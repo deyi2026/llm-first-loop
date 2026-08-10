@@ -44,6 +44,20 @@ class SessionListResponse(BaseModel):
     count: int
 
 
+class MessageItem(BaseModel):
+    """会话消息条目（刷新后恢复对话用）."""
+
+    role: str
+    content: str
+
+
+class SessionMessagesResponse(BaseModel):
+    """会话历史消息响应."""
+
+    session_id: str
+    messages: list[MessageItem]
+
+
 class ErrorResponse(BaseModel):
     """错误响应（错误类型 + 原因/引导建议，如实可检索）."""
 

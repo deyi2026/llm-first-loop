@@ -125,6 +125,15 @@ async function loadSessions() {
   renderSessions();
 }
 
+async function loadSessionMessages(sessionId) {
+  const { status, data } = await api(`/api/v1/sessions/${encodeURIComponent(sessionId)}/messages`);
+  if (status !== 200) return;
+  state.messages = (data.messages || [])
+    .filter((m) => m.role === "user" || m.role === "assistant")
+    .map((m) => ({ role: m.role, content: m.content, note: null }));
+  renderMessages();
+}
+
 function renderSessions() {
   els.sessionList.innerHTML = "";
   const q = els.searchInput.value.trim().toLowerCase();
@@ -158,6 +167,7 @@ function selectSession(sessionId) {
   state.messages = [];
   renderMessages();
   renderSessions();
+  loadSessionMessages(sessionId); // 加载该会话历史消息
   els.messageInput.focus();
 }
 
@@ -196,6 +206,11 @@ async function init() {
     setStatus(false, "未连接");
   }
   await loadSessions();
+  // 刷新后自动选中最近会话并恢复其历史消息（无会话则保持空白等待新建）
+  const latest = state.sessions[0];
+  if (latest) {
+    selectSession(latest.session_id);
+  }
 }
 
 els.sendBtn.addEventListener("click", sendMessage);
