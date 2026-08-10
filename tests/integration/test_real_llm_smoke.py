@@ -362,7 +362,7 @@ def test_real_llm_v4_thinking_comparison(tmp_path):
                 "task_done": done,
                 "answer_len": len(result.final_answer or ""),
                 "elapsed_s": round(elapsed, 1),
-                "400": "400" in (result.final_answer or ""),
+                "400": "[LLM 调用异常]" in (result.final_answer or ""),  # M22 审计: 真实 400 呈 [LLM 调用异常]；文本 "400" 会被合法数字（如 79338400）误伤
             }
         )
     # 记录对比证据（验收报告 T149 汇总）
