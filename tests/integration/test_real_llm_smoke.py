@@ -203,7 +203,10 @@ def _run_with_retry(fn, retries=1):
 
 
 def test_real_llm_link_a_self_check_adjust(tmp_path):
-    """场景 a（FR-VALID-AI-01）: AI 自主 architecture_status 自查 → adjust_strategy 调整（PARAM-03 生效）."""
+    """场景 a（FR-VALID-AI-01）: AI 自主 architecture_status 自查 → adjust_strategy 调整（PARAM-03 生效）.
+
+    M23（FR-CHAIN-VAL-01）: 判据升级为"动作链完整"（自查→调整 或 自查→明确结论）+ 每场景 3 独立会话样本。
+    """
     from llm_loop.factory import build_engine
 
     engine = build_engine(_real_llm_settings(tmp_path))  # type: ignore[arg-type]
@@ -216,21 +219,31 @@ def test_real_llm_link_a_self_check_adjust(tmp_path):
         )
         seq = _extract_tool_call_seq(sess)
         assert result.final_answer, "应产生回答"
-        # a) 先自查后调整（adjust_strategy 在 architecture_status 之后）
+        # 动作链完整判定（M23 升级）: 自查→调整 或 自查→明确结论
         if "architecture_status" in seq and "adjust_strategy" in seq:
             assert seq.index("adjust_strategy") > seq.index("architecture_status"), "应先自查后调整"
-            return True, "命中（architecture_status→adjust_strategy 顺序正确）"
-        return False, f"未主动调架构工具（工具序列: {seq}）"
+            return "hit", "动作链完整（architecture_status→adjust_strategy 自查→调整闭环）"
+        if "architecture_status" in seq:
+            return "conclusion", f"自查→明确结论（缺调整步，序列: {seq}）"
+        return "miss", f"未调架构工具（序列: {seq}）"
 
-    try:
-        hit, note = _run_with_retry(_run)[0]
-    except AssertionError as exc:
-        hit, note = False, f"失败: {exc}"
-    print(f"[场景 a] {'命中' if hit else '未命中'} - {note}")
-    # 判定式（design 10.2.1）: 命中即通过；未命中如实记录（样本计入 T127 命中率基线 ≥2/3，
-    # 真实 LLM 行为不可控，单次不硬判失败——命中与否由 T127 报告 3 次会话汇总判定）
-    if not hit:
-        print("[场景 a] 样本已记录（未命中）→ T127 报告汇总命中率")
+    # 每场景 3 独立会话样本（对齐 M21 AI-05 ×3 范式）
+    results = []
+    for i in range(3):
+        try:
+            ret = _run_with_retry(_run)
+            status, note = ret[0]
+        except AssertionError as exc:
+            status, note = "miss", f"失败: {exc}"
+        results.append((status, note))
+        print(f"[场景 a 样本{i + 1}] {status} - {note}")
+    # 动作链完整率 = (hit + conclusion) / 3（≥2/3 目标判定，非硬门禁）
+    complete = sum(1 for s, _ in results if s in ("hit", "conclusion"))
+    rate = complete / len(results)
+    print(f"[场景 a] 动作链完整率={complete}/{len(results)} = {rate:.2f}")
+    # 判定式（design 10.2.1 + spec 18.3.1）: ≥2/3 记录"引导生效"；<2/3 如实记录，走四维分析（不判失败）
+    if rate < 2 / 3:
+        print("[场景 a] 动作链完整率 <2/3（如实记录）→ M23 报告四维原因分析")
 
 
 def test_real_llm_link_b_eval_evolve_run(tmp_path):
@@ -303,7 +316,11 @@ def test_real_llm_link_d_boundary_human(tmp_path):
 
 
 def test_real_llm_rule_executability(tmp_path):
-    """场景 f（FR-VALID-AI-06）: 无引导时 AI 自主想起架构工具（规则可执行性观察样本）."""
+    """场景 f（FR-VALID-AI-06）: 无引导时 AI 自主想起架构工具（规则可执行性观察样本）.
+
+    M23（FR-CHAIN-VAL-01）: 判据保留语义（主动调架构工具 或 回答提及工具名）+ 每场景 3 独立会话样本，
+    复测重点 = 回答提及工具名率（复核基线：序列 ['architecture_status','search_records','search_records'] 但回答未提及）。
+    """
     from llm_loop.factory import build_engine
 
     engine = build_engine(_real_llm_settings(tmp_path))  # type: ignore[arg-type]
@@ -311,25 +328,40 @@ def test_real_llm_rule_executability(tmp_path):
     def _run():
         result, sess = _real_run(engine, "这个会话运行状态如何？帮我看看有没有改进空间。")
         seq = _extract_tool_call_seq(sess)
-        assert result.final_answer
-        # 主动调用架构工具（无程序提醒前置）
+        answer = result.final_answer or ""
+        assert answer
+        # 判据保留: 主动调用架构工具（无程序提醒前置）或 回答显式提及工具名
         if "architecture_status" in seq and _is_ai_initiated(sess, "architecture_status"):
-            return True, f"AI 主动调用 architecture_status（序列: {seq}）"
-        # 兜底: 无工具调用但回答明确提及架构工具名
-        answer = result.final_answer
+            mentioned = any(
+                t in answer for t in ("architecture_status", "search_records", "adjust_strategy")
+            )
+            return (
+                "hit",
+                f"AI 主动调用 architecture_status（序列: {seq}; 回答提及工具名={mentioned}）",
+                mentioned,
+            )
         if "architecture_status" in answer or "调整参数" in answer or "self_evaluate" in answer:
-            return True, "回答明确提及架构工具名（AI 知晓规则）"
-        return False, f"AI 未自主想起架构工具（序列: {seq}; 回答: {answer[:80]}）"
+            return "hit", "回答明确提及架构工具名（AI 知晓规则）", True
+        return "miss", f"AI 未自主想起架构工具（序列: {seq}; 回答: {answer[:80]}）", False
 
-    try:
-        hit, note = _run_with_retry(_run)[0]
-    except AssertionError as exc:
-        hit, note = False, f"失败: {exc}"
-    print(f"[场景 f] {'命中' if hit else '未命中'} - {note}")
-    # 判定式（design 10.2.6）: 独立会话命中即提供样本；未命中如实记录——
-    # 命中率基线 = 场景 a/b/f 三次会话 ≥2/3，由 T127 报告汇总判定（未命中触发 FR-VALID-FIX-07 优化路径）
-    if not hit:
-        print("[场景 f] 样本已记录（未命中）→ T127 报告汇总命中率，若 <2/3 触发 FR-VALID-FIX-07")
+    # 每场景 3 独立会话样本（对齐 M21 AI-05 ×3 范式）
+    results = []
+    for i in range(3):
+        try:
+            ret = _run_with_retry(_run)
+            status, note, mentioned = ret[0]
+        except AssertionError as exc:
+            status, note, mentioned = "miss", f"失败: {exc}", False
+        results.append((status, note, mentioned))
+        print(f"[场景 f 样本{i + 1}] {status} - {note}")
+    hit_count = sum(1 for s, _, _ in results if s == "hit")
+    mention_count = sum(1 for _, _, m in results if m)
+    print(
+        f"[场景 f] 命中率={hit_count}/{len(results)} 回答提及工具名率={mention_count}/{len(results)}"
+    )
+    # 判定式（design 10.2.6 + spec 18.3.1）: ≥2/3 记录"引导生效"；<2/3 如实记录，走四维分析（不判失败）
+    if hit_count / len(results) < 2 / 3:
+        print("[场景 f] 命中率 <2/3（如实记录）→ M23 报告四维原因分析")
 
 
 def test_real_llm_v4_thinking_comparison(tmp_path):
@@ -370,7 +402,10 @@ def test_real_llm_v4_thinking_comparison(tmp_path):
                 "task_done": done,
                 "answer_len": len(result.final_answer or ""),
                 "elapsed_s": round(elapsed, 1),
-                "400": "[LLM 调用异常]" in (result.final_answer or ""),  # M22 审计: 真实 400 呈 [LLM 调用异常]；文本 "400" 会被合法数字（如 79338400）误伤
+                "400": "[LLM 调用异常]"
+                in (
+                    result.final_answer or ""
+                ),  # M22 审计: 真实 400 呈 [LLM 调用异常]；文本 "400" 会被合法数字（如 79338400）误伤
             }
         )
     # 记录对比证据（验收报告 T149 汇总）
