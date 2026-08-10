@@ -21,7 +21,8 @@ def test_prompt_has_self_check_conclusion():
     """自查→明确结论/调整闭环引导句存在（FR-CHAIN-PRMP-01，场景 a 型）."""
     prompt = build_system_prompt()
     assert "走完动作链" in prompt
-    assert "继续调用 adjust_strategy 落地调整" in prompt
+    # M25: 三要素①措辞强化（许可型"继续调用"→命令句"应调用"，见 FR-ADJ2-WD-02）
+    assert "应调用 adjust_strategy 落地调整" in prompt
     assert "明确结论" in prompt
 
 
