@@ -107,6 +107,17 @@ def test_health_no_llm_call(build_test_engine, fake_settings):
     assert len(fake.calls) == 0  # 健康检查不调 LLM
 
 
+def test_root_returns_service_info(build_test_engine, fake_settings):
+    engine, fake = build_test_engine([])
+    client = _make_client(engine)
+    resp = client.get("/")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["service"] == "llm-first-loop-web"
+    assert "api/v1/chat" in str(body["endpoints"])
+    assert len(fake.calls) == 0  # 根路径不调 LLM
+
+
 def test_list_sessions(build_test_engine, fake_settings):
     engine, _ = build_test_engine([{"content": "a"}])
     client = _make_client(engine)

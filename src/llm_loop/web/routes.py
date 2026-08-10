@@ -77,6 +77,23 @@ def chat(payload: ChatRequest, request: Request) -> ChatResponse | Response:
     )
 
 
+@router.get("/")
+def root() -> dict:
+    """服务根路径：返回服务信息与端点指引（打开根路径有内容而非 404）."""
+    return {
+        "service": SERVICE_NAME,
+        "version": SERVICE_VERSION,
+        "endpoints": {
+            "POST /api/v1/chat": "对话（body: {message, session_id?}）",
+            "GET /api/v1/sessions": "会话列表",
+            "DELETE /api/v1/sessions/{session_id}?confirm=true": "删除会话（须确认）",
+            "GET /health": "健康检查",
+            "GET /docs": "Swagger 交互文档",
+        },
+        "usage": "POST /api/v1/chat -H 'Content-Type: application/json' -d '{\"message\": \"你好\"}'",
+    }
+
+
 @router.get("/health")
 def health() -> dict:
     """健康检查：纯服务层探活，不调用 LLM、不含凭证."""
