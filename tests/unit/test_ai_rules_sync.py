@@ -40,6 +40,14 @@ _RULE_KEYWORDS = {
         "仍失败再如实说明",  # 三要素③失败兑底（与 RULE-AI-03 衔接）
         "不强制调用工具",  # 程序角色（AI 决定一切保留）
     ],
+    # M23: 动作链完整性引导（自查→调整/明确结论 + 回答可追溯，不强制调整）
+    "RULE-AI-08": [
+        "动作链完整",  # 规则编号名（SoT 标题 + prompt 注入段标题）
+        "明确结论",  # 三要素②自查→明确结论闭环
+        "adjust_strategy",  # 三要素①自查→调整闭环（修正工具名）
+        "提及本轮所用工具名",  # 三要素③回答可追溯
+        "不强制调用工具",  # 程序角色（AI 决定一切保留）
+    ],
 }
 
 
@@ -66,8 +74,8 @@ def test_rules_consistent_both_sides():
     doc = _read("docs/ai_rules.md")
     prompt = _read("src/llm_loop/core/prompt.py")
     for rule_id, keywords in _RULE_KEYWORDS.items():
-        # RULE-AI-06 含四子规则（M16 审计）/ RULE-AI-07 含程序角色+正反例（M22）→ 更大窗口；其余规则 600 字符
-        window = 1600 if rule_id in {"RULE-AI-06", "RULE-AI-07"} else 600
+        # RULE-AI-06 含四子规则（M16 审计）/ RULE-AI-07/08 含程序角色+正反例（M22/M23）→ 更大窗口；其余规则 600 字符
+        window = 1600 if rule_id in {"RULE-AI-06", "RULE-AI-07", "RULE-AI-08"} else 600
         doc_section = doc[doc.find(rule_id) :][:window]
         prompt_section = prompt[prompt.find(rule_id) :][:window]
         for kw in keywords:
