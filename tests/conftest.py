@@ -1,0 +1,178 @@
+"""测试公共 fixture: FakeLLM + 隔离数据目录（design.md §2.5）.
+
+- FakeLLM: 可编程响应序列（含流式分片模拟），不触网
+- 隔离数据目录: DATA_DIR 指向 tmp_path，杜绝污染真实 ./data
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from llm_loop.core.message import ToolCall
+from llm_loop.llm.client import LLMResponse
+
+
+class FakeLLM:
+    """可编程 LLM 桩：按预编程响应序列依次返回.
+
+    记录每次调用收到的 messages/tools（供测试断言）。
+    响应项: {"content": str, "tool_calls": [ToolCall]} 或 callable(history) -> LLMResponse
+    """
+
+    def __init__(self, responses: list[Any]) -> None:
+        self._responses = list(responses)
+        self.calls: list[dict] = []  # 每次调用的 messages/tools 记录
+
+    def chat(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        *,
+        timeout_s: float | None = None,
+    ) -> LLMResponse:
+        self.calls.append({"messages": messages, "tools": tools})
+        if not self._responses:
+            return LLMResponse(content="（无更多响应）", tool_calls=[], provider="fake")
+        item = self._responses.pop(0)
+        if callable(item):
+            result = item(self.calls)
+            assert isinstance(result, LLMResponse)
+            return result
+        if isinstance(item, LLMResponse):
+            return item
+        content = item.get("content")
+        tcs = item.get("tool_calls") or []
+        # M20 THK-04: FakeLLM 响应项支持 reasoning_content（多轮回传断言用）
+        return LLMResponse(
+            content=content,
+            tool_calls=tcs,
+            provider="fake",
+            reasoning_content=item.get("reasoning_content"),
+        )
+
+    @staticmethod
+    def tool(name: str, arguments: dict, tc_id: str = "call_fake_1") -> ToolCall:
+        return ToolCall(id=tc_id, name=name, arguments=arguments)
+
+
+@pytest.fixture(autouse=True)
+def isolated_data_dir(tmp_path, monkeypatch):
+    """隔离数据目录：所有测试不触碰真实 ./data."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    monkeypatch.setenv("DATA_DIR", str(data_dir))
+    return data_dir
+
+
+@pytest.fixture
+def fake_settings(isolated_data_dir):
+    """测试用 Settings（Fake key/base_url/model + 隔离 DATA_DIR）."""
+    from llm_loop.config import Settings
+
+    return Settings(
+        llm_api_key="test-key",
+        llm_base_url="https://fake.local/v1",
+        llm_model="fake-model",
+        data_dir=str(isolated_data_dir),
+        max_iterations=10,
+    )
+
+
+@pytest.fixture
+def build_test_engine(fake_settings):
+    """构造测试引擎（装配 FakeLLM 与隔离存储），返回 (engine, fake_llm)."""
+
+    def _build(responses: list[Any]):
+        from llm_loop.core.loop import LoopEngine
+        from llm_loop.core.session import SessionStore
+        from llm_loop.feedback.validator import DeclarationValidator
+        from llm_loop.introspection.corrections import CorrectionContext, CorrectionToolRegistry
+        from llm_loop.introspection.status import ArchitectureStatusProvider
+        from llm_loop.memory.archive import ArchiveStore
+        from llm_loop.memory.store import MemoryStore
+        from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
+        from llm_loop.tools.builtin.read_file import ReadFileTool
+        from llm_loop.tools.registry import ToolRegistry
+
+        fake = FakeLLM(responses)
+        memory = MemoryStore(fake_settings.memory_dir)
+        session = SessionStore(fake_settings.sessions_dir)
+        archive = ArchiveStore(fake_settings.archive_dir) if fake_settings.archive_enabled else None
+        registry = ToolRegistry(
+            tool_timeout_s=fake_settings.tool_timeout_s,
+            max_output_chars=fake_settings.tool_max_output_chars,
+            archive_store=archive,
+        )
+        registry.register(ReadFileTool())
+        registry.register(ExecuteCommandTool())
+        status = ArchitectureStatusProvider(
+            audit_dir=fake_settings.audit_dir,
+            enabled=fake_settings.self_inspection_enabled,
+            config_status=fake_settings.to_status_dict,
+        )
+        ctx = CorrectionContext()
+        corrections = CorrectionToolRegistry(
+            ctx, audit_dir=fake_settings.audit_dir, status_provider=status, archive_store=archive
+        )
+        from llm_loop.factory import _CorrectionAdapterTool
+        from llm_loop.introspection.search import RecordSearcher
+
+        searcher = RecordSearcher(
+            audit_dir=fake_settings.audit_dir, memory_store=memory, archive_store=archive
+        )
+        corrections._search_records_fn = lambda **kw: searcher.search(**kw)  # noqa: SLF001
+
+        for td in corrections.tool_defs():
+            registry.register(
+                _CorrectionAdapterTool(
+                    corrections,
+                    name=td["name"],
+                    description=td["description"],
+                    parameters=td["parameters"],
+                )
+            )
+        validator = DeclarationValidator(audit_dir=fake_settings.audit_dir)
+        # M12 组件装配
+        from llm_loop.core.runtime_params import RuntimeParams
+        from llm_loop.feedback.fault_classifier import FaultClassifier
+        from llm_loop.feedback.selfheal_budget import SelfHealBudget
+        from llm_loop.introspection.evolution import EvolutionStore
+
+        runtime = RuntimeParams(fake_settings, strategy=ctx.strategy)
+        runtime.set_persist_path(fake_settings.audit_dir / "param_adjust_history.jsonl")
+        runtime.set_max_adjust_per_round(fake_settings.param_adjust_per_round)
+        ctx.runtime = runtime
+        ctx.evolution_store = EvolutionStore(fake_settings.audit_dir)
+        # M17 FR-REVIEW-AI-02/03: LoopSignalDetector 三合一（executing 提醒检测数据源）
+        from llm_loop.introspection.loop_signals import LoopSignalDetector
+
+        loop_signal_detector = LoopSignalDetector(
+            eval_trigger_detector=None,
+            status=status,
+            settings=fake_settings,
+        )
+        engine = LoopEngine(
+            llm_client=fake,  # type: ignore[arg-type] — FakeLLM 实现 chat 协议（Duck typing）
+            registry=registry,
+            memory=memory,
+            session=session,
+            settings=fake_settings,
+            validator=validator,
+            status_provider=status,
+            correction_registry=corrections,
+            correction_ctx=ctx,
+            archive=archive,
+            runtime=runtime,
+            fault_classifier=FaultClassifier(),
+            selfheal_budget=SelfHealBudget(
+                max_attempts=fake_settings.selfheal_max_attempts,
+                max_per_round=fake_settings.selfheal_max_per_round,
+            ),
+            evolution_store=ctx.evolution_store,
+            loop_signal_detector=loop_signal_detector,
+        )
+        return engine, fake
+
+    return _build

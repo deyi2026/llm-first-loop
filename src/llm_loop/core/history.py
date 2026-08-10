@@ -1,0 +1,103 @@
+"""上下文构造与压缩另存（design.md §2.2.2.3 / T22 另存提取替代截断）.
+
+- 保序提交（FR-MSG-03）
+- **T22: 截断不是目的**——上下文超长时，将被丢弃的旧消息先"另存提取重要信息"
+  （原文完整另存 + 关键事实/路径索引）到 ArchiveStore，再注入精简内容 +
+  `[上下文压缩]` 标注（含"可查 search_archive"指引），信息零丢失。
+- 记忆注入（source=memory 前置消息）
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+
+from llm_loop.core.message import Message
+
+# archive sink: (session_id, message) -> None（由调用方装配 ArchiveStore）
+ArchiveSink = Callable[[str, Message], None]
+
+
+def build_history_messages(
+    session_messages: list[Message],
+    system_prompt: str,
+    max_chars: int = 80000,
+    *,
+    session_id: str = "",
+    archive_sink: ArchiveSink | None = None,
+) -> list[dict]:
+    """组装提交 LLM 的消息序列（保序 + 超长另存压缩 + 如实标注）.
+
+    Args:
+        session_messages: 会话消息序列（保序）.
+        system_prompt: 系统提示词.
+        max_chars: 上下文注入字符预算.
+        session_id: 当前会话（另存归档用）.
+        archive_sink: 压缩另存回调（将被丢弃的消息逐条另存，信息零丢失）.
+
+    Returns:
+        LLM 协议消息列表（dict）。压缩发生时消息序列含 `[上下文压缩]` 标注。
+    """
+    out: list[dict] = []
+    if system_prompt:
+        out.append({"role": "system", "content": system_prompt})
+
+    total_chars = sum(len(m.content) for m in session_messages)
+    if total_chars <= max_chars:
+        for m in session_messages:
+            out.append(m.to_llm_dict())
+        return out
+
+    # ── 超长: 从最新往回保留，最旧的先"另存提取"再精简注入（不静默丢弃）──
+    kept: list[Message] = []
+    archived: list[Message] = []
+    budget = max_chars
+    for m in reversed(session_messages):
+        content_len = len(m.content)
+        if budget - content_len < 0 and kept:
+            archived.append(m)  # 将被丢弃 → 先另存
+            continue
+        if content_len > budget and not kept:
+            # 单条即超限: 另存全文 + 精简注入
+            archived.append(m)
+            trimmed = (
+                m.content[: max(budget - 100, 100)]
+                + "\n…[本消息已压缩，完整内容已另存，可用 search_archive 检索]…"
+            )
+            kept.insert(
+                0,
+                Message(
+                    role=m.role,
+                    content=trimmed,
+                    source=m.source,
+                    tool_call_id=m.tool_call_id,
+                    status=m.status,
+                    tool_name=m.tool_name,
+                    error_detail=m.error_detail,
+                    tool_calls=m.tool_calls,
+                    reasoning_content=m.reasoning_content,  # M20 THK-04: 压缩后回传链不因截断断裂
+                    metadata=m.metadata,
+                ),
+            )
+            budget -= len(trimmed)
+            continue
+        kept.insert(0, m)
+        budget -= content_len
+
+    # 另存被丢弃消息（信息零丢失）
+    if archive_sink is not None and session_id and archived:
+        for m in archived:
+            try:
+                archive_sink(session_id, m)
+            except Exception:
+                import logging
+
+                logging.getLogger(__name__).warning("archive sink 异常（fail-open）", exc_info=True)
+
+    for m in kept:
+        out.append(m.to_llm_dict())
+    if archived:
+        from llm_loop.feedback.honesty import compression_message
+
+        comp = compression_message(len(archived), sum(len(a.content) for a in archived))
+        out.insert(1, comp.to_llm_dict())
+    return out

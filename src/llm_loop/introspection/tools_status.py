@@ -1,0 +1,158 @@
+"""架构状态/检索类工具实现（M16 审计 FR-AUDIT-AI-14 拆分: corrections.py → tools_status.py）.
+
+- architecture_status: LLM 拉取架构运行状态（通道一）
+- search_archive / search_records: 统一检索（压缩档案 / 历史记录·记忆·档案）
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from llm_loop.core.message import ToolResult, ToolResultStatus
+
+_SEARCH_RECORDS_KIND_HINT = (
+    "action_trace/exception_log/self_correction_log/declaration_check/"
+    "memory/memory_extract/archive/evolution/evolution_exec/self_eval/all"
+)
+
+
+def run_status(ctx: Any, status_provider: Any, args: dict) -> ToolResult:
+    """architecture_status: 拉取架构状态快照（维度可按需裁剪）."""
+    if status_provider is None:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content="[架构状态不可用] 架构自省未启用（SELF_INSPECTION_ENABLED=0）或状态提供器未装配。",
+            tool_call_id="",
+            tool_name="architecture_status",
+        )
+    dims = args.get("dimensions")
+    snap = status_provider.snapshot(dimensions=dims)
+    text = json.dumps(snap, ensure_ascii=False, indent=2)
+    # M19 FIX-03: 8000 字符静默截断如实标注（标注拼接在截断段之后，保证标注可见）
+    if len(text) > 8000:
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content=text[:8000]
+            + "\n[快照截断] 超出 8000 字符部分未显示（可缩小 dimensions 精确查询，如仅查 architecture_config）。",
+            tool_call_id="",
+            tool_name="architecture_status",
+        )
+    return ToolResult(
+        status=ToolResultStatus.SUCCESS,
+        content=text,
+        tool_call_id="",
+        tool_name="architecture_status",
+    )
+
+
+def current_session_id(ctx: Any) -> str:
+    """当前会话（由循环注入；默认空则检索全部）."""
+    return getattr(ctx, "session_id", "") or ""
+
+
+def run_search_archive(ctx: Any, archive: Any, args: dict, session_id_fn: Any) -> ToolResult:
+    """search_archive: 检索被压缩的历史/超长结果（T22）."""
+    query = str(args.get("query", "")).strip()
+    if not query:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content='[参数错误] 事实: 缺少检索关键词。\n原因: query 为必填。\n建议: 提供关键词后重试（如 search_archive(query="文件名")）。',
+            tool_call_id="",
+            tool_name="search_archive",
+        )
+    if archive is None:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content="[压缩档案不可用] 事实: 压缩档案未装配。\n原因: ARCHIVE_ENABLED=0 或 ArchiveStore 未注入。\n建议: 检查配置后重试。",
+            tool_call_id="",
+            tool_name="search_archive",
+        )
+    limit = int(args.get("limit") or 10)
+    limit = max(1, min(limit, 50))
+    role = args.get("role") or None
+    tool_name = args.get("tool_name") or None
+    hits = archive.search(session_id_fn(), query, limit=limit, role=role, tool_name=tool_name)
+    if not hits:
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content=f"[search_archive] 未找到匹配 '{query}' 的压缩档案条目（不伪造结果）。",
+            tool_call_id="",
+            tool_name="search_archive",
+        )
+    lines: list[str] = []
+    for h in hits[:6]:
+        lines.append(
+            f"[{h.get('ts', '')}] {h.get('role', '')}/{h.get('tool_name') or h.get('source', '')}: "
+            f"{str(h.get('summary', ''))[:200]}"
+        )
+    lines.append("原文片段: " + str(hits[0].get("content_preview", ""))[:400])
+    content = "[search_archive] 命中 " + str(len(hits)) + " 条:\n" + "\n".join(lines[:6])
+    # M19 FIX-02: 命中 > 展示数时如实标注（AI 请求 limit 却只见 6 条，需告知真实命中数）
+    if len(hits) > 6:
+        content += (
+            f"\n[仅显示前 6 条] 共 {len(hits)} 条命中（limit={limit}）。"
+            "可缩小 query 或提高 limit 精确检索。"
+        )
+    return ToolResult(
+        status=ToolResultStatus.SUCCESS,
+        content=content,
+        tool_call_id="",
+        tool_name="search_archive",
+    )
+
+
+def run_search_records(ctx: Any, search_fn: Any, args: dict, session_id_fn: Any) -> ToolResult:
+    """search_records: 统一检索运行记录/记忆/压缩档案（T23）."""
+    if search_fn is None:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content="[统一检索不可用] 事实: search_records 未装配。\n原因: 检索实现未注入。\n建议: 检查配置后重试。",
+            tool_call_id="",
+            tool_name="search_records",
+        )
+    kind = str(args.get("kind", "all")).strip()
+    query = str(args.get("query", "")).strip()
+    limit = int(args.get("limit") or 10)
+    limit = max(1, min(limit, 50))
+    try:
+        result = search_fn(kind=kind, query=query, limit=limit, session_id=session_id_fn())
+    except ValueError as exc:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content=f"[参数错误] 事实: {exc}\n原因: kind 取值不合法。\n建议: 可选 {_SEARCH_RECORDS_KIND_HINT}。",
+            tool_call_id="",
+            tool_name="search_records",
+        )
+    if not result:
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content=f"[search_records] 未找到匹配 '{query}' 的记录（不伪造结果）。",
+            tool_call_id="",
+            tool_name="search_records",
+        )
+    lines: list[str] = []
+    for r in result[:limit]:
+        lines.append(
+            f"[{r.get('ts', '')}] {r.get('kind', kind)}: {str(r.get('summary', ''))[:200]}"
+        )
+    content = "[search_records] 命中 " + str(len(result)) + " 条:\n" + "\n".join(lines[:6])
+    # M19 FIX-02: 命中 > 展示数时如实标注（真实命中数 len(result)，非截断后计数）
+    if len(result) > 6:
+        content += (
+            f"\n[仅显示前 6 条] 共 {len(result)} 条命中（limit={limit}）。"
+            "可缩小 query 或提高 limit 精确检索。"
+        )
+    return ToolResult(
+        status=ToolResultStatus.SUCCESS,
+        content=content,
+        tool_call_id="",
+        tool_name="search_records",
+    )
+
+
+def current_params(ctx: Any) -> dict:
+    """当前生效参数（动态优先）."""
+    if ctx.runtime is not None:
+        return ctx.runtime.current()
+    return dict(ctx.strategy)
