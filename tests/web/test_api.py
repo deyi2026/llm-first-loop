@@ -108,14 +108,17 @@ def test_health_no_llm_call(build_test_engine, fake_settings):
 
 
 def test_root_returns_service_info(build_test_engine, fake_settings):
+    """根路径 M37 起返回聊天页面 HTML（不再是 JSON 服务信息）."""
     engine, fake = build_test_engine([])
     client = _make_client(engine)
     resp = client.get("/")
     assert resp.status_code == 200
-    body = resp.json()
-    assert body["service"] == "llm-first-loop-web"
-    assert "api/v1/chat" in str(body["endpoints"])
+    assert "text/html" in resp.headers["content-type"]
+    assert "<!DOCTYPE html>" in resp.text
     assert len(fake.calls) == 0  # 根路径不调 LLM
+    info = client.get("/api/info")
+    assert info.status_code == 200
+    assert info.json()["service"] == "llm-first-loop-web"
 
 
 def test_list_sessions(build_test_engine, fake_settings):
