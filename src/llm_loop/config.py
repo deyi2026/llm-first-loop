@@ -115,7 +115,7 @@ class Settings:
     validate_semantic_threshold: float = 0.75
 
     # ── M12 AI 自主闭环（§9，默认值保零回归）──
-    selfheal_enabled: bool = True
+
     selfheal_max_attempts: int = 3  # 单故障自愈尝试次数上限
     selfheal_max_per_round: int = 6  # 单轮自愈动作上限
     param_adjust_per_round: int = 3  # 单轮参数调整次数上限
@@ -258,7 +258,7 @@ def load_settings() -> Settings:
         validate_semantic=_env_bool("VALIDATE_SEMANTIC", False),
         validate_semantic_threshold=float(_env_int("VALIDATE_SEMANTIC_THRESHOLD", 0)) or 0.75,
         # M12 AI 自主闭环（§9，默认值保零回归）
-        selfheal_enabled=_env_bool("SELFHEAL_ENABLED", True),
+
         selfheal_max_attempts=_env_int("SELFHEAL_MAX_ATTEMPTS", 3),
         selfheal_max_per_round=_env_int("SELFHEAL_MAX_PER_ROUND", 6),
         param_adjust_per_round=_env_int("PARAM_ADJUST_PER_ROUND", 3),

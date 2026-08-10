@@ -145,17 +145,25 @@ def _real_run(engine, user_text, pre_rounds=None):
 def _extract_tool_call_seq(sess):
     """提取工具调用序列（assistant 消息 tool_calls 名）——供"先自查后调整"顺序断言.
 
-    兼容 tool_calls 为对象或 dict（run 落盘后可能序列化）。
+    兼容两种存储格式:
+    - OpenAI 协议格式（LLM 流式聚合原样存储）: {"type": "function", "function": {"name": ...}}
+    - 扁平格式（部分路径归一化）: {"name": ...}
+    以及 ToolCall 对象（内存态）。
+    M22 修复: 原实现用 tc.get("name") 恒取空 → 工具序列恒空 → 非空率假象（与 exec_smoke 同步）。
     """
     seq = []
     for m in sess.messages:
         if m.role == "assistant" and getattr(m, "tool_calls", None):
             for tc in m.tool_calls:
                 if isinstance(tc, dict):
-                    seq.append(tc.get("name", ""))
+                    fn = tc.get("function") or {}
+                    name = fn.get("name") if isinstance(fn, dict) else None
+                    name = name or tc.get("name", "")
                 else:
-                    seq.append(getattr(tc, "name", ""))
-    return [n for n in seq if n]
+                    name = getattr(tc, "name", "")
+                if name:
+                    seq.append(name)
+    return seq
 
 
 def _is_ai_initiated(sess, tool_name):
