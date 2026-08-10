@@ -262,9 +262,9 @@ def test_real_llm_link_a_self_check_adjust(tmp_path):
             return "conclusion", f"自查→明确结论（缺调整步，序列: {seq}）"
         return "miss", f"未调架构工具（序列: {seq}）"
 
-    # 每场景 3 独立会话样本（对齐 M21 AI-05 ×3 范式）
+    # 每场景 6 独立会话样本（M26 N=3→N=6 扩展，FR-EXT-SMP-02）
     results = []
-    for i in range(3):
+    for i in range(6):
         try:
             ret = _run_with_retry(_run)
             status, note = ret[0]
@@ -306,9 +306,9 @@ def test_real_llm_adj_required(tmp_path):
             return "partial", f"自查但无调整步（序列: {seq}）"
         return "miss", f"未自查（序列: {seq}）"
 
-    # ×3 独立会话样本（对齐 M21 AI-05 / M23 ×3 范式）
+    # ×6 独立会话样本（M26 N=3→N=6 扩展，FR-EXT-SMP-01）
     results = []
-    for i in range(3):
+    for i in range(6):
         try:
             ret = _run_with_retry(_run)
             status, note = ret[0]
@@ -318,14 +318,14 @@ def test_real_llm_adj_required(tmp_path):
         print(f"[必调整 样本{i + 1}] {status} - {note}")
     hit_count = sum(1 for s, _ in results if s == "hit")
     rate = hit_count / len(results)
-    print(
-        f"[必调整] 调整步达成率={hit_count}/{len(results)} = {rate:.2f}（对照组 M23 场景 a 基线 0/3）"
-    )
-    # 判定式（design 15.5.2）: ≥2/3 记录"必调整任务设计触发真实调整闭环"；<2/3 如实记录走四维分析（不判失败）
-    if rate >= 2 / 3:
-        print("[必调整] 达成率 ≥2/3 → 必调整任务设计触发真实调整闭环")
+    print(f"[必调整] 调整步达成率={hit_count}/{len(results)} = {rate:.2f}（M25 基线 2/3=0.67）")
+    # 判定式三分支（M26 FR-EXT-STAT-02，design 17.2）: ≥4/6 达标 / =3/6 临界 / <3/6 未达（均仅 print 不 assert，非硬门禁）
+    if hit_count >= 4:
+        print("[必调整] 达成率 ≥4/6 → 措辞强化后调整步达成率稳定（N=6）")
+    elif hit_count == 3:
+        print("[必调整] 达成率 =3/6（临界，如实记录）→ 波动分析 + 统计显著性说明")
     else:
-        print("[必调整] 达成率 <2/3（如实记录）→ M24 报告四维原因分析")
+        print("[必调整] 达成率 <3/6（如实记录）→ 波动归因 + 四维分析")
 
 
 def test_real_llm_link_b_eval_evolve_run(tmp_path):
