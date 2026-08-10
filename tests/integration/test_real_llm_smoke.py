@@ -199,6 +199,41 @@ def _run_with_retry(fn, retries=1):
     raise AssertionError(f"重试 {retries} 次仍失败: {last}")
 
 
+# ── M24 T177-T178: 必调整场景任务文本 + 状态层注入 helper（FR-ADJ-SCEN-01/02/03）──
+
+# 必调整任务文本定稿（design 15.2.2）: 命令式措辞，使调整步成为任务必要动作
+# （区别于 M23 场景 a 许可型"若发现运行参数有问题，请自行评估并调整"）
+_ADJ_REQUIRED_PROMPT = (
+    "持续运行并管理好运行参数。请检查当前运行参数与工具执行状况"
+    "（调用 architecture_status 查看工具历史与异常记录），若发现异常（如工具失败率偏高/异常记录），"
+    "请调用 adjust_strategy 将相关参数修正为合理值，并在回答中说明调整的参数与依据。"
+)
+
+
+def _inject_status_failures(engine):
+    """状态层注入 helper（FR-ADJ-SCEN-03，design 15.3.2）: 制造 architecture_status 可见失败记录.
+
+    M24 关键机制纠正（design 15.0.2-1）: pre_rounds 预置仅 append 会话消息、不进 tool_history，
+    仅靠 pre_rounds 无法满足"architecture_status 可见"——必须叠加状态层注入。
+    仅测试基建直调 engine.status 公共方法（record_tool_history/record_exception），产品代码零改动。
+    """
+    from llm_loop.core.message import ToolResultStatus
+    from llm_loop.introspection.status import ToolHistoryItem
+
+    status = engine.status
+    for i in range(2):
+        status.record_tool_history(
+            ToolHistoryItem(
+                name="read_file",
+                arguments={"path": f"/no/such/m24_{i}"},
+                status=ToolResultStatus.FAILURE,
+                summary=f"[文件不存在] /no/such/m24_{i} 不存在（M24 预置失败信号）",
+            )
+        )
+    status.record_exception("action.tool_loop", FileNotFoundError("/no/such/m24 预置异常信号"))
+    return status
+
+
 # ── M19 T117-T122: 真实链路验收场景（engine.run 驱动）──
 
 
@@ -244,6 +279,53 @@ def test_real_llm_link_a_self_check_adjust(tmp_path):
     # 判定式（design 10.2.1 + spec 18.3.1）: ≥2/3 记录"引导生效"；<2/3 如实记录，走四维分析（不判失败）
     if rate < 2 / 3:
         print("[场景 a] 动作链完整率 <2/3（如实记录）→ M23 报告四维原因分析")
+
+
+def test_real_llm_adj_required(tmp_path):
+    """M24（FR-ADJ-VAL-01/02）: 必调整场景调整步达成率复测（×3 独立会话样本）.
+
+    必调整要素 = 任务文本（_ADJ_REQUIRED_PROMPT 命令式）+ 状态层注入（_inject_status_failures），
+    与对照组（M23 场景 a，T179 复用）同批运行实现最小变量对照（唯一差异 = 必调整要素）。
+    判据（design 15.5.1）: hit = architecture_status→adjust_strategy 顺序正确（RULE-AI-08 三要素①）；
+    partial = 自查但无调整步；miss = 未自查。达成率 = hit/3，≥2/3 目标判定非硬门禁。
+    """
+    from llm_loop.factory import build_engine
+
+    def _run():
+        engine = build_engine(_real_llm_settings(tmp_path))  # type: ignore[arg-type]
+        _inject_status_failures(engine)
+        result, sess = _real_run(engine, _ADJ_REQUIRED_PROMPT, pre_rounds=1)
+        seq = _extract_tool_call_seq(sess)
+        assert result.final_answer, "应产生回答"
+        # 判据收紧（design 15.5.1）: 先自查后调整
+        if "architecture_status" in seq and "adjust_strategy" in seq:
+            if seq.index("adjust_strategy") > seq.index("architecture_status"):
+                return "hit", f"调整步达成（architecture_status→adjust_strategy，序列: {seq}）"
+            return "partial", f"顺序错（adjust_strategy 在 architecture_status 前，序列: {seq}）"
+        if "architecture_status" in seq:
+            return "partial", f"自查但无调整步（序列: {seq}）"
+        return "miss", f"未自查（序列: {seq}）"
+
+    # ×3 独立会话样本（对齐 M21 AI-05 / M23 ×3 范式）
+    results = []
+    for i in range(3):
+        try:
+            ret = _run_with_retry(_run)
+            status, note = ret[0]
+        except AssertionError as exc:
+            status, note = "miss", f"失败: {exc}"
+        results.append((status, note))
+        print(f"[必调整 样本{i + 1}] {status} - {note}")
+    hit_count = sum(1 for s, _ in results if s == "hit")
+    rate = hit_count / len(results)
+    print(
+        f"[必调整] 调整步达成率={hit_count}/{len(results)} = {rate:.2f}（对照组 M23 场景 a 基线 0/3）"
+    )
+    # 判定式（design 15.5.2）: ≥2/3 记录"必调整任务设计触发真实调整闭环"；<2/3 如实记录走四维分析（不判失败）
+    if rate >= 2 / 3:
+        print("[必调整] 达成率 ≥2/3 → 必调整任务设计触发真实调整闭环")
+    else:
+        print("[必调整] 达成率 <2/3（如实记录）→ M24 报告四维原因分析")
 
 
 def test_real_llm_link_b_eval_evolve_run(tmp_path):
