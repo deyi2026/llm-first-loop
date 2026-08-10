@@ -164,3 +164,23 @@ def test_chat_session_not_found_no_create(build_test_engine, fake_settings):
     resp = client.post("/api/v1/chat", json={"message": "x", "session_id": "nope"})
     assert resp.status_code == 404
     assert len(engine.session.list_sessions()) == before  # 不静默新建
+
+
+def test_get_session_messages(build_test_engine, fake_settings):
+    engine, _ = build_test_engine([{"content": "回答"}])
+    client = _make_client(engine)
+    sid = client.post("/api/v1/chat", json={"message": "你好"}).json()["session_id"]
+    resp = client.get(f"/api/v1/sessions/{sid}/messages")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["session_id"] == sid
+    roles = [m["role"] for m in body["messages"]]
+    assert "user" in roles
+    assert "assistant" in roles
+
+
+def test_get_session_messages_not_found(build_test_engine, fake_settings):
+    engine, _ = build_test_engine([])
+    client = _make_client(engine)
+    resp = client.get("/api/v1/sessions/nope/messages")
+    assert resp.status_code == 404

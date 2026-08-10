@@ -17,7 +17,9 @@ from .schemas import (
     ChatRequest,
     ChatResponse,
     ErrorResponse,
+    MessageItem,
     SessionListResponse,
+    SessionMessagesResponse,
     SessionMetaItem,
 )
 
@@ -143,6 +145,34 @@ def list_sessions(request: Request, include_archived: bool = False) -> SessionLi
         for m in metas
     ]
     return SessionListResponse(sessions=items, count=len(items))
+
+
+@router.get(
+    "/api/v1/sessions/{session_id}/messages",
+    response_model=SessionMessagesResponse,
+    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+)
+def get_session_messages(session_id: str, request: Request) -> SessionMessagesResponse | Response:
+    """会话历史消息：刷新后恢复对话用（复用 engine.session.load，不复制存储逻辑）."""
+    engine = _engine_from(request)
+    if not engine.session.exists(session_id):
+        return JSONResponse(
+            status_code=404,
+            content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
+        )
+    try:
+        session = engine.session.load(session_id)
+    except Exception as exc:
+        logger.exception("session load failed: session_id=%s", session_id)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "load_failed",
+                "detail": f"[程序异常] 会话加载失败（{type(exc).__name__}: {exc}）。",
+            },
+        )
+    messages = [MessageItem(role=m.role, content=m.content) for m in session.messages]
+    return SessionMessagesResponse(session_id=session_id, messages=messages)
 
 
 @router.delete(
