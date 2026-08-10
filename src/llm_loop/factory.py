@@ -242,9 +242,36 @@ def build_engine(settings: Settings) -> LoopEngine:
         extractor=extractor,  # T33: 独立记忆提取
         semantic_retriever=semantic_retriever,  # M11 T45: 语义接线
         runtime=runtime,  # M12 T50: 动态参数视图
+        fault_classifier=_build_fault_classifier(),
+        selfheal_budget=_build_selfheal_budget(settings),
         eval_trigger_detector=_build_eval_trigger_detector(settings),
         evolution_store=correction_ctx.evolution_store,  # M17 FR-REVIEW-AI-02: executing 提醒数据源
         loop_signal_detector=_build_loop_signal_detector(settings, status_provider, corrections),
+    )
+
+
+def _build_fault_classifier() -> Any:
+    """装配故障可自愈性分类器（M12 T49 / design 5.1，FR-AUTO-SELFHEAL-02）.
+
+    M22 config 审计补齐: 生产路径此前未装配（loop 构造参数恒 None → 故障反馈降级），
+    与 tests/conftest.py 测试路径一致装配，故障反馈含分类建议（M18 AA12 保留语义）。
+    """
+    from llm_loop.feedback.fault_classifier import FaultClassifier
+
+    return FaultClassifier()
+
+
+def _build_selfheal_budget(settings) -> Any:
+    """装配自愈尝试预算（M12 T49 / design 5.1，FR-AUTO-SELFHEAL-03）.
+
+    预算上限读 config: selfheal_max_attempts（SELFHEAL_MAX_ATTEMPTS）/ selfheal_max_per_round
+    （SELFHEAL_MAX_PER_ROUND，tasks.md:852 权威命名）。生产路径补齐装配（与 conftest 一致）。
+    """
+    from llm_loop.feedback.selfheal_budget import SelfHealBudget
+
+    return SelfHealBudget(
+        max_attempts=getattr(settings, "selfheal_max_attempts", 3),
+        max_per_round=getattr(settings, "selfheal_max_per_round", 6),
     )
 
 
