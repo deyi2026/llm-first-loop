@@ -13,7 +13,7 @@ from llm_loop.config import load_settings
 from llm_loop.factory import build_engine
 
 from .auth import require_api_key, validate_binding
-from .routes import router
+from .routes import UTF8JSONResponse, router
 
 __all__ = ["build_app", "main"]
 
@@ -30,7 +30,7 @@ def build_app(settings=None, engine=None) -> FastAPI:
             settings = load_settings()
         engine = build_engine(settings)
 
-    app = FastAPI(title="llm-first-loop-web", version="0.1.0")
+    app = FastAPI(title="llm-first-loop-web", version="0.1.0", default_response_class=UTF8JSONResponse)
     app.state.engine = engine
 
     # 鉴权：条件挂载到受保护路由（远程监听时要求 Bearer 令牌）
