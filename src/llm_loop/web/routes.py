@@ -28,6 +28,12 @@ SERVICE_NAME = "llm-first-loop-web"
 SERVICE_VERSION = "0.1.0"
 
 
+class UTF8JSONResponse(JSONResponse):
+    """强制 UTF-8 声明：content-type 带 charset=utf-8，杜绝中文按默认编码（如 GBK）误解码."""
+
+    media_type = "application/json; charset=utf-8"
+
+
 def _engine_from(request: Request) -> Any:
     """从 app.state 取单引擎实例（装配一次复用全部请求，不每请求重建）."""
     return request.app.state.engine
@@ -44,7 +50,7 @@ def chat(payload: ChatRequest, request: Request) -> ChatResponse | Response:
 
     if payload.session_id is not None:
         if not engine.session.exists(payload.session_id):
-            return JSONResponse(
+            return UTF8JSONResponse(
                 status_code=404,
                 content={
                     "error": "session_not_found",
@@ -59,7 +65,7 @@ def chat(payload: ChatRequest, request: Request) -> ChatResponse | Response:
         result = engine.run(session_id, payload.message)
     except Exception as exc:  # 如实反馈不静默降级（对齐 PREFERENCE_1）
         logger.exception("engine.run failed: session_id=%s", session_id)
-        return JSONResponse(
+        return UTF8JSONResponse(
             status_code=500,
             content={
                 "error": "internal_error",
@@ -132,7 +138,7 @@ def list_sessions(request: Request, include_archived: bool = False) -> SessionLi
 def delete_session(session_id: str, request: Request, confirm: bool = False) -> Response:
     """会话删除：须 confirm=true 确认（对齐 CLI y/N 语义 + FR-P1-SES-04）."""
     if not confirm:
-        return JSONResponse(
+        return UTF8JSONResponse(
             status_code=409,
             content={
                 "error": "confirm_required",
@@ -143,7 +149,7 @@ def delete_session(session_id: str, request: Request, confirm: bool = False) -> 
     engine = _engine_from(request)
 
     if not engine.session.exists(session_id):
-        return JSONResponse(
+        return UTF8JSONResponse(
             status_code=404,
             content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
         )
@@ -152,7 +158,7 @@ def delete_session(session_id: str, request: Request, confirm: bool = False) -> 
         engine.session.delete(session_id)
     except Exception as exc:
         logger.exception("session delete failed: session_id=%s", session_id)
-        return JSONResponse(
+        return UTF8JSONResponse(
             status_code=500,
             content={
                 "error": "delete_failed",
@@ -160,6 +166,6 @@ def delete_session(session_id: str, request: Request, confirm: bool = False) -> 
             },
         )
 
-    return JSONResponse(
+    return UTF8JSONResponse(
         content={"status": "deleted", "detail": session_deleted_message(session_id)}
     )
