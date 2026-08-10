@@ -52,11 +52,92 @@ function setStatus(ok, text) {
   els.statusBadge.className = "status-badge " + (ok ? "ok" : "err");
 }
 
+// ---------- Markdown 渲染（M38） ----------
+const MD_ALLOWED_TAGS = new Set([
+  "p", "strong", "em", "b", "i", "code", "pre", "blockquote",
+  "ul", "ol", "li", "table", "thead", "tbody", "tr", "th", "td",
+  "h1", "h2", "h3", "h4", "h5", "h6", "a", "img", "br", "hr", "span", "del",
+]);
+const MD_ALLOWED_ATTRS = {
+  a: ["href", "title"],
+  img: ["src", "alt", "title"],
+  th: ["align"],
+  td: ["align"],
+  code: ["class"],
+  pre: ["class"],
+};
+const MD_SAFE_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
+
+function sanitizeHtml(raw) {
+  // 白名单 DOM sanitizer（M38，防 XSS）：移除危险标签/属性，保留文本内容
+  if (typeof DOMParser === "undefined") return null;
+  const doc = new DOMParser().parseFromString(raw, "text/html");
+  const walk = (node) => {
+    for (const child of [...node.childNodes]) {
+      if (child.nodeType === 1) {
+        const tag = child.tagName.toLowerCase();
+        if (!MD_ALLOWED_TAGS.has(tag)) {
+          // 危险/非白名单标签：移除外壳，保留子节点与文本（不删文本语义）
+          while (child.firstChild) node.insertBefore(child.firstChild, child);
+          node.removeChild(child);
+          continue;
+        }
+        for (const attr of [...child.attributes]) {
+          const an = attr.name.toLowerCase();
+          const allowed = (MD_ALLOWED_ATTRS[tag] || []).includes(an);
+          if (!allowed || an.startsWith("on")) {
+            child.removeAttribute(attr.name);
+            continue;
+          }
+          if (an === "href" || an === "src") {
+            let val = (attr.value || "").trim().toLowerCase();
+            if (!val.startsWith("#")) {
+              const proto = val.match(/^([a-z][a-z0-9+.-]*):/);
+              if (proto && !MD_SAFE_PROTOCOLS.has(proto[1] + ":")) {
+                child.removeAttribute(attr.name); // 拒绝 javascript:/data: 等可执行协议
+                continue;
+              }
+            }
+          }
+        }
+        walk(child);
+      }
+    }
+  };
+  walk(doc.body);
+  return doc.body.innerHTML;
+}
+
+function renderMarkdown(md) {
+  // MD → HTML（marked gfm）→ sanitize；异常返回 null（调用方降级纯文本）
+  if (typeof marked === "undefined") return null;
+  try {
+    const rawHtml = marked.parse(md, { gfm: true });
+    return sanitizeHtml(rawHtml);
+  } catch (err) {
+    console.error("MD 渲染失败，降级纯文本:", err);
+    return null;
+  }
+}
+
 // ---------- 消息渲染 ----------
 function renderMessages() {
   els.messages.innerHTML = "";
   for (const msg of state.messages) {
-    const node = el("div", "message " + msg.role, msg.content);
+    const node = document.createElement("div");
+    node.className = "message " + msg.role;
+    if (msg.role === "assistant") {
+      // AI 回答：MD 渲染（经 sanitize）；渲染失败降级纯文本（不空白不伪造）
+      const html = renderMarkdown(msg.content);
+      if (html !== null) {
+        node.innerHTML = html;
+      } else {
+        node.textContent = msg.content;
+      }
+    } else {
+      // user/error：纯文本如实回显（user 不渲染 MD，error 原样提示）
+      node.textContent = msg.content;
+    }
     if (msg.note) {
       node.appendChild(el("span", "msg-note", msg.note));
     }

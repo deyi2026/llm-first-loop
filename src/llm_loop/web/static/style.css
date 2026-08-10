@@ -244,3 +244,101 @@ html, body {
 #message-input:focus {
   border-color: #3b82f6;
 }
+
+/* ---------- Markdown 渲染样式（M38） ---------- */
+.message.assistant {
+  white-space: normal; /* MD 渲染后由 HTML 布局，不再 pre-wrap */
+}
+
+.message.assistant h1, .message.assistant h2, .message.assistant h3,
+.message.assistant h4, .message.assistant h5, .message.assistant h6 {
+  margin: 10px 0 6px;
+  line-height: 1.3;
+}
+
+.message.assistant h1 { font-size: 18px; }
+.message.assistant h2 { font-size: 16px; }
+.message.assistant h3 { font-size: 15px; }
+.message.assistant h4, .message.assistant h5, .message.assistant h6 { font-size: 14px; }
+
+.message.assistant p {
+  margin: 6px 0;
+}
+
+.message.assistant ul, .message.assistant ol {
+  margin: 6px 0;
+  padding-left: 22px;
+}
+
+.message.assistant li {
+  margin: 2px 0;
+}
+
+.message.assistant blockquote {
+  margin: 8px 0;
+  padding: 4px 12px;
+  border-left: 3px solid #d1d5db;
+  color: #4b5563;
+  background: #f9fafb;
+  border-radius: 0 6px 6px 0;
+}
+
+.message.assistant code {
+  font-family: "SF Mono", "Menlo", "Consolas", "Courier New", monospace;
+  font-size: 13px;
+  background: #f3f4f6;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.message.assistant pre {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: #1e2532;
+  color: #e8edf5;
+  border-radius: 8px;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.message.assistant pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font-size: 13px;
+}
+
+.message.assistant a {
+  color: #3b82f6;
+  text-decoration: underline;
+}
+
+.message.assistant table {
+  margin: 8px 0;
+  border-collapse: collapse;
+  max-width: 100%;
+  display: block;
+  overflow-x: auto;
+}
+
+.message.assistant th, .message.assistant td {
+  border: 1px solid #d1d5db;
+  padding: 5px 10px;
+  font-size: 13px;
+}
+
+.message.assistant th {
+  background: #f3f4f6;
+  font-weight: 600;
+}
+
+.message.assistant hr {
+  border: none;
+  border-top: 1px solid #e5e7eb;
+  margin: 10px 0;
+}
+
+.message.assistant img {
+  max-width: 100%;
+  border-radius: 6px;
+}
