@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LLM-First Loop Chat</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <div id="sidebar-header">
+        <h1>LLM-First Loop</h1>
+        <span id="status-badge" class="status-badge">检测中</span>
+      </div>
+      <button id="new-session-btn" class="btn-primary">+ 新会话</button>
+      <input id="search-input" type="text" placeholder="搜索会话..." aria-label="搜索会话">
+      <ul id="session-list" aria-label="会话列表"></ul>
+    </aside>
+    <main id="chat-area">
+      <div id="messages" aria-label="对话消息"></div>
+      <div id="input-bar">
+        <textarea id="message-input" rows="1" placeholder="输入消息，Enter 发送（Shift+Enter 换行）" aria-label="消息输入"></textarea>
+        <button id="send-btn" class="btn-primary">发送</button>
+      </div>
+    </main>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

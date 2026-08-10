@@ -5,10 +5,11 @@
 """
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from llm_loop.feedback.honesty import session_deleted_message, session_not_found_message
 
@@ -83,9 +84,27 @@ def chat(payload: ChatRequest, request: Request) -> ChatResponse | Response:
     )
 
 
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
 @router.get("/")
-def root() -> dict:
-    """服务根路径：返回服务信息与端点指引（打开根路径有内容而非 404）."""
+def root() -> Response:
+    """服务根路径：返回 Web 聊天页面（M37 前端 UI）."""
+    index = _STATIC_DIR / "index.html"
+    if not index.exists():
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "frontend_missing",
+                "detail": "前端页面缺失（static/index.html 不存在），请检查安装完整性。",
+            },
+        )
+    return HTMLResponse(content=index.read_text(encoding="utf-8"))
+
+
+@router.get("/api/info")
+def api_info() -> dict:
+    """API 信息端点（JSON 服务信息，供程序/调试使用）."""
     return {
         "service": SERVICE_NAME,
         "version": SERVICE_VERSION,
