@@ -7,6 +7,7 @@ const state = {
   currentSessionId: null,
   messages: [],
   sessions: [],
+  attachments: [], // M39 上传附件上下文（发送时作为 user 消息前缀注入）
 };
 
 const els = {
@@ -17,6 +18,9 @@ const els = {
   messages: document.getElementById("messages"),
   messageInput: document.getElementById("message-input"),
   sendBtn: document.getElementById("send-btn"),
+  uploadBtn: document.getElementById("upload-btn"),
+  fileInput: document.getElementById("file-input"),
+  chatArea: document.getElementById("chat-area"),
 };
 
 // ---------- 工具 ----------
@@ -134,14 +138,25 @@ function renderMessages() {
       } else {
         node.textContent = msg.content;
       }
+      // 复制按钮（M39）：复制 final_answer 原文纯文本，成功"已复制"/失败如实
+      const wrap = document.createElement("div");
+      wrap.className = "message-wrap";
+      wrap.appendChild(node);
+      const copyBtn = el("button", "copy-btn", "复制");
+      copyBtn.onclick = () => copyMessage(msg.content, copyBtn);
+      wrap.appendChild(copyBtn);
+      els.messages.appendChild(wrap);
+      if (msg.note) {
+        node.appendChild(el("span", "msg-note", msg.note));
+      }
     } else {
       // user/error：纯文本如实回显（user 不渲染 MD，error 原样提示）
       node.textContent = msg.content;
+      els.messages.appendChild(node);
+      if (msg.note) {
+        node.appendChild(el("span", "msg-note", msg.note));
+      }
     }
-    if (msg.note) {
-      node.appendChild(el("span", "msg-note", msg.note));
-    }
-    els.messages.appendChild(node);
   }
   els.messages.scrollTop = els.messages.scrollHeight;
 }
@@ -156,6 +171,15 @@ async function sendMessage() {
   const text = els.messageInput.value.trim();
   if (!text) return; // 空消息前端校验
   els.messageInput.value = "";
+  // M39 命令处理：/ 开头消息走纯前端命令分支（不调 API）
+  if (text.startsWith("/")) {
+    handleCommand(text);
+    return;
+  }
+  // M39 附件上下文前缀注入：发送时附件处理结果作为 user 消息前缀（含来源标注，发送后清空）
+  const attachmentPrefix = state.attachments.map((a) => `[附件 ${a.filename}] ${a.result_text}`).join("\n\n");
+  const effectiveText = attachmentPrefix ? `${attachmentPrefix}\n\n${text}` : text;
+  if (attachmentPrefix) state.attachments = [];
   addMessage("user", text);
   const loading = el("div", "message assistant loading", "思考中…");
   els.messages.appendChild(loading);
@@ -163,7 +187,7 @@ async function sendMessage() {
   els.sendBtn.disabled = true;
 
   try {
-    const body = { message: text };
+    const body = { message: effectiveText };
     if (state.currentSessionId) body.session_id = state.currentSessionId;
     const { status, data } = await api("/api/v1/chat", {
       method: "POST",
@@ -294,6 +318,97 @@ async function init() {
   }
 }
 
+// ---------- M39 命令处理（纯前端状态操作，不调 API） ----------
+function handleCommand(cmd) {
+  const parts = cmd.trim().split(/\s+/);
+  const name = (parts[0] || "").toLowerCase();
+  if (name === "/new") {
+    newSession();
+    addMessage("system", "已新建会话。");
+  } else if (name === "/clear") {
+    state.messages = [];
+    renderMessages();
+    addMessage("system", "对话区已清空（会话保留）。");
+  } else if (name === "/help") {
+    addMessage("system", "可用命令：\n/new 新建会话\n/clear 清空对话区（不删会话）\n/help 帮助\n其余以 / 开头的输入视为未知命令。");
+  } else {
+    addMessage("error", `未知命令：${name}。输入 /help 查看可用命令。`);
+  }
+  loadSessions();
+}
+
+// ---------- M39 复制按钮（Clipboard API 复制原文纯文本） ----------
+async function copyMessage(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text);
+    btn.textContent = "已复制";
+    btn.classList.add("copied");
+    setTimeout(() => {
+      btn.textContent = "复制";
+      btn.classList.remove("copied");
+    }, 1500);
+  } catch (err) {
+    // 剪贴板 API 不可用（如非安全上下文）：如实提示 + textarea 降级复制
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+      btn.textContent = "已复制";
+      btn.classList.add("copied");
+      setTimeout(() => { btn.textContent = "复制"; btn.classList.remove("copied"); }, 1500);
+    } catch (err2) {
+      addMessage("error", `复制失败：${err2.message}`);
+    }
+  }
+}
+
+// ---------- M39 上传附件 ----------
+async function uploadFile(file) {
+  const reader = new FileReader();
+  reader.onload = async () => {
+    const b64 = reader.result.split(",")[1]; // data:...;base64, 前缀剥离
+    try {
+      const { status, data } = await api("/api/v1/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: file.name, data: b64 }),
+      });
+      if (status === 200) {
+        const statusText = { ok: "处理成功", degraded: "降级", pending: "待处理", error: "失败" }[data.status] || data.status;
+        addAttachmentBubble(file.name, data.content_type, statusText, data.result_text, data.detail);
+        if (data.status === "ok" || data.status === "pending") {
+          // 处理结果暂存附件上下文（发送时作为 user 消息前缀注入）
+          state.attachments.push({ filename: file.name, result_text: data.result_text || data.detail || "" });
+        }
+      } else {
+        addMessage("error", `上传失败（${status}）：${data.detail || "未知错误"}`);
+      }
+    } catch (err) {
+      addMessage("error", `上传网络错误：${err.message}`);
+    }
+  };
+  reader.onerror = () => addMessage("error", `读取文件失败：${file.name}`);
+  reader.readAsDataURL(file);
+}
+
+function addAttachmentBubble(filename, contentType, statusText, resultText, detail) {
+  const node = el("div", "attachment-bubble");
+  node.appendChild(el("span", "att-name", `📎 ${filename}`));
+  node.appendChild(el("div", "att-meta", `类型 ${contentType} · ${statusText}`));
+  if (resultText) {
+    const preview = el("div", "att-meta", resultText.slice(0, 200) + (resultText.length > 200 ? "…" : ""));
+    node.appendChild(preview);
+  }
+  if (detail && !resultText) {
+    node.appendChild(el("div", "att-meta", detail));
+  }
+  els.messages.appendChild(node);
+  els.messages.scrollTop = els.messages.scrollHeight;
+}
+
 els.sendBtn.addEventListener("click", sendMessage);
 els.newSessionBtn.addEventListener("click", newSession);
 els.searchInput.addEventListener("input", renderSessions);
@@ -302,6 +417,22 @@ els.messageInput.addEventListener("keydown", (e) => {
     e.preventDefault();
     sendMessage();
   }
+});
+
+els.uploadBtn.addEventListener("click", () => els.fileInput.click());
+els.fileInput.addEventListener("change", () => {
+  for (const f of els.fileInput.files) uploadFile(f);
+  els.fileInput.value = "";
+});
+// 原生拖拽上传（M39）
+["dragover", "drop"].forEach((evt) => {
+  els.chatArea.addEventListener(evt, (e) => e.preventDefault());
+});
+els.chatArea.addEventListener("dragover", () => els.chatArea.classList.add("dragover"));
+els.chatArea.addEventListener("dragleave", () => els.chatArea.classList.remove("dragover"));
+els.chatArea.addEventListener("drop", (e) => {
+  els.chatArea.classList.remove("dragover");
+  for (const f of e.dataTransfer.files) uploadFile(f);
 });
 
 init();
