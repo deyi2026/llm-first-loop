@@ -76,10 +76,10 @@ class Settings:
 
     # ── 工具 ──
     tool_timeout_s: float = 60.0
-    tool_max_output_chars: int = 20000
+    tool_max_output_chars: int = 100000
 
     # ── 上下文 ──
-    history_max_chars: int = 80000
+    history_max_chars: int = 1000000
     memory_top_k: int = 5
 
     # ── 架构自省（AI-serving, design.md §2.1.4）──
@@ -92,7 +92,7 @@ class Settings:
     # ── P1 摘要（FR-P1-MEM, §3.6）──
     summary_mode: str = "off"  # off/sync/async
     summary_timeout_s: float = 30.0
-    summary_max_input_chars: int = 20000
+    summary_max_input_chars: int = 100000
 
     # ── P1 语义检索（FR-P1-RET, §3.6）──
     embedding_provider: str = "none"  # none/hash/api
@@ -107,7 +107,7 @@ class Settings:
     extract_enabled: bool = True
     extract_interval_msgs: int = 20
     extract_cooldown_s: float = 600.0
-    extract_max_input_chars: int = 30000
+    extract_max_input_chars: int = 100000
     extract_timeout_s: float = 60.0
 
     # ── P1 校验语义匹配（FR-P1-OPT-01, §3.6）──
@@ -233,8 +233,8 @@ def load_settings() -> Settings:
         llm_timeout_s=float(_env_int("LLM_TIMEOUT_S", 120)),
         data_dir=os.environ.get("DATA_DIR", "./data").strip(),
         tool_timeout_s=float(_env_int("TOOL_TIMEOUT_S", 60)),
-        tool_max_output_chars=_env_int("TOOL_MAX_OUTPUT_CHARS", 20000),
-        history_max_chars=_env_int("HISTORY_MAX_CHARS", 80000),
+        tool_max_output_chars=_env_int("TOOL_MAX_OUTPUT_CHARS", 100000),
+        history_max_chars=_env_int("HISTORY_MAX_CHARS", 1000000),
         memory_top_k=_env_int("MEMORY_TOP_K", 5),
         self_inspection_enabled=_env_bool("SELF_INSPECTION_ENABLED", True),
         status_report_cooldown_s=float(_env_int("STATUS_REPORT_COOLDOWN_S", 60)),
@@ -242,7 +242,7 @@ def load_settings() -> Settings:
         # P1（design.md §3.6，非法值回退默认）
         summary_mode=os.environ.get("SUMMARY_MODE", "off").strip().lower() or "off",
         summary_timeout_s=float(_env_int("SUMMARY_TIMEOUT_S", 30)),
-        summary_max_input_chars=_env_int("SUMMARY_MAX_INPUT_CHARS", 20000),
+        summary_max_input_chars=_env_int("SUMMARY_MAX_INPUT_CHARS", 100000),
         embedding_provider=os.environ.get("EMBEDDING_PROVIDER", "none").strip().lower() or "none",
         embedding_base_url=os.environ.get("EMBEDDING_BASE_URL", "").strip(),
         embedding_model=os.environ.get("EMBEDDING_MODEL", "").strip(),
@@ -253,7 +253,7 @@ def load_settings() -> Settings:
         extract_enabled=_env_bool("EXTRACT_ENABLED", True),
         extract_interval_msgs=_env_int("EXTRACT_INTERVAL_MSGS", 20),
         extract_cooldown_s=float(_env_int("EXTRACT_COOLDOWN_S", 600)),
-        extract_max_input_chars=_env_int("EXTRACT_MAX_INPUT_CHARS", 30000),
+        extract_max_input_chars=_env_int("EXTRACT_MAX_INPUT_CHARS", 100000),
         extract_timeout_s=float(_env_int("EXTRACT_TIMEOUT_S", 60)),
         validate_semantic=_env_bool("VALIDATE_SEMANTIC", False),
         validate_semantic_threshold=float(_env_int("VALIDATE_SEMANTIC_THRESHOLD", 0)) or 0.75,

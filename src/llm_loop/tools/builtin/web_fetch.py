@@ -18,7 +18,7 @@ class WebFetchTool:
         "type": "object",
         "properties": {
             "url": {"type": "string", "description": "要抓取的完整 URL（http/https）"},
-            "max_chars": {"type": "integer", "description": "返回内容最大字符数（默认 20000）"},
+            "max_chars": {"type": "integer", "description": "返回内容最大字符数（默认 100000）"},
         },
         "required": ["url"],
     }
@@ -29,7 +29,7 @@ class WebFetchTool:
 
     def execute(self, **kwargs) -> ToolResult:
         url = str(kwargs.get("url", "")).strip()
-        max_chars = int(kwargs.get("max_chars", 20000) or 20000)
+        max_chars = int(kwargs.get("max_chars", 100000) or 100000)
         if not url:
             return ToolResult(
                 status=ToolResultStatus.FAILURE,

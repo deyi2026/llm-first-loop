@@ -90,7 +90,7 @@ class MemoryExtractor:
         enabled: bool = True,
         interval_msgs: int = 20,
         cooldown_s: float = 600.0,
-        max_input_chars: int = 30000,
+        max_input_chars: int = 100000,
         timeout_s: float = 60.0,
         audit_dir: str | Path | None = None,
     ) -> None:

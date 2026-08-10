@@ -47,7 +47,7 @@ class Summarizer:
         llm_client: Any | None = None,
         mode: str = "off",
         timeout_s: float = 30.0,
-        max_input_chars: int = 20000,
+        max_input_chars: int = 100000,
         max_async_queue: int = 4,
     ) -> None:
         self.llm = llm_client

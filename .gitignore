@@ -21,3 +21,5 @@ data/
 
 # 系统
 .DS_Store
+# 含密钥的本地启动脚本（勿提交）
+scripts/start_with_embedding.sh

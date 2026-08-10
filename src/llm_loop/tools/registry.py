@@ -28,14 +28,16 @@ class ToolRegistry:
         *,
         safety_guard: CatastrophicGuard | None = None,
         tool_timeout_s: float = 60.0,
-        max_output_chars: int = 20000,
+        max_output_chars: int = 100000,
         archive_store: Any | None = None,
+        failure_guidance_enabled: bool = True,
     ) -> None:
         self._tools: dict[str, Any] = {}
         self._lock = threading.Lock()
         self.safety = safety_guard or CatastrophicGuard()
         self.tool_timeout_s = tool_timeout_s
         self.max_output_chars = max_output_chars
+        self.failure_guidance_enabled = failure_guidance_enabled
         self._pre_execute_hooks: list[PreExecuteHook] = []
         self._archive_store = archive_store  # ArchiveStore（T22 超长结果另存）
         self._session_id = ""
@@ -235,9 +237,18 @@ class ToolRegistry:
         return result
 
 
-def tool_result_to_message(result: ToolResult) -> Message:
+_FAILURE_GUIDANCE = {
+    "failure": "建议: 检查参数/路径/网络后重试，或改用其他更合适的工具（规则 RULE-AI-02/07）。",
+    "error": "建议: 工具执行异常，检查输入后重试，或换用等价工具完成任务。",
+    "timeout": "建议: 工具执行超时，可重试（增大超时或换更轻量方案），或改用其他工具。",
+}
+
+
+def tool_result_to_message(result: ToolResult, *, failure_guidance_enabled: bool = True) -> Message:
     """ToolResult → tool 消息（如实承载状态，T21: content 前置状态标注）.
 
+    M41: 失败回执追加引导段（错误类型 + 建议换用工具/重试，衔接 RULE-AI-02/07），
+    BLOCKED 不加引导（灾难性拦截语义，不做任何诱导）。五态语义零改动。
     约束 C2: content 非空；AI 视角: AI 无需推断执行状态。
     """
     status_label = result.status.value if result.status else "unknown"
@@ -246,6 +257,8 @@ def tool_result_to_message(result: ToolResult) -> Message:
         if result.content.strip()
         else f"[{result.tool_name} 执行{status_label}]（无输出）"
     )
+    if failure_guidance_enabled and result.status and result.status.value in _FAILURE_GUIDANCE:
+        content += "\n" + _FAILURE_GUIDANCE[result.status.value]
     return Message(
         role="tool",
         content=content,
