@@ -213,8 +213,12 @@ class LoopEngine:
             if not resp.tool_calls:
                 self._phase("honest_answer")
                 final_answer = resp.content or ""
+                # M41 修复: 回答被截断（truncated=True）时不执行声明-回执校验——
+                # 不完整内容校验不可靠（会误报"声明与回执不符"），截断如实透传标注
+                if resp.truncated:
+                    truncation_noted = True
                 # ── 声明-回执轻量提醒（T38: 诚实性交 AI 自主，程序仅提供事实提醒，不强制更正重入）──
-                if final_answer.strip():
+                if final_answer.strip() and not resp.truncated:
                     tool_msgs = [m for m in sess.messages if m.role == "tool"]
                     if self.validator:
                         check = self.validator.check(final_answer, tool_msgs)
@@ -270,7 +274,9 @@ class LoopEngine:
                 tool_trace.append({"id": tc.id, "name": tc.name, "arguments": tc.arguments})
                 result = self.registry.execute(tc)
                 self._record_tool_history(result)
-                tool_msg = tool_result_to_message(result)
+                tool_msg = tool_result_to_message(
+                    result, failure_guidance_enabled=self.registry.failure_guidance_enabled
+                )
                 sess.messages.append(tool_msg)
 
             # ── M12 深化 T65: 自我评估触发检测（每轮末，仅提示不强制）──

@@ -20,7 +20,7 @@ ArchiveSink = Callable[[str, Message], None]
 def build_history_messages(
     session_messages: list[Message],
     system_prompt: str,
-    max_chars: int = 80000,
+    max_chars: int = 1000000,
     *,
     session_id: str = "",
     archive_sink: ArchiveSink | None = None,
