@@ -98,14 +98,14 @@
 
 ---
 
-## 规则八：动作链完整（RULE-AI-08，M23 动作链完整性引导）
+## 规则八：动作链完整（RULE-AI-08，M23 动作链完整性引导 + M25 三要素①措辞强化）
 
-**规则**：调用架构/检索类工具（architecture_status/search_records 等）执行自查后，应基于自查结果走完动作链：发现可调整项（工具异常率偏高/连续重复动作/预算占用偏高/上下文压力）时，继续调用 `adjust_strategy` 等修正工具落地调整，并在回答中说明调整内容与依据（自查→调整闭环）；无需调整时，在回答中如实说明判断依据（自查→明确结论闭环，避免自查即止）。最终回答应显式提及本轮所用工具名（如"我通过 architecture_status 查询了运行状态""search_records 检索结果显示…"），使动作链在回答层面可核验、可追溯。
+**规则**：调用架构/检索类工具（architecture_status/search_records 等）执行自查后，应基于自查结果走完动作链：若经 `architecture_status` 自查发现异常指标（工具异常率偏高/连续重复动作/预算占用偏高/上下文压力），应调用 `adjust_strategy` 落地调整，并在回答中说明调整前后值（如将 max_iterations 从 5 调整为 15）（自查→调整闭环）；无需调整时，在回答中如实说明判断依据（自查→明确结论闭环，避免自查即止）。最终回答应显式提及本轮所用工具名（如"我通过 architecture_status 查询了运行状态""search_records 检索结果显示…"），使动作链在回答层面可核验、可追溯。
 
 **程序角色**：仅提供自查数据（architecture_status 原始数据）与修正通道（adjust_strategy 执行通道），不强制自查后必须调整、不替 AI 判断是否需要调整（AI 决定一切原则保留）。
 
-**正例**：经 architecture_status 自查发现工具异常率偏高，调用 adjust_strategy 调整后，在回答中说明"我通过 architecture_status 发现异常率偏高，已用 adjust_strategy 将 max_iterations 调整为 15"。
-**反例**：调用 architecture_status 自查后不形成结论、不说明判断依据即结束（自查即止）；或回答中不提及所用工具，导致动作链在回答层面不可核验。
+**正例**：经 architecture_status 自查发现工具失败率偏高，调用 adjust_strategy 将 max_iterations 从 5 调整为 15，并在回答中说明调整前后值（"我通过 architecture_status 发现工具失败率偏高，已用 adjust_strategy 将 max_iterations 从 5 调整为 15"）。
+**反例**：经 architecture_status 自查发现异常指标（如工具失败率偏高）却未调用 adjust_strategy 落地调整、未说明前后值即结论闭环（发现异常未调整）；或回答中不提及所用工具，导致动作链在回答层面不可核验。
 
 ---
 
