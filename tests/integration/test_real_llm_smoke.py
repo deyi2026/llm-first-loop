@@ -211,12 +211,12 @@ _ADJ_REQUIRED_PROMPT = (
 
 
 def _inject_status_failures(engine):
-    """状态层注入 helper（FR-ADJ-SCEN-03 + M28 FR-RST-SIG-01）: 制造 architecture_status 可见失败记录.
+    """状态层注入 helper（FR-ADJ-SCEN-03 + M30 FR-MOD-ASM-02）: 制造 architecture_status 可见失败记录.
 
     M24 关键机制纠正（design 15.0.2-1）: pre_rounds 预置仅 append 会话消息、不进 tool_history，
     仅靠 pre_rounds 无法满足"architecture_status 可见"——必须叠加状态层注入。
-    M28 信号规模恢复: 注入 FAILURE 条数 5→2（恢复 M26 配置，M27 回归验证——M27 方向 c 实测无协同，
-    design 19.2）——确认 0.67 基线可复现。
+    M30 模型对比: 注入信号保持 M28 配置（2 条 FAILURE + 1 异常，稳定基线），路径前缀 m28→m30
+    （M30 批次语义标签，design 21.4）——对比模型下复测服从度，唯一变量 = 模型。
     仅测试基建直调 engine.status 公共方法（record_tool_history/record_exception），产品代码零改动。
     """
     from llm_loop.core.message import ToolResultStatus
@@ -227,12 +227,12 @@ def _inject_status_failures(engine):
         status.record_tool_history(
             ToolHistoryItem(
                 name="read_file",
-                arguments={"path": f"/no/such/m28_{i}"},
+                arguments={"path": f"/no/such/m30_{i}"},
                 status=ToolResultStatus.FAILURE,
-                summary=f"[文件不存在] /no/such/m28_{i} 不存在（M28 预置失败信号）",
+                summary=f"[文件不存在] /no/such/m30_{i} 不存在（M30 预置失败信号）",
             )
         )
-    status.record_exception("action.tool_loop", FileNotFoundError("/no/such/m28 预置异常信号"))
+    status.record_exception("action.tool_loop", FileNotFoundError("/no/such/m30 预置异常信号"))
     return status
 
 
