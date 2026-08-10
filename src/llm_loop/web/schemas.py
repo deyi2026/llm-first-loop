@@ -63,3 +63,21 @@ class ErrorResponse(BaseModel):
 
     error: str
     detail: str
+
+
+class UploadRequest(BaseModel):
+    """上传请求（POST /api/v1/upload body，JSON/base64 传输）."""
+
+    filename: str = Field(min_length=1, description="文件名（含扩展名）")
+    data: str = Field(min_length=1, description="文件内容（base64 编码）")
+
+
+class UploadResponse(BaseModel):
+    """上传处理响应（来源可追溯 + 状态如实）."""
+
+    source_filename: str
+    content_type: str
+    status: str  # ok / degraded / pending / error
+    result_text: str = ""
+    detail: str = ""
+    truncated: bool = False

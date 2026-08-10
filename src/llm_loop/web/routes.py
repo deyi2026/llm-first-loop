@@ -21,7 +21,10 @@ from .schemas import (
     SessionListResponse,
     SessionMessagesResponse,
     SessionMetaItem,
+    UploadRequest,
+    UploadResponse,
 )
+from .upload_handlers import SUPPORTED_IMAGE_EXTS, file_ext, process_upload, validate_upload
 
 logger = logging.getLogger(__name__)
 
@@ -217,4 +220,81 @@ def delete_session(session_id: str, request: Request, confirm: bool = False) -> 
 
     return UTF8JSONResponse(
         content={"status": "deleted", "detail": session_deleted_message(session_id)}
+    )
+
+
+@router.post(
+    "/api/v1/upload",
+    response_model=UploadResponse,
+    responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+)
+def upload_file(payload: UploadRequest) -> UploadResponse | Response:
+    """上传处理端点：base64 解码 → 校验 → 类型分发（文本/docx/PDF → 提取；图片 → 视觉识别）.
+
+    不调用 engine.run（上传处理独立于核心对话链路，结果由前端注入对话上下文）。
+    """
+    import base64 as _b64
+
+    try:
+        data = _b64.b64decode(payload.data, validate=True)
+    except Exception:
+        return UTF8JSONResponse(
+            status_code=400,
+            content={"error": "invalid_base64", "detail": "文件数据 base64 解码失败。"},
+        )
+
+    err = validate_upload(payload.filename, data)
+    if err:
+        return UTF8JSONResponse(
+            status_code=400,
+            content={"error": "invalid_upload", "detail": err},
+        )
+
+    ext = file_ext(payload.filename)
+    if ext in SUPPORTED_IMAGE_EXTS:
+        # 图片 → 视觉识别（无 key 如实降级）
+        from .vision import describe_image, vision_enabled
+
+        if not vision_enabled():
+            return UploadResponse(
+                source_filename=payload.filename,
+                content_type="image",
+                status="degraded",
+                result_text="",
+                detail="视觉识别未配置（无 MINIMAX_API_KEY），图片无法识别。",
+            )
+        mime = {
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".gif": "image/gif",
+            ".webp": "image/webp",
+            ".bmp": "image/bmp",
+        }.get(ext, "image/png")
+        try:
+            text = describe_image(data, mime=mime)
+            return UploadResponse(
+                source_filename=payload.filename,
+                content_type="image",
+                status="ok",
+                result_text=text,
+            )
+        except Exception as exc:  # 识别失败如实反馈，不伪装成功
+            logger.exception("image vision failed: %s", payload.filename)
+            return UploadResponse(
+                source_filename=payload.filename,
+                content_type="image",
+                status="degraded",
+                detail=f"[程序异常] 图片识别失败（{type(exc).__name__}: {exc}）。",
+            )
+
+    # 文本/docx/PDF → 文档提取
+    result = process_upload(payload.filename, data)
+    return UploadResponse(
+        source_filename=result.source_filename,
+        content_type=result.content_type,
+        status=result.status,
+        result_text=result.result_text,
+        detail=result.detail,
+        truncated=result.truncated,
     )

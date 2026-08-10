@@ -342,3 +342,91 @@ html, body {
   max-width: 100%;
   border-radius: 6px;
 }
+
+/* ---------- 上传/复制/命令（M39） ---------- */
+.btn-secondary {
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #fff;
+  color: #1f2328;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-secondary:hover {
+  background: #f3f4f6;
+}
+
+#chat-area.dragover {
+  outline: 2px dashed #3b82f6;
+  outline-offset: -4px;
+}
+
+.attachment-bubble {
+  align-self: flex-start;
+  background: #f0f7ff;
+  border: 1px solid #bcd7f7;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #1f2328;
+  max-width: 78%;
+}
+
+.attachment-bubble .att-name {
+  font-weight: 600;
+}
+
+.attachment-bubble .att-meta {
+  font-size: 11px;
+  color: #6b7280;
+  margin-top: 2px;
+}
+
+.message-wrap {
+  position: relative;
+  max-width: 78%;
+  align-self: flex-start;
+}
+
+.copy-btn {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  border: none;
+  background: rgba(31, 35, 40, 0.08);
+  color: #4b5563;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.message-wrap:hover .copy-btn {
+  opacity: 1;
+}
+
+.copy-btn:hover {
+  background: rgba(31, 35, 40, 0.16);
+}
+
+.copy-btn.copied {
+  background: #1e7a3c;
+  color: #fff;
+  opacity: 1;
+}
+
+.cmd-tip {
+  align-self: flex-start;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #4b5563;
+  white-space: pre-wrap;
+}

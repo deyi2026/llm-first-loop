@@ -20,7 +20,9 @@
     <main id="chat-area">
       <div id="messages" aria-label="对话消息"></div>
       <div id="input-bar">
-        <textarea id="message-input" rows="1" placeholder="输入消息，Enter 发送（Shift+Enter 换行）" aria-label="消息输入"></textarea>
+        <input type="file" id="file-input" multiple accept=".txt,.md,.json,.csv,.log,.py,.pdf,.docx,.png,.jpg,.jpeg,.gif,.webp,.bmp" hidden aria-label="上传附件">
+        <button id="upload-btn" class="btn-secondary" title="上传附件（图片/文本/PDF/docx）">📎</button>
+        <textarea id="message-input" rows="1" placeholder="输入消息，Enter 发送（Shift+Enter 换行）；/help 查看命令" aria-label="消息输入"></textarea>
         <button id="send-btn" class="btn-primary">发送</button>
       </div>
     </main>

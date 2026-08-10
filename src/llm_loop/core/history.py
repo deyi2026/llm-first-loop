@@ -48,40 +48,63 @@ def build_history_messages(
         return out
 
     # ── 超长: 从最新往回保留，最旧的先"另存提取"再精简注入（不静默丢弃）──
-    kept: list[Message] = []
+    # ── M40 修复（tool_calls 配对原子性）: assistant(tool_calls) 与其紧跟的 tool 响应
+    #    组成"配对组"整体保留/归档/精简——否则 LLM 协议报
+    #    "assistant with tool_calls must be followed by tool messages"（HTTP 400）──
+    atomic_groups: list[list[Message]] = []
+    i = 0
+    n = len(session_messages)
+    while i < n:
+        m = session_messages[i]
+        if m.role == "assistant" and m.tool_calls:
+            # 配对组: assistant(tool_calls) + 其后连续的 tool 响应（保持协议配对原子性）
+            group = [m]
+            j = i + 1
+            while j < n and session_messages[j].role == "tool":
+                group.append(session_messages[j])
+                j += 1
+            atomic_groups.append(group)
+            i = j
+        else:
+            atomic_groups.append([m])
+            i += 1
+
+    kept_groups: list[list[Message]] = []
     archived: list[Message] = []
     budget = max_chars
-    for m in reversed(session_messages):
-        content_len = len(m.content)
-        if budget - content_len < 0 and kept:
-            archived.append(m)  # 将被丢弃 → 先另存
+    for group in reversed(atomic_groups):
+        group_len = sum(len(mm.content) for mm in group)
+        if budget - group_len < 0 and kept_groups:
+            archived.extend(group)  # 整组归档（配对原子性：不拆散）
             continue
-        if content_len > budget and not kept:
-            # 单条即超限: 另存全文 + 精简注入
-            archived.append(m)
-            trimmed = (
-                m.content[: max(budget - 100, 100)]
-                + "\n…[本消息已压缩，完整内容已另存，可用 search_archive 检索]…"
-            )
-            kept.insert(
-                0,
-                Message(
-                    role=m.role,
-                    content=trimmed,
-                    source=m.source,
-                    tool_call_id=m.tool_call_id,
-                    status=m.status,
-                    tool_name=m.tool_name,
-                    error_detail=m.error_detail,
-                    tool_calls=m.tool_calls,
-                    reasoning_content=m.reasoning_content,  # M20 THK-04: 压缩后回传链不因截断断裂
-                    metadata=m.metadata,
-                ),
-            )
-            budget -= len(trimmed)
+        if group_len > budget and not kept_groups:
+            # 最新组单条/整组超限: 另存全文 + 精简注入（组内字段保留，仅 content 截断）
+            archived.extend(group)
+            trimmed_group: list[Message] = []
+            for mm in group:
+                trimmed = (
+                    mm.content[: max(budget - 100, 100)]
+                    + "\n…[本消息已压缩，完整内容已另存，可用 search_archive 检索]…"
+                )
+                trimmed_group.append(
+                    Message(
+                        role=mm.role,
+                        content=trimmed,
+                        source=mm.source,
+                        tool_call_id=mm.tool_call_id,
+                        status=mm.status,
+                        tool_name=mm.tool_name,
+                        error_detail=mm.error_detail,
+                        tool_calls=mm.tool_calls,
+                        reasoning_content=mm.reasoning_content,  # M20 THK-04: 压缩后回传链不因截断断裂
+                        metadata=mm.metadata,
+                    )
+                )
+                budget -= len(trimmed)
+            kept_groups.insert(0, trimmed_group)
             continue
-        kept.insert(0, m)
-        budget -= content_len
+        kept_groups.insert(0, group)
+        budget -= group_len
 
     # 另存被丢弃消息（信息零丢失）
     if archive_sink is not None and session_id and archived:
@@ -93,8 +116,9 @@ def build_history_messages(
 
                 logging.getLogger(__name__).warning("archive sink 异常（fail-open）", exc_info=True)
 
-    for m in kept:
-        out.append(m.to_llm_dict())
+    for group in kept_groups:
+        for m in group:
+            out.append(m.to_llm_dict())
     if archived:
         from llm_loop.feedback.honesty import compression_message
 
