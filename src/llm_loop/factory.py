@@ -75,9 +75,14 @@ def build_engine(settings: Settings) -> LoopEngine:
 
     # M48（design §5.3）: 模型客户端路由池（会话级 model_override 路由 + provider 级缓存）
     # 未配置 MODEL_PROVIDERS（仅 L0 单 provider 合成）→ 池仅有默认 client，行为与现状一致
+    # M49（design §5.4）: 注入 MODEL_FALLBACKS 原始字符串，池在 fallback_candidates() 中按需解析
     from llm_loop.llm.pool import ModelClientPool
 
-    model_pool = ModelClientPool(registry=registry, default_client=llm)
+    model_pool = ModelClientPool(
+        registry=registry,
+        default_client=llm,
+        model_fallbacks_raw=settings.model_fallbacks_raw,
+    )
 
     # 存储（记忆 + 压缩档案 + 会话）
     memory = MemoryStore(settings.memory_dir)
