@@ -622,6 +622,7 @@ class LoopEngine:
             session_id=sess.session_id,
             archive_sink=archive_sink,
             summarizer=self.summarizer,  # EVO-9794797e: 主动压缩（旧消息语义摘要）
+            layer_tool_trim=getattr(self.settings, "tool_trim_enabled", False),  # EVO-20260811-7baa2737: 历史分层降级
         )
 
     def _check_eval_trigger(self, sess, rounds: int, *, milestone: bool = False) -> None:

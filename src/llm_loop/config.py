@@ -98,6 +98,8 @@ class Settings:
     tool_max_output_chars: int = 100000
     # EVO-20260811-22a7d3e1: 工具输出分层注入阈值（超过则默认注入首/尾摘要，原文另存可检索）
     tool_summary_threshold: int = 5000
+    # EVO-20260811-7baa2737: 历史分层降级（旧长 tool 消息降级为摘要，原文归档）
+    tool_trim_enabled: bool = True
     # ── EXEC_MODE 命令分级（EVO-20260810-2549e9b6）──
     # 默认空 = 不启用分级（AI 可执行 shell，仅灾难性硬阻断）；可选 readonly/allowlist/blocked 安全分级
     exec_mode: str = ""
@@ -220,6 +222,7 @@ class Settings:
             "tool_timeout_s": self.tool_timeout_s,
             "tool_max_output_chars": self.tool_max_output_chars,
             "tool_summary_threshold": self.tool_summary_threshold,
+            "tool_trim_enabled": self.tool_trim_enabled,
             "tool_schema_lazy": self.tool_schema_lazy,
             "history_max_chars": self.history_max_chars,
             "memory_top_k": self.memory_top_k,
@@ -281,6 +284,7 @@ def load_settings() -> Settings:
         tool_timeout_s=float(_env_int("TOOL_TIMEOUT_S", 60)),
         tool_max_output_chars=_env_int("TOOL_MAX_OUTPUT_CHARS", 100000),
         tool_summary_threshold=_env_int("TOOL_SUMMARY_THRESHOLD", 5000),
+        tool_trim_enabled=_env_bool("TOOL_TRIM_ENABLED", True),
         exec_mode=_env_exec_mode("EXEC_MODE"),
         exec_allowlist=os.environ.get("EXEC_ALLOWLIST", "").strip(),
         tool_schema_lazy=_env_bool("TOOL_SCHEMA_LAZY", False),

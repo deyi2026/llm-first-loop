@@ -61,6 +61,64 @@ def _archive_index_dir(messages: list["Message"]) -> str:
 
 
 
+
+def _layer_trim(
+    messages: list["Message"],
+    *,
+    enabled: bool,
+    threshold: int,
+    age: int,
+    session_id: str,
+    archive_sink: "ArchiveSink | None",
+) -> list["Message"]:
+    """历史分层降级（EVO-20260811-7baa2737）: 旧的长 tool 消息降级为首尾摘要.
+
+    规则: role=tool 且 content 超 threshold 且距最新消息 >= age 条 → 降级。
+    原文经 archive_sink 归档（信息零丢失），消息本身保留（role/tool_name/status 不变），
+    仅 content 替换为摘要 + 检索指引。返回新消息列表（无副作用，不动原消息）。
+    """
+    if not enabled:
+        return list(messages)
+    out: list[Message] = []
+    n = len(messages)
+    for idx, m in enumerate(messages):
+        is_old_tool = (
+            m.role == "tool" and m.content and len(m.content) > threshold and (n - 1 - idx) >= age
+        )
+        if not is_old_tool:
+            out.append(m)
+            continue
+        full = m.content
+        if archive_sink is not None and session_id:
+            try:
+                archive_sink(session_id, m)
+            except Exception:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "分层降级原文归档失败（fail-open）", exc_info=True
+                )
+        out.append(
+            Message(
+                role=m.role,
+                content=(
+                    f"[工具输出已分层] 共 {len(full)} 字符，原文已另存压缩档案（可用 search_archive 检索）：\n"
+                    f"── 首部 ──\n{full[:400]}\n── 尾部 ──\n{full[-400:]}"
+                ),
+                source=m.source,
+                tool_call_id=m.tool_call_id,
+                status=m.status,
+                tool_name=m.tool_name,
+                error_detail=m.error_detail,
+                tool_calls=m.tool_calls,
+                reasoning_content=m.reasoning_content,
+                metadata=m.metadata,
+            )
+        )
+    return out
+
+
+
 # archive sink: (session_id, message) -> None（由调用方装配 ArchiveStore）
 ArchiveSink = Callable[[str, Message], None]
 
@@ -73,6 +131,9 @@ def build_history_messages(
     session_id: str = "",
     archive_sink: ArchiveSink | None = None,
     summarizer: Any | None = None,  # EVO-9794797e: 主动压缩摘要器（可 None 走纯另存）
+    layer_tool_trim: bool = False,  # EVO-20260811-7baa2737: 历史分层降级（默认关=零回归，loop 装配时按 settings 启用）
+    tool_trim_threshold: int = 2000,  # tool 消息 content 超此长度才降级
+    tool_trim_age: int = 20,  # 距最新消息 >= 此条数才降级（保护最近上下文完整）
 ) -> list[dict]:
     """组装提交 LLM 的消息序列（保序 + 超长另存压缩 + 如实标注）.
 
@@ -92,7 +153,14 @@ def build_history_messages(
 
     total_chars = sum(len(m.content) for m in session_messages)
     if total_chars <= max_chars:
-        for m in session_messages:
+        for m in _layer_trim(
+            session_messages,
+            enabled=layer_tool_trim,
+            threshold=tool_trim_threshold,
+            age=tool_trim_age,
+            session_id=session_id,
+            archive_sink=archive_sink,
+        ):
             out.append(m.to_llm_dict())
         return out
 
@@ -165,9 +233,17 @@ def build_history_messages(
 
                 logging.getLogger(__name__).warning("archive sink 异常（fail-open）", exc_info=True)
 
-    for group in kept_groups:
-        for m in group:
-            out.append(m.to_llm_dict())
+    kept_flat = [m for g in kept_groups for m in g]
+    kept_flat = _layer_trim(
+        kept_flat,
+        enabled=layer_tool_trim,
+        threshold=tool_trim_threshold,
+        age=tool_trim_age,
+        session_id=session_id,
+        archive_sink=archive_sink,
+    )
+    for m in kept_flat:
+        out.append(m.to_llm_dict())
     if archived:
         # EVO-9794797e: 主动压缩——对将被丢弃的旧消息生成语义摘要注入上下文
         # （替代纯丢弃：模型仍能感知旧结论；原文已另存保信息零丢失，fail-open）
