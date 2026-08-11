@@ -77,6 +77,26 @@ class LoopResult:
     tokens_out: int = 0
 
 
+def build_session_snapshot_text(
+    message_count: int, memory_count: int, evolution_summary: dict | None = None
+) -> str:
+    """会话状态快照文本（EVO-20260811-9ccdec97）: 客观指标 + 定位校准引导.
+
+    作为 system 消息注入，帮助 AI 在长会话中保有"我在哪、要去哪"的定位锚点；
+    客观指标取实时值，语义部分（当前任务/下一步）由 AI 以本条为锚点自行校准。
+    """
+    parts = [f"[会话状态快照] 消息 {message_count} 条；记忆 {memory_count} 条"]
+    if evolution_summary:
+        parts.append(
+            "演进待办: "
+            + ", ".join(
+                f"{k}={v}" for k, v in evolution_summary.items() if k in ("pending_review", "executed", "executing")
+            )
+        )
+    parts.append("若你对当前任务/已完成/下一步/未决事项的定位漂移，以本条为锚点重新校准。")
+    return "；".join(parts)
+
+
 class LoopEngine:
     """五阶段核心循环控制器."""
 
@@ -127,6 +147,8 @@ class LoopEngine:
         self.loop_signal_detector = loop_signal_detector
         # M48（design §5.3）: 会话级模型路由池；None 时使用装配默认 client（零回归）
         self.llm_pool = llm_pool
+        # EVO-20260811-9ccdec97: 会话状态快照节流（上次快照注入时的消息数）
+        self._last_snapshot_count = 0
 
     # ── 阶段记录（架构自省）──
     def _phase(self, phase: str) -> None:
@@ -564,6 +586,30 @@ class LoopEngine:
         system_prompt = build_system_prompt()
         # 记忆消息作为前置注入
         base = [m for m in memory_msgs] + list(sess.messages)
+        # EVO-20260811-9ccdec97: 会话状态快照节流——每间隔注入状态帧（定位锚点，fail-open）
+        try:
+            interval = getattr(self.settings, "extract_interval_msgs", 20) or 20
+            if len(sess.messages) - self._last_snapshot_count >= interval:
+                evo_summary = None
+                if self.evolution_store is not None and hasattr(self.evolution_store, "summary"):
+                    try:
+                        s = self.evolution_store.summary()
+                        evo_summary = s if isinstance(s, dict) else None
+                    except Exception:
+                        evo_summary = None
+                snapshot = Message(
+                    role="system",
+                    content=build_session_snapshot_text(
+                        len(sess.messages), self.memory.count(), evo_summary
+                    ),
+                    source=MessageSource.SYSTEM,
+                )
+                base.insert(0, snapshot)
+                self._last_snapshot_count = len(sess.messages)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning("会话状态快照注入失败（fail-open）", exc_info=True)
         from llm_loop.core.history import build_history_messages
 
         archive_sink = None
