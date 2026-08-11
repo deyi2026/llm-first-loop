@@ -177,9 +177,10 @@ def test_model_catalog_degraded_annotation() -> None:
     assert "[degraded]" in result.content
 
 
-def test_model_catalog_zero_registry_singleton_provider() -> None:
+def test_model_catalog_zero_registry_singleton_provider(tmp_path) -> None:
     """零回归: 未配置 MODEL_PROVIDERS → catalog 如实返回单 provider 现状（不伪造多 provider）."""
-    settings = _settings()
+    # data_dir 指向隔离目录，避免工作区 data/providers.json 影响（走 L0 合成）
+    settings = _settings(data_dir=str(tmp_path / "data"))
     pool = _build_pool(settings)
     # L0 合成: 仅 deepseek 单 provider
     assert set(pool.registry.providers) == {"deepseek"}

@@ -48,6 +48,19 @@ def llm_error_text(error: Exception) -> str:
     )
 
 
+def model_unavailable_text(model_ref: str, error: Exception) -> str:
+    """模型不可用如实反馈（M50：模型不在注册表/凭据缺失，三件套）.
+
+    供 loop.py 在 per-call 模型（Web 切换）解析失败时直接作为 final_answer，
+    不静默降级到默认模型（对齐 PREFERENCE_1 如实反馈）。
+    """
+    return (
+        f"[模型不可用] 事实: 模型 {model_ref} 不可用。\n"
+        f"原因: {type(error).__name__}: {error}\n"
+        f"建议: 请从可用模型目录中选择模型后重试（输入栏下方下拉 / /model 命令）。"
+    )
+
+
 def max_iterations_feedback(trace: list[str]) -> Message:
     """达最大轮数如实结束（已执行轨迹 + 说明）."""
     trace_str = "; ".join(trace[-10:]) if trace else "（无动作记录）"

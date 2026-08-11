@@ -21,6 +21,7 @@ from llm_loop.core.prompt import build_system_prompt
 from llm_loop.core.session import SessionStore
 from llm_loop.feedback.honesty import (
     max_iterations_feedback,
+    model_unavailable_text,
 )
 from llm_loop.feedback.validator import DeclarationValidator, build_discrepancy_feedback
 from llm_loop.introspection.corrections import CorrectionContext, CorrectionToolRegistry
@@ -204,11 +205,24 @@ class LoopEngine:
             # ── 行动：LLM 决策 ──
             self._phase("action.llm_decide")
             # M48（design §5.3）: 路由决策——
-            # - per-call Web model（run() 参数）优先级最高（Web 临时覆盖，ephemeral），用默认 client + chat(model=...)
+            # - per-call Web model（run() 参数）优先级最高：经池路由到对应 provider client
+            #   （正确 base_url/key），并把发送给 LLM 的 model 归一化为裸模型名
+            #   （M50 修复: 全限定 provider/model 不得直接透传 LLM API，否则 400）
             # - 否则按会话级 model_override 经 pool 路由（switch_model 设置，持久生效）
             # - pool 未装配（None）→ 用默认 client（零回归）
             chat_model_arg = model  # per-call Web override（None 表示不覆盖）
-            if chat_model_arg is None and self.llm_pool is not None:
+            if chat_model_arg is not None and self.llm_pool is not None:
+                # per-call 覆盖：解析 provider/model → 对应 provider client
+                try:
+                    llm_client = self.llm_pool.get_client(chat_model_arg)
+                    _, resolved_model_id = self.llm_pool.registry.resolve(chat_model_arg)
+                    chat_model_arg = resolved_model_id
+                except ValueError as exc:
+                    # 模型不在注册表 / 凭据缺失：如实反馈，不静默降级（PREFERENCE_1）
+                    self._record_action("action.llm_decide", "pool_resolve_failed", str(exc)[:200])
+                    final_answer = model_unavailable_text(chat_model_arg, exc)
+                    break
+            elif chat_model_arg is None and self.llm_pool is not None:
                 # 会话级 override 路由：取 switch_model 写入的覆盖
                 try:
                     llm_client = self.llm_pool.get_client(sess.model_override)
