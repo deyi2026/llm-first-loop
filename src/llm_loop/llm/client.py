@@ -34,6 +34,9 @@ class LLMResponse:
     provider: str
     truncated: bool = False  # 流式是否被截断（如实标注）
     reasoning_content: str | None = None  # M20: 思考链（存在态按序拼接/缺失态 None）
+    # M52: token 用量（stream_options.include_usage 末 chunk 解析；缺失态 0 = 未提供，如实不伪造）
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
 
 @dataclass
@@ -111,6 +114,8 @@ class LLMClient:
         agg = ToolCallDeltaAggregator()
         truncated = False
         finish_reason = ""
+        prompt_tokens = 0  # M52: usage 末 chunk 填充（缺失保持 0 = 未提供，不伪造）
+        completion_tokens = 0
 
         try:
             effective_timeout = timeout_s if timeout_s is not None else self.timeout_s
@@ -135,6 +140,11 @@ class LLMClient:
                         chunk = json.loads(data)
                     except json.JSONDecodeError:
                         continue
+                    # M52: usage 在末 chunk（choices 为空）— 先取用量再按 choices 过滤
+                    usage = chunk.get("usage")
+                    if isinstance(usage, dict):
+                        prompt_tokens = int(usage.get("prompt_tokens") or 0)
+                        completion_tokens = int(usage.get("completion_tokens") or 0)
                     choices = chunk.get("choices") or []
                     if not choices:
                         continue
@@ -186,4 +196,6 @@ class LLMClient:
             provider=self.provider,
             truncated=truncated,
             reasoning_content="".join(reasoning_parts) or None,  # M20 THK-02/03
+            prompt_tokens=prompt_tokens,  # M52
+            completion_tokens=completion_tokens,  # M52
         )

@@ -169,7 +169,13 @@ class FeishuMessageHandler:
             answer += f"\n[声明提示] {result.verification_note}"
         # M51: 回复下方标注实际生成模型（provider/model，如实透传）
         if getattr(result, "model_used", ""):
-            answer += f"\n—— {result.model_used}"
+            footer = f"\n—— {result.model_used}"
+            # M52: footer 附带本轮 token 用量（0 = provider 未提供时不显示）
+            if getattr(result, "tokens_in", 0) or getattr(result, "tokens_out", 0):
+                from llm_loop.core.loop import format_tokens
+
+                footer += f" · {format_tokens(result.tokens_in)}入/{format_tokens(result.tokens_out)}出"
+            answer += footer
         self._reply_chunked(msg, answer)
 
     # ── 附件/图片（复用 M39 web/upload_handlers + vision）──
@@ -241,7 +247,13 @@ class FeishuMessageHandler:
         reply = result.final_answer or "(空回答)"
         # M51: 回复下方标注实际生成模型
         if getattr(result, "model_used", ""):
-            reply += f"\n—— {result.model_used}"
+            footer = f"\n—— {result.model_used}"
+            # M52: footer 附带本轮 token 用量
+            if getattr(result, "tokens_in", 0) or getattr(result, "tokens_out", 0):
+                from llm_loop.core.loop import format_tokens
+
+                footer += f" · {format_tokens(result.tokens_in)}入/{format_tokens(result.tokens_out)}出"
+            reply += footer
         self._reply_chunked(msg, reply)
 
     def register_attachment_download(

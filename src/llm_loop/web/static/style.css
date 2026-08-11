@@ -280,6 +280,14 @@ html, body {
   color: #6b7280;
 }
 
+/* M52: token 用量累计（输入区模型选择旁）*/
+.token-stats {
+  color: #9ca3af;
+  font-size: 11px;
+  margin-left: 4px;
+  white-space: nowrap;
+}
+
 #model-select {
   padding: 4px 8px;
   border: 1px solid #d1d5db;
