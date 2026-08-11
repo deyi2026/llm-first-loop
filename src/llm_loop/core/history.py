@@ -15,6 +15,52 @@ from typing import Any
 
 from llm_loop.core.message import Message, MessageSource
 
+
+def _top_keywords(messages: list["Message"], top: int = 5) -> list[str]:
+    """从消息内容抽取高频词作为检索建议词（极简词频，fail-open 由调用方包裹）."""
+    import re
+    from collections import Counter
+
+    stop = {
+        "的", "了", "是", "在", "我", "你", "他", "她", "它", "这", "那", "个", "与", "和",
+        "及", "对", "为", "从", "到", "把", "被", "也", "都", "就", "而", "但", "并", "或",
+        "the", "a", "an", "is", "are", "was", "to", "of", "for", "and", "or", "in", "on",
+        "with", "as", "at", "by", "from", "that", "this", "it", "we", "you", "i",
+    }
+    counter: Counter = Counter()
+    for m in messages:
+        if not m.content:
+            continue
+        for tok in re.findall(r"[\u4e00-\u9fff]+|[A-Za-z][A-Za-z0-9_]{2,}", m.content):
+            t = tok.lower()
+            if t not in stop and len(t) >= 2:
+                counter[t] += 1
+    return [w for w, _ in counter.most_common(top)]
+
+
+def _archive_index_dir(messages: list["Message"]) -> str:
+    """生成压缩档案索引目录（数行，供 AI 主动检索；原文已另存至档案）."""
+    from collections import Counter
+
+    roles = Counter(m.role for m in messages if m.content)
+    tools = Counter(m.tool_name for m in messages if m.tool_name)
+    n = len(messages)
+    chars = sum(len(m.content) for m in messages)
+    lines = [
+        f"[压缩档案目录] 本次归档 {n} 条消息（约 {chars} 字符），原文已完整另存，"
+        "可用 search_archive 按关键词检索："
+    ]
+    if roles:
+        lines.append("- 消息构成: " + ", ".join(f"{r}×{c}" for r, c in roles.most_common()))
+    if tools:
+        lines.append("- 工具结果: " + ", ".join(f"{t}×{c}" for t, c in tools.most_common(6)))
+    words = _top_keywords(messages)
+    if words:
+        lines.append("- 建议检索词: " + ", ".join(words))
+    return "\n".join(lines)
+
+
+
 # archive sink: (session_id, message) -> None（由调用方装配 ArchiveStore）
 ArchiveSink = Callable[[str, Message], None]
 
@@ -125,6 +171,8 @@ def build_history_messages(
     if archived:
         # EVO-9794797e: 主动压缩——对将被丢弃的旧消息生成语义摘要注入上下文
         # （替代纯丢弃：模型仍能感知旧结论；原文已另存保信息零丢失，fail-open）
+        # EVO-20260811-1e68f400: 附加压缩档案目录（主动检索意识，fail-open）
+        extras: list[Message] = []
         if summarizer is not None:
             archived_text = "\n".join(m.content for m in archived if m.content)[-20000:]
             if archived_text.strip():
@@ -135,16 +183,17 @@ def build_history_messages(
                         if summary_result.note:
                             src_note += f"，{summary_result.note}"
                         src_note += "）"
-                        summary_msg = Message(
-                            role="system",
-                            content=(
-                                f"[上下文压缩摘要] 以下为被压缩旧消息的语义摘要 {src_note}：\n"
-                                f"{summary_result.summary}\n"
-                                f"（原文已完整另存至压缩档案，可用 search_archive 检索）"
-                            ),
-                            source=MessageSource.SYSTEM,
+                        extras.append(
+                            Message(
+                                role="system",
+                                content=(
+                                    f"[上下文压缩摘要] 以下为被压缩旧消息的语义摘要 {src_note}：\n"
+                                    f"{summary_result.summary}\n"
+                                    f"（原文已完整另存至压缩档案，可用 search_archive 检索）"
+                                ),
+                                source=MessageSource.SYSTEM,
+                            )
                         )
-                        out.insert(1, summary_msg.to_llm_dict())
                 except Exception:
                     import logging
 
@@ -152,8 +201,25 @@ def build_history_messages(
                         "压缩摘要生成失败（fail-open）", exc_info=True
                     )
 
+        # 档案目录（无论摘要是否成功均注入，保证"有什么可找"可见）
+        try:
+            idx_dir = _archive_index_dir(archived)
+            if idx_dir:
+                extras.append(
+                    Message(role="system", content=idx_dir, source=MessageSource.SYSTEM)
+                )
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "压缩档案目录生成失败（fail-open）", exc_info=True
+            )
+
         from llm_loop.feedback.honesty import compression_message
 
-        comp = compression_message(len(archived), sum(len(a.content) for a in archived))
-        out.insert(1, comp.to_llm_dict())
+        extras.append(
+            compression_message(len(archived), sum(len(a.content) for a in archived))
+        )
+        for i, em in enumerate(extras):
+            out.insert(1 + i, em.to_llm_dict())
     return out
