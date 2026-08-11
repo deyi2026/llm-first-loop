@@ -251,3 +251,97 @@ def test_history_no_summarizer_backward_compat():
     contents = [str(m.get("content", "")) for m in out]
     assert not any("上下文压缩摘要" in c for c in contents)
     assert any("search_archive" in c for c in contents)
+
+
+# ── EVO-20260811-1e68f400: 压缩档案目录化 ──
+def test_compression_injects_archive_index_dir():
+    """压缩发生时注入 [压缩档案目录]（归档数/角色构成/可检索指引），原文仍完整另存."""
+    msgs = [
+        Message(role="user", content=f"旧消息{i}内容" * 80, source=MessageSource.USER)
+        for i in range(10)
+    ]
+    archived: list[Message] = []
+    sink = lambda sid, m: archived.append(m)  # noqa: E731
+
+    class _FakeResult:
+        summary = "摘要"
+        source = "llm"
+        note = ""
+
+    class _FakeSummarizer:
+        def summarize(self, text):
+            return _FakeResult()
+
+    out = build_history_messages(
+        msgs,
+        system_prompt="SYS",
+        max_chars=3000,
+        session_id="s1",
+        archive_sink=sink,
+        summarizer=_FakeSummarizer(),
+    )
+    contents = [str(m.get("content", "")) for m in out]
+    assert any("压缩档案目录" in c for c in contents)
+    dir_msg = next(c for c in contents if "压缩档案目录" in c)
+    assert "归档" in dir_msg and "search_archive" in dir_msg
+    assert "user" in dir_msg  # 角色构成
+    assert len(archived) >= 1  # 原文仍完整另存
+
+
+def test_archive_index_dir_without_summarizer():
+    """summarizer=None（纯另存模式）也注入档案目录（保证'有什么可找'可见）."""
+    msgs = [
+        Message(role="user", content="y" * 150, source=MessageSource.USER) for _ in range(10)
+    ]
+    archived: list[Message] = []
+    sink = lambda sid, m: archived.append(m)  # noqa: E731
+
+    out = build_history_messages(
+        msgs,
+        system_prompt="SYS",
+        max_chars=1000,
+        session_id="s1",
+        archive_sink=sink,
+        summarizer=None,
+    )
+    contents = [str(m.get("content", "")) for m in out]
+    assert not any("上下文压缩摘要" in c for c in contents)  # 无摘要
+    assert any("压缩档案目录" in c for c in contents)  # 有目录
+
+
+def test_archive_index_dir_lists_tool_results():
+    """目录包含工具结果构成（tool_name 统计）."""
+    msgs = []
+    for k in range(6):
+        msgs.append(
+            Message(
+                role="assistant",
+                content=f"调用第{k}次" * 60,
+                source=MessageSource.USER,
+                tool_calls=[{"id": f"c{k}", "name": "read_file", "arguments": "{}"}],
+            )
+        )
+        msgs.append(
+            Message(
+                role="tool",
+                content=f"读取结果{k}" * 50,
+                source=MessageSource.TOOL,
+                tool_call_id=f"c{k}",
+                tool_name="read_file",
+            )
+        )
+    msgs.append(Message(role="user", content="最新问题", source=MessageSource.USER))
+    archived: list[Message] = []
+    sink = lambda sid, m: archived.append(m)  # noqa: E731
+
+    out = build_history_messages(
+        msgs,
+        system_prompt="SYS",
+        max_chars=800,
+        session_id="s1",
+        archive_sink=sink,
+        summarizer=None,
+    )
+    contents = [str(m.get("content", "")) for m in out]
+    dir_msg = next((c for c in contents if "压缩档案目录" in c), "")
+    assert "read_file" in dir_msg  # 工具结果构成
