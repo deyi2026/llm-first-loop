@@ -85,6 +85,7 @@ class LoopEngine:
         | None = None,  # M17 FR-REVIEW-AI-02: EvolutionStore（executing 提醒检测）
         loop_signal_detector: Any
         | None = None,  # M17 FR-REVIEW-AI-02/03: LoopSignalDetector 三合一
+        llm_pool: Any | None = None,  # M48（design §5.3）: ModelClientPool（会话级模型路由）
     ) -> None:
         self.llm = llm_client
         self.registry = registry
@@ -105,6 +106,8 @@ class LoopEngine:
         self.eval_trigger_detector = eval_trigger_detector
         self.evolution_store = evolution_store
         self.loop_signal_detector = loop_signal_detector
+        # M48（design §5.3）: 会话级模型路由池；None 时使用装配默认 client（零回归）
+        self.llm_pool = llm_pool
 
     # ── 阶段记录（架构自省）──
     def _phase(self, phase: str) -> None:
@@ -154,6 +157,12 @@ class LoopEngine:
             self.registry.set_session_id(session_id)
         if self.correction_ctx is not None:
             self.correction_ctx.session_id = session_id
+            # M48（design §5.3）: switch_model 写入会话级 override 的回调（直接修改 in-memory sess）
+            # loop 结束时 self.session.save(sess) 会持久化该字段（向后兼容，旧会话缺该字段 → None）
+            self.correction_ctx.session_model_override = sess.model_override
+            self.correction_ctx.session_set_override = lambda value: self._set_session_override(
+                sess, value
+            )
 
         # ── 消息进：构造用户消息并落库 ──
         user_msg = Message(role="user", content=user_text, source=MessageSource.USER)
@@ -194,12 +203,27 @@ class LoopEngine:
 
             # ── 行动：LLM 决策 ──
             self._phase("action.llm_decide")
+            # M48（design §5.3）: 路由决策——
+            # - per-call Web model（run() 参数）优先级最高（Web 临时覆盖，ephemeral），用默认 client + chat(model=...)
+            # - 否则按会话级 model_override 经 pool 路由（switch_model 设置，持久生效）
+            # - pool 未装配（None）→ 用默认 client（零回归）
+            chat_model_arg = model  # per-call Web override（None 表示不覆盖）
+            if chat_model_arg is None and self.llm_pool is not None:
+                # 会话级 override 路由：取 switch_model 写入的覆盖
+                try:
+                    llm_client = self.llm_pool.get_client(sess.model_override)
+                except ValueError as exc:
+                    # resolve 失败（override 在 refresh_config 后失效等）：如实反馈，走默认 client
+                    self._record_action("action.llm_decide", "pool_resolve_failed", str(exc)[:200])
+                    llm_client = self.llm
+            else:
+                llm_client = self.llm
             try:
-                resp = self.llm.chat(
+                resp = llm_client.chat(
                     messages=messages,
                     tools=tools_param,
                     timeout_s=self._runtime_timeout(),
-                    model=model,
+                    model=chat_model_arg,
                 )
             except LLMError as exc:
                 self._record_action("action.llm_decide", "llm_error", str(exc)[:200])
@@ -278,7 +302,7 @@ class LoopEngine:
             valid_calls = [tc for tc in resp.tool_calls if tc.id]
             if valid_calls:
                 results = self.registry.execute_many(valid_calls)
-                for tc, result in zip(valid_calls, results):
+                for tc, result in zip(valid_calls, results, strict=False):
                     tool_trace.append({"id": tc.id, "name": tc.name, "arguments": tc.arguments})
                     self._record_tool_history(result)
                     tool_msg = tool_result_to_message(
@@ -486,6 +510,16 @@ class LoopEngine:
                     duration_ms=result.duration_ms,
                 )
             )
+
+    def _set_session_override(self, sess, value: str | None) -> None:
+        """M48（design §5.3）: switch_model 调用的会话 override 写入回调.
+
+        直接修改 in-memory sess（引用已加载的 Session 对象）, loop 末 self.session.save(sess)
+        会自动持久化。失败由 tools_model.run_switch_model 内部捕获并如实回执。
+        """
+        sess.model_override = value
+        if self.correction_ctx is not None:
+            self.correction_ctx.session_model_override = value
 
     def _remember(self, final_answer: str, session_id: str, sess) -> None:
         """解析最终回答的记忆块并落盘（FR-MEM-01/03，失败不阻塞）."""

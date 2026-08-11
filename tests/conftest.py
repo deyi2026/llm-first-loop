@@ -81,6 +81,19 @@ def fake_settings(isolated_data_dir):
     )
 
 
+def __build_test_pool(fake, fake_settings):
+    """M48（design §5.3）: 测试用 ModelClientPool（FakeLLM 作 default_client, duck typing）.
+
+    Pool 仅作为路由容器；测试场景不实际走 provider 级 LLMClient（仍是 FakeLLM）.
+    默认 L0 合成注册表（仅含 fake_settings.llm_model）,保证零回归.
+    """
+    from llm_loop.llm.pool import ModelClientPool
+    from llm_loop.llm.providers import load_registry
+
+    registry = load_registry(fake_settings)
+    return ModelClientPool(registry=registry, default_client=fake)  # type: ignore[arg-type]
+
+
 @pytest.fixture
 def build_test_engine(fake_settings):
     """构造测试引擎（装配 FakeLLM 与隔离存储），返回 (engine, fake_llm)."""
@@ -173,6 +186,9 @@ def build_test_engine(fake_settings):
             ),
             evolution_store=ctx.evolution_store,
             loop_signal_detector=loop_signal_detector,
+            # M48（design §5.3）: 测试路径注入 ModelClientPool（FakeLLM 作 default_client，
+            # pool.get_client(None) → fake；override 路径仅在 test_model_tools 显式构造）
+            llm_pool=__build_test_pool(fake, fake_settings),
         )
         return engine, fake
 

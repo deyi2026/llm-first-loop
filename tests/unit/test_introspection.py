@@ -116,6 +116,7 @@ def test_correction_clear_state_removed():
     r = reg.execute("clear_state", {"scope": "stagnation"})
     assert r.status == ToolResultStatus.FAILURE
     # 修正工具集 + 检索/状态工具 + M12 submit_evolution/self_evaluate + M17 evolution_complete
+    # + M48 model_catalog / switch_model（design §5.3 新增工具）
     assert set(names) == {
         "architecture_status",
         "search_archive",
@@ -126,6 +127,8 @@ def test_correction_clear_state_removed():
         "submit_evolution",
         "self_evaluate",
         "evolution_complete",
+        "model_catalog",
+        "switch_model",
     }
 
 
