@@ -51,15 +51,22 @@ class Session:
     title: str = ""  # T24: 默认标题（确定性生成，不调 LLM）
     updated_at: str = field(default_factory=_now)
     status: Literal["active", "archived"] = _ACTIVE  # T24: 活跃/归档
+    # version 3 分支字段（EVO-20260810-3188682f：会话分支；缺省向后兼容 version 1/2）
+    parent_id: str | None = None  # 父会话 id（根会话为 None；fork 时指向来源会话）
+    branch_id: str = ""           # 分支标识（根会话为空；fork 生成唯一短 id）
+    branch_summary: str = ""      # 分支摘要（fork 时从父会话分叉点后提炼，跨分支情报传递）
 
     def to_dict(self) -> dict:
         return {
-            "version": 2,
+            "version": 3,
             "session_id": self.session_id,
             "created_at": self.created_at,
             "title": self.title,
             "updated_at": self.updated_at,
             "status": self.status,
+            "parent_id": self.parent_id,
+            "branch_id": self.branch_id,
+            "branch_summary": self.branch_summary,
             "messages": [
                 {
                     "role": m.role,
@@ -126,10 +133,38 @@ class SessionStore:
         return self._dir / f"{session_id}.json"
 
     def save(self, session: Session) -> None:
+        """保存会话（统一维护 title/updated_at，覆盖 append/run/fork 全路径）.
+
+        EVO-20260811（管理完善）: 此前仅 append() 更新 updated_at 与生成 title，
+        LoopEngine.run 走 save() 导致会话列表"未命名 + 时间不更新"。现在保存即统一维护：
+        - updated_at 每次保存更新为当前时间（列表排序/时间显示正确）
+        - title 为空且有用户消息时补首条用户消息标题（幂等，不覆盖已有标题）
+        """
+        session.updated_at = _now()
+        if not session.title:
+            first_user = next((m for m in session.messages if m.role == "user"), None)
+            if first_user is not None:
+                session.title = _make_title(first_user.content)
         self._path(session.session_id).write_text(
             json.dumps(session.to_dict(), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+
+    def rename(self, session_id: str, new_title: str) -> bool:
+        """重命名会话标题（管理完善：手动设置可识别标题）.
+
+        Returns:
+            True 成功；False 会话不存在或新标题为空。
+        """
+        if not self.exists(session_id):
+            return False
+        title = (new_title or "").strip()
+        if not title:
+            return False
+        session = self.load(session_id)
+        session.title = title
+        self.save(session)
+        return True
 
     def load(self, session_id: str) -> Session:
         """加载会话；不存在则返回新会话（fail-open 恢复）."""
@@ -146,6 +181,9 @@ class SessionStore:
                 title=data.get("title", ""),  # version 1 缺省补默认（向后兼容）
                 updated_at=data.get("updated_at", _now()),
                 status=data.get("status", _ACTIVE),
+                parent_id=data.get("parent_id"),  # version 3: 分支字段缺省向后兼容
+                branch_id=data.get("branch_id", ""),
+                branch_summary=data.get("branch_summary", ""),
             )
         except (json.JSONDecodeError, KeyError, ValueError):
             # 如实降级：文件损坏时返回新会话（不伪造恢复）
@@ -289,3 +327,77 @@ class SessionStore:
             return True
         except OSError:
             return False
+
+    # ── EVO-20260810-3188682f: 会话分支 ──
+    def fork(
+        self,
+        session_id: str,
+        branch_point_index: int | None = None,
+        branch_summary: str = "",
+    ) -> str:
+        """从指定会话分叉出新分支会话（旧会话不覆盖不删除，可回溯）.
+
+        Args:
+            session_id: 父会话 id.
+            branch_point_index: 分叉点（父会话消息索引；新分支仅保留此前消息，之后开始新探索）.
+                缺省 = 父会话末尾（克隆当前状态开新分支）；传索引可从历史中间分叉.
+            branch_summary: 显式分支摘要；缺省自动提炼（分叉点后最近一条 assistant 消息，
+                即旧分支在分叉点后的结论，跨分支情报传递；确定性规则不调 LLM）.
+
+        Returns:
+            新分支会话 session_id.
+        """
+        parent = self.load(session_id)
+        idx = len(parent.messages) if branch_point_index is None else branch_point_index
+        idx = max(0, min(idx, len(parent.messages)))
+        prefix = parent.messages[:idx]
+        summary = branch_summary or self._default_branch_summary(parent, idx)
+        new_id = str(uuid.uuid4())
+        branch = Session(
+            session_id=new_id,
+            messages=list(prefix),
+            created_at=_now(),
+            title=(parent.title or "未命名") + "（分支）",
+            parent_id=session_id,
+            branch_id=str(uuid.uuid4())[:8],
+            branch_summary=summary,
+        )
+        self.save(branch)
+        return new_id
+
+    @staticmethod
+    def _default_branch_summary(parent: Session, branch_point_index: int) -> str:
+        """分支摘要（确定性，不调 LLM）：分叉点后最近一条 assistant 消息前 200 字符."""
+        for m in reversed(parent.messages[branch_point_index:]):
+            if m.role == "assistant" and m.content:
+                return m.content[:200]
+        return ""
+
+    def branches(self, session_id: str) -> list[SessionMeta]:
+        """列出以 session_id 为父的全部分支会话元数据（不含父自身；按 updated_at 降序）.
+
+        父会话自身可用 get_meta 查询；分支会话经 get_meta/fork 后可继续探索。
+        """
+        metas: list[SessionMeta] = []
+        for p in sorted(self._dir.glob("*.json")):
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            if data.get("parent_id") != session_id:
+                continue
+            messages = data.get("messages", [])
+            preview = messages[-1].get("content", "")[:80] if messages else ""
+            metas.append(
+                SessionMeta(
+                    session_id=data.get("session_id", p.stem),
+                    title=data.get("title") or "未命名",
+                    created_at=data.get("created_at", ""),
+                    updated_at=data.get("updated_at", data.get("created_at", "")),
+                    message_count=len(messages),
+                    status=data.get("status", _ACTIVE),
+                    last_message_preview=preview,
+                )
+            )
+        metas.sort(key=lambda m: m.updated_at, reverse=True)
+        return metas

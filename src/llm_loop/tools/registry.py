@@ -31,6 +31,9 @@ class ToolRegistry:
         max_output_chars: int = 100000,
         archive_store: Any | None = None,
         failure_guidance_enabled: bool = True,
+        # EVO-20260810-2549e9b6: EXEC_MODE 命令分级（默认空 = 不启用，生产由 factory 显式装配 blocked）
+        exec_mode: str = "",
+        exec_allowlist: str = "",
     ) -> None:
         self._tools: dict[str, Any] = {}
         self._lock = threading.Lock()
@@ -38,6 +41,8 @@ class ToolRegistry:
         self.tool_timeout_s = tool_timeout_s
         self.max_output_chars = max_output_chars
         self.failure_guidance_enabled = failure_guidance_enabled
+        self.exec_mode = exec_mode  # readonly/allowlist/blocked（空 = 不启用分级）
+        self.exec_allowlist = [s.strip() for s in (exec_allowlist or "").split(",") if s.strip()]
         self._pre_execute_hooks: list[PreExecuteHook] = []
         self._archive_store = archive_store  # ArchiveStore（T22 超长结果另存）
         self._session_id = ""
@@ -86,14 +91,40 @@ class ToolRegistry:
         with self._lock:
             return sorted(self._tools)
 
-    def schemas(self) -> list[dict]:
-        """生成 LLM tools 参数（JSON Schema，约束 C4）."""
+    def schemas(self, lazy: bool = False) -> list[dict]:
+        """生成 LLM tools 参数（JSON Schema，约束 C4）.
+
+        EVO-d5db88d9: lazy=True 时返回精简索引（name + description 截断 + 参数骨架），
+        模型需要某工具完整参数时调用 get_tool_schema 按需读取（工具规模扩展时上下文占用可控）。
+        默认 lazy=False 全量注入（零回归，当前工具规模推荐）。
+        """
         with self._lock:
-            defs = [
-                {"name": t.name, "description": t.description, "parameters": t.parameters}
-                for t in self._tools.values()
-            ]
+            if lazy:
+                defs = [
+                    {
+                        "name": t.name,
+                        "description": (t.description or "")[:200],
+                        "parameters": self._lazy_parameters(t),
+                    }
+                    for t in self._tools.values()
+                ]
+            else:
+                defs = [
+                    {"name": t.name, "description": t.description, "parameters": t.parameters}
+                    for t in self._tools.values()
+                ]
         return defs
+
+    @staticmethod
+    def _lazy_parameters(t) -> dict:
+        """参数骨架（lazy 索引）：仅保留字段名与类型，体积最小."""
+        params = getattr(t, "parameters", {}) or {}
+        props = params.get("properties", {})
+        return {
+            "type": "object",
+            "properties": {k: {"type": v.get("type", "string")} for k, v in props.items()},
+            "required": list(params.get("required", [])),
+        }
 
     def add_pre_execute_hook(self, hook: PreExecuteHook) -> None:
         """注册执行前钩子（如架构自省动作轨迹采集，零侵入）."""
@@ -150,6 +181,19 @@ class ToolRegistry:
                     duration_ms=0.0,
                 )
 
+        # 2.5 EXEC_MODE 命令分级校验（EVO-20260810-2549e9b6；仅 execute_command）
+        if call.name == "execute_command":
+            blocked = self._check_exec_mode(call.arguments)
+            if blocked:
+                return ToolResult(
+                    status=ToolResultStatus.BLOCKED,
+                    content=f"[权限拦截] {blocked}",
+                    tool_call_id=call.id,
+                    tool_name=call.name,
+                    error_detail="EXEC_MODE 限制，该命令需人工执行",
+                    duration_ms=0.0,
+                )
+
         # 3. 执行前钩子（架构自省动作轨迹）
         for hook in self._pre_execute_hooks:
             try:
@@ -178,6 +222,47 @@ class ToolRegistry:
                 duration_ms=(time.perf_counter() - start) * 1000,
             )
 
+    # EVO-20260810-750e985a: 工具并发控制
+    _READONLY_TOOLS = frozenset(
+        {
+            "read_file",
+            "web_fetch",
+            "architecture_status",
+            "search_archive",
+            "search_records",
+        }
+    )
+    _READONLY_MAX_WORKERS = 4
+
+    def execute_many(self, calls: list[ToolCall]) -> list[ToolResult]:
+        """批量执行工具调用：只读并行 / 修改串行 / 结果按声明顺序回写.
+
+        只读工具（read_file/web_fetch/架构检索类，无副作用）同一轮并行执行以降低延迟；
+        修改类工具（写文件/执行命令/调整策略等，可能有副作用）强制串行，避免并发竞争；
+        所有 toolResult 严格按传入声明顺序回写（保持模型对工具执行时序的理解，约束 C4）。
+        """
+        readonly = [c for c in calls if c.name in self._READONLY_TOOLS]
+        mutating = [c for c in calls if c.name not in self._READONLY_TOOLS]
+        by_id: dict[str, ToolResult] = {}
+
+        if readonly:
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(len(readonly), self._READONLY_MAX_WORKERS)
+            ) as pool:
+                futures = {pool.submit(self.execute, c): c for c in readonly}
+                for fut in concurrent.futures.as_completed(futures):
+                    call = futures[fut]
+                    result = fut.result()
+                    by_id[result.tool_call_id or call.id] = result
+
+        for c in mutating:
+            result = self.execute(c)
+            by_id[result.tool_call_id or c.id] = result
+
+        return [by_id[c.id] for c in calls]
+
     def _result(
         self, status: ToolResultStatus, call: ToolCall, content: str, *, duration_ms: float
     ) -> ToolResult:
@@ -192,6 +277,28 @@ class ToolRegistry:
     def _is_destructive_tool(self, name: str) -> bool:
         """是否具备破坏能力的工具（需过灾难性安全校验）."""
         return name in {"execute_command", "delete_file", "write_file", "edit_file", "append_file"}
+
+    def _check_exec_mode(self, args: dict) -> str:
+        """EXEC_MODE 校验: blocked 全禁 / readonly 只读 / allowlist 前缀白名单（空 = 不启用）."""
+        command = str(args.get("command", "") or "").strip()
+        if not command:
+            return "缺少命令"
+        if not self.exec_mode:
+            return ""  # 未启用分级（默认兼容）
+        if self.exec_mode == "blocked":
+            return "当前 EXEC_MODE=blocked，AI 不可执行 shell 命令（需人工执行）"
+        if self.exec_mode == "readonly":
+            from llm_loop.tools.safety import is_readonly_command
+
+            if not is_readonly_command(command):
+                return "当前 EXEC_MODE=readonly，仅放行只读命令（该命令涉及写/变更，需人工执行）"
+            return ""
+        if self.exec_mode == "allowlist":
+            for prefix in self.exec_allowlist:
+                if command.startswith(prefix):
+                    return ""
+            return "命令不在白名单（EXEC_ALLOWLIST），需人工执行"
+        return "未知 EXEC_MODE"
 
     def _run_with_timeout(self, tool: Any, call: ToolCall) -> ToolResult:
         """真实执行 + 超时控制 + 输出截断标注."""
@@ -268,3 +375,66 @@ def tool_result_to_message(result: ToolResult, *, failure_guidance_enabled: bool
         tool_name=result.tool_name,
         error_detail=result.error_detail,
     )
+
+
+class GetToolSchemaTool:
+    """按需读取工具完整 Schema（EVO-d5db88d9 懒加载配套工具）.
+
+    lazy 模式（TOOL_SCHEMA_LAZY=1）下 LLM 只见精简索引，需要调用某工具时
+    先调用本工具获取完整 JSON Schema（参数格式/必填/说明），再发起真实调用。
+    """
+
+    name = "get_tool_schema"
+    description = (
+        "获取指定工具的完整 JSON Schema 定义（参数格式/必填项/使用说明）。"
+        "何时用: 需要调用某工具但不确定其参数格式时，先读取完整 Schema 再调用。"
+        "何时不用: 已确知工具参数格式时不必调用（直接发起工具调用）。"
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "tool_name": {"type": "string", "description": "要查询的工具名（如 read_file）"},
+        },
+        "required": ["tool_name"],
+    }
+
+    def __init__(self, registry: ToolRegistry) -> None:
+        self._registry = registry
+
+    def execute(self, **kwargs) -> Any:
+        from llm_loop.core.message import ToolResult, ToolResultStatus
+
+        name = str(kwargs.get("tool_name", "")).strip()
+        if not name:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content="[参数错误] 缺少必填参数 'tool_name'（要查询的工具名）",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        try:
+            tool = self._registry.get(name)
+        except KeyError:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[工具不存在] 未找到工具 '{name}'。可用工具: {', '.join(self._registry.names())}",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        import json
+
+        schema = json.dumps(
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content=f"工具 '{name}' 完整 Schema:\n{schema}",
+            tool_call_id="",
+            tool_name=self.name,
+        )

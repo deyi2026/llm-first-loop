@@ -68,7 +68,7 @@ def chat(payload: ChatRequest, request: Request) -> ChatResponse | Response:
         session_id = engine.session.create()
 
     try:
-        result = engine.run(session_id, payload.message)
+        result = engine.run(session_id, payload.message, model=payload.model)
     except Exception as exc:  # 如实反馈不静默降级（对齐 PREFERENCE_1）
         logger.exception("engine.run failed: session_id=%s", session_id)
         return UTF8JSONResponse(
@@ -114,14 +114,37 @@ def api_info() -> dict:
         "service": SERVICE_NAME,
         "version": SERVICE_VERSION,
         "endpoints": {
-            "POST /api/v1/chat": "对话（body: {message, session_id?}）",
+            "POST /api/v1/chat": "对话（body: {message, session_id?, model?}）",
             "GET /api/v1/sessions": "会话列表",
             "DELETE /api/v1/sessions/{session_id}?confirm=true": "删除会话（须确认）",
+            "GET /api/v1/models": "可用模型列表",
             "GET /health": "健康检查",
             "GET /docs": "Swagger 交互文档",
         },
         "usage": "POST /api/v1/chat -H 'Content-Type: application/json' -d '{\"message\": \"你好\"}'",
     }
+
+
+@router.get("/api/v1/models")
+def list_models(request: Request) -> dict:
+    """可用模型列表（供前端模型切换下拉）.
+
+    候选顺序: WEB_MODELS 逗号分隔（配置优先）> 内置候选（当前装配模型 + 常用档位）。
+    current 为引擎当前装配模型（如实，不伪造可用性）。
+    """
+    import os as _os
+
+    engine = _engine_from(request)
+    current = getattr(getattr(engine, "llm", None), "model", None) or "deepseek-v4-flash"
+    configured = _os.environ.get("WEB_MODELS", "").strip()
+    names = (
+        [m.strip() for m in configured.split(",") if m.strip()]
+        if configured
+        else ["deepseek-v4-flash", "deepseek-v4-pro"]
+    )
+    if current not in names:
+        names.insert(0, current)
+    return {"models": names, "current": current}
 
 
 @router.get("/health")

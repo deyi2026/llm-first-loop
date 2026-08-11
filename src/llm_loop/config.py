@@ -58,6 +58,14 @@ def _env_evolve_level(name: str) -> int:
     return 0
 
 
+def _env_exec_mode(name: str) -> str:
+    """EXEC_MODE 解析: readonly/allowlist/blocked；未设置返回空（不启用分级）；非法回退 blocked（安全优先）."""
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return ""  # 未设置 = 不启用分级（AI 可执行 shell，仅灾难性硬阻断）
+    return raw if raw in {"readonly", "allowlist", "blocked"} else "blocked"
+
+
 @dataclass(frozen=True)
 class Settings:
     """集中配置面：全部运行参数从环境变量装配（design.md §2.4.1）."""
@@ -77,6 +85,12 @@ class Settings:
     # ── 工具 ──
     tool_timeout_s: float = 60.0
     tool_max_output_chars: int = 100000
+    # ── EXEC_MODE 命令分级（EVO-20260810-2549e9b6）──
+    # 默认空 = 不启用分级（AI 可执行 shell，仅灾难性硬阻断）；可选 readonly/allowlist/blocked 安全分级
+    exec_mode: str = ""
+    exec_allowlist: str = ""  # allowlist 模式的命令前缀白名单（逗号分隔）
+    # ── EVO-d5db88d9: 工具 Schema 索引化（TOOL_SCHEMA_LAZY=1 时 LLM 只见精简索引，按需读完整 Schema）──
+    tool_schema_lazy: bool = False  # 默认 0 = 零回归（全量注入）
 
     # ── 上下文 ──
     history_max_chars: int = 1000000
@@ -179,6 +193,7 @@ class Settings:
             "llm_timeout_s": self.llm_timeout_s,
             "tool_timeout_s": self.tool_timeout_s,
             "tool_max_output_chars": self.tool_max_output_chars,
+            "tool_schema_lazy": self.tool_schema_lazy,
             "history_max_chars": self.history_max_chars,
             "memory_top_k": self.memory_top_k,
             "self_inspection_enabled": self.self_inspection_enabled,
@@ -234,6 +249,9 @@ def load_settings() -> Settings:
         data_dir=os.environ.get("DATA_DIR", "./data").strip(),
         tool_timeout_s=float(_env_int("TOOL_TIMEOUT_S", 60)),
         tool_max_output_chars=_env_int("TOOL_MAX_OUTPUT_CHARS", 100000),
+        exec_mode=_env_exec_mode("EXEC_MODE"),
+        exec_allowlist=os.environ.get("EXEC_ALLOWLIST", "").strip(),
+        tool_schema_lazy=_env_bool("TOOL_SCHEMA_LAZY", False),
         history_max_chars=_env_int("HISTORY_MAX_CHARS", 1000000),
         memory_top_k=_env_int("MEMORY_TOP_K", 5),
         self_inspection_enabled=_env_bool("SELF_INSPECTION_ENABLED", True),

@@ -21,7 +21,7 @@ class MemoryEntry:
     """记忆条目（数据约束 6.3 / P1 字段扩展 §3.5.1）."""
 
     id: str
-    type: str  # fact | decision | convention
+    type: str  # fact | decision | convention | procedure
     content: str
     keywords: list[str] = field(default_factory=list)
     source_session_id: str = ""
@@ -31,9 +31,17 @@ class MemoryEntry:
     summary_source: str = "deterministic"  # P1: llm/deterministic
     deposit_path: str = "inline"  # P1: inline（即时沉淀）/ extract（独立提取）
     content_fingerprint: str = ""  # P1: 内容规范化 SHA-256（去重）
+    # ── Phase 2 增强（EVO-20260810-baae4016）──
+    access_count: int = 0            # 检索命中次数
+    last_access_at: str = ""         # 最近访问时间 ISO（空=从未被检索）
+    decay_score: float = 1.0         # 衰减分（1.0=最新最活跃；随未访问天数下降）
+    citations: list[dict] = field(default_factory=list)  # 溯源: [{"kind","ref","note"}]
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+_HALF_LIFE_DAYS = 30.0  # Phase 2: 衰减半衰期（decay = 0.5 ** (未访问天数/30)）
 
 
 class MemoryStore:
@@ -74,17 +82,39 @@ class MemoryStore:
         return entry
 
     def search(self, keywords: list[str], top_k: int = 5) -> list[MemoryEntry]:
-        """关键词检索（P0: 简单重叠匹配 + 条数上限）."""
+        """关键词检索 + 衰减排序（Phase 2）: 检索命中更新访问统计（内存），不即时全量落盘."""
         if not keywords:
             return []
-        scored: list[tuple[int, MemoryEntry]] = []
+        scored: list[tuple[float, MemoryEntry]] = []
+        now = datetime.now(UTC).isoformat()
         for e in self._entries:
             hay = " ".join([e.content, *e.keywords]).lower()
             score = sum(1 for k in keywords if k.lower() in hay)
             if score > 0:
+                # 命中 → 先基于"上次访问时间"算当前衰减分（体现久未访问降权），再刷新访问时间（命中即强化）
+                e.decay_score = self._compute_decay(e)
+                e.access_count += 1
+                e.last_access_at = now
                 scored.append((score, e))
-        scored.sort(key=lambda x: (-x[0], x[1].created_at))
+        # 排序: 关键词分降序 → decay_score 降序 → created_at 降序（reverse=True 三键全降序）
+        scored.sort(key=lambda x: (x[0], x[1].decay_score, x[1].created_at), reverse=True)
         return [e for _, e in scored[:top_k]]
+
+    @staticmethod
+    def _compute_decay(entry: MemoryEntry) -> float:
+        """衰减分: 1.0 * 0.5**(未访问天数/半衰期)；无访问记录视为 1.0."""
+        if not entry.last_access_at:
+            return 1.0
+        try:
+            last = datetime.fromisoformat(entry.last_access_at)
+            days = (datetime.now(UTC) - last).total_seconds() / 86400.0
+            return round(1.0 * (0.5 ** max(0.0, days / _HALF_LIFE_DAYS)), 4)
+        except (ValueError, TypeError):
+            return 1.0
+
+    def flush(self) -> None:
+        """强制落盘（供调用方在合适时机批量持久化，避免每轮检索全量写 JSON）."""
+        self._save()
 
     def all(self) -> list[MemoryEntry]:
         return list(self._entries)

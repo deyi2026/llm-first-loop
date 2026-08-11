@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,7 +23,59 @@ from llm_loop.memory.embedder import Embedder, cosine_similarity
 
 logger = logging.getLogger(__name__)
 
-RetrieveMode = Literal["semantic", "keyword", "mixed"]
+# ── Phase 5: 实体提取（mem0 式 Entity Linking 轻量实现，零依赖规则）──
+_ENTITY_RE = re.compile(r"\b[A-Z][A-Za-z]{2,}\b")  # 首字母大写、长度≥3 的英文专有名词
+# 中文实体启发式（无空格/大小写，用常见实体后缀识别；零依赖）
+_CN_ENTITY_SUFFIXES = (
+    "公司", "集团", "系统", "项目", "模型", "框架", "平台", "协议", "语言",
+    "工具", "部门", "团队", "城市", "国家", "机构", "组织", "企业", "产品",
+    "引擎", "数据库", "服务", "库", "框架", "版本", "标准", "规范", "接口",
+)
+_CN_ENTITY_RE = re.compile(
+    r"[\u4e00-\u9fff]{2,12}(" + "|".join(_CN_ENTITY_SUFFIXES) + r")"
+)
+_QUOTED_ENTITY_RE = re.compile(r'[“「『]([\u4e00-\u9fffA-Za-z0-9_]{2,20})[”」』]')
+_ENTITY_STOP = {
+    "The", "This", "That", "These", "Those", "What", "Which", "When",
+    "Where", "Who", "How", "Why", "And", "But", "For", "Not", "You",
+    "Your", "Please", "Hello", "Hi", "I", "We", "They", "He", "She",
+    "It", "Are", "Is", "Was", "Were", "Do", "Does", "Did", "Can",
+    "Could", "Should", "Would", "Will", "May", "Might", "Must",
+}
+
+
+def extract_entities(text: str) -> list[str]:
+    """提取文本中的实体（专有名词）: 英文首字母大写词 + 中文实体后缀/引号专名.
+
+    零依赖、确定性（Phase 5 + 中文增强, mem0 Entity Linking 轻量版）；
+    中文启发式: ①常见实体后缀（如"智能体系统"→ 取"智能体系统"整词）
+    ②引号/书名号包裹的专名（如"「记忆引擎」"）。
+    """
+    if not text:
+        return []
+    ents: list[str] = []
+    # 英文专有名词（原规则）
+    for m in _ENTITY_RE.finditer(text):
+        w = m.group(0)
+        if w not in _ENTITY_STOP and w.lower() not in {"llm", "api", "ai", "cli", "json", "yaml", "sql", "http", "https"}:
+            ents.append(w)
+    # 中文: 实体后缀词（整词保留，如 "记忆系统"）
+    for m in _CN_ENTITY_RE.finditer(text):
+        w = m.group(0)
+        if len(w) >= 2:
+            ents.append(w)
+    # 中文/混合: 引号包裹专名
+    for m in _QUOTED_ENTITY_RE.finditer(text):
+        ents.append(m.group(1))
+    # 去重保序
+    seen: list[str] = []
+    for e in ents:
+        if e not in seen:
+            seen.append(e)
+    return seen
+
+
+RetrieveMode = Literal["semantic", "keyword", "mixed", "entity", "mixed_entity"]
 
 
 @dataclass
@@ -35,7 +88,13 @@ class RetrievalResult:
 
 
 class SemanticRetriever:
-    """语义检索器（语义 → 关键词兜底 → 如实降级标注）."""
+    """语义检索器（RRF 多信号融合: 语义 + 关键词 → 如实降级标注）.
+
+    Phase 3（EVO 深化）: 融合算法从"语义优先+关键词补充"线性融合升级为
+    RRF（Reciprocal Rank Fusion）: score(d) = Σ_i 1/(k + rank_i(d))，k=60。
+    Phase 5: 三通道（语义排名 + 关键词排名 + 实体排名）各自贡献，
+    多信号同时命中者得分更高（mem0 式 Entity Linking 轻量版）。
+    """
 
     def __init__(
         self,
@@ -133,23 +192,34 @@ class SemanticRetriever:
         semantic_hits.sort(key=lambda x: x["_semantic_score"], reverse=True)
         semantic_hits = semantic_hits[: self.semantic_top_k]
 
-        # 融合去重（语义优先 + 关键词补充至 top_k）
-        fused: list[dict] = []
-        seen: set[str] = set()
-        for h in semantic_hits:
-            key = self._entry_key(h)
-            if key not in seen:
-                seen.add(key)
-                fused.append(h)
-        for k in keyword_results or []:
-            key = self._entry_key(k)
-            if key not in seen and len(fused) < top_k:
-                seen.add(key)
-                fused.append(k)
-        mode: RetrieveMode = "semantic" if semantic_hits else "keyword"
-        if semantic_hits and keyword_results:
-            mode = "mixed"
-        return RetrievalResult(entries=fused[:top_k], mode=mode, note="")
+        # Phase 5: 实体通道（Entity Linking，轻量规则）
+        entity_hits: list[dict] = []
+        q_entities = extract_entities(query)
+        if q_entities:
+            for c in candidates:
+                if time.monotonic() - start > self.timeout_s:
+                    break  # 实体通道受同一时间预算约束，超时跳过（不阻塞）
+                overlap = self._entity_overlap(q_entities, extract_entities(c.get("content", "")))
+                if overlap > 0:
+                    entity_hits.append({**c, "_entity_score": overlap})
+            entity_hits.sort(key=lambda x: x["_entity_score"], reverse=True)
+            entity_hits = entity_hits[: self.semantic_top_k]
+
+        # RRF 多信号融合（Phase 3+5）: 语义 + 关键词 + 实体 → 融合重排
+        fused = self._rrf_fuse(
+            semantic_hits, keyword_results or [], entity_hits, top_k=top_k
+        )
+        # mode 如实标注（FR-P1-RET-04）: 多信号参与 → mixed；实体独立命中 → entity
+        signals = sum(1 for x in (semantic_hits, keyword_results, entity_hits) if x)
+        if signals >= 2:
+            mode: RetrieveMode = "mixed"
+        elif entity_hits:
+            mode = "mixed_entity"
+        elif semantic_hits:
+            mode = "semantic"
+        else:
+            mode = "keyword"
+        return RetrievalResult(entries=fused, mode=mode, note="")
 
     # ── 候选条目（惰性向量化）──
     def _candidates(self, scope: str, session_id: str, memory: Any, archive: Any) -> list[dict]:
@@ -188,6 +258,46 @@ class SemanticRetriever:
             path = self._mem_cache_path if scope == "memory" else self._arch_cache_path
             self._persist_emb_cache(path, cache)
         return cache.get(key)
+
+    def _rrf_fuse(
+        self,
+        semantic_hits: list[dict],
+        keyword_results: list[dict],
+        entity_hits: list[dict] | None = None,
+        *,
+        top_k: int,
+        k: int = 60,
+    ) -> list[dict]:
+        """RRF 融合: score(d) = Σ_i 1/(k + rank_i(d)).
+
+        - 语义通道排名 = semantic_hits 顺序（已按 _semantic_score 降序）
+        - 关键词通道排名 = keyword_results 顺序（调用方已按关键词得分排序）
+        - 实体通道排名 = entity_hits 顺序（已按 _entity_score 降序，Phase 5）
+        - 多通道同时命中的条目获得叠加得分（多信号增强）
+        - 附加 _rrf_score 便于审计/调试；各通道原始分保留
+        """
+        fused: dict[str, list] = {}
+        channels = [("语义", semantic_hits), ("关键词", keyword_results), ("实体", entity_hits or [])]
+        for _label, hits in channels:
+            for rank, h in enumerate(hits, start=1):
+                key = self._entry_key(h)
+                contrib = 1.0 / (k + rank)
+                if key in fused:
+                    fused[key][0] += contrib
+                else:
+                    fused[key] = [contrib, dict(h)]
+        ranked = sorted(fused.values(), key=lambda x: x[0], reverse=True)
+        for score, entry in ranked:
+            entry["_rrf_score"] = round(score, 4)
+        return [entry for _, entry in ranked[:top_k]]
+
+    @staticmethod
+    def _entity_overlap(query_entities: list[str], candidate_entities: list[str]) -> int:
+        """实体重叠数（query 实体 ∩ 候选条目实体）."""
+        if not query_entities or not candidate_entities:
+            return 0
+        q_set = set(query_entities)
+        return sum(1 for e in candidate_entities if e in q_set)
 
     @staticmethod
     def _entry_key(h: dict) -> str:

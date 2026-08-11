@@ -8,6 +8,7 @@ const state = {
   messages: [],
   sessions: [],
   attachments: [], // M39 上传附件上下文（发送时作为 user 消息前缀注入）
+  model: null, // M47 当前模型（模型切换下拉，None=装配默认）
 };
 
 const els = {
@@ -21,7 +22,17 @@ const els = {
   uploadBtn: document.getElementById("upload-btn"),
   fileInput: document.getElementById("file-input"),
   chatArea: document.getElementById("chat-area"),
+  modelSelect: document.getElementById("model-select"),
+  cmdSuggest: document.getElementById("cmd-suggest"),
 };
+
+// M47 快捷命令定义（argHint 非空表示需附加参数，点击只填入不自动执行）
+const COMMANDS = [
+  { name: "/new", desc: "新建会话" },
+  { name: "/clear", desc: "清空对话区（不删会话）" },
+  { name: "/model", desc: "切换模型，如 /model deepseek-v4-pro（或用下方下拉）", argHint: " <模型名>" },
+  { name: "/help", desc: "查看可用命令" },
+];
 
 // ---------- 工具 ----------
 function el(tag, className, text) {
@@ -138,7 +149,7 @@ function renderMessages() {
       } else {
         node.textContent = msg.content;
       }
-      // 复制按钮（M39）：复制 final_answer 原文纯文本，成功"已复制"/失败如实
+      // 一键复制按钮（M39）：位于回复框右下角，复制 final_answer 原文纯文本
       const wrap = document.createElement("div");
       wrap.className = "message-wrap";
       wrap.appendChild(node);
@@ -149,16 +160,49 @@ function renderMessages() {
       if (msg.note) {
         node.appendChild(el("span", "msg-note", msg.note));
       }
+      // 回复内命令框（代码块）右上角也提供复制按钮
+      addCodeBlockCopyButtons(node);
     } else {
-      // user/error：纯文本如实回显（user 不渲染 MD，error 原样提示）
-      node.textContent = msg.content;
-      els.messages.appendChild(node);
+      // user：M47 起也渲染 MD（纯文本降级）；error：纯文本如实回显
+      if (msg.role === "user") {
+        const html = renderMarkdown(msg.content);
+        if (html !== null) {
+          node.innerHTML = html;
+        } else {
+          node.textContent = msg.content;
+        }
+        const wrap = document.createElement("div");
+        wrap.className = "message-wrap user-wrap";
+        wrap.appendChild(node);
+        const copyBtn = el("button", "copy-btn copy-btn-left", "复制");
+        copyBtn.onclick = () => copyMessage(msg.content, copyBtn);
+        wrap.appendChild(copyBtn);
+        els.messages.appendChild(wrap);
+        addCodeBlockCopyButtons(node);
+      } else {
+        node.textContent = msg.content;
+        els.messages.appendChild(node);
+      }
       if (msg.note) {
         node.appendChild(el("span", "msg-note", msg.note));
       }
     }
   }
   els.messages.scrollTop = els.messages.scrollHeight;
+}
+
+// 为回复中每个代码块（pre）添加右上角复制按钮，复制该代码块文本
+function addCodeBlockCopyButtons(container) {
+  for (const pre of container.querySelectorAll("pre")) {
+    if (pre.parentElement && pre.parentElement.classList.contains("code-block-wrap")) continue;
+    const wrap = document.createElement("div");
+    wrap.className = "code-block-wrap";
+    pre.parentNode.insertBefore(wrap, pre);
+    wrap.appendChild(pre);
+    const btn = el("button", "code-copy-btn", "复制");
+    btn.onclick = () => copyMessage(pre.textContent, btn);
+    wrap.appendChild(btn);
+  }
 }
 
 function addMessage(role, content, note) {
@@ -171,6 +215,8 @@ async function sendMessage() {
   const text = els.messageInput.value.trim();
   if (!text) return; // 空消息前端校验
   els.messageInput.value = "";
+  autoGrowInput();
+  hideCmdSuggest();
   // M39 命令处理：/ 开头消息走纯前端命令分支（不调 API）
   if (text.startsWith("/")) {
     handleCommand(text);
@@ -189,6 +235,7 @@ async function sendMessage() {
   try {
     const body = { message: effectiveText };
     if (state.currentSessionId) body.session_id = state.currentSessionId;
+    if (state.model) body.model = state.model; // M47 模型切换：对当前请求生效
     const { status, data } = await api("/api/v1/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -310,6 +357,7 @@ async function init() {
   } catch {
     setStatus(false, "未连接");
   }
+  await loadModels(); // M47 模型切换候选
   await loadSessions();
   // 刷新后自动选中最近会话并恢复其历史消息（无会话则保持空白等待新建）
   const latest = state.sessions[0];
@@ -329,8 +377,19 @@ function handleCommand(cmd) {
     state.messages = [];
     renderMessages();
     addMessage("system", "对话区已清空（会话保留）。");
+  } else if (name === "/model") {
+    const m = (parts[1] || "").trim();
+    if (!m) {
+      addMessage("error", "用法: /model <模型名>。当前候选见输入栏下方下拉列表。");
+    } else {
+      state.model = m;
+      for (const opt of els.modelSelect.options) {
+        if (opt.value === m) { els.modelSelect.value = m; break; }
+      }
+      addMessage("system", `已切换模型：${m}（下一条消息生效）。`);
+    }
   } else if (name === "/help") {
-    addMessage("system", "可用命令：\n/new 新建会话\n/clear 清空对话区（不删会话）\n/help 帮助\n其余以 / 开头的输入视为未知命令。");
+    addMessage("system", "可用命令：\n/new 新建会话\n/clear 清空对话区（不删会话）\n/model <模型名> 切换模型（或用输入栏下方下拉）\n/help 帮助\n其余以 / 开头的输入视为未知命令。");
   } else {
     addMessage("error", `未知命令：${name}。输入 /help 查看可用命令。`);
   }
@@ -409,14 +468,90 @@ function addAttachmentBubble(filename, contentType, statusText, resultText, deta
   els.messages.scrollTop = els.messages.scrollHeight;
 }
 
+// ---------- M47 模型切换 ----------
+async function loadModels() {
+  const { status, data } = await api("/api/v1/models");
+  if (status !== 200) return;
+  els.modelSelect.innerHTML = "";
+  for (const m of data.models) {
+    const opt = document.createElement("option");
+    opt.value = m;
+    opt.textContent = m;
+    els.modelSelect.appendChild(opt);
+  }
+  state.model = data.current || null;
+  els.modelSelect.value = state.model || "";
+}
+
+// ---------- M47 输入框增强：自动增高 + 快捷命令 ----------
+function autoGrowInput() {
+  const ta = els.messageInput;
+  ta.style.height = "auto";
+  ta.style.height = Math.min(ta.scrollHeight, 180) + "px";
+}
+
+function hideCmdSuggest() {
+  els.cmdSuggest.hidden = true;
+}
+
+function showCmdSuggest() {
+  const value = els.messageInput.value;
+  // 仅当以 / 开头且当前行无空格/换行时提示（允许 /model 带参数后不再弹出）
+  if (!value.startsWith("/") || value.includes(" ") || value.includes("\n")) {
+    hideCmdSuggest();
+    return;
+  }
+  const q = value.slice(1).toLowerCase();
+  const items = COMMANDS.filter((c) => c.name.slice(1).startsWith(q));
+  if (!items.length) {
+    hideCmdSuggest();
+    return;
+  }
+  els.cmdSuggest.innerHTML = "";
+  for (const c of items) {
+    const item = el("div", "cmd-suggest-item");
+    item.appendChild(el("span", "cmd-name", c.name));
+    item.appendChild(el("span", "cmd-desc", c.desc));
+    item.onclick = () => {
+      els.messageInput.value = c.name + (c.argHint ? " " : "");
+      els.messageInput.focus();
+      hideCmdSuggest();
+      if (!c.argHint) sendMessage(); // 无需参数的命令点击即执行
+    };
+    els.cmdSuggest.appendChild(item);
+  }
+  els.cmdSuggest.hidden = false;
+}
+
 els.sendBtn.addEventListener("click", sendMessage);
 els.newSessionBtn.addEventListener("click", newSession);
 els.searchInput.addEventListener("input", renderSessions);
 els.messageInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
+    // IME 组合态（中文输入法选词/中英文切换）回车不触发发送，避免误操作
+    if (e.isComposing || e.keyCode === 229) return;
     e.preventDefault();
     sendMessage();
   }
+});
+els.messageInput.addEventListener("input", () => {
+  autoGrowInput();
+  showCmdSuggest();
+});
+els.modelSelect.addEventListener("change", () => {
+  state.model = els.modelSelect.value || null;
+  addMessage("system", `已切换模型：${state.model}（下一条消息生效）。`);
+});
+els.cmdSuggest.addEventListener("mousedown", (e) => e.preventDefault()); // 保持输入框焦点
+document.querySelectorAll(".cmd-chip").forEach((chip) => {
+  chip.addEventListener("click", () => {
+    const def = COMMANDS.find((c) => c.name === chip.dataset.cmd);
+    if (!def) return;
+    els.messageInput.value = def.name + (def.argHint ? " " : "");
+    els.messageInput.focus();
+    hideCmdSuggest();
+    if (!def.argHint) sendMessage(); // 无需参数的命令点击即执行
+  });
 });
 
 els.uploadBtn.addEventListener("click", () => els.fileInput.click());

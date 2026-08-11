@@ -31,8 +31,9 @@ class FakeLLM:
         tools: list[dict],
         *,
         timeout_s: float | None = None,
+        model: str | None = None,
     ) -> LLMResponse:
-        self.calls.append({"messages": messages, "tools": tools})
+        self.calls.append({"messages": messages, "tools": tools, "model": model})
         if not self._responses:
             return LLMResponse(content="（无更多响应）", tool_calls=[], provider="fake")
         item = self._responses.pop(0)

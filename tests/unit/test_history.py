@@ -171,3 +171,83 @@ def test_compression_archives_tool_pairs_atomic():
             i = j
         else:
             i += 1
+
+
+# ── EVO-9794797e: 上下文压缩主动化 ──
+def test_history_compression_injects_summary():
+    """压缩发生时调用 summarizer 注入旧消息语义摘要（含来源标注 + 可检索指引）."""
+    msgs = [
+        Message(role="user", content=f"旧消息{i}内容" * 80, source=MessageSource.USER)
+        for i in range(10)
+    ]
+    archived: list[Message] = []
+    sink = lambda sid, m: archived.append(m)  # noqa: E731
+
+    class _FakeResult:
+        summary = "这是旧消息的语义摘要内容"
+        source = "llm"
+        note = ""
+
+    class _FakeSummarizer:
+        def summarize(self, text):
+            return _FakeResult()
+
+    out = build_history_messages(
+        msgs,
+        system_prompt="SYS",
+        max_chars=3000,
+        session_id="s1",
+        archive_sink=sink,
+        summarizer=_FakeSummarizer(),
+    )
+    assert len(archived) >= 1  # 原文仍完整另存
+    contents = [str(m.get("content", "")) for m in out]
+    assert any("上下文压缩摘要" in c for c in contents)
+    assert any("这是旧消息的语义摘要内容" in c for c in contents)
+    assert any("search_archive" in c for c in contents)
+
+
+def test_history_compression_summary_fail_open():
+    """summarizer 异常 → fail-open：不阻断、无摘要注入，压缩标注仍注入."""
+    msgs = [
+        Message(role="user", content="x" * 200, source=MessageSource.USER) for _ in range(10)
+    ]
+    archived: list[Message] = []
+    sink = lambda sid, m: archived.append(m)  # noqa: E731
+
+    class _BoomSummarizer:
+        def summarize(self, text):
+            raise RuntimeError("summarizer boom")
+
+    out = build_history_messages(
+        msgs,
+        system_prompt="SYS",
+        max_chars=1000,
+        session_id="s1",
+        archive_sink=sink,
+        summarizer=_BoomSummarizer(),
+    )
+    contents = [str(m.get("content", "")) for m in out]
+    assert not any("上下文压缩摘要" in c for c in contents)  # fail-open 无摘要
+    assert any("search_archive" in c for c in contents)  # 压缩标注仍注入
+
+
+def test_history_no_summarizer_backward_compat():
+    """summarizer=None → 行为不变（纯另存 + 压缩标注，无摘要注入）."""
+    msgs = [
+        Message(role="user", content="y" * 150, source=MessageSource.USER) for _ in range(10)
+    ]
+    archived: list[Message] = []
+    sink = lambda sid, m: archived.append(m)  # noqa: E731
+
+    out = build_history_messages(
+        msgs,
+        system_prompt="SYS",
+        max_chars=1000,
+        session_id="s1",
+        archive_sink=sink,
+        summarizer=None,
+    )
+    contents = [str(m.get("content", "")) for m in out]
+    assert not any("上下文压缩摘要" in c for c in contents)
+    assert any("search_archive" in c for c in contents)

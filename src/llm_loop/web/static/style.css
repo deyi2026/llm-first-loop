@@ -222,11 +222,26 @@ html, body {
 }
 
 #input-bar {
+  position: relative;
   display: flex;
   gap: 10px;
-  padding: 14px 20px;
+  padding: 12px 20px 14px;
   border-top: 1px solid #e5e7eb;
   background: #fff;
+}
+
+#input-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+#input-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
 }
 
 #message-input {
@@ -239,15 +254,213 @@ html, body {
   font-family: inherit;
   outline: none;
   line-height: 1.5;
+  max-height: 180px;
+  overflow-y: auto;
 }
 
 #message-input:focus {
   border-color: #3b82f6;
 }
 
+#input-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+#input-tools .btn-secondary {
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+.model-label {
+  margin-left: 2px;
+  color: #6b7280;
+}
+
+#model-select {
+  padding: 4px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #fff;
+  color: #1f2328;
+  font-size: 12px;
+  cursor: pointer;
+  max-width: 220px;
+}
+
+#model-select:focus {
+  border-color: #3b82f6;
+}
+
+#cmd-hint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cmd-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #f3f4f6;
+  color: #4b5563;
+  font-size: 11px;
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  cursor: pointer;
+  user-select: none;
+}
+
+.cmd-chip:hover {
+  background: #e5e7eb;
+}
+
+.cmd-suggest {
+  position: absolute;
+  left: 20px;
+  right: 20px;
+  bottom: calc(100% - 6px);
+  z-index: 30;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+.cmd-suggest-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.cmd-suggest-item:hover,
+.cmd-suggest-item.active {
+  background: #f0f7ff;
+}
+
+.cmd-suggest-item .cmd-name {
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  font-weight: 600;
+  color: #1f2328;
+}
+
+.cmd-suggest-item .cmd-desc {
+  color: #6b7280;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---------- Markdown 渲染样式（M38） ---------- */
 .message.assistant {
   white-space: normal; /* MD 渲染后由 HTML 布局，不再 pre-wrap */
+}
+
+.message.user {
+  white-space: normal; /* M47: 用户消息也渲染 MD，同样由 HTML 布局 */
+}
+
+/* 用户气泡内 MD 元素适配（蓝底白字，深色底内容反色） */
+.message.user h1, .message.user h2, .message.user h3,
+.message.user h4, .message.user h5, .message.user h6 {
+  margin: 10px 0 6px;
+  line-height: 1.3;
+}
+
+.message.user h1 { font-size: 18px; }
+.message.user h2 { font-size: 16px; }
+.message.user h3 { font-size: 15px; }
+.message.user h4, .message.user h5, .message.user h6 { font-size: 14px; }
+
+.message.user p {
+  margin: 6px 0;
+}
+
+.message.user ul, .message.user ol {
+  margin: 6px 0;
+  padding-left: 22px;
+}
+
+.message.user li {
+  margin: 2px 0;
+}
+
+.message.user blockquote {
+  margin: 8px 0;
+  padding: 4px 12px;
+  border-left: 3px solid #93c5fd;
+  color: #dbeafe;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 0 6px 6px 0;
+}
+
+.message.user code {
+  font-family: "SF Mono", "Menlo", "Consolas", "Courier New", monospace;
+  font-size: 13px;
+  background: rgba(255, 255, 255, 0.18);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.message.user pre {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.28);
+  color: #f3f4f6;
+  border-radius: 8px;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.message.user pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font-size: 13px;
+}
+
+.message.user a {
+  color: #bfdbfe;
+  text-decoration: underline;
+}
+
+.message.user table {
+  margin: 8px 0;
+  border-collapse: collapse;
+  max-width: 100%;
+  display: block;
+  overflow-x: auto;
+}
+
+.message.user th, .message.user td {
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  padding: 5px 10px;
+  font-size: 13px;
+}
+
+.message.user th {
+  background: rgba(255, 255, 255, 0.2);
+  font-weight: 600;
+}
+
+.message.user hr {
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.4);
+  margin: 10px 0;
+}
+
+.message.user img {
+  max-width: 100%;
+  border-radius: 6px;
 }
 
 .message.assistant h1, .message.assistant h2, .message.assistant h3,
@@ -388,7 +601,16 @@ html, body {
 .message-wrap {
   position: relative;
   max-width: 78%;
+  width: fit-content;
   align-self: flex-start;
+}
+
+.message-wrap.user-wrap {
+  align-self: flex-end;
+}
+
+.message-wrap .message {
+  max-width: 100%;
 }
 
 .copy-btn {
@@ -402,12 +624,12 @@ html, body {
   padding: 2px 8px;
   border-radius: 6px;
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s, background 0.15s;
+  transition: background 0.15s;
 }
 
-.message-wrap:hover .copy-btn {
-  opacity: 1;
+.copy-btn-left {
+  right: auto;
+  left: 6px;
 }
 
 .copy-btn:hover {
@@ -417,7 +639,39 @@ html, body {
 .copy-btn.copied {
   background: #1e7a3c;
   color: #fff;
-  opacity: 1;
+}
+
+.code-block-wrap {
+  position: relative;
+  margin: 8px 0;
+}
+
+.code-block-wrap pre {
+  margin: 0;
+  padding-top: 32px;
+}
+
+.code-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  border: none;
+  background: rgba(255, 255, 255, 0.12);
+  color: #cbd5e1;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.code-copy-btn:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.code-copy-btn.copied {
+  background: #1e7a3c;
+  color: #fff;
 }
 
 .cmd-tip {

@@ -160,6 +160,15 @@ class ArchitectureStatusProvider:
     def build_report_message(self, event: ArchitectureEvent):
         return self.reporter.build_message(event)
 
+    def _process_versions(self) -> dict:
+        """进程代码版本一致性（EVO-20260811-f94e5306）；读取失败如实标注."""
+        try:
+            from llm_loop.introspection.proc_version import get_process_versions
+
+            return get_process_versions()
+        except Exception as exc:  # noqa: BLE001 — 读取失败如实标注（fail-open）
+            return {"note": f"读取失败: {type(exc).__name__}: {exc}"}
+
     def _memory_stats(self) -> dict:
         """记忆统计（M18 AA10: 补真实数据；未注入/读取失败如实标注，不伪造）."""
         if self._memory_stats_fn is None:
@@ -204,6 +213,7 @@ class ArchitectureStatusProvider:
                 for e in self._exception_log[-10:]
             ],
             "architecture_config": self._config_status(),
+            "process_versions": self._process_versions(),  # EVO-20260811-f94e5306
         }
         if dimensions:
             out: dict = {}

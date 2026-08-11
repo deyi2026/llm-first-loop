@@ -11,7 +11,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from llm_loop.core.message import Message
+from typing import Any
+
+from llm_loop.core.message import Message, MessageSource
 
 # archive sink: (session_id, message) -> None（由调用方装配 ArchiveStore）
 ArchiveSink = Callable[[str, Message], None]
@@ -24,6 +26,7 @@ def build_history_messages(
     *,
     session_id: str = "",
     archive_sink: ArchiveSink | None = None,
+    summarizer: Any | None = None,  # EVO-9794797e: 主动压缩摘要器（可 None 走纯另存）
 ) -> list[dict]:
     """组装提交 LLM 的消息序列（保序 + 超长另存压缩 + 如实标注）.
 
@@ -120,6 +123,35 @@ def build_history_messages(
         for m in group:
             out.append(m.to_llm_dict())
     if archived:
+        # EVO-9794797e: 主动压缩——对将被丢弃的旧消息生成语义摘要注入上下文
+        # （替代纯丢弃：模型仍能感知旧结论；原文已另存保信息零丢失，fail-open）
+        if summarizer is not None:
+            archived_text = "\n".join(m.content for m in archived if m.content)[-20000:]
+            if archived_text.strip():
+                try:
+                    summary_result = summarizer.summarize(archived_text)
+                    if summary_result.summary:
+                        src_note = f"（来源: {summary_result.source}"
+                        if summary_result.note:
+                            src_note += f"，{summary_result.note}"
+                        src_note += "）"
+                        summary_msg = Message(
+                            role="system",
+                            content=(
+                                f"[上下文压缩摘要] 以下为被压缩旧消息的语义摘要 {src_note}：\n"
+                                f"{summary_result.summary}\n"
+                                f"（原文已完整另存至压缩档案，可用 search_archive 检索）"
+                            ),
+                            source=MessageSource.SYSTEM,
+                        )
+                        out.insert(1, summary_msg.to_llm_dict())
+                except Exception:
+                    import logging
+
+                    logging.getLogger(__name__).warning(
+                        "压缩摘要生成失败（fail-open）", exc_info=True
+                    )
+
         from llm_loop.feedback.honesty import compression_message
 
         comp = compression_message(len(archived), sum(len(a.content) for a in archived))

@@ -64,8 +64,12 @@ def _is_loopback(host: str) -> bool:
 
 def main() -> None:
     """服务启动入口（python -m llm_loop.web）."""
+    # EVO-20260811-f94e5306: 记录进程启动版本（一致性检测）
+    from llm_loop.introspection.proc_version import record_process_start
+
+    record_process_start("web")
     host = os.environ.get("WEB_HOST", "127.0.0.1").strip()
-    port = int(os.environ.get("WEB_PORT", "8901").strip())
+    port = int(os.environ.get("WEB_PORT", "8902").strip())
 
     try:
         validate_binding(host)
