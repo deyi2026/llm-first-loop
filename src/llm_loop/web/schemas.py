@@ -16,7 +16,7 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    """对话响应（LoopResult 六字段如实透传）."""
+    """对话响应（LoopResult 七字段如实透传, M51 增 model_used）."""
 
     session_id: str
     final_answer: str
@@ -24,6 +24,7 @@ class ChatResponse(BaseModel):
     rounds: int = 0
     tool_calls: list[dict] = []
     truncated: bool = False
+    model_used: str = ""  # M51: 实际生成回复的模型标签（provider/model）
 
 
 class SessionMetaItem(BaseModel):

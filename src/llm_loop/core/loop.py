@@ -57,6 +57,8 @@ class LoopResult:
     rounds: int = 0
     tool_calls: list[dict] = field(default_factory=list)  # 工具声明轨迹（审计）
     truncated: bool = False
+    # M51: 实际生成本次回复的模型标签（provider/model 全限定，如实透传；降级后为降级模型 ref）
+    model_used: str = ""
 
 
 class LoopEngine:
@@ -174,6 +176,7 @@ class LoopEngine:
         verification_note: str | None = None
         truncation_noted = False
         rounds = 0
+        model_used = ""  # M51: 本轮实际使用的模型标签（每轮 LLM 调用时刷新）
         resp: Any = None  # M20 THK-04: 最终回答轮思考链来源（LLM 异常/停滞路径为 None）
 
         while True:
@@ -215,8 +218,9 @@ class LoopEngine:
                 # per-call 覆盖：解析 provider/model → 对应 provider client
                 try:
                     llm_client = self.llm_pool.get_client(chat_model_arg)
-                    _, resolved_model_id = self.llm_pool.registry.resolve(chat_model_arg)
+                    pid, resolved_model_id = self.llm_pool.registry.resolve(chat_model_arg)
                     chat_model_arg = resolved_model_id
+                    model_used = f"{pid}/{resolved_model_id}"  # M51: 如实标注实际模型
                 except ValueError as exc:
                     # 模型不在注册表 / 凭据缺失：如实反馈，不静默降级（PREFERENCE_1）
                     self._record_action("action.llm_decide", "pool_resolve_failed", str(exc)[:200])
@@ -226,12 +230,16 @@ class LoopEngine:
                 # 会话级 override 路由：取 switch_model 写入的覆盖
                 try:
                     llm_client = self.llm_pool.get_client(sess.model_override)
+                    # M51: override 为全限定 ref；None 时为装配默认标签
+                    model_used = sess.model_override or self._default_model_label()
                 except ValueError as exc:
                     # resolve 失败（override 在 refresh_config 后失效等）：如实反馈，走默认 client
                     self._record_action("action.llm_decide", "pool_resolve_failed", str(exc)[:200])
                     llm_client = self.llm
+                    model_used = self._default_model_label()
             else:
                 llm_client = self.llm
+                model_used = self._default_model_label()
             try:
                 resp = llm_client.chat(
                     messages=messages,
@@ -252,7 +260,7 @@ class LoopEngine:
                     sess.model_override is None and chat_model_arg is None
                 )
                 if is_default_assembled and self._is_fallback_eligible_error(exc):
-                    fallback_resp, inject_msgs = self._try_fallback_chain(
+                    fallback_resp, inject_msgs, fallback_ref = self._try_fallback_chain(
                         messages=messages,
                         tools=tools_param,
                         timeout_s=self._runtime_timeout(),
@@ -265,6 +273,8 @@ class LoopEngine:
                     if fallback_resp is not None:
                         # 降级成功: 响应以新模型运行, 进入后续正常路径
                         resp = fallback_resp
+                        if fallback_ref:
+                            model_used = fallback_ref  # M51: 如实标注为降级后的模型
                     else:
                         # 链全失败 → 已注入汇总提示, 走原异常如实反馈路径
                         from llm_loop.feedback.honesty import llm_error_text
@@ -405,7 +415,25 @@ class LoopEngine:
             rounds=rounds,
             tool_calls=tool_trace,
             truncated=truncation_noted,
+            model_used=model_used,
         )
+
+    def _default_model_label(self) -> str:
+        """M51: 装配默认模型的全限定标签（provider/model）.
+
+        有 pool 时经注册表 resolve 为全限定 ref；无 pool / resolve 失败 → 裸模型名（零回归）.
+        client 无 model 属性（如测试 FakeLLM）→ 返回空串（不伪造标签, 无 footer）.
+        """
+        model = getattr(self.llm, "model", "")
+        if not model:
+            return ""
+        if self.llm_pool is not None:
+            try:
+                pid, mid = self.llm_pool.registry.resolve(model)
+                return f"{pid}/{mid}"
+            except ValueError:
+                pass
+        return model
 
     # ── 辅助 ──
     def _build_llm_messages(self, sess, memory_msgs: list[Message]) -> list[dict]:
@@ -600,14 +628,14 @@ class LoopEngine:
         timeout_s: float | None,
         primary_error: LLMError,
         session_id: str,
-    ) -> tuple[LLMResponse | None, list[Message]]:
+    ) -> tuple[LLMResponse | None, list[Message], str | None]:
         """沿 fallback 链尝试下一个候选（design §5.4 行为规则表 + 原则 2 如实反馈）.
 
         行为:
         - 调用 pool.fallback_candidates() 取得合法降级候选列表
-        - 空 → 返回 (None, [])（调用方走原异常如实反馈路径，零回归）
-        - 逐个尝试,首个成功 → 返回 (resp, [notice_msg])（调用方把 notice_msg 注入 sess.messages）
-        - 全部失败 → 返回 (None, [summary_msg])（调用方把 summary_msg 注入 sess.messages + 走原异常反馈路径）
+        - 空 → 返回 (None, [], None)（调用方走原异常如实反馈路径，零回归）
+        - 逐个尝试,首个成功 → 返回 (resp, [notice_msg], 成功的模型 ref)（调用方把 notice_msg 注入 sess.messages）
+        - 全部失败 → 返回 (None, [summary_msg], None)（调用方把 summary_msg 注入 sess.messages + 走原异常反馈路径）
 
         Args:
             messages: 本轮 LLM 调用所需消息列表.
@@ -623,12 +651,12 @@ class LoopEngine:
         """
         if self.llm_pool is None:
             # 池未装配（如某些测试路径）→ 不启用降级, 调用方如实反馈
-            return None, []
+            return None, [], None
 
         candidates = self.llm_pool.fallback_candidates()
         if not candidates:
             # MODEL_FALLBACKS 未配置/全非法 → 不启用降级（零回归路径）
-            return None, []
+            return None, [], None
 
         from_model = self.llm_pool.get_default_model()
         primary_reason = self._fallback_reason_label(primary_error)
@@ -679,7 +707,7 @@ class LoopEngine:
                     reason=reason,
                     result_status="success",
                 )
-            return resp, [notice]
+            return resp, [notice], ref
 
         # ── 链全失败 ──
         # 汇总提示: 包含主调用原因 + 每个候选失败原因（如实反馈, design §5.4 行为表）
@@ -702,7 +730,7 @@ class LoopEngine:
                 detail=detail_lines,
             )
         # 状态: 不更新 record_fallback（链全失败不算"降级态"）
-        return None, [summary]
+        return None, [summary], None
 
     @staticmethod
     def _fallback_reason_label(exc: LLMError) -> str:

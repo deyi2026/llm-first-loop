@@ -41,6 +41,8 @@ def _run_single(engine, text: str, session_id: str | None = None) -> None:
     if result.verification_note:
         print(f"[校验] {result.verification_note.splitlines()[0][:100]}")
     print(result.final_answer)
+    if result.model_used:
+        print(f"—— {result.model_used}")
     print("─" * 60)
 
 
@@ -120,6 +122,8 @@ def _run_interactive(engine, session_id: str | None = None) -> None:
                 continue
         result = engine.run(sid, text)
         print(f"\nAI> {result.final_answer}")
+        if result.model_used:
+            print(f"—— {result.model_used}")
         if result.verification_note:
             print(f"[校验提示] {result.verification_note}")
 

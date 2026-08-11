@@ -167,6 +167,9 @@ class FeishuMessageHandler:
             answer += "\n（回答被截断）"
         if result.verification_note:
             answer += f"\n[声明提示] {result.verification_note}"
+        # M51: 回复下方标注实际生成模型（provider/model，如实透传）
+        if getattr(result, "model_used", ""):
+            answer += f"\n—— {result.model_used}"
         self._reply_chunked(msg, answer)
 
     # ── 附件/图片（复用 M39 web/upload_handlers + vision）──
@@ -234,7 +237,11 @@ class FeishuMessageHandler:
     def _run_inject(self, msg: FeishuMessage, prefix: str) -> None:
         """附件注入引擎执行 + 回复（M46：_run_with_processing_actions 包内）."""
         sid = self._session_map.get_or_create(self._map_key(msg))
-        reply = self._engine.run(sid, prefix).final_answer or "(空回答)"
+        result = self._engine.run(sid, prefix)
+        reply = result.final_answer or "(空回答)"
+        # M51: 回复下方标注实际生成模型
+        if getattr(result, "model_used", ""):
+            reply += f"\n—— {result.model_used}"
         self._reply_chunked(msg, reply)
 
     def register_attachment_download(
