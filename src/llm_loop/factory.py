@@ -159,6 +159,17 @@ def build_engine(settings: Settings) -> LoopEngine:
         ),
         memory_stats_fn=_build_memory_stats_fn(memory),
     )
+    # M56 B5（ANALYSIS-20260811）: 当前模型窗口注入 architecture_status（AI 可查后
+    # 自主决策上下文压缩；resolve 失败/未知模型如实返回 label+context=None，不伪造）
+    def _model_window_snapshot() -> dict:
+        try:
+            pid, mid = model_pool.registry.resolve(settings.llm_model)
+            spec = model_pool.registry.providers[pid].models.get(mid)
+            return {"label": f"{pid}/{mid}", "context": spec.context if spec else None}
+        except Exception:  # noqa: BLE001 — 窗口查询失败如实降级
+            return {"label": settings.llm_model, "context": None}
+
+    status_provider.set_model_context_fn(_model_window_snapshot)
 
     # 修正/检索工具注册表（M12 T50: RuntimeParams 与 ctx.strategy 共享 dict 引用）
     from llm_loop.core.runtime_params import RuntimeParams
@@ -168,6 +179,11 @@ def build_engine(settings: Settings) -> LoopEngine:
     runtime.set_persist_path(settings.audit_dir / "param_adjust_history.jsonl")
     runtime.set_max_adjust_per_round(settings.param_adjust_per_round)
     correction_ctx.runtime = runtime  # T50: adjust_strategy 消费/计数经 runtime
+    # M57 配置面收敛: architecture_status 展示 adjust_strategy 当前生效值（AI 可查可验证）
+    status_provider.set_runtime_params_fn(lambda: runtime.current())
+    # M59 配置面收敛: 语义检索召回上限接 runtime（AI 经 adjust_strategy 可调）
+    if semantic_retriever is not None:
+        semantic_retriever.set_top_k_provider(lambda: runtime.retrieve_semantic_top_k)
     corrections = CorrectionToolRegistry(
         correction_ctx,
         audit_dir=settings.audit_dir,
@@ -263,6 +279,9 @@ def build_engine(settings: Settings) -> LoopEngine:
             max_input_chars=settings.summary_max_input_chars,
         )
 
+    # R2: search_archive(with_summary=true) 时生成 LLM 语义摘要
+    correction_ctx.summarizer = summarizer
+
     # P1: 独立记忆提取器（EXTRACT_*, §3.6）
     extractor = None
     if settings.extract_enabled:
@@ -305,6 +324,8 @@ def build_engine(settings: Settings) -> LoopEngine:
 
     # M50（design §5.6）: 注入增强版 refresh_config executor — 重读 providers.json
     install_refresh_executor(engine)
+    # R1: 上下文占用分解注入 architecture_status（AI 每轮可见，自主决策压缩/切换）
+    status_provider.set_context_breakdown_fn(lambda: getattr(engine, "_last_breakdown", None))
     return engine
 
 

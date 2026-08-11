@@ -44,11 +44,15 @@ class CorrectionContext:
     """修正工具可作用的运行时状态（由主程序装配注入）."""
 
     # adjust_strategy 白名单参数（显式排除安全边界配置，FR-SAFE-01 不可绕过）
+    # M57-M59 配置面收敛: memory_top_k / extract_interval_msgs / retrieve_semantic_top_k
     strategy_whitelist: dict[str, dict] = field(
         default_factory=lambda: {
             "max_iterations": {"type": "integer", "min": 5, "max": 500},
             "timeout_s": {"type": "number", "min": 5, "max": 600},
             "history_budget": {"type": "integer", "min": 1000, "max": 1000000},
+            "memory_top_k": {"type": "integer", "min": 1, "max": 50},
+            "extract_interval_msgs": {"type": "integer", "min": 5, "max": 200},
+            "retrieve_semantic_top_k": {"type": "integer", "min": 1, "max": 100},
         }
     )
     # 运行时策略参数（可被 adjust_strategy 修改，由循环消费）
@@ -72,6 +76,7 @@ class CorrectionContext:
     model_pool: Any | None = None  # ModelClientPool（M48 新增；None 时工具回执"工具不可用"）
     session_set_override: Callable[[str | None], None] | None = None
     session_model_override: str | None = None  # 当前会话级覆盖（switch_model 审计 from→to 用）
+    summarizer: Any | None = None  # R2: search_archive(with_summary=true) 时生成 LLM 语义摘要
 
 
 class CorrectionToolRegistry:
@@ -134,6 +139,10 @@ class CorrectionToolRegistry:
                         "tool_name": {
                             "type": "string",
                             "description": "按来源工具名过滤（如 read_file）",
+                        },
+                        "with_summary": {
+                            "type": "boolean",
+                            "description": "是否对命中条目生成 LLM 语义摘要（默认 false，返回首尾摘要）。设 true 时每条命中多一次 LLM 调用（增加计费），用于需要语义理解被压内容的场景。",
                         },
                     },
                     "required": ["query"],
@@ -291,7 +300,10 @@ class CorrectionToolRegistry:
     def _run_search_archive(self, args: dict) -> ToolResult:
         from llm_loop.introspection.tools_status import run_search_archive
 
-        return run_search_archive(self.ctx, self._archive, args, self._current_session_id)
+        return run_search_archive(
+            self.ctx, self._archive, args, self._current_session_id,
+            summarizer=getattr(self.ctx, "summarizer", None),
+        )
 
     def _run_search_records(self, args: dict) -> ToolResult:
         from llm_loop.introspection.tools_status import run_search_records

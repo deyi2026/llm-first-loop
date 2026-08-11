@@ -21,6 +21,40 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def load_env_file(path: str | Path | None = None) -> None:
+    """从 .env 加载配置到环境变量（M63 配置加载统一，环境变量优先）.
+
+    供 CLI 等非 restart_system.sh 管理的入口在 load_settings 前调用，保证与
+    web/feishu 进程（restart_system.sh 已注入 .env）配置一致。
+
+    - 已设置的环境变量不被覆盖（环境优先）
+    - 忽略 # 注释与空行；值首尾单/双引号剥离
+    - 文件不存在 / 读取失败 fail-open（不阻断启动）
+    """
+    if path is None:
+        path = Path(__file__).resolve().parent.parent.parent / ".env"
+    p = Path(path)
+    if not p.exists():
+        return
+    try:
+        for raw in p.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            if not key or not key.isidentifier():
+                continue
+            if key in os.environ:
+                continue  # 环境变量优先，已设置的键不覆盖
+            val = val.strip()
+            if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+                val = val[1:-1]
+            os.environ[key] = val
+    except OSError:
+        pass  # 读取失败 fail-open
+
+
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.environ.get(name, "")
     if not raw:
@@ -100,6 +134,8 @@ class Settings:
     tool_summary_threshold: int = 5000
     # EVO-20260811-7baa2737: 历史分层降级（旧长 tool 消息降级为摘要，原文归档）
     tool_trim_enabled: bool = True
+    # R3: tool_trim 自适应降级年龄（0=自适应：按占用率自动调 <40%→20/40-70%→10/>70%→5；>0=固定值禁用自适应）
+    tool_trim_age: int = 0
     # ── EXEC_MODE 命令分级（EVO-20260810-2549e9b6）──
     # 默认空 = 不启用分级（AI 可执行 shell，仅灾难性硬阻断）；可选 readonly/allowlist/blocked 安全分级
     exec_mode: str = ""
@@ -138,6 +174,9 @@ class Settings:
     extract_cooldown_s: float = 600.0
     extract_max_input_chars: int = 100000
     extract_timeout_s: float = 60.0
+    # M66 思考链瘦身: 提交给 LLM 的历史中仅保留最近 N 轮 assistant 思考链
+    # （0=全部保留；缩减上下文体积，最近轮 THK-04 回传不受影响）
+    reasoning_tail: int = 2
 
     # ── P1 校验语义匹配（FR-P1-OPT-01, §3.6）──
     validate_semantic: bool = False
@@ -285,6 +324,7 @@ def load_settings() -> Settings:
         tool_max_output_chars=_env_int("TOOL_MAX_OUTPUT_CHARS", 100000),
         tool_summary_threshold=_env_int("TOOL_SUMMARY_THRESHOLD", 5000),
         tool_trim_enabled=_env_bool("TOOL_TRIM_ENABLED", True),
+        tool_trim_age=_env_int("TOOL_TRIM_AGE", 0),
         exec_mode=_env_exec_mode("EXEC_MODE"),
         exec_allowlist=os.environ.get("EXEC_ALLOWLIST", "").strip(),
         tool_schema_lazy=_env_bool("TOOL_SCHEMA_LAZY", False),
@@ -306,6 +346,7 @@ def load_settings() -> Settings:
         retrieve_semantic_top_k=_env_int("RETRIEVE_SEMANTIC_TOP_K", 20),
         extract_enabled=_env_bool("EXTRACT_ENABLED", True),
         extract_interval_msgs=_env_int("EXTRACT_INTERVAL_MSGS", 20),
+        reasoning_tail=_env_int("REASONING_TAIL", 2),  # M66 思考链瘦身（0=全部保留）
         extract_cooldown_s=float(_env_int("EXTRACT_COOLDOWN_S", 600)),
         extract_max_input_chars=_env_int("EXTRACT_MAX_INPUT_CHARS", 100000),
         extract_timeout_s=float(_env_int("EXTRACT_TIMEOUT_S", 60)),

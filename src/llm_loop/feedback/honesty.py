@@ -133,3 +133,36 @@ def program_error_message(
             )
     content += "建议: 若尝试修复无效，请基于现有上下文继续作答，或换用其他信息途径；程序会如实反馈，不会静默。"
     return Message(role="system", content=content, source=MessageSource.SYSTEM)
+
+
+def overflow_feedback(
+    exc: Exception,
+    breakdown: dict | None = None,
+    model_window: dict | None = None,
+) -> str:
+    """R4: overflow 如实反馈（不自动重试，决策权归 AI）.
+
+    告知 AI: 错误事实 + 当前占用 + 模型窗口 + 可选动作（AI 自主选择）。
+    程序不替 AI 压缩/重试（避免丢信息影响大模型决策）。
+    """
+    lines = [
+        f"[上下文溢出] 事实: provider 返回 overflow 错误: {exc}",
+        "原因: 当前上下文超过模型窗口上限。",
+        "程序未自动压缩重试（避免丢信息影响你的决策），请自主选择:",
+        "① search_archive(query=\"关键词\") 检索被压内容，确认关键信息是否在上下文",
+        "② adjust_strategy(history_budget=更小值) 主动压缩历史",
+        "③ switch_model(更大窗口模型) 切换模型",
+        "④ 开新会话（旧会话历史已另存可经 search_archive 找回）",
+    ]
+    if breakdown:
+        total = breakdown.get("total", {})
+        lines.append(
+            f"当前占用: {total.get('chars', 0)} 字符"
+            f" / 预算 {breakdown.get('budget', 0)}"
+            f"（比例 {breakdown.get('ratio', 'N/A')}）"
+        )
+    if model_window:
+        lines.append(
+            f"模型窗口: {model_window.get('label', '?')} context={model_window.get('context', '?')}"
+        )
+    return "\n".join(lines)

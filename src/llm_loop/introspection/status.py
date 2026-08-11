@@ -235,11 +235,48 @@ class ArchitectureStatusProvider:
         }
 
     # ── 查询（拉取通道）──
+    def set_model_context_fn(self, fn) -> None:
+        """注入当前模型窗口查询回调（M56 B5：AI 可查窗口后自主决策压缩）.
+
+        fn() -> dict | None，如 {"label": "deepseek/deepseek-v4-flash", "context": 131072}；
+        未注入 → snapshot 中 model_window 为 None（向后兼容）。
+        """
+        self._model_context_fn = fn
+
+    def set_runtime_params_fn(self, fn) -> None:
+        """注入运行时参数快照查询回调（M57 配置面收敛：AI 可查 adjust_strategy 生效值）.
+
+        fn() -> dict，如 {"max_iterations": 30, "memory_top_k": 12}；
+        未注入 → snapshot 中 runtime_params 为 None（向后兼容）。
+        """
+        self._runtime_params_fn = fn
+
+    def set_context_breakdown_fn(self, fn) -> None:
+        """注入上下文占用分解回调（R1: AI 经 architecture_status 可见组件级占用）.
+
+        fn() -> dict | None；未注入 → snapshot 中 breakdown 为 None（向后兼容）。
+        """
+        self._context_breakdown_fn = fn
+
     def snapshot(self, session_id: str = "", dimensions: list[str] | None = None) -> dict:
         """构造八维状态快照（紧凑 JSON，维度可按需裁剪）.
 
         部分维度不可用时如实标注（不伪造状态）。
         """
+        model_window = None
+        fn = getattr(self, "_model_context_fn", None)
+        if fn is not None:
+            try:
+                model_window = fn()
+            except Exception:  # noqa: BLE001 — 窗口查询失败如实标注 None（fail-open）
+                model_window = None
+        runtime_params = None
+        fn2 = getattr(self, "_runtime_params_fn", None)
+        if fn2 is not None:
+            try:
+                runtime_params = fn2()
+            except Exception:  # noqa: BLE001 — 参数快照失败如实标注 None（fail-open）
+                runtime_params = None
         avail = {
             "current_phase": self._current_phase,
             "action_trace": [a.to_dict() for a in self._action_trace[-30:]],
@@ -259,6 +296,16 @@ class ArchitectureStatusProvider:
                 "llm_rounds": self._llm_rounds,
                 "action_trace_count": len(self._action_trace),
                 "archive": self._archive_stats_fn() if self._archive_stats_fn else None,
+                # M56 B5（ANALYSIS-20260811）: 当前模型窗口（AI 可查后自主决策压缩）
+                "model_window": model_window,
+                # M57 配置面收敛: adjust_strategy 当前生效值（AI 可查可验证）
+                "runtime_params": runtime_params,
+                # R1: 组件级占用分解（AI 每轮可见，自主决策压缩/切换/开新会话）
+                "breakdown": (
+                    self._context_breakdown_fn()
+                    if getattr(self, "_context_breakdown_fn", None)
+                    else None
+                ),
                 "records_hint": "完整历史运行记录可用 search_records 检索（不限于内存窗口）",
             },
             "exception_log": [
