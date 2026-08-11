@@ -5,11 +5,17 @@
 JSON 文件存储（P0），条目含 id/type/content/keywords/source_session_id/
 source_message_id/created_at（数据约束 6.3: 可检索、来源可溯）。
 失败不阻塞主循环（FR-MEM-03），由调用方捕获并如实标注。
+
+版本化与去重（EVO-20260811-cbd6c52a）: 同一事实更新时覆盖旧版而非追加，
+保留 version/updated_at，旧版内容沉入 version_history（不删除业务数据），
+注入排序按版本新鲜度。
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -36,12 +42,21 @@ class MemoryEntry:
     last_access_at: str = ""         # 最近访问时间 ISO（空=从未被检索）
     decay_score: float = 1.0         # 衰减分（1.0=最新最活跃；随未访问天数下降）
     citations: list[dict] = field(default_factory=list)  # 溯源: [{"kind","ref","note"}]
+    # ── 版本化与去重（EVO-20260811-cbd6c52a）──
+    version: int = 1                 # 版本号（同事实更新 +1）
+    updated_at: str = ""             # 最近更新时间 ISO（空=与 created_at 同）
+    version_history: list[dict] = field(default_factory=list)  # 旧版沉淀: [{"version","content","updated_at"}]
 
     def to_dict(self) -> dict:
         return asdict(self)
 
 
 _HALF_LIFE_DAYS = 30.0  # Phase 2: 衰减半衰期（decay = 0.5 ** (未访问天数/30)）
+
+
+def _normalize_content(text: str) -> str:
+    """内容规范化（用于指纹/同事实判定）: 去首尾空白、折叠空白、小写."""
+    return re.sub(r"\s+", " ", text.strip()).lower()
 
 
 class MemoryStore:
@@ -72,11 +87,69 @@ class MemoryStore:
             encoding="utf-8",
         )
 
+    # ── 版本化与去重（EVO-20260811-cbd6c52a）──
+    def _compute_fingerprint(self, entry: MemoryEntry) -> str:
+        """规范化内容 SHA-256（空内容返回空串，不参与指纹匹配）."""
+        norm = _normalize_content(entry.content)
+        if not norm:
+            return ""
+        return hashlib.sha256(norm.encode("utf-8")).hexdigest()
+
+    def _find_same_fact(self, entry: MemoryEntry) -> MemoryEntry | None:
+        """查找"同事实"旧条目:
+        - 强匹配: content_fingerprint 非空且相等（内容规范化后完全一致）
+        - 弱匹配: type 相同 且 双方 keywords 均非空 且 交集 >= 1（同一主题更新）
+        都不命中返回 None（视为新事实追加）。
+        """
+        fp = entry.content_fingerprint or self._compute_fingerprint(entry)
+        new_keys = {str(k).lower() for k in entry.keywords}
+        for e in self._entries:
+            if fp and (e.content_fingerprint or self._compute_fingerprint(e)) == fp:
+                return e
+            if (
+                e.type == entry.type
+                and new_keys
+                and e.keywords
+                and new_keys & {str(k).lower() for k in e.keywords}
+            ):
+                return e
+        return None
+
+    def _update_existing(self, existing: MemoryEntry, entry: MemoryEntry) -> MemoryEntry:
+        """覆盖更新旧条目（保留 id/created_at/访问统计，版本 +1，旧版沉 version_history）."""
+        now = datetime.now(UTC).isoformat()
+        # 旧版沉淀（不删除业务数据）
+        existing.version_history.append(
+            {
+                "version": existing.version,
+                "content": existing.content,
+                "updated_at": existing.updated_at or existing.created_at,
+            }
+        )
+        existing.version += 1
+        existing.content = entry.content
+        existing.keywords = list(entry.keywords)
+        existing.summary = entry.summary or existing.summary
+        existing.source_session_id = entry.source_session_id or existing.source_session_id
+        existing.source_message_id = entry.source_message_id or existing.source_message_id
+        existing.updated_at = now
+        existing.content_fingerprint = entry.content_fingerprint or self._compute_fingerprint(entry)
+        existing.decay_score = 1.0  # 更新即"最新"，衰减重置（访问统计保留）
+        return existing
+
     def save_entry(self, entry: MemoryEntry) -> MemoryEntry:
         if not entry.id:
             entry.id = f"MEM-{datetime.now(UTC).strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}"
         if not entry.created_at:
             entry.created_at = datetime.now(UTC).isoformat()
+        if not entry.content_fingerprint:
+            entry.content_fingerprint = self._compute_fingerprint(entry)
+        existing = self._find_same_fact(entry)
+        if existing is not None:
+            updated = self._update_existing(existing, entry)
+            self._save()
+            return updated
+        entry.updated_at = entry.updated_at or entry.created_at
         self._entries.append(entry)
         self._save()
         return entry
@@ -96,8 +169,15 @@ class MemoryStore:
                 e.access_count += 1
                 e.last_access_at = now
                 scored.append((score, e))
-        # 排序: 关键词分降序 → decay_score 降序 → created_at 降序（reverse=True 三键全降序）
-        scored.sort(key=lambda x: (x[0], x[1].decay_score, x[1].created_at), reverse=True)
+        # 排序: 关键词分降序 → decay_score 降序 → 版本新鲜度（updated_at/created_at）降序
+        scored.sort(
+            key=lambda x: (
+                x[0],
+                x[1].decay_score,
+                x[1].updated_at or x[1].created_at,
+            ),
+            reverse=True,
+        )
         return [e for _, e in scored[:top_k]]
 
     @staticmethod
