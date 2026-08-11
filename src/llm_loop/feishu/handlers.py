@@ -118,7 +118,30 @@ class FeishuMessageHandler:
         # M50（design §六）: 飞书 /model 指令拦截（与 CLI 共用同一套处理逻辑）
         if self._try_handle_model_command(msg, text):
             return
+        # M55: 飞书 /new·/clear 会话指令拦截（对齐 Web 快捷命令, founder 实测缺口）
+        if self._try_handle_session_command(msg, text):
+            return
         self._run_with_processing_actions(msg, self._run_text, text)
+
+    def _try_handle_session_command(self, msg: FeishuMessage, text: str) -> bool:
+        """M55: 飞书会话指令拦截（/new 新会话 /clear 继续但开新上下文）.
+
+        Returns:
+            True → 已处理；False → 非会话指令，继续走原路径。
+        """
+        cmd = text.strip().lower()
+        if cmd not in {"/new", "/clear"}:
+            return False
+        key = self._map_key(msg)
+        self._session_map.remove(key)
+        new_sid = self._session_map.get_or_create(key)
+        # 审计落盘（如实记录新会话 ID 前 8 位）
+        self._audit(msg, "session_new", f"{cmd} → {new_sid[:8]}")
+        if cmd == "/new":
+            self._reply(msg, "已新建会话。旧会话已保留，可经 CLI/Web 端查看。")
+        else:
+            self._reply(msg, "已开启新上下文（旧会话保留）。")
+        return True
 
     def _try_handle_model_command(self, msg: FeishuMessage, text: str) -> bool:
         """M50：飞书 /model 指令拦截（三端一致性，与 CLI 共用 handle_model_command）.
