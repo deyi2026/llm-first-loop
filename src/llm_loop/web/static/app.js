@@ -250,6 +250,8 @@ async function sendMessage() {
       const note = [];
       if (data.truncated) note.push("（回答被截断）");
       if (data.verification_note) note.push(data.verification_note);
+      // M51: 回复下方标注实际生成模型（provider/model，含降级后的真实模型）
+      if (data.model_used) note.push(`—— ${data.model_used}`);
       addMessage("assistant", data.final_answer, note.join("\n") || null);
     } else if (status === 404) {
       addMessage("error", data.detail || "会话不存在，请新建会话。");

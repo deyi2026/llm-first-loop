@@ -86,6 +86,7 @@ def chat(payload: ChatRequest, request: Request) -> ChatResponse | Response:
         rounds=result.rounds,
         tool_calls=result.tool_calls,
         truncated=result.truncated,
+        model_used=result.model_used,
     )
 
 
