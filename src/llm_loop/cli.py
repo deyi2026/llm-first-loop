@@ -120,6 +120,11 @@ def _run_interactive(engine, session_id: str | None = None) -> None:
             continue
         if text.lower() in {"exit", "quit", "退出"}:
             break
+        # M55: /new·/clear 会话指令拦截 (与飞书桥/Web 快捷命令对齐)
+        if text.strip().lower() in {"/new", "/clear"}:
+            sid = session_store.create()
+            print(f"\n[新会话] 已切换到新会话 {sid[:8]}（旧会话保留，可 list 查看）")
+            continue
         # M50: /model 指令拦截 (与飞书桥共用同一套处理逻辑)
         ctx = getattr(engine, "correction_ctx", None)
         if ctx is not None:

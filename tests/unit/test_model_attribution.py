@@ -345,3 +345,45 @@ def test_web_chat_response_carries_model_used(
     resp = client.post("/api/v1/chat", json={"message": "你好"})
     assert resp.status_code == 200
     assert resp.json()["model_used"] == "deepseek/deepseek-v4-flash"
+
+
+# ── M55: 飞书 /new 会话指令 ──
+
+
+def test_feishu_new_command_creates_fresh_session(tmp_path) -> None:
+    """飞书 /new → 换新会话 + 如实回执 + 旧会话保留."""
+    from llm_loop.core.session import SessionStore
+    from llm_loop.feishu.handlers import FeishuMessage, FeishuMessageHandler
+    from llm_loop.feishu.session_map import SessionMap
+
+    session_store = SessionStore(str(tmp_path / "sessions"))
+
+    class _StubEngine:
+        session = session_store
+
+        def run(self, sid, text):
+            return SimpleNamespace(
+                session_id=sid, final_answer="回答", verification_note=None,
+                rounds=1, tool_calls=[], truncated=False, model_used="",
+                tokens_in=0, tokens_out=0,
+            )
+
+    session_map = SessionMap(session_store, path=str(tmp_path / "map.json"))
+    replies: list[tuple[str, str, str]] = []
+    handler = FeishuMessageHandler(
+        _StubEngine(), session_map,
+        lambda rid, text, rtype: replies.append((rid, text, rtype)),
+        audit_dir=str(tmp_path / "audit"),
+    )
+    msg = FeishuMessage(
+        message_id="om_n1", sender_id="ou_u", chat_id="oc_c", msg_type="text", text="/new"
+    )
+    key = session_map.p2p_key("ou_u")
+
+    old_sid = session_map.get_or_create(key)  # 模拟已有会话
+    handler.handle(msg)
+    new_sid = session_map.get(key)
+
+    assert new_sid != old_sid  # 换了新会话
+    assert "已新建会话" in replies[0][1]
+    assert session_store.exists(old_sid)  # 旧会话保留
