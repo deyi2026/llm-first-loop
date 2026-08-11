@@ -54,6 +54,12 @@ def format_tokens(n: int) -> str:
     return str(n)
 
 
+# M53: 上下文守卫估算口径（chars/token 保守估计, 中文混合内容约 2 字符/token）
+_CHARS_PER_TOKEN_EST = 2
+# 安全边距: 预留 10% 给响应生成
+_CONTEXT_SAFETY_MARGIN = 0.9
+
+
 @dataclass
 class LoopResult:
     """一次 run() 的完整结果（如实交付用户，design.md §2.2.2.3）."""
@@ -252,6 +258,21 @@ class LoopEngine:
             else:
                 llm_client = self.llm
                 model_used = self._default_model_label()
+            # ── M53: 上下文超限前置守卫 ──
+            # 载荷估算超模型注册表 context 上限 → 如实拒绝, 不发注定失败的请求
+            # (如 kimi/k3-256k 仅 256K 窗口, 1M 预算装配的历史必被 provider 拒绝)
+            # 未知模型 context（无 pool/裸标签）→ 跳过守卫, 不阻断
+            context_limit = self._current_context_limit(model_used)
+            if context_limit:
+                refusal = self._check_context_fit(
+                    messages, tools_param, context_limit, model_used
+                )
+                if refusal is not None:
+                    self._record_action(
+                        "action.llm_decide", "context_overflow", refusal[:200]
+                    )
+                    final_answer = refusal
+                    break
             try:
                 resp = llm_client.chat(
                     messages=messages,
@@ -451,6 +472,47 @@ class LoopEngine:
             except ValueError:
                 pass
         return model
+
+    def _current_context_limit(self, model_label: str) -> int | None:
+        """M53: 查询当前模型的上下文上限（注册表 ModelSpec.context 元数据）.
+
+        model_label 为全限定 "provider/model"（M51 路由已保证）；无 pool / 裸名 / 未知 → None（守卫跳过）.
+        """
+        if self.llm_pool is None or not model_label or "/" not in model_label:
+            return None
+        pid, mid = model_label.split("/", 1)
+        spec = self.llm_pool.registry.providers.get(pid)
+        if spec is None or mid not in spec.models:
+            return None
+        context = spec.models[mid].context
+        return context if context and context > 0 else None
+
+    @staticmethod
+    def _check_context_fit(
+        messages: list[dict],
+        tools_param: list[dict],
+        context_limit: int,
+        model_label: str,
+    ) -> str | None:
+        """M53: 载荷 vs 模型上下文上限校验.
+
+        估算口径: JSON 序列化字符数 / 2 ≈ tokens（中文混合保守估计）+ 10% 安全边距。
+        超限 → 返回如实拒绝文案（不发送请求）；未超 → None。
+        """
+        payload_chars = sum(len(_json_dumps_args(m)) for m in messages) + len(
+            _json_dumps_args({"tools": tools_param})
+        )
+        est_tokens = payload_chars // _CHARS_PER_TOKEN_EST
+        allowed = int(context_limit * _CONTEXT_SAFETY_MARGIN)
+        if est_tokens <= allowed:
+            return None
+        return (
+            f"[上下文超限] 本次请求载荷约 {est_tokens} tokens（按 {_CHARS_PER_TOKEN_EST} 字符/token 估算），"
+            f"超过当前模型 {model_label} 的上下文上限 {context_limit}（安全边距后可用 {allowed}）。\n"
+            f"建议：① /model 切换到更大窗口模型；② /new 开新会话（历史另存可经 search_archive 找回）；"
+            f"③ 缩短本次输入。\n"
+            f"（程序守卫：未发送请求，避免必失败调用；估算口径可能有误差，以 provider 实际判定为准）"
+        )
 
     # ── 辅助 ──
     def _build_llm_messages(self, sess, memory_msgs: list[Message]) -> list[dict]:
