@@ -48,6 +48,7 @@ def build_engine(settings: Settings) -> LoopEngine:
 
     # M47（design §5.1/§5.5）: 从注册表查思考支持（消除 _thinking_supported() 硬编码 deepseek.com）.
     # 当前模型不在注册表（如显式使用未注册的模型）→ 保持 LLMClient 默认（向后兼容）.
+    # M48（design §5.3）: 注册表同时为 ModelClientPool 提供服务（路由/缓存/思考查询）。
     thinking_supported: bool | None = None
     try:
         from llm_loop.llm.providers import load_registry
@@ -71,6 +72,12 @@ def build_engine(settings: Settings) -> LoopEngine:
         # M47 §5.5: 元数据驱动的思考支持判定（None 时退回硬编码，向后兼容）
         thinking_supported=thinking_supported,
     )
+
+    # M48（design §5.3）: 模型客户端路由池（会话级 model_override 路由 + provider 级缓存）
+    # 未配置 MODEL_PROVIDERS（仅 L0 单 provider 合成）→ 池仅有默认 client，行为与现状一致
+    from llm_loop.llm.pool import ModelClientPool
+
+    model_pool = ModelClientPool(registry=registry, default_client=llm)
 
     # 存储（记忆 + 压缩档案 + 会话）
     memory = MemoryStore(settings.memory_dir)
@@ -182,6 +189,9 @@ def build_engine(settings: Settings) -> LoopEngine:
         min_samples=getattr(settings, "self_eval_min_samples", 5),
         span=getattr(settings, "self_eval_span", 50),
     )
+    # M48（design §5.3）: 模型路由池注入；session_set_override 回调在 run() 内动态绑定，
+    # 此处先注入 pool 让 tool_defs() 完整（让 LLM 在工具列表中看到 model_catalog/switch_model）
+    correction_ctx.model_pool = model_pool
 
     # T23: 统一检索实现注入（search_records）+ T31 语义路径
     searcher = RecordSearcher(
@@ -277,6 +287,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         eval_trigger_detector=_build_eval_trigger_detector(settings),
         evolution_store=correction_ctx.evolution_store,  # M17 FR-REVIEW-AI-02: executing 提醒数据源
         loop_signal_detector=_build_loop_signal_detector(settings, status_provider, corrections),
+        llm_pool=model_pool,  # M48（design §5.3）: 会话级模型路由
     )
 
 

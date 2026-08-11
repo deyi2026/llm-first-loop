@@ -55,6 +55,9 @@ class Session:
     parent_id: str | None = None  # 父会话 id（根会话为 None；fork 时指向来源会话）
     branch_id: str = ""           # 分支标识（根会话为空；fork 生成唯一短 id）
     branch_summary: str = ""      # 分支摘要（fork 时从父会话分叉点后提炼，跨分支情报传递）
+    # M48（design §5.3）：会话级模型覆盖（switch_model 工具写入；None = 用装配默认）
+    # 旧会话 JSON 缺省 → None（向后兼容，向前兼容 version 1/2/3 三套字段）
+    model_override: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -67,6 +70,7 @@ class Session:
             "parent_id": self.parent_id,
             "branch_id": self.branch_id,
             "branch_summary": self.branch_summary,
+            "model_override": self.model_override,
             "messages": [
                 {
                     "role": m.role,
@@ -184,6 +188,8 @@ class SessionStore:
                 parent_id=data.get("parent_id"),  # version 3: 分支字段缺省向后兼容
                 branch_id=data.get("branch_id", ""),
                 branch_summary=data.get("branch_summary", ""),
+                # M48: model_override 缺省向后兼容（旧 JSON 无键 → None）
+                model_override=data.get("model_override"),
             )
         except (json.JSONDecodeError, KeyError, ValueError):
             # 如实降级：文件损坏时返回新会话（不伪造恢复）

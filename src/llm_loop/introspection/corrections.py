@@ -26,6 +26,14 @@ from llm_loop.introspection.tools_exec_complete import (
     EVOLUTION_COMPLETE_TOOL_DEF as _EVOLUTION_COMPLETE_TOOL_DEF,
 )
 
+# M48（design §5.3）: model_catalog / switch_model 工具定义（引自独立模块，避免重复维护）
+from llm_loop.introspection.tools_model import (
+    MODEL_CATALOG_TOOL_DEF as _MODEL_CATALOG_TOOL_DEF,
+)
+from llm_loop.introspection.tools_model import (
+    SWITCH_MODEL_TOOL_DEF as _SWITCH_MODEL_TOOL_DEF,
+)
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
@@ -58,6 +66,12 @@ class CorrectionContext:
     )
     evolve_exec_whitelist: str = ""  # M12 深化 T60: 执行白名单（逗号分隔，级别 1 时生效）
     evaluator: Any | None = None  # M12 深化 T64: SelfEvaluator（self_evaluate）
+    # M48（design §5.3）: 会话级模型覆盖 + 模型客户端池
+    # model_pool 注入后, model_catalog / switch_model 工具可用
+    # session_set_override(model_ref) 回调: switch_model 写入新 override（None=清除）
+    model_pool: Any | None = None  # ModelClientPool（M48 新增；None 时工具回执"工具不可用"）
+    session_set_override: Callable[[str | None], None] | None = None
+    session_model_override: str | None = None  # 当前会话级覆盖（switch_model 审计 from→to 用）
 
 
 class CorrectionToolRegistry:
@@ -226,6 +240,10 @@ class CorrectionToolRegistry:
             },
             # M17 FR-REVIEW-AI-01: evolution_complete 工具（定义引自独立模块，避免重复维护）
             _EVOLUTION_COMPLETE_TOOL_DEF,
+            # M48（design §5.3）: model_catalog / switch_model 工具（model_pool 未注入时仍注册 schema，
+            # 执行时如实回执'工具不可用'，LLM 仍可感知工具存在）
+            _MODEL_CATALOG_TOOL_DEF,
+            _SWITCH_MODEL_TOOL_DEF,
         ]
 
     def execute(self, name: str, arguments: dict) -> ToolResult:
@@ -248,6 +266,10 @@ class CorrectionToolRegistry:
             return self._run_evolution_complete(arguments)
         if name == "refresh_config":
             return self._run_refresh()
+        if name == "model_catalog":
+            return self._run_model_catalog(arguments)
+        if name == "switch_model":
+            return self._run_switch_model(arguments)
         return ToolResult(
             status=ToolResultStatus.FAILURE,
             content=f"[修正工具不存在] 未注册的修正工具 '{name}'",
@@ -435,6 +457,42 @@ class CorrectionToolRegistry:
             tool_call_id="",
             tool_name="refresh_config",
         )
+
+    # ── M48（design §5.3）: model_catalog / switch_model 工具薄壳委托 ──
+    def _run_model_catalog(self, args: dict) -> ToolResult:
+        """model_catalog: 列出可用模型 + 当前会话模型（只读）.
+
+        实现拆分至 introspection/tools_model.py（按 M17 evolution_complete 模式）,
+        本壳仅做上下文转发 + 审计记录。
+        """
+        from llm_loop.introspection.tools_model import run_model_catalog
+
+        result = run_model_catalog(
+            self.ctx,
+            self.ctx.model_pool,
+            self.ctx.session_model_override,
+        )
+        self._audit("model_catalog", args, result.status.value)
+        return result
+
+    def _run_switch_model(self, args: dict) -> ToolResult:
+        """switch_model: 切换会话级模型覆盖 + 审计落盘.
+
+        实现拆分至 introspection/tools_model.py, 本壳仅做上下文转发;
+        写入失败由 tools_model.run_switch_model 内部捕获并如实回执。
+        """
+        from llm_loop.introspection.tools_model import run_switch_model
+
+        result = run_switch_model(
+            self.ctx,
+            self.ctx.model_pool,
+            self.ctx.session_set_override,
+            self._audit,
+            args,
+        )
+        # tools_model.run_switch_model 内部已审计成功路径；此处补一次失败审计（如未记）
+        # 简化: 不重复审计（tools_model 已处理 success 路径; 失败路径不污染审计）
+        return result
 
     def _audit(self, tool_name: str, arguments: dict, result_status: str) -> None:
         """修正动作审计落盘（AI 可溯源，design.md §2.3.2）."""
