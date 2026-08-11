@@ -66,6 +66,17 @@ def _env_exec_mode(name: str) -> str:
     return raw if raw in {"readonly", "allowlist", "blocked"} else "blocked"
 
 
+def _count_fallbacks(raw: str) -> int:
+    """MODEL_FALLBACKS 计数（仅统计非空逗号分隔项，非法判定由 pool.fallback_candidates 完成）.
+
+    to_status_dict 暴露此计数的目的: AI 可经 architecture_status 自查"是否配置了降级链"，
+    但**不暴露降级链明细**（provider/model 引用集合不外泄，密钥安全 DFX-SEC-02 + 设计原则 4）。
+    """
+    if not raw:
+        return 0
+    return sum(1 for item in raw.split(",") if item.strip())
+
+
 @dataclass(frozen=True)
 class Settings:
     """集中配置面：全部运行参数从环境变量装配（design.md §2.4.1）."""
@@ -158,6 +169,14 @@ class Settings:
     # to_status_dict 不输出原始 JSON（不暴露配置细节, 仅暴露 bool 标志）.
     model_providers_raw: str = ""
 
+    # ── M49 Fallback 链原始字符串（design §5.4）──
+    # 仅承载 MODEL_FALLBACKS env 的原始字符串（逗号分隔 provider/model 引用）,
+    # 解析由 llm.pool.ModelClientPool.fallback_candidates 完成（非法条目跳过, 空 = 不启用）.
+    # to_status_dict 不输出明细（不暴露降级链细节）, 仅暴露计数（model_fallbacks_count）.
+    # 降级仅在默认装配模型失败时生效；会话显式 override（含用户/AI 经 switch_model 选择）
+    # 走严格模式失败直接如实反馈，不自动降级（design §5.4 行为规则表核心）。
+    model_fallbacks_raw: str = ""
+
     # 运行时装配（非 env）: 由 builder 注入
     _extra: dict = field(default_factory=dict, repr=False, compare=False)
 
@@ -219,6 +238,8 @@ class Settings:
             "self_eval_span": self.self_eval_span,
             # M47: Provider 注册表配置状态（AI 可自查, 不暴露原始 JSON）
             "model_providers_configured": bool(self.model_providers_raw),
+            # M49: Fallback 链配置状态（仅计数, 不暴露降级链明细, 密钥安全 DFX-SEC-02）
+            "model_fallbacks_count": _count_fallbacks(self.model_fallbacks_raw),
         }
 
 
@@ -296,4 +317,6 @@ def load_settings() -> Settings:
         self_eval_span=_env_int("SELF_EVAL_SPAN", 50),
         # M47（design §5.1）: MODEL_PROVIDERS 注册表 JSON, 解析由 llm.providers.load_registry 完成
         model_providers_raw=os.environ.get("MODEL_PROVIDERS", "").strip(),
+        # M49（design §5.4）: MODEL_FALLBACKS 降级链原始值, 解析由 llm.pool 完成
+        model_fallbacks_raw=os.environ.get("MODEL_FALLBACKS", "").strip(),
     )

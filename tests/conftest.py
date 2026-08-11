@@ -86,12 +86,17 @@ def __build_test_pool(fake, fake_settings):
 
     Pool 仅作为路由容器；测试场景不实际走 provider 级 LLMClient（仍是 FakeLLM）.
     默认 L0 合成注册表（仅含 fake_settings.llm_model）,保证零回归.
+    M49（design §5.4）: 传递 model_fallbacks_raw（默认空, 单元测试 fallback 行为时单独构造 pool）.
     """
     from llm_loop.llm.pool import ModelClientPool
     from llm_loop.llm.providers import load_registry
 
     registry = load_registry(fake_settings)
-    return ModelClientPool(registry=registry, default_client=fake)  # type: ignore[arg-type]
+    return ModelClientPool(  # type: ignore[arg-type]
+        registry=registry,
+        default_client=fake,
+        model_fallbacks_raw=fake_settings.model_fallbacks_raw,
+    )
 
 
 @pytest.fixture

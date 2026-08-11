@@ -511,3 +511,45 @@ class CorrectionToolRegistry:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
         except OSError:
             pass  # fail-open
+
+    def audit_fallback_event(
+        self,
+        *,
+        from_model: str,
+        to_model: str,
+        reason: str,
+        result_status: str,
+        detail: str = "",
+    ) -> None:
+        """M49（design §5.4）: 模型降级事件审计落盘（独立子方法便于 loop.py 直接调用）.
+
+        与 _audit 一致落 self_correction_log.jsonl（AI 可经 search_records(kind=self_correction_log) 检索）;
+        tool_name 固定为 "model_fallback", 便于检索时与 switch_model 等工具区分.
+
+        Args:
+            from_model: 原模型引用（如 "deepseek/deepseek-v4-flash" 或裸名）
+            to_model: 降级后模型引用（同上格式；"all_failed" 表示链全失败）
+            reason: 失败原因（如 "429 限流", "网络不可达", "5xx"）
+            result_status: "success"（单次降级成功） / "all_failed"（链全失败汇总）/ "skipped"（严格模式不降级）
+            detail: 详情（如各候选失败原因汇总, 仅 result_status="all_failed" 时有意义）
+        """
+        if self._audit_dir is None:
+            return
+        try:
+            self._audit_dir.mkdir(parents=True, exist_ok=True)
+            record = {
+                "id": f"COR-{datetime.now(UTC).strftime('%Y%m%d')}",
+                "ts": _now(),
+                "tool_name": "model_fallback",
+                "arguments": {
+                    "from": from_model,
+                    "to": to_model,
+                    "reason": reason,
+                    "detail": detail,
+                },
+                "result_status": result_status,
+            }
+            with (self._audit_dir / "self_correction_log.jsonl").open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except OSError:
+            pass  # fail-open

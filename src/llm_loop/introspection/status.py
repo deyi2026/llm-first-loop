@@ -95,6 +95,8 @@ class ArchitectureStatusProvider:
         self._exception_log: list[ExceptionLogItem] = []
         self._last_exception_ts: float = 0.0
         self._llm_rounds = 0
+        # M49（design §5.4）: 当前降级状态（None = 未处于降级; dict = 最近一次降级）
+        self._fallback_state: dict | None = None
 
     # ── 采集（循环事件附带调用，零侵入）──
     def record_phase(self, phase: str) -> None:
@@ -181,6 +183,57 @@ class ArchitectureStatusProvider:
                 "entries_hint": None,
             }
 
+    # ── M49（design §5.4）: 模型降级状态（architecture_status 可见） ──
+    def record_fallback(
+        self, from_model: str, to_model: str, reason: str, *, session_id: str = ""
+    ) -> None:
+        """记录一次模型降级（仅保留最近一次,供 architecture_status 可见）.
+
+        Args:
+            from_model: 原模型引用（"provider/model" 或裸模型名）
+            to_model: 降级后模型引用
+            reason: 失败原因（"429 限流" / "网络不可达" / "5xx 上游错误" 等,设计原则 2 如实反馈）
+            session_id: 当前会话 ID（关联降级事件与会话）
+        """
+        if not self.enabled:
+            return
+        self._fallback_state = {
+            "ts": _now(),
+            "from": from_model,
+            "to": to_model,
+            "reason": reason,
+            "session_id": session_id,
+        }
+
+    def clear_fallback(self) -> None:
+        """清除降级状态（下次成功调用 default 模型后由调用方调用; 当前仅在 loop.run 出口自动调用）."""
+        if not self.enabled:
+            return
+        self._fallback_state = None
+
+    def _fallback_status(self) -> dict:
+        """降级状态摘要（architecture_status 维度, 有则显示, 无则 null/None）.
+
+        Returns:
+            dict: 含 from/to/reason/ts 字段；未处于降级态时各字段为 None
+        """
+        st = getattr(self, "_fallback_state", None)
+        if not st:
+            return {
+                "active": False,
+                "from": None,
+                "to": None,
+                "reason": None,
+                "ts": None,
+            }
+        return {
+            "active": True,
+            "from": st.get("from"),
+            "to": st.get("to"),
+            "reason": st.get("reason"),
+            "ts": st.get("ts"),
+        }
+
     # ── 查询（拉取通道）──
     def snapshot(self, session_id: str = "", dimensions: list[str] | None = None) -> dict:
         """构造八维状态快照（紧凑 JSON，维度可按需裁剪）.
@@ -214,6 +267,8 @@ class ArchitectureStatusProvider:
             ],
             "architecture_config": self._config_status(),
             "process_versions": self._process_versions(),  # EVO-20260811-f94e5306
+            # M49（design §5.4）: 当前降级状态（有则显示，含 from/to/reason/ts; 无则全 None）
+            "model_fallback": self._fallback_status(),
         }
         if dimensions:
             out: dict = {}
