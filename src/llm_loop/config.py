@@ -153,6 +153,11 @@ class Settings:
     thinking_mode: bool = True  # LLM_THINKING_MODE（enabled/disabled，默认 enabled）
     reasoning_effort: str = "high"  # LLM_REASONING_EFFORT（low/high/max，默认 high）
 
+    # ── M47 Provider 注册表原始 JSON（design §5.1）──
+    # 仅承载 MODEL_PROVIDERS env 的原始字符串, 解析由 llm.providers.load_registry 完成 (fail-soft).
+    # to_status_dict 不输出原始 JSON（不暴露配置细节, 仅暴露 bool 标志）.
+    model_providers_raw: str = ""
+
     # 运行时装配（非 env）: 由 builder 注入
     _extra: dict = field(default_factory=dict, repr=False, compare=False)
 
@@ -212,6 +217,8 @@ class Settings:
             "self_eval_interval_rounds": self.self_eval_interval_rounds,
             "self_eval_min_samples": self.self_eval_min_samples,
             "self_eval_span": self.self_eval_span,
+            # M47: Provider 注册表配置状态（AI 可自查, 不暴露原始 JSON）
+            "model_providers_configured": bool(self.model_providers_raw),
         }
 
 
@@ -287,4 +294,6 @@ def load_settings() -> Settings:
         self_eval_interval_rounds=_env_int("SELF_EVAL_INTERVAL_ROUNDS", 50),
         self_eval_min_samples=_env_int("SELF_EVAL_MIN_SAMPLES", 5),
         self_eval_span=_env_int("SELF_EVAL_SPAN", 50),
+        # M47（design §5.1）: MODEL_PROVIDERS 注册表 JSON, 解析由 llm.providers.load_registry 完成
+        model_providers_raw=os.environ.get("MODEL_PROVIDERS", "").strip(),
     )

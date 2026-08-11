@@ -56,11 +56,21 @@ class LLMClient:
     thinking_mode: bool = True
     reasoning_effort: str = "high"
 
+    # M47（design §5.5）: 思考参数泛化 - 显式传入时以此为准（消除硬编码 deepseek.com）;
+    # None 时保持原 _thinking_supported() 行为（向后兼容，零回归）.
+    thinking_supported: bool | None = None
+
     def __post_init__(self) -> None:
         self._client = httpx.Client(timeout=self.timeout_s)
 
     def _thinking_supported(self) -> bool:
-        """思考参数发送判定（CFG-03）: provider 为 deepseek 或 base_url 含 deepseek.com 才发."""
+        """思考参数发送判定（M20 CFG-03 + M47 §5.5）.
+
+        - thinking_supported 显式传入（非 None）→ 以传入值为准（注册表元数据驱动）
+        - thinking_supported=None → 原行为: provider 为 deepseek 或 base_url 含 deepseek.com
+        """
+        if self.thinking_supported is not None:
+            return self.thinking_supported
         return self.provider == "deepseek" or "deepseek.com" in self.base_url
 
     def close(self) -> None:
