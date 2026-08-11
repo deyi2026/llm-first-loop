@@ -136,6 +136,10 @@ def _cmd_search(engine, query: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(argv) if argv is not None else list(sys.argv[1:])
+    # EVO-20260811-f94e5306: 记录进程启动版本（一致性检测）
+    from llm_loop.introspection.proc_version import record_process_start
+
+    record_process_start("cli")
     # 手动分派子命令（避免 subparsers 吃掉位置参数 message）
     _cmds = {
         "list",
@@ -144,6 +148,8 @@ def main(argv: list[str] | None = None) -> int:
         "unarchive",
         "search",
         "extract",
+        "fork",
+        "rename",
         "evolve-list",
         "evolve-review",
         "evolve-complete",  # M17 FR-REVIEW-AI-01: 人工完成登记（涉边界演进）
@@ -214,6 +220,28 @@ def _dispatch_command(argv: list[str]) -> int:
             print("用法: llm_loop extract <session_id>")
             return 2
         return _cmd_extract(engine, argv[1])
+    if cmd == "rename":
+        if len(argv) < 3:
+            print("用法: llm_loop rename <session_id> \"<新标题>\"")
+            return 2
+        return _cmd_rename(engine, argv[1], " ".join(argv[2:]))
+    if cmd == "fork":
+        if len(argv) < 2:
+            print("用法: llm_loop fork <session_id> [--at <索引>] [--summary \"<摘要>\"]")
+            return 2
+        at = None
+        summary = ""
+        rest = argv[2:]
+        for i, tok in enumerate(rest):
+            if tok == "--at" and i + 1 < len(rest):
+                try:
+                    at = int(rest[i + 1])
+                except ValueError:
+                    print("❌ --at 需为整数", file=sys.stderr)
+                    return 2
+            elif tok == "--summary" and i + 1 < len(rest):
+                summary = rest[i + 1]
+        return _cmd_fork(engine, argv[1], at=at, summary=summary)
     if cmd == "evolve-list":
         return _cmd_evolve_list(engine, argv[1] if len(argv) > 1 else None)
     if cmd == "evolve-review":
@@ -344,5 +372,57 @@ def _cmd_extract(engine, session_id: str) -> int:
     return 0
 
 
+# ── EVO-20260810-3188682f: 会话分支 ──
+def _cmd_fork(engine, session_id: str, *, at: int | None, summary: str) -> int:
+    """分叉会话：从指定会话创建新分支（旧会话不覆盖不删除）.
+
+    用法: llm_loop fork <session_id> [--at <索引>] [--summary "<摘要>"]
+    - --at: 分叉点（消息索引，新分支仅保留此前消息）；缺省=父会话末尾（克隆当前状态）
+    - --summary: 分支摘要；缺省自动提炼（分叉点后最近 assistant 消息）
+    """
+    store: SessionStore = engine.session
+    if not store.exists(session_id):
+        from llm_loop.feedback.honesty import session_not_found_message
+
+        print(session_not_found_message(session_id))
+        return 2
+    try:
+        new_id = store.fork(session_id, branch_point_index=at, branch_summary=summary)
+    except Exception as exc:  # noqa: BLE001 — 分叉失败如实反馈
+        print(f"❌ 分叉失败（{type(exc).__name__}: {exc}）", file=sys.stderr)
+        return 2
+    sess = store.load(new_id)
+    print(f"✅ 已从会话 {session_id[:10]} 分叉出新分支: {new_id}")
+    print(f"   标题: {sess.title or '未命名'}")
+    print(f"   消息数: {len(sess.messages)}")
+    if sess.branch_summary:
+        print(f"   分支摘要: {sess.branch_summary[:80]}")
+    print(f"   继续使用: llm_loop --session {new_id} <消息>")
+    return 0
+
+
+
+
+
+# ── 管理完善: 会话重命名 ──
+def _cmd_rename(engine, session_id: str, new_title: str) -> int:
+    """重命名会话标题（web 列表可识别，减少"未命名"混乱）.
+
+    用法: llm_loop rename <session_id> "<新标题>"
+    """
+    store: SessionStore = engine.session
+    if store.rename(session_id, new_title):
+        meta = store.get_meta(session_id)
+        print(f"✅ 已重命名: {session_id[:10]} → {meta.title if meta else new_title}")
+        return 0
+    if not store.exists(session_id):
+        from llm_loop.feedback.honesty import session_not_found_message
+
+        print(session_not_found_message(session_id))
+        return 2
+    print("❌ 重命名失败（新标题为空）", file=sys.stderr)
+    return 2
+
 if __name__ == "__main__":
     raise SystemExit(main())
+

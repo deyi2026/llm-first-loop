@@ -72,6 +72,7 @@ class LLMClient:
         tools: list[dict],
         *,
         timeout_s: float | None = None,  # PARAM-01: 每次调用可覆盖超时（None 用构造值）
+        model: str | None = None,  # WEB: 每次调用可覆盖模型（None 用构造值，供 Web 模型切换）
     ) -> LLMResponse:
         """流式请求并聚合 tool_calls（同步阻塞式消费 SSE）.
 
@@ -79,7 +80,7 @@ class LLMClient:
         """
         url = f"{self.base_url.rstrip('/')}/chat/completions"
         payload: dict[str, Any] = {
-            "model": self.model,
+            "model": self.model if model is None else model,
             "messages": messages,
             "tools": tools,
             "tool_choice": "auto",  # 约束 C6

@@ -67,11 +67,26 @@ def build_engine(settings: Settings) -> LoopEngine:
         tool_timeout_s=settings.tool_timeout_s,
         max_output_chars=settings.tool_max_output_chars,
         archive_store=archive,  # T22: 超长工具结果另存
+        exec_mode=settings.exec_mode,  # EVO-20260810-2549e9b6: EXEC_MODE 命令分级
+        exec_allowlist=settings.exec_allowlist,
     )
     registry.register(ReadFileTool())
+    # EVO-d5db88d9: 按需读取工具完整 Schema（懒加载配套；零副作用可始终注册）
+    from llm_loop.tools.registry import GetToolSchemaTool
+
+    registry.register(GetToolSchemaTool(registry))
     # M18 AA8: 工具内兜底超时读配置值（注册表另有线程级超时兜底）
     registry.register(ExecuteCommandTool(timeout_s=settings.tool_timeout_s))
     registry.register(WebFetchTool(timeout_s=settings.tool_timeout_s))
+
+    # EVO-20260811-f94e5306: 变更通告（修改类工具调用记录，多会话协调）
+    def _change_log_hook(call):
+        from llm_loop.introspection.proc_version import record_change_log
+
+        if call.name in ("execute_command", "write_file", "edit_file", "delete_file", "append_file"):
+            record_change_log(call.name, f"arguments={str(call.arguments)[:200]}", session_id=registry._session_id)
+
+    registry.add_pre_execute_hook(_change_log_hook)
 
     # P1: 嵌入服务（EMBEDDING_PROVIDER, §3.6）
     embedder = None

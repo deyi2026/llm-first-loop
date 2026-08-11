@@ -80,3 +80,69 @@ class CatastrophicGuard:
                     evidence=f"命令: {command[:200]}; 命中模式: {m.group(0)[:80]}",
                 )
         return None
+
+
+# ── EVO-20260810-2549e9b6: EXEC_MODE 只读命令判定 ──
+_READONLY_PREFIXES = (
+    "ls",
+    "cat",
+    "pwd",
+    "echo",
+    "head",
+    "tail",
+    "grep",
+    "find",
+    "which",
+    "git status",
+    "git log",
+    "git diff",
+    "ps",
+    "df",
+    "du",
+    "env",
+    "date",
+    "whoami",
+    "python3 -c",
+    "python -c",
+    "printenv",
+)
+_WRITE_MARKERS = (
+    ">",
+    ">>",
+    "tee",
+    "rm ",
+    "mv ",
+    "cp ",
+    "mkdir",
+    "touch",
+    "chmod",
+    "chown",
+    "curl -o",
+    "wget -O",
+    "pip install",
+    "pip3 install",
+    "npm install",
+    "git add",
+    "git commit",
+    "git push",
+    "git reset",
+    "git checkout",
+    "source ",
+    "export ",
+    "unset ",
+    "kill",
+    "sudo ",
+    "brew install",
+    "cargo install",
+)
+
+
+def is_readonly_command(command: str) -> bool:
+    """判定命令是否只读（EXEC_MODE=readonly 时放行只读，拦截写类）."""
+    cmd = command.strip().lstrip()
+    if not cmd:
+        return False
+    if cmd.startswith(_READONLY_PREFIXES):
+        # 只读命令 + 无写标记 → 放行
+        return not any(m in command for m in _WRITE_MARKERS)
+    return False

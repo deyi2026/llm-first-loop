@@ -184,3 +184,33 @@ def test_get_session_messages_not_found(build_test_engine, fake_settings):
     client = _make_client(engine)
     resp = client.get("/api/v1/sessions/nope/messages")
     assert resp.status_code == 404
+
+
+def test_chat_model_passthrough(build_test_engine, fake_settings):
+    """model 参数透传到 LLM 调用（Web 模型切换）."""
+    engine, fake = build_test_engine([{"content": "用 pro 模型回答"}])
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat", json={"message": "x", "model": "deepseek-v4-pro"})
+    assert resp.status_code == 200
+    assert fake.calls and fake.calls[0]["model"] == "deepseek-v4-pro"
+
+
+def test_chat_model_omitted_uses_default(build_test_engine, fake_settings):
+    """不传 model 时透传 None（引擎用装配默认模型）."""
+    engine, fake = build_test_engine([{"content": "ok"}])
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat", json={"message": "x"})
+    assert resp.status_code == 200
+    assert fake.calls and fake.calls[0]["model"] is None
+
+
+def test_list_models_endpoint(build_test_engine, fake_settings):
+    """GET /api/v1/models 返回候选模型列表 + 当前装配模型."""
+    engine, fake = build_test_engine([{"content": "a"}])
+    client = _make_client(engine)
+    resp = client.get("/api/v1/models")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "models" in body and body["models"]
+    assert body["current"] in body["models"]
+    assert len(fake.calls) == 0  # 不调 LLM

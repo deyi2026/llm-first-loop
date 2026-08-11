@@ -57,6 +57,16 @@ _TOOL_RECEIPT_KEYWORDS = {
 }
 
 
+# EVO-20260810-50816b30: 能力陈述 vs 行为声明语义区分
+# 情态/能力标志（表"能力/意愿"，非"已完成"）
+_ABILITY_MARKERS = [
+    "可以", "能够", "能", "可", "会", "具备", "支持",
+    "can ", "could ", "may ", "might ",
+]
+# 完成标志（表"已完成/已发生"）
+_COMPLETION_MARKERS = ["已", "了", "成功", "完成", "did", "has ", "have ", "done"]
+
+
 @dataclass
 class DeclarationCheckResult:
     """一次声明-回执校验结果."""
@@ -133,9 +143,27 @@ class DeclarationValidator:
             r"[^。！？.!?\n]{0,40}(" + "|".join(_DECLARE_VERBS) + r")[^。！？.!?\n]{0,40}", answer
         ):
             text = m.group(0).strip()
-            if text and text not in decls:
-                decls.append(text)
+            if not text or text in decls:
+                continue
+            # EVO-20260810-50816b30: 能力陈述（"可以调用工具执行命令"）非完成声明，跳过
+            if self._is_ability_statement(text):
+                continue
+            decls.append(text)
         return decls
+
+    @staticmethod
+    def _is_ability_statement(text: str) -> bool:
+        """能力陈述判定: 含情态动词（可以/能够/can 等）且不含完成标志（已/了/成功等）.
+
+        例: "可以调用工具执行命令" → 能力（跳过）; "已执行命令" → 完成（保留）。
+        英文情态带空格避免误伤（scan/american 等）。
+        """
+        lower = text.lower()
+        has_ability = any(m in lower for m in _ABILITY_MARKERS)
+        if not has_ability:
+            return False
+        has_completion = any(m in lower for m in _COMPLETION_MARKERS)
+        return not has_completion
 
     def _declaration_matches_receipt(self, declaration: str, receipts: list[str]) -> str:
         """声明与回执匹配（返回匹配方式: keyword/semantic/""=不匹配）.

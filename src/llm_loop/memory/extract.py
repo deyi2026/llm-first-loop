@@ -58,9 +58,23 @@ def memory_blocks_to_entries(
             failures.append(f"记忆块缺少 content: {json.dumps(b, ensure_ascii=False)[:100]}")
             continue
         mtype = str(b.get("type", "fact"))
-        if mtype not in {"fact", "decision", "convention"}:
+        # Phase 2: type 集合扩展 procedure（流程/操作类记忆）
+        if mtype not in {"fact", "decision", "convention", "procedure"}:
             mtype = "fact"
         keywords = [str(k) for k in (b.get("keywords") or [])]
+        # Phase 2: citations 溯源解析（非法/缺省 → 空列表，不丢弃整块）
+        citations: list[dict] = []
+        citations_raw = b.get("citations")
+        if isinstance(citations_raw, list):
+            for c in citations_raw:
+                if isinstance(c, dict) and c.get("ref"):
+                    citations.append(
+                        {
+                            "kind": str(c.get("kind", "message")),
+                            "ref": str(c["ref"]),
+                            "note": str(c.get("note", "")),
+                        }
+                    )
         entries.append(
             MemoryEntry(
                 id="",
@@ -70,6 +84,7 @@ def memory_blocks_to_entries(
                 source_session_id=session_id,
                 source_message_id=message_id,
                 created_at="",
+                citations=citations,  # Phase 2 溯源
             )
         )
     return entries, failures

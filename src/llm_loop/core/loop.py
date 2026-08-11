@@ -133,8 +133,11 @@ class LoopEngine:
         return None
 
     # ── 主入口 ──
-    def run(self, session_id: str, user_text: str) -> LoopResult:
-        """单条用户消息的完整循环（消息进→理解→行动→真诚回答→记住）."""
+    def run(self, session_id: str, user_text: str, model: str | None = None) -> LoopResult:
+        """单条用户消息的完整循环（消息进→理解→行动→真诚回答→记住）.
+
+        model: 可选，本次对话覆盖使用的 LLM 模型（None 用装配模型，Web 模型切换用）。
+        """
         tool_trace: list[dict] = []
 
         # 会话恢复（重启继续对话，DFX-REL-03）
@@ -186,7 +189,7 @@ class LoopEngine:
             messages = self._build_llm_messages(sess, memory_msgs)
             if len(messages) < len(sess.messages) + len(memory_msgs) + 1:
                 truncation_noted = True
-            tool_schemas = self.registry.schemas()
+            tool_schemas = self.registry.schemas(lazy=self.settings.tool_schema_lazy)
             tools_param = [self._schema_to_param(t) for t in tool_schemas]
 
             # ── 行动：LLM 决策 ──
@@ -196,6 +199,7 @@ class LoopEngine:
                     messages=messages,
                     tools=tools_param,
                     timeout_s=self._runtime_timeout(),
+                    model=model,
                 )
             except LLMError as exc:
                 self._record_action("action.llm_decide", "llm_error", str(exc)[:200])
@@ -270,19 +274,24 @@ class LoopEngine:
                     )
                     sess.messages.append(msg)
                     self._record_action("action.tool_loop", "missing_tool_call_id", tc.name)
-                    continue
-                tool_trace.append({"id": tc.id, "name": tc.name, "arguments": tc.arguments})
-                result = self.registry.execute(tc)
-                self._record_tool_history(result)
-                tool_msg = tool_result_to_message(
-                    result, failure_guidance_enabled=self.registry.failure_guidance_enabled
-                )
-                sess.messages.append(tool_msg)
+            # EVO-20260810-750e985a: 工具并发控制（只读并行/修改串行/按声明顺序回写）
+            valid_calls = [tc for tc in resp.tool_calls if tc.id]
+            if valid_calls:
+                results = self.registry.execute_many(valid_calls)
+                for tc, result in zip(valid_calls, results):
+                    tool_trace.append({"id": tc.id, "name": tc.name, "arguments": tc.arguments})
+                    self._record_tool_history(result)
+                    tool_msg = tool_result_to_message(
+                        result, failure_guidance_enabled=self.registry.failure_guidance_enabled
+                    )
+                    sess.messages.append(tool_msg)
 
             # ── M12 深化 T65: 自我评估触发检测（每轮末，仅提示不强制）──
             self._check_eval_trigger(sess, rounds)
             # ── M17 FR-REVIEW-AI-02: executing 演进待办提醒（每轮末，仅提示不强制）──
             self._check_evolution_executing(sess)
+            # ── EVO-20260810-86e777d1: pending_review 演进弹窗提醒（每轮末）──
+            self._check_pending_review(sess)
 
             # ── 轮数上限（如实结束，T38: 进展判断交 AI 自主，程序仅保留此硬边界）──
             if rounds >= self._runtime_max_iterations():
@@ -348,6 +357,7 @@ class LoopEngine:
             max_chars=self._runtime_history_budget(),
             session_id=sess.session_id,
             archive_sink=archive_sink,
+            summarizer=self.summarizer,  # EVO-9794797e: 主动压缩（旧消息语义摘要）
         )
 
     def _check_eval_trigger(self, sess, rounds: int, *, milestone: bool = False) -> None:
@@ -376,6 +386,22 @@ class LoopEngine:
         if self.loop_signal_detector is None or self.status is None or not self.status.enabled:
             return
         event = self.loop_signal_detector.check_evolution_executing(self.evolution_store)
+        if event is None:
+            return
+        msg = self._report(
+            event.event_type, fact=event.fact, reason=event.reason, suggestion=event.suggestion
+        )
+        if msg is not None:
+            sess.messages.append(msg)
+
+    def _check_pending_review(self, sess) -> None:
+        """EVO-20260810-86e777d1: pending_review 演进弹窗提醒（每轮末，仅提示不强制）.
+
+        复用 EventReporter 冷却；无 pending_review / 读取失败 → 不注入。
+        """
+        if self.loop_signal_detector is None or self.status is None or not self.status.enabled:
+            return
+        event = self.loop_signal_detector.check_pending_review(self.evolution_store)
         if event is None:
             return
         msg = self._report(
