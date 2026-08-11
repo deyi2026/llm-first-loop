@@ -93,6 +93,7 @@ def build_engine(settings: Settings) -> LoopEngine:
     registry = ToolRegistry(
         tool_timeout_s=settings.tool_timeout_s,
         max_output_chars=settings.tool_max_output_chars,
+        summary_threshold=settings.tool_summary_threshold,
         archive_store=archive,  # T22: 超长工具结果另存
         exec_mode=settings.exec_mode,  # EVO-20260810-2549e9b6: EXEC_MODE 命令分级
         exec_allowlist=settings.exec_allowlist,

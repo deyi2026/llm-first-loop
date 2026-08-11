@@ -29,6 +29,7 @@ class ToolRegistry:
         safety_guard: CatastrophicGuard | None = None,
         tool_timeout_s: float = 60.0,
         max_output_chars: int = 100000,
+        summary_threshold: int = 5000,
         archive_store: Any | None = None,
         failure_guidance_enabled: bool = True,
         # EVO-20260810-2549e9b6: EXEC_MODE 命令分级（默认空 = 不启用，生产由 factory 显式装配 blocked）
@@ -40,6 +41,7 @@ class ToolRegistry:
         self.safety = safety_guard or CatastrophicGuard()
         self.tool_timeout_s = tool_timeout_s
         self.max_output_chars = max_output_chars
+        self.summary_threshold = summary_threshold
         self.failure_guidance_enabled = failure_guidance_enabled
         self.exec_mode = exec_mode  # readonly/allowlist/blocked（空 = 不启用分级）
         self.exec_allowlist = [s.strip() for s in (exec_allowlist or "").split(",") if s.strip()]
@@ -274,6 +276,27 @@ class ToolRegistry:
             duration_ms=duration_ms,
         )
 
+    @staticmethod
+    def _summarize_output(full: str, head_chars: int = 600, tail_chars: int = 600) -> str:
+        """输出分层摘要: 首部 + 尾部 + 规模 + 检索指引（命令输出关键信息常在尾部）.
+
+        原文已由调用方完整另存至压缩档案（信息零丢失），此处仅注入摘要。
+        内容未超首尾窗口时完整展示但仍带"输出摘要"标注（AI 可感知已分层）。
+        """
+        n = len(full)
+        if n <= head_chars + tail_chars:
+            return (
+                f"[输出摘要] 共 {n} 字符，内容未超首尾窗口故完整展示"
+                f"（原文已另存至压缩档案，可用 search_archive 检索找回）：\n{full}"
+            )
+        head = full[:head_chars]
+        tail = full[-tail_chars:]
+        return (
+            f"[输出摘要] 共 {n} 字符，以下为首部/尾部关键内容"
+            f"（完整内容已另存至压缩档案，可用 search_archive 检索找回）：\n"
+            f"── 首部 ──\n{head}\n── 尾部 ──\n{tail}"
+        )
+
     def _is_destructive_tool(self, name: str) -> bool:
         """是否具备破坏能力的工具（需过灾难性安全校验）."""
         return name in {"execute_command", "delete_file", "write_file", "edit_file", "append_file"}
@@ -320,17 +343,29 @@ class ToolRegistry:
                     partial_output=None,
                 )
         if not isinstance(result, ToolResult):
-            # 工具直接返回文本/原始值时包装为 success（如实）
-            return ToolResult(
+            # 工具直接返回文本/原始值时包装为 success（如实），继续走统一输出分层
+            result = ToolResult(
                 status=ToolResultStatus.SUCCESS,
                 content=str(result),
                 tool_call_id=call.id,
                 tool_name=call.name,
             )
-        # 输出超长截断 + 如实标注（T22: 完整结果先另存，信息不丢失）
-        if len(result.content) > self.max_output_chars:
+        # 输出分层注入（EVO-20260811-22a7d3e1）:
+        # - 超过 summary_threshold: 默认注入首/尾摘要（全文另存可检索，信息零丢失）
+        # - 超过 max_output_chars（硬上限）: 全文另存 + 截断（T22 既有逻辑）
+        if len(result.content) > self.summary_threshold:
             full = result.content
-            # 另存完整结果到压缩档案（关联 tool_call_id，可检索找回）
+            self._archive_oversize_output(call, full)  # 原文完整另存（信息零丢失）
+            result.content = self._summarize_output(full)
+            # 硬上限安全阀: 摘要后仍超限才截断（原文已存档，无需重复存档）
+            if len(result.content) > self.max_output_chars:
+                result.content = (
+                    result.content[: self.max_output_chars]
+                    + f"\n…[结果超长，已截断，共 {len(result.content)} 字符]；完整内容已另存至压缩档案，可用 search_archive 检索找回…"
+                )
+        elif len(result.content) > self.max_output_chars:
+            # 未超摘要阈值但超硬上限（阈值配置异常）→ 存档 + 截断（T22 既有行为）
+            full = result.content
             self._archive_oversize_output(call, full)
             result.content = (
                 full[: self.max_output_chars]
