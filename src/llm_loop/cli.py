@@ -35,14 +35,24 @@ def _run_single(engine, text: str, session_id: str | None = None) -> None:
         _apply_cli_startup_model(engine, session_store, sid, engine._cli_startup_model)
     result = engine.run(sid, text)
     print("\n" + "─" * 60)
-    print(f"[会话 {sid[:8]}] 轮数={result.rounds} 工具调用={len(result.tool_calls)}")
+    stats = f"[会话 {sid[:8]}] 轮数={result.rounds} 工具调用={len(result.tool_calls)}"
+    if result.tokens_in or result.tokens_out:
+        from llm_loop.core.loop import format_tokens
+
+        stats += f" tokens={format_tokens(result.tokens_in)}入/{format_tokens(result.tokens_out)}出"
+    print(stats)
     if result.truncated:
         print("[提示] 本次发生上下文截断")
     if result.verification_note:
         print(f"[校验] {result.verification_note.splitlines()[0][:100]}")
     print(result.final_answer)
     if result.model_used:
-        print(f"—— {result.model_used}")
+        from llm_loop.core.loop import format_tokens
+
+        footer = f"—— {result.model_used}"
+        if result.tokens_in or result.tokens_out:
+            footer += f" · {format_tokens(result.tokens_in)}入/{format_tokens(result.tokens_out)}出"
+        print(footer)
     print("─" * 60)
 
 
@@ -123,7 +133,12 @@ def _run_interactive(engine, session_id: str | None = None) -> None:
         result = engine.run(sid, text)
         print(f"\nAI> {result.final_answer}")
         if result.model_used:
-            print(f"—— {result.model_used}")
+            from llm_loop.core.loop import format_tokens
+
+            footer = f"—— {result.model_used}"
+            if result.tokens_in or result.tokens_out:
+                footer += f" · {format_tokens(result.tokens_in)}入/{format_tokens(result.tokens_out)}出"
+            print(footer)
         if result.verification_note:
             print(f"[校验提示] {result.verification_note}")
 

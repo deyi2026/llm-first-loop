@@ -211,6 +211,20 @@ function addMessage(role, content, note) {
   renderMessages();
 }
 
+// ---------- M52: token 用量显示 ----------
+function fmtTokens(n) {
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+}
+
+function renderTokenStats() {
+  const elStats = document.getElementById("token-stats");
+  if (!elStats) return;
+  const inTok = state.pageTokensIn || 0;
+  const outTok = state.pageTokensOut || 0;
+  if (!inTok && !outTok) { elStats.textContent = ""; return; }
+  elStats.textContent = `tokens 本次页面: ${fmtTokens(inTok)}入/${fmtTokens(outTok)}出`;
+}
+
 // ---------- 发送消息 ----------
 async function sendMessage() {
   const text = els.messageInput.value.trim();
@@ -251,8 +265,21 @@ async function sendMessage() {
       if (data.truncated) note.push("（回答被截断）");
       if (data.verification_note) note.push(data.verification_note);
       // M51: 回复下方标注实际生成模型（provider/model，含降级后的真实模型）
-      if (data.model_used) note.push(`—— ${data.model_used}`);
+      // M52: 同一 footer 附带本轮 token 用量（provider 未返回 usage 时不显示）
+      if (data.model_used) {
+        let footer = `—— ${data.model_used}`;
+        if (data.tokens_in || data.tokens_out) {
+          footer += ` · ${fmtTokens(data.tokens_in)}入/${fmtTokens(data.tokens_out)}出`;
+        }
+        note.push(footer);
+      }
       addMessage("assistant", data.final_answer, note.join("\n") || null);
+      // M52: 本次页面会话 token 累计（输入区模型选择旁实时更新）
+      if (data.tokens_in || data.tokens_out) {
+        state.pageTokensIn = (state.pageTokensIn || 0) + data.tokens_in;
+        state.pageTokensOut = (state.pageTokensOut || 0) + data.tokens_out;
+        renderTokenStats();
+      }
     } else if (status === 404) {
       addMessage("error", data.detail || "会话不存在，请新建会话。");
       state.currentSessionId = null;

@@ -25,6 +25,8 @@ class ChatResponse(BaseModel):
     tool_calls: list[dict] = []
     truncated: bool = False
     model_used: str = ""  # M51: 实际生成回复的模型标签（provider/model）
+    tokens_in: int = 0  # M52: 本轮 prompt tokens（0 = provider 未提供）
+    tokens_out: int = 0  # M52: 本轮 completion tokens
 
 
 class SessionMetaItem(BaseModel):

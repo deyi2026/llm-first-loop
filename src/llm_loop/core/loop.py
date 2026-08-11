@@ -47,6 +47,13 @@ def _json_dumps_args(arguments: dict) -> str:
         return "{}"
 
 
+def format_tokens(n: int) -> str:
+    """M52: token 计数人性化显示（1234 → "1.2k"）；0 = 未提供，如实返回 "0"."""
+    if n >= 1000:
+        return f"{n / 1000:.1f}k"
+    return str(n)
+
+
 @dataclass
 class LoopResult:
     """一次 run() 的完整结果（如实交付用户，design.md §2.2.2.3）."""
@@ -59,6 +66,9 @@ class LoopResult:
     truncated: bool = False
     # M51: 实际生成本次回复的模型标签（provider/model 全限定，如实透传；降级后为降级模型 ref）
     model_used: str = ""
+    # M52: 本次 run 的 token 用量（工具循环多次调用累加；provider 未返回 usage 时为 0，如实不伪造）
+    tokens_in: int = 0
+    tokens_out: int = 0
 
 
 class LoopEngine:
@@ -177,6 +187,8 @@ class LoopEngine:
         truncation_noted = False
         rounds = 0
         model_used = ""  # M51: 本轮实际使用的模型标签（每轮 LLM 调用时刷新）
+        tokens_in = 0  # M52: 本次 run 累计 prompt tokens
+        tokens_out = 0  # M52: 本次 run 累计 completion tokens
         resp: Any = None  # M20 THK-04: 最终回答轮思考链来源（LLM 异常/停滞路径为 None）
 
         while True:
@@ -289,6 +301,9 @@ class LoopEngine:
                     break
 
             self._record_action("action.llm_decide", "llm_response", self._resp_summary(resp))
+            # M52: 聚合本轮 token 用量（含 fallback 成功响应；0 = provider 未提供）
+            tokens_in += resp.prompt_tokens
+            tokens_out += resp.completion_tokens
 
             # 无工具调用 → 最终回答 → 真诚回答阶段
             if not resp.tool_calls:
@@ -416,6 +431,8 @@ class LoopEngine:
             tool_calls=tool_trace,
             truncated=truncation_noted,
             model_used=model_used,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
         )
 
     def _default_model_label(self) -> str:
