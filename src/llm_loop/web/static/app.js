@@ -9,6 +9,7 @@ const state = {
   sessions: [],
   attachments: [], // M39 上传附件上下文（发送时作为 user 消息前缀注入）
   model: null, // M47 当前模型（模型切换下拉，None=装配默认）
+  availableModels: [], // M47 服务端声明的可用模型列表（/model 命令校验用）
 };
 
 const els = {
@@ -381,6 +382,8 @@ function handleCommand(cmd) {
     const m = (parts[1] || "").trim();
     if (!m) {
       addMessage("error", "用法: /model <模型名>。当前候选见输入栏下方下拉列表。");
+    } else if (state.availableModels.length && !state.availableModels.includes(m)) {
+      addMessage("error", `模型 ${m} 不被当前 API 支持（可用: ${state.availableModels.join(" / ")}）。已保持当前模型不变。`);
     } else {
       state.model = m;
       for (const opt of els.modelSelect.options) {
@@ -473,11 +476,13 @@ async function loadModels() {
   const { status, data } = await api("/api/v1/models");
   if (status !== 200) return;
   els.modelSelect.innerHTML = "";
+  state.availableModels = [];
   for (const m of data.models) {
     const opt = document.createElement("option");
     opt.value = m;
     opt.textContent = m;
     els.modelSelect.appendChild(opt);
+    state.availableModels.push(m);
   }
   state.model = data.current || null;
   els.modelSelect.value = state.model || "";

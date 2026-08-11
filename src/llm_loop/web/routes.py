@@ -167,9 +167,15 @@ def list_models(request: Request) -> dict:
         names = [n for n in all_names if n in wanted]
     else:
         names = all_names
-    # current 不在列表中 → 插入首部（保证前端下拉可见）
+    # current 不在列表中 → 归一化为全限定名（前端下拉可匹配高亮）或插入首部
+    # 修复（2026-08-11）: 裸名 current 已作为 provider/model 候选存在（如 deepseek/deepseek-v4-flash）
+    # 时归一化为全限定名（避免下拉重复 + current 与候选项一致可高亮）
     if current not in names:
-        names.insert(0, current)
+        matched = next((n for n in names if n.endswith(f"/{current}")), None)
+        if matched:
+            current = matched
+        else:
+            names.insert(0, current)
     return {"models": names, "current": current}
 
 

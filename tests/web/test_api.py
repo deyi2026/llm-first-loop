@@ -187,12 +187,26 @@ def test_get_session_messages_not_found(build_test_engine, fake_settings):
 
 
 def test_chat_model_passthrough(build_test_engine, fake_settings):
-    """model 参数透传到 LLM 调用（Web 模型切换）."""
+    """per-call 模型经池解析：provider/model → 裸模型名透传给 LLM 调用（Web 模型切换）."""
     engine, fake = build_test_engine([{"content": "用 pro 模型回答"}])
     client = _make_client(engine)
-    resp = client.post("/api/v1/chat", json={"message": "x", "model": "deepseek-v4-pro"})
+    # "default" 为 L0 合成单 provider id（fake.local），"fake-model" 为其唯一模型
+    resp = client.post("/api/v1/chat", json={"message": "x", "model": "default/fake-model"})
     assert resp.status_code == 200
-    assert fake.calls and fake.calls[0]["model"] == "deepseek-v4-pro"
+    assert resp.json()["final_answer"] == "用 pro 模型回答"
+    assert fake.calls and fake.calls[0]["model"] == "fake-model"
+
+
+def test_chat_model_unavailable_honest(build_test_engine, fake_settings):
+    """per-call 模型不在注册表 → 如实 [模型不可用] 反馈，不静默降级、不调 LLM."""
+    engine, fake = build_test_engine([])
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat", json={"message": "x", "model": "nonexistent/model-xyz"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "[模型不可用]" in body["final_answer"]
+    assert "nonexistent/model-xyz" in body["final_answer"]
+    assert len(fake.calls) == 0  # 未调 LLM
 
 
 def test_chat_model_omitted_uses_default(build_test_engine, fake_settings):

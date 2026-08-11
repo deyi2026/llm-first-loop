@@ -93,9 +93,10 @@ def test_env_json_priority_over_file(tmp_path) -> None:
     assert "other" not in reg.providers
 
 
-def test_l0_synthesis_zero_regression() -> None:
+def test_l0_synthesis_zero_regression(tmp_path) -> None:
     """L0 合成路径: 无注册表配置时从 LLM_* env 合成单 provider（零回归）."""
-    reg = load_registry(_settings())
+    # data_dir 指向隔离目录，避免工作区 data/providers.json 影响（走 L0 通道）
+    reg = load_registry(_settings(data_dir=str(tmp_path / "data")))
     assert not reg.degraded
     assert set(reg.providers) == {"deepseek"}
     spec = reg.providers["deepseek"]
@@ -105,10 +106,14 @@ def test_l0_synthesis_zero_regression() -> None:
     assert spec.default_model == "deepseek-v4-flash"
 
 
-def test_l0_synthesis_non_deepseek_no_thinking() -> None:
+def test_l0_synthesis_non_deepseek_no_thinking(tmp_path) -> None:
     """L0 合成: 非 deepseek URL → thinking=False（对齐原行为）."""
     reg = load_registry(
-        _settings(llm_base_url="https://api.minimax.chat/v1", llm_model="MiniMax-M3")
+        _settings(
+            llm_base_url="https://api.minimax.chat/v1",
+            llm_model="MiniMax-M3",
+            data_dir=str(tmp_path / "data"),
+        )
     )
     assert set(reg.providers) == {"minimax"}
     assert reg.providers["minimax"].models["MiniMax-M3"].thinking is False
