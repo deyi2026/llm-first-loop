@@ -71,14 +71,22 @@ class _WsConnector:
         )
 
     def _build_event_handler(self):
-        """构造 lark 事件分发器：im.message.receive_v1 → _handle_event."""
+        """构造 lark 事件分发器：im.message.receive_v1 → _handle_event；已知无需处理事件注册 no-op（消 processor not found 噪音，EVO-20260811-cf6d9a78）."""
         import lark_oapi as lark
 
         return (
             lark.EventDispatcherHandler.builder("", "")
             .register_p2_im_message_receive_v1(self._handle_event)
+            .register_p2_im_message_message_read_v1(self._ignore_event)
+            .register_p2_im_message_reaction_created_v1(self._ignore_event)
+            .register_p2_im_message_reaction_deleted_v1(self._ignore_event)
+            .register_p2_im_chat_access_event_bot_p2p_chat_entered_v1(self._ignore_event)
             .build()
         )
+
+    def _ignore_event(self, data, ctx=None) -> None:
+        """已知无需处理事件的空处理器（已读回执/表情回复/进入会话），消除未注册告警."""
+        logger.debug("飞书事件已忽略（无需处理类型）: %s", type(data).__name__)
 
     def _handle_event(self, data, ctx=None) -> None:
         """lark 事件对象 → payload dict → on_message 分发（回调异常如实记录不中断）."""

@@ -31,6 +31,36 @@ def git_head() -> str:
         return "no-git"
 
 
+def workspace_dirty() -> bool:
+    """工作区是否含未提交改动（git status --short 非空=True；异常如实降级 False，不阻断）."""
+    try:
+        r = subprocess.run(
+            ["git", "status", "--short"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        return bool(r.stdout.strip()) if r.returncode == 0 else False
+    except Exception:  # noqa: BLE001 — 非 git/异常如实降级
+        return False
+
+
+def workspace_diff_summary(max_chars: int = 120) -> str:
+    """工作区未提交改动摘要（git status --short 前 N 字符；无改动/异常返回空串）."""
+    try:
+        r = subprocess.run(
+            ["git", "status", "--short"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if r.returncode != 0:
+            return ""
+        return r.stdout.strip().replace("\n", "; ")[:max_chars]
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def record_process_start(service: str) -> None:
     """记录进程启动（启动时间 + PID + git HEAD）到 proc_versions.jsonl（fail-open）."""
     try:
@@ -41,6 +71,7 @@ def record_process_start(service: str) -> None:
             "pid": os.getpid(),
             "service": service,
             "git_head": git_head(),
+            "workspace_dirty": workspace_dirty(),
         }
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -76,23 +107,34 @@ def get_process_versions(limit: int = 30) -> dict:
     for r in records:
         latest_by_service[r.get("service", "?")] = r
     services = []
+    current_dirty = workspace_dirty()
     for svc, r in latest_by_service.items():
         head = r.get("git_head", "")
+        start_dirty = bool(r.get("workspace_dirty", False))
+        same_head = head == current
+        if not same_head:
+            note = "启动时代码与当前 HEAD 不一致（旧代码，建议重启）"
+        elif start_dirty or current_dirty:
+            note = "工作区含未提交改动（进程加载代码可能与 HEAD 不一致），建议及时 commit 并重启"
+        else:
+            note = ""
         services.append(
             {
                 "service": svc,
                 "pid": r.get("pid"),
                 "started_at": r.get("ts", ""),
                 "git_head": head,
-                "code_current": head == current,
-                "note": "" if head == current else "启动时代码与当前 HEAD 不一致（旧代码，建议重启）",
+                "workspace_dirty": start_dirty,
+                "code_current": same_head,
+                "note": note,
             }
         )
     services.sort(key=lambda s: s["started_at"], reverse=True)
     return {
         "current_git_head": current,
+        "current_workspace_dirty": current_dirty,
         "services": services,
-        "note": "进程启动时记录 git HEAD；启动早于代码变更的进程标注建议重启（EVO-20260811-f94e5306）",
+        "note": "进程启动时记录 git HEAD；启动早于代码变更的进程标注建议重启（EVO-20260811-f94e5306）；EVO-20260811-a30732d9 增加工作区 dirty 检测",
     }
 
 
