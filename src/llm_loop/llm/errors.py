@@ -35,3 +35,22 @@ class LLMHTTPError(LLMError):
 
 class LLMProtocolError(LLMError):
     """响应协议解析失败（流式/字段缺失等）."""
+
+
+# R4: provider 返回的上下文溢出错误模式（如实反馈让 AI 决策，不自动重试）
+_OVERFLOW_PATTERNS = (
+    "context length exceeded",
+    "request_too_large",
+    "input token count exceeds",
+    "maximum context length",
+    "token limit exceeded",
+    "context window exceeded",
+    "prompt is too long",
+    "input too long",
+)
+
+
+def is_overflow_error(exc: LLMError) -> bool:
+    """识别 provider 返回的上下文溢出错误（R4: 如实反馈让 AI 决策）."""
+    msg = str(exc).lower()
+    return any(p in msg for p in _OVERFLOW_PATTERNS)

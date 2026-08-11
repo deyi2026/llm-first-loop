@@ -9,6 +9,25 @@
 
 ---
 
+## 规则零：AI 优先总纲（RULE-AI-00，2026-08-12 确立）
+
+**程序是 AI 的感官和手脚，非大脑。** 程序提供信息（感官）与执行通道（手脚），不替 AI 决策。
+具体约束：
+
+1. **不替 AI 决策**：压缩 / 重试 / 摘要 / 模型切换等决策权归 AI；程序如实反馈事实 + 提供工具，AI 自主选择。
+2. **不自动压缩/重试/摘要**：这些行为可能丢信息 / 增计费 / 注入无用内容，须 AI 主动触发（经 `search_archive(with_summary=true)` 等工具参数），程序不自动注入。
+3. **如实反馈让 AI 决策**：程序异常 / 上下文超限 / 工具失败 → 如实告知 AI + 提供可选动作，AI 决定怎么做；不静默吞错、不静默降级。
+4. **简化而非增加配置面**：AI 不能改 env，env 参数对 AI 是黑盒；优先程序自适应（如按占用率自动调参）而非暴露更多配置项；避免复杂成为约束。
+5. **赋能 AI 上下文感知**：上下文状态作为 `architecture_status` 工具返回维度（`context_usage.breakdown`），AI 每轮可见，而非 slash 命令（人类接口）。
+6. **避免程序错误影响大模型**：程序故障隔离不抛穿，程序不替 AI 压缩/丢弃上下文，AI 基于完整事实决策。
+
+**程序角色**：感官（`architecture_status` 提供上下文/模型/异常事实）+ 手脚（`search_archive`/`adjust_strategy`/`switch_model` 等执行通道）+ 如实反馈（不静默）。**不替 AI 思考、不替 AI 选择、不替 AI 承担决策后果。**
+
+**正例**：上下文逼近窗口时，程序经 `architecture_status.context_usage.breakdown` 让 AI 可见占用构成；AI 自主决定压缩（`search_archive` 检索被压内容）/ 调预算（`adjust_strategy`）/ 切模型（`switch_model`）/ 开新会话。
+**反例**：程序自动压缩上下文并重试请求（丢信息风险，AI 不知情）；程序自动注入 LLM 摘要（程序不知道哪些重要）；程序静默吞 overflow 错误（AI 不知道发生了什么）。
+
+---
+
 ## 规则一：诚实自查（RULE-AI-01，替代程序强制声明-回执校验）
 
 **规则**：给出最终回答前，自行对照本轮工具回执（每个工具结果带 `[状态: success/failure/error/timeout/blocked]` 标注），如实声明完成情况。若声明完成但无对应成功回执，请如实说明或重新执行，不得虚构完成。
@@ -24,7 +43,7 @@
 
 **规则**：调用工具前核对参数格式与必填项（工具描述含"何时用/何时不用/失败对策" + 参数要求）。若收到参数引导反馈，自行更正后重试。
 
-**主动管理自查**（M18 AA1 移交承载，原程序参数信号检测四类信号移交 AI 自主）：运行中可定期经 `architecture_status` 自查运行参数状态——工具异常率偏高（exception_log/tool_history 计数）、连续重复动作（tool_history 最近 N 条同类）、循环预算占用偏高（current_phase/轮数）、上下文占用逼近预算（context_usage）时，可调用 `adjust_strategy` 调整白名单参数（max_iterations/timeout_s/history_budget，受全局硬上限 500 与 PARAM-03 单轮频次约束）；自查为 AI 自主判断，程序不再推送参数调整建议（仅保留 `architecture_status` 原始数据 + `adjust_strategy` 执行通道）。
+**主动管理自查**（M18 AA1 移交承载，原程序参数信号检测四类信号移交 AI 自主）：运行中可定期经 `architecture_status` 自查运行参数状态——工具异常率偏高（exception_log/tool_history 计数）、连续重复动作（tool_history 最近 N 条同类）、循环预算占用偏高（current_phase/轮数）、上下文占用逼近预算（context_usage，含 model_window 模型窗口）时，可调用 `adjust_strategy` 调整白名单参数（max_iterations/timeout_s/history_budget/memory_top_k/extract_interval_msgs/retrieve_semantic_top_k，受全局硬上限 500 与 PARAM-03 单轮频次约束；M57 起当前生效值经 `architecture_status.context_usage.runtime_params` 可查可验证）；自查为 AI 自主判断，程序不再推送参数调整建议（仅保留 `architecture_status` 原始数据 + `adjust_strategy` 执行通道）。
 
 **程序角色**：仅保留最小防御（非 dict 参数报错）；类型偏差不再前置拦截，由工具容错执行或如实反馈引导。
 
@@ -129,6 +148,33 @@ MODEL_FALLBACKS 降级链——程序只做注册表解析/切换执行/如实�
 
 **正例**：经 model_catalog 发现当前模型连续 429 且任务需更强推理，调用 switch_model 切到 deepseek/deepseek-v4-pro（reason 写明"连续 429 + 复杂推理"），切换后 architecture_status 复查 llm_model 确认生效，回答中说明切换前后模型与原因。
 **反例**：未查目录直接 switch_model（目标不在注册表→失败回执）；或用户显式选定的模型失败后自动降级到其他模型（违反诚实边界，须显性报错）。
+
+---
+
+## 规则十：每轮自主检查清单（RULE-AI-10，M56 收敛 ANALYSIS-20260811）
+
+程序不再每轮逐一推送"自我评估 / 演进待办 / 待审事项"三类提醒（已收敛为一次轻量
+事实注入）；"何时该检查、是否处理"的**判断完全归 AI**。每轮循环（尤其多轮执行后），
+主动自查以下清单（经工具查询，而非等待程序提醒）：
+
+1. **自我评估**：本轮是否达成关键结论/发生异常路径（如工具连续失败、回答被截断）？
+   若是，主动触发自我评估（self_evaluate）沉淀经验，不必等周期/里程碑触发
+2. **演进待办**：是否存在 executing 状态的演进建议待落地？无执行障碍时主动执行并登记闭环
+3. **待审事项**：是否存在 pending_review 待审条目？按优先级主动处理或明确搁置原因
+4. **模型/上下文窗口**：经 architecture_status 查 `context_usage.model_window`；
+   判断当前上下文是否逼近窗口、是否需要主动压缩/检索归档（程序只提供窗口事实，压缩决策归 AI）
+5. **思考链自知（M66）**：提交给模型的历史中，仅最近 N 轮（REASONING_TAIL，默认 2）的
+   思考链（reasoning_content）会随请求发送，更早轮次的思考链**程序已省略**（内容与工具调用
+   完整保留，不丢事实）。需要回溯早期推理过程时，用 `search_records`/`search_archive` 检索，
+   不要假设早期思考链仍在上下文中。**关键结论应在回答前主动写入记忆/归档**（信息固化，不依赖上下文窗口）
+
+**程序角色**：仅提供事实与工具（architecture_status / search_records / self_evaluate /
+evolution_complete / 待办查询）；不做"何时提醒"的预判。程序错误（如归档失败）会如实
+注入提示，AI 须如实回应不忽略。
+
+**正例**：连续 5 轮工具执行后，主动调 architecture_status 自查 model_window 与异常指标，
+确认上下文逼近窗口 → 主动压缩归档并说明理由。
+**反例**：出现 [程序异常]（如归档另存失败）提示后视而不见，继续作答（违反 PREFERENCE_1 如实反馈）。
 
 ---
 

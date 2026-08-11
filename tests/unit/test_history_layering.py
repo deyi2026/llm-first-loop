@@ -90,3 +90,64 @@ def test_compression_path_layering_non_interfering():
     assert any("[上下文压缩]" in c for c in contents)  # 压缩标注正常
     assert any("最新问题" in c for c in contents)  # 最新消息保留
     assert len(archived) >= 1  # 归档正常
+
+
+# ── R3: tool_trim_age 自适应测试 ──
+
+
+def test_adaptive_age_low_occupancy():
+    """占用率 < 40% → age=20（保守）."""
+    from llm_loop.core.history import _adaptive_tool_trim_age
+    assert _adaptive_tool_trim_age(100, 1000) == 20   # 10%
+    assert _adaptive_tool_trim_age(399, 1000) == 20   # 39.9%
+
+
+def test_adaptive_age_mid_occupancy():
+    """占用率 40-70% → age=10（中等）."""
+    from llm_loop.core.history import _adaptive_tool_trim_age
+    assert _adaptive_tool_trim_age(400, 1000) == 10   # 40%
+    assert _adaptive_tool_trim_age(699, 1000) == 10   # 69.9%
+
+
+def test_adaptive_age_high_occupancy():
+    """占用率 > 70% → age=5（激进）."""
+    from llm_loop.core.history import _adaptive_tool_trim_age
+    assert _adaptive_tool_trim_age(700, 1000) == 5    # 70%
+    assert _adaptive_tool_trim_age(900, 1000) == 5    # 90%
+
+
+def test_adaptive_age_zero_max_chars():
+    """max_chars=0 → age=20（不除零）."""
+    from llm_loop.core.history import _adaptive_tool_trim_age
+    assert _adaptive_tool_trim_age(100, 0) == 20
+
+
+def test_adaptive_age_via_build_history():
+    """tool_trim_age=0 自适应：占用高时 age=5，距最新 8 条的旧 tool 降级."""
+    # 8 < 20（低占用时不降级）但 8 >= 5（高占用 age=5 时降级）
+    msgs = [_tool_msg("X" * 5000)] + [_user(f"q{i}") for i in range(8)]
+    sink = lambda sid, m: None  # noqa: E731
+    # 高占用：total~5016, max=7000 → 71% > 70% → age=5 → 距最新 8 >= 5 → 降级
+    out_high = build_history_messages(
+        msgs, system_prompt="S", max_chars=7000, session_id="s",
+        archive_sink=sink, layer_tool_trim=True, tool_trim_age=0,
+    )
+    assert any("工具输出已分层" in str(m.get("content", "")) for m in out_high)
+    # 低占用：total~5016, max=1000000 → < 40% → age=20 → 距最新 8 < 20 → 不降级
+    out_low = build_history_messages(
+        msgs, system_prompt="S", max_chars=1000000, session_id="s",
+        archive_sink=sink, layer_tool_trim=True, tool_trim_age=0,
+    )
+    assert not any("工具输出已分层" in str(m.get("content", "")) for m in out_low)
+
+
+def test_fixed_age_disables_adaptive():
+    """tool_trim_age=20 固定值禁用自适应（向后兼容）."""
+    msgs = [_tool_msg("X" * 5000)] + [_user(f"q{i}") for i in range(8)]
+    sink = lambda sid, m: None  # noqa: E731
+    # 固定 age=20，距最新 8 < 20 → 不降级（即使占用高）
+    out = build_history_messages(
+        msgs, system_prompt="S", max_chars=7000, session_id="s",
+        archive_sink=sink, layer_tool_trim=True, tool_trim_age=20,
+    )
+    assert not any("工具输出已分层" in str(m.get("content", "")) for m in out)

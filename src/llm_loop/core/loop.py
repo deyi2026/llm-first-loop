@@ -28,7 +28,13 @@ from llm_loop.introspection.corrections import CorrectionContext, CorrectionTool
 from llm_loop.introspection.events import ArchitectureEvent, ArchitectureEventType
 from llm_loop.introspection.status import ArchitectureStatusProvider, ToolHistoryItem
 from llm_loop.llm.client import LLMClient, LLMResponse
-from llm_loop.llm.errors import LLMError, LLMHTTPError, LLMNetworkError, LLMTimeoutError
+from llm_loop.llm.errors import (
+    LLMError,
+    LLMHTTPError,
+    LLMNetworkError,
+    LLMTimeoutError,
+    is_overflow_error,
+)
 from llm_loop.memory.extract import extract_memory_blocks, memory_blocks_to_entries
 from llm_loop.memory.retrieve import build_memory_messages
 from llm_loop.memory.store import MemoryStore
@@ -189,8 +195,10 @@ class LoopEngine:
         if not self.session.exists(session_id):
             try:
                 self.session.save(sess)
-            except Exception:  # noqa: BLE001 — T39: 存储故障不阻断
+            except Exception as exc:
+                # C1（PREFERENCE_1）: 会话持久化失败如实告知 AI，不静默——消息可能未落盘
                 logger.warning("初始会话保存失败（fail-open）", exc_info=True)
+                sess.messages.append(self._fault_feedback("session_persistence", exc))
         # T22/T23: 注入当前会话到注册表与修正上下文（压缩档案/检索关联）
         from contextlib import suppress
 
@@ -233,7 +241,7 @@ class LoopEngine:
                 memory_msgs = build_memory_messages(
                     user_text,
                     self.memory,
-                    top_k=self.settings.memory_top_k,
+                    top_k=self._runtime_memory_top_k(),  # M57 配置面收敛: 动态优先（AI 可调）
                     semantic_retriever=self.semantic_retriever,  # M11 T45: 语义路径接线
                 )
             except Exception as exc:  # noqa: BLE001 — 记忆失败不阻塞（FR-MEM-03）
@@ -315,6 +323,22 @@ class LoopEngine:
                 self._record_action("action.llm_decide", "llm_error", str(exc)[:200])
                 if self.status:
                     self.status.record_exception("llm_call", exc)
+                # R4: overflow 如实反馈（不自动重试，决策权归 AI，避免丢信息影响大模型）
+                if is_overflow_error(exc):
+                    from llm_loop.feedback.honesty import overflow_feedback
+
+                    ctx_limit = self._current_context_limit(model_used)
+                    model_window = (
+                        {"label": model_used, "context": ctx_limit}
+                        if ctx_limit
+                        else {"label": model_used, "context": None}
+                    )
+                    final_answer = overflow_feedback(
+                        exc,
+                        getattr(self, "_last_breakdown", None),
+                        model_window,
+                    )
+                    break
                 # ── M49（design §5.4）: 降级逻辑 ──
                 # 仅当当前模型为默认装配（sess.model_override is None 且 per-call override 也为 None）
                 # 才沿 fallback 链尝试；会话显式 override（含用户/AI 经 switch_model 选择）=
@@ -430,12 +454,10 @@ class LoopEngine:
                     )
                     sess.messages.append(tool_msg)
 
-            # ── M12 深化 T65: 自我评估触发检测（每轮末，仅提示不强制）──
-            self._check_eval_trigger(sess, rounds)
-            # ── M17 FR-REVIEW-AI-02: executing 演进待办提醒（每轮末，仅提示不强制）──
-            self._check_evolution_executing(sess)
-            # ── EVO-20260810-86e777d1: pending_review 演进弹窗提醒（每轮末）──
-            self._check_pending_review(sess)
+            # ── M56 收敛（ANALYSIS-20260811-loop-strategy-branch-inventory）:
+            # 每轮末信号检测统一为一次调用（自评/演进待办/待审提醒，均仅提示不强制，
+            # 触发判断与决策交 AI 自主——RULE-AI-10 每轮自主检查清单）──
+            self._check_loop_signals(sess, rounds)
 
             # ── 轮数上限（如实结束，T38: 进展判断交 AI 自主，程序仅保留此硬边界）──
             if rounds >= self._runtime_max_iterations():
@@ -587,8 +609,9 @@ class LoopEngine:
         # 记忆消息作为前置注入
         base = [m for m in memory_msgs] + list(sess.messages)
         # EVO-20260811-9ccdec97: 会话状态快照节流——每间隔注入状态帧（定位锚点，fail-open）
+        # M58 配置面收敛: 间隔走 runtime（动态优先，AI 可调）
         try:
-            interval = getattr(self.settings, "extract_interval_msgs", 20) or 20
+            interval = self._runtime_extract_interval()
             if len(sess.messages) - self._last_snapshot_count >= interval:
                 evo_summary = None
                 if self.evolution_store is not None and hasattr(self.evolution_store, "summary"):
@@ -615,6 +638,13 @@ class LoopEngine:
         archive_sink = None
         if self.archive is not None:
             archive_sink = self._archive_sink
+        # R1: 计算组件级占用分解（供 architecture_status.context_usage.breakdown 注入）
+        from llm_loop.core.history import compute_breakdown
+
+        effective_budget = max_chars if max_chars is not None else self._runtime_history_budget()
+        self._last_breakdown = compute_breakdown(
+            base, system_prompt, memory_msgs, budget=effective_budget
+        )
         return build_history_messages(
             base,
             system_prompt,
@@ -623,7 +653,19 @@ class LoopEngine:
             archive_sink=archive_sink,
             summarizer=self.summarizer,  # EVO-9794797e: 主动压缩（旧消息语义摘要）
             layer_tool_trim=getattr(self.settings, "tool_trim_enabled", False),  # EVO-20260811-7baa2737: 历史分层降级
+            tool_trim_age=getattr(self.settings, "tool_trim_age", 0),  # R3: 0=自适应
+            reasoning_tail=getattr(self.settings, "reasoning_tail", 2),  # M66 思考链瘦身
         )
+
+    def _check_loop_signals(self, sess, rounds: int) -> None:
+        """每轮末信号检测统一入口（M56 收敛，ANALYSIS-20260811）.
+
+        合并自评触发 / executing 演进待办 / pending_review 待审三项检测为一次调用；
+        均仅"事实提醒"不强制，触发判断与决策权归 AI（RULE-AI-10 每轮自主检查清单）。
+        """
+        self._check_eval_trigger(sess, rounds)
+        self._check_evolution_executing(sess)
+        self._check_pending_review(sess)
 
     def _check_eval_trigger(self, sess, rounds: int, *, milestone: bool = False) -> None:
         """自我评估触发检测（T63/T65: 每轮末 + run 完成里程碑）.
@@ -687,6 +729,18 @@ class LoopEngine:
             return self.runtime.history_max_chars
         return self.settings.history_max_chars
 
+    def _runtime_extract_interval(self) -> int:
+        """会话状态快照注入间隔（M58 配置面收敛: 动态优先、静态兜底）."""
+        if self.runtime is not None:
+            return self.runtime.extract_interval_msgs
+        return getattr(self.settings, "extract_interval_msgs", 20) or 20
+
+    def _runtime_memory_top_k(self) -> int:
+        """记忆检索条数（M57 配置面收敛: 动态优先、静态兜底）."""
+        if self.runtime is not None:
+            return self.runtime.memory_top_k
+        return getattr(self.settings, "memory_top_k", 5)
+
     def _runtime_timeout(self) -> float | None:
         """LLM 调用超时（PARAM-01: 动态优先、静态兜底）."""
         if self.runtime is not None:
@@ -722,8 +776,16 @@ class LoopEngine:
             # T28: LLM 摘要（SUMMARY_MODE 配置；off 走确定性，sync/async 由 Summarizer 处理）
             if self.summarizer is not None and entry is not None:
                 self.summarizer.summarize_archive(entry.id, msg.content, self.archive)
-        except Exception:
+        except Exception as exc:
+            # C3（PREFERENCE_1）: 压缩另存/摘要失败如实注入会话（AI 可感知，不静默——
+            # 被压缩消息可能无法找回）。注入失败静默（尽力而为）。
             logger.warning("压缩另存/摘要失败（fail-open）", exc_info=True)
+            from contextlib import suppress
+
+            with suppress(Exception):
+                s = self.session.load(session_id)
+                s.messages.append(self._fault_feedback("archive_sink", exc))
+                self.session.save(s)
 
     def _schema_to_param(self, t: dict) -> dict:
         return {

@@ -10,13 +10,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-
 from typing import Any
 
 from llm_loop.core.message import Message, MessageSource
 
 
-def _top_keywords(messages: list["Message"], top: int = 5) -> list[str]:
+def _top_keywords(messages: list[Message], top: int = 5) -> list[str]:
     """从消息内容抽取高频词作为检索建议词（极简词频，fail-open 由调用方包裹）."""
     import re
     from collections import Counter
@@ -38,7 +37,7 @@ def _top_keywords(messages: list["Message"], top: int = 5) -> list[str]:
     return [w for w, _ in counter.most_common(top)]
 
 
-def _archive_index_dir(messages: list["Message"]) -> str:
+def _archive_index_dir(messages: list[Message]) -> str:
     """生成压缩档案索引目录（数行，供 AI 主动检索；原文已另存至档案）."""
     from collections import Counter
 
@@ -62,15 +61,32 @@ def _archive_index_dir(messages: list["Message"]) -> str:
 
 
 
+def _adaptive_tool_trim_age(total_chars: int, max_chars: int) -> int:
+    """R3: 按上下文占用率自适应 tool_trim_age（AI 无感零配置）.
+
+    - < 40% → 20（保守，保护最近上下文完整）
+    - 40-70% → 10（中等）
+    - > 70% → 5（激进，更早降级旧 tool 结果）
+    """
+    if max_chars <= 0:
+        return 20
+    ratio = total_chars / max_chars
+    if ratio < 0.4:
+        return 20
+    if ratio < 0.7:
+        return 10
+    return 5
+
+
 def _layer_trim(
-    messages: list["Message"],
+    messages: list[Message],
     *,
     enabled: bool,
     threshold: int,
     age: int,
     session_id: str,
-    archive_sink: "ArchiveSink | None",
-) -> list["Message"]:
+    archive_sink: ArchiveSink | None,
+) -> list[Message]:
     """历史分层降级（EVO-20260811-7baa2737）: 旧的长 tool 消息降级为首尾摘要.
 
     规则: role=tool 且 content 超 threshold 且距最新消息 >= age 条 → 降级。
@@ -123,6 +139,35 @@ def _layer_trim(
 ArchiveSink = Callable[[str, Message], None]
 
 
+def _apply_reasoning_tail(
+    messages: list[Message], reasoning_tail: int
+) -> list[Message]:
+    """M66 思考链瘦身: 历史中仅保留最近 N 轮 assistant 思考链（reasoning_content）.
+
+    更早轮次的思考链在**提交给 LLM 时**省略（内容/工具调用完整保留），
+    体积显著减小且不影响事实完整性；不修改原消息（仅提交视图瘦身）。
+
+    - reasoning_tail <= 0 → 保留全部（向后兼容，零回归）
+    - 最近一轮的 reasoning 必须保留（M20 THK-04: 携带 tool_calls 必须回传，
+      否则协议 400）——本实现始终保留最近 N 轮，覆盖最近一轮。
+    """
+    if reasoning_tail <= 0:
+        return messages
+    from dataclasses import replace
+
+    idx = [i for i, m in enumerate(messages) if m.role == "assistant" and m.reasoning_content]
+    keep = set(idx[-reasoning_tail:]) if idx else set()
+    if not idx:
+        return messages
+    out: list[Message] = []
+    for i, m in enumerate(messages):
+        if m.role == "assistant" and m.reasoning_content and i not in keep:
+            out.append(replace(m, reasoning_content=None))  # 仅提交视图省略，不动原消息
+        else:
+            out.append(m)
+    return out
+
+
 def build_history_messages(
     session_messages: list[Message],
     system_prompt: str,
@@ -133,7 +178,8 @@ def build_history_messages(
     summarizer: Any | None = None,  # EVO-9794797e: 主动压缩摘要器（可 None 走纯另存）
     layer_tool_trim: bool = False,  # EVO-20260811-7baa2737: 历史分层降级（默认关=零回归，loop 装配时按 settings 启用）
     tool_trim_threshold: int = 2000,  # tool 消息 content 超此长度才降级
-    tool_trim_age: int = 20,  # 距最新消息 >= 此条数才降级（保护最近上下文完整）
+    tool_trim_age: int = 0,  # R3: 0=自适应（按占用率自动调）；>0=固定值禁用自适应
+    reasoning_tail: int = 2,  # M66: 历史中仅保留最近 N 轮 assistant 思考链（0=全部保留）
 ) -> list[dict]:
     """组装提交 LLM 的消息序列（保序 + 超长另存压缩 + 如实标注）.
 
@@ -152,14 +198,20 @@ def build_history_messages(
         out.append({"role": "system", "content": system_prompt})
 
     total_chars = sum(len(m.content) for m in session_messages)
+    # R3: tool_trim_age=0 时按占用率自适应（AI 无感零配置）
+    if tool_trim_age <= 0:
+        tool_trim_age = _adaptive_tool_trim_age(total_chars, max_chars)
     if total_chars <= max_chars:
-        for m in _layer_trim(
-            session_messages,
-            enabled=layer_tool_trim,
-            threshold=tool_trim_threshold,
-            age=tool_trim_age,
-            session_id=session_id,
-            archive_sink=archive_sink,
+        for m in _apply_reasoning_tail(
+            _layer_trim(
+                session_messages,
+                enabled=layer_tool_trim,
+                threshold=tool_trim_threshold,
+                age=tool_trim_age,
+                session_id=session_id,
+                archive_sink=archive_sink,
+            ),
+            reasoning_tail,
         ):
             out.append(m.to_llm_dict())
         return out
@@ -234,13 +286,16 @@ def build_history_messages(
                 logging.getLogger(__name__).warning("archive sink 异常（fail-open）", exc_info=True)
 
     kept_flat = [m for g in kept_groups for m in g]
-    kept_flat = _layer_trim(
-        kept_flat,
-        enabled=layer_tool_trim,
-        threshold=tool_trim_threshold,
-        age=tool_trim_age,
-        session_id=session_id,
-        archive_sink=archive_sink,
+    kept_flat = _apply_reasoning_tail(
+        _layer_trim(
+            kept_flat,
+            enabled=layer_tool_trim,
+            threshold=tool_trim_threshold,
+            age=tool_trim_age,
+            session_id=session_id,
+            archive_sink=archive_sink,
+        ),
+        reasoning_tail,
     )
     for m in kept_flat:
         out.append(m.to_llm_dict())
@@ -299,3 +354,38 @@ def build_history_messages(
         for i, em in enumerate(extras):
             out.insert(1 + i, em.to_llm_dict())
     return out
+
+
+def compute_breakdown(
+    session_messages: list[Message],
+    system_prompt: str,
+    memory_msgs: list[Message] | None = None,
+    *,
+    tool_schema_chars: int = 0,
+    budget: int = 0,
+) -> dict:
+    """组件级上下文占用分解（R1: 纯只读，无副作用，供 architecture_status 注入）.
+
+    Returns:
+        {system, memory, history, tool_results, tool_schema, total, budget, ratio}
+        每项含 {chars, est_tokens, pct}；budget<=0 时 ratio 为 None。
+    """
+    sys_chars = len(system_prompt or "")
+    mem_chars = sum(len(m.content) for m in (memory_msgs or []))
+    hist_chars = sum(len(m.content) for m in session_messages if m.role != "tool")
+    tool_chars = sum(len(m.content) for m in session_messages if m.role == "tool")
+    total = sys_chars + mem_chars + hist_chars + tool_chars + tool_schema_chars
+
+    def _item(c: int) -> dict:
+        return {"chars": c, "est_tokens": c // 2, "pct": round(c / max(1, total) * 100, 1)}
+
+    return {
+        "system": _item(sys_chars),
+        "memory": _item(mem_chars),
+        "history": _item(hist_chars),
+        "tool_results": _item(tool_chars),
+        "tool_schema": _item(tool_schema_chars),
+        "total": {"chars": total, "est_tokens": total // 2},
+        "budget": budget,
+        "ratio": round(total / max(1, budget), 3) if budget > 0 else None,
+    }

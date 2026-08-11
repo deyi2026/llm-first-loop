@@ -51,8 +51,11 @@ def current_session_id(ctx: Any) -> str:
     return getattr(ctx, "session_id", "") or ""
 
 
-def run_search_archive(ctx: Any, archive: Any, args: dict, session_id_fn: Any) -> ToolResult:
-    """search_archive: 检索被压缩的历史/超长结果（T22）."""
+def run_search_archive(ctx: Any, archive: Any, args: dict, session_id_fn: Any, summarizer: Any = None) -> ToolResult:
+    """search_archive: 检索被压缩的历史/超长结果（T22）.
+
+    R2: with_summary=true 时对命中条目生成 LLM 语义摘要（AI 按需触发，增加计费）。
+    """
     query = str(args.get("query", "")).strip()
     if not query:
         return ToolResult(
@@ -80,13 +83,36 @@ def run_search_archive(ctx: Any, archive: Any, args: dict, session_id_fn: Any) -
             tool_call_id="",
             tool_name="search_archive",
         )
+    with_summary = bool(args.get("with_summary", False))
     lines: list[str] = []
     for h in hits[:6]:
-        lines.append(
-            f"[{h.get('ts', '')}] {h.get('role', '')}/{h.get('tool_name') or h.get('source', '')}: "
-            f"{str(h.get('summary', ''))[:200]}"
-        )
-    lines.append("原文片段: " + str(hits[0].get("content_preview", ""))[:400])
+        ts = h.get("ts", "")
+        role_h = h.get("role", "")
+        src = h.get("tool_name") or h.get("source", "")
+        header = f"[{ts}] {role_h}/{src}"
+        if with_summary:
+            content_preview = str(h.get("content_preview", ""))
+            if summarizer is not None and content_preview:
+                try:
+                    result = summarizer.summarize(content_preview)
+                    lines.append(
+                        f"{header}: 摘要(source={result.source}): {result.summary}\n"
+                        f"原文片段: {content_preview[:200]}"
+                    )
+                except Exception as exc:  # noqa: BLE001 — 如实反馈失败，不静默降级
+                    lines.append(
+                        f"{header}: [摘要失败: {exc}] 原文片段: {content_preview[:400]}"
+                    )
+            else:
+                lines.append(
+                    f"{header}: [摘要不可用] 原文片段: {content_preview[:400]}"
+                )
+        else:
+            lines.append(
+                f"{header}: {str(h.get('summary', ''))[:200]}"
+            )
+    if not with_summary:
+        lines.append("原文片段: " + str(hits[0].get("content_preview", ""))[:400])
     content = "[search_archive] 命中 " + str(len(hits)) + " 条:\n" + "\n".join(lines[:6])
     # M19 FIX-02: 命中 > 展示数时如实标注（AI 请求 limit 却只见 6 条，需告知真实命中数）
     if len(hits) > 6:
