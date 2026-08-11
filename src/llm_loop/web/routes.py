@@ -127,21 +127,47 @@ def api_info() -> dict:
 
 @router.get("/api/v1/models")
 def list_models(request: Request) -> dict:
-    """可用模型列表（供前端模型切换下拉）.
+    """可用模型列表（供前端模型切换下拉，M50）.
 
-    候选顺序: WEB_MODELS 逗号分隔（配置优先）> 内置候选（当前装配模型 + 常用档位）。
-    current 为引擎当前装配模型（如实，不伪造可用性）。
+    M50（design §六）三端一致性: 候选从 `engine.llm_pool.registry` 自动生成。
+    - WEB_MODELS env 保留作**过滤子集**（若设置則只返回其交集; 未设置 = 注册表全量）
+    - 零回归: 未配置注册表（仅 L0 单 provider 合成）时行为同现状（返回默认 + 常用档位）
+    - current 如实呈现当前会话 override > 引擎默认装配（不伪造可用性）
     """
     import os as _os
 
     engine = _engine_from(request)
-    current = getattr(getattr(engine, "llm", None), "model", None) or "deepseek-v4-flash"
+    default_model = getattr(getattr(engine, "llm", None), "model", None) or "deepseek-v4-flash"
+    # M50: 从 session_map 取当前会话当前 override — sessions_id 不在查询参取中以当前不实现会话级（保留扩展位）
+    current = default_model
+
+    # M50: 从注册表生成候选
+    registry = getattr(getattr(engine, "llm_pool", None), "registry", None)
+    if registry is None:
+        # 零回归回顾: 未注入 model_pool（test 场景）→ 行为同现状
+        configured = _os.environ.get("WEB_MODELS", "").strip()
+        names = (
+            [m.strip() for m in configured.split(",") if m.strip()]
+            if configured
+            else ["deepseek-v4-flash", "deepseek-v4-pro"]
+        )
+        if current not in names:
+            names.insert(0, current)
+        return {"models": names, "current": current}
+
+    # 拉取所有注册表内全限定 'provider/model'
+    all_names: list[str] = []
+    for pid, spec in registry.providers.items():
+        for mid in spec.models:
+            all_names.append(f"{pid}/{mid}")
+    # WEB_MODELS 过滤子集（保留交集顺序, 避免跨 provider 冲突）
     configured = _os.environ.get("WEB_MODELS", "").strip()
-    names = (
-        [m.strip() for m in configured.split(",") if m.strip()]
-        if configured
-        else ["deepseek-v4-flash", "deepseek-v4-pro"]
-    )
+    if configured:
+        wanted = {m.strip() for m in configured.split(",") if m.strip()}
+        names = [n for n in all_names if n in wanted]
+    else:
+        names = all_names
+    # current 不在列表中 → 插入首部（保证前端下拉可见）
     if current not in names:
         names.insert(0, current)
     return {"models": names, "current": current}

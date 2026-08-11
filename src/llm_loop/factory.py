@@ -174,7 +174,14 @@ def build_engine(settings: Settings) -> LoopEngine:
         archive_store=archive,  # T22: search_archive
     )
     correction_ctx.retry_executor = lambda name, args: registry.execute(_make_tool_call(name, args))
-    correction_ctx.refresh_executor = lambda: "配置重载完成（当前为环境变量直读，无独立配置文件）"
+    # M50（design §5.6）: refresh_config 扩展 — 重载 env 同时重读 data/providers.json，重建注册表
+    # 失败保持旧 registry + 如实标注 (DFX-REL-08 fail-open)
+    # 实现提取至 introspection/providers_registry_reload.py 以便于独立测试
+    from llm_loop.introspection.providers_registry_reload import install_refresh_executor
+
+    # 临时初始化为占位 (factory 尚未构造 engine 上下文, install 时机选在 LoopEngine 构造后)
+    correction_ctx.refresh_executor = lambda: "配置重载执行器待 install (M50)"
+
     # M12 T52: 演进建议存储装配
     from llm_loop.introspection.evolution import EvolutionStore
 
@@ -272,7 +279,7 @@ def build_engine(settings: Settings) -> LoopEngine:
             audit_dir=settings.audit_dir,
         )
 
-    return LoopEngine(
+    engine = LoopEngine(
         llm_client=llm,
         registry=registry,
         memory=memory,
@@ -294,6 +301,10 @@ def build_engine(settings: Settings) -> LoopEngine:
         loop_signal_detector=_build_loop_signal_detector(settings, status_provider, corrections),
         llm_pool=model_pool,  # M48（design §5.3）: 会话级模型路由
     )
+
+    # M50（design §5.6）: 注入增强版 refresh_config executor — 重读 providers.json
+    install_refresh_executor(engine)
+    return engine
 
 
 def _build_fault_classifier() -> Any:

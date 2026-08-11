@@ -15,7 +15,11 @@ from llm_loop.core.session import SessionStore
 
 
 def _run_single(engine, text: str, session_id: str | None = None) -> None:
-    """单条消息跑通最小闭环并打印真诚回答（可复用既有会话）."""
+    """单条消息跑通最小闭环并打印真诚回答（可复用既有会话）.
+
+    M50 启动参数 `--model <provider/model>` 支持: 启动时写入会话 model_override（交互模式即时生效;
+    单条消息模式应用于本次运行的 session 上下文, 与设计 §六 三端一致性对齐）。
+    """
     session_store: SessionStore = engine.session
     if session_id:
         if not session_store.exists(session_id):
@@ -26,6 +30,9 @@ def _run_single(engine, text: str, session_id: str | None = None) -> None:
         sid = session_id
     else:
         sid = session_store.create()
+    # M50: 启动参数 --model 写会话 override (复用 M48 switch_model 路径，零代码重复)
+    if getattr(engine, "_cli_startup_model", None):
+        _apply_cli_startup_model(engine, session_store, sid, engine._cli_startup_model)
     result = engine.run(sid, text)
     print("\n" + "─" * 60)
     print(f"[会话 {sid[:8]}] 轮数={result.rounds} 工具调用={len(result.tool_calls)}")
@@ -37,8 +44,38 @@ def _run_single(engine, text: str, session_id: str | None = None) -> None:
     print("─" * 60)
 
 
+def _apply_cli_startup_model(engine, session_store, session_id: str, model_ref: str) -> None:
+    """M50 启动参数 `--model` 落地: 复用 M48 切换路径, 写会话 override + 持久化.
+
+    失败不阻断主流程(对齐 design §三 原则 2 如实反馈) — 仅打印失败原因, 后续 run() 仍用默认装配.
+    """
+    from llm_loop.introspection.model_command import handle_model_command
+
+    ctx = getattr(engine, "correction_ctx", None)
+    if ctx is None:
+        print("[--model 启动失败] correction_ctx 缺失; 请改用 /model 交互指令切换。")
+        return
+    sess = session_store.load(session_id)
+    session_store.save(sess)  # 确保会话 JSON 落盘存在
+    # 强制 reload (load 一次后若 start 内已写入，需拿到 in-memory sess 引用)
+    sess = session_store.load(session_id)
+    result = handle_model_command(
+        f"/model {model_ref}", ctx, sess, session_store, audit=None
+    )
+    if result is not None:
+        print(result.reply)
+
+
 def _run_interactive(engine, session_id: str | None = None) -> None:
-    """交互模式（连续会话，验证记忆贯穿；可复用既有会话）."""
+    """交互模式（连续会话，验证记忆贯穿；可复用既有会话）.
+
+    M50 三端一致性: 交互模式 /model 命令（设计与飞书桥共用）
+    - /model → 列出当前会话模型 + 目录
+    - /model <ref> → 切换 (provider/model 或裸模型名)
+    - /model default → 清除 override 回装配默认
+    """
+    from llm_loop.introspection.model_command import handle_model_command
+
     session_store: SessionStore = engine.session
     if session_id and not session_store.exists(session_id):
         from llm_loop.feedback.honesty import session_not_found_message
@@ -46,7 +83,21 @@ def _run_interactive(engine, session_id: str | None = None) -> None:
         print(session_not_found_message(session_id))
         return
     sid = session_id or session_store.create()
-    print(f"LLM-First Core Loop 交互模式（会话 {sid[:8]}，输入 exit 退出）")
+    # M50: 启动参数 --model 写会话 override (复用 handle_model_command 路径)
+    startup_model = getattr(engine, "_cli_startup_model", None)
+    if startup_model:
+        # 触发 handle_model_command 走切换路径, 复用 M48 同套审计/回执
+        sess = session_store.load(sid)
+        result = handle_model_command(
+            f"/model {startup_model}",
+            engine.correction_ctx,
+            sess,
+            session_store,
+            audit=None,
+        )
+        if result is not None:
+            print(f"[--model 启动] {result.reply}")
+    print(f"LLM-First Core Loop 交互模式（会话 {sid[:8]}，输入 exit 退出；M50: /model [provider/model|default] 切换模型）")
     while True:
         try:
             text = input("\n你> ").strip()
@@ -57,6 +108,16 @@ def _run_interactive(engine, session_id: str | None = None) -> None:
             continue
         if text.lower() in {"exit", "quit", "退出"}:
             break
+        # M50: /model 指令拦截 (与飞书桥共用同一套处理逻辑)
+        ctx = getattr(engine, "correction_ctx", None)
+        if ctx is not None:
+            sess = session_store.load(sid)
+            cmd_result = handle_model_command(
+                text, ctx, sess, session_store, audit=None
+            )
+            if cmd_result is not None:
+                print(f"\n[模型指令] {cmd_result.reply}")
+                continue
         result = engine.run(sid, text)
         print(f"\nAI> {result.final_answer}")
         if result.verification_note:
@@ -161,6 +222,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("message", nargs="?", help="单条消息（不填则进入交互模式）")
     parser.add_argument("--interactive", action="store_true", help="交互模式")
     parser.add_argument("--session", help="复用指定会话（单条/交互）")
+    parser.add_argument(
+        "--model",
+        dest="model",
+        default="",
+        help="M50: 启动时为会话装配模型（provider/model 或裸模型名；与 Web /model 一致, 复用同一 session override）",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -172,6 +239,9 @@ def main(argv: list[str] | None = None) -> int:
     from llm_loop.factory import build_engine
 
     engine = build_engine(settings)
+    # M50: 启动参数 --model 转入引擎属性, 由 _run_single / _run_interactive 落地
+    if args.model:
+        engine._cli_startup_model = args.model  # noqa: SLF001 — 私有装配通道
 
     if args.message:
         _run_single(engine, args.message, session_id=args.session)

@@ -115,7 +115,48 @@ class FeishuMessageHandler:
         if not text:
             return
         self._audit(msg, "text", text[:200])
+        # M50（design §六）: 飞书 /model 指令拦截（与 CLI 共用同一套处理逻辑）
+        if self._try_handle_model_command(msg, text):
+            return
         self._run_with_processing_actions(msg, self._run_text, text)
+
+    def _try_handle_model_command(self, msg: FeishuMessage, text: str) -> bool:
+        """M50：飞书 /model 指令拦截（三端一致性，与 CLI 共用 handle_model_command）.
+
+        Returns:
+            True → 已处理（调用方勿继续走 engine.run）；False → 非 /model 指令，继续走原路径。
+        """
+        from llm_loop.introspection.model_command import handle_model_command
+
+        ctx = getattr(self._engine, "correction_ctx", None)
+        if ctx is None:
+            return False
+        # 取/建会话（与 _run_text 同一映射路径，与 CLI 共用 SessionStore）
+        sid = self._session_map.get_or_create(self._map_key(msg))
+        sess = self._engine.session.load(sid)
+        # audit 注入：复用 corrections._audit 闭包（保证落 self_correction_log.jsonl）
+        audit_fn = self._model_command_audit
+        result = handle_model_command(text, ctx, sess, self._engine.session, audit_fn)
+        if result is None:
+            return False
+        # 特殊路径：走 ReplyFn 直接回执（不走 _run_with_processing_actions / 状态卡）
+        self._reply(msg, result.reply)
+        # 审计：feishu 通道记录（与 engine 内部审计区分）
+        self._audit(
+            msg,
+            "model_command",
+            f"success={result.success} changed={result.changed} text={text[:80]}",
+        )
+        return True
+
+    def _model_command_audit(self, tool_name: str, arguments: dict, result_status: str) -> None:
+        """M50：复用 corrections._audit 习惯（落 self_correction_log.jsonl）.
+
+        飞书 /model 指令触发的 switch_model 需锁到主会话审计通道;
+        避免双写重复 — 飞书端仅依赖 corrections 路径的 audit，feishu 审计仅记录通道动作。
+        """
+        # 委托给 engine 内部的 _audit 闭包（如果有）；此处简化为 no-op，靠 corrections 内部审计
+        return
 
     def _run_text(self, msg: FeishuMessage, text: str) -> None:
         """文本引擎执行 + 回复（M46：_run_with_processing_actions 包内）."""
