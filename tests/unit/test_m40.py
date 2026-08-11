@@ -66,7 +66,11 @@ def test_history_compression_pair_atomic_2m():
 
 
 def test_tool_oversize_archived_not_lost():
-    """300K 工具输出：先另存再截断（完整结果可检索找回，不丢失）."""
+    """300K 工具输出：分层摘要注入 + 完整结果另存（EVO-20260811-22a7d3e1 更新验收）.
+
+    演进后行为: 超 summary_threshold(默认5000) 先注入首/尾摘要（远小于硬上限），
+    完整结果仍另存至压缩档案可检索找回（信息零丢失不变）。
+    """
     registry = ToolRegistry(max_output_chars=100_000)
 
     class _BigTool:
@@ -87,8 +91,8 @@ def test_tool_oversize_archived_not_lost():
 
     call = ToolCall(id="big_1", name="big_tool", arguments={})
     result = registry.execute(call)
-    assert len(result.content) <= 100_000 + 200  # 截断
-    assert "[结果超长，已截断" in result.content
+    assert len(result.content) <= 100_000 + 200  # 注入内容远小于硬上限（分层摘要）
+    assert "[输出摘要]" in result.content  # 分层注入（EVO-20260811-22a7d3e1）
     assert "search_archive 检索找回" in result.content  # 完整结果可检索找回指引
 
 
