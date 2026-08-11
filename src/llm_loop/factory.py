@@ -46,6 +46,19 @@ def build_engine(settings: Settings) -> LoopEngine:
     """装配全部组件并返回 LoopEngine."""
     settings.ensure_dirs()
 
+    # M47（design §5.1/§5.5）: 从注册表查思考支持（消除 _thinking_supported() 硬编码 deepseek.com）.
+    # 当前模型不在注册表（如显式使用未注册的模型）→ 保持 LLMClient 默认（向后兼容）.
+    thinking_supported: bool | None = None
+    try:
+        from llm_loop.llm.providers import load_registry
+
+        registry = load_registry(settings)
+        provider_id, model_id = registry.resolve(settings.llm_model)
+        thinking_supported = registry.supports_thinking(provider_id, model_id)
+    except ValueError:
+        # 当前模型不在注册表 → 保持 LLMClient 默认（向后兼容 _thinking_supported）
+        pass
+
     # LLM 客户端
     llm = LLMClient(
         api_key=settings.llm_api_key,
@@ -55,6 +68,8 @@ def build_engine(settings: Settings) -> LoopEngine:
         # M20 THK-01: 思考参数装配一次，三条 LLM 路径统一受益（VAL-02）
         thinking_mode=settings.thinking_mode,
         reasoning_effort=settings.reasoning_effort,
+        # M47 §5.5: 元数据驱动的思考支持判定（None 时退回硬编码，向后兼容）
+        thinking_supported=thinking_supported,
     )
 
     # 存储（记忆 + 压缩档案 + 会话）
