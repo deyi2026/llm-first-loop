@@ -217,7 +217,16 @@ class LoopEngine:
             except Exception as exc:  # noqa: BLE001 — 记忆失败不阻塞（FR-MEM-03）
                 memory_msgs = [self._fault_feedback("memory", exc)]
 
-            messages = self._build_llm_messages(sess, memory_msgs)
+            # M54: 模型窗口感知的主动压缩 — 先定模型标签, 再按其窗口收紧历史预算
+            planned_label = self._planned_model_label(model, sess)
+            effective_budget = self._effective_history_budget(planned_label)
+            if effective_budget < self._runtime_history_budget():
+                self._record_action(
+                    "understand.build_messages",
+                    "model_aware_budget",
+                    f"{planned_label}: {self._runtime_history_budget()}→{effective_budget}",
+                )
+            messages = self._build_llm_messages(sess, memory_msgs, max_chars=effective_budget)
             if len(messages) < len(sess.messages) + len(memory_msgs) + 1:
                 truncation_noted = True
             tool_schemas = self.registry.schemas(lazy=self.settings.tool_schema_lazy)
@@ -515,8 +524,43 @@ class LoopEngine:
         )
 
     # ── 辅助 ──
-    def _build_llm_messages(self, sess, memory_msgs: list[Message]) -> list[dict]:
-        """构造提交 LLM 的消息序列（system prompt + 记忆注入 + 历史 + 压缩另存）."""
+    def _planned_model_label(self, model: str | None, sess) -> str:
+        """M54: 预测本轮将使用的模型标签（仅标签解析, 不建 client）.
+
+        与路由同序: per-call override > 会话 override > 默认装配。
+        用于在构造消息前计算模型窗口感知的压缩预算。
+        """
+        if model is not None and self.llm_pool is not None:
+            try:
+                pid, mid = self.llm_pool.registry.resolve(model)
+                return f"{pid}/{mid}"
+            except ValueError:
+                return model
+        if self.llm_pool is not None and sess.model_override:
+            return sess.model_override
+        return self._default_model_label()
+
+    def _effective_history_budget(self, model_label: str) -> int:
+        """M54: 模型窗口感知的历史压缩预算.
+
+        effective = min(全局预算, 模型 context × 2字符/token × 0.5 压缩系数)。
+        例: k3-256k (262144 tokens) → ~26万字符（而不是全局 1M）→ 历史先压到窗口内再调用。
+        无 pool / 未知模型 → 全局预算（零回归）。
+        """
+        global_budget = self._runtime_history_budget()
+        limit = self._current_context_limit(model_label)
+        if not limit:
+            return global_budget
+        model_budget = int(limit * _CHARS_PER_TOKEN_EST * 0.5)
+        return min(global_budget, model_budget)
+
+    def _build_llm_messages(
+        self, sess, memory_msgs: list[Message], max_chars: int | None = None
+    ) -> list[dict]:
+        """构造提交 LLM 的消息序列（system prompt + 记忆注入 + 历史 + 压缩另存）.
+
+        M54: max_chars 可覆盖默认预算（模型窗口感知压缩）；None = 运行时预算（零回归）。
+        """
         system_prompt = build_system_prompt()
         # 记忆消息作为前置注入
         base = [m for m in memory_msgs] + list(sess.messages)
@@ -528,7 +572,7 @@ class LoopEngine:
         return build_history_messages(
             base,
             system_prompt,
-            max_chars=self._runtime_history_budget(),
+            max_chars=max_chars if max_chars is not None else self._runtime_history_budget(),
             session_id=sess.session_id,
             archive_sink=archive_sink,
             summarizer=self.summarizer,  # EVO-9794797e: 主动压缩（旧消息语义摘要）
