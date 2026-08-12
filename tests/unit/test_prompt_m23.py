@@ -30,7 +30,7 @@ def test_prompt_mentions_tool_names():
     """回答提及工具名引导句存在（FR-CHAIN-PRMP-02，场景 f 型）."""
     prompt = build_system_prompt()
     assert "提及本轮所用工具名" in prompt
-    assert "回答与动作链可核验、可追溯" in prompt
+    assert "使动作链可核验可追溯" in prompt
 
 
 def test_prompt_keeps_decision_principle():

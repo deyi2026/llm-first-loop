@@ -46,6 +46,8 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 - **信息不丢失**：上下文超长时另存压缩档案（`search_archive` 检索找回）；`search_records` 统一检索历史记录/记忆/档案（可查可检索）
 - **记忆智能**：LLM 语义摘要（`SUMMARY_MODE`）、语义检索（`EMBEDDING_PROVIDER`）、独立记忆提取（会话结束/定期/手动）
 - **多会话管理**：CLI 子命令 `list / delete / archive / unarchive / search / extract` + `--session` 复用
+- **模型体系**（M47-M50）：`model_catalog` 查目录 / `switch_model` 自主切换（带 reason 审计落盘，AI 决策权）；Provider 注册表 + `MODEL_FALLBACKS` 应急降级链（仅默认装配模型失败时自动应急降级并如实标注，用户显式选择的模型不降级）；模型窗口自适应历史预算（按当前模型 context 收紧/放宽）
+- **双端接入**（Web + 飞书桥）：Web 管理界面（FastAPI :8902）+ 飞书长连接桥；配置 `FEISHU_OWNER_OPEN_ID` 后两端共享同一会话（一端说话另一端可续聊同一上下文）；飞书桥内置假死防护（SDK 锁泄漏运行时修补 + 看门狗心跳 + 健康检查按心跳新鲜度判定）
 - **灾难性安全**：唯一硬边界 = 不可逆删除/系统破坏，其余一切反馈放行
 
 ## CLI 子命令
