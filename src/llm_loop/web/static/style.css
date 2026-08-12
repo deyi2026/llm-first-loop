@@ -799,3 +799,40 @@ html, body {
   word-break: break-all;
   white-space: pre-wrap;
 }
+
+/* ── M52: 异常醒目 + 完整原文 ── */
+.tool-call-toggle-error {
+  color: #c0392b;
+  border-color: #e6b8b3;
+  background: #fdf1f0;
+}
+.tool-call-toggle-error:hover {
+  background: #fbe4e2;
+}
+.tool-call-full-btn {
+  display: inline-block;
+  margin: 4px 0 4px 8px;
+  padding: 2px 10px;
+  font-size: 12px;
+  color: #2456a6;
+  background: #eef4fd;
+  border: 1px solid #c3d7f2;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.tool-call-full-btn:hover:not(:disabled) {
+  background: #ddeafa;
+}
+.tool-call-full-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.tool-call-full-text {
+  border-top: 1px dashed #d0d7de;
+  margin-top: 6px;
+  padding-top: 6px;
+}
+.message-alert {
+  border-left: 3px solid #c0392b;
+  background: #fdf6f5;
+}

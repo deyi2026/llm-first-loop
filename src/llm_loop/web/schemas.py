@@ -55,6 +55,7 @@ class MessageItem(BaseModel):
 
     role: str
     content: str
+    tool_call_id: str | None = None  # M52: tool 消息透出（web 端"展开原文"精确定位档案）
 
 
 class SessionMessagesResponse(BaseModel):

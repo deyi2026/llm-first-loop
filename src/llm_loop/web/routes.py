@@ -347,8 +347,47 @@ def get_session_messages(session_id: str, request: Request) -> SessionMessagesRe
                 "detail": f"[程序异常] 会话加载失败（{type(exc).__name__}: {exc}）。",
             },
         )
-    messages = [MessageItem(role=m.role, content=m.content) for m in session.messages]
+    messages = [MessageItem(role=m.role, content=m.content, tool_call_id=m.tool_call_id) for m in session.messages]
     return SessionMessagesResponse(session_id=session_id, messages=messages)
+
+
+@router.get("/api/v1/sessions/{session_id}/archive/{tool_call_id}", response_model=None)
+def get_archived_tool_output(session_id: str, tool_call_id: str, request: Request) -> Response:
+    """M52: 分层截断工具回执的完整原文（web 端"展开原文"数据源，按 tool_call_id 精确定位）."""
+    engine = _engine_from(request)
+    if not engine.session.exists(session_id):
+        return JSONResponse(
+            status_code=404,
+            content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
+        )
+    store = getattr(engine, "archive", None)
+    if store is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "archive_unavailable", "detail": "压缩档案不可用（未配置），无法取回原文。"},
+        )
+    try:
+        entry = store.get_by_tool_call_id(session_id, tool_call_id)
+    except Exception as exc:  # fail-open 如实反馈（RULE-AI-04）
+        logger.exception("archive lookup failed: %s/%s", session_id, tool_call_id)
+        return JSONResponse(
+            status_code=500,
+            content={"error": "archive_lookup_failed", "detail": f"[程序异常] 档案检索失败（{type(exc).__name__}: {exc}）。"},
+        )
+    if entry is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "archive_not_found", "detail": "该工具回执未归档（可能未超长或归档降级），无完整原文可取。"},
+        )
+    return JSONResponse(
+        content={
+            "tool_call_id": tool_call_id,
+            "tool_name": entry.get("tool_name") or "",
+            "ts": entry.get("ts") or "",
+            "chars": entry.get("chars") or len(entry.get("content", "")),
+            "content": entry.get("content", ""),
+        }
+    )
 
 
 @router.delete(

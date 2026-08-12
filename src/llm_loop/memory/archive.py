@@ -201,6 +201,29 @@ class ArchiveStore:
                     break
         return hits
 
+    def get_by_tool_call_id(self, session_id: str, tool_call_id: str) -> dict | None:
+        """按 tool_call_id 精确取档案条目（M52: web 端分层截断"展开原文"数据源）.
+
+        返回 None 表示未归档（未截断/归档降级），调用方如实降级。
+        """
+        if not tool_call_id:
+            return None
+        p = self._path(session_id)
+        if not p.exists():
+            return None
+        with p.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if entry.get("tool_call_id") == tool_call_id:
+                    return entry
+        return None
+
     def stats(self, session_id: str) -> dict:
         """压缩档案统计（供 architecture_status 展示）."""
         p = self._path(session_id)
