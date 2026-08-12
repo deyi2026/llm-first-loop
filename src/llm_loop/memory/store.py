@@ -118,17 +118,18 @@ class MemoryStore:
         都不命中返回 None（视为新事实追加）。
         """
         fp = entry.content_fingerprint or self._compute_fingerprint(entry)
-        new_keys = {str(k).lower() for k in entry.keywords}
+        new_keys = [str(k).lower() for k in entry.keywords]
         for e in self._entries:
             if fp and (e.content_fingerprint or self._compute_fingerprint(e)) == fp:
                 return e
-            if (
-                e.type == entry.type
-                and new_keys
-                and e.keywords
-                and new_keys & {str(k).lower() for k in e.keywords}
-            ):
-                return e
+            # 弱匹配（同主题更新）: 交集>=1 且 交集包含任一方首标签。
+            # 修复(2026-08-13): 原交集>=1 过弱，共享泛用词（如 adjust_strategy/基线）
+            # 会误判跨主题条目为同事实并覆盖（借鉴 playbook 资产化时实证触发）。
+            old_keys = [str(k).lower() for k in e.keywords]
+            if e.type == entry.type and new_keys and old_keys:
+                inter = set(new_keys) & set(old_keys)
+                if inter and (new_keys[0] in inter or old_keys[0] in inter):
+                    return e
         return None
 
     def _update_existing(self, existing: MemoryEntry, entry: MemoryEntry) -> MemoryEntry:
@@ -145,6 +146,7 @@ class MemoryStore:
         existing.version += 1
         existing.content = entry.content
         existing.keywords = list(entry.keywords)
+        existing.citations = entry.citations or existing.citations  # 溯源跟随新条目（修复残留旧来源）
         existing.summary = entry.summary or existing.summary
         existing.source_session_id = entry.source_session_id or existing.source_session_id
         existing.source_message_id = entry.source_message_id or existing.source_message_id
