@@ -447,3 +447,61 @@ def test_architecture_status_desc_has_evolution_summary():
     td = next(t for t in reg.tool_defs() if t["name"] == "architecture_status")
     assert "evolution_summary" in td["description"]
     assert "演进待办" in td["description"]
+
+
+def test_submit_evolution_scope_session_receipt(tmp_path):
+    """M49: scope=session → 回执标注 executing + 登记闭环指引，不进人工审阅."""
+    from llm_loop.introspection.evolution import EvolutionStore
+    from llm_loop.introspection.tools_evolution import run_submit_evolution
+
+    store = EvolutionStore(tmp_path / "audit")
+    ctx = CorrectionContext(evolution_store=store)
+    r = run_submit_evolution(
+        ctx,
+        lambda *a, **k: None,
+        {"content": "本轮临时调参", "impact_scope": "运行参数", "scope": "session"},
+        audit_dir=str(tmp_path / "audit"),
+    )
+    assert r.status.value == "success"
+    assert "scope=session" in r.content
+    assert "状态=executing" in r.content
+    assert "evolution_complete" in r.content
+    assert "pending_review" not in r.content
+    assert store.list(status="pending_review") == []
+
+
+def test_submit_evolution_scope_boundary_override_receipt(tmp_path):
+    """M49: 涉边界指定 session → 强制 global，回执如实标注覆盖."""
+    from llm_loop.introspection.evolution import EvolutionStore
+    from llm_loop.introspection.tools_evolution import run_submit_evolution
+
+    store = EvolutionStore(tmp_path / "audit")
+    ctx = CorrectionContext(evolution_store=store)
+    r = run_submit_evolution(
+        ctx,
+        lambda *a, **k: None,
+        {"content": "改安全边界", "impact_scope": "安全边界", "scope": "session"},
+        audit_dir=str(tmp_path / "audit"),
+    )
+    assert r.status.value == "success"
+    assert "scope=global" in r.content
+    assert "覆盖为 global" in r.content
+    assert store.list(status="pending_review")[0]["scope"] == "global"
+
+
+def test_submit_evolution_default_scope_global_receipt(tmp_path):
+    """M49: 不传 scope → 默认 global，回执保持原人工审阅语义（向后兼容）."""
+    from llm_loop.introspection.evolution import EvolutionStore
+    from llm_loop.introspection.tools_evolution import run_submit_evolution
+
+    store = EvolutionStore(tmp_path / "audit")
+    ctx = CorrectionContext(evolution_store=store)
+    r = run_submit_evolution(
+        ctx,
+        lambda *a, **k: None,
+        {"content": "优化超时", "impact_scope": "timeout_s"},
+        audit_dir=str(tmp_path / "audit"),
+    )
+    assert r.status.value == "success"
+    assert "scope=global" in r.content
+    assert "evolve-review" in r.content

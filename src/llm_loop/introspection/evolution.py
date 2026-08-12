@@ -66,6 +66,11 @@ class EvolutionSuggestion:
     # （submit_evolution 为纯建议通道，执行动作由 AI 经修正工具自主完成，恒空列表）
     actions: list[dict] = field(default_factory=list)
     eval_id: str = ""  # 关联评估记录（evidence 引用 eval:<id>）
+    # M49（EVO-20260812-dc911d93 双层作用域，借鉴 Prime Agent HarnessScope）:
+    # global=持久架构变更，进 pending_review 人工审（默认，保守）；
+    # session=本会话级改进，直达 executing 经修正工具执行+evolution_complete 登记闭环。
+    # 涉边界内容强制 global（安全优先，AI 指定的 session 被覆盖时如实标注）。
+    scope: str = "global"  # global|session
     executed_at: str = ""  # 流转时间戳（EXEC-07 验收"状态流转完整记录"）
     verified_at: str = ""
     rolled_back_at: str = ""
@@ -98,8 +103,17 @@ class EvolutionStore:
         session_id: str = "",
         actions: list[dict] | None = None,
         eval_id: str = "",
+        scope: str = "global",
     ) -> EvolutionSuggestion:
-        """提交演进建议（返回含 id 与状态；涉边界标注 requires_human；T56 透传 actions/eval_id）."""
+        """提交演进建议（返回含 id 与状态；涉边界标注 requires_human；T56 透传 actions/eval_id）.
+
+        M49 双层作用域：scope=session 直达 executing（不进人工审阅队列），
+        涉边界内容强制回退 global（安全优先）。
+        """
+        requires_human = self._touches_boundary(impact_scope, content)
+        scope_norm = scope if scope in {"global", "session"} else "global"
+        if requires_human:
+            scope_norm = "global"  # 涉边界强制人工审，AI 指定 session 被覆盖（如实由回执标注）
         suggestion = EvolutionSuggestion(
             id=f"EVO-{datetime.now(UTC).strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}",
             ts=datetime.now(UTC).isoformat(),
@@ -107,10 +121,12 @@ class EvolutionStore:
             evidence=evidence,
             impact_scope=impact_scope,
             priority=priority if priority in {"high", "medium", "low"} else "medium",
-            requires_human=self._touches_boundary(impact_scope, content),
+            status="executing" if scope_norm == "session" else "pending_review",
+            requires_human=requires_human,
             session_id=session_id,
             actions=list(actions) if actions else [],
             eval_id=eval_id,
+            scope=scope_norm,
         )
         with self._path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(suggestion.to_dict(), ensure_ascii=False) + "\n")
@@ -145,6 +161,7 @@ class EvolutionStore:
             ("executed_at", ""),
             ("verified_at", ""),
             ("rolled_back_at", ""),
+            ("scope", "global"),  # M49: 旧记录默认 global（保守，维持原人工审语义）
         ):
             if key not in entry:
                 entry[key] = default
