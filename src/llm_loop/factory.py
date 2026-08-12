@@ -22,6 +22,7 @@ from llm_loop.introspection.status import ArchitectureStatusProvider
 from llm_loop.llm.client import LLMClient
 from llm_loop.memory.archive import ArchiveStore
 from llm_loop.memory.store import MemoryStore
+from llm_loop.tools.builtin.edit_file import EditFileTool
 from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
 from llm_loop.tools.builtin.read_file import ReadFileTool
 from llm_loop.tools.builtin.web_fetch import WebFetchTool
@@ -118,6 +119,8 @@ def build_engine(settings: Settings) -> LoopEngine:
         exec_allowlist=settings.exec_allowlist,
     )
     registry.register(ReadFileTool())
+    # M51: 四段式文件修改（read→match→diff→apply+verify，替代 sed/heredoc 盲替换）
+    registry.register(EditFileTool())
     # EVO-d5db88d9: 按需读取工具完整 Schema（懒加载配套；零副作用可始终注册）
     from llm_loop.tools.registry import GetToolSchemaTool
 
