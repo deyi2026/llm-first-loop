@@ -41,6 +41,11 @@ class MemoryEntry:
     access_count: int = 0            # 检索命中次数
     last_access_at: str = ""         # 最近访问时间 ISO（空=从未被检索）
     decay_score: float = 1.0         # 衰减分（1.0=最新最活跃；随未访问天数下降）
+    # SkillZip ReZip 借鉴（执行感知反馈环）:
+    # guidance_used_at: 最近一次被 M41 注入使用的时间（执行感知）
+    # guidance_risk: 风险标记（注入后同场景仍失败累计，>=2 提示经验可能失效）
+    guidance_used_at: str = ""
+    guidance_risk: int = 0
     citations: list[dict] = field(default_factory=list)  # 溯源: [{"kind","ref","note"}]
     # ── 版本化与去重（EVO-20260811-cbd6c52a）──
     version: int = 1                 # 版本号（同事实更新 +1）
