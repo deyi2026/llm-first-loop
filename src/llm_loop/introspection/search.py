@@ -78,6 +78,30 @@ def _jsonl_search(
     return hits
 
 
+def _memory_progressive_summary(e) -> str:
+    """渐进水合展示：procedure 条目优先提取【已验解法】段（契约级），其余回退整条前 300 字.
+
+    借鉴 SkillZip PathHydrate（progressive disclosure）：AI 检索经验时先看可执行解法，
+    而非整条陈述，减少 token 占用（SkillZip 论文: 文本接近≠契约等价，解法段才是可执行契约）。
+    """
+    content = str(getattr(e, "content", "") or "")
+    if getattr(e, "type", "") == "procedure":
+        idx = content.find("已验解法")
+        if idx != -1:
+            start = idx + len("已验解法")
+            while start < len(content) and content[start] in ":： \n\t":
+                start += 1
+            end = len(content)
+            for stop in ("\n实证", "\n反例", "\n触发标签"):
+                pos = content.find(stop, start)
+                if pos != -1:
+                    end = min(end, pos)
+            solution = content[start:end].strip()
+            if solution:
+                return f"[已验解法] {solution[:280]}"
+    return content[:300]
+
+
 class RecordSearcher:
     """统一检索器（T23）: 各 kind 记录 + 记忆 + 压缩档案（T31 语义路径）."""
 
@@ -262,7 +286,9 @@ class RecordSearcher:
                 "kind": "memory",
                 "ts": e.created_at,
                 "id": e.id,
-                "summary": e.content[:300],
+                # SkillZip PathHydrate 借鉴（渐进水合）: procedure 命中时优先返回
+                # "已验解法"段（契约级可执行信息），非 procedure 或无法提取则回退整条前 300 字
+                "summary": _memory_progressive_summary(e),
                 "file": "memory/index.json",
                 "key": f"memory:{e.id}",
             }

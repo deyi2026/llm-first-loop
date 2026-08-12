@@ -309,12 +309,28 @@ class ToolRegistry:
             hits = store.search(kws, top_k=3)
         except Exception:  # noqa: BLE001 — 经验检索失败降级默认模板
             return ""
+        from datetime import datetime, timezone
+
         for h in hits:
             content = str(getattr(h, "content", "") or "")
             if getattr(h, "type", "") == "procedure" and "已验解法" in content:
                 solution = self._extract_solution_section(content)
                 if solution:
-                    return f"[经验参考] {solution}"
+                    # SkillZip ReZip 借鉴（执行感知反馈环）:
+                    # 1) 记录本次注入使用时间（执行感知，供后续失效判定）
+                    try:
+                        h.guidance_used_at = datetime.now(timezone.utc).isoformat()
+                        # 2) 若该经验已累计风险（注入后同场景仍失败）→ 附带风险提示，让 AI 谨慎参考
+                        risk = int(getattr(h, "guidance_risk", 0) or 0)
+                        if risk >= 2:
+                            return (
+                                f"[经验参考] {solution}\n"
+                                f"[经验风险] 该经验已被注入 {risk} 次但同场景仍失败，"
+                                f"建议谨慎参考或换用其他方法（执行感知反馈环标记）"
+                            )
+                        return f"[经验参考] {solution}"
+                    except Exception:  # noqa: BLE001 — 记录失败不影响注入
+                        return f"[经验参考] {solution}"
         return ""
 
     @staticmethod
