@@ -37,6 +37,39 @@ def _top_keywords(messages: list[Message], top: int = 5) -> list[str]:
     return [w for w, _ in counter.most_common(top)]
 
 
+_REASON_WORDS = (
+    "因为", "所以", "决定", "选择", "由于", "为了", "判断", "推断",
+    "结论", "理由", "依据", "优先", "采用", "建议", "认为", "考虑",
+)
+
+
+def _extract_reasoning_facts(messages: list[Message], max_facts: int = 6) -> list[str]:
+    """EVO-3b39134f（OpenAI harness 借鉴）: 提取"决策点+理由"信号行.
+
+    压缩保留推理（为什么这样做）而非仅动作/结果——被压缩的推理链丢失后，
+    AI 检索归档只见动作不见动机，易重复分析。规则提取零 LLM：
+    含决策/推理连接词的行（因为/所以/决定/选择/由于/为了/判断/推断/结论/理由/
+    依据/优先/采用/建议/认为/考虑）且长度 <=200 视为推理结论候选。
+    """
+    facts: list[str] = []
+    seen: set[str] = set()
+    for m in messages:
+        if not m.content:
+            continue
+        for line in m.content.splitlines():
+            line = line.strip()
+            if not line or line in seen:
+                continue
+            if len(line) > 200:
+                continue
+            if any(w in line for w in _REASON_WORDS):
+                seen.add(line)
+                facts.append(line)
+            if len(facts) >= max_facts:
+                return facts
+    return facts
+
+
 def _archive_key_facts(messages: list[Message], max_facts: int = 8) -> str:
     """RULE-AI-00 增强: 压缩注入"确定性关键事实清单"（规则提取零 LLM）.
 
@@ -66,8 +99,15 @@ def _archive_key_facts(messages: list[Message], max_facts: int = 8) -> str:
             break
     if not facts:
         return ""
-    return "[压缩关键事实] 被压缩旧消息中的关键动作/结果（规则提取，非语义总结；细节以原文为准）:\n- " + "\n- ".join(facts)
-
+    # EVO-3b39134f: 动作/结果 + 推理结论（决策+理由）并列注入
+    reasoning = _extract_reasoning_facts(messages, max_facts=6)
+    out = "[压缩关键事实] 被压缩旧消息中的关键动作/结果（规则提取，非语义总结；细节以原文为准）:\n- " + "\n- ".join(facts)
+    if reasoning:
+        out += (
+            "\n[压缩推理结论] 关键决策与理由（规则提取，供追溯决策动机、避免重复推理；"
+            "细节以原文为准）:\n- " + "\n- ".join(reasoning)
+        )
+    return out
 
 def _archive_index_dir(messages: list[Message]) -> str:
     """生成压缩档案索引目录（数行，供 AI 主动检索；原文已另存至档案）."""
