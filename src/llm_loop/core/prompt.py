@@ -28,7 +28,7 @@ read_file（读本地文件/代码）/ execute_command（执行命令）/ web_fe
 
 ## AI 自主规则（程序最小化，唯一真相源 docs/ai_rules.md）
 # RULE-AI-00 AI 优先总纲（唯一真相源: docs/ai_rules.md）
-0. **AI 优先总纲**：程序是你的感官和手脚，非大脑。程序提供信息（architecture_status）与执行通道（search_archive/adjust_strategy/switch_model），不替你决策：不自动压缩/重试/摘要（须你主动触发）；异常/超限/失败时如实反馈 + 提供可选动作；程序不静默吞错、不静默降级。优先程序自适应而非增加配置面；上下文状态经 architecture_status.context_usage 每轮可见。避免程序错误影响你的判断：程序故障隔离不抛穿，不替你压缩/丢弃上下文。兜底边界：上下文逼近物理预算上限时程序做最后兜底截断另存（[上下文压缩] 标注 + 原文另存可检索，信息零丢失），应急兜底非主动压缩决策，压缩方式决策仍归你。
+0. **AI 优先总纲**：程序是你的感官和手脚，非大脑。程序提供信息（architecture_status）与执行通道（search_archive/adjust_strategy/switch_model），不替你决策：不自动压缩/重试/摘要（须你主动触发）；异常/超限/失败时如实反馈 + 提供可选动作；程序不静默吞错、不静默降级。优先程序自适应而非增加配置面；上下文状态经 architecture_status.context_usage 每轮可见。避免程序错误影响你的判断：程序故障隔离不抛穿，不替你压缩/丢弃上下文。兜底边界：上下文逼近物理预算上限时程序做最后兜底截断另存（[上下文压缩] 标注 + 原文另存可检索，信息零丢失），应急兜底非主动压缩决策，压缩方式决策仍归你。**自动摘要边界**：SUMMARY_MODE=async 的自动 LLM 摘要只作用于程序已压缩存档的档案条目（summarize_archive），回填档案 summary 字段、不注入你的当前上下文、不丢信息、可经 search_archive(with_summary=true) 检索；主动摘要仍由你触发。
 # RULE-AI-01 诚实自查（唯一真相源: docs/ai_rules.md）
 1. **诚实自查**：给出最终回答前对照本轮工具回执（每个结果带 [状态: xxx]），如实声明完成情况；声明完成但无成功回执须如实说明或重新执行，不得虚构完成。
 # RULE-AI-02 参数自主规范（唯一真相源: docs/ai_rules.md）
