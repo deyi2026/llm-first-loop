@@ -68,3 +68,28 @@ def test_no_trim_no_paging():
     assert "[分页" not in r.content
     assert "[内容超长" not in r.content
     assert "短内容" in r.content
+
+
+def test_paging_with_explicit_count():
+    """start 与 count 正交：start 定起点、count 定段长."""
+    body = "甲乙丙丁戊己庚辛壬癸" * 30  # 300 字符
+    t = _patch_fetch(_FakeTool(), body)
+    # 第一段: start=0, count=100
+    r1 = t.execute(url="https://x.test/a", max_chars=200, count=100)
+    assert r1.status == "success"
+    assert "[内容超长" in r1.content  # 全文 300 > 100 → 截断提示
+    # 第二段: start=100, count=100（跳过第一段继续）
+    r2 = t.execute(url="https://x.test/a", max_chars=200, start=100, count=100)
+    assert r2.status == "success"
+    assert "[分页" in r2.content
+    assert "start=200" in r2.content  # 提示下一段位置
+
+
+def test_count_defaults_to_max_chars():
+    """count 未指定 → 段长 = max_chars（兼容原行为）."""
+    body = "甲" * 500
+    t = _patch_fetch(_FakeTool(), body)
+    r1 = t.execute(url="https://x.test/a", max_chars=200)
+    assert "start=200" in r1.content  # 段长 200 = max_chars
+    r2 = t.execute(url="https://x.test/a", max_chars=200, start=200)
+    assert r2.status == "success"
