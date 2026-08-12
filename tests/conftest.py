@@ -173,6 +173,14 @@ def build_test_engine(fake_settings):
         )
         registry.register(ReadFileTool())
         registry.register(ExecuteCommandTool())
+        # EVO 第五项: 递归子代理（与 factory 装配一致，测试真实路径）
+        from llm_loop.subagent.runner import SubAgentRunner
+        from llm_loop.tools.builtin.spawn_subagent import SpawnSubAgentTool
+
+        subagent_runner = SubAgentRunner(
+            llm=fake, registry=registry, session_store=session
+        )
+        registry.register(SpawnSubAgentTool(subagent_runner))
         status = ArchitectureStatusProvider(
             audit_dir=fake_settings.audit_dir,
             enabled=fake_settings.self_inspection_enabled,
