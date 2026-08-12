@@ -12,6 +12,7 @@ import threading
 import time
 import traceback
 from collections.abc import Callable
+from datetime import UTC
 from typing import Any
 
 from llm_loop.core.message import Message, MessageSource, ToolCall, ToolResult, ToolResultStatus
@@ -309,7 +310,7 @@ class ToolRegistry:
             hits = store.search(kws, top_k=3)
         except Exception:  # noqa: BLE001 — 经验检索失败降级默认模板
             return ""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         for h in hits:
             content = str(getattr(h, "content", "") or "")
@@ -319,7 +320,7 @@ class ToolRegistry:
                     # SkillZip ReZip 借鉴（执行感知反馈环）:
                     # 1) 记录本次注入使用时间（执行感知，供后续失效判定）
                     try:
-                        h.guidance_used_at = datetime.now(timezone.utc).isoformat()
+                        h.guidance_used_at = datetime.now(UTC).isoformat()
                         # 2) 若该经验已累计风险（注入后同场景仍失败）→ 附带风险提示，让 AI 谨慎参考
                         risk = int(getattr(h, "guidance_risk", 0) or 0)
                         if risk >= 2:

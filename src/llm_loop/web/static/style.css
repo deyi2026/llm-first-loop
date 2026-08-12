@@ -856,3 +856,16 @@ html, body {
 .expand-btn:hover {
   background: #ddeafa;
 }
+
+/* ── T2: 折叠重构（摘要/全文节点分离 + 显隐切换，spec 5.2.1） ── */
+.collapsed-summary {
+  display: block;
+}
+.collapsed-summary-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #6b7280;
+}
+.collapsed-full[hidden] {
+  display: none;
+}

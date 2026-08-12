@@ -186,8 +186,8 @@ class Summarizer:
             try:
                 det = self._deterministic(text, note="异步摘要异常，已降级为确定性")
                 self._backfill(archive, entry_id, det.summary, det.source, det.note)
-            except Exception:
-                pass
+            except (OSError, ValueError) as exc:  # fail-open：确定性降级也失败仅影响记忆质量，不抛穿
+                logger.warning("确定性摘要降级也失败（fail-open），记忆摘要将缺失: %s", exc)
 
     def _backfill(self, archive: Any, entry_id: str, summary: str, source: str, note: str) -> None:
         """回填摘要到档案条目（失败仅日志，不影响已交付档案）."""

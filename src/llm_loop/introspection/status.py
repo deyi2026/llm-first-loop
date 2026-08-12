@@ -402,8 +402,9 @@ def cleanup_audit_logs(audit_dir: str | Path, ttl_days: int) -> dict:
                     if isinstance(ts, str) and ts and ts < cutoff:
                         total += 1
                         continue
-                except (json.JSONDecodeError, AttributeError):
-                    pass  # 无法解析的行保守保留
+                except (json.JSONDecodeError, AttributeError) as exc:
+                    # fail-open：无法解析的行保守保留
+                    logging.getLogger(__name__).debug("审计行解析失败，保守保留（fail-open）: %s", exc)
                 kept.append(line)
             if len(kept) < len(lines):
                 if kept:

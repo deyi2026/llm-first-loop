@@ -139,7 +139,8 @@ def chat(
     try:
         sess = engine.session.load(session_id)
         channel = getattr(sess, "channel", "") or ""
-    except Exception:  # noqa: BLE001 — 推送前置读取失败静默跳过
+    except Exception as exc:  # noqa: BLE001 — 推送前置读取失败静默跳过（fail-open）
+        logger.debug("飞书推送前置读取失败，跳过推送（fail-open）: %s", exc)
         channel = ""
     if channel.startswith("feishu:"):
         from .feishu_push import push_web_chat_to_feishu

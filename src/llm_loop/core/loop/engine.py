@@ -564,8 +564,8 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin):
             try:
                 pid, mid = self.llm_pool.registry.resolve(model)
                 return f"{pid}/{mid}"
-            except ValueError:
-                pass
+            except ValueError as exc:  # fail-open：模型标签 resolve 失败回退裸名
+                logger.debug("模型标签 resolve 失败，回退裸名（fail-open）: %s", exc)
         return model
 
     def _current_context_limit(self, model_label: str) -> int | None:

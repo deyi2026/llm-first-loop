@@ -10,6 +10,7 @@ const state = {
   attachments: [], // M39 上传附件上下文（发送时作为 user 消息前缀注入）
   model: null, // M47 当前模型（模型切换下拉，None=装配默认）
   availableModels: [], // M47 服务端声明的可用模型列表（/model 命令校验用）
+  typewriterPending: false, // T3: 最新 assistant 回复是否用假流式打字机渲染
 };
 
 const els = {
@@ -247,16 +248,13 @@ function renderMessages() {
     }
     if (msg.role === "assistant") {
       // AI 回答：MD 渲染（经 sanitize）；渲染失败降级纯文本（不空白不伪造）
-      const html = renderMarkdown(msg.content);
-      if (html !== null) {
-        node.innerHTML = html;
-      } else {
-        node.textContent = msg.content;
-      }
       // P2-1: AI 回复内容前插入折叠工具调用链（若有）
       if (Array.isArray(msg.toolCalls) && msg.toolCalls.length) {
         renderToolCalls(msg.toolCalls, node);
       }
+      // 正文容器（打字机只作用于正文，不碰工具链/note）
+      const body = el("div", "answer-body");
+      node.appendChild(body);
       // 一键复制按钮（M39）：位于回复框右下角，复制 final_answer 原文纯文本
       const wrap = document.createElement("div");
       wrap.className = "message-wrap";
@@ -268,10 +266,27 @@ function renderMessages() {
       if (msg.note) {
         node.appendChild(el("span", "msg-note", msg.note));
       }
+      // 渲染正文 + 后处理（代码块复制按钮 + 长内容折叠）
+      const finalize = () => {
         // 回复内命令框（代码块）右上角也提供复制按钮
         addCodeBlockCopyButtons(node);
         // T3: 长内容折叠（超阈值 pre/消息体 → 摘要 + 展开全文）
         collapseLongContent(node);
+      };
+      const html = renderMarkdown(msg.content);
+      const shouldTypewrite =
+        msg === state.messages[state.messages.length - 1] && state.typewriterPending;
+      if (shouldTypewrite) state.typewriterPending = false;
+      if (html === null) {
+        body.textContent = msg.content;
+        finalize();
+      } else if (shouldTypewrite) {
+        // T3: 前端假流式打字机（仅最新一条 assistant 渐进渲染，历史消息一次性，零后端改动）
+        fakeTypewriter(body, msg.content, 40, 20, finalize);
+      } else {
+        body.innerHTML = html;
+        finalize();
+      }
     } else {
       // user：M47 起也渲染 MD（纯文本降级）；error：纯文本如实回显
       if (msg.role === "user") {
@@ -316,50 +331,109 @@ function addCodeBlockCopyButtons(container) {
   }
 }
 
-// T3: 长内容折叠器（spec.md 5.2.1 / design.md §2.1.3.2）
-// pre 行数 > LONG_LINE_THRESHOLD → 前 20 行摘要 + 展开全文；消息体字符 > LONG_CHAR_THRESHOLD → 前 2000 字符摘要 + 展开全文
+// T2: 长内容折叠器（重构版：摘要/全文节点分离 + 显隐切换，spec 5.2.1 / design §2.1.3.2）
+// collapseUnit：为超阈值容器建「摘要节点 + 全文节点 + 切换按钮」，展开/折叠仅切 hidden，不重建 DOM（消除按钮失效缺陷）
+// pre 行数 > LONG_LINE_THRESHOLD → 代码摘要（renderMarkdown 渲染代码块，保留格式）；消息体非代码块 > LONG_CHAR_THRESHOLD → HTML 摘要（复制已渲染元素，保留 MD 格式）
 // 折叠异常 fail-open：保留原样 + console.error，不空白不伪造
+function collapseUnit(target, summaryNode) {
+  // 把 target 现有子节点移入全文节点（appendChild 移动保留事件绑定，不重建 DOM），
+  // 再插入摘要节点 + 全文节点 + 切换按钮；展开/折叠仅切 hidden + dataset 状态
+  const fullNode = el("div", "collapsed-full");
+  while (target.firstChild) {
+    fullNode.appendChild(target.firstChild);
+  }
+  fullNode.hidden = true;
+  const btn = el("button", "expand-btn", "展开全文");
+  btn.type = "button";
+  let collapsed = true;
+  btn.onclick = () => {
+    collapsed = !collapsed;
+    summaryNode.hidden = !collapsed;
+    fullNode.hidden = collapsed;
+    target.dataset.collapsed = collapsed ? "1" : "";
+    btn.textContent = collapsed ? "展开全文" : "折叠";
+  };
+  target.appendChild(summaryNode);
+  target.appendChild(fullNode);
+  target.appendChild(btn);
+  target.dataset.collapsed = "1";
+}
+
 function collapseLongContent(node) {
   try {
+    // 1. pre 级折叠：超长代码块（摘要经 renderMarkdown 渲染代码块，保留格式）
     for (const pre of node.querySelectorAll("pre")) {
-      if (pre.dataset.collapsed) continue;
+      if (pre.closest(".collapsed-full")) continue;
       const text = pre.textContent || "";
       const lines = text.split("\n");
       if (lines.length <= LONG_LINE_THRESHOLD) continue;
-      pre.dataset.collapsed = "1";
-      const fullHtml = pre.innerHTML;
-      const summary = lines.slice(0, 20).join("\n") + "\n…（共 " + lines.length + " 行，已折叠，点击展开全文）";
-      pre.classList.add("collapsed");
-      pre.textContent = summary;
-      const btn = el("button", "expand-btn", "展开全文");
-      btn.type = "button";
-      let expanded = false;
-      btn.onclick = () => {
-        expanded = !expanded;
-        if (expanded) { pre.innerHTML = fullHtml; pre.classList.remove("collapsed"); btn.textContent = "折叠"; }
-        else { pre.textContent = summary; pre.classList.add("collapsed"); btn.textContent = "展开全文"; }
-      };
-      if (pre.parentElement) pre.parentElement.appendChild(btn);
+      const wrap = pre.parentElement;
+      if (!wrap || wrap.dataset.collapsed) continue;
+      const summaryMd =
+        "```\n" + lines.slice(0, 20).join("\n") + "\n…（共 " + lines.length + " 行，已折叠，点击展开全文）\n```";
+      const summaryNode = el("div", "collapsed-summary");
+      const summaryHtml = renderMarkdown(summaryMd);
+      if (summaryHtml !== null) {
+        summaryNode.innerHTML = summaryHtml;
+      } else {
+        summaryNode.appendChild(el("pre", "", lines.slice(0, 20).join("\n") + "\n…（已折叠）"));
+      }
+      collapseUnit(wrap, summaryNode);
     }
-    if (!node.dataset.bodyCollapsed && (node.textContent || "").length > LONG_CHAR_THRESHOLD) {
-      node.dataset.bodyCollapsed = "1";
-      const fullHtml = node.innerHTML;
-      const summary = (node.textContent || "").slice(0, 2000) + "\n…（内容超长，已折叠，点击展开全文）";
-      node.classList.add("collapsed");
-      node.textContent = summary;
-      const btn = el("button", "expand-btn", "展开全文");
-      btn.type = "button";
-      let expanded = false;
-      btn.onclick = () => {
-        expanded = !expanded;
-        if (expanded) { node.innerHTML = fullHtml; node.classList.remove("collapsed"); btn.textContent = "折叠"; }
-        else { node.textContent = summary; node.classList.add("collapsed"); btn.textContent = "展开全文"; }
-      };
-      node.appendChild(btn);
+    // 2. 消息体级折叠：非代码块长文本（摘要复制已渲染 HTML 元素，保留 MD 格式，排除已折叠 pre）
+    if (!node.dataset.bodyCollapsed) {
+      const probe = node.cloneNode(true);
+      probe.querySelectorAll("pre, .code-block-wrap, .tool-call-chain, .expand-btn").forEach((e) => e.remove());
+      const nonCodeText = probe.textContent || "";
+      if (nonCodeText.length > LONG_CHAR_THRESHOLD) {
+        node.dataset.bodyCollapsed = "1";
+        const summaryNode = el("div", "collapsed-summary");
+        let chars = 0;
+        for (const child of [...probe.childNodes]) {
+          if (chars >= 2000) break;
+          summaryNode.appendChild(child.cloneNode(true));
+          chars += (child.textContent || "").length;
+        }
+        summaryNode.appendChild(el("div", "collapsed-summary-hint", "…（内容超长，已折叠，点击展开全文）"));
+        collapseUnit(node, summaryNode);
+      }
     }
   } catch (err) {
     console.error("长内容折叠失败（fail-open）:", err);
   }
+}
+
+// T3: 前端假流式打字机（方案 A，零后端改动，spec 5.3.1 / design §2.1.3.3）
+// 按字符分片 MD，逐片 renderMarkdown + sanitize 后替换正文节点，渐进渲染（打字机体验）
+// 分片渲染异常 → fail-open：一次性渲染完整内容 + console.error，不空白
+function fakeTypewriter(node, answerHtml, chunkChars, intervalMs, onDone) {
+  chunkChars = chunkChars || 40;
+  intervalMs = intervalMs || 20;
+  const total = String(answerHtml || "").length;
+  if (total === 0) {
+    if (onDone) onDone();
+    return;
+  }
+  let pos = 0;
+  const step = () => {
+    pos += chunkChars;
+    const done = pos >= total;
+    const part = done ? answerHtml : answerHtml.slice(0, pos);
+    const html = renderMarkdown(part);
+    if (html !== null) {
+      node.innerHTML = html;
+    } else {
+      node.textContent = part;
+    }
+    if (done) {
+      if (onDone) onDone();
+    } else {
+      node.appendChild(el("span", "typewriter-cursor", "▌"));
+      els.messages.scrollTop = els.messages.scrollHeight;
+      setTimeout(step, intervalMs);
+    }
+  };
+  step();
 }
 
 function addMessage(role, content, note, toolCalls) {
@@ -432,6 +506,7 @@ async function sendMessage() {
         note.push(footer);
       }
       // P2-1: 透传本轮工具调用链（tool_calls 已由后端返回，前端渲染折叠链）
+      state.typewriterPending = true; // T3: 最新回复用假流式打字机渲染
       addMessage("assistant", data.final_answer, note.join("\n") || null, data.tool_calls);
       // M52: 本次页面会话 token 累计（输入区模型选择旁实时更新）
       if (data.tokens_in || data.tokens_out) {

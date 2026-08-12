@@ -429,8 +429,8 @@ class FeishuMessageHandler:
                 "detail": detail,
             }
             _write_audit_line(self._audit_path, record)
-        except OSError:
-            pass
+        except OSError as exc:  # fail-open：审计落盘失败不阻断
+            logger.warning("审计落盘失败（fail-open）: %s", exc)
 
 
 def _write_audit_line(path: Path, record: dict) -> None:

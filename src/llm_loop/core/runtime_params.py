@@ -11,10 +11,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # 全局硬上限（与既有 LLM_MAX_ITERATIONS 上限语义一致，防 AI 调参失控）
 HARD_CAP_MAX_ITERATIONS = 500
@@ -209,6 +212,6 @@ class RuntimeParams:
                     line = line.strip()
                     if line:
                         out.append(json.loads(line))
-        except (OSError, json.JSONDecodeError):
-            pass
+        except (OSError, json.JSONDecodeError) as exc:  # fail-open：读调整历史失败返回已读部分
+            logger.warning("读参数调整历史失败（fail-open），返回已读部分: %s", exc)
         return out

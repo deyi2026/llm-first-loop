@@ -14,6 +14,7 @@ summary/chars/original。
 from __future__ import annotations
 
 import json
+import logging
 import re
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -240,8 +241,8 @@ class ArchiveStore:
                 try:
                     entry = json.loads(line)
                     chars += int(entry.get("chars", 0))
-                except (json.JSONDecodeError, ValueError):
-                    pass
+                except (json.JSONDecodeError, ValueError) as exc:  # fail-open：单行损坏跳过
+                    logging.getLogger(__name__).debug("档案统计单行损坏跳过（fail-open）: %s", exc)
         return {"archived_count": count, "archived_chars": chars}
 
     def update_summary(self, entry_id: str, summary: str, summary_source: str) -> bool:

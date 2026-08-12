@@ -4,6 +4,7 @@
 CLI / Web /（未来飞书）共用同一 LoopEngine 实例。
 """
 
+import logging
 import os
 import sys
 from pathlib import Path
@@ -16,6 +17,8 @@ from llm_loop.factory import build_engine
 
 from .auth import require_api_key, validate_binding
 from .routes import UTF8JSONResponse, router
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["build_app", "main"]
 
@@ -82,8 +85,8 @@ def _install_exit_signal_log() -> None:
         try:
             with open(exit_log_path, "a", encoding="utf-8") as f:
                 f.write(f"{datetime.datetime.now().isoformat()} pid={os.getpid()} {reason}\n")
-        except OSError:
-            pass
+        except OSError as exc:  # fail-open：退出日志写失败不影响启动
+            logger.debug("退出日志写失败（fail-open）: %s", exc)
 
     def _on_signal(signum, frame):  # noqa: ARG001 — signal handler 签名固定
         try:

@@ -135,8 +135,8 @@ class SemanticRetriever:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
-        except OSError:
-            pass
+        except OSError as exc:  # fail-open：缓存写失败仅影响下次冷启动
+            logger.debug("embedding 缓存写失败，仅影响下次冷启动（fail-open）: %s", exc)
 
     # ── 语义可用性 ──
     def semantic_available(self) -> bool:
