@@ -97,17 +97,24 @@ def _archive_key_facts(messages: list[Message], max_facts: int = 8) -> str:
                 break
         if len(facts) >= max_facts:
             break
-    if not facts:
-        return ""
-    # EVO-3b39134f: 动作/结果 + 推理结论（决策+理由）并列注入
+    # EVO-3b39134f: 动作/结果 + 推理结论（决策+理由）并列注入。
+    # 推理结论独立于动作/结果——归档消息若只有决策理由（无动作结果信号词），
+    # facts 为空也应注入推理段（否则推理结论丢失，OpenAI 实验痛点复现）。
     reasoning = _extract_reasoning_facts(messages, max_facts=6)
-    out = "[压缩关键事实] 被压缩旧消息中的关键动作/结果（规则提取，非语义总结；细节以原文为准）:\n- " + "\n- ".join(facts)
-    if reasoning:
-        out += (
-            "\n[压缩推理结论] 关键决策与理由（规则提取，供追溯决策动机、避免重复推理；"
-            "细节以原文为准）:\n- " + "\n- ".join(reasoning)
+    if not facts and not reasoning:
+        return ""
+    parts: list[str] = []
+    if facts:
+        parts.append(
+            "[压缩关键事实] 被压缩旧消息中的关键动作/结果（规则提取，非语义总结；细节以原文为准）：\n- "
+            + "\n- ".join(facts)
         )
-    return out
+    if reasoning:
+        parts.append(
+            "[压缩推理结论] 关键决策与理由（规则提取，供追溯决策动机、避免重复推理；"
+            "细节以原文为准）：\n- " + "\n- ".join(reasoning)
+        )
+    return "\n".join(parts)
 
 def _archive_index_dir(messages: list[Message]) -> str:
     """生成压缩档案索引目录（数行，供 AI 主动检索；原文已另存至档案）."""
