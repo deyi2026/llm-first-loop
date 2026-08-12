@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -37,6 +38,13 @@ class LLMResponse:
     # M52: token 用量（stream_options.include_usage 末 chunk 解析；缺失态 0 = 未提供，如实不伪造）
     prompt_tokens: int = 0
     completion_tokens: int = 0
+
+
+@dataclass
+class StreamDelta:
+    """流式回答的一个文本分片（design.md §2.2.2.2）."""
+
+    text: str
 
 
 @dataclass
@@ -79,15 +87,15 @@ class LLMClient:
     def close(self) -> None:
         self._client.close()
 
-    def chat(
+    def chat_stream(
         self,
         messages: list[dict],
         tools: list[dict],
         *,
         timeout_s: float | None = None,  # PARAM-01: 每次调用可覆盖超时（None 用构造值）
         model: str | None = None,  # WEB: 每次调用可覆盖模型（None 用构造值，供 Web 模型切换）
-    ) -> LLMResponse:
-        """流式请求并聚合 tool_calls（同步阻塞式消费 SSE）.
+    ) -> Iterator[StreamDelta]:
+        """流式请求，逐 content delta yield；generator 结束返回完整 LLMResponse.
 
         异常按类型抛出 LLMError 子类，由循环如实反馈。
         """
@@ -153,6 +161,7 @@ class LLMClient:
                     content = delta.get("content")
                     if content:
                         content_parts.append(content)
+                        yield StreamDelta(text=content)
                     # M20 THK-02: reasoning_content 独立分支（与 content/tool_calls 互不读写并行）
                     rc = delta.get("reasoning_content")
                     if rc:
@@ -199,3 +208,22 @@ class LLMClient:
             prompt_tokens=prompt_tokens,  # M52
             completion_tokens=completion_tokens,  # M52
         )
+
+    def chat(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        *,
+        timeout_s: float | None = None,  # PARAM-01: 每次调用可覆盖超时（None 用构造值）
+        model: str | None = None,  # WEB: 每次调用可覆盖模型（None 用构造值，供 Web 模型切换）
+    ) -> LLMResponse:
+        """流式请求并聚合 tool_calls（chat_stream 的同步聚合包装，签名/返回不变）.
+
+        异常按类型抛出 LLMError 子类，由循环如实反馈。
+        """
+        it = self.chat_stream(messages, tools, timeout_s=timeout_s, model=model)
+        while True:
+            try:
+                next(it)
+            except StopIteration as exc:
+                return exc.value

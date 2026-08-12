@@ -6,9 +6,31 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ConfigFallbackNote:
+    """配置项非法值回退标注（不含 raw 原文，防密钥经日志扩散）."""
+
+    config_name: str
+    fallback_value: Any
+    invalid_value_type: str
+
+
+_fallback_notes: list[ConfigFallbackNote] = []
+
+
+def _note_invalid_fallback(name: str, fallback_value: Any, invalid_value_type: str) -> None:
+    """记录配置项非法值回退（仅配置项名 + 回退结果 + 类型描述，不回显原始非法值）."""
+    _fallback_notes.append(ConfigFallbackNote(name, fallback_value, invalid_value_type))
+    logger.warning("配置项 %s 值非法（%s），已回退默认值 %r", name, invalid_value_type, fallback_value)
 
 
 def _env_int(name: str, default: int) -> int:
@@ -18,6 +40,7 @@ def _env_int(name: str, default: int) -> int:
     try:
         return int(raw)
     except ValueError:
+        _note_invalid_fallback(name, default, "非整数字符串")
         return default
 
 
@@ -56,28 +79,38 @@ def load_env_file(path: str | Path | None = None) -> None:
 
 
 def _env_bool(name: str, default: bool) -> bool:
-    raw = os.environ.get(name, "")
+    raw = os.environ.get(name, "").strip().lower()
     if not raw:
         return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    _note_invalid_fallback(name, False, "非布尔字符串")
+    return False
 
 
 def _env_thinking_mode(name: str) -> bool:
     """LLM_THINKING_MODE 解析: enabled/1/true/on → True；disabled/0/false/off → False；非法回退 True."""
     raw = os.environ.get(name, "").strip().lower()
-    return raw not in {
-        "disabled",
-        "0",
-        "false",
-        "off",
-        "no",
-    }  # 默认 enabled + 非法值回退 enabled（fail-open）
+    if not raw:
+        return True  # 未设置默认 enabled
+    if raw in {"enabled", "1", "true", "on", "yes"}:
+        return True
+    if raw in {"disabled", "0", "false", "off", "no"}:
+        return False
+    _note_invalid_fallback(name, True, "非布尔字符串")
+    return True
 
 
 def _env_effort(name: str) -> str:
     """LLM_REASONING_EFFORT 解析: low/high/max；非法回退 high."""
     raw = os.environ.get(name, "").strip().lower()
-    return raw if raw in {"low", "high", "max"} else "high"
+    if raw in {"low", "high", "max"}:
+        return raw
+    if raw:
+        _note_invalid_fallback(name, "high", "非 low/high/max 字符串")
+    return "high"
 
 
 def _env_evolve_level(name: str) -> int:
@@ -89,6 +122,8 @@ def _env_evolve_level(name: str) -> int:
         return 1
     if raw in {"false", "no", "off", "0"}:
         return 0
+    if raw:
+        _note_invalid_fallback(name, 0, "非 0/1/2 或布尔字符串")
     return 0
 
 
@@ -97,7 +132,10 @@ def _env_exec_mode(name: str) -> str:
     raw = os.environ.get(name, "").strip().lower()
     if not raw:
         return ""  # 未设置 = 不启用分级（AI 可执行 shell，仅灾难性硬阻断）
-    return raw if raw in {"readonly", "allowlist", "blocked"} else "blocked"
+    if raw in {"readonly", "allowlist", "blocked"}:
+        return raw
+    _note_invalid_fallback(name, "blocked", "非 readonly/allowlist/blocked 字符串")
+    return "blocked"
 
 
 def _count_fallbacks(raw: str) -> int:
@@ -228,6 +266,9 @@ class Settings:
     # 运行时装配（非 env）: 由 builder 注入
     _extra: dict = field(default_factory=dict, repr=False, compare=False)
 
+    # 配置项非法值回退标注（装配期注入，运行时只读；不含 raw 原文）
+    invalid_fallbacks: tuple = field(default_factory=tuple, repr=False, compare=False)
+
     # ── 派生路径 ──
     @property
     def sessions_dir(self) -> Path:
@@ -290,11 +331,21 @@ class Settings:
             "model_providers_configured": bool(self.model_providers_raw),
             # M49: Fallback 链配置状态（仅计数, 不暴露降级链明细, 密钥安全 DFX-SEC-02）
             "model_fallbacks_count": _count_fallbacks(self.model_fallbacks_raw),
+            # 配置项非法值回退标注（如实标注，AI 可感知；不含密钥与 raw 原文）
+            "config_invalid_fallbacks": [
+                {
+                    "config_name": n.config_name,
+                    "fallback_value": n.fallback_value,
+                    "invalid_value_type": n.invalid_value_type,
+                }
+                for n in self.invalid_fallbacks
+            ],
         }
 
 
 def load_settings() -> Settings:
     """从环境变量装配 Settings；缺少必填项时抛出带指引的 ValueError."""
+    _fallback_notes.clear()
     api_key = os.environ.get("LLM_API_KEY", "").strip()
     base_url = os.environ.get("LLM_BASE_URL", "").strip()
     # M20 CFG-01/02: LLM_MODEL 缺省 → OPENSYGAI_DEEPSEEK_DEFAULT_MODEL → 内置 deepseek-v4-flash
@@ -378,4 +429,5 @@ def load_settings() -> Settings:
         model_providers_raw=os.environ.get("MODEL_PROVIDERS", "").strip(),
         # M49（design §5.4）: MODEL_FALLBACKS 降级链原始值, 解析由 llm.pool 完成
         model_fallbacks_raw=os.environ.get("MODEL_FALLBACKS", "").strip(),
+        invalid_fallbacks=tuple(_fallback_notes),
     )

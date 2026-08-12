@@ -160,6 +160,102 @@ def chat(
     )
 
 
+def _sse(event_type: str, data: Any) -> str:
+    """SSE 事件序列化（data: {json}，design §2.2.2.3）."""
+    return f"data: {json.dumps({'type': event_type, 'data': data}, ensure_ascii=False)}\n\n"
+
+
+@router.post("/api/v1/chat/stream")
+def chat_stream(
+    payload: ChatRequest,
+    request: Request,
+) -> Response:
+    """真流式对话端点（SSE）：answer_delta* → done（九字段）| error.
+
+    真流式仅作用于最终回答轮（中间工具轮无可见文本、同步等待）；终态 done 携带完整
+    ChatResponse 九字段，与非流式 POST /api/v1/chat 内容等价（spec 5.2 规则 4）。
+    """
+    engine = _engine_from(request)
+
+    # 超长输入前置校验（与 chat 端点一致，不创建会话、不消耗 LLM 配额）
+    input_max = getattr(engine.settings, "history_max_chars", 1000000)
+    if len(payload.message) > input_max:
+        return UTF8JSONResponse(
+            status_code=413,
+            content={
+                "error": "input_too_long",
+                "detail": f"输入超长（{len(payload.message)} > {input_max}），请缩短后重试或新建会话。",
+            },
+        )
+
+    # 会话存在性检查（与 chat 端点一致）
+    if payload.session_id is not None:
+        if not engine.session.exists(payload.session_id):
+            return UTF8JSONResponse(
+                status_code=404,
+                content={
+                    "error": "session_not_found",
+                    "detail": session_not_found_message(payload.session_id),
+                },
+            )
+        session_id = payload.session_id
+    else:
+        shared = engine.session.get_shared_current()
+        if shared is not None:
+            session_id = shared
+        else:
+            session_id = engine.session.create()
+            engine.session.set_shared_current(session_id)
+
+    def event_stream():
+        lock = _get_session_lock(request, session_id)
+        acquired = False
+        if lock is not None and not lock.acquire(timeout=_LOCK_TIMEOUT_S):
+            yield _sse("error", {"error": "session_busy", "detail": "会话繁忙，请稍后重试"})
+            return
+        if lock is not None:
+            acquired = True
+        try:
+            it = engine.run_stream(session_id, payload.message, model=payload.model)
+            while True:
+                try:
+                    delta = next(it)
+                    yield _sse("answer_delta", {"data": delta.text})
+                except StopIteration as exc:
+                    result = exc.value
+                    break
+        except Exception as exc:  # noqa: BLE001 — 引擎异常如实反馈（已生成分片不撤回）
+            logger.exception("engine.run_stream failed: session_id=%s", session_id)
+            yield _sse(
+                "error",
+                {
+                    "error": "internal_error",
+                    "detail": f"[程序异常] 引擎执行失败（{type(exc).__name__}: {exc}）。",
+                },
+            )
+            return
+        finally:
+            if acquired and lock is not None:
+                lock.release()
+
+        yield _sse(
+            "done",
+            {
+                "session_id": result.session_id,
+                "final_answer": result.final_answer,
+                "verification_note": result.verification_note,
+                "rounds": result.rounds,
+                "tool_calls": result.tool_calls,
+                "truncated": result.truncated,
+                "model_used": result.model_used,
+                "tokens_in": result.tokens_in,
+                "tokens_out": result.tokens_out,
+            },
+        )
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
@@ -369,8 +465,16 @@ async def stream_session_events(request: Request) -> StreamingResponse:
     response_model=SessionMessagesResponse,
     responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
 )
-def get_session_messages(session_id: str, request: Request) -> SessionMessagesResponse | Response:
-    """会话历史消息：刷新后恢复对话用（复用 engine.session.load，不复制存储逻辑）."""
+def get_session_messages(
+    session_id: str,
+    request: Request,
+    limit: int | None = None,
+    offset: int = 0,
+) -> SessionMessagesResponse | Response:
+    """会话历史消息：刷新后恢复对话用（复用 engine.session.load，不复制存储逻辑）.
+
+    D2: 可选 limit/offset 分页（offset = 跳过最近 N 条，返回更早消息）；不传 limit 全量返回。
+    """
     engine = _engine_from(request)
     if not engine.session.exists(session_id):
         return JSONResponse(
@@ -389,7 +493,15 @@ def get_session_messages(session_id: str, request: Request) -> SessionMessagesRe
             },
         )
     messages = [MessageItem(role=m.role, content=m.content, tool_call_id=m.tool_call_id) for m in session.messages]
-    return SessionMessagesResponse(session_id=session_id, messages=messages)
+    total = len(messages)
+    if limit is not None:
+        start = max(0, total - offset - limit)
+        end = total - offset
+        page = messages[start:end]
+        return SessionMessagesResponse(
+            session_id=session_id, messages=page, has_more=start > 0, total=total
+        )
+    return SessionMessagesResponse(session_id=session_id, messages=messages, total=total)
 
 
 @router.get("/api/v1/sessions/{session_id}/archive/{tool_call_id}", response_model=None)
