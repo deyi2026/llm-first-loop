@@ -3,12 +3,15 @@
 M48 增强（2026-08-12）：浏览器 UA 池（403 自动换 UA 重试）+ 正文提取降级链：
 trafilatura → og:title/<p> 密度启发 → 去标签纯文本（原行为兜底，兼容文档页）。
 设计借鉴 AnySearch（结构化/提取分离），实测解决头条 JS 壳、站点反爬 UA 拦截。
+M48-B curl 回退：httpx 被 TLS 指纹拦截（ConnectError/Reset）或仅取到 JS 壳时，
+自动回退 curl 子进程（argv 无 shell 注入面）按 UA 池重试——实测唯一能穿透头条的路径。
 """
 
 from __future__ import annotations
 
 import html as _html
 import re
+import subprocess
 
 import httpx
 
@@ -119,6 +122,33 @@ class WebFetchTool:
             raise last_exc
         return resp  # type: ignore[possibly-undefined]
 
+    def _curl_fetch(self, url: str) -> tuple[str, str] | None:
+        """curl 回退通道（httpx 被 TLS 指纹拦截/JS 壳时）.
+
+        argv 列表传参无 shell 注入面；按 UA 池逐个尝试，返回首个"非 JS 壳且
+        正文提取达标"的 (extract_method, raw_html)。全部失败如实返回 None。
+        """
+        for ua in _UA_POOL:
+            try:
+                proc = subprocess.run(  # noqa: S603 — 固定 argv、URL 已校验协议
+                    ["curl", "-sL", "-m", str(int(self._timeout_s)), "-A", ua,
+                     "-H", "Accept-Language: zh-CN,zh;q=0.9,en;q=0.8", "--", url],
+                    capture_output=True,
+                    timeout=self._timeout_s + 5,
+                    check=False,
+                )
+            except (subprocess.TimeoutExpired, OSError):
+                continue
+            if proc.returncode != 0 or not proc.stdout:
+                continue
+            raw = proc.stdout.decode("utf-8", errors="ignore")
+            method, _title, text = _extract_content(raw, url)
+            lower = raw[:5000].lower()
+            is_shell = any(h in lower for h in _SHELL_HINTS) and len(text) < 300
+            if not is_shell and len(text.strip()) >= 20:
+                return (method, raw)
+        return None
+
     def execute(self, **kwargs) -> ToolResult:
         url = str(kwargs.get("url", "")).strip()
         max_chars = int(kwargs.get("max_chars", 100000) or 100000)
@@ -136,40 +166,51 @@ class WebFetchTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
+        httpx_note = ""
         try:
             resp = self._request(url)
         except httpx.TimeoutException:
-            return ToolResult(
-                status=ToolResultStatus.TIMEOUT,
-                content=f"[抓取超时] {url} 超过 {self._timeout_s:.0f}s 未响应",
-                tool_call_id="",
-                tool_name=self.name,
-            )
+            resp = None
+            httpx_note = f"httpx 超时（{self._timeout_s:.0f}s）"
         except httpx.HTTPError as exc:
-            return ToolResult(
-                status=ToolResultStatus.FAILURE,
-                content=f"[抓取失败] {type(exc).__name__}: {exc}",
-                tool_call_id="",
-                tool_name=self.name,
-            )
+            resp = None
+            httpx_note = f"httpx {type(exc).__name__}: {exc}"
 
-        if resp.status_code >= 400:
-            return ToolResult(
-                status=ToolResultStatus.FAILURE,
-                content=f"[HTTP {resp.status_code}] {url} 返回错误状态: {resp.reason_phrase}（已轮换 {len(_UA_POOL)} 个 UA）",
-                tool_call_id="",
-                tool_name=self.name,
-            )
+        if resp is not None and resp.status_code >= 400:
+            httpx_note = f"httpx HTTP {resp.status_code}（已轮换 {len(_UA_POOL)} 个 UA）"
+            resp = None
 
-        raw = resp.text
-        method, title, text = _extract_content(raw, url)
-        header = f"[title] {title}\n[source] {url}\n[extract] {method}\n\n" if title else ""
-        lower = raw[:5000].lower()
-        if method == "strip" and any(h in lower for h in _SHELL_HINTS) and len(text) < 300:
-            header += (
-                "[提示] 该页面疑似 JS 壳/反爬页，正文需浏览器渲染；"
-                "可换 execute_command 用 curl+python 解析，或改用 web_search 找替代信源。\n\n"
-            )
+        curl_used = False
+        if resp is not None:
+            raw = resp.text
+            method, title, text = _extract_content(raw, url)
+            lower = raw[:5000].lower()
+            if method == "strip" and any(h in lower for h in _SHELL_HINTS) and len(text) < 300:
+                # JS 壳：尝试 curl 回退（实测头条等站点 curl 可穿透）
+                httpx_note = "httpx 仅取到 JS 壳"
+                resp = None
+            else:
+                method_out = method
+
+        if resp is None:
+            fallback = self._curl_fetch(url)
+            if fallback is None:
+                status = ToolResultStatus.TIMEOUT if "超时" in httpx_note else ToolResultStatus.FAILURE
+                return ToolResult(
+                    status=status,
+                    content=f"[抓取失败] {url}：{httpx_note}；curl 回退亦失败（已轮换 {len(_UA_POOL)} 个 UA）。"
+                    "可换 execute_command 手动排查，或改用 web_search 找替代信源。",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            curl_used = True
+            method_out, raw = fallback
+            method, title, text = _extract_content(raw, url)
+
+        header = f"[title] {title}\n[source] {url}\n[extract] {method_out}\n" if title else ""
+        if curl_used:
+            header += f"[fetch] curl 回退（{httpx_note}）\n"
+        header += "\n"
         if not text.strip():
             text = "（页面无文本内容）"
         body = header + text
