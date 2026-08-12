@@ -12,11 +12,10 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SPEC_DIR = Path("<外部项目路径>/.codeartsdoer/specs/llm_first_loop")
+SPEC_DIR = ROOT / ".codeartsdoer" / "specs" / "llm_first_loop"
 
 _DEPRECATED_PHRASES = ["更正（最多 1 次）", "参数边界校验", "前置类型拦截"]
 _M11_START = {"spec.md": 610, "design.md": 2028, "tasks.md": 668}

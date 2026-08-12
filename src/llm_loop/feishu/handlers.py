@@ -421,6 +421,7 @@ class FeishuMessageHandler:
         """审计落盘（fail-open，不阻断）."""
         try:
             record = {
+                "ts": time.time(),  # P1-2-R1: 审计时间戳（断线时刻时间对齐回归分析数据源）
                 "message_id": msg.message_id,
                 "kind": kind,
                 "chat_id": msg.chat_id,
