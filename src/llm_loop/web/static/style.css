@@ -739,3 +739,63 @@ html, body {
   color: #4b5563;
   white-space: pre-wrap;
 }
+
+/* ---------- P2-1 工具调用链折叠样式（M49） ---------- */
+.tool-call-chain {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+  overflow: hidden;
+}
+
+.tool-call-toggle {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.tool-call-toggle:hover {
+  background: rgba(31, 35, 40, 0.06);
+}
+
+.tool-call-detail {
+  border-top: 1px solid #eef0f3;
+  padding: 4px 10px 8px;
+}
+
+.tool-call-item {
+  padding: 6px 0;
+  border-bottom: 1px solid #f0f2f5;
+}
+
+.tool-call-item:last-child {
+  border-bottom: none;
+}
+
+.tool-call-name {
+  display: inline-block;
+  background: #e8edf5;
+  color: #334155;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.tool-call-detail-text {
+  margin-top: 4px;
+  color: #6b7280;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  word-break: break-all;
+  white-space: pre-wrap;
+}

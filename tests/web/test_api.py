@@ -88,6 +88,25 @@ def test_chat_verification_note_passthrough(build_test_engine, fake_settings):
     assert "verification_note" in body
 
 
+def test_chat_response_tool_calls_passthrough(build_test_engine, fake_settings):
+    """P2-1: 后端 ChatResponse.tool_calls 透传链路（前端可消费数据源成立，零后端改动）."""
+    from llm_loop.core.message import ToolCall
+    from llm_loop.llm.client import LLMResponse
+
+    tc = ToolCall(id="call_1", name="read_file", arguments={"path": "/no/such"})
+    responses = [
+        LLMResponse(content="", tool_calls=[tc], provider="fake"),
+        LLMResponse(content="最终回答", tool_calls=[], provider="fake"),
+    ]
+    engine, _ = build_test_engine(responses)
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat", json={"message": "读文件"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["tool_calls"] and body["tool_calls"][0]["name"] == "read_file"
+    assert body["tool_calls"][0]["arguments"] == {"path": "/no/such"}
+
+
 def test_chat_truncated_passthrough(build_test_engine, fake_settings):
     engine, _ = build_test_engine([{"content": "ok"}])
     client = _make_client(engine)
