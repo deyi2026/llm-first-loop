@@ -43,7 +43,7 @@ def test_web_fetch_missing_url():
 
 def test_web_fetch_http_error():
     tool = WebFetchTool()
-    with mock.patch("httpx.Client") as client_cls:
+    with mock.patch.object(tool, "_curl_fetch", return_value=None), mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.__enter__.return_value.get.return_value = _FakeResponse(
             404, reason_phrase="Not Found"
         )
@@ -54,7 +54,7 @@ def test_web_fetch_http_error():
 
 def test_web_fetch_timeout():
     tool = WebFetchTool()
-    with mock.patch("httpx.Client") as client_cls:
+    with mock.patch.object(tool, "_curl_fetch", return_value=None), mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.__enter__.return_value.get.side_effect = mock.MagicMock(
             side_effect=__import__("httpx").TimeoutException("timeout")
         )
@@ -67,21 +67,21 @@ def test_web_fetch_timeout_config(tmp_path):
     # 默认兜底 30
     t_default = WebFetchTool()
     assert t_default._timeout_s == 30.0
-    with mock.patch("httpx.Client") as client_cls:
+    with mock.patch.object(t_default, "_curl_fetch", return_value=None), mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.__enter__.return_value.get.side_effect = mock.MagicMock(
             side_effect=__import__("httpx").TimeoutException("timeout")
         )
         r = t_default.execute(url="https://example.com")
-    assert "超过 30s" in r.content
+    assert "30s" in r.content and "curl 回退亦失败" in r.content
     # 配置注入 45
     t45 = WebFetchTool(timeout_s=45)
     assert t45._timeout_s == 45.0
-    with mock.patch("httpx.Client") as client_cls:
+    with mock.patch.object(t45, "_curl_fetch", return_value=None), mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.__enter__.return_value.get.side_effect = mock.MagicMock(
             side_effect=__import__("httpx").TimeoutException("timeout")
         )
         r45 = t45.execute(url="https://example.com")
-    assert "超过 45s" in r45.content
+    assert "45s" in r45.content
     # 传入的 httpx.Client 超时用配置值（直接构造验证 Client(timeout=...)）
     with mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.__enter__.return_value.get.return_value = mock.MagicMock(

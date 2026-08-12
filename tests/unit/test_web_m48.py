@@ -121,3 +121,68 @@ def test_web_search_all_fail_honest():
 
 def test_web_search_missing_query():
     assert WebSearchTool().execute().status == ToolResultStatus.FAILURE
+
+
+# ── M48-B: curl 回退通道 ──
+
+def _curl_proc(stdout: bytes, returncode: int = 0):
+    return mock.MagicMock(returncode=returncode, stdout=stdout)
+
+
+def test_curl_fallback_on_connect_error():
+    """httpx 连接被重置（TLS 指纹拦截场景）→ curl 回退成功并如实标注."""
+    tool = WebFetchTool()
+    article = "<html><head><title>真文章</title></head><body><div class=\"article-content\"><p>" + "正文" * 40 + "</p></div> </body></html>"
+    with (
+        mock.patch("httpx.Client") as client_cls,
+        mock.patch("subprocess.run", return_value=_curl_proc(article.encode())) as run_mock,
+    ):
+        client_cls.return_value.__enter__.return_value.get.side_effect = __import__("httpx").ConnectError("reset")
+        r = tool.execute(url="https://example.com/a")
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "[fetch] curl 回退" in r.content
+    assert "ConnectError" in r.content  # 如实记录 httpx 侧原因
+    assert "正文" in r.content
+    # argv 列表传参（无 shell），URL 在 -- 之后
+    args = run_mock.call_args[0][0]
+    assert args[0] == "curl" and "--" in args and "https://example.com/a" in args
+
+
+def test_curl_fallback_on_js_shell():
+    """httpx 仅取到 JS 壳 → curl 回退拿到正文（头条场景）."""
+    tool = WebFetchTool()
+    shell = '<html><body><noscript>您需要允许该网站执行 JavaScript</noscript><script>var _$jsvmprt=1;</script></body></html>'
+    article = "<html><head><title>头条文章</title></head><body><div class=\"article-content\"><p>" + "正文" * 40 + "</p></div> </body></html>"
+    with (
+        mock.patch("httpx.Client") as client_cls,
+        mock.patch("subprocess.run", return_value=_curl_proc(article.encode())),
+    ):
+        client_cls.return_value.__enter__.return_value.get.return_value = _FakeResponse(200, shell)
+        r = tool.execute(url="https://m.toutiao.com/article/x/")
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "curl 回退" in r.content and "JS 壳" in r.content
+    assert "正文" in r.content
+
+
+def test_curl_fallback_both_fail_honest():
+    """httpx 失败 + curl 也失败 → 如实双失败，不伪造."""
+    tool = WebFetchTool()
+    with (
+        mock.patch("httpx.Client") as client_cls,
+        mock.patch("subprocess.run", return_value=_curl_proc(b"", returncode=7)),
+    ):
+        client_cls.return_value.__enter__.return_value.get.side_effect = __import__("httpx").ConnectError("down")
+        r = tool.execute(url="https://example.com")
+    assert r.status == ToolResultStatus.FAILURE
+    assert "curl 回退亦失败" in r.content
+    assert "ConnectError" in r.content
+
+
+def test_curl_fallback_skips_shell_and_tries_next_ua():
+    """curl 首个 UA 取到 JS 壳时换 UA 再试."""
+    tool = WebFetchTool()
+    shell = b'<html><body><noscript>enable javascript</noscript><script>_$jsvmprt</script></body></html>'
+    article = ("<html><head><title>t</title></head><body><p>" + "正文" * 40 + "</p></body></html>").encode()
+    with mock.patch("subprocess.run", side_effect=[_curl_proc(shell), _curl_proc(article)]) as run_mock:
+        got = tool._curl_fetch("https://example.com")
+    assert got is not None and run_mock.call_count == 2
