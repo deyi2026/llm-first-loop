@@ -25,6 +25,7 @@ from llm_loop.memory.store import MemoryStore
 from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
 from llm_loop.tools.builtin.read_file import ReadFileTool
 from llm_loop.tools.builtin.web_fetch import WebFetchTool
+from llm_loop.tools.builtin.web_search import WebSearchTool
 from llm_loop.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -124,6 +125,7 @@ def build_engine(settings: Settings) -> LoopEngine:
     # M18 AA8: 工具内兜底超时读配置值（注册表另有线程级超时兜底）
     registry.register(ExecuteCommandTool(timeout_s=settings.tool_timeout_s))
     registry.register(WebFetchTool(timeout_s=settings.tool_timeout_s))
+    registry.register(WebSearchTool(timeout_s=settings.tool_timeout_s))  # M48: 网络搜索（Bing/百度双后端降级）
 
     # EVO-20260811-f94e5306: 变更通告（修改类工具调用记录，多会话协调）
     def _change_log_hook(call):
