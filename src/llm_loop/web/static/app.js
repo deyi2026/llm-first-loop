@@ -177,8 +177,12 @@ function renderToolMessage(msg, container) {
   const chain = el("div", "tool-call-chain");
   const content = String(msg.content || "");
   const m = content.match(/^\[([^\]]+)\]/);
-  const summary = m ? `🔧 ${m[1]}` : "🔧 工具回执";
-  const toggle = el("button", "tool-call-toggle", `${summary} ▸`);
+  // M52: 异常回执醒目（error/failure/安全硬阻断/程序异常 → 红色警示样式 + ⚠️）
+  const statusText = m ? m[1] : "";
+  const isError = /error|failure|失败|参数错误|安全硬阻断|程序异常/i.test(statusText)
+    || /^\[安全硬阻断\]/.test(content) || /^\[程序异常\]/.test(content);
+  const summary = `${isError ? "⚠️" : "🔧"} ${statusText || "工具回执"}`;
+  const toggle = el("button", "tool-call-toggle" + (isError ? " tool-call-toggle-error" : ""), `${summary} ▸`);
   toggle.type = "button";
   const detail = el("div", "tool-call-detail");
   detail.hidden = true;
@@ -187,6 +191,32 @@ function renderToolMessage(msg, container) {
     toggle.textContent = `${summary} ${detail.hidden ? "▸" : "▾"}`;
   };
   detail.appendChild(el("div", "tool-call-detail-text", content));
+  // M52: 分层截断/已归档 → "查看完整原文"（按 tool_call_id 精确取档案，失败如实提示）
+  const layered = content.includes("[工具输出已分层]") || content.includes("已另存至压缩档案");
+  if (layered && msg.tool_call_id && state.currentSessionId) {
+    const btn = el("button", "tool-call-full-btn", "📄 查看完整原文");
+    btn.type = "button";
+    btn.onclick = async () => {
+      btn.disabled = true;
+      btn.textContent = "⏳ 加载中…";
+      try {
+        const resp = await fetch(`/api/v1/sessions/${state.currentSessionId}/archive/${msg.tool_call_id}`);
+        const data = await resp.json();
+        if (resp.ok) {
+          detail.appendChild(el("div", "tool-call-detail-text tool-call-full-text",
+            `── 完整原文（${data.tool_name || "tool"}，${data.chars} 字符，归档于 ${data.ts}）──\n${data.content}`));
+          btn.remove();
+        } else {
+          btn.disabled = false;
+          btn.textContent = `📄 原文不可用：${data.detail || "未知原因"}`;
+        }
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = "📄 加载失败（网络异常），点击重试";
+      }
+    };
+    chain.appendChild(btn);
+  }
   chain.appendChild(toggle);
   chain.appendChild(detail);
   container.appendChild(chain);
@@ -198,6 +228,10 @@ function renderMessages() {
   for (const msg of state.messages) {
     const node = document.createElement("div");
     node.className = "message " + msg.role;
+    // M52: 架构事件/程序异常消息醒目（红色左边框，不混入普通消息流）
+    if (msg.role === "assistant" && /\[(架构上报|程序异常|安全硬阻断)\]/.test(String(msg.content || ""))) {
+      node.classList.add("message-alert");
+    }
     if (msg.role === "tool") {
       // P2-1: 历史 tool 角色消息渲染为折叠回执
       const wrap = document.createElement("div");
