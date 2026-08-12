@@ -376,3 +376,65 @@ def test_compression_injects_deterministic_key_facts():
     assert "read_file 成功" in facts_msg  # 工具结果状态被提取
     # 不注入 LLM 语义摘要
     assert not any("上下文压缩摘要" in c for c in contents)
+
+
+# ── EVO-3b39134f: 压缩保留推理结论（OpenAI harness 借鉴）──
+
+def test_extract_reasoning_facts_decision_lines():
+    """提取含决策/理由连接词的行."""
+    from llm_loop.core.history import _extract_reasoning_facts
+    from llm_loop.core.message import Message, MessageSource
+
+    msgs = [
+        Message(role="assistant", content="选择 read_file 是因为需要先确认文件内容", source=MessageSource.USER),
+        Message(role="assistant", content="由于经验库命中，决定直接套用已验解法", source=MessageSource.USER),
+        Message(role="assistant", content="执行 pytest 全量测试", source=MessageSource.USER),  # 无决策词
+    ]
+    facts = _extract_reasoning_facts(msgs)
+    assert any("read_file" in f for f in facts)
+    assert any("经验库" in f for f in facts)
+    assert not any("pytest" in f for f in facts)  # 无决策词的普通动作行不提取
+
+
+def test_extract_reasoning_facts_dedup_and_limit():
+    """去重 + 上限."""
+    from llm_loop.core.history import _extract_reasoning_facts
+    from llm_loop.core.message import Message, MessageSource
+
+    msgs = [
+        Message(role="assistant", content=f"因为原因{i}，所以决定采用方案{i}", source=MessageSource.USER)
+        for i in range(10)
+    ]
+    facts = _extract_reasoning_facts(msgs, max_facts=4)
+    assert len(facts) == 4
+    assert len(set(facts)) == len(facts)
+
+
+def test_archive_key_facts_includes_reasoning_section():
+    """压缩关键事实注入含 [压缩推理结论] 段（动作/结果 + 决策/理由并列）."""
+    from llm_loop.core.history import _archive_key_facts
+    from llm_loop.core.message import Message, MessageSource
+
+    msgs = [
+        Message(role="assistant", content="选择了 read_file 因为需要读取配置；执行成功", source=MessageSource.USER),
+        Message(role="assistant", content="决定压缩归档，因为上下文预算紧张；压缩完成", source=MessageSource.USER),
+    ]
+    out = _archive_key_facts(msgs)
+    assert "[压缩关键事实]" in out
+    assert "[压缩推理结论]" in out  # 新增推理段
+    assert "选择了 read_file" in out  # 推理行在推理段
+    assert "压缩完成" in out  # 动作/结果在关键事实段
+
+
+def test_archive_key_facts_no_reasoning_section_when_absent():
+    """无决策词时仅关键事实段（零回归）."""
+    from llm_loop.core.history import _archive_key_facts
+    from llm_loop.core.message import Message, MessageSource
+
+    msgs = [
+        Message(role="assistant", content="执行 pytest；全部通过", source=MessageSource.USER),
+        Message(role="assistant", content="结果返回 success", source=MessageSource.USER),
+    ]
+    out = _archive_key_facts(msgs)
+    assert "[压缩关键事实]" in out
+    assert "[压缩推理结论]" not in out  # 无决策词 → 不注入空推理段
