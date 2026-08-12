@@ -885,3 +885,19 @@ html, body {
 .code-num {
   color: #d19a66;
 }
+
+/* ── T4 D2: 断流重试按钮 ── */
+.retry-btn {
+  display: inline-block;
+  margin: 8px;
+  padding: 4px 14px;
+  font-size: 13px;
+  color: #2456a6;
+  background: #eef4fd;
+  border: 1px solid #c3d7f2;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.retry-btn:hover {
+  background: #ddeafa;
+}

@@ -24,9 +24,7 @@ data/
 .DS_Store
 # 含密钥的本地启动脚本（勿提交）
 scripts/start_with_embedding.sh
-# 含飞书密钥的重启脚本（勿提交）
-scripts/restart_system.sh
-scripts/restart_feishu.sh
+
 
 # 含飞书密钥的项目凭证文件（勿提交）
 .feishu.env

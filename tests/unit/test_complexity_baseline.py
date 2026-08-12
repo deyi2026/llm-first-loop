@@ -41,3 +41,28 @@ class TestComplexityBaseline:
         assert "14" in baseline_src
         assert "163" in baseline_src
         assert "合规" in baseline_src
+
+    def test_round4_decision_scan_conclusion(self, baseline_src: str):
+        # round4 方向 B：非 if-return 决策点复扫结论（spec 5.4.2 规则 1）
+        assert "非 if-return 决策点复扫" in baseline_src
+        for name in ("自动摘要", "自动演进", "自动切换", "定期自评", "参数视图"):
+            assert name in baseline_src
+        assert "全部合规保留" in baseline_src
+
+    def test_hard_boundary_preserved_statement(self, baseline_src: str):
+        # 硬边界保留声明（spec 5.1 规则 2）
+        assert "硬边界保留声明" in baseline_src
+        for kw in ("输入校验", "并发安全", "FR-SAFE-01", "C1-C6", "资源"):
+            assert kw in baseline_src
+
+    def test_adaptive_tool_trim_age_still_pending(self, baseline_src: str):
+        # 方向 A 未处置，保持待后续评估标注（spec 5.1 规则 8）
+        assert "_adaptive_tool_trim_age" in baseline_src
+        assert "待后续评估" in baseline_src
+
+    def test_no_implementation_details(self, baseline_src: str):
+        # 文档不含实现方案（spec 5.4.2 规则 4）
+        assert "```python" not in baseline_src
+        assert "```javascript" not in baseline_src
+        assert "class " not in baseline_src
+        assert "def " not in baseline_src

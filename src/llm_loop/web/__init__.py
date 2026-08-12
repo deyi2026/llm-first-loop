@@ -128,7 +128,9 @@ def main() -> None:
     import uvicorn
 
     _install_exit_signal_log()  # P1-3-R1: 退出信号记录（web_exit.log，不改变退出行为）
-    uvicorn.run(app, host=host, port=port)
+    # P1: 优雅退出超时（SIGTERM 后最多 10s 内自然退出，< restart_system.sh 的 GRACE_S=15，
+    # 避免同步 LLM 长请求阻塞导致 SIGKILL 强杀）
+    uvicorn.run(app, host=host, port=port, timeout_graceful_shutdown=10)
 
 
 if __name__ == "__main__":

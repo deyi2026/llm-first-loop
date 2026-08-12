@@ -13,6 +13,7 @@ const state = {
   typewriterPending: false, // T3: 最新 assistant 回复是否用假流式打字机渲染
   hasMoreHistory: false, // D2: 是否还有更早历史消息（懒加载）
   loadedHistoryCount: 0, // D2: 已加载历史消息条数（offset 基准）
+  retryRequest: null, // D2 断流重试: 最近一次流式请求体（重试复用）
 };
 
 // D2: 历史懒加载分页大小（首屏/每次"加载更早"的条数）
@@ -524,9 +525,17 @@ function fakeTypewriter(node, answerHtml, chunkChars, intervalMs, onDone) {
   step();
 }
 
+// T4 D1: 滚动跟随判定（底部检测，抗抖动阈值）
+const SCROLL_FOLLOW_THRESHOLD = 4; // px
+function isMessagesAtBottom() {
+  const el = els.messages;
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= SCROLL_FOLLOW_THRESHOLD;
+}
+
 // T2.7: 真流式消费（fetch + ReadableStream 解析 SSE，spec 5.2 规则 1）
-// answer_delta 逐分片回调 onDelta；done 携带九字段；error 保留已生成分片不伪造 done
-// ReadableStream 不可用 / 非流式响应（404/413）→ 返回 ok=false 由调用方降级非流式
+// answer_delta 逐分片回调 onDelta；done 携带九字段；error 为终态（停止追加分片，不伪造 done）
+// 读异常 = 网络中断（errorType:"network"）；SSE error 事件 = 引擎错误（errorType:"engine"）
+// 非 2xx（404/413）= http 错误（errorType:"http"）；ReadableStream 不可用 → 降级非流式
 async function streamChatRequest(body, onDelta) {
   let resp;
   try {
@@ -536,22 +545,29 @@ async function streamChatRequest(body, onDelta) {
       body: JSON.stringify(body),
     });
   } catch {
-    return { ok: false, status: 0, data: null, error: { detail: "网络错误" } };
+    return { ok: false, status: 0, data: null, errorType: "network", error: { detail: "连接中断，已保留已生成内容" } };
   }
   if (!resp.ok || !resp.body || typeof resp.body.getReader !== "function") {
     let data = null;
     try { data = await resp.json(); } catch { /* ignore */ }
-    return { ok: false, status: resp.status, data, error: data };
+    return { ok: false, status: resp.status, data, errorType: "http", error: data };
   }
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let doneData = null;
   let errorData = null;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+  let finished = false;
+  while (!finished) {
+    let chunk;
+    try {
+      chunk = await reader.read();
+    } catch {
+      // 读异常 = 连接中断（区别于 SSE error 事件，不 throw 穿透）
+      return { ok: false, status: 0, data: null, errorType: "network", error: { detail: "连接中断，已保留已生成内容" } };
+    }
+    if (chunk.done) break;
+    buffer += decoder.decode(chunk.value, { stream: true });
     let idx;
     while ((idx = buffer.indexOf("\n\n")) >= 0) {
       const block = buffer.slice(0, idx);
@@ -561,12 +577,13 @@ async function streamChatRequest(body, onDelta) {
       let evt;
       try { evt = JSON.parse(dataLine.slice(6)); } catch { continue; }
       if (evt.type === "answer_delta") onDelta(evt.data && evt.data.data);
-      else if (evt.type === "done") doneData = evt.data;
-      else if (evt.type === "error") errorData = evt.data;
+      else if (evt.type === "done") { doneData = evt.data; finished = true; break; }
+      else if (evt.type === "error") { errorData = evt.data; finished = true; break; } // error 为终态（D3）
     }
   }
   if (doneData) return { ok: true, status: 200, data: doneData, error: null };
-  return { ok: false, status: 200, data: null, error: errorData };
+  if (errorData) return { ok: false, status: 200, data: null, errorType: "engine", error: errorData };
+  return { ok: false, status: 200, data: null, errorType: "network", error: { detail: "连接中断，已保留已生成内容" } };
 }
 
 function buildAssistantNote(data) {
@@ -581,6 +598,96 @@ function buildAssistantNote(data) {
     note.push(footer);
   }
   return note.join("\n") || null;
+}
+
+// D1~D4: 真流式请求 + 渲染 + 结果处理（滚动跟随/断流重试/错误边界/空回答清理）
+async function runStreamChat(body, loading) {
+  let acc = "";
+  let bodyNode = null;
+  let streamed = false;
+  const result = await streamChatRequest(body, (delta) => {
+    if (!streamed) {
+      streamed = true;
+      if (loading) loading.remove();
+      addMessage("assistant", "", null, null);
+      const wrap = els.messages.querySelector(".message-wrap:last-of-type");
+      bodyNode = wrap ? wrap.querySelector(".answer-body") : null;
+    }
+    acc += delta;
+    if (bodyNode) {
+      const html = renderMarkdown(acc);
+      bodyNode.innerHTML = html !== null ? html : acc;
+      if (isMessagesAtBottom()) {
+        // D1: 仅底部态跟随，用户上滚查看历史时暂停（不打断阅读）
+        els.messages.scrollTop = els.messages.scrollHeight;
+      }
+    }
+  });
+
+  if (result.ok && result.data) {
+    const data = result.data;
+    state.currentSessionId = data.session_id;
+    const finalText = (data.final_answer || "").trim();
+    if (streamed) {
+      const last = state.messages[state.messages.length - 1];
+      if (last && last.role === "assistant") {
+        if (finalText) {
+          last.content = data.final_answer;
+          if (Array.isArray(data.tool_calls) && data.tool_calls.length) last.toolCalls = data.tool_calls;
+          last.note = buildAssistantNote(data);
+        } else if (Array.isArray(data.tool_calls) && data.tool_calls.length) {
+          // D4: 纯工具轮 → 保留工具链 + 占位，不伪造文字
+          last.content = "";
+          last.toolCalls = data.tool_calls;
+          last.note = "（无文字回答）";
+        } else {
+          // D4: 空回答且无工具痕迹 → 移除空占位（不残留空气泡）
+          state.messages.pop();
+        }
+      }
+      renderMessages();
+    } else {
+      if (loading) loading.remove();
+      if (finalText) {
+        state.typewriterPending = true; // 降级：假流式打字机
+        addMessage("assistant", data.final_answer, buildAssistantNote(data), data.tool_calls);
+      } else if (Array.isArray(data.tool_calls) && data.tool_calls.length) {
+        addMessage("assistant", "", "（无文字回答）", data.tool_calls);
+      } else {
+        addMessage("error", "（无文字回答）");
+      }
+    }
+    if (data.tokens_in || data.tokens_out) {
+      state.pageTokensIn = (state.pageTokensIn || 0) + data.tokens_in;
+      state.pageTokensOut = (state.pageTokensOut || 0) + data.tokens_out;
+      renderTokenStats();
+    }
+  } else if (result.status === 404) {
+    if (loading) loading.remove();
+    addMessage("error", (result.data && result.data.detail) || "会话不存在，请新建会话。");
+    state.currentSessionId = null;
+  } else {
+    // D2: 网络/引擎错误区分提示 + 可重试（不静默重连，fail-open ≠ fail-silent）
+    if (loading) loading.remove();
+    const isNetwork = result.errorType === "network";
+    const detail = result.error && result.error.detail ? result.error.detail : "服务内部错误。";
+    const note = `${isNetwork ? "" : "[程序异常] "}${detail}`;
+    if (streamed) {
+      const last = state.messages[state.messages.length - 1];
+      if (last && last.role === "assistant") {
+        last.note = note;
+      }
+      renderMessages();
+    } else {
+      addMessage("error", note);
+    }
+    // 重试入口：保留已生成分片，重新发起请求
+    const retryBtn = el("button", "retry-btn", "重试");
+    retryBtn.type = "button";
+    retryBtn.onclick = () => runStreamChat(state.retryRequest, null);
+    els.messages.appendChild(retryBtn);
+    els.messages.scrollTop = els.messages.scrollHeight;
+  }
 }
 
 function addMessage(role, content, note, toolCalls) {
@@ -630,70 +737,8 @@ async function sendMessage() {
     const body = { message: effectiveText };
     if (state.currentSessionId) body.session_id = state.currentSessionId;
     if (state.model) body.model = state.model; // M47 模型切换：对当前请求生效
-
-    // T2.7: 真流式（fetch + ReadableStream）；ReadableStream 不可用/异常降级非流式
-    let acc = "";
-    let bodyNode = null;
-    let streamed = false;
-    const result = await streamChatRequest(body, (delta) => {
-      if (!streamed) {
-        streamed = true;
-        loading.remove();
-        addMessage("assistant", "", null, null);
-        const wrap = els.messages.querySelector(".message-wrap:last-of-type");
-        bodyNode = wrap ? wrap.querySelector(".answer-body") : null;
-      }
-      acc += delta;
-      if (bodyNode) {
-        const html = renderMarkdown(acc);
-        bodyNode.innerHTML = html !== null ? html : acc;
-        els.messages.scrollTop = els.messages.scrollHeight;
-      }
-    });
-
-    if (result.ok && result.data) {
-      const data = result.data;
-      state.currentSessionId = data.session_id;
-      if (streamed) {
-        // 补全 content/tool_calls/note，重渲染完整态（含工具链/折叠/复制）
-        const last = state.messages[state.messages.length - 1];
-        if (last && last.role === "assistant") {
-          last.content = data.final_answer;
-          if (Array.isArray(data.tool_calls) && data.tool_calls.length) last.toolCalls = data.tool_calls;
-          last.note = buildAssistantNote(data);
-        }
-        renderMessages();
-      } else {
-        loading.remove();
-        state.typewriterPending = true; // 降级/空回答：假流式打字机
-        addMessage("assistant", data.final_answer, buildAssistantNote(data), data.tool_calls);
-      }
-      // M52: 本次页面会话 token 累计（输入区模型选择旁实时更新）
-      if (data.tokens_in || data.tokens_out) {
-        state.pageTokensIn = (state.pageTokensIn || 0) + data.tokens_in;
-        state.pageTokensOut = (state.pageTokensOut || 0) + data.tokens_out;
-        renderTokenStats();
-      }
-    } else if (result.status === 404) {
-      loading.remove();
-      addMessage("error", (result.data && result.data.detail) || "会话不存在，请新建会话。");
-      state.currentSessionId = null;
-    } else if (result.error) {
-      loading.remove();
-      if (streamed) {
-        // 保留已生成分片 + 如实错误提示（不空白不伪造）
-        const last = state.messages[state.messages.length - 1];
-        if (last && last.role === "assistant") {
-          last.note = `[程序异常] ${result.error.detail || "引擎执行失败"}`;
-        }
-        renderMessages();
-      } else {
-        addMessage("error", result.error.detail || "服务内部错误。");
-      }
-    } else {
-      loading.remove();
-      addMessage("error", "请求失败，请重试。");
-    }
+    state.retryRequest = body; // D2 断流重试：保存请求体供重试复用
+    await runStreamChat(body, loading);
   } catch (err) {
     loading.remove();
     addMessage("error", `网络错误：${err.message}`);

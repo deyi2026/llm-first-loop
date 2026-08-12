@@ -95,6 +95,11 @@ _backoff_sleep() {
 
 # ── 单次检测 + 拉起 ──
 _guard_once() {
+  # P0: 维护标记（restart_system.sh 重启期间）→ 跳过本轮，避免与重启竞态抢跑
+  if [[ -f "$DATA_DIR/maintenance.lock" ]]; then
+    _log_guard "skip_maintenance" "" "检测到维护标记，跳过本轮（restart 进行中）"
+    return 0
+  fi
   local svc fail_count=0
   for svc in web feishu; do
     if ! _service_healthy "$svc"; then
