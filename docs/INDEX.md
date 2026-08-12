@@ -18,6 +18,7 @@ docs/ 目录共 **26 个 Markdown 文档**，分四类：
 
 ## 二、报告清单
 | ASSESSMENT-20260813-ai-first-evolution.md | AI 优先演进整体评估报告（四维+RULE-AI-00 对照，20260813） | 评估 | §5.1 |
+| ASSESSMENT-20260813-ai-first-evolution-round2.md | AI 优先演进第二轮评估报告（吞错清理/折叠修复/流式取舍/if-return 核验，20260813） | 评估 | §5.1-§5.5 |
 
 | # | 文件 | 一句话摘要 | 类型 | spec 章节 |
 |:--:|:---|:---|:---|:---|

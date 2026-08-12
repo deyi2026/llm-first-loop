@@ -122,8 +122,8 @@ def main() -> None:
         try:
             with open(_exit_log_path, "a", encoding="utf-8") as f:
                 f.write(f"{datetime.datetime.now().isoformat()} pid={os.getpid()} {reason}\n")
-        except OSError:
-            pass
+        except OSError as exc:  # fail-open：退出日志写失败不影响退出
+            logger.debug("退出日志写失败（fail-open）: %s", exc)
 
     _log_exit("启动")
     stop_event = threading.Event()

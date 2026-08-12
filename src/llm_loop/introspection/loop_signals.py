@@ -220,8 +220,8 @@ class LoopSignalDetector:
                 # 指纹：忽略内容的开头 20 字符（足够独特且避免长度差导致的子串失配）
                 if ign_content[:20] and ign_content[:20] in content_preview:
                     return True
-        except OSError:
-            pass
+        except OSError as exc:  # fail-open：读忽略清单失败视为无
+            logger.debug("读忽略清单失败（fail-open）: %s", exc)
         return False
 
     def _ignore_ghost(self, store, sid: str, content_preview: str = "") -> None:
@@ -239,5 +239,5 @@ class LoopSignalDetector:
             }
             with open(path, "a", encoding="utf-8") as f:
                 f.write(_json.dumps(record, ensure_ascii=False) + "\n")
-        except OSError:
-            pass
+        except OSError as exc:  # fail-open：写忽略清单失败不阻断循环
+            logger.debug("写忽略清单失败（fail-open）: %s", exc)

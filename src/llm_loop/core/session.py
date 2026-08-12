@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -16,6 +17,8 @@ from pathlib import Path
 from typing import Literal
 
 from llm_loop.core.message import Message, MessageSource, ToolResultStatus
+
+logger = logging.getLogger(__name__)
 
 _ACTIVE = "active"
 _ARCHIVED = "archived"
@@ -156,8 +159,8 @@ class SessionStore:
             sid = str(data.get("current", ""))
             if sid and self.exists(sid):
                 return sid
-        except (OSError, json.JSONDecodeError, ValueError):
-            pass
+        except (OSError, json.JSONDecodeError, ValueError) as exc:  # fail-open：读共享会话失败视为无
+            logger.debug("读共享当前会话失败（fail-open）: %s", exc)
         return None
 
     def set_shared_current(self, session_id: str) -> None:

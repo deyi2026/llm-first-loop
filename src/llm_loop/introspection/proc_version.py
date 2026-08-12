@@ -7,10 +7,13 @@
 """
 
 import json
+import logging
 import os
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def _audit_dir() -> Path:
@@ -99,8 +102,8 @@ def get_process_versions(limit: int = 30) -> dict:
                     records.append(json.loads(line))
                 except json.JSONDecodeError:
                     continue
-        except OSError:
-            pass
+        except OSError as exc:  # fail-open：读进程版本文件失败视为空
+            logger.debug("读进程版本文件失败（fail-open）: %s", exc)
     records = records[-limit:]
     # 每服务取最新一条（旧记录保留可查但状态只看最新）
     latest_by_service: dict[str, dict] = {}
