@@ -10,6 +10,7 @@ AI 无需二次推理即可决策。
 from __future__ import annotations
 
 from llm_loop.core.message import Message, MessageSource
+from llm_loop.llm.errors import is_quota_error
 
 # 统一标注常量（FR-HON-03: 任何兜底/降级带显式来源标注）
 MEMORY_UNAVAILABLE = "[记忆不可用] 记忆服务异常，本次未注入记忆"
@@ -40,7 +41,18 @@ def llm_error_text(error: Exception) -> str:
     M18 AA15: Message 版 llm_error_message 与 memory_unavailable_message 已删除
     （均无消费方——记忆故障走 _fault_feedback → program_error_message）；统一为 str 版
     供 loop.py LLM 异常出口直接作为 final_answer。
+
+    EVO-20260812-fb50ab78: 识别 provider 配额耗尽（403 access_terminated_error 等）
+    → 专门文案（本周期不可恢复，非配置/网络问题），避免泛化建议误导排查方向。
     """
+    # 配额耗尽: 专门反馈（billing 周期用尽，换模型/检查配置均无用）
+    if is_quota_error(error):  # type: ignore[arg-type]
+        return (
+            f"[LLM 调用异常] 事实: LLM 调用失败。\n"
+            f"原因: {type(error).__name__}: {error}\n"
+            f"建议: API 配额周期已用尽（billing quota exhausted），本周期内无法继续；"
+            f"非网络/Key/模型配置问题。请等待配额刷新或升级套餐后重试；本次未能获得回答。"
+        )
     return (
         f"[LLM 调用异常] 事实: LLM 调用失败。\n"
         f"原因: {type(error).__name__}: {error}\n"
