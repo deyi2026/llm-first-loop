@@ -176,3 +176,54 @@ def test_review_accept_returns_pending_execution(tmp_path):
     assert target["id"] == s.id
     assert target["status"] == "accepted"
     assert target["requires_human"] is False
+
+
+# ── M49: 双层演进作用域（EVO-20260812-dc911d93 落地）──
+
+def test_scope_defaults_global(tmp_path):
+    """不传 scope → global + pending_review（保守默认，向后兼容）."""
+    store = EvolutionStore(tmp_path)
+    sug = store.submit(content="持久架构变更", impact_scope="loop")
+    assert sug.scope == "global"
+    assert sug.status == "pending_review"
+
+
+def test_scope_session_goes_executing(tmp_path):
+    """scope=session 直达 executing，不进人工审阅队列."""
+    store = EvolutionStore(tmp_path)
+    sug = store.submit(content="本轮临时调大 history_budget", impact_scope="运行参数", scope="session")
+    assert sug.scope == "session"
+    assert sug.status == "executing"
+    assert store.list(status="pending_review") == []
+    assert len(store.list(status="executing")) == 1
+
+
+def test_scope_invalid_falls_back_global(tmp_path):
+    store = EvolutionStore(tmp_path)
+    sug = store.submit(content="x", scope="bogus")
+    assert sug.scope == "global"
+
+
+def test_boundary_forces_global(tmp_path):
+    """涉边界内容指定 session 被强制覆盖为 global（安全优先）."""
+    store = EvolutionStore(tmp_path)
+    sug = store.submit(
+        content="修改安全边界",
+        impact_scope="安全边界/协议硬约束",
+        scope="session",
+    )
+    assert sug.scope == "global"
+    assert sug.status == "pending_review"
+    assert sug.requires_human is True
+
+
+def test_old_records_default_scope_global(tmp_path):
+    """旧记录（无 scope 字段）读取时补默认 global，零破坏兼容."""
+    import json as _json
+    store = EvolutionStore(tmp_path)
+    old = {"id": "EVO-old-1", "ts": "2026-01-01T00:00:00", "content": "旧建议",
+           "status": "pending_review", "priority": "medium"}
+    with store._path.open("a", encoding="utf-8") as f:
+        f.write(_json.dumps(old, ensure_ascii=False) + "\n")
+    items = store.list()
+    assert items[0]["scope"] == "global"

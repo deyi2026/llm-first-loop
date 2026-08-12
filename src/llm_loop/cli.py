@@ -110,6 +110,11 @@ def _run_interactive(engine, session_id: str | None = None) -> None:
         if result is not None:
             print(f"[--model 启动] {result.reply}")
     print(f"LLM-First Core Loop 交互模式（会话 {sid[:8]}，输入 exit 退出；M50: /model [provider/model|default] 切换模型）")
+    # M49 RULE-AI-00: 交互模式（有人值守）是唯一启用待审弹窗授权的路径；
+    # web/feishu/单条 CLI 保持默认不弹窗（仅文本注入，不阻塞循环）。
+    detector = getattr(engine, "loop_signal_detector", None)
+    if detector is not None:
+        detector.popup_pending_review = True
     while True:
         try:
             text = input("\n你> ").strip()
@@ -367,8 +372,10 @@ def _cmd_evolve_list(engine, status: str | None) -> int:
         return 0
     for it in items:
         human = " [需人工决策]" if it.get("requires_human") else ""
+        scope = it.get("scope", "global")
+        scope_mark = " [session级]" if scope == "session" else ""
         print(
-            f"  {it['id']} | {it['status']} | {it.get('priority')} | {it.get('content', '')[:50]}{human}"
+            f"  {it['id']} | {it['status']} | {it.get('priority')} | {it.get('content', '')[:50]}{human}{scope_mark}"
         )
     return 0
 
