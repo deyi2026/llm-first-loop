@@ -39,6 +39,10 @@ def build_app(settings=None, engine=None) -> FastAPI:
     )
     app.state.engine = engine
 
+    # T5.1: 会话级并发锁装配（spec.md 5.4.1，默认开启，SESSION_CONCURRENCY_LOCK=false 退化为无锁）
+    _lock_enabled = os.environ.get("SESSION_CONCURRENCY_LOCK", "true").strip().lower() in ("true", "1", "")
+    app.state.session_locks = {} if _lock_enabled else None
+
     # 鉴权：条件挂载到受保护路由（远程监听时要求 Bearer 令牌）
     if os.environ.get("WEB_AUTH_REQUIRE", "").strip() == "1":
         app.include_router(router, dependencies=[Depends(require_api_key)])
@@ -60,6 +64,38 @@ def _is_loopback(host: str) -> bool:
     from .auth import is_loopback as _il
 
     return _il(host)
+
+
+def _install_exit_signal_log() -> None:
+    """P1-3-R1: web 退出信号记录（对齐 feishu `_log_exit` 范式，仅记录不改变退出行为）.
+
+    SIGTERM/SIGINT/SIGHUP 到达时追加写 `data/web_exit.log`（时刻/pid/信号名）。
+    fail-open：写失败静默、信号注册异常不阻塞启动。
+    """
+    import contextlib
+    import datetime
+    import signal
+
+    exit_log_path = os.path.join(os.environ.get("DATA_DIR", "data"), "web_exit.log")
+
+    def _log_web_exit(reason: str) -> None:
+        try:
+            with open(exit_log_path, "a", encoding="utf-8") as f:
+                f.write(f"{datetime.datetime.now().isoformat()} pid={os.getpid()} {reason}\n")
+        except OSError:
+            pass
+
+    def _on_signal(signum, frame):  # noqa: ARG001 — signal handler 签名固定
+        try:
+            name = signal.Signals(signum).name
+        except (ValueError, AttributeError):
+            name = str(signum)
+        _log_web_exit(f"收到信号 {signum} ({name})")
+
+    signal.signal(signal.SIGTERM, _on_signal)
+    signal.signal(signal.SIGINT, _on_signal)
+    with contextlib.suppress(AttributeError, ValueError, OSError):
+        signal.signal(signal.SIGHUP, _on_signal)  # 终端关闭保护
 
 
 def main() -> None:
@@ -88,6 +124,7 @@ def main() -> None:
 
     import uvicorn
 
+    _install_exit_signal_log()  # P1-3-R1: 退出信号记录（web_exit.log，不改变退出行为）
     uvicorn.run(app, host=host, port=port)
 
 

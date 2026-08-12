@@ -836,3 +836,23 @@ html, body {
   border-left: 3px solid #c0392b;
   background: #fdf6f5;
 }
+
+/* ── T3: 长内容折叠（spec.md 5.2.1） ── */
+.collapsed {
+  max-height: 400px;
+  overflow: hidden;
+}
+.expand-btn {
+  display: inline-block;
+  margin: 4px 0 4px 8px;
+  padding: 2px 10px;
+  font-size: 12px;
+  color: #2456a6;
+  background: #eef4fd;
+  border: 1px solid #c3d7f2;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.expand-btn:hover {
+  background: #ddeafa;
+}

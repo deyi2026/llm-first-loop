@@ -68,6 +68,10 @@ function setStatus(ok, text) {
   els.statusBadge.className = "status-badge " + (ok ? "ok" : "err");
 }
 
+// ---------- 长文本折叠阈值（T3，spec.md 5.2.1） ----------
+const LONG_LINE_THRESHOLD = 200;   // pre 代码块行数超此值折叠为前 20 行摘要
+const LONG_CHAR_THRESHOLD = 20000; // 消息体字符数超此值折叠为前 2000 字符摘要
+
 // ---------- Markdown 渲染（M38） ----------
 const MD_ALLOWED_TAGS = new Set([
   "p", "strong", "em", "b", "i", "code", "pre", "blockquote",
@@ -264,8 +268,10 @@ function renderMessages() {
       if (msg.note) {
         node.appendChild(el("span", "msg-note", msg.note));
       }
-      // 回复内命令框（代码块）右上角也提供复制按钮
-      addCodeBlockCopyButtons(node);
+        // 回复内命令框（代码块）右上角也提供复制按钮
+        addCodeBlockCopyButtons(node);
+        // T3: 长内容折叠（超阈值 pre/消息体 → 摘要 + 展开全文）
+        collapseLongContent(node);
     } else {
       // user：M47 起也渲染 MD（纯文本降级）；error：纯文本如实回显
       if (msg.role === "user") {
@@ -283,6 +289,7 @@ function renderMessages() {
         wrap.appendChild(copyBtn);
         els.messages.appendChild(wrap);
         addCodeBlockCopyButtons(node);
+        collapseLongContent(node);
       } else {
         node.textContent = msg.content;
         els.messages.appendChild(node);
@@ -306,6 +313,52 @@ function addCodeBlockCopyButtons(container) {
     const btn = el("button", "code-copy-btn", "复制");
     btn.onclick = () => copyMessage(pre.textContent, btn);
     wrap.appendChild(btn);
+  }
+}
+
+// T3: 长内容折叠器（spec.md 5.2.1 / design.md §2.1.3.2）
+// pre 行数 > LONG_LINE_THRESHOLD → 前 20 行摘要 + 展开全文；消息体字符 > LONG_CHAR_THRESHOLD → 前 2000 字符摘要 + 展开全文
+// 折叠异常 fail-open：保留原样 + console.error，不空白不伪造
+function collapseLongContent(node) {
+  try {
+    for (const pre of node.querySelectorAll("pre")) {
+      if (pre.dataset.collapsed) continue;
+      const text = pre.textContent || "";
+      const lines = text.split("\n");
+      if (lines.length <= LONG_LINE_THRESHOLD) continue;
+      pre.dataset.collapsed = "1";
+      const fullHtml = pre.innerHTML;
+      const summary = lines.slice(0, 20).join("\n") + "\n…（共 " + lines.length + " 行，已折叠，点击展开全文）";
+      pre.classList.add("collapsed");
+      pre.textContent = summary;
+      const btn = el("button", "expand-btn", "展开全文");
+      btn.type = "button";
+      let expanded = false;
+      btn.onclick = () => {
+        expanded = !expanded;
+        if (expanded) { pre.innerHTML = fullHtml; pre.classList.remove("collapsed"); btn.textContent = "折叠"; }
+        else { pre.textContent = summary; pre.classList.add("collapsed"); btn.textContent = "展开全文"; }
+      };
+      if (pre.parentElement) pre.parentElement.appendChild(btn);
+    }
+    if (!node.dataset.bodyCollapsed && (node.textContent || "").length > LONG_CHAR_THRESHOLD) {
+      node.dataset.bodyCollapsed = "1";
+      const fullHtml = node.innerHTML;
+      const summary = (node.textContent || "").slice(0, 2000) + "\n…（内容超长，已折叠，点击展开全文）";
+      node.classList.add("collapsed");
+      node.textContent = summary;
+      const btn = el("button", "expand-btn", "展开全文");
+      btn.type = "button";
+      let expanded = false;
+      btn.onclick = () => {
+        expanded = !expanded;
+        if (expanded) { node.innerHTML = fullHtml; node.classList.remove("collapsed"); btn.textContent = "折叠"; }
+        else { node.textContent = summary; node.classList.add("collapsed"); btn.textContent = "展开全文"; }
+      };
+      node.appendChild(btn);
+    }
+  } catch (err) {
+    console.error("长内容折叠失败（fail-open）:", err);
   }
 }
 
@@ -367,7 +420,7 @@ async function sendMessage() {
     if (status === 200) {
       state.currentSessionId = data.session_id;
       const note = [];
-      if (data.truncated) note.push("（回答被截断）");
+      if (data.truncated) note.push("（回答被截断，建议新建会话或调整 prompt 继续）");
       if (data.verification_note) note.push(data.verification_note);
       // M51: 回复下方标注实际生成模型（provider/model，含降级后的真实模型）
       // M52: 同一 footer 附带本轮 token 用量（provider 未返回 usage 时不显示）

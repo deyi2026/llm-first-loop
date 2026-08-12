@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,9 @@ from llm_loop.llm.client import LLMResponse
 # ── M64 测试环境污染全局防御（pytest 收集前执行）──
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _REAL_DATA_DIR = str((_PROJECT_ROOT / "data").resolve())
+
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 
 def _isolate_real_data_dir(data_dir):

@@ -248,6 +248,78 @@ class TestWatchdog:
             assert rec["pid"] == main_hb["pid"]
             assert "ts" in rec and "state" in rec
 
+    # ── P1-3-R3: 主链路活性观测 ──
+    def test_heartbeat_liveness_fields(self, monkeypatch, tmp_path):
+        """P1-3-R3: 心跳 payload 含 9 个活性字段且类型合法."""
+        import json
+        from pathlib import Path
+
+        import llm_loop.feishu.bridge as br
+
+        c = self._connector()
+        monkeypatch.setattr(br, "_HEARTBEAT_PATH", str(tmp_path / "hb.json"))
+        monkeypatch.setattr(br, "_HEARTBEAT_HISTORY_PATH", str(tmp_path / "hb.jsonl"))
+        client = _SdkLikeClient()
+        c._write_heartbeat(client)
+        hb = json.loads(Path(tmp_path / "hb.json").read_text(encoding="utf-8"))
+        assert "last_message_ts" in hb and (hb["last_message_ts"] is None or isinstance(hb["last_message_ts"], float))
+        assert isinstance(hb["queue_depth"], int)
+        assert "last_processed_ts" in hb
+        assert isinstance(hb["processing_msg_id"], str)
+        assert hb["processing_since"] is None
+        assert isinstance(hb["process_timeout_count"], int)
+        assert isinstance(hb["msg_timeout_s"], float)
+        assert isinstance(hb["silent_suspected"], bool)
+        assert "silent_since" in hb
+
+    def test_process_timeout_detected(self, monkeypatch, caplog):
+        """P1-3-R3: 处理中时长超阈值 → 计数递增 + WARNING 含 msg_id（探测不打断）."""
+
+        import llm_loop.feishu.bridge as br
+
+        c = self._connector()
+        c._processing_msg_id = "om_timeout_1"
+        c._processing_since = time.time() - (br._MSG_PROCESS_TIMEOUT_S + 60)
+        # 直接执行 watchdog 超时探测逻辑
+        c._watchdog_check_process_timeout()
+        assert c._process_timeout_count == 1
+        assert c._processing_timeout_reported is True
+        assert any(
+            "处理超时" in r.getMessage() and "om_timeout_1" in r.getMessage()
+            for r in caplog.records
+        )
+        # 同一条消息不重复告警
+        c._watchdog_check_process_timeout()
+        assert c._process_timeout_count == 1
+
+    def test_silent_suspected_flag(self, monkeypatch):
+        """P1-3-R3: 无消息 ≥ 阈值且无处理中 → True；有消息/处理中 → False."""
+        import llm_loop.feishu.bridge as br
+
+        c = self._connector()
+        # 无消息记录 → False（尚未收到过消息）
+        assert c._silent_suspected() is False
+        # 有消息但久远且无处理中 → True
+        c._last_message_ts = time.time() - (br._SILENT_THRESHOLD_S + 100)
+        assert c._silent_suspected() is True
+        # 有处理中 → False
+        c._processing_msg_id = "om_busy"
+        assert c._silent_suspected() is False
+        # 刚收到消息 → False
+        c._processing_msg_id = ""
+        c._last_message_ts = time.time()
+        assert c._silent_suspected() is False
+
+    def test_heartbeat_fail_open_kept(self, monkeypatch):
+        """P1-3-R3: 心跳路径不可写 → 主流程不受影响（fail-open 保持）."""
+        import llm_loop.feishu.bridge as br
+
+        c = self._connector()
+        monkeypatch.setattr(br, "_HEARTBEAT_PATH", "/nonexistent_dir_xyz/hb.json")
+        monkeypatch.setattr(br, "_HEARTBEAT_HISTORY_PATH", "/nonexistent_dir_xyz/hb.jsonl")
+        client = _SdkLikeClient()
+        c._write_heartbeat(client)  # 不抛异常即通过
+
 
 class TestLogDowngrade:
     def test_ping_timeout_error_downgraded(self, caplog):

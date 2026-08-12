@@ -5,6 +5,8 @@ build_bridge(engine=None) 支持测试注入；python -m llm_loop.feishu 启动�
 """
 
 import contextlib
+import logging
+import os
 import sys
 
 from llm_loop.config import load_settings
@@ -16,6 +18,21 @@ from .handlers import FeishuMessageHandler
 from .session_map import SessionMap
 
 __all__ = ["build_bridge", "start_bridge", "main"]
+
+logger = logging.getLogger(__name__)
+
+# P1-3-R2: 优雅退出时间契约 —— wait(10) + drain(3) = 13s ≤ GRACE_S(15) − 2s 余量。
+# 硬编码 30s > GRACE_S 15s 是 2026-08-12 22:41 feishu 被 SIGKILL 强杀的直接原因。
+def _env_float(name: str, default: float) -> float:
+    """读取 env 浮点值（非法值回退默认，fail-open）."""
+    try:
+        return float(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+_EXIT_WAIT_S: float = _env_float("FEISHU_EXIT_WAIT_S", 10)
+_EXIT_DRAIN_S: float = _env_float("FEISHU_EXIT_DRAIN_S", 3)
 
 
 def build_bridge(engine=None, config: FeishuConfig | None = None, lark_client=None):
@@ -132,11 +149,18 @@ def main() -> None:
         _log_exit(f"主循环异常退出: {type(exc).__name__}: {exc}")
         raise
     finally:
-        # 优雅退出：等待正在处理的 run 完成（最多 30s），避免中断导致消息无回复
+        # P1-3-R2: 优雅退出时间契约 —— wait 上限可配（默认 10s ≤ GRACE_S 15s 余量），
+        # 超时如实记录（不再静默被 SIGKILL 强杀）；wait_until_idle 本体零改动。
+        drained = False
         with contextlib.suppress(Exception):
-            handler.wait_until_idle(30)
+            drained = bool(handler.wait_until_idle(_EXIT_WAIT_S))
+        if not drained:
+            logger.warning("优雅退出: 等待处理中消息超时 %.0fs（busy 未归零）", _EXIT_WAIT_S)
         bridge.stop()
-        _log_exit(f"优雅退出完成（信号 {received_signal[0]}）")
+        if drained:
+            _log_exit(f"优雅退出完成（信号 {received_signal[0]}）")
+        else:
+            _log_exit(f"优雅退出超时未完成（等待 {_EXIT_WAIT_S:.0f}s，busy 未归零）")
         print("飞书桥已停止。")
 
 

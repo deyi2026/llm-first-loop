@@ -53,6 +53,24 @@ _HEARTBEAT_HISTORY_PATH = os.environ.get(
 # 仅 marshal + put_nowait 立即返回；队列满 fail-open 如实告警丢弃（不阻塞 loop）。
 _MAX_MSG_QUEUE: int = int(os.environ.get("FEISHU_WS_QUEUE_MAX", "64"))
 
+# ── P1-3-R2: 优雅退出 drain 时间预算 ──
+# 时间契约: wait(10) + drain(3) = 13s ≤ GRACE_S(15) − 2s 余量（与 feishu/__init__.py 对齐）。
+# 预算耗尽中断 drain 时如实 WARNING 记录积压量（不再无时间上限地拖住优雅退出）。
+def _env_float(name: str, default: float) -> float:
+    """读取 env 浮点值（非法值回退默认，fail-open）."""
+    try:
+        return float(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+_DRAIN_BUDGET_S: float = _env_float("FEISHU_EXIT_DRAIN_S", 3)
+
+# ── P1-3-R3: 活性观测阈值 ──
+# 单条消息处理超时探测（只记录不打断，默认 5min）；主链路静默判定（默认 30min）。
+_MSG_PROCESS_TIMEOUT_S: float = _env_float("FEISHU_MSG_PROCESS_TIMEOUT_S", 300)
+_SILENT_THRESHOLD_S: float = _env_float("FEISHU_SILENT_THRESHOLD_S", 1800)
+
 
 def _patch_sdk_connect_lock(client: Any) -> None:
     """修补 lark-oapi<=1.7.2 ws.Client._connect 锁泄漏（acquire 后 conn 非空早退未释放）.
@@ -154,6 +172,13 @@ class _WsConnector:
         self._last_disconnect_ts: float | None = None
         self._last_reconnect_ts: float | None = None
         self._disconnect_count: int = 0
+        # P1-3-R3: 主链路活性状态（心跳活性字段数据源；区分"正常静默"与"worker 卡死"）
+        self._last_message_ts: float | None = None  # 最近收到 SDK 消息时刻
+        self._last_processed_ts: float | None = None  # 最近处理完成时刻
+        self._processing_msg_id: str = ""  # 当前处理中消息 id（空=无处理中）
+        self._processing_since: float | None = None  # 当前消息处理开始时刻
+        self._process_timeout_count: int = 0  # 累计单条处理超时次数
+        self._processing_timeout_reported: bool = False  # 当前消息是否已告警（防重复）
 
     def _default_ws_client(self, event_handler):
         """默认 lark ws.Client（官方长连接；Mock 测试注入替代）."""
@@ -214,6 +239,8 @@ class _WsConnector:
         """
         try:
             self._msg_queue.put_nowait(payload)
+            # P1-3-R3: 入队成功记录"最近收到消息时刻"（活性字段；队列满丢弃分支不更新）
+            self._last_message_ts = time.time()
             return True
         except queue.Full:
             header = payload.get("header") or {}
@@ -226,26 +253,66 @@ class _WsConnector:
             return False
 
     def _worker_loop(self) -> None:
-        """消息处理 worker 线程：串行处理队列消息（单 worker 保证 SessionStore 无并发）."""
+        """消息处理 worker 线程：串行处理队列消息（单 worker 保证 SessionStore 无并发）.
+
+        P1-3-R2: 哨兵 drain 按时间预算（_DRAIN_BUDGET_S）执行，预算耗尽中断并如实记录。
+        """
         while True:
             item = self._msg_queue.get()
-            if item is None:  # 哨兵 → 优雅退出（先 drain 剩余消息）
-                try:
-                    while True:
+            if item is None:  # 哨兵 → 优雅退出（按预算 drain 剩余消息）
+                deadline = time.monotonic() + _DRAIN_BUDGET_S
+                while True:
+                    if time.monotonic() > deadline:
+                        leftover_ids = self._drain_backlog_ids()
+                        logger.warning(
+                            "优雅退出 drain 超时: 剩余积压 %d 条，中断消息 id 摘要: %s",
+                            leftover_ids["count"],
+                            leftover_ids["ids"],
+                        )
+                        break
+                    try:
                         leftover = self._msg_queue.get_nowait()
-                        if leftover is not None:
-                            self._safe_handle_message(leftover)
-                except queue.Empty:
-                    break
+                    except queue.Empty:
+                        break
+                    if leftover is not None:
+                        self._safe_handle_message(leftover)
                 break
             self._safe_handle_message(item)
 
+    def _drain_backlog_ids(self) -> dict:
+        """drain 超时时提取队列剩余消息 id 摘要（用于如实告警）."""
+        ids: list[str] = []
+        while True:
+            try:
+                item = self._msg_queue.get_nowait()
+            except queue.Empty:
+                break
+            if item is not None:
+                header = item.get("header") or {}
+                eid = header.get("event_id", "")
+                mid = (item.get("event") or {}).get("message", {}).get("message_id", "")
+                ids.append(mid or eid or "<unknown>")
+        return {"count": len(ids), "ids": ", ".join(ids[:8]) + ("…" if len(ids) > 8 else "")}
+
     def _safe_handle_message(self, payload: dict) -> None:
-        """worker 线程内安全处理单条消息（单条异常不导致 worker 崩溃）."""
+        """worker 线程内安全处理单条消息（单条异常不导致 worker 崩溃）.
+
+        P1-3-R3: 处理开始/完成时刻与消息 id 记录（心跳活性字段数据源）。
+        """
+        header = payload.get("header") or {}
+        event = payload.get("event") or {}
+        mid = (event.get("message") or {}).get("message_id", "")
+        self._processing_msg_id = mid or header.get("event_id", "")
+        self._processing_since = time.time()
+        self._processing_timeout_reported = False
         try:
             self._on_message(payload)
         except Exception as exc:  # noqa: BLE001 — worker 永不因单条消息崩溃
             logger.exception("飞书消息处理异常（worker）: %s", exc)
+        finally:
+            self._processing_msg_id = ""
+            self._processing_since = None
+            self._last_processed_ts = time.time()
 
     # ── M47 看门狗（假死兜底）──
     def _install_sdk_callbacks(self, client: Any) -> None:
@@ -287,6 +354,21 @@ class _WsConnector:
         self._lock_held_since = None
         return None
 
+    def _queue_depth(self) -> int:
+        """worker 队列当前深度（心跳活性字段；qsize 异常回退 0，fail-open）."""
+        try:
+            return int(self._msg_queue.qsize())
+        except Exception:  # noqa: BLE001
+            return 0
+
+    def _silent_suspected(self) -> bool:
+        """主链路静默疑似判定：有消息过但 ≥ 阈值无新消息且无处理中 → True（可能 worker 卡死）."""
+        if self._last_message_ts is None:
+            return False
+        if self._processing_msg_id:
+            return False
+        return time.time() - self._last_message_ts >= _SILENT_THRESHOLD_S
+
     def _write_heartbeat(self, client: Any) -> None:
         """心跳落盘（restart_system.sh 健康检查据此判断假死，替代误报的 TCP ESTABLISHED）."""
         try:
@@ -313,6 +395,16 @@ class _WsConnector:
                 "last_reconnect_ts": self._last_reconnect_ts,
                 "sdk_lock_held_s": self._sdk_lock_held_s(client),
                 "sdk_connect_lock_patched": bool(getattr(client, "_connect_lock_patched", False)),
+                # P1-3-R3: 主链路活性字段（区分"正常静默"与"worker 卡死"；全部 fail-open）
+                "last_message_ts": self._last_message_ts,
+                "queue_depth": self._queue_depth(),
+                "last_processed_ts": self._last_processed_ts,
+                "processing_msg_id": self._processing_msg_id,
+                "processing_since": self._processing_since,
+                "process_timeout_count": self._process_timeout_count,
+                "msg_timeout_s": _MSG_PROCESS_TIMEOUT_S,
+                "silent_suspected": self._silent_suspected(),
+                "silent_since": self._last_message_ts,
             }
             path = _Path(_HEARTBEAT_PATH)
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -328,10 +420,31 @@ class _WsConnector:
         except Exception:  # noqa: BLE001 — 心跳失败不阻断主流程
             pass
 
+    def _watchdog_check_process_timeout(self) -> None:
+        """P1-3-R3: 单条消息处理超时探测（只记录不打断，覆盖 engine.run 卡死不退出场景）."""
+        if (
+            self._processing_since is not None
+            and time.time() - self._processing_since > _MSG_PROCESS_TIMEOUT_S
+            and not self._processing_timeout_reported
+        ):
+            self._process_timeout_count += 1
+            self._processing_timeout_reported = True
+            logger.warning(
+                "飞书消息处理超时: msg_id=%s 处理中 %.0fs ≥ 阈值 %.0fs（探测不打断）",
+                self._processing_msg_id,
+                time.time() - self._processing_since,
+                _MSG_PROCESS_TIMEOUT_S,
+            )
+
     def _watchdog_loop(self, client: Any) -> None:
-        """看门狗：周期心跳落盘；SDK 锁持有超 _WATCHDOG_LOCK_S 判定假死 → 自杀（restart_system.sh 拉起）."""
+        """看门狗：周期心跳落盘；SDK 锁持有超 _WATCHDOG_LOCK_S 判定假死 → 自杀（restart_system.sh 拉起）.
+
+        P1-3-R3: 每轮追加单条消息处理超时探测（只记录不打断，覆盖 engine.run 卡死不退出场景）。
+        """
         while not self._stop:
             self._write_heartbeat(client)
+            # P1-3-R3: 单条处理超时探测（_processing_since 超阈值 → 计数 + 如实告警，不打断处理）
+            self._watchdog_check_process_timeout()
             held_s = self._sdk_lock_held_s(client)
             if held_s is not None and held_s >= _WATCHDOG_LOCK_S:
                 logger.error(
@@ -346,12 +459,18 @@ class _WsConnector:
         """停止（lark ws.Client 无公开 stop API；daemon 线程 + 进程退出兜底）."""
         self._stop = True
         # P1-2-R2: worker 线程优雅退出（哨兵 + drain 剩余消息 + join 兜底；未启动不抛异常）
+        # P1-3-R2-T3: join 时长与 drain 预算显式关联（max(1, 预算+1)），超时如实告警
         if self._worker_thread is not None:
             from contextlib import suppress
 
             with suppress(queue.Full):  # 队列满：直接丢弃（哨兵必须送达）
                 self._msg_queue.put_nowait(None)
-            self._worker_thread.join(timeout=5)
+            join_timeout = max(1.0, int(_DRAIN_BUDGET_S) + 1)
+            self._worker_thread.join(timeout=join_timeout)
+            if self._worker_thread.is_alive():
+                logger.warning(
+                    "优雅退出: worker join 超时（预算 %.0fs，线程仍在处理）", _DRAIN_BUDGET_S
+                )
             self._worker_thread = None
 
     def run(self) -> None:

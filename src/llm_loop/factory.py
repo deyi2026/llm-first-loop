@@ -365,6 +365,8 @@ def build_engine(settings: Settings) -> LoopEngine:
     install_refresh_executor(engine)
     # R1: 上下文占用分解注入 architecture_status（AI 每轮可见，自主决策压缩/切换）
     status_provider.set_context_breakdown_fn(lambda: getattr(engine, "_last_breakdown", None))
+    # T4（spec.md 5.3.1）: 待办聚合注入 architecture_status（AI 一站式感知系统待办）
+    status_provider.set_pending_actions_fn(_build_pending_actions_fn(settings))
 
     # EVO 第五项: 递归子代理（参考 OpenRSI 四算子 + 执行反馈）— 独立会话隔离 + 受限工具 + 深度/预算边界
     subagent_runner = SubAgentRunner(
@@ -466,6 +468,44 @@ def _build_config_status_with_evolution(settings) -> Any:
         return base
 
     return _config_status
+
+
+def _build_pending_actions_fn(settings) -> Any:
+    """构造待办聚合闭包（T4: 纯聚合无判断，spec.md 5.3.1 / design.md §2.4.3）.
+
+    聚合 evolution_summary（executing/pending_review 计数）为 pending_actions 维度；
+    只计数 + 拼接 hint，不做决策；读取失败 fail-open 计数字段 null + note 标注。
+    """
+    from llm_loop.introspection.evolution import EvolutionStore
+
+    def _aggregate() -> dict:
+        try:
+            store = EvolutionStore(settings.audit_dir)
+            items = store.list()
+            executing = sum(1 for it in items if it.get("status") == "executing")
+            pending_review = sum(1 for it in items if it.get("status") == "pending_review")
+        except Exception as exc:  # noqa: BLE001 — 聚合失败如实标注（fail-open）
+            return {
+                "executing_evolutions": None,
+                "pending_reviews": None,
+                "pending_self_evals": None,
+                "hint": None,
+                "note": f"演进待办聚合失败: {type(exc).__name__}: {exc}",
+            }
+        hint_parts: list[str] = []
+        if executing:
+            hint_parts.append(f"{executing} 项演进执行中（可经 evolution_complete 登记）")
+        if pending_review:
+            hint_parts.append(f"{pending_review} 项演进待审阅")
+        return {
+            "executing_evolutions": executing,
+            "pending_reviews": pending_review,
+            "pending_self_evals": 0,
+            "hint": "；".join(hint_parts) if hint_parts else None,
+            "note": None,
+        }
+
+    return _aggregate
 
 
 def _build_loop_signal_detector(settings, status_provider, corrections) -> Any:
