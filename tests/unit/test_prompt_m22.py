@@ -14,10 +14,11 @@ def test_prompt_has_information_first():
     """核心原则段含第 4 条"信息获取优先"（FR-PROMPT-EXEC-PRMP-01）."""
     prompt = build_system_prompt()
     assert "信息获取优先" in prompt
-    assert "不凭推测或记忆编造" in prompt
+    # 精简后"不编造"措辞归 RULE-AI-07 承载（语义等价：不凭推测编造）
+    assert "不得凭训练数据推测或编造" in prompt
     # 先取后答 + 是否调用仍由你决定（与 RULE-AI-07 语义一致）
-    assert "先调用相应工具获取真实信息再回答" in prompt
-    assert "是否调用、何时调用仍由你决定" in prompt
+    assert "先调用相应工具获取真实信息" in prompt
+    assert "是否调用仍由你决定" in prompt
 
 
 def test_prompt_keeps_decision_principle():
@@ -35,13 +36,13 @@ def test_prompt_keeps_decision_principle():
 
 
 def test_prompt_has_tool_overview():
-    """ "可用工具"概述段含三核心工具（FR-PROMPT-EXEC-PRMP-02）."""
+    """"工具发现"段含三核心工具（FR-PROMPT-EXEC-PRMP-02）."""
     prompt = build_system_prompt()
-    assert "可用工具" in prompt
+    assert "工具发现" in prompt
     for tool in ("read_file", "execute_command", "web_fetch"):
         assert tool in prompt
     # 末尾引导句：完整工具列表见 tools 定义（避免误以为只有三工具）
-    assert "完整工具列表、参数与使用约束见 tools 定义" in prompt
+    assert "完整工具与约束见 tools 定义" in prompt
 
 
 def test_prompt_has_rule_ai_07():

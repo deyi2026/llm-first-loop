@@ -19,14 +19,14 @@ def test_prompt_has_m25_command_phrase():
 def test_prompt_has_before_after_values():
     """前后值说明要求 + 正例具体化（FR-ADJ2-WD-02 + WD-03）."""
     prompt = build_system_prompt()
-    assert "说明调整前后值" in prompt
+    assert "说明前后值" in prompt
     assert "从 5 调整为 15" in prompt
 
 
 def test_prompt_keeps_ai_decision_m25():
     """AI 决定一切保留（强化不弱化自主决策，FR-ADJ2-WD-02 c）."""
     prompt = build_system_prompt()
-    assert "是否调整仍由你决定" in prompt
+    assert "是否调整由你决定" in prompt
     assert "不强制自查后必须调整" in prompt
 
 
