@@ -172,6 +172,7 @@ class WebFetchTool:
         "properties": {
             "url": {"type": "string", "description": "要抓取的完整 URL（http/https）"},
             "max_chars": {"type": "integer", "description": "返回内容最大字符数（默认 100000）"},
+            "start": {"type": "integer", "description": "分页续读起始偏移（字符，默认 0）。正文超长被截断后，用 start=上次位置 续读下一段（借鉴 既有实现 read_preview 分页续读）"},
         },
         "required": ["url"],
     }
@@ -229,6 +230,9 @@ class WebFetchTool:
     def execute(self, **kwargs) -> ToolResult:
         url = str(kwargs.get("url", "")).strip()
         max_chars = int(kwargs.get("max_chars", 100000) or 100000)
+        start = int(kwargs.get("start", 0) or 0)
+        if start < 0:
+            start = 0
         if not url:
             return ToolResult(
                 status=ToolResultStatus.FAILURE,
@@ -291,8 +295,28 @@ class WebFetchTool:
         if not text.strip():
             text = "（页面无文本内容）"
         body = header + text
+        total = len(body)
+        if start > 0:
+            # 分页续读（既有实现 read_preview 借鉴）：返回 [start, start+max_chars) 段
+            body = body[start:start + max_chars]
+            if not body:
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content=f"[分页越界] start={start} 超过正文总长 {total}（已抓全，无更多内容）",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            seg_note = f"\n…[分页 {start}-{start+len(body)}/{total}，续读；可用 start={start+len(body)} 继续]…"
+            if len(body) >= max_chars:
+                body = body + seg_note
+            return ToolResult(
+                status=ToolResultStatus.SUCCESS,
+                content=body,
+                tool_call_id="",
+                tool_name=self.name,
+            )
         if len(body) > max_chars:
-            body = body[:max_chars] + f"\n…[内容超长，已截断，共 {len(body)} 字符]…"
+            body = body[:max_chars] + f"\n…[内容超长，已截断，共 {len(body)} 字符；可用 start={max_chars} 续读]…"
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=body,
