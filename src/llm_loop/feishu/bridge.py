@@ -8,6 +8,7 @@ _WsConnector 封装 websockets 可注入 Mock（测试零真实 WS 连接）。
 import json
 import logging
 import os
+import queue
 import re
 import threading
 import time
@@ -42,6 +43,15 @@ _TOKEN_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/inter
 _WATCHDOG_POLL_S = int(os.environ.get("FEISHU_WS_WATCHDOG_POLL_S", "30"))  # 看门狗轮询/心跳间隔
 _WATCHDOG_LOCK_S = float(os.environ.get("FEISHU_WS_WATCHDOG_LOCK_S", "180"))  # SDK 锁持有超此时长判定假死
 _HEARTBEAT_PATH = os.environ.get("FEISHU_HEARTBEAT_PATH", "data/feishu_heartbeat.json")
+_HEARTBEAT_HISTORY_PATH = os.environ.get(
+    "FEISHU_HEARTBEAT_HISTORY_PATH", "data/feishu_heartbeat_history.jsonl"
+)
+
+# ── P1-2-R2: 消息处理线程迁移（阻塞消除）──
+# 根因: 事件回调在 SDK asyncio loop 内同步执行消息处理（LLM 推理可达分钟级），期间
+# _ping_loop 停发 → 服务端 3003 断开。方案: 单 worker 线程 + 有界队列，_handle_event
+# 仅 marshal + put_nowait 立即返回；队列满 fail-open 如实告警丢弃（不阻塞 loop）。
+_MAX_MSG_QUEUE: int = int(os.environ.get("FEISHU_WS_QUEUE_MAX", "64"))
 
 
 def _patch_sdk_connect_lock(client: Any) -> None:
@@ -78,14 +88,22 @@ def _patch_sdk_connect_lock(client: Any) -> None:
 
 
 class _PingTimeoutDowngradeFilter(logging.Filter):
-    """SDK ping_timeout 日志降噪：ERROR→WARNING 并计数（断线自愈属常态，避免淹没真实异常）."""
+    """SDK ping_timeout/keepalive 1011 日志降噪：ERROR→WARNING 并计数（断线自愈属常态，避免淹没真实异常）.
+
+    P1-2-R3 修复: ①levelno 降级同时同步 levelname（原只改 levelno，日志仍显示 [ERROR] 半生效）；
+    ②匹配扩展 keepalive ping timeout（1011 同类断线）；③计数仅在降级时 +1（真实异常不误计）。
+    """
 
     count = 0
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
-            if record.levelno >= logging.ERROR and "ping_timeout" in record.getMessage():
+            msg = record.getMessage()
+            if record.levelno >= logging.ERROR and (
+                "ping_timeout" in msg or "keepalive ping timeout" in msg
+            ):
                 record.levelno = logging.WARNING
+                record.levelname = logging.getLevelName(logging.WARNING)
                 type(self).count += 1
         except Exception:  # noqa: BLE001
             pass
@@ -128,6 +146,14 @@ class _WsConnector:
         self._stop = False
         self._reconnect_count = 0  # SDK on_reconnecting 计数（心跳可观测）
         self._lock_held_since: float | None = None  # SDK 锁首次观测为持有的时刻
+        # P1-2-R2: 消息处理 worker 线程 + 有界队列（_handle_event 提交即返，不阻塞 SDK loop）
+        self._msg_queue: queue.Queue[dict | None] = queue.Queue(maxsize=_MAX_MSG_QUEUE)
+        self._worker_thread: threading.Thread | None = None
+        # P1-2-R4: 断线/重连状态（三态 connected/reconnecting/disconnected，心跳可观测）
+        self._conn_state: str = "disconnected"
+        self._last_disconnect_ts: float | None = None
+        self._last_reconnect_ts: float | None = None
+        self._disconnect_count: int = 0
 
     def _default_ws_client(self, event_handler):
         """默认 lark ws.Client（官方长连接；Mock 测试注入替代）."""
@@ -159,7 +185,11 @@ class _WsConnector:
         logger.debug("飞书事件已忽略（无需处理类型）: %s", type(data).__name__)
 
     def _handle_event(self, data, ctx=None) -> None:
-        """lark 事件对象 → payload dict → on_message 分发（回调异常如实记录不中断）."""
+        """lark 事件对象 → payload dict → 提交队列（P1-2-R2: 立即返回，不阻塞 SDK loop）.
+
+        消息处理迁移到 worker 线程（_worker_loop），SDK _ping_loop 不再被 LLM 推理阻塞。
+        marshal/序列化异常如实记录（try/except 保留，不向 SDK 冒泡）。
+        """
         try:
             import json
 
@@ -167,24 +197,76 @@ class _WsConnector:
 
             raw = lark.JSON.marshal(data)
             if isinstance(raw, dict):
-                self._on_message(raw)
+                self._submit_message(raw)
                 return
             payload = json.loads(raw or "{}")
             if isinstance(payload, dict):
-                self._on_message(payload)
+                self._submit_message(payload)
         except Exception as exc:  # noqa: BLE001 — 回调异常如实记录不中断连接
             logger.exception("飞书事件回调处理异常: %s", exc)
 
+    def _submit_message(self, payload: dict) -> bool:
+        """提交消息到 worker 队列（非阻塞；队列满 fail-open 如实告警丢弃，不阻塞 loop）.
+
+        Returns:
+            True=入队成功; False=队列满丢弃（已告警，不抛异常、不向 SDK 冒泡）。
+        """
+        try:
+            self._msg_queue.put_nowait(payload)
+            return True
+        except queue.Full:
+            header = payload.get("header") or {}
+            logger.warning(
+                "飞书消息队列已满（maxsize=%d），丢弃事件: event_type=%s event_id=%s（fail-open，不阻塞连接）",
+                self._msg_queue.maxsize,
+                header.get("event_type", ""),
+                header.get("event_id", ""),
+            )
+            return False
+
+    def _worker_loop(self) -> None:
+        """消息处理 worker 线程：串行处理队列消息（单 worker 保证 SessionStore 无并发）."""
+        while True:
+            item = self._msg_queue.get()
+            if item is None:  # 哨兵 → 优雅退出（先 drain 剩余消息）
+                try:
+                    while True:
+                        leftover = self._msg_queue.get_nowait()
+                        if leftover is not None:
+                            self._safe_handle_message(leftover)
+                except queue.Empty:
+                    break
+                break
+            self._safe_handle_message(item)
+
+    def _safe_handle_message(self, payload: dict) -> None:
+        """worker 线程内安全处理单条消息（单条异常不导致 worker 崩溃）."""
+        try:
+            self._on_message(payload)
+        except Exception as exc:  # noqa: BLE001 — worker 永不因单条消息崩溃
+            logger.exception("飞书消息处理异常（worker）: %s", exc)
+
     # ── M47 看门狗（假死兜底）──
     def _install_sdk_callbacks(self, client: Any) -> None:
-        """挂接 SDK 重连钩子（重连计数入心跳，进程级可观测；Mock 无属性时静默跳过）."""
+        """挂接 SDK 重连钩子（重连/断线/重连完成计数入心跳，进程级可观测；Mock 无属性时静默跳过）."""
 
         def _on_reconnecting() -> None:
             self._reconnect_count += 1
+            # P1-2-R4: 断线/重连状态更新（三态 + 时间戳 + 累计次数）
+            self._disconnect_count += 1
+            self._last_disconnect_ts = time.time()
+            self._conn_state = "reconnecting"
+
+        def _on_reconnected() -> None:
+            self._last_reconnect_ts = time.time()
+            self._conn_state = "connected"
 
         try:
             if hasattr(client, "on_reconnecting"):
                 client.on_reconnecting = _on_reconnecting
+            # P1-2-R4: 重连完成钩子（SDK 有 on_reconnected 时挂接；无属性静默跳过）
+            if hasattr(client, "on_reconnected"):
+                client.on_reconnected = _on_reconnected
         except Exception:  # noqa: BLE001
             pass
 
@@ -210,18 +292,38 @@ class _WsConnector:
             import json as _json
             from pathlib import Path as _Path
 
+            # P1-2-R4: state 三态（connected/reconnecting/disconnected）。
+            # _conn_state 优先（SDK on_reconnected 后置位）；无 SDK 连接对象时如实 disconnected。
+            if self._conn_state == "connected" or getattr(client, "_conn", None) is not None:
+                state = "connected"
+            elif self._conn_state == "reconnecting":
+                state = "reconnecting"
+            else:
+                state = "disconnected"
             payload = {
                 "ts": time.time(),
                 "pid": os.getpid(),
-                "state": "connected" if getattr(client, "_conn", None) is not None else "disconnected",
+                "state": state,
                 "reconnect_count": self._reconnect_count,
                 "ping_timeout_count": _PingTimeoutDowngradeFilter.count,
+                # P1-2-R4: 断线/重连诊断字段（跨重启清零，进程内计数语义）
+                "disconnect_count": self._disconnect_count,
+                "last_disconnect_ts": self._last_disconnect_ts,
+                "last_reconnect_ts": self._last_reconnect_ts,
                 "sdk_lock_held_s": self._sdk_lock_held_s(client),
                 "sdk_connect_lock_patched": bool(getattr(client, "_connect_lock_patched", False)),
             }
             path = _Path(_HEARTBEAT_PATH)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(_json.dumps(payload), encoding="utf-8")
+            # P1-2-R4: 心跳历史追加写（R6 连续新鲜率数据源；fail-open，与主文件互不影响）
+            hist_path = _Path(_HEARTBEAT_HISTORY_PATH)
+            try:
+                hist_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(hist_path, "a", encoding="utf-8") as f:
+                    f.write(_json.dumps(payload) + "\n")
+            except Exception:  # noqa: BLE001 — 历史写失败不影响主文件与主流程
+                logger.warning("飞书心跳历史写失败（fail-open）: %s", _HEARTBEAT_HISTORY_PATH)
         except Exception:  # noqa: BLE001 — 心跳失败不阻断主流程
             pass
 
@@ -242,6 +344,14 @@ class _WsConnector:
     def stop(self) -> None:
         """停止（lark ws.Client 无公开 stop API；daemon 线程 + 进程退出兜底）."""
         self._stop = True
+        # P1-2-R2: worker 线程优雅退出（哨兵 + drain 剩余消息 + join 兜底；未启动不抛异常）
+        if self._worker_thread is not None:
+            from contextlib import suppress
+
+            with suppress(queue.Full):  # 队列满：直接丢弃（哨兵必须送达）
+                self._msg_queue.put_nowait(None)
+            self._worker_thread.join(timeout=5)
+            self._worker_thread = None
 
     def run(self) -> None:
         """长连接主循环（token 未就绪等待零触网；就绪后 lark ws.Client.start 阻塞）."""
@@ -256,6 +366,13 @@ class _WsConnector:
         _patch_sdk_connect_lock(client)  # M47①：SDK 锁泄漏根治（Mock 无 _connect 时静默跳过）
         self._install_sdk_callbacks(client)
         _install_lark_log_filter()  # M47：ping_timeout 日志降噪
+        # P1-2-R2: 启动消息处理 worker 线程（队列提交即返，SDK ping 不被消息处理阻塞）
+        self._worker_thread = threading.Thread(
+            target=self._worker_loop,
+            name="feishu-ws-worker",
+            daemon=True,
+        )
+        self._worker_thread.start()
         watchdog = threading.Thread(
             target=self._watchdog_loop,
             args=(client,),

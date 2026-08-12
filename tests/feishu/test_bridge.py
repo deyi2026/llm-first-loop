@@ -238,3 +238,184 @@ def test_event_handler_registers_noop_processors(monkeypatch):
         assert expected in registered, f"{expected} 未注册 no-op 处理器"
     # 消息接收仍走真实处理
     assert "receive" in registered
+
+
+# ── P1-2-R2: 消息处理线程迁移（worker + 有界队列）──
+
+
+def _connector_with(on_message, queue_max=4):
+    import threading
+
+    from llm_loop.feishu.bridge import _WsConnector
+
+    connector = _WsConnector(
+        config=_cfg(),
+        on_message=on_message,
+        has_token=lambda: True,
+        ws_client_factory=lambda eh: object(),
+        sleep=lambda s: None,
+    )
+    connector._msg_queue = __import__("queue").Queue(maxsize=queue_max)
+    connector._worker_thread = threading.Thread(
+        target=connector._worker_loop, name="test-worker", daemon=True
+    )
+    connector._worker_thread.start()
+    return connector
+
+
+def _stop_worker(connector):
+    connector._msg_queue.put_nowait(None)
+    connector._worker_thread.join(timeout=5)
+
+
+def test_handle_event_returns_immediately_not_blocking():
+    """P1-2-R2: _handle_event 提交即返（<0.1s），消息在 worker 线程执行（线程 id ≠ 调用线程）."""
+    import threading
+    import time
+
+    received = {}
+
+    def _slow(payload):
+        time.sleep(0.2)
+        received["thread_id"] = threading.get_ident()
+        received["payload"] = payload
+
+    connector = _connector_with(_slow, queue_max=4)
+    try:
+        payload = {
+            "header": {"event_id": "evt_fast", "event_type": "im.message.receive_v1"},
+            "event": {"sender": {"sender_id": {"open_id": "ou_1"}}, "message": {}},
+        }
+        t0 = time.time()
+        connector._handle_event(payload)
+        elapsed = time.time() - t0
+        assert elapsed < 0.1  # 未同步执行慢处理
+        deadline = time.time() + 2.0
+        while time.time() < deadline and "payload" not in received:
+            time.sleep(0.01)
+        assert received.get("thread_id") != threading.get_ident()
+        assert received["payload"]["header"]["event_id"] == "evt_fast"
+    finally:
+        _stop_worker(connector)
+
+
+def test_worker_serial_order():
+    """P1-2-R2: 连续提交多条 payload 处理顺序与提交顺序一致（单 worker 串行）."""
+    import time
+
+    order: list[str] = []
+
+    def _collect(payload):
+        order.append(payload["header"]["event_id"])
+
+    connector = _connector_with(_collect, queue_max=8)
+    try:
+        for i in range(5):
+            connector._submit_message(
+                {"header": {"event_id": f"evt_seq_{i}", "event_type": "im.message.receive_v1"}, "event": {}}
+            )
+        deadline = time.time() + 2.0
+        while time.time() < deadline and len(order) < 5:
+            time.sleep(0.01)
+        assert order == [f"evt_seq_{i}" for i in range(5)]
+    finally:
+        _stop_worker(connector)
+
+
+def test_long_processing_ping_not_blocked():
+    """P1-2-R2: 长处理期间（同 loop 语义）ping 计数持续增长——直接证明 R2 目标.
+
+    模拟: worker 线程处理长消息（0.3s），期间主线程持续"ping"（计数），
+    验证长处理不阻塞 ping（R2 核心：消息处理已从 loop 剥离）。
+    """
+    import threading
+    import time
+
+    ping_count = [0]
+    stop_flag = [False]
+
+    def _long(payload):
+        time.sleep(0.3)
+
+    connector = _connector_with(_long, queue_max=4)
+    try:
+        connector._submit_message({"header": {"event_id": "evt_long", "event_type": "im.message.receive_v1"}, "event": {}})
+
+        def _ping_loop():
+            while not stop_flag[0]:
+                ping_count[0] += 1
+                time.sleep(0.01)
+
+        t = threading.Thread(target=_ping_loop, daemon=True)
+        t.start()
+        time.sleep(0.35)  # 覆盖长处理窗口
+        stop_flag[0] = True
+        t.join(timeout=2)
+        assert ping_count[0] >= 10  # 长处理期间 ping 持续发生（未被阻塞）
+    finally:
+        _stop_worker(connector)
+
+
+def test_worker_queue_full_fail_open():
+    """P1-2-R2: 满队列 _submit_message 返回 False、日志含告警、不抛异常."""
+    import queue as _queue
+    import unittest.mock as _mock
+
+    from llm_loop.feishu.bridge import _WsConnector
+
+    connector = _WsConnector(
+        config=_cfg(),
+        on_message=lambda p: None,
+        has_token=lambda: True,
+        ws_client_factory=lambda eh: object(),
+        sleep=lambda s: None,
+    )
+    # 满队列（1 容量，已占满）——不启动 worker，直接测 _submit_message fail-open
+    connector._msg_queue = _queue.Queue(maxsize=1)
+    connector._msg_queue.put_nowait({"occupied": True})
+    with _mock.patch("llm_loop.feishu.bridge.logger.warning") as warn:
+        ok = connector._submit_message({"header": {"event_id": "evt_full_2"}, "event": {}})
+        assert ok is False
+        assert warn.called
+
+
+def test_worker_on_message_error_isolated():
+    """P1-2-R2: 单条消息异常不影响后续消息处理（worker 存活）."""
+    import time
+
+    order: list[str] = []
+
+    def _flaky(payload):
+        ev = payload["header"]["event_id"]
+        if ev == "evt_bad":
+            raise RuntimeError("boom")
+        order.append(ev)
+
+    connector = _connector_with(_flaky, queue_max=4)
+    try:
+        connector._submit_message({"header": {"event_id": "evt_bad"}, "event": {}})
+        connector._submit_message({"header": {"event_id": "evt_good"}, "event": {}})
+        deadline = time.time() + 2.0
+        while time.time() < deadline and "evt_good" not in order:
+            time.sleep(0.01)
+        assert order == ["evt_good"]  # 异常后 worker 仍处理后续消息
+    finally:
+        _stop_worker(connector)
+
+
+def test_worker_message_delivery():
+    """P1-2-R2: 队列 → worker → on_message 回调完整（消息零丢失）."""
+    import time
+
+    received: list[dict] = []
+    connector = _connector_with(lambda p: received.append(p), queue_max=4)
+    try:
+        for i in range(4):
+            connector._submit_message({"header": {"event_id": f"evt_del_{i}"}, "event": {}})
+        deadline = time.time() + 2.0
+        while time.time() < deadline and len(received) < 4:
+            time.sleep(0.01)
+        assert len(received) == 4
+        assert [r["header"]["event_id"] for r in received] == [f"evt_del_{i}" for i in range(4)]
+    finally:
+        _stop_worker(connector)

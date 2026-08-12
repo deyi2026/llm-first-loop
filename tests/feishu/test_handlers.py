@@ -590,3 +590,23 @@ def test_attachment_inject_processing_actions(build_test_engine, tmp_path):
     assert len(card.create_calls) == 1  # 附件也建状态卡
     assert len(reaction.remove_calls) == 1
     assert replies[0][1] == "处理中回复"
+
+
+def test_audit_record_has_ts(build_test_engine, tmp_path):
+    """P1-2-R1: 审计记录含 ts 时间戳字段（断线时刻时间对齐回归分析数据源）."""
+    handler, engine, fake, session_map, replies = _make_handler(build_test_engine, tmp_path)
+    m = _msg()
+    m.message_id = "om_ts_1"
+    handler._audit(m, kind="receive", detail="测试审计")
+    audit_file = tmp_path / "audit" / "feishu_audit.jsonl"
+    assert audit_file.exists()
+    lines = audit_file.read_text(encoding="utf-8").strip().splitlines()
+    last = json.loads(lines[-1])
+    assert isinstance(last.get("ts"), float)
+    # 既有字段完整保留
+    assert last["message_id"] == "om_ts_1"
+    assert last["kind"] == "receive"
+    assert last["detail"] == "测试审计"
+    # 旧记录（无 ts）读取不报错
+    audit_file.write_text('{"message_id": "old", "kind": "receive", "detail": "x"}\n', encoding="utf-8")
+    assert json.loads(audit_file.read_text(encoding="utf-8").splitlines()[0])["message_id"] == "old"

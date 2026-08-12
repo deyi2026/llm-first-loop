@@ -69,7 +69,10 @@ def test_connector_start_lark():
 
 
 def test_event_callback_bridge():
-    """用例 15：lark 事件对象 → payload dict → on_message 分发（既有链路接入点）."""
+    """用例 15：lark 事件对象 → payload dict → 提交队列 → worker 处理 → on_message 分发.
+
+    P1-2-R2 适配: _handle_event 改为提交即返（不阻塞 SDK loop），消息由 worker 线程处理。
+    """
     received = []
     connector = _WsConnector(
         _cfg(),
@@ -83,9 +86,21 @@ def test_event_callback_bridge():
         "header": {"event_id": "evt_1", "event_type": "im.message.receive_v1"},
         "event": {"sender": {"sender_id": {"open_id": "ou_1"}}, "message": {}},
     }
-    connector._handle_event(payload)  # 模拟 lark 回调（lark.JSON.marshal 对 dict 原样返回）
-    assert len(received) == 1
-    assert received[0]["header"]["event_type"] == "im.message.receive_v1"
+    # 启动 worker 线程（R2: _handle_event 提交队列，worker 异步处理）
+    connector._worker_thread = threading.Thread(
+        target=connector._worker_loop, name="test-worker", daemon=True
+    )
+    connector._worker_thread.start()
+    try:
+        connector._handle_event(payload)  # 模拟 lark 回调（提交即返）
+        deadline = time.time() + 2.0
+        while time.time() < deadline and not received:
+            time.sleep(0.01)
+        assert len(received) == 1
+        assert received[0]["header"]["event_type"] == "im.message.receive_v1"
+    finally:
+        connector._msg_queue.put_nowait(None)
+        connector._worker_thread.join(timeout=5)
 
 
 def test_event_callback_error_honest():
