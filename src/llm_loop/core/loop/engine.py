@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -32,7 +33,7 @@ from llm_loop.feedback.validator import DeclarationValidator, build_discrepancy_
 from llm_loop.introspection.corrections import CorrectionContext, CorrectionToolRegistry
 from llm_loop.introspection.events import ArchitectureEvent, ArchitectureEventType
 from llm_loop.introspection.status import ArchitectureStatusProvider, ToolHistoryItem
-from llm_loop.llm.client import LLMClient, LLMResponse
+from llm_loop.llm.client import LLMClient, LLMResponse, StreamDelta
 from llm_loop.llm.errors import (
     LLMError,
     is_overflow_error,
@@ -189,10 +190,13 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin):
         return None
 
     # ── 主入口 ──
-    def run(self, session_id: str, user_text: str, model: str | None = None) -> LoopResult:
-        """单条用户消息的完整循环（消息进→理解→行动→真诚回答→记住）.
+    def run_stream(
+        self, session_id: str, user_text: str, model: str | None = None
+    ) -> Iterator[StreamDelta]:
+        """单条用户消息的完整循环（流式）：逐 content delta yield，结束返回 LoopResult.
 
         model: 可选，本次对话覆盖使用的 LLM 模型（None 用装配模型，Web 模型切换用）。
+        与 run 共享同一核心，唯一差异是每轮 LLM 调用处走 chat_stream 并外泄 delta。
         """
         tool_trace: list[dict] = []
 
@@ -333,12 +337,28 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin):
                     final_answer = refusal
                     break
             try:
-                resp = llm_client.chat(
-                    messages=messages,
-                    tools=tools_param,
-                    timeout_s=self._runtime_timeout(),
-                    model=chat_model_arg,
-                )
+                stream_fn = getattr(llm_client, "chat_stream", None)
+                if stream_fn is not None:
+                    it = stream_fn(
+                        messages=messages,
+                        tools=tools_param,
+                        timeout_s=self._runtime_timeout(),
+                        model=chat_model_arg,
+                    )
+                    while True:
+                        try:
+                            yield next(it)
+                        except StopIteration as exc:
+                            resp = exc.value
+                            break
+                else:
+                    # 无 chat_stream 的客户端（如测试 FakeLLM）→ 同步 chat（不 yield，行为与 run 一致）
+                    resp = llm_client.chat(
+                        messages=messages,
+                        tools=tools_param,
+                        timeout_s=self._runtime_timeout(),
+                        model=chat_model_arg,
+                    )
             except LLMError as exc:
                 self._record_action("action.llm_decide", "llm_error", str(exc)[:200])
                 if self.status:
@@ -550,6 +570,18 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin):
             tokens_in=tokens_in,
             tokens_out=tokens_out,
         )
+
+    def run(self, session_id: str, user_text: str, model: str | None = None) -> LoopResult:
+        """单条用户消息的完整循环（run_stream 的同步聚合包装，签名/返回不变）.
+
+        model: 可选，本次对话覆盖使用的 LLM 模型（None 用装配模型，Web 模型切换用）。
+        """
+        it = self.run_stream(session_id, user_text, model)
+        while True:
+            try:
+                next(it)
+            except StopIteration as exc:
+                return exc.value
 
     def _default_model_label(self) -> str:
         """M51: 装配默认模型的全限定标签（provider/model）.

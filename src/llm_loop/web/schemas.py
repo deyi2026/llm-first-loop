@@ -63,6 +63,8 @@ class SessionMessagesResponse(BaseModel):
 
     session_id: str
     messages: list[MessageItem]
+    has_more: bool = False  # D2: 是否还有更早消息（分页用，旧客户端忽略）
+    total: int = 0  # D2: 会话消息总数（分页用，旧客户端忽略）
 
 
 class ErrorResponse(BaseModel):

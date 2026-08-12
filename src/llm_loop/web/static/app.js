@@ -11,7 +11,12 @@ const state = {
   model: null, // M47 当前模型（模型切换下拉，None=装配默认）
   availableModels: [], // M47 服务端声明的可用模型列表（/model 命令校验用）
   typewriterPending: false, // T3: 最新 assistant 回复是否用假流式打字机渲染
+  hasMoreHistory: false, // D2: 是否还有更早历史消息（懒加载）
+  loadedHistoryCount: 0, // D2: 已加载历史消息条数（offset 基准）
 };
+
+// D2: 历史懒加载分页大小（首屏/每次"加载更早"的条数）
+const HISTORY_PAGE_SIZE = 50;
 
 const els = {
   statusBadge: document.getElementById("status-badge"),
@@ -228,7 +233,7 @@ function renderToolMessage(msg, container) {
 }
 
 // ---------- 消息渲染 ----------
-function renderMessages() {
+function renderMessages(scrollToBottom = true) {
   els.messages.innerHTML = "";
   for (const msg of state.messages) {
     const node = document.createElement("div");
@@ -266,8 +271,10 @@ function renderMessages() {
       if (msg.note) {
         node.appendChild(el("span", "msg-note", msg.note));
       }
-      // 渲染正文 + 后处理（代码块复制按钮 + 长内容折叠）
+      // 渲染正文 + 后处理（代码块高亮 → 复制按钮 → 长内容折叠）
       const finalize = () => {
+        // T3: 代码块语法高亮（renderMarkdown sanitize 之后、复制/折叠之前）
+        highlightCodeBlocks(node);
         // 回复内命令框（代码块）右上角也提供复制按钮
         addCodeBlockCopyButtons(node);
         // T3: 长内容折叠（超阈值 pre/消息体 → 摘要 + 展开全文）
@@ -303,6 +310,7 @@ function renderMessages() {
         copyBtn.onclick = () => copyMessage(msg.content, copyBtn);
         wrap.appendChild(copyBtn);
         els.messages.appendChild(wrap);
+        highlightCodeBlocks(node);
         addCodeBlockCopyButtons(node);
         collapseLongContent(node);
       } else {
@@ -314,7 +322,8 @@ function renderMessages() {
       }
     }
   }
-  els.messages.scrollTop = els.messages.scrollHeight;
+  renderLoadMoreButton();
+  if (scrollToBottom) els.messages.scrollTop = els.messages.scrollHeight;
 }
 
 // 为回复中每个代码块（pre）添加右上角复制按钮，复制该代码块文本
@@ -328,6 +337,85 @@ function addCodeBlockCopyButtons(container) {
     const btn = el("button", "code-copy-btn", "复制");
     btn.onclick = () => copyMessage(pre.textContent, btn);
     wrap.appendChild(btn);
+  }
+}
+
+// T3: 代码块语法高亮（自研简版，spec 5.3.1 D1 / design §2.1.3.3）
+// 关键字/字符串/注释/数字四类 token，用 DOM API 构建 span（textContent + className），不注入 HTML（防 XSS）
+// 无语言标识或高亮异常 → 保留纯文本等宽 + console.warn（fail-open，不空白不伪造）
+const HIGHLIGHT_KEYWORDS = {
+  python: ["def", "return", "if", "elif", "else", "for", "while", "import", "from", "as", "class", "try", "except", "finally", "with", "lambda", "pass", "break", "continue", "in", "is", "not", "and", "or", "None", "True", "False", "raise", "yield", "global", "nonlocal", "assert", "del", "print", "self"],
+  js: ["function", "return", "if", "else", "for", "while", "const", "let", "var", "import", "export", "from", "class", "try", "catch", "finally", "new", "typeof", "instanceof", "in", "of", "null", "undefined", "true", "false", "async", "await", "throw", "break", "continue", "switch", "case", "default", "do", "this"],
+  shell: ["if", "then", "else", "elif", "fi", "for", "while", "do", "done", "case", "esac", "function", "return", "echo", "export", "local", "readonly", "in", "source", "exit", "set", "unset"],
+};
+
+function normalizeLang(lang) {
+  if (!lang) return "";
+  if (["python", "py"].includes(lang)) return "python";
+  if (["js", "javascript", "ts", "typescript"].includes(lang)) return "js";
+  if (["shell", "bash", "sh", "zsh"].includes(lang)) return "shell";
+  return lang;
+}
+
+function highlightCodeBlock(codeEl, lang) {
+  const text = codeEl.textContent || "";
+  if (!text) return;
+  const keywords = HIGHLIGHT_KEYWORDS[lang];
+  if (!keywords) {
+    console.warn("代码高亮：未知语言，降级纯文本", lang);
+    return;
+  }
+  try {
+    const kwSet = new Set(keywords);
+    const re = new RegExp(
+      "(\"[^\"\\n]*\"|'[^'\\n]*'|`[^`\\n]*`)" + // 字符串
+        "|(#[^\\n]*|\\/\\/[^\\n]*)" + // 注释
+        "|(\\b\\d+\\.?\\d*\\b)" + // 数字
+        "|(\\b[A-Za-z_][A-Za-z0-9_]*\\b)", // 标识符（关键字匹配）
+      "g"
+    );
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > last) {
+        frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+      }
+      const full = m[0];
+      const str = m[1];
+      const comment = m[2];
+      const num = m[3];
+      const ident = m[4];
+      let cls = null;
+      if (str !== undefined) cls = "code-str";
+      else if (comment !== undefined) cls = "code-comment";
+      else if (num !== undefined) cls = "code-num";
+      else if (ident !== undefined && kwSet.has(ident)) cls = "code-kw";
+      if (cls) {
+        const span = document.createElement("span");
+        span.className = cls;
+        span.textContent = full;
+        frag.appendChild(span);
+      } else {
+        frag.appendChild(document.createTextNode(full));
+      }
+      last = m.index + full.length;
+    }
+    if (last < text.length) {
+      frag.appendChild(document.createTextNode(text.slice(last)));
+    }
+    codeEl.textContent = "";
+    codeEl.appendChild(frag);
+  } catch (err) {
+    console.warn("代码高亮失败，降级纯文本:", err);
+  }
+}
+
+function highlightCodeBlocks(container) {
+  for (const code of container.querySelectorAll("pre code")) {
+    const m = (code.className || "").match(/language-([\w-]+)/);
+    const lang = normalizeLang(m ? m[1] : "");
+    highlightCodeBlock(code, lang);
   }
 }
 
@@ -436,6 +524,65 @@ function fakeTypewriter(node, answerHtml, chunkChars, intervalMs, onDone) {
   step();
 }
 
+// T2.7: 真流式消费（fetch + ReadableStream 解析 SSE，spec 5.2 规则 1）
+// answer_delta 逐分片回调 onDelta；done 携带九字段；error 保留已生成分片不伪造 done
+// ReadableStream 不可用 / 非流式响应（404/413）→ 返回 ok=false 由调用方降级非流式
+async function streamChatRequest(body, onDelta) {
+  let resp;
+  try {
+    resp = await fetch("/api/v1/chat/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { ok: false, status: 0, data: null, error: { detail: "网络错误" } };
+  }
+  if (!resp.ok || !resp.body || typeof resp.body.getReader !== "function") {
+    let data = null;
+    try { data = await resp.json(); } catch { /* ignore */ }
+    return { ok: false, status: resp.status, data, error: data };
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let doneData = null;
+  let errorData = null;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buffer.indexOf("\n\n")) >= 0) {
+      const block = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      const dataLine = block.split("\n").find((l) => l.startsWith("data: "));
+      if (!dataLine) continue;
+      let evt;
+      try { evt = JSON.parse(dataLine.slice(6)); } catch { continue; }
+      if (evt.type === "answer_delta") onDelta(evt.data && evt.data.data);
+      else if (evt.type === "done") doneData = evt.data;
+      else if (evt.type === "error") errorData = evt.data;
+    }
+  }
+  if (doneData) return { ok: true, status: 200, data: doneData, error: null };
+  return { ok: false, status: 200, data: null, error: errorData };
+}
+
+function buildAssistantNote(data) {
+  const note = [];
+  if (data.truncated) note.push("（回答被截断，建议新建会话或调整 prompt 继续）");
+  if (data.verification_note) note.push(data.verification_note);
+  if (data.model_used) {
+    let footer = `—— ${data.model_used}`;
+    if (data.tokens_in || data.tokens_out) {
+      footer += ` · ${fmtTokens(data.tokens_in)}入/${fmtTokens(data.tokens_out)}出`;
+    }
+    note.push(footer);
+  }
+  return note.join("\n") || null;
+}
+
 function addMessage(role, content, note, toolCalls) {
   const m = { role, content, note };
   if (Array.isArray(toolCalls) && toolCalls.length) m.toolCalls = toolCalls;
@@ -483,44 +630,69 @@ async function sendMessage() {
     const body = { message: effectiveText };
     if (state.currentSessionId) body.session_id = state.currentSessionId;
     if (state.model) body.model = state.model; // M47 模型切换：对当前请求生效
-    const { status, data } = await api("/api/v1/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+
+    // T2.7: 真流式（fetch + ReadableStream）；ReadableStream 不可用/异常降级非流式
+    let acc = "";
+    let bodyNode = null;
+    let streamed = false;
+    const result = await streamChatRequest(body, (delta) => {
+      if (!streamed) {
+        streamed = true;
+        loading.remove();
+        addMessage("assistant", "", null, null);
+        const wrap = els.messages.querySelector(".message-wrap:last-of-type");
+        bodyNode = wrap ? wrap.querySelector(".answer-body") : null;
+      }
+      acc += delta;
+      if (bodyNode) {
+        const html = renderMarkdown(acc);
+        bodyNode.innerHTML = html !== null ? html : acc;
+        els.messages.scrollTop = els.messages.scrollHeight;
+      }
     });
 
-    loading.remove();
-
-    if (status === 200) {
+    if (result.ok && result.data) {
+      const data = result.data;
       state.currentSessionId = data.session_id;
-      const note = [];
-      if (data.truncated) note.push("（回答被截断，建议新建会话或调整 prompt 继续）");
-      if (data.verification_note) note.push(data.verification_note);
-      // M51: 回复下方标注实际生成模型（provider/model，含降级后的真实模型）
-      // M52: 同一 footer 附带本轮 token 用量（provider 未返回 usage 时不显示）
-      if (data.model_used) {
-        let footer = `—— ${data.model_used}`;
-        if (data.tokens_in || data.tokens_out) {
-          footer += ` · ${fmtTokens(data.tokens_in)}入/${fmtTokens(data.tokens_out)}出`;
+      if (streamed) {
+        // 补全 content/tool_calls/note，重渲染完整态（含工具链/折叠/复制）
+        const last = state.messages[state.messages.length - 1];
+        if (last && last.role === "assistant") {
+          last.content = data.final_answer;
+          if (Array.isArray(data.tool_calls) && data.tool_calls.length) last.toolCalls = data.tool_calls;
+          last.note = buildAssistantNote(data);
         }
-        note.push(footer);
+        renderMessages();
+      } else {
+        loading.remove();
+        state.typewriterPending = true; // 降级/空回答：假流式打字机
+        addMessage("assistant", data.final_answer, buildAssistantNote(data), data.tool_calls);
       }
-      // P2-1: 透传本轮工具调用链（tool_calls 已由后端返回，前端渲染折叠链）
-      state.typewriterPending = true; // T3: 最新回复用假流式打字机渲染
-      addMessage("assistant", data.final_answer, note.join("\n") || null, data.tool_calls);
       // M52: 本次页面会话 token 累计（输入区模型选择旁实时更新）
       if (data.tokens_in || data.tokens_out) {
         state.pageTokensIn = (state.pageTokensIn || 0) + data.tokens_in;
         state.pageTokensOut = (state.pageTokensOut || 0) + data.tokens_out;
         renderTokenStats();
       }
-    } else if (status === 404) {
-      addMessage("error", data.detail || "会话不存在，请新建会话。");
+    } else if (result.status === 404) {
+      loading.remove();
+      addMessage("error", (result.data && result.data.detail) || "会话不存在，请新建会话。");
       state.currentSessionId = null;
-    } else if (status === 500) {
-      addMessage("error", data.detail || "服务内部错误。");
+    } else if (result.error) {
+      loading.remove();
+      if (streamed) {
+        // 保留已生成分片 + 如实错误提示（不空白不伪造）
+        const last = state.messages[state.messages.length - 1];
+        if (last && last.role === "assistant") {
+          last.note = `[程序异常] ${result.error.detail || "引擎执行失败"}`;
+        }
+        renderMessages();
+      } else {
+        addMessage("error", result.error.detail || "服务内部错误。");
+      }
     } else {
-      addMessage("error", `请求失败（${status}）：${data.detail || "未知错误"}`);
+      loading.remove();
+      addMessage("error", "请求失败，请重试。");
     }
   } catch (err) {
     loading.remove();
@@ -542,13 +714,50 @@ async function loadSessions() {
 }
 
 async function loadSessionMessages(sessionId) {
-  const { status, data } = await api(`/api/v1/sessions/${encodeURIComponent(sessionId)}/messages`);
+  // D2: 首屏仅加载最近 HISTORY_PAGE_SIZE 条，更早按需加载
+  const { status, data } = await api(
+    `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages?limit=${HISTORY_PAGE_SIZE}`
+  );
   if (status !== 200) return;
   // P2-1: 白名单保留 tool 角色（工具调用回执），历史刷新后仍可见
   state.messages = (data.messages || [])
     .filter((m) => m.role === "user" || m.role === "assistant" || m.role === "tool")
     .map((m) => ({ role: m.role, content: m.content, note: null }));
+  state.hasMoreHistory = !!data.has_more;
+  state.loadedHistoryCount = (data.messages || []).length;
   renderMessages();
+}
+
+async function loadEarlierHistory() {
+  // D2: 按需加载更早历史（offset = 已加载条数），追加到顶部
+  if (!state.currentSessionId) return;
+  const { status, data } = await api(
+    `/api/v1/sessions/${encodeURIComponent(state.currentSessionId)}/messages?limit=${HISTORY_PAGE_SIZE}&offset=${state.loadedHistoryCount}`
+  );
+  if (status !== 200) {
+    addMessage("error", "加载更早消息失败，可重试。");
+    return;
+  }
+  const earlier = (data.messages || [])
+    .filter((m) => m.role === "user" || m.role === "assistant" || m.role === "tool")
+    .map((m) => ({ role: m.role, content: m.content, note: null }));
+  state.messages = [...earlier, ...state.messages];
+  state.hasMoreHistory = !!data.has_more;
+  state.loadedHistoryCount += (data.messages || []).length;
+  renderMessages(false); // 追加到顶部，不滚动到底部
+}
+
+function renderLoadMoreButton() {
+  // D2: 消息列表顶部提示"加载更早"/"已到最早"
+  if (state.hasMoreHistory) {
+    const btn = el("button", "load-more-btn", "↑ 加载更早消息");
+    btn.type = "button";
+    btn.onclick = () => loadEarlierHistory();
+    els.messages.insertBefore(btn, els.messages.firstChild);
+  } else if (state.loadedHistoryCount > 0 && state.messages.length >= state.loadedHistoryCount) {
+    const hint = el("div", "history-hint", "已到最早消息");
+    els.messages.insertBefore(hint, els.messages.firstChild);
+  }
 }
 
 function renderSessions() {

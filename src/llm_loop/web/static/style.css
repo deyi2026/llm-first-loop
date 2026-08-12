@@ -869,3 +869,19 @@ html, body {
 .collapsed-full[hidden] {
   display: none;
 }
+
+/* ── T3: 代码块语法高亮（自研简版，spec 5.3.1 D1） ── */
+.code-kw {
+  color: #c678dd;
+  font-weight: 500;
+}
+.code-str {
+  color: #98c379;
+}
+.code-comment {
+  color: #7f848e;
+  font-style: italic;
+}
+.code-num {
+  color: #d19a66;
+}
