@@ -445,7 +445,13 @@ _FAILURE_GUIDANCE = {
 }
 
 
-def tool_result_to_message(result: ToolResult, *, failure_guidance_enabled: bool = True) -> Message:
+def tool_result_to_message(
+    result: ToolResult,
+    *,
+    failure_guidance_enabled: bool = True,
+    # 阶段4-A: 经验注入独立开关（None=跟随主开关；子代理用 True 可仅注入经验不注入默认模板）
+    experience_guidance_enabled: bool | None = None,
+) -> Message:
     """ToolResult → tool 消息（如实承载状态，T21: content 前置状态标注）.
 
     M41: 失败回执追加引导段（错误类型 + 建议换用工具/重试，衔接 RULE-AI-02/07），
@@ -461,7 +467,13 @@ def tool_result_to_message(result: ToolResult, *, failure_guidance_enabled: bool
     if failure_guidance_enabled and result.status and result.status.value in _FAILURE_GUIDANCE:
         content += "\n" + _FAILURE_GUIDANCE[result.status.value]
     # EVO-d78b270c: 经验驱动注入（独立于默认模板；开启引导时带出，未命中为空串零回归）
-    if failure_guidance_enabled and result.guidance_extra:
+    # 阶段4-A: experience_guidance_enabled 独立开关（None 跟随主开关；子代理可仅开经验）
+    exp_enabled = (
+        failure_guidance_enabled
+        if experience_guidance_enabled is None
+        else experience_guidance_enabled
+    )
+    if exp_enabled and result.guidance_extra:
         content += "\n" + result.guidance_extra
     return Message(
         role="tool",

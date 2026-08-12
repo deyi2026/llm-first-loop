@@ -170,7 +170,11 @@ class SubAgentRunner:
                 from llm_loop.tools.registry import tool_result_to_message
 
                 sess.messages.append(
-                    tool_result_to_message(result, failure_guidance_enabled=False)
+                    tool_result_to_message(
+                        result,
+                        failure_guidance_enabled=False,
+                        experience_guidance_enabled=True,  # 阶段4-A: 子代理仅注入经验（无默认模板噪音）
+                    )
                 )
 
         # 轮数超限截断（如实标注）
