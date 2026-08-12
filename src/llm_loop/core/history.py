@@ -37,6 +37,38 @@ def _top_keywords(messages: list[Message], top: int = 5) -> list[str]:
     return [w for w, _ in counter.most_common(top)]
 
 
+def _archive_key_facts(messages: list[Message], max_facts: int = 8) -> str:
+    """RULE-AI-00 增强: 压缩注入"确定性关键事实清单"（规则提取零 LLM）.
+
+    对被压缩消息逐条用 extract_key_info 提取含动作/结果信号的行，
+    汇总去重后注入——AI 快速感知旧内容要点，再决定是否主动检索原文。
+    不调 LLM（程序只提供客观要点，不替 AI 理解）。
+    """
+    from llm_loop.memory.archive import extract_key_info
+
+    facts: list[str] = []
+    seen: set[str] = set()
+    for m in messages:
+        if not m.content:
+            continue
+        try:
+            f, _p, _s = extract_key_info(m.content, max_facts=3)
+        except Exception:
+            continue
+        for item in f:
+            item = item.strip()
+            if item and len(item) >= 4 and item not in seen:
+                seen.add(item)
+                facts.append(item)
+            if len(facts) >= max_facts:
+                break
+        if len(facts) >= max_facts:
+            break
+    if not facts:
+        return ""
+    return "[压缩关键事实] 被压缩旧消息中的关键动作/结果（规则提取，非语义总结；细节以原文为准）:\n- " + "\n- ".join(facts)
+
+
 def _archive_index_dir(messages: list[Message]) -> str:
     """生成压缩档案索引目录（数行，供 AI 主动检索；原文已另存至档案）."""
     from collections import Counter
@@ -175,7 +207,7 @@ def build_history_messages(
     *,
     session_id: str = "",
     archive_sink: ArchiveSink | None = None,
-    summarizer: Any | None = None,  # EVO-9794797e: 主动压缩摘要器（可 None 走纯另存）
+    summarizer: Any | None = None,  # 保留签名向后兼容；压缩路径不再自动调 LLM 摘要（RULE-AI-00，LLM 摘要由 AI 经 search_archive(with_summary=true) 主动触发）
     layer_tool_trim: bool = False,  # EVO-20260811-7baa2737: 历史分层降级（默认关=零回归，loop 装配时按 settings 启用）
     tool_trim_threshold: int = 2000,  # tool 消息 content 超此长度才降级
     tool_trim_age: int = 0,  # R3: 0=自适应（按占用率自动调）；>0=固定值禁用自适应
@@ -300,39 +332,28 @@ def build_history_messages(
     for m in kept_flat:
         out.append(m.to_llm_dict())
     if archived:
-        # EVO-9794797e: 主动压缩——对将被丢弃的旧消息生成语义摘要注入上下文
-        # （替代纯丢弃：模型仍能感知旧结论；原文已另存保信息零丢失，fail-open）
+        # EVO-9794797e: 主动压缩——对被丢弃的旧消息做"另存 + 可见标注"
+        # （原文已完整另存至压缩档案保信息零丢失，fail-open）
+        # AI 优先（RULE-AI-00）: 压缩路径不自动调 LLM 摘要（程序不知道哪些信息重要、
+        # 自动摘要可能误导 + 增计费）；LLM 语义摘要由 AI 主动触发（search_archive with_summary=true）。
         # EVO-20260811-1e68f400: 附加压缩档案目录（主动检索意识，fail-open）
         extras: list[Message] = []
-        if summarizer is not None:
-            archived_text = "\n".join(m.content for m in archived if m.content)[-20000:]
-            if archived_text.strip():
-                try:
-                    summary_result = summarizer.summarize(archived_text)
-                    if summary_result.summary:
-                        src_note = f"（来源: {summary_result.source}"
-                        if summary_result.note:
-                            src_note += f"，{summary_result.note}"
-                        src_note += "）"
-                        extras.append(
-                            Message(
-                                role="system",
-                                content=(
-                                    f"[上下文压缩摘要] 以下为被压缩旧消息的语义摘要 {src_note}：\n"
-                                    f"{summary_result.summary}\n"
-                                    f"（原文已完整另存至压缩档案，可用 search_archive 检索）"
-                                ),
-                                source=MessageSource.SYSTEM,
-                            )
-                        )
-                except Exception:
-                    import logging
 
-                    logging.getLogger(__name__).warning(
-                        "压缩摘要生成失败（fail-open）", exc_info=True
-                    )
+        # RULE-AI-00 增强: 确定性关键事实清单（规则提取零 LLM，AI 快速感知旧内容要点）
+        try:
+            key_facts = _archive_key_facts(archived)
+            if key_facts:
+                extras.append(
+                    Message(role="system", content=key_facts, source=MessageSource.SYSTEM)
+                )
+        except Exception:
+            import logging
 
-        # 档案目录（无论摘要是否成功均注入，保证"有什么可找"可见）
+            logging.getLogger(__name__).warning(
+                "压缩关键事实提取失败（fail-open）", exc_info=True
+            )
+
+        # 档案目录（保证"有什么可找"可见）
         try:
             idx_dir = _archive_index_dir(archived)
             if idx_dir:

@@ -684,7 +684,7 @@ class LoopEngine:
             max_chars=max_chars if max_chars is not None else self._runtime_history_budget(),
             session_id=sess.session_id,
             archive_sink=archive_sink,
-            summarizer=self.summarizer,  # EVO-9794797e: 主动压缩（旧消息语义摘要）
+            # RULE-AI-00: 不再传 summarizer（压缩路径不自动 LLM 摘要，AI 主动触发）
             layer_tool_trim=getattr(self.settings, "tool_trim_enabled", False),  # EVO-20260811-7baa2737: 历史分层降级
             tool_trim_age=getattr(self.settings, "tool_trim_age", 0),  # R3: 0=自适应
             reasoning_tail=getattr(self.settings, "reasoning_tail", 2),  # M66 思考链瘦身
@@ -797,7 +797,7 @@ class LoopEngine:
         if self.archive is None:
             return
         try:
-            entry = self.archive.archive(
+            self.archive.archive(
                 session_id,
                 role=msg.role,
                 source=msg.source.value,
@@ -806,9 +806,8 @@ class LoopEngine:
                 tool_call_id=msg.tool_call_id,
                 status=msg.status.value if msg.status else None,
             )
-            # T28: LLM 摘要（SUMMARY_MODE 配置；off 走确定性，sync/async 由 Summarizer 处理）
-            if self.summarizer is not None and entry is not None:
-                self.summarizer.summarize_archive(entry.id, msg.content, self.archive)
+            # RULE-AI-00: 压缩另存只做原文另存（确定性索引），不自动调 LLM 摘要——
+            # LLM 语义摘要由 AI 主动触发（search_archive with_summary=true）
         except Exception as exc:
             # C3（PREFERENCE_1）: 压缩另存/摘要失败如实注入会话（AI 可感知，不静默——
             # 被压缩消息可能无法找回）。注入失败静默（尽力而为）。

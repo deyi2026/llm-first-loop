@@ -414,10 +414,19 @@ async function init() {
   await loadModels(); // M47 模型切换候选
   await loadSessions();
   initEventStream(); // M56 实时刷新（飞书/Web 会话同步）
-  // 刷新后自动选中最近会话并恢复其历史消息（无会话则保持空白等待新建）
-  const latest = state.sessions[0];
-  if (latest) {
-    selectSession(latest.session_id);
+  // 优先加载跨端共享当前会话（Web/飞书同一上下文），否则取最近会话
+  let target = null;
+  try {
+    const r = await api("/api/v1/session/current");
+    if (r.status === 200 && r.data.current) {
+      target = state.sessions.find((s) => s.session_id === r.data.current) || null;
+    }
+  } catch {
+    /* fail-open */
+  }
+  if (!target) target = state.sessions[0];
+  if (target) {
+    selectSession(target.session_id);
   }
 }
 

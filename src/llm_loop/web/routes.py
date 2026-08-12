@@ -74,7 +74,14 @@ def chat(
             )
         session_id = payload.session_id
     else:
-        session_id = engine.session.create()
+        # 跨端共享当前会话：无 session_id 时复用共享当前（Web/飞书同一上下文）；
+        # 无共享或共享会话已删则新建并设为共享当前
+        shared = engine.session.get_shared_current()
+        if shared is not None:
+            session_id = shared
+        else:
+            session_id = engine.session.create()
+            engine.session.set_shared_current(session_id)
 
     try:
         result = engine.run(session_id, payload.message, model=payload.model)
@@ -230,6 +237,14 @@ def list_sessions(request: Request, include_archived: bool = False) -> SessionLi
         for m in metas
     ]
     return SessionListResponse(sessions=items, count=len(items))
+
+
+@router.get("/api/v1/session/current")
+def get_shared_current(request: Request) -> JSONResponse:
+    """跨端共享当前会话（Web 默认加载飞书当前会话，同一上下文）."""
+    engine = _engine_from(request)
+    current = engine.session.get_shared_current()
+    return JSONResponse({"current": current})
 
 
 @router.post(

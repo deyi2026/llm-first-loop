@@ -75,17 +75,33 @@ class MemoryStore:
                 data = json.loads(self._index_path.read_text(encoding="utf-8"))
                 self._entries = [MemoryEntry(**e) for e in data]
             except (json.JSONDecodeError, TypeError, ValueError) as exc:
-                # T39: 损坏如实记录（不静默降级），fail-open 继续
+                # T39: 损坏如实记录（不静默降级），备份原始文件（不覆盖丢数据），fail-open 继续
                 import logging
 
-                logging.getLogger(__name__).warning("记忆索引损坏，已重置为空索引（原因: %s）", exc)
+                logging.getLogger(__name__).warning(
+                    "记忆索引损坏，已备份并重置为空索引（原因: %s）", exc
+                )
+                try:
+                    backup = self._index_path.with_suffix(".corrupt.json")
+                    backup.write_text(
+                        self._index_path.read_text(encoding="utf-8"), encoding="utf-8"
+                    )
+                except OSError:
+                    pass  # 备份失败尽力而为
                 self._entries = []
 
     def _save(self) -> None:
-        self._index_path.write_text(
-            json.dumps([e.to_dict() for e in self._entries], ensure_ascii=False, indent=2),
-            encoding="utf-8",
+        # 原子写（tmp+rename）：Web/飞书跨进程共享记忆时防半写损坏/交错覆盖
+        payload = json.dumps(
+            [e.to_dict() for e in self._entries], ensure_ascii=False, indent=2
         )
+        try:
+            tmp = self._index_path.with_suffix(".tmp")
+            tmp.write_text(payload, encoding="utf-8")
+            tmp.replace(self._index_path)
+        except OSError:
+            # 原子写失败回退直写（fail-open，尽力而为）
+            self._index_path.write_text(payload, encoding="utf-8")
 
     # ── 版本化与去重（EVO-20260811-cbd6c52a）──
     def _compute_fingerprint(self, entry: MemoryEntry) -> str:

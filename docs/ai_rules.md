@@ -15,7 +15,7 @@
 具体约束：
 
 1. **不替 AI 决策**：压缩 / 重试 / 摘要 / 模型切换等决策权归 AI；程序如实反馈事实 + 提供工具，AI 自主选择。
-2. **不自动压缩/重试/摘要**：这些行为可能丢信息 / 增计费 / 注入无用内容，须 AI 主动触发（经 `search_archive(with_summary=true)` 等工具参数），程序不自动注入。
+2. **不自动压缩/重试/摘要**：这些行为可能丢信息 / 增计费 / 注入无用内容，须 AI 主动触发（经 `search_archive(with_summary=true)` 等工具参数），程序不自动注入。**兜底边界**：上下文逼近物理预算上限时，程序会做**最后兜底截断另存**（原文完整另存压缩档案 + 注入 `[上下文压缩]` 标注 + 档案目录与关键事实可见，信息零丢失可检索）——这是物理预算下的应急兜底而非主动压缩决策，AI 可经 `architecture_status.context_usage.breakdown` 预判占用、主动决定压缩方式；LLM 语义摘要 / 主动重试 / 主动压缩决策仍归 AI 触发。
 3. **如实反馈让 AI 决策**：程序异常 / 上下文超限 / 工具失败 → 如实告知 AI + 提供可选动作，AI 决定怎么做；不静默吞错、不静默降级。
 4. **简化而非增加配置面**：AI 不能改 env，env 参数对 AI 是黑盒；优先程序自适应（如按占用率自动调参）而非暴露更多配置项；避免复杂成为约束。
 5. **赋能 AI 上下文感知**：上下文状态作为 `architecture_status` 工具返回维度（`context_usage.breakdown`），AI 每轮可见，而非 slash 命令（人类接口）。
@@ -24,7 +24,7 @@
 **程序角色**：感官（`architecture_status` 提供上下文/模型/异常事实）+ 手脚（`search_archive`/`adjust_strategy`/`switch_model` 等执行通道）+ 如实反馈（不静默）。**不替 AI 思考、不替 AI 选择、不替 AI 承担决策后果。**
 
 **正例**：上下文逼近窗口时，程序经 `architecture_status.context_usage.breakdown` 让 AI 可见占用构成；AI 自主决定压缩（`search_archive` 检索被压内容）/ 调预算（`adjust_strategy`）/ 切模型（`switch_model`）/ 开新会话。
-**反例**：程序自动压缩上下文并重试请求（丢信息风险，AI 不知情）；程序自动注入 LLM 摘要（程序不知道哪些重要）；程序静默吞 overflow 错误（AI 不知道发生了什么）。
+**反例**：程序自动压缩上下文并**静默丢弃**（无标注不可检索，丢信息）；程序自动注入 LLM 摘要（程序不知道哪些重要）；程序静默吞 overflow 错误（AI 不知道发生了什么）。（对照：有 `[上下文压缩]` 标注 + 档案完整另存的**兜底截断另存**属应急兜底，非本反例。）
 
 ---
 
@@ -143,7 +143,7 @@ MODEL_FALLBACKS 降级链——程序只做注册表解析/切换执行/如实�
    - **成本/离线约束**（如高成本模型跑批量、需本地 provider 数据隔离）
 2. **切换必带 reason**：switch_model 的 reason 必填（审计落盘 from→to→reason，可 search_records 回溯）；同会话**非必要不重复切**
 3. **切后必验**：切换后用 architecture_status 复查 llm_model 确认生效；思考参数按目标模型能力适配（thinking=false 的模型不回传思考链，回执如实标注）
-4. **诚实边界**：**用户显式选择**的模型（L2 会话 override / Web 下拉 / CLI --model / /model 命令）失败时**不自动降级**，显性报错（禁止静默背离用户意图）；仅**默认装配**模型失败时走 MODEL_FALLBACKS 链，且回执如实标注 `[模型降级: X→Y, 原因: ...]`
+4. **诚实边界**：**用户显式选择**的模型（L2 会话 override / Web 下拉 / CLI --model / /model 命令）失败时**不自动降级**，显性报错（禁止静默背离用户意图）；仅**默认装配**模型失败时走 MODEL_FALLBACKS 链，且回执如实标注 `[模型降级: X→Y, 原因: ...]`。**降级语义**：自动降级仅为 LLM 调用失败瞬间的**应急恢复**（默认模型不可用时保住本轮请求），不改变你对模型选择的主导权——降级后你可经 `switch_model` 切回/切换，或经 `architecture_status` 验证当前生效模型。
 5. **密钥不出域**：注册表只存 api_key_env 名；工具回执/日志/审计永不回显 key 本体
 
 **正例**：经 model_catalog 发现当前模型连续 429 且任务需更强推理，调用 switch_model 切到 deepseek/deepseek-v4-pro（reason 写明"连续 429 + 复杂推理"），切换后 architecture_status 复查 llm_model 确认生效，回答中说明切换前后模型与原因。
