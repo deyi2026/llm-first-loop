@@ -27,13 +27,38 @@ _UA = (
 
 
 def _search_bing(query: str, limit: int, timeout: float) -> list[dict]:
-    """Bing HTML 端（实测 302→cn.bing.com 跟随跳转后 200，h2>a 可解析）."""
+    """Bing HTML 端（302→cn.bing.com 跟随跳转后 200）.
+
+    M49 增强: 按 b_algo 结果块解析，提取 <p> 摘要（实测可稳定拿到描述，
+    供 LLM 预判相关性，减少盲目抓取）；无摘要时回退空串。
+    """
     url = f"https://www.bing.com/search?q={quote_plus(query)}&count={min(limit * 2, 30)}"
     with httpx.Client(timeout=timeout, follow_redirects=True) as client:
         resp = client.get(url, headers={"User-Agent": _UA, "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"})
     resp.raise_for_status()
+    # 按结果块解析（标题+摘要同块，避免跨块错配）
+    blocks = re.findall(r'<li class="b_algo".*?</li>', resp.text, re.S)
+    out: list[dict] = []
+    for b in blocks:
+        hm = re.search(r'<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', b, re.S | re.I)
+        if not hm:
+            continue
+        u, t = hm.group(1), hm.group(2)
+        title = _html.unescape(re.sub(r"<[^>]+>", "", t)).strip()
+        snippet = ""
+        for pm in re.findall(r'<p[^>]*>(.*?)</p>', b, re.S):
+            cand = _html.unescape(re.sub(r"<[^>]+>", "", pm)).strip()
+            if len(cand) > 30:  # 过滤日期/短碎片
+                snippet = cand
+                break
+        if title and u.startswith("http"):
+            out.append({"title": title, "url": u, "snippet": snippet, "source": "bing"})
+        if len(out) >= limit:
+            break
+    if out:
+        return out
+    # 兼容无 b_algo 结构（旧测试/精简 HTML）：回退 h2 级解析（摘要为空）
     items = re.findall(r'<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', resp.text, re.S | re.I)
-    out = []
     for u, t in items:
         title = _html.unescape(re.sub(r"<[^>]+>", "", t)).strip()
         if title and u.startswith("http"):
@@ -49,8 +74,28 @@ def _search_baidu(query: str, limit: int, timeout: float) -> list[dict]:
     with httpx.Client(timeout=timeout, follow_redirects=True) as client:
         resp = client.get(url, headers={"User-Agent": _UA})
     resp.raise_for_status()
+    # 优先 result 块解析（含摘要）；无块时回退 h3 链接级解析（摘要为空）
+    blocks = re.findall(
+        r'<div[^>]*class="[^"]*result[^"]*"[^>]*>.*?</div>\s*</div>', resp.text, re.S
+    )
+    out: list[dict] = []
+    for b in blocks:
+        hm = re.search(r'<h3[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', b, re.S | re.I)
+        if not hm:
+            continue
+        u, t = hm.group(1), hm.group(2)
+        title = _html.unescape(re.sub(r"<[^>]+>", "", t)).strip()
+        snippet = ""
+        sm = re.search(r'class="[^"]*c-abstract[^"]*"[^>]*>(.*?)</', b, re.S)
+        if sm:
+            snippet = _html.unescape(re.sub(r"<[^>]+>", "", sm.group(1))).strip()
+        if title:
+            out.append({"title": title, "url": u, "snippet": snippet, "source": "baidu(跳转链接)"})
+        if len(out) >= limit:
+            break
+    if out:
+        return out
     items = re.findall(r'<h3[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', resp.text, re.S | re.I)
-    out = []
     for u, t in items:
         title = _html.unescape(re.sub(r"<[^>]+>", "", t)).strip()
         if title:
