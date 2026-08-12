@@ -155,6 +155,8 @@ class Settings:
     archive_enabled: bool = True
     archive_max_entries: int = 0  # R7: 单会话最大档案条目数（0=不限）
     archive_ttl_days: int = 0     # R7: 条目存活天数（0=不限）
+    audit_ttl_days: int = 30      # P1-3: 审计 JSONL 条目存活天数（0=不清理）
+    memory_max_entries: int = 0   # P1-5: 记忆条目上限（0=不限；超限淘汰 decay_score 最低）
 
     # ── P1 摘要（FR-P1-MEM, §3.6）──
     summary_mode: str = "off"  # off/sync/async
@@ -338,6 +340,8 @@ def load_settings() -> Settings:
         archive_enabled=_env_bool("ARCHIVE_ENABLED", True),
         archive_max_entries=_env_int("ARCHIVE_MAX_ENTRIES", 0),
         archive_ttl_days=_env_int("ARCHIVE_TTL_DAYS", 0),
+        audit_ttl_days=_env_int("AUDIT_TTL_DAYS", 30),
+        memory_max_entries=_env_int("MEMORY_MAX_ENTRIES", 0),
         # P1（design.md §3.6，非法值回退默认）
         summary_mode=os.environ.get("SUMMARY_MODE", "off").strip().lower() or "off",
         summary_timeout_s=float(_env_int("SUMMARY_TIMEOUT_S", 30)),

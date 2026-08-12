@@ -337,3 +337,49 @@ class ArchitectureStatusProvider:
             import logging
 
             logging.getLogger(__name__).warning("审计写入失败（fail-open）: %s", exc)
+
+
+def cleanup_audit_logs(audit_dir: str | Path, ttl_days: int) -> dict:
+    """P1-3: 按 TTL 清理审计 JSONL 条目（启动时调用一次，防无限增长，fail-open）.
+
+    逐行过滤：ts 早于 cutoff 的条目删除（有 ts 的按 ts 判，无 ts/损坏行保守保留）。
+    返回 {"pruned_files": N, "pruned_entries": N}；ttl_days<=0 空操作。
+    """
+    if ttl_days <= 0:
+        return {"pruned_files": 0, "pruned_entries": 0}
+    import logging
+    from datetime import UTC, datetime, timedelta
+
+    d = Path(audit_dir)
+    if not d.exists():
+        return {"pruned_files": 0, "pruned_entries": 0}
+    cutoff = (datetime.now(UTC) - timedelta(days=ttl_days)).isoformat()
+    total = 0
+    files = 0
+    for p in sorted(d.glob("*.jsonl")):
+        try:
+            lines = p.read_text(encoding="utf-8").splitlines()
+            kept: list[str] = []
+            for line in lines:
+                if not line.strip():
+                    continue
+                try:
+                    ts = json.loads(line).get("ts", "")
+                    if isinstance(ts, str) and ts and ts < cutoff:
+                        total += 1
+                        continue
+                except (json.JSONDecodeError, AttributeError):
+                    pass  # 无法解析的行保守保留
+                kept.append(line)
+            if len(kept) < len(lines):
+                if kept:
+                    p.write_text("\n".join(kept) + "\n", encoding="utf-8")
+                else:
+                    p.unlink(missing_ok=True)
+                files += 1
+        except Exception:  # noqa: BLE001 — 单文件清理失败 fail-open
+            logging.getLogger(__name__).warning(
+                "审计清理失败（fail-open）: %s", p, exc_info=True
+            )
+            continue
+    return {"pruned_files": files, "pruned_entries": total}

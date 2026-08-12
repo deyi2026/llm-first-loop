@@ -212,6 +212,24 @@ class MemoryStore:
         """强制落盘（供调用方在合适时机批量持久化，避免每轮检索全量写 JSON）."""
         self._save()
 
+    def cleanup(self, *, max_entries: int = 0) -> dict:
+        """P1-5: 记忆条数上限保护（启动时调用一次，超限淘汰 decay_score 最低的条目）.
+
+        max_entries<=0 空操作（零回归）；淘汰后落盘。
+        Returns: {"pruned": N}
+        """
+        if max_entries <= 0 or len(self._entries) <= max_entries:
+            return {"pruned": 0}
+        excess = len(self._entries) - max_entries
+        sorted_entries = sorted(
+            self._entries,
+            key=lambda e: (e.decay_score, e.last_access_at or ""),
+        )
+        doomed = {id(e) for e in sorted_entries[:excess]}
+        self._entries = [e for e in self._entries if id(e) not in doomed]
+        self._save()
+        return {"pruned": excess}
+
     def all(self) -> list[MemoryEntry]:
         return list(self._entries)
 

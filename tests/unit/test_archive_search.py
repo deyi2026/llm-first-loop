@@ -106,3 +106,52 @@ def test_search_records_no_hit(tmp_path):
     """无命中返回空列表（不伪造）."""
     searcher = RecordSearcher(audit_dir=tmp_path / "audit")
     assert searcher.search(kind="all", query="不存在的东西") == []
+
+
+def test_search_records_kind_all_allocates_evenly(tmp_path):
+    """P1-4: kind=all 各 kind 均匀分配 limit（后序 kind 不被前序挤掉）."""
+    audit = tmp_path / "audit"
+    audit.mkdir()
+    # 前序 kind（action_trace）大量命中，后序 kind（self_eval）少量命中
+    (audit / "action_trace.jsonl").write_text(
+        "".join(
+            f'{{"ts": "t{i}", "phase": "action", "action_type": "llm", "detail": "含关键词X"}}\n'
+            for i in range(20)
+        ),
+        encoding="utf-8",
+    )
+    (audit / "self_eval_log.jsonl").write_text(
+        '{"ts": "t1", "id": "SE-1", "trigger": "manual", "note": "含关键词X评估"}\n',
+        encoding="utf-8",
+    )
+    searcher = RecordSearcher(audit_dir=audit)
+    hits = searcher.search(kind="all", query="关键词X", limit=10)
+    # 后序 kind（self_eval）结果必须出现（修复前被 results[:limit] 挤掉）
+    assert any(h["kind"] == "self_eval" for h in hits)
+    assert len(hits) <= 10
+
+
+def test_search_records_new_kinds(tmp_path):
+    """P2-6: 配置变更/进程版本/飞书审计三类可检索."""
+    audit = tmp_path / "audit"
+    audit.mkdir()
+    (audit / "change_log.jsonl").write_text(
+        '{"ts": "t1", "key": "HISTORY_MAX_CHARS", "before": "80000", "after": "100000", "note": "调大"}\n',
+        encoding="utf-8",
+    )
+    (audit / "proc_versions.jsonl").write_text(
+        '{"ts": "t1", "process": "feishu", "version": "abc123", "started_at": "t0", "git_hash": "h1"}\n',
+        encoding="utf-8",
+    )
+    (audit / "feishu_audit.jsonl").write_text(
+        '{"ts": "t1", "message_id": "om_1", "sender_id": "ou_1", "action": "text", "note": "收到消息", "text": "含关键词Y"}\n',
+        encoding="utf-8",
+    )
+    searcher = RecordSearcher(audit_dir=audit)
+    assert len(searcher.search(kind="change_log", query="HISTORY_MAX_CHARS")) == 1
+    assert len(searcher.search(kind="proc_versions", query="feishu")) == 1
+    assert len(searcher.search(kind="feishu_audit", query="关键词Y")) == 1
+    # all 也覆盖新 kind
+    all_hits = searcher.search(kind="all", query="", limit=50)
+    kinds = {h["kind"] for h in all_hits}
+    assert {"change_log", "proc_versions", "feishu_audit"} <= kinds

@@ -31,6 +31,9 @@ _VALID_KINDS = {
     "evolution",  # M12 T52: 架构演进建议
     "evolution_exec",  # M12 深化 T57: 演进执行审计（EXEC-06）
     "self_eval",  # M12 深化 T62: 自我评估记录（EVAL-04）
+    "change_log",  # P2-6: 配置变更审计
+    "proc_versions",  # P2-6: 进程版本记录
+    "feishu_audit",  # P2-6: 飞书消息审计
     "all",
 }
 
@@ -117,12 +120,15 @@ class RecordSearcher:
         if kind == "archive":
             return self._search_archive(query, limit, session_id)
 
+        # P1-4: kind=all 时各 kind 均匀分配 limit（避免前序 kind 挤占、后序永远不可见）
+        each_limit = max(1, limit // 12) if kind == "all" else limit
+
         results: list[dict] = []
         if kind in {"action_trace", "all"}:
             results += _jsonl_search(
                 self._audit_dir / "action_trace.jsonl",
                 query,
-                limit,
+                each_limit,
                 kind="action_trace",
                 summary_keys=("phase", "action_type", "detail"),
             )
@@ -130,7 +136,7 @@ class RecordSearcher:
             results += _jsonl_search(
                 self._audit_dir / "exception_log.jsonl",
                 query,
-                limit,
+                each_limit,
                 kind="exception_log",
                 summary_keys=("phase", "error_type", "error_message"),
             )
@@ -138,7 +144,7 @@ class RecordSearcher:
             results += _jsonl_search(
                 self._audit_dir / "self_correction_log.jsonl",
                 query,
-                limit,
+                each_limit,
                 kind="self_correction_log",
                 summary_keys=("tool_name", "result_status"),
             )
@@ -146,7 +152,7 @@ class RecordSearcher:
             results += _jsonl_search(
                 self._audit_dir / "selfheal_log.jsonl",
                 query,
-                limit,
+                each_limit,
                 kind="selfheal",
                 summary_keys=("component", "error_type", "category", "suggested_actions"),
                 content_key="error_message",
@@ -155,7 +161,7 @@ class RecordSearcher:
             results += _jsonl_search(
                 self._audit_dir / "param_adjust_history.jsonl",
                 query,
-                limit,
+                each_limit,
                 kind="param_adjust",
                 summary_keys=("key", "before", "after"),
             )
@@ -165,7 +171,7 @@ class RecordSearcher:
                 results += _jsonl_search(
                     evolution_path,
                     query,
-                    limit,
+                    each_limit,
                     kind="evolution",
                     summary_keys=("content", "evidence", "impact_scope", "status"),
                 )
@@ -175,7 +181,7 @@ class RecordSearcher:
                 results += _jsonl_search(
                     exec_path,
                     query,
-                    limit,
+                    each_limit,
                     kind="evolution_exec",
                     summary_keys=("suggestion_id", "executor", "status", "verify_result"),
                     content_key="note",
@@ -183,14 +189,14 @@ class RecordSearcher:
         if kind in {"self_eval", "all"}:  # M12 深化 T62: 自我评估记录（EVAL-04）
             eval_path = self._audit_dir / "self_eval_log.jsonl"
             if eval_path.exists():
-                results += self._search_self_eval(eval_path, query, limit)
+                results += self._search_self_eval(eval_path, query, each_limit)
         if kind in {"evolution", "all"}:  # M12 深化 T62: 建议带 eval_id → 关联评估摘要
             self._annotate_evolution_eval(results)
         if kind in {"memory_extract", "all"}:  # T33: 独立记忆提取记录
             results += _jsonl_search(
                 self._audit_dir / "memory_extract_log.jsonl",
                 query,
-                limit,
+                each_limit,
                 kind="memory_extract",
                 summary_keys=("trigger", "session_id", "note"),
                 content_key="failures",
@@ -199,14 +205,40 @@ class RecordSearcher:
             results += _jsonl_search(
                 self._audit_dir / "declaration_check.jsonl",
                 query,
-                limit,
+                each_limit,
                 kind="declaration_check",
                 summary_keys=("consistent", "declarations", "discrepancies"),
                 content_key="answer_preview",
             )
+        if kind in {"change_log", "all"}:  # P2-6: 配置变更审计
+            results += _jsonl_search(
+                self._audit_dir / "change_log.jsonl",
+                query,
+                each_limit,
+                kind="change_log",
+                summary_keys=("key", "before", "after", "note"),
+            )
+        if kind in {"proc_versions", "all"}:  # P2-6: 进程版本记录
+            results += _jsonl_search(
+                self._audit_dir / "proc_versions.jsonl",
+                query,
+                each_limit,
+                kind="proc_versions",
+                summary_keys=("process", "version", "started_at"),
+                content_key="git_hash",
+            )
+        if kind in {"feishu_audit", "all"}:  # P2-6: 飞书消息审计
+            results += _jsonl_search(
+                self._audit_dir / "feishu_audit.jsonl",
+                query,
+                each_limit,
+                kind="feishu_audit",
+                summary_keys=("message_id", "sender_id", "action", "note"),
+                content_key="text",
+            )
         if kind == "all":
-            results += self._search_memory(query, limit)
-            results += self._search_archive(query, limit, session_id)
+            results += self._search_memory(query, each_limit)
+            results += self._search_archive(query, each_limit, session_id)
         return results[:limit]
 
     def _search_memory(self, query: str, limit: int) -> list[dict]:

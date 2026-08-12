@@ -158,7 +158,7 @@ class CorrectionToolRegistry:
             },
             {
                 "name": "search_records",
-                "description": "统一检索历史运行记录/记忆/压缩档案（可查可检索，不限于当前上下文）。何时用: 需要回溯动作轨迹/异常/修正记录/记忆/被压缩信息/演进建议/执行审计/自我评估/故障自愈/参数调整历史时。kind 可选: action_trace/exception_log/self_correction_log/declaration_check/memory/memory_extract/archive/selfheal/param_adjust/evolution/evolution_exec/self_eval/all。何时不用: 只查压缩档案用 search_archive；当前上下文已有信息不必检索。失败对策: 检索失败/无结果会如实返回，请调整 kind/关键词重试。",
+                "description": "统一检索历史运行记录/记忆/压缩档案（可查可检索，不限于当前上下文）。何时用: 需要回溯动作轨迹/异常/修正记录/记忆/被压缩信息/演进建议/执行审计/自我评估/故障自愈/参数调整/配置变更/进程版本/飞书审计时。kind 可选: action_trace/exception_log/self_correction_log/declaration_check/memory/memory_extract/archive/selfheal/param_adjust/evolution/evolution_exec/self_eval/change_log/proc_versions/feishu_audit/all。何时不用: 只查压缩档案用 search_archive；当前上下文已有信息不必检索。失败对策: 检索失败/无结果会如实返回，请调整 kind/关键词重试。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -177,6 +177,9 @@ class CorrectionToolRegistry:
                                 "evolution",
                                 "evolution_exec",
                                 "self_eval",
+                                "change_log",
+                                "proc_versions",
+                                "feishu_audit",
                                 "all",
                             ],
                         },
