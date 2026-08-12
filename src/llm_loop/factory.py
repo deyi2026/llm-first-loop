@@ -119,6 +119,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         archive_store=archive,  # T22: 超长工具结果另存
         exec_mode=settings.exec_mode,  # EVO-20260810-2549e9b6: EXEC_MODE 命令分级
         exec_allowlist=settings.exec_allowlist,
+        memory_store=memory,  # EVO-d78b270c: 经验驱动注入（M41 升级，失败回执检索经验库）
     )
     registry.register(ReadFileTool())
     # M51: 四段式文件修改（read→match→diff→apply+verify，替代 sed/heredoc 盲替换）
