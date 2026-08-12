@@ -289,3 +289,52 @@ def test_merge_dedupe():
     g2 = [{"title": "A2", "url": "u1"}, {"title": "C", "url": "u3"}]
     merged = _merge_dedupe([g1, g2], 10)
     assert [m["title"] for m in merged] == ["A", "B", "C"]
+
+
+# --- M49: bing 摘要提取 + SPA 内嵌 JSON 提取 ---
+
+def test_bing_snippet_extraction():
+    """M49: b_algo 块内 <p> 摘要被提取（供 LLM 预判相关性）."""
+    from llm_loop.tools.builtin.web_search import _search_bing
+
+    html = (
+        '<li class="b_algo"><h2><a href="https://a.com/x">标题A</a></h2>'
+        '<p>这是结果A的详细摘要描述，长度足够用于判断相关性，超过三十字阈值。</p></li>'
+        '<li class="b_algo"><h2><a href="https://b.com/y">标题B</a></h2></li>'
+    )
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.__enter__.return_value.get.return_value = _FakeResponse(200, html)
+        rs = _search_bing("q", 5, 5)
+    assert rs[0]["title"] == "标题A"
+    assert "详细摘要" in rs[0]["snippet"]
+    assert rs[1]["snippet"] == ""  # 无 <p> 摘要留空
+
+
+def test_web_fetch_embedded_json_extract():
+    """M49: SPA 内嵌 JSON（ld+json）正文提取，过滤 URL 噪声."""
+    from llm_loop.tools.builtin.web_fetch import _embedded_json_extract
+
+    raw = (
+        '<html><head><script type="application/ld+json">'
+        '{"@type":"WebPage","headline":"示例文章标题","description":"这是内嵌JSON中的正文内容，'
+        '长度足够超过过滤阈值，用于验证SPA数据提取路径是否正常工作并且完整返回。"}'
+        '</script></head><body><div id="app"></div></body></html>'
+    )
+    txt = _embedded_json_extract(raw)
+    assert "内嵌JSON" in txt
+    assert "https://" not in txt  # URL 噪声被过滤
+
+
+def test_web_fetch_embedded_json_noise_filter():
+    """M49: 纯 URL 字符串被过滤，不污染正文."""
+    from llm_loop.tools.builtin.web_fetch import _embedded_json_extract
+
+    raw = (
+        '<script type="application/ld+json">'
+        '{"image":"https://cdn.example.com/pic.png","text":"这是一段有意义的正文内容，'
+        '长度足够超过四十字阈值，应当被正常保留下来用于阅读判断。"}'
+        '</script>'
+    )
+    txt = _embedded_json_extract(raw)
+    assert "有意义" in txt
+    assert "pic.png" not in txt

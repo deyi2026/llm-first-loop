@@ -67,6 +67,80 @@ def _strip_tags(raw: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _embedded_json_extract(raw: str) -> str:
+    """SPA 内嵌 JSON 提取（M49）: Next.js __NEXT_DATA__ / Nuxt __NUXT__ / ld+json /
+    __INITIAL_STATE__ —— 正文常藏在 HTML 内嵌数据里，trafilatura 抓不到时兜底.
+
+    策略: 逐类提取 JSON → 递归收集字符串值（跳过 key/短碎片）→ 拼接正文。
+    返回 "" 表示无有效内容（降级链继续）。
+    """
+    import json
+
+    # 候选 JSON 块: (正则, 是否需 json.loads 校验)
+    patterns = [
+        (r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', True),
+        (r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', True),
+        (r'window\.__NUXT__\s*=\s*(.*?)</script>', False),
+        (r'window\.__INITIAL_STATE__\s*=\s*(.*?)</script>', False),
+    ]
+    texts: list[str] = []
+    for pat, need_json in patterns:
+        for m in re.finditer(pat, raw, re.S | re.I):
+            blob = m.group(1).strip()
+            if not blob:
+                continue
+            data = None
+            if need_json:
+                try:
+                    data = json.loads(blob)
+                except Exception:  # noqa: BLE001
+                    continue
+            if data is None:
+                # __NUXT__/__INITIAL_STATE__ 是 JS 对象，尝试 JSON 化后提取
+                try:
+                    import json5  # type: ignore[import-not-found]
+                except Exception:  # noqa: BLE001
+                    try:
+                        # 无 json5 时: 只提取可见字符串字面量（保守）
+                        strs = re.findall(r'"((?:[^"\\]|\\.){40,})"', blob)
+                        texts.extend(x for x in strs if len(x) > 40)
+                        continue
+                    except Exception:  # noqa: BLE001
+                        continue
+                try:
+                    data = json5.loads(blob)
+                except Exception:  # noqa: BLE001
+                    continue
+            texts.extend(_collect_json_strings(data))
+    # 去重保序 + 过滤噪声（排除纯 URL/图片链接/短碎片）
+    seen: set[str] = set()
+    out: list[str] = []
+    for t in texts:
+        t = _html.unescape(t).strip()
+        if len(t) < 40 or t in seen:
+            continue
+        if re.fullmatch(r"https?://\S+|\S+\.(?:png|jpe?g|svg|webp|gif|ico)", t, re.I):
+            continue
+        seen.add(t)
+        out.append(t)
+    return "\n\n".join(out)
+
+
+def _collect_json_strings(data) -> list[str]:
+    """递归收集 JSON 中的长字符串值（正文候选，跳过 key 与短碎片）."""
+    out: list[str] = []
+    if isinstance(data, str):
+        if len(data) >= 40:
+            out.append(data)
+    elif isinstance(data, dict):
+        for v in data.values():
+            out.extend(_collect_json_strings(v))
+    elif isinstance(data, list):
+        for v in data:
+            out.extend(_collect_json_strings(v))
+    return out
+
+
 def _extract_content(raw: str, url: str) -> tuple[str, str, str]:
     """正文提取降级链。返回 (method, title, text)."""
     title = _extract_title(raw)
@@ -81,6 +155,9 @@ def _extract_content(raw: str, url: str) -> tuple[str, str, str]:
     text = _density_extract(raw)
     if len(text) >= 50:
         return ("density", title, text)
+    text = _embedded_json_extract(raw)
+    if len(text) >= 50:
+        return ("embedded_json", title, text)
     return ("strip", title, _strip_tags(raw))
 
 
