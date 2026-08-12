@@ -1,7 +1,7 @@
 """T47: AI 规则一致性校验（FR-AUD-DOC-02）.
 
 docs/ai_rules.md 为唯一规则真相源，core/prompt.py 为其派生呈现。
-断言七条规则（RULE-AI-01~07）关键动作句双向包含，防漂移。
+断言十一条规则（RULE-AI-00~10）关键动作句双向包含，防漂移。
 """
 
 from __future__ import annotations
@@ -61,6 +61,23 @@ _RULE_KEYWORDS = {
         "前后值",  # 三要素①前后值说明要求（M25 强化）
         "从 5 调整为 15",  # 三要素①正例前后值具体化（M25 强化）
     ],
+    # RULE-AI-09: 模型切换自主（切前自查/带 reason/切后必验/诚实边界）
+    "RULE-AI-09": [
+        "模型切换自主",  # 规则编号名（SoT 标题 + prompt 注入段标题）
+        "model_catalog",  # 切前查目录
+        "切后必验",  # 切换后复查确认生效
+        "用户显式选择",  # 诚实边界（显式选择不自动降级）
+        "默认装配",  # 仅默认装配走 MODEL_FALLBACKS 链
+        "密钥不出域",  # 注册表只存 env 名，不回显 key
+    ],
+    # RULE-AI-10: 每轮自主检查清单（自我评估/演进待办/待审/窗口/思考链自知）
+    "RULE-AI-10": [
+        "每轮自主检查清单",  # 规则编号名（SoT 标题 + prompt 注入段标题）
+        "self_evaluate",  # 自我评估触发
+        "evolution_complete",  # 演进待办登记闭环
+        "model_window",  # 上下文窗口自查
+        "思考链自知",  # M66 思考链省略自知
+    ],
 }
 
 
@@ -83,12 +100,24 @@ def test_prompt_has_rule_numbers():
 
 
 def test_rules_consistent_both_sides():
-    """五条规则关键动作句在 ai_rules.md 与 prompt.py 双向包含（防漂移）."""
+    """十一条规则关键动作句在 ai_rules.md 与 prompt.py 双向包含（防漂移）."""
     doc = _read("docs/ai_rules.md")
     prompt = _read("src/llm_loop/core/prompt.py")
     for rule_id, keywords in _RULE_KEYWORDS.items():
-        # RULE-AI-06 含四子规则（M16 审计）/ RULE-AI-07/08 含程序角色+正反例（M22/M23）→ 更大窗口；其余规则 600 字符
-        window = 1600 if rule_id in {"RULE-AI-06", "RULE-AI-07", "RULE-AI-08"} else 600
+        # 长规则（多子规则/多要素/加长总纲）用更大窗口；其余规则 600 字符
+        window = (
+            1600
+            if rule_id
+            in {
+                "RULE-AI-00",
+                "RULE-AI-06",
+                "RULE-AI-07",
+                "RULE-AI-08",
+                "RULE-AI-09",
+                "RULE-AI-10",
+            }
+            else 600
+        )
         doc_section = doc[doc.find(rule_id) :][:window]
         prompt_section = prompt[prompt.find(rule_id) :][:window]
         for kw in keywords:

@@ -141,6 +141,39 @@ class SessionStore:
         self.save(session)
         return sid
 
+    # ── 跨端共享当前会话（Web/飞书同一上下文）──
+    _SHARED_SESSION_FILE = "shared_current_session.json"
+
+    def get_shared_current(self) -> str | None:
+        """读跨端共享当前会话（Web/飞书对称复用，fail-open）.
+
+        Returns:
+            共享当前 session_id（会话文件有效时）；无共享或会话已删返回 None。
+        """
+        p = self._dir.parent / self._SHARED_SESSION_FILE
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            sid = str(data.get("current", ""))
+            if sid and self.exists(sid):
+                return sid
+        except (OSError, json.JSONDecodeError, ValueError):
+            pass
+        return None
+
+    def set_shared_current(self, session_id: str) -> None:
+        """写跨端共享当前会话（原子写，fail-open 不阻断主链路）."""
+        p = self._dir.parent / self._SHARED_SESSION_FILE
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            tmp = p.with_suffix(".tmp")
+            tmp.write_text(
+                json.dumps({"current": session_id, "updated_at": _now()}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            tmp.replace(p)
+        except OSError:
+            pass  # fail-open（共享会话写入失败不阻断 Web/飞书主链路）
+
     def _path(self, session_id: str) -> Path:
         return self._dir / f"{session_id}.json"
 
@@ -157,10 +190,21 @@ class SessionStore:
             first_user = next((m for m in session.messages if m.role == "user"), None)
             if first_user is not None:
                 session.title = _make_title(first_user.content)
-        self._path(session.session_id).write_text(
-            json.dumps(session.to_dict(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        # 原子写（tmp+rename）：Web/飞书跨进程共享会话时防半写损坏/交错覆盖
+        p = self._path(session.session_id)
+        try:
+            tmp = p.with_suffix(".tmp")
+            tmp.write_text(
+                json.dumps(session.to_dict(), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            tmp.replace(p)
+        except OSError:
+            # 原子写失败回退直写（fail-open，尽力而为）
+            p.write_text(
+                json.dumps(session.to_dict(), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
 
     def rename(self, session_id: str, new_title: str) -> bool:
         """重命名会话标题（管理完善：手动设置可识别标题）.
@@ -203,7 +247,12 @@ class SessionStore:
                 channel=data.get("channel", "web"),
             )
         except (json.JSONDecodeError, KeyError, ValueError):
-            # 如实降级：文件损坏时返回新会话（不伪造恢复）
+            # 如实降级：文件损坏时备份原始文件（不覆盖丢数据），返回新会话（不伪造恢复）
+            try:
+                backup = p.with_suffix(".corrupt.json")
+                backup.write_text(p.read_text(encoding="utf-8"), encoding="utf-8")
+            except OSError:
+                pass  # 备份失败尽力而为
             return Session(session_id=session_id)
 
     def append(self, session_id: str, message: Message) -> None:

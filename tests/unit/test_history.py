@@ -173,9 +173,12 @@ def test_compression_archives_tool_pairs_atomic():
             i += 1
 
 
-# ── EVO-9794797e: 上下文压缩主动化 ──
-def test_history_compression_injects_summary():
-    """压缩发生时调用 summarizer 注入旧消息语义摘要（含来源标注 + 可检索指引）."""
+# ── EVO-9794797e + RULE-AI-00: 上下文压缩主动化 ──
+def test_history_compression_no_auto_llm_summary():
+    """RULE-AI-00: 压缩不再自动调用 summarizer 注入 LLM 摘要（AI 主动触发 search_archive）.
+
+    压缩标注 + 档案目录仍注入（"有什么可找"可见），原文仍完整另存。
+    """
     msgs = [
         Message(role="user", content=f"旧消息{i}内容" * 80, source=MessageSource.USER)
         for i in range(10)
@@ -202,9 +205,9 @@ def test_history_compression_injects_summary():
     )
     assert len(archived) >= 1  # 原文仍完整另存
     contents = [str(m.get("content", "")) for m in out]
-    assert any("上下文压缩摘要" in c for c in contents)
-    assert any("这是旧消息的语义摘要内容" in c for c in contents)
-    assert any("search_archive" in c for c in contents)
+    assert not any("上下文压缩摘要" in c for c in contents)  # 不再自动注入 LLM 摘要
+    assert not any("这是旧消息的语义摘要内容" in c for c in contents)
+    assert any("search_archive" in c for c in contents)  # 压缩标注仍注入
 
 
 def test_history_compression_summary_fail_open():
@@ -345,3 +348,31 @@ def test_archive_index_dir_lists_tool_results():
     contents = [str(m.get("content", "")) for m in out]
     dir_msg = next((c for c in contents if "压缩档案目录" in c), "")
     assert "read_file" in dir_msg  # 工具结果构成
+
+
+# ── RULE-AI-00 增强: 压缩注入确定性关键事实清单（零 LLM）──
+def test_compression_injects_deterministic_key_facts():
+    """压缩注入 [压缩关键事实]（规则提取含信号词的行，非 LLM 摘要）."""
+    msgs = [
+        Message(role="user", content="方案对比完成：选定方案 A 作为最终方案", source=MessageSource.USER),
+        Message(role="tool", content="read_file 成功，配置读取完成", source=MessageSource.TOOL),
+        Message(role="user", content="" * 500, source=MessageSource.USER),
+        Message(role="user", content="补充内容" * 200, source=MessageSource.USER),
+    ]
+    archived: list[Message] = []
+    sink = lambda sid, m: archived.append(m)  # noqa: E731
+
+    out = build_history_messages(
+        msgs,
+        system_prompt="SYS",
+        max_chars=800,
+        session_id="s1",
+        archive_sink=sink,
+        summarizer=None,
+    )
+    contents = [str(m.get("content", "")) for m in out]
+    facts_msg = next((c for c in contents if "压缩关键事实" in c), "")
+    assert "选定方案 A" in facts_msg  # 关键动作/结果被提取
+    assert "read_file 成功" in facts_msg  # 工具结果状态被提取
+    # 不注入 LLM 语义摘要
+    assert not any("上下文压缩摘要" in c for c in contents)

@@ -12,7 +12,7 @@ from llm_loop.core.message import ToolResult, ToolResultStatus
 
 SUBMIT_EVOLUTION_TOOL_DEF: dict = {
     "name": "submit_evolution",
-    "description": "提交架构演进建议（结构化落盘供人工审阅）。何时用: 通过 architecture_status/search_records/self_evaluate 发现架构改进机会时（如冗余工具/重复模式/效率建议）。注意: 涉安全边界/协议硬约束的建议仅提交等待人工决策，AI 不得自行执行。evidence 可引用评估 ID（格式 'eval:SE-...'，EVAL-05 双向溯源）。",
+    "description": "提交架构演进建议（结构化落盘供人工审阅）。何时用: 通过 architecture_status/search_records/self_evaluate 发现架构改进机会时（如冗余工具/重复模式/效率建议）。注意: 涉安全边界/协议硬约束的建议仅提交等待人工决策，AI 不得自行执行。evidence 可引用评估 ID（格式 'eval:SE-...'，EVAL-05 双向溯源）。何时不用: 无具体证据/影响范围的空泛建议不应提交。失败对策: 提交失败（必填 content 缺失）会如实返回，请补齐后重试。",
     "parameters": {
         "type": "object",
         "properties": {

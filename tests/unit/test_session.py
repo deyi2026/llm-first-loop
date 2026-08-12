@@ -288,3 +288,43 @@ def test_rename_session(tmp_path):
     assert store.load(sid).title == "我的会话"
     assert store.rename("no-such", "x") is False
     assert store.rename(sid, "   ") is False  # 空标题
+
+
+# ── 跨端共享当前会话（Web/飞书同一上下文）──
+def test_shared_current_roundtrip(tmp_path):
+    """set/get 共享当前会话（Web/飞书对称复用，fail-open）."""
+    store = _store(tmp_path)
+    assert store.get_shared_current() is None  # 初始无共享
+    sid = store.create()
+    store.set_shared_current(sid)
+    assert store.get_shared_current() == sid
+
+
+def test_shared_current_ignores_deleted_session(tmp_path):
+    """共享当前指向已删除会话 → 返回 None（下次新建）."""
+    store = _store(tmp_path)
+    sid = store.create()
+    store.set_shared_current(sid)
+    store.delete(sid)
+    assert store.get_shared_current() is None
+
+
+def test_shared_current_corrupt_file_fail_open(tmp_path):
+    """共享文件损坏 → get 返回 None（fail-open，不阻断）."""
+    store = _store(tmp_path)
+    p = tmp_path / "shared_current_session.json"
+    p.write_text("{broken", encoding="utf-8")
+    assert store.get_shared_current() is None
+
+
+def test_session_corrupt_file_backed_up(tmp_path):
+    """会话文件损坏 → load 备份为 .corrupt.json（不直接覆盖丢数据）+ 返回空会话."""
+    store = _store(tmp_path)
+    sid = "corrupt-session"
+    p = store._path(sid)  # noqa: SLF001 — 测试直写存储层
+    p.write_text("{broken json!!", encoding="utf-8")
+    sess = store.load(sid)
+    assert sess.session_id == sid  # fail-open 返回空会话
+    backup = tmp_path / "sessions" / "corrupt-session.corrupt.json"
+    assert backup.exists()  # 原始损坏已备份
+    assert "{broken json!!" in backup.read_text(encoding="utf-8")  # 备份保留原始内容

@@ -21,6 +21,14 @@ from typing import Any
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.introspection.status import ArchitectureStatusProvider
 
+# M16 拆分: submit_evolution / self_evaluate 工具定义（引自独立模块，避免重复维护）
+from llm_loop.introspection.tools_eval import (
+    SELF_EVALUATE_TOOL_DEF as _SELF_EVALUATE_TOOL_DEF,
+)
+from llm_loop.introspection.tools_evolution import (
+    SUBMIT_EVOLUTION_TOOL_DEF as _SUBMIT_EVOLUTION_TOOL_DEF,
+)
+
 # M17 FR-REVIEW-AI-01: evolution_complete 工具定义（引自独立模块，避免重复维护）
 from llm_loop.introspection.tools_exec_complete import (
     EVOLUTION_COMPLETE_TOOL_DEF as _EVOLUTION_COMPLETE_TOOL_DEF,
@@ -150,7 +158,7 @@ class CorrectionToolRegistry:
             },
             {
                 "name": "search_records",
-                "description": "统一检索历史运行记录/记忆/压缩档案（可查可检索，不限于当前上下文）。何时用: 需要回溯动作轨迹/异常/修正记录/记忆/被压缩信息/演进建议/执行审计/自我评估时。kind 可选: action_trace/exception_log/self_correction_log/declaration_check/memory/memory_extract/archive/evolution/evolution_exec/self_eval/all。何时不用: 只查压缩档案用 search_archive；当前上下文已有信息不必检索。失败对策: 检索失败/无结果会如实返回，请调整 kind/关键词重试。",
+                "description": "统一检索历史运行记录/记忆/压缩档案（可查可检索，不限于当前上下文）。何时用: 需要回溯动作轨迹/异常/修正记录/记忆/被压缩信息/演进建议/执行审计/自我评估/故障自愈/参数调整历史时。kind 可选: action_trace/exception_log/self_correction_log/declaration_check/memory/memory_extract/archive/selfheal/param_adjust/evolution/evolution_exec/self_eval/all。何时不用: 只查压缩档案用 search_archive；当前上下文已有信息不必检索。失败对策: 检索失败/无结果会如实返回，请调整 kind/关键词重试。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -164,6 +172,8 @@ class CorrectionToolRegistry:
                                 "memory",
                                 "memory_extract",
                                 "archive",
+                                "selfheal",
+                                "param_adjust",
                                 "evolution",
                                 "evolution_exec",
                                 "self_eval",
@@ -205,43 +215,9 @@ class CorrectionToolRegistry:
                     "required": ["tool_name", "arguments"],
                 },
             },
-            {
-                "name": "submit_evolution",
-                "description": "提交架构演进建议（结构化落盘供人工审阅）。何时用: 通过 architecture_status/search_records/self_evaluate 发现架构改进机会时（如冗余工具/重复模式/效率建议）。注意: 涉安全边界/协议硬约束的建议仅提交等待人工决策，AI 不得自行执行。evidence 可引用评估 ID（格式 'eval:SE-...'，EVAL-05 双向溯源）。何时不用: 无具体证据/影响范围的空泛建议不应提交。失败对策: 提交失败（必填 content 缺失）会如实返回，请补齐后重试。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "content": {
-                            "type": "string",
-                            "description": "建议内容（改进点 + 期望效果）",
-                        },
-                        "evidence": {
-                            "type": "string",
-                            "description": "证据（架构状态/检索结果/观察；可引用评估 ID 'eval:SE-...'）",
-                        },
-                        "impact_scope": {
-                            "type": "string",
-                            "description": "影响范围（文件/模块/行为）",
-                        },
-                        "priority": {"type": "string", "enum": ["high", "medium", "low"]},
-                    },
-                    "required": ["content"],
-                },
-            },
-            {
-                "name": "self_evaluate",
-                "description": "主动发起自我评估（五维指标: 成功率/工具效率/诚实性/停滞率/异常率，来源可溯）。何时用: 发现运行异常/完成阶段性任务/希望沉淀经验时。评估结果落盘可检索（search_records kind=self_eval），可基于评估结果 submit_evolution 提交改进建议（evidence 引用 'eval:<评估ID>'）。何时不用: 仅需查状态用 architecture_status；无需评估时不必调用（评估有成本）。失败对策: 样本不足时结果会标注“样本不足”，请基于现有数据解读，不强行下结论。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "trigger": {
-                            "type": "string",
-                            "enum": ["periodic", "milestone", "anomaly", "manual"],
-                            "description": "触发原因（默认 manual）",
-                        }
-                    },
-                },
-            },
+            # M16 拆分: submit_evolution / self_evaluate 工具定义（引自独立模块，避免重复维护）
+            _SUBMIT_EVOLUTION_TOOL_DEF,
+            _SELF_EVALUATE_TOOL_DEF,
             {
                 "name": "refresh_config",
                 "description": "重载程序自身配置（配置文件/环境变量）。何时用: 配置文件/环境变量变更后需要生效时。何时不用: 需要调整运行参数（max_iterations 等白名单）用 adjust_strategy；未变更配置时无需重载。失败对策: 重载失败会如实返回原因，程序保持旧配置继续运行，请核对配置后重试。",

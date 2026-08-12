@@ -11,7 +11,7 @@ from llm_loop.core.message import ToolResult, ToolResultStatus
 
 SELF_EVALUATE_TOOL_DEF: dict = {
     "name": "self_evaluate",
-    "description": "主动发起自我评估（五维指标: 成功率/工具效率/诚实性/停滞率/异常率，来源可溯）。何时用: 发现运行异常/完成阶段性任务/希望沉淀经验时。评估结果落盘可检索（search_records kind=self_eval），可基于评估结果 submit_evolution 提交改进建议（evidence 引用 'eval:<评估ID>'）。",
+    "description": "主动发起自我评估（五维指标: 成功率/工具效率/诚实性/停滞率/异常率，来源可溯）。何时用: 发现运行异常/完成阶段性任务/希望沉淀经验时。评估结果落盘可检索（search_records kind=self_eval），可基于评估结果 submit_evolution 提交改进建议（evidence 引用 'eval:<评估ID>'）。何时不用: 仅需查状态用 architecture_status；无需评估时不必调用（评估有成本）。失败对策: 样本不足时结果会标注“样本不足”，请基于现有数据解读，不强行下结论。",
     "parameters": {
         "type": "object",
         "properties": {
