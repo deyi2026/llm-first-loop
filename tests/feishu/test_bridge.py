@@ -423,3 +423,119 @@ def test_worker_message_delivery():
         assert [r["header"]["event_id"] for r in received] == [f"evt_del_{i}" for i in range(4)]
     finally:
         _stop_worker(connector)
+
+
+# ── P1-3-R2: 优雅退出 drain 时间预算 ──
+
+
+def test_worker_drain_all_completed():
+    """P1-3-R2: 预算充足 → 哨兵 drain 处理完剩余全部消息（不丢已完成回复）."""
+    import threading
+    import time
+
+    import llm_loop.feishu.bridge as br
+
+    received: list[str] = []
+    connector = br._WsConnector(
+        config=_cfg(),
+        on_message=lambda p: received.append(p["header"]["event_id"]),
+        has_token=lambda: True,
+        ws_client_factory=lambda eh: object(),
+        sleep=lambda s: None,
+    )
+    connector._msg_queue = __import__("queue").Queue(maxsize=16)
+    connector._worker_thread = threading.Thread(
+        target=connector._worker_loop, name="test-drain", daemon=True
+    )
+    connector._worker_thread.start()
+    try:
+        for i in range(5):
+            connector._submit_message({"header": {"event_id": f"evt_drain_{i}"}, "event": {}})
+        deadline = time.time() + 2.0
+        while time.time() < deadline and len(received) < 5:
+            time.sleep(0.01)
+        connector._msg_queue.put_nowait(None)  # 哨兵 → drain
+        connector._worker_thread.join(timeout=5)
+        assert len(received) == 5  # 全部处理完成
+    finally:
+        if connector._worker_thread.is_alive():
+            connector._worker_thread.join(timeout=5)
+
+
+def test_worker_drain_bounded():
+    """P1-3-R2: 慢处理 + 积压 → drain 在预算内结束且 WARNING 含积压量（不无限拖住退出）."""
+    import threading
+    import time
+    import unittest.mock as _mock
+
+    import llm_loop.feishu.bridge as br
+
+    connector = br._WsConnector(
+        config=_cfg(),
+        on_message=lambda p: time.sleep(0.3),  # 慢处理（远超 drain 预算）
+        has_token=lambda: True,
+        ws_client_factory=lambda eh: object(),
+        sleep=lambda s: None,
+    )
+    connector._msg_queue = __import__("queue").Queue(maxsize=16)
+    connector._worker_thread = threading.Thread(
+        target=connector._worker_loop, name="test-drain-bounded", daemon=True
+    )
+    connector._worker_thread.start()
+    monkeypatch_backup = br._DRAIN_BUDGET_S
+    br._DRAIN_BUDGET_S = 0.2
+    try:
+        # 第 1 条慢消息开始处理 → 哨兵 + 2 条积压入队（哨兵在队列中排队）
+        connector._submit_message({"header": {"event_id": "evt_slow_0"}, "event": {}})
+        time.sleep(0.05)  # worker 已取走第一条开始处理
+        connector._msg_queue.put_nowait(None)  # 哨兵
+        connector._submit_message({"header": {"event_id": "evt_slow_1"}, "event": {}})
+        connector._submit_message({"header": {"event_id": "evt_slow_2"}, "event": {}})
+        with _mock.patch("llm_loop.feishu.bridge.logger.warning") as warn:
+            connector._worker_thread.join(timeout=5)
+        assert any("drain 超时" in str(c.args[0]) for c in warn.call_args_list)
+    finally:
+        br._DRAIN_BUDGET_S = monkeypatch_backup
+        if connector._worker_thread.is_alive():
+            connector._worker_thread.join(timeout=5)
+
+
+# ── P1-3-R3: 主链路活性观测 ──
+
+
+def test_message_ts_updated_on_submit():
+    """P1-3-R3: _submit_message 成功后 _last_message_ts 更新为真实时刻."""
+    import time
+
+    from llm_loop.feishu.bridge import _WsConnector
+
+    connector = _WsConnector(
+        config=_cfg(), on_message=lambda p: None, has_token=lambda: True
+    )
+    assert connector._last_message_ts is None
+    before = time.time()
+    connector._submit_message({"header": {"event_id": "evt_ts"}, "event": {}})
+    assert connector._last_message_ts is not None
+    assert connector._last_message_ts >= before
+
+
+def test_processing_ts_updated():
+    """P1-3-R3: 处理期间 _processing_msg_id/_processing_since 非空，完成后清空 + last_processed 更新."""
+
+    from llm_loop.feishu.bridge import _WsConnector
+
+    done = []
+
+    def _slow(payload):
+        done.append(connector._processing_msg_id)
+        done.append(connector._processing_since is not None)
+
+    connector = _WsConnector(
+        config=_cfg(), on_message=_slow, has_token=lambda: True
+    )
+    connector._safe_handle_message({"header": {"event_id": "evt_p"}, "event": {}})
+    assert done[0] == "evt_p"  # 处理中 msg_id 可见
+    assert done[1] is True  # 处理中 since 可见
+    assert connector._processing_msg_id == ""  # 完成后清空
+    assert connector._processing_since is None
+    assert connector._last_processed_ts is not None

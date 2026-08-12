@@ -31,3 +31,13 @@ def test_uses_heartbeat_mtime_not_tcp():
     # 不再依赖 WS_HOST 连接判定（仅注释提及历史移除说明）
     assert 'WS_HOST="' not in text
     assert 'grep "TCP' not in text
+
+
+def test_restart_system_injects_exit_env():
+    """P1-3-R2: restart_system.sh/restart_feishu.sh feishu 启动路径注入退出时间契约 env."""
+    system_script = _SCRIPT.parents[1] / "scripts" / "restart_system.sh"
+    feishu_script = _SCRIPT.parents[1] / "scripts" / "restart_feishu.sh"
+    for script in (system_script, feishu_script):
+        text = script.read_text(encoding="utf-8")
+        assert "FEISHU_EXIT_WAIT_S" in text
+        assert "FEISHU_EXIT_DRAIN_S" in text

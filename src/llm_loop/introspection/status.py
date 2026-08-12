@@ -97,6 +97,8 @@ class ArchitectureStatusProvider:
         self._llm_rounds = 0
         # M49（design §5.4）: 当前降级状态（None = 未处于降级; dict = 最近一次降级）
         self._fallback_state: dict | None = None
+        # T4（spec.md 5.3.1）: 待办聚合回调（纯聚合无判断，AI 一站式感知系统待办）
+        self._pending_actions_fn: Callable[[], dict] | None = None
 
     # ── 采集（循环事件附带调用，零侵入）──
     def record_phase(self, phase: str) -> None:
@@ -234,6 +236,27 @@ class ArchitectureStatusProvider:
             "ts": st.get("ts"),
         }
 
+    def _pending_actions(self) -> dict:
+        """T4: 待办聚合（纯聚合无判断，spec.md 5.3.1 / design.md §2.2.2.2）.
+
+        回调注入 → 调用回调返回聚合 dict（计数 + hint，无决策）；
+        未注入 → {"note": "数据源未注入"}（向后兼容）；
+        回调异常 → 计数字段 null + note 标注原因（fail-open 不伪造 0）。
+        """
+        fn = getattr(self, "_pending_actions_fn", None)
+        if fn is None:
+            return {"note": "数据源未注入"}
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001 — 聚合失败如实标注（fail-open）
+            return {
+                "executing_evolutions": None,
+                "pending_reviews": None,
+                "pending_self_evals": None,
+                "hint": None,
+                "note": f"待办聚合失败（{type(exc).__name__}: {exc}）",
+            }
+
     # ── 查询（拉取通道）──
     def set_model_context_fn(self, fn) -> None:
         """注入当前模型窗口查询回调（M56 B5：AI 可查窗口后自主决策压缩）.
@@ -257,6 +280,15 @@ class ArchitectureStatusProvider:
         fn() -> dict | None；未注入 → snapshot 中 breakdown 为 None（向后兼容）。
         """
         self._context_breakdown_fn = fn
+
+    def set_pending_actions_fn(self, fn) -> None:
+        """注入待办聚合回调（T4: AI 一站式感知系统待办，纯聚合无判断）.
+
+        fn() -> dict，如 {"executing_evolutions": 2, "pending_reviews": 1,
+        "pending_self_evals": 0, "hint": "...", "note": None}；
+        未注入 → snapshot 中 pending_actions 为 {"note": "数据源未注入"}（向后兼容）。
+        """
+        self._pending_actions_fn = fn
 
     def snapshot(self, session_id: str = "", dimensions: list[str] | None = None) -> dict:
         """构造八维状态快照（紧凑 JSON，维度可按需裁剪）.
@@ -316,6 +348,8 @@ class ArchitectureStatusProvider:
             "process_versions": self._process_versions(),  # EVO-20260811-f94e5306
             # M49（design §5.4）: 当前降级状态（有则显示，含 from/to/reason/ts; 无则全 None）
             "model_fallback": self._fallback_status(),
+            # T4（spec.md 5.3.1）: 待办聚合（纯聚合无判断，AI 一站式感知系统待办）
+            "pending_actions": self._pending_actions(),
         }
         if dimensions:
             out: dict = {}

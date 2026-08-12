@@ -17,6 +17,7 @@ docs/ 目录共 **26 个 Markdown 文档**，分四类：
 **导航方式**：按报告名 glob（`docs/mNN_*.md`）或经本索引 spec 章节映射直达。
 
 ## 二、报告清单
+| ASSESSMENT-20260813-ai-first-evolution.md | AI 优先演进整体评估报告（四维+RULE-AI-00 对照，20260813） | 评估 | §5.1 |
 
 | # | 文件 | 一句话摘要 | 类型 | spec 章节 |
 |:--:|:---|:---|:---|:---|
@@ -102,5 +103,58 @@ docs/ 目录共 **26 个 Markdown 文档**，分四类：
 - 本索引全部条目引自 docs/ 既有文档（26 文件标题/摘要 + spec §1-§30 章节号 + playbook 1.1-4.3 小节），**不引入新数据**（FR-IDX-TRC-01）。
 - 驱动来源：docs/m34_ux_revisit_report.md §八（建议 1 内容设计）+ §九（拍板结果记录，M35 立项）——引用非改写。
 - 如本索引与源文档不一致，**以源文档为准**（内容如实，不夸大导航收益）。
+
+## 七、AI 视角快速索引（T4，spec.md 5.3.1）
+
+> AI 或人类经本索引可 1 步直达 AI 能力/工具/规则/自检路径，无需遍历源码。
+
+### 能力清单（AI 能做什么）
+
+| 能力 | 说明 |
+|:---|:---|
+| 自主决策 | 压缩/重试/摘要/模型切换等决策权归 AI（RULE-AI-00 P1） |
+| 自主压缩 | 经 search_archive(with_summary=true) 主动压缩（程序不自动注入） |
+| 自主切换 | switch_model 切模型（带 reason 审计） |
+| 自主调整 | adjust_strategy 调白名单参数（max_iterations/timeout_s 等） |
+| 自主继续 | 收到截断标注后新建会话或调整 prompt 继续 |
+| 自主自检 | self_evaluate 五维自我评估（成功率/工具效率/诚实性/停滞率/异常率） |
+
+### 工具清单（程序提供什么）
+
+| 工具 | 角色 |
+|:---|:---|
+| architecture_status | 感官：查循环阶段/动作轨迹/工具历史/异常/配置/pending_actions |
+| adjust_strategy | 手脚：调白名单参数 |
+| retry_tool | 手脚：重试工具 |
+| refresh_config | 手脚：重读配置 |
+| search_records | 感官：检索历史记录/记忆/档案 |
+| search_archive | 感官：检索压缩档案（含 with_summary） |
+| switch_model | 手脚：切换模型 |
+| submit_evolution / evolution_complete | 手脚：提交/登记演进建议 |
+| self_evaluate | 手脚：发起自我评估 |
+
+### 规则清单（大脑约束，docs/ai_rules.md SoT）
+
+| 规则 | 一句话陈述 |
+|:---|:---|
+| RULE-AI-00 | AI 优先总纲：程序是感官和手脚，非大脑，不替 AI 决策 |
+| RULE-AI-01 | 诚实自查：回答前对照回执如实声明 |
+| RULE-AI-02 | 工具参数自主规范：调用前核对参数 |
+| RULE-AI-03 | 停滞自主调整：重复动作时主动换策略 |
+| RULE-AI-04 | 程序故障处理：收到[程序异常]基于现有上下文继续 |
+| RULE-AI-05 | 记忆沉淀：值得记住的信息附带[[memory]]块 |
+| RULE-AI-06 | 架构演进与自我评估：发现改进机会提交建议 |
+| RULE-AI-07 | 工具优先执行：所需信息仅存工具结果时先调用工具 |
+
+### 自检路径（感知→决策→执行→验证）
+
+```
+architecture_status（感知状态，含 pending_actions）
+  → 发现异常/待办
+  → adjust_strategy / retry_tool / refresh_config / switch_model（自主决策执行）
+  → architecture_status（复查确认异常已处理）
+```
+
+---
 
 *（docs/ 文档导航索引 v1.0 完——M35 docs/INDEX.md 文档导航文件）*

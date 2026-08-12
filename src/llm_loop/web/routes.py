@@ -7,6 +7,7 @@
 import asyncio
 import json
 import logging
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,21 @@ def _engine_from(request: Request) -> Any:
     return request.app.state.engine
 
 
+_locks_guard = threading.Lock()
+_LOCK_TIMEOUT_S = 30
+
+
+def _get_session_lock(request: Request, session_id: str) -> threading.Lock | None:
+    """T5.1: 获取会话级并发锁（未启用返回 None，向后兼容，spec.md 5.4.1）."""
+    locks = getattr(request.app.state, "session_locks", None)
+    if locks is None:
+        return None
+    with _locks_guard:
+        if session_id not in locks:
+            locks[session_id] = threading.Lock()
+        return locks[session_id]
+
+
 @router.post(
     "/api/v1/chat",
     response_model=ChatResponse,
@@ -62,6 +78,17 @@ def chat(
     M56：飞书来源会话在回复后经 background task 实时推送回飞书（不阻塞响应）。
     """
     engine = _engine_from(request)
+
+    # T5.2: 超长输入前置校验（不创建会话、不写入审计、不消耗 LLM 配额，spec.md 5.4.1）
+    input_max = getattr(engine.settings, "history_max_chars", 1000000)
+    if len(payload.message) > input_max:
+        return UTF8JSONResponse(
+            status_code=413,
+            content={
+                "error": "input_too_long",
+                "detail": f"输入超长（{len(payload.message)} > {input_max}），请缩短后重试或新建会话。",
+            },
+        )
 
     if payload.session_id is not None:
         if not engine.session.exists(payload.session_id):
@@ -83,6 +110,16 @@ def chat(
             session_id = engine.session.create()
             engine.session.set_shared_current(session_id)
 
+    # T5.1: 会话级并发锁（同会话串行，不同会话并行，spec.md 5.4.1）
+    lock = _get_session_lock(request, session_id)
+    acquired = False
+    if lock is not None and not lock.acquire(timeout=_LOCK_TIMEOUT_S):
+        return UTF8JSONResponse(
+            status_code=503,
+            content={"error": "session_busy", "detail": "会话繁忙，请稍后重试"},
+        )
+    if lock is not None:
+        acquired = True
     try:
         result = engine.run(session_id, payload.message, model=payload.model)
     except Exception as exc:  # 如实反馈不静默降级（对齐 PREFERENCE_1）
@@ -94,6 +131,9 @@ def chat(
                 "detail": f"[程序异常] 引擎执行失败（{type(exc).__name__}: {exc}）。",
             },
         )
+    finally:
+        if acquired and lock is not None:
+            lock.release()
 
     # M56：飞书来源会话 → 后台推送用户消息 + 回答到飞书（fail-open 不阻断响应）
     try:
