@@ -106,6 +106,10 @@ class ToolResult:
     error_detail: str | None = None  # 完整错误描述（类型+原因+上下文）
     partial_output: str | None = None  # 超时时的部分结果（TIMEOUT 时）
     duration_ms: float = 0.0
+    # EVO-d78b270c: 经验驱动注入（M41 升级）——registry 失败时按错误关键词检索
+    # MemoryStore，命中 procedure 经验条目的【已验解法】段写入此字段，tool 消息带出。
+    # 默认空串 = 零回归（无经验库/未命中时行为与旧版完全一致）。
+    guidance_extra: str = ""
 
     def to_message(self) -> Message:
         """构造为 tool 消息（如实承载状态，AI 视角：状态结构化呈现）.

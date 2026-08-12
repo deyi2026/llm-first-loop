@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 import traceback
@@ -32,6 +33,9 @@ class ToolRegistry:
         summary_threshold: int = 5000,
         archive_store: Any | None = None,
         failure_guidance_enabled: bool = True,
+        # EVO-d78b270c: 经验库（MemoryStore）注入——失败回执按错误关键词检索
+        # procedure 经验条目，命中则注入【已验解法】段（None = 无经验库，零回归）
+        memory_store: Any | None = None,
         # EVO-20260810-2549e9b6: EXEC_MODE 命令分级（默认空 = 不启用，生产由 factory 显式装配 blocked）
         exec_mode: str = "",
         exec_allowlist: str = "",
@@ -43,6 +47,7 @@ class ToolRegistry:
         self.max_output_chars = max_output_chars
         self.summary_threshold = summary_threshold
         self.failure_guidance_enabled = failure_guidance_enabled
+        self._memory_store = memory_store  # EVO-d78b270c: 经验库（fail-open 零回归）
         self.exec_mode = exec_mode  # readonly/allowlist/blocked（空 = 不启用分级）
         self.exec_allowlist = [s.strip() for s in (exec_allowlist or "").split(",") if s.strip()]
         self._pre_execute_hooks: list[PreExecuteHook] = []
@@ -268,13 +273,67 @@ class ToolRegistry:
     def _result(
         self, status: ToolResultStatus, call: ToolCall, content: str, *, duration_ms: float
     ) -> ToolResult:
-        return ToolResult(
+        result = ToolResult(
             status=status,
             content=content,
             tool_call_id=call.id,
             tool_name=call.name,
             duration_ms=duration_ms,
         )
+        # EVO-d78b270c: 失败/异常/超时 → 经验驱动注入（命中 procedure 已验解法）
+        if status in (ToolResultStatus.FAILURE, ToolResultStatus.ERROR, ToolResultStatus.TIMEOUT):
+            result.guidance_extra = self._inject_experience_guidance(result)
+        return result
+
+    def _inject_experience_guidance(self, result: ToolResult) -> str:
+        """按错误关键词检索经验库，命中 procedure 条目则提取【已验解法】段.
+
+        fail-open: 无经验库/检索异常/未命中 → 返回空串（零回归，默认模板照常）。
+        """
+        store = self._memory_store
+        if store is None or not result.content:
+            return ""
+        # 错误关键词: tool_name + error_detail/content 分词（2-40 字符有效词）
+        _sep_re = re.compile(r"[\\s,;:：，。；、/|()\"'\[\]]+")
+        kws: list[str] = []
+        if result.tool_name:
+            kws.append(result.tool_name)
+        detail = result.error_detail or result.content or ""
+        for tok in re.split(_sep_re, detail):
+            tok = tok.strip()
+            if 2 <= len(tok) <= 40:
+                kws.append(tok)
+        if len(kws) < 2:
+            return ""
+        try:
+            hits = store.search(kws, top_k=3)
+        except Exception:  # noqa: BLE001 — 经验检索失败降级默认模板
+            return ""
+        for h in hits:
+            content = str(getattr(h, "content", "") or "")
+            if getattr(h, "type", "") == "procedure" and "已验解法" in content:
+                solution = self._extract_solution_section(content)
+                if solution:
+                    return f"[经验参考] {solution}"
+        return ""
+
+    @staticmethod
+    def _extract_solution_section(content: str) -> str:
+        """提取 procedure 条目的【已验解法】段（到 实证/反例/触发标签 前的正文）."""
+        marker = "已验解法"
+        idx = content.find(marker)
+        if idx < 0:
+            return ""
+        start = idx + len(marker)
+        # 跳过冒号与空白
+        while start < len(content) and content[start] in ":： \n\t":
+            start += 1
+        end = len(content)
+        for stop in ("\n实证", "\n反例", "\n触发标签"):
+            pos = content.find(stop, start)
+            if pos != -1:
+                end = min(end, pos)
+        return content[start:end].strip()
 
     @staticmethod
     def _summarize_output(full: str, head_chars: int = 600, tail_chars: int = 600) -> str:
@@ -401,6 +460,9 @@ def tool_result_to_message(result: ToolResult, *, failure_guidance_enabled: bool
     )
     if failure_guidance_enabled and result.status and result.status.value in _FAILURE_GUIDANCE:
         content += "\n" + _FAILURE_GUIDANCE[result.status.value]
+    # EVO-d78b270c: 经验驱动注入（独立于默认模板；开启引导时带出，未命中为空串零回归）
+    if failure_guidance_enabled and result.guidance_extra:
+        content += "\n" + result.guidance_extra
     return Message(
         role="tool",
         content=content,
