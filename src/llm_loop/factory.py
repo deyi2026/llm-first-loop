@@ -22,9 +22,11 @@ from llm_loop.introspection.status import ArchitectureStatusProvider
 from llm_loop.llm.client import LLMClient
 from llm_loop.memory.archive import ArchiveStore
 from llm_loop.memory.store import MemoryStore
+from llm_loop.subagent.runner import SubAgentRunner
 from llm_loop.tools.builtin.edit_file import EditFileTool
 from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
 from llm_loop.tools.builtin.read_file import ReadFileTool
+from llm_loop.tools.builtin.spawn_subagent import SpawnSubAgentTool
 from llm_loop.tools.builtin.web_fetch import WebFetchTool
 from llm_loop.tools.builtin.web_search import WebSearchTool
 from llm_loop.tools.registry import ToolRegistry
@@ -362,6 +364,14 @@ def build_engine(settings: Settings) -> LoopEngine:
     install_refresh_executor(engine)
     # R1: 上下文占用分解注入 architecture_status（AI 每轮可见，自主决策压缩/切换）
     status_provider.set_context_breakdown_fn(lambda: getattr(engine, "_last_breakdown", None))
+
+    # EVO 第五项: 递归子代理（参考 OpenRSI 四算子 + 执行反馈）— 独立会话隔离 + 受限工具 + 深度/预算边界
+    subagent_runner = SubAgentRunner(
+        llm=llm,
+        registry=registry,
+        session_store=session_store,
+    )
+    registry.register(SpawnSubAgentTool(subagent_runner))
     return engine
 
 
