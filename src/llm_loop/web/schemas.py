@@ -39,6 +39,8 @@ class SessionMetaItem(BaseModel):
     message_count: int
     status: str
     last_message_preview: str = ""
+    pinned: bool = False   # M56: 置顶（Web 端列表置顶优先）
+    channel: str = "web"   # M56: 来源通道（web / feishu:p2p:* / feishu:group:*）
 
 
 class SessionListResponse(BaseModel):

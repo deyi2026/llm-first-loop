@@ -53,7 +53,7 @@ def test_record_change_log(tmp_path, monkeypatch):
     record_change_log("execute_command", "echo test", session_id="s1")
     path = tmp_path / "audit" / "change_log.jsonl"
     assert path.exists()
-    records = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert len(records) == 1
     assert records[0]["tool"] == "execute_command"
     assert records[0]["session_id"] == "s1"
@@ -62,10 +62,39 @@ def test_record_change_log(tmp_path, monkeypatch):
 
 def test_fail_open_on_bad_env(tmp_path, monkeypatch):
     """DATA_DIR 不可写 → 记录 fail-open（不抛异常）."""
-    import os
 
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "nonexistent" / "deep"))
     record_process_start("svc")  # 不应抛异常
     record_change_log("execute_command", "x")  # 不应抛异常
     # 子目录不存在时 _audit_dir().mkdir(parents=True) 会创建 → 仍写入
     assert (tmp_path / "nonexistent" / "deep" / "audit").exists()
+
+
+# ── M65: EVO-20260811-a30732d9 验证闭环（workspace_dirty 检测）──
+
+
+def test_workspace_dirty_non_git_false(tmp_path, monkeypatch):
+    """非 git 目录 → workspace_dirty 如实降级 False（不阻断）."""
+    monkeypatch.chdir(tmp_path)  # tmp_path 非 git 仓库
+    assert proc_version.workspace_dirty() is False
+    assert proc_version.workspace_diff_summary() == ""
+
+
+def test_workspace_dirty_clean_and_dirty(tmp_path, monkeypatch):
+    """git 仓库 clean → False；新增未提交文件 → True + 摘要非空."""
+    import subprocess
+
+    r = subprocess.run(["git", "init", "-q", str(tmp_path)], capture_output=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"git init 失败: {r.stderr.decode()}")
+    monkeypatch.chdir(tmp_path)
+    subprocess.run(["git", "config", "user.email", "t@t"], capture_output=True)
+    subprocess.run(["git", "config", "user.name", "t"], capture_output=True)
+
+    # clean（无任何文件也视为 clean：无未提交改动）
+    assert proc_version.workspace_dirty() is False
+
+    # dirty：新建未提交文件
+    (tmp_path / "dirty.txt").write_text("x", encoding="utf-8")
+    assert proc_version.workspace_dirty() is True
+    assert "dirty.txt" in proc_version.workspace_diff_summary()

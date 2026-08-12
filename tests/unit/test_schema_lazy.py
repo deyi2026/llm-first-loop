@@ -6,7 +6,7 @@ lazy 索引（体积最小） / 默认全量零回归 / get_tool_schema 按需�
 
 import json
 
-from llm_loop.core.message import ToolCall, ToolResultStatus
+from llm_loop.core.message import ToolResultStatus
 from llm_loop.tools.registry import GetToolSchemaTool, ToolRegistry
 
 

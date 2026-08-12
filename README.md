@@ -81,6 +81,11 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 | `SELF_EVAL_REMIND_ENABLED` | 1 | 触发提醒开关（仅提示不强制） |
 | `SELF_EVAL_INTERVAL_ROUNDS` / `SELF_EVAL_MIN_SAMPLES` / `SELF_EVAL_SPAN` | 50/5/50 | 定期触发间隔/样本不足阈值/聚合窗口 |
 | `SYSTEM_PROMPT_EXTRA` | — | 叠加自定义 AI 规则（程序最小化，无需改代码） |
+| `HISTORY_MAX_CHARS` | 1000000 | 提交给 LLM 的历史上下文预算（字符）。**建议按模型窗口调低**（如 80000）——预算过高会导致上下文膨胀超限，所有模型调用失败/超时 |
+| `MODEL_FALLBACKS` | 空 | 降级链（逗号分隔 `provider/model`，如 `deepseek/deepseek-v4-flash,local/qwen3.6-27b-fable-fusion-711-uncensored-heretic-nm-dau-neo-max-mtp`）；空=不启用降级 |
+
+> **配置加载（M63）**：CLI / Web / 飞书 三端统一从项目 `.env` 加载（环境变量优先）。
+> 修改 `.env` 后：CLI 直接生效；web/feishu 执行 `bash scripts/restart_system.sh restart` 一键重启。
 
 ## 文档
 

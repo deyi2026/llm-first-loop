@@ -157,6 +157,53 @@ html, body {
   color: #f87171;
 }
 
+/* M56 置顶按钮 + 来源标签 */
+.session-pin {
+  float: right;
+  border: none;
+  background: transparent;
+  color: #8a94a6;
+  font-size: 13px;
+  cursor: pointer;
+  display: none;
+  padding: 0 2px;
+  line-height: 1.2;
+}
+
+.session-item:hover .session-pin {
+  display: inline;
+}
+
+.session-pin:hover {
+  color: #fbbf24;
+}
+
+.session-pin.pinned {
+  display: inline;
+  color: #fbbf24;
+}
+
+.session-item.active .session-pin.pinned {
+  color: #fde68a;
+}
+
+.session-channel {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 4px;
+  font-size: 10px;
+  line-height: 1.5;
+  border-radius: 3px;
+  background: rgba(147, 197, 253, 0.2);
+  color: #93c5fd;
+  vertical-align: middle;
+}
+
+.session-item.active .session-channel {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
 /* ---------- 右侧聊天区 ---------- */
 #chat-area {
   flex: 1;

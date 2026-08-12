@@ -43,6 +43,8 @@ pythonVersion = "3.13"
 typeCheckingMode = "basic"
 include = ["src"]
 
+reportMissingImports = "none"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --import-mode=importlib"

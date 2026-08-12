@@ -228,3 +228,96 @@ def test_list_models_endpoint(build_test_engine, fake_settings):
     assert "models" in body and body["models"]
     assert body["current"] in body["models"]
     assert len(fake.calls) == 0  # 不调 LLM
+
+
+# ── M56 Web/飞书会话同步：置顶 + 来源 + SSE + 飞书推送 ──
+
+
+def test_session_pin_endpoint(build_test_engine, fake_settings):
+    """POST /api/v1/sessions/{id}/pin?pinned=true 置顶；列表 pinned=True 且置顶优先."""
+    engine, _ = build_test_engine([{"content": "a"}, {"content": "b"}])
+    client = _make_client(engine)
+    client.post("/api/v1/chat", json={"message": "a"})
+    sid_b = client.post("/api/v1/chat", json={"message": "b"}).json()["session_id"]
+    # 置顶 b（后创建的 b 本来排在前面；置顶后仍第一）
+    resp = client.post(f"/api/v1/sessions/{sid_b}/pin?pinned=true")
+    assert resp.status_code == 200
+    assert resp.json()["pinned"] is True
+    sessions = client.get("/api/v1/sessions").json()["sessions"]
+    assert sessions[0]["session_id"] == sid_b and sessions[0]["pinned"] is True
+    # 取消置顶
+    resp = client.post(f"/api/v1/sessions/{sid_b}/pin?pinned=false")
+    assert resp.status_code == 200
+    sessions = client.get("/api/v1/sessions").json()["sessions"]
+    assert sessions[0]["pinned"] is False
+
+
+def test_session_pin_not_found(build_test_engine, fake_settings):
+    """置顶不存在的会话 → 404."""
+    engine, _ = build_test_engine([])
+    client = _make_client(engine)
+    resp = client.post("/api/v1/sessions/nope/pin?pinned=true")
+    assert resp.status_code == 404
+
+
+def test_list_sessions_includes_pinned_and_channel(build_test_engine, fake_settings):
+    """列表透传 pinned/channel（M56）."""
+    engine, _ = build_test_engine([{"content": "a"}])
+    client = _make_client(engine)
+    sid = client.post("/api/v1/chat", json={"message": "a"}).json()["session_id"]
+    sessions = client.get("/api/v1/sessions").json()["sessions"]
+    item = next(s for s in sessions if s["session_id"] == sid)
+    assert item["pinned"] is False
+    assert item["channel"] == "web"
+
+
+def test_chat_feishu_channel_push(build_test_engine, fake_settings, monkeypatch):
+    """飞书来源会话发消息 → 后台推送到飞书（mock 推送，fail-open）."""
+    import llm_loop.web.feishu_push as fp
+
+    pushed = []
+    monkeypatch.setattr(fp, "push_web_chat_to_feishu", lambda channel, user_text, answer: pushed.append((channel, user_text, answer)))
+    engine, _ = build_test_engine([{"content": "第一答"}, {"content": "回答内容"}])
+    client = _make_client(engine)
+    sid = client.post("/api/v1/chat", json={"message": "web 消息"}).json()["session_id"]
+    engine.session.set_channel(sid, "feishu:group:oc_test_chat")
+    resp = client.post("/api/v1/chat", json={"message": "第二句", "session_id": sid})
+    assert resp.status_code == 200
+    assert pushed, "飞书来源会话应触发推送"
+    channel, user_text, answer = pushed[0]
+    assert channel == "feishu:group:oc_test_chat"
+    assert user_text == "第二句"
+    assert answer == "回答内容"
+
+
+def test_chat_web_channel_no_push(build_test_engine, fake_settings, monkeypatch):
+    """Web 来源会话发消息不触发飞书推送."""
+    import llm_loop.web.feishu_push as fp
+
+    pushed = []
+    monkeypatch.setattr(fp, "push_web_chat_to_feishu", lambda channel, user_text, answer: pushed.append(1))
+    engine, _ = build_test_engine([{"content": "ok"}])
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat", json={"message": "x"})
+    assert resp.status_code == 200
+    assert not pushed
+
+
+def test_sse_events_endpoint(build_test_engine, fake_settings):
+    """SSE 端点已注册 + 指纹变化检测正确（无限流不做 HTTP 级流读，冒烟阶段 curl 验证）."""
+    from llm_loop.web.routes import _sessions_fingerprint
+
+    engine, _ = build_test_engine([{"content": "a"}])
+    client = _make_client(engine)
+    client.post("/api/v1/chat", json={"message": "a"})
+    # 指纹变化检测：写入新会话文件后指纹应变化
+    fp_before = _sessions_fingerprint(engine.settings.sessions_dir)
+    engine.session.create()
+    fp_after = _sessions_fingerprint(engine.settings.sessions_dir)
+    assert fp_before != fp_after
+    # 端点已注册（OpenAPI schema）
+    schema = client.get("/openapi.json").json()
+    assert "/api/v1/events" in schema["paths"]
+    # 端点信息含在 /api/info
+    info = client.get("/api/info").json()
+    assert "GET /api/v1/events" in info["endpoints"]

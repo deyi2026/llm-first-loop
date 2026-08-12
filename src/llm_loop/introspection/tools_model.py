@@ -73,7 +73,7 @@ class _SwitchOutcome:
 
 def run_model_catalog(
     ctx: Any,
-    pool: ModelClientPool,
+    pool: ModelClientPool | None,
     session_override: str | None,
 ) -> ToolResult:
     """model_catalog: 列出可用模型 + 当前会话模型 + degraded 标注（只读）.
@@ -120,9 +120,17 @@ def run_model_catalog(
                 or (not session_override and mid == default_model)
             )
             mark = " ← 当前" if is_current else ""
+            caps = []
+            if mspec.reasoning:
+                caps.append("reasoning")
+            if mspec.long_context:
+                caps.append("long_context")
+            if mspec.multimodal:
+                caps.append("multimodal")
+            cap_str = f" [{'/'.join(caps)}]" if caps else ""
             lines.append(
                 f"    - {mid}: context={mspec.context}, "
-                f"thinking={thinking}, cost={mspec.cost_tier}{mark}"
+                f"thinking={thinking}, cost={mspec.cost_tier}{cap_str}{mark}"
             )
     return ToolResult(
         status=ToolResultStatus.SUCCESS,
@@ -134,7 +142,7 @@ def run_model_catalog(
 
 def run_switch_model(
     ctx: Any,
-    pool: ModelClientPool,
+    pool: ModelClientPool | None,
     session_set_override: Callable[[str | None], None] | None,
     audit: Callable[[str, dict, str], None] | None,
     args: dict,

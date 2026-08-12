@@ -153,11 +153,14 @@ class Settings:
 
     # ── 压缩档案（T22 另存提取替代截断）──
     archive_enabled: bool = True
+    archive_max_entries: int = 0  # R7: 单会话最大档案条目数（0=不限）
+    archive_ttl_days: int = 0     # R7: 条目存活天数（0=不限）
 
     # ── P1 摘要（FR-P1-MEM, §3.6）──
     summary_mode: str = "off"  # off/sync/async
     summary_timeout_s: float = 30.0
     summary_max_input_chars: int = 100000
+    summary_model: str = ""  # R6: 独立摘要模型（provider/model 引用，空=用主模型）
 
     # ── P1 语义检索（FR-P1-RET, §3.6）──
     embedding_provider: str = "none"  # none/hash/api
@@ -333,10 +336,13 @@ def load_settings() -> Settings:
         self_inspection_enabled=_env_bool("SELF_INSPECTION_ENABLED", True),
         status_report_cooldown_s=float(_env_int("STATUS_REPORT_COOLDOWN_S", 60)),
         archive_enabled=_env_bool("ARCHIVE_ENABLED", True),
+        archive_max_entries=_env_int("ARCHIVE_MAX_ENTRIES", 0),
+        archive_ttl_days=_env_int("ARCHIVE_TTL_DAYS", 0),
         # P1（design.md §3.6，非法值回退默认）
         summary_mode=os.environ.get("SUMMARY_MODE", "off").strip().lower() or "off",
         summary_timeout_s=float(_env_int("SUMMARY_TIMEOUT_S", 30)),
         summary_max_input_chars=_env_int("SUMMARY_MAX_INPUT_CHARS", 100000),
+        summary_model=os.environ.get("SUMMARY_MODEL", "").strip(),
         embedding_provider=os.environ.get("EMBEDDING_PROVIDER", "none").strip().lower() or "none",
         embedding_base_url=os.environ.get("EMBEDDING_BASE_URL", "").strip(),
         embedding_model=os.environ.get("EMBEDDING_MODEL", "").strip(),

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.introspection.events import ArchitectureEvent, ArchitectureEventType
-from llm_loop.notify import confirm, notify  # EVO-20260810-86e777d1: 系统通知/授权确认（fail-open）
+from llm_loop.notify import confirm  # EVO-20260810-86e777d1: 系统通知/授权确认（fail-open）
 
 logger = logging.getLogger(__name__)
 

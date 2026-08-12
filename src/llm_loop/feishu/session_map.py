@@ -43,12 +43,31 @@ class SessionMap:
             if key in self._map:
                 sid = self._map[key]
                 if self._store.exists(sid):
+                    # M56：补标记来源通道（兼容既有映射/旧会话无 channel 字段）
+                    self._mark_channel(sid, key)
                     return sid
                 # 映射的会话已被删除 → 重建（生命周期管理）
             sid = self._store.create()
             self._map[key] = sid
+            self._mark_channel(sid, key)
             self._save()
             return sid
+
+    def _mark_channel(self, sid: str, key: str) -> None:
+        """按映射键标记会话来源通道（p:→feishu:p2p，g:→feishu:group；fail-open）.
+
+        供 Web 端识别飞书来源会话并实时推送；set_channel 幂等（已标记不覆盖）。
+        """
+        if key.startswith("p:"):
+            channel = f"feishu:p2p:{key[2:]}"
+        elif key.startswith("g:"):
+            channel = f"feishu:group:{key[2:]}"
+        else:
+            return
+        from contextlib import suppress
+
+        with suppress(Exception):  # 标记失败不阻断飞书主链路
+            self._store.set_channel(sid, channel)
 
     def get(self, key: str) -> str | None:
         with self._lock:

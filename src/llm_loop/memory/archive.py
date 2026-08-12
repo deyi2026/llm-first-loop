@@ -17,7 +17,7 @@ import json
 import re
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 _PATH_TOKEN_RE = re.compile(r"[\w./\\\-]+\.\w{1,8}|[/\\][\w.\-]+(?:[/\\][\w.\-]+)*")
@@ -264,3 +264,59 @@ class ArchiveStore:
                     if entry.get("id") == entry_id:
                         return p.stem
         return ""
+
+    def cleanup(self, *, max_entries: int = 0, ttl_days: int = 0) -> dict:
+        """R7: 清理过期/超量档案条目（启动时调用一次，防磁盘膨胀）.
+
+        - max_entries > 0: 单会话档案超过 N 条时删除最旧的（保留最近 N 条）
+        - ttl_days > 0: 超过 N 天的条目删除（按条目 ts 判断）
+        - 两者都为 0: 空操作（零回归）
+        - 单文件清理失败 fail-open（warning + 跳过），不阻断其他文件
+
+        Returns:
+            {"pruned_files": N, "pruned_entries": N}
+        """
+        if max_entries <= 0 and ttl_days <= 0:
+            return {"pruned_files": 0, "pruned_entries": 0}
+
+        import logging
+
+        cutoff_ts = None
+        if ttl_days > 0:
+            cutoff_ts = (datetime.now(UTC) - timedelta(days=ttl_days)).isoformat()
+        total_pruned = 0
+        pruned_files = 0
+
+        for p in self._dir.glob("*.jsonl"):
+            try:
+                lines = p.read_text(encoding="utf-8").splitlines()
+                kept: list[str] = []
+                for line in lines:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        kept.append(line)  # 无法解析的条目保留（fail-open）
+                        continue
+                    if cutoff_ts is not None:
+                        ts = entry.get("ts", "")
+                        if ts and ts < cutoff_ts:
+                            total_pruned += 1
+                            continue
+                    kept.append(line)
+                if max_entries > 0 and len(kept) > max_entries:
+                    total_pruned += len(kept) - max_entries
+                    kept = kept[-max_entries:]
+                if len(kept) < len(lines):
+                    if kept:
+                        p.write_text("\n".join(kept) + "\n", encoding="utf-8")
+                    else:
+                        p.unlink(missing_ok=True)  # 全部清理 → 删除空档案文件
+                    pruned_files += 1
+            except Exception as exc:  # noqa: BLE001 — 单文件清理失败 fail-open
+                logging.getLogger(__name__).warning("档案 GC 失败（fail-open）: %s: %s", p, exc)
+                continue
+
+        return {"pruned_files": pruned_files, "pruned_entries": total_pruned}

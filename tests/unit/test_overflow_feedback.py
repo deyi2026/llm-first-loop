@@ -77,3 +77,37 @@ def test_overflow_feedback_no_breakdown_no_error():
     feedback = overflow_feedback(exc, breakdown=None, model_window=None)
     assert "上下文溢出" in feedback
     assert "search_archive" in feedback  # 动作建议仍在
+
+
+# ── R4 增强: overflow 注入 system 消息 + continue 集成测试 ──
+
+
+def test_overflow_injects_system_message_and_continues(build_test_engine):
+    """第一次 overflow 注入 system 消息 + continue，AI 在同会话内有机会处理."""
+
+
+    def raise_overflow(history):
+        raise LLMHTTPError("context length exceeded", status_code=400)
+
+    engine, _fake = build_test_engine([
+        raise_overflow,
+        {"content": "已处理overflow"},
+    ])
+    result = engine.run("s1", "你好")
+    assert "已处理overflow" in result.final_answer
+    sess = engine.session.load("s1")
+    overflow_sys = [m for m in sess.messages if "上下文溢出" in m.content and m.role == "system"]
+    assert len(overflow_sys) == 1
+
+
+def test_overflow_second_time_ends_loop(build_test_engine):
+    """第二次 overflow 直接结束（避免无限循环）."""
+    def raise_overflow(history):
+        raise LLMHTTPError("context length exceeded", status_code=400)
+
+    engine, _fake = build_test_engine([raise_overflow, raise_overflow])
+    result = engine.run("s2", "你好")
+    assert "上下文溢出" in result.final_answer
+    sess = engine.session.load("s2")
+    overflow_sys = [m for m in sess.messages if "上下文溢出" in m.content and m.role == "system"]
+    assert len(overflow_sys) == 1

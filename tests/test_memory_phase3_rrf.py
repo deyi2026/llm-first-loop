@@ -18,7 +18,7 @@ def _kw(hits):
 
 def test_rrf_double_signal_outranks_single(tmp_path):
     """双通道命中（语义+关键词）条目 RRF 得分 > 仅语义命中条目."""
-    mem = _mem(tmp_path)
+
     retriever = SemanticRetriever(HashEmbedder(), memory_dir=tmp_path / "memory")
     # 构造: A 仅语义命中（排名高），B 语义+关键词双命中
     semantic = [

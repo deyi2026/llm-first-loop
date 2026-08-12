@@ -94,3 +94,13 @@ def test_breakdown_est_tokens_is_chars_div_2():
     msgs = [_user("X" * 101)]
     bd = compute_breakdown(msgs, "S", None, budget=1000)
     assert bd["history"]["est_tokens"] == 101 // 2
+
+
+def test_breakdown_tool_schema_chars_in_loop(build_test_engine):
+    """R1 修复: loop 中 _last_breakdown 的 tool_schema chars > 0（修复前恒为 0）."""
+    engine, _fake = build_test_engine([{"content": "done"}])
+    engine.run("test-session", "你好")
+    bd = getattr(engine, "_last_breakdown", None)
+    assert bd is not None
+    assert bd["tool_schema"]["chars"] > 0
+    assert bd["total"]["chars"] > bd["history"]["chars"] + bd["tool_results"]["chars"]
