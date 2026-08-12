@@ -93,3 +93,45 @@ def test_count_defaults_to_max_chars():
     assert "start=200" in r1.content  # 段长 200 = max_chars
     r2 = t.execute(url="https://x.test/a", max_chars=200, start=200)
     assert r2.status == "success"
+
+
+# ── 单例感知（既有实现 单例 Browser 借鉴: 短时重复抓取提示复用）──
+
+def _reset_history():
+    import llm_loop.tools.builtin.web_fetch as wf
+    wf._fetch_history.clear()
+
+
+def test_single_browser_reuse_notice():
+    """短时重复抓同一 URL → 第二次回执提示可复用."""
+    _reset_history()
+    body = "甲" * 50
+    t = _patch_fetch(_FakeTool(), body)
+    r1 = t.execute(url="https://x.test/single", max_chars=200)
+    assert "[重复抓取]" not in r1.content  # 首次无提示
+    r2 = t.execute(url="https://x.test/single", max_chars=200)
+    assert "[重复抓取]" in r2.content  # 短时重复 → 提示
+    assert "秒前抓取过" in r2.content
+
+
+def test_single_browser_different_url_no_notice():
+    """不同 URL 互不影响."""
+    _reset_history()
+    body = "甲" * 50
+    t = _patch_fetch(_FakeTool(), body)
+    t.execute(url="https://x.test/a1", max_chars=200)
+    r = t.execute(url="https://x.test/a2", max_chars=200)
+    assert "[重复抓取]" not in r.content
+
+
+def test_single_browser_window_expired():
+    """超过 5 分钟窗口 → 不提示（网页可能已变化）."""
+    import llm_loop.tools.builtin.web_fetch as wf
+    _reset_history()
+    body = "甲" * 50
+    t = _patch_fetch(_FakeTool(), body)
+    t.execute(url="https://x.test/w", max_chars=200)
+    # 模拟 10 分钟前抓取过
+    wf._fetch_history["https://x.test/w"] = wf._fetch_history["https://x.test/w"] - 600
+    r = t.execute(url="https://x.test/w", max_chars=200)
+    assert "[重复抓取]" not in r.content

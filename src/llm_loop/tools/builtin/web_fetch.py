@@ -12,10 +12,17 @@ from __future__ import annotations
 import html as _html
 import re
 import subprocess
+import time as _time
 
 import httpx
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+
+# 单例 Browser 借鉴（既有实现 read_preview）: 短时重复抓取同一 URL 感知。
+# 模块级 {url: last_fetch_epoch}——同会话内 5 分钟内重复抓同一 URL，
+# 回执头部提示可复用上次结果（网页动态变化才重抓），避免浪费 token。
+_fetch_history: dict[str, float] = {}
+_FETCH_REUSE_WINDOW_S = 300  # 5 分钟内重复抓取提示复用
 
 # 真实浏览器 UA 池（实测：多数站点按 UA 反爬，首个失败换 UA 重试）
 _UA_POOL = [
@@ -251,6 +258,15 @@ class WebFetchTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
+        # 单例感知: 短时重复抓取同一 URL → 提示可复用（既有实现 单例 Browser 精神）
+        now = _time.time()
+        reuse_note = ""
+        last_fetch = _fetch_history.get(url)
+        if last_fetch is not None and now - last_fetch < _FETCH_REUSE_WINDOW_S:
+            reuse_note = (
+                f"[重复抓取] 该 URL 于 {int(now - last_fetch)} 秒前抓取过"
+                "（单例精神: 可考虑复用上次结果，网页动态变化才重抓）\n"
+            )
         httpx_note = ""
         try:
             resp = self._request(url)
@@ -295,7 +311,9 @@ class WebFetchTool:
         header = f"[title] {title}\n[source] {url}\n[extract] {method_out}\n" if title else ""
         if curl_used:
             header += f"[fetch] curl 回退（{httpx_note}）\n"
+        header += reuse_note  # 单例感知提示（无重复则为空）
         header += "\n"
+        _fetch_history[url] = now  # 记录本次抓取（成功才记，失败不记）
         if not text.strip():
             text = "（页面无文本内容）"
         body = header + text
