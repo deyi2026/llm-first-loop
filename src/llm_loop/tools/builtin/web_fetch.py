@@ -172,7 +172,8 @@ class WebFetchTool:
         "properties": {
             "url": {"type": "string", "description": "要抓取的完整 URL（http/https）"},
             "max_chars": {"type": "integer", "description": "返回内容最大字符数（默认 100000）"},
-            "start": {"type": "integer", "description": "分页续读起始偏移（字符，默认 0）。正文超长被截断后，用 start=上次位置 续读下一段（借鉴 既有实现 read_preview 分页续读）"},
+            "start": {"type": "integer", "description": "分页续读起始偏移（字符，默认 0）。正文超长被截断后，用 start=上次位置 续读下一段"},
+            "count": {"type": "integer", "description": "分页续读每段长度（字符，默认 max_chars）。start 与 count 正交：start 定起点、count 定段长（借鉴 既有实现 read_preview 'start 与 count 的分页续读'）"},
         },
         "required": ["url"],
     }
@@ -233,6 +234,9 @@ class WebFetchTool:
         start = int(kwargs.get("start", 0) or 0)
         if start < 0:
             start = 0
+        count = int(kwargs.get("count", 0) or 0)
+        if count <= 0:
+            count = max_chars  # count 未指定 → 段长 = max_chars
         if not url:
             return ToolResult(
                 status=ToolResultStatus.FAILURE,
@@ -297,8 +301,9 @@ class WebFetchTool:
         body = header + text
         total = len(body)
         if start > 0:
-            # 分页续读（既有实现 read_preview 借鉴）：返回 [start, start+max_chars) 段
-            body = body[start:start + max_chars]
+            # 分页续读（既有实现 read_preview 借鉴：start 与 count 正交）
+            # start 定起点、count 定段长；返回 [start, start+count) 段
+            body = body[start:start + count]
             if not body:
                 return ToolResult(
                     status=ToolResultStatus.FAILURE,
@@ -307,7 +312,7 @@ class WebFetchTool:
                     tool_name=self.name,
                 )
             seg_note = f"\n…[分页 {start}-{start+len(body)}/{total}，续读；可用 start={start+len(body)} 继续]…"
-            if len(body) >= max_chars:
+            if len(body) >= count:
                 body = body + seg_note
             return ToolResult(
                 status=ToolResultStatus.SUCCESS,
