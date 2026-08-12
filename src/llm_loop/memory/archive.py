@@ -46,6 +46,7 @@ class ArchiveEntry:
     chars: int = 0
     summary_source: str = "deterministic"  # T28: llm/deterministic/none（来源如实标注）
     embedding: list[float] | None = None  # T35: 可选语义向量（不可用仍可关键词命中）
+    reasoning_content: str | None = None  # P0-2: 思考链完整另存（随压缩归档，检索域含）
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -113,6 +114,7 @@ class ArchiveStore:
         tool_name: str | None = None,
         tool_call_id: str | None = None,
         status: str | None = None,
+        reasoning_content: str | None = None,  # P0-2: 思考链完整另存
     ) -> ArchiveEntry:
         """另存一条消息/结果为压缩档案条目（原文完整 + 索引）."""
         facts, paths, summary = extract_key_info(content)
@@ -129,6 +131,7 @@ class ArchiveStore:
             tool_call_id=tool_call_id,
             status=status,
             chars=len(content),
+            reasoning_content=reasoning_content,
         )
         p = self._path(session_id)
         with p.open("a", encoding="utf-8") as f:
@@ -172,6 +175,7 @@ class ArchiveStore:
                         entry.get("summary", ""),
                         " ".join(entry.get("key_facts", [])),
                         " ".join(entry.get("key_paths", [])),
+                        entry.get("reasoning_content", "") or "",  # P0-2: 思考链可检索
                     ]
                 ).lower()
                 if q and q not in hay:

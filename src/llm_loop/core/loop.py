@@ -529,6 +529,14 @@ class LoopEngine:
             )
         self._phase("done")
 
+        # P0-1: 记忆访问统计（decay_score/access_count/last_access_at）落盘——
+        # search() 仅更新内存，此处每轮 run 完成批量持久化（低频，避免每轮检索全量写盘）
+        try:
+            if self.memory is not None:
+                self.memory.flush()
+        except Exception as exc:  # noqa: BLE001 — 统计落盘失败不阻断 run
+            logger.warning("记忆统计落盘失败（fail-open）: %s", exc)
+
         return LoopResult(
             session_id=session_id,
             final_answer=final_answer,
@@ -805,6 +813,7 @@ class LoopEngine:
                 tool_name=msg.tool_name,
                 tool_call_id=msg.tool_call_id,
                 status=msg.status.value if msg.status else None,
+                reasoning_content=getattr(msg, "reasoning_content", None) or None,
             )
             # RULE-AI-00: 压缩另存只做原文另存（确定性索引），不自动调 LLM 摘要——
             # LLM 语义摘要由 AI 主动触发（search_archive with_summary=true）
