@@ -54,3 +54,26 @@ def test_search_freshness_after_update(tmp_path):
     hits = store.search(["主题"], top_k=5)
     assert len(hits) == 1  # 同事实更新不产生第二份
     assert "版本2" in hits[0].content
+
+
+def test_shared_generic_keyword_no_overwrite(tmp_path):
+    """修复(2026-08-13): 共享泛用词（adjust_strategy）不触发同事实覆盖.
+
+    借鉴 playbook 资产化时实证: 动作链条目与必调整场景条目共享 keyword
+    'adjust_strategy'，原交集>=1 弱匹配误判同主题并覆盖（version+1 合并）。
+    """
+    store = _mk_store(tmp_path)
+    e1 = store.save_entry(MemoryEntry(
+        id="", type="procedure",
+        content="【触发标签】自查后/动作链。场景: 调用架构自查后。已验解法: adjust_strategy 落地。",
+        keywords=["动作链", "自查后", "adjust_strategy"],
+    ))
+    e2 = store.save_entry(MemoryEntry(
+        id="", type="procedure",
+        content="【触发标签】必调整场景/信号规模。场景: 调整策略参数。已验解法: 信号 2 条 FAILURE 基线。",
+        keywords=["必调整场景", "信号规模", "adjust_strategy"],
+    ))
+    assert e1.id != e2.id  # 各自独立，不覆盖
+    assert e2.version == 1
+    hits = store.search(["动作链"], top_k=5)
+    assert any("动作链" in h.keywords[0] for h in hits)  # 动作链条目仍在
