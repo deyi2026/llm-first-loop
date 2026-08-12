@@ -94,7 +94,10 @@ def test_ses_map_persist(build_test_engine, tmp_path):
 
 
 def test_ses_concurrent_isolate(build_test_engine, tmp_path):
-    """用例 19：多线程并发各自映射（无串话 + 无异常，Lock 保护）."""
+    """用例 19：多线程并发各自映射（无串话 + 无异常，Lock 保护）.
+
+    未配置 owner_open_id 时各私聊独立（共享跨端会话仅在 owner 配置下生效）。
+    """
     _, _, _, smap = _make_handler(build_test_engine, tmp_path, [{"content": "答"}])
     keys = [SessionMap.p2p_key(f"ou_t{i}") for i in range(10)]
     results: dict[str, str] = {}
@@ -139,3 +142,38 @@ def test_ses_lifecycle(build_test_engine, tmp_path):
     reloaded = SessionMap(smap._store, path=str(path))
     sid3 = reloaded.get_or_create(key)
     assert sid3  # 损坏后重建可用
+
+
+def test_ses_owner_shared_current(build_test_engine, tmp_path):
+    """跨端共享：owner 私聊复用共享当前会话（Web/飞书同一上下文）."""
+    _, _, _, smap = _make_handler(build_test_engine, tmp_path, [{"content": "答"}])
+    smap._owner = "ou_owner"  # noqa: SLF001 — 测试注入 owner
+    sid1 = smap.get_or_create(SessionMap.p2p_key("ou_owner"))
+    sid2 = smap.get_or_create(SessionMap.p2p_key("ou_owner"))
+    assert sid2 == sid1  # owner 多轮复用同一会话
+    assert smap._store.get_shared_current() == sid1  # noqa: SLF001 — 共享当前已设置
+
+
+def test_ses_owner_shared_with_web_created(build_test_engine, tmp_path):
+    """跨端共享：Web 先建共享当前 → owner 私聊复用（续同一上下文）."""
+    _, engine, _, smap = _make_handler(build_test_engine, tmp_path, [{"content": "答"}])
+    smap._owner = "ou_owner"  # noqa: SLF001 — 测试注入 owner
+    # Web 端新建并设为共享当前
+    web_sid = engine.session.create()
+    engine.session.set_shared_current(web_sid)
+    # owner 飞书私聊 → 复用 Web 的共享会话
+    feishu_sid = smap.get_or_create(SessionMap.p2p_key("ou_owner"))
+    assert feishu_sid == web_sid
+
+
+def test_ses_non_owner_not_shared(build_test_engine, tmp_path):
+    """跨端共享：非 owner 私聊独立（多用户不串话）；群聊独立."""
+    _, _, _, smap = _make_handler(build_test_engine, tmp_path, [{"content": "答"}])
+    smap._owner = "ou_owner"  # noqa: SLF001 — 测试注入 owner
+    owner_sid = smap.get_or_create(SessionMap.p2p_key("ou_owner"))
+    other = smap.get_or_create(SessionMap.p2p_key("ou_other"))
+    g1 = smap.get_or_create(SessionMap.group_key("chat_1"))
+    g2 = smap.get_or_create(SessionMap.group_key("chat_2"))
+    assert other != owner_sid  # 非 owner 私聊独立
+    assert g1 != g2  # 群聊各自独立
+    assert smap._store.get_shared_current() == owner_sid  # noqa: SLF001 — 共享当前未被改写

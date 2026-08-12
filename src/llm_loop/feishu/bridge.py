@@ -7,8 +7,10 @@ _WsConnector 封装 websockets 可注入 Mock（测试零真实 WS 连接）。
 
 import json
 import logging
+import os
 import re
 import threading
+import time
 from collections import deque
 from collections.abc import Callable
 from time import sleep as _sleep
@@ -29,6 +31,72 @@ _RECONNECT_MAX_S = 30
 _RECONNECT_MAX_ATTEMPTS = 5
 _RECONNECT_LONG_BACKOFF_S = 300
 _TOKEN_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"  # 探针端点（M44：token 生命周期交 SDK，仅预检用）
+
+
+# ── M47 WS 假死防护（2026-08-12）──
+# 根因：lark-oapi<=1.7.2 ws.Client._connect() acquire 锁后若连接已建立则提前 return
+# 未释放锁；密集断连时并发重连竞态必命中 → SDK 内部锁永久泄漏 → ping/重连全部
+# 永久阻塞，进程假死但旧 TCP 仍 ESTABLISHED（健康检查误报健康，须人工重启）。
+# 防护三层：①_ 修补 _connect 锁泄漏（根治）②看门狗心跳 + 假死自杀（兜底）
+# ③restart_system.sh 健康检查改看门狗心跳新鲜度（消除误报）。
+_WATCHDOG_POLL_S = int(os.environ.get("FEISHU_WS_WATCHDOG_POLL_S", "30"))  # 看门狗轮询/心跳间隔
+_WATCHDOG_LOCK_S = float(os.environ.get("FEISHU_WS_WATCHDOG_LOCK_S", "180"))  # SDK 锁持有超此时长判定假死
+_HEARTBEAT_PATH = os.environ.get("FEISHU_HEARTBEAT_PATH", "data/feishu_heartbeat.json")
+
+
+def _patch_sdk_connect_lock(client: Any) -> None:
+    """修补 lark-oapi<=1.7.2 ws.Client._connect 锁泄漏（acquire 后 conn 非空早退未释放）.
+
+    策略：外层 asyncio.Lock 串行化 + 进入前/持锁后双重 conn 检查，确保"连接已建立"
+    的并发重连永不进入有 bug 的原生实现。上游修复后本包装仍安全无副作用（可移除）。
+    """
+    try:
+        if getattr(client, "_connect_lock_patched", False):
+            return
+        orig = getattr(client, "_connect", None)
+        if orig is None or not callable(orig):
+            return
+        import asyncio
+        from collections.abc import Callable
+
+        _orig_connect: Callable[..., Any] = orig
+
+        guard = asyncio.Lock()
+
+        async def _connect_safe() -> None:
+            if getattr(client, "_conn", None) is not None:
+                return
+            async with guard:
+                if getattr(client, "_conn", None) is not None:
+                    return
+                await _orig_connect()
+
+        client._connect = _connect_safe  # noqa: SLF001 — 刻意修补 SDK 私有方法
+        client._connect_lock_patched = True  # noqa: SLF001
+    except Exception:  # noqa: BLE001 — 修补失败如实告警，继续使用原生实现
+        logger.warning("lark SDK _connect 锁泄漏修补失败（继续使用原生实现）", exc_info=True)
+
+
+class _PingTimeoutDowngradeFilter(logging.Filter):
+    """SDK ping_timeout 日志降噪：ERROR→WARNING 并计数（断线自愈属常态，避免淹没真实异常）."""
+
+    count = 0
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            if record.levelno >= logging.ERROR and "ping_timeout" in record.getMessage():
+                record.levelno = logging.WARNING
+                type(self).count += 1
+        except Exception:  # noqa: BLE001
+            pass
+        return True
+
+
+def _install_lark_log_filter() -> None:
+    """给 SDK "Lark" logger 挂降噪过滤器（幂等）."""
+    lark_logger = logging.getLogger("Lark")
+    if not any(isinstance(f, _PingTimeoutDowngradeFilter) for f in lark_logger.filters):
+        lark_logger.addFilter(_PingTimeoutDowngradeFilter())
 
 
 class _WsConnector:
@@ -58,6 +126,8 @@ class _WsConnector:
         self._ws_client_factory = ws_client_factory or self._default_ws_client
         self._sleep = sleep or _sleep
         self._stop = False
+        self._reconnect_count = 0  # SDK on_reconnecting 计数（心跳可观测）
+        self._lock_held_since: float | None = None  # SDK 锁首次观测为持有的时刻
 
     def _default_ws_client(self, event_handler):
         """默认 lark ws.Client（官方长连接；Mock 测试注入替代）."""
@@ -105,6 +175,70 @@ class _WsConnector:
         except Exception as exc:  # noqa: BLE001 — 回调异常如实记录不中断连接
             logger.exception("飞书事件回调处理异常: %s", exc)
 
+    # ── M47 看门狗（假死兜底）──
+    def _install_sdk_callbacks(self, client: Any) -> None:
+        """挂接 SDK 重连钩子（重连计数入心跳，进程级可观测；Mock 无属性时静默跳过）."""
+
+        def _on_reconnecting() -> None:
+            self._reconnect_count += 1
+
+        try:
+            if hasattr(client, "on_reconnecting"):
+                client.on_reconnecting = _on_reconnecting
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _sdk_lock_held_s(self, client: Any) -> float | None:
+        """SDK 内部锁连续持有时长（秒；未持有返回 None）——假死检测信号."""
+        lock = getattr(client, "_lock", None)
+        held = False
+        if lock is not None and hasattr(lock, "locked"):
+            try:
+                held = bool(lock.locked())
+            except Exception:  # noqa: BLE001
+                held = False
+        if held:
+            if self._lock_held_since is None:
+                self._lock_held_since = time.time()
+            return time.time() - self._lock_held_since
+        self._lock_held_since = None
+        return None
+
+    def _write_heartbeat(self, client: Any) -> None:
+        """心跳落盘（restart_system.sh 健康检查据此判断假死，替代误报的 TCP ESTABLISHED）."""
+        try:
+            import json as _json
+            from pathlib import Path as _Path
+
+            payload = {
+                "ts": time.time(),
+                "pid": os.getpid(),
+                "state": "connected" if getattr(client, "_conn", None) is not None else "disconnected",
+                "reconnect_count": self._reconnect_count,
+                "ping_timeout_count": _PingTimeoutDowngradeFilter.count,
+                "sdk_lock_held_s": self._sdk_lock_held_s(client),
+                "sdk_connect_lock_patched": bool(getattr(client, "_connect_lock_patched", False)),
+            }
+            path = _Path(_HEARTBEAT_PATH)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(_json.dumps(payload), encoding="utf-8")
+        except Exception:  # noqa: BLE001 — 心跳失败不阻断主流程
+            pass
+
+    def _watchdog_loop(self, client: Any) -> None:
+        """看门狗：周期心跳落盘；SDK 锁持有超 _WATCHDOG_LOCK_S 判定假死 → 自杀（restart_system.sh 拉起）."""
+        while not self._stop:
+            self._write_heartbeat(client)
+            held_s = self._sdk_lock_held_s(client)
+            if held_s is not None and held_s >= _WATCHDOG_LOCK_S:
+                logger.error(
+                    "飞书桥看门狗: SDK 内部锁持有 %.0fs（>= %.0fs），判定假死，进程退出交由重启脚本拉起",
+                    held_s,
+                    _WATCHDOG_LOCK_S,
+                )
+                os._exit(42)  # noqa: SLF001 — 假死兜底：不经 atexit，确保退出
+            _sleep(_WATCHDOG_POLL_S)  # 模块级真实 sleep（不复用注入 Mock，防忙轮询）
+
     def stop(self) -> None:
         """停止（lark ws.Client 无公开 stop API；daemon 线程 + 进程退出兜底）."""
         self._stop = True
@@ -119,6 +253,16 @@ class _WsConnector:
                 self._sleep(1)
             return
         client = self._ws_client_factory(self._build_event_handler())
+        _patch_sdk_connect_lock(client)  # M47①：SDK 锁泄漏根治（Mock 无 _connect 时静默跳过）
+        self._install_sdk_callbacks(client)
+        _install_lark_log_filter()  # M47：ping_timeout 日志降噪
+        watchdog = threading.Thread(
+            target=self._watchdog_loop,
+            args=(client,),
+            name="feishu-ws-watchdog",
+            daemon=True,
+        )
+        watchdog.start()  # M47②：心跳落盘 + 假死检测自杀
         # SDK 内部完成 endpoint/连接/心跳/重连/收帧（阻塞；断线 SDK 自动重连）
         client.start()
 
