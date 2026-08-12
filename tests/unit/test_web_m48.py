@@ -1,5 +1,6 @@
 """M48 单元测试: web_fetch 正文提取降级链 + web_search 双后端降级."""
 
+import json
 from unittest import mock
 
 from llm_loop.core.message import ToolResultStatus
@@ -186,3 +187,105 @@ def test_curl_fallback_skips_shell_and_tries_next_ua():
     with mock.patch("subprocess.run", side_effect=[_curl_proc(shell), _curl_proc(article)]) as run_mock:
         got = tool._curl_fetch("https://example.com")
     assert got is not None and run_mock.call_count == 2
+
+
+# ── M48-C: 垂直搜索通道（免 key 公开 API）──
+
+_OA_JSON = json.dumps({
+    "results": [
+        {"title": "Paper A", "publication_year": 2025, "cited_by_count": 12,
+         "primary_location": {"landing_page_url": "https://a.example.com/p1"}},
+        {"title": "Paper B", "publication_year": 2024, "cited_by_count": 3,
+         "primary_location": {"landing_page_url": "https://b.example.com/p2"}},
+    ]
+})
+_CR_JSON = json.dumps({"message": {"items": [
+    {"title": ["Paper C"], "DOI": "10.1/x", "issued": {"date-parts": [[2023]]}},
+]}})
+_PM_SEARCH = json.dumps({"esearchresult": {"idlist": ["111", "222"]}})
+_PM_SUMM = json.dumps({"result": {"uids": ["111", "222"],
+    "111": {"title": "Med A", "source": "Nature", "pubdate": "2025"},
+    "222": {"title": "Med B", "source": "Cell", "pubdate": "2024"}}})
+_GH_JSON = json.dumps({"items": [
+    {"full_name": "a/b", "html_url": "https://github.com/a/b", "stargazers_count": 99,
+     "language": "Python", "description": "demo"},
+]})
+
+
+def _json_router(mapping):
+    def _side(url, headers=None, **kw):
+        for key, body in mapping.items():
+            if key in url:
+                return _FakeResponse(200, body)
+        raise __import__("httpx").ConnectError(f"no route: {url}")
+    return _side
+
+
+def test_scholar_merges_multi_source():
+    """scholar 通道合并 OpenAlex+Crossref+PubMed 并标注来源."""
+    tool = WebSearchTool()
+    mapping = {
+        "openalex": _OA_JSON,
+        "crossref": _CR_JSON,
+        "esearch": _PM_SEARCH,
+        "esummary": _PM_SUMM,
+    }
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.__enter__.return_value.get.side_effect = _json_router(mapping)
+        r = tool.execute(query="llm agent", channel="scholar", limit=10)
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "[channel] scholar" in r.content
+    assert "Paper A" in r.content and "Paper C" in r.content and "Med A" in r.content
+    assert "openalex" in r.content and "crossref" in r.content and "pubmed" in r.content
+    assert "被引:12" in r.content
+
+
+def test_scholar_partial_failure_degrades():
+    """单源失败降级其余源，并如实记录降级."""
+    tool = WebSearchTool()
+    mapping = {"crossref": _CR_JSON, "esearch": _PM_SEARCH, "esummary": _PM_SUMM}
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.__enter__.return_value.get.side_effect = _json_router(mapping)
+        r = tool.execute(query="x", channel="scholar")
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "Paper C" in r.content
+    assert "降级记录" in r.content and "openalex" in r.content
+
+
+def test_code_channel_github():
+    tool = WebSearchTool()
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.__enter__.return_value.get.side_effect = _json_router({"api.github.com": _GH_JSON})
+        r = tool.execute(query="anysearch", channel="code")
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "a/b" in r.content and "★99" in r.content and "github" in r.content
+
+
+def test_channel_all_fail_honest():
+    tool = WebSearchTool()
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.__enter__.return_value.get.side_effect = __import__("httpx").ConnectError("down")
+        r = tool.execute(query="x", channel="scholar")
+    assert r.status == ToolResultStatus.FAILURE
+    assert "channel=scholar" in r.content
+
+
+def test_auto_routing():
+    from llm_loop.tools.builtin.web_search import _route_channel
+    assert _route_channel("找几篇关于agent的论文") == "scholar"
+    assert _route_channel("anysearch github 仓库") == "code"
+    assert _route_channel("今天天气怎么样") == "general"
+    # auto 端到端：走 code 通道
+    tool = WebSearchTool()
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.__enter__.return_value.get.side_effect = _json_router({"api.github.com": _GH_JSON})
+        r = tool.execute(query="anysearch github", channel="auto")
+    assert "[channel] code" in r.content
+
+
+def test_merge_dedupe():
+    from llm_loop.tools.builtin.web_search import _merge_dedupe
+    g1 = [{"title": "A", "url": "u1"}, {"title": "B", "url": "u2"}]
+    g2 = [{"title": "A2", "url": "u1"}, {"title": "C", "url": "u3"}]
+    merged = _merge_dedupe([g1, g2], 10)
+    assert [m["title"] for m in merged] == ["A", "B", "C"]

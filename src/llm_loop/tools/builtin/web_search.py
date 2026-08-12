@@ -2,11 +2,17 @@
 
 无 JS 渲染环境下实测可行的免费通道：Bing HTML（主）/ 百度 HTML（备）双后端互为降级。
 返回结构化结果（title/url/snippet/source），不返回网页清单原始 HTML。
+
+M48-C 垂直通道（2026-08-12，借鉴 AnySearch 多源直连思路，全部免 key 公开 API）：
+channel=scholar 学术（OpenAlex/Crossref/PubMed 多源合并去重）；channel=code 代码（GitHub 免认证，
+10 次/分钟限额如实提示）；channel=auto 按关键词路由。维基百科/arXiv 本机实测不通故未接入（诚实边界）。
 """
 
 from __future__ import annotations
 
+import contextlib
 import html as _html
+import json
 import re
 from urllib.parse import quote_plus
 
@@ -54,6 +60,132 @@ def _search_baidu(query: str, limit: int, timeout: float) -> list[dict]:
     return out
 
 
+_JSON_HEADERS = {"User-Agent": _UA, "Accept": "application/json"}
+
+
+def _get_json(url: str, timeout: float) -> dict:
+    with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+        resp = client.get(url, headers=_JSON_HEADERS)
+    resp.raise_for_status()
+    return json.loads(resp.text)
+
+
+def _search_openalex(query: str, limit: int, timeout: float) -> list[dict]:
+    """OpenAlex 学术（免 key，实测 170ms 响应、47 万级命中）."""
+    data = _get_json(
+        f"https://api.openalex.org/works?search={quote_plus(query)}&per-page={limit}", timeout
+    )
+    out = []
+    for w in data.get("results", []):
+        url = (w.get("primary_location") or {}).get("landing_page_url") or w.get("id", "")
+        year = w.get("publication_year") or ""
+        cited = w.get("cited_by_count")
+        snippet = f"{year} 被引:{cited}" if year else ""
+        out.append({"title": (w.get("title") or "").strip(), "url": url, "snippet": snippet, "source": "openalex"})
+    return [r for r in out if r["title"]][:limit]
+
+
+def _search_crossref(query: str, limit: int, timeout: float) -> list[dict]:
+    """Crossref 学术（免 key，DOI 注册机构官方 API）."""
+    data = _get_json(f"https://api.crossref.org/works?query={quote_plus(query)}&rows={limit}", timeout)
+    out = []
+    for w in (data.get("message") or {}).get("items", []):
+        titles = w.get("title") or []
+        doi = w.get("DOI", "")
+        year = ""
+        with contextlib.suppress(KeyError, IndexError, TypeError):
+            year = str(w["issued"]["date-parts"][0][0])
+        out.append({
+            "title": titles[0].strip() if titles else "",
+            "url": f"https://doi.org/{doi}" if doi else w.get("URL", ""),
+            "snippet": year,
+            "source": "crossref",
+        })
+    return [r for r in out if r["title"]][:limit]
+
+
+def _search_pubmed(query: str, limit: int, timeout: float) -> list[dict]:
+    """PubMed 生物医学（NCBI E-utilities 免 key）."""
+    es = _get_json(
+        f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term={quote_plus(query)}&retmode=json&retmax={limit}",
+        timeout,
+    )
+    ids = (es.get("esearchresult") or {}).get("idlist", [])
+    if not ids:
+        return []
+    summ = _get_json(
+        f"https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id={','.join(ids)}&retmode=json",
+        timeout,
+    )
+    result = summ.get("result") or {}
+    out = []
+    for uid in result.get("uids", []):
+        item = result.get(uid) or {}
+        out.append({
+            "title": (item.get("title") or "").strip(),
+            "url": f"https://pubmed.ncbi.nlm.nih.gov/{uid}/",
+            "snippet": f"{item.get('source', '')} {item.get('pubdate', '')}".strip(),
+            "source": "pubmed",
+        })
+    return [r for r in out if r["title"]][:limit]
+
+
+def _search_github(query: str, limit: int, timeout: float) -> list[dict]:
+    """GitHub 仓库（免认证 10 次/分钟，429 时如实报错）."""
+    data = _get_json(
+        f"https://api.github.com/search/repositories?q={quote_plus(query)}&per_page={limit}", timeout
+    )
+    out = []
+    for w in data.get("items", []):
+        stars = w.get("stargazers_count", 0)
+        lang = w.get("language") or ""
+        desc = (w.get("description") or "")[:100]
+        out.append({
+            "title": w.get("full_name", ""),
+            "url": w.get("html_url", ""),
+            "snippet": f"★{stars} {lang} {desc}".strip(),
+            "source": "github",
+        })
+    return [r for r in out if r["title"]][:limit]
+
+
+def _merge_dedupe(groups: list[list[dict]], limit: int) -> list[dict]:
+    """多源结果合并去重（按 url/title），保持各源顺序交错."""
+    seen: set[str] = set()
+    out: list[dict] = []
+    idx = 0
+    while len(out) < limit:
+        progressed = False
+        for g in groups:
+            if idx < len(g):
+                progressed = True
+                key = g[idx]["url"] or g[idx]["title"].lower()
+                if key not in seen:
+                    seen.add(key)
+                    out.append(g[idx])
+                    if len(out) >= limit:
+                        break
+        if not progressed:
+            break
+        idx += 1
+    return out
+
+
+_SCHOLAR_SOURCES = [("openalex", _search_openalex), ("crossref", _search_crossref), ("pubmed", _search_pubmed)]
+_SCHOLAR_HINTS = ("论文", "文献", "研究", "学术", "paper", "study", "research", "arxiv", "doi")
+_CODE_HINTS = ("github", "仓库", "源码", "开源", "repo", "library", "sdk")
+
+
+def _route_channel(query: str) -> str:
+    """auto 模式关键词路由（保守：无明确信号回 general，不误判）."""
+    q = query.lower()
+    if any(h in q for h in _CODE_HINTS):
+        return "code"
+    if any(h in q for h in _SCHOLAR_HINTS):
+        return "scholar"
+    return "general"
+
+
 _BACKENDS = [("bing", _search_bing), ("baidu", _search_baidu)]
 
 
@@ -61,6 +193,8 @@ class WebSearchTool:
     name = "web_search"
     description = (
         "网络搜索，返回结构化结果列表（标题/URL/来源）。何时用: 查找信息、找网页线索、验证外部事实。"
+        "channel 可选: general 通用网页（默认，Bing/百度双后端）/ scholar 学术论文（OpenAlex+Crossref+PubMed 免 key 多源合并）"
+        "/ code 代码仓库（GitHub 免认证）/ auto 按关键词自动路由。"
         "何时不用: 已知确切 URL 时用 web_fetch 直接抓取；本地检索用 search_records/search_archive。"
         "失败对策: 后端被限流/超时会自动降级到备用后端并如实标注来源；全部失败如实返回原因。"
     )
@@ -69,6 +203,11 @@ class WebSearchTool:
         "properties": {
             "query": {"type": "string", "description": "搜索关键词"},
             "limit": {"type": "integer", "description": "返回结果条数（默认 5，最大 10）"},
+            "channel": {
+                "type": "string",
+                "enum": ["general", "scholar", "code", "auto"],
+                "description": "搜索通道：general 通用网页(默认) / scholar 学术论文 / code 代码仓库 / auto 关键词自动路由",
+            },
         },
         "required": ["query"],
     }
@@ -76,9 +215,46 @@ class WebSearchTool:
     def __init__(self, timeout_s: float | None = None) -> None:
         self._timeout_s = 30.0 if timeout_s is None else float(timeout_s)
 
+    def _execute_vertical(self, query: str, limit: int, channel: str) -> ToolResult:
+        """垂直通道执行：scholar 多源合并去重 / code 单源，单源失败降级其余源，全失败如实报."""
+        sources = [("github", _search_github)] if channel == "code" else _SCHOLAR_SOURCES
+        groups: list[list[dict]] = []
+        errors: list[str] = []
+        for name, fn in sources:
+            try:
+                groups.append(fn(query, limit, self._timeout_s))
+            except Exception as exc:  # noqa: BLE001 — 单源失败降级其余源，如实记录
+                errors.append(f"{name}: {type(exc).__name__}: {exc}")
+        merged = _merge_dedupe(groups, limit)
+        if not merged:
+            detail = "; ".join(errors) if errors else "所有源均 0 条结果"
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[搜索失败] channel={channel} 无结果: {detail}",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        used = sorted({r["source"] for r in merged})
+        lines = [f"[query] {query}  [channel] {channel}  [sources] {'+'.join(used)}  [count] {len(merged)}"]
+        for i, r in enumerate(merged, 1):
+            lines.append(f"{i}. {r['title']}\n   {r['url']}  ({r['source']})")
+            if r["snippet"]:
+                lines.append(f"   {r['snippet']}")
+        if errors:
+            lines.append(f"[降级记录] 部分源失败: {'; '.join(errors)}")
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content="\n".join(lines),
+            tool_call_id="",
+            tool_name=self.name,
+        )
+
     def execute(self, **kwargs) -> ToolResult:
         query = str(kwargs.get("query", "")).strip()
         limit = min(max(int(kwargs.get("limit", 5) or 5), 1), 10)
+        channel = str(kwargs.get("channel", "general") or "general").strip().lower()
+        if channel == "auto":
+            channel = _route_channel(query)
         if not query:
             return ToolResult(
                 status=ToolResultStatus.FAILURE,
@@ -86,6 +262,9 @@ class WebSearchTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
+        if channel in ("scholar", "code"):
+            return self._execute_vertical(query, limit, channel)
+
         errors: list[str] = []
         for name, fn in _BACKENDS:
             try:
