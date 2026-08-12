@@ -26,7 +26,7 @@ class _FakeStore:
 def test_confirm_granted_auto_reviews():
     """用户点确认 → store.review(accepted) 自动执行，无需复制命令."""
     store = _FakeStore([{"id": "EVO-C1", "status": "pending_review", "content": "测试建议"}])
-    det = LoopSignalDetector()
+    det = LoopSignalDetector(popup_pending_review=True)
     with mock.patch("llm_loop.introspection.loop_signals.confirm", return_value=True):
         event = det.check_pending_review(store)
     assert store.reviewed == [("EVO-C1", "accepted")]  # 自动审阅
@@ -37,7 +37,7 @@ def test_confirm_granted_auto_reviews():
 def test_confirm_rejected_fallback():
     """用户点拒绝 → 不自动审阅，降级文本引导."""
     store = _FakeStore([{"id": "EVO-C2", "status": "pending_review", "content": "测试"}])
-    det = LoopSignalDetector()
+    det = LoopSignalDetector(popup_pending_review=True)
     with mock.patch("llm_loop.introspection.loop_signals.confirm", return_value=False):
         event = det.check_pending_review(store)
     assert store.reviewed == []  # 未审阅
@@ -56,7 +56,7 @@ def test_no_pending_returns_none():
 def test_confirm_failure_fallback():
     """confirm 异常 → 降级拒绝（不阻断）."""
     store = _FakeStore([{"id": "EVO-C4", "status": "pending_review", "content": "x"}])
-    det = LoopSignalDetector()
+    det = LoopSignalDetector(popup_pending_review=True)
     with mock.patch("llm_loop.introspection.loop_signals.confirm", side_effect=RuntimeError("boom")):
         event = det.check_pending_review(store)
     assert store.reviewed == []
@@ -79,7 +79,7 @@ def test_confirm_real_returns_bool(monkeypatch):
 def test_same_pending_only_prompts_once():
     """同建议保持 pending：第一次弹窗，第二次不再弹（去重）."""
     store = _FakeStore([{"id": "EVO-D1", "status": "pending_review", "content": "x"}])
-    det = LoopSignalDetector()
+    det = LoopSignalDetector(popup_pending_review=True)
     with mock.patch("llm_loop.introspection.loop_signals.confirm", return_value=False) as m:
         ev1 = det.check_pending_review(store)   # 第一次: 弹窗（拒绝）
         ev2 = det.check_pending_review(store)   # 第二次: 不应再弹
@@ -90,7 +90,7 @@ def test_same_pending_only_prompts_once():
 
 def test_different_pending_each_prompts():
     """不同建议各自弹窗（不误伤）."""
-    det = LoopSignalDetector()
+    det = LoopSignalDetector(popup_pending_review=True)
     with mock.patch("llm_loop.introspection.loop_signals.confirm", return_value=False):
         s1 = _FakeStore([{"id": "EVO-E1", "status": "pending_review", "content": "a"}])
         assert det.check_pending_review(s1) is not None
@@ -101,7 +101,7 @@ def test_different_pending_each_prompts():
 def test_confirmed_then_no_repeat():
     """确认审阅后建议变 accepted → 自然不再 pending，也不再弹."""
     store = _FakeStore([{"id": "EVO-F1", "status": "pending_review", "content": "x"}])
-    det = LoopSignalDetector()
+    det = LoopSignalDetector(popup_pending_review=True)
     with mock.patch("llm_loop.introspection.loop_signals.confirm", return_value=True):
         det.check_pending_review(store)
     assert store.reviewed == [("EVO-F1", "accepted")]

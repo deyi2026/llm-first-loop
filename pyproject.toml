@@ -48,7 +48,7 @@ reportMissingImports = "none"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q --import-mode=importlib"
+addopts = "-q --import-mode=importlib -m \"not real_llm\""
 markers = [
     "real_llm: 真实 LLM 冒烟测试（需真实 key + 网络，默认不随全量运行）",
 ]

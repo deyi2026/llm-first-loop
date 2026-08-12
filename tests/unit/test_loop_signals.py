@@ -161,13 +161,103 @@ def test_param_signal_removal_grep():
     assert hits == [], f"移除面残留（生产逻辑）: {hits}"
 
 
+# ── M49 RULE-AI-00: 默认不弹窗（web/feishu/测试无人值守路径仅文本注入）──
+class _PendingStore:
+    _path: None = None
+
+    def __init__(self, items) -> None:
+        self._items = items
+        self.reviewed: list = []
+        self._path = None
+
+    def list(self, status=""):
+        if status:
+            return [i for i in self._items if i.get("status") == status]
+        return self._items
+
+    def review(self, sid, decision):
+        self.reviewed.append((sid, decision))
+        return {"id": sid, "status": decision}
+
+
+def test_pending_review_no_popup_default(tmp_path, monkeypatch):
+    """默认构造 + 有 pending_review → confirm 未被调用，仅文本事件（含待审 id）."""
+    store = _PendingStore([{"id": "EVO-NOPOP-1", "status": "pending_review", "content": "x"}])
+    detector = LoopSignalDetector()
+    calls: list = []
+    monkeypatch.setattr(
+        "llm_loop.introspection.loop_signals.confirm",
+        lambda *a, **k: calls.append("confirm") or True,
+    )
+    ev = detector.check_pending_review(store)
+    assert calls == []  # 默认不弹窗
+    assert ev is not None
+    assert "EVO-NOPOP-1" in ev.fact  # 待审事实 AI 可见
+    assert "evolve-review" in ev.suggestion
+
+
+def test_pending_review_no_popup_no_auto_review(tmp_path, monkeypatch):
+    """非弹窗模式: store.review 未被调用、忽略清单不落盘、_prompted_ids 不更新."""
+    store = _PendingStore([{"id": "EVO-NOPOP-2", "status": "pending_review", "content": "x"}])
+    detector = LoopSignalDetector()
+    monkeypatch.setattr(
+        "llm_loop.introspection.loop_signals.confirm", lambda *a, **k: True
+    )
+    ev = detector.check_pending_review(store)
+    assert ev is not None
+    assert store.reviewed == []  # 不自动审阅
+    assert not (tmp_path / "audit" / "pending_ignored.jsonl").exists()  # 不写忽略清单
+    assert detector._prompted_ids == set()  # 不更新已提示列表
+
+
+def test_pending_review_popup_enabled_keeps_behavior(tmp_path, monkeypatch):
+    """popup_pending_review=True → 保留既有弹窗行为（确认→accepted；拒绝→文本引导）."""
+    confirmed_store = _PendingStore(
+        [{"id": "EVO-POPUP-1", "status": "pending_review", "content": "x"}]
+    )
+    detector = LoopSignalDetector(popup_pending_review=True)
+    monkeypatch.setattr(
+        "llm_loop.introspection.loop_signals.confirm", lambda *a, **k: True
+    )
+    ev = detector.check_pending_review(confirmed_store)
+    assert confirmed_store.reviewed == [("EVO-POPUP-1", "accepted")]  # 确认自动审阅
+    assert ev is not None and "accepted" in ev.fact
+
+    rejected_store = _PendingStore(
+        [{"id": "EVO-POPUP-2", "status": "pending_review", "content": "x"}]
+    )
+    detector2 = LoopSignalDetector(popup_pending_review=True)
+    monkeypatch.setattr(
+        "llm_loop.introspection.loop_signals.confirm", lambda *a, **k: False
+    )
+    ev2 = detector2.check_pending_review(rejected_store)
+    assert rejected_store.reviewed == []  # 拒绝不自动审阅
+    assert ev2 is not None and "待审阅" in ev2.fact
+
+
+def test_pending_review_no_popup_store_fail_open(tmp_path, monkeypatch):
+    """非弹窗模式 store.list 抛 OSError → None（fail-open，DFX-REL-08）."""
+    from pathlib import Path
+
+    real_open = Path.open
+
+    def _broken(self, *args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Path, "open", _broken)
+    try:
+        detector = LoopSignalDetector()
+        assert detector.check_pending_review(_PendingStore([])) is None
+    finally:
+        monkeypatch.setattr(Path, "open", real_open)
+
+
 # ── EVO-20260811-f94e5306 补丁: 幽灵建议防御 ──
 def test_pending_review_ghost_ignored(tmp_path, monkeypatch):
-    """幽灵建议（确认后 review 返回 None）→ 持久化忽略，下次不再弹."""
 
     from llm_loop.introspection.loop_signals import LoopSignalDetector
 
-    detector = LoopSignalDetector()
+    detector = LoopSignalDetector(popup_pending_review=True)
     detector._prompted_ids = set()
 
     class _GhostStore:
@@ -229,7 +319,7 @@ def test_pending_review_normal_not_ignored(tmp_path, monkeypatch):
 
     from llm_loop.introspection.loop_signals import LoopSignalDetector
 
-    detector = LoopSignalDetector()
+    detector = LoopSignalDetector(popup_pending_review=True)
     detector._prompted_ids = set()
 
     class _NormalStore:

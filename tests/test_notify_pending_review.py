@@ -19,7 +19,7 @@ class _FakeStore:
 def test_pending_review_detects_and_notifies():
     """有 pending_review → 授权弹窗被调用 + 返回 DEVIATION 事件."""
     store = _FakeStore([{"id": "EVO-TEST-1", "status": "pending_review"}])
-    det = LoopSignalDetector()
+    det = LoopSignalDetector(popup_pending_review=True)
     with mock.patch("llm_loop.introspection.loop_signals.confirm", return_value=False) as m:
         event = det.check_pending_review(store)
     assert event is not None
@@ -32,7 +32,7 @@ def test_no_pending_review_returns_none():
     """无 pending_review → None（不弹窗不注入）."""
     store = _FakeStore([{"id": "EVO-TEST-2", "status": "executed"}])
     det = LoopSignalDetector()
-    with mock.patch("llm_loop.introspection.loop_signals.notify") as m:
+    with mock.patch("llm_loop.introspection.loop_signals.confirm") as m:
         event = det.check_pending_review(store)
     assert event is None
     m.assert_not_called()
@@ -51,7 +51,7 @@ def test_notify_failure_fallback_event():
     Mock 错函数导致测试运行时真实弹出 osascript 授权窗（EVO-TEST-3）。
     """
     store = _FakeStore([{"id": "EVO-TEST-3", "status": "pending_review"}])
-    det = LoopSignalDetector()
+    det = LoopSignalDetector(popup_pending_review=True)
     with mock.patch("llm_loop.introspection.loop_signals.confirm", side_effect=RuntimeError("boom")):
         event = det.check_pending_review(store)
     assert event is not None

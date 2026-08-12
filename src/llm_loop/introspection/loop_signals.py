@@ -31,10 +31,14 @@ class LoopSignalDetector:
         eval_trigger_detector: Any | None = None,  # EvalTriggerDetector
         status: Any | None = None,  # ArchitectureStatusProvider
         settings: Any | None = None,  # Settings（self_eval_remind_enabled 等）
+        popup_pending_review: bool = False,  # M49 RULE-AI-00: 默认不弹窗，仅 CLI 交互开启
     ) -> None:
         self._eval_trigger_detector = eval_trigger_detector
         self._status = status
         self._settings = settings
+        # M49 弹窗开关: True 时 check_pending_review 保留 osascript 授权确认（仅有人值守 CLI 交互）;
+        # False（默认）时仅文本事件注入（web/feishu/测试/单条 CLI 无人值守路径不阻塞循环）。
+        self.popup_pending_review = popup_pending_review
         # EVO-20260810-86e777d1 缺陷修复: 已弹窗提示过的建议 ID（确认或拒绝后不再重复弹）
         self._prompted_ids: set[str] = set()
 
@@ -119,6 +123,18 @@ class LoopSignalDetector:
         # EVO-20260811-f94e5306 补丁: 幽灵建议（确认后存储不存在）持久化忽略，防反复弹
         if sid in self._prompted_ids or self._is_ghost_ignored(store, sid, content_preview):
             return None
+        # M49 RULE-AI-00: 默认不弹窗（web/feishu/测试/单条 CLI 无人值守路径）。
+        # 仅文本事件注入待审事实（AI 可见，不静默丢失），不阻塞循环、不自动审阅、不写忽略清单。
+        if not self.popup_pending_review:
+            return ArchitectureEvent(
+                event_type=ArchitectureEventType.DEVIATION,
+                fact=f"存在待审阅演进建议（{sid}）",
+                reason="未启用弹窗授权（非交互路径），等待人工审阅",
+                suggestion=(
+                    "可执行 CLI: evolve-review <id> accepted|rejected；"
+                    "多条待审阅可逐条处理（不审阅不阻断本循环）。"
+                ),
+            )
         # 授权确认弹窗（阻塞等待用户选择；失败/超时 → False → 降级引导）
         try:
             granted = confirm(

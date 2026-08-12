@@ -110,3 +110,25 @@ def test_style_has_upload_styles():
     assert ".copy-btn" in css
     assert ".attachment-bubble" in css
     assert ".dragover" in css
+
+
+def test_app_has_tool_call_chain_render():
+    """P2-1: app.js 含 renderToolCalls 折叠链渲染与 data.tool_calls 消费逻辑."""
+    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    assert "function renderToolCalls" in app_js
+    assert "function renderToolMessage" in app_js
+    assert "data.tool_calls" in app_js  # sendMessage 200 分支消费 tool_calls
+    assert "tool-call-chain" in app_js
+
+
+def test_app_keeps_tool_role_in_history():
+    """P2-1: loadSessionMessages 保留 tool 角色消息（历史刷新后工具回执可见）."""
+    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    assert 'm.role === "tool"' in app_js  # 白名单保留 tool 角色
+
+
+def test_style_has_tool_chain_styles():
+    """P2-1: style.css 含 .tool-call- 折叠样式类."""
+    css = (STATIC_DIR / "style.css").read_text(encoding="utf-8")
+    for cls in (".tool-call-chain", ".tool-call-toggle", ".tool-call-detail", ".tool-call-item"):
+        assert cls in css

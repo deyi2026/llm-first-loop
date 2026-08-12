@@ -136,12 +136,77 @@ function renderMarkdown(md) {
   }
 }
 
+// ---------- P2-1 工具调用链渲染（M49） ----------
+function fmtToolArgs(args) {
+  // 参数摘要：JSON 序列化，超长截断；stringify 异常降级显示原始字符串
+  if (args === undefined || args === null) return "";
+  try {
+    const s = JSON.stringify(args);
+    return s.length > 200 ? s.slice(0, 200) + "…" : s;
+  } catch (err) {
+    return String(args);
+  }
+}
+
+function renderToolCalls(toolCalls, container) {
+  // 空/非数组直接返回（不产生 DOM 残留）
+  if (!Array.isArray(toolCalls) || !toolCalls.length) return;
+  const chain = el("div", "tool-call-chain");
+  const toggle = el("button", "tool-call-toggle", `🔧 工具调用 ${toolCalls.length} 次 ▸`);
+  toggle.type = "button";
+  const detail = el("div", "tool-call-detail");
+  detail.hidden = true;
+  toggle.onclick = () => {
+    detail.hidden = !detail.hidden;
+    toggle.textContent = `🔧 工具调用 ${toolCalls.length} 次 ${detail.hidden ? "▸" : "▾"}`;
+  };
+  for (const tc of toolCalls) {
+    const item = el("div", "tool-call-item");
+    item.appendChild(el("span", "tool-call-name", String(tc.name || "tool")));
+    const argsText = fmtToolArgs(tc.arguments);
+    if (argsText) item.appendChild(el("div", "tool-call-detail-text", `参数: ${argsText}`));
+    detail.appendChild(item);
+  }
+  chain.appendChild(toggle);
+  chain.appendChild(detail);
+  container.insertBefore(chain, container.firstChild);
+}
+
+function renderToolMessage(msg, container) {
+  // 历史 tool 角色消息 → 折叠回执（解析 [状态: xxx] 前缀作为摘要）
+  const chain = el("div", "tool-call-chain");
+  const content = String(msg.content || "");
+  const m = content.match(/^\[([^\]]+)\]/);
+  const summary = m ? `🔧 ${m[1]}` : "🔧 工具回执";
+  const toggle = el("button", "tool-call-toggle", `${summary} ▸`);
+  toggle.type = "button";
+  const detail = el("div", "tool-call-detail");
+  detail.hidden = true;
+  toggle.onclick = () => {
+    detail.hidden = !detail.hidden;
+    toggle.textContent = `${summary} ${detail.hidden ? "▸" : "▾"}`;
+  };
+  detail.appendChild(el("div", "tool-call-detail-text", content));
+  chain.appendChild(toggle);
+  chain.appendChild(detail);
+  container.appendChild(chain);
+}
+
 // ---------- 消息渲染 ----------
 function renderMessages() {
   els.messages.innerHTML = "";
   for (const msg of state.messages) {
     const node = document.createElement("div");
     node.className = "message " + msg.role;
+    if (msg.role === "tool") {
+      // P2-1: 历史 tool 角色消息渲染为折叠回执
+      const wrap = document.createElement("div");
+      wrap.className = "message-wrap";
+      wrap.appendChild(node);
+      renderToolMessage(msg, wrap);
+      els.messages.appendChild(wrap);
+      continue;
+    }
     if (msg.role === "assistant") {
       // AI 回答：MD 渲染（经 sanitize）；渲染失败降级纯文本（不空白不伪造）
       const html = renderMarkdown(msg.content);
@@ -149,6 +214,10 @@ function renderMessages() {
         node.innerHTML = html;
       } else {
         node.textContent = msg.content;
+      }
+      // P2-1: AI 回复内容前插入折叠工具调用链（若有）
+      if (Array.isArray(msg.toolCalls) && msg.toolCalls.length) {
+        renderToolCalls(msg.toolCalls, node);
       }
       // 一键复制按钮（M39）：位于回复框右下角，复制 final_answer 原文纯文本
       const wrap = document.createElement("div");
@@ -206,8 +275,10 @@ function addCodeBlockCopyButtons(container) {
   }
 }
 
-function addMessage(role, content, note) {
-  state.messages.push({ role, content, note });
+function addMessage(role, content, note, toolCalls) {
+  const m = { role, content, note };
+  if (Array.isArray(toolCalls) && toolCalls.length) m.toolCalls = toolCalls;
+  state.messages.push(m);
   renderMessages();
 }
 
@@ -273,7 +344,8 @@ async function sendMessage() {
         }
         note.push(footer);
       }
-      addMessage("assistant", data.final_answer, note.join("\n") || null);
+      // P2-1: 透传本轮工具调用链（tool_calls 已由后端返回，前端渲染折叠链）
+      addMessage("assistant", data.final_answer, note.join("\n") || null, data.tool_calls);
       // M52: 本次页面会话 token 累计（输入区模型选择旁实时更新）
       if (data.tokens_in || data.tokens_out) {
         state.pageTokensIn = (state.pageTokensIn || 0) + data.tokens_in;
@@ -310,8 +382,9 @@ async function loadSessions() {
 async function loadSessionMessages(sessionId) {
   const { status, data } = await api(`/api/v1/sessions/${encodeURIComponent(sessionId)}/messages`);
   if (status !== 200) return;
+  // P2-1: 白名单保留 tool 角色（工具调用回执），历史刷新后仍可见
   state.messages = (data.messages || [])
-    .filter((m) => m.role === "user" || m.role === "assistant")
+    .filter((m) => m.role === "user" || m.role === "assistant" || m.role === "tool")
     .map((m) => ({ role: m.role, content: m.content, note: null }));
   renderMessages();
 }
