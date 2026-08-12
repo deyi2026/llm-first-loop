@@ -191,7 +191,7 @@ def test_ws_bridge_lifecycle(monkeypatch):
 
 
 def test_event_handler_registers_noop_processors(monkeypatch):
-    """_build_event_handler 注册 4 类已知无需处理事件的 no-op 处理器（消日志噪音）."""
+    """_build_event_handler 注册 5 类已知无需处理事件的 no-op 处理器（消日志噪音）."""
     import lark_oapi as lark
 
     registered: list[str] = []
@@ -211,6 +211,10 @@ def test_event_handler_registers_noop_processors(monkeypatch):
 
         def register_p2_im_message_reaction_deleted_v1(self, fn):
             registered.append("reaction_deleted")
+            return self
+
+        def register_p2_im_message_recalled_v1(self, fn):
+            registered.append("recalled")
             return self
 
         def register_p2_im_chat_access_event_bot_p2p_chat_entered_v1(self, fn):
@@ -233,8 +237,8 @@ def test_event_handler_registers_noop_processors(monkeypatch):
     bridge = _WsConnector(config=_cfg(), on_message=Mock(), has_token=lambda: True)
     handler = bridge._build_event_handler()
     assert handler == "handler"
-    # 已读回执 / 表情创建 / 表情删除 / 进入会话 均注册 no-op（cf6d9a78）
-    for expected in ("message_read", "reaction_created", "reaction_deleted", "access_event"):
+    # 已读回执 / 表情创建 / 表情删除 / 撤回消息 / 进入会话 均注册 no-op（cf6d9a78 + M51 补 recalled）
+    for expected in ("message_read", "reaction_created", "reaction_deleted", "recalled", "access_event"):
         assert expected in registered, f"{expected} 未注册 no-op 处理器"
     # 消息接收仍走真实处理
     assert "receive" in registered

@@ -176,6 +176,7 @@ class _WsConnector:
             .register_p2_im_message_message_read_v1(self._ignore_event)
             .register_p2_im_message_reaction_created_v1(self._ignore_event)
             .register_p2_im_message_reaction_deleted_v1(self._ignore_event)
+            .register_p2_im_message_recalled_v1(self._ignore_event)
             .register_p2_im_chat_access_event_bot_p2p_chat_entered_v1(self._ignore_event)
             .build()
         )
