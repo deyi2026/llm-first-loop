@@ -1,7 +1,6 @@
 """授权确认弹窗测试（EVO-20260810-86e777d1 演进: 通知型→授权确认型）."""
 from unittest import mock
 
-from llm_loop.introspection.events import ArchitectureEventType
 from llm_loop.introspection.loop_signals import LoopSignalDetector
 from llm_loop.notify import confirm, notify
 

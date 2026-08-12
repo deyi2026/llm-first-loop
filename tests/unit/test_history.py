@@ -118,7 +118,7 @@ def test_compression_keeps_tool_pairs_atomic():
     msgs.append(_m("user", "最新问题"))
     # 预算仅够最新部分 → 触发压缩
     out = build_history_messages(msgs, system_prompt="SYS", max_chars=2000)
-    roles = [d["role"] for d in out]
+
     # 校验: assistant(tool_calls) 后的 tool 消息数 == 该 assistant 的 tool_calls 数（协议配对）
     i = 0
     n = len(out)
@@ -150,7 +150,7 @@ def test_compression_archives_tool_pairs_atomic():
     out = build_history_messages(
         msgs, system_prompt="SYS", max_chars=600, session_id="s1", archive_sink=sink
     )
-    roles = [d["role"] for d in out]
+
     # 归档端的 assistant(tool_calls) 也应与其 tool 响应同组归档（不残留孤 tool）
     arch_roles = [m.role for m in archived]
     for idx, r in enumerate(arch_roles):

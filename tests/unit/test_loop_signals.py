@@ -164,7 +164,6 @@ def test_param_signal_removal_grep():
 # ── EVO-20260811-f94e5306 补丁: 幽灵建议防御 ──
 def test_pending_review_ghost_ignored(tmp_path, monkeypatch):
     """幽灵建议（确认后 review 返回 None）→ 持久化忽略，下次不再弹."""
-    import json as _json
 
     from llm_loop.introspection.loop_signals import LoopSignalDetector
 
@@ -227,7 +226,6 @@ def test_pending_review_ignored_skips_before_confirm(tmp_path, monkeypatch):
 
 def test_pending_review_normal_not_ignored(tmp_path, monkeypatch):
     """正常建议（review 返回 dict）→ 正常 accepted 事件，不写忽略清单."""
-    import json as _json
 
     from llm_loop.introspection.loop_signals import LoopSignalDetector
 

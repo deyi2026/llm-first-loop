@@ -7,6 +7,7 @@ DeclarationValidator + RecordSearcher 装配为 LoopEngine。
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -25,6 +26,8 @@ from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
 from llm_loop.tools.builtin.read_file import ReadFileTool
 from llm_loop.tools.builtin.web_fetch import WebFetchTool
 from llm_loop.tools.registry import ToolRegistry
+
+logger = logging.getLogger(__name__)
 
 
 class _CorrectionAdapterTool:
@@ -87,6 +90,21 @@ def build_engine(settings: Settings) -> LoopEngine:
     # 存储（记忆 + 压缩档案 + 会话）
     memory = MemoryStore(settings.memory_dir)
     archive = ArchiveStore(settings.archive_dir) if settings.archive_enabled else None
+    # R7: 启动时清理一次过期/超量档案（fail-open，不影响启动）
+    if archive is not None:
+        try:
+            gc_result = archive.cleanup(
+                max_entries=settings.archive_max_entries,
+                ttl_days=settings.archive_ttl_days,
+            )
+            if gc_result.get("pruned_entries", 0) > 0:
+                logger.info(
+                    "档案 GC: 清理 %s 条目 / %s 文件",
+                    gc_result["pruned_entries"],
+                    gc_result["pruned_files"],
+                )
+        except Exception:  # noqa: BLE001 — GC 失败不影响启动
+            logger.warning("档案 GC 启动清理失败（fail-open）", exc_info=True)
     session_store = SessionStore(settings.sessions_dir)
 
     # 工具注册表（3 基础工具 + 自省/修正/检索工具）
@@ -268,12 +286,25 @@ def build_engine(settings: Settings) -> LoopEngine:
     )
 
     # P1: LLM 摘要器（SUMMARY_MODE，§3.6）
+    # R6: SUMMARY_MODEL 指定独立摘要模型（成本隔离）；未配置/构造失败 → 回退主模型（fail-open）
     summarizer = None
     if settings.summary_mode in {"sync", "async"}:
         from llm_loop.memory.summarize import Summarizer
 
+        summary_client = llm
+        if settings.summary_model:
+            try:
+                summary_client = model_pool.get_client(settings.summary_model)
+            except Exception as exc:  # noqa: BLE001 — 独立摘要模型不可用如实 warning + 回退主模型
+                logger.warning(
+                    "独立摘要模型 %s 不可用，回退主模型（fail-open）: %s",
+                    settings.summary_model,
+                    exc,
+                )
+                summary_client = llm
+
         summarizer = Summarizer(
-            llm_client=llm,
+            llm_client=summary_client,
             mode=settings.summary_mode,
             timeout_s=settings.summary_timeout_s,
             max_input_chars=settings.summary_max_input_chars,

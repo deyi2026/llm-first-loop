@@ -49,7 +49,7 @@ def test_history_compression_pair_atomic_2m():
         msgs.append(Message(role="tool", content="x" * 2000, source=MessageSource.TOOL, tool_call_id=f"c{k}_0"))
     msgs.append(Message(role="user", content="最新问题", source=MessageSource.USER))
     out = build_history_messages(msgs, system_prompt="SYS", max_chars=500_000)
-    roles = [d["role"] for d in out]
+
     i = 0
     n = len(out)
     while i < n:

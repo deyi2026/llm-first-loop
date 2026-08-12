@@ -760,3 +760,56 @@ def test_corrections_execute_dispatch_switch_model(tmp_path, monkeypatch: pytest
     record = json.loads(log.read_text(encoding="utf-8").strip().splitlines()[-1])
     assert record["tool_name"] == "switch_model"
     assert record["result_status"] == "success"
+
+
+# ── R5: ModelSpec 能力字段 + model_catalog 展示 ──
+
+
+def test_model_spec_capability_fields_default_false() -> None:
+    """能力字段默认 False（未配置零回归）."""
+    settings = _settings(model_providers_raw=_TWO_PROVIDER_JSON)
+    pool = _build_pool(settings)
+    spec = pool.registry.providers["deepseek"].models["deepseek-v4-flash"]
+    assert spec.reasoning is False
+    assert spec.long_context is False
+    assert spec.multimodal is False
+
+
+def test_model_catalog_shows_capabilities() -> None:
+    """配置能力字段后 model_catalog 回执展示."""
+    providers_json = json.dumps(
+        {
+            "deepseek": {
+                "base_url": "https://api.deepseek.com/v1",
+                "api_key_env": "DEEPSEEK_API_KEY",
+                "models": {
+                    "deepseek-v4-pro": {
+                        "context": 1000000,
+                        "thinking": True,
+                        "cost_tier": "high",
+                        "reasoning": True,
+                        "long_context": True,
+                    },
+                    "deepseek-v4-flash": {
+                        "context": 131072,
+                        "thinking": True,
+                        "cost_tier": "low",
+                    },
+                },
+                "default_model": "deepseek-v4-flash",
+            }
+        }
+    )
+    settings = _settings(model_providers_raw=providers_json)
+    pool = _build_pool(settings)
+    spec = pool.registry.providers["deepseek"].models["deepseek-v4-pro"]
+    assert spec.reasoning is True
+    assert spec.long_context is True
+    assert spec.multimodal is False
+
+    ctx = _build_ctx(pool)
+    ctx.session_model_override = None
+    result = run_model_catalog(ctx, pool, ctx.session_model_override)
+    assert result.status.value == "success"
+    assert "reasoning/long_context" in result.content  # 能力标注
+    assert "deepseek-v4-flash" in result.content  # 无能力字段模型不标注

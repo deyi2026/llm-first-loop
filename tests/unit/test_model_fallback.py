@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from typing import Any
 
 import pytest
@@ -40,12 +41,16 @@ from llm_loop.llm.providers import ProviderRegistry
 
 
 def _settings(**overrides) -> Settings:
-    """构造最小 Settings（含 M49 model_fallbacks_raw）."""
+    """构造最小 Settings（含 M49 model_fallbacks_raw）.
+
+    隔离治理: data_dir 默认指向独立临时目录（tempfile.mkdtemp），杜绝测试写真实 data/；
+    调用 engine.run 的测试显式传 data_dir=str(tmp_path / "data")，由 pytest 自动清理。
+    """
     base: dict[str, Any] = {
         "llm_api_key": "test-key",
         "llm_base_url": "https://api.deepseek.com/v1",
         "llm_model": "deepseek-v4-flash",
-        "data_dir": "./data",
+        "data_dir": tempfile.mkdtemp(prefix="llm-fallback-test-"),
         "model_providers_raw": "",
         "model_fallbacks_raw": "",
     }
@@ -98,6 +103,7 @@ def test_fallback_candidates_empty_returns_empty_list() -> None:
 
 
 def test_fallback_candidates_resolves_valid_entries(
+    tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """合法条目 → 全限定 provider/model 列表返回."""
@@ -106,6 +112,7 @@ def test_fallback_candidates_resolves_valid_entries(
     settings = _settings(
         model_providers_raw=_THREE_PROVIDER_JSON,
         model_fallbacks_raw="deepseek/deepseek-v4-flash,local/qwen3.6-27b,minimax/MiniMax-M3",
+    data_dir=str(tmp_path / "data"),
     )
     from llm_loop.llm.providers import load_registry
 
@@ -123,6 +130,7 @@ def test_fallback_candidates_resolves_valid_entries(
 
 
 def test_fallback_candidates_skips_invalid_entries(
+    tmp_path,
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """非法条目（未知 provider / 裸名歧义 / key 缺失）→ 跳过 + warning 日志, 不影响链上其他候选."""
@@ -137,6 +145,7 @@ def test_fallback_candidates_skips_invalid_entries(
             "minimax/MiniMax-M3,"  # MINIMAX_API_KEY 未设 → 跳过
             "local/qwen3.6-27b"
         ),
+        data_dir=str(tmp_path / "data"),
     )
     from llm_loop.llm.providers import load_registry
 
@@ -155,6 +164,7 @@ def test_fallback_candidates_skips_invalid_entries(
 
 
 def test_fallback_candidates_bare_ambiguous_skipped(
+    tmp_path,
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """裸名跨 provider 歧义 → 跳过 + warning, 不阻断链上其他合法条目."""
@@ -177,6 +187,7 @@ def test_fallback_candidates_bare_ambiguous_skipped(
     settings = _settings(
         model_providers_raw=raw,
         model_fallbacks_raw="shared,local/qwen3.6-27b",  # "shared" 歧义; local 不存在 → 双跳过
+    data_dir=str(tmp_path / "data"),
     )
     from llm_loop.llm.providers import load_registry
 
@@ -282,6 +293,7 @@ def test_default_model_429_triggers_fallback_to_next(
     settings = _settings(
         model_providers_raw=_THREE_PROVIDER_JSON,
         model_fallbacks_raw="deepseek/deepseek-v4-flash,local/qwen3.6-27b",
+    data_dir=str(tmp_path / "data"),
     )
 
     # 主 client 第一次 chat 抛 429, 之后不再调用（fallback 接管）
@@ -361,6 +373,7 @@ def test_default_model_timeout_triggers_fallback_chain(
     settings = _settings(
         model_providers_raw=_THREE_PROVIDER_JSON,
         model_fallbacks_raw="local/qwen3.6-27b,minimax/MiniMax-M3",
+    data_dir=str(tmp_path / "data"),
     )
     monkeypatch.setenv("MINIMAX_API_KEY", "real-key")
 
@@ -416,6 +429,7 @@ def test_session_override_model_failure_no_fallback_strict_mode(
     settings = _settings(
         model_providers_raw=_THREE_PROVIDER_JSON,
         model_fallbacks_raw="local/qwen3.6-27b",
+    data_dir=str(tmp_path / "data"),
     )
 
     # 默认 client 跑通（设置 override 前先完成设置, 因为 run() 内部读 sess.model_override）
@@ -483,6 +497,7 @@ def test_all_fallbacks_fail_summarizes_reasons(
     settings = _settings(
         model_providers_raw=_THREE_PROVIDER_JSON,
         model_fallbacks_raw="deepseek/deepseek-v4-flash,local/qwen3.6-27b,minimax/MiniMax-M3",
+    data_dir=str(tmp_path / "data"),
     )
 
     # 主 client 抛 5xx
@@ -577,6 +592,7 @@ def test_http_4xx_no_fallback(
     settings = _settings(
         model_providers_raw=_THREE_PROVIDER_JSON,
         model_fallbacks_raw="local/qwen3.6-27b,minimax/MiniMax-M3",
+    data_dir=str(tmp_path / "data"),
     )
     monkeypatch.setenv("MINIMAX_API_KEY", "real-key")
 
@@ -643,6 +659,7 @@ def test_empty_fallbacks_zero_regression(
     settings = _settings(
         model_providers_raw=_THREE_PROVIDER_JSON,
         model_fallbacks_raw="",  # 空 = 不启用
+    data_dir=str(tmp_path / "data"),
     )
 
     main_client = _FakeLLMClient("deepseek-v4-flash")
@@ -765,6 +782,7 @@ def test_no_api_key_leaked_in_fallback_audit(
     settings = _settings(
         model_providers_raw=_THREE_PROVIDER_JSON,
         model_fallbacks_raw="local/qwen3.6-27b",
+    data_dir=str(tmp_path / "data"),
     )
 
     main_client = _FakeLLMClient("deepseek-v4-flash")

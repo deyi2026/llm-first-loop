@@ -7,8 +7,6 @@ token 失效重试 / 限流静默。全部 lark client Mock（_FakeCardkitServic
 
 import json
 
-import pytest
-
 from llm_loop.feishu.streaming_card import StreamingCard, _card_json
 
 

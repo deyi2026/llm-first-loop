@@ -26,11 +26,6 @@ class _FakeTool:
         return f"{self.name}:ok"
 
 
-def _reg():
-    reg = ToolRegistry()
-    reg.register(_FakeTool("read_file", fn=lambda **k: (_lock_enter("r") or "read:ok")))
-    return reg
-
 
 # 用事件/计时验证并发
 _lock = Lock()

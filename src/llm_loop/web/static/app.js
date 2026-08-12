@@ -30,7 +30,7 @@ const els = {
 // M47 快捷命令定义（argHint 非空表示需附加参数，点击只填入不自动执行）
 const COMMANDS = [
   { name: "/new", desc: "新建会话" },
-  { name: "/clear", desc: "清空对话区（不删会话）" },
+  { name: "/clear", desc: "清除上下文（新建隔离会话，旧会话保留）" },
   { name: "/model", desc: "切换模型，如 /model deepseek-v4-pro（或用下方下拉）", argHint: " <模型名>" },
   { name: "/help", desc: "查看可用命令" },
 ];
@@ -324,6 +324,14 @@ function renderSessions() {
   );
   for (const s of list) {
     const item = el("li", "session-item" + (s.session_id === state.currentSessionId ? " active" : ""));
+    // M56 置顶按钮（📌 置顶 / 📍 未置顶）
+    const pinBtn = el("button", "session-pin" + (s.pinned ? " pinned" : ""), s.pinned ? "📌" : "📍");
+    pinBtn.title = s.pinned ? "取消置顶" : "置顶";
+    pinBtn.onclick = (e) => {
+      e.stopPropagation();
+      setSessionPin(s.session_id, !s.pinned);
+    };
+    item.appendChild(pinBtn);
     const delBtn = el("button", "session-del", "✕");
     delBtn.title = "删除会话";
     delBtn.onclick = (e) => {
@@ -332,6 +340,10 @@ function renderSessions() {
     };
     item.appendChild(delBtn);
     const title = el("div", "session-title", s.title || "未命名");
+    // M56 来源标签（飞书会话标注；Web 端不标）
+    if (s.channel && s.channel !== "web") {
+      title.appendChild(el("span", "session-channel", "飞书"));
+    }
     const meta = el(
       "div",
       "session-meta",
@@ -342,6 +354,18 @@ function renderSessions() {
     item.onclick = () => selectSession(s.session_id);
     els.sessionList.appendChild(item);
   }
+}
+
+// M56 置顶/取消置顶（后端排序：置顶优先）
+async function setSessionPin(sessionId, pinned) {
+  const { status } = await api(
+    `/api/v1/sessions/${encodeURIComponent(sessionId)}/pin?pinned=${pinned}`,
+    { method: "POST" }
+  );
+  if (status !== 200) {
+    addMessage("error", "置顶操作失败。");
+  }
+  loadSessions();
 }
 
 function selectSession(sessionId) {
@@ -389,11 +413,24 @@ async function init() {
   }
   await loadModels(); // M47 模型切换候选
   await loadSessions();
+  initEventStream(); // M56 实时刷新（飞书/Web 会话同步）
   // 刷新后自动选中最近会话并恢复其历史消息（无会话则保持空白等待新建）
   const latest = state.sessions[0];
   if (latest) {
     selectSession(latest.session_id);
   }
+}
+
+// ---------- M56 SSE 实时刷新（飞书/Web 会话同步） ----------
+function initEventStream() {
+  if (typeof EventSource === "undefined") return; // 老旧浏览器降级为手动刷新
+  const es = new EventSource("/api/v1/events");
+  es.addEventListener("sessions_updated", () => {
+    loadSessions(); // 刷新列表（预览/置顶顺序/来源标签）
+    if (state.currentSessionId) {
+      loadSessionMessages(state.currentSessionId); // 刷新当前会话（飞书侧新消息实时可见）
+    }
+  });
 }
 
 // ---------- M39 命令处理（纯前端状态操作，不调 API） ----------
@@ -402,11 +439,12 @@ function handleCommand(cmd) {
   const name = (parts[0] || "").toLowerCase();
   if (name === "/new") {
     newSession();
-    addMessage("system", "已新建会话。");
+    addMessage("system", "已新建会话（下一条消息将进入全新会话）。");
   } else if (name === "/clear") {
-    state.messages = [];
-    renderMessages();
-    addMessage("system", "对话区已清空（会话保留）。");
+    // M62 修复: 彻底隔离——清空 currentSessionId 等同新建会话，
+    // 否则下一条消息仍发到旧会话（上下文超限错误继续出现）
+    newSession();
+    addMessage("system", "已清除上下文（下一条消息将进入全新会话，旧会话保留可查看）。");
   } else if (name === "/model") {
     const m = (parts[1] || "").trim();
     if (!m) {
@@ -421,7 +459,7 @@ function handleCommand(cmd) {
       addMessage("system", `已切换模型：${m}（下一条消息生效）。`);
     }
   } else if (name === "/help") {
-    addMessage("system", "可用命令：\n/new 新建会话\n/clear 清空对话区（不删会话）\n/model <模型名> 切换模型（或用输入栏下方下拉）\n/help 帮助\n其余以 / 开头的输入视为未知命令。");
+    addMessage("system", "可用命令：\n/new 新建会话\n/clear 清除上下文（新建隔离会话，旧会话保留）\n/model <模型名> 切换模型（或用输入栏下方下拉）\n/help 帮助\n其余以 / 开头的输入视为未知命令。");
   } else {
     addMessage("error", `未知命令：${name}。输入 /help 查看可用命令。`);
   }

@@ -36,6 +36,9 @@ class SessionMeta:
     message_count: int
     status: Literal["active", "archived"]
     last_message_preview: str
+    # M56（Web/飞书会话同步）: 缺省向后兼容
+    pinned: bool = False   # 置顶
+    channel: str = "web"   # 来源通道
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -58,10 +61,13 @@ class Session:
     # M48（design §5.3）：会话级模型覆盖（switch_model 工具写入；None = 用装配默认）
     # 旧会话 JSON 缺省 → None（向后兼容，向前兼容 version 1/2/3 三套字段）
     model_override: str | None = None
+    # M56（Web/飞书会话同步）：version 4 字段，缺省向后兼容
+    pinned: bool = False      # 置顶（Web 端会话列表置顶优先）
+    channel: str = "web"      # 来源通道: "web" / "feishu:p2p:{open_id}" / "feishu:group:{chat_id}"
 
     def to_dict(self) -> dict:
         return {
-            "version": 3,
+            "version": 4,
             "session_id": self.session_id,
             "created_at": self.created_at,
             "title": self.title,
@@ -71,6 +77,8 @@ class Session:
             "branch_id": self.branch_id,
             "branch_summary": self.branch_summary,
             "model_override": self.model_override,
+            "pinned": self.pinned,
+            "channel": self.channel,
             "messages": [
                 {
                     "role": m.role,
@@ -190,6 +198,9 @@ class SessionStore:
                 branch_summary=data.get("branch_summary", ""),
                 # M48: model_override 缺省向后兼容（旧 JSON 无键 → None）
                 model_override=data.get("model_override"),
+                # M56: pinned/channel 缺省向后兼容（旧 JSON 无键 → 默认值）
+                pinned=bool(data.get("pinned", False)),
+                channel=data.get("channel", "web"),
             )
         except (json.JSONDecodeError, KeyError, ValueError):
             # 如实降级：文件损坏时返回新会话（不伪造恢复）
@@ -218,10 +229,13 @@ class SessionStore:
             message_count=len(session.messages),
             status=session.status,
             last_message_preview=preview,
+            # M56: pinned/channel 透传
+            pinned=session.pinned,
+            channel=session.channel,
         )
 
     def list_sessions(self, include_archived: bool = False) -> list[SessionMeta]:
-        """列出全部会话元数据（按 updated_at 降序；归档会话默认隐藏）."""
+        """列出全部会话元数据（M56: 置顶优先，再按 updated_at 降序；归档默认隐藏）."""
         metas: list[SessionMeta] = []
         for p in sorted(self._dir.glob("*.json")):
             try:
@@ -242,9 +256,14 @@ class SessionStore:
                     message_count=len(messages),
                     status=status,
                     last_message_preview=preview,
+                    # M56: pinned/channel 透传（缺省向后兼容）
+                    pinned=bool(data.get("pinned", False)),
+                    channel=data.get("channel", "web"),
                 )
             )
+        # M56: 置顶会话优先（同置顶级别内保持 updated_at 降序；稳定排序保证相对序不变）
         metas.sort(key=lambda m: m.updated_at, reverse=True)
+        metas.sort(key=lambda m: not m.pinned)
         return metas
 
     def get_meta(self, session_id: str) -> SessionMeta | None:
@@ -252,6 +271,34 @@ class SessionStore:
         if not self.exists(session_id):
             return None
         return self._to_meta(self.load(session_id))
+
+    # ── M56（Web/飞书会话同步）：置顶 + 来源通道 ──
+    def set_pinned(self, session_id: str, pinned: bool) -> bool:
+        """置顶/取消置顶会话（Web 端会话列表置顶优先）.
+
+        Returns:
+            True 成功；False 会话不存在。
+        """
+        if not self.exists(session_id):
+            return False
+        session = self.load(session_id)
+        session.pinned = bool(pinned)
+        self.save(session)
+        return True
+
+    def set_channel(self, session_id: str, channel: str) -> bool:
+        """标记会话来源通道（"web" / "feishu:p2p:{open_id}" / "feishu:group:{chat_id}"）.
+
+        幂等：已标记（非默认）则不覆盖，保留首建端来源。返回 False 表示会话不存在。
+        """
+        if not self.exists(session_id):
+            return False
+        session = self.load(session_id)
+        if session.channel != "web" and session.channel:
+            return True  # 已标记来源，不覆盖
+        session.channel = channel or "web"
+        self.save(session)
+        return True
 
     def search(self, query: str, top_k: int = 10) -> list[dict]:
         """按元数据标题 + 内容关键词检索会话（FR-P1-SES-06）.
@@ -275,6 +322,9 @@ class SessionStore:
                 title=data.get("title", ""),
                 updated_at=data.get("updated_at", _now()),
                 status=data.get("status", _ACTIVE),
+                # M56: pinned/channel 缺省向后兼容
+                pinned=bool(data.get("pinned", False)),
+                channel=data.get("channel", "web"),
             )
             meta = self._to_meta(session)
             # 标题命中
@@ -367,6 +417,8 @@ class SessionStore:
             parent_id=session_id,
             branch_id=str(uuid.uuid4())[:8],
             branch_summary=summary,
+            # M56: 分支继承来源通道（置顶不继承，新分支默认不置顶）
+            channel=parent.channel,
         )
         self.save(branch)
         return new_id

@@ -27,11 +27,17 @@ class ModelSpec:
     - context: 上下文窗口 (token 数)
     - thinking: 是否支持思考参数 (M47 泛化前硬编码在 _thinking_supported 中)
     - cost_tier: 成本档 (free/low/mid/high, 仅供展示, 不参与路由)
+    - reasoning: 强推理能力 (R5: model_catalog 展示, AI 自主选模型)
+    - long_context: 长上下文档 (R5: context >= 256K)
+    - multimodal: 多模态（图片/音频/视频, R5)
     """
 
     context: int = 131072
     thinking: bool = False
     cost_tier: str = "mid"
+    reasoning: bool = False
+    long_context: bool = False
+    multimodal: bool = False
 
 
 @dataclass(frozen=True)
@@ -188,6 +194,9 @@ def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
                         context=int(mval.get("context", 131072)),
                         thinking=bool(mval.get("thinking", False)),
                         cost_tier=str(mval.get("cost_tier", "mid")),
+                        reasoning=bool(mval.get("reasoning", False)),
+                        long_context=bool(mval.get("long_context", False)),
+                        multimodal=bool(mval.get("multimodal", False)),
                     )
                 else:
                     models[mid] = ModelSpec()

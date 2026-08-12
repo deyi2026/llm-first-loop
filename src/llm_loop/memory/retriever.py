@@ -15,6 +15,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -110,6 +111,8 @@ class SemanticRetriever:
         self.timeout_s = timeout_s
         self.semantic_top_k = semantic_top_k
         self.threshold = threshold
+        # M59 配置面收敛: 运行时动态 top_k 提供器（AI 经 adjust_strategy 可调；未注入用构造值）
+        self._top_k_provider: Callable[[], int] | None = None
         self._mem_emb_cache: dict[str, list[float]] = {}
         self._arch_emb_cache: dict[str, list[float]] = {}
         if memory_dir:
@@ -138,6 +141,24 @@ class SemanticRetriever:
     # ── 语义可用性 ──
     def semantic_available(self) -> bool:
         return self.embedder is not None and self.embedder.provider != "none"
+
+    # ── M59: 运行时动态语义召回上限 ──
+    def set_top_k_provider(self, fn: Callable[[], int]) -> None:
+        """注入动态 top_k 提供器（AI 经 adjust_strategy 可调；未注入用构造值）.
+
+        fn 返回整数；调用失败/非法回退构造值（fail-open 不阻断检索）。
+        """
+        self._top_k_provider = fn
+
+    def _semantic_top_k(self) -> int:
+        if self._top_k_provider is not None:
+            try:
+                val = self._top_k_provider()
+                if isinstance(val, int) and not isinstance(val, bool) and val > 0:
+                    return val
+            except Exception:  # noqa: BLE001 — 提供器异常回退构造值
+                pass
+        return self.semantic_top_k
 
     # ── 主入口 ──
     def search(
@@ -190,7 +211,7 @@ class SemanticRetriever:
             if score >= self.threshold:
                 semantic_hits.append({**c, "_semantic_score": round(score, 3)})
         semantic_hits.sort(key=lambda x: x["_semantic_score"], reverse=True)
-        semantic_hits = semantic_hits[: self.semantic_top_k]
+        semantic_hits = semantic_hits[: self._semantic_top_k()]
 
         # Phase 5: 实体通道（Entity Linking，轻量规则）
         entity_hits: list[dict] = []
@@ -203,7 +224,7 @@ class SemanticRetriever:
                 if overlap > 0:
                     entity_hits.append({**c, "_entity_score": overlap})
             entity_hits.sort(key=lambda x: x["_entity_score"], reverse=True)
-            entity_hits = entity_hits[: self.semantic_top_k]
+            entity_hits = entity_hits[: self._semantic_top_k()]
 
         # RRF 多信号融合（Phase 3+5）: 语义 + 关键词 + 实体 → 融合重排
         fused = self._rrf_fuse(

@@ -13,7 +13,6 @@ def _make_client(engine):
 
 
 def test_index_html_exists():
-    import os
     from pathlib import Path
 
     index = Path(__file__).resolve().parents[2] / "src" / "llm_loop" / "web" / "static" / "index.html"

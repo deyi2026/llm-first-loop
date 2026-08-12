@@ -155,6 +155,10 @@ class LoopEngine:
         self.llm_pool = llm_pool
         # EVO-20260811-9ccdec97: 会话状态快照节流（上次快照注入时的消息数）
         self._last_snapshot_count = 0
+        # R4 增强: overflow 反馈注入次数（同一 run 内最多注入 1 次后让 AI 决策，第二次直接结束）
+        self._overflow_reinject_count = 0
+        # M50: CLI --model 启动参数装配通道（cli.py 注入，_run_single/_run_interactive 消费）
+        self._cli_startup_model: str | None = None
 
     # ── 阶段记录（架构自省）──
     def _phase(self, phase: str) -> None:
@@ -222,6 +226,7 @@ class LoopEngine:
         verification_note: str | None = None
         truncation_noted = False
         rounds = 0
+        self._overflow_reinject_count = 0  # R4 增强: 每次 run 重置 overflow 注入计数
         model_used = ""  # M51: 本轮实际使用的模型标签（每轮 LLM 调用时刷新）
         tokens_in = 0  # M52: 本次 run 累计 prompt tokens
         tokens_out = 0  # M52: 本次 run 累计 completion tokens
@@ -261,6 +266,19 @@ class LoopEngine:
                 truncation_noted = True
             tool_schemas = self.registry.schemas(lazy=self.settings.tool_schema_lazy)
             tools_param = [self._schema_to_param(t) for t in tool_schemas]
+
+            # R1: 计算组件级占用分解（含 tool_schema_chars，供 architecture_status.context_usage.breakdown 注入）
+            from llm_loop.core.history import compute_breakdown
+
+            _info = getattr(self, "_last_build_info", None)
+            if _info:
+                self._last_breakdown = compute_breakdown(
+                    _info["base"],
+                    _info["system_prompt"],
+                    _info["memory_msgs"],
+                    tool_schema_chars=len(_json_dumps_args({"tools": tools_param})),
+                    budget=_info["budget"],
+                )
 
             # ── 行动：LLM 决策 ──
             self._phase("action.llm_decide")
@@ -323,7 +341,7 @@ class LoopEngine:
                 self._record_action("action.llm_decide", "llm_error", str(exc)[:200])
                 if self.status:
                     self.status.record_exception("llm_call", exc)
-                # R4: overflow 如实反馈（不自动重试，决策权归 AI，避免丢信息影响大模型）
+                # R4: overflow 如实反馈（不自动重试/不自动压缩，决策权归 AI）
                 if is_overflow_error(exc):
                     from llm_loop.feedback.honesty import overflow_feedback
 
@@ -333,11 +351,25 @@ class LoopEngine:
                         if ctx_limit
                         else {"label": model_used, "context": None}
                     )
-                    final_answer = overflow_feedback(
+                    feedback_text = overflow_feedback(
                         exc,
                         getattr(self, "_last_breakdown", None),
                         model_window,
                     )
+                    # 第一次 overflow: 注入 system 消息让 AI 在同会话内自主决策（调工具/换模型/回答）
+                    # 第二次 overflow: AI 已有一次机会但未解决，直接结束避免无限循环
+
+                    if self._overflow_reinject_count < 1:
+                        self._overflow_reinject_count += 1
+                        sess.messages.append(
+                            Message(
+                                role="system",
+                                content=feedback_text,
+                                source=MessageSource.SYSTEM,
+                            )
+                        )
+                        continue
+                    final_answer = feedback_text
                     break
                 # ── M49（design §5.4）: 降级逻辑 ──
                 # 仅当当前模型为默认装配（sess.model_override is None 且 per-call override 也为 None）
@@ -638,13 +670,14 @@ class LoopEngine:
         archive_sink = None
         if self.archive is not None:
             archive_sink = self._archive_sink
-        # R1: 计算组件级占用分解（供 architecture_status.context_usage.breakdown 注入）
-        from llm_loop.core.history import compute_breakdown
-
+        # R1: 存构建中间值，供主循环在 tools_param 构造后计算 breakdown（含 tool_schema_chars）
         effective_budget = max_chars if max_chars is not None else self._runtime_history_budget()
-        self._last_breakdown = compute_breakdown(
-            base, system_prompt, memory_msgs, budget=effective_budget
-        )
+        self._last_build_info = {
+            "base": base,
+            "system_prompt": system_prompt,
+            "memory_msgs": memory_msgs,
+            "budget": effective_budget,
+        }
         return build_history_messages(
             base,
             system_prompt,

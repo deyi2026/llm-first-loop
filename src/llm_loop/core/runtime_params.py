@@ -90,12 +90,33 @@ class RuntimeParams:
         default = self._settings.llm_timeout_s
         return float(self.get("timeout_s", default))
 
+    @property
+    def memory_top_k(self) -> int:
+        """记忆检索条数（M57 配置面收敛：AI 经 adjust_strategy 可调，动态优先）."""
+        default = getattr(self._settings, "memory_top_k", 5)
+        return int(self.get("memory_top_k", default))
+
+    @property
+    def extract_interval_msgs(self) -> int:
+        """会话状态快照注入间隔（M58 配置面收敛：AI 经 adjust_strategy 可调，动态优先）."""
+        default = getattr(self._settings, "extract_interval_msgs", 20)
+        return int(self.get("extract_interval_msgs", default))
+
+    @property
+    def retrieve_semantic_top_k(self) -> int:
+        """语义检索召回上限（M59 配置面收敛：AI 经 adjust_strategy 可调，动态优先）."""
+        default = getattr(self._settings, "retrieve_semantic_top_k", 20)
+        return int(self.get("retrieve_semantic_top_k", default))
+
     # ── 白名单范围校验（与 strategy_whitelist 一致）──
     def _valid(self, key: str, val: Any) -> bool:
         ranges = {
             "max_iterations": (5, HARD_CAP_MAX_ITERATIONS),
             "timeout_s": (5, 600),
             "history_budget": (1000, 1000000),
+            "memory_top_k": (1, 50),
+            "extract_interval_msgs": (5, 200),
+            "retrieve_semantic_top_k": (1, 100),
         }
         r = ranges.get(key)
         if r is None:
@@ -148,11 +169,14 @@ class RuntimeParams:
         self._round_adjust_count = 0
 
     def current(self) -> dict:
-        """当前生效值快照（前值/后值对比、审计用）."""
+        """当前生效值快照（前值/后值对比、审计用；M57-M59 增策略参数）."""
         return {
             "max_iterations": self.max_iterations,
             "timeout_s": self.llm_timeout_s,
             "history_budget": self.history_max_chars,
+            "memory_top_k": self.memory_top_k,
+            "extract_interval_msgs": self.extract_interval_msgs,
+            "retrieve_semantic_top_k": self.retrieve_semantic_top_k,
         }
 
     def reset(self, key: str | None = None) -> dict:

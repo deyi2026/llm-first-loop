@@ -18,6 +18,7 @@ data/
 # 环境与密钥
 .env
 .env.local
+.env.bak-*
 
 # 系统
 .DS_Store

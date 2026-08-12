@@ -185,3 +185,56 @@ def test_ws_bridge_lifecycle(monkeypatch):
     bridge2 = _make_bridge(monkeypatch, config=_cfg(app_id="", secret=""))
     assert bridge2.start() is False
     assert bridge2.is_healthy() is False
+
+
+# ── M65: EVO-20260811-cf6d9a78 验证闭环（no-op 处理器注册断言）──
+
+
+def test_event_handler_registers_noop_processors(monkeypatch):
+    """_build_event_handler 注册 4 类已知无需处理事件的 no-op 处理器（消日志噪音）."""
+    import lark_oapi as lark
+
+    registered: list[str] = []
+
+    class _FakeBuilder:
+        def register_p2_im_message_receive_v1(self, fn):
+            registered.append("receive")
+            return self
+
+        def register_p2_im_message_message_read_v1(self, fn):
+            registered.append("message_read")
+            return self
+
+        def register_p2_im_message_reaction_created_v1(self, fn):
+            registered.append("reaction_created")
+            return self
+
+        def register_p2_im_message_reaction_deleted_v1(self, fn):
+            registered.append("reaction_deleted")
+            return self
+
+        def register_p2_im_chat_access_event_bot_p2p_chat_entered_v1(self, fn):
+            registered.append("access_event")
+            return self
+
+        def build(self):
+            return "handler"
+
+    class _FakeDispatcher:
+        @staticmethod
+        def builder(app_id, app_secret):
+            return _FakeBuilder()
+
+    monkeypatch.setattr(lark, "EventDispatcherHandler", _FakeDispatcher)
+    from unittest.mock import Mock
+
+    from llm_loop.feishu.bridge import _WsConnector
+
+    bridge = _WsConnector(config=_cfg(), on_message=Mock(), has_token=lambda: True)
+    handler = bridge._build_event_handler()
+    assert handler == "handler"
+    # 已读回执 / 表情创建 / 表情删除 / 进入会话 均注册 no-op（cf6d9a78）
+    for expected in ("message_read", "reaction_created", "reaction_deleted", "access_event"):
+        assert expected in registered, f"{expected} 未注册 no-op 处理器"
+    # 消息接收仍走真实处理
+    assert "receive" in registered

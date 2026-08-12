@@ -4,12 +4,14 @@
 对话路径唯一执行入口 = engine.run。
 """
 
+import asyncio
+import json
 import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi import APIRouter, BackgroundTasks, Request
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from llm_loop.feedback.honesty import session_deleted_message, session_not_found_message
 
@@ -50,8 +52,15 @@ def _engine_from(request: Request) -> Any:
     response_model=ChatResponse,
     responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
 )
-def chat(payload: ChatRequest, request: Request) -> ChatResponse | Response:
-    """同步对话端点：会话存在性检查 → engine.run 单一路径 → LoopResult 如实透传."""
+def chat(
+    payload: ChatRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+) -> ChatResponse | Response:
+    """同步对话端点：会话存在性检查 → engine.run 单一路径 → LoopResult 如实透传.
+
+    M56：飞书来源会话在回复后经 background task 实时推送回飞书（不阻塞响应）。
+    """
     engine = _engine_from(request)
 
     if payload.session_id is not None:
@@ -78,6 +87,17 @@ def chat(payload: ChatRequest, request: Request) -> ChatResponse | Response:
                 "detail": f"[程序异常] 引擎执行失败（{type(exc).__name__}: {exc}）。",
             },
         )
+
+    # M56：飞书来源会话 → 后台推送用户消息 + 回答到飞书（fail-open 不阻断响应）
+    try:
+        sess = engine.session.load(session_id)
+        channel = getattr(sess, "channel", "") or ""
+    except Exception:  # noqa: BLE001 — 推送前置读取失败静默跳过
+        channel = ""
+    if channel.startswith("feishu:"):
+        from .feishu_push import push_web_chat_to_feishu
+
+        background_tasks.add_task(push_web_chat_to_feishu, channel, payload.message, result.final_answer)
 
     return ChatResponse(
         session_id=result.session_id,
@@ -120,7 +140,9 @@ def api_info() -> dict:
             "POST /api/v1/chat": "对话（body: {message, session_id?, model?}）",
             "GET /api/v1/sessions": "会话列表",
             "DELETE /api/v1/sessions/{session_id}?confirm=true": "删除会话（须确认）",
+            "POST /api/v1/sessions/{session_id}/pin": "会话置顶/取消置顶（M56）",
             "GET /api/v1/models": "可用模型列表",
+            "GET /api/v1/events": "SSE 会话更新事件流（M56 实时刷新）",
             "GET /health": "健康检查",
             "GET /docs": "Swagger 交互文档",
         },
@@ -202,10 +224,88 @@ def list_sessions(request: Request, include_archived: bool = False) -> SessionLi
             message_count=m.message_count,
             status=m.status,
             last_message_preview=m.last_message_preview,
+            pinned=m.pinned,      # M56: 置顶透传
+            channel=m.channel,    # M56: 来源通道透传
         )
         for m in metas
     ]
     return SessionListResponse(sessions=items, count=len(items))
+
+
+@router.post(
+    "/api/v1/sessions/{session_id}/pin",
+    response_model=None,
+    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+)
+def set_session_pin(session_id: str, request: Request, pinned: bool = False) -> Response:
+    """会话置顶/取消置顶（M56，Web 端列表置顶优先）."""
+    engine = _engine_from(request)
+    if not engine.session.exists(session_id):
+        return UTF8JSONResponse(
+            status_code=404,
+            content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
+        )
+    try:
+        ok = engine.session.set_pinned(session_id, pinned)
+    except Exception as exc:
+        logger.exception("session pin failed: session_id=%s", session_id)
+        return UTF8JSONResponse(
+            status_code=500,
+            content={
+                "error": "pin_failed",
+                "detail": f"[程序异常] 会话置顶失败（{type(exc).__name__}: {exc}）。",
+            },
+        )
+    if not ok:
+        return UTF8JSONResponse(
+            status_code=404,
+            content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
+        )
+    return UTF8JSONResponse(content={"status": "ok", "session_id": session_id, "pinned": pinned})
+
+
+# ── M56：SSE 会话更新事件（Web 端实时刷新，轮询共享会话目录零新依赖）──
+
+
+def _sessions_fingerprint(sessions_dir: str | Path) -> str:
+    """会话目录轻量指纹：文件数 + 最新文件 mtime + 文件名（任一变化即事件）."""
+    try:
+        files = [p for p in Path(sessions_dir).glob("*.json")]
+        if not files:
+            return "0"
+        newest = max(files, key=lambda p: p.stat().st_mtime)
+        return f"{len(files)}:{newest.stat().st_mtime_ns}:{newest.name}"
+    except OSError:
+        return "err"
+
+
+@router.get("/api/v1/events")
+async def stream_session_events(request: Request) -> StreamingResponse:
+    """SSE 会话更新事件流（M56：Web 端实时刷新）.
+
+    轮询共享会话目录指纹（文件数 + 最新 mtime），变化即推送 sessions_updated 事件；
+    Web 前端收到后刷新会话列表与当前会话消息。零新依赖（同进程内 asyncio 轮询）。
+    """
+    engine = _engine_from(request)
+    sessions_dir = getattr(getattr(engine, "settings", None), "sessions_dir", None) or "./data/sessions"
+    initial = _sessions_fingerprint(sessions_dir)
+
+    async def gen():
+        nonlocal initial
+        yield "data: " + json.dumps({"type": "connected", "ts": asyncio.get_event_loop().time()}) + "\n\n"
+        while True:
+            try:
+                if await request.is_disconnected():
+                    break
+            except Exception:  # noqa: BLE001 — 断开检测异常按断开处理
+                break
+            await asyncio.sleep(1.5)
+            current = _sessions_fingerprint(sessions_dir)
+            if current != initial and current != "err":
+                initial = current
+                yield "data: " + json.dumps({"type": "sessions_updated"}) + "\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
 
 
 @router.get(

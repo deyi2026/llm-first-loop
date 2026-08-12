@@ -6,7 +6,6 @@ FakeLLM 装配复用 tests/web 既有模式；不调用真实视觉 API（Mock d
 
 import base64
 
-import pytest
 from fastapi.testclient import TestClient
 
 from llm_loop.web import build_app
@@ -27,7 +26,7 @@ def _upload(client, filename, data: bytes):
 def test_upload_text_ok(build_test_engine, fake_settings):
     engine, _ = build_test_engine([])
     client = _make_client(engine)
-    resp = _upload(client, "notes.txt", "你好，这是内容".encode("utf-8"))
+    resp = _upload(client, "notes.txt", "你好，这是内容".encode())
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "ok"
@@ -39,7 +38,7 @@ def test_upload_text_ok(build_test_engine, fake_settings):
 def test_upload_text_markdown(build_test_engine, fake_settings):
     engine, _ = build_test_engine([])
     client = _make_client(engine)
-    resp = _upload(client, "doc.md", "# 标题\n**加粗**".encode("utf-8"))
+    resp = _upload(client, "doc.md", "# 标题\n**加粗**".encode())
     assert resp.status_code == 200
     assert resp.json()["content_type"] == "text"
     assert "# 标题" in resp.json()["result_text"]
@@ -50,7 +49,7 @@ def test_upload_docx_ok(build_test_engine, fake_settings):
 
     engine, _ = build_test_engine([])
     client = _make_client(engine)
-    buf = bytes()
+
     # 最小 docx（word/document.xml 含文本）
     import io
 
@@ -150,7 +149,7 @@ def test_upload_no_engine_call(build_test_engine, fake_settings):
     """上传端点不调用 engine.run（独立于核心对话链路）."""
     engine, fake = build_test_engine([])
     client = _make_client(engine)
-    resp = _upload(client, "notes.txt", "hello".encode())
+    resp = _upload(client, "notes.txt", b"hello")
     assert resp.status_code == 200
     assert len(fake.calls) == 0  # 上传不触发 LLM 主链路
 

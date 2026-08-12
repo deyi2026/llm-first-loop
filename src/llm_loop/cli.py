@@ -221,6 +221,10 @@ def _cmd_search(engine, query: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(argv) if argv is not None else list(sys.argv[1:])
+    # M63 配置加载统一: CLI 先加载项目 .env（环境变量优先），与 web/feishu 进程配置一致
+    from llm_loop.config import load_env_file
+
+    load_env_file()
     # EVO-20260811-f94e5306: 记录进程启动版本（一致性检测）
     from llm_loop.introspection.proc_version import record_process_start
 

@@ -2,16 +2,58 @@
 
 - FakeLLM: 可编程响应序列（含流式分片模拟），不触网
 - 隔离数据目录: DATA_DIR 指向 tmp_path，杜绝污染真实 ./data
+- M64 全局防御: 任何指向项目真实 data 目录的 SessionStore 写盘请求 → 自动临时目录
+  （兜底硬编码 data_dir="./data" 的测试，不依赖测试自觉）
 """
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from llm_loop.core.message import ToolCall
 from llm_loop.llm.client import LLMResponse
+
+# ── M64 测试环境污染全局防御（pytest 收集前执行）──
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_REAL_DATA_DIR = str((_PROJECT_ROOT / "data").resolve())
+
+
+def _isolate_real_data_dir(data_dir):
+    """测试环境兜底：指向项目真实 data 目录的目录 → 独立临时目录（零污染）.
+
+    - "./data" / "data" / 项目 data 绝对路径 → 重定向
+    - 其余（tmp_path 等）原样保留（不影响测试预期目录）
+    """
+    if data_dir is None:
+        return data_dir
+    try:
+        d = str(data_dir)
+        if d in ("./data", "data"):
+            return tempfile.mkdtemp(prefix="llm-test-data-")
+        if str((_PROJECT_ROOT / d).resolve()) == _REAL_DATA_DIR:
+            return tempfile.mkdtemp(prefix="llm-test-data-")
+    except Exception:  # noqa: BLE001 — 防御逻辑失败保持原值（fail-open）
+        pass
+    return data_dir
+
+
+def _patch_session_store_isolation():
+    """替换 SessionStore.__init__：所有写盘请求经 _isolate_real_data_dir 兜底."""
+    from llm_loop.core.session import SessionStore
+
+    _orig_init = SessionStore.__init__
+
+    def _isolated_init(self, data_dir, *args, **kwargs):
+        _orig_init(self, _isolate_real_data_dir(data_dir), *args, **kwargs)
+
+    SessionStore.__init__ = _isolated_init  # type: ignore[method-assign]
+
+
+_patch_session_store_isolation()
 
 
 class FakeLLM:
