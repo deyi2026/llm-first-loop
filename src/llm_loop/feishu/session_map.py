@@ -18,9 +18,15 @@ class SessionMap:
     映射到同一 LoopEngine session_id（多轮连续），并发经锁隔离不串话。
     """
 
-    def __init__(self, session_store: SessionStore, path: str | None = None) -> None:
+    def __init__(
+        self,
+        session_store: SessionStore,
+        path: str | None = None,
+        owner_open_id: str = "",
+    ) -> None:
         self._store = session_store
         self._path = Path(path) if path else None
+        self._owner = owner_open_id  # 跨端共享：owner 私聊与 Web 共享同一会话（空=不启用）
         self._lock = threading.RLock()
         self._map: dict[str, str] = {}
         self._load()
@@ -38,8 +44,21 @@ class SessionMap:
 
     # ── 核心 ──
     def get_or_create(self, key: str) -> str:
-        """取或建 LoopEngine session_id（多轮连续 + 并发隔离）."""
+        """取或建 LoopEngine session_id（多轮连续 + 并发隔离）.
+
+        跨端共享（M-new）: 仅配置了 owner_open_id 且键为其私聊（p:{owner}）时，
+        优先复用共享当前会话——Web/飞书同一上下文，一端说话另一端能感知。
+        其余私聊/群聊保持独立映射（多用户不串话）。
+        """
         with self._lock:
+            is_owner = bool(self._owner) and key == f"p:{self._owner}"
+            if is_owner:
+                shared = self._store.get_shared_current()
+                if shared is not None:
+                    self._map[key] = shared
+                    self._mark_channel(shared, key)
+                    self._save()
+                    return shared
             if key in self._map:
                 sid = self._map[key]
                 if self._store.exists(sid):
@@ -48,6 +67,8 @@ class SessionMap:
                     return sid
                 # 映射的会话已被删除 → 重建（生命周期管理）
             sid = self._store.create()
+            if is_owner:
+                self._store.set_shared_current(sid)  # owner 私聊新建 → 设为跨端共享当前
             self._map[key] = sid
             self._mark_channel(sid, key)
             self._save()

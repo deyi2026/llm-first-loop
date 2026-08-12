@@ -22,6 +22,7 @@ class FeishuConfig:
     chunk_limit: int = 50000
     typing_ack: bool = True  # M46：Typing reaction 回执（对齐 本地既有实现_FEISHU_TYPING_ACK）
     streaming: bool = True  # M46：流式状态卡（对齐 本地既有实现_FEISHU_STREAMING）
+    owner_open_id: str = ""  # 跨端共享：owner 私聊与 Web 共享同一会话（空=不启用，各私聊独立）
 
     @property
     def enabled(self) -> bool:
@@ -52,6 +53,7 @@ def load_feishu_config() -> FeishuConfig:
     chunk_limit = _env_int("FEISHU_CHUNK_LIMIT", 50000)
     typing_ack = _env_flag("本地既有实现_FEISHU_TYPING_ACK", True)
     streaming = _env_flag("本地既有实现_FEISHU_STREAMING", True)
+    owner_open_id = os.environ.get("FEISHU_OWNER_OPEN_ID", "").strip()
     return FeishuConfig(
         app_id=app_id,
         app_secret=app_secret,
@@ -60,6 +62,7 @@ def load_feishu_config() -> FeishuConfig:
         chunk_limit=max(chunk_limit, 200),
         typing_ack=typing_ack,
         streaming=streaming,
+        owner_open_id=owner_open_id,
     )
 
 

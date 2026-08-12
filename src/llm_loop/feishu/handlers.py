@@ -10,6 +10,8 @@ M46：挂钩 Typing reaction 回执（本地既有实现_FEISHU_TYPING_ACK）+ �
 import json
 import logging
 import os
+import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -80,6 +82,9 @@ class FeishuMessageHandler:
         self._lark_client = lark_client
         self._typing_ack = typing_ack
         self._streaming = streaming
+        # 优雅退出保护：处理中计数（信号触发退出时等待正在进行的 run 完成，避免中断丢回复）
+        self._busy_lock = threading.Lock()
+        self._busy_count = 0
 
     def _reply(self, msg: FeishuMessage, text: str) -> None:
         """回复回调（按消息类型选目标：群聊 chat_id / 私聊 open_id；未装配如实标注）."""
@@ -293,6 +298,8 @@ class FeishuMessageHandler:
 
         任一动作失败 fail-open（日志/审计），绝不阻断引擎执行与回复；异常路径 finally 保证清理。
         """
+        with self._busy_lock:
+            self._busy_count += 1
         reaction_id = ""
         card = None
         if self._typing_ack and self._rest_client is not None and msg.message_id:
@@ -309,6 +316,8 @@ class FeishuMessageHandler:
             self._audit(msg, error_kind, str(exc)[:200])
             self._reply(msg, f"[程序异常] 消息处理失败（{type(exc).__name__}: {exc}）。")
         finally:
+            with self._busy_lock:
+                self._busy_count -= 1
             # 处理结束 → 状态卡定稿 + 删除 Typing reaction（best-effort）
             self._close_status_card(card, msg)
             if reaction_id and self._rest_client is not None:
@@ -316,6 +325,16 @@ class FeishuMessageHandler:
                     self._rest_client.remove_reaction(msg.message_id, reaction_id)
                 except Exception as exc:  # noqa: BLE001 — 删除失败静默
                     logger.debug("feishu typing reaction remove error: %s", exc)
+
+    def wait_until_idle(self, timeout_s: float = 30.0) -> bool:
+        """等待正在处理的消息完成（优雅退出保护，避免进程退出中断 engine.run 丢回复）."""
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            with self._busy_lock:
+                if self._busy_count <= 0:
+                    return True
+            time.sleep(0.5)
+        return False
 
     # ── M46：流式状态卡（对齐 本地既有实现 streaming_card 算法思路，状态卡形式）──
     def _try_start_status_card(self, msg: FeishuMessage):

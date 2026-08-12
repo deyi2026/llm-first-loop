@@ -4,6 +4,7 @@
 build_bridge(engine=None) 支持测试注入；python -m llm_loop.feishu 启动入口。
 """
 
+import contextlib
 import sys
 
 from llm_loop.config import load_settings
@@ -39,7 +40,11 @@ def build_bridge(engine=None, config: FeishuConfig | None = None, lark_client=No
             .log_level(lark.LogLevel.WARNING)
             .build()
         )
-    session_map = SessionMap(engine.session, path=config.session_map_path)
+    session_map = SessionMap(
+        engine.session,
+        path=config.session_map_path,
+        owner_open_id=config.owner_open_id,
+    )
     bridge = FeishuWsBridge(config, handler=None, lark_client=lark_client)
     handler = FeishuMessageHandler(
         engine,
@@ -85,13 +90,53 @@ def main() -> None:
         print("飞书桥启动失败（凭证预检未通过）。", file=sys.stderr)
         raise SystemExit(2)
     print("飞书桥已启动（Ctrl+C 停止）。")
-    try:
-        import time
+    # 优雅停机：SIGTERM（restart_system.sh）/ SIGINT / SIGHUP 均触发 bridge.stop()。
+    # 退出原因记录到 data/feishu_exit.log（精确定位信号来源/异常退出，便于诊断反复退出）。
+    import datetime
+    import os
+    import signal
+    import threading
 
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
+    _exit_log_path = os.path.join(
+        os.environ.get("DATA_DIR", "data"), "feishu_exit.log"
+    )
+
+    def _log_exit(reason: str) -> None:
+        try:
+            with open(_exit_log_path, "a", encoding="utf-8") as f:
+                f.write(f"{datetime.datetime.now().isoformat()} pid={os.getpid()} {reason}\n")
+        except OSError:
+            pass
+
+    _log_exit("启动")
+    stop_event = threading.Event()
+    received_signal = [None]
+
+    def _request_stop(signum, frame):  # noqa: ARG001 — signal handler 签名固定
+        received_signal[0] = signum
+        try:
+            name = signal.Signals(signum).name
+        except (ValueError, AttributeError):
+            name = str(signum)
+        _log_exit(f"收到信号 {signum} ({name})")
+        stop_event.set()
+
+    signal.signal(signal.SIGTERM, _request_stop)
+    signal.signal(signal.SIGINT, _request_stop)
+    with contextlib.suppress(AttributeError, ValueError, OSError):
+        signal.signal(signal.SIGHUP, _request_stop)  # 终端关闭保护（默认 SIGHUP 直接终止）
+    try:
+        while not stop_event.wait(1):
+            pass
+    except BaseException as exc:  # noqa: BLE001 — 任何主循环异常都如实记录再退出
+        _log_exit(f"主循环异常退出: {type(exc).__name__}: {exc}")
+        raise
+    finally:
+        # 优雅退出：等待正在处理的 run 完成（最多 30s），避免中断导致消息无回复
+        with contextlib.suppress(Exception):
+            handler.wait_until_idle(30)
         bridge.stop()
+        _log_exit(f"优雅退出完成（信号 {received_signal[0]}）")
         print("飞书桥已停止。")
 
 
