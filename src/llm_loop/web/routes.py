@@ -222,10 +222,21 @@ def chat_stream(
                 try:
                     delta = next(it)
                     # P1-1: text/reasoning 分片独立 yield（并行互不阻塞，spec 4.1.1）
+                    # P2-1: tool_round 工具轮次进展独立 yield（三事件并行互不阻塞）
                     if delta.text:
                         yield _sse("answer_delta", {"data": delta.text})
                     if delta.reasoning:
                         yield _sse("reasoning_delta", {"data": delta.reasoning})
+                    if delta.tool_round is not None:
+                        yield _sse(
+                            "tool_round",
+                            {
+                                "tool_name": delta.tool_round.tool_name,
+                                "round_index": delta.tool_round.round_index,
+                                "args_summary": delta.tool_round.args_summary,
+                                "tool_call_id": delta.tool_round.tool_call_id,
+                            },
+                        )
                 except StopIteration as exc:
                     result = exc.value
                     break
