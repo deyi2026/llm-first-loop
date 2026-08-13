@@ -901,3 +901,33 @@ html, body {
 .retry-btn:hover {
   background: #ddeafa;
 }
+
+/* ── P1-1: 思考过程展示区（与正文视觉区分，默认折叠） ── */
+.reasoning-block {
+  margin: 4px 0 8px;
+  border-left: 3px solid #c9a8e8;
+  background: #f8f6fc;
+  border-radius: 0 4px 4px 0;
+}
+.reasoning-toggle {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: #8a6bbf;
+  background: transparent;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  font-style: italic;
+}
+.reasoning-toggle:hover {
+  background: #f0eaf8;
+}
+.reasoning-body {
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #6b6b6b;
+  font-style: italic;
+  line-height: 1.6;
+}

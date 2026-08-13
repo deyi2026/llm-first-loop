@@ -34,6 +34,7 @@ _VALID_KINDS = {
     "change_log",  # P2-6: 配置变更审计
     "proc_versions",  # P2-6: 进程版本记录
     "feishu_audit",  # P2-6: 飞书消息审计
+    "experience",  # P1-2: 经验库检索
     "all",
 }
 
@@ -111,11 +112,13 @@ class RecordSearcher:
         audit_dir: str | Path,
         memory_store: Any | None = None,
         archive_store: Any | None = None,
+        experience_store: Any | None = None,
         semantic_retriever: Any | None = None,
     ) -> None:
         self._audit_dir = Path(audit_dir)
         self._memory = memory_store
         self._archive = archive_store
+        self._experience_store = experience_store  # P1-2: 经验库（None 时 _search_experience 返回空）
         self._semantic = semantic_retriever  # T31: 语义检索器（可 None 走关键词）
 
     def search(
@@ -143,9 +146,11 @@ class RecordSearcher:
             return self._search_memory(query, limit)
         if kind == "archive":
             return self._search_archive(query, limit, session_id)
+        if kind == "experience":  # P1-2: 经验库检索
+            return self._search_experience(query, limit)
 
         # P1-4: kind=all 时各 kind 均匀分配 limit（避免前序 kind 挤占、后序永远不可见）
-        each_limit = max(1, limit // 12) if kind == "all" else limit
+        each_limit = max(1, limit // 13) if kind == "all" else limit
 
         results: list[dict] = []
         if kind in {"action_trace", "all"}:
@@ -263,7 +268,14 @@ class RecordSearcher:
         if kind == "all":
             results += self._search_memory(query, each_limit)
             results += self._search_archive(query, each_limit, session_id)
+            results += self._search_experience(query, each_limit)  # P1-2: 经验库并列返回
         return results[:limit]
+
+    def _search_experience(self, query: str, limit: int) -> list[dict]:
+        """P1-2: 经验库检索（None 时返回空，零回归）。"""
+        if self._experience_store is None:
+            return []
+        return self._experience_store.list_active(query, limit)
 
     def _search_memory(self, query: str, limit: int) -> list[dict]:
         if self._memory is None:

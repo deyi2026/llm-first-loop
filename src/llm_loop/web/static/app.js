@@ -233,6 +233,52 @@ function renderToolMessage(msg, container) {
   container.appendChild(chain);
 }
 
+// ---------- P1-1 思考过程渲染 ----------
+function renderReasoningBlock(reasoning, parentNode) {
+  // 思考展示区：默认折叠 + 点击展开 + 样式区分；插入 parentNode 正文前方
+  // 返回 { block, body, setReasoning }：setReasoning 供流式渐进/done 覆盖更新
+  // 折叠态仅显示标题提示不渲染完整 DOM（spec 4.1.2）；展开时 renderMarkdown + collapseLongContent
+  const block = el("div", "reasoning-block");
+  const toggle = el("button", "reasoning-toggle", "💭 思考过程 ▸");
+  toggle.type = "button";
+  const body = el("div", "reasoning-body");
+  body.hidden = true;
+  let expanded = false;
+  let currentText = "";
+  const renderFull = () => {
+    const html = renderMarkdown(currentText);
+    if (html !== null) {
+      body.innerHTML = html;
+    } else {
+      body.textContent = currentText;
+    }
+    collapseLongContent(body);
+  };
+  const setReasoning = (text) => {
+    currentText = String(text || "");
+    if (expanded) {
+      renderFull();
+    } else {
+      toggle.textContent = `💭 思考过程（${currentText.length} 字）▸`;
+    }
+  };
+  toggle.onclick = () => {
+    expanded = !expanded;
+    body.hidden = !expanded;
+    if (expanded) {
+      renderFull();
+      toggle.textContent = "💭 思考过程 ▾";
+    } else {
+      toggle.textContent = `💭 思考过程（${currentText.length} 字）▸`;
+    }
+  };
+  block.appendChild(toggle);
+  block.appendChild(body);
+  parentNode.insertBefore(block, parentNode.firstChild);
+  setReasoning(reasoning);
+  return { block, body, setReasoning };
+}
+
 // ---------- 消息渲染 ----------
 function renderMessages(scrollToBottom = true) {
   els.messages.innerHTML = "";
@@ -257,6 +303,10 @@ function renderMessages(scrollToBottom = true) {
       // P2-1: AI 回复内容前插入折叠工具调用链（若有）
       if (Array.isArray(msg.toolCalls) && msg.toolCalls.length) {
         renderToolCalls(msg.toolCalls, node);
+      }
+      // P1-1: 思考区渲染（默认折叠，在正文前方；历史消息恢复）
+      if (msg.reasoningContent) {
+        renderReasoningBlock(msg.reasoningContent, node);
       }
       // 正文容器（打字机只作用于正文，不碰工具链/note）
       const body = el("div", "answer-body");
@@ -536,7 +586,7 @@ function isMessagesAtBottom() {
 // answer_delta 逐分片回调 onDelta；done 携带九字段；error 为终态（停止追加分片，不伪造 done）
 // 读异常 = 网络中断（errorType:"network"）；SSE error 事件 = 引擎错误（errorType:"engine"）
 // 非 2xx（404/413）= http 错误（errorType:"http"）；ReadableStream 不可用 → 降级非流式
-async function streamChatRequest(body, onDelta) {
+async function streamChatRequest(body, onDelta, onReasoningDelta) {
   let resp;
   try {
     resp = await fetch("/api/v1/chat/stream", {
@@ -577,6 +627,7 @@ async function streamChatRequest(body, onDelta) {
       let evt;
       try { evt = JSON.parse(dataLine.slice(6)); } catch { continue; }
       if (evt.type === "answer_delta") onDelta(evt.data && evt.data.data);
+      else if (evt.type === "reasoning_delta") { if (onReasoningDelta) onReasoningDelta(evt.data && evt.data.data); }
       else if (evt.type === "done") { doneData = evt.data; finished = true; break; }
       else if (evt.type === "error") { errorData = evt.data; finished = true; break; } // error 为终态（D3）
     }
@@ -603,9 +654,11 @@ function buildAssistantNote(data) {
 // D1~D4: 真流式请求 + 渲染 + 结果处理（滚动跟随/断流重试/错误边界/空回答清理）
 async function runStreamChat(body, loading) {
   let acc = "";
+  let accReasoning = "";
   let bodyNode = null;
+  let reasoningBlock = null;
   let streamed = false;
-  const result = await streamChatRequest(body, (delta) => {
+  const ensureStreamed = () => {
     if (!streamed) {
       streamed = true;
       if (loading) loading.remove();
@@ -613,6 +666,9 @@ async function runStreamChat(body, loading) {
       const wrap = els.messages.querySelector(".message-wrap:last-of-type");
       bodyNode = wrap ? wrap.querySelector(".answer-body") : null;
     }
+  };
+  const result = await streamChatRequest(body, (delta) => {
+    ensureStreamed();
     acc += delta;
     if (bodyNode) {
       const html = renderMarkdown(acc);
@@ -621,6 +677,18 @@ async function runStreamChat(body, loading) {
         // D1: 仅底部态跟随，用户上滚查看历史时暂停（不打断阅读）
         els.messages.scrollTop = els.messages.scrollHeight;
       }
+    }
+  }, (reasoningDelta) => {
+    // P1-1: 流式思考分片渐进渲染（与正文并行互不阻塞，spec 4.1.1/5.1.1 规则 5）
+    ensureStreamed();
+    accReasoning += reasoningDelta;
+    if (bodyNode && !reasoningBlock) {
+      reasoningBlock = renderReasoningBlock(accReasoning, bodyNode);
+    } else if (reasoningBlock) {
+      reasoningBlock.setReasoning(accReasoning);
+    }
+    if (isMessagesAtBottom()) {
+      els.messages.scrollTop = els.messages.scrollHeight;
     }
   });
 
@@ -635,6 +703,8 @@ async function runStreamChat(body, loading) {
           last.content = data.final_answer;
           if (Array.isArray(data.tool_calls) && data.tool_calls.length) last.toolCalls = data.tool_calls;
           last.note = buildAssistantNote(data);
+          // P1-1: done 终态覆盖流式累积（终态一致，spec 5.1.1 规则 6a）
+          last.reasoningContent = data.reasoning_content || (accReasoning || null);
         } else if (Array.isArray(data.tool_calls) && data.tool_calls.length) {
           // D4: 纯工具轮 → 保留工具链 + 占位，不伪造文字
           last.content = "";
@@ -650,7 +720,7 @@ async function runStreamChat(body, loading) {
       if (loading) loading.remove();
       if (finalText) {
         state.typewriterPending = true; // 降级：假流式打字机
-        addMessage("assistant", data.final_answer, buildAssistantNote(data), data.tool_calls);
+        addMessage("assistant", data.final_answer, buildAssistantNote(data), data.tool_calls, data.reasoning_content || null);
       } else if (Array.isArray(data.tool_calls) && data.tool_calls.length) {
         addMessage("assistant", "", "（无文字回答）", data.tool_calls);
       } else {
@@ -690,8 +760,8 @@ async function runStreamChat(body, loading) {
   }
 }
 
-function addMessage(role, content, note, toolCalls) {
-  const m = { role, content, note };
+function addMessage(role, content, note, toolCalls, reasoningContent) {
+  const m = { role, content, note, reasoningContent: reasoningContent || null };
   if (Array.isArray(toolCalls) && toolCalls.length) m.toolCalls = toolCalls;
   state.messages.push(m);
   renderMessages();
@@ -767,7 +837,7 @@ async function loadSessionMessages(sessionId) {
   // P2-1: 白名单保留 tool 角色（工具调用回执），历史刷新后仍可见
   state.messages = (data.messages || [])
     .filter((m) => m.role === "user" || m.role === "assistant" || m.role === "tool")
-    .map((m) => ({ role: m.role, content: m.content, note: null }));
+    .map((m) => ({ role: m.role, content: m.content, note: null, reasoningContent: m.reasoning_content || null }));
   state.hasMoreHistory = !!data.has_more;
   state.loadedHistoryCount = (data.messages || []).length;
   renderMessages();

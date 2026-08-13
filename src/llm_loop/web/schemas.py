@@ -27,6 +27,7 @@ class ChatResponse(BaseModel):
     model_used: str = ""  # M51: 实际生成回复的模型标签（provider/model）
     tokens_in: int = 0  # M52: 本轮 prompt tokens（0 = provider 未提供）
     tokens_out: int = 0  # M52: 本轮 completion tokens
+    reasoning_content: str | None = None  # P1-1: 最终回答轮思考链透传（缺失/思考模式关闭为 None）
 
 
 class SessionMetaItem(BaseModel):
@@ -56,6 +57,7 @@ class MessageItem(BaseModel):
     role: str
     content: str
     tool_call_id: str | None = None  # M52: tool 消息透出（web 端"展开原文"精确定位档案）
+    reasoning_content: str | None = None  # P1-1: assistant 消息思考链透传（历史会话恢复渲染）
 
 
 class SessionMessagesResponse(BaseModel):

@@ -61,6 +61,10 @@ class StreamingFakeLLM:
 
     def chat_stream(self, messages, tools, *, timeout_s=None, model=None):
         self.calls.append({"messages": messages, "model": model})
+        # P1-1: reasoning 分片外泄（思考在前，与真实 LLMClient 行为对齐）
+        if self._reasoning:
+            for ch in self._reasoning:
+                yield StreamDelta(text="", reasoning=ch)
         for ch in self._content:
             yield StreamDelta(text=ch)
         return LLMResponse(
