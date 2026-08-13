@@ -117,6 +117,7 @@ def test_correction_clear_state_removed():
     assert r.status == ToolResultStatus.FAILURE
     # 修正工具集 + 检索/状态工具 + M12 submit_evolution/self_evaluate + M17 evolution_complete
     # + M48 model_catalog / switch_model（design §5.3 新增工具）
+    # + P1-2 save_experience / refine_experience（经验库沉淀/生命周期）
     assert set(names) == {
         "architecture_status",
         "search_archive",
@@ -129,6 +130,8 @@ def test_correction_clear_state_removed():
         "evolution_complete",
         "model_catalog",
         "switch_model",
+        "save_experience",
+        "refine_experience",
     }
 
 

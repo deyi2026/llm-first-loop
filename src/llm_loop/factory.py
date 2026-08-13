@@ -249,13 +249,19 @@ def build_engine(settings: Settings) -> LoopEngine:
     correction_ctx.model_pool = model_pool
 
     # T23: 统一检索实现注入（search_records）+ T31 语义路径
+    # P1-2: 经验库装配（fail-open，目录不存在时检索如实返回未命中）
+    from llm_loop.experiences.store import ExperienceStore
+
+    experience_store = ExperienceStore(settings.experiences_dir)
     searcher = RecordSearcher(
         audit_dir=settings.audit_dir,
         memory_store=memory,
         archive_store=archive,
+        experience_store=experience_store,  # P1-2: 经验库检索接入
         semantic_retriever=semantic_retriever,  # T31: 语义召回
     )
     corrections._search_records_fn = lambda **kw: searcher.search(**kw)  # noqa: SLF001
+    corrections._experience_store = experience_store  # noqa: SLF001 — P1-2: 工具分派注入
 
     # 自省/修正/检索工具注册进 ToolRegistry（LLM 可见）
     for td in corrections.tool_defs():

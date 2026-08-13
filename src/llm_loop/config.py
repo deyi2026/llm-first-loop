@@ -191,6 +191,7 @@ class Settings:
 
     # ── 压缩档案（T22 另存提取替代截断）──
     archive_enabled: bool = True
+    experiences_dir: str = "./experiences"  # P1-2: 经验库目录（默认项目根 experiences/）
     archive_max_entries: int = 0  # R7: 单会话最大档案条目数（0=不限）
     archive_ttl_days: int = 0     # R7: 条目存活天数（0=不限）
     audit_ttl_days: int = 30      # P1-3: 审计 JSONL 条目存活天数（0=不清理）
@@ -389,6 +390,7 @@ def load_settings() -> Settings:
         self_inspection_enabled=_env_bool("SELF_INSPECTION_ENABLED", True),
         status_report_cooldown_s=float(_env_int("STATUS_REPORT_COOLDOWN_S", 60)),
         archive_enabled=_env_bool("ARCHIVE_ENABLED", True),
+        experiences_dir=os.environ.get("EXPERIENCES_DIR", "./experiences").strip(),
         archive_max_entries=_env_int("ARCHIVE_MAX_ENTRIES", 0),
         archive_ttl_days=_env_int("ARCHIVE_TTL_DAYS", 0),
         audit_ttl_days=_env_int("AUDIT_TTL_DAYS", 30),
