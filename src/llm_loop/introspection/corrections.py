@@ -234,6 +234,37 @@ class CorrectionToolRegistry:
             # 执行时如实回执'工具不可用'，LLM 仍可感知工具存在）
             _MODEL_CATALOG_TOOL_DEF,
             _SWITCH_MODEL_TOOL_DEF,
+            # P1-2: 经验库沉淀/生命周期工具（AI 优先：程序仅通道，提取/判断归 AI）
+            {
+                "name": "save_experience",
+                "description": "沉淀工程经验到经验库（跨会话复用）。何时用: 产生可复用的工程经验（根因分析/修复模式/架构决策）时。何时不用: 闲聊/过程性内容。失败对策: 必填字段缺失返回参数错误，IO 异常返回程序异常，均如实不伪造成功。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "description": "经验标题（生成文件名 slug）"},
+                        "scenario": {"type": "string", "description": "触发场景"},
+                        "solution": {"type": "string", "description": "解决方案"},
+                        "root_cause": {"type": "string", "description": "根因（可选）"},
+                        "evidence": {"type": "string", "description": "证据引用（可选）"},
+                        "tags": {"type": "array", "items": {"type": "string"}, "description": "标签（可选）"},
+                        "source": {"type": "object", "description": "来源溯源（可选）"},
+                        "body": {"type": "string", "description": "经验正文原文（可选）"},
+                    },
+                    "required": ["title", "scenario", "solution"],
+                },
+            },
+            {
+                "name": "refine_experience",
+                "description": "经验生命周期流转（归档/失效/恢复）。何时用: 经验过时/失效/需恢复时。何时不用: 经验仍有效时无需流转。失败对策: 经验不存在返回未找到，action 非法返回参数错误，均如实。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "experience_id": {"type": "string", "description": "经验标识（文件名去 .md）"},
+                        "action": {"type": "string", "enum": ["archive", "invalidate", "restore"]},
+                    },
+                    "required": ["experience_id", "action"],
+                },
+            },
         ]
 
     def execute(self, name: str, arguments: dict) -> ToolResult:
@@ -254,6 +285,10 @@ class CorrectionToolRegistry:
             return self._run_self_evaluate(arguments)
         if name == "evolution_complete":
             return self._run_evolution_complete(arguments)
+        if name == "save_experience":
+            return self._run_save_experience(arguments)
+        if name == "refine_experience":
+            return self._run_refine_experience(arguments)
         if name == "refresh_config":
             return self._run_refresh()
         if name == "model_catalog":
@@ -290,6 +325,52 @@ class CorrectionToolRegistry:
         from llm_loop.introspection.tools_status import run_search_records
 
         return run_search_records(self.ctx, self._search_records_fn, args, self._current_session_id)
+
+    def _run_save_experience(self, args: dict) -> ToolResult:
+        """save_experience: 沉淀工程经验到经验库（P1-2，AI 优先：程序仅通道）。"""
+        if self._experience_store is None:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content="[程序异常] 经验库未装配（experience_store 未注入）",
+                tool_call_id="",
+                tool_name="save_experience",
+            )
+        from llm_loop.introspection.tools_experience import run_save_experience
+
+        content = run_save_experience(
+            self._experience_store,
+            title=args.get("title", ""),
+            scenario=args.get("scenario", ""),
+            solution=args.get("solution", ""),
+            root_cause=args.get("root_cause", ""),
+            evidence=args.get("evidence", ""),
+            tags=args.get("tags") or [],
+            source=args.get("source") or {},
+            body=args.get("body", ""),
+        )
+        status = ToolResultStatus.SUCCESS if content.startswith("[save_experience]") else ToolResultStatus.FAILURE
+        return ToolResult(status=status, content=content, tool_call_id="", tool_name="save_experience")
+
+    def _run_refine_experience(self, args: dict) -> ToolResult:
+        """refine_experience: 经验生命周期流转（P1-2）。"""
+        if self._experience_store is None:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content="[程序异常] 经验库未装配（experience_store 未注入）",
+                tool_call_id="",
+                tool_name="refine_experience",
+            )
+        from llm_loop.introspection.tools_experience import run_refine_experience
+
+        content = run_refine_experience(
+            self._experience_store,
+            experience_id=args.get("experience_id", ""),
+            action=args.get("action", ""),
+        )
+        status = (
+            ToolResultStatus.SUCCESS if content.startswith("[refine_experience]") else ToolResultStatus.FAILURE
+        )
+        return ToolResult(status=status, content=content, tool_call_id="", tool_name="refine_experience")
 
     def _current_params(self) -> dict:
         from llm_loop.introspection.tools_status import current_params
