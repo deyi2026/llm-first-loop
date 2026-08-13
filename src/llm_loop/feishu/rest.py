@@ -212,6 +212,173 @@ class FeishuRestClient:
             raise FeishuRestError(f"回退 code={resp.code} msg={resp.msg}")
         raise FeishuRestError("回退发送失败（重试后仍失败）")  # 不可达，类型兜底
 
+    # === 主动出站文档创建（EVO-20260813-432813b2） ===
+    def create_doc(self, title: str, content: str, folder_token: str | None = None) -> tuple[str, str]:
+        """创建飞书 docx 文档.
+
+        Args:
+            title: 文档标题.
+            content: Markdown 内容（转为 docx block 写入）.
+            folder_token: 目标文件夹 token（None=根目录）.
+
+        Returns:
+            (doc_id, doc_url).
+        """
+        from lark_oapi.api.docx.v1 import (
+            CreateDocumentRequest,
+            CreateDocumentRequestBody,
+        )
+        builder = CreateDocumentRequestBody.builder().title(title)
+        if folder_token:
+            builder = builder.folder_token(folder_token)
+        req = CreateDocumentRequest.builder().request_body(builder.build()).build()
+        docx = self._lark_client.docx
+        assert docx is not None
+        resp = docx.v1.document.create(req)
+        if resp.code != 0 or resp.data is None or resp.data.document is None:
+            raise FeishuRestError(f"创建文档失败 code={resp.code} msg={resp.msg}")
+        doc_id = resp.data.document.document_id or ""
+        doc_url = f"https://feishu.cn/docx/{doc_id}" if doc_id else ""
+        if content.strip():
+            self._write_markdown_to_doc(doc_id, content)
+        return doc_id, doc_url
+
+    def _write_markdown_to_doc(self, doc_id: str, content: str) -> None:
+        """Markdown -> docx block 转换器（增强版）.
+
+        增强点:
+        - 围栏代码块识别为 block_type=14 code（等宽渲染）
+        - 行内双星粗体切分为多 TextRun（带 bold 样式）
+        - 水平分割线 --- 识别为 divider（block_type=22）
+        - 段落连续非空行合并
+        - 标题/列表/引用按 SDK 字段方法构造
+        """
+        import re as _re
+
+        from lark_oapi.api.docx.v1 import (
+            CreateDocumentBlockChildrenRequest,
+            CreateDocumentBlockChildrenRequestBody,
+        )
+        from lark_oapi.api.docx.v1.model import (
+            BlockBuilder,
+            TextBuilder,
+            TextElementBuilder,
+            TextElementStyleBuilder,
+            TextRunBuilder,
+        )
+        _BOLD_RE = _re.compile(r"\*\*(.+?)\*\*")
+        _DIVIDER_RE = _re.compile(r"^\s*---\s*$")
+        _ORDERED_RE = _re.compile(r"^\s*(\d+)\.\s+(.+)$")
+        def _run(content, bold=False, code=False):
+            style = TextElementStyleBuilder()
+            if bold: style = style.bold(True)
+            if code: style = style.inline_code(True)
+            tr = TextRunBuilder().content(content).text_element_style(style.build()).build()
+            return TextElementBuilder().text_run(tr).build()
+        def _split_runs(text):
+            elements = []
+            pos = 0
+            for m in _BOLD_RE.finditer(text):
+                if m.start() > pos:
+                    elements.append(_run(text[pos:m.start()]))
+                elements.append(_run(m.group(1), bold=True))
+                pos = m.end()
+            if pos < len(text):
+                elements.append(_run(text[pos:]))
+            if not elements:
+                elements.append(_run(text))
+            return elements
+        def _text(elements):
+            return TextBuilder().elements(elements).build()
+        def _mk_text(text):
+            return BlockBuilder().block_type(2).text(_text(_split_runs(text))).build()
+        def _mk_heading(text, level):
+            t = _text(_split_runs(text))
+            if level == 1: return BlockBuilder().block_type(3).heading1(t).build()
+            if level == 2: return BlockBuilder().block_type(4).heading2(t).build()
+            return BlockBuilder().block_type(5).heading3(t).build()
+        def _mk_bullet(text):
+            return BlockBuilder().block_type(12).bullet(_text(_split_runs(text))).build()
+        def _mk_ordered(text):
+            return BlockBuilder().block_type(13).ordered(_text(_split_runs(text))).build()
+        def _mk_quote(text):
+            return BlockBuilder().block_type(15).quote(_text(_split_runs(text))).build()
+        def _mk_code(text):
+            style = TextElementStyleBuilder().inline_code(True).build()
+            tr = TextRunBuilder().content(text).text_element_style(style).build()
+            el = TextElementBuilder().text_run(tr).build()
+            t = TextBuilder().elements([el]).build()
+            return BlockBuilder().block_type(14).code(t).build()
+        def _mk_divider():
+            return BlockBuilder().block_type(22).divider({}).build()
+        blocks = []
+        lines = content.splitlines()
+        i = 0
+        BACKTICK = chr(96)
+        while i < len(lines):
+            line = lines[i].rstrip()
+            stripped = line.strip()
+            if not stripped:
+                i += 1
+                continue
+            if stripped.startswith(BACKTICK * 3):
+                i += 1
+                code_lines = []
+                while i < len(lines) and not lines[i].strip().startswith(BACKTICK * 3):
+                    code_lines.append(lines[i].rstrip())
+                    i += 1
+                i += 1
+                code_text = "\n".join(code_lines) if code_lines else ""
+                if code_text:
+                    blocks.append(_mk_code(code_text))
+                continue
+            if _DIVIDER_RE.match(line):
+                blocks.append(_mk_divider())
+                i += 1
+                continue
+            if stripped.startswith("### "):
+                blocks.append(_mk_heading(stripped[4:].strip(), 3)); i += 1; continue
+            if stripped.startswith("## "):
+                blocks.append(_mk_heading(stripped[3:].strip(), 2)); i += 1; continue
+            if stripped.startswith("# "):
+                blocks.append(_mk_heading(stripped[2:].strip(), 1)); i += 1; continue
+            if stripped.startswith(("- ", "* ", "+ ")):
+                blocks.append(_mk_bullet(stripped[2:].strip())); i += 1; continue
+            om = _ORDERED_RE.match(line)
+            if om:
+                blocks.append(_mk_ordered(om.group(2).strip())); i += 1; continue
+            if stripped.startswith("> "):
+                blocks.append(_mk_quote(stripped[2:].strip())); i += 1; continue
+            para_lines = [line]
+            j = i + 1
+            while j < len(lines):
+                nl = lines[j]
+                ns = nl.strip()
+                if not ns: break
+                if (ns.startswith("#") or ns.startswith(("- ", "* ", "+ ", "> "))
+                    or ns.startswith(BACKTICK * 3) or _ORDERED_RE.match(nl) or _DIVIDER_RE.match(nl)):
+                    break
+                para_lines.append(nl.rstrip())
+                j += 1
+            i = j
+            para_text = " ".join(l.strip() for l in para_lines)
+            if para_text:
+                blocks.append(_mk_text(para_text))
+        if not blocks:
+            return
+        BATCH = 50
+        docx = self._lark_client.docx
+        assert docx is not None
+        for i in range(0, len(blocks), BATCH):
+            batch = blocks[i:i + BATCH]
+            req = (CreateDocumentBlockChildrenRequest.builder()
+                   .document_id(doc_id).block_id(doc_id)
+                   .request_body(CreateDocumentBlockChildrenRequestBody.builder().children(batch).build())
+                   .build())
+            resp = docx.v1.document_block_children.create(req)
+            if resp.code != 0:
+                raise FeishuRestError(f"写入文档内容失败 code={resp.code} msg={resp.msg}")
+
     # ── Typing reaction 回执（M46，FR-TYP-01~04，对齐 本地既有实现 ws_bridge Typing reaction）──
     def add_typing_reaction(self, message_id: str) -> str:
         """对用户消息加 Typing 表情 reaction（处理中回执）.

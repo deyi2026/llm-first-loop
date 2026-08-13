@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from contextlib import suppress
 from typing import Any
 
 from llm_loop.config import Settings
@@ -17,6 +18,7 @@ from llm_loop.core.message import ToolResult
 from llm_loop.core.session import SessionStore
 from llm_loop.feedback.validator import DeclarationValidator
 from llm_loop.introspection.corrections import CorrectionContext, CorrectionToolRegistry
+from llm_loop.introspection.docs_search import DocsSearcher
 from llm_loop.introspection.search import RecordSearcher
 from llm_loop.introspection.status import ArchitectureStatusProvider
 from llm_loop.llm.client import LLMClient
@@ -263,6 +265,42 @@ def build_engine(settings: Settings) -> LoopEngine:
     corrections._search_records_fn = lambda **kw: searcher.search(**kw)  # noqa: SLF001
     corrections._experience_store = experience_store  # noqa: SLF001 — P1-2: 工具分派注入
 
+    # P2-3: docs/ 文档语义检索装配（fail-open，不阻断启动）
+    try:
+        docs_searcher = DocsSearcher(
+            docs_dir=settings.docs_dir,
+            semantic_retriever=semantic_retriever,
+        )
+        corrections._search_docs_fn = lambda **kw: docs_searcher.search(**kw)  # noqa: SLF001
+    except Exception:  # noqa: BLE001 — 装配失败不阻断启动
+        logger.warning("docs/ 检索装配失败（fail-open），search_docs 将回执'检索不可用'", exc_info=True)
+
+    # P2-2: fail-open 数据丢失恢复通道装配
+    from llm_loop.recovery.backup import BackupStore
+    from llm_loop.recovery.channel import RecoveryChannel
+
+    backup_store = BackupStore(settings.recovery_dir)
+
+    def _recovery_action_trace(action_type: str, detail: str) -> None:
+        with suppress(Exception):
+            status_provider.record_action("recovery", action_type, detail)
+
+    recovery_channel = RecoveryChannel(
+        backup_store=backup_store,
+        action_trace_fn=_recovery_action_trace,
+    )
+    # 启动时清理超期超量备份（fail-open，不影响启动）
+    try:
+        cleanup_result = backup_store.cleanup()
+        if cleanup_result.get("pruned", 0) > 0:
+            logger.info("恢复备份 GC: 清理 %s 份过期/超量备份", cleanup_result["pruned"])
+    except Exception:  # noqa: BLE001 — GC 失败不影响启动
+        logger.warning("恢复备份 GC 启动清理失败（fail-open）", exc_info=True)
+    corrections._recovery_channel = recovery_channel  # noqa: SLF001 — P2-2: 工具分派注入
+    corrections._recovery_sessions_dir = settings.sessions_dir  # noqa: SLF001
+    corrections._recovery_memory_dir = settings.memory_dir  # noqa: SLF001
+    status_provider.set_recovery_status_fn(backup_store.status_summary)
+
     # 自省/修正/检索工具注册进 ToolRegistry（LLM 可见）
     for td in corrections.tool_defs():
         registry.register(
@@ -365,6 +403,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         evolution_store=correction_ctx.evolution_store,  # M17 FR-REVIEW-AI-02: executing 提醒数据源
         loop_signal_detector=_build_loop_signal_detector(settings, status_provider, corrections),
         llm_pool=model_pool,  # M48（design §5.3）: 会话级模型路由
+        recovery=recovery_channel,  # P2-2: fail-open 写失败恢复通道
     )
 
     # M50（design §5.6）: 注入增强版 refresh_config executor — 重读 providers.json

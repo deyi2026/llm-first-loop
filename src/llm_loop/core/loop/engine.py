@@ -18,42 +18,42 @@ from typing import Any
 
 from llm_loop.config import Settings
 
-# M53 拆分: 职责 mixin（signals 信号检查 / runtime 运行时参数 / fallback 模型降级链）
+# M53 拆分: 职责 mixin（signals 信号检查 / runtime 运行时参数 / fallback 模型降级链 / routing 模型路由 / overflow overflow 处理 / tool_exec 工具执行）
 from llm_loop.core.loop.fallback import _FallbackMixin
+from llm_loop.core.loop.overflow import _OverflowMixin
+from llm_loop.core.loop.routing import (
+    _CHARS_PER_TOKEN_EST,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
+    _CONTEXT_SAFETY_MARGIN,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
+    _RoutingMixin,
+)
 from llm_loop.core.loop.runtime import _RuntimeParamsMixin
 from llm_loop.core.loop.signals import _SignalsMixin
-from llm_loop.core.message import Message, MessageSource, ToolResult
+from llm_loop.core.loop.tool_exec import (
+    _json_dumps_args,
+    _tool_args_summary,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
+    _ToolExecMixin,
+)
+from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.prompt import build_system_prompt
 from llm_loop.core.session import SessionStore
-from llm_loop.feedback.honesty import (
-    max_iterations_feedback,
-    model_unavailable_text,
-)
+from llm_loop.feedback.honesty import max_iterations_feedback
 from llm_loop.feedback.validator import DeclarationValidator, build_discrepancy_feedback
 from llm_loop.introspection.corrections import CorrectionContext, CorrectionToolRegistry
 from llm_loop.introspection.events import ArchitectureEvent, ArchitectureEventType
-from llm_loop.introspection.status import ArchitectureStatusProvider, ToolHistoryItem
-from llm_loop.llm.client import LLMClient, LLMResponse, StreamDelta
-from llm_loop.llm.errors import (
-    LLMError,
-    is_overflow_error,
-)
+from llm_loop.introspection.status import ArchitectureStatusProvider
+from llm_loop.llm.client import LLMClient, StreamDelta
+from llm_loop.llm.errors import LLMError
 from llm_loop.memory.extract import extract_memory_blocks, memory_blocks_to_entries
 from llm_loop.memory.retrieve import build_memory_messages
 from llm_loop.memory.store import MemoryStore
-from llm_loop.tools.registry import ToolRegistry, tool_result_to_message
+from llm_loop.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
 
-def _json_dumps_args(arguments: dict) -> str:
-    """工具参数序列化为 JSON 字符串（FC 协议 function.arguments 要求）."""
-    import json as _json
-
-    try:
-        return _json.dumps(arguments, ensure_ascii=False)
-    except TypeError:
-        return "{}"
+# M53 拆分: _json_dumps_args/_tool_args_summary → llm_loop/core/loop/tool_exec.py（_ToolExecMixin）
+# 迁移注释保留（REQ-REF-06）: 原路径可导入（对齐 test_tool_round_visible.py），行为与迁移前一致。
+# 模块级函数随工具执行职责单元迁移，经此 re-export 保持 `engine._tool_args_summary` 等可导入。
 
 
 def format_tokens(n: int) -> str:
@@ -63,10 +63,9 @@ def format_tokens(n: int) -> str:
     return str(n)
 
 
-# M53: 上下文守卫估算口径（chars/token 保守估计, 中文混合内容约 2 字符/token）
-_CHARS_PER_TOKEN_EST = 2
-# 安全边距: 预留 10% 给响应生成
-_CONTEXT_SAFETY_MARGIN = 0.9
+# M53: 上下文守卫估算常量 → llm_loop/core/loop/routing.py（_RoutingMixin）
+# 迁移注释保留（REQ-REF-06）: 原路径可导入（engine._CHARS_PER_TOKEN_EST/_CONTEXT_SAFETY_MARGIN），取值与迁移前一致。
+# 估算口径（chars/token 保守估计, 中文混合内容约 2 字符/token；安全边距预留 10% 给响应生成）已随迁至 routing.py。
 
 
 @dataclass
@@ -108,7 +107,7 @@ def build_session_snapshot_text(
     return "；".join(parts)
 
 
-class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin):
+class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _OverflowMixin, _ToolExecMixin):
     """五阶段核心循环控制器."""
 
     def __init__(
@@ -136,6 +135,7 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin):
         loop_signal_detector: Any
         | None = None,  # M17 FR-REVIEW-AI-02/03: LoopSignalDetector 三合一
         llm_pool: Any | None = None,  # M48（design §5.3）: ModelClientPool（会话级模型路由）
+        recovery: Any | None = None,  # P2-2: RecoveryChannel（fail-open 写失败恢复通道）
     ) -> None:
         self.llm = llm_client
         self.registry = registry
@@ -158,6 +158,8 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin):
         self.loop_signal_detector = loop_signal_detector
         # M48（design §5.3）: 会话级模型路由池；None 时使用装配默认 client（零回归）
         self.llm_pool = llm_pool
+        # P2-2: fail-open 写失败恢复通道；None 时三个 fail-open 点行为不变（零回归）
+        self.recovery = recovery
         # EVO-20260811-9ccdec97: 会话状态快照节流（上次快照注入时的消息数）
         self._last_snapshot_count = 0
         # R4 增强: overflow 反馈注入次数（同一 run 内最多注入 1 次后让 AI 决策，第二次直接结束）
@@ -210,7 +212,21 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin):
             except Exception as exc:
                 # C1（PREFERENCE_1）: 会话持久化失败如实告知 AI，不静默——消息可能未落盘
                 logger.warning("初始会话保存失败（fail-open）", exc_info=True)
-                sess.messages.append(self._fault_feedback("session_persistence", exc))
+                recovery_note = self._persist_with_recovery_note(
+                    target_type="session",
+                    source_id=sess.session_id,
+                    write_fn=lambda: self.session.save(sess),
+                    payload=self._session_payload(sess),
+                    trigger_point="initial_save",
+                )
+                msg = self._fault_feedback("session_persistence", exc)
+                if recovery_note:
+                    msg = Message(
+                        role=msg.role,
+                        content=msg.content + f"\n{recovery_note}",
+                        source=msg.source,
+                    )
+                sess.messages.append(msg)
         # T22/T23: 注入当前会话到注册表与修正上下文（压缩档案/检索关联）
         from contextlib import suppress
 
@@ -234,7 +250,7 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin):
         verification_note: str | None = None
         truncation_noted = False
         rounds = 0
-        self._overflow_reinject_count = 0  # R4 增强: 每次 run 重置 overflow 注入计数
+        self._reset_overflow_state()  # R4 增强: 每次 run 重置 overflow 注入计数
         model_used = ""  # M51: 本轮实际使用的模型标签（每轮 LLM 调用时刷新）
         tokens_in = 0  # M52: 本次 run 累计 prompt tokens
         tokens_out = 0  # M52: 本次 run 累计 completion tokens
@@ -290,54 +306,14 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin):
 
             # ── 行动：LLM 决策 ──
             self._phase("action.llm_decide")
-            # M48（design §5.3）: 路由决策——
-            # - per-call Web model（run() 参数）优先级最高：经池路由到对应 provider client
-            #   （正确 base_url/key），并把发送给 LLM 的 model 归一化为裸模型名
-            #   （M50 修复: 全限定 provider/model 不得直接透传 LLM API，否则 400）
-            # - 否则按会话级 model_override 经 pool 路由（switch_model 设置，持久生效）
-            # - pool 未装配（None）→ 用默认 client（零回归）
-            chat_model_arg = model  # per-call Web override（None 表示不覆盖）
-            if chat_model_arg is not None and self.llm_pool is not None:
-                # per-call 覆盖：解析 provider/model → 对应 provider client
-                try:
-                    llm_client = self.llm_pool.get_client(chat_model_arg)
-                    pid, resolved_model_id = self.llm_pool.registry.resolve(chat_model_arg)
-                    chat_model_arg = resolved_model_id
-                    model_used = f"{pid}/{resolved_model_id}"  # M51: 如实标注实际模型
-                except ValueError as exc:
-                    # 模型不在注册表 / 凭据缺失：如实反馈，不静默降级（PREFERENCE_1）
-                    self._record_action("action.llm_decide", "pool_resolve_failed", str(exc)[:200])
-                    final_answer = model_unavailable_text(chat_model_arg, exc)
-                    break
-            elif chat_model_arg is None and self.llm_pool is not None:
-                # 会话级 override 路由：取 switch_model 写入的覆盖
-                try:
-                    llm_client = self.llm_pool.get_client(sess.model_override)
-                    # M51: override 为全限定 ref；None 时为装配默认标签
-                    model_used = sess.model_override or self._default_model_label()
-                except ValueError as exc:
-                    # resolve 失败（override 在 refresh_config 后失效等）：如实反馈，走默认 client
-                    self._record_action("action.llm_decide", "pool_resolve_failed", str(exc)[:200])
-                    llm_client = self.llm
-                    model_used = self._default_model_label()
-            else:
-                llm_client = self.llm
-                model_used = self._default_model_label()
-            # ── M53: 上下文超限前置守卫 ──
-            # 载荷估算超模型注册表 context 上限 → 如实拒绝, 不发注定失败的请求
-            # (如 kimi/k3-256k 仅 256K 窗口, 1M 预算装配的历史必被 provider 拒绝)
-            # 未知模型 context（无 pool/裸标签）→ 跳过守卫, 不阻断
-            context_limit = self._current_context_limit(model_used)
-            if context_limit:
-                refusal = self._check_context_fit(
-                    messages, tools_param, context_limit, model_used
-                )
-                if refusal is not None:
-                    self._record_action(
-                        "action.llm_decide", "context_overflow", refusal[:200]
-                    )
-                    final_answer = refusal
-                    break
+            # M53 拆分: 路由决策 + 上下文守卫 → _RoutingMixin._route_model（move 语义，行为零变化）
+            routing = self._route_model(model, sess, messages, tools_param)
+            llm_client = routing.llm_client
+            model_used = routing.model_used
+            chat_model_arg = routing.chat_model_arg
+            if routing.final_answer_override is not None:
+                final_answer = routing.final_answer_override
+                break
             try:
                 stream_fn = getattr(llm_client, "chat_stream", None)
                 if stream_fn is not None:
@@ -365,35 +341,13 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin):
                 self._record_action("action.llm_decide", "llm_error", str(exc)[:200])
                 if self.status:
                     self.status.record_exception("llm_call", exc)
-                # R4: overflow 如实反馈（不自动重试/不自动压缩，决策权归 AI）
-                if is_overflow_error(exc):
-                    from llm_loop.feedback.honesty import overflow_feedback
-
-                    ctx_limit = self._current_context_limit(model_used)
-                    model_window = (
-                        {"label": model_used, "context": ctx_limit}
-                        if ctx_limit
-                        else {"label": model_used, "context": None}
-                    )
-                    feedback_text = overflow_feedback(
-                        exc,
-                        getattr(self, "_last_breakdown", None),
-                        model_window,
-                    )
-                    # 第一次 overflow: 注入 system 消息让 AI 在同会话内自主决策（调工具/换模型/回答）
-                    # 第二次 overflow: AI 已有一次机会但未解决，直接结束避免无限循环
-
-                    if self._overflow_reinject_count < 1:
-                        self._overflow_reinject_count += 1
-                        sess.messages.append(
-                            Message(
-                                role="system",
-                                content=feedback_text,
-                                source=MessageSource.SYSTEM,
-                            )
-                        )
-                        continue
-                    final_answer = feedback_text
+                # M53 拆分: overflow 如实反馈（不自动重试/不自动压缩，决策权归 AI）
+                # → _OverflowMixin._handle_overflow（move 语义，行为零变化）
+                overflow_action, overflow_final = self._handle_overflow(exc, sess, model_used)
+                if overflow_action == "reinject":
+                    continue  # 首次注入 system 消息让 AI 自主决策
+                if overflow_action == "end" and overflow_final is not None:
+                    final_answer = overflow_final
                     break
                 # ── M49（design §5.4）: 降级逻辑 ──
                 # 仅当当前模型为默认装配（sess.model_override is None 且 per-call override 也为 None）
@@ -462,53 +416,8 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin):
                 break
 
             # ── 行动：执行工具（tool_calls）──
-            self._phase("action.tool_loop")
-            # 约束 C1 配对: 先把 LLM 声明追加为 assistant 消息（带 tool_calls），
-            # 后续 tool 回执才有前置声明（严格 API 要求，否则 400）
-            if resp.tool_calls:
-                assistant_decl = Message(
-                    role="assistant",
-                    content=resp.content or "",
-                    source=MessageSource.USER,
-                    tool_calls=[
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.name,
-                                "arguments": _json_dumps_args(tc.arguments),
-                            },
-                        }
-                        for tc in resp.tool_calls
-                    ],
-                    reasoning_content=resp.reasoning_content,  # M20 THK-04: 工具轮回传思考链
-                )
-                sess.messages.append(assistant_decl)
-            for tc in resp.tool_calls:
-                if not tc.id:
-                    # 约束 C1: 缺 id 声明不可执行，如实注入反馈（AI-first 三件套）
-                    msg = Message(
-                        role="system",
-                        content=(
-                            f"[工具调用异常] 事实: 声明缺少 tool_call_id，无法绑定执行（工具 '{tc.name}'）。\n"
-                            f"原因: 程序不伪造执行无绑定标识的声明（协议约束）。\n"
-                            f"建议: 请重新声明工具调用（确保原生 tool_calls 含 id 字段）。"
-                        ),
-                        source=MessageSource.SYSTEM,
-                    )
-                    sess.messages.append(msg)
-                    self._record_action("action.tool_loop", "missing_tool_call_id", tc.name)
-            # EVO-20260810-750e985a: 工具并发控制（只读并行/修改串行/按声明顺序回写）
-            valid_calls = [tc for tc in resp.tool_calls if tc.id]
-            if valid_calls:
-                results = self.registry.execute_many(valid_calls)
-                for tc, result in zip(valid_calls, results, strict=False):
-                    tool_trace.append({"id": tc.id, "name": tc.name, "arguments": tc.arguments})
-                    self._record_tool_history(result)
-                    tool_msg = tool_result_to_message(
-                        result, failure_guidance_enabled=self.registry.failure_guidance_enabled
-                    )
-                    sess.messages.append(tool_msg)
+            # M53 拆分: 工具段 → _ToolExecMixin._execute_tools（yield from 保持 tool_round 外泄次序）
+            yield from self._execute_tools(resp, sess, rounds, tool_trace)
 
             # ── M56 收敛（ANALYSIS-20260811-loop-strategy-branch-inventory）:
             # 每轮末信号检测统一为一次调用（自评/演进待办/待审提醒，均仅提示不强制，
@@ -547,9 +456,17 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin):
             self.session.save(sess)
         except Exception as exc:  # noqa: BLE001
             logger.warning("会话保存失败（fail-open）: %s", exc)
+            recovery_note = self._persist_with_recovery_note(
+                target_type="session",
+                source_id=sess.session_id,
+                write_fn=lambda: self.session.save(sess),
+                payload=self._session_payload(sess),
+                trigger_point="loop_end_save",
+            )
+            extra = f" {recovery_note}" if recovery_note else ""
             final_answer = (
                 f"{final_answer}\n\n[程序异常] 会话保存失败（{type(exc).__name__}: {exc}）。"
-                "本次回答仍有效，但历史可能未持久化。"
+                f"本次回答仍有效，但历史可能未持久化。{extra}"
             )
         self._phase("done")
 
@@ -560,6 +477,15 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin):
                 self.memory.flush()
         except Exception as exc:  # noqa: BLE001 — 统计落盘失败不阻断 run
             logger.warning("记忆统计落盘失败（fail-open）: %s", exc)
+            recovery_note = self._persist_with_recovery_note(
+                target_type="memory_stats",
+                source_id="memory",
+                write_fn=lambda: self.memory.flush() if self.memory is not None else None,
+                payload=self._memory_payload(),
+                trigger_point="memory_flush",
+            )
+            if recovery_note:
+                logger.warning("记忆统计恢复通道: %s", recovery_note)
 
         return LoopResult(
             session_id=session_id,
@@ -586,94 +512,17 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin):
             except StopIteration as exc:
                 return exc.value
 
-    def _default_model_label(self) -> str:
-        """M51: 装配默认模型的全限定标签（provider/model）.
+    # M53 拆分: 模型路由辅助方法族 → llm_loop/core/loop/routing.py（_RoutingMixin）
+    # 迁移注释保留（test_silent_pass_cleanup 源码断言）: 模型标签 resolve 失败时回退裸名（fail-open），
+    # 行为与迁移前一致；有 pool 时经注册表 resolve 为全限定 ref。
+    # 已随迁方法（经 Mixin 混入后实例可调用，签名/语义不变）:
+    #   _default_model_label / _current_context_limit / _check_context_fit / _planned_model_label / _effective_history_budget
+    # 估算常量 _CHARS_PER_TOKEN_EST/_CONTEXT_SAFETY_MARGIN 经模块级 re-export 保持原路径可导入。
 
-        有 pool 时经注册表 resolve 为全限定 ref；无 pool / resolve 失败 → 裸模型名（零回归）.
-        client 无 model 属性（如测试 FakeLLM）→ 返回空串（不伪造标签, 无 footer）.
-        """
-        model = getattr(self.llm, "model", "")
-        if not model:
-            return ""
-        if self.llm_pool is not None:
-            try:
-                pid, mid = self.llm_pool.registry.resolve(model)
-                return f"{pid}/{mid}"
-            except ValueError as exc:  # fail-open：模型标签 resolve 失败回退裸名
-                logger.debug("模型标签 resolve 失败，回退裸名（fail-open）: %s", exc)
-        return model
-
-    def _current_context_limit(self, model_label: str) -> int | None:
-        """M53: 查询当前模型的上下文上限（注册表 ModelSpec.context 元数据）.
-
-        model_label 为全限定 "provider/model"（M51 路由已保证）；无 pool / 裸名 / 未知 → None（守卫跳过）.
-        """
-        if self.llm_pool is None or not model_label or "/" not in model_label:
-            return None
-        pid, mid = model_label.split("/", 1)
-        spec = self.llm_pool.registry.providers.get(pid)
-        if spec is None or mid not in spec.models:
-            return None
-        context = spec.models[mid].context
-        return context if context and context > 0 else None
-
-    @staticmethod
-    def _check_context_fit(
-        messages: list[dict],
-        tools_param: list[dict],
-        context_limit: int,
-        model_label: str,
-    ) -> str | None:
-        """M53: 载荷 vs 模型上下文上限校验.
-
-        估算口径: JSON 序列化字符数 / 2 ≈ tokens（中文混合保守估计）+ 10% 安全边距。
-        超限 → 返回如实拒绝文案（不发送请求）；未超 → None。
-        """
-        payload_chars = sum(len(_json_dumps_args(m)) for m in messages) + len(
-            _json_dumps_args({"tools": tools_param})
-        )
-        est_tokens = payload_chars // _CHARS_PER_TOKEN_EST
-        allowed = int(context_limit * _CONTEXT_SAFETY_MARGIN)
-        if est_tokens <= allowed:
-            return None
-        return (
-            f"[上下文超限] 本次请求载荷约 {est_tokens} tokens（按 {_CHARS_PER_TOKEN_EST} 字符/token 估算），"
-            f"超过当前模型 {model_label} 的上下文上限 {context_limit}（安全边距后可用 {allowed}）。\n"
-            f"建议：① /model 切换到更大窗口模型；② /new 开新会话（历史另存可经 search_archive 找回）；"
-            f"③ 缩短本次输入。\n"
-            f"（程序守卫：未发送请求，避免必失败调用；估算口径可能有误差，以 provider 实际判定为准）"
-        )
-
-    # ── 辅助 ──
-    def _planned_model_label(self, model: str | None, sess) -> str:
-        """M54: 预测本轮将使用的模型标签（仅标签解析, 不建 client）.
-
-        与路由同序: per-call override > 会话 override > 默认装配。
-        用于在构造消息前计算模型窗口感知的压缩预算。
-        """
-        if model is not None and self.llm_pool is not None:
-            try:
-                pid, mid = self.llm_pool.registry.resolve(model)
-                return f"{pid}/{mid}"
-            except ValueError:
-                return model
-        if self.llm_pool is not None and sess.model_override:
-            return sess.model_override
-        return self._default_model_label()
-
-    def _effective_history_budget(self, model_label: str) -> int:
-        """M54: 模型窗口感知的历史压缩预算.
-
-        effective = min(全局预算, 模型 context × 2字符/token × 0.5 压缩系数)。
-        例: k3-256k (262144 tokens) → ~26万字符（而不是全局 1M）→ 历史先压到窗口内再调用。
-        无 pool / 未知模型 → 全局预算（零回归）。
-        """
-        global_budget = self._runtime_history_budget()
-        limit = self._current_context_limit(model_label)
-        if not limit:
-            return global_budget
-        model_budget = int(limit * _CHARS_PER_TOKEN_EST * 0.5)
-        return min(global_budget, model_budget)
+    # M53 拆分: 工具辅助方法 → llm_loop/core/loop/tool_exec.py（_ToolExecMixin）
+    # 已随迁方法（经 Mixin 混入后实例可调用，签名/语义不变）:
+    #   _schema_to_param / _resp_summary / _record_tool_history
+    # 模块级函数 _json_dumps_args/_tool_args_summary 经模块级 re-export 保持原路径可导入。
 
     def _build_llm_messages(
         self, sess, memory_msgs: list[Message], max_chars: int | None = None
@@ -736,6 +585,56 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin):
         )
 
 
+    def _persist_with_recovery_note(
+        self,
+        *,
+        target_type: str,
+        source_id: str,
+        write_fn: Any,
+        payload: str,
+        trigger_point: str,
+    ) -> str:
+        """P2-2: 调 RecoveryChannel.persist_with_recovery 并返回标注文本.
+
+        self.recovery 为 None 时返回空串（零回归）。
+        """
+        if self.recovery is None:
+            return ""
+        try:
+            receipt = self.recovery.persist_with_recovery(
+                target_type=target_type,
+                source_id=source_id,
+                write_fn=write_fn,
+                payload=payload,
+                trigger_point=trigger_point,
+            )
+        except Exception:  # noqa: BLE001 — 恢复通道自身失败不中断主循环
+            logger.warning("恢复通道异常（fail-open）", exc_info=True)
+            return "[恢复通道异常] 重试/备份均未完成"
+        if receipt.status == "retried_ok":
+            return f"[恢复通道] 已重试 {receipt.retries} 次后成功落盘"
+        if receipt.status == "backed_up":
+            return f"[恢复通道] 重试 {receipt.retries} 次仍失败，已备份 {receipt.backup_id}"
+        return f"[恢复通道] 重试 {receipt.retries} 次仍失败，备份也失败: {receipt.error}"
+
+    def _session_payload(self, sess: Any) -> str:
+        """构造会话 JSON 原文（备份用，不摘要/改写/压缩）."""
+        import json as _json
+
+        return _json.dumps(sess.to_dict(), ensure_ascii=False, indent=2)
+
+    def _memory_payload(self) -> str:
+        """构造记忆索引 JSON 原文（备份用，不摘要/改写/压缩）."""
+        import json as _json
+
+        if self.memory is None:
+            return "[]"
+        return _json.dumps(
+            [e.to_dict() for e in self.memory._entries],  # noqa: SLF001
+            ensure_ascii=False,
+            indent=2,
+        )
+
     def _fault_feedback(self, component: str, exc: Exception) -> Message:
         """程序辅助组件故障增强反馈（M12 T49; M17 FR-REVIEW-AI-03 拆至 loop_feedback.py）."""
         from llm_loop.feedback.loop_feedback import build_fault_feedback_message
@@ -776,32 +675,6 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin):
                 s.messages.append(self._fault_feedback("archive_sink", exc))
                 self.session.save(s)
 
-    def _schema_to_param(self, t: dict) -> dict:
-        return {
-            "type": "function",
-            "function": {
-                "name": t["name"],
-                "description": t["description"],
-                "parameters": t["parameters"],
-            },
-        }
-
-    def _resp_summary(self, resp: LLMResponse) -> str:
-        if resp.tool_calls:
-            return "tool_calls=" + ",".join(t.name for t in resp.tool_calls)
-        return f"content={resp.content[:80] if resp.content else '(空)'}"
-
-    def _record_tool_history(self, result: ToolResult) -> None:
-        if self.status:
-            self.status.record_tool_history(
-                ToolHistoryItem(
-                    name=result.tool_name,
-                    arguments={},
-                    status=result.status,
-                    summary=result.content[:120],
-                    duration_ms=result.duration_ms,
-                )
-            )
 
     def _set_session_override(self, sess, value: str | None) -> None:
         """M48（design §5.3）: switch_model 调用的会话 override 写入回调.

@@ -99,6 +99,8 @@ class ArchitectureStatusProvider:
         self._fallback_state: dict | None = None
         # T4（spec.md 5.3.1）: 待办聚合回调（纯聚合无判断，AI 一站式感知系统待办）
         self._pending_actions_fn: Callable[[], dict] | None = None
+        # P2-2: 备份状态回调（AI 经 architecture_status.recovery 感知待恢复备份）
+        self._recovery_status_fn: Callable[[], dict] | None = None
 
     # ── 采集（循环事件附带调用，零侵入）──
     def record_phase(self, phase: str) -> None:
@@ -257,6 +259,26 @@ class ArchitectureStatusProvider:
                 "note": f"待办聚合失败（{type(exc).__name__}: {exc}）",
             }
 
+    def _recovery_status(self) -> dict:
+        """P2-2: 备份状态感知（spec.md 5.3.1 规则 4 / design §2.3.2.7）.
+
+        回调注入 → 调用回调返回备份状态 dict（pending_count/oldest_backup_at/by_type）；
+        未注入 → {"note": "数据源未注入"}（向后兼容）；
+        回调异常 → 如实标注原因（fail-open 不伪造为零）。
+        """
+        fn = getattr(self, "_recovery_status_fn", None)
+        if fn is None:
+            return {"note": "数据源未注入"}
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001 — 状态查询失败如实标注（fail-open）
+            return {
+                "pending_count": None,
+                "oldest_backup_at": None,
+                "by_type": {"session": None, "memory_stats": None},
+                "note": f"备份状态读取失败（{type(exc).__name__}: {exc}）",
+            }
+
     # ── 查询（拉取通道）──
     def set_model_context_fn(self, fn) -> None:
         """注入当前模型窗口查询回调（M56 B5：AI 可查窗口后自主决策压缩）.
@@ -289,6 +311,15 @@ class ArchitectureStatusProvider:
         未注入 → snapshot 中 pending_actions 为 {"note": "数据源未注入"}（向后兼容）。
         """
         self._pending_actions_fn = fn
+
+    def set_recovery_status_fn(self, fn) -> None:
+        """注入备份状态查询回调（P2-2: AI 经 architecture_status.recovery 感知）.
+
+        fn() -> dict，如 {"pending_count": 2, "oldest_backup_at": "...",
+        "by_type": {"session": 1, "memory_stats": 1}, "note": None}；
+        未注入 → snapshot 中 recovery 为 {"note": "数据源未注入"}（向后兼容）。
+        """
+        self._recovery_status_fn = fn
 
     def snapshot(self, session_id: str = "", dimensions: list[str] | None = None) -> dict:
         """构造八维状态快照（紧凑 JSON，维度可按需裁剪）.
@@ -350,6 +381,8 @@ class ArchitectureStatusProvider:
             "model_fallback": self._fallback_status(),
             # T4（spec.md 5.3.1）: 待办聚合（纯聚合无判断，AI 一站式感知系统待办）
             "pending_actions": self._pending_actions(),
+            # P2-2: 备份状态（AI 经 architecture_status.recovery 感知待恢复备份）
+            "recovery": self._recovery_status(),
         }
         if dimensions:
             out: dict = {}
