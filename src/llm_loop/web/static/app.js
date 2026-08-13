@@ -14,6 +14,7 @@ const state = {
   hasMoreHistory: false, // D2: 是否还有更早历史消息（懒加载）
   loadedHistoryCount: 0, // D2: 已加载历史消息条数（offset 基准）
   retryRequest: null, // D2 断流重试: 最近一次流式请求体（重试复用）
+  declarationIndex: new Map(), // P3-1: 页面级声明暂存（session_id → Map<toolCallId, {id,name,arguments}>，不落盘）
 };
 
 // D2: 历史懒加载分页大小（首屏/每次"加载更早"的条数）
@@ -32,6 +33,10 @@ const els = {
   chatArea: document.getElementById("chat-area"),
   modelSelect: document.getElementById("model-select"),
   cmdSuggest: document.getElementById("cmd-suggest"),
+  // P4-2: 移动端响应式引用
+  app: document.getElementById("app"),
+  sidebarToggle: document.getElementById("sidebar-toggle"),
+  sidebarScrim: document.getElementById("sidebar-scrim"),
 };
 
 // M47 快捷命令定义（argHint 非空表示需附加参数，点击只填入不自动执行）
@@ -135,12 +140,249 @@ function sanitizeHtml(raw) {
   return doc.body.innerHTML;
 }
 
+// ---------- P4-3 数学公式渲染（KaTeX 本地分发 + 占位符净化注入） ----------
+// 管线：extractMath（公式移出正文为占位符）→ marked + sanitize（净化先于渲染）→
+//       restoreMathInHtml（净化后经 DOM API 注入 KaTeX 元素，白名单一字不改）
+const MATH_PLACEHOLDER_PREFIX = "@@MATH_";
+const MATH_FORMULA_MAX = 50;          // 单条消息公式渲染上限
+const MATH_RENDER_BUDGET_MS = 200;    // 单条消息公式渲染耗时预算（ms）
+const MATH_KATEX_JS = "/static/katex/katex.min.js";   // 本地分发，无 CDN
+const MATH_KATEX_CSS = "/static/katex/katex.min.css"; // 本地分发，无 CDN
+let mathEngineState = { promise: null, available: false }; // 模块级按需加载状态（非 state 数据）
+
+function extractMath(src) {
+  // 公式识别器（O(n) 单遍扫描）：块级定界符优先（$$…$$ / \[…\]），行内（$…$ / \(…\)）
+  // 代码区豁免（围栏/缩进/行内代码）+ 转义豁免（\ 前缀的定界符不识别）
+  // 未识别到公式时 text 恒等于 src、formulas 为空（零行为影响）
+  const text = String(src || "");
+  const formulas = [];
+  if (!text) return { text, formulas };
+  const out = [];
+  let i = 0;
+  let fenced = false;      // ``` 围栏代码区
+  let fenceChar = "";
+  let blockBuf = null;     // 块级公式内容暂存（闭合后生成占位符，不进入 out）
+  const hasUnclosedBlock = { display: false, start: -1, delim: "" }; // 未闭合块级定界符追踪
+  while (i < text.length) {
+    const ch = text[i];
+    const two = text.slice(i, i + 2);
+    // 围栏代码区状态机（``` 或 ~~~）
+    if (!fenced && (two === "``" || two === "~~") && text[i + 2] === ch) {
+      const lineStart = out.length === 0 || out[out.length - 1] === "\n";
+      if (lineStart || text[i - 1] === "\n" || i === 0) {
+        const lineEnd = text.indexOf("\n", i + 3);
+        if (lineEnd === -1) { fenced = true; fenceChar = ch; out.push(text.slice(i)); break; }
+        const line = text.slice(i, lineEnd);
+        const isClosing = line.trim().slice(0, 3) === ch + ch + ch;
+        if (!isClosing) { fenced = true; fenceChar = ch; out.push(text.slice(i, lineEnd)); i = lineEnd; continue; }
+      }
+    }
+    if (fenced) {
+      const closeIdx = text.indexOf("\n" + fenceChar + fenceChar + fenceChar, i);
+      if (closeIdx === -1) { out.push(text.slice(i)); break; }
+      out.push(text.slice(i, closeIdx + 4));
+      i = closeIdx + 4;
+      fenced = false;
+      continue;
+    }
+    // 块级公式内部：内容一律暂存（不进入 out），仅识别闭合定界符
+    if (hasUnclosedBlock.display) {
+      const closesNow =
+        (hasUnclosedBlock.delim === "$$" && two === "$$") ||
+        (hasUnclosedBlock.delim === "\\[" && (two === "\\]" || two === "\\["));
+      if (closesNow) {
+        const idx = formulas.length;
+        const tex = blockBuf ? blockBuf.join("") : "";
+        formulas.push({ idx, tex, display: true });
+        out.push(`${MATH_PLACEHOLDER_PREFIX}${idx}@@`);
+        hasUnclosedBlock.display = false;
+        blockBuf = null;
+        i += 2;
+        continue;
+      }
+      blockBuf.push(ch);
+      i += 1;
+      continue;
+    }
+    // 缩进代码区（行首 4 空格及以上）与行内代码区（`…`）豁免
+    const lineStartPos = text.lastIndexOf("\n", i - 1) + 1;
+    if (i === lineStartPos && text[i] === " " && text.slice(i, i + 4) === "    ") {
+      let j = i;
+      while (j < text.length && text[j] !== "\n") j += 1;
+      out.push(text.slice(i, j));
+      i = j;
+      continue;
+    }
+    if (ch === "`") {
+      let j = i;
+      while (j < text.length && text[j] === "`") j += 1;
+      const backtickLen = j - i;
+      const end = text.indexOf("`".repeat(backtickLen), j);
+      if (end === -1) { out.push(text.slice(i)); break; }
+      out.push(text.slice(i, end + backtickLen));
+      i = end + backtickLen;
+      continue;
+    }
+    // 转义豁免：定界符前有奇数个反斜杠则跳过（\$ / \( / \[）
+    const bsCount = (() => { let n = 0; let k = i - 1; while (k >= 0 && text[k] === "\\") { n += 1; k -= 1; } return n; })();
+    if (bsCount % 2 === 1) { out.push(ch); i += 1; continue; }
+    // 块级定界符开始（块级优先于行内 $，避免 $$x$$ 被误拆）
+    if (two === "$$") {
+      hasUnclosedBlock.display = true; hasUnclosedBlock.start = i; hasUnclosedBlock.delim = "$$";
+      blockBuf = [];
+      i += 2;
+      continue;
+    }
+    if (two === "\\[") {
+      hasUnclosedBlock.display = true; hasUnclosedBlock.start = i; hasUnclosedBlock.delim = "\\[";
+      blockBuf = [];
+      i += 2;
+      continue;
+    }
+    // 行内定界符：$ 与 \(
+    if (ch === "$" && !(two === "$$")) {
+      const end = text.indexOf("$", i + 1);
+      if (end === -1) { out.push(ch); i += 1; continue; } // 未闭合 → 原文保留（fail-open）
+      const inner = text.slice(i + 1, end);
+      if (inner.includes("\n")) { out.push(ch); i += 1; continue; } // 行内公式不跨行
+      const idx = formulas.length;
+      formulas.push({ idx, tex: inner, display: false });
+      out.push(`${MATH_PLACEHOLDER_PREFIX}${idx}@@`);
+      i = end + 1;
+      continue;
+    }
+    if (two === "\\(" ) {
+      const end = text.indexOf("\\)", i + 2);
+      if (end === -1) { out.push(ch); i += 1; continue; }
+      const inner = text.slice(i + 2, end);
+      const idx = formulas.length;
+      formulas.push({ idx, tex: inner, display: false });
+      out.push(`${MATH_PLACEHOLDER_PREFIX}${idx}@@`);
+      i = end + 2;
+      continue;
+    }
+    out.push(ch);
+    i += 1;
+  }
+  if (hasUnclosedBlock.display) {
+    console.warn("公式定界符未闭合（fail-open，按原文呈现）", hasUnclosedBlock.delim);
+  }
+  return { text: out.join(""), formulas };
+}
+
+function loadMathEngine() {
+  // 按需加载 KaTeX（本地资源，首屏零负担；失败 resolve(false)，available=false 后不重试）
+  if (mathEngineState.promise) return mathEngineState.promise;
+  mathEngineState.promise = new Promise((resolve) => {
+    try {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = MATH_KATEX_CSS;
+      document.head.appendChild(link);
+      const script = document.createElement("script");
+      script.src = MATH_KATEX_JS;
+      script.onload = () => {
+        mathEngineState.available = typeof window.katex !== "undefined";
+        if (!mathEngineState.available) console.error("公式引擎不可用（fail-open）: katex 未定义");
+        resolve(mathEngineState.available);
+      };
+      script.onerror = () => {
+        mathEngineState.available = false;
+        console.error("公式引擎不可用（fail-open）: 资源加载失败");
+        resolve(false);
+      };
+      document.head.appendChild(script);
+    } catch (err) {
+      mathEngineState.available = false;
+      console.error("公式引擎不可用（fail-open）:", err);
+      resolve(false);
+    }
+  });
+  return mathEngineState.promise;
+}
+
+function renderMathElement(tex, displayMode) {
+  // 单公式渲染：throwOnError=true 使非法语法抛错并降级原文；trust=false 禁可执行协议
+  const placeholder = el("span", "math-placeholder");
+  const fallback = document.createTextNode(String(tex || ""));
+  loadMathEngine().then((ok) => {
+    if (!ok) {
+      console.error("公式引擎不可用（fail-open），按原文显示公式");
+      if (placeholder.parentNode) placeholder.parentNode.replaceChild(fallback, placeholder);
+      else placeholder.appendChild(fallback);
+      return;
+    }
+    try {
+      window.katex.render(String(tex || ""), placeholder, {
+        displayMode: Boolean(displayMode),
+        throwOnError: true,
+        trust: false,
+      });
+    } catch (err) {
+      console.error("公式渲染失败（fail-open），按原文显示公式:", err);
+      if (placeholder.parentNode) placeholder.parentNode.replaceChild(fallback, placeholder);
+      else placeholder.appendChild(fallback);
+    }
+  });
+  return placeholder;
+}
+
+function restoreMathInHtml(html, formulas) {
+  // 净化后注入：无占位符短路直返（零开销）；含占位符时经 DOMParser 深度遍历文本节点，
+  // 逐条调 renderMathElement 原位注入 KaTeX 元素（DOM API，不经 sanitize 白名单）
+  if (!html || typeof html !== "string" || !html.includes(MATH_PLACEHOLDER_PREFIX)) return html;
+  if (typeof DOMParser === "undefined" || !Array.isArray(formulas) || !formulas.length) return html;
+  try {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const byIdx = new Map(formulas.map((f) => [f.idx, f]));
+    let rendered = 0;
+    const startTs = Date.now();
+    const walk = (node) => {
+      for (const child of [...node.childNodes]) {
+        if (child.nodeType === 3 && child.nodeValue && child.nodeValue.includes(MATH_PLACEHOLDER_PREFIX)) {
+          const frag = document.createDocumentFragment();
+          let rest = child.nodeValue;
+          while (rest) {
+            const idxMatch = rest.match(new RegExp(MATH_PLACEHOLDER_PREFIX + "(\\d+)@@"));
+            if (!idxMatch) { frag.appendChild(document.createTextNode(rest)); break; }
+            const prefix = rest.slice(0, idxMatch.index);
+            if (prefix) frag.appendChild(document.createTextNode(prefix));
+            const idx = Number(idxMatch[1]);
+            const f = byIdx.get(idx);
+            if (f && rendered < MATH_FORMULA_MAX && Date.now() - startTs < MATH_RENDER_BUDGET_MS) {
+              frag.appendChild(renderMathElement(f.tex, f.display));
+              rendered += 1;
+            } else {
+              if (f) console.warn("公式渲染超限（fail-open，按原文显示）", idx);
+              frag.appendChild(document.createTextNode(MATH_PLACEHOLDER_PREFIX + idxMatch[1] + "@@"));
+            }
+            rest = rest.slice(idxMatch.index + idxMatch[0].length);
+          }
+          node.replaceChild(frag, child);
+        } else if (child.nodeType === 1) {
+          walk(child);
+        }
+      }
+    };
+    walk(doc.body);
+    return doc.body.innerHTML;
+  } catch (err) {
+    console.error("公式注入失败（fail-open，按原文显示）:", err);
+    return html;
+  }
+}
+
 function renderMarkdown(md) {
   // MD → HTML（marked gfm）→ sanitize；异常返回 null（调用方降级纯文本）
+  // P4-3: 公式占位符管线——extractMath 移出公式 → marked/sanitize 净化 → restoreMathInHtml 注入
   if (typeof marked === "undefined") return null;
   try {
-    const rawHtml = marked.parse(md, { gfm: true });
-    return sanitizeHtml(rawHtml);
+    const extracted = extractMath(md);
+    const rawHtml = marked.parse(extracted.text, { gfm: true });
+    const sanitized = sanitizeHtml(rawHtml);
+    if (sanitized === null) return null;
+    if (extracted.formulas.length === 0) return sanitized; // 无公式短路直返（路径逐字符一致）
+    return restoreMathInHtml(sanitized, extracted.formulas);
   } catch (err) {
     console.error("MD 渲染失败，降级纯文本:", err);
     return null;
@@ -159,7 +401,7 @@ function fmtToolArgs(args) {
   }
 }
 
-function renderToolCalls(toolCalls, container) {
+function renderToolCalls(toolCalls, container, missNote) {
   // 空/非数组直接返回（不产生 DOM 残留）
   if (!Array.isArray(toolCalls) || !toolCalls.length) return;
   const chain = el("div", "tool-call-chain");
@@ -176,6 +418,8 @@ function renderToolCalls(toolCalls, container) {
     item.appendChild(el("span", "tool-call-name", String(tc.name || "tool")));
     const argsText = fmtToolArgs(tc.arguments);
     if (argsText) item.appendChild(el("div", "tool-call-detail-text", `参数: ${argsText}`));
+    // P3-1: 未配对声明如实标注（仅历史视图回执数据已加载时，避免将"未加载"误报为"无回执"）
+    if (missNote) item.appendChild(el("span", "tool-pair-miss-note", "（无对应回执）"));
     detail.appendChild(item);
   }
   chain.appendChild(toggle);
@@ -183,54 +427,163 @@ function renderToolCalls(toolCalls, container) {
   container.insertBefore(chain, container.firstChild);
 }
 
-function renderToolMessage(msg, container) {
-  // 历史 tool 角色消息 → 折叠回执（解析 [状态: xxx] 前缀作为摘要）
-  const chain = el("div", "tool-call-chain");
-  const content = String(msg.content || "");
-  const m = content.match(/^\[([^\]]+)\]/);
-  // M52: 异常回执醒目（error/failure/安全硬阻断/程序异常 → 红色警示样式 + ⚠️）
+function parseToolResultStatus(content) {
+  // P3-1: 回执状态判定纯函数（自 renderToolMessage 拆出，配对卡片与独立回执共用）
+  const s = String(content || "");
+  const m = s.match(/^\[([^\]]+)\]/);
   const statusText = m ? m[1] : "";
   const isError = /error|failure|失败|参数错误|安全硬阻断|程序异常/i.test(statusText)
-    || /^\[安全硬阻断\]/.test(content) || /^\[程序异常\]/.test(content);
+    || /^\[安全硬阻断\]/.test(s) || /^\[程序异常\]/.test(s);
   const summary = `${isError ? "⚠️" : "🔧"} ${statusText || "工具回执"}`;
-  const toggle = el("button", "tool-call-toggle" + (isError ? " tool-call-toggle-error" : ""), `${summary} ▸`);
+  return { statusText, isError, summary };
+}
+
+function renderArchiveButton(container, toolCallId, sessionId) {
+  // P3-1: M52 分层截断"查看完整原文"按钮（自 renderToolMessage 拆出，配对卡片与独立回执共用）
+  // 仅 toolCallId/sessionId 为合法非空字符串时构建；否则返回 null（fail-open）
+  if (typeof toolCallId !== "string" || !toolCallId.length) return null;
+  if (typeof sessionId !== "string" || !sessionId.length) return null;
+  const btn = el("button", "tool-call-full-btn", "📄 查看完整原文");
+  btn.type = "button";
+  btn.onclick = async () => {
+    btn.disabled = true;
+    btn.textContent = "⏳ 加载中…";
+    try {
+      const resp = await fetch(`/api/v1/sessions/${sessionId}/archive/${toolCallId}`);
+      const data = await resp.json();
+      if (resp.ok) {
+        container.appendChild(el("div", "tool-call-detail-text tool-call-full-text",
+          `── 完整原文（${data.tool_name || "tool"}，${data.chars} 字符，归档于 ${data.ts}）──\n${data.content}`));
+        btn.remove();
+      } else {
+        btn.disabled = false;
+        btn.textContent = `📄 原文不可用：${data.detail || "未知原因"}`;
+      }
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = "📄 加载失败（网络异常），点击重试";
+    }
+  };
+  return btn;
+}
+
+function buildToolPairIndex(messages, declIndex) {
+  // P3-1: 构建"调用声明 ↔ 工具回执"配对索引（纯函数，无 DOM 依赖，O(N)）
+  // id 字符串精确匹配，顺序无关、同 id 归并；非法 id（null/空串/非字符串）不参与配对
+  const decls = new Map();
+  for (const msg of messages) {
+    if (msg && msg.role === "assistant" && Array.isArray(msg.toolCalls)) {
+      for (const tc of msg.toolCalls) {
+        if (tc && typeof tc.id === "string" && tc.id.length > 0 && !decls.has(tc.id)) {
+          decls.set(tc.id, { id: tc.id, name: tc.name || "tool", arguments: tc.arguments });
+        }
+      }
+    }
+  }
+  if (declIndex && typeof declIndex.forEach === "function") {
+    declIndex.forEach((info, id) => {
+      if (!decls.has(id)) decls.set(id, info);
+    });
+  }
+  const results = new Map();
+  for (const msg of messages) {
+    if (msg && msg.role === "tool" && typeof msg.toolCallId === "string" && msg.toolCallId.length > 0) {
+      results.set(msg.toolCallId, msg);
+    }
+  }
+  const hasToolResults = results.size > 0;
+  const pairs = [];
+  const pairedIds = new Set();
+  decls.forEach((decl, id) => {
+    if (results.has(id)) {
+      pairs.push({ id, decl, resultMsg: results.get(id) });
+      pairedIds.add(id);
+    }
+  });
+  const unpairedResults = [];
+  results.forEach((msg, id) => {
+    if (!pairedIds.has(id)) unpairedResults.push({ id, msg });
+  });
+  const unpairedDecls = [];
+  decls.forEach((decl, id) => {
+    if (!pairedIds.has(id)) unpairedDecls.push({ id, decl });
+  });
+  return { pairs, pairedIds, unpairedResults, unpairedDecls, hasToolResults };
+}
+
+function renderToolMessage(msg, container, missNote) {
+  // 历史 tool 角色消息 → 折叠回执（解析 [状态: xxx] 前缀作为摘要）
+  // P3-1: 状态判定与 M52 取档复用拆出的 parseToolResultStatus / renderArchiveButton
+  const chain = el("div", "tool-call-chain");
+  const content = String(msg.content || "");
+  const st = parseToolResultStatus(content);
+  const toggle = el("button", "tool-call-toggle" + (st.isError ? " tool-call-toggle-error" : ""), `${st.summary} ▸`);
   toggle.type = "button";
   const detail = el("div", "tool-call-detail");
   detail.hidden = true;
   toggle.onclick = () => {
     detail.hidden = !detail.hidden;
-    toggle.textContent = `${summary} ${detail.hidden ? "▸" : "▾"}`;
+    toggle.textContent = `${st.summary} ${detail.hidden ? "▸" : "▾"}`;
   };
   detail.appendChild(el("div", "tool-call-detail-text", content));
+  // P3-1: 孤儿回执如实标注（id 合法但无声明匹配）
+  if (missNote) detail.appendChild(el("span", "tool-pair-miss-note", `（${missNote}）`));
   // M52: 分层截断/已归档 → "查看完整原文"（按 tool_call_id 精确取档案，失败如实提示）
   const layered = content.includes("[工具输出已分层]") || content.includes("已另存至压缩档案");
-  if (layered && msg.tool_call_id && state.currentSessionId) {
-    const btn = el("button", "tool-call-full-btn", "📄 查看完整原文");
-    btn.type = "button";
-    btn.onclick = async () => {
-      btn.disabled = true;
-      btn.textContent = "⏳ 加载中…";
-      try {
-        const resp = await fetch(`/api/v1/sessions/${state.currentSessionId}/archive/${msg.tool_call_id}`);
-        const data = await resp.json();
-        if (resp.ok) {
-          detail.appendChild(el("div", "tool-call-detail-text tool-call-full-text",
-            `── 完整原文（${data.tool_name || "tool"}，${data.chars} 字符，归档于 ${data.ts}）──\n${data.content}`));
-          btn.remove();
-        } else {
-          btn.disabled = false;
-          btn.textContent = `📄 原文不可用：${data.detail || "未知原因"}`;
-        }
-      } catch (e) {
-        btn.disabled = false;
-        btn.textContent = "📄 加载失败（网络异常），点击重试";
-      }
-    };
-    chain.appendChild(btn);
+  if (layered) {
+    const btn = renderArchiveButton(detail, msg.tool_call_id, state.currentSessionId);
+    if (btn) chain.appendChild(btn);
   }
   chain.appendChild(toggle);
   chain.appendChild(detail);
   container.appendChild(chain);
+}
+
+function renderToolPairCard(decl, resultMsg) {
+  // P3-1: 渲染"调用→回执"配对卡片（tool 消息位置，单一折叠单元，调用侧→箭头→回执侧）
+  // 文本经 textContent 构建；name/arguments 额外 sanitizeHtml 纵深防御；异常返回 null（fail-open）
+  try {
+    const card = el("div", "tool-pair-card");
+    const content = String((resultMsg && resultMsg.content) || "");
+    const st = parseToolResultStatus(content);
+    const toolName = typeof decl.name === "string" && decl.name.length ? decl.name : "tool";
+    const safeName = sanitizeHtml(toolName) || toolName;
+    const toggle = el("button", "tool-pair-toggle" + (st.isError ? " tool-pair-toggle-error" : ""),
+      `${st.isError ? "⚠️" : "🔧"} ${safeName} ▸`);
+    toggle.type = "button";
+    const body = el("div", "tool-pair-body");
+    body.hidden = true;
+    toggle.onclick = () => {
+      body.hidden = !body.hidden;
+      toggle.textContent = `${st.isError ? "⚠️" : "🔧"} ${safeName} ${body.hidden ? "▸" : "▾"}`;
+      // REQ-P3-1-10: 展开时底部态滚动跟随（用户上滚则暂停，不打断阅读）
+      if (!body.hidden && isMessagesAtBottom()) {
+        els.messages.scrollTop = els.messages.scrollHeight;
+      }
+    };
+    const call = el("div", "tool-pair-call");
+    call.appendChild(el("span", "tool-call-name", safeName));
+    const argsText = fmtToolArgs(decl.arguments);
+    if (argsText) {
+      call.appendChild(el("div", "tool-call-detail-text", `参数: ${sanitizeHtml(argsText) || argsText}`));
+    }
+    body.appendChild(call);
+    body.appendChild(el("div", "tool-pair-arrow", "→"));
+    const result = el("div", "tool-pair-result");
+    result.appendChild(el("div", "tool-call-detail-text", content));
+    const layered = content.includes("[工具输出已分层]") || content.includes("已另存至压缩档案");
+    if (layered) {
+      const btn = renderArchiveButton(result, resultMsg.toolCallId, state.currentSessionId);
+      if (btn) result.appendChild(btn);
+    }
+    body.appendChild(result);
+    card.appendChild(toggle);
+    card.appendChild(body);
+    return card;
+  } catch (e) {
+    console.error("renderToolPairCard 失败（fail-open，回退独立渲染）", e);
+    return null;
+  }
 }
 
 // ---------- P1-1 思考过程渲染 ----------
@@ -279,9 +632,41 @@ function renderReasoningBlock(reasoning, parentNode) {
   return { block, body, setReasoning };
 }
 
+function renderToolRoundProgress(parentNode) {
+  // P2-1: 工具调用进展占位区（流式期间即时呈现，done 后收敛移除）
+  // 返回 { block, setProgress }：setProgress(toolRounds) 供流式渐进更新计数器
+  try {
+    const block = el("div", "tool-round-progress");
+    const counter = el("div", "tool-round-counter");
+    block.appendChild(counter);
+    parentNode.insertBefore(block, parentNode.firstChild);
+    const setProgress = (toolRounds) => {
+      const n = toolRounds.length;
+      const last = toolRounds[n - 1];
+      const name = last && last.tool_name ? sanitizeHtml(last.tool_name) : "工具";
+      counter.textContent = `🔧 工具调用 ${n} 次（正在调用 ${name}…）`;
+    };
+    return { block, setProgress };
+  } catch (e) {
+    console.error("renderToolRoundProgress 失败（fail-open）", e);
+    return { block: null, setProgress: () => {} };
+  }
+}
+
 // ---------- 消息渲染 ----------
 function renderMessages(scrollToBottom = true) {
   els.messages.innerHTML = "";
+  // P3-1: 构建配对索引（每次渲染基于当前数据源重建，无陈旧残留；异常 fail-open 空结构）
+  let pairIndex = null;
+  try {
+    pairIndex = buildToolPairIndex(
+      state.messages,
+      state.declarationIndex.get(state.currentSessionId) || null
+    );
+  } catch (e) {
+    console.error("buildToolPairIndex 失败（fail-open，回退既有渲染）", e);
+  }
+  const hasPairIndex = pairIndex && pairIndex.pairedIds && pairIndex.pairedIds.size > 0;
   for (const msg of state.messages) {
     const node = document.createElement("div");
     node.className = "message " + msg.role;
@@ -291,18 +676,46 @@ function renderMessages(scrollToBottom = true) {
     }
     if (msg.role === "tool") {
       // P2-1: 历史 tool 角色消息渲染为折叠回执
+      // P3-1: 回执 id 命中配对 → 配对卡片承载于此位置；否则独立渲染
       const wrap = document.createElement("div");
       wrap.className = "message-wrap";
       wrap.appendChild(node);
-      renderToolMessage(msg, wrap);
+      const paired = hasPairIndex
+        && typeof msg.toolCallId === "string" && msg.toolCallId.length > 0
+        && pairIndex.pairedIds.has(msg.toolCallId);
+      if (paired) {
+        const pairDecl = pairIndex.pairs.find((p) => p.id === msg.toolCallId);
+        const card = pairDecl ? renderToolPairCard(pairDecl.decl, msg) : null;
+        if (card) {
+          wrap.appendChild(card);
+        } else {
+          renderToolMessage(msg, wrap, null); // fail-open: 卡片异常回退独立渲染
+        }
+      } else {
+        const missNote = (typeof msg.toolCallId === "string" && msg.toolCallId.length > 0)
+          ? "未找到对应调用" : null;
+        renderToolMessage(msg, wrap, missNote);
+      }
       els.messages.appendChild(wrap);
       continue;
     }
     if (msg.role === "assistant") {
       // AI 回答：MD 渲染（经 sanitize）；渲染失败降级纯文本（不空白不伪造）
       // P2-1: AI 回复内容前插入折叠工具调用链（若有）
+      // P3-1: 过滤已配对声明（配对卡片已在 tool 消息位置承载，不重复呈现）
+      let unpairedCalls = null;
       if (Array.isArray(msg.toolCalls) && msg.toolCalls.length) {
-        renderToolCalls(msg.toolCalls, node);
+        if (hasPairIndex) {
+          unpairedCalls = msg.toolCalls.filter(
+            (tc) => !(tc && typeof tc.id === "string" && tc.id.length > 0 && pairIndex.pairedIds.has(tc.id))
+          );
+        } else {
+          unpairedCalls = msg.toolCalls;
+        }
+      }
+      if (Array.isArray(unpairedCalls) && unpairedCalls.length) {
+        // 历史视图回执已加载（hasToolResults=true）时对未配对声明如实标注"无对应回执"
+        renderToolCalls(unpairedCalls, node, pairIndex && pairIndex.hasToolResults);
       }
       // P1-1: 思考区渲染（默认折叠，在正文前方；历史消息恢复）
       if (msg.reasoningContent) {
@@ -586,7 +999,7 @@ function isMessagesAtBottom() {
 // answer_delta 逐分片回调 onDelta；done 携带九字段；error 为终态（停止追加分片，不伪造 done）
 // 读异常 = 网络中断（errorType:"network"）；SSE error 事件 = 引擎错误（errorType:"engine"）
 // 非 2xx（404/413）= http 错误（errorType:"http"）；ReadableStream 不可用 → 降级非流式
-async function streamChatRequest(body, onDelta, onReasoningDelta) {
+async function streamChatRequest(body, onDelta, onReasoningDelta, onToolRound) {
   let resp;
   try {
     resp = await fetch("/api/v1/chat/stream", {
@@ -628,6 +1041,7 @@ async function streamChatRequest(body, onDelta, onReasoningDelta) {
       try { evt = JSON.parse(dataLine.slice(6)); } catch { continue; }
       if (evt.type === "answer_delta") onDelta(evt.data && evt.data.data);
       else if (evt.type === "reasoning_delta") { if (onReasoningDelta) onReasoningDelta(evt.data && evt.data.data); }
+      else if (evt.type === "tool_round") { if (onToolRound) onToolRound(evt.data); }
       else if (evt.type === "done") { doneData = evt.data; finished = true; break; }
       else if (evt.type === "error") { errorData = evt.data; finished = true; break; } // error 为终态（D3）
     }
@@ -657,6 +1071,8 @@ async function runStreamChat(body, loading) {
   let accReasoning = "";
   let bodyNode = null;
   let reasoningBlock = null;
+  let toolRoundBlock = null;
+  let toolRounds = [];
   let streamed = false;
   const ensureStreamed = () => {
     if (!streamed) {
@@ -690,11 +1106,37 @@ async function runStreamChat(body, loading) {
     if (isMessagesAtBottom()) {
       els.messages.scrollTop = els.messages.scrollHeight;
     }
+  }, (toolRound) => {
+    // P2-1: 工具轮次进展渐进渲染（与正文/思考区并行互不阻塞，spec 4.1.1/5.1.1 规则 6）
+    ensureStreamed();
+    toolRounds.push(toolRound);
+    if (bodyNode && !toolRoundBlock) {
+      toolRoundBlock = renderToolRoundProgress(bodyNode);
+    }
+    if (toolRoundBlock) {
+      toolRoundBlock.setProgress(toolRounds);
+    }
+    if (isMessagesAtBottom()) {
+      els.messages.scrollTop = els.messages.scrollHeight;
+    }
   });
 
   if (result.ok && result.data) {
     const data = result.data;
     state.currentSessionId = data.session_id;
+    // P3-1: done 终态暂存声明侧事实（session_id 键控，合并写入不覆盖既有键，纯页面内存态）
+    if (data.session_id && Array.isArray(data.tool_calls)) {
+      let sessionDecls = state.declarationIndex.get(data.session_id);
+      if (!sessionDecls) {
+        sessionDecls = new Map();
+        state.declarationIndex.set(data.session_id, sessionDecls);
+      }
+      for (const tc of data.tool_calls) {
+        if (tc && typeof tc.id === "string" && tc.id.length > 0 && !sessionDecls.has(tc.id)) {
+          sessionDecls.set(tc.id, { id: tc.id, name: tc.name || "tool", arguments: tc.arguments });
+        }
+      }
+    }
     const finalText = (data.final_answer || "").trim();
     if (streamed) {
       const last = state.messages[state.messages.length - 1];
@@ -761,7 +1203,7 @@ async function runStreamChat(body, loading) {
 }
 
 function addMessage(role, content, note, toolCalls, reasoningContent) {
-  const m = { role, content, note, reasoningContent: reasoningContent || null };
+  const m = { role, content, note, reasoningContent: reasoningContent || null, toolRounds: null };
   if (Array.isArray(toolCalls) && toolCalls.length) m.toolCalls = toolCalls;
   state.messages.push(m);
   renderMessages();
@@ -820,6 +1262,58 @@ async function sendMessage() {
   loadSessions(); // 刷新侧栏（会话可能新建/更新）
 }
 
+// ---------- P4-2 移动端响应式（窄屏抽屉 + 视口兜底，fail-open 降级桌面布局） ----------
+function isNarrowScreen() {
+  // 窄屏判定：与 CSS 断点共用同一阈值；异常降级返回 false（桌面布局）
+  try {
+    return window.matchMedia("(max-width: 767.98px)").matches;
+  } catch (e) {
+    console.error("isNarrowScreen 失败（fail-open，按桌面布局处理）", e);
+    return false;
+  }
+}
+
+function handleVisualViewportChange() {
+  // 无 dvh 支持且 visualViewport 可用时，软键盘弹出同步 #app 高度保证输入区可达
+  try {
+    let supportsDvh = false;
+    try { supportsDvh = CSS.supports("height", "100dvh"); } catch (e) { /* 不支持即回退 */ }
+    if (supportsDvh) return; // CSS 100dvh 已处理动态视口，JS 无需兜底
+    if (window.visualViewport) {
+      const syncHeight = () => {
+        els.app.style.height = `${window.visualViewport.height}px`;
+      };
+      window.visualViewport.addEventListener("resize", syncHeight);
+      window.visualViewport.addEventListener("scroll", syncHeight);
+    }
+  } catch (e) {
+    console.error("handleVisualViewportChange 失败（fail-open，CSS 100vh 回退）", e);
+  }
+}
+
+function setSidebarOpen(open) {
+  // 仅窄屏生效；宽屏幂等返回，防覆盖态残留
+  if (!isNarrowScreen()) return;
+  els.app.classList.toggle("sidebar-open", Boolean(open));
+}
+
+function initResponsive() {
+  // 注册侧栏开合事件源 + 断点切换归位 + 视口兜底；异常 fail-open 不阻断既有功能
+  try {
+    els.sidebarToggle.addEventListener("click", () => {
+      const willOpen = !els.app.classList.contains("sidebar-open");
+      setSidebarOpen(willOpen);
+    });
+    els.sidebarScrim.addEventListener("click", () => setSidebarOpen(false));
+    window.matchMedia("(max-width: 767.98px)").addEventListener("change", (evt) => {
+      if (!evt.matches) setSidebarOpen(false); // 切回宽屏自动归位
+    });
+    handleVisualViewportChange();
+  } catch (e) {
+    console.error("响应式初始化失败（fail-open，保持桌面布局）", e);
+  }
+}
+
 // ---------- 会话管理 ----------
 async function loadSessions() {
   const { status, data } = await api("/api/v1/sessions");
@@ -835,9 +1329,10 @@ async function loadSessionMessages(sessionId) {
   );
   if (status !== 200) return;
   // P2-1: 白名单保留 tool 角色（工具调用回执），历史刷新后仍可见
+  // P3-1: 保留 tool_call_id（回执侧配对键），供工具调用与回执配对
   state.messages = (data.messages || [])
     .filter((m) => m.role === "user" || m.role === "assistant" || m.role === "tool")
-    .map((m) => ({ role: m.role, content: m.content, note: null, reasoningContent: m.reasoning_content || null }));
+    .map((m) => ({ role: m.role, content: m.content, note: null, reasoningContent: m.reasoning_content || null, toolCallId: m.tool_call_id || null }));
   state.hasMoreHistory = !!data.has_more;
   state.loadedHistoryCount = (data.messages || []).length;
   renderMessages();
@@ -855,7 +1350,7 @@ async function loadEarlierHistory() {
   }
   const earlier = (data.messages || [])
     .filter((m) => m.role === "user" || m.role === "assistant" || m.role === "tool")
-    .map((m) => ({ role: m.role, content: m.content, note: null }));
+    .map((m) => ({ role: m.role, content: m.content, note: null, toolCallId: m.tool_call_id || null }));
   state.messages = [...earlier, ...state.messages];
   state.hasMoreHistory = !!data.has_more;
   state.loadedHistoryCount += (data.messages || []).length;
@@ -934,6 +1429,7 @@ function selectSession(sessionId) {
   renderSessions();
   loadSessionMessages(sessionId); // 加载该会话历史消息
   els.messageInput.focus();
+  setSidebarOpen(false); // P4-2: 窄屏选择会话后自动收起抽屉
 }
 
 function newSession() {
@@ -942,6 +1438,7 @@ function newSession() {
   renderMessages();
   renderSessions();
   els.messageInput.focus();
+  setSidebarOpen(false); // P4-2: 窄屏新建会话后自动收起抽屉
 }
 
 async function deleteSession(sessionId) {
@@ -951,6 +1448,8 @@ async function deleteSession(sessionId) {
     { method: "DELETE" }
   );
   if (status === 200) {
+    // P3-1: 删除会话时清理对应声明暂存（无陈旧残留）
+    state.declarationIndex.delete(sessionId);
     if (state.currentSessionId === sessionId) {
       state.currentSessionId = null;
       state.messages = [];
@@ -987,6 +1486,7 @@ async function init() {
   if (target) {
     selectSession(target.session_id);
   }
+  initResponsive(); // P4-2: 移动端响应式初始化（侧栏抽屉 + 视口兜底）
 }
 
 // ---------- M56 SSE 实时刷新（飞书/Web 会话同步） ----------

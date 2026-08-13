@@ -832,6 +832,73 @@ html, body {
   margin-top: 6px;
   padding-top: 6px;
 }
+
+/* ---------- P3-1 工具调用↔回执配对卡片（复用 .tool-call-chain 视觉语言） ---------- */
+.tool-pair-card {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+  overflow: hidden;
+}
+
+.tool-pair-toggle {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.tool-pair-toggle:hover {
+  background: rgba(31, 35, 40, 0.06);
+}
+
+.tool-pair-toggle-error {
+  color: #c0392b;
+  border-color: #e6b8b3;
+  background: #fdf1f0;
+}
+
+.tool-pair-toggle-error:hover {
+  background: #fbe4e2;
+}
+
+.tool-pair-body {
+  border-top: 1px solid #eef0f3;
+  padding: 6px 10px 8px;
+}
+
+.tool-pair-call {
+  padding: 2px 0;
+}
+
+.tool-pair-arrow {
+  text-align: center;
+  color: #9aa4b2;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.tool-pair-result {
+  border-top: 1px dashed #e5e7eb;
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+.tool-pair-miss-note {
+  display: inline-block;
+  margin: 2px 0;
+  font-size: 11px;
+  color: #9aa4b2;
+  font-weight: 400;
+}
 .message-alert {
   border-left: 3px solid #c0392b;
   background: #fdf6f5;
@@ -930,4 +997,201 @@ html, body {
   color: #6b6b6b;
   font-style: italic;
   line-height: 1.6;
+}
+
+.tool-round-progress {
+  margin: 6px 0 10px;
+  font-size: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+  overflow: hidden;
+  animation: tool-round-pulse 1.5s ease-in-out infinite;
+}
+.tool-round-counter {
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+}
+@keyframes tool-round-pulse {
+  0%, 100% { background: #f8fafc; }
+  50% { background: #eef2f7; }
+}
+
+/* ---------- P4-2 移动端适配（桌面优先，窄屏 <768px 增量叠加；单一断点） ---------- */
+/* 桌面默认隐藏汉堡/遮罩（新增规则，不改动既有桌面规则） */
+#sidebar-toggle,
+#sidebar-scrim {
+  display: none;
+}
+
+/* 集中式窄屏断点块（全文仅此一个 @media 断点；块外桌面规则零改动） */
+@media (max-width: 767.98px) {
+  /* 段1: 视口高度（动态视口 + 100vh 回退，软键盘/地址栏下输入区可达） */
+  #app {
+    height: 100vh;
+  }
+  @supports (height: 100dvh) {
+    #app {
+      height: 100dvh;
+    }
+  }
+
+  /* 段2: 侧栏抽屉（默认移出视口，打开滑入覆盖聊天区） */
+  #sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(85vw, 320px);
+    z-index: 40;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+  }
+  #app.sidebar-open #sidebar {
+    transform: translateX(0);
+  }
+  #sidebar-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    z-index: 50;
+    width: 44px;
+    height: 44px;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    background: #fff;
+    color: #1f2328;
+    font-size: 18px;
+    cursor: pointer;
+  }
+  #sidebar-scrim {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.35);
+    z-index: 30;
+    display: none;
+  }
+  #app.sidebar-open #sidebar-scrim {
+    display: block;
+  }
+
+  /* 段3: 触控目标 ≥44×44（命中区域与视觉解耦） */
+  #send-btn,
+  #upload-btn,
+  #new-session-btn,
+  #model-select,
+  #search-input,
+  .cmd-suggest-item,
+  .load-more-btn {
+    min-height: 44px;
+  }
+  .session-item {
+    min-height: 44px;
+  }
+  .cmd-chip,
+  .session-del,
+  .session-pin,
+  .copy-btn,
+  .code-copy-btn,
+  .tool-call-toggle,
+  .tool-pair-toggle,
+  .reasoning-toggle,
+  .tool-call-full-btn,
+  .expand-btn,
+  .retry-btn {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  /* 触控按压反馈（仅 CSS :active，不新增 JS） */
+  #send-btn:active,
+  #upload-btn:active,
+  #new-session-btn:active,
+  .cmd-chip:active,
+  .cmd-suggest-item:active,
+  .tool-call-toggle:active,
+  .tool-pair-toggle:active,
+  .reasoning-toggle:active,
+  .expand-btn:active,
+  .retry-btn:active {
+    opacity: 0.7;
+  }
+
+  /* 段4: hover-only 会话操作窄屏常显（覆盖块外 display:none + :hover 显示） */
+  .session-del,
+  .session-pin {
+    display: inline-flex;
+  }
+  .session-del {
+    float: none;
+    position: absolute;
+    top: 8px;
+    right: 30px;
+  }
+  .session-pin {
+    float: none;
+    position: absolute;
+    top: 8px;
+    right: 4px;
+  }
+
+  /* 段5: 输入区（收窄留白 + 工具行换行 + 命令 chips 横向滚动） */
+  #input-bar {
+    padding: 10px 10px 12px;
+  }
+  #input-tools {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  #cmd-hint {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  #cmd-hint::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* 段6: 消息气泡与卡片宽度适配 */
+  .message,
+  .message-wrap,
+  .attachment-bubble {
+    max-width: 92%;
+  }
+  #messages {
+    padding: 12px;
+  }
+}
+
+/* ---------- P4-3 数学公式渲染（KaTeX）样式 ---------- */
+.katex {
+  font-size: 1.05em;
+}
+
+.katex-display {
+  margin: 8px 0;
+  padding: 2px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* user 蓝底白字反色适配 */
+.message.user .katex,
+.message.user .katex-display {
+  color: #fff;
+}
+
+.message.user .katex a {
+  color: #bfdbfe;
+}
+
+/* 思考区字号协调 */
+.reasoning-body .katex {
+  font-size: 1em;
 }
