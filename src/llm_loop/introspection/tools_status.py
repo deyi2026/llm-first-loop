@@ -14,7 +14,7 @@ from llm_loop.core.message import ToolResult, ToolResultStatus
 _SEARCH_RECORDS_KIND_HINT = (
     "action_trace/exception_log/self_correction_log/declaration_check/"
     "memory/memory_extract/archive/selfheal/param_adjust/evolution/evolution_exec/"
-    "self_eval/change_log/proc_versions/feishu_audit/all"
+    "self_eval/change_log/proc_versions/feishu_audit/experience/all"
 )
 
 

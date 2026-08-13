@@ -84,6 +84,8 @@ class LoopResult:
     # M52: 本次 run 的 token 用量（工具循环多次调用累加；provider 未返回 usage 时为 0，如实不伪造）
     tokens_in: int = 0
     tokens_out: int = 0
+    # P1-1: 最终回答轮完整思考链（供 Web done 事件透传前端渲染）；工具轮思考链不在此字段
+    reasoning_content: str | None = None
 
 
 def build_session_snapshot_text(
@@ -569,6 +571,7 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin):
             model_used=model_used,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
+            reasoning_content=resp.reasoning_content if resp is not None else None,
         )
 
     def run(self, session_id: str, user_text: str, model: str | None = None) -> LoopResult:

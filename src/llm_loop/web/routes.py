@@ -157,6 +157,7 @@ def chat(
         model_used=result.model_used,
         tokens_in=result.tokens_in,
         tokens_out=result.tokens_out,
+        reasoning_content=result.reasoning_content,  # P1-1: 非流式路径透传思考链
     )
 
 
@@ -220,7 +221,11 @@ def chat_stream(
             while True:
                 try:
                     delta = next(it)
-                    yield _sse("answer_delta", {"data": delta.text})
+                    # P1-1: text/reasoning 分片独立 yield（并行互不阻塞，spec 4.1.1）
+                    if delta.text:
+                        yield _sse("answer_delta", {"data": delta.text})
+                    if delta.reasoning:
+                        yield _sse("reasoning_delta", {"data": delta.reasoning})
                 except StopIteration as exc:
                     result = exc.value
                     break
@@ -250,6 +255,7 @@ def chat_stream(
                 "model_used": result.model_used,
                 "tokens_in": result.tokens_in,
                 "tokens_out": result.tokens_out,
+                "reasoning_content": result.reasoning_content,  # P1-1: 终态兜底
             },
         )
 
@@ -492,7 +498,15 @@ def get_session_messages(
                 "detail": f"[程序异常] 会话加载失败（{type(exc).__name__}: {exc}）。",
             },
         )
-    messages = [MessageItem(role=m.role, content=m.content, tool_call_id=m.tool_call_id) for m in session.messages]
+    messages = [
+        MessageItem(
+            role=m.role,
+            content=m.content,
+            tool_call_id=m.tool_call_id,
+            reasoning_content=getattr(m, "reasoning_content", None),  # P1-1: 历史思考链透传
+        )
+        for m in session.messages
+    ]
     total = len(messages)
     if limit is not None:
         start = max(0, total - offset - limit)

@@ -42,9 +42,13 @@ class LLMResponse:
 
 @dataclass
 class StreamDelta:
-    """流式回答的一个文本分片（design.md §2.2.2.2）."""
+    """流式回答的一个文本分片（design.md §2.2.2.2）.
+
+    P1-1: reasoning 携带思考分片（与 text 独立，流式渐进外泄）；默认 None 向后兼容。
+    """
 
     text: str
+    reasoning: str | None = None
 
 
 @dataclass
@@ -163,9 +167,11 @@ class LLMClient:
                         content_parts.append(content)
                         yield StreamDelta(text=content)
                     # M20 THK-02: reasoning_content 独立分支（与 content/tool_calls 互不读写并行）
+                    # P1-1: 流式期间外泄思考分片（与 text yield 独立，终态仍聚合完整链）
                     rc = delta.get("reasoning_content")
                     if rc:
                         reasoning_parts.append(rc)
+                        yield StreamDelta(text="", reasoning=rc)
                     if delta.get("tool_calls"):
                         for tc in delta["tool_calls"]:
                             agg.add_delta(tc)

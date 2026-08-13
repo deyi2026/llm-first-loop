@@ -85,7 +85,7 @@ class TestHistoryPagination:
         client = _make_client(engine)
         resp = client.get(f"/api/v1/sessions/{sid}/messages?limit=10")
         for m in resp.json()["messages"]:
-            assert set(m.keys()) <= {"role", "content", "tool_call_id"}
+            assert set(m.keys()) <= {"role", "content", "tool_call_id", "reasoning_content"}
 
 
 class TestFrontendLazyLoad:
