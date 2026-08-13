@@ -192,6 +192,7 @@ class Settings:
     # ── 压缩档案（T22 另存提取替代截断）──
     archive_enabled: bool = True
     experiences_dir: str = "./experiences"  # P1-2: 经验库目录（默认项目根 experiences/）
+    docs_dir: str = "./docs"  # P2-3: 文档检索目录（默认项目根 docs/）
     archive_max_entries: int = 0  # R7: 单会话最大档案条目数（0=不限）
     archive_ttl_days: int = 0     # R7: 条目存活天数（0=不限）
     audit_ttl_days: int = 30      # P1-3: 审计 JSONL 条目存活天数（0=不清理）
@@ -287,9 +288,13 @@ class Settings:
     def archive_dir(self) -> Path:
         return Path(self.data_dir) / "archives"
 
+    @property
+    def recovery_dir(self) -> Path:
+        return Path(self.data_dir) / ".recovery"
+
     def ensure_dirs(self) -> None:
         """确保运行时数据目录存在（幂等）."""
-        dirs = [self.sessions_dir, self.memory_dir, self.audit_dir]
+        dirs = [self.sessions_dir, self.memory_dir, self.audit_dir, self.recovery_dir]
         if self.archive_enabled:
             dirs.append(self.archive_dir)
         for d in dirs:
@@ -328,6 +333,8 @@ class Settings:
             "self_eval_interval_rounds": self.self_eval_interval_rounds,
             "self_eval_min_samples": self.self_eval_min_samples,
             "self_eval_span": self.self_eval_span,
+            # P2-3: 文档检索入口状态（AI 可自查，不暴露路径细节）
+            "docs_search_enabled": bool(self.docs_dir),
             # M47: Provider 注册表配置状态（AI 可自查, 不暴露原始 JSON）
             "model_providers_configured": bool(self.model_providers_raw),
             # M49: Fallback 链配置状态（仅计数, 不暴露降级链明细, 密钥安全 DFX-SEC-02）
@@ -391,6 +398,7 @@ def load_settings() -> Settings:
         status_report_cooldown_s=float(_env_int("STATUS_REPORT_COOLDOWN_S", 60)),
         archive_enabled=_env_bool("ARCHIVE_ENABLED", True),
         experiences_dir=os.environ.get("EXPERIENCES_DIR", "./experiences").strip(),
+        docs_dir=os.environ.get("DOCS_DIR", "./docs").strip(),
         archive_max_entries=_env_int("ARCHIVE_MAX_ENTRIES", 0),
         archive_ttl_days=_env_int("ARCHIVE_TTL_DAYS", 0),
         audit_ttl_days=_env_int("AUDIT_TTL_DAYS", 30),

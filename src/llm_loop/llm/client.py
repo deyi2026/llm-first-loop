@@ -41,14 +41,29 @@ class LLMResponse:
 
 
 @dataclass
+class ToolRoundInfo:
+    """工具轮次进展事实（P2-1，design §2.3.2.2）.
+
+    流式期间工具调用进展的载体，经 StreamDelta.tool_round 携带外泄。
+    """
+
+    tool_name: str
+    round_index: int
+    args_summary: str = ""
+    tool_call_id: str = ""
+
+
+@dataclass
 class StreamDelta:
     """流式回答的一个文本分片（design.md §2.2.2.2）.
 
     P1-1: reasoning 携带思考分片（与 text 独立，流式渐进外泄）；默认 None 向后兼容。
+    P2-1: tool_round 携带工具轮次进展事实（与 text/reasoning 独立）；默认 None 向后兼容。
     """
 
     text: str
     reasoning: str | None = None
+    tool_round: ToolRoundInfo | None = None
 
 
 @dataclass

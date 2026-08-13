@@ -118,10 +118,14 @@ def test_correction_clear_state_removed():
     # 修正工具集 + 检索/状态工具 + M12 submit_evolution/self_evaluate + M17 evolution_complete
     # + M48 model_catalog / switch_model（design §5.3 新增工具）
     # + P1-2 save_experience / refine_experience（经验库沉淀/生命周期）
+    # + EVO-20260813-432813b2 主动出站飞书（send_feishu_message / create_feishu_doc / send_feishu_attachment）
+    # + P2-2 recover_from_backup（fail-open 数据丢失恢复通道）
+    # + P2-3 search_docs（docs/ 文档语义检索入口）
     assert set(names) == {
         "architecture_status",
         "search_archive",
         "search_records",
+        "search_docs",
         "adjust_strategy",
         "retry_tool",
         "refresh_config",
@@ -132,6 +136,21 @@ def test_correction_clear_state_removed():
         "switch_model",
         "save_experience",
         "refine_experience",
+        "send_feishu_message",
+        "create_feishu_doc",
+        "send_feishu_attachment",
+        "recover_from_backup",
+        # Codex 风格 Skills 工具（2026-08-13 头条文章盘点补齐）
+        "code_review",
+        "grill_me",
+        "stop_slop",
+            "handoff_now",
+            "generate_evolution_template",
+            "playwright_test",
+            "record_skill",
+            "brainstorm_design",
+            "tdd_red_green",
+            "design_review",
     }
 
 

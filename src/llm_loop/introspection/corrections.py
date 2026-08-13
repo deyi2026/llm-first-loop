@@ -20,6 +20,9 @@ from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.introspection.status import ArchitectureStatusProvider
+from llm_loop.introspection.tools_docs import (
+    SEARCH_DOCS_TOOL_DEF as _SEARCH_DOCS_TOOL_DEF,
+)
 
 # M16 拆分: submit_evolution / self_evaluate 工具定义（引自独立模块，避免重复维护）
 from llm_loop.introspection.tools_eval import (
@@ -32,6 +35,51 @@ from llm_loop.introspection.tools_evolution import (
 # M17 FR-REVIEW-AI-01: evolution_complete 工具定义（引自独立模块，避免重复维护）
 from llm_loop.introspection.tools_exec_complete import (
     EVOLUTION_COMPLETE_TOOL_DEF as _EVOLUTION_COMPLETE_TOOL_DEF,
+)
+from llm_loop.introspection.tools_feishu_outbound import (
+    CREATE_FEISHU_DOC_TOOL_DEF as _CREATE_FEISHU_DOC_TOOL_DEF,
+)
+from llm_loop.introspection.tools_feishu_outbound import (
+    SEND_FEISHU_ATTACHMENT_TOOL_DEF as _SEND_FEISHU_ATTACHMENT_TOOL_DEF,
+)
+
+# EVO-20260813-432813b2: 主动出站飞书工具（涉安全边界演进）
+from llm_loop.introspection.tools_feishu_outbound import (
+    SEND_FEISHU_MESSAGE_TOOL_DEF as _SEND_FEISHU_MESSAGE_TOOL_DEF,
+)
+
+# Codex 风格 Skills 工具（2026-08-13 头条文章盘点补齐：code_review/grill_me/stop_slop）
+from llm_loop.introspection.tools_skills import (
+    CODE_REVIEW_TOOL_DEF as _CODE_REVIEW_TOOL_DEF,
+    GRILL_ME_TOOL_DEF as _GRILL_ME_TOOL_DEF,
+    STOP_SLOP_TOOL_DEF as _STOP_SLOP_TOOL_DEF,
+)
+
+# handoff 增强（EVO-20260813-62791501）
+from llm_loop.introspection.tools_handoff import (
+    HANDOFF_TOOL_DEF as _HANDOFF_TOOL_DEF,
+)
+
+# skill-creator 增强（EVO-20260813-dd496f99）
+from llm_loop.introspection.tools_evolution_template import (
+    EVOLUTION_TEMPLATE_TOOL_DEF as _EVOLUTION_TEMPLATE_TOOL_DEF,
+)
+
+# Playwright E2E（EVO-20260813-0ae212ae）
+from llm_loop.introspection.tools_playwright import (
+    PLAYWRIGHT_TEST_TOOL_DEF as _PLAYWRIGHT_TEST_TOOL_DEF,
+)
+
+# Record & Replay Stage 1（EVO-20260813-db25127c）
+from llm_loop.introspection.tools_record_skill import (
+    RECORD_SKILL_TOOL_DEF as _RECORD_SKILL_TOOL_DEF,
+)
+
+# Superpowers Stage 1（EVO-20260813-ca794989）
+from llm_loop.introspection.tools_superpowers import (
+    BRAINSTORM_DESIGN_TOOL_DEF as _BRAINSTORM_DESIGN_TOOL_DEF,
+    TDD_RED_GREEN_TOOL_DEF as _TDD_RED_GREEN_TOOL_DEF,
+    DESIGN_REVIEW_TOOL_DEF as _DESIGN_REVIEW_TOOL_DEF,
 )
 
 # M48（design §5.3）: model_catalog / switch_model 工具定义（引自独立模块，避免重复维护）
@@ -107,7 +155,11 @@ class CorrectionToolRegistry:
         self._status = status_provider
         self._archive = archive_store  # ArchiveStore（T22 压缩档案检索）
         self._search_records_fn: Callable[..., list[dict]] | None = None  # T23: 统一检索实现
+        self._search_docs_fn: Callable[..., list[dict]] | None = None  # P2-3: docs/ 文档检索实现
         self._experience_store: Any | None = None  # P1-2: ExperienceStore 注入通道
+        self._recovery_channel: Any | None = None  # P2-2: RecoveryChannel 注入通道
+        self._recovery_sessions_dir: str | Path | None = None  # P2-2: 会话目录（恢复写入目标）
+        self._recovery_memory_dir: str | Path | None = None  # P2-2: 记忆目录（恢复写入目标）
 
     # ── 工具定义（供 LLM 可见）──
     def tool_defs(self) -> list[dict]:
@@ -265,6 +317,50 @@ class CorrectionToolRegistry:
                     "required": ["experience_id", "action"],
                 },
             },
+            # P2-3: docs/ 文档语义检索入口（AI 优先：程序仅通道，检索决策归 AI）
+            _SEARCH_DOCS_TOOL_DEF,
+            # EVO-20260813-432813b2: 主动出站飞书工具（3 个，默认禁用+白名单+速率+审计）
+            _SEND_FEISHU_MESSAGE_TOOL_DEF,
+            _CREATE_FEISHU_DOC_TOOL_DEF,
+            _SEND_FEISHU_ATTACHMENT_TOOL_DEF,
+            # Codex 风格 Skills 工具（2026-08-13 头条文章盘点补齐）
+            _CODE_REVIEW_TOOL_DEF,
+            _GRILL_ME_TOOL_DEF,
+            _STOP_SLOP_TOOL_DEF,
+            _HANDOFF_TOOL_DEF,
+            _EVOLUTION_TEMPLATE_TOOL_DEF,
+            _PLAYWRIGHT_TEST_TOOL_DEF,
+            _RECORD_SKILL_TOOL_DEF,
+            _BRAINSTORM_DESIGN_TOOL_DEF,
+            _TDD_RED_GREEN_TOOL_DEF,
+            _DESIGN_REVIEW_TOOL_DEF,
+            {
+                "name": "recover_from_backup",
+                "description": (
+                    "从备份归档恢复未落盘数据到正式位置。何时用: 经 architecture_status 查询发现 "
+                    "recovery 维度有待恢复备份（pending_count>0），且自主判断需要恢复"
+                    "（如会话历史丢失影响后续对话/记忆统计偏移影响排序）时。"
+                    "何时不用: 无待恢复备份/备份已过期/正式位置已有更新数据且不愿覆盖。"
+                    "失败对策: 备份不存在/损坏/冲突会如实返回，不假装成功。"
+                    "AI 优先: 是否恢复/恢复哪条/是否覆盖冲突归 AI 决策，程序仅提供恢复通道。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "backup_id": {
+                            "type": "string",
+                            "description": "备份标识（文件名: <source_id>.<timestamp>.<target_type>.pending.json）",
+                        },
+                        "on_conflict": {
+                            "type": "string",
+                            "enum": ["abort", "overwrite"],
+                            "default": "abort",
+                            "description": "正式位置已有数据时策略: abort 不覆盖（默认）/overwrite 覆盖（显式决策）",
+                        },
+                    },
+                    "required": ["backup_id"],
+                },
+            },
         ]
 
     def execute(self, name: str, arguments: dict) -> ToolResult:
@@ -275,6 +371,8 @@ class CorrectionToolRegistry:
             return self._run_search_archive(arguments)
         if name == "search_records":
             return self._run_search_records(arguments)
+        if name == "search_docs":
+            return self._run_search_docs(arguments)
         if name == "adjust_strategy":
             return self._run_adjust_strategy(arguments)
         if name == "retry_tool":
@@ -285,10 +383,39 @@ class CorrectionToolRegistry:
             return self._run_self_evaluate(arguments)
         if name == "evolution_complete":
             return self._run_evolution_complete(arguments)
+        # EVO-20260813-432813b2: 主动出站飞书工具分发
+        if name == "send_feishu_message":
+            return self._run_send_feishu_message(arguments)
+        if name == "create_feishu_doc":
+            return self._run_create_feishu_doc(arguments)
+        if name == "send_feishu_attachment":
+            return self._run_send_feishu_attachment(arguments)
         if name == "save_experience":
             return self._run_save_experience(arguments)
         if name == "refine_experience":
             return self._run_refine_experience(arguments)
+        if name == "code_review":
+            return self._run_code_review(arguments)
+        if name == "grill_me":
+            return self._run_grill_me(arguments)
+        if name == "stop_slop":
+            return self._run_stop_slop(arguments)
+        if name == "handoff_now":
+            return self._run_handoff_now(arguments)
+        if name == "generate_evolution_template":
+            return self._run_generate_evolution_template(arguments)
+        if name == "playwright_test":
+            return self._run_playwright_test(arguments)
+        if name == "record_skill":
+            return self._run_record_skill(arguments)
+        if name == "brainstorm_design":
+            return self._run_brainstorm_design(arguments)
+        if name == "tdd_red_green":
+            return self._run_tdd_red_green(arguments)
+        if name == "design_review":
+            return self._run_design_review(arguments)
+        if name == "recover_from_backup":
+            return self._run_recover_from_backup(arguments)
         if name == "refresh_config":
             return self._run_refresh()
         if name == "model_catalog":
@@ -326,6 +453,11 @@ class CorrectionToolRegistry:
 
         return run_search_records(self.ctx, self._search_records_fn, args, self._current_session_id)
 
+    def _run_search_docs(self, args: dict) -> ToolResult:
+        from llm_loop.introspection.tools_docs import run_search_docs
+
+        return run_search_docs(self._search_docs_fn, args)
+
     def _run_save_experience(self, args: dict) -> ToolResult:
         """save_experience: 沉淀工程经验到经验库（P1-2，AI 优先：程序仅通道）。"""
         if self._experience_store is None:
@@ -351,6 +483,46 @@ class CorrectionToolRegistry:
         status = ToolResultStatus.SUCCESS if content.startswith("[save_experience]") else ToolResultStatus.FAILURE
         return ToolResult(status=status, content=content, tool_call_id="", tool_name="save_experience")
 
+    def _run_code_review(self, args: dict) -> ToolResult:
+        from llm_loop.introspection.tools_skills import run_code_review
+        return run_code_review(self.ctx, self._audit, args)
+
+    def _run_grill_me(self, args: dict) -> ToolResult:
+        from llm_loop.introspection.tools_skills import run_grill_me
+        return run_grill_me(self.ctx, self._audit, args)
+
+    def _run_stop_slop(self, args: dict) -> ToolResult:
+        from llm_loop.introspection.tools_skills import run_stop_slop
+        return run_stop_slop(self.ctx, self._audit, args)
+
+    def _run_handoff_now(self, args: dict) -> ToolResult:
+        from llm_loop.introspection.tools_handoff import run_handoff_now
+        return run_handoff_now(self.ctx, self._audit, args)
+
+    def _run_generate_evolution_template(self, args: dict) -> ToolResult:
+        from llm_loop.introspection.tools_evolution_template import run_generate_evolution_template
+        return run_generate_evolution_template(self.ctx, self._audit, args)
+
+    def _run_playwright_test(self, args: dict) -> ToolResult:
+        from llm_loop.introspection.tools_playwright import run_playwright_test
+        return run_playwright_test(self.ctx, self._audit, args)
+
+    def _run_record_skill(self, args: dict) -> ToolResult:
+        from llm_loop.introspection.tools_record_skill import run_record_skill
+        return run_record_skill(self.ctx, self._audit, args)
+
+    def _run_brainstorm_design(self, args: dict) -> ToolResult:
+        from llm_loop.introspection.tools_superpowers import run_brainstorm_design
+        return run_brainstorm_design(self.ctx, self._audit, args)
+
+    def _run_tdd_red_green(self, args: dict) -> ToolResult:
+        from llm_loop.introspection.tools_superpowers import run_tdd_red_green
+        return run_tdd_red_green(self.ctx, self._audit, args)
+
+    def _run_design_review(self, args: dict) -> ToolResult:
+        from llm_loop.introspection.tools_superpowers import run_design_review
+        return run_design_review(self.ctx, self._audit, args)
+
     def _run_refine_experience(self, args: dict) -> ToolResult:
         """refine_experience: 经验生命周期流转（P1-2）。"""
         if self._experience_store is None:
@@ -371,6 +543,33 @@ class CorrectionToolRegistry:
             ToolResultStatus.SUCCESS if content.startswith("[refine_experience]") else ToolResultStatus.FAILURE
         )
         return ToolResult(status=status, content=content, tool_call_id="", tool_name="refine_experience")
+
+    def _run_recover_from_backup(self, args: dict) -> ToolResult:
+        """recover_from_backup: 从备份恢复未落盘数据（P2-2，AI 优先：程序仅通道）。"""
+        if self._recovery_channel is None:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content="[程序异常] 恢复通道未装配（recovery_channel 未注入）",
+                tool_call_id="",
+                tool_name="recover_from_backup",
+            )
+        from llm_loop.introspection.tools_recovery import run_recover_from_backup
+
+        content = run_recover_from_backup(
+            self._recovery_channel,
+            backup_id=args.get("backup_id", ""),
+            on_conflict=args.get("on_conflict", "abort"),
+            sessions_dir=self._recovery_sessions_dir,
+            memory_dir=self._recovery_memory_dir,
+        )
+        status = (
+            ToolResultStatus.SUCCESS
+            if content.startswith("[recover_from_backup]")
+            else ToolResultStatus.FAILURE
+        )
+        return ToolResult(
+            status=status, content=content, tool_call_id="", tool_name="recover_from_backup"
+        )
 
     def _current_params(self) -> dict:
         from llm_loop.introspection.tools_status import current_params
@@ -490,6 +689,22 @@ class CorrectionToolRegistry:
             args,
             audit_dir=str(self._audit_dir) if self._audit_dir else None,
         )
+
+    # ── EVO-20260813-432813b2: 主动出站飞书工具包装（涉安全边界） ──
+    def _run_send_feishu_message(self, args: dict) -> ToolResult:
+        """send_feishu_message 包装（默认禁用+白名单+速率+审计）."""
+        from llm_loop.introspection.tools_feishu_outbound import run_send_feishu_message
+        return run_send_feishu_message(self.ctx, self._audit, args)
+
+    def _run_create_feishu_doc(self, args: dict) -> ToolResult:
+        """create_feishu_doc 包装（默认禁用+白名单+速率+审计）."""
+        from llm_loop.introspection.tools_feishu_outbound import run_create_feishu_doc
+        return run_create_feishu_doc(self.ctx, self._audit, args)
+
+    def _run_send_feishu_attachment(self, args: dict) -> ToolResult:
+        """send_feishu_attachment 包装（默认禁用+白名单+速率+审计）."""
+        from llm_loop.introspection.tools_feishu_outbound import run_send_feishu_attachment
+        return run_send_feishu_attachment(self.ctx, self._audit, args)
 
     def _run_self_evaluate(self, args: dict) -> ToolResult:
         from llm_loop.introspection.tools_eval import run_self_evaluate
