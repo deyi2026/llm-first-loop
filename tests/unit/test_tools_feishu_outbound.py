@@ -170,3 +170,78 @@ def test_mask_id_does_not_leak():
     assert "8fc14b9345399c1cffe7f6173afd0f49" not in masked
     assert masked.startswith("ou_8")
     assert masked.endswith("0f49")
+
+
+# ── send_file REST 面（技术债清理：修复 FeishuRestClient.send_file 缺失）──
+
+
+def test_send_file_method_exists():
+    """FeishuRestClient 必须实现 send_file（修复 pyright send_file 未知缺陷）."""
+    from llm_loop.feishu.rest import FeishuRestClient
+
+    assert hasattr(FeishuRestClient, "send_file")
+    assert hasattr(FeishuRestClient, "_send_file_upload")
+    assert hasattr(FeishuRestClient, "_send_doc_link")
+
+
+def test_send_file_requires_argument():
+    """file_path 与 doc_id 均缺省必须抛 FeishuRestError（不静默）."""
+    from llm_loop.feishu.rest import FeishuRestClient, FeishuRestError
+
+    client = FeishuRestClient(MagicMock(), MagicMock())
+    with pytest.raises(FeishuRestError):
+        client.send_file(receive_id="ou_abc")
+
+
+def test_send_doc_link_path(monkeypatch):
+    """doc_id 场景：发送文档链接消息（text msg_type + feishu.cn/docx 链接）."""
+    from llm_loop.feishu.rest import FeishuRestClient
+
+    client = FeishuRestClient(MagicMock(), MagicMock())
+    fake_resp = MagicMock()
+    fake_resp.code = 0
+    fake_resp.data.message_id = "om_doclink"
+    client._lark_client.im.v1.message.create.return_value = fake_resp
+    mid = client.send_file(receive_id="ou_abc", doc_id="doc123", receive_id_type="open_id")
+    assert mid == "om_doclink"
+    call_kwargs = client._lark_client.im.v1.message.create.call_args
+    body = call_kwargs[0][0].request_body
+    assert body.msg_type == "text"
+    assert "doc123" in body.content
+    assert "feishu.cn/docx" in body.content
+
+
+def test_send_file_upload_flow(monkeypatch, tmp_path):
+    """file_path 场景：上传文件获取 file_key → 发送 file 消息."""
+    from llm_loop.feishu.rest import FeishuRestClient
+
+    fp = tmp_path / "report.txt"
+    fp.write_text("hello", encoding="utf-8")
+    client = FeishuRestClient(MagicMock(), MagicMock())
+    fake_upload = MagicMock()
+    fake_upload.code = 0
+    fake_upload.data.file_key = "file_key_123"
+    fake_send = MagicMock()
+    fake_send.code = 0
+    fake_send.data.message_id = "om_file"
+    client._lark_client.im.v1.file.create.return_value = fake_upload
+    client._lark_client.im.v1.message.create.return_value = fake_send
+    mid = client.send_file(
+        receive_id="ou_abc", file_path=str(fp), receive_id_type="open_id"
+    )
+    assert mid == "om_file"
+    assert client._lark_client.im.v1.file.create.called
+    send_body = client._lark_client.im.v1.message.create.call_args[0][0].request_body
+    assert send_body.msg_type == "file"
+    assert "file_key_123" in send_body.content
+
+
+def test_send_file_upload_nonexistent(monkeypatch, tmp_path):
+    """file_path 指向不存在文件必须抛 FeishuRestError."""
+    from llm_loop.feishu.rest import FeishuRestClient, FeishuRestError
+
+    client = FeishuRestClient(MagicMock(), MagicMock())
+    with pytest.raises(FeishuRestError):
+        client.send_file(
+            receive_id="ou_abc", file_path=str(tmp_path / "missing.txt")
+        )

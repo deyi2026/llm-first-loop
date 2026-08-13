@@ -266,19 +266,23 @@ class FeishuRestClient:
             TextElementStyleBuilder,
             TextRunBuilder,
         )
-        _BOLD_RE = _re.compile(r"\*\*(.+?)\*\*")
-        _DIVIDER_RE = _re.compile(r"^\s*---\s*$")
-        _ORDERED_RE = _re.compile(r"^\s*(\d+)\.\s+(.+)$")
+        bold_re = _re.compile(r"\*\*(.+?)\*\*")
+        divider_re = _re.compile(r"^\s*---\s*$")
+        ordered_re = _re.compile(r"^\s*(\d+)\.\s+(.+)$")
+
         def _run(content, bold=False, code=False):
             style = TextElementStyleBuilder()
-            if bold: style = style.bold(True)
-            if code: style = style.inline_code(True)
+            if bold:
+                style = style.bold(True)
+            if code:
+                style = style.inline_code(True)
             tr = TextRunBuilder().content(content).text_element_style(style.build()).build()
             return TextElementBuilder().text_run(tr).build()
+
         def _split_runs(text):
             elements = []
             pos = 0
-            for m in _BOLD_RE.finditer(text):
+            for m in bold_re.finditer(text):
                 if m.start() > pos:
                     elements.append(_run(text[pos:m.start()]))
                 elements.append(_run(m.group(1), bold=True))
@@ -288,43 +292,54 @@ class FeishuRestClient:
             if not elements:
                 elements.append(_run(text))
             return elements
+
         def _text(elements):
             return TextBuilder().elements(elements).build()
+
         def _mk_text(text):
             return BlockBuilder().block_type(2).text(_text(_split_runs(text))).build()
+
         def _mk_heading(text, level):
             t = _text(_split_runs(text))
-            if level == 1: return BlockBuilder().block_type(3).heading1(t).build()
-            if level == 2: return BlockBuilder().block_type(4).heading2(t).build()
+            if level == 1:
+                return BlockBuilder().block_type(3).heading1(t).build()
+            if level == 2:
+                return BlockBuilder().block_type(4).heading2(t).build()
             return BlockBuilder().block_type(5).heading3(t).build()
+
         def _mk_bullet(text):
             return BlockBuilder().block_type(12).bullet(_text(_split_runs(text))).build()
+
         def _mk_ordered(text):
             return BlockBuilder().block_type(13).ordered(_text(_split_runs(text))).build()
+
         def _mk_quote(text):
             return BlockBuilder().block_type(15).quote(_text(_split_runs(text))).build()
+
         def _mk_code(text):
             style = TextElementStyleBuilder().inline_code(True).build()
             tr = TextRunBuilder().content(text).text_element_style(style).build()
             el = TextElementBuilder().text_run(tr).build()
             t = TextBuilder().elements([el]).build()
             return BlockBuilder().block_type(14).code(t).build()
+
         def _mk_divider():
             return BlockBuilder().block_type(22).divider({}).build()
+
         blocks = []
         lines = content.splitlines()
         i = 0
-        BACKTICK = chr(96)
+        backtick_char = chr(96)
         while i < len(lines):
             line = lines[i].rstrip()
             stripped = line.strip()
             if not stripped:
                 i += 1
                 continue
-            if stripped.startswith(BACKTICK * 3):
+            if stripped.startswith(backtick_char * 3):
                 i += 1
                 code_lines = []
-                while i < len(lines) and not lines[i].strip().startswith(BACKTICK * 3):
+                while i < len(lines) and not lines[i].strip().startswith(backtick_char * 3):
                     code_lines.append(lines[i].rstrip())
                     i += 1
                 i += 1
@@ -332,45 +347,63 @@ class FeishuRestClient:
                 if code_text:
                     blocks.append(_mk_code(code_text))
                 continue
-            if _DIVIDER_RE.match(line):
+            if divider_re.match(line):
                 blocks.append(_mk_divider())
                 i += 1
                 continue
             if stripped.startswith("### "):
-                blocks.append(_mk_heading(stripped[4:].strip(), 3)); i += 1; continue
+                blocks.append(_mk_heading(stripped[4:].strip(), 3))
+                i += 1
+                continue
             if stripped.startswith("## "):
-                blocks.append(_mk_heading(stripped[3:].strip(), 2)); i += 1; continue
+                blocks.append(_mk_heading(stripped[3:].strip(), 2))
+                i += 1
+                continue
             if stripped.startswith("# "):
-                blocks.append(_mk_heading(stripped[2:].strip(), 1)); i += 1; continue
+                blocks.append(_mk_heading(stripped[2:].strip(), 1))
+                i += 1
+                continue
             if stripped.startswith(("- ", "* ", "+ ")):
-                blocks.append(_mk_bullet(stripped[2:].strip())); i += 1; continue
-            om = _ORDERED_RE.match(line)
+                blocks.append(_mk_bullet(stripped[2:].strip()))
+                i += 1
+                continue
+            om = ordered_re.match(line)
             if om:
-                blocks.append(_mk_ordered(om.group(2).strip())); i += 1; continue
+                blocks.append(_mk_ordered(om.group(2).strip()))
+                i += 1
+                continue
             if stripped.startswith("> "):
-                blocks.append(_mk_quote(stripped[2:].strip())); i += 1; continue
+                blocks.append(_mk_quote(stripped[2:].strip()))
+                i += 1
+                continue
             para_lines = [line]
             j = i + 1
             while j < len(lines):
                 nl = lines[j]
                 ns = nl.strip()
-                if not ns: break
-                if (ns.startswith("#") or ns.startswith(("- ", "* ", "+ ", "> "))
-                    or ns.startswith(BACKTICK * 3) or _ORDERED_RE.match(nl) or _DIVIDER_RE.match(nl)):
+                if not ns:
+                    break
+                if (
+                    ns.startswith("#")
+                    or ns.startswith(("- ", "* ", "+ ", "> "))
+                    or ns.startswith(backtick_char * 3)
+                    or ordered_re.match(nl)
+                    or divider_re.match(nl)
+                ):
                     break
                 para_lines.append(nl.rstrip())
                 j += 1
             i = j
-            para_text = " ".join(l.strip() for l in para_lines)
+            para_text = " ".join(item.strip() for item in para_lines)
             if para_text:
                 blocks.append(_mk_text(para_text))
         if not blocks:
             return
-        BATCH = 50
+        batch_size = 50
         docx = self._lark_client.docx
         assert docx is not None
-        for i in range(0, len(blocks), BATCH):
-            batch = blocks[i:i + BATCH]
+        for i in range(0, len(blocks), batch_size):
+            batch = blocks[i:i + batch_size]
             req = (CreateDocumentBlockChildrenRequest.builder()
                    .document_id(doc_id).block_id(doc_id)
                    .request_body(CreateDocumentBlockChildrenRequestBody.builder().children(batch).build())
@@ -504,3 +537,144 @@ class FeishuRestClient:
                 raise FeishuRestError(f"token 失效重试仍失败（code={resp.code} msg={resp.msg}）")
             raise FeishuRestError(f"code={resp.code} msg={resp.msg}")
         raise FeishuRestError("下载失败（重试后仍失败）")  # 不可达，类型兜底
+
+    # === 主动出站附件发送（EVO-20260813-432813b2: send_feishu_attachment） ===
+    def send_file(
+        self,
+        receive_id: str,
+        file_path: str | None = None,
+        doc_id: str | None = None,
+        receive_id_type: str = "open_id",
+    ) -> str:
+        """发送文件或文档链接到指定会话.
+
+        Args:
+            receive_id: 目标会话 id（open_id/chat_id/user_id/email）.
+            file_path: 本地文件路径（与 doc_id 二选一；优先）。
+            doc_id: 已创建的飞书文档 id（file_path 缺省时发送文档链接）.
+            receive_id_type: 接收方 ID 类型，默认 open_id.
+
+        Returns:
+            data.message_id（成功）.
+
+        Raises:
+            FeishuRestError: 上传/发送失败（含 code/msg 如实信息）；file_path 与 doc_id 均缺省.
+        """
+        if not file_path and not doc_id:
+            raise FeishuRestError("file_path 与 doc_id 至少传一个")
+        if file_path:
+            return self._send_file_upload(receive_id, file_path, receive_id_type)
+        assert doc_id is not None  # 上述守卫已保证 doc_id 非空
+        return self._send_doc_link(receive_id, doc_id, receive_id_type)
+
+    def _send_file_upload(
+        self, receive_id: str, file_path: str, receive_id_type: str
+    ) -> str:
+        """本地文件上传（lark.im.v1.file.create）→ file_key → 发送文件消息."""
+
+        from lark_oapi.api.im.v1 import (
+            CreateFileRequest,
+            CreateFileRequestBody,
+        )
+        from lark_oapi.api.im.v1.model.create_message_request import (
+            CreateMessageRequest,
+            CreateMessageRequestBody,
+        )
+
+        fp = Path(file_path)
+        if not fp.exists() or not fp.is_file():
+            raise FeishuRestError(f"文件不存在或非普通文件: {file_path}")
+        file_name = fp.name
+        file_type = Path(file_name).suffix.lstrip(".").lower() or "stream"
+        im = self._lark_client.im
+        assert im is not None
+        file_key = ""
+        for attempt in range(2):  # 首次 + token 失效重试一次
+            try:
+                with fp.open("rb") as fh:
+                    body = (
+                        CreateFileRequestBody.builder()
+                        .file_type(file_type)
+                        .file_name(file_name)
+                        .file(fh)
+                        .build()
+                    )
+                    req = CreateFileRequest.builder().request_body(body).build()
+                    resp = im.v1.file.create(req)
+            except OSError as exc:
+                raise FeishuRestError(f"文件读取失败: {exc}") from exc
+            if resp.code == 0:
+                file_key = (resp.data.file_key if resp.data else "") or ""
+                if not file_key:
+                    raise FeishuRestError("文件上传成功但响应缺少 file_key")
+                break
+            if self._raise_if_token_invalid(resp.code, resp.raw.status_code if resp.raw else 0):
+                if attempt == 0:
+                    continue
+                raise FeishuRestError(f"token 失效重试仍失败（code={resp.code} msg={resp.msg}）")
+            raise FeishuRestError(f"文件上传失败 code={resp.code} msg={resp.msg}")
+        if not file_key:
+            raise FeishuRestError("文件上传失败（重试后仍失败）")
+        request = (
+            CreateMessageRequest.builder()
+            .receive_id_type(receive_id_type)
+            .request_body(
+                CreateMessageRequestBody.builder()
+                .receive_id(receive_id)
+                .msg_type("file")
+                .content(json.dumps({"file_key": file_key}, ensure_ascii=False))
+                .build()
+            )
+            .build()
+        )
+        for attempt in range(2):  # 首次 + token 失效重试一次
+            resp = im.v1.message.create(request)
+            if resp.code == 0:
+                message_id = (resp.data.message_id if resp.data else "") or ""
+                if not message_id:
+                    raise FeishuRestError("文件消息发送成功但响应缺少 data.message_id")
+                return message_id
+            if self._raise_if_token_invalid(resp.code, resp.raw.status_code if resp.raw else 0):
+                if attempt == 0:
+                    continue
+                raise FeishuRestError(f"token 失效重试仍失败（code={resp.code} msg={resp.msg}）")
+            raise FeishuRestError(f"文件消息发送失败 code={resp.code} msg={resp.msg}")
+        raise FeishuRestError("文件消息发送失败（重试后仍失败）")  # 不可达，类型兜底
+
+    def _send_doc_link(
+        self, receive_id: str, doc_id: str, receive_id_type: str
+    ) -> str:
+        """发送飞书文档链接（doc_id → feishu.cn/docx/<id> 链接消息）."""
+        from lark_oapi.api.im.v1.model.create_message_request import (
+            CreateMessageRequest,
+            CreateMessageRequestBody,
+        )
+
+        url = f"https://feishu.cn/docx/{doc_id}"
+        request = (
+            CreateMessageRequest.builder()
+            .receive_id_type(receive_id_type)
+            .request_body(
+                CreateMessageRequestBody.builder()
+                .receive_id(receive_id)
+                .msg_type("text")
+                .content(json.dumps({"text": f"文档：{url}"}, ensure_ascii=False))
+                .build()
+            )
+            .build()
+        )
+        im = self._lark_client.im
+        assert im is not None
+        for attempt in range(2):  # 首次 + token 失效重试一次
+            resp = im.v1.message.create(request)
+            if resp.code == 0:
+                message_id = (resp.data.message_id if resp.data else "") or ""
+                if not message_id:
+                    raise FeishuRestError("文档链接发送成功但响应缺少 data.message_id")
+                return message_id
+            if self._raise_if_token_invalid(resp.code, resp.raw.status_code if resp.raw else 0):
+                if attempt == 0:
+                    continue
+                raise FeishuRestError(f"token 失效重试仍失败（code={resp.code} msg={resp.msg}）")
+            raise FeishuRestError(f"文档链接发送失败 code={resp.code} msg={resp.msg}")
+        raise FeishuRestError("文档链接发送失败（重试后仍失败）")  # 不可达，类型兜底
