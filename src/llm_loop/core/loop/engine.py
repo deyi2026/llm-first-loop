@@ -648,11 +648,17 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
         )
 
     def _archive_sink(self, session_id: str, msg: Message) -> None:
-        """压缩另存回调（T22）: 将被丢弃的消息原文完整另存到 ArchiveStore."""
+        """压缩另存回调（T22）: 将被丢弃的消息原文完整另存到 ArchiveStore.
+
+        合规变体 A（方案 3 对话历史语义摘要的合规落地）: SUMMARY_MODE!=off 时，
+        压缩另存后自动回填档案语义摘要（summarize_archive）——严格限定在
+        RULE-AI-00 自动摘要边界内: 只作用于已压缩存档的档案条目、回填 summary 字段、
+        不注入当前上下文、不丢信息、可经 search_archive(with_summary=true) 检索。
+        """
         if self.archive is None:
             return
         try:
-            self.archive.archive(
+            entry = self.archive.archive(
                 session_id,
                 role=msg.role,
                 source=msg.source.value,
@@ -662,8 +668,12 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
                 status=msg.status.value if msg.status else None,
                 reasoning_content=getattr(msg, "reasoning_content", None) or None,
             )
-            # RULE-AI-00: 压缩另存只做原文另存（确定性索引），不自动调 LLM 摘要——
-            # LLM 语义摘要由 AI 主动触发（search_archive with_summary=true）
+            # RULE-AI-00 自动摘要边界内: 压缩档案自动回填语义摘要（async 后台/off 跳过）
+            if (
+                self.summarizer is not None
+                and getattr(self.summarizer, "mode", "off") != "off"
+            ):
+                self.summarizer.summarize_archive(entry.id, msg.content, self.archive)
         except Exception as exc:
             # C3（PREFERENCE_1）: 压缩另存/摘要失败如实注入会话（AI 可感知，不静默——
             # 被压缩消息可能无法找回）。注入失败静默（尽力而为）。

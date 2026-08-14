@@ -128,13 +128,21 @@ class LLMClient:
             "stream_options": {"include_usage": True},
         }
         # M20 THK-01: DeepSeek V4 思考模式显式声明（thinking_mode AND provider 支持才发送）
-        if self.thinking_mode and self._thinking_supported():
+        # P1-FEISHU: 本地 provider (LM Studio) 不发 OpenAI 的 `thinking` 字段
+        # —— LM Studio 优先 `thinking.type=enabled` 而忽略 `chat_template_kwargs.enable_thinking=False`,
+        # 两者并存时 think 块仍会输出耗尽 max_tokens 导致 content 空。
+        # 故本地 provider 跳过 OpenAI thinking 分支,仅靠下方 chat_template_kwargs 关闭 thinking。
+        if self.thinking_mode and self._thinking_supported() and self.api_key:
             payload["thinking"] = {"type": "enabled"}
             payload["reasoning_effort"] = self.reasoning_effort
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
+        # P1-FEISHU: 本地 provider (LM Studio, api_key 为空) 显式关闭 thinking
+        if not self.api_key:
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
+        # 本地 provider（api_key 为空）不发 Authorization 头：空 Bearer 会被 httpx 拒绝
+        # （Illegal header value b'Bearer '），且本地端点（LM Studio 等）无需认证。
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
 
         content_parts: list[str] = []
         reasoning_parts: list[str] = []  # M20 THK-02: 思考链分片（与 content/tool_calls 并行）
@@ -167,6 +175,24 @@ class LLMClient:
                         chunk = json.loads(data)
                     except json.JSONDecodeError:
                         continue
+                    # P1-FEISHU: LM Studio SSE 错误事件检测（HTTP 200 + event: error + data: {error:...}）。
+                    # 之前 [system, system, ...] 触发 qwen3 Jinja 500 时，SSE 返回 200 + event: error 数据，
+                    # 旧代码静默忽略所有非 data: 行 → content 为空 + 无 finish_reason + 无 truncated → 用户看到"(空回答)"+ "(回答被截断)"。
+                    # 修复：解析 data 后检测 error 字段 → 抛 LLMHTTPError 让循环层如实处理/降级/重试。
+                    err_obj = chunk.get("error")
+                    if isinstance(err_obj, dict):
+                        msg = err_obj.get("message") or err_obj.get("code") or "未知 SSE 错误"
+                        code = err_obj.get("code") or 500
+                        try:
+                            code_i = int(code)
+                        except Exception:
+                            code_i = 500
+                        raise LLMHTTPError(
+                            f"SSE provider error: {msg[:500]}",
+                            status_code=code_i,
+                            body=msg[:2000],
+                            provider=self.provider,
+                        )
                     # M52: usage 在末 chunk（choices 为空）— 先取用量再按 choices 过滤
                     usage = chunk.get("usage")
                     if isinstance(usage, dict):

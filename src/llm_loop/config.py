@@ -71,6 +71,9 @@ def load_env_file(path: str | Path | None = None) -> None:
             if key in os.environ:
                 continue  # 环境变量优先，已设置的键不覆盖
             val = val.strip()
+            # 行内注释剥离（EVO-20260813-ba4a107c）: 值与 # 之间的空白分隔处截断，
+            # 避免 `KEY=1  # 注释` 把注释带进值导致 _env_int 解析失败回退默认
+            val = val.split(" #", 1)[0].strip()
             if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
                 val = val[1:-1]
             os.environ[key] = val
@@ -173,17 +176,21 @@ class Settings:
     # EVO-20260811-7baa2737: 历史分层降级（旧长 tool 消息降级为摘要，原文归档）
     tool_trim_enabled: bool = True
     # R3: tool_trim 自适应降级年龄（0=自适应：按占用率自动调 <40%→20/40-70%→10/>70%→5；>0=固定值禁用自适应）
-    tool_trim_age: int = 0
+    tool_trim_age: int = 0  # auto-adaptive (existing): 0=按占用率自适应
     # ── EXEC_MODE 命令分级（EVO-20260810-2549e9b6）──
     # 默认空 = 不启用分级（AI 可执行 shell，仅灾难性硬阻断）；可选 readonly/allowlist/blocked 安全分级
     exec_mode: str = ""
     exec_allowlist: str = ""  # allowlist 模式的命令前缀白名单（逗号分隔）
     # ── EVO-d5db88d9: 工具 Schema 索引化（TOOL_SCHEMA_LAZY=1 时 LLM 只见精简索引，按需读完整 Schema）──
     tool_schema_lazy: bool = False  # 默认 0 = 零回归（全量注入）
+    # ── EVO-20260813-9ced1f4c: 工具执行瀑布（pipeline.py，默认全关零回归）──
+    tool_pipeline_enabled: bool = False  # 总开关（TOOL_PIPELINE_ENABLED）
+    tool_materialize_enabled: bool = False  # 参数物化+深冻结（TOOL_MATERIALIZE_ENABLED）
+    tool_guard_enabled: bool = False  # 单调守卫（TOOL_GUARD_ENABLED）
 
     # ── 上下文 ──
     history_max_chars: int = 1000000
-    memory_top_k: int = 5
+    memory_top_k: int = 5  # auto-adaptive: env 未显式设置时按上下文占用率自适应（>70%→8/<30%→3，硬上限 20）
 
     # ── 架构自省（AI-serving, design.md §2.1.4）──
     self_inspection_enabled: bool = True
@@ -211,7 +218,7 @@ class Settings:
     embedding_api_key: str = ""  # 仅 env 读取，脱敏
     embedding_dim: int = 128
     retrieve_timeout_s: float = 1.0
-    retrieve_semantic_top_k: int = 20
+    retrieve_semantic_top_k: int = 20  # auto-adaptive: env 未显式设置时按检索分数自适应（<0.3→10/>0.7→30，硬上限 50）
 
     # ── P1 独立提取（FR-P1-EXT, §3.6）──
     extract_enabled: bool = True
@@ -244,7 +251,7 @@ class Settings:
     self_eval_remind_enabled: bool = (
         True  # [自我评估提醒] 触发提示开关（0 仅支持 AI 主动 self_evaluate）
     )
-    self_eval_interval_rounds: int = 50  # 定期触发轮数间隔（rounds % N == 0）
+    self_eval_interval_rounds: int = 50  # auto-adaptive: env 未显式设置时按异常率自适应（>20%→20/<5%→80，硬上限 200）
     self_eval_min_samples: int = 5  # 指标最小样本数（不足 → 如实标注"样本不足"）
     self_eval_span: int = 50  # 评估聚合窗口（近 N 轮/条）
 
@@ -270,6 +277,9 @@ class Settings:
 
     # 配置项非法值回退标注（装配期注入，运行时只读；不含 raw 原文）
     invalid_fallbacks: tuple = field(default_factory=tuple, repr=False, compare=False)
+
+    # T3 配置面收敛: env 未显式设置的可自适应配置项集合（消费方据此决定是否走自适应）
+    auto_adaptive_keys: frozenset = field(default_factory=frozenset, repr=False, compare=False)
 
     # ── 派生路径 ──
     @property
@@ -315,6 +325,9 @@ class Settings:
             "tool_summary_threshold": self.tool_summary_threshold,
             "tool_trim_enabled": self.tool_trim_enabled,
             "tool_schema_lazy": self.tool_schema_lazy,
+            "tool_pipeline_enabled": self.tool_pipeline_enabled,
+            "tool_materialize_enabled": self.tool_materialize_enabled,
+            "tool_guard_enabled": self.tool_guard_enabled,
             "history_max_chars": self.history_max_chars,
             "memory_top_k": self.memory_top_k,
             "self_inspection_enabled": self.self_inspection_enabled,
@@ -348,6 +361,8 @@ class Settings:
                 }
                 for n in self.invalid_fallbacks
             ],
+            # T3: env 未显式设置的可自适应配置项（AI 可经 architecture_status 感知哪些参数在自适应）
+            "auto_adaptive_keys": sorted(self.auto_adaptive_keys),
         }
 
 
@@ -375,6 +390,17 @@ def load_settings() -> Settings:
             + "。请参考 .env.example 配置 LLM_API_KEY / LLM_BASE_URL（LLM_MODEL 缺省默认 deepseek-v4-flash）。"
         )
 
+    # T3: 记录 env 未显式设置的可自适应配置项（消费方据此走自适应，env 显式设置时走固定值）
+    _auto_adaptive_keys: set[str] = set()
+    if not os.environ.get("TOOL_TRIM_AGE", "").strip():
+        _auto_adaptive_keys.add("tool_trim_age")
+    if not os.environ.get("MEMORY_TOP_K", "").strip():
+        _auto_adaptive_keys.add("memory_top_k")
+    if not os.environ.get("RETRIEVE_SEMANTIC_TOP_K", "").strip():
+        _auto_adaptive_keys.add("retrieve_semantic_top_k")
+    if not os.environ.get("SELF_EVAL_INTERVAL_ROUNDS", "").strip():
+        _auto_adaptive_keys.add("self_eval_interval_rounds")
+
     return Settings(
         llm_api_key=api_key,
         llm_base_url=base_url,
@@ -392,6 +418,9 @@ def load_settings() -> Settings:
         exec_mode=_env_exec_mode("EXEC_MODE"),
         exec_allowlist=os.environ.get("EXEC_ALLOWLIST", "").strip(),
         tool_schema_lazy=_env_bool("TOOL_SCHEMA_LAZY", False),
+        tool_pipeline_enabled=_env_bool("TOOL_PIPELINE_ENABLED", False),
+        tool_materialize_enabled=_env_bool("TOOL_MATERIALIZE_ENABLED", False),
+        tool_guard_enabled=_env_bool("TOOL_GUARD_ENABLED", False),
         history_max_chars=_env_int("HISTORY_MAX_CHARS", 1000000),
         memory_top_k=_env_int("MEMORY_TOP_K", 5),
         self_inspection_enabled=_env_bool("SELF_INSPECTION_ENABLED", True),
@@ -440,4 +469,5 @@ def load_settings() -> Settings:
         # M49（design §5.4）: MODEL_FALLBACKS 降级链原始值, 解析由 llm.pool 完成
         model_fallbacks_raw=os.environ.get("MODEL_FALLBACKS", "").strip(),
         invalid_fallbacks=tuple(_fallback_notes),
+        auto_adaptive_keys=frozenset(_auto_adaptive_keys),
     )

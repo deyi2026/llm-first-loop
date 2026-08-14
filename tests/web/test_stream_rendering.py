@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 ROOT = Path(__file__).resolve().parents[2]
 APP_JS = ROOT / "src" / "llm_loop" / "web" / "static" / "app.js"
 SCHEMAS = ROOT / "src" / "llm_loop" / "web" / "schemas.py"
@@ -28,10 +26,6 @@ CHAT_RESPONSE_FIELDS = [
     "tokens_out",
 ]
 
-
-@pytest.fixture(scope="module")
-def app_js_src() -> str:
-    return APP_JS.read_text(encoding="utf-8")
 
 
 class TestStreamRendering:

@@ -18,7 +18,6 @@ from fastapi.testclient import TestClient
 from llm_loop.web import build_app
 
 ROOT = Path(__file__).resolve().parents[2]
-APP_JS = ROOT / "src" / "llm_loop" / "web" / "static" / "app.js"
 
 
 def _make_client(engine):
@@ -89,14 +88,12 @@ class TestHistoryPagination:
 
 
 class TestFrontendLazyLoad:
-    def test_load_session_messages_uses_limit(self):
-        app_js = APP_JS.read_text(encoding="utf-8")
-        assert "loadSessionMessages" in app_js
-        assert "?limit=" in app_js
-        assert "limit=${HISTORY_PAGE_SIZE}" in app_js
+    def test_load_session_messages_uses_limit(self, app_js_src: str):
+        assert "loadSessionMessages" in app_js_src
+        assert "?limit=" in app_js_src
+        assert "limit=${HISTORY_PAGE_SIZE}" in app_js_src
 
-    def test_load_earlier_history_defined(self):
-        app_js = APP_JS.read_text(encoding="utf-8")
-        assert "async function loadEarlierHistory" in app_js
-        assert "&offset=" in app_js
-        assert "加载更早消息" in app_js
+    def test_load_earlier_history_defined(self, app_js_src: str):
+        assert "async function loadEarlierHistory" in app_js_src
+        assert "&offset=" in app_js_src
+        assert "加载更早消息" in app_js_src

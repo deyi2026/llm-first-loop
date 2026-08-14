@@ -70,9 +70,21 @@ _load_llm() {
     while IFS='=' read -r _key _val; do
       _key="${_key//[$'\r']/}"
       [[ "$_key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
-      if [[ -z "${!_key:-}" ]]; then
-        export "$_key=${_val}"
-      fi
+      # 行内注释剥离（与 config.load_env_file EVO-ba4a107c 一致）：
+      # 防 `KEY=1  # 注释` 把注释带进值 → export 后 _env_bool 解析非法回退默认
+      _val="${_val%% #*}"
+      # 密钥类键保留环境优先（允许显式 export 覆盖）；其余 .env 配置键强制生效，
+      # 防外层 shell 残留脏值（如 RETRIEVE_TIMEOUT_S="1  # 注释"）遮蔽 .env 新值
+      case "$_key" in
+        LLM_API_KEY|LLM_BASE_URL|LLM_MODEL|DEEPSEEK_API_KEY|FEISHU_APP_ID|FEISHU_APP_SECRET)
+          if [[ -z "${!_key:-}" ]]; then
+            export "$_key=${_val}"
+          fi
+          ;;
+        *)
+          export "$_key=${_val}"
+          ;;
+      esac
     done < <(grep -vE '^\s*#|^\s*$' "$env_file")
   fi
   export LLM_API_KEY="${LLM_API_KEY:-${DEEPSEEK_API_KEY:-}}"

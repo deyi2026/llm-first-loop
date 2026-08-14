@@ -10,6 +10,31 @@ import subprocess
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 
+# 方案 4: 工具输出截断（context 优化——长输出只发头尾，完整内容可经 search_archive 检索）
+_MAX_OUTPUT_CHARS = 3000
+_KEEP_HEAD_CHARS = 1500
+_KEEP_TAIL_CHARS = 1500
+
+
+def _truncate_output(content: str, command: str = "") -> str:
+    """截断长输出：保留首 1500 + 末 1500 字符，中间附截断说明与搜索关键词."""
+    if len(content) <= _MAX_OUTPUT_CHARS:
+        return content
+    head = content[:_KEEP_HEAD_CHARS]
+    tail = content[-_KEEP_TAIL_CHARS:]
+    # 从命令提取关键词（取可打印词，最多 3 个；排除常见 shell 噪音词）
+    _NOISE = {"and", "or", "not", "the", "for", "with", "echo"}
+    kw = " ".join(
+        [w for w in command.split() if w.isalnum() and len(w) >= 2 and w not in _NOISE][:3]
+    )
+    return (
+        f"{head}\n"
+        f"[输出已截断] 事实: 完整输出 {len(content)} 字符，仅展示首 {_KEEP_HEAD_CHARS} + 末 {_KEEP_TAIL_CHARS} 字符。"
+        f"\n原因: 上下文优化（方案 4 工具输出截断）。"
+        f"\n建议: 如需完整内容可用 search_archive 检索{'，搜索关键词: ' + kw if kw else '（按命令相关词检索）'}。\n"
+        f"{tail}"
+    )
+
 
 class ExecuteCommandTool:
     name = "execute_command"
@@ -74,6 +99,8 @@ class ExecuteCommandTool:
         status = ToolResultStatus.SUCCESS if proc.returncode == 0 else ToolResultStatus.FAILURE
         if proc.returncode != 0:
             content = f"[命令退出码 {proc.returncode}] {content}"
+
+        content = _truncate_output(content, command)
 
         return ToolResult(
             status=status,

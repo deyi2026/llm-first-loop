@@ -8,7 +8,7 @@
 
 ## 一、文档定位说明
 
-docs/ 目录共 **26 个 Markdown 文档**，分四类：
+docs/ 目录共 **28 个 Markdown 文档**，分四类：
 - **验收报告**（m11-m34 各里程碑）：m11_audit_report.md ~ m34_ux_revisit_report.md，每个里程碑的验收结论与数据
 - **规则与手册**（ai_rules.md / ai_guidance_playbook.md）：规则 SoT + 引导规范手册（实践引用与复用指引）
 - **审计/评审报告**（ai_first_review.md / config_integrity_audit.md / four_principles_audit.md / metrics_fixed_revalidation_report.md / p01_program_audit_report.md / program_minimalism_review.md）：各轮程序面/文档面/架构面审计与评审
@@ -17,6 +17,8 @@ docs/ 目录共 **26 个 Markdown 文档**，分四类：
 **导航方式**：按报告名 glob（`docs/mNN_*.md`）或经本索引 spec 章节映射直达。
 
 ## 二、报告清单
+| DESIGN-20260814-tool-execution-waterfall.md | 工具执行瀑布+参数深冻结实现级设计（grill 10 盲点并入，EVO-9ced1f4c） | 设计 | — |
+| ANALYSIS-20260814-deepseek-harness-architecture-comparison.md | DeepSeek Harness 架构对比与借鉴分析（插件/轨迹/执行瀑布，20260814） | 分析 | — |
 | ASSESSMENT-20260813-ai-first-evolution.md | AI 优先演进整体评估报告（四维+RULE-AI-00 对照，20260813） | 评估 | §5.1 |
 | ASSESSMENT-20260813-ai-first-evolution-round2.md | AI 优先演进第二轮评估报告（吞错清理/折叠修复/流式取舍/if-return 核验，20260813） | 评估 | §5.1-§5.5 |
 

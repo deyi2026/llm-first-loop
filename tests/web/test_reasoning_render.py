@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -69,15 +68,12 @@ def test_history_messages_reasoning_content(build_test_engine):
     assert any(m.get("reasoning_content") for m in assistant_msgs), "历史 assistant 消息无 reasoning_content"
 
 
-def test_old_frontend_compat_static():
+def test_old_frontend_compat_static(app_js_src: str):
     """4.7: 旧前端兼容静态断言（onReasoningDelta 可选，reasoning_delta 事件可忽略）."""
-    app_js = (
-        Path(__file__).resolve().parents[2] / "src" / "llm_loop" / "web" / "static" / "app.js"
-    ).read_text(encoding="utf-8")
-    assert "onReasoningDelta" in app_js
-    assert 'evt.type === "reasoning_delta"' in app_js
+    assert "onReasoningDelta" in app_js_src
+    assert 'evt.type === "reasoning_delta"' in app_js_src
     # 旧调用方不传第三参数 → reasoning_delta 被忽略（onReasoningDelta falsy 判定存在）
-    assert "if (onReasoningDelta)" in app_js
+    assert "if (onReasoningDelta)" in app_js_src
 
 
 def test_thinking_off_zero_regression(build_test_engine):
