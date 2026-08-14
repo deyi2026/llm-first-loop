@@ -106,42 +106,95 @@ class _ToolExecMixin:
         # EVO-20260810-750e985a: 工具并发控制（只读并行/修改串行/按声明顺序回写）
         valid_calls = [tc for tc in resp.tool_calls if tc.id]
         if valid_calls:
-            # P2-1: 工具轮次进展外泄（fail-open，yield 异常不阻断主循环）
-            for tc in valid_calls:
-                # H-UI: 工具调用开始（实时状态条）
-                self._notify_action(
-                    "tool_call",
-                    tool_name=tc.name,
-                    args_summary=_tool_args_summary(tc.arguments),
-                )
-                try:
-                    yield StreamDelta(
-                        text="",
-                        tool_round=ToolRoundInfo(
-                            tool_name=tc.name,
-                            round_index=rounds,
-                            args_summary=_tool_args_summary(tc.arguments),
-                            tool_call_id=tc.id,
-                        ),
+            # HARNESS-01(2026-08-14): 中断时孤儿 tool_calls 合成回执——assistant 声明
+            # （带 tool_calls）先入历史、yield 流式进展后才 execute_many；若客户端在 yield
+            # 阶段断流（GeneratorExit），历史留下"有声明无回执"孤儿 → 严格 FC 协议下下次
+            # 请求直接 400。兜底：中断时对未执行声明写合成"已取消"回执并立即保存会话
+            # （声明数 = 结果数 + 取消数 对账不变量成立，任何保存时机历史自洽）。
+            try:
+                # P2-1: 工具轮次进展外泄（fail-open，yield 异常不阻断主循环）
+                for tc in valid_calls:
+                    # H-UI: 工具调用开始（实时状态条）
+                    self._notify_action(
+                        "tool_call",
+                        tool_name=tc.name,
+                        args_summary=_tool_args_summary(tc.arguments),
                     )
-                except Exception:  # noqa: BLE001 — fail-open
-                    logger.warning("tool_round yield 失败（fail-open）", exc_info=True)
-            results = self.registry.execute_many(valid_calls)
-            for tc, result in zip(valid_calls, results, strict=False):
-                tool_trace.append({"id": tc.id, "name": tc.name, "arguments": tc.arguments})
-                self._record_tool_history(result)
-                # H-UI: 工具结果（实时状态条）
-                self._notify_action(
-                    "tool_result", tool_name=tc.name, status=result.status.value
-                )
-                tool_msg = tool_result_to_message(
-                    result, failure_guidance_enabled=self.registry.failure_guidance_enabled
-                )
-                sess.messages.append(tool_msg)
-                # D1: tool 回执消息事件（fail-open）
-                self._append_message_event(sess, tool_msg)
-                # EVO-20260814-aab7eb0b P2: 运行中停滞指纹追踪（evaluator.py:271 同构指纹）
-                self._track_stagnation(tc, sess, tool_trace)
+                    try:
+                        yield StreamDelta(
+                            text="",
+                            tool_round=ToolRoundInfo(
+                                tool_name=tc.name,
+                                round_index=rounds,
+                                args_summary=_tool_args_summary(tc.arguments),
+                                tool_call_id=tc.id,
+                            ),
+                        )
+                    except GeneratorExit:
+                        # 客户端断流：全部声明未执行 → 合成取消回执 + 落盘（防孤儿）
+                        self._synthesize_cancelled(sess, valid_calls, executed_ids=set())
+                        try:
+                            self.session.save(sess)
+                        except Exception:  # noqa: BLE001 — 保存失败 fail-open
+                            logger.warning("中断路径会话保存失败（fail-open）", exc_info=True)
+                        raise  # 正常生成器关闭语义（重新抛 GeneratorExit）
+                    except Exception:  # noqa: BLE001 — fail-open
+                        logger.warning("tool_round yield 失败（fail-open）", exc_info=True)
+                results = self.registry.execute_many(valid_calls)
+                # 对账不变量: 声明数 == 结果数（缺失 → 合成取消，防孤儿声明落盘）
+                if len(results) != len(valid_calls):
+                    executed_ids = {r.tool_call_id for r in results if r.tool_call_id}
+                    missing = [tc for tc in valid_calls if tc.id not in executed_ids]
+                    if missing:
+                        self._synthesize_cancelled(sess, missing, executed_ids=set())
+                        logger.warning(
+                            "工具对账不变量缺失: 声明 %d 结果 %d（%d 条合成取消）",
+                            len(valid_calls),
+                            len(results),
+                            len(missing),
+                        )
+                for tc, result in zip(valid_calls, results, strict=False):
+                    tool_trace.append({"id": tc.id, "name": tc.name, "arguments": tc.arguments})
+                    self._record_tool_history(result)
+                    # H-UI: 工具结果（实时状态条）
+                    self._notify_action(
+                        "tool_result", tool_name=tc.name, status=result.status.value
+                    )
+                    tool_msg = tool_result_to_message(
+                        result, failure_guidance_enabled=self.registry.failure_guidance_enabled
+                    )
+                    sess.messages.append(tool_msg)
+                    # D1: tool 回执消息事件（fail-open）
+                    self._append_message_event(sess, tool_msg)
+                    # EVO-20260814-aab7eb0b P2: 运行中停滞指纹追踪（evaluator.py:271 同构指纹）
+                    self._track_stagnation(tc, sess, tool_trace)
+            # 注：唯一中断点 = tool_round yield（内层 except GeneratorExit 已合成+落盘+重抛）；
+            # execute_many 后无 yield（同步阻塞），不重复外层兜底（防重复合成）
+            except GeneratorExit:
+                raise  # 透传（内层已处理合成，此处仅保证 try 语法与传播语义）
+
+    def _synthesize_cancelled(self: LoopEngine, sess, calls, *, executed_ids: set[str]) -> None:
+        """HARNESS-01: 对未执行声明写合成取消回执（防孤儿 tool_calls → 下轮 400）.
+
+        消息如实标注"声明后中断未执行"，status 不设（非五态结果，不伪造成功/失败）；
+        随会话落盘，任何保存时机下声明数 = 结果数 + 取消数 对账成立。
+        """
+        for tc in calls:
+            if tc.id in executed_ids:
+                continue
+            cancel_msg = Message(
+                role="tool",
+                content=(
+                    f"[执行中断] 工具 '{tc.name}' 声明后循环中断（客户端断流/引擎终止），"
+                    f"该调用未执行、无副作用。"
+                ),
+                tool_call_id=tc.id,
+                tool_name=tc.name,
+                source=MessageSource.SYSTEM,
+            )
+            sess.messages.append(cancel_msg)
+            self._append_message_event(sess, cancel_msg)
+            self._record_action("action.tool_loop", "cancelled", tc.name)
 
     # ── EVO-20260814-aab7eb0b P2: 循环实时停滞检测 ──
 

@@ -30,7 +30,9 @@ def _fake_client(resp):
     return mock.patch("httpx.Client") and resp
 
 
-def test_web_fetch_extract_header_and_body():
+def test_web_fetch_extract_header_and_body(monkeypatch):
+    # 本测试聚焦其他行为（非 SSRF）——关闭内网拦截避免测试环境 DNS 干扰（198.18/15 VPN 劫持段）
+    monkeypatch.setenv("WEB_FETCH_BLOCK_PRIVATE", "0")
     """正文提取成功时输出含 title/source/extract 头与正文."""
     tool = WebFetchTool()
     html = (
@@ -47,7 +49,9 @@ def test_web_fetch_extract_header_and_body():
     assert "这是正文段落" in r.content
 
 
-def test_web_fetch_403_ua_rotation():
+def test_web_fetch_403_ua_rotation(monkeypatch):
+    # 本测试聚焦其他行为（非 SSRF）——关闭内网拦截避免测试环境 DNS 干扰（198.18/15 VPN 劫持段）
+    monkeypatch.setenv("WEB_FETCH_BLOCK_PRIVATE", "0")
     """403 时自动换 UA 重试，第二个 UA 成功则整体成功."""
     tool = WebFetchTool()
     ok = _FakeResponse(200, "<html>Hello Page</html>")
@@ -61,7 +65,9 @@ def test_web_fetch_403_ua_rotation():
     assert "Hello Page" in r.content
 
 
-def test_web_fetch_js_shell_hint():
+def test_web_fetch_js_shell_hint(monkeypatch):
+    # 本测试聚焦其他行为（非 SSRF）——关闭内网拦截避免测试环境 DNS 干扰（198.18/15 VPN 劫持段）
+    monkeypatch.setenv("WEB_FETCH_BLOCK_PRIVATE", "0")
     """JS 壳页面如实提示，不伪装正文成功."""
     tool = WebFetchTool()
     shell = '<html><body><noscript>您需要允许该页面 JavaScript</noscript><script>var _$jsvmprt=1;</script></body></html>'
@@ -130,7 +136,9 @@ def _curl_proc(stdout: bytes, returncode: int = 0):
     return mock.MagicMock(returncode=returncode, stdout=stdout)
 
 
-def test_curl_fallback_on_connect_error():
+def test_curl_fallback_on_connect_error(monkeypatch):
+    # 本测试聚焦其他行为（非 SSRF）——关闭内网拦截避免测试环境 DNS 干扰（198.18/15 VPN 劫持段）
+    monkeypatch.setenv("WEB_FETCH_BLOCK_PRIVATE", "0")
     """httpx 连接被重置（TLS 指纹拦截场景）→ curl 回退成功并如实标注."""
     tool = WebFetchTool()
     article = "<html><head><title>真文章</title></head><body><div class=\"article-content\"><p>" + "正文" * 40 + "</p></div> </body></html>"
@@ -149,7 +157,9 @@ def test_curl_fallback_on_connect_error():
     assert args[0] == "curl" and "--" in args and "https://example.com/a" in args
 
 
-def test_curl_fallback_on_js_shell():
+def test_curl_fallback_on_js_shell(monkeypatch):
+    # 本测试聚焦其他行为（非 SSRF）——关闭内网拦截避免测试环境 DNS 干扰（198.18/15 VPN 劫持段）
+    monkeypatch.setenv("WEB_FETCH_BLOCK_PRIVATE", "0")
     """httpx 仅取到 JS 壳 → curl 回退拿到正文（头条场景）."""
     tool = WebFetchTool()
     shell = '<html><body><noscript>您需要允许该网站执行 JavaScript</noscript><script>var _$jsvmprt=1;</script></body></html>'
@@ -165,7 +175,9 @@ def test_curl_fallback_on_js_shell():
     assert "正文" in r.content
 
 
-def test_curl_fallback_both_fail_honest():
+def test_curl_fallback_both_fail_honest(monkeypatch):
+    # 本测试聚焦其他行为（非 SSRF）——关闭内网拦截避免测试环境 DNS 干扰（198.18/15 VPN 劫持段）
+    monkeypatch.setenv("WEB_FETCH_BLOCK_PRIVATE", "0")
     """httpx 失败 + curl 也失败 → 如实双失败，不伪造."""
     tool = WebFetchTool()
     with (
@@ -310,7 +322,9 @@ def test_bing_snippet_extraction():
     assert rs[1]["snippet"] == ""  # 无 <p> 摘要留空
 
 
-def test_web_fetch_embedded_json_extract():
+def test_web_fetch_embedded_json_extract(monkeypatch):
+    # 本测试聚焦其他行为（非 SSRF）——关闭内网拦截避免测试环境 DNS 干扰（198.18/15 VPN 劫持段）
+    monkeypatch.setenv("WEB_FETCH_BLOCK_PRIVATE", "0")
     """M49: SPA 内嵌 JSON（ld+json）正文提取，过滤 URL 噪声."""
     from llm_loop.tools.builtin.web_fetch import _embedded_json_extract
 
@@ -325,7 +339,9 @@ def test_web_fetch_embedded_json_extract():
     assert "https://" not in txt  # URL 噪声被过滤
 
 
-def test_web_fetch_embedded_json_noise_filter():
+def test_web_fetch_embedded_json_noise_filter(monkeypatch):
+    # 本测试聚焦其他行为（非 SSRF）——关闭内网拦截避免测试环境 DNS 干扰（198.18/15 VPN 劫持段）
+    monkeypatch.setenv("WEB_FETCH_BLOCK_PRIVATE", "0")
     """M49: 纯 URL 字符串被过滤，不污染正文."""
     from llm_loop.tools.builtin.web_fetch import _embedded_json_extract
 

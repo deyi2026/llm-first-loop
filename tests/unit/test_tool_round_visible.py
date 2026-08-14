@@ -212,3 +212,180 @@ def test_run_stream_multi_tool_call_same_round(build_test_engine, tmp_path):
     assert tool_round_deltas[1].tool_round.tool_call_id == "c2"
     assert tool_round_deltas[0].tool_round.round_index == 1
     assert tool_round_deltas[1].tool_round.round_index == 1
+
+
+# ── HARNESS-01: 中断时孤儿 tool_calls 合成回执 ──
+
+
+def test_interrupt_synthesizes_cancelled_results(tmp_path):
+    """流式中断（GeneratorExit）→ 未执行声明合成取消回执并落盘（防孤儿→下轮 400）."""
+    from llm_loop.config import Settings
+    from llm_loop.core.loop.engine import LoopEngine
+    from llm_loop.core.message import ToolCall, ToolResult, ToolResultStatus
+    from llm_loop.core.session import SessionStore
+    from llm_loop.llm.client import LLMResponse
+    from llm_loop.tools.registry import ToolRegistry
+
+    executed = []
+
+    class _Fake:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def _next(self):
+            self.calls += 1
+            if self.calls == 1:
+                return LLMResponse(
+                    content="用工具",
+                    tool_calls=[
+                        ToolCall(id="tc-orphan", name="read_file", arguments={"path": "x"})
+                    ],
+                    provider="fake",
+                )
+            return LLMResponse(content="不会到", tool_calls=[], provider="fake")
+
+        def chat(self, messages, tools, **kw):
+            return self._next()
+
+        def chat_stream(self, messages, tools, **kw):
+            def _gen():
+                yield from ()
+                return self._next()
+
+            return _gen()
+
+    class _Reg(ToolRegistry):
+        def execute(self, call):
+            executed.append(call.id)
+            return ToolResult(
+                status=ToolResultStatus.SUCCESS,
+                content="ok",
+                tool_call_id=call.id,
+                tool_name=call.name,
+                duration_ms=0.0,
+            )
+
+    reg = _Reg()
+    reg.register(
+        type(
+            "RF",
+            (),
+            {"name": "read_file", "description": "t", "parameters": {"type": "object"}},
+        )()
+    )
+    settings = Settings(
+        llm_api_key="k",
+        llm_base_url="https://x/v1",
+        llm_model="m",
+        data_dir=str(tmp_path / "data"),
+        extract_enabled=False,
+        summary_mode="off",
+    )
+    store = SessionStore(tmp_path / "sessions")
+    engine = LoopEngine(
+        llm_client=_Fake(),  # type: ignore[arg-type]
+        registry=reg,  # type: ignore[arg-type]
+        memory=None,  # type: ignore[arg-type]
+        session=store,
+        settings=settings,
+    )
+    sid = store.create()
+    it = engine.run_stream(sid, "任务")
+    # 消费第一个 delta（tool_round yield 处）后中断
+    next(it)
+    it.close()  # GeneratorExit → 合成回执
+    assert executed == []  # 工具未执行
+    sess = store.load(sid)
+    tool_msgs = [m for m in sess.messages if m.role == "tool"]
+    assert len(tool_msgs) == 1  # 合成取消回执
+    assert "执行中断" in tool_msgs[0].content
+    assert tool_msgs[0].tool_call_id == "tc-orphan"
+    # 对账: 声明数 == 结果数(0) + 取消数(1)
+    decl = [m for m in sess.messages if m.role == "assistant" and m.tool_calls]
+    assert len(decl) == 1
+    assert len(tool_msgs) == len(decl[0].tool_calls or [])
+
+
+def test_reconciliation_missing_result_synthesized(tmp_path, monkeypatch):
+    """正常路径对账：execute_many 缺结果 → 缺失声明合成取消（不变量成立）."""
+    from llm_loop.config import Settings
+    from llm_loop.core.loop.engine import LoopEngine
+    from llm_loop.core.message import ToolCall, ToolResult, ToolResultStatus
+    from llm_loop.core.session import SessionStore
+    from llm_loop.llm.client import LLMResponse
+    from llm_loop.tools.registry import ToolRegistry
+
+    class _Fake:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def _next(self):
+            self.calls += 1
+            if self.calls == 1:
+                return LLMResponse(
+                    content="用工具",
+                    tool_calls=[
+                        ToolCall(id="tc-a", name="read_file", arguments={"path": "a"}),
+                        ToolCall(id="tc-b", name="read_file", arguments={"path": "b"}),
+                    ],
+                    provider="fake",
+                )
+            return LLMResponse(content="最终回答", tool_calls=[], provider="fake")
+
+        def chat(self, messages, tools, **kw):
+            return self._next()
+
+        def chat_stream(self, messages, tools, **kw):
+            def _gen():
+                yield from ()
+                return self._next()
+
+            return _gen()
+
+    class _Reg(ToolRegistry):
+        def execute(self, call):
+            return ToolResult(
+                status=ToolResultStatus.SUCCESS,
+                content="ok",
+                tool_call_id=call.id,
+                tool_name=call.name,
+                duration_ms=0.0,
+            )
+
+        def execute_many(self, calls):
+            # 模拟缺结果：只返回 tc-a
+            return [super().execute(calls[0])]
+
+    reg = _Reg()
+    reg.register(
+        type(
+            "RF",
+            (),
+            {"name": "read_file", "description": "t", "parameters": {"type": "object"}},
+        )()
+    )
+    settings = Settings(
+        llm_api_key="k",
+        llm_base_url="https://x/v1",
+        llm_model="m",
+        data_dir=str(tmp_path / "data"),
+        extract_enabled=False,
+        summary_mode="off",
+    )
+    store = SessionStore(tmp_path / "sessions")
+    engine = LoopEngine(
+        llm_client=_Fake(),  # type: ignore[arg-type]
+        registry=reg,  # type: ignore[arg-type]
+        memory=None,  # type: ignore[arg-type]
+        session=store,
+        settings=settings,
+    )
+    result = engine.run_single("任务")
+    assert result.final_answer
+    sess = store.load(result.session_id)
+    tool_msgs = [m for m in sess.messages if m.role == "tool"]
+    # 对账: 声明 2 == 结果 1 + 取消 1
+    assert len(tool_msgs) == 2
+    cancelled = [m for m in tool_msgs if "执行中断" in m.content]
+    assert len(cancelled) == 1
+    assert cancelled[0].tool_call_id == "tc-b"

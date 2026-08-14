@@ -34,7 +34,9 @@ def _patch_fetch(tool, body: str):
     return tool
 
 
-def test_paging_continues():
+def test_paging_continues(monkeypatch):
+    # 非 SSRF 聚焦测试——关闭内网拦截避免测试环境 DNS 干扰
+    monkeypatch.setenv("WEB_FETCH_BLOCK_PRIVATE", "0")
     """start>0 续读下一段."""
     body = "甲" * 500
     t = _patch_fetch(_FakeTool(), body)
@@ -50,7 +52,9 @@ def test_paging_continues():
     assert "甲" in r2.content
 
 
-def test_paging_oop_bounds():
+def test_paging_oop_bounds(monkeypatch):
+    # 非 SSRF 聚焦测试——关闭内网拦截避免测试环境 DNS 干扰
+    monkeypatch.setenv("WEB_FETCH_BLOCK_PRIVATE", "0")
     """越界返回 FAILURE（已抓全）."""
     body = "甲" * 100
     t = _patch_fetch(_FakeTool(), body)
@@ -59,7 +63,9 @@ def test_paging_oop_bounds():
     assert "分页越界" in r.content
 
 
-def test_no_trim_no_paging():
+def test_no_trim_no_paging(monkeypatch):
+    # 非 SSRF 聚焦测试——关闭内网拦截避免测试环境 DNS 干扰
+    monkeypatch.setenv("WEB_FETCH_BLOCK_PRIVATE", "0")
     """内容未超长 → 无分页标注（零回归）."""
     body = "短内容"
     t = _patch_fetch(_FakeTool(), body)
@@ -70,7 +76,9 @@ def test_no_trim_no_paging():
     assert "短内容" in r.content
 
 
-def test_paging_with_explicit_count():
+def test_paging_with_explicit_count(monkeypatch):
+    # 非 SSRF 聚焦测试——关闭内网拦截避免测试环境 DNS 干扰
+    monkeypatch.setenv("WEB_FETCH_BLOCK_PRIVATE", "0")
     """start 与 count 正交：start 定起点、count 定段长."""
     body = "甲乙丙丁戊己庚辛壬癸" * 30  # 300 字符
     t = _patch_fetch(_FakeTool(), body)
@@ -85,7 +93,9 @@ def test_paging_with_explicit_count():
     assert "start=200" in r2.content  # 提示下一段位置
 
 
-def test_count_defaults_to_max_chars():
+def test_count_defaults_to_max_chars(monkeypatch):
+    # 非 SSRF 聚焦测试——关闭内网拦截避免测试环境 DNS 干扰
+    monkeypatch.setenv("WEB_FETCH_BLOCK_PRIVATE", "0")
     """count 未指定 → 段长 = max_chars（兼容原行为）."""
     body = "甲" * 500
     t = _patch_fetch(_FakeTool(), body)
@@ -102,7 +112,9 @@ def _reset_history():
     wf._fetch_history.clear()
 
 
-def test_single_browser_reuse_notice():
+def test_single_browser_reuse_notice(monkeypatch):
+    # 非 SSRF 聚焦测试——关闭内网拦截避免测试环境 DNS 干扰
+    monkeypatch.setenv("WEB_FETCH_BLOCK_PRIVATE", "0")
     """短时重复抓同一 URL → 第二次回执提示可复用."""
     _reset_history()
     body = "甲" * 50
@@ -114,7 +126,9 @@ def test_single_browser_reuse_notice():
     assert "秒前抓取过" in r2.content
 
 
-def test_single_browser_different_url_no_notice():
+def test_single_browser_different_url_no_notice(monkeypatch):
+    # 非 SSRF 聚焦测试——关闭内网拦截避免测试环境 DNS 干扰
+    monkeypatch.setenv("WEB_FETCH_BLOCK_PRIVATE", "0")
     """不同 URL 互不影响."""
     _reset_history()
     body = "甲" * 50
@@ -124,7 +138,9 @@ def test_single_browser_different_url_no_notice():
     assert "[重复抓取]" not in r.content
 
 
-def test_single_browser_window_expired():
+def test_single_browser_window_expired(monkeypatch):
+    # 非 SSRF 聚焦测试——关闭内网拦截避免测试环境 DNS 干扰
+    monkeypatch.setenv("WEB_FETCH_BLOCK_PRIVATE", "0")
     """超过 5 分钟窗口 → 不提示（网页可能已变化）."""
     import llm_loop.tools.builtin.web_fetch as wf
     _reset_history()

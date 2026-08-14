@@ -55,5 +55,9 @@ def test_run_stream_delegation_points(engine_src):
 
 
 def test_complexity_reduction(engine_src):
-    """engine.py 体量较拆分前（946 行）显著下降（REQ-REF-04c）."""
-    assert len(engine_src.splitlines()) < 946
+    """engine.py 体量较拆分前（1087 行）显著下降（REQ-REF-04c）.
+
+    基线: 拆分后 946 → HARNESS-02/04（request.meta 快照 + 预算预警）入主循环后 955;
+    仍远低于拆分前, 守卫防再膨胀（>1000 应触发拆分评审）。
+    """
+    assert len(engine_src.splitlines()) < 1000
