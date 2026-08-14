@@ -174,3 +174,27 @@ function showCmdSuggest() {
   const value = els.messageInput.value;
   // 仅当以 / 开头且当前行无空格/换行时提示（允许 /model 带参数后不再弹出）
   if (!value.startsWith("/") || value.includes(" ") || value.includes("\n")) {
+    hideCmdSuggest();
+    return;
+  }
+  const q = value.slice(1).toLowerCase();
+  const items = COMMANDS.filter((c) => c.name.slice(1).startsWith(q));
+  if (!items.length) {
+    hideCmdSuggest();
+    return;
+  }
+  els.cmdSuggest.innerHTML = "";
+  for (const c of items) {
+    const item = el("div", "cmd-suggest-item");
+    item.appendChild(el("span", "cmd-name", c.name));
+    item.appendChild(el("span", "cmd-desc", c.desc));
+    item.onclick = () => {
+      els.messageInput.value = c.name + (c.argHint ? " " : "");
+      els.messageInput.focus();
+      hideCmdSuggest();
+      if (!c.argHint) sendMessage(); // 无需参数的命令点击即执行
+    };
+    els.cmdSuggest.appendChild(item);
+  }
+  els.cmdSuggest.hidden = false;
+}
