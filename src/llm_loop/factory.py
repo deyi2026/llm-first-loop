@@ -27,11 +27,35 @@ from llm_loop.memory.store import MemoryStore
 from llm_loop.subagent.runner import SubAgentRunner
 from llm_loop.tools.builtin.edit_file import EditFileTool
 from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
+from llm_loop.tools.builtin.job_kill import JobKillTool
+from llm_loop.tools.builtin.job_output import JobOutputTool
 from llm_loop.tools.builtin.read_file import ReadFileTool
 from llm_loop.tools.builtin.spawn_subagent import SpawnSubAgentTool
 from llm_loop.tools.builtin.web_fetch import WebFetchTool
 from llm_loop.tools.builtin.web_search import WebSearchTool
+from llm_loop.tools.builtin.workflow import WorkflowRunTool
 from llm_loop.tools.registry import ToolRegistry
+
+# EVO-20260814 P1-A: RUN_MODE 运行模式（对齐 Harness 四种运行模式）
+# standard: 全工具集（默认零回归）; ptc: 命令执行为主路径（web 外围降级）;
+# minimal: 精简工具集（只读+必要执行）; creative: 宽松默认参数（超时/输出/检索放大）
+_RUN_MODE_HIDDEN_TOOLS: dict[str, set[str]] = {
+    # minimal: 外围/重工具禁用（web 检索、飞书出站、playwright、record_skill 等）
+    "minimal": {
+        "web_fetch", "web_search",
+        "send_feishu_message", "create_feishu_doc", "send_feishu_attachment",
+        "playwright_test", "record_skill",
+    },
+    # ptc: 命令执行主路径——web 检索类降级（LLM 少走低效 web 往返）
+    "ptc": {"web_fetch", "web_search"},
+    # creative/standard: 全工具集
+    "creative": set(),
+    "standard": set(),
+}
+
+
+def _run_mode_hidden(run_mode: str) -> set[str]:
+    return _RUN_MODE_HIDDEN_TOOLS.get(run_mode, set())
 
 logger = logging.getLogger(__name__)
 
@@ -147,8 +171,38 @@ def build_engine(settings: Settings) -> LoopEngine:
     registry.register(GetToolSchemaTool(registry))
     # M18 AA8: 工具内兜底超时读配置值（注册表另有线程级超时兜底）
     registry.register(ExecuteCommandTool(timeout_s=settings.tool_timeout_s))
-    registry.register(WebFetchTool(timeout_s=settings.tool_timeout_s))
-    registry.register(WebSearchTool(timeout_s=settings.tool_timeout_s))  # M48: 网络搜索（Bing/百度双后端降级）
+    # EVO-20260814: 后台任务查询/终止（配合 execute_command run_in_background=true）
+    registry.register(JobOutputTool())
+    registry.register(JobKillTool())
+    # EVO-20260814 P1-A: RUN_MODE 装配（creative 放宽默认参数）
+    _run_mode = getattr(settings, "run_mode", "standard")
+    _hidden = _run_mode_hidden(_run_mode)
+    if _run_mode == "creative":
+        _tool_timeout = settings.tool_timeout_s * 1.5
+        _max_output = settings.tool_max_output_chars * 2
+    else:
+        _tool_timeout = settings.tool_timeout_s
+        _max_output = settings.tool_max_output_chars
+
+    def _register_basic(name: str, tool: Any) -> None:
+        if name not in _hidden:
+            registry.register(tool)
+
+    _register_basic("read_file", ReadFileTool())
+    # M51: 四段式文件修改（read→match→diff→apply+verify，替代 sed/heredoc 盲替换）
+    _register_basic("edit_file", EditFileTool())
+    # EVO-d5db88d9: 按需读取工具完整 Schema（懒加载配套；零副作用可始终注册）
+    from llm_loop.tools.registry import GetToolSchemaTool
+
+    registry.register(GetToolSchemaTool(registry))
+    # M18 AA8: 工具内兜底超时读配置值（注册表另有线程级超时兜底）
+    _register_basic("execute_command", ExecuteCommandTool(timeout_s=_tool_timeout))
+    # EVO-20260814: 后台任务查询/终止（配合 execute_command run_in_background=true）
+    _register_basic("job_output", JobOutputTool())
+    _register_basic("job_kill", JobKillTool())
+    _register_basic("web_fetch", WebFetchTool(timeout_s=_tool_timeout))
+    # M48: 网络搜索（Bing/百度双后端降级）
+    _register_basic("web_search", WebSearchTool(timeout_s=_tool_timeout))
 
     # EVO-20260811-f94e5306: 变更通告（修改类工具调用记录，多会话协调）
     def _change_log_hook(call):
@@ -277,7 +331,20 @@ def build_engine(settings: Settings) -> LoopEngine:
         experience_store=experience_store,  # P1-2: 经验库检索接入
         semantic_retriever=semantic_retriever,  # T31: 语义召回
     )
-    corrections._search_records_fn = lambda **kw: searcher.search(**kw)  # noqa: SLF001
+    # EVO-20260814: 适配器同时支持 search_records（可调用）与 event_stream（对象方法）
+    class _RecordSearcherAdapter:
+        """可调用 + 方法双接口（search 走调用，event_stream 走方法）."""
+
+        def __init__(self, searcher: Any) -> None:
+            self._searcher = searcher
+
+        def __call__(self, **kw: Any) -> list[dict]:
+            return self._searcher.search(**kw)
+
+        def event_stream(self, **kw: Any) -> list[dict]:
+            return self._searcher.event_stream(**kw)
+
+    corrections._search_records_fn = _RecordSearcherAdapter(searcher)  # noqa: SLF001
     corrections._experience_store = experience_store  # noqa: SLF001 — P1-2: 工具分派注入
 
     # P2-3: docs/ 文档语义检索装配（fail-open，不阻断启动）
@@ -317,7 +384,11 @@ def build_engine(settings: Settings) -> LoopEngine:
     status_provider.set_recovery_status_fn(backup_store.status_summary)
 
     # 自省/修正/检索工具注册进 ToolRegistry（LLM 可见）
+    # EVO-20260814 P1-A: RUN_MODE=minimal 时过滤外围工具（飞书出站/playwright/record_skill）
+    _corr_hidden = _run_mode_hidden(_run_mode)
     for td in corrections.tool_defs():
+        if td["name"] in _corr_hidden:
+            continue
         registry.register(
             _CorrectionAdapterTool(
                 corrections,
@@ -444,6 +515,8 @@ def build_engine(settings: Settings) -> LoopEngine:
         session_store=session_store,
     )
     registry.register(SpawnSubAgentTool(subagent_runner))
+    # EVO-20260814 P1-B: 工作流编排（parallel 聚合 / pipeline 串联，对齐 Harness 多 Agent 编排）
+    registry.register(WorkflowRunTool(subagent_runner))
     return engine
 
 

@@ -581,6 +581,7 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
             # RULE-AI-00: 不再传 summarizer（压缩路径不自动 LLM 摘要，AI 主动触发）
             layer_tool_trim=getattr(self.settings, "tool_trim_enabled", False),  # EVO-20260811-7baa2737: 历史分层降级
             tool_trim_age=getattr(self.settings, "tool_trim_age", 0),  # R3: 0=自适应
+            tool_trim_threshold=getattr(self.settings, "tool_trim_threshold", 2000),  # EVO-A: 降级长度阈值
             reasoning_tail=getattr(self.settings, "reasoning_tail", 2),  # M66 思考链瘦身
         )
 

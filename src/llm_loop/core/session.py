@@ -266,6 +266,75 @@ class SessionStore:
         if not session.title and message.role == "user":
             session.title = _make_title(message.content)
         self.save(session)
+    # ── EVO-20260814: 会话瘦身（保留近期 + 早期摘要到压缩档案，可逆）──
+    def trim_session(
+        self,
+        session_id: str,
+        *,
+        keep_recent: int = 200,
+        archived_dir: str | Path | None = None,
+    ) -> dict | None:
+        """会话瘦身：保留近期 N 条完整消息 + 早期消息摘要到压缩档案.
+
+        设计原则（节 token 不损信息）:
+        - keep_recent 范围内的消息完整保留（user/assistant/system/tool 全部）
+        - 早期 user/assistant 消息：摘要保留（头 200 字符）
+        - 早期 tool 消息：截断为 1 行摘要（"工具名: 状态" + 头 100 字符）
+        - 原 session 备份到 archived_dir/<session_id>_<ts>.json（可逆）
+
+        Returns: {"before", "after", "trimmed", "archived_to", "summary_path"}
+        会话不存在 → None；已足够短 → 0 瘦身 noop.
+        """
+        if not self.exists(session_id):
+            return None
+        session = self.load(session_id)
+        original_count = len(session.messages)
+        if original_count <= keep_recent:
+            return {"before": original_count, "after": original_count, "trimmed": 0,
+                    "archived_to": None, "note": "已足够短，无需瘦身"}
+
+        # 摘要时转 dict（保留原 Message 列表以便 save 序列化）
+        msg_dicts = [asdict(m) for m in session.messages]
+        keep = list(session.messages[-keep_recent:])  # 完整保留近期（Message 对象）
+        early = list(msg_dicts[:-keep_recent])        # 早期用 dict 摘要
+
+        def _summarize(m: dict) -> str:
+            role = m.get("role", "")
+            content = (m.get("content") or "").strip()
+            ts = (m.get("metadata") or {}).get("ts", "")[:19]
+            if role == "tool":
+                tname = m.get("tool_name") or "?"
+                return f"[{ts}] tool:{tname} | {content[:100]}"
+            if role == "assistant":
+                return f"[{ts}] assistant: {content[:200]}"
+            if role == "user":
+                return f"[{ts}] user: {content[:200]}"
+            return f"[{role}] {content[:200]}"
+
+        archive_root = Path(archived_dir) if archived_dir else (self._dir / "_trimmed")
+        archive_root.mkdir(parents=True, exist_ok=True)
+        ts_slug = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+        backup_path = archive_root / f"{session_id}_{ts_slug}.json"
+        backup_path.write_text(
+            json.dumps(asdict(session), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        summary_path = archive_root / f"{session_id}_{ts_slug}_summary.jsonl"
+        with summary_path.open("w", encoding="utf-8") as f:
+            for s in [_summarize(m) for m in early]:
+                f.write(json.dumps({"ts": _now(), "content": s}, ensure_ascii=False) + "\n")
+
+        session.messages = list(keep)
+        session.updated_at = _now()
+        self.save(session)
+
+        return {
+            "before": original_count,
+            "after": len(keep),
+            "trimmed": len(early),
+            "archived_to": str(backup_path),
+            "summary_path": str(summary_path),
+        }
 
     def exists(self, session_id: str) -> bool:
         return self._path(session_id).exists()

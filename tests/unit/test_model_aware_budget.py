@@ -59,7 +59,7 @@ def _received_history_chars(fake) -> int:
 def test_small_window_model_compresses_proactively(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """256K 窗模型: 30万字符历史 → 主动压缩到 ~26万字符预算内（M54 核心）."""
     monkeypatch.setenv("KIMI_API_KEY", "k")
-    settings = _settings(tmp_path, model_providers_raw=_K256_JSON, llm_model="k3-256k")
+    settings = _settings(tmp_path, model_providers_raw=_K256_JSON, llm_model="k3-256k", history_max_chars=1_000_000)  # EVO-20260814: 显式 1M 模拟生产环境
     fake = _FakeLLMClient("k3-256k")
     pool = _make_pool(settings, fake)
     engine = _make_engine(tmp_path, pool, settings)
@@ -106,9 +106,10 @@ def test_effective_budget_math(tmp_path, monkeypatch: pytest.MonkeyPatch) -> Non
     # 256K 窗: 262144 × 2 × 0.5 = 262144
     assert engine._effective_history_budget("kimi/k3-256k") == 262144
     # 1M 窗: min(1M全局, 1000000×2×0.5=1M) = 1M 全局
-    assert engine._effective_history_budget("kimi/k3") == 1000000
+    # EVO-20260814: Settings.history_max_chars 默认 1M，测试 settings 显式不传 → 装配层走 _env_int 默认（无环境变量时 1000000）
+    assert engine._effective_history_budget("kimi/k3") == 1_000_000
     # 未知模型 → 全局预算
-    assert engine._effective_history_budget("ghost/x") == 1000000
+    assert engine._effective_history_budget("ghost/x") == 1_000_000
 
 
 def test_no_pool_zero_regression(build_test_engine) -> None:

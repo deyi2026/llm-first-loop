@@ -129,6 +129,51 @@ def run_search_archive(ctx: Any, archive: Any, args: dict, session_id_fn: Any, s
     )
 
 
+
+def run_event_stream(search_fn: Any, args: dict) -> ToolResult:
+    """event_stream: 统一事件流视图（EVO-20260814）."""
+    if search_fn is None:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content="[事件流不可用] 事实: event_stream 未装配。\n原因: 检索实现未注入。\n建议: 检查配置后重试。",
+            tool_call_id="",
+            tool_name="event_stream",
+        )
+    streams = str(args.get("streams", "all")).strip() or "all"
+    query = str(args.get("query", "")).strip()
+    limit = int(args.get("limit") or 50)
+    limit = max(1, min(limit, 200))
+    since = str(args.get("since", "")).strip()
+    try:
+        result = search_fn.event_stream(streams=streams, query=query, limit=limit, since=since)
+    except Exception as exc:  # noqa: BLE001 — 事件流读取失败如实回执
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content=f"[事件流读取失败] 事实: {exc}\n原因: 审计流读取异常。\n建议: 检查 audit_dir 后重试。",
+            tool_call_id="",
+            tool_name="event_stream",
+        )
+    if not result:
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content=f"[event_stream] 无匹配事件（streams={streams}, query='{query}'）。不伪造视图。",
+            tool_call_id="",
+            tool_name="event_stream",
+        )
+    lines: list[str] = []
+    for e in result:
+        lines.append(f"[{e.get('ts', '')}] {e.get('stream', '?')}: {str(e.get('summary', ''))[:200]}")
+    content = "[event_stream] 统一事件流 " + str(len(result)) + " 条（旧→新）:\n" + "\n".join(lines)
+    if len(result) == limit:
+        content += f"\n[已达 limit={limit} 上限] 如需更早事件可提高 limit 或加 since 过滤。"
+    return ToolResult(
+        status=ToolResultStatus.SUCCESS,
+        content=content,
+        tool_call_id="",
+        tool_name="event_stream",
+    )
+
+
 def run_search_records(ctx: Any, search_fn: Any, args: dict, session_id_fn: Any) -> ToolResult:
     """search_records: 统一检索运行记录/记忆/压缩档案（T23）."""
     if search_fn is None:

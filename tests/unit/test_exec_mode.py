@@ -5,7 +5,7 @@ blocked 全禁 / readonly 只读放行+写拦截 / allowlist 前缀白名单 / �
 """
 
 from llm_loop.config import _env_exec_mode
-from llm_loop.core.message import ToolCall, ToolResultStatus
+from llm_loop.core.message import ToolCall, ToolResult, ToolResultStatus
 from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
 from llm_loop.tools.registry import ToolRegistry
 
@@ -72,3 +72,111 @@ def test_exec_mode_default_disabled():
     reg = _reg()  # exec_mode=""
     result = _exec(reg, "echo hi")
     assert result.status == ToolResultStatus.SUCCESS
+
+
+# ── EVO-20260814: fail-closed 覆盖所有破坏性工具（修写文件工具绕过分级）──
+
+class _MockWriteTool:
+    """模拟写文件类工具（name 在破坏性集合，execute 恒 SUCCESS，不碰真实文件）."""
+
+    name = "write_file"
+    description = "mock 写工具"
+    parameters = {
+        "type": "object",
+        "properties": {"path": {"type": "string"}},
+        "required": ["path"],
+    }
+
+    def execute(self, **kwargs) -> "ToolResult":
+
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content="[mock] 写文件成功",
+            tool_call_id="",
+            tool_name=self.name,
+        )
+
+
+def _make_mock_write(name: str):
+    """按工具名生成 mock 写工具（execute 恒 SUCCESS；type() 动态类绕开类体不闭包）."""
+
+    def execute(self, **kwargs) -> "ToolResult":
+
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content=f"[mock] {self.name} 成功",
+            tool_call_id="",
+            tool_name=self.name,
+        )
+
+    cls = type(
+        name,
+        (),
+        {
+            "name": name,
+            "description": f"mock {name}",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+            "execute": execute,
+        },
+    )
+    return cls()
+
+
+def _reg2(exec_mode: str = "", allowlist: str = ""):
+    """装配含全部破坏性 mock 工具（write/delete/append/edit）的 Registry."""
+    reg = ToolRegistry(exec_mode=exec_mode, exec_allowlist=allowlist)
+    for n in ("write_file", "delete_file", "append_file", "edit_file"):
+        reg.register(_make_mock_write(n))
+    return reg
+
+
+def _write(reg, name: str = "write_file"):
+    return reg.execute(ToolCall(id="c2", name=name, arguments={"path": "/tmp/x.txt"}))
+
+
+def test_exec_readonly_blocks_write_tool():
+    """readonly: 写文件类工具被拦截（fail-closed 覆盖，修此前绕过缺口）."""
+    reg = _reg2(exec_mode="readonly")
+    result = _write(reg)
+    assert result.status == ToolResultStatus.BLOCKED
+    assert "readonly" in result.content
+    assert "write_file" in result.content
+
+
+def test_exec_blocked_blocks_write_tool():
+    """blocked: 写文件类工具被拦截（此前绕过分级可任意写文件）."""
+    reg = _reg2(exec_mode="blocked")
+    result = _write(reg)
+    assert result.status == ToolResultStatus.BLOCKED
+    assert "blocked" in result.content
+
+
+def test_exec_allowlist_tool_name():
+    """allowlist: 工具名在白名单放行、不在拦截."""
+    reg = _reg2(exec_mode="allowlist", allowlist="write_file")
+    ok = _write(reg)
+    assert ok.status == ToolResultStatus.SUCCESS  # write_file 在白名单 → 放行
+    reg2 = _reg2(exec_mode="allowlist", allowlist="ls")
+    blocked = _write(reg2)
+    assert blocked.status == ToolResultStatus.BLOCKED
+    assert "白名单" in blocked.content
+
+
+def test_exec_mode_default_allows_write_tool():
+    """默认（未启用分级）: 写文件类工具放行（零回归）."""
+    reg = _reg2()
+    result = _write(reg)
+    assert result.status == ToolResultStatus.SUCCESS
+
+
+def test_exec_readonly_blocks_all_destructive_tools():
+    """readonly: 全部破坏性工具名集合均被拦截（write/delete/append/edit）."""
+    reg = _reg2(exec_mode="readonly")
+    for name in ("write_file", "delete_file", "append_file", "edit_file"):
+        result = _write(reg, name=name)
+        assert result.status == ToolResultStatus.BLOCKED, f"{name} 应被 readonly 拦截"
+        assert "readonly" in result.content
