@@ -28,3 +28,8 @@ scripts/start_with_embedding.sh
 
 # 含飞书密钥的项目凭证文件（勿提交）
 .feishu.env
+
+# CodeArts 工具运行时配置（开源只带 specs 规格文档，其余工具链配置不公开）
+.codeartsdoer/*
+!.codeartsdoer/specs/
+!.codeartsdoer/specs/llm_first_loop/

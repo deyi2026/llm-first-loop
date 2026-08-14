@@ -667,8 +667,8 @@ class ToolRegistry:
 
 
 _FAILURE_GUIDANCE = {
-    "failure": "建议: 检查参数/路径/网络后重试，或改用其他更合适的工具（规则 RULE-AI-02/07）。",
-    "error": "建议: 工具执行异常，检查输入后重试，或换用等价工具完成任务。",
+    "failure": "建议: 检查参数/路径/网络后重试，或改用其他更合适的工具（规则 RULE-AI-02/07）。若不确定命令/环境/调用方式，先 search_records(kind=memory) 或 search_docs 查历史执行方式（EVO-20260814-3c65c11b），禁止逐个试错探测。",
+    "error": "建议: 工具执行异常，检查输入后重试，或换用等价工具完成任务。若不确定调用方式，先 search_records(kind=memory)/search_docs 查证（EVO-20260814-3c65c11b）。",
     "timeout": "建议: 工具执行超时，可重试（增大超时或换更轻量方案），或改用其他工具。",
 }
 
