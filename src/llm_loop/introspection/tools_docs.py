@@ -100,12 +100,7 @@ def run_search_docs(
             tool_name="search_docs",
         )
     if not result:
-        return ToolResult(
-            status=ToolResultStatus.SUCCESS,
-            content=f"[search_docs] 未找到匹配 '{query}' 的文档（不伪造结果）。",
-            tool_call_id="",
-            tool_name="search_docs",
-        )
+        return _no_hit_result(query, docs_search_fn)
     lines: list[str] = []
     for r in result[:6]:
         ts = r.get("ts", "")
@@ -126,6 +121,60 @@ def run_search_docs(
     return ToolResult(
         status=ToolResultStatus.SUCCESS,
         content=content,
+        tool_call_id="",
+        tool_name="search_docs",
+    )
+
+
+def _no_hit_result(query: str, docs_search_fn: Callable[..., list[dict]] | None) -> ToolResult:
+    """A4: search_docs 未命中 → 近 N 篇文档标题引导（明确标注"未命中 + 参考引导"）.
+
+    recent 通道经 `docs_search_fn.recent_docs`（可选属性，未装配时回退
+    既有"不伪造结果"文案，零回归）。recent 通道异常 → fail-open 回退既有文案。
+    """
+    fallback = f"[search_docs] 未找到匹配 '{query}' 的文档（不伪造结果）。"
+    recent_fn = getattr(docs_search_fn, "recent_docs", None)
+    if not callable(recent_fn):
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content=fallback,
+            tool_call_id="",
+            tool_name="search_docs",
+        )
+    try:
+        recent = recent_fn(limit=5) or []
+        if not isinstance(recent, list):
+            return ToolResult(
+                status=ToolResultStatus.SUCCESS,
+                content=fallback,
+                tool_call_id="",
+                tool_name="search_docs",
+            )
+    except Exception:  # noqa: BLE001 — recent 通道异常 fail-open 回退既有文案
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content=fallback,
+            tool_call_id="",
+            tool_name="search_docs",
+        )
+    recent_entries: list[dict] = [
+        r for r in recent if isinstance(r, dict)
+    ]  # A4: recent 条目防御（元素非 dict 过滤，fail-open）
+    titles = [r.get("title", "") for r in recent_entries[:5] if r.get("title")]
+    if not titles:
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content=fallback,
+            tool_call_id="",
+            tool_name="search_docs",
+        )
+    guide = "\n".join(f"- {t}" for t in titles)
+    return ToolResult(
+        status=ToolResultStatus.SUCCESS,
+        content=(
+            f"[search_docs] 未命中 '{query}'（不伪造结果）；"
+            f"docs/ 最近文档参考引导：\n{guide}"
+        ),
         tool_call_id="",
         tool_name="search_docs",
     )

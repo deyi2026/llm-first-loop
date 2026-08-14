@@ -23,6 +23,9 @@ from llm_loop.core.loop import LoopEngine
 
 logger = logging.getLogger(__name__)
 
+# G4: 长回复折叠阈值（回复长度超过则首段发摘要卡 + 完整内容全量分段推送）
+_FOLD_THRESHOLD = 2000
+
 
 @dataclass
 class FeishuMessage:
@@ -188,7 +191,7 @@ class FeishuMessageHandler:
         # 委托给 engine 内部的 _audit 闭包（如果有）；此处简化为 no-op，靠 corrections 内部审计
         return
 
-    def _run_text(self, msg: FeishuMessage, text: str) -> None:
+    def _run_text(self, msg: FeishuMessage, text: str) -> str:
         """文本引擎执行 + 回复（M46：_run_with_processing_actions 包内）."""
         sid = self._session_map.get_or_create(self._map_key(msg))
         result = self._engine.run(sid, text)
@@ -197,6 +200,14 @@ class FeishuMessageHandler:
             answer += "\n（回答被截断）"
         if result.verification_note:
             answer += f"\n[声明提示] {result.verification_note}"
+        # P2-4: 公式降级提示（飞书卡片不支持 KaTeX/LaTeX 渲染，如实告知）
+        try:
+            from llm_loop.feishu.card_utils import detect_math_formula
+
+            if detect_math_formula(answer):
+                answer += "\n（公式请于 Web 端查看）"
+        except Exception:  # noqa: BLE001 — 检测失败 fail-open
+            pass
         # M51: 回复下方标注实际生成模型（provider/model，如实透传）
         if getattr(result, "model_used", ""):
             footer = f"\n—— {result.model_used}"
@@ -205,8 +216,13 @@ class FeishuMessageHandler:
                 from llm_loop.core.loop import format_tokens
 
                 footer += f" · {format_tokens(result.tokens_in)}入/{format_tokens(result.tokens_out)}出"
+            # P2-3: footer 附带工具调用次数（无工具调用不追加）
+            n_tools = len(getattr(result, "tool_calls", None) or [])
+            if n_tools > 0:
+                footer += f" · 🔧 工具调用 {n_tools} 次"
             answer += footer
         self._reply_chunked(msg, answer)
+        return answer
 
     # ── 附件/图片（复用 M39 web/upload_handlers + vision）──
     def _handle_attachment(self, msg: FeishuMessage) -> None:
@@ -270,11 +286,19 @@ class FeishuMessageHandler:
             msg, self._run_inject, prefix, error_kind="attachment_error"
         )
 
-    def _run_inject(self, msg: FeishuMessage, prefix: str) -> None:
+    def _run_inject(self, msg: FeishuMessage, prefix: str) -> str:
         """附件注入引擎执行 + 回复（M46：_run_with_processing_actions 包内）."""
         sid = self._session_map.get_or_create(self._map_key(msg))
         result = self._engine.run(sid, prefix)
         reply = result.final_answer or "(空回答)"
+        # P2-4: 公式降级提示（飞书卡片不支持 KaTeX/LaTeX 渲染，如实告知）
+        try:
+            from llm_loop.feishu.card_utils import detect_math_formula
+
+            if detect_math_formula(reply):
+                reply += "\n（公式请于 Web 端查看）"
+        except Exception:  # noqa: BLE001 — 检测失败 fail-open
+            pass
         # M51: 回复下方标注实际生成模型
         if getattr(result, "model_used", ""):
             footer = f"\n—— {result.model_used}"
@@ -283,8 +307,13 @@ class FeishuMessageHandler:
                 from llm_loop.core.loop import format_tokens
 
                 footer += f" · {format_tokens(result.tokens_in)}入/{format_tokens(result.tokens_out)}出"
+            # P2-3: footer 附带工具调用次数（无工具调用不追加）
+            n_tools = len(getattr(result, "tool_calls", None) or [])
+            if n_tools > 0:
+                footer += f" · 🔧 工具调用 {n_tools} 次"
             reply += footer
         self._reply_chunked(msg, reply)
+        return reply
 
     def register_attachment_download(
         self, fn: Callable[[FeishuMessage], tuple[bytes | None, str]]
@@ -311,8 +340,9 @@ class FeishuMessageHandler:
                 logger.debug("feishu typing reaction add error: %s", exc)
         if self._streaming and self._lark_client is not None:
             card = self._try_start_status_card(msg)
+        answer = ""
         try:
-            fn(msg, payload)
+            answer = fn(msg, payload) or ""
         except Exception as exc:  # 失败如实反馈，不静默降级
             logger.exception("feishu message handle failed")
             self._audit(msg, error_kind, str(exc)[:200])
@@ -320,8 +350,8 @@ class FeishuMessageHandler:
         finally:
             with self._busy_lock:
                 self._busy_count -= 1
-            # 处理结束 → 状态卡定稿 + 删除 Typing reaction（best-effort）
-            self._close_status_card(card, msg)
+            # 处理结束 → 状态卡定稿（回填回复摘要）+ 删除 Typing reaction（best-effort）
+            self._close_status_card(card, msg, answer)
             if reaction_id and self._rest_client is not None:
                 try:
                     self._rest_client.remove_reaction(msg.message_id, reaction_id)
@@ -363,13 +393,19 @@ class FeishuMessageHandler:
             logger.debug("feishu status card start error: %s", exc)
             return None
 
-    def _close_status_card(self, card, msg: FeishuMessage) -> None:
-        """处理完成 → 状态卡定稿（✅ 处理完成 + 关 streaming_mode），best-effort."""
+    def _close_status_card(self, card, msg: FeishuMessage, answer: str = "") -> None:
+        """处理完成 → 状态卡定稿（回填回复摘要 + ✅ + 关 streaming_mode），best-effort.
+
+        P2-2: 透传回复摘要首行（≤80 字符）作为状态卡内容回填，
+        建立"状态卡 → 分段消息"视觉关联；answer 为空走既有无参 close 路径（零回归）。
+        """
         if card is None:
             return
         try:
-            if card.close():
-                self._audit(msg, "status_card_close", "状态卡定稿（✅ 处理完成）")
+            summary = (answer or "").strip().splitlines()[0][:80] if (answer or "").strip() else ""
+            ok = card.close(content=summary) if summary else card.close()
+            if ok:
+                self._audit(msg, "status_card_close", "状态卡定稿（摘要已回填）" if summary else "状态卡定稿（✅ 处理完成）")
             else:
                 self._audit(msg, "status_card_fallback", "定稿失败（卡保持处理中态）")
         except Exception as exc:  # noqa: BLE001 — 定稿失败不阻断主流程
@@ -377,10 +413,28 @@ class FeishuMessageHandler:
 
     # ── 长回复分段 ──
     def _reply_chunked(self, msg: FeishuMessage, text: str) -> None:
-        """长回复按 markdown 感知分段（fence 闭合重开），逐段发送（不丢失内容）."""
+        """长回复按 markdown 感知分段（fence 闭合重开），逐段发送（不丢失内容）.
+
+        G4: 回复长度 > `_FOLD_THRESHOLD` 时先发摘要卡（截断 + 折叠标注 + 引导），
+        完整内容仍全量分段推送；摘要卡失败 fail-open 回退既有全量分段路径。
+        """
         if len(text) <= self._chunk_limit:
+            if len(text) > _FOLD_THRESHOLD:
+                try:
+                    from llm_loop.feishu.card_utils import build_summary_card
+
+                    self._reply(msg, build_summary_card(text))
+                except Exception:  # noqa: BLE001 — 摘要卡失败 fail-open 走既有路径
+                    logger.debug("feishu summary card build failed, fallback")
             self._reply(msg, text)
             return
+        if len(text) > _FOLD_THRESHOLD:
+            try:
+                from llm_loop.feishu.card_utils import build_summary_card
+
+                self._reply(msg, build_summary_card(text))
+            except Exception:  # noqa: BLE001 — 摘要卡失败 fail-open 走既有路径
+                logger.debug("feishu summary card build failed, fallback")
         for part in self._chunk_markdown(text, self._chunk_limit):
             self._reply(msg, part)
 
@@ -389,19 +443,38 @@ class FeishuMessageHandler:
         """markdown 感知分段（对齐 本地既有实现 markdown_chunker 算法思路）.
 
         切点按行；代码 fence 内切段自动补闭合并在下一段开头重开（含语言标签）。
-        各段拼接（剥离 fence 修复对后）= 原回复内容，无丢失。
+        表格感知：以 `|` 开头的连续行序列视为表格块（fence 内不触发表格态），
+        表格行内不切段；当切点落在表格块中间时，从表格块起点回溯，
+        将整表（含表头）归入下一段，避免表格语法被分段劈裂。
+        各段拼接（剥离 fence/表格修复对后）= 原回复内容，无丢失。
         """
         parts: list[str] = []
         in_fence = False
+        in_table = False
+        table_start = 0  # 当前表格块在 buf 中的起点偏移（未在表格中时无效）
         buf = ""
         for line in text.splitlines(keepends=True):
-            if line.strip().startswith("```"):
+            stripped = line.strip()
+            if stripped.startswith("```"):
                 in_fence = not in_fence
+            is_table_line = (not in_fence) and stripped.startswith("|")
+            if is_table_line and not in_table:
+                in_table = True
+                table_start = len(buf)
+            elif not is_table_line:
+                in_table = False
             if buf and len(buf) + len(line) > limit:
                 if in_fence:
                     buf += "```\n"  # 闭合 fence
                     parts.append(buf)
                     buf = "```\n"  # 重开 fence
+                elif in_table:
+                    # 切点落在表格块中间：回溯到表格起点，整表（含表头）归入下一段
+                    prefix = buf[:table_start]
+                    if prefix:
+                        parts.append(prefix)
+                    buf = buf[table_start:]
+                    table_start = 0
                 else:
                     parts.append(buf)
                     buf = ""

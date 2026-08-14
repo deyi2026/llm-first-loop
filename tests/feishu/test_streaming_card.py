@@ -219,6 +219,29 @@ def test_close_without_create_false():
     assert card.close() is False
 
 
+def test_close_card_with_summary():
+    """P2-2: close(content=摘要) 更新内容含摘要、summary 截断 ≤50 字符；无参 close 行为不变."""
+    fake = _FakeLark()
+    card = StreamingCard(fake)
+    assert card.create() is True
+    assert card.bind("oc_1", "chat_id") is True
+    summary = "第一行摘要" + "长" * 60  # 首行超 50 字符，验证截断
+    assert card.close(content=summary) is True
+    up = fake.cardkit.v1.card.update_calls[0]
+    up_card = json.loads(up.request_body.card.data)
+    assert up_card["body"]["elements"][0]["content"] == summary
+    assert len(up_card["config"]["summary"]) <= 50
+    assert up_card["config"]["summary"].startswith("第一行摘要")
+    # 无参 close（content=None）→ 内容回退 ✅ 处理完成（零回归）
+    fake2 = _FakeLark()
+    card2 = StreamingCard(fake2)
+    assert card2.create() is True
+    assert card2.bind("oc_1", "chat_id") is True
+    assert card2.close() is True
+    up2 = json.loads(fake2.cardkit.v1.card.update_calls[0].request_body.card.data)
+    assert up2["body"]["elements"][0]["content"] == "✅ 处理完成"
+
+
 def test_close_settings_fail_still_returns():
     """用例 11：close 中 settings 失败 → 返回 False（不抛异常，回退分段）."""
     fake = _FakeLark(

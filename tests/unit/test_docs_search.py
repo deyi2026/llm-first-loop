@@ -303,3 +303,101 @@ class TestRunSearchDocs:
         r = run_search_docs(fn, {"query": "test"})
         assert r.status == ToolResultStatus.FAILURE
         assert "程序异常" in r.content
+
+
+# ── A4: recent_docs + search_docs 未命中引导 ──
+
+
+class TestRecentDocs:
+    """A4-T1: DocsSearcher.recent_docs 按 ts 降序返回最近 N 篇."""
+
+    def _make_docs(self, tmp_path: Path) -> Path:
+        docs = tmp_path / "docs"
+        docs.mkdir()
+        (docs / "DESIGN-alpha.md").write_text("# Alpha 设计\n\n内容", encoding="utf-8")
+        (docs / "ANALYSIS-beta.md").write_text("# Beta 分析\n\n内容", encoding="utf-8")
+        (docs / "ai_rules.md").write_text("# AI 规则\n\n内容", encoding="utf-8")
+        return docs
+
+    def test_recent_docs_recent_first(self, tmp_path: Path) -> None:
+        docs = self._make_docs(tmp_path)
+        s = DocsSearcher(docs_dir=docs)
+        recent = s.recent_docs(5)
+        assert len(recent) == 3
+        for r in recent:
+            assert "file" in r
+            assert "title" in r
+            assert "summary" in r
+            assert "doc_type" in r
+            assert "ts" in r
+        ts_list = [r["ts"] for r in recent]
+        assert ts_list == sorted(ts_list, reverse=True)
+
+    def test_recent_docs_no_dir_returns_empty(self, tmp_path: Path) -> None:
+        s = DocsSearcher(docs_dir=tmp_path / "nonexistent")
+        assert s.recent_docs(5) == []
+
+    def test_recent_docs_empty_dir_returns_empty(self, tmp_path: Path) -> None:
+        docs = tmp_path / "docs"
+        docs.mkdir()
+        s = DocsSearcher(docs_dir=docs)
+        assert s.recent_docs(5) == []
+
+    def test_recent_docs_limit_respected(self, tmp_path: Path) -> None:
+        docs = self._make_docs(tmp_path)
+        s = DocsSearcher(docs_dir=docs)
+        assert len(s.recent_docs(2)) == 2
+
+    def test_recent_docs_corrupt_file_fail_open(self, tmp_path: Path) -> None:
+        docs = tmp_path / "docs"
+        docs.mkdir()
+        (docs / "good.md").write_text("# 好文档\n\n内容", encoding="utf-8")
+        (docs / "bad.md").write_bytes(b"\xff\xfe\x00\x01")
+        s = DocsSearcher(docs_dir=docs)
+        assert len(s.recent_docs(5)) == 1
+
+
+class TestSearchDocsNoHitGuide:
+    """A4-T2: search_docs 未命中 → 近 N 篇文档标题引导；recent 通道不可用 → 回退既有文案."""
+
+    def test_no_hit_with_recent_channel(self) -> None:
+        def fn(**kw: object) -> list[dict]:
+            return []
+
+        fn.recent_docs = lambda limit=5: [  # type: ignore[attr-defined]
+            {"title": "Alpha 设计"},
+            {"title": "Beta 分析"},
+        ]
+        r = run_search_docs(fn, {"query": "不存在的词"})
+        assert r.status == ToolResultStatus.SUCCESS
+        assert "未命中" in r.content
+        assert "参考引导" in r.content
+        assert "Alpha 设计" in r.content
+        assert "Beta 分析" in r.content
+
+    def test_no_hit_recent_channel_unavailable_fallback(self) -> None:
+        r = run_search_docs(lambda **kw: [], {"query": "不存在的词"})
+        assert r.status == ToolResultStatus.SUCCESS
+        assert "未找到" in r.content
+        assert "不伪造结果" in r.content
+
+    def test_no_hit_recent_channel_exception_fallback(self) -> None:
+        def fn(**kw: object) -> list[dict]:
+            return []
+
+        def _boom(limit: int = 5) -> list:
+            raise RuntimeError("recent down")
+
+        fn.recent_docs = _boom  # type: ignore[attr-defined]
+        r = run_search_docs(fn, {"query": "不存在的词"})
+        assert r.status == ToolResultStatus.SUCCESS
+        assert "不伪造结果" in r.content
+
+    def test_no_hit_recent_channel_empty_fallback(self) -> None:
+        def fn(**kw: object) -> list[dict]:
+            return []
+
+        fn.recent_docs = lambda limit=5: []  # type: ignore[attr-defined]
+        r = run_search_docs(fn, {"query": "不存在的词"})
+        assert r.status == ToolResultStatus.SUCCESS
+        assert "不伪造结果" in r.content

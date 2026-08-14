@@ -268,6 +268,10 @@ class LLMClient:
 
         异常按类型抛出 LLMError 子类，由循环如实反馈。
         """
+        # S2/A2: 发送前协议配对自检（fail-open，违规补齐占位防 HTTP 400）
+        from llm_loop.core.history import _repair_tool_call_pairing
+
+        messages = _repair_tool_call_pairing(messages)
         it = self.chat_stream(messages, tools, timeout_s=timeout_s, model=model)
         while True:
             try:

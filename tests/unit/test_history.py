@@ -492,3 +492,59 @@ def test_build_history_messages_merges_multiple_system_messages():
     assert "快照" in out[0]["content"], f"snapshot 内容应保留: {out[0]['content'][:80]}"
     # user 应在第二位
     assert out[1]["role"] == "user"
+
+
+# ── S2/A2 协议配对自检 ──
+
+def test_validate_pairing_ok():
+    """S2: 正常序列（assistant(tool_calls) + 全量 tool 消息）返回空列表."""
+    from llm_loop.core.history import validate_tool_call_pairing
+
+    messages = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "c1"}, {"id": "c2"}]},
+        {"role": "tool", "tool_call_id": "c1", "content": "r1"},
+        {"role": "tool", "tool_call_id": "c2", "content": "r2"},
+        {"role": "assistant", "content": "done"},
+    ]
+    assert validate_tool_call_pairing(messages) == []
+
+
+def test_validate_pairing_missing_tool():
+    """S2: assistant(tool_calls) 后缺 tool 消息 → 返回违规描述."""
+    from llm_loop.core.history import validate_tool_call_pairing
+
+    messages = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "c1"}, {"id": "c2"}]},
+        {"role": "tool", "tool_call_id": "c1", "content": "r1"},
+        {"role": "assistant", "content": "done"},
+    ]
+    violations = validate_tool_call_pairing(messages)
+    assert len(violations) == 1
+    assert "缺 1 条" in violations[0]
+
+
+def test_validate_pairing_remediation():
+    """S2: 构造点检测违规 → 补齐占位 + 如实标注（fail-open，不伪造真实回执）."""
+    from llm_loop.core.history import _repair_tool_call_pairing, validate_tool_call_pairing
+
+    messages = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "c1"}, {"id": "c2"}]},
+        {"role": "tool", "tool_call_id": "c1", "content": "r1"},
+        {"role": "assistant", "content": "done"},
+    ]
+    repaired = _repair_tool_call_pairing(messages)
+    # 补齐后配对自检通过
+    assert validate_tool_call_pairing(repaired) == []
+    # 占位以 [程序异常] 如实标注，tool_call_id 沿用声明 id
+    tool_msgs = [m for m in repaired if m["role"] == "tool"]
+    assert any("[程序异常]" in m["content"] for m in tool_msgs)
+    assert tool_msgs[1]["tool_call_id"] == "c2"
+    # 正常序列零改动（原样返回）
+    ok_msgs = [
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "c1"}]},
+        {"role": "tool", "tool_call_id": "c1", "content": "r1"},
+    ]
+    assert _repair_tool_call_pairing(ok_msgs) is ok_msgs

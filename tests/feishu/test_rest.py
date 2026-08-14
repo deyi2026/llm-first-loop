@@ -351,8 +351,8 @@ def test_table_overflow_convert_retry():
     assert calls[0].request_body.msg_type == "interactive"
     assert calls[1].request_body.msg_type == "interactive"  # 转换后仍 interactive
     converted_card = json.loads(calls[1].request_body.content)
-    assert "**A | B**" in converted_card["body"]["elements"][0]["content"]  # 表格已转 bullets
-    assert "- 1；2" in converted_card["body"]["elements"][0]["content"]
+    assert "- **A | B**" in converted_card["body"]["elements"][0]["content"]  # 表格已转 bullets（表头加粗）
+    assert "  - A: 1；B: 2" in converted_card["body"]["elements"][0]["content"]  # 数据行列名映射
 
 
 def test_table_overflow_convert_fail_fallback():
@@ -548,3 +548,22 @@ def test_remove_reaction_fail_silent():
     """用例 ⑦：删除失败（非限流码）→ 不抛异常（best-effort 静默）."""
     client, _ = _reaction_rest(delete_results=[_FakeReactionResp(code=230001, msg="fail")])
     client.remove_reaction("om_1", "re_x")  # 不抛即通过
+
+
+# ── G3 错误醒目化 ──
+
+def test_send_text_error_highlight():
+    """G3: 错误回执发送内容前插 `⚠️ ` + 首行加粗；正常内容零改动."""
+    fake = _FakeLark(create_results=[_FakeCreateResp(message_id="om_err")])
+    client = _rest(fake)
+    client.send_text("oc_1", "[状态: error] 执行失败\n详细信息")
+    sent = json.loads(fake.im.v1.message.create_calls[0].request_body.content)
+    content = sent["body"]["elements"][0]["content"]
+    assert content.startswith("⚠️ **[状态: error] 执行失败**")
+    assert "详细信息" in content
+
+    fake2 = _FakeLark(create_results=[_FakeCreateResp(message_id="om_ok")])
+    client2 = _rest(fake2)
+    client2.send_text("oc_1", "正常内容\n第二行")
+    sent2 = json.loads(fake2.im.v1.message.create_calls[0].request_body.content)
+    assert sent2["body"]["elements"][0]["content"] == "正常内容\n第二行"  # 正常内容零改动
