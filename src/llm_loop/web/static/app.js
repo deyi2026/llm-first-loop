@@ -48,3 +48,5 @@ els.chatArea.addEventListener("drop", (e) => {
   for (const f of e.dataTransfer.files) uploadFile(f);
 });
 
+init();
+
