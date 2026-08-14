@@ -105,6 +105,15 @@ class FeishuRestClient:
         Raises:
             FeishuRestError: interactive 与 text 回退均失败（含两段失败 code/msg 如实信息）.
         """
+        # G3: 错误状态醒目化（⚠️ + 首行加粗；正常内容零改动；检测失败 fail-open 原样发送）
+        try:
+            from llm_loop.feishu.card_utils import detect_error_status
+
+            if detect_error_status(text):
+                first, _, rest = text.partition("\n")
+                text = f"⚠️ **{first}**" + (f"\n{rest}" if rest else "")
+        except Exception:  # noqa: BLE001 — 醒目化失败不阻断发送
+            pass
         try:
             return self._send_interactive(receive_id, text, receive_id_type, converted=False)
         except _TableOverflowError as exc:

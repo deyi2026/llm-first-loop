@@ -353,7 +353,20 @@ def build_engine(settings: Settings) -> LoopEngine:
             docs_dir=settings.docs_dir,
             semantic_retriever=semantic_retriever,
         )
-        corrections._search_docs_fn = lambda **kw: docs_searcher.search(**kw)  # noqa: SLF001
+
+        class _DocsSearcherAdapter:
+            """A4: 包装 DocsSearcher（search + recent_docs 通道，供 search_docs 未命中引导）."""
+
+            def __init__(self, searcher: DocsSearcher) -> None:
+                self._searcher = searcher
+
+            def __call__(self, **kw: Any) -> list[dict]:
+                return self._searcher.search(**kw)
+
+            def recent_docs(self, limit: int = 5) -> list[dict]:
+                return self._searcher.recent_docs(limit=limit)
+
+        corrections._search_docs_fn = _DocsSearcherAdapter(docs_searcher)  # noqa: SLF001
     except Exception:  # noqa: BLE001 — 装配失败不阻断启动
         logger.warning("docs/ 检索装配失败（fail-open），search_docs 将回执'检索不可用'", exc_info=True)
 

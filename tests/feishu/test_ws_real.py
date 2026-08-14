@@ -171,7 +171,10 @@ def test_build_bridge_wired(build_test_engine, tmp_path):
 
 
 def test_default_long_reply_single_send(build_test_engine, tmp_path):
-    """用例 19：默认 chunk_limit=50000 → 4000 字符长回复单条完整发送（不触发分段）."""
+    """用例 19：默认 chunk_limit=50000 → 4000 字符长回复完整发送（不触发分段）.
+
+    G4 折叠（>2000 字符）后行为：首条为摘要卡 + 完整内容仍单条完整发送（不触发分段）。
+    """
     long_reply = "\n".join(f"第{i}行内容abcdefgh" for i in range(250))
     assert len(long_reply) > 3000 and len(long_reply) < 50000
 
@@ -189,5 +192,6 @@ def test_default_long_reply_single_send(build_test_engine, tmp_path):
             message_id="om_l", sender_id="ou_l", chat_id="oc_l", msg_type="text", text="写长文"
         )
     )
-    assert len(replies) == 1  # 单条完整发送不触发分段
-    assert replies[0][1] == long_reply  # 内容完整无截断
+    assert len(replies) == 2  # 摘要卡 + 完整内容（G4 折叠，不触发分段）
+    assert "内容过长已折叠" in replies[0][1]  # 摘要卡含折叠标注
+    assert replies[1][1] == long_reply  # 完整内容无截断、单条发送

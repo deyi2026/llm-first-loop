@@ -610,3 +610,238 @@ def test_audit_record_has_ts(build_test_engine, tmp_path):
     # 旧记录（无 ts）读取不报错
     audit_file.write_text('{"message_id": "old", "kind": "receive", "detail": "x"}\n', encoding="utf-8")
     assert json.loads(audit_file.read_text(encoding="utf-8").splitlines()[0])["message_id"] == "old"
+
+
+# ── G1 表格感知分段（P1-1）──
+
+def test_chunk_markdown_table_kept_in_segment():
+    """G1: 长回复含表格 + 强制小 limit，表格整体保留单段、表内不切段（无段从数据行续起被误判为表头）."""
+    header = "| 列A | 列B |\n|---|---|\n"
+    rows = "\n".join(f"| 值a{i} | 值b{i} |" for i in range(10))
+    text = "开头正文\n" + header + rows
+    parts = FeishuMessageHandler._chunk_markdown(text, limit=30)
+    assert len(parts) > 1
+    # 表格块整体在一段内：凡以 | 开头的段必须从表头行开始（表格未被劈裂）
+    for part in parts:
+        if part.lstrip().startswith("|"):
+            assert part.lstrip().startswith("| 列A |")
+    # 所有表格数据行在同一段内（无表内切段）
+    table_parts = [p for p in parts if "值a0" in p]
+    assert len(table_parts) == 1
+    assert "值a9" in table_parts[0]
+    joined = "".join(parts)
+    assert joined == text
+
+
+def test_chunk_markdown_table_whole_to_next_segment():
+    """G1: 表格块整体超限 → 整表（含表头）从表头起归入下一段，表内不切段."""
+    header = "| 列A | 列B |\n|---|---|\n"
+    rows = "\n".join(f"| 值a{i} | 值b{i} |" for i in range(5))
+    text = "前缀正文前缀正文\n" + header + rows
+    parts = FeishuMessageHandler._chunk_markdown(text, limit=20)
+    # 表格块（含表头）完整出现在某一段中，且该段以表头行开头
+    table_parts = [p for p in parts if p.lstrip().startswith("|")]
+    assert len(table_parts) >= 1
+    for tp in table_parts:
+        assert tp.lstrip().startswith("| 列A |")
+        assert "值a4" in tp
+    joined = "".join(parts)
+    assert joined == text
+
+
+def test_chunk_markdown_table_join_no_loss():
+    """G1: 分段拼接 = 原文，无丢失无重复（含表格跨段场景）."""
+    body = "\n".join(f"正文行{i}" for i in range(40))
+    table = "| 列A | 列B |\n|---|---|\n" + "\n".join(f"| x{i} | y{i} |" for i in range(8))
+    text = body + "\n" + table + "\n" + body
+    parts = FeishuMessageHandler._chunk_markdown(text, limit=50)
+    assert len(parts) > 1
+    assert "".join(parts) == text
+
+
+def test_chunk_markdown_no_table_regression():
+    """G1: 无表格文本分段行为与逐字节一致（零回归）."""
+    body = "\n".join(f"第{i}行正文内容abcdefghij" for i in range(30))
+    parts = FeishuMessageHandler._chunk_markdown(body, limit=60)
+    assert "".join(parts) == body
+    assert all(len(p) <= 60 + 1 for p in parts)
+    assert len(parts) > 1
+
+
+def test_chunk_markdown_fence_across_segments():
+    """G1: fence 跨段闭合/重开标记完整，孤立 ``` 不出现于段首（既有行为保持）."""
+    code = "```python\n" + "\n".join(f"print({i})  # 代码行" for i in range(20)) + "\n```"
+    text = "开头正文开头正文\n" + code
+    parts = FeishuMessageHandler._chunk_markdown(text, limit=30)
+    assert len(parts) > 1
+    joined = "".join(parts)
+    assert joined.replace("```\n```\n", "") == text
+    assert "```python" in joined
+
+
+# ── G4 长回执折叠 ──
+
+def test_reply_chunked_fold_threshold(build_test_engine, tmp_path, monkeypatch):
+    """G4: 长回复 > 阈值 → 首段为摘要卡 + 完整内容全量分段推送；短回复走既有路径."""
+    # 多行长文本（> 2000 字符），贴近真实 LLM 回复；单行超长不切分属既有设计，不用单行构造
+    long_text = "\n".join(f"内容段内容段内容段内容段内容段内容段内容段内容段{i}" for i in range(90))
+    from llm_loop.feishu.handlers import _FOLD_THRESHOLD
+
+    assert len(long_text) > _FOLD_THRESHOLD  # 前置：确实超过阈值
+    handler, engine, fake, session_map, replies = _make_handler(
+        build_test_engine, tmp_path, [{"content": long_text}], chunk_limit=500
+    )
+    handler.handle(_msg(text="写长文"))
+
+    assert len(replies) > 2  # 摘要卡 + 至少 2 段完整内容
+    # 首段为摘要卡（含折叠标注与引导）
+    first = replies[0][1]
+    assert "内容过长已折叠" in first
+    assert "原文已存，可回复'展开全文'" in first
+    # 完整内容全量推送（无丢失，PREFERENCE_3）
+    joined_full = "".join(text for _, text, _ in replies)
+    assert joined_full.startswith(first)
+    assert joined_full[len(first):] == long_text
+
+    # 短回复走既有路径（单条，无摘要卡）
+    short_text = "简短回答"
+    handler2, _, _, _, replies2 = _make_handler(
+        build_test_engine, tmp_path, [{"content": short_text}]
+    )
+    handler2.handle(_msg(text="你好"))
+    assert replies2 == [("oc_a", short_text, "chat_id")]
+
+
+# ── P2-2 状态卡摘要回填 / P2-3 footer 工具次数 ──
+
+
+class _FakeStreamingCard:
+    """P2-2: 记录 close 调用的 StreamingCard 桩."""
+
+    def __init__(self):
+        self.close_calls: list = []
+        self._ok = True
+
+    def close(self, content=None):
+        self.close_calls.append(content)
+        return self._ok
+
+
+def test_close_status_card_summary_passthrough(build_test_engine, tmp_path):
+    """P2-2: _close_status_card 透传回复摘要首行（≤80 字符）给 card.close(content=摘要)."""
+    handler, engine, fake, session_map, replies = _make_handler(build_test_engine, tmp_path)
+    card = _FakeStreamingCard()
+    m = _msg(text="你好")
+    m.message_id = "om_p22"
+    answer = "第一行摘要内容" + "长" * 90 + "\n第二行"
+    handler._close_status_card(card, m, answer)
+
+    assert len(card.close_calls) == 1
+    assert card.close_calls[0] == answer.strip().splitlines()[0][:80]
+    assert len(card.close_calls[0]) == 80
+
+
+def test_close_status_card_no_answer_keeps_default(build_test_engine, tmp_path):
+    """P2-2: answer 为空 → 走既有无参 close()（零回归）."""
+    handler, engine, fake, session_map, replies = _make_handler(build_test_engine, tmp_path)
+    card = _FakeStreamingCard()
+    m = _msg(text="你好")
+    m.message_id = "om_p22b"
+    handler._close_status_card(card, m, "")
+
+    assert card.close_calls == [None]
+
+
+def test_close_status_card_fail_open(build_test_engine, tmp_path):
+    """P2-2: close 抛异常 → 不阻断（best-effort，仅日志）."""
+    handler, engine, fake, session_map, replies = _make_handler(build_test_engine, tmp_path)
+
+    class _BoomCard(_FakeStreamingCard):
+        def close(self, content=None):
+            raise RuntimeError("boom")
+
+    card = _BoomCard()
+    m = _msg(text="你好")
+    m.message_id = "om_p22c"
+    handler._close_status_card(card, m, "摘要")
+    assert card.close_calls == []  # 异常被吞，不影响主链路
+
+
+def test_run_text_footer_tool_count(build_test_engine, tmp_path, monkeypatch):
+    """P2-3: 有 tool_calls → footer 含 🔧 工具调用 N 次（N 与 len(tool_calls) 一致）；无工具调用不追加."""
+    from types import SimpleNamespace
+
+    from llm_loop.feishu.session_map import SessionMap
+
+    class _StubEngine:
+        session = None
+
+        def run(self, sid, text):
+            return SimpleNamespace(
+                session_id=sid,
+                final_answer="带工具回答",
+                verification_note=None,
+                rounds=1,
+                tool_calls=[{"name": "a"}, {"name": "b"}],
+                truncated=False,
+                model_used="deepseek/deepseek-v4-flash",
+            )
+
+    from llm_loop.core.session import SessionStore
+
+    ss = SessionStore(str(tmp_path / "sessions_p23"))
+    _StubEngine.session = ss
+    smap = SessionMap(ss, path=str(tmp_path / "map_p23.json"))
+    replies: list[tuple[str, str, str]] = []
+    handler = FeishuMessageHandler(
+        _StubEngine(),
+        smap,
+        lambda rid, text, rtype: replies.append((rid, text, rtype)),
+        audit_dir=str(tmp_path / "audit_p23"),
+    )
+    m = _msg(text="写个东西")
+    m.message_id = "om_p23"
+    handler.handle(m)
+
+    assert replies[0][1].startswith("带工具回答")
+    assert "🔧 工具调用 2 次" in replies[0][1]
+    assert replies[0][1].endswith("—— deepseek/deepseek-v4-flash") or "—— deepseek" in replies[0][1]
+
+
+def test_run_text_footer_no_tool_no_count(build_test_engine, tmp_path):
+    """P2-3: 无 tool_calls → footer 不追加工具行（零回归）."""
+    from types import SimpleNamespace
+
+    from llm_loop.core.session import SessionStore
+    from llm_loop.feishu.session_map import SessionMap
+
+    class _StubEngine:
+        session = None
+
+        def run(self, sid, text):
+            return SimpleNamespace(
+                session_id=sid,
+                final_answer="无工具回答",
+                verification_note=None,
+                rounds=1,
+                tool_calls=[],
+                truncated=False,
+                model_used="deepseek/deepseek-v4-flash",
+            )
+
+    ss = SessionStore(str(tmp_path / "sessions_p23b"))
+    _StubEngine.session = ss
+    smap = SessionMap(ss, path=str(tmp_path / "map_p23b.json"))
+    replies: list[tuple[str, str, str]] = []
+    handler = FeishuMessageHandler(
+        _StubEngine(),
+        smap,
+        lambda rid, text, rtype: replies.append((rid, text, rtype)),
+        audit_dir=str(tmp_path / "audit_p23b"),
+    )
+    m = _msg(text="你好")
+    m.message_id = "om_p23b"
+    handler.handle(m)
+
+    assert replies[0][1].startswith("无工具回答")
+    assert "🔧 工具调用" not in replies[0][1]

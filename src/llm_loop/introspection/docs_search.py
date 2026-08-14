@@ -180,6 +180,39 @@ class DocsSearcher:
         results.sort(key=lambda r: r.get("relevance", 0.0), reverse=True)
         return results[:limit]
 
+    def recent_docs(self, limit: int = 5) -> list[dict]:
+        """A4: 返回最近 N 篇 docs/ 文档标题引导（按 ts 降序）.
+
+        实时 glob 扫描 `docs/*.md`，按 mtime 降序返回最近 `limit` 篇
+        `{file, title, summary, doc_type, ts}`（与 `search` 返回格式兼容）。
+        docs/ 不存在或为空 → 空列表（如实）；glob/元数据提取异常 → 空列表（fail-open）。
+        """
+        limit = max(1, int(limit))
+        metas: list[DocMeta] = []
+        try:
+            if not self._docs_dir.exists():
+                return []
+            for p in sorted(self._docs_dir.glob("*.md")):
+                meta = _extract_doc_meta(p)
+                if meta is None:
+                    continue
+                metas.append(meta)
+        except Exception:  # noqa: BLE001 — 扫描异常 fail-open 返回空列表
+            return []
+        metas.sort(key=lambda m: m.ts, reverse=True)
+        return [
+            {
+                "kind": "docs",
+                "file": str(m.path),
+                "title": m.title,
+                "summary": m.summary[:_SUMMARY_MAX_CHARS],
+                "relevance": 0.0,
+                "doc_type": m.doc_type,
+                "ts": m.ts,
+            }
+            for m in metas[:limit]
+        ]
+
     def _should_use_semantic(self) -> bool:
         if self._semantic is None:
             return False

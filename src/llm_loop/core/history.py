@@ -321,7 +321,7 @@ def build_history_messages(
             reasoning_tail,
         ):
             _append_or_merge(m.to_llm_dict())
-        return out
+        return _repair_tool_call_pairing(out)
 
     # ── 超长: 从最新往回保留，最旧的先"另存提取"再精简注入（不静默丢弃）──
     # ── M40 修复（tool_calls 配对原子性）: assistant(tool_calls) 与其紧跟的 tool 响应
@@ -459,7 +459,7 @@ def build_history_messages(
         # 原实现 out.insert(1+i) 绕过 _append_or_merge → 产生多条独立 system → 400。
         for em in extras:
             _append_or_merge(em.to_llm_dict())
-    return out
+    return _repair_tool_call_pairing(out)
 
 
 def compute_breakdown(
@@ -501,3 +501,106 @@ def compute_breakdown(
         "budget": budget,
         "ratio": round(total / max(1, budget), 3) if budget > 0 else None,
     }
+
+
+def validate_tool_call_pairing(messages: list[dict]) -> list[str]:
+    """S2/A2: LLM 消息序列 tool_calls↔tool 消息配对自检（纯函数，无副作用）.
+
+    对每条 `role == "assistant"` 且含 `tool_calls` 的消息，校验其后连续
+    tool 消息数量 ≥ 声明数量（tool_calls 列表中每项按 `id`/`index` 计数）；
+    不足 → 返回违规描述列表（缺几条/缺哪轮）；空列表 = 通过。
+    遍历/结构异常 → 返回 `["配对自检异常: <原因>"]`（如实标注，不静默）。
+
+    Args:
+        messages: LLM 协议消息列表（dict，含 role/content/tool_calls/tool_call_id 等）.
+
+    Returns:
+        违规描述列表；空列表表示序列配对完整（fail-open：异常同样以列表如实返回）。
+    """
+    try:
+        violations: list[str] = []
+        n = len(messages)
+        for i, msg in enumerate(messages):
+            if not isinstance(msg, dict):
+                continue
+            if msg.get("role") != "assistant":
+                continue
+            calls = msg.get("tool_calls")
+            if not calls:
+                continue
+            declared = len(calls)
+            # 其后连续 tool 消息（含 tool_call_id）计数
+            matched = 0
+            j = i + 1
+            while j < n and messages[j].get("role") == "tool":
+                if messages[j].get("tool_call_id"):
+                    matched += 1
+                j += 1
+            if matched < declared:
+                missing = declared - matched
+                violations.append(
+                    f"第 {i} 轮 assistant(tool_calls) 声明 {declared} 个工具调用，"
+                    f"其后仅 {matched} 条 tool 回执，缺 {missing} 条"
+                )
+        return violations
+    except Exception as exc:  # noqa: BLE001 — 自检异常如实标注，不静默不阻断
+        return [f"配对自检异常: {type(exc).__name__}: {exc}"]
+
+
+def _repair_tool_call_pairing(messages: list[dict]) -> list[dict]:
+    """S2/A2: 协议配对自检 + 补齐占位（fail-open，不阻断不伪装真实回执）.
+
+    对 assistant(tool_calls) 后缺失的 tool 回执按声明顺序补齐占位消息：
+    content 为 `[程序异常] 工具回执缺失（协议配对自检）`，tool_call_id 沿用
+    assistant 声明的 id（缺失 id 时用占位 id），日志如实标注违规明细；
+    无违规 → 返回原列表（零改动）。
+
+    Args:
+        messages: LLM 协议消息列表（dict）.
+
+    Returns:
+        补齐后的消息列表（无违规时原样返回）.
+    """
+    violations = validate_tool_call_pairing(messages)
+    if not violations:
+        return messages
+    import logging
+
+    logging.getLogger(__name__).warning(
+        "tool_calls↔tool 配对自检发现违规，已补齐占位（协议配对自检）: %s",
+        "; ".join(violations),
+    )
+    out: list[dict] = []
+    n = len(messages)
+    i = 0
+    while i < n:
+        m = messages[i]
+        out.append(m)
+        if isinstance(m, dict) and m.get("role") == "assistant" and m.get("tool_calls"):
+            calls = m["tool_calls"]
+            declared = len(calls)
+            matched = 0
+            j = i + 1
+            while j < n and messages[j].get("role") == "tool":
+                if messages[j].get("tool_call_id"):
+                    matched += 1
+                j += 1
+            # 既有 tool 回执原序追加（占位补在真实回执之后）
+            for t in range(i + 1, j):
+                out.append(messages[t])
+            # 按声明顺序补齐缺失占位
+            for k in range(matched, declared):
+                declared_id = ""
+                if isinstance(calls[k], dict):
+                    declared_id = calls[k].get("id") or ""
+                out.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": declared_id or f"pairing-placeholder-{i}-{k}",
+                        "content": "[程序异常] 工具回执缺失（协议配对自检）",
+                    }
+                )
+            i = j
+            continue
+        i += 1
+    return out

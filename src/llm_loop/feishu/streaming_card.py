@@ -165,11 +165,15 @@ class StreamingCard:
         self._broken = True
         return False
 
-    def close(self) -> bool:
-        """定稿: 更新完成态 + 关闭 streaming_mode + summary. 失败返回 False（回退分段）."""
+    def close(self, content: str | None = None) -> bool:
+        """定稿: 更新完成态（`content` 提供时回填回复摘要）+ 关闭 streaming_mode + summary.
+
+        失败返回 False（回退分段）。`content=None`（默认）保持既有 `_done_text="✅ 处理完成"` 行为；
+        summary 由回填内容首行截断 ≤50 字符（对齐 `_card_json` summary 契约）。
+        """
         if not self.active:
             return False
-        ok_update = self._update_content(self._done_text)
+        ok_update = self._update_content(content if content is not None else self._done_text)
         ok_settings = self._close_streaming()
         self._broken = True  # 生命周期结束，防止后续误操作
         return ok_update and ok_settings
@@ -187,6 +191,7 @@ class StreamingCard:
         if card is None:
             return False
         self._sequence += 1
+        summary = content.strip().splitlines()[0][:50] if content.strip() else "[处理完成]"
         request = (
             UpdateCardRequest.builder()
             .card_id(self._card_id)
@@ -195,7 +200,7 @@ class StreamingCard:
                 .card(
                     Card.builder()
                     .type("card")
-                    .data(_card_json(content, streaming=False, summary="[处理完成]"))
+                    .data(_card_json(content, streaming=False, summary=summary))
                     .build()
                 )
                 .uuid(uuid.uuid4().hex)
