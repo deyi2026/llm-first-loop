@@ -34,7 +34,7 @@ jobs:
       - name: pyright
         run: pyright src --pythonpath python
       - name: pytest（非真实 LLM）
-        run: python -m pytest tests/ -q -m "not real_llm"
+        run: python -m pytest tests/ -q -m "not real_llm" -o log_cli=true -o log_cli_level=WARNING
 
   nightly-real:
     name: nightly 真实 LLM 冒烟 + 评测集
