@@ -56,3 +56,24 @@ def test_guard_status_mode():
     text = _SCRIPT.read_text(encoding="utf-8")
     assert "status)" in text
     assert "once" in text
+
+
+# ── R4/A3: 本地真实回归脚本静态断言 ──
+
+
+def test_run_real_smoke_script_exists_and_syntax():
+    """run_real_smoke.sh 存在、可执行、bash 语法正确（防回归）."""
+    import subprocess
+    from pathlib import Path as _Path
+
+    script = _Path(__file__).resolve().parents[2] / "scripts" / "run_real_smoke.sh"
+    assert script.exists()
+    assert script.stat().st_mode & 0o111  # 可执行位
+    proc = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    text = script.read_text(encoding="utf-8")
+    # 关键要素：key 从 .env 读取（不上传）、冒烟 + 评测两段
+    assert "DEEPSEEK_API_KEY" in text
+    assert ".env" in text
+    assert "run_eval.py" in text
+    assert "real_llm_smoke" in text

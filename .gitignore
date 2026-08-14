@@ -39,3 +39,6 @@ scripts/start_with_embedding.sh
 
 # 评测报告（本地运行产物，不入库——key 不上传策略下评测本地跑）
 docs/metrics/
+
+# 本地学习/经验文档（不入库、不上传 GitHub）
+docs/local/

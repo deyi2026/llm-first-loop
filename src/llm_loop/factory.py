@@ -171,18 +171,8 @@ def build_engine(settings: Settings) -> LoopEngine:
             _pipe_cfg.materialize,
             _pipe_cfg.guard,
         )
-    registry.register(ReadFileTool())
-    # M51: 四段式文件修改（read→match→diff→apply+verify，替代 sed/heredoc 盲替换）
-    registry.register(EditFileTool())
-    # EVO-d5db88d9: 按需读取工具完整 Schema（懒加载配套；零副作用可始终注册）
-    from llm_loop.tools.registry import GetToolSchemaTool
-
-    registry.register(GetToolSchemaTool(registry))
-    # M18 AA8: 工具内兜底超时读配置值（注册表另有线程级超时兜底）
-    registry.register(ExecuteCommandTool(timeout_s=settings.tool_timeout_s))
-    # EVO-20260814: 后台任务查询/终止（配合 execute_command run_in_background=true）
-    registry.register(JobOutputTool())
-    registry.register(JobKillTool())
+    # R1(2026-08-14): 基础工具注册统一走下方 `_register_basic`（RUN_MODE hidden 过滤生效；
+    # 此处不再重复注册——历史残留双注册导致重名覆盖告警 + minimal 模式过滤失效）
     # EVO-20260814 P1-A: RUN_MODE 装配（creative 放宽默认参数）
     _run_mode = getattr(settings, "run_mode", "standard")
     _hidden = _run_mode_hidden(_run_mode)

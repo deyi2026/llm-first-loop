@@ -267,6 +267,7 @@ def main(argv: list[str] | None = None) -> int:
         "evolve-verify",  # EVO-20260813-8279507f: 人工核验确认（executed → verified_at 标记）
         "export-distill",  # export_distill: 蒸馏数据集导出（薄壳只读，不装配 engine）
         "event-inventory",  # D1: 存量存储盘点（只读，不装配 engine）
+        "archive-index",  # R3: 压缩档案存量段索引重建（纯存储操作，不装配 engine）
         "event-migrate",  # D1: 存量迁移为事件日志（纯存储操作，不装配 engine）
         "event-verify",  # D1: 事件重放 vs 源逐字段校验（只读，不装配 engine）
         "event-rollback",  # D1: 从备份恢复源数据（纯存储操作，不装配 engine）
@@ -325,6 +326,8 @@ def _dispatch_command(argv: list[str]) -> int:
     # D1: event-* 纯存储/只读命令，入口特判（早于 build_engine，避免无谓 LLM 装配）
     if cmd == "event-inventory":
         return _cmd_event_inventory(argv[1:])
+    if cmd == "archive-index":
+        return _cmd_archive_index(argv[1:])
     if cmd == "event-migrate":
         return _cmd_event_migrate(argv[1:])
     if cmd == "event-verify":
@@ -555,6 +558,37 @@ def _cmd_export_distill(argv: list[str]) -> int:
 # ── D1 事件源化 CLI 子命令（event-*，纯存储/只读操作，不装配 engine）──
 
 _DEFAULT_DATA_DIR = "./data"
+
+
+def _cmd_archive_index(argv: list[str]) -> int:
+    """R3: 压缩档案存量段 sidecar 索引重建（幂等；不装配 engine）.
+
+    用法: llm_loop archive-index [--data-dir DIR]
+    为 archives/ 下全部段文件（含存量无索引段）重建 .idx，检索从全文扫描提速到索引路径。
+    """
+    from llm_loop.memory.archive import ArchiveStore
+
+    parser = argparse.ArgumentParser(
+        prog="llm_loop archive-index",
+        description="压缩档案存量段索引重建（幂等，可重复执行）",
+    )
+    parser.add_argument("--data-dir", default=_DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
+    args = parser.parse_args(argv)
+
+    try:
+        store = ArchiveStore(
+            Path(args.data_dir) / "archives",
+            segment_bytes=getattr(load_settings(), "archive_segment_bytes", 0),
+        )
+        report = store.rebuild_all_indexes()
+    except Exception as exc:  # noqa: BLE001 — 重建异常如实反馈
+        print(f"❌ 索引重建失败（{type(exc).__name__}: {exc}）", file=sys.stderr)
+        return 1
+    print(
+        f"✅ 档案索引重建完成: {report['segments']} 段 / {report['entries']} 条目"
+        + (f"（{report['failed']} 段失败）" if report["failed"] else "")
+    )
+    return 0
 
 
 def _cmd_event_inventory(argv: list[str]) -> int:
