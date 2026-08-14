@@ -1,4 +1,4 @@
-"""web_fetch 分页续读测试（既有实现 read_preview 借鉴）.
+"""web_fetch 分页续读测试.
 
 验证:
 - start=0 默认整段截断 + 续读提示
@@ -95,7 +95,7 @@ def test_count_defaults_to_max_chars():
     assert r2.status == "success"
 
 
-# ── 单例感知（既有实现 单例 Browser 借鉴: 短时重复抓取提示复用）──
+# ── 单例感知（短时重复抓取提示复用）──
 
 def _reset_history():
     import llm_loop.tools.builtin.web_fetch as wf

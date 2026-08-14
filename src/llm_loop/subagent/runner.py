@@ -1,4 +1,4 @@
-"""SubAgentRunner：递归子代理执行器（design docs/DESIGN-20260812-recursive-subagent.md）.
+"""SubAgentRunner：递归子代理执行器（设计见本地开发文档）.
 
 核心: 独立 session（隔离上下文）+ 迷你 LLM 循环（受限工具 schema）+ 真实执行（复用 registry）+
 深度/轮数预算 + 工具子集边界。全部如实回执（拒绝/截断/失败显式标注）。

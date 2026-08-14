@@ -6,7 +6,6 @@
 - fail-soft: JSON 解析失败 → 回退 L0 合成 + degraded=True + degraded_reason 字段（如实标注, 不崩）
 - resolve 支持 "provider/model" 全限定 + 裸模型名唯一匹配; 歧义/未知抛 ValueError 列候选
 
-参考: docs/model_switch_config_design.md §5.1/§5.2/§5.5
 """
 
 from __future__ import annotations
