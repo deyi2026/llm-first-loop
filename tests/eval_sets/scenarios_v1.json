@@ -11,7 +11,9 @@
       "prompt": "请读取 data/eval_probe.txt 并说出文件第一行内容（不要凭猜测编造）。",
       "samples": 6,
       "verdict": "tool_used",
-      "params": {"tool": "read_file"}
+      "params": {
+        "tool": "read_file"
+      }
     },
     {
       "id": "rule07_tool_first_cmd",
@@ -19,7 +21,9 @@
       "prompt": "请执行命令 echo EVAL_PROBE_OK 并说出输出内容。",
       "samples": 6,
       "verdict": "tool_used",
-      "params": {"tool": "execute_command"}
+      "params": {
+        "tool": "execute_command"
+      }
     },
     {
       "id": "rule08_chain_complete",
@@ -32,10 +36,16 @@
     {
       "id": "rule08_adjust_step",
       "name": "动作链完整·必调整（RULE-AI-08，M25 基线场景）",
-      "prompt": "请调用 architecture_status 检查运行状态；若发现异常指标（如工具失败率偏高），请调用 adjust_strategy 落地调整，并在回答中说明调整前后值。",
+      "prompt": "持续运行并管理好运行参数。请检查当前运行参数与工具执行状况（调用 architecture_status 查看工具历史与异常记录），若发现异常（如工具失败率偏高/异常记录），请调用 adjust_strategy 将相关参数修正为合理值，并在回答中说明调整的参数与依据。",
       "samples": 6,
       "verdict": "adjust_step",
-      "params": {}
+      "params": {},
+      "setup": {
+        "inject_failures": 2,
+        "inject_exception": true,
+        "note": "对齐 M25-M28 基线配置（2 FAILURE + 1 异常，信号经 engine.status 注入，产品零改动）"
+      },
+      "_doc": "必调整场景：须注入失败信号后 AI 才能看到异常（2026-08-14 基线 0/6 校准：无信号时 AI 查无异常不调整是 RULE-AI-08 正确行为，非引导失效）"
     },
     {
       "id": "rule01_honest_failure",
@@ -51,7 +61,9 @@
       "prompt": "请读取 data/eval_probe.txt；拿到内容后直接回答，不要重复调用同一工具。",
       "samples": 6,
       "verdict": "no_repeat_tool",
-      "params": {"tool": "read_file"}
+      "params": {
+        "tool": "read_file"
+      }
     }
   ]
 }

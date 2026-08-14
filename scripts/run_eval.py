@@ -59,10 +59,12 @@ def _settings(tmp_path, key: str):
     )
 
 
-def run_one_sample(prompt: str, workdir: Path, key: str) -> dict:
+def run_one_sample(prompt: str, workdir: Path, key: str, setup: dict | None = None) -> dict:
     """单样本真实执行：engine.run → (trace, answer)。
 
     会话/数据目录全部隔离到临时目录（M64 防污染真实 data/ 的独立实现）。
+    setup（场景可选）: 运行前向 engine.status 注入失败信号（对齐 M25-M28 必调整基线配置，
+    仅测试基建直调 status 公共方法，产品零改动）。
     """
     import tempfile
 
@@ -70,6 +72,8 @@ def run_one_sample(prompt: str, workdir: Path, key: str) -> dict:
 
     tmp = Path(tempfile.mkdtemp(prefix="eval-run-", dir=str(workdir)))
     engine = build_engine(_settings(tmp, key))  # type: ignore[arg-type]
+    if setup:
+        _apply_setup(engine, setup)
     sid = engine.session.create()
     result = engine.run(sid, prompt)
     trace = [
@@ -85,7 +89,38 @@ def run_one_sample(prompt: str, workdir: Path, key: str) -> dict:
     }
 
 
-def run_dry_sample(prompt: str, workdir: Path, key: str) -> dict:
+def _apply_setup(engine, setup: dict) -> None:
+    """场景 setup：向 engine.status 注入失败信号（对齐 M28 基线：2 FAILURE + 1 异常）.
+
+    仅测试基建直调 status 公共方法（record_tool_history/record_exception），产品零改动。
+    注入失败 fail-open（status 未装配/异常时跳过，样本照常运行）。
+    """
+    try:
+        from llm_loop.core.message import ToolResultStatus
+        from llm_loop.introspection.status import ToolHistoryItem
+
+        status = getattr(engine, "status", None)
+        if status is None:
+            return
+        n_fail = int(setup.get("inject_failures", 0) or 0)
+        for i in range(n_fail):
+            status.record_tool_history(
+                ToolHistoryItem(
+                    name="read_file",
+                    arguments={"path": f"/no/such/eval_{i}"},
+                    status=ToolResultStatus.FAILURE,
+                    summary=f"[文件不存在] /no/such/eval_{i} 不存在（评测预置失败信号）",
+                )
+            )
+        if setup.get("inject_exception"):
+            status.record_exception(
+                "action.tool_loop", FileNotFoundError("/no/such/eval 预置异常信号")
+            )
+    except Exception:  # noqa: BLE001 — 注入失败 fail-open
+        pass
+
+
+def run_dry_sample(prompt: str, workdir: Path, key: str, setup: dict | None = None) -> dict:
     """dry 模式：固定 fixture 轨迹验证管道（零 LLM；trace 含自查+调整，answer 提及工具名）."""
     return {
         "trace": [
@@ -113,9 +148,10 @@ def evaluate(scenarios: dict, *, dry: bool, samples_override: int | None, workdi
     results: list[dict] = []
     for sc in scenarios["scenarios"]:
         n = samples_override if samples_override is not None else int(sc.get("samples", 6))
+        setup = sc.get("setup")
         per_scenario: list[dict] = []
         for i in range(n):
-            sample = runner(sc["prompt"], workdir, key)
+            sample = runner(sc["prompt"], workdir, key, setup)
             verdict = run_verdict(sc["verdict"], sample["trace"], sample["answer"], sc.get("params"))
             per_scenario.append(
                 {
@@ -183,6 +219,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--dry", action="store_true", help="dry 模式：fixture 轨迹验证管道（零 LLM）")
     args = parser.parse_args(argv)
+
+    # M63 对齐: 与 CLI/Web/飞书一致从项目 .env 加载（环境变量优先），
+    # 真实模式无需手动 export key；--dry 不受影响（不读 key）
+    from llm_loop.config import load_env_file
+
+    load_env_file()
 
     try:
         scenarios = load_scenarios(args.scenarios)
