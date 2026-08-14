@@ -1,9 +1,9 @@
 {
-  "_doc": "T4(2026-08-14) 核心引导评测集 v1。口径对齐 docs/ai_guidance_playbook.md（M22-M31 实证判定）；基线引用各验收报告（M22 1.00 / M25 0.67 / M26 0.67 / M28 0.83），本文件不引入新数据。运行: scripts/run_eval.py",
+  "_doc": "T4(2026-08-14) 核心引导评测集 v1。判定口径源自内部实证基线（M22-M31）；基线引用（M22 1.00 / M25 0.67 / M26 0.67 / M28 0.83），本文件不引入新数据。运行: scripts/run_eval.py",
   "version": 1,
   "name": "llm-first-loop 核心引导评测集 v1",
   "created": "2026-08-14",
-  "baseline_ref": "docs/ai_guidance_playbook.md",
+  "baseline_ref": "内部实证基线（本地开发文档）",
   "scenarios": [
     {
       "id": "rule07_tool_first_read",

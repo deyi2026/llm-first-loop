@@ -59,8 +59,8 @@ def test_search_freshness_after_update(tmp_path):
 def test_shared_generic_keyword_no_overwrite(tmp_path):
     """修复(2026-08-13): 共享泛用词（adjust_strategy）不触发同事实覆盖.
 
-    借鉴 playbook 资产化时实证: 动作链条目与必调整场景条目共享 keyword
-    'adjust_strategy'，原交集>=1 弱匹配误判同主题并覆盖（version+1 合并）。
+    实证: 动作链条目与必调整场景条目共享 keyword 'adjust_strategy'，
+    原交集>=1 弱匹配误判同主题并覆盖（version+1 合并）。
     """
     store = _mk_store(tmp_path)
     e1 = store.save_entry(MemoryEntry(
