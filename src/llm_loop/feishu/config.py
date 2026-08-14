@@ -1,7 +1,7 @@
 """飞书桥配置读取（M42，薄壳适配器）.
 
 FEISHU_APP_ID / FEISHU_APP_SECRET / FEISHU_WS_ENABLED env 读取（借鉴 本地既有实现 配置面）。
-M46：新增 本地既有实现_FEISHU_TYPING_ACK / 本地既有实现_FEISHU_STREAMING 开关（对齐 本地既有实现 命名）。
+M46：新增 FEISHU_TYPING_ACK / FEISHU_STREAMING 开关（对齐 本地既有实现 命名）。
 密钥仅 env 读取，前端/日志零字面量；缺失如实报错。
 """
 
@@ -20,8 +20,8 @@ class FeishuConfig:
     ws_enabled: bool = True
     session_map_path: str | None = None
     chunk_limit: int = 50000
-    typing_ack: bool = True  # M46：Typing reaction 回执（对齐 本地既有实现_FEISHU_TYPING_ACK）
-    streaming: bool = True  # M46：流式状态卡（对齐 本地既有实现_FEISHU_STREAMING）
+    typing_ack: bool = True  # M46：Typing reaction 回执（对齐 FEISHU_TYPING_ACK）
+    streaming: bool = True  # M46：流式状态卡（对齐 FEISHU_STREAMING）
     owner_open_id: str = ""  # 跨端共享：owner 私聊与 Web 共享同一会话（空=不启用，各私聊独立）
 
     @property
@@ -51,8 +51,8 @@ def load_feishu_config() -> FeishuConfig:
         or f"{os.environ.get('DATA_DIR', './data')}/feishu_session_map.json"
     )
     chunk_limit = _env_int("FEISHU_CHUNK_LIMIT", 50000)
-    typing_ack = _env_flag("本地既有实现_FEISHU_TYPING_ACK", True)
-    streaming = _env_flag("本地既有实现_FEISHU_STREAMING", True)
+    typing_ack = _env_flag("FEISHU_TYPING_ACK", True)
+    streaming = _env_flag("FEISHU_STREAMING", True)
     owner_open_id = os.environ.get("FEISHU_OWNER_OPEN_ID", "").strip()
     return FeishuConfig(
         app_id=app_id,

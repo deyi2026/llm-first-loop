@@ -534,7 +534,7 @@ def test_typing_ack_exception_still_removes(build_test_engine, tmp_path):
 
 
 def test_typing_ack_switch_off(build_test_engine, tmp_path):
-    """用例 M46-⑧：本地既有实现_FEISHU_TYPING_ACK=0 → 零 reaction 调用（行为与 M45 一致）."""
+    """用例 M46-⑧：FEISHU_TYPING_ACK=0 → 零 reaction 调用（行为与 M45 一致）."""
     handler, fake, reaction, card, replies = _processing_handler(
         build_test_engine, tmp_path, typing_ack=False
     )
@@ -570,7 +570,7 @@ def test_status_card_fail_fallback(build_test_engine, tmp_path):
 
 
 def test_streaming_switch_off(build_test_engine, tmp_path):
-    """用例 M46-⑩b：本地既有实现_FEISHU_STREAMING=0 → 零状态卡调用（行为与 M45 一致）."""
+    """用例 M46-⑩b：FEISHU_STREAMING=0 → 零状态卡调用（行为与 M45 一致）."""
     handler, fake, reaction, card, replies = _processing_handler(
         build_test_engine, tmp_path, streaming=False
     )

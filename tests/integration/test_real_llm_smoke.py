@@ -462,7 +462,7 @@ def test_real_llm_v4_thinking_comparison(tmp_path):
     fixture_dir = tmp_path / "exec_fixtures"
     fixture_dir.mkdir(parents=True, exist_ok=True)
     (fixture_dir / "exec_task_01.txt").write_text(
-        "本地既有实现-M21-EXEC-FIXTURE-7F3C 量子环形加速器冷却液阈值为 128.5 升，输出功率 372 兆瓦。",
+        "LLMFIRST-M21-EXEC-FIXTURE-7F3C 量子环形加速器冷却液阈值为 128.5 升，输出功率 372 兆瓦。",
         encoding="utf-8",
     )
     prompt = f"请读取 {fixture_dir}/exec_task_01.txt 文件的内容，并告诉我它写了什么。"

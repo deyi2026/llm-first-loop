@@ -87,7 +87,5 @@ def test_spec_design_tasks_exist():
 def test_spec_dir_points_to_project():
     """P1-1: `_SPEC_DIR` 指向本项目 `.codeartsdoer/specs/llm_first_loop` 且目录存在."""
     assert _SPEC_DIR.is_dir(), f"目录不存在: {_SPEC_DIR}"
-    # 不再指向外部用户目录（消除路径漂移）
-    assert "本地既有实现" not in str(_SPEC_DIR)
-    # 目录确实位于本项目根下
+    # 目录确实位于本项目根下（开源脱敏：不引用任何外部个人路径）
     assert str(_SPEC_DIR).startswith(str(_ROOT))

@@ -1,7 +1,7 @@
 """飞书消息处理（M42，薄壳适配器）.
 
 文本 → 会话映射 → LoopEngine.run → 回复原会话；长回复 markdown 分段。
-M46：挂钩 Typing reaction 回执（本地既有实现_FEISHU_TYPING_ACK）+ 流式状态卡（本地既有实现_FEISHU_STREAMING），
+M46：挂钩 Typing reaction 回执（FEISHU_TYPING_ACK）+ 流式状态卡（FEISHU_STREAMING），
 对齐 本地既有实现 ws_bridge/streaming_card 算法思路；失败 fail-open 回退既有路径。
 附件/图片复用 M39 web/upload_handlers + vision（不复制不重写）；失败如实 fail-open。
 审计落盘 data/audit/feishu_audit.jsonl（fail-open）。
@@ -71,8 +71,8 @@ class FeishuMessageHandler:
         chunk_limit: int = 3500,
         rest_client: Any | None = None,  # FeishuRestClient（M46：Typing reaction + 状态卡发送）
         lark_client: lark_oapi.Client | None = None,  # M46：状态卡 cardkit
-        typing_ack: bool = True,  # M46：本地既有实现_FEISHU_TYPING_ACK
-        streaming: bool = True,  # M46：本地既有实现_FEISHU_STREAMING
+        typing_ack: bool = True,  # M46：FEISHU_TYPING_ACK
+        streaming: bool = True,  # M46：FEISHU_STREAMING
     ) -> None:
         self._engine = engine
         self._session_map = session_map
