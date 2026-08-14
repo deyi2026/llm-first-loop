@@ -35,6 +35,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="M44 飞书全链路 SDK 化冒烟验证")
     parser.add_argument("--chat-id", default="", help="发送测试消息的目标会话 chat_id（真实值）")
     parser.add_argument("--ws-wait-s", type=float, default=6.0, help="WS 长连接监听秒数")
+    parser.add_argument(
+        "--render-matrix", action="store_true", help="F5: 发送渲染支持矩阵样本（对照 docs/feishu_render_matrix.md 人工确认）"
+    )
     args = parser.parse_args()
 
     config = load_feishu_config()
@@ -105,6 +108,9 @@ def main() -> int:
             print("     内容含：标题/加粗/行内代码/代码块/列表/表格——请在飞书桌面端+手机端确认 markdown 渲染")
         except Exception as exc:  # noqa: BLE001 — 如实记录
             _log_fail("发送 md 测试消息（interactive 卡片）", f"{type(exc).__name__}: {exc}")
+
+        if args.render_matrix:
+            _send_render_matrix(rest, args.chat_id)
     else:
         print("  ⏳ 未提供 --chat-id，跳过发送测试消息（用真实 chat_id 发送 md 内容复验渲染）")
 
@@ -115,3 +121,26 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def _send_render_matrix(rest, chat_id: str) -> None:
+    """F5: 发送渲染支持矩阵样本（对照 docs/feishu_render_matrix.md 逐项人工确认）.
+
+    每项一条消息（编号前缀便于飞书端对照），失败如实记录不中断。
+    """
+    print("  📋 渲染支持矩阵样本发送（逐项确认后更新 docs/feishu_render_matrix.md）")
+    samples = [
+        ("01-粗体", "**粗体文本** 与 普通文本"),
+        ("02-斜体", "*斜体文本* 与 ~~删除线文本~~"),
+        ("03-行内代码", "行内代码 `code_here` 与链接 [项目主页](https://github.com/deyi2026/llm-first-loop)"),
+        ("04-有序列表", "有序列表:\n1. 第一项\n2. 第二项\n3. 第三项"),
+        ("05-任务列表", "任务列表:\n- [x] 已完成项\n- [ ] 未完成项"),
+        ("06-引用块", "> 引用块文本\n\n---\n水平线之上为引用"),
+        ("07-图片", "图片语法测试: ![alt](https://example.com/nonexistent.png)（应显示占位或链接）"),
+    ]
+    for label, content in samples:
+        try:
+            mid = rest.send_text(chat_id, f"**[矩阵-{label}]**\n{content}")
+            _log_ok(f"发送 {label}", f"message_id={mid}")
+        except Exception as exc:  # noqa: BLE001 — 如实记录
+            _log_fail(f"发送 {label}", f"{type(exc).__name__}: {exc}")

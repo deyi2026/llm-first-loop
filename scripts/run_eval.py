@@ -86,6 +86,9 @@ def run_one_sample(prompt: str, workdir: Path, key: str, setup: dict | None = No
         "model_used": result.model_used,
         "rounds": result.rounds,
         "truncated": result.truncated,
+        # A2(2026-08-14): token 用量（prompt 开销指标；0=provider 未提供）
+        "tokens_in": result.tokens_in,
+        "tokens_out": result.tokens_out,
     }
 
 
@@ -132,6 +135,8 @@ def run_dry_sample(prompt: str, workdir: Path, key: str, setup: dict | None = No
         "model_used": "dry-fixture",
         "rounds": 3,
         "truncated": False,
+        "tokens_in": 0,
+        "tokens_out": 0,
     }
 
 
@@ -162,10 +167,21 @@ def evaluate(scenarios: dict, *, dry: bool, samples_override: int | None, workdi
                     "model_used": sample["model_used"],
                     "rounds": sample["rounds"],
                     "truncated": sample["truncated"],
+                    "tokens_in": sample.get("tokens_in", 0),
+                    "tokens_out": sample.get("tokens_out", 0),
                 }
             )
         k = sum(1 for s in per_scenario if s["verdict"])
         lo, hi = wilson_ci(k, n)
+        # A2: 场景级 token 开销统计（provider 未提供用量时如实 0）
+        _toks_in = [s["tokens_in"] for s in per_scenario]
+        _toks_out = [s["tokens_out"] for s in per_scenario]
+        _toks_total = [a + b for a, b in zip(_toks_in, _toks_out, strict=False)]
+        tokens_stats = {
+            "total_in": sum(_toks_in),
+            "total_out": sum(_toks_out),
+            "avg_per_sample": round(sum(_toks_total) / n, 1) if n else 0,
+        }
         results.append(
             {
                 "id": sc["id"],
@@ -173,6 +189,7 @@ def evaluate(scenarios: dict, *, dry: bool, samples_override: int | None, workdi
                 "verdict": sc["verdict"],
                 "samples": n,
                 "passed": k,
+                "tokens": tokens_stats,
                 "rate": k / n if n else 0.0,
                 "ci": [round(lo, 3), round(hi, 3)],
                 "samples_detail": per_scenario,
@@ -190,13 +207,14 @@ def render_markdown(scenarios: dict, eval_out: dict) -> str:
         f"> 生成: {datetime.now(UTC).isoformat()}",
         f"> 基线引用: {scenarios.get('baseline_ref', '')}（各验收报告为数据唯一出处）",
         "",
-        "| 场景 | 判定 | 通过/样本 | 率 | Wilson 95% CI |",
-        "|:---|:---|:---|:---|:---|",
+        "| 场景 | 判定 | 通过/样本 | 率 | Wilson 95% CI | 平均 token/样本 |",
+        "|:---|:---|:---|:---|:---|:---|",
     ]
     for r in eval_out["results"]:
         lines.append(
             f"| {r['name']} | {r['verdict']} | {r['passed']}/{r['samples']} "
-            f"| {r['rate']:.2f} | [{r['ci'][0]:.3f}, {r['ci'][1]:.3f}] |"
+            f"| {r['rate']:.2f} | [{r['ci'][0]:.3f}, {r['ci'][1]:.3f}] "
+            f"| {r.get('tokens', {}).get('avg_per_sample', 0):.0f} |"
         )
     lines.append("")
     lines.append("> 纪律：样本不足如实标注；CI 区间重叠即不宣称统计显著；负结果同等呈现。")

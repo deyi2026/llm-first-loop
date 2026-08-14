@@ -176,3 +176,64 @@ def test_index_does_not_break_segment_enumeration(tmp_path):
     _mk(store, _SID, "内容1")
     _mk(store, _SID, "内容2")
     assert all(not s.name.endswith(".idx") for s in store._segment_paths(_SID))
+
+
+# ── R3: 存量段索引重建（archive-index）──
+
+
+def test_rebuild_segment_index(tmp_path):
+    """无索引存量段 → 重建 .idx（rec 格式一致，偏移正确）."""
+    from llm_loop.memory.archive import ArchiveStore
+
+    store = ArchiveStore(tmp_path, segment_bytes=0)
+    _mk(store, _SID, "存量内容 alpha")
+    _mk(store, _SID, "存量内容 beta")
+    seg = store._dir / f"{_SID}.jsonl"
+    idx = Path(str(seg) + ".idx")
+    idx.unlink()  # 模拟存量段（无索引）
+    n = store.rebuild_segment_index(seg)
+    assert n == 2
+    recs = [
+        json.loads(raw_line)
+        for raw_line in idx.read_text(encoding="utf-8").splitlines()
+        if raw_line.strip()
+    ]
+    assert [r["content_head"] for r in recs] == ["存量内容 alpha", "存量内容 beta"]
+    assert recs[0]["offset"] == 0
+    assert recs[1]["offset"] > recs[0]["offset"]
+    # 重建后检索走索引路径（快速通道命中）
+    hits = store.search(_SID, "beta", limit=10)
+    assert len(hits) == 1 and "beta" in hits[0]["content_preview"]
+
+
+def test_rebuild_idempotent_and_corrupt_skip(tmp_path):
+    """重建幂等（重复执行条目数一致）+ 损坏行跳过（fail-open）."""
+    from llm_loop.memory.archive import ArchiveStore
+
+    store = ArchiveStore(tmp_path, segment_bytes=0)
+    _mk(store, _SID, "内容一")
+    seg = store._dir / f"{_SID}.jsonl"
+    with seg.open("a", encoding="utf-8") as f:
+        f.write("{broken json\n")
+    idx = Path(str(seg) + ".idx")
+    assert store.rebuild_segment_index(seg) == 1  # 损坏行跳过
+    assert store.rebuild_segment_index(seg) == 1  # 幂等
+    recs = [
+        raw_line
+        for raw_line in idx.read_text(encoding="utf-8").splitlines()
+        if raw_line.strip()
+    ]
+    assert len(recs) == 1
+
+
+def test_rebuild_all_indexes(tmp_path):
+    """全量重建（含分片段）统计正确."""
+    from llm_loop.memory.archive import ArchiveStore
+
+    store = ArchiveStore(tmp_path, segment_bytes=100000)
+    _mk(store, _SID, "内容x")
+    _mk(store, "bbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "内容y")
+    report = store.rebuild_all_indexes()
+    assert report["segments"] == 2
+    assert report["entries"] == 2
+    assert report["failed"] == 0
