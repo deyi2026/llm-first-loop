@@ -1,14 +1,21 @@
 """T47: 文档同步校验（FR-AUD-DOC-08）.
 
 spec/design/tasks 不含已废弃措辞（M10/M11 移除项）；README 含必备关键词。
+
+开源说明（2026-08-14）: `.codeartsdoer/specs/` 为本地开发过程文档（CodeArts 工作流），
+开源仓库不含——三件套校验在 specs 存在时（本地开发环境）生效，缺失时（公开仓库/CI）跳过。
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 _ROOT = Path(__file__).resolve().parents[2]
 _SPEC_DIR = _ROOT / ".codeartsdoer" / "specs" / "llm_first_loop"
+
+_SPECS_AVAILABLE = _SPEC_DIR.is_dir()
 
 # 已废弃措辞（M10/M11 移除，正文不得再出现——M11 审计章节的历史引用除外）
 _DEPRECATED_PHRASES = [
@@ -32,6 +39,7 @@ def _read(path: str) -> str:
     return (_ROOT / path).read_text(encoding="utf-8")
 
 
+@pytest.mark.skipif(not _SPECS_AVAILABLE, reason="specs 为本地开发文档，开源仓库不含")
 def test_docs_no_deprecated_phrases():
     """spec/design/tasks 正文不含已废弃措辞（M11 章节历史引用豁免）."""
     for fname, m11_line in _M11_START.items():
@@ -76,6 +84,7 @@ def test_readme_has_no_clear_state():
     assert "clear_state" not in readme
 
 
+@pytest.mark.skipif(not _SPECS_AVAILABLE, reason="specs 为本地开发文档，开源仓库不含")
 def test_spec_design_tasks_exist():
     """P1-1: `.codeartsdoer/specs/llm_first_loop/` 下三文档均存在且非空."""
     for fname in ("spec.md", "design.md", "tasks.md"):
@@ -84,6 +93,7 @@ def test_spec_design_tasks_exist():
         assert path.stat().st_size > 0, f"文档为空: {path}"
 
 
+@pytest.mark.skipif(not _SPECS_AVAILABLE, reason="specs 为本地开发文档，开源仓库不含")
 def test_spec_dir_points_to_project():
     """P1-1: `_SPEC_DIR` 指向本项目 `.codeartsdoer/specs/llm_first_loop` 且目录存在."""
     assert _SPEC_DIR.is_dir(), f"目录不存在: {_SPEC_DIR}"

@@ -33,3 +33,6 @@ scripts/start_with_embedding.sh
 .codeartsdoer/*
 !.codeartsdoer/specs/
 !.codeartsdoer/specs/llm_first_loop/
+
+# CodeArts 开发工作流（specs 等全部本地保留，不公开）
+.codeartsdoer/

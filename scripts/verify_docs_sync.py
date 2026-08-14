@@ -33,13 +33,16 @@ def _read(path: Path) -> str:
 def main() -> int:
     errors: list[str] = []
 
-    # 1. 废弃措辞检查
-    for fname, m11_line in _M11_START.items():
-        body = _read(SPEC_DIR / fname).splitlines()[: m11_line - 1]
-        for i, line in enumerate(body, 1):
-            for phrase in _DEPRECATED_PHRASES:
-                if phrase in line and "已移除" not in line and "不再" not in line and "移交" not in line:
-                    errors.append(f"{fname}:{i} 含废弃措辞 '{phrase}'")
+    # 1. 废弃措辞检查（specs 为本地开发文档；开源仓库不含时跳过该步）
+    if SPEC_DIR.is_dir():
+        for fname, m11_line in _M11_START.items():
+            body = _read(SPEC_DIR / fname).splitlines()[: m11_line - 1]
+            for i, line in enumerate(body, 1):
+                for phrase in _DEPRECATED_PHRASES:
+                    if phrase in line and "已移除" not in line and "不再" not in line and "移交" not in line:
+                        errors.append(f"{fname}:{i} 含废弃措辞 '{phrase}'")
+    else:
+        print("（specs 为本地开发文档，仓库不含——跳过废弃措辞检查）")
 
     # 2. README 关键词
     readme = _read(ROOT / "README.md")
