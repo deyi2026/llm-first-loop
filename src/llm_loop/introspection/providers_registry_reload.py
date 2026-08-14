@@ -5,7 +5,6 @@
 - 失败语义: 保持旧 registry + 中文回执如实标注 (DFX-REL-08 fail-open)
 - install_refresh_executor: 注入 refresh_config 工具的 executor (供 build_engine 复用)
 
-参考: docs/model_switch_config_design.md §5.6
 """
 
 from __future__ import annotations

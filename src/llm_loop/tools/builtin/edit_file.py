@@ -7,7 +7,8 @@ M51（能力盘点短板改进）: 替代 execute_command + sed/heredoc 盲替�
   3. diff    生成统一 diff 预览（回执可见，dry_run=true 时仅预览不写入）
   4. apply+verify  临时文件 + os.replace 原子写入，写后复读校验（失败如实报）
 
-EVO-20260814-aab7eb0b（借鉴 coding-tools-mcp patching.py, Apache 2.0）:
+EVO-20260814-aab7eb0b（思路借鉴 coding-tools-mcp patching.py，Apache License 2.0
+https://github.com/coding-tools-mcp，本实现为独立改编：BOM/CRLF 归一化 + 基线校验）:
 - 匹配前统一做 BOM 剥离 + CRLF→LF 归一化，写回时恢复原 BOM/换行风格——
   old_string 只需"内容对得上"，不再要求换行风格字节级一致（弱模型/跨平台友好）。
 - FileBaseline：匹配后、写入前校验文件未被外部改动（mtime_ns+size），

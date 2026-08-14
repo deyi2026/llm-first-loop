@@ -109,7 +109,7 @@ def main() -> int:
         print("  ⏳ 未提供 --chat-id，跳过发送测试消息（用真实 chat_id 发送 md 内容复验渲染）")
 
     print("\n冒烟完成（显式 REST 调用 ≤5 次，SDK 内部 token 调用未计数）")
-    print("结果请落档 docs/m45_feishu_md_smoke_report.md（成功/失败如实记录 + 双端渲染确认）。")
+    print("结果请落档本地开发文档（成功/失败如实记录 + 双端渲染确认）。")
     return 0
 
 

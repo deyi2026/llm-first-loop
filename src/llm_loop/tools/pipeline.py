@@ -5,7 +5,6 @@
   2. 单调守卫 MonotonicGuard（权限只收紧不放松，fail-closed 启动校验）
   3. 不可变 result（权威结果，审计快照）
 
-设计文档: docs/DESIGN-20260814-tool-execution-waterfall.md（grill 10 盲点并入）
 """
 
 from __future__ import annotations

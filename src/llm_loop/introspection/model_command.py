@@ -9,7 +9,6 @@
 - 切换成功/失败回执通过格式统一构造, 三端复用文案
 - 密钥安全 (DFX-SEC-02): 回执不暴露 api_key / base_url 之外的敏感信息
 
-参考: docs/model_switch_config_design.md §5.6 / §六
 """
 
 from __future__ import annotations

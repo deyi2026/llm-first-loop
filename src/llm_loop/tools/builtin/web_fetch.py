@@ -18,7 +18,7 @@ import httpx
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 
-# 单例 Browser 借鉴（既有实现 read_preview）: 短时重复抓取同一 URL 感知。
+# 单例 Browser 感知: 短时重复抓取同一 URL 提示复用。
 # 模块级 {url: last_fetch_epoch}——同会话内 5 分钟内重复抓同一 URL，
 # 回执头部提示可复用上次结果（网页动态变化才重抓），避免浪费 token。
 _fetch_history: dict[str, float] = {}
@@ -180,7 +180,7 @@ class WebFetchTool:
             "url": {"type": "string", "description": "要抓取的完整 URL（http/https）"},
             "max_chars": {"type": "integer", "description": "返回内容最大字符数（默认 100000）"},
             "start": {"type": "integer", "description": "分页续读起始偏移（字符，默认 0）。正文超长被截断后，用 start=上次位置 续读下一段"},
-            "count": {"type": "integer", "description": "分页续读每段长度（字符，默认 max_chars）。start 与 count 正交：start 定起点、count 定段长（借鉴 既有实现 read_preview 'start 与 count 的分页续读'）"},
+            "count": {"type": "integer", "description": "分页续读每段长度（字符，默认 max_chars）。start 与 count 正交：start 定起点、count 定段长（分页续读语义）"},
         },
         "required": ["url"],
     }
@@ -258,7 +258,7 @@ class WebFetchTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
-        # 单例感知: 短时重复抓取同一 URL → 提示可复用（既有实现 单例 Browser 精神）
+        # 单例感知: 短时重复抓取同一 URL → 提示可复用
         now = _time.time()
         reuse_note = ""
         last_fetch = _fetch_history.get(url)
@@ -319,7 +319,7 @@ class WebFetchTool:
         body = header + text
         total = len(body)
         if start > 0:
-            # 分页续读（既有实现 read_preview 借鉴：start 与 count 正交）
+            # 分页续读（start 与 count 正交）
             # start 定起点、count 定段长；返回 [start, start+count) 段
             body = body[start:start + count]
             if not body:

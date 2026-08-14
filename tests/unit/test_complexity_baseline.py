@@ -16,6 +16,11 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 BASELINE = ROOT / "docs" / "ANALYSIS-20260813-program-complexity-baseline.md"
 
+# 开源说明（2026-08-14）: 基线文档为本地开发过程文档，开源仓库不含——缺失时跳过
+pytestmark = pytest.mark.skipif(
+    not BASELINE.is_file(), reason="复杂度基线文档为本地开发过程文档，开源仓库不含"
+)
+
 
 @pytest.fixture(scope="module")
 def baseline_src() -> str:

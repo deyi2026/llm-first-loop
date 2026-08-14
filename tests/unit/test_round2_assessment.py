@@ -17,6 +17,11 @@ ROOT = Path(__file__).resolve().parents[2]
 REPORT = ROOT / "docs" / "ASSESSMENT-20260813-ai-first-evolution-round2.md"
 INDEX = ROOT / "docs" / "INDEX.md"
 
+# 开源说明（2026-08-14）: 评估报告为本地开发过程文档，开源仓库不含——缺失时跳过
+pytestmark = pytest.mark.skipif(
+    not REPORT.is_file(), reason="评估报告为本地开发过程文档，开源仓库不含"
+)
+
 RISK_IDS = (
     [f"ROB-SILENT-{i:03d}" for i in range(1, 21)]
     + [f"ELG-DEGRADE-{i:03d}" for i in range(1, 11)]
