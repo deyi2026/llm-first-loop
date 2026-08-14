@@ -132,7 +132,9 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 
 ## 文档
 
-- 文档导航：`docs/INDEX.md`（报告清单 / 章节映射 / 更新约定）
+- 快速上手：`examples/`（01 最小 CLI 循环 / 02 Web 嵌入 / 03 自定义工具注册）
+- 公共 API 参考：`docs/api.md`（装配/引擎/会话/工具/Web/CLI/扩展点）
+- 文档导航：`docs/INDEX.md`
 - AI 自主规则（唯一规则真相源）：`docs/ai_rules.md`
 - 开源框架化路线图：`docs/ROADMAP-B-20260814.md`
 - 开发过程规格（spec/design/tasks）为本地 CodeArts 工作流文档，不随开源仓库分发
