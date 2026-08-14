@@ -77,6 +77,9 @@ def test_cooldown_blocks_repeat(tmp_path):
         cooldown_s=600,
         audit_dir=tmp_path / "audit",
     )
+    # 诊断断言（CI 平台差异排查用；失败时输出 meta 实际值）
+    meta = store.get_meta(sid)
+    assert meta is not None and meta.message_count >= 20, f"诊断: meta={meta!r}"
     assert ex.maybe_trigger(sid) is True
     assert ex.maybe_trigger(sid) is False  # 冷却内
 

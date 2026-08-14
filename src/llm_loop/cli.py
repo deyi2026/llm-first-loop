@@ -142,7 +142,9 @@ def _run_interactive(engine, session_id: str | None = None) -> None:
             break
         # M55: /new·/clear 会话指令拦截 (与飞书桥/Web 快捷命令对齐)
         if text.strip().lower() in {"/new", "/clear"}:
-            sid = session_store.create()
+            # M52-fix: 新会话继承当前模型覆盖（不回落装配默认）
+            current = session_store.load(sid)
+            sid = session_store.create(model_override=current.model_override)
             print(f"\n[新会话] 已切换到新会话 {sid[:8]}（旧会话保留，可 list 查看）")
             continue
         # M50: /model 指令拦截 (与飞书桥共用同一套处理逻辑)
