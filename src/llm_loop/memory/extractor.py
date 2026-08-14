@@ -112,6 +112,11 @@ class MemoryExtractor:
 
         Returns:
             True 已提交异步提取；False 未满足（不产生审计噪音）。
+
+        FIX(2026-08-14, CI 抓到的平台 bug): 首次触发判定不得用 0.0 与 monotonic 比较——
+        容器/新命名空间里 time.monotonic() 从 0 开始（CI runner 启动 < cooldown_s 时），
+        `now - 0.0 < cooldown` 会把首次触发误判为冷却期（提取静默失效）。用 None 表示
+        "从未触发"，首次只检查消息数阈值（平台无关）。
         """
         if not self.enabled or self.session_store is None:
             return False
@@ -120,8 +125,10 @@ class MemoryExtractor:
             return False
         now = time.monotonic()
         with self._lock:
-            last = self._last_trigger_ts.get(session_id, 0.0)
-            if meta.message_count < self.interval_msgs or (now - last) < self.cooldown_s:
+            last = self._last_trigger_ts.get(session_id)
+            if meta.message_count < self.interval_msgs or (
+                last is not None and (now - last) < self.cooldown_s
+            ):
                 return False
             self._last_trigger_ts[session_id] = now
         self._run_async(session_id, trigger="interval")
