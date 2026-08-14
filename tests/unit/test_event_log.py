@@ -16,6 +16,7 @@ import os
 from llm_loop.event_log.model import (
     EVENT_CONTEXT_COMPRESSED,
     EVENT_MESSAGE_APPENDED,
+    EVENT_REQUEST_META,
     EVENT_SESSION_CREATED,
     EVENT_SESSION_FORKED,
     EVENT_SESSION_META_CHANGED,
@@ -93,6 +94,7 @@ def test_registry_covers_five_types_with_fields():
         EVENT_CONTEXT_COMPRESSED,
         EVENT_SESSION_META_CHANGED,
         EVENT_SESSION_FORKED,
+        EVENT_REQUEST_META,  # HARNESS-02: request.meta 请求快照
     }
     assert set(REGISTRY.registered()) == names
     # 字段语义可查询
@@ -202,3 +204,115 @@ def test_append_multiprocess_no_interleaving(tmp_path):
     seqs = [e.seq for e in events]
     assert seqs == sorted(seqs) and len(set(seqs)) == 90
     assert seqs == list(range(1, 91))
+
+
+# ── HARNESS-02: request.meta 请求快照事件 ──
+
+
+def test_request_meta_event_written_per_round(tmp_path):
+    """引擎每轮 LLM 调用前写 request.meta（模型/思考/工具数/预算快照，fail-open）."""
+    from llm_loop.config import Settings
+    from llm_loop.core.loop.engine import LoopEngine
+    from llm_loop.core.message import ToolCall
+    from llm_loop.core.session import SessionStore
+    from llm_loop.event_log.store import EventStore
+    from llm_loop.llm.client import LLMResponse
+    from llm_loop.tools.registry import ToolRegistry
+
+    class _Fake:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def _next(self):
+            self.calls += 1
+            if self.calls == 1:
+                return LLMResponse(
+                    content="用工具",
+                    tool_calls=[
+                        ToolCall(id="tc-m", name="read_file", arguments={"path": "a"})
+                    ],
+                    provider="fake",
+                )
+            return LLMResponse(content="完成", tool_calls=[], provider="fake")
+
+        def chat(self, messages, tools, **kw):
+            return self._next()
+
+        def chat_stream(self, messages, tools, **kw):
+            def _gen():
+                yield from ()
+                return self._next()
+
+            return _gen()
+
+    reg = ToolRegistry()
+    reg.register(
+        type(
+            "RF",
+            (),
+            {"name": "read_file", "description": "t", "parameters": {"type": "object"}},
+        )()
+    )
+    settings = Settings(
+        llm_api_key="k",
+        llm_base_url="https://x/v1",
+        llm_model="m",
+        data_dir=str(tmp_path / "data"),
+        extract_enabled=False,
+        summary_mode="off",
+    )
+    ev_dir = tmp_path / "events"
+    event_store = EventStore(ev_dir)
+    sess_dir = tmp_path / "sessions"
+    store = SessionStore(sess_dir, event_store=event_store)
+    engine = LoopEngine(
+        llm_client=_Fake(),  # type: ignore[arg-type]
+        registry=reg,  # type: ignore[arg-type]
+        memory=None,  # type: ignore[arg-type]
+        session=store,
+        settings=settings,
+        event_store=event_store,
+    )
+    result = engine.run_single("任务")
+    assert result.final_answer
+    events = event_store.read(result.session_id)
+    metas = [e for e in events if e.type == "request.meta"]
+    assert len(metas) == 2  # 两轮各一次
+    assert metas[0].payload["model"]  # 模型标签如实记录（测试环境无 pool 时为回退标签，非空即可）
+    assert metas[0].payload["round"] == 1
+    assert metas[1].payload["round"] == 2
+    assert "tools_count" in metas[0].payload
+    assert "budget" in metas[0].payload
+
+
+def test_request_meta_registered_replay_ignored(tmp_path):
+    """回放对已登记但视图不消费的 request.meta → 静默跳过，消息重建不受影响（replay 兼容）."""
+    from llm_loop.event_log.model import EVENT_REQUEST_META
+    from llm_loop.event_log.replay import replay_session
+    from llm_loop.event_log.store import EventStore
+
+    ev_dir = tmp_path / "events"
+    store = EventStore(ev_dir)
+    sid = "s-request-meta"
+    store.append(sid, EVENT_REQUEST_META, {"round": 1, "model": "m"})
+    store.append(
+        sid,
+        "session.created",
+        {
+            "version": 4,
+            "title": "t",
+            "created_at": "2026-08-14T00:00:00+00:00",
+            "updated_at": "2026-08-14T00:00:00+00:00",
+            "status": "active",
+            "parent_id": None,
+            "branch_id": None,
+            "branch_summary": None,
+            "model_override": None,
+            "pinned": False,
+            "channel": "cli",
+        },
+    )
+    view = replay_session(list(store.read(sid)))
+    assert view["session_id"] == sid  # 视图正常重建
+    assert "unknown_event_types" not in view  # 已登记类型不记 unknown
+    assert view["messages"] == []  # request.meta 不产生消息

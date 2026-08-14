@@ -20,6 +20,7 @@ EVENT_MESSAGE_APPENDED = "message.appended"
 EVENT_CONTEXT_COMPRESSED = "context.compressed"
 EVENT_SESSION_META_CHANGED = "session.meta_changed"
 EVENT_SESSION_FORKED = "session.forked"  # D3 预留：本期登记不触发行为
+EVENT_REQUEST_META = "request.meta"  # HARNESS-02(2026-08-14): 每轮请求快照（模型/思考/工具目录/预算）
 
 
 @dataclass(frozen=True)
@@ -200,6 +201,21 @@ REGISTRY.register(
             "parent_id": "父会话 id",
             "branch_id": "分支标识",
             "fork_point": "分叉点消息索引",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_REQUEST_META,
+        version=1,
+        fields={
+            "round": "循环轮次",
+            "model": "本轮实际使用的模型标签（routing/fallback 后最终值）",
+            "thinking": "思考模式是否开启",
+            "reasoning_effort": "推理强度",
+            "tools_count": "本轮注入的工具 schema 数量",
+            "history_chars": "提交历史字符数",
+            "budget": "本轮历史预算",
         },
     )
 )

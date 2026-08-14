@@ -19,6 +19,7 @@ from typing import Any
 from llm_loop.config import Settings
 
 # M53 拆分: 职责 mixin（signals 信号检查 / runtime 运行时参数 / fallback 模型降级链 / routing 模型路由 / overflow overflow 处理 / tool_exec 工具执行）
+from llm_loop.core.loop.archive import _ArchiveMixin
 from llm_loop.core.loop.fallback import _FallbackMixin
 from llm_loop.core.loop.overflow import _OverflowMixin
 from llm_loop.core.loop.routing import (
@@ -55,11 +56,9 @@ from llm_loop.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
-
 # M53 拆分: _json_dumps_args/_tool_args_summary → llm_loop/core/loop/tool_exec.py（_ToolExecMixin）
 # 迁移注释保留（REQ-REF-06）: 原路径可导入（对齐 test_tool_round_visible.py），行为与迁移前一致。
 # 模块级函数随工具执行职责单元迁移，经此 re-export 保持 `engine._tool_args_summary` 等可导入。
-
 
 def format_tokens(n: int) -> str:
     """M52: token 计数人性化显示（1234 → "1.2k"）；0 = 未提供，如实返回 "0"."""
@@ -67,11 +66,9 @@ def format_tokens(n: int) -> str:
         return f"{n / 1000:.1f}k"
     return str(n)
 
-
 # M53: 上下文守卫估算常量 → llm_loop/core/loop/routing.py（_RoutingMixin）
 # 迁移注释保留（REQ-REF-06）: 原路径可导入（engine._CHARS_PER_TOKEN_EST/_CONTEXT_SAFETY_MARGIN），取值与迁移前一致。
 # 估算口径（chars/token 保守估计, 中文混合内容约 2 字符/token；安全边距预留 10% 给响应生成）已随迁至 routing.py。
-
 
 @dataclass
 class LoopResult:
@@ -90,7 +87,6 @@ class LoopResult:
     tokens_out: int = 0
     # P1-1: 最终回答轮完整思考链（供 Web done 事件透传前端渲染）；工具轮思考链不在此字段
     reasoning_content: str | None = None
-
 
 def build_session_snapshot_text(
     message_count: int, memory_count: int, evolution_summary: dict | None = None
@@ -111,8 +107,7 @@ def build_session_snapshot_text(
     parts.append("若你对当前任务/已完成/下一步/未决事项的定位漂移，以本条为锚点重新校准。")
     return "；".join(parts)
 
-
-class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _OverflowMixin, _ToolExecMixin):
+class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _OverflowMixin, _ToolExecMixin, _ArchiveMixin):
     """五阶段核心循环控制器."""
 
     def __init__(
@@ -321,6 +316,8 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
         tool_trace: list[dict] = []
         # EVO-20260814-aab7eb0b P2: 每次 run/run_stream 重置实时停滞检测状态（跨会话不泄漏）
         self._stagnation_state = {"fp": None, "count": 0, "reminded": False}
+        # HARNESS-04(2026-08-14): 上下文预算预警——每次 run 独立判断（上下文随 run 累积）
+        self._context_warning_injected = False
 
         # 会话恢复（重启继续对话，DFX-REL-03）
         sess = self.session.load(session_id)
@@ -440,6 +437,26 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
             if routing.final_answer_override is not None:
                 final_answer = routing.final_answer_override
                 break
+            # HARNESS-02(2026-08-14): 每轮请求快照进事件日志（fail-open）——routing/fallback
+            # 可能中途换模型，事件回放据此确知"当时用的哪个模型/挂了哪些工具/预算多少"，
+            # 对 self_evaluate 溯源与回放诊断有帮助
+            try:
+                self._event_append(
+                    session_id,
+                    "request.meta",
+                    {
+                        "round": rounds,
+                        # model_used 在无 pool 场景可能为空 → 回退装配模型名（如实标注）
+                        "model": model_used or getattr(self.settings, "llm_model", ""),
+                        "thinking": bool(self.settings.thinking_mode),
+                        "reasoning_effort": str(getattr(self.settings, "reasoning_effort", "")),
+                        "tools_count": len(tools_param),
+                        "history_chars": sum(len(str(m.get("content", ""))) for m in messages),
+                        "budget": effective_budget,
+                    },
+                )
+            except Exception:  # noqa: BLE001 — 快照失败 fail-open（不影响主循环）
+                logger.debug("request.meta 事件写入失败（fail-open）")
             try:
                 stream_fn = getattr(llm_client, "chat_stream", None)
                 if stream_fn is not None:
@@ -581,6 +598,34 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
                 # D1: 系统注入消息事件（fail-open）
                 self._append_message_event(sess, warning)
                 self._record_action("round.warning", "injected", f"{rounds}/{_budget}")
+
+            # ── HARNESS-04(2026-08-14): 上下文预算预警（占用率≥80% 注入一次）──
+            # 程序只如实告知事实（占用率/预算），"压缩/收尾"决策归 AI（RULE-AI-00，
+            # 程序不自动压缩历史——压缩只由 AI 主动触发）
+            _bd = getattr(self, "_last_breakdown", None)
+            _ratio = (_bd or {}).get("ratio")
+            if (
+                not self._context_warning_injected
+                and _ratio is not None
+                and _ratio >= 0.8
+            ):
+                self._context_warning_injected = True
+                _used = (_bd or {}).get("total", {}).get("chars", 0)
+                _budget_chars = (_bd or {}).get("budget", 0)
+                _pct = round(_ratio * 100)
+                warning = Message(
+                    role="system",
+                    content=(
+                        f"[预算预警] 当前上下文占用已达预算的 {_pct}%"
+                        f"（约 {_used:,}/{_budget_chars:,} 字符）。程序不会自动压缩历史；"
+                        f"是否压缩归档/收尾由你自主决策（RULE-AI-00）。"
+                    ),
+                    source=MessageSource.SYSTEM,
+                )
+                sess.messages.append(warning)
+                # D1: 系统注入消息事件（fail-open）
+                self._append_message_event(sess, warning)
+                self._record_action("context.warning", "injected", f"{_pct}%")
 
             # ── 轮数上限（如实结束，T38: 进展判断交 AI 自主，程序仅保留此硬边界）──
             if rounds >= _budget:
@@ -757,7 +802,6 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
             reasoning_tail=getattr(self.settings, "reasoning_tail", 2),  # M66 思考链瘦身
         )
 
-
     def _persist_with_recovery_note(
         self,
         *,
@@ -819,57 +863,6 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
             selfheal_budget=self.selfheal_budget,
             audit_dir=self.settings.audit_dir,
         )
-
-    def _archive_sink(self, session_id: str, msg: Message) -> None:
-        """压缩另存回调（T22）: 将被丢弃的消息原文完整另存到 ArchiveStore.
-
-        合规变体 A（方案 3 对话历史语义摘要的合规落地）: SUMMARY_MODE!=off 时，
-        压缩另存后自动回填档案语义摘要（summarize_archive）——严格限定在
-        RULE-AI-00 自动摘要边界内: 只作用于已压缩存档的档案条目、回填 summary 字段、
-        不注入当前上下文、不丢信息、可经 search_archive(with_summary=true) 检索。
-        """
-        if self.archive is None:
-            return
-        try:
-            entry = self.archive.archive(
-                session_id,
-                role=msg.role,
-                source=msg.source.value,
-                content=msg.content,
-                tool_name=msg.tool_name,
-                tool_call_id=msg.tool_call_id,
-                status=msg.status.value if msg.status else None,
-                reasoning_content=getattr(msg, "reasoning_content", None) or None,
-            )
-            # D1: context.compressed 事件（与原文另存同一事务点，fail-open）——
-            # archive_ref 优先 tool_call_id（与 web 展开端点 get_by_tool_call_id 契约一致）
-            self._event_append(
-                session_id,
-                "context.compressed",
-                {
-                    "archive_ref": msg.tool_call_id or getattr(entry, "id", None),
-                    "tool_call_id": msg.tool_call_id,
-                    "msg_seq": self._resolve_msg_seq(session_id, msg),
-                    "chars": getattr(entry, "chars", None) or len(msg.content),
-                },
-            )
-            # RULE-AI-00 自动摘要边界内: 压缩档案自动回填语义摘要（async 后台/off 跳过）
-            if (
-                self.summarizer is not None
-                and getattr(self.summarizer, "mode", "off") != "off"
-            ):
-                self.summarizer.summarize_archive(entry.id, msg.content, self.archive)
-        except Exception as exc:
-            # C3（PREFERENCE_1）: 压缩另存/摘要失败如实注入会话（AI 可感知，不静默——
-            # 被压缩消息可能无法找回）。注入失败静默（尽力而为）。
-            logger.warning("压缩另存/摘要失败（fail-open）", exc_info=True)
-            from contextlib import suppress
-
-            with suppress(Exception):
-                s = self.session.load(session_id)
-                s.messages.append(self._fault_feedback("archive_sink", exc))
-                self.session.save(s)
-
 
     def _set_session_override(self, sess, value: str | None) -> None:
         """M48（design §5.3）: switch_model 调用的会话 override 写入回调.

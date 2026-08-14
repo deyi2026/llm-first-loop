@@ -1,15 +1,11 @@
-"""验证：run_stream 客户端中断（close）后是否产生孤儿 tool_calls.
+"""HARNESS-01 回归守卫：run_stream 客户端中断（close）后的孤儿 tool_calls 兜底.
 
-背景：借鉴 DeepSeek Harness「取消时写合成结果，不留半截工具链」。
-本项目时序：assistant 声明（带全部 tool_calls）先 append 进 in-memory sess + 事件日志
-→ yield tool_round → 最后 execute_many 补 tool 回执。若客户端在 yield 阶段 close：
-
-- JSON 读路径（默认 read_path_source=session_json）：JSON 仅在 run 结束 save()，
-  中断前只走事件日志 → 下一轮 load 到旧 JSON → 在途消息静默丢失；
-- event_log 读路径（D1 退役终态）：replay 重建出「有声明、无回执」的孤儿声明
-  → 下一轮请求带孤儿 tool_calls，严格 FC 协议会 400。
-
-本测试只做事实验证，不做修复。
+演化史：
+- 初版（2026-08-15 早）实测确认缺口：中断 → 孤儿声明 / JSON 路径静默丢失
+- 并行会话同日实现 HARNESS-01 修复（tool_exec.py +88 行）：
+  GeneratorExit 时 _synthesize_cancelled 写合成"已取消"回执 + 立即 save，
+  对账不变量「声明数 = 结果数 + 取消数」成立
+- 本文件随之翻转为回归守卫：断言修复后行为（无孤儿、消息完整落盘）
 """
 
 from __future__ import annotations
@@ -70,8 +66,8 @@ def _orphan_report(msgs) -> tuple[set, set, set]:
     return declared, answered, declared - answered
 
 
-def test_json_path_interrupt_silent_loss(build_test_engine, tmp_path):
-    """场景A（当前默认 JSON 读路径）：中断后在途消息是否落盘。"""
+def test_json_path_interrupt_no_orphan_no_loss(build_test_engine):
+    """场景A（JSON 读路径）：中断后无孤儿、在途消息完整落盘（HARNESS-01 回归守卫）。"""
     engine, _ = build_test_engine([])
     engine.llm_pool.default_client = _StreamFake()
     sid = engine.session.create()
@@ -81,12 +77,15 @@ def test_json_path_interrupt_silent_loss(build_test_engine, tmp_path):
     msgs = engine.session.load(sid).messages
     declared, answered, orphans = _orphan_report(msgs)
     print(f"\n[A-JSON] 消息总数: {len(msgs)} 声明: {sorted(declared)} 回执: {sorted(answered)} 孤儿: {sorted(orphans)}")
-    # 事实：JSON 未在中间 save → 在途消息（user + assistant 声明）全部丢失
-    assert len(msgs) == 0, "场景A事实：JSON 读路径下中断 → 在途消息未落盘，静默丢失"
+    assert not orphans, "HARNESS-01：中断后不得有孤儿 tool_calls"
+    assert declared == {"c1", "c2"} and answered == {"c1", "c2"}, "声明与合成取消回执成对落盘"
+    assert any(m.role == "user" for m in msgs), "在途用户消息不得静默丢失"
+    cancel_msgs = [m for m in msgs if m.role == "tool"]
+    assert all("中断" in m.content or "取消" in m.content for m in cancel_msgs), "合成回执须诚实标注"
 
 
-def test_event_log_path_interrupt_orphans(build_test_engine, tmp_path):
-    """场景B（event_log 读路径，D1 终态）：中断后 replay 出孤儿声明并原样发给 LLM。"""
+def test_event_log_path_interrupt_no_orphan(build_test_engine, tmp_path):
+    """场景B（event_log 读路径）：中断后 replay 历史自洽，下一轮正常继续。"""
     from llm_loop.core.session import SessionStore
     from llm_loop.event_log.store import EventStore
 
@@ -106,22 +105,12 @@ def test_event_log_path_interrupt_orphans(build_test_engine, tmp_path):
     msgs = engine.session.load(sid).messages
     declared, answered, orphans = _orphan_report(msgs)
     print(f"\n[B-EVT] 消息总数: {len(msgs)} 声明: {sorted(declared)} 回执: {sorted(answered)} 孤儿: {sorted(orphans)}")
-    assert orphans == {"c1", "c2"}, "场景B事实：event_log 读路径中断 → replay 出 2 个孤儿 tool_calls"
+    assert not orphans, "HARNESS-01：event_log replay 后不得有孤儿"
 
-    # 下一轮请求：history.py 协议配对自检（L560+）在请求构建时补齐诚实占位
-    # → FC 400 风险已有兜底（借鉴点1的协议风险假设被驳回）
+    # 下一轮：历史自洽 → 正常继续，无配对自检兜底告警路径
     for _ in engine.run_stream(sid, "continue please"):
         pass
-    sent = fake.calls[-1]["messages"]
-    sent_decl = [m for m in sent if isinstance(m, dict) and m.get("tool_calls")]
-    sent_tools = [m for m in sent if isinstance(m, dict) and m.get("role") == "tool"]
-    print(f"[B-EVT] 下一轮请求: 孤儿声明消息 {len(sent_decl)} 条, 占位 tool 回执 {len(sent_tools)} 条")
-    assert sent_decl, "孤儿声明仍在历史里"
-    assert sent_tools and all("工具回执缺失" in t.get("content", "") for t in sent_tools), \
-        "配对自检补齐了诚实占位回执 → 严格 FC 不 400（已有兜底）"
-
-    # 残留事实：占位只补在出站请求，不回写会话 → 孤儿永久残留，每轮重复告警补齐
+    assert fake.calls[-1]["messages"], "下一轮请求正常构建"
     msgs_after = engine.session.load(sid).messages
     _, _, orphans_after = _orphan_report(msgs_after)
-    print(f"[B-EVT] 补齐不回写会话，孤儿仍残留: {sorted(orphans_after)}")
-    assert orphans_after == {"c1", "c2"}, "配对自检不回写历史，孤儿声明永久残留"
+    assert not orphans_after, "继续对话后历史保持自洽"

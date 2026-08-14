@@ -168,6 +168,56 @@ def _extract_content(raw: str, url: str) -> tuple[str, str, str]:
     return ("strip", title, _strip_tags(raw))
 
 
+# ── HARNESS-03: SSRF 内网拦截（默认开；WEB_FETCH_BLOCK_PRIVATE=0 关闭）──
+_BLOCK_PRIVATE_DEFAULT = "1"
+
+
+def _block_private_enabled() -> bool:
+    """WEB_FETCH_BLOCK_PRIVATE 解析（默认 1=开启；0/off/false 关闭）."""
+    import os
+
+    raw = os.environ.get("WEB_FETCH_BLOCK_PRIVATE", _BLOCK_PRIVATE_DEFAULT).strip().lower()
+    return raw not in {"0", "off", "false", "no"}
+
+
+def _blocked_private_url(url: str) -> str:
+    """URL 目标是否命中私网/保留地址段；返回命中说明（未命中返回空串）.
+
+    检查链路: host 为 IP 字面量直接判定；域名经 getaddrinfo 解析后逐地址判定
+    （任一地址命中即拦截——DNS rebinding 面收窄）。解析失败 fail-open 放行
+    （域名解析失败后续请求会如实报网络错误）。
+    """
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+
+    try:
+        host = urlparse(url).hostname or ""
+        if not host:
+            return "host 为空"
+        candidates: list[str] = []
+        try:
+            ip = ipaddress.ip_address(host)
+            candidates = [str(ip)]
+        except ValueError:
+            # 域名 → DNS 解析（IPv4/IPv6 全取）
+            try:
+                infos = socket.getaddrinfo(host, None)
+                candidates = [str(info[4][0]) for info in infos]
+            except socket.gaierror:
+                return ""  # 解析失败 fail-open（请求阶段如实报错）
+        for cand in candidates:
+            try:
+                ip = ipaddress.ip_address(cand)
+            except ValueError:
+                continue
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                return f"{cand}（{'私网' if ip.is_private else '回环' if ip.is_loopback else '链路本地' if ip.is_link_local else '保留地址'}）"
+        return ""
+    except Exception:  # noqa: BLE001 — 判定失败 fail-open（不阻断正常请求）
+        return ""
+
+
 class WebFetchTool:
     name = "web_fetch"
     description = (
@@ -258,6 +308,24 @@ class WebFetchTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
+        # HARNESS-03(2026-08-14): 内网拦截（SSRF 防护）——web_fetch 默认拦截私网/链路本地/
+        # 回环/保留地址（含云元数据 169.254.169.254），防 Agent 被诱导访问内网服务。
+        # WEB_FETCH_BLOCK_PRIVATE=0 可关闭（本地开发需要访问内网时）。
+        if _block_private_enabled():
+            blocked = _blocked_private_url(url)
+            if blocked:
+                return ToolResult(
+                    status=ToolResultStatus.BLOCKED,
+                    content=(
+                        f"[内网拦截] 目标地址属于私网/保留地址段（{blocked}），已拒绝访问（SSRF 防护）。\n"
+                        f"原因: web_fetch 默认拦截内网地址（含云元数据 169.254.169.254），"
+                        f"防 AI 被诱导访问内网服务/云凭证。\n"
+                        f"建议: 确需访问内网时设置 WEB_FETCH_BLOCK_PRIVATE=0（本地部署自担风险），"
+                        f"或改用其他通道。"
+                    ),
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
         # 单例感知: 短时重复抓取同一 URL → 提示可复用
         now = _time.time()
         reuse_note = ""

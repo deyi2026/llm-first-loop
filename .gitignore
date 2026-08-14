@@ -42,3 +42,6 @@ docs/metrics/
 
 # 本地学习/经验文档（不入库、不上传 GitHub）
 docs/local/
+
+# 运行时经验库产物（并行会话沉淀，不入库）
+experiences/
