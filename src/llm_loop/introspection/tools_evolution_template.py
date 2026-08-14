@@ -82,7 +82,7 @@ def _tools_added_summary() -> str:
         # 去重
         unique = sorted(set(m[1].lstrip("_") for m in matches))
         return "已注册工具（含本演进未触及）:\n" + "\n".join(f"- {n}" for n in unique)
-    except (FileNotFoundError, IOError):
+    except (OSError, FileNotFoundError):
         return "（corrections.py 不可访问）"
 
 

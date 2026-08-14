@@ -468,11 +468,11 @@ def test_archive_key_facts_both_empty_returns_empty():
 
 def test_build_history_messages_merges_multiple_system_messages():
     """P1-FEISHU: qwen3 heretic 模板拒绝 [system, system, ...] 序列.
-    
+
     根因: _build_llm_messages 会注入 snapshot (role=system) 到 base[0],
     build_history_messages 又独立 push system_prompt,导致连续两个 system。
     LM Studio qwen3 模板抛 "System message must be at the beginning" → 500。
-    
+
     修复: build_history_messages 合并额外 system 消息到首个 system.content。
     """
     from llm_loop.core.history import build_history_messages

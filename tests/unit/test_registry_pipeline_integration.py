@@ -9,11 +9,8 @@
 
 from __future__ import annotations
 
-import pytest
-
 from llm_loop.core.message import ToolCall, ToolResultStatus
 from llm_loop.tools.pipeline import (
-    GuardViolation,
     MonotonicGuard,
     PipelineConfig,
     ToolExecutionPipeline,

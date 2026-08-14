@@ -4,7 +4,6 @@
 且不注入当前上下文、不丢原文、可经 search_archive(with_summary=true) 检索。
 """
 import tempfile
-from pathlib import Path
 
 from llm_loop.memory.archive import ArchiveStore
 from llm_loop.memory.summarize import Summarizer
@@ -27,7 +26,7 @@ def test_archive_backfill_summary_in_rule_boundary():
     with tempfile.TemporaryDirectory() as td:
         store = ArchiveStore(td)
         # mode=off: 不应触发摘要回填
-        off = _FakeSummarizer(mode="off")
+        _FakeSummarizer(mode="off")
         # 直接走 summarize_archive: off/sync 同步回填
         sync = _FakeSummarizer(mode="sync")
         entry = store.archive("s1", role="assistant", source="test", content="A" * 200)
@@ -41,6 +40,7 @@ def test_archive_backfill_summary_in_rule_boundary():
 def test_engine_archive_sink_skips_when_off():
     """engine 侧: summarizer.mode=off 时 _archive_sink 不调用 summarize_archive."""
     from unittest.mock import MagicMock, patch
+
     from llm_loop.core.loop.engine import LoopEngine
     from llm_loop.core.message import Message, MessageSource
 
@@ -57,6 +57,7 @@ def test_engine_archive_sink_skips_when_off():
 def test_engine_archive_sink_backfills_when_sync():
     """engine 侧: summarizer.mode=sync 时 _archive_sink 自动回填档案摘要."""
     from unittest.mock import MagicMock, patch
+
     from llm_loop.core.loop.engine import LoopEngine
     from llm_loop.core.message import Message, MessageSource
 

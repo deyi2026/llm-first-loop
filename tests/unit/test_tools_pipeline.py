@@ -9,7 +9,7 @@ import pytest
 
 from llm_loop.core.message import ToolCall
 from llm_loop.tools.pipeline import (
-    GuardViolation,
+    GuardViolationError,
     ImmutableResult,
     MaterializationError,
     MonotonicGuard,
@@ -58,7 +58,7 @@ def test_guard_add_deny_blocks():
 def test_guard_add_allow_on_denied_raises():
     g = MonotonicGuard()
     g.add_deny("rm_tool")
-    with pytest.raises(GuardViolation):
+    with pytest.raises(GuardViolationError):
         g.add_allow("rm_tool")  # 对已 deny 的加 allow = 放松 → 拒绝
 
 
@@ -73,7 +73,7 @@ def test_guard_kernel_cannot_be_relaxed():
     """内核 deny 不可被 allow 放松（fail-closed 核心）."""
     kernel = {PermissionEntry(tool="execute_command", action="deny", reason="内核")}
     g = MonotonicGuard(kernel_minimal=kernel)
-    with pytest.raises(GuardViolation):
+    with pytest.raises(GuardViolationError):
         g.add_allow("execute_command")  # 对内核 deny 加 allow = 放松 → 拒绝
     assert g.check("execute_command") == "内核"  # 仍被拒
 
@@ -108,7 +108,7 @@ def test_pipeline_guard_blocks():
     g = MonotonicGuard()
     g.add_deny("execute_command", "测试拒绝")
     p.set_guard(g)
-    with pytest.raises(GuardViolation):
+    with pytest.raises(GuardViolationError):
         p.execute(
             _fake_tool,
             ToolCall(id="1", name="execute_command", arguments={}),

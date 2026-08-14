@@ -6,12 +6,12 @@ Codex 风格 handoff 增强：在上下文压力高（context_usage > 70%）时�
 
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -183,10 +183,6 @@ def run_handoff_now(ctx: Any, audit: Any, args: dict) -> ToolResult:
     # EVO-20260813-4b49a822: 同步归档到当前会话 ArchiveStore（使 search_archive 天然可检索）
     _archive_handoff(ctx, doc)
 
-    audit_msg = (
-        f"[handoff_now] 完成紧急度={urgency} 压力={pressure:.0%} "
-        f"路径={handoff_path}"
-    )
 
     summary = (
         f"# 📨 交接文档已生成\n\n"

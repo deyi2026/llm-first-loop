@@ -7,8 +7,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from llm_loop.core.message import ToolResult, ToolResultStatus
-from llm_loop.introspection.tools_handoff import run_handoff_now, _archive_handoff
+from llm_loop.core.message import ToolResultStatus
+from llm_loop.introspection.tools_handoff import _archive_handoff, run_handoff_now
 from llm_loop.memory.archive import ArchiveStore
 
 
@@ -40,7 +40,7 @@ def test_handoff_now_archives_to_current_session():
 
 def test_handoff_archive_fail_open():
     """归档失败 fail-open: 不影响 handoff 主流程（仍返回 SUCCESS）. """
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory():
         # ctx.archive 用 MagicMock, 其 archive() 抛异常
         ctx = MagicMock()
         ctx.session_id = "sess-test-002"

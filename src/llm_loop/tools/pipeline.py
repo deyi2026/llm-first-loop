@@ -10,14 +10,13 @@
 
 from __future__ import annotations
 
-import copy
 import json
 import types
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from llm_loop.core.message import ToolCall
-
 
 # ── 1. 参数无损 JSON 物化边界 + 深冻结 ──────────────────────────────
 
@@ -78,7 +77,7 @@ def deep_unfreeze(obj: Any) -> Any:
 
 # ── 2. 单调守卫 MonotonicGuard（权限只收紧不放松）──────────────────
 
-class GuardViolation(RuntimeError):
+class GuardViolationError(RuntimeError):
     """守卫违反：试图放松权限 / 启动时守卫集比内核种子更宽松."""
 
 
@@ -95,7 +94,7 @@ class MonotonicGuard:
     """单调守卫: 权限只允许收紧（add deny / 移除 allow），不允许放松.
 
     - add_deny: 收紧（允许）
-    - add_allow: 仅当该 tool 当前无 deny 时才允许添加（否则视为放松，抛 GuardViolation）
+    - add_allow: 仅当该 tool 当前无 deny 时才允许添加（否则视为放松，抛 GuardViolationError）
     - remove_deny / remove_allow: 一律禁止（移除 = 放松）
     - fail-closed: 启动时校验 guard 集是否比内核最小安全集合更宽松，是则拒绝启动
     """
@@ -116,7 +115,7 @@ class MonotonicGuard:
         """内核种子中的 deny 必须全部保留；任一缺失 → 拒绝启动."""
         for entry in self._kernel_minimal:
             if entry.action == "deny" and entry.tool not in self._deny:
-                raise GuardViolation(
+                raise GuardViolationError(
                     f"fail-closed: 内核最小安全集合缺失 deny({entry.tool})，拒绝启动"
                 )
 
@@ -127,7 +126,7 @@ class MonotonicGuard:
     # ── 添加 allow（仅当无 deny 冲突，否则视为放松）──
     def add_allow(self, tool: str) -> None:
         if tool in self._deny:
-            raise GuardViolation(
+            raise GuardViolationError(
                 f"单调守卫: 试图对已 deny 的 {tool} 添加 allow（放松），拒绝"
             )
         self._allow.add(tool)
@@ -218,7 +217,7 @@ class ToolExecutionPipeline:
         if self.config.guard and self._guard is not None:
             reason = self._guard.check(call.name)
             if reason is not None:
-                raise GuardViolation(f"单调守卫拒绝 {call.name}: {reason}")
+                raise GuardViolationError(f"单调守卫拒绝 {call.name}: {reason}")
 
         # 4. 执行（注入不可变参数视图）
         if frozen_args is not None:
@@ -248,7 +247,7 @@ __all__ = [
     "deep_unfreeze",
     "PermissionEntry",
     "MonotonicGuard",
-    "GuardViolation",
+    "GuardViolationError",
     "ImmutableResult",
     "PipelineConfig",
     "ToolExecutionPipeline",

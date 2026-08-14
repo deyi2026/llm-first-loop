@@ -10,7 +10,6 @@ Stage 2（未实施）：GUI 录制（需 pyautogui + macOS 权限）
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
@@ -56,7 +55,7 @@ def _detect_pattern(action_log: list[dict]) -> dict:
         all_keys: set = set()
         for e in action_log:
             all_keys.update((e.get("args") or {}).keys())
-        n_total = len(action_log)
+
         # fixed: 在每个 entry 都出现且值一致
         # varying: 其他（即使只出现 1 次）
         fixed_keys = []

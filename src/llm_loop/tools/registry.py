@@ -15,8 +15,8 @@ from collections.abc import Callable
 from datetime import UTC
 from typing import Any
 
-from llm_loop.tools.pipeline import GuardViolation, ImmutableResult, MaterializationError
 from llm_loop.core.message import Message, MessageSource, ToolCall, ToolResult, ToolResultStatus
+from llm_loop.tools.pipeline import ImmutableResult, MaterializationError
 from llm_loop.tools.safety import CatastrophicGuard
 
 # execute 包裹的扩展钩子（由外部装配: 如架构自省 record_action）

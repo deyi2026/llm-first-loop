@@ -4,7 +4,7 @@
 """
 
 from __future__ import annotations
-from typing import Any
+
 from llm_loop.core.message import ToolResult, ToolResultStatus
 
 # ── Tool 1: brainstorm_design ──
