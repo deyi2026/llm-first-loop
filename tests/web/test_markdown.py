@@ -10,6 +10,14 @@ from fastapi.testclient import TestClient
 
 from llm_loop.web import build_app
 
+
+def read_all_js():
+    from pathlib import Path
+    _d = Path(__file__).resolve().parents[2] / "src" / "llm_loop" / "web" / "static"
+    _fs = ["modules/state.js","modules/markdown-math.js","modules/tool-render.js","modules/message-render.js","modules/stream-chat.js","modules/app-core.js","modules/responsive.js","modules/session-list.js","modules/command-upload-model.js","app.js"]
+    return chr(10).join((_d / f).read_text(encoding="utf-8") for f in _fs if (_d / f).exists())
+
+
 STATIC_DIR = Path(__file__).resolve().parents[2] / "src" / "llm_loop" / "web" / "static"
 
 
@@ -46,19 +54,19 @@ def test_no_cdn_reference():
 
 
 def test_app_js_has_render_markdown():
-    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    app_js = read_all_js()
     assert "function renderMarkdown" in app_js
     assert "marked.parse" in app_js
 
 
 def test_app_js_has_sanitize():
-    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    app_js = read_all_js()
     assert "function sanitizeHtml" in app_js
     assert "DOMParser" in app_js
 
 
 def test_assistant_uses_innerhtml_user_uses_textcontent():
-    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    app_js = read_all_js()
     # assistant 走 MD 渲染（innerHTML），user/error 走 textContent
     assert 'msg.role === "assistant"' in app_js
     assert "node.innerHTML = html" in app_js
@@ -66,36 +74,36 @@ def test_assistant_uses_innerhtml_user_uses_textcontent():
 
 
 def test_sanitize_whitelist_tags():
-    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    app_js = read_all_js()
     for tag in ("pre", "code", "table", "thead", "th", "td", "blockquote", "h1", "a", "img"):
         assert f'"{tag}"' in app_js
 
 
 def test_sanitize_rejects_dangerous_tags():
-    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    app_js = read_all_js()
     # 白名单 Set 不含 script/iframe/style → sanitize 会移除外壳
     assert 'script"' not in app_js or "MD_ALLOWED_TAGS" in app_js  # script 不在白名单
 
 
 def test_sanitize_strips_on_events():
-    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    app_js = read_all_js()
     assert 'an.startsWith("on")' in app_js  # 事件属性移除逻辑
 
 
 def test_sanitize_protocol_whitelist():
-    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    app_js = read_all_js()
     assert "http:" in app_js
     assert "https:" in app_js
     assert "javascript:" in app_js  # 拒绝协议列表含 javascript
 
 
 def test_render_fallback_to_plaintext():
-    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    app_js = read_all_js()
     assert "返回 null" in app_js or "return null" in app_js  # 渲染异常返回 null → 降级纯文本
 
 
 def test_note_stays_plaintext():
-    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    app_js = read_all_js()
     assert 'msg-note' in app_js  # note 经 el() textContent 渲染，不 MD 渲染
 
 
@@ -107,5 +115,5 @@ def test_style_has_md_elements():
 
 def test_render_breaks_assistant():
     # 静态断言：assistant 分支含 renderMarkdown 调用（语义等价模拟兜底）
-    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    app_js = read_all_js()
     assert "renderMarkdown(msg.content)" in app_js

@@ -6,12 +6,20 @@ from pathlib import Path
 
 import pytest
 
+
+def read_all_js():
+    from pathlib import Path
+    _d = Path(__file__).resolve().parents[2] / "src" / "llm_loop" / "web" / "static"
+    _fs = ["modules/state.js","modules/markdown-math.js","modules/tool-render.js","modules/message-render.js","modules/stream-chat.js","modules/app-core.js","modules/responsive.js","modules/session-list.js","modules/command-upload-model.js","app.js"]
+    return chr(10).join((_d / f).read_text(encoding="utf-8") for f in _fs if (_d / f).exists())
+
+
 STATIC_DIR = Path(__file__).resolve().parents[2] / "src" / "llm_loop" / "web" / "static"
 
 
 @pytest.fixture(scope="module")
 def app_js() -> str:
-    return (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    return read_all_js()
 
 
 @pytest.fixture(scope="module")

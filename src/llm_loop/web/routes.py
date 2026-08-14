@@ -324,8 +324,17 @@ def list_models(request: Request) -> dict:
 
     engine = _engine_from(request)
     default_model = getattr(getattr(engine, "llm", None), "model", None) or "deepseek-v4-flash"
-    # M50: 从 session_map 取当前会话当前 override — sessions_id 不在查询参取中以当前不实现会话级（保留扩展位）
+    # M50: current 反映当前共享会话的 model_override（若有），否则回退默认装配。
+    # 修复：Web 前端 state.model 初始值跟随此值，避免 per-call model 遮蔽 switch_model 会话 override。
     current = default_model
+    try:
+        sid = engine.session.get_shared_current()
+        if sid and engine.session.exists(sid):
+            sess = engine.session.load(sid)
+            if sess.model_override:
+                current = sess.model_override
+    except Exception:  # noqa: BLE001 - 读取 override 失败不阻断（回退默认，如实不伪造）
+        pass
 
     # M50: 从注册表生成候选
     registry = getattr(getattr(engine, "llm_pool", None), "registry", None)

@@ -464,3 +464,31 @@ def test_archive_key_facts_both_empty_returns_empty():
 
     msgs = [Message(role="assistant", content="普通陈述行", source=MessageSource.USER)]
     assert _archive_key_facts(msgs) == ""
+
+
+def test_build_history_messages_merges_multiple_system_messages():
+    """P1-FEISHU: qwen3 heretic 模板拒绝 [system, system, ...] 序列.
+    
+    根因: _build_llm_messages 会注入 snapshot (role=system) 到 base[0],
+    build_history_messages 又独立 push system_prompt,导致连续两个 system。
+    LM Studio qwen3 模板抛 "System message must be at the beginning" → 500。
+    
+    修复: build_history_messages 合并额外 system 消息到首个 system.content。
+    """
+    from llm_loop.core.history import build_history_messages
+    from llm_loop.core.message import Message, MessageSource
+
+    base = [
+        Message(role="system", content="快照: 5 轮, 3 记忆", source=MessageSource.SYSTEM),
+        Message(role="user", content="你是什么大模型？", source=MessageSource.USER),
+    ]
+    out = build_history_messages(base, "你是 helpful AI")
+
+    # 必须仅 1 条 system（合并）
+    sys_count = sum(1 for m in out if m["role"] == "system")
+    assert sys_count == 1, f"应合并为 1 条 system, 实际 {sys_count}: {out}"
+    # 合并内容应包含两者
+    assert "helpful AI" in out[0]["content"], f"system_prompt 内容应保留: {out[0]['content'][:80]}"
+    assert "快照" in out[0]["content"], f"snapshot 内容应保留: {out[0]['content'][:80]}"
+    # user 应在第二位
+    assert out[1]["role"] == "user"

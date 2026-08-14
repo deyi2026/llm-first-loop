@@ -43,16 +43,18 @@ class SessionMap:
         return f"g:{chat_id}"
 
     # ── 核心 ──
-    def get_or_create(self, key: str) -> str:
+    def get_or_create(self, key: str, force_new: bool = False) -> str:
         """取或建 LoopEngine session_id（多轮连续 + 并发隔离）.
 
         跨端共享（M-new）: 仅配置了 owner_open_id 且键为其私聊（p:{owner}）时，
         优先复用共享当前会话——Web/飞书同一上下文，一端说话另一端能感知。
         其余私聊/群聊保持独立映射（多用户不串话）。
+
+        force_new=True 跳过 owner 跨端共享（用于 /clear /new 指令，强制创建新 session）。
         """
         with self._lock:
             is_owner = bool(self._owner) and key == f"p:{self._owner}"
-            if is_owner:
+            if is_owner and not force_new:
                 shared = self._store.get_shared_current()
                 if shared is not None:
                     self._map[key] = shared
@@ -68,7 +70,12 @@ class SessionMap:
                 # 映射的会话已被删除 → 重建（生命周期管理）
             sid = self._store.create()
             if is_owner:
+                # owner 跨端共享: 新建时设为共享当前
                 self._store.set_shared_current(sid)  # owner 私聊新建 → 设为跨端共享当前
+            elif force_new:
+                # force_new=True: 旧 shared_current 应清掉(避免下次 owner 自动恢复),新 sid 不设为 shared
+                # 但保留调用方上下文(非 owner key 也可能想要干净隔离)
+                pass
             self._map[key] = sid
             self._mark_channel(sid, key)
             self._save()

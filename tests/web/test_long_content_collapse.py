@@ -16,13 +16,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-APP_JS = ROOT / "src" / "llm_loop" / "web" / "static" / "app.js"
 STYLE_CSS = ROOT / "src" / "llm_loop" / "web" / "static" / "style.css"
-
-
-@pytest.fixture(scope="module")
-def app_js_src() -> str:
-    return APP_JS.read_text(encoding="utf-8")
 
 
 class TestLongContentCollapse:

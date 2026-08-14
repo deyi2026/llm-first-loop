@@ -123,6 +123,21 @@ def build_engine(settings: Settings) -> LoopEngine:
         exec_allowlist=settings.exec_allowlist,
         memory_store=memory,  # EVO-d78b270c: 经验驱动注入（M41 升级，失败回执检索经验库）
     )
+    # EVO-20260813-9ced1f4c: 工具执行瀑布装配（默认全关零回归；开关经 .env 启用）
+    from llm_loop.tools.pipeline import PipelineConfig, ToolExecutionPipeline
+
+    _pipe_cfg = PipelineConfig(
+        enabled=settings.tool_pipeline_enabled,
+        materialize=settings.tool_materialize_enabled,
+        guard=settings.tool_guard_enabled,
+    )
+    if _pipe_cfg.enabled:
+        registry.set_pipeline(ToolExecutionPipeline(_pipe_cfg))
+        logger.info(
+            "工具执行瀑布已启用 materialize=%s guard=%s",
+            _pipe_cfg.materialize,
+            _pipe_cfg.guard,
+        )
     registry.register(ReadFileTool())
     # M51: 四段式文件修改（read→match→diff→apply+verify，替代 sed/heredoc 盲替换）
     registry.register(EditFileTool())
@@ -254,7 +269,7 @@ def build_engine(settings: Settings) -> LoopEngine:
     # P1-2: 经验库装配（fail-open，目录不存在时检索如实返回未命中）
     from llm_loop.experiences.store import ExperienceStore
 
-    experience_store = ExperienceStore(settings.experiences_dir)
+    experience_store = ExperienceStore(settings.experiences_dir, embedder=embedder)  # T5: 注入 embedder 供语义检索
     searcher = RecordSearcher(
         audit_dir=settings.audit_dir,
         memory_store=memory,
@@ -410,6 +425,15 @@ def build_engine(settings: Settings) -> LoopEngine:
     install_refresh_executor(engine)
     # R1: 上下文占用分解注入 architecture_status（AI 每轮可见，自主决策压缩/切换）
     status_provider.set_context_breakdown_fn(lambda: getattr(engine, "_last_breakdown", None))
+    # T3: 上下文占用率注入 runtime（memory_top_k 自适应消费；breakdown 不可用时走默认值零回归）
+    def _context_usage_ratio() -> float:
+        bd = getattr(engine, "_last_breakdown", None)
+        if bd is None:
+            return 0.0
+        total = getattr(bd, "total_chars", 0) or 0
+        cap = getattr(bd, "max_chars", 0) or 0
+        return total / cap if cap > 0 else 0.0
+    runtime.set_context_usage_fn(_context_usage_ratio)
     # T4（spec.md 5.3.1）: 待办聚合注入 architecture_status（AI 一站式感知系统待办）
     status_provider.set_pending_actions_fn(_build_pending_actions_fn(settings))
 

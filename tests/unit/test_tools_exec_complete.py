@@ -206,3 +206,31 @@ def test_complete_transition_none_error(tmp_path):
     outcome = executor.complete("EVO-NOPE", note="完成")
     assert outcome.error == "状态未推进（建议不存在）"
     assert outcome.status == "executed"  # status 字段不变（error 单独标注）
+
+
+# ── 方案 4: 工具输出截断（context 优化）──
+
+def test_truncate_short_output_unchanged():
+    """短输出不应截断."""
+    from llm_loop.tools.builtin.execute_command import _truncate_output
+    content = "hello world"
+    assert _truncate_output(content) == content
+
+
+def test_truncate_long_output_head_tail():
+    """长输出应保留头尾 + 截断说明."""
+    from llm_loop.tools.builtin.execute_command import _truncate_output
+    long = "A" * 5000
+    r = _truncate_output(long, "ps aux grep")
+    assert r.startswith("A" * 1500)
+    assert r.endswith("A" * 1500)
+    assert "[输出已截断]" in r
+    assert "5000" in r  # 完整长度
+    assert "ps" in r    # 搜索关键词
+
+
+def test_truncate_exact_boundary():
+    """恰好 3000 字符不截断."""
+    from llm_loop.tools.builtin.execute_command import _truncate_output
+    content = "B" * 3000
+    assert _truncate_output(content) == content

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -124,14 +123,11 @@ def test_done_convergence(build_test_engine, tmp_path):
     assert done_events[0]["data"]["final_answer"] == "final answer"
 
 
-def test_old_frontend_compat_static():
+def test_old_frontend_compat_static(app_js_src: str):
     """4.8: 旧前端兼容静态断言（onToolRound 可选，tool_round 事件可忽略）。"""
-    app_js = (
-        Path(__file__).resolve().parents[2] / "src" / "llm_loop" / "web" / "static" / "app.js"
-    ).read_text(encoding="utf-8")
-    assert "onToolRound" in app_js
-    assert 'evt.type === "tool_round"' in app_js
-    assert "if (onToolRound)" in app_js
+    assert "onToolRound" in app_js_src
+    assert 'evt.type === "tool_round"' in app_js_src
+    assert "if (onToolRound)" in app_js_src
 
 
 def test_new_frontend_compat_old_backend(build_test_engine):

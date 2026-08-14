@@ -11,6 +11,9 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+import logging
+
+logger = logging.getLogger(__name__)
 
 HANDOFF_TOOL_DEF: dict = {
     "name": "handoff_now",
@@ -121,6 +124,31 @@ def _next_steps(urgency: str, pressure: float) -> str:
     return "\n".join(lines)
 
 
+
+
+def _archive_handoff(ctx: Any, doc: str) -> None:
+    """将交接文档归档到当前会话 ArchiveStore（fail-open，零回归）.
+
+    EVO-20260813-4b49a822: handoff.md 只写普通文件时 search_archive 检索不到
+    （search_archive 仅检索 ArchiveStore 条目），导致新会话恢复路径断裂。
+    此处同步归档为档案条目（role=system, source=handoff），使交接物天然可检索。
+    """
+    try:
+        archive = getattr(ctx, "archive", None)
+        if archive is None:
+            return
+        session_id = getattr(ctx, "session_id", "") or ""
+        archive.archive(
+            session_id,
+            role="system",
+            source="handoff",
+            content=doc,
+            tool_name="handoff_now",
+        )
+    except Exception as exc:  # noqa: BLE001 fail-open
+        logger.warning("handoff 归档失败（fail-open）: %s", exc)
+
+
 def run_handoff_now(ctx: Any, audit: Any, args: dict) -> ToolResult:
     """handoff_now: 生成结构化交接文档."""
     urgency = str(args.get("urgency", "medium")).strip() or "medium"
@@ -151,6 +179,9 @@ def run_handoff_now(ctx: Any, audit: Any, args: dict) -> ToolResult:
     archive_dir.mkdir(parents=True, exist_ok=True)
     handoff_path = archive_dir / "handoff.md"
     handoff_path.write_text(doc, encoding="utf-8")
+
+    # EVO-20260813-4b49a822: 同步归档到当前会话 ArchiveStore（使 search_archive 天然可检索）
+    _archive_handoff(ctx, doc)
 
     audit_msg = (
         f"[handoff_now] 完成紧急度={urgency} 压力={pressure:.0%} "

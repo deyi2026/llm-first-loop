@@ -10,6 +10,14 @@ from fastapi.testclient import TestClient
 
 from llm_loop.web import build_app
 
+
+def read_all_js():
+    from pathlib import Path
+    _d = Path(__file__).resolve().parents[2] / "src" / "llm_loop" / "web" / "static"
+    _fs = ["modules/state.js","modules/markdown-math.js","modules/tool-render.js","modules/message-render.js","modules/stream-chat.js","modules/app-core.js","modules/responsive.js","modules/session-list.js","modules/command-upload-model.js","app.js"]
+    return chr(10).join((_d / f).read_text(encoding="utf-8") for f in _fs if (_d / f).exists())
+
+
 STATIC_DIR = Path(__file__).resolve().parents[2] / "src" / "llm_loop" / "web" / "static"
 
 
@@ -31,7 +39,7 @@ def test_index_upload_accepts_types():
 
 
 def test_app_has_command_handler():
-    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    app_js = read_all_js()
     assert "function handleCommand" in app_js
     assert '"/new"' in app_js
     assert '"/clear"' in app_js
@@ -40,49 +48,49 @@ def test_app_has_command_handler():
 
 def test_command_is_frontend_only():
     """命令处理不调用 /api/v1/chat（纯前端状态操作）."""
-    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    app_js = read_all_js()
     # handleCommand 内无 fetch api 调用（sendMessage 的命令分支直接 return）
     assert 'text.startsWith("/")' in app_js
     assert "handleCommand(text)" in app_js
 
 
 def test_app_has_copy_button_logic():
-    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    app_js = read_all_js()
     assert "copy-btn" in app_js
     assert "navigator.clipboard.writeText" in app_js
     assert '"已复制"' in app_js
 
 
 def test_app_has_upload_logic():
-    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    app_js = read_all_js()
     assert "async function uploadFile" in app_js
     assert "FileReader" in app_js
     assert '"/api/v1/upload"' in app_js
 
 
 def test_app_attachment_context():
-    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    app_js = read_all_js()
     assert "attachments" in app_js
     assert "state.attachments" in app_js
     assert "attachmentPrefix" in app_js
 
 
 def test_app_drag_drop():
-    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    app_js = read_all_js()
     assert "dragover" in app_js
     assert "e.dataTransfer.files" in app_js
 
 
 def test_app_no_key_literal():
     """前端零 key 字面量（敏感信息保护）."""
-    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    app_js = read_all_js()
     assert "API_KEY" not in app_js
     assert "sk-" not in app_js
 
 
 def test_app_copy_uses_plaintext():
     """复制 final_answer 原文纯文本（copyMessage(msg.content)）."""
-    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    app_js = read_all_js()
     assert "copyMessage(msg.content" in app_js
 
 
@@ -92,7 +100,7 @@ def test_frontend_served(build_test_engine, fake_settings):
     resp = client.get("/")
     assert resp.status_code == 200
     assert "upload-btn" in resp.text
-    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    app_js = read_all_js()
     assert "copy-btn" in app_js  # 复制按钮由 JS 动态生成
 
 
@@ -114,7 +122,7 @@ def test_style_has_upload_styles():
 
 def test_app_has_tool_call_chain_render():
     """P2-1: app.js 含 renderToolCalls 折叠链渲染与 data.tool_calls 消费逻辑."""
-    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    app_js = read_all_js()
     assert "function renderToolCalls" in app_js
     assert "function renderToolMessage" in app_js
     assert "data.tool_calls" in app_js  # sendMessage 200 分支消费 tool_calls
@@ -123,7 +131,7 @@ def test_app_has_tool_call_chain_render():
 
 def test_app_keeps_tool_role_in_history():
     """P2-1: loadSessionMessages 保留 tool 角色消息（历史刷新后工具回执可见）."""
-    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    app_js = read_all_js()
     assert 'm.role === "tool"' in app_js  # 白名单保留 tool 角色
 
 

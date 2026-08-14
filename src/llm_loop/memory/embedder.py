@@ -91,7 +91,11 @@ class APIEmbedder:
         try:
             resp = self._client.post(
                 f"{self.base_url}/embeddings",
-                headers={"Authorization": f"Bearer {self.api_key}"},
+                # 本地 embedding 端点无需认证（api_key 为空时不发 Authorization 头）。
+                headers=(
+                    {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+                    if self.api_key else {"Content-Type": "application/json"}
+                ),
                 json={"model": self.model, "input": text},
             )
             if resp.status_code >= 400:

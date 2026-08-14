@@ -139,7 +139,9 @@ class FeishuMessageHandler:
             return False
         key = self._map_key(msg)
         self._session_map.remove(key)
-        new_sid = self._session_map.get_or_create(key)
+        # M55-fix: force_new=True 跳过 owner 跨端共享,真正创建新 session;
+        # 否则 owner 路径会被 get_shared_current() 拉回老 session → /clear 失效
+        new_sid = self._session_map.get_or_create(key, force_new=True)
         # 审计落盘（如实记录新会话 ID 前 8 位）
         self._audit(msg, "session_new", f"{cmd} → {new_sid[:8]}")
         if cmd == "/new":

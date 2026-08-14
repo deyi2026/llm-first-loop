@@ -6,9 +6,11 @@
 
 from __future__ import annotations
 
+import math
 import re
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from llm_loop.experiences.document import ExperienceDocument, ExperienceParseError
 
@@ -16,8 +18,9 @@ from llm_loop.experiences.document import ExperienceDocument, ExperienceParseErr
 class ExperienceStore:
     """经验库存储组件（操作 experiences/ 目录）。"""
 
-    def __init__(self, experiences_dir: str | Path) -> None:
+    def __init__(self, experiences_dir: str | Path, *, embedder: Any | None = None) -> None:
         self._dir = Path(experiences_dir)
+        self._embedder = embedder  # T5: 可选 embedder 注入（None 时走关键词匹配，零回归）
 
     @staticmethod
     def sanitize_slug(slug: str) -> str:
@@ -40,20 +43,76 @@ class ExperienceStore:
         return filename
 
     def list_active(self, query: str = "", limit: int = 20) -> list[dict]:
-        """扫描 experiences/*.md，过滤 active，关键词匹配，按 ts 排序截断到 limit。"""
+        """扫描 experiences/*.md，过滤 active，按相关性排序截断到 limit.
+
+        T5: embedder 注入且 embed(query) 成功时走语义检索（cosine 相似度降序）；
+        否则回退关键词匹配（fail-open，零回归）。结果附 score 字段。
+        """
         if not self._dir.exists():
             return []
-        results: list[dict] = []
+        # 收集 active 文档
+        active: list[tuple[str, ExperienceDocument]] = []
         for path in sorted(self._dir.glob("EXPERIENCE-*.md")):
             try:
                 doc = ExperienceDocument.from_md(path.read_text(encoding="utf-8"))
             except (ExperienceParseError, OSError):
-                continue  # 文件损坏跳过（fail-open，如实标注部分不可读）
+                continue
             if doc.status != "active":
                 continue
+            active.append((path.name, doc))
+
+        # T5: 尝试语义检索路径
+        if query and self._embedder is not None:
+            try:
+                query_vec = self._embedder.embed(query)
+            except Exception:
+                query_vec = None
+            if query_vec is not None:
+                return self._semantic_search(active, query_vec, limit, degraded=False)
+            # embed 失败 → 回退关键词匹配（fail-open）
+            return self._keyword_search(active, query, limit, degraded=True)
+
+        # 无 query 或无 embedder → 关键词匹配
+        return self._keyword_search(active, query, limit, degraded=False)
+
+    def _semantic_search(
+        self, active: list[tuple[str, ExperienceDocument]], query_vec: list[float], limit: int, *, degraded: bool
+    ) -> list[dict]:
+        """语义检索：对每条 active 计算 cosine 相似度，降序排列。"""
+        if self._embedder is None:
+            return []
+        scored: list[tuple[float, str, ExperienceDocument]] = []
+        for filename, doc in active:
+            doc_text = " ".join([doc.title, doc.scenario, doc.root_cause, doc.solution])
+            try:
+                doc_vec = self._embedder.embed(doc_text)
+            except Exception:
+                doc_vec = None
+            if doc_vec is None:
+                continue
+            score = _cosine_similarity(query_vec, doc_vec)
+            scored.append((score, filename, doc))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        results = []
+        for score, filename, doc in scored[:limit]:
+            rec = self._to_record(filename, doc)
+            rec["score"] = round(score, 4)
+            results.append(rec)
+        return results
+
+    def _keyword_search(
+        self, active: list[tuple[str, ExperienceDocument]], query: str, limit: int, *, degraded: bool
+    ) -> list[dict]:
+        """关键词匹配检索（fail-open 回退时附降级标注）。"""
+        results = []
+        for filename, doc in active:
             if query and not self._match(doc, query):
                 continue
-            results.append(self._to_record(path.name, doc))
+            rec = self._to_record(filename, doc)
+            rec["score"] = None
+            if degraded:
+                rec["degraded"] = "[语义检索降级] embed 失败，回退关键词匹配"
+            results.append(rec)
         return results[:limit]
 
     def get(self, experience_id: str) -> ExperienceDocument | None:
@@ -114,3 +173,13 @@ class ExperienceStore:
             "source": doc.source,
             "status": doc.status,
         }
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    """余弦相似度（0.0-1.0；零向量返回 0.0）。"""
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(y * y for y in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)

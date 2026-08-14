@@ -54,6 +54,7 @@ class RuntimeParams:
         self._history: list[ParamAdjustRecord] = []
         self._persist_path: Path | None = None
         self._session_id = ""
+        self._context_usage_fn: Any = None  # T3: 上下文占用率回调（0.0-1.0），供 memory_top_k 自适应
 
     # ── 配置注入（factory 装配）──
     def set_max_adjust_per_round(self, n: int) -> None:
@@ -64,6 +65,10 @@ class RuntimeParams:
 
     def set_session_id(self, session_id: str) -> None:
         self._session_id = session_id
+
+    def set_context_usage_fn(self, fn: Any) -> None:
+        """T3: 注入上下文占用率回调（返回 0.0-1.0），供 memory_top_k 自适应."""
+        self._context_usage_fn = fn
 
     # ── 读取（动态优先、静态兜底）──
     def get(self, key: str, default: Any = None) -> Any:
@@ -95,9 +100,28 @@ class RuntimeParams:
 
     @property
     def memory_top_k(self) -> int:
-        """记忆检索条数（M57 配置面收敛：AI 经 adjust_strategy 可调，动态优先）."""
+        """记忆检索条数（M57 配置面收敛：AI 经 adjust_strategy 可调，动态优先）.
+
+        T3 自适应: env 未显式设置（auto_adaptive_keys）且 strategy 未调整时，
+        按上下文占用率自适应（>70%→8 / <30%→3，硬上限 20）；指标不可用走默认值（零回归）。
+        """
         default = getattr(self._settings, "memory_top_k", 5)
-        return int(self.get("memory_top_k", default))
+        val = self.get("memory_top_k", default)
+        adaptive_keys = getattr(self._settings, "auto_adaptive_keys", frozenset())
+        if (
+            "memory_top_k" in adaptive_keys
+            and "memory_top_k" not in self._strategy
+            and self._context_usage_fn is not None
+        ):
+            try:
+                ratio = float(self._context_usage_fn())
+            except (TypeError, ValueError):
+                return int(val)
+            if ratio > 0.7:
+                return min(8, 20)
+            if ratio < 0.3:
+                return max(3, 1)
+        return int(val)
 
     @property
     def extract_interval_msgs(self) -> int:

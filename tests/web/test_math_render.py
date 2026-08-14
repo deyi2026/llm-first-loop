@@ -23,11 +23,7 @@ KATEX_DIR = ROOT / "src" / "llm_loop" / "web" / "static" / "katex"
 
 
 @pytest.fixture(scope="module")
-def app_js_src() -> str:
-    return APP_JS.read_text(encoding="utf-8")
 
-
-@pytest.fixture(scope="module")
 def style_css_src() -> str:
     return STYLE_CSS.read_text(encoding="utf-8")
 

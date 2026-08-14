@@ -15,6 +15,7 @@ from collections.abc import Callable
 from datetime import UTC
 from typing import Any
 
+from llm_loop.tools.pipeline import GuardViolation, ImmutableResult, MaterializationError
 from llm_loop.core.message import Message, MessageSource, ToolCall, ToolResult, ToolResultStatus
 from llm_loop.tools.safety import CatastrophicGuard
 
@@ -54,10 +55,19 @@ class ToolRegistry:
         self._pre_execute_hooks: list[PreExecuteHook] = []
         self._archive_store = archive_store  # ArchiveStore（T22 超长结果另存）
         self._session_id = ""
+        # EVO-20260813-9ced1f4c: 工具执行瀑布（默认 None = 零回归；set_pipeline 显式装配）
+        self._pipeline: Any = None
 
     def set_session_id(self, session_id: str) -> None:
         """由循环注入当前会话（压缩档案关联）."""
         self._session_id = session_id
+
+    def set_pipeline(self, pipeline: Any) -> None:
+        """装配工具执行瀑布（EVO-20260813-9ced1f4c）.
+
+        pipeline 为 None 或 config.enabled=False 时主链路行为完全不变（零回归）。
+        """
+        self._pipeline = pipeline
 
     def _archive_oversize_output(self, call: ToolCall, full_content: str) -> None:
         """T22: 超长工具结果另存到压缩档案（信息零丢失，可检索找回）."""
@@ -176,6 +186,24 @@ class ToolRegistry:
                 duration_ms=0.0,
             )
 
+        # EVO-20260813-9ced1f4c: 参数物化边界（瀑布，默认关闭零回归）
+        # 无损 JSON 物化 + 深冻结，防策略检查后被篡改；失败 → 拒绝调用（宁严勿松）
+        pipeline = self._pipeline
+        if pipeline is not None and pipeline.config.enabled and pipeline.config.materialize:
+            from llm_loop.tools.pipeline import materialize_lossless_json
+
+            try:
+                materialized = materialize_lossless_json(call.arguments)
+            except MaterializationError as exc:
+                return self._result(
+                    ToolResultStatus.FAILURE,
+                    call,
+                    f"[参数拒绝] 参数无法无损物化（{exc}），已拒绝调用（物化边界，宁严勿松）",
+                    duration_ms=(time.perf_counter() - start) * 1000,
+                )
+            # 物化副本替换原参数（roundtrip 独立副本防引用篡改；普通 dict 供执行）
+            call = ToolCall(id=call.id, name=call.name, arguments=materialized)
+
         # 2. 灾难性安全校验（FR-SAFE-01；仅可破坏工具）
         if self._is_destructive_tool(call.name):
             blocked = self.safety.guard(call.name, call.arguments)
@@ -202,6 +230,18 @@ class ToolRegistry:
                     duration_ms=0.0,
                 )
 
+        # EVO-20260813-9ced1f4c: 单调守卫（瀑布，默认关闭零回归）
+        # 守卫拒绝 → BLOCKED（与灾难性安全同语义）；守卫只收紧不放松（fail-closed）
+        if pipeline is not None and pipeline.config.enabled and pipeline.config.guard and pipeline._guard is not None:
+            reason = pipeline._guard.check(call.name)
+            if reason is not None:
+                return self._result(
+                    ToolResultStatus.BLOCKED,
+                    call,
+                    f"[单调守卫] 工具 '{call.name}' 被拒绝: {reason}",
+                    duration_ms=(time.perf_counter() - start) * 1000,
+                )
+
         # 3. 执行前钩子（架构自省动作轨迹）
         for hook in self._pre_execute_hooks:
             try:
@@ -218,6 +258,24 @@ class ToolRegistry:
             result = self._run_with_timeout(tool, call)
             duration_ms = (time.perf_counter() - start) * 1000
             result.duration_ms = duration_ms
+            # EVO-20260813-9ced1f4c: post 快照（不可变 result + post 钩子，默认关闭零回归）
+            if pipeline is not None and pipeline.config.enabled and pipeline._post_hooks:
+                snapshot = ImmutableResult(
+                    tool_name=call.name,
+                    status=getattr(result, "status", "unknown"),
+                    content=getattr(result, "content", ""),
+                    duration_ms=duration_ms,
+                    meta={"pipeline": True, "guard_checked": pipeline.config.guard},
+                )
+                for hook in pipeline._post_hooks:
+                    try:
+                        hook(snapshot)
+                    except Exception:  # noqa: BLE001 — post 钩子 fail-open
+                        import logging
+
+                        logging.getLogger(__name__).warning(
+                            "post_execute hook 异常（fail-open）", exc_info=True
+                        )
             return result
         except Exception as exc:  # noqa: BLE001 — 如实构造异常结果
             return ToolResult(

@@ -276,6 +276,34 @@ def build_history_messages(
     if system_prompt:
         out.append({"role": "system", "content": system_prompt})
 
+    # P1-FEISHU: 合并后续 system 消息到首个 system（避免连续 system 导致模板 500）。
+    # —— qwen3 heretic 模板严格要求 "System message must be at the beginning"。
+    # ⚠️ 累积陷阱: 架构上报/validator reminder 每轮注入到 sess.messages,session 长时间累积后
+    # 125+ 条 system 消息若全合并 → 单条 system 数十万字符 → LM Studio 超 token 限 / 超时。
+    # 修复: 合并时限制总字符数(MAX_SYS_MERGE_CHARS),保留最新追加、丢弃过期的(state 帧意义在即时性)。
+    MAX_SYS_MERGE_CHARS = 4000  # system_prompt + snapshot + 最近 1-3 条 reminder 上限
+    def _append_or_merge(msg_dict: dict) -> None:
+        if msg_dict.get("role") == "system" and out and out[0].get("role") == "system":
+            new_content = msg_dict.get("content", "")
+            if not new_content:
+                return
+            cur = out[0]["content"]
+            # 已超限 → 整段替换为"仅保留最新"(历史 state 帧意义已失)
+            if len(cur) >= MAX_SYS_MERGE_CHARS:
+                # 用最新一条替换,避免无止境增长
+                out[0]["content"] = cur[:200] + "\n\n[…历史系统消息已截断(超 MAX_SYS_MERGE_CHARS=4000)…]\n\n" + new_content
+                # 仍超限则直接覆盖
+                if len(out[0]["content"]) > MAX_SYS_MERGE_CHARS * 1.5:
+                    out[0]["content"] = new_content[-MAX_SYS_MERGE_CHARS:]
+                return
+            sep = "\n\n"
+            out[0]["content"] = cur + sep + new_content
+            # 仍超限 → 尾部截断(保留最新)
+            if len(out[0]["content"]) > MAX_SYS_MERGE_CHARS * 1.5:
+                out[0]["content"] = "...[已截断]...\n" + out[0]["content"][-(MAX_SYS_MERGE_CHARS-20):]
+        else:
+            out.append(msg_dict)
+
     total_chars = sum(len(m.content) for m in session_messages)
     # R3: tool_trim_age=0 时按占用率自适应（AI 无感零配置）
     if tool_trim_age <= 0:
@@ -292,7 +320,7 @@ def build_history_messages(
             ),
             reasoning_tail,
         ):
-            out.append(m.to_llm_dict())
+            _append_or_merge(m.to_llm_dict())
         return out
 
     # ── 超长: 从最新往回保留，最旧的先"另存提取"再精简注入（不静默丢弃）──
@@ -377,7 +405,13 @@ def build_history_messages(
         reasoning_tail,
     )
     for m in kept_flat:
-        out.append(m.to_llm_dict())
+        # P1-QWEN-FIX: 压缩裁剪后的 system 消息必须并入开头 system，
+        # 否则 system 落在消息中间 → qwen 系模板(9B/27B) 报
+        # "System message must be at the beginning" (HTTP 400/500)。
+        if m.role == "system":
+            _append_or_merge(m.to_llm_dict())
+        else:
+            out.append(m.to_llm_dict())
     if archived:
         # EVO-9794797e: 主动压缩——对被丢弃的旧消息做"另存 + 可见标注"
         # （原文已完整另存至压缩档案保信息零丢失，fail-open）
@@ -419,8 +453,12 @@ def build_history_messages(
         extras.append(
             compression_message(len(archived), sum(len(a.content) for a in archived))
         )
-        for i, em in enumerate(extras):
-            out.insert(1 + i, em.to_llm_dict())
+        # P1-QWEN-SYS-SINGLE: extras（压缩关键事实/档案目录/压缩标注，均为 system）
+        # 必须并入开头唯一 system —— qwen 系模板(9B/27B) 只允许 1 条 system 消息，
+        # 多条 system（即便都在开头）也会触发 "System message must be at the beginning"。
+        # 原实现 out.insert(1+i) 绕过 _append_or_merge → 产生多条独立 system → 400。
+        for em in extras:
+            _append_or_merge(em.to_llm_dict())
     return out
 
 
@@ -442,7 +480,12 @@ def compute_breakdown(
     mem_chars = sum(len(m.content) for m in (memory_msgs or []))
     hist_chars = sum(len(m.content) for m in session_messages if m.role != "tool")
     tool_chars = sum(len(m.content) for m in session_messages if m.role == "tool")
-    total = sys_chars + mem_chars + hist_chars + tool_chars + tool_schema_chars
+    reasoning_chars = sum(
+        len(m.reasoning_content or "")
+        for m in session_messages
+        if m.role == "assistant" and getattr(m, "reasoning_content", None)
+    )
+    total = sys_chars + mem_chars + hist_chars + tool_chars + tool_schema_chars + reasoning_chars
 
     def _item(c: int) -> dict:
         return {"chars": c, "est_tokens": c // 2, "pct": round(c / max(1, total) * 100, 1)}
@@ -453,6 +496,7 @@ def compute_breakdown(
         "history": _item(hist_chars),
         "tool_results": _item(tool_chars),
         "tool_schema": _item(tool_schema_chars),
+        "reasoning": _item(reasoning_chars),
         "total": {"chars": total, "est_tokens": total // 2},
         "budget": budget,
         "ratio": round(total / max(1, budget), 3) if budget > 0 else None,

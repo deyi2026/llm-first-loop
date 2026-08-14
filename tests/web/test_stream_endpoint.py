@@ -99,18 +99,8 @@ def test_chat_response_schema_unchanged():
 class TestFrontendStreamConsumption:
     """前端真流式消费静态断言（tasks 2.7）."""
 
-    def test_stream_chat_request_defined(self):
-        from pathlib import Path
-
-        app_js = (
-            Path(__file__).resolve().parents[2]
-            / "src"
-            / "llm_loop"
-            / "web"
-            / "static"
-            / "app.js"
-        ).read_text(encoding="utf-8")
-        assert "async function streamChatRequest" in app_js
-        assert 'fetch("/api/v1/chat/stream"' in app_js
-        assert "getReader" in app_js
-        assert "answer_delta" in app_js
+    def test_stream_chat_request_defined(self, app_js_src: str):
+        assert "async function streamChatRequest" in app_js_src
+        assert 'fetch("/api/v1/chat/stream"' in app_js_src
+        assert "getReader" in app_js_src
+        assert "answer_delta" in app_js_src

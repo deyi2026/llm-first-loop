@@ -180,3 +180,71 @@ def test_chat_payload_tools_empty_thinking():
     payload = client_cls.return_value.stream.call_args.kwargs["json"]
     assert payload["thinking"] == {"type": "enabled"}  # 思考参数保持发送（不降级）
     assert payload["tools"] == []  # 空数组原样携带（FIX-02 未触发时的基线断言）
+
+
+def test_chat_no_auth_header_when_api_key_empty():
+    """本地 provider（api_key 为空）不发 Authorization 头（修复 Illegal header value b'Bearer '）."""
+    lines = [
+        'data: {"choices": [{"delta": {"content": "ok"}}]}',
+        'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
+    with mock.patch("httpx.Client") as client_cls:
+        fake = _FakeStreamCtx(lines)
+        client_cls.return_value.stream.return_value = fake
+        _client(api_key="").chat(messages=[{"role": "user", "content": "hi"}], tools=[])
+    # 捕获 stream 调用参数，验证 headers 不含 Authorization
+    _, kwargs = client_cls.return_value.stream.call_args
+    headers = kwargs["headers"]
+    assert "Authorization" not in headers, f"空 api_key 不应发 Authorization 头, 实际: {headers}"
+    assert headers.get("Content-Type") == "application/json"
+
+
+def test_chat_with_auth_header_when_api_key_present():
+    """有 api_key 时正常发 Authorization: Bearer 头."""
+    lines = [
+        'data: {"choices": [{"delta": {"content": "ok"}}]}',
+        'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
+    with mock.patch("httpx.Client") as client_cls:
+        fake = _FakeStreamCtx(lines)
+        client_cls.return_value.stream.return_value = fake
+        _client(api_key="secret").chat(messages=[{"role": "user", "content": "hi"}], tools=[])
+    _, kwargs = client_cls.return_value.stream.call_args
+    headers = kwargs["headers"]
+    assert headers.get("Authorization") == "Bearer secret"
+
+
+def test_local_provider_disables_thinking_in_payload():
+    """本地 provider (api_key 空) 必须正确处理 thinking 字段.
+    
+    根因 (P1-FEISHU):
+      1. qwen3 默认 enable_thinking=true → think 块耗尽 max_tokens → content 空 + truncated
+      2. LM Studio 优先 OpenAI `thinking.type=enabled`，忽略 `chat_template_kwargs.enable_thinking=False`
+         → 两者并存时仍输出 think 块（用户看到"你好 → 空回答 + 截断"）。
+    
+    修复: 本地 provider 跳过 OpenAI `thinking` 分支 + 仅发 chat_template_kwargs。
+    """
+    from unittest.mock import patch
+    captured = {}
+
+    def fake_stream(self, method, url, **kwargs):
+        captured["json"] = kwargs.get("json", {})
+        raise RuntimeError("STOP")
+
+    from llm_loop.llm.client import LLMClient
+    client = LLMClient(api_key="", base_url="http://localhost:1234/v1", model="m", timeout_s=5)
+    with patch("httpx.Client.stream", fake_stream):
+        try:
+            list(client.chat_stream([{"role": "user", "content": "hi"}], tools=[]))
+        except RuntimeError:
+            pass
+
+    p = captured.get("json", {})
+    # 必须 1: chat_template_kwargs.enable_thinking=False
+    assert "chat_template_kwargs" in p, f"本地 provider 缺 chat_template_kwargs, payload={p}"
+    assert p["chat_template_kwargs"].get("enable_thinking") is False, \
+        f"本地 provider 必须 enable_thinking=False, 实际={p['chat_template_kwargs']}"
+    # 必须 2: 不应同时发 OpenAI thinking 字段（LM Studio 优先级冲突）
+    assert "thinking" not in p, f"本地 provider 不应发 OpenAI thinking 字段（与 chat_template_kwargs 冲突）, payload={p}"
