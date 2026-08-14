@@ -37,7 +37,11 @@ from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.prompt import build_system_prompt
 from llm_loop.core.session import SessionStore
 from llm_loop.event_log.model import build_message_payload
-from llm_loop.feedback.honesty import max_iterations_feedback, stagnation_feedback
+from llm_loop.feedback.honesty import (
+    max_iterations_feedback,
+    max_iterations_warning_message,
+    stagnation_feedback,
+)
 from llm_loop.feedback.validator import DeclarationValidator, build_discrepancy_feedback
 from llm_loop.introspection.corrections import CorrectionContext, CorrectionToolRegistry
 from llm_loop.introspection.events import ArchitectureEvent, ArchitectureEventType
@@ -526,8 +530,23 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
             # 触发判断与决策交 AI 自主——RULE-AI-10 每轮自主检查清单）──
             self._check_loop_signals(sess, rounds)
 
+            # ── R10: 轮数预警（达 80% 注入一次，AI 可 adjust_strategy 调大自救）──
+            # 程序只如实告知事实（剩余轮数），"继续/调大/收尾"决策归 AI（RULE-AI-00）
+            _budget = self._runtime_max_iterations()
+            if (
+                not getattr(self, "_round_warning_injected", False)
+                and _budget >= 10
+                and rounds >= int(_budget * 0.8)
+            ):
+                self._round_warning_injected = True
+                warning = max_iterations_warning_message(rounds, _budget)
+                sess.messages.append(warning)
+                # D1: 系统注入消息事件（fail-open）
+                self._append_message_event(sess, warning)
+                self._record_action("round.warning", "injected", f"{rounds}/{_budget}")
+
             # ── 轮数上限（如实结束，T38: 进展判断交 AI 自主，程序仅保留此硬边界）──
-            if rounds >= self._runtime_max_iterations():
+            if rounds >= _budget:
                 self._phase("terminate.max_iterations")
                 final_answer = max_iterations_feedback([t["name"] for t in tool_trace]).content
                 break

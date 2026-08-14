@@ -74,14 +74,35 @@ def model_unavailable_text(model_ref: str, error: Exception) -> str:
 
 
 def max_iterations_feedback(trace: list[str]) -> Message:
-    """达最大轮数如实结束（已执行轨迹 + 说明）."""
+    """达最大轮数如实结束（已执行轨迹 + 说明 + 续做引导）."""
     trace_str = "; ".join(trace[-10:]) if trace else "（无动作记录）"
     return Message(
         role="system",
         content=(
             f"[已达轮数上限] 事实: 已达到最大循环轮数。\n"
             f"原因: 已执行轨迹: {trace_str}。\n"
-            f"建议: 请基于现有信息给出最终回答。"
+            f"建议: 请基于现有信息给出最终回答；若任务尚未完成，请如实说明"
+            f"已完成/未完成与下一步——用户可直接在同一会话继续发消息（历史保留，"
+            f"循环会以新消息重新进入）；或用户调大 LLM_MAX_ITERATIONS 后重试。"
+        ),
+        source=MessageSource.SYSTEM,
+    )
+
+
+def max_iterations_warning_message(rounds: int, budget: int) -> Message:
+    """[轮数预警] 轮数接近上限时注入一次（R10：如实告知事实，决策归 AI）.
+
+    AI 可自主决定：继续按当前节奏收尾 / 调用 adjust_strategy 调大 max_iterations /
+    直接给出最终回答。程序只提供事实，不强制任何选择。
+    """
+    return Message(
+        role="system",
+        content=(
+            f"[轮数预警] 事实: 本轮已执行 {rounds} 轮，接近轮数上限 {budget}。\n"
+            f"原因: 任务所需工具调用较多时，剩余轮数可能不足以完成全部步骤。\n"
+            f"建议: 若预计还需多轮工具调用，可调用 adjust_strategy 将 max_iterations "
+            f"调大（白名单可调，上限 500）后继续；或压缩剩余步骤、优先完成关键动作，"
+            f"在最终回答中如实说明未完成部分。"
         ),
         source=MessageSource.SYSTEM,
     )

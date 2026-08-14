@@ -104,6 +104,7 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 | `LLM_MODEL` | deepseek-v4-flash | 模型（缺省链: 显式 > OPENSYGAI_DEEPSEEK_DEFAULT_MODEL > 内置） |
 | `LLM_THINKING_MODE` | enabled | DeepSeek V4 思考模式开关（非 DeepSeek 自动不发） |
 | `LLM_REASONING_EFFORT` | high | 推理强度 low/high/max |
+| `LLM_MAX_ITERATIONS` | 40 | 单次 run 最大循环轮数（工具密集任务可调大；达 80% 时注入 [轮数预警]，AI 可经 adjust_strategy 调大，硬上限 500） |
 | `SUMMARY_MODE` | off | LLM 摘要: off/sync/async |
 | `EMBEDDING_PROVIDER` | none | 语义检索: none/hash/api |
 | `EXTRACT_ENABLED` | 1 | 独立记忆提取开关 |
