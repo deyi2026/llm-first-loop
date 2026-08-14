@@ -131,9 +131,9 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 
 ## 文档
 
-- 需求规格：`.codeartsdoer/specs/llm_first_loop/spec.md`
-- 实现方案：`.codeartsdoer/specs/llm_first_loop/design.md`
-- 任务规划：`.codeartsdoer/specs/llm_first_loop/tasks.md`
+- 文档导航：`docs/INDEX.md`（报告清单 / 章节映射 / 更新约定）
 - AI 自主规则（唯一规则真相源）：`docs/ai_rules.md`
-- 审查基线：`docs/ai_first_review.md`（AI 视角）/ `docs/program_minimalism_review.md`（程序最小化）/ `docs/m11_audit_report.md`（M11 审计）
+- AI 引导手册（实证口径）：`docs/ai_guidance_playbook.md`
+- 开源框架化路线图：`docs/ROADMAP-B-20260814.md`
 - 变更记录：`docs/CHANGES.md`
+- 开发过程规格（spec/design/tasks）为本地 CodeArts 工作流文档，不随开源仓库分发

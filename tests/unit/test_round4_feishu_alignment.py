@@ -20,6 +20,12 @@ ROOT = Path(__file__).resolve().parents[2]
 FEISHU_HANDLERS = ROOT / "src" / "llm_loop" / "feishu" / "handlers.py"
 DESIGN = ROOT / ".codeartsdoer" / "specs" / "ai_first_evolution_round4" / "design.md"
 
+_DESIGN_AVAILABLE = DESIGN.is_file()
+
+pytestmark = pytest.mark.skipif(
+    not _DESIGN_AVAILABLE, reason="specs 为本地开发文档，开源仓库不含"
+)
+
 
 @pytest.fixture(scope="module")
 def handlers_src() -> str:
