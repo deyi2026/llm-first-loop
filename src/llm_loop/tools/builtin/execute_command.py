@@ -6,30 +6,79 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
+from pathlib import Path
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.tools.builtin.job_registry import JobRegistry
 
 # 方案 4: 工具输出截断（context 优化——长输出只发头尾，完整内容可经 search_archive 检索）
-_MAX_OUTPUT_CHARS = 3000
-_KEEP_HEAD_CHARS = 1500
-_KEEP_TAIL_CHARS = 1500
+# EVO-20260814: 裁剪阈值可配置化（对齐 Harness toolResultPruner 思路）——
+# TOOL_TRIM_MAX/HEAD/TAIL 环境变量可调，未设置用默认；非法值回退默认（零回归）。
 _NOISE_WORDS = {"and", "or", "not", "the", "for", "with", "echo"}
 
 
+def _trim_config() -> tuple[int, int, int]:
+    """返回 (max, head, tail) 裁剪参数；环境变量非法/未设置回退默认."""
+    def _get(name: str, default: int) -> int:
+        try:
+            return int(os.environ.get(name, "") or default)
+        except ValueError:
+            return default
+
+    return (
+        _get("TOOL_TRIM_MAX", 3000),
+        _get("TOOL_TRIM_HEAD", 1500),
+        _get("TOOL_TRIM_TAIL", 1500),
+    )
+
+
+# EVO-20260814-61a52baf: 执行环境清洗（Harness defensive-patterns #6）
+# 不给不可信输出 ambient environment：密钥类环境变量一律剔除，白名单基础键强制保留，
+# 其余非敏感键保留（避免破坏 git/ssh/代理等正常功能，零回归）。
+_ENV_WHITELIST = frozenset(
+    {
+        "PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "SHELL",
+        "USER", "LOGNAME", "TERM", "TMPDIR", "HOSTNAME", "PWD",
+        "SSH_AUTH_SOCK",  # agent socket 路径（非密钥），保留以支持 ssh/git agent
+    }
+)
+# 密钥类模式（大小写不敏感，子串匹配）
+_ENV_BLOCK_PATTERNS = (
+    "API_KEY", "SECRET", "TOKEN", "PASSWORD", "PASSWD",
+    "PRIVATE_KEY", "CREDENTIAL", "ACCESS_KEY", "SESSION_KEY", "BEARER",
+)
+
+
+def _scrubbed_env() -> dict[str, str]:
+    """构造清洗后的子进程环境：白名单强制保留 + 密钥类剔除 + 其余保留."""
+    scrubbed: dict[str, str] = {}
+    for k, v in os.environ.items():
+        up = k.upper()
+        if k in _ENV_WHITELIST:
+            scrubbed[k] = v
+        elif any(p in up for p in _ENV_BLOCK_PATTERNS):
+            continue  # 密钥类剔除，不外泄
+        else:
+            scrubbed[k] = v
+    return scrubbed
+
+
 def _truncate_output(content: str, command: str = "") -> str:
-    """截断长输出：保留首 1500 + 末 1500 字符，中间附截断说明与搜索关键词."""
-    if len(content) <= _MAX_OUTPUT_CHARS:
+    """截断长输出：保留首 N + 末 M 字符（可配），中间附截断说明与搜索关键词."""
+    max_chars, keep_head, keep_tail = _trim_config()
+    if len(content) <= max_chars:
         return content
-    head = content[:_KEEP_HEAD_CHARS]
-    tail = content[-_KEEP_TAIL_CHARS:]
+    head = content[:keep_head]
+    tail = content[-keep_tail:]
     # 从命令提取关键词（取可打印词，最多 3 个；排除常见 shell 噪音词）
     kw = " ".join(
         [w for w in command.split() if w.isalnum() and len(w) >= 2 and w not in _NOISE_WORDS][:3]
     )
     return (
         f"{head}\n"
-        f"[输出已截断] 事实: 完整输出 {len(content)} 字符，仅展示首 {_KEEP_HEAD_CHARS} + 末 {_KEEP_TAIL_CHARS} 字符。"
+        f"[输出已截断] 事实: 完整输出 {len(content)} 字符，仅展示首 {keep_head} + 末 {keep_tail} 字符。"
         f"\n原因: 上下文优化（方案 4 工具输出截断）。"
         f"\n建议: 如需完整内容可用 search_archive 检索{'，搜索关键词: ' + kw if kw else '（按命令相关词检索）'}。\n"
         f"{tail}"
@@ -47,6 +96,14 @@ class ExecuteCommandTool:
         "type": "object",
         "properties": {
             "command": {"type": "string", "description": "要执行的 shell 命令"},
+            "workdir": {
+                "type": "string",
+                "description": "工作目录（可选）。默认继承进程当前目录；建议显式指定而非用 cd（fresh shell 语义，避免状态污染）。",
+            },
+            "run_in_background": {
+                "type": "boolean",
+                "description": "后台运行（可选，默认 false）。true 时立即返回 job_id，不阻塞等待；用 job_output 查询输出、job_kill 终止。适合长任务（测试/安装/编译）。",
+            },
         },
         "required": ["command"],
     }
@@ -64,13 +121,52 @@ class ExecuteCommandTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
+        workdir = str(kwargs.get("workdir", "") or "").strip() or None
+        if workdir is not None:
+            wd = Path(workdir).expanduser()
+            if not wd.is_dir():
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content=f"[参数错误] workdir 不是有效目录: {workdir}",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            workdir = str(wd)
+        run_bg = bool(kwargs.get("run_in_background", False))
         try:
+            # C: 环境事实注入——子进程可见 LLM_EXEC_CWD（当前实际工作目录），模型可感知执行环境
+            env = _scrubbed_env()
+            env["LLM_EXEC_CWD"] = workdir or os.getcwd()
+            if run_bg:
+                # A: 后台任务（对齐 Harness ctx.jobs）——Popen 不阻塞，登记 JobRegistry 供 job_output/job_kill
+                proc = subprocess.Popen(
+                    command,
+                    shell=True,  # noqa: S602 — 安全校验由 CatastrophicGuard 前置
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    bufsize=1,
+                    cwd=workdir,
+                    env=env,
+                    start_new_session=True,  # 独立进程组：job_kill 可整树终止（防孤儿进程）
+                )
+                job_id = JobRegistry.instance().create(proc, command)
+                JobRegistry.instance().start_readers(job_id)
+                return ToolResult(
+                    status=ToolResultStatus.SUCCESS,
+                    content=f"[后台任务已启动] job_id={job_id} status=running\n命令: {command}\n"
+                            f"用 job_output(job_id={job_id}) 查询输出，job_kill(job_id={job_id}) 终止。",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
             proc = subprocess.run(
                 command,
                 shell=True,  # noqa: S602 — 工具本质是执行命令，安全校验由 CatastrophicGuard 前置
                 capture_output=True,
                 text=True,
                 timeout=self._timeout_s,  # 工具内兜底超时 = 配置值（注册表另有线程级超时）
+                cwd=workdir,  # B: workdir 支持（fresh shell，对齐 Harness）
+                env=env,  # EVO-20260814-61a52baf: 环境清洗，密钥不外泄 + LLM_EXEC_CWD 事实
             )
         except subprocess.TimeoutExpired:
             return ToolResult(

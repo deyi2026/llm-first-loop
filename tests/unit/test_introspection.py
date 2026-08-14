@@ -125,6 +125,8 @@ def test_correction_clear_state_removed():
         "architecture_status",
         "search_archive",
         "search_records",
+        # EVO-20260814: 统一事件流视图（对齐 Harness Trajectory）
+        "event_stream",
         "search_docs",
         "adjust_strategy",
         "retry_tool",

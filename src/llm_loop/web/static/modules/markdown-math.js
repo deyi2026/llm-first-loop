@@ -292,7 +292,8 @@ function renderMarkdown(md) {
   if (typeof marked === "undefined") return null;
   try {
     const extracted = extractMath(md);
-    const rawHtml = marked.parse(extracted.text, { gfm: true });
+    // EVO-20260814: 显式禁用 marked v5+ 弃用默认（mangle/headerIds），消除 console 弃用警告刷屏
+    const rawHtml = marked.parse(extracted.text, { gfm: true, mangle: false, headerIds: false });
     const sanitized = sanitizeHtml(rawHtml);
     if (sanitized === null) return null;
     if (extracted.formulas.length === 0) return sanitized; // 无公式短路直返（路径逐字符一致）

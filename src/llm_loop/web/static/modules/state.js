@@ -28,6 +28,7 @@ const els = {
   messages: document.getElementById("messages"),
   messageInput: document.getElementById("message-input"),
   sendBtn: document.getElementById("send-btn"),
+  clearBtn: document.getElementById("clear-btn"),
   uploadBtn: document.getElementById("upload-btn"),
   fileInput: document.getElementById("file-input"),
   chatArea: document.getElementById("chat-area"),

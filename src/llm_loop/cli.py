@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import UTC
 
 from llm_loop.config import load_settings
 from llm_loop.core.session import SessionStore
@@ -247,6 +248,7 @@ def main(argv: list[str] | None = None) -> int:
         "evolve-list",
         "evolve-review",
         "evolve-complete",  # M17 FR-REVIEW-AI-01: 人工完成登记（涉边界演进）
+        "evolve-verify",  # EVO-20260813-8279507f: 人工核验确认（executed → verified_at 标记）
     }
     if argv and argv[0] in _cmds:
         return _dispatch_command(argv)
@@ -357,6 +359,11 @@ def _dispatch_command(argv: list[str]) -> int:
             print('用法: llm_loop evolve-complete <suggestion_id> "<执行结果说明>"')
             return 2
         return _cmd_evolve_complete(engine, argv[1], " ".join(argv[2:]))
+    if cmd == "evolve-verify":
+        if len(argv) < 3:
+            print('用法: llm_loop evolve-verify <suggestion_id> "<核验说明>"')
+            return 2
+        return _cmd_evolve_verify(engine, argv[1], " ".join(argv[2:]))
     return 2
 
 
@@ -374,8 +381,11 @@ def _cmd_evolve_list(engine, status: str | None) -> int:
         human = " [需人工决策]" if it.get("requires_human") else ""
         scope = it.get("scope", "global")
         scope_mark = " [session级]" if scope == "session" else ""
+        verify_mark = ""
+        if it.get("status") == "executed":
+            verify_mark = " [已核验]" if it.get("verified_at") else " [待核验]"
         print(
-            f"  {it['id']} | {it['status']} | {it.get('priority')} | {it.get('content', '')[:50]}{human}{scope_mark}"
+            f"  {it['id']} | {it['status']} | {it.get('priority')} | {it.get('content', '')[:50]}{human}{scope_mark}{verify_mark}"
         )
     return 0
 
@@ -398,6 +408,34 @@ def _cmd_evolve_review(engine, suggestion_id: str, decision: str) -> int:
     # T60: accepted 且权限允许 → 自动触发执行（EXEC-02）
     if decision == "accepted":
         _maybe_auto_execute(engine, store, target)
+    return 0
+
+
+def _cmd_evolve_verify(engine, suggestion_id: str, note: str) -> int:
+    """人工核验确认（EVO-20260813-8279507f）: executed → verified_at + verify_note.
+
+    幂等: 已核验则跳过（不重复覆盖）。仅 executed 状态可核验（未执行完的不核验）。
+    实现: 保持 executed 终态不变，附加 verified_at/verify_note 字段（最小侵入，不破坏状态机）。
+    """
+    store = getattr(engine.correction_ctx, "evolution_store", None)
+    if store is None:
+        print("[演进建议不可用] EVOLVE_ENABLED=0")
+        return 1
+    entry = next((it for it in store.list() if it.get("id") == suggestion_id), None)
+    if entry is None:
+        print(f"[建议不存在] 未找到 {suggestion_id}")
+        return 1
+    if entry.get("status") != "executed":
+        print(f"[不可核验] {suggestion_id} 当前状态 {entry.get('status')}，仅 executed 可核验")
+        return 2
+    if entry.get("verified_at"):
+        print(f"[已核验（幂等跳过）] {suggestion_id} 已于 {entry['verified_at']} 核验")
+        return 0
+    from datetime import datetime
+
+    now = datetime.now(UTC).isoformat(timespec="seconds")
+    store.transition(suggestion_id, status="executed", verified_at=now, verify_note=note)
+    print(f"[核验完成] {suggestion_id} → executed（verified_at={now}）: {note}")
     return 0
 
 

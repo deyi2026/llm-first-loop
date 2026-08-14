@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import threading
@@ -97,6 +98,32 @@ class ToolRegistry:
 
                 logging.getLogger(__name__).warning("工具重名覆盖: %s", tool.name)
             self._tools[tool.name] = tool
+
+    def unregister(self, name: str) -> bool:
+        """卸载工具（EVO-20260814-488e7ef7: 注册即回滚，Cordis reversible effects）.
+
+        返回是否真的移除（不存在返回 False，不抛异常）。卸载后：
+        - execute(name) → 工具不存在 → 如实构造 failure（fail-closed，安全）
+        - 可重新 register 同名工具（热更新/演进回滚通道）
+        guard 规则（MonotonicGuard）为独立对象，不随工具卸载清理；但工具已不存在时
+        guard.check 不再可达（execute 先查工具存在性），无残留风险。
+        """
+        with self._lock:
+            existed = name in self._tools
+            if existed:
+                del self._tools[name]
+            return existed
+
+    def dispose(self) -> int:
+        """批量卸载全部工具（EVO-20260814-488e7ef7，Cordis disposer 语义）.
+
+        供测试隔离 / teardown（避免测试注册污染后续用例）。返回卸载数量。
+        幂等：已空时返回 0。
+        """
+        with self._lock:
+            n = len(self._tools)
+            self._tools.clear()
+            return n
 
     def get(self, name: str) -> Any:
         with self._lock:
@@ -217,16 +244,16 @@ class ToolRegistry:
                     duration_ms=0.0,
                 )
 
-        # 2.5 EXEC_MODE 命令分级校验（EVO-20260810-2549e9b6；仅 execute_command）
-        if call.name == "execute_command":
-            blocked = self._check_exec_mode(call.arguments)
+        # 2.5 EXEC_MODE 命令分级校验（EVO-20260810-2549e9b6 + 20260814 fail-closed 覆盖所有破坏性工具）
+        if self._is_destructive_tool(call.name):
+            blocked = self._check_exec_mode(call.name, call.arguments)
             if blocked:
                 return ToolResult(
                     status=ToolResultStatus.BLOCKED,
                     content=f"[权限拦截] {blocked}",
                     tool_call_id=call.id,
                     tool_name=call.name,
-                    error_detail="EXEC_MODE 限制，该命令需人工执行",
+                    error_detail="EXEC_MODE 限制，该操作需人工执行",
                     duration_ms=0.0,
                 )
 
@@ -267,15 +294,20 @@ class ToolRegistry:
                     duration_ms=duration_ms,
                     meta={"pipeline": True, "guard_checked": pipeline.config.guard},
                 )
-                for hook in pipeline._post_hooks:
-                    try:
-                        hook(snapshot)
-                    except Exception:  # noqa: BLE001 — post 钩子 fail-open
-                        import logging
-
-                        logging.getLogger(__name__).warning(
-                            "post_execute hook 异常（fail-open）", exc_info=True
-                        )
+                # EVO-20260814-39a10097: post hook waterfall（block/replace）
+                snapshot = pipeline.run_post_hooks(snapshot)
+                if snapshot.status == ToolResultStatus.BLOCKED.value:
+                    return ToolResult(
+                        status=ToolResultStatus.BLOCKED,
+                        content=snapshot.content,
+                        tool_call_id=call.id,
+                        tool_name=call.name,
+                        duration_ms=duration_ms,
+                    )
+                if snapshot.content != getattr(result, "content", ""):
+                    result.content = snapshot.content  # replace 回写
+                    with contextlib.suppress(ValueError):
+                        result.status = ToolResultStatus(snapshot.status)  # 未知 status 保持原样
             return result
         except Exception as exc:  # noqa: BLE001 — 如实构造异常结果
             return ToolResult(
@@ -435,26 +467,46 @@ class ToolRegistry:
         """是否具备破坏能力的工具（需过灾难性安全校验）."""
         return name in {"execute_command", "delete_file", "write_file", "edit_file", "append_file"}
 
-    def _check_exec_mode(self, args: dict) -> str:
-        """EXEC_MODE 校验: blocked 全禁 / readonly 只读 / allowlist 前缀白名单（空 = 不启用）."""
-        command = str(args.get("command", "") or "").strip()
-        if not command:
-            return "缺少命令"
-        if not self.exec_mode:
-            return ""  # 未启用分级（默认兼容）
-        if self.exec_mode == "blocked":
-            return "当前 EXEC_MODE=blocked，AI 不可执行 shell 命令（需人工执行）"
-        if self.exec_mode == "readonly":
-            from llm_loop.tools.safety import is_readonly_command
+    def _check_exec_mode(self, name: str, args: dict) -> str:
+        """EXEC_MODE 校验（EVO-20260814 fail-closed 增强）.
 
-            if not is_readonly_command(command):
-                return "当前 EXEC_MODE=readonly，仅放行只读命令（该命令涉及写/变更，需人工执行）"
-            return ""
-        if self.exec_mode == "allowlist":
-            for prefix in self.exec_allowlist:
-                if command.startswith(prefix):
+        blocked 全禁 / readonly 只读 / allowlist 白名单 / 空 = 不启用。
+        fail-closed 语义: 显式启用分级时，未匹配任何放行规则 → 拒绝（不静默放行）。
+        覆盖所有破坏性工具（execute_command + write_file/edit_file/delete_file/append_file），
+        不限于 execute_command（修 readonly/blocked 下写文件工具绕过分级的 fail-open 缺口）。
+
+        Returns:
+            空串 = 放行；非空串 = 拦截原因。
+        """
+        if not self.exec_mode:
+            return ""  # 未启用分级（默认兼容，零回归）
+
+        if self.exec_mode == "blocked":
+            return "当前 EXEC_MODE=blocked，AI 不可执行变更类操作（shell/写文件，需人工执行）"
+
+        if name == "execute_command":
+            command = str(args.get("command", "") or "").strip()
+            if not command:
+                return "缺少命令"
+            if self.exec_mode == "readonly":
+                from llm_loop.tools.safety import is_readonly_command
+
+                if not is_readonly_command(command):
+                    return "当前 EXEC_MODE=readonly，仅放行只读命令（该命令涉及写/变更，需人工执行）"
+                return ""
+            if self.exec_mode == "allowlist":
+                for prefix in self.exec_allowlist:
+                    if command.startswith(prefix):
+                        return ""
+                return "命令不在白名单（EXEC_ALLOWLIST），需人工执行"
+        else:
+            # 写文件类工具（edit_file/write_file/delete_file/append_file）
+            if self.exec_mode == "readonly":
+                return f"当前 EXEC_MODE=readonly，禁止写文件类操作（{name}），需人工执行"
+            if self.exec_mode == "allowlist":
+                if name in self.exec_allowlist:
                     return ""
-            return "命令不在白名单（EXEC_ALLOWLIST），需人工执行"
+                return f"工具 {name} 不在白名单（EXEC_ALLOWLIST），需人工执行"
         return "未知 EXEC_MODE"
 
     def _run_with_timeout(self, tool: Any, call: ToolCall) -> ToolResult:

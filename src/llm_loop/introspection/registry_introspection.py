@@ -101,11 +101,39 @@ _SEARCH_RECORDS_TOOL_DEF: dict[str, Any] = {
 }
 
 
+_EVENT_STREAM_TOOL_DEF: dict[str, Any] = {
+    "name": "event_stream",
+    "description": "统一事件流视图（EVO-20260814，对齐 Harness Trajectory）：把分散的 append-only 审计流（action_trace/exception_log/self_correction/evolution/param_adjust 等）按时间序合并为单一轨迹流。何时用: 需要看'系统最近发生了什么'的连贯轨迹（回溯/审计/交接/排障）而非按 kind 分别检索时。何时不用: 只想查某一类记录用 search_records（更聚焦）；只想查压缩档案用 search_archive。失败对策: 无事件/审计目录不存在会如实返回空视图（不伪造），请核对 audit_dir 配置。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "streams": {
+                "type": "string",
+                "description": "逗号分隔的流名子集；'all' = 全部流（默认）。可选: action_trace/exception_log/self_correction/evolution/param_adjust/declaration_check/self_eval/memory_extract/proc_versions/feishu_audit/evolution_exec",
+            },
+            "query": {
+                "type": "string",
+                "description": "关键词过滤（匹配摘要字段，空 = 不过滤）",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "返回条数上限（按时间倒序取最近 N 条，默认 50）",
+            },
+            "since": {
+                "type": "string",
+                "description": "ISO 时间下界（只返回 ts >= since 的事件，空 = 不限）。如 '2026-08-14T00:00:00'",
+            },
+        },
+    },
+}
+
+
 def tool_defs() -> list[dict]:
     return [
         _ARCHITECTURE_STATUS_TOOL_DEF,
         _SEARCH_ARCHIVE_TOOL_DEF,
         _SEARCH_RECORDS_TOOL_DEF,
+        _EVENT_STREAM_TOOL_DEF,
         SEARCH_DOCS_TOOL_DEF,
     ]
 
@@ -131,6 +159,11 @@ def execute(name: str, args: dict, host: RegistryHost) -> ToolResult | None:
         from llm_loop.introspection.tools_status import run_search_records
 
         return run_search_records(host.ctx, host.search_records_fn, args, host.current_session_id)
+
+    if name == "event_stream":
+        from llm_loop.introspection.tools_status import run_event_stream
+
+        return run_event_stream(host.search_records_fn, args)
 
     if name == "search_docs":
         from llm_loop.introspection.tools_docs import run_search_docs

@@ -32,6 +32,8 @@ document.querySelectorAll(".cmd-chip").forEach((chip) => {
   });
 });
 
+// EVO-20260814: 清空上下文按钮（等同 /clear 命令——纯前端状态操作，旧会话保留）
+els.clearBtn.addEventListener("click", () => handleCommand("/clear"));
 els.uploadBtn.addEventListener("click", () => els.fileInput.click());
 els.fileInput.addEventListener("change", () => {
   for (const f of els.fileInput.files) uploadFile(f);

@@ -33,8 +33,22 @@ def _note_invalid_fallback(name: str, fallback_value: Any, invalid_value_type: s
     logger.warning("配置项 %s 值非法（%s），已回退默认值 %r", name, invalid_value_type, fallback_value)
 
 
+def _raw_env(name: str) -> str:
+    """读取环境变量并剥离行内注释（与 load_env_file EVO-ba4a107c 对齐）.
+
+    防外层 shell 残留脏值（如 RETRIEVE_TIMEOUT_S="1  # 注释"）导致解析失败回退默认：
+    环境变量优先原则下 .env 无法覆盖已存在的脏值，解析函数自身剥离注释兜底。
+    """
+    if name in os.environ:
+        raw = os.environ[name]
+        if " #" in raw:
+            raw = raw.split(" #", 1)[0]
+        return raw
+    return ""
+
+
 def _env_int(name: str, default: int) -> int:
-    raw = os.environ.get(name, "")
+    raw = _raw_env(name)
     if not raw:
         return default
     try:
@@ -82,7 +96,7 @@ def load_env_file(path: str | Path | None = None) -> None:
 
 
 def _env_bool(name: str, default: bool) -> bool:
-    raw = os.environ.get(name, "").strip().lower()
+    raw = _raw_env(name).strip().lower()
     if not raw:
         return default
     if raw in {"1", "true", "yes", "on"}:
@@ -95,7 +109,7 @@ def _env_bool(name: str, default: bool) -> bool:
 
 def _env_thinking_mode(name: str) -> bool:
     """LLM_THINKING_MODE 解析: enabled/1/true/on → True；disabled/0/false/off → False；非法回退 True."""
-    raw = os.environ.get(name, "").strip().lower()
+    raw = _raw_env(name).strip().lower()
     if not raw:
         return True  # 未设置默认 enabled
     if raw in {"enabled", "1", "true", "on", "yes"}:
@@ -108,7 +122,7 @@ def _env_thinking_mode(name: str) -> bool:
 
 def _env_effort(name: str) -> str:
     """LLM_REASONING_EFFORT 解析: low/high/max；非法回退 high."""
-    raw = os.environ.get(name, "").strip().lower()
+    raw = _raw_env(name).strip().lower()
     if raw in {"low", "high", "max"}:
         return raw
     if raw:
@@ -118,7 +132,7 @@ def _env_effort(name: str) -> str:
 
 def _env_evolve_level(name: str) -> int:
     """EVOLVE_LOCAL_EXEC 三级解析（0/1/2；旧布尔 true/false 映射 1/0；非法回退 0）."""
-    raw = os.environ.get(name, "").strip().lower()
+    raw = _raw_env(name).strip().lower()
     if raw in {"0", "1", "2"}:
         return int(raw)
     if raw in {"true", "yes", "on", "1"}:
@@ -132,13 +146,32 @@ def _env_evolve_level(name: str) -> int:
 
 def _env_exec_mode(name: str) -> str:
     """EXEC_MODE 解析: readonly/allowlist/blocked；未设置返回空（不启用分级）；非法回退 blocked（安全优先）."""
-    raw = os.environ.get(name, "").strip().lower()
+    raw = _raw_env(name).strip().lower()
     if not raw:
         return ""  # 未设置 = 不启用分级（AI 可执行 shell，仅灾难性硬阻断）
     if raw in {"readonly", "allowlist", "blocked"}:
         return raw
     _note_invalid_fallback(name, "blocked", "非 readonly/allowlist/blocked 字符串")
     return "blocked"
+
+
+def _env_run_mode(name: str) -> str:
+    """RUN_MODE 运行模式解析（EVO-20260814 P1-A，对齐 Harness 四种运行模式）.
+
+    standard: 全工具集（默认，零回归）
+    ptc:      程序化工具调用强化（对齐 Harness PTC 模式）——全工具集但命令执行为
+              主路径（web 类工具默认降级禁用，减少 LLM 在低效 web 检索上的往返）
+    minimal:  精简工具集——只读 + 必要执行（web/飞书/playwright 等外围工具禁用）
+    creative: 宽松默认参数——更大超时/输出阈值/检索上限（对齐 Harness creative 模式）
+    非法回退 standard（不阻断启动，安全性不受影响）。
+    """
+    raw = _raw_env(name).strip().lower()
+    if not raw:
+        return "standard"
+    if raw in {"standard", "ptc", "minimal", "creative"}:
+        return raw
+    _note_invalid_fallback(name, "standard", "非 standard/ptc/minimal/creative 字符串")
+    return "standard"
 
 
 def _count_fallbacks(raw: str) -> int:
@@ -177,19 +210,25 @@ class Settings:
     tool_trim_enabled: bool = True
     # R3: tool_trim 自适应降级年龄（0=自适应：按占用率自动调 <40%→20/40-70%→10/>70%→5；>0=固定值禁用自适应）
     tool_trim_age: int = 0  # auto-adaptive (existing): 0=按占用率自适应
+    # EVO-A: tool_trim 降级长度阈值（tool 消息 content 超过此长度且达到年龄才降级为首尾摘要；越小越省 token）
+    tool_trim_threshold: int = 2000
     # ── EXEC_MODE 命令分级（EVO-20260810-2549e9b6）──
     # 默认空 = 不启用分级（AI 可执行 shell，仅灾难性硬阻断）；可选 readonly/allowlist/blocked 安全分级
     exec_mode: str = ""
     exec_allowlist: str = ""  # allowlist 模式的命令前缀白名单（逗号分隔）
+    # ── EVO-20260814 P1-A: RUN_MODE 运行模式（对齐 Harness 四种运行模式）──
+    # standard/ptc/minimal/creative（默认 standard 全工具集，零回归）
+    run_mode: str = "standard"
     # ── EVO-d5db88d9: 工具 Schema 索引化（TOOL_SCHEMA_LAZY=1 时 LLM 只见精简索引，按需读完整 Schema）──
-    tool_schema_lazy: bool = False  # 默认 0 = 零回归（全量注入）
+    # EVO-20260814: 默认开（节 token；环境变量仍可覆盖回 0 兼容旧用户）
+    tool_schema_lazy: bool = True
     # ── EVO-20260813-9ced1f4c: 工具执行瀑布（pipeline.py，默认全关零回归）──
     tool_pipeline_enabled: bool = False  # 总开关（TOOL_PIPELINE_ENABLED）
     tool_materialize_enabled: bool = False  # 参数物化+深冻结（TOOL_MATERIALIZE_ENABLED）
     tool_guard_enabled: bool = False  # 单调守卫（TOOL_GUARD_ENABLED）
 
     # ── 上下文 ──
-    history_max_chars: int = 1000000
+    history_max_chars: int = 1000000  # EVO-20260814: 运行时默认改 _env_int 默认值；Settings 默认仍 1M（语义对齐窗口）
     memory_top_k: int = 5  # auto-adaptive: env 未显式设置时按上下文占用率自适应（>70%→8/<30%→3，硬上限 20）
 
     # ── 架构自省（AI-serving, design.md §2.1.4）──
@@ -338,6 +377,8 @@ class Settings:
             "extract_enabled": self.extract_enabled,
             "extract_interval_msgs": self.extract_interval_msgs,
             "validate_semantic": self.validate_semantic,
+            # EVO-20260814 P1-A: RUN_MODE 运行模式（standard/ptc/minimal/creative，可查可验证）
+            "run_mode": self.run_mode,
             # M12 深化（EXEC-01/08 + EVAL-02/03，architecture_config 可查）
             "evolve_local_exec": self.evolve_local_exec,
             "evolve_exec_whitelist": self.evolve_exec_whitelist,
@@ -415,13 +456,15 @@ def load_settings() -> Settings:
         tool_summary_threshold=_env_int("TOOL_SUMMARY_THRESHOLD", 5000),
         tool_trim_enabled=_env_bool("TOOL_TRIM_ENABLED", True),
         tool_trim_age=_env_int("TOOL_TRIM_AGE", 0),
+        tool_trim_threshold=_env_int("TOOL_TRIM_THRESHOLD", 2000),
         exec_mode=_env_exec_mode("EXEC_MODE"),
         exec_allowlist=os.environ.get("EXEC_ALLOWLIST", "").strip(),
-        tool_schema_lazy=_env_bool("TOOL_SCHEMA_LAZY", False),
+        run_mode=_env_run_mode("RUN_MODE"),
+        tool_schema_lazy=_env_bool("TOOL_SCHEMA_LAZY", True),  # EVO-20260814: 默认开
         tool_pipeline_enabled=_env_bool("TOOL_PIPELINE_ENABLED", False),
         tool_materialize_enabled=_env_bool("TOOL_MATERIALIZE_ENABLED", False),
         tool_guard_enabled=_env_bool("TOOL_GUARD_ENABLED", False),
-        history_max_chars=_env_int("HISTORY_MAX_CHARS", 1000000),
+        history_max_chars=_env_int("HISTORY_MAX_CHARS", 30000),  # EVO-20260814: 默认 30000
         memory_top_k=_env_int("MEMORY_TOP_K", 5),
         self_inspection_enabled=_env_bool("SELF_INSPECTION_ENABLED", True),
         status_report_cooldown_s=float(_env_int("STATUS_REPORT_COOLDOWN_S", 60)),

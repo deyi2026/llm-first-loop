@@ -81,6 +81,14 @@ class GuardViolationError(RuntimeError):
     """守卫违反：试图放松权限 / 启动时守卫集比内核种子更宽松."""
 
 
+class BlockResultError(RuntimeError):
+    """结果门禁拒绝（EVO-20260814-39a10097，post hook waterfall 语义）.
+
+    post hook 抛出以拒绝结果：流水线短路，构造 BLOCKED 结果返回调用方。
+    典型用途：密钥泄露扫描命中 / 策略拒绝已执行出的结果。
+    """
+
+
 @dataclass(frozen=True)
 class PermissionEntry:
     """一条权限记录（不可变）."""
@@ -185,14 +193,14 @@ class ToolExecutionPipeline:
     def __init__(self, config: PipelineConfig | None = None) -> None:
         self.config = config or PipelineConfig()
         self._pre_hooks: list[Callable[[ToolCall], None]] = []
-        self._post_hooks: list[Callable[[ImmutableResult], None]] = []
+        self._post_hooks: list[Callable[[ImmutableResult], ImmutableResult | None]] = []
         self._guard: MonotonicGuard | None = None
 
     # ── 钩子注册（可重排：按列表顺序执行）──
     def add_pre_hook(self, hook: Callable[[ToolCall], None]) -> None:
         self._pre_hooks.append(hook)
 
-    def add_post_hook(self, hook: Callable[[ImmutableResult], None]) -> None:
+    def add_post_hook(self, hook: Callable[[ImmutableResult], ImmutableResult | None]) -> None:
         self._post_hooks.append(hook)
 
     def set_guard(self, guard: MonotonicGuard) -> None:
@@ -234,9 +242,39 @@ class ToolExecutionPipeline:
             duration_ms=getattr(raw, "duration_ms", 0.0),
             meta={"pipeline": True, "materialized": self.config.materialize},
         )
+        return self.run_post_hooks(result)
+
+    def run_post_hooks(self, result: ImmutableResult) -> ImmutableResult:
+        """执行 post 钩子瀑布（waterfall 语义，EVO-20260814-39a10097）.
+
+        每个钩子返回:
+        - None → 放行（观察者，现状行为零回归）
+        - ImmutableResult → replace（结果替换，链式传递）
+        抛 BlockResultError → block（短路，构造 blocked 结果返回）
+        其他异常 → fail-open（防御模式 #5 不变，观察者异常不破坏主流程）
+        """
+        current = result
         for hook in self._post_hooks:
-            hook(result)
-        return result
+            try:
+                out = hook(current)
+            except BlockResultError as exc:
+                return ImmutableResult(
+                    tool_name=current.tool_name,
+                    status="blocked",
+                    content=f"[结果门禁] {exc}",
+                    duration_ms=current.duration_ms,
+                    meta={**current.meta, "blocked": True, "block_reason": str(exc)},
+                )
+            except Exception:  # noqa: BLE001 — post 钩子 fail-open
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "post_execute hook 异常（fail-open）", exc_info=True
+                )
+                continue
+            if out is not None:
+                current = out
+        return current
 
 
 __all__ = [
@@ -248,6 +286,7 @@ __all__ = [
     "PermissionEntry",
     "MonotonicGuard",
     "GuardViolationError",
+    "BlockResultError",
     "ImmutableResult",
     "PipelineConfig",
     "ToolExecutionPipeline",

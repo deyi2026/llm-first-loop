@@ -271,6 +271,88 @@ class RecordSearcher:
             results += self._search_experience(query, each_limit)  # P1-2: 经验库并列返回
         return results[:limit]
 
+    # ── EVO-20260814: 统一事件流视图（对齐 Harness Trajectory 思路）──
+    _EVENT_STREAMS: dict[str, tuple[str, tuple[str, ...]]] = {
+        # stream 名 -> (jsonl 文件名, 摘要键)
+        "action_trace": ("action_trace.jsonl", ("phase", "action_type", "detail")),
+        "exception_log": ("exception_log.jsonl", ("phase", "error_type", "detail")),
+        "self_correction": ("self_correction_log.jsonl", ("phase", "action", "detail")),
+        "evolution": ("evolution_suggestions.jsonl", ("id", "status", "content")),
+        "param_adjust": ("param_adjust_history.jsonl", ("key", "before", "after")),
+        "declaration_check": ("declaration_check_log.jsonl", ("phase", "result", "detail")),
+        "self_eval": ("self_eval.jsonl", ("eval_id", "trigger", "summary")),
+        "memory_extract": ("memory_extract_log.jsonl", ("extract_id", "scope", "summary")),
+        "proc_versions": ("proc_versions.jsonl", ("process", "version", "started_at")),
+        "feishu_audit": ("feishu_audit.jsonl", ("message_id", "sender_id", "action", "note")),
+        "evolution_exec": ("evolution_exec_log.jsonl", ("id", "status", "note")),
+    }
+
+    def event_stream(
+        self,
+        streams: str = "all",
+        query: str = "",
+        limit: int = 50,
+        since: str = "",
+    ) -> list[dict]:
+        """统一事件流视图（EVO-20260814）.
+
+        把分散的 append-only 审计流（action_trace/exception_log/...）按时间序
+        合并为单一轨迹视图——对齐 Harness 的 Trajectory 思路：可观测/回溯
+        应看到"一条流"，而非各文件分别查。
+
+        Args:
+            streams: 逗号分隔的流名子集（'all' = 全部流；'action_trace,exception_log' = 指定流）.
+            query: 关键词（空 = 不过滤）.
+            limit: 返回条数上限（按时间倒序取最近 N 条）.
+            since: ISO 时间下界（只返回 ts >= since 的事件，空 = 不限）.
+
+        Returns:
+            按 ts 升序（旧→新）的统一事件列表; 每条含 stream/ts/summary 可溯源.
+        """
+        if streams.strip().lower() == "all":
+            names = list(self._EVENT_STREAMS)
+        else:
+            names = [s.strip() for s in streams.split(",") if s.strip()]
+        q = query.lower()
+        merged: list[dict] = []
+        for name in names:
+            fname, keys = self._EVENT_STREAMS.get(name, (None, ()))
+            if fname is None:
+                continue  # 未知流名跳过（不阻断）
+            path = self._audit_dir / fname
+            if not path.exists():
+                continue
+            with path.open("r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    ts = str(entry.get("ts", entry.get("created_at", entry.get("timestamp", ""))))
+                    if since and ts < since:
+                        continue
+                    hay = " ".join(
+                        str(entry.get(k, "")) for k in keys + ("content", "note")
+                    ).lower()
+                    if q and q not in hay:
+                        continue
+                    merged.append(
+                        {
+                            "stream": name,
+                            "ts": ts,
+                            "summary": " ".join(str(entry.get(k, "")) for k in keys)[:300],
+                            "file": str(path),
+                        }
+                    )
+        # 按 ts 降序取最近 N 条，再反转为升序（旧→新轨迹）
+        merged.sort(key=lambda e: e["ts"], reverse=True)
+        merged = merged[:limit]
+        merged.sort(key=lambda e: e["ts"])
+        return merged
+
     def _search_experience(self, query: str, limit: int) -> list[dict]:
         """P1-2: 经验库检索（None 时返回空，零回归）。"""
         if self._experience_store is None:
