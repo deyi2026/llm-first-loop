@@ -4,8 +4,12 @@ from unittest.mock import MagicMock
 
 from llm_loop.core.message import ToolResultStatus
 from llm_loop.introspection.tools_skills import (
-    run_code_review, run_grill_me, run_stop_slop,
-    CODE_REVIEW_TOOL_DEF, GRILL_ME_TOOL_DEF, STOP_SLOP_TOOL_DEF,
+    CODE_REVIEW_TOOL_DEF,
+    GRILL_ME_TOOL_DEF,
+    STOP_SLOP_TOOL_DEF,
+    run_code_review,
+    run_grill_me,
+    run_stop_slop,
 )
 
 

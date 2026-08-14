@@ -5,6 +5,7 @@ mock httpx 流式响应，验证 tool_calls 聚合与异常分类。
 
 from __future__ import annotations
 
+import contextlib
 from unittest import mock
 
 import pytest
@@ -218,12 +219,12 @@ def test_chat_with_auth_header_when_api_key_present():
 
 def test_local_provider_disables_thinking_in_payload():
     """本地 provider (api_key 空) 必须正确处理 thinking 字段.
-    
+
     根因 (P1-FEISHU):
       1. qwen3 默认 enable_thinking=true → think 块耗尽 max_tokens → content 空 + truncated
       2. LM Studio 优先 OpenAI `thinking.type=enabled`，忽略 `chat_template_kwargs.enable_thinking=False`
          → 两者并存时仍输出 think 块（用户看到"你好 → 空回答 + 截断"）。
-    
+
     修复: 本地 provider 跳过 OpenAI `thinking` 分支 + 仅发 chat_template_kwargs。
     """
     from unittest.mock import patch
@@ -235,11 +236,8 @@ def test_local_provider_disables_thinking_in_payload():
 
     from llm_loop.llm.client import LLMClient
     client = LLMClient(api_key="", base_url="http://localhost:1234/v1", model="m", timeout_s=5)
-    with patch("httpx.Client.stream", fake_stream):
-        try:
-            list(client.chat_stream([{"role": "user", "content": "hi"}], tools=[]))
-        except RuntimeError:
-            pass
+    with patch("httpx.Client.stream", fake_stream), contextlib.suppress(RuntimeError):
+        list(client.chat_stream([{"role": "user", "content": "hi"}], tools=[]))
 
     p = captured.get("json", {})
     # 必须 1: chat_template_kwargs.enable_thinking=False

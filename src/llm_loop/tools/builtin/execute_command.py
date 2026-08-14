@@ -14,6 +14,7 @@ from llm_loop.core.message import ToolResult, ToolResultStatus
 _MAX_OUTPUT_CHARS = 3000
 _KEEP_HEAD_CHARS = 1500
 _KEEP_TAIL_CHARS = 1500
+_NOISE_WORDS = {"and", "or", "not", "the", "for", "with", "echo"}
 
 
 def _truncate_output(content: str, command: str = "") -> str:
@@ -23,9 +24,8 @@ def _truncate_output(content: str, command: str = "") -> str:
     head = content[:_KEEP_HEAD_CHARS]
     tail = content[-_KEEP_TAIL_CHARS:]
     # 从命令提取关键词（取可打印词，最多 3 个；排除常见 shell 噪音词）
-    _NOISE = {"and", "or", "not", "the", "for", "with", "echo"}
     kw = " ".join(
-        [w for w in command.split() if w.isalnum() and len(w) >= 2 and w not in _NOISE][:3]
+        [w for w in command.split() if w.isalnum() and len(w) >= 2 and w not in _NOISE_WORDS][:3]
     )
     return (
         f"{head}\n"

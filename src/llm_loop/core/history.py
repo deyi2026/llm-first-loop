@@ -280,8 +280,8 @@ def build_history_messages(
     # —— qwen3 heretic 模板严格要求 "System message must be at the beginning"。
     # ⚠️ 累积陷阱: 架构上报/validator reminder 每轮注入到 sess.messages,session 长时间累积后
     # 125+ 条 system 消息若全合并 → 单条 system 数十万字符 → LM Studio 超 token 限 / 超时。
-    # 修复: 合并时限制总字符数(MAX_SYS_MERGE_CHARS),保留最新追加、丢弃过期的(state 帧意义在即时性)。
-    MAX_SYS_MERGE_CHARS = 4000  # system_prompt + snapshot + 最近 1-3 条 reminder 上限
+    # 修复: 合并时限制总字符数(max_sys_merge_chars),保留最新追加、丢弃过期的(state 帧意义在即时性)。
+    max_sys_merge_chars = 4000  # system_prompt + snapshot + 最近 1-3 条 reminder 上限
     def _append_or_merge(msg_dict: dict) -> None:
         if msg_dict.get("role") == "system" and out and out[0].get("role") == "system":
             new_content = msg_dict.get("content", "")
@@ -289,18 +289,18 @@ def build_history_messages(
                 return
             cur = out[0]["content"]
             # 已超限 → 整段替换为"仅保留最新"(历史 state 帧意义已失)
-            if len(cur) >= MAX_SYS_MERGE_CHARS:
+            if len(cur) >= max_sys_merge_chars:
                 # 用最新一条替换,避免无止境增长
-                out[0]["content"] = cur[:200] + "\n\n[…历史系统消息已截断(超 MAX_SYS_MERGE_CHARS=4000)…]\n\n" + new_content
+                out[0]["content"] = cur[:200] + "\n\n[…历史系统消息已截断(超 max_sys_merge_chars=4000)…]\n\n" + new_content
                 # 仍超限则直接覆盖
-                if len(out[0]["content"]) > MAX_SYS_MERGE_CHARS * 1.5:
-                    out[0]["content"] = new_content[-MAX_SYS_MERGE_CHARS:]
+                if len(out[0]["content"]) > max_sys_merge_chars * 1.5:
+                    out[0]["content"] = new_content[-max_sys_merge_chars:]
                 return
             sep = "\n\n"
             out[0]["content"] = cur + sep + new_content
             # 仍超限 → 尾部截断(保留最新)
-            if len(out[0]["content"]) > MAX_SYS_MERGE_CHARS * 1.5:
-                out[0]["content"] = "...[已截断]...\n" + out[0]["content"][-(MAX_SYS_MERGE_CHARS-20):]
+            if len(out[0]["content"]) > max_sys_merge_chars * 1.5:
+                out[0]["content"] = "...[已截断]...\n" + out[0]["content"][-(max_sys_merge_chars-20):]
         else:
             out.append(msg_dict)
 

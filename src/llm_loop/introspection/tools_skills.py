@@ -18,7 +18,6 @@ from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 
-
 # ════════════════════════════════════════════════════════════════════════
 # Skill 1: code_review — 多维代码审查
 # ════════════════════════════════════════════════════════════════════════
@@ -107,7 +106,7 @@ def run_code_review(ctx: Any, audit: Any, args: dict) -> ToolResult:
         )
 
     lines = code.splitlines()
-    findings: list[dict] = []
+
 
     # 1. 维度清单（提示 LLM 阅读时重点关注）
     dim_section = ["## 📋 审查维度清单", ""]
@@ -132,9 +131,9 @@ def run_code_review(ctx: Any, audit: Any, args: dict) -> ToolResult:
     stat_section = [
         "## 📊 基础统计",
         f"- 行数: {len(lines)}",
-        f"- 非空行: {sum(1 for l in lines if l.strip())}",
-        f"- 注释行: {sum(1 for l in lines if l.strip().startswith(('#', '//', '/*', '--'))) }",
-        f"- 缩进风格: {'空格' if any(l.startswith(' ') for l in lines) else 'Tab/无'}",
+        f"- 非空行: {sum(1 for line in lines if line.strip())}",
+        f"- 注释行: {sum(1 for line in lines if line.strip().startswith(('#', '//', '/*', '--'))) }",
+        f"- 缩进风格: {'空格' if any(line.startswith(' ') for line in lines) else 'Tab/无'}",
         f"- 语言: {language}",
         "",
     ]
@@ -155,7 +154,7 @@ def run_code_review(ctx: Any, audit: Any, args: dict) -> ToolResult:
         + ["", deep_review_hint]
     )
 
-    findings_summary = f"[code_review] 完成 {language} 审查 {len(lines)} 行, 异味扫描={smells_found}, 维度={len(focus)}"
+
     return ToolResult(
         status=ToolResultStatus.SUCCESS,
         content=report,

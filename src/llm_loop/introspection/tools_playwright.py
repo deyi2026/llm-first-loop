@@ -173,7 +173,7 @@ def run_playwright_test(ctx: Any, audit: Any, args: dict) -> ToolResult:
     # 真实执行
     try:
         from playwright.sync_api import sync_playwright
-        exec_ns: dict = {}
+
         # 安全执行（有限命名空间）
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=headless)
