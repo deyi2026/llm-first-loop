@@ -68,7 +68,7 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 - **数据治理**（T3）：压缩档案分片（`ARCHIVE_SEGMENT_BYTES` 默认 100MB，超阈值开 `<sid>-N.jsonl` 新段，检索按段倒序 + sidecar 索引快速通道 + 全文补齐，limit 截断语义等价；存量无索引段全文扫描兜底）；飞书心跳历史轮转（`FEISHU_HEARTBEAT_HISTORY_MAX_MB`，超阈值 `.1` 保留 1 份）
 - **人工审批流**（T5a）：EXEC_MODE 拦截项在 CLI 交互模式可经终端确认放行（`_cli_approval_prompt`，无终端 fail-closed 拒绝）；审批审计落盘 `data/audit/approval_audit.jsonl`（decision/tool/参数摘要，不含密钥）；灾难性安全硬阻断不可审批
 - **symlink 写防护**（T5b）：edit_file 写路径含符号链接（自身/父目录）拒绝写入防越界（fail-closed + realpath 引导）；read_file 读 symlink 如实标注不拒绝
-- **评测体系**（T4）：固定评测集 `tests/eval_sets/scenarios_v1.json`（6 场景，口径对齐 ai_guidance_playbook）+ 运行器 `scripts/run_eval.py`（真实 LLM / `--dry` 管道验证，判定 + Wilson CI + 报告落盘 `docs/metrics/`）+ CI nightly 自动运行
+- **评测体系**（T4）：固定评测集 `tests/eval_sets/scenarios_v1.json`（6 场景，判定口径源自内部实证基线）+ 运行器 `scripts/run_eval.py`（真实 LLM / `--dry` 管道验证，判定 + Wilson CI + 报告落盘 `docs/metrics/`）+ CI nightly 自动运行
 - **CI + 版本**（T7）：GitHub Actions 三件套门禁（pytest/ruff/pyright）+ nightly 真实评测；语义化版本 v0.2.0
 
 ## CLI 子命令
@@ -133,7 +133,5 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 
 - 文档导航：`docs/INDEX.md`（报告清单 / 章节映射 / 更新约定）
 - AI 自主规则（唯一规则真相源）：`docs/ai_rules.md`
-- AI 引导手册（实证口径）：`docs/ai_guidance_playbook.md`
 - 开源框架化路线图：`docs/ROADMAP-B-20260814.md`
-- 变更记录：`docs/CHANGES.md`
 - 开发过程规格（spec/design/tasks）为本地 CodeArts 工作流文档，不随开源仓库分发
