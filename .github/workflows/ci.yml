@@ -57,32 +57,6 @@ jobs:
             echo "未配置 LLM API key（仓库 secrets），跳过 nightly 真实评测"
             exit 0
           fi
-      - name: 运行时诊断（LLM 环境）
-        run: |
-          python - <<'EOF'
-          import os
-          print("DEEPSEEK_API_KEY set:", bool(os.environ.get("DEEPSEEK_API_KEY")))
-          print("DEEPSEEK_API_KEY len:", len(os.environ.get("DEEPSEEK_API_KEY", "")))
-          print("DEEPSEEK_API_KEY head:", repr(os.environ.get("DEEPSEEK_API_KEY", "")[:6]))
-          print("LLM_API_KEY set:", bool(os.environ.get("LLM_API_KEY")))
-          print("LLM_BASE_URL:", repr(os.environ.get("LLM_BASE_URL")))
-          print("LLM_MODEL:", repr(os.environ.get("LLM_MODEL")))
-          from llm_loop.config import Settings
-          s = Settings(
-              llm_api_key=os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("LLM_API_KEY", ""),
-              llm_base_url=os.environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1"),
-              llm_model=os.environ.get("LLM_MODEL", "deepseek-v4-flash"),
-              data_dir="/tmp/eval_data",
-              max_iterations=10,
-              tool_timeout_s=30.0,
-          )
-          print("settings.llm_base_url:", repr(s.llm_base_url))
-          print("settings.llm_model:", repr(s.llm_model))
-          from llm_loop.factory import build_engine
-          engine = build_engine(s)
-          print("engine.llm.base_url:", repr(engine.llm.base_url))
-          print("engine.llm.model:", repr(engine.llm.model))
-          EOF
       - name: real_llm 冒烟
         run: python -m pytest tests/integration/test_real_llm_smoke.py tests/integration/test_real_llm_exec_smoke.py -m real_llm -q
       - name: 评测集真实运行（指标落盘）

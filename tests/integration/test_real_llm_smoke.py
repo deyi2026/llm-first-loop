@@ -31,8 +31,8 @@ def _real_llm_settings(tmp_path):
         pytest.skip("无真实 LLM key（DEEPSEEK_API_KEY/LLM_API_KEY）")
     return Settings(
         llm_api_key=api_key,
-        llm_base_url=os.environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1"),
-        llm_model=os.environ.get("LLM_MODEL", "deepseek-v4-flash"),
+        llm_base_url=os.environ.get("LLM_BASE_URL") or "https://api.deepseek.com/v1",  # 空串回退（CI secrets 未配置=空串）
+        llm_model=os.environ.get("LLM_MODEL") or "deepseek-v4-flash",
         data_dir=str(tmp_path / "data"),
         max_iterations=10,
         tool_timeout_s=30.0,
