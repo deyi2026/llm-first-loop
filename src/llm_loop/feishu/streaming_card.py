@@ -165,6 +165,16 @@ class StreamingCard:
         self._broken = True
         return False
 
+    def update(self, content: str) -> bool:
+        """H-UI(2026-08-14): 实时更新流式卡内容（思考/工具动作状态条）.
+
+        未建卡/已熔断 → False（fail-open 不阻断）；调用方观察者回调内使用，
+        429 限流静默跳过（_update_content 既有语义）。
+        """
+        if not self.active:
+            return False
+        return self._update_content(content)
+
     def close(self, content: str | None = None) -> bool:
         """定稿: 更新完成态（`content` 提供时回填回复摘要）+ 关闭 streaming_mode + summary.
 

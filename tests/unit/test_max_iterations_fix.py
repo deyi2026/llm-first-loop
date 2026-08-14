@@ -158,3 +158,141 @@ def test_warning_not_injected_for_small_budget(tmp_path):
 
     msg = max_iterations_warning_message(7, 8)  # 仅验证文本函数；引擎侧小预算由条件守卫跳过
     assert "轮数预警" in msg.content
+
+
+# ── H-UI: 引擎动作观察者（实时状态条数据源）──
+
+
+def test_action_observer_events_sequence(tmp_path):
+    """观察者收到 thinking→tool_call→tool_result→thinking→answer→done 序列（同步 run 也触发）."""
+    from llm_loop.config import Settings
+    from llm_loop.core.loop.engine import LoopEngine
+    from llm_loop.core.message import ToolCall, ToolResultStatus
+    from llm_loop.core.session import SessionStore
+    from llm_loop.llm.client import LLMResponse
+    from llm_loop.tools.registry import ToolRegistry
+
+    class _Fake:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def _next(self) -> LLMResponse:
+            self.calls += 1
+            if self.calls == 1:
+                return LLMResponse(
+                    content="用工具",
+                    tool_calls=[
+                        ToolCall(id="tc1", name="read_file", arguments={"path": "a.txt"})
+                    ],
+                    provider="fake",
+                )
+            return LLMResponse(content="最终回答", tool_calls=[], provider="fake")
+
+        def chat(self, messages, tools, **kw) -> LLMResponse:
+            return self._next()
+
+        def chat_stream(self, messages, tools, **kw):
+            def _gen():
+                yield from ()
+                return self._next()
+
+            return _gen()
+
+    class _Reg(ToolRegistry):
+        def execute(self, call):
+            from llm_loop.core.message import ToolResult
+
+            return ToolResult(
+                status=ToolResultStatus.SUCCESS,
+                content="ok",
+                tool_call_id=call.id,
+                tool_name=call.name,
+                duration_ms=0.0,
+            )
+
+    reg = _Reg()
+    reg.register(
+        type(
+            "RF",
+            (),
+            {
+                "name": "read_file",
+                "description": "test",
+                "parameters": {"type": "object"},
+            },
+        )()
+    )
+    settings = Settings(
+        llm_api_key="k",
+        llm_base_url="https://x/v1",
+        llm_model="m",
+        data_dir=str(tmp_path / "data"),
+        extract_enabled=False,
+        summary_mode="off",
+    )
+    engine = LoopEngine(
+        llm_client=_Fake(),  # type: ignore[arg-type]
+        registry=reg,  # type: ignore[arg-type]
+        memory=None,  # type: ignore[arg-type]
+        session=SessionStore(tmp_path / "sessions"),
+        settings=settings,
+    )
+    events: list[str] = []
+    engine.set_action_observer(lambda etype, payload: events.append(etype))
+    engine.run_single("任务")
+    assert events[0] == "thinking"
+    assert "tool_call" in events
+    assert "tool_result" in events
+    assert events[-1] == "done"
+    # 顺序约束：tool_call 在 tool_result 前
+    assert events.index("tool_call") < events.index("tool_result")
+    # 最后回答前有 thinking（第 2 轮）
+    assert events.count("thinking") >= 2
+    # 观察者通知后移除 → 不再触发
+    engine.set_action_observer(None)
+    events.clear()
+    engine.run_single("任务2")
+    assert events == []
+
+
+def test_action_observer_exception_fail_open(tmp_path):
+    """观察者抛异常 → fail-open，主循环正常完成."""
+    from llm_loop.config import Settings
+    from llm_loop.core.loop.engine import LoopEngine
+    from llm_loop.core.session import SessionStore
+    from llm_loop.llm.client import LLMResponse
+    from llm_loop.tools.registry import ToolRegistry
+
+    class _Fake:
+        def chat(self, messages, tools, **kw) -> LLMResponse:
+            return LLMResponse(content="回答", tool_calls=[], provider="fake")
+
+        def chat_stream(self, messages, tools, **kw):
+            def _gen():
+                yield from ()
+                return LLMResponse(content="回答", tool_calls=[], provider="fake")
+
+            return _gen()
+
+    settings = Settings(
+        llm_api_key="k",
+        llm_base_url="https://x/v1",
+        llm_model="m",
+        data_dir=str(tmp_path / "data"),
+        extract_enabled=False,
+        summary_mode="off",
+    )
+    engine = LoopEngine(
+        llm_client=_Fake(),  # type: ignore[arg-type]
+        registry=ToolRegistry(),  # type: ignore[arg-type]
+        memory=None,  # type: ignore[arg-type]
+        session=SessionStore(tmp_path / "sessions"),
+        settings=settings,
+    )
+
+    def boom(etype, payload):
+        raise RuntimeError("观察者故障")
+
+    engine.set_action_observer(boom)
+    result = engine.run_single("任务")
+    assert result.final_answer == "回答"  # 观察者异常不影响结果

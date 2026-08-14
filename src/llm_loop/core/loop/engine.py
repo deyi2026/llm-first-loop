@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -174,6 +174,28 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
         self._overflow_reinject_count = 0
         # M50: CLI --model 启动参数装配通道（cli.py 注入，_run_single/_run_interactive 消费）
         self._cli_startup_model: str | None = None
+        # H-UI(2026-08-14): 动作观察者（实时 UI 状态条：thinking/tool_call/tool_result/answer/done）
+        # None = 不通知（零回归）；观察者异常 fail-open 不影响主循环
+        self._action_observer: Callable[[str, dict], None] | None = None
+
+    def set_action_observer(self, fn: Callable[[str, dict], None] | None) -> None:
+        """H-UI: 注入/移除动作观察者.
+
+        事件: ("thinking", {"round": N}) / ("tool_call", {"tool_name", "args_summary"})
+        / ("tool_result", {"tool_name", "status"}) / ("answer", {}) / ("done", {})。
+        观察者同步调用（引擎线程内），异常 fail-open；传 None 移除。
+        """
+        self._action_observer = fn
+
+    def _notify_action(self, event_type: str, **payload) -> None:
+        """动作事件通知（fail-open：观察者异常/缺失均不阻断主循环）."""
+        fn = self._action_observer
+        if fn is None:
+            return
+        try:
+            fn(event_type, payload)
+        except Exception:  # noqa: BLE001 — 观察者异常不影响 AI 发挥
+            logger.debug("动作观察者异常（fail-open）: %s", event_type)
 
     # ── D1 事件源化辅助（fail-open：禁用/异常如实记录，不抛穿主循环）──
 
@@ -352,6 +374,8 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
             rounds += 1
             if self.runtime is not None:
                 self.runtime.reset_round()
+            # H-UI: 每轮思考开始（实时状态条）
+            self._notify_action("thinking", round=rounds)
             self._phase("comprehension")
             if self.status:
                 self.status.record_llm_round()
@@ -488,6 +512,8 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
             # 无工具调用 → 最终回答 → 真诚回答阶段
             if not resp.tool_calls:
                 self._phase("honest_answer")
+                # H-UI: 进入回答生成
+                self._notify_action("answer")
                 final_answer = resp.content or ""
                 # M41 修复: 回答被截断（truncated=True）时不执行声明-回执校验——
                 # 不完整内容校验不可靠（会误报"声明与回执不符"），截断如实透传标注
@@ -592,6 +618,8 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
                 f"本次回答仍有效，但历史可能未持久化。{extra}"
             )
         self._phase("done")
+        # H-UI: 循环结束（状态条可收尾）
+        self._notify_action("done")
 
         # P0-1: 记忆访问统计（decay_score/access_count/last_access_at）落盘——
         # search() 仅更新内存，此处每轮 run 完成批量持久化（低频，避免每轮检索全量写盘）

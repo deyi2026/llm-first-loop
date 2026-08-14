@@ -108,6 +108,12 @@ class _ToolExecMixin:
         if valid_calls:
             # P2-1: 工具轮次进展外泄（fail-open，yield 异常不阻断主循环）
             for tc in valid_calls:
+                # H-UI: 工具调用开始（实时状态条）
+                self._notify_action(
+                    "tool_call",
+                    tool_name=tc.name,
+                    args_summary=_tool_args_summary(tc.arguments),
+                )
                 try:
                     yield StreamDelta(
                         text="",
@@ -124,6 +130,10 @@ class _ToolExecMixin:
             for tc, result in zip(valid_calls, results, strict=False):
                 tool_trace.append({"id": tc.id, "name": tc.name, "arguments": tc.arguments})
                 self._record_tool_history(result)
+                # H-UI: 工具结果（实时状态条）
+                self._notify_action(
+                    "tool_result", tool_name=tc.name, status=result.status.value
+                )
                 tool_msg = tool_result_to_message(
                     result, failure_guidance_enabled=self.registry.failure_guidance_enabled
                 )
