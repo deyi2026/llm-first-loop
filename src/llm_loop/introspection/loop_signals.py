@@ -55,8 +55,15 @@ class LoopSignalDetector:
         异常触发时机交 AI 自主（RULE-AI-06 子规则 3）；仅提示不强制。
         """
         if self._eval_trigger_detector is None or self._status is None or not self._status.enabled:
+            logger.debug(
+                "check_eval_trigger 前置条件不满足: detector=%s status=%s enabled=%s",
+                self._eval_trigger_detector is not None,
+                self._status is not None,
+                getattr(self._status, "enabled", None),
+            )
             return None
         if not getattr(self._settings, "self_eval_remind_enabled", True):
+            logger.debug("check_eval_trigger: self_eval_remind_enabled=False")
             return None
         try:
             trigger = self._eval_trigger_detector.check(
@@ -64,7 +71,9 @@ class LoopSignalDetector:
                 task_completed=milestone,
             )
             if trigger is None:
+                logger.debug("check_eval_trigger: trigger=None (rounds=%s milestone=%s)", rounds, milestone)
                 return None
+            logger.debug("check_eval_trigger: trigger=%s (rounds=%s milestone=%s)", trigger.trigger, rounds, milestone)
             return ArchitectureEvent(
                 event_type=ArchitectureEventType.DEGRADATION,
                 fact=trigger.fact,
