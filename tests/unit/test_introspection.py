@@ -532,3 +532,72 @@ def test_submit_evolution_default_scope_global_receipt(tmp_path):
     assert r.status.value == "success"
     assert "scope=global" in r.content
     assert "evolve-review" in r.content
+
+
+# ── R2/A6: 程序故障计数（AI 可感知程序故障率）──
+
+
+def test_program_fault_counter_and_snapshot():
+    """record_program_fault 计数 + snapshot 可见（AI 可感知程序故障）."""
+    from llm_loop.introspection.status import ArchitectureStatusProvider
+
+    p = ArchitectureStatusProvider(config_status=lambda: {"llm_model": "fake"})
+    p.record_program_fault("memory")
+    p.record_program_fault("memory")
+    p.record_program_fault("llm_call")
+    snap = p.snapshot()
+    assert snap["program_faults"] == {"memory": 2, "llm_call": 1}
+    # 禁用时不计（enabled=False）
+    p.enabled = False
+    p.record_program_fault("session_persist")
+    assert p.snapshot()["program_faults"] == {"memory": 2, "llm_call": 1}
+
+
+def test_engine_fault_recording(tmp_path):
+    """引擎 fail-open 点记录程序故障（记忆失败路径）."""
+    from llm_loop.config import Settings
+    from llm_loop.core.loop.engine import LoopEngine
+    from llm_loop.core.session import SessionStore
+    from llm_loop.llm.client import LLMResponse
+    from llm_loop.tools.registry import ToolRegistry
+
+    class _Fake:
+        def chat(self, messages, tools, **kw) -> LLMResponse:
+            return LLMResponse(content="回答", tool_calls=[], provider="fake")
+
+        def chat_stream(self, messages, tools, **kw):
+            def _gen():
+                yield from ()
+                return LLMResponse(content="回答", tool_calls=[], provider="fake")
+
+            return _gen()
+
+    class _BrokenMemory:
+        def search(self, *a, **k):
+            raise RuntimeError("记忆故障")
+
+        def flush(self) -> None:
+            pass  # 循环末记忆统计落盘（故障隔离外）
+
+    settings = Settings(
+        llm_api_key="k",
+        llm_base_url="https://x/v1",
+        llm_model="m",
+        data_dir=str(tmp_path / "data"),
+        extract_enabled=False,
+        summary_mode="off",
+    )
+    from llm_loop.introspection.status import ArchitectureStatusProvider
+
+    engine = LoopEngine(
+        llm_client=_Fake(),  # type: ignore[arg-type]
+        registry=ToolRegistry(),  # type: ignore[arg-type]
+        memory=_BrokenMemory(),  # type: ignore[arg-type]
+        session=SessionStore(tmp_path / "sessions"),
+        settings=settings,
+        status_provider=ArchitectureStatusProvider(config_status=lambda: {"llm_model": "fake"}),
+    )
+    result = engine.run_single("任务")
+    assert result.final_answer  # 记忆故障不阻断
+    faults = engine.status.snapshot()["program_faults"]
+    assert faults.get("memory", 0) >= 1  # 记忆故障已计数
