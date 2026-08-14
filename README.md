@@ -135,6 +135,9 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 
 - 快速上手：`examples/`（01 最小 CLI 循环 / 02 Web 嵌入 / 03 自定义工具注册）
 - 公共 API 参考：`docs/api.md`（装配/引擎/会话/工具/Web/CLI/扩展点）
+- 配置参考：`docs/configuration.md`（分组配置表 + 常见坑速查）
+- 事件溯源设计：`docs/event_sourcing.md`（单一真相源 + 迁移/回滚指南）
+- 评测集扩展指南：`tests/eval_sets/README.md`（场景 schema + 贡献步骤）
 - 文档导航：`docs/INDEX.md`
 - AI 自主规则（唯一规则真相源）：`docs/ai_rules.md`
 - 开源框架化路线图：`docs/ROADMAP-B-20260814.md`

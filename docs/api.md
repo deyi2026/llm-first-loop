@@ -1,7 +1,10 @@
 # llm_loop 公共 API 参考
 
 > 本文档面向集成者：把 LLM-First Core Loop 嵌入自有应用/脚本。
-> 完整配置项见 `.env.example`；示例代码见 `examples/`。
+> 完整配置项见 `.env.example` 与 `docs/configuration.md`；示例代码见 `examples/`。
+> **稳定 API 声明（B5）**：下表列出的符号（§1–§8）为公共稳定接口，语义变更需版本号
+> 升级（0.x 内小版本可增补，不破坏）；未列出的内部符号（`_` 前缀、mixin、registry_*）
+> 视为私有，勿在外部依赖。
 
 ---
 
@@ -14,8 +17,8 @@ from llm_loop.factory import build_engine
 load_env_file()              # 从项目根 .env 加载配置（环境变量优先）
 engine = build_engine(load_settings())
 
-# 单条消息完整循环（五阶段：消息进→理解→行动→真诚回答→记住）
-result = engine.run(engine.session.create(), "请读取 data/notes.txt 并总结")
+# 一次性对话（自动创建会话）：最简路径
+result = engine.run_single("请读取 data/notes.txt 并总结")
 print(result.final_answer)
 ```
 
@@ -36,9 +39,16 @@ print(result.final_answer)
 | 方法 | 说明 |
 |:---|:---|
 | `run(session_id: str, user_text: str, model=None) -> LoopResult` | 同步执行完整循环（工具循环内部阻塞） |
+| `run_single(user_text: str, model=None) -> LoopResult` | **一次性便捷入口**：自动创建新会话并执行（等价 `run(create(), text)`） |
 | `run_stream(session_id, user_text, model=None) -> Iterator[StreamDelta]` | 流式版本：逐 content delta yield，结束抛出 `StopIteration` 携带 `LoopResult` |
 | `session` | 已装配的 `SessionStore`（会话 CRUD） |
 | `registry` | 已装配的 `ToolRegistry`（工具注册/执行） |
+
+### 注入自定义工具（B5）
+```python
+engine.registry.register(MyTool())   # 实现 name/description/parameters/execute（见 §5）
+# 注册后 AI 在下一轮循环即可自主调用（schema 自动注入）
+```
 
 ### `LoopResult` 关键字段
 `session_id` / `final_answer` / `rounds` / `tool_calls`（工具声明轨迹）/ `model_used`（如实标注实际模型）/ `tokens_in` / `tokens_out` / `truncated` / `reasoning_content`
