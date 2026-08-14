@@ -58,6 +58,8 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 - **模型体系**（M47-M50）：`model_catalog` 查目录 / `switch_model` 自主切换（带 reason 审计落盘，AI 决策权）；Provider 注册表 + `MODEL_FALLBACKS` 应急降级链（仅默认装配模型失败时自动应急降级并如实标注，用户显式选择的模型不降级）；模型窗口自适应历史预算（按当前模型 context 收紧/放宽）
 - **双端接入**（Web + 飞书桥）：Web 管理界面（FastAPI :8902）+ 飞书长连接桥；配置 `FEISHU_OWNER_OPEN_ID` 后两端共享同一会话（一端说话另一端可续聊同一上下文）；飞书桥内置假死防护（SDK 锁泄漏运行时修补 + 看门狗心跳 + 健康检查按心跳新鲜度判定）
 - **蒸馏数据集导出**（export_distill，纯读只读薄壳）：`export-distill` 子命令把 `data/sessions/*.json` 会话轨迹导出为带思考链的 ReAct JSONL 蒸馏集 + 结构化统计报告——user 边界切分任务段 → `status=success` + 闭环完整性段级过滤（过滤原因分类计数）→ ReAct 三元组样本（thought/action/observation 与源逐字节一致，缺失思考链如实置 null）→ JSONL（`ensure_ascii=False` 超长不截断）+ 报告（通过+过滤=段总数闭环对账）；只产数据不训练、不切分/增强/脱敏；损坏文件 fail-open 如实标注跳过，输出已存在默认拒绝（`--force` 覆盖），源 session 文件只读零修改
+- **事件源化单一真相源**（D1 事件日志）：`data/event_logs/<session_id>.jsonl` 事件日志作为轨迹单一真相源（5 类事件：session.created / message.appended / context.compressed / session.meta_changed / session.forked），运行期经 fail-open 钩子追加事件，`event-replay` 回放重建派生视图；`event-inventory` 只读盘点（哈希+mtime 零修改）→ `event-migrate` 从存量 session JSON 迁移生成事件日志（迁移前自动备份 `event_logs/_backup/<ts>/`，v3 旧会话缺省字段自动补默认，幂等二次迁移 0 迁移）→ `event-verify` 重放视图与源逐字段对账（差异如实标注）→ `event-rollback` 备份区逐字节恢复（`--remove-events` 还原事件日志）；`EVENT_LOG_ENABLED=0` 时事件写入零行为，三套存量存储保留双轨可对账
+- **D1 后续批次**（d1_es_followup）：**D3 会话 fork**——`session-fork` / `POST /api/v1/sessions/{id}/fork` 触发事件日志物理复制继承（保留 type/ts/payload 重分配 seq/event_id/session_id）+ session.forked 事件承载 fork 元信息 + 源会话逐字节不变 + 新会话事件独立可 replay；**三套存储退役**——`event-retire` 编排（备份→双轨对账→归档 action_trace/session JSON→切读路径 `READ_PATH_SOURCE=event_log`）+ `event-retire-rollback` 逐字节恢复，对账全量通过方可切换（不一致不切换不退役）；**事件日志滚动**——多段目录 `<sid>/<segment_seq>.jsonl`（大小/天数/会话结束三触发条件）+ `event-rotate-status` 段清单 + 跨段 replay 逐字节一致 + 归档段只读；**D4 过滤钩子**——`EventStore.append` 入口 HookChain（filter 丢弃 / desensitize 脱敏 / transform 转换，按 priority 升序）+ 审计落盘 `_hook_audit.jsonl`（不含原始 payload 敏感内容）+ fail-open 异常不阻断 + `event-hooks` CLI（list/test）+ 钩子链默认空零行为零回归
 - **灾难性安全**：唯一硬边界 = 不可逆删除/系统破坏，其余一切反馈放行
 
 ## CLI 子命令
@@ -73,6 +75,15 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 .venv/bin/python -m llm_loop.cli evolve-review <id> <accepted|rejected>  # 审阅演进建议（accepted 且权限允许 → 自动执行）
 .venv/bin/python -m llm_loop.cli evolve-complete <id> "<结果说明>"  # 人工完成登记（涉边界演进 → executed, executor=human）
 .venv/bin/python -m llm_loop.cli export-distill [--input-dir DIR] [--output FILE] [--report FILE] [--force]  # 导出蒸馏数据集（薄壳只读，ReAct JSONL + 统计报告）
+.venv/bin/python -m llm_loop.cli event-inventory [--event-logs-dir DIR]  # 事件日志盘点（只读，规模数字+割裂点，文件零修改）
+.venv/bin/python -m llm_loop.cli event-migrate [--event-logs-dir DIR] [--force]  # 存量 session 迁移为事件日志（先备份 _backup/<ts>/，幂等）
+.venv/bin/python -m llm_loop.cli event-verify [--all|--session ID] [--event-logs-dir DIR]  # 重放视图与源逐字段对账
+.venv/bin/python -m llm_loop.cli event-rollback [--session ID] [--remove-events]  # 从备份区恢复源文件（可选移除事件日志）
+.venv/bin/python -m llm_loop.cli session-fork --session <id> [--fork-point N] [--summary ...]  # 会话 fork（事件日志物理复制继承 + session.forked 事件）
+.venv/bin/python -m llm_loop.cli event-retire [--data-dir DIR] [--force]  # 三套存储退役（备份→对账→归档→切读路径）
+.venv/bin/python -m llm_loop.cli event-retire-rollback --data-dir DIR --backup-dir <dir>  # 退役回滚（逐字节恢复 + 读路径切回）
+.venv/bin/python -m llm_loop.cli event-rotate-status [--data-dir DIR] [--session <id>]  # 事件日志滚动段清单
+.venv/bin/python -m llm_loop.cli event-hooks [--data-dir DIR] {list,test}  # 过滤钩子管理（list 已注册 / test 示例事件）
 .venv/bin/python -m llm_loop.cli --session <id> "消息"  # 复用会话继续对话
 ```
 
@@ -96,6 +107,13 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 | `SYSTEM_PROMPT_EXTRA` | — | 叠加自定义 AI 规则（程序最小化，无需改代码） |
 | `HISTORY_MAX_CHARS` | 1000000 | 提交给 LLM 的历史上下文预算（字符）。**建议按模型窗口调低**（如 80000）——预算过高会导致上下文膨胀超限，所有模型调用失败/超时 |
 | `MODEL_FALLBACKS` | 空 | 降级链（逗号分隔 `provider/model`，如 `deepseek/deepseek-v4-flash,local/qwen3.6-27b-fable-fusion-711-uncensored-heretic-nm-dau-neo-max-mtp`）；空=不启用降级 |
+| `EVENT_LOG_ENABLED` | 1 | 事件源化单一真相源开关（`data/event_logs/<session_id>.jsonl` 追加写；0=事件写入零行为） |
+| `EVENT_LOGS_DIR` | 空 | 事件日志目录覆盖（空=从 data_dir 派生 `data/event_logs`） |
+| `READ_PATH_SOURCE` | session_json | 读路径分派（session_json 既有 / event_log replay 重建） |
+| `EVENT_LOG_ROTATE_BYTES` | 10485760 | 事件日志滚动大小阈值字节（0=禁用） |
+| `EVENT_LOG_ROTATE_DAYS` | 30 | 事件日志滚动天数阈值（0=禁用） |
+| `EVENT_LOG_ROTATE_ON_SESSION_END` | 1 | 会话结束时触发滚动 |
+| `EVENT_HOOKS_CONFIG` | 空 | 过滤钩子配置文件路径（空=钩子链默认空零行为） |
 
 > **配置加载（M63）**：CLI / Web / 飞书 三端统一从项目 `.env` 加载（环境变量优先）。
 > 修改 `.env` 后：CLI 直接生效；web/feishu 执行 `bash scripts/restart_system.sh restart` 一键重启。

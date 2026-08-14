@@ -200,6 +200,21 @@ class Settings:
 
     # ── 数据目录 ──
     data_dir: str = "./data"
+    # ── D1 事件日志（单一真相源，design.md §2.2.1）──
+    # 关闭时事件写入零行为零回归（读路径/既有写路径不受影响）
+    event_log_enabled: bool = True
+    # EVENT_LOGS_DIR 覆盖（空 = 从 data_dir 派生 event_logs_dir）
+    event_logs_dir_override: str = ""
+    # ── D1 后续批次 2：读路径切换（退役阶段，design.md §2.4.1）──
+    # session_json（默认）= 既有 load 读 session JSON（零回归）
+    # event_log = 从事件日志 replay 重建（退役后切换）
+    read_path_source: str = "session_json"
+    # ── D1 后续批次 3：事件日志滚动策略（design.md §2.4.1）──
+    event_log_rotate_bytes: int = 10 * 1024 * 1024  # 0=禁用大小触发
+    event_log_rotate_days: int = 30  # 0=禁用天数触发
+    event_log_rotate_on_session_end: bool = True
+    # ── D1 后续批次 4：pre-step 过滤钩子（design.md §2.4.1）──
+    event_hooks_config: str = ""  # 钩子规则配置文件路径（空=钩子链默认空零行为）
 
     # ── 工具 ──
     tool_timeout_s: float = 60.0
@@ -324,6 +339,13 @@ class Settings:
     @property
     def sessions_dir(self) -> Path:
         return Path(self.data_dir) / "sessions"
+
+    @property
+    def event_logs_dir(self) -> Path:
+        """事件日志目录（D1 单一真相源；EVENT_LOGS_DIR 覆盖，默认 data_dir/event_logs）."""
+        if self.event_logs_dir_override:
+            return Path(self.event_logs_dir_override)
+        return Path(self.data_dir) / "event_logs"
 
     @property
     def memory_dir(self) -> Path:
@@ -451,6 +473,14 @@ def load_settings() -> Settings:
         max_iterations=_env_int("LLM_MAX_ITERATIONS", 20),
         llm_timeout_s=float(_env_int("LLM_TIMEOUT_S", 120)),
         data_dir=os.environ.get("DATA_DIR", "./data").strip(),
+        # D1 事件日志（EVENT_LOG_ENABLED / EVENT_LOGS_DIR 透传）
+        event_log_enabled=_env_bool("EVENT_LOG_ENABLED", True),
+        event_logs_dir_override=os.environ.get("EVENT_LOGS_DIR", "").strip(),
+        read_path_source=os.environ.get("READ_PATH_SOURCE", "session_json").strip(),
+        event_log_rotate_bytes=int(os.environ.get("EVENT_LOG_ROTATE_BYTES", str(10 * 1024 * 1024))),
+        event_log_rotate_days=int(os.environ.get("EVENT_LOG_ROTATE_DAYS", "30")),
+        event_log_rotate_on_session_end=_env_bool("EVENT_LOG_ROTATE_ON_SESSION_END", True),
+        event_hooks_config=os.environ.get("EVENT_HOOKS_CONFIG", "").strip(),
         tool_timeout_s=float(_env_int("TOOL_TIMEOUT_S", 60)),
         tool_max_output_chars=_env_int("TOOL_MAX_OUTPUT_CHARS", 100000),
         tool_summary_threshold=_env_int("TOOL_SUMMARY_THRESHOLD", 5000),

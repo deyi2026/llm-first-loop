@@ -193,11 +193,17 @@ def _layer_trim(
                 logging.getLogger(__name__).warning(
                     "分层降级原文归档失败（fail-open）", exc_info=True
                 )
+        _hint = (
+            f'查看完整原文请直接调用 search_archive(tool_name="{m.tool_name}")'
+            "（可再加 query= 关键词精确定位；一次取回，勿换命令重复执行同一工具）"
+            if m.tool_name
+            else "可用 search_archive(query=<关键词>) 检索找回"
+        )
         out.append(
             Message(
                 role=m.role,
                 content=(
-                    f"[工具输出已分层] 共 {len(full)} 字符，原文已另存压缩档案（可用 search_archive 检索）：\n"
+                    f"[工具输出已分层] 共 {len(full)} 字符，原文已另存压缩档案（{_hint}）：\n"
                     f"── 首部 ──\n{full[:400]}\n── 尾部 ──\n{full[-400:]}"
                 ),
                 source=m.source,

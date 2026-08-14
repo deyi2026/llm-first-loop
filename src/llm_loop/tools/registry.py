@@ -359,7 +359,22 @@ class ToolRegistry:
             result = self.execute(c)
             by_id[result.tool_call_id or c.id] = result
 
-        return [by_id[c.id] for c in calls]
+        # 防御性取值（防程序错误向 AI 传导）: 执行路径若未能把结果写入 by_id
+        # （键错位/结果丢失），不得抛 KeyError 中断整轮，而应构造 [程序异常]
+        # 占位结果如实回执，交由 AI 自主决策重试/换路径。
+        return [
+            by_id.get(c.id)
+            or ToolResult(
+                status=ToolResultStatus.ERROR,
+                content=(
+                    f"[程序异常] 工具执行结果丢失（execute_many 索引未命中 "
+                    f"tool_call_id={c.id}，工具 '{c.name}'）"
+                ),
+                tool_call_id=c.id,
+                tool_name=c.name,
+            )
+            for c in calls
+        ]
 
     def _result(
         self, status: ToolResultStatus, call: ToolCall, content: str, *, duration_ms: float
@@ -443,23 +458,52 @@ class ToolRegistry:
         return content[start:end].strip()
 
     @staticmethod
-    def _summarize_output(full: str, head_chars: int = 600, tail_chars: int = 600) -> str:
+    def _archive_query_hint(call) -> str:
+        """EVO-20260814-e5b045d3: 从工具调用参数提取 archive 检索建议.
+
+        与 ArchiveStore.search 契约对齐: query 子串匹配（content/summary/key_facts/key_paths），
+        tool_name 精确过滤。路径取 basename、命令取前缀，给出可直接照抄的调用示例。
+        """
+        name = getattr(call, "name", "") or ""
+        args = getattr(call, "arguments", None) or {}
+        path = str(args.get("path", "") or "").strip()
+        cmd = str(args.get("command", "") or "").strip()
+        if path:
+            q = path.rsplit("/", 1)[-1] or path
+        elif cmd:
+            q = cmd[:40]
+        else:
+            q = ""
+        if q:
+            return f'search_archive(query="{q}", tool_name="{name}")'
+        return f'search_archive(tool_name="{name}")'
+
+    @staticmethod
+    def _summarize_output(full: str, head_chars: int = 600, tail_chars: int = 600, call=None) -> str:
         """输出分层摘要: 首部 + 尾部 + 规模 + 检索指引（命令输出关键信息常在尾部）.
 
         原文已由调用方完整另存至压缩档案（信息零丢失），此处仅注入摘要。
         内容未超首尾窗口时完整展示但仍带"输出摘要"标注（AI 可感知已分层）。
+        EVO-20260814-e5b045d3: 指引升级为可直接照抄的 search_archive 调用示例
+        （query 取路径 basename/命令前缀 + tool_name 过滤），避免 AI 换命令重读原文空耗轮数。
         """
+        hint = (
+            f"查看完整原文请直接调用 {ToolRegistry._archive_query_hint(call)}"
+            "（一次取回，勿换命令重复执行同一工具）"
+            if call is not None
+            else "可用 search_archive 检索找回"
+        )
         n = len(full)
         if n <= head_chars + tail_chars:
             return (
                 f"[输出摘要] 共 {n} 字符，内容未超首尾窗口故完整展示"
-                f"（原文已另存至压缩档案，可用 search_archive 检索找回）：\n{full}"
+                f"（原文已另存至压缩档案，{hint}）：\n{full}"
             )
         head = full[:head_chars]
         tail = full[-tail_chars:]
         return (
             f"[输出摘要] 共 {n} 字符，以下为首部/尾部关键内容"
-            f"（完整内容已另存至压缩档案，可用 search_archive 检索找回）：\n"
+            f"（完整内容已另存至压缩档案，{hint}）：\n"
             f"── 首部 ──\n{head}\n── 尾部 ──\n{tail}"
         )
 
@@ -542,7 +586,7 @@ class ToolRegistry:
         if len(result.content) > self.summary_threshold:
             full = result.content
             self._archive_oversize_output(call, full)  # 原文完整另存（信息零丢失）
-            result.content = self._summarize_output(full)
+            result.content = self._summarize_output(full, call=call)
             # 硬上限安全阀: 摘要后仍超限才截断（原文已存档，无需重复存档）
             if len(result.content) > self.max_output_chars:
                 result.content = (
@@ -557,8 +601,9 @@ class ToolRegistry:
                 full[: self.max_output_chars]
                 + f"\n…[结果超长，已截断，共 {len(full)} 字符]；完整结果已另存至压缩档案，可用 search_archive 检索找回…"
             )
-        # 工具自身可能返回空 tool_call_id → 用声明 id 填充（约束 C1 绑定）
-        if not result.tool_call_id:
+        # 约束 C1 绑定: 工具返回的 tool_call_id 必须等于声明 id（空/不一致都纠正为
+        # call.id，防 execute_many 索引键错位导致 KeyError 中断整轮）
+        if result.tool_call_id != call.id:
             result.tool_call_id = call.id
         if not result.tool_name:
             result.tool_name = call.name

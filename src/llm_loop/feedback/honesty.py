@@ -87,6 +87,33 @@ def max_iterations_feedback(trace: list[str]) -> Message:
     )
 
 
+def stagnation_reminder_message(tool_name: str, streak: int) -> Message:
+    """[停滞提醒] 连续相同指纹工具调用提醒（EVO-20260814-aab7eb0b P2，阈值 3）."""
+    return Message(
+        role="system",
+        content=(
+            f"[停滞提醒] 事实: 你已连续 {streak} 次以相同参数调用工具 {tool_name}。\n"
+            f"原因: 重复调用不产生新信息，只会空耗轮数预算（max_iterations 硬边界）。\n"
+            f"建议: 停止重复调用，基于已有回执给出回答；若信息确实不足，请换用不同参数或其他工具。"
+        ),
+        source=MessageSource.SYSTEM,
+    )
+
+
+def stagnation_feedback(tool_name: str, streak: int, trace: list[str]) -> Message:
+    """[停滞熔断] 连续相同指纹工具调用熔断如实结束（EVO-20260814-aab7eb0b P2，阈值 5）."""
+    trace_str = "; ".join(trace[-10:]) if trace else "（无动作记录）"
+    return Message(
+        role="system",
+        content=(
+            f"[停滞熔断] 事实: 已连续 {streak} 次以相同参数调用工具 {tool_name}，循环被程序如实终止。\n"
+            f"原因: 重复调用无法产生新信息，继续执行只会耗尽轮数预算。已执行轨迹: {trace_str}。\n"
+            f"建议: 基于已获得的信息给出最终回答；若确需继续，请明确说明还需要什么、换不同参数或不同工具。"
+        ),
+        source=MessageSource.SYSTEM,
+    )
+
+
 def architecture_report_message(fact: str, reason: str, suggestion: str) -> Message:
     """[架构上报] 推送式如实上报（design.md §2.1.4.3 通道二）.
 

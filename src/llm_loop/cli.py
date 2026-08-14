@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import UTC
+from pathlib import Path
 
 from llm_loop.config import load_settings
 from llm_loop.core.session import SessionStore
@@ -250,6 +251,15 @@ def main(argv: list[str] | None = None) -> int:
         "evolve-complete",  # M17 FR-REVIEW-AI-01: 人工完成登记（涉边界演进）
         "evolve-verify",  # EVO-20260813-8279507f: 人工核验确认（executed → verified_at 标记）
         "export-distill",  # export_distill: 蒸馏数据集导出（薄壳只读，不装配 engine）
+        "event-inventory",  # D1: 存量存储盘点（只读，不装配 engine）
+        "event-migrate",  # D1: 存量迁移为事件日志（纯存储操作，不装配 engine）
+        "event-verify",  # D1: 事件重放 vs 源逐字段校验（只读，不装配 engine）
+        "event-rollback",  # D1: 从备份恢复源数据（纯存储操作，不装配 engine）
+        "session-fork",  # D3: 会话 fork（事件日志物理复制 + session JSON 双轨，不装配 engine）
+        "event-retire",  # D1后续批次2: 三套存储退役（对账+归档+读路径切换）
+        "event-retire-rollback",  # D1后续批次2: 退役回滚
+        "event-rotate-status",  # D1后续批次3:, 事件日志滚动段清单
+        "event-hooks",  # D1后续批次4: pre-step 过滤钩子管理
     }
     if argv and argv[0] in _cmds:
         return _dispatch_command(argv)
@@ -292,6 +302,25 @@ def _dispatch_command(argv: list[str]) -> int:
     # export_distill: 薄壳纯读命令，入口特判（早于 build_engine，避免无谓 engine 装配）
     if cmd == "export-distill":
         return _cmd_export_distill(argv[1:])
+    # D1: event-* 纯存储/只读命令，入口特判（早于 build_engine，避免无谓 LLM 装配）
+    if cmd == "event-inventory":
+        return _cmd_event_inventory(argv[1:])
+    if cmd == "event-migrate":
+        return _cmd_event_migrate(argv[1:])
+    if cmd == "event-verify":
+        return _cmd_event_verify(argv[1:])
+    if cmd == "event-rollback":
+        return _cmd_event_rollback(argv[1:])
+    if cmd == "session-fork":
+        return _cmd_session_fork(argv[1:])
+    if cmd == "event-retire":
+        return _cmd_event_retire(argv[1:])
+    if cmd == "event-retire-rollback":
+        return _cmd_event_retire_rollback(argv[1:])
+    if cmd == "event-rotate-status":
+        return _cmd_event_rotate_status(argv[1:])
+    if cmd == "event-hooks":
+        return _cmd_event_hooks(argv[1:])
     try:
         settings = load_settings()
     except ValueError as exc:
@@ -500,6 +529,405 @@ def _cmd_export_distill(argv: list[str]) -> int:
     print(report.render_text())
     print(f"[数据集] {output}")
     print(f"[报告] {report_path}")
+    return 0
+
+
+# ── D1 事件源化 CLI 子命令（event-*，纯存储/只读操作，不装配 engine）──
+
+_DEFAULT_DATA_DIR = "./data"
+
+
+def _cmd_event_inventory(argv: list[str]) -> int:
+    """event-inventory: 三套存量存储只读盘点（spec §5.1）.
+
+    用法: llm_loop event-inventory [--data-dir DIR]
+    """
+    from llm_loop.event_log.inventory import run_inventory
+
+    parser = argparse.ArgumentParser(
+        prog="llm_loop event-inventory",
+        description="存量存储只读盘点（sessions/archives/compressed_archive/action_trace）",
+    )
+    parser.add_argument("--data-dir", default=_DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
+    args = parser.parse_args(argv)
+
+    try:
+        report = run_inventory(args.data_dir)
+    except Exception as exc:  # noqa: BLE001 — 盘点异常如实反馈
+        print(f"❌ 盘点失败（{type(exc).__name__}: {exc}）", file=sys.stderr)
+        return 1
+    print(report.render_text())
+    return 0
+
+
+def _cmd_event_migrate(argv: list[str]) -> int:
+    """event-migrate: 存量会话迁移为事件日志（备份→迁移→校验闭环，幂等）.
+
+    用法: llm_loop event-migrate [--data-dir DIR] [--force]
+    """
+    from llm_loop.event_log.migrate import run_migration
+
+    parser = argparse.ArgumentParser(
+        prog="llm_loop event-migrate",
+        description="存量会话 → 事件日志迁移（备份先行、幂等、迁移后校验闭环）",
+    )
+    parser.add_argument("--data-dir", default=_DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
+    parser.add_argument(
+        "--force", action="store_true", help="跳过幂等检查强制重建既有事件日志（修复不一致）"
+    )
+    args = parser.parse_args(argv)
+
+    data_dir = args.data_dir
+    try:
+        report = run_migration(
+            f"{data_dir}/sessions",
+            f"{data_dir}/event_logs",
+            force=args.force,
+        )
+    except Exception as exc:  # noqa: BLE001 — 迁移异常如实反馈
+        print(f"❌ 迁移失败（{type(exc).__name__}: {exc}）", file=sys.stderr)
+        return 1
+    print(report.render_text())
+    return 0 if len(report.failed) == 0 else 1
+
+
+def _cmd_event_verify(argv: list[str]) -> int:
+    """event-verify: 事件重放 vs 源 session 逐字段校验（只读，闭环对账）.
+
+    用法: llm_loop event-verify [--data-dir DIR] [--session <sid>|--all]
+    """
+    from llm_loop.event_log.reconcile import reconcile
+    from llm_loop.event_log.replay import replay_session
+    from llm_loop.event_log.store import EventStore
+
+    parser = argparse.ArgumentParser(
+        prog="llm_loop event-verify",
+        description="事件重放 vs 源 session 逐字段校验（通过+失败=总数闭环）",
+    )
+    parser.add_argument("--data-dir", default=_DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--session", default="", help="单会话校验（默认全部）")
+    group.add_argument("--all", action="store_true", help="全量校验（默认行为）")
+    args = parser.parse_args(argv)
+
+    data_dir = args.data_dir
+    sessions_dir = f"{data_dir}/sessions"
+    store = EventStore(f"{data_dir}/event_logs")
+    passed = 0
+    failed: list[dict] = []
+    import json
+    import time
+
+    targets: list[str] = []
+    if args.session:
+        targets = [args.session]
+    else:
+        targets = sorted(p.stem for p in Path(sessions_dir).glob("*.json")) if Path(
+            sessions_dir
+        ).is_dir() else []
+
+    if not targets:
+        print(f"❌ 无会话可校验（目录: {sessions_dir}）", file=sys.stderr)
+        return 1
+
+    for sid in targets:
+        src_path = Path(sessions_dir) / f"{sid}.json"
+        if not src_path.is_file():
+            failed.append({"session_id": sid, "reason": "源会话不存在"})
+            continue
+        try:
+            source = json.loads(src_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            failed.append({"session_id": sid, "reason": f"源解析失败: {exc}"})
+            continue
+        try:
+            start = time.monotonic()
+            events = store.read(sid)
+            derived = replay_session(events)
+            if derived.get("exists") is False:
+                failed.append({"session_id": sid, "reason": "事件日志不存在（未迁移）"})
+                continue
+            report = reconcile(derived, source, replay_ms=(time.monotonic() - start) * 1000)
+        except Exception as exc:  # noqa: BLE001 — 单会话校验异常如实标注，不中断整体（fail-open）
+            failed.append({"session_id": sid, "reason": f"校验异常: {type(exc).__name__}: {exc}"})
+            continue
+        if report.passed:
+            passed += 1
+        else:
+            failed.append(
+                {
+                    "session_id": sid,
+                    "reason": (
+                        f"不一致: 顶层差异 {len(report.top_level_diffs)} / 消息差异 "
+                        f"{len(report.message_diffs)} / 缺口 {report.gap_count} / "
+                        f"未知类型 {report.unknown_events}"
+                    ),
+                }
+            )
+
+    print("【事件日志校验报告】")
+    print(f"- 通过: {passed} / 失败: {len(failed)}（总数 {len(targets)}，闭环对账）")
+    for f in failed:
+        print(f"    - {f.get('session_id')}: {f.get('reason')}")
+    return 0 if not failed else 1
+
+
+def _cmd_event_rollback(argv: list[str]) -> int:
+    """event-rollback: 从备份区恢复源数据（可选项清除迁移事件日志）.
+
+    用法: llm_loop event-rollback [--data-dir DIR] [--session <sid>|--all] [--remove-events]
+    """
+    from llm_loop.event_log.migrate import run_rollback
+
+    parser = argparse.ArgumentParser(
+        prog="llm_loop event-rollback",
+        description="从备份区恢复源 session JSON（--remove-events 时清除迁移事件日志）",
+    )
+    parser.add_argument("--data-dir", default=_DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
+    parser.add_argument("--session", default="", help="单会话回滚（默认全部备份）")
+    parser.add_argument(
+        "--remove-events", action="store_true", help="同时清除对应事件日志（需操作者显式确认）"
+    )
+    args = parser.parse_args(argv)
+
+    data_dir = args.data_dir
+    event_logs_dir = Path(f"{data_dir}/event_logs")
+    backups = sorted((event_logs_dir / "_backup").glob("*")) if (event_logs_dir / "_backup").is_dir() else []
+    if not backups:
+        print("❌ 无备份区可回滚", file=sys.stderr)
+        return 1
+    backup_dir = backups[-1]  # 默认最近一次迁移备份
+    session_ids = [args.session] if args.session else None
+
+    try:
+        result = run_rollback(
+            backup_dir,
+            event_logs_dir,
+            session_ids=session_ids,
+            remove_events=args.remove_events,
+        )
+    except Exception as exc:  # noqa: BLE001 — 回滚异常如实反馈
+        print(f"❌ 回滚失败（{type(exc).__name__}: {exc}）", file=sys.stderr)
+        return 1
+    print("【事件日志回滚报告】")
+    print(f"- 备份区: {backup_dir}")
+    print(f"- 恢复会话: {len(result['restored'])}（{', '.join(result['restored'][:5])}{'…' if len(result['restored']) > 5 else ''}）")
+    print(f"- 清除事件: {len(result['events_removed'])}")
+    if result["errors"]:
+        print(f"- 错误（如实标注）: {len(result['errors'])}")
+        for e in result["errors"][:5]:
+            print(f"    - {e}")
+    return 0 if not result["errors"] else 1
+
+
+def _cmd_session_fork(argv: list[str]) -> int:
+    """session-fork: 会话 fork（事件日志物理复制 + session JSON 双轨，不装配 engine）.
+
+    用法: llm_loop session-fork --session <sid> [--data-dir DIR] [--fork-point N] [--summary "..."]
+    """
+    from llm_loop.core.session import SessionStore
+    from llm_loop.event_log.fork import fork_session
+    from llm_loop.event_log.store import EventStore
+
+    parser = argparse.ArgumentParser(
+        prog="llm_loop session-fork",
+        description="会话 fork（事件日志物理复制继承 + session JSON 双轨）",
+    )
+    parser.add_argument("--session", required=True, help="源会话 ID")
+    parser.add_argument("--data-dir", default=_DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
+    parser.add_argument("--fork-point", type=int, default=None, help="fork 点（保留前 N 条消息；缺省=全部）")
+    parser.add_argument("--summary", default="", help="分支摘要（缺省自动提炼）")
+    args = parser.parse_args(argv)
+
+    try:
+        settings = load_settings()
+    except ValueError as exc:
+        print(f"❌ {exc}", file=sys.stderr)
+        return 2
+
+    data_dir = args.data_dir
+    event_store = EventStore(
+        Path(f"{data_dir}/event_logs"),
+        enabled=settings.event_log_enabled,
+    )
+    session_store = SessionStore(
+        Path(f"{data_dir}/sessions"),
+        event_store=event_store,
+    )
+
+    try:
+        report = fork_session(
+            event_store,
+            session_store,
+            args.session,
+            fork_point=args.fork_point,
+            branch_summary=args.summary,
+        )
+    except Exception as exc:  # noqa: BLE001 — fork 异常如实反馈
+        print(f"❌ fork 失败（{type(exc).__name__}: {exc}）", file=sys.stderr)
+        return 1
+
+    if not report.success:
+        print(f"❌ {report.error}", file=sys.stderr)
+        return 1
+    print(f"✅ 已从会话 {args.session[:10]}… fork 出新分支: {report.new_session_id}")
+    print(f"   继承事件数: {report.inherited_event_count}")
+    print(f"   fork 点: {report.fork_point}")
+    print(f"   耗时: {report.elapsed_ms}ms")
+    print(f"   继续使用: llm_loop --session {report.new_session_id} <消息>")
+    return 0
+
+
+def _cmd_event_retire(argv: list[str]) -> int:
+    """event-retire: 三套存储退役（对账+归档+读路径切换）.
+
+    用法: llm_loop event-retire [--data-dir DIR] [--force]
+    """
+    from llm_loop.event_log.retire import run_retire
+
+    parser = argparse.ArgumentParser(
+        prog="llm_loop event-retire",
+        description="三套存储退役（双轨对账前置 + 归档 + 读路径切换）",
+    )
+    parser.add_argument("--data-dir", default=_DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
+    parser.add_argument("--force", action="store_true", help="跳过幂等检查强制退役")
+    args = parser.parse_args(argv)
+
+    try:
+        report = run_retire(args.data_dir, force=args.force)
+    except Exception as exc:  # noqa: BLE001
+        print(f"❌ 退役失败（{type(exc).__name__}: {exc}）", file=sys.stderr)
+        return 1
+    if report.error:
+        print(f"❌ {report.error}", file=sys.stderr)
+        return 1
+    print("【三套存储退役报告】")
+    print(f"- 退役步骤: {' → '.join(report.retired_steps)}")
+    print(f"- 双轨对账: {'通过' if report.reconcile_passed else '失败'}")
+    if report.reconcile_diffs:
+        print(f"  对账差异（{len(report.reconcile_diffs)} 项）:")
+        for d in report.reconcile_diffs[:5]:
+            print(f"    - {d}")
+    print(f"- 读路径切换: {'是' if report.read_path_switched else '否'}")
+    print(f"- 归档清单: {', '.join(report.archived_files) or '无'}")
+    print(f"- 备份区: {report.backup_dir}")
+    print(f"- 耗时: {report.elapsed_s}s")
+    print(f"- 回滚入口: llm_loop event-retire-rollback --data-dir {args.data_dir} --backup-dir {report.backup_dir}")
+    return 0
+
+
+def _cmd_event_retire_rollback(argv: list[str]) -> int:
+    """event-retire-rollback: 从备份区恢复源文件 + 读路径切回.
+
+    用法: llm_loop event-retire-rollback --data-dir DIR --backup-dir <dir>
+    """
+    from llm_loop.event_log.retire import run_retire_rollback
+
+    parser = argparse.ArgumentParser(
+        prog="llm_loop event-retire-rollback",
+        description="从备份区恢复源 session JSON + action_trace",
+    )
+    parser.add_argument("--data-dir", default=_DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
+    parser.add_argument("--backup-dir", required=True, help="备份区目录")
+    args = parser.parse_args(argv)
+
+    try:
+        result = run_retire_rollback(args.backup_dir, args.data_dir)
+    except Exception as exc:  # noqa: BLE001
+        print(f"❌ 回滚失败（{type(exc).__name__}: {exc}）", file=sys.stderr)
+        return 1
+    print("【退役回滚报告】")
+    print(f"- 恢复项: {', '.join(result['restored']) or '无'}")
+    if result["errors"]:
+        print(f"- 错误: {len(result['errors'])}")
+        for e in result["errors"][:5]:
+            print(f"    - {e}")
+    print("- 读路径已切回 session_json（请设置 READ_PATH_SOURCE=session_json）")
+    return 0 if not result["errors"] else 1
+
+
+def _cmd_event_rotate_status(argv: list[str]) -> int:
+    """event-rotate-status: 事件日志滚动段清单.
+
+    用法: llm_loop event-rotate-status [--data-dir DIR] [--session <sid>]
+    """
+    from llm_loop.event_log.rotate import RotateManager
+
+    parser = argparse.ArgumentParser(
+        prog="llm_loop event-rotate-status",
+        description="事件日志滚动段清单（序号/事件数/时间范围/大小/活跃状态）",
+    )
+    parser.add_argument("--data-dir", default=_DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
+    parser.add_argument("--session", default="", help="单会话段清单（缺省列出全部多段会话）")
+    args = parser.parse_args(argv)
+
+    event_logs_dir = Path(f"{args.data_dir}/event_logs")
+    if args.session:
+        segments = RotateManager.list_segments(event_logs_dir, args.session)
+        if not segments:
+            print(f"会话 {args.session} 无多段事件日志（单文件或不存在）")
+            return 0
+        print(f"【会话 {args.session} 段清单】")
+        for s in segments:
+            active = "活跃" if s.is_active else "归档"
+            print(f"  段 {s.segment_seq}: {s.event_count} 事件, {s.size_bytes}B, {active}")
+        return 0
+    multi_sessions = [p.name for p in event_logs_dir.iterdir() if p.is_dir() and not p.name.startswith("_")]
+    if not multi_sessions:
+        print("无多段事件日志会话")
+        return 0
+    print(f"【多段会话清单】（{len(multi_sessions)} 个）")
+    for sid in sorted(multi_sessions):
+        segments = RotateManager.list_segments(event_logs_dir, sid)
+        total = sum(s.event_count for s in segments)
+        print(f"  {sid}: {len(segments)} 段, {total} 事件")
+    return 0
+
+
+def _cmd_event_hooks(argv: list[str]) -> int:
+    """event-hooks: pre-step 过滤钩子管理.
+
+    用法: llm_loop event-hooks {list,test} [--event <json>]
+    """
+    parser = argparse.ArgumentParser(
+        prog="llm_loop event-hooks",
+        description="pre-step 过滤钩子管理（list/test）",
+    )
+    parser.add_argument("subcommand", choices=["list", "test"], help="子命令")
+    parser.add_argument("--event", default="", help="测试事件 JSON（test 子命令）")
+    args = parser.parse_args(argv)
+
+    if args.subcommand == "list":
+        print("【已注册钩子】")
+        print("（钩子注册通过 EVENT_HOOKS_CONFIG 配置文件或代码内 HookRegistry.register）")
+        return 0
+    if args.subcommand == "test":
+        if not args.event:
+            print("❌ 缺少 --event 参数", file=sys.stderr)
+            return 2
+        import json as _json
+
+        try:
+            data = _json.loads(args.event)
+        except _json.JSONDecodeError as exc:
+            print(f"❌ 事件 JSON 解析失败: {exc}", file=sys.stderr)
+            return 2
+        from llm_loop.event_log.hooks import HookChain
+        from llm_loop.event_log.model import Event
+
+        event = Event(
+            event_id=data.get("event_id", "test"),
+            session_id=data.get("session_id", "test"),
+            seq=data.get("seq", 1),
+            type=data.get("type", ""),
+            ts=data.get("ts", ""),
+            payload=data.get("payload", {}),
+        )
+        chain = HookChain([])  # 空链测试
+        processed, audits = chain.process(event)
+        print(f"处理结果: {'被过滤' if processed is None else '保留'}")
+        print(f"审计记录: {len(audits)}")
+        return 0
     return 0
 
 

@@ -135,7 +135,11 @@ def build_engine(settings: Settings) -> LoopEngine:
                 )
         except Exception:  # noqa: BLE001 — GC 失败不影响启动
             logger.warning("档案 GC 启动清理失败（fail-open）", exc_info=True)
-    session_store = SessionStore(settings.sessions_dir)
+    session_store = SessionStore(
+        settings.sessions_dir,
+        event_store=_build_event_store(settings),
+        read_path_source=getattr(settings, "read_path_source", "session_json"),
+    )
 
     # 工具注册表（3 基础工具 + 自省/修正/检索工具）
     registry = ToolRegistry(
@@ -503,6 +507,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         loop_signal_detector=_build_loop_signal_detector(settings, status_provider, corrections),
         llm_pool=model_pool,  # M48（design §5.3）: 会话级模型路由
         recovery=recovery_channel,  # P2-2: fail-open 写失败恢复通道
+        event_store=_build_event_store(settings),  # D1: 事件源化（共享同一实例）
     )
 
     # M50（design §5.6）: 注入增强版 refresh_config executor — 重读 providers.json
@@ -533,12 +538,24 @@ def build_engine(settings: Settings) -> LoopEngine:
     return engine
 
 
+def _build_event_store(settings: Settings) -> Any:
+    """装配 D1 事件日志存储（EventStore，单一真相源）.
+
+    默认开启（EVENT_LOG_ENABLED=1）；关闭时事件写入零行为零回归。
+    会话存储与 engine 共享同一实例，保证事件 seq 续号一致。
+    """
+    from llm_loop.event_log.store import EventStore
+
+    return EventStore(settings.event_logs_dir, enabled=settings.event_log_enabled)
+
+
 def _build_fault_classifier() -> Any:
     """装配故障可自愈性分类器（M12 T49 / design 5.1，FR-AUTO-SELFHEAL-02）.
 
     M22 config 审计补齐: 生产路径此前未装配（loop 构造参数恒 None → 故障反馈降级），
     与 tests/conftest.py 测试路径一致装配，故障反馈含分类建议（M18 AA12 保留语义）。
     """
+
     from llm_loop.feedback.fault_classifier import FaultClassifier
 
     return FaultClassifier()

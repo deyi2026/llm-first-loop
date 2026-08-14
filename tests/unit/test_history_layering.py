@@ -151,3 +151,36 @@ def test_fixed_age_disables_adaptive():
         archive_sink=sink, layer_tool_trim=True, tool_trim_age=20,
     )
     assert not any("工具输出已分层" in str(m.get("content", "")) for m in out)
+
+
+# ── EVO-20260814-e5b045d3: 分层提示附带可照抄的 search_archive 调用示例 ──
+
+
+def test_layered_history_hint_includes_tool_name_filter():
+    """历史降级提示含 tool_name 过滤的检索示例，可直接照抄."""
+    import inspect
+
+    from llm_loop.core import history as h
+
+    src = inspect.getsource(h)
+    assert 'search_archive(tool_name="' in src  # 提示中含精确过滤示例
+    assert "勿换命令重复执行同一工具" in src
+
+
+def test_registry_summarize_hint_with_call():
+    """registry._summarize_output 传 call 时提示含 query + tool_name 示例."""
+    from types import SimpleNamespace
+
+    from llm_loop.tools.registry import ToolRegistry
+
+    call = SimpleNamespace(name="read_file", arguments={"path": "/a/b/engine.py"})
+    out = ToolRegistry._summarize_output("x" * 5000, call=call)
+    assert 'search_archive(query="engine.py", tool_name="read_file")' in out
+
+    call_cmd = SimpleNamespace(name="execute_command", arguments={"command": "git status --short"})
+    out2 = ToolRegistry._summarize_output("x" * 5000, call=call_cmd)
+    assert 'search_archive(query="git status --short", tool_name="execute_command")' in out2
+
+    # 无 call（向后兼容路径）退回通用指引
+    out3 = ToolRegistry._summarize_output("x" * 5000)
+    assert "search_archive" in out3

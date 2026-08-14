@@ -36,7 +36,8 @@ from llm_loop.core.loop.tool_exec import (
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.prompt import build_system_prompt
 from llm_loop.core.session import SessionStore
-from llm_loop.feedback.honesty import max_iterations_feedback
+from llm_loop.event_log.model import build_message_payload
+from llm_loop.feedback.honesty import max_iterations_feedback, stagnation_feedback
 from llm_loop.feedback.validator import DeclarationValidator, build_discrepancy_feedback
 from llm_loop.introspection.corrections import CorrectionContext, CorrectionToolRegistry
 from llm_loop.introspection.events import ArchitectureEvent, ArchitectureEventType
@@ -136,6 +137,7 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
         | None = None,  # M17 FR-REVIEW-AI-02/03: LoopSignalDetector 三合一
         llm_pool: Any | None = None,  # M48（design §5.3）: ModelClientPool（会话级模型路由）
         recovery: Any | None = None,  # P2-2: RecoveryChannel（fail-open 写失败恢复通道）
+        event_store: Any | None = None,  # D1: EventStore（事件源化，默认 None 零行为）
     ) -> None:
         self.llm = llm_client
         self.registry = registry
@@ -160,12 +162,91 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
         self.llm_pool = llm_pool
         # P2-2: fail-open 写失败恢复通道；None 时三个 fail-open 点行为不变（零回归）
         self.recovery = recovery
+        # D1: 事件源化 EventStore（默认 None 零行为；注入时消息/元数据/压缩事件落事件日志）
+        self._event_store = event_store
         # EVO-20260811-9ccdec97: 会话状态快照节流（上次快照注入时的消息数）
         self._last_snapshot_count = 0
         # R4 增强: overflow 反馈注入次数（同一 run 内最多注入 1 次后让 AI 决策，第二次直接结束）
         self._overflow_reinject_count = 0
         # M50: CLI --model 启动参数装配通道（cli.py 注入，_run_single/_run_interactive 消费）
         self._cli_startup_model: str | None = None
+
+    # ── D1 事件源化辅助（fail-open：禁用/异常如实记录，不抛穿主循环）──
+
+    def _event_append(self, session_id: str, event_type: str, payload: dict) -> None:
+        """D1 事件写入（fail-open：未注入/禁用/异常均如实 warning，不抛穿主循环）."""
+        store = getattr(self, "_event_store", None)
+        if store is None or getattr(store, "enabled", False) is False:
+            return
+        try:
+            store.append(session_id, event_type, payload)
+        except Exception as exc:  # noqa: BLE001 — 事件写入失败不阻断循环（fail-open）
+            logger.warning("事件写入失败（fail-open）: %s", exc)
+
+    def _ensure_session_created(self, sess) -> None:
+        """会话首次落库时生成 session.created（顶层字段快照，缺失如实置空）."""
+        store = getattr(self, "_event_store", None)
+        if store is None or getattr(store, "enabled", False) is False:
+            return
+        try:
+            if store.exists(sess.session_id):
+                return
+            payload = {
+                "version": sess.to_dict().get("version", 4),
+                "title": sess.title,
+                "created_at": sess.created_at,
+                "updated_at": sess.updated_at,
+                "status": sess.status,
+                "parent_id": sess.parent_id,
+                "branch_id": sess.branch_id,
+                "branch_summary": sess.branch_summary,
+                "model_override": sess.model_override,
+                "pinned": sess.pinned,
+                "channel": sess.channel,
+            }
+            store.append(sess.session_id, "session.created", payload)
+        except Exception as exc:  # noqa: BLE001 — fail-open
+            logger.warning("session.created 事件写入失败（fail-open）: %s", exc)
+
+    def _append_message_event(self, sess, msg: Message) -> None:
+        """消息落库点事件（payload 与 Session.to_dict() 消息字段逐一对齐）."""
+        store = getattr(self, "_event_store", None)
+        if store is None or getattr(store, "enabled", False) is False:
+            return
+        try:
+            store.append(
+                sess.session_id,
+                "message.appended",
+                build_message_payload(
+                    index=len(sess.messages) - 1,
+                    role=msg.role,
+                    content=msg.content,
+                    source=msg.source.value,
+                    tool_call_id=msg.tool_call_id,
+                    status=msg.status.value if msg.status else None,
+                    tool_name=msg.tool_name,
+                    error_detail=msg.error_detail,
+                    tool_calls=msg.tool_calls,
+                    reasoning_content=msg.reasoning_content,
+                    metadata=msg.metadata,
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001 — fail-open
+            logger.warning("message.appended 事件写入失败（fail-open）: %s", exc)
+
+    def _resolve_msg_seq(self, session_id: str, msg: Message) -> int | None:
+        """尽力定位消息在会话中的序号（tool_call_id 优先，其次内容匹配；失败如实 None）."""
+        try:
+            sess = self.session.load(session_id)
+            for i, m in enumerate(sess.messages):
+                if msg.tool_call_id and m.tool_call_id == msg.tool_call_id:
+                    return i
+            for i, m in enumerate(sess.messages):
+                if m.role == msg.role and m.content == msg.content:
+                    return i
+        except Exception:  # noqa: BLE001 — 定位失败如实 None
+            pass
+        return None
 
     # ── 阶段记录（架构自省）──
     def _phase(self, phase: str) -> None:
@@ -203,6 +284,8 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
         与 run 共享同一核心，唯一差异是每轮 LLM 调用处走 chat_stream 并外泄 delta。
         """
         tool_trace: list[dict] = []
+        # EVO-20260814-aab7eb0b P2: 每次 run/run_stream 重置实时停滞检测状态（跨会话不泄漏）
+        self._stagnation_state = {"fp": None, "count": 0, "reminded": False}
 
         # 会话恢复（重启继续对话，DFX-REL-03）
         sess = self.session.load(session_id)
@@ -227,6 +310,8 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
                         source=msg.source,
                     )
                 sess.messages.append(msg)
+                # D1: 系统注入消息事件（fail-open）
+                self._append_message_event(sess, msg)
         # T22/T23: 注入当前会话到注册表与修正上下文（压缩档案/检索关联）
         from contextlib import suppress
 
@@ -244,6 +329,9 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
         # ── 消息进：构造用户消息并落库 ──
         user_msg = Message(role="user", content=user_text, source=MessageSource.USER)
         sess.messages.append(user_msg)
+        # D1: 会话首次落库生成 session.created + 用户消息事件（fail-open）
+        self._ensure_session_created(sess)
+        self._append_message_event(sess, user_msg)
         self._phase("ingress")
 
         final_answer = ""
@@ -368,6 +456,8 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
                     # 注入降级提示到主消息流（AI 可见, design 原则 2）
                     for m in inject_msgs:
                         sess.messages.append(m)
+                        # D1: 系统注入消息事件（fail-open）
+                        self._append_message_event(sess, m)
                     if fallback_resp is not None:
                         # 降级成功: 响应以新模型运行, 进入后续正常路径
                         resp = fallback_resp
@@ -413,11 +503,23 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
                                 source=MessageSource.SYSTEM,
                             )
                             sess.messages.append(reminder)
+                            # D1: 系统注入消息事件（fail-open）
+                            self._append_message_event(sess, reminder)
                 break
 
             # ── 行动：执行工具（tool_calls）──
             # M53 拆分: 工具段 → _ToolExecMixin._execute_tools（yield from 保持 tool_round 外泄次序）
             yield from self._execute_tools(resp, sess, rounds, tool_trace)
+
+            # ── EVO-20260814-aab7eb0b P2: 实时停滞熔断（连续同指纹工具调用，如实结束）──
+            _should_break, _tool_name, _streak = self._stagnation_should_break()
+            if _should_break:
+                self._phase("terminate.stagnation")
+                final_answer = stagnation_feedback(
+                    _tool_name, _streak, [t["name"] for t in tool_trace]
+                ).content
+                self._record_action("stagnation.break", "terminated", f"{_tool_name} x{_streak}")
+                break
 
             # ── M56 收敛（ANALYSIS-20260811-loop-strategy-branch-inventory）:
             # 每轮末信号检测统一为一次调用（自评/演进待办/待审提醒，均仅提示不强制，
@@ -449,6 +551,8 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
         if final_answer and resp is not None and resp.reasoning_content:
             last = sess.messages[-1]
             last.reasoning_content = resp.reasoning_content
+        # D1: 最终回答消息事件（fail-open）
+        self._append_message_event(sess, sess.messages[-1])
         # M12 深化 T65: run 完成里程碑自我评估提醒（仅提示不强制，EVAL-03；追加后随会话保存）
         self._check_eval_trigger(sess, rounds, milestone=True)
         # T39: 会话保存异常 → 如实标注 + 不抛穿（程序故障不影响 AI 发挥）
@@ -668,6 +772,18 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
                 tool_call_id=msg.tool_call_id,
                 status=msg.status.value if msg.status else None,
                 reasoning_content=getattr(msg, "reasoning_content", None) or None,
+            )
+            # D1: context.compressed 事件（与原文另存同一事务点，fail-open）——
+            # archive_ref 优先 tool_call_id（与 web 展开端点 get_by_tool_call_id 契约一致）
+            self._event_append(
+                session_id,
+                "context.compressed",
+                {
+                    "archive_ref": msg.tool_call_id or getattr(entry, "id", None),
+                    "tool_call_id": msg.tool_call_id,
+                    "msg_seq": self._resolve_msg_seq(session_id, msg),
+                    "chars": getattr(entry, "chars", None) or len(msg.content),
+                },
             )
             # RULE-AI-00 自动摘要边界内: 压缩档案自动回填语义摘要（async 后台/off 跳过）
             if (
