@@ -79,7 +79,14 @@ def test_rotate_missing_file_noop(tmp_path):
 
 
 def test_rotate_directory_fail_open(tmp_path, monkeypatch):
-    """stat 失败（路径是目录等 OSError）→ fail-open False 不抛."""
+    """stat 失败（OSError，如权限拒绝）→ fail-open False 不抛（平台无关模拟）."""
+    from pathlib import Path
+
     p = tmp_path / "dirlike.jsonl"
-    p.mkdir()
+    p.write_text("x" * 600, encoding="utf-8")
+
+    def _boom_stat(self, *args, **kwargs):
+        raise OSError("模拟 stat 失败")
+
+    monkeypatch.setattr(Path, "stat", _boom_stat)
     assert rotate_heartbeat_history(p, 500) is False

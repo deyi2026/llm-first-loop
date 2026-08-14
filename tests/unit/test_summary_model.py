@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from llm_loop.config import Settings
 
 _PROVIDERS = json.dumps(
@@ -38,6 +40,12 @@ def _settings(tmp_path, **overrides) -> Settings:
     }
     base.update(overrides)
     return Settings(**base)
+
+
+@pytest.fixture(autouse=True)
+def _provider_api_key(monkeypatch):
+    """provider 注册表 api_key_env=DEEPSEEK_API_KEY 需要环境变量存在（M60 类环境自足修复）."""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
 
 
 def test_summary_model_not_configured_uses_main(tmp_path):
