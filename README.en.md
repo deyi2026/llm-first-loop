@@ -1,6 +1,6 @@
 # LLM-First Core Loop
 
-> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.2.0 ｜ [中文文档 (Chinese README)](README.md)
+> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.3.0 ｜ [中文文档 (Chinese README)](README.md)
 
 An **LLM-first agent runtime (harness)**: the model is the core, and every action revolves around it.
 Architecture core = **message in → understand → act → answer honestly → remember**.
@@ -122,6 +122,10 @@ CLI/Web/Feishu all load `.env` (env vars take precedence). After editing `.env`:
 - Docs index: `docs/INDEX.md` (public-surface principle: only run-required + user-facing docs ship)
 - AI autonomy rules (single source of truth): `docs/ai_rules.md`
 - Open-source roadmap (B track): `docs/ROADMAP-B-20260814.md`
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md).
 
 ## Development
 
