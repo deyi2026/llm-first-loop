@@ -1,7 +1,10 @@
 # T7(2026-08-14): CI 三件套门禁 + nightly 真实评测
 #
-# - push/PR: pytest（非 real_llm）+ ruff + pyright 全量门禁
-# - 每日 20:00 UTC（北京 04:00）: real_llm 冒烟 + 评测集真实运行（需仓库 secrets）
+# - push/PR: pytest（非 real_llm）+ ruff + pyright 全量门禁（零触网零 LLM 消费）
+# - 每日 20:00 UTC（北京 04:00）: real_llm 冒烟 + 评测集真实运行
+# - key 策略（2026-08-14 用户决策 A）: 默认不配置 secrets——nightly 无 key 时自动跳过
+#   （不误报）；评测集在本地运行（`python scripts/run_eval.py`，读项目 .env，key 不上传）。
+#   如需 CI 自动化评测，自行配置 DEEPSEEK_API_KEY secret（注意配额消耗与平台信任权衡）。
 # - workflow_dispatch 可手动触发 nightly（含真实 LLM 消费，注意配额）
 
 name: CI
