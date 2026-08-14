@@ -55,12 +55,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
       - name: 无 key 时跳过（不误报）
+        id: keycheck
         run: |
           if [ -z "$DEEPSEEK_API_KEY" ] && [ -z "$LLM_API_KEY" ]; then
             echo "未配置 LLM API key（仓库 secrets），跳过 nightly 真实评测"
-            exit 0
+            echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
       - name: real_llm 冒烟
+        if: steps.keycheck.outputs.skip != 'true'
         run: python -m pytest tests/integration/test_real_llm_smoke.py tests/integration/test_real_llm_exec_smoke.py -m real_llm -q
       - name: 评测集真实运行（指标落盘）
+        if: steps.keycheck.outputs.skip != 'true'
         run: python scripts/run_eval.py --output docs/metrics/eval_ci
