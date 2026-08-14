@@ -88,6 +88,38 @@ class FeishuMessageHandler:
         # 优雅退出保护：处理中计数（信号触发退出时等待正在进行的 run 完成，避免中断丢回复）
         self._busy_lock = threading.Lock()
         self._busy_count = 0
+        # H-UI(2026-08-14): 当前活动状态卡（引擎动作观察者实时更新；None=未建卡/已结束）
+        self._active_status_card: Any | None = None
+
+    def _attach_action_observer(self) -> None:
+        """H-UI: 引擎动作 → 状态卡实时更新（对齐 DeepSeek Harness 动作显示条）.
+
+        thinking/tool_call/tool_result/answer 事件更新状态卡文本；未建卡/已熔断 →
+        不注入（零回归）；观察者内部异常由引擎 fail-open 兜底。
+        无 set_action_observer 能力的引擎（测试 Stub/外部实现）→ 直接跳过。
+        """
+        engine = self._engine
+        if not hasattr(engine, "set_action_observer"):
+            return
+        card = self._active_status_card
+        if card is None or not card.active:
+            engine.set_action_observer(None)
+            return
+
+        def observer(event_type: str, payload: dict) -> None:
+            if event_type == "thinking":
+                card.update("💭 思考中…")
+            elif event_type == "tool_call":
+                name = str(payload.get("tool_name", ""))
+                args = str(payload.get("args_summary", ""))[:60]
+                card.update(f"🔧 正在调用 {name}（{args}）")
+            elif event_type == "tool_result":
+                card.update(f"✅ {payload.get('tool_name', '')} 完成")
+            elif event_type == "answer":
+                card.update("✍️ 正在生成回答…")
+            # done 不更新（_close_status_card 定稿已有）
+
+        engine.set_action_observer(observer)
 
     def _reply(self, msg: FeishuMessage, text: str) -> None:
         """回复回调（按消息类型选目标：群聊 chat_id / 私聊 open_id；未装配如实标注）."""
@@ -197,7 +229,12 @@ class FeishuMessageHandler:
     def _run_text(self, msg: FeishuMessage, text: str) -> str:
         """文本引擎执行 + 回复（M46：_run_with_processing_actions 包内）."""
         sid = self._session_map.get_or_create(self._map_key(msg))
-        result = self._engine.run(sid, text)
+        self._attach_action_observer()  # H-UI: 状态卡实时动作显示
+        try:
+            result = self._engine.run(sid, text)
+        finally:
+            if hasattr(self._engine, "set_action_observer"):
+                self._engine.set_action_observer(None)
         answer = result.final_answer or "(空回答)"
         if result.truncated:
             answer += "\n（回答被截断）"
@@ -292,7 +329,12 @@ class FeishuMessageHandler:
     def _run_inject(self, msg: FeishuMessage, prefix: str) -> str:
         """附件注入引擎执行 + 回复（M46：_run_with_processing_actions 包内）."""
         sid = self._session_map.get_or_create(self._map_key(msg))
-        result = self._engine.run(sid, prefix)
+        self._attach_action_observer()  # H-UI: 状态卡实时动作显示
+        try:
+            result = self._engine.run(sid, prefix)
+        finally:
+            if hasattr(self._engine, "set_action_observer"):
+                self._engine.set_action_observer(None)
         reply = result.final_answer or "(空回答)"
         # P2-4: 公式降级提示（飞书卡片不支持 KaTeX/LaTeX 渲染，如实告知）
         try:
@@ -343,6 +385,7 @@ class FeishuMessageHandler:
                 logger.debug("feishu typing reaction add error: %s", exc)
         if self._streaming and self._lark_client is not None:
             card = self._try_start_status_card(msg)
+        self._active_status_card = card  # H-UI: 引擎动作观察者读取当前卡
         answer = ""
         try:
             answer = fn(msg, payload) or ""
@@ -351,6 +394,7 @@ class FeishuMessageHandler:
             self._audit(msg, error_kind, str(exc)[:200])
             self._reply(msg, f"[程序异常] 消息处理失败（{type(exc).__name__}: {exc}）。")
         finally:
+            self._active_status_card = None  # H-UI: 清理当前卡引用
             with self._busy_lock:
                 self._busy_count -= 1
             # 处理结束 → 状态卡定稿（回填回复摘要）+ 删除 Typing reaction（best-effort）

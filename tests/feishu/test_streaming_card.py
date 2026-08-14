@@ -283,3 +283,56 @@ def test_placeholder_custom():
     assert card.close() is True
     up_card = json.loads(fake.cardkit.v1.card.update_calls[0].request_body.card.data)
     assert up_card["body"]["elements"][0]["content"] == "🎉 完成"
+
+
+# ── H-UI: update 实时更新（动作状态条）──
+
+
+def _mk_card(fake_service):
+    from lark_oapi import Client
+
+    client = Client.builder().build()
+    client.cardkit = type("C", (), {"v1": type("V", (), {"card": fake_service})()})()
+    card = StreamingCard(client)
+    assert card.create() is True
+    return card, fake_service
+
+
+def test_update_live_content():
+    """update 实时更新内容（思考/工具动作状态条）."""
+    svc = _FakeCardService()
+    card, svc = _mk_card(svc)
+    assert card.update("🔧 正在调用 read_file（a.txt）") is True
+    assert len(svc.update_calls) == 1
+    body = svc.update_calls[0].request_body
+    assert "🔧 正在调用 read_file" in body.card.data
+    assert card.update("💭 思考中…") is True
+    assert len(svc.update_calls) == 2
+
+
+def test_update_before_create_returns_false():
+    """未建卡 update → False（fail-open）."""
+    from lark_oapi import Client
+
+    client = Client.builder().build()
+    card = StreamingCard(client)
+    assert card.update("x") is False
+
+
+def test_update_after_close_returns_false():
+    """定稿后 update → False（生命周期结束）."""
+    svc = _FakeCardService()
+    card, svc = _mk_card(svc)
+    assert card.close() is True
+    assert card.update("再更新") is False
+
+
+def test_update_rate_limited_silent():
+    """429 限流 → update 返回 False 静默（不抛）."""
+    from llm_loop.feishu.streaming_card import _RATE_LIMIT_CODES
+
+    rate_code = next(iter(_RATE_LIMIT_CODES)) if _RATE_LIMIT_CODES else 429
+    svc = _FakeCardService(update_results=[_FakeResp(code=rate_code, msg="rate limited")])
+    card, svc = _mk_card(svc)
+    assert card.update("🔧 工具调用") is False
+    assert not card._broken  # 限流不熔断

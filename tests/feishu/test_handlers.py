@@ -545,14 +545,20 @@ def test_typing_ack_switch_off(build_test_engine, tmp_path):
 
 
 def test_status_card_start_and_close(build_test_engine, tmp_path):
-    """用例 M46-⑨：状态卡建卡（create+bind）→ 处理完成定稿（update+settings）."""
+    """用例 M46-⑨：状态卡建卡（create+bind）→ 处理完成定稿（update+settings）.
+
+    H-UI(2026-08-14): 引擎动作观察者使状态卡实时更新（思考/工具调用/回答状态条）
+    ——update 次数 = 动作更新 + 定稿；内容含状态条文本。
+    """
     handler, fake, reaction, card, replies = _processing_handler(build_test_engine, tmp_path)
     handler.handle(_msg(text="处理一下"))
     # a) 建卡：cardkit create 一次 + interactive 发卡（bind 走 message.create）
     assert len(card.create_calls) == 1
-    # b) 定稿：update + settings 各一次
-    assert len(card.update_calls) == 1
+    # b) 定稿：settings 一次；update = 动作状态条更新（thinking/tool_call/...）+ 定稿
     assert len(card.settings_calls) == 1
+    # H-UI: 观察者驱动了额外 update（>1 即证明动作状态条在跑）；
+    # 更新内容正确性由 test_streaming_card::test_update_live_content 直接覆盖
+    assert len(card.update_calls) >= 2
     # c) 正式回复仍发出（状态卡不承载最终内容）
     assert replies[0][1] == "处理中回复"
 
