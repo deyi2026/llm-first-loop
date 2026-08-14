@@ -38,7 +38,7 @@ def build_app(settings=None, engine=None) -> FastAPI:
         engine = build_engine(settings)
 
     app = FastAPI(
-        title="llm-first-loop-web", version="0.1.0", default_response_class=UTF8JSONResponse
+        title="llm-first-loop-web", version="0.2.0", default_response_class=UTF8JSONResponse
     )
     app.state.engine = engine
 

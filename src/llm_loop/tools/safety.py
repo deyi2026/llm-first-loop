@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -146,3 +147,38 @@ def is_readonly_command(command: str) -> bool:
         # 只读命令 + 无写标记 → 放行
         return not any(m in command for m in _WRITE_MARKERS)
     return False
+
+
+def link_shaped_paths(path: str | Path) -> list[str]:
+    """路径链中的符号链接组件（自身或任一父目录，T5b 对齐 Harness Unlink 模式）.
+
+    路径可不存在（写场景的待建文件）：从最深现有祖先向下检查每层 is_symlink。
+    解析失败如实返回空（fail-open，不阻断正常路径）。
+
+    Returns: 含符号链接的路径字符串列表（根 → 叶顺序）；空 = 无链接。
+    """
+    out: list[str] = []
+    try:
+        p = Path(path).expanduser()
+        # 从最深现有祖先开始（不存在部分先暂存，之后逐层拼回）
+        cur = p
+        missing: list[Path] = []
+        while not cur.exists() and cur != cur.parent:
+            missing.append(cur)
+            cur = cur.parent
+        chain: list[Path] = []
+        if cur.exists():
+            parts = cur.parts
+            probe = Path(parts[0])
+            chain.append(probe)
+            for part in parts[1:]:
+                probe = probe / part
+                chain.append(probe)
+        for m in reversed(missing):
+            chain.append(m)
+        for c in chain:
+            if c.is_symlink():
+                out.append(str(c))
+    except OSError:
+        pass  # 路径解析失败 fail-open：如实返回已收集结果（不阻断正常路径）
+    return out

@@ -1,0 +1,63 @@
+# T7(2026-08-14): CI 三件套门禁 + nightly 真实评测
+#
+# - push/PR: pytest（非 real_llm）+ ruff + pyright 全量门禁
+# - 每日 20:00 UTC（北京 04:00）: real_llm 冒烟 + 评测集真实运行（需仓库 secrets）
+# - workflow_dispatch 可手动触发 nightly（含真实 LLM 消费，注意配额）
+
+name: CI
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 20 * * *"
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: 门禁（pytest + ruff + pyright）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: ruff
+        run: ruff check src tests scripts
+      - name: pyright
+        run: pyright src
+      - name: pytest（非真实 LLM）
+        run: python -m pytest tests/ -q -m "not real_llm"
+
+  nightly-real:
+    name: nightly 真实 LLM 冒烟 + 评测集
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+      LLM_MODEL: ${{ secrets.LLM_MODEL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: 无 key 时跳过（不误报）
+        run: |
+          if [ -z "$DEEPSEEK_API_KEY" ] && [ -z "$LLM_API_KEY" ]; then
+            echo "未配置 LLM API key（仓库 secrets），跳过 nightly 真实评测"
+            exit 0
+          fi
+      - name: real_llm 冒烟
+        run: python -m pytest tests/integration/test_real_llm_smoke.py tests/integration/test_real_llm_exec_smoke.py -m real_llm -q
+      - name: 评测集真实运行（指标落盘）
+        run: python scripts/run_eval.py --output docs/metrics/eval_ci

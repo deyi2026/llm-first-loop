@@ -122,19 +122,37 @@ class SemanticRetriever:
         self._mem_cache_path = Path(memory_dir) / "embeddings.json" if memory_dir else None
         self._arch_cache_path = Path(archive_dir) / "embeddings.json" if archive_dir else None
 
-    def _load_emb_cache(self, path: Path, cache: dict) -> None:
-        if path.exists():
-            from contextlib import suppress
+    def _emb_version(self) -> str:
+        """当前 embedder 向量算法版本（T6: 缓存按版本校验，防新旧向量混用）."""
+        if self.embedder is not None:
+            return str(getattr(self.embedder, "vector_version", ""))
+        return ""
 
-            with suppress(json.JSONDecodeError, OSError):
-                cache.update(json.loads(path.read_text(encoding="utf-8")))
+    def _load_emb_cache(self, path: Path, cache: dict) -> None:
+        """加载 embedding 缓存（T6 版本化：新格式带 v 键校验；旧扁平格式仅 hash-v1 兼容）."""
+        if not path.exists():
+            return
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            ver = self._emb_version()
+            if isinstance(raw, dict) and "v" in raw:
+                # 新格式: {"v": <版本>, "data": {key: vec}}；版本不匹配 → 忽略
+                # （fail-open 重建，防算法变更后新旧向量混用）
+                if raw.get("v") == ver:
+                    cache.update(raw.get("data", {}))
+            elif isinstance(raw, dict) and ver == "hash-v1":
+                # 旧扁平格式（v1 时代无版本键）：仅 hash-v1 兼容
+                cache.update(raw)
+        except (json.JSONDecodeError, OSError, TypeError):
+            pass  # 损坏/异常 fail-open：忽略缓存
 
     def _persist_emb_cache(self, path: Path | None, cache: dict) -> None:
         if path is None:
             return
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+            payload = {"v": self._emb_version(), "data": dict(cache)}
+            path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         except OSError as exc:  # fail-open：缓存写失败仅影响下次冷启动
             logger.debug("embedding 缓存写失败，仅影响下次冷启动（fail-open）: %s", exc)
 
