@@ -48,10 +48,20 @@ class EventReporter:
         return f"{event.event_type.value}:{event.fact[:60]}"
 
     def should_report(self, event: ArchitectureEvent) -> bool:
-        """冷却判定：冷却期内返回 False（由循环选择合并计数）."""
+        """冷却判定：冷却期内返回 False（由循环选择合并计数）.
+
+        首次调用（该 key 无记录）恒返回 True——冷却表初始 last 不能取 0.0:
+        time.monotonic() 从系统启动起算（CI 全新 runner 启动可能不足 60s），
+        若取 0.0 会误判"仍在冷却"拦截首次上报（HARNESS-05 flaky 根因:
+        eval_trigger 提醒偶发不注入, 本地无法复现, CI 全新 runner 复现）。
+        """
         key = self._key(event)
         now = time.monotonic()
-        last = self._last_report_ts.get(key, 0.0)
+        last = self._last_report_ts.get(key)
+        if last is None:
+            self._last_report_ts[key] = now
+            self._pending_counts[key] = 0
+            return True
         if now - last >= self._cooldown_s:
             self._last_report_ts[key] = now
             self._pending_counts[key] = 0
