@@ -25,6 +25,9 @@ logger = logging.getLogger(__name__)
 
 # G4: 长回复折叠阈值（回复长度超过则首段发摘要卡 + 完整内容全量分段推送）
 _FOLD_THRESHOLD = 2000
+_FOLDED_MAX = 20  # F4: 折叠全文暂存上限（有界防膨胀）
+_CARD_UPDATE_MIN_INTERVAL_S = 1.0  # F6: 状态卡更新最小间隔（工具密集时合并中间态）
+_FOLD_EXPAND_CMD = "展开全文"  # F4: 用户取回全文指令
 
 
 @dataclass
@@ -90,6 +93,10 @@ class FeishuMessageHandler:
         self._busy_count = 0
         # H-UI(2026-08-14): 当前活动状态卡（引擎动作观察者实时更新；None=未建卡/已结束）
         self._active_status_card: Any | None = None
+        # F4(2026-08-14): 折叠全文暂存（key=ts，值=全文；有界最近 _FOLDED_MAX 条；"展开全文"取回）
+        self._folded_store: dict[str, str] = {}
+        # F6(2026-08-14): 状态卡更新节流时间戳（观察者内更新）
+        self._card_update_ts: float = 0.0
 
     def _attach_action_observer(self) -> None:
         """H-UI: 引擎动作 → 状态卡实时更新（对齐 DeepSeek Harness 动作显示条）.
@@ -107,6 +114,13 @@ class FeishuMessageHandler:
             return
 
         def observer(event_type: str, payload: dict) -> None:
+            # F6(2026-08-14): 节流——同一引擎 run 内相邻更新最小间隔（工具密集时
+            # 合并中间态，防 cardkit 更新风暴；间隔内事件丢弃最新内容留待下个事件）
+            now = time.monotonic()
+            last = getattr(handler_self, "_card_update_ts", 0.0)
+            if now - last < _CARD_UPDATE_MIN_INTERVAL_S:
+                return
+            handler_self._card_update_ts = now
             if event_type == "thinking":
                 card.update("💭 思考中…")
             elif event_type == "tool_call":
@@ -119,6 +133,7 @@ class FeishuMessageHandler:
                 card.update("✍️ 正在生成回答…")
             # done 不更新（_close_status_card 定稿已有）
 
+        handler_self = self
         engine.set_action_observer(observer)
 
     def _reply(self, msg: FeishuMessage, text: str) -> None:
@@ -155,6 +170,10 @@ class FeishuMessageHandler:
         if not text:
             return
         self._audit(msg, "text", text[:200])
+        # F4: "展开全文"取回最近折叠回复（不走引擎）
+        if text.strip() == _FOLD_EXPAND_CMD:
+            self._reply_folded_full(msg)
+            return
         # M50（design §六）: 飞书 /model 指令拦截（与 CLI 共用同一套处理逻辑）
         if self._try_handle_model_command(msg, text):
             return
@@ -459,31 +478,57 @@ class FeishuMessageHandler:
             logger.debug("feishu status card close error: %s", exc)
 
     # ── 长回复分段 ──
-    def _reply_chunked(self, msg: FeishuMessage, text: str) -> None:
+    def _reply_chunked(self, msg: FeishuMessage, text: str, *, force_full: bool = False) -> None:
         """长回复按 markdown 感知分段（fence 闭合重开），逐段发送（不丢失内容）.
 
-        G4: 回复长度 > `_FOLD_THRESHOLD` 时先发摘要卡（截断 + 折叠标注 + 引导），
-        完整内容仍全量分段推送；摘要卡失败 fail-open 回退既有全量分段路径。
+        F4(2026-08-14) 交互式折叠: 回复长度 > `_FOLD_THRESHOLD` 时——
+        暂存全文（有界 `_folded_store`）+ 发摘要卡（含"回复『展开全文』获取完整内容"引导），
+        不再自动全量推送（消息条数收敛）；用户回复「展开全文」经 `_reply_folded_full`
+        取回全文分段发送。`force_full=True`（展开路径）跳过折叠直接全量分段。
+        摘要卡/暂存失败 fail-open 回退既有全量分段路径（不丢内容）。
         """
         if len(text) <= self._chunk_limit:
-            if len(text) > _FOLD_THRESHOLD:
-                try:
-                    from llm_loop.feishu.card_utils import build_summary_card
-
-                    self._reply(msg, build_summary_card(text))
-                except Exception:  # noqa: BLE001 — 摘要卡失败 fail-open 走既有路径
-                    logger.debug("feishu summary card build failed, fallback")
+            if len(text) > _FOLD_THRESHOLD and not force_full:
+                self._fold_and_notify(msg, text)
+                return
             self._reply(msg, text)
             return
-        if len(text) > _FOLD_THRESHOLD:
-            try:
-                from llm_loop.feishu.card_utils import build_summary_card
-
-                self._reply(msg, build_summary_card(text))
-            except Exception:  # noqa: BLE001 — 摘要卡失败 fail-open 走既有路径
-                logger.debug("feishu summary card build failed, fallback")
+        if len(text) > _FOLD_THRESHOLD and not force_full:
+            self._fold_and_notify(msg, text)
+            return
         for part in self._chunk_markdown(text, self._chunk_limit):
             self._reply(msg, part)
+
+    def _fold_and_notify(self, msg: FeishuMessage, text: str) -> None:
+        """F4: 暂存全文 + 发摘要卡（引导「展开全文」取回）.
+
+        暂存/摘要失败 fail-open：回退既有全量分段路径（不丢内容）。
+        """
+        try:
+            from llm_loop.feishu.card_utils import build_summary_card
+
+            key = f"{time.time():.6f}"
+            self._folded_store[key] = text
+            while len(self._folded_store) > _FOLDED_MAX:
+                self._folded_store.pop(next(iter(self._folded_store)))
+            self._reply(msg, build_summary_card(text))
+        except Exception:  # noqa: BLE001 — 折叠失败回退全量
+            logger.debug("feishu fold failed, fallback full")
+            if len(text) <= self._chunk_limit:
+                self._reply(msg, text)
+            else:
+                for part in self._chunk_markdown(text, self._chunk_limit):
+                    self._reply(msg, part)
+
+    def _reply_folded_full(self, msg: FeishuMessage) -> None:
+        """F4: 「展开全文」取回最近折叠回复（分段发送）."""
+        if not self._folded_store:
+            self._reply(msg, "当前没有可展开的折叠回复（最近回复较短或已过期）。")
+            return
+        key = next(reversed(self._folded_store))
+        full = self._folded_store.pop(key)
+        self._audit(msg, "fold_expand", f"len={len(full)}")
+        self._reply_chunked(msg, full, force_full=True)
 
     @staticmethod
     def _chunk_markdown(text: str, limit: int) -> list[str]:
@@ -500,6 +545,7 @@ class FeishuMessageHandler:
         in_table = False
         table_start = 0  # 当前表格块在 buf 中的起点偏移（未在表格中时无效）
         buf = ""
+        buf_bytes = 0  # F3: 当前段字节数（UTF-8；中文 3 字节/字，字符上限会触飞书 150KB 物理上限）
         for line in text.splitlines(keepends=True):
             stripped = line.strip()
             if stripped.startswith("```"):
@@ -510,7 +556,8 @@ class FeishuMessageHandler:
                 table_start = len(buf)
             elif not is_table_line:
                 in_table = False
-            if buf and len(buf) + len(line) > limit:
+            line_bytes = len(line.encode("utf-8"))
+            if buf and buf_bytes + line_bytes > limit:
                 if in_fence:
                     buf += "```\n"  # 闭合 fence
                     parts.append(buf)
@@ -526,6 +573,7 @@ class FeishuMessageHandler:
                     parts.append(buf)
                     buf = ""
             buf += line
+            buf_bytes += line_bytes
         if buf:
             parts.append(buf)
         return parts

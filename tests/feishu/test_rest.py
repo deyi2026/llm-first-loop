@@ -567,3 +567,40 @@ def test_send_text_error_highlight():
     client2.send_text("oc_1", "正常内容\n第二行")
     sent2 = json.loads(fake2.im.v1.message.create_calls[0].request_body.content)
     assert sent2["body"]["elements"][0]["content"] == "正常内容\n第二行"  # 正常内容零改动
+
+
+# ── F8: 发送最小间隔（多段防频率限制）──
+
+
+def test_send_throttle_waits_min_interval(monkeypatch):
+    """连续发送间隔不足 → sleep 补齐最小间隔（0.3s）."""
+    from unittest import mock
+
+    from lark_oapi import Client as _LarkClient
+
+    import llm_loop.feishu.rest as rest_mod
+    from llm_loop.feishu.rest import FeishuRestClient
+
+    cfg = _cfg()
+    client = _LarkClient.builder().build()
+    rest_client = FeishuRestClient(cfg, client)
+    sleeps: list[float] = []
+
+    def _fake_sleep(sec: float) -> None:
+        sleeps.append(sec)
+
+    fake_now = iter([10.0, 10.0, 10.5])  # 第1次发送→立即; 第2次 0.0s 后→sleep 0.3; 第3次 0.5s 后→不 sleep
+
+    import itertools
+
+    def _fake_monotonic() -> float:
+        return next(fake_now)
+
+    fake_now = itertools.repeat(10.0)  # 时钟静止：每次调用间隔恒 < 0.3s
+    with mock.patch.object(rest_mod.time, "monotonic", _fake_monotonic), mock.patch.object(
+        rest_mod.time, "sleep", _fake_sleep
+    ):
+        rest_client._throttle_send()  # 首次：无上次记录，不 sleep
+        rest_client._throttle_send()  # 间隔 0 → sleep 0.3
+        rest_client._throttle_send()  # 间隔仍 0 → sleep 0.3
+    assert sleeps == [0.3, 0.3]

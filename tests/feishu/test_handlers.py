@@ -688,7 +688,7 @@ def test_chunk_markdown_fence_across_segments():
 # ── G4 长回执折叠 ──
 
 def test_reply_chunked_fold_threshold(build_test_engine, tmp_path, monkeypatch):
-    """G4: 长回复 > 阈值 → 首段为摘要卡 + 完整内容全量分段推送；短回复走既有路径."""
+    """F4: 长回复 > 阈值 → 仅发摘要卡（全文暂存）；「展开全文」取回全量分段推送."""
     # 多行长文本（> 2000 字符），贴近真实 LLM 回复；单行超长不切分属既有设计，不用单行构造
     long_text = "\n".join(f"内容段内容段内容段内容段内容段内容段内容段内容段{i}" for i in range(90))
     from llm_loop.feishu.handlers import _FOLD_THRESHOLD
@@ -699,15 +699,21 @@ def test_reply_chunked_fold_threshold(build_test_engine, tmp_path, monkeypatch):
     )
     handler.handle(_msg(text="写长文"))
 
-    assert len(replies) > 2  # 摘要卡 + 至少 2 段完整内容
-    # 首段为摘要卡（含折叠标注与引导）
+    # F4: 仅摘要卡（全文暂存，消息条数收敛）
+    assert len(replies) == 1
     first = replies[0][1]
     assert "内容过长已折叠" in first
-    assert "原文已存，可回复'展开全文'" in first
-    # 完整内容全量推送（无丢失，PREFERENCE_3）
-    joined_full = "".join(text for _, text, _ in replies)
-    assert joined_full.startswith(first)
-    assert joined_full[len(first):] == long_text
+    assert "展开全文" in first
+    # 全文已暂存
+    assert len(handler._folded_store) == 1
+
+    # 用户回复「展开全文」→ 全文分段推送（无丢失）
+    replies.clear()
+    handler.handle(_msg(text="展开全文"))
+    assert len(replies) > 2  # 至少 2 段完整内容
+    joined = "".join(text for _, text, _ in replies)
+    assert joined == long_text  # 全文无损
+    assert len(handler._folded_store) == 0  # 取回后清除
 
     # 短回复走既有路径（单条，无摘要卡）
     short_text = "简短回答"
@@ -851,3 +857,31 @@ def test_run_text_footer_no_tool_no_count(build_test_engine, tmp_path):
 
     assert replies[0][1].startswith("无工具回答")
     assert "🔧 工具调用" not in replies[0][1]
+
+
+# ── F4: 展开全文命令 ──
+
+
+def test_expand_full_no_folded(build_test_engine, tmp_path):
+    """无折叠暂存时「展开全文」→ 如实提示."""
+    handler, engine, fake, session_map, replies = _make_handler(
+        build_test_engine, tmp_path, [{"content": "短回复"}]
+    )
+    handler.handle(_msg(text="展开全文"))
+    assert len(replies) == 1
+    assert "没有可展开的折叠回复" in replies[0][1]
+
+
+def test_folded_store_bounded(build_test_engine, tmp_path):
+    """折叠暂存有界（>20 条淘汰最旧）."""
+    from llm_loop.feishu.handlers import _FOLDED_MAX
+
+    long_text = "很长的回复内容" * 300  # 2400 > 2000
+    handler, engine, fake, session_map, replies = _make_handler(
+        build_test_engine,
+        tmp_path,
+        [{"content": long_text}] * (_FOLDED_MAX + 5),
+    )
+    for i in range(_FOLDED_MAX + 5):
+        handler.handle(_msg(text=f"写长文{i}"))
+    assert len(handler._folded_store) == _FOLDED_MAX  # 有界

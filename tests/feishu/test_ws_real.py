@@ -158,25 +158,25 @@ def test_build_bridge_lark_mock_injectable(build_test_engine):
 
 
 def test_build_bridge_wired(build_test_engine, tmp_path):
-    """用例 18：build_bridge（FakeLLM）→ reply_fn/download 装配非 None + chunk_limit==50000."""
+    """用例 18：build_bridge（FakeLLM）→ reply_fn/download 装配非 None + chunk_limit==30000."""
     from llm_loop.feishu import build_bridge
 
     engine, _ = build_test_engine([])
     bridge, handler, session_map = build_bridge(engine=engine)
     assert handler._reply_fn is not None  # = bridge.send_text
     assert handler._attachment_download is not None  # = bridge.download_attachment
-    assert handler._chunk_limit == 50000  # 飞书字数不设人为限制（默认）
+    assert handler._chunk_limit == 30000  # 飞书字数不设人为限制（默认）
     assert bridge._handler is handler  # attach_handler 已装配
     assert session_map is not None
 
 
 def test_default_long_reply_single_send(build_test_engine, tmp_path):
-    """用例 19：默认 chunk_limit=50000 → 4000 字符长回复完整发送（不触发分段）.
+    """用例 19：默认 chunk_limit=30000 → 4000 字符长回复完整发送（不触发分段）.
 
-    G4 折叠（>2000 字符）后行为：首条为摘要卡 + 完整内容仍单条完整发送（不触发分段）。
+    F4 折叠（>2000 字符）后行为：仅摘要卡（全文暂存，「展开全文」取回）——消息条数收敛。
     """
     long_reply = "\n".join(f"第{i}行内容abcdefgh" for i in range(250))
-    assert len(long_reply) > 3000 and len(long_reply) < 50000
+    assert len(long_reply) > 3000 and len(long_reply) < 30000
 
     engine, _ = build_test_engine([{"content": long_reply}])
     session_map = SessionMap(engine.session, path=str(tmp_path / "feishu_session_map.json"))
@@ -185,13 +185,23 @@ def test_default_long_reply_single_send(build_test_engine, tmp_path):
         engine,
         session_map,
         reply_fn=lambda rid, text, rtype: replies.append((rid, text, rtype)),
-        chunk_limit=50000,
+        chunk_limit=30000,
     )
     handler.handle(
         FeishuMessage(
             message_id="om_l", sender_id="ou_l", chat_id="oc_l", msg_type="text", text="写长文"
         )
     )
-    assert len(replies) == 2  # 摘要卡 + 完整内容（G4 折叠，不触发分段）
+    assert len(replies) == 1  # F4: 仅摘要卡（全文暂存，消息条数收敛）
     assert "内容过长已折叠" in replies[0][1]  # 摘要卡含折叠标注
-    assert replies[1][1] == long_reply  # 完整内容无截断、单条发送
+    assert "展开全文" in replies[0][1]  # 取回引导
+    assert len(handler._folded_store) == 1  # 全文已暂存
+    # 用户回复「展开全文」→ 完整内容无截断、单条发送
+    replies.clear()
+    handler.handle(
+        FeishuMessage(
+            message_id="om_l2", sender_id="ou_l", chat_id="oc_l", msg_type="text", text="展开全文"
+        )
+    )
+    assert len(replies) == 1
+    assert replies[0][1] == long_reply

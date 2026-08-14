@@ -105,21 +105,21 @@ def test_audit_written(build_test_engine, tmp_path, monkeypatch):
     assert len(fake.calls) == 2  # 引擎仍被调用（审计失败不阻断）
 
 
-def test_chunk_limit_default_50000(monkeypatch):
-    """用例 19（M43）：chunk_limit 默认 50000（飞书字数不设人为限制）+ env 覆盖 + 下限保持."""
-    # a) 默认（未设 env）→ 50000
+def test_chunk_limit_default_30000(monkeypatch):
+    """用例 19（M43）：chunk_limit 默认 30000（飞书字数不设人为限制）+ env 覆盖 + 下限保持."""
+    # a) 默认（未设 env）→ 30000
     monkeypatch.delenv("FEISHU_CHUNK_LIMIT", raising=False)
     monkeypatch.setenv("FEISHU_APP_ID", APP_ID)
     monkeypatch.setenv("FEISHU_APP_SECRET", SECRET)
-    assert load_feishu_config().chunk_limit == 50000
+    assert load_feishu_config().chunk_limit == 30000
 
     # b) env 显式覆盖 → 尊重用户设置（500 > 下限 200，覆盖生效）
     monkeypatch.setenv("FEISHU_CHUNK_LIMIT", "500")
     assert load_feishu_config().chunk_limit == 500
 
-    # c) 非法值 → 回退默认 50000
+    # c) 非法值 → 回退默认 30000
     monkeypatch.setenv("FEISHU_CHUNK_LIMIT", "abc")
-    assert load_feishu_config().chunk_limit == 50000
+    assert load_feishu_config().chunk_limit == 30000
 
     # d) 下限保持（min 200，防配置异常）
     monkeypatch.setenv("FEISHU_CHUNK_LIMIT", "50")
