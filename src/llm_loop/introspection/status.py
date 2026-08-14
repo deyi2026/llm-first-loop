@@ -95,6 +95,9 @@ class ArchitectureStatusProvider:
         self._exception_log: list[ExceptionLogItem] = []
         self._last_exception_ts: float = 0.0
         self._llm_rounds = 0
+        # R2/A6(2026-08-14): 程序故障计数（fail-open 事件聚合，AI 经 architecture_status 感知
+        # "程序故障率"——程序故障本身对 AI 可见可应对，对齐 RULE-AI-04）
+        self._program_faults: dict[str, int] = {}
         # M49（design §5.4）: 当前降级状态（None = 未处于降级; dict = 最近一次降级）
         self._fallback_state: dict | None = None
         # T4（spec.md 5.3.1）: 待办聚合回调（纯聚合无判断，AI 一站式感知系统待办）
@@ -133,6 +136,18 @@ class ArchitectureStatusProvider:
     def record_llm_round(self) -> None:
         if self.enabled:
             self._llm_rounds += 1
+
+    def record_program_fault(self, kind: str) -> None:
+        """R2/A6: 程序故障计数（fail-open 事件聚合，kind 如 memory/session_persist/event_write/llm_call）.
+
+        供 engine 各 fail-open 点调用；自身 fail-open（异常不影响主流程）；
+        计数供 architecture_status.program_faults 展示（AI 可感知程序故障率）。
+        """
+        try:
+            if self.enabled:
+                self._program_faults[kind] = self._program_faults.get(kind, 0) + 1
+        except Exception:  # noqa: BLE001 — 计数失败 fail-open
+            pass
 
     def record_exception(self, phase: str, exc: Exception, *, session_id: str = "") -> None:
         if not self.enabled:
@@ -383,6 +398,8 @@ class ArchitectureStatusProvider:
             "pending_actions": self._pending_actions(),
             # P2-2: 备份状态（AI 经 architecture_status.recovery 感知待恢复备份）
             "recovery": self._recovery_status(),
+            # R2/A6: 程序故障计数（fail-open 聚合，AI 可感知"程序故障率"）
+            "program_faults": dict(self._program_faults),
         }
         if dimensions:
             out: dict = {}

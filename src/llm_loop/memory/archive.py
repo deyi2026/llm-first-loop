@@ -215,6 +215,68 @@ class ArchiveStore:
             logger = logging.getLogger(__name__)
             logger.warning("档案索引写失败（fail-open，检索回退全文扫描）: %s", idx)
 
+    def rebuild_segment_index(self, segment: Path) -> int:
+        """R3(2026-08-14): 为单个段文件重建 sidecar 索引（存量段补索引）.
+
+        扫描段内每行，按与 _index_append 一致的 rec 格式写出索引（覆盖式重建，幂等）。
+        损坏行跳过（fail-open）；返回成功索引的条目数。
+        """
+        idx = self._index_path(segment)
+        count = 0
+        try:
+            lines_out: list[str] = []
+            offset = 0
+            with segment.open("rb") as f:
+                while True:
+                    raw = f.readline()
+                    if not raw:
+                        break
+                    line = raw.decode("utf-8", errors="replace").strip()
+                    if line:
+                        try:
+                            entry = json.loads(line)
+                        except json.JSONDecodeError:
+                            offset += len(raw)
+                            continue  # 损坏行跳过（fail-open）
+                        rec = {
+                            "id": entry.get("id", ""),
+                            "ts": entry.get("ts", ""),
+                            "chars": entry.get("chars", 0),
+                            "summary": entry.get("summary", ""),
+                            "key_facts": entry.get("key_facts", []),
+                            "key_paths": entry.get("key_paths", []),
+                            "content_head": (entry.get("content") or "")[: self._CONTENT_HEAD_CHARS],
+                            "tool_call_id": entry.get("tool_call_id"),
+                            "tool_name": entry.get("tool_name"),
+                            "role": entry.get("role", ""),
+                            "offset": offset,
+                        }
+                        lines_out.append(json.dumps(rec, ensure_ascii=False))
+                        count += 1
+                    offset += len(raw)
+            idx.write_text("\n".join(lines_out) + ("\n" if lines_out else ""), encoding="utf-8")
+        except OSError:
+            logger = logging.getLogger(__name__)
+            logger.warning("档案索引重建失败（fail-open）: %s", segment)
+            return 0
+        return count
+
+    def rebuild_all_indexes(self) -> dict:
+        """R3: 遍历全部段文件重建索引（存量段补 sidecar；幂等可重复执行）.
+
+        Returns: {"segments": N, "entries": M, "failed": K}
+        """
+        total_segments = 0
+        total_entries = 0
+        failed = 0
+        for p in sorted(self._dir.glob("*.jsonl")):
+            total_segments += 1
+            try:
+                total_entries += self.rebuild_segment_index(p)
+            except Exception:  # noqa: BLE001 — 单段失败 fail-open 继续
+                failed += 1
+        return {"segments": total_segments, "entries": total_entries, "failed": failed}
+
     def _line_at(self, segment: Path, offset: int) -> str | None:
         """按字节偏移读取段文件一行（fail-open：越界/损坏返回 None）."""
         try:

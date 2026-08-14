@@ -125,9 +125,16 @@ class ToolRegistry:
 
     # ── 注册 / 发现 ──
     def register(self, tool: Any) -> None:
-        """注册工具（启动时装配；重名覆盖并告警日志）."""
+        """注册工具（启动时装配）.
+
+        R1(2026-08-14): 同对象重复注册（装配路径基础工具与修正工具集重名）→ 静默去重；
+        不同实现的重名覆盖仍告警（防未来静默覆盖）。
+        """
         with self._lock:
-            if tool.name in self._tools:
+            existing = self._tools.get(tool.name)
+            if existing is tool:
+                return  # 同对象重复注册：静默（零回归）
+            if existing is not None:
                 import logging
 
                 logging.getLogger(__name__).warning("工具重名覆盖: %s", tool.name)

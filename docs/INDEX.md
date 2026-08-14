@@ -12,6 +12,8 @@
 | `ROADMAP-B-20260814.md` | 开源框架化路线图（面向使用者的项目方向说明） |
 | `api.md` | 公共 API 参考（装配/引擎/会话/工具/Web/CLI/扩展点） |
 | `configuration.md` | 配置参考（分组配置表 + 常见坑速查） |
+| `feishu_render_matrix.md` | 飞书渲染支持矩阵（markdown 特性支持范围 + 降级预案） |
+| `development_methodology.md` | AI 驱动开发方法论（SoT 先行/如实记录/零回归/评测纪律） |
 | `event_sourcing.md` | 事件溯源设计（单一真相源 + 迁移/回滚指南） |
 | `README.md` | 项目入口（功能/快速开始/CLI/配置） |
 

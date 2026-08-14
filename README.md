@@ -141,6 +141,8 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 - 公共 API 参考：`docs/api.md`（装配/引擎/会话/工具/Web/CLI/扩展点）
 - 配置参考：`docs/configuration.md`（分组配置表 + 常见坑速查）
 - 事件溯源设计：`docs/event_sourcing.md`（单一真相源 + 迁移/回滚指南）
+- 飞书渲染支持矩阵：`docs/feishu_render_matrix.md`（markdown 特性支持范围）
+- 开发方法论：`docs/development_methodology.md`（SoT 先行/如实记录/零回归纪律）
 - 评测集扩展指南：`tests/eval_sets/README.md`（场景 schema + 贡献步骤）
 - 文档导航：`docs/INDEX.md`
 - AI 自主规则（唯一规则真相源）：`docs/ai_rules.md`

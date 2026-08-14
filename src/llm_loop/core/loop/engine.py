@@ -187,6 +187,14 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
         """
         self._action_observer = fn
 
+    def _record_program_fault(self, kind: str) -> None:
+        """R2/A6: 程序故障计数（fail-open 聚合，AI 经 architecture_status 感知）."""
+        try:
+            if self.status is not None:
+                self.status.record_program_fault(kind)
+        except Exception:  # noqa: BLE001 — 计数失败 fail-open
+            pass
+
     def _notify_action(self, event_type: str, **payload) -> None:
         """动作事件通知（fail-open：观察者异常/缺失均不阻断主循环）."""
         fn = self._action_observer
@@ -208,6 +216,7 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
             store.append(session_id, event_type, payload)
         except Exception as exc:  # noqa: BLE001 — 事件写入失败不阻断循环（fail-open）
             logger.warning("事件写入失败（fail-open）: %s", exc)
+            self._record_program_fault("event_write")
 
     def _ensure_session_created(self, sess) -> None:
         """会话首次落库时生成 session.created（顶层字段快照，缺失如实置空）."""
@@ -391,6 +400,7 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
                 )
             except Exception as exc:  # noqa: BLE001 — 记忆失败不阻塞（FR-MEM-03）
                 memory_msgs = [self._fault_feedback("memory", exc)]
+                self._record_program_fault("memory")
 
             # M54: 模型窗口感知的主动压缩 — 先定模型标签, 再按其窗口收紧历史预算
             planned_label = self._planned_model_label(model, sess)
@@ -457,6 +467,7 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
                 self._record_action("action.llm_decide", "llm_error", str(exc)[:200])
                 if self.status:
                     self.status.record_exception("llm_call", exc)
+                self._record_program_fault("llm_call")
                 # M53 拆分: overflow 如实反馈（不自动重试/不自动压缩，决策权归 AI）
                 # → _OverflowMixin._handle_overflow（move 语义，行为零变化）
                 overflow_action, overflow_final = self._handle_overflow(exc, sess, model_used)
@@ -605,6 +616,7 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
             self.session.save(sess)
         except Exception as exc:  # noqa: BLE001
             logger.warning("会话保存失败（fail-open）: %s", exc)
+            self._record_program_fault("session_persist")
             recovery_note = self._persist_with_recovery_note(
                 target_type="session",
                 source_id=sess.session_id,
