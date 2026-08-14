@@ -195,7 +195,9 @@ class Settings:
     llm_model: str
 
     # ── 循环控制 ──
-    max_iterations: int = 20
+    # R10(2026-08-14): 默认 20→40——多步任务（读→改→验证→再改）实测常超 20 轮触顶；
+    # 仍受 adjust_strategy 硬上限 500 约束；80% 轮数时程序注入 [轮数预警]（AI 可自主调大）
+    max_iterations: int = 40
     llm_timeout_s: float = 120.0
 
     # ── 数据目录 ──
@@ -471,7 +473,7 @@ def load_settings() -> Settings:
         llm_model=model,
         thinking_mode=_env_thinking_mode("LLM_THINKING_MODE"),
         reasoning_effort=_env_effort("LLM_REASONING_EFFORT"),
-        max_iterations=_env_int("LLM_MAX_ITERATIONS", 20),
+        max_iterations=_env_int("LLM_MAX_ITERATIONS", 40),
         llm_timeout_s=float(_env_int("LLM_TIMEOUT_S", 120)),
         data_dir=os.environ.get("DATA_DIR", "./data").strip(),
         # D1 事件日志（EVENT_LOG_ENABLED / EVENT_LOGS_DIR 透传）

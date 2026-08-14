@@ -37,11 +37,11 @@ def _names(settings) -> list[str]:
 class TestInvalidFallbackNotice:
     def test_int_invalid_noticed(self, monkeypatch):
         s = _load(monkeypatch, LLM_MAX_ITERATIONS="abc")
-        assert s.max_iterations == 20  # 回退语义不变
+        assert s.max_iterations == 40  # 回退语义不变（R10: 默认 20→40）
         notes = list(s.invalid_fallbacks)
         assert any(
             n.config_name == "LLM_MAX_ITERATIONS"
-            and n.fallback_value == 20
+            and n.fallback_value == 40
             and n.invalid_value_type == "非整数字符串"
             for n in notes
         )
