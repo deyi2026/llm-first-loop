@@ -80,6 +80,19 @@ def _apply_cli_startup_model(engine, session_store, session_id: str, model_ref: 
         print(result.reply)
 
 
+def _cli_approval_prompt(tool_name: str, args_summary: str) -> bool:
+    """T5a: 人工审批一次性 prompt（终端 y/N；无终端/异常 → 拒绝 fail-closed）."""
+    try:
+        print(
+            f"\n[人工审批] AI 请求执行被 EXEC_MODE 限制的操作:\n"
+            f"  工具: {tool_name}\n  参数: {args_summary[:200]}"
+        )
+        answer = input("批准执行? [y/N]: ").strip().lower()
+        return answer in ("y", "yes")
+    except EOFError:
+        return False  # 无终端（重定向等）→ 拒绝
+
+
 def _run_interactive(engine, session_id: str | None = None) -> None:
     """交互模式（连续会话，验证记忆贯穿；可复用既有会话）.
 
@@ -288,6 +301,11 @@ def main(argv: list[str] | None = None) -> int:
     # M50: 启动参数 --model 转入引擎属性, 由 _run_single / _run_interactive 落地
     if args.model:
         engine._cli_startup_model = args.model  # noqa: SLF001 — 私有装配通道
+
+    # T5a: 交互模式注入人工审批回调（EXEC_MODE 拦截项可经终端确认放行；
+    # 单条消息模式/web/feishu 不注入 → 拦截即拒绝 fail-closed）
+    if args.interactive:
+        engine.registry.set_approval_callback(_cli_approval_prompt)
 
     if args.message:
         _run_single(engine, args.message, session_id=args.session)

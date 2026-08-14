@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.tools.safety import link_shaped_paths
 
 
 class ReadFileTool:
@@ -37,6 +38,9 @@ class ReadFileTool:
                 tool_name=self.name,
             )
         p = Path(path).expanduser()
+        # T5b: symlink 透明标注（读放行，信息不隐藏；写路径在 edit_file 拒绝）
+        _links = link_shaped_paths(p)
+        _link_note = f"\n[symlink] 路径含符号链接: {' → '.join(_links)}" if _links else ""
         try:
             if not p.exists():
                 return ToolResult(
@@ -69,7 +73,7 @@ class ReadFileTool:
             note = f"\n[共 {total} 行，已显示 {len(selected)} 行]" if len(selected) < total else ""
             return ToolResult(
                 status=ToolResultStatus.SUCCESS,
-                content=numbered + note,
+                content=numbered + note + _link_note,
                 tool_call_id="",
                 tool_name=self.name,
             )

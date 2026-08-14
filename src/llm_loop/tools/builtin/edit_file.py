@@ -26,6 +26,7 @@ import tempfile
 from pathlib import Path
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.tools.safety import link_shaped_paths
 
 _DIFF_MAX_LINES = 80  # 回执中 diff 预览最大行数（超出截断并如实标注）
 _UTF8_BOM = b"\xef\xbb\xbf"
@@ -97,8 +98,18 @@ class EditFileTool:
         if old == "":
             return self._fail("old_string 为空无法定位（插入内容请锚定相邻原文）")
 
-        # ── 段1: read（bytes 读取，保留 BOM/换行风格信息 + 基线快照）──
+        # ── T5b: symlink 写防护（fail-closed）——写路径含符号链接（自身或父目录）
+        # 可能越界写项目外文件（对齐 Harness Unlink 模式；读路径 read_file 仅标注）──
         path = Path(path_str)
+        _links = link_shaped_paths(path)
+        if _links:
+            return self._fail(
+                f"写路径含符号链接，已拒绝写入（防越界写）: {' → '.join(_links)}。"
+                "如需修改目标文件请使用其真实路径（realpath 解析后重试）。",
+                "SymlinkGuard",
+            )
+
+        # ── 段1: read（bytes 读取，保留 BOM/换行风格信息 + 基线快照）──
         try:
             raw = path.read_bytes()
         except FileNotFoundError:

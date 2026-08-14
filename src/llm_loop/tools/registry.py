@@ -8,17 +8,21 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import re
 import threading
 import time
 import traceback
 from collections.abc import Callable
 from datetime import UTC
+from pathlib import Path
 from typing import Any
 
 from llm_loop.core.message import Message, MessageSource, ToolCall, ToolResult, ToolResultStatus
 from llm_loop.tools.pipeline import ImmutableResult, MaterializationError
 from llm_loop.tools.safety import CatastrophicGuard
+
+logger = logging.getLogger(__name__)
 
 # execute 包裹的扩展钩子（由外部装配: 如架构自省 record_action）
 PreExecuteHook = Callable[[ToolCall], None]
@@ -42,6 +46,12 @@ class ToolRegistry:
         # EVO-20260810-2549e9b6: EXEC_MODE 命令分级（默认空 = 不启用，生产由 factory 显式装配 blocked）
         exec_mode: str = "",
         exec_allowlist: str = "",
+        # T5a(2026-08-14): 人工审批回调（None = 拦截即拒绝 fail-closed，零回归）
+        # 回调签名: (tool_name, args_summary) -> bool（True=人工批准放行 / False=拒绝）
+        # 仅 EXEC_MODE 拦截路径触发；灾难性安全硬阻断不可审批（C 类硬边界不移交）。
+        approval_callback: Callable[[str, str], bool] | None = None,
+        # T5a: 审批审计落盘路径（None = 不落盘；含时间/工具/参数摘要/决策，不含密钥）
+        approval_audit_path: str | Path | None = None,
     ) -> None:
         self._tools: dict[str, Any] = {}
         self._lock = threading.Lock()
@@ -58,6 +68,30 @@ class ToolRegistry:
         self._session_id = ""
         # EVO-20260813-9ced1f4c: 工具执行瀑布（默认 None = 零回归；set_pipeline 显式装配）
         self._pipeline: Any = None
+        # T5a: 人工审批通道（None = 拦截即拒；set_approval_callback 运行时注入）
+        self._approval_callback = approval_callback
+        self._approval_audit_path = Path(approval_audit_path) if approval_audit_path else None
+
+    def set_approval_callback(self, callback: Callable[[str, str], bool] | None) -> None:
+        """运行时注入/移除人工审批回调（CLI 交互模式装配；web/feishu 不注入 → fail-closed）."""
+        self._approval_callback = callback
+
+    def _approval_log(self, decision: str, tool_name: str, summary: str) -> None:
+        """审批审计落盘（fail-open：审计失败不阻断执行；不写密钥/完整参数）."""
+        if self._approval_audit_path is None:
+            return
+        try:
+            self._approval_audit_path.parent.mkdir(parents=True, exist_ok=True)
+            rec = {
+                "ts": time.time(),
+                "decision": decision,  # approved / rejected / no_callback
+                "tool": tool_name,
+                "args_summary": summary[:300],
+            }
+            with self._approval_audit_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except OSError:
+            logger.warning("审批审计写失败（fail-open）: %s", self._approval_audit_path)
 
     def set_session_id(self, session_id: str) -> None:
         """由循环注入当前会话（压缩档案关联）."""
@@ -248,14 +282,36 @@ class ToolRegistry:
         if self._is_destructive_tool(call.name):
             blocked = self._check_exec_mode(call.name, call.arguments)
             if blocked:
-                return ToolResult(
-                    status=ToolResultStatus.BLOCKED,
-                    content=f"[权限拦截] {blocked}",
-                    tool_call_id=call.id,
-                    tool_name=call.name,
-                    error_detail="EXEC_MODE 限制，该操作需人工执行",
-                    duration_ms=0.0,
-                )
+                # T5a: 人工审批通道——有回调且人工批准 → 放行继续执行；
+                # 无回调 / 拒绝 / 回调异常 → 拦截（fail-closed，灾难性安全硬阻断不可审批）
+                if self._approval_callback is not None:
+                    summary = json.dumps(call.arguments, ensure_ascii=False)
+                    try:
+                        approved = bool(self._approval_callback(call.name, summary))
+                    except Exception:  # noqa: BLE001 — 回调异常 fail-closed 拒绝
+                        approved = False
+                    self._approval_log("approved" if approved else "rejected", call.name, summary)
+                    if approved:
+                        logger.info("人工审批通过: %s", call.name)
+                    else:
+                        return ToolResult(
+                            status=ToolResultStatus.BLOCKED,
+                            content=f"[权限拦截] {blocked}（人工审批未通过）",
+                            tool_call_id=call.id,
+                            tool_name=call.name,
+                            error_detail="EXEC_MODE 限制，人工审批拒绝该操作",
+                            duration_ms=0.0,
+                        )
+                else:
+                    self._approval_log("no_callback", call.name, json.dumps(call.arguments, ensure_ascii=False))
+                    return ToolResult(
+                        status=ToolResultStatus.BLOCKED,
+                        content=f"[权限拦截] {blocked}",
+                        tool_call_id=call.id,
+                        tool_name=call.name,
+                        error_detail="EXEC_MODE 限制，该操作需人工执行",
+                        duration_ms=0.0,
+                    )
 
         # EVO-20260813-9ced1f4c: 单调守卫（瀑布，默认关闭零回归）
         # 守卫拒绝 → BLOCKED（与灾难性安全同语义）；守卫只收紧不放松（fail-closed）

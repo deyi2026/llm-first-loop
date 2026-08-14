@@ -36,13 +36,15 @@ class NullEmbedder:
 
 
 class HashEmbedder:
-    """本地轻量语义嵌入（字符 n-gram 哈希向量）.
+    """本地轻量语义嵌入（字符 n-gram 哈希向量，T6 增强: 2+3-gram 混合）.
 
     零依赖、确定性、无网络；维度 EMBEDDING_DIM（默认 128）。
-    用 2-gram 字符哈希构造稀疏向量 → L2 归一化，支持余弦相似度。
+    2-gram + 3-gram 字符哈希构造稀疏向量 → L2 归一化，支持余弦相似度。
+    vector_version: 向量算法版本（缓存按版本校验，算法变更自动重建缓存防混用）。
     """
 
     provider = "hash"
+    vector_version = "hash-v2"
 
     def __init__(self, dim: int = 128) -> None:
         self._dim = max(16, int(dim))
@@ -52,8 +54,10 @@ class HashEmbedder:
             return None
         vec = [0.0] * self._dim
         norm_text = text.lower().strip()
-        # 字符 2-gram 哈希
-        grams = [norm_text[i : i + 2] for i in range(max(1, len(norm_text) - 1))]
+        # T6: 2-gram + 3-gram 混合（3-gram 提升长词/语义短语区分度；2-gram 保持 v1 召回面）
+        grams: list[str] = []
+        for n in (2, 3):
+            grams.extend(norm_text[i : i + n] for i in range(max(1, len(norm_text) - n + 1)))
         for g in grams:
             idx = int(hashlib.md5(g.encode("utf-8")).hexdigest(), 16) % self._dim
             vec[idx] += 1.0

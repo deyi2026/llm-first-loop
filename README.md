@@ -61,6 +61,11 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 - **事件源化单一真相源**（D1 事件日志）：`data/event_logs/<session_id>.jsonl` 事件日志作为轨迹单一真相源（5 类事件：session.created / message.appended / context.compressed / session.meta_changed / session.forked），运行期经 fail-open 钩子追加事件，`event-replay` 回放重建派生视图；`event-inventory` 只读盘点（哈希+mtime 零修改）→ `event-migrate` 从存量 session JSON 迁移生成事件日志（迁移前自动备份 `event_logs/_backup/<ts>/`，v3 旧会话缺省字段自动补默认，幂等二次迁移 0 迁移）→ `event-verify` 重放视图与源逐字段对账（差异如实标注）→ `event-rollback` 备份区逐字节恢复（`--remove-events` 还原事件日志）；`EVENT_LOG_ENABLED=0` 时事件写入零行为，三套存量存储保留双轨可对账
 - **D1 后续批次**（d1_es_followup）：**D3 会话 fork**——`session-fork` / `POST /api/v1/sessions/{id}/fork` 触发事件日志物理复制继承（保留 type/ts/payload 重分配 seq/event_id/session_id）+ session.forked 事件承载 fork 元信息 + 源会话逐字节不变 + 新会话事件独立可 replay；**三套存储退役**——`event-retire` 编排（备份→双轨对账→归档 action_trace/session JSON→切读路径 `READ_PATH_SOURCE=event_log`）+ `event-retire-rollback` 逐字节恢复，对账全量通过方可切换（不一致不切换不退役）；**事件日志滚动**——多段目录 `<sid>/<segment_seq>.jsonl`（大小/天数/会话结束三触发条件）+ `event-rotate-status` 段清单 + 跨段 replay 逐字节一致 + 归档段只读；**D4 过滤钩子**——`EventStore.append` 入口 HookChain（filter 丢弃 / desensitize 脱敏 / transform 转换，按 priority 升序）+ 审计落盘 `_hook_audit.jsonl`（不含原始 payload 敏感内容）+ fail-open 异常不阻断 + `event-hooks` CLI（list/test）+ 钩子链默认空零行为零回归
 - **灾难性安全**：唯一硬边界 = 不可逆删除/系统破坏，其余一切反馈放行
+- **数据治理**（T3）：压缩档案分片（`ARCHIVE_SEGMENT_BYTES` 默认 100MB，超阈值开 `<sid>-N.jsonl` 新段，检索按段倒序 + sidecar 索引快速通道 + 全文补齐，limit 截断语义等价；存量无索引段全文扫描兜底）；飞书心跳历史轮转（`FEISHU_HEARTBEAT_HISTORY_MAX_MB`，超阈值 `.1` 保留 1 份）
+- **人工审批流**（T5a）：EXEC_MODE 拦截项在 CLI 交互模式可经终端确认放行（`_cli_approval_prompt`，无终端 fail-closed 拒绝）；审批审计落盘 `data/audit/approval_audit.jsonl`（decision/tool/参数摘要，不含密钥）；灾难性安全硬阻断不可审批
+- **symlink 写防护**（T5b）：edit_file 写路径含符号链接（自身/父目录）拒绝写入防越界（fail-closed + realpath 引导）；read_file 读 symlink 如实标注不拒绝
+- **评测体系**（T4）：固定评测集 `tests/eval_sets/scenarios_v1.json`（6 场景，口径对齐 ai_guidance_playbook）+ 运行器 `scripts/run_eval.py`（真实 LLM / `--dry` 管道验证，判定 + Wilson CI + 报告落盘 `docs/metrics/`）+ CI nightly 自动运行
+- **CI + 版本**（T7）：GitHub Actions 三件套门禁（pytest/ruff/pyright）+ nightly 真实评测；语义化版本 v0.2.0
 
 ## CLI 子命令
 
