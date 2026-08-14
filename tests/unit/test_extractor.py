@@ -84,6 +84,28 @@ def test_cooldown_blocks_repeat(tmp_path):
     assert ex.maybe_trigger(sid) is False  # 冷却内
 
 
+def test_cooldown_first_trigger_when_monotonic_starts_at_zero(tmp_path):
+    """容器/新命名空间场景回归（CI 抓到的平台 bug）：monotonic 从 0 开始（< cooldown_s）
+    时首次触发不被误判为冷却期."""
+    from unittest import mock
+
+    import llm_loop.memory.extractor as extractor_mod
+
+    store = SessionStore(tmp_path / "sessions")
+    sid = _mk_session(store, 25)
+    ex = extractor_mod.MemoryExtractor(
+        llm_client=_FakeLLMExtract(),
+        memory=MemoryStore(tmp_path / "memory"),
+        session_store=store,
+        interval_msgs=20,
+        cooldown_s=600,
+        audit_dir=tmp_path / "audit",
+    )
+    with mock.patch.object(extractor_mod.time, "monotonic", return_value=1.0):
+        assert ex.maybe_trigger(sid) is True  # 首次（从未触发）→ 只查消息数阈值
+        assert ex.maybe_trigger(sid) is False  # 冷却内（now - last = 0 < 600）
+
+
 def test_extract_same_structure_and_dedup(tmp_path):
     """同构解析 + 指纹去重（即时沉淀 + 独立提取不重复）."""
     store = SessionStore(tmp_path / "sessions")
