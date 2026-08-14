@@ -328,3 +328,18 @@ def test_session_corrupt_file_backed_up(tmp_path):
     backup = tmp_path / "sessions" / "corrupt-session.corrupt.json"
     assert backup.exists()  # 原始损坏已备份
     assert "{broken json!!" in backup.read_text(encoding="utf-8")  # 备份保留原始内容
+
+
+# ── M52-fix: create(model_override=...) /new·/clear 新建继承模型覆盖 ──
+def test_create_with_model_override_persisted(tmp_path):
+    """M52-fix: create 带 model_override 持久化，load 后保持（/new 继承用）."""
+    store = _store(tmp_path)
+    sid = store.create(model_override="kimi/k3-256k")
+    assert store.load(sid).model_override == "kimi/k3-256k"
+
+
+def test_create_default_model_override_none(tmp_path):
+    """向后兼容：无参 create 的 model_override 为 None（回落装配默认）."""
+    store = _store(tmp_path)
+    sid = store.create()
+    assert store.load(sid).model_override is None
