@@ -57,6 +57,7 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 - **多会话管理**：CLI 子命令 `list / delete / archive / unarchive / search / extract` + `--session` 复用
 - **模型体系**（M47-M50）：`model_catalog` 查目录 / `switch_model` 自主切换（带 reason 审计落盘，AI 决策权）；Provider 注册表 + `MODEL_FALLBACKS` 应急降级链（仅默认装配模型失败时自动应急降级并如实标注，用户显式选择的模型不降级）；模型窗口自适应历史预算（按当前模型 context 收紧/放宽）
 - **双端接入**（Web + 飞书桥）：Web 管理界面（FastAPI :8902）+ 飞书长连接桥；配置 `FEISHU_OWNER_OPEN_ID` 后两端共享同一会话（一端说话另一端可续聊同一上下文）；飞书桥内置假死防护（SDK 锁泄漏运行时修补 + 看门狗心跳 + 健康检查按心跳新鲜度判定）
+- **蒸馏数据集导出**（export_distill，纯读只读薄壳）：`export-distill` 子命令把 `data/sessions/*.json` 会话轨迹导出为带思考链的 ReAct JSONL 蒸馏集 + 结构化统计报告——user 边界切分任务段 → `status=success` + 闭环完整性段级过滤（过滤原因分类计数）→ ReAct 三元组样本（thought/action/observation 与源逐字节一致，缺失思考链如实置 null）→ JSONL（`ensure_ascii=False` 超长不截断）+ 报告（通过+过滤=段总数闭环对账）；只产数据不训练、不切分/增强/脱敏；损坏文件 fail-open 如实标注跳过，输出已存在默认拒绝（`--force` 覆盖），源 session 文件只读零修改
 - **灾难性安全**：唯一硬边界 = 不可逆删除/系统破坏，其余一切反馈放行
 
 ## CLI 子命令
@@ -71,6 +72,7 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 .venv/bin/python -m llm_loop.cli evolve-list [status]  # 列出演进建议（人工审阅入口）
 .venv/bin/python -m llm_loop.cli evolve-review <id> <accepted|rejected>  # 审阅演进建议（accepted 且权限允许 → 自动执行）
 .venv/bin/python -m llm_loop.cli evolve-complete <id> "<结果说明>"  # 人工完成登记（涉边界演进 → executed, executor=human）
+.venv/bin/python -m llm_loop.cli export-distill [--input-dir DIR] [--output FILE] [--report FILE] [--force]  # 导出蒸馏数据集（薄壳只读，ReAct JSONL + 统计报告）
 .venv/bin/python -m llm_loop.cli --session <id> "消息"  # 复用会话继续对话
 ```
 
