@@ -54,3 +54,20 @@ def test_js_balanced_braces() -> None:
         opens = text.count("{")
         closes = text.count("}")
         assert opens == closes, f"{rel}: 花括号不平衡 (open={opens} close={closes})"
+
+
+def test_init_entrypoint_called() -> None:
+    """app.js 末尾必须调用 init()（T1 拆分曾丢失该调用，导致模型下拉/会话/SSE 全部失效）。"""
+    app_js = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    assert "init();" in app_js, "app.js 缺少 init() 调用——初始化（模型列表/会话/SSE）不会执行"
+    # 调用必须在文件末尾（所有函数定义与事件绑定之后），否则引用的函数尚未定义
+    tail = app_js[app_js.rfind("init();"):]
+    assert tail.strip() == "init();", "init() 调用后不应再有其他代码"
+
+
+def test_init_function_defined() -> None:
+    """init() 函数定义必须存在（负责 loadModels/loadSessions/initEventStream）。"""
+    src = (STATIC_DIR / "modules" / "command-upload-model.js").read_text(encoding="utf-8")
+    assert "async function init()" in src, "command-upload-model.js 缺少 init() 定义"
+    assert "loadModels()" in src, "init() 内缺少 loadModels() 调用（模型下拉不会填充）"
+    assert "loadSessions()" in src, "init() 内缺少 loadSessions() 调用（会话列表不会加载）"
