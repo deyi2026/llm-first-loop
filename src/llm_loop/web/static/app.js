@@ -1,29 +1,5 @@
 "use strict";
 
-    hideCmdSuggest();
-    return;
-  }
-  const q = value.slice(1).toLowerCase();
-  const items = COMMANDS.filter((c) => c.name.slice(1).startsWith(q));
-  if (!items.length) {
-    hideCmdSuggest();
-    return;
-  }
-  els.cmdSuggest.innerHTML = "";
-  for (const c of items) {
-    const item = el("div", "cmd-suggest-item");
-    item.appendChild(el("span", "cmd-name", c.name));
-    item.appendChild(el("span", "cmd-desc", c.desc));
-    item.onclick = () => {
-      els.messageInput.value = c.name + (c.argHint ? " " : "");
-      els.messageInput.focus();
-      hideCmdSuggest();
-      if (!c.argHint) sendMessage(); // 无需参数的命令点击即执行
-    };
-    els.cmdSuggest.appendChild(item);
-  }
-  els.cmdSuggest.hidden = false;
-}
 
 els.sendBtn.addEventListener("click", sendMessage);
 els.newSessionBtn.addEventListener("click", newSession);
