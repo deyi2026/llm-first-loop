@@ -11,6 +11,7 @@ interactive（Card 2.0 markdown 元素，双端一致渲染）+ 失败如实回�
 import json
 import logging
 import os
+import time
 from pathlib import Path
 
 import lark_oapi
@@ -24,6 +25,8 @@ logger = logging.getLogger(__name__)
 _TOKEN_INVALID_CODES = frozenset({99991663, 99991668, 99991661})
 # 卡片表格超限类错误码（表格密集回复触发，转 bullets 兜底）
 _TABLE_OVERFLOW_CODES = frozenset({230099, 11310})
+_MIN_SEND_INTERVAL_S = 0.3  # F8: 发送最小间隔（多段连续发送防频率限制）
+
 # 限流类错误码（Typing reaction 遇之静默跳过，防风暴；对齐 本地既有实现 ws_bridge _RATE_LIMIT_CODES）
 _RATE_LIMIT_CODES = frozenset({429, 99991400, 99991403})
 
@@ -68,6 +71,16 @@ class FeishuRestClient:
         self._config = config
         self._lark_client = lark_client
         self._audit_path = Path(audit_path or f"{_default_audit_dir()}/feishu_audit.jsonl")
+        # F8(2026-08-14): 发送最小间隔（多段连续发送防消息频率限制；进程内上次发送时刻）
+        self._last_send_ts: float = 0.0
+
+    def _throttle_send(self) -> None:
+        """F8: 发送间隔节流（多段回复连续发送时补齐最小间隔，防频率限制触发丢段）."""
+        now = time.monotonic()
+        elapsed = now - self._last_send_ts
+        if self._last_send_ts and elapsed < _MIN_SEND_INTERVAL_S:
+            time.sleep(_MIN_SEND_INTERVAL_S - elapsed)
+        self._last_send_ts = time.monotonic()
 
     def _raise_if_token_invalid(self, code: int | None, status_code: int | None) -> bool:
         """token 失效判定（SDK 化 401 检测：HTTP 401 或失效错误码）."""
@@ -105,6 +118,8 @@ class FeishuRestClient:
         Raises:
             FeishuRestError: interactive 与 text 回退均失败（含两段失败 code/msg 如实信息）.
         """
+        # F8: 发送间隔节流（多段连续发送防频率限制丢段）
+        self._throttle_send()
         # G3: 错误状态醒目化（⚠️ + 首行加粗；正常内容零改动；检测失败 fail-open 原样发送）
         try:
             from llm_loop.feishu.card_utils import detect_error_status

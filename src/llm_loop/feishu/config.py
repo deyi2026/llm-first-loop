@@ -19,7 +19,7 @@ class FeishuConfig:
     app_secret: str
     ws_enabled: bool = True
     session_map_path: str | None = None
-    chunk_limit: int = 50000
+    chunk_limit: int = 30000  # F3(2026-08-14): 50000 字符≈150KB 触物理上限，降 30000（≈90KB）留余量
     typing_ack: bool = True  # M46：Typing reaction 回执（对齐 FEISHU_TYPING_ACK）
     streaming: bool = True  # M46：流式状态卡（对齐 FEISHU_STREAMING）
     owner_open_id: str = ""  # 跨端共享：owner 私聊与 Web 共享同一会话（空=不启用，各私聊独立）
@@ -50,7 +50,7 @@ def load_feishu_config() -> FeishuConfig:
         os.environ.get("FEISHU_SESSION_MAP_PATH", "").strip()
         or f"{os.environ.get('DATA_DIR', './data')}/feishu_session_map.json"
     )
-    chunk_limit = _env_int("FEISHU_CHUNK_LIMIT", 50000)
+    chunk_limit = _env_int("FEISHU_CHUNK_LIMIT", 30000)  # F3: 字节预算语义（见 handlers._chunk_markdown）
     typing_ack = _env_flag("FEISHU_TYPING_ACK", True)
     streaming = _env_flag("FEISHU_STREAMING", True)
     owner_open_id = os.environ.get("FEISHU_OWNER_OPEN_ID", "").strip()

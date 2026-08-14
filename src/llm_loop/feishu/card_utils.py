@@ -16,6 +16,10 @@ _BR_RE = re.compile(r"<\s*br\s*/?\s*>", re.IGNORECASE)
 _INLINE_MATH_RE = re.compile(r"(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)")
 _BLOCK_MATH_RE = re.compile(r"\$\$(.+?)\$\$", re.DOTALL)
 
+# F1(2026-08-14): 超长无断点行折行阈值（字符；长 URL/长 token 行无空白断点会溢出卡片宽度）
+_FOLD_LINE_LIMIT = 100
+_ZERO_WIDTH_SPACE = "\u200b"
+
 # G3: 错误状态标记检测（大小写不敏感；对齐 Web M52 错误醒目的标记集合）
 _ERROR_STATUS_RE = re.compile(
     r"\[状态:\s*(?:error|failure|参数错误|安全硬阻断|程序异常)\]",
@@ -140,9 +144,47 @@ def _build_card_content(text: str) -> str:
     card = {
         "schema": "2.0",
         "config": {"width_mode": "fill"},
-        "body": {"elements": [{"tag": "markdown", "content": sanitize_html_tags(text)}]},
+        "body": {"elements": [{"tag": "markdown", "content": fold_long_lines(sanitize_html_tags(text))}]},
     }
     return json.dumps(card, ensure_ascii=False)
+
+
+def fold_long_lines(text: str, limit: int = _FOLD_LINE_LIMIT) -> str:
+    """F1(2026-08-14): 超长无断点行折行（零宽空格软折行，防卡片宽度溢出）.
+
+    仅处理**非代码 fence** 中长度 > limit 且**无空白断点**的行（长 URL/base64/长 token）：
+    每 limit 字符插入零宽空格（U+200B）——飞书卡片 soft-wrap 生效，复制内容时不可见。
+    fence 内代码行**不折**（保留可复制性/格式）；已有空白断点的行不处理（自然换行）。
+
+    Args:
+        text: 原始 markdown 文本.
+        limit: 单行折行阈值（字符，防御下限 20）.
+
+    Returns:
+        折行后的文本（无超长无断点行时不改动）。
+    """
+    if not text:
+        return text
+    limit = max(20, int(limit))
+    out: list[str] = []
+    in_fence = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            out.append(line)
+            continue
+        if in_fence:
+            out.append(line)  # 代码块不折
+            continue
+        if len(line) > limit and not any(c.isspace() for c in line):
+            folded = _ZERO_WIDTH_SPACE.join(
+                line[i : i + limit] for i in range(0, len(line), limit)
+            )
+            out.append(folded)
+        else:
+            out.append(line)
+    return "\n".join(out)
 
 
 def convert_tables_to_bullets(text: str) -> str:
@@ -199,4 +241,12 @@ def convert_tables_to_bullets(text: str) -> str:
                 lines_out.append("  - " + "；".join(pairs))
             else:
                 lines_out.append("- " + "；".join(cells))
-    return "\n".join(lines_out)
+    # F2(2026-08-14): 降级增强——来源标注 + 列数过多提示（结构退化如实告知）
+    result = "\n".join(lines_out)
+    if in_table:
+        n_headers = len(headers)
+        note = "（表格已转为键值列表；原表格结构简化，Web 端可查看原始 markdown）"
+        if n_headers > 6:
+            note = f"（表格列数较多（{n_headers} 列），已简化为键值列表；Web 端可查看原始 markdown）"
+        result += "\n" + note
+    return result

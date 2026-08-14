@@ -40,7 +40,8 @@ def test_convert_tables_basic():
     assert lines[0] == "- **列A | 列B**"  # 表头 bullet + 加粗列名
     assert "  - 列A: 1；列B: 2" in lines  # 数据行缩进子 bullet（列名映射）
     assert "  - 列A: 3；列B: 4" in lines
-    assert len(lines) == 3  # 分隔行被丢弃
+    assert len(lines) == 4  # 分隔行被丢弃 + F2 来源标注
+    assert "已转为键值列表" in lines[-1]  # F2: 降级增强标注
 
 
 def test_convert_tables_cell_strip():
@@ -147,3 +148,77 @@ def test_build_summary_card_truncate():
 
     tiny = build_summary_card("abc", max_chars=0)
     assert tiny.startswith("a")  # max_chars=0 → 下限 1
+
+
+# ── F1: 超长行折行（零宽空格软折行）──
+
+
+def test_fold_long_url():
+    """长 URL 无断点 → 每 limit 字符插零宽空格."""
+    from llm_loop.feishu.card_utils import fold_long_lines
+
+    url = "https://example.com/" + "a" * 150
+    out = fold_long_lines(url, limit=50)
+    parts = out.split("\u200b")
+    assert all(len(p) <= 50 for p in parts)
+    assert "".join(parts) == url  # 内容无损
+
+
+def test_fold_short_line_unchanged():
+    from llm_loop.feishu.card_utils import fold_long_lines
+
+    assert fold_long_lines("短行", limit=50) == "短行"
+    assert fold_long_lines("", limit=50) == ""
+
+
+def test_fold_line_with_spaces_unchanged():
+    """有空白断点的行不折（自然换行可用）."""
+    from llm_loop.feishu.card_utils import fold_long_lines
+
+    line = "word " * 60  # 有空格
+    assert fold_long_lines(line, limit=50) == line
+
+
+def test_fold_skips_code_fence():
+    """fence 内代码行不折（保留可复制性）."""
+    from llm_loop.feishu.card_utils import fold_long_lines
+
+    code = "x" * 200
+    text = f"```python\n{code}\n```"
+    assert fold_long_lines(text, limit=50) == text
+
+
+def test_fold_multiline_mixed():
+    from llm_loop.feishu.card_utils import fold_long_lines
+
+    long = "y" * 120
+    code_long = "z" * 300
+    text = f"正常行\n{long}\n```\n{code_long}\n```\n尾部"
+    out = fold_long_lines(text, limit=100)
+    assert "\u200b" in out  # 非 fence 长行被折
+    # fence 内容仍在原样
+    assert f"```\n{code_long}\n```" in out
+    assert "正常行" in out and "尾部" in out
+
+
+# ── F2: 表格降级增强（来源标注 + 列数提示）──
+
+
+def test_convert_tables_no_table_no_note():
+    """无表格文本 → 原样返回（不加 F2 标注）."""
+    from llm_loop.feishu.card_utils import convert_tables_to_bullets
+
+    text = "纯文本\n没有表格"
+    assert convert_tables_to_bullets(text) == text
+
+
+def test_convert_tables_many_columns_note():
+    """列数 >6 → 列数过多提示."""
+    from llm_loop.feishu.card_utils import convert_tables_to_bullets
+
+    cols = "| " + " | ".join(f"列{i}" for i in range(1, 8)) + " |"
+    sep = "|" + "---|" * 7
+    row = "| " + " | ".join(str(i) for i in range(1, 8)) + " |"
+    out = convert_tables_to_bullets(f"{cols}\n{sep}\n{row}")
+    assert "列数较多" in out
+    assert "7 列" in out
