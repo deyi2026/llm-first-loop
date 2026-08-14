@@ -222,10 +222,14 @@ class SessionStore:
         except Exception as exc:  # noqa: BLE001 — fail-open
             logger.warning("事件兜底写入失败（fail-open）: %s", exc)
 
-    def create(self) -> str:
-        """生成唯一 session_id 并初始化会话文件."""
+    def create(self, model_override: str | None = None) -> str:
+        """生成唯一 session_id 并初始化会话文件.
+
+        model_override: 可选模型覆盖（M52）。/new·/clear 新建会话时传入当前会话的
+        override，使新会话继承用户所选模型而非回落装配默认（M52-fix）。
+        """
         sid = str(uuid.uuid4())
-        session = Session(session_id=sid)
+        session = Session(session_id=sid, model_override=model_override)
         self.save(session)
         return sid
 
