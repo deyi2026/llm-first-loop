@@ -78,13 +78,13 @@ PROMPT_AI_05 = (
 # ── fixture 预置矩阵（12.1.2）──
 FIXTURE_DIRNAME = "exec_fixtures"
 FIXTURE_EXEC_TASK_01 = (
-    "本地既有实现-M21-EXEC-FIXTURE-7F3C 量子环形加速器冷却液阈值为 128.5 升，输出功率 372 兆瓦。"
+    "LLMFIRST-M21-EXEC-FIXTURE-7F3C 量子环形加速器冷却液阈值为 128.5 升，输出功率 372 兆瓦。"
 )
-FIXTURE_READ_ME = "本地既有实现-M21-EXEC-FIXTURE-BETA 记忆库压缩阈值已调整为 0.82，归档保留 30 天。"
+FIXTURE_READ_ME = "LLMFIRST-M21-EXEC-FIXTURE-BETA 记忆库压缩阈值已调整为 0.82，归档保留 30 天。"
 FIXTURE_AUX_INPUT = (
-    "本地既有实现-M21-AUX-FIXTURE 摘要输入文本：冷却系统包含 12 个泵，每台最大流量 450 升/分钟。"
+    "LLMFIRST-M21-AUX-FIXTURE 摘要输入文本：冷却系统包含 12 个泵，每台最大流量 450 升/分钟。"
 )
-FIXTURE_EXTRA = "本地既有实现-M21-EXEC-FIXTURE-GAMMA 备用电源容量 96 千瓦时，应急响应时间 1.8 秒。"
+FIXTURE_EXTRA = "LLMFIRST-M21-EXEC-FIXTURE-GAMMA 备用电源容量 96 千瓦时，应急响应时间 1.8 秒。"
 
 
 def _prep_exec_fixture(tmp_path, name: str = "exec_task_01.txt") -> tuple[str, str]:
@@ -103,7 +103,7 @@ def _prep_exec_fixture(tmp_path, name: str = "exec_task_01.txt") -> tuple[str, s
     elif name == "extra.txt":
         content, keyword = FIXTURE_EXTRA, "96 千瓦时"
     else:
-        content, keyword = f"本地既有实现-M21-EXEC-FIXTURE-{name.upper()} 约定内容", "约定内容"
+        content, keyword = f"LLMFIRST-M21-EXEC-FIXTURE-{name.upper()} 约定内容", "约定内容"
     path = fixture_dir / name
     path.write_text(content, encoding="utf-8")
     return str(path), keyword

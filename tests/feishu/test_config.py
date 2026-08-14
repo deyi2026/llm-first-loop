@@ -127,24 +127,24 @@ def test_chunk_limit_default_50000(monkeypatch):
 
 
 def test_m46_switches_default_and_env(monkeypatch):
-    """用例 M46-⑪：本地既有实现_FEISHU_TYPING_ACK / 本地既有实现_FEISHU_STREAMING 默认 1，显式 0 关闭."""
+    """用例 M46-⑪：FEISHU_TYPING_ACK / FEISHU_STREAMING 默认 1，显式 0 关闭."""
     monkeypatch.setenv("FEISHU_APP_ID", APP_ID)
     monkeypatch.setenv("FEISHU_APP_SECRET", SECRET)
     # a) 默认（未设 env）→ 两者均 True
-    monkeypatch.delenv("本地既有实现_FEISHU_TYPING_ACK", raising=False)
-    monkeypatch.delenv("本地既有实现_FEISHU_STREAMING", raising=False)
+    monkeypatch.delenv("FEISHU_TYPING_ACK", raising=False)
+    monkeypatch.delenv("FEISHU_STREAMING", raising=False)
     cfg = load_feishu_config()
     assert cfg.typing_ack is True
     assert cfg.streaming is True
     # b) 显式 0 → 关闭
-    monkeypatch.setenv("本地既有实现_FEISHU_TYPING_ACK", "0")
-    monkeypatch.setenv("本地既有实现_FEISHU_STREAMING", "false")
+    monkeypatch.setenv("FEISHU_TYPING_ACK", "0")
+    monkeypatch.setenv("FEISHU_STREAMING", "false")
     cfg2 = load_feishu_config()
     assert cfg2.typing_ack is False
     assert cfg2.streaming is False
     # c) 显式 1 / off 语义（off 关闭，1 开启）
-    monkeypatch.setenv("本地既有实现_FEISHU_TYPING_ACK", "off")
-    monkeypatch.setenv("本地既有实现_FEISHU_STREAMING", "1")
+    monkeypatch.setenv("FEISHU_TYPING_ACK", "off")
+    monkeypatch.setenv("FEISHU_STREAMING", "1")
     cfg3 = load_feishu_config()
     assert cfg3.typing_ack is False
     assert cfg3.streaming is True

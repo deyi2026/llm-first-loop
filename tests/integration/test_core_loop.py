@@ -463,7 +463,7 @@ def test_exec_read_file_must_task(build_test_engine, tmp_path):
     """
 
     f = tmp_path / "exec_task_01.txt"
-    f.write_text("本地既有实现-M21-EXEC-FIXTURE-7F3C 冷却液阈值 128.5 升", encoding="utf-8")
+    f.write_text("LLMFIRST-M21-EXEC-FIXTURE-7F3C 冷却液阈值 128.5 升", encoding="utf-8")
     engine, fake = build_test_engine(
         [
             {"tool_calls": [_read_file_call(str(f), "call_r1")]},
@@ -485,7 +485,7 @@ def test_exec_failure_self_correct(build_test_engine, tmp_path):
     from llm_loop.core.message import ToolCall
 
     real = tmp_path / "read_me.txt"
-    real.write_text("本地既有实现-M21-EXEC-FIXTURE-BETA 压缩阈值 0.82", encoding="utf-8")
+    real.write_text("LLMFIRST-M21-EXEC-FIXTURE-BETA 压缩阈值 0.82", encoding="utf-8")
     missing = tmp_path / "missing_file.txt"  # 不创建
     engine, fake = build_test_engine(
         [
@@ -523,7 +523,7 @@ def test_exec_multi_step_closure(build_test_engine, tmp_path):
     from llm_loop.core.message import ToolCall
 
     f1 = tmp_path / "a.txt"
-    f1.write_text("本地既有实现-M21-EXEC-FIXTURE-7F3C 冷却液阈值 128.5 升", encoding="utf-8")
+    f1.write_text("LLMFIRST-M21-EXEC-FIXTURE-7F3C 冷却液阈值 128.5 升", encoding="utf-8")
     engine, fake = build_test_engine(
         [
             {
