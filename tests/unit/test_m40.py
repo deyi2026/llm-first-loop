@@ -11,10 +11,9 @@ from llm_loop.core.message import Message, MessageSource
 from llm_loop.tools.registry import ToolRegistry
 
 
-def test_config_history_max_chars_1m():
-    """history_max_chars 放大到 1M（对齐 1M 上下文窗口）."""
-        # EVO-20260814: Settings 默认仍 1M（语义对齐 1M 上下文窗口）；运行时默认改 _env_int 默认 30000
-    assert Settings.history_max_chars == 1_000_000
+def test_config_history_max_chars_100k():
+    """history_max_chars 默认 100K（T2 收敛：类默认与运行时 env 默认一致；1M 曾撑爆窗口，30000 过保守）."""
+    assert Settings.history_max_chars == 100_000
 
 
 def test_config_tool_output_chars_100k():

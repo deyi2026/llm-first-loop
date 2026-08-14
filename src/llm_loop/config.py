@@ -243,7 +243,7 @@ class Settings:
     tool_guard_enabled: bool = False  # 单调守卫（TOOL_GUARD_ENABLED）
 
     # ── 上下文 ──
-    history_max_chars: int = 1000000  # EVO-20260814: 运行时默认改 _env_int 默认值；Settings 默认仍 1M（语义对齐窗口）
+    history_max_chars: int = 100000  # T2(2026-08-14): 类默认收敛与运行时 env 默认一致（100K；1M 曾撑爆窗口，30000 过保守）
     memory_top_k: int = 5  # auto-adaptive: env 未显式设置时按上下文占用率自适应（>70%→8/<30%→3，硬上限 20）
 
     # ── 架构自省（AI-serving, design.md §2.1.4）──
@@ -256,6 +256,7 @@ class Settings:
     docs_dir: str = "./docs"  # P2-3: 文档检索目录（默认项目根 docs/）
     archive_max_entries: int = 0  # R7: 单会话最大档案条目数（0=不限）
     archive_ttl_days: int = 0     # R7: 条目存活天数（0=不限）
+    archive_segment_bytes: int = 104857600  # T3b(2026-08-14): 档案单文件分片阈值（默认 100MB；0=不分片）
     audit_ttl_days: int = 30      # P1-3: 审计 JSONL 条目存活天数（0=不清理）
     memory_max_entries: int = 0   # P1-5: 记忆条目上限（0=不限；超限淘汰 decay_score 最低）
 
@@ -494,7 +495,7 @@ def load_settings() -> Settings:
         tool_pipeline_enabled=_env_bool("TOOL_PIPELINE_ENABLED", False),
         tool_materialize_enabled=_env_bool("TOOL_MATERIALIZE_ENABLED", False),
         tool_guard_enabled=_env_bool("TOOL_GUARD_ENABLED", False),
-        history_max_chars=_env_int("HISTORY_MAX_CHARS", 30000),  # EVO-20260814: 默认 30000
+        history_max_chars=_env_int("HISTORY_MAX_CHARS", 100000),  # T2(2026-08-14): 默认 100K（与类默认收敛；1M 曾致上下文撑爆全失败）
         memory_top_k=_env_int("MEMORY_TOP_K", 5),
         self_inspection_enabled=_env_bool("SELF_INSPECTION_ENABLED", True),
         status_report_cooldown_s=float(_env_int("STATUS_REPORT_COOLDOWN_S", 60)),
@@ -503,6 +504,7 @@ def load_settings() -> Settings:
         docs_dir=os.environ.get("DOCS_DIR", "./docs").strip(),
         archive_max_entries=_env_int("ARCHIVE_MAX_ENTRIES", 0),
         archive_ttl_days=_env_int("ARCHIVE_TTL_DAYS", 0),
+        archive_segment_bytes=_env_int("ARCHIVE_SEGMENT_BYTES", 104857600),  # T3b: 默认 100MB（0=不分片）
         audit_ttl_days=_env_int("AUDIT_TTL_DAYS", 30),
         memory_max_entries=_env_int("MEMORY_MAX_ENTRIES", 0),
         # P1（design.md §3.6，非法值回退默认）

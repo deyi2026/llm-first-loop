@@ -105,7 +105,7 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 | `SELF_EVAL_REMIND_ENABLED` | 1 | 触发提醒开关（仅提示不强制） |
 | `SELF_EVAL_INTERVAL_ROUNDS` / `SELF_EVAL_MIN_SAMPLES` / `SELF_EVAL_SPAN` | 50/5/50 | 定期触发间隔/样本不足阈值/聚合窗口 |
 | `SYSTEM_PROMPT_EXTRA` | — | 叠加自定义 AI 规则（程序最小化，无需改代码） |
-| `HISTORY_MAX_CHARS` | 1000000 | 提交给 LLM 的历史上下文预算（字符）。**建议按模型窗口调低**（如 80000）——预算过高会导致上下文膨胀超限，所有模型调用失败/超时 |
+| `HISTORY_MAX_CHARS` | 100000 | 提交给 LLM 的历史上下文预算（字符），默认 100K（≈50K tokens），可按模型窗口调整（1M 窗口模型可调大，小窗模型调小）；预算过高会撑爆窗口导致所有模型调用失败/超时 |
 | `MODEL_FALLBACKS` | 空 | 降级链（逗号分隔 `provider/model`，如 `deepseek/deepseek-v4-flash,local/qwen3.6-27b-fable-fusion-711-uncensored-heretic-nm-dau-neo-max-mtp`）；空=不启用降级 |
 | `EVENT_LOG_ENABLED` | 1 | 事件源化单一真相源开关（`data/event_logs/<session_id>.jsonl` 追加写；0=事件写入零行为） |
 | `EVENT_LOGS_DIR` | 空 | 事件日志目录覆盖（空=从 data_dir 派生 `data/event_logs`） |
@@ -114,6 +114,8 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 | `EVENT_LOG_ROTATE_DAYS` | 30 | 事件日志滚动天数阈值（0=禁用） |
 | `EVENT_LOG_ROTATE_ON_SESSION_END` | 1 | 会话结束时触发滚动 |
 | `EVENT_HOOKS_CONFIG` | 空 | 过滤钩子配置文件路径（空=钩子链默认空零行为） |
+| `ARCHIVE_SEGMENT_BYTES` | 104857600 | 压缩档案单文件分片阈值（默认 100MB；0=不分片；超阈值开 `<sid>-N.jsonl` 新段，检索按段倒序 + sidecar 索引快速通道） |
+| `FEISHU_HEARTBEAT_HISTORY_MAX_MB` | 空 | 飞书心跳历史轮转阈值（MB；空=不限制；超阈值当前文件轮转为 `.1` 保留 1 份） |
 
 > **配置加载（M63）**：CLI / Web / 飞书 三端统一从项目 `.env` 加载（环境变量优先）。
 > 修改 `.env` 后：CLI 直接生效；web/feishu 执行 `bash scripts/restart_system.sh restart` 一键重启。

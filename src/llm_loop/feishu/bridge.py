@@ -14,6 +14,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable
+from pathlib import Path
 from time import sleep as _sleep
 from typing import Any
 
@@ -46,6 +47,41 @@ _HEARTBEAT_PATH = os.environ.get("FEISHU_HEARTBEAT_PATH", "data/feishu_heartbeat
 _HEARTBEAT_HISTORY_PATH = os.environ.get(
     "FEISHU_HEARTBEAT_HISTORY_PATH", "data/feishu_heartbeat_history.jsonl"
 )
+
+# ── T3a(2026-08-14): 心跳历史轮转（防无限膨胀；空=不限制零回归）──
+# 每 30s 一次心跳追加写，历史文件将无限增长（实测 5.4MB/万行）——超过阈值时
+# 当前文件轮转为 .1（保留 1 份最近段），健康检查/诊断数据源不丢近期数据。
+
+
+def _heartbeat_history_max_bytes() -> int | None:
+    """解析 FEISHU_HEARTBEAT_HISTORY_MAX_MB（MB→bytes；空/非法 → None 不限制）."""
+    raw = os.environ.get("FEISHU_HEARTBEAT_HISTORY_MAX_MB", "").strip()
+    if not raw:
+        return None
+    try:
+        return int(float(raw) * 1024 * 1024)
+    except (TypeError, ValueError):
+        return None  # 非法值 fail-open 不限制
+
+
+def rotate_heartbeat_history(hist_path: str | Path, max_bytes: int | None) -> bool:
+    """心跳历史轮转：文件存在且 ≥ 阈值时轮转为 .1（先删旧 .1，保留 1 份）。
+
+    Returns: 是否发生轮转；未配置/不存在/未超限/OSError 均 False（fail-open 不阻断写入）。
+    """
+    if max_bytes is None or max_bytes <= 0:
+        return False
+    try:
+        p = Path(hist_path)
+        if p.exists() and p.stat().st_size >= max_bytes:
+            bak = p.with_suffix(p.suffix + ".1")
+            if bak.exists():
+                bak.unlink()
+            p.rename(bak)
+            return True
+    except OSError:
+        pass  # 轮转失败 fail-open：不阻断心跳写入（下轮再试）
+    return False
 
 # ── P1-2-R2: 消息处理线程迁移（阻塞消除）──
 # 根因: 事件回调在 SDK asyncio loop 内同步执行消息处理（LLM 推理可达分钟级），期间
@@ -413,6 +449,8 @@ class _WsConnector:
             hist_path = _Path(_HEARTBEAT_HISTORY_PATH)
             try:
                 hist_path.parent.mkdir(parents=True, exist_ok=True)
+                # T3a(2026-08-14): 追加前轮转检查（未配置 FEISHU_HEARTBEAT_HISTORY_MAX_MB 时零行为）
+                rotate_heartbeat_history(hist_path, _heartbeat_history_max_bytes())
                 with open(hist_path, "a", encoding="utf-8") as f:
                     f.write(_json.dumps(payload) + "\n")
             except Exception:  # noqa: BLE001 — 历史写失败不影响主文件与主流程

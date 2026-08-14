@@ -119,7 +119,11 @@ def build_engine(settings: Settings) -> LoopEngine:
 
     # 存储（记忆 + 压缩档案 + 会话）
     memory = MemoryStore(settings.memory_dir)
-    archive = ArchiveStore(settings.archive_dir) if settings.archive_enabled else None
+    archive = (
+        ArchiveStore(settings.archive_dir, segment_bytes=settings.archive_segment_bytes)
+        if settings.archive_enabled
+        else None
+    )
     # R7: 启动时清理一次过期/超量档案（fail-open，不影响启动）
     if archive is not None:
         try:
