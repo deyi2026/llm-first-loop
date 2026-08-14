@@ -249,6 +249,7 @@ def main(argv: list[str] | None = None) -> int:
         "evolve-review",
         "evolve-complete",  # M17 FR-REVIEW-AI-01: 人工完成登记（涉边界演进）
         "evolve-verify",  # EVO-20260813-8279507f: 人工核验确认（executed → verified_at 标记）
+        "export-distill",  # export_distill: 蒸馏数据集导出（薄壳只读，不装配 engine）
     }
     if argv and argv[0] in _cmds:
         return _dispatch_command(argv)
@@ -288,6 +289,9 @@ def main(argv: list[str] | None = None) -> int:
 def _dispatch_command(argv: list[str]) -> int:
     """子命令分派（list/delete/archive/unarchive/search/extract）."""
     cmd = argv[0]
+    # export_distill: 薄壳纯读命令，入口特判（早于 build_engine，避免无谓 engine 装配）
+    if cmd == "export-distill":
+        return _cmd_export_distill(argv[1:])
     try:
         settings = load_settings()
     except ValueError as exc:
@@ -436,6 +440,66 @@ def _cmd_evolve_verify(engine, suggestion_id: str, note: str) -> int:
     now = datetime.now(UTC).isoformat(timespec="seconds")
     store.transition(suggestion_id, status="executed", verified_at=now, verify_note=note)
     print(f"[核验完成] {suggestion_id} → executed（verified_at={now}）: {note}")
+    return 0
+
+
+def _cmd_export_distill(argv: list[str]) -> int:
+    """export-distill 子命令入口（薄壳只读，不装配 engine）.
+
+    导出带思考链的 ReAct 蒸馏数据集（`data/sessions/*.json` → JSONL + 统计报告）。
+    用法: llm_loop export-distill [--input-dir DIR] [--output FILE] [--report FILE] [--force]
+    """
+    from datetime import datetime
+
+    from llm_loop.introspection.export_distill import (
+        _DEFAULT_INPUT_DIR,
+        run_export,
+    )
+
+    parser = argparse.ArgumentParser(
+        prog="llm_loop export-distill",
+        description="导出带思考链的 ReAct 蒸馏数据集（薄壳只读，不装配 engine）",
+    )
+    parser.add_argument(
+        "--input-dir",
+        default=_DEFAULT_INPUT_DIR,
+        help=f"会话输入目录（默认 {_DEFAULT_INPUT_DIR}）",
+    )
+    parser.add_argument(
+        "--output",
+        default="",
+        help="JSONL 输出路径（默认 data/export_distill/distill_<YYYYmmdd-HHMMSS>.jsonl）",
+    )
+    parser.add_argument(
+        "--report",
+        default="",
+        help="统计报告路径（默认同输出目录 report_<YYYYmmdd-HHMMSS>.json）",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="覆盖既有输出文件（默认拒绝已存在的输出，杜绝静默追加）",
+    )
+    args = parser.parse_args(argv)
+
+    ts = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    output = args.output or f"data/export_distill/distill_{ts}.jsonl"
+    report_path = args.report or f"data/export_distill/report_{ts}.json"
+
+    try:
+        report = run_export(args.input_dir, output, report_path, force=args.force)
+    except FileNotFoundError as exc:
+        print(f"❌ {exc}", file=sys.stderr)
+        return 2
+    except FileExistsError as exc:
+        print(f"❌ {exc}", file=sys.stderr)
+        return 2
+    except Exception as exc:  # noqa: BLE001 — 内部异常如实反馈
+        print(f"❌ 导出失败（{type(exc).__name__}: {exc}）", file=sys.stderr)
+        return 1
+    print(report.render_text())
+    print(f"[数据集] {output}")
+    print(f"[报告] {report_path}")
     return 0
 
 
