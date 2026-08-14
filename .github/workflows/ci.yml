@@ -29,7 +29,7 @@ jobs:
       - name: ruff
         run: ruff check src tests scripts
       - name: pyright
-        run: pyright src
+        run: pyright src --pythonpath python
       - name: pytest（非真实 LLM）
         run: python -m pytest tests/ -q -m "not real_llm"
 

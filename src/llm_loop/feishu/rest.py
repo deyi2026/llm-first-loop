@@ -270,6 +270,7 @@ class FeishuRestClient:
         )
         from lark_oapi.api.docx.v1.model import (
             BlockBuilder,
+            Divider,
             TextBuilder,
             TextElementBuilder,
             TextElementStyleBuilder,
@@ -333,7 +334,8 @@ class FeishuRestClient:
             return BlockBuilder().block_type(14).code(t).build()
 
         def _mk_divider():
-            return BlockBuilder().block_type(22).divider({}).build()
+            # pyright 1.1.411+ 严格检查：divider 参数须为 Divider 对象（空构造 JSON 序列化为 {}，行为等价）
+            return BlockBuilder().block_type(22).divider(Divider()).build()
 
         blocks = []
         lines = content.splitlines()
