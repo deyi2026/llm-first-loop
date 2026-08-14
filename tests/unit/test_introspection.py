@@ -153,6 +153,9 @@ def test_correction_clear_state_removed():
             "brainstorm_design",
             "tdd_red_green",
             "design_review",
+            # B3: 插件化 Skill（skills/ 目录）
+            "skill_list",
+            "skill_load",
     }
 
 

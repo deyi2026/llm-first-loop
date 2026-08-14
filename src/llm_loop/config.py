@@ -255,6 +255,7 @@ class Settings:
     # ── 压缩档案（T22 另存提取替代截断）──
     archive_enabled: bool = True
     experiences_dir: str = "./experiences"  # P1-2: 经验库目录（默认项目根 experiences/）
+    skills_dir: str = "./skills"  # B3(2026-08-14): 插件化 Skill 目录（skills/<name>/SKILL.md；空/不存在=零行为）
     docs_dir: str = "./docs"  # P2-3: 文档检索目录（默认项目根 docs/）
     archive_max_entries: int = 0  # R7: 单会话最大档案条目数（0=不限）
     archive_ttl_days: int = 0     # R7: 条目存活天数（0=不限）
@@ -503,6 +504,7 @@ def load_settings() -> Settings:
         status_report_cooldown_s=float(_env_int("STATUS_REPORT_COOLDOWN_S", 60)),
         archive_enabled=_env_bool("ARCHIVE_ENABLED", True),
         experiences_dir=os.environ.get("EXPERIENCES_DIR", "./experiences").strip(),
+        skills_dir=os.environ.get("SKILLS_DIR", "./skills").strip(),  # B3: 插件化 Skill 目录
         docs_dir=os.environ.get("DOCS_DIR", "./docs").strip(),
         archive_max_entries=_env_int("ARCHIVE_MAX_ENTRIES", 0),
         archive_ttl_days=_env_int("ARCHIVE_TTL_DAYS", 0),

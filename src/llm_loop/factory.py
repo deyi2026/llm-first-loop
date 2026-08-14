@@ -403,6 +403,7 @@ def build_engine(settings: Settings) -> LoopEngine:
     corrections._recovery_channel = recovery_channel  # noqa: SLF001 — P2-2: 工具分派注入
     corrections._recovery_sessions_dir = settings.sessions_dir  # noqa: SLF001
     corrections._recovery_memory_dir = settings.memory_dir  # noqa: SLF001
+    corrections._skills_dir = settings.skills_dir or None  # noqa: SLF001 — B3: 插件化 Skill 目录注入
     status_provider.set_recovery_status_fn(backup_store.status_summary)
 
     # 自省/修正/检索工具注册进 ToolRegistry（LLM 可见）

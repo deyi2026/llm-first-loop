@@ -100,6 +100,7 @@ class CorrectionToolRegistry:
         self._recovery_channel: Any | None = None
         self._recovery_sessions_dir: str | Path | None = None
         self._recovery_memory_dir: str | Path | None = None
+        self._skills_dir: str | None = None  # B3: 插件化 Skill 目录（None=未注入零回归）
 
     # ── 暴露私有属性为公开名供 registry 模块访问（RegistryHost 协议）──
     _PUBLIC_MAP = {
@@ -112,6 +113,7 @@ class CorrectionToolRegistry:
         "recovery_channel": "_recovery_channel",
         "recovery_sessions_dir": "_recovery_sessions_dir",
         "recovery_memory_dir": "_recovery_memory_dir",
+        "skills_dir": "_skills_dir",  # B3: 插件化 Skill 目录
     }
 
     def __getattr__(self, name: str) -> Any:
