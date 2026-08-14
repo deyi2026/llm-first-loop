@@ -58,3 +58,43 @@ def test_examples_referenced_in_readme():
     readme = (_ROOT / "README.md").read_text(encoding="utf-8")
     assert "examples/" in readme
     assert "docs/api.md" in readme
+
+
+def test_run_single_convenience_entry(tmp_path, monkeypatch):
+    """B5: run_single 自动建会话执行（一次性便捷入口）."""
+    from llm_loop.config import Settings
+    from llm_loop.core.loop.engine import LoopEngine
+    from llm_loop.core.session import SessionStore
+    from llm_loop.llm.client import LLMResponse
+    from llm_loop.tools.registry import ToolRegistry
+
+    class _Fake:
+        def chat(self, messages, tools, **kw):
+            return LLMResponse(content="一次性回答", tool_calls=[], provider="fake")
+
+        def chat_stream(self, messages, tools, **kw):
+            def _gen():
+                yield from ()
+                return LLMResponse(content="一次性回答", tool_calls=[], provider="fake")
+
+            return _gen()
+
+    settings = Settings(
+        llm_api_key="k",
+        llm_base_url="https://x/v1",
+        llm_model="m",
+        data_dir=str(tmp_path / "data"),
+        extract_enabled=False,
+        summary_mode="off",
+    )
+    engine = LoopEngine(
+        llm_client=_Fake(),  # type: ignore[arg-type]
+        registry=ToolRegistry(),  # type: ignore[arg-type]
+        memory=None,  # type: ignore[arg-type]
+        session=SessionStore(tmp_path / "sessions"),
+        settings=settings,
+    )
+    result = engine.run_single("你好")
+    assert result.final_answer == "一次性回答"
+    assert result.session_id  # 自动创建了会话
+    assert engine.session.exists(result.session_id)  # 会话已落盘可追溯

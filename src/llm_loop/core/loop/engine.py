@@ -635,6 +635,15 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
             except StopIteration as exc:
                 return exc.value
 
+    def run_single(self, user_text: str, model: str | None = None) -> LoopResult:
+        """B5(2026-08-14) 一次性便捷入口：自动创建新会话并执行完整循环.
+
+        外部嵌入（examples/01 模式）无需手动 session.create()；等价于
+        `run(create(), text)`。会话按正常路径落盘（可 list/search 追溯）。
+        """
+        session_id = self.session.create()
+        return self.run(session_id, user_text, model=model)
+
     # M53 拆分: 模型路由辅助方法族 → llm_loop/core/loop/routing.py（_RoutingMixin）
     # 迁移注释保留（test_silent_pass_cleanup 源码断言）: 模型标签 resolve 失败时回退裸名（fail-open），
     # 行为与迁移前一致；有 pool 时经注册表 resolve 为全限定 ref。

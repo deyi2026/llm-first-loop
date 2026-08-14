@@ -151,6 +151,10 @@ def test_model_catalog_includes_directory_and_current() -> None:
     assert "默认装配" in content
     # thinking 标注存在
     assert "thinking=" in content
+    # B6: 选型指引（成本/能力语义 + switch_model 引导）
+    assert "选型指引" in content
+    assert "cost=low/mid/high" in content
+    assert "switch_model" in content
 
 
 def test_model_catalog_marks_current_with_override() -> None:

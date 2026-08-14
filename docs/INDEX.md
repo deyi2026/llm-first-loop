@@ -10,6 +10,9 @@
 |:---|:---|
 | `ai_rules.md` | **AI 自主规则唯一真相源（SoT）**，内嵌于 system prompt，`test_ai_rules_sync` 防漂移——运行必需 |
 | `ROADMAP-B-20260814.md` | 开源框架化路线图（面向使用者的项目方向说明） |
+| `api.md` | 公共 API 参考（装配/引擎/会话/工具/Web/CLI/扩展点） |
+| `configuration.md` | 配置参考（分组配置表 + 常见坑速查） |
+| `event_sourcing.md` | 事件溯源设计（单一真相源 + 迁移/回滚指南） |
 | `README.md` | 项目入口（功能/快速开始/CLI/配置） |
 
 ## 更新约定

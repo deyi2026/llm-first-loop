@@ -132,6 +132,13 @@ def run_model_catalog(
                 f"    - {mid}: context={mspec.context}, "
                 f"thinking={thinking}, cost={mspec.cost_tier}{cap_str}{mark}"
             )
+    # B6(2026-08-14): 成本/能力选型指引（对齐 RULE-AI-09 切前自查——判断归 AI，程序只给事实）
+    lines.append(
+        "选型指引: cost=low/mid/high 成本档；thinking/reasoning=强推理；"
+        "long_context=长上下文；multimodal=多模态。"
+        "复杂推理→thinking+reasoning 模型；长任务→long_context；成本敏感/批量→low。"
+        "切换经 switch_model（必带 reason，审计可溯，RULE-AI-09）。"
+    )
     return ToolResult(
         status=ToolResultStatus.SUCCESS,
         content="\n".join(lines),
