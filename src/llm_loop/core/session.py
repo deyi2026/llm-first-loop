@@ -14,14 +14,30 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from llm_loop.core.message import Message, MessageSource, ToolResultStatus
+from llm_loop.event_log.model import build_message_payload
 
 logger = logging.getLogger(__name__)
 
 _ACTIVE = "active"
 _ARCHIVED = "archived"
+
+# D1: session.created 事件承载的顶层字段（与 Session.to_dict() 对齐，缺失如实置空）
+_EVENT_TOP_FIELDS = (
+    "version",
+    "title",
+    "created_at",
+    "updated_at",
+    "status",
+    "parent_id",
+    "branch_id",
+    "branch_summary",
+    "model_override",
+    "pinned",
+    "channel",
+)
 
 
 def _now() -> str:
@@ -131,11 +147,80 @@ def _make_title(first_user_content: str) -> str:
 
 
 class SessionStore:
-    """会话持久化（JSON 文件，P0 + P1 多会话方法）."""
+    """会话持久化（JSON 文件，P0 + P1 多会话方法）.
 
-    def __init__(self, sessions_dir: str | Path) -> None:
+    D1 事件源化: 可选注入 `event_store`（默认 None 零行为）。注入时:
+    - save() 内兜底（事件日志不存在则生成 session.created + 全部消息事件，防御层 fail-open）
+    - rename/set_pinned/set_channel/archive/unarchive 挂 session.meta_changed
+    """
+
+    def __init__(
+        self,
+        sessions_dir: str | Path,
+        *,
+        event_store: Any | None = None,
+        read_path_source: str = "session_json",
+    ) -> None:
         self._dir = Path(sessions_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
+        self._event_store = event_store
+        self._read_path_source = read_path_source
+
+    def _event_append(self, session_id: str, event_type: str, payload: dict) -> None:
+        """D1 事件写入（fail-open：未注入/禁用/异常均如实记录，不抛穿调用方）."""
+        store = self._event_store
+        if store is None or getattr(store, "enabled", False) is False:
+            return
+        try:
+            store.append(session_id, event_type, payload)
+        except Exception as exc:  # noqa: BLE001 — fail-open
+            logger.warning("事件写入失败（fail-open）: %s", exc)
+
+    def _event_backfill(self, session: Session) -> None:
+        """save 兜底（防御层）: 对比已落事件数与消息长度，缺失消息事件才补（tasks §7.3）.
+
+        主事件路径在 engine 落库点；本兜底防御引擎遗漏点/手动改会话，
+        保证事件日志与 session 最终一致（缺什么补什么，零重复开销）。
+        - 事件日志不存在 → 生成 session.created + 全部消息事件
+        - 已存在但消息事件数 < 消息长度（如迁移后引擎继续追加）→ 补缺失 index 的消息事件
+        """
+        store = self._event_store
+        if store is None or getattr(store, "enabled", False) is False:
+            return
+        try:
+            if not store.exists(session.session_id):
+                payload = {k: getattr(session, k, None) for k in _EVENT_TOP_FIELDS}
+                payload["version"] = session.to_dict().get("version", 4)
+                store.append(session.session_id, "session.created", payload)
+                existing: set[int] = set()
+            else:
+                existing = {
+                    e.payload.get("index")
+                    for e in store.read(session.session_id)
+                    if e.type == "message.appended" and isinstance(e.payload.get("index"), int)
+                }
+            for i, m in enumerate(session.messages):
+                if i in existing:
+                    continue  # 已落库消息事件跳过（零重复）
+                store.append(
+                    session.session_id,
+                    "message.appended",
+                    build_message_payload(
+                        index=i,
+                        role=m.role,
+                        content=m.content,
+                        source=m.source.value,
+                        tool_call_id=m.tool_call_id,
+                        status=m.status.value if m.status else None,
+                        tool_name=m.tool_name,
+                        error_detail=m.error_detail,
+                        tool_calls=m.tool_calls,
+                        reasoning_content=m.reasoning_content,
+                        metadata=m.metadata,
+                    ),
+                )
+        except Exception as exc:  # noqa: BLE001 — fail-open
+            logger.warning("事件兜底写入失败（fail-open）: %s", exc)
 
     def create(self) -> str:
         """生成唯一 session_id 并初始化会话文件."""
@@ -208,6 +293,8 @@ class SessionStore:
                 json.dumps(session.to_dict(), ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
+        # D1 兜底（防御层）: 事件日志缺失时生成 session.created + 消息事件（fail-open）
+        self._event_backfill(session)
 
     def rename(self, session_id: str, new_title: str) -> bool:
         """重命名会话标题（管理完善：手动设置可识别标题）.
@@ -221,12 +308,75 @@ class SessionStore:
         if not title:
             return False
         session = self.load(session_id)
+        old_title = session.title
         session.title = title
         self.save(session)
+        self._event_append(
+            session_id,
+            "session.meta_changed",
+            {
+                "field": "title",
+                "changes": {"title": {"from": old_title, "to": title}},
+            },
+        )
         return True
 
     def load(self, session_id: str) -> Session:
-        """加载会话；不存在则返回新会话（fail-open 恢复）."""
+        """加载会话；不存在则返回新会话（fail-open 恢复）.
+
+        D1 后续批次 2：按 ``read_path_source`` 分派——
+        ``session_json``（默认）读 session JSON（零回归）；
+        ``event_log`` 从事件日志 replay 重建（退役后切换），replay 异常 fail-open 回退。
+        """
+        if self._read_path_source == "event_log" and self._event_store is not None:
+            session = self._load_from_event_log(session_id)
+            if session is not None:
+                return session
+            logger.warning(
+                "event_log 读路径 replay 失败，回退 session JSON（fail-open）: %s",
+                session_id,
+            )
+        return self._load_from_json(session_id)
+
+    def _load_from_event_log(self, session_id: str) -> Session | None:
+        """从事件日志 replay 重建 Session（失败返回 None，由调用方回退）."""
+        store = self._event_store
+        if store is None or getattr(store, "enabled", False) is False:
+            return None
+        try:
+            if not store.exists(session_id):
+                return None
+            events = store.read(session_id)
+            if not events:
+                return None
+            from llm_loop.event_log.replay import replay_session
+
+            view = replay_session(events)
+            if not view or view.get("exists") is False:
+                return None
+            messages = [
+                _message_from_dict(m) for m in view.get("messages", [])
+            ]
+            return Session(
+                session_id=view.get("session_id", session_id),
+                messages=messages,
+                created_at=view.get("created_at", _now()),
+                title=view.get("title", ""),
+                updated_at=view.get("updated_at", _now()),
+                status=view.get("status", _ACTIVE),
+                parent_id=view.get("parent_id"),
+                branch_id=view.get("branch_id", ""),
+                branch_summary=view.get("branch_summary", ""),
+                model_override=view.get("model_override"),
+                pinned=bool(view.get("pinned", False)),
+                channel=view.get("channel", "web"),
+            )
+        except Exception as exc:  # noqa: BLE001 — fail-open
+            logger.warning("event_log replay 重建异常（fail-open）: %s: %s", session_id, exc)
+            return None
+
+    def _load_from_json(self, session_id: str) -> Session:
+        """从 session JSON 加载会话（既有 load 逻辑，零回归）."""
         p = self._path(session_id)
         if not p.exists():
             return Session(session_id=session_id)
@@ -403,8 +553,17 @@ class SessionStore:
         if not self.exists(session_id):
             return False
         session = self.load(session_id)
+        old_pinned = session.pinned
         session.pinned = bool(pinned)
         self.save(session)
+        self._event_append(
+            session_id,
+            "session.meta_changed",
+            {
+                "field": "pinned",
+                "changes": {"pinned": {"from": old_pinned, "to": bool(pinned)}},
+            },
+        )
         return True
 
     def set_channel(self, session_id: str, channel: str) -> bool:
@@ -417,8 +576,17 @@ class SessionStore:
         session = self.load(session_id)
         if session.channel != "web" and session.channel:
             return True  # 已标记来源，不覆盖
+        old_channel = session.channel
         session.channel = channel or "web"
         self.save(session)
+        self._event_append(
+            session_id,
+            "session.meta_changed",
+            {
+                "field": "channel",
+                "changes": {"channel": {"from": old_channel, "to": session.channel}},
+            },
+        )
         return True
 
     def search(self, query: str, top_k: int = 10) -> list[dict]:
@@ -478,8 +646,17 @@ class SessionStore:
         if not self.exists(session_id):
             return False
         session = self.load(session_id)
+        old_status = session.status
         session.status = _ARCHIVED
         self.save(session)
+        self._event_append(
+            session_id,
+            "session.meta_changed",
+            {
+                "field": "status",
+                "changes": {"status": {"from": old_status, "to": _ARCHIVED}},
+            },
+        )
         return True
 
     def unarchive(self, session_id: str) -> bool:
@@ -487,8 +664,17 @@ class SessionStore:
         if not self.exists(session_id):
             return False
         session = self.load(session_id)
+        old_status = session.status
         session.status = _ACTIVE
         self.save(session)
+        self._event_append(
+            session_id,
+            "session.meta_changed",
+            {
+                "field": "status",
+                "changes": {"status": {"from": old_status, "to": _ACTIVE}},
+            },
+        )
         return True
 
     def delete(self, session_id: str) -> bool:
@@ -516,33 +702,27 @@ class SessionStore:
 
         Args:
             session_id: 父会话 id.
-            branch_point_index: 分叉点（父会话消息索引；新分支仅保留此前消息，之后开始新探索）.
-                缺省 = 父会话末尾（克隆当前状态开新分支）；传索引可从历史中间分叉.
-            branch_summary: 显式分支摘要；缺省自动提炼（分叉点后最近一条 assistant 消息，
-                即旧分支在分叉点后的结论，跨分支情报传递；确定性规则不调 LLM）.
+            branch_point_index: 分叉点（保留前 N 条消息，即 messages[:N]；None=末尾全部）.
+            branch_summary: 显式分支摘要；缺省自动提炼.
 
         Returns:
             新分支会话 session_id.
+
+        Raises:
+            ValueError: fork 点越界或源会话事件日志不存在（spec §5.1.3，从"钳位"改为"报错"）.
         """
-        parent = self.load(session_id)
-        idx = len(parent.messages) if branch_point_index is None else branch_point_index
-        idx = max(0, min(idx, len(parent.messages)))
-        prefix = parent.messages[:idx]
-        summary = branch_summary or self._default_branch_summary(parent, idx)
-        new_id = str(uuid.uuid4())
-        branch = Session(
-            session_id=new_id,
-            messages=list(prefix),
-            created_at=_now(),
-            title=(parent.title or "未命名") + "（分支）",
-            parent_id=session_id,
-            branch_id=str(uuid.uuid4())[:8],
-            branch_summary=summary,
-            # M56: 分支继承来源通道（置顶不继承，新分支默认不置顶）
-            channel=parent.channel,
+        from llm_loop.event_log.fork import fork_session
+
+        report = fork_session(
+            self._event_store,
+            self,
+            session_id,
+            fork_point=branch_point_index,
+            branch_summary=branch_summary,
         )
-        self.save(branch)
-        return new_id
+        if not report.success:
+            raise ValueError(report.error)
+        return report.new_session_id
 
     @staticmethod
     def _default_branch_summary(parent: Session, branch_point_index: int) -> str:

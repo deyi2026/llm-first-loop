@@ -94,7 +94,7 @@ def test_tool_oversize_archived_not_lost():
     result = registry.execute(call)
     assert len(result.content) <= 100_000 + 200  # 注入内容远小于硬上限（分层摘要）
     assert "[输出摘要]" in result.content  # 分层注入（EVO-20260811-22a7d3e1）
-    assert "search_archive 检索找回" in result.content  # 完整结果可检索找回指引
+    assert 'search_archive(tool_name="big_tool")' in result.content  # EVO-20260814-e5b045d3: 可照抄的检索调用示例（旧通用指引已升级）
 
 
 def test_history_within_800k_budget_no_compression():

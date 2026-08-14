@@ -1,0 +1,235 @@
+"""D1 事件模型与类型登记表（design.md §2.2.2-A / §2.3.2）.
+
+事件是 append-only 的不可变事实单元：`event_id` 全局唯一（uuid4 hex）、
+`session_id` 必填落盘（修复割裂点 A：审计流反向关联会话）、`seq` 会话内从 1 单调递增、
+`type` 在登记表中可见、`ts` ISO 时间戳（UTC）、`payload` 缺失字段如实置空不伪造。
+
+全部为无状态纯函数（serialize/parse/validate），可先行单测。
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from typing import Any
+
+# ── 事件类型登记（spec §5.2.1 / design.md §2.3.2）──
+
+EVENT_SESSION_CREATED = "session.created"
+EVENT_MESSAGE_APPENDED = "message.appended"
+EVENT_CONTEXT_COMPRESSED = "context.compressed"
+EVENT_SESSION_META_CHANGED = "session.meta_changed"
+EVENT_SESSION_FORKED = "session.forked"  # D3 预留：本期登记不触发行为
+
+
+@dataclass(frozen=True)
+class EventTypeSpec:
+    """事件类型登记项（类型名/版本/字段语义）.
+
+    fields: {字段名: 语义描述}；字段缺失由事件承载方如实置空（不伪造）。
+    """
+
+    name: str
+    version: int
+    fields: dict[str, str]
+
+
+@dataclass(frozen=True)
+class Event:
+    """事件对象（spec §6.1 逐字段对齐）."""
+
+    event_id: str  # 全局唯一（uuid4 hex）
+    session_id: str  # 关联会话标识（修复割裂点 A：必填落盘）
+    seq: int  # 会话内单调递增、不重号
+    type: str  # 事件类型（登记表中可见）
+    ts: str  # ISO 时间戳（UTC）
+    payload: dict  # 事件承载字段（缺失如实置空，不伪造）
+
+
+def _event_to_dict(event: Event) -> dict:
+    return {
+        "event_id": event.event_id,
+        "session_id": event.session_id,
+        "seq": event.seq,
+        "type": event.type,
+        "ts": event.ts,
+        "payload": event.payload,
+    }
+
+
+def serialize_event(event: Event) -> str:
+    """事件 → 单行 JSON（ensure_ascii=False，无内嵌换行，保证 JSONL 行语义）."""
+    return json.dumps(_event_to_dict(event), ensure_ascii=False)
+
+
+def parse_event_line(line: str) -> Event | None:
+    """单行 JSON → Event；损坏/结构非法 → None（调用方如实标注，fail-open）.
+
+    不做类型登记校验（`validate_event_type` 单独负责），保证读路径对未登记
+    旧类型只读兼容：解析成功即返回，是否合法由校验函数判定。
+    """
+    try:
+        data = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    event_id = data.get("event_id")
+    session_id = data.get("session_id")
+    seq = data.get("seq")
+    type_ = data.get("type")
+    ts = data.get("ts")
+    if not isinstance(event_id, str) or not event_id:
+        return None
+    if not isinstance(session_id, str) or not session_id:
+        return None
+    if not isinstance(seq, int) or seq < 1:
+        return None
+    if not isinstance(type_, str) or not type_:
+        return None
+    if not isinstance(ts, str):
+        return None
+    payload = data.get("payload")
+    if not isinstance(payload, dict):
+        payload = {}
+    return Event(
+        event_id=event_id,
+        session_id=session_id,
+        seq=seq,
+        type=type_,
+        ts=ts,
+        payload=payload,
+    )
+
+
+def validate_event_type(event: Event) -> list[str]:
+    """类型登记校验：返回违规描述列表（空 = 合法）."""
+    return REGISTRY.validate(event)
+
+
+class EventTypeRegistry:
+    """事件类型登记表（显式登记，旧类型只读兼容，spec §4.4）."""
+
+    def __init__(self) -> None:
+        self._types: dict[str, EventTypeSpec] = {}
+
+    def register(self, spec: EventTypeSpec) -> None:
+        self._types[spec.name] = spec
+
+    def spec(self, type_name: str) -> EventTypeSpec | None:
+        return self._types.get(type_name)
+
+    def registered(self) -> list[str]:
+        return list(self._types.keys())
+
+    def validate(self, event: Event) -> list[str]:
+        """校验事件类型是否登记；返回违规描述列表（空 = 合法）."""
+        spec = self._types.get(event.type)
+        if spec is None:
+            return [f"未登记事件类型: {event.type}"]
+        return []
+
+
+# 模块级默认登记表（显式登记 5 类事件）
+REGISTRY = EventTypeRegistry()
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_SESSION_CREATED,
+        version=1,
+        fields={
+            "version": "派生视图格式版本",
+            "title": "会话标题",
+            "created_at": "创建时间 ISO",
+            "updated_at": "更新时间 ISO",
+            "status": "active/archived",
+            "parent_id": "父会话 id（根会话 None）",
+            "branch_id": "分支标识",
+            "branch_summary": "分支摘要",
+            "model_override": "会话级模型覆盖（None=用装配默认）",
+            "pinned": "置顶",
+            "channel": "来源通道",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_MESSAGE_APPENDED,
+        version=1,
+        fields={
+            "index": "消息在会话中的序号",
+            "role": "user/assistant/tool/system",
+            "content": "消息内容",
+            "source": "消息来源标识",
+            "tool_call_id": "tool 消息绑定 id",
+            "status": "tool 执行状态",
+            "tool_name": "来源工具名",
+            "error_detail": "完整错误描述",
+            "tool_calls": "assistant 工具声明",
+            "reasoning_content": "assistant 思考链",
+            "metadata": "截断/降级标注等",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_CONTEXT_COMPRESSED,
+        version=1,
+        fields={
+            "archive_ref": "压缩档案引用（archive id 或 tool_call_id）",
+            "tool_call_id": "原消息定位（tool 消息绑定 id）",
+            "msg_seq": "原消息在会话中的序号",
+            "chars": "原文长度",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_SESSION_META_CHANGED,
+        version=1,
+        fields={
+            "field": "变更字段名",
+            "changes": "变更明细（字段: 旧值→新值）",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_SESSION_FORKED,
+        version=1,
+        fields={
+            "parent_id": "父会话 id",
+            "branch_id": "分支标识",
+            "fork_point": "分叉点消息索引",
+        },
+    )
+)
+
+
+def build_message_payload(
+    *,
+    index: int,
+    role: str,
+    content: str,
+    source: str,
+    tool_call_id: Any = None,
+    status: Any = None,
+    tool_name: Any = None,
+    error_detail: Any = None,
+    tool_calls: Any = None,
+    reasoning_content: Any = None,
+    metadata: dict | None = None,
+) -> dict:
+    """构造 message.appended 事件 payload（与 Session.to_dict() 消息字段逐一对齐）."""
+    return {
+        "index": index,
+        "role": role,
+        "content": content,
+        "source": source,
+        "tool_call_id": tool_call_id,
+        "status": status,
+        "tool_name": tool_name,
+        "error_detail": error_detail,
+        "tool_calls": tool_calls,
+        "reasoning_content": reasoning_content,
+        "metadata": metadata or {},
+    }

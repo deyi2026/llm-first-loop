@@ -26,6 +26,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# EVO-20260814-aab7eb0b P2: 循环实时停滞检测阈值
+# 连续 N 次相同指纹（tool_name + 规范化参数 JSON）：
+#   >= _STAGNATION_REMIND_AT 注入 [停滞提醒]（一次）；>= _STAGNATION_BREAK_AT 熔断如实结束。
+_STAGNATION_REMIND_AT = 3
+_STAGNATION_BREAK_AT = 5
+
 
 def _json_dumps_args(arguments: dict) -> str:
     """工具参数序列化为 JSON 字符串（FC 协议 function.arguments 要求）."""
@@ -79,6 +85,8 @@ class _ToolExecMixin:
                 reasoning_content=resp.reasoning_content,  # M20 THK-04: 工具轮回传思考链
             )
             sess.messages.append(assistant_decl)
+            # D1: assistant 声明消息事件（fail-open）
+            self._append_message_event(sess, assistant_decl)
         for tc in resp.tool_calls:
             if not tc.id:
                 # 约束 C1: 缺 id 声明不可执行，如实注入反馈（AI-first 三件套）
@@ -92,6 +100,8 @@ class _ToolExecMixin:
                     source=MessageSource.SYSTEM,
                 )
                 sess.messages.append(msg)
+                # D1: 系统注入消息事件（fail-open）
+                self._append_message_event(sess, msg)
                 self._record_action("action.tool_loop", "missing_tool_call_id", tc.name)
         # EVO-20260810-750e985a: 工具并发控制（只读并行/修改串行/按声明顺序回写）
         valid_calls = [tc for tc in resp.tool_calls if tc.id]
@@ -118,6 +128,51 @@ class _ToolExecMixin:
                     result, failure_guidance_enabled=self.registry.failure_guidance_enabled
                 )
                 sess.messages.append(tool_msg)
+                # D1: tool 回执消息事件（fail-open）
+                self._append_message_event(sess, tool_msg)
+                # EVO-20260814-aab7eb0b P2: 运行中停滞指纹追踪（evaluator.py:271 同构指纹）
+                self._track_stagnation(tc, sess, tool_trace)
+
+    # ── EVO-20260814-aab7eb0b P2: 循环实时停滞检测 ──
+
+    def _stagnation_fingerprint(self: LoopEngine, tc) -> str:
+        """单次工具调用指纹（evaluator.py:271 同构: 名称 + 规范化参数 JSON）."""
+        return f"{tc.name}|{_json_dumps_args(tc.arguments)}"
+
+    def _track_stagnation(self: LoopEngine, tc, sess, tool_trace: list[dict]) -> None:
+        """每次工具执行后更新连续同指纹计数；达提醒阈值注入 [停滞提醒]（一次，AI 自主决策）。
+
+        熔断决策在 engine 主循环（能 break 的位置）读取 _stagnation_should_break() 完成。
+        """
+        fp = self._stagnation_fingerprint(tc)
+        state = getattr(self, "_stagnation_state", None)
+        if state is None:
+            state = self._stagnation_state = {"fp": None, "count": 0, "reminded": False}
+        if state["fp"] == fp:
+            state["count"] += 1
+        else:
+            state["fp"] = fp
+            state["count"] = 1
+            state["reminded"] = False
+        if state["count"] >= _STAGNATION_REMIND_AT and not state["reminded"]:
+            state["reminded"] = True
+            try:
+                from llm_loop.feedback.honesty import stagnation_reminder_message
+
+                reminder = stagnation_reminder_message(tc.name, state["count"])
+                sess.messages.append(reminder)
+                self._append_message_event(sess, reminder)
+                self._record_action("stagnation.reminder", "injected", f"{tc.name} x{state['count']}")
+            except Exception:
+                logger.warning("停滞提醒注入失败（fail-open）", exc_info=True)
+
+    def _stagnation_should_break(self: LoopEngine) -> tuple[bool, str, int]:
+        """是否达熔断阈值（engine 主循环每轮工具执行后调用）。."""
+        state = getattr(self, "_stagnation_state", None)
+        if not state or state["count"] < _STAGNATION_BREAK_AT:
+            return (False, "", 0)
+        name = (state["fp"] or "").split("|", 1)[0]
+        return (True, name, state["count"])
 
     def _schema_to_param(self: LoopEngine, t: dict) -> dict:
         return {

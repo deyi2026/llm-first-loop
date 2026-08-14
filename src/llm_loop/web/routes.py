@@ -442,6 +442,58 @@ def set_session_pin(session_id: str, request: Request, pinned: bool = False) -> 
     return UTF8JSONResponse(content={"status": "ok", "session_id": session_id, "pinned": pinned})
 
 
+@router.post(
+    "/api/v1/sessions/{session_id}/fork",
+    response_model=None,
+    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+)
+def fork_session_endpoint(
+    session_id: str,
+    request: Request,
+    fork_point: int | None = None,
+    summary: str = "",
+) -> Response:
+    """会话 fork（D3：事件日志物理复制继承 + session JSON 双轨）."""
+    from llm_loop.event_log.fork import fork_session
+
+    engine = _engine_from(request)
+    if not engine.session.exists(session_id):
+        return UTF8JSONResponse(
+            status_code=404,
+            content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
+        )
+    event_store = getattr(engine.session, "_event_store", None)
+    try:
+        report = fork_session(
+            event_store,
+            engine.session,
+            session_id,
+            fork_point=fork_point,
+            branch_summary=summary,
+        )
+    except Exception as exc:
+        logger.exception("session fork failed: session_id=%s", session_id)
+        return UTF8JSONResponse(
+            status_code=500,
+            content={"error": "fork_failed", "detail": f"[程序异常] fork 失败（{type(exc).__name__}: {exc}）"},
+        )
+    if not report.success:
+        return UTF8JSONResponse(
+            status_code=500,
+            content={"error": "fork_failed", "detail": report.error},
+        )
+    return UTF8JSONResponse(
+        content={
+            "status": "ok",
+            "new_session_id": report.new_session_id,
+            "source_session_id": report.source_session_id,
+            "fork_point": report.fork_point,
+            "inherited_event_count": report.inherited_event_count,
+            "elapsed_ms": report.elapsed_ms,
+        }
+    )
+
+
 # ── M56：SSE 会话更新事件（Web 端实时刷新，轮询共享会话目录零新依赖）──
 
 
