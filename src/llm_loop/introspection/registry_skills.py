@@ -3,6 +3,8 @@
 承载: code_review / grill_me / stop_slop / handoff_now / brainstorm_design /
       tdd_red_green / design_review / record_skill
 执行委托至 tools_skills / tools_handoff / tools_superpowers / tools_record_skill。
+B3(2026-08-14): + skill_list / skill_load（外部 skills/ 目录插件化加载，
+委托 tools_skill_files，宿主 skills_dir 未注入时空清单零回归）。
 """
 
 from __future__ import annotations
@@ -11,6 +13,10 @@ from llm_loop.core.message import ToolResult
 from llm_loop.introspection.registry_host import RegistryHost
 from llm_loop.introspection.tools_handoff import HANDOFF_TOOL_DEF
 from llm_loop.introspection.tools_record_skill import RECORD_SKILL_TOOL_DEF
+from llm_loop.introspection.tools_skill_files import (
+    SKILL_LIST_TOOL_DEF,
+    SKILL_LOAD_TOOL_DEF,
+)
 from llm_loop.introspection.tools_skills import (
     CODE_REVIEW_TOOL_DEF,
     GRILL_ME_TOOL_DEF,
@@ -33,6 +39,8 @@ def tool_defs() -> list[dict]:
         TDD_RED_GREEN_TOOL_DEF,
         DESIGN_REVIEW_TOOL_DEF,
         RECORD_SKILL_TOOL_DEF,
+        SKILL_LIST_TOOL_DEF,  # B3: 插件化 Skill（skills/ 目录）
+        SKILL_LOAD_TOOL_DEF,
     ]
 
 
@@ -69,4 +77,12 @@ def execute(name: str, args: dict, host: RegistryHost) -> ToolResult | None:
         from llm_loop.introspection.tools_record_skill import run_record_skill
 
         return run_record_skill(host.ctx, host.audit, args)
+    if name == "skill_list":  # B3: 插件化 Skill（skills/ 目录）
+        from llm_loop.introspection.tools_skill_files import run_skill_list
+
+        return run_skill_list(host, args)
+    if name == "skill_load":
+        from llm_loop.introspection.tools_skill_files import run_skill_load
+
+        return run_skill_load(host, args)
     return None
