@@ -57,6 +57,40 @@ def test_event_report_cooldown():
     assert "连续发生" in msg.content
 
 
+def test_event_report_first_call_fresh_system(monkeypatch):
+    """HARNESS-05 回归: 系统启动不足冷却窗（CI 全新 runner）时首次上报必须通过.
+
+    根因: should_report 首次调用 last 取 0.0, 而 time.monotonic() 从系统启动起算;
+    CI runner 启动可能 <60s → `now - 0 < cooldown` 误判冷却拦截首次上报
+    → eval_trigger 提醒偶发不注入（本地系统启动久无法复现, CI 复现）。
+    """
+    import llm_loop.introspection.events as evmod
+
+    class _FakeTime:
+        t = 5.0
+
+        @staticmethod
+        def monotonic() -> float:
+            return _FakeTime.t
+
+    orig = evmod.time.monotonic
+    evmod.time.monotonic = _FakeTime.monotonic
+    try:
+        r = ArchitectureStatusProvider(cooldown_s=60).reporter
+        ev = ArchitectureEvent(
+            event_type=ArchitectureEventType.DEGRADATION,
+            fact="本轮 run 已完成",
+            reason="r",
+            suggestion="s",
+        )
+        assert r.should_report(ev) is True  # 系统启动 5s 首次上报必须通过
+        assert r.should_report(ev) is False  # 仍处冷却
+        _FakeTime.t = 70.0
+        assert r.should_report(ev) is True  # 冷却过期恢复
+    finally:
+        evmod.time.monotonic = orig
+
+
 def test_exception_log_reported():
     """异常记录落盘（exception_log）."""
     p = ArchitectureStatusProvider(audit_dir="/tmp/llm-loop-test-audit-exc")
