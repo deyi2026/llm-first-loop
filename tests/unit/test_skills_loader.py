@@ -185,7 +185,7 @@ def test_factory_injects_skills_dir(tmp_path, monkeypatch):
 
 
 def test_factory_default_skills_dir_zero_behavior(tmp_path):
-    """默认 skills_dir（./skills，不存在）→ skill_list 空清单零行为."""
+    """skills_dir 指向不存在目录 → skill_list 空清单零行为."""
     from llm_loop.config import Settings
     from llm_loop.factory import build_engine
 
@@ -194,6 +194,7 @@ def test_factory_default_skills_dir_zero_behavior(tmp_path):
         llm_base_url="https://x/v1",
         llm_model="m",
         data_dir=str(tmp_path / "data"),
+        skills_dir=str(tmp_path / "no_such_skills"),
         extract_enabled=False,
         summary_mode="off",
     )
@@ -201,3 +202,50 @@ def test_factory_default_skills_dir_zero_behavior(tmp_path):
     r = engine.corrections.execute("skill_list", {})
     assert r.status.value == "success"
     assert "无外部技能" in r.content
+
+
+def test_repo_bundled_skills_discoverable(tmp_path, monkeypatch):
+    """端到端: 仓库自带 skills/ 示例技能可被真实装配发现并加载（B3 可演示性）.
+
+    用仓库根 skills/ 目录（notebook-session + incident-report 示例 SKILL 入库），
+    经 build_engine 真实装配 → skill_list 发现 → skill_load 全文加载。
+    """
+    from llm_loop.config import Settings
+    from llm_loop.factory import build_engine
+
+    repo_skills = Path(__file__).resolve().parents[2] / "skills"
+    settings = Settings(
+        llm_api_key="k",
+        llm_base_url="https://x/v1",
+        llm_model="m",
+        data_dir=str(tmp_path / "data"),
+        skills_dir=str(repo_skills),
+        extract_enabled=False,
+        summary_mode="off",
+    )
+    engine = build_engine(settings)  # type: ignore[arg-type]
+
+    listed = engine.corrections.execute("skill_list", {})
+    assert listed.status.value == "success"
+    assert "notebook-session" in listed.content
+    assert "incident-report" in listed.content
+
+    loaded = engine.corrections.execute("skill_load", {"name": "notebook-session"})
+    assert loaded.status.value == "success"
+    assert "笔记本会话运维" in loaded.content  # frontmatter 描述
+    assert "标准流程" in loaded.content  # 正文全文
+
+    loaded2 = engine.corrections.execute("skill_load", {"name": "incident-report"})
+    assert loaded2.status.value == "success"
+    assert "故障报告撰写" in loaded2.content
+
+
+def test_repo_bundled_skills_have_valid_frontmatter():
+    """入库示例 SKILL 格式自检: 每个 SKILL.md 可解析、name 与目录名一致（防手误）."""
+    repo_skills = Path(__file__).resolve().parents[2] / "skills"
+    metas = scan_skills_dir(repo_skills)
+    names = {m.name for m in metas}
+    assert {"notebook-session", "incident-report"} <= names
+    for meta in metas:
+        assert meta.description, f"{meta.name} 缺 description"
+        assert meta.body, f"{meta.name} 正文为空"
