@@ -93,7 +93,8 @@ class _FakeLLM:
     reasoning_effort: str = "high"
     thinking_supported: bool = True
     model: str = "deepseek-v4-flash"
-    max_tokens: int | None = None  # 2026-08-15: 对齐 LLMClient 新装配字段
+    max_tokens: int | None = None
+    wire_protocol: str = "openai"  # P3-5 对齐 LLMClient 新字段  # 2026-08-15: 对齐 LLMClient 新装配字段
 
     def chat(self, *args, **kwargs):  # noqa: ANN001, ANN002 — 占位
         raise NotImplementedError

@@ -593,3 +593,54 @@ def test_provider_max_tokens_missing_absent() -> None:
         )
     )
     assert "max_tokens" not in reg.client_params("p1", "m1")
+
+
+# ── P3-5: wire_protocol 元数据 ──
+
+def test_wire_protocol_parsed_and_passed(monkeypatch) -> None:
+    """模型条目 wire_protocol → ModelSpec + client_params 下发（pool 透传客户端）."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "k-a")
+    monkeypatch.setenv("GEMINI_API_KEY", "k-g")
+    monkeypatch.setenv("LLM_API_KEY", "k-d")
+    reg = load_registry(
+        _settings(
+            model_providers_raw=json.dumps(
+                {
+                    "claude": {
+                        "base_url": "https://api.anthropic.com",
+                        "api_key_env": "ANTHROPIC_API_KEY",
+                        "models": {"claude-sonnet": {"wire_protocol": "anthropic"}},
+                    },
+                    "gemini": {
+                        "base_url": "https://generativelanguage.googleapis.com",
+                        "api_key_env": "GEMINI_API_KEY",
+                        "models": {"gemini-pro": {"wire_protocol": "google"}},
+                    },
+                    "ds": {
+                        "base_url": "https://api.deepseek.com/v1",
+                        "api_key_env": "LLM_API_KEY",
+                        "models": {"deepseek-v4-flash": {}},
+                    },
+                }
+            )
+        )
+    )
+    assert reg.providers["claude"].models["claude-sonnet"].wire_protocol == "anthropic"
+    assert reg.providers["gemini"].models["gemini-pro"].wire_protocol == "google"
+    assert reg.providers["ds"].models["deepseek-v4-flash"].wire_protocol == "openai"
+    assert reg.client_params("claude", "claude-sonnet").get("wire_protocol") == "anthropic"
+    assert reg.client_params("gemini", "gemini-pro").get("wire_protocol") == "google"
+    assert "wire_protocol" not in reg.client_params("ds", "deepseek-v4-flash")  # 默认不下发（零回归）
+
+
+def test_wire_protocol_invalid_falls_back(caplog: pytest.LogCaptureFixture) -> None:
+    """非法协议 → 回退 openai + 如实告警."""
+    reg = load_registry(
+        _settings(
+            model_providers_raw=json.dumps(
+                {"p1": {"base_url": "http://a", "api_key_env": "", "models": {"m1": {"wire_protocol": "silly"}}}}
+            )
+        )
+    )
+    assert reg.providers["p1"].models["m1"].wire_protocol == "openai"
+    assert any("wire_protocol" in r.message and "回退" in r.message for r in caplog.records)

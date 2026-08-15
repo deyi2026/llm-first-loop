@@ -2,6 +2,19 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.5（2026-08-15）
+
+### P3-5：provider 广度——Anthropic / Google 原生协议（wire_protocol）
+- LLMClient 协议分发：`openai`（默认零回归）/ `anthropic`（Messages API：/v1/messages + x-api-key +
+  anthropic-version，system 拆分、tool_use/tool_result 转换、thinking_delta/input_json_delta 流式解析）/
+  `google`（Gemini：streamGenerateContent?alt=sse + x-goog-api-key，contents/systemInstruction/
+  functionDeclarations，functionCall 聚合、MAX_TOKENS→truncated）
+- 元数据驱动：ModelSpec.wire_protocol（providers.json 模型条目，非法值回退 openai 如实告警）；
+  client_params/pool/factory 全链透传；LLM_WIRE_PROTOCOL 可配默认 client
+- 修复：Python 3.11+ 裸 yield-from 丢弃子生成器返回值（终态 LLMResponse 必须显式捕获 return）
+- 测试 +7（anthropic payload/头/tool_use 聚合、google payload/functionCall/截断、默认零回归、
+  provider 解析/非法回退）；门禁 pytest 2084 + ruff 0 + pyright 0
+
 ## v0.6.4（2026-08-15）
 
 ### P3-4：workflow_run DAG 编排（拓扑序 + 节点级预算，无 graph DSL）
