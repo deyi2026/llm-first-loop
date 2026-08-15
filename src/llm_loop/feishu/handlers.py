@@ -315,11 +315,13 @@ class FeishuMessageHandler:
         """图片 → 复用 M39 web/vision 识别 → 识别文本注入上下文."""
         from llm_loop.web.vision import describe_image, vision_enabled
 
-        if not vision_enabled():
+        if not vision_enabled(settings=getattr(self._engine, "settings", None)):
             self._reply(msg, "视觉识别未配置（MINIMAX_API_KEY 缺失），图片已跳过。")
             return
         try:
-            text = describe_image(data, mime="image/png")
+            text = describe_image(
+                data, mime="image/png", settings=getattr(self._engine, "settings", None)
+            )
         except Exception as exc:  # 识别失败如实降级（无伪造描述）
             logger.exception("feishu image vision failed")
             self._audit(msg, "attachment_error", str(exc)[:200])

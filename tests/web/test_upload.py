@@ -104,14 +104,36 @@ def test_upload_pdf_corrupt(build_test_engine, fake_settings):
 
 
 def test_upload_image_no_key_degraded(build_test_engine, fake_settings, monkeypatch):
+    """识别失败（mock，环境无关）→ degraded + 如实文案（含"未包含"防幻觉提示）."""
     monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
+    import llm_loop.web.vision as vision_mod
+
+    def boom(image_bytes, mime="image/png", prompt="", settings=None):
+        raise RuntimeError("识别失败（mock）")
+
+    monkeypatch.setattr(vision_mod, "describe_image", boom)
+    monkeypatch.setattr(vision_mod, "vision_enabled", lambda *a, **k: True)
     engine, _ = build_test_engine([])
     client = _make_client(engine)
     resp = _upload(client, "photo.png", b"fake-png-bytes")
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "degraded"
-    assert "MINIMAX_API_KEY" in body["detail"]
+    assert "图片识别失败" in body["detail"]
+    assert "未包含" in body["detail"]  # 防幻觉提示
+
+
+def test_upload_image_minimax_optin_no_key_degraded(build_test_engine, fake_settings, monkeypatch):
+    """WEB_VISION_BACKEND=minimax 旧路径：无 key → degraded 含 MINIMAX_API_KEY 提示."""
+    monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
+    monkeypatch.setenv("WEB_VISION_BACKEND", "minimax")
+    engine, _ = build_test_engine([])
+    client = _make_client(engine)
+    resp = _upload(client, "photo.png", b"fake-png-bytes")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "degraded"
+    assert "不可用" in body["detail"]
 
 
 def test_upload_oversize(build_test_engine, fake_settings):
@@ -157,11 +179,12 @@ def test_upload_no_engine_call(build_test_engine, fake_settings):
 def test_upload_image_mocked_vision(build_test_engine, fake_settings, monkeypatch):
     """Mock 视觉识别：有 key 时返回识别文本（零真实 API 调用）."""
     monkeypatch.setenv("MINIMAX_API_KEY", "test-key")
+    monkeypatch.setenv("WEB_VISION_BACKEND", "minimax")
     engine, _ = build_test_engine([])
     client = _make_client(engine)
     import llm_loop.web.vision as vision_mod
 
-    def fake_describe(image_bytes, mime, prompt=""):
+    def fake_describe(image_bytes, mime, prompt="", settings=None):
         return "图片描述：一只猫"
 
     monkeypatch.setattr(vision_mod, "describe_image", fake_describe)
@@ -175,6 +198,7 @@ def test_upload_image_mocked_vision(build_test_engine, fake_settings, monkeypatc
 
 def test_upload_image_vision_fails_degraded(build_test_engine, fake_settings, monkeypatch):
     monkeypatch.setenv("MINIMAX_API_KEY", "test-key")
+    monkeypatch.setenv("WEB_VISION_BACKEND", "minimax")
     engine, _ = build_test_engine([])
     client = _make_client(engine)
     import llm_loop.web.vision as vision_mod
