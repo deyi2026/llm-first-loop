@@ -227,8 +227,10 @@ class Settings:
     tool_trim_enabled: bool = True
     # R3: tool_trim 自适应降级年龄（0=自适应：按占用率自动调 <40%→20/40-70%→10/>70%→5；>0=固定值禁用自适应）
     tool_trim_age: int = 0  # auto-adaptive (existing): 0=按占用率自适应
-    # EVO-A: tool_trim 降级长度阈值（tool 消息 content 超过此长度且达到年龄才降级为首尾摘要；越小越省 token）
-    tool_trim_threshold: int = 2000
+    # EVO-A: tool_trim 降级长度阈值（tool 消息 content 超过此长度且达到年龄才降级；
+    # 默认 8000：常规工具输出（grep/读文件片段/短日志）不触发折叠，大输出（长日志/抓取全文）才降级；
+    # 折叠时提取关键事实摘要优先、首尾截断兜底；越小越省 token，越大越少折叠触发）
+    tool_trim_threshold: int = 8000
     # ── EXEC_MODE 命令分级（EVO-20260810-2549e9b6）──
     # 默认空 = 不启用分级（AI 可执行 shell，仅灾难性硬阻断）；可选 readonly/allowlist/blocked 安全分级
     exec_mode: str = ""
@@ -490,7 +492,7 @@ def load_settings() -> Settings:
         tool_summary_threshold=_env_int("TOOL_SUMMARY_THRESHOLD", 5000),
         tool_trim_enabled=_env_bool("TOOL_TRIM_ENABLED", True),
         tool_trim_age=_env_int("TOOL_TRIM_AGE", 0),
-        tool_trim_threshold=_env_int("TOOL_TRIM_THRESHOLD", 2000),
+        tool_trim_threshold=_env_int("TOOL_TRIM_THRESHOLD", 8000),
         exec_mode=_env_exec_mode("EXEC_MODE"),
         exec_allowlist=os.environ.get("EXEC_ALLOWLIST", "").strip(),
         run_mode=_env_run_mode("RUN_MODE"),

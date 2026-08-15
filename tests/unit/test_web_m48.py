@@ -18,12 +18,44 @@ class _FakeResponse:
         self.status_code = status_code
         self.text = text
         self.reason_phrase = reason_phrase
+        self.headers: dict = {}
+        self.extensions: dict = {}
+
+    def read(self) -> bytes:
+        return self.text.encode("utf-8")
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
             import httpx
 
             raise httpx.HTTPStatusError("err", request=None, response=None)
+
+
+class _FakeStreamCM:
+    """P0-2 后 web_fetch httpx 通道走 client.stream：上下文管理器包装."""
+
+    def __init__(self, resp: _FakeResponse) -> None:
+        self._resp = resp
+
+    def __enter__(self) -> _FakeResponse:
+        return self._resp
+
+    def __exit__(self, *args) -> bool:
+        return False
+
+
+def _stream_seq(*items):
+    """构造 client.stream 的 side_effect：依次返回 _FakeStreamCM 或抛异常."""
+
+    seq = list(items)
+
+    def _side(method, url, headers=None):
+        item = seq.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return _FakeStreamCM(item)
+
+    return _side
 
 
 def _fake_client(resp):
@@ -41,7 +73,9 @@ def test_web_fetch_extract_header_and_body(monkeypatch):
         + "<p>这是正文段落。" + "长" * 60 + "</p></div> </body></html>"
     )
     with mock.patch("httpx.Client") as client_cls:
-        client_cls.return_value.__enter__.return_value.get.return_value = _FakeResponse(200, html)
+        client_cls.return_value.__enter__.return_value.stream.side_effect = _stream_seq(
+            _FakeResponse(200, html)
+        )
         r = tool.execute(url="https://example.com/a")
     assert r.status == ToolResultStatus.SUCCESS
     assert "[title] 测试文章标题" in r.content
@@ -56,12 +90,12 @@ def test_web_fetch_403_ua_rotation(monkeypatch):
     tool = WebFetchTool()
     ok = _FakeResponse(200, "<html>Hello Page</html>")
     forbid = _FakeResponse(403, reason_phrase="Forbidden")
-    get = mock.MagicMock(side_effect=[forbid, ok])
+    stream = mock.MagicMock(side_effect=_stream_seq(forbid, ok))
     with mock.patch("httpx.Client") as client_cls:
-        client_cls.return_value.__enter__.return_value.get = get
+        client_cls.return_value.__enter__.return_value.stream = stream
         r = tool.execute(url="https://example.com")
     assert r.status == ToolResultStatus.SUCCESS
-    assert get.call_count == 2
+    assert stream.call_count == 2
     assert "Hello Page" in r.content
 
 
@@ -71,8 +105,15 @@ def test_web_fetch_js_shell_hint(monkeypatch):
     """JS 壳页面如实提示，不伪装正文成功."""
     tool = WebFetchTool()
     shell = '<html><body><noscript>您需要允许该页面 JavaScript</noscript><script>var _$jsvmprt=1;</script></body></html>'
-    with mock.patch("httpx.Client") as client_cls:
-        client_cls.return_value.__enter__.return_value.get.return_value = _FakeResponse(200, shell)
+    article = ("<html><head><title>t</title></head><body><p>" + "正文" * 40 + "</p></body></html>").encode()
+    # P0-2 后 curl 回退带状态行解析——本地替身返回 200 文章（原实现隐式依赖真实网络 404 页，脆弱）
+    with (
+        mock.patch("httpx.Client") as client_cls,
+        mock.patch("subprocess.run", return_value=_curl_proc(article)),
+    ):
+        client_cls.return_value.__enter__.return_value.stream.side_effect = _stream_seq(
+            _FakeResponse(200, shell)
+        )
         r = tool.execute(url="https://example.com/shell")
     assert r.status == ToolResultStatus.SUCCESS
     assert "JS 壳" in r.content
@@ -132,8 +173,9 @@ def test_web_search_missing_query():
 
 # ── M48-B: curl 回退通道 ──
 
-def _curl_proc(stdout: bytes, returncode: int = 0):
-    return mock.MagicMock(returncode=returncode, stdout=stdout)
+def _curl_proc(stdout: bytes, returncode: int = 0, code: int = 200, redirect: str = ""):
+    # P0-2: curl 不再 -L 自动跟随，-w 尾部追加 "\n%{http_code} %{redirect_url}" 供手动循环判定
+    return mock.MagicMock(returncode=returncode, stdout=stdout + f"\n{code} {redirect}".encode())
 
 
 def test_curl_fallback_on_connect_error(monkeypatch):
@@ -146,7 +188,7 @@ def test_curl_fallback_on_connect_error(monkeypatch):
         mock.patch("httpx.Client") as client_cls,
         mock.patch("subprocess.run", return_value=_curl_proc(article.encode())) as run_mock,
     ):
-        client_cls.return_value.__enter__.return_value.get.side_effect = __import__("httpx").ConnectError("reset")
+        client_cls.return_value.__enter__.return_value.stream.side_effect = __import__("httpx").ConnectError("reset")
         r = tool.execute(url="https://example.com/a")
     assert r.status == ToolResultStatus.SUCCESS
     assert "[fetch] curl 回退" in r.content
@@ -168,7 +210,9 @@ def test_curl_fallback_on_js_shell(monkeypatch):
         mock.patch("httpx.Client") as client_cls,
         mock.patch("subprocess.run", return_value=_curl_proc(article.encode())),
     ):
-        client_cls.return_value.__enter__.return_value.get.return_value = _FakeResponse(200, shell)
+        client_cls.return_value.__enter__.return_value.stream.side_effect = _stream_seq(
+            _FakeResponse(200, shell)
+        )
         r = tool.execute(url="https://m.toutiao.com/article/x/")
     assert r.status == ToolResultStatus.SUCCESS
     assert "curl 回退" in r.content and "JS 壳" in r.content
@@ -184,15 +228,17 @@ def test_curl_fallback_both_fail_honest(monkeypatch):
         mock.patch("httpx.Client") as client_cls,
         mock.patch("subprocess.run", return_value=_curl_proc(b"", returncode=7)),
     ):
-        client_cls.return_value.__enter__.return_value.get.side_effect = __import__("httpx").ConnectError("down")
+        client_cls.return_value.__enter__.return_value.stream.side_effect = __import__("httpx").ConnectError("down")
         r = tool.execute(url="https://example.com")
     assert r.status == ToolResultStatus.FAILURE
     assert "curl 回退亦失败" in r.content
     assert "ConnectError" in r.content
 
 
-def test_curl_fallback_skips_shell_and_tries_next_ua():
+def test_curl_fallback_skips_shell_and_tries_next_ua(monkeypatch):
     """curl 首个 UA 取到 JS 壳时换 UA 再试."""
+    # P0-2 后 _curl_fetch 每跳做内网校验——本测试聚焦 UA 轮换，关闭拦截避免 DNS 干扰
+    monkeypatch.setenv("WEB_FETCH_BLOCK_PRIVATE", "0")
     tool = WebFetchTool()
     shell = b'<html><body><noscript>enable javascript</noscript><script>_$jsvmprt</script></body></html>'
     article = ("<html><head><title>t</title></head><body><p>" + "正文" * 40 + "</p></body></html>").encode()

@@ -199,12 +199,26 @@ def _layer_trim(
             if m.tool_name
             else "可用 search_archive(query=<关键词>) 检索找回"
         )
+        # 摘要优先（EVO-20260815）: 折叠时先提取关键事实（复用 extract_key_info，
+        # 规则提取零 LLM），避免机械首尾截断把中间关键信息丢给 AI 迫使二次检索浪费 token；
+        # 提取不到关键事实（无路径/URL/动作信号词）时回退首尾截断兜底（背景+结论）。
+        digest = ""
+        try:
+            from llm_loop.memory.archive import extract_key_info
+
+            facts, _p, _s = extract_key_info(full, max_facts=5)
+            if facts:
+                digest = "关键事实（规则提取，非语义总结；细节以原文为准）：\n- " + "\n- ".join(facts)
+        except Exception:
+            digest = ""
+        if not digest:
+            digest = f"── 首部 ──\n{full[:400]}\n── 尾部 ──\n{full[-400:]}"
         out.append(
             Message(
                 role=m.role,
                 content=(
                     f"[工具输出已分层] 共 {len(full)} 字符，原文已另存压缩档案（{_hint}）：\n"
-                    f"── 首部 ──\n{full[:400]}\n── 尾部 ──\n{full[-400:]}"
+                    f"{digest}"
                 ),
                 source=m.source,
                 tool_call_id=m.tool_call_id,
@@ -262,7 +276,7 @@ def build_history_messages(
     archive_sink: ArchiveSink | None = None,
     summarizer: Any | None = None,  # 保留签名向后兼容；压缩路径不再自动调 LLM 摘要（RULE-AI-00，LLM 摘要由 AI 经 search_archive(with_summary=true) 主动触发）
     layer_tool_trim: bool = False,  # EVO-20260811-7baa2737: 历史分层降级（默认关=零回归，loop 装配时按 settings 启用）
-    tool_trim_threshold: int = 2000,  # tool 消息 content 超此长度才降级
+    tool_trim_threshold: int = 8000,  # tool 消息 content 超此长度才降级（默认 8000，EVO-20260815 调大减少折叠触发）
     tool_trim_age: int = 0,  # R3: 0=自适应（按占用率自动调）；>0=固定值禁用自适应
     reasoning_tail: int = 2,  # M66: 历史中仅保留最近 N 轮 assistant 思考链（0=全部保留）
 ) -> list[dict]:

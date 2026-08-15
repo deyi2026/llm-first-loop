@@ -52,10 +52,13 @@ class ToolRegistry:
         approval_callback: Callable[[str, str], bool] | None = None,
         # T5a: 审批审计落盘路径（None = 不落盘；含时间/工具/参数摘要/决策，不含密钥）
         approval_audit_path: str | Path | None = None,
+        # P0-1(2026-08-15): 阻断审计目录（默认守卫落盘 safety_blocks.jsonl；
+        # 仅 safety_guard 未显式注入时生效；None = 不落盘，零回归）
+        safety_audit_dir: str | Path | None = None,
     ) -> None:
         self._tools: dict[str, Any] = {}
         self._lock = threading.Lock()
-        self.safety = safety_guard or CatastrophicGuard()
+        self.safety = safety_guard or CatastrophicGuard(audit_dir=safety_audit_dir)
         self.tool_timeout_s = tool_timeout_s
         self.max_output_chars = max_output_chars
         self.summary_threshold = summary_threshold
