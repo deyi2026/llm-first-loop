@@ -5,6 +5,14 @@ trafilatura → og:title/<p> 密度启发 → 去标签纯文本（原行为兜�
 设计借鉴 AnySearch（结构化/提取分离），实测解决头条 JS 壳、站点反爬 UA 拦截。
 M48-B curl 回退：httpx 被 TLS 指纹拦截（ConnectError/Reset）或仅取到 JS 壳时，
 自动回退 curl 子进程（argv 无 shell 注入面）按 UA 池重试——实测唯一能穿透头条的路径。
+
+P0-2/P0-3（2026-08-15，审计发现 #1/#2 修复）SSRF 深化：
+- 重定向不再自动跟随（httpx follow_redirects / curl -L 均关闭），改手动循环：
+  每一跳重新做内网校验（含 DNS 解析），上限 5 跳如实报错（防跳云元数据泄凭证）。
+- DNS rebinding TOCTOU 收窄（混合方案）：curl 通道 --resolve 钉住已校验 IP
+  （预连接钉扎，SNI/证书校验不受损）；httpx 通道连接后读取实际对端 IP 复核，
+  命中私网即丢弃连接。如实标注 httpx 残余：GET 请求已发出，此处防数据回读；
+  需更强隔离的场景依赖 curl 钉 IP 通道。
 """
 
 from __future__ import annotations
@@ -180,6 +188,55 @@ def _block_private_enabled() -> bool:
     return raw not in {"0", "off", "false", "no"}
 
 
+def _blocked_ip_label(ip_str: str) -> str:
+    """单个 IP 字符串的私网/保留命中说明（未命中返回空串）."""
+    import ipaddress
+
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return ""
+    if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+        kind = "私网" if ip.is_private else "回环" if ip.is_loopback else "链路本地" if ip.is_link_local else "保留地址"
+        return f"{ip_str}（{kind}）"
+    return ""
+
+
+def _resolve_checked_ips(url: str) -> tuple[str, list[str], str, int]:
+    """解析 URL 主机并校验全部地址 → (命中原因, 已校验 IP 列表, host, port).
+
+    任一地址命中私网即整域拦截（防一半公网一半内网的解析漂移）。
+    解析失败 fail-open（返回空列表，请求阶段如实报网络错误）。
+    """
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname or ""
+        if not host:
+            return ("host 为空", [], "", 0)
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        candidates: list[str] = []
+        try:
+            ip = ipaddress.ip_address(host)
+            candidates = [str(ip)]
+        except ValueError:
+            try:
+                infos = socket.getaddrinfo(host, None)
+                candidates = [str(info[4][0]) for info in infos]
+            except socket.gaierror:
+                return ("", [], host, port)  # 解析失败 fail-open（请求阶段如实报错）
+        for cand in candidates:
+            label = _blocked_ip_label(cand)
+            if label:
+                return (label, [], host, port)
+        return ("", candidates, host, port)
+    except Exception:  # noqa: BLE001 — 判定失败 fail-open（不阻断正常请求）
+        return ("", [], "", 0)
+
+
 def _blocked_private_url(url: str) -> str:
     """URL 目标是否命中私网/保留地址段；返回命中说明（未命中返回空串）.
 
@@ -187,35 +244,18 @@ def _blocked_private_url(url: str) -> str:
     （任一地址命中即拦截——DNS rebinding 面收窄）。解析失败 fail-open 放行
     （域名解析失败后续请求会如实报网络错误）。
     """
-    import ipaddress
-    import socket
-    from urllib.parse import urlparse
+    return _resolve_checked_ips(url)[0]
 
-    try:
-        host = urlparse(url).hostname or ""
-        if not host:
-            return "host 为空"
-        candidates: list[str] = []
-        try:
-            ip = ipaddress.ip_address(host)
-            candidates = [str(ip)]
-        except ValueError:
-            # 域名 → DNS 解析（IPv4/IPv6 全取）
-            try:
-                infos = socket.getaddrinfo(host, None)
-                candidates = [str(info[4][0]) for info in infos]
-            except socket.gaierror:
-                return ""  # 解析失败 fail-open（请求阶段如实报错）
-        for cand in candidates:
-            try:
-                ip = ipaddress.ip_address(cand)
-            except ValueError:
-                continue
-            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-                return f"{cand}（{'私网' if ip.is_private else '回环' if ip.is_loopback else '链路本地' if ip.is_link_local else '保留地址'}）"
-        return ""
-    except Exception:  # noqa: BLE001 — 判定失败 fail-open（不阻断正常请求）
-        return ""
+
+class _PrivateTargetBlockedError(Exception):
+    """P0-2: 重定向/连接后校验命中私网目标（execute 捕获转 BLOCKED 回执）."""
+
+
+class _RedirectLimitExceededError(Exception):
+    """P0-2: 重定向超过上限（防无限循环/资源耗尽，如实报错）."""
+
+
+_MAX_REDIRECT_HOPS = 5
 
 
 class WebFetchTool:
@@ -240,50 +280,160 @@ class WebFetchTool:
         self._timeout_s = 30.0 if timeout_s is None else float(timeout_s)
 
     def _request(self, url: str) -> httpx.Response:
-        """UA 池轮换请求：首个 UA 遇 403/418 自动换 UA 重试."""
+        """httpx 通道：手动重定向循环（P0-2：每跳重新内网校验，上限 5 跳）.
+
+        修复前 follow_redirects=True 自动跟随——公开 URL 302 跳内网即 SSRF 泄漏。
+        """
+        from urllib.parse import urljoin
+
+        current = url
+        for _hop in range(_MAX_REDIRECT_HOPS + 1):
+            if _block_private_enabled():
+                blocked = _blocked_private_url(current)
+                if blocked:
+                    raise _PrivateTargetBlockedError(f"{current} → {blocked}")
+            resp = self._request_once(current)
+            if 300 <= resp.status_code < 400:
+                loc = resp.headers.get("location", "")
+                if not loc:
+                    return resp  # 无 Location 的 3xx 如实返回（由上层按 HTTP 错误处理）
+                current = urljoin(current, loc)
+                continue
+            return resp
+        raise _RedirectLimitExceededError(f"重定向超过 {_MAX_REDIRECT_HOPS} 跳")
+
+    def _request_once(self, url: str) -> httpx.Response:
+        """单跳请求：UA 池轮换（403/418/429 换 UA）+ 连接后对端 IP 复核（P0-3）."""
         last_exc: Exception | None = None
-        with httpx.Client(timeout=self._timeout_s, follow_redirects=True) as client:
+        with httpx.Client(timeout=self._timeout_s) as client:  # follow_redirects 关闭（手动循环）
             for i, ua in enumerate(_UA_POOL):
                 try:
-                    resp = client.get(url, headers={"User-Agent": ua, "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"})
+                    with client.stream(
+                        "GET", url,
+                        headers={"User-Agent": ua, "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"},
+                    ) as resp:
+                        self._verify_peer(resp, url)  # P0-3: 实际对端命中私网 → 丢弃
+                        if resp.status_code in (403, 418, 429) and i + 1 < len(_UA_POOL):
+                            continue  # 疑似 UA 反爬，换下一个 UA
+                        if not (300 <= resp.status_code < 400):
+                            resp.read()  # 非重定向才读体（重定向跳读体浪费带宽）
+                        return resp
                 except httpx.HTTPError as exc:
                     if i == 0:
                         raise  # 网络层错误如实抛出，换 UA 无意义
                     last_exc = exc
                     continue
-                if resp.status_code in (403, 418, 429) and i + 1 < len(_UA_POOL):
-                    continue  # 疑似 UA 反爬，换下一个 UA
-                return resp
         if last_exc is not None:
             raise last_exc
-        return resp  # type: ignore[possibly-undefined]
+        raise httpx.HTTPError("UA 池耗尽未取得响应")  # 理论不可达（首 UA 网络错即抛出）
+
+    @staticmethod
+    def _verify_peer(resp: httpx.Response, url: str) -> None:
+        """P0-3: 连接后对端 IP 复核（DNS rebinding TOCTOU 收窄）.
+
+        如实标注：GET 请求已发出，此处防的是数据回读（丢弃连接不读体）；
+        预连接钉扎在 curl 通道（--resolve）。扩展缺失/已释放 → 跳过（fail-open
+        保可用性，初始 URL 的预解析校验仍在前置把关）。
+        """
+        if not _block_private_enabled():
+            return
+        stream = resp.extensions.get("network_stream")
+        if stream is None:
+            return
+        try:
+            addr = stream.get_extra_info("server_addr")
+        except Exception:  # noqa: BLE001 — 取不到对端地址跳过复核
+            return
+        if not addr:
+            return
+        label = _blocked_ip_label(str(addr[0]))
+        if label:
+            raise _PrivateTargetBlockedError(f"{url} 实际连接对端命中内网: {label}")
 
     def _curl_fetch(self, url: str) -> tuple[str, str] | None:
         """curl 回退通道（httpx 被 TLS 指纹拦截/JS 壳时）.
 
-        argv 列表传参无 shell 注入面；按 UA 池逐个尝试，返回首个"非 JS 壳且
-        正文提取达标"的 (extract_method, raw_html)。全部失败如实返回 None。
+        P0-2/P0-3：不再用 -L 自动跟随，改手动重定向循环（每跳内网校验，上限 5 跳）；
+        域名 URL 经 --resolve 钉住已校验 IP（预连接钉扎，防 TOCTOU 二次解析漂移，
+        SNI/证书校验不受损）。argv 列表传参无 shell 注入面；按 UA 池逐个尝试，
+        返回首个"非 JS 壳且正文提取达标"的 (extract_method, raw_html)。全部失败
+        如实返回 None。
         """
+        from urllib.parse import urljoin
+
+        current = url
+        for _hop in range(_MAX_REDIRECT_HOPS + 1):
+            resolve: str | None = None
+            if _block_private_enabled():
+                reason, ips, host, port = _resolve_checked_ips(current)
+                if reason:
+                    raise _PrivateTargetBlockedError(f"{current} → {reason}")
+                if ips and host:
+                    resolve = f"{host}:{port}:{','.join(ips[:3])}"  # 钉已校验 IP（前 3 个）
+            hop = self._curl_hop(current, resolve)
+            if hop is None:
+                return None
+            if hop[0] == "redirect":
+                if not hop[1]:
+                    return None  # 3xx 无 Location 如实失败
+                current = urljoin(current, hop[1])
+                continue
+            return (hop[1], hop[2])
+        raise _RedirectLimitExceededError(f"重定向超过 {_MAX_REDIRECT_HOPS} 跳")
+
+    def _curl_hop(self, url: str, resolve: str | None) -> tuple | None:
+        """单跳 curl：返回 ("ok", method, raw) / ("redirect", location) / None."""
         for ua in _UA_POOL:
-            try:
-                proc = subprocess.run(  # noqa: S603 — 固定 argv、URL 已校验协议
-                    ["curl", "-sL", "-m", str(int(self._timeout_s)), "-A", ua,
-                     "-H", "Accept-Language: zh-CN,zh;q=0.9,en;q=0.8", "--", url],
-                    capture_output=True,
-                    timeout=self._timeout_s + 5,
-                    check=False,
-                )
-            except (subprocess.TimeoutExpired, OSError):
+            r = self._curl_once(url, ua, resolve)
+            if r is None:
                 continue
-            if proc.returncode != 0 or not proc.stdout:
-                continue
-            raw = proc.stdout.decode("utf-8", errors="ignore")
+            code, redirect, raw = r
+            if 300 <= code < 400:
+                return ("redirect", redirect)
+            if code >= 400 or not raw.strip():
+                continue  # 错误页/反爬 → 换 UA
             method, _title, text = _extract_content(raw, url)
             lower = raw[:5000].lower()
             is_shell = any(h in lower for h in _SHELL_HINTS) and len(text) < 300
             if not is_shell and len(text.strip()) >= 20:
-                return (method, raw)
+                return ("ok", method, raw)
         return None
+
+    def _curl_once(self, url: str, ua: str, resolve: str | None) -> tuple[int, str, str] | None:
+        """单次 curl（不跟随重定向）→ (http_code, redirect_url, body)；失败 None.
+
+        -w 尾部追加 "\\n%{http_code} %{redirect_url}" 供手动重定向循环判定。
+        """
+        args = [
+            "curl", "-s", "-m", str(int(self._timeout_s)), "-A", ua,
+            "-H", "Accept-Language: zh-CN,zh;q=0.9,en;q=0.8",
+            "-w", "\n%{http_code} %{redirect_url}",
+        ]
+        if resolve:
+            args += ["--resolve", resolve]  # P0-3: 预连接钉已校验 IP
+        args += ["--", url]
+        try:
+            proc = subprocess.run(  # noqa: S603 — 固定 argv、URL 已校验协议
+                args,
+                capture_output=True,
+                timeout=self._timeout_s + 5,
+                check=False,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            return None
+        if proc.returncode != 0 or not proc.stdout:
+            return None
+        text = proc.stdout.decode("utf-8", errors="ignore")
+        body, sep, trailer = text.rpartition("\n")
+        if not sep:
+            return None
+        parts = trailer.strip().split(" ", 1)
+        try:
+            code = int(parts[0])
+        except (ValueError, IndexError):
+            return None
+        redirect = parts[1].strip() if len(parts) > 1 else ""
+        return (code, redirect, body)
 
     def execute(self, **kwargs) -> ToolResult:
         url = str(kwargs.get("url", "")).strip()
@@ -338,10 +488,29 @@ class WebFetchTool:
         httpx_note = ""
         try:
             resp = self._request(url)
+        except _PrivateTargetBlockedError as exc:
+            # P0-2: 重定向/连接后命中内网（与初始拦截同一回执语义）
+            return ToolResult(
+                status=ToolResultStatus.BLOCKED,
+                content=(
+                    f"[内网拦截] {exc}，已拒绝访问（SSRF 防护——重定向目标逐跳校验）。\n"
+                    f"原因: 公开 URL 的 3xx 重定向目标属于私网/保留地址段，"
+                    f"自动跟随会泄内网信息/云凭证（审计发现 #1 修复）。\n"
+                    f"建议: 核对最终跳转目标；确需访问内网时设置 WEB_FETCH_BLOCK_PRIVATE=0（自担风险）。"
+                ),
+                tool_call_id="",
+                tool_name=self.name,
+            )
         except httpx.TimeoutException:
             resp = None
             httpx_note = f"httpx 超时（{self._timeout_s:.0f}s）"
+        except _RedirectLimitExceededError as exc:
+            resp = None
+            httpx_note = f"httpx 重定向超限（{exc}）"
         except httpx.HTTPError as exc:
+            resp = None
+            httpx_note = f"httpx {type(exc).__name__}: {exc}"
+        except Exception as exc:  # noqa: BLE001 — httpx 通道意外异常如实降级 curl（fail-open）
             resp = None
             httpx_note = f"httpx {type(exc).__name__}: {exc}"
 
@@ -362,7 +531,25 @@ class WebFetchTool:
                 method_out = method
 
         if resp is None:
-            fallback = self._curl_fetch(url)
+            try:
+                fallback = self._curl_fetch(url)
+            except _PrivateTargetBlockedError as exc:
+                # P0-2: curl 通道重定向命中内网（同一回执语义）
+                return ToolResult(
+                    status=ToolResultStatus.BLOCKED,
+                    content=(
+                        f"[内网拦截] {exc}，已拒绝访问（SSRF 防护——重定向目标逐跳校验）。\n"
+                        f"原因: 3xx 重定向目标属于私网/保留地址段，自动跟随会泄内网信息/云凭证。\n"
+                        f"建议: 核对最终跳转目标；确需访问内网时设置 WEB_FETCH_BLOCK_PRIVATE=0（自担风险）。"
+                    ),
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            except _RedirectLimitExceededError as exc:
+                fallback = None
+                httpx_note = f"{httpx_note}；curl 重定向超限（{exc}）"
+            except Exception:  # noqa: BLE001 — curl 通道意外异常如实落入失败回执
+                fallback = None
             if fallback is None:
                 status = ToolResultStatus.TIMEOUT if "超时" in httpx_note else ToolResultStatus.FAILURE
                 return ToolResult(

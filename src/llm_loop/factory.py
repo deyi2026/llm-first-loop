@@ -155,6 +155,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         exec_allowlist=settings.exec_allowlist,
         memory_store=memory,  # EVO-d78b270c: 经验驱动注入（M41 升级，失败回执检索经验库）
         approval_audit_path=settings.audit_dir / "approval_audit.jsonl",  # T5a: 审批审计落盘
+        safety_audit_dir=settings.audit_dir,  # P0-1: 灾难性阻断审计 safety_blocks.jsonl
     )
     # EVO-20260813-9ced1f4c: 工具执行瀑布装配（默认全关零回归；开关经 .env 启用）
     from llm_loop.tools.pipeline import PipelineConfig, ToolExecutionPipeline
