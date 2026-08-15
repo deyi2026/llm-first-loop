@@ -173,7 +173,8 @@ def test_build_bridge_wired(build_test_engine, tmp_path):
 def test_default_long_reply_single_send(build_test_engine, tmp_path):
     """用例 19：默认 chunk_limit=30000 → 4000 字符长回复完整发送（不触发分段）.
 
-    F4 折叠（>2000 字符）后行为：仅摘要卡（全文暂存，「展开全文」取回）——消息条数收敛。
+    2026-08-15 用户需求：默认不折叠——完整单条发送（分块输出仅超 chunk_limit 才发生）；
+    折叠路径（摘要卡+展开全文）见 opt-in 用例（FEISHU_FOLD_LONG_REPLY=1）。
     """
     long_reply = "\n".join(f"第{i}行内容abcdefgh" for i in range(250))
     assert len(long_reply) > 3000 and len(long_reply) < 30000
@@ -192,11 +193,10 @@ def test_default_long_reply_single_send(build_test_engine, tmp_path):
             message_id="om_l", sender_id="ou_l", chat_id="oc_l", msg_type="text", text="写长文"
         )
     )
-    assert len(replies) == 1  # F4: 仅摘要卡（全文暂存，消息条数收敛）
-    assert "内容过长已折叠" in replies[0][1]  # 摘要卡含折叠标注
-    assert "展开全文" in replies[0][1]  # 取回引导
-    assert len(handler._folded_store) == 1  # 全文已暂存
-    # 用户回复「展开全文」→ 完整内容无截断、单条发送
+    assert len(replies) == 1  # 默认不折叠：完整单条发送
+    assert replies[0][1] == long_reply  # 全文无损
+    assert len(handler._folded_store) == 0  # 无暂存
+    # 默认不折叠后无暂存——「展开全文」如实提示无可展开（命令保留向后兼容）
     replies.clear()
     handler.handle(
         FeishuMessage(
@@ -204,4 +204,4 @@ def test_default_long_reply_single_send(build_test_engine, tmp_path):
         )
     )
     assert len(replies) == 1
-    assert replies[0][1] == long_reply
+    assert "没有可展开的折叠回复" in replies[0][1]

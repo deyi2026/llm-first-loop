@@ -118,10 +118,10 @@ def test_sanitize_whitelist_not_relaxed(app_js_src):
 
 def test_existing_symbols_kept(app_js_src, style_css_src):
     """既有关键函数与类名未删除（桌面与既有能力零回归）."""
-    for fn in ("renderMessages", "collapseLongContent", "isMessagesAtBottom",
+    for fn in ("renderMessages", "chunkLongContent", "isMessagesAtBottom",
                "renderToolCalls", "sanitizeHtml"):
         assert f"function {fn}" in app_js_src, f"{fn} 被删除"
-    for cls in (".tool-call-chain", ".collapsed-summary", ".collapsed-full"):
+    for cls in (".tool-call-chain", ".chunk-marker", ".chunked-pre"):
         assert cls in style_css_src, f"{cls} 被删除"
 
 

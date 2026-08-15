@@ -145,7 +145,7 @@ def test_sanitize_whitelist_not_relaxed(app_js_src):
 
 def test_existing_symbols_and_calls_kept(app_js_src):
     """既有关键符号与调用点零回归 + 公式内嵌 renderMarkdown 入口."""
-    for fn in ("renderMarkdown", "sanitizeHtml", "highlightCodeBlocks", "collapseLongContent"):
+    for fn in ("renderMarkdown", "sanitizeHtml", "highlightCodeBlocks", "chunkLongContent"):
         assert f"function {fn}" in app_js_src, f"{fn} 被删除"
     assert "renderMarkdown(msg.content)" in app_js_src
     assert "marked.parse" in app_js_src

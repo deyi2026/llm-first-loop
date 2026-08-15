@@ -85,8 +85,8 @@ function renderMessages(scrollToBottom = true) {
         highlightCodeBlocks(node);
         // 回复内命令框（代码块）右上角也提供复制按钮
         addCodeBlockCopyButtons(node);
-        // T3: 长内容折叠（超阈值 pre/消息体 → 摘要 + 展开全文）
-        collapseLongContent(node);
+        // 长内容分块（2026-08-15：不折叠；超阈值 pre → 顺序分段全量展示）
+        chunkLongContent(node);
       };
       const html = renderMarkdown(msg.content);
       const shouldTypewrite =
@@ -120,7 +120,7 @@ function renderMessages(scrollToBottom = true) {
         els.messages.appendChild(wrap);
         highlightCodeBlocks(node);
         addCodeBlockCopyButtons(node);
-        collapseLongContent(node);
+        chunkLongContent(node);
       } else {
         node.textContent = msg.content;
         els.messages.appendChild(node);
@@ -227,75 +227,45 @@ function highlightCodeBlocks(container) {
   }
 }
 
-// T2: 长内容折叠器（重构版：摘要/全文节点分离 + 显隐切换，spec 5.2.1 / design §2.1.3.2）
-// collapseUnit：为超阈值容器建「摘要节点 + 全文节点 + 切换按钮」，展开/折叠仅切 hidden，不重建 DOM（消除按钮失效缺陷）
-// pre 行数 > LONG_LINE_THRESHOLD → 代码摘要（renderMarkdown 渲染代码块，保留格式）；消息体非代码块 > LONG_CHAR_THRESHOLD → HTML 摘要（复制已渲染元素，保留 MD 格式）
-// 折叠异常 fail-open：保留原样 + console.error，不空白不伪造
-function collapseUnit(target, summaryNode) {
-  // 把 target 现有子节点移入全文节点（appendChild 移动保留事件绑定，不重建 DOM），
-  // 再插入摘要节点 + 全文节点 + 切换按钮；展开/折叠仅切 hidden + dataset 状态
-  const fullNode = el("div", "collapsed-full");
-  while (target.firstChild) {
-    fullNode.appendChild(target.firstChild);
-  }
-  fullNode.hidden = true;
-  const btn = el("button", "expand-btn", "展开全文");
-  btn.type = "button";
-  let collapsed = true;
-  btn.onclick = () => {
-    collapsed = !collapsed;
-    summaryNode.hidden = !collapsed;
-    fullNode.hidden = collapsed;
-    target.dataset.collapsed = collapsed ? "1" : "";
-    btn.textContent = collapsed ? "展开全文" : "折叠";
-  };
-  target.appendChild(summaryNode);
-  target.appendChild(fullNode);
-  target.appendChild(btn);
-  target.dataset.collapsed = "1";
-}
-
-function collapseLongContent(node) {
+// 长内容分块器（2026-08-15 用户需求：回复不折叠，过长分块输出；替代 spec 5.2.1 折叠方案）
+// chunkLongContent：pre 行数 > LONG_LINE_THRESHOLD → 顺序拆为多段可见代码块（每段 ≤ 阈值行，
+// 段首标注「第 i/N 段 · 共 X 行（自动分块，未折叠）」），无隐藏节点、无展开按钮；
+// 消息体不再折叠（全量渲染）。分块异常 fail-open：保留原样 + console.error，不空白不伪造
+function chunkLongContent(node) {
   try {
-    // 1. pre 级折叠：超长代码块（摘要经 renderMarkdown 渲染代码块，保留格式）
-    for (const pre of node.querySelectorAll("pre")) {
-      if (pre.closest(".collapsed-full")) continue;
+    for (const pre of [...node.querySelectorAll("pre")]) {
+      if (pre.closest(".chunked-pre")) continue;
       const text = pre.textContent || "";
       const lines = text.split("\n");
       if (lines.length <= LONG_LINE_THRESHOLD) continue;
       const wrap = pre.parentElement;
-      if (!wrap || wrap.dataset.collapsed) continue;
-      const summaryMd =
-        "```\n" + lines.slice(0, 20).join("\n") + "\n…（共 " + lines.length + " 行，已折叠，点击展开全文）\n```";
-      const summaryNode = el("div", "collapsed-summary");
-      const summaryHtml = renderMarkdown(summaryMd);
-      if (summaryHtml !== null) {
-        summaryNode.innerHTML = summaryHtml;
-      } else {
-        summaryNode.appendChild(el("pre", "", lines.slice(0, 20).join("\n") + "\n…（已折叠）"));
+      if (!wrap || wrap.dataset.chunked) continue;
+      wrap.dataset.chunked = "1";
+      // 保留语言标签以维持语法高亮（highlightCodeBlocks 已先跑，分段后逐段重高亮）
+      const codeEl = pre.querySelector("code");
+      const m = codeEl && /language-([\w-]+)/.exec(codeEl.className || "");
+      const lang = m ? m[1] : "";
+      const total = lines.length;
+      const nChunks = Math.ceil(total / LONG_LINE_THRESHOLD);
+      const container = el("div", "chunked-pre");
+      for (let i = 0; i < nChunks; i++) {
+        const partLines = lines.slice(i * LONG_LINE_THRESHOLD, (i + 1) * LONG_LINE_THRESHOLD);
+        container.appendChild(
+          el("div", "chunk-marker", "▸ 第 " + (i + 1) + "/" + nChunks + " 段 · 共 " + total + " 行（自动分块，未折叠）")
+        );
+        const p = el("pre", "");
+        const c = el("code", lang ? "language-" + lang : "");
+        c.textContent = partLines.join("\n");
+        p.appendChild(c);
+        highlightCodeBlock(c, lang);
+        container.appendChild(p);
       }
-      collapseUnit(wrap, summaryNode);
-    }
-    // 2. 消息体级折叠：非代码块长文本（摘要复制已渲染 HTML 元素，保留 MD 格式，排除已折叠 pre）
-    if (!node.dataset.bodyCollapsed) {
-      const probe = node.cloneNode(true);
-      probe.querySelectorAll("pre, .code-block-wrap, .tool-call-chain, .expand-btn").forEach((e) => e.remove());
-      const nonCodeText = probe.textContent || "";
-      if (nonCodeText.length > LONG_CHAR_THRESHOLD) {
-        node.dataset.bodyCollapsed = "1";
-        const summaryNode = el("div", "collapsed-summary");
-        let chars = 0;
-        for (const child of [...probe.childNodes]) {
-          if (chars >= 2000) break;
-          summaryNode.appendChild(child.cloneNode(true));
-          chars += (child.textContent || "").length;
-        }
-        summaryNode.appendChild(el("div", "collapsed-summary-hint", "…（内容超长，已折叠，点击展开全文）"));
-        collapseUnit(node, summaryNode);
-      }
+      // 原 wrap（code-block-wrap，可能含复制按钮）整段替换为分段容器，再给每段补复制按钮
+      wrap.parentElement.replaceChild(container, wrap);
+      addCodeBlockCopyButtons(container);
     }
   } catch (err) {
-    console.error("长内容折叠失败（fail-open）:", err);
+    console.error("长内容分块失败（fail-open）:", err);
   }
 }
 

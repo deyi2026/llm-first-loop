@@ -904,37 +904,14 @@ html, body {
   background: #fdf6f5;
 }
 
-/* ── T3: 长内容折叠（spec.md 5.2.1） ── */
-.collapsed {
-  max-height: 400px;
-  overflow: hidden;
-}
-.expand-btn {
-  display: inline-block;
-  margin: 4px 0 4px 8px;
-  padding: 2px 10px;
-  font-size: 12px;
-  color: #2456a6;
-  background: #eef4fd;
-  border: 1px solid #c3d7f2;
-  border-radius: 4px;
-  cursor: pointer;
-}
-.expand-btn:hover {
-  background: #ddeafa;
-}
-
-/* ── T2: 折叠重构（摘要/全文节点分离 + 显隐切换，spec 5.2.1） ── */
-.collapsed-summary {
+/* ── 长内容分块（2026-08-15 用户需求：不折叠，顺序分段全量可见） ── */
+.chunked-pre {
   display: block;
 }
-.collapsed-summary-hint {
-  margin-top: 6px;
+.chunk-marker {
+  margin: 8px 0 4px 8px;
   font-size: 12px;
   color: #6b7280;
-}
-.collapsed-full[hidden] {
-  display: none;
 }
 
 /* ── T3: 代码块语法高亮（自研简版，spec 5.3.1 D1） ── */
@@ -1102,7 +1079,6 @@ html, body {
   .tool-pair-toggle,
   .reasoning-toggle,
   .tool-call-full-btn,
-  .expand-btn,
   .retry-btn {
     min-width: 44px;
     min-height: 44px;
@@ -1119,7 +1095,6 @@ html, body {
   .tool-call-toggle:active,
   .tool-pair-toggle:active,
   .reasoning-toggle:active,
-  .expand-btn:active,
   .retry-btn:active {
     opacity: 0.7;
   }
