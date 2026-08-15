@@ -2,7 +2,7 @@
 // 用户右侧气泡（--dsw-specific-bubble）、助手全宽正文、思考块默认折叠、
 // 工具行折叠链、代码块 banner（语言+复制）+ 高亮 + 长块分块、笔记 footer）
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ChatMessage, ToolCallInfo } from "../../core/types";
 import { renderMarkdown } from "../../core/markdown";
 import { zh } from "../../i18n/zh";
@@ -106,6 +106,23 @@ function ToolChain({ calls }: { calls: ToolCallInfo[] }) {
   );
 }
 
+function StreamingHint({ startedAt }: { startedAt: number | null }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!startedAt) return;
+    const t = window.setInterval(() => {
+      setElapsed(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+    }, 1000);
+    return () => window.clearInterval(t);
+  }, [startedAt]);
+  return (
+    <div className="v2-thinking-hint" data-testid="thinking-hint">
+      {zh.thinkingHint}
+      {elapsed >= 5 ? `（已等待 ${elapsed}s，首 token 生成中，同会话串行排队中）` : ""}
+    </div>
+  );
+}
+
 export function MessageItem({ msg }: { msg: ChatMessage }) {
   if (msg.role === "user") {
     return (
@@ -135,7 +152,7 @@ export function MessageItem({ msg }: { msg: ChatMessage }) {
         ) : null}
         {msg.content ? <Markdown text={msg.content} /> : null}
         {msg.streaming && !msg.content && (
-          <div className="v2-thinking-hint">{zh.thinkingHint}</div>
+          <StreamingHint startedAt={msg.streamStartedAt ?? null} />
         )}
         {msg.note ? <div className="v2-msg-note">{msg.note}</div> : null}
       </div>
