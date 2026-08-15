@@ -42,7 +42,14 @@ class _RuntimeParamsMixin:
         return getattr(self.settings, "memory_top_k", 5)
 
     def _runtime_timeout(self: LoopEngine) -> float | None:
-        """LLM 调用超时（PARAM-01: 动态优先、静态兜底）."""
-        if self.runtime is not None:
+        """LLM 调用超时（PARAM-01: 动态优先、静态兜底）.
+
+        仅当 timeout_s 被显式调整（adjust_strategy / 会话级策略）时才作为
+        per-call 覆盖下发; 未调整返回 None → client 使用自身超时
+        （provider 级 timeout_s 优先, 否则全局 LLM_TIMEOUT_S）。
+        本地慢模型（LM Studio 大上下文 prefill 超 120s）由此获得 provider 级
+        更大超时; 未配置 provider 超时时行为与既有完全一致（client 超时即全局值）。
+        """
+        if self.runtime is not None and self.runtime.is_overridden("timeout_s"):
             return self.runtime.llm_timeout_s
         return None

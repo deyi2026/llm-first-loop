@@ -104,3 +104,39 @@ def test_breakdown_tool_schema_chars_in_loop(build_test_engine):
     assert bd is not None
     assert bd["tool_schema"]["chars"] > 0
     assert bd["total"]["chars"] > bd["history"]["chars"] + bd["tool_results"]["chars"]
+
+
+# ── 基于实际发送载荷的分解（compute_breakdown_from_dicts）──
+
+
+def test_breakdown_from_dicts_measures_built_payload():
+    """R1 口径修复: 分解基于构建后的协议 dict（已压缩归档历史不计入占用）.
+
+    旧口径统计原始会话（几百万字符）→ 本地慢模型收紧预算后占用虚高数十倍,
+    误导 [预算预警]/AI 压缩决策; 新口径只统计真正发送的载荷。
+    """
+    from llm_loop.core.history import compute_breakdown_from_dicts
+
+    msgs = [
+        {"role": "system", "content": "SYS"},
+        {"role": "user", "content": "你好"},
+        {"role": "assistant", "content": "回答", "reasoning_content": "思考中" * 10},
+        {"role": "tool", "content": "工具输出" * 50, "tool_call_id": "t1"},
+    ]
+    bd = compute_breakdown_from_dicts(msgs, tool_schema_chars=500, budget=12000)
+    assert bd["system"]["chars"] == 3
+    assert bd["history"]["chars"] == 4
+    assert bd["tool_results"]["chars"] == 200
+    assert bd["tool_schema"]["chars"] == 500
+    assert bd["reasoning"]["chars"] == 30
+    assert bd["memory"]["chars"] == 0  # 协议层记忆消息不可区分, 如实为 0
+    assert bd["total"]["chars"] == 3 + 4 + 200 + 500 + 30
+    assert bd["budget"] == 12000
+    assert bd["ratio"] == round(bd["total"]["chars"] / 12000, 3)
+    # 预算 <= 0 → ratio None（与 compute_breakdown 同语义）
+    assert compute_breakdown_from_dicts(msgs, budget=0)["ratio"] is None
+    # pct 总和 ≈ 100
+    pct = sum(
+        bd[k]["pct"] for k in ("system", "memory", "history", "tool_results", "tool_schema", "reasoning")
+    )
+    assert abs(pct - 100.0) < 0.2

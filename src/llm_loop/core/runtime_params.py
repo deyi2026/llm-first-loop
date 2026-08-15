@@ -79,6 +79,14 @@ class RuntimeParams:
                 return dynamic
         return default
 
+    def is_overridden(self, key: str) -> bool:
+        """该参数是否被显式调整过（strategy 中存在该 key 即视为显式覆盖）.
+
+        用于区分"用户/AI 显式调参"与"静态默认"：如 timeout_s 未显式调整时,
+        循环不下发 per-call 覆盖, 让 client 自身的超时（provider 级优先）生效。
+        """
+        return key in self._strategy
+
     @property
     def max_iterations(self) -> int:
         default = self._settings.max_iterations

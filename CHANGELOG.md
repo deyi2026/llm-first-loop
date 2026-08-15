@@ -2,6 +2,34 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.5.3（2026-08-15）
+
+### 消息响应提速：事件日志 O(n²) 续号修复（agent 通用路径，本地/云端同受益）
+- **根因（用户反馈"发消息 1 分钟模型才有反应"）**：大会话（如 654 条）压缩归档时对每条消息单独写一条事件日志，而 `EventStore.append` 为求最大 seq **每次全文件扫描**——625 次连续 append 总耗时 O(n²)，实测 62s 阻塞在主循环（LLM 调用之前）；云端 80K 预算归档同样多，故本地/云端一样慢
+- **修复**：seq 续号改**尾部读取**（append-only 文件最大 seq 必在尾部，反向读最后一条事件，O(1)；含损坏行容错与多段归档段取大）；`last_seq()` 同口径；`_resolve_msg_seq` 优先用 run 中内存会话（P0-5 绑定表），避免每次归档都读盘
+- **实测（真实 654 消息会话 + 9B）**：run 97s → 37s，其中 LLM 固有 prefill+生成 35.7s（cProfile 实证），**agent 管线 63s → 1.3s**
+- 事件日志语义零变化（seq 单调、损坏行容错、flock 并发安全、滚动兼容），相关测试全绿
+
+
+### 本地大模型接入：provider 级超时（修复 LLM 请求超时 120s）
+- **根因**：本地大模型（LM Studio 27B 量化实测 ~5s/千字 prefill）在 120s 全局超时内完不成首 token——40K 字上下文实测 208s 才出首字节，大上下文会话（几十万字符）必然超时报 `LLMTimeoutError: LLM 请求超时（120.0s）`
+- **provider 级 `timeout_s`**：`data/providers.json` 每个 provider 可配 `"timeout_s": 600`（本地慢模型放大，云端保持全局默认零回归）；`model_catalog` 目录标注 provider 超时
+- **调用语义修正**：`timeout_s` 未被 `adjust_strategy` 显式调整时，循环不再下发 per-call 覆盖，让 client 自身超时（provider 级优先、全局兜底）生效——此前 provider 配再大也会被循环的 120s 覆盖
+- **配置**：`data/providers.json` 的 `local` 已配 `"timeout_s": 600`；`docs/configuration.md` 常见坑新增本地模型超时排查三步（调超时/控上下文/换轻模型）
+
+### 本地大模型接入：provider 级历史预算（agent 发给本地模型的上下文过长问题）
+- **根因（用户指出）**：agent 每轮发给本地模型的历史按全局 `HISTORY_MAX_CHARS`（80K 字符 ≈ 56K tokens）构建，本地模型 prefill 随上下文线性涨——80K 字符在 CPU 级 27B 上首 token 要 7-10 分钟，即使窗口装得下也慢得不可用；实际有用的近期内容远小于全量历史
+- **provider 级 `history_budget_chars`**：`data/providers.json` 每个 provider 可配历史注入预算（字符），`_effective_history_budget` 取 min(全局, 窗口折算, provider 预算)——`local` 已配 `"history_budget_chars": 12000`（≈9K tokens），实测真实会话发送载荷 69,697 → 13,510 字符（5 倍缩小），27B 首 token 缩到 1-2 分钟、9B 10-20 秒；旧历史照常压缩归档可检索（信息零丢失，RULE-AI-00 不变）
+- **`[预算预警]`/context_usage 占用率口径修正**：改为统计**实际发送载荷**（构建后消息），不再把已压缩归档的原始会话算进"当前占用"——旧口径在收紧预算后会虚高数十倍（实测 440K vs 实际 70K），误导 AI 压缩决策；`architecture_status.context_usage.breakdown` 同步如实
+- **配置**：`data/providers.json` 的 `local` 已配 `"history_budget_chars": 12000`；云端 provider 不配则完全零回归
+
+## v0.5.3（2026-08-15）
+
+### 现场修复：代理假 IP 段（198.18/15）误拦 web_fetch（本地大模型接入用户现场）
+- **背景**：Surge/Clash fake-ip 模式下代理 DNS 把目标域名解析为 198.18.0.0/15 假地址；Python `is_private` 将该段判为私网 → SSRF 防护误杀代理环境下全部外网抓取（`[内网拦截] 目标地址属于私网/保留地址段（198.18.x.x）`），既有测试被迫 `WEB_FETCH_BLOCK_PRIVATE=0` 绕过
+- **修复**：全部解析地址落在 198.18/15（代理假 IP）→ 默认放行 + 回执如实标注「已按代理通道放行」；`WEB_FETCH_BLOCK_FAKE_IP=1` 恢复严格拦截；真实私网/回环/链路本地/保留段拦截语义不变（P0 不回归）；连接后对端复核（TUN 假 IP）同步放行
+- **测试**：新增 `test_web_fetch_fake_ip.py`（8 项）；撤销 m48/paging/builtin 中 17 处"关拦截"绕过（修复后拦截开启下通过）
+
 ## v0.5.2（2026-08-15）
 
 ### 回复展示：不折叠，过长分块输出（用户需求批次）

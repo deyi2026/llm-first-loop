@@ -233,6 +233,111 @@ def test_client_params_no_auth_provider() -> None:
     assert params["base_url"] == "http://localhost:1234/v1"
 
 
+# ── provider 级超时（timeout_s, 本地慢模型接入）──
+
+
+def _timeout_provider_json(timeout: object) -> str:
+    return json.dumps(
+        {
+            "local": {
+                "base_url": "http://localhost:1234/v1",
+                "api_key_env": "",
+                "timeout_s": timeout,
+                "models": {"qwen3.6-27b": {"context": 131072}},
+                "default_model": "qwen3.6-27b",
+            }
+        }
+    )
+
+
+def test_provider_timeout_s_parsed() -> None:
+    """provider 级 timeout_s 正常解析（本地慢模型接入）."""
+    reg = load_registry(_settings(model_providers_raw=_timeout_provider_json(600)))
+    assert reg.providers["local"].timeout_s == 600.0
+
+
+def test_provider_timeout_s_absent_defaults_none() -> None:
+    """未配置 timeout_s → None（全局 LLM_TIMEOUT_S 兜底, 零回归）."""
+    reg = load_registry(_settings(model_providers_raw=_TWO_PROVIDER_JSON))
+    assert reg.providers["local"].timeout_s is None
+    assert reg.providers["deepseek"].timeout_s is None
+    # client_params 不含 timeout_s 键（与既有返回契约零差异）
+    assert "timeout_s" not in reg.client_params("local", "qwen3.6-27b")
+
+
+def test_client_params_includes_timeout_when_set() -> None:
+    """显式配置 timeout_s → client_params 下发（pool 据此构造 client）."""
+    reg = load_registry(_settings(model_providers_raw=_timeout_provider_json(600)))
+    params = reg.client_params("local", "qwen3.6-27b")
+    assert params["timeout_s"] == 600.0
+
+
+@pytest.mark.parametrize("bad", ["abc", -10, 0, "12x"])
+def test_provider_timeout_s_invalid_warns_and_defaults(
+    bad, caplog: pytest.LogCaptureFixture
+) -> None:
+    """非法 timeout_s → warning 如实告警 + 回退 None（全局兜底, 不拖垮注册表）."""
+    with caplog.at_level(logging.WARNING, logger="llm_loop.llm.providers"):
+        reg = load_registry(_settings(model_providers_raw=_timeout_provider_json(bad)))
+    assert reg.providers["local"].timeout_s is None
+    assert not reg.degraded
+    assert any("timeout_s" in r.message and "local" in r.message for r in caplog.records)
+
+
+def test_catalog_summary_shows_provider_timeout() -> None:
+    """catalog_summary 标注 provider 级超时（model_catalog 可感知本地慢模型配置）."""
+    reg = load_registry(_settings(model_providers_raw=_timeout_provider_json(600)))
+    assert "timeout=600s" in reg.catalog_summary()
+
+
+# ── provider 级历史预算（history_budget_chars, 本地慢模型收紧上下文）──
+
+
+def _budget_provider_json(budget: object) -> str:
+    return json.dumps(
+        {
+            "local": {
+                "base_url": "http://localhost:1234/v1",
+                "api_key_env": "",
+                "history_budget_chars": budget,
+                "models": {"qwen3.6-27b": {"context": 131072}},
+                "default_model": "qwen3.6-27b",
+            }
+        }
+    )
+
+
+def test_provider_history_budget_parsed() -> None:
+    """provider 级 history_budget_chars 正常解析."""
+    reg = load_registry(_settings(model_providers_raw=_budget_provider_json(12000)))
+    assert reg.providers["local"].history_budget_chars == 12000
+
+
+def test_provider_history_budget_absent_defaults_none() -> None:
+    """未配置 → None（全局 HISTORY_MAX_CHARS 兜底, 零回归）."""
+    reg = load_registry(_settings(model_providers_raw=_TWO_PROVIDER_JSON))
+    assert reg.providers["local"].history_budget_chars is None
+    assert reg.providers["deepseek"].history_budget_chars is None
+
+
+@pytest.mark.parametrize("bad", ["abc", -5, 0, "12k"])
+def test_provider_history_budget_invalid_warns_and_defaults(
+    bad, caplog: pytest.LogCaptureFixture
+) -> None:
+    """非法 history_budget_chars → warning 如实告警 + 回退 None（不拖垮注册表）."""
+    with caplog.at_level(logging.WARNING, logger="llm_loop.llm.providers"):
+        reg = load_registry(_settings(model_providers_raw=_budget_provider_json(bad)))
+    assert reg.providers["local"].history_budget_chars is None
+    assert not reg.degraded
+    assert any("history_budget_chars" in r.message and "local" in r.message for r in caplog.records)
+
+
+def test_catalog_summary_shows_provider_history_budget() -> None:
+    """catalog_summary 标注 provider 级历史预算."""
+    reg = load_registry(_settings(model_providers_raw=_budget_provider_json(12000)))
+    assert "history_budget=12000" in reg.catalog_summary()
+
+
 # ── catalog_summary ──
 
 

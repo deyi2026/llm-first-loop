@@ -17,8 +17,6 @@ class _FakeResponse:
 
 
 def test_web_fetch_success(monkeypatch):
-    # 本测试聚焦成功路径（非 SSRF）——关闭内网拦截避免测试环境 DNS 干扰
-    monkeypatch.setenv("WEB_FETCH_BLOCK_PRIVATE", "0")
     tool = WebFetchTool()
     # P0-2 后 httpx 通道收敛到 _request（手动重定向循环）；mock 该边界保持行为断言不变
     with mock.patch.object(tool, "_request", return_value=_FakeResponse(200, "<html>Hello Page</html>")):
@@ -42,8 +40,6 @@ def test_web_fetch_missing_url():
 
 
 def test_web_fetch_http_error(monkeypatch):
-    # 本测试聚焦 HTTP 错误路径（非 SSRF）——关闭内网拦截避免测试环境 DNS 干扰
-    monkeypatch.setenv("WEB_FETCH_BLOCK_PRIVATE", "0")
     tool = WebFetchTool()
     with mock.patch.object(tool, "_curl_fetch", return_value=None), mock.patch.object(
         tool, "_request", return_value=_FakeResponse(404, reason_phrase="Not Found")
@@ -54,8 +50,6 @@ def test_web_fetch_http_error(monkeypatch):
 
 
 def test_web_fetch_timeout(monkeypatch):
-    # 本测试聚焦超时（非 SSRF）——关闭内网拦截避免测试环境 DNS 干扰
-    monkeypatch.setenv("WEB_FETCH_BLOCK_PRIVATE", "0")
     tool = WebFetchTool()
     with mock.patch.object(tool, "_curl_fetch", return_value=None), mock.patch.object(
         tool, "_request", side_effect=__import__("httpx").TimeoutException("timeout")
@@ -66,8 +60,6 @@ def test_web_fetch_timeout(monkeypatch):
 
 def test_web_fetch_timeout_config(tmp_path, monkeypatch):
     """M18 AA8: 工具内超时读配置值（构造注入）+ 文案动态化（默认 30 兜底）."""
-    # 本测试聚焦超时配置（非 SSRF）——关闭内网拦截避免测试环境 DNS 干扰
-    monkeypatch.setenv("WEB_FETCH_BLOCK_PRIVATE", "0")
     # 默认兜底 30
     t_default = WebFetchTool()
     assert t_default._timeout_s == 30.0
@@ -195,9 +187,9 @@ def test_web_fetch_blocks_private_domain(monkeypatch):
 
 def test_web_fetch_block_switch_off(monkeypatch):
     """WEB_FETCH_BLOCK_PRIVATE=0 → 不拦截（如实放行到请求阶段）."""
+    monkeypatch.setenv("WEB_FETCH_BLOCK_PRIVATE", "0")
     from llm_loop.tools.builtin.web_fetch import WebFetchTool
 
-    monkeypatch.setenv("WEB_FETCH_BLOCK_PRIVATE", "0")
     tool = WebFetchTool()
     r = tool.execute(url="http://127.0.0.1:9/x")  # 端口 9 无服务 → 网络错误而非拦截
     assert r.status.value in ("failure", "error")

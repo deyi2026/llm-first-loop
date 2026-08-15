@@ -54,6 +54,11 @@ class ProviderSpec:
     """单个 provider 元数据.
 
     api_key_env 存 **env var 名字** (如 "DEEPSEEK_API_KEY"), 不存 key 本体.
+    timeout_s: provider 级 LLM 调用超时（秒）; None = 用全局 LLM_TIMEOUT_S。
+    本地慢模型（LM Studio 大模型 prefill 慢）在此放大, 云端保持全局默认（零回归）。
+    history_budget_chars: provider 级历史注入预算（字符）; None = 用全局
+    HISTORY_MAX_CHARS。本地模型 prefill 成本随上下文线性涨, 收紧预算可显著缩短
+    首 token 时延（旧长历史经压缩归档可检索, 信息零丢失, 不损失可用性）。
     """
 
     id: str
@@ -61,6 +66,8 @@ class ProviderSpec:
     api_key_env: str
     models: dict[str, ModelSpec] = field(default_factory=dict)
     default_model: str = ""
+    timeout_s: float | None = None
+    history_budget_chars: int | None = None
 
 
 @dataclass(frozen=True)
@@ -123,7 +130,13 @@ class ProviderRegistry:
         """
         lines: list[str] = []
         for pid, spec in self.providers.items():
-            lines.append(f"[{pid}] base_url={spec.base_url}")
+            tags = []
+            if spec.timeout_s:
+                tags.append(f"timeout={spec.timeout_s:g}s")
+            if spec.history_budget_chars:
+                tags.append(f"history_budget={spec.history_budget_chars}")
+            tag_str = (" " + " ".join(tags)) if tags else ""
+            lines.append(f"[{pid}] base_url={spec.base_url}{tag_str}")
             for mid, mspec in spec.models.items():
                 thinking = "✓" if mspec.thinking else "✗"
                 lines.append(
@@ -160,6 +173,9 @@ class ProviderRegistry:
             "api_key": api_key,
             "base_url": spec.base_url,
             "model": model_id,
+            # provider 级超时仅显式配置时下发（None 由 pool 回退全局 LLM_TIMEOUT_S）;
+            # 未配置不含该键, 与既有返回契约零差异
+            **({"timeout_s": spec.timeout_s} if spec.timeout_s is not None else {}),
         }
 
 
@@ -271,12 +287,51 @@ def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
                             pid, mid, exc,
                         )
             default_model = str(val.get("default_model", "")) or ""
+            # provider 级超时（秒）: 仅合法正数接受; 非法/缺失 → None（全局 LLM_TIMEOUT_S 兜底）
+            timeout_s: float | None = None
+            raw_timeout = val.get("timeout_s")
+            if raw_timeout is not None:
+                try:
+                    parsed = float(raw_timeout)
+                    if parsed > 0:
+                        timeout_s = parsed
+                    else:
+                        logger.warning(
+                            "provider 条目 %r 的 timeout_s=%r 非正数, 回退全局超时",
+                            pid, raw_timeout,
+                        )
+                except (ValueError, TypeError):
+                    logger.warning(
+                        "provider 条目 %r 的 timeout_s=%r 非法, 回退全局超时",
+                        pid, raw_timeout,
+                    )
+            # provider 级历史注入预算（字符）: 本地慢模型收紧以缩短 prefill;
+            # 非法/缺失 → None（全局 HISTORY_MAX_CHARS 兜底）
+            history_budget_chars: int | None = None
+            raw_budget = val.get("history_budget_chars")
+            if raw_budget is not None:
+                try:
+                    parsed_budget = int(raw_budget)
+                    if parsed_budget > 0:
+                        history_budget_chars = parsed_budget
+                    else:
+                        logger.warning(
+                            "provider 条目 %r 的 history_budget_chars=%r 非正数, 回退全局预算",
+                            pid, raw_budget,
+                        )
+                except (ValueError, TypeError):
+                    logger.warning(
+                        "provider 条目 %r 的 history_budget_chars=%r 非法, 回退全局预算",
+                        pid, raw_budget,
+                    )
             out[str(pid)] = ProviderSpec(
                 id=str(pid),
                 base_url=base_url,
                 api_key_env=api_key_env,
                 models=models,
                 default_model=default_model,
+                timeout_s=timeout_s,
+                history_budget_chars=history_budget_chars,
             )
         except (ValueError, TypeError) as exc:
             # P1-3: provider 条目级兜底（意外转换异常也不拖垮整个注册表）

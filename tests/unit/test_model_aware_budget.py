@@ -127,3 +127,77 @@ def test_no_pool_zero_regression(build_test_engine) -> None:
     fake.model = "fake-model"
     engine.llm_pool = None
     assert engine._effective_history_budget("") == engine._runtime_history_budget()
+
+
+# ── provider 级预算收紧（本地慢模型接入, prefill 随上下文线性涨）──
+
+_LOCAL_JSON = json.dumps(
+    {
+        "local": {
+            "base_url": "http://localhost:1234/v1",
+            "api_key_env": "",
+            "history_budget_chars": 12000,
+            "models": {
+                "qwen3.6-27b": {"context": 131072, "thinking": True, "cost_tier": "free"},
+                "qwen9b": {"context": 1048576, "thinking": False, "cost_tier": "free"},
+            },
+            "default_model": "qwen3.6-27b",
+        },
+        "kimi": {
+            "base_url": "https://api.kimi.com/coding/v1",
+            "api_key_env": "KIMI_API_KEY",
+            "models": {"k3-256k": {"context": 262144, "thinking": True, "cost_tier": "mid"}},
+            "default_model": "k3-256k",
+        },
+    }
+)
+
+
+def test_provider_history_budget_caps_global(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """provider history_budget_chars 优先于全局预算（本地慢模型核心修复）.
+
+    local 配 12000 → 即使模型窗口 1M（qwen9b）也按 12000 收紧;
+    未配置的 provider（kimi）保持 min(全局, 窗口) 语义（零回归）。
+    """
+    monkeypatch.setenv("KIMI_API_KEY", "k")
+    settings = _settings(
+        tmp_path,
+        model_providers_raw=_LOCAL_JSON,
+        llm_model="qwen3.6-27b",
+        history_max_chars=1_000_000,
+    )
+    fake = _FakeLLMClient("qwen3.6-27b")
+    pool = _make_pool(settings, fake)
+    engine = _make_engine(tmp_path, pool, settings)
+
+    # local 27B: min(1M, 131072×2×0.5=131072, 12000) = 12000
+    assert engine._effective_history_budget("local/qwen3.6-27b") == 12000
+    # local 9B（1M 窗）: provider 预算仍压到 12000（窗口大 ≠ prefill 快）
+    assert engine._effective_history_budget("local/qwen9b") == 12000
+    # 未配置 provider: 窗口公式不变
+    assert engine._effective_history_budget("kimi/k3-256k") == 262144
+
+
+def test_provider_history_budget_compresses_sent_context(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """端到端: local provider 下 30万字符历史 → 实际发送被压到 12000 预算附近."""
+    monkeypatch.setenv("KIMI_API_KEY", "k")
+    settings = _settings(
+        tmp_path,
+        model_providers_raw=_LOCAL_JSON,
+        llm_model="qwen3.6-27b",
+        history_max_chars=1_000_000,
+    )
+    fake = _FakeLLMClient("qwen3.6-27b")
+    pool = _make_pool(settings, fake)
+    engine = _make_engine(tmp_path, pool, settings)
+
+    sid = engine.session.create()
+    _stuff_history(engine, sid, 300000)
+
+    result = engine.run(sid, "新问题")
+    assert result.final_answer == "默认回答"
+    received = _received_history_chars(fake)
+    # 发送载荷压到 ~12K 预算量级（含 system prompt）, 远小于全局 1M
+    assert received < 40000, f"应压到 provider 预算内, 实际 {received}"

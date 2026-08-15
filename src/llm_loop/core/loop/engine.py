@@ -283,9 +283,14 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             logger.warning("message.appended 事件写入失败（fail-open）: %s", exc)
 
     def _resolve_msg_seq(self, session_id: str, msg: Message) -> int | None:
-        """尽力定位消息在会话中的序号（tool_call_id 优先，其次内容匹配；失败如实 None）."""
+        """尽力定位消息在会话中的序号（tool_call_id 优先，其次内容匹配；失败如实 None）.
+
+        P1-7(2026-08-15, 性能): 压缩归档对每条消息调用本方法（大会话数百次），
+        原实现每次 session.load 读盘——优先用 run 中已绑定的内存会话（P0-5
+        _run_sessions），miss 才回退磁盘 load（零行为差异，快 2-3 个数量级）。
+        """
         try:
-            sess = self.session.load(session_id)
+            sess = self._run_sessions.get(session_id) or self.session.load(session_id)
             for i, m in enumerate(sess.messages):
                 if msg.tool_call_id and m.tool_call_id == msg.tool_call_id:
                     return i
@@ -456,17 +461,16 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             tools_param = [self._schema_to_param(t) for t in tool_schemas]
 
             # R1: 计算组件级占用分解（含 tool_schema_chars，供 architecture_status.context_usage.breakdown 注入）
-            from llm_loop.core.history import compute_breakdown
+            # 口径: **实际发送载荷**（构建后 messages）而非原始会话——已压缩归档的历史
+            # 不再计入"当前占用"（旧口径在本地慢模型收紧预算后会把占用虚高数十倍，
+            # 误导 [预算预警]/AI 压缩决策）。_last_build_info 保留（其他消费方兼容）。
+            from llm_loop.core.history import compute_breakdown_from_dicts
 
-            _info = getattr(self, "_last_build_info", None)
-            if _info:
-                self._last_breakdown = compute_breakdown(
-                    _info["base"],
-                    _info["system_prompt"],
-                    _info["memory_msgs"],
-                    tool_schema_chars=len(_json_dumps_args({"tools": tools_param})),
-                    budget=_info["budget"],
-                )
+            self._last_breakdown = compute_breakdown_from_dicts(
+                messages,
+                tool_schema_chars=len(_json_dumps_args({"tools": tools_param})),
+                budget=effective_budget,
+            )
 
             # ── 行动：LLM 决策 ──
             self._phase("action.llm_decide")
