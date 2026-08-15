@@ -32,6 +32,10 @@ describe("消息反馈", () => {
       expect(calls.some((c) => c.includes("feedback") && c.includes('"up"'))).toBe(true);
     });
     expect(calls.some((c) => c.includes('"message_index":3'))).toBe(true);
+    // 点击后出现常显确认态（不再随 hover 消失）
+    await waitFor(() => {
+      expect(screen.getByText("👍 已记录（有帮助）")).toBeInTheDocument();
+    });
   });
 });
 
