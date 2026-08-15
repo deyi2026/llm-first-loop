@@ -274,16 +274,6 @@ def _blocked_private_url(url: str) -> str:
     return _resolve_checked_ips(url)[0]
 
 
-def _blocked_private_url(url: str) -> str:
-    """URL 目标是否命中私网/保留地址段；返回命中说明（未命中返回空串）.
-
-    检查链路: host 为 IP 字面量直接判定；域名经 getaddrinfo 解析后逐地址判定
-    （任一地址命中即拦截——DNS rebinding 面收窄）。解析失败 fail-open 放行
-    （域名解析失败后续请求会如实报网络错误）。
-    """
-    return _resolve_checked_ips(url)[0]
-
-
 class _PrivateTargetBlockedError(Exception):
     """P0-2: 重定向/连接后校验命中私网目标（execute 捕获转 BLOCKED 回执）."""
 
