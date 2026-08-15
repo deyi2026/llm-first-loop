@@ -222,7 +222,7 @@ class Settings:
     tool_timeout_s: float = 60.0
     tool_max_output_chars: int = 100000
     # EVO-20260811-22a7d3e1: 工具输出分层注入阈值（超过则默认注入首/尾摘要，原文另存可检索）
-    tool_summary_threshold: int = 5000
+    tool_summary_threshold: int = 12000  # 2026-08-15 放大字数（5000→12000；截断信号强化批次）
     # EVO-20260811-7baa2737: 历史分层降级（旧长 tool 消息降级为摘要，原文归档）
     tool_trim_enabled: bool = True
     # R3: tool_trim 自适应降级年龄（0=自适应：按占用率自动调 <40%→20/40-70%→10/>70%→5；>0=固定值禁用自适应）
@@ -489,7 +489,7 @@ def load_settings() -> Settings:
         event_hooks_config=os.environ.get("EVENT_HOOKS_CONFIG", "").strip(),
         tool_timeout_s=float(_env_int("TOOL_TIMEOUT_S", 60)),
         tool_max_output_chars=_env_int("TOOL_MAX_OUTPUT_CHARS", 100000),
-        tool_summary_threshold=_env_int("TOOL_SUMMARY_THRESHOLD", 5000),
+        tool_summary_threshold=_env_int("TOOL_SUMMARY_THRESHOLD", 12000),  # 2026-08-15 放大字数
         tool_trim_enabled=_env_bool("TOOL_TRIM_ENABLED", True),
         tool_trim_age=_env_int("TOOL_TRIM_AGE", 0),
         tool_trim_threshold=_env_int("TOOL_TRIM_THRESHOLD", 8000),

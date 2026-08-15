@@ -38,6 +38,7 @@ class _RunState:
     overflow_reinject_count: int = 0
     context_warning_injected: bool = False
     round_warning_injected: bool = False
+    exhaustion_decision_used: bool = False  # 轮次耗尽决策轮一次性标志（2026-08-15）
     last_snapshot_count: int = 0
     last_breakdown: Any = None
     last_build_info: Any = None
@@ -88,6 +89,14 @@ class _RunStateMixin:
     @_round_warning_injected.setter
     def _round_warning_injected(self, value: bool) -> None:
         self._run_state().round_warning_injected = value
+
+    @property
+    def _exhaustion_decision_used(self) -> bool:
+        return self._run_state().exhaustion_decision_used
+
+    @_exhaustion_decision_used.setter
+    def _exhaustion_decision_used(self, value: bool) -> None:
+        self._run_state().exhaustion_decision_used = value
 
     @property
     def _last_snapshot_count(self) -> int:

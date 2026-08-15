@@ -37,7 +37,7 @@ class ToolRegistry:
         safety_guard: CatastrophicGuard | None = None,
         tool_timeout_s: float = 60.0,
         max_output_chars: int = 100000,
-        summary_threshold: int = 5000,
+        summary_threshold: int = 12000,  # 2026-08-15 放大字数（5000→12000）
         archive_store: Any | None = None,
         failure_guidance_enabled: bool = True,
         # EVO-d78b270c: 经验库（MemoryStore）注入——失败回执按错误关键词检索
@@ -572,14 +572,23 @@ class ToolRegistry:
             return f'search_archive(query="{q}", tool_name="{name}")'
         return f'search_archive(tool_name="{name}")'
 
+    # 2026-08-15 截断信号强化（用户需求）：行动指引统一文案——摘要/截断回执均附。
+    # 程序只发信号不替 AI 摘要（RULE-AI-00）：提炼与纳入最终总结由 AI 完成。
+    _DISTILL_GUIDANCE = (
+        "行动指引：中部/被省略内容不在当前上下文——继续推理前，请先把可见要点与"
+        "待核实缺口提炼记录（写入你的推理链或 [[memory]] 记忆块），最终总结时请纳入"
+        "这些要点与缺口说明。"
+    )
+
     @staticmethod
-    def _summarize_output(full: str, head_chars: int = 600, tail_chars: int = 600, call=None) -> str:
+    def _summarize_output(full: str, head_chars: int = 2500, tail_chars: int = 2500, call=None) -> str:
         """输出分层摘要: 首部 + 尾部 + 规模 + 检索指引（命令输出关键信息常在尾部）.
 
         原文已由调用方完整另存至压缩档案（信息零丢失），此处仅注入摘要。
         内容未超首尾窗口时完整展示但仍带"输出摘要"标注（AI 可感知已分层）。
         EVO-20260814-e5b045d3: 指引升级为可直接照抄的 search_archive 调用示例
         （query 取路径 basename/命令前缀 + tool_name 过滤），避免 AI 换命令重读原文空耗轮数。
+        2026-08-15 放大字数：首尾窗口 600/600 → 2500/2500；附提炼要点行动指引。
         """
         hint = (
             f"查看完整原文请直接调用 {ToolRegistry._archive_query_hint(call)}"
@@ -598,7 +607,7 @@ class ToolRegistry:
         return (
             f"[输出摘要] 共 {n} 字符，以下为首部/尾部关键内容"
             f"（完整内容已另存至压缩档案，{hint}）：\n"
-            f"── 首部 ──\n{head}\n── 尾部 ──\n{tail}"
+            f"── 首部 ──\n{head}\n── 尾部 ──\n{tail}\n{ToolRegistry._DISTILL_GUIDANCE}"
         )
 
     def _is_destructive_tool(self, name: str) -> bool:
@@ -708,7 +717,8 @@ class ToolRegistry:
             if len(result.content) > self.max_output_chars:
                 result.content = (
                     result.content[: self.max_output_chars]
-                    + f"\n…[结果超长，已截断，共 {len(result.content)} 字符]；完整内容已另存至压缩档案，可用 search_archive 检索找回…"
+                    + f"\n…[结果超长，已截断，共 {len(result.content)} 字符]；完整内容已另存至压缩档案，可用 search_archive 检索找回…\n"
+                    + self._DISTILL_GUIDANCE
                 )
         elif len(result.content) > self.max_output_chars:
             # 未超摘要阈值但超硬上限（阈值配置异常）→ 存档 + 截断（T22 既有行为）
@@ -716,7 +726,8 @@ class ToolRegistry:
             self._archive_oversize_output(call, full)
             result.content = (
                 full[: self.max_output_chars]
-                + f"\n…[结果超长，已截断，共 {len(full)} 字符]；完整结果已另存至压缩档案，可用 search_archive 检索找回…"
+                + f"\n…[结果超长，已截断，共 {len(full)} 字符]；完整结果已另存至压缩档案，可用 search_archive 检索找回…\n"
+                + self._DISTILL_GUIDANCE
             )
         # 约束 C1 绑定: 工具返回的 tool_call_id 必须等于声明 id（空/不一致都纠正为
         # call.id，防 execute_many 索引键错位导致 KeyError 中断整轮）

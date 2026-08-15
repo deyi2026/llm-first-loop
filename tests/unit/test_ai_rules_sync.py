@@ -1,7 +1,7 @@
 """T47: AI 规则一致性校验（FR-AUD-DOC-02）.
 
 docs/ai_rules.md 为唯一规则真相源，core/prompt.py 为其派生呈现。
-断言十一条规则（RULE-AI-00~10）关键动作句双向包含，防漂移。
+断言十二条规则（RULE-AI-00~11）关键动作句双向包含，防漂移。
 """
 
 from __future__ import annotations
@@ -82,6 +82,16 @@ _RULE_KEYWORDS = {
         "model_window",  # 上下文窗口自查
         "思考链自知",  # M66 思考链省略自知
     ],
+    # RULE-AI-11: 截断提炼 + 轮次耗尽自主归因（2026-08-15 截断信号强化）
+    "RULE-AI-11": [
+        "截断提炼与轮次耗尽自主归因",  # 规则编号名
+        "提炼记录",  # 截断信号 → 先提炼要点再推理
+        "最终总结",  # 要点纳入最终总结
+        "轮次决策请求",  # 耗尽信号
+        "工具使用错误",  # 归因情形①
+        "adjust_strategy",  # 正常推进 → 调大续跑
+        "硬上限 500",  # 程序兜底边界
+    ],
 }
 
 
@@ -104,7 +114,7 @@ def test_prompt_has_rule_numbers():
 
 
 def test_rules_consistent_both_sides():
-    """十一条规则关键动作句在 ai_rules.md 与 prompt.py 双向包含（防漂移）."""
+    """十二条规则关键动作句在 ai_rules.md 与 prompt.py 双向包含（防漂移）."""
     doc = _read("docs/ai_rules.md")
     prompt = _read("src/llm_loop/core/prompt.py")
     for rule_id, keywords in _RULE_KEYWORDS.items():

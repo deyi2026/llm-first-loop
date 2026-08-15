@@ -59,6 +59,7 @@ def test_complexity_reduction(engine_src):
 
     基线: 拆分后 946 → HARNESS-02/04（request.meta 快照 + 预算预警）入主循环后 955
     → P2-4(2026-08-15) close() 生命周期接线后 1009（新增 18 行：LLM httpx 连接释放）。
-    仍低于拆分前, 守卫防再膨胀（>1015 应触发拆分评审）。
+    → 2026-08-15 轮次耗尽决策轮（[轮次决策请求] 一次性注入分支）后 1023（新增 14 行）。
+    仍低于拆分前, 守卫防再膨胀（>1035 应触发拆分评审）。
     """
-    assert len(engine_src.splitlines()) < 1015
+    assert len(engine_src.splitlines()) < 1035

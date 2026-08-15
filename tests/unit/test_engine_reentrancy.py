@@ -105,7 +105,7 @@ def _make_files(tmp_path):
     small = tmp_path / "data" / "x.txt"
     small.write_text("小文件", encoding="utf-8")
     big = tmp_path / "data" / "y.txt"
-    big.write_text("y" * 6000, encoding="utf-8")  # 超 summary_threshold(5000) 触发归档
+    big.write_text("y" * 13000, encoding="utf-8")  # 超 summary_threshold(12000，2026-08-15 新默认) 触发归档
 
 
 def test_concurrent_runs_isolated_state_and_archive(build_test_engine, tmp_path):
