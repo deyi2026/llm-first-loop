@@ -25,7 +25,10 @@ def test_arkcli_backend_success_parses_content(monkeypatch):
     """成功：扁平 schema content 解析返回."""
     monkeypatch.setenv("WEB_VISION_BACKEND", "arkcli")
     data = json.dumps({"id": "r1", "model": "doubao-seed-1-6", "content": "图片内容：红色方块", "usage": {}})
-    with mock.patch("llm_loop.web.vision.subprocess.run", return_value=_proc(data)) as run:
+    with (
+        mock.patch("llm_loop.web.vision.shutil.which", return_value="/bin/arkcli"),
+        mock.patch("llm_loop.web.vision.subprocess.run", return_value=_proc(data)) as run,
+    ):
         text = vision.describe_image(b"PNGDATA", mime="image/png", prompt="描述")
     assert text == "图片内容：红色方块"
     # 命令行含 image-caption + @临时文件 + no-progress + format json
@@ -40,6 +43,7 @@ def test_arkcli_auth_failure_gives_actionable_hint(monkeypatch):
     monkeypatch.setenv("WEB_VISION_BACKEND", "arkcli")
     err = json.dumps({"ok": False, "error": {"type": "error", "message": "not logged in, SSO token expired"}})
     with (
+        mock.patch("llm_loop.web.vision.shutil.which", return_value="/bin/arkcli"),
         mock.patch("llm_loop.web.vision.subprocess.run", return_value=_proc("", code=1, err=err)),
         pytest.raises(RuntimeError) as ei,
     ):
@@ -53,6 +57,7 @@ def test_arkcli_timeout_reports(monkeypatch):
     """超时 → RuntimeError（如实）."""
     monkeypatch.setenv("WEB_VISION_BACKEND", "arkcli")
     with (
+        mock.patch("llm_loop.web.vision.shutil.which", return_value="/bin/arkcli"),
         mock.patch(
             "llm_loop.web.vision.subprocess.run",
             side_effect=__import__("subprocess").TimeoutExpired("arkcli", 60),
