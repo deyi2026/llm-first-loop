@@ -126,12 +126,24 @@ function StreamingHint({ startedAt }: { startedAt: number | null }) {
 
 function FeedbackButtons({ sessionId, index }: { sessionId: string; index: number }) {
   const [picked, setPicked] = useState<"up" | "down" | null>(null);
+  const [saved, setSaved] = useState(false);
   const send = async (fb: "up" | "down") => {
     if (picked) return; // 一次性反馈（本地状态）
     setPicked(fb);
     const ok = await submitFeedback(sessionId, index, fb);
+    setSaved(ok);
     if (!ok) setPicked(null); // 失败复位可重试
   };
+  if (saved) {
+    // 反馈已记录：常显确认态（不随 hover 消失，点击有明确反馈）
+    return (
+      <div className="v2-feedback saved" data-testid="msg-feedback">
+        <span className={`v2-fb-saved ${picked === "up" ? "up" : "down"}`}>
+          {picked === "up" ? "👍 已记录（有帮助）" : "👎 已记录（有问题）"}
+        </span>
+      </div>
+    );
+  }
   return (
     <div className="v2-feedback" data-testid="msg-feedback">
       <button

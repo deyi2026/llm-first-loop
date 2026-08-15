@@ -439,6 +439,34 @@
   color: var(--dsw-alias-state-error-primary);
 }
 
+.v2-fb-btn.picked {
+  color: var(--dsw-alias-state-success-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 14%, transparent);
+}
+
+.v2-feedback.saved {
+  opacity: 1 !important;
+}
+
+.v2-fb-saved {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: var(--dsw-radius-sm);
+  font-size: 12px;
+  line-height: 18px;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.v2-fb-saved.up {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.v2-fb-saved.down {
+  color: var(--dsw-alias-state-error-primary);
+}
+
 /* ── 子代理标签 ── */
 .v2-channel-tag.subagent {
   color: var(--dsw-alias-state-business-primary);
