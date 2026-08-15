@@ -110,6 +110,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         base_url=settings.llm_base_url,
         model=settings.llm_model,
         timeout_s=settings.llm_timeout_s,
+        max_tokens=settings.llm_max_tokens,  # 2026-08-15 显式输出预算
         # M20 THK-01: 思考参数装配一次，三条 LLM 路径统一受益（VAL-02）
         thinking_mode=settings.thinking_mode,
         reasoning_effort=settings.reasoning_effort,

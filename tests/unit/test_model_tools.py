@@ -80,6 +80,7 @@ class _FakeLLM:
 
     def __init__(self, model: str = "deepseek-v4-flash") -> None:
         self.model = model
+        self.max_tokens: int | None = None  # 2026-08-15: 对齐 LLMClient 新装配字段
         self.timeout_s = 120.0
         self.thinking_mode = True
         self.reasoning_effort = "high"

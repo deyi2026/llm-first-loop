@@ -199,6 +199,7 @@ class Settings:
     # 仍受 adjust_strategy 硬上限 500 约束；80% 轮数时程序注入 [轮数预警]（AI 可自主调大）
     max_iterations: int = 40
     llm_timeout_s: float = 120.0
+    llm_max_tokens: int = 8192  # 2026-08-15: 显式输出预算（默认 8192，防模型默认 4096 截断长分析；思考链也占此预算）
 
     # ── 数据目录 ──
     data_dir: str = "./data"
@@ -478,6 +479,7 @@ def load_settings() -> Settings:
         reasoning_effort=_env_effort("LLM_REASONING_EFFORT"),
         max_iterations=_env_int("LLM_MAX_ITERATIONS", 40),
         llm_timeout_s=float(_env_int("LLM_TIMEOUT_S", 120)),
+        llm_max_tokens=_env_int("LLM_MAX_TOKENS", 8192),  # 2026-08-15 显式输出预算
         data_dir=os.environ.get("DATA_DIR", "./data").strip(),
         # D1 事件日志（EVENT_LOG_ENABLED / EVENT_LOGS_DIR 透传）
         event_log_enabled=_env_bool("EVENT_LOG_ENABLED", True),
