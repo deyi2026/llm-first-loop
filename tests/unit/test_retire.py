@@ -26,15 +26,28 @@ def _build_dual_track(tmp_path: Path, num_sessions: int = 2) -> Path:
 
 
 def test_retire_basic(tmp_path):
-    """退役基本流程：备份→对账→归档→切换."""
+    """退役基本流程：备份→对账→归档→就绪切换（P1-2：如实标注，不伪造切换事实）."""
     data_dir = _build_dual_track(tmp_path, num_sessions=2)
     report = run_retire(data_dir)
     assert report.error == "", report.error
     assert report.reconcile_passed
     assert "backup" in report.retired_steps
     assert "reconcile" in report.retired_steps
-    assert report.read_path_switched
+    # P1-2: 程序不替人改 .env——报告"可切换就绪" + 人工指引，而非谎称已切换
+    assert report.read_path_ready_to_switch
+    assert report.switch_instructions, "缺人工切换指引"
+    assert any("READ_PATH_SOURCE=event_log" in s for s in report.switch_instructions)
+    assert any("重启" in s for s in report.switch_instructions)
     assert "sessions" in report.archived_files
+
+
+def test_retire_already_on_event_log(tmp_path):
+    """P1-2: 当前读路径已是 event_log → 指引如实标注无需切换."""
+    data_dir = _build_dual_track(tmp_path)
+    report = run_retire(data_dir, read_path_source="event_log")
+    assert report.error == ""
+    assert report.read_path_ready_to_switch
+    assert any("已是 event_log" in s for s in report.switch_instructions)
 
 
 def test_retire_backup_created(tmp_path):
@@ -79,7 +92,7 @@ def test_retire_reconcile_failure(tmp_path):
         p.write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")
     report = run_retire(data_dir)
     assert not report.reconcile_passed
-    assert not report.read_path_switched
+    assert not report.read_path_ready_to_switch
     assert "对账不一致" in report.error
 
 

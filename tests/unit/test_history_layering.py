@@ -27,6 +27,7 @@ def test_budget_in_layer_trims_old_long_tool():
     out = build_history_messages(
         msgs, system_prompt="SYS", max_chars=100000, session_id="s1",
         archive_sink=sink, layer_tool_trim=True,
+        tool_trim_threshold=100,  # 显式小阈值强制触发折叠（与默认 8000 解耦）
     )
     contents = [str(m.get("content", "")) for m in out]
     assert any("工具输出已分层" in c for c in contents)  # 降级注入
@@ -35,12 +36,38 @@ def test_budget_in_layer_trims_old_long_tool():
     assert len(archived) == 1 and len(archived[0].content) == 5000  # 原文完整归档
 
 
+def test_trim_uses_key_facts_digest():
+    """EVO-20260815: 折叠含路径/URL 的长 tool 消息 → 注入关键事实摘要（摘要优先），
+    而非机械首尾截断把中间信息丢给 AI 迫使二次检索浪费 token."""
+    archived: list[Message] = []
+    content = (
+        "抓取结果: https://m.toutiao.com/article/7674130972811608626\n"
+        "- 关键动作: 修复 /Users/yyj/Project/llm-first-loop/src/llm_loop/core/history.py 折叠逻辑\n"
+        "- 验证: tests/unit/test_history_layering.py 全部通过\n"
+        "正文细节（不应出现在摘要里）: 大量展开内容" * 80
+    )
+    msgs = [_tool_msg(content)] + [_user(f"问题{i}") for i in range(24)]
+    out = build_history_messages(
+        msgs, system_prompt="SYS", max_chars=100000, session_id="s1",
+        archive_sink=lambda sid, m: archived.append(m), layer_tool_trim=True,
+        tool_trim_threshold=100,  # 显式小阈值强制触发折叠
+    )
+    folded = [str(m.get("content", "")) for m in out if "工具输出已分层" in str(m.get("content", ""))]
+    assert folded, "应触发折叠"
+    c = folded[0]
+    # 摘要优先: 注入关键事实/路径（规则提取），而非只有首尾截断
+    assert "关键事实" in c
+    assert "history.py" in c or "关键路径" in c
+    # 原文完整归档（信息零丢失）
+    assert len(archived) == 1 and "正文细节" in archived[0].content
+
+
 def test_recent_tool_not_trimmed():
     """距最新消息 < age 条的 tool 消息保留完整（保护最近上下文）."""
     msgs = [_user("问题0"), _tool_msg("E" * 5000), _user("最新问题")]
     out = build_history_messages(
         msgs, system_prompt="SYS", max_chars=100000, session_id="s1",
-        layer_tool_trim=True,
+        layer_tool_trim=True, tool_trim_threshold=100,  # 显式小阈值：测 age 逻辑（最近保留）而非长度
     )
     contents = [str(m.get("content", "")) for m in out]
     assert not any("工具输出已分层" in c for c in contents)
@@ -131,6 +158,7 @@ def test_adaptive_age_via_build_history():
     out_high = build_history_messages(
         msgs, system_prompt="S", max_chars=7000, session_id="s",
         archive_sink=sink, layer_tool_trim=True, tool_trim_age=0,
+        tool_trim_threshold=100,  # 显式小阈值强制触发折叠（与默认 8000 解耦）
     )
     assert any("工具输出已分层" in str(m.get("content", "")) for m in out_high)
     # 低占用：total~5016, max=1000000 → < 40% → age=20 → 距最新 8 < 20 → 不降级
@@ -149,6 +177,7 @@ def test_fixed_age_disables_adaptive():
     out = build_history_messages(
         msgs, system_prompt="S", max_chars=7000, session_id="s",
         archive_sink=sink, layer_tool_trim=True, tool_trim_age=20,
+        tool_trim_threshold=100,  # 显式小阈值：测 age 逻辑（8<20 不降级）而非长度
     )
     assert not any("工具输出已分层" in str(m.get("content", "")) for m in out)
 

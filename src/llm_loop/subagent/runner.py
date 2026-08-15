@@ -11,7 +11,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 
 from llm_loop.core.message import Message, MessageSource, ToolCall
-from llm_loop.core.session import SessionStore
+from llm_loop.core.session import Session, SessionStore
 from llm_loop.llm.client import LLMClient
 from llm_loop.tools.registry import ToolRegistry
 
@@ -78,10 +78,33 @@ class SubAgentRunner:
         sess = self.session_store.load(sid)
         with suppress(Exception):
             self.session_store.save(sess)  # 落盘（可审计）
-        # 注入子代理 session_id（change_log/status hook 依赖；父会话由 engine.run 恢复）
-        with suppress(Exception):
-            self.registry.set_session_id(sid)
 
+        # P1-5(审计发现 #10): 子代理执行期间切换到子会话，执行结束必须恢复父会话——
+        # 否则父级后续的超长工具结果归档/变更日志会归错到子会话（串台）。
+        # registry._session_id 为 contextvar 优先（P0-5），因此显式回退字段与
+        # current_session_id 两者都要保存/恢复；用值快照 + set 还原（engine 层
+        # 已验证该模式跨 Context 兼容——token reset 跨 Context 会抛 ValueError）。
+        from llm_loop.core.run_context import current_session_id
+
+        old_explicit = getattr(self.registry, "_session_id_explicit", "")
+        old_ctx_sid = current_session_id.get()
+        try:
+            with suppress(Exception):
+                self.registry.set_session_id(sid)
+            with suppress(Exception):
+                current_session_id.set(sid)
+            return self._execute_subagent(sess, task, context, depth)
+        finally:
+            # 恢复父会话（成功/异常/截断任何返回路径都必须执行）
+            with suppress(Exception):
+                self.registry.set_session_id(old_explicit)
+            with suppress(Exception):
+                current_session_id.set(old_ctx_sid)
+
+    def _execute_subagent(
+        self, sess: Session, task: str, context: str, depth: int
+    ) -> SubAgentResult:
+        """子代理循环本体（会话注入/恢复由 run 包裹；拆出保证 finally 覆盖全部返回路径）."""
         # 构造子代理消息
         sys_prompt = (
             f"你是递归子代理（深度 {depth}/{self.max_depth}）。你的任务:\n{task}\n"

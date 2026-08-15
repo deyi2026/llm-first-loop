@@ -23,7 +23,13 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ForkReport:
-    """fork 操作报告（design.md §2.2.2-A）."""
+    """fork 操作报告（design.md §2.2.2-A）.
+
+    P1-6(2026-08-15，审计发现 #15)：fork 点落在 assistant(tool_calls) 与其 tool
+    回执之间时，自动向前对齐到完整工具轮边界（不产孤儿声明——孤儿声明会在分支
+    下次运行时被配对修复伪造 `[程序异常]` 回执）。``snapped_fork_point`` 为实际
+    生效点（未指定 fork 点时为 None）。
+    """
 
     new_session_id: str
     source_session_id: str
@@ -32,6 +38,7 @@ class ForkReport:
     elapsed_ms: float
     success: bool
     error: str = ""
+    snapped_fork_point: int | None = None  # 工具轮边界对齐后的实际 fork 点（如实）
 
 
 def _now_iso() -> str:
@@ -69,6 +76,7 @@ def fork_session(
         inherited: int = 0,
         success: bool = False,
         error: str = "",
+        snapped: int | None = None,
     ) -> ForkReport:
         return ForkReport(
             new_session_id=new_id,
@@ -78,6 +86,7 @@ def fork_session(
             elapsed_ms=round((time.monotonic() - start) * 1000, 2),
             success=success,
             error=error,
+            snapped_fork_point=snapped,
         )
 
     # 加载源会话（session JSON）——用于 session JSON 双轨生成 + 消息数计算
@@ -94,6 +103,17 @@ def fork_session(
         )
 
     effective_fp = fork_point if fork_point is not None else msg_count
+    # P1-6(2026-08-15，审计发现 #15)：fork 点对齐到完整工具轮边界——
+    # 切在 assistant(tool_calls) 与其 tool 回执之间会产生孤儿声明（分支下次运行
+    # 被配对修复伪造 [程序异常] 回执 / API 400），向前收到该 assistant 之前。
+    snapped_fp = (
+        _snap_fork_point(source_session.messages, effective_fp) if fork_point is not None else None
+    )
+    if snapped_fp is not None and snapped_fp != effective_fp:
+        logger.info(
+            "fork 点工具轮对齐: %d → %d（孤儿声明不入分支，如实报告）", effective_fp, snapped_fp
+        )
+        effective_fp = snapped_fp
 
     # 生成新 session_id
     new_id = str(uuid.uuid4())
@@ -136,8 +156,9 @@ def fork_session(
             inherited=inherited_count,
             success=False,
             error=event_error,
+            snapped=snapped_fp,
         )
-    return _report(new_id=new_id, inherited=inherited_count, success=True)
+    return _report(new_id=new_id, inherited=inherited_count, success=True, snapped=snapped_fp)
 
 
 def _write_event_log(
@@ -201,6 +222,44 @@ def _write_event_log(
         return len(inherited_events), f"session.forked 写入失败（fail-open）: {exc}"
 
     return len(inherited_events), ""
+
+
+def _snap_fork_point(messages: list, fp: int) -> int:
+    """fork 点对齐到完整工具轮边界（P1-6，审计发现 #15）.
+
+    截断前缀中若存在"声明了 tool_calls 但回执不全"的 assistant 消息（孤儿声明），
+    向前收到最后一个含孤儿声明的 assistant 之前；前缀配对完整则原样返回。
+    源会话自身遗留的孤儿声明同样被排外（防御性对齐，逐轮递减必终止）。
+    """
+    fp = max(0, min(fp, len(messages)))
+    while fp > 0:
+        declared: set[str] = set()
+        answered: set[str] = set()
+        for m in messages[:fp]:
+            if m.role == "assistant" and m.tool_calls:
+                for tc in m.tool_calls:
+                    if isinstance(tc, dict) and tc.get("id"):
+                        declared.add(str(tc["id"]))
+            elif m.role == "tool" and m.tool_call_id:
+                answered.add(str(m.tool_call_id))
+        orphan = declared - answered
+        if not orphan:
+            return fp
+        for i in range(fp - 1, -1, -1):
+            m = messages[i]
+            if (
+                m.role == "assistant"
+                and m.tool_calls
+                and any(
+                    isinstance(tc, dict) and str(tc.get("id") or "") in orphan
+                    for tc in m.tool_calls
+                )
+            ):
+                fp = i
+                break
+        else:
+            return fp  # 找不到声明者（理论不可达）——保持当前边界
+    return fp
 
 
 def _truncate_events(events: list, fork_point: int) -> list:

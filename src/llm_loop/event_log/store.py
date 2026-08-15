@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+import time
 import uuid
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -27,8 +30,12 @@ def _now_iso() -> str:
 class EventStore:
     """事件日志存储（append-only 单一真相源）.
 
-    事件文件布局: `event_logs_dir/<session_id>.jsonl`；跨进程并发写同会话
-    经 fcntl.flock 写锁兜底保证行不交错（对齐 session.py 跨进程原子写约定）。
+    事件文件布局: `event_logs_dir/<session_id>.jsonl`（单文件）或
+    `event_logs_dir/<session_id>/<segment_seq>.jsonl`（多段，滚动后）。
+    并发写同会话经会话级稳定锁文件 `<sid>.lock`（flock）兜底——
+    P1-1(2026-08-15，审计发现 #9)：滚动检查（含单文件→多段迁移）与追加
+    在同一把锁内完成，跨进程并发不再因"检查在锁外"竞态丢事件；
+    多段形态追加时 seq 全局续号（活跃段扫描 + 末归档段末事件取大）。
     """
 
     def __init__(
@@ -39,6 +46,17 @@ class EventStore:
         self._hook_chain = hook_chain
         # 最近一次 read 如实跳过的损坏行数（供调用方标注，不伪造）
         self.last_read_skipped: int = 0
+        # P1-1: 滚动管理器（None = 不自动滚动，零回归；set_rotate_manager 显式接线）
+        self._rotate_manager: Any | None = None
+        # P1-1: append 路径滚动检查节流（天级触发需读文件，30s 粒度足够）
+        self._rotate_checked_at: dict[str, float] = {}
+        # P1-1: 会话级稳定锁的进程内回退（fcntl 不可用时）与锁表守护
+        self._fallback_locks: dict[str, threading.Lock] = {}
+        self._fallback_locks_guard = threading.Lock()
+
+    def set_rotate_manager(self, manager: Any | None) -> None:
+        """接线滚动管理器（P1-1：append/run 末自动检查滚动；None 解除接线）."""
+        self._rotate_manager = manager
 
     @property
     def enabled(self) -> bool:
@@ -74,6 +92,66 @@ class EventStore:
         except OSError as exc:
             logger.warning("事件日志目录创建失败（fail-open）: %s: %s", self._dir, exc)
             return False
+
+    # ── P1-1: 会话级稳定锁（滚动+追加同锁，闭合审计 #9 竞态）──
+    @contextmanager
+    def _session_flock(self, session_id: str):
+        """会话级稳定锁（`<sid>.lock` flock；fcntl 不可用回退进程内锁；锁失败告警降级）.
+
+        锁文件独立于事件文件——滚动会移动/新建事件文件（inode 变化），
+        文件锁无法跨越迁移边界提供互斥，稳定锁文件可以。
+        """
+        lock_path = self._dir / f"{session_id}.lock"
+        try:
+            import fcntl
+        except ImportError:
+            with self._fallback_locks_guard:
+                lock = self._fallback_locks.setdefault(session_id, threading.Lock())
+            with lock:
+                yield
+            return
+        try:
+            with lock_path.open("a") as lf:
+                fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+        except OSError as exc:
+            # 锁不可用降级（fail-open 保可用性，与 append 的写失败语义一致）
+            logger.warning("事件日志会话锁不可用（降级无锁写入）: %s", exc)
+            yield
+
+    def check_rotate(self, session_id: str) -> None:
+        """公开滚动检查（引擎 run 末钩子/运维入口）：完整检查不节流，fail-open 不抛."""
+        rm = self._rotate_manager
+        if rm is None or not self._enabled:
+            return
+        try:
+            with self._session_flock(session_id):
+                rm.check_and_rotate(session_id)  # 锁内检查+迁移（审计 #9 竞态闭合）
+            self._rotate_checked_at[session_id] = time.monotonic()
+        except Exception:  # noqa: BLE001 — 滚动失败不影响主流程
+            logger.warning("事件日志滚动检查失败（fail-open）: sid=%s", session_id, exc_info=True)
+
+    def _rotate_check_throttled(self, session_id: str) -> None:
+        """append 内联滚动检查：大小触发每次查（stat 廉价），天数触发 30s 节流（需读文件）."""
+        rm = self._rotate_manager
+        if rm is None:
+            return
+        try:
+            p = (
+                self._active_segment_path(session_id)
+                if self._is_multi_segment(session_id)
+                else self._path(session_id)
+            )
+            size_hit = rm.size_triggered(p)
+            now = time.monotonic()
+            if size_hit or now - self._rotate_checked_at.get(session_id, 0.0) >= 30.0:
+                rm.check_and_rotate(session_id)  # 调用方已持会话锁
+                self._rotate_checked_at[session_id] = now
+        except Exception:  # noqa: BLE001
+            logger.warning("事件日志滚动检查失败（fail-open）: sid=%s", session_id, exc_info=True)
 
     def last_seq(self, session_id: str) -> int:
         """会话内最大 seq（无事件返回 0）."""
@@ -118,10 +196,12 @@ class EventStore:
         event_type: str,
         payload: dict,
     ) -> Event | None:
-        """追加事件（flock 写锁覆盖"读续号 + 写"临界区；失败 fail-open 返回 None）.
+        """追加事件（会话级稳定锁覆盖"滚动检查 + 读续号 + 写"临界区；失败 fail-open 返回 None）.
 
-        seq 续号与落盘在同一把写锁内完成，保证多进程并发写同会话时 seq 单调不重号
-        （行不交错 + 序号不冲突）。目录不可写 → 如实记录并返回 None（不抛穿主循环）。
+        P1-1(2026-08-15，审计发现 #9)：滚动检查（含单文件→多段迁移）与追加在
+        同一把 `<sid>.lock` flock 内完成——跨进程并发写同会话 seq 单调不重号、
+        迁移不丢事件。多段形态 seq 全局续号（活跃段 + 末归档段取大）。
+        目录不可写 → 如实记录并返回 None（不抛穿主循环）。
 
         Returns:
             已落盘事件；写入不可用/失败返回 None（调用方经日志感知，不抛穿主循环）。
@@ -130,27 +210,59 @@ class EventStore:
             return None
         if not self._ensure_dir():
             return None
-        # 多段形态写入活跃段，单文件形态写入单文件
-        if self._is_multi_segment(session_id):
-            p = self._active_segment_path(session_id)
-        else:
-            p = self._path(session_id)
-        try:
-            with p.open("a+", encoding="utf-8") as f:
-                try:
-                    import fcntl
-
-                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-                    try:
-                        event = self._append_locked(f, session_id, event_type, payload)
-                    finally:
-                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-                except ImportError:
+        with self._session_flock(session_id):
+            # 锁内滚动检查（节流）：大小/天数触发时先迁移再选定写入路径
+            self._rotate_check_throttled(session_id)
+            # 多段形态写入活跃段，单文件形态写入单文件
+            if self._is_multi_segment(session_id):
+                p = self._active_segment_path(session_id)
+            else:
+                p = self._path(session_id)
+            try:
+                with p.open("a+", encoding="utf-8") as f:
                     event = self._append_locked(f, session_id, event_type, payload)
-        except OSError as exc:
-            logger.warning("事件日志写入失败（fail-open）: %s: %s", p, exc)
-            return None
+            except OSError as exc:
+                logger.warning("事件日志写入失败（fail-open）: %s: %s", p, exc)
+                return None
         return event
+
+    def _global_last_seq_locked(self, f, session_id: str) -> int:
+        """稳定锁内取会话全局最大 seq：活跃段文件扫描 + 末归档段末事件取大.
+
+        seq 全局单调（本方法即保证者），故归档段中只需读末段的末事件。
+        """
+        last = 0
+        f.seek(0)
+        for raw in f:
+            line = raw.strip()
+            if not line:
+                continue
+            ev = self._parse_line(line)
+            if ev is not None and ev.seq > last:
+                last = ev.seq
+        segs = self._all_segment_paths(session_id)
+        if len(segs) >= 2:  # 多段形态且有归档段
+            for ev in self._read_last_event_of(segs[-2]):
+                if ev.seq > last:
+                    last = ev.seq
+        return last
+
+    @staticmethod
+    def _read_last_event_of(path: Path) -> list[Event]:
+        """读文件最后一个有效事件（单元素列表；无则空）."""
+        last: Event | None = None
+        try:
+            with path.open("r", encoding="utf-8") as fp:
+                for raw in fp:
+                    line = raw.strip()
+                    if not line:
+                        continue
+                    ev = EventStore._parse_line(line)
+                    if ev is not None:
+                        last = ev
+        except OSError:
+            pass  # 读取失败 fail-open（seq 退化为活跃段扫描结果）
+        return [last] if last is not None else []
 
     def _append_locked(
         self,
@@ -159,16 +271,8 @@ class EventStore:
         event_type: str,
         payload: dict,
     ) -> Event | None:
-        """锁内执行：读最后有效 seq → 分配新 seq → 追加写（O_APPEND 语义）."""
-        f.seek(0)
-        last = 0
-        for raw in f:
-            line = raw.strip()
-            if not line:
-                continue
-            ev = self._parse_line(line)
-            if ev is not None and ev.seq > last:
-                last = ev.seq
+        """锁内执行：全局续号（多段取全局最大）→ 分配新 seq → 追加写（O_APPEND 语义）."""
+        last = self._global_last_seq_locked(f, session_id)
         event = Event(
             event_id=str(uuid.uuid4()),
             session_id=session_id,
@@ -201,35 +305,23 @@ class EventStore:
             return None
         if not self._ensure_dir():
             return None
-        p = self._path(session_id)
-        try:
-            with p.open("a+", encoding="utf-8") as f:
-                try:
-                    import fcntl
-
-                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-                    try:
-                        new_event = self._append_event_locked(f, session_id, event)
-                    finally:
-                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-                except ImportError:
+        # P1-1: 与 append 同一把会话级稳定锁（fork 复制目标可能是多段形态）
+        with self._session_flock(session_id):
+            if self._is_multi_segment(session_id):
+                p = self._active_segment_path(session_id)
+            else:
+                p = self._path(session_id)
+            try:
+                with p.open("a+", encoding="utf-8") as f:
                     new_event = self._append_event_locked(f, session_id, event)
-        except OSError as exc:
-            logger.warning("事件日志写入失败（fail-open）: %s: %s", p, exc)
-            return None
+            except OSError as exc:
+                logger.warning("事件日志写入失败（fail-open）: %s: %s", p, exc)
+                return None
         return new_event
 
     def _append_event_locked(self, f, session_id: str, event: Event) -> Event:
-        """锁内执行：读最后有效 seq → 重分配 → 追加写（保留 type/ts/payload）."""
-        f.seek(0)
-        last = 0
-        for raw in f:
-            line = raw.strip()
-            if not line:
-                continue
-            ev = self._parse_line(line)
-            if ev is not None and ev.seq > last:
-                last = ev.seq
+        """锁内执行：全局续号 → 重分配 → 追加写（保留 type/ts/payload）."""
+        last = self._global_last_seq_locked(f, session_id)
         new_event = Event(
             event_id=str(uuid.uuid4()),
             session_id=session_id,

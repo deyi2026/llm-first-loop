@@ -82,16 +82,27 @@ def build_engine(settings: Settings) -> LoopEngine:
     # M47（design §5.1/§5.5）: 从注册表查思考支持（消除 _thinking_supported() 硬编码 deepseek.com）.
     # 当前模型不在注册表（如显式使用未注册的模型）→ 保持 LLMClient 默认（向后兼容）.
     # M48（design §5.3）: 注册表同时为 ModelClientPool 提供服务（路由/缓存/思考查询）。
+    # P1-4（审计 #13）: resolve 失败不再静默吞掉——warning 如实告警（含用户配置的模型名与
+    # 失败原因）+ config_status 暴露 model_registry_resolved=false, 让 AI 经
+    # architecture_status 感知"模型配置未生效"（程序故障对 AI 可见原则）.
     thinking_supported: bool | None = None
+    model_registry_resolved = False
     try:
         from llm_loop.llm.providers import load_registry
 
         registry = load_registry(settings)
         provider_id, model_id = registry.resolve(settings.llm_model)
         thinking_supported = registry.supports_thinking(provider_id, model_id)
-    except ValueError:
+        model_registry_resolved = True
+    except ValueError as exc:
         # 当前模型不在注册表 → 保持 LLMClient 默认（向后兼容 _thinking_supported）
-        pass
+        # P1-4: 不再静默吞错——如实告警（含模型名与失败原因）供人工/AI 排查
+        logger.warning(
+            "模型注册表 resolve 失败: 配置模型 '%s' 未生效（能力元数据按默认处理, "
+            "可能致 thinking-mode 等模式错配）: %s",
+            settings.llm_model,
+            exc,
+        )
 
     # LLM 客户端
     llm = LLMClient(
@@ -248,7 +259,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         audit_dir=settings.audit_dir,
         cooldown_s=settings.status_report_cooldown_s,
         enabled=settings.self_inspection_enabled,
-        config_status=_build_config_status_with_evolution(settings),
+        config_status=_build_config_status_with_evolution(settings, model_registry_resolved),
         archive_stats_fn=(
             (lambda: {"archived_total": 0})
             if archive is None
@@ -540,10 +551,26 @@ def _build_event_store(settings: Settings) -> Any:
 
     默认开启（EVENT_LOG_ENABLED=1）；关闭时事件写入零行为零回归。
     会话存储与 engine 共享同一实例，保证事件 seq 续号一致。
+
+    P1-1(2026-08-15，审计发现 #9)：接线 RotateManager——append 在同一把会话锁内
+    自动检查大小/天数触发滚动（此前仅 CLI event-rotate-status 读段清单，生产
+    永不滚动）。rotate_on_session_end 保留为 RotateManager 能力（当前无"会话
+    结束"信号源，引擎在 run 末做检查钩子，不做强制滚动——如实标注）。
     """
+    from llm_loop.event_log.rotate import RotateManager
     from llm_loop.event_log.store import EventStore
 
-    return EventStore(settings.event_logs_dir, enabled=settings.event_log_enabled)
+    store = EventStore(settings.event_logs_dir, enabled=settings.event_log_enabled)
+    if settings.event_log_enabled:
+        store.set_rotate_manager(
+            RotateManager(
+                store,
+                rotate_bytes=settings.event_log_rotate_bytes,
+                rotate_days=settings.event_log_rotate_days,
+                rotate_on_session_end=settings.event_log_rotate_on_session_end,
+            )
+        )
+    return store
 
 
 def _build_fault_classifier() -> Any:
@@ -595,16 +622,21 @@ def _build_memory_stats_fn(memory) -> Any:
     return _memory_stats
 
 
-def _build_config_status_with_evolution(settings) -> Any:
+def _build_config_status_with_evolution(settings, model_registry_resolved: bool) -> Any:
     """构造 config_status 闭包: to_status_dict + evolution_summary（M17 FR-REVIEW-AI-05）.
 
     演进状态摘要（executing/pending_review 计数 + recent 摘要）为信息提供（非约束）；
     store.list() 异常 → evolution_summary.error 如实标注（fail-open，DFX-REL-08），不抛穿。
+    P1-4（审计 #13）: model_registry_resolved 由 build_engine 装配期 resolve 结果注入
+    （不在闭包内重算, 避免与装配期结果不一致）——resolve 失败时 AI 可经 architecture_status
+    感知"配置模型未生效", 成功时为 true（如实标注, 不伪造）.
     """
     from llm_loop.introspection.evolution import EvolutionStore
 
     def _config_status() -> dict:
         base = settings.to_status_dict()
+        # P1-4: 模型注册表 resolve 结果如实标注（AI 可经 architecture_status 自查）
+        base["model_registry_resolved"] = model_registry_resolved
         try:
             store = EvolutionStore(settings.audit_dir)
             items = store.list()

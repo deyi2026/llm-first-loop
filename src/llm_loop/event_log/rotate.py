@@ -50,6 +50,10 @@ class RotateManager:
         self._rotate_days = rotate_days
         self._rotate_on_session_end = rotate_on_session_end
 
+    def size_triggered(self, path: Path) -> bool:
+        """大小触发判定（stat 廉价，供 EventStore.append 每次追加内联检查）."""
+        return self._rotate_bytes > 0 and path.exists() and path.stat().st_size >= self._rotate_bytes
+
     def check_and_rotate(self, session_id: str) -> list[SegmentInfo]:
         """检测触发条件 → 触发滚动（关闭当前段为归档段 + 创建新活跃段）.
 

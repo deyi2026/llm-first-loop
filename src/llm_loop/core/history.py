@@ -199,16 +199,27 @@ def _layer_trim(
             if m.tool_name
             else "可用 search_archive(query=<关键词>) 检索找回"
         )
-        # 摘要优先（EVO-20260815）: 折叠时先提取关键事实（复用 extract_key_info，
+        # 摘要优先（EVO-20260815）: 折叠时先提取关键事实+关键路径/URL（复用 extract_key_info，
         # 规则提取零 LLM），避免机械首尾截断把中间关键信息丢给 AI 迫使二次检索浪费 token；
-        # 提取不到关键事实（无路径/URL/动作信号词）时回退首尾截断兜底（背景+结论）。
+        # 提取不到任何内容（无路径/URL/动作信号词）时回退首尾截断兜底（背景+结论）。
         digest = ""
         try:
             from llm_loop.memory.archive import extract_key_info
 
-            facts, _p, _s = extract_key_info(full, max_facts=5)
+            facts, paths, _s = extract_key_info(full, max_facts=5)
+            parts: list[str] = []
             if facts:
-                digest = "关键事实（规则提取，非语义总结；细节以原文为准）：\n- " + "\n- ".join(facts)
+                # 清洗: facts 可能保留原文行前缀（"- "等），避免 join 后出现 "- - xxx" 重复噪音
+                cleaned = [f.strip().lstrip("-").strip() for f in facts if f.strip()]
+                cleaned = [f for f in cleaned if f]
+                if cleaned:
+                    parts.append(
+                        "关键事实（规则提取，非语义总结；细节以原文为准）：\n- "
+                        + "\n- ".join(cleaned)
+                    )
+            if paths:
+                parts.append("关键路径/URL：\n- " + "\n- ".join(paths[:8]))
+            digest = "\n\n".join(parts)
         except Exception:
             digest = ""
         if not digest:
@@ -523,6 +534,41 @@ def compute_breakdown(
     }
 
 
+def _pairing_gap(messages: list[dict], i: int) -> tuple[list[str], list[str], int]:
+    """assistant(i) 声明的 tool_calls 与紧随 tool 回执的配对缺口.
+
+    P1-6(2026-08-15，审计发现 #16)：按 id 精确配对；空 id 声明/回执按位置兜底——
+    存量会话存在空 tool_call_id 回执，旧实现按"回执 id 非空"计数会漏计 → 多补占位
+    （额外 tool 消息无对应声明 → API 400）。
+
+    Returns: (declared_ids, missing_declared_ids, next_index)
+        missing 为空 = 配对完整；next_index = 紧随回执段之后的位置。
+    """
+    calls = messages[i].get("tool_calls") or []
+    declared: list[str] = []
+    for c in calls:
+        declared.append(str(c.get("id") or "") if isinstance(c, dict) else "")
+    n = len(messages)
+    receipt_ids: list[str] = []
+    j = i + 1
+    while j < n and isinstance(messages[j], dict) and messages[j].get("role") == "tool":
+        receipt_ids.append(str(messages[j].get("tool_call_id") or ""))
+        j += 1
+    # id 精确配对
+    remaining = list(receipt_ids)
+    answered: set[int] = set()
+    for di, did in enumerate(declared):
+        if did and did in remaining:
+            remaining.remove(did)
+            answered.add(di)
+    # 空 id 声明/回执按位置兜底（存量兼容，不丢弃真实回执）
+    unanswered = [di for di in range(len(declared)) if di not in answered]
+    for di, _rid in zip(unanswered, remaining, strict=False):
+        answered.add(di)
+    missing = [declared[di] for di in range(len(declared)) if di not in answered]
+    return declared, missing, j
+
+
 def validate_tool_call_pairing(messages: list[dict]) -> list[str]:
     """S2/A2: LLM 消息序列 tool_calls↔tool 消息配对自检（纯函数，无副作用）.
 
@@ -539,7 +585,6 @@ def validate_tool_call_pairing(messages: list[dict]) -> list[str]:
     """
     try:
         violations: list[str] = []
-        n = len(messages)
         for i, msg in enumerate(messages):
             if not isinstance(msg, dict):
                 continue
@@ -548,19 +593,11 @@ def validate_tool_call_pairing(messages: list[dict]) -> list[str]:
             calls = msg.get("tool_calls")
             if not calls:
                 continue
-            declared = len(calls)
-            # 其后连续 tool 消息（含 tool_call_id）计数
-            matched = 0
-            j = i + 1
-            while j < n and messages[j].get("role") == "tool":
-                if messages[j].get("tool_call_id"):
-                    matched += 1
-                j += 1
-            if matched < declared:
-                missing = declared - matched
+            declared, missing, _j = _pairing_gap(messages, i)
+            if missing:
                 violations.append(
-                    f"第 {i} 轮 assistant(tool_calls) 声明 {declared} 个工具调用，"
-                    f"其后仅 {matched} 条 tool 回执，缺 {missing} 条"
+                    f"第 {i} 轮 assistant(tool_calls) 声明 {len(declared)} 个工具调用，"
+                    f"其后仅 {len(declared) - len(missing)} 条 tool 回执，缺 {len(missing)} 条"
                 )
         return violations
     except Exception as exc:  # noqa: BLE001 — 自检异常如实标注，不静默不阻断
@@ -597,26 +634,17 @@ def _repair_tool_call_pairing(messages: list[dict]) -> list[dict]:
         m = messages[i]
         out.append(m)
         if isinstance(m, dict) and m.get("role") == "assistant" and m.get("tool_calls"):
-            calls = m["tool_calls"]
-            declared = len(calls)
-            matched = 0
-            j = i + 1
-            while j < n and messages[j].get("role") == "tool":
-                if messages[j].get("tool_call_id"):
-                    matched += 1
-                j += 1
+            # P1-6: id 精确配对 + 空 id 位置兜底（审计 #16，缺口语义与自检一致）
+            _declared, missing, j = _pairing_gap(messages, i)
             # 既有 tool 回执原序追加（占位补在真实回执之后）
             for t in range(i + 1, j):
                 out.append(messages[t])
-            # 按声明顺序补齐缺失占位
-            for k in range(matched, declared):
-                declared_id = ""
-                if isinstance(calls[k], dict):
-                    declared_id = calls[k].get("id") or ""
+            # 按声明顺序补齐缺失占位（沿用缺口声明 id；空 id 用占位 id）
+            for k, did in enumerate(missing):
                 out.append(
                     {
                         "role": "tool",
-                        "tool_call_id": declared_id or f"pairing-placeholder-{i}-{k}",
+                        "tool_call_id": did or f"pairing-placeholder-{i}-{k}",
                         "content": "[程序异常] 工具回执缺失（协议配对自检）",
                     }
                 )

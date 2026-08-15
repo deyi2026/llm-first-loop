@@ -3,6 +3,8 @@
 覆盖: env JSON 解析 / providers.json 文件通道 / LLM_* 合成零回归 /
 malformed JSON fail-soft / resolve 全限定+裸名唯一+歧义+未知 /
 supports_thinking 元数据驱动 / 密钥仅存 env 名 / client_params 缺失如实报错。
+P1-3（审计 #14）: 严格布尔解析（bool("false")==True 陷阱）/ 单条目非法独立跳过 +
+warning 如实标注 / context 缺失回退默认值。
 
 全部 Mock/构造输入, 零真实网络。
 """
@@ -10,6 +12,7 @@ supports_thinking 元数据驱动 / 密钥仅存 env 名 / client_params 缺失�
 from __future__ import annotations
 
 import json
+import logging
 
 import pytest
 
@@ -266,3 +269,137 @@ def test_settings_default_no_registry() -> None:
     """默认无 MODEL_PROVIDERS → 标志 False（零回归）."""
     s = _settings()
     assert s.to_status_dict()["model_providers_configured"] is False
+
+
+# ── P1-3（审计 #14）: 严格布尔解析 + 单条目非法独立跳过 ──
+
+
+def test_strict_bool_string_false_not_enabled(caplog: pytest.LogCaptureFixture) -> None:
+    """P1-3: 字符串 "false" 不再被 bool() 误判为 True（禁用配置不被静默启用）."""
+    raw = json.dumps(
+        {
+            "p1": {
+                "base_url": "http://a",
+                "api_key_env": "",
+                "models": {
+                    "m1": {"thinking": "false", "reasoning": "false"},
+                    "m2": {"thinking": "FALSE", "long_context": "off"},
+                },
+            }
+        }
+    )
+    reg = load_registry(_settings(model_providers_raw=raw))
+    assert reg.providers["p1"].models["m1"].thinking is False
+    assert reg.providers["p1"].models["m1"].reasoning is False
+    assert reg.providers["p1"].models["m2"].thinking is False
+    assert reg.providers["p1"].models["m2"].long_context is False
+    # 白名单内的字符串属合法值, 不产生告警
+    assert not any("非合法布尔" in r.message for r in caplog.records)
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (True, True),  # 真正 bool 直通（零回归）
+        (False, False),
+        (1, True),  # 整数 1/0 与 bool() 一致（零回归）
+        (0, False),
+        ("1", True),
+        ("0", False),
+        ("true", True),
+        ("false", False),
+        ("TRUE", True),  # 大小写不敏感
+        ("FALSE", False),
+        ("yes", True),
+        ("no", False),
+        ("on", True),
+        ("off", False),
+    ],
+)
+def test_strict_bool_whitelist(raw, expected) -> None:
+    """P1-3: 严格布尔白名单解析（仅 bool / 整数 1/0 / 白名单字符串）."""
+    reg = load_registry(
+        _settings(
+            model_providers_raw=json.dumps(
+                {"p1": {"base_url": "http://a", "api_key_env": "", "models": {"m1": {"thinking": raw}}}}
+            )
+        )
+    )
+    assert reg.providers["p1"].models["m1"].thinking is expected
+
+
+def test_invalid_bool_string_warns_and_defaults(caplog: pytest.LogCaptureFixture) -> None:
+    """P1-3: 白名单外字符串 → warning 如实告警 + 回退默认 False（不静默 bool()）."""
+    raw = json.dumps(
+        {"p1": {"base_url": "http://a", "api_key_env": "", "models": {"m1": {"thinking": "maybe"}}}}
+    )
+    with caplog.at_level(logging.WARNING, logger="llm_loop.llm.providers"):
+        reg = load_registry(_settings(model_providers_raw=raw))
+    assert reg.providers["p1"].models["m1"].thinking is False
+    assert any(
+        "m1" in r.message and "thinking" in r.message and "非合法布尔" in r.message
+        for r in caplog.records
+    )
+
+
+def test_invalid_context_entry_skipped_others_load(caplog: pytest.LogCaptureFixture) -> None:
+    """P1-3（审计 #14）: 单模型 context 非法 → 跳过该条 + warning, 不拖垮整个注册表.
+
+    此前 int("abc") ValueError 会触发 fail-soft 回落 L0, 所有 provider 全灭;
+    修复后仅该条被跳过, 同 provider 其余模型与其他 provider 正常加载, 且不标记 degraded.
+    """
+    raw = json.dumps(
+        {
+            "p1": {
+                "base_url": "http://a",
+                "api_key_env": "",
+                "models": {
+                    "bad": {"context": "abc", "thinking": True},
+                    "good": {"context": 12345, "thinking": True},
+                },
+            },
+            "p2": {"base_url": "http://b", "api_key_env": "", "models": {"m2": {"context": 999}}},
+        }
+    )
+    with caplog.at_level(logging.WARNING, logger="llm_loop.llm.providers"):
+        reg = load_registry(_settings(model_providers_raw=raw))
+    # 非法条目被跳过
+    assert "bad" not in reg.providers["p1"].models
+    # 其余条目正常加载（同 provider 的 good + 其他 provider）
+    assert reg.providers["p1"].models["good"].context == 12345
+    assert reg.providers["p2"].models["m2"].context == 999
+    # 不再回落 L0 / 标记 degraded（单条非法不拖垮注册表）
+    assert not reg.degraded
+    # warning 含条目 name/model 与原因
+    assert any(
+        "p1" in r.message and "bad" in r.message and "context" in r.message
+        for r in caplog.records
+    )
+
+
+def test_missing_context_uses_default() -> None:
+    """P1-3: context 缺失 → 回退 131072（与 ModelSpec.context 默认一致, 全项目既有默认值）."""
+    reg = load_registry(
+        _settings(
+            model_providers_raw=json.dumps(
+                {"p1": {"base_url": "http://a", "api_key_env": "", "models": {"m1": {"thinking": True}}}}
+            )
+        )
+    )
+    assert reg.providers["p1"].models["m1"].context == 131072
+
+
+def test_non_dict_provider_warns_and_skipped(caplog: pytest.LogCaptureFixture) -> None:
+    """P1-3: 非 dict provider 条目 → warning + 跳过（此前静默跳过, 现如实标注）."""
+    raw = json.dumps(
+        {
+            "p1": "not-a-dict",
+            "p2": {"base_url": "http://b", "api_key_env": "", "models": {}},
+        }
+    )
+    with caplog.at_level(logging.WARNING, logger="llm_loop.llm.providers"):
+        reg = load_registry(_settings(model_providers_raw=raw))
+    assert "p1" not in reg.providers
+    assert "p2" in reg.providers
+    assert not reg.degraded
+    assert any("p1" in r.message and "非 dict" in r.message for r in caplog.records)

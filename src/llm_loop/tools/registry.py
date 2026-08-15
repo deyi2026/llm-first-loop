@@ -656,19 +656,39 @@ class ToolRegistry:
 
         # P0-5: 超时包裹的内层线程同样传播上下文（current_session_id 等）——
         # 工具 execute 本体在内层线程执行，缺传播则 contextvar 读到空串
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(contextvars.copy_context().run, tool.execute, **call.arguments)
-            try:
-                result = future.result(timeout=self.tool_timeout_s)
-            except concurrent.futures.TimeoutError:
-                pool.shutdown(wait=False, cancel_futures=True)
-                return ToolResult(
-                    status=ToolResultStatus.TIMEOUT,
-                    content=f"[执行超时] 工具 '{call.name}' 超过 {self.tool_timeout_s:.0f}s 未完成",
-                    tool_call_id=call.id,
-                    tool_name=call.name,
-                    partial_output=None,
-                )
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = pool.submit(contextvars.copy_context().run, tool.execute, **call.arguments)
+        try:
+            result = future.result(timeout=self.tool_timeout_s)
+        except concurrent.futures.TimeoutError:
+            # P1-5(审计发现 #11): 超时即放弃等待，让"超时"按时返回——
+            # ① future.cancel()（运行中任务取消无效，尽力而为）;
+            # ② 调用工具暴露的 terminate() 钩子（execute_command 整树杀子进程，
+            #    其余工具无钩子则跳过）;
+            # ③ shutdown(wait=False) 立即返回——原 with 块退出会 shutdown(wait=True)
+            #    卡到工具自行结束，超时名存实亡（耗时 = 工具时长）。
+            # 残余如实标注: 工作线程非 daemon 无法强杀，无钩子工具残余线程最多存活
+            # 到工具自身超时/自然结束（期间解释器退出会被其阻塞等待）。
+            future.cancel()
+            terminate = getattr(tool, "terminate", None)
+            if callable(terminate):
+                with contextlib.suppress(Exception):
+                    terminate()
+            pool.shutdown(wait=False, cancel_futures=True)
+            return ToolResult(
+                status=ToolResultStatus.TIMEOUT,
+                content=f"[执行超时] 工具 '{call.name}' 超过 {self.tool_timeout_s:.0f}s 未完成",
+                tool_call_id=call.id,
+                tool_name=call.name,
+                partial_output=None,
+            )
+        except BaseException:
+            # 工具异常路径：线程已结束，防御性 wait=False 防意外挂起
+            future.cancel()
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        # 正常完成：线程已结束，等待回收（不泄漏）
+        pool.shutdown(wait=True)
         if not isinstance(result, ToolResult):
             # 工具直接返回文本/原始值时包装为 success（如实），继续走统一输出分层
             result = ToolResult(
