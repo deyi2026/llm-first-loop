@@ -278,6 +278,34 @@ def _apply_reasoning_tail(
     return out
 
 
+# P1-7: 推送式通知内容前缀（存量会话消息无 metadata 标记，按前缀兼容跳过）
+_INJECTED_SYSTEM_PREFIXES = (
+    "[架构上报]",
+    "[预算预警]",
+    "[轮数预警]",
+    "[声明提醒]",
+    "[自我评估提醒]",
+)
+
+
+def _is_injected_system(m: Message) -> bool:
+    """P1-7: 是否为推送式 system 注入（架构上报/预警/快照等）.
+
+    双通道判定: ① 新注入带 metadata.injected_system 标记（引擎注入点已打标）;
+    ② 存量会话历史消息无标记, 按内容前缀兼容（[架构上报]/[预算预警] 等）。
+    这类消息仅"落会话保留记录、不进提交视图"——本地慢模型下让 system 前缀保持
+    静态, llama.cpp 引擎前缀缓存每轮命中; 功能性注入（压缩标注/降级通知/overflow
+    回注/故障反馈/轮次决策请求）不匹配前缀, 不受影响。
+    """
+    if m.role != "system":
+        return False
+    meta = m.metadata or {}
+    if meta.get("injected_system"):
+        return True
+    content = m.content or ""
+    return any(content.startswith(p) for p in _INJECTED_SYSTEM_PREFIXES)
+
+
 def build_history_messages(
     session_messages: list[Message],
     system_prompt: str,
@@ -290,6 +318,12 @@ def build_history_messages(
     tool_trim_threshold: int = 8000,  # tool 消息 content 超此长度才降级（默认 8000，EVO-20260815 调大减少折叠触发）
     tool_trim_age: int = 0,  # R3: 0=自适应（按占用率自动调）；>0=固定值禁用自适应
     reasoning_tail: int = 2,  # M66: 历史中仅保留最近 N 轮 assistant 思考链（0=全部保留）
+    skip_injected_system: bool = False,  # P1-7: 跳过推送式 system 注入（metadata.injected_system）
+    # —— 仅落会话不进提交, system 前缀保持静态 → 引擎前缀缓存命中; 功能性注入不受影响
+    history_anchor: int = 0,  # P1-10: 历史窗口锚点（相对 session_messages 的索引; 0=无锚现有行为）
+    # —— 锚定后起点固定（只追加不挤旧, 超预算优先降级中段）, system+历史前缀稳定 → 前缀缓存命中
+    anchor_out: list[int] | None = None,  # P1-10: 输出容器——构建后填充新锚点（相对传入列表）;
+    # 正常提交（无归档）不填充（锚点保持不变, engine 沿用旧值）; 超长归档后填充推进值
 ) -> list[dict]:
     """组装提交 LLM 的消息序列（保序 + 超长另存压缩 + 如实标注）.
 
@@ -336,9 +370,32 @@ def build_history_messages(
             out.append(msg_dict)
 
     total_chars = sum(len(m.content) for m in session_messages)
+    # P1-10: 窗口锚定——起点固定（锚点前的消息已归档, 不再参与构建/重复归档）
+    if history_anchor > 0 and history_anchor < len(session_messages):
+        session_messages = session_messages[history_anchor:]
+        total_chars = sum(len(m.content) for m in session_messages)
     # R3: tool_trim_age=0 时按占用率自适应（AI 无感零配置）
     if tool_trim_age <= 0:
         tool_trim_age = _adaptive_tool_trim_age(total_chars, max_chars)
+    # P1-10: 锚定模式超预算 → 依次: ①剔除注入消息（推送式 system 不进提交, 剔除对提交
+    # 零影响且不产生归档/extras——提交前缀完全稳定）; ②分层降级中段旧 tool 消息（不移动锚点）;
+    # 仍超才走归档路径（锚点前移, 前缀断一次后重新锚定）
+    if history_anchor > 0 and total_chars > max_chars:
+        if skip_injected_system:
+            filtered = [m for m in session_messages if not _is_injected_system(m)]
+            if len(filtered) != len(session_messages):
+                session_messages = filtered
+                total_chars = sum(len(m.content) for m in session_messages)
+        if total_chars > max_chars and layer_tool_trim:
+            session_messages = _layer_trim(
+                session_messages,
+                enabled=True,
+                threshold=tool_trim_threshold,
+                age=tool_trim_age,
+                session_id=session_id,
+                archive_sink=archive_sink,
+            )
+            total_chars = sum(len(m.content) for m in session_messages)
     if total_chars <= max_chars:
         for m in _apply_reasoning_tail(
             _layer_trim(
@@ -351,6 +408,8 @@ def build_history_messages(
             ),
             reasoning_tail,
         ):
+            if skip_injected_system and _is_injected_system(m):
+                continue  # P1-7: 推送式注入仅落会话, 不进提交（system 前缀稳定）
             _append_or_merge(m.to_llm_dict())
         return _repair_tool_call_pairing(out)
 
@@ -435,7 +494,14 @@ def build_history_messages(
         ),
         reasoning_tail,
     )
+    # P1-10: 超长归档后锚点推进 = 旧锚点 + 窗口内被丢弃消息数
+    # （kept_flat 消息数不变（_layer_trim/思考链瘦身不删消息）, 差值即整组丢弃数;
+    # "最新组超限精简注入"分支的消息仍在 kept → 不计入推进）
+    if anchor_out is not None:
+        anchor_out.append(history_anchor + (len(session_messages) - len(kept_flat)))
     for m in kept_flat:
+        if skip_injected_system and _is_injected_system(m):
+            continue  # P1-7: 推送式注入仅落会话, 不进提交（system 前缀稳定）
         # P1-QWEN-FIX: 压缩裁剪后的 system 消息必须并入开头 system，
         # 否则 system 落在消息中间 → qwen 系模板(9B/27B) 报
         # "System message must be at the beginning" (HTTP 400/500)。

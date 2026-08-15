@@ -454,7 +454,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                     "model_aware_budget",
                     f"{planned_label}: {self._runtime_history_budget()}→{effective_budget}",
                 )
-            messages = self._build_llm_messages(sess, memory_msgs, max_chars=effective_budget)
+            messages = self._build_llm_messages(sess, memory_msgs, max_chars=effective_budget, model=model)
             if len(messages) < len(sess.messages) + len(memory_msgs) + 1:
                 truncation_noted = True
             tool_schemas = self.registry.schemas(lazy=self.settings.tool_schema_lazy)
@@ -614,6 +614,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                                 role="system",
                                 content=f"[声明提醒] 你的最终回答中存在与工具回执不符的完成声明，请知悉（不影响本次输出，后续请如实声明）。\n{verification_note}",
                                 source=MessageSource.SYSTEM,
+                                metadata={"injected_system": True},  # P1-7: 推送式注入标记
                             )
                             sess.messages.append(reminder)
                             # D1: 系统注入消息事件（fail-open）
@@ -649,6 +650,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             ):
                 self._round_warning_injected = True
                 warning = max_iterations_warning_message(rounds, _budget)
+                warning.metadata = {**warning.metadata, "injected_system": True}  # P1-7: 推送式注入标记
                 sess.messages.append(warning)
                 # D1: 系统注入消息事件（fail-open）
                 self._append_message_event(sess, warning)
@@ -676,6 +678,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                         f"是否压缩归档/收尾由你自主决策（RULE-AI-00）。"
                     ),
                     source=MessageSource.SYSTEM,
+                    metadata={"injected_system": True},  # P1-7: 推送式注入标记
                 )
                 sess.messages.append(warning)
                 # D1: 系统注入消息事件（fail-open）
@@ -830,40 +833,52 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
     # 模块级函数 _json_dumps_args/_tool_args_summary 经模块级 re-export 保持原路径可导入。
 
     def _build_llm_messages(
-        self, sess, memory_msgs: list[Message], max_chars: int | None = None
+        self, sess, memory_msgs: list[Message], max_chars: int | None = None,
+        model: str | None = None,  # P1-7: per-call 模型覆盖（判定本地 provider 跳过推送式注入）
     ) -> list[dict]:
         """构造提交 LLM 的消息序列（system prompt + 记忆注入 + 历史 + 压缩另存）.
 
         M54: max_chars 可覆盖默认预算（模型窗口感知压缩）；None = 运行时预算（零回归）。
+        P1-10: 窗口锚定——按 provider 固定历史起点（只追加不挤旧, 超预算优先降级中段),
+        前缀稳定命中引擎/服务端缓存; 锚点写入 sess.history_anchors 随会话持久化。
         """
+        planned_label = self._planned_model_label(model, sess)
+        provider_id = planned_label.partition("/")[0] or "default"
+        anchors = sess.history_anchors or {}
+        sess_anchor = int(anchors.get(provider_id, 0) or 0)
         system_prompt = build_system_prompt()
         # 记忆消息作为前置注入
         base = [m for m in memory_msgs] + list(sess.messages)
+        prefix_len = len(memory_msgs)
         # EVO-20260811-9ccdec97: 会话状态快照节流——每间隔注入状态帧（定位锚点，fail-open）
         # M58 配置面收敛: 间隔走 runtime（动态优先，AI 可调）
-        try:
-            interval = self._runtime_extract_interval()
-            if len(sess.messages) - self._last_snapshot_count >= interval:
-                evo_summary = None
-                if self.evolution_store is not None and hasattr(self.evolution_store, "summary"):
-                    try:
-                        s = self.evolution_store.summary()
-                        evo_summary = s if isinstance(s, dict) else None
-                    except Exception:
-                        evo_summary = None
-                snapshot = Message(
-                    role="system",
-                    content=build_session_snapshot_text(
-                        len(sess.messages), self.memory.count(), evo_summary
-                    ),
-                    source=MessageSource.SYSTEM,
-                )
-                base.insert(0, snapshot)
-                self._last_snapshot_count = len(sess.messages)
-        except Exception:
-            import logging
+        # P1-10: 仅无锚时注入（锚定后快照为推送式注入（已打标被跳过提交）, 且避免锚点换算复杂化）
+        if sess_anchor == 0:
+            try:
+                interval = self._runtime_extract_interval()
+                if len(sess.messages) - self._last_snapshot_count >= interval:
+                    evo_summary = None
+                    if self.evolution_store is not None and hasattr(self.evolution_store, "summary"):
+                        try:
+                            s = self.evolution_store.summary()
+                            evo_summary = s if isinstance(s, dict) else None
+                        except Exception:
+                            evo_summary = None
+                    snapshot = Message(
+                        role="system",
+                        content=build_session_snapshot_text(
+                            len(sess.messages), self.memory.count(), evo_summary
+                        ),
+                        source=MessageSource.SYSTEM,
+                        metadata={"injected_system": True},  # P1-7: 快照=推送式注入（本地 provider 下不进提交）
+                    )
+                    base.insert(0, snapshot)
+                    prefix_len += 1
+                    self._last_snapshot_count = len(sess.messages)
+            except Exception:
+                import logging
 
-            logging.getLogger(__name__).warning("会话状态快照注入失败（fail-open）", exc_info=True)
+                logging.getLogger(__name__).warning("会话状态快照注入失败（fail-open）", exc_info=True)
         from llm_loop.core.history import build_history_messages
 
         archive_sink = None
@@ -877,7 +892,10 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             "memory_msgs": memory_msgs,
             "budget": effective_budget,
         }
-        return build_history_messages(
+        # P1-10: 锚点相对传入列表 = 会话锚点 + 前置（memory/快照）长度
+        anchor_arg = sess_anchor + prefix_len if sess_anchor > 0 else 0
+        anchor_box: list[int] = []
+        built = build_history_messages(
             base,
             system_prompt,
             max_chars=max_chars if max_chars is not None else self._runtime_history_budget(),
@@ -888,7 +906,20 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             tool_trim_age=getattr(self.settings, "tool_trim_age", 0),  # R3: 0=自适应
             tool_trim_threshold=getattr(self.settings, "tool_trim_threshold", 8000),  # EVO-A: 降级长度阈值（默认 8000）
             reasoning_tail=getattr(self.settings, "reasoning_tail", 2),  # M66 思考链瘦身
+            # P1-7: provider（inject_system_notices=false）跳过推送式注入 → system 前缀静态 → 引擎缓存命中
+            skip_injected_system=not self._provider_inject_notices(planned_label),
+            # P1-10: 窗口锚定
+            history_anchor=anchor_arg,
+            anchor_out=anchor_box,
         )
+        # P1-10: 锚点推进持久化（换算回会话索引, clamp 防御）
+        if anchor_box:
+            new_anchor = anchor_box[0] - prefix_len
+            new_anchor = max(0, min(len(sess.messages), new_anchor))
+            if sess.history_anchors is None:
+                sess.history_anchors = {}
+            sess.history_anchors[provider_id] = new_anchor
+        return built
 
     def _persist_with_recovery_note(
         self,

@@ -69,6 +69,9 @@ class ProviderSpec:
     timeout_s: float | None = None
     history_budget_chars: int | None = None
     max_tokens: int | None = None  # 2026-08-15: provider 级输出预算（None=全局 LLM_MAX_TOKENS）
+    inject_system_notices: bool = True  # 推送式 system 注入（架构上报/预警/快照）是否进提交视图;
+    # False（本地慢模型用）= 仅落会话不进提交 —— system 前缀保持静态, llama.cpp 引擎前缀缓存
+    # 每轮命中（首 token 大幅缩短）; 功能性注入（压缩标注/降级通知/overflow 回注等）不受影响。
 
 
 @dataclass(frozen=True)
@@ -347,6 +350,23 @@ def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
                         "provider 条目 %r 的 history_budget_chars=%r 非法, 回退全局预算",
                         pid, raw_budget,
                     )
+            # 推送式 system 注入开关（本地慢模型关 → system 前缀静态 → 引擎前缀缓存命中）;
+            # 严格布尔解析（复用白名单语义）; 非法 → warning + 默认 True（零回归）
+            inject_notices: bool = True
+            raw_inject = val.get("inject_system_notices", True)
+            if isinstance(raw_inject, bool):
+                inject_notices = raw_inject
+            elif isinstance(raw_inject, int):
+                inject_notices = bool(raw_inject)
+            elif isinstance(raw_inject, str) and raw_inject.strip().lower() in _TRUTHY_STRINGS:
+                inject_notices = True
+            elif isinstance(raw_inject, str) and raw_inject.strip().lower() in _FALSY_STRINGS:
+                inject_notices = False
+            else:
+                logger.warning(
+                    "provider 条目 %r 的 inject_system_notices=%r 非法, 回退默认 True",
+                    pid, raw_inject,
+                )
             out[str(pid)] = ProviderSpec(
                 id=str(pid),
                 base_url=base_url,
@@ -356,6 +376,7 @@ def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
                 timeout_s=timeout_s,
                 history_budget_chars=history_budget_chars,
                 max_tokens=max_tokens,
+                inject_system_notices=inject_notices,
             )
         except (ValueError, TypeError) as exc:
             # P1-3: provider 条目级兜底（意外转换异常也不拖垮整个注册表）

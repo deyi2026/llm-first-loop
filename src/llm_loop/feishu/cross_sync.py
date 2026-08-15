@@ -55,6 +55,7 @@ class CrossSyncWatcher:
         poll_s: float = _POLL_S,
         min_interval_s: float = _MIN_INTERVAL_S,
         max_chars: int = _MAX_CHARS,
+        skip_fn: Any | None = None,
     ) -> None:
         self._store = session_store
         self._map = session_map
@@ -63,6 +64,9 @@ class CrossSyncWatcher:
         self._poll_s = poll_s
         self._min_interval = min_interval_s
         self._max_chars = max_chars
+        # P1-11(2026-08-16): skip_fn(sid) → True 时跳过该会话（桥正在处理的会话）——
+        # 只防桥自己的回答被当 Web 侧增量重复推; 其他会话照常实时同步（不做全局暂停）
+        self._skip_fn = skip_fn
         self._baseline: dict[str, tuple[int, str]] = {}  # sid → (message_count, updated_at)
         self._last_push: dict[str, float] = {}  # receive_id → 上次推送时刻（速率限制）
         self._stop = threading.Event()
@@ -132,6 +136,14 @@ class CrossSyncWatcher:
                 logger.warning("跨端同步检查会话 %s 异常（fail-open）: %s", sid, exc)
 
     def _check_session(self, sid: str, keys: list[str], meta) -> None:
+        # P1-11: 只跳过"桥正在处理的那个会话"（防桥自己的回答被当 Web 增量重复推）；
+        # 其他会话照常实时同步（busy 全局暂停改为按会话精确跳过，忙时跨端不再全停）
+        if self._skip_fn is not None:
+            try:
+                if self._skip_fn(sid):
+                    return
+            except Exception:  # noqa: BLE001 — 探测失败按不阻塞处理
+                pass
         if meta is None:
             return
         cur = (meta.message_count, meta.updated_at)

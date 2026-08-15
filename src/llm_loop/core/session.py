@@ -86,6 +86,10 @@ class Session:
     # M56（Web/飞书会话同步）：version 4 字段，缺省向后兼容
     pinned: bool = False      # 置顶（Web 端会话列表置顶优先）
     channel: str = "web"      # 来源通道: "web" / "feishu:p2p:{open_id}" / "feishu:group:{chat_id}"
+    # P1-10（窗口锚定）: 各 provider 的历史窗口锚点（provider_id → sess.messages 索引）。
+    # 锚定后历史起点固定（只追加不挤旧, 超预算优先降级中段）, system+历史前缀稳定 →
+    # 引擎/服务端前缀缓存命中; 缺省向后兼容（旧 JSON 无键 → {}）
+    history_anchors: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -101,6 +105,7 @@ class Session:
             "model_override": self.model_override,
             "pinned": self.pinned,
             "channel": self.channel,
+            "history_anchors": self.history_anchors,
             "messages": [
                 {
                     "role": m.role,
@@ -478,6 +483,8 @@ class SessionStore:
                 # M56: pinned/channel 缺省向后兼容（旧 JSON 无键 → 默认值）
                 pinned=bool(data.get("pinned", False)),
                 channel=data.get("channel", "web"),
+                # P1-10: history_anchors 缺省向后兼容（旧 JSON 无键 → {}）
+                history_anchors=data.get("history_anchors") or {},
             )
         except (json.JSONDecodeError, KeyError, ValueError):
             # 如实降级：文件损坏时备份原始文件（不覆盖丢数据），返回新会话（不伪造恢复）

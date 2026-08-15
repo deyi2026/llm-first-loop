@@ -338,6 +338,49 @@ def test_catalog_summary_shows_provider_history_budget() -> None:
     assert "history_budget=12000" in reg.catalog_summary()
 
 
+# ── provider 级推送式注入开关（inject_system_notices, 本地慢模型前缀稳定）──
+
+
+def _inject_provider_json(value: object) -> str:
+    return json.dumps(
+        {
+            "local": {
+                "base_url": "http://localhost:1234/v1",
+                "api_key_env": "",
+                "inject_system_notices": value,
+                "models": {"qwen3.6-27b": {"context": 131072}},
+            }
+        }
+    )
+
+
+def test_inject_system_notices_default_true() -> None:
+    """未配置 → 默认 True（零回归, 推送式注入保持既有行为）."""
+    reg = load_registry(_settings(model_providers_raw=_TWO_PROVIDER_JSON))
+    assert reg.providers["local"].inject_system_notices is True
+    assert reg.providers["deepseek"].inject_system_notices is True
+
+
+def test_inject_system_notices_parsed() -> None:
+    """显式 false（本地慢模型）→ 解析为 False."""
+    reg = load_registry(_settings(model_providers_raw=_inject_provider_json(False)))
+    assert reg.providers["local"].inject_system_notices is False
+    reg2 = load_registry(_settings(model_providers_raw=_inject_provider_json("false")))
+    assert reg2.providers["local"].inject_system_notices is False
+
+
+@pytest.mark.parametrize("bad", ["maybe", [], "yes?"])
+def test_inject_system_notices_invalid_warns_defaults(
+    bad, caplog: pytest.LogCaptureFixture
+) -> None:
+    """非法值 → warning 如实告警 + 回退默认 True（不静默）."""
+    with caplog.at_level(logging.WARNING, logger="llm_loop.llm.providers"):
+        reg = load_registry(_settings(model_providers_raw=_inject_provider_json(bad)))
+    assert reg.providers["local"].inject_system_notices is True
+    assert not reg.degraded
+    assert any("inject_system_notices" in r.message for r in caplog.records)
+
+
 # ── catalog_summary ──
 
 

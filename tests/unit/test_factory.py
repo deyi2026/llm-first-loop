@@ -123,3 +123,62 @@ def test_model_registry_resolved_false_warns_on_resolve_failure(tmp_path, caplog
     )
     snap = engine.status.snapshot(dimensions=["architecture_config"])
     assert snap["architecture_config"]["model_registry_resolved"] is False
+
+
+# ── P1-8: 默认模型全限定 "provider/model"（默认 client 走注册表参数）──
+
+_KIMI_PROVIDERS_JSON = json.dumps(
+    {
+        "kimi": {
+            "base_url": "https://api.kimi.com/coding/v1",
+            "api_key_env": "KIMI_API_KEY",
+            "models": {
+                "k3-256k": {"context": 262144, "thinking": True, "cost_tier": "low"},
+            },
+            "default_model": "k3-256k",
+        },
+    }
+)
+
+
+def test_default_model_qualified_resolves_provider(tmp_path, monkeypatch):
+    """LLM_MODEL="kimi/k3-256k"（全限定）→ 默认 client 走 kimi provider 参数.
+
+    base_url/api_key 来自注册表（KIMI_API_KEY）, 模型名发送裸名（k3-256k）;
+    env 三件套（LLM_BASE_URL=deepseek）不参与。
+    """
+    monkeypatch.setenv("KIMI_API_KEY", "kimi-key-xyz")
+    settings = Settings(
+        llm_api_key="env-key",
+        llm_base_url="https://api.deepseek.com/v1",
+        llm_model="kimi/k3-256k",
+        data_dir=str(tmp_path / "data"),
+        model_providers_raw=_KIMI_PROVIDERS_JSON,
+        extract_enabled=False,
+    )
+    from llm_loop.factory import build_engine
+
+    engine = build_engine(settings)  # type: ignore[arg-type]
+    client = engine.llm
+    assert client.base_url == "https://api.kimi.com/coding/v1"
+    assert client.model == "k3-256k"  # 裸模型名（OpenAI 兼容端点不接受全限定）
+    assert client.api_key == "kimi-key-xyz"
+    assert client.thinking_supported is True  # 注册表元数据
+
+
+def test_default_model_bare_keeps_env_trio(tmp_path):
+    """裸模型名（无 "/"）→ 默认 client 保持 env 三件套（零回归）."""
+    settings = Settings(
+        llm_api_key="env-key",
+        llm_base_url="https://api.deepseek.com/v1",
+        llm_model="deepseek-v4-flash",
+        data_dir=str(tmp_path / "data"),
+        extract_enabled=False,
+    )
+    from llm_loop.factory import build_engine
+
+    engine = build_engine(settings)  # type: ignore[arg-type]
+    client = engine.llm
+    assert client.base_url == "https://api.deepseek.com/v1"
+    assert client.model == "deepseek-v4-flash"
+    assert client.api_key == "env-key"

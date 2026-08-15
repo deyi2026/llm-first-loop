@@ -140,6 +140,21 @@ class _RoutingMixin:
         context = spec.models[mid].context
         return context if context and context > 0 else None
 
+    def _provider_inject_notices(self: LoopEngine, model_label: str) -> bool:
+        """该 provider 的推送式 system 注入是否进提交视图（P1-7 本地慢模型接入）.
+
+        provider 配置 inject_system_notices=false（本地模型用）→ False: 架构上报/预警/
+        快照等仅落会话不进提交, system 前缀保持静态 → llama.cpp 引擎前缀缓存每轮命中
+        （首 token 大幅缩短）。未知/未配置 → True（零回归）。
+        """
+        if self.llm_pool is None or "/" not in model_label:
+            return True
+        pid, _mid = model_label.split("/", 1)
+        spec = self.llm_pool.registry.providers.get(pid)
+        if spec is None:
+            return True
+        return spec.inject_system_notices
+
     @staticmethod
     def _check_context_fit(
         messages: list[dict],

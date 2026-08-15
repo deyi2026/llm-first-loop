@@ -126,3 +126,32 @@ def test_corrupt_session_fail_open(tmp_path):
     sess_file.write_text("{broken json", encoding="utf-8")
     watcher.poll_once()  # 不抛异常
     assert replies == []
+
+
+# ── P1-11(2026-08-16): busy_fn 暂停轮询（消除桥回答被重复推送的竞态）──
+
+
+def test_skip_only_processing_sid_others_sync_realtime(tmp_path):
+    """P1-11: skip_fn 只跳过被桥处理的会话，其他会话照常实时同步."""
+    store, smap, watcher, replies = _make(tmp_path)
+    sid_busy = smap.get_or_create("p:ou_owner")
+    sid_other = smap.get_or_create("p:ou_other")
+    watcher.poll_once()  # 首见建基线（两会话）
+
+    processing = {sid_busy}
+    watcher._skip_fn = lambda sid: sid in processing
+
+    # 桥正在处理 sid_busy → 它的增量被跳过; sid_other 照常实时同步
+    _append_web(store, sid_busy, ["被处理会话的用户消息", "被处理会话的 AI 输出"])
+    _append_web(store, sid_other, ["其他会话的用户消息", "其他会话的 AI 输出"])
+    watcher.poll_once()
+    assert len(replies) == 1  # 只有 sid_other 的同步
+    rid, text, rtype = replies[0]
+    assert rid == "ou_other" and "其他会话的用户消息" in text
+    assert "被处理会话的用户消息" not in text
+
+    # 处理完成（mark_processed）→ sid_busy 不再跳过，但基线已覆盖 → 不重复推
+    watcher.mark_processed(sid_busy)
+    processing.discard(sid_busy)
+    watcher.poll_once()
+    assert len(replies) == 1

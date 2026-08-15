@@ -87,6 +87,11 @@ def build_engine(settings: Settings) -> LoopEngine:
     # architecture_status 感知"模型配置未生效"（程序故障对 AI 可见原则）.
     thinking_supported: bool | None = None
     model_registry_resolved = False
+    # P1-8(2026-08-15): 默认模型支持 "provider/model" 全限定（如 kimi/k3-256k）——
+    # 全限定 → 默认 client 按注册表 provider 参数装配（base_url/api_key 来自 provider 配置,
+    # 模型名用裸名发送——OpenAI 兼容端点不接受全限定）; 裸名（如 deepseek-v4-flash）→
+    # 保持 env 三件套（LLM_BASE_URL/LLM_API_KEY/LLM_MODEL, 零回归）。
+    llm_params: dict | None = None
     try:
         from llm_loop.llm.providers import load_registry
 
@@ -94,6 +99,8 @@ def build_engine(settings: Settings) -> LoopEngine:
         provider_id, model_id = registry.resolve(settings.llm_model)
         thinking_supported = registry.supports_thinking(provider_id, model_id)
         model_registry_resolved = True
+        if "/" in settings.llm_model:
+            llm_params = registry.client_params(provider_id, model_id)
     except ValueError as exc:
         # 当前模型不在注册表 → 保持 LLMClient 默认（向后兼容 _thinking_supported）
         # P1-4: 不再静默吞错——如实告警（含模型名与失败原因）供人工/AI 排查
@@ -104,11 +111,11 @@ def build_engine(settings: Settings) -> LoopEngine:
             exc,
         )
 
-    # LLM 客户端
+    # LLM 客户端（全限定默认模型走注册表参数, 否则 env 三件套）
     llm = LLMClient(
-        api_key=settings.llm_api_key,
-        base_url=settings.llm_base_url,
-        model=settings.llm_model,
+        api_key=(llm_params or {}).get("api_key", settings.llm_api_key),
+        base_url=(llm_params or {}).get("base_url", settings.llm_base_url),
+        model=(llm_params or {}).get("model", settings.llm_model),
         timeout_s=settings.llm_timeout_s,
         max_tokens=settings.llm_max_tokens,  # 2026-08-15 显式输出预算
         # M20 THK-01: 思考参数装配一次，三条 LLM 路径统一受益（VAL-02）
@@ -215,6 +222,17 @@ def build_engine(settings: Settings) -> LoopEngine:
     _register_basic("web_fetch", WebFetchTool(timeout_s=_tool_timeout))
     # M48: 网络搜索（Bing/百度双后端降级）
     _register_basic("web_search", WebSearchTool(timeout_s=_tool_timeout))
+
+    # P3-1(2026-08-15): MCP 客户端接入（MCP_SERVERS env；stdio 连接 + schema 透传 +
+    # 五态包装 + 超时/审计复用；单服务器 fail-open）
+    try:
+        from llm_loop.tools.mcp_client import register_mcp_tools
+
+        _mcp_tools = register_mcp_tools(registry, settings.mcp_servers_raw)
+        if _mcp_tools:
+            logger.info("MCP 工具注册 %d 个: %s", len(_mcp_tools), ", ".join(_mcp_tools[:6]))
+    except Exception:  # noqa: BLE001 — MCP 装配失败不影响核心链路
+        logger.exception("MCP 工具装配失败（fail-open）")
 
     # EVO-20260811-f94e5306: 变更通告（修改类工具调用记录，多会话协调）
     def _change_log_hook(call):
