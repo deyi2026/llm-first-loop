@@ -104,17 +104,23 @@ def test_upload_pdf_corrupt(build_test_engine, fake_settings):
 
 
 def test_upload_image_no_key_degraded(build_test_engine, fake_settings, monkeypatch):
-    """arkcli 后端确定性验证：识别失败 → degraded + 可操作指引（CI/本地环境无关）."""
+    """识别失败（mock，环境无关）→ degraded + 如实文案（含"未包含"防幻觉提示）."""
     monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
-    monkeypatch.setenv("WEB_VISION_BACKEND", "arkcli")
+    import llm_loop.web.vision as vision_mod
+
+    def boom(image_bytes, mime="image/png", prompt="", settings=None):
+        raise RuntimeError("识别失败（mock）")
+
+    monkeypatch.setattr(vision_mod, "describe_image", boom)
+    monkeypatch.setattr(vision_mod, "vision_enabled", lambda *a, **k: True)
     engine, _ = build_test_engine([])
     client = _make_client(engine)
     resp = _upload(client, "photo.png", b"fake-png-bytes")
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "degraded"
-    # arkcli 后端强制：无论本机是否安装/认证，错误信息均含 arkcli 与登录指引
-    assert "arkcli" in body["detail"]
+    assert "图片识别失败" in body["detail"]
+    assert "未包含" in body["detail"]  # 防幻觉提示
 
 
 def test_upload_image_minimax_optin_no_key_degraded(build_test_engine, fake_settings, monkeypatch):
