@@ -26,6 +26,7 @@ from llm_loop.llm.errors import (
     LLMNetworkError,
     LLMTimeoutError,
 )
+from llm_loop.llm.schemas import ToolCallDeltaAggregator  # finish() 含 json.loads 归一（约束 C5）
 
 
 @dataclass
@@ -54,64 +55,6 @@ class StreamDelta:
     text: str = ""
     reasoning: str | None = None
     tool_round: ToolRoundInfo | None = None
-
-
-@dataclass
-class ToolCallDelta:
-    id: str = ""
-    name: str = ""
-    arguments: str = ""
-
-
-class ToolCallDeltaAggregator:
-    """流式工具调用增量聚合（OpenAI: index 分片；Anthropic: input_json_delta 分片）."""
-
-    def __init__(self) -> None:
-        self._by_index: dict[int, ToolCallDelta] = {}
-        self._order: list[int] = []
-
-    def add_delta(self, delta: dict[str, Any], index: int = 0) -> None:
-        if index not in self._by_index:
-            self._by_index[index] = ToolCallDelta()
-            self._order.append(index)
-        cur = self._by_index[index]
-        if delta.get("id"):
-            cur.id = str(delta["id"])
-        # OpenAI delta 嵌套结构: {index, id, type, function: {name, arguments}}
-        fn = delta.get("function") or {}
-        if delta.get("name"):
-            cur.name = str(delta["name"])
-        if fn.get("name"):
-            cur.name = str(fn["name"])
-        if delta.get("arguments"):
-            cur.arguments += str(delta["arguments"])
-        if fn.get("arguments"):
-            cur.arguments += str(fn["arguments"])
-
-    def add_anthropic_block(self, block: dict[str, Any]) -> None:
-        """Anthropic content_block_start + input_json_delta 合并到 index 槽."""
-        bid = int(block.get("index", 0))
-        if bid not in self._by_index:
-            self._by_index[bid] = ToolCallDelta()
-            self._order.append(bid)
-        cur = self._by_index[bid]
-        if block.get("type") == "tool_use":
-            cur.id = str(block.get("id", ""))
-            cur.name = str(block.get("name", ""))
-            cur.arguments = str(block.get("input") or "")
-        elif block.get("type") == "input_json_delta":
-            cur.arguments += str(block.get("partial_json") or "")
-
-    def finish(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "id": self._by_index[i].id,
-                "name": self._by_index[i].name,
-                "arguments": self._by_index[i].arguments,
-            }
-            for i in self._order
-            if self._by_index[i].name
-        ]
 
 
 @dataclass
@@ -352,7 +295,21 @@ class LLMClient:
                     elif evt_type == "content_block_start":
                         block = evt.get("content_block") or {}
                         if block.get("type") == "tool_use":
-                            agg.add_anthropic_block(block)
+                            # 流式语义：start 时 input 恒为空 dict——不并入 arguments，
+                            # 参数由随后的 input_json_delta 分片拼装（并入 "{}" 会破坏 JSON）
+                            start_input = block.get("input") or {}
+                            start_args = (
+                                json.dumps(start_input, ensure_ascii=False)
+                                if start_input
+                                else ""
+                            )
+                            agg.add_delta(
+                                {
+                                    "index": evt.get("index", 0),
+                                    "id": block.get("id", ""),
+                                    "function": {"name": block.get("name", ""), "arguments": start_args},
+                                }
+                            )
                     elif evt_type == "content_block_delta":
                         delta = evt.get("delta") or {}
                         dtype = delta.get("type")
@@ -363,7 +320,12 @@ class LLMClient:
                             acc.reasoning_parts.append(delta["thinking"])
                             yield StreamDelta(text="", reasoning=delta["thinking"])
                         elif dtype == "input_json_delta":
-                            agg.add_anthropic_block({"type": "input_json_delta", "partial_json": delta.get("partial_json") or "", "index": evt.get("index", 0)})
+                            agg.add_delta(
+                                {
+                                    "index": evt.get("index", 0),
+                                    "function": {"arguments": delta.get("partial_json") or ""},
+                                }
+                            )
                     elif evt_type == "message_delta":
                         stop = ((evt.get("delta") or {}).get("stop_reason")) or ""
                         if stop:
@@ -410,6 +372,7 @@ class LLMClient:
 
         acc = _StreamAcc()
         agg = ToolCallDeltaAggregator()
+        google_fc_index = 0  # Google functionCall 每次独立工具调用（index 递增）
         try:
             effective_timeout = timeout_s if timeout_s is not None else self.timeout_s
             with self._client.stream(
@@ -444,11 +407,15 @@ class LLMClient:
                             fc = part["functionCall"]
                             agg.add_delta(
                                 {
+                                    "index": google_fc_index,
                                     "id": f"fc_{int(time.time() * 1000)}",
-                                    "name": fc.get("name", ""),
-                                    "arguments": json.dumps(fc.get("args") or {}, ensure_ascii=False),
+                                    "function": {
+                                        "name": fc.get("name", ""),
+                                        "arguments": json.dumps(fc.get("args") or {}, ensure_ascii=False),
+                                    },
                                 }
                             )
+                            google_fc_index += 1
         except httpx.TimeoutException as exc:
             raise LLMTimeoutError(f"LLM 请求超时（{effective_timeout}s）") from exc
         except httpx.NetworkError as exc:
