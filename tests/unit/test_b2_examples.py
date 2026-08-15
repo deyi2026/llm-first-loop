@@ -98,3 +98,106 @@ def test_run_single_convenience_entry(tmp_path, monkeypatch):
     assert result.final_answer == "一次性回答"
     assert result.session_id  # 自动创建了会话
     assert engine.session.exists(result.session_id)  # 会话已落盘可追溯
+
+
+def test_public_api_signature_snapshot():
+    """B5 契约快照: 公共 API 签名锁定（防语义漂移——外部依赖据此接入）.
+
+    变更公共签名（参数名/默认值/返回类型）必须同步本测试与 docs/api.md。
+    （from __future__ import annotations 使注解字符串化, 此处按参数名+默认值比对）
+    """
+    import inspect
+
+    from llm_loop.config import load_env_file, load_settings
+    from llm_loop.core.loop.engine import LoopEngine
+    from llm_loop.core.session import SessionStore
+    from llm_loop.factory import build_engine
+    from llm_loop.tools.registry import ToolRegistry
+
+    def _params(fn) -> list[str]:
+        sig = inspect.signature(fn)
+        return [p.name for p in sig.parameters.values()]
+
+    def _defaults(fn) -> dict[str, object]:
+        sig = inspect.signature(fn)
+        return {
+            name: p.default
+            for name, p in sig.parameters.items()
+            if p.default is not inspect.Parameter.empty
+        }
+
+    # build_engine(settings)（唯一生产装配点）
+    assert _params(build_engine) == ["settings"]
+
+    # 引擎核心方法（session_id 位置参数, model 关键字可选）
+    assert _params(LoopEngine.run) == ["self", "session_id", "user_text", "model"]
+    assert _defaults(LoopEngine.run) == {"model": None}
+    assert _params(LoopEngine.run_single) == ["self", "user_text", "model"]
+    assert _defaults(LoopEngine.run_single) == {"model": None}
+    assert _params(LoopEngine.run_stream) == ["self", "session_id", "user_text", "model"]
+    assert _defaults(LoopEngine.run_stream) == {"model": None}
+
+    # 配置入口
+    assert _params(load_settings) == []
+    assert "path" in _params(load_env_file)
+
+    # 存储/工具注册表公共方法
+    assert _params(SessionStore.create) == ["self", "model_override"]
+    assert _defaults(SessionStore.create) == {"model_override": None}
+    assert _params(SessionStore.save) == ["self", "session"]
+    assert _params(SessionStore.load) == ["self", "session_id"]
+    assert _params(ToolRegistry.register) == ["self", "tool"]
+    assert _params(ToolRegistry.unregister) == ["self", "name"]
+    assert _params(ToolRegistry.schemas) == ["self", "lazy"]
+    assert _defaults(ToolRegistry.schemas) == {"lazy": False}
+
+    # LoopResult 关键字段存在（文档 §3 承诺）——实例化后字段可访问
+    from llm_loop.core.loop.engine import LoopResult
+
+    r = LoopResult(session_id="s", final_answer="a")
+    for field in (
+        "session_id", "final_answer", "rounds", "tool_calls", "model_used",
+        "tokens_in", "tokens_out", "truncated", "reasoning_content",
+    ):
+        assert hasattr(r, field), f"LoopResult 缺承诺字段: {field}"
+
+
+def test_example01_assembly_chain_runs(tmp_path, monkeypatch):
+    """B5: api.md §1 快速装配链路（load_env_file→load_settings→build_engine→run）可执行.
+
+    零 LLM 零网络: 注入最小 env + 临时 data 目录, 用真实 build_engine 装配并跑一轮.
+    （Fake 客户端经注册表 provider 缓存注入, 避免触网——与 conftest build_test_engine 同思路）
+    """
+    from llm_loop.config import load_env_file, load_settings
+    from llm_loop.factory import build_engine
+    from llm_loop.llm.client import LLMResponse
+
+    monkeypatch.setenv("LLM_API_KEY", "k")
+    monkeypatch.setenv("LLM_BASE_URL", "https://x/v1")
+    monkeypatch.setenv("LLM_MODEL", "m")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("EXTRACT_ENABLED", "0")
+    monkeypatch.setenv("SUMMARY_MODE", "off")
+
+    class _Fake:
+        def chat(self, messages, tools, **kw):
+            return LLMResponse(content="装配链路回答", tool_calls=[], provider="fake")
+
+        def chat_stream(self, messages, tools, **kw):
+            def _gen():
+                yield from ()
+                return LLMResponse(content="装配链路回答", tool_calls=[], provider="fake")
+
+            return _gen()
+
+    load_env_file()  # 文档 §1: 从 .env 加载（此处 env 已注入, 不依赖真实 .env）
+    settings = load_settings()
+    engine = build_engine(settings)
+    # 用 Fake 替换默认 client（pool 路由 None override → default_client, 零触网）
+    engine.llm_pool.default_client = _Fake()  # type: ignore[assignment]
+
+    sid = engine.session.create()
+    result = engine.run(sid, "你好")
+    assert result.final_answer == "装配链路回答"
+    assert result.rounds >= 1
+    assert engine.session.exists(sid)
