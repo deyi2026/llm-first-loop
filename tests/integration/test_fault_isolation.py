@@ -274,3 +274,40 @@ def test_llm_error_three_part_end_to_end(build_test_engine, monkeypatch):
     log = engine.settings.audit_dir / "exception_log.jsonl"
     if log.exists():
         assert "LLMError" in log.read_text(encoding="utf-8")
+
+
+def test_llm_error_type_matrix_injected(build_test_engine, monkeypatch):
+    """A4: LLM 错误类型矩阵——网络/超时/HTTP 4xx/HTTP 5xx/协议 各类型注入.
+
+    每类错误 → 引擎循环内如实三件套反馈（[LLM 调用异常] + 事实/原因/建议），
+    不抛穿（正常返回 LoopResult），错误类型名如实呈现（不伪造/不吞并）。
+    """
+    from llm_loop.llm.errors import (
+        LLMHTTPError,
+        LLMNetworkError,
+        LLMProtocolError,
+        LLMTimeoutError,
+    )
+
+    cases = [
+        (LLMNetworkError("connection refused"), "LLMNetworkError"),
+        (LLMTimeoutError("timeout after 120s"), "LLMTimeoutError"),
+        (LLMHTTPError("403 Forbidden", status_code=403), "LLMHTTPError"),
+        (LLMHTTPError("500 Internal Server Error", status_code=500), "LLMHTTPError"),
+        (LLMProtocolError("malformed response"), "LLMProtocolError"),
+    ]
+    for err, type_name in cases:
+        engine, fake = build_test_engine([{"content": "我是 AI 助手。"}])
+        monkeypatch.setattr(
+            fake, "chat", lambda *a, _e=err, **k: (_ for _ in ()).throw(_e)
+        )
+        sid = engine.session.create()
+        result = engine.run(sid, "你好")
+        # 不抛穿 + 三件套 + 错误类型如实呈现
+        assert result.final_answer, type_name
+        assert "[LLM 调用异常]" in result.final_answer, type_name
+        assert "事实:" in result.final_answer, type_name
+        assert "原因:" in result.final_answer, type_name
+        assert "建议:" in result.final_answer, type_name
+        assert type_name in result.final_answer, type_name
+        assert "检查网络/Key/模型名配置后重试" in result.final_answer, type_name
