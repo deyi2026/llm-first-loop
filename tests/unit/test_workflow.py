@@ -146,3 +146,110 @@ def test_workflow_tool_registered():
     engine = build_engine(settings)  # type: ignore[arg-type]
     names = set(engine.registry._tools.keys())  # noqa: SLF001
     assert "workflow_run" in names
+
+
+# ── P3-4: dag 模式（拓扑序 + 依赖注入 + 节点预算 + 环检测） ──
+
+def test_dag_topological_order_and_dep_injection():
+    """dag: 依赖步骤先执行；依赖 final_answer 注入被依赖步骤 context."""
+    runner = FakeRunner()
+    tool = WorkflowRunTool(runner)
+    res = tool.execute(
+        mode="dag",
+        steps=[
+            {"id": "a", "task": "调研 A"},
+            {"id": "b", "task": "基于 A 做 B", "depends_on": ["a"]},
+            {"id": "c", "task": "独立 C"},
+            {"id": "d", "task": "汇总 B 与 C", "depends_on": ["b", "c"]},
+        ],
+    )
+    assert res.status == ToolResultStatus.SUCCESS
+    # 拓扑序：a 与 c 在前（任一），b 在 a 后，d 最后
+    order = [t for t, _ in runner.calls]
+    assert order.index("调研 A") < order.index("基于 A 做 B")
+    assert order.index("独立 C") < order.index("汇总 B 与 C")
+    assert order[-1] == "汇总 B 与 C"
+    # 依赖注入：b 的 context 含 a 的结果；d 的 context 含 b 和 c 的结果
+    ctx_b = runner.calls[order.index("基于 A 做 B")][1]
+    ctx_d = runner.calls[order.index("汇总 B 与 C")][1]
+    assert "依赖步骤 a 结果" in ctx_b and "result_of:调研 A" in ctx_b
+    assert "依赖步骤 b 结果" in ctx_d and "依赖步骤 c 结果" in ctx_d
+    # 回执含拓扑序标注
+    assert "拓扑序" in res.content
+
+
+def test_dag_cycle_detected():
+    runner = FakeRunner()
+    tool = WorkflowRunTool(runner)
+    res = tool.execute(
+        mode="dag",
+        steps=[
+            {"id": "a", "task": "A", "depends_on": ["b"]},
+            {"id": "b", "task": "B", "depends_on": ["a"]},
+        ],
+    )
+    assert res.status == ToolResultStatus.FAILURE
+    assert "循环依赖" in res.content
+    assert runner.calls == []  # 环检测在派发前
+
+
+def test_dag_unknown_dep_rejected():
+    tool = WorkflowRunTool(FakeRunner())
+    res = tool.execute(
+        mode="dag",
+        steps=[
+            {"id": "a", "task": "A", "depends_on": ["ghost"]},
+        ],
+    )
+    assert res.status == ToolResultStatus.FAILURE
+    assert "未知" in res.content and "ghost" in res.content
+
+
+def test_dag_self_dep_rejected():
+    tool = WorkflowRunTool(FakeRunner())
+    res = tool.execute(
+        mode="dag",
+        steps=[
+            {"id": "a", "task": "A", "depends_on": ["a"]},
+        ],
+    )
+    assert res.status == ToolResultStatus.FAILURE
+    assert "自身" in res.content
+
+
+def test_dag_duplicate_id_rejected():
+    tool = WorkflowRunTool(FakeRunner())
+    res = tool.execute(
+        mode="dag",
+        steps=[
+            {"id": "a", "task": "A"},
+            {"id": "a", "task": "A2"},
+        ],
+    )
+    assert res.status == ToolResultStatus.FAILURE
+    assert "重复" in res.content
+
+
+def test_dag_budget_rounds_passthrough():
+    """节点级预算：budget_rounds 透传子代理 max_rounds（runner 记录 kwargs）."""
+
+    class BudgetRunner:
+        def __init__(self) -> None:
+            self.max_rounds_calls: list[int | None] = []
+
+        def run(self, task: str, context: str = "", depth: int = 0, max_rounds: int | None = None):
+            self.max_rounds_calls.append(max_rounds)
+            return FakeResult(final_answer=f"ok:{task[:8]}", rounds=3)
+
+    runner = BudgetRunner()
+    tool = WorkflowRunTool(runner)
+    res = tool.execute(
+        mode="dag",
+        steps=[
+            {"id": "a", "task": "A", "budget_rounds": 5},
+            {"id": "b", "task": "B"},
+        ],
+    )
+    assert res.status == ToolResultStatus.SUCCESS
+    assert runner.max_rounds_calls == [5, None]
+    assert "budget_rounds=5" in res.content
