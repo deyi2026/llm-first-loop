@@ -36,9 +36,21 @@ def require_api_key(
     """远程访问令牌校验（仅 HTTP 层访问控制，核心零改动）.
 
     回环默认豁免；WEB_AUTH_REQUIRE=1 时回环也要求令牌。
+
+    P2-1(2026-08-15)：fail-closed——WEB_AUTH_REQUIRE=1 但未配置 WEB_API_KEY
+    属于配置错误（显式要求鉴权却不可能通过），旧实现静默放行等于无鉴权；
+    现 503 如实报错（启动期由 validate_auth_require 拦截，请求期兜底防御）。
     """
     expected = _web_api_key()
     if not expected:
+        if os.environ.get("WEB_AUTH_REQUIRE", "").strip() == "1":
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "WEB_AUTH_REQUIRE=1 但未配置 WEB_API_KEY——鉴权配置错误，拒绝服务"
+                    "（fail-closed：要么配置 key，要么关闭 WEB_AUTH_REQUIRE）。"
+                ),
+            )
         return  # 未配置 key 时由启动校验拦截远程绑定；本地无 key 放行
 
     if os.environ.get("WEB_AUTH_REQUIRE", "").strip() != "1":
@@ -50,6 +62,15 @@ def require_api_key(
         raise HTTPException(status_code=401, detail="缺少 Authorization: Bearer 令牌。")
     if not hmac.compare_digest(credentials.credentials, expected):
         raise HTTPException(status_code=401, detail="令牌无效。")
+
+
+def validate_auth_require() -> None:
+    """P2-1: WEB_AUTH_REQUIRE=1 但未配置 WEB_API_KEY → 启动拒绝（对齐 validate_binding 语义）."""
+    if os.environ.get("WEB_AUTH_REQUIRE", "").strip() == "1" and not _web_api_key():
+        raise RuntimeError(
+            "WEB_AUTH_REQUIRE=1 但未配置 WEB_API_KEY：显式要求鉴权却没有可校验的令牌，"
+            "fail-closed 拒绝启动——请配置 WEB_API_KEY 或关闭 WEB_AUTH_REQUIRE。"
+        )
 
 
 def validate_binding(host: str) -> None:

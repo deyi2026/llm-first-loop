@@ -27,7 +27,13 @@ from .schemas import (
     UploadRequest,
     UploadResponse,
 )
-from .upload_handlers import SUPPORTED_IMAGE_EXTS, file_ext, process_upload, validate_upload
+from .upload_handlers import (
+    SUPPORTED_IMAGE_EXTS,
+    file_ext,
+    process_upload,
+    validate_upload,
+    validate_upload_b64_size,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,17 +56,58 @@ def _engine_from(request: Request) -> Any:
 
 _locks_guard = threading.Lock()
 _LOCK_TIMEOUT_S = 30
+# P2-3(2026-08-15，审计发现)：会话锁表上限（LRU 淘汰空闲锁；dict 保序即插入序）
+_SESSION_LOCKS_MAX = 1024
 
 
 def _get_session_lock(request: Request, session_id: str) -> threading.Lock | None:
-    """T5.1: 获取会话级并发锁（未启用返回 None，向后兼容，spec.md 5.4.1）."""
+    """T5.1: 获取会话级并发锁（未启用返回 None，向后兼容，spec.md 5.4.1）.
+
+    P2-3: LRU 上限 _SESSION_LOCKS_MAX——触碰移至末尾，超限时淘汰最旧空闲锁
+    （locked 的跳过，防互斥失效；极端全 locked 时允许超限增长并 debug 如实记录）。
+    """
     locks = getattr(request.app.state, "session_locks", None)
     if locks is None:
         return None
     with _locks_guard:
-        if session_id not in locks:
-            locks[session_id] = threading.Lock()
-        return locks[session_id]
+        lock = locks.get(session_id)
+        if lock is not None:
+            locks[session_id] = locks.pop(session_id)  # 移至末尾（LRU 触碰）
+            return lock
+        lock = threading.Lock()
+        locks[session_id] = lock
+        while len(locks) > _SESSION_LOCKS_MAX:
+            oldest_sid = next(iter(locks))
+            oldest = locks[oldest_sid]
+            if oldest.locked():
+                # 找下一个空闲候选；全部持锁则容忍超限（如实记录，不破坏互斥）
+                idle = next((s for s, lk in locks.items() if not lk.locked()), None)
+                if idle is None:
+                    logger.debug("会话锁表超限且全部持锁，容忍增长: %d", len(locks))
+                    break
+                oldest_sid = idle
+            del locks[oldest_sid]
+        return lock
+
+
+def _resolve_session_id_locked(engine: Any, request: Request, explicit_sid: str | None) -> str:
+    """P2-3: 会话解析原子段（模块级 guard 内完成，闭合"无 sid 并发首聊双建会话"竞态）.
+
+    guard 内：无 sid 时 get_shared→create→set_shared 原子完成（并发请求必共享同一会话）；
+    锁对象获取由调用方随后经 `_get_session_lock`（幂等落表 + LRU）完成。
+    """
+    del request  # 解析只涉引擎会话存储；锁表由 _get_session_lock 管
+    with _locks_guard:
+        if explicit_sid is not None:
+            return explicit_sid
+        # 跨端共享当前会话：无 session_id 时复用共享当前（Web/飞书同一上下文）；
+        # 无共享或共享会话已删则新建并设为共享当前
+        shared = engine.session.get_shared_current()
+        if shared is not None:
+            return shared
+        session_id = engine.session.create()
+        engine.session.set_shared_current(session_id)
+        return session_id
 
 
 @router.post(
@@ -101,14 +148,8 @@ def chat(
             )
         session_id = payload.session_id
     else:
-        # 跨端共享当前会话：无 session_id 时复用共享当前（Web/飞书同一上下文）；
-        # 无共享或共享会话已删则新建并设为共享当前
-        shared = engine.session.get_shared_current()
-        if shared is not None:
-            session_id = shared
-        else:
-            session_id = engine.session.create()
-            engine.session.set_shared_current(session_id)
+        # P2-3: 无 sid 解析（复用共享/新建+设共享）在模块级 guard 内原子完成
+        session_id = _resolve_session_id_locked(engine, request, None)
 
     # T5.1: 会话级并发锁（同会话串行，不同会话并行，spec.md 5.4.1）
     lock = _get_session_lock(request, session_id)
@@ -201,12 +242,8 @@ def chat_stream(
             )
         session_id = payload.session_id
     else:
-        shared = engine.session.get_shared_current()
-        if shared is not None:
-            session_id = shared
-        else:
-            session_id = engine.session.create()
-            engine.session.set_shared_current(session_id)
+        # P2-3: 无 sid 解析在模块级 guard 内原子完成（与 chat 端点同一事务语义）
+        session_id = _resolve_session_id_locked(engine, request, None)
 
     def event_stream():
         lock = _get_session_lock(request, session_id)
@@ -685,6 +722,14 @@ def upload_file(payload: UploadRequest) -> UploadResponse | Response:
     不调用 engine.run（上传处理独立于核心对话链路，结果由前端注入对话上下文）。
     """
     import base64 as _b64
+
+    # P2-2(2026-08-15)：base64 体积前置检查（≈4/3 原始体积），超限 413 不解码
+    size_err = validate_upload_b64_size(payload.data)
+    if size_err:
+        return UTF8JSONResponse(
+            status_code=413,
+            content={"error": "upload_too_large", "detail": size_err},
+        )
 
     try:
         data = _b64.b64decode(payload.data, validate=True)

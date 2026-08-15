@@ -96,9 +96,43 @@ class ModelClientPool:
         """已缓存的 provider id 列表（测试/调试用）."""
         return sorted(self._provider_cache.keys())
 
-    def clear_cache(self) -> None:
-        """清空 provider 缓存（refresh_config / 测试用；不影响 default_client）."""
+    def close(self) -> None:
+        """P2-4(2026-08-15): 关闭 default_client 与全部缓存 client（释放 httpx 连接）.
+
+        - default_client 与 _provider_cache 中每个 client 依次关闭；
+          单个关闭失败 fail-open（记 warning 继续，不中断整体关闭）
+        - 幂等: 可重复调用（httpx.Client.close 幂等；缓存清空后不再有重复关闭项）
+        - 关闭完成后清空缓存（已关闭的 client 不再被 get_client 复用）
+        """
+        self._close_client(self.default_client)
+        for client in list(self._provider_cache.values()):
+            self._close_client(client)
         self._provider_cache.clear()
+
+    def clear_cache(self) -> None:
+        """清空 provider 缓存（refresh_config / 测试用；不影响 default_client）.
+
+        P2-4(2026-08-15): 语义更新——清空前先关闭被丢弃的缓存 client。
+        providers 热重载路径（refresh_config → providers_registry_reload.py）调用
+        本方法，旧 client 关闭后才丢弃，防止 httpx 连接泄漏。
+        default_client 不归 cache 管理，不在本方法关闭（由 close() 统一处理）。
+        """
+        for client in list(self._provider_cache.values()):
+            self._close_client(client)
+        self._provider_cache.clear()
+
+    def _close_client(self, client: LLMClient) -> None:
+        """P2-4(2026-08-15): 单个 client 关闭（duck-typing getattr 防御 + fail-open）.
+
+        无 close 方法的可注入实现（如测试 FakeLLM）跳过；关闭异常记 warning 继续。
+        """
+        closer = getattr(client, "close", None)
+        if closer is None:
+            return
+        try:
+            closer()
+        except Exception as exc:  # noqa: BLE001 — 单个关闭失败 fail-open
+            logger.warning("LLM 客户端关闭失败（fail-open）: %s", exc)
 
     def fallback_candidates(self) -> list[str]:
         """解析 MODEL_FALLBACKS env 为合法 provider/model 引用列表 (M49 / design §5.4).

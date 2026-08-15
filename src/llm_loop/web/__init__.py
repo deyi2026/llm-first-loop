@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from llm_loop.config import load_settings
 from llm_loop.factory import build_engine
 
-from .auth import require_api_key, validate_binding
+from .auth import is_loopback, require_api_key, validate_auth_require, validate_binding
 from .routes import UTF8JSONResponse, router
 
 logger = logging.getLogger(__name__)
@@ -23,6 +23,46 @@ logger = logging.getLogger(__name__)
 __all__ = ["build_app", "main"]
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+_MUTATING_METHODS = frozenset({"POST", "PUT", "DELETE", "PATCH"})
+
+
+class _OriginGuardMiddleware:
+    """P2-1(2026-08-15，审计发现)：回环豁免部署的跨站写防护.
+
+    默认本机部署（127.0.0.1 + 无 key）下浏览器任意网页可跨站 POST 本服务
+    （表单/fetch 打 127.0.0.1）。浏览器跨站请求必带 Origin 头——mutating 方法
+    携非回环 Origin → 403 如实拒绝；无 Origin（curl/脚本/服务器间）与非
+    mutating 方法不受影响（零回归）。令牌鉴权开启时本层冗余但无害。
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http" and scope.get("method") in _MUTATING_METHODS:
+            origin = ""
+            for k, v in scope.get("headers") or []:
+                if k == b"origin":
+                    origin = v.decode("utf-8", errors="replace").strip()
+                    break
+            if origin:
+                from urllib.parse import urlparse
+
+                host = (urlparse(origin).hostname or "").lower()
+                if not is_loopback(host):
+                    body = (
+                        '{"error":"foreign_origin_forbidden","detail":'
+                        '"跨站 Origin 拒绝（本机服务仅接受回环来源的写请求）。"}'
+                    ).encode()
+                    await send({
+                        "type": "http.response.start",
+                        "status": 403,
+                        "headers": [(b"content-type", b"application/json; charset=utf-8")],
+                    })
+                    await send({"type": "http.response.body", "body": body})
+                    return
+        await self.app(scope, receive, send)
 
 
 def build_app(settings=None, engine=None) -> FastAPI:
@@ -41,6 +81,8 @@ def build_app(settings=None, engine=None) -> FastAPI:
         title="llm-first-loop-web", version="0.4.0", default_response_class=UTF8JSONResponse
     )
     app.state.engine = engine
+    # P2-1: 跨站写防护（ASGI 中间件，mutating + 非回环 Origin → 403）
+    app.add_middleware(_OriginGuardMiddleware)
 
     # T5.1: 会话级并发锁装配（spec.md 5.4.1，默认开启，SESSION_CONCURRENCY_LOCK=false 退化为无锁）
     _lock_enabled = os.environ.get("SESSION_CONCURRENCY_LOCK", "true").strip().lower() in ("true", "1", "")
@@ -112,6 +154,7 @@ def main() -> None:
 
     try:
         validate_binding(host)
+        validate_auth_require()  # P2-1: WEB_AUTH_REQUIRE=1 无 key → 拒绝启动（fail-closed）
     except RuntimeError as exc:
         print(f"❌ {exc}", file=sys.stderr)
         raise SystemExit(2) from None
@@ -130,7 +173,11 @@ def main() -> None:
     _install_exit_signal_log()  # P1-3-R1: 退出信号记录（web_exit.log，不改变退出行为）
     # P1: 优雅退出超时（SIGTERM 后最多 10s 内自然退出，< restart_system.sh 的 GRACE_S=15，
     # 避免同步 LLM 长请求阻塞导致 SIGKILL 强杀）
-    uvicorn.run(app, host=host, port=port, timeout_graceful_shutdown=10)
+    try:
+        uvicorn.run(app, host=host, port=port, timeout_graceful_shutdown=10)
+    finally:
+        # P2-4(2026-08-15): 服务退出关闭 LLM 连接（httpx Client 连接池不泄漏）
+        engine.close()
 
 
 if __name__ == "__main__":

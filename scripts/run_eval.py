@@ -140,6 +140,53 @@ def run_dry_sample(prompt: str, workdir: Path, key: str, setup: dict | None = No
     }
 
 
+def _dry_injection_selfcheck() -> None:
+    """P2-5(2026-08-15): dry 模式注入可见性自检（管道失效如实失败，防 dry 假绿）.
+
+    背景: run_one_sample 依赖 setup 向 engine.status 注入 FAILURE 历史/异常（供
+    adjust_step 等必调整场景），而 run_dry_sample 完全不经过注入——若注入链路或
+    architecture_status 快照生产路径失效，依赖注入的场景在 dry 下无法被发现。
+
+    自检流程（与 run_one_sample 完全相同的注入调用 + 真实快照生产路径）:
+    1. 构造真实 ArchitectureStatusProvider（architecture_status 所用的状态类）
+    2. 执行 inject_failures=2 + inject_exception=True 的注入调用（复用 _apply_setup）
+    3. 走 architecture_status 快照生产路径（run_status → status_provider.snapshot）
+    4. 断言注入的 FAILURE 计数与异常在快照中可见；不可见抛 RuntimeError
+       （dry 结果不可信时必须如实失败，不静默通过）。
+    """
+    from types import SimpleNamespace
+
+    from llm_loop.core.message import ToolResultStatus
+    from llm_loop.introspection.status import ArchitectureStatusProvider
+    from llm_loop.introspection.tools_status import run_status
+
+    status = ArchitectureStatusProvider(enabled=True)
+    _apply_setup(
+        SimpleNamespace(status=status),
+        {"inject_failures": 2, "inject_exception": True},
+    )
+
+    result = run_status(ctx=None, status_provider=status, args={})
+    if result.status != ToolResultStatus.SUCCESS:
+        raise RuntimeError(
+            f"dry 注入自检失败: architecture_status 快照生产失败（status={result.status.value}）"
+        )
+    try:
+        snap = json.loads(result.content)
+    except (ValueError, TypeError) as exc:
+        raise RuntimeError(f"dry 注入自检失败: architecture_status 快照解析失败: {exc}") from exc
+
+    tool_history = snap.get("tool_history", [])
+    failures = [t for t in tool_history if t.get("status") == ToolResultStatus.FAILURE.value]
+    exception_log = snap.get("exception_log", [])
+    if len(failures) < 2 or not exception_log:
+        raise RuntimeError(
+            "dry 注入自检失败: 预置失败信号在 architecture_status 快照中不可见"
+            f"（tool_history FAILURE={len(failures)}/2, exception_log={len(exception_log)}/1）"
+            "——注入链路或快照生产路径失效，dry 结果不可信（如实失败）。"
+        )
+
+
 def evaluate(scenarios: dict, *, dry: bool, samples_override: int | None, workdir: Path) -> dict:
     import os
 
@@ -148,6 +195,10 @@ def evaluate(scenarios: dict, *, dry: bool, samples_override: int | None, workdi
         key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("LLM_API_KEY", "")
         if not key:
             raise RuntimeError("无真实 LLM key（DEEPSEEK_API_KEY/LLM_API_KEY）；使用 --dry 验证管道")
+    else:
+        # P2-5(2026-08-15): dry 路径开头做注入可见性自检——adjust_step 等依赖预置失败
+        # 信号的场景必须在 dry 下同样可被发现（注入不可见 → 如实失败，防 dry 假绿）
+        _dry_injection_selfcheck()
 
     runner = run_dry_sample if dry else run_one_sample
     results: list[dict] = []
