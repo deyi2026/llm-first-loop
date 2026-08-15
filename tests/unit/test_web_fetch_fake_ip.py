@@ -126,3 +126,19 @@ def test_verify_peer_tolerates_fake_ip(monkeypatch):
         assert "内网" in str(exc)
     else:
         raise AssertionError("真实私网对端应被丢弃")
+
+
+def test_verify_peer_tolerates_loopback_proxy(monkeypatch):
+    """对端为本机回环（Surge/Clash 透明代理监听）→ 放行（per-hop 预检查已把关目标）."""
+    from llm_loop.tools.builtin.web_fetch import WebFetchTool as W
+
+    class _Stream:
+        def get_extra_info(self, key):
+            return ("127.0.0.1", 6152)
+
+    class _Resp:
+        status_code = 200
+        extensions = {"network_stream": _Stream()}
+        headers = {}
+
+    W._verify_peer(_Resp(), "https://example.com/x")  # 回环对端放行（不抛）
