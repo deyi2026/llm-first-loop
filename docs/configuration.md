@@ -89,6 +89,7 @@
 | 变量 | 默认 | 说明 |
 |:---|:---|:---|
 | `WEB_API_KEY` | 空 | 远程访问令牌（回环默认豁免；远程绑定未配置 key → 启动报错） |
+| `WEB_AUTH_REQUIRE` | 0 | 1=回环也强制令牌；**fail-closed**：设为 1 但未配置 WEB_API_KEY → 启动拒绝 + 请求 503（v0.5.0 起，不再静默放行）。回环豁免部署下 mutating 端点自带 Origin 跨站写防护（非回环来源 403） |
 | `WEB_HOST` / `WEB_PORT` | 127.0.0.1 / 8902 | 绑定地址 / 端口 |
 | `SESSION_CONCURRENCY_LOCK` | 1 | 会话级并发锁（0=无锁） |
 | `LONG_LINE_THRESHOLD` / `LONG_CHAR_THRESHOLD` | — | 长内容折叠阈值（前端展示） |
