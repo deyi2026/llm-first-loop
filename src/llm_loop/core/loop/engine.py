@@ -781,6 +781,24 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         session_id = self.session.create()
         return self.run(session_id, user_text, model=model)
 
+    def close(self) -> None:
+        """P2-4(2026-08-15): 释放底层 LLM 客户端连接（httpx）.
+
+        优先关闭 llm_pool（默认 client + provider 缓存一次全部释放）；
+        pool 未装配（None）时关闭装配默认 client（self.llm）。
+        duck-typing getattr 防御（无 close 的可注入实现跳过）；
+        幂等（可重复调用，httpx.Client.close 幂等）+ fail-open
+        （关闭异常记 warning 不抛穿，避免影响停机流程）。
+        """
+        target = self.llm_pool if self.llm_pool is not None else self.llm
+        closer = getattr(target, "close", None)
+        if closer is None:
+            return
+        try:
+            closer()
+        except Exception as exc:  # noqa: BLE001 — 关闭失败 fail-open
+            logger.warning("LLM 客户端关闭失败（fail-open）: %s", exc)
+
     # M53 拆分: 模型路由辅助方法族 → llm_loop/core/loop/routing.py（_RoutingMixin）
     # 迁移注释保留（test_silent_pass_cleanup 源码断言）: 模型标签 resolve 失败时回退裸名（fail-open），
     # 行为与迁移前一致；有 pool 时经注册表 resolve 为全限定 ref。

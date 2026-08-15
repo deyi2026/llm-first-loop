@@ -69,6 +69,21 @@ def file_ext(filename: str) -> str:
     return Path(filename).suffix.lower()
 
 
+def validate_upload_b64_size(data_b64: str) -> str | None:
+    """P2-2(2026-08-15，审计发现)：base64 体积前置检查（解码前）.
+
+    base64 编码体积 ≈ 原始 4/3——先查字符串长度再解码，超限直接拒绝，
+    避免大 payload 先吃解码内存/CPU 再被体积拒（解码后 validate_upload 仍兜底）。
+    """
+    # base64 含换行/填充余量：+16 字符宽限（标准 4 字符组 + padding）
+    if len(data_b64) > (MAX_UPLOAD_BYTES * 4) // 3 + 16:
+        return (
+            f"文件超过 10MB 上限（base64 前置估算 {len(data_b64)} 字符 "
+            f"≈ {len(data_b64) * 3 // 4} 字节）。"
+        )
+    return None
+
+
 def validate_upload(filename: str, data: bytes) -> str | None:
     """上传校验：大小 + 扩展名类型。返回错误信息（None = 通过）."""
     if len(data) > MAX_UPLOAD_BYTES:

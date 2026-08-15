@@ -35,6 +35,23 @@ _EXIT_WAIT_S: float = _env_float("FEISHU_EXIT_WAIT_S", 10)
 _EXIT_DRAIN_S: float = _env_float("FEISHU_EXIT_DRAIN_S", 3)
 
 
+def _close_engine(handler) -> None:
+    """P2-4(2026-08-15): 关闭 handler 持有的引擎（释放 LLM httpx 连接）.
+
+    停机路径调用（engine 可达路径为 handler._engine，build_bridge 装配注入）。
+    duck-typing getattr 防御（engine 缺失/无 close 跳过，零回归）；
+    fail-open 幂等（关闭异常记 warning 不阻断退出）。
+    """
+    engine = getattr(handler, "_engine", None)
+    closer = getattr(engine, "close", None)
+    if closer is None:
+        return
+    try:
+        closer()
+    except Exception as exc:  # noqa: BLE001 — 关闭失败 fail-open
+        logger.warning("引擎关闭失败（fail-open）: %s", exc)
+
+
 def build_bridge(engine=None, config: FeishuConfig | None = None, lark_client=None):
     """装配飞书桥（薄壳）：config + engine + session_map + bridge + handler.
 
@@ -105,6 +122,8 @@ def main() -> None:
         raise SystemExit(2) from None
     if not start_bridge(bridge):
         print("飞书桥启动失败（凭证预检未通过）。", file=sys.stderr)
+        # P2-4(2026-08-15): 启动失败同样释放引擎连接（build_bridge 已装配 engine）
+        _close_engine(handler)
         raise SystemExit(2)
     print("飞书桥已启动（Ctrl+C 停止）。")
     # 优雅停机：SIGTERM（restart_system.sh）/ SIGINT / SIGHUP 均触发 bridge.stop()。
@@ -157,6 +176,9 @@ def main() -> None:
         if not drained:
             logger.warning("优雅退出: 等待处理中消息超时 %.0fs（busy 未归零）", _EXIT_WAIT_S)
         bridge.stop()
+        # P2-4(2026-08-15): 停机路径关闭引擎（释放 LLM httpx 连接；fail-open 幂等，
+        # 见 _close_engine）——bridge.stop() 之后调用，确保消息处理已停止再释放连接。
+        _close_engine(handler)
         if drained:
             _log_exit(f"优雅退出完成（信号 {received_signal[0]}）")
         else:

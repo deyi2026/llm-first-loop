@@ -301,20 +301,27 @@ def main(argv: list[str] | None = None) -> int:
     from llm_loop.factory import build_engine
 
     engine = build_engine(settings)
-    # M50: 启动参数 --model 转入引擎属性, 由 _run_single / _run_interactive 落地
-    if args.model:
-        engine._cli_startup_model = args.model  # noqa: SLF001 — 私有装配通道
+    # P2-4(2026-08-15): 主返回路径 try/finally 保证 engine.close()（释放 LLM httpx 连接，
+    # fail-open 幂等，见 LoopEngine.close）。覆盖 main() 全部 return 出口
+    # （单条消息模式 / 交互模式退出）。
+    try:
+        # M50: 启动参数 --model 转入引擎属性, 由 _run_single / _run_interactive 落地
+        if args.model:
+            engine._cli_startup_model = args.model  # noqa: SLF001 — 私有装配通道
 
-    # T5a: 交互模式注入人工审批回调（EXEC_MODE 拦截项可经终端确认放行；
-    # 单条消息模式/web/feishu 不注入 → 拦截即拒绝 fail-closed）
-    if args.interactive:
-        engine.registry.set_approval_callback(_cli_approval_prompt)
+        # T5a: 交互模式注入人工审批回调（EXEC_MODE 拦截项可经终端确认放行；
+        # 单条消息模式/web/feishu 不注入 → 拦截即拒绝 fail-closed）
+        if args.interactive:
+            engine.registry.set_approval_callback(_cli_approval_prompt)
 
-    if args.message:
-        _run_single(engine, args.message, session_id=args.session)
+        if args.message:
+            _run_single(engine, args.message, session_id=args.session)
+            return 0
+        _run_interactive(engine, session_id=args.session)
         return 0
-    _run_interactive(engine, session_id=args.session)
-    return 0
+    finally:
+        # P2-4(2026-08-15): 关闭引擎（含 LLM httpx 连接；fail-open 幂等，不遮蔽返回值）
+        engine.close()
 
 
 def _dispatch_command(argv: list[str]) -> int:
@@ -353,74 +360,82 @@ def _dispatch_command(argv: list[str]) -> int:
     from llm_loop.factory import build_engine
 
     engine = build_engine(settings)
+    # P2-4(2026-08-15): 子命令分派同样装配 engine（持有 LLM httpx 连接），
+    # 统一 try/finally 在退出前 close（fail-open 幂等）——覆盖本分派全部 return 出口。
+    def _dispatch() -> int:
+        if cmd == "list":
+            return _cmd_list(engine, "--archived" in argv)
+        if cmd == "delete":
+            if len(argv) < 2:
+                print("用法: llm_loop delete <session_id> [--yes]")
+                return 2
+            return _cmd_delete(engine, argv[1], "--yes" in argv)
+        if cmd == "archive":
+            if len(argv) < 2:
+                print("用法: llm_loop archive <session_id>")
+                return 2
+            return _cmd_archive(engine, argv[1], True)
+        if cmd == "unarchive":
+            if len(argv) < 2:
+                print("用法: llm_loop unarchive <session_id>")
+                return 2
+            return _cmd_archive(engine, argv[1], False)
+        if cmd == "search":
+            if len(argv) < 2:
+                print("用法: llm_loop search <query>")
+                return 2
+            return _cmd_search(engine, " ".join(argv[1:]))
+        if cmd == "extract":
+            if len(argv) < 2:
+                print("用法: llm_loop extract <session_id>")
+                return 2
+            return _cmd_extract(engine, argv[1])
+        if cmd == "rename":
+            if len(argv) < 3:
+                print("用法: llm_loop rename <session_id> \"<新标题>\"")
+                return 2
+            return _cmd_rename(engine, argv[1], " ".join(argv[2:]))
+        if cmd == "fork":
+            if len(argv) < 2:
+                print("用法: llm_loop fork <session_id> [--at <索引>] [--summary \"<摘要>\"]")
+                return 2
+            at = None
+            summary = ""
+            rest = argv[2:]
+            for i, tok in enumerate(rest):
+                if tok == "--at" and i + 1 < len(rest):
+                    try:
+                        at = int(rest[i + 1])
+                    except ValueError:
+                        print("❌ --at 需为整数", file=sys.stderr)
+                        return 2
+                elif tok == "--summary" and i + 1 < len(rest):
+                    summary = rest[i + 1]
+            return _cmd_fork(engine, argv[1], at=at, summary=summary)
+        if cmd == "evolve-list":
+            return _cmd_evolve_list(engine, argv[1] if len(argv) > 1 else None)
+        if cmd == "evolve-review":
+            if len(argv) < 3:
+                print("用法: llm_loop evolve-review <suggestion_id> <accepted|rejected>")
+                return 2
+            return _cmd_evolve_review(engine, argv[1], argv[2])
+        if cmd == "evolve-complete":
+            if len(argv) < 3:
+                print('用法: llm_loop evolve-complete <suggestion_id> "<执行结果说明>"')
+                return 2
+            return _cmd_evolve_complete(engine, argv[1], " ".join(argv[2:]))
+        if cmd == "evolve-verify":
+            if len(argv) < 3:
+                print('用法: llm_loop evolve-verify <suggestion_id> "<核验说明>"')
+                return 2
+            return _cmd_evolve_verify(engine, argv[1], " ".join(argv[2:]))
+        return 2
 
-    if cmd == "list":
-        return _cmd_list(engine, "--archived" in argv)
-    if cmd == "delete":
-        if len(argv) < 2:
-            print("用法: llm_loop delete <session_id> [--yes]")
-            return 2
-        return _cmd_delete(engine, argv[1], "--yes" in argv)
-    if cmd == "archive":
-        if len(argv) < 2:
-            print("用法: llm_loop archive <session_id>")
-            return 2
-        return _cmd_archive(engine, argv[1], True)
-    if cmd == "unarchive":
-        if len(argv) < 2:
-            print("用法: llm_loop unarchive <session_id>")
-            return 2
-        return _cmd_archive(engine, argv[1], False)
-    if cmd == "search":
-        if len(argv) < 2:
-            print("用法: llm_loop search <query>")
-            return 2
-        return _cmd_search(engine, " ".join(argv[1:]))
-    if cmd == "extract":
-        if len(argv) < 2:
-            print("用法: llm_loop extract <session_id>")
-            return 2
-        return _cmd_extract(engine, argv[1])
-    if cmd == "rename":
-        if len(argv) < 3:
-            print("用法: llm_loop rename <session_id> \"<新标题>\"")
-            return 2
-        return _cmd_rename(engine, argv[1], " ".join(argv[2:]))
-    if cmd == "fork":
-        if len(argv) < 2:
-            print("用法: llm_loop fork <session_id> [--at <索引>] [--summary \"<摘要>\"]")
-            return 2
-        at = None
-        summary = ""
-        rest = argv[2:]
-        for i, tok in enumerate(rest):
-            if tok == "--at" and i + 1 < len(rest):
-                try:
-                    at = int(rest[i + 1])
-                except ValueError:
-                    print("❌ --at 需为整数", file=sys.stderr)
-                    return 2
-            elif tok == "--summary" and i + 1 < len(rest):
-                summary = rest[i + 1]
-        return _cmd_fork(engine, argv[1], at=at, summary=summary)
-    if cmd == "evolve-list":
-        return _cmd_evolve_list(engine, argv[1] if len(argv) > 1 else None)
-    if cmd == "evolve-review":
-        if len(argv) < 3:
-            print("用法: llm_loop evolve-review <suggestion_id> <accepted|rejected>")
-            return 2
-        return _cmd_evolve_review(engine, argv[1], argv[2])
-    if cmd == "evolve-complete":
-        if len(argv) < 3:
-            print('用法: llm_loop evolve-complete <suggestion_id> "<执行结果说明>"')
-            return 2
-        return _cmd_evolve_complete(engine, argv[1], " ".join(argv[2:]))
-    if cmd == "evolve-verify":
-        if len(argv) < 3:
-            print('用法: llm_loop evolve-verify <suggestion_id> "<核验说明>"')
-            return 2
-        return _cmd_evolve_verify(engine, argv[1], " ".join(argv[2:]))
-    return 2
+    try:
+        return _dispatch()
+    finally:
+        # P2-4(2026-08-15): 子命令分派退出前统一关闭引擎（fail-open 幂等，不遮蔽返回值）
+        engine.close()
 
 
 def _cmd_evolve_list(engine, status: str | None) -> int:
