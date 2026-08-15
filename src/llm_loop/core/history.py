@@ -373,6 +373,32 @@ def build_history_messages(
     # P1-10: 窗口锚定——起点固定（锚点前的消息已归档, 不再参与构建/重复归档）
     if history_anchor > 0 and history_anchor < len(session_messages):
         session_messages = session_messages[history_anchor:]
+        # 2026-08-16 锚点对齐工具轮边界（现场：tool_call_id is not found 根因）：
+        # 锚点落在声明↔回执组内会把声明裁掉、留下孤儿回执（API 拒绝）。
+        # 裁后窗口内"无对应声明"的 tool 回执 → 丢弃（如实标注；声明必在回执前，
+        # 被裁掉的声明不可伪造，故不回补）。
+        declared_ids = {
+            str(tc.get("id") or "")
+            for m in session_messages
+            if m.role == "assistant" and getattr(m, "tool_calls", None)
+            for tc in (m.tool_calls or [])
+        }
+        kept_msgs: list[Message] = []
+        dropped_orphans = 0
+        for m in session_messages:
+            rid = str(getattr(m, "tool_call_id", "") or "")
+            if m.role == "tool" and rid and rid not in declared_ids:
+                dropped_orphans += 1
+                continue
+            kept_msgs.append(m)
+        if dropped_orphans:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "锚点对齐: 丢弃 %d 条无声明孤儿工具回执（防 tool_call_id 协议拒绝）",
+                dropped_orphans,
+            )
+        session_messages = kept_msgs
         total_chars = sum(len(m.content) for m in session_messages)
     # R3: tool_trim_age=0 时按占用率自适应（AI 无感零配置）
     if tool_trim_age <= 0:
