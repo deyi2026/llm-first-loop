@@ -61,7 +61,17 @@ class SubAgentRunner:
         self.max_iterations = max_iterations
 
     # ── 公开入口 ──
-    def run(self, task: str, context: str = "", depth: int = 0) -> SubAgentResult:
+    def run(
+        self,
+        task: str,
+        context: str = "",
+        depth: int = 0,
+        max_rounds: int | None = None,
+    ) -> SubAgentResult:
+        """执行子代理任务（父代理调用 depth=0，子代理内部递归自增）.
+
+        max_rounds: 节点级轮次预算（P3-4 DAG 节点预算）；None = 构造器 max_iterations。
+        """
         """执行子代理任务（父代理调用 depth=0，子代理内部递归自增）."""
         if depth >= self.max_depth:
             return SubAgentResult(
@@ -93,7 +103,7 @@ class SubAgentRunner:
                 self.registry.set_session_id(sid)
             with suppress(Exception):
                 current_session_id.set(sid)
-            return self._execute_subagent(sess, task, context, depth)
+            return self._execute_subagent(sess, task, context, depth, max_rounds=max_rounds)
         finally:
             # 恢复父会话（成功/异常/截断任何返回路径都必须执行）
             with suppress(Exception):
@@ -102,16 +112,24 @@ class SubAgentRunner:
                 current_session_id.set(old_ctx_sid)
 
     def _execute_subagent(
-        self, sess: Session, task: str, context: str, depth: int
+        self,
+        sess: Session,
+        task: str,
+        context: str,
+        depth: int,
+        max_rounds: int | None = None,
     ) -> SubAgentResult:
         """子代理循环本体（会话注入/恢复由 run 包裹；拆出保证 finally 覆盖全部返回路径）."""
+        effective_rounds = (
+            max(1, int(max_rounds)) if max_rounds is not None else self.max_iterations
+        )
         # 构造子代理消息
         sys_prompt = (
             f"你是递归子代理（深度 {depth}/{self.max_depth}）。你的任务:\n{task}\n"
             f"父代理提供的上下文要点:\n{context or '（无）'}\n\n"
             "规则:\n"
             f"- 可用工具: {sorted(SUBAGENT_ALLOWED_TOOLS)}\n"
-            f"- 最多 {self.max_iterations} 轮工具循环，结束后给出最终回答\n"
+            f"- 最多 {effective_rounds} 轮工具循环，结束后给出最终回答\n"
             "- 如任务仍可拆分且未达深度上限，可用 spawn_subagent 递归委派（depth 自动+1）\n"
             "- 全部基于真实工具结果作答，不得编造"
         )
@@ -123,7 +141,7 @@ class SubAgentRunner:
         tokens_out = 0
         truncated = False
 
-        while rounds < self.max_iterations:
+        while rounds < effective_rounds:
             rounds += 1
             # ── LLM 决策 ──
             msgs = [m.to_llm_dict() for m in sess.messages]  # type: ignore[attr-defined]

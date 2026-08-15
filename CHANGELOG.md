@@ -2,6 +2,17 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.4（2026-08-15）
+
+### P3-4：workflow_run DAG 编排（拓扑序 + 节点级预算，无 graph DSL）
+- `mode=dag`：步骤可声明 `id` + `depends_on`（id 或 0 起下标）依赖；Kahn 拓扑排序确定执行序，
+  依赖步骤 final_answer 自动注入被依赖步骤 context（【依赖步骤 X 结果】标注）
+- 校验诚实：未知依赖/自依赖/重复 id → 400 式如实失败；**循环依赖 → 拓扑前检测**（不派发任何步骤）
+- **节点级预算** `budget_rounds`：透传子代理 max_rounds（SubAgentRunner.run 新增可选参数，
+  提示文案与循环守卫同步生效）；回执如实标注 budget
+- parallel/pipeline 同步支持 budget_rounds（通用节点预算）
+- 测试 +6（拓扑序+依赖注入/环检测/未知依赖/自依赖/重复 id/预算透传）；门禁 pytest 2079 + ruff 0 + pyright 0
+
 ## v0.6.3（2026-08-15）
 
 ### P3-2：英文文档对等化
