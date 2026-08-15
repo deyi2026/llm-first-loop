@@ -18,7 +18,6 @@ export const zh = {
   panelSettings: "设置",
   panelJobs: "后台任务",
   panelPlaceholder: "模块建设中（阶段 {stage}）",
-  sessionCount: "{n} 个会话",
   sharedSession: "跨端共享",
   stage1Note: "阶段 1 基座：主题 / 布局壳 / 连接与 SSE 基建 / 会话列表",
   loadEarlier: "加载更早",
@@ -31,4 +30,6 @@ export const zh = {
   attach: "添加附件（图片/文本/PDF/docx）",
   modelSelect: "选择模型（当前请求生效）",
   modelDefault: "默认模型",
+  reload: "重新加载",
+  sessionCount: "{n} 个会话",
 };

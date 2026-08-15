@@ -203,6 +203,108 @@
   color: var(--dsw-alias-label-dimmed);
 }
 
+.v2-session-item-wrap {
+  position: relative;
+  border-radius: var(--dsw-radius-md);
+}
+
+.v2-session-item-wrap:hover {
+  background: var(--dsw-specific-sidebar-nav-item-hover);
+}
+
+.v2-session-item-wrap.active {
+  background: var(--dsw-specific-sidebar-nav-item-active);
+  box-shadow: inset 0 0 0 1px var(--dsw-alias-button-ghost-active-border);
+}
+
+.v2-session-item-wrap .v2-session-item {
+  background: transparent;
+}
+
+.v2-session-item-wrap .v2-session-item:hover {
+  background: transparent;
+}
+
+.v2-session-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.v2-session-count {
+  font-size: 11px;
+  color: var(--dsw-alias-label-caption);
+}
+
+.v2-session-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: none;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-specific-sidebar-fill);
+}
+
+.v2-session-item-wrap:hover .v2-session-actions {
+  display: inline-flex;
+}
+
+.v2-session-actions .v2-icon-btn {
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
+}
+
+.v2-session-actions .v2-icon-btn.danger.confirming {
+  color: var(--dsw-alias-state-error-primary);
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+  font-weight: 600;
+  width: auto;
+  padding: 0 6px;
+}
+
+/* ── 右侧面板：模型目录 ── */
+.v2-panel-section-title {
+  margin-top: 16px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.v2-model-catalog {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.v2-catalog-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.v2-catalog-item.current {
+  box-shadow: inset 0 0 0 1px var(--dsw-alias-brand-primary-new-color);
+}
+
+.v2-catalog-current {
+  flex: none;
+  font-family: var(--dsw-font-family);
+  font-size: 11px;
+  color: var(--dsw-alias-state-business-primary);
+}
+
 /* ── 通用控件（对齐 DSH 交互：hover 底色 / 圆角 / 动效） ── */
 .v2-btn {
   display: inline-flex;
