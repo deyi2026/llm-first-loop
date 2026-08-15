@@ -2,6 +2,18 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.7（2026-08-16）
+
+### 修复：history_anchor 落在工具轮内 → 孤儿 tool 回执 → 上游 API 400（tool_call_id is not found）
+- 根因：锚点（P1-10 窗口裁剪起点）落在「工具调用声明 ↔ 工具回执」消息组内部时，
+  声明被裁掉、回执成孤儿 → OpenAI 兼容 API 拒绝（tool_call_id is not found）
+- 双层修复：① `build_history_messages` 裁切后丢弃窗口内无对应声明的 tool 回执
+  （declared_ids 集合 + dropped_orphans 计数，如实告警）；② 锚点推进对齐——锚点若落在
+  工具回执上则拉回至其声明起点，保证组内声明/回执成对进入窗口
+- 回归防护 +1（tests/unit/test_anchor_pairing_boundary.py：锚点落在工具轮内/外两方向配对断言）
+- 门禁 pytest 2058 passed（25 本地文档基线 skip / 14 real_llm 排除）+ ruff 0 + pyright 0；
+  线上实测（kimi/k3 真实 tool-call 往返）正常
+
 ## v0.6.6（2026-08-15）
 
 ### 修复：tool_call.arguments 归一化回归（v0.6.5 引入，工具通道断连根因）
