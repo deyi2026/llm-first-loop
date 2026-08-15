@@ -22,8 +22,8 @@ def _read(path: Path) -> str:
 def test_api_en_has_same_section_count():
     zh = _read(_DOCS / "api.md")
     en = _read(_DOCS / "api.en.md")
-    zh_heads = [l for l in zh.splitlines() if l.startswith(("# ", "## "))]
-    en_heads = [l for l in en.splitlines() if l.startswith(("# ", "## "))]
+    zh_heads = [ln for ln in zh.splitlines() if ln.startswith(("# ", "## "))]
+    en_heads = [ln for ln in en.splitlines() if ln.startswith(("# ", "## "))]
     assert len(en_heads) == len(zh_heads), f"章节数不一致: zh={len(zh_heads)} en={len(en_heads)}"
 
 
