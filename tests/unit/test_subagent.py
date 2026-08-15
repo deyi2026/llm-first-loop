@@ -7,8 +7,11 @@
 - 子代理工具受限（edit_file 被拒）
 - spawn_subagent 工具回执格式（五态 + 轨迹摘要 + 深度标注）
 - 父会话上下文不被污染（子代理独立 session）
+- P1-5(审计发现 #10): 子代理执行后会话 id 恢复为父会话（成功/异常路径都恢复）
 """
 from __future__ import annotations
+
+import pytest
 
 from llm_loop.core.message import ToolCall
 from llm_loop.llm.client import LLMResponse
@@ -161,3 +164,88 @@ def test_spawn_subagent_tool_missing_task(build_test_engine):
     result = tool.execute()
     assert result.status.value == "failure"
     assert "task" in result.content
+
+
+def test_runner_restores_parent_session_id(build_test_engine):
+    """P1-5(审计发现 #10): 子代理执行后会话 id 恢复为父会话（不再串台）.
+
+    子代理执行期间注册表会话为子会话（change_log/超长归档正确归属子会话）；
+    执行结束恢复父会话——父级后续工具结果的归档/变更日志不得归错到子会话。
+    contextvar（P0-5 优先）与显式回退字段两者都要恢复。
+    """
+    from llm_loop.core.run_context import current_session_id
+
+    engine, fake = build_test_engine([])
+    runner = SubAgentRunner(
+        llm=fake, registry=engine.registry, session_store=engine.session
+    )
+
+    # 探针工具（在子代理受限工具集内，且测试引擎未注册 web_search）:
+    # 记录子代理执行瞬间的会话（contextvar 优先值 + 显式回退字段）
+    captured: list[tuple[str, str]] = []
+
+    class _ProbeTool:
+        name = "web_search"
+        description = "探针（子代理会话断言）"
+        parameters = {"type": "object", "properties": {}}
+
+        def execute(self, **kwargs):
+            captured.append(
+                (engine.registry._session_id, engine.registry._session_id_explicit)
+            )
+            return "探针结果"
+
+    engine.registry.register(_ProbeTool())
+    fake._responses = [
+        LLMResponse(
+            content="",
+            tool_calls=[ToolCall(id="c1", name="web_search", arguments={})],
+            provider="fake",
+        ),
+        LLMResponse(content="子代理完成", tool_calls=[], provider="fake"),
+    ]
+
+    parent_sid = "parent_test_session"
+    engine.registry.set_session_id(parent_sid)
+    prev_ctx = current_session_id.get()
+    current_session_id.set(parent_sid)  # 模拟 engine.run 包装层（值快照 set，与引擎一致）
+    try:
+        result = runner.run(task="探针任务", depth=0)
+        assert result.truncated is False
+        # 执行期间: 会话为子会话（contextvar 优先 + 显式字段都指向子会话）
+        assert captured, "探针工具应被执行"
+        assert captured[0][0].startswith("subagent_"), captured
+        assert captured[0][1].startswith("subagent_"), captured
+        # 执行结束: 恢复父会话（显式字段 + contextvar + 属性读取三者一致）
+        assert engine.registry._session_id_explicit == parent_sid
+        assert current_session_id.get() == parent_sid
+        assert engine.registry._session_id == parent_sid
+    finally:
+        current_session_id.set(prev_ctx)
+
+
+def test_runner_restores_parent_session_on_exception(build_test_engine):
+    """P1-5(审计发现 #10): 子代理内部异常时同样恢复父会话（finally 兜底）."""
+    from llm_loop.core.run_context import current_session_id
+
+    engine, fake = build_test_engine([])
+    runner = SubAgentRunner(
+        llm=fake, registry=engine.registry, session_store=engine.session
+    )
+    parent_sid = "parent_test_session"
+    engine.registry.set_session_id(parent_sid)
+    prev_ctx = current_session_id.get()
+    current_session_id.set(parent_sid)
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("子代理内部异常（测试注入）")
+
+    runner._execute_subagent = _boom  # type: ignore[method-assign] — 注入异常路径
+    try:
+        with pytest.raises(RuntimeError):
+            runner.run(task="探针任务", depth=0)
+        # 异常穿透后父会话仍被恢复（try/finally 覆盖所有返回路径）
+        assert engine.registry._session_id_explicit == parent_sid
+        assert current_session_id.get() == parent_sid
+    finally:
+        current_session_id.set(prev_ctx)

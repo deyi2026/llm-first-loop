@@ -506,12 +506,22 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                         timeout_s=self._runtime_timeout(),
                         model=chat_model_arg,
                     )
+                    partial_parts: list[str] = []  # P1-6: 流式部分回答累积（断连落盘用）
                     while True:
                         try:
-                            yield next(it)
+                            d = next(it)
+                            if getattr(d, "text", ""):
+                                partial_parts.append(d.text)
+                            yield d
                         except StopIteration as exc:
                             resp = exc.value
                             break
+                        except GeneratorExit:
+                            # P1-6(2026-08-15，审计发现 #17)：客户端断连——部分回答如实
+                            # 落会话（中断标注不伪装完整）并立即保存，闭合"事件日志已追加
+                            # 而 session JSON 未保存"的双轨漂移。
+                            self._on_stream_disconnect(sess, partial_parts)
+                            raise
                 else:
                     # 无 chat_stream 的客户端（如测试 FakeLLM）→ 同步 chat（不 yield，行为与 run 一致）
                     resp = llm_client.chat(
@@ -715,6 +725,8 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 f"本次回答仍有效，但历史可能未持久化。{extra}"
             )
         self._phase("done")
+        # P1-1(2026-08-15): run 末事件日志滚动检查钩子（大小/天数触发；fail-open 不阻断）
+        self._check_event_rotate(session_id)
         # H-UI: 循环结束（状态条可收尾）
         self._notify_action("done")
 
@@ -838,7 +850,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             # RULE-AI-00: 不再传 summarizer（压缩路径不自动 LLM 摘要，AI 主动触发）
             layer_tool_trim=getattr(self.settings, "tool_trim_enabled", False),  # EVO-20260811-7baa2737: 历史分层降级
             tool_trim_age=getattr(self.settings, "tool_trim_age", 0),  # R3: 0=自适应
-            tool_trim_threshold=getattr(self.settings, "tool_trim_threshold", 2000),  # EVO-A: 降级长度阈值
+            tool_trim_threshold=getattr(self.settings, "tool_trim_threshold", 8000),  # EVO-A: 降级长度阈值（默认 8000）
             reasoning_tail=getattr(self.settings, "reasoning_tail", 2),  # M66 思考链瘦身
         )
 
@@ -927,6 +939,33 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             lambda: sess.model_override,
             lambda value: self._set_session_override(sess, value),
         )
+
+    def _check_event_rotate(self, session_id: str) -> None:
+        """P1-1: run 末事件日志滚动检查（fail-open；未接线/未启用零行为）."""
+        store = self._event_store
+        if store is None:
+            return
+        try:
+            store.check_rotate(session_id)
+        except Exception:  # noqa: BLE001 — 滚动检查失败不影响 run 结果
+            logger.warning("事件日志滚动检查失败（fail-open）: sid=%s", session_id, exc_info=True)
+
+    def _on_stream_disconnect(self, sess, partial_parts: list[str]) -> None:
+        """P1-6(2026-08-15，审计发现 #17)：LLM 流式中客户端断连（GeneratorExit）的落盘处理.
+
+        部分回答如实落会话（中断标注，不伪装完整）+ 事件双轨同步 + 立即保存——
+        闭合"事件日志已追加而 session JSON 未保存"的双轨漂移。保存失败 fail-open。
+        """
+        partial = "".join(partial_parts).strip()
+        note = "\n[对话已中断] 客户端断连，以上为不完整部分回答（如实标注，可能截断于任意位置）。"
+        content = (partial + note) if partial else "[对话已中断] 客户端断连，本回合未产生回答内容。"
+        msg = Message(role="assistant", content=content, source=MessageSource.SYSTEM)
+        sess.messages.append(msg)
+        try:
+            self._append_message_event(sess, msg)  # 双轨：事件同步（fail-open 内置）
+            self.session.save(sess)
+        except Exception:  # noqa: BLE001 — 断连保存失败不抛穿（生成器关闭路径）
+            logger.warning("断连会话保存失败（fail-open）: sid=%s", sess.session_id, exc_info=True)
 
     def _remember(self, final_answer: str, session_id: str, sess) -> None:
         """解析最终回答的记忆块并落盘（FR-MEM-01/03，失败不阻塞）."""

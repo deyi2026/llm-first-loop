@@ -11,12 +11,22 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from llm_loop.config import Settings
+
+logger = logging.getLogger(__name__)
+
+# P1-3（审计 #14）: 严格布尔解析白名单（bool("false")==True 陷阱修复）.
+# 仅接受真正的 bool / 整数 1/0 / 以下字符串（大小写不敏感）; 其余值回退字段默认并告警.
+_TRUTHY_STRINGS = frozenset({"1", "true", "yes", "on"})
+_FALSY_STRINGS = frozenset({"0", "false", "no", "off"})
+# P1-3: context 缺失回退默认值（与 ModelSpec.context 默认一致, 全项目 context window 既有默认值）.
+_DEFAULT_CONTEXT = 131072
 
 
 @dataclass(frozen=True)
@@ -172,41 +182,105 @@ def _provider_id_from_base_url(base_url: str) -> str:
     return "default"
 
 
+def _parse_bool_field(pid: str, mid: str, field: str, mval: dict[str, Any]) -> bool:
+    """解析单布尔字段（P1-3 审计 #14: bool("false")==True 陷阱修复）.
+
+    仅接受真正的 bool / 整数 1/0（与 bool() 一致, 零回归）/ 白名单字符串
+    "1/true/yes/on"（True）/ "0/false/no/off"（False）, 大小写不敏感;
+    其余值（含任意非白名单字符串）→ logger.warning 如实告警 + 回退字段默认 False
+    （不静默 bool(), 禁用配置不再被静默启用）.
+    """
+    value = mval.get(field, False)
+    if isinstance(value, int):  # bool 是 int 子类, 一并覆盖
+        return bool(value)
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in _TRUTHY_STRINGS:
+            return True
+        if v in _FALSY_STRINGS:
+            return False
+    logger.warning(
+        "模型 %s/%s 字段 %s=%r 非合法布尔（仅接受 true/false/1/0/yes/no/on/off），"
+        "回退默认 False",
+        pid, mid, field, value,
+    )
+    return False
+
+
+def _parse_context(value: Any) -> int:
+    """解析 context（P1-3 审计 #14: int() 转换异常不再杀死整个注册表）.
+
+    缺失 → 回退 131072（与 ModelSpec.context 默认一致）;
+    非法（非整数, 如 "abc"）→ 抛 ValueError, 由调用方 per-条目 try/except
+    跳过该条并告警（含 provider id / model 名, 不拖垮整个注册表加载）.
+    """
+    if value is None:
+        return _DEFAULT_CONTEXT
+    try:
+        return int(value)
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"context={value!r} 非整数: {exc}") from exc
+
+
+def _parse_model_spec(pid: str, mid: str, mval: dict[str, Any]) -> ModelSpec:
+    """解析单模型条目 → ModelSpec（P1-3 审计 #14 加固）.
+
+    布尔字段走严格解析（bool("false")==True 陷阱修复）+ context 非法如实报错;
+    context 非法抛 ValueError, 由调用方 per-条目 try/except 跳过该条（不拖垮注册表）.
+    """
+    return ModelSpec(
+        context=_parse_context(mval.get("context")),
+        thinking=_parse_bool_field(pid, mid, "thinking", mval),
+        cost_tier=str(mval.get("cost_tier", "mid")),
+        reasoning=_parse_bool_field(pid, mid, "reasoning", mval),
+        long_context=_parse_bool_field(pid, mid, "long_context", mval),
+        multimodal=_parse_bool_field(pid, mid, "multimodal", mval),
+    )
+
+
 def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
     """解析 JSON dict → ProviderSpec dict.
 
-    单条 provider 配置非法（非 dict / 缺 base_url 等）→ 静默跳过该条,
+    P1-3（审计 #14）: 每条 provider / 模型配置独立 try/except——单条非法
+    （context 非整数等）→ 跳过该条 + logger.warning 如实记录原因（含 provider id /
+    model 名）, 不再让 ValueError 杀死整个注册表加载（此前会触发 fail-soft 回落 L0,
+    所有 provider 全灭）。
     JSON 整体非法 → 由上层 catch 触发 fail-soft. 此处不抛异常.
     """
     out: dict[str, ProviderSpec] = {}
     for pid, val in raw.items():
-        if not isinstance(val, dict):
-            continue
-        base_url = str(val.get("base_url", ""))
-        api_key_env = str(val.get("api_key_env", ""))
-        models_raw = val.get("models", {})
-        models: dict[str, ModelSpec] = {}
-        if isinstance(models_raw, dict):
-            for mid, mval in models_raw.items():
-                if isinstance(mval, dict):
-                    models[mid] = ModelSpec(
-                        context=int(mval.get("context", 131072)),
-                        thinking=bool(mval.get("thinking", False)),
-                        cost_tier=str(mval.get("cost_tier", "mid")),
-                        reasoning=bool(mval.get("reasoning", False)),
-                        long_context=bool(mval.get("long_context", False)),
-                        multimodal=bool(mval.get("multimodal", False)),
-                    )
-                else:
-                    models[mid] = ModelSpec()
-        default_model = str(val.get("default_model", "")) or ""
-        out[str(pid)] = ProviderSpec(
-            id=str(pid),
-            base_url=base_url,
-            api_key_env=api_key_env,
-            models=models,
-            default_model=default_model,
-        )
+        try:
+            if not isinstance(val, dict):
+                logger.warning("provider 条目 %r 非 dict, 跳过", pid)
+                continue
+            base_url = str(val.get("base_url", ""))
+            api_key_env = str(val.get("api_key_env", ""))
+            models_raw = val.get("models", {})
+            models: dict[str, ModelSpec] = {}
+            if isinstance(models_raw, dict):
+                for mid, mval in models_raw.items():
+                    try:
+                        # P1-3: 单模型条目独立 try/except（非法条目跳过, 不拖垮同 provider 其余模型）
+                        if isinstance(mval, dict):
+                            models[mid] = _parse_model_spec(pid, mid, mval)
+                        else:
+                            models[mid] = ModelSpec()
+                    except (ValueError, TypeError) as exc:
+                        logger.warning(
+                            "模型条目 %s/%s 配置非法, 跳过该条（其余模型/Provider 正常加载）: %s",
+                            pid, mid, exc,
+                        )
+            default_model = str(val.get("default_model", "")) or ""
+            out[str(pid)] = ProviderSpec(
+                id=str(pid),
+                base_url=base_url,
+                api_key_env=api_key_env,
+                models=models,
+                default_model=default_model,
+            )
+        except (ValueError, TypeError) as exc:
+            # P1-3: provider 条目级兜底（意外转换异常也不拖垮整个注册表）
+            logger.warning("provider 条目 %r 配置非法, 跳过: %s", pid, exc)
     return out
 
 
@@ -223,7 +297,7 @@ def _synthesize_single_provider(settings: Settings) -> dict[str, ProviderSpec]:
         api_key_env="LLM_API_KEY",
         models={
             settings.llm_model: ModelSpec(
-                context=131072,
+                context=_DEFAULT_CONTEXT,
                 thinking=is_deepseek_compat,
                 cost_tier="mid",
             )

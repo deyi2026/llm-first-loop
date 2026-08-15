@@ -862,7 +862,11 @@ def _cmd_event_retire(argv: list[str]) -> int:
         print(f"  对账差异（{len(report.reconcile_diffs)} 项）:")
         for d in report.reconcile_diffs[:5]:
             print(f"    - {d}")
-    print(f"- 读路径切换: {'是' if report.read_path_switched else '否'}")
+    print(f"- 读路径切换就绪: {'是' if report.read_path_ready_to_switch else '否'}")
+    if report.switch_instructions:
+        print("- 人工切换指引（程序不替改 .env，切换需人工+重启）:")
+        for s in report.switch_instructions:
+            print(f"    {s}")
     print(f"- 归档清单: {', '.join(report.archived_files) or '无'}")
     print(f"- 备份区: {report.backup_dir}")
     print(f"- 耗时: {report.elapsed_s}s")
@@ -896,7 +900,9 @@ def _cmd_event_retire_rollback(argv: list[str]) -> int:
         print(f"- 错误: {len(result['errors'])}")
         for e in result["errors"][:5]:
             print(f"    - {e}")
-    print("- 读路径已切回 session_json（请设置 READ_PATH_SOURCE=session_json）")
+    print("- 读路径回退（程序不替改 .env，需人工操作）:")
+    print("    1. 编辑 .env：设置 READ_PATH_SOURCE=session_json")
+    print("    2. 重启服务：bash scripts/restart_system.sh restart")
     return 0 if not result["errors"] else 1
 
 

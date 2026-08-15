@@ -20,12 +20,18 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class RetireReport:
-    """退役报告（design.md §2.2.2-B）."""
+    """退役报告（design.md §2.2.2-B）.
+
+    P1-2(2026-08-15，审计发现 #12)：如实命名——程序不替人改 .env（真实的读路径
+    切换 = 人工改 READ_PATH_SOURCE + 重启），退役只报告"可切换就绪"并给出指引；
+    旧字段 read_path_switched 谎称已切换，已更名 read_path_ready_to_switch。
+    """
 
     retired_steps: list[str] = field(default_factory=list)
     reconcile_passed: bool = False
     reconcile_diffs: list[str] = field(default_factory=list)
-    read_path_switched: bool = False
+    read_path_ready_to_switch: bool = False  # 对账通过+归档完成，具备人工切换条件
+    switch_instructions: list[str] = field(default_factory=list)  # 人工切换指引（如实）
     backup_dir: str = ""
     archived_files: list[str] = field(default_factory=list)
     elapsed_s: float = 0.0
@@ -147,8 +153,19 @@ def run_retire(
         except OSError as exc:
             logger.warning("session JSON 归档失败（fail-open）: %s", exc)
 
-    # ⑤ 切换读路径（设置环境变量标记）
-    report.read_path_switched = True
+    # ⑤ 切换读路径（P1-2 如实标注：程序不替人改 .env——报告"就绪"+人工指引；
+    #    真实切换 = 人工设 READ_PATH_SOURCE=event_log + 重启服务）
+    report.read_path_ready_to_switch = True
+    if read_path_source == "event_log":
+        report.switch_instructions = [
+            "当前读路径已是 event_log（READ_PATH_SOURCE=event_log），无需切换。",
+        ]
+    else:
+        report.switch_instructions = [
+            "1. 编辑 .env：设置 READ_PATH_SOURCE=event_log",
+            "2. 重启服务：bash scripts/restart_system.sh restart",
+            "3. 重启后抽查若干会话确认读取正常；异常则改回 session_json 并重启回退",
+        ]
     report.retired_steps.append("switch_read_path")
 
     # ⑥ 压缩档案保留（不移动）

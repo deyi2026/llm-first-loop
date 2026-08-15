@@ -95,14 +95,37 @@ def test_web_fetch_timeout_config(tmp_path, monkeypatch):
 
 
 def test_execute_command_timeout_config():
-    """M18 AA8: ExecuteCommandTool 超时读配置值（默认 30 兜底 + 文案动态化）."""
+    """M18 AA8: ExecuteCommandTool 超时读配置值（默认 30 兜底 + 文案动态化）.
+
+    P1-5(审计发现 #11): 前台路径由 subprocess.run 改为 Popen + communicate
+    （暴露句柄给注册表超时 terminate），工具内兜底超时对应 communicate(timeout)。
+    """
+    import subprocess
+
     from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
 
     t_default = ExecuteCommandTool()
     assert t_default._timeout_s == 30.0
     t45 = ExecuteCommandTool(timeout_s=45)
     assert t45._timeout_s == 45.0
-    with mock.patch("subprocess.run", side_effect=__import__("subprocess").TimeoutExpired("c", 45)):
+
+    class _FakePopen:
+        # 不存在的 pid: terminate 的 killpg 会 ProcessLookupError（被抑制兜底）
+        pid = 1234567
+
+        def poll(self):
+            return None
+
+        def communicate(self, timeout=None):
+            raise subprocess.TimeoutExpired("c", timeout)
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout=None):
+            return -9
+
+    with mock.patch("subprocess.Popen", return_value=_FakePopen()):
         r = t45.execute(command="sleep 100")
     assert r.status == ToolResultStatus.TIMEOUT
     assert "超过 45s" in r.content

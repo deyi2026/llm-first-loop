@@ -10,9 +10,31 @@ from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
 
 
 def test_execute_command_timeout():
-    """命令超时 → timeout 状态."""
+    """命令超时 → timeout 状态.
+
+    P1-5(审计发现 #11): 前台路径由 subprocess.run 改为 Popen + communicate
+    （暴露句柄给注册表超时 terminate），工具内兜底超时对应 communicate(timeout)。
+    """
+    import subprocess
+
     tool = ExecuteCommandTool()
-    with mock.patch("subprocess.run", side_effect=__import__("subprocess").TimeoutExpired("x", 30)):
+
+    class _FakePopen:
+        pid = 1234567  # 不存在的 pid: terminate 的 killpg 会 ProcessLookupError（被抑制）
+
+        def poll(self):
+            return None
+
+        def communicate(self, timeout=None):
+            raise subprocess.TimeoutExpired("x", timeout)
+
+        def kill(self):
+            pass
+
+        def wait(self, timeout=None):
+            return -9
+
+    with mock.patch("subprocess.Popen", return_value=_FakePopen()):
         r = tool.execute(command="sleep 100")
     assert r.status == ToolResultStatus.TIMEOUT
 
@@ -20,7 +42,7 @@ def test_execute_command_timeout():
 def test_execute_command_oserror():
     """OSError → error 状态 + 完整错误."""
     tool = ExecuteCommandTool()
-    with mock.patch("subprocess.run", side_effect=OSError("boom")):
+    with mock.patch("subprocess.Popen", side_effect=OSError("boom")):
         r = tool.execute(command="whatever")
     assert r.status == ToolResultStatus.ERROR
     assert r.error_type == "OSError"

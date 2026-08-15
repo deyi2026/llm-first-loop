@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
+from contextlib import suppress
 from pathlib import Path
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
@@ -111,6 +113,32 @@ class ExecuteCommandTool:
     def __init__(self, timeout_s: float | None = None) -> None:
         """工具内兜底超时（M18 AA8: 读配置值，默认 30s 兜底向后兼容；注册表另有线程级超时）."""
         self._timeout_s = 30.0 if timeout_s is None else float(timeout_s)
+        # P1-5(审计发现 #11): 当前前台子进程句柄（注册表线程级超时的 terminate 钩子用）。
+        # 由执行线程写、注册表线程读——GIL 下简单属性赋值原子，竞态窗口仅进程刚启动的
+        # 瞬间，错过则退化为工具自身超时兜底（如实标注，不静默吞掉）。
+        self._active_proc: subprocess.Popen | None = None
+
+    def terminate(self) -> None:
+        """注册表超时兜底钩子：终止正在执行的前台子进程（整树 SIGKILL）.
+
+        P1-5(审计发现 #11): 注册表线程级超时先于工具内超时触发时，工作线程仍阻塞在
+        communicate() 等子进程——本钩子整树击杀后 communicate 立即返回，线程可回收，
+        孤儿子进程不再残留。尽力而为：击杀失败只记残留，不抛穿。
+        """
+        proc = self._active_proc
+        if proc is None:
+            return
+        try:
+            if proc.poll() is not None:
+                return  # 已结束（无需终止）
+        except Exception:  # noqa: BLE001 — 句柄异常按已结束处理（防御）
+            return
+        with suppress(OSError):
+            # start_new_session=True → proc.pid 即进程组 id；整树 SIGKILL（超时强制
+            # 终止，比 job_kill 的 SIGTERM 更果断——本钩子只在已超时后触发）
+            os.killpg(proc.pid, signal.SIGKILL)
+        with suppress(Exception):  # noqa: BLE001 — 组击杀失败时兜底单进程
+            proc.kill()
 
     def execute(self, **kwargs) -> ToolResult:
         command = str(kwargs.get("command", "")).strip()
@@ -159,22 +187,32 @@ class ExecuteCommandTool:
                     tool_call_id="",
                     tool_name=self.name,
                 )
-            proc = subprocess.run(
+            proc = subprocess.Popen(
                 command,
                 shell=True,  # noqa: S602 — 工具本质是执行命令，安全校验由 CatastrophicGuard 前置
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=self._timeout_s,  # 工具内兜底超时 = 配置值（注册表另有线程级超时）
                 cwd=workdir,  # B: workdir 支持（fresh shell，对齐 Harness）
                 env=env,  # EVO-20260814-61a52baf: 环境清洗，密钥不外泄 + LLM_EXEC_CWD 事实
+                # P1-5(审计发现 #11): 独立进程组——注册表超时 terminate 可整树终止（防孤儿）。
+                # 原 subprocess.run 封装无句柄可抓，且其超时只杀直接 shell、孙进程成孤儿。
+                start_new_session=True,
             )
-        except subprocess.TimeoutExpired:
-            return ToolResult(
-                status=ToolResultStatus.TIMEOUT,
-                content=f"[执行超时] 命令超过 {self._timeout_s:.0f}s 未完成",
-                tool_call_id="",
-                tool_name=self.name,
-            )
+            self._active_proc = proc
+            try:
+                stdout, stderr = proc.communicate(timeout=self._timeout_s)
+            except subprocess.TimeoutExpired:
+                # 工具内兜底超时（communicate 只抛异常不杀进程）→ 整树终止防孤儿
+                self.terminate()
+                with suppress(Exception):
+                    proc.wait(timeout=5)  # 收尸（SIGKILL 后立即退出；失败不阻断回执）
+                return ToolResult(
+                    status=ToolResultStatus.TIMEOUT,
+                    content=f"[执行超时] 命令超过 {self._timeout_s:.0f}s 未完成",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
         except OSError as exc:
             return ToolResult(
                 status=ToolResultStatus.ERROR,
@@ -184,12 +222,14 @@ class ExecuteCommandTool:
                 error_type=type(exc).__name__,
                 error_detail=str(exc),
             )
+        finally:
+            self._active_proc = None
 
         parts: list[str] = []
-        if proc.stdout:
-            parts.append(proc.stdout.rstrip())
-        if proc.stderr:
-            parts.append(f"[stderr] {proc.stderr.rstrip()}")
+        if stdout:
+            parts.append(stdout.rstrip())
+        if stderr:
+            parts.append(f"[stderr] {stderr.rstrip()}")
         content = "\n".join(parts) if parts else "（命令执行成功，无输出）"
 
         status = ToolResultStatus.SUCCESS if proc.returncode == 0 else ToolResultStatus.FAILURE
