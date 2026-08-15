@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 SERVICE_NAME = "llm-first-loop-web"
-SERVICE_VERSION = "0.5.5"  # T7: 语义化版本（与 pyproject 同步；git tag v0.5.2）
+SERVICE_VERSION = "0.5.6"  # T7: 语义化版本（与 pyproject 同步；git tag v0.5.2）
 
 
 class UTF8JSONResponse(JSONResponse):
@@ -534,6 +534,15 @@ def fork_session_endpoint(
 # ── M56：SSE 会话更新事件（Web 端实时刷新，轮询共享会话目录零新依赖）──
 
 
+def _sse_event(name: str, payload: dict) -> str:
+    """SSE 命名事件帧（2026-08-15 修复）：必须带 `event: <type>` 行浏览器才按命名事件分发。
+
+    此前只发 `data: {"type": ...}` → 浏览器按默认 message 处理，前端
+    addEventListener("sessions_updated") 永不触发（Web 端必须手动刷新）。
+    """
+    return f"event: {name}\ndata: {json.dumps(payload)}\n\n"
+
+
 def _sessions_fingerprint(sessions_dir: str | Path) -> str:
     """会话目录轻量指纹：文件数 + 最新文件 mtime + 文件名（任一变化即事件）."""
     try:
@@ -552,6 +561,12 @@ async def stream_session_events(request: Request) -> StreamingResponse:
 
     轮询共享会话目录指纹（文件数 + 最新 mtime），变化即推送 sessions_updated 事件；
     Web 前端收到后刷新会话列表与当前会话消息。零新依赖（同进程内 asyncio 轮询）。
+
+    2026-08-15 修复：SSE 命名事件必须带 `event: <type>` 行——此前只发
+    `data: {"type": ...}`，浏览器按默认 message 事件处理，前端
+    addEventListener("sessions_updated") 永不触发（Web 端必须手动刷新才能看到
+    飞书消息）。现补 `event:` 行（data 内 type 字段保留向后兼容），并加 20s
+    keepalive 注释行防中间层/浏览器超时掐断长连接。
     """
     engine = _engine_from(request)
     sessions_dir = getattr(getattr(engine, "settings", None), "sessions_dir", None) or "./data/sessions"
@@ -559,7 +574,9 @@ async def stream_session_events(request: Request) -> StreamingResponse:
 
     async def gen():
         nonlocal initial
-        yield "data: " + json.dumps({"type": "connected", "ts": asyncio.get_event_loop().time()}) + "\n\n"
+        loop = asyncio.get_event_loop()
+        yield _sse_event("connected", {"type": "connected", "ts": loop.time()})
+        last_beat = loop.time()
         while True:
             try:
                 if await request.is_disconnected():
@@ -567,10 +584,17 @@ async def stream_session_events(request: Request) -> StreamingResponse:
             except Exception:  # noqa: BLE001 — 断开检测异常按断开处理
                 break
             await asyncio.sleep(1.5)
+            now = loop.time()
+            # keepalive：20s 无事件也保活（注释行，浏览器忽略内容仅感知存活）
+            if now - last_beat >= 20.0:
+                last_beat = now
+                yield ": keepalive\n\n"
+                continue
             current = _sessions_fingerprint(sessions_dir)
             if current != initial and current != "err":
                 initial = current
-                yield "data: " + json.dumps({"type": "sessions_updated"}) + "\n\n"
+                last_beat = now
+                yield _sse_event("sessions_updated", {"type": "sessions_updated"})
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 

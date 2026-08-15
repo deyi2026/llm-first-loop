@@ -140,3 +140,21 @@ def test_style_has_tool_chain_styles():
     css = (STATIC_DIR / "style.css").read_text(encoding="utf-8")
     for cls in (".tool-call-chain", ".tool-call-toggle", ".tool-call-detail", ".tool-call-item"):
         assert cls in css
+
+
+# ── 2026-08-15: SSE 前端加固（失联自愈看门狗 + 聚焦即刷 + 命名事件监听）──
+
+class TestSseFrontendHardening:
+    def test_refresh_from_sync_defined(self, app_js_src: str):
+        assert "function refreshFromSync" in app_js_src
+
+    def test_watchdog_self_heal(self, app_js_src: str):
+        assert "25000" in app_js_src  # 失联阈值 25s
+        assert "visibilityState" in app_js_src
+
+    def test_visibility_change_reload(self, app_js_src: str):
+        assert "visibilitychange" in app_js_src
+
+    def test_named_event_listener_kept(self, app_js_src: str):
+        assert 'addEventListener("sessions_updated"' in app_js_src
+        assert 'addEventListener("connected"' in app_js_src

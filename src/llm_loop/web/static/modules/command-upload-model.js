@@ -26,13 +26,41 @@ async function init() {
 }
 
 // ---------- M56 SSE 实时刷新（飞书/Web 会话同步） ----------
+// 2026-08-15 加固：服务端补 `event:` 命名行后命名事件才真正到达浏览器（此前只发
+// data:{"type":...} 按默认 message 处理，addEventListener 永不触发）；
+// 另加：失联自愈看门狗（>25s 无事件→自愈刷新）+ 标签页聚焦即刷（后台节流兜底）。
+let lastSyncEvent = Date.now();
+
+function refreshFromSync() {
+  loadSessions(); // 刷新列表（预览/置顶顺序/来源标签）
+  if (state.currentSessionId) {
+    loadSessionMessages(state.currentSessionId); // 刷新当前会话（飞书侧新消息实时可见）
+  }
+}
+
 function initEventStream() {
   if (typeof EventSource === "undefined") return; // 老旧浏览器降级为手动刷新
   const es = new EventSource("/api/v1/events");
+  es.addEventListener("connected", () => {
+    lastSyncEvent = Date.now();
+  });
   es.addEventListener("sessions_updated", () => {
-    loadSessions(); // 刷新列表（预览/置顶顺序/来源标签）
-    if (state.currentSessionId) {
-      loadSessionMessages(state.currentSessionId); // 刷新当前会话（飞书侧新消息实时可见）
+    lastSyncEvent = Date.now();
+    refreshFromSync();
+  });
+  // 看门狗：事件流静默失联（>25s 无事件且页面可见）→ 自愈刷新。
+  // SSE 健康时事件 ≤3s 到达（不触发）；失联时 ~25s 一次静默自愈（不打扰用户）。
+  setInterval(() => {
+    if (document.visibilityState === "visible" && Date.now() - lastSyncEvent > 25000) {
+      lastSyncEvent = Date.now();
+      refreshFromSync();
+    }
+  }, 20000);
+  // 标签页重新聚焦 → 立即同步（后台标签页的 SSE/定时器会被浏览器节流）
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && Date.now() - lastSyncEvent > 5000) {
+      lastSyncEvent = Date.now();
+      refreshFromSync();
     }
   });
 }
