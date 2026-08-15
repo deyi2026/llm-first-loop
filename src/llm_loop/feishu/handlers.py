@@ -76,6 +76,7 @@ class FeishuMessageHandler:
         lark_client: lark_oapi.Client | None = None,  # M46：状态卡 cardkit
         typing_ack: bool = True,  # M46：FEISHU_TYPING_ACK
         streaming: bool = True,  # M46：FEISHU_STREAMING
+        cross_sync: Any | None = None,  # 2026-08-15 跨端同步（Web→飞书推送；None=不启用）
     ) -> None:
         self._engine = engine
         self._session_map = session_map
@@ -87,6 +88,7 @@ class FeishuMessageHandler:
         self._rest_client = rest_client
         self._lark_client = lark_client
         self._typing_ack = typing_ack
+        self._cross_sync = cross_sync
         self._streaming = streaming
         # 优雅退出保护：处理中计数（信号触发退出时等待正在进行的 run 完成，避免中断丢回复）
         self._busy_lock = threading.Lock()
@@ -281,6 +283,9 @@ class FeishuMessageHandler:
                 footer += f" · 🔧 工具调用 {n_tools} 次"
             answer += footer
         self._reply_chunked(msg, answer)
+        # 2026-08-15 跨端同步：桥自身输出完成后刷新基线（Web 端增量才推送，不重复推自己）
+        if self._cross_sync is not None:
+            self._cross_sync.mark_processed(sid)
         return answer
 
     # ── 附件/图片（复用 M39 web/upload_handlers + vision）──
