@@ -249,6 +249,9 @@ def test_switch_model_success_writes_session_and_audit(tmp_path, monkeypatch: py
     assert "deepseek-v4-flash → deepseek/deepseek-v4-pro" in result.content
     assert "需要更强推理" in result.content
     assert "思考参数" in result.content
+    # B6: 成本/能力事实注入（目标模型 cost_tier + 能力语义, 判断归 AI）
+    assert "成本档:" in result.content
+    assert "能力:" in result.content
     # override 已写入会话
     assert captured["value"] == "deepseek/deepseek-v4-pro"
     assert sess.model_override == "deepseek/deepseek-v4-pro"

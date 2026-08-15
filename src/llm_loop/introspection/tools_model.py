@@ -299,11 +299,33 @@ def run_switch_model(
     thinking_note = (
         "思考参数: 发送" if thinking_supported else "思考参数: 不发送（该 provider 不支持）"
     )
+    # B6(2026-08-15): 成本/能力事实注入——目标模型 cost_tier + 能力语义（对齐
+    # model_catalog 选型指引, 判断归 AI, 程序只给事实）
+    try:
+        mspec = pool.registry.providers[provider_id].models[model_id]
+        cost_note = f"成本档: {mspec.cost_tier}"
+        caps = []
+        if mspec.thinking:
+            caps.append("thinking")
+        if mspec.reasoning:
+            caps.append("reasoning")
+        if mspec.long_context:
+            caps.append("long_context")
+        if mspec.multimodal:
+            caps.append("multimodal")
+        cap_note = f"能力: {'/'.join(caps) if caps else '标准'}"
+        context_note = f"上下文: {mspec.context // 1024}K"
+    except Exception:  # noqa: BLE001 — 元数据缺失如实省略（不伪造）
+        cost_note = "成本档: 未知（元数据缺失）"
+        cap_note = "能力: 未知（元数据缺失）"
+        context_note = ""
     return ToolResult(
         status=ToolResultStatus.SUCCESS,
         content=(
             f"[状态: 成功] 模型已切换: {from_label} → {to_label}（原因: {reason}）；"
-            f"{thinking_note}。新模型将在下一轮 LLM 调用生效（覆盖已写入会话存储）。"
+            f"{thinking_note}；{cost_note}；{cap_note}"
+            + (f"；{context_note}" if context_note else "")
+            + "。新模型将在下一轮 LLM 调用生效（覆盖已写入会话存储）。"
         ),
         tool_call_id="",
         tool_name="switch_model",
