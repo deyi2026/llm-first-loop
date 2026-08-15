@@ -268,7 +268,7 @@ def test_att_image_vision(build_test_engine, tmp_path, monkeypatch):
     """用例 12：图片 → Mock 下载 → 复用 vision 识别 → 识别文本注入上下文."""
     handler, engine, fake, session_map, replies = _make_handler(build_test_engine, tmp_path)
     handler.register_attachment_download(lambda m: (b"\x89PNG\r\n\x1a\n\x00\x00\x00\r", "pic.png"))
-    monkeypatch.setattr("llm_loop.web.vision.vision_enabled", lambda: True)
+    monkeypatch.setattr("llm_loop.web.vision.vision_enabled", lambda *a, **k: True)
     monkeypatch.setattr(
         "llm_loop.web.vision.describe_image", lambda *a, **k: "识别出的图片文字：车牌号ABC"
     )
@@ -313,12 +313,12 @@ def test_att_failure_failopen(build_test_engine, tmp_path, monkeypatch):
 
     # b) vision 无 key（未配置）→ 如实降级标注（无伪造描述）
     handler.register_attachment_download(lambda m: (b"\x89PNG", "pic.png"))
-    monkeypatch.setattr("llm_loop.web.vision.vision_enabled", lambda: False)
+    monkeypatch.setattr("llm_loop.web.vision.vision_enabled", lambda *a, **k: False)
     handler.handle(_msg(msg_type="image", file_key="fk2"))
     assert "视觉识别未配置" in replies[-1][1]
 
     # c) 识别失败（describe_image 抛 RuntimeError）→ 如实提示（无伪造文本）
-    monkeypatch.setattr("llm_loop.web.vision.vision_enabled", lambda: True)
+    monkeypatch.setattr("llm_loop.web.vision.vision_enabled", lambda *a, **k: True)
     monkeypatch.setattr(
         "llm_loop.web.vision.describe_image",
         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no key")),

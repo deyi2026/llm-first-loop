@@ -4,6 +4,8 @@
 复用 tests/conftest.py 的 build_test_engine fixture（既有装配，不复制逻辑）。
 """
 
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from llm_loop.web import build_app
@@ -366,3 +368,96 @@ def test_sse_route_uses_named_event_helper():
     assert '_sse_event("sessions_updated"' in text
     assert '_sse_event("connected"' in text
     assert 'yield "data: ' not in text  # 旧格式（无 event: 行）不再出现
+
+
+# ── Web V2（2026-08-15）：/ui/v2 挂载并存（原版 / 不动；产物缺失不挂载） ──
+
+def test_ui_v2_mounted_when_dist_present(build_test_engine, fake_settings, tmp_path, monkeypatch):
+    """webui/dist 存在（UI_V2_DIR 注入）→ /ui/v2 挂载并可取 index.html."""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html><body>Web V2</body></html>", encoding="utf-8")
+    monkeypatch.setenv("UI_V2_DIR", str(dist))
+    engine, _ = build_test_engine([{"content": "a"}])
+    client = _make_client(engine)
+    resp = client.get("/ui/v2/")
+    assert resp.status_code == 200
+    assert "Web V2" in resp.text
+
+
+def test_ui_v2_not_mounted_without_dist(build_test_engine, fake_settings, tmp_path, monkeypatch):
+    """无构建产物（CI/未构建）→ /ui/v2 不挂载（404），原版 / 不受影响."""
+    monkeypatch.setenv("UI_V2_DIR", str(tmp_path / "nonexistent"))
+    engine, _ = build_test_engine([{"content": "a"}])
+    client = _make_client(engine)
+    assert client.get("/ui/v2/").status_code == 404
+    assert client.get("/").status_code in (200, 307)  # 原版入口不受影响
+
+
+def test_ui_v2_assets_same_origin_api(build_test_engine, fake_settings, tmp_path, monkeypatch):
+    """V2 静态资源与 API 同源（base=/ui/v2/ 的 assets 可解析）."""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text(
+        '<script type="module" src="/ui/v2/assets/index-x.js"></script>', encoding="utf-8"
+    )
+    (dist / "assets").mkdir()
+    (dist / "assets" / "index-x.js").write_text("console.log(1)", encoding="utf-8")
+    monkeypatch.setenv("UI_V2_DIR", str(dist))
+    engine, _ = build_test_engine([{"content": "a"}])
+    client = _make_client(engine)
+    assert client.get("/ui/v2/assets/index-x.js").status_code == 200
+
+
+# ── 2026-08-15：消息反馈（对齐 DSH ui-message-feedback） ──
+
+def test_feedback_appends_jsonl(build_test_engine, fake_settings, tmp_path, monkeypatch):
+    """反馈 → data/feedback.jsonl 追加（含 role/note），会话内容不变."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    engine, fake = build_test_engine([{"content": "回答内容"}])
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat", json={"message": "你好"})
+    sid = resp.json()["session_id"]
+    before = engine.session.load(sid)
+    r = client.post(
+        f"/api/v1/sessions/{sid}/feedback",
+        json={"message_index": 1, "feedback": "up", "note": "回答准确"},
+    )
+    assert r.status_code == 200
+    lines = (Path(engine.settings.data_dir) / "feedback.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 1
+    rec = __import__("json").loads(lines[0])
+    assert rec["session_id"] == sid and rec["feedback"] == "up" and rec["note"] == "回答准确"
+    assert rec["role"] == "assistant"
+    after = engine.session.load(sid)
+    assert len(after.messages) == len(before.messages)  # 会话内容未被反馈修改
+
+
+def test_feedback_validations(build_test_engine, fake_settings, tmp_path, monkeypatch):
+    """非法 feedback / 越界 index → 400 如实."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    engine, fake = build_test_engine([{"content": "a"}])
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat", json={"message": "hi"})
+    sid = resp.json()["session_id"]
+    assert (
+        client.post(
+            f"/api/v1/sessions/{sid}/feedback",
+            json={"message_index": 0, "feedback": "sideways"},
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            f"/api/v1/sessions/{sid}/feedback",
+            json={"message_index": 999, "feedback": "up"},
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            "/api/v1/sessions/nonexistent/feedback",
+            json={"message_index": 0, "feedback": "up"},
+        ).status_code
+        == 404
+    )
