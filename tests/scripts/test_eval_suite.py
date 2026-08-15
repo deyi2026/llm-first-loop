@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from llm_loop.eval.verdicts import (
     run_verdict,
@@ -173,3 +174,22 @@ def test_run_eval_dry(tmp_path):
     assert (out / "report.md").exists()
     md = (out / "report.md").read_text(encoding="utf-8")
     assert "Wilson 95% CI" in md
+
+
+def test_contributor_guide_doc_exists_and_covers():
+    """B7 贡献者文档防漂移: docs/eval_scenarios.md 存在且覆盖关键承诺."""
+    p = Path(__file__).resolve().parents[2] / "docs" / "eval_scenarios.md"
+    text = p.read_text(encoding="utf-8")
+    for key in [
+        "场景 schema",
+        "新增场景步骤",
+        "verdicts.py",
+        "_register",
+        "run_eval.py --dry",
+        "PR 验收清单",
+        "scenarios_v2",
+    ]:
+        assert key in text, f"贡献指南缺关键内容: {key}"
+    # INDEX 收录（发现入口不丢）
+    index = Path(__file__).resolve().parents[2] / "docs" / "INDEX.md"
+    assert "eval_scenarios.md" in index.read_text(encoding="utf-8")
