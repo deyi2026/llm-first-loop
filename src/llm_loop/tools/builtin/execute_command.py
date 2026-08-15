@@ -117,6 +117,7 @@ class ExecuteCommandTool:
         # 由执行线程写、注册表线程读——GIL 下简单属性赋值原子，竞态窗口仅进程刚启动的
         # 瞬间，错过则退化为工具自身超时兜底（如实标注，不静默吞掉）。
         self._active_proc: subprocess.Popen | None = None
+        self._sandbox_note: str = ""  # P3-3: 本次执行沙箱说明（bwrap 启用时如实标注）
 
     def terminate(self) -> None:
         """注册表超时兜底钩子：终止正在执行的前台子进程（整树 SIGKILL）.
@@ -167,9 +168,20 @@ class ExecuteCommandTool:
             env["LLM_EXEC_CWD"] = workdir or os.getcwd()
             if run_bg:
                 # A: 后台任务（对齐 Harness ctx.jobs）——Popen 不阻塞，登记 JobRegistry 供 job_output/job_kill
+                from llm_loop.tools.sandbox import sandbox_argv
+
+                try:
+                    bg_cmd, _ = sandbox_argv(command, str(workdir or "."))
+                except RuntimeError as exc:
+                    return ToolResult(
+                        status=ToolResultStatus.ERROR,
+                        content=f"[沙箱不可用] {exc}",
+                        tool_call_id="",
+                        tool_name=self.name,
+                    )
                 proc = subprocess.Popen(
-                    command,
-                    shell=True,  # noqa: S602 — 安全校验由 CatastrophicGuard 前置
+                    bg_cmd if bg_cmd is not None else command,
+                    shell=bg_cmd is None,  # noqa: S602 — 安全校验由 CatastrophicGuard 前置
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
@@ -187,9 +199,23 @@ class ExecuteCommandTool:
                     tool_call_id="",
                     tool_name=self.name,
                 )
+            # P3-3(2026-08-15): EXEC_SANDBOX=bwrap → bwrap argv（shell=False，独立命名空间 +
+            # 只读系统目录 + 工作区可写）；显式开启而 bwrap 缺失 → fail-closed 如实失败
+            from llm_loop.tools.sandbox import sandbox_argv
+
+            sandbox_note = ""
+            try:
+                sandbox_cmd, sandbox_note = sandbox_argv(command, str(workdir or "."))
+            except RuntimeError as exc:
+                return ToolResult(
+                    status=ToolResultStatus.ERROR,
+                    content=f"[沙箱不可用] {exc}",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
             proc = subprocess.Popen(
-                command,
-                shell=True,  # noqa: S602 — 工具本质是执行命令，安全校验由 CatastrophicGuard 前置
+                sandbox_cmd if sandbox_cmd is not None else command,
+                shell=sandbox_cmd is None,  # noqa: S602 — 工具本质是执行命令，安全校验由 CatastrophicGuard 前置
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -199,6 +225,7 @@ class ExecuteCommandTool:
                 # 原 subprocess.run 封装无句柄可抓，且其超时只杀直接 shell、孙进程成孤儿。
                 start_new_session=True,
             )
+            self._sandbox_note = sandbox_note
             self._active_proc = proc
             try:
                 stdout, stderr = proc.communicate(timeout=self._timeout_s)
@@ -226,6 +253,8 @@ class ExecuteCommandTool:
             self._active_proc = None
 
         parts: list[str] = []
+        if self._sandbox_note:
+            parts.append(self._sandbox_note)  # 沙箱启用如实标注
         if stdout:
             parts.append(stdout.rstrip())
         if stderr:
