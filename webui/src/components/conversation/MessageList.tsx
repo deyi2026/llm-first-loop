@@ -54,7 +54,7 @@ export function MessageList() {
         </button>
       )}
       {conv.messages.map((m, i) => (
-        <MessageItem key={i} msg={m} />
+        <MessageItem key={i} msg={m} index={i} sessionId={sessionStore.getState().currentSessionId ?? undefined} />
       ))}
       {!atBottom && (
         <button

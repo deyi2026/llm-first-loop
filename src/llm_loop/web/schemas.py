@@ -83,6 +83,14 @@ class UploadRequest(BaseModel):
     data: str = Field(min_length=1, description="文件内容（base64 编码）")
 
 
+class FeedbackRequest(BaseModel):
+    """消息反馈（POST /api/v1/sessions/{id}/feedback，2026-08-15 对齐 DSH ui-message-feedback）."""
+
+    message_index: int = Field(ge=0, description="会话内消息下标（含 user/assistant 全部角色）")
+    feedback: str = Field(description="up / down")
+    note: str = Field(default="", max_length=500, description="可选补充说明")
+
+
 class UploadResponse(BaseModel):
     """上传处理响应（来源可追溯 + 状态如实）."""
 

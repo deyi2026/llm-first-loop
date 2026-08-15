@@ -20,6 +20,7 @@ from .schemas import (
     ChatRequest,
     ChatResponse,
     ErrorResponse,
+    FeedbackRequest,
     MessageItem,
     SessionListResponse,
     SessionMessagesResponse,
@@ -529,6 +530,69 @@ def fork_session_endpoint(
             "elapsed_ms": report.elapsed_ms,
         }
     )
+
+
+# ── 2026-08-15：消息反馈（对齐 DSH ui-message-feedback；JSONL 追加审计，不侵入会话） ──
+
+@router.post(
+    "/api/v1/sessions/{session_id}/feedback",
+    response_model=None,
+    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+)
+def submit_message_feedback(
+    session_id: str,
+    payload: FeedbackRequest,
+    request: Request,
+) -> Response:
+    """消息反馈：追加 data/feedback.jsonl（session_id/下标/up-down/note/ts）.
+
+    仅审计记录，不修改会话内容；index 越界/非法 feedback 如实 400。
+    """
+    engine = _engine_from(request)
+    if not engine.session.exists(session_id):
+        return UTF8JSONResponse(
+            status_code=404,
+            content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
+        )
+    if payload.feedback not in ("up", "down"):
+        return UTF8JSONResponse(
+            status_code=400,
+            content={"error": "invalid_feedback", "detail": "feedback 仅支持 up / down。"},
+        )
+    try:
+        sess = engine.session.load(session_id)
+        if payload.message_index >= len(sess.messages):
+            return UTF8JSONResponse(
+                status_code=400,
+                content={
+                    "error": "index_out_of_range",
+                    "detail": f"message_index {payload.message_index} 超出会话消息数 {len(sess.messages)}。",
+                },
+            )
+        data_dir = Path(getattr(engine.settings, "data_dir", "./data"))
+        feedback_file = data_dir / "feedback.jsonl"
+        with open(feedback_file, "a", encoding="utf-8") as f:
+            f.write(
+                json.dumps(
+                    {
+                        "ts": __import__("time").time(),
+                        "session_id": session_id,
+                        "message_index": payload.message_index,
+                        "role": sess.messages[payload.message_index].role,
+                        "feedback": payload.feedback,
+                        "note": payload.note,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+    except Exception as exc:  # noqa: BLE001 — 反馈失败如实 500（不影响主链路）
+        logger.exception("message feedback failed: session=%s", session_id)
+        return UTF8JSONResponse(
+            status_code=500,
+            content={"error": "feedback_failed", "detail": f"[程序异常] 反馈记录失败（{type(exc).__name__}: {exc}）"},
+        )
+    return UTF8JSONResponse(content={"status": "ok", "session_id": session_id})
 
 
 # ── M56：SSE 会话更新事件（Web 端实时刷新，轮询共享会话目录零新依赖）──

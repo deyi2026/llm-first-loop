@@ -77,6 +77,40 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
   return resp.ok;
 }
 
+/** 消息反馈（对齐 DSH ui-message-feedback；后端追加 feedback.jsonl 审计） */
+export async function submitFeedback(
+  sessionId: string,
+  messageIndex: number,
+  feedback: "up" | "down",
+  note = ""
+): Promise<boolean> {
+  const resp = await fetch(`/api/v1/sessions/${encodeURIComponent(sessionId)}/feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message_index: messageIndex, feedback, note }),
+  });
+  return resp.ok;
+}
+
+/** 全量消息拉取（分页到底；导出用） */
+export async function fetchAllMessages(sessionId: string): Promise<Array<{ role: string; content: string }>> {
+  const out: Array<{ role: string; content: string }> = [];
+  let offset = 0;
+  const page = 100;
+  for (let guard = 0; guard < 200; guard += 1) {
+    const resp = await fetch(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages?limit=${page}&offset=${offset}`
+    );
+    if (!resp.ok) break;
+    const data = (await resp.json()) as { messages?: Array<{ role: string; content: string }>; has_more?: boolean };
+    const msgs = data.messages ?? [];
+    out.push(...msgs);
+    offset += msgs.length;
+    if (!data.has_more || msgs.length === 0) break;
+  }
+  return out;
+}
+
 export async function forkSession(
   sessionId: string,
   summary = ""

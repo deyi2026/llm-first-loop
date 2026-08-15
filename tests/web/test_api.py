@@ -4,6 +4,8 @@
 复用 tests/conftest.py 的 build_test_engine fixture（既有装配，不复制逻辑）。
 """
 
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from llm_loop.web import build_app
@@ -405,3 +407,57 @@ def test_ui_v2_assets_same_origin_api(build_test_engine, fake_settings, tmp_path
     engine, _ = build_test_engine([{"content": "a"}])
     client = _make_client(engine)
     assert client.get("/ui/v2/assets/index-x.js").status_code == 200
+
+
+# ── 2026-08-15：消息反馈（对齐 DSH ui-message-feedback） ──
+
+def test_feedback_appends_jsonl(build_test_engine, fake_settings, tmp_path, monkeypatch):
+    """反馈 → data/feedback.jsonl 追加（含 role/note），会话内容不变."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    engine, fake = build_test_engine([{"content": "回答内容"}])
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat", json={"message": "你好"})
+    sid = resp.json()["session_id"]
+    before = engine.session.load(sid)
+    r = client.post(
+        f"/api/v1/sessions/{sid}/feedback",
+        json={"message_index": 1, "feedback": "up", "note": "回答准确"},
+    )
+    assert r.status_code == 200
+    lines = (Path(engine.settings.data_dir) / "feedback.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 1
+    rec = __import__("json").loads(lines[0])
+    assert rec["session_id"] == sid and rec["feedback"] == "up" and rec["note"] == "回答准确"
+    assert rec["role"] == "assistant"
+    after = engine.session.load(sid)
+    assert len(after.messages) == len(before.messages)  # 会话内容未被反馈修改
+
+
+def test_feedback_validations(build_test_engine, fake_settings, tmp_path, monkeypatch):
+    """非法 feedback / 越界 index → 400 如实."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    engine, fake = build_test_engine([{"content": "a"}])
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat", json={"message": "hi"})
+    sid = resp.json()["session_id"]
+    assert (
+        client.post(
+            f"/api/v1/sessions/{sid}/feedback",
+            json={"message_index": 0, "feedback": "sideways"},
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            f"/api/v1/sessions/{sid}/feedback",
+            json={"message_index": 999, "feedback": "up"},
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            f"/api/v1/sessions/nonexistent/feedback",
+            json={"message_index": 0, "feedback": "up"},
+        ).status_code
+        == 404
+    )

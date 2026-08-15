@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ChatMessage, ToolCallInfo } from "../../core/types";
 import { renderMarkdown } from "../../core/markdown";
+import { submitFeedback } from "../../core/api";
 import { zh } from "../../i18n/zh";
 
 function Markdown({ text }: { text: string }) {
@@ -123,7 +124,37 @@ function StreamingHint({ startedAt }: { startedAt: number | null }) {
   );
 }
 
-export function MessageItem({ msg }: { msg: ChatMessage }) {
+function FeedbackButtons({ sessionId, index }: { sessionId: string; index: number }) {
+  const [picked, setPicked] = useState<"up" | "down" | null>(null);
+  const send = async (fb: "up" | "down") => {
+    if (picked) return; // 一次性反馈（本地状态）
+    setPicked(fb);
+    const ok = await submitFeedback(sessionId, index, fb);
+    if (!ok) setPicked(null); // 失败复位可重试
+  };
+  return (
+    <div className="v2-feedback" data-testid="msg-feedback">
+      <button
+        type="button"
+        className={`v2-fb-btn ${picked === "up" ? "picked" : ""}`}
+        title={zh.feedbackUp}
+        onClick={() => void send("up")}
+      >
+        👍
+      </button>
+      <button
+        type="button"
+        className={`v2-fb-btn ${picked === "down" ? "picked down" : ""}`}
+        title={zh.feedbackDown}
+        onClick={() => void send("down")}
+      >
+        👎
+      </button>
+    </div>
+  );
+}
+
+export function MessageItem({ msg, index, sessionId }: { msg: ChatMessage; index?: number; sessionId?: string }) {
   if (msg.role === "user") {
     return (
       <div className="v2-msg user" data-testid="msg-user">
@@ -155,6 +186,7 @@ export function MessageItem({ msg }: { msg: ChatMessage }) {
           <StreamingHint startedAt={msg.streamStartedAt ?? null} />
         )}
         {msg.note ? <div className="v2-msg-note">{msg.note}</div> : null}
+        {typeof index === "number" && sessionId ? <FeedbackButtons sessionId={sessionId} index={index} /> : null}
       </div>
     </div>
   );

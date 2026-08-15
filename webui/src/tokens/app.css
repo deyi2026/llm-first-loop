@@ -394,6 +394,129 @@
   background: var(--dsw-alias-state-business-primary);
 }
 
+/* ── 消息反馈按钮 ── */
+.v2-feedback {
+  display: inline-flex;
+  gap: 2px;
+  align-self: flex-start;
+  margin-top: 4px;
+  opacity: 0;
+  transition: opacity var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+
+.v2-msg-body:hover .v2-feedback,
+.v2-feedback:focus-within {
+  opacity: 1;
+}
+
+.v2-fb-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  font-size: 13px;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: background var(--ds-transition-duration) var(--ds-ease-in-out),
+    opacity var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+
+.v2-fb-btn:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  opacity: 1;
+}
+
+.v2-fb-btn.picked {
+  background: var(--dsw-alias-interactive-bg-active);
+  opacity: 1;
+}
+
+.v2-fb-btn.picked.down {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* ── 子代理标签 ── */
+.v2-channel-tag.subagent {
+  color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-state-business-tertiary, var(--dsw-static-deepseek-50));
+}
+
+/* ── 消息入场动效（尊重 prefers-reduced-motion） ── */
+@keyframes v2-msg-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.v2-msg {
+  animation: v2-msg-in 0.18s var(--ds-ease-in-out);
+}
+
+/* ── 移动端响应式（对齐原版 P4-2：抽屉式侧栏/面板） ── */
+@media (max-width: 900px) {
+  .v2-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 200;
+    transform: translateX(-100%);
+    transition: transform var(--ds-transition-duration) var(--ds-ease-in-out);
+    box-shadow: var(--dsw-shadow-lv3);
+  }
+
+  .v2-shell.mobile-sidebar-open .v2-sidebar {
+    transform: none;
+  }
+
+  .v2-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 200;
+    width: min(320px, 85vw);
+    transform: translateX(100%);
+    transition: transform var(--ds-transition-duration) var(--ds-ease-in-out);
+    box-shadow: var(--dsw-shadow-lv3);
+  }
+
+  .v2-shell.mobile-panel-open .v2-panel {
+    transform: none;
+  }
+
+  .v2-shell.mobile-sidebar-open .v2-sidebar,
+  .v2-shell.mobile-panel-open .v2-panel {
+    /* 抽屉打开时禁用背景交互 */
+    pointer-events: auto;
+  }
+
+  .v2-message-list {
+    padding: var(--dsw-space-3);
+  }
+
+  .v2-composer {
+    padding: var(--dsw-space-2) var(--dsw-space-3) var(--dsw-space-3);
+  }
+
+  .v2-msg-bubble {
+    max-width: 88%;
+  }
+
+  .v2-model-select {
+    max-width: 110px;
+  }
+}
+
 /* ── 主题切换（跟随系统/亮/暗 三段） ── */
 .v2-theme-switch {
   display: inline-flex;
