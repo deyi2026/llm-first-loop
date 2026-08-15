@@ -65,7 +65,11 @@ class ToolRegistry:
         self.exec_allowlist = [s.strip() for s in (exec_allowlist or "").split(",") if s.strip()]
         self._pre_execute_hooks: list[PreExecuteHook] = []
         self._archive_store = archive_store  # ArchiveStore（T22 超长结果另存）
-        self._session_id = ""
+        # P0-5(2026-08-15): 显式注入的会话 id（set_session_id 写入，无 contextvar
+        # 上下文时的回退值）。并发 run 期间，属性 `_session_id`（下方 property）
+        # 优先读 contextvar——execute_many 只读池线程经 copy_context 传播获得
+        # 本会话值，跨会话并发不再串台（审计发现 #7 修复）。
+        self._session_id_explicit = ""
         # EVO-20260813-9ced1f4c: 工具执行瀑布（默认 None = 零回归；set_pipeline 显式装配）
         self._pipeline: Any = None
         # T5a: 人工审批通道（None = 拦截即拒；set_approval_callback 运行时注入）
@@ -93,9 +97,26 @@ class ToolRegistry:
         except OSError:
             logger.warning("审批审计写失败（fail-open）: %s", self._approval_audit_path)
 
+    @property
+    def _session_id(self) -> str:
+        """当前会话 id（P0-5: contextvar 优先，显式注入回退）."""
+        try:
+            from llm_loop.core.run_context import current_session_id
+
+            sid = current_session_id.get()
+            if sid:
+                return sid
+        except Exception:  # noqa: BLE001 — 上下文不可用时回退显式值（零回归）
+            pass
+        return self._session_id_explicit
+
+    @_session_id.setter
+    def _session_id(self, value: str) -> None:
+        self._session_id_explicit = value
+
     def set_session_id(self, session_id: str) -> None:
-        """由循环注入当前会话（压缩档案关联）."""
-        self._session_id = session_id
+        """由循环注入当前会话（压缩档案关联；无 contextvar 上下文时的回退值）."""
+        self._session_id_explicit = session_id
 
     def set_pipeline(self, pipeline: Any) -> None:
         """装配工具执行瀑布（EVO-20260813-9ced1f4c）.
@@ -408,11 +429,18 @@ class ToolRegistry:
 
         if readonly:
             import concurrent.futures
+            import contextvars
 
+            # P0-5: 逐任务复制当前上下文（含 current_session_id）到池线程——
+            # 只读工具（search_archive/architecture_status 等）在池线程内仍能
+            # 定位本会话，跨会话并发不串台（审计发现 #7 修复）。
             with concurrent.futures.ThreadPoolExecutor(
                 max_workers=min(len(readonly), self._READONLY_MAX_WORKERS)
             ) as pool:
-                futures = {pool.submit(self.execute, c): c for c in readonly}
+                futures = {
+                    pool.submit(contextvars.copy_context().run, self.execute, c): c
+                    for c in readonly
+                }
                 for fut in concurrent.futures.as_completed(futures):
                     call = futures[fut]
                     result = fut.result()
@@ -621,9 +649,12 @@ class ToolRegistry:
         # execute_command 可传 shell=True 场景由工具自身处理；
         # 此处统一超时控制（工具 execute 同步阻塞，用线程 + join 兜底）
         import concurrent.futures
+        import contextvars
 
+        # P0-5: 超时包裹的内层线程同样传播上下文（current_session_id 等）——
+        # 工具 execute 本体在内层线程执行，缺传播则 contextvar 读到空串
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(tool.execute, **call.arguments)
+            future = pool.submit(contextvars.copy_context().run, tool.execute, **call.arguments)
             try:
                 result = future.result(timeout=self.tool_timeout_s)
             except concurrent.futures.TimeoutError:

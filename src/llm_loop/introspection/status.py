@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -89,6 +90,10 @@ class ArchitectureStatusProvider:
         self._audit_dir = Path(audit_dir) if audit_dir else None
 
         self._current_phase: str = "idle"
+        # P0-5(2026-08-15): 阶段按会话分桶（并发 run 不互改对方 current_phase；
+        # _current_phase 保留为"最近写入值"兼容快照缺省路径）
+        self._phases: dict[str, str] = {}
+        self._phases_guard = threading.Lock()
         self._action_trace: list[ActionTraceItem] = []
         self._tool_history: list[ToolHistoryItem] = []
         self._message_flow: list[dict] = []
@@ -108,7 +113,30 @@ class ArchitectureStatusProvider:
     # ── 采集（循环事件附带调用，零侵入）──
     def record_phase(self, phase: str) -> None:
         if self.enabled:
-            self._current_phase = phase
+            # P0-5: 按 contextvar 会话分桶（无上下文 → 全局桶）；并发 run 各记各的
+            try:
+                from llm_loop.core.run_context import current_session_id
+
+                sid = current_session_id.get()
+            except Exception:  # noqa: BLE001 — 上下文不可用落全局桶（零回归）
+                sid = ""
+            with self._phases_guard:
+                self._phases[sid] = phase
+                self._current_phase = phase  # 兼容：最近写入值
+
+    def _phase_for(self, session_id: str = "") -> str:
+        """快照取阶段：会话桶优先 → 全局桶 → 最近写入值（如实回退链）."""
+        try:
+            from llm_loop.core.run_context import current_session_id
+
+            ctx_sid = current_session_id.get()
+        except Exception:  # noqa: BLE001
+            ctx_sid = ""
+        with self._phases_guard:
+            for key in (session_id, ctx_sid, ""):
+                if key and key in self._phases:
+                    return self._phases[key]
+            return self._current_phase
 
     def record_action(
         self, phase: str, action_type: str, detail: str, session_id: str = ""
@@ -356,7 +384,7 @@ class ArchitectureStatusProvider:
             except Exception:  # noqa: BLE001 — 参数快照失败如实标注 None（fail-open）
                 runtime_params = None
         avail = {
-            "current_phase": self._current_phase,
+            "current_phase": self._phase_for(session_id),
             "action_trace": [a.to_dict() for a in self._action_trace[-30:]],
             "tool_history": [
                 {

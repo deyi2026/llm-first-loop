@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -165,6 +168,64 @@ class SessionStore:
         self._dir.mkdir(parents=True, exist_ok=True)
         self._event_store = event_store
         self._read_path_source = read_path_source
+        # P0-4(2026-08-15): 非 POSIX 平台 flock 不可得时的进程内回退锁表
+        self._fallback_locks: dict[str, threading.Lock] = {}
+        self._fallback_locks_guard = threading.Lock()
+
+    # ── P0-4(2026-08-15): 跨进程会话写锁（审计发现 #8 lost update 修复）──
+    # Web 与飞书为独立进程共享同一 data/ 目录；load→modify→save 全程加 flock
+    # （锁文件 <sid>.lock，对齐 EventStore 跨进程原子写约定）。锁文件不参与
+    # 会话列表（list_sessions glob *.json 不匹配），delete 时一并清理。
+    @contextmanager
+    def _session_lock(self, session_id: str) -> Iterator[None]:
+        """per-session 跨进程写锁（flock LOCK_EX；非 POSIX 回退进程内锁）.
+
+        注意不可重入：同一线程对同一 sid 嵌套 acquire 会自死锁（flock 按
+        打开文件描述符互斥）。持锁路径内部必须走 ``_save_locked``。
+        """
+        lock_path = self._dir / f"{session_id}.lock"
+        try:
+            import fcntl
+        except ImportError:
+            with self._fallback_locks_guard:
+                lk = self._fallback_locks.setdefault(session_id, threading.Lock())
+            with lk:
+                yield
+            return
+        try:
+            with lock_path.open("a", encoding="utf-8") as f:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        except OSError as exc:
+            # 锁文件不可写：如实记录后放行（不阻断主链路；并发保护降级如实标注）
+            logger.warning("会话锁不可用（fail-open，并发保护降级）: %s: %s", lock_path, exc)
+            yield
+
+    @contextmanager
+    def _shared_file_lock(self, name: str) -> Iterator[None]:
+        """data/ 根级共享文件锁（如 shared_current_session；语义同 _session_lock）."""
+        lock_path = self._dir.parent / f"{name}.lock"
+        try:
+            import fcntl
+        except ImportError:
+            with self._fallback_locks_guard:
+                lk = self._fallback_locks.setdefault(name, threading.Lock())
+            with lk:
+                yield
+            return
+        try:
+            with lock_path.open("a", encoding="utf-8") as f:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        except OSError as exc:
+            logger.warning("共享文件锁不可用（fail-open）: %s: %s", lock_path, exc)
+            yield
 
     def _event_append(self, session_id: str, event_type: str, payload: dict) -> None:
         """D1 事件写入（fail-open：未注入/禁用/异常均如实记录，不抛穿调用方）."""
@@ -253,16 +314,17 @@ class SessionStore:
         return None
 
     def set_shared_current(self, session_id: str) -> None:
-        """写跨端共享当前会话（原子写，fail-open 不阻断主链路）."""
+        """写跨端共享当前会话（原子写 + P0-4 跨进程文件锁，fail-open 不阻断主链路）."""
         p = self._dir.parent / self._SHARED_SESSION_FILE
         try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            tmp = p.with_suffix(".tmp")
-            tmp.write_text(
-                json.dumps({"current": session_id, "updated_at": _now()}, ensure_ascii=False),
-                encoding="utf-8",
-            )
-            tmp.replace(p)
+            with self._shared_file_lock("shared_current_session"):
+                p.parent.mkdir(parents=True, exist_ok=True)
+                tmp = p.with_suffix(".tmp")
+                tmp.write_text(
+                    json.dumps({"current": session_id, "updated_at": _now()}, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                tmp.replace(p)
         except OSError:
             pass  # fail-open（共享会话写入失败不阻断 Web/飞书主链路）
 
@@ -276,7 +338,17 @@ class SessionStore:
         LoopEngine.run 走 save() 导致会话列表"未命名 + 时间不更新"。现在保存即统一维护：
         - updated_at 每次保存更新为当前时间（列表排序/时间显示正确）
         - title 为空且有用户消息时补首条用户消息标题（幂等，不覆盖已有标题）
+
+        P0-4(2026-08-15): 写阶段持会话锁（与 append/rename 等持锁路径互斥）。
+        如实标注：本方法只保护"写"这一瞬——调用方若在锁外先 load 再 save
+        （如 engine 长 run 持有内存态整轮），跨进程 lost update 残差仍在；
+        完整防护须走 append/rename 等持锁的 load→modify→save 整段路径。
         """
+        with self._session_lock(session.session_id):
+            self._save_locked(session)
+
+    def _save_locked(self, session: Session) -> None:
+        """save 的持锁内层（调用方必须已持有 _session_lock，否则并发保护不成立）."""
         session.updated_at = _now()
         if not session.title:
             first_user = next((m for m in session.messages if m.role == "user"), None)
@@ -291,8 +363,10 @@ class SessionStore:
                 encoding="utf-8",
             )
             tmp.replace(p)
-        except OSError:
-            # 原子写失败回退直写（fail-open，尽力而为）
+        except OSError as exc:
+            # P0-4: 原子写失败回退直写（持锁内，无并发写者撕裂面；读者仍有瞬时窗口，
+            # 如实 warning 不再静默——该路径现实不可达，仅跨设备 rename 等极端场景）
+            logger.warning("会话原子写失败，回退直写（fail-open）: %s: %s", p, exc)
             p.write_text(
                 json.dumps(session.to_dict(), ensure_ascii=False, indent=2),
                 encoding="utf-8",
@@ -311,10 +385,12 @@ class SessionStore:
         title = (new_title or "").strip()
         if not title:
             return False
-        session = self.load(session_id)
-        old_title = session.title
-        session.title = title
-        self.save(session)
+        # P0-4: load→modify→save 整段持锁
+        with self._session_lock(session_id):
+            session = self.load(session_id)
+            old_title = session.title
+            session.title = title
+            self._save_locked(session)
         self._event_append(
             session_id,
             "session.meta_changed",
@@ -413,13 +489,15 @@ class SessionStore:
             return Session(session_id=session_id)
 
     def append(self, session_id: str, message: Message) -> None:
-        session = self.load(session_id)
-        session.messages.append(message)
-        session.updated_at = _now()
-        # T24: 标题仅首条用户消息生成一次（确定性，不调 LLM）
-        if not session.title and message.role == "user":
-            session.title = _make_title(message.content)
-        self.save(session)
+        # P0-4: load→modify→save 整段持锁（跨进程 lost update 防护）
+        with self._session_lock(session_id):
+            session = self.load(session_id)
+            session.messages.append(message)
+            session.updated_at = _now()
+            # T24: 标题仅首条用户消息生成一次（确定性，不调 LLM）
+            if not session.title and message.role == "user":
+                session.title = _make_title(message.content)
+            self._save_locked(session)
     # ── EVO-20260814: 会话瘦身（保留近期 + 早期摘要到压缩档案，可逆）──
     def trim_session(
         self,
@@ -441,54 +519,56 @@ class SessionStore:
         """
         if not self.exists(session_id):
             return None
-        session = self.load(session_id)
-        original_count = len(session.messages)
-        if original_count <= keep_recent:
-            return {"before": original_count, "after": original_count, "trimmed": 0,
-                    "archived_to": None, "note": "已足够短，无需瘦身"}
+        # P0-4: load→modify→save 整段持锁（单锁包全身，瘦身期间并发 append 不丢失）
+        with self._session_lock(session_id):
+            session = self.load(session_id)
+            original_count = len(session.messages)
+            if original_count <= keep_recent:
+                return {"before": original_count, "after": original_count, "trimmed": 0,
+                        "archived_to": None, "note": "已足够短，无需瘦身"}
 
-        # 摘要时转 dict（保留原 Message 列表以便 save 序列化）
-        msg_dicts = [asdict(m) for m in session.messages]
-        keep = list(session.messages[-keep_recent:])  # 完整保留近期（Message 对象）
-        early = list(msg_dicts[:-keep_recent])        # 早期用 dict 摘要
+            # 摘要时转 dict（保留原 Message 列表以便 save 序列化）
+            msg_dicts = [asdict(m) for m in session.messages]
+            keep = list(session.messages[-keep_recent:])  # 完整保留近期（Message 对象）
+            early = list(msg_dicts[:-keep_recent])        # 早期用 dict 摘要
 
-        def _summarize(m: dict) -> str:
-            role = m.get("role", "")
-            content = (m.get("content") or "").strip()
-            ts = (m.get("metadata") or {}).get("ts", "")[:19]
-            if role == "tool":
-                tname = m.get("tool_name") or "?"
-                return f"[{ts}] tool:{tname} | {content[:100]}"
-            if role == "assistant":
-                return f"[{ts}] assistant: {content[:200]}"
-            if role == "user":
-                return f"[{ts}] user: {content[:200]}"
-            return f"[{role}] {content[:200]}"
+            def _summarize(m: dict) -> str:
+                role = m.get("role", "")
+                content = (m.get("content") or "").strip()
+                ts = (m.get("metadata") or {}).get("ts", "")[:19]
+                if role == "tool":
+                    tname = m.get("tool_name") or "?"
+                    return f"[{ts}] tool:{tname} | {content[:100]}"
+                if role == "assistant":
+                    return f"[{ts}] assistant: {content[:200]}"
+                if role == "user":
+                    return f"[{ts}] user: {content[:200]}"
+                return f"[{role}] {content[:200]}"
 
-        archive_root = Path(archived_dir) if archived_dir else (self._dir / "_trimmed")
-        archive_root.mkdir(parents=True, exist_ok=True)
-        ts_slug = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-        backup_path = archive_root / f"{session_id}_{ts_slug}.json"
-        backup_path.write_text(
-            json.dumps(asdict(session), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        summary_path = archive_root / f"{session_id}_{ts_slug}_summary.jsonl"
-        with summary_path.open("w", encoding="utf-8") as f:
-            for s in [_summarize(m) for m in early]:
-                f.write(json.dumps({"ts": _now(), "content": s}, ensure_ascii=False) + "\n")
+            archive_root = Path(archived_dir) if archived_dir else (self._dir / "_trimmed")
+            archive_root.mkdir(parents=True, exist_ok=True)
+            ts_slug = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+            backup_path = archive_root / f"{session_id}_{ts_slug}.json"
+            backup_path.write_text(
+                json.dumps(asdict(session), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            summary_path = archive_root / f"{session_id}_{ts_slug}_summary.jsonl"
+            with summary_path.open("w", encoding="utf-8") as f:
+                for s in [_summarize(m) for m in early]:
+                    f.write(json.dumps({"ts": _now(), "content": s}, ensure_ascii=False) + "\n")
 
-        session.messages = list(keep)
-        session.updated_at = _now()
-        self.save(session)
+            session.messages = list(keep)
+            session.updated_at = _now()
+            self._save_locked(session)
 
-        return {
-            "before": original_count,
-            "after": len(keep),
-            "trimmed": len(early),
-            "archived_to": str(backup_path),
-            "summary_path": str(summary_path),
-        }
+            return {
+                "before": original_count,
+                "after": len(keep),
+                "trimmed": len(early),
+                "archived_to": str(backup_path),
+                "summary_path": str(summary_path),
+            }
 
     def exists(self, session_id: str) -> bool:
         return self._path(session_id).exists()
@@ -556,10 +636,12 @@ class SessionStore:
         """
         if not self.exists(session_id):
             return False
-        session = self.load(session_id)
-        old_pinned = session.pinned
-        session.pinned = bool(pinned)
-        self.save(session)
+        # P0-4: load→modify→save 整段持锁
+        with self._session_lock(session_id):
+            session = self.load(session_id)
+            old_pinned = session.pinned
+            session.pinned = bool(pinned)
+            self._save_locked(session)
         self._event_append(
             session_id,
             "session.meta_changed",
@@ -577,12 +659,14 @@ class SessionStore:
         """
         if not self.exists(session_id):
             return False
-        session = self.load(session_id)
-        if session.channel != "web" and session.channel:
-            return True  # 已标记来源，不覆盖
-        old_channel = session.channel
-        session.channel = channel or "web"
-        self.save(session)
+        # P0-4: load→modify→save 整段持锁（幂等判定也须读到最新值）
+        with self._session_lock(session_id):
+            session = self.load(session_id)
+            if session.channel != "web" and session.channel:
+                return True  # 已标记来源，不覆盖
+            old_channel = session.channel
+            session.channel = channel or "web"
+            self._save_locked(session)
         self._event_append(
             session_id,
             "session.meta_changed",
@@ -649,10 +733,12 @@ class SessionStore:
         """归档会话（仅改状态，内容完整保留可检索）."""
         if not self.exists(session_id):
             return False
-        session = self.load(session_id)
-        old_status = session.status
-        session.status = _ARCHIVED
-        self.save(session)
+        # P0-4: load→modify→save 整段持锁
+        with self._session_lock(session_id):
+            session = self.load(session_id)
+            old_status = session.status
+            session.status = _ARCHIVED
+            self._save_locked(session)
         self._event_append(
             session_id,
             "session.meta_changed",
@@ -667,10 +753,12 @@ class SessionStore:
         """取消归档（恢复活跃）."""
         if not self.exists(session_id):
             return False
-        session = self.load(session_id)
-        old_status = session.status
-        session.status = _ACTIVE
-        self.save(session)
+        # P0-4: load→modify→save 整段持锁
+        with self._session_lock(session_id):
+            session = self.load(session_id)
+            old_status = session.status
+            session.status = _ACTIVE
+            self._save_locked(session)
         self._event_append(
             session_id,
             "session.meta_changed",
@@ -685,12 +773,17 @@ class SessionStore:
         """物理删除会话 JSON 文件（须经用户确认，确认在 CLI 层 T26）.
 
         删除不销毁该会话已沉淀的记忆/压缩档案/审计（来源可溯仍指向 session_id）。
+        P0-4: 持锁删除（防与进行中写竞态），并清理配套锁文件。
         """
         p = self._path(session_id)
         if not p.exists():
             return False
         try:
-            p.unlink()
+            with self._session_lock(session_id):
+                p.unlink()
+            # 锁文件随会话删除清理（ best-effort；锁竞争方持有的是已 unlink 的旧 fd，
+            # 后续 acquire 会新建锁文件——与 EventStore 目录级语义一致的已知残差）
+            (self._dir / f"{session_id}.lock").unlink(missing_ok=True)
             return True
         except OSError:
             return False

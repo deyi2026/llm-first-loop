@@ -46,8 +46,13 @@ def refresh_provider_registry(
     try:
         # 重新读取 env + providers.json（生产路径走 load_registry 优先级链）
         if re_read_settings:
-            from llm_loop.config import load_settings
+            from llm_loop.config import load_env_file, load_settings
 
+            # EVO-HOTFIX: 热重载前先重读 .env 文件——
+            # 根因: load_settings() 只读 os.environ，启动后写入 .env 的新配置
+            # （如 MINIMAX_API_KEY）永远进不了进程 → 热重载形同空转。
+            # load_env_file 环境优先（不覆盖已存在值）、文件缺失 fail-open，安全。
+            load_env_file()
             new_settings = load_settings()
         else:
             new_settings = settings

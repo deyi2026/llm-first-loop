@@ -29,6 +29,18 @@ WS_HOST="msg-frontier.feishu.cn"
 # P0: 维护标记（restart 期间 touch，guard 检测到则跳过本轮拉起，防竞态抢跑）
 MAINTENANCE_LOCK="$DATA_DIR/maintenance.lock"
 
+# P0: trap 兜底清理维护锁（脚本中断/异常退出时防 lock 残留导致 guard 瘫痪数小时）
+# 仅在 _MAINTENANCE_LOCK_ACTIVE=1 时清理：
+#   restart 流程：创建 lock 时置 1，正常删除 lock 时置 0 → 异常中断 trap 清理
+#   stop 流程：_stop_all 置 1，stop 命令末尾显式置 0 保留 lock 防 guard 拉起已停止服务
+_MAINTENANCE_LOCK_ACTIVE=0
+_cleanup_maintenance_lock() {
+  if [[ "$_MAINTENANCE_LOCK_ACTIVE" -eq 1 ]]; then
+    rm -f "$MAINTENANCE_LOCK" 2>/dev/null || true
+  fi
+}
+trap _cleanup_maintenance_lock EXIT INT TERM
+
 # 可调参数（env 覆盖）
 GRACE_S="${SYSTEM_GRACE_S:-15}"                  # 优雅停机等待秒数
 STARTUP_WAIT_S="${SYSTEM_STARTUP_WAIT_S:-20}"    # 启动健康检查等待秒数
@@ -262,6 +274,7 @@ FEISHU_BEFORE_WEB="feishu web"   # 停止序：feishu 先（桥先断，web 后�
 _stop_all() {
   # P0: 维护标记（重启期间 guard 跳过拉起，防竞态抢跑）
   touch "$MAINTENANCE_LOCK"
+  _MAINTENANCE_LOCK_ACTIVE=1
   for svc in $FEISHU_BEFORE_WEB; do
     _stop_service "$svc"
   done
@@ -273,6 +286,7 @@ _start_all() {
     _start_service "$svc"
   done
   rm -f "$MAINTENANCE_LOCK"  # P0: 重启完成，恢复 guard
+  _MAINTENANCE_LOCK_ACTIVE=0
 }
 
 # ── 全部状态 ──
@@ -290,13 +304,13 @@ case "${1:-}" in
     case "$ACTION" in
       start)   _start_service "$1" ;;
       stop)    _stop_service "$1" ;;
-      restart) touch "$MAINTENANCE_LOCK"; _stop_service "$1"; _start_service "$1"; rm -f "$MAINTENANCE_LOCK" ;;
+      restart) touch "$MAINTENANCE_LOCK"; _MAINTENANCE_LOCK_ACTIVE=1; _stop_service "$1"; _start_service "$1"; rm -f "$MAINTENANCE_LOCK"; _MAINTENANCE_LOCK_ACTIVE=0 ;;
       status)  _status_service "$1" ;;
       *)       _die "未知命令: ${ACTION}（支持 start/stop/restart/status）" ;;
     esac
     ;;
   start)   _start_all ;;
-  stop)    _stop_all ;;
+  stop)    _stop_all; _MAINTENANCE_LOCK_ACTIVE=0 ;;  # stop 故意保留 lock 防 guard 拉起
   restart) _stop_all; _start_all ;;
   status)  _status_all ;;
   *)       _die "用法: $0 [web|feishu] [start|stop|restart|status] 或 $0 [start|stop|restart|status]" ;;

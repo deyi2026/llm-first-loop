@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -27,6 +28,7 @@ from llm_loop.core.loop.routing import (
     _CONTEXT_SAFETY_MARGIN,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
     _RoutingMixin,
 )
+from llm_loop.core.loop.runstate import _RunState, _RunStateMixin
 from llm_loop.core.loop.runtime import _RuntimeParamsMixin
 from llm_loop.core.loop.signals import _SignalsMixin
 from llm_loop.core.loop.tool_exec import (
@@ -36,6 +38,7 @@ from llm_loop.core.loop.tool_exec import (
 )
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.prompt import build_system_prompt
+from llm_loop.core.run_context import current_session_id as _current_session_id
 from llm_loop.core.session import SessionStore
 from llm_loop.event_log.model import build_message_payload
 from llm_loop.feedback.honesty import (
@@ -107,7 +110,7 @@ def build_session_snapshot_text(
     parts.append("若你对当前任务/已完成/下一步/未决事项的定位漂移，以本条为锚点重新校准。")
     return "；".join(parts)
 
-class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _OverflowMixin, _ToolExecMixin, _ArchiveMixin):
+class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _OverflowMixin, _ToolExecMixin, _ArchiveMixin):
     """五阶段核心循环控制器."""
 
     def __init__(
@@ -147,6 +150,10 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
         self.status = status_provider
         self.correction_ctx = correction_ctx
         self.corrections = correction_registry
+        # P0-5: 每会话 override 绑定解析器（一次性装配；registry_model 经 contextvar
+        # 定位本会话 sess，并发 run 不互踩 switch_model 回调）
+        if correction_ctx is not None:
+            correction_ctx.session_binding_resolver = self._resolve_session_binding
         self.archive = archive  # ArchiveStore（T22 压缩档案，可 None 降级）
         self.summarizer = summarizer
         self.extractor = extractor
@@ -163,7 +170,17 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
         self.recovery = recovery
         # D1: 事件源化 EventStore（默认 None 零行为；注入时消息/元数据/压缩事件落事件日志）
         self._event_store = event_store
-        # EVO-20260811-9ccdec97: 会话状态快照节流（上次快照注入时的消息数）
+        # P0-5(2026-08-15): per-session 运行状态表（审计发现 #7 可重入修复）——
+        # 停滞指纹/overflow 计数/预警标志/快照节流/breakdown 按 session_id 分桶，
+        # 跨会话并发 run 不再共享污染。属性 shim（下方）保持既有读写接口不变。
+        self._run_states: dict[str, _RunState] = {}
+        self._run_states_guard = threading.Lock()
+        # P0-5: 每会话 in-memory Session 绑定表（switch_model 等按 contextvar 解析
+        # 本会话 sess，避免并发 run 互踩 override 回调；会话数级内存占用，不实清理）
+        self._run_sessions: dict[str, Any] = {}
+        # P0-5: 最近活跃会话（out-of-run 时属性 shim 的回退锚点，保持 run 后复查语义）
+        self._last_active_sid: str = ""
+        # EVO-20260811-9ccdec97: 会话状态快照节流（上次快照注入时的消息数）—— P0-5 起经 shim 入 per-session 桶
         self._last_snapshot_count = 0
         # R4 增强: overflow 反馈注入次数（同一 run 内最多注入 1 次后让 AI 决策，第二次直接结束）
         self._overflow_reinject_count = 0
@@ -312,7 +329,26 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
 
         model: 可选，本次对话覆盖使用的 LLM 模型（None 用装配模型，Web 模型切换用）。
         与 run 共享同一核心，唯一差异是每轮 LLM 调用处走 chat_stream 并外泄 delta。
+
+        P0-5: contextvar 在包装层 set/reset——run 存续期（含客户端断连 GeneratorExit）
+        当前执行上下文归属本会话；结束后复位，避免残留泄漏到复用线程的无关代码。
+        run 后可读性由 `_run_state()` 的 `_last_active_sid` 回退保留（测试复查语义）。
         """
+        # SSE/ASGI 消费方可能在不同 Context 中驱动本生成器（Token.reset 要求同一
+        # Context，跨 Context 抛 ValueError）——改用 值快照 + set 还原（set 不挑 Context）。
+        _prev_sid = _current_session_id.get()
+        _current_session_id.set(session_id)
+        try:
+            return (yield from self._run_stream_inner(session_id, user_text, model))
+        finally:
+            _current_session_id.set(_prev_sid)
+
+    def _run_stream_inner(
+        self, session_id: str, user_text: str, model: str | None = None
+    ) -> Iterator[StreamDelta]:
+        """run_stream 的循环本体（P0-5 包装层拆出；逻辑与拆分前逐行一致）."""
+        # P0-5: 记录最近活跃会话（out-of-run 的属性 shim 回退锚点，保持测试复查语义）
+        self._last_active_sid = session_id
         tool_trace: list[dict] = []
         # EVO-20260814-aab7eb0b P2: 每次 run/run_stream 重置实时停滞检测状态（跨会话不泄漏）
         self._stagnation_state = {"fp": None, "count": 0, "reminded": False}
@@ -357,6 +393,10 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
             self.correction_ctx.session_set_override = lambda value: self._set_session_override(
                 sess, value
             )
+            # P0-5: 每会话绑定表——并发 run 各自 sess 不互踩（registry_model 经
+            # contextvar 解析本会话绑定，上方 ctx 字段保留为无上下文回退）
+            with self._run_states_guard:
+                self._run_sessions[session_id] = sess
 
         # ── 消息进：构造用户消息并落库 ──
         user_msg = Message(role="user", content=user_text, source=MessageSource.USER)
@@ -873,6 +913,20 @@ class LoopEngine(_SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMix
         sess.model_override = value
         if self.correction_ctx is not None:
             self.correction_ctx.session_model_override = value
+
+    def _resolve_session_binding(self, session_id: str):
+        """P0-5: 按会话解析 switch_model 绑定（getter/setter），供 registry_model 经
+        contextvar 定位本会话 sess——并发 run 各自写自己的 Session 对象.
+        会话不在活跃绑定表（非 run 期间调用）→ None，调用方回退 ctx 环境字段.
+        """
+        with self._run_states_guard:
+            sess = self._run_sessions.get(session_id)
+        if sess is None:
+            return None
+        return (
+            lambda: sess.model_override,
+            lambda value: self._set_session_override(sess, value),
+        )
 
     def _remember(self, final_answer: str, session_id: str, sess) -> None:
         """解析最终回答的记忆块并落盘（FR-MEM-01/03，失败不阻塞）."""
