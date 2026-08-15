@@ -1,10 +1,12 @@
-// Web V2：侧边栏（会话列表只读展示：标题/预览/来源通道标签/激活态）
-// 阶段 1 骨架——搜索/置顶/删除/fork 等交互在阶段 3 接入。
+// Web V2：侧边栏（会话列表：搜索/置顶/删除/分支/新会话；来源通道标签；激活态）
+// 阶段 3：管理交互（pin/delete 两步确认/fork）——删除与分支后自动刷新并切换。
 
 import { useEffect, useState } from "react";
-import { channelLabel, type SessionMeta } from "../../core/api";
+import { channelLabel, deleteSession, forkSession, setSessionPin, type SessionMeta } from "../../core/api";
 import { refreshSessionsAndCurrent } from "../../core/events";
 import { sessionStore, useCurrentSessionId, useSessions } from "../../core/stores";
+import { conversationStore } from "../../core/conversation";
+import { loadHistory } from "../../core/conversation";
 import { zh } from "../../i18n/zh";
 
 function formatTime(iso: string): string {
@@ -22,6 +24,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
   const sessions = useSessions();
   const currentId = useCurrentSessionId();
   const [query, setQuery] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   useEffect(() => {
     void refreshSessionsAndCurrent();
@@ -35,6 +38,45 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
       (s.last_message_preview || "").toLowerCase().includes(q)
     );
   });
+
+  const handleNew = () => {
+    sessionStore.setCurrentSession("");
+    conversationStore.setState({
+      messages: [],
+      hasMoreHistory: false,
+      loadedHistoryCount: 0,
+      streamStartedAt: null,
+    });
+  };
+
+  const handleDelete = async (sid: string) => {
+    if (confirmDelete !== sid) {
+      setConfirmDelete(sid); // 两步确认：再次点击才执行
+      window.setTimeout(() => setConfirmDelete((v) => (v === sid ? null : v)), 3000);
+      return;
+    }
+    setConfirmDelete(null);
+    const ok = await deleteSession(sid);
+    if (ok && currentId === sid) {
+      sessionStore.setCurrentSession("");
+      conversationStore.setState({
+        messages: [],
+        hasMoreHistory: false,
+        loadedHistoryCount: 0,
+        streamStartedAt: null,
+      });
+    }
+    await refreshSessionsAndCurrent();
+  };
+
+  const handleFork = async (sid: string) => {
+    const report = await forkSession(sid);
+    if (report?.new_session_id) {
+      sessionStore.setCurrentSession(report.new_session_id);
+      await refreshSessionsAndCurrent();
+      await loadHistory(report.new_session_id);
+    }
+  };
 
   if (collapsed) {
     return (
@@ -55,7 +97,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
           {zh.brandSub}
         </span>
       </div>
-      <button type="button" className="v2-new-session" data-testid="new-session">
+      <button type="button" className="v2-new-session" data-testid="new-session" onClick={handleNew}>
         ＋ {zh.newSession}
       </button>
       <input
@@ -68,22 +110,56 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
       />
       <div className="v2-session-list" data-testid="session-list">
         {filtered.map((s: SessionMeta) => (
-          <button
+          <div
             key={s.session_id}
-            type="button"
-            className={`v2-session-item ${s.session_id === currentId ? "active" : ""}`}
-            onClick={() => {
-              sessionStore.setCurrentSession(s.session_id);
-            }}
+            className={`v2-session-item-wrap ${s.session_id === currentId ? "active" : ""}`}
             data-testid="session-item"
           >
-            <span className="v2-session-title">{s.title || "未命名"}</span>
-            <span className="v2-session-preview">
-              {s.last_message_preview || "（空会话）"}
-              {s.updated_at ? ` · ${formatTime(s.updated_at)}` : ""}
-            </span>
-            <span className="v2-channel-tag">{channelLabel(s.channel)}</span>
-          </button>
+            <button
+              type="button"
+              className="v2-session-item"
+              onClick={() => sessionStore.setCurrentSession(s.session_id)}
+            >
+              <span className="v2-session-title">
+                {s.pinned ? "📌 " : ""}
+                {s.title || "未命名"}
+              </span>
+              <span className="v2-session-preview">
+                {s.last_message_preview || "（空会话）"}
+                {s.updated_at ? ` · ${formatTime(s.updated_at)}` : ""}
+              </span>
+              <span className="v2-session-meta-row">
+                <span className="v2-channel-tag">{channelLabel(s.channel)}</span>
+                <span className="v2-session-count">{s.message_count} 条</span>
+              </span>
+            </button>
+            <div className="v2-session-actions" data-testid="session-actions">
+              <button
+                type="button"
+                className="v2-icon-btn"
+                title={s.pinned ? "取消置顶" : "置顶"}
+                onClick={() => void setSessionPin(s.session_id, !s.pinned).then(() => refreshSessionsAndCurrent())}
+              >
+                📌
+              </button>
+              <button
+                type="button"
+                className="v2-icon-btn"
+                title="在新会话中分支"
+                onClick={() => void handleFork(s.session_id)}
+              >
+                ⑂
+              </button>
+              <button
+                type="button"
+                className={`v2-icon-btn danger ${confirmDelete === s.session_id ? "confirming" : ""}`}
+                title={confirmDelete === s.session_id ? "再次点击确认删除" : "删除会话"}
+                onClick={() => void handleDelete(s.session_id)}
+              >
+                {confirmDelete === s.session_id ? "确认?" : "🗑"}
+              </button>
+            </div>
+          </div>
         ))}
         {filtered.length === 0 && (
           <div style={{ padding: 12, fontSize: 12, color: "var(--dsw-alias-label-tertiary)" }}>

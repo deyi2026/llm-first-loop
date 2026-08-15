@@ -89,7 +89,7 @@ describe("发送链路", () => {
     expect((ta as HTMLTextAreaElement).value).toBe("");
   });
 
-  it("降级附件：发送载荷携带"图片未包含"诚实标记（防幻觉）", async () => {
+  it("降级附件：发送载荷携带【图片未包含】诚实标记（防幻觉）", async () => {
     mockBackend();
     // 捕获发送到后端的 body
     let sentBody = "";

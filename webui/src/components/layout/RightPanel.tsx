@@ -1,12 +1,25 @@
-// Web V2：右侧面板（阶段 1 骨架：设置/后台任务标签占位，阶段 3/4 接入）
+// Web V2：右侧面板（阶段 3：设置=通用+模型目录；后台任务=如实占位）
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { zh } from "../../i18n/zh";
 import { useConnection } from "../../core/stores";
+import { fetchModels } from "../../core/chat";
 
 export function RightPanel({ open }: { open: boolean }) {
   const [tab, setTab] = useState<"settings" | "jobs">("settings");
   const conn = useConnection();
+  const [models, setModels] = useState<string[]>([]);
+  const [current, setCurrent] = useState<string | null>(null);
+
+  const loadCatalog = async () => {
+    const { models, current } = await fetchModels();
+    setModels(models);
+    setCurrent(current);
+  };
+
+  useEffect(() => {
+    if (open && tab === "settings") void loadCatalog();
+  }, [open, tab]);
 
   if (!open) return null;
 
@@ -39,12 +52,28 @@ export function RightPanel({ open }: { open: boolean }) {
               <span className="k">连接</span>
               <span className="v">{conn.ok ? zh.statusConnected : zh.statusDisconnected}</span>
             </div>
-            <div className="v2-placeholder" style={{ marginTop: 16 }}>
-              {zh.panelPlaceholder.replace("{stage}", "3")}（通用/模型目录）
+            <div className="v2-panel-section-title">模型目录</div>
+            <div className="v2-model-catalog" data-testid="model-catalog">
+              {models.map((m) => (
+                <div
+                  key={m}
+                  className={`v2-catalog-item ${m === current ? "current" : ""}`}
+                  data-testid="catalog-item"
+                >
+                  <span className="v2-catalog-id">{m}</span>
+                  {m === current && <span className="v2-catalog-current">当前</span>}
+                </div>
+              ))}
+              {models.length === 0 && (
+                <div className="v2-placeholder">模型目录为空（/api/v1/models）</div>
+              )}
             </div>
+            <button type="button" className="v2-btn ghost" onClick={() => void loadCatalog()}>
+              ⟳ {zh.reload}
+            </button>
           </>
         ) : (
-          <div className="v2-placeholder">{zh.panelPlaceholder.replace("{stage}", "3")}（后台任务）</div>
+          <div className="v2-placeholder">{zh.panelPlaceholder.replace("{stage}", "4")}（后台任务）</div>
         )}
       </div>
     </aside>

@@ -52,9 +52,46 @@ export async function fetchSharedCurrent(): Promise<string | null> {
   return status === 200 ? data.current ?? null : null;
 }
 
+export interface ForkResult {
+  status?: string;
+  new_session_id?: string;
+  source_session_id?: string;
+  fork_point?: number | null;
+  inherited_event_count?: number;
+  elapsed_ms?: number;
+}
+
+export async function setSessionPin(sessionId: string, pinned: boolean): Promise<boolean> {
+  const resp = await fetch(
+    `/api/v1/sessions/${encodeURIComponent(sessionId)}/pin?pinned=${pinned}`,
+    { method: "POST" }
+  );
+  return resp.ok;
+}
+
+export async function deleteSession(sessionId: string): Promise<boolean> {
+  const resp = await fetch(
+    `/api/v1/sessions/${encodeURIComponent(sessionId)}?confirm=true`,
+    { method: "DELETE" }
+  );
+  return resp.ok;
+}
+
+export async function forkSession(
+  sessionId: string,
+  summary = ""
+): Promise<ForkResult | null> {
+  const resp = await fetch(
+    `/api/v1/sessions/${encodeURIComponent(sessionId)}/fork?summary=${encodeURIComponent(summary)}`,
+    { method: "POST" }
+  );
+  if (!resp.ok) return null;
+  return (await resp.json().catch(() => ({}))) as ForkResult;
+}
+
 /** 通道标签（对齐 M56 来源通道语义：feishu:p2p:xxx / feishu:group:xxx / web） */
 export function channelLabel(channel: string | undefined): string {
-  if (!channel) return "Web";
+  if (!channel || channel === "web") return "Web";
   if (channel.startsWith("feishu:p2p:")) return "飞书私聊";
   if (channel.startsWith("feishu:group:")) return "飞书群聊";
   return channel;
