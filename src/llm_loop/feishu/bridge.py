@@ -565,6 +565,8 @@ class FeishuWsBridge:
         self._token_ready: bool = False  # 凭证有效标志（替代 _token 缓存，token 值仅 SDK 内部）
         # REST 面（M44：共享 lark.Client 惰性创建真实实例 / 测试注入 Mock）
         self._rest_client: FeishuRestClient | None = None
+        # 2026-08-15 跨端同步（飞书 ← Web）：Web 侧新消息推送到映射飞书聊天
+        self._cross_sync: Any | None = None
 
     @property
     def config(self) -> FeishuConfig:
@@ -592,12 +594,40 @@ class FeishuWsBridge:
         )
         self._thread = threading.Thread(target=self._run_loop, name="feishu-ws", daemon=True)
         self._thread.start()
+        self._start_cross_sync()
         logger.info("飞书桥已启动")
         return True
+
+    def _start_cross_sync(self) -> None:
+        """2026-08-15 跨端同步装配（FEISHU_CROSS_SYNC=0 关闭；fail-open）."""
+        from llm_loop.feishu.cross_sync import _ENABLED, CrossSyncWatcher
+
+        if not _ENABLED or self._cross_sync is not None:
+            return
+        handler = self._handler
+        if handler is None:
+            return
+        engine = getattr(handler, "_engine", None)
+        if engine is None:
+            return
+        try:
+            self._cross_sync = CrossSyncWatcher(
+                engine.session,
+                handler._session_map,
+                handler._reply_fn,
+                engine.settings.sessions_dir,
+            )
+            handler._cross_sync = self._cross_sync
+            self._cross_sync.start()
+        except Exception as exc:  # noqa: BLE001 — 装配失败不阻断桥主体
+            logger.warning("跨端同步装配失败（fail-open）: %s", exc)
 
     def stop(self) -> None:
         self._running = False
         self._ws_state = "disconnected"
+        if self._cross_sync is not None:
+            self._cross_sync.stop()
+            self._cross_sync = None
         self._token_ready = False
         if self._connector:
             self._connector.stop()
