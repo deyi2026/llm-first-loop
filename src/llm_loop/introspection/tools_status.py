@@ -48,7 +48,19 @@ def run_status(ctx: Any, status_provider: Any, args: dict) -> ToolResult:
 
 
 def current_session_id(ctx: Any) -> str:
-    """当前会话（由循环注入；默认空则检索全部）."""
+    """当前会话（由循环注入；默认空则检索全部）.
+
+    P0-5(2026-08-15): contextvar 优先——并发 run 期间按当前执行上下文定位
+    本会话（ctx.session_id 为环境回退，跨会话并发时其值为最后写入者，不可信）。
+    """
+    try:
+        from llm_loop.core.run_context import current_session_id as _sid_var
+
+        sid = _sid_var.get()
+        if sid:
+            return sid
+    except Exception:  # noqa: BLE001 — 上下文不可用回退 ctx 字段（零回归）
+        pass
     return getattr(ctx, "session_id", "") or ""
 
 

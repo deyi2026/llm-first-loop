@@ -76,6 +76,9 @@ class CorrectionContext:
     model_pool: Any | None = None
     session_set_override: Callable[[str | None], None] | None = None  # switch_model 写入 override
     session_model_override: str | None = None  # 当前会话级覆盖（审计 from→to）
+    # P0-5(2026-08-15): 每会话绑定解析器（contextvar 定位本会话 sess 的
+    # override getter/setter；并发 run 不互踩。None = 无解析器，回退上方环境字段）
+    session_binding_resolver: Callable[[str], Any] | None = None
     summarizer: Any | None = None  # R2: search_archive(with_summary=true) LLM 摘要
 
 
