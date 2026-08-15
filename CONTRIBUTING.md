@@ -64,3 +64,15 @@ python3.13 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 
 见 `docs/ROADMAP-B-20260814.md`（P1 可用性 / P2 差异化 / P3 社区化）与 `CHANGELOG.md`。
 欢迎在 issue 讨论新方向后再动手大改。
+
+## 发布流程（B11 月度节奏）
+
+1. **PR 标题规范**：`feat:` / `fix:` / `docs:` / `chore:` / `test:` / `refactor:` / `perf:` 前缀
+   ——Release Drafter 按前缀自动归类 changelog 草稿（`.github/release-drafter.yml`）。
+2. **PR 合并后**：`release-drafter.yml` 工作流自动更新 Draft Release（草稿，无副作用）。
+3. **发版（维护者）**：
+   - 核对 Draft Release 内容 → 与 `CHANGELOG.md` 最新段一致（公开面原则：只含使用者可见变更）
+   - 打 tag：`git tag vX.Y.Z && git push origin vX.Y.Z`（触发 `release.yml`：门禁复核 + 生成 Release 草稿）
+   - 人工确认发布 Release；同步更新 `CHANGELOG.md` 版本段与 `pyproject.toml`/web 版本号
+4. **版本语义**：0.x 内小版本可增补能力，不破坏既有行为；公共 API 语义变更必须升版本
+   （`docs/api.md` §1 稳定声明 + 签名快照测试保护）。

@@ -1,0 +1,46 @@
+# GitHub Release 记录（B11 发布节奏制度化）
+# tag v* 推送时: ① 先跑门禁（pytest/ruff/pyright）确认发版基线 ② 生成 Release（草稿, 人工确认发布）。
+# 配合 release-drafter（PR 合并自动维护 draft）: 发布前人工核对 draft 内容, 或直接由本流程生成。
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  gate:
+    name: 发版门禁复核（零回归纪律）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: ruff
+        run: ruff check src tests scripts
+      - name: pyright
+        run: pyright src --pythonpath python
+      - name: pytest（非真实 LLM）
+        run: python -m pytest tests/ -q -m "not real_llm"
+
+  release:
+    name: 生成 Release 草稿
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 生成 Release（草稿, 人工确认发布）
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
