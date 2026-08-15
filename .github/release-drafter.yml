@@ -1,0 +1,34 @@
+# Release Drafter 配置（B11 发布节奏制度化）
+# PR 合并后自动生成 changelog 草稿（按标题分类），发布时转正式 CHANGELOG。
+# 标题规范: feat: / fix: / docs: / chore: / test: / refactor: / perf: 前缀
+name-template: 'v$NEXT_PATCH_VERSION'
+tag-template: 'v$NEXT_PATCH_VERSION'
+categories:
+  - title: '### 新能力'
+    labels:
+      - 'feat'
+      - 'feature'
+      - 'enhancement'
+  - title: '### 改进'
+    labels:
+      - 'refactor'
+      - 'perf'
+  - title: '### 修复'
+    labels:
+      - 'fix'
+      - 'bug'
+  - title: '### 文档'
+    labels:
+      - 'docs'
+  - title: '### 其他'
+    labels:
+      - 'chore'
+      - 'test'
+change-template: '- $TITLE（@$AUTHOR）'
+template: |
+  ## 变更
+
+  $CHANGES
+
+  ---
+  > 完整变更见 CHANGELOG.md（公开变更记录）。

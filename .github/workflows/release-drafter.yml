@@ -1,0 +1,24 @@
+# Release Drafter（B11 发布节奏制度化）
+# PR 合并到 main 后自动更新 Draft Release（changelog 草稿按标题归类）。
+# 发布流程: 手动确认 Draft Release → Publish → 触发 release.yml 的 GitHub Release 记录。
+name: Release Drafter
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update_release_draft:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: release-drafter/release-drafter@v6
+        with:
+          config-name: release-drafter.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
