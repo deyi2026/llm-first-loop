@@ -7,7 +7,6 @@ import type {
   ChatMessage,
   HistoryMessage,
   HistoryResponse,
-  ModelEntry,
   StreamOutcome,
   ToolCallDelta,
   ToolCallInfo,
@@ -115,11 +114,20 @@ export async function fetchHistory(
   return (await resp.json()) as HistoryResponse;
 }
 
-export async function fetchModels(): Promise<ModelEntry[]> {
+export interface ModelCatalog {
+  models: string[];
+  current: string | null;
+}
+
+/** /api/v1/models 真实契约：{models: string[], current: string|null}（模型 id 为字符串） */
+export async function fetchModels(): Promise<ModelCatalog> {
   const resp = await fetch("/api/v1/models");
-  if (!resp.ok) return [];
-  const data = (await resp.json()) as { models?: ModelEntry[] } | ModelEntry[];
-  return Array.isArray(data) ? data : (data.models ?? []);
+  if (!resp.ok) return { models: [], current: null };
+  const data = (await resp.json()) as { models?: unknown; current?: unknown };
+  return {
+    models: Array.isArray(data.models) ? data.models.map(String).filter(Boolean) : [],
+    current: typeof data.current === "string" ? data.current : null,
+  };
 }
 
 export async function uploadFileBase64(
