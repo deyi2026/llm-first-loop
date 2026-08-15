@@ -916,6 +916,11 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         if anchor_box:
             new_anchor = anchor_box[0] - prefix_len
             new_anchor = max(0, min(len(sess.messages), new_anchor))
+            # 2026-08-16 锚点推进对齐工具轮边界（现场：tool_call_id is not found 根因）：
+            # 锚点不得落在声明↔回执组内——若锚点处是 tool 回执（其声明在锚点前），
+            # 拉回至该轮声明起点（整组保留，防孤儿回执）。
+            while 0 < new_anchor < len(sess.messages) and sess.messages[new_anchor].role == "tool":
+                new_anchor -= 1
             if sess.history_anchors is None:
                 sess.history_anchors = {}
             sess.history_anchors[provider_id] = new_anchor
