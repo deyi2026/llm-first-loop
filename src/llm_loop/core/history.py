@@ -534,6 +534,54 @@ def compute_breakdown(
     }
 
 
+def compute_breakdown_from_dicts(
+    messages: list[dict],
+    tool_schema_chars: int = 0,
+    budget: int = 0,
+) -> dict:
+    """基于**实际发送载荷**（LLM 协议 dict 列表）的组件级占用分解.
+
+    与 compute_breakdown（基于原始会话消息）同构，但口径为构建后真正发给
+    LLM 的内容——已压缩归档的历史不再计入占用（旧口径把原始会话全量算进
+    "当前上下文占用"，本地慢模型收紧预算后会虚高数十倍，误导 AI 压缩决策）。
+
+    Returns:
+        {system, memory, history, tool_results, tool_schema, reasoning,
+         total, budget, ratio}；memory 恒 0（记忆消息已并入 system/history，
+        协议层不可区分）；budget<=0 时 ratio 为 None。
+    """
+    sys_chars = sum(
+        len(str(m.get("content") or "")) for m in messages if m.get("role") == "system"
+    )
+    hist_chars = sum(
+        len(str(m.get("content") or ""))
+        for m in messages
+        if m.get("role") not in ("system", "tool")
+    )
+    tool_chars = sum(
+        len(str(m.get("content") or "")) for m in messages if m.get("role") == "tool"
+    )
+    reasoning_chars = sum(
+        len(str(m.get("reasoning_content") or "")) for m in messages
+    )
+    total = sys_chars + hist_chars + tool_chars + tool_schema_chars + reasoning_chars
+
+    def _item(c: int) -> dict:
+        return {"chars": c, "est_tokens": c // 2, "pct": round(c / max(1, total) * 100, 1)}
+
+    return {
+        "system": _item(sys_chars),
+        "memory": _item(0),
+        "history": _item(hist_chars),
+        "tool_results": _item(tool_chars),
+        "tool_schema": _item(tool_schema_chars),
+        "reasoning": _item(reasoning_chars),
+        "total": {"chars": total, "est_tokens": total // 2},
+        "budget": budget,
+        "ratio": round(total / max(1, budget), 3) if budget > 0 else None,
+    }
+
+
 def _pairing_gap(messages: list[dict], i: int) -> tuple[list[str], list[str], int]:
     """assistant(i) 声明的 tool_calls 与紧随 tool 回执的配对缺口.
 

@@ -20,7 +20,7 @@
 | 变量 | 默认 | 说明 / 坑 |
 |:---|:---|:---|
 | `LLM_MAX_ITERATIONS` | 40 | 单次 run 最大循环轮数。**坑**：工具密集任务（读→改→验证）20 轮常触顶（2026-08-14 已 20→40）；达 80% 时程序注入 `[轮数预警]`，AI 可经 adjust_strategy 调大（白名单，硬上限 500） |
-| `LLM_TIMEOUT_S` | 120 | 单次 LLM 调用超时。**坑**：量化/大上下文模型生成慢，120s 可能不够（调大或用轻模型） |
+| `LLM_TIMEOUT_S` | 120 | 单次 LLM 调用超时。**坑**：量化/大上下文模型生成慢，120s 可能不够（调大或用轻模型）。**provider 级覆盖**：在 `data/providers.json` 的 provider 条目加 `"timeout_s": 600`（本地慢模型专用，云端不放大）；未配置时用全局值 |
 | `LLM_THINKING_MODE` | enabled | 思考模式（非 DeepSeek 自动不发） |
 | `LLM_REASONING_EFFORT` | high | 推理强度 low/high/max |
 
@@ -28,7 +28,7 @@
 
 | 变量 | 默认 | 说明 / 坑 |
 |:---|:---|:---|
-| `HISTORY_MAX_CHARS` | 100000 | 提交给 LLM 的历史预算（字符 ≈ 50K tokens）。**坑**：1M 会撑爆窗口导致所有调用失败（已收敛 100K）；1M 窗口模型可调大，小窗模型调小 |
+| `HISTORY_MAX_CHARS` | 100000 | 提交给 LLM 的历史预算（字符 ≈ 50K tokens）。**坑**：1M 会撑爆窗口导致所有调用失败（已收敛 100K）；1M 窗口模型可调大，小窗模型调小。**provider 级覆盖**：在 `data/providers.json` 的 provider 条目加 `"history_budget_chars": 12000`（本地慢模型专用——prefill 成本随上下文线性涨，收紧预算显著缩短首 token 时延；旧历史经压缩归档可检索，信息零丢失）；未配置时用全局值 |
 | `REASONING_TAIL` | 2 | 提交历史中保留最近 N 轮思考链（更早省略，可 search_records 回溯） |
 | `TOOL_TRIM_ENABLED` | 1 | 旧 tool 消息分层降级（超阈值→首尾摘要+归档检索指引） |
 | `TOOL_TRIM_THRESHOLD` / `TOOL_TRIM_AGE` | 2000 / 0 | 降级阈值（字符）/ 年龄（距最新消息条数） |
@@ -93,6 +93,7 @@
 | `WEB_AUTH_REQUIRE` | 0 | 1=回环也强制令牌；**fail-closed**：设为 1 但未配置 WEB_API_KEY → 启动拒绝 + 请求 503（v0.5.0 起，不再静默放行）。回环豁免部署下 mutating 端点自带 Origin 跨站写防护（非回环来源 403） |
 | `WEB_HOST` / `WEB_PORT` | 127.0.0.1 / 8902 | 绑定地址 / 端口 |
 | `SESSION_CONCURRENCY_LOCK` | 1 | 会话级并发锁（0=无锁） |
+| `WEB_FETCH_BLOCK_FAKE_IP` | 0 | web_fetch 代理假 IP 段（198.18/15，Surge/Clash fake-ip）严格拦截开关；默认 0=放行+回执如实标注（真实连接由代理通道完成），1=严格拦截 |
 | `LONG_LINE_THRESHOLD` | 200 | 长内容分块粒度（前端展示；v0.5.2 起回复不折叠，超长代码块按 200 行/段顺序分段全量展示） |
 | `FEISHU_FOLD_LONG_REPLY` | 0 | 飞书长回复折叠选择加入（1=恢复旧折叠行为：摘要卡+「展开全文」取回；默认 0=不折叠全量分段推送） |
 
@@ -132,6 +133,7 @@
 ## 常见坑速查
 
 1. **所有模型调用失败/超时** → 查 `HISTORY_MAX_CHARS` 是否超过模型窗口（默认 100K 安全）。
+2. **本地模型（LM Studio/Ollama）调用超时 `LLM 请求超时（120.0s）`** → 本地大模型 prefill 慢（27B 量化实测 ~5s/千字，40K 字上下文首 token 需 200s+），120s 必然超时。三步：① `data/providers.json` 的 `local` 条目设 `"timeout_s": 600` + `"history_budget_chars": 12000`（已默认配置，后者把发给本地模型的历史压到 ~12K 字符≈9K tokens，prefill 降到 1-2 分钟内）；若仍报 120s（而非 600s），说明请求未走 providers.json 的 `local` 条目（如用 `LLM_BASE_URL` 直配的默认通道）——请在模型下拉/`/model` 目录里选 `local/qwen3.6-…` 走注册表路径（600s 生效），或直接调大 `LLM_TIMEOUT_S`；② 控制上下文——本地模型窗口小（如 131K tokens），大会话需先压缩/新开会话；③ 仍慢则换更小模型（如 9B Q4）。`[预算预警]` 的占用率统计的是**实际发送载荷**（已压缩归档的历史不计入），数字可信。
 2. **"经常到轮数上限"** → `LLM_MAX_ITERATIONS` 调大（默认 40；AI 也会在 80% 时收到 `[轮数预警]` 并可自行调大）。
 3. **AI 无法执行命令** → 检查是否显式设置了 `EXEC_MODE`（readonly/blocked 会拦；默认不设=不拦）。
 4. **AI 能主动发飞书消息？** → 不会：`FEISHU_OUTBOUND_ENABLED` 默认 false（安全边界）。

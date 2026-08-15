@@ -78,7 +78,7 @@ def build_app(settings=None, engine=None) -> FastAPI:
         engine = build_engine(settings)
 
     app = FastAPI(
-        title="llm-first-loop-web", version="0.5.2", default_response_class=UTF8JSONResponse
+        title="llm-first-loop-web", version="0.5.3", default_response_class=UTF8JSONResponse
     )
     app.state.engine = engine
     # P2-1: 跨站写防护（ASGI 中间件，mutating + 非回环 Origin → 403）

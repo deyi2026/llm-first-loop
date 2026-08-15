@@ -61,12 +61,18 @@ class ModelClientPool:
         params = self.registry.client_params(provider_id, model_id)
         # 思考参数按注册表元数据判定（消除原 _thinking_supported 硬编码 deepseek.com）
         thinking_supported = self.registry.supports_thinking(provider_id, model_id)
-        # 继承默认 client 的运行参数（超时/思考模式/effort），仅切换 provider/model/key/base_url
+        # 超时: provider 级 timeout_s（providers.json 显式配置, 本地慢模型放大）优先,
+        # 否则继承默认 client 的运行参数（全局 LLM_TIMEOUT_S, 零回归）
+        provider_timeout = params.get("timeout_s")
         client = LLMClient(
             api_key=params["api_key"],
             base_url=params["base_url"],
             model=params["model"],
-            timeout_s=self.default_client.timeout_s,
+            timeout_s=(
+                provider_timeout
+                if provider_timeout is not None
+                else self.default_client.timeout_s
+            ),
             thinking_mode=self.default_client.thinking_mode,
             reasoning_effort=self.default_client.reasoning_effort,
             thinking_supported=thinking_supported,

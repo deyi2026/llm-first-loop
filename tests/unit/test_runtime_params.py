@@ -48,6 +48,28 @@ def test_invalid_dynamic_ignored():
     assert rp.llm_timeout_s == 120.0
 
 
+def test_is_overridden_tracks_explicit_adjust():
+    """is_overridden: 仅显式调整过的参数为 True（区分静态默认与 per-call 覆盖）.
+
+    真实路径: adjust_strategy 直接改共享 strategy dict（registry_correction 侧
+    ctx.strategy.update），RuntimeParams 与 ctx 共享同一 dict 引用.
+    """
+    s = _settings()
+    shared: dict = {}
+    rp = RuntimeParams(s, strategy=shared)
+    assert rp.is_overridden("timeout_s") is False
+    assert rp.is_overridden("max_iterations") is False
+    # 模拟 adjust_strategy 工具写入（共享 dict）
+    shared["timeout_s"] = 300
+    assert rp.is_overridden("timeout_s") is True
+    assert rp.is_overridden("max_iterations") is False
+    assert rp.llm_timeout_s == 300.0
+    # reset 回滚（从 strategy 删除）后恢复未覆盖态
+    rp.reset("timeout_s")
+    assert rp.is_overridden("timeout_s") is False
+    assert rp.llm_timeout_s == 120.0
+
+
 def test_adjust_count_and_budget():
     """单轮调整频次预算（PARAM-03）."""
     s = _settings()

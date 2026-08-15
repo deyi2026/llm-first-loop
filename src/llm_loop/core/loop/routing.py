@@ -187,11 +187,23 @@ class _RoutingMixin:
     def _effective_history_budget(self: LoopEngine, model_label: str) -> int:
         """M54: 模型窗口感知的历史压缩预算.
 
-        effective = min(全局预算, 模型 context × 2字符/token × 0.5 压缩系数)。
+        effective = min(全局预算, 模型 context × 2字符/token × 0.5 压缩系数,
+        provider history_budget_chars 若配置)。
         例: k3-256k (262144 tokens) → ~26万字符（而不是全局 1M）→ 历史先压到窗口内再调用。
+        例: local provider 配 history_budget_chars=12000（本地模型 prefill 随上下文线性涨,
+        收紧预算显著缩短首 token 时延; 旧历史经压缩归档可检索, 信息零丢失）。
         无 pool / 未知模型 → 全局预算（零回归）。
         """
         global_budget = self._runtime_history_budget()
+        # provider 级预算（本地慢模型收紧; 未配置 None → 跳过）
+        provider_budget: int | None = None
+        if self.llm_pool is not None and "/" in model_label:
+            pid, _mid = model_label.split("/", 1)
+            spec = self.llm_pool.registry.providers.get(pid)
+            if spec is not None:
+                provider_budget = spec.history_budget_chars
+        if provider_budget:
+            global_budget = min(global_budget, provider_budget)
         limit = self._current_context_limit(model_label)
         if not limit:
             return global_budget

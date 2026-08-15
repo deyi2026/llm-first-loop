@@ -154,38 +154,16 @@ class EventStore:
             logger.warning("事件日志滚动检查失败（fail-open）: sid=%s", session_id, exc_info=True)
 
     def last_seq(self, session_id: str) -> int:
-        """会话内最大 seq（无事件返回 0）."""
+        """会话内最大 seq（无事件返回 0）.
+
+        P1-7(2026-08-15, 性能): 原实现全文件扫描，改为各段尾部读取取大（O(1)）。
+        """
         if self._is_multi_segment(session_id):
             last = 0
             for p in self._all_segment_paths(session_id):
-                try:
-                    with p.open("r", encoding="utf-8") as f:
-                        for raw in f:
-                            line = raw.strip()
-                            if not line:
-                                continue
-                            event = self._parse_line(line)
-                            if event is not None and event.seq > last:
-                                last = event.seq
-                except OSError as exc:
-                    logger.warning("事件日志读取失败（fail-open）: %s: %s", p, exc)
+                last = max(last, self._tail_last_seq(p))
             return last
-        p = self._path(session_id)
-        if not p.exists():
-            return 0
-        last = 0
-        try:
-            with p.open("r", encoding="utf-8") as f:
-                for raw in f:
-                    line = raw.strip()
-                    if not line:
-                        continue
-                    event = self._parse_line(line)
-                    if event is not None and event.seq > last:
-                        last = event.seq
-        except OSError as exc:
-            logger.warning("事件日志读取失败（fail-open）: %s: %s", p, exc)
-        return last
+        return self._tail_last_seq(self._path(session_id))
 
     def exists(self, session_id: str) -> bool:
         return self._path(session_id).exists() or self._is_multi_segment(session_id)
@@ -226,43 +204,61 @@ class EventStore:
                 return None
         return event
 
-    def _global_last_seq_locked(self, f, session_id: str) -> int:
-        """稳定锁内取会话全局最大 seq：活跃段文件扫描 + 末归档段末事件取大.
+    @staticmethod
+    def _tail_last_seq(path: Path) -> int:
+        """append-only 事件文件尾部最后一条事件的 seq（O(1)，不扫描全文件）.
 
-        seq 全局单调（本方法即保证者），故归档段中只需读末段的末事件。
+        P1-7(2026-08-15, 性能): 原实现为求最大 seq 逐行扫描整个文件——大会话
+        压缩归档对每条消息单独 append 事件时，每次 append 都 O(文件行数)，总耗时
+        O(n²)，实测 625 次 append 累积 62s 阻塞主循环（本地/云端同样受影响）。
+        事件文件 append-only 且 seq 单调递增，最大 seq 必在文件尾部——反向读取
+        尾部块解析最后一条完整事件即可；块内首行可能不完整（被截断），从第二行
+        起解析，解析不出则扩大读取窗口直至找到有效事件。跨进程并发一致性由
+        调用方持有的会话级 flock 保证。
+        """
+        try:
+            with path.open("rb") as f:
+                f.seek(0, 2)
+                size = f.tell()
+                if size == 0:
+                    return 0
+                read_len = 0
+                while read_len < size:
+                    read_len = min(size, read_len + 65536)
+                    f.seek(size - read_len)
+                    chunk = f.read(read_len).decode("utf-8", errors="replace")
+                    lines = chunk.splitlines()
+                    # 块起点未达文件头时首行可能是上一行的尾部（被截断），跳过；
+                    # 块起点达文件头时首行必为完整行（文件头开始）
+                    candidates = lines if read_len >= size else lines[1:]
+                    for line in reversed(candidates):
+                        line = line.strip()
+                        if not line:
+                            continue
+                        ev = EventStore._parse_line(line)
+                        if ev is not None:
+                            return ev.seq
+            return 0
+        except OSError:
+            return 0
+
+    def _global_last_seq_locked(self, f, session_id: str) -> int:
+        """稳定锁内取会话全局最大 seq：活跃段尾部读取 + 末归档段尾部取大（O(1)）.
+
+        f 参数保留（调用方已持锁持有文件句柄），实现不再依赖 f 内容——
+        原全文件扫描在连续 append 场景下 O(n²) 拖垮主循环（P1-7 修复）。
         """
         last = 0
-        f.seek(0)
-        for raw in f:
-            line = raw.strip()
-            if not line:
-                continue
-            ev = self._parse_line(line)
-            if ev is not None and ev.seq > last:
-                last = ev.seq
+        if self._is_multi_segment(session_id):
+            last = self._tail_last_seq(self._active_segment_path(session_id))
+        else:
+            last = self._tail_last_seq(self._path(session_id))
         segs = self._all_segment_paths(session_id)
         if len(segs) >= 2:  # 多段形态且有归档段
-            for ev in self._read_last_event_of(segs[-2]):
-                if ev.seq > last:
-                    last = ev.seq
+            last_arch = self._tail_last_seq(segs[-2])
+            if last_arch > last:
+                last = last_arch
         return last
-
-    @staticmethod
-    def _read_last_event_of(path: Path) -> list[Event]:
-        """读文件最后一个有效事件（单元素列表；无则空）."""
-        last: Event | None = None
-        try:
-            with path.open("r", encoding="utf-8") as fp:
-                for raw in fp:
-                    line = raw.strip()
-                    if not line:
-                        continue
-                    ev = EventStore._parse_line(line)
-                    if ev is not None:
-                        last = ev
-        except OSError:
-            pass  # 读取失败 fail-open（seq 退化为活跃段扫描结果）
-        return [last] if last is not None else []
 
     def _append_locked(
         self,

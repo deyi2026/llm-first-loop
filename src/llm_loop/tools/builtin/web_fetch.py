@@ -18,6 +18,7 @@ P0-2/P0-3（2026-08-15，审计发现 #1/#2 修复）SSRF 深化：
 from __future__ import annotations
 
 import html as _html
+import ipaddress
 import re
 import subprocess
 import time as _time
@@ -179,6 +180,22 @@ def _extract_content(raw: str, url: str) -> tuple[str, str, str]:
 # ── HARNESS-03: SSRF 内网拦截（默认开；WEB_FETCH_BLOCK_PRIVATE=0 关闭）──
 _BLOCK_PRIVATE_DEFAULT = "1"
 
+# 2026-08-15 现场修复：198.18.0.0/15 为 RFC 2544 基准测试段，也是 Surge/Clash fake-ip 模式的
+# 默认假地址段（代理 DNS 把目标域名解析成 198.18.x.x）。Python is_private 将其判为私网，
+# 导致代理环境下所有外网抓取被 SSRF 误杀（既有测试被迫 WEB_FETCH_BLOCK_PRIVATE=0 绕过）。
+# 默认策略：全部解析地址均落在该段（代理假 IP）→ 放行 + 回执如实标注（真实连接由代理通道
+# 完成，对端为真实公网地址）；WEB_FETCH_BLOCK_FAKE_IP=1 恢复严格拦截。真实私网/回环/
+# 链路本地/保留段拦截语义不变（P0 不回归）。
+_FAKE_IP_NETWORK = ipaddress.ip_network("198.18.0.0/15")
+
+
+def _strict_fake_ip() -> bool:
+    """WEB_FETCH_BLOCK_FAKE_IP 解析（默认 0=放行假 IP；1=严格拦截）."""
+    import os
+
+    raw = os.environ.get("WEB_FETCH_BLOCK_FAKE_IP", "0").strip().lower()
+    return raw in {"1", "on", "true", "yes"}
+
 
 def _block_private_enabled() -> bool:
     """WEB_FETCH_BLOCK_PRIVATE 解析（默认 1=开启；0/off/false 关闭）."""
@@ -202,13 +219,14 @@ def _blocked_ip_label(ip_str: str) -> str:
     return ""
 
 
-def _resolve_checked_ips(url: str) -> tuple[str, list[str], str, int]:
-    """解析 URL 主机并校验全部地址 → (命中原因, 已校验 IP 列表, host, port).
+def _resolve_checked_ips(url: str) -> tuple[str, list[str], str, int, bool]:
+    """解析 URL 主机并校验全部地址 → (命中原因, 已校验 IP 列表, host, port, 假IP放行标志).
 
-    任一地址命中私网即整域拦截（防一半公网一半内网的解析漂移）。
+    任一地址命中真实私网即整域拦截（防一半公网一半内网的解析漂移）；
+    全部地址命中 198.18/15 代理假 IP 段（且非严格模式）→ 放行，第 5 元置 True（回执如实标注）；
+    混合解析（假 IP + 真实私网）→ 真实私网拦截语义不变。
     解析失败 fail-open（返回空列表，请求阶段如实报网络错误）。
     """
-    import ipaddress
     import socket
     from urllib.parse import urlparse
 
@@ -216,7 +234,7 @@ def _resolve_checked_ips(url: str) -> tuple[str, list[str], str, int]:
         parsed = urlparse(url)
         host = parsed.hostname or ""
         if not host:
-            return ("host 为空", [], "", 0)
+            return ("host 为空", [], "", 0, False)
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
         candidates: list[str] = []
         try:
@@ -227,14 +245,33 @@ def _resolve_checked_ips(url: str) -> tuple[str, list[str], str, int]:
                 infos = socket.getaddrinfo(host, None)
                 candidates = [str(info[4][0]) for info in infos]
             except socket.gaierror:
-                return ("", [], host, port)  # 解析失败 fail-open（请求阶段如实报错）
+                return ("", [], host, port, False)  # 解析失败 fail-open（请求阶段如实报错）
+        fake_hits = 0
         for cand in candidates:
+            if ipaddress.ip_address(cand) in _FAKE_IP_NETWORK:
+                if _strict_fake_ip():
+                    return (f"{cand}（代理假 IP 段 198.18/15，严格模式拦截）", [], host, port, False)
+                fake_hits += 1
+                continue
             label = _blocked_ip_label(cand)
             if label:
-                return (label, [], host, port)
-        return ("", candidates, host, port)
+                return (label, [], host, port, False)
+        if candidates and fake_hits == len(candidates):
+            # 全部为代理假 IP（Surge/Clash fake-ip 模式）→ 放行（真实连接由代理通道完成）
+            return ("", candidates, host, port, True)
+        return ("", candidates, host, port, False)
     except Exception:  # noqa: BLE001 — 判定失败 fail-open（不阻断正常请求）
-        return ("", [], "", 0)
+        return ("", [], "", 0, False)
+
+
+def _blocked_private_url(url: str) -> str:
+    """URL 目标是否命中私网/保留地址段；返回命中说明（未命中返回空串）.
+
+    检查链路: host 为 IP 字面量直接判定；域名经 getaddrinfo 解析后逐地址判定
+    （任一地址命中即拦截——DNS rebinding 面收窄；198.18/15 代理假 IP 段默认放行）。
+    解析失败 fail-open 放行（域名解析失败后续请求会如实报网络错误）。
+    """
+    return _resolve_checked_ips(url)[0]
 
 
 def _blocked_private_url(url: str) -> str:
@@ -346,7 +383,15 @@ class WebFetchTool:
             return
         if not addr:
             return
-        label = _blocked_ip_label(str(addr[0]))
+        peer = str(addr[0])
+        # 2026-08-15: TUN 模式下对端地址即代理假 IP（198.18/15）——放行（非严格模式），
+        # 真实连接由代理通道完成；真实私网对端仍丢弃（P0-3 语义不变）
+        try:
+            if ipaddress.ip_address(peer) in _FAKE_IP_NETWORK and not _strict_fake_ip():
+                return
+        except ValueError:
+            pass  # 非 IP 字面量（域名字符串）→ 走 _blocked_ip_label 常规判定
+        label = _blocked_ip_label(peer)
         if label:
             raise _PrivateTargetBlockedError(f"{url} 实际连接对端命中内网: {label}")
 
@@ -365,7 +410,7 @@ class WebFetchTool:
         for _hop in range(_MAX_REDIRECT_HOPS + 1):
             resolve: str | None = None
             if _block_private_enabled():
-                reason, ips, host, port = _resolve_checked_ips(current)
+                reason, ips, host, port, _fake = _resolve_checked_ips(current)
                 if reason:
                     raise _PrivateTargetBlockedError(f"{current} → {reason}")
                 if ips and host:
@@ -461,13 +506,15 @@ class WebFetchTool:
         # HARNESS-03(2026-08-14): 内网拦截（SSRF 防护）——web_fetch 默认拦截私网/链路本地/
         # 回环/保留地址（含云元数据 169.254.169.254），防 Agent 被诱导访问内网服务。
         # WEB_FETCH_BLOCK_PRIVATE=0 可关闭（本地开发需要访问内网时）。
+        # 2026-08-15: 198.18/15 代理假 IP 段（Surge/Clash fake-ip）默认放行 + 如实标注。
+        fake_ip_note = ""
         if _block_private_enabled():
-            blocked = _blocked_private_url(url)
-            if blocked:
+            block_label, _, _, _, fake_ip = _resolve_checked_ips(url)
+            if block_label:
                 return ToolResult(
                     status=ToolResultStatus.BLOCKED,
                     content=(
-                        f"[内网拦截] 目标地址属于私网/保留地址段（{blocked}），已拒绝访问（SSRF 防护）。\n"
+                        f"[内网拦截] 目标地址属于私网/保留地址段（{block_label}），已拒绝访问（SSRF 防护）。\n"
                         f"原因: web_fetch 默认拦截内网地址（含云元数据 169.254.169.254），"
                         f"防 AI 被诱导访问内网服务/云凭证。\n"
                         f"建议: 确需访问内网时设置 WEB_FETCH_BLOCK_PRIVATE=0（本地部署自担风险），"
@@ -475,6 +522,12 @@ class WebFetchTool:
                     ),
                     tool_call_id="",
                     tool_name=self.name,
+                )
+            if fake_ip:
+                fake_ip_note = (
+                    "[注] 目标解析为代理假 IP 段（198.18/15，Surge/Clash fake-ip 模式），"
+                    "已按代理通道放行（真实连接由代理完成）；WEB_FETCH_BLOCK_FAKE_IP=1 "
+                    "可恢复严格拦截。\n"
                 )
         # 单例感知: 短时重复抓取同一 URL → 提示可复用
         now = _time.time()
@@ -567,6 +620,7 @@ class WebFetchTool:
         if curl_used:
             header += f"[fetch] curl 回退（{httpx_note}）\n"
         header += reuse_note  # 单例感知提示（无重复则为空）
+        header += fake_ip_note  # 代理假 IP 放行如实标注（未命中则为空）
         header += "\n"
         _fetch_history[url] = now  # 记录本次抓取（成功才记，失败不记）
         if not text.strip():

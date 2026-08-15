@@ -535,6 +535,40 @@ def test_pool_bare_name_unique_resolve() -> None:
         monkeypatch.undo()
 
 
+def test_pool_provider_timeout_wins_over_global() -> None:
+    """provider 级 timeout_s 优先于全局默认（本地慢模型接入）.
+
+    local 显式配置 timeout_s=600 → 构造 client 超时 600;
+    deepseek 未配置 → 继承默认 client 的全局超时（零回归）.
+    """
+    raw = json.dumps(
+        {
+            "deepseek": {
+                "base_url": "https://api.deepseek.com/v1",
+                "api_key_env": "DEEPSEEK_API_KEY",
+                "models": {"deepseek-v4-flash": {}},
+            },
+            "local": {
+                "base_url": "http://localhost:1234/v1",
+                "api_key_env": "",
+                "timeout_s": 600,
+                "models": {"qwen3.6-27b": {}},
+            },
+        }
+    )
+    settings = _settings(model_providers_raw=raw)
+    pool = _build_pool(settings)
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "real-key")
+    try:
+        local_client = pool.get_client("local/qwen3.6-27b")
+        assert local_client.timeout_s == 600.0
+        ds_client = pool.get_client("deepseek/deepseek-v4-flash")
+        assert ds_client.timeout_s == pool.default_client.timeout_s  # 全局值继承
+    finally:
+        monkeypatch.undo()
+
+
 def test_pool_bare_name_ambiguous_raises() -> None:
     """裸名歧义 → ValueError（如实反馈, 不静默 fallback）."""
     raw = json.dumps(
