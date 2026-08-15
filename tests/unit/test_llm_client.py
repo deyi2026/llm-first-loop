@@ -6,7 +6,6 @@ mock httpx 流式响应，验证 tool_calls 聚合与异常分类。
 from __future__ import annotations
 
 import contextlib
-import json
 from unittest import mock
 
 import pytest
@@ -73,7 +72,7 @@ def test_chat_tool_calls_aggregation():
     tc = resp.tool_calls[0]
     assert tc.id == "call_9"
     assert tc.name == "read_file"
-    assert json.loads(tc.arguments) == {"path": "a.txt"}  # 原始 JSON 串，引擎层解析
+    assert tc.arguments == {"path": "a.txt"}  # schemas finish 已归一为 dict（约束 C5）
 
 
 def test_chat_http_400():
@@ -388,7 +387,7 @@ def test_anthropic_tool_use_aggregation():
     assert len(final.tool_calls) == 1
     assert final.tool_calls[0].id == "tu1"
     assert final.tool_calls[0].name == "read_file"
-    assert json.loads(final.tool_calls[0].arguments) == {"path": "a"}  # 原始 JSON 串，引擎层解析
+    assert final.tool_calls[0].arguments == {"path": "a"}  # schemas finish 已归一为 dict
 
 
 def test_google_payload_and_stream():
@@ -441,7 +440,7 @@ def test_google_function_call_aggregation_and_truncation():
                 break
     assert len(final.tool_calls) == 1
     assert final.tool_calls[0].name == "read_file"
-    assert json.loads(final.tool_calls[0].arguments) == {"p": "x"}  # 原始 JSON 串
+    assert final.tool_calls[0].arguments == {"p": "x"}  # schemas finish 已归一为 dict
     assert final.truncated is True
     assert final.content == "部分"
 
