@@ -1,6 +1,6 @@
 # LLM-First Core Loop
 
-> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.3.0 ｜ [中文文档 (Chinese README)](README.md)
+> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.4.0 ｜ [中文文档 (Chinese README)](README.md)
 
 An **LLM-first agent runtime (harness)**: the model is the core, and every action revolves around it.
 Architecture core = **message in → understand → act → answer honestly → remember**.
@@ -83,6 +83,21 @@ public API reference.
   Wilson CI constraints, CI nightly
 - **Safety**: catastrophic hard bound (irreversible deletion/system destruction only), EXEC_MODE tiers,
   human approval flow (CLI interactive), symlink write protection, secret-in-env-only
+- **web_fetch SSRF guard** (HARNESS-03): `WEB_FETCH_BLOCK_PRIVATE` (default on) blocks private/loopback/link-local/reserved ranges
+  (IP literals + DNS resolution dual path) against cloud-metadata and other internal probing; returns BLOCKED `[内网拦截]`
+- **Context budget warning** (HARNESS-04): a one-time `[预算预警]` (usage %, chars) is injected when context usage ≥80%
+  of budget — compress/wrap-up decisions stay with the AI, the program never auto-compresses
+- **Orphan tool_calls receipts** (HARNESS-01): client-interrupted `run_stream` writes a "cancelled" receipt and saves
+  immediately — no orphan declaration without a receipt (root cause of strict FC protocol 400s)
+- **`request.meta` event** (HARNESS-02): per-round LLM request snapshot in the event log
+  (round/model/tools_count/history_chars/budget) — replay tells you exactly which model/tools were in play
+- **Headless service mode** (B5): UI-free pure-API embedding — `examples/04_headless_service.py`
+  (`build_engine` single instance + sync/streaming chat endpoints in ~20 lines); public API signature snapshot test locks it
+- **Multi-provider cost routing** (B6): `switch_model` success receipt injects the target model's cost tier
+  (cost_tier), capability semantics (thinking/reasoning/long_context/multimodal) and context window
+  (honestly marked "unknown" when metadata is missing — judgment stays with the AI)
+- **Eval contributor guide** (B7): `docs/eval_scenarios.md` — external contributors add a scenario in ~30 minutes
+  (verdict registration + dry validation + PR acceptance checklist)
 
 ## CLI Subcommands
 
