@@ -2,6 +2,16 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.2（2026-08-15）
+
+### P3-3：bash 沙箱后端（EXEC_SANDBOX=bwrap|none，可选）
+- `EXEC_SANDBOX=bwrap`：bubblewrap 隔离 execute_command——只读系统目录（/usr /etc /lib /lib64 /bin /sbin）、
+  /dev /proc 挂载、/tmp 临时文件系统、工作区可写绑定、独立 PID/UTS/IPC 命名空间
+- **fail-closed 语义**：显式开启而 bwrap 缺失 → 命令不执行、回执如实说明（不静默降级）；
+  回执标注"已启用 bwrap 沙箱"
+- 前台/后台（run_in_background）双路径接线；未启用零回归（shell=True 路径不变）
+- 测试 +8（argv 结构/禁用/启用/缺失 fail-closed/回执标注/后台/零回归）；门禁 pytest 全绿
+
 ## v0.6.1（2026-08-15）
 
 ### P3-1：MCP 客户端接入（stdio）
