@@ -246,3 +246,66 @@ def test_local_provider_disables_thinking_in_payload():
         f"本地 provider 必须 enable_thinking=False, 实际={p['chat_template_kwargs']}"
     # 必须 2: 不应同时发 OpenAI thinking 字段（LM Studio 优先级冲突）
     assert "thinking" not in p, f"本地 provider 不应发 OpenAI thinking 字段（与 chat_template_kwargs 冲突）, payload={p}"
+
+
+# ── 2026-08-15: max_tokens 显式装配（回答不再被模型默认 4096 截断）──
+
+def test_chat_payload_max_tokens_sent():
+    """显式配置 max_tokens → payload 携带（默认 4096 截断修复）."""
+    lines = [
+        'data: {"choices": [{"delta": {"content": "好"}}]}',
+        'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
+        _client(max_tokens=8192).chat(messages=[{"role": "user", "content": "hi"}], tools=[])
+        payload = client_cls.return_value.stream.call_args.kwargs["json"]
+    assert payload.get("max_tokens") == 8192
+
+
+def test_chat_payload_max_tokens_absent_when_none():
+    """未配置 max_tokens（None）→ 不发字段（向后兼容）."""
+    lines = [
+        'data: {"choices": [{"delta": {"content": "好"}}]}',
+        'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
+        _client().chat(messages=[{"role": "user", "content": "hi"}], tools=[])
+        payload = client_cls.return_value.stream.call_args.kwargs["json"]
+    assert "max_tokens" not in payload
+
+
+def test_default_client_wired_with_settings_max_tokens(monkeypatch):
+    """装配默认 client 携带 settings.llm_max_tokens（默认 8192，env 可调）."""
+    from llm_loop.config import Settings, load_settings
+
+    assert Settings.llm_max_tokens == 8192
+    monkeypatch.setenv("LLM_API_KEY", "k")
+    monkeypatch.setenv("LLM_BASE_URL", "http://t")
+    monkeypatch.setenv("LLM_MODEL", "m")
+    assert load_settings().llm_max_tokens == 8192
+    monkeypatch.setenv("LLM_MAX_TOKENS", "16384")
+    assert load_settings().llm_max_tokens == 16384
+
+
+def test_factory_wires_max_tokens(monkeypatch):
+    """factory 装配 default client 时传入 settings.llm_max_tokens."""
+    from unittest import mock as _mock
+
+    monkeypatch.setenv("LLM_API_KEY", "k")
+    monkeypatch.setenv("LLM_BASE_URL", "http://t")
+    monkeypatch.setenv("LLM_MODEL", "m")
+    monkeypatch.setenv("LLM_MAX_TOKENS", "8192")
+    from llm_loop.config import load_settings
+
+    settings = load_settings()
+    with _mock.patch("llm_loop.factory.LLMClient") as client_cls:
+        client_cls.return_value = _mock.MagicMock()
+        from llm_loop.factory import build_engine
+
+        build_engine(settings)
+        kwargs = client_cls.call_args.kwargs
+    assert kwargs.get("max_tokens") == 8192

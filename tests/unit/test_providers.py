@@ -508,3 +508,45 @@ def test_non_dict_provider_warns_and_skipped(caplog: pytest.LogCaptureFixture) -
     assert "p2" in reg.providers
     assert not reg.degraded
     assert any("p1" in r.message and "非 dict" in r.message for r in caplog.records)
+
+
+# ── 2026-08-15: provider 级 max_tokens 输出预算 ──
+
+def test_provider_max_tokens_parsed_and_passed() -> None:
+    """provider 条目 max_tokens → ProviderSpec + client_params 下发（pool 优先用它）."""
+    reg = load_registry(
+        _settings(
+            model_providers_raw=json.dumps(
+                {"p1": {"base_url": "http://a", "api_key_env": "", "max_tokens": 16384, "models": {"m1": {}}}}
+            )
+        )
+    )
+    assert reg.providers["p1"].max_tokens == 16384
+    params = reg.client_params("p1", "m1")
+    assert params.get("max_tokens") == 16384
+
+
+def test_provider_max_tokens_invalid_falls_back() -> None:
+    """max_tokens 非法（0/负数/非数字）→ None（全局 LLM_MAX_TOKENS 兜底）+ warning."""
+    raw = json.dumps(
+        {
+            "p1": {"base_url": "http://a", "api_key_env": "", "max_tokens": 0, "models": {"m1": {}}},
+            "p2": {"base_url": "http://b", "api_key_env": "", "max_tokens": "abc", "models": {"m2": {}}},
+        }
+    )
+    reg = load_registry(_settings(model_providers_raw=raw))
+    assert reg.providers["p1"].max_tokens is None
+    assert reg.providers["p2"].max_tokens is None
+    assert "max_tokens" not in reg.client_params("p1", "m1")
+
+
+def test_provider_max_tokens_missing_absent() -> None:
+    """未配置 max_tokens → client_params 不含该键（零回归契约）."""
+    reg = load_registry(
+        _settings(
+            model_providers_raw=json.dumps(
+                {"p1": {"base_url": "http://a", "api_key_env": "", "models": {"m1": {}}}}
+            )
+        )
+    )
+    assert "max_tokens" not in reg.client_params("p1", "m1")

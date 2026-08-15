@@ -78,6 +78,7 @@ class LLMClient:
     base_url: str
     model: str
     timeout_s: float = 120.0
+    max_tokens: int | None = None  # 2026-08-15: 显式输出预算（None=不发字段，模型默认）
     max_retries: int = 0
 
     # 兼容构造: settings 装配（保留字段注入）
@@ -127,6 +128,10 @@ class LLMClient:
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        # 2026-08-15: 显式输出预算（None=不发字段，模型默认——思考链模型默认 4096 时
+        # 思考占大半、最终分析被截断，用户现场反馈"回答被截断"根因）
+        if self.max_tokens is not None:
+            payload["max_tokens"] = self.max_tokens
         # M20 THK-01: DeepSeek V4 思考模式显式声明（thinking_mode AND provider 支持才发送）
         # P1-FEISHU: 本地 provider (LM Studio) 不发 OpenAI 的 `thinking` 字段
         # —— LM Studio 优先 `thinking.type=enabled` 而忽略 `chat_template_kwargs.enable_thinking=False`,

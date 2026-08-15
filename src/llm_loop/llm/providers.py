@@ -68,6 +68,7 @@ class ProviderSpec:
     default_model: str = ""
     timeout_s: float | None = None
     history_budget_chars: int | None = None
+    max_tokens: int | None = None  # 2026-08-15: provider 级输出预算（None=全局 LLM_MAX_TOKENS）
 
 
 @dataclass(frozen=True)
@@ -135,6 +136,8 @@ class ProviderRegistry:
                 tags.append(f"timeout={spec.timeout_s:g}s")
             if spec.history_budget_chars:
                 tags.append(f"history_budget={spec.history_budget_chars}")
+            if spec.max_tokens:
+                tags.append(f"max_tokens={spec.max_tokens}")
             tag_str = (" " + " ".join(tags)) if tags else ""
             lines.append(f"[{pid}] base_url={spec.base_url}{tag_str}")
             for mid, mspec in spec.models.items():
@@ -176,6 +179,7 @@ class ProviderRegistry:
             # provider 级超时仅显式配置时下发（None 由 pool 回退全局 LLM_TIMEOUT_S）;
             # 未配置不含该键, 与既有返回契约零差异
             **({"timeout_s": spec.timeout_s} if spec.timeout_s is not None else {}),
+            **({"max_tokens": spec.max_tokens} if spec.max_tokens is not None else {}),
         }
 
 
@@ -305,6 +309,25 @@ def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
                         "provider 条目 %r 的 timeout_s=%r 非法, 回退全局超时",
                         pid, raw_timeout,
                     )
+            # provider 级输出预算（token）: 2026-08-15 显式 max_tokens（长分析模型放大）;
+            # 非法/缺失 → None（全局 LLM_MAX_TOKENS 兜底）
+            max_tokens: int | None = None
+            raw_tokens = val.get("max_tokens")
+            if raw_tokens is not None:
+                try:
+                    parsed_tokens = int(raw_tokens)
+                    if parsed_tokens > 0:
+                        max_tokens = parsed_tokens
+                    else:
+                        logger.warning(
+                            "provider 条目 %r 的 max_tokens=%r 非正数, 回退全局预算",
+                            pid, raw_tokens,
+                        )
+                except (ValueError, TypeError):
+                    logger.warning(
+                        "provider 条目 %r 的 max_tokens=%r 非法, 回退全局预算",
+                        pid, raw_tokens,
+                    )
             # provider 级历史注入预算（字符）: 本地慢模型收紧以缩短 prefill;
             # 非法/缺失 → None（全局 HISTORY_MAX_CHARS 兜底）
             history_budget_chars: int | None = None
@@ -332,6 +355,7 @@ def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
                 default_model=default_model,
                 timeout_s=timeout_s,
                 history_budget_chars=history_budget_chars,
+                max_tokens=max_tokens,
             )
         except (ValueError, TypeError) as exc:
             # P1-3: provider 条目级兜底（意外转换异常也不拖垮整个注册表）

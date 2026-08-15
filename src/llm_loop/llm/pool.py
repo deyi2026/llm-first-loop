@@ -64,6 +64,7 @@ class ModelClientPool:
         # 超时: provider 级 timeout_s（providers.json 显式配置, 本地慢模型放大）优先,
         # 否则继承默认 client 的运行参数（全局 LLM_TIMEOUT_S, 零回归）
         provider_timeout = params.get("timeout_s")
+        provider_max_tokens = params.get("max_tokens")
         client = LLMClient(
             api_key=params["api_key"],
             base_url=params["base_url"],
@@ -72,6 +73,12 @@ class ModelClientPool:
                 provider_timeout
                 if provider_timeout is not None
                 else self.default_client.timeout_s
+            ),
+            # 2026-08-15: provider 级输出预算优先，否则继承默认 client（全局 LLM_MAX_TOKENS）
+            max_tokens=(
+                provider_max_tokens
+                if provider_max_tokens is not None
+                else self.default_client.max_tokens
             ),
             thinking_mode=self.default_client.thinking_mode,
             reasoning_effort=self.default_client.reasoning_effort,
