@@ -45,3 +45,8 @@ docs/local/
 
 # 运行时经验库产物（并行会话沉淀，不入库）
 experiences/
+
+# Web V2（React+TS，独立目录；构建产物由 UI_V2_DIR/本地构建提供，不入库）
+webui/node_modules/
+webui/dist/
+webui/tsconfig.tsbuildinfo

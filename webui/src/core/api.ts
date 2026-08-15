@@ -1,0 +1,61 @@
+// Web V2 核心：API 客户端（对齐后端 /api/v1/* 契约，POST/GET/流式分离）
+
+export interface ApiResult<T = unknown> {
+  status: number;
+  data: T;
+}
+
+export async function api<T = unknown>(
+  url: string,
+  options?: RequestInit
+): Promise<ApiResult<T>> {
+  const resp = await fetch(url, options);
+  const data = (await resp.json().catch(() => ({}))) as T;
+  return { status: resp.status, data };
+}
+
+export interface HealthInfo {
+  status?: string;
+  service?: string;
+  version?: string;
+}
+
+export interface SessionMeta {
+  session_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+  status: string;
+  last_message_preview: string;
+  pinned: boolean;
+  channel: string;
+}
+
+export interface SessionListResponse {
+  sessions: SessionMeta[];
+  count: number;
+}
+
+export async function fetchHealth(): Promise<HealthInfo | null> {
+  const { status, data } = await api<HealthInfo>("/health");
+  return status === 200 ? data : null;
+}
+
+export async function fetchSessions(): Promise<SessionMeta[]> {
+  const { status, data } = await api<SessionListResponse>("/api/v1/sessions");
+  return status === 200 && Array.isArray(data.sessions) ? data.sessions : [];
+}
+
+export async function fetchSharedCurrent(): Promise<string | null> {
+  const { status, data } = await api<{ current: string | null }>("/api/v1/session/current");
+  return status === 200 ? data.current ?? null : null;
+}
+
+/** 通道标签（对齐 M56 来源通道语义：feishu:p2p:xxx / feishu:group:xxx / web） */
+export function channelLabel(channel: string | undefined): string {
+  if (!channel) return "Web";
+  if (channel.startsWith("feishu:p2p:")) return "飞书私聊";
+  if (channel.startsWith("feishu:group:")) return "飞书群聊";
+  return channel;
+}

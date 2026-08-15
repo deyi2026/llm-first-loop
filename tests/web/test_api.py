@@ -366,3 +366,42 @@ def test_sse_route_uses_named_event_helper():
     assert '_sse_event("sessions_updated"' in text
     assert '_sse_event("connected"' in text
     assert 'yield "data: ' not in text  # 旧格式（无 event: 行）不再出现
+
+
+# ── Web V2（2026-08-15）：/ui/v2 挂载并存（原版 / 不动；产物缺失不挂载） ──
+
+def test_ui_v2_mounted_when_dist_present(build_test_engine, fake_settings, tmp_path, monkeypatch):
+    """webui/dist 存在（UI_V2_DIR 注入）→ /ui/v2 挂载并可取 index.html."""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html><body>Web V2</body></html>", encoding="utf-8")
+    monkeypatch.setenv("UI_V2_DIR", str(dist))
+    engine, _ = build_test_engine([{"content": "a"}])
+    client = _make_client(engine)
+    resp = client.get("/ui/v2/")
+    assert resp.status_code == 200
+    assert "Web V2" in resp.text
+
+
+def test_ui_v2_not_mounted_without_dist(build_test_engine, fake_settings, tmp_path, monkeypatch):
+    """无构建产物（CI/未构建）→ /ui/v2 不挂载（404），原版 / 不受影响."""
+    monkeypatch.setenv("UI_V2_DIR", str(tmp_path / "nonexistent"))
+    engine, _ = build_test_engine([{"content": "a"}])
+    client = _make_client(engine)
+    assert client.get("/ui/v2/").status_code == 404
+    assert client.get("/").status_code in (200, 307)  # 原版入口不受影响
+
+
+def test_ui_v2_assets_same_origin_api(build_test_engine, fake_settings, tmp_path, monkeypatch):
+    """V2 静态资源与 API 同源（base=/ui/v2/ 的 assets 可解析）."""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text(
+        '<script type="module" src="/ui/v2/assets/index-x.js"></script>', encoding="utf-8"
+    )
+    (dist / "assets").mkdir()
+    (dist / "assets" / "index-x.js").write_text("console.log(1)", encoding="utf-8")
+    monkeypatch.setenv("UI_V2_DIR", str(dist))
+    engine, _ = build_test_engine([{"content": "a"}])
+    client = _make_client(engine)
+    assert client.get("/ui/v2/assets/index-x.js").status_code == 200
