@@ -27,6 +27,15 @@
 ### 文档
 - 飞书渲染支持矩阵（`docs/feishu_render_matrix.md`）+ 开发方法论（`docs/development_methodology.md`）
 
+### 框架化批次（2026-08-15 追加）
+- **headless 服务模式（B5）**：`examples/04_headless_service.py`（无 UI 纯 API 嵌入——`build_engine` 单实例 + 同步/流式对话端点约 20 行）
+- **LLM 错误注入矩阵（A4）**：网络/超时/HTTP 4xx/HTTP 5xx/协议五类错误各注入引擎循环，断言 `[LLM 调用异常]` 三件套如实呈现 + 类型名不吞并 + 不抛穿
+- **发布节奏制度化（B11）**：Release Drafter（PR 标题自动归类 changelog 草稿）+ tag 触发门禁复核 + Release 草稿生成 + CONTRIBUTING 发布流程
+- **多 provider 成本路由增强（B6）**：`switch_model` 成功回执注入目标模型成本档 + 能力语义 + 上下文窗口（元数据缺失如实标注，判断归 AI）
+- **插件化 Skill 可演示化（B3）**：仓库自带示例技能（`skills/`）入库，真实装配端到端测试
+- **评测集贡献指南（B7）**：`docs/eval_scenarios.md`（schema + 判定注册 + 30 分钟新增路径 + PR 验收）
+- **API 契约稳定化（B5）**：公共签名快照测试（build_engine/LoopEngine/SessionStore/ToolRegistry 参数锁定）+ api.md §1 装配链路可执行验证
+
 ## v0.3.0（2026-08-14）
 
 ### 新能力
