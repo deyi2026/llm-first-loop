@@ -15,6 +15,8 @@ interface ConversationState {
   /** 当前进行中的助手消息索引（-1=无） */
   streamingIndex: number;
   lastError: string | null;
+  /** 本次流式开始时刻（占位符等待时长展示；null=未在流式） */
+  streamStartedAt: number | null;
 }
 
 const listeners = new Set<() => void>();
@@ -25,6 +27,7 @@ let state: ConversationState = {
   streaming: false,
   streamingIndex: -1,
   lastError: null,
+  streamStartedAt: null,
 };
 
 let abortCtrl: AbortController | null = null;
@@ -59,6 +62,7 @@ export async function loadHistory(sessionId: string): Promise<void> {
     streaming: false,
     streamingIndex: -1,
     lastError: null,
+    streamStartedAt: null,
   });
 }
 
@@ -105,12 +109,14 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
     toolCalls: null,
     note: null,
     streaming: true,
+    streamStartedAt: Date.now(),
   };
   conversationStore.setState({
     messages: [...cur.messages, userMsg, placeholder],
     streaming: true,
     streamingIndex: cur.messages.length + 1,
     lastError: null,
+    streamStartedAt: Date.now(),
   });
 
   const body = {
@@ -147,6 +153,7 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
       messages: [...st.messages.slice(0, st.streamingIndex), msg, ...st.messages.slice(st.streamingIndex + 1)],
       streaming: false,
       streamingIndex: -1,
+      streamStartedAt: null,
     });
   };
 

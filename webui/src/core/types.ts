@@ -22,6 +22,8 @@ export interface ChatMessage {
   note?: string | null;
   /** 流式进行中标记（展示用，不落库） */
   streaming?: boolean;
+  /** 流式开始时刻（等待时长展示；仅流式占位符使用） */
+  streamStartedAt?: number | null;
 }
 
 export interface ChatDoneData {

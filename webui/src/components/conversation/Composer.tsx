@@ -147,10 +147,12 @@ export function Composer() {
         return;
       }
     }
-    await sendMessage(trimmed, attachments);
+    // 乐观 UI（2026-08-15 现场反馈）：发送即清空输入与附件——
+    // 流式完成前文字留在框里会让人以为"没发出去/没反馈"
     setText("");
     setAttachments([]);
     setCmdOpen(false);
+    await sendMessage(trimmed, attachments);
   };
 
   const onPickFile = async (file: File) => {
