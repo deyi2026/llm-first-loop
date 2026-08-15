@@ -9,15 +9,19 @@ import { fetchModels, uploadFileBase64 } from "../../core/chat";
 import { sessionStore } from "../../core/stores";
 import type { ModelEntry } from "../../core/types";
 
+type AttachStatus = "ok" | "pending" | "degraded" | "error";
+
 interface Attachment {
   filename: string;
   result_text: string;
   preview?: string;
+  status: AttachStatus;
+  detail?: string;
 }
 
 interface CommandOption {
   label: string;
-  apply: () => void;
+  run: () => void;
 }
 
 interface CommandDef {
@@ -36,7 +40,15 @@ export function Composer() {
   const [cmdOptions, setCmdOptions] = useState<CommandOption[]>([]);
   const [cmdBusy, setCmdBusy] = useState(false);
   const [models, setModels] = useState<ModelEntry[]>([]);
+  const [hint, setHint] = useState("");
+  const hintTimer = useRef<number | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+
+  const flashHint = (msg: string) => {
+    setHint(msg);
+    if (hintTimer.current) window.clearTimeout(hintTimer.current);
+    hintTimer.current = window.setTimeout(() => setHint(""), 2500);
+  };
 
   // 模型目录（下拉与 /model 命令共用）
   useEffect(() => {
@@ -65,9 +77,18 @@ export function Composer() {
         name: "model",
         desc: "选择模型（当前请求生效）",
         options: async () =>
-          models.map((m) => ({ label: String(m.id), apply: () => setText(`/model ${m.id}`) })),
+          models.map((m) => ({
+            label: String(m.id),
+            run: () => {
+              sessionStore.setModel(String(m.id));
+              flashHint(`已选择模型：${m.id}（当前请求生效）`);
+            },
+          })),
         run: (arg) => {
-          if (arg) sessionStore.setModel(arg);
+          if (arg) {
+            sessionStore.setModel(arg);
+            flashHint(`已选择模型：${arg}（当前请求生效）`);
+          }
         },
       },
     ],
@@ -137,17 +158,25 @@ export function Composer() {
     reader.onload = async () => {
       const b64 = String(reader.result).split(",")[1] ?? "";
       const { status, data } = await uploadFileBase64(file.name, b64);
-      if (status === 200 && (data.status === "ok" || data.status === "pending")) {
+      if (status === 200) {
+        const attach: Attachment = {
+          filename: file.name,
+          result_text: data.result_text ?? "",
+          preview: file.type.startsWith("image/") ? String(reader.result) : undefined,
+          status: (data.status as AttachStatus) ?? "error",
+          detail: data.detail,
+        };
+        setAttachments((prev) => [...prev, attach]);
+      } else {
         setAttachments((prev) => [
           ...prev,
           {
             filename: file.name,
-            result_text: data.result_text ?? data.detail ?? "",
-            preview: file.type.startsWith("image/") ? String(reader.result) : undefined,
+            result_text: "",
+            status: "error",
+            detail: `上传失败（${status}）：${data.detail ?? "未知错误"}`,
           },
         ]);
-      } else {
-        window.alert(`上传失败（${status}）：${data.detail ?? "未知错误"}`);
       }
     };
     reader.readAsDataURL(file);
@@ -160,9 +189,12 @@ export function Composer() {
       {attachments.length > 0 && (
         <div className="v2-attachments">
           {attachments.map((a, i) => (
-            <div key={i} className="v2-attachment">
+            <div key={i} className={`v2-attachment ${a.status}`}>
               {a.preview ? <img src={a.preview} alt={a.filename} /> : <span>📄</span>}
-              <span className="v2-attachment-name">{a.filename}</span>
+              <span className="v2-attachment-name" title={a.detail ?? ""}>
+                {a.filename}
+                {a.status === "degraded" || a.status === "error" ? "（降级/失败）" : ""}
+              </span>
               <button
                 type="button"
                 className="v2-icon-btn"
@@ -184,7 +216,7 @@ export function Composer() {
               type="button"
               className="v2-cmd-item"
               onClick={() => {
-                o.apply();
+                o.run();
                 setCmdOpen(false);
                 setCmdOptions([]);
                 taRef.current?.focus();
@@ -257,7 +289,9 @@ export function Composer() {
           )}
         </div>
       </div>
-      <div className="v2-composer-hint">{zh.composerHint}</div>
+      <div className="v2-composer-hint" data-testid="composer-hint">
+        {hint || zh.composerHint}
+      </div>
     </div>
   );
 }

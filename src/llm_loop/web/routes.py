@@ -801,11 +801,16 @@ def upload_file(payload: UploadRequest) -> UploadResponse | Response:
             )
         except Exception as exc:  # 识别失败如实反馈，不伪装成功
             logger.exception("image vision failed: %s", payload.filename)
+            from .vision import _vision_model as _vm
+
             return UploadResponse(
                 source_filename=payload.filename,
                 content_type="image",
                 status="degraded",
-                detail=f"[程序异常] 图片识别失败（{type(exc).__name__}: {exc}）。",
+                detail=(
+                    f"[程序异常] 图片识别失败（模型 {_vm()}，{type(exc).__name__}: {exc}）。"
+                    "可设置 WEB_VISION_MODEL 换支持图片的模型，或改用文本通道。"
+                ),
             )
 
     # 文本/docx/PDF → 文档提取
