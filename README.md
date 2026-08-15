@@ -1,6 +1,6 @@
 # LLM-First Core Loop
 
-> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.3.0 ｜ **状态**: 开源框架化（B 路线）进行中 ｜ **English**: [README.en.md](README.en.md)
+> **License**: [Apache-2.0](LICENSE) ｜ **Version**: 0.4.0 ｜ **状态**: 开源框架化（B 路线）进行中 ｜ **English**: [README.en.md](README.en.md)
 
 大模型是核心，所有动作围绕大模型展开。架构核心 = **消息进 → 理解 → 行动 → 真诚回答 → 记住**。
 
@@ -69,8 +69,15 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 - **人工审批流**（T5a）：EXEC_MODE 拦截项在 CLI 交互模式可经终端确认放行（`_cli_approval_prompt`，无终端 fail-closed 拒绝）；审批审计落盘 `data/audit/approval_audit.jsonl`（decision/tool/参数摘要，不含密钥）；灾难性安全硬阻断不可审批
 - **symlink 写防护**（T5b）：edit_file 写路径含符号链接（自身/父目录）拒绝写入防越界（fail-closed + realpath 引导）；read_file 读 symlink 如实标注不拒绝
 - **评测体系**（T4）：固定评测集 `tests/eval_sets/scenarios_v1.json`（6 场景，判定口径源自内部实证基线）+ 运行器 `scripts/run_eval.py`（真实 LLM / `--dry` 管道验证，判定 + Wilson CI + 报告落盘 `docs/metrics/`）+ CI nightly 自动运行
-- **CI + 版本**（T7）：GitHub Actions 三件套门禁（pytest/ruff/pyright）+ nightly 真实评测；语义化版本 v0.2.0
+- **CI + 版本**（T7/B11）：GitHub Actions 三件套门禁（pytest/ruff/pyright）+ nightly 真实评测；语义化版本 v0.4.0；Release Drafter（PR 标题自动归类 changelog）+ tag 触发门禁复核 + Release 草稿（发布节奏制度化）
 - **插件化 Skill**（B3）：`skills/<name>/SKILL.md` 目录自动扫描（`SKILLS_DIR`，默认 ./skills），AI 经 `skill_list`/`skill_load` 发现并加载外部技能执行——外部开发者零代码扩展框架能力；损坏/缺失文件 fail-open 跳过；仓库自带示例技能（`skills/`：notebook-session/incident-report）可直接 `skill_list` 发现体验
+- **web_fetch SSRF 内网拦截**（HARNESS-03）：`WEB_FETCH_BLOCK_PRIVATE`（默认开）拦截私网/环回/链路本地/保留段地址（IP 字面量 + DNS 解析双路径），防云元数据等内网探测；命中返回 BLOCKED `[内网拦截]`
+- **上下文预算预警**（HARNESS-04）：上下文占用率 ≥80% 预算时注入一次 `[预算预警]`（含占用率/字符数），"压缩/收尾"决策归 AI——程序不自动压缩
+- **孤儿 tool_calls 合成回执**（HARNESS-01）：`run_stream` 客户端中断时自动写「已取消」回执并立即保存，不产生「有声明无回执」的孤儿声明（严格 FC 协议 400 根源）
+- **`request.meta` 事件**（HARNESS-02）：每轮 LLM 请求快照入事件日志（round/model/tools_count/history_chars/budget），回放可确知"当时用的哪个模型/挂了哪些工具"
+- **Headless 服务模式**（B5）：无 UI 纯 API 嵌入——`examples/04_headless_service.py`（`build_engine` 单实例 + 同步/流式对话端点约 20 行）；公共 API 签名快照测试锁定（防语义漂移）
+- **多 provider 成本路由增强**（B6）：`switch_model` 成功回执注入目标模型成本档（cost_tier）+ 能力语义（thinking/reasoning/long_context/multimodal）+ 上下文窗口（元数据缺失如实标注，判断归 AI）
+- **评测集贡献指南**（B7）：`docs/eval_scenarios.md`——外部贡献者按 schema 新增场景约 30 分钟（判定注册 + dry 验证 + PR 验收清单）
 
 ## CLI 子命令
 
