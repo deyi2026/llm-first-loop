@@ -1,15 +1,17 @@
-"""图片识别模块（M39 + 2026-08-15 重构：走自家 provider 注册表，视觉模型可配）.
+"""图片识别模块（M39 + 2026-08-15 重构）.
 
-后端策略（env WEB_VISION_BACKEND）:
-- provider（默认）：从 provider 注册表（data/providers.json）选择**支持多模态的模型**
-  （ModelSpec.multimodal=True，如 Kimi k3/k3-256k——2026-08-15 实测 kimi 视觉可用，
-  正确识别纯色图；MiniMax M3/M2.x 实测均无真实视觉，M2.x 返回凭空猜测属伪成功幻觉，
-  故不作为默认）。调用方式为 OpenAI 兼容 chat/completions + image_url data URI。
-  模型选择：WEB_VISION_MODEL 显式 "provider/model" → 优先；否则扫描注册表首个
-  multimodal 模型。api_key 从注册表 api_key_env 对应环境变量读取（与 LLM 主链路一致）。
-- arkcli（团队自研多模态工具）：`arkcli +understand image-caption`（豆包视觉）。
-  数据面鉴权失败时如实报错并给修复指引（`arkcli auth login volc-sso` / `arkcli auth apikey`）。
-- minimax（旧路径 opt-in）：httpx 直调 MiniMax 端点（仅显式开启；见上实测结论）。
+设计定位（团队确认）：识别工具本身把图片/文档**转换为文字**，输出文本给
+**无视觉能力的主模型**使用——本模块产出的 result_text 由调用方注入对话上下文。
+
+后端策略（env WEB_VISION_BACKEND，默认 auto 自动链）:
+- auto（默认）：**团队识别工具优先**（arkcli +understand image-caption，豆包视觉）——
+  工具不可用/未认证（SSO 过期等）时如实降级链：→ provider（注册表 multimodal 模型，
+  如 Kimi k3，实测真实视觉可用）→ 明确报错。识别来源在结果 detail 中如实标注。
+- arkcli：仅团队工具，失败即报错（含 `arkcli auth login volc-sso` / `arkcli auth apikey` 指引）。
+- provider：仅注册表视觉模型（OpenAI 兼容 chat/completions + image_url；WEB_VISION_MODEL
+  显式 "provider/model" 优先，否则扫描注册表首个 multimodal 模型；api_key 走 api_key_env）。
+- minimax（旧路径 opt-in）：MiniMax 端点（M3/M2.x 实测均无真实视觉，M2.x 返回凭空
+  猜测属伪成功幻觉，仅显式开启）。
 
 独立于核心 LLM 主链路（不修改 LoopEngine/prompt）；失败如实反馈。
 """
@@ -33,8 +35,8 @@ _AUTH_HINT = (
 
 
 def _vision_backend() -> str:
-    """识别后端：provider（默认，注册表 multimodal 模型）/ arkcli / minimax."""
-    return os.environ.get("WEB_VISION_BACKEND", "provider").strip().lower() or "provider"
+    """识别后端：auto（默认，arkcli 工具优先 + provider 兜底）/ arkcli / provider / minimax."""
+    return os.environ.get("WEB_VISION_BACKEND", "auto").strip().lower() or "auto"
 
 
 def _vision_timeout() -> float:
@@ -70,7 +72,11 @@ def vision_enabled(settings: Any = None) -> bool:
         reg = _registry(settings)
     except Exception:  # noqa: BLE001 — 注册表不可读按不可用
         return False
-    return _pick_provider_model(reg, os.environ.get("WEB_VISION_MODEL", "")) is not None
+    has_provider = _pick_provider_model(reg, os.environ.get("WEB_VISION_MODEL", "")) is not None
+    if backend == "provider":
+        return has_provider
+    # auto：工具或模型任一可用即可
+    return has_provider or shutil.which("arkcli") is not None
 
 
 def _pick_provider_model(reg: Any, explicit: str) -> tuple[str, str] | None:
@@ -252,6 +258,8 @@ def _describe_minimax(image_bytes: bytes, mime: str, prompt: str) -> str:
 def describe_image(image_bytes: bytes, mime: str = "image/png", prompt: str = "", settings: Any = None) -> str:
     """调用图片识别能力描述图片，返回描述文本（非空）.
 
+    识别结果即**文本**（供无视觉能力的主模型使用），调用方注入对话上下文。
+
     Args:
         settings: 引擎设置（provider 后端注册表来源）；None = 全局配置。
 
@@ -264,17 +272,40 @@ def describe_image(image_bytes: bytes, mime: str = "image/png", prompt: str = ""
     if backend == "minimax":
         return _describe_minimax(image_bytes, mime, prompt)
     if backend == "arkcli":
-        if shutil.which("arkcli") is None:
-            raise RuntimeError(f"arkcli 未安装（PATH 中找不到），无法调用图片识别工具。{_AUTH_HINT}")
+        return _describe_arkcli_with_hint(image_bytes, mime, prompt)
+    if backend == "provider":
+        return _describe_provider(image_bytes, mime, prompt, settings)
+    # auto：团队识别工具优先（产文本），不可用/未认证 → provider 模型兜底 → 明确报错
+    if shutil.which("arkcli") is not None:
         try:
-            text = _describe_arkcli(image_bytes, mime, prompt)
+            return _describe_arkcli_with_hint(image_bytes, mime, prompt)
         except RuntimeError as exc:
-            msg = str(exc)
-            if any(k in msg for k in ("not logged in", "API Key is required", "AccessDenied", "SSO")):
-                raise RuntimeError(f"{msg}。{_AUTH_HINT}") from exc
-            raise
-        if not text.strip():
-            raise RuntimeError("图片识别返回空结果")
-        return text
-    # provider 后端（默认）
+            auth_failed = any(
+                k in str(exc) for k in ("not logged in", "API Key is required", "AccessDenied", "SSO")
+            )
+            if not auth_failed:
+                raise  # 非鉴权失败：如实上报工具错误
+            # 工具未认证 → 降级到注册表视觉模型（如实；detail 由调用方透传）
+            try:
+                return _describe_provider(image_bytes, mime, prompt, settings)
+            except RuntimeError as prov_exc:
+                raise RuntimeError(
+                    f"arkcli 未认证（{str(exc)}）且注册表视觉模型亦失败（{prov_exc}）。{_AUTH_HINT}"
+                ) from prov_exc
     return _describe_provider(image_bytes, mime, prompt, settings)
+
+
+def _describe_arkcli_with_hint(image_bytes: bytes, mime: str, prompt: str) -> str:
+    """arkcli 后端（含未安装/未认证的可操作指引）."""
+    if shutil.which("arkcli") is None:
+        raise RuntimeError(f"arkcli 未安装（PATH 中找不到），无法调用图片识别工具。{_AUTH_HINT}")
+    try:
+        text = _describe_arkcli(image_bytes, mime, prompt)
+    except RuntimeError as exc:
+        msg = str(exc)
+        if any(k in msg for k in ("not logged in", "API Key is required", "AccessDenied", "SSO")):
+            raise RuntimeError(f"{msg}。{_AUTH_HINT}") from exc
+        raise
+    if not text.strip():
+        raise RuntimeError("图片识别返回空结果")
+    return text
