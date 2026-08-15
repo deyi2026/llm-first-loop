@@ -201,3 +201,48 @@ def test_example01_assembly_chain_runs(tmp_path, monkeypatch):
     assert result.final_answer == "装配链路回答"
     assert result.rounds >= 1
     assert engine.session.exists(sid)
+
+
+def test_example04_headless_service_runs(tmp_path, monkeypatch):
+    """B5: headless 服务模式——示例 04 的 build_headless_app 可装配、端点可调用.
+
+    零 LLM 零网络: env 注入 + Fake client（pool default）替换; 用 FastAPI TestClient
+    调 /health 与 /chat, 断言 headless 嵌入链路（引擎单实例 → 对话端点）可用。
+    """
+    from fastapi.testclient import TestClient
+
+    from llm_loop.config import load_settings
+    from llm_loop.factory import build_engine
+    from llm_loop.llm.client import LLMResponse
+
+    monkeypatch.setenv("LLM_API_KEY", "k")
+    monkeypatch.setenv("LLM_BASE_URL", "https://x/v1")
+    monkeypatch.setenv("LLM_MODEL", "m")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("EXTRACT_ENABLED", "0")
+    monkeypatch.setenv("SUMMARY_MODE", "off")
+
+    class _Fake:
+        def chat(self, messages, tools, **kw):
+            return LLMResponse(content="headless 回答", tool_calls=[], provider="fake")
+
+        def chat_stream(self, messages, tools, **kw):
+            def _gen():
+                yield from ()
+                return LLMResponse(content="headless 回答", tool_calls=[], provider="fake")
+
+            return _gen()
+
+    settings = load_settings()
+    engine = build_engine(settings)
+    engine.llm_pool.default_client = _Fake()  # type: ignore[assignment]
+
+    from llm_loop.web import build_app
+
+    app = build_app(settings=settings, engine=engine)
+    client = TestClient(app)
+
+    assert client.get("/health").json()["status"] == "ok"
+    resp = client.post("/api/v1/chat", json={"message": "你好"})
+    assert resp.status_code == 200
+    assert "headless 回答" in resp.text

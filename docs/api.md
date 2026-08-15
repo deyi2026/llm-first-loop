@@ -110,8 +110,13 @@ app = build_app(settings=load_settings())   # FastAPI 应用（含鉴权/上传/
 ```
 
 `build_app(settings=None, engine=None)`：双参数装配；`app.state.engine` 单实例。
-端点速览：`POST /api/v1/chat`、`POST /api/v1/chat/stream`、`GET /api/v1/sessions`、
-`POST /api/v1/upload`、`GET /health`（鉴权：回环豁免 + `WEB_API_KEY` 远程强制）。
+端点速览：`POST /api/v1/chat`（body: `{message, session_id?, model?}`）、
+`POST /api/v1/chat/stream`、`GET /api/v1/sessions`、`POST /api/v1/upload`、`GET /health`
+（鉴权：回环豁免 + `WEB_API_KEY` 远程强制）。
+
+**Headless 服务模式（B5）**：无 UI 纯 API 嵌入——示例 `examples/04_headless_service.py`
+（装配 + 同步/流式对话端点，约 20 行），核心是 `build_engine(load_settings())` 单实例 +
+`engine.run_single` / `engine.run_stream` 两个入口（签名快照测试锁定）。
 
 ## 8. CLI（`python -m llm_loop.cli`）
 
