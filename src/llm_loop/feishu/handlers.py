@@ -481,19 +481,19 @@ class FeishuMessageHandler:
     def _reply_chunked(self, msg: FeishuMessage, text: str, *, force_full: bool = False) -> None:
         """长回复按 markdown 感知分段（fence 闭合重开），逐段发送（不丢失内容）.
 
-        F4(2026-08-14) 交互式折叠: 回复长度 > `_FOLD_THRESHOLD` 时——
-        暂存全文（有界 `_folded_store`）+ 发摘要卡（含"回复『展开全文』获取完整内容"引导），
-        不再自动全量推送（消息条数收敛）；用户回复「展开全文」经 `_reply_folded_full`
-        取回全文分段发送。`force_full=True`（展开路径）跳过折叠直接全量分段。
+        2026-08-15 用户需求：默认不折叠——超过 `_FOLD_THRESHOLD` 也直接全量分段推送
+        （分块输出）；`FEISHU_FOLD_LONG_REPLY=1` 选择加入旧折叠行为（F4：暂存全文 +
+        摘要卡 + 「展开全文」取回，`force_full=True` 展开路径跳过折叠）。
         摘要卡/暂存失败 fail-open 回退既有全量分段路径（不丢内容）。
         """
+        fold_enabled = os.environ.get("FEISHU_FOLD_LONG_REPLY", "0") == "1"
         if len(text) <= self._chunk_limit:
-            if len(text) > _FOLD_THRESHOLD and not force_full:
+            if fold_enabled and len(text) > _FOLD_THRESHOLD and not force_full:
                 self._fold_and_notify(msg, text)
                 return
             self._reply(msg, text)
             return
-        if len(text) > _FOLD_THRESHOLD and not force_full:
+        if fold_enabled and len(text) > _FOLD_THRESHOLD and not force_full:
             self._fold_and_notify(msg, text)
             return
         for part in self._chunk_markdown(text, self._chunk_limit):

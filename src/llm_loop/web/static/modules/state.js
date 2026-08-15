@@ -81,7 +81,6 @@ function setStatus(ok, text) {
   els.statusBadge.className = "status-badge " + (ok ? "ok" : "err");
 }
 
-// ---------- 长文本折叠阈值（T3，spec.md 5.2.1） ----------
-const LONG_LINE_THRESHOLD = 200;   // pre 代码块行数超此值折叠为前 20 行摘要
-const LONG_CHAR_THRESHOLD = 20000; // 消息体字符数超此值折叠为前 2000 字符摘要
+// ---------- 长内容分块粒度（2026-08-15 用户需求：不折叠，过长分块输出） ----------
+const LONG_LINE_THRESHOLD = 200;   // pre 代码块行数超此值顺序分段（每段 ≤ 200 行全量可见，无折叠）
 

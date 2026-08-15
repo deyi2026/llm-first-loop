@@ -93,7 +93,8 @@
 | `WEB_AUTH_REQUIRE` | 0 | 1=回环也强制令牌；**fail-closed**：设为 1 但未配置 WEB_API_KEY → 启动拒绝 + 请求 503（v0.5.0 起，不再静默放行）。回环豁免部署下 mutating 端点自带 Origin 跨站写防护（非回环来源 403） |
 | `WEB_HOST` / `WEB_PORT` | 127.0.0.1 / 8902 | 绑定地址 / 端口 |
 | `SESSION_CONCURRENCY_LOCK` | 1 | 会话级并发锁（0=无锁） |
-| `LONG_LINE_THRESHOLD` / `LONG_CHAR_THRESHOLD` | — | 长内容折叠阈值（前端展示） |
+| `LONG_LINE_THRESHOLD` | 200 | 长内容分块粒度（前端展示；v0.5.2 起回复不折叠，超长代码块按 200 行/段顺序分段全量展示） |
+| `FEISHU_FOLD_LONG_REPLY` | 0 | 飞书长回复折叠选择加入（1=恢复旧折叠行为：摘要卡+「展开全文」取回；默认 0=不折叠全量分段推送） |
 
 ## 九、飞书桥
 

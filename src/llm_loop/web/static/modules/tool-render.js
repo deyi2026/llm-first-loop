@@ -198,7 +198,7 @@ function renderToolPairCard(decl, resultMsg) {
 function renderReasoningBlock(reasoning, parentNode) {
   // 思考展示区：默认折叠 + 点击展开 + 样式区分；插入 parentNode 正文前方
   // 返回 { block, body, setReasoning }：setReasoning 供流式渐进/done 覆盖更新
-  // 折叠态仅显示标题提示不渲染完整 DOM（spec 4.1.2）；展开时 renderMarkdown + collapseLongContent
+  // 折叠态仅显示标题提示不渲染完整 DOM（spec 4.1.2）；展开时 renderMarkdown + chunkLongContent
   const block = el("div", "reasoning-block");
   const toggle = el("button", "reasoning-toggle", "💭 思考过程 ▸");
   toggle.type = "button";
@@ -213,7 +213,7 @@ function renderReasoningBlock(reasoning, parentNode) {
     } else {
       body.textContent = currentText;
     }
-    collapseLongContent(body);
+    chunkLongContent(body);
   };
   const setReasoning = (text) => {
     currentText = String(text || "");
