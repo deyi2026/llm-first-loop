@@ -81,14 +81,18 @@ export function stopStreaming(): void {
 }
 
 /** 发送消息（含附件前缀注入；流式渲染思考/工具轮/正文；done 终态覆盖；错误可重试） */
-export async function sendMessage(
-  text: string,
-  attachments: Array<{ filename: string; result_text: string }>
-): Promise<void> {
+export interface SendAttachment {
+  filename: string;
+  result_text: string;
+  status?: "ok" | "pending" | "degraded" | "error";
+}
+
+export async function sendMessage(text: string, attachments: SendAttachment[]): Promise<void> {
   const cur = conversationStore.getState();
   const sessionId = sessionStore.getState().currentSessionId;
   if (!sessionId) return;
   const attachmentPrefix = attachments
+    .filter((a) => a.status === "ok" || a.status === "pending")
     .map((a) => `[附件 ${a.filename}] ${a.result_text}`)
     .join("\n\n");
   const effectiveText = attachmentPrefix ? `${attachmentPrefix}\n\n${text}` : text;

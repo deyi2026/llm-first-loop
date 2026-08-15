@@ -56,6 +56,44 @@ function ToolRow({ tool }: { tool: ToolCallInfo }) {
   );
 }
 
+/** 工具回执状态解析（content 内 [状态: xxx] 标记；缺失中性） */
+function receiptStatus(content: string): { key: string; label: string } {
+  const m = /\[状态:\s*([a-z_]+)\]/i.exec(content || "");
+  const key = (m ? m[1] : "done").toLowerCase();
+  const labels: Record<string, string> = {
+    success: "成功",
+    failure: "失败",
+    error: "错误",
+    blocked: "已拦截",
+    timeout: "超时",
+    done: "完成",
+    running: "执行中",
+  };
+  return { key, label: labels[key] ?? key };
+}
+
+function ToolReceipt({ msg }: { msg: ChatMessage }) {
+  const [open, setOpen] = useState(false);
+  const st = receiptStatus(msg.content);
+  const statusClass = st.key === "success" || st.key === "done" ? "ok" : st.key === "blocked" ? "warn" : st.key === "failure" || st.key === "error" ? "err" : "neutral";
+  return (
+    <div className="v2-tool-receipt" data-testid="tool-receipt">
+      <button type="button" className="v2-tool-receipt-toggle" onClick={() => setOpen((v) => !v)}>
+        <span className="v2-tool-icon">⚙️</span>
+        <span className="v2-tool-name">{msg.toolName || "tool"}</span>
+        <span className={`v2-status-chip ${statusClass}`}>{st.label}</span>
+        {msg.toolCallId ? <span className="v2-tool-id">{msg.toolCallId}</span> : null}
+        <span className="v2-tool-arrow">{open ? "▾" : "▸"}</span>
+      </button>
+      {open && (
+        <pre className="v2-tool-receipt-body">
+          <code>{msg.content}</code>
+        </pre>
+      )}
+    </div>
+  );
+}
+
 function ToolChain({ calls }: { calls: ToolCallInfo[] }) {
   const [open, setOpen] = useState(false);
   return (
@@ -81,11 +119,7 @@ export function MessageItem({ msg }: { msg: ChatMessage }) {
   if (msg.role === "tool") {
     return (
       <div className="v2-msg tool" data-testid="msg-tool">
-        <div className="v2-tool-row static">
-          <span className="v2-tool-icon">⚙️</span>
-          <span className="v2-tool-name">{msg.toolName || "tool"}</span>
-          <span className="v2-tool-id">{msg.toolCallId || ""}</span>
-        </div>
+        <ToolReceipt msg={msg} />
       </div>
     );
   }

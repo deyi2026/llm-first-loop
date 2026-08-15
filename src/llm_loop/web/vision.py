@@ -1,7 +1,9 @@
 """图片识别模块（M39，借鉴 本地既有实现 vision.py 算法思路，引用非改写）.
 
-httpx 直调 MiniMax 多模态端点（Anthropic 兼容 /v1/messages），base64 image block。
-无 key 如实降级（不伪装识别成功）；失败如实反馈；独立于核心 LLM 主链路（不修改 LoopEngine/prompt）。
+httpx 直调 MiniMax OpenAI 兼容多模态端点（/v1/chat/completions + image_url data URI），
+2026-08-15 修复：旧 Anthropic 兼容端点 /v1/messages 已被 MiniMax 下线（404）——
+新端点 image 内容走 content parts（type=image_url）。无 key 如实降级（不伪装识别成功）；
+失败如实反馈；独立于核心 LLM 主链路（不修改 LoopEngine/prompt）。
 """
 
 import base64
@@ -25,7 +27,7 @@ def _vision_timeout() -> float:
 
 
 def _vision_base_url() -> str:
-    """MiniMax 多模态端点（base 部分，/v1/messages 由本模块拼接）."""
+    """MiniMax OpenAI 兼容端点 base（/v1/chat/completions 由本模块拼接）."""
     return os.environ.get("MINIMAX_BASE_URL", "https://api.minimax.chat").rstrip("/")
 
 
@@ -64,8 +66,8 @@ def describe_image(image_bytes: bytes, mime: str = "image/png", prompt: str = ""
                 "role": "user",
                 "content": [
                     {
-                        "type": "image",
-                        "source": {"type": "base64", "media_type": mime, "data": b64},
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime};base64,{b64}"},
                     },
                     {"type": "text", "text": prompt.strip() or VISION_DEFAULT_PROMPT},
                 ],
@@ -73,10 +75,9 @@ def describe_image(image_bytes: bytes, mime: str = "image/png", prompt: str = ""
         ],
     }
     resp = httpx.post(
-        f"{_vision_base_url()}/v1/messages",
+        f"{_vision_base_url()}/v1/chat/completions",
         headers={
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         },
         json=payload,
@@ -84,8 +85,10 @@ def describe_image(image_bytes: bytes, mime: str = "image/png", prompt: str = ""
     )
     resp.raise_for_status()
     data = resp.json()
-    blocks = data.get("content") or []
-    text = "".join(b.get("text", "") for b in blocks if isinstance(b, dict))
-    if not text.strip():
+    try:
+        text = (data["choices"][0]["message"]["content"] or "").strip()
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError(f"视觉识别响应结构异常（{type(exc).__name__}）") from exc
+    if not text:
         raise RuntimeError("视觉识别返回空结果")
     return text.strip()

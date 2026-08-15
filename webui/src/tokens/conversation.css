@@ -364,6 +364,96 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* ── 工具回执（彩色状态，非灰） ── */
+.v2-tool-receipt {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-1);
+  overflow: hidden;
+}
+
+.v2-tool-receipt-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.v2-tool-receipt-toggle:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.v2-status-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 9px;
+  font-size: 11px;
+  line-height: 18px;
+  font-weight: 500;
+}
+
+.v2-status-chip.ok {
+  color: var(--dsw-alias-state-success-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 12%, transparent);
+}
+
+.v2-status-chip.err {
+  color: var(--dsw-alias-state-error-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent);
+}
+
+.v2-status-chip.warn {
+  color: var(--dsw-alias-state-warn-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 14%, transparent);
+}
+
+.v2-status-chip.neutral {
+  color: var(--dsw-alias-label-tertiary);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.v2-tool-receipt-body {
+  margin: 0;
+  padding: 10px 12px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-markdown-code-block);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--dsw-alias-label-primary);
+}
+
+.v2-tool-receipt-body code {
+  font: inherit;
+  background: none;
+  padding: 0;
+}
+
+/* ── 附件状态（降级/失败有色标注） ── */
+.v2-attachment.degraded {
+  border: 1px solid var(--dsw-alias-state-warn-primary);
+  color: var(--dsw-alias-state-warn-label);
+}
+
+.v2-attachment.error {
+  border: 1px solid var(--dsw-alias-state-error-primary);
+  color: var(--dsw-alias-state-error-primary);
+}
+
 /* ── 加载更早 / 回到底部 ── */
 .v2-load-earlier,
 .v2-scroll-bottom {
