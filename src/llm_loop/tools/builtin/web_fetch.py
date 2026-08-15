@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import html as _html
 import ipaddress
+import logging
 import re
 import subprocess
 import time as _time
@@ -26,6 +27,8 @@ import time as _time
 import httpx
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+
+logger = logging.getLogger(__name__)
 
 # 单例 Browser 感知: 短时重复抓取同一 URL 提示复用。
 # 模块级 {url: last_fetch_epoch}——同会话内 5 分钟内重复抓同一 URL，
@@ -374,10 +377,21 @@ class WebFetchTool:
         if not addr:
             return
         peer = str(addr[0])
-        # 2026-08-15: TUN 模式下对端地址即代理假 IP（198.18/15）——放行（非严格模式），
-        # 真实连接由代理通道完成；真实私网对端仍丢弃（P0-3 语义不变）
+        # 2026-08-15: TUN/增强模式（Surge pf 重定向）下实际对端可能是——
+        # ① 代理假 IP（198.18/15）：放行（非严格模式），真实连接由代理通道完成；
+        # ② 本机回环（透明代理监听 127.0.0.1:port，如 Surge 6152 / Clash 7890）：
+        #    per-hop 预检查已把关目标（直连 127.0.0.1 的 URL 在预检查即拦截），
+        #    对端回环仅可能来自系统级透明转发 → 放行（logger 留痕）。
+        #    残余如实标注：同跳内 DNS rebinding 至回环的窗口极小（需攻击者 DNS 控制
+        #    + 同跳换 IP），且真实私网对端（10.x/172.16/192.168/169.254 等）仍丢弃，
+        #    P0-2/P0-3 主体防护不变。
+        # 真实私网对端仍丢弃（P0-3 语义不变）。
         try:
-            if ipaddress.ip_address(peer) in _FAKE_IP_NETWORK and not _strict_fake_ip():
+            peer_ip = ipaddress.ip_address(peer)
+            if peer_ip in _FAKE_IP_NETWORK and not _strict_fake_ip():
+                return
+            if peer_ip.is_loopback:
+                logger.info("web_fetch 对端为本机回环 %s（透明代理转发，已放行）: %s", peer, url)
                 return
         except ValueError:
             pass  # 非 IP 字面量（域名字符串）→ 走 _blocked_ip_label 常规判定
