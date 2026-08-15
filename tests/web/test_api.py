@@ -456,7 +456,7 @@ def test_feedback_validations(build_test_engine, fake_settings, tmp_path, monkey
     )
     assert (
         client.post(
-            f"/api/v1/sessions/nonexistent/feedback",
+            "/api/v1/sessions/nonexistent/feedback",
             json={"message_index": 0, "feedback": "up"},
         ).status_code
         == 404
