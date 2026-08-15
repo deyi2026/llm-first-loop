@@ -3,6 +3,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import "./tokens/theme.css";
 import "./tokens/app.css";
+import "./tokens/conversation.css";
 import { App } from "./App";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

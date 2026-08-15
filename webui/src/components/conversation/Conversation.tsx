@@ -1,28 +1,35 @@
-// Web V2：会话主区（阶段 1 空状态占位；消息流在阶段 2 接入）
+// Web V2：会话主区（消息列表 + 输入区；会话切换时加载历史）
 
-import { zh } from "../../i18n/zh";
+import { useEffect } from "react";
+import { MessageList } from "./MessageList";
+import { Composer } from "./Composer";
 import { useCurrentSessionId, useSessions } from "../../core/stores";
+import { conversationStore, loadHistory, useConversation } from "../../core/conversation";
 
 export function Conversation() {
   const currentId = useCurrentSessionId();
   const sessions = useSessions();
+  const conv = useConversation();
   const current = sessions.find((s) => s.session_id === currentId);
+
+  useEffect(() => {
+    if (currentId) {
+      void loadHistory(currentId);
+    } else {
+      conversationStore.setState({ messages: [], hasMoreHistory: false, loadedHistoryCount: 0 });
+    }
+  }, [currentId]);
 
   return (
     <main className="v2-conversation" data-testid="conversation">
-      <div className="v2-conversation-empty">
-        <h2>{zh.emptyHeroTitle}</h2>
-        <p>{zh.emptyHeroSub}</p>
-        {current && (
-          <div className="v2-kv" style={{ marginTop: 12, maxWidth: 320 }}>
-            <span className="k">当前会话</span>
-            <span className="v">{current.title || current.session_id}</span>
-            <span className="k">消息数</span>
-            <span className="v">{current.message_count}</span>
-          </div>
-        )}
-        <p style={{ fontSize: 12, opacity: 0.7 }}>{zh.stage1Note}</p>
-      </div>
+      {current && (
+        <div className="v2-conversation-header">
+          <span className="v2-conversation-title">{current.title || current.session_id}</span>
+          {conv.lastError && <span className="v2-conv-error">{conv.lastError}</span>}
+        </div>
+      )}
+      <MessageList />
+      <Composer />
     </main>
   );
 }

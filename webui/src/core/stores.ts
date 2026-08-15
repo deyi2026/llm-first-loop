@@ -8,6 +8,8 @@ export type ThemePreference = "system" | "light" | "dark";
 interface SessionState {
   sessions: SessionMeta[];
   currentSessionId: string | null;
+  /** 会话级模型覆盖（chat 请求携带；M47 语义） */
+  model: string | null;
 }
 
 const listeners = new Set<() => void>();
@@ -28,12 +30,17 @@ function createStore<T extends object>(initial: T) {
 }
 
 // ── 会话 store ──
-const sessionStoreRaw = createStore<SessionState>({ sessions: [], currentSessionId: null });
+const sessionStoreRaw = createStore<SessionState>({
+  sessions: [],
+  currentSessionId: null,
+  model: null,
+});
 
 export const sessionStore = {
   getState: sessionStoreRaw.getState,
   setSessions: (sessions: SessionMeta[]) => sessionStoreRaw.setState({ sessions }),
   setCurrentSession: (sessionId: string) => sessionStoreRaw.setState({ currentSessionId: sessionId }),
+  setModel: (model: string | null) => sessionStoreRaw.setState({ model }),
   subscribe: sessionStoreRaw.subscribe,
 };
 
