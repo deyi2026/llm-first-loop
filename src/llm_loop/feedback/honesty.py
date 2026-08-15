@@ -89,6 +89,32 @@ def max_iterations_feedback(trace: list[str]) -> Message:
     )
 
 
+def max_iterations_decision_message(rounds: int, budget: int) -> Message:
+    """[轮次决策请求] 轮数耗尽时注入一次的归因/续跑决策轮（2026-08-15 用户需求）.
+
+    耗尽有两种典型情形，判断归 AI（RULE-AI-00，程序不自动续跑）：
+    ① 工具使用错误/空转（参数错/选错工具/无效重试）→ 如实归因 + 正确做法 + 当前结论收尾；
+    ② 正常任务推进但步骤多 → adjust_strategy 调大 max_iterations（≤500 硬上限）续跑。
+    决策轮仅一次（per-session 标志）；AI 未调大且仍耗竭 → 回到罐装如实终止。
+    """
+    return Message(
+        role="system",
+        content=(
+            f"[轮次决策请求] 事实: 已达轮数上限 {budget}（已执行 {rounds} 轮）。\n"
+            f"原因: 轮数耗尽可能有两类成因——① 工具使用错误/空转（参数错误、选错工具、"
+            f"无效重复重试）；② 任务正常推进但步骤较多、预算不足。\n"
+            f"建议: 请先归因再行动——\n"
+            f"- 若属 ① 工具使用错误：不要调大轮数。请在回答中如实归因（哪一步错、"
+            f"正确做法是什么），并基于已有信息给出当前结论与未完成项。\n"
+            f"- 若属 ② 正常推进：调用 adjust_strategy 将 max_iterations 调大"
+            f"（白名单可调，硬上限 500）后继续完成任务；或压缩剩余步骤，"
+            f"在最终回答中如实列出已完成/未完成与下一步。\n"
+            f"程序不会自动续跑——是否继续由你判断。"
+        ),
+        source=MessageSource.SYSTEM,
+    )
+
+
 def max_iterations_warning_message(rounds: int, budget: int) -> Message:
     """[轮数预警] 轮数接近上限时注入一次（R10：如实告知事实，决策归 AI）.
 

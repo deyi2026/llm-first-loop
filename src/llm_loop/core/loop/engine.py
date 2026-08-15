@@ -42,6 +42,7 @@ from llm_loop.core.run_context import current_session_id as _current_session_id
 from llm_loop.core.session import SessionStore
 from llm_loop.event_log.model import build_message_payload
 from llm_loop.feedback.honesty import (
+    max_iterations_decision_message,
     max_iterations_feedback,
     max_iterations_warning_message,
     stagnation_feedback,
@@ -677,8 +678,21 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 self._append_message_event(sess, warning)
                 self._record_action("context.warning", "injected", f"{_pct}%")
 
-            # ── 轮数上限（如实结束，T38: 进展判断交 AI 自主，程序仅保留此硬边界）──
+            # ── 轮数上限（2026-08-15 强化：耗尽先给 AI 一次归因/续跑决策轮）──
+            # 决策轮仅一次（per-session 标志）：AI 调 adjust_strategy 调大（≤500）→
+            # 下轮预算重估自然续跑；AI 纯文本归因 → 走正常最终回答路径收尾；
+            # AI 未调大仍耗竭 → 罐装 [已达轮数上限] 如实终止（程序兜底边界不变）。
             if rounds >= _budget:
+                if not self._exhaustion_decision_used:
+                    self._exhaustion_decision_used = True
+                    decision = max_iterations_decision_message(rounds, _budget)
+                    sess.messages.append(decision)
+                    # D1: 系统注入消息事件（fail-open）
+                    self._append_message_event(sess, decision)
+                    self._record_action(
+                        "round.exhaustion", "decision_requested", f"{rounds}/{_budget}"
+                    )
+                    continue  # 给 AI 一个决策轮（下一轮 LLM 调用可见该消息）
                 self._phase("terminate.max_iterations")
                 final_answer = max_iterations_feedback([t["name"] for t in tool_trace]).content
                 break

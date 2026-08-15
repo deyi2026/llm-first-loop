@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 SERVICE_NAME = "llm-first-loop-web"
-SERVICE_VERSION = "0.5.0"  # T7: 语义化版本（与 pyproject 同步；git tag v0.5.0）
+SERVICE_VERSION = "0.5.1"  # T7: 语义化版本（与 pyproject 同步；git tag v0.5.1）
 
 
 class UTF8JSONResponse(JSONResponse):
