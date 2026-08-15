@@ -104,16 +104,16 @@ def test_upload_pdf_corrupt(build_test_engine, fake_settings):
 
 
 def test_upload_image_no_key_degraded(build_test_engine, fake_settings, monkeypatch):
-    """默认 arkcli 后端：识别失败 → degraded + 可操作指引（arkcli 存在但未认证/失败）."""
+    """arkcli 后端确定性验证：识别失败 → degraded + 可操作指引（CI/本地环境无关）."""
     monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
-    monkeypatch.delenv("WEB_VISION_BACKEND", raising=False)
+    monkeypatch.setenv("WEB_VISION_BACKEND", "arkcli")
     engine, _ = build_test_engine([])
     client = _make_client(engine)
     resp = _upload(client, "photo.png", b"fake-png-bytes")
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "degraded"
-    # auto 链（arkcli 未认证 → provider 无视觉模型）：如实报错含登录指引
+    # arkcli 后端强制：无论本机是否安装/认证，错误信息均含 arkcli 与登录指引
     assert "arkcli" in body["detail"]
 
 
