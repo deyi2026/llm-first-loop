@@ -113,7 +113,8 @@ def test_upload_image_no_key_degraded(build_test_engine, fake_settings, monkeypa
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "degraded"
-    assert "不可用" in body["detail"]
+    # auto 链（arkcli 未认证 → provider 无视觉模型）：如实报错含登录指引
+    assert "arkcli" in body["detail"]
 
 
 def test_upload_image_minimax_optin_no_key_degraded(build_test_engine, fake_settings, monkeypatch):

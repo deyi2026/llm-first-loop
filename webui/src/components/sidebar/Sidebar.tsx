@@ -130,6 +130,9 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
               </span>
               <span className="v2-session-meta-row">
                 <span className="v2-channel-tag">{channelLabel(s.channel)}</span>
+                {s.session_id.startsWith("subagent_") && (
+                  <span className="v2-channel-tag subagent">{zh.subagentTag}</span>
+                )}
                 <span className="v2-session-count">{s.message_count} 条</span>
               </span>
             </button>

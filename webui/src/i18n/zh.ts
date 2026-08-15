@@ -31,5 +31,10 @@ export const zh = {
   modelSelect: "选择模型（当前请求生效）",
   modelDefault: "默认模型",
   reload: "重新加载",
+  feedbackUp: "回答有帮助",
+  feedbackDown: "回答有问题",
+  exportSession: "导出会话（Markdown）",
+  exporting: "导出中…",
+  subagentTag: "子代理",
   sessionCount: "{n} 个会话",
 };
