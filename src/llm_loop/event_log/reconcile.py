@@ -18,6 +18,10 @@ from llm_loop.event_log.replay import _TOP_LEVEL_DEFAULTS
 # 比对时排除的派生视图附加标注字段（非会话顶层字段）
 _DERIVED_ONLY_KEYS = {"event_log_gaps", "unknown_event_types", "compressed_refs"}
 
+# P1-10: 比对时排除的源会话运行时优化字段（非会话内容, 事件日志不追溯）——
+# history_anchors 是窗口锚定元数据（provider→消息索引），双轨对账/迁移/退役应容忍
+_RUNTIME_ONLY_KEYS = {"history_anchors"}
+
 # 消息逐字段比对全集（与 Session.to_dict() 消息字段对齐）
 _MESSAGE_FIELDS = [
     "role",
@@ -74,9 +78,11 @@ def reconcile(derived: dict, source: dict, *, replay_ms: float = 0.0) -> Reconci
         if not _same_value(expected, actual):
             top_diffs.append({"字段": key, "期望": expected, "实际": actual})
 
-    # 源含但视图未建模的顶层键（如实标注，不静默放行）
+    # 源含但视图未建模的顶层键（如实标注，不静默放行）; 运行时优化字段（history_anchors）容忍
     for key in source:
         if key == "messages" or key in _TOP_LEVEL_DEFAULTS or key == "session_id":
+            continue
+        if key in _RUNTIME_ONLY_KEYS:
             continue
         if key not in derived or derived.get(key) != source.get(key):
             top_diffs.append({"字段": key, "期望": source.get(key), "实际": derived.get(key)})

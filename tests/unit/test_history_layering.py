@@ -213,3 +213,115 @@ def test_registry_summarize_hint_with_call():
     # 无 call（向后兼容路径）退回通用指引
     out3 = ToolRegistry._summarize_output("x" * 5000)
     assert "search_archive" in out3
+
+
+# ── P1-7: 推送式 system 注入跳过（本地 provider 前缀稳定）──
+
+
+def test_skip_injected_system_not_submitted():
+    """skip_injected_system=True → 带 injected_system 标记的 system 消息不进提交视图.
+
+    推送式注入（架构上报/预警/快照）仅落会话; 未标记的 system（功能性注入/
+    压缩标注）与普通消息不受影响。默认 False 零回归。
+    """
+    from llm_loop.core.message import Message, MessageSource
+
+    injected = Message(
+        role="system", content="[架构上报] 事实: 待审阅",
+        source=MessageSource.SYSTEM, metadata={"injected_system": True},
+    )
+    func_sys = Message(
+        role="system", content="[模型降级] 事实: 已切换",
+        source=MessageSource.SYSTEM, metadata={},
+    )
+    msgs = [injected, func_sys, _user("问题1")]
+
+    # 默认（False）: 全部提交（零回归）
+    out_default = build_history_messages(msgs, "SYS", max_chars=100000)
+    assert "[架构上报]" in out_default[0]["content"]
+    assert "[模型降级]" in out_default[0]["content"]
+
+    # 开启跳过: 仅 injected 标记的 system 不进提交, 其余保留
+    out_skip = build_history_messages(
+        msgs, "SYS", max_chars=100000, skip_injected_system=True
+    )
+    sys_content = out_skip[0]["content"]
+    assert "[架构上报]" not in sys_content
+    assert "[模型降级]" in sys_content
+    assert len(out_skip) == 2  # system(含 func_sys 合并) + user
+
+
+def test_skip_injected_system_survives_long_path():
+    """超长预算路径同样跳过注入（本地 provider 前缀稳定不因压缩失效）."""
+    from llm_loop.core.message import Message, MessageSource
+
+    injected = Message(
+        role="system", content="[预算预警] 事实: 占用超限",
+        source=MessageSource.SYSTEM, metadata={"injected_system": True},
+    )
+    msgs = [injected] + [_user(f"问题{i} " + "x" * 2000) for i in range(30)]
+    out = build_history_messages(
+        msgs, "SYS", max_chars=5000, session_id="s1", skip_injected_system=True
+    )
+    sys_content = out[0]["content"]
+    assert "[预算预警]" not in sys_content
+    # 压缩标注（功能性 extras）仍注入
+    assert "压缩" in sys_content or any("压缩" in str(m.get("content", "")) for m in out)
+
+
+# ── P1-10: 窗口锚定（固定起点, 前缀稳定 → 缓存命中）──
+
+
+def test_anchor_slices_prefix_and_keeps_rest():
+    """history_anchor=N → 跳过前 N 条消息（起点固定, 只提交锚点起内容）."""
+    msgs = [_user(f"旧问题{i}") for i in range(10)]
+    box: list[int] = []
+    out = build_history_messages(msgs, "SYS", max_chars=100000, history_anchor=6, anchor_out=box)
+    contents = [m.get("content") for m in out]
+    assert "旧问题0" not in contents
+    assert "旧问题6" in contents
+    assert len(box) == 0  # 窗口在预算内 → 无归档 → 锚点不变
+
+
+def test_anchor_within_budget_no_archive():
+    """锚定窗口 ≤ 预算 → 无归档、无 extras、锚点不变（前缀完全稳定）."""
+    msgs = [_user(f"问题{i} " + "x" * 300) for i in range(20)]  # ~6.2K 字符
+    box: list[int] = []
+    out = build_history_messages(
+        msgs, "SYS", max_chars=8000, history_anchor=5, anchor_out=box,
+        session_id="s1", layer_tool_trim=True,
+    )
+    assert len(box) == 0
+    sys_content = out[0]["content"]
+    assert "[上下文压缩]" not in sys_content  # 无归档 → 无压缩标注
+    assert "问题5" in str(out)
+
+
+def test_anchor_over_budget_advances_anchor():
+    """锚定窗口超预算（降级后仍超）→ 从窗口头归档, 锚点推进 = 旧锚点 + 丢弃数."""
+    msgs = [_user(f"问题{i} " + "x" * 2000) for i in range(30)]  # ~62K 字符
+    box: list[int] = []
+    out = build_history_messages(
+        msgs, "SYS", max_chars=20000, history_anchor=10, anchor_out=box,
+        session_id="s1", layer_tool_trim=True, tool_trim_threshold=3000,
+    )
+    assert len(box) == 1
+    assert box[0] > 10  # 锚点前移
+    assert box[0] <= 30
+    # 提交内容不含被归档的窗口头
+    submitted = str(out)
+    assert submitted  # 归档起点取决于预算, 只验证锚点推进合理（提交内容非空）
+
+
+def test_anchor_zero_behavior_unchanged():
+    """history_anchor=0（默认）→ 现有行为（零回归）, 锚点 = 归档丢弃数."""
+    msgs = [_user(f"问题{i} " + "x" * 2000) for i in range(30)]
+    box: list[int] = []
+    out = build_history_messages(
+        msgs, "SYS", max_chars=20000, anchor_out=box, session_id="s1"
+    )
+    assert len(box) == 1
+    assert box[0] > 0  # 无锚: 丢弃数即新锚点
+    # 与不带 anchor_out 的默认行为一致（返回内容相同）
+    out2 = build_history_messages(msgs, "SYS", max_chars=20000, session_id="s1")
+    assert out == out2

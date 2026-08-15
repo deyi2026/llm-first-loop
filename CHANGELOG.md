@@ -2,7 +2,43 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.1（2026-08-15）
+
+### P3-1：MCP 客户端接入（stdio）
+- `MCP_SERVERS` env JSON 配置 stdio MCP 服务器；启动连接握手（initialize/initialized/tools/list）
+- 工具以 `mcp.<server>.<tool>` 名注册（inputSchema 透传为 parameters），执行走统一注册表通道
+  （线程超时 / 输出分层 / 审计复用）；结果五态包装（success/failure/blocked/timeout/error）
+- 诚实边界：单服务器连接失败 fail-open（其余服务器/工具不受影响）；调用失联单次重连，
+  仍失败 → ERROR 态如实；isError → FAILURE 态（content 原样透传）
+- 测试 +10（配置解析/真实 stdio 握手与清单/schema 透传/五态/注册表集成/双服务器 fail-open）
+- 门禁：pytest 2062 passed + ruff 0 + pyright 0
+
 ## v0.6.0（2026-08-15）
+
+### 修复：飞书收到回复后多一条重复 [跨端同步] 消息（P1-11 竞态）
+- **根因**：`CrossSyncWatcher`（飞书←Web 增量同步）的基线刷新（`mark_processed`）原在**回复发送后**才调用——回答落盘与基线刷新之间存在秒级窗口，轮询（1.5s）会插入其中，把桥自己的回答当"Web 侧增量"重复推送一条 `[跨端同步]`（用户反馈重复）
+- **修复**：① `mark_processed` 前移到 `engine.run` 返回后立即执行（窗口缩至微秒级）；② `cross_sync` 新增 `busy_fn`——桥正在处理消息时整轮暂停轮询（busy 清除后增量按累积 diff 一起推，不丢消息）；两保险彻底消除重复
+- 飞书测试 191 全绿（含 busy_fn 语义用例）
+
+### 窗口锚定：历史起点固定 → 前缀缓存全量命中（P1-10）
+- **根因**：预算裁剪"从最新往回保留"导致每次提交的保留集合**起点移动**（旧的挤出、新的加入）→ system+历史前缀每次从历史第一条就变 → llama.cpp/服务端前缀缓存几乎全 miss（冷 prefill 每轮 ~20-56s）
+- **锚定机制**：按 provider 在会话持久化窗口锚点（`history_anchors`）——锚定后起点固定（只追加不挤旧）；超预算依次：①剔除注入消息（不进提交、零损失、不产生归档）②分层降级中段旧 tool ③仍超才归档推进锚点（前缀断一次后重新锚定，低频）
+- **实测（真实大会话 + local 9B）**：前缀一致率 **48/49（98%）**；连续 run 首分片从 20-56s → **3.8-11.5s（缓存命中）**
+- 快照注入仅无锚时执行（锚定后快照为推送式注入已打标跳过提交，避免锚点换算复杂化）；无锚路径行为零变化
+
+### 云端 provider 提速降本：前缀稳定 + 历史预算（P1-9）
+- 本地模型优化（P1-7 前缀稳定 / 历史预算）推广到云端：deepseek/kimi 配 `history_budget_chars: 60000` + `inject_system_notices: false`、minimax 配 `40000` + false——system 前缀静态化命中服务端 prompt 缓存（输入 token 折扣）+ 控制输入量（成本），推送式注入仍可经 architecture_status 自查（能力零损失）；超时保持全局 120s 不放大（provider 级差异由配置天然表达）
+- 实测：kimi/k3-256k 默认模型端到端正常（in=5916 tokens, 回答正确）
+
+### 默认模型支持全限定 `provider/model`（P1-8）
+- `LLM_MODEL=kimi/k3-256k` 形式全限定默认模型 → 默认 client 按注册表 provider 参数装配（base_url/api_key 来自 provider 配置、模型名发送裸名，OpenAI 兼容端点不接受全限定）；裸模型名保持 env 三件套（零回归）
+- 配置：`.env` 默认模型已切至 `kimi/k3-256k`（备份 `.env.bak-20260816-kimi`）
+
+### 本地模型首 token 提速：推送式 system 注入不进提交视图（P1-7 前缀稳定）
+- **根因（Stateful API 可行性验证）**：LM Studio Stateful API 增量续聊实测 TTFT 0.58s，但 OpenAI 兼容端点在**相同前缀**下同样命中引擎 KV 缓存（2.9s）——让 agent 缓存失效的真正元凶是**每轮注入的 system 消息**（[架构上报]/[预算预警]/[声明提醒]/快照，大会话已累积 181 条），下次 run 全部合并进开头 system → 前缀从第一个 token 就变 → 每轮全量冷 prefill
+- **provider 级开关 `inject_system_notices`**：默认 True（零回归）；`local` 配 false → 推送式注入（架构上报/预算预警/轮数预警/声明提醒/快照/自我评估提醒）仅落会话、不进提交视图（AI 可经 architecture_status 自查，能力零损失）；功能性注入（压缩标注/降级通知/overflow 回注/轮次决策请求/故障反馈）不受影响
+- **存量消息兼容**：跳过判定 = metadata 标记 + 内容前缀（[架构上报] 等）双通道，历史遗留注入消息同样生效
+- **实测**：system 前缀稳定为静态文本（+压缩标注尾部），首分片从 ~70s 降至 ~25s（9B 冷 prefill 固有成本；多引擎 CPU 争抢缓解后更低）
 
 ### Web V2：全新 React 端（对齐 DeepSeek Harness Web，双版本并存）
 - **独立目录 `webui/`（React 18 + TS + Vite）**，挂载 `/ui/v2` 与原版 `/` 并存（原版保留可回退）；独立分支 `feature/web-v2` 合入

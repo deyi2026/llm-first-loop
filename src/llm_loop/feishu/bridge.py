@@ -616,6 +616,9 @@ class FeishuWsBridge:
                 handler._session_map,
                 handler._reply_fn,
                 engine.settings.sessions_dir,
+                # P1-11: 按会话精确跳过——只防桥正在处理的那个会话的回答被当 Web 增量
+                # 重复推；其他会话照常实时同步（不做全局暂停, 忙时跨端不卡）
+                skip_fn=lambda sid: sid in getattr(handler, "_processing_sids", frozenset()),
             )
             handler._cross_sync = self._cross_sync
             self._cross_sync.start()

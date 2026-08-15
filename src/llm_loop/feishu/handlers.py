@@ -93,6 +93,9 @@ class FeishuMessageHandler:
         # 优雅退出保护：处理中计数（信号触发退出时等待正在进行的 run 完成，避免中断丢回复）
         self._busy_lock = threading.Lock()
         self._busy_count = 0
+        # P1-11(2026-08-16): 正在处理的会话 id 集合（跨端同步按会话精确跳过——
+        # 只防桥自己的回答被当 Web 增量重复推，其他会话照常实时同步）
+        self._processing_sids: set[str] = set()
         # H-UI(2026-08-14): 当前活动状态卡（引擎动作观察者实时更新；None=未建卡/已结束）
         self._active_status_card: Any | None = None
         # F4(2026-08-14): 折叠全文暂存（key=ts，值=全文；有界最近 _FOLDED_MAX 条；"展开全文"取回）
@@ -282,10 +285,13 @@ class FeishuMessageHandler:
             if n_tools > 0:
                 footer += f" · 🔧 工具调用 {n_tools} 次"
             answer += footer
-        self._reply_chunked(msg, answer)
         # 2026-08-15 跨端同步：桥自身输出完成后刷新基线（Web 端增量才推送，不重复推自己）
+        # P1-11(2026-08-16): 前移到 run 返回后立即执行——原实现在 _reply_chunked 之后，
+        # 回答落盘与基线刷新之间存在秒级窗口，跨端同步轮询（1.5s）会插入其中把
+        # 桥自己的回答当"Web 侧增量"重复推送一条 [跨端同步]（用户反馈重复）。
         if self._cross_sync is not None:
             self._cross_sync.mark_processed(sid)
+        self._reply_chunked(msg, answer)
         return answer
 
     # ── 附件/图片（复用 M39 web/upload_handlers + vision）──
@@ -400,8 +406,11 @@ class FeishuMessageHandler:
 
         任一动作失败 fail-open（日志/审计），绝不阻断引擎执行与回复；异常路径 finally 保证清理。
         """
+        # P1-11: 处理中的会话 id（跨端同步按会话跳过——get_or_create 幂等, 与 fn 内部一致）
+        proc_sid = self._session_map.get_or_create(self._map_key(msg))
         with self._busy_lock:
             self._busy_count += 1
+            self._processing_sids.add(proc_sid)
         reaction_id = ""
         card = None
         if self._typing_ack and self._rest_client is not None and msg.message_id:
@@ -423,6 +432,7 @@ class FeishuMessageHandler:
             self._active_status_card = None  # H-UI: 清理当前卡引用
             with self._busy_lock:
                 self._busy_count -= 1
+                self._processing_sids.discard(proc_sid)
             # 处理结束 → 状态卡定稿（回填回复摘要）+ 删除 Typing reaction（best-effort）
             self._close_status_card(card, msg, answer)
             if reaction_id and self._rest_client is not None:

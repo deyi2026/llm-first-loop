@@ -43,6 +43,7 @@ class _SignalsMixin:
             event.event_type, fact=event.fact, reason=event.reason, suggestion=event.suggestion
         )
         if msg is not None:
+            msg.metadata = {**msg.metadata, "injected_system": True}  # P1-7: 推送式注入标记
             sess.messages.append(msg)
 
     def _check_evolution_executing(self: LoopEngine, sess) -> None:
@@ -59,6 +60,7 @@ class _SignalsMixin:
             event.event_type, fact=event.fact, reason=event.reason, suggestion=event.suggestion
         )
         if msg is not None:
+            msg.metadata = {**msg.metadata, "injected_system": True}  # P1-7: 推送式注入标记
             sess.messages.append(msg)
 
     def _check_pending_review(self: LoopEngine, sess) -> None:
@@ -75,4 +77,5 @@ class _SignalsMixin:
             event.event_type, fact=event.fact, reason=event.reason, suggestion=event.suggestion
         )
         if msg is not None:
+            msg.metadata = {**msg.metadata, "injected_system": True}  # P1-7: 推送式注入标记
             sess.messages.append(msg)
