@@ -7,7 +7,6 @@ import { zh } from "../../i18n/zh";
 import { sendMessage, stopStreaming, useConversation } from "../../core/conversation";
 import { fetchModels, uploadFileBase64 } from "../../core/chat";
 import { sessionStore } from "../../core/stores";
-import type { ModelEntry } from "../../core/types";
 
 type AttachStatus = "ok" | "pending" | "degraded" | "error";
 
@@ -27,7 +26,8 @@ interface CommandOption {
 interface CommandDef {
   name: string;
   desc: string;
-  options?: () => Promise<CommandOption[]>;
+  /** 同步选项（如 /model 目录）；渲染期随状态自动刷新 */
+  options?: () => CommandOption[];
   run: (arg: string) => void;
 }
 
@@ -38,8 +38,9 @@ export function Composer() {
   const [cmdOpen, setCmdOpen] = useState(false);
   const [cmdMatch, setCmdMatch] = useState<CommandDef[]>([]);
   const [cmdOptions, setCmdOptions] = useState<CommandOption[]>([]);
-  const [cmdBusy, setCmdBusy] = useState(false);
-  const [models, setModels] = useState<ModelEntry[]>([]);
+  const [models, setModels] = useState<string[]>([]);
+  // 模型列表 ref：命令 options 闭包始终读最新值（cmdMatch 旧闭包竞态修复）
+  const modelsRef = useRef<string[]>([]);
   const [hint, setHint] = useState("");
   const hintTimer = useRef<number | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -50,10 +51,22 @@ export function Composer() {
     hintTimer.current = window.setTimeout(() => setHint(""), 2500);
   };
 
-  // 模型目录（下拉与 /model 命令共用）
+  // 模型目录（下拉与 /model 命令共用；initial current 同步到会话模型覆盖）
   useEffect(() => {
-    void fetchModels().then(setModels);
+    void fetchModels().then(({ models, current }) => {
+      modelsRef.current = models;
+      setModels(models);
+      if (current && !sessionStore.getState().model) sessionStore.setModel(current);
+    });
   }, []);
+
+  // models 到达/变更时刷新命令选项（修复竞态：先输入 /model、选项后到）
+  useEffect(() => {
+    modelsRef.current = models;
+    if (cmdOpen && cmdMatch.length === 1 && cmdMatch[0].options) {
+      setCmdOptions(cmdMatch[0].options());
+    }
+  }, [models, cmdOpen]);
 
   const commands: CommandDef[] = useMemo(
     () => [
@@ -76,12 +89,12 @@ export function Composer() {
       {
         name: "model",
         desc: "选择模型（当前请求生效）",
-        options: async () =>
-          models.map((m) => ({
-            label: String(m.id),
+        options: () =>
+          modelsRef.current.map((m) => ({
+            label: m,
             run: () => {
-              sessionStore.setModel(String(m.id));
-              flashHint(`已选择模型：${m.id}（当前请求生效）`);
+              sessionStore.setModel(m);
+              flashHint(`已选择模型：${m}（当前请求生效）`);
             },
           })),
         run: (arg) => {
@@ -119,15 +132,7 @@ export function Composer() {
       const matches = commands.filter((c) => c.name.startsWith(q));
       setCmdMatch(matches);
       setCmdOpen(matches.length > 0);
-      if (matches.length === 1 && matches[0].options) {
-        setCmdBusy(true);
-        void matches[0].options().then((opts) => {
-          setCmdOptions(opts);
-          setCmdBusy(false);
-        });
-      } else {
-        setCmdOptions([]);
-      }
+      setCmdOptions(matches.length === 1 && matches[0].options ? matches[0].options() : []);
     } else {
       setCmdOpen(false);
     }
@@ -211,7 +216,6 @@ export function Composer() {
       )}
       {cmdOpen && (
         <div className="v2-cmd-popup" data-testid="cmd-popup">
-          {cmdBusy && <div className="v2-cmd-item dim">正在加载选项…</div>}
           {cmdOptions.map((o, i) => (
             <button
               key={i}
@@ -227,12 +231,26 @@ export function Composer() {
               {o.label}
             </button>
           ))}
-          {!cmdBusy &&
-            cmdMatch.map((c) => (
-              <div key={c.name} className="v2-cmd-item static">
+          {cmdMatch.map((c) => (
+              <button
+                key={c.name}
+                type="button"
+                className="v2-cmd-item"
+                onClick={() => {
+                  if (c.options) {
+                    // 有选项的命令：点击 → 展示选项（如 /model 目录，同步刷新）
+                    setCmdOptions(c.options());
+                  } else {
+                    c.run("");
+                    setText("");
+                    setCmdOpen(false);
+                    taRef.current?.focus();
+                  }
+                }}
+              >
                 <span className="v2-cmd-name">/{c.name}</span>
                 <span className="v2-cmd-desc">{c.desc}</span>
-              </div>
+              </button>
             ))}
         </div>
       )}
@@ -257,8 +275,8 @@ export function Composer() {
           >
             <option value="">{zh.modelDefault}</option>
             {models.map((m) => (
-              <option key={String(m.id)} value={String(m.id)}>
-                {String(m.id)}
+              <option key={m} value={m}>
+                {m}
               </option>
             ))}
           </select>

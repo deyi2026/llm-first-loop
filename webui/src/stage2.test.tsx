@@ -1,7 +1,7 @@
 // 阶段 2：markdown/高亮/消息/输入区 单元与冒烟测试
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, waitFor, within } from "@testing-library/react";
 import { renderMarkdown, highlightCode } from "./core/markdown";
 import { MessageItem } from "./components/conversation/MessageItem";
 import { Composer } from "./components/conversation/Composer";
@@ -103,5 +103,41 @@ describe("Composer", () => {
     fireEvent.change(ta, { target: { value: "/" } });
     expect(screen.getByTestId("cmd-popup")).toBeInTheDocument();
     expect(screen.getByText("/new")).toBeInTheDocument();
+  });
+
+  it("/model 目录选项可点击：点选即切换模型 + 反馈", async () => {
+    // 真实契约：models 为字符串数组
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/v1/models")) {
+        return new Response(
+          JSON.stringify({ models: ["deepseek/deepseek-v4-flash", "kimi/k3"], current: null }),
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+    const { sessionStore } = await import("./core/stores");
+    render(<Composer />);
+    const ta = screen.getByTestId("composer-input");
+    fireEvent.change(ta, { target: { value: "/model" } });
+    const popup = () => screen.getByTestId("cmd-popup");
+    await waitFor(
+      () => expect(within(popup()).getByText("deepseek/deepseek-v4-flash")).toBeInTheDocument(),
+      { timeout: 3000 }
+    );
+    fireEvent.click(within(popup()).getByText("deepseek/deepseek-v4-flash"));
+    expect(sessionStore.getState().model).toBe("deepseek/deepseek-v4-flash");
+    expect(screen.getByTestId("composer-hint").textContent).toContain("已选择模型");
+  });
+
+  it("命令行点击直接执行（/new 无选项）", () => {
+    render(<Composer />);
+    const ta = screen.getByTestId("composer-input");
+    fireEvent.change(ta, { target: { value: "/new" } });
+    const popup = screen.getByTestId("cmd-popup");
+    expect(popup).toBeInTheDocument();
+    fireEvent.click(within(popup).getByText("/new"));
+    expect((ta as HTMLTextAreaElement).value).toBe("");
   });
 });
