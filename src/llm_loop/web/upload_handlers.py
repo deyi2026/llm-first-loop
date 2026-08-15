@@ -179,14 +179,86 @@ def _extract_pdf(data: bytes, filename: str) -> ExtractResult:
     )
 
 
+def _extract_doc_arkcli(data: bytes, filename: str, prompt: str) -> str | None:
+    """arkcli +understand doc-extract 结构化抽取（2026-08-15 团队自研工具）.
+
+    返回抽取文本；CLI 缺失/调用失败/解析失败 → None（调用方本地提取兜底，fail-open）。
+    鉴权失败也走兜底（本地文本提取仍有真实内容，不伪装 arkcli 成功）。
+    """
+    import json as _json
+    import os as _os
+    import shutil as _shutil
+    import subprocess as _sp
+    import tempfile as _tf
+
+    if _os.environ.get("WEB_DOC_BACKEND", "arkcli").strip().lower() == "local":
+        return None
+    if _shutil.which("arkcli") is None:
+        return None
+    ext = Path(filename).suffix.lower() or ".pdf"
+    with _tf.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+        tmp_path = tmp.name
+        tmp.write(data)
+        cmd = [
+            "arkcli", "+understand", "doc-extract", "--input", f"@{tmp_path}",
+            prompt, "--no-progress", "--format", "json",
+        ]
+        import contextlib as _ctx
+
+        try:
+            with _ctx.suppress(ValueError):
+                timeout = max(30.0, float(_os.environ.get("WEB_DOC_TIMEOUT", "120")))
+            proc = _sp.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+        except Exception:  # noqa: BLE001 — 工具不可用/超时 → 本地兜底
+            return None
+        for out in (proc.stdout, proc.stderr):
+            if not out.strip():
+                continue
+            try:
+                parsed = _json.loads(out)
+            except _json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict) and parsed.get("content"):
+                return str(parsed["content"]).strip()
+    import contextlib as _ctx
+
+    with _ctx.suppress(OSError):
+        _os.unlink(tmp_path)
+    return None
+
+
 def process_upload(filename: str, data: bytes) -> ExtractResult:
     """上传文件类型分发（文本/docx/PDF/图片）。图片由 vision 模块处理，此处返回降级提示."""
     ext = file_ext(filename)
     if ext in _TEXT_EXTS:
         return _extract_text(data, filename)
     if ext in _DOCX_EXTS:
+        ark = _extract_doc_arkcli(
+            data, filename,
+            "抽取文档关键信息：标题/核心要点/关键字段（保留原文细节，输出结构化文本）",
+        )
+        if ark:
+            return ExtractResult(
+                source_filename=filename,
+                content_type="docx",
+                status="ok",
+                result_text=ark,
+                detail="（arkcli doc-extract 结构化抽取）",
+            )
         return _extract_docx(data, filename)
     if ext in _PDF_EXTS:
+        ark = _extract_doc_arkcli(
+            data, filename,
+            "抽取文档关键信息：标题/核心要点/关键字段（保留原文细节，输出结构化文本）",
+        )
+        if ark:
+            return ExtractResult(
+                source_filename=filename,
+                content_type="pdf",
+                status="ok",
+                result_text=ark,
+                detail="（arkcli doc-extract 结构化抽取）",
+            )
         return _extract_pdf(data, filename)
     if ext in _IMAGE_EXTS:
         return ExtractResult(
