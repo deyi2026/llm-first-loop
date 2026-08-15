@@ -2,6 +2,17 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.6（2026-08-15）
+
+### 修复：tool_call.arguments 归一化回归（v0.6.5 引入，工具通道断连根因）
+- 根因：v0.6.5 客户端重写时本地重定义了 ToolCallDeltaAggregator（原版从 llm/schemas.py 导入），
+  新实现 finish() 不解析 arguments → 真实 provider 的 JSON 字符串 arguments 原样进注册表 →
+  所有工具调用被 "[参数错误] 参数必须为 JSON 对象" 拒绝（FakeLLM 预构造 dict 的测试盲区）
+- 修复：复用 schemas.py 聚合器（finish 含 json.loads 归一 + _raw_arguments 兜底）；
+  Anthropic tool_use start 空 input 不并入（防 "{}" 破坏 JSON）；Google functionCall 独立 index
+- 回归防护 +4（归一/非法兜底/端到端真实客户端 mock SSE→read_file 真实执行/注册表防线）
+- 门禁 pytest 2090 + ruff 0 + pyright 0
+
 ## v0.6.5（2026-08-15）
 
 ### P3-5：provider 广度——Anthropic / Google 原生协议（wire_protocol）
