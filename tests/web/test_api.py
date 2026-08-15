@@ -340,3 +340,29 @@ def test_sse_events_endpoint(build_test_engine, fake_settings):
     # 端点信息含在 /api/info
     info = client.get("/api/info").json()
     assert "GET /api/v1/events" in info["endpoints"]
+
+
+# ── 2026-08-15: SSE 命名事件修复（此前 data 内嵌 type，浏览器按默认 message 处理，
+#    addEventListener("sessions_updated") 永不触发 → Web 端必须手动刷新）──
+
+def test_sse_named_event_frame_format():
+    """命名事件帧带 `event:` 行（浏览器按命名事件分发的前置条件）."""
+    from llm_loop.web.routes import _sse_event
+
+    frame = _sse_event("sessions_updated", {"type": "sessions_updated"})
+    assert frame.startswith("event: sessions_updated\n")
+    assert "data: {\"type\": \"sessions_updated\"}" in frame
+    assert frame.endswith("\n\n")
+    conn = _sse_event("connected", {"type": "connected"})
+    assert conn.startswith("event: connected\n")
+
+
+def test_sse_route_uses_named_event_helper():
+    """端点使用 _sse_event 生成帧（防回退 data 内嵌 type 格式的回归守护）."""
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[2] / "src" / "llm_loop" / "web" / "routes.py"
+    text = src.read_text(encoding="utf-8")
+    assert '_sse_event("sessions_updated"' in text
+    assert '_sse_event("connected"' in text
+    assert 'yield "data: ' not in text  # 旧格式（无 event: 行）不再出现
