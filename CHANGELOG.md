@@ -2,6 +2,34 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.5.0（2026-08-15）
+
+> 安全深化 + 正确性修复批次（代码审计 18 项发现的完整闭环；审计报告与修复计划为本地过程文档不入库）。
+
+### 安全修复（P0）
+- **灾难性命令硬阻断 Guard（P0-1/审计发现 #1/#4）**：execute_command 危险命令检测重写为"全串正则层 + shlex 分段子命令层"双扫描——管道/拼接/`rm -rf` 聚合 flag/`find -delete|-exec rm`/`sh -c` 内嵌/`python -c` 载荷（rmtree/unlink/os.remove 等）此前可绕过的形态全部闭合；命中硬阻断 + 审计落盘 `data/audit/safety_blocks.jsonl`（fail-open）。模块职责如实标注为"已知模式硬阻断+审计，非完备沙箱"
+- **web_fetch SSRF 重定向逐跳检查（P0-2/审计发现 #2）**：301/302 跳转此前不经私网校验（公网 URL 可跳板打内网）——curl/httpx 双路径改手工逐跳循环，每跳目的 IP 均过内网拦截，超 5 跳如实报 FAIL
+- **web_fetch DNS 钉 IP（P0-3/审计发现 #3）**：解析→连接之间的 DNS 重绑定窗口闭合——curl `--resolve` 钉死已校验 IP；httpx 建连后核验对端地址（不符即断连丢弃，GET 请求行已发出的残余如实标注：保护的是回读数据）
+- **会话存储跨进程写互斥（P0-4/审计发现 #5/#6）**：Session 保存此前仅进程内锁——CLI/Web/飞书多进程并存可写穿 JSON。现每会话 `<sid>.lock` flock 覆盖"读-改-写"临界区（含 load→append→save 全链），锁不可用如实降级告警
+- **引擎跨会话可重入（P0-5/审计发现 #7）**：停滞指纹/overflow 计数/预算预警/快照节流等运行态此前挂在引擎单例上——同引擎多会话并发 run 互相污染（状态串台/停滞误判）。改为 `contextvars` 会话定位 + per-session 状态桶（SSE/ASGI 跨 Context 驱动用值快照还原），registry 双层线程池均做上下文传播
+
+### 正确性修复（P1）与工程补强（P2）
+- **子代理会话泄漏（P1-5/审计发现 #10）**：SubAgentRunner 执行前切到子会话但从不恢复——父级后续超长工具结果归档/变更日志归错子会话（串台）。改为 try/finally 保存并恢复注册表会话（显式字段 + `current_session_id` ContextVar 值快照还原，成功/异常/截断路径全覆盖）
+- **工具超时线程/子进程泄漏（P1-5/审计发现 #11）**：`_run_with_timeout` 超时后 `with ThreadPoolExecutor` 退出会 `shutdown(wait=True)` 卡到工具自行结束（超时名存实亡），且 execute_command 的 shell 子进程不被终止。修复：超时路径 `cancel()` + 调用工具 `terminate()` 钩子 + `shutdown(wait=False)` 立即返回；execute_command 前台改 `Popen`+`communicate`（独立进程组 + `terminate()` 整树 SIGKILL），超时后 shell 及其孙进程不再残留孤儿（残余无钩子工具的工作线程如实标注：最多存活到工具自身超时/结束）
+- **事件日志滚动未接线生产（P1-1/审计发现 #9）**：RotateManager 此前只有 CLI 读段清单在用，`check_and_rotate` 生产无人调用（事件日志永不滚动），且多段迁移检查在锁外有竞态、迁移后追加 seq 从 1 重启。修复：RotateManager 接线进 EventStore.append（大小触发每次查、天数触发 30s 节流）+ 会话级稳定锁 `<sid>.lock` 覆盖"检查+迁移+追加"临界区 + 多段 seq 全局续号 + 引擎 run 末 `check_rotate` 钩子（均 fail-open；未接线存储零回归）
+- **fork 工具轮边界对齐（P1-6/审计发现 #15）**：fork 点切在 assistant(tool_calls) 与其回执之间 → 分支继承孤儿声明，下次运行被配对修复伪造 `[程序异常]` 回执。修复：fork 点自动向前对齐到完整工具轮边界，`ForkReport.snapped_fork_point` 如实报告实际生效点
+- **tool_calls 配对漏计空 id 回执（P1-6/审计发现 #16）**：配对自检/补齐按"回执 id 非空"计数，存量会话的空 tool_call_id 回执被漏计 → 多补占位（额外 tool 消息无声明 → API 400）。修复：按 id 精确配对 + 空 id 位置兜底，自检与补齐共用同一缺口函数
+- **流式断连会话漂移（P1-6/审计发现 #17）**：`run_stream` LLM 流式中客户端断连（GeneratorExit）跳过 loop 末保存 → 事件日志已追加而 session JSON 未保存。修复：部分回答如实落会话（中断标注不伪装完整）+ 事件双轨同步 + 立即保存
+- **retire 指引如实化（P1-2/审计发现 #8）**：`read_path_switched` 字段名暗示已切换（实际只写切换指引）。改名 `read_path_ready_to_switch` + 新增 `switch_instructions`（READ_PATH_SOURCE 修改 + 重启两步指引），CLI 打印与回滚提示同步如实（程序不代写用户 .env）
+- **providers 配置解析加固（P1-3/审计发现 #12）**：能力标志严格布尔解析（白名单字符串/非法值 warning + 回退默认，不再静默 `bool()`）；context 缺失回退 131072 与 ModelSpec 默认一致；provider/模型双层 try/except——单条非法跳过该条并如实告警，不再拖垮整个注册表
+- **模型解析失败可感知（P1-4/审计发现 #13）**：`switch_model` 目标解析 ValueError 不再静默吞掉——warning 含配置模型名与失败原因；`config_status` 新增 `model_registry_resolved` 维度，AI 可感知"模型配置未生效"
+- **鉴权 fail-closed + 跨站写防护（P2-1）**：`WEB_AUTH_REQUIRE=1` 未配置 `WEB_API_KEY` 旧实现静默放行（等于无鉴权）——现启动拒绝（对齐远程绑定校验语义）+ 请求期 503 如实报错；回环豁免部署的 mutating 端点新增 Origin 头校验（非回环来源 POST/PUT/DELETE/PATCH → 403，防浏览器跨站打 127.0.0.1；无 Origin 的 curl/脚本不受影响）
+- **upload 体积前置检查（P2-2）**：base64 体积先查字符串长度（≈4/3 原始体积）再解码，超限直接 413——大 payload 不再先吃解码内存/CPU
+- **会话锁表无界增长 + 首聊竞态（P2-3）**：`session_locks` 改 LRU 上限 1024（淘汰最旧空闲锁，持锁不淘汰防互斥失效）；无 session_id 并发首聊的"取共享→建会话→设共享"收进同一模块级 guard——不再双建孤儿会话
+- **LLM 连接泄漏（P2-4）**：`LLMClient.close()` 此前无人调用。新增 `ModelClientPool.close()`（default+缓存全关，幂等）与 `LoopEngine.close()`；`clear_cache()` 热重载路径改为先关旧 client 再清空；CLI 主返回路径、web 退出、飞书停机均接线关闭
+- **eval 管道验证补强（P2-5）**：wilson_ci docstring 漂移修复（k=0 正常计算真实区间如 (0.0, 0.562]，仅 n≤0/k<0 返回 (0,0)）；dry 模式新增注入可见性自检（真实状态追踪器注入 FAILURE → architecture_status 快照路径断言可见，不可见即管道失效如实报错）
+- **fallback 引擎级集成测试（P2-6）**：真实 `_try_fallback_chain` 触发路径（主模型 500 → 降级链成功）——断言回答来自降级模型、`[模型降级]` 回执注入、architecture_status 降级态与 `model_fallbacks_count` 配置计数可见；4xx 不降级与链全失败汇总两条零回归路径同测
+
 ## v0.4.0（2026-08-15）
 
 ### 新能力
@@ -23,21 +51,6 @@
 ### 修复
 - **上报冷却首调误拦截（HARNESS-05）**：`EventReporter.should_report` 首次调用 last 取 0.0、`time.monotonic()` 从系统启动起算——CI 全新 runner 启动 <60s 时首次上报被误判"冷却中"拒绝，致自我评估/演进提醒偶发不注入（本地系统启动久无法复现，CI 复现；回归测试模拟系统启动 5s 场景）
 - **CI nightly 无 key 跳过失效**：`exit 0` 只放行当前 step，后续 real_llm/评测 steps 无 key 时仍执行致 exit 2——改为 GITHUB_OUTPUT 条件门（workflow_dispatch 实测修复）
-- **子代理会话泄漏（P1-5/审计发现 #10）**：SubAgentRunner 执行前切到子会话但从不恢复——父级后续超长工具结果归档/变更日志归错子会话（串台）。改为 try/finally 保存并恢复注册表会话（显式字段 + `current_session_id` ContextVar 值快照还原，成功/异常/截断路径全覆盖）
-- **工具超时线程/子进程泄漏（P1-5/审计发现 #11）**：`_run_with_timeout` 超时后 `with ThreadPoolExecutor` 退出会 `shutdown(wait=True)` 卡到工具自行结束（超时名存实亡），且 execute_command 的 shell 子进程不被终止。修复：超时路径 `cancel()` + 调用工具 `terminate()` 钩子 + `shutdown(wait=False)` 立即返回；execute_command 前台改 `Popen`+`communicate`（独立进程组 + `terminate()` 整树 SIGKILL），超时后 shell 及其孙进程不再残留孤儿（残余无钩子工具的工作线程如实标注：最多存活到工具自身超时/结束）
-- **事件日志滚动未接线生产（P1-1/审计发现 #9）**：RotateManager 此前只有 CLI 读段清单在用，`check_and_rotate` 生产无人调用（事件日志永不滚动），且多段迁移检查在锁外有竞态、迁移后追加 seq 从 1 重启。修复：RotateManager 接线进 EventStore.append（大小触发每次查、天数触发 30s 节流）+ 会话级稳定锁 `<sid>.lock` 覆盖"检查+迁移+追加"临界区 + 多段 seq 全局续号 + 引擎 run 末 `check_rotate` 钩子（均 fail-open；未接线存储零回归）
-- **fork 工具轮边界对齐（P1-6/审计发现 #15）**：fork 点切在 assistant(tool_calls) 与其回执之间 → 分支继承孤儿声明，下次运行被配对修复伪造 `[程序异常]` 回执。修复：fork 点自动向前对齐到完整工具轮边界，`ForkReport.snapped_fork_point` 如实报告实际生效点
-- **tool_calls 配对漏计空 id 回执（P1-6/审计发现 #16）**：配对自检/补齐按"回执 id 非空"计数，存量会话的空 tool_call_id 回执被漏计 → 多补占位（额外 tool 消息无声明 → API 400）。修复：按 id 精确配对 + 空 id 位置兜底，自检与补齐共用同一缺口函数
-- **流式断连会话漂移（P1-6/审计发现 #17）**：`run_stream` LLM 流式中客户端断连（GeneratorExit）跳过 loop 末保存 → 事件日志已追加而 session JSON 未保存。修复：部分回答如实落会话（中断标注不伪装完整）+ 事件双轨同步 + 立即保存
-- **retire 指引如实化（P1-2/审计发现 #8）**：`read_path_switched` 字段名暗示已切换（实际只写切换指引）。改名 `read_path_ready_to_switch` + 新增 `switch_instructions`（READ_PATH_SOURCE 修改 + 重启两步指引），CLI 打印与回滚提示同步如实（程序不代写用户 .env）
-- **providers 配置解析加固（P1-3/审计发现 #12）**：能力标志严格布尔解析（白名单字符串/非法值 warning + 回退默认，不再静默 `bool()`）；context 缺失回退 131072 与 ModelSpec 默认一致；provider/模型双层 try/except——单条非法跳过该条并如实告警，不再拖垮整个注册表
-- **模型解析失败可感知（P1-4/审计发现 #13）**：`switch_model` 目标解析 ValueError 不再静默吞掉——warning 含配置模型名与失败原因；`config_status` 新增 `model_registry_resolved` 维度，AI 可感知"模型配置未生效"
-- **鉴权 fail-closed + 跨站写防护（P2-1）**：`WEB_AUTH_REQUIRE=1` 未配置 `WEB_API_KEY` 旧实现静默放行（等于无鉴权）——现启动拒绝（对齐远程绑定校验语义）+ 请求期 503 如实报错；回环豁免部署的 mutating 端点新增 Origin 头校验（非回环来源 POST/PUT/DELETE/PATCH → 403，防浏览器跨站打 127.0.0.1；无 Origin 的 curl/脚本不受影响）
-- **upload 体积前置检查（P2-2）**：base64 体积先查字符串长度（≈4/3 原始体积）再解码，超限直接 413——大 payload 不再先吃解码内存/CPU
-- **会话锁表无界增长 + 首聊竞态（P2-3）**：`session_locks` 改 LRU 上限 1024（淘汰最旧空闲锁，持锁不淘汰防互斥失效）；无 session_id 并发首聊的"取共享→建会话→设共享"收进同一模块级 guard——不再双建孤儿会话
-- **LLM 连接泄漏（P2-4）**：`LLMClient.close()` 此前无人调用。新增 `ModelClientPool.close()`（default+缓存全关，幂等）与 `LoopEngine.close()`；`clear_cache()` 热重载路径改为先关旧 client 再清空；CLI 主返回路径、web 退出、飞书停机均接线关闭
-- **eval 管道验证补强（P2-5）**：wilson_ci docstring 漂移修复（k=0 正常计算真实区间如 (0.0, 0.562]，仅 n≤0/k<0 返回 (0,0)）；dry 模式新增注入可见性自检（真实状态追踪器注入 FAILURE → architecture_status 快照路径断言可见，不可见即管道失效如实报错）
-- **fallback 引擎级集成测试（P2-6）**：真实 `_try_fallback_chain` 触发路径（主模型 500 → 降级链成功）——断言回答来自降级模型、`[模型降级]` 回执注入、architecture_status 降级态与 `model_fallbacks_count` 配置计数可见；4xx 不降级与链全失败汇总两条零回归路径同测
 
 ### 文档
 - 飞书渲染支持矩阵（`docs/feishu_render_matrix.md`）+ 开发方法论（`docs/development_methodology.md`）
