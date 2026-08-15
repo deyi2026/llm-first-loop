@@ -20,6 +20,8 @@
 | 变量 | 默认 | 说明 / 坑 |
 |:---|:---|:---|
 | `LLM_MAX_ITERATIONS` | 40 | 单次 run 最大循环轮数。**坑**：工具密集任务（读→改→验证）20 轮常触顶（2026-08-14 已 20→40）；达 80% 时程序注入 `[轮数预警]`，AI 可经 adjust_strategy 调大（白名单，硬上限 500） |
+| `WEB_VISION_BACKEND` | provider | 图片识别后端：provider（默认，注册表 multimodal 模型，如 Kimi k3）/ arkcli（团队多模态工具，需 `arkcli auth` 登录）/ minimax（旧路径，仅显式 opt-in） |
+| `WEB_VISION_MODEL` | — | 视觉模型指定：`provider/model`（如 `kimi/k3`）；缺省扫描注册表首个 multimodal 模型 |
 | `LLM_MAX_TOKENS` | 8192 | 单次 LLM 输出预算（token）。思考链模型思考也占此预算——默认 4096 时思考占大半、最终分析被截断（2026-08-15 现场）。**provider 级覆盖**：`data/providers.json` 条目加 `"max_tokens": 16384`（长分析模型放大） |
 | `LLM_TIMEOUT_S` | 120 | 单次 LLM 调用超时。**坑**：量化/大上下文模型生成慢，120s 可能不够（调大或用轻模型）。**provider 级覆盖**：在 `data/providers.json` 的 provider 条目加 `"timeout_s": 600`（本地慢模型专用，云端不放大）；未配置时用全局值 |
 | `LLM_THINKING_MODE` | enabled | 思考模式（非 DeepSeek 自动不发） |

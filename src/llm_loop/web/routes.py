@@ -740,11 +740,13 @@ def delete_session(session_id: str, request: Request, confirm: bool = False) -> 
     response_model=UploadResponse,
     responses={400: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
 )
-def upload_file(payload: UploadRequest) -> UploadResponse | Response:
+def upload_file(payload: UploadRequest, request: Request) -> UploadResponse | Response:
     """上传处理端点：base64 解码 → 校验 → 类型分发（文本/docx/PDF → 提取；图片 → 视觉识别）.
 
     不调用 engine.run（上传处理独立于核心对话链路，结果由前端注入对话上下文）。
+    request: 注入以取引擎 settings（vision provider 后端注册表来源）。
     """
+    engine = _engine_from(request)
     import base64 as _b64
 
     # P2-2(2026-08-15)：base64 体积前置检查（≈4/3 原始体积），超限 413 不解码
@@ -775,13 +777,13 @@ def upload_file(payload: UploadRequest) -> UploadResponse | Response:
         # 图片 → 视觉识别（无 key 如实降级）
         from .vision import describe_image, vision_enabled
 
-        if not vision_enabled():
+        if not vision_enabled(settings=getattr(engine, "settings", None)):
             return UploadResponse(
                 source_filename=payload.filename,
                 content_type="image",
                 status="degraded",
                 result_text="",
-                detail="视觉识别未配置（无 MINIMAX_API_KEY），图片无法识别。",
+                detail="图片识别不可用（无视觉模型/工具），图片未识别且未包含在请求中。",
             )
         mime = {
             ".png": "image/png",
@@ -792,7 +794,7 @@ def upload_file(payload: UploadRequest) -> UploadResponse | Response:
             ".bmp": "image/bmp",
         }.get(ext, "image/png")
         try:
-            text = describe_image(data, mime=mime)
+            text = describe_image(data, mime=mime, settings=getattr(engine, "settings", None))
             return UploadResponse(
                 source_filename=payload.filename,
                 content_type="image",
@@ -801,15 +803,15 @@ def upload_file(payload: UploadRequest) -> UploadResponse | Response:
             )
         except Exception as exc:  # 识别失败如实反馈，不伪装成功
             logger.exception("image vision failed: %s", payload.filename)
-            from .vision import _vision_model as _vm
-
             return UploadResponse(
                 source_filename=payload.filename,
                 content_type="image",
                 status="degraded",
                 detail=(
-                    f"[程序异常] 图片识别失败（模型 {_vm()}，{type(exc).__name__}: {exc}）。"
-                    "可设置 WEB_VISION_MODEL 换支持图片的模型，或改用文本通道。"
+                    f"[程序异常] 图片识别失败（{type(exc).__name__}: {exc}）。"
+                    "图片内容**未包含**在本次请求中——请勿让 LLM 猜测图片内容。"
+                    "可设置 WEB_VISION_MODEL 指定 provider/model（如 kimi/k3），"
+                    "或改用文本通道。"
                 ),
             )
 

@@ -89,16 +89,28 @@ export interface SendAttachment {
   filename: string;
   result_text: string;
   status?: "ok" | "pending" | "degraded" | "error";
+  detail?: string;
 }
 
 export async function sendMessage(text: string, attachments: SendAttachment[]): Promise<void> {
   const cur = conversationStore.getState();
   const sessionId = sessionStore.getState().currentSessionId;
   if (!sessionId) return;
-  const attachmentPrefix = attachments
+  // 识别成功/待处理附件：内容注入上下文
+  const okPrefix = attachments
     .filter((a) => a.status === "ok" || a.status === "pending")
     .map((a) => `[附件 ${a.filename}] ${a.result_text}`)
     .join("\n\n");
+  // 识别失败/降级附件：如实标记"图片未包含"（防 LLM 从历史旧图内容幻觉，2026-08-15 现场）
+  const failedPrefix = attachments
+    .filter((a) => a.status === "degraded" || a.status === "error")
+    .map(
+      (a) =>
+        `[附件 ${a.filename} 未能识别（${a.detail ?? "识别失败"}）——` +
+        `本次请求未包含该图片内容，请勿猜测或虚构图片内容]`
+    )
+    .join("\n\n");
+  const attachmentPrefix = [okPrefix, failedPrefix].filter(Boolean).join("\n\n");
   const effectiveText = attachmentPrefix ? `${attachmentPrefix}\n\n${text}` : text;
 
   const userMsg: ChatMessage = { role: "user", content: text };

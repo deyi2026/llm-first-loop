@@ -89,6 +89,34 @@ describe("发送链路", () => {
     expect((ta as HTMLTextAreaElement).value).toBe("");
   });
 
+  it("降级附件：发送载荷携带"图片未包含"诚实标记（防幻觉）", async () => {
+    mockBackend();
+    // 捕获发送到后端的 body
+    let sentBody = "";
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/v1/chat/stream")) {
+        sentBody = String(init?.body ?? "");
+        return new Response(sseStream([
+          `data: {"type":"done","data":${JSON.stringify({ ...DONE, final_answer: "图片未包含，无法识别" })}}`,
+        ]), { status: 200 });
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+    render(<Composer />);
+    const ta = screen.getByTestId("composer-input");
+    fireEvent.change(ta, { target: { value: "识别" } });
+    // 注入降级附件（模拟图片识别失败）
+    const { conversationStore: convSt } = await import("./core/conversation");
+    const { sendMessage } = await import("./core/conversation");
+    await sendMessage("识别", [
+      { filename: "a.png", result_text: "", status: "degraded", detail: "图片识别失败" },
+    ]);
+    expect(sentBody).toContain("未能识别");
+    expect(sentBody).toContain("未包含该图片内容");
+    expect(convSt.getState().streaming).toBe(false);
+  });
+
   it("连续两次发送不卡死：第二次不再被 streaming 拦截", async () => {
     mockBackend();
     render(<><MessageList /><Composer /></>);
