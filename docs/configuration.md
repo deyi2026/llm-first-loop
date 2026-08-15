@@ -21,6 +21,7 @@
 |:---|:---|:---|
 | `LLM_MAX_ITERATIONS` | 40 | 单次 run 最大循环轮数。**坑**：工具密集任务（读→改→验证）20 轮常触顶（2026-08-14 已 20→40）；达 80% 时程序注入 `[轮数预警]`，AI 可经 adjust_strategy 调大（白名单，硬上限 500） |
 | `EXEC_SANDBOX` | none | bash 沙箱（P3-3）：`bwrap`=bubblewrap 隔离 execute_command（只读系统目录/独立命名空间/工作区可写，回执如实标注）；显式开启而 bwrap 缺失 → fail-closed 命令不执行；空=none 不启用 |
+| `LLM_WIRE_PROTOCOL` | openai | 默认 client 线协议（P3-5）：openai / anthropic / google；provider 模型条目可用 `wire_protocol` 元数据逐模型覆盖 |
 | `MCP_SERVERS` | — | MCP stdio 服务器 JSON 数组（P3-1）：`[{"name": "fs", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path"]}]`；工具以 `mcp.<server>.<tool>` 名注册（schema 透传、五态包装、超时/审计复用；单服务器失败 fail-open） |
 | `WEB_VISION_BACKEND` | provider | 图片识别后端：provider（默认，注册表 multimodal 模型，如 Kimi k3）/ arkcli（团队多模态工具，需 `arkcli auth` 登录）/ minimax（旧路径，仅显式 opt-in） |
 | `WEB_VISION_MODEL` | — | 视觉模型指定：`provider/model`（如 `kimi/k3`）；缺省扫描注册表首个 multimodal 模型 |

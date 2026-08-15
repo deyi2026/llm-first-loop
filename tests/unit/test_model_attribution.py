@@ -40,7 +40,8 @@ class _FakeLLMClient:
         self.thinking_mode = True
         self.reasoning_effort = "high"
         self.thinking_supported = True
-        self.max_tokens: int | None = None  # 2026-08-15 对齐 LLMClient 新装配字段
+        self.max_tokens: int | None = None
+        self.wire_protocol: str = "openai"  # P3-5 对齐 LLMClient 新字段  # 2026-08-15 对齐 LLMClient 新装配字段
         self._responses: list[Any] = []
         self.calls: list[dict[str, Any]] = []
 

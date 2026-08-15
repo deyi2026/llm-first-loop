@@ -47,6 +47,7 @@ class ModelSpec:
     reasoning: bool = False
     long_context: bool = False
     multimodal: bool = False
+    wire_protocol: str = "openai"  # P3-5: openai / anthropic / google（客户端协议分发）
 
 
 @dataclass(frozen=True)
@@ -183,6 +184,8 @@ class ProviderRegistry:
             # 未配置不含该键, 与既有返回契约零差异
             **({"timeout_s": spec.timeout_s} if spec.timeout_s is not None else {}),
             **({"max_tokens": spec.max_tokens} if spec.max_tokens is not None else {}),
+            # P3-5: 协议（模型级元数据；默认 openai 零回归）
+            **({"wire_protocol": spec.models[model_id].wire_protocol} if spec.models[model_id].wire_protocol != "openai" else {}),
         }
 
 
@@ -245,6 +248,19 @@ def _parse_context(value: Any) -> int:
         raise ValueError(f"context={value!r} 非整数: {exc}") from exc
 
 
+def _parse_wire_protocol(pid: str, mid: str, mval: dict[str, Any]) -> str:
+    """P3-5: 协议字段解析（openai/anthropic/google 白名单；非法回退 openai 如实告警）."""
+    raw = str(mval.get("wire_protocol", "openai")).strip().lower()
+    if raw in {"openai", "anthropic", "google"}:
+        return raw
+    if raw != "openai":
+        logger.warning(
+            "模型 %s/%s 的 wire_protocol=%r 非法（支持 openai/anthropic/google），回退 openai",
+            pid, mid, raw,
+        )
+    return "openai"
+
+
 def _parse_model_spec(pid: str, mid: str, mval: dict[str, Any]) -> ModelSpec:
     """解析单模型条目 → ModelSpec（P1-3 审计 #14 加固）.
 
@@ -258,6 +274,8 @@ def _parse_model_spec(pid: str, mid: str, mval: dict[str, Any]) -> ModelSpec:
         reasoning=_parse_bool_field(pid, mid, "reasoning", mval),
         long_context=_parse_bool_field(pid, mid, "long_context", mval),
         multimodal=_parse_bool_field(pid, mid, "multimodal", mval),
+        # P3-5: 协议白名单（非法值回退 openai + 如实告警，不拖垮注册表）
+        wire_protocol=_parse_wire_protocol(pid, mid, mval),
     )
 
 

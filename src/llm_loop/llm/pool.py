@@ -65,6 +65,7 @@ class ModelClientPool:
         # 否则继承默认 client 的运行参数（全局 LLM_TIMEOUT_S, 零回归）
         provider_timeout = params.get("timeout_s")
         provider_max_tokens = params.get("max_tokens")
+        provider_wire_protocol = params.get("wire_protocol")
         client = LLMClient(
             api_key=params["api_key"],
             base_url=params["base_url"],
@@ -79,6 +80,12 @@ class ModelClientPool:
                 provider_max_tokens
                 if provider_max_tokens is not None
                 else self.default_client.max_tokens
+            ),
+            # P3-5: 协议优先 provider 元数据，否则继承默认 client
+            wire_protocol=(
+                provider_wire_protocol
+                if provider_wire_protocol is not None
+                else self.default_client.wire_protocol
             ),
             thinking_mode=self.default_client.thinking_mode,
             reasoning_effort=self.default_client.reasoning_effort,

@@ -70,7 +70,8 @@ class FakeLLM:
     def __init__(self, responses: list[Any]) -> None:
         self._responses = list(responses)
         self.calls: list[dict] = []  # 每次调用的 messages/tools 记录
-        self.max_tokens: int | None = None  # 2026-08-15: 对齐 LLMClient 新装配字段（pool 继承默认 client 预算）
+        self.max_tokens: int | None = None
+        self.wire_protocol: str = "openai"  # P3-5 对齐 LLMClient 新字段  # 2026-08-15: 对齐 LLMClient 新装配字段（pool 继承默认 client 预算）
 
     def chat(
         self,

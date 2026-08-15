@@ -6,6 +6,7 @@ mock httpx 流式响应，验证 tool_calls 聚合与异常分类。
 from __future__ import annotations
 
 import contextlib
+import json
 from unittest import mock
 
 import pytest
@@ -72,7 +73,7 @@ def test_chat_tool_calls_aggregation():
     tc = resp.tool_calls[0]
     assert tc.id == "call_9"
     assert tc.name == "read_file"
-    assert tc.arguments == {"path": "a.txt"}
+    assert json.loads(tc.arguments) == {"path": "a.txt"}  # 原始 JSON 串，引擎层解析
 
 
 def test_chat_http_400():
@@ -309,3 +310,158 @@ def test_factory_wires_max_tokens(monkeypatch):
         build_engine(settings)
         kwargs = client_cls.call_args.kwargs
     assert kwargs.get("max_tokens") == 8192
+
+
+# ── P3-5: 多协议（Anthropic / Google 原生协议） ──
+
+def _stream_resp(lines, status=200, headers=None):
+    resp = _FakeStreamCtx(lines, status_code=status)
+    resp.headers = headers or {}
+    return resp
+
+
+def test_anthropic_payload_and_headers():
+    """wire_protocol=anthropic：URL/头/payload 形状（system 拆分、tool_use/tool_result 转换）."""
+    lines = [
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":0}}}',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"你好"}}',
+        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
+        "data: [DONE]",
+    ]
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _stream_resp(lines)
+        client = _client(wire_protocol="anthropic", api_key="k-an")
+        it = client.chat_stream(
+            messages=[
+                {"role": "system", "content": "你是助手"},
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "tool_calls": [{"id": "t1", "name": "read_file", "arguments": {"p": "x"}}]},
+                {"role": "tool", "tool_call_id": "t1", "content": "内容"},
+            ],
+            tools=[{"type": "function", "function": {"name": "read_file", "description": "d", "parameters": {"type": "object"}}}],
+        )
+        final = None
+        while True:
+            try:
+                next(it)
+            except StopIteration as e:
+                final = e.value
+                break
+        url = client_cls.return_value.stream.call_args.args[1]
+        assert url.endswith("/v1/messages")
+        headers = client_cls.return_value.stream.call_args.kwargs["headers"]
+        assert headers["x-api-key"] == "k-an"
+        assert headers["anthropic-version"] == "2023-06-01"
+        payload = client_cls.return_value.stream.call_args.kwargs["json"]
+        assert payload["system"] == "你是助手"
+        # 消息转换：tool_use / tool_result
+        msgs = payload["messages"]
+        assert msgs[0]["role"] == "user"
+        assert msgs[1]["role"] == "assistant"
+        assert msgs[1]["content"][0]["type"] == "tool_use"
+        assert msgs[2]["role"] == "user"
+        assert msgs[2]["content"][0]["type"] == "tool_result"
+        assert final.content == "你好"
+        assert final.prompt_tokens == 10
+
+
+def test_anthropic_tool_use_aggregation():
+    """Anthropic 工具声明聚合：tool_use 块 + input_json_delta 分片 → ToolCall."""
+    lines = [
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tu1","name":"read_file","input":{}}}',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"path\\": \\"a"}}',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\\"}"}}',
+        'data: {"type":"content_block_stop","index":0}',
+        'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}',
+        "data: [DONE]",
+    ]
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _stream_resp(lines)
+        it = _client(wire_protocol="anthropic").chat_stream(messages=[{"role": "user", "content": "x"}], tools=[])
+        final = None
+        while True:
+            try:
+                next(it)
+            except StopIteration as e:
+                final = e.value
+                break
+    assert len(final.tool_calls) == 1
+    assert final.tool_calls[0].id == "tu1"
+    assert final.tool_calls[0].name == "read_file"
+    assert json.loads(final.tool_calls[0].arguments) == {"path": "a"}  # 原始 JSON 串，引擎层解析
+
+
+def test_google_payload_and_stream():
+    """wire_protocol=google：URL/头/payload（contents/systemInstruction/functionDeclarations）+ 流式解析."""
+    lines = [
+        'data: {"candidates":[{"content":{"parts":[{"text":"你好"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":2}}',
+    ]
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _stream_resp(lines)
+        client = _client(wire_protocol="google", api_key="k-g", base_url="https://generativelanguage.googleapis.com")
+        it = client.chat_stream(
+            messages=[{"role": "system", "content": "规则"}, {"role": "user", "content": "hi"}],
+            tools=[{"type": "function", "function": {"name": "web_fetch", "description": "d", "parameters": {"type": "object"}}}],
+        )
+        deltas = []
+        while True:
+            try:
+                d = next(it)
+                deltas.append(d.text)
+            except StopIteration as e:
+                final = e.value
+                break
+    url = client_cls.return_value.stream.call_args.args[1]
+    assert ":streamGenerateContent?alt=sse" in url
+    headers = client_cls.return_value.stream.call_args.kwargs["headers"]
+    assert headers["x-goog-api-key"] == "k-g"
+    payload = client_cls.return_value.stream.call_args.kwargs["json"]
+    assert payload["systemInstruction"]["parts"][0]["text"] == "规则"
+    assert payload["contents"][0]["parts"][0]["text"] == "hi"
+    assert payload["tools"][0]["functionDeclarations"][0]["name"] == "web_fetch"
+    assert "".join(deltas) == "你好"
+    assert final.content == "你好"
+    assert final.prompt_tokens == 5
+
+
+def test_google_function_call_aggregation_and_truncation():
+    """Google functionCall 聚合 + MAX_TOKENS → truncated."""
+    lines = [
+        'data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"read_file","args":{"p":"x"}}}]},"finishReason":"STOP"}]}',
+        'data: {"candidates":[{"content":{"parts":[{"text":"部分"}]},"finishReason":"MAX_TOKENS"}]}',
+    ]
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _stream_resp(lines)
+        it = _client(wire_protocol="google").chat_stream(messages=[{"role": "user", "content": "x"}], tools=[])
+        while True:
+            try:
+                next(it)
+            except StopIteration as e:
+                final = e.value
+                break
+    assert len(final.tool_calls) == 1
+    assert final.tool_calls[0].name == "read_file"
+    assert json.loads(final.tool_calls[0].arguments) == {"p": "x"}  # 原始 JSON 串
+    assert final.truncated is True
+    assert final.content == "部分"
+
+
+def test_wire_protocol_default_openai_zero_regression():
+    """默认 openai：URL/头与既有行为一致（零回归）."""
+    lines = [
+        'data: {"choices":[{"delta":{"content":"好"}}]}',
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+        "data: [DONE]",
+    ]
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _stream_resp(lines)
+        it = _client().chat_stream(messages=[{"role": "user", "content": "hi"}], tools=[])
+        while True:
+            try:
+                next(it)
+            except StopIteration as e:
+                final = e.value
+                break
+    url = client_cls.return_value.stream.call_args.args[1]
+    assert url.endswith("/chat/completions")
+    assert final.content == "好"
