@@ -1,0 +1,90 @@
+// Web V2：Markdown 渲染（marked + DOMPurify 白名单 + KaTeX 数学 + 轻量代码高亮）
+// 视觉对齐 DSH：--dsw-alias-markdown-* 底色、--shiki-token-* 语法色（token 层定义）
+
+import { marked } from "marked";
+import DOMPurify from "dompurify";
+import katex from "katex";
+import "katex/dist/katex.min.css";
+
+marked.setOptions({
+  gfm: true,
+  breaks: true,
+});
+
+const ALLOWED_TAGS = [
+  "p", "br", "hr", "strong", "em", "del", "code", "pre", "blockquote", "ul", "ol", "li",
+  "h1", "h2", "h3", "h4", "h5", "h6", "a", "img", "table", "thead", "tbody", "tr", "th", "td",
+  "span", "div", "input", "details", "summary",
+];
+
+const ALLOWED_ATTR = ["href", "src", "alt", "title", "class", "checked", "type"];
+
+/** 行内/块级数学 → KaTeX HTML（失败 fail-open 原样返回） */
+function renderMath(src: string): string {
+  // 块级 $$...$$
+  let out = src.replace(/\$\$([\s\S]+?)\$\$/g, (_m, expr: string) => {
+    try {
+      return katex.renderToString(expr.trim(), { displayMode: true, throwOnError: false });
+    } catch {
+      return _m;
+    }
+  });
+  // 行内 $...$
+  out = out.replace(/(^|[^$])\$([^$\n]+?)\$(?![$])/g, (_m, pre: string, expr: string) => {
+    try {
+      return `${pre}${katex.renderToString(expr.trim(), { displayMode: false, throwOnError: false })}`;
+    } catch {
+      return _m;
+    }
+  });
+  return out;
+}
+
+export function renderMarkdown(src: string): string {
+  if (!src) return "";
+  try {
+    const math = renderMath(src);
+    const raw = marked.parse(math) as string;
+    return DOMPurify.sanitize(raw, {
+      ALLOWED_TAGS,
+      ALLOWED_ATTR,
+      ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|data:image\/|#)/i,
+    });
+  } catch {
+    return DOMPurify.sanitize(src, { ALLOWED_TAGS, ALLOWED_ATTR });
+  }
+}
+
+/** 轻量语法高亮（单遍分词器，对齐原版能力；颜色走 --shiki-token-* 由主题层切换） */
+const HIGHLIGHT_KEYWORDS = new Set([
+  "def", "class", "return", "import", "from", "if", "else", "elif", "for", "while",
+  "try", "except", "finally", "with", "as", "pass", "break", "continue", "lambda",
+  "yield", "async", "await", "raise", "global", "nonlocal", "match", "case",
+  "True", "False", "None", "and", "or", "not", "in", "is", "const", "let", "var",
+  "function", "export", "new", "typeof", "switch", "case", "default", "do", "void",
+  "int", "float", "char", "double", "long", "struct", "enum", "static", "void",
+]);
+
+export function highlightCode(code: string, _lang?: string): string {
+  const re =
+    /("[^"\n]*"|'[^'\n]*'|`[^`\n]*`)|(#[^\n]*|\/\/[^\n]*)|(\b\d+\.?\d*\b)|(\b[A-Za-z_][A-Za-z0-9_]*\b)/g;
+  const esc = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  let out = "";
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(code)) !== null) {
+    if (m.index > last) out += esc(code.slice(last, m.index));
+    const [, str, comment, num, ident] = m;
+    let cls: string | null = null;
+    if (str !== undefined) cls = "shiki-string";
+    else if (comment !== undefined) cls = "shiki-comment";
+    else if (num !== undefined) cls = "shiki-number";
+    else if (ident !== undefined && HIGHLIGHT_KEYWORDS.has(ident)) cls = "shiki-keyword";
+    if (cls) out += `<span class="${cls}">${esc(m[0])}</span>`;
+    else out += esc(m[0]);
+    last = m.index + m[0].length;
+  }
+  out += esc(code.slice(last));
+  return out;
+}

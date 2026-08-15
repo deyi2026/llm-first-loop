@@ -239,6 +239,25 @@ textarea {
   background: transparent;
 }
 
+/* ── 代码语法色（对齐 DSH --shiki-token-*） ── */
+:root {
+  --shiki-token-constant: #1c7ed6;
+  --shiki-token-string: #2f9e44;
+  --shiki-token-comment: #868e96;
+  --shiki-token-keyword: #d6336c;
+  --shiki-token-function: #6741d9;
+  --shiki-token-number: #e8590c;
+}
+
+body[data-ds-dark-theme] {
+  --shiki-token-constant: #4dabf7;
+  --shiki-token-string: #69db7c;
+  --shiki-token-comment: #adb5bd;
+  --shiki-token-keyword: #faa2c1;
+  --shiki-token-function: #b197fc;
+  --shiki-token-number: #ffa94d;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
