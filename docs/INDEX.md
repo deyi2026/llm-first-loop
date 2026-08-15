@@ -15,6 +15,7 @@
 | `feishu_render_matrix.md` | 飞书渲染支持矩阵（markdown 特性支持范围 + 降级预案） |
 | `development_methodology.md` | AI 驱动开发方法论（SoT 先行/如实记录/零回归/评测纪律） |
 | `event_sourcing.md` | 事件溯源设计（单一真相源 + 迁移/回滚指南） |
+| `eval_scenarios.md` | 评测集贡献指南（场景 schema + 判定注册 + 30 分钟新增路径 + PR 验收） |
 | `README.md` | 项目入口（功能/快速开始/CLI/配置） |
 
 ## 更新约定
