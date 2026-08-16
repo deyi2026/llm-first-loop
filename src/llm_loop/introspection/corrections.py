@@ -61,6 +61,9 @@ class CorrectionContext:
             "memory_top_k": {"type": "integer", "min": 1, "max": 50},
             "extract_interval_msgs": {"type": "integer", "min": 5, "max": 200},
             "retrieve_semantic_top_k": {"type": "integer", "min": 1, "max": 100},
+            # task_quality 六路径开关（D3 定案：动态参数，布尔 0/1）
+            "precheck_enabled": {"type": "integer", "min": 0, "max": 1},
+            "fix_loop_enabled": {"type": "integer", "min": 0, "max": 1},
         }
     )
     strategy: dict = field(default_factory=dict)  # 运行时策略（adjust_strategy 修改，循环消费）
