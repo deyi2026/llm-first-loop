@@ -314,6 +314,33 @@ _start_all() {
   if [[ -f "$PROJECT_DIR/scripts/guard_system.sh" ]]; then
     bash "$PROJECT_DIR/scripts/guard_system.sh" ack-workspace 2>/dev/null || true
   fi
+  # 2026-08-16: 重启后一键验证（对齐孤儿进程排查经验）——每服务 pgrep 应恰好 1 行、
+  # web 端口监听应单一 PID；多实例残留如实告警（fail-open 不阻断，防旧连接抢消息）
+  _verify_single_instance
+}
+
+# ── 重启后验证（防多实例残留：健康检查只看主 PID，残留进程会抢端口/抢飞书消息）──
+_verify_single_instance() {
+  local svc pids count port_pids
+  for svc in $SERVICES; do
+    pids="$(pgrep -f "llm_loop\\.${svc}" || true)"
+    count="$(printf '%s\n' "$pids" | grep -c . || true)"
+    if [[ -n "$pids" ]] && (( count > 1 )); then
+      _log "[${svc}] ⚠️ 检测到 ${count} 个实例（残留）: $(echo "$pids" | tr '\n' ' ')。建议手动清理: pkill -f 'llm_loop\\.${svc}' 后重跑 restart"
+    else
+      _log "[${svc}] 实例数 ${count} ✓"
+    fi
+  done
+  # web 端口单一监听校验
+  port_pids="$(lsof -tiTCP:"${WEB_PORT}" -sTCP:LISTEN 2>/dev/null || true)"
+  if [[ -n "$port_pids" ]]; then
+    count="$(printf '%s\n' "$port_pids" | grep -c . || true)"
+    if (( count > 1 )); then
+      _log "[web] ⚠️ 端口 ${WEB_PORT} 有 ${count} 个监听者（残留）: $(echo "$port_pids" | tr '\n' ' ')"
+    else
+      _log "[web] 端口 ${WEB_PORT} 单一监听 ✓"
+    fi
+  fi
 }
 
 # ── 全部状态 ──
