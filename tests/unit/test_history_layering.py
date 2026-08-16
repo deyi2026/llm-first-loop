@@ -42,7 +42,7 @@ def test_trim_uses_key_facts_digest():
     archived: list[Message] = []
     content = (
         "抓取结果: https://m.toutiao.com/article/7674130972811608626\n"
-        "- 关键动作: 修复 /Users/yyj/Project/llm-first-loop/src/llm_loop/core/history.py 折叠逻辑\n"
+        "- 关键动作: 修复 <repo>/src/llm_loop/core/history.py 折叠逻辑\n"
         "- 验证: tests/unit/test_history_layering.py 全部通过\n"
         "正文细节（不应出现在摘要里）: 大量展开内容" * 80
     )
