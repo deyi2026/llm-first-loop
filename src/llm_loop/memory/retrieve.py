@@ -125,7 +125,14 @@ def build_memory_messages(
 
     if not entries:
         return []
-    lines = [f"- [{e.type}] {e.content}" for e in entries[:top_k]]
+    final = entries[:top_k]
+    # 升格判据事实源（EVO-20260816-fcdbe2e9）：只计真正进入注入消息的条目，
+    # fail-open（计数失败不阻塞记忆注入主流程，FR-MEM-03）
+    try:  # noqa: SIM105 — fail-open 计数，suppress 等价的显式容忍（FR-MEM-03）
+        store.mark_injected(final)
+    except Exception:  # noqa: BLE001 — 计数失败如实容忍（统计非关键路径）
+        pass
+    lines = [f"- [{e.type}] {e.content}" for e in final]
     if note:
         lines.insert(0, f"[记忆检索] {note}")
     return [
