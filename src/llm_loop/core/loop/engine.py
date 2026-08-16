@@ -220,6 +220,16 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         """
         # SSE/ASGI 消费方可能在不同 Context 中驱动本生成器（Token.reset 要求同一
         # Context，跨 Context 抛 ValueError）——改用 值快照 + set 还原（set 不挑 Context）。
+        # EVO 后台 run 改造（B5/B7）: 跨入口互斥——同会话已有后台 run 进行中则拒绝
+        # （后台工作线程自身调用放行 is_worker；生成器惰性，检查在首 next 时执行）
+        runner = getattr(self, "runner", None)
+        if runner is not None and runner.enabled and not runner.is_worker():
+            if runner.is_running(session_id):
+                from llm_loop.core.loop.runner import SessionBusyError
+
+                raise SessionBusyError(
+                    f"会话 {session_id} 已有进行中的 run（跨入口互斥，请稍后重试）"
+                )
         _prev_sid = _current_session_id.get()
         _current_session_id.set(session_id)
         # 工作区根跟随（工具相对路径/命令默认 cwd；与会话同生命周期）

@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import os
+import queue
 import threading
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ from fastapi import APIRouter, BackgroundTasks, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from llm_loop.feedback.honesty import session_deleted_message, session_not_found_message
+from llm_loop.core.loop.runner import SessionBusyError
 from llm_loop.workspace.store import workspace_key
 
 from .schemas import (
@@ -61,6 +63,7 @@ def _engine_from(request: Request) -> Any:
 
 _locks_guard = threading.Lock()
 _LOCK_TIMEOUT_S = 30
+_SSE_QUEUE_TIMEOUT_S = 15  # 后台 run 订阅队列 get 超时（防御；正常 run 必有 done/error 终态）
 # P2-3(2026-08-15，审计发现)：会话锁表上限（LRU 淘汰空闲锁；dict 保序即插入序）
 _SESSION_LOCKS_MAX = 1024
 
@@ -168,6 +171,12 @@ def chat(
         acquired = True
     try:
         result = engine.run(session_id, payload.message, model=payload.model)
+    except SessionBusyError as exc:
+        # EVO 后台 run 改造（B5/B7）: 同会话已有后台 run 进行中 → 503（与锁超时同语义）
+        return UTF8JSONResponse(
+            status_code=503,
+            content={"error": "session_busy", "detail": str(exc)},
+        )
     except Exception as exc:  # 如实反馈不静默降级（对齐 PREFERENCE_1）
         logger.exception("engine.run failed: session_id=%s", session_id)
         return UTF8JSONResponse(
@@ -212,6 +221,82 @@ def _sse(event_type: str, data: Any) -> str:
     return f"data: {json.dumps({'type': event_type, 'data': data}, ensure_ascii=False)}\n\n"
 
 
+def _stream_background(runner: Any, session_id: str, message: str, model: str | None) -> Any:
+    """后台 run 订阅生成器（EVO 后台 run 改造）：提交 → 消费事件 → 分片 yield SSE.
+
+    - delta: text/reasoning/tool_round 分片独立 yield（对齐旧路径 P1-1/P2-1）
+    - done: 终态九字段（对齐非流式 ChatResponse）
+    - error: 引擎异常如实回执
+    - finally: unsubscribe（SSE 断连只停订阅，后台线程不受影响、继续落盘）
+    """
+    handle, q = runner.start(session_id, message, model=model)
+    if q is None:
+        yield _sse(
+            "error",
+            {
+                "error": "session_busy",
+                "detail": "会话繁忙（已有生成中的 run），请稍后刷新查看",
+            },
+        )
+        return
+    try:
+        while True:
+            try:
+                ev = q.get(timeout=_SSE_QUEUE_TIMEOUT_S)
+            except queue.Empty:
+                # 防御超时（正常 run 必有终态）；后台长时间无 delta（如工具执行）时
+                # 保持连接等待。断连由 ASGI 在生成器 yield 挂起点注入 GeneratorExit。
+                continue
+            etype = ev["type"]
+            if etype == "delta":
+                delta = ev["delta"]
+                if getattr(delta, "text", None):
+                    yield _sse("answer_delta", {"data": delta.text})
+                if getattr(delta, "reasoning", None):
+                    yield _sse("reasoning_delta", {"data": delta.reasoning})
+                tr = getattr(delta, "tool_round", None)
+                if tr is not None:
+                    yield _sse(
+                        "tool_round",
+                        {
+                            "tool_name": getattr(tr, "tool_name", ""),
+                            "round_index": getattr(tr, "round_index", 0),
+                            "args_summary": getattr(tr, "args_summary", ""),
+                            "tool_call_id": getattr(tr, "tool_call_id", ""),
+                        },
+                    )
+            elif etype == "done":
+                result = ev["result"]
+                yield _sse(
+                    "done",
+                    {
+                        "session_id": getattr(result, "session_id", session_id),
+                        "final_answer": getattr(result, "final_answer", ""),
+                        "verification_note": getattr(result, "verification_note", None),
+                        "rounds": getattr(result, "rounds", 0),
+                        "tool_calls": getattr(result, "tool_calls", 0),
+                        "truncated": getattr(result, "truncated", False),
+                        "model_used": getattr(result, "model_used", ""),
+                        "tokens_in": getattr(result, "tokens_in", 0),
+                        "tokens_out": getattr(result, "tokens_out", 0),
+                        "tokens_cache_hit": getattr(result, "tokens_cache_hit", 0),
+                        "reasoning_content": getattr(result, "reasoning_content", ""),
+                    },
+                )
+                return
+            elif etype == "error":
+                yield _sse(
+                    "error",
+                    {
+                        "error": "internal_error",
+                        "detail": f"[程序异常] 引擎执行失败（{ev['error']}）。",
+                    },
+                )
+                return
+    finally:
+        runner.unsubscribe(session_id, q)  # 断连/完成：停止订阅，后台线程不受影响
+
+
 @router.post("/api/v1/chat/stream")
 def chat_stream(
     payload: ChatRequest,
@@ -221,6 +306,9 @@ def chat_stream(
 
     真流式仅作用于最终回答轮（中间工具轮无可见文本、同步等待）；终态 done 携带完整
     ChatResponse 九字段，与非流式 POST /api/v1/chat 内容等价（spec 5.2 规则 4）。
+
+    EVO 后台 run 改造：装配了 runner 时走"提交 + 订阅"（run 在后台线程执行，SSE 断连
+    只停订阅、run 继续落盘）；否则回退旧生成器直驱（RUNNER_BACKGROUND=0 或未装配）。
     """
     engine = _engine_from(request)
 
@@ -251,6 +339,12 @@ def chat_stream(
         session_id = _resolve_session_id_locked(engine, request, None)
 
     def event_stream():
+        # 后台 run 模式（EVO 后台 run 改造，对齐 DSH）：提交 + 订阅；断连只停订阅
+        runner = getattr(engine, "runner", None)
+        if runner is not None and runner.enabled:
+            yield from _stream_background(runner, session_id, payload.message, payload.model)
+            return
+        # 回退旧路径（生成器直驱，原行为；RUNNER_BACKGROUND=0 或未装配）
         lock = _get_session_lock(request, session_id)
         acquired = False
         if lock is not None and not lock.acquire(timeout=_LOCK_TIMEOUT_S):
