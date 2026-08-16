@@ -75,6 +75,18 @@
    保持在 system 前缀之后（重算面最小化）；不得将检索结果拼进 system_prompt 开头。
 7. **压缩/归档是异常路径**：超预算降级中段会破坏前缀——仅在预算逼近时触发，正常轮
    不产生前缀变化。
+8. **压缩留缓冲（EVO-380f1c2e，2026-08-16 实证）**：压缩目标从"裁到预算 100%"改为
+   "预算×0.6"（`COMPRESS_TARGET_RATIO` 可覆盖）——裁到 100% 上限下一轮必再超、
+   每轮压缩、前缀每轮变化、永久断点（实测命中率 ~1%）；留 40% 缓冲后稳定期从几轮
+   延长到几十轮（前缀纯追加实证命中 97.3%，长 run 99.2%）。单条超限兜底分支用全预算
+   判断（`trim_budget=max_chars`），与留缓冲解耦。
+9. **预算链三层配置**：`effective = min(全局 HISTORY_MAX_CHARS, provider 级
+   history_budget_chars, 模型窗口×系数)`——真实压制点可能在 provider 级（本环境 60000
+   压制全局 256000 达数月）；`request.meta` 事件日志是每轮真实 model/budget 的真相源
+   （session model_override 会覆盖 .env 默认模型，查模型先看 request.meta）；
+   `refresh_config` 热重载对 provider 级预算**不生效**，必须重启进程。
+10. **经验注入是尾部追加**：`[经验提示]`（EVO-62977206/ec8c36bb）与外部 skill 匹配
+    提示均经 `injected_system` 标记尾部追加，不破坏 system 前缀——命中才注入（零开销）。
 
 ### 验证方式
 
