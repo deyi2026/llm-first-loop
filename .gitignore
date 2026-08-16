@@ -7,6 +7,7 @@ venv/
 
 # 测试/工具缓存
 .pytest_cache/
+.vite/
 .ruff_cache/
 .coverage
 htmlcov/
