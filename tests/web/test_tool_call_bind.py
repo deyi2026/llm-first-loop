@@ -122,10 +122,10 @@ def test_message_item_contract_unchanged(build_test_engine):
     client = _make_client(engine)
     resp = client.get("/api/v1/sessions/sess-contract/messages")
     for m in resp.json()["messages"]:
-        # M51/M52: 模型 + token 消耗字段（2026-08-16 页脚扩展，属计划内契约变更）
+        # M51/M52/M53: 模型+token+工具声明字段（2026-08-16 页脚/出产物扩展，属计划内契约变更）
         assert set(m.keys()) <= {
             "role", "content", "tool_call_id", "reasoning_content",
-            "model_used", "tokens_in", "tokens_out",
+            "model_used", "tokens_in", "tokens_out", "tool_calls",
         }
 
 

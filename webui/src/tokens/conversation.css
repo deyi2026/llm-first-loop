@@ -100,6 +100,25 @@
   color: var(--dsw-alias-label-primary);
 }
 
+/* 出产物内联文件链接（对齐 DSH producedFileMentions：正文中的文件路径可点击打开） */
+.v2-file-link {
+  display: inline-block;
+  border-radius: 4px;
+  padding: 0 4px;
+  margin: 0 1px;
+  font-family: var(--ds-font-family-code);
+  font-size: 0.9em;
+  color: var(--dsw-alias-state-business-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 10%, transparent);
+  cursor: pointer;
+  border-bottom: 1px dashed var(--dsw-alias-state-business-primary);
+}
+
+.v2-file-link:hover {
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 18%, transparent);
+  border-bottom-style: solid;
+}
+
 .v2-md p {
   margin: 12px 0;
 }

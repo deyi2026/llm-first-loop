@@ -1,7 +1,7 @@
 // Web V2：消息列表（滚动跟随/回到底部/加载更早；流式期间自动跟随）
 
-import { useEffect, useRef, useState } from "react";
-import { MessageItem } from "./MessageItem";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { MessageItem, extractProducedPaths } from "./MessageItem";
 import { loadEarlierHistory, useConversation } from "../../core/conversation";
 import { sessionStore } from "../../core/stores";
 import { zh } from "../../i18n/zh";
@@ -10,6 +10,18 @@ export function MessageList() {
   const conv = useConversation();
   const [atBottom, setAtBottom] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // 会话级出产物集合（对齐 DSH turn 级 deliverables）：跨消息累积 edit_file 路径，
+  // 供最终回答正文中的路径引用可点击打开（编辑与引用通常在不同消息）
+  const producedPaths = useMemo(() => {
+    const out: string[] = [];
+    for (const m of conv.messages) {
+      for (const p of extractProducedPaths(m.toolCalls)) {
+        if (!out.includes(p)) out.push(p);
+      }
+    }
+    return new Set(out);
+  }, [conv.messages]);
 
   const updateBottom = () => {
     const el = scrollRef.current;
@@ -54,7 +66,13 @@ export function MessageList() {
         </button>
       )}
       {conv.messages.map((m, i) => (
-        <MessageItem key={i} msg={m} index={i} sessionId={sessionStore.getState().currentSessionId ?? undefined} />
+        <MessageItem
+          key={i}
+          msg={m}
+          index={i}
+          sessionId={sessionStore.getState().currentSessionId ?? undefined}
+          producedPaths={producedPaths}
+        />
       ))}
       {!atBottom && (
         <button

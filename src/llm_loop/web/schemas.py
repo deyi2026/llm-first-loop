@@ -61,6 +61,7 @@ class MessageItem(BaseModel):
     model_used: str = ""  # M51: assistant 消息模型标签透传（页脚显示）
     tokens_in: int = 0  # M52: assistant 消息 prompt tokens 透传
     tokens_out: int = 0  # M52: assistant 消息 completion tokens 透传
+    tool_calls: list[dict] | None = None  # assistant 工具声明透传（历史恢复出产物/正文链接）
 
 
 class SessionMessagesResponse(BaseModel):

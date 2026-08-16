@@ -111,9 +111,20 @@ export function Composer() {
   const autoGrow = () => {
     const el = taRef.current;
     if (!el) return;
+    if (!el.value) {
+      // 空内容 → 清除内联高度，恢复 CSS 默认（scrollHeight 含 padding 不等于默认行高）
+      el.style.height = "";
+      return;
+    }
     el.style.height = "auto";
     el.style.height = Math.min(el.scrollHeight, 180) + "px";
   };
+
+  // text 变化（含发送/命令清空）后按渲染结果复位高度——
+  // 发送后 setText("") 是异步渲染，若在 doSend 内同步调 autoGrow 会读到旧 scrollHeight
+  useEffect(() => {
+    autoGrow();
+  }, [text]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -125,8 +136,7 @@ export function Composer() {
   };
 
   const onTextChange = (v: string) => {
-    setText(v);
-    autoGrow();
+    setText(v); // 高度自适应由 useEffect([text]) 统一处理
     if (v.startsWith("/") && !v.includes(" ")) {
       const q = v.slice(1).toLowerCase();
       const matches = commands.filter((c) => c.name.startsWith(q));
@@ -147,14 +157,14 @@ export function Composer() {
       const cmd = commands.find((c) => c.name === name);
       if (cmd) {
         cmd.run(rest.join(" "));
-        setText("");
+        setText(""); // 高度复位由 useEffect([text]) 处理
         setCmdOpen(false);
         return;
       }
     }
     // 乐观 UI（2026-08-15 现场反馈）：发送即清空输入与附件——
     // 流式完成前文字留在框里会让人以为"没发出去/没反馈"
-    setText("");
+    setText(""); // 高度复位由 useEffect([text]) 处理
     setAttachments([]);
     setCmdOpen(false);
     await sendMessage(trimmed, attachments);

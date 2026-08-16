@@ -143,13 +143,58 @@ export async function uploadFileBase64(
   return { status: resp.status, data };
 }
 
+/** 历史 tool_calls 归一化：后端存储为 OpenAI 嵌套格式 {function:{name,arguments}}，
+ * 前端 ToolCallInfo 为扁平 {id,name,arguments}——统一（arguments 字符串→对象） */
+function normalizeToolCalls(raw: unknown): ToolCallInfo[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: ToolCallInfo[] = [];
+  for (const tc of raw) {
+    if (!tc || typeof tc !== "object") continue;
+    const r = tc as Record<string, unknown>;
+    let id = typeof r.id === "string" ? r.id : "";
+    let name = "";
+    let args: Record<string, unknown> = {};
+    if (r.function && typeof r.function === "object") {
+      const fn = r.function as Record<string, unknown>;
+      name = typeof fn.name === "string" ? fn.name : "";
+      const rawArgs = fn.arguments;
+      if (typeof rawArgs === "string") {
+        try {
+          const parsed = JSON.parse(rawArgs);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) args = parsed;
+        } catch {
+          args = { _raw: rawArgs };
+        }
+      } else if (rawArgs && typeof rawArgs === "object") {
+        args = rawArgs as Record<string, unknown>;
+      }
+    } else {
+      name = typeof r.name === "string" ? r.name : "";
+      const a = r.arguments;
+      if (typeof a === "string") {
+        try {
+          const parsed = JSON.parse(a);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) args = parsed;
+        } catch {
+          args = { _raw: a };
+        }
+      } else if (a && typeof a === "object") {
+        args = a as Record<string, unknown>;
+      }
+    }
+    if (!id && name) id = name;
+    out.push({ id, name, arguments: args });
+  }
+  return out.length > 0 ? out : null;
+}
+
 /** 历史消息 → 渲染消息（tool 回执按角色呈现；tool_calls 透传；M51/M52 模型+token 页脚数据） */
 export function toChatMessage(m: HistoryMessage): ChatMessage {
   return {
     role: m.role as ChatMessage["role"],
     content: m.content ?? "",
     reasoningContent: m.reasoning_content ?? null,
-    toolCalls: (m.tool_calls as ToolCallInfo[]) ?? null,
+    toolCalls: normalizeToolCalls(m.tool_calls),
     toolCallId: m.tool_call_id ?? null,
     toolName: m.tool_name ?? null,
     note: null,
