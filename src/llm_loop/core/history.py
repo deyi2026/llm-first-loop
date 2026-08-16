@@ -340,32 +340,43 @@ def build_history_messages(
     out: list[dict] = []
     if system_prompt:
         out.append({"role": "system", "content": system_prompt})
+    # Cache-First (2026-08-16): system_prompt 静态主体长度——永不截断（前缀缓存锚）。
+    # 只对动态追加段（memory/inbox/快照/reminder）设上限，防累积超限（原意图不变）。
+    sys_base_len = len(out[0]["content"]) if out else 0
 
     # P1-FEISHU: 合并后续 system 消息到首个 system（避免连续 system 导致模板 500）。
     # —— qwen3 heretic 模板严格要求 "System message must be at the beginning"。
     # ⚠️ 累积陷阱: 架构上报/validator reminder 每轮注入到 sess.messages,session 长时间累积后
     # 125+ 条 system 消息若全合并 → 单条 system 数十万字符 → LM Studio 超 token 限 / 超时。
-    # 修复: 合并时限制总字符数(max_sys_merge_chars),保留最新追加、丢弃过期的(state 帧意义在即时性)。
-    max_sys_merge_chars = 4000  # system_prompt + snapshot + 最近 1-3 条 reminder 上限
+    # 修复: 合并时限制动态追加段总字符数(max_sys_merge_chars),保留最新追加、丢弃过期的
+    # (state 帧意义在即时性)。静态 system_prompt 主体不参与截断（前缀缓存保持命中）。
+    max_sys_merge_chars = 4000  # 动态 system 追加段上限（不含 system_prompt 主体）
+
     def _append_or_merge(msg_dict: dict) -> None:
         if msg_dict.get("role") == "system" and out and out[0].get("role") == "system":
             new_content = msg_dict.get("content", "")
             if not new_content:
                 return
             cur = out[0]["content"]
-            # 已超限 → 整段替换为"仅保留最新"(历史 state 帧意义已失)
-            if len(cur) >= max_sys_merge_chars:
-                # 用最新一条替换,避免无止境增长
-                out[0]["content"] = cur[:200] + "\n\n[…历史系统消息已截断(超 max_sys_merge_chars=4000)…]\n\n" + new_content
-                # 仍超限则直接覆盖
-                if len(out[0]["content"]) > max_sys_merge_chars * 1.5:
-                    out[0]["content"] = new_content[-max_sys_merge_chars:]
-                return
-            sep = "\n\n"
-            out[0]["content"] = cur + sep + new_content
-            # 仍超限 → 尾部截断(保留最新)
-            if len(out[0]["content"]) > max_sys_merge_chars * 1.5:
-                out[0]["content"] = "...[已截断]...\n" + out[0]["content"][-(max_sys_merge_chars-20):]
+            dyn = cur[sys_base_len:]  # 动态追加段（含分隔符）
+            # 动态段已超限 → 截动态段、保留最新（system_prompt 主体不动）
+            if len(dyn) >= max_sys_merge_chars:
+                out[0]["content"] = (
+                    cur[:sys_base_len]
+                    + "\n\n[…历史系统消息已截断(超 max_sys_merge_chars=4000)…]\n\n"
+                    + new_content
+                )
+            else:
+                sep = "\n\n"
+                out[0]["content"] = cur + sep + new_content
+            # 兜底: 动态段仍超限 → 截动态段尾部（保留最新）
+            dyn2 = out[0]["content"][sys_base_len:]
+            if len(dyn2) > max_sys_merge_chars * 1.5:
+                out[0]["content"] = (
+                    cur[:sys_base_len]
+                    + "...[已截断]...\n"
+                    + dyn2[-(max_sys_merge_chars - 20):]
+                )
         else:
             out.append(msg_dict)
 
