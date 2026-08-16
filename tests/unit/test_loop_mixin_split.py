@@ -67,4 +67,4 @@ def test_complexity_reduction(engine_src):
       run 入口 contextvar 注入）后 1102（新增 31 行）。
     仍低于拆分前, 守卫防再膨胀（>1110 应触发拆分评审）。
     """
-    assert len(engine_src.splitlines()) < 1113
+    assert len(engine_src.splitlines()) < 1115

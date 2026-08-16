@@ -606,11 +606,130 @@ def build_engine(settings: Settings) -> LoopEngine:
     )
     registry.register(SpawnSubAgentTool(subagent_runner))
     # EVO-20260814 P1-B: 工作流编排（parallel 聚合 / pipeline 串联，对齐 Harness 多 Agent 编排）
-    registry.register(WorkflowRunTool(subagent_runner))
+    workflow_tool = WorkflowRunTool(subagent_runner)
+    registry.register(workflow_tool)
     # DSH-ORCHESTRATION（2026-08-16）: 调度 DeepSeek Harness headless 执行任务（进程级子代理）
     registry.register(DshTaskTool())
     registry.register(DshSessionReadTool())
+
+    # CodeArts 子 Agent 调度集成（design.md §2.1.2，缺省 fail-open 零装配）
+    # CODEARTS_ENABLED=false 或凭证缺失/校验失败 → 跳过装配 + 日志标注，主运行时零回归
+    _assemble_codearts(settings, registry, session_store, engine, workflow_tool)
+
     return engine
+
+
+def _assemble_codearts(settings: Settings, registry: ToolRegistry, session_store: Any, engine: Any, workflow_tool: Any = None) -> None:
+    """装配 CodeArts 子 Agent 调度集成（fail-open 全分支覆盖）.
+
+    分支:
+    1. settings.codearts.enabled == False → 跳过 + 日志标注"总开关关闭"
+    2. 凭证缺失 → 跳过 + 日志标注"缺凭证"
+    3. 凭证校验失败 → 跳过 + 日志标注"凭证校验失败: <原因>"
+    4. 校验通过 → 构造调度核心 + 注册 4 工具 + 接管在途委派
+
+    全分支 fail-open 不阻断主运行时启动。
+    """
+    ca = settings.codearts
+    if not ca.enabled:
+        logger.info("CodeArts 集成未装配（总开关关闭）")
+        return
+    if not ca.has_credential():
+        logger.info("CodeArts 集成未装配（缺凭证：未配置 AK/SK 或 IAM token）")
+        return
+    try:
+        from llm_loop.codearts.audit import AuditLogger
+        from llm_loop.codearts.client import HttpxCodeArtsClient
+        from llm_loop.codearts.collector import ResultCollector
+        from llm_loop.codearts.credential import CredentialError, EnvCredentialProvider
+        from llm_loop.codearts.handle import HandleRegistry
+        from llm_loop.codearts.risk import PatternRiskClassifier
+        from llm_loop.codearts.scheduler import CodeArtsScheduler
+        from llm_loop.codearts.sync import PollingSynchronizer
+        from llm_loop.tools.builtin.codearts_cancel import CodeArtsCancelTool
+        from llm_loop.tools.builtin.codearts_capability import CodeArtsCapabilityTool
+        from llm_loop.tools.builtin.codearts_dispatch import CodeArtsDispatchTool
+        from llm_loop.tools.builtin.codearts_status import CodeArtsStatusTool
+    except ImportError as exc:
+        logger.warning("CodeArts 集成模块导入失败（fail-open）: %s", exc)
+        return
+
+    try:
+        credential_provider = EnvCredentialProvider(ca)
+        client = HttpxCodeArtsClient(ca)
+        # 凭证轻量校验
+        if not credential_provider.validate(ca.region):
+            logger.warning("CodeArts 凭证校验失败: region=%s（跳过装配）", ca.region)
+            return
+        event_store = _build_event_store(settings)
+        handle_registry = HandleRegistry(event_store, max_concurrent=ca.max_concurrent)
+        risk_classifier = PatternRiskClassifier(registry.safety)
+        audit_logger = AuditLogger(settings.audit_dir)
+        state_synchronizer = PollingSynchronizer(
+            client, credential_provider, handle_registry, event_store, ca
+        )
+        result_collector = ResultCollector(
+            client, event_store,
+            result_max_bytes=ca.result_max_bytes, max_retries=ca.max_retries,
+        )
+        # 审批回调：CLI 交互模式注入 notify.confirm；Web/飞书/测试不注入 → fail-closed
+        approval_callback = _build_codearts_approval_callback(settings)
+        scheduler = CodeArtsScheduler(
+            config=ca,
+            credential_provider=credential_provider,
+            client=client,
+            handle_registry=handle_registry,
+            state_synchronizer=state_synchronizer,
+            result_collector=result_collector,
+            risk_classifier=risk_classifier,
+            audit_logger=audit_logger,
+            event_store=event_store,
+            safety_guard=registry.safety,
+            approval_callback=approval_callback,
+        )
+        registry.register(CodeArtsDispatchTool(scheduler))
+        registry.register(CodeArtsStatusTool(scheduler))
+        registry.register(CodeArtsCancelTool(scheduler))
+        registry.register(CodeArtsCapabilityTool(scheduler))
+        # 进程重启接管在途委派（spec §4.2.2，接管时延上限 60s）
+        recovered = scheduler.recover_in_flight()
+        if recovered > 0:
+            logger.info("CodeArts 集成已装配，接管 %d 个在途委派", recovered)
+        else:
+            logger.info("CodeArts 集成已装配（4 工具已注册）")
+        # 挂载到 engine 供自省/热加载
+        engine.codearts_scheduler = scheduler  # type: ignore[attr-defined]
+        # 注入 workflow_run 工具以支持 executor="codearts" 步骤
+        if workflow_tool is not None:
+            workflow_tool._codearts_scheduler = scheduler  # noqa: SLF001
+    except CredentialError as exc:
+        logger.warning("CodeArts 凭证校验失败: %s（跳过装配）", exc)
+    except Exception as exc:  # noqa: BLE001 — 装配失败不阻断启动
+        logger.warning("CodeArts 集成装配失败（fail-open）: %s", exc, exc_info=True)
+
+
+def _build_codearts_approval_callback(settings: Settings) -> Any:
+    """构造 CodeArts 高风险动作审批回调.
+
+    CLI 交互模式 → 注入 notify.confirm 回调（osascript 授权弹窗）。
+    Web/飞书/测试模式 → 返回 None（fail-closed，灾难性动作默认拒绝）。
+    """
+    # 仅 CLI 模式注入回调（RUN_MODE != standard 时也可注入，但 Web/飞书不注入）
+    # 判定依据：是否有交互终端 + 非 Web/飞书进程
+    import sys
+
+    if not sys.stdin.isatty():
+        return None  # 无人值守模式 fail-closed
+    try:
+        from llm_loop.notify import confirm
+
+        def _approval(action_desc: str, risk_reason: str) -> bool:
+            message = f"CodeArts 高风险动作审批:\n动作: {action_desc[:200]}\n风险: {risk_reason[:200]}\n是否放行?"
+            return confirm("CodeArts 审批", message)
+
+        return _approval
+    except ImportError:
+        return None
 
 
 def _build_event_store(settings: Settings) -> Any:

@@ -15,6 +15,8 @@ dag:       有向无环图编排（P3-4）——步骤可声明 depends_on（id 
 
 from __future__ import annotations
 
+from typing import Any
+
 from llm_loop.core.message import ToolResult, ToolResultStatus
 
 MAX_STEPS = 6
@@ -88,6 +90,12 @@ class WorkflowRunTool:
                             "type": "integer",
                             "description": "dag/parallel/pipeline 通用节点级轮次预算（可选；透传子代理 max_rounds）",
                         },
+                        "executor": {
+                            "type": "string",
+                            "enum": ["local", "codearts"],
+                            "description": "执行器（可选；local=本地 SubAgentRunner（缺省零回归）；"
+                                           "codearts=经 CodeArtsScheduler 委派远端子 Agent 执行）",
+                        },
                     },
                     "required": ["task"],
                 },
@@ -97,8 +105,9 @@ class WorkflowRunTool:
         "required": ["mode", "steps"],
     }
 
-    def __init__(self, runner) -> None:
+    def __init__(self, runner, codearts_scheduler: Any = None) -> None:
         self._runner = runner
+        self._codearts_scheduler = codearts_scheduler
 
     def execute(self, **kwargs) -> ToolResult:
         mode = str(kwargs.get("mode", "")).strip().lower()
@@ -259,6 +268,9 @@ class WorkflowRunTool:
                 budget = max(1, int(raw_budget))
             except (ValueError, TypeError):
                 budget = None  # 非法预算如实忽略（用默认）
+        executor = str(step.get("executor", "local")).strip().lower()
+        if executor == "codearts":
+            return self._run_step_codearts(i, total, task, ctx, budget)
         try:
             if budget is not None:
                 result = self._runner.run(task=task, context=ctx, depth=0, max_rounds=budget)
@@ -287,3 +299,49 @@ class WorkflowRunTool:
         line += f"\n  [回答] {result.final_answer[:300]}"
         line += f"\n  [回答全文 {len(result.final_answer)} 字符，如需完整见上文]"
         return line, refused, result.truncated, result.final_answer, budget
+
+    def _run_step_codearts(self, i: int, total: int, task: str, ctx: str, budget: int | None):
+        """经 CodeArtsScheduler 委派远端子 Agent 执行步骤."""
+        if self._codearts_scheduler is None:
+            return (
+                f"[步骤 {i}/{total}] [状态: failure] CodeArts 集成未装配，无法执行远端步骤",
+                True,
+                False,
+                "",
+                budget,
+            )
+        try:
+            import uuid as _uuid
+
+            from llm_loop.codearts.models import DispatchTask, TimeoutBudget
+
+            dispatch_task = DispatchTask(
+                task_description=task,
+                trace_id=str(_uuid.uuid4()),
+                context_summary=ctx,
+                timeout_budget=TimeoutBudget(exec_s=budget * 60 if budget else 1800),
+            )
+            session_id = ""
+            try:
+                from llm_loop.core.run_context import current_session_id
+
+                session_id = current_session_id.get() or ""
+            except Exception:  # noqa: BLE001
+                pass
+            result = self._codearts_scheduler.dispatch(dispatch_task, session_id=session_id)
+        except Exception as exc:  # noqa: BLE001 — 委派异常如实标注
+            return (
+                f"[步骤 {i}/{total}] [状态: error] CodeArts 委派异常: {type(exc).__name__}: {exc}",
+                True,
+                False,
+                "",
+                budget,
+            )
+        st = result.status.value
+        refused = result.status.value != "success"
+        answer = result.content
+        budget_note = f" budget_rounds={budget}" if budget else ""
+        line = f"[步骤 {i}/{total}] [状态: {st}] executor=codearts{budget_note}"
+        line += f"\n  [回答] {answer[:300]}"
+        line += f"\n  [回答全文 {len(answer)} 字符]"
+        return line, refused, False, answer, budget
