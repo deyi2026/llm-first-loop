@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
+
 import pytest
 
 from llm_loop.task_quality import models as tq_models
 from llm_loop.task_quality.models import (
-    CheckIssue,
-    CheckOverallStatus,
     CheckerResult,
     CheckerStatus,
+    CheckIssue,
+    CheckOverallStatus,
     ConventionItem,
     ConventionSummary,
     ConventionType,
@@ -27,7 +29,6 @@ from llm_loop.task_quality.models import (
     RoundRecord,
     Severity,
     StaticCheckResult,
-    TestFramework as _TF,
 )
 
 
@@ -57,7 +58,7 @@ def test_precheck_guidance_feedback_field_error():
 def test_precheck_frozen():
     """frozen: 不可变."""
     r = PreCheckResult(valid=True)
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError):
         r.valid = False  # type: ignore[misc]
 
 
@@ -182,7 +183,7 @@ def test_dep_nodes_edges_frozen():
     e = DepEdge("m1", "t1", DepRelation.IMPORTED_BY)
     assert n.node_id == "m1"
     assert e.relation == DepRelation.IMPORTED_BY
-    with pytest.raises(Exception):
+    with pytest.raises(FrozenInstanceError):
         n.node_id = "hacked"  # type: ignore[misc]
 
 
