@@ -22,6 +22,14 @@ EVENT_SESSION_META_CHANGED = "session.meta_changed"
 EVENT_SESSION_FORKED = "session.forked"  # D3 预留：本期登记不触发行为
 EVENT_REQUEST_META = "request.meta"  # HARNESS-02(2026-08-14): 每轮请求快照（模型/思考/工具目录/预算）
 
+# ── CodeArts 子 Agent 调度集成事件类型（design.md §1.1.2，凭证明文绝不入 payload）──
+EVENT_CODEARTS_DISPATCHED = "codearts.dispatched"
+EVENT_CODEARTS_STATUS_SYNCED = "codearts.status_synced"
+EVENT_CODEARTS_STATUS_UNKNOWN = "codearts.status_unknown"
+EVENT_CODEARTS_COLLECTED = "codearts.collected"
+EVENT_CODEARTS_CANCELLED = "codearts.cancelled"
+EVENT_CODEARTS_RECOVERED = "codearts.recovered"
+
 
 @dataclass(frozen=True)
 class EventTypeSpec:
@@ -216,6 +224,91 @@ REGISTRY.register(
             "tools_count": "本轮注入的工具 schema 数量",
             "history_chars": "提交历史字符数",
             "budget": "本轮历史预算",
+        },
+    )
+)
+# ── CodeArts 委派事件类型登记（payload 不含凭证明文，spec §6.1/§6.2/§6.3）──
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_CODEARTS_DISPATCHED,
+        version=1,
+        fields={
+            "handle_id": "执行句柄标识",
+            "session_id": "关联会话标识",
+            "trace_id": "链路追踪标识",
+            "created_at": "句柄创建时间 ISO",
+            "task_description": "委派任务描述摘要（已脱敏）",
+            "priority": "优先级",
+            "risk_level": "风险等级",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_CODEARTS_STATUS_SYNCED,
+        version=1,
+        fields={
+            "handle_id": "执行句柄标识",
+            "session_id": "关联会话标识",
+            "trace_id": "链路追踪标识",
+            "status": "本地状态",
+            "remote_status": "远端状态",
+            "synced_at": "同步时间 ISO",
+            "drift": "是否状态漂移",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_CODEARTS_STATUS_UNKNOWN,
+        version=1,
+        fields={
+            "handle_id": "执行句柄标识",
+            "session_id": "关联会话标识",
+            "trace_id": "链路追踪标识",
+            "reason": "状态查询持续失败原因",
+            "failed_attempts": "连续失败次数",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_CODEARTS_COLLECTED,
+        version=1,
+        fields={
+            "handle_id": "执行句柄标识",
+            "session_id": "关联会话标识",
+            "trace_id": "链路追踪标识",
+            "status": "结果状态",
+            "final_answer_chars": "最终回答字符数（可能已截断）",
+            "truncated": "是否截断",
+            "original_bytes": "原始体积（截断时标注）",
+            "retained_bytes": "保留体积（截断时标注）",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_CODEARTS_CANCELLED,
+        version=1,
+        fields={
+            "handle_id": "执行句柄标识",
+            "session_id": "关联会话标识",
+            "trace_id": "链路追踪标识",
+            "cancelled_at": "取消时间 ISO",
+            "remote_cancelled": "远端是否确认取消",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_CODEARTS_RECOVERED,
+        version=1,
+        fields={
+            "handle_id": "执行句柄标识",
+            "session_id": "关联会话标识",
+            "trace_id": "链路追踪标识",
+            "recovered_at": "接管时间 ISO",
         },
     )
 )

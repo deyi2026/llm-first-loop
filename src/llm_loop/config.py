@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from llm_loop.codearts.config import CodeArtsSettings
+
 logger = logging.getLogger(__name__)
 
 
@@ -335,6 +337,11 @@ class Settings:
     # 走严格模式失败直接如实反馈，不自动降级（design §5.4 行为规则表核心）。
     model_fallbacks_raw: str = ""
 
+    # ── CodeArts 子 Agent 调度集成（design.md §2.1.2，缺省 fail-open 零装配）──
+    # CODEARTS_ENABLED=false 或凭证缺失时本组件不注册调度工具，对现有运行时零影响。
+    # 凭证类字段（ak/sk/iam_token/webhook_secret）仅从 os.environ 读取，不落盘不日志。
+    codearts: CodeArtsSettings = field(default_factory=CodeArtsSettings)
+
     # 运行时装配（非 env）: 由 builder 注入
     _extra: dict = field(default_factory=dict, repr=False, compare=False)
 
@@ -424,6 +431,14 @@ class Settings:
             "model_providers_configured": bool(self.model_providers_raw),
             # M49: Fallback 链配置状态（仅计数, 不暴露降级链明细, 密钥安全 DFX-SEC-02）
             "model_fallbacks_count": _count_fallbacks(self.model_fallbacks_raw),
+            # CodeArts 集成配置状态（AI 可自查，不暴露凭证细节）
+            "codearts_enabled": self.codearts.enabled,
+            "codearts_endpoint": self.codearts.endpoint,
+            "codearts_region": self.codearts.region,
+            "codearts_credential_kind": self.codearts.credential_kind(),
+            "codearts_webhook_enabled": self.codearts.webhook_enabled,
+            "codearts_approval_required": self.codearts.approval_required,
+            "codearts_max_concurrent": self.codearts.max_concurrent,
             # 配置项非法值回退标注（如实标注，AI 可感知；不含密钥与 raw 原文）
             "config_invalid_fallbacks": [
                 {
@@ -555,6 +570,28 @@ def load_settings() -> Settings:
         model_providers_raw=os.environ.get("MODEL_PROVIDERS", "").strip(),
         # M49（design §5.4）: MODEL_FALLBACKS 降级链原始值, 解析由 llm.pool 完成
         model_fallbacks_raw=os.environ.get("MODEL_FALLBACKS", "").strip(),
+        # CodeArts 子 Agent 调度集成（design.md §2.1.2，缺省 fail-open 零装配）
+        # 凭证类字段仅从 os.environ 读取，不落盘不日志（DFX-SEC-02）
+        codearts=CodeArtsSettings(
+            enabled=_env_bool("CODEARTS_ENABLED", False),
+            endpoint=os.environ.get("CODEARTS_ENDPOINT", "").strip(),
+            region=os.environ.get("CODEARTS_REGION", "cn-north-4").strip() or "cn-north-4",
+            project_id=os.environ.get("CODEARTS_PROJECT_ID", "").strip(),
+            ak=os.environ.get("CODEARTS_AK", "").strip(),
+            sk=os.environ.get("CODEARTS_SK", "").strip(),
+            iam_token=os.environ.get("CODEARTS_IAM_TOKEN", "").strip(),
+            api_version=os.environ.get("CODEARTS_API_VERSION", "v1").strip() or "v1",
+            connect_timeout_s=_env_int("CODEARTS_CONNECT_TIMEOUT_S", 10),
+            call_timeout_s=_env_int("CODEARTS_CALL_TIMEOUT_S", 30),
+            exec_timeout_s=_env_int("CODEARTS_EXEC_TIMEOUT_S", 1800),
+            poll_interval_s=_env_int("CODEARTS_POLL_INTERVAL_S", 5),
+            max_concurrent=_env_int("CODEARTS_MAX_CONCURRENT", 10),
+            max_retries=_env_int("CODEARTS_MAX_RETRIES", 3),
+            result_max_bytes=_env_int("CODEARTS_RESULT_MAX_BYTES", 1048576),
+            webhook_enabled=_env_bool("CODEARTS_WEBHOOK_ENABLED", False),
+            webhook_secret=os.environ.get("CODEARTS_WEBHOOK_SECRET", "").strip(),
+            approval_required=_env_bool("CODEARTS_APPROVAL_REQUIRED", True),
+        ),
         invalid_fallbacks=tuple(_fallback_notes),
         auto_adaptive_keys=frozenset(_auto_adaptive_keys),
     )

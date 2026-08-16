@@ -14,6 +14,12 @@ import multiprocessing
 import os
 
 from llm_loop.event_log.model import (
+    EVENT_CODEARTS_CANCELLED,
+    EVENT_CODEARTS_COLLECTED,
+    EVENT_CODEARTS_DISPATCHED,
+    EVENT_CODEARTS_RECOVERED,
+    EVENT_CODEARTS_STATUS_SYNCED,
+    EVENT_CODEARTS_STATUS_UNKNOWN,
     EVENT_CONTEXT_COMPRESSED,
     EVENT_MESSAGE_APPENDED,
     EVENT_REQUEST_META,
@@ -95,6 +101,12 @@ def test_registry_covers_five_types_with_fields():
         EVENT_SESSION_META_CHANGED,
         EVENT_SESSION_FORKED,
         EVENT_REQUEST_META,  # HARNESS-02: request.meta 请求快照
+        EVENT_CODEARTS_DISPATCHED,
+        EVENT_CODEARTS_STATUS_SYNCED,
+        EVENT_CODEARTS_STATUS_UNKNOWN,
+        EVENT_CODEARTS_COLLECTED,
+        EVENT_CODEARTS_CANCELLED,
+        EVENT_CODEARTS_RECOVERED,
     }
     assert set(REGISTRY.registered()) == names
     # 字段语义可查询
