@@ -55,7 +55,7 @@ def _fallback_notice_cooldown_s() -> float:
             if v >= 0:
                 return v
         except ValueError:
-            pass
+            pass  # 非法值 → 回落默认冷却时长（fail-open，不阻塞配置加载）
     return _DEFAULT_COOLDOWN_S
 
 

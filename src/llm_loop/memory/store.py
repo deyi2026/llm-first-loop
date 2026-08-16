@@ -41,6 +41,12 @@ class MemoryEntry:
     access_count: int = 0            # 检索命中次数
     last_access_at: str = ""         # 最近访问时间 ISO（空=从未被检索）
     decay_score: float = 1.0         # 衰减分（1.0=最新最活跃；随未访问天数下降）
+    # ── 升格判据事实源（EVO-20260816-fcdbe2e9）──
+    # inject_count/last_inject_at 仅记录"实际注入上下文"（build_memory_messages 最终 top_k），
+    # 与 access_count（检索命中，含未进 top_k 的噪音）区分——升格通道"命中复用 ≥3 次"以
+    # inject_count 为量化判据（architecture_status.memory.top_injected 可查）。
+    inject_count: int = 0            # 实际注入上下文次数
+    last_inject_at: str = ""         # 最近注入时间 ISO（空=从未被注入）
     # SkillZip ReZip 借鉴（执行感知反馈环）:
     # guidance_used_at: 最近一次被 M41 注入使用的时间（执行感知）
     # guidance_risk: 风险标记（注入后同场景仍失败累计，>=2 提示经验可能失效）
@@ -214,6 +220,39 @@ class MemoryStore:
             return round(1.0 * (0.5 ** max(0.0, days / _HALF_LIFE_DAYS)), 4)
         except (ValueError, TypeError):
             return 1.0
+
+    def mark_injected(self, entries: list[MemoryEntry]) -> None:
+        """标记条目已实际注入上下文（EVO-20260816-fcdbe2e9）.
+
+        仅内存态更新（inject_count+1 / last_inject_at 刷新），落盘沿用
+        engine.run 末 flush() 批量持久化路径（低频，不新增写盘点）。
+        与 search() 的 access_count 区分：此处只计真正进入注入消息的 top_k 条目。
+        """
+        if not entries:
+            return
+        now = datetime.now(UTC).isoformat()
+        for e in entries:
+            e.inject_count += 1
+            e.last_inject_at = now
+
+    def top_injected(self, limit: int = 5) -> list[dict]:
+        """按实际注入次数降序的头部条目（升格判断量化事实源）.
+
+        返回 [{id, type, inject_count, last_inject_at, content(截断)}]；
+        无注入记录 → 空列表（如实，不伪造）。
+        """
+        hits = [e for e in self._entries if e.inject_count > 0]
+        hits.sort(key=lambda e: (e.inject_count, e.last_inject_at), reverse=True)
+        return [
+            {
+                "id": e.id,
+                "type": e.type,
+                "inject_count": e.inject_count,
+                "last_inject_at": e.last_inject_at,
+                "content": e.content[:60],
+            }
+            for e in hits[:limit]
+        ]
 
     def flush(self) -> None:
         """强制落盘（供调用方在合适时机批量持久化，避免每轮检索全量写 JSON）."""
