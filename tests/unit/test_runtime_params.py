@@ -112,3 +112,21 @@ def test_current_snapshot():
     snap = rp.current()
     assert snap["max_iterations"] == 35
     assert snap["timeout_s"] == 120.0
+
+
+def test_task_quality_switches():
+    """D3: task_quality 开关白名单（0/1）与默认关闭."""
+    from types import SimpleNamespace
+
+    from llm_loop.core.runtime_params import RuntimeParams
+
+    s = SimpleNamespace(precheck_enabled=False, fix_loop_enabled=False)
+    shared: dict = {}
+    rp = RuntimeParams(s, strategy=shared)
+    assert rp.precheck_enabled is False
+    assert rp.fix_loop_enabled is False
+    # 模拟 adjust_strategy 写入共享 dict
+    shared["precheck_enabled"] = True
+    shared["fix_loop_enabled"] = True
+    assert rp.precheck_enabled is True
+    assert rp.fix_loop_enabled is True

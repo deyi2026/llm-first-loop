@@ -153,3 +153,21 @@ def test_trace_id_consistent():
     # 所有事件 trace_id 一致
     traces = {e[1].get("trace_id") for e in store.events}
     assert len(traces) == 1
+
+
+def test_fix_loop_disabled_via_enabled_fn():
+    """D3 动态开关: enabled_fn=False → 回执未启用."""
+    reg = _FakeRegistry({1: "5 passed"})
+    t = _tool(reg, _FakeSubAgent(), enabled_fn=lambda: False)
+    r = t.execute(check_command="pytest tests/")
+    assert r.status.value == "failure"
+    assert "未启用" in r.content
+    assert len(reg.calls) == 0  # 未执行任何检查
+
+
+def test_fix_loop_enabled_via_enabled_fn():
+    """D3 动态开关: enabled_fn=True → 正常执行."""
+    reg = _FakeRegistry({1: "5 passed"})
+    t = _tool(reg, _FakeSubAgent(), enabled_fn=lambda: True)
+    r = t.execute(check_command="pytest tests/")
+    assert r.status.value == "success"

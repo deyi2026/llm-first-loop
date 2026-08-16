@@ -61,6 +61,7 @@ class FixLoopTool:
         event_store: Any | None = None,
         audit_dir: Path | None = None,
         session_id: str = "",
+        enabled_fn: Any | None = None,  # D3: 动态开关回调（None=恒开；False=回执未启用）
     ) -> None:
         self._registry = registry
         self._subagent_runner = subagent_runner
@@ -70,9 +71,28 @@ class FixLoopTool:
         self._event_store = event_store
         self._audit_dir = audit_dir
         self._session_id = session_id
+        self._enabled_fn = enabled_fn
 
     def execute(self, **kwargs) -> ToolResult:
         """执行修复循环（同步；内部经子代理完成修复）."""
+        # D3: 动态开关关闭 → 如实回执未启用（不静默放行）
+        if self._enabled_fn is not None:
+            try:
+                if not self._enabled_fn():
+                    return ToolResult(
+                        status=ToolResultStatus.FAILURE,
+                        content=(
+                            "[状态: failure] fix_loop 未启用（task_quality 动态开关关闭）。"
+                            "可经 adjust_strategy 设置 fix_loop_enabled=1 开启。"
+                        ),
+                        tool_call_id="", tool_name=self.name,
+                    )
+            except Exception:  # noqa: BLE001 — 开关读取异常按关闭处理（fail-safe）
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content="[状态: failure] fix_loop 开关读取异常，按关闭处理",
+                    tool_call_id="", tool_name=self.name,
+                )
         check_command = str(kwargs.get("check_command", "") or "").strip()
         if not check_command:
             return ToolResult(

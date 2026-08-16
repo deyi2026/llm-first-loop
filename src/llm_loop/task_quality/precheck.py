@@ -44,13 +44,15 @@ class PreCheckLayer:
         max_depth: int = 10,
         event_store: Any | None = None,
         session_id: str = "",
+        enabled_fn: Any | None = None,  # D3: 动态开关回调（None=恒开；False=放行零回归）
     ) -> None:
         self._max_depth = max_depth
         self._event_store = event_store
         self._session_id = session_id
+        self._enabled_fn = enabled_fn
 
     def check(self, arguments: dict, schema: dict) -> PreCheckResult:
-        """校验参数（schema 缺失/异常 fail-open 放行）.
+        """校验参数（schema 缺失/异常/开关关闭 fail-open 放行）.
 
         Args:
             arguments: 工具调用参数（dict）。
@@ -59,6 +61,13 @@ class PreCheckLayer:
         Returns:
             PreCheckResult（valid=True 放行 / valid=False + FieldError 清单）。
         """
+        # D3: 动态开关关闭 → 恒放行（零回归）
+        if self._enabled_fn is not None:
+            try:
+                if not self._enabled_fn():
+                    return PreCheckResult(valid=True)
+            except Exception:  # noqa: BLE001 — 开关读取异常放行
+                return PreCheckResult(valid=True)
         start = time.perf_counter()
         # fail-open: schema 缺失/非 dict → 跳过预检放行
         if not schema or not isinstance(schema, dict):

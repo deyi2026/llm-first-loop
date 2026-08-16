@@ -74,3 +74,21 @@ def test_precheck_does_not_bypass_safety():
     reg2.register(ExecuteCommandTool(timeout_s=5))
     r = reg2.execute(_call(tool_name="execute_command", command="echo hi"))
     assert r.status.value == "blocked"
+
+
+def test_precheck_disabled_via_enabled_fn():
+    """D3 动态开关: enabled_fn 返回 False → 恒放行（零回归）."""
+    reg = ToolRegistry(precheck_layer=PreCheckLayer(enabled_fn=lambda: False))
+    reg.register(_DummyTool())
+    # 参数错误也应放行（开关关闭）
+    r = reg.execute(_call(count="abc", name="x"))
+    assert r.status.value == "success"
+
+
+def test_precheck_enabled_via_enabled_fn():
+    """D3 动态开关: enabled_fn 返回 True → 拦截参数错误."""
+    reg = ToolRegistry(precheck_layer=PreCheckLayer(enabled_fn=lambda: True))
+    reg.register(_DummyTool())
+    r = reg.execute(_call(count="abc", name="x"))
+    assert r.status.value == "failure"
+    assert "参数预检失败" in r.content

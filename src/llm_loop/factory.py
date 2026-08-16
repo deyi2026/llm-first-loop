@@ -645,6 +645,31 @@ def build_engine(settings: Settings) -> LoopEngine:
         session_store=session_store,
     )
     registry.register(SpawnSubAgentTool(subagent_runner))
+
+    # task_quality 六路径装配（2026-08-17，D3 定案: 动态开关默认关零回归）:
+    # 路径 A 预检层注入 ToolRegistry（安全检查前拦截参数错误）；
+    # 路径 I FixLoopTool 注册（子代理内修复，P0-D1）。
+    from llm_loop.task_quality.error_locate import ErrorLocator
+    from llm_loop.task_quality.fix_loop import FixLoopTool
+    from llm_loop.task_quality.precheck import PreCheckLayer
+
+    _event_store = _build_event_store(settings)
+    # 预检层（动态开关读取 runtime；关闭时 check 恒放行 = 零回归）
+    registry.precheck_layer = PreCheckLayer(
+        event_store=_event_store,
+        session_id="",
+        enabled_fn=lambda: getattr(runtime, "precheck_enabled", False),
+    )
+    # FixLoopTool（动态开关：关闭时 execute 回执未启用）
+    registry.register(FixLoopTool(
+        registry=registry,
+        subagent_runner=subagent_runner,
+        error_locator=ErrorLocator(event_store=_event_store),
+        event_store=_event_store,
+        audit_dir=settings.audit_dir,
+        enabled_fn=lambda: getattr(runtime, "fix_loop_enabled", False),
+    ))
+    logger.info("task_quality 装配完成: precheck_layer + fix_loop 已注册（开关经 adjust_strategy 动态控制）")
     # EVO-20260814 P1-B: 工作流编排（parallel 聚合 / pipeline 串联，对齐 Harness 多 Agent 编排）
     workflow_tool = WorkflowRunTool(subagent_runner)
     registry.register(workflow_tool)
