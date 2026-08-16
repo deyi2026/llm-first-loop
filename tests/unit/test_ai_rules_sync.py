@@ -92,6 +92,15 @@ _RULE_KEYWORDS = {
         "adjust_strategy",  # 正常推进 → 调大续跑
         "硬上限 500",  # 程序兜底边界
     ],
+    # RULE-AI-12: 模型身份声明约束（2026-08-15 身份幻觉实证 A4' 条款化，EVO-91044aa7）
+    "RULE-AI-12": [
+        "模型身份声明约束",  # 规则编号名（SoT 标题 + prompt 注入段标题）
+        "model_catalog",  # 身份以 tool 回执为准
+        "architecture_status",  # 回执来源二
+        "禁止依据训练先验自报身份",  # 核心禁令（训练先验=真实幻觉源）
+        "未核验",  # 无回执时如实声明而非给具体身份
+        "以回执为准",  # 回执冲突处理
+    ],
 }
 
 
@@ -129,6 +138,7 @@ def test_rules_consistent_both_sides():
                 "RULE-AI-08",
                 "RULE-AI-09",
                 "RULE-AI-10",
+                "RULE-AI-12",  # 身份条款多子规则（EVO-91044aa7）
             }
             else 600
         )

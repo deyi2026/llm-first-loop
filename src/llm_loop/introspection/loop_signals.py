@@ -41,6 +41,34 @@ class LoopSignalDetector:
         self.popup_pending_review = popup_pending_review
         # EVO-20260810-86e777d1 缺陷修复: 已弹窗提示过的建议 ID（确认或拒绝后不再重复弹）
         self._prompted_ids: set[str] = set()
+        # EVO-20260815-69ac0bd0: 进程代码时效提示冷却（每进程仅提示一次，防刷屏）
+        self._stale_notified: bool = False
+
+    # ── EVO-20260815-69ac0bd0: 进程代码时效检测（S1 问题机制化，仅提示不阻断）──
+    def check_proc_stale(self) -> ArchitectureEvent | None:
+        """本进程代码时效性检测（工作区含未提交改动 → 提示 commit/重启）.
+
+        复用 proc_version.check_self_stale() 检测（fail-open）；每进程仅提示一次
+        防刷屏（冷却）；结果只读，是否处理归 AI（S1 教训：检测存在≠被感知，
+        提升为每轮末主动提醒而非埋 architecture_status 深层字段）。
+        """
+        if self._stale_notified:
+            return None  # 冷却：每进程仅提示一次
+        from llm_loop.introspection.proc_version import check_self_stale
+
+        hint = check_self_stale()
+        if not hint:
+            return None
+        self._stale_notified = True
+        return ArchitectureEvent(
+            event_type=ArchitectureEventType.DEGRADATION,
+            fact="本进程代码时效性提示（工作区含未提交改动）",
+            reason=hint,
+            suggestion=(
+                "是否处理由你决定（提示只读不阻断循环）；涉及刚改动模块时，"
+                "建议 git commit 后重启长驻进程确保新代码生效（EVO-20260815-69ac0bd0）。"
+            ),
+        )
 
     # ── T63/T65 自我评估触发检测（逐字搬移自 loop.py:362-389，M16 收敛语义不变）──
     def check_eval_trigger(

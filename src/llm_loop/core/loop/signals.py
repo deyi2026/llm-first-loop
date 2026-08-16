@@ -26,6 +26,24 @@ class _SignalsMixin:
         self._check_eval_trigger(sess, rounds)
         self._check_evolution_executing(sess)
         self._check_pending_review(sess)
+        self._check_proc_stale(sess)  # EVO-20260815-69ac0bd0
+
+    def _check_proc_stale(self: LoopEngine, sess) -> None:
+        """EVO-20260815-69ac0bd0: 进程代码时效提醒（每轮末，仅提示不强制）.
+
+        复用 LoopSignalDetector 冷却（每进程仅提示一次）；无 stale/检测关闭 → 不注入。
+        """
+        if self.loop_signal_detector is None:
+            return
+        event = self.loop_signal_detector.check_proc_stale()
+        if event is None:
+            return
+        msg = self._report(
+            event.event_type, fact=event.fact, reason=event.reason, suggestion=event.suggestion
+        )
+        if msg is not None:
+            msg.metadata = {**msg.metadata, "injected_system": True}
+            sess.messages.append(msg)
 
     def _check_eval_trigger(self: LoopEngine, sess, rounds: int, *, milestone: bool = False) -> None:
         """自我评估触发检测（T63/T65: 每轮末 + run 完成里程碑）.

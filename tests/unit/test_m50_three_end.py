@@ -703,3 +703,94 @@ def test_handle_model_command_without_model_pool(tmp_path):
     assert result is not None
     assert result.success is False
     assert "不可用" in result.reply
+
+
+# ── 9. refresh_config executor 热生效（EVO-20260815-b3339561 Phase 1）──
+
+from llm_loop.introspection.corrections import CorrectionContext  # noqa: E402
+from llm_loop.introspection.providers_registry_reload import (  # noqa: E402
+    install_refresh_executor,
+)
+
+
+class _FakeEngine:
+    """install_refresh_executor 测试用 engine stub（仅持 correction_ctx + model_pool）."""
+
+    def __init__(self, pool: ModelClientPool) -> None:
+        self.correction_ctx = CorrectionContext()
+        self.correction_ctx.model_pool = pool
+
+
+def _executor_env(tmp_path: Path, monkeypatch) -> None:
+    """executor 内部 load_settings() 的 env 最小集（data_dir 指向 tmp，防读生产 providers.json）."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("MODEL_PROVIDERS", "")
+    monkeypatch.setenv("LLM_WIRE_PROTOCOL", "openai")
+
+
+def test_refresh_executor_syncs_default_client_credentials(tmp_path, monkeypatch):
+    """EVO-20260815-b3339561: env 变更后 executor 原地同步 default_client 凭据 + 回执区分两类."""
+    _write_providers_json(tmp_path, json.loads(_TWO_PROVIDER_JSON))
+    settings = _make_settings(tmp_path, model_providers_raw="")
+    fake = _FakeLLM()  # 无 api_key/base_url 属性（旧装配未注入）→ getattr None → 必同步
+    pool = _make_pool(settings, fake)
+    engine = _FakeEngine(pool)
+    install_refresh_executor(engine)
+
+    _executor_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("LLM_API_KEY", "brand-new-key")
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.kimi.com/coding/v1")
+    monkeypatch.setenv("LLM_MODEL", "k3")
+
+    msg = engine.correction_ctx.refresh_executor()
+
+    assert fake.api_key == "brand-new-key"
+    assert fake.base_url == "https://api.kimi.com/coding/v1"
+    assert fake.model == "k3"
+    assert "已原地同步" in msg and "api_key" in msg
+    assert "需重启" in msg  # 冻结字段如实标注（诚实回执）
+
+
+def test_refresh_executor_no_credential_change_reports_verified(tmp_path, monkeypatch):
+    """EVO-20260815-b3339561: 凭据与 env 一致时无写入，回执如实标注'已核验一致'."""
+    _write_providers_json(tmp_path, json.loads(_TWO_PROVIDER_JSON))
+    settings = _make_settings(tmp_path, model_providers_raw="")
+    fake = _FakeLLM()
+    fake.api_key = "same-key"  # 与 env 一致 → 不触发同步
+    fake.base_url = "https://api.deepseek.com/v1"  # 与 env 一致（model/wire_protocol 类属性已一致）
+    pool = _make_pool(settings, fake)
+    engine = _FakeEngine(pool)
+    install_refresh_executor(engine)
+
+    _executor_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("LLM_API_KEY", "same-key")
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.deepseek.com/v1")  # 与 _make_settings 一致
+    monkeypatch.setenv("LLM_MODEL", "deepseek-v4-flash")
+
+    msg = engine.correction_ctx.refresh_executor()
+
+    assert fake.api_key == "same-key"
+    assert "已核验与新配置一致" in msg
+
+
+def test_refresh_executor_settings_failure_honest_receipt(tmp_path, monkeypatch):
+    """EVO-20260815-b3339561: settings 读取失败 → 如实失败回执 + registry/default 均不动."""
+    _write_providers_json(tmp_path, json.loads(_TWO_PROVIDER_JSON))
+    settings = _make_settings(tmp_path, model_providers_raw="")
+    fake = _FakeLLM()
+    pool = _make_pool(settings, fake)
+    engine = _FakeEngine(pool)
+    install_refresh_executor(engine)
+    old_registry = pool.registry
+
+    # executor 内函数级导入 → monkeypatch 模块属性生效（load_env_file 禁掉防 .env 回填）
+    monkeypatch.setattr("llm_loop.config.load_env_file", lambda: None)
+    def _boom():
+        raise RuntimeError("boom-settings")
+    monkeypatch.setattr("llm_loop.config.load_settings", _boom)
+
+    msg = engine.correction_ctx.refresh_executor()
+
+    assert "[重载失败]" in msg and "boom-settings" in msg
+    assert pool.registry is old_registry  # 未动
+    assert getattr(fake, "api_key", None) is None  # 未动
