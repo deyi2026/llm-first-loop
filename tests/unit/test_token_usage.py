@@ -95,6 +95,7 @@ def test_loop_aggregates_tokens_across_rounds(tmp_path, monkeypatch: pytest.Monk
             provider="fake",
             prompt_tokens=100,
             completion_tokens=10,
+            prompt_cache_hit_tokens=50,
         ),
         # 第 2 轮: 最终回答
         LLMResponse(
@@ -103,6 +104,7 @@ def test_loop_aggregates_tokens_across_rounds(tmp_path, monkeypatch: pytest.Monk
             provider="fake",
             prompt_tokens=200,
             completion_tokens=20,
+            prompt_cache_hit_tokens=70,
         ),
     ]
     from .test_model_attribution import _FakeLLMClient
@@ -116,6 +118,7 @@ def test_loop_aggregates_tokens_across_rounds(tmp_path, monkeypatch: pytest.Monk
     assert result.final_answer == "完成"
     assert result.tokens_in == 300  # 100 + 200 累加
     assert result.tokens_out == 30  # 10 + 20 累加
+    assert result.tokens_cache_hit == 120  # 50 + 70 累加（M58 缓存命中）
 
 
 def test_loop_tokens_default_zero(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:

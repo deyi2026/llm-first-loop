@@ -66,7 +66,8 @@ class Message:
     )
     model_used: str = ""  # M51: 仅 assistant 消息：实际生成模型标签（provider/model）
     tokens_in: int = 0  # M52: 仅 assistant 消息：本轮 run 累计 prompt tokens
-    tokens_out: int = 0  # M52: 仅 assistant 消息：本轮 run 累计 completion tokens
+    tokens_out: int = 0
+    tokens_cache_hit: int = 0  # M58: 本轮 run 前缀缓存命中 token（0=未提供/未命中）
     metadata: dict = field(default_factory=dict)  # 截断标注/降级标注等
 
     def to_llm_dict(self) -> dict:

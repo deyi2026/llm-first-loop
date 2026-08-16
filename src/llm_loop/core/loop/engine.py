@@ -23,6 +23,7 @@ from llm_loop.config import Settings
 # M53 拆分: 职责 mixin（signals 信号检查 / runtime 运行时参数 / fallback 模型降级链 / routing 模型路由 / overflow overflow 处理 / tool_exec 工具执行）
 from llm_loop.core.loop.archive import _ArchiveMixin
 from llm_loop.core.loop.fallback import _FallbackMixin
+from llm_loop.core.loop.interop import _InteropMixin
 from llm_loop.core.loop.overflow import _OverflowMixin
 from llm_loop.core.loop.routing import (
     _CHARS_PER_TOKEN_EST,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
@@ -95,6 +96,8 @@ class LoopResult:
     # M52: 本次 run 的 token 用量（工具循环多次调用累加；provider 未返回 usage 时为 0，如实不伪造）
     tokens_in: int = 0
     tokens_out: int = 0
+    # M58: 本次 run 前缀缓存命中 token（provider 返回 prompt_cache_hit_tokens/cached_tokens；未返回为 0）
+    tokens_cache_hit: int = 0
     # P1-1: 最终回答轮完整思考链（供 Web done 事件透传前端渲染）；工具轮思考链不在此字段
     reasoning_content: str | None = None
 
@@ -117,7 +120,7 @@ def build_session_snapshot_text(
     parts.append("若你对当前任务/已完成/下一步/未决事项的定位漂移，以本条为锚点重新校准。")
     return "；".join(parts)
 
-class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _OverflowMixin, _ToolExecMixin, _ArchiveMixin):
+class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _OverflowMixin, _ToolExecMixin, _InteropMixin, _ArchiveMixin):
     """五阶段核心循环控制器."""
 
     def __init__(
@@ -434,7 +437,8 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         self._reset_overflow_state()  # R4 增强: 每次 run 重置 overflow 注入计数
         model_used = ""  # M51: 本轮实际使用的模型标签（每轮 LLM 调用时刷新）
         tokens_in = 0  # M52: 本次 run 累计 prompt tokens
-        tokens_out = 0  # M52: 本次 run 累计 completion tokens
+        tokens_out = 0
+        tokens_cache_hit = 0  # M58: 本次 run 前缀缓存命中 token（省钱可观测）
         resp: Any = None  # M20 THK-04: 最终回答轮思考链来源（LLM 异常/停滞路径为 None）
 
         while True:
@@ -606,6 +610,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             # M52: 聚合本轮 token 用量（含 fallback 成功响应；0 = provider 未提供）
             tokens_in += resp.prompt_tokens
             tokens_out += resp.completion_tokens
+            tokens_cache_hit += resp.prompt_cache_hit_tokens
 
             # 无工具调用 → 最终回答 → 真诚回答阶段
             if not resp.tool_calls:
@@ -738,6 +743,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 model_used=model_used,
                 tokens_in=tokens_in,
                 tokens_out=tokens_out,
+                tokens_cache_hit=tokens_cache_hit,
             )
             if final_answer
             else Message(role="assistant", content="（无回答输出）", source=MessageSource.USER)
@@ -801,6 +807,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             model_used=model_used,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
+            tokens_cache_hit=tokens_cache_hit,
             reasoning_content=resp.reasoning_content if resp is not None else None,
         )
 
@@ -889,6 +896,11 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         # 记忆消息作为前置注入
         base = [m for m in memory_msgs] + list(sess.messages)
         prefix_len = len(memory_msgs)
+        # RULE-AI-14 协调通道: 程序级自动注入 DSH→LFL 待处理消息（每轮 run 必感知，
+        # 非仅提示词引导；实现见 core/loop/interop.py _InteropMixin，fail-open）
+        # 注入位置: memory 之后、历史之前（2026-08-16 优化: system_prompt+memory 前缀
+        # 有/无消息轮字节级一致，服务端缓存命中不受 inbox 影响）
+        base, prefix_len = self._inject_interop_messages(base, prefix_len)
         # EVO-20260811-9ccdec97: 会话状态快照节流——每间隔注入状态帧（定位锚点，fail-open）
         # M58 配置面收敛: 间隔走 runtime（动态优先，AI 可调）
         # P1-10: 仅无锚时注入（锚定后快照为推送式注入（已打标被跳过提交）, 且避免锚点换算复杂化）

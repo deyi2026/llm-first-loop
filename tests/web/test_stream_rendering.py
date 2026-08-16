@@ -24,6 +24,7 @@ CHAT_RESPONSE_FIELDS = [
     "model_used",
     "tokens_in",
     "tokens_out",
+    "tokens_cache_hit",
 ]
 
 

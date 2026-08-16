@@ -38,6 +38,7 @@ class LLMResponse:
     reasoning_content: str | None = None  # M20 THK-02/03
     prompt_tokens: int = 0  # M52: 缺失保持 0 = 未提供，不伪造
     completion_tokens: int = 0
+    prompt_cache_hit_tokens: int = 0  # M58: provider 前缀缓存命中 token（省钱可观测）
 
 
 @dataclass
@@ -67,6 +68,7 @@ class _StreamAcc:
     finish_reason: str = ""
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    prompt_cache_hit_tokens: int = 0
 
 
 def _finish_response(
@@ -84,6 +86,7 @@ def _finish_response(
         reasoning_content="".join(acc.reasoning_parts) or None,
         prompt_tokens=acc.prompt_tokens,
         completion_tokens=acc.completion_tokens,
+        prompt_cache_hit_tokens=acc.prompt_cache_hit_tokens,
     )
 
 
@@ -211,6 +214,11 @@ class LLMClient:
                     if isinstance(usage, dict):
                         acc.prompt_tokens = int(usage.get("prompt_tokens") or 0)
                         acc.completion_tokens = int(usage.get("completion_tokens") or 0)
+                        # M58: 前缀缓存命中（DeepSeek prompt_cache_hit_tokens；Kimi 兜底 cached_tokens）
+                        hit = usage.get("prompt_cache_hit_tokens")
+                        if hit is None:
+                            hit = usage.get("cached_tokens")
+                        acc.prompt_cache_hit_tokens = int(hit or 0)
                     choices = chunk.get("choices") or []
                     if not choices:
                         continue
@@ -292,6 +300,8 @@ class LLMClient:
                         usage = (evt.get("message") or {}).get("usage") or {}
                         acc.prompt_tokens = int(usage.get("input_tokens") or 0)
                         acc.completion_tokens = int(usage.get("output_tokens") or 0)
+                        # M58: Anthropic 缓存命中（cache_read_input_tokens）
+                        acc.prompt_cache_hit_tokens = int(usage.get("cache_read_input_tokens") or 0)
                     elif evt_type == "content_block_start":
                         block = evt.get("content_block") or {}
                         if block.get("type") == "tool_use":
