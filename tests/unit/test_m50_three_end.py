@@ -636,8 +636,13 @@ def test_refresh_registry_failure_keeps_old(tmp_path):
     assert len(old_pool.registry.providers) == old_provider_count
 
 
-def test_refresh_registry_via_corrections(tmp_path, build_test_engine):
+def test_refresh_registry_via_corrections(tmp_path, build_test_engine, monkeypatch):
     """修正工具 refresh_config 触发 → 中文回执 + 注册表更新."""
+    # CI 无密钥（key 不上传策略）: refresh_config 的 executor 会重读 env + load_settings(),
+    # 缺 LLM_API_KEY/LLM_BASE_URL 会走"[重载失败]"路径——注入假值保证走成功路径
+    # （测试意图是验证"模型目录重载"回执，不依赖真实密钥）。
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.deepseek.com/v1")
     _write_providers_json(
         tmp_path,
         {
