@@ -9,10 +9,17 @@
 
 from __future__ import annotations
 
+import os
+
 from collections.abc import Callable
 from typing import Any
 
 from llm_loop.core.message import Message, MessageSource
+
+# EVO-20260816-380f1c2e: 压缩目标比例（裁到预算×此值，留缓冲降低断点频率）。
+# 实证: 前缀缓存下压缩轮必断点；裁到 100% → 每轮压缩 → 永久断点（命中率 ~1%）；
+# 裁到 60% → 留 40% 增长空间 → 稳定期纯追加高命中（97%+）。可经环境变量覆盖（缓存纪律: 配置低频改）。
+_COMPRESS_TARGET_RATIO = float(os.environ.get("COMPRESS_TARGET_RATIO", "0.6"))
 
 
 def _top_keywords(messages: list[Message], top: int = 5) -> list[str]:
@@ -474,19 +481,26 @@ def build_history_messages(
 
     kept_groups: list[list[Message]] = []
     archived: list[Message] = []
-    budget = max_chars
+    # EVO-20260816-380f1c2e（缓存友好压缩）: 归档目标从"裁到预算上限"改为"裁到预算×0.6 留缓冲"。
+    # 前缀缓存机制: 追加消息不破坏命中（实证 97%+），但修改已提交序列（压缩）必断点。
+    # 裁到 100% 上限 → 下一轮必再超 → 每轮压缩 → 前缀每轮变化 → 永久断点（实测 1% 命中率）。
+    # 裁到 60% → 压缩后留 40% 增长空间 → 稳定期从"几轮"延长到"几十轮"（该时段纯追加、高命中）。
+    archive_budget = int(max_chars * _COMPRESS_TARGET_RATIO)
+    # 最新组单条超限兜底仍按全预算判断（不因留缓冲而更激进截断单条消息;
+    # 该分支语义=单条消息就超整个预算的极端场景, 保留语义与留缓冲解耦）。
+    trim_budget = max_chars
     for group in reversed(atomic_groups):
         group_len = sum(len(mm.content) for mm in group)
-        if budget - group_len < 0 and kept_groups:
+        if archive_budget - group_len < 0 and kept_groups:
             archived.extend(group)  # 整组归档（配对原子性：不拆散）
             continue
-        if group_len > budget and not kept_groups:
+        if group_len > trim_budget and not kept_groups:
             # 最新组单条/整组超限: 另存全文 + 精简注入（组内字段保留，仅 content 截断）
             archived.extend(group)
             trimmed_group: list[Message] = []
             for mm in group:
                 trimmed = (
-                    mm.content[: max(budget - 100, 100)]
+                    mm.content[: max(trim_budget - 100, 100)]
                     + "\n…[本消息已压缩，完整内容已另存，可用 search_archive 检索]…"
                 )
                 trimmed_group.append(
@@ -503,11 +517,11 @@ def build_history_messages(
                         metadata=mm.metadata,
                     )
                 )
-                budget -= len(trimmed)
+                archive_budget -= len(trimmed)
             kept_groups.insert(0, trimmed_group)
             continue
         kept_groups.insert(0, group)
-        budget -= group_len
+        archive_budget -= group_len
 
     # 另存被丢弃消息（信息零丢失）
     if archive_sink is not None and session_id and archived:
