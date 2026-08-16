@@ -308,6 +308,7 @@ def chat_stream(
                 "model_used": result.model_used,
                 "tokens_in": result.tokens_in,
                 "tokens_out": result.tokens_out,
+                "tokens_cache_hit": getattr(result, "tokens_cache_hit", 0),  # M58: 缓存命中
                 "reasoning_content": result.reasoning_content,  # P1-1: 终态兜底
             },
         )

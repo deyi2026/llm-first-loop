@@ -27,6 +27,7 @@ class ChatResponse(BaseModel):
     model_used: str = ""  # M51: 实际生成回复的模型标签（provider/model）
     tokens_in: int = 0  # M52: 本轮 prompt tokens（0 = provider 未提供）
     tokens_out: int = 0  # M52: 本轮 completion tokens
+    tokens_cache_hit: int = 0  # M58: 本轮前缀缓存命中 token（0=未提供/未命中）
     reasoning_content: str | None = None  # P1-1: 最终回答轮思考链透传（缺失/思考模式关闭为 None）
 
 
@@ -61,6 +62,7 @@ class MessageItem(BaseModel):
     model_used: str = ""  # M51: assistant 消息模型标签透传（页脚显示）
     tokens_in: int = 0  # M52: assistant 消息 prompt tokens 透传
     tokens_out: int = 0  # M52: assistant 消息 completion tokens 透传
+    tokens_cache_hit: int = 0  # M58: 前缀缓存命中 token
     tool_calls: list[dict] | None = None  # assistant 工具声明透传（历史恢复出产物/正文链接）
 
 

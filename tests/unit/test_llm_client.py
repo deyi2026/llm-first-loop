@@ -464,3 +464,75 @@ def test_wire_protocol_default_openai_zero_regression():
     url = client_cls.return_value.stream.call_args.args[1]
     assert url.endswith("/chat/completions")
     assert final.content == "好"
+
+
+# ── M58: 前缀缓存命中 token 解析（DeepSeek prompt_cache_hit_tokens / Kimi cached_tokens / Anthropic cache_read）──
+
+def test_chat_cache_hit_deepseek_field():
+    """OpenAI 兼容（DeepSeek）：usage.prompt_cache_hit_tokens 解析入 LLMResponse."""
+    lines = [
+        'data: {"usage": {"prompt_tokens": 100, "completion_tokens": 5, "prompt_cache_hit_tokens": 70}}',
+        'data: {"choices": [{"delta": {"content": "ok"}}]}',
+        'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
+        resp = _client().chat(messages=[{"role": "user", "content": "hi"}], tools=[])
+    assert resp.prompt_tokens == 100
+    assert resp.prompt_cache_hit_tokens == 70
+
+
+def test_chat_cache_hit_kimi_cached_tokens():
+    """OpenAI 兼容（Kimi 兜底）：usage.cached_tokens 解析入 LLMResponse."""
+    lines = [
+        'data: {"usage": {"prompt_tokens": 200, "completion_tokens": 8, "cached_tokens": 150}}',
+        'data: {"choices": [{"delta": {"content": "ok"}}]}',
+        'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
+        resp = _client().chat(messages=[{"role": "user", "content": "hi"}], tools=[])
+    assert resp.prompt_tokens == 200
+    assert resp.prompt_cache_hit_tokens == 150
+
+
+def test_chat_cache_hit_missing_zero():
+    """usage 无缓存字段 → 0（不伪造）."""
+    lines = [
+        'data: {"usage": {"prompt_tokens": 50, "completion_tokens": 3}}',
+        'data: {"choices": [{"delta": {"content": "ok"}}]}',
+        'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
+        resp = _client().chat(messages=[{"role": "user", "content": "hi"}], tools=[])
+    assert resp.prompt_cache_hit_tokens == 0
+
+
+def test_anthropic_cache_read_tokens():
+    """Anthropic：usage.cache_read_input_tokens 解析入 LLMResponse."""
+    lines = [
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":300,"output_tokens":0,"cache_read_input_tokens":250}}}',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}',
+        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
+        "data: [DONE]",
+    ]
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _stream_resp(lines)
+        client = _client(wire_protocol="anthropic", api_key="k-an")
+        it = client.chat_stream(
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[],
+        )
+        final = None
+        while True:
+            try:
+                next(it)
+            except StopIteration as e:
+                final = e.value
+                break
+    assert final.prompt_tokens == 300
+    assert final.prompt_cache_hit_tokens == 250
