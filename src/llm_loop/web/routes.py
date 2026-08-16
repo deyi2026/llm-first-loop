@@ -423,6 +423,53 @@ def health() -> dict:
     return {"status": "ok", "service": SERVICE_NAME, "version": SERVICE_VERSION}
 
 
+@router.get("/api/v1/sessions/{session_id}/stats")
+def session_stats(session_id: str, request: Request) -> dict | Response:
+    """会话统计（M59，对齐 DSH 统计栏）：轮/步/tokens/缓存命中/耗时聚合.
+
+    从会话消息聚合（只读，不触发 run）：
+    turns=assistant 消息数；steps=tool 消息数；tokens 累加；缓存命中率；
+    llm_ms/tool_ms 总和；首 token 平均；tok/s（输出/LLM 耗时）。
+    """
+    engine = _engine_from(request)
+    sess = engine.session.load(session_id)
+    if sess is None:
+        return UTF8JSONResponse(status_code=404, content={"error": "session_not_found", "detail": f"会话不存在: {session_id}"})
+    msgs = getattr(sess, "messages", []) or []
+    turns = steps = 0
+    tokens_in = tokens_out = cache_hit = 0
+    llm_ms = tool_ms = 0.0
+    ttft_sum = 0.0
+    ttft_n = 0
+    for m in msgs:
+        if m.role == "assistant":
+            turns += 1
+            tokens_in += getattr(m, "tokens_in", 0) or 0
+            tokens_out += getattr(m, "tokens_out", 0) or 0
+            cache_hit += getattr(m, "tokens_cache_hit", 0) or 0
+            llm_ms += getattr(m, "llm_ms", 0.0) or 0.0
+            ttft = getattr(m, "ttft_ms", 0.0) or 0.0
+            if ttft > 0:
+                ttft_sum += ttft
+                ttft_n += 1
+        elif m.role == "tool":
+            steps += 1
+            tool_ms += getattr(m, "duration_ms", 0.0) or 0.0
+    hit_rate = round(cache_hit / tokens_in * 100, 1) if tokens_in > 0 else 0.0
+    tok_s = round(tokens_out / (llm_ms / 1000.0), 1) if llm_ms > 0 else 0.0
+    return {
+        "turns": turns,
+        "steps": steps,
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+        "cache_hit": cache_hit,
+        "cache_hit_rate": hit_rate,
+        "llm_ms": round(llm_ms, 1),
+        "tool_ms": round(tool_ms, 1),
+        "ttft_avg_ms": round(ttft_sum / ttft_n, 1) if ttft_n else 0.0,
+        "tok_s": tok_s,
+    }
+
 @router.get("/api/v1/interop/messages")
 def list_interop_messages(request: Request) -> dict:
     """协调通道消息（只读，不触发 run）——web 端展示给用户看.

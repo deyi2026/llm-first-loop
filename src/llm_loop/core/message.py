@@ -68,6 +68,9 @@ class Message:
     tokens_in: int = 0  # M52: 仅 assistant 消息：本轮 run 累计 prompt tokens
     tokens_out: int = 0
     tokens_cache_hit: int = 0  # M58: 本轮 run 前缀缓存命中 token（0=未提供/未命中）
+    llm_ms: float = 0.0  # M59: 本轮 run LLM 调用总耗时（毫秒；0=未记录）
+    ttft_ms: float = 0.0  # M59: 首 token 延迟（毫秒；0=未记录/无文本）
+    duration_ms: float = 0.0  # M59: 工具执行耗时（毫秒，tool 消息）
     metadata: dict = field(default_factory=dict)  # 截断标注/降级标注等
 
     def to_llm_dict(self) -> dict:
@@ -140,4 +143,5 @@ class ToolResult:
             status=self.status,
             tool_name=self.tool_name,
             error_detail=self.error_detail,
+            duration_ms=self.duration_ms,
         )

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
+import { SessionStats } from "./SessionStats";
 import { useCurrentSessionId, useSessions } from "../../core/stores";
 import { fetchAllMessages } from "../../core/api";
 import { conversationStore, loadHistory, useConversation } from "../../core/conversation";
@@ -52,6 +53,7 @@ export function Conversation() {
         <div className="v2-conversation-header">
           <span className="v2-conversation-title">{current.title || current.session_id}</span>
           {conv.lastError && <span className="v2-conv-error">{conv.lastError}</span>}
+          {currentId && <SessionStats sessionId={currentId} />}
           <div style={{ flex: 1 }} />
           <button
             type="button"
