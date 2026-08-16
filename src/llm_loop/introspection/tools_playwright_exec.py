@@ -107,19 +107,38 @@ def js(expr):
     return _page.evaluate(expr)
 
 def axtree_text():
-    snap = _page.accessibility.snapshot()
+    # Playwright Python 新版无 page.accessibility 属性——走 CDP（对齐 Hermes 的 Accessibility.getFullAXTree）
+    cdp = _page.context.new_cdp_session(_page)
+    data = cdp.send("Accessibility.getFullAXTree")
+    raw = data.get("nodes", [])
+    nodes = {n["nodeId"]: n for n in raw}
+    children = {}
+    roots = []
+    for n in raw:
+        pid = n.get("parentId")
+        if pid and pid in nodes:
+            children.setdefault(pid, []).append(n["nodeId"])
+        else:
+            roots.append(n["nodeId"])
     lines = []
-    def _walk(node, depth=0):
-        if not node:
+    def _walk(nid, depth):
+        if len(lines) >= 500:  # 行数熔断（防巨型页面 token 爆炸）
             return
-        role = node.get("role", "")
-        name = node.get("name", "")
+        n = nodes.get(nid)
+        if not n:
+            return
+        role = (n.get("role") or {}).get("value", "")
+        name = (n.get("name") or {}).get("value", "")
         if name:
             lines.append("  " * depth + f"[{role}] {name}")
-        for c in node.get("children", []) or []:
-            _walk(c, depth + 1)
-    _walk(snap)
-    return "\\n".join(lines)
+        for cid in children.get(nid, []):
+            _walk(cid, depth + 1)
+    for r in roots:
+        _walk(r, 0)
+    text = "\\n".join(lines)
+    if len(text) > 20000:  # 字符熔断
+        text = text[:20000] + "\\n... [截断: axtree 超 20000 字符，用 js() 精确取目标区域]"
+    return text
 
 def screenshot(name):
     safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in str(name))[:60]
