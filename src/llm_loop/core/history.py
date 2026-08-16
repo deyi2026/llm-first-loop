@@ -228,7 +228,7 @@ def _layer_trim(
             Message(
                 role=m.role,
                 content=(
-                    f"[工具输出已分层] 共 {len(full)} 字符，原文已另存压缩档案（{_hint}）：\n"
+                    f"[工具输出已分层] 共 {len(full)} 字符（触发阈值: {threshold} 字符），原文已另存压缩档案（{_hint}）：\n"
                     f"{digest}"
                 ),
                 source=m.source,

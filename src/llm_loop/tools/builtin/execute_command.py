@@ -80,7 +80,8 @@ def _truncate_output(content: str, command: str = "") -> str:
     )
     return (
         f"{head}\n"
-        f"[输出已截断] 事实: 完整输出 {len(content)} 字符，仅展示首 {keep_head} + 末 {keep_tail} 字符。"
+        f"[输出已截断] 事实: 完整输出 {len(content)} 字符，仅展示首 {keep_head} + 末 {keep_tail} 字符"
+        f"（触发阈值: {max_chars} 字符，TOOL_TRIM_MAX/HEAD/TAIL 环境变量可调）。"
         f"\n原因: 上下文优化（方案 4 工具输出截断）。"
         f"\n建议: 如需完整内容可用 search_archive 检索{'，搜索关键词: ' + kw if kw else '（按命令相关词检索）'}。\n"
         f"{tail}"
@@ -93,6 +94,11 @@ class ExecuteCommandTool:
         "在本地 shell 执行命令并返回标准输出/错误。何时用: 运行脚本、查询系统状态、安装依赖、文件操作等。"
         "何时不用: 纯读取文件应优先 read_file；仅获取网页用 web_fetch。"
         "失败对策: 非零退出码会如实返回并标注；破坏性命令（rm -rf 根目录等）会被安全边界硬阻断，请改用安全方案。"
+        "状态契约: 每次调用是独立 shell 进程——cd/环境变量/命令历史不跨调用持久（用 workdir 参数或命令内 cd && 串联）；"
+        "run_in_background 任务跨调用持久，经 job_output/job_kill 管理；"
+        "输出超 3000 字符将截断为首 1500 + 末 1500（完整原文另存压缩档案可 search_archive 检索；"
+        "阈值由 TOOL_TRIM_MAX/HEAD/TAIL 环境变量控制）；"
+        "长任务拆多次中型调用防超时丢进度，大量中间产物落盘文件而非全靠回显。"
     )
     parameters = {
         "type": "object",
