@@ -2,6 +2,18 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+### 安全：playwright 执行防线补强（DSH 独立审查后修复，2026-08-16）
+- **URL 沙箱 host 精确校验**：原正则无 `$` 锚定，`userinfo@host`/域后缀可逃逸（如
+  `https://a.feishu.cn@example.com/`）；现改用 urlparse 解析 hostname 精确集合校验
+  （仅 feishu.cn 含子域/localhost/127.0.0.1），同时修复裸 `feishu.cn` 误拦与大小写不敏感
+- **命名空间隔离**：模型代码经 `_run_model` 在独立命名空间 exec，仅可见 helper 七件套+
+  内置；`_page/_browser/_pw/_OUT` 内部对象不可见——堵死"裸 API 直连绕过白名单"路径
+- **AST 门控纵深**：新增拦截动态导入（`__import__`/`import_module`/getattr 间接引用）、
+  动态执行（exec/eval/compile）、`sys.modules` 取已加载模块（任何访问形态）
+- **明确开放面**：模型代码在子进程内可读写工作区文件、发起任意网络请求，属设计未承诺
+  防护的信任边界，需产品方显式决策
+- 附：DSH 工具 DSH_HOME 可写性回退（长驻 agent 沙箱下 ~/.dsh 不可写时回落项目内 data/dsh-home）
+
 ### 安全：提交安全扫描——防 AI 自动提交误传敏感/私密/错误文件
 - `scripts/git_security_scan.sh`（pre-commit 钩子 + CI job）：拦截 data/ 运行时数据、.env*/日志/私钥、
   高价值密钥模式（sk-/AKIA/ghp_/app_secret 等）、本地绝对路径（用户目录、/home/）、>1MB 大文件
