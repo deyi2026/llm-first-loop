@@ -133,17 +133,30 @@ class BackgroundRunner:
 
     # ── 启动 ──
     def start(
-        self, session_id: str, user_text: str, model: str | None = None
+        self,
+        session_id: str,
+        user_text: str,
+        model: str | None = None,
+        *,
+        resume: bool = False,
     ) -> tuple[RunHandle | None, queue.Queue | None]:
         """注册 + 起后台线程；返回 (handle, queue)，调用方订阅消费.
 
-        同会话已有 running → (None, None)（调用方按 session_busy 处理）；
-        disabled → (None, None)。
+        - resume=False（默认）: 同会话已有 running → (None, None)（调用方按 session_busy 处理）
+        - resume=True: 同会话已有 running → 返回 (None, 新订阅队列)（重连订阅已有 run，
+          刷新/切回会话场景；done 后 handle 已移除 → 返回 (None, None)）
+        - disabled → (None, None)
         """
         if not self.enabled:
             return None, None
         with self._guard:
-            if session_id in self._registry:
+            existing = self._registry.get(session_id)
+            if existing is not None:
+                if resume:
+                    return None, existing._bus.subscribe()
+                return None, None
+            if resume:
+                # resume 语义=订阅已有 run；无进行中 run 时无可订阅（不启动新 run）
                 return None, None
             handle = RunHandle(session_id=session_id)
             self._registry[session_id] = handle
