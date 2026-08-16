@@ -424,7 +424,7 @@ def health() -> dict:
 
 
 @router.get("/api/v1/sessions/{session_id}/stats")
-def session_stats(session_id: str, request: Request) -> dict | Response:
+def session_stats(session_id: str, request: Request) -> Any:
     """会话统计（M59，对齐 DSH 统计栏）：轮/步/tokens/缓存命中/耗时聚合.
 
     从会话消息聚合（只读，不触发 run）：
