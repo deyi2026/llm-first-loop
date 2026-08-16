@@ -4,6 +4,10 @@
 
 ## v0.6.8（2026-08-16）
 
+### 优化：降级提示 stamp 限频——同类降级 24h 内主消息流只提示一次
+- 同一降级对（from→to）重复降级时，提示消息 24h（`FALLBACK_NOTICE_COOLDOWN_S` 可调，0=关闭）内仅注入一次；stamp 落盘 `<data_dir>/state/fallback_notice_stamps.json`，重启仍生效
+- 仅抑制消息注入：status 降级态 / 审计 / action_trace 每次照常记录（可观测性不降级）；链全失败汇总不限频（每次如实告知）
+
 ### 新增：工作区变更感知——guard 检测 + 提醒重启（P1-12）
 - **背景**：运行中进程不感知工作区变化（.env/providers.json/src/skills 改动需重启生效，外部编辑/git pull/agent 自改后一直跑旧状态）
 - **机制（手动确认式，不无差别自动重启）**：guard 每轮对监视文件做内容哈希指纹对比基线；变化 → 写 `data/workspace_changed.json`（变更清单 + 建议命令）+ guard.log 记录，**不自动重启**；AI 经 `architecture_status.workspace_changed` 自查可见；确认后 `restart_system.sh restart` 末尾自动 ack（清 flag + 刷新基线闭环）

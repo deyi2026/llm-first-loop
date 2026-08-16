@@ -40,6 +40,7 @@
 | `TOOL_TRIM_THRESHOLD` / `TOOL_TRIM_AGE` | 2000 / 0 | 降级阈值（字符）/ 年龄（距最新消息条数） |
 | `TOOL_MAX_OUTPUT_CHARS` | 100000 | 工具输出上限（超出→另存档案+截断标注，信息可检索找回） |
 | `TOOL_SUMMARY_THRESHOLD` | 12000 | 工具输出分层阈值（超出→首/尾各 2500 字符摘要注入 + 原文另存可检索 + 提炼要点行动指引；v0.5.0 由 5000 放大） |
+| `FALLBACK_NOTICE_COOLDOWN_S` | 86400 | 模型降级提示限频（2026-08-16，EVO-20260816-37633629③）：同一降级对（from→to）的主消息流提示在该间隔内只注入一次（nudge without nagging）；仅抑制消息注入，status/审计/action_trace 每次照常记录；0=关闭限频。stamp 落盘 `<data_dir>/state/fallback_notice_stamps.json` |
 
 ## 四、记忆与检索
 
