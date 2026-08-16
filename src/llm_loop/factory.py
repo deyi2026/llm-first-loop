@@ -567,6 +567,13 @@ def build_engine(settings: Settings) -> LoopEngine:
     # M50（design §5.6）: 注入增强版 refresh_config executor — 重读 providers.json
     install_refresh_executor(engine)
 
+    # EVO 后台 run 改造（对齐 DSH 后台任务）：装配后台 run 执行器——SSE 端点改订阅，
+    # run 在后台 daemon 线程执行，断连只停订阅、结果落盘；RUNNER_BACKGROUND=0 回退旧直驱
+    from llm_loop.core.loop.runner import BackgroundRunner
+
+    engine.runner = BackgroundRunner(engine, enabled=settings.runner_background)
+    logger.info("后台 run 执行器已装配 enabled=%s", settings.runner_background)
+
     # 工作区管理（对齐 DSH Workspace）：注册表 + 旧会话迁移 + 引擎挂载当前工作区。
     # 默认工作区 = 启动 cwd（当前行为一致：工具/会话根=项目根，零回归）。
     from llm_loop.workspace.store import WorkspaceStore
