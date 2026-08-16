@@ -141,6 +141,33 @@ def get_process_versions(limit: int = 30) -> dict:
     }
 
 
+def check_self_stale() -> str:
+    """本进程代码时效性轻量检查（EVO-20260815-69ac0bd0 S1 问题机制化）.
+
+    检测逻辑复用（git_head/workspace_dirty），结果提升为"主动提示"而非
+    "被动可查"（埋 architecture_status 深层字段、AI 不主动查看不到的治理）。
+
+    Returns:
+        "" = 一致（head 一致且工作区干净）；否则一句话提示（含 commit+重启建议）。
+        提示为只读信息，AI 自主决定是否处理；检查 fail-open，异常返回 "" 不阻断。
+    """
+    try:
+        head = git_head()
+        if head == "no-git":
+            return ""
+        dirty = workspace_dirty()
+        if not dirty:
+            return ""
+        return (
+            f"[进程代码时效提示] 工作区含未提交改动（HEAD {head}）——本进程加载的代码"
+            "可能与磁盘不一致；如涉及刚改动的模块，判断结果可能基于旧逻辑。"
+            "建议及时 git commit；长驻进程（feishu/web 网关等）需重启后新代码生效。"
+            "是否处理由你决定（提示只读，不阻断）。"
+        )
+    except Exception:  # noqa: BLE001 — 检查异常如实降级，不阻断循环
+        return ""
+
+
 def record_change_log(tool_name: str, detail: str, session_id: str = "") -> None:
     """变更通告：修改类工具调用记录（多会话协调，可检索，fail-open）.
 

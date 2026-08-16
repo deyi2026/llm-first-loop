@@ -94,16 +94,46 @@ def install_refresh_executor(engine: object) -> None:
         return
 
     def _refresh_executor() -> str:
-        # 取当前 settings (engine 提供)
-        settings = getattr(engine, "settings", None)
-        if settings is None:
-            return (
-                "[重载失败] engine.settings 缺失, 无法读取新配置。"
-            )
-        msg, new_registry = refresh_provider_registry(model_pool, settings)
+        # EVO-20260815-b3339561 Phase 1（2026-08-15）:
+        # 原缺口: 回执声明"重载完成"但 default_client 持启动时旧凭据（MINIMAX_API_KEY
+        # 写入 .env 后重载，新 provider 生效而默认路由仍用旧 key）——声明未真实生效。
+        # 修复: executor 自行重读 env + settings（幂等），对比并原地同步 default_client
+        # 凭据（LLMClient 非冻结 dataclass），回执如实区分即时生效/需重启两类。
+        from llm_loop.config import load_env_file, load_settings
+
+        try:
+            load_env_file()  # 环境优先（不覆盖已存在值）、文件缺失 fail-open
+            new_settings = load_settings()
+        except Exception as exc:  # noqa: BLE001 — env/settings 读取失败如实回执，不动 registry
+            return f"[重载失败] 配置读取失败: {type(exc).__name__}: {exc}。当前保持旧注册表与旧凭据。"
+
+        msg, new_registry = refresh_provider_registry(model_pool, new_settings, re_read_settings=False)
         # 成功: 应用 new_registry (失败 → new_registry == pool.registry, 写入无副作用)
         model_pool.registry = new_registry
         model_pool.clear_cache()
-        return msg
+
+        # ── default_client 凭据原地同步（变更才写，无变更不动）──
+        default_client = getattr(model_pool, "default_client", None)
+        synced: list[str] = []
+        if default_client is not None:
+            for attr, new_val in (
+                ("api_key", new_settings.llm_api_key),
+                ("base_url", new_settings.llm_base_url),
+                ("model", new_settings.llm_model),
+                ("wire_protocol", new_settings.llm_wire_protocol),
+            ):
+                if new_val and getattr(default_client, attr, None) != new_val:
+                    setattr(default_client, attr, new_val)
+                    synced.append(attr)
+
+        if synced:
+            hot_note = f"默认 client 已原地同步（变更: {', '.join(synced)}），即时生效。"
+        else:
+            hot_note = "默认 client 凭据已核验与新配置一致（无需变更）。"
+        restart_note = (
+            "其余 Settings 字段为启动时装配（冻结），变更需重启进程生效；"
+            "运行参数（max_iterations/timeout_s/history_budget）请用 adjust_strategy 即时调整。"
+        )
+        return f"{msg} {hot_note}{restart_note}"
 
     ctx.refresh_executor = _refresh_executor

@@ -43,7 +43,7 @@ if [[ -z "${DEEPSEEK_API_KEY:-}" ]]; then
   exit 2
 fi
 
-echo "=== [1/2] real_llm 冒烟（$([ "$QUICK" = 1 ] && echo quick || echo full)）==="
+echo "=== [1/3] real_llm 冒烟（$([ "$QUICK" = 1 ] && echo quick || echo full)）==="
 if [[ "$QUICK" = 1 ]]; then
   .venv/bin/python -m pytest \
     tests/integration/test_real_llm_smoke.py::test_real_llm_smoke_self_evaluate_and_evolve \
@@ -55,12 +55,20 @@ else
     -m real_llm -q
 fi
 
+# EVO-20260815-f22ab8dd: 真实 tool-call 往返门禁（v0.6.5 arguments 透传回归补洞）
+# 协议矩阵: 默认 openai(deepseek); 其他协议经 SMOKE_WIRE_PROTOCOL=anthropic|google
+#           + SMOKE_API_KEY/SMOKE_BASE_URL/SMOKE_MODEL 逐协议执行（无 key 自动 skip）
+echo "=== [1.5/3] 真实 tool-call 往返（arguments str→dict 解析门禁）==="
+.venv/bin/python -m pytest \
+  tests/integration/test_real_llm_smoke.py::test_real_llm_tool_call_arguments_roundtrip \
+  -m real_llm -q
+
 if [[ "$QUICK" = 1 ]]; then
   echo "✅ quick 冒烟通过（完整回归请不带 --quick 运行）"
   exit 0
 fi
 
-echo "=== [2/2] 评测集真实运行 ==="
+echo "=== [2/3] 评测集真实运行 ==="
 .venv/bin/python scripts/run_eval.py --output "docs/metrics/eval_$(date +%Y%m%d-%H%M%S)"
 
 echo "✅ 本地真实回归全部通过（报告见 docs/metrics/eval_* 最新目录）"

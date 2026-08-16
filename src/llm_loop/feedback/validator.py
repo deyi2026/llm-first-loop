@@ -66,6 +66,13 @@ _ABILITY_MARKERS = [
 # 完成标志（表"已完成/已发生"）
 _COMPLETION_MARKERS = ["已", "了", "成功", "完成", "did", "has ", "have ", "done"]
 
+# EVO-20260815-640fc96a: B2 计划陈述豁免标记（未来时态/规划句非完成声明）
+# 仅当句子不含完成标志时豁免（"已执行计划中的迁移"仍保留校验）
+_PLAN_MARKERS = ["下一步", "建议执行", "优先级", "计划", "待办", "接下来", "后续将", "即将"]
+
+# B3 markdown 结构行（代码 fence/表格行/引用块）为引用内容，不进入声明抽取
+_MARKDOWN_STRUCT_PREFIXES = ("|", ">")
+
 
 @dataclass
 class DeclarationCheckResult:
@@ -139,6 +146,9 @@ class DeclarationValidator:
     def _extract_declarations(self, answer: str) -> list[str]:
         """扫描回答文本提取完成声明（动词 + 宾语）."""
         decls: list[str] = []
+        # EVO-20260815-640fc96a B3: markdown 结构行（fence 内代码/表格行/引用块）
+        # 为引用内容而非行为声明，抽取前剥离
+        answer = self._strip_markdown_structures(answer)
         for m in re.finditer(
             r"[^。！？.!?\n]{0,40}(" + "|".join(_DECLARE_VERBS) + r")[^。！？.!?\n]{0,40}", answer
         ):
@@ -148,8 +158,42 @@ class DeclarationValidator:
             # EVO-20260810-50816b30: 能力陈述（"可以调用工具执行命令"）非完成声明，跳过
             if self._is_ability_statement(text):
                 continue
+            # EVO-20260815-640fc96a B2: 计划陈述（"下一步优先级：①…②…"）未来时态
+            # 本质无回执可佐证，跳过；含完成标志（"已执行计划中的命令"）不豁免
+            if self._is_plan_statement(text):
+                continue
             decls.append(text)
         return decls
+
+    @staticmethod
+    def _strip_markdown_structures(answer: str) -> str:
+        """剥离 markdown 结构行（EVO-20260815-640fc96a B3）.
+
+        代码 fence 块整体移除；表格行（| 开头）/引用块（> 开头）按行移除——
+        引用内容非行为声明（0814 误报实证：代码片段/表格行被判 False）。
+        """
+        text = re.sub(r"```.*?```", "", answer, flags=re.DOTALL)
+        lines = [
+            ln for ln in text.splitlines()
+            if not ln.lstrip().startswith(_MARKDOWN_STRUCT_PREFIXES)
+        ]
+        return "\n".join(lines)
+
+    @staticmethod
+    def _is_plan_statement(text: str) -> bool:
+        """计划陈述判定（EVO-20260815-640fc96a B2）: 含计划标记且不含完成标志.
+
+        例: "下一步优先级：①修复 ②验证" → 计划（跳过）；
+            "已执行计划中的迁移" → 完成声明（保留，有"已"标志）。
+        注意: 身份声明（"我是 X"）与比较结论（"与文档一致"）不在动词表内，
+        天然不进入抽取——本豁免不影响真阳性捕获。
+        """
+        has_plan = any(m in text for m in _PLAN_MARKERS)
+        if not has_plan:
+            return False
+        lower = text.lower()
+        has_completion = any(m in lower for m in _COMPLETION_MARKERS)
+        return not has_completion
 
     @staticmethod
     def _is_ability_statement(text: str) -> bool:

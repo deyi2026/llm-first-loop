@@ -518,3 +518,87 @@ def test_real_llm_v4_thinking_comparison(tmp_path):
         )
     else:
         print(f"[AI-04] 任务完成度一致（两态均 {on['task_done']}）——如实记录，不静默宣称增益")
+
+
+# ── EVO-20260815-f22ab8dd：真实 tool-call 往返用例（v0.6.5 回归漏检补洞）──
+
+
+def test_real_llm_tool_call_arguments_roundtrip(tmp_path):
+    """真实 provider tool_call.arguments 必须为 dict（v0.6.5 str 透传回归门禁）.
+
+    漏检根因：FakeLLM 单测返回预构造 dict，覆盖不到真实 provider 的 str→dict 解析路径。
+    本用例强制真实模型发起带参工具调用（read_file，必填 path），断言：
+      ① 至少一轮工具调用且真实执行（success/failure 五态之一）；
+      ② arguments 解析为 dict（v0.6.5 原样透传 str 则此处直接失败）；
+      ③ 回执不出现 T38 "参数必须为 JSON 对象" 字样。
+    覆盖 wire_protocol：默认 deepseek=openai 兼容；anthropic/google 经 SMOKE_WIRE_PROTOCOL
+    + SMOKE_API_KEY + SMOKE_BASE_URL + SMOKE_MODEL 显式开启（无 key 自动 skip，协议矩阵驱动）。
+    """
+    import os
+
+    from llm_loop.config import Settings
+    from llm_loop.factory import build_engine
+
+    wire = os.environ.get("SMOKE_WIRE_PROTOCOL", "").strip().lower()
+    if wire:
+        api_key = os.environ.get("SMOKE_API_KEY", "").strip()
+        base_url = os.environ.get("SMOKE_BASE_URL", "").strip()
+        model = os.environ.get("SMOKE_MODEL", "").strip()
+        if not (api_key and base_url and model):
+            pytest.skip(f"SMOKE_WIRE_PROTOCOL={wire} 但 SMOKE_API_KEY/BASE_URL/MODEL 未配齐")
+    else:
+        wire = "openai"
+        api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("LLM_API_KEY", "")
+        base_url = os.environ.get("LLM_BASE_URL") or "https://api.deepseek.com/v1"
+        model = os.environ.get("LLM_MODEL") or "deepseek-v4-flash"
+        if not api_key:
+            pytest.skip("无真实 LLM key（DEEPSEEK_API_KEY/LLM_API_KEY）")
+
+    settings = Settings(
+        llm_api_key=api_key,
+        llm_base_url=base_url,
+        llm_model=model,
+        llm_wire_protocol=wire,
+        data_dir=str(tmp_path / "data"),
+        max_iterations=8,
+        tool_timeout_s=30.0,
+    )
+    engine = build_engine(settings)  # type: ignore[arg-type]
+
+    prompt = (
+        "调用 read_file 工具读取文件 /tmp/llm_loop_smoke_probe.txt（这是硬性要求："
+        "你必须真的发起 read_file 工具调用，path 参数填 /tmp/llm_loop_smoke_probe.txt）。"
+        "文件不存在也没关系，拿到工具回执后用一句话报告结果。"
+    )
+    resp = engine.run_turn(prompt)
+    assert resp, "真实 LLM 未返回响应"
+
+    # ① 至少发起一轮工具调用且经 dispatcher 真实执行
+    tool_msgs = [
+        m for m in engine.session.messages
+        if getattr(m, "role", "") == "tool" and getattr(m, "tool_call_id", "")
+    ]
+    assert tool_msgs, (
+        f"模型未发起任何工具调用（协议={wire}）。若为模型不配合可重跑；"
+        "连续多次为空需排查 tool-use prompt/协议解析"
+    )
+
+    # ② assistant.tool_calls.arguments 必须为 dict（v0.6.5 str 透传核心断言）
+    parsed_args = 0
+    for m in engine.session.messages:
+        if getattr(m, "role", "") == "assistant" and getattr(m, "tool_calls", None):
+            for tc in m.tool_calls:
+                args = getattr(tc, "arguments", None)
+                assert isinstance(args, dict), (
+                    f"tool_call.arguments 为 {type(args).__name__} 而非 dict（v0.6.5 回归信号，"
+                    f"协议={wire}）: {str(args)[:200]}"
+                )
+                parsed_args += 1
+    assert parsed_args > 0, "存在工具回执但未找到 assistant tool_calls 记录（事件链断裂）"
+
+    # ③ 回执不得出现 T38 str 校验失败字样（佐证 arguments 已正确 loads）
+    for tm in tool_msgs:
+        assert "参数必须为 JSON 对象" not in (tm.content or ""), (
+            f"dispatcher 收到 str 参数（v0.6.5 回归信号，协议={wire}）: {tm.content[:200]}"
+        )
+    print(f"[tool-roundtrip] 协议={wire} 工具调用 {parsed_args} 次，arguments 全部为 dict，回执无 T38 字样")
