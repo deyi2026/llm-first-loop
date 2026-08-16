@@ -110,6 +110,8 @@ def _apply_setup(engine, setup: dict) -> None:
 
     仅测试基建直调 status 公共方法（record_tool_history/record_exception），产品零改动。
     注入失败 fail-open（status 未装配/异常时跳过，样本照常运行）。
+    EVO-20260816-4fb09dd0: setup 含 inject_guidance 时同步注入行动引导
+    （"发现失败率偏高/异常 → 应调用 adjust_strategy 调整"），对齐程序给事实、AI 决策。
     """
     try:
         from llm_loop.core.message import ToolResultStatus
@@ -132,6 +134,30 @@ def _apply_setup(engine, setup: dict) -> None:
             status.record_exception(
                 "action.tool_loop", FileNotFoundError("/no/such/eval 预置异常信号")
             )
+        # B: 行动引导注入（对齐 HARNESS-04 预警模式——程序给事实，AI 决策）
+        if setup.get("inject_guidance"):
+            try:
+                from llm_loop.core.message import Message, MessageSource
+
+                sess = getattr(engine, "session", None)
+                sid = getattr(engine, "session_id", "")
+                if sess is not None:
+                    msg = Message(
+                        role="system",
+                        content=(
+                            "[行动引导] 检测到工具失败率偏高（2 条 FAILURE）与异常记录。"
+                            "若确认异常，应调用 adjust_strategy 调整相关运行参数（如 max_iterations/"
+                            "timeout_s）并说明依据——检查后行动，而非仅汇报。"
+                        ),
+                        source=MessageSource.SYSTEM,
+                        metadata={"injected_system": True},
+                    )
+                    try:
+                        sess.messages.append(msg)
+                    except Exception:  # noqa: BLE001 — 注入失败 fail-open
+                        pass
+            except Exception:  # noqa: BLE001 — 引导注入失败 fail-open
+                pass
     except Exception:  # noqa: BLE001 — 注入失败 fail-open
         pass
 

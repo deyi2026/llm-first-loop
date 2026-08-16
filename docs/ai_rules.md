@@ -129,6 +129,8 @@
 
 **规则**：调用架构/检索类工具（architecture_status/search_records 等）执行自查后，应基于自查结果走完动作链：若经 `architecture_status` 自查发现异常指标（工具异常率偏高/连续重复动作/预算占用偏高/上下文压力），应调用 `adjust_strategy` 落地调整，并在回答中说明调整前后值（如将 max_iterations 从 5 调整为 15）（自查→调整闭环）；无需调整时，在回答中如实说明判断依据（自查→明确结论闭环，避免自查即止）。最终回答应显式提及本轮所用工具名（如"我通过 architecture_status 查询了运行状态""search_records 检索结果显示…"），使动作链在回答层面可核验、可追溯。
 
+**检查即行动（EVO-20260816-4fb09dd0 补充）**：发现异常指标后**默认应立即行动**（调用 adjust_strategy 调整），避免"多轮调查仅汇报"——调查型行为（反复 architecture_status/search_records 深挖而不调整）是动作链断裂的常见形态（评测实测：必调整场景失败样本查 2-4 步不行动、通过样本查 1 次立即调整）。检查的目的是行动依据，不是替代行动；一次自查确认异常即调整，确需更多信息才二次查询（避免为"再确认"而查询）。
+
 **程序角色**：仅提供自查数据（architecture_status 原始数据）与修正通道（adjust_strategy 执行通道），不强制自查后必须调整、不替 AI 判断是否需要调整（AI 决定一切原则保留）。
 
 **正例**：经 architecture_status 自查发现工具失败率偏高，调用 adjust_strategy 将 max_iterations 从 5 调整为 15，并在回答中说明调整前后值（"我通过 architecture_status 发现工具失败率偏高，已用 adjust_strategy 将 max_iterations 从 5 调整为 15"）。
