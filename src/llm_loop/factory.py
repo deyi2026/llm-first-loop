@@ -26,6 +26,8 @@ from llm_loop.llm.client import LLMClient
 from llm_loop.memory.archive import ArchiveStore
 from llm_loop.memory.store import MemoryStore
 from llm_loop.subagent.runner import SubAgentRunner
+from llm_loop.tools.builtin.dsh_session_read import DshSessionReadTool
+from llm_loop.tools.builtin.dsh_task import DshTaskTool
 from llm_loop.tools.builtin.edit_file import EditFileTool
 from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
 from llm_loop.tools.builtin.job_kill import JobKillTool
@@ -603,6 +605,9 @@ def build_engine(settings: Settings) -> LoopEngine:
     registry.register(SpawnSubAgentTool(subagent_runner))
     # EVO-20260814 P1-B: 工作流编排（parallel 聚合 / pipeline 串联，对齐 Harness 多 Agent 编排）
     registry.register(WorkflowRunTool(subagent_runner))
+    # DSH-ORCHESTRATION（2026-08-16）: 调度 DeepSeek Harness headless 执行任务（进程级子代理）
+    registry.register(DshTaskTool())
+    registry.register(DshSessionReadTool())
     return engine
 
 
@@ -669,13 +674,19 @@ def _build_memory_stats_fn(memory) -> Any:
     def _memory_stats() -> dict:
         try:
             entries = memory.all()
-            return {
+            stats = {
                 "entries": memory.count(),
                 "recent": [
                     {"content": str(e.content)[:80], "type": getattr(e, "entry_type", "")}
                     for e in entries[-3:]
                 ],
             }
+            # EVO-20260816-fcdbe2e9: 升格判据量化事实源（实际注入次数降序，无注入记录→空列表如实）
+            try:
+                stats["top_injected"] = memory.top_injected(limit=5)
+            except AttributeError:
+                stats["top_injected"] = []  # 旧 store 无该方法 → 如实空列表（不伪造）
+            return stats
         except Exception as exc:  # noqa: BLE001 — 读取失败如实标注（fail-open）
             return {"note": f"读取失败: {type(exc).__name__}: {exc}", "entries_hint": None}
 

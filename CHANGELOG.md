@@ -4,6 +4,21 @@
 
 ## v0.6.8（2026-08-16）
 
+### 新增：DSH 编排工具集——调度 DeepSeek Harness 执行任务（P0/P1/P2）
+- `dsh_task`：进程级子代理（spawn `dsh --profile headless "<task>"`）——任务下发/超时整树终止/退出码五态映射/3 万字符截断/审计落盘；协议 v2 支持 `ctx_path`（上下文文件引用并入）、`report_format`（结构化汇报模板）、`acceptance`（验收清单逐项自检）、`retry`（失败新 session 重试，timeout 不重试）、任务文本脱敏（敏感 env 值替换）、`background`（JobRegistry 后台执行，多任务并行 fan-out）
+- `dsh_session_read`：DSH session 事件日志回放（zstd JSONL）——最终回答 + 工具调用轨迹 + 关键词过滤/指定 session 检索，补全"只回最终文本"的中间过程盲区
+- 新增依赖 `zstandard`
+
+### 修复：长任务重启保护——重启预检 + feishu 中断补偿 + guard 去抖
+- `restart_system.sh restart` 前检测 feishu 处理中消息（心跳 `processing_msg_id`）——长任务进行中警告确认，防重启打断导致无反馈
+- feishu 桥优雅退出打断长任务 → 落盘补偿记录 → 下次启动主动回复"任务因重启中断请重发"（防静默丢失）
+- guard 工作区变更日志 5 分钟去抖（agent 长任务编辑期间不再每 21s 刷屏；flag 仍每次刷新）
+
+### 新增：memory 命中计数事实源——升格判据量化（EVO-20260816-fcdbe2e9）
+- `MemoryEntry` 新增 `inject_count`/`last_inject_at`：只计**实际注入上下文**（检索构造注入消息的最终 top_k 条目），与 `access_count`（检索命中，含未注入的噪音）区分
+- 技巧升格通道（"命中复用 ≥3 次 → 升格经验库"）由此获得程序侧量化判据：`architecture_status.memory.top_injected` 可查按注入次数降序的头部条目
+- 计数内存态更新，沿用 run 末 flush() 批量落盘（不新增写盘点）；计数失败 fail-open 不阻塞记忆注入；旧索引无新字段加载默认 0（向后兼容）
+
 ### 优化：降级提示 stamp 限频——同类降级 24h 内主消息流只提示一次
 - 同一降级对（from→to）重复降级时，提示消息 24h（`FALLBACK_NOTICE_COOLDOWN_S` 可调，0=关闭）内仅注入一次；stamp 落盘 `<data_dir>/state/fallback_notice_stamps.json`，重启仍生效
 - 仅抑制消息注入：status 降级态 / 审计 / action_trace 每次照常记录（可观测性不降级）；链全失败汇总不限频（每次如实告知）
