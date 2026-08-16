@@ -145,6 +145,19 @@ class RuntimeParams:
         default = getattr(self._settings, "retrieve_semantic_top_k", 20)
         return int(self.get("retrieve_semantic_top_k", default))
 
+    # ── task_quality 六路径开关（D3 定案：动态参数，adjust_strategy 即时调整）──
+    @property
+    def precheck_enabled(self) -> bool:
+        """路径 A 参数预检开关（默认关零回归；动态优先，缺省取 settings 静态值）."""
+        default = bool(getattr(self._settings, "precheck_enabled", False))
+        return bool(self.get("precheck_enabled", default))
+
+    @property
+    def fix_loop_enabled(self) -> bool:
+        """路径 I 修复循环开关（默认关零回归；动态优先）."""
+        default = bool(getattr(self._settings, "fix_loop_enabled", False))
+        return bool(self.get("fix_loop_enabled", default))
+
     # ── 白名单范围校验（与 strategy_whitelist 一致）──
     def _valid(self, key: str, val: Any) -> bool:
         ranges = {
@@ -154,10 +167,15 @@ class RuntimeParams:
             "memory_top_k": (1, 50),
             "extract_interval_msgs": (5, 200),
             "retrieve_semantic_top_k": (1, 100),
+            "precheck_enabled": (0, 1),
+            "fix_loop_enabled": (0, 1),
         }
         r = ranges.get(key)
         if r is None:
             return False
+        # 布尔开关允许 0/1
+        if key in ("precheck_enabled", "fix_loop_enabled"):
+            return val in (0, 1, True, False)
         if isinstance(val, bool) or not isinstance(val, (int, float)):
             return False
         return r[0] <= val <= r[1]
