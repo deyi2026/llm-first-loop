@@ -539,3 +539,60 @@ def test_processing_ts_updated():
     assert connector._processing_msg_id == ""  # 完成后清空
     assert connector._processing_since is None
     assert connector._last_processed_ts is not None
+
+
+
+# ── 中断补偿（2026-08-16）：长任务被优雅退出打断 → 落盘 → 下次启动主动回复 ──
+
+def test_persist_and_recover_interrupted(monkeypatch, tmp_path):
+    """处理中消息被打断 → 落盘；启动时补偿回复 + 清文件."""
+    import llm_loop.feishu.bridge as _bridge_mod
+
+    monkeypatch.setattr(_bridge_mod, "_INTERRUPTED_PATH", str(tmp_path / "interrupted.json"))
+    bridge = _make_bridge(monkeypatch)
+    # 模拟 connector 处理中消息
+    connector = Mock()
+    connector._processing_msg_id = "om_test_msg_001"
+    connector._processing_reply_id = "oc_test_chat_001"
+    connector._processing_reply_type = "chat_id"
+    bridge._connector = connector
+    bridge._persist_interrupted()
+    assert (tmp_path / "interrupted.json").exists()
+    # 启动恢复：send_text 被调 + 文件清除
+    sent: list[tuple[str, str, str]] = []
+
+    def fake_send_text(receive_id, text, receive_id_type="chat_id"):
+        sent.append((receive_id, text, receive_id_type))
+        return True
+
+    monkeypatch.setattr(bridge, "send_text", fake_send_text)
+    bridge._recover_interrupted()
+    assert sent and sent[0][0] == "oc_test_chat_001"
+    assert "中断" in sent[0][1]
+    assert sent[0][2] == "chat_id"
+    assert not (tmp_path / "interrupted.json").exists()
+
+
+def test_recover_no_file_noop(monkeypatch, tmp_path):
+    """无中断记录文件 → 恢复函数 no-op（不发送）."""
+    import llm_loop.feishu.bridge as _bridge_mod
+
+    monkeypatch.setattr(_bridge_mod, "_INTERRUPTED_PATH", str(tmp_path / "none.json"))
+    bridge = _make_bridge(monkeypatch)
+    sent: list = []
+    monkeypatch.setattr(bridge, "send_text", lambda *a, **k: sent.append(a) or True)
+    bridge._recover_interrupted()
+    assert sent == []
+
+
+def test_persist_no_processing_noop(monkeypatch, tmp_path):
+    """无处理中消息 → 不落盘（优雅退出正常时不产生补偿记录）."""
+    import llm_loop.feishu.bridge as _bridge_mod
+
+    monkeypatch.setattr(_bridge_mod, "_INTERRUPTED_PATH", str(tmp_path / "i.json"))
+    bridge = _make_bridge(monkeypatch)
+    connector = Mock()
+    connector._processing_msg_id = ""
+    bridge._connector = connector
+    bridge._persist_interrupted()
+    assert not (tmp_path / "i.json").exists()

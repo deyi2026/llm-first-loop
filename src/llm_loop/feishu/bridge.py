@@ -44,6 +44,8 @@ _TOKEN_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/inter
 _WATCHDOG_POLL_S = int(os.environ.get("FEISHU_WS_WATCHDOG_POLL_S", "30"))  # 看门狗轮询/心跳间隔
 _WATCHDOG_LOCK_S = float(os.environ.get("FEISHU_WS_WATCHDOG_LOCK_S", "180"))  # SDK 锁持有超此时长判定假死
 _HEARTBEAT_PATH = os.environ.get("FEISHU_HEARTBEAT_PATH", "data/feishu_heartbeat.json")
+# 中断补偿（2026-08-16）：优雅退出打断长任务 → 落盘 → 下次启动主动回复（避免静默丢失）
+_INTERRUPTED_PATH = os.environ.get("FEISHU_INTERRUPTED_PATH", "data/feishu_interrupted.json")
 _HEARTBEAT_HISTORY_PATH = os.environ.get(
     "FEISHU_HEARTBEAT_HISTORY_PATH", "data/feishu_heartbeat_history.jsonl"
 )
@@ -213,6 +215,10 @@ class _WsConnector:
         self._last_processed_ts: float | None = None  # 最近处理完成时刻
         self._processing_msg_id: str = ""  # 当前处理中消息 id（空=无处理中）
         self._processing_since: float | None = None  # 当前消息处理开始时刻
+        # 中断补偿：处理中消息的回复目标（优雅退出被打断时落盘，下次启动主动回复）
+        self._processing_chat_id: str = ""
+        self._processing_reply_id: str = ""
+        self._processing_reply_type: str = "chat_id"
         self._process_timeout_count: int = 0  # 累计单条处理超时次数
         self._processing_timeout_reported: bool = False  # 当前消息是否已告警（防重复）
 
@@ -334,13 +340,26 @@ class _WsConnector:
         """worker 线程内安全处理单条消息（单条异常不导致 worker 崩溃）.
 
         P1-3-R3: 处理开始/完成时刻与消息 id 记录（心跳活性字段数据源）。
+        中断补偿: 记录回复目标（chat_id / 私聊 open_id），优雅退出被打断时落盘供下次启动回复。
         """
         header = payload.get("header") or {}
         event = payload.get("event") or {}
-        mid = (event.get("message") or {}).get("message_id", "")
+        message = event.get("message") or {}
+        mid = message.get("message_id", "")
         self._processing_msg_id = mid or header.get("event_id", "")
         self._processing_since = time.time()
         self._processing_timeout_reported = False
+        # 回复目标（对齐 handlers reply_receive_id 推导：chat_id 优先，私聊用 sender open_id）
+        chat_id = str(message.get("chat_id") or (event.get("chat") or {}).get("chat_id") or "")
+        sender = event.get("sender") or {}
+        open_id = str((sender.get("sender_id") or {}).get("open_id", ""))
+        self._processing_chat_id = chat_id
+        if chat_id:
+            self._processing_reply_id = chat_id
+            self._processing_reply_type = "chat_id"
+        else:
+            self._processing_reply_id = open_id
+            self._processing_reply_type = "open_id"
         try:
             self._on_message(payload)
         except Exception as exc:  # noqa: BLE001 — worker 永不因单条消息崩溃
@@ -634,8 +653,58 @@ class FeishuWsBridge:
         self._token_ready = False
         if self._connector:
             self._connector.stop()
+            # 长任务处理中被优雅退出打断 → 落盘（下次启动补偿回复，防静默丢失）
+            self._persist_interrupted()
         if self._thread:
             self._thread.join(timeout=2)
+
+    def _persist_interrupted(self) -> None:
+        """优雅退出打断长任务 → 落盘补偿记录（下次启动 _recover_interrupted 主动回复）."""
+        connector = self._connector
+        if connector is None:
+            return
+        mid = getattr(connector, "_processing_msg_id", "") or ""
+        if not mid:
+            return  # 无处理中消息 → 正常退出，不产生补偿记录
+        reply_id = getattr(connector, "_processing_reply_id", "") or ""
+        if not reply_id:
+            return
+        try:
+            Path(_INTERRUPTED_PATH).parent.mkdir(parents=True, exist_ok=True)
+            Path(_INTERRUPTED_PATH).write_text(
+                json.dumps(
+                    {
+                        "msg_id": mid,
+                        "reply_id": reply_id,
+                        "reply_type": getattr(connector, "_processing_reply_type", "chat_id") or "chat_id",
+                        "interrupted_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            logger.warning("中断补偿已落盘: msg_id=%s → %s", mid, reply_id)
+        except OSError as exc:
+            logger.warning("中断补偿落盘失败（fail-open）: %s", exc)
+
+    def _recover_interrupted(self) -> None:
+        """启动补偿：上次优雅退出打断的长任务 → 主动回复（如实告知，非伪装成功）."""
+        try:
+            p = Path(_INTERRUPTED_PATH)
+            if not p.exists():
+                return
+            data = json.loads(p.read_text(encoding="utf-8"))
+            reply_id = str(data.get("reply_id", ""))
+            if reply_id:
+                ok = self.send_text(
+                    reply_id,
+                    "（程序提示）上一条消息的长任务处理因服务重启被中断，未生成回答。请重新发送该消息。",
+                    str(data.get("reply_type", "chat_id")),
+                )
+                logger.warning("中断补偿回复 %s: %s", "成功" if ok else "失败", reply_id)
+            p.unlink(missing_ok=True)
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("中断补偿恢复失败（fail-open）: %s", exc)
 
     def is_healthy(self) -> bool:
         return self._running and self._thread is not None and self._thread.is_alive()
@@ -842,6 +911,8 @@ class FeishuWsBridge:
 
     def _run_loop(self) -> None:
         """后台循环：指数退避重连（5→30s，连续失败超限长退避 300s）."""
+        # 中断补偿：上次优雅退出打断的长任务 → 主动回复（走 HTTP API，token 由 send_text 解析）
+        self._recover_interrupted()
         fail_count = 0
         while self._running:
             try:
