@@ -717,7 +717,9 @@ class ToolRegistry:
             if len(result.content) > self.max_output_chars:
                 result.content = (
                     result.content[: self.max_output_chars]
-                    + f"\n…[结果超长，已截断，共 {len(result.content)} 字符]；完整内容已另存至压缩档案，可用 search_archive 检索找回…\n"
+                    + f"\n…[结果超长，已截断，共 {len(result.content)} 字符"
+                    f"（阈值: 摘要 {self.summary_threshold}/硬上限 {self.max_output_chars}）]；"
+                    "完整内容已另存至压缩档案，可用 search_archive 检索找回…\n"
                     + self._DISTILL_GUIDANCE
                 )
         elif len(result.content) > self.max_output_chars:
@@ -726,7 +728,8 @@ class ToolRegistry:
             self._archive_oversize_output(call, full)
             result.content = (
                 full[: self.max_output_chars]
-                + f"\n…[结果超长，已截断，共 {len(full)} 字符]；完整结果已另存至压缩档案，可用 search_archive 检索找回…\n"
+                + f"\n…[结果超长，已截断，共 {len(full)} 字符（硬上限: {self.max_output_chars}）]；"
+                "完整结果已另存至压缩档案，可用 search_archive 检索找回…\n"
                 + self._DISTILL_GUIDANCE
             )
         # 约束 C1 绑定: 工具返回的 tool_call_id 必须等于声明 id（空/不一致都纠正为

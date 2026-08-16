@@ -439,7 +439,13 @@ class ArchitectureStatusProvider:
         if dimensions:
             out: dict = {}
             for d in dimensions:
-                out[d] = avail.get(d, {"unavailable": f"维度 '{d}' 暂不可用"})
+                out[d] = avail.get(
+                    d,
+                    {
+                        "unavailable": f"维度 '{d}' 暂不可用",
+                        "available_dimensions": sorted(avail.keys()),
+                    },
+                )
             return out
         return avail
 

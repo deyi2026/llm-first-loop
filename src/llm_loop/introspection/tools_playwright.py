@@ -20,7 +20,7 @@ from llm_loop.core.message import ToolResult, ToolResultStatus
 
 PLAYWRIGHT_TEST_TOOL_DEF: dict = {
     "name": "playwright_test",
-    "description": "用 Playwright 执行端到端测试（描述场景→生成脚本→执行→返回截图+pass/fail）。何时用: 验证 UI 改动无回归（飞书卡片/网关 Web）；补 E2E 缺口。何时不用: 仅单元测试（用 pytest）；本地浏览器调试（用 IDE）。失败对策: 浏览器未安装时如实返回缺失提示；URL 不在沙箱时拒绝执行。",
+    "description": "用 Playwright 执行端到端测试（描述场景→生成脚本→执行→返回截图+pass/fail）。何时用: 验证 UI 改动无回归（飞书卡片/网关 Web）；补 E2E 缺口。何时不用: 仅单元测试（用 pytest）；本地浏览器调试（用 IDE）。失败对策: 浏览器未安装时如实返回缺失提示；URL 不在沙箱时拒绝执行。状态契约: 每次调用启动独立浏览器会话（cookies/登录态/打开页面不跨调用持久）；每次调用记录到 data/audit/playwright.jsonl 审计。",
     "parameters": {
         "type": "object",
         "properties": {
