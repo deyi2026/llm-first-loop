@@ -125,6 +125,8 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
 
     # EVO 后台 run 执行器（factory 动态装配 BackgroundRunner；声明类型供 pyright 静态检查）
     runner: Any | None = None
+    # DSH-PLUGINS-20260816 ②: 调度提醒线程（factory 装配；声明类型供 pyright 静态检查）
+    scheduler: Any | None = None
 
     def __init__(
         self,

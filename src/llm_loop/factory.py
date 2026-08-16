@@ -33,8 +33,9 @@ from llm_loop.tools.builtin.edit_file import EditFileTool
 from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
 from llm_loop.tools.builtin.job_kill import JobKillTool
 from llm_loop.tools.builtin.job_output import JobOutputTool
-from llm_loop.tools.builtin.search_files import SearchFilesTool
 from llm_loop.tools.builtin.read_file import ReadFileTool
+from llm_loop.tools.builtin.schedule import ScheduleTool
+from llm_loop.tools.builtin.search_files import SearchFilesTool
 from llm_loop.tools.builtin.spawn_subagent import SpawnSubAgentTool
 from llm_loop.tools.builtin.web_fetch import WebFetchTool
 from llm_loop.tools.builtin.web_search import WebSearchTool
@@ -261,6 +262,8 @@ def build_engine(settings: Settings) -> LoopEngine:
     _register_basic("job_kill", JobKillTool())
     # DSH-PLUGINS-20260816 ③: 文件搜索（glob + 内容 grep，工具优先免碎调用）
     _register_basic("search_files", SearchFilesTool())
+    # DSH-PLUGINS-20260816 ②: 定时提醒（at/after/rate → interop notify 注入会话）
+    _register_basic("schedule", ScheduleTool())
     _register_basic("web_fetch", WebFetchTool(timeout_s=_tool_timeout))
     # M48: 网络搜索（Bing/百度双后端降级）
     _register_basic("web_search", WebSearchTool(timeout_s=_tool_timeout))
@@ -593,6 +596,16 @@ def build_engine(settings: Settings) -> LoopEngine:
 
     engine.runner = BackgroundRunner(engine, enabled=settings.runner_background)
     logger.info("后台 run 执行器已装配 enabled=%s", settings.runner_background)
+
+    # DSH-PLUGINS-20260816 ②: 调度提醒线程（到点写 interop notify，LFL 下轮 run 回显）
+    try:
+        from llm_loop.core.scheduler import SchedulerThread, ScheduleStore
+
+        engine.scheduler = SchedulerThread(ScheduleStore())
+        engine.scheduler.start()
+    except Exception:  # noqa: BLE001 — 调度装配失败不影响核心链路
+        logger.exception("调度提醒线程装配失败（fail-open）")
+        engine.scheduler = None
 
     # 工作区管理（对齐 DSH Workspace）：注册表 + 旧会话迁移 + 引擎挂载当前工作区。
     # 默认工作区 = 启动 cwd（当前行为一致：工具/会话根=项目根，零回归）。
