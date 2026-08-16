@@ -143,7 +143,7 @@ export async function uploadFileBase64(
   return { status: resp.status, data };
 }
 
-/** 历史消息 → 渲染消息（tool 回执按角色呈现；tool_calls 透传） */
+/** 历史消息 → 渲染消息（tool 回执按角色呈现；tool_calls 透传；M51/M52 模型+token 页脚数据） */
 export function toChatMessage(m: HistoryMessage): ChatMessage {
   return {
     role: m.role as ChatMessage["role"],
@@ -153,20 +153,26 @@ export function toChatMessage(m: HistoryMessage): ChatMessage {
     toolCallId: m.tool_call_id ?? null,
     toolName: m.tool_name ?? null,
     note: null,
+    model_used: m.model_used ?? "",
+    tokens_in: m.tokens_in ?? 0,
+    tokens_out: m.tokens_out ?? 0,
   };
 }
 
-/** done 终态 → 助手消息（对齐 D4：纯工具轮占位、空回答清理由调用方决策） */
+/** done 终态 → 助手消息注释（模型/token 页脚由 MessageItem 结构化渲染，此处不含） */
 export function buildAssistantNote(data: ChatDoneData): string | null {
   const note: string[] = [];
   if (data.truncated) note.push("（回答被截断，已有输出保留在对话中。发送“继续”可让模型接着输出。）");
   if (data.verification_note) note.push(data.verification_note);
-  if (data.model_used) {
-    let footer = `—— ${data.model_used}`;
-    if (data.tokens_in || data.tokens_out) {
-      footer += ` · ${data.tokens_in ?? 0}入/${data.tokens_out ?? 0}出`;
-    }
-    note.push(footer);
-  }
   return note.length > 0 ? note.join("\n") : null;
+}
+
+/** token 可读格式化（对齐 feishu 页脚 k 单位：12345 → 12.3k） */
+export function formatTokens(n: number | undefined | null): string {
+  const v = Number(n ?? 0);
+  if (v >= 1000) {
+    const k = v / 1000;
+    return `${k >= 100 ? Math.round(k) : Math.round(k * 10) / 10}k`;
+  }
+  return String(v);
 }

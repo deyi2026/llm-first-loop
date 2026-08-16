@@ -33,6 +33,8 @@ export const zh = {
   reload: "重新加载",
   feedbackUp: "回答有帮助",
   feedbackDown: "回答有问题",
+  copy: "复制",
+  copied: "已复制",
   exportSession: "导出会话（Markdown）",
   exporting: "导出中…",
   subagentTag: "子代理",

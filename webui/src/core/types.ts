@@ -24,6 +24,12 @@ export interface ChatMessage {
   streaming?: boolean;
   /** 流式开始时刻（等待时长展示；仅流式占位符使用） */
   streamStartedAt?: number | null;
+  /** M51: 实际生成模型标签（provider/model，页脚显示） */
+  model_used?: string;
+  /** M52: 本轮 run 累计 prompt tokens */
+  tokens_in?: number;
+  /** M52: 本轮 run 累计 completion tokens */
+  tokens_out?: number;
 }
 
 export interface ChatDoneData {
@@ -46,6 +52,9 @@ export interface HistoryMessage {
   tool_name?: string | null;
   status?: string;
   tool_calls?: ToolCallInfo[];
+  model_used?: string;
+  tokens_in?: number;
+  tokens_out?: number;
   [key: string]: unknown;
 }
 

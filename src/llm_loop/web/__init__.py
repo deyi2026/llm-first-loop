@@ -9,7 +9,7 @@ import os
 import sys
 from pathlib import Path
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 
 from llm_loop.config import load_settings
@@ -108,6 +108,16 @@ def build_app(settings=None, engine=None) -> FastAPI:
     _ui_v2_dir = Path(os.environ.get("UI_V2_DIR", "") or Path(__file__).resolve().parents[3] / "webui" / "dist")
     if Path(_ui_v2_dir).is_dir():
         app.mount("/ui/v2", StaticFiles(directory=str(_ui_v2_dir), html=True), name="ui-v2")
+
+        # Web V2 缓存策略：index.html 不缓存（迭代频繁，浏览器必须每次拉新；
+        # 此前仅 ETag 时部分浏览器刷新不重新验证导致"刷新没变化"）。JS/CSS 带
+        # 内容 hash，命中缓存安全；仅作用于 /ui/v2/ 静态路径，不影响 API。
+        @app.middleware("http")
+        async def _ui_v2_no_cache(request: Request, call_next):
+            response = await call_next(request)
+            if request.url.path.startswith("/ui/v2/"):
+                response.headers["Cache-Control"] = "no-store"
+            return response
 
     return app
 

@@ -64,6 +64,9 @@ class Message:
     reasoning_content: str | None = (
         None  # M20 THK-04: 仅 assistant 消息思考链（协议回传用，不注入 prompt）
     )
+    model_used: str = ""  # M51: 仅 assistant 消息：实际生成模型标签（provider/model）
+    tokens_in: int = 0  # M52: 仅 assistant 消息：本轮 run 累计 prompt tokens
+    tokens_out: int = 0  # M52: 仅 assistant 消息：本轮 run 累计 completion tokens
     metadata: dict = field(default_factory=dict)  # 截断标注/降级标注等
 
     def to_llm_dict(self) -> dict:

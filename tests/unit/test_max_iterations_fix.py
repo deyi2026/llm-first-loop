@@ -18,6 +18,9 @@ def test_max_iterations_default_40(monkeypatch):
     """类默认与 env 默认均 40（多步任务不再轻易触顶）."""
     assert Settings.max_iterations == 40
     # env 未设置 → 40（补必填 env 通过装配校验）
+    # 2026-08-16: 显式清掉 LLM_MAX_ITERATIONS——前序测试 load_env_file 可能把 .env
+    # 的 80 注入 os.environ（污染），delenv 保证本测试断言"未设置时默认"语义
+    monkeypatch.delenv("LLM_MAX_ITERATIONS", raising=False)
     monkeypatch.setenv("LLM_API_KEY", "k")
     monkeypatch.setenv("LLM_BASE_URL", "http://t")
     monkeypatch.setenv("LLM_MODEL", "m")

@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { zh } from "../../i18n/zh";
 import { sendMessage, stopStreaming, useConversation } from "../../core/conversation";
 import { fetchModels, uploadFileBase64 } from "../../core/chat";
-import { sessionStore } from "../../core/stores";
+import { sessionStore, useModel } from "../../core/stores";
 
 type AttachStatus = "ok" | "pending" | "degraded" | "error";
 
@@ -189,7 +189,7 @@ export function Composer() {
     reader.readAsDataURL(file);
   };
 
-  const currentModel = sessionStore.getState().model;
+  const currentModel = useModel();
 
   return (
     <div className="v2-composer" data-testid="composer">

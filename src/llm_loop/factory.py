@@ -8,6 +8,7 @@ DeclarationValidator + RecordSearcher 装配为 LoopEngine。
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable
 from contextlib import suppress
 from typing import Any
@@ -73,6 +74,24 @@ class _CorrectionAdapterTool:
 
     def execute(self, **kwargs: Any) -> ToolResult:
         return self._corrections.execute(self.name, kwargs)
+
+
+def _read_workspace_changed_flag(data_dir: str) -> dict | None:
+    """P1-12: 读 guard 写的工作区变更 flag（data/workspace_changed.json）.
+
+    存在且合法 → 返回 {changed_at, changed_files, note, action}; 不存在/损坏 → None。
+    fail-open（读失败不影响 architecture_status）。
+    """
+    import json
+    from pathlib import Path
+
+    p = Path(data_dir) / "workspace_changed.json"
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 def build_engine(settings: Settings) -> LoopEngine:
@@ -286,6 +305,9 @@ def build_engine(settings: Settings) -> LoopEngine:
             else lambda: _sum_archive_stats(archive)
         ),
         memory_stats_fn=_build_memory_stats_fn(memory),
+        # P1-12(2026-08-16): 工作区变更检测——guard 检测 .env/providers.json/src/skills
+        # 变化后写 data/workspace_changed.json, AI 经 architecture_status 自查可见
+        workspace_changed_fn=lambda: _read_workspace_changed_flag(settings.data_dir),
     )
     # M56 B5（ANALYSIS-20260811）: 当前模型窗口注入 architecture_status（AI 可查后
     # 自主决策上下文压缩；resolve 失败/未知模型如实返回 label+context=None，不伪造）
@@ -540,6 +562,24 @@ def build_engine(settings: Settings) -> LoopEngine:
 
     # M50（design §5.6）: 注入增强版 refresh_config executor — 重读 providers.json
     install_refresh_executor(engine)
+
+    # 工作区管理（对齐 DSH Workspace）：注册表 + 旧会话迁移 + 引擎挂载当前工作区。
+    # 默认工作区 = 启动 cwd（当前行为一致：工具/会话根=项目根，零回归）。
+    from llm_loop.workspace.store import WorkspaceStore
+
+    workspace_store = WorkspaceStore(settings.data_dir)
+    default_ws = workspace_store.register(os.getcwd())  # 幂等注册
+    try:
+        workspace_store.migrate_legacy_sessions(settings.data_dir, default_ws)
+    except Exception:  # noqa: BLE001 — 迁移失败不影响启动（旧会话仍在原目录可读）
+        logger.warning("工作区旧会话迁移失败（fail-open），旧会话留在原目录", exc_info=True)
+    # 首次装配（注册表无 current）→ 默认工作区设为 current 并持久化
+    if workspace_store.get_current() is None:
+        workspace_store.switch(default_ws.id)
+    current_ws = workspace_store.get_current() or default_ws
+    engine.set_workspace(current_ws.path)
+    engine.workspace_store = workspace_store  # web 层切换工作区入口
+
     # R1: 上下文占用分解注入 architecture_status（AI 每轮可见，自主决策压缩/切换）
     status_provider.set_context_breakdown_fn(lambda: getattr(engine, "_last_breakdown", None))
     # T3: 上下文占用率注入 runtime（memory_top_k 自适应消费；breakdown 不可用时走默认值零回归）

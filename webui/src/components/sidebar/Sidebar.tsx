@@ -7,18 +7,8 @@ import { refreshSessionsAndCurrent } from "../../core/events";
 import { sessionStore, useCurrentSessionId, useSessions } from "../../core/stores";
 import { conversationStore } from "../../core/conversation";
 import { loadHistory } from "../../core/conversation";
+import { WorkspaceGroups, formatRelative } from "./WorkspaceGroups";
 import { zh } from "../../i18n/zh";
-
-function formatTime(iso: string): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const now = new Date();
-  const sameDay = d.toDateString() === now.toDateString();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  if (sameDay) return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  return `${d.getMonth() + 1}月${d.getDate()}日`;
-}
 
 export function Sidebar({ collapsed }: { collapsed: boolean }) {
   const sessions = useSessions();
@@ -108,68 +98,83 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
         onChange={(e) => setQuery(e.target.value)}
         aria-label={zh.searchPlaceholder}
       />
-      <div className="v2-session-list" data-testid="session-list">
-        {filtered.map((s: SessionMeta) => (
-          <div
-            key={s.session_id}
-            className={`v2-session-item-wrap ${s.session_id === currentId ? "active" : ""}`}
-            data-testid="session-item"
-          >
-            <button
-              type="button"
-              className="v2-session-item"
-              onClick={() => sessionStore.setCurrentSession(s.session_id)}
+      <WorkspaceGroups
+        activeSessionId={currentId ?? undefined}
+        onOpenOtherSession={(_wsId, sid) => {
+          // 工作区已由 WorkspaceGroups 切换；打开会话（Conversation 随 currentId 加载历史）
+          sessionStore.setCurrentSession(sid);
+          void refreshSessionsAndCurrent();
+        }}
+        onWorkspaceChanged={() => {
+          // 新工作区无旧会话上下文：清空当前会话与对话区（对齐 handleNew）
+          sessionStore.setCurrentSession("");
+          conversationStore.setState({ messages: [], hasMoreHistory: false, loadedHistoryCount: 0 });
+          void refreshSessionsAndCurrent();
+        }}
+      >
+        <div className="v2-session-list" data-testid="session-list">
+          {filtered.map((s: SessionMeta) => (
+            <div
+              key={s.session_id}
+              className={`v2-session-item-wrap ${s.session_id === currentId ? "active" : ""}`}
+              data-testid="session-item"
             >
-              <span className="v2-session-title">
-                {s.pinned ? "📌 " : ""}
-                {s.title || "未命名"}
-              </span>
-              <span className="v2-session-preview">
-                {s.last_message_preview || "（空会话）"}
-                {s.updated_at ? ` · ${formatTime(s.updated_at)}` : ""}
-              </span>
-              <span className="v2-session-meta-row">
-                <span className="v2-channel-tag">{channelLabel(s.channel)}</span>
-                {s.session_id.startsWith("subagent_") && (
-                  <span className="v2-channel-tag subagent">{zh.subagentTag}</span>
-                )}
-                <span className="v2-session-count">{s.message_count} 条</span>
-              </span>
-            </button>
-            <div className="v2-session-actions" data-testid="session-actions">
               <button
                 type="button"
-                className="v2-icon-btn"
-                title={s.pinned ? "取消置顶" : "置顶"}
-                onClick={() => void setSessionPin(s.session_id, !s.pinned).then(() => refreshSessionsAndCurrent())}
+                className="v2-session-item"
+                onClick={() => sessionStore.setCurrentSession(s.session_id)}
               >
-                📌
+                <span className="v2-session-title">
+                  {s.pinned ? "📌 " : ""}
+                  {s.title || "未命名"}
+                </span>
+                <span className="v2-session-preview">
+                  {s.last_message_preview || "（空会话）"}
+                  {s.updated_at ? ` · ${formatRelative(s.updated_at)}` : ""}
+                </span>
+                <span className="v2-session-meta-row">
+                  <span className="v2-channel-tag">{channelLabel(s.channel)}</span>
+                  {s.session_id.startsWith("subagent_") && (
+                    <span className="v2-channel-tag subagent">{zh.subagentTag}</span>
+                  )}
+                  <span className="v2-session-count">{s.message_count} 条</span>
+                </span>
               </button>
-              <button
-                type="button"
-                className="v2-icon-btn"
-                title="在新会话中分支"
-                onClick={() => void handleFork(s.session_id)}
-              >
-                ⑂
-              </button>
-              <button
-                type="button"
-                className={`v2-icon-btn danger ${confirmDelete === s.session_id ? "confirming" : ""}`}
-                title={confirmDelete === s.session_id ? "再次点击确认删除" : "删除会话"}
-                onClick={() => void handleDelete(s.session_id)}
-              >
-                {confirmDelete === s.session_id ? "确认?" : "🗑"}
-              </button>
+              <div className="v2-session-actions" data-testid="session-actions">
+                <button
+                  type="button"
+                  className="v2-icon-btn"
+                  title={s.pinned ? "取消置顶" : "置顶"}
+                  onClick={() => void setSessionPin(s.session_id, !s.pinned).then(() => refreshSessionsAndCurrent())}
+                >
+                  📌
+                </button>
+                <button
+                  type="button"
+                  className="v2-icon-btn"
+                  title="在新会话中分支"
+                  onClick={() => void handleFork(s.session_id)}
+                >
+                  ⑂
+                </button>
+                <button
+                  type="button"
+                  className={`v2-icon-btn danger ${confirmDelete === s.session_id ? "confirming" : ""}`}
+                  title={confirmDelete === s.session_id ? "再次点击确认删除" : "删除会话"}
+                  onClick={() => void handleDelete(s.session_id)}
+                >
+                  {confirmDelete === s.session_id ? "确认?" : "🗑"}
+                </button>
+              </div>
             </div>
-          </div>
-        ))}
-        {filtered.length === 0 && (
-          <div style={{ padding: 12, fontSize: 12, color: "var(--dsw-alias-label-tertiary)" }}>
-            {query ? "无匹配会话" : "暂无会话"}
-          </div>
-        )}
-      </div>
+          ))}
+          {filtered.length === 0 && (
+            <div style={{ padding: 12, fontSize: 12, color: "var(--dsw-alias-label-tertiary)" }}>
+              {query ? "无匹配会话" : "暂无会话"}
+            </div>
+          )}
+        </div>
+      </WorkspaceGroups>
       <div className="v2-sidebar-footer">
         <span>{zh.sessionCount.replace("{n}", String(sessions.length))}</span>
       </div>

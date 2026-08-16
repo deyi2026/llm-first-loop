@@ -247,6 +247,10 @@ textarea {
   --shiki-token-keyword: #d6336c;
   --shiki-token-function: #6741d9;
   --shiki-token-number: #e8590c;
+
+  /* ── 会话内容列宽（对齐 DSH --dsh-chat-content-width：消息/输入区居中聚焦） ── */
+  --dsh-chat-content-width: 780px;
+  --dsh-composer-card-max-width: 780px;
 }
 
 body[data-ds-dark-theme] {

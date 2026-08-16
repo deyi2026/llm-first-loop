@@ -94,8 +94,9 @@ export interface SendAttachment {
 
 export async function sendMessage(text: string, attachments: SendAttachment[]): Promise<void> {
   const cur = conversationStore.getState();
-  const sessionId = sessionStore.getState().currentSessionId;
-  if (!sessionId) return;
+  // 空串归一为 null：新工作区/新会话无会话时后端按"新建会话"处理
+  // （不可在此 return，否则新工作区发消息被静默拦截）
+  const sessionId = sessionStore.getState().currentSessionId || null;
   // 识别成功/待处理附件：内容注入上下文
   const okPrefix = attachments
     .filter((a) => a.status === "ok" || a.status === "pending")
@@ -181,6 +182,10 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
         toolCalls: data.tool_calls ?? null,
         note: buildAssistantNote(data),
         streaming: false,
+        // M51/M52: 模型 + token 消耗结构化填充（页脚渲染，与历史恢复同源）
+        model_used: data.model_used ?? "",
+        tokens_in: data.tokens_in ?? 0,
+        tokens_out: data.tokens_out ?? 0,
       });
     } else if (Array.isArray(data.tool_calls) && data.tool_calls.length > 0) {
       finalize({

@@ -38,6 +38,11 @@ class ReadFileTool:
                 tool_name=self.name,
             )
         p = Path(path).expanduser()
+        # 工作区跟随: 相对路径基于当前工作区根（无工作区 → 进程 cwd，零回归）
+        if not p.is_absolute():
+            from llm_loop.core.run_context import workspace_base
+
+            p = Path(workspace_base()) / p
         # T5b: symlink 透明标注（读放行，信息不隐藏；写路径在 edit_file 拒绝）
         _links = link_shaped_paths(p)
         _link_note = f"\n[symlink] 路径含符号链接: {' → '.join(_links)}" if _links else ""

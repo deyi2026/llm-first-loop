@@ -58,6 +58,9 @@ class MessageItem(BaseModel):
     content: str
     tool_call_id: str | None = None  # M52: tool 消息透出（web 端"展开原文"精确定位档案）
     reasoning_content: str | None = None  # P1-1: assistant 消息思考链透传（历史会话恢复渲染）
+    model_used: str = ""  # M51: assistant 消息模型标签透传（页脚显示）
+    tokens_in: int = 0  # M52: assistant 消息 prompt tokens 透传
+    tokens_out: int = 0  # M52: assistant 消息 completion tokens 透传
 
 
 class SessionMessagesResponse(BaseModel):
@@ -67,6 +70,18 @@ class SessionMessagesResponse(BaseModel):
     messages: list[MessageItem]
     has_more: bool = False  # D2: 是否还有更早消息（分页用，旧客户端忽略）
     total: int = 0  # D2: 会话消息总数（分页用，旧客户端忽略）
+
+
+class WorkspaceRequest(BaseModel):
+    """工作区注册请求（Open 语义：注册即切换）."""
+
+    path: str = Field(min_length=1, description="要打开的目录绝对路径")
+
+
+class WorkspaceSwitchRequest(BaseModel):
+    """工作区切换请求."""
+
+    id: str = Field(min_length=1, description="已注册工作区 id")
 
 
 class ErrorResponse(BaseModel):

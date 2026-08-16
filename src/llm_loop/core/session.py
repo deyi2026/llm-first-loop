@@ -117,6 +117,9 @@ class Session:
                     "error_detail": m.error_detail,
                     "tool_calls": m.tool_calls,
                     "reasoning_content": m.reasoning_content,  # M20 THK-04: 思考链持久化同步
+                    "model_used": m.model_used,  # M51: 模型标签持久化（页脚数据源）
+                    "tokens_in": m.tokens_in,  # M52: prompt tokens 持久化
+                    "tokens_out": m.tokens_out,  # M52: completion tokens 持久化
                     "metadata": m.metadata,
                 }
                 for m in self.messages
@@ -142,6 +145,9 @@ def _message_from_dict(d: dict) -> Message:
         error_detail=d.get("error_detail"),
         tool_calls=d.get("tool_calls"),
         reasoning_content=d.get("reasoning_content"),  # M20 THK-04: 旧 JSON 无键 → None 向后兼容
+        model_used=d.get("model_used", ""),  # M51: 旧 JSON 无键 → "" 向后兼容
+        tokens_in=int(d.get("tokens_in") or 0),  # M52: 旧 JSON 无键 → 0
+        tokens_out=int(d.get("tokens_out") or 0),  # M52
         metadata=d.get("metadata") or {},
     )
 
@@ -175,6 +181,12 @@ class SessionStore:
         self._read_path_source = read_path_source
         # P0-4(2026-08-15): 非 POSIX 平台 flock 不可得时的进程内回退锁表
         self._fallback_locks: dict[str, threading.Lock] = {}
+
+    def set_root(self, sessions_dir: str | Path) -> None:
+        """切换会话根目录（工作区管理：按工作区分区隔离；锁表随目录重建）."""
+        self._dir = Path(sessions_dir)
+        self._dir.mkdir(parents=True, exist_ok=True)
+        self._fallback_locks.clear()
         self._fallback_locks_guard = threading.Lock()
 
     # ── P0-4(2026-08-15): 跨进程会话写锁（审计发现 #8 lost update 修复）──
@@ -300,6 +312,8 @@ class SessionStore:
         return sid
 
     # ── 跨端共享当前会话（Web/飞书同一上下文）──
+    # 工作区管理（2026-08-16）：共享文件按工作区分区（_dir 内），避免跨工作区互踩指针——
+    # 否则 web 切工作区后 owner 跨端共享会反复失效/覆盖（各工作区独立"当前会话"）。
     _SHARED_SESSION_FILE = "shared_current_session.json"
 
     def get_shared_current(self) -> str | None:
@@ -308,7 +322,7 @@ class SessionStore:
         Returns:
             共享当前 session_id（会话文件有效时）；无共享或会话已删返回 None。
         """
-        p = self._dir.parent / self._SHARED_SESSION_FILE
+        p = self._dir / self._SHARED_SESSION_FILE
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
             sid = str(data.get("current", ""))
@@ -320,7 +334,7 @@ class SessionStore:
 
     def set_shared_current(self, session_id: str) -> None:
         """写跨端共享当前会话（原子写 + P0-4 跨进程文件锁，fail-open 不阻断主链路）."""
-        p = self._dir.parent / self._SHARED_SESSION_FILE
+        p = self._dir / self._SHARED_SESSION_FILE
         try:
             with self._shared_file_lock("shared_current_session"):
                 p.parent.mkdir(parents=True, exist_ok=True)
@@ -598,8 +612,18 @@ class SessionStore:
 
     def list_sessions(self, include_archived: bool = False) -> list[SessionMeta]:
         """列出全部会话元数据（M56: 置顶优先，再按 updated_at 降序；归档默认隐藏）."""
+        return self._list_sessions_in(self._dir, include_archived=include_archived)
+
+    def list_sessions_in(self, sessions_dir: str | Path, include_archived: bool = False) -> list[SessionMeta]:
+        """按指定目录列出会话元数据（工作区管理：按工作区分区展示，不改变当前根）."""
+        return self._list_sessions_in(Path(sessions_dir), include_archived=include_archived)
+
+    def _list_sessions_in(self, target: Path, include_archived: bool = False) -> list[SessionMeta]:
+        """list_sessions 实现体（目录参数化；M56 排序语义不变）."""
         metas: list[SessionMeta] = []
-        for p in sorted(self._dir.glob("*.json")):
+        for p in sorted(target.glob("*.json")):
+            if p.name == self._SHARED_SESSION_FILE:
+                continue  # 工作区分区后共享会话文件在会话目录内，排除（非会话文件）
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):

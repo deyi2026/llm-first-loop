@@ -182,3 +182,29 @@ def test_default_model_bare_keeps_env_trio(tmp_path):
     assert client.base_url == "https://api.deepseek.com/v1"
     assert client.model == "deepseek-v4-flash"
     assert client.api_key == "env-key"
+
+
+def test_workspace_changed_dimension_in_status(tmp_path):
+    """P1-12: architecture_status 含 workspace_changed 维度（guard flag 检测）."""
+    import json as _json
+
+    from llm_loop.factory import build_engine
+
+    settings = Settings(
+        llm_api_key="k", llm_base_url="https://x/v1", llm_model="m",
+        data_dir=str(tmp_path / "data"), extract_enabled=False,
+    )
+    engine = build_engine(settings)  # type: ignore[arg-type]
+    snap = engine.status.snapshot()
+    # 无 flag → None
+    assert snap.get("workspace_changed") is None
+    # 有 flag → 返回内容
+    d = tmp_path / "data"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "workspace_changed.json").write_text(_json.dumps({
+        "changed_at": "2026-08-16T00:00:00+00:00",
+        "changed_files": ["src/x.py"],
+        "note": "变更", "action": "restart",
+    }), encoding="utf-8")
+    snap2 = engine.status.snapshot()
+    assert snap2["workspace_changed"]["changed_files"] == ["src/x.py"]

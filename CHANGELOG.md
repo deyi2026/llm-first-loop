@@ -4,7 +4,12 @@
 
 ## v0.6.8（2026-08-16）
 
-### 新增：RULE-AI-12 模型身份声明约束（0814 身份幻觉真阳性实证条款化）
+### 新增：工作区变更感知——guard 检测 + 提醒重启（P1-12）
+- **背景**：运行中进程不感知工作区变化（.env/providers.json/src/skills 改动需重启生效，外部编辑/git pull/agent 自改后一直跑旧状态）
+- **机制（手动确认式，不无差别自动重启）**：guard 每轮对监视文件做内容哈希指纹对比基线；变化 → 写 `data/workspace_changed.json`（变更清单 + 建议命令）+ guard.log 记录，**不自动重启**；AI 经 `architecture_status.workspace_changed` 自查可见；确认后 `restart_system.sh restart` 末尾自动 ack（清 flag + 刷新基线闭环）
+- 端到端闭环实测通过；相关测试 230 全绿
+
+### 修复：飞书收到回复后多一条重复 [跨端同步] 消息（P1-11 竞态）
 - 规则条款：对自身模型身份/提供方的声明必须以 model_catalog / architecture_status 回执为准，
   禁止依据训练先验自报身份；无回执佐证如实声明"未核验"
 - prompt 注入 + `docs/ai_rules.md` 条款 + 评测判定器 `verdict_identity_verified`

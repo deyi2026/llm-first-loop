@@ -15,6 +15,7 @@ from fastapi import APIRouter, BackgroundTasks, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from llm_loop.feedback.honesty import session_deleted_message, session_not_found_message
+from llm_loop.workspace.store import workspace_key
 
 from .schemas import (
     ChatRequest,
@@ -27,6 +28,8 @@ from .schemas import (
     SessionMetaItem,
     UploadRequest,
     UploadResponse,
+    WorkspaceRequest,
+    WorkspaceSwitchRequest,
 )
 from .upload_handlers import (
     SUPPORTED_IMAGE_EXTS,
@@ -701,6 +704,9 @@ def get_session_messages(
             content=m.content,
             tool_call_id=m.tool_call_id,
             reasoning_content=getattr(m, "reasoning_content", None),  # P1-1: 历史思考链透传
+            model_used=getattr(m, "model_used", ""),  # M51: 历史模型标签透传（页脚）
+            tokens_in=getattr(m, "tokens_in", 0),  # M52: 历史 token 消耗透传
+            tokens_out=getattr(m, "tokens_out", 0),  # M52
         )
         for m in session.messages
     ]
@@ -888,4 +894,212 @@ def upload_file(payload: UploadRequest, request: Request) -> UploadResponse | Re
         result_text=result.result_text,
         detail=result.detail,
         truncated=result.truncated,
+    )
+
+
+# ── 出产物文件预览（Web V2 对齐 DSH deliverables：编辑的文件可点击打开） ──
+_PREVIEW_ROOT = Path(__file__).resolve().parents[3]  # 项目根（与 _ui_v2_dir 同模式）
+_PREVIEW_MAX_CHARS = 200_000  # 预览上限（超限截断提示，不整读）
+
+
+@router.get("/api/v1/files/preview")
+def preview_file(request: Request, path: str) -> Response:
+    """只读文件预览（出产物点击打开）.
+
+    安全边界：拒绝绝对路径与越界路径（resolve 后必须仍在项目根内）；
+    仅限普通文件；大小上限截断（返回 truncated 标记如实提示）。
+    """
+    if not path or path.startswith(("/", "\\")) or ".." in Path(path).parts:
+        return UTF8JSONResponse(
+            status_code=400,
+            content={"error": "invalid_path", "detail": "仅接受项目内相对路径。"},
+        )
+    # 工作区跟随: 预览根 = 当前工作区根（无工作区 → 仓库根兜底）
+    engine = _engine_from(request)
+    root = Path(getattr(engine, "workspace_root", "") or _PREVIEW_ROOT)
+    target = (root / path).resolve()
+    if not target.is_relative_to(root.resolve()):
+        return UTF8JSONResponse(
+            status_code=400,
+            content={"error": "out_of_bounds", "detail": "路径越出项目根，已拒绝。"},
+        )
+    if not target.is_file():
+        return UTF8JSONResponse(
+            status_code=404,
+            content={"error": "file_not_found", "detail": f"文件不存在: {path}"},
+        )
+    try:
+        raw = target.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        logger.exception("file preview read failed: path=%s", path)
+        return UTF8JSONResponse(
+            status_code=500,
+            content={"error": "read_failed", "detail": f"[程序异常] 读取失败（{type(exc).__name__}）。"},
+        )
+    truncated = len(raw) > _PREVIEW_MAX_CHARS
+    return UTF8JSONResponse(
+        content={
+            "path": path,
+            "size": len(raw),
+            "truncated": truncated,
+            "content": raw[:_PREVIEW_MAX_CHARS] if truncated else raw,
+        }
+    )
+
+
+# ── 工作区管理（对齐 DSH Workspace：注册/切换/注销；会话按工作区分区） ──
+@router.get("/api/v1/workspaces")
+def list_workspaces(request: Request) -> JSONResponse:
+    """工作区列表 + 当前工作区（web 端选择器数据源）."""
+    engine = _engine_from(request)
+    store = getattr(engine, "workspace_store", None)
+    if store is None:
+        return JSONResponse({"workspaces": [], "current": ""})
+    current = store.get_current()
+    return JSONResponse(
+        {
+            "workspaces": [{"id": w.id, "path": w.path} for w in store.list()],
+            "current": current.id if current else "",
+        }
+    )
+
+
+@router.get("/api/v1/workspaces/{workspace_id}/sessions")
+def list_workspace_sessions(workspace_id: str, request: Request) -> JSONResponse:
+    """按工作区列会话（侧栏工作区分组展示；不改当前工作区）."""
+    engine = _engine_from(request)
+    store = getattr(engine, "workspace_store", None)
+    if store is None:
+        return JSONResponse({"sessions": [], "count": 0})
+    ws = store.get(workspace_id)
+    if ws is None:
+        return UTF8JSONResponse(
+            status_code=404,
+            content={"error": "workspace_not_found", "detail": f"工作区未注册: {workspace_id}"},
+        )
+    metas = engine.session.list_sessions_in(
+        Path(engine.settings.sessions_dir) / workspace_key(ws.path)
+    )
+    return JSONResponse(
+        {
+            "sessions": [
+                {
+                    "session_id": m.session_id,
+                    "title": m.title,
+                    "updated_at": m.updated_at,
+                    "message_count": m.message_count,
+                    "status": m.status,
+                    "last_message_preview": m.last_message_preview,
+                    "pinned": m.pinned,
+                    "channel": m.channel,
+                }
+                for m in metas
+            ],
+            "count": len(metas),
+        }
+    )
+
+
+@router.post("/api/v1/workspaces")
+def register_workspace(request: Request, body: WorkspaceRequest) -> Response:
+    """注册并切换工作区（Open 语义：注册即采用）."""
+    engine = _engine_from(request)
+    store = getattr(engine, "workspace_store", None)
+    if store is None:
+        return UTF8JSONResponse(
+            status_code=500,
+            content={"error": "workspace_unavailable", "detail": "工作区存储未装配。"},
+        )
+    path = body.path.strip()
+    try:
+        ws = store.register(path)
+        store.switch(ws.id)
+        engine.set_workspace(ws.path)
+    except ValueError as exc:
+        return UTF8JSONResponse(
+            status_code=400,
+            content={"error": "invalid_workspace", "detail": str(exc)},
+        )
+    return JSONResponse({"id": ws.id, "path": ws.path, "current": True})
+
+
+@router.post("/api/v1/workspaces/switch")
+def switch_workspace(request: Request, body: WorkspaceSwitchRequest) -> Response:
+    """切换当前工作区（会话列表/工具根/文件预览根跟随）."""
+    engine = _engine_from(request)
+    store = getattr(engine, "workspace_store", None)
+    if store is None:
+        return UTF8JSONResponse(
+            status_code=500,
+            content={"error": "workspace_unavailable", "detail": "工作区存储未装配。"},
+        )
+    try:
+        ws = store.switch(body.id)
+        engine.set_workspace(ws.path)
+    except ValueError as exc:
+        return UTF8JSONResponse(
+            status_code=400,
+            content={"error": "invalid_workspace", "detail": str(exc)},
+        )
+    return JSONResponse({"id": ws.id, "path": ws.path, "current": True})
+
+
+@router.delete("/api/v1/workspaces/{workspace_id}")
+def remove_workspace(workspace_id: str, request: Request) -> Response:
+    """注销工作区（不删会话数据；当前工作区不可注销）."""
+    engine = _engine_from(request)
+    store = getattr(engine, "workspace_store", None)
+    if store is None:
+        return UTF8JSONResponse(
+            status_code=500,
+            content={"error": "workspace_unavailable", "detail": "工作区存储未装配。"},
+        )
+    if not store.remove(workspace_id):
+        return UTF8JSONResponse(
+            status_code=409,
+            content={
+                "error": "workspace_conflict",
+                "detail": "注销失败：当前工作区不可注销，或工作区不存在。",
+            },
+        )
+    return JSONResponse({"removed": True})
+
+
+# ── 目录浏览（对齐 DSH directory-browser：应用内选择工作区目录，替代输入路径） ──
+@router.get("/api/v1/fs/dirs")
+def list_dirs(request: Request, path: str = "") -> Response:
+    """列出目录的子目录（工作区目录浏览器数据源）.
+
+    默认从家目录开始；导航任意绝对路径（本地工具）；不存在/权限不足如实 4xx。
+    """
+    raw = (path or "").strip()
+    try:
+        target = Path(raw).expanduser() if raw else Path.home()
+        target = target.resolve()
+    except OSError as exc:
+        return UTF8JSONResponse(
+            status_code=400,
+            content={"error": "invalid_path", "detail": f"路径解析失败: {exc}"},
+        )
+    if not target.is_dir():
+        return UTF8JSONResponse(
+            status_code=404,
+            content={"error": "dir_not_found", "detail": f"目录不存在: {target}"},
+        )
+    try:
+        children = sorted(
+            (p for p in target.iterdir() if p.is_dir() and not p.name.startswith(".")),
+            key=lambda p: p.name.lower(),
+        )
+    except OSError as exc:
+        return UTF8JSONResponse(
+            status_code=403,
+            content={"error": "dir_unreadable", "detail": f"目录不可读: {exc}"},
+        )
+    return JSONResponse(
+        {
+            "path": str(target),
+            "parent": str(target.parent) if target != target.parent else None,
+            "dirs": [p.name for p in children[:500]],  # 单层上限防超载
+        }
     )

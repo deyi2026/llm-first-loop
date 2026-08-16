@@ -106,6 +106,307 @@
   outline-offset: 2px;
 }
 
+/* ── 工作区树状侧栏（对齐 DSH：工作区为父节点、会话为缩进子节点，简洁无边框） ── */
+.v2-ws-tree {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.v2-ws-tree-node {
+  display: flex;
+  flex-direction: column;
+}
+
+.v2-ws-tree-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: var(--dsw-radius-sm);
+  font-size: 13px;
+  color: var(--dsw-alias-label-primary);
+  cursor: default;
+}
+
+.v2-ws-tree-node.current > .v2-ws-tree-head {
+  background: var(--dsw-alias-interactive-bg-active);
+  font-weight: 500;
+  cursor: default;
+}
+
+/* 其他工作区分组头可点击（点击 = 切换工作区，无会话的工作区也可切） */
+.v2-ws-tree-node:not(.current) > .v2-ws-tree-head {
+  cursor: pointer;
+}
+
+.v2-ws-tree-node:not(.current) > .v2-ws-tree-head:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.v2-ws-tree-icon {
+  flex: none;
+  font-size: 12px;
+}
+
+.v2-ws-tree-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.v2-ws-tree-count {
+  flex: none;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* 树状缩进子节点（当前工作区 = Sidebar 完整会话列表；其他 = 紧凑只读项） */
+.v2-ws-tree-children {
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.v2-ws-tree-node.current > .v2-ws-tree-children {
+  padding-left: 0;
+}
+
+/* 当前工作区分组内会话列表（去掉原 flex:1 滚动，随树滚动） */
+.v2-ws-tree-node.current .v2-session-list {
+  flex: none;
+  overflow: visible;
+  padding: 2px 0 2px 8px;
+}
+
+/* 其他工作区只读会话 */
+.v2-ws-other-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 2px 0;
+}
+
+.v2-session-item.compact {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.v2-session-item.compact:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.v2-session-item.compact.active {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+.v2-session-item.compact .v2-session-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  font-size: 12px;
+}
+
+.v2-session-rel {
+  flex: none;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.v2-ws-empty {
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.v2-ws-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 2px;
+}
+
+.v2-ws-add-input {
+  flex: 1 1 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+}
+
+.v2-ws-add-btn {
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--dsw-radius-md);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.v2-ws-add-btn:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* ── 目录浏览器模态（对齐 DSH directory-browser：应用内选择工作区目录） ── */
+.v2-dir-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(0 0 0 / 45%);
+  padding: 40px;
+}
+
+.v2-dir-card {
+  display: flex;
+  flex-direction: column;
+  width: min(660px, 100%);
+  max-height: 74vh;
+  border-radius: var(--dsw-radius-lg);
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 25%);
+  overflow: hidden;
+}
+
+.v2-dir-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.v2-dir-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.v2-dir-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.v2-dir-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-2);
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+}
+
+.v2-dir-row:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: var(--dsw-alias-border-l2);
+}
+
+.v2-dir-row-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.v2-dir-row-arrow {
+  flex: none;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.v2-dir-row.parent {
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 0;
+  margin-bottom: 6px;
+}
+
+.v2-dir-row.parent:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: transparent;
+}
+
+.v2-dir-hint {
+  padding: 24px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.v2-dir-hint.err {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.v2-dir-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.v2-dir-full {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.v2-ws-error {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: var(--dsw-alias-state-error-primary);
+}
+
 .v2-session-list {
   flex: 1;
   min-height: 0;
@@ -392,6 +693,52 @@
 
 .v2-status-badge.sync .v2-status-dot {
   background: var(--dsw-alias-state-business-primary);
+}
+
+/* ── 消息操作行（复制 + 反馈；对齐 DSH MessageIconActions 的 hover 显隐） ── */
+.v2-msg-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  margin-top: 4px;
+  opacity: 0;
+  transition: opacity var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+
+.v2-msg:hover .v2-msg-actions,
+.v2-msg-actions:focus-within,
+.v2-msg-actions:has(.v2-copy-btn.copied) {
+  opacity: 1;
+}
+
+.v2-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: background var(--ds-transition-duration) var(--ds-ease-in-out),
+    opacity var(--ds-transition-duration) var(--ds-ease-in-out),
+    color var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+
+.v2-copy-btn:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  opacity: 1;
+}
+
+.v2-copy-btn.copied {
+  color: var(--dsw-alias-state-success-primary);
+  opacity: 1;
 }
 
 /* ── 消息反馈按钮 ── */

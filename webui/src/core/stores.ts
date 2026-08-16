@@ -52,6 +52,10 @@ export function useCurrentSessionId(): string | null {
   return useSyncExternalStore(sessionStore.subscribe, () => sessionStore.getState().currentSessionId);
 }
 
+export function useModel(): string | null {
+  return useSyncExternalStore(sessionStore.subscribe, () => sessionStore.getState().model);
+}
+
 // ── 主题 store（偏好持久化 localStorage + 跟随系统；body[data-ds-dark-theme] 属性生效） ──
 const THEME_KEY = "dsw-theme-preference";
 

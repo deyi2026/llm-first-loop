@@ -287,6 +287,10 @@ _start_all() {
   done
   rm -f "$MAINTENANCE_LOCK"  # P0: 重启完成，恢复 guard
   _MAINTENANCE_LOCK_ACTIVE=0
+  # 2026-08-16: 工作区变更闭环——重启生效后 ack（清 flag + 刷新基线）
+  if [[ -f "$PROJECT_DIR/scripts/guard_system.sh" ]]; then
+    bash "$PROJECT_DIR/scripts/guard_system.sh" ack-workspace 2>/dev/null || true
+  fi
 }
 
 # ── 全部状态 ──

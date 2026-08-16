@@ -162,6 +162,11 @@ class ExecuteCommandTool:
                 )
             workdir = str(wd)
         run_bg = bool(kwargs.get("run_in_background", False))
+        # 工作区跟随: 未显式指定 workdir 时默认当前工作区根（无工作区 → 进程 cwd，零回归）
+        if workdir is None:
+            from llm_loop.core.run_context import workspace_base
+
+            workdir = workspace_base()
         try:
             # C: 环境事实注入——子进程可见 LLM_EXEC_CWD（当前实际工作目录），模型可感知执行环境
             env = _scrubbed_env()

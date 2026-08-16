@@ -130,3 +130,74 @@ export function channelLabel(channel: string | undefined): string {
   if (channel.startsWith("feishu:group:")) return "飞书群聊";
   return channel;
 }
+
+/** 出产物文件预览（对齐 DSH deliverables 点击打开；只读、项目根内） */
+export interface FilePreview {
+  path: string;
+  size: number;
+  truncated: boolean;
+  content: string;
+}
+
+export async function fetchFilePreview(path: string): Promise<FilePreview | null> {
+  const { status, data } = await api<FilePreview>(
+    `/api/v1/files/preview?path=${encodeURIComponent(path)}`
+  );
+  return status === 200 && typeof data.content === "string" ? data : null;
+}
+
+/** 工作区管理（对齐 DSH Workspace：注册/切换/注销；会话按工作区分区） */
+export interface WorkspaceInfo {
+  id: string;
+  path: string;
+}
+
+export interface WorkspaceListResponse {
+  workspaces: WorkspaceInfo[];
+  current: string;
+}
+
+export async function fetchWorkspaces(): Promise<WorkspaceListResponse | null> {
+  const { status, data } = await api<WorkspaceListResponse>("/api/v1/workspaces");
+  return status === 200 ? data : null;
+}
+
+export async function registerWorkspace(path: string): Promise<WorkspaceInfo | null> {
+  const resp = await fetch("/api/v1/workspaces", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
+  if (!resp.ok) return null;
+  return (await resp.json().catch(() => ({}))) as WorkspaceInfo;
+}
+
+export async function switchWorkspace(id: string): Promise<boolean> {
+  const resp = await fetch("/api/v1/workspaces/switch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+  return resp.ok;
+}
+
+/** 按工作区列会话（侧栏工作区分组展示；不改当前工作区） */
+export async function fetchWorkspaceSessions(workspaceId: string): Promise<SessionMeta[]> {
+  const { status, data } = await api<{ sessions?: SessionMeta[] }>(
+    `/api/v1/workspaces/${encodeURIComponent(workspaceId)}/sessions`
+  );
+  return status === 200 && Array.isArray(data.sessions) ? data.sessions : [];
+}
+
+/** 目录浏览（对齐 DSH directory-browser：应用内选择工作区目录） */
+export interface DirList {
+  path: string;
+  parent: string | null;
+  dirs: string[];
+}
+
+export async function fetchDirs(path = ""): Promise<DirList | null> {
+  const q = path ? `?path=${encodeURIComponent(path)}` : "";
+  const { status, data } = await api<DirList>(`/api/v1/fs/dirs${q}`);
+  return status === 200 && typeof data.path === "string" && Array.isArray(data.dirs) ? data : null;
+}

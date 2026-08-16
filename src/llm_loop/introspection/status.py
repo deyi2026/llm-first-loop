@@ -81,12 +81,14 @@ class ArchitectureStatusProvider:
         config_status: Callable[[], dict] | None = None,
         archive_stats_fn: Callable[[], dict] | None = None,
         memory_stats_fn: Callable[[], dict] | None = None,  # M18 AA10: 记忆统计（补真实数据）
+        workspace_changed_fn: Callable[[], dict | None] | None = None,  # P1-12: 工作区变更检测
     ) -> None:
         self.enabled = enabled
         self.reporter = EventReporter(cooldown_s=cooldown_s)
         self._config_status = config_status or (lambda: {})
         self._archive_stats_fn = archive_stats_fn  # T23: 压缩档案统计
         self._memory_stats_fn = memory_stats_fn  # M18 AA10: 记忆统计（未注入如实标注）
+        self._workspace_changed_fn = workspace_changed_fn  # P1-12: 工作区变更（guard 检测）
         self._audit_dir = Path(audit_dir) if audit_dir else None
 
         self._current_phase: str = "idle"
@@ -419,6 +421,11 @@ class ArchitectureStatusProvider:
                 for e in self._exception_log[-10:]
             ],
             "architecture_config": self._config_status(),
+            # P1-12(2026-08-16): 工作区变更检测（guard 检测 .env/providers.json/src/skills 变化
+            # 后写 flag → AI 经 architecture_status 自查可见; None = 无变更/未配置）
+            "workspace_changed": (
+                self._workspace_changed_fn() if self._workspace_changed_fn else None
+            ),
             "process_versions": self._process_versions(),  # EVO-20260811-f94e5306
             # M49（design §5.4）: 当前降级状态（有则显示，含 from/to/reason/ts; 无则全 None）
             "model_fallback": self._fallback_status(),
