@@ -17,6 +17,14 @@ on:
   workflow_dispatch:
 
 jobs:
+  security-scan:
+    name: 安全扫描（敏感/私密/错误文件拦截）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 全树安全扫描（data/.env/密钥/绝对路径/大文件）
+        run: bash scripts/git_security_scan.sh --tree
+
   test:
     name: 门禁（pytest + ruff + pyright）
     runs-on: ubuntu-latest

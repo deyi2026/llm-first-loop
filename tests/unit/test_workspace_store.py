@@ -10,7 +10,7 @@ from llm_loop.workspace.store import WorkspaceStore, workspace_key
 
 
 def test_workspace_key_encoding():
-    assert workspace_key("/Users/yyj/Project/llm-first-loop") == "--Users-yyj-Project-llm-first-loop--"
+    assert workspace_key("/Users/someone/My-Project") == "--Users-someone-My-Project--"
     assert workspace_key("/a/b") == "--a-b--"
 
 

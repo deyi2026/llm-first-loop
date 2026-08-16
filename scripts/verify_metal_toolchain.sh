@@ -1,7 +1,8 @@
 #!/bin/bash
 # Metal Toolchain 安装后验证脚本: 确认 llama.cpp Metal 后端恢复
 set -e
-MODEL=/Users/yyj/.lmstudio/.internal/bundled-models/nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.Q4_K_M.gguf
+# 本地模型路径（机器相关，勿提交真实路径；用环境变量覆盖）
+MODEL="${LOCAL_EMBED_MODEL:-/path/to/your/embed-model.gguf}"
 BIN=~/.lmstudio/extensions/backends/llama.cpp-mac-arm64-apple-metal-advsimd-2.28.2/llama-server
 echo "== 1. 离线 Metal 编译器 =="
 printf '#include <metal_stdlib>\nusing namespace metal;\nkernel void t(device float* o [[buffer(0)]], uint i [[thread_position_in_grid]]) { o[i] = 1.0; }\n' > /tmp/mt.metal

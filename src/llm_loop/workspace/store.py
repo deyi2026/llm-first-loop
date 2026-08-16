@@ -24,7 +24,7 @@ _REGISTRY_VERSION = 1
 
 
 def workspace_key(path: str | Path) -> str:
-    """绝对路径 → 会话目录名（DSH 式编码：/Users/a/b → --Users-a-b--）."""
+    """绝对路径 → 会话目录名（DSH 式编码：/srv/app → --srv-app--）."""
     p = Path(path).resolve()
     return "--" + str(p).lstrip("/").replace("/", "-") + "--"
 

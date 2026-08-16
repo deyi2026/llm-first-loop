@@ -41,10 +41,10 @@ function mockApi() {
       return new Response(
         JSON.stringify({
           workspaces: [
-            { id: "--Users-yyj-Project-llm-first-loop--", path: "/Users/yyj/Project/llm-first-loop" },
-            { id: "--Users-yyj-Project-b--", path: "/Users/yyj/Project/b" },
+            { id: "--srv-llm-first-loop--", path: "/srv/llm-first-loop" },
+            { id: "--srv-b--", path: "/srv/b" },
           ],
-          current: "--Users-yyj-Project-llm-first-loop--",
+          current: "--srv-llm-first-loop--",
         }),
         { status: 200 }
       );
@@ -155,21 +155,21 @@ describe("Sidebar 会话管理", () => {
       const url = String(input);
       if (url.includes("/api/v1/fs/dirs")) {
         return new Response(
-          JSON.stringify({ path: "/Users/yyj/Project/new", parent: "/Users/yyj/Project", dirs: ["sub1", "sub2"] }),
+          JSON.stringify({ path: "/srv/new", parent: "/srv", dirs: ["sub1", "sub2"] }),
           { status: 200 }
         );
       }
       if (url.includes("/api/v1/workspaces") && init?.method === "POST") {
         return new Response(
-          JSON.stringify({ id: "--Users-yyj-Project-new--", path: "/Users/yyj/Project/new", current: true }),
+          JSON.stringify({ id: "--srv-new--", path: "/srv/new", current: true }),
           { status: 200 }
         );
       }
       if (url.includes("/api/v1/workspaces")) {
         return new Response(
           JSON.stringify({
-            workspaces: [{ id: "--Users-yyj-Project-llm-first-loop--", path: "/Users/yyj/Project/llm-first-loop" }],
-            current: "--Users-yyj-Project-llm-first-loop--",
+            workspaces: [{ id: "--srv-llm-first-loop--", path: "/srv/llm-first-loop" }],
+            current: "--srv-llm-first-loop--",
           }),
           { status: 200 }
         );
@@ -206,14 +206,14 @@ describe("Sidebar 会话管理", () => {
       const url = String(input);
       if (url.includes("/api/v1/fs/dirs")) {
         return new Response(
-          JSON.stringify({ path: "/Users/yyj/Project/new", parent: "/Users/yyj/Project", dirs: ["sub1"] }),
+          JSON.stringify({ path: "/srv/new", parent: "/srv", dirs: ["sub1"] }),
           { status: 200 }
         );
       }
       if (url.includes("/api/v1/workspaces") && init?.method === "POST") {
         registered = true;
         return new Response(
-          JSON.stringify({ id: "--Users-yyj-Project-new--", path: "/Users/yyj/Project/new", current: true }),
+          JSON.stringify({ id: "--srv-new--", path: "/srv/new", current: true }),
           { status: 200 }
         );
       }
@@ -224,12 +224,12 @@ describe("Sidebar 会话管理", () => {
         return new Response(
           JSON.stringify({
             workspaces: [
-              { id: "--Users-yyj-Project-llm-first-loop--", path: "/Users/yyj/Project/llm-first-loop" },
-              { id: "--Users-yyj-Project-new--", path: "/Users/yyj/Project/new" },
+              { id: "--srv-llm-first-loop--", path: "/srv/llm-first-loop" },
+              { id: "--srv-new--", path: "/srv/new" },
             ],
             current: registered
-              ? "--Users-yyj-Project-new--"
-              : "--Users-yyj-Project-llm-first-loop--",
+              ? "--srv-new--"
+              : "--srv-llm-first-loop--",
           }),
           { status: 200 }
         );
@@ -268,8 +268,8 @@ describe("Sidebar 会话管理", () => {
       if (url.includes("/api/v1/workspaces")) {
         return new Response(
           JSON.stringify({
-            workspaces: [{ id: "--Users-yyj-Project-llm-first-loop--", path: "/Users/yyj/Project/llm-first-loop" }],
-            current: "--Users-yyj-Project-llm-first-loop--",
+            workspaces: [{ id: "--srv-llm-first-loop--", path: "/srv/llm-first-loop" }],
+            current: "--srv-llm-first-loop--",
           }),
           { status: 200 }
         );

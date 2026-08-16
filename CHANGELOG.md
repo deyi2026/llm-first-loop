@@ -2,7 +2,18 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
-## v0.6.8（2026-08-16）
+### 安全：提交安全扫描——防 AI 自动提交误传敏感/私密/错误文件
+- `scripts/git_security_scan.sh`（pre-commit 钩子 + CI job）：拦截 data/ 运行时数据、.env*/日志/私钥、
+  高价值密钥模式（sk-/AKIA/ghp_/app_secret 等）、本地绝对路径（用户目录、/home/）、>1MB 大文件
+- `.githooks/pre-commit` 提交前硬拦截（AI 自动提交无人工检查环节）；CI `security-scan` job 全树兜底
+- 清理存量：已跟踪文件中的本地用户目录路径痕迹全部中性化（占位符/样例路径）（占位符/样例路径）
+
+### 新增：playwright_exec(code) 单 exec 浏览器工具（EVO-20260816-bfb9f215 阶段二）
+- 模型写 Python 一次调用打包 navigate+act+extract，预置 helper 七件套（goto/click/fill/wait/js/screenshot/axtree_text）
+- 每次调用独立子进程（解释器/浏览器零跨调用持久），产物落盘 `data/e2e/<session>/`；confirm 二段确认默认 dry_run
+- 安全：AST 静态门控禁止 import playwright（强制走 helper）；helper goto 强制 URL 白名单（复用阶段一校验）；子进程超时终止（默认 60s 上限 300s）
+- 工具描述钉死 ≤2KB helper 摘要+状态契约+fetch-first"何时不用"条款（对齐 Hermes 调研 #1/#2/#6/#7）
+- 验收基准 `scripts/bench_playwright_exec.py`：5 个网关 Web E2E 任务 × 3 次重复（方法论评测纪律第 5 条首单，需网关在线时人工触发）
 
 ### 安全：playwright 执行门控升级——注册层门控 + 执行层 URL 再校验（EVO-20260816-96215428）
 - RUN_MODE=ptc 隐藏 `playwright_test`（浏览器执行类工具仅 standard/creative 可见，对齐"仅 terminal 权限会话注册"精神），为 playwright 单 exec 演进扫清安全前提
