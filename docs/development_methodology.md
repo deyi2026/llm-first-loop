@@ -101,3 +101,18 @@
 | 事件溯源 | 迁移可对账、回滚逐字节、双轨退役——存储演进零数据丢失 |
 | 真实评测 | 首轮基线暴露 2 个判定/场景设计缺陷并校准 |
 | 零回归 | 数十个里程碑全部 pytest 全绿 + ruff 0 + pyright 0 |
+
+## 七、工具成功率提升六路径（task_quality，2026-08-17）
+
+六路径组件（`.codeartsdoer/specs/task_success_rate/` spec/design/DECISIONS）：
+- **路径 A 参数预检**：ToolRegistry 安全检查前拦截参数错误，返回字段级引导反馈（`precheck_enabled` 开关）
+- **路径 D 静态检查**：edit_file 后自动 ruff+pyright 检查（已就绪待接线）
+- **路径 E 约定注入**：编辑后提取同目录约定 + 违背检测（`check_violations`）
+- **路径 H 错误定位**：pytest/ruff/pyright/generic 四格式结构化解析
+- **路径 I 修复循环**：子代理内修复原子工作流（`fix_loop_enabled` 开关，P0-D1 定案）
+- **路径 K 回归保护**：import 依赖图反向查找受影响测试子集
+
+**配置纪律（D3 定案）**：六路径开关走 RuntimeParams 动态参数（`adjust_strategy` 即时调），
+不走 Settings 冻结字段（热加载不生效）；默认全关零回归。
+
+**使用**：`adjust_strategy {"precheck_enabled": 1}` 开启预检；`{"fix_loop_enabled": 1}` 开启修复循环。
