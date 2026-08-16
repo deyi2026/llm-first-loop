@@ -68,9 +68,28 @@ def refresh_provider_registry(
                 f"模型 {old_model_count}→{new_model_count}（其中包含回落 L0 合成）。"
             )
         else:
+            # EVO-20260816-ff1e36e8（回执分级声明）: provider 级 history_budget_chars 变更
+            # 仅重建 registry，不作用于运行中引擎的实际预算计算（实证: refresh 后
+            # request.meta budget 仍为旧值）——回执如实标注"需重启生效"，避免误导。
+            budget_changes = []
+            for pid in set(pool.registry.providers) | set(new_registry.providers):
+                old_spec = pool.registry.providers.get(pid)
+                new_spec = new_registry.providers.get(pid)
+                old_b = getattr(old_spec, "history_budget_chars", None) if old_spec else None
+                new_b = getattr(new_spec, "history_budget_chars", None) if new_spec else None
+                if old_b != new_b:
+                    budget_changes.append(f"{pid}: {old_b}→{new_b}")
+            budget_note = ""
+            if budget_changes:
+                budget_note = (
+                    " ⚠️ 其中 provider 级 history_budget_chars 有变更（"
+                    + "、".join(budget_changes)
+                    + "），该字段仅重建注册表、运行中引擎不生效，需重启进程生效。"
+                )
             msg = (
                 f"[重载完成] 模型目录已从 {old_provider_count} 个 provider / {old_model_count} 个模型 "
                 f"变为 {new_provider_count} 个 provider / {new_model_count} 个模型。"
+                f"{budget_note}"
             )
         return msg, new_registry
     except Exception as exc:  # noqa: BLE001 — 重载失败保持旧 registry（fail-open, DFX-REL-08）
