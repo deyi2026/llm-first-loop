@@ -171,6 +171,17 @@ def run_playwright_test(ctx: Any, audit: Any, args: dict) -> ToolResult:
         )
 
     # 真实执行
+    # EVO-20260816-96215428 阶段一：执行层再校验一次 URL（纵深防御）——
+    # 参数层校验在函数入口，此处防御未来代码路径绕过入口直接触达执行段；
+    # 阶段二单 exec 形态的 helper goto 将复用同一 _validate_url（白名单不可绕过）。
+    ok_exec, err_exec = _validate_url(url)
+    if not ok_exec:
+        _audit({"scenario": scenario, "url": url, "result": "blocked", "reason": f"exec-layer: {err_exec}"})
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content=f"[URL 沙箱拒绝·执行层] 事实: {err_exec}。",
+            tool_call_id="", tool_name="playwright_test",
+        )
     try:
         from playwright.sync_api import sync_playwright
 

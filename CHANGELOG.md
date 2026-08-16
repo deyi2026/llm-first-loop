@@ -4,6 +4,11 @@
 
 ## v0.6.8（2026-08-16）
 
+### 安全：playwright 执行门控升级——注册层门控 + 执行层 URL 再校验（EVO-20260816-96215428）
+- RUN_MODE=ptc 隐藏 `playwright_test`（浏览器执行类工具仅 standard/creative 可见，对齐"仅 terminal 权限会话注册"精神），为 playwright 单 exec 演进扫清安全前提
+- `playwright_test` 真实执行路径增加执行层 URL 沙箱再校验（纵深防御，参数层之外的第二道）
+- 新增 tests/unit/test_playwright_gate.py（3 用例）+ run_mode 四模式可见性断言
+
 ### 新增：DSH 编排工具集——调度 DeepSeek Harness 执行任务（P0/P1/P2）
 - `dsh_task`：进程级子代理（spawn `dsh --profile headless "<task>"`）——任务下发/超时整树终止/退出码五态映射/3 万字符截断/审计落盘；协议 v2 支持 `ctx_path`（上下文文件引用并入）、`report_format`（结构化汇报模板）、`acceptance`（验收清单逐项自检）、`retry`（失败新 session 重试，timeout 不重试）、任务文本脱敏（敏感 env 值替换）、`background`（JobRegistry 后台执行，多任务并行 fan-out）
 - `dsh_session_read`：DSH session 事件日志回放（zstd JSONL）——最终回答 + 工具调用轨迹 + 关键词过滤/指定 session 检索，补全"只回最终文本"的中间过程盲区

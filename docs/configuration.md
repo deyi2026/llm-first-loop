@@ -82,7 +82,7 @@
 | `SELFHEAL_MAX_ATTEMPTS` / `SELFHEAL_MAX_PER_ROUND` | 3 / 2 | 自愈尝试预算 |
 | `PARAM_ADJUST_PER_ROUND` | 2 | 每轮参数调整频次上限（PARAM-03） |
 | `SYSTEM_PROMPT_EXTRA` | — | 叠加自定义 AI 规则段（无需改代码） |
-| `RUN_MODE` | standard | 运行模式（A1 文档化，2026-08-14）: **standard** 全工具集（默认）/ **ptc** 程序化工具调用强化（web 类工具默认降级，命令执行为主）/ **minimal** 精简工具集（只读+必要执行，web/飞书/playwright 等外围禁用）/ **creative** 宽松默认参数（超时×1.5、输出×2）。弱模型选 minimal 减小工具选择压力；工具密集任务选 ptc；非法值回退 standard |
+| `RUN_MODE` | standard | 运行模式（A1 文档化，2026-08-14）: **standard** 全工具集（默认）/ **ptc** 程序化工具调用强化（web 类工具默认降级，命令执行为主；playwright 隐藏——EVO-20260816-96215428 注册层门控，浏览器执行类仅 standard/creative 可见）/ **minimal** 精简工具集（只读+必要执行，web/飞书/playwright 等外围禁用）/ **creative** 宽松默认参数（超时×1.5、输出×2）。弱模型选 minimal 减小工具选择压力；工具密集任务选 ptc；非法值回退 standard |
 
 ## 七、安全与执行
 
