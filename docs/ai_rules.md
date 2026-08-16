@@ -228,6 +228,28 @@ architecture_status 的工具回执为准；**禁止依据训练先验自报身�
 **正例**：被问身份→先 model_catalog 确认当前模型为 k3（Kimi），如实答"当前会话模型为
 k3（Kimi，经 model_catalog 回执核验）"。
 **反例**：被问身份→未查回执凭先验答"我是 Qwythos"（真实幻觉，被判 False）。
+---
+
+## 规则十三：DSH 编排能力（RULE-AI-13，2026-08-16 DSH 编排工具集）
+
+**能力**：`dsh_task` 调度 DeepSeek Harness headless 作为**进程级子代理**（独立进程 + 新会话 +
+DSH 自身模型/凭据/工具链，llm-first-loop 看不到其中间过程）；`dsh_session_read` 回放该
+DSH 会话事件日志补全中间过程。
+
+**规则**：
+1. **何时用 dsh_task**：长任务（几十轮/分钟级）、跨项目工作区（cwd 指定）、需要 DSH 完整
+   工具链或多模型路由、可并行的独立子任务（background=true 多任务 fan-out）。
+2. **何时不用**：简单任务用自身工具或 SpawnSubAgent（进程内更快，零冷启动）；任务强依赖
+   本会话上下文时（DSH 看不到本会话——须用 ctx_path 引用上下文文件，或把必要要点写进
+   任务文本，任务文本自带上下文）。
+3. **结果形态**：DSH 只回最终回答文本（默认已注入汇报格式/验收清单，可用参数调整）；
+   需要中间过程/工具轨迹时用 dsh_session_read 回放（按关键词/指定 session 检索）。
+4. **失败对策**：退出码非 0 → 回执含 stderr 错误摘要 → 修任务重发（新 session 重试无状态
+   污染）或先 dsh_session_read 看过程再决定。
+
+**正例**：跨项目重构任务 → dsh_task(cwd=目标项目, task=含上下文要点+验收清单) → 结果回执
+→ 需细节时 dsh_session_read(workspace=目标项目)。
+**反例**：简单提问/小改动直接调 dsh_task（冷启动开销不值）——用自身工具。
 
 ---
 

@@ -81,6 +81,10 @@ type: fact / decision / convention。
 ## 模型身份声明约束
 对自身模型身份/提供方的声明必须以 model_catalog / architecture_status 工具回执为准；禁止依据训练先验自报身份（"我是 X / 由 Y 创建"为真实幻觉源）。身份询问先取回执按实作答；未核验如实声明"未核验"而非给具体身份；回执与先验冲突以回执为准并如实说明。
 
+# RULE-AI-13 DSH 编排能力（唯一真相源: docs/ai_rules.md）
+## DSH 编排能力
+可用 dsh_task 调度 DeepSeek Harness headless 作为进程级子代理（独立进程 + 新会话 + DSH 自身模型/凭据/工具链）。何时用：长任务、跨项目工作区（cwd 指定）、需要 DSH 完整工具链或多模型路由、可并行的独立子任务（background=true）。何时不用：简单任务用自身工具或 SpawnSubAgent（进程内更快）；任务强依赖本会话上下文时须用 ctx_path 引用上下文文件或把要点写进任务文本（任务文本自带上下文）。DSH 只回最终回答文本（默认已注入汇报格式/验收清单）；需要中间过程/工具轨迹时用 dsh_session_read 回放（按关键词/指定 session 检索）。失败对策：退出码非 0 回执含 stderr 错误摘要，修任务重发（新 session 重试）或先 dsh_session_read 看过程再决定。
+
 ## 灾难性安全
 程序唯一会硬阻断的行动是不可逆破坏（如 rm -rf 根目录、格式化磁盘等）。
 若你的行动被阻断，你会收到 [安全硬阻断] 反馈，请如实调整方案。"""
