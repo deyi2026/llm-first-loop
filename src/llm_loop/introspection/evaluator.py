@@ -230,22 +230,32 @@ class SelfEvaluator:
         return not ("error" in action_type or "missing" in action_type or "fail" in action_type)
 
     def _metric_tool_efficiency(self, tool_history: list[dict]) -> EvalMetric:
-        """工具效率 ← tool_history: 近 span 条工具调用 success / 总数."""
+        """工具效率 ← tool_history: 近 span 条工具调用 success / 总数.
+
+        EVO-20260816-dc3876f9: 低调用频次不再一律 N/A——有样本即评估（小样本如实标注），
+        仅无样本才 N/A；原逻辑样本<min_samples 恒 N/A，工具调用稀疏时指标形同虚设。
+        """
         recent = tool_history[-self._span :]
-        if len(recent) < self._min_samples:
+        if not recent:
             return EvalMetric(
                 name="tool_efficiency",
                 value=None,
-                sample_size=len(recent),
+                sample_size=0,
                 source="tool_history",
-                note=f"样本不足（{len(recent)} < {self._min_samples}）",
+                note="无工具调用样本",
             )
         success = sum(1 for t in recent if t.get("status") == "success")
+        note = (
+            ""
+            if len(recent) >= self._min_samples
+            else f"小样本（{len(recent)} < {self._min_samples}）"
+        )
         return EvalMetric(
             name="tool_efficiency",
             value=round(success / len(recent), 4),
             sample_size=len(recent),
             source="tool_history",
+            note=note,
         )
 
     def _metric_honesty_rate(self, checks: list[dict]) -> EvalMetric:

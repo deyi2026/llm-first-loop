@@ -168,6 +168,8 @@ class _ToolExecMixin:
                     self._append_message_event(sess, tool_msg)
                     # EVO-20260814-aab7eb0b P2: 运行中停滞指纹追踪（evaluator.py:271 同构指纹）
                     self._track_stagnation(tc, sess, tool_trace)
+                # EVO-20260816-62977206: 工具执行后经验提示注入（末尾追加，无命中不注入）
+                self._inject_experience_tips(sess, [tc.name for tc in valid_calls])
             # 注：唯一中断点 = tool_round yield（内层 except GeneratorExit 已合成+落盘+重抛）；
             # execute_many 后无 yield（同步阻塞），不重复外层兜底（防重复合成）
             except GeneratorExit:
@@ -195,6 +197,50 @@ class _ToolExecMixin:
             sess.messages.append(cancel_msg)
             self._append_message_event(sess, cancel_msg)
             self._record_action("action.tool_loop", "cancelled", tc.name)
+
+    def _inject_experience_tips(self: LoopEngine, sess, tool_names: list[str]) -> None:
+        """EVO-20260816-62977206: 工具执行后按工具名检索经验库，命中注入 [经验提示].
+
+        语义: 对 AI 的下一步决策前置带经验（AI 对照经验与本次结果决定重试/换路径/复用）；
+        无命中不注入（零开销）、检索异常 fail-open（不阻断主循环）；末尾追加缓存友好。
+        开关: TOOL_EXPERIENCE_INJECT（默认开）。
+        """
+        if not getattr(self.settings, "tool_experience_inject", True):
+            return
+        try:
+            store = getattr(self, "_exp_store", None)
+            if store is None:
+                from llm_loop.experiences.store import ExperienceStore
+
+                store = ExperienceStore(self.settings.experiences_dir)
+                self._exp_store = store
+            lines: list[str] = []
+            for name in dict.fromkeys(tool_names):  # 去重保序
+                hits = store.list_active(query=name, limit=2)
+                for hit in hits:
+                    lines.append(f"- 工具 '{name}' → {hit.get('summary', hit.get('id', ''))}")
+                    if len(lines) >= 4:
+                        break
+                if len(lines) >= 4:
+                    break
+            if not lines:
+                return  # 无命中不注入
+            content = (
+                "[经验提示] 以下为本次工具调用相关的已验证经验（可复用，避免重复探测/踩已知坑）:\n"
+                + "\n".join(lines)
+            )
+            if len(content) > 800:
+                content = content[:800] + "…"  # 注入最小化（RULE-AI-16）
+            msg = Message(
+                role="system",
+                content=content,
+                source=MessageSource.SYSTEM,
+                metadata={"injected_system": True},
+            )
+            sess.messages.append(msg)
+            self._append_message_event(sess, msg)
+        except Exception:  # noqa: BLE001 — 经验检索 fail-open（不阻断主循环）
+            logger.warning("经验提示注入失败（fail-open）", exc_info=True)
 
     # ── EVO-20260814-aab7eb0b P2: 循环实时停滞检测 ──
 

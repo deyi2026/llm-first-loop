@@ -94,13 +94,20 @@ def test_evaluate_five_metrics(tmp_path):
 
 
 def test_evaluate_sample_insufficient(tmp_path):
-    """样本不足 → value=None + 如实标注（EVAL-02，spec 10.2.3-1）."""
+    """样本不足 → value=None + 如实标注（EVAL-02，spec 10.2.3-1）.
+
+    EVO-20260816-dc3876f9: tool_efficiency 仅无样本才 N/A（空工具历史标注"无工具调用样本"），
+    其余指标维持样本不足语义。
+    """
     evaluator = SelfEvaluator(status_provider=_Status(), audit_dir=tmp_path, min_samples=5)
     report = evaluator.evaluate()
     metrics = {m.name: m for m in report.metrics}
-    for m in metrics.values():
+    for name, m in metrics.items():
         assert m.value is None
-        assert "样本不足" in m.note
+        if name == "tool_efficiency":
+            assert m.note == "无工具调用样本"
+        else:
+            assert "样本不足" in m.note
 
 
 def test_evaluate_stagnation_detected(tmp_path):
