@@ -49,7 +49,7 @@ def _raw_env(name: str) -> str:
     return ""
 
 
-def _env_int(name: str, default: int) -> int:
+def _env_int(name: str, default: int | None = None) -> int | None:
     raw = _raw_env(name)
     if not raw:
         return default
@@ -255,7 +255,8 @@ class Settings:
     tool_experience_inject: bool = True  # 按工具名检索经验库并注入提示（TOOL_EXPERIENCE_INJECT）
 
     # ── 上下文 ──
-    history_max_chars: int = 100000  # T2(2026-08-14): 类默认收敛与运行时 env 默认一致（100K；1M 曾撑爆窗口，30000 过保守）
+    history_max_chars: int | None = None  # T2(2026-08-14): 默认 100K 收敛（1M 曾撑爆窗口，30000 过保守）；
+    # EVO-20260816-3af5dee3: None=未显式配置 → 运行时按当前模型窗口 8% 自适应（取代固定值）
     memory_top_k: int = 5  # auto-adaptive: env 未显式设置时按上下文占用率自适应（>70%→8/<30%→3，硬上限 20）
 
     # ── 架构自省（AI-serving, design.md §2.1.4）──
@@ -528,7 +529,7 @@ def load_settings() -> Settings:
         tool_guard_enabled=_env_bool("TOOL_GUARD_ENABLED", False),
         runner_background=_env_bool("RUNNER_BACKGROUND", True),  # EVO 后台 run 改造: 默认开
         tool_experience_inject=_env_bool("TOOL_EXPERIENCE_INJECT", True),  # EVO-20260816-62977206: 默认开
-        history_max_chars=_env_int("HISTORY_MAX_CHARS", 100000),  # T2(2026-08-14): 默认 100K（与类默认收敛；1M 曾致上下文撑爆全失败）
+        history_max_chars=_env_int("HISTORY_MAX_CHARS"),  # EVO-20260816-3af5dee3: None=未配置→按窗口自适应
         memory_top_k=_env_int("MEMORY_TOP_K", 5),
         self_inspection_enabled=_env_bool("SELF_INSPECTION_ENABLED", True),
         status_report_cooldown_s=float(_env_int("STATUS_REPORT_COOLDOWN_S", 60)),

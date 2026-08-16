@@ -7,6 +7,7 @@ DeclarationValidator + RecordSearcher 装配为 LoopEngine。
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
 from collections.abc import Callable
@@ -120,6 +121,20 @@ def build_engine(settings: Settings) -> LoopEngine:
 
         registry = load_registry(settings)
         provider_id, model_id = registry.resolve(settings.llm_model)
+        # EVO-20260816-3af5dee3: history_max_chars 未显式配置（None）→ 按默认模型窗口 8% 自适应，
+        # 取代固定 100K（1M 窗口仅 10% 过保守 / 262K 窗口达 38% 偏激进）。装配期一次解析归一，
+        # 后续所有消费方（RuntimeParams/engine/routes 校验）拿到非 None 值。
+        if settings.history_max_chars is None:
+            _limit: int | None = None
+            try:
+                _spec = registry.providers[provider_id].models.get(model_id)
+                _limit = _spec.context if _spec else None
+            except Exception:  # noqa: BLE001 — 窗口未知兜底旧默认
+                _limit = None
+            _default_budget = int(_limit * 2 * 0.08) if _limit else 100000
+            _default_budget = max(10000, _default_budget)
+            settings = dataclasses.replace(settings, history_max_chars=_default_budget)
+            logger.info("history_max_chars 未配置 → 按模型窗口自适应: %d 字符", _default_budget)
         thinking_supported = registry.supports_thinking(provider_id, model_id)
         model_registry_resolved = True
         if "/" in settings.llm_model:

@@ -15,6 +15,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from llm_loop.core.loop.engine import LoopEngine
 
+# EVO-20260816-3af5dee3: 字符/token 估算（与 routing._effective_history_budget 同源）
+_CHARS_PER_TOKEN_EST = 2
+
 
 class _RuntimeParamsMixin:
     def _runtime_max_iterations(self: LoopEngine) -> int:
@@ -24,10 +27,27 @@ class _RuntimeParamsMixin:
         return self.settings.max_iterations
 
     def _runtime_history_budget(self: LoopEngine) -> int:
-        """上下文注入预算（PARAM-01: 动态优先、静态兜底）."""
+        """上下文注入预算（PARAM-01: 动态优先、静态兜底）.
+
+        EVO-20260816-3af5dee3: settings.history_max_chars=None（未显式配置）时
+        按当前模型窗口 8% 自适应（取代固定 100K——1M 窗口下 100K 仅 10% 过保守，
+        262K 窗口下 100K 达 38% 偏激进）。窗口未知兜底旧默认 100000。
+        """
         if self.runtime is not None:
             return self.runtime.history_max_chars
-        return self.settings.history_max_chars
+        configured = getattr(self.settings, "history_max_chars", None)
+        if configured is not None:
+            return configured
+        try:
+            ctx_lim = getattr(self, "_current_context_limit", None)
+            def_model = getattr(self, "_default_model_label", None)
+            if ctx_lim is not None and def_model is not None:
+                limit = ctx_lim(def_model())
+                if limit:
+                    return max(10000, int(limit * _CHARS_PER_TOKEN_EST * 0.08))
+        except Exception:  # noqa: BLE001 — 窗口查询失败兜底旧默认
+            pass
+        return 100000
 
     def _runtime_extract_interval(self: LoopEngine) -> int:
         """会话状态快照注入间隔（M58 配置面收敛: 动态优先、静态兜底）."""

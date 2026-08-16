@@ -99,6 +99,8 @@ class RuntimeParams:
     @property
     def history_max_chars(self) -> int:
         default = self._settings.history_max_chars
+        if default is None:  # EVO-20260816-3af5dee3: 未配置兜底旧默认（factory 装配已归一，此处防御）
+            default = 100000
         return int(self.get("history_budget", default))
 
     @property
