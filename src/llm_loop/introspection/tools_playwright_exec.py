@@ -14,8 +14,12 @@
   （__import__/import_module）+ 动态执行（exec/eval/compile）+ sys.modules 取模块
 - confirm=true 才执行（默认 dry_run 仅回显脚本）
 - 子进程隔离 + 超时终止; 审计落盘 data/audit/playwright.jsonl
-- 明确开放面（设计未承诺防护）: 模型代码在子进程内可读写工作区文件、发起任意
-  网络请求（requests/urllib/socket 未被禁）——等价于完全可信 shell，信任边界
+- 子进程加固（2026-08-16 DSH 复核 005 建议 a+c）: cwd 限定 data/e2e/<session>/ +
+  env 剥离敏感键（KEY/SECRET/TOKEN/PASSWORD/PASSWD/CREDENTIAL）——**门槛非沙箱**：
+  绝对路径访问（open('/abs/path/.env')）与同用户权限（ctypes/syscall）仍可达，
+  定位为"挡误操作/粗注入"，不得宣称沙箱
+- 明确开放面（设计未承诺防护）: 模型代码在子进程内仍可经绝对路径读写工作区文件、
+  发起任意网络请求（requests/urllib/socket 未被禁）——等价于完全可信 shell，信任边界
   由产品方显式决策（见 docs/local/EVAL 报告与审计结论）
 """
 
@@ -28,6 +32,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from pathlib import Path
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
@@ -81,7 +86,7 @@ from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright
 
 _SESSION = __SESSION__
-_OUT = Path("data/e2e") / _SESSION
+_OUT = Path(__OUT_ABS__)  # 绝对路径注入：子进程 cwd 已限定 data/e2e/<session>（2026-08-16 DSH 复核建议 c）
 _OUT.mkdir(parents=True, exist_ok=True)
 
 _pw = sync_playwright().start()
@@ -246,6 +251,25 @@ def _audit(record: dict) -> None:
         f.write(json.dumps({**record, "tool": TOOL_NAME, "ts": time.time()}, ensure_ascii=False) + "\n")
 
 
+# ── 子进程加固（2026-08-16 DSH 复核 005 建议 a+c；门槛非沙箱，诚实声明见文件头）──
+_SENSITIVE_ENV_MARKERS = ("KEY", "SECRET", "TOKEN", "PASSWORD", "PASSWD", "CREDENTIAL")
+
+
+def _child_env() -> dict:
+    """子进程 env：剥离敏感键（消除模型代码经 os.environ 读取凭据的面）."""
+    return {
+        k: v for k, v in os.environ.items()
+        if not any(m in k.upper() for m in _SENSITIVE_ENV_MARKERS)
+    }
+
+
+def _child_workdir(session: str) -> Path:
+    """子进程 cwd：限定 data/e2e/<session>/（模型代码相对路径访问被限定在产物目录）."""
+    wd = Path("data/e2e") / session
+    wd.mkdir(parents=True, exist_ok=True)
+    return wd.resolve()
+
+
 def run_playwright_exec(ctx: Any, audit: Any, args: dict) -> ToolResult:
     """playwright_exec: 单 exec 浏览器脚本执行."""
     code = str(args.get("code", "")).strip()
@@ -283,9 +307,14 @@ def run_playwright_exec(ctx: Any, audit: Any, args: dict) -> ToolResult:
 
     # 真实执行：独立子进程（解释器/浏览器均不跨调用持久）。
     # 模型代码以 __MODEL_CODE__ 注入，由 preamble 的 _run_model 在隔离命名空间执行
-    # （2026-08-16 安全修复：不再直接拼接进同一模块作用域）
+    # （2026-08-16 安全修复：不再直接拼接进同一模块作用域）。
+    # cwd 限定 data/e2e/<session>/ + env 剥离敏感键（2026-08-16 DSH 复核 005 建议 a+c）
+    workdir = _child_workdir(session)
     script = (
-        _PREAMBLE.replace("__SESSION__", repr(session)).replace("__MODEL_CODE__", repr(code))
+        _PREAMBLE
+        .replace("__SESSION__", repr(session))
+        .replace("__OUT_ABS__", repr(str(workdir)))
+        .replace("__MODEL_CODE__", repr(code))
     )
     tmp_path = None
     try:
@@ -295,7 +324,8 @@ def run_playwright_exec(ctx: Any, audit: Any, args: dict) -> ToolResult:
         proc = subprocess.run(
             [sys.executable, tmp_path],
             capture_output=True, text=True, timeout=timeout_s,
-            env={**os.environ},
+            cwd=workdir,
+            env=_child_env(),
         )
         out = (proc.stdout or "")[-8000:]
         err_tail = (proc.stderr or "")[-2000:]
