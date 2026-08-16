@@ -257,7 +257,6 @@ class _ToolExecMixin:
         frontmatter name/description 与工具名+关键词做子串匹配；
         目录不存在/损坏 fail-open 返回空；扫描结果缓存（目录 mtime 变化才重扫）。
         """
-        import os
         import re
         from pathlib import Path
 

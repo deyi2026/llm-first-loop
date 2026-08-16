@@ -9,8 +9,6 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
 from llm_loop.core.loop.tool_exec import _ToolExecMixin
 
 _EXP_MD = """---
