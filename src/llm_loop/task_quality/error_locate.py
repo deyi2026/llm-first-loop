@@ -89,7 +89,7 @@ class PytestParser:
             if 1 <= line <= len(lines):
                 return lines[line - 1].strip()[:200]
         except OSError:
-            pass
+            return ""  # 文件读取失败：代码片段不可用（fail-open，返回空不伪造）
         return ""
 
 
