@@ -73,7 +73,8 @@ class DshSessionReadTool:
         limit = max(1, min(limit, 200))
 
         key = workspace_key(workspace)
-        base = _DSH_SESSIONS_ROOT / key
+        root = self._sessions_root()
+        base = root / key
         if not base.is_dir():
             return ToolResult(
                 status=ToolResultStatus.FAILURE,
@@ -116,6 +117,15 @@ class DshSessionReadTool:
         )
 
     # ── 内部 ──
+    @staticmethod
+    def _sessions_root() -> Path:
+        """session 根目录：DSH_HOME 已重定向（服务进程写项目内 data/dsh-home）→ 跟随；
+        否则用模块常量（~/.dsh/sessions 或 DSH_SESSIONS_ROOT 覆盖）."""
+        dsh_home = os.environ.get("DSH_HOME", "").strip()
+        if dsh_home:
+            return Path(dsh_home) / "sessions"
+        return _DSH_SESSIONS_ROOT
+
     @staticmethod
     def _pick_session_dir(base: Path, session_id: str) -> Path | None:
         """选 session 目录：指定 id 精确匹配；否则取最新（按 mtime）."""

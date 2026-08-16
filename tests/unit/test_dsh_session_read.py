@@ -58,6 +58,7 @@ def _events() -> list[dict]:
 
 
 def _make(monkeypatch, tmp_path, root: Path) -> DshSessionReadTool:
+    monkeypatch.delenv("DSH_HOME", raising=False)  # 隔离本机 DSH_HOME 残留
     monkeypatch.setattr(
         "llm_loop.tools.builtin.dsh_session_read._DSH_SESSIONS_ROOT", root
     )
@@ -131,3 +132,16 @@ def test_corrupt_log_failure(monkeypatch, tmp_path):
     r = tool.execute(workspace="/fake/ws")
     assert r.status == ToolResultStatus.FAILURE
     assert "不可读" in r.content
+
+
+def test_dsh_home_redirect(monkeypatch, tmp_path):
+    """DSH_HOME 设置时 session 根跟随 DSH_HOME/sessions（服务进程重定向场景）."""
+    monkeypatch.delenv("DSH_HOME", raising=False)
+    root = tmp_path / "project" / "data" / "dsh-home"
+    base = root / "sessions" / workspace_key("/fake/ws")
+    _write_session(base, "session-h", _events())
+    monkeypatch.setenv("DSH_HOME", str(root))
+    tool = DshSessionReadTool()
+    r = tool.execute(workspace="/fake/ws")
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "session-h" in r.content

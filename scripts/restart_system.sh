@@ -207,6 +207,12 @@ _start_service() {
   _load_credentials
   _load_llm
 
+  # DSH 编排（2026-08-16）：DSH_HOME 重定向到项目内 data/dsh-home（服务进程对 data/ 有写
+  # 权限）——规避 macOS TCC/沙箱对 ~/.dsh 的写入授权限制（dsh_task 真实调用依赖该目录可写；
+  # 凭据仍共享 ~/.dsh/.credentials.yaml，仅 profile/session 落盘到项目内）
+  export DSH_HOME="${DSH_HOME:-$PROJECT_DIR/data/dsh-home}"
+  mkdir -p "$DSH_HOME"
+
   case "$svc" in
     web)
       # 端口冲突检测（被占用 → 如实提示用 WEB_PORT 覆盖，不静默抢端口）
