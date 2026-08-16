@@ -33,22 +33,26 @@ PLAYWRIGHT_TEST_TOOL_DEF: dict = {
     },
 }
 
-# URL 沙箱
-_ALLOWED_URL_PATTERNS = [
-    r"^https://[a-z0-9-]+\.feishu\.cn",
-    r"^http://localhost(:\d+)?(/.*)?$",
-    r"^http://127\.0\.0\.1(:\d+)?(/.*)?$",
-]
-
 _AUDIT_PATH = Path("data/audit/playwright.jsonl")
+
+# URL 沙箱：host 精确集合校验（2026-08-16 安全修复——原正则无 $ 锚定，
+# userinfo@host/域后缀可逃逸；与 tools_playwright_exec._url_allowed 逻辑保持一致）
+_URL_ALLOWED_HOSTS = {"feishu.cn", "localhost", "127.0.0.1"}
 
 
 def _validate_url(url: str) -> tuple[bool, str]:
-    """URL 沙箱验证."""
-    import re
-    for pat in _ALLOWED_URL_PATTERNS:
-        if re.match(pat, url):
-            return True, ""
+    """URL 沙箱验证：urlparse 解析 hostname 精确校验（防 userinfo@host/域后缀/IP 变体/IPv6 逃逸）."""
+    from urllib.parse import urlparse
+
+    try:
+        p = urlparse(url)
+    except ValueError:
+        return False, f"URL '{url}' 无法解析"
+    if p.scheme not in ("http", "https"):
+        return False, f"URL '{url}' 协议不在允许范围（仅 http/https）"
+    host = (p.hostname or "").lower()
+    if host in _URL_ALLOWED_HOSTS or host.endswith(".feishu.cn"):
+        return True, ""
     return False, f"URL '{url}' 不在沙箱允许列表（仅 feishu.cn/localhost/127.0.0.1）"
 
 

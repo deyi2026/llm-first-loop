@@ -54,6 +54,33 @@ _REPORT_FORMAT_SUFFIX = (
 _SENSITIVE_ENV_RE = re.compile(r"^(.*(?:KEY|SECRET|TOKEN|PASSWORD).*)$", re.IGNORECASE)
 
 
+def _dsh_env(cwd: str) -> dict[str, str]:
+    """构造 DSH 子进程环境：DSH_HOME 可写性回退（2026-08-16 EPERM 复盘）.
+
+    背景: profile-boot 启动时覆写 $DSH_HOME/profiles/headless/cordis.yml。
+    长驻 agent 进程可能携带过期 DSH_HOME（如 ~/.dsh 在 macOS 沙箱/TCC 下不可写）
+    → EPERM 启动失败。策略: 当前值可写则沿用；否则回退 <cwd>/data/dsh-home
+    （restart_system.sh 注入的服务级 DSH_HOME，profile/session 落盘项目内）。
+    """
+    env = dict(os.environ)
+    home = env.get("DSH_HOME", "").strip()
+    if home:
+        probe = Path(home) / "profiles" / _DSH_PROFILE
+        try:
+            probe.mkdir(parents=True, exist_ok=True)
+            t = probe / ".write_probe"
+            t.write_text("ok")
+            t.unlink()
+            return env  # 可写，沿用
+        except OSError:
+            pass  # 不可写 → 走回退
+    fallback = Path(cwd) / "data" / "dsh-home"
+    if fallback.is_dir():
+        env["DSH_HOME"] = str(fallback)
+        logger.info("DSH_HOME 回退到项目内: %s（原值不可写: %s）", fallback, home or "(未设)")
+    return env
+
+
 class DshTaskTool:
     name = "dsh_task"
     description = (
@@ -248,6 +275,7 @@ class DshTaskTool:
             text=True,
             bufsize=1,
             cwd=cwd,
+            env=_dsh_env(cwd),
             start_new_session=True,  # 独立进程组：超时整树终止（防孤儿）
         )
         try:
