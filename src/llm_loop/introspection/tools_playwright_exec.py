@@ -18,9 +18,10 @@
   env 剥离敏感键（KEY/SECRET/TOKEN/PASSWORD/PASSWD/CREDENTIAL）——**门槛非沙箱**：
   绝对路径访问（open('/abs/path/.env')）与同用户权限（ctypes/syscall）仍可达，
   定位为"挡误操作/粗注入"，不得宣称沙箱
-- 明确开放面（设计未承诺防护）: 模型代码在子进程内仍可经绝对路径读写工作区文件、
-  发起任意网络请求（requests/urllib/socket 未被禁）——等价于完全可信 shell，信任边界
-  由产品方显式决策（见 docs/local/EVAL 报告与审计结论）
+- 明确开放面（2026-08-16 产品方已决策：**维持现状**——仅受控 E2E 场景、confirm=true、
+  审计全量；触发升级条件与理由见 docs/local/DECISION-20260816-playwright-open-surface.md）:
+  模型代码在子进程内仍可经绝对路径读写工作区文件、发起任意网络请求
+  （requests/urllib/socket 未被禁）
 """
 
 from __future__ import annotations
