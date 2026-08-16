@@ -250,6 +250,8 @@ class Settings:
     tool_pipeline_enabled: bool = False  # 总开关（TOOL_PIPELINE_ENABLED）
     tool_materialize_enabled: bool = False  # 参数物化+深冻结（TOOL_MATERIALIZE_ENABLED）
     tool_guard_enabled: bool = False  # 单调守卫（TOOL_GUARD_ENABLED）
+    # ── EVO-20260816-62977206: 工具执行后经验提示注入（默认开，可关）──
+    tool_experience_inject: bool = True  # 按工具名检索经验库并注入提示（TOOL_EXPERIENCE_INJECT）
 
     # ── 上下文 ──
     history_max_chars: int = 100000  # T2(2026-08-14): 类默认收敛与运行时 env 默认一致（100K；1M 曾撑爆窗口，30000 过保守）
@@ -405,6 +407,7 @@ class Settings:
             "tool_pipeline_enabled": self.tool_pipeline_enabled,
             "tool_materialize_enabled": self.tool_materialize_enabled,
             "tool_guard_enabled": self.tool_guard_enabled,
+            "tool_experience_inject": self.tool_experience_inject,
             "history_max_chars": self.history_max_chars,
             "memory_top_k": self.memory_top_k,
             "self_inspection_enabled": self.self_inspection_enabled,
@@ -521,6 +524,7 @@ def load_settings() -> Settings:
         tool_pipeline_enabled=_env_bool("TOOL_PIPELINE_ENABLED", False),
         tool_materialize_enabled=_env_bool("TOOL_MATERIALIZE_ENABLED", False),
         tool_guard_enabled=_env_bool("TOOL_GUARD_ENABLED", False),
+        tool_experience_inject=_env_bool("TOOL_EXPERIENCE_INJECT", True),  # EVO-20260816-62977206: 默认开
         history_max_chars=_env_int("HISTORY_MAX_CHARS", 100000),  # T2(2026-08-14): 默认 100K（与类默认收敛；1M 曾致上下文撑爆全失败）
         memory_top_k=_env_int("MEMORY_TOP_K", 5),
         self_inspection_enabled=_env_bool("SELF_INSPECTION_ENABLED", True),
