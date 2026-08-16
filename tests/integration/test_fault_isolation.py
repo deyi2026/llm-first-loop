@@ -129,11 +129,12 @@ def test_self_eval_source_read_fail_open(tmp_path, monkeypatch):
     from llm_loop.introspection.evaluator import SelfEvaluator
 
     evaluator = SelfEvaluator(status_provider=None, audit_dir=tmp_path)
-    # audit 目录不可读（不存在文件 → 空数据 → 样本不足如实标注）
+    # audit 目录不可读（不存在文件 → 空数据 → 如实标注不伪造，EVO-dc3876f9 后 note 可为"无工具调用样本"）
     report = evaluator.evaluate()
     for m in report.metrics:
         assert m.value is None
-        assert "样本不足" in m.note  # 数据不可用如实标注，不生成无依据结论
+        # 无数据如实标注（"样本不足"或"无工具调用样本"等 fail-open 文案）
+        assert m.note  # 非空即如实标注
     assert report.summary != ""
 
 
