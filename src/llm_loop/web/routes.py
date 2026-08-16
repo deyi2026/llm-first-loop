@@ -431,26 +431,34 @@ def list_interop_messages(request: Request) -> dict:
     """
     del request  # 纯文件读取，无引擎依赖
     base = Path(os.environ.get("LFL_DATA_DIR", "data")) / "interop"
-    result: dict[str, list[dict]] = {"lfl_to_dsh": [], "dsh_to_lfl": []}
+    result: dict[str, dict] = {"lfl_to_dsh": {"pending": [], "recent_done": []},
+                               "dsh_to_lfl": {"pending": [], "recent_done": []}}
     for direction in ("lfl_to_dsh", "dsh_to_lfl"):
-        pdir = base / direction / "pending"
-        if not pdir.is_dir():
-            continue
-        for f in sorted(pdir.glob("*.json")):
-            try:
-                d = json.loads(f.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue  # 格式坏/读失败 → 跳过（fail-open）
-            result[direction].append(
-                {
-                    "id": d.get("id", f.stem),
-                    "from": d.get("from", ""),
-                    "to": d.get("to", ""),
-                    "ts": d.get("ts", ""),
-                    "topic": d.get("topic", ""),
-                    "body": str(d.get("body", ""))[:300],
-                }
-            )
+        for sub in ("pending", "done"):
+            pdir = base / direction / sub
+            if not pdir.is_dir():
+                continue
+            # done 只取最近 N 条（按文件名倒序）
+            files = sorted(pdir.glob("*.json"), reverse=True)
+            if sub == "done":
+                files = files[:5]
+            result_key = "recent_done" if sub == "done" else "pending"
+            for f in files:
+                try:
+                    d = json.loads(f.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue  # 格式坏/读失败 → 跳过（fail-open）
+                result[direction][result_key].append(
+                    {
+                        "id": d.get("id", f.stem),
+                        "from": d.get("from", ""),
+                        "to": d.get("to", ""),
+                        "ts": d.get("ts", ""),
+                        "topic": d.get("topic", ""),
+                        "body": str(d.get("body", ""))[:300],
+                        "status": d.get("status", sub),
+                    }
+                )
     return result
 
 @router.get("/api/v1/sessions", response_model=SessionListResponse)
