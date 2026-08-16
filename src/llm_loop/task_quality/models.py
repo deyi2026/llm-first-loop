@@ -306,6 +306,8 @@ class RegressionResult:
                 f"受影响测试 {len(self.affected_tests)} 个（全量占比 {self.subset_ratio:.0%}）"
                 f"，通过 {self.passed_count} / 失败 {self.failed_count}"
             ]
+            lines.append("（子集: " + ", ".join(self.affected_tests[:10])
+                         + ("…" if len(self.affected_tests) > 10 else "") + "）")
             for f in self.failures:
                 lines.append(f"  {f.file_path}:{f.line_number} —— {f.reason}")
         lines.append("（受影响文件: " + ", ".join(self.modified_files) + "）")
