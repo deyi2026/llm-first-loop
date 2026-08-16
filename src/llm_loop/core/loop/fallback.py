@@ -10,7 +10,11 @@ design §5.4 行为规则表: 可降级 5xx/429/超时/网络；4xx 非 429 不�
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -26,6 +30,62 @@ from llm_loop.llm.errors import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ── EVO-20260816-37633629 ③: 降级提示 stamp 限频（nudge without nagging）──
+# 同一降级对（from→to）在主消息流的提示 24h（FALLBACK_NOTICE_COOLDOWN_S）内只出现一次；
+# 仅抑制消息注入，status.record_fallback / 审计 / action_trace 每次照常记录（可观测性不降级）。
+# stamp 落盘 <data_dir>/state/fallback_notice_stamps.json（{kind: epoch}），进程重启仍生效；
+# 路径随 Settings.data_dir 派生——测试/多工作区天然隔离，互不污染。
+_DEFAULT_COOLDOWN_S = 86400.0  # 24h
+
+
+def _notice_stamp_path(settings: object) -> Path:
+    """stamp 文件路径（从 Settings.data_dir 派生；settings 缺失时回退 ./data）。"""
+    base = getattr(settings, "data_dir", None) or "./data"
+    return Path(str(base)) / "state" / "fallback_notice_stamps.json"
+
+
+def _fallback_notice_cooldown_s() -> float:
+    """限频间隔（秒）。env 每次调用重读，运行时调整即时生效；非法值回退默认 24h。"""
+    raw = os.environ.get("FALLBACK_NOTICE_COOLDOWN_S", "").strip()
+    if raw:
+        try:
+            v = float(raw)
+            if v >= 0:
+                return v
+        except ValueError:
+            pass
+    return _DEFAULT_COOLDOWN_S
+
+
+def _load_notice_stamps(path: Path) -> dict[str, float]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return {str(k): float(v) for k, v in data.items()}
+    except (OSError, ValueError, TypeError):
+        pass  # 文件缺失/损坏 → 视为无历史（fail-open：下次提示照常注入）
+    return {}
+
+
+def _fallback_notice_suppressed(path: Path, kind: str) -> bool:
+    """同类降级提示是否处于限频窗口内（True=应抑制消息注入）."""
+    last = _load_notice_stamps(path).get(kind)
+    return last is not None and (time.time() - last) < _fallback_notice_cooldown_s()
+
+
+def _record_fallback_notice(path: Path, kind: str) -> None:
+    """写入提示 stamp（best-effort：落盘失败不阻断降级主流程）."""
+    try:
+        stamps = _load_notice_stamps(path)
+        stamps[kind] = time.time()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(stamps, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        logger.warning("fallback notice stamp 写入失败（fail-open，不影响降级）", exc_info=True)
 
 
 class _FallbackMixin:
@@ -144,7 +204,21 @@ class _FallbackMixin:
                     reason=reason,
                     result_status="success",
                 )
-            return resp, [notice], ref
+            # EVO-20260816-37633629 ③: stamp 限频——同类降级提示 24h 内主消息流只注入一次
+            # （status/审计/action_trace 每次照常记录，可观测性不降级；仅消息注入被限频）。
+            notices: list[Message] = []
+            kind = f"{from_model}->{to_model}"
+            stamp_path = _notice_stamp_path(getattr(self, "settings", None))
+            if _fallback_notice_suppressed(stamp_path, kind):
+                self._record_action(
+                    "action.llm_decide",
+                    "fallback_notice_suppressed",
+                    f"{kind}（{int(_fallback_notice_cooldown_s())}s 内已提示, 本次仅记录不注入提示消息）",
+                )
+            else:
+                _record_fallback_notice(stamp_path, kind)
+                notices.append(notice)
+            return resp, notices, ref
 
         # ── 链全失败 ──
         # 汇总提示: 包含主调用原因 + 每个候选失败原因（如实反馈, design §5.4 行为表）
