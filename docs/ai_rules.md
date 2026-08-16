@@ -272,6 +272,59 @@ DSH 会话事件日志补全中间过程。
 
 ---
 
+## 规则十五：CodeArts 远端子 Agent 调度（RULE-AI-15，2026-08-16 CodeArts 集成）
+
+**能力**：`codearts_dispatch` 委派任务至华为云 CodeArts 平台子 Agent 执行（远端独立环境 +
+CodeArts 工具链：流水线/代码检查/部署/仓库操作）；`codearts_status` 查进度；
+`codearts_cancel` 取消；`codearts_capability` 查适用场景与局限性声明。
+亦可经 `workflow_run` 步骤 `executor: "codearts"` 编排多步骤远端委派。
+
+**规则**：
+1. **何时用 codearts_dispatch**：需 CodeArts 平台能力的重任务（流水线触发/代码检查/部署/
+   远端仓库操作）、需远端执行环境的长时异步任务、可经 workflow_run executor="codearts"
+   编排多步骤远端 + 本地混合流水线。
+2. **何时不用**：本地轻量子任务用 `spawn_subagent` 或 `dsh_task`（更快、零远端依赖）；
+   任务强依赖本会话上下文时（远端看不到本会话——须把要点写进 task_description/
+   context_summary，远端子 Agent 仅能看到委派时传入的信息）。
+3. **异步语义**：dispatch 回执含 handle_id（任务已提交远端，**非已完成**）→ 用
+   codearts_status 查进度 → 终态结果自动回收（至少一次，经 ResultCollector）；
+   需取消时 codearts_cancel。回执五态：success/failure/blocked/timeout/error。
+4. **能力与局限**：调 codearts_capability 查适用场景/局限性/远端依赖/非完备声明——
+   CodeArts **不保证任务成功**（远端可能失败/超时/取消），状态查询持续失败时标注
+   UNKNOWN **不臆造状态**。
+5. **安全**：高风险动作（生产部署/制品发布/仓库强推/环境销毁）需人工审批，无人值守
+   模式默认拒绝（fail-closed）；灾难性动作经本地安全硬边界前置检查拦截。
+6. **失败对策**：CodeArts 不可用或回执 error 时可感知并改用本地子代理
+   （spawn_subagent/dsh_task）——fail-open 不阻断主循环。
+
+**正例**：需触发远端流水线构建 → codearts_dispatch(task_description="构建并测试",
+context_summary="分支 feature-x, 验收: 全量测试通过") → 回执 handle_id →
+codearts_status(handle_id) 查进度 → 终态结果回收。
+**反例**：简单本地文件修改调 codearts_dispatch（远端冷启动 + 网络开销不值）——用自身工具。
+
+
+---
+
+## 规则十六：缓存命中优先（RULE-AI-16，2026-08-16 确立）
+
+**背景**：LLM provider（DeepSeek/Kimi）对**相同 prompt 前缀**的缓存计费打折（省钱省时）；
+缓存按前缀匹配——system prompt 与历史是缓存主体，**前缀变化（哪怕末尾追加之外的任何改动）会导致全量失效**。
+
+**规则**：
+1. **system prompt 稳定优先**：新增规则/提示词改动（ai_rules/prompt.py）**批量、低频**合并提交
+   ——一次改动 = 一次全量缓存失效，改动后新前缀稳定恢复；避免高频小改（每次全量失效）。
+2. **注入内容末尾追加**：动态注入（协调消息/记忆/快照）一律**追加到末尾**（合并机制），
+   **绝不插入历史中间**（中间插入破坏整个前缀缓存）。
+3. **注入最小化**：动态内容保持最小（几百字符级）；无内容时不注入（零开销零失效）。
+4. **会话历史稳定**：不对历史消息中间插入/重排；追加新消息是缓存友好形态。
+5. **可观测**：`tokens_cache_hit`（M58）可见真实命中率——大版本/大改动后检查命中率基线，
+   异常下降提示缓存被破坏（排查注入位置/前缀变动）。
+
+**正例**：协调消息合并追加 system_prompt 末尾（前缀保持命中，仅追加段单轮重算）。
+**反例**：在历史消息中间插入协调内容（全量前缀缓存失效，一次 run 全价）。
+
+---
+
 ## 配置扩展
 
 通过环境变量 `SYSTEM_PROMPT_EXTRA` 叠加自定义规则段（程序最小化：规则可配置注入，无需改代码）：

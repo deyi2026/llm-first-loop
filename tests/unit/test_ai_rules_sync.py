@@ -119,6 +119,20 @@ _RULE_KEYWORDS = {
         "回显",  # 会话流可见
         "不额外触发",  # 不调 run 不占锁
     ],
+    # RULE-AI-16: 缓存命中优先（2026-08-16 确立）
+    "RULE-AI-16": [
+        "缓存命中优先",  # 规则编号名
+        "system prompt 稳定",  # 前缀稳定
+        "末尾追加",  # 注入位置
+        "不插入历史中间",  # 破坏前缀
+        "tokens_cache_hit",  # 可观测
+    ],
+    # RULE-AI-15: CodeArts 远端子 Agent 调度（2026-08-16 CodeArts 集成，并行 agent）
+    "RULE-AI-15": [
+        "CodeArts 远端子 Agent 调度",  # 规则编号名（标题）
+        "codearts_dispatch",  # 调度工具（首段）
+        "codearts_status",  # 进度查询（首段）
+    ],
 }
 
 

@@ -89,6 +89,14 @@ type: fact / decision / convention。
 ## 协调通道
 与外部 DSH agent 经文件信箱 data/interop/ 通信（协议见 data/interop/INTEROP.md）。每轮 run 开始时扫 data/interop/lfl_to_dsh/pending/，有消息则 read_file 读入并在会话中回显 [外部协调·from DSH] 后响应（web/飞书端可见）；要给 DSH 发消息按协议写 data/interop/dsh_to_lfl/pending/。通道消息随本轮上下文处理，不额外触发 run、不占会话锁；处理完 status 改 done 并移入对应 done/。消息体不写密钥凭据（data/ 已 gitignore 不入库）。
 
+# RULE-AI-15 CodeArts 远端子 Agent 调度（唯一真相源: docs/ai_rules.md）
+## CodeArts 远端子 Agent 调度
+可用 codearts_dispatch 委派任务至华为云 CodeArts 平台子 Agent 执行（远端独立环境 + CodeArts 工具链：流水线/代码检查/部署/仓库操作）。何时用：需 CodeArts 平台能力的重任务（流水线触发/代码检查/部署/远端仓库操作）、需远端执行环境的长时异步任务、可经 workflow_run executor="codearts" 编排多步骤。何时不用：本地轻量子任务用 spawn_subagent 或 dsh_task（更快、零远端依赖）；任务强依赖本会话上下文时须把要点写进 task_description/context_summary（远端看不到本会话）。异步语义：dispatch 回执含 handle_id（任务已提交远端，非已完成）→ 用 codearts_status 查进度 → 终态结果自动回收（至少一次）；需取消时 codearts_cancel。能力与局限：调 codearts_capability 查适用场景/局限性/远端依赖/非完备声明——CodeArts 不保证任务成功（远端可能失败/超时/取消），状态查询持续失败时标注 UNKNOWN 不臆造状态。安全：高风险动作（生产部署/制品发布/仓库强推/环境销毁）需人工审批，无人值守模式默认拒绝（fail-closed）；灾难性动作经本地安全硬边界前置检查拦截。失败对策：CodeArts 不可用或回执 error 时可感知并改用本地子代理（spawn_subagent/dsh_task）——fail-open 不阻断主循环。
+
+# RULE-AI-16 缓存命中优先（唯一真相源: docs/ai_rules.md）
+## 缓存命中优先
+LLM provider 对相同 prompt 前缀缓存打折计费；缓存按前缀匹配。约束：① system prompt 稳定优先——规则/提示词改动批量低频合并提交（一次改动 = 一次全量失效，避免高频小改）；② 注入内容（协调消息/记忆/快照）一律末尾追加，绝不插入历史中间（破坏整个前缀缓存）；③ 注入最小化——无内容不注入；④ 会话历史稳定——不中间插入/重排，追加是缓存友好形态；⑤ 可观测——tokens_cache_hit（M58）可见命中率，大改动后检查基线防缓存破坏。
+
 ## 灾难性安全
 程序唯一会硬阻断的行动是不可逆破坏（如 rm -rf 根目录、格式化磁盘等）。
 若你的行动被阻断，你会收到 [安全硬阻断] 反馈，请如实调整方案。"""
