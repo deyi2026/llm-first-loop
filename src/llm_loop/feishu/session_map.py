@@ -69,7 +69,8 @@ class SessionMap:
                 shared = self._store.get_shared_current()
                 if shared is not None:
                     self._map[key] = shared
-                    self._mark_channel(shared, key)
+                    # 2026-08-16: 共享会话（web 起源）复用 → 复合通道（两端标识，防误显示"仅飞书"）
+                    self._mark_channel(shared, key, shared_from_web=True)
                     self._save()
                     return shared
             if not force_new and key in self._map:
@@ -101,10 +102,13 @@ class SessionMap:
             self._save()
             return sid
 
-    def _mark_channel(self, sid: str, key: str) -> None:
+    def _mark_channel(self, sid: str, key: str, shared_from_web: bool = False) -> None:
         """按映射键标记会话来源通道（p:→feishu:p2p，g:→feishu:group；fail-open）.
 
         供 Web 端识别飞书来源会话并实时推送；set_channel 幂等（已标记不覆盖）。
+        shared_from_web=True（2026-08-16）：owner 复用跨端共享会话（web 起源）→ 标
+        复合通道 `feishu:p2p:{open_id}+web`——双端会话不被误显示为"仅飞书私聊"；
+        推送解析（feishu_push）去 +web 后缀仍正常。
         """
         if key.startswith("p:"):
             channel = f"feishu:p2p:{key[2:]}"
@@ -112,6 +116,8 @@ class SessionMap:
             channel = f"feishu:group:{key[2:]}"
         else:
             return
+        if shared_from_web:
+            channel = f"{channel}+web"
         with suppress(Exception):  # 标记失败不阻断飞书主链路
             self._store.set_channel(sid, channel)
 

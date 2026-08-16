@@ -30,6 +30,8 @@ def parse_feishu_channel(channel: str) -> tuple[str, str] | None:
     if len(parts) < 3 or parts[1] not in ("p2p", "group"):
         return None
     kind, target = parts[1], parts[2]
+    # 2026-08-16: 复合通道（共享会话 `+web` 后缀）——去后缀还原目标 id
+    target = target.split("+")[0]
     if not target:
         return None
     return (target, "open_id" if kind == "p2p" else "chat_id")

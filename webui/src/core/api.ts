@@ -126,6 +126,12 @@ export async function forkSession(
 /** 通道标签（对齐 M56 来源通道语义：feishu:p2p:xxx / feishu:group:xxx / web） */
 export function channelLabel(channel: string | undefined): string {
   if (!channel || channel === "web") return "Web";
+  // 复合通道（共享会话双端）：feishu:p2p:{id}+web
+  if (channel.endsWith("+web")) {
+    const base = channel.slice(0, -4);
+    if (base.startsWith("feishu:p2p:")) return "Web · 飞书私聊";
+    if (base.startsWith("feishu:group:")) return "Web · 飞书群聊";
+  }
   if (channel.startsWith("feishu:p2p:")) return "飞书私聊";
   if (channel.startsWith("feishu:group:")) return "飞书群聊";
   return channel;
