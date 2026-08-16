@@ -147,6 +147,46 @@ def test_multiple_subscribers_all_receive():
     _drain(q1, 3)
 
 
+def test_unsubscribe_stops_delivery():
+    """订阅者 unsubscribe（SSE 断连）后不再收到后续事件（B6 释放语义）."""
+    eng = FakeEngine(deltas=10, delay=0.03)
+    r = BackgroundRunner(eng)
+    handle, q = r.start("s1", "hi")
+    # 收 2 个 delta 后模拟断连：unsubscribe
+    _drain(q, 2)
+    r.unsubscribe("s1", q)
+    # 后台继续完成（不受影响）
+    deadline = time.time() + 5
+    while r.is_running("s1") and time.time() < deadline:
+        time.sleep(0.01)
+    assert handle.status == "done"
+    # 断连的队列不再收到事件（空）
+    assert q.empty()
+
+
+def test_resume_subscribes_existing_run():
+    """resume=True 且同会话已有 running → 返回 (None, 新订阅队列)（重连订阅已有 run）."""
+    eng = FakeEngine(deltas=8, delay=0.03)
+    r = BackgroundRunner(eng)
+    h1, q1 = r.start("s1", "hi")
+    assert h1 is not None
+    # resume 订阅（模拟刷新/切回）
+    h2, q2 = r.start("s1", "", resume=True)
+    assert h2 is None and q2 is not None
+    # 两个订阅者都收到全部事件（广播）
+    evs1 = _drain(q1, 9)  # 8 delta + done
+    evs2 = _drain(q2, 9)
+    assert evs1[-1]["type"] == "done" and evs2[-1]["type"] == "done"
+    assert [e["type"] for e in evs1] == [e["type"] for e in evs2]
+    deadline = time.time() + 5
+    while r.is_running("s1") and time.time() < deadline:
+        time.sleep(0.01)
+    assert h1.status == "done"
+    # done 后 resume → 无 handle → (None, None)
+    h3, q3 = r.start("s1", "", resume=True)
+    assert h3 is None and q3 is None
+
+
 def test_disabled_returns_none():
     r = BackgroundRunner(FakeEngine(), enabled=False)
     handle, q = r.start("s1", "hi")

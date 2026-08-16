@@ -192,6 +192,23 @@ async function runStreamChat(body, loading) {
     } else {
       addMessage("error", note);
     }
+    // EVO 后台 run：session_busy → 自动轮询状态，完成后刷新历史（用户无需手动刷新）
+    if (result.error && result.error.error === "session_busy" && state.currentSessionId) {
+      const sid = state.currentSessionId;
+      const poll = setInterval(async () => {
+        try {
+          const r = await fetch(`/api/v1/chat/stream/status?session_id=${encodeURIComponent(sid)}`);
+          const st = await r.json();
+          if (!st.running) {
+            clearInterval(poll);
+            if (typeof loadSessionMessages === "function") {
+              await loadSessionMessages(sid); // 完成 → 加载最新历史（含完整结果）
+            }
+            addMessage("system", "该会话的生成已完成，可查看结果。");
+          }
+        } catch { /* 轮询失败忽略，下次再试 */ }
+      }, 2000);
+    }
     // 重试入口：保留已生成分片，重新发起请求
     const retryBtn = el("button", "retry-btn", "重试");
     retryBtn.type = "button";

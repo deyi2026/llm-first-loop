@@ -221,21 +221,41 @@ def _sse(event_type: str, data: Any) -> str:
     return f"data: {json.dumps({'type': event_type, 'data': data}, ensure_ascii=False)}\n\n"
 
 
-def _stream_background(runner: Any, session_id: str, message: str, model: str | None) -> Any:
+def _fmt_ts(ts: float | None) -> str:
+    """时间戳 → HH:MM:SS（busy 提示用；非法/缺失返回空串）."""
+    if not ts:
+        return ""
+    try:
+        import datetime
+
+        return datetime.datetime.fromtimestamp(ts).strftime("%H:%M:%S")
+    except Exception:  # noqa: BLE001 — 格式化失败返回空串
+        return ""
+
+
+def _stream_background(
+    runner: Any, session_id: str, message: str, model: str | None, *, resume: bool = False
+) -> Any:
     """后台 run 订阅生成器（EVO 后台 run 改造）：提交 → 消费事件 → 分片 yield SSE.
 
+    - resume=True: 不提交新 run，订阅已有 run（刷新/切回会话场景）
     - delta: text/reasoning/tool_round 分片独立 yield（对齐旧路径 P1-1/P2-1）
     - done: 终态九字段（对齐非流式 ChatResponse）
     - error: 引擎异常如实回执
     - finally: unsubscribe（SSE 断连只停订阅，后台线程不受影响、继续落盘）
     """
-    handle, q = runner.start(session_id, message, model=model)
+    handle, q = runner.start(session_id, message, model=model, resume=resume)
     if q is None:
+        # 提交被拒（同会话已有 running run）→ 附状态信息，前端可轮询
+        snap = runner.get_handle(session_id) or {}
         yield _sse(
             "error",
             {
                 "error": "session_busy",
-                "detail": "会话繁忙（已有生成中的 run），请稍后刷新查看",
+                "detail": "该会话正在生成中"
+                + (f"（开始于 {_fmt_ts(snap.get('started_at'))}）" if snap.get("started_at") else "")
+                + "，完成后即可继续发送；可稍后刷新查看结果",
+                "status": snap,
             },
         )
         return
@@ -342,7 +362,9 @@ def chat_stream(
         # 后台 run 模式（EVO 后台 run 改造，对齐 DSH）：提交 + 订阅；断连只停订阅
         runner = getattr(engine, "runner", None)
         if runner is not None and runner.enabled:
-            yield from _stream_background(runner, session_id, payload.message, payload.model)
+            yield from _stream_background(
+                runner, session_id, payload.message, payload.model, resume=bool(getattr(payload, "resume", False))
+            )
             return
         # 回退旧路径（生成器直驱，原行为；RUNNER_BACKGROUND=0 或未装配）
         lock = _get_session_lock(request, session_id)
@@ -408,6 +430,23 @@ def chat_stream(
         )
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@router.get("/api/v1/chat/stream/status")
+def chat_stream_status(session_id: str, request: Request) -> Response:
+    """后台 run 状态查询（EVO 后台 run）：running/done/error + 起止时间.
+
+    前端收到 session_busy 或切换/刷新会话时轮询，判断生成是否完成。
+    未装配 runner / 无进行中 run → {"running": false}（前端走会话历史兜底）。
+    """
+    engine = _engine_from(request)
+    runner = getattr(engine, "runner", None)
+    if runner is None or not runner.enabled:
+        return UTF8JSONResponse(content={"running": False, "detail": "后台 run 未启用"})
+    snap = runner.get_handle(session_id)
+    if snap is None:
+        return UTF8JSONResponse(content={"running": False})
+    return UTF8JSONResponse(content={"running": True, **snap})
 
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"

@@ -13,6 +13,7 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, description="用户消息，必填非空字符串")
     session_id: str | None = Field(default=None, description="会话 ID，可选；不传则新建会话")
     model: str | None = Field(default=None, description="模型名，可选；不传用装配默认模型")
+    resume: bool = Field(default=False, description="EVO 后台 run：true=不提交新 run，订阅已有 run（刷新/切回）")
 
 
 class ChatResponse(BaseModel):
