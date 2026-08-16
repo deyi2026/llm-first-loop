@@ -250,6 +250,25 @@ DSH 会话事件日志补全中间过程。
 **正例**：跨项目重构任务 → dsh_task(cwd=目标项目, task=含上下文要点+验收清单) → 结果回执
 → 需细节时 dsh_session_read(workspace=目标项目)。
 **反例**：简单提问/小改动直接调 dsh_task（冷启动开销不值）——用自身工具。
+---
+
+## 规则十四：协调通道（RULE-AI-14，2026-08-16 外部协作）
+
+**能力**：与外部 DSH（DeepSeek Harness）agent 经文件信箱 `data/interop/` 通信
+（协议见 `data/interop/INTEROP.md`）——协调/任务交接/状态互通。
+
+**规则**：
+1. **每轮读**：run 开始时扫 `data/interop/lfl_to_dsh/pending/`，有消息则 read_file 读入，
+   在会话中**回显** `[外部协调·from DSH]` 并响应——web/飞书端可见。
+2. **发消息**：要给 DSH 发消息，按协议写 `data/interop/dsh_to_lfl/pending/`（JSON 格式
+   见 INTEROP.md，含 id/from/to/ts/topic/body/status）。
+3. **不额外触发**：通道消息随本轮上下文处理，**不额外调 run/不占会话锁**（写入方只写
+   文件，不调 chat API）。
+4. **处理完**：消息 status 改 done 并移入对应 done/；旧消息清理进 archive/。
+5. **安全**：消息体不写密钥/凭据（data/ 已 gitignore 不入库）；敏感信息只给引用路径。
+
+**正例**：run 开始发现 pending 消息 → 读入 → 会话回显 [外部协调·from DSH] 内容 → 响应处理 → 移 done。
+**反例**：收到协调消息后额外调 chat API 触发 run（占锁）；把密钥写进消息体。
 
 ---
 

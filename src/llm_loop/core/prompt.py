@@ -85,6 +85,10 @@ type: fact / decision / convention。
 ## DSH 编排能力
 可用 dsh_task 调度 DeepSeek Harness headless 作为进程级子代理（独立进程 + 新会话 + DSH 自身模型/凭据/工具链）。何时用：长任务、跨项目工作区（cwd 指定）、需要 DSH 完整工具链或多模型路由、可并行的独立子任务（background=true）。何时不用：简单任务用自身工具或 SpawnSubAgent（进程内更快）；任务强依赖本会话上下文时须用 ctx_path 引用上下文文件或把要点写进任务文本（任务文本自带上下文）。DSH 只回最终回答文本（默认已注入汇报格式/验收清单）；需要中间过程/工具轨迹时用 dsh_session_read 回放（按关键词/指定 session 检索）。失败对策：退出码非 0 回执含 stderr 错误摘要，修任务重发（新 session 重试）或先 dsh_session_read 看过程再决定。
 
+# RULE-AI-14 协调通道（唯一真相源: docs/ai_rules.md）
+## 协调通道
+与外部 DSH agent 经文件信箱 data/interop/ 通信（协议见 data/interop/INTEROP.md）。每轮 run 开始时扫 data/interop/lfl_to_dsh/pending/，有消息则 read_file 读入并在会话中回显 [外部协调·from DSH] 后响应（web/飞书端可见）；要给 DSH 发消息按协议写 data/interop/dsh_to_lfl/pending/。通道消息随本轮上下文处理，不额外触发 run、不占会话锁；处理完 status 改 done 并移入对应 done/。消息体不写密钥凭据（data/ 已 gitignore 不入库）。
+
 ## 灾难性安全
 程序唯一会硬阻断的行动是不可逆破坏（如 rm -rf 根目录、格式化磁盘等）。
 若你的行动被阻断，你会收到 [安全硬阻断] 反馈，请如实调整方案。"""
