@@ -243,3 +243,52 @@ def test_eval_id_unique_across_restart(tmp_path):
     prefix1 = r1.eval_id.rsplit("-", 1)[0]
     prefix2 = r2.eval_id.rsplit("-", 1)[0]
     assert prefix2 > prefix1  # 计数递增
+
+
+# ── EVO-20260816-f1f73a0d: 时间窗过滤 ──
+
+def test_time_filter_excludes_old_exceptions(tmp_path):
+    """时间窗: 24h 前的异常被过滤，不污染当前评估（条数窗会把旧异常混入）."""
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    old_ts = (now - timedelta(hours=48)).isoformat()
+    new_ts = (now - timedelta(hours=1)).isoformat()
+    _write_jsonl(
+        tmp_path / "exception_log.jsonl",
+        [
+            {"ts": old_ts, "error_type": "OldError"},
+            {"ts": new_ts, "error_type": "NewError"},
+            {"ts": "no_ts", "error_type": "NoTs"},  # 缺 ts 保留
+        ],
+    )
+    _write_jsonl(
+        tmp_path / "action_trace.jsonl",
+        [{"ts": new_ts, "phase": "action.tool_loop", "action_type": "tool_call", "detail": "ok"} for _ in range(8)],
+    )
+    status = _Status(llm_rounds=8)
+    ev = SelfEvaluator(status_provider=status, audit_dir=tmp_path, min_samples=5, span=50, window_hours=24)
+    report = ev.evaluate(session_id="s1", trigger="manual")
+    metrics = {m.name: m for m in report.metrics}
+    # 24h 内异常: NewError + NoTs = 2 条（OldError 被过滤）→ 异常率 2/8
+    assert metrics["exception_rate"].value == 0.25
+
+
+def test_time_filter_disabled_window_zero(tmp_path):
+    """window_hours=0（旧行为）: 不过滤，全部计入."""
+    from datetime import UTC, datetime, timedelta
+
+    old_ts = (datetime.now(UTC) - timedelta(hours=48)).isoformat()
+    _write_jsonl(
+        tmp_path / "exception_log.jsonl",
+        [{"ts": old_ts, "error_type": "OldError"} for _ in range(4)],
+    )
+    _write_jsonl(
+        tmp_path / "action_trace.jsonl",
+        [{"ts": "t", "phase": "action.tool_loop", "action_type": "tool_call", "detail": "ok"} for _ in range(8)],
+    )
+    status = _Status(llm_rounds=8)
+    ev = SelfEvaluator(status_provider=status, audit_dir=tmp_path, min_samples=5, span=50, window_hours=0)
+    report = ev.evaluate(session_id="s1", trigger="manual")
+    metrics = {m.name: m for m in report.metrics}
+    assert metrics["exception_rate"].value == 0.5  # 4/8 全部计入
