@@ -62,6 +62,9 @@ def test_complexity_reduction(engine_src):
     → 2026-08-15 轮次耗尽决策轮（[轮次决策请求] 一次性注入分支）后 1023（新增 14 行）。
     → P1-7(2026-08-15) 本地模型前缀稳定（注入标记×4 + 快照标记 + skip 传参 + 签名）后 1036（新增 13 行）。
     → P1-10(2026-08-15) 窗口锚定（provider 锚点读写 + 快照条件 + 锚点换算持久化）后 1058（新增 22 行）。
-    仍低于拆分前, 守卫防再膨胀（>1065 应触发拆分评审）。
+    → M51/M52(2026-08-16) 模型+token 持久化（最终回答 Message 构造扩展）后 1071（新增 13 行）。
+    → 工作区(2026-08-16) 多工作区管理（workspace_root/workspace_store/set_workspace +
+      run 入口 contextvar 注入）后 1102（新增 31 行）。
+    仍低于拆分前, 守卫防再膨胀（>1110 应触发拆分评审）。
     """
-    assert len(engine_src.splitlines()) < 1065
+    assert len(engine_src.splitlines()) < 1110

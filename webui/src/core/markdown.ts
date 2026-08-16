@@ -11,13 +11,38 @@ marked.setOptions({
   breaks: true,
 });
 
+// 代码块渲染：banner（语言 + 字符数 + 复制按钮）+ 轻量高亮（对齐 DSH 代码块结构）。
+// 复制按钮点击由 Markdown 组件事件委托处理（dangerouslySetInnerHTML 无法绑 React 事件）。
+marked.use({
+  renderer: {
+    code({ text, lang }) {
+      const escAttr = (s: string) =>
+        s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const langSafe = escAttr((lang ?? "").trim());
+      const body = highlightCode(text, langSafe);
+      const langLabel = langSafe ? `<span class="v2-code-lang">${langSafe}</span>` : "";
+      const count = text.length;
+      return (
+        '<div class="v2-code-block">' +
+        '<div class="v2-code-banner">' +
+        langLabel +
+        `<span class="v2-code-count">${count} 字符</span>` +
+        '<button type="button" class="v2-code-copy" aria-label="复制代码">复制</button>' +
+        "</div>" +
+        `<pre><code class="lang-${langSafe || "text"}">${body}</code></pre>` +
+        "</div>"
+      );
+    },
+  },
+});
+
 const ALLOWED_TAGS = [
   "p", "br", "hr", "strong", "em", "del", "code", "pre", "blockquote", "ul", "ol", "li",
   "h1", "h2", "h3", "h4", "h5", "h6", "a", "img", "table", "thead", "tbody", "tr", "th", "td",
-  "span", "div", "input", "details", "summary",
+  "span", "div", "input", "details", "summary", "button",
 ];
 
-const ALLOWED_ATTR = ["href", "src", "alt", "title", "class", "checked", "type"];
+const ALLOWED_ATTR = ["href", "src", "alt", "title", "class", "checked", "type", "aria-label"];
 
 /** 行内/块级数学 → KaTeX HTML（失败 fail-open 原样返回） */
 function renderMath(src: string): string {

@@ -49,6 +49,47 @@ describe("MessageItem", () => {
     expect(screen.getByText("你好")).toBeInTheDocument();
   });
 
+  it("用户/助手消息均有一键复制按钮", () => {
+    render(<MessageItem msg={{ role: "user", content: "用户内容" }} />);
+    expect(screen.getByTestId("copy-btn")).toBeInTheDocument();
+    cleanup();
+    render(<MessageItem msg={{ role: "assistant", content: "助手内容" }} />);
+    expect(screen.getByTestId("copy-btn")).toBeInTheDocument();
+  });
+
+  it("点击复制 → 写入剪贴板 + 显示已复制（1s 恢复）", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    render(<MessageItem msg={{ role: "assistant", content: "待复制内容" }} />);
+    fireEvent.click(screen.getByTestId("copy-btn"));
+    expect(writeText).toHaveBeenCalledWith("待复制内容");
+    await waitFor(() => expect(screen.getByText("已复制")).toBeInTheDocument());
+    vi.useFakeTimers();
+    // 触发 1s 定时器恢复（copied 状态由 setTimeout 复位）
+    // 先等待写入 promise 微任务落地再推进
+    vi.advanceTimersByTime(1000);
+    vi.useRealTimers();
+    await waitFor(() => expect(screen.getByText("复制")).toBeInTheDocument());
+    vi.unstubAllGlobals();
+  });
+
+  it("助手消息：模型 + token 消耗页脚（M51/M52，k 单位格式化）", () => {
+    render(
+      <MessageItem
+        msg={{ role: "assistant", content: "回答", model_used: "kimi/k3", tokens_in: 12345, tokens_out: 678 }}
+      />
+    );
+    const footer = screen.getByTestId("msg-footer");
+    expect(footer.textContent).toContain("—— kimi/k3");
+    expect(footer.textContent).toContain("12.3k入");
+    expect(footer.textContent).toContain("678出");
+  });
+
+  it("助手消息：无模型/token 时不渲染页脚", () => {
+    render(<MessageItem msg={{ role: "assistant", content: "回答" }} />);
+    expect(screen.queryByTestId("msg-footer")).not.toBeInTheDocument();
+  });
+
   it("助手消息：正文 + 思考块默认折叠", () => {
     render(
       <MessageItem
@@ -75,6 +116,49 @@ describe("MessageItem", () => {
     expect(screen.getByTestId("tool-chain")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("tool-chain").querySelector("button")!);
     expect(screen.getByText("read_file")).toBeInTheDocument();
+  });
+
+  it("出产物：edit_file 工具调用 → 文件 chips 即时可见", () => {
+    render(
+      <MessageItem
+        msg={{
+          role: "assistant",
+          content: "",
+          toolCalls: [
+            { id: "c1", name: "edit_file", arguments: { path: "src/llm_loop/core/a.py" } },
+            { id: "c2", name: "edit_file", arguments: { path: "src/llm_loop/core/a.py" } }, // 去重
+            { id: "c3", name: "read_file", arguments: { path: "README.md" } }, // 非产出工具
+          ],
+        }}
+      />
+    );
+    expect(screen.getByTestId("produced-files")).toBeInTheDocument();
+    expect(screen.getByText("src/llm_loop/core/a.py")).toBeInTheDocument();
+    expect(screen.queryByText("README.md")).not.toBeInTheDocument();
+  });
+
+  it("出产物：点击 chip → 打开文件预览（fetch 内容 + 模态显示）", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ path: "src/a.py", size: 8, truncated: false, content: "print(1)" }), {
+          status: 200,
+        })
+      )
+    );
+    render(
+      <MessageItem
+        msg={{
+          role: "assistant",
+          content: "",
+          toolCalls: [{ id: "c1", name: "edit_file", arguments: { path: "src/a.py" } }],
+        }}
+      />
+    );
+    fireEvent.click(screen.getByText("src/a.py"));
+    await waitFor(() => expect(screen.getByTestId("file-preview")).toBeInTheDocument());
+    expect(screen.getByText("print(1)")).toBeInTheDocument();
+    vi.unstubAllGlobals();
   });
 });
 
@@ -129,6 +213,28 @@ describe("Composer", () => {
     fireEvent.click(within(popup()).getByText("deepseek/deepseek-v4-flash"));
     expect(sessionStore.getState().model).toBe("deepseek/deepseek-v4-flash");
     expect(screen.getByTestId("composer-hint").textContent).toContain("已选择模型");
+  });
+
+  it("模型下拉：选择后 store 更新且 select 值保持（响应式不回弹）", async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/v1/models")) {
+        return new Response(
+          JSON.stringify({ models: ["deepseek/deepseek-v4-flash", "kimi/k3"], current: null }),
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+    const { sessionStore } = await import("./core/stores");
+    sessionStore.setModel(null);
+    render(<Composer />);
+    const select = (await screen.findByTestId("model-select")) as HTMLSelectElement;
+    await waitFor(() => expect(select.options.length).toBeGreaterThan(1)); // 模型选项加载
+    fireEvent.change(select, { target: { value: "kimi/k3" } });
+    expect(sessionStore.getState().model).toBe("kimi/k3");
+    // 响应式：select 受控值跟随 store（再渲染不回弹）
+    expect(select.value).toBe("kimi/k3");
   });
 
   it("命令行点击直接执行（/new 无选项）", () => {

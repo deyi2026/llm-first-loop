@@ -19,3 +19,18 @@ import contextvars
 current_session_id: contextvars.ContextVar[str] = contextvars.ContextVar(
     "llm_loop_current_session_id", default=""
 )
+
+# 当前工作区根目录（工作区管理：工具相对路径/命令默认 cwd 跟随；无工作区 → 空串走进程 cwd）
+current_workspace_root: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "llm_loop_current_workspace_root", default=""
+)
+
+
+def workspace_base() -> str:
+    """工具相对路径/命令默认 cwd 的基准目录（工作区根优先，空则进程 cwd）."""
+    root = current_workspace_root.get()
+    if root:
+        return root
+    import os
+
+    return os.getcwd()

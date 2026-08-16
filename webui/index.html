@@ -7,6 +7,7 @@
     <title>LLM-First Loop · Web V2</title>
     <script>
       // 主题预载（对齐 DSH：data-ds-dark-theme 属性 + prefers-color-scheme 跟随系统）
+      // head 同步执行时 body 尚未解析 → 判空 + DOMContentLoaded 兜底（防 toggleAttribute null 报错）
       (() => {
         const saved = localStorage.getItem("dsw-theme-preference");
         const preference = saved || "system";
@@ -16,7 +17,9 @@
           matchMedia("(prefers-color-scheme: dark)").matches;
         const dark = preference === "dark" || systemDark;
         document.documentElement.style.colorScheme = dark ? "dark" : "light";
-        document.body.toggleAttribute("data-ds-dark-theme", dark);
+        const apply = () => document.body?.toggleAttribute("data-ds-dark-theme", dark);
+        if (document.body) apply();
+        else document.addEventListener("DOMContentLoaded", apply);
       })();
     </script>
   </head>

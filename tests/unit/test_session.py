@@ -312,9 +312,26 @@ def test_shared_current_ignores_deleted_session(tmp_path):
 def test_shared_current_corrupt_file_fail_open(tmp_path):
     """共享文件损坏 → get 返回 None（fail-open，不阻断）."""
     store = _store(tmp_path)
-    p = tmp_path / "shared_current_session.json"
+    p = tmp_path / "sessions" / "shared_current_session.json"
     p.write_text("{broken", encoding="utf-8")
     assert store.get_shared_current() is None
+
+
+def test_shared_current_isolated_by_workspace(tmp_path):
+    """工作区管理：共享当前会话按工作区分区，互不串扰."""
+    store = _store(tmp_path)
+    sid_a = store.create()
+    store.set_shared_current(sid_a)
+    assert store.get_shared_current() == sid_a
+    # 切工作区 B → 无共享
+    store.set_root(tmp_path / "sessions" / "ws_b")
+    assert store.get_shared_current() is None
+    sid_b = store.create()
+    store.set_shared_current(sid_b)
+    assert store.get_shared_current() == sid_b
+    # 切回 A → A 的共享未受影响
+    store.set_root(tmp_path / "sessions")
+    assert store.get_shared_current() == sid_a
 
 
 def test_session_corrupt_file_backed_up(tmp_path):

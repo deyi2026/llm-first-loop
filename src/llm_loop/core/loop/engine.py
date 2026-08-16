@@ -15,6 +15,7 @@ import logging
 import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from llm_loop.config import Settings
@@ -38,7 +39,12 @@ from llm_loop.core.loop.tool_exec import (
 )
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.prompt import build_system_prompt
-from llm_loop.core.run_context import current_session_id as _current_session_id
+from llm_loop.core.run_context import (
+    current_session_id as _current_session_id,
+)
+from llm_loop.core.run_context import (
+    current_workspace_root as _current_workspace_root,
+)
 from llm_loop.core.session import SessionStore
 from llm_loop.event_log.model import build_message_payload
 from llm_loop.feedback.honesty import (
@@ -171,6 +177,11 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         self.recovery = recovery
         # D1: 事件源化 EventStore（默认 None 零行为；注入时消息/元数据/压缩事件落事件日志）
         self._event_store = event_store
+        # 工作区管理（对齐 DSH Workspace）：当前工作区根（空 = 进程 cwd 零回归）；
+        # run 入口注入 contextvar 供工具相对路径/命令默认 cwd 跟随
+        self.workspace_root: str = ""
+        # 工作区注册表（factory 装配注入；web 层切换工作区入口）
+        self.workspace_store: Any | None = None
         # P0-5(2026-08-15): per-session 运行状态表（审计发现 #7 可重入修复）——
         # 停滞指纹/overflow 计数/预警标志/快照节流/breakdown 按 session_id 分桶，
         # 跨会话并发 run 不再共享污染。属性 shim（下方）保持既有读写接口不变。
@@ -344,9 +355,13 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         # Context，跨 Context 抛 ValueError）——改用 值快照 + set 还原（set 不挑 Context）。
         _prev_sid = _current_session_id.get()
         _current_session_id.set(session_id)
+        # 工作区根跟随（工具相对路径/命令默认 cwd；与会话同生命周期）
+        _prev_ws = _current_workspace_root.get()
+        _current_workspace_root.set(self.workspace_root or "")
         try:
             return (yield from self._run_stream_inner(session_id, user_text, model))
         finally:
+            _current_workspace_root.set(_prev_ws)
             _current_session_id.set(_prev_sid)
 
     def _run_stream_inner(
@@ -715,7 +730,15 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 logger.warning("独立提取触发失败（fail-open）", exc_info=True)
 
         sess.messages.append(
-            Message(role="assistant", content=final_answer, source=MessageSource.USER)
+            Message(
+                role="assistant",
+                content=final_answer,
+                source=MessageSource.USER,
+                # M51/M52: 模型 + 本轮 run token 消耗持久化（web/feishu 页脚数据源）
+                model_used=model_used,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+            )
             if final_answer
             else Message(role="assistant", content="（无回答输出）", source=MessageSource.USER)
         )
@@ -831,6 +854,22 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
     # 已随迁方法（经 Mixin 混入后实例可调用，签名/语义不变）:
     #   _schema_to_param / _resp_summary / _record_tool_history
     # 模块级函数 _json_dumps_args/_tool_args_summary 经模块级 re-export 保持原路径可导入。
+
+    def set_workspace(self, workspace_root: str) -> None:
+        """切换工作区（对齐 DSH Workspace）：工具根 + 会话存储分区跟随.
+
+        空串 → 复位为进程 cwd 单根（零回归）；非空 → 会话根切到
+        data/sessions/<workspace_key>，工具相对路径/命令默认 cwd 由
+        run 入口注入的 contextvar 跟随本根。
+        """
+        self.workspace_root = workspace_root or ""
+        base = Path(self.settings.sessions_dir)
+        if self.workspace_root:
+            from llm_loop.workspace.store import workspace_key
+
+            self.session.set_root(base / workspace_key(self.workspace_root))
+        else:
+            self.session.set_root(base)
 
     def _build_llm_messages(
         self, sess, memory_msgs: list[Message], max_chars: int | None = None,

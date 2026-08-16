@@ -132,4 +132,28 @@ describe("发送链路", () => {
     }, { timeout: 3000 });
     expect(conv.getState().streaming).toBe(false);
   });
+
+  it("新工作区无当前会话：发送仍发出请求（session_id=null 新建会话）", async () => {
+    mockBackend();
+    const { sendMessage } = await import("./core/conversation");
+    const { sessionStore } = await import("./core/stores");
+    // 清空当前会话（新工作区/新会话场景）
+    sessionStore.setCurrentSession("");
+    let sentBody = "";
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/v1/chat/stream")) {
+        sentBody = String(init?.body ?? "");
+        return new Response(
+          sseStream([`data: {"type":"done","data":${JSON.stringify({ ...DONE, final_answer: "ok" })}}`]),
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+    await sendMessage("你好", []);
+    // 关键：无 sessionId 仍发出请求（不再被 if(!sessionId) return 拦截），且 session_id 归一为 null
+    expect(sentBody).toContain('"session_id":null');
+    expect(sentBody).toContain('"message":"你好"');
+  });
 });

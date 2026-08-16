@@ -37,8 +37,76 @@ _log_guard() {
     "$ts" "$$" "$1" "${2:-}" "${3:-}" >> "$GUARD_LOG" 2>/dev/null || true
 }
 
+# ── 工作区变更检测（2026-08-16：.env/providers.json/src/skills 变化 → 提醒重启）──
+# 原则（RULE-AI-00 程序最小化）：只"检测 + 记录 + 写 flag"，不自动重启——
+# 变更生效需人工/AI 确认后手动 restart_system.sh restart（restart 末尾自动 ack 清 flag）。
+# 指纹 = 监视文件内容哈希聚合（变化即指纹变）；基线存 data/guard_workspace.baseline。
+# 监视范围（变化需重启才生效的）: .env / data/providers.json / src/**/*.py / skills/**/SKILL.md
+GUARD_WS_BASELINE="${GUARD_WS_BASELINE:-$DATA_DIR/guard_workspace.baseline}"
+GUARD_WS_FLAG="${GUARD_WS_FLAG:-$DATA_DIR/workspace_changed.json}"
+
+_workspace_fingerprint() {
+  # 监视文件的内容哈希聚合（文件列表稳定排序; 内容哈希抗 mtime 抖动）
+  local files
+  files="$(printf '%s\n' "$PROJECT_DIR/.env" "$PROJECT_DIR/data/providers.json"; \
+           find "$PROJECT_DIR/src" "$PROJECT_DIR/skills" -name '*.py' -o -name 'SKILL.md' 2>/dev/null | sort)"
+  local out=""
+  local f
+  while IFS= read -r f; do
+    [[ -f "$f" ]] && out="$out$(shasum -a 256 "$f" 2>/dev/null | cut -d' ' -f1) "
+  done <<< "$files"
+  printf '%s' "$out" | shasum -a 256 | cut -d' ' -f1
+}
+
+_check_workspace_change() {
+  local fp="$(_workspace_fingerprint)"
+  if [[ ! -f "$GUARD_WS_BASELINE" ]]; then
+    printf '%s\n' "$fp" > "$GUARD_WS_BASELINE"
+    _log_guard "workspace_baseline" "" "建立工作区基线（首次, 不告警）"
+    return 0
+  fi
+  local base
+  base="$(cat "$GUARD_WS_BASELINE" 2>/dev/null || true)"
+  if [[ "$fp" == "$base" ]]; then
+    return 0  # 无变化
+  fi
+  # 变化 → 写 flag（flag 已存在则刷新内容, 不重复刷日志告警等级）
+  # 变更文件清单: 统一按 -nt（新于基线）检测（.env/providers.json 同样走检测, 不无条件列）
+  local changed_files
+  changed_files="$(for f in "$PROJECT_DIR/.env" "$PROJECT_DIR/data/providers.json"; do [[ "$f" -nt "$GUARD_WS_BASELINE" ]] && echo "${f#$PROJECT_DIR/}"; done; \
+    find "$PROJECT_DIR/src" "$PROJECT_DIR/skills" \( -name '*.py' -o -name 'SKILL.md' \) -newer "$GUARD_WS_BASELINE" 2>/dev/null | head -20 | sed "s|$PROJECT_DIR/||")"
+  python3 - "$GUARD_WS_FLAG" "$changed_files" <<'PYEOF' 2>/dev/null || true
+import json, sys
+from datetime import datetime, UTC
+flag, changed = sys.argv[1], [x for x in sys.argv[2].splitlines() if x]
+json.dump({
+    "changed_at": datetime.now(UTC).isoformat(),
+    "changed_files": changed,
+    "note": "工作区代码/配置已变更，运行中进程仍是旧状态",
+    "action": "bash scripts/restart_system.sh restart  # 确认后重启生效",
+}, open(flag, "w"), ensure_ascii=False, indent=2)
+PYEOF
+  _log_guard "workspace_changed" "" "检测到工作区变更（需重启生效）: $(echo "$changed_files" | tr '\n' ' ' | cut -c1-120)"
+}
+
+# 手动 ack（restart 末尾调用/人工确认后调用）：清 flag + 刷新基线
+_ack_workspace() {
+  rm -f "$GUARD_WS_FLAG"
+  _workspace_fingerprint > "$GUARD_WS_BASELINE"
+  _log_guard "workspace_ack" "" "变更已确认处理, flag 清除 + 基线刷新"
+}
+
+# ── 主入口 ──
+# 无需锁的子命令（不与守护循环冲突）先行处理：status / workspace-check / ack-workspace
+case "${1:-loop}" in
+  status) _guard_status; exit 0 ;;
+  workspace-check) _check_workspace_change; exit 0 ;;
+  ack-workspace) _ack_workspace; exit 0 ;;
+esac
+
 # ── 防多实例（mkdir 原子锁：POSIX 兼容，macOS 无 flock 命令）──
 # 持有锁目录即单实例；拿到锁的实例退出前释放（trap）。launchd 反复拉起时仅一个存活。
+# 注：仅 once/loop 需要锁（workspace-check/ack-workspace/status 在上方已先行处理）
 _LOCK_DIR="$DATA_DIR/guard.lock"
 if [[ -f "$_LOCK_DIR" ]]; then
   rm -f "$_LOCK_DIR"  # 一次性清理旧 flock 遗留文件（防 mkdir 失败）
@@ -100,6 +168,8 @@ _guard_once() {
     _log_guard "skip_maintenance" "" "检测到维护标记，跳过本轮（restart 进行中）"
     return 0
   fi
+  # 2026-08-16: 工作区变更检测（健康检查之后; 仅提醒不自动重启）
+  _check_workspace_change
   local svc fail_count=0
   for svc in web feishu; do
     if ! _service_healthy "$svc"; then
@@ -142,9 +212,8 @@ _guard_status() {
   fi
 }
 
-# ── 主入口 ──
+# ── 主入口（需锁的分支：once/loop；status/workspace-check/ack-workspace 在上方先行处理）──
 case "${1:-loop}" in
   once)   _guard_once ;;
-  status) _guard_status ;;
   loop|*) _guard_loop ;;
 esac
