@@ -123,6 +123,9 @@ def build_session_snapshot_text(
 class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _OverflowMixin, _ToolExecMixin, _InteropMixin, _ArchiveMixin, _EventsMixin):
     """五阶段核心循环控制器."""
 
+    # EVO 后台 run 执行器（factory 动态装配 BackgroundRunner；声明类型供 pyright 静态检查）
+    runner: Any | None = None
+
     def __init__(
         self,
         llm_client: LLMClient,
@@ -223,13 +226,17 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         # EVO 后台 run 改造（B5/B7）: 跨入口互斥——同会话已有后台 run 进行中则拒绝
         # （后台工作线程自身调用放行 is_worker；生成器惰性，检查在首 next 时执行）
         runner = getattr(self, "runner", None)
-        if runner is not None and runner.enabled and not runner.is_worker():
-            if runner.is_running(session_id):
-                from llm_loop.core.loop.runner import SessionBusyError
+        if (
+            runner is not None
+            and runner.enabled
+            and not runner.is_worker()
+            and runner.is_running(session_id)
+        ):
+            from llm_loop.core.loop.runner import SessionBusyError
 
-                raise SessionBusyError(
-                    f"会话 {session_id} 已有进行中的 run（跨入口互斥，请稍后重试）"
-                )
+            raise SessionBusyError(
+                f"会话 {session_id} 已有进行中的 run（跨入口互斥，请稍后重试）"
+            )
         _prev_sid = _current_session_id.get()
         _current_session_id.set(session_id)
         # 工作区根跟随（工具相对路径/命令默认 cwd；与会话同生命周期）

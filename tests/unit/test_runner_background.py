@@ -8,18 +8,13 @@ FakeEngine 提供 run_stream 生成器（yield delta + return result），不依
 from __future__ import annotations
 
 import queue
-import threading
 import time
 from types import SimpleNamespace
 
-import pytest
-
-from llm_loop.core.loop.engine import LoopEngine
 from llm_loop.core.loop.runner import (
     BackgroundRunner,
     EventBus,
     RunHandle,
-    SessionBusyError,
 )
 
 
