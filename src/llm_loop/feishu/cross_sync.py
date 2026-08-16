@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 _POLL_S = float(os.environ.get("FEISHU_CROSS_SYNC_POLL_S", "1.5"))
 _MIN_INTERVAL_S = float(os.environ.get("FEISHU_CROSS_SYNC_MIN_INTERVAL_S", "3.0"))
-_MAX_CHARS = int(os.environ.get("FEISHU_CROSS_SYNC_MAX_CHARS", "600"))
+_MAX_CHARS = int(os.environ.get("FEISHU_CROSS_SYNC_MAX_CHARS", "10000"))
 _ENABLED = os.environ.get("FEISHU_CROSS_SYNC", "1").strip().lower() not in {
     "0",
     "off",
@@ -178,24 +178,48 @@ class CrossSyncWatcher:
         now = time.monotonic()
         if now - self._last_push.get(target[0], 0.0) < self._min_interval:
             return  # 速率受限：基线不推进，下轮合并推送
-        text = self._format_push(getattr(meta, "title", "") or "未命名", new)
+        texts = self._format_push(getattr(meta, "title", "") or "未命名", new)
         try:
-            self._reply(target[0], text, target[1])
+            for text in texts:
+                self._reply(target[0], text, target[1])
             self._last_push[target[0]] = now
             self._baseline[sid] = cur  # 推送成功才推进基线
         except Exception as exc:  # noqa: BLE001 — 推送失败不推进基线（下轮重试，fail-open）
             logger.warning("跨端同步推送失败（fail-open，下轮重试）: %s", exc)
 
-    def _format_push(self, title: str, messages: list) -> str:
-        """增量消息卡片文本（角色标注 + 截断；多条合并一条）."""
-        lines = [f"[跨端同步] Web 端会话「{title}」新增 {len(messages)} 条消息："]
+    def _format_push(self, title: str, messages: list) -> list[str]:
+        """增量消息推送分段（角色标注 + 多条合并为一批；整批超 max_chars 拆多段，段标 i/N）.
+
+        信息零丢失——不再 "…" 截断（2026-08-16 用户需求：单条上限 10000，超出分段显示）。
+        """
+        header = f"[跨端同步] Web 端会话「{title}」新增 {len(messages)} 条消息："
+        lines: list[str] = []
         for m in messages:
             role = "👤 用户" if m.role == "user" else "🤖 AI" if m.role == "assistant" else f"⚙️ {m.role}"
             content = (m.content or "").strip() or "（空消息）"
-            if len(content) > self._max_chars:
-                content = content[: self._max_chars] + "…"
             lines.append(f"{role}: {content}")
-        return "\n".join(lines)
+        body = "\n".join(lines)
+        budget = max(50, self._max_chars - len(header) - 8)  # 预留段头/段标空间
+        chunks = self._split_text(body, budget)
+        if len(chunks) == 1:
+            return [f"{header}\n{chunks[0]}"]
+        total = len(chunks)
+        return [f"{header}（{i}/{total}）\n{c}" for i, c in enumerate(chunks, 1)]
+
+    @staticmethod
+    def _split_text(text: str, budget: int) -> list[str]:
+        """把 text 切成 ≤ budget 的块，优先在换行符处断开；信息零丢失."""
+        chunks: list[str] = []
+        rest = text
+        while len(rest) > budget:
+            cut = rest.rfind("\n", 0, budget + 1)
+            if cut < budget // 2:  # 换行符太靠前/没有 → 硬切，避免碎段
+                cut = budget
+            chunks.append(rest[:cut].rstrip("\n"))
+            rest = rest[cut:].lstrip("\n")
+        if rest:
+            chunks.append(rest)
+        return chunks
 
     def _loop(self) -> None:
         while not self._stop.wait(self._poll_s):

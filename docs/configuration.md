@@ -101,7 +101,7 @@
 | `SESSION_CONCURRENCY_LOCK` | 1 | 会话级并发锁（0=无锁） |
 | `WEB_FETCH_BLOCK_FAKE_IP` | 0 | web_fetch 代理假 IP 段（198.18/15，Surge/Clash fake-ip）严格拦截开关；默认 0=放行+回执如实标注（真实连接由代理通道完成），1=严格拦截 |
 | `LONG_LINE_THRESHOLD` | 200 | 长内容分块粒度（前端展示；v0.5.2 起回复不折叠，超长代码块按 200 行/段顺序分段全量展示） |
-| `FEISHU_CROSS_SYNC` | 1 | 飞书 ← Web 跨端同步（2026-08-15）：Web 侧对映射会话（含 owner 共享当前会话）的新增消息实时推送到飞书聊天；0=关闭。轮询 1.5s、推送最小间隔 3s、单条截断 600 字（`FEISHU_CROSS_SYNC_POLL_S` / `_MIN_INTERVAL_S` / `_MAX_CHARS` 可调） |
+| `FEISHU_CROSS_SYNC` | 1 | 飞书 ← Web 跨端同步（2026-08-15）：Web 侧对映射会话（含 owner 共享当前会话）的新增消息实时推送到飞书聊天；0=关闭。轮询 1.5s、推送最小间隔 3s、单条上限 10000 字、超出分段显示（i/N，信息零丢失不截断，2026-08-16）（`FEISHU_CROSS_SYNC_POLL_S` / `_MIN_INTERVAL_S` / `_MAX_CHARS` 可调，启动时装配需重启） |
 | `FEISHU_FOLD_LONG_REPLY` | 0 | 飞书长回复折叠选择加入（1=恢复旧折叠行为：摘要卡+「展开全文」取回；默认 0=不折叠全量分段推送） |
 
 ## 九、飞书桥
