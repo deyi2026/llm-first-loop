@@ -93,3 +93,33 @@ def test_url_sandbox_allows_whitelist():
     for url in ALLOWED_URLS:
         ok, err = _validate_url(url)
         assert ok, f"误拦: {url!r} -> {err}"
+
+
+# ── 2026-08-16 DSH 复核 005 建议 a+c：env 剥离 + cwd 限定 ──
+def test_child_env_strips_sensitive_keys(monkeypatch):
+    """敏感键（KEY/SECRET/TOKEN/PASSWORD 等）被剥离，普通键保留."""
+    from llm_loop.introspection.tools_playwright_exec import _child_env
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-xxx")
+    monkeypatch.setenv("FEISHU_APP_SECRET", "sec-xxx")
+    monkeypatch.setenv("MY_TOKEN", "tok")
+    monkeypatch.setenv("DB_PASSWORD", "pw")
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("HOME", "/Users/test")
+    env = _child_env()
+    assert "OPENAI_API_KEY" not in env
+    assert "FEISHU_APP_SECRET" not in env
+    assert "MY_TOKEN" not in env
+    assert "DB_PASSWORD" not in env
+    assert env["PATH"] == "/usr/bin:/bin"
+    assert env["HOME"] == "/Users/test"
+
+
+def test_child_workdir_limits_to_session(tmp_path, monkeypatch):
+    """cwd 限定 data/e2e/<session>/ 且目录已建."""
+    from llm_loop.introspection.tools_playwright_exec import _child_workdir
+
+    monkeypatch.chdir(tmp_path)
+    wd = _child_workdir("secreview-test")
+    assert wd == (tmp_path / "data" / "e2e" / "secreview-test").resolve()
+    assert wd.exists()
