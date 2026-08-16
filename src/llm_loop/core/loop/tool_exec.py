@@ -223,6 +223,12 @@ class _ToolExecMixin:
                         break
                 if len(lines) >= 4:
                     break
+            # EVO-20260816-ec8c36bb: 外部 skill 匹配补充（经验库不足 4 条时并入）
+            if len(lines) < 4:
+                for sname, sdesc in self._match_skills(tool_names):
+                    lines.append(f"- 可用 skill: {sname} —— {sdesc}（skill_load 加载）")
+                    if len(lines) >= 4:
+                        break
             if not lines:
                 return  # 无命中不注入
             content = (
@@ -241,6 +247,62 @@ class _ToolExecMixin:
             self._append_message_event(sess, msg)
         except Exception:  # noqa: BLE001 — 经验检索 fail-open（不阻断主循环）
             logger.warning("经验提示注入失败（fail-open）", exc_info=True)
+
+    # EVO-20260816-ec8c36bb: 外部 skill 扫描匹配（进程内缓存，目录 mtime 变化重扫）
+    _skills_cache: tuple[float, list[tuple[str, str]]] = (0.0, [])
+
+    def _match_skills(self: LoopEngine, tool_names: list[str]) -> list[tuple[str, str]]:
+        """按工具名/场景关键词匹配 skills/ 下 SKILL.md（返回 (name, description)）.
+
+        frontmatter name/description 与工具名+关键词做子串匹配；
+        目录不存在/损坏 fail-open 返回空；扫描结果缓存（目录 mtime 变化才重扫）。
+        """
+        import os
+        import re
+        from pathlib import Path
+
+        try:
+            base = Path(getattr(self.settings, "skills_dir", "./skills"))
+            if not base.is_dir():
+                return []
+            try:
+                dir_mtime = max((p.stat().st_mtime for p in base.iterdir() if p.is_dir()), default=0.0)
+            except OSError:
+                dir_mtime = 0.0
+            if self._skills_cache[0] == dir_mtime:
+                cached = self._skills_cache[1]
+            else:
+                cached = []
+                for p in sorted(base.glob("*/SKILL.md")):
+                    try:
+                        text = p.read_text(encoding="utf-8", errors="replace")[:2000]
+                        fm = re.search(r"^---\s*\n(.*?)\n---", text, re.S | re.M)
+                        meta: dict[str, str] = {}
+                        if fm:
+                            for line in fm.group(1).splitlines():
+                                m = re.match(r"(\w+):\s*(.*)", line)
+                                if m:
+                                    meta[m.group(1).strip()] = m.group(2).strip().strip('"\'')
+                        if meta.get("name") and meta.get("description"):
+                            cached.append((meta["name"], meta["description"][:200]))
+                    except (OSError, UnicodeDecodeError):
+                        continue  # 损坏 skill fail-open 跳过
+                self._skills_cache = (dir_mtime, cached)
+            # 匹配: 工具名分词（-/_/空格分隔）命中 skill name/description 才触发。
+            # 不用通用关键词池——避免"zzz_unrelated_tool"因描述含 cache/debug 等泛词而误命中。
+            # SKILL.md 编写规范: description 中列出可触发的工具名（如 web_fetch/architecture_status）。
+            tokens: set[str] = set()
+            for n in tool_names:
+                tokens.update(t for t in re.split(r"[^a-z0-9]+", n.lower()) if t)
+            hits: list[tuple[str, str]] = []
+            for sname, sdesc in cached:
+                hay = f"{sname} {sdesc}".lower()
+                if any(t in hay for t in tokens):
+                    hits.append((sname, sdesc))
+            return hits
+        except Exception:  # noqa: BLE001 — skill 扫描 fail-open
+            logger.warning("skill 扫描失败（fail-open）", exc_info=True)
+            return []
 
     # ── EVO-20260814-aab7eb0b P2: 循环实时停滞检测 ──
 
