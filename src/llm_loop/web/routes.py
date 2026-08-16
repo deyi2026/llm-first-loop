@@ -135,7 +135,8 @@ def chat(
     engine = _engine_from(request)
 
     # T5.2: 超长输入前置校验（不创建会话、不写入审计、不消耗 LLM 配额，spec.md 5.4.1）
-    input_max = getattr(engine.settings, "history_max_chars", 100000)
+    # EVO-20260816-3af5dee3: history_max_chars 可 None（未配置→运行时窗口自适应），输入上限兜底 100K
+    input_max = getattr(engine.settings, "history_max_chars", None) or 100000
     if len(payload.message) > input_max:
         return UTF8JSONResponse(
             status_code=413,
@@ -333,7 +334,8 @@ def chat_stream(
     engine = _engine_from(request)
 
     # 超长输入前置校验（与 chat 端点一致，不创建会话、不消耗 LLM 配额）
-    input_max = getattr(engine.settings, "history_max_chars", 100000)
+    # EVO-20260816-3af5dee3: history_max_chars 可 None（未配置→运行时窗口自适应），输入上限兜底 100K
+    input_max = getattr(engine.settings, "history_max_chars", None) or 100000
     if len(payload.message) > input_max:
         return UTF8JSONResponse(
             status_code=413,

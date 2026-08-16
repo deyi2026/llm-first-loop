@@ -11,9 +11,18 @@ from llm_loop.core.message import Message, MessageSource
 from llm_loop.tools.registry import ToolRegistry
 
 
-def test_config_history_max_chars_100k():
-    """history_max_chars 默认 100K（T2 收敛：类默认与运行时 env 默认一致；1M 曾撑爆窗口，30000 过保守）."""
-    assert Settings.history_max_chars == 100_000
+def test_config_history_max_chars_default_none():
+    """history_max_chars 默认 None（EVO-20260816-3af5dee3：未显式配置→运行时按模型窗口 8% 自适应，取代固定 100K）."""
+    assert Settings.history_max_chars is None
+
+
+def test_config_history_max_chars_env_override(monkeypatch):
+    """显式 env 配置仍生效（自适应仅作用于未配置默认路径）."""
+    monkeypatch.setenv("HISTORY_MAX_CHARS", "123456")
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_BASE_URL", "http://test")
+    monkeypatch.setenv("LLM_MODEL", "test-model")
+    assert load_settings().history_max_chars == 123456
 
 
 def test_config_tool_output_chars_100k():
