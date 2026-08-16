@@ -183,6 +183,8 @@ def test_correction_clear_state_removed():
             "handoff_now",
             "generate_evolution_template",
             "playwright_test",
+            # EVO-20260816-bfb9f215: 单 exec 浏览器工具（阶段二）
+            "playwright_exec",
             "record_skill",
             "brainstorm_design",
             "tdd_red_green",

@@ -47,12 +47,12 @@ _RUN_MODE_HIDDEN_TOOLS: dict[str, set[str]] = {
     "minimal": {
         "web_fetch", "web_search",
         "send_feishu_message", "create_feishu_doc", "send_feishu_attachment",
-        "playwright_test", "record_skill",
+        "playwright_test", "playwright_exec", "record_skill",
     },
     # ptc: 命令执行主路径——web 检索类降级（LLM 少走低效 web 往返）；
     # playwright 隐藏（EVO-20260816-96215428 阶段一门控：浏览器执行类工具仅 standard/creative 可见，
     # 对齐 Hermes"仅 terminal 权限会话注册 browser_exec"的注册层门控精神，为单 exec 演进扫清安全前提）
-    "ptc": {"web_fetch", "web_search", "playwright_test"},
+    "ptc": {"web_fetch", "web_search", "playwright_test", "playwright_exec"},
     # creative/standard: 全工具集
     "creative": set(),
     "standard": set(),
