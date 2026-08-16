@@ -270,6 +270,29 @@ SERVICES="web feishu"
 WEB_BEFORE_FEISHU="web feishu"   # 启动序：web 先（依赖 LLM/端口）
 FEISHU_BEFORE_WEB="feishu web"   # 停止序：feishu 先（桥先断，web 后）
 
+# ── 重启前检测（2026-08-16）：长任务处理中 → 警告确认，防重启打断导致无反馈 ──
+_restart_precheck() {
+  local mid
+  mid="$(python3 -c "
+import json
+p = '$DATA_DIR/feishu_heartbeat.json'
+try:
+    d = json.load(open(p))
+    print(d.get('processing_msg_id', '') or '')
+except Exception:
+    print('')
+" 2>/dev/null)"
+  if [[ -n "$mid" ]]; then
+    echo "[restart_system] ⚠️ 飞书桥正在处理消息 ${mid:0:12}（长任务进行中）——重启会中断该任务且无回复。"
+    echo -n "确认继续重启? (y/N) "
+    read -r ans
+    if [[ ! "$ans" =~ ^[yY]$ ]]; then
+      echo "[restart_system] 已取消重启（保护进行中的长任务）。"
+      exit 1
+    fi
+  fi
+}
+
 # ── 全部停止（逆启动序，逐个优雅停机）──
 _stop_all() {
   # P0: 维护标记（重启期间 guard 跳过拉起，防竞态抢跑）
@@ -315,7 +338,7 @@ case "${1:-}" in
     ;;
   start)   _start_all ;;
   stop)    _stop_all; _MAINTENANCE_LOCK_ACTIVE=0 ;;  # stop 故意保留 lock 防 guard 拉起
-  restart) _stop_all; _start_all ;;
+  restart) _restart_precheck; _stop_all; _start_all ;;  # precheck: 长任务处理中警告确认
   status)  _status_all ;;
   *)       _die "用法: $0 [web|feishu] [start|stop|restart|status] 或 $0 [start|stop|restart|status]" ;;
 esac

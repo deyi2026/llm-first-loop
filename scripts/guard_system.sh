@@ -86,6 +86,18 @@ json.dump({
     "action": "bash scripts/restart_system.sh restart  # 确认后重启生效",
 }, open(flag, "w"), ensure_ascii=False, indent=2)
 PYEOF
+  # 日志去抖（2026-08-16）：agent 长任务持续编辑文件时 guard 每轮都报 → 噪音。
+  # 同一"未确认变更"5 分钟内仅记一次日志（flag 每次刷新保持 architecture_status 可见）。
+  GUARD_WS_LAST_LOG="${GUARD_WS_LAST_LOG:-$DATA_DIR/guard_ws_last_log.ts}"
+  local now last_log
+  now="$(date +%s)"
+  if [[ -f "$GUARD_WS_LAST_LOG" ]]; then
+    last_log="$(cat "$GUARD_WS_LAST_LOG" 2>/dev/null || echo 0)"
+    if (( now - last_log < 300 )); then
+      return 0  # 5 分钟去抖（flag 已写，仅抑制日志刷屏）
+    fi
+  fi
+  printf '%s\n' "$now" > "$GUARD_WS_LAST_LOG"
   _log_guard "workspace_changed" "" "检测到工作区变更（需重启生效）: $(echo "$changed_files" | tr '\n' ' ' | cut -c1-120)"
 }
 
