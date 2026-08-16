@@ -37,6 +37,8 @@ def test_run_mode_default_standard(tmp_path):
     names = _registered_names(engine)
     assert "web_fetch" in names and "web_search" in names
     assert "execute_command" in names and "read_file" in names
+    # EVO-20260816-96215428：playwright 门控放行端——standard 必须可见（防误伤）
+    assert "playwright_test" in names, "playwright_test 应在 standard 下保留"
 
 
 def test_run_mode_minimal_hides_peripheral(tmp_path):
@@ -53,12 +55,14 @@ def test_run_mode_minimal_hides_peripheral(tmp_path):
 
 
 def test_run_mode_ptc_hides_web(tmp_path):
-    """ptc → web 检索类隐藏（命令执行主路径），其余保留."""
+    """ptc → web 检索类 + playwright 隐藏（命令执行主路径），其余保留."""
     from llm_loop.factory import build_engine
 
     engine = build_engine(_settings(tmp_path, "ptc"))
     names = _registered_names(engine)
     assert "web_fetch" not in names and "web_search" not in names
+    # EVO-20260816-96215428 阶段一门控：浏览器执行类工具 ptc 不可见（仅 standard/creative）
+    assert "playwright_test" not in names, "playwright_test 应在 ptc 下隐藏（注册层门控）"
     assert "execute_command" in names and "send_feishu_message" in names  # 飞书保留
 
 
@@ -70,6 +74,8 @@ def test_run_mode_creative_keeps_all(tmp_path):
     names = _registered_names(engine)
     assert "web_fetch" in names and "web_search" in names
     assert "send_feishu_message" in names
+    # EVO-20260816-96215428：playwright 门控放行端——standard/creative 必须可见（防误伤）
+    assert "playwright_test" in names, "playwright_test 应在 creative 下保留"
 
 
 def test_run_mode_exposed_in_status(tmp_path):
