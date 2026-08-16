@@ -10,7 +10,7 @@ from llm_loop.memory.store import MemoryEntry, MemoryStore
 def test_extract_key_info_paths():
     """关键信息提取: 路径/URL 作为关键路径."""
     facts, paths, summary = extract_key_info(
-        "读取 /Users/me/data/notes.txt 成功，访问 https://example.com"
+        "读取 /srv/data/notes.txt 成功，访问 https://example.com"
     )
     assert any("notes.txt" in p for p in paths)
     assert any("example.com" in p for p in paths)
