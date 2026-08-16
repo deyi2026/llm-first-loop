@@ -46,6 +46,7 @@ _WATCHDOG_LOCK_S = float(os.environ.get("FEISHU_WS_WATCHDOG_LOCK_S", "180"))  # 
 _HEARTBEAT_PATH = os.environ.get("FEISHU_HEARTBEAT_PATH", "data/feishu_heartbeat.json")
 # 中断补偿（2026-08-16）：优雅退出打断长任务 → 落盘 → 下次启动主动回复（避免静默丢失）
 _INTERRUPTED_PATH = os.environ.get("FEISHU_INTERRUPTED_PATH", "data/feishu_interrupted.json")
+_DEDUP_PATH = os.environ.get("FEISHU_DEDUP_PATH", "data/feishu_dedup.json")
 _HEARTBEAT_HISTORY_PATH = os.environ.get(
     "FEISHU_HEARTBEAT_HISTORY_PATH", "data/feishu_heartbeat_history.jsonl"
 )
@@ -604,6 +605,7 @@ class FeishuWsBridge:
             logger.warning("飞书桥凭证预检失败: %s", preflight)
             return False
         self._running = True
+        self._load_dedup()  # 去重表持久化: 重启后恢复已见事件, 防 WS 重推旧消息重复处理
         self._ws_state = "connected"
         self._connector = _WsConnector(
             self._config,
@@ -702,6 +704,10 @@ class FeishuWsBridge:
                     str(data.get("reply_type", "chat_id")),
                 )
                 logger.warning("中断补偿回复 %s: %s", "成功" if ok else "失败", reply_id)
+            # 补偿过的消息登记去重: 防服务端重推该消息导致重复处理/重复回复
+            mid = str(data.get("msg_id", ""))
+            if mid and self._remember(f"m:{mid}"):
+                self._persist_dedup()
             p.unlink(missing_ok=True)
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning("中断补偿恢复失败（fail-open）: %s", exc)
@@ -844,6 +850,9 @@ class FeishuWsBridge:
         event = payload.get("event") or {}
         msg = self._unpack_message(event)
         if msg is not None:
+            # 双键去重: 消息 ID 优先（同一消息重推即使 event_id 变化也能识别）
+            if msg.message_id and self._remember(f"m:{msg.message_id}"):
+                self._persist_dedup()
             try:
                 self._handler.handle(msg)
             except Exception as exc:  # 处理异常不中断桥
@@ -895,19 +904,62 @@ class FeishuWsBridge:
         )
 
     # ── 工具 ──
-    def _is_new_event(self, event_id: str) -> bool:
-        if not event_id:
-            return True
+    def _remember(self, key: str) -> bool:
+        """登记去重键（新键返回 True；已见返回 False）.
+
+        有界窗口（_MAX_DEDUP_IDS）：按到达序淘汰最旧，防无限增长。
+        键格式带前缀避免 event_id 与 message_id 碰撞: e:<event_id> / m:<message_id>.
+        """
         with self._dedup_lock:
-            if event_id in self._seen_ids:
+            if key in self._seen_ids:
                 return False
-            self._seen_ids.add(event_id)
-            self._seen_order.append(event_id)
-            if len(self._seen_order) > _MAX_DEDUP_IDS:
-                # 防无限增长：按到达序淘汰最旧（窗口有界，对齐 本地既有实现 _seen_ids 语义）
+            self._seen_ids.add(key)
+            self._seen_order.append(key)
+            while len(self._seen_order) > _MAX_DEDUP_IDS:
                 oldest = self._seen_order.popleft()
                 self._seen_ids.discard(oldest)
             return True
+
+    def _is_new_event(self, event_id: str) -> bool:
+        if not event_id:
+            return True
+        is_new = self._remember(f"e:{event_id}")
+        if is_new:
+            self._persist_dedup()
+        return is_new
+
+    def _load_dedup(self) -> None:
+        """启动加载去重表（EVO-20260816-38875e81）.
+
+        重启后恢复已见事件/消息 ID, 防 WS at-least-once 重推旧事件被当新消息
+        重复处理（用户可见"旧消息再次弹出"）。加载失败 fail-open（不影响启动）。
+        """
+        try:
+            p = Path(_DEDUP_PATH)
+            if not p.exists():
+                return
+            data = json.loads(p.read_text(encoding="utf-8"))
+            ids = [str(i) for i in data.get("ids", [])][-_MAX_DEDUP_IDS:]
+            with self._dedup_lock:
+                for key in ids:
+                    if key not in self._seen_ids:
+                        self._seen_ids.add(key)
+                        self._seen_order.append(key)
+            logger.info("去重表已恢复 %d 条（%s）", len(ids), _DEDUP_PATH)
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("去重表加载失败（fail-open，不影响启动）: %s", exc)
+
+    def _persist_dedup(self) -> None:
+        """落盘去重表（窗口内已见事件/消息 ID，供下次启动恢复）."""
+        try:
+            with self._dedup_lock:
+                ids = list(self._seen_order)
+            Path(_DEDUP_PATH).parent.mkdir(parents=True, exist_ok=True)
+            Path(_DEDUP_PATH).write_text(
+                json.dumps({"ids": ids}, ensure_ascii=False), encoding="utf-8"
+            )
+        except OSError as exc:
+            logger.warning("去重表落盘失败（fail-open）: %s", exc)
 
     def _run_loop(self) -> None:
         """后台循环：指数退避重连（5→30s，连续失败超限长退避 300s）."""
