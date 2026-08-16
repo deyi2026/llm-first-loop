@@ -707,6 +707,7 @@ def get_session_messages(
             model_used=getattr(m, "model_used", ""),  # M51: 历史模型标签透传（页脚）
             tokens_in=getattr(m, "tokens_in", 0),  # M52: 历史 token 消耗透传
             tokens_out=getattr(m, "tokens_out", 0),  # M52
+            tool_calls=getattr(m, "tool_calls", None),  # 工具声明透传（历史出产物/正文链接）
         )
         for m in session.messages
     ]
@@ -909,20 +910,45 @@ def preview_file(request: Request, path: str) -> Response:
     安全边界：拒绝绝对路径与越界路径（resolve 后必须仍在项目根内）；
     仅限普通文件；大小上限截断（返回 truncated 标记如实提示）。
     """
-    if not path or path.startswith(("/", "\\")) or ".." in Path(path).parts:
+    if not path:
         return UTF8JSONResponse(
             status_code=400,
-            content={"error": "invalid_path", "detail": "仅接受项目内相对路径。"},
+            content={"error": "invalid_path", "detail": "缺少 path。"},
         )
     # 工作区跟随: 预览根 = 当前工作区根（无工作区 → 仓库根兜底）
     engine = _engine_from(request)
     root = Path(getattr(engine, "workspace_root", "") or _PREVIEW_ROOT)
-    target = (root / path).resolve()
+    # 相对路径基于工作区根；绝对路径亦接受（resolve 后必须仍在根内，越界拒绝）
+    raw = Path(path)
+    target = raw.resolve() if raw.is_absolute() else (root / raw).resolve()
     if not target.is_relative_to(root.resolve()):
         return UTF8JSONResponse(
             status_code=400,
             content={"error": "out_of_bounds", "detail": "路径越出项目根，已拒绝。"},
         )
+    # 裸文件名兜底（正文常引用 `development_methodology.md` 这类无目录前缀的文件名）：
+    # 根下直接解析失败时，在工作区常见目录内按 basename 唯一匹配（多命中 → 409 歧义
+    # 提示，宁可不猜不错开；防误开原则）。
+    if not target.is_file() and not raw.is_absolute() and "/" not in path and "\\" not in path:
+        try:
+            candidates = [
+                p.resolve()
+                for base in ("docs", "src", "tests", "scripts", "skills", "webui")
+                for p in (root / base).rglob(path)
+                if p.is_file()
+            ]
+        except OSError:
+            candidates = []
+        if len(candidates) == 1:
+            target = candidates[0]
+        elif len(candidates) > 1:
+            return UTF8JSONResponse(
+                status_code=409,
+                content={
+                    "error": "ambiguous_path",
+                    "detail": f"文件名 {path} 在工作区内有 {len(candidates)} 处，请用完整路径。",
+                },
+            )
     if not target.is_file():
         return UTF8JSONResponse(
             status_code=404,

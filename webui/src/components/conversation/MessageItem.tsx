@@ -49,11 +49,19 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function Markdown({ text }: { text: string }) {
-  const html = useMemo(() => renderMarkdown(text), [text]);
-  // 代码块复制按钮：dangerouslySetInnerHTML 内容无法绑 React 事件 → 事件委托
-  const onCopyClick = async (e: React.MouseEvent<HTMLDivElement>) => {
+function Markdown({ text, clickablePaths }: { text: string; clickablePaths?: Set<string> }) {
+  const html = useMemo(() => renderMarkdown(text, clickablePaths), [text, clickablePaths]);
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
+  // 代码块复制按钮 + 出产物内联路径链接：dangerouslySetInnerHTML 内容无法绑
+  // React 事件 → 事件委托
+  const onBodyClick = async (e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
+    const link = target.closest?.(".v2-file-link") as HTMLElement | null;
+    if (link) {
+      const p = link.getAttribute("data-path");
+      if (p) setPreviewPath(p);
+      return;
+    }
     const btn = target.closest?.(".v2-code-copy") as HTMLButtonElement | null;
     if (!btn) return;
     const code = btn.closest(".v2-code-block")?.querySelector("pre code");
@@ -66,7 +74,12 @@ function Markdown({ text }: { text: string }) {
       }, 1000);
     }
   };
-  return <div className="v2-md" onClick={onCopyClick} dangerouslySetInnerHTML={{ __html: html }} />;
+  return (
+    <>
+      <div className="v2-md" onClick={onBodyClick} dangerouslySetInnerHTML={{ __html: html }} />
+      {previewPath ? <FilePreviewModal path={previewPath} onClose={() => setPreviewPath(null)} /> : null}
+    </>
+  );
 }
 
 function ThinkingBlock({ text, streaming }: { text: string; streaming?: boolean }) {
@@ -204,18 +217,21 @@ function FilePreviewModal({ path, onClose }: { path: string; onClose: () => void
   );
 }
 
+/** 出产物路径提取（edit_file/write_file 的 path 参数，去重）——chips 与正文链接共用 */
+export function extractProducedPaths(calls: ToolCallInfo[] | null | undefined): string[] {
+  const out: string[] = [];
+  for (const t of calls ?? []) {
+    if (t.name !== "edit_file" && t.name !== "write_file") continue;
+    const p = (t.arguments as Record<string, unknown>)?.path;
+    if (typeof p === "string" && p.trim() && !out.includes(p)) out.push(p.trim());
+  }
+  return out;
+}
+
 /** 出产物文件列表（从 edit_file/write_file 工具调用提取路径，点击打开预览） */
 function ProducedFiles({ calls }: { calls: ToolCallInfo[] }) {
   const [previewPath, setPreviewPath] = useState<string | null>(null);
-  const paths = useMemo(() => {
-    const out: string[] = [];
-    for (const t of calls) {
-      if (t.name !== "edit_file" && t.name !== "write_file") continue;
-      const p = (t.arguments as Record<string, unknown>)?.path;
-      if (typeof p === "string" && p.trim() && !out.includes(p)) out.push(p.trim());
-    }
-    return out;
-  }, [calls]);
+  const paths = useMemo(() => extractProducedPaths(calls), [calls]);
   if (paths.length === 0) return null;
   return (
     <div className="v2-produced" data-testid="produced-files">
@@ -295,7 +311,18 @@ function FeedbackButtons({ sessionId, index }: { sessionId: string; index: numbe
   );
 }
 
-export function MessageItem({ msg, index, sessionId }: { msg: ChatMessage; index?: number; sessionId?: string }) {
+export function MessageItem({
+  msg,
+  index,
+  sessionId,
+  producedPaths,
+}: {
+  msg: ChatMessage;
+  index?: number;
+  sessionId?: string;
+  /** 会话级出产物路径集合（正文路径引用可点击打开；由 MessageList 计算） */
+  producedPaths?: Set<string>;
+}) {
   if (msg.role === "user") {
     return (
       <div className="v2-msg user" data-testid="msg-user">
@@ -329,7 +356,9 @@ export function MessageItem({ msg, index, sessionId }: { msg: ChatMessage; index
             <ProducedFiles calls={msg.toolCalls} />
           </>
         ) : null}
-        {msg.content ? <Markdown text={msg.content} /> : null}
+        {msg.content ? (
+          <Markdown text={msg.content} clickablePaths={producedPaths} />
+        ) : null}
         {msg.streaming && !msg.content && (
           <StreamingHint startedAt={msg.streamStartedAt ?? null} />
         )}

@@ -65,16 +65,39 @@ function renderMath(src: string): string {
   return out;
 }
 
-export function renderMarkdown(src: string): string {
+/** 已知文件扩展名（路径样式判定用） */
+const PATH_EXT = /\.(py|ts|tsx|js|jsx|md|json|sh|css|yaml|yml|toml|html|txt|sql|go|rs|java|vue|svg|c|h|cpp|lock|ini|cfg)$/i;
+
+/** 路径样式判定：无空白、非 URL、含 / 或以已知扩展名结尾（防把命令/普通词误判） */
+function looksLikePath(code: string): boolean {
+  if (!code || code.length > 200 || /\s/.test(code)) return false;
+  if (/^(https?:|www\.)/i.test(code)) return false;
+  return code.includes("/") || PATH_EXT.test(code);
+}
+
+export function renderMarkdown(src: string, clickablePaths?: Set<string>): string {
   if (!src) return "";
   try {
     const math = renderMath(src);
     const raw = marked.parse(math) as string;
-    return DOMPurify.sanitize(raw, {
+    let clean = DOMPurify.sanitize(raw, {
       ALLOWED_TAGS,
       ALLOWED_ATTR,
       ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|data:image\/|#)/i,
     });
+    // 文件路径内联链接（对齐 DSH producedFileMentions）：
+    // ① 命中出产物集合（edit_file 产出，相对/绝对 forms endsWith 互通）必可点；
+    // ② 路径样式的 inline code 也可点——点击时后端校验存在性（404 如实提示，
+    //    防误开不静默）。URL/命令/普通词排除。
+    const paths = clickablePaths ? [...clickablePaths] : [];
+    clean = clean.replace(/<code>([^<]*)<\/code>/g, (_m, codeRaw: string) => {
+      const code = codeRaw.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+      const producedHit = paths.some((p) => p === code || code.endsWith(p) || p.endsWith(code));
+      if (!producedHit && !looksLikePath(code)) return _m;
+      const htmlEsc = code.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      return `<span class="v2-file-link" data-path="${htmlEsc}" title="打开 ${htmlEsc}">${htmlEsc}</span>`;
+    });
+    return clean;
   } catch {
     return DOMPurify.sanitize(src, { ALLOWED_TAGS, ALLOWED_ATTR });
   }

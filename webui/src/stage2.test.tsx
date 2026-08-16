@@ -19,6 +19,32 @@ describe("renderMarkdown", () => {
     expect(html).toContain("katex");
   });
 
+  it("出产物内联路径：正文中的文件路径 code 变为可点击链接", () => {
+    const html = renderMarkdown(
+      "已修改 `src/llm_loop/core/a.py` 与 `src/llm_loop/core/b.py`",
+      new Set(["src/llm_loop/core/a.py"])
+    );
+    // 集合命中的路径 → v2-file-link（可点击打开）
+    expect(html).toContain('class="v2-file-link" data-path="src/llm_loop/core/a.py"');
+    // 未命中集合但路径样式 → 也可点（点击时后端校验存在性）
+    expect(html).toContain('class="v2-file-link" data-path="src/llm_loop/core/b.py"');
+  });
+
+  it("出产物内联路径：无 clickablePaths 时路径样式 code 也可点，命令/普通词排除", () => {
+    // 路径样式（含 / 或以已知扩展名结尾）→ 可点
+    const html = renderMarkdown("修改了 `docs/development_methodology.md` 与 `src/a.py`");
+    expect(html).toContain('class="v2-file-link" data-path="docs/development_methodology.md"');
+    expect(html).toContain('class="v2-file-link" data-path="src/a.py"');
+    // 命令（含空格）/ 普通词 → 保持普通 code
+    const html2 = renderMarkdown("执行 `bash llm_loop evolve-review` 与 `hello` 与 `max_tokens`");
+    expect(html2).not.toContain("v2-file-link");
+    expect(html2).toContain("<code>bash llm_loop evolve-review</code>");
+    expect(html2).toContain("<code>hello</code>");
+    // URL 排除（marked 渲染为链接，不在 code 内）
+    const html3 = renderMarkdown("看 `https://example.com/a.md`");
+    expect(html3).not.toContain('class="v2-file-link" data-path="https://example.com/a.md"');
+  });
+
   it("XSS 脚本被剥离（白名单 sanitize）", () => {
     const html = renderMarkdown('<script>alert(1)</script>正文');
     expect(html).not.toContain("<script>");
@@ -179,6 +205,30 @@ describe("Composer", () => {
     expect(send.disabled).toBe(true);
     fireEvent.change(screen.getByTestId("composer-input"), { target: { value: "hi" } });
     expect(send.disabled).toBe(false);
+  });
+
+  it("粘贴大内容发送后输入框高度复位（不再残留增高）", async () => {
+    // chat/stream 返回 done（sendMessage 完整链路）
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/v1/chat/stream")) {
+        return new Response(
+          "data: {\"type\":\"done\",\"data\":{\"final_answer\":\"ok\"}}\n\n",
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify({ models: [] }), { status: 200 });
+    });
+    render(<Composer />);
+    const ta = screen.getByTestId("composer-input") as HTMLTextAreaElement;
+    // 模拟粘贴大内容 → autoGrow 增高
+    fireEvent.change(ta, { target: { value: "长内容\n".repeat(30) } });
+    // 发送后高度应复位（空内容 → 内联高度清除，恢复 CSS 默认）
+    fireEvent.click(screen.getByText("发送"));
+    await waitFor(() => {
+      expect((ta as HTMLTextAreaElement).style.height).toBe("");
+    });
+    expect((ta as HTMLTextAreaElement).value).toBe("");
   });
 
   it("/ 唤起命令面板", () => {
