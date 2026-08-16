@@ -33,6 +33,7 @@ from llm_loop.tools.builtin.edit_file import EditFileTool
 from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
 from llm_loop.tools.builtin.job_kill import JobKillTool
 from llm_loop.tools.builtin.job_output import JobOutputTool
+from llm_loop.tools.builtin.search_files import SearchFilesTool
 from llm_loop.tools.builtin.read_file import ReadFileTool
 from llm_loop.tools.builtin.spawn_subagent import SpawnSubAgentTool
 from llm_loop.tools.builtin.web_fetch import WebFetchTool
@@ -258,6 +259,8 @@ def build_engine(settings: Settings) -> LoopEngine:
     # EVO-20260814: 后台任务查询/终止（配合 execute_command run_in_background=true）
     _register_basic("job_output", JobOutputTool())
     _register_basic("job_kill", JobKillTool())
+    # DSH-PLUGINS-20260816 ③: 文件搜索（glob + 内容 grep，工具优先免碎调用）
+    _register_basic("search_files", SearchFilesTool())
     _register_basic("web_fetch", WebFetchTool(timeout_s=_tool_timeout))
     # M48: 网络搜索（Bing/百度双后端降级）
     _register_basic("web_search", WebSearchTool(timeout_s=_tool_timeout))
