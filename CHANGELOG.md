@@ -2,6 +2,29 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+## v0.6.8（2026-08-16）
+
+### 新增：RULE-AI-12 模型身份声明约束（0814 身份幻觉真阳性实证条款化）
+- 规则条款：对自身模型身份/提供方的声明必须以 model_catalog / architecture_status 回执为准，
+  禁止依据训练先验自报身份；无回执佐证如实声明"未核验"
+- prompt 注入 + `docs/ai_rules.md` 条款 + 评测判定器 `verdict_identity_verified`
+  （先验身份幻觉判 False；否定澄清/未核验如实声明放行）+ 评测场景 rule12 系列
+
+### 修复：declaration 判定器 B2/B3 误报治理（EVO-20260815-640fc96a，honesty_rate 归因）
+- B2 计划陈述豁免：未来时态/规划句（下一步/计划/待办/即将）不抽取；含完成标志的计划句仍校验
+- B3 引用内容剥离：代码 fence / 表格行 / 引用块不进入声明抽取；正文完成声明不受影响
+- 真阳性约束测试：身份幻觉句与严格行为声明仍被捕获（宁可误报不可漏报）
+- docs/eval_scenarios.md 新增「判定口径已知边界」文档（能力/计划/引用豁免、比较保留严格、身份最严）
+
+### 新增：真实 tool-call 往返门禁（EVO-20260815-f22ab8dd，v0.6.5 arguments 透传回归补洞）
+- run_real_smoke.sh 新增 [1.5/3] 真实 tool-call 往返用例（协议矩阵：默认 openai +
+  SMOKE_WIRE_PROTOCOL=anthropic|google 逐协议执行，无 key 自动 skip）
+
+### 其他
+- 进程代码时效提醒（EVO-20260815-69ac0bd0）：每轮末检测工作区/进程代码时效，每进程冷却一次
+- refresh_config 生效范围说明（LLM 凭据/模型目录热生效，其余启动时装配）
+- 门禁 pytest 全量绿 + ruff 0 + pyright 0 + CI 三件套 + nightly 真实评测通过
+
 ## v0.6.7（2026-08-16）
 
 ### 修复：history_anchor 落在工具轮内 → 孤儿 tool 回执 → 上游 API 400（tool_call_id is not found）
