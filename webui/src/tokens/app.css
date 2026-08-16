@@ -1090,3 +1090,23 @@
   color: var(--dsw-alias-text-tertiary, #8a8f98);
   margin-left: 4px;
 }
+
+/* ── 会话统计条（SessionStats，M59 对齐 DSH 统计栏）── */
+.v2-session-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--dsw-alias-text-tertiary, #8a8f98);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.v2-stats-sep {
+  opacity: 0.5;
+}
+.v2-stats-ok {
+  color: #4caf7d;
+}
+.v2-stats-warn {
+  color: #e8b64c;
+}

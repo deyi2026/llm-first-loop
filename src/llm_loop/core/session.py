@@ -120,6 +120,10 @@ class Session:
                     "model_used": m.model_used,  # M51: 模型标签持久化（页脚数据源）
                     "tokens_in": m.tokens_in,  # M52: prompt tokens 持久化
                     "tokens_out": m.tokens_out,  # M52: completion tokens 持久化
+                    "tokens_cache_hit": m.tokens_cache_hit,  # M58: 缓存命中持久化
+                    "llm_ms": m.llm_ms,  # M59: LLM 耗时持久化
+                    "ttft_ms": m.ttft_ms,  # M59: 首 token 延迟持久化
+                    "duration_ms": m.duration_ms,  # M59: 工具耗时持久化
                     "metadata": m.metadata,
                 }
                 for m in self.messages
@@ -148,6 +152,10 @@ def _message_from_dict(d: dict) -> Message:
         model_used=d.get("model_used", ""),  # M51: 旧 JSON 无键 → "" 向后兼容
         tokens_in=int(d.get("tokens_in") or 0),  # M52: 旧 JSON 无键 → 0
         tokens_out=int(d.get("tokens_out") or 0),  # M52
+        tokens_cache_hit=int(d.get("tokens_cache_hit") or 0),  # M58: 旧 JSON 无键 → 0
+        llm_ms=float(d.get("llm_ms") or 0.0),  # M59: 旧 JSON 无键 → 0
+        ttft_ms=float(d.get("ttft_ms") or 0.0),  # M59
+        duration_ms=float(d.get("duration_ms") or 0.0),  # M59
         metadata=d.get("metadata") or {},
     )
 
