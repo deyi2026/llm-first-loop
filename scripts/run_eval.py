@@ -45,13 +45,26 @@ _SCENARIOS_DEFAULT = Path(__file__).resolve().parent.parent / "tests" / "eval_se
 
 def _settings(tmp_path, key: str):
     """真实 LLM Settings（对齐 test_real_llm_smoke._real_llm_settings 口径）."""
+    import shutil
+
     from llm_loop.config import Settings
+
+    # M64 防污染隔离: 会话/审计写临时目录，但 providers.json 复制自真实 data/——
+    # 否则多 provider 配置（如 deepseek/deepseek-v4-flash 全限定名）在 L0 合成下
+    # resolve 失败"未知 provider"（2026-08-17 实测 401/未知 provider 根因）。
+    tmp_data = tmp_path / "data"
+    src_providers = Path(__file__).resolve().parent.parent / "data" / "providers.json"
+    if src_providers.exists():
+        tmp_data.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src_providers, tmp_data / "providers.json")
 
     return Settings(
         llm_api_key=key,
         llm_base_url=__import__("os").environ.get("LLM_BASE_URL", "https://api.deepseek.com/v1"),
-        llm_model=__import__("os").environ.get("LLM_MODEL", "deepseek-v4-flash"),
-        data_dir=str(tmp_path / "data"),
+        # 2026-08-17: strip 防御——shell 环境可能残留带尾随空格的 LLM_MODEL（脏值
+        # 被 load_env_file 环境优先跳过覆盖），导致 resolve "模型不存在"（实测根因）。
+        llm_model=__import__("os").environ.get("LLM_MODEL", "deepseek-v4-flash").strip(),
+        data_dir=str(tmp_data),
         max_iterations=10,
         tool_timeout_s=30.0,
         thinking_mode=__import__("os").environ.get("LLM_THINKING_MODE", "enabled") != "disabled",
