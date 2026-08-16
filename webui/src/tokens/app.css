@@ -1025,3 +1025,64 @@
   color: var(--dsw-alias-label-primary);
   word-break: break-all;
 }
+
+/* ── 协调通道消息提示（InteropNotice）── */
+.v2-interop {
+  position: relative;
+  flex: none;
+  padding: 0 12px;
+  z-index: 30;
+}
+.v2-interop-toggle {
+  width: 100%;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--dsw-specific-accent-fg, #e8b64c);
+  background: color-mix(in srgb, var(--dsw-specific-accent-fg, #e8b64c) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--dsw-specific-accent-fg, #e8b64c) 35%, transparent);
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+.v2-interop-toggle:hover {
+  background: color-mix(in srgb, var(--dsw-specific-accent-fg, #e8b64c) 18%, transparent);
+}
+.v2-interop-panel {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: calc(100% + 4px);
+  max-height: 40vh;
+  overflow: auto;
+  background: var(--dsw-specific-surface, #1e1f24);
+  border: 1px solid var(--dsw-alias-border-l1, #3a3d45);
+  border-radius: 8px;
+  padding: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.v2-interop-group {
+  margin-bottom: 8px;
+}
+.v2-interop-group-title {
+  font-size: 11px;
+  color: var(--dsw-alias-text-tertiary, #8a8f98);
+  margin-bottom: 4px;
+}
+.v2-interop-item {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--dsw-specific-surface, #1e1f24) 60%, #000 20%);
+  margin-bottom: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.v2-interop-meta {
+  font-size: 11px;
+  color: var(--dsw-alias-text-tertiary, #8a8f98);
+  margin-bottom: 2px;
+}
+.v2-interop-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--dsw-alias-text-primary, #e8e8ea);
+}

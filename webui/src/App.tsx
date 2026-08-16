@@ -6,6 +6,7 @@ import { TopBar } from "./components/layout/TopBar";
 import { RightPanel } from "./components/layout/RightPanel";
 import { Conversation } from "./components/conversation/Conversation";
 import { initEventStream } from "./core/events";
+import { InteropNotice } from "./components/InteropNotice";
 
 export function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -36,6 +37,7 @@ export function App() {
       <Sidebar collapsed={sidebarCollapsed} />
       <div className="v2-main">
         <TopBar onToggleSidebar={() => setSidebarCollapsed((v) => !v)} />
+        <InteropNotice />
         <Conversation />
       </div>
       <button

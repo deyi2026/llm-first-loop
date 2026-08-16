@@ -7,6 +7,7 @@
 import asyncio
 import json
 import logging
+import os
 import threading
 from pathlib import Path
 from typing import Any
@@ -420,6 +421,37 @@ def health() -> dict:
     """健康检查：纯服务层探活，不调用 LLM、不含凭证."""
     return {"status": "ok", "service": SERVICE_NAME, "version": SERVICE_VERSION}
 
+
+@router.get("/api/v1/interop/messages")
+def list_interop_messages(request: Request) -> dict:
+    """协调通道消息（只读，不触发 run）——web 端展示给用户看.
+
+    读 data/interop/{lfl_to_dsh,dsh_to_lfl}/pending/ 的 JSON 消息（协议见 INTEROP.md），
+    返回两个方向的待处理消息摘要。只读文件系统，不触发 agent run、不占会话锁。
+    """
+    del request  # 纯文件读取，无引擎依赖
+    base = Path(os.environ.get("LFL_DATA_DIR", "data")) / "interop"
+    result: dict[str, list[dict]] = {"lfl_to_dsh": [], "dsh_to_lfl": []}
+    for direction in ("lfl_to_dsh", "dsh_to_lfl"):
+        pdir = base / direction / "pending"
+        if not pdir.is_dir():
+            continue
+        for f in sorted(pdir.glob("*.json")):
+            try:
+                d = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue  # 格式坏/读失败 → 跳过（fail-open）
+            result[direction].append(
+                {
+                    "id": d.get("id", f.stem),
+                    "from": d.get("from", ""),
+                    "to": d.get("to", ""),
+                    "ts": d.get("ts", ""),
+                    "topic": d.get("topic", ""),
+                    "body": str(d.get("body", ""))[:300],
+                }
+            )
+    return result
 
 @router.get("/api/v1/sessions", response_model=SessionListResponse)
 def list_sessions(request: Request, include_archived: bool = False) -> SessionListResponse:
