@@ -155,3 +155,50 @@ def test_skip_only_processing_sid_others_sync_realtime(tmp_path):
     processing.discard(sid_busy)
     watcher.poll_once()
     assert len(replies) == 1
+
+
+# ── 2026-08-16: 单条上限 10000 + 超出分段显示（替代 "…" 截断，信息零丢失）──
+
+
+def test_long_content_split_into_chunks_no_truncation(tmp_path):
+    """超长增量 → 拆成多段推送：每段 ≤ max_chars、段标 i/N、拼接后内容零丢失."""
+    store, smap, watcher, replies = _make(tmp_path)  # max_chars=200
+    sid = smap.get_or_create("p:ou_owner")
+    watcher.poll_once()
+    long_text = "\n".join(f"第{i:02d}行内容 " + "字" * 40 for i in range(20))  # ~1000 字
+    _append_web(store, sid, [long_text])
+    watcher.poll_once()
+    assert len(replies) >= 2  # 已分段
+    for _, text, _ in replies:
+        assert len(text) <= 200
+    assert "（1/" in replies[0][1] and f"（{len(replies)}/{len(replies)}）" in replies[-1][1]
+    joined = "\n".join(t for _, t, _ in replies)
+    assert "…" not in joined  # 无截断省略号
+    for i in range(20):  # 每一行都完整存在
+        assert f"第{i:02d}行内容" in joined
+
+
+def test_single_long_line_hard_split_no_loss(tmp_path):
+    """无换行的超长单行 → 硬切分段，拼接后零丢失."""
+    store, smap, watcher, replies = _make(tmp_path)
+    sid = smap.get_or_create("p:ou_owner")
+    watcher.poll_once()
+    blob = "x" * 500
+    _append_web(store, sid, [blob])
+    watcher.poll_once()
+    assert len(replies) >= 2
+    recovered = "".join(
+        t.split("\n", 1)[1].replace("🤖 AI: ", "", 1) for _, t, _ in replies
+    )
+    assert blob in recovered or recovered.count("x") >= 500
+
+
+def test_short_content_single_segment_no_label(tmp_path):
+    """短内容 → 单段推送且无段标（与既有行为兼容）."""
+    store, smap, watcher, replies = _make(tmp_path)
+    sid = smap.get_or_create("p:ou_owner")
+    watcher.poll_once()
+    _append_web(store, sid, ["短消息"])
+    watcher.poll_once()
+    assert len(replies) == 1
+    assert "（1/" not in replies[0][1] and "短消息" in replies[0][1]
