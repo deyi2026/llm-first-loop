@@ -55,6 +55,9 @@ class ToolRegistry:
         # P0-1(2026-08-15): 阻断审计目录（默认守卫落盘 safety_blocks.jsonl；
         # 仅 safety_guard 未显式注入时生效；None = 不落盘，零回归）
         safety_audit_dir: str | Path | None = None,
+        # task_quality 路径 A（2026-08-17）: 参数预检层（None = 关闭，零回归；
+        # 注入后 execute 步骤 1 后、安全检查前执行预检，失败返回字段级引导反馈）
+        precheck_layer: Any | None = None,
     ) -> None:
         self._tools: dict[str, Any] = {}
         self._lock = threading.Lock()
@@ -67,6 +70,7 @@ class ToolRegistry:
         self.exec_mode = exec_mode  # readonly/allowlist/blocked（空 = 不启用分级）
         self.exec_allowlist = [s.strip() for s in (exec_allowlist or "").split(",") if s.strip()]
         self._pre_execute_hooks: list[PreExecuteHook] = []
+        self.precheck_layer = precheck_layer  # task_quality 路径 A（None=关闭零回归）
         self._archive_store = archive_store  # ArchiveStore（T22 超长结果另存）
         # P0-5(2026-08-15): 显式注入的会话 id（set_session_id 写入，无 contextvar
         # 上下文时的回退值）。并发 run 期间，属性 `_session_id`（下方 property）
@@ -277,6 +281,26 @@ class ToolRegistry:
                 f"[参数错误] 参数必须为 JSON 对象，收到 {type(call.arguments).__name__}。正确用法示例: {json.dumps(tool.parameters, ensure_ascii=False)[:400]}",
                 duration_ms=0.0,
             )
+
+        # 1.5 task_quality 路径 A（2026-08-17）: 参数预检（安全检查前，失败拦截不执行）
+        # 缺省 None 零回归；schema 缺失/异常 fail-open 放行。
+        precheck = getattr(self, "precheck_layer", None)
+        if precheck is not None:
+            try:
+                pre_result = precheck.check(call.arguments, tool.parameters)
+                if not pre_result.valid:
+                    return self._result(
+                        ToolResultStatus.FAILURE,
+                        call,
+                        pre_result.to_guidance_feedback(),
+                        duration_ms=(time.perf_counter() - start) * 1000,
+                    )
+            except Exception:  # noqa: BLE001 — 预检异常 fail-open（不阻断主循环）
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "参数预检执行异常（fail-open 放行）: %s", call.name, exc_info=True
+                )
 
         # EVO-20260813-9ced1f4c: 参数物化边界（瀑布，默认关闭零回归）
         # 无损 JSON 物化 + 深冻结，防策略检查后被篡改；失败 → 拒绝调用（宁严勿松）
