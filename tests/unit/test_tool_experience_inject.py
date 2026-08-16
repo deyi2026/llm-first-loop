@@ -27,16 +27,27 @@ updated_at: "2026-08-16T00:00:00+08:00"
 ---
 """
 
+_SKILL_MD = """---
+name: cache-hit-debug
+description: LLM 前缀缓存命中排查技能——缓存命中率异常低时使用；三实验法定位根因。触发工具: architecture_status/execute_command/search_records/search_archive。
+---
+# 缓存排查
+"""
 
-class _Stub:
-    """LoopEngine 最小桩（mixin 方法所需属性）."""
 
-    def __init__(self, enabled: bool, exp_dir: str | Path) -> None:
+class _Stub(_ToolExecMixin):
+    """LoopEngine 最小桩（mixin 方法所需属性；继承 mixin 获得 _match_skills）."""
+
+    def __init__(self, enabled: bool, exp_dir: str | Path, skills_dir: str | Path = "nonexistent_skills") -> None:
         self.settings = SimpleNamespace(
-            tool_experience_inject=enabled, experiences_dir=str(exp_dir)
+            tool_experience_inject=enabled,
+            experiences_dir=str(exp_dir),
+            skills_dir=str(skills_dir),
         )
         self.messages = []
         self.events = []
+        # 重置类级 skill 缓存（跨测试隔离）
+        type(self)._skills_cache = (0.0, [])
 
     def _append_message_event(self, sess, msg) -> None:
         self.events.append(msg)
@@ -83,4 +94,42 @@ def test_inject_dir_missing_fail_open(tmp_path):
     """经验目录不存在: fail-open 不抛、不注入."""
     stub = _Stub(True, tmp_path / "no_such_dir")
     _ToolExecMixin._inject_experience_tips(stub, stub, ["web_fetch"])
+    assert stub.messages == []
+
+
+def _make_skills_dir(tmp_path: Path, name: str = "cache-hit-debug") -> Path:
+    d = tmp_path / "skills" / name
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text(_SKILL_MD, encoding="utf-8")
+    return tmp_path / "skills"
+
+
+def test_skill_inject_hit(tmp_path):
+    """EVO-20260816-ec8c36bb: 工具名命中 skill → 注入 '可用 skill' 行."""
+    d = _make_exp_dir(tmp_path)  # 经验库为空命中
+    sd = _make_skills_dir(tmp_path)
+    stub = _Stub(True, d, sd)
+    _ToolExecMixin._inject_experience_tips(stub, stub, ["architecture_status"])
+    # 经验库无 architecture_status 命中 → 走 skill 匹配（kw_pool 含 cache/debug）
+    assert len(stub.messages) == 1
+    msg = stub.messages[0]
+    assert "[经验提示]" in msg.content
+    assert "cache-hit-debug" in msg.content
+    assert "skill_load" in msg.content
+
+
+def test_skill_no_dir_no_inject(tmp_path):
+    """skills 目录不存在: fail-open 不抛、不注入."""
+    d = _make_exp_dir(tmp_path)
+    stub = _Stub(True, d)  # skills_dir 默认 nonexistent_skills
+    _ToolExecMixin._inject_experience_tips(stub, stub, ["architecture_status"])
+    assert stub.messages == []
+
+
+def test_skill_unmatched_no_inject(tmp_path):
+    """无 skill 匹配关键词: 不注入."""
+    d = _make_exp_dir(tmp_path)
+    sd = _make_skills_dir(tmp_path)
+    stub = _Stub(True, d, sd)
+    _ToolExecMixin._inject_experience_tips(stub, stub, ["zzz_unrelated_tool"])
     assert stub.messages == []
