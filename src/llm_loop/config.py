@@ -49,7 +49,7 @@ def _raw_env(name: str) -> str:
     return ""
 
 
-def _env_int(name: str, default: int | None = None) -> int | None:
+def _env_int(name: str, default: int) -> int:
     raw = _raw_env(name)
     if not raw:
         return default
@@ -58,6 +58,21 @@ def _env_int(name: str, default: int | None = None) -> int | None:
     except ValueError:
         _note_invalid_fallback(name, default, "非整数字符串")
         return default
+
+
+def _env_int_or_none(name: str) -> int | None:
+    """EVO-20260816-3af5dee3: env 未配置返回 None（history_max_chars 用，None=窗口自适应）.
+
+    独立于 _env_int（其签名保持 int 返回，避免 46 处调用点类型连锁）。
+    """
+    raw = _raw_env(name)
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        _note_invalid_fallback(name, None, "非整数字符串")
+        return None
 
 
 def load_env_file(path: str | Path | None = None) -> None:
@@ -529,7 +544,7 @@ def load_settings() -> Settings:
         tool_guard_enabled=_env_bool("TOOL_GUARD_ENABLED", False),
         runner_background=_env_bool("RUNNER_BACKGROUND", True),  # EVO 后台 run 改造: 默认开
         tool_experience_inject=_env_bool("TOOL_EXPERIENCE_INJECT", True),  # EVO-20260816-62977206: 默认开
-        history_max_chars=_env_int("HISTORY_MAX_CHARS"),  # EVO-20260816-3af5dee3: None=未配置→按窗口自适应
+        history_max_chars=_env_int_or_none("HISTORY_MAX_CHARS"),  # EVO-20260816-3af5dee3: None=未配置→按窗口自适应
         memory_top_k=_env_int("MEMORY_TOP_K", 5),
         self_inspection_enabled=_env_bool("SELF_INSPECTION_ENABLED", True),
         status_report_cooldown_s=float(_env_int("STATUS_REPORT_COOLDOWN_S", 60)),
