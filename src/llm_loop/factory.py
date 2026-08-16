@@ -386,6 +386,8 @@ def build_engine(settings: Settings) -> LoopEngine:
         audit_dir=settings.audit_dir,
         min_samples=getattr(settings, "self_eval_min_samples", 5),
         span=getattr(settings, "self_eval_span", 50),
+        # EVO-20260816-f1f73a0d: 采样时间窗 24h（防历史异常污染当前评估）
+        window_hours=24.0,
     )
     # M48（design §5.3）: 模型路由池注入；session_set_override 回调在 run() 内动态绑定，
     # 此处先注入 pool 让 tool_defs() 完整（让 LLM 在工具列表中看到 model_catalog/switch_model）

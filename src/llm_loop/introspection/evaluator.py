@@ -143,11 +143,13 @@ class SelfEvaluator:
         audit_dir: str | Path,
         min_samples: int = 5,  # SELF_EVAL_MIN_SAMPLES
         span: int = 50,  # SELF_EVAL_SPAN 聚合窗口
+        window_hours: float = 24.0,  # EVO-20260816-f1f73a0d: 采样时间窗（小时），防历史污染
     ) -> None:
         self._status = status_provider
         self._audit_dir = Path(audit_dir)
         self._min_samples = min_samples
         self._span = span
+        self._window_hours = window_hours
 
     # ── 五维聚合 ──
     def evaluate(
@@ -156,10 +158,10 @@ class SelfEvaluator:
         trigger: Literal["periodic", "milestone", "anomaly", "manual"] = "manual",
     ) -> SelfEvalReport:
         """聚合五维指标（来源可溯；数据不足如实标注）."""
-        action_trace = self._read_action_trace()
-        tool_history = self._read_tool_history()
-        declaration_checks = self._read_declaration_checks()
-        exceptions = self._read_exceptions()
+        action_trace = self._time_filter(self._read_action_trace())
+        tool_history = self._time_filter(self._read_tool_history())
+        declaration_checks = self._time_filter(self._read_declaration_checks())
+        exceptions = self._time_filter(self._read_exceptions())
         llm_rounds = self._llm_rounds()
 
         metrics = [
@@ -330,7 +332,13 @@ class SelfEvaluator:
                 parts.append(f"{m.name}=N/A（{m.note}）")
             else:
                 parts.append(f"{m.name}={m.value:.2f}")
-        return "近 {span} 条窗口指标: {parts}".format(span=self._span, parts="、".join(parts))
+        # EVO-20260816-f1f73a0d: 摘要注明采样窗口（时间窗 + span 上限）
+        window_desc = (
+            f"近 {self._window_hours:g}h 时间窗（最多 {self._span} 条）"
+            if self._window_hours > 0
+            else f"近 {self._span} 条"
+        )
+        return f"{window_desc}窗口指标: {parts}"
 
     # ── 数据源读取（读取失败如实标注，不伪造）──
     def _read_jsonl(self, filename: str) -> list[dict]:
@@ -370,6 +378,38 @@ class SelfEvaluator:
 
     def _read_exceptions(self) -> list[dict]:
         return self._read_jsonl("exception_log.jsonl")
+
+    def _time_filter(self, items: list[dict]) -> list[dict]:
+        """EVO-20260816-f1f73a0d: 按时间窗过滤（ts 字段；解析失败保留，缺 ts 保留）.
+
+        防历史旧记录污染当前评估（条数窗会把 5 天前的异常混入今日指标）。
+        先时间窗过滤 → 再取 span 条（时间窗内最多 span 条）。
+        """
+        if not items or self._window_hours <= 0:
+            return items
+        try:
+            cutoff = datetime.now(UTC).timestamp() - self._window_hours * 3600
+        except Exception:  # noqa: BLE001 — 时间计算失败不过滤（fail-open）
+            return items
+        out: list[dict] = []
+        for it in items:
+            ts = str(it.get("ts", ""))
+            if not ts:
+                out.append(it)  # 缺 ts 保留（不误杀）
+                continue
+            try:
+                # 兼容 ISO 带时区/不带时区
+                t = ts
+                if t.endswith("Z"):
+                    t = t[:-1] + "+00:00"
+                dt = datetime.fromisoformat(t)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=UTC)
+                if dt.timestamp() >= cutoff:
+                    out.append(it)
+            except (ValueError, TypeError):
+                out.append(it)  # 解析失败保留（fail-open）
+        return out
 
     def _llm_rounds(self) -> int:
         if self._status is not None:
