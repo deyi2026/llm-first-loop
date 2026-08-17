@@ -15,7 +15,7 @@ class SpawnSubAgentTool:
         "派生子代理执行子任务（递归子代理，EVO 第五项）。何时用: 复杂任务需要拆解成独立子任务"
         "（如独立调研/独立计算/并行验证）时，委派给子代理在隔离上下文中真实执行，结果回传后整合。"
         "何时不用: 任务简单直接处理时；子任务依赖父上下文大量状态时。"
-        "注意: 子代理可用工具受限（read_file/execute_command/web_fetch/web_search/get_tool_schema），"
+        "注意: 子代理可用工具受限（read_file/execute_command/web_fetch/web_search/get_tool_schema/edit_file），"
         "不可改文件/改架构；递归深度上限 3，超限会拒绝。"
         "失败对策: 深度超限/轮数超限会如实标注，请在父级整合已有结果。"
     )

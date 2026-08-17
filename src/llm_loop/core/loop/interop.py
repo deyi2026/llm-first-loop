@@ -46,7 +46,11 @@ class _InteropMixin:
             if not base.is_dir():
                 return []
             out: list[Message] = []
-            for f in sorted(base.glob("*.json")):
+            # 审查 P2 修复: 注入上限——pending 堆积（如 DSH 批量发消息）时
+            # 只注入最新 8 条，防单轮上下文被协调消息撑爆（剩余下轮再注入）
+            _MAX_INBOX_INJECT = 8
+            files = sorted(base.glob("*.json"))
+            for f in files[-_MAX_INBOX_INJECT:]:
                 try:
                     d = json.loads(f.read_text(encoding="utf-8"))
                 except (OSError, ValueError):
@@ -63,6 +67,15 @@ class _InteropMixin:
                         f"[{d.get('topic', '')}] {body}\n"
                         f"（文件: data/interop/lfl_to_dsh/pending/{f.name}；"
                         f"处理完按协议 status 改 done 并移入 done/）"
+                    ),
+                    source=MessageSource.SYSTEM,
+                ))
+            if len(files) > _MAX_INBOX_INJECT:
+                out.insert(0, Message(
+                    role="system",
+                    content=(
+                        f"[外部协调] 另有 {len(files) - _MAX_INBOX_INJECT} 条待处理消息"
+                        f"（超出单轮注入上限 {_MAX_INBOX_INJECT}，将在后续轮次注入）"
                     ),
                     source=MessageSource.SYSTEM,
                 ))

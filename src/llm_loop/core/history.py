@@ -190,21 +190,30 @@ def _layer_trim(
             out.append(m)
             continue
         full = m.content
+        archived = False
         if archive_sink is not None and session_id:
             try:
                 archive_sink(session_id, m)
+                archived = True
             except Exception:
                 import logging
 
                 logging.getLogger(__name__).warning(
-                    "分层降级原文归档失败（fail-open）", exc_info=True
+                    "分层降级原文归档失败（fail-open，标注如实声明）", exc_info=True
                 )
-        _hint = (
-            f'查看完整原文请直接调用 search_archive(tool_name="{m.tool_name}")'
-            "（可再加 query= 关键词精确定位；一次取回，勿换命令重复执行同一工具）"
-            if m.tool_name
-            else "可用 search_archive(query=<关键词>) 检索找回"
-        )
+        # 审查中危修复: sink 失败时标注如实声明"未能归档"——原实现失败仍写
+        # "原文已另存"（信息零丢失承诺失实，AI 检索必空手而归）。
+        if archived:
+            _hint = (
+                f'查看完整原文请直接调用 search_archive(tool_name="{m.tool_name}")'
+                "（可再加 query= 关键词精确定位；一次取回，勿换命令重复执行同一工具）"
+                if m.tool_name
+                else "可用 search_archive(query=<关键词>) 检索找回"
+            )
+            archived_note = "原文已另存压缩档案"
+        else:
+            _hint = ""
+            archived_note = "原文归档失败（未另存，仅保留以下摘要）"
         # 摘要优先（EVO-20260815）: 折叠时先提取关键事实+关键路径/URL（复用 extract_key_info，
         # 规则提取零 LLM），避免机械首尾截断把中间关键信息丢给 AI 迫使二次检索浪费 token；
         # 提取不到任何内容（无路径/URL/动作信号词）时回退首尾截断兜底（背景+结论）。
@@ -234,8 +243,9 @@ def _layer_trim(
             Message(
                 role=m.role,
                 content=(
-                    f"[工具输出已分层] 共 {len(full)} 字符（触发阈值: {threshold} 字符），原文已另存压缩档案（{_hint}）：\n"
-                    f"{digest}"
+                    f"[工具输出已分层] 共 {len(full)} 字符（触发阈值: {threshold} 字符），{archived_note}"
+                    + (f"（{_hint}）：\n" if _hint else "：\n")
+                    + f"{digest}"
                 ),
                 source=m.source,
                 tool_call_id=m.tool_call_id,

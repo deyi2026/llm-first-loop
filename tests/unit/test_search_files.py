@@ -75,3 +75,11 @@ def test_max_results_limit(tmp_path):
     assert r.status.value == "success"
     # 只返回 1 条
     assert r.content.count(":") >= 1
+
+
+def test_invalid_max_results_type():
+    """审查低危: max_results 类型非法 → FAILURE 回执（原实现直接外抛 ValueError）."""
+    tool = SearchFilesTool()
+    r = tool.execute(pattern="*.py", max_results="not-a-number")
+    assert r.status.value == "failure"
+    assert "参数错误" in r.content

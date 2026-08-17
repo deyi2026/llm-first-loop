@@ -123,3 +123,53 @@ def test_scheduler_thread_notify(tmp_path):
         assert st.list() == []  # 触发后删除
     finally:
         SchedulerThread._notify_via_interop = orig
+
+
+def test_multi_store_no_overwrite(tmp_path):
+    """审查中危: 多实例（模拟多进程）add 不互相覆盖——修复前后写覆盖先写丢条目."""
+    p = tmp_path / "schedule.json"
+    s1 = ScheduleStore(p)
+    s2 = ScheduleStore(p)  # 独立实例 = 模拟另一个进程
+    sid1 = s1.add("proc1 提醒", after=60)
+    sid2 = s2.add("proc2 提醒", after=120)
+    # s1 重新加载（或另一实例）应看到两条
+    s3 = ScheduleStore(p)
+    assert s3.cancel(sid1) is True
+    assert s3.cancel(sid2) is True, "s2 的条目被覆盖丢失（多进程覆盖 bug）"
+
+
+def test_mark_triggered_persists_deletion(tmp_path):
+    """审查中危: 触发删除后磁盘同步（不读回已删条目）."""
+    p = tmp_path / "schedule.json"
+    s = ScheduleStore(p)
+    sid = s.add("立即", after=0)
+    s.mark_triggered(sid)
+    s2 = ScheduleStore(p)  # 重新加载
+    assert s2.list() == []
+
+
+def test_multi_store_mark_no_resurrect(tmp_path):
+    """审查中危: 多实例场景触发删除不复活（磁盘删除语义跨实例一致）."""
+    p = tmp_path / "schedule.json"
+    s1 = ScheduleStore(p)
+    s2 = ScheduleStore(p)
+    sid = s1.add("立即", after=0)
+    s1.mark_triggered(sid)
+    s3 = ScheduleStore(p)
+    assert s3.list() == [], "已删除条目被合并读回（resurrect）"
+
+
+def test_schedule_cancel_tool(tmp_path):
+    """审查 P2: schedule_cancel 工具可取消已注册提醒."""
+    from llm_loop.tools.builtin.schedule import ScheduleCancelTool, ScheduleTool
+    st = ScheduleTool(store=ScheduleStore(tmp_path / "s.json"))
+    r = st.execute(message="测试提醒", after=60)
+    assert r.status.value == "success"
+    sid = r.content.split("已注册提醒 ")[1].split(":")[0]
+    ct = ScheduleCancelTool(store=ScheduleStore(tmp_path / "s.json"))
+    r2 = ct.execute(sid=sid)
+    assert r2.status.value == "success" and "已取消" in r2.content
+    r3 = ct.execute(sid=sid)
+    assert r3.status.value == "failure" and "不存在" in r3.content
+    r4 = ct.execute(sid="")
+    assert r4.status.value == "failure" and "缺少必填" in r4.content

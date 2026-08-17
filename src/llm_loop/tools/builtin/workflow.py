@@ -50,7 +50,7 @@ class WorkflowRunTool:
         "上一步结果自动传给下一步）或有向无环图编排（dag 模式：步骤声明 depends_on 依赖，"
         "按拓扑序执行，依赖结果自动注入；支持节点级 budget_rounds 轮次预算）时。"
         "何时不用: 单个子任务用 spawn_subagent；任务简单直接处理。"
-        "注意: 子代理可用工具受限（read_file/execute_command/web_fetch/web_search/get_tool_schema），"
+        "注意: 子代理可用工具受限（read_file/execute_command/web_fetch/web_search/get_tool_schema/edit_file），"
         "不可改文件/改架构；递归深度上限 3。parallel/dag 当前为顺序执行+聚合（registry 有状态，"
         "真并发有竞态风险——结果等价，如实标注）。"
         "失败对策: 某步失败不阻断后续步骤，每步状态如实标注，请在父级整合。"

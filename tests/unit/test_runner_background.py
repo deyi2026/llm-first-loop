@@ -8,6 +8,7 @@ FakeEngine 提供 run_stream 生成器（yield delta + return result），不依
 from __future__ import annotations
 
 import queue
+import threading
 import time
 from types import SimpleNamespace
 
@@ -194,3 +195,52 @@ def test_handle_snapshot_readonly():
     snap = handle.snapshot()
     snap["status"] = "hacked"
     assert handle.status == "running"  # 快照修改不影响原 handle
+
+
+# ── EVO-20260817 审查 P0-3: 同步 vs 后台并发互斥（双向） ──
+
+class _SyncEngine(FakeEngine):
+    """带同步活跃注册表的 engine 桩（模拟真实 engine._sync_active）."""
+
+    def __init__(self, **kw) -> None:
+        super().__init__(**kw)
+        self._sync_guard = threading.Lock()
+        self._sync_active: set[str] = set()
+
+
+def test_sync_active_blocks_background_start():
+    """同步 run 活跃时，后台 start 同会话 → (None, None) 拒绝（竞写防护）."""
+    eng = _SyncEngine()
+    with eng._sync_guard:
+        eng._sync_active.add("sess-1")  # 模拟同步 run 进行中
+    r = BackgroundRunner(eng)
+    handle, q = r.start("sess-1", "hi")
+    assert handle is None and q is None
+    # 其他会话不受影响
+    handle2, q2 = r.start("sess-2", "hi")
+    assert handle2 is not None and q2 is not None
+    r.unsubscribe("sess-2", q2)
+
+
+def test_resume_after_done_returns_none(monkeypatch):
+    """审查中危: done 广播后 registry pop 前 resume → (None, None)，不订阅空队列.
+
+    修复前该窗口 resume 返回新订阅队列 → SSE 连接永不终结（空队列永挂）。
+    """
+    eng = FakeEngine(delay=0.05)
+    r = BackgroundRunner(eng)
+    handle, q = r.start("sess-d", "hi")
+    assert handle is not None
+    # 等 run 完成（drain 全部事件）——完成后 _consume 设置 status=done 后 pop
+    _drain(q, 3)  # 3 个 delta
+    done_evt = q.get(timeout=5.0)
+    assert done_evt["type"] == "done"
+    # 此刻 handle 已 done，但 pop 可能尚未执行（竞态窗口）——直接模拟该窗口状态
+    with r._guard:
+        # 手动把 handle 放回 registry（模拟 done 后未 pop 的窗口）
+        r._registry["sess-d"] = handle
+    handle2, q2 = r.start("sess-d", "hi", resume=True)
+    assert handle2 is None and q2 is None, "终态 run 不应可订阅"
+    # 清理
+    with r._guard:
+        r._registry.pop("sess-d", None)

@@ -87,7 +87,7 @@ type: fact / decision / convention。
 
 # RULE-AI-14 协调通道（唯一真相源: docs/ai_rules.md）
 ## 协调通道
-与外部 DSH agent 经文件信箱 data/interop/ 通信（协议见 data/interop/INTEROP.md）。每轮 run 开始时扫 data/interop/lfl_to_dsh/pending/，有消息则 read_file 读入并在会话中回显 [外部协调·from DSH] 后响应（web/飞书端可见）；要给 DSH 发消息按协议写 data/interop/dsh_to_lfl/pending/。通道消息随本轮上下文处理，不额外触发 run、不占会话锁；处理完 status 改 done 并移入对应 done/。消息体不写密钥凭据（data/ 已 gitignore 不入库）。
+与外部 DSH agent 经文件信箱 data/interop/ 通信（协议见 data/interop/INTEROP.md）。run 开始时程序自动扫描 data/interop/lfl_to_dsh/pending/ 并注入会话（[外部协调·from DSH] 回显，web/飞书端可见，无需手动 read_file）；要给 DSH 发消息按协议写 data/interop/dsh_to_lfl/pending/。通道消息随本轮上下文处理，不额外触发 run、不占会话锁；处理完 status 改 done 并移入对应 done/。消息体不写密钥凭据（data/ 已 gitignore 不入库）。
 
 # RULE-AI-15 CodeArts 远端子 Agent 调度（唯一真相源: docs/ai_rules.md）
 ## CodeArts 远端子 Agent 调度

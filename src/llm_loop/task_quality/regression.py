@@ -116,13 +116,15 @@ class RegressionGuard:
                 affected_tests=tuple(test_files), subset_ratio=subset_ratio,
                 passed_count=0, failed_count=0, failures=(),
                 depgraph_available=True, fallback_full=fallback_full,
+                error="测试执行超时（120s）",
             )
-        except Exception:  # noqa: BLE001 — 框架崩溃如实回执
+        except Exception as exc:  # noqa: BLE001 — 框架崩溃如实回执
             return RegressionResult(
                 modified_files=tuple(modified_files),
                 affected_tests=tuple(test_files), subset_ratio=subset_ratio,
                 passed_count=0, failed_count=0, failures=(),
                 depgraph_available=True, fallback_full=fallback_full,
+                error=f"测试框架异常: {type(exc).__name__}: {exc}",
             )
 
         # 解析结果

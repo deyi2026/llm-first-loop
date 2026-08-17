@@ -50,10 +50,24 @@ class SearchFilesTool:
     }
 
     def execute(self, **kwargs) -> ToolResult:
-        pattern = str(kwargs.get("pattern", "") or "").strip()
-        content = str(kwargs.get("content", "") or "").strip()
-        root = str(kwargs.get("root", "") or "").strip()
-        max_results = int(kwargs.get("max_results", 20) or 20)
+        try:
+            pattern = str(kwargs.get("pattern", "") or "").strip()
+            content = str(kwargs.get("content", "") or "").strip()
+            root = str(kwargs.get("root", "") or "").strip()
+            max_results = int(kwargs.get("max_results", 20) or 20)
+        except (TypeError, ValueError) as exc:
+            # 审查低危修复: 参数类型转换异常如实返回 FAILURE（原实现直接外抛）
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[参数错误] 参数类型非法: {exc}",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        # 审查低危修复: max_results 钳制（防 LLM 传超大值扫全盘耗尽资源）
+        if max_results < 1:
+            max_results = 20
+        elif max_results > 200:
+            max_results = 200
 
         if not pattern and not content:
             return ToolResult(
@@ -63,13 +77,35 @@ class SearchFilesTool:
                 tool_name=self.name,
             )
 
-        # 搜索根解析：默认项目根；显式 root 允许任意存在目录（测试/外部工作区用）
+        # 搜索根解析：默认项目根；显式 root 允许外部工作区（如 /tmp 评测目录），
+        # 但拒绝敏感/系统目录（防御纵深：防 .env/.ssh 等密钥文件被便捷扫描）。
         # __file__ = src/llm_loop/tools/builtin/search_files.py → 上 5 级 = 项目根
         project_root = Path(__file__).resolve().parent.parent.parent.parent.parent
         if root:
             base = (project_root / root).resolve()
             if not base.exists():
                 base = Path(root).resolve()
+            # 敏感目录黑名单（解析后路径前缀匹配；命中即拒，防越权扫密钥）
+            home = Path.home().resolve()
+            _sensitive_prefixes = (
+                home,  # 家目录整体（含 .ssh/.aws/.env 等）
+                Path("/etc"), Path("/usr"), Path("/bin"), Path("/sbin"),
+                Path("/var/root"), Path("/private/etc"), Path("/private/var/root"),
+            )
+            try:
+                base.relative_to(project_root)  # 项目内 → 直接放行
+            except ValueError:
+                for sp in _sensitive_prefixes:
+                    try:
+                        base.relative_to(sp)
+                    except ValueError:
+                        continue
+                    return ToolResult(
+                        status=ToolResultStatus.FAILURE,
+                        content=f"[越权拒绝] root 位于敏感目录（{root} → {base}），禁止搜索密钥/系统目录",
+                        tool_call_id="",
+                        tool_name=self.name,
+                    )
             if not base.is_dir():
                 return ToolResult(
                     status=ToolResultStatus.FAILURE,
@@ -124,9 +160,13 @@ class SearchFilesTool:
                 for dirpath, dirnames, filenames in os.walk(base):
                     dirnames[:] = [d for d in dirnames if d not in _ignore_dirs]
                     for fn in filenames:
-                        if fnmatch.fnmatch(fn, pattern):
-                            rel = (Path(dirpath) / fn).relative_to(base)
-                            results.append(str(rel))
+                        # 审查低危修复: 匹配相对路径（支持 '**/models/*.py' 等路径模式），
+                        # 原实现只匹配 basename（'src/x.py' 模式永远不中）
+                        rel = (Path(dirpath) / fn).relative_to(base)
+                        rel_str = str(rel)
+                        # PurePath.match 原生支持 ** 跨目录；fnmatch 兜底 basename 匹配
+                        if fnmatch.fnmatch(fn, pattern) or rel.match(pattern):
+                            results.append(rel_str)
                             if len(results) >= max_results:
                                 break
                     if len(results) >= max_results:

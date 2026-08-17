@@ -61,8 +61,22 @@ class DepGraph:
             nodes: dict[str, DepNode] = {}
             edges: dict[str, set[str]] = {}
             imported_by: dict[str, set[str]] = {}
-            py_files = [p for p in self._src_root.rglob("*.py")
-                        if ".git" not in p.parts and "__pycache__" not in p.parts]
+            # 审查中危修复: 扫描范围含 test_root（tests 在 src 外时原只扫 src_root，
+            # 外部测试文件不入图 → affected_tests 恒空）。去重防同文件双扫。
+            scan_roots = [self._src_root]
+            if self._test_root and self._test_root != self._src_root:
+                scan_roots.append(self._test_root)
+            py_files: list[Path] = []
+            seen: set[Path] = set()
+            for sr in scan_roots:
+                for p in sr.rglob("*.py"):
+                    rp = p.resolve()
+                    if rp in seen:
+                        continue
+                    seen.add(rp)
+                    if ".git" in p.parts or "__pycache__" in p.parts:
+                        continue
+                    py_files.append(p)
             for fp in py_files:
                 if time.perf_counter() - start > self._build_timeout_s:
                     logger.warning("依赖图构建超时（fail-open）: %s", self._build_timeout_s)
@@ -87,12 +101,30 @@ class DepGraph:
         node_id 用去 src 前缀的相对路径（对齐 import 名，如 llm_loop.x.y），
         使 `from llm_loop.task_quality import models` 能反向匹配。
         """
-        rel = fp.relative_to(self._src_root)
-        is_test = (
-            "tests" in fp.parts
-            or fp.name.startswith("test_")
-            or fp.name.endswith("_test.py")
-        )
+        # 审查中危修复: 支持 src 外文件（test_root）——relative_to 先试 src_root，
+        # 失败（在 src 外）再试 test_root；node_id 用相对各自根的路径
+        try:
+            rel = fp.relative_to(self._src_root)
+        except ValueError:
+            if self._test_root:
+                rel = fp.relative_to(self._test_root)
+            else:
+                rel = Path(fp.name)  # 兜底（极端场景）
+        # 审查中危修复: TEST 判断优先用 _test_root（tests 在 src 外时原硬编码
+        # "tests" in parts 判断失效 → 回归子集恒空）；无显式 test_root 时回退路径判断
+        is_test = False
+        if self._test_root and self._test_root != self._src_root:
+            try:
+                fp.relative_to(self._test_root)
+                is_test = True
+            except ValueError:
+                pass
+        if not is_test:
+            is_test = (
+                "tests" in fp.parts
+                or fp.name.startswith("test_")
+                or fp.name.endswith("_test.py")
+            )
         ntype = DepNodeType.TEST if is_test else DepNodeType.MODULE
         # 去掉 src/ 前缀（若存在）→ node_id 与 import 名对齐
         parts = list(rel.parts)
@@ -169,13 +201,24 @@ class DepGraph:
         """
         start = time.perf_counter()
         try:
+            # 审查中危修复: 持锁段内不调用 build/rebuild（非重入锁 → 死锁）。
+            # 未构建 → 释放锁后走 build（build 自身持锁）；超时/异常同。
             with self._lock:
                 if not self._built:
-                    return self.build()
-                for cf in changed_files:
-                    if time.perf_counter() - start > self._increment_timeout_s:
-                        logger.warning("依赖图增量更新超时 → 重建")
-                        return self.rebuild()
+                    needs_full = True
+                    files = []
+                else:
+                    needs_full = False
+                    files = list(changed_files)
+                    for cf in changed_files:
+                        if time.perf_counter() - start > self._increment_timeout_s:
+                            logger.warning("依赖图增量更新超时 → 重建")
+                            needs_full = True
+                            break
+            if needs_full:
+                return self.build()
+            with self._lock:
+                for cf in files:
                     fp = Path(cf)
                     if not fp.exists():
                         continue
@@ -192,7 +235,7 @@ class DepGraph:
                 return True
         except Exception as exc:  # noqa: BLE001 — 增量失败需重建
             logger.warning("依赖图增量更新失败（重建）: %s", exc)
-            return self.rebuild()
+            return self.build()
 
     def rebuild(self) -> bool:
         """重建依赖图（增量失败/缓存损坏时）."""

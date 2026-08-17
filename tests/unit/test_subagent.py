@@ -78,7 +78,7 @@ def test_runner_max_iterations_truncated(build_test_engine):
 
 
 def test_runner_tool_restricted(build_test_engine):
-    """受限工具集: edit_file 被拒（blocked 如实标注，不执行）. """
+    """受限工具集: edit_file 已纳入白名单（审查 P0-2 修复）→ 走 registry 执行而非 blocked. """
     engine, fake = build_test_engine([])
     runner = SubAgentRunner(
         llm=fake, registry=engine.registry, session_store=engine.session, max_iterations=2
@@ -93,8 +93,8 @@ def test_runner_tool_restricted(build_test_engine):
     ]
     result = runner.run(task="尝试改文件", depth=0)
     assert result.tool_calls[0]["name"] == "edit_file"
-    assert result.tool_calls[0]["status"] == "blocked"
-    # 未实际调用 edit_file（blocked 在子代理层拦截，未进 registry.execute）
+    # 修复后: edit_file 在白名单内 → 不再 blocked（安全链由 edit_file 自身 symlink 防护/FileBaseline 承担）
+    assert result.tool_calls[0]["status"] != "blocked"
     assert result.truncated is False
 
 

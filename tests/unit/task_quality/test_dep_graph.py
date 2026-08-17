@@ -123,3 +123,46 @@ def test_thread_safety(tmp_path):
     for t in threads:
         t.join()
     assert errors == []
+
+
+def test_incremental_update_not_built_no_deadlock(tmp_path):
+    """审查中危: 未构建时 incremental_update 不应死锁（原实现持锁内调 build → 非重入锁死锁）.
+
+    回归: 修复前该场景线程永久卡死（timeout 暴露）；修复后走 build 并返回 True。
+    """
+    import threading
+    root = _mk_project(tmp_path)
+    g = DepGraph(src_root=root)  # 未调用 build → _built=False
+    result: list = []
+    def worker():
+        try:
+            ok = g.incremental_update([str(root / "src" / "calc.py")])
+            result.append(("ok", ok))
+        except Exception as exc:  # noqa: BLE001
+            result.append(("err", str(exc)))
+    t = threading.Thread(target=worker)
+    t.start()
+    t.join(timeout=10.0)
+    assert not t.is_alive(), "incremental_update 死锁（线程 10s 未返回）"
+    assert result and result[0][0] == "ok" and result[0][1] is True
+
+
+def test_test_root_outside_src(tmp_path):
+    """审查中危: tests 在 src 外（显式 test_root）时 affected_tests 非空.
+
+    回归: 修复前 _make_node 硬编码 "tests" in parts，test_root 指定的外部测试目录
+    不被识别为 TEST 节点 → 回归子集恒空。
+    """
+    root = tmp_path / "proj"
+    src = root / "src"
+    tests = root / "qa"  # 外部测试目录（非 tests 名）
+    src.mkdir(parents=True)
+    tests.mkdir(parents=True)
+    (src / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (tests / "test_calc.py").write_text(
+        "import calc\n\ndef test_add():\n    assert calc.add(1, 2) == 3\n", encoding="utf-8")
+    g = DepGraph(src_root=src, test_root=tests)
+    g.build()
+    tests, available = g.affected_tests([str(src / "calc.py")])
+    assert available is True
+    assert any("test_calc.py" in t for t in tests), f"外部 test_root 未被识别: {tests}"

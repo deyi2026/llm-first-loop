@@ -108,3 +108,34 @@ def test_feedback_section():
     assert "[状态: success]" in text
     assert "受影响测试" in text
     assert "tests/test_calc.py" in text
+
+
+def test_runner_exception_sets_error_field(monkeypatch):
+    """审查中危: 框架异常（非 command_runner 路径）→ error 字段非空，不伪造通过.
+
+    回归: 修复前该路径 failed_count=0/failures=() → 调用方误判通过。
+    """
+    import subprocess
+    def _boom(*a, **kw):
+        raise subprocess.TimeoutExpired(cmd="pytest", timeout=120)
+    monkeypatch.setattr(subprocess, "run", _boom)
+    # 无 command_runner → 走 subprocess 路径
+    g = RegressionGuard(dep_graph=_FakeDepGraph(["tests/test_calc.py"]))
+    r = g.verify(["src/calc.py"])
+    assert r.error is not None and "超时" in r.error
+    assert r.completed is False
+    text = r.to_feedback_section()
+    assert "[状态: error]" in text and "未完成" in text
+
+
+def test_runner_oserror_sets_error_field(monkeypatch):
+    """框架 OSError → error 字段非空."""
+    import subprocess
+    def _boom(*a, **kw):
+        raise OSError("no such file: pytest")
+    monkeypatch.setattr(subprocess, "run", _boom)
+    g = RegressionGuard(dep_graph=_FakeDepGraph(["tests/test_calc.py"]))
+    r = g.verify(["src/calc.py"])
+    assert r.error is not None and "OSError" in r.error
+    assert r.completed is False
+    assert r.failed_count == 0  # 但 error 非空——调用方不得按 failed_count 判通过
