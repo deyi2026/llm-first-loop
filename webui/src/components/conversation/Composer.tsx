@@ -6,7 +6,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { zh } from "../../i18n/zh";
 import { sendMessage, stopStreaming, useConversation } from "../../core/conversation";
 import { fetchModels, uploadFileBase64 } from "../../core/chat";
-import { forkSession, setSessionPin } from "../../core/api";
 import { sessionStore, useModel } from "../../core/stores";
 import { EVT_COMPOSER_FILL, focusSearch } from "../../core/shortcuts";
 
@@ -104,76 +103,6 @@ export function Composer() {
             sessionStore.setModel(arg);
             flashHint(`已选择模型：${arg}（当前请求生效）`);
           }
-        },
-      },
-      {
-        name: "fork",
-        desc: "分叉当前会话（保留分支继续）",
-        run: async () => {
-          const sid = sessionStore.getState().currentSessionId;
-          if (!sid) {
-            flashHint(zh.noSession);
-            return;
-          }
-          const report = await forkSession(sid);
-          if (report?.new_session_id) {
-            flashHint(`已分叉 → ${report.new_session_id.slice(0, 8)}…`);
-          } else {
-            flashHint(zh.forkFailed);
-          }
-        },
-      },
-      {
-        name: "pin",
-        desc: "置顶 / 取消置顶当前会话",
-        run: async () => {
-          const sid = sessionStore.getState().currentSessionId;
-          if (!sid) {
-            flashHint(zh.noSession);
-            return;
-          }
-          const pinned = await setSessionPin(sid, true);
-          flashHint(pinned ? zh.pinned : zh.pinFailed);
-        },
-      },
-      {
-        name: "stats",
-        desc: "查看当前会话统计（轮次/耗时/缓存命中率）",
-        run: async () => {
-          const sid = sessionStore.getState().currentSessionId;
-          if (!sid) {
-            flashHint(zh.noSession);
-            return;
-          }
-          try {
-            const resp = await fetch(`/api/v1/sessions/${encodeURIComponent(sid)}/stats`);
-            if (!resp.ok) {
-              flashHint(zh.statsFailed);
-              return;
-            }
-            const s = await resp.json();
-            const rate = s.tokens_in
-              ? ((s.cache_hit ?? 0) / s.tokens_in) * 100
-              : 0;
-            flashHint(
-              `统计: ${s.turns ?? 0} 轮 · ${s.steps ?? 0} 步 · 命中率 ${rate.toFixed(1)}% · LLM ${(
-                (s.llm_ms ?? 0) / 1000
-              ).toFixed(1)}s`
-            );
-          } catch {
-            flashHint(zh.statsFailed);
-          }
-        },
-      },
-      {
-        name: "help",
-        desc: "列出全部命令",
-        run: () => {
-          flashHint(
-            commands
-              .map((c) => `/${c.name}—${c.desc}`)
-              .join(" · ")
-          );
         },
       },
     ],
