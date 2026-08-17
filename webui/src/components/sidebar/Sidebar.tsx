@@ -9,6 +9,7 @@ import { conversationStore } from "../../core/conversation";
 import { loadHistory } from "../../core/conversation";
 import { WorkspaceGroups, formatRelative } from "./WorkspaceGroups";
 import { FileTree } from "./FileTree";
+import { EvolutionPanel } from "./EvolutionPanel";
 import { zh } from "../../i18n/zh";
 
 export function Sidebar({ collapsed }: { collapsed: boolean }) {
@@ -17,7 +18,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
   const [query, setQuery] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   // 对齐 DSH：侧栏视图切换（会话列表 ↔ 文件树）
-  const [view, setView] = useState<"sessions" | "files">("sessions");
+  const [view, setView] = useState<"sessions" | "files" | "evo">("sessions");
   // 对齐 DSH 会话树：parent_id 映射（fetchAgentsTree 合并——会话树状层级）
   const [parentMap, setParentMap] = useState<Map<string, string | null>>(new Map());
 
@@ -116,9 +117,19 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
         >
           📁 {zh.fileTree}
         </button>
+        <button
+          type="button"
+          className={`v2-tab ${view === "evo" ? "active" : ""}`}
+          onClick={() => setView("evo")}
+          data-testid="tab-evo"
+        >
+          📋 {zh.evolutionShort}
+        </button>
       </div>
       {view === "files" ? (
         <FileTree />
+      ) : view === "evo" ? (
+        <EvolutionPanel />
       ) : (
       <>
       <input

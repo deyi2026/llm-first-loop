@@ -52,4 +52,8 @@ export const zh = {
   confirmDelete: "再次点击确认删除",
   confirm: "确定",
   cancel: "取消",
+  evolutionTitle: "演进建议",
+  evolutionShort: "演进",
+  evoHint: "审批请用飞书私聊：审批列表 / 批准 EVO-xxx / 拒绝 EVO-xxx 理由：…",
+  refresh: "刷新",
 };
