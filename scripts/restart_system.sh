@@ -85,6 +85,11 @@ _load_llm() {
       # 行内注释剥离（与 config.load_env_file EVO-ba4a107c 一致）：
       # 防 `KEY=1  # 注释` 把注释带进值 → export 后 _env_bool 解析非法回退默认
       _val="${_val%% #*}"
+      # 去尾随空白（EVO-20260817-69d034c7 实测）：`.env` 值 `KEY=v  # 注释` 经
+      # `%% #*` 剥后仍留尾随空格（`KEY=v  `）→ bash 子进程/测试直读 os.environ
+      # 拿到带空格模型名 → 注册表 resolve 失败/API 400。python 层 load_settings
+      # 有 strip 兜底，但 bash 注入路径（run_real_smoke.sh/测试 fixture）没有。
+      _val="${_val%"${_val##*[![:space:]]}"}"
       # 密钥类键保留环境优先（允许显式 export 覆盖）；其余 .env 配置键强制生效，
       # 防外层 shell 残留脏值（如 RETRIEVE_TIMEOUT_S="1  # 注释"）遮蔽 .env 新值
       case "$_key" in
