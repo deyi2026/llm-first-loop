@@ -343,6 +343,10 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         verification_note: str | None = None
         truncation_noted = False
         rounds = 0
+        # DSH 借鉴(2026-08-17): run 结束原因（统一出口 run.end 事件用；各结束分支标记，
+        # 默认 completed——未标记即正常完成。fail-open 不阻断）
+        _run_end_reason = "completed"
+        _run_started_at = time.monotonic()
         self._reset_overflow_state()  # R4 增强: 每次 run 重置 overflow 注入计数
         model_used = ""  # M51: 本轮实际使用的模型标签（每轮 LLM 调用时刷新）
         tokens_in = 0  # M52: 本次 run 累计 prompt tokens
@@ -410,6 +414,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             model_used = routing.model_used
             chat_model_arg = routing.chat_model_arg
             if routing.final_answer_override is not None:
+                _run_end_reason = "routing_override"
                 final_answer = routing.final_answer_override
                 break
             # HARNESS-02(2026-08-14): 每轮请求快照进事件日志（fail-open）——routing/fallback
@@ -486,6 +491,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 if overflow_action == "reinject":
                     continue  # 首次注入 system 消息让 AI 自主决策
                 if overflow_action == "end" and overflow_final is not None:
+                    _run_end_reason = "overflow"
                     final_answer = overflow_final
                     break
                 # ── M49（design §5.4）: 降级逻辑 ──
@@ -518,12 +524,14 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                         # 链全失败 → 已注入汇总提示, 走原异常如实反馈路径
                         from llm_loop.feedback.honesty import llm_error_text
 
+                        _run_end_reason = "llm_error"
                         final_answer = llm_error_text(exc)
                         break
                 else:
                     # 严格模式 / 非降级错误 → 如实反馈（DFX-REL-02）
                     from llm_loop.feedback.honesty import llm_error_text
 
+                    _run_end_reason = "llm_error"
                     final_answer = llm_error_text(exc)
                     break
 
@@ -590,6 +598,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             _should_break, _tool_name, _streak = self._stagnation_should_break()
             if _should_break:
                 self._phase("terminate.stagnation")
+                _run_end_reason = "stagnation"
                 final_answer = stagnation_feedback(
                     _tool_name, _streak, [t["name"] for t in tool_trace]
                 ).content
@@ -662,6 +671,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                     )
                     continue  # 给 AI 一个决策轮（下一轮 LLM 调用可见该消息）
                 self._phase("terminate.max_iterations")
+                _run_end_reason = "max_iterations"
                 final_answer = max_iterations_feedback([t["name"] for t in tool_trace]).content
                 break
 
@@ -713,6 +723,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 trigger_point="loop_end_save",
             )
             extra = f" {recovery_note}" if recovery_note else ""
+            _run_end_reason = "session_save_failed"
             final_answer = (
                 f"{final_answer}\n\n[程序异常] 会话保存失败（{type(exc).__name__}: {exc}）。"
                 f"本次回答仍有效，但历史可能未持久化。{extra}"
@@ -782,6 +793,28 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             )
             if recovery_note:
                 logger.warning("记忆统计恢复通道: %s", recovery_note)
+
+        # DSH 借鉴(2026-08-17): run 生命周期结束事件（对齐 DSH turn/end reason）——
+        # 统一出口落盘，结束原因/轮数/token 汇总/耗时一次可查（fail-open 不阻断）
+        try:
+            self._event_append(
+                session_id,
+                "run.end",
+                {
+                    "session_id": session_id,
+                    "reason": _run_end_reason,
+                    "rounds": rounds,
+                    "tokens_in": tokens_in,
+                    "tokens_out": tokens_out,
+                    "cache_hit": tokens_cache_hit,
+                    "duration_ms": int((time.monotonic() - _run_started_at) * 1000),
+                    "model_used": model_used,
+                    "truncated": truncation_noted,
+                    "answer_preview": (final_answer or "")[:200],
+                },
+            )
+        except Exception:  # noqa: BLE001 — run.end 失败 fail-open（不影响返回）
+            logger.debug("run.end 事件写入失败（fail-open）")
 
         return LoopResult(
             session_id=session_id,
@@ -886,7 +919,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         # 非仅提示词引导；实现见 core/loop/interop.py _InteropMixin，fail-open）
         # 注入位置: memory 之后、历史之前（2026-08-16 优化: system_prompt+memory 前缀
         # 有/无消息轮字节级一致，服务端缓存命中不受 inbox 影响）
-        base, prefix_len = self._inject_interop_messages(base, prefix_len)
+        base, prefix_len = self._inject_interop_messages(base, prefix_len, sess.session_id)
         # EVO-20260811-9ccdec97: 会话状态快照节流——每间隔注入状态帧（定位锚点，fail-open）
         # M58 配置面收敛: 间隔走 runtime（动态优先，AI 可调）
         # P1-10: 仅无锚时注入（锚定后快照为推送式注入（已打标被跳过提交）, 且避免锚点换算复杂化）

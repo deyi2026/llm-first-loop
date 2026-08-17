@@ -118,7 +118,7 @@ class DepGraph:
                 fp.relative_to(self._test_root)
                 is_test = True
             except ValueError:
-                pass
+                pass  # 不在 test_root 下 → 按路径判断兜底（fail-open: is_test 保持 False 走常规判断）
         if not is_test:
             is_test = (
                 "tests" in fp.parts
