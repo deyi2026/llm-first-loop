@@ -210,6 +210,12 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         self._last_snapshot_count = 0
         # R4 增强: overflow 反馈注入次数（同一 run 内最多注入 1 次后让 AI 决策，第二次直接结束）
         self._overflow_reinject_count = 0
+        # EVO-20260817-cef296f8 L2: 缓存命中率窗口监控（跨 run 累计，实例级；
+        # 低命中率 → final_answer 注入诊断 + action_trace 审计，fail-open）
+        self._cache_win_in = 0
+        self._cache_win_hit = 0
+        self._cache_win_runs = 0
+        self._cache_win_notified = False
         # M50: CLI --model 启动参数装配通道（cli.py 注入，_run_single/_run_interactive 消费）
         self._cli_startup_model: str | None = None
         # H-UI(2026-08-14): 动作观察者（实时 UI 状态条：thinking/tool_call/tool_result/answer/done）
@@ -690,6 +696,33 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 f"本次回答仍有效，但历史可能未持久化。{extra}"
             )
         self._phase("done")
+        # EVO-20260817-cef296f8 L2: 缓存命中率窗口监控（fail-open 不阻断 run）
+        # 窗口条件: ≥5 次 run 且累计输入 ≥50K tokens（排除短会话/冷启动天然低命中）；
+        # 命中率 <50% → 注入诊断（final_answer 可见 + action_trace 审计），每进程仅告警一次。
+        try:
+            self._cache_win_in += tokens_in
+            self._cache_win_hit += tokens_cache_hit
+            self._cache_win_runs += 1
+            if (
+                self._cache_win_runs >= 5
+                and self._cache_win_in >= 50000
+                and not self._cache_win_notified
+            ):
+                _win_rate = self._cache_win_hit / self._cache_win_in if self._cache_win_in else 1.0
+                if _win_rate < 0.5:
+                    self._cache_win_notified = True
+                    _hint = (
+                        f"[缓存命中告警] 近 {self._cache_win_runs} 次 run 缓存命中率 "
+                        f"{_win_rate*100:.0f}%（{self._cache_win_hit}/{self._cache_win_in} tokens）"
+                        "——前缀可能被破坏（动态注入 system/重复经验提示/每轮内容变更）。"
+                        "缓存破坏使成本放大 ~50 倍（hit 0.05/M vs miss 1.5/M）。"
+                        "是否处理由你决定（只读告警，不阻断）。"
+                    )
+                    self._record_action("run.cache_monitor", "low_hit_rate", _hint)
+                    if final_answer:
+                        final_answer = f"{final_answer}\n\n{_hint}"
+        except Exception:  # noqa: BLE001 — 监控失败 fail-open，不阻断 run
+            logger.warning("缓存命中率窗口监控异常（fail-open）", exc_info=True)
         # P1-1(2026-08-15): run 末事件日志滚动检查钩子（大小/天数触发；fail-open 不阻断）
         self._check_event_rotate(session_id)
         # H-UI: 循环结束（状态条可收尾）

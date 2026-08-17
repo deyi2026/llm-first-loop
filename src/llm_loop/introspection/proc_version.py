@@ -146,9 +146,12 @@ def check_self_stale() -> str:
 
     检测逻辑复用（git_head/workspace_dirty），结果提升为"主动提示"而非
     "被动可查"（埋 architecture_status 深层字段、AI 不主动查看不到的治理）。
+    EVO-20260817-cef296f8: 增加服务级对照——工作区干净但存在"启动 HEAD 落后于
+    当前 HEAD"的进程（已 commit 未重启）同样提示（本次 feishu 事故缺口：
+    修复提交后 web 重启但 feishu 未重启，dirty 检测不触发、对照仅被动可查）。
 
     Returns:
-        "" = 一致（head 一致且工作区干净）；否则一句话提示（含 commit+重启建议）。
+        "" = 一致（head 一致且工作区干净且无旧代码服务）；否则一句话提示（含 commit+重启建议）。
         提示为只读信息，AI 自主决定是否处理；检查 fail-open，异常返回 "" 不阻断。
     """
     try:
@@ -156,15 +159,52 @@ def check_self_stale() -> str:
         if head == "no-git":
             return ""
         dirty = workspace_dirty()
-        if not dirty:
-            return ""
-        return (
-            f"[进程代码时效提示] 工作区含未提交改动（HEAD {head}）——本进程加载的代码"
-            "可能与磁盘不一致；如涉及刚改动的模块，判断结果可能基于旧逻辑。"
-            "建议及时 git commit；长驻进程（feishu/web 网关等）需重启后新代码生效。"
-            "是否处理由你决定（提示只读，不阻断）。"
-        )
+        if dirty:
+            return (
+                f"[进程代码时效提示] 工作区含未提交改动（HEAD {head}）——本进程加载的代码"
+                "可能与磁盘不一致；如涉及刚改动的模块，判断结果可能基于旧逻辑。"
+                "建议及时 git commit；长驻进程（feishu/web 网关等）需重启后新代码生效。"
+                "是否处理由你决定（提示只读，不阻断）。"
+            )
+        # 工作区干净但存在旧代码服务（启动 HEAD 落后于当前 HEAD）
+        stale = check_stale_services()
+        if stale:
+            return stale
     except Exception:  # noqa: BLE001 — 检查异常如实降级，不阻断循环
+        return ""
+    return ""
+
+
+def check_stale_services(limit: int = 10) -> str:
+    """服务级旧代码检测（EVO-20260817-cef296f8 L1）.
+
+    对照 proc_versions.jsonl 中每服务最新启动记录与当前 git HEAD，
+    存在 code_current=False（启动 HEAD ≠ 当前 HEAD）的进程 → 返回主动提示
+    （含服务/PID/启动时 HEAD/当前 HEAD）；全部一致返回 ""。
+    fail-open：读记录/解析异常返回 "" 不阻断。
+    """
+    try:
+        info = get_process_versions(limit=30)
+        stale_services = [
+            s
+            for s in info.get("services", [])
+            if not s.get("code_current", True) and s.get("service") != "cli"
+        ]
+        if not stale_services:
+            return ""
+        head = info.get("current_git_head", "?")
+        detail = "; ".join(
+            f"{s['service']}(pid={s['pid']}, 启动 HEAD {s.get('git_head', '?')})"
+            for s in stale_services[:3]
+        )
+        extra = f" 共 {len(stale_services)} 个" if len(stale_services) > 3 else ""
+        return (
+            f"[进程代码时效提示] 存在旧代码进程：{detail}{extra}——当前 HEAD {head}，"
+            "这些进程启动早于最近提交，仍在运行旧代码（缓存去重等修复未生效，"
+            "可能持续产生全价缓存 MISS/旧行为）。建议任务间隙重启对应服务"
+            "（scripts/restart_system.sh <svc> restart）。是否处理由你决定（提示只读）。"
+        )
+    except Exception:  # noqa: BLE001
         return ""
 
 
