@@ -142,7 +142,10 @@ export function Composer() {
 
   // 输入法兼容（用户 2026-08-17 需求）：中文输入法组合/候选选择期间回车不发送——
   // 第一次回车=选候选字母，第二次回车（组合结束）才发送。
+  // 增强（2026-08-18 用户反馈再失效）：部分输入法候选选择时先结束组合再发 Enter
+  // （isComposing 已 false）→ 加"组合刚结束（400ms 内）的回车也不发送"窗口。
   const composingRef = useRef(false);
+  const lastCompEndRef = useRef(0);
 
   useEffect(() => {
     const ta = taRef.current;
@@ -152,6 +155,7 @@ export function Composer() {
     };
     const onEnd = () => {
       composingRef.current = false;
+      lastCompEndRef.current = Date.now();
     };
     ta.addEventListener("compositionstart", onStart);
     ta.addEventListener("compositionend", onEnd);
@@ -165,6 +169,8 @@ export function Composer() {
     if (e.key === "Enter" && !e.shiftKey) {
       // 输入法组合中（含候选选择）：回车交给输入法选候选，不发送
       if (composingRef.current || e.nativeEvent.isComposing) return;
+      // 组合刚结束（候选确认的回车，≤400ms）：本次回车=选候选——不发送（下次回车才发送）
+      if (Date.now() - lastCompEndRef.current < 400) return;
       e.preventDefault();
       void doSend();
     } else if (e.key === "Escape" && cmdOpen) {
