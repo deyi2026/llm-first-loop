@@ -202,6 +202,41 @@ export interface DirList {
   dirs: string[];
 }
 
+/** 文件树（目录+文件单层可展——工作区根内，安全边界后端把关） */
+export interface FsTree {
+  path: string;
+  parent: string | null;
+  dirs: string[];
+  files: { name: string; size: number }[];
+}
+
+export async function fetchFsTree(path = ""): Promise<FsTree | null> {
+  const q = path ? `?path=${encodeURIComponent(path)}` : "";
+  const { status, data } = await api<FsTree>(`/api/v1/fs/tree${q}`);
+  return status === 200 ? data : null;
+}
+
+export async function fsMkdir(path: string): Promise<boolean> {
+  const { status } = await api(`/api/v1/fs/mkdir?path=${encodeURIComponent(path)}`, { method: "POST" });
+  return status === 200;
+}
+
+export async function fsRename(path: string, newName: string): Promise<boolean> {
+  const { status } = await api(
+    `/api/v1/fs/rename?path=${encodeURIComponent(path)}&new_name=${encodeURIComponent(newName)}`,
+    { method: "PUT" }
+  );
+  return status === 200;
+}
+
+export async function fsDelete(path: string): Promise<boolean> {
+  const { status } = await api(
+    `/api/v1/fs/delete?path=${encodeURIComponent(path)}&confirm=true`,
+    { method: "DELETE" }
+  );
+  return status === 200;
+}
+
 export async function fetchDirs(path = ""): Promise<DirList | null> {
   const q = path ? `?path=${encodeURIComponent(path)}` : "";
   const { status, data } = await api<DirList>(`/api/v1/fs/dirs${q}`);
