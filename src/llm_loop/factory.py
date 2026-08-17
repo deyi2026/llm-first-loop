@@ -31,6 +31,7 @@ from llm_loop.tools.builtin.dsh_session_read import DshSessionReadTool
 from llm_loop.tools.builtin.dsh_task import DshTaskTool
 from llm_loop.tools.builtin.edit_file import EditFileTool
 from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
+from llm_loop.tools.builtin.inspect_code import InspectCodeTool
 from llm_loop.tools.builtin.job_kill import JobKillTool
 from llm_loop.tools.builtin.job_output import JobOutputTool
 from llm_loop.tools.builtin.read_file import ReadFileTool
@@ -249,6 +250,8 @@ def build_engine(settings: Settings) -> LoopEngine:
             registry.register(tool)
 
     _register_basic("read_file", ReadFileTool())
+    # EVO-20260817: 代码结构概览（AST 索引，最高 ROI 能力工具——大项目定位提速）
+    _register_basic("inspect_code", InspectCodeTool())
     # M51: 四段式文件修改（read→match→diff→apply+verify，替代 sed/heredoc 盲替换）
     _register_basic("edit_file", EditFileTool())
     # EVO-d5db88d9: 按需读取工具完整 Schema（懒加载配套；零副作用可始终注册）
