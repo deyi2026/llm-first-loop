@@ -2,7 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 import type { ChatDoneData, ChatMessage } from "./types";
-import { streamChatRequest, toChatMessage, buildAssistantNote, fetchHistory } from "./chat";
+import { streamChatRequest, toChatMessage, buildAssistantNote, fetchHistory, fetchStreamStatus } from "./chat";
 import { sessionStore } from "./stores";
 
 const HISTORY_PAGE_SIZE = 100;
@@ -12,6 +12,8 @@ interface ConversationState {
   hasMoreHistory: boolean;
   loadedHistoryCount: number;
   streaming: boolean;
+  /** 后台 run 进行中（EVO 后台 run：刷新/切换后可见性） */
+  backgroundRunning: boolean;
   /** 当前进行中的助手消息索引（-1=无） */
   streamingIndex: number;
   lastError: string | null;
@@ -25,6 +27,7 @@ let state: ConversationState = {
   hasMoreHistory: false,
   loadedHistoryCount: 0,
   streaming: false,
+  backgroundRunning: false,
   streamingIndex: -1,
   lastError: null,
   streamStartedAt: null,
@@ -63,7 +66,28 @@ export async function loadHistory(sessionId: string): Promise<void> {
     streamingIndex: -1,
     lastError: null,
     streamStartedAt: null,
+    backgroundRunning: false,
   });
+  // EVO 后台 run：加载后查后台生成状态——running 则轮询直到完成（刷新/切换后可见进行中任务）
+  void checkBackgroundRun(sessionId);
+}
+
+let bgPollTimer: number | undefined;
+
+/** 后台 run 检查：running → 显示生成中 + 轮询；完成 → 重载历史显示结果（对齐 DSH 后台任务可见性）. */
+export async function checkBackgroundRun(sessionId: string): Promise<void> {
+  window.clearInterval(bgPollTimer);
+  const status = await fetchStreamStatus(sessionId);
+  if (!status || !status.running) return;
+  conversationStore.setState({ backgroundRunning: true });
+  bgPollTimer = window.setInterval(async () => {
+    const s = await fetchStreamStatus(sessionId);
+    if (!s || !s.running) {
+      window.clearInterval(bgPollTimer);
+      conversationStore.setState({ backgroundRunning: false });
+      void loadHistory(sessionId); // 后台完成 → 重载显示完整结果
+    }
+  }, 2000);
 }
 
 export async function loadEarlierHistory(sessionId: string): Promise<void> {

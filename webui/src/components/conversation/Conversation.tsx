@@ -49,6 +49,11 @@ export function Conversation() {
 
   return (
     <main className="v2-conversation" data-testid="conversation">
+      {current && conv.backgroundRunning && (
+        <div className="v2-bg-running" data-testid="bg-running">
+          ⏳ 后台任务生成中（刷新/切换不会中断，完成后自动显示结果）
+        </div>
+      )}
       {current && (
         <div className="v2-conversation-header">
           <span className="v2-conversation-title">{current.title || current.session_id}</span>
