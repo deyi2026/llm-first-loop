@@ -627,8 +627,14 @@ def test_compact_ratio_preemptive_compression():
     )
     assert any("[上下文压缩]" in str(m.get("content", "")) for m in out_pre)
     non_sys = [m for m in out_pre if m["role"] != "system"]
-    assert len(non_sys) == 1  # 旧消息归档, 只留最新
-    assert non_sys[0]["content"].startswith("x")  # 最新消息全文保留（预算内不截断）
+    # DSH 修复（EVO-20260817）: 压缩 extras（关键事实/档案目录/压缩标注）转独立 user 消息
+    # （不并入 system 主体 → system 字节稳定 → 前缀缓存命中）——non_sys = 最新消息 + extras
+    latest = [m for m in non_sys if m["content"].startswith("x")]
+    assert len(latest) == 1  # 旧消息归档, 只留最新
+    assert any("[压缩档案目录]" in m["content"] for m in non_sys)  # extras 独立可见
+    # system 主体稳定（extras 不入主体）
+    sys_msgs = [m for m in out_pre if m["role"] == "system"]
+    assert all("[压缩档案目录]" not in m["content"] for m in sys_msgs)
 
 
 def test_compact_ratio_one_is_legacy():

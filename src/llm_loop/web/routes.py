@@ -213,6 +213,7 @@ def chat(
         model_used=result.model_used,
         tokens_in=result.tokens_in,
         tokens_out=result.tokens_out,
+        tokens_cache_hit=result.tokens_cache_hit,  # M58: 非流式路径透传（DSH 修复 20260817）
         reasoning_content=result.reasoning_content,  # P1-1: 非流式路径透传思考链
     )
 
