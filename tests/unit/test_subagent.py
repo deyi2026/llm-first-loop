@@ -322,3 +322,22 @@ def test_subagent_parent_id_mounted(build_test_engine, monkeypatch):
 
     sess_json = _json.loads(latest.read_text(encoding="utf-8"))
     assert sess_json.get("parent_id") == parent_sid, sess_json.get("parent_id")
+
+
+def test_subagent_tools_have_type_field(build_test_engine):
+    """2026-08-18 修复: 子代理 tools 参数必须含 type='function'（裸 schema → DeepSeek 400）."""
+    engine, fake = build_test_engine([])
+    runner = SubAgentRunner(
+        llm=fake, registry=engine.registry, session_store=engine.session
+    )
+    fake._responses = [LLMResponse(content="完成", tool_calls=[], provider="fake")]
+    result = runner.run(task="测试", depth=0)
+    assert result.refused is False
+    assert fake.calls, "子代理应有 LLM 调用"
+    # 断言所有 tools 都带 type='function' + function 包装
+    for call in fake.calls:
+        tools = call.get("tools") or []
+        assert tools, "tools 不应为空"
+        for t in tools:
+            assert t.get("type") == "function", f"缺 type=function: {t}"
+            assert "function" in t and "name" in t["function"], f"缺 function.name: {t}"

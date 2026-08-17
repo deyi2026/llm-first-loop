@@ -197,7 +197,24 @@ class SubAgentRunner:
             # ── LLM 决策 ──
             msgs = [m.to_llm_dict() for m in sess.messages]  # type: ignore[attr-defined]
             schemas = self.registry.schemas(lazy=False)
-            sub_schemas = [s for s in schemas if s.get("name") in SUBAGENT_ALLOWED_TOOLS or s.get("name") == "spawn_subagent"]
+            sub_schemas = [
+                s for s in schemas
+                if s.get("name") in SUBAGENT_ALLOWED_TOOLS or s.get("name") == "spawn_subagent"
+            ]
+            # 2026-08-18 修复: 主循环经 _schema_to_param 包装 {type:"function", function:{...}}，
+            # 子代理此前直传裸 schema（{name,description,parameters} 无 type）→ DeepSeek 400
+            # "tools[0]: missing field type"（实证：子代理 09:31 起全部失败）。补齐同款包装。
+            sub_schemas = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": t["name"],
+                        "description": t.get("description", ""),
+                        "parameters": t.get("parameters", {"type": "object", "properties": {}}),
+                    },
+                }
+                for t in sub_schemas
+            ]
             try:
                 resp = self.llm.chat(msgs, tools=sub_schemas)
             except Exception as exc:  # noqa: BLE001 — 子代理 LLM 失败如实回传
