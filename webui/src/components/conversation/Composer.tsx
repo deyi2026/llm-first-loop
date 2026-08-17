@@ -126,8 +126,31 @@ export function Composer() {
     autoGrow();
   }, [text]);
 
+  // 输入法兼容（用户 2026-08-17 需求）：中文输入法组合/候选选择期间回车不发送——
+  // 第一次回车=选候选字母，第二次回车（组合结束）才发送。
+  const composingRef = useRef(false);
+
+  useEffect(() => {
+    const ta = taRef.current;
+    if (!ta) return;
+    const onStart = () => {
+      composingRef.current = true;
+    };
+    const onEnd = () => {
+      composingRef.current = false;
+    };
+    ta.addEventListener("compositionstart", onStart);
+    ta.addEventListener("compositionend", onEnd);
+    return () => {
+      ta.removeEventListener("compositionstart", onStart);
+      ta.removeEventListener("compositionend", onEnd);
+    };
+  }, []);
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
+      // 输入法组合中（含候选选择）：回车交给输入法选候选，不发送
+      if (composingRef.current || e.nativeEvent.isComposing) return;
       e.preventDefault();
       void doSend();
     } else if (e.key === "Escape" && cmdOpen) {
