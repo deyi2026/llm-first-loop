@@ -291,6 +291,50 @@ html, body {
   align-items: flex-end;
 }
 
+/* 2026-08-17: 模型选择独立行（从 input-tools 移出，输入框上方，避免与工具按钮挤在一起） */
+.input-model-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 2px 6px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.input-model-row select {
+  max-width: 260px;
+  font-size: 12px;
+  padding: 2px 6px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+  color: #374151;
+}
+
+.input-model-row .model-label {
+  margin-left: 2px;
+  color: #6b7280;
+}
+
+.input-model-row .token-stats {
+  margin-left: 4px;
+}
+
+/* 消息时间戳（消息内小灰字，右下角；assistant/user 均可用） */
+.msg-time {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.2;
+  color: #9ca3af;
+  text-align: right;
+  user-select: none;
+}
+
+.message.user .msg-time {
+  color: rgba(255, 255, 255, 0.7);
+}
+
 #message-input {
   flex: 1;
   resize: none;
@@ -944,6 +988,17 @@ html, body {
 }
 .retry-btn:hover {
   background: #ddeafa;
+}
+
+/* ── 2026-08-17: 自动续联提示（连接中断自动重连中） ── */
+.reconnect-note {
+  padding: 4px 8px;
+  margin: 4px 8px;
+  font-size: 12px;
+  color: #8a6d1a;
+  background: #fdf6e3;
+  border: 1px solid #e8d9a0;
+  border-radius: 4px;
 }
 
 /* ── P1-1: 思考过程展示区（与正文视觉区分，默认折叠） ── */

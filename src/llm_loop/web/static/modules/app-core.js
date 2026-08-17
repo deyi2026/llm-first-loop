@@ -1,5 +1,5 @@
 function addMessage(role, content, note, toolCalls, reasoningContent) {
-  const m = { role, content, note, reasoningContent: reasoningContent || null, toolRounds: null };
+  const m = { role, content, note, reasoningContent: reasoningContent || null, toolRounds: null, ts: Date.now() / 1000 };
   if (Array.isArray(toolCalls) && toolCalls.length) m.toolCalls = toolCalls;
   state.messages.push(m);
   renderMessages();

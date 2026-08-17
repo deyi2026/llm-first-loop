@@ -107,11 +107,12 @@ def _url_allowed(url):
     host = (p.hostname or "").lower()
     return host in _URL_ALLOWED_HOSTS or host.endswith(".feishu.cn")
 
-def goto(url):
+def goto(url, wait_until="networkidle"):
     if not _url_allowed(url):
         raise PermissionError(f"URL 沙箱拒绝: {url}（仅 feishu.cn/localhost/127.0.0.1）")
-    _page.goto(url)
-    _page.wait_for_load_state("networkidle")
+    # wait_until 可传 domcontentloaded/load/networkidle（2026-08-17 参数化：
+    # 含 SSE 长连接的页面 networkidle 永不空闲，E2E 需 domcontentloaded 绕开）
+    _page.goto(url, wait_until=wait_until)
     return _page.title()
 
 def click(selector):

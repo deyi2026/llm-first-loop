@@ -24,6 +24,11 @@
         <input type="file" id="file-input" multiple accept=".txt,.md,.json,.csv,.log,.py,.pdf,.docx,.png,.jpg,.jpeg,.gif,.webp,.bmp" hidden aria-label="上传附件">
         <div id="input-main">
           <div id="cmd-suggest" class="cmd-suggest" hidden aria-label="快捷命令候选"></div>
+          <div id="input-model-row" class="input-model-row">
+            <label class="model-label" for="model-select">模型</label>
+            <select id="model-select" title="切换模型（对下一条消息生效）" aria-label="切换模型"></select>
+            <span id="token-stats" class="token-stats" title="本次页面会话 token 累计（刷新页面清零）"></span>
+          </div>
           <div id="input-row">
             <textarea id="message-input" rows="1" placeholder="输入消息，Enter 发送（Shift+Enter 换行）；/ 开头查看快捷命令" aria-label="消息输入"></textarea>
             <button id="send-btn" class="btn-primary">发送</button>
@@ -31,9 +36,6 @@
           <div id="input-tools">
             <button id="clear-btn" class="btn-secondary" title="清除上下文（等同 /clear，旧会话保留可查看）">🗑</button>
             <button id="upload-btn" class="btn-secondary" title="上传附件（图片/文本/PDF/docx）">📎</button>
-            <label class="model-label" for="model-select">模型</label>
-            <select id="model-select" title="切换模型（对下一条消息生效）" aria-label="切换模型"></select>
-            <span id="token-stats" class="token-stats" title="本次页面会话 token 累计（刷新页面清零）"></span>
             <div id="cmd-hint" title="点击快捷填入命令">命令 <span class="cmd-chip" data-cmd="/new">/new</span><span class="cmd-chip" data-cmd="/clear">/clear</span><span class="cmd-chip" data-cmd="/model">/model</span><span class="cmd-chip" data-cmd="/help">/help</span></div>
           </div>
         </div>

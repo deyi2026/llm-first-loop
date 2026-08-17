@@ -65,8 +65,18 @@ function buildAssistantNote(data) {
 }
 
 // D1~D4: 真流式请求 + 渲染 + 结果处理（滚动跟随/断流重试/错误边界/空回答清理）
-async function runStreamChat(body, loading) {
+// 2026-08-17 续联：opts.resume=true 订阅已有后台 run（断线自动续收/刷新恢复），
+// 复用最后一条 assistant 消息气泡（不新建），acc 初始取页面上已显示内容（防丢已生成分片）。
+let resumeAttempts = 0; // 自动续联尝试次数（上限 2，防网络抖动递归风暴）
+async function runStreamChat(body, loading, opts = {}) {
+  const resume = !!opts.resume;
   let acc = "";
+  if (resume) {
+    const wrap = els.messages.querySelector(".message-wrap:last-of-type");
+    const ans = wrap && wrap.querySelector(".answer-body");
+    const last = state.messages[state.messages.length - 1];
+    acc = ans ? ans.textContent : (last && last.role === "assistant" ? last.content || "" : "");
+  }
   let accReasoning = "";
   let bodyNode = null;
   let reasoningBlock = null;
@@ -77,9 +87,22 @@ async function runStreamChat(body, loading) {
     if (!streamed) {
       streamed = true;
       if (loading) loading.remove();
-      addMessage("assistant", "", null, null);
-      const wrap = els.messages.querySelector(".message-wrap:last-of-type");
-      bodyNode = wrap ? wrap.querySelector(".answer-body") : null;
+      if (resume) {
+        // resume：复用最后一条 assistant 消息气泡（断线续收/刷新恢复，不新建）
+        const wrap = els.messages.querySelector(".message-wrap:last-of-type");
+        const last = state.messages[state.messages.length - 1];
+        if (wrap && last && last.role === "assistant") {
+          bodyNode = wrap.querySelector(".answer-body");
+        } else {
+          addMessage("assistant", "", null, null);
+          const w = els.messages.querySelector(".message-wrap:last-of-type");
+          bodyNode = w ? w.querySelector(".answer-body") : null;
+        }
+      } else {
+        addMessage("assistant", "", null, null);
+        const wrap = els.messages.querySelector(".message-wrap:last-of-type");
+        bodyNode = wrap ? wrap.querySelector(".answer-body") : null;
+      }
     }
   };
   const result = await streamChatRequest(body, (delta) => {
@@ -122,6 +145,7 @@ async function runStreamChat(body, loading) {
 
   if (result.ok && result.data) {
     const data = result.data;
+    resumeAttempts = 0; // 续联成功：重置计数
     state.currentSessionId = data.session_id;
     // P3-1: done 终态暂存声明侧事实（session_id 键控，合并写入不覆盖既有键，纯页面内存态）
     if (data.session_id && Array.isArray(data.tool_calls)) {
@@ -157,6 +181,19 @@ async function runStreamChat(body, loading) {
         }
       }
       renderMessages();
+    } else if (resume) {
+      // resume 无 delta 直接 done（run 已近完成）：更新最后一条 assistant 消息，不重复新建
+      if (loading) loading.remove();
+      const last = state.messages[state.messages.length - 1];
+      if (last && last.role === "assistant") {
+        last.content = finalText; // 终态一致：无条件覆盖（纯工具轮清空残留）
+        if (data.reasoning_content) last.reasoningContent = data.reasoning_content;
+        if (Array.isArray(data.tool_calls) && data.tool_calls.length) last.toolCalls = data.tool_calls;
+        last.note = buildAssistantNote(data);
+        renderMessages();
+      } else {
+        addMessage("assistant", finalText || "（无文字回答）", buildAssistantNote(data), data.tool_calls, data.reasoning_content || null);
+      }
     } else {
       if (loading) loading.remove();
       if (finalText) {
@@ -183,6 +220,21 @@ async function runStreamChat(body, loading) {
     const isNetwork = result.errorType === "network";
     const detail = result.error && result.error.detail ? result.error.detail : "服务内部错误。";
     const note = `${isNetwork ? "" : "[程序异常] "}${detail}`;
+    // 自动续联：网络中断 → resume 订阅续收（后台 run 继续执行；上限 2 次防递归风暴）
+    if (isNetwork && state.retryRequest && state.retryRequest.session_id && resumeAttempts < 2) {
+      resumeAttempts += 1;
+      const rnote = document.createElement("div");
+      rnote.className = "reconnect-note";
+      rnote.textContent = `连接中断，正在自动重连…（${resumeAttempts}/2）`;
+      els.messages.appendChild(rnote);
+      els.messages.scrollTop = els.messages.scrollHeight;
+      setTimeout(async () => {
+        try { if (rnote.parentNode) rnote.parentNode.removeChild(rnote); } catch { /* ignore */ }
+        // resume 请求体：同会话订阅已有 run（不提交新 run，message 占位不会被消费）
+        await runStreamChat({ ...state.retryRequest, resume: true }, null, { resume: true });
+      }, 1500);
+      return;
+    }
     if (streamed) {
       const last = state.messages[state.messages.length - 1];
       if (last && last.role === "assistant") {
@@ -215,6 +267,29 @@ async function runStreamChat(body, loading) {
     retryBtn.onclick = () => runStreamChat(state.retryRequest, null);
     els.messages.appendChild(retryBtn);
     els.messages.scrollTop = els.messages.scrollHeight;
+  }
+}
+
+// 2026-08-17 刷新恢复：页面加载后检查当前会话是否有后台 run 进行中，
+// 有则提示 + resume 订阅续收（done 终态覆盖完整结果，刷新不再丢进行中内容）。
+// 无进行中 run → 静默返回（历史已由 loadSessionMessages 加载）。
+async function checkResumeOnLoad() {
+  const sid = state.currentSessionId;
+  if (!sid) return;
+  let st = null;
+  try {
+    const r = await fetch(`/api/v1/chat/stream/status?session_id=${encodeURIComponent(sid)}`);
+    st = await r.json();
+  } catch { /* fail-open：状态不可达时不阻塞首屏 */ return; }
+  if (!st || !st.running) return;
+  const loading = el("div", "message assistant loading", "该会话正在生成中，正在恢复…");
+  els.messages.appendChild(loading);
+  els.messages.scrollTop = els.messages.scrollHeight;
+  try {
+    // resume 订阅：message 传占位（后端 resume 分支不消费 message）
+    await runStreamChat({ message: "（恢复连接）", session_id: sid, resume: true }, loading, { resume: true });
+  } catch {
+    try { if (loading.parentNode) loading.parentNode.removeChild(loading); } catch { /* ignore */ }
   }
 }
 

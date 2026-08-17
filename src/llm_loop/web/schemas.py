@@ -64,6 +64,7 @@ class MessageItem(BaseModel):
     tokens_in: int = 0  # M52: assistant 消息 prompt tokens 透传
     tokens_out: int = 0  # M52: assistant 消息 completion tokens 透传
     tokens_cache_hit: int = 0  # M58: 前缀缓存命中 token
+    ts: float = 0.0  # 消息时间戳（epoch 秒；web 端时间显示，旧消息缺省 0）
     tool_calls: list[dict] | None = None  # assistant 工具声明透传（历史恢复出产物/正文链接）
 
 

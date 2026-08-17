@@ -50,8 +50,8 @@ def test_preamble_isolates_model_namespace():
     """preamble 必须以 _run_model 隔离执行模型代码（内部对象不可见）."""
     assert "_run_model(__MODEL_CODE__)" in _PREAMBLE
     assert "__builtins__" in _PREAMBLE
-    # helper 仍闭包引用内部对象（功能不受影响）
-    assert "def goto(url):" in _PREAMBLE
+    # helper 仍闭包引用内部对象（功能不受影响）；goto 参数化（wait_until，2026-08-17）
+    assert "def goto(url" in _PREAMBLE
     assert "_HELPERS" in _PREAMBLE
 
 
