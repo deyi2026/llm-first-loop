@@ -378,7 +378,14 @@ def build_history_messages(
     # (state 帧意义在即时性)。静态 system_prompt 主体不参与截断（前缀缓存保持命中）。
     max_sys_merge_chars = 4000  # 动态 system 追加段上限（不含 system_prompt 主体）
 
-    def _append_or_merge(msg_dict: dict) -> None:
+    def _append_or_merge(msg_dict: dict, dynamic: bool = False) -> None:
+        # EVO-20260817（DSH 修复）: 动态注入（memory/inbox 等每轮变化段）不并入 system 主体——
+        # 转独立 user 消息（system 主体字节稳定 → DeepSeek 前缀缓存命中；qwen 单 system 模板兼容）
+        if dynamic and msg_dict.get("role") == "system":
+            msg_dict = dict(msg_dict)
+            msg_dict["role"] = "user"
+            out.append(msg_dict)
+            return
         if msg_dict.get("role") == "system" and out and out[0].get("role") == "system":
             new_content = msg_dict.get("content", "")
             if not new_content:
@@ -481,7 +488,7 @@ def build_history_messages(
             # system 区 → 前缀不因耗尽注入持续分叉（缓存 MISS 收敛）
             if skip_injected_system and m.role == "system" and (m.metadata or {}).get("consumed"):
                 continue
-            _append_or_merge(m.to_llm_dict())
+            _append_or_merge(m.to_llm_dict(), dynamic=_is_dynamic_inject(m))
         return _repair_tool_call_pairing(out)
 
     # ── 超长: 从最新往回保留，最旧的先"另存提取"再精简注入（不静默丢弃）──
@@ -613,7 +620,7 @@ def build_history_messages(
         # 否则 system 落在消息中间 → qwen 系模板(9B/27B) 报
         # "System message must be at the beginning" (HTTP 400/500)。
         if m.role == "system":
-            _append_or_merge(m.to_llm_dict())
+            _append_or_merge(m.to_llm_dict(), dynamic=_is_dynamic_inject(m))
         else:
             out.append(m.to_llm_dict())
     if archived:
@@ -662,7 +669,11 @@ def build_history_messages(
         # 多条 system（即便都在开头）也会触发 "System message must be at the beginning"。
         # 原实现 out.insert(1+i) 绕过 _append_or_merge → 产生多条独立 system → 400。
         for em in extras:
-            _append_or_merge(em.to_llm_dict())
+            # DSH 修复（EVO-20260817 缓存 0 命中）: 压缩 extras（关键事实/档案目录/压缩标注）
+            # 每轮归档内容变化 → 标记 _dynamic → 转独立 user 消息（不并入 system 主体，
+            # system 主体字节稳定 → 前缀缓存命中；qwen 单 system 模板兼容）
+            em.metadata["_dynamic"] = True
+            _append_or_merge(em.to_llm_dict(), dynamic=_is_dynamic_inject(em))
     return _repair_tool_call_pairing(out)
 
 
@@ -876,6 +887,15 @@ def _repair_tool_call_pairing(messages: list[dict]) -> list[dict]:
 
 
 # ── EVO-20260817-b6554376: 投影一致性门闸（借鉴 DSH seq 水印）──
+def _is_dynamic_inject(m: Message) -> bool:
+    """EVO-20260817（DSH 修复）: 每轮变化的动态注入（memory 检索/inbox 临时消息）→ 不并入
+    system 主体（转独立 user 消息，system 主体字节稳定 → 前缀缓存命中）."""
+    if getattr(m, "source", None) == MessageSource.MEMORY:
+        return True
+    meta = getattr(m, "metadata", None) or {}
+    return bool(meta.get("_dynamic"))
+
+
 def stable_digest(obj: Any) -> str:
     """稳定序列化哈希（sort_keys + ensure_ascii=False）——同输入必同输出.
 
