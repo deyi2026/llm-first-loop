@@ -7,6 +7,7 @@ import { zh } from "../../i18n/zh";
 import { sendMessage, stopStreaming, useConversation } from "../../core/conversation";
 import { fetchModels, uploadFileBase64 } from "../../core/chat";
 import { sessionStore, useModel } from "../../core/stores";
+import { EVT_COMPOSER_FILL, focusSearch } from "../../core/shortcuts";
 
 type AttachStatus = "ok" | "pending" | "degraded" | "error";
 
@@ -130,10 +131,51 @@ export function Composer() {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       void doSend();
-    } else if (e.key === "Escape" && cmdOpen) {
-      setCmdOpen(false);
+      return;
+    }
+    if (e.key === "Escape") {
+      if (cmdOpen) {
+        setCmdOpen(false);
+        return;
+      }
+      if (conv.streaming) {
+        // 对齐 DSH：Esc 停止流式生成（非命令菜单态）
+        e.preventDefault();
+        stopStreaming();
+        flashHint(zh.streamStopped);
+      }
+      return;
+    }
+    if (e.key === "ArrowUp" && !e.shiftKey && !text.trim()) {
+      // 对齐 DSH：输入为空时 ↑ 回填上一条 user 消息（编辑后重发）
+      const msgs = conv.messages;
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        if (msgs[i].role === "user" && msgs[i].content?.trim()) {
+          e.preventDefault();
+          setText(msgs[i].content as string);
+          return;
+        }
+      }
+      return;
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      // 对齐 DSH：⌘K / Ctrl+K 聚焦会话内搜索
+      e.preventDefault();
+      focusSearch();
     }
   };
+
+  // 对齐 DSH：跨组件回填（↑/user 消息"重发"）→ 填入文本并聚焦
+  useEffect(() => {
+    const onFill = (e: Event) => {
+      const text0 = (e as CustomEvent<{ text: string }>).detail?.text ?? "";
+      setText(text0);
+      setCmdOpen(false);
+      requestAnimationFrame(() => taRef.current?.focus());
+    };
+    window.addEventListener(EVT_COMPOSER_FILL, onFill);
+    return () => window.removeEventListener(EVT_COMPOSER_FILL, onFill);
+  }, []);
 
   const onTextChange = (v: string) => {
     setText(v); // 高度自适应由 useEffect([text]) 统一处理
