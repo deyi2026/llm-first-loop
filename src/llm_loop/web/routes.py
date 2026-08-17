@@ -46,6 +46,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# EVO-20260818: 文件树/会话树 API（独立模块 fs_tree.py，安全边界+审计）
+from llm_loop.web.fs_tree import fs_router
+
+router.include_router(fs_router)
+
 SERVICE_NAME = "llm-first-loop-web"
 SERVICE_VERSION = "0.6.6"  # T7: 语义化版本（与 pyproject 同步；git tag v0.5.2）
 
