@@ -44,6 +44,8 @@ interface Props {
 
 export function WorkspaceGroups({ children, activeSessionId, onOpenOtherSession, onWorkspaceChanged }: Props) {
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
+  // 当前工作区分组折叠态（点击分组头折叠/展开会话列表——对齐树状分组）
+  const [collapsedCurrent, setCollapsedCurrent] = useState(false);
   const [currentWsId, setCurrentWsId] = useState("");
   // 其他工作区会话缓存：{ wsId: SessionMeta[] }
   const [otherSessions, setOtherSessions] = useState<Record<string, SessionMeta[]>>({});
@@ -137,21 +139,31 @@ export function WorkspaceGroups({ children, activeSessionId, onOpenOtherSession,
                 <div
                   className="v2-ws-tree-head"
                   title={ws.path}
-                  role={isCurrent ? undefined : "button"}
-                  tabIndex={isCurrent ? undefined : 0}
-                  onClick={() => void switchWs(ws.id)}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => {
+                    if (isCurrent) {
+                      setCollapsedCurrent((v) => !v);
+                    } else {
+                      void switchWs(ws.id);
+                    }
+                  }}
                   onKeyDown={(e) => {
-                    if (!isCurrent && (e.key === "Enter" || e.key === " ")) void switchWs(ws.id);
+                    if (e.key === "Enter" || e.key === " ") {
+                      if (isCurrent) setCollapsedCurrent((v) => !v);
+                      else void switchWs(ws.id);
+                    }
                   }}
                   data-testid="ws-tree-head"
                 >
+                  <span className="v2-ws-tree-arrow">{isCurrent ? (collapsedCurrent ? "▶" : "▼") : ""}</span>
                   <span className="v2-ws-tree-icon">{isCurrent ? "📁" : "📂"}</span>
                   <span className="v2-ws-tree-name">{basename(ws.path)}</span>
                   {!isCurrent ? <span className="v2-ws-tree-count">{others.length}</span> : null}
                 </div>
                 <div className="v2-ws-tree-children">
                   {isCurrent ? (
-                    children
+                    collapsedCurrent ? null : children
                   ) : (
                     <div className="v2-ws-other-sessions" data-testid="ws-other-sessions">
                       {others.map((s) => (
