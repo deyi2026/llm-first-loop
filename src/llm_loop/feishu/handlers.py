@@ -185,7 +185,26 @@ class FeishuMessageHandler:
         # M55: 飞书 /new·/clear 会话指令拦截（对齐 Web 快捷命令, founder 实测缺口）
         if self._try_handle_session_command(msg, text):
             return
+        # EVO-20260817 飞书审批 UX（方案 A）: 审批列表/批准/拒绝指令（私聊 + open_id 白名单）
+        if self._try_handle_approval_command(msg, text):
+            return
         self._run_with_processing_actions(msg, self._run_text, text)
+
+    def _try_handle_approval_command(self, msg: FeishuMessage, text: str) -> bool:
+        """EVO-20260817: 飞书文本指令审批（替代终端 evolve-review，方案 A）.
+
+        指令: 审批列表 / 批准 EVO-xxx / 拒绝 EVO-xxx [理由：…]。
+        安全: 私聊（非群）+ open_id 白名单（feishu_session_map p: 前缀）。
+        Returns: True=已处理；False=非审批指令走原路径。
+        """
+        from llm_loop.feishu.approval import handle_approval
+
+        try:
+            return handle_approval(self._engine, msg, text, self._reply_fn)
+        except Exception as exc:  # noqa: BLE001 — 审批异常不阻断消息处理
+            logger.exception("飞书审批指令处理异常: %s", exc)
+            self._reply(msg, f"⚠️ 审批指令处理异常：{type(exc).__name__}，请重试或走 CLI。")
+            return True
 
     def _try_handle_session_command(self, msg: FeishuMessage, text: str) -> bool:
         """M55: 飞书会话指令拦截（/new 新会话 /clear 继续但开新上下文）.
