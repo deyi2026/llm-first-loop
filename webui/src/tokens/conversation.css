@@ -1147,3 +1147,27 @@
   margin-left: -18px;
   margin-right: 2px;
 }
+
+/* 会话树：树根 + 树线视觉（对齐文件树层级感） */
+.v2-session-tree-root {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-secondary, inherit);
+  border-bottom: 1px solid var(--dsw-alias-divider-color, rgba(128,128,128,0.2));
+}
+
+.v2-tree-guide {
+  flex: none;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code, monospace);
+  margin-right: 2px;
+}
+
+.v2-tree-guide.child {
+  margin-left: -18px;
+}

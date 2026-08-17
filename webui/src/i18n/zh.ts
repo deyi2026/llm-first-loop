@@ -56,4 +56,5 @@ export const zh = {
   evolutionShort: "演进",
   evoHint: "审批请用飞书私聊：审批列表 / 批准 EVO-xxx / 拒绝 EVO-xxx 理由：…",
   refresh: "刷新",
+  sessionTreeRoot: "工作区会话",
 };

@@ -157,6 +157,12 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
         }}
       >
         <div className="v2-session-list" data-testid="session-list">
+          <div className="v2-session-tree-root">
+            <span className="v2-tree-arrow placeholder" />
+            <span className="v2-tree-icon">📂</span>
+            <span className="v2-tree-name">{zh.sessionTreeRoot}</span>
+            <span className="v2-tree-size">（{filtered.length}）</span>
+          </div>
           {(() => {
             // 会话树：按 parent_id 分组（根平铺 + 子代理缩进挂载）
             const ids = new Set(filtered.map((s) => s.session_id));
@@ -182,6 +188,9 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                   data-testid="session-item"
                   style={{ paddingLeft: depth > 0 ? 22 : 0 }}
                 >
+                  <span className={`v2-tree-guide ${depth > 0 ? "child" : "root"}`} aria-hidden>
+                    {depth > 0 ? "└─" : "├─"}
+                  </span>
                   {depth > 0 && <span className="v2-tree-branch" aria-hidden />}
                   {kids.length > 0 && (
                     <button
