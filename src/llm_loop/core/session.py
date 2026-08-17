@@ -90,6 +90,10 @@ class Session:
     # 锚定后历史起点固定（只追加不挤旧, 超预算优先降级中段）, system+历史前缀稳定 →
     # 引擎/服务端前缀缓存命中; 缺省向后兼容（旧 JSON 无键 → {}）
     history_anchors: dict[str, int] = field(default_factory=dict)
+    # EVO-20260817-b6554376: 投影一致性门闸缓存行（provider_id → {ver, seq, built_hash, ts}）。
+    # 精确水印哨兵：ver+seq 匹配而 built_hash 不同 = 非确定性构建/历史被改 → 告警。
+    # 缺省向后兼容（旧 JSON 无键 → {}）
+    projection_guard: dict[str, dict] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -106,6 +110,7 @@ class Session:
             "pinned": self.pinned,
             "channel": self.channel,
             "history_anchors": self.history_anchors,
+            "projection_guard": self.projection_guard,  # EVO-20260817-b6554376 投影门闸缓存行
             "messages": [
                 {
                     "role": m.role,
@@ -507,6 +512,8 @@ class SessionStore:
                 channel=data.get("channel", "web"),
                 # P1-10: history_anchors 缺省向后兼容（旧 JSON 无键 → {}）
                 history_anchors=data.get("history_anchors") or {},
+                # EVO-20260817-b6554376: projection_guard 缺省向后兼容（旧 JSON 无键 → {}）
+                projection_guard=data.get("projection_guard") or {},
             )
         except (json.JSONDecodeError, KeyError, ValueError):
             # 如实降级：文件损坏时备份原始文件（不覆盖丢数据），返回新会话（不伪造恢复）

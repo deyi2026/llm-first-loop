@@ -5,10 +5,15 @@
   （原文完整另存 + 关键事实/路径索引）到 ArchiveStore，再注入精简内容 +
   `[上下文压缩]` 标注（含"可查 search_archive"指引），信息零丢失。
 - 记忆注入（source=memory 前置消息）
+- **EVO-20260817-b6554376: 投影一致性门闸（借鉴 DSH seq 水印）**——stable_digest /
+  projection_ver / projection_check 纯函数：以 seq（消息数）+ ver（构建参数指纹）
+  精确水印检测"输入未变但输出变化"的非确定性构建/历史被改（防前缀缓存悄悄失效）。
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from collections.abc import Callable
 from typing import Any
@@ -836,3 +841,51 @@ def _repair_tool_call_pairing(messages: list[dict]) -> list[dict]:
             continue
         i += 1
     return out
+
+
+# ── EVO-20260817-b6554376: 投影一致性门闸（借鉴 DSH seq 水印）──
+def stable_digest(obj: Any) -> str:
+    """稳定序列化哈希（sort_keys + ensure_ascii=False）——同输入必同输出.
+
+    Message 对象转 (role, content) 对；dict/list 稳定 JSON；其余 str() 兜底。
+    """
+    def _norm(o: Any):
+        if isinstance(o, Message):
+            return {"role": o.role, "content": o.content, "metadata": o.metadata}
+        if isinstance(o, dict):
+            return {k: _norm(v) for k, v in o.items()}
+        if isinstance(o, (list, tuple)):
+            return [_norm(v) for v in o]
+        return o
+
+    raw = json.dumps(_norm(obj), sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def projection_ver(*, model: str, budget: int, anchor: int, memory_fp: str,
+                   interop_fp: str, system_fp: str, settings_fp: str) -> str:
+    """构建参数指纹（ver）——任何影响构建输出的参数变化 → ver 变化 → 缓存行自然过期.
+
+    seq（消息数）负责"历史追加"水印；ver 负责"参数/动态输入（记忆/协调/system/开关）"水印。
+    """
+    return stable_digest({
+        "model": model, "budget": budget, "anchor": anchor,
+        "memory_fp": memory_fp, "interop_fp": interop_fp,
+        "system_fp": system_fp, "settings_fp": settings_fp,
+    })
+
+
+def projection_check(prev: dict | None, *, ver: str, seq: int, built_hash: str) -> str:
+    """投影一致性校验——纯函数，返回状态字符串.
+
+    - "miss":  无前序缓存行 / ver 或 seq 不匹配（正常：新会话/参数变化/新消息追加）→ 应更新缓存行
+    - "ok":    ver+seq 匹配且输出哈希一致（稳定期，前缀应命中）
+    - "mismatch": ver+seq 匹配但输出哈希不同 → **非确定性构建或历史被改**（追加式保证被破坏）→ 告警
+    """
+    if prev is None:
+        return "miss"
+    if prev.get("ver") != ver or prev.get("seq") != seq:
+        return "miss"
+    if prev.get("built_hash") == built_hash:
+        return "ok"
+    return "mismatch"

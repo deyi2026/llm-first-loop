@@ -20,7 +20,8 @@ _DERIVED_ONLY_KEYS = {"event_log_gaps", "unknown_event_types", "compressed_refs"
 
 # P1-10: 比对时排除的源会话运行时优化字段（非会话内容, 事件日志不追溯）——
 # history_anchors 是窗口锚定元数据（provider→消息索引），双轨对账/迁移/退役应容忍
-_RUNTIME_ONLY_KEYS = {"history_anchors"}
+# EVO-20260817-b6554376: projection_guard 同性质（投影一致性缓存行，运行时哨兵）
+_RUNTIME_ONLY_KEYS = {"history_anchors", "projection_guard"}
 
 # 消息逐字段比对全集（与 Session.to_dict() 消息字段对齐）
 _MESSAGE_FIELDS = [

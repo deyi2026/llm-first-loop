@@ -216,6 +216,8 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         self._cache_win_hit = 0
         self._cache_win_runs = 0
         self._cache_win_notified = False
+        # EVO-20260817-b6554376: 投影一致性门闸最近状态（ok/miss/mismatch；构建后更新）
+        self._projection_guard_state: str = "miss"
         # M50: CLI --model 启动参数装配通道（cli.py 注入，_run_single/_run_interactive 消费）
         self._cli_startup_model: str | None = None
         # H-UI(2026-08-14): 动作观察者（实时 UI 状态条：thinking/tool_call/tool_result/answer/done）
@@ -426,6 +428,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                         "tools_count": len(tools_param),
                         "history_chars": sum(len(str(m.get("content", ""))) for m in messages),
                         "budget": effective_budget,
+                        "projection_guard": getattr(self, "_projection_guard_state", "miss"),
                     },
                 )
             except Exception:  # noqa: BLE001 — 快照失败 fail-open（不影响主循环）
@@ -939,6 +942,51 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             if sess.history_anchors is None:
                 sess.history_anchors = {}
             sess.history_anchors[provider_id] = new_anchor
+        # EVO-20260817-b6554376: 投影一致性门闸（借鉴 DSH seq 水印，fail-open 不阻断 run）
+        # seq（消息数）负责"历史追加"水印；ver（构建参数+动态输入指纹）负责参数水印；
+        # ver+seq 匹配而 built_hash 不同 → 非确定性构建/历史被改 → 告警（只读，不阻断）。
+        try:
+            from llm_loop.core.history import stable_digest, projection_ver, projection_check
+
+            _fp = lambda msgs: stable_digest([(m.role, m.content) for m in msgs])  # noqa: E731
+            _settings_fp = stable_digest({
+                "tool_trim_enabled": getattr(self.settings, "tool_trim_enabled", False),
+                "tool_trim_age": getattr(self.settings, "tool_trim_age", 0),
+                "tool_trim_threshold": getattr(self.settings, "tool_trim_threshold", 8000),
+                "reasoning_tail": getattr(self.settings, "reasoning_tail", 2),
+                "skip_injected_system": not self._provider_inject_notices(planned_label),
+                "extract_interval_msgs": getattr(self.settings, "extract_interval_msgs", 20),
+            })
+            _ver = projection_ver(
+                model=planned_label, budget=effective_budget, anchor=sess_anchor,
+                memory_fp=_fp(memory_msgs),
+                interop_fp=stable_digest([(m.role, m.content) for m in base[:prefix_len]]),
+                system_fp=stable_digest(system_prompt),
+                settings_fp=_settings_fp,
+            )
+            _seq = len(sess.messages)
+            _built_hash = stable_digest(built)
+            _guards = sess.projection_guard if sess.projection_guard is not None else {}
+            _prev = _guards.get(provider_id)
+            _state = projection_check(_prev, ver=_ver, seq=_seq, built_hash=_built_hash)
+            self._projection_guard_state = _state
+            if _state == "mismatch":
+                _hint = (
+                    f"[投影一致性告警] provider={provider_id} seq={_seq} ver 匹配但构建输出与上次不一致"
+                    f"——非确定性构建或历史被改（追加式保证被破坏），前缀缓存可能失效（成本放大 ~50 倍）。"
+                    "只读告警，是否处理由你决定。"
+                )
+                self._record_action("run.projection_guard", "mismatch", _hint)
+            # 更新缓存行（mismatch 也更新——保留最近构建作新基准，但已告警过）
+            import datetime as _dt
+
+            _guards[provider_id] = {
+                "ver": _ver, "seq": _seq, "built_hash": _built_hash,
+                "ts": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+            }
+            sess.projection_guard = _guards
+        except Exception:  # noqa: BLE001 — 门闸失败 fail-open，不阻断 run
+            logging.getLogger(__name__).warning("投影一致性门闸异常（fail-open）", exc_info=True)
         return built
 
     def _persist_with_recovery_note(
