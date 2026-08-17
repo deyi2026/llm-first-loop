@@ -1171,3 +1171,9 @@
 .v2-tree-guide.child {
   margin-left: -18px;
 }
+
+.v2-session-empty-kids {
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  padding: 2px 8px;
+}
