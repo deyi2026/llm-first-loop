@@ -696,6 +696,22 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 f"本次回答仍有效，但历史可能未持久化。{extra}"
             )
         self._phase("done")
+        # EVO-20260817-cef296f8 L1b: 耗尽注入的 system 消息 run 结束后标记 consumed
+        # （[轮次决策请求]/[已达轮数上限] 不在 _INJECTED_SYSTEM_PREFIXES，注入后进请求
+        # system 区使前缀分叉 → 后续所有 run 持续 MISS；run 内 AI 决策需可见，run 结束
+        # 后消费掉，下个 run 构建时跳过 → 前缀恢复稳定。fail-open 不影响 run。）
+        try:
+            for m in sess.messages:
+                if m.role != "system":
+                    continue
+                c = m.content or ""
+                if c.startswith("[轮次决策请求]") or c.startswith("[已达轮数上限]"):
+                    md = dict(m.metadata or {})
+                    if not md.get("consumed"):
+                        md["consumed"] = True
+                        m.metadata = md
+        except Exception:  # noqa: BLE001 — 消费标记失败不阻断 run
+            logger.warning("耗尽消息消费标记异常（fail-open）", exc_info=True)
         # EVO-20260817-cef296f8 L2: 缓存命中率窗口监控（fail-open 不阻断 run）
         # 窗口条件: ≥5 次 run 且累计输入 ≥50K tokens（排除短会话/冷启动天然低命中）；
         # 命中率 <50% → 注入诊断（final_answer 可见 + action_trace 审计），每进程仅告警一次。
