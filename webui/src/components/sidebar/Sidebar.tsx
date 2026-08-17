@@ -182,9 +182,6 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                   data-testid="session-item"
                   style={{ paddingLeft: depth > 0 ? 22 : 0 }}
                 >
-                  <span className={`v2-tree-guide ${depth > 0 ? "child" : "root"}`} aria-hidden>
-                    {depth > 0 ? "└─" : "├─"}
-                  </span>
                   {depth > 0 && <span className="v2-tree-branch" aria-hidden />}
                   {depth === 0 && (
                     <button
