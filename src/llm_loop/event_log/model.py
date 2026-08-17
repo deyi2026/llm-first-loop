@@ -22,6 +22,8 @@ EVENT_SESSION_META_CHANGED = "session.meta_changed"
 EVENT_SESSION_FORKED = "session.forked"  # D3 预留：本期登记不触发行为
 EVENT_REQUEST_META = "request.meta"  # HARNESS-02(2026-08-14): 每轮请求快照（模型/思考/工具目录/预算）
 EVENT_REQUEST_USAGE = "request.usage"  # DSH 借鉴(2026-08-17): 每轮响应 usage 明细（命中/miss token 精确落盘）
+EVENT_INTEROP_SPLICED = "interop.spliced"  # DSH 借鉴(2026-08-17): 协调通道 inbox 注入事件（对齐 agent/inbox/spliced）
+EVENT_RUN_END = "run.end"  # DSH 借鉴(2026-08-17): run 生命周期结束事件（对齐 turn/end，结束原因可审计）
 
 # ── CodeArts 子 Agent 调度集成事件类型（design.md §1.1.2，凭证明文绝不入 payload）──
 EVENT_CODEARTS_DISPATCHED = "codearts.dispatched"
@@ -242,6 +244,45 @@ REGISTRY.register(
             "cache_hit": "前缀缓存命中 token（provider 未返回为 0）",
             "cache_miss": "缓存未命中 token（=tokens_in−cache_hit，负值截 0；provider 无 usage 时不可据此判命中率）",
             "usage_available": "provider 是否返回 usage（false 时 tokens_in/cache_hit=0 不可当全 miss）",
+        },
+    )
+)
+# DSH 借鉴(2026-08-17): 协调通道 inbox 注入事件（对齐 DSH agent/inbox/spliced 血缘语义）——
+# 每轮 run 构建消息时若有外部协调消息注入，记录来源/条数/位置，缓存审计可追溯
+# "哪轮请求含外部注入"（注入改变请求内容→可解释该轮 miss 来源）。
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_INTEROP_SPLICED,
+        version=1,
+        fields={
+            "session_id": "注入目标会话 ID",
+            "round": "注入发生的循环轮次（0=构建期不可知时如实置 0）",
+            "count": "注入消息条数",
+            "start": "注入位置（base 列表索引，对齐 DSH start 语义）",
+            "sources": "来源文件列表（data/interop/lfl_to_dsh/pending/*.json）",
+            "content_preview": "首条消息内容前 200 字符（审计摘要，不全量落盘）",
+        },
+    )
+)
+# DSH 借鉴(2026-08-17): run 生命周期结束事件（对齐 DSH turn/end reason 语义）——
+# run 有 8+ 个结束出口（completed/llm_error/overflow/stagnation/max_iterations/routing_override
+# /session_save_failed 等），结束原因散落各分支无统一审计；run.end 在统一出口
+# LoopResult 前落盘，排障/轮次耗尽归因（RULE-AI-11）直接可查。
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_RUN_END,
+        version=1,
+        fields={
+            "session_id": "run 所属会话 ID",
+            "reason": "结束原因（completed/llm_error/overflow/stagnation/max_iterations/routing_override/session_save_failed）",
+            "rounds": "实际循环轮数",
+            "tokens_in": "run 累计输入 token",
+            "tokens_out": "run 累计输出 token",
+            "cache_hit": "run 累计缓存命中 token",
+            "duration_ms": "run 总耗时毫秒（run 开始到结束）",
+            "model_used": "最终模型标签",
+            "truncated": "最终回答是否被截断",
+            "answer_preview": "最终回答前 200 字符（审计摘要）",
         },
     )
 )

@@ -69,6 +69,7 @@ class _InteropMixin:
                         f"处理完按协议 status 改 done 并移入 done/）"
                     ),
                     source=MessageSource.SYSTEM,
+                    metadata={"interop_source": f.name},  # DSH 借鉴: 注入事件溯源文件名
                 ))
             if len(files) > _MAX_INBOX_INJECT:
                 out.insert(0, Message(
@@ -84,10 +85,13 @@ class _InteropMixin:
             logger.warning("协调通道 inbox 扫描失败（fail-open）", exc_info=True)
             return []
 
-    def _inject_interop_messages(self, base: list[Message], prefix_len: int) -> tuple[list[Message], int]:
+    def _inject_interop_messages(
+        self, base: list[Message], prefix_len: int, session_id: str = ""
+    ) -> tuple[list[Message], int]:
         """装配点调用: inbox 消息注入到 memory 之后、历史之前（返回注入后的 base 与 prefix_len）.
 
         engine._build_llm_messages 调用（每轮 run 必感知）；任何异常回落原值（fail-open）。
+        session_id: 注入目标会话（供 interop.spliced 事件溯源，缺省不记）。
         注入位置语义（2026-08-16 优化，P1-10 前缀稳定）:
         - base[:prefix_len] = memory 段（前置注入，字节级稳定）
         - inbox 插入 memory 之后 → 与 memory 同机制: 最终由 build_history_messages 的
@@ -99,6 +103,26 @@ class _InteropMixin:
         try:
             inbox = self._interop_inbox_messages()
             if inbox:
+                # DSH 借鉴(2026-08-17): interop.spliced 注入事件（对齐 agent/inbox/spliced）——
+                # 记录来源/条数/位置，缓存审计可追溯"哪轮请求含外部注入"（fail-open）
+                try:
+                    self._event_append(
+                        session_id or "?",
+                        "interop.spliced",
+                        {
+                            "session_id": session_id or "?",
+                            "round": 0,  # 构建期不知轮次，如实置 0
+                            "count": len(inbox),
+                            "start": prefix_len,
+                            "sources": [
+                                (m.metadata or {}).get("interop_source", "")
+                                for m in inbox
+                            ],
+                            "content_preview": (inbox[0].content or "")[:200],
+                        },
+                    )
+                except Exception:  # noqa: BLE001 — 注入事件失败 fail-open（不影响注入本身）
+                    logger.warning("interop.spliced 事件写入失败（fail-open）")
                 return base[:prefix_len] + inbox + base[prefix_len:], prefix_len + len(inbox)
         except Exception:
             logger.warning("协调通道 inbox 注入失败（fail-open）", exc_info=True)
