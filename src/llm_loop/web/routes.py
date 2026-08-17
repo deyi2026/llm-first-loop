@@ -570,6 +570,40 @@ def health() -> dict:
     return {"status": "ok", "service": SERVICE_NAME, "version": SERVICE_VERSION}
 
 
+@router.get("/api/v1/evolution/list")
+def evolution_list(request: Request, limit: int = 30) -> Response:
+    """演进建议列表（只读——web 审批状态展示数据源；审批走飞书/CLI）."""
+    from pathlib import Path as _P
+
+    base = Path(os.environ.get("LFL_DATA_DIR", "") or _P(__file__).resolve().parents[3] / "data")
+    f = base / "audit" / "evolution_suggestions.jsonl"
+    out = []
+    if f.exists():
+        try:
+            for line in f.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except Exception:  # noqa: BLE001 — 单行坏数据跳过
+                    continue
+                out.append({
+                    "id": d.get("id", ""),
+                    "ts": d.get("ts", ""),
+                    "status": d.get("status", ""),
+                    "priority": d.get("priority", ""),
+                    "requires_human": bool(d.get("requires_human")),
+                    "content": (d.get("content") or "")[:200],
+                    "executed_at": d.get("executed_at"),
+                    "verified_at": d.get("verified_at"),
+                })
+        except OSError:
+            pass
+    out.sort(key=lambda x: x["ts"], reverse=True)
+    return JSONResponse(content={"suggestions": out[:limit], "count": len(out)})
+
+
 @router.get("/api/v1/sessions/{session_id}/stats")
 def session_stats(session_id: str, request: Request) -> Any:
     """会话统计（M59，对齐 DSH 统计栏）：轮/步/tokens/缓存命中/耗时聚合.
