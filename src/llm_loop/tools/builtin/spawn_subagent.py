@@ -39,6 +39,13 @@ class SpawnSubAgentTool:
                 "type": "integer",
                 "description": "递归深度（内部自增，父调用不传；子代理再委派时自动+1）",
             },
+            "acceptance": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "验收清单（可选，对齐 dsh_task 协议 v2）：子代理完成时逐项自检输出"
+                               "完成/未完成/原因——分歧显性化，父级保留最终裁决权。给验收标准后"
+                               "子代理结果更可靠（自检倒逼收敛，避免'答非所问'）。",
+            },
         },
         "required": ["task"],
     }
@@ -51,6 +58,7 @@ class SpawnSubAgentTool:
         context = str(kwargs.get("context", "")).strip()
         inherit = bool(kwargs.get("inherit", False))
         depth = int(kwargs.get("depth", 0) or 0)
+        acceptance = [str(a).strip() for a in (kwargs.get("acceptance") or []) if str(a).strip()]
 
         if not task:
             return ToolResult(
@@ -61,7 +69,9 @@ class SpawnSubAgentTool:
             )
 
         try:
-            result = self._runner.run(task=task, context=context, depth=depth, inherit=inherit)
+            result = self._runner.run(
+                task=task, context=context, depth=depth, inherit=inherit, acceptance=acceptance
+            )
         except Exception as exc:  # noqa: BLE001 — 子代理异常如实回传
             return ToolResult(
                 status=ToolResultStatus.ERROR,
