@@ -221,3 +221,21 @@ export function formatTokens(n: number | undefined | null): string {
   }
   return String(v);
 }
+
+/** 后台 run 状态查询（EVO 后台 run）：running/done + 起止时间（前端刷新/切换后恢复可见性）. */
+export interface StreamStatus {
+  running: boolean;
+  detail?: string;
+  started_at?: string;
+  finished_at?: string;
+}
+
+export async function fetchStreamStatus(sessionId: string): Promise<StreamStatus | null> {
+  try {
+    const resp = await fetch(`/api/v1/chat/stream/status?session_id=${encodeURIComponent(sessionId)}`);
+    if (!resp.ok) return null;
+    return (await resp.json()) as StreamStatus;
+  } catch {
+    return null; // 端点不可用 → 静默（fail-open）
+  }
+}

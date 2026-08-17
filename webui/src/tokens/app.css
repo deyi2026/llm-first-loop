@@ -1110,3 +1110,12 @@
 .v2-stats-warn {
   color: #e8b64c;
 }
+
+/* ── 后台任务生成中提示（EVO 后台 run 可见性）── */
+.v2-bg-running {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--dsw-specific-accent-fg, #e8b64c);
+  background: color-mix(in srgb, var(--dsw-specific-accent-fg, #e8b64c) 10%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--dsw-specific-accent-fg, #e8b64c) 30%, transparent);
+}
