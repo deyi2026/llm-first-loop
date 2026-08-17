@@ -13,7 +13,7 @@ from contextlib import suppress
 from pathlib import Path
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
-from llm_loop.tools.builtin.job_registry import JobRegistry
+from llm_loop.tools.builtin.job_registry import JobLimitExceeded, JobRegistry
 
 # 方案 4: 工具输出截断（context 优化——长输出只发头尾，完整内容可经 search_archive 检索）
 # EVO-20260814: 裁剪阈值可配置化（对齐 Harness toolResultPruner 思路）——
@@ -224,7 +224,20 @@ class ExecuteCommandTool:
                     env=env,
                     start_new_session=True,  # 独立进程组：job_kill 可整树终止（防孤儿进程）
                 )
-                job_id = JobRegistry.instance().create(proc, command)
+                # DSH 借鉴 021-B: owner 并发上限——超限释放已启动进程并如实拒绝
+                try:
+                    job_id = JobRegistry.instance().create(proc, command)
+                except JobLimitExceeded as exc:
+                    try:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                    except (ProcessLookupError, PermissionError, OSError):
+                        proc.terminate()  # 兜底：单进程 SIGTERM
+                    return ToolResult(
+                        status=ToolResultStatus.FAILURE,
+                        content=f"[任务超限拒绝] {exc}\n命令未执行（进程已释放）: {command}",
+                        tool_call_id="",
+                        tool_name=self.name,
+                    )
                 JobRegistry.instance().start_readers(job_id)
                 return ToolResult(
                     status=ToolResultStatus.SUCCESS,

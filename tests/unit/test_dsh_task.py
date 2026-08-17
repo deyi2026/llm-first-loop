@@ -29,8 +29,6 @@ def _write_fake_dsh(dirpath: Path, mode: str) -> str:
 def _make_tool(monkeypatch, fake_dsh: str) -> DshTaskTool:
     monkeypatch.setattr("shutil.which", lambda _name: fake_dsh)
     return DshTaskTool()
-
-
 def test_success_receives_answer(monkeypatch, tmp_path):
     """退出码 0 + stdout 回答 → success 回执."""
     fake = _write_fake_dsh(tmp_path, "ok")

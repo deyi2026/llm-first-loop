@@ -279,7 +279,8 @@ class SchedulerThread:
         """
         from datetime import datetime as _dt
 
-        inbox = Path("data/interop/lfl_to_dsh/pending")
+        # EVO-20260817-6efeb7a0: 基准统一（P0-3）——LFL_DATA_DIR 优先，与 interop/web 一致
+        inbox = Path(os.environ.get("LFL_DATA_DIR", "data")) / "interop" / "lfl_to_dsh" / "pending"
         inbox.mkdir(parents=True, exist_ok=True)
         now = _dt.now(UTC)
         ts = now.strftime("%Y%m%d-%H%M%S")

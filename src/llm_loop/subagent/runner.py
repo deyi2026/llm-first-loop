@@ -22,6 +22,7 @@ SUBAGENT_ALLOWED_TOOLS = {
     "web_fetch",
     "web_search",
     "get_tool_schema",
+    "subagent_report",  # DSH 借鉴 022-B: 子代理中途报告（父侧可见性）
     # EVO-20260817 审查 P0-2: fix_loop 路径 I 子代理修复需要 edit_file（P0-D1 设计
     # 本要求"修复由子代理经 edit_file 完成"，白名单漏配致端到端断路）。
     # 安全链完整: edit_file 含 symlink 写防护 + FileBaseline 并发校验 + CatastrophicGuard。
@@ -31,6 +32,11 @@ SUBAGENT_ALLOWED_TOOLS = {
 MAX_DEPTH = 3
 MAX_ITERATIONS = 8
 
+# fork 继承切片预算（DSH 借鉴 022-A）: 最近消息条数 / 单条字符 / 总字符
+_INHERIT_MAX_MSGS = 6
+_INHERIT_MSG_CHARS = 800
+_INHERIT_MAX_CHARS = 3000
+
 
 @dataclass
 class SubAgentResult:
@@ -39,6 +45,7 @@ class SubAgentResult:
     final_answer: str
     rounds: int = 0
     tool_calls: list[dict] = field(default_factory=list)  # 工具轨迹摘要（name→status）
+    reports: list[str] = field(default_factory=list)  # 中途报告（DSH 借鉴 022-B）
     truncated: bool = False  # 轮数超限截断
     refused: bool = False  # 深度超限拒绝
     depth: int = 0
@@ -71,12 +78,15 @@ class SubAgentRunner:
         context: str = "",
         depth: int = 0,
         max_rounds: int | None = None,
+        inherit: bool = False,
     ) -> SubAgentResult:
         """执行子代理任务（父代理调用 depth=0，子代理内部递归自增）.
 
         max_rounds: 节点级轮次预算（P3-4 DAG 节点预算）；None = 构造器 max_iterations。
+        inherit (DSH 借鉴 022-A, fork 继承): True 时自动从当前会话（父会话）切片最近
+        上下文注入子代理，省手动提取要点；与 context 手动要点可并存（合并注入）。
+        诚实标注: 切片为最近消息原文（非摘要），按条数/字符预算截断。
         """
-        """执行子代理任务（父代理调用 depth=0，子代理内部递归自增）."""
         if depth >= self.max_depth:
             return SubAgentResult(
                 final_answer=(
@@ -86,6 +96,10 @@ class SubAgentRunner:
                 refused=True,
                 depth=depth,
             )
+
+        # DSH 借鉴 022-A: fork 继承——切换子会话前读取父会话切片（current_session_id 仍指向父）
+        if inherit:
+            context = self._inherit_parent_context(context)
 
         # 独立会话（隔离父上下文）
         sid = f"subagent_{uuid.uuid4().hex[:12]}"
@@ -102,14 +116,23 @@ class SubAgentRunner:
 
         old_explicit = getattr(self.registry, "_session_id_explicit", "")
         old_ctx_sid = current_session_id.get()
+        # DSH 借鉴 022-B: 注入 subagent_report 上下文（收集器 + sid），finally 恢复
+        from llm_loop.tools.builtin.subagent_report import _SUBAGENT_REPORT_CTX
+
+        reports: list[str] = []
+        _report_tok = _SUBAGENT_REPORT_CTX.set((reports, sid))
         try:
             with suppress(Exception):
                 self.registry.set_session_id(sid)
             with suppress(Exception):
                 current_session_id.set(sid)
-            return self._execute_subagent(sess, task, context, depth, max_rounds=max_rounds)
+            result = self._execute_subagent(sess, task, context, depth, max_rounds=max_rounds)
+            # 报告收集器回填（如实：仅回传子代理实际调用的报告）
+            result.reports = list(reports)
+            return result
         finally:
             # 恢复父会话（成功/异常/截断任何返回路径都必须执行）
+            _SUBAGENT_REPORT_CTX.reset(_report_tok)
             with suppress(Exception):
                 self.registry.set_session_id(old_explicit)
             with suppress(Exception):
@@ -134,6 +157,7 @@ class SubAgentRunner:
             "规则:\n"
             f"- 可用工具: {sorted(SUBAGENT_ALLOWED_TOOLS)}\n"
             f"- 最多 {effective_rounds} 轮工具循环，结束后给出最终回答\n"
+            "- 执行中有关键进展/发现/异常，可用 subagent_report 主动向父代理报告（可多次，报告≠结束）\n"
             "- 如任务仍可拆分且未达深度上限，可用 spawn_subagent 递归委派（depth 自动+1）\n"
             "- 全部基于真实工具结果作答，不得编造"
         )
@@ -236,3 +260,45 @@ class SubAgentRunner:
             tokens_in=tokens_in,
             tokens_out=tokens_out,
         )
+
+    # ── fork 继承（DSH 借鉴 022-A）──
+    def _inherit_parent_context(self, context: str) -> str:
+        """父会话切片: 最近消息原文注入（条数/字符预算截断），fail-open.
+
+        读取 current_session_id（此时仍指向父会话）→ 切片最近消息 → 格式化为
+        '[role] content' 追加到 context。失败/空会话 → 原样返回（不阻断）。
+        """
+        from llm_loop.core.run_context import current_session_id
+
+        parent_sid = current_session_id.get()
+        if not parent_sid:
+            return context
+        try:
+            parent_sess = self.session_store.load(parent_sid)
+            msgs = list(parent_sess.messages)
+        except Exception:  # noqa: BLE001 — fail-open: 继承失败不阻断子代理
+            return context
+        # 取最近 _INHERIT_MAX_MSGS 条、总字符 ≤ _INHERIT_MAX_CHARS、单条截断
+        parts: list[str] = []
+        total = 0
+        for m in reversed(msgs):
+            role = getattr(m, "role", "?")
+            content = str(getattr(m, "content", "") or "")
+            if not content.strip():
+                continue
+            if len(content) > _INHERIT_MSG_CHARS:
+                content = content[:_INHERIT_MSG_CHARS] + "…（截断）"
+            line = f"[{role}] {content}"
+            if total + len(line) > _INHERIT_MAX_CHARS:
+                break
+            parts.append(line)
+            total += len(line)
+            if len(parts) >= _INHERIT_MAX_MSGS:
+                break
+        if not parts:
+            return context
+        inherit_block = (
+            "【fork 继承·父会话最近上下文（原文切片，非摘要）】\n"
+            + "\n".join(reversed(parts))
+        )
+        return f"{context}\n\n{inherit_block}" if context.strip() else inherit_block

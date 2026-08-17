@@ -30,6 +30,11 @@ class SpawnSubAgentTool:
                 "type": "string",
                 "description": "父上下文要点（可选；子代理无需父全量历史，只传必要背景）",
             },
+            "inherit": {
+                "type": "boolean",
+                "description": "fork 继承（可选，默认 false）：自动注入父会话最近上下文切片"
+                               "（原文非摘要，条数/字符预算截断），省手动提取；可与 context 并存",
+            },
             "depth": {
                 "type": "integer",
                 "description": "递归深度（内部自增，父调用不传；子代理再委派时自动+1）",
@@ -44,6 +49,7 @@ class SpawnSubAgentTool:
     def execute(self, **kwargs) -> ToolResult:
         task = str(kwargs.get("task", "")).strip()
         context = str(kwargs.get("context", "")).strip()
+        inherit = bool(kwargs.get("inherit", False))
         depth = int(kwargs.get("depth", 0) or 0)
 
         if not task:
@@ -55,7 +61,7 @@ class SpawnSubAgentTool:
             )
 
         try:
-            result = self._runner.run(task=task, context=context, depth=depth)
+            result = self._runner.run(task=task, context=context, depth=depth, inherit=inherit)
         except Exception as exc:  # noqa: BLE001 — 子代理异常如实回传
             return ToolResult(
                 status=ToolResultStatus.ERROR,
@@ -74,6 +80,11 @@ class SpawnSubAgentTool:
         ]
         if result.truncated:
             parts.append("[子代理截断] 已达轮数上限，结果未完整收敛")
+        if result.reports:
+            # DSH 借鉴 022-B: 中途报告摘要（最多 3 条防刷屏）
+            parts.append(f"[中途报告 {len(result.reports)} 条]")
+            for rep in result.reports[-3:]:
+                parts.append(f"  - {rep[:150]}")
         if result.tool_calls:
             trace = ", ".join(
                 f"{t['name']}:{t['status']}" for t in result.tool_calls[:10]

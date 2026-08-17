@@ -122,6 +122,7 @@ class Session:
                     "error_detail": m.error_detail,
                     "tool_calls": m.tool_calls,
                     "reasoning_content": m.reasoning_content,  # M20 THK-04: 思考链持久化同步
+                    "ts": m.ts,  # 2026-08-17: 消息时间戳持久化（web 时间显示数据源）
                     "model_used": m.model_used,  # M51: 模型标签持久化（页脚数据源）
                     "tokens_in": m.tokens_in,  # M52: prompt tokens 持久化
                     "tokens_out": m.tokens_out,  # M52: completion tokens 持久化
@@ -161,6 +162,7 @@ def _message_from_dict(d: dict) -> Message:
         llm_ms=float(d.get("llm_ms") or 0.0),  # M59: 旧 JSON 无键 → 0
         ttft_ms=float(d.get("ttft_ms") or 0.0),  # M59
         duration_ms=float(d.get("duration_ms") or 0.0),  # M59
+        ts=float(d.get("ts") or 0.0),  # 时间戳: 旧 JSON 无键 → 0（web 端时间显示兜底）
         metadata=d.get("metadata") or {},
     )
 

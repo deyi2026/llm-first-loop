@@ -191,13 +191,25 @@ class CrossSyncWatcher:
         """增量消息推送分段（角色标注 + 多条合并为一批；整批超 max_chars 拆多段，段标 i/N）.
 
         信息零丢失——不再 "…" 截断（2026-08-16 用户需求：单条上限 10000，超出分段显示）。
+        M51/M52/M58（2026-08-17 修复）：assistant 消息追加模型/token 脚注，与 web 端
+        buildAssistantNote / handlers.py footer 格式一致（—— {model} · {入}入/{出}出）。
         """
         header = f"[跨端同步] Web 端会话「{title}」新增 {len(messages)} 条消息："
         lines: list[str] = []
         for m in messages:
             role = "👤 用户" if m.role == "user" else "🤖 AI" if m.role == "assistant" else f"⚙️ {m.role}"
             content = (m.content or "").strip() or "（空消息）"
-            lines.append(f"{role}: {content}")
+            line = f"{role}: {content}"
+            if m.role == "assistant" and getattr(m, "model_used", ""):
+                from llm_loop.core.loop import format_tokens
+
+                footer = f"\n—— {m.model_used}"
+                if getattr(m, "tokens_in", 0) or getattr(m, "tokens_out", 0):
+                    footer += f" · {format_tokens(m.tokens_in)}入/{format_tokens(m.tokens_out)}出"
+                if getattr(m, "tokens_cache_hit", 0):
+                    footer += f" · 缓存{format_tokens(m.tokens_cache_hit)}"
+                line += footer
+            lines.append(line)
         body = "\n".join(lines)
         budget = max(50, self._max_chars - len(header) - 8)  # 预留段头/段标空间
         chunks = self._split_text(body, budget)
