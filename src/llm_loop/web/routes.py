@@ -24,6 +24,7 @@ from .schemas import (
     ChatRequest,
     ChatResponse,
     ErrorResponse,
+    EvolutionReviewRequest,
     FeedbackRequest,
     MessageItem,
     SessionListResponse,
@@ -50,6 +51,9 @@ router = APIRouter()
 from llm_loop.web.fs_tree import fs_router
 
 router.include_router(fs_router)
+
+# EVO-20260818: web 演进审批（复用飞书 approval.py 状态机+幂等+flock 锁）
+from llm_loop.feishu.approval import approve, reject  # noqa: E402
 
 SERVICE_NAME = "llm-first-loop-web"
 SERVICE_VERSION = "0.6.6"  # T7: 语义化版本（与 pyproject 同步；git tag v0.5.2）
@@ -602,6 +606,66 @@ def evolution_list(request: Request, limit: int = 30) -> Response:
             pass
     out.sort(key=lambda x: x["ts"], reverse=True)
     return JSONResponse(content={"suggestions": out[:limit], "count": len(out)})
+
+
+@router.post("/api/v1/evolution/review")
+def evolution_review(payload: EvolutionReviewRequest, request: Request) -> Response:
+    """web 演进建议审批（EVO-20260818: 用户要求审批按钮，替代仅飞书/CLI）.
+
+    body: {"id": "EVO-xxx", "decision": "accepted|rejected", "reason": "可选"}
+    复用 feishu/approval.py 的 approve/reject（状态机+幂等+flock 锁）；
+    accepted 且 EVOLVE_LOCAL_EXEC 允许 → 自动触发执行（与飞书/CLI 行为一致）。
+    安全: 本地 web（127.0.0.1）默认可信；WEB_AUTH_REQUIRE=1 时受 Bearer 保护。
+    """
+    engine = _engine_from(request)
+    store = getattr(engine, "evolution_store", None)
+    if store is None:
+        return UTF8JSONResponse(
+            status_code=400,
+            content={"error": "evolve_disabled", "detail": "演进功能未启用（EVOLVE_ENABLED=0）。"},
+        )
+    evo_id = (payload.id or "").strip()
+    decision = (payload.decision or "").strip()
+    reason = (payload.reason or "").strip()
+    if not evo_id or decision not in {"accepted", "rejected"}:
+        return UTF8JSONResponse(
+            status_code=400,
+            content={"error": "invalid_params", "detail": "id 必填，decision 须为 accepted/rejected。"},
+        )
+    try:
+        if decision == "accepted":
+            ok, resp, reviewed = approve(store, evo_id)
+            if ok and reviewed:
+                from llm_loop.introspection.evolution_exec import maybe_auto_execute_from_engine
+
+                cur = _find_suggestion(store, evo_id)
+                if cur is not None:
+                    try:
+                        resp += "\n" + maybe_auto_execute_from_engine(engine, store, cur)
+                    except Exception as exc:  # noqa: BLE001 — 执行触发失败不影响审批
+                        resp += f"\n⚠️ 自动执行触发异常：{type(exc).__name__}"
+        else:
+            ok, resp = reject(store, evo_id, reason)
+    except Exception as exc:  # noqa: BLE001 — 审批异常如实回执
+        return UTF8JSONResponse(
+            status_code=500,
+            content={"error": "review_failed", "detail": f"审批异常: {type(exc).__name__}: {exc}"},
+        )
+    return UTF8JSONResponse(
+        content={"ok": ok, "message": resp},
+        status_code=200 if ok else 400,
+    )
+
+
+def _find_suggestion(store: Any, evo_id: str) -> dict | None:
+    """按 id 在演进存储中查找建议（web 审批执行触发用）."""
+    try:
+        for s in store.list() or []:
+            if s.get("id") == evo_id:
+                return s
+    except Exception:  # noqa: BLE001
+        return None
+    return None
 
 
 @router.get("/api/v1/sessions/{session_id}/stats")

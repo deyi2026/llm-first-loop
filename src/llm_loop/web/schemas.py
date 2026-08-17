@@ -121,3 +121,11 @@ class UploadResponse(BaseModel):
     result_text: str = ""
     detail: str = ""
     truncated: bool = False
+
+
+class EvolutionReviewRequest(BaseModel):
+    """web 演进建议审批（POST /api/v1/evolution/review，EVO-20260818）."""
+
+    id: str = Field(min_length=4, description="演进建议 ID（EVO-xxx）")
+    decision: str = Field(pattern="^(accepted|rejected)$", description="accepted / rejected")
+    reason: str = Field(default="", max_length=500, description="拒绝理由（可选）")

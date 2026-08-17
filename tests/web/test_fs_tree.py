@@ -143,3 +143,47 @@ def test_agents_tree_empty(client):
     r = cli.get("/api/v1/agents/tree")
     assert r.status_code == 200
     assert r.json()["nodes"] == []
+
+
+# ── 演进审批 API ──
+def test_evolution_review_accept(client, tmp_path):
+    """web 审批: accepted → 状态机流转 + 回执."""
+    cli, engine = client
+    # 构造带 evolution_store 的引擎
+    from llm_loop.introspection.evolution import EvolutionStore
+
+    st = EvolutionStore(tmp_path / "data" / "audit")
+    st.submit(content="web 审批测试建议", evidence="ev", impact_scope="core", priority="low")
+    engine.evolution_store = st
+    sid = st.list()[0]["id"]
+
+    r = cli.post("/api/v1/evolution/review", json={"id": sid, "decision": "accepted"})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["ok"] is True and "已批准" in d["message"]
+    assert st.list()[0]["status"] == "accepted"
+
+
+def test_evolution_review_reject_with_reason(client, tmp_path):
+    cli, engine = client
+    from llm_loop.introspection.evolution import EvolutionStore
+
+    st = EvolutionStore(tmp_path / "data" / "audit")
+    st.submit(content="web 拒绝测试", evidence="ev", impact_scope="core", priority="low")
+    engine.evolution_store = st
+    sid = st.list()[0]["id"]
+
+    r = cli.post("/api/v1/evolution/review", json={"id": sid, "decision": "rejected", "reason": "不成熟"})
+    assert r.status_code == 200
+    assert r.json()["ok"] is True and "已拒绝" in r.json()["message"]
+    assert st.list()[0]["status"] == "rejected"
+
+
+def test_evolution_review_invalid_params(client):
+    cli, _ = client
+    # decision 非法 → Pydantic pattern 校验拦下（422）
+    r = cli.post("/api/v1/evolution/review", json={"id": "EVO-x", "decision": "maybe"})
+    assert r.status_code == 422
+    # 缺 id → 422（min_length 校验）
+    r2 = cli.post("/api/v1/evolution/review", json={"id": "", "decision": "accepted"})
+    assert r2.status_code == 422

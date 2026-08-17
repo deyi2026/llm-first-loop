@@ -1094,3 +1094,56 @@
   color: var(--dsw-alias-label-tertiary);
   margin-top: 2px;
 }
+
+/* EVO-20260818: web 审批按钮（批准/拒绝） */
+.v2-evo-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.v2-evo-btn {
+  border: none;
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.v2-evo-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.v2-evo-btn.approve {
+  background: var(--dsw-alias-state-success, #16a34a);
+  color: #fff;
+}
+
+.v2-evo-btn.reject {
+  background: var(--dsw-alias-state-danger, #dc2626);
+  color: #fff;
+}
+
+.v2-evo-action-msg {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* 会话树：父会话折叠箭头 */
+.v2-session-arrow {
+  border: none;
+  background: transparent;
+  font-size: 10px;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  padding: 0 2px;
+  width: 16px;
+  flex: none;
+  margin-left: -18px;
+  margin-right: 2px;
+}
