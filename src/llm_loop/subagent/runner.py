@@ -79,12 +79,15 @@ class SubAgentRunner:
         depth: int = 0,
         max_rounds: int | None = None,
         inherit: bool = False,
+        acceptance: list[str] | None = None,
     ) -> SubAgentResult:
         """执行子代理任务（父代理调用 depth=0，子代理内部递归自增）.
 
         max_rounds: 节点级轮次预算（P3-4 DAG 节点预算）；None = 构造器 max_iterations。
         inherit (DSH 借鉴 022-A, fork 继承): True 时自动从当前会话（父会话）切片最近
         上下文注入子代理，省手动提取要点；与 context 手动要点可并存（合并注入）。
+        acceptance (2026-08-18, 对齐 dsh_task 协议 v2): 验收清单——注入子代理系统提示，
+        完成时逐项自检输出 完成/未完成/原因，分歧显性化（父级保留最终裁决权）。
         诚实标注: 切片为最近消息原文（非摘要），按条数/字符预算截断。
         """
         if depth >= self.max_depth:
@@ -126,7 +129,9 @@ class SubAgentRunner:
                 self.registry.set_session_id(sid)
             with suppress(Exception):
                 current_session_id.set(sid)
-            result = self._execute_subagent(sess, task, context, depth, max_rounds=max_rounds)
+            result = self._execute_subagent(
+                sess, task, context, depth, max_rounds=max_rounds, acceptance=acceptance
+            )
             # 报告收集器回填（如实：仅回传子代理实际调用的报告）
             result.reports = list(reports)
             return result
@@ -145,6 +150,7 @@ class SubAgentRunner:
         context: str,
         depth: int,
         max_rounds: int | None = None,
+        acceptance: list[str] | None = None,
     ) -> SubAgentResult:
         """子代理循环本体（会话注入/恢复由 run 包裹；拆出保证 finally 覆盖全部返回路径）."""
         effective_rounds = (
@@ -161,6 +167,13 @@ class SubAgentRunner:
             "- 如任务仍可拆分且未达深度上限，可用 spawn_subagent 递归委派（depth 自动+1）\n"
             "- 全部基于真实工具结果作答，不得编造"
         )
+        # 2026-08-18: 验收清单（对齐 dsh_task 协议 v2）——自检倒逼收敛，分歧显性化
+        if acceptance:
+            items = "\n".join(f"{i}. {a}" for i, a in enumerate(acceptance, 1))
+            sys_prompt += (
+                "\n\n--- 验收清单（最终回答必须逐项自检输出：完成 / 未完成 / 原因）---\n"
+                f"{items}"
+            )
         sess.messages.append(Message(role="user", content=sys_prompt, source=MessageSource.USER))
 
         rounds = 0

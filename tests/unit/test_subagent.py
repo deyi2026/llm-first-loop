@@ -249,3 +249,47 @@ def test_runner_restores_parent_session_on_exception(build_test_engine):
         assert current_session_id.get() == parent_sid
     finally:
         current_session_id.set(prev_ctx)
+
+
+def test_runner_acceptance_injected(build_test_engine):
+    """2026-08-18: acceptance 验收清单注入子代理系统提示（对齐 dsh_task 协议 v2）."""
+    engine, fake = build_test_engine([])
+    runner = SubAgentRunner(
+        llm=fake, registry=engine.registry, session_store=engine.session
+    )
+
+    def seq(calls):
+        # 记录收到的消息，断言验收清单已注入
+        import json
+
+        msgs = json.dumps([m.to_llm_dict() for m in calls], ensure_ascii=False) if hasattr(calls[0], "to_llm_dict") else str(calls)
+        captured.append(msgs)
+        return LLMResponse(content="完成", tool_calls=[], provider="fake")
+
+    captured: list[str] = []
+    fake._responses = [seq]
+    result = runner.run(
+        task="实现一个函数",
+        depth=0,
+        acceptance=["函数签名正确", "有 docstring", "单测通过"],
+    )
+    assert result.refused is False
+    joined = " ".join(captured)
+    assert "验收清单" in joined
+    assert "1. 函数签名正确" in joined
+    assert "2. 有 docstring" in joined
+    assert "3. 单测通过" in joined
+    assert "完成 / 未完成 / 原因" in joined
+
+
+def test_spawn_tool_acceptance_param(build_test_engine):
+    """spawn_subagent 工具参数透传: acceptance → runner（回执含验收自检要求）."""
+    engine, fake = build_test_engine([])
+    from llm_loop.tools.builtin.spawn_subagent import SpawnSubAgentTool
+
+    fake._responses = [LLMResponse(content="按验收完成", tool_calls=[], provider="fake")]
+    tool = engine.registry.get("spawn_subagent")
+    assert isinstance(tool, SpawnSubAgentTool), type(tool)
+    r = tool.execute(task="实现函数", acceptance=["签名正确", "有 docstring"])
+    assert r.status.name == "SUCCESS"
+    assert "按验收完成" in r.content
