@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Literal
@@ -71,6 +72,7 @@ class Message:
     llm_ms: float = 0.0  # M59: 本轮 run LLM 调用总耗时（毫秒；0=未记录）
     ttft_ms: float = 0.0  # M59: 首 token 延迟（毫秒；0=未记录/无文本）
     duration_ms: float = 0.0  # M59: 工具执行耗时（毫秒，tool 消息）
+    ts: float = field(default_factory=time.time)  # 消息时间戳（epoch 秒；web 端时间显示，缺省=创建时）
     metadata: dict = field(default_factory=dict)  # 截断标注/降级标注等
 
     def to_llm_dict(self) -> dict:

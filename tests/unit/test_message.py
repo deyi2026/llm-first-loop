@@ -101,3 +101,45 @@ def test_assistant_reasoning_content_roundtrip():
     # None → 无该键（零回归）
     m2 = Message(role="assistant", content="答", source=MessageSource.USER)
     assert "reasoning_content" not in m2.to_llm_dict()
+
+
+def test_message_ts_default_and_roundtrip():
+    """消息时间戳: 构造默认当前时间；asdict 序列化含 ts；旧 JSON 无 ts 兼容为 0."""
+    import time as _time
+    from dataclasses import asdict
+
+    from llm_loop.core.session import _message_from_dict
+
+    m = Message(role="user", content="hi", source=MessageSource.USER)
+    # 默认 ts = 创建时刻（允许微小偏差）
+    assert 0 < m.ts <= _time.time() + 1
+
+    # 序列化含 ts
+    d = asdict(m)
+    assert d["ts"] == m.ts
+
+    # 反序列化保留
+    m2 = _message_from_dict(d)
+    assert m2.ts == m.ts
+
+    # 旧 JSON 无 ts → 0（web 端时间显示兜底，不显示）
+    m3 = _message_from_dict({"role": "user", "content": "x", "source": "user"})
+    assert m3.ts == 0.0
+
+    # 显式 ts 透传
+    m4 = _message_from_dict({"role": "user", "content": "x", "source": "user", "ts": 1750000000.5})
+    assert m4.ts == 1750000000.5
+
+
+def test_session_to_dict_persists_ts():
+    """Session.to_dict 落盘序列化必须含 ts（端到端回归: ts-e2e 抓到的丢字段 bug）."""
+    from llm_loop.core.session import Session, _message_from_dict
+
+    m = Message(role="user", content="hi", source=MessageSource.USER)
+    assert m.ts > 0
+    s = Session(session_id="sess-ts-persist", messages=[m])
+    msgs = s.to_dict()["messages"]
+    assert msgs[0]["ts"] == m.ts
+    # 与 _message_from_dict 回读闭环
+    m2 = _message_from_dict(msgs[0])
+    assert m2.ts == m.ts

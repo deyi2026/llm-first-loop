@@ -548,3 +548,95 @@ def test_validate_pairing_remediation():
         {"role": "tool", "tool_call_id": "c1", "content": "r1"},
     ]
     assert _repair_tool_call_pairing(ok_msgs) is ok_msgs
+
+
+def _long_m(role, tag, n=200) -> Message:
+    """长消息（默认 200 字符，用于构造超预算场景）."""
+    return _m(role, tag * n)
+
+
+def test_head_keep_cache_friendly_archive():
+    """EVO-20260817-9d3e1f2c: head_keep_chars>0 时保留锚点头部（提交前缀稳定命中），
+    只归档中段，锚点不动——压缩不再全量破坏前缀缓存."""
+    archived: list[Message] = []
+    msgs = [
+        _m("user", "旧"), _m("assistant", "旧"),   # 锚点前（history_anchor=2）
+        _long_m("user", "头"),                      # 头部（前缀核心）
+        _long_m("assistant", "头"),
+        _long_m("user", "中"),                      # 中段（应归档）
+        _long_m("user", "中"),
+        _long_m("user", "尾"),                      # 尾部（最近，保留）
+    ]
+
+    def sink(session_id: str, msg: Message) -> None:
+        archived.append(msg)
+
+    anchor_box: list[int] = []
+    out = build_history_messages(
+        msgs, system_prompt="SYS", max_chars=800, session_id="s1",
+        archive_sink=sink, history_anchor=2, anchor_out=anchor_box,
+        head_keep_chars=400,  # 头部保留 400 字符（idx2+3 组）
+    )
+    # ① 锚点不动（前缀稳定）
+    assert anchor_box == [2], f"头部保留时锚点不应推进: {anchor_box}"
+    # ② 头部消息保留在输出（前缀核心未删）
+    contents = "".join(str(m.get("content", "")) for m in out)
+    assert "头" in contents, "头部消息应保留（前缀命中核心）"
+    # ③ 中段被归档（信息零丢失）
+    assert any("中" in a.content for a in archived), "中段应被归档"
+    # ④ 尾部（最近消息）保留
+    assert "尾" in contents, "最近消息应保留"
+
+
+def test_head_keep_zero_regression():
+    """head_keep_chars=0（默认）保持现有行为: 锚点前移 = 丢弃数（旧行为零回归）."""
+    archived: list[Message] = []
+    msgs = [
+        _m("user", "旧"), _m("assistant", "旧"),
+        _long_m("user", "头"), _long_m("assistant", "头"),
+        _long_m("user", "中"), _long_m("user", "中"),
+        _long_m("user", "尾"),
+    ]
+
+    def sink(session_id: str, msg: Message) -> None:
+        archived.append(msg)
+
+    anchor_box: list[int] = []
+    build_history_messages(
+        msgs, system_prompt="SYS", max_chars=800, session_id="s1",
+        archive_sink=sink, history_anchor=2, anchor_out=anchor_box,
+        head_keep_chars=0,  # 关闭修正 = 现有行为
+    )
+    # 旧行为: 从最旧端删除直到凑满 480 预算 → 保留尾部 400 字符（2 组）→ 锚点 = 2 + (5-2) = 5
+    assert anchor_box == [5], f"零回归模式锚点应推进: {anchor_box}"
+
+
+def test_compact_ratio_preemptive_compression():
+    """EVO-20260817 分级压缩: compact_ratio=0.9 时 90% 预算即主动压缩（不撞顶）.
+
+    预算 10000，history 9500（95%）——1.0 不压（<10000），0.9 压（>9000）.
+    预压缩只归档旧消息（消息数减少），最新消息在预算内不截断（平滑整理不打断推理）.
+    """
+    msgs = [_m("user", "旧消息" + "y" * 500), _m("assistant", "x" * 8900)]
+    # 默认 1.0: 95% 未超限 → 不压缩
+    out_full = build_history_messages(msgs, system_prompt="SYS", max_chars=10000)
+    assert not any("[上下文压缩]" in str(m.get("content", "")) for m in out_full)
+    # 0.9: 95% > 90% → 主动压缩（归档最旧，保留最新）
+    out_pre = build_history_messages(
+        msgs, system_prompt="SYS", max_chars=10000, compact_ratio=0.9
+    )
+    assert any("[上下文压缩]" in str(m.get("content", "")) for m in out_pre)
+    non_sys = [m for m in out_pre if m["role"] != "system"]
+    assert len(non_sys) == 1  # 旧消息归档, 只留最新
+    assert non_sys[0]["content"].startswith("x")  # 最新消息全文保留（预算内不截断）
+
+
+def test_compact_ratio_one_is_legacy():
+    """compact_ratio=1.0 保持现行为（超限才压），零回归."""
+    msgs = [_m("user", "u"), _m("assistant", "x" * 9500)]
+    out = build_history_messages(msgs, system_prompt="SYS", max_chars=10000, compact_ratio=1.0)
+    assert not any("[上下文压缩]" in str(m.get("content", "")) for m in out)
+    # 超限（105%）仍压
+    msgs2 = [_m("user", "u"), _m("assistant", "x" * 10500)]
+    out2 = build_history_messages(msgs2, system_prompt="SYS", max_chars=10000, compact_ratio=1.0)
+    assert any("[上下文压缩]" in str(m.get("content", "")) for m in out2)
