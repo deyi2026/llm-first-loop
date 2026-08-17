@@ -21,8 +21,8 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
   const [view, setView] = useState<"sessions" | "files" | "evo">("sessions");
   // 对齐 DSH 会话树：parent_id 映射（fetchAgentsTree 合并——会话树状层级）
   const [parentMap, setParentMap] = useState<Map<string, string | null>>(new Map());
-  // 会话树：折叠的父会话集合（默认展开——箭头可折叠）
-  const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
+  // 会话树：展开的父会话集合（默认折叠——每个主会话可展开子代理区域）
+  const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     void fetchAgentsTree().then(setParentMap);
@@ -180,7 +180,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
             }
             const renderRow = (s: SessionMeta, depth: number): React.ReactElement => {
               const kids = childrenMap.get(s.session_id) ?? [];
-              const isCollapsed = collapsedSessions.has(s.session_id);
+              const isExpanded = expandedSessions.has(s.session_id);
               return (
               <div key={s.session_id}>
                 <div
@@ -192,14 +192,14 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                     {depth > 0 ? "└─" : "├─"}
                   </span>
                   {depth > 0 && <span className="v2-tree-branch" aria-hidden />}
-                  {kids.length > 0 && (
+                  {depth === 0 && (
                     <button
                       type="button"
                       className="v2-session-arrow"
-                      title={isCollapsed ? "展开子代理" : "折叠子代理"}
+                      title={isExpanded ? "折叠" : "展开"}
                       onClick={(e) => {
                         e.stopPropagation();
-                        setCollapsedSessions((prev) => {
+                        setExpandedSessions((prev) => {
                           const n = new Set(prev);
                           if (n.has(s.session_id)) n.delete(s.session_id);
                           else n.add(s.session_id);
@@ -207,7 +207,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                         });
                       }}
                     >
-                      {isCollapsed ? "▶" : "▼"}
+                      {isExpanded ? "▼" : "▶"}
                     </button>
                   )}
                   <button
@@ -259,7 +259,12 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                     </button>
                   </div>
                 </div>
-                {!isCollapsed && kids.map((c) => renderRow(c, depth + 1))}
+                {isExpanded && kids.map((c) => renderRow(c, depth + 1))}
+                {isExpanded && kids.length === 0 && (
+                  <div className="v2-session-empty-kids" style={{ paddingLeft: 40 }}>
+                    （无子代理）
+                  </div>
+                )}
               </div>
               );
             };
