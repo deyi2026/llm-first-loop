@@ -62,12 +62,14 @@ def test_hit_procedure_injects_solution():
 
 
 def test_no_hit_default_template():
-    """经验库存在但未命中 → 默认模板（零回归）."""
+    """经验库存在但未命中 → 沉淀提示（2026-08-18 B 闭环：失败→提示 AI 沉淀经验）."""
     reg = ToolRegistry(memory_store=_FakeMemory([]))
     r = reg._result(ToolResultStatus.FAILURE, _fail_call(), "[文件不存在] /x", duration_ms=1.0)
-    assert r.guidance_extra == ""
+    assert "经验沉淀提示" in r.guidance_extra  # 无命中 → 提示沉淀（零回归：仅失败路径）
     msg = tool_result_to_message(r)
-    assert "[经验参考]" not in msg.content
+    assert "[经验参考]" not in msg.content  # 未命中不注入解法
+    assert "save_experience" in msg.content  # 但提示可用 save_experience 沉淀
+    assert "检查参数/路径" in msg.content  # 默认模板仍在
 
 
 def test_proc_without_solution_not_injected():

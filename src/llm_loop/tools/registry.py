@@ -555,6 +555,16 @@ class ToolRegistry:
                         return f"[经验参考] {solution}"
                     except Exception:  # noqa: BLE001 — 记录失败不影响注入
                         return f"[经验参考] {solution}"
+        # 2026-08-18 失败→经验沉淀闭环（B）: 失败且经验库无命中 → 提示 AI 主动沉淀
+        # （对齐 RULE-AI-05 记忆沉淀；仅提示不强制，决策归 AI。零回归：仅失败路径追加提示）
+        try:
+            if store is not None and not hits:
+                return (
+                    "[经验沉淀提示] 本次工具失败无经验库命中。若你定位了根因/解法，"
+                    "可用 save_experience 沉淀（跨会话复用，避免同类失败重复踩坑）。"
+                )
+        except Exception:  # noqa: BLE001 — 提示失败零影响
+            pass
         return ""
 
     @staticmethod
