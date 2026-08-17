@@ -120,6 +120,9 @@ def max_iterations_warning_message(rounds: int, budget: int) -> Message:
 
     AI 可自主决定：继续按当前节奏收尾 / 调用 adjust_strategy 调大 max_iterations /
     直接给出最终回答。程序只提供事实，不强制任何选择。
+    2026-08-18（DSH 009 ③）: 追加"拆分后台"引导——长任务重活应委托后台
+    （execute_command 后台 job / dsh_task background / spawn_subagent / workflow 扇出），
+    主循环只调度轮询，勿单循环硬跑（实证：12 实例逐个 execute_command → 40 轮耗尽）。
     """
     return Message(
         role="system",
@@ -128,7 +131,11 @@ def max_iterations_warning_message(rounds: int, budget: int) -> Message:
             f"原因: 任务所需工具调用较多时，剩余轮数可能不足以完成全部步骤。\n"
             f"建议: 若预计还需多轮工具调用，可调用 adjust_strategy 将 max_iterations "
             f"调大（白名单可调，上限 500）后继续；或压缩剩余步骤、优先完成关键动作，"
-            f"在最终回答中如实说明未完成部分。"
+            f"在最终回答中如实说明未完成部分。\n"
+            f"⚠️ 若任务含大量可并行/独立子步骤（多实例修复、批量处理等），优先拆分为"
+            f"后台任务（execute_command run_in_background=true / dsh_task background / "
+            f"workflow_run 扇出 / spawn_subagent 委派）再轮询汇总（job_output/结果通知）——"
+            f"主循环只做调度，勿单循环逐个硬跑（易耗尽轮数且串行低效）。"
         ),
         source=MessageSource.SYSTEM,
     )
