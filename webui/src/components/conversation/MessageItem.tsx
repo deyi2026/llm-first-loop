@@ -8,7 +8,6 @@ import { renderMarkdown } from "../../core/markdown";
 import { formatTokens } from "../../core/chat";
 import { fetchFilePreview, submitFeedback } from "../../core/api";
 import { zh } from "../../i18n/zh";
-import { fillComposer } from "../../core/shortcuts";
 
 /** 写剪贴板（navigator.clipboard 不可用/失败 → false，静默） */
 async function writeClipboard(text: string): Promise<boolean> {
@@ -326,35 +325,26 @@ export function MessageItem({
 }) {
   if (msg.role === "user") {
     return (
-      <div className="v2-msg user" data-testid="msg-user" data-msg-idx={index}>
+      <div className="v2-msg user" data-testid="msg-user">
         <div className="v2-msg-bubble user">
           <div className="v2-msg-text">{msg.content}</div>
         </div>
         <div className="v2-msg-actions">
           <CopyButton text={msg.content} />
-          <button
-            type="button"
-            className="v2-copy-btn"
-            data-testid="resend-btn"
-            title={zh.resend}
-            onClick={() => fillComposer(msg.content ?? "")}
-          >
-            🔄 {zh.resend}
-          </button>
         </div>
       </div>
     );
   }
   if (msg.role === "tool") {
     return (
-      <div className="v2-msg tool" data-testid="msg-tool" data-msg-idx={index}>
+      <div className="v2-msg tool" data-testid="msg-tool">
         <ToolReceipt msg={msg} />
       </div>
     );
   }
   // assistant
   return (
-    <div className="v2-msg assistant" data-testid="msg-assistant" data-msg-idx={index}>
+    <div className="v2-msg assistant" data-testid="msg-assistant">
       <div className="v2-msg-body">
         {msg.reasoningContent ? (
           <ThinkingBlock text={msg.reasoningContent} streaming={msg.streaming} />
