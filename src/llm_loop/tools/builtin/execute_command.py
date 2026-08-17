@@ -68,7 +68,13 @@ def _scrubbed_env() -> dict[str, str]:
 
 
 def _truncate_output(content: str, command: str = "") -> str:
-    """截断长输出：保留首 N + 末 M 字符（可配），中间附截断说明与搜索关键词."""
+    """截断长输出：保留首 N + 末 M 字符（可配），中间附截断说明与搜索关键词.
+
+    EVO-20260817-f485acac: 超阈值完整输出落盘到显式文件（data/audit/cmd_outputs/），
+    回执标注路径——AI 可 read_file 按需读全文，避免反复全量回显撑大请求前缀
+    （缓存命中时前缀体量仍计费；评测/批量任务大输出是成本大头）。
+    落盘失败 fail-open 不影响截断。
+    """
     max_chars, keep_head, keep_tail = _trim_config()
     if len(content) <= max_chars:
         return content
@@ -78,12 +84,29 @@ def _truncate_output(content: str, command: str = "") -> str:
     kw = " ".join(
         [w for w in command.split() if w.isalnum() and len(w) >= 2 and w not in _NOISE_WORDS][:3]
     )
+    # 完整输出落盘（f485acac）——仅超阈值时；data/ 已 gitignore 不入库
+    saved_note = ""
+    try:
+        import os
+        import time
+
+        out_dir = (
+            Path(os.environ.get("DATA_DIR", "data")) / "audit" / "cmd_outputs"
+        )
+        out_dir.mkdir(parents=True, exist_ok=True)
+        safe_cmd = "".join(c if c.isalnum() or c in "-_." else "_" for c in command[:40])
+        dump_path = out_dir / f"{time.strftime('%Y%m%d-%H%M%S')}_{safe_cmd[:24] or 'cmd'}.log"
+        dump_path.write_text(content, encoding="utf-8")
+        saved_note = f"\n完整输出已落盘: {dump_path}（可 read_file 按需读取全文，无需重跑命令）"
+    except Exception:  # noqa: BLE001 — 落盘失败不阻断截断
+        saved_note = ""
     return (
         f"{head}\n"
         f"[输出已截断] 事实: 完整输出 {len(content)} 字符，仅展示首 {keep_head} + 末 {keep_tail} 字符"
         f"（触发阈值: {max_chars} 字符，TOOL_TRIM_MAX/HEAD/TAIL 环境变量可调）。"
         f"\n原因: 上下文优化（方案 4 工具输出截断）。"
-        f"\n建议: 如需完整内容可用 search_archive 检索{'，搜索关键词: ' + kw if kw else '（按命令相关词检索）'}。\n"
+        f"\n建议: 如需完整内容可用 search_archive 检索{'，搜索关键词: ' + kw if kw else '（按命令相关词检索）'}。"
+        f"{saved_note}\n"
         f"{tail}"
     )
 
