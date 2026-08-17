@@ -41,4 +41,8 @@ export const zh = {
   exporting: "导出中…",
   subagentTag: "子代理",
   sessionCount: "{n} 个会话",
+  sessions: "会话",
+  fileTree: "文件",
+  copyPath: "复制路径",
+  treeHint: "目录树（骨架）：展开/折叠浏览——文件操作待后端 API",
 };

@@ -8,6 +8,7 @@ import { sessionStore, useCurrentSessionId, useSessions } from "../../core/store
 import { conversationStore } from "../../core/conversation";
 import { loadHistory } from "../../core/conversation";
 import { WorkspaceGroups, formatRelative } from "./WorkspaceGroups";
+import { FileTree } from "./FileTree";
 import { zh } from "../../i18n/zh";
 
 export function Sidebar({ collapsed }: { collapsed: boolean }) {
@@ -15,6 +16,8 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
   const currentId = useCurrentSessionId();
   const [query, setQuery] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  // 对齐 DSH：侧栏视图切换（会话列表 ↔ 文件树）
+  const [view, setView] = useState<"sessions" | "files">("sessions");
 
   useEffect(() => {
     void refreshSessionsAndCurrent();
@@ -90,6 +93,28 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
       <button type="button" className="v2-new-session" data-testid="new-session" onClick={handleNew}>
         ＋ {zh.newSession}
       </button>
+      <div className="v2-sidebar-tabs">
+        <button
+          type="button"
+          className={`v2-tab ${view === "sessions" ? "active" : ""}`}
+          onClick={() => setView("sessions")}
+          data-testid="tab-sessions"
+        >
+          💬 {zh.sessions}
+        </button>
+        <button
+          type="button"
+          className={`v2-tab ${view === "files" ? "active" : ""}`}
+          onClick={() => setView("files")}
+          data-testid="tab-files"
+        >
+          📁 {zh.fileTree}
+        </button>
+      </div>
+      {view === "files" ? (
+        <FileTree />
+      ) : (
+      <>
       <input
         className="v2-session-search"
         type="text"
@@ -175,6 +200,8 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
           )}
         </div>
       </WorkspaceGroups>
+      </>
+      )}
       <div className="v2-sidebar-footer">
         <span>{zh.sessionCount.replace("{n}", String(sessions.length))}</span>
       </div>

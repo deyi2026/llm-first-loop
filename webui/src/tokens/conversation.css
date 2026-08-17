@@ -803,3 +803,139 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ── 对齐 DSH：侧栏视图切换 tab + 文件树 ── */
+.v2-sidebar-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--dsw-alias-divider-color, rgba(128,128,128,0.2));
+}
+
+.v2-tab {
+  flex: 1;
+  padding: 4px 0;
+  font-size: 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.v2-tab.active {
+  background: var(--dsw-alias-state-business-primary, rgba(64, 128, 255, 0.15));
+  color: var(--dsw-alias-label-primary, inherit);
+  font-weight: 600;
+}
+
+.v2-tree {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.v2-tree-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.v2-tree-title {
+  font-weight: 600;
+}
+
+.v2-tree-root {
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v2-tree-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 2px 4px;
+}
+
+.v2-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.v2-tree-row:hover {
+  background: var(--dsw-alias-elevation-2, rgba(128, 128, 128, 0.12));
+}
+
+.v2-tree-arrow {
+  border: none;
+  background: transparent;
+  font-size: 10px;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  padding: 0;
+  width: 14px;
+  flex: none;
+}
+
+.v2-tree-arrow.placeholder {
+  visibility: hidden;
+}
+
+.v2-tree-icon {
+  flex: none;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.v2-tree-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.v2-tree-empty-hint {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+.v2-tree-actions {
+  flex: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.v2-tree-row:hover .v2-tree-actions {
+  opacity: 1;
+}
+
+.v2-tree-loading {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.v2-tree-loading.err {
+  color: var(--dsw-alias-state-danger, #dc2626);
+}
+
+.v2-tree-hint {
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  border-top: 1px solid var(--dsw-alias-divider-color, rgba(128,128,128,0.2));
+}
