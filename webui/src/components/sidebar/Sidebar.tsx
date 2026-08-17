@@ -21,6 +21,8 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
   const [view, setView] = useState<"sessions" | "files" | "evo">("sessions");
   // 对齐 DSH 会话树：parent_id 映射（fetchAgentsTree 合并——会话树状层级）
   const [parentMap, setParentMap] = useState<Map<string, string | null>>(new Map());
+  // 会话树：折叠的父会话集合（默认展开——箭头可折叠）
+  const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     void fetchAgentsTree().then(setParentMap);
@@ -170,7 +172,10 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                 roots.push(s);
               }
             }
-            const renderRow = (s: SessionMeta, depth: number) => (
+            const renderRow = (s: SessionMeta, depth: number): React.ReactElement => {
+              const kids = childrenMap.get(s.session_id) ?? [];
+              const isCollapsed = collapsedSessions.has(s.session_id);
+              return (
               <div key={s.session_id}>
                 <div
                   className={`v2-session-item-wrap ${s.session_id === currentId ? "active" : ""}`}
@@ -178,6 +183,24 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                   style={{ paddingLeft: depth > 0 ? 22 : 0 }}
                 >
                   {depth > 0 && <span className="v2-tree-branch" aria-hidden />}
+                  {kids.length > 0 && (
+                    <button
+                      type="button"
+                      className="v2-session-arrow"
+                      title={isCollapsed ? "展开子代理" : "折叠子代理"}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setCollapsedSessions((prev) => {
+                          const n = new Set(prev);
+                          if (n.has(s.session_id)) n.delete(s.session_id);
+                          else n.add(s.session_id);
+                          return n;
+                        });
+                      }}
+                    >
+                      {isCollapsed ? "▶" : "▼"}
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="v2-session-item"
@@ -227,9 +250,10 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                     </button>
                   </div>
                 </div>
-                {(childrenMap.get(s.session_id) ?? []).map((c) => renderRow(c, depth + 1))}
+                {!isCollapsed && kids.map((c) => renderRow(c, depth + 1))}
               </div>
-            );
+              );
+            };
             return roots.map((s) => renderRow(s, 0));
           })()}
           {filtered.length === 0 && (

@@ -107,6 +107,16 @@ class SubAgentRunner:
         # 独立会话（隔离父上下文）
         sid = f"subagent_{uuid.uuid4().hex[:12]}"
         sess = self.session_store.load(sid)
+        # 树对齐（DSH 借鉴，2026-08-18）: 子代理挂载父会话——parent_id 供会话树层级显示
+        # （agents/tree 按 parent_id 组树；此前未设 → 子代理悬空平铺）
+        try:
+            from llm_loop.core.run_context import current_session_id as _csid
+
+            _parent = _csid.get()
+            if _parent and _parent != sid:
+                sess.parent_id = _parent
+        except Exception:  # noqa: BLE001 — parent 标记失败不影响子代理运行
+            pass
         with suppress(Exception):
             self.session_store.save(sess)  # 落盘（可审计）
 
