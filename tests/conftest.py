@@ -108,10 +108,17 @@ class FakeLLM:
 
 @pytest.fixture(autouse=True)
 def isolated_data_dir(tmp_path, monkeypatch):
-    """隔离数据目录：所有测试不触碰真实 ./data."""
+    """隔离数据目录：所有测试不触碰真实 ./data.
+
+    EVO-20260817-38364821（已 accepted）: 同时覆盖 LFL_DATA_DIR——
+    interop 写方（job 终态通知 _notify_completion / subagent_report inbox）读
+    os.environ.get("LFL_DATA_DIR", "data")，缺省回落项目真实 data/ 造成污染
+    （2026-08-17 实测 10 条 job 通知混入真实 inbox）。
+    """
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     monkeypatch.setenv("DATA_DIR", str(data_dir))
+    monkeypatch.setenv("LFL_DATA_DIR", str(data_dir))
     return data_dir
 
 
@@ -187,6 +194,10 @@ def build_test_engine(fake_settings):
             llm=fake, registry=registry, session_store=session
         )
         registry.register(SpawnSubAgentTool(subagent_runner))
+        # DSH 借鉴 022-B: 子代理中途报告（与 factory 装配一致）
+        from llm_loop.tools.builtin.subagent_report import SubagentReportTool
+
+        registry.register(SubagentReportTool())
         status = ArchitectureStatusProvider(
             audit_dir=fake_settings.audit_dir,
             enabled=fake_settings.self_inspection_enabled,

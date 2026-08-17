@@ -332,6 +332,8 @@ def build_history_messages(
     system_prompt: str,
     max_chars: int = 1000000,
     *,
+    compact_ratio: float = 1.0,  # EVO-20260817: 主动压缩阈值（预算比例; 1.0=现行为超限才压;
+    # <1.0 在预算附近提前整理压缩——裁到 COMPRESS_TARGET_RATIO 留缓冲, 避免撞顶被动压缩）
     session_id: str = "",
     archive_sink: ArchiveSink | None = None,
     summarizer: Any | None = None,  # 保留签名向后兼容；压缩路径不再自动调 LLM 摘要（RULE-AI-00，LLM 摘要由 AI 经 search_archive(with_summary=true) 主动触发）
@@ -345,6 +347,9 @@ def build_history_messages(
     # —— 锚定后起点固定（只追加不挤旧, 超预算优先降级中段）, system+历史前缀稳定 → 前缀缓存命中
     anchor_out: list[int] | None = None,  # P1-10: 输出容器——构建后填充新锚点（相对传入列表）;
     # 正常提交（无归档）不填充（锚点保持不变, engine 沿用旧值）; 超长归档后填充推进值
+    head_keep_chars: int = 0,  # EVO-20260817-9d3e1f2c: 缓存友好压缩——保留锚点头部字符预算
+    # （0=关闭/现有行为零回归）。>0 时归档路径保留最旧 head_keep_chars 字符的组（提交前缀
+    # 稳定命中），只归档中段；锚点不推进（仅头部被归档兜底时才前移）。
 ) -> list[dict]:
     """组装提交 LLM 的消息序列（保序 + 超长另存压缩 + 如实标注）.
 
@@ -435,16 +440,19 @@ def build_history_messages(
     # R3: tool_trim_age=0 时按占用率自适应（AI 无感零配置）
     if tool_trim_age <= 0:
         tool_trim_age = _adaptive_tool_trim_age(total_chars, max_chars)
+    # EVO-20260817: 主动压缩阈值（预算×compact_ratio; 1.0=现行为超限才压,
+    # <1.0 预算附近提前整理——用户决策: 长任务大几率撞顶, 提前平滑压缩优于被动撞顶）
+    compact_limit = max(1, int(max_chars * compact_ratio))
     # P1-10: 锚定模式超预算 → 依次: ①剔除注入消息（推送式 system 不进提交, 剔除对提交
     # 零影响且不产生归档/extras——提交前缀完全稳定）; ②分层降级中段旧 tool 消息（不移动锚点）;
     # 仍超才走归档路径（锚点前移, 前缀断一次后重新锚定）
-    if history_anchor > 0 and total_chars > max_chars:
+    if history_anchor > 0 and total_chars > compact_limit:
         if skip_injected_system:
             filtered = [m for m in session_messages if not _is_injected_system(m)]
             if len(filtered) != len(session_messages):
                 session_messages = filtered
                 total_chars = sum(len(m.content) for m in session_messages)
-        if total_chars > max_chars and layer_tool_trim:
+        if total_chars > compact_limit and layer_tool_trim:
             session_messages = _layer_trim(
                 session_messages,
                 enabled=True,
@@ -454,7 +462,7 @@ def build_history_messages(
                 archive_sink=archive_sink,
             )
             total_chars = sum(len(m.content) for m in session_messages)
-    if total_chars <= max_chars:
+    if total_chars <= compact_limit:
         for m in _apply_reasoning_tail(
             _layer_trim(
                 session_messages,
@@ -505,10 +513,29 @@ def build_history_messages(
     # 裁到 100% 上限 → 下一轮必再超 → 每轮压缩 → 前缀每轮变化 → 永久断点（实测 1% 命中率）。
     # 裁到 60% → 压缩后留 40% 增长空间 → 稳定期从"几轮"延长到"几十轮"（该时段纯追加、高命中）。
     archive_budget = int(max_chars * _COMPRESS_TARGET_RATIO)
+    # EVO-20260817-9d3e1f2c（缓存友好压缩 v2）: 保留锚点头部（提交前缀命中）+ 最近尾部（语义），
+    # 只归档中段——压缩不再破坏前缀缓存。实证: 锚点前移式压缩后首轮命中 6.8%→次轮起 96%
+    # （全量失效后重新锚定）; 保留头部后压缩轮即命中 system+头部（~70%+），次轮 99%，无断崖。
+    # 头部保留代价: 每轮多占预算（命中价 ~1/10），换来压缩轮无全量失效; head_keep_chars=0 关闭。
+    head_groups: list[list[Message]] = []
+    if head_keep_chars > 0:
+        acc = 0
+        for g in atomic_groups:  # 从最旧端累积头部保留组（前缀核心）
+            gl = sum(len(mm.content) for mm in g)
+            if acc + gl > head_keep_chars:
+                break
+            head_groups.append(g)
+            acc += gl
+        # 上限保护: 头部不超过归档预算一半（防配置过大挤占尾部/超 max_chars）
+        head_chars = acc
+        while head_groups and head_chars > archive_budget // 2:
+            g = head_groups.pop()  # 收缩时去掉最新头部组（靠近中段，前缀核心不变）
+            head_chars -= sum(len(mm.content) for mm in g)
+    head_count = len(head_groups)
     # 最新组单条超限兜底仍按全预算判断（不因留缓冲而更激进截断单条消息;
     # 该分支语义=单条消息就超整个预算的极端场景, 保留语义与留缓冲解耦）。
     trim_budget = max_chars
-    for group in reversed(atomic_groups):
+    for group in reversed(atomic_groups[head_count:]):
         group_len = sum(len(mm.content) for mm in group)
         if archive_budget - group_len < 0 and kept_groups:
             archived.extend(group)  # 整组归档（配对原子性：不拆散）
@@ -567,8 +594,13 @@ def build_history_messages(
     # P1-10: 超长归档后锚点推进 = 旧锚点 + 窗口内被丢弃消息数
     # （kept_flat 消息数不变（_layer_trim/思考链瘦身不删消息）, 差值即整组丢弃数;
     # "最新组超限精简注入"分支的消息仍在 kept → 不计入推进）
+    # EVO-20260817-9d3e1f2c: 缓存友好压缩——头部保留（head_count>0）时锚点不动
+    # （提交前缀稳定命中，只归档中段）；仅头部也被归档（head_count=0）才前移。
     if anchor_out is not None:
-        anchor_out.append(history_anchor + (len(session_messages) - len(kept_flat)))
+        if head_count > 0:
+            anchor_out.append(history_anchor)
+        else:
+            anchor_out.append(history_anchor + (len(session_messages) - len(kept_flat)))
     for m in kept_flat:
         if skip_injected_system and _is_injected_system(m):
             continue  # P1-7: 推送式注入仅落会话, 不进提交（system 前缀稳定）
