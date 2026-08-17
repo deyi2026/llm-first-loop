@@ -85,9 +85,11 @@ class TestHistoryPagination:
         resp = client.get(f"/api/v1/sessions/{sid}/messages?limit=10")
         for m in resp.json()["messages"]:
             # M51/M52: 模型 + token 消耗字段（2026-08-16 页脚扩展，属计划内契约变更）
+            # ts: 消息时间戳（2026-08-17 消息时间显示，属计划内契约变更）
             assert set(m.keys()) <= {
                 "role", "content", "tool_call_id", "reasoning_content",
                 "model_used", "tokens_in", "tokens_out", "tokens_cache_hit", "tool_calls",
+                "ts",
             }
 
 

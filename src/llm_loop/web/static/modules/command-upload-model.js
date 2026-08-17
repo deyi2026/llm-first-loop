@@ -21,6 +21,7 @@ async function init() {
   if (!target) target = state.sessions[0];
   if (target) {
     selectSession(target.session_id);
+    checkResumeOnLoad(); // 2026-08-17 刷新恢复：有后台 run 进行中则自动续收
   }
   initResponsive(); // P4-2: 移动端响应式初始化（侧栏抽屉 + 视口兜底）
 }
@@ -176,12 +177,28 @@ async function loadModels() {
   if (status !== 200) return;
   els.modelSelect.innerHTML = "";
   state.availableModels = [];
+  // 2026-08-17: 按 provider 分组展示（optgroup），长模型名精简为可读名称（值不变）
+  const groups = new Map(); // provider -> [model...]
   for (const m of data.models) {
-    const opt = document.createElement("option");
-    opt.value = m;
-    opt.textContent = m;
-    els.modelSelect.appendChild(opt);
-    state.availableModels.push(m);
+    const slash = m.indexOf("/");
+    const provider = slash > 0 ? m.slice(0, slash) : "default";
+    if (!groups.has(provider)) groups.set(provider, []);
+    groups.get(provider).push(m);
+  }
+  for (const [provider, models] of groups) {
+    const og = document.createElement("optgroup");
+    og.label = provider;
+    for (const m of models) {
+      const opt = document.createElement("option");
+      opt.value = m;
+      // local/qwen3.6-27b-fable-fusion-711-uncensored-heretic-nm-dau-neo-max-mtp → 精简展示
+      const slash = m.indexOf("/");
+      const short = slash > 0 ? m.slice(slash + 1) : m;
+      opt.textContent = short.length > 42 ? short.slice(0, 39) + "…" : short;
+      og.appendChild(opt);
+      state.availableModels.push(m);
+    }
+    els.modelSelect.appendChild(og);
   }
   state.model = data.current || null;
   els.modelSelect.value = state.model || "";

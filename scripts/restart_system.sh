@@ -235,6 +235,7 @@ _start_service() {
       _rotate_log "$DATA_DIR/web.log"
       _log "[web] 启动 FastAPI（${WEB_HOST}:${WEB_PORT}，日志: ${DATA_DIR}/web.log）..."
       nohup "$VENV_PY" -m llm_loop.web >> "$DATA_DIR/web.log" 2>&1 &
+      echo "$!" > "$DATA_DIR/web.pid"   # 2026-08-17: 启动即落盘 pid（防"空 pid 文件→stop 误判未运行→端口占用"复发，DSH 036 建议）
       ;;
     feishu)
       _rotate_log "$DATA_DIR/feishu_bridge.log"
@@ -243,6 +244,7 @@ _start_service() {
       export FEISHU_EXIT_DRAIN_S="${FEISHU_EXIT_DRAIN_S:-3}"
       _log "[feishu] 启动飞书桥（日志: ${DATA_DIR}/feishu_bridge.log）..."
       nohup "$VENV_PY" -m llm_loop.feishu >> "$DATA_DIR/feishu_bridge.log" 2>&1 &
+      echo "$!" > "$DATA_DIR/feishu.pid"   # 2026-08-17: 启动即落盘 pid（同 web 修复，防复发）
       ;;
     cli)
       # cli 是交互式终端程序（需 tty），不能 nohup 后台常驻——只做可启动性校验并提示手动启动。

@@ -13,6 +13,15 @@ function renderMessages(scrollToBottom = true) {
   const hasPairIndex = pairIndex && pairIndex.pairedIds && pairIndex.pairedIds.size > 0;
   for (const msg of state.messages) {
     const node = document.createElement("div");
+    // 消息时间提示（epoch 秒 → HH:MM；跨天补日期；ts=0 旧数据不显示）
+    const addMsgTime = (target) => {
+      if (msg.ts) {
+        const d = new Date(msg.ts * 1000);
+        const sameDay = d.toDateString() === new Date().toDateString();
+        const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+        target.appendChild(el("span", "msg-time", sameDay ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`));
+      }
+    };
     node.className = "message " + msg.role;
     // M52: 架构事件/程序异常消息醒目（红色左边框，不混入普通消息流）
     if (msg.role === "assistant" && /\[(架构上报|程序异常|安全硬阻断)\]/.test(String(msg.content || ""))) {
@@ -68,6 +77,7 @@ function renderMessages(scrollToBottom = true) {
       // 正文容器（打字机只作用于正文，不碰工具链/note）
       const body = el("div", "answer-body");
       node.appendChild(body);
+      addMsgTime(node); // 消息时间提示（在 node 上、正文之外，打字机不清除）
       // 一键复制按钮（M39）：位于回复框右下角，复制 final_answer 原文纯文本
       const wrap = document.createElement("div");
       wrap.className = "message-wrap";
@@ -111,6 +121,7 @@ function renderMessages(scrollToBottom = true) {
         } else {
           node.textContent = msg.content;
         }
+        addMsgTime(node); // 消息时间提示（正文设置后追加，避免被 innerHTML 清空）
         const wrap = document.createElement("div");
         wrap.className = "message-wrap user-wrap";
         wrap.appendChild(node);

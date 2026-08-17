@@ -934,6 +934,7 @@ def get_session_messages(
             model_used=getattr(m, "model_used", ""),  # M51: 历史模型标签透传（页脚）
             tokens_in=getattr(m, "tokens_in", 0),  # M52: 历史 token 消耗透传
             tokens_out=getattr(m, "tokens_out", 0),  # M52
+            ts=getattr(m, "ts", 0.0),  # 时间戳透传（web 端消息时间显示）
             tool_calls=getattr(m, "tool_calls", None),  # 工具声明透传（历史出产物/正文链接）
         )
         for m in session.messages

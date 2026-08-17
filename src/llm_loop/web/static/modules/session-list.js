@@ -15,7 +15,7 @@ async function loadSessionMessages(sessionId) {
   // P3-1: 保留 tool_call_id（回执侧配对键），供工具调用与回执配对
   state.messages = (data.messages || [])
     .filter((m) => m.role === "user" || m.role === "assistant" || m.role === "tool")
-    .map((m) => ({ role: m.role, content: m.content, note: null, reasoningContent: m.reasoning_content || null, toolCallId: m.tool_call_id || null }));
+    .map((m) => ({ role: m.role, content: m.content, note: null, reasoningContent: m.reasoning_content || null, toolCallId: m.tool_call_id || null, ts: m.ts || 0 }));
   state.hasMoreHistory = !!data.has_more;
   state.loadedHistoryCount = (data.messages || []).length;
   renderMessages();
@@ -33,7 +33,7 @@ async function loadEarlierHistory() {
   }
   const earlier = (data.messages || [])
     .filter((m) => m.role === "user" || m.role === "assistant" || m.role === "tool")
-    .map((m) => ({ role: m.role, content: m.content, note: null, toolCallId: m.tool_call_id || null }));
+    .map((m) => ({ role: m.role, content: m.content, note: null, toolCallId: m.tool_call_id || null, ts: m.ts || 0 }));
   state.messages = [...earlier, ...state.messages];
   state.hasMoreHistory = !!data.has_more;
   state.loadedHistoryCount += (data.messages || []).length;

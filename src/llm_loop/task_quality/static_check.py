@@ -136,10 +136,14 @@ class StaticCheckChain:
 
     def _run_checker(self, name: str, file_path: str) -> CheckerResult:
         """执行单个检查器（超时/不可用 fail-open）."""
-        # 检查器不可用（未安装）→ SKIPPED
-        bin_path = self._find_bin(name)
-        if bin_path is None:
-            return CheckerResult(name, CheckerStatus.SKIPPED)
+        # 注入 command_runner 且未显式指定 env_bin_dir 时跳过本机探测（runner 接管执行，
+        # 测试/隔离场景）；显式 env_bin_dir（含指向空目录模拟缺失）仍走探测 → SKIPPED
+        if self._command_runner is not None and not self._env_bin:
+            bin_path = name
+        else:
+            bin_path = self._find_bin(name)
+            if bin_path is None:
+                return CheckerResult(name, CheckerStatus.SKIPPED)
 
         cmd = [part.replace("{bin}", bin_path).replace("{file_path}", file_path)
                for part in _CMD_TEMPLATES[name]]
