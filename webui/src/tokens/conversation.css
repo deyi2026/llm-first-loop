@@ -657,8 +657,8 @@
 
 .v2-composer-bar {
   display: flex;
-  align-items: flex-end;
-  gap: var(--dsw-space-2);
+  flex-direction: column;
+  gap: 6px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: var(--dsw-radius-lg);
   background: var(--dsw-specific-input-major);
@@ -687,10 +687,24 @@
   color: var(--dsw-alias-label-dimmed);
 }
 
-.v2-composer-actions {
+.v2-composer-tools {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: var(--dsw-space-2);
+}
+
+.v2-composer-tools-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.v2-composer-tools-right {
+  display: flex;
+  align-items: center;
+  flex: none;
 }
 
 .v2-model-select {

@@ -315,62 +315,66 @@ export function Composer() {
           rows={1}
           data-testid="composer-input"
         />
-        <div className="v2-composer-actions">
-          <select
-            className="v2-model-select"
-            value={currentModel ?? ""}
-            onChange={(e) => sessionStore.setModel(e.target.value || null)}
-            title={zh.modelSelect}
-            data-testid="model-select"
-          >
-            <option value="">{zh.modelDefault}</option>
-            {models.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-          <select
-            className="v2-model-select v2-effort-select"
-            value={currentEffort ?? ""}
-            onChange={(e) => sessionStore.setReasoningEffort(e.target.value || null)}
-            title={zh.reasoningEffortSelect}
-            data-testid="effort-select"
-          >
-            <option value="">{zh.effortDefault}</option>
-            {EFFORT_OPTIONS.map((ef) => (
-              <option key={ef} value={ef}>
-                {ef}
-              </option>
-            ))}
-          </select>
-          <label className="v2-icon-btn" title={zh.attach}>
-            📎
-            <input
-              type="file"
-              hidden
-              accept="image/*,.txt,.md,.pdf,.docx"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) void onPickFile(f);
-                e.target.value = "";
-              }}
-            />
-          </label>
-          {conv.streaming ? (
-            <button type="button" className="v2-btn primary" onClick={stopStreaming}>
-              ■ {zh.stop}
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="v2-btn primary"
-              onClick={() => void doSend()}
-              disabled={!text.trim()}
+        <div className="v2-composer-tools">
+          <div className="v2-composer-tools-left">
+            <select
+              className="v2-model-select"
+              value={currentModel ?? ""}
+              onChange={(e) => sessionStore.setModel(e.target.value || null)}
+              title={zh.modelSelect}
+              data-testid="model-select"
             >
-              {zh.send}
-            </button>
-          )}
+              <option value="">{zh.modelDefault}</option>
+              {models.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+            <select
+              className="v2-model-select v2-effort-select"
+              value={currentEffort ?? ""}
+              onChange={(e) => sessionStore.setReasoningEffort(e.target.value || null)}
+              title={zh.reasoningEffortSelect}
+              data-testid="effort-select"
+            >
+              <option value="">{zh.effortDefault}</option>
+              {EFFORT_OPTIONS.map((ef) => (
+                <option key={ef} value={ef}>
+                  {ef}
+                </option>
+              ))}
+            </select>
+            <label className="v2-icon-btn" title={zh.attach}>
+              📎
+              <input
+                type="file"
+                hidden
+                accept="image/*,.txt,.md,.pdf,.docx"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void onPickFile(f);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+          </div>
+          <div className="v2-composer-tools-right">
+            {conv.streaming ? (
+              <button type="button" className="v2-btn primary" onClick={stopStreaming}>
+                ■ {zh.stop}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="v2-btn primary"
+                onClick={() => void doSend()}
+                disabled={!text.trim()}
+              >
+                {zh.send}
+              </button>
+            )}
+          </div>
         </div>
       </div>
       <div className="v2-composer-hint" data-testid="composer-hint">
