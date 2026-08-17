@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
 # llm-first-loop 系统级优雅重启脚本（M46 补充，2026-08-11）
 #
-# 管理常驻服务（CLI 为交互式，不纳入）:
+# 管理常驻服务（cli 交互式，纳入 status/stop + 可启动校验，不参与常驻 start_all）:
 #   web    FastAPI 服务（python -m llm_loop.web，健康端点 GET /health）
 #   feishu 飞书桥（python -m llm_loop.feishu，WS 长连接）
+#   cli    终端 CLI（python -m llm_loop.cli，交互式需 tty，不能后台守护）
+#          cli start = 可启动性校验（import+版本）+ 提示手动终端启动（不伪装常驻）
 #
 # 用法:
-#   scripts/restart_system.sh                  # 全部重启
+#   scripts/restart_system.sh                  # 全部重启（web+feishu）
 #   scripts/restart_system.sh start|stop|restart|status
-#   scripts/restart_system.sh web|feishu start|stop|restart|status   # 单服务
+#   scripts/restart_system.sh web|feishu|cli start|stop|restart|status   # 单服务
 #
 # 设计要点:
 #   1. 优雅停机: SIGTERM → GRACE_S 内自然退出 → 超时 SIGKILL（每服务独立）。
-#   2. 健康检查: web 用 HTTP GET /health；feishu 用看门狗心跳文件新鲜度（M47，替代易误报的 TCP 检查）。
+#   2. 健康检查: web 用 HTTP GET /health；feishu 用看门狗心跳文件新鲜度（M47，替代易误报的 TCP 检查）；
+#      cli 用进程存活（无健康端点，交互式）。
 #   3. 凭证不硬编码: 环境变量优先 → 回退 本地既有实现/.env（脱敏提示不落盘）。
 #   4. 端口冲突检测: web 默认 8902（被占用时经 WEB_PORT 覆盖），启动前探测。
 #   5. 幂等安全: PID 文件 + pgrep 双校验；按依赖序启动（web 先、feishu 后）。
@@ -194,6 +197,10 @@ _health_check() {
       now_s="$(date +%s)"
       (( now_s - hb_mtime <= 90 ))
       ;;
+    cli)
+      # cli 无健康端点（交互式终端程序）：进程存活即健康
+      kill -0 "$pid" 2>/dev/null
+      ;;
     *) return 1 ;;
   esac
 }
@@ -237,6 +244,19 @@ _start_service() {
       _log "[feishu] 启动飞书桥（日志: ${DATA_DIR}/feishu_bridge.log）..."
       nohup "$VENV_PY" -m llm_loop.feishu >> "$DATA_DIR/feishu_bridge.log" 2>&1 &
       ;;
+    cli)
+      # cli 是交互式终端程序（需 tty），不能 nohup 后台常驻——只做可启动性校验并提示手动启动。
+      # 校验: import 引擎 + 打印当前 git HEAD（保证 cli 与脚本同代码基线）。
+      _log "[cli] 校验可启动性（import llm_loop.cli + 当前代码 HEAD）..."
+      if ! "$VENV_PY" -c "import llm_loop.cli; print('import OK')" >/dev/null 2>&1; then
+        _log "[cli] ❌ import 失败（venv/代码异常），详见上方错误"
+        return 1
+      fi
+      _log "[cli] import OK；当前代码 $(git -C "$PROJECT_DIR" rev-parse --short HEAD 2>/dev/null || echo '?')"
+      _log "[cli] 交互式程序需 tty，请手动终端启动: $VENV_PY -m llm_loop.cli [--interactive]（脚本不做后台常驻）"
+      echo "$VENV_PY -m llm_loop.cli --interactive" > "$DATA_DIR/cli.start.hint"  # 提示落盘可查
+      return 0
+      ;;
     *) _die "未知服务: ${svc}" ;;
   esac
 
@@ -278,8 +298,8 @@ _status_service() {
 }
 
 # ── 服务集定义 ──
-SERVICES="web feishu"
-WEB_BEFORE_FEISHU="web feishu"   # 启动序：web 先（依赖 LLM/端口）
+SERVICES="web feishu cli"
+WEB_BEFORE_FEISHU="web feishu"   # 启动序：web 先（依赖 LLM/端口）；cli 交互式不参与常驻启动
 FEISHU_BEFORE_WEB="feishu web"   # 停止序：feishu 先（桥先断，web 后）
 
 # ── 重启前检测（2026-08-16）：长任务处理中 → 警告确认，防重启打断导致无反馈 ──
@@ -365,7 +385,7 @@ _status_all() {
 # ── 主入口：支持 [service] action 与全局 action ──
 ACTION="${2:-}"
 case "${1:-}" in
-  web|feishu)
+  web|feishu|cli)
     [[ -n "$ACTION" ]] || ACTION="restart"
     case "$ACTION" in
       start)   _start_service "$1" ;;

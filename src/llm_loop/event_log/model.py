@@ -21,6 +21,7 @@ EVENT_CONTEXT_COMPRESSED = "context.compressed"
 EVENT_SESSION_META_CHANGED = "session.meta_changed"
 EVENT_SESSION_FORKED = "session.forked"  # D3 预留：本期登记不触发行为
 EVENT_REQUEST_META = "request.meta"  # HARNESS-02(2026-08-14): 每轮请求快照（模型/思考/工具目录/预算）
+EVENT_REQUEST_USAGE = "request.usage"  # DSH 借鉴(2026-08-17): 每轮响应 usage 明细（命中/miss token 精确落盘）
 
 # ── CodeArts 子 Agent 调度集成事件类型（design.md §1.1.2，凭证明文绝不入 payload）──
 EVENT_CODEARTS_DISPATCHED = "codearts.dispatched"
@@ -224,6 +225,23 @@ REGISTRY.register(
             "tools_count": "本轮注入的工具 schema 数量",
             "history_chars": "提交历史字符数",
             "budget": "本轮历史预算",
+        },
+    )
+)
+# DSH 借鉴(2026-08-17): 每轮响应 usage 明细——对齐 DSH 事件流 usage 事件，
+# 命中/miss token 逐轮落盘，命中率实时可算（不再依赖 CSV 账单/流式 M58 盲区）。
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_REQUEST_USAGE,
+        version=1,
+        fields={
+            "round": "循环轮次",
+            "model": "本轮实际使用的模型标签",
+            "tokens_in": "本轮输入 token（provider 未返回 usage 时为 0，如实不伪造）",
+            "tokens_out": "本轮输出 token",
+            "cache_hit": "前缀缓存命中 token（provider 未返回为 0）",
+            "cache_miss": "缓存未命中 token（=tokens_in−cache_hit，负值截 0；provider 无 usage 时不可据此判命中率）",
+            "usage_available": "provider 是否返回 usage（false 时 tokens_in/cache_hit=0 不可当全 miss）",
         },
     )
 )

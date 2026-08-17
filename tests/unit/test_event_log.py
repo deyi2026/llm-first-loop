@@ -23,6 +23,7 @@ from llm_loop.event_log.model import (
     EVENT_CONTEXT_COMPRESSED,
     EVENT_MESSAGE_APPENDED,
     EVENT_REQUEST_META,
+    EVENT_REQUEST_USAGE,
     EVENT_SESSION_CREATED,
     EVENT_SESSION_FORKED,
     EVENT_SESSION_META_CHANGED,
@@ -101,6 +102,7 @@ def test_registry_covers_five_types_with_fields():
         EVENT_SESSION_META_CHANGED,
         EVENT_SESSION_FORKED,
         EVENT_REQUEST_META,  # HARNESS-02: request.meta 请求快照
+        EVENT_REQUEST_USAGE,  # DSH 借鉴: request.usage 响应 usage 明细
         EVENT_CODEARTS_DISPATCHED,
         EVENT_CODEARTS_STATUS_SYNCED,
         EVENT_CODEARTS_STATUS_UNKNOWN,
@@ -117,6 +119,9 @@ def test_registry_covers_five_types_with_fields():
     comp_spec = REGISTRY.spec(EVENT_CONTEXT_COMPRESSED)
     assert comp_spec is not None
     assert {"archive_ref", "tool_call_id", "msg_seq", "chars"} <= set(comp_spec.fields)
+    usage_spec = REGISTRY.spec(EVENT_REQUEST_USAGE)
+    assert usage_spec is not None
+    assert {"tokens_in", "cache_hit", "cache_miss", "usage_available"} <= set(usage_spec.fields)
 
 
 def test_registry_unregistered_spec_none():

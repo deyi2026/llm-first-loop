@@ -533,6 +533,25 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             tokens_out += resp.completion_tokens
             tokens_cache_hit += resp.prompt_cache_hit_tokens
             llm_ms_total += _llm_round_ms
+            # DSH 借鉴(2026-08-17): 本轮响应 usage 明细落盘（fail-open）——命中/miss
+            # token 逐轮可审计，命中率实时可算（不依赖 CSV 账单/流式 M58 盲区）。
+            try:
+                _req_usage_available = bool(resp.prompt_tokens)
+                self._event_append(
+                    session_id,
+                    "request.usage",
+                    {
+                        "round": rounds,
+                        "model": model_used or getattr(self.settings, "llm_model", ""),
+                        "tokens_in": resp.prompt_tokens,
+                        "tokens_out": resp.completion_tokens,
+                        "cache_hit": resp.prompt_cache_hit_tokens,
+                        "cache_miss": max(0, resp.prompt_tokens - resp.prompt_cache_hit_tokens),
+                        "usage_available": _req_usage_available,
+                    },
+                )
+            except Exception:  # noqa: BLE001 — usage 明细失败 fail-open（不影响主循环）
+                logger.debug("request.usage 事件写入失败（fail-open）")
 
             # 无工具调用 → 最终回答 → 真诚回答阶段
             if not resp.tool_calls:
