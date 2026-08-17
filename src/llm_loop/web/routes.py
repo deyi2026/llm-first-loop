@@ -567,9 +567,11 @@ def health() -> dict:
 def session_stats(session_id: str, request: Request) -> Any:
     """会话统计（M59，对齐 DSH 统计栏）：轮/步/tokens/缓存命中/耗时聚合.
 
-    从会话消息聚合（只读，不触发 run）：
-    turns=assistant 消息数；steps=tool 消息数；tokens 累加；缓存命中率；
-    llm_ms/tool_ms 总和；首 token 平均；tok/s（输出/LLM 耗时）。
+    双源聚合（只读，不触发 run）：
+    - turns/steps：会话消息计数（assistant/tool）
+    - tokens/耗时/缓存：优先从 request.usage 事件聚合（消息 payload 不含统计字段，
+      message.appended 只存基础字段；request.usage 有 tokens_in/out/cache_hit/耗时）。
+      事件缺失时回退消息字段（内存态兼容）。
     """
     engine = _engine_from(request)
     sess = engine.session.load(session_id)
@@ -577,24 +579,52 @@ def session_stats(session_id: str, request: Request) -> Any:
         return UTF8JSONResponse(status_code=404, content={"error": "session_not_found", "detail": f"会话不存在: {session_id}"})
     msgs = getattr(sess, "messages", []) or []
     turns = steps = 0
+    for m in msgs:
+        if m.role == "assistant":
+            turns += 1
+        elif m.role == "tool":
+            steps += 1
+
+    # ── 统计字段：优先 request.usage 事件（持久化真相源），回退消息字段 ──
     tokens_in = tokens_out = cache_hit = 0
     llm_ms = tool_ms = 0.0
     ttft_sum = 0.0
     ttft_n = 0
-    for m in msgs:
-        if m.role == "assistant":
-            turns += 1
-            tokens_in += getattr(m, "tokens_in", 0) or 0
-            tokens_out += getattr(m, "tokens_out", 0) or 0
-            cache_hit += getattr(m, "tokens_cache_hit", 0) or 0
-            llm_ms += getattr(m, "llm_ms", 0.0) or 0.0
-            ttft = getattr(m, "ttft_ms", 0.0) or 0.0
-            if ttft > 0:
-                ttft_sum += ttft
-                ttft_n += 1
-        elif m.role == "tool":
-            steps += 1
-            tool_ms += getattr(m, "duration_ms", 0.0) or 0.0
+    usage_events = 0
+    event_store = getattr(engine.session, "_event_store", None)
+    if event_store is not None and getattr(event_store, "enabled", False):
+        try:
+            events = event_store.read(session_id)
+            for e in events:
+                if e.type != "request.usage":
+                    continue
+                p = e.payload or {}
+                usage_events += 1
+                tokens_in += p.get("tokens_in") or 0
+                tokens_out += p.get("tokens_out") or 0
+                cache_hit += p.get("cache_hit") or 0
+                llm_ms += p.get("llm_ms") or 0.0
+                tool_ms += p.get("tool_ms") or 0.0
+                ttft = p.get("ttft_ms") or 0.0
+                if ttft > 0:
+                    ttft_sum += ttft
+                    ttft_n += 1
+        except Exception:  # noqa: BLE001 — 事件读取失败回退消息字段（fail-open）
+            usage_events = 0
+    if usage_events == 0:
+        # 回退：消息字段（内存态会话有统计字段；event_log replay 无则如实 0）
+        for m in msgs:
+            if m.role == "assistant":
+                tokens_in += getattr(m, "tokens_in", 0) or 0
+                tokens_out += getattr(m, "tokens_out", 0) or 0
+                cache_hit += getattr(m, "tokens_cache_hit", 0) or 0
+                llm_ms += getattr(m, "llm_ms", 0.0) or 0.0
+                ttft = getattr(m, "ttft_ms", 0.0) or 0.0
+                if ttft > 0:
+                    ttft_sum += ttft
+                    ttft_n += 1
+            elif m.role == "tool":
+                tool_ms += getattr(m, "duration_ms", 0.0) or 0.0
     hit_rate = round(cache_hit / tokens_in * 100, 1) if tokens_in > 0 else 0.0
     tok_s = round(tokens_out / (llm_ms / 1000.0), 1) if llm_ms > 0 else 0.0
     return {
