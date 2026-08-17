@@ -29,6 +29,8 @@ export const zh = {
   stop: "停止生成",
   attach: "添加附件（图片/文本/PDF/docx）",
   modelSelect: "选择模型（当前请求生效）",
+  reasoningEffortSelect: "推理等级（当前请求生效）",
+  effortDefault: "默认推理等级",
   modelDefault: "默认模型",
   reload: "重新加载",
   feedbackUp: "回答有帮助",

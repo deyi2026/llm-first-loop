@@ -171,7 +171,9 @@ def chat(
     if lock is not None:
         acquired = True
     try:
-        result = engine.run(session_id, payload.message, model=payload.model)
+        result = engine.run(
+            session_id, payload.message, model=payload.model, reasoning_effort=payload.reasoning_effort
+        )
     except SessionBusyError as exc:
         # EVO 后台 run 改造（B5/B7）: 同会话已有后台 run 进行中 → 503（与锁超时同语义）
         return UTF8JSONResponse(
