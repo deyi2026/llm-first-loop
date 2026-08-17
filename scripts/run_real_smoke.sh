@@ -66,6 +66,13 @@ echo "=== [1.5/3] 真实 tool-call 往返（arguments str→dict 解析门禁）
   tests/integration/test_real_llm_smoke.py::test_real_llm_tool_call_arguments_roundtrip \
   -m real_llm -q
 
+# EVO-20260817-cef296f8 L3: 缓存命中门禁（同前缀 2 连发断言 ≥85%，防前缀稳定被破坏）
+# 缓存破坏 = 成本放大 ~50 倍（hit 0.05/M vs miss 1.5/M）；quick 也跑（每次 +2 请求，成本可忽略）
+echo "=== [1.6/3] 缓存命中门禁（前缀稳定 ≥85%）==="
+.venv/bin/python -m pytest \
+  tests/integration/test_cache_hit_smoke.py::test_cache_hit_rate_gate \
+  -m real_llm -q
+
 if [[ "$QUICK" = 1 ]]; then
   echo "✅ quick 冒烟通过（完整回归请不带 --quick 运行）"
   exit 0
