@@ -103,7 +103,7 @@ def fs_tree(request: Request, path: str = "") -> JSONResponse:
     try:
         dirs, files = [], []
         for p in sorted(target.iterdir(), key=lambda p: p.name.lower()):
-            if p.name.startswith("."):
+            if p.name.startswith(".") or p.name == "__pycache__":
                 continue
             if p.is_dir():
                 dirs.append(p.name)
