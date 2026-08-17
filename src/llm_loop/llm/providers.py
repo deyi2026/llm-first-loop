@@ -249,13 +249,17 @@ def _parse_context(value: Any) -> int:
 
 
 def _parse_wire_protocol(pid: str, mid: str, mval: dict[str, Any]) -> str:
-    """P3-5: 协议字段解析（openai/anthropic/google 白名单；非法回退 openai 如实告警）."""
+    """P3-5: 协议字段解析（openai/anthropic/google/lms-chat 白名单；非法回退 openai 如实告警）.
+
+    lms-chat（EVO-20260817 用户需求）: LM Studio 新版 /api/v1/chat 端点——input 模态数组、
+    SSE 流式、reasoning/message 分离；无原生工具，走文本工具协议（见 client.py _stream_lms_chat）。
+    """
     raw = str(mval.get("wire_protocol", "openai")).strip().lower()
-    if raw in {"openai", "anthropic", "google"}:
+    if raw in {"openai", "anthropic", "google", "lms-chat"}:
         return raw
     if raw != "openai":
         logger.warning(
-            "模型 %s/%s 的 wire_protocol=%r 非法（支持 openai/anthropic/google），回退 openai",
+            "模型 %s/%s 的 wire_protocol=%r 非法（支持 openai/anthropic/google/lms-chat），回退 openai",
             pid, mid, raw,
         )
     return "openai"

@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -152,6 +153,8 @@ class LLMClient:
             result = yield from self._stream_anthropic(messages, tools, timeout_s=timeout_s, model=model)
         elif protocol == "google":
             result = yield from self._stream_google(messages, tools, timeout_s=timeout_s, model=model)
+        elif protocol == "lms-chat":
+            result = yield from self._stream_lms_chat(messages, tools, timeout_s=timeout_s, model=model)
         else:
             result = yield from self._stream_openai(messages, tools, timeout_s=timeout_s, model=model)
         return result
@@ -258,6 +261,16 @@ class LLMClient:
         return _finish_response(acc, agg, self.provider)
 
     # ── Anthropic Messages API（wire_protocol=anthropic，P3-5） ──
+    def _anthropic_cache_enabled(self) -> bool:
+        """prompt caching 开关（EVO-20260817）: env ANTHROPIC_CACHE_CONTROL 显式覆盖；
+        未配置时 localhost/127.0.0.1 自动启用（本地模型省 token 主场景），远端默认关
+        （官方 API 兼容但默认零回归，避免第三方端点对 cache_control 报错）。"""
+        v = os.environ.get("ANTHROPIC_CACHE_CONTROL")
+        if v is not None:
+            return v.strip().lower() in {"1", "true", "yes", "on"}
+        base = (self.base_url or "").lower()
+        return "localhost" in base or "127.0.0.1" in base
+
     def _stream_anthropic(
         self,
         messages: list[dict],
@@ -266,18 +279,42 @@ class LLMClient:
         timeout_s: float | None,
         model: str | None,
     ) -> Iterator[StreamDelta]:
-        url = f"{self.base_url.rstrip('/')}/v1/messages"
+        # EVO-20260817: base_url 已含 /v1 时（如 LM Studio http://localhost:1234/v1）
+        # 避免拼出 /v1/v1/messages 404——归一化后两种配置均正确，官方 API 零回归
+        _base = self.base_url.rstrip("/")
+        if _base.endswith("/v1"):
+            _base = _base[:-3]
+        url = f"{_base}/v1/messages"
         system_parts = [m["content"] for m in messages if m.get("role") == "system" and m.get("content")]
         msgs = [m for m in messages if m.get("role") != "system"]
         payload: dict[str, Any] = {
             "model": self.model if model is None else model,
             "messages": self._to_anthropic_messages(msgs),
-            "tools": self._to_anthropic_tools(tools) or None,
             "stream": True,
             "max_tokens": self.max_tokens or 4096,
         }
+        # EVO-20260817: 无工具时不发 tools 字段（LM Studio 拒绝 null；官方 API 亦兼容省略）
+        _atools = self._to_anthropic_tools(tools)
+        if _atools:
+            payload["tools"] = _atools
         if system_parts:
-            payload["system"] = "\n\n".join(str(p) for p in system_parts)
+            # EVO-20260817 prompt caching（本地模型省 token，用户需求）:
+            # system+tools 为"固化固定信息"（每轮不变），打 cache_control 标记 →
+            # 首次全量计费、后续轮 cache hit 只计费追加的 messages（实测 LM Studio
+            # cache_read_input_tokens 命中，81% 前缀省 token）；messages 尾部追加最新。
+            # 默认 localhost 自动启用；官方 API 亦兼容（可 env 覆盖）。
+            if self._anthropic_cache_enabled():
+                payload["system"] = [
+                    {
+                        "type": "text",
+                        "text": "\n\n".join(str(p) for p in system_parts),
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ]
+                if payload.get("tools"):
+                    payload["tools"][-1]["cache_control"] = {"type": "ephemeral"}
+            else:
+                payload["system"] = "\n\n".join(str(p) for p in system_parts)
         headers = {
             "Content-Type": "application/json",
             "x-api-key": self.api_key,
@@ -448,6 +485,232 @@ class LLMClient:
             raise LLMNetworkError(f"LLM HTTP 异常: {exc}") from exc
         return _finish_response(acc, agg, self.provider)
 
+    # ── LM Studio /api/v1/chat（wire_protocol=lms-chat，EVO-20260817 用户需求） ──
+    def _stream_lms_chat(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        *,
+        timeout_s: float | None,
+        model: str | None,
+    ) -> Iterator[StreamDelta]:
+        """LM Studio 新版 /api/v1/chat 端点适配.
+
+        端点特征（实测 2026-08-17）:
+        - input: 模态数组 [{type: text, content: str}]（无 role/system/tools 键——极简接口）
+        - SSE 流式: reasoning.delta / message.delta / chat.end 事件（无原生工具事件）
+        - 无原生工具调用 → 文本工具协议: 工具描述注入文本, 模型输出
+          JSON {"tool": name, "args": {...}}，此处解析为 ToolCall 交给循环执行
+        - 工具轮上下文精简（用户需求）: 只保留最近 LMS_CHAT_TAIL 条消息文本化
+          （默认 16），不发送全部历史——端点无角色字段天然拼接, 早期历史经压缩
+          归档可检索（信息零丢失）
+        """
+        base = self.base_url.rstrip("/")
+        if base.endswith("/v1"):
+            base = base[:-3]
+        url = f"{base}/api/v1/chat"
+        model_id = self.model if model is None else model
+        payload: dict[str, Any] = {
+            "model": model_id,
+            "input": self._to_lms_input(messages, tools),
+            "stream": True,
+        }
+        headers = {"Content-Type": "application/json"}
+        acc = _StreamAcc()
+        try:
+            effective_timeout = timeout_s if timeout_s is not None else self.timeout_s
+            with self._client.stream(
+                "POST", url, json=payload, headers=headers, timeout=effective_timeout
+            ) as resp:
+                if resp.status_code >= 400:
+                    self._raise_for_status(resp)
+                for line in resp.iter_lines():
+                    if not line or not line.startswith("data: "):
+                        continue
+                    try:
+                        chunk = json.loads(line[6:])
+                    except ValueError:
+                        continue
+                    etype = chunk.get("type")
+                    if etype == "reasoning.delta":
+                        rc = chunk.get("content") or ""
+                        if rc:
+                            acc.reasoning_parts.append(rc)
+                            yield StreamDelta(text="", reasoning=rc)
+                    elif etype == "message.delta":
+                        c = chunk.get("content") or ""
+                        if c:
+                            acc.content_parts.append(c)
+                            yield StreamDelta(text=c)
+                    elif etype == "chat.end":
+                        break
+        except httpx.TimeoutException as exc:
+            raise LLMTimeoutError(f"LLM 请求超时（{effective_timeout}s）") from exc
+        except httpx.NetworkError as exc:
+            raise LLMNetworkError(f"LLM 网络不可达: {exc}") from exc
+        except LLMHTTPError:
+            raise
+        except httpx.HTTPError as exc:
+            raise LLMNetworkError(f"LLM HTTP 异常: {exc}") from exc
+        content = "".join(acc.content_parts) or None
+        reasoning = "".join(acc.reasoning_parts) or None
+        tool_calls: list[ToolCall] = []
+        if content:
+            for i, tc in enumerate(self._parse_text_tool_calls(content)):
+                tool_calls.append(ToolCall(id=f"lms-{i}", name=tc["name"], arguments=tc["arguments"]))
+        return LLMResponse(
+            content=content,
+            tool_calls=tool_calls,
+            provider=self.provider,
+            reasoning_content=reasoning,
+            prompt_tokens=acc.prompt_tokens,
+            completion_tokens=acc.completion_tokens,
+        )
+
+    # ── lms-chat 文本工具协议 ──
+    _LMS_CHAT_TAIL = int(os.environ.get("LMS_CHAT_TAIL", "16"))  # 工具轮只保留最近 N 条（上下文精简）
+
+    def _to_lms_input(self, messages: list[dict], tools: list[dict]) -> list[dict]:
+        """消息 → input 模态数组（system + 工具描述 + 最近 N 条历史，文本化）."""
+        parts: list[str] = []
+        for m in messages:
+            if m.get("role") == "system" and m.get("content"):
+                parts.append("[系统] " + str(m["content"]))
+        if tools:
+            parts.append(self._lms_tools_text(tools))
+        tail = [m for m in messages if m.get("role") != "system"][-self._LMS_CHAT_TAIL:]
+        for m in tail:
+            parts.append(self._lms_msg_text(m))
+        return [{"type": "text", "content": "\n\n".join(parts)}]
+
+    @staticmethod
+    def _lms_msg_text(m: dict) -> str:
+        """单条消息文本化（角色前缀标记；工具结果/调用 JSON 化）."""
+        role = m.get("role", "user")
+        content = m.get("content")
+        c = content if isinstance(content, str) else (
+            json.dumps(content, ensure_ascii=False) if content else ""
+        )
+        if role == "tool":
+            name = m.get("name") or "tool"
+            return f"[工具结果 {name}] {c}"
+        if role == "assistant":
+            tcs = m.get("tool_calls") or []
+            extra = ""
+            if tcs:
+                bits = []
+                for tc in tcs:
+                    fn = tc.get("function") or tc
+                    bits.append(
+                        f'[调用工具 {fn.get("name")} 参数 {json.dumps(fn.get("arguments") or {}, ensure_ascii=False)}]'
+                    )
+                extra = " " + " ".join(bits)
+            return f"[助手] {c}{extra}"
+        return f"[用户] {c}"
+
+    @staticmethod
+    def _lms_tools_text(tools: list[dict]) -> str:
+        """工具描述 → 文本注入（文本工具协议）.
+
+        EVO-20260817 本地模型精简（用户需求）: 本地模型 prefill 随输入线性增长，
+        全量 40+ 工具完整 JSON 每轮重发 = token 大头。这里固化精简:
+        - 仅 name + description 首句（≤120 字符）+ 参数骨架（字段名+类型+required）
+        - 固定不变 → 前缀稳定；尾部追加最新消息（LMS_CHAT_TAIL 已限 16 条）
+        - 省 token 但不影响推理: 模型只需知道"有哪些工具/干什么/参数骨架"，
+          完整 schema 按需经 get_tool_schema 读取
+        """
+        lines = ["[可用工具]"]
+        for t in tools:
+            fn = t.get("function") or t
+            desc = (fn.get("description") or "").strip().split("\n")[0][:120]
+            params = fn.get("parameters") or {}
+            props = (params.get("properties") or {})
+            skeleton = {
+                k: {"type": v.get("type", "string")}
+                for k, v in props.items()
+            }
+            lines.append(
+                json.dumps(
+                    {
+                        "name": fn.get("name", ""),
+                        "description": desc,
+                        "parameters": {
+                            "type": "object",
+                            "properties": skeleton,
+                            "required": params.get("required", []),
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        lines.append(
+            '需要调用工具时，仅输出一行 JSON: {"tool": "工具名", "args": {...}}；'
+            "多个调用用换行分隔，不要输出其他内容。"
+        )
+        return "\n".join(lines)
+
+    @staticmethod
+    def _parse_text_tool_calls(text: str) -> list[dict]:
+        """从消息文本解析文本协议工具调用 → [{name, arguments(dict)}].
+
+        容错: ```json 围栏、前后杂文本、args 嵌套空对象/数组；
+        解析失败返回空（fail-open 当普通回答）。
+        实现: 定位 "tool" 键 → 向前找对象起点 → 平衡括号找对象终点 → json.loads。
+        """
+        import re
+
+        out: list[dict] = []
+        s = text.strip()
+        m = re.search(r"```(?:json)?\s*(.*?)```", s, re.S)
+        if m:
+            s = m.group(1).strip()
+        for tm in re.finditer(r'"tool"\s*:\s*"[^"]+"', s):
+            i = tm.start()
+            while i > 0 and s[i] != "{":
+                i -= 1
+            if s[i] != "{":
+                continue
+            depth = 0
+            in_str = False
+            esc = False
+            j = i
+            while j < len(s):
+                ch = s[j]
+                if in_str:
+                    if esc:
+                        esc = False
+                    elif ch == "\\":
+                        esc = True
+                    elif ch == '"':
+                        in_str = False
+                else:
+                    if ch == '"':
+                        in_str = True
+                    elif ch == "{":
+                        depth += 1
+                    elif ch == "}":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                j += 1
+            if j >= len(s):
+                continue
+            try:
+                d = json.loads(s[i : j + 1])
+            except ValueError:
+                continue
+            name = d.get("tool")
+            if not name:
+                continue
+            args = d.get("args") or {}
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except ValueError:
+                    args = {}
+            out.append({"name": name, "arguments": args if isinstance(args, dict) else {}})
+        return out
+
     # ── 共享工具方法 ──
     def _raise_for_status(self, resp: httpx.Response) -> None:
         if resp.status_code >= 400:
@@ -479,42 +742,83 @@ class LLMClient:
     # ── 消息/工具协议转换 ──
     @staticmethod
     def _to_anthropic_messages(messages: list[dict]) -> list[dict]:
+        """OpenAI 历史 → Anthropic messages（tool_use/tool_result 配对清洗）.
+
+        2026-08-17 修复: 历史可能含"声明了 tool_calls 但回执缺失"的 assistant 消息
+        （LLM 调用失败中断/上下文压缩裁剪导致）。Anthropic API 硬约束: tool_use 必须
+        紧跟对应 tool_result。清洗策略: 未消费的孤立 tool_use 删除其块（含整条空消息
+        剔除）；孤立 tool_result（无对应 tool_use）删除该 user 消息。避免 400 拒绝。
+        """
+        # 第一遍: 转换 + 记录 tool_use 消费情况
         out: list[dict] = []
+        pending_use_ids: list[str] = []   # 已发出但未消费的 tool_use id
+        consumed: set[str] = set()        # 已被 tool_result 消费的 id
+        # (输出索引, 该条 assistant 的 tool_use id 列表)
+        assistant_blocks: list[tuple[int, list[str]]] = []
+        # 2026-08-17 修复2: 连续 tool 回执合并为单条 user（含多个 tool_result 块）。
+        # Anthropic 硬约束: 每个 tool_use 必须"immediately after"紧跟其 tool_result；
+        # 若一条 assistant 声明多个 tool_use、回执拆成多条独立 user → 仅第一个 tool_use
+        # 满足紧跟，后续 tool_use 被前一条 user 隔开 → 400（现场: id 360355894）。
+        # 合并后: assistant[text, tool_use A, tool_use B] → user[tool_result A, tool_result B]。
+        tool_buffer: list[dict] = []
         for m in messages:
             role = m.get("role")
             content = m.get("content") or ""
             if role == "tool":
-                # 工具回执 → tool_result 块（OpenAI 历史中 tool_call_id 关联）
-                out.append(
+                tid = str(m.get("tool_call_id") or "")
+                if tid and tid not in pending_use_ids:
+                    # 孤立 tool_result（无对应 tool_use）→ 跳过该消息
+                    continue
+                tool_buffer.append(
                     {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": str(m.get("tool_call_id") or ""),
-                                "content": str(content),
-                            }
-                        ],
+                        "type": "tool_result",
+                        "tool_use_id": tid,
+                        "content": str(content),
                     }
                 )
+                consumed.add(tid)
                 continue
+            # 非 tool 消息: 先 flush 缓冲的 tool_result（合并为单条 user）
+            if tool_buffer:
+                out.append({"role": "user", "content": tool_buffer})
+                tool_buffer = []
             if role == "assistant" and m.get("tool_calls"):
-                # 声明侧工具调用 → tool_use 块 + 文本
                 blocks: list[dict] = []
                 if content:
                     blocks.append({"type": "text", "text": str(content)})
+                ids: list[str] = []
                 for tc in m.get("tool_calls") or []:
+                    tid = str(tc.get("id") or "")
+                    ids.append(tid)
+                    pending_use_ids.append(tid)
                     blocks.append(
                         {
                             "type": "tool_use",
-                            "id": str(tc.get("id") or ""),
+                            "id": tid,
                             "name": str(tc.get("name") or ""),
                             "input": tc.get("arguments") or {},
                         }
                     )
                 out.append({"role": "assistant", "content": blocks})
+                assistant_blocks.append((len(out) - 1, ids))
                 continue
             out.append({"role": role, "content": str(content)})
+        if tool_buffer:  # 循环尾部 flush
+            out.append({"role": "user", "content": tool_buffer})
+        # 第二遍: 剔除未消费的孤立 tool_use 块（整条消息无文本且全孤立 → 删消息）
+        orphan_ids = [tid for tid in pending_use_ids if tid not in consumed]
+        if orphan_ids:
+            orphan_set = set(orphan_ids)
+            for idx, ids in assistant_blocks:
+                msgs = out[idx]
+                blocks = msgs.get("content") or []
+                keep = [b for b in blocks if not (b.get("type") == "tool_use" and b.get("id") in orphan_set)]
+                if keep:
+                    out[idx]["content"] = keep
+                else:
+                    # 该 assistant 消息只剩孤立 tool_use → 整条删除
+                    out[idx] = None
+            out = [m for m in out if m is not None]
         return out
 
     @staticmethod
