@@ -1141,11 +1141,15 @@
   font-size: 10px;
   color: var(--dsw-alias-label-tertiary);
   cursor: pointer;
-  padding: 0 2px;
+  padding: 0;
   width: 16px;
   flex: none;
-  margin-left: -18px;
-  margin-right: 2px;
+  margin: 0 4px 0 0;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
 }
 
 /* 会话树：树根 + 树线视觉（对齐文件树层级感） */
@@ -1165,11 +1169,15 @@
   font-size: 11px;
   color: var(--dsw-alias-label-tertiary);
   font-family: var(--ds-font-family-code, monospace);
-  margin-right: 2px;
+  width: 24px;
+  line-height: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  margin-right: 4px;
 }
 
 .v2-tree-guide.child {
-  margin-left: -18px;
+  margin-left: -20px;
 }
 
 .v2-session-empty-kids {
