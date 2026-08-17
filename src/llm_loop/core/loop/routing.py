@@ -156,6 +156,36 @@ class _RoutingMixin:
         return spec.inject_system_notices
 
     @staticmethod
+    def _local_tool_allowlist() -> frozenset[str]:
+        """本地模型工具白名单（EVO-20260817 用户需求: 固化精简工具集 + 尾部追加）.
+
+        lms-chat 文本工具协议/本地模型 prefill 下，全量 40+ 工具每轮文本化是 token 大头；
+        只注入核心常用工具（固定前缀稳定），完整目录仍可经 get_tool_schema 按需读取。
+        可经 env LOCAL_TOOL_NAMES 覆盖（逗号分隔）。
+        """
+        import os
+
+        names = os.environ.get(
+            "LOCAL_TOOL_NAMES",
+            # 核心集: 信息获取+执行+检索+架构自查（get_tool_schema 自举完整 schema）
+            "read_file,execute_command,search_files,web_fetch,web_search,"
+            "get_tool_schema,architecture_status,search_records,search_archive,"
+            "schedule,job_output,adjust_strategy",
+        )
+        return frozenset(n.strip() for n in names.split(",") if n.strip())
+
+    def _filter_local_tools(self: LoopEngine, tool_schemas: list[dict], model_label: str) -> list[dict]:
+        """本地 provider（local/*）工具精简: 只注入白名单核心工具（固定前缀+省 token）.
+
+        非 local provider → 原样返回（零回归）。
+        """
+        if not (model_label and "/" in model_label and model_label.split("/", 1)[0] == "local"):
+            return tool_schemas
+        allow = _RoutingMixin._local_tool_allowlist()
+        kept = [t for t in tool_schemas if t.get("name") in allow]
+        return kept if kept else tool_schemas
+
+    @staticmethod
     def _check_context_fit(
         messages: list[dict],
         tools_param: list[dict],

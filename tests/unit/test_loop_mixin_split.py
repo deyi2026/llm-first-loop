@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from llm_loop.core.loop.routing import _RoutingMixin
+
 LOOP_DIR = Path(__file__).resolve().parents[2] / "src" / "llm_loop" / "core" / "loop"
 
 
@@ -65,6 +67,27 @@ def test_complexity_reduction(engine_src):
     → M51/M52(2026-08-16) 模型+token 持久化（最终回答 Message 构造扩展）后 1071（新增 13 行）。
     → 工作区(2026-08-16) 多工作区管理（workspace_root/workspace_store/set_workspace +
       run 入口 contextvar 注入）后 1102（新增 31 行）。
-    仍低于拆分前, 守卫防再膨胀（>1110 应触发拆分评审）。
+    → EVO-20260817-72fcd94a(2026-08-17) 缓存健康闭环 + 发送前门禁（逻辑抽独立模块
+      core/cache_health.py 164 行，engine 仅接线）后 1125（新增 23 行：init 接线 + build
+      预检/后检 + run 末注入）。
+    仍低于拆分前, 守卫防再膨胀（>1135 应触发拆分评审）。
     """
-    assert len(engine_src.splitlines()) < 1113
+    assert len(engine_src.splitlines()) < 1136
+
+
+def test_local_tool_allowlist_filter():
+    """EVO-20260817: local provider 工具精简（固定白名单, 省 token 不影响推理）."""
+    schemas = [
+        {"name": "read_file"},
+        {"name": "web_fetch"},
+        {"name": "submit_evolution"},
+        {"name": "switch_model"},
+        {"name": "get_tool_schema"},
+    ]
+    kept = _RoutingMixin._filter_local_tools(None, schemas, "local/qwen3.8-27b-mlx")
+    names = [t["name"] for t in kept]
+    assert "read_file" in names and "web_fetch" in names and "get_tool_schema" in names
+    assert "submit_evolution" not in names and "switch_model" not in names
+    # 非 local provider 零回归
+    kept2 = _RoutingMixin._filter_local_tools(None, schemas, "deepseek/deepseek-v4-flash")
+    assert len(kept2) == len(schemas)
