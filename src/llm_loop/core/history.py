@@ -463,6 +463,11 @@ def build_history_messages(
         ):
             if skip_injected_system and _is_injected_system(m):
                 continue  # P1-7: 推送式注入仅落会话, 不进提交（system 前缀稳定）
+            # EVO-20260817-cef296f8 L1b: 已消费的耗尽注入 system（[轮次决策请求]/
+            # [已达轮数上限]）跳过——run 内 AI 决策可见，run 后消费，下个 run 不进请求
+            # system 区 → 前缀不因耗尽注入持续分叉（缓存 MISS 收敛）
+            if skip_injected_system and m.role == "system" and (m.metadata or {}).get("consumed"):
+                continue
             _append_or_merge(m.to_llm_dict())
         return _repair_tool_call_pairing(out)
 
@@ -562,6 +567,11 @@ def build_history_messages(
     for m in kept_flat:
         if skip_injected_system and _is_injected_system(m):
             continue  # P1-7: 推送式注入仅落会话, 不进提交（system 前缀稳定）
+        # EVO-20260817-cef296f8 L1b: 已消费的耗尽注入 system（[轮次决策请求]/
+        # [已达轮数上限]）跳过——run 内 AI 决策可见，run 后消费，下个 run 不进请求
+        # system 区 → 前缀不因耗尽注入持续分叉（缓存 MISS 收敛）
+        if skip_injected_system and m.role == "system" and (m.metadata or {}).get("consumed"):
+            continue
         # P1-QWEN-FIX: 压缩裁剪后的 system 消息必须并入开头 system，
         # 否则 system 落在消息中间 → qwen 系模板(9B/27B) 报
         # "System message must be at the beginning" (HTTP 400/500)。
