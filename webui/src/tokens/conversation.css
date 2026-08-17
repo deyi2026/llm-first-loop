@@ -1177,3 +1177,10 @@
   color: var(--dsw-alias-label-tertiary);
   padding: 2px 8px;
 }
+
+.v2-ws-tree-arrow {
+  font-size: 10px;
+  color: var(--dsw-alias-label-tertiary);
+  width: 14px;
+  flex: none;
+}
