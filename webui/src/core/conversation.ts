@@ -56,6 +56,15 @@ export function useConversation(): ConversationState {
 }
 
 export async function loadHistory(sessionId: string): Promise<void> {
+  // 对齐 DSH（2026-08-17 用户需求）：切换会话时正在进行的操作内容不丢——
+  // 当前流式 abort（SSE 断连 → 后端转后台继续执行）；切回时 checkBackgroundRun
+  // 轮询到完成自动重载，过程内容完整保留。
+  if (
+    conversationStore.getState().streaming &&
+    sessionStore.getState().currentSessionId !== sessionId
+  ) {
+    stopStreaming();
+  }
   const resp = await fetchHistory(sessionId, HISTORY_PAGE_SIZE, 0);
   const messages = resp.messages.map(toChatMessage);
   conversationStore.setState({
