@@ -60,6 +60,60 @@ def test_missing_dir_fail_open(tmp_path, monkeypatch):
     assert _bare_engine()._interop_inbox_messages() == []  # 不抛异常
 
 
+def _write_msg(inbox, name, topic, body, ref="", msg_id=None):
+    (inbox / name).write_text(json.dumps({
+        "id": msg_id or name, "from": "dsh", "to": "lfl",
+        "ts": "2026-08-17T12:00:00", "topic": topic, "ref": ref,
+        "body": body, "status": "pending",
+    }), encoding="utf-8")
+
+
+def test_notify_duplicate_auto_archive(tmp_path, monkeypatch):
+    """EVO-20260817-c35c9178: 重复 notify（同 from/ref/body 指纹）→ 不注入 + 自动归档."""
+    inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
+    inbox.mkdir(parents=True)
+    _write_msg(inbox, "n1.json", "notify", "job-1 完成", ref="job-1", msg_id="n1")
+    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
+    eng = _bare_engine()
+
+    # 首见 → 注入回显，文件仍在 pending（AI 按协议处理）
+    msgs = eng._interop_inbox_messages()
+    assert len(msgs) == 1 and "job-1 完成" in msgs[0].content
+    assert (inbox / "n1.json").exists()
+
+    # 同指纹重复（scheduler 重复写同提醒）→ 不注入 + 自动归档（done + 移走）
+    _write_msg(inbox, "n1-dup.json", "notify", "job-1 完成", ref="job-1", msg_id="n1-dup")
+    msgs2 = eng._interop_inbox_messages()
+    assert msgs2 == []
+    assert not (inbox / "n1-dup.json").exists()
+    done = tmp_path / "interop" / "lfl_to_dsh" / "done" / "n1-dup.json"
+    assert done.exists()
+    assert json.loads(done.read_text())["status"] == "done"
+
+
+def test_notify_first_seen_not_archived(tmp_path, monkeypatch):
+    """首见 notify 不自动归档（可见性不变，等待 AI 按协议处理）."""
+    inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
+    inbox.mkdir(parents=True)
+    _write_msg(inbox, "n2.json", "notify", "job-2 完成", ref="job-2", msg_id="n2")
+    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
+    msgs = _bare_engine()._interop_inbox_messages()
+    assert len(msgs) == 1 and (inbox / "n2.json").exists()
+
+
+def test_coordinate_not_auto_archived(tmp_path, monkeypatch):
+    """coordinate/task 类消息不自动归档（保持原协议，AI 处理）."""
+    inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
+    inbox.mkdir(parents=True)
+    _write_msg(inbox, "t1.json", "task", "请复核风险清单", ref="", msg_id="t1")
+    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
+    eng = _bare_engine()
+    for _ in range(2):  # 两次扫描都不自动归档（非 notify）
+        msgs = eng._interop_inbox_messages()
+        assert len(msgs) == 1 and "请复核风险清单" in msgs[0].content
+        assert (inbox / "t1.json").exists()
+
+
 def test_build_messages_injects_inbox_after_memory(tmp_path, monkeypatch):
     """装配点验证: _build_llm_messages 中 inbox 注入在 memory 之后（每轮必感知）.
 

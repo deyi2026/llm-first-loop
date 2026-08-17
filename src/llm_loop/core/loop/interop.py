@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from pathlib import Path
 
 from llm_loop.core.message import Message, MessageSource
@@ -40,6 +41,13 @@ class _InteropMixin:
 
         基准路径: LFL_DATA_DIR/interop/lfl_to_dsh/pending（与 web/routes.py 一致）。
         返回临时 system 消息列表；无消息/异常 → 空列表。
+
+        notify 自动归档（EVO-20260817-c35c9178，已人工 accepted）:
+        - topic=notify 通知类消息首见仍注入回显（协议可见性不变，AI 按协议处理归档）
+        - 同指纹 (from, ref, body) 已注入过的 notify → 不重复注入 + 自动归档
+          （status→done + 移入 done/）——防高频通知堆积持续破坏前缀缓存
+          （RULE-AI-16 注入最小化；实证: 14 条 job 通知堆积 → 每轮注入漂移 → 命中率 8.2%）
+        - coordinate/task 类消息保持原协议（注入 + AI 处理），不自动归档
         """
         try:
             base = Path(os.environ.get("LFL_DATA_DIR", "data")) / _INTEROP_INBOX_REL
@@ -50,6 +58,11 @@ class _InteropMixin:
             # 只注入最新 8 条，防单轮上下文被协调消息撑爆（剩余下轮再注入）
             _MAX_INBOX_INJECT = 8
             files = sorted(base.glob("*.json"))
+            # EVO-20260817-c35c9178: notify 已注入指纹（进程级，重启后 pending 已 done 无重复）
+            seen = getattr(self, "_notify_injected", None)
+            if seen is None:
+                seen = self._notify_injected = set()
+            notify_archives: list[Path] = []  # 命中指纹 → 本轮自动归档
             for f in files[-_MAX_INBOX_INJECT:]:
                 try:
                     d = json.loads(f.read_text(encoding="utf-8"))
@@ -60,6 +73,12 @@ class _InteropMixin:
                 body = str(d.get("body", "")).strip()
                 if not body:
                     continue
+                if d.get("topic") == "notify":
+                    fp = (str(d.get("from", "")), str(d.get("ref", "")), body)
+                    if fp in seen:
+                        notify_archives.append(f)  # 重复通知 → 归档不注入（幂等）
+                        continue
+                    seen.add(fp)                   # 首见 → 注入并记录指纹
                 out.append(Message(
                     role="system",
                     content=(
@@ -80,10 +99,32 @@ class _InteropMixin:
                     ),
                     source=MessageSource.SYSTEM,
                 ))
+            # EVO-20260817-c35c9178: 重复 notify 自动归档（fail-open，异常仅告警不阻塞注入）
+            for f in notify_archives:
+                self._archive_interop_notify(f)
             return out
         except Exception:
             logger.warning("协调通道 inbox 扫描失败（fail-open）", exc_info=True)
             return []
+
+    def _archive_interop_notify(self, f: Path) -> None:
+        """重复 notify 自动归档: status→done + 移入 done/（EVO-20260817-c35c9178）.
+
+        注入即回显（首见已注入本会话），重复文件不再注入 → 自动归档防堆积。
+        fail-open: 任何异常仅告警，文件保留 pending 待人工处理（不静默丢消息）。
+        """
+        try:
+            done_dir = f.parent.parent / "done"
+            done_dir.mkdir(parents=True, exist_ok=True)
+            txt = f.read_text(encoding="utf-8")
+            txt = txt.replace('"status": "pending"', '"status": "done"')
+            target = done_dir / f.name
+            if target.exists():  # 防覆盖: done 已有同名 → 时间戳后缀
+                target = done_dir / f"{f.stem}-{int(time.time())}{f.suffix}"
+            target.write_text(txt, encoding="utf-8")
+            f.unlink()
+        except Exception:  # noqa: BLE001 — 归档失败 fail-open，消息保留待人工处理
+            logger.warning(f"notify 自动归档失败（fail-open，保留 pending）: {f.name}", exc_info=True)
 
     def _inject_interop_messages(
         self, base: list[Message], prefix_len: int, session_id: str = ""
