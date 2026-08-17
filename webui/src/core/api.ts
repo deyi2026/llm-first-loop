@@ -237,6 +237,25 @@ export async function fsDelete(path: string): Promise<boolean> {
   return status === 200;
 }
 
+/** 会话/子代理树（对齐 DSH agents 树：按 parent_id 组层级） */
+export interface AgentTreeNode {
+  id: string;
+  parent_id: string | null;
+  is_subagent: boolean;
+  model?: string;
+  created_at?: string | null;
+}
+
+export async function fetchAgentsTree(): Promise<Map<string, string | null>> {
+  try {
+    const { status, data } = await api<{ nodes: AgentTreeNode[] }>("/api/v1/agents/tree");
+    if (status !== 200 || !data?.nodes) return new Map();
+    return new Map(data.nodes.map((n) => [n.id, n.parent_id]));
+  } catch {
+    return new Map();
+  }
+}
+
 export async function fetchDirs(path = ""): Promise<DirList | null> {
   const q = path ? `?path=${encodeURIComponent(path)}` : "";
   const { status, data } = await api<DirList>(`/api/v1/fs/dirs${q}`);
