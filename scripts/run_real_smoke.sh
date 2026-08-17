@@ -29,7 +29,10 @@ load_env_val() {
   if [[ -n "${!key:-}" ]]; then
     val="${!key}"
   elif [[ -f .env ]]; then
-    val="$(grep -m1 "^${key}=" .env | cut -d= -f2- || true)"
+    # 剥离行内注释与首尾空白（与 config.load_env_file EVO-ba4a107c 对齐）：
+    # 防 `KEY=value  # 注释` 把尾随空格带进 export → 下游 python fixture
+    # 直读 os.environ 无 strip → 模型名/reasoning_effort 带空格 → API 400
+    val="$(grep -m1 "^${key}=" .env | cut -d= -f2- | sed -E 's/[[:space:]]*#.*$//; s/^[[:space:]]+//; s/[[:space:]]+$//' || true)"
   fi
   printf '%s' "$val"
 }

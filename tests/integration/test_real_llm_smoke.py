@@ -556,13 +556,26 @@ def test_real_llm_tool_call_arguments_roundtrip(tmp_path):
 
     settings = Settings(
         llm_api_key=api_key,
-        llm_base_url=base_url,
-        llm_model=model,
+        # 防御: os.environ 可能带尾随空白/行内注释残留（bash 注入路径），
+        # strip 后直传 LLMClient——否则模型名带空格 → 注册表 resolve 失败/API 400
+        llm_base_url=base_url.strip(),
+        llm_model=model.strip(),
         llm_wire_protocol=wire,
         data_dir=str(tmp_path / "data"),
         max_iterations=8,
         tool_timeout_s=30.0,
     )
+    # 注册表可用性（同 _real_llm_settings）: tmp_path 无 providers.json → load_registry
+    # 回退 L0 合成（无模型映射）→ factory resolve 失败 → engine.llm 用带前缀模型名
+    # （deepseek/deepseek-v4-flash）→ 真实请求 400 → 模型无工具调用。拷贝项目注册表。
+    import shutil
+    from pathlib import Path as _Path
+
+    _data_dir = _Path(tmp_path) / "data"
+    _data_dir.mkdir(parents=True, exist_ok=True)
+    _proj_providers = _Path(__file__).resolve().parents[2] / "data" / "providers.json"
+    if _proj_providers.exists():
+        shutil.copy(_proj_providers, _data_dir / "providers.json")
     engine = build_engine(settings)  # type: ignore[arg-type]
 
     prompt = (
@@ -570,31 +583,34 @@ def test_real_llm_tool_call_arguments_roundtrip(tmp_path):
         "你必须真的发起 read_file 工具调用，path 参数填 /tmp/llm_loop_smoke_probe.txt）。"
         "文件不存在也没关系，拿到工具回执后用一句话报告结果。"
     )
-    resp = engine.run_turn(prompt)
-    assert resp, "真实 LLM 未返回响应"
+    resp = engine.run_single(prompt)
+    assert resp and resp.final_answer, "真实 LLM 未返回响应"
 
-    # ① 至少发起一轮工具调用且经 dispatcher 真实执行
-    tool_msgs = [
-        m for m in engine.session.messages
-        if getattr(m, "role", "") == "tool" and getattr(m, "tool_call_id", "")
-    ]
-    assert tool_msgs, (
+    # ① 至少发起一轮工具调用且经 dispatcher 真实执行。
+    # 断言依据用 LoopResult.tool_calls（引擎执行轨迹，arguments 为解析后 dict），
+    # 不用会话加载后的 assistant.tool_calls——落盘/加载后 tool_calls 只剩空占位
+    # （id/name 空、arguments None），断言会误报（实测 NoneType）。
+    assert resp.tool_calls, (
         f"模型未发起任何工具调用（协议={wire}）。若为模型不配合可重跑；"
         "连续多次为空需排查 tool-use prompt/协议解析"
     )
+    sess = engine.session.load(resp.session_id)
+    tool_msgs = [
+        m for m in sess.messages
+        if getattr(m, "role", "") == "tool" and getattr(m, "tool_call_id", "")
+    ]
+    assert tool_msgs, "存在执行轨迹但无 tool 回执消息（事件链断裂）"
 
-    # ② assistant.tool_calls.arguments 必须为 dict（v0.6.5 str 透传核心断言）
+    # ② 执行轨迹 arguments 必须为 dict（v0.6.5 str 透传核心断言）
     parsed_args = 0
-    for m in engine.session.messages:
-        if getattr(m, "role", "") == "assistant" and getattr(m, "tool_calls", None):
-            for tc in m.tool_calls:
-                args = getattr(tc, "arguments", None)
-                assert isinstance(args, dict), (
-                    f"tool_call.arguments 为 {type(args).__name__} 而非 dict（v0.6.5 回归信号，"
-                    f"协议={wire}）: {str(args)[:200]}"
-                )
-                parsed_args += 1
-    assert parsed_args > 0, "存在工具回执但未找到 assistant tool_calls 记录（事件链断裂）"
+    for tc in resp.tool_calls:
+        args = tc.get("arguments")
+        assert isinstance(args, dict), (
+            f"tool_call.arguments 为 {type(args).__name__} 而非 dict（v0.6.5 回归信号，"
+            f"协议={wire}）: {str(args)[:200]}"
+        )
+        parsed_args += 1
+    assert parsed_args > 0, "执行轨迹无参数可断言"
 
     # ③ 回执不得出现 T38 str 校验失败字样（佐证 arguments 已正确 loads）
     for tm in tool_msgs:
