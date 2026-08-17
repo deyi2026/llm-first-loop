@@ -293,3 +293,32 @@ def test_spawn_tool_acceptance_param(build_test_engine):
     r = tool.execute(task="实现函数", acceptance=["签名正确", "有 docstring"])
     assert r.status.name == "SUCCESS"
     assert "按验收完成" in r.content
+
+
+def test_subagent_parent_id_mounted(build_test_engine, monkeypatch):
+    """2026-08-18 会话树修复（c09dc9e）: 子代理创建时挂载父会话 parent_id."""
+    from llm_loop.core.run_context import current_session_id as _csid
+
+    engine, fake = build_test_engine([])
+    fake._responses = [LLMResponse(content="完成", tool_calls=[], provider="fake")]
+    runner = SubAgentRunner(
+        llm=fake, registry=engine.registry, session_store=engine.session
+    )
+    # 模拟父会话 run 上下文（engine.run_stream 设置 current_session_id）
+    parent_sid = "parent-session-123"
+    tok = _csid.set(parent_sid)
+    try:
+        result = runner.run(task="测试", depth=0)
+        assert result.refused is False
+    finally:
+        _csid.reset(tok)
+    # 验证子代理会话 parent_id = 父会话
+    import pathlib
+
+    sub_files = sorted(pathlib.Path(engine.session._dir).glob("subagent_*.json"))
+    assert sub_files, "子代理会话应已落盘"
+    latest = sub_files[-1]
+    import json as _json
+
+    sess_json = _json.loads(latest.read_text(encoding="utf-8"))
+    assert sess_json.get("parent_id") == parent_sid, sess_json.get("parent_id")
