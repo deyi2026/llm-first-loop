@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from llm_loop.config import Settings
 from llm_loop.core.loop.engine import LoopEngine
 from llm_loop.core.message import (
@@ -18,6 +20,16 @@ from llm_loop.core.message import (
 from llm_loop.core.session import SessionStore
 from llm_loop.llm.client import LLMResponse
 from llm_loop.tools.registry import ToolRegistry
+
+
+@pytest.fixture(autouse=True)
+def _isolate_data_dir(tmp_path, monkeypatch):
+    """隔离协调通道/data 目录（EVO-20260817: 测试进程 cwd=项目根时，_inject_interop_messages
+    会读取真实 data/interop/ 残留 pending 消息并注入构建载荷——多轮测试恰好越过 90%
+    压缩线导致 user 历史被整组归档、[预算预警] 永不触发。此处把 LFL_DATA_DIR 指到 tmp，
+    让 inbox 为空，测试载荷完全可控。"""
+    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path / "data"))
+    yield
 
 
 def _make_fake():
@@ -103,10 +115,13 @@ def test_engine_injects_context_warning_at_80_percent(tmp_path):
     fake = _make_fake()
     store, engine = _build_engine(tmp_path, fake, settings)
     sid = store.create()
-    # 预填超长历史: 预算默认 100K，历史 90K 已占 90%（+system prompt → 必超 80%）
+    # 预填超长历史: 预算默认 100K，历史 85K（85% 预算）+system prompt → 超 80% 预警线。
+    # ⚠️ 不能预填 90K: EVO-20260817 compact_ratio=0.9 预算分级主动压缩在 ≥90% 提前归档
+    # （裁到 60% 留缓冲），90K 单条会被整组另存 → 提交载荷骤降 → 预警条件（≥80%）永不达。
+    # 预警有效窗口 = (80%预算, 90%压缩线)。
     sess = store.load(sid)
     sess.messages.append(
-        Message(role="user", content="内容" * 45000, source=MessageSource.USER)  # 90000 字符
+        Message(role="user", content="内容" * 42500, source=MessageSource.USER)  # 85000 字符
     )
     store.save(sess)
 
@@ -185,8 +200,9 @@ def test_context_warning_once_per_run(tmp_path):
     store, engine = _build_engine(tmp_path, _Fake(), settings)
     sid = store.create()
     sess = store.load(sid)
+    # 同 test_engine_injects_context_warning_at_80_percent: 85K 落预警窗口（避开 90% 压缩线）
     sess.messages.append(
-        Message(role="user", content="内容" * 45000, source=MessageSource.USER)  # 90000 字符
+        Message(role="user", content="内容" * 42500, source=MessageSource.USER)  # 85000 字符
     )
     store.save(sess)
 
