@@ -41,6 +41,25 @@ export function EvolutionPanel() {
   const [items, setItems] = useState<EvoItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [actionMsg, setActionMsg] = useState("");
+
+  const review = (id: string, decision: string, reason: string) => {
+    setBusy(true);
+    setActionMsg("");
+    return fetch("/api/v1/evolution/review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, decision, reason }),
+    })
+      .then(async (r) => {
+        const d = await r.json().catch(() => ({ message: r.statusText }));
+        setActionMsg(d.message || (r.ok ? "已处理" : `失败(${r.status})`));
+        if (r.ok) load();
+      })
+      .catch((err) => setActionMsg(`请求失败: ${String(err)}`))
+      .finally(() => setBusy(false));
+  };
 
   const load = () => {
     setLoading(true);
@@ -100,10 +119,37 @@ export function EvolutionPanel() {
               <div className="v2-evo-summary">{it.content}</div>
               {expanded === it.id && (
                 <div className="v2-evo-detail" data-testid="evo-detail">
-                  {it.requires_human && <div className="v2-evo-note">⚠ 需人工确认（飞书审批）</div>}
+                  {it.requires_human && <div className="v2-evo-note">⚠ 需人工确认</div>}
                   {it.executed_at && <div className="v2-evo-note">执行于 {fmtTs(it.executed_at)}</div>}
                   {it.verified_at && <div className="v2-evo-note">核验于 {fmtTs(it.verified_at)}</div>}
-                  <div className="v2-evo-hint">{zh.evoHint}</div>
+                  {it.status === "pending_review" && (
+                    <div className="v2-evo-actions" data-testid="evo-actions">
+                      <button
+                        className="v2-evo-btn approve"
+                        data-testid="evo-approve"
+                        disabled={busy}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void review(it.id, "accepted", "");
+                        }}
+                      >
+                        ✅ 批准
+                      </button>
+                      <button
+                        className="v2-evo-btn reject"
+                        data-testid="evo-reject"
+                        disabled={busy}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void review(it.id, "rejected", "");
+                        }}
+                      >
+                        ❌ 拒绝
+                      </button>
+                    </div>
+                  )}
+                  {actionMsg && <div className="v2-evo-action-msg" data-testid="evo-action-msg">{actionMsg}</div>}
+                  {it.status !== "pending_review" && <div className="v2-evo-hint">{zh.evoHint}</div>}
                 </div>
               )}
             </div>
