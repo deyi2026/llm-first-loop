@@ -939,3 +939,34 @@
   color: var(--dsw-alias-label-tertiary);
   border-top: 1px solid var(--dsw-alias-divider-color, rgba(128,128,128,0.2));
 }
+
+/* 文件树：文件大小/内联操作表单 */
+.v2-tree-size {
+  margin-left: 6px;
+  font-size: 10px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.v2-tree-inline-form {
+  display: flex;
+  gap: 6px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--dsw-alias-divider-color, rgba(128,128,128,0.2));
+}
+
+.v2-tree-inline-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--dsw-alias-divider-color, rgba(128,128,128,0.3));
+  border-radius: 6px;
+  padding: 3px 6px;
+  font-size: 12px;
+  background: transparent;
+  color: inherit;
+}
+
+.v2-icon-btn.danger.confirming {
+  color: #fff;
+  background: var(--dsw-alias-state-danger, #dc2626);
+  border-radius: 4px;
+}

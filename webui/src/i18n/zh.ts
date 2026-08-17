@@ -44,5 +44,12 @@ export const zh = {
   sessions: "会话",
   fileTree: "文件",
   copyPath: "复制路径",
-  treeHint: "目录树（骨架）：展开/折叠浏览——文件操作待后端 API",
+  treeHint: "文件树：展开/折叠浏览——操作（新建/重命名/删除两步确认）已接入",
+  newFolder: "新建目录",
+  newFolderName: "新目录名",
+  rename: "重命名",
+  delete: "删除",
+  confirmDelete: "再次点击确认删除",
+  confirm: "确定",
+  cancel: "取消",
 };
