@@ -108,6 +108,20 @@ export function Composer() {
     [models]
   );
 
+  // 对齐 DSH：刷新/切换会话时输入草稿保留不丢失（按会话存 localStorage）
+  const draftKey = () =>
+    `lfl-draft-${sessionStore.getState().currentSessionId ?? "new"}`;
+  useEffect(() => {
+    // 会话就绪/切换 → 恢复对应草稿
+    const saved = localStorage.getItem(draftKey());
+    if (saved) setText(saved);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionStore.getState().currentSessionId]);
+  useEffect(() => {
+    // 输入变化 → 实时落草稿（空串=清草稿）
+    localStorage.setItem(draftKey(), text);
+  }, [text]);
+
   const autoGrow = () => {
     const el = taRef.current;
     if (!el) return;
