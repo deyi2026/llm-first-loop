@@ -22,6 +22,10 @@ SUBAGENT_ALLOWED_TOOLS = {
     "web_fetch",
     "web_search",
     "get_tool_schema",
+    # EVO-20260817 审查 P0-2: fix_loop 路径 I 子代理修复需要 edit_file（P0-D1 设计
+    # 本要求"修复由子代理经 edit_file 完成"，白名单漏配致端到端断路）。
+    # 安全链完整: edit_file 含 symlink 写防护 + FileBaseline 并发校验 + CatastrophicGuard。
+    "edit_file",
 }
 
 MAX_DEPTH = 3

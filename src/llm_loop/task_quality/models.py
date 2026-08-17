@@ -283,7 +283,12 @@ class DepEdge:
 
 @dataclass(frozen=True)
 class RegressionResult:
-    """回归保护结果（spec §6.6 + 5.6）."""
+    """回归保护结果（spec §6.6 + 5.6）.
+
+    error: 非 None = 验证未完成（超时/框架崩溃），failed_count=0 不代表通过——
+    调用方必须检查 error 字段（审查中危修复: 原超时/异常路径 failed_count=0
+    会被误判为"通过"→ 伪造 success）。
+    """
 
     modified_files: tuple[str, ...]
     affected_tests: tuple[str, ...] = ()
@@ -293,9 +298,17 @@ class RegressionResult:
     failures: tuple[FailureInfo, ...] = ()
     depgraph_available: bool = False
     fallback_full: bool = False
+    error: str | None = None  # 验证未完成原因（超时/框架异常）
+
+    @property
+    def completed(self) -> bool:
+        """验证是否真实完成（error 为空即完成；未完成不得视为通过）."""
+        return self.error is None
 
     def to_feedback_section(self) -> str:
         """测试子集执行结果回执（含子集范围/通过失败计数/失败详情）."""
+        if self.error:
+            return f"[状态: error] 回归保护未完成: {self.error}"
         if self.fallback_full:
             lines = ["[状态: success] 回归保护（依赖图不可用，回退全量测试）"]
         elif not self.affected_tests:

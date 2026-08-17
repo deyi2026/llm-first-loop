@@ -114,6 +114,15 @@ class BackgroundRunner:
         """当前线程是否为后台 run 工作线程（engine 入口自调用放行）."""
         return threading.get_ident() in self._worker_idents
 
+    def is_sync_active(self, session_id: str) -> bool:
+        """同步 run 是否活跃于该会话（EVO-20260817 审查 P0-3: 后台 start 互斥）."""
+        engine = getattr(self, "_engine", None)
+        guard = getattr(engine, "_sync_guard", None)
+        if guard is None:
+            return False  # 旧装配无同步注册表 → 跳过（fail-open 不阻断）
+        with guard:
+            return session_id in engine._sync_active
+
     def get_handle(self, session_id: str) -> dict | None:
         """只读快照（B1：不暴露裸可变 handle）."""
         with self._guard:
@@ -153,15 +162,26 @@ class BackgroundRunner:
             existing = self._registry.get(session_id)
             if existing is not None:
                 if resume:
+                    # EVO-20260817 审查中危修复: done/error 广播后、registry pop 前的
+                    # 窗口内 resume 会拿到"已结束"的 run → 订阅空队列永挂。
+                    # 终态 handle 不再可订阅（调用方按"无进行中 run"处理）。
+                    if existing.status in ("done", "error"):
+                        return None, None
                     return None, existing._bus.subscribe()
+                return None, None
+            # EVO-20260817 审查 P0-3: 同步 run 活跃时拒绝后台 start（双向互斥闭环）
+            if not resume and self.is_sync_active(session_id):
                 return None, None
             if resume:
                 # resume 语义=订阅已有 run；无进行中 run 时无可订阅（不启动新 run）
                 return None, None
             handle = RunHandle(session_id=session_id)
             self._registry[session_id] = handle
-        bus = EventBus()
-        handle._bus = bus  # unsubscribe 用（内部引用）
+            # EVO-20260817 审查中危修复: _bus 在锁内赋值——原锁外赋值导致
+            # unsubscribe 锁内读 h._bus 可能读到 None（start 释放锁后、赋值前），
+            # 订阅静默失效（SSE 断连后仍收事件/队列泄漏）。
+            bus = EventBus()
+            handle._bus = bus
         q = bus.subscribe()  # 先订阅再起线程（保证不丢 start 后首个事件）
         t = threading.Thread(
             target=self._consume,

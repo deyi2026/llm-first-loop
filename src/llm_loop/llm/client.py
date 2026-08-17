@@ -212,13 +212,20 @@ class LLMClient:
                     self._check_sse_error(chunk)
                     usage = chunk.get("usage")
                     if isinstance(usage, dict):
-                        acc.prompt_tokens = int(usage.get("prompt_tokens") or 0)
-                        acc.completion_tokens = int(usage.get("completion_tokens") or 0)
+                        # M58 修复（审查中危）: 缺失不覆盖——部分 provider 在中间 chunk
+                        # 带 usage 但缺字段（或全 0），覆盖式赋值会把已累计值清零。
+                        pt = usage.get("prompt_tokens")
+                        if pt:
+                            acc.prompt_tokens = int(pt)
+                        ct = usage.get("completion_tokens")
+                        if ct:
+                            acc.completion_tokens = int(ct)
                         # M58: 前缀缓存命中（DeepSeek prompt_cache_hit_tokens；Kimi 兜底 cached_tokens）
                         hit = usage.get("prompt_cache_hit_tokens")
                         if hit is None:
                             hit = usage.get("cached_tokens")
-                        acc.prompt_cache_hit_tokens = int(hit or 0)
+                        if hit:
+                            acc.prompt_cache_hit_tokens = int(hit)
                     choices = chunk.get("choices") or []
                     if not choices:
                         continue
@@ -401,8 +408,13 @@ class LLMClient:
                         continue
                     usage = chunk.get("usageMetadata") or {}
                     if usage:
-                        acc.prompt_tokens = int(usage.get("promptTokenCount") or 0)
-                        acc.completion_tokens = int(usage.get("candidatesTokenCount") or 0)
+                        # M58 修复（审查中危）: 缺失不覆盖（与 openai 路径一致）
+                        pt = usage.get("promptTokenCount")
+                        if pt:
+                            acc.prompt_tokens = int(pt)
+                        ct = usage.get("candidatesTokenCount")
+                        if ct:
+                            acc.completion_tokens = int(ct)
                     finish = chunk.get("candidates", [{}])[0].get("finishReason", "") if chunk.get("candidates") else ""
                     if finish:
                         acc.finish_reason = finish

@@ -34,7 +34,7 @@ from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
 from llm_loop.tools.builtin.job_kill import JobKillTool
 from llm_loop.tools.builtin.job_output import JobOutputTool
 from llm_loop.tools.builtin.read_file import ReadFileTool
-from llm_loop.tools.builtin.schedule import ScheduleTool
+from llm_loop.tools.builtin.schedule import ScheduleCancelTool, ScheduleTool
 from llm_loop.tools.builtin.search_files import SearchFilesTool
 from llm_loop.tools.builtin.spawn_subagent import SpawnSubAgentTool
 from llm_loop.tools.builtin.web_fetch import WebFetchTool
@@ -264,6 +264,7 @@ def build_engine(settings: Settings) -> LoopEngine:
     _register_basic("search_files", SearchFilesTool())
     # DSH-PLUGINS-20260816 ②: 定时提醒（at/after/rate → interop notify 注入会话）
     _register_basic("schedule", ScheduleTool())
+    _register_basic("schedule_cancel", ScheduleCancelTool())
     _register_basic("web_fetch", WebFetchTool(timeout_s=_tool_timeout))
     # M48: 网络搜索（Bing/百度双后端降级）
     _register_basic("web_search", WebSearchTool(timeout_s=_tool_timeout))

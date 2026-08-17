@@ -30,7 +30,7 @@ class ScheduleTool:
             },
             "after": {
                 "type": "number",
-                "description": "N 秒后触发一次（默认 0=立即？不——必须 >0 或给 at）",
+                "description": "N 秒后触发一次（默认 0=立即触发；与 at 二选一，都填以 at 为准）",
             },
             "at": {
                 "type": "string",
@@ -57,11 +57,20 @@ class ScheduleTool:
         return self._store
 
     def execute(self, **kwargs) -> ToolResult:
-        message = str(kwargs.get("message", "") or "").strip()
-        after = float(kwargs.get("after", 0) or 0)
-        at = str(kwargs.get("at", "") or "").strip()
-        repeat_interval = float(kwargs.get("repeat_interval", 0) or 0)
-        max_count = int(kwargs.get("max_count", 1) or 1)
+        try:
+            message = str(kwargs.get("message", "") or "").strip()
+            after = float(kwargs.get("after", 0) or 0)
+            at = str(kwargs.get("at", "") or "").strip()
+            repeat_interval = float(kwargs.get("repeat_interval", 0) or 0)
+            max_count = int(kwargs.get("max_count", 1) or 1)
+        except (TypeError, ValueError) as exc:
+            # 审查低危修复: 参数类型转换异常如实返回 FAILURE（原实现直接外抛）
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[参数错误] 参数类型非法: {exc}",
+                tool_call_id="",
+                tool_name=self.name,
+            )
 
         if not message:
             return ToolResult(
@@ -95,6 +104,16 @@ class ScheduleTool:
                     tool_call_id="",
                     tool_name=self.name,
                 )
+            # 审查低危修复: at 过去时间如实拒绝（原实现静默立即触发——"at 过去不校验"）
+            import time as _time
+
+            if at_ts < _time.time() - 5:  # 5s 容差（时钟偏差/构造-注册间隙）
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content=f"[参数错误] at 时间已过去（{at}），请检查或改用 after",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
 
         sid = self._get_store().add(
             message, after=after, at=at_ts, repeat_interval=repeat_interval, max_count=max_count
@@ -105,6 +124,67 @@ class ScheduleTool:
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=f"[schedule] 已注册提醒 {sid}: '{message}'（{when}）。到点经协调通道注入会话。",
+            tool_call_id="",
+            tool_name=self.name,
+        )
+
+
+class ScheduleCancelTool:
+    """取消已注册提醒（审查 P2: 无取消工具 → 提醒只能等触发/重启清除）."""
+
+    name = "schedule_cancel"
+    description = (
+        "取消已注册的定时提醒（按 sid，来自 schedule 工具回执）。"
+        "何时用: 提醒不再需要/重复注册后清理。"
+        "失败对策: sid 不存在如实返回。"
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "sid": {
+                "type": "string",
+                "description": "要取消的提醒 sid（schedule 工具回执中给出）",
+            },
+        },
+        "required": ["sid"],
+    }
+
+    def __init__(self, store: ScheduleStore | None = None) -> None:
+        self._store = store
+
+    def _get_store(self) -> ScheduleStore:
+        if self._store is None:
+            self._store = ScheduleStore()
+        return self._store
+
+    def execute(self, **kwargs) -> ToolResult:
+        sid = str(kwargs.get("sid", "") or "").strip()
+        if not sid:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content="[参数错误] 缺少必填参数 'sid'",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        try:
+            removed = self._get_store().cancel(sid)
+        except Exception as exc:  # noqa: BLE001 — fail-open 如实回执
+            return ToolResult(
+                status=ToolResultStatus.ERROR,
+                content=f"[schedule_cancel] 取消失败: {type(exc).__name__}: {exc}",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        if removed:
+            return ToolResult(
+                status=ToolResultStatus.SUCCESS,
+                content=f"[schedule_cancel] 已取消提醒 {sid}",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content=f"[schedule_cancel] 提醒 {sid} 不存在（可能已触发或已取消）",
             tool_call_id="",
             tool_name=self.name,
         )

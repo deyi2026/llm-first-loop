@@ -196,9 +196,11 @@ def _extract_doc_arkcli(data: bytes, filename: str, prompt: str) -> str | None:
     if _shutil.which("arkcli") is None:
         return None
     ext = Path(filename).suffix.lower() or ".pdf"
-    with _tf.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
-        tmp_path = tmp.name
-        tmp.write(data)
+    tmp_path: str | None = None
+    try:
+        with _tf.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(data)
         cmd = [
             "arkcli", "+understand", "doc-extract", "--input", f"@{tmp_path}",
             prompt, "--no-progress", "--format", "json",
@@ -220,11 +222,15 @@ def _extract_doc_arkcli(data: bytes, filename: str, prompt: str) -> str | None:
                 continue
             if isinstance(parsed, dict) and parsed.get("content"):
                 return str(parsed["content"]).strip()
-    import contextlib as _ctx
+        return None
+    finally:
+        # 审查中危修复: 临时文件在 finally 清理（原实现成功/异常 return 路径
+        # 不执行 unlink → 临时文件泄漏，长期运行累积磁盘）
+        if tmp_path:
+            import contextlib as _ctx
 
-    with _ctx.suppress(OSError):
-        _os.unlink(tmp_path)
-    return None
+            with _ctx.suppress(OSError):
+                _os.unlink(tmp_path)
 
 
 def process_upload(filename: str, data: bytes) -> ExtractResult:

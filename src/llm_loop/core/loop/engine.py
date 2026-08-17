@@ -200,6 +200,12 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         self._run_sessions: dict[str, Any] = {}
         # P0-5: 最近活跃会话（out-of-run 时属性 shim 的回退锚点，保持 run 后复查语义）
         self._last_active_sid: str = ""
+        # EVO-20260817 审查 P0-3: 同步 run 活跃会话集合——后台 start 互斥用。
+        # 同步 run_stream 只经 registry 互斥（registry 仅跟踪后台 run），后台 start
+        # 检查不到同步 run → 双 run 竞写会话文件（last-write-wins 丢消息）。
+        # 双向互斥: 同步 run 首 next 注册、finally 注销；后台 start 检查本集合拒绝。
+        self._sync_active: set[str] = set()
+        self._sync_guard = threading.Lock()
         # EVO-20260811-9ccdec97: 会话状态快照节流（上次快照注入时的消息数）—— P0-5 起经 shim 入 per-session 桶
         self._last_snapshot_count = 0
         # R4 增强: overflow 反馈注入次数（同一 run 内最多注入 1 次后让 AI 决策，第二次直接结束）
@@ -239,6 +245,16 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             raise SessionBusyError(
                 f"会话 {session_id} 已有进行中的 run（跨入口互斥，请稍后重试）"
             )
+        # EVO-20260817 审查 P0-3: 同步 run 注册活跃（后台 start 互斥）；
+        # 同步 run 本身同会话重入也拒绝（双同步 run 同样竞写）
+        with self._sync_guard:
+            if session_id in self._sync_active:
+                from llm_loop.core.loop.runner import SessionBusyError
+
+                raise SessionBusyError(
+                    f"会话 {session_id} 已有进行中的同步 run（互斥，请稍后重试）"
+                )
+            self._sync_active.add(session_id)
         _prev_sid = _current_session_id.get()
         _current_session_id.set(session_id)
         # 工作区根跟随（工具相对路径/命令默认 cwd；与会话同生命周期）
@@ -247,6 +263,8 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         try:
             return (yield from self._run_stream_inner(session_id, user_text, model))
         finally:
+            with self._sync_guard:
+                self._sync_active.discard(session_id)
             _current_workspace_root.set(_prev_ws)
             _current_session_id.set(_prev_sid)
 

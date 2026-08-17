@@ -102,6 +102,21 @@ class FixLoopTool:
             )
         max_rounds = int(kwargs.get("max_rounds", self._default_max_rounds) or self._default_max_rounds)
         fuse_count = int(kwargs.get("fuse_count", self._default_fuse_count) or self._default_fuse_count)
+        # 审查低危修复: 上限钳制（LLM 可传超大值触发资源失控；超限钳到上限并如实标注）
+        _MAX_ROUNDS_CAP, _MAX_FUSE_CAP = 20, 10
+        clamped = []
+        if max_rounds > _MAX_ROUNDS_CAP:
+            max_rounds = _MAX_ROUNDS_CAP
+            clamped.append(f"max_rounds 钳制到 {_MAX_ROUNDS_CAP}")
+        if fuse_count > _MAX_FUSE_CAP:
+            fuse_count = _MAX_FUSE_CAP
+            clamped.append(f"fuse_count 钳制到 {_MAX_FUSE_CAP}")
+        if max_rounds < 1 or fuse_count < 1:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[参数错误] max_rounds/fuse_count 必须 ≥ 1",
+                tool_call_id="", tool_name=self.name,
+            )
         fix_hint = str(kwargs.get("fix_hint", "") or "")
 
         loop_id = f"fix_{uuid.uuid4().hex[:8]}"
@@ -117,7 +132,10 @@ class FixLoopTool:
                     ToolCall(id=f"{loop_id}_c{rn}", name="execute_command",
                              arguments={"command": check_command})
                 )
-                check_passed = check_result.status == ToolResultStatus.SUCCESS and "failed" not in check_result.content.lower()
+                # 审查 P1 修复: 判定用回执状态（execute_command 已按 returncode 映射
+                # 五态: 0→SUCCESS/非 0→FAILURE）——原"failed"子串判定会误判真实 pytest
+                # 成功输出（可能含 "failed" 字样），状态判定是权威通过信号。
+                check_passed = check_result.status == ToolResultStatus.SUCCESS
 
                 if check_passed:
                     record = RoundRecord(rn, check_result="passed", rerun_result="passed")
@@ -133,7 +151,8 @@ class FixLoopTool:
                         content=(
                             f"[状态: success] 修复循环通过（{loop_id}，trace={trace_id}，"
                             f"执行 {rn} 轮）\n检查命令: {check_command}\n"
-                            f"{FixLoopRecord(loop_id, trace_id, max_rounds, tuple(rounds), FixLoopFinalStatus.PASSED).to_feedback_section()}"
+                            + (f"（参数钳制: {'；'.join(clamped)}）\n" if clamped else "")
+                            + f"{FixLoopRecord(loop_id, trace_id, max_rounds, tuple(rounds), FixLoopFinalStatus.PASSED).to_feedback_section()}"
                         ),
                         tool_call_id="", tool_name=self.name,
                     )

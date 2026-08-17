@@ -171,3 +171,51 @@ def test_fix_loop_enabled_via_enabled_fn():
     t = _tool(reg, _FakeSubAgent(), enabled_fn=lambda: True)
     r = t.execute(check_command="pytest tests/")
     assert r.status.value == "success"
+
+
+def test_success_output_containing_failed_word_passes():
+    """审查 P1: 成功输出含 'failed' 字样不应误判失败（旧子串判定会误判）.
+
+    pytest 成功输出可能包含描述性 'failed'（如 xfail 统计/插件文案），
+    SUCCESS 状态（returncode 0）才是权威通过信号。
+    """
+    reg = _FakeRegistry({1: "5 passed, 2 xfailed, 0 failed"})  # 含 failed 但实际全过
+    tool = _tool(reg)
+    r = tool.execute(
+        check_command="pytest -q",
+        max_rounds=1,
+    )
+    assert r.status == ToolResultStatus.SUCCESS, r.content
+    assert "修复循环通过" in r.content
+
+
+def test_max_rounds_capped():
+    """审查低危: max_rounds/fuse_count 上限钳制（LLM 传超大值不失控）."""
+    reg = _FakeRegistry({i: "1 failed" for i in range(1, 6)})
+    tool = _tool(reg)
+    r = tool.execute(check_command="pytest", max_rounds=999, fuse_count=999)
+    # 钳制后 max_rounds=20 仍会跑但熔断 fuse_count=10 → 单指纹连续 10 次熔断结束
+    assert r.status in (ToolResultStatus.SUCCESS, ToolResultStatus.FAILURE), r.content
+    # 执行轮数 ≤ 10（熔断生效，不会 20 轮）
+    assert len(reg.calls) <= 10, f"轮数未钳制: {len(reg.calls)}"
+
+
+def test_real_pytest_output_success_containing_failed():
+    """审查 P2: 真实 pytest 成功输出（含 '0 failed' 字样）不误判失败.
+
+    回归: 旧 "failed" 子串判定会把 '5 passed, 0 failed' 判失败。
+    """
+    reg = _FakeRegistry({1: "5 passed, 0 failed in 0.03s"})
+    tool = _tool(reg)
+    r = tool.execute(check_command="pytest -q", max_rounds=1)
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "修复循环通过" in r.content
+
+
+def test_real_pytest_output_failure_with_location():
+    """真实 pytest 失败输出（含 FAILED 行）→ 触发修复循环，非误判通过."""
+    reg = _FakeRegistry({1: "1 failed in 0.05s", 2: "8 passed"})
+    tool = _tool(reg)
+    r = tool.execute(check_command="pytest -q", max_rounds=2)
+    assert r.status == ToolResultStatus.SUCCESS
+    assert len(reg.calls) == 2  # 第一轮失败 → 第二轮修复后通过

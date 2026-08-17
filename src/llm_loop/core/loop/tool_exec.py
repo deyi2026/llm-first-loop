@@ -204,10 +204,21 @@ class _ToolExecMixin:
         语义: 对 AI 的下一步决策前置带经验（AI 对照经验与本次结果决定重试/换路径/复用）；
         无命中不注入（零开销）、检索异常 fail-open（不阻断主循环）；末尾追加缓存友好。
         开关: TOOL_EXPERIENCE_INJECT（默认开）。
+        EVO-20260817-20cc3f91: 会话级去重——同工具名每会话只注入一次。已注入的
+        system 消息保持原样（前缀稳定），仅停掉重复追加；否则每轮追加一条 system
+        使请求前缀在追加点分叉，其后全部历史（含 87% 工具结果）从缓存命中变全价
+        MISS（实测命中率 ~1-5%，成本放大 ~50 倍）。
         """
         if not getattr(self.settings, "tool_experience_inject", True):
             return
         try:
+            seen = getattr(self, "_injected_tip_tools", None)
+            if seen is None:
+                seen = self._injected_tip_tools = set()
+            # 会话级去重：只处理本会话尚未注入过的工具名
+            candidate = [n for n in dict.fromkeys(tool_names) if n not in seen]
+            if not candidate:
+                return  # 全部已注入过——零注入，前缀完全稳定
             store = getattr(self, "_exp_store", None)
             if store is None:
                 from llm_loop.experiences.store import ExperienceStore
@@ -215,7 +226,7 @@ class _ToolExecMixin:
                 store = ExperienceStore(self.settings.experiences_dir)
                 self._exp_store = store
             lines: list[str] = []
-            for name in dict.fromkeys(tool_names):  # 去重保序
+            for name in candidate:  # 去重保序
                 hits = store.list_active(query=name, limit=2)
                 for hit in hits:
                     lines.append(f"- 工具 '{name}' → {hit.get('summary', hit.get('id', ''))}")
@@ -225,7 +236,7 @@ class _ToolExecMixin:
                     break
             # EVO-20260816-ec8c36bb: 外部 skill 匹配补充（经验库不足 4 条时并入）
             if len(lines) < 4:
-                for sname, sdesc in self._match_skills(tool_names):
+                for sname, sdesc in self._match_skills(candidate):
                     lines.append(f"- 可用 skill: {sname} —— {sdesc}（skill_load 加载）")
                     if len(lines) >= 4:
                         break
@@ -245,6 +256,8 @@ class _ToolExecMixin:
             )
             sess.messages.append(msg)
             self._append_message_event(sess, msg)
+            # EVO-20260817-20cc3f91: 注入成功后标记——本会话不再为该工具名重复注入
+            seen.update(candidate)
         except Exception:  # noqa: BLE001 — 经验检索 fail-open（不阻断主循环）
             logger.warning("经验提示注入失败（fail-open）", exc_info=True)
 

@@ -261,12 +261,16 @@ def _stream_background(
         )
         return
     try:
+        # 审查 P2 修复: 断连解绑提速——q.get 超时 15s→2s。同步生成器无法
+        # await is_disconnected，断连靠 ASGI 在 yield 挂起点注入 GeneratorExit；
+        # 短超时让循环更快回到 yield 挂起点（断连后订阅残留从 ~15s 降到 ~2s，
+        # 期间不再长时间向无人消费的队列 put 事件）。
         while True:
             try:
-                ev = q.get(timeout=_SSE_QUEUE_TIMEOUT_S)
+                ev = q.get(timeout=2.0)
             except queue.Empty:
                 # 防御超时（正常 run 必有终态）；后台长时间无 delta（如工具执行）时
-                # 保持连接等待。断连由 ASGI 在生成器 yield 挂起点注入 GeneratorExit。
+                # 保持连接等待。断连由 ASGI 在 yield 挂起点注入 GeneratorExit。
                 continue
             etype = ev["type"]
             if etype == "delta":

@@ -325,3 +325,40 @@ def test_anchor_zero_behavior_unchanged():
     # 与不带 anchor_out 的默认行为一致（返回内容相同）
     out2 = build_history_messages(msgs, "SYS", max_chars=20000, session_id="s1")
     assert out == out2
+
+
+def test_sink_failure_note_honest():
+    """审查中危: archive_sink 失败时标注如实声明"归档失败"，不谎称已另存."""
+    def _boom(sid, m):
+        raise OSError("disk full")
+    msgs = [_tool_msg("D" * 5000)] + [_user(f"问题{i}") for i in range(24)]
+    out = build_history_messages(
+        msgs, system_prompt="SYS", max_chars=100000, session_id="s1",
+        archive_sink=_boom, layer_tool_trim=True,
+        tool_trim_threshold=100, tool_trim_age=20,
+    )
+    folded = [m for m in out if m.get("role") == "tool" and "已分层" in str(m.get("content", ""))]
+    assert folded, "应有折叠消息"
+    c = str(folded[0].get("content", ""))
+    assert "原文归档失败（未另存，仅保留以下摘要）" in c, c[:200]
+    assert "原文已另存压缩档案" not in c
+    assert "search_archive" not in c  # 未归档则不给检索指引（避免空检索）
+
+
+def test_anchor_beyond_len_no_loss():
+    """审查中危: history_anchor ≥ len(messages) 时不裁切（历史不丢）.
+
+    回归: 极端并发/持久化异常下 anchor 可能越界；防御逻辑（>0 and <len 才裁）
+    保证越界时走全量（不丢历史、不崩溃）。
+    """
+    msgs = [_tool_msg("x")] + [_user(f"问题{i}") for i in range(5)]
+    box: list[int] = []
+    out = build_history_messages(
+        msgs, system_prompt="SYS", max_chars=100000,
+        history_anchor=999,  # 越界锚点
+        anchor_out=box,
+    )
+    # 全部消息仍提交（无裁切）
+    roles = [m.get("role") for m in out if m.get("role") in ("user", "tool")]
+    assert roles == ["tool"] + ["user"] * 5, f"越界锚点导致历史丢失: {roles}"
+    assert len(out) == 7  # SYS + 6 条消息

@@ -105,3 +105,31 @@ class TestFrontendStreamConsumption:
         assert 'fetch("/api/v1/chat/stream"' in app_js_src
         assert "getReader" in app_js_src
         assert "answer_delta" in app_js_src
+
+
+def test_chat_stream_background_runner_mode(build_test_engine):
+    """审查 P2: 装配后台 runner 时流式端点走订阅路径（done 终态正常送达）."""
+    engine, _ = build_test_engine([])
+    engine.llm_pool.default_client = StreamingFakeLLM("后台回答")
+    from llm_loop.core.loop.runner import BackgroundRunner
+    engine.runner = BackgroundRunner(engine, enabled=True)
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat/stream", json={"message": "hi"})
+    assert resp.status_code == 200
+    events = _parse_sse(resp.text)
+    assert events and events[-1]["type"] == "done", f"后台模式无 done 终态: {events[-1] if events else 'empty'}"
+    done = events[-1]["data"]
+    assert done["final_answer"] == "后台回答"
+
+
+def test_chat_stream_background_disabled_fallback(build_test_engine):
+    """审查 P2: runner disabled → 回退旧直驱（done 仍正常）."""
+    engine, _ = build_test_engine([])
+    engine.llm_pool.default_client = StreamingFakeLLM("直驱回答")
+    from llm_loop.core.loop.runner import BackgroundRunner
+    engine.runner = BackgroundRunner(engine, enabled=False)
+    client = _make_client(engine)
+    resp = client.post("/api/v1/chat/stream", json={"message": "hi"})
+    events = _parse_sse(resp.text)
+    assert events[-1]["type"] == "done"
+    assert events[-1]["data"]["final_answer"] == "直驱回答"
