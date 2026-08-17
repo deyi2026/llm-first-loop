@@ -970,3 +970,17 @@
   background: var(--dsw-alias-state-danger, #dc2626);
   border-radius: 4px;
 }
+
+/* 会话树：子代理分支缩进 */
+.v2-session-item-wrap {
+  position: relative;
+}
+
+.v2-tree-branch {
+  position: absolute;
+  left: 8px;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  border-left: 1px solid var(--dsw-alias-divider-color, rgba(128,128,128,0.25));
+}
