@@ -231,7 +231,8 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
 
     # ── 主入口 ──
     def run_stream(
-        self, session_id: str, user_text: str, model: str | None = None
+        self, session_id: str, user_text: str, model: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> Iterator[StreamDelta]:
         """单条用户消息的完整循环（流式）：逐 content delta yield，结束返回 LoopResult.
 
@@ -273,9 +274,15 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         # 工作区根跟随（工具相对路径/命令默认 cwd；与会话同生命周期）
         _prev_ws = _current_workspace_root.get()
         _current_workspace_root.set(self.workspace_root or "")
+        # DSH 对齐（2026-08-17）: 每请求推理等级 override——请求期设置/finally 恢复
+        _prev_effort = getattr(self.llm, "reasoning_effort", None)
+        if reasoning_effort is not None and reasoning_effort != _prev_effort:
+            self.llm.reasoning_effort = reasoning_effort
         try:
             return (yield from self._run_stream_inner(session_id, user_text, model))
         finally:
+            if _prev_effort is not None:
+                self.llm.reasoning_effort = _prev_effort
             with self._sync_guard:
                 self._sync_active.discard(session_id)
             _current_workspace_root.set(_prev_ws)
@@ -835,12 +842,15 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             reasoning_content=resp.reasoning_content if resp is not None else None,
         )
 
-    def run(self, session_id: str, user_text: str, model: str | None = None) -> LoopResult:
+    def run(
+        self, session_id: str, user_text: str, model: str | None = None,
+        reasoning_effort: str | None = None,
+    ) -> LoopResult:
         """单条用户消息的完整循环（run_stream 的同步聚合包装，签名/返回不变）.
 
         model: 可选，本次对话覆盖使用的 LLM 模型（None 用装配模型，Web 模型切换用）。
         """
-        it = self.run_stream(session_id, user_text, model)
+        it = self.run_stream(session_id, user_text, model, reasoning_effort=reasoning_effort)
         while True:
             try:
                 next(it)

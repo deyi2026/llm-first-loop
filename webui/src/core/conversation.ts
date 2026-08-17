@@ -160,6 +160,7 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
     message: effectiveText,
     session_id: sessionId,
     model: sessionStore.getState().model,
+    reasoning_effort: sessionStore.getState().reasoningEffort,
   };
   abortCtrl = new AbortController();
   const acc = { answer: "", reasoning: "", toolRounds: 0 };

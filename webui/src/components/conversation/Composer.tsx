@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { zh } from "../../i18n/zh";
 import { sendMessage, stopStreaming, useConversation } from "../../core/conversation";
 import { fetchModels, uploadFileBase64 } from "../../core/chat";
-import { sessionStore, useModel } from "../../core/stores";
+import { sessionStore, useModel, useReasoningEffort } from "../../core/stores";
 
 type AttachStatus = "ok" | "pending" | "degraded" | "error";
 
@@ -223,6 +223,9 @@ export function Composer() {
   };
 
   const currentModel = useModel();
+  // 对齐 DSH：推理等级选择（low/medium/high——每请求携带）
+  const currentEffort = useReasoningEffort();
+  const EFFORT_OPTIONS = ["low", "medium", "high"];
 
   return (
     <div className="v2-composer" data-testid="composer">
@@ -310,6 +313,20 @@ export function Composer() {
             {models.map((m) => (
               <option key={m} value={m}>
                 {m}
+              </option>
+            ))}
+          </select>
+          <select
+            className="v2-model-select v2-effort-select"
+            value={currentEffort ?? ""}
+            onChange={(e) => sessionStore.setReasoningEffort(e.target.value || null)}
+            title={zh.reasoningEffortSelect}
+            data-testid="effort-select"
+          >
+            <option value="">{zh.effortDefault}</option>
+            {EFFORT_OPTIONS.map((ef) => (
+              <option key={ef} value={ef}>
+                {ef}
               </option>
             ))}
           </select>

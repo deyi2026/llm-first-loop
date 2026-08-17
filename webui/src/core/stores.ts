@@ -10,6 +10,8 @@ interface SessionState {
   currentSessionId: string | null;
   /** 会话级模型覆盖（chat 请求携带；M47 语义） */
   model: string | null;
+  /** 会话级推理等级覆盖（对齐 DSH 模型+推理等级选择；chat 请求携带） */
+  reasoningEffort: string | null;
 }
 
 const listeners = new Set<() => void>();
@@ -34,6 +36,7 @@ const sessionStoreRaw = createStore<SessionState>({
   sessions: [],
   currentSessionId: null,
   model: null,
+  reasoningEffort: null,
 });
 
 export const sessionStore = {
@@ -41,6 +44,7 @@ export const sessionStore = {
   setSessions: (sessions: SessionMeta[]) => sessionStoreRaw.setState({ sessions }),
   setCurrentSession: (sessionId: string) => sessionStoreRaw.setState({ currentSessionId: sessionId }),
   setModel: (model: string | null) => sessionStoreRaw.setState({ model }),
+  setReasoningEffort: (effort: string | null) => sessionStoreRaw.setState({ reasoningEffort: effort }),
   subscribe: sessionStoreRaw.subscribe,
 };
 
@@ -54,6 +58,10 @@ export function useCurrentSessionId(): string | null {
 
 export function useModel(): string | null {
   return useSyncExternalStore(sessionStore.subscribe, () => sessionStore.getState().model);
+}
+
+export function useReasoningEffort(): string | null {
+  return useSyncExternalStore(sessionStore.subscribe, () => sessionStore.getState().reasoningEffort);
 }
 
 // ── 主题 store（偏好持久化 localStorage + 跟随系统；body[data-ds-dark-theme] 属性生效） ──
