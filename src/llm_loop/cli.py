@@ -1031,35 +1031,13 @@ def _cmd_evolve_complete(engine, suggestion_id: str, result: str) -> int:
 
 
 def _maybe_auto_execute(engine, store, target: dict) -> None:
-    """accepted 后按权限分级自动执行（can_auto_exec → EvolutionExecutor，T60）."""
-    from llm_loop.introspection.evolution import EvolutionSuggestion
-    from llm_loop.introspection.evolution_exec import EvolutionExecutor
+    """accepted 后按权限分级自动执行（can_auto_exec → EvolutionExecutor，T60）.
 
-    level = int(getattr(engine.correction_ctx, "evolve_local_exec", 0) or 0)
-    if level == 0:
-        print(
-            f"[等待人工执行] 当前为仅建议模式（EVOLVE_LOCAL_EXEC=0），{target['id']} 由人工执行。"
-        )
-        return
-    whitelist_raw = getattr(engine.correction_ctx, "evolve_exec_whitelist", "") or ""
-    whitelist = (
-        tuple(w.strip() for w in whitelist_raw.split(",") if w.strip()) if whitelist_raw else ()
-    )
-    suggestion = EvolutionSuggestion(**target)
-    executor = EvolutionExecutor(
-        exec_level=level,
-        whitelist=whitelist,
-        store=store,
-        audit_dir=getattr(engine.settings, "audit_dir", None),
-    )
-    outcome = executor.maybe_auto_execute(suggestion)
-    if outcome is None:
-        print(f"[等待人工执行] {target['id']} 不满足自动执行条件（边界/权限/白名单），由人工执行。")
-    else:
-        print(
-            f"[自动执行] {target['id']} → {outcome.status}（executor={outcome.executor} "
-            f"verify={outcome.verify_result} rollback={outcome.rollback_result}）: {outcome.note[:120]}"
-        )
+    薄包装：逻辑已提取公共函数 maybe_auto_execute_from_engine（EVO 飞书审批 UX，
+    CLI/飞书共用防分叉）。"""
+    from llm_loop.introspection.evolution_exec import maybe_auto_execute_from_engine
+
+    print(maybe_auto_execute_from_engine(engine, store, target))
 
 
 def _cmd_extract(engine, session_id: str) -> int:

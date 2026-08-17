@@ -18,7 +18,16 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Iterator, Literal
+
+import logging
+import threading
+from contextlib import contextmanager
+
+logger = logging.getLogger(__name__)
+
+# 非 POSIX 平台 flock 不可得时的进程内回退锁（对齐 session.py P0-4 模式）
+_FALLBACK_LOCK = threading.Lock()
 
 # 范围边界（不可 AI 执行，仅允许建议）
 _BOUNDARY_MARKERS = [
@@ -188,31 +197,61 @@ class EvolutionStore:
         return self._transition(suggestion_id, status=status, **fields)
 
     def _transition(self, suggestion_id: str, *, status: str, **fields: str) -> dict | None:
-        """内部流转实现: 仅对已存在的建议生效，不存在的返回 None."""
+        """内部流转实现: 仅对已存在的建议生效，不存在的返回 None.
+
+        EVO-20260817 飞书审批 UX: 跨进程写锁（flock LOCK_EX；非 POSIX 回退进程内锁）——
+        CLI/飞书/未来入口并发改同一 JSONL 防 lost update（对齐 session.py 锁模式）。
+        """
         if not self._path.exists():
             return None
-        lines = self._path.read_text(encoding="utf-8").splitlines()
-        out: list[str] = []
-        target: dict | None = None
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                out.append(line)
-                continue
-            if entry.get("id") == suggestion_id:
-                entry = self._with_defaults(entry)
-                entry["status"] = status
-                for key, val in fields.items():
-                    entry[key] = val
-                target = entry
-            out.append(json.dumps(entry, ensure_ascii=False))
-        if target is not None:
-            self._path.write_text("\n".join(out) + "\n", encoding="utf-8")
-        return target
+        with self._file_lock():
+            lines = self._path.read_text(encoding="utf-8").splitlines()
+            out: list[str] = []
+            target: dict | None = None
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    out.append(line)
+                    continue
+                if entry.get("id") == suggestion_id:
+                    entry = self._with_defaults(entry)
+                    entry["status"] = status
+                    for key, val in fields.items():
+                        entry[key] = val
+                    target = entry
+                out.append(json.dumps(entry, ensure_ascii=False))
+            if target is not None:
+                self._path.write_text("\n".join(out) + "\n", encoding="utf-8")
+            return target
+
+    @contextmanager
+    def _file_lock(self) -> Iterator[None]:
+        """evolution_suggestions.jsonl 跨进程写锁（flock；非 POSIX 回退进程内锁）.
+
+        不可重入：同一线程嵌套 acquire 自死锁（flock 按文件描述符互斥）——
+        持锁路径内不得再次 _file_lock。
+        """
+        lock_path = self._path.with_suffix(self._path.suffix + ".lock")
+        try:
+            import fcntl
+        except ImportError:
+            with _FALLBACK_LOCK:
+                yield
+            return
+        try:
+            with lock_path.open("a", encoding="utf-8") as f:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        except OSError as exc:
+            logger.warning("演进存储锁不可用（fail-open，并发保护降级）: %s: %s", lock_path, exc)
+            yield
 
     def search(self, query: str, limit: int = 10) -> list[dict]:
         """检索建议（关键词匹配 content/evidence/impact_scope）."""
