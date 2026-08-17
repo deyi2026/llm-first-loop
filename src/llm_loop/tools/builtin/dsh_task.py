@@ -213,7 +213,7 @@ class DshTaskTool:
     # ── 内部 ──
     def _start_background(self, task: str, cwd: str, dsh_bin: str) -> ToolResult:
         """后台执行：spawn + JobRegistry 登记（对齐 execute_command run_in_background）."""
-        from llm_loop.tools.builtin.job_registry import JobRegistry
+        from llm_loop.tools.builtin.job_registry import JobLimitExceeded, JobRegistry
 
         proc = subprocess.Popen(
             [dsh_bin, "--profile", _DSH_PROFILE, task],
@@ -224,7 +224,20 @@ class DshTaskTool:
             cwd=cwd,
             start_new_session=True,
         )
-        job_id = JobRegistry.instance().create(proc, f"dsh --profile {_DSH_PROFILE} <task>")
+        # DSH 借鉴 021-B: owner 并发上限——超限释放已启动进程并如实拒绝
+        try:
+            job_id = JobRegistry.instance().create(proc, f"dsh --profile {_DSH_PROFILE} <task>")
+        except JobLimitExceeded as exc:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, OSError):
+                proc.terminate()  # 兜底：单进程 SIGTERM
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[任务超限拒绝] {exc}\ndsh_task 未执行（进程已释放）",
+                tool_call_id="",
+                tool_name=self.name,
+            )
         JobRegistry.instance().start_readers(job_id)
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
