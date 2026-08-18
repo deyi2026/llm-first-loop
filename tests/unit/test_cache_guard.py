@@ -155,6 +155,25 @@ class TestValidateRequest:
         assert d.verdict == "BLOCK"
         assert d.rule == "low_hit_rate"
 
+    def test_block_escape(self, tmp_path):
+        """连续 BLOCK 达上限 → 自动降级 WARN（防死锁）. """
+        g = PromptGuard(audit_file=tmp_path / "g.jsonl")
+        for _ in range(3):
+            g.record_result("s-esc", 100000, 5000)  # 稳定前缀低命中
+        for _ in range(4):  # 连续 4 次（>3 逃生上限）
+            d = g.check(session_id="s-esc", system_text="sys", messages=_sys("sys"))
+        assert d.verdict == "WARN"  # 逃生降级
+        assert d.rule == "low_hit_rate_escape"
+
+    def test_reset_session(self, tmp_path):
+        """reset_session（模型切换）清窗口——恢复不判（冷启动）. """
+        g = PromptGuard(audit_file=tmp_path / "g.jsonl")
+        for _ in range(3):
+            g.record_result("s-r", 100000, 5000)
+        g.reset_session("s-r")
+        d = g.check(session_id="s-r", system_text="sys", messages=_sys("sys"))
+        assert d.verdict == "ALLOW"  # 窗口清空——样本不足——放行
+
     def test_fail_open(self, tmp_path, monkeypatch):
         """校验异常 → ALLOW（fail-open——不阻断主流程）."""
         import llm_loop.cache_guard.guard as mod

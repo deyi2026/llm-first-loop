@@ -38,9 +38,13 @@ _SUBMIT_RATIO_BLOCK = 0.95  # >95% 预算 → BLOCK（强制先决策）
 _SUBMIT_RATIO_WARN = 0.85  # >85% → WARN（提示接近超限）
 # 规则 G（2026-08-18 用户反馈：'低命中'应拦截——命中是结果——需响应回馈闭环）：
 # 会话近期命中率 < 阈值且样本足够 → BLOCK（前缀不稳定——先压缩 checkpoint/换会话）
-_HIT_RATE_BLOCK = 0.30  # 近期命中率 <30% → BLOCK
-_HIT_RATE_WARN = 0.50  # <50% → WARN
-_HIT_SAMPLE_MIN = 3  # 最少样本数（样本不足不判——避免冷启动误拦）
+# 阈值 env 化（拷问④——2026-08-18）: 可用 CACHE_GUARD_* 覆盖
+_HIT_RATE_BLOCK = float(os.environ.get("CACHE_GUARD_HIT_BLOCK", "0.30"))
+_HIT_RATE_WARN = float(os.environ.get("CACHE_GUARD_HIT_WARN", "0.50"))
+_HIT_SAMPLE_MIN = int(os.environ.get("CACHE_GUARD_HIT_SAMPLE", "3"))
+# 逃生（拷问③——2026-08-18）: 连续 BLOCK N 次后自动降级 WARN（防死锁——AI 不处理时
+# 不无限拦截；降级后 AI 可行动）
+_BLOCK_ESCAPE_MAX = int(os.environ.get("CACHE_GUARD_BLOCK_ESCAPE", "3"))
 _SENSITIVE_PATTERNS = [
     re.compile(r"sk-[A-Za-z0-9]{16,}"),  # API key
     re.compile(r"AKIA[0-9A-Z]{16}"),  # AWS key
@@ -245,6 +249,13 @@ def validate_request(
     return decision
 
 
+class CacheGuardBlockedError(Exception):
+    """cache_guard BLOCK 专用异常（拷问⑥——2026-08-18）: 与普通 LLM 错误区分——
+
+    engine 直接如实反馈 AI（不重试/不走 overflow reinject——重试同样被拦=浪费循环）.
+    """
+
+
 class PromptGuard:
     """MCP 出入口的进程内接口（校验 + 基线维护 + 命中率闭环）——MCP server 复用本类."""
 
@@ -253,6 +264,17 @@ class PromptGuard:
         self.audit_file = audit_file
         # 规则 G: 会话级命中率窗口（近 N 次请求的 hit/in——响应回馈）
         self._hit_win: dict[str, list[tuple[int, int]]] = {}  # session → [(in, hit)...]
+        # 逃生（拷问③）: 每会话连续 BLOCK 计数——达上限自动降级 WARN
+        self._block_streak: dict[str, int] = {}
+
+    def reset_session(self, session_id: str) -> None:
+        """重置会话状态（拷问②——模型切换/换会话时调用）——清窗口/基线/逃生计数. """
+        try:
+            self._hit_win.pop(session_id, None)
+            self._baselines.pop(session_id, None)
+            self._block_streak.pop(session_id, None)
+        except Exception:  # noqa: BLE001
+            pass
 
     def record_result(self, session_id: str, tokens_in: int, tokens_hit: int) -> None:
         """响应后回馈（闭环）——记录该会话本次请求的命中——规则 G 数据源.
@@ -358,7 +380,25 @@ class PromptGuard:
                 hit_d.verdict == "BLOCK"
                 or (hit_d.verdict == "WARN" and decision.verdict == "ALLOW")
             ):
+                # 逃生（拷问③）: 连续 BLOCK 达上限 → 降级 WARN（防死锁——AI 不处理时
+                # 不无限拦截——AI 可行动（压缩/换会话）后重试）
+                if hit_d.verdict == "BLOCK":
+                    streak = self._block_streak.get(session_id, 0) + 1
+                    self._block_streak[session_id] = streak
+                    if streak > _BLOCK_ESCAPE_MAX:
+                        hit_d = GuardDecision(
+                            verdict="WARN",
+                            rule="low_hit_rate_escape",
+                            detail=(
+                                f"连续 {streak} 次 BLOCK 后自动降级 WARN（逃生——"
+                                "避免死锁；请尽快压缩 checkpoint/换会话恢复命中）"
+                            ),
+                        )
+                else:
+                    self._block_streak[session_id] = 0
                 decision = hit_d
+        elif decision.verdict == "ALLOW":
+            self._block_streak[session_id] = 0
         # 基线维护：ALLOW 且无 WARN（system 稳定）时更新基线；有 WARN 不动（下次继续检测）
         if decision.verdict == "ALLOW":
             self._baselines[session_id] = system_text
