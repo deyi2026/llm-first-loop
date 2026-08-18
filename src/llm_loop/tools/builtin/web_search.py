@@ -9,6 +9,7 @@ channel=scholar 学术（OpenAlex/Crossref/PubMed 多源合并去重）；channe
 """
 
 from __future__ import annotations
+from llm_loop.tools.trim import truncate_output
 
 import contextlib
 import html as _html
@@ -287,9 +288,12 @@ class WebSearchTool:
                 lines.append(f"   {r['snippet']}")
         if errors:
             lines.append(f"[降级记录] 部分源失败: {'; '.join(errors)}")
+        content = "\n".join(lines)
+        # 2026-08-18 对齐 DSH: 搜索结果截断（首尾+落盘可检索——尾部新增小=命中高）
+        content = truncate_output(content, source=query)
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
-            content="\n".join(lines),
+            content=content,
             tool_call_id="",
             tool_name=self.name,
         )

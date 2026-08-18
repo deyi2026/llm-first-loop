@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from llm_loop.tools.trim import truncate_output
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.tools.safety import link_shaped_paths
@@ -78,9 +79,12 @@ class ReadFileTool:
                 )
             numbered = "\n".join(f"{start + i + 1} | {ln}" for i, ln in enumerate(selected))
             note = f"\n[共 {total} 行，已显示 {len(selected)} 行]" if len(selected) < total else ""
+            content = numbered + note + _link_note
+            # 2026-08-18 对齐 DSH: 大文件读取截断（首尾+落盘可检索——尾部新增小=命中高）
+            content = truncate_output(content, source=str(p))
             return ToolResult(
                 status=ToolResultStatus.SUCCESS,
-                content=numbered + note + _link_note,
+                content=content,
                 tool_call_id="",
                 tool_name=self.name,
             )
