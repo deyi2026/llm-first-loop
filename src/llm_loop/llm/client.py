@@ -123,6 +123,9 @@ class LLMClient:
     # 会话上下文（engine 透传——会话级基线/压缩计数）
     guard_session_id: str = ""
     guard_compress_count: int = 0
+    # M3 适配（2026-08-18）: <think> 标签流式剥离状态（跨 delta 累积）
+    _think_buf: str = ""
+    _in_think: bool = False
 
     def __post_init__(self) -> None:
         self._client = httpx.Client(timeout=self.timeout_s)
@@ -272,8 +275,42 @@ class LLMClient:
                     delta = choice.get("delta") or {}
                     content = delta.get("content")
                     if content:
-                        acc.content_parts.append(content)
-                        yield StreamDelta(text=content)
+                        # 2026-08-18 MiniMax-M3 适配（场景 B）: M3 把思考链放 content 的
+                        # <think>...</think> 标签（reasoning_content 字段为空）——流式剥离到 reasoning
+                        self._think_buf = getattr(self, "_think_buf", "") + content
+                        _in_think = getattr(self, "_in_think", False)
+                        while True:
+                            if not _in_think:
+                                idx = self._think_buf.find("<think>")
+                                if idx == -1:
+                                    normal = self._think_buf
+                                    self._think_buf = ""
+                                    if normal:
+                                        acc.content_parts.append(normal)
+                                        yield StreamDelta(text=normal)
+                                    break
+                                normal = self._think_buf[:idx]
+                                self._think_buf = self._think_buf[idx:]
+                                if normal:
+                                    acc.content_parts.append(normal)
+                                    yield StreamDelta(text=normal)
+                                _in_think = True
+                            else:
+                                end = self._think_buf.find("</think>")
+                                if end == -1:
+                                    think = self._think_buf
+                                    self._think_buf = ""
+                                    if think:
+                                        acc.reasoning_parts.append(think)
+                                        yield StreamDelta(text="", reasoning=think)
+                                    break
+                                think = self._think_buf[:end]
+                                self._think_buf = self._think_buf[end + len("</think>"):]
+                                _in_think = False
+                                if think:
+                                    acc.reasoning_parts.append(think)
+                                    yield StreamDelta(text="", reasoning=think)
+                        self._in_think = _in_think
                     rc = delta.get("reasoning_content")
                     if rc:
                         acc.reasoning_parts.append(rc)
