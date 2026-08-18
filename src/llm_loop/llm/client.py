@@ -262,10 +262,13 @@ class LLMClient:
                         ct = usage.get("completion_tokens")
                         if ct:
                             acc.completion_tokens = int(ct)
-                        # M58: 前缀缓存命中（DeepSeek prompt_cache_hit_tokens；Kimi 兜底 cached_tokens）
+                        # M58: 前缀缓存命中（DeepSeek prompt_cache_hit_tokens；Kimi 兜底 cached_tokens；
+                        # 2026-08-18 MiniMax-M3: prompt_tokens_details.cached_tokens（嵌套——实测 128 命中）
                         hit = usage.get("prompt_cache_hit_tokens")
                         if hit is None:
                             hit = usage.get("cached_tokens")
+                        if hit is None:
+                            hit = (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
                         if hit:
                             acc.prompt_cache_hit_tokens = int(hit)
                     choices = chunk.get("choices") or []
