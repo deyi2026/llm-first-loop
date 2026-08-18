@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # EVO-20260818: 文件树/会话树 API（独立模块 fs_tree.py，安全边界+审计）
-from llm_loop.web.fs_tree import fs_router
+from llm_loop.web.fs_tree import fs_router  # noqa: E402 — 延迟导入防循环（与下方 approve 同模式）
 
 router.include_router(fs_router)
 
@@ -621,9 +621,9 @@ def architecture_status_web(request: Request, session_id: str = "") -> Response:
 @router.get("/api/v1/evolution/list")
 def evolution_list(request: Request, limit: int = 30) -> Response:
     """演进建议列表（只读——web 审批状态展示数据源；审批走飞书/CLI）."""
-    from pathlib import Path as _P
+    from pathlib import Path
 
-    base = Path(os.environ.get("LFL_DATA_DIR", "") or _P(__file__).resolve().parents[3] / "data")
+    base = Path(os.environ.get("LFL_DATA_DIR", "") or Path(__file__).resolve().parents[3] / "data")
     f = base / "audit" / "evolution_suggestions.jsonl"
     out = []
     if f.exists():
