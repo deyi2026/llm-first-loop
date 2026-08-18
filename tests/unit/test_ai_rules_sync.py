@@ -1,11 +1,13 @@
 """T47: AI 规则一致性校验（FR-AUD-DOC-02）.
 
 docs/ai_rules.md 为唯一规则真相源，core/prompt.py 为其派生呈现。
-断言十二条规则（RULE-AI-00~11）关键动作句双向包含，防漂移。
+断言全部规则（RULE-AI-00~18）关键动作句双向包含，防漂移；
+开集断言：SoT 中出现的每个 RULE-AI 编号都必须注入 prompt.py（封堵新增规则漏同步）。
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -15,7 +17,6 @@ _RULE_KEYWORDS = {
     "RULE-AI-00": [
         "AI 优先总纲",
         "感官和手脚",
-
         "不自动压缩/重试/摘要",
         "如实反馈",
         "避免程序错误影响",
@@ -133,6 +134,23 @@ _RULE_KEYWORDS = {
         "codearts_dispatch",  # 调度工具（首段）
         "codearts_status",  # 进度查询（首段）
     ],
+    # RULE-AI-17: 长内容默认分段输出（2026-08-16 确立，EVO-20260816-fa642e6f）
+    "RULE-AI-17": [
+        "长内容默认分段输出",  # 规则编号名（标题）
+        "先摘要后分段",  # ① 摘要/目录先行
+        "1/N",  # ② 分段标注
+        "段末给选项",  # ③ 用户控制节奏
+        "代码/命令只留关键片段",  # ④ 完整内容写文件给路径
+        "出口统一",  # ⑤ 全出口一致
+    ],
+    # RULE-AI-18: 经验前置注入与已验证路径强制复用（2026-08-16 确立，EVO-20260816-62977206）
+    "RULE-AI-18": [
+        "经验前置注入与已验证路径强制复用",  # 规则编号名（标题）
+        "search_records",  # ① 决策前查证（禁逐个试错探测）
+        "已验证最短路径",  # ② 命中直接复用
+        "失败定向修正",  # ③ 按失败模式分类修正
+        "save_experience",  # ④ 沉淀即复用
+    ],
 }
 
 
@@ -155,7 +173,7 @@ def test_prompt_has_rule_numbers():
 
 
 def test_rules_consistent_both_sides():
-    """十二条规则关键动作句在 ai_rules.md 与 prompt.py 双向包含（防漂移）."""
+    """全部规则关键动作句在 ai_rules.md 与 prompt.py 双向包含（防漂移）."""
     doc = _read("docs/ai_rules.md")
     prompt = _read("src/llm_loop/core/prompt.py")
     for rule_id, keywords in _RULE_KEYWORDS.items():
@@ -184,3 +202,16 @@ def test_rules_consistent_both_sides():
             assert kw in prompt_section or kw in prompt[: prompt.find(rule_id) + 40], (
                 f"prompt.py {rule_id} 缺关键词: {kw}"
             )
+
+
+def test_sot_rule_numbers_all_injected_to_prompt():
+    """开集断言：SoT 中每个 RULE-AI 编号都必须以 '# RULE-AI-XX' 注入 prompt.py.
+
+    封闭关键词表无法发现"新增规则未同步注入"类漂移（2026-08-16 曾漏 RULE-AI-17/18），
+    本测试以正则从 ai_rules.md 提取编号全集，与 prompt.py 注入集比对，封堵盲区。
+    """
+    doc = _read("docs/ai_rules.md")
+    prompt = _read("src/llm_loop/core/prompt.py")
+    doc_ids = sorted({m for m in re.findall(r"RULE-AI-\d+", doc)})
+    missing = [rid for rid in doc_ids if f"# {rid} " not in prompt]
+    assert not missing, f"SoT 新增规则未同步注入 prompt.py: {missing}"
