@@ -242,11 +242,15 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
     streamStartedAt: Date.now(),
   });
 
+  // 2026-08-18 修复跳回旧会话: handleNew 后发送需 new_session=true（消费标记）
+  const newSessionPending = sessionStore.getState().newSessionPending;
+  if (newSessionPending) sessionStore.setNewSessionPending(false);
   const body = {
     message: effectiveText,
     session_id: sessionId,
     model: sessionStore.getState().model,
     reasoning_effort: sessionStore.getState().reasoningEffort,
+    new_session: newSessionPending || undefined,
   };
   abortCtrl = new AbortController();
   const acc = { answer: "", reasoning: "", toolRounds: 0 };

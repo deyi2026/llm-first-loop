@@ -43,6 +43,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
 
   const handleNew = () => {
     sessionStore.setCurrentSession("");
+    sessionStore.setNewSessionPending(true);  // 2026-08-18 修复跳回旧会话
     conversationStore.setState({
       messages: [],
       hasMoreHistory: false,
