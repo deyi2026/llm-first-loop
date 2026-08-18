@@ -115,3 +115,40 @@ def test_compression_downgrade_notice_on_exhaustion():
         assert any("[缓存降级]" in str(m.get("content", "")) for m in built2)
     # 无论是否降级: system 保留 + 无异常
     assert built2[0]["content"] == big_sys
+
+
+def test_emergency_compact_forces_anchor_advance():
+    """M53 拒绝逃生（grill-me 2026-08-18）: emergency_compact 强制 head_keep=0 →
+    锚点前移（历史真正缩小，防超限会话死循环）; 普通压缩 head_keep>0 时锚点不动."""
+    history = [_msg("user", f"m{i:03d}-" + "z" * 3000) for i in range(40)]  # 120K 字符
+    archived: list[Message] = []
+
+    def sink(session_id: str, m: Message) -> None:
+        archived.append(m)
+
+    # 普通压缩: head_keep>0 → 锚点不前移
+    box1: list[int] = []
+    build_history_messages(
+        history, SYSTEM_PROMPT, max_chars=60000, session_id="s1",
+        archive_sink=sink, head_keep_chars=12000,
+        history_anchor=10, anchor_out=box1,
+    )
+    assert box1 == [10], f"head 保留时锚点不应前移: {box1}"
+
+    # 紧急压缩（emergency 语义 = head_keep=0）: 锚点前移 + 历史缩小
+    box2: list[int] = []
+    arch2: list[Message] = []
+    def sink2(session_id: str, m: Message) -> None:
+        arch2.append(m)
+
+    built = build_history_messages(
+        history, SYSTEM_PROMPT, max_chars=60000, session_id="s1",
+        archive_sink=sink2, head_keep_chars=0,
+        history_anchor=10, anchor_out=box2,
+    )
+    # 锚点推进 = 旧锚点 + 窗口内丢弃数（窗口 = anchor 之后 30 条）
+    assert box2[0] > 10, f"紧急压缩锚点应前移: {box2}"  # 锚点前移（精确值受 extras 影响，断言方向）
+    assert len(arch2) > 0  # 归档发生（信息零丢失）
+    # 提交显著缩小（≤ 预算）
+    total = sum(len(str(m.get("content", ""))) for m in built)
+    assert total <= 60000 + len(SYSTEM_PROMPT)
