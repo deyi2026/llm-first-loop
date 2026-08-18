@@ -156,6 +156,9 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
     note: null,
     streaming: true,
     streamStartedAt: Date.now(),
+    tokens_in: 0,
+    tokens_out: 0,
+    tokens_cache_hit: 0,
   };
   conversationStore.setState({
     messages: [...cur.messages, userMsg, placeholder],
@@ -220,6 +223,7 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
         model_used: data.model_used ?? "",
         tokens_in: data.tokens_in ?? 0,
         tokens_out: data.tokens_out ?? 0,
+        tokens_cache_hit: data.tokens_cache_hit ?? 0,
       });
     } else if (Array.isArray(data.tool_calls) && data.tool_calls.length > 0) {
       finalize({

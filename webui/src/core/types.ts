@@ -30,6 +30,8 @@ export interface ChatMessage {
   tokens_in?: number;
   /** M52: 本轮 run 累计 completion tokens */
   tokens_out?: number;
+  /** M58: 本轮 run 前缀缓存命中 token（页脚命中率显示） */
+  tokens_cache_hit?: number;
 }
 
 export interface ChatDoneData {
@@ -42,6 +44,7 @@ export interface ChatDoneData {
   model_used?: string;
   tokens_in?: number;
   tokens_out?: number;
+  tokens_cache_hit?: number;
 }
 
 export interface HistoryMessage {

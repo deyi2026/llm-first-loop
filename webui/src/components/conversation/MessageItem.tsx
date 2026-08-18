@@ -364,10 +364,14 @@ export function MessageItem({
         )}
         {msg.model_used || msg.tokens_in || msg.tokens_out ? (
           // M51/M52: 模型 + token 消耗页脚（对齐 feishu「—— 模型 · N入/M出」格式）
+          // M58（2026-08-18 用户需求）: 每次命中率也加到末尾——⚡ 命中率%
           <div className="v2-msg-footer" data-testid="msg-footer">
             {msg.model_used ? `—— ${msg.model_used}` : ""}
             {msg.tokens_in || msg.tokens_out
               ? ` · ${formatTokens(msg.tokens_in)}入/${formatTokens(msg.tokens_out)}出`
+              : ""}
+            {msg.tokens_in && msg.tokens_cache_hit
+              ? ` · ⚡ ${((msg.tokens_cache_hit / msg.tokens_in) * 100).toFixed(1)}%`
               : ""}
           </div>
         ) : null}
