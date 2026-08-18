@@ -595,6 +595,29 @@ def health() -> dict:
     return {"status": "ok", "service": SERVICE_NAME, "version": SERVICE_VERSION}
 
 
+@router.get("/api/v1/architecture_status")
+def architecture_status_web(request: Request, session_id: str = "") -> Response:
+    """EVO-20260818（spec §5.4.1-2）: 架构状态 web API 通道.
+
+    含 context_usage.cache_health / cache_guard 快照——命中率权威口径为
+    cache_guard.recent_hit_rate（会话近 10 次窗口，目标 ≥90%）。fail-open：
+    快照异常返回部分字段（error + 空快照），不抛 500。
+    """
+    engine = _engine_from(request)
+    try:
+        snap = engine.status.snapshot(session_id=session_id)
+        return UTF8JSONResponse(content=snap)
+    except Exception as exc:  # noqa: BLE001 — 快照异常 fail-open
+        return UTF8JSONResponse(
+            content={
+                "error": f"architecture_status 快照失败（fail-open）: {exc}",
+                "cache_health": None,
+                "cache_guard": None,
+            },
+            status_code=500,
+        )
+
+
 @router.get("/api/v1/evolution/list")
 def evolution_list(request: Request, limit: int = 30) -> Response:
     """演进建议列表（只读——web 审批状态展示数据源；审批走飞书/CLI）."""
