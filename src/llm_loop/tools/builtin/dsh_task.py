@@ -133,6 +133,13 @@ class DshTaskTool:
                 "用 job_output 查询输出、job_kill 终止——支持多 dsh_task 并行 fan-out（每任务独立进程/session）。"
                 "注意: 后台模式不执行 retry/审计，退出码经 job_output 可见。",
             },
+            "reasoning_effort": {
+                "type": "string",
+                "enum": ["low", "medium", "high", "max"],
+                "description": "DSH 推理强度（可选，默认沿用 settings.yaml 配置——当前为 max 最贵档）。"
+                "low/medium/high/max：经 --patch 覆盖 agent-default-model.config.reasoningEffort（rc.7 验证可行）。"
+                "批量/浅档任务用 low 省 token（质量影响小）；深档推理任务用 medium/high；max 为默认最贵档。",
+            },
         },
         "required": ["task"],
     }
@@ -154,6 +161,16 @@ class DshTaskTool:
         ctx_path = str(kwargs.get("ctx_path", "") or "").strip()
         acceptance = [str(a).strip() for a in (kwargs.get("acceptance") or []) if str(a).strip()]
         background = bool(kwargs.get("background", False))
+        reasoning_effort = str(kwargs.get("reasoning_effort") or "").strip().lower()
+        if reasoning_effort and reasoning_effort not in ("low", "medium", "high", "max"):
+            return self._fail(kwargs, f"reasoning_effort 非法: {reasoning_effort}（low/medium/high/max）")
+        # 生成 --patch 文件（reasoningEffort 覆盖；None 沿用 settings 不生成）
+        patch_path = ""
+        if reasoning_effort:
+            try:
+                patch_path = self._write_effort_patch(reasoning_effort)
+            except OSError as exc:
+                return self._fail(kwargs, f"生成 reasoning_effort patch 失败: {exc}")
 
         dsh_bin = shutil.which("dsh")
         if dsh_bin is None:
@@ -167,13 +184,13 @@ class DshTaskTool:
         full_task = self._build_task(task, ctx_path, report_format, acceptance)
 
         if background:
-            return self._start_background(full_task, cwd, dsh_bin)
+            return self._start_background(full_task, cwd, dsh_bin, patch_path=patch_path)
 
         # 执行 + 重试（仅非 0 退出码；timeout 不重试防无限超时）
         attempts = 0
         while True:
             attempts += 1
-            code, out, err, elapsed = self._run_once(full_task, cwd, timeout_s, dsh_bin)
+            code, out, err, elapsed = self._run_once(full_task, cwd, timeout_s, dsh_bin, patch_path=patch_path)
             self._audit(full_task, cwd, code, elapsed, attempts)
             if code == 0:
                 return ToolResult(
@@ -211,12 +228,16 @@ class DshTaskTool:
             )
 
     # ── 内部 ──
-    def _start_background(self, task: str, cwd: str, dsh_bin: str) -> ToolResult:
+    def _start_background(self, task: str, cwd: str, dsh_bin: str, patch_path: str = "") -> ToolResult:
         """后台执行：spawn + JobRegistry 登记（对齐 execute_command run_in_background）."""
         from llm_loop.tools.builtin.job_registry import JobLimitExceeded, JobRegistry
 
+        cmd = [dsh_bin, "--profile", _DSH_PROFILE]
+        if patch_path:
+            cmd += ["--patch", patch_path]
+        cmd.append(task)
         proc = subprocess.Popen(
-            [dsh_bin, "--profile", _DSH_PROFILE, task],
+            cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -278,11 +299,15 @@ class DshTaskTool:
                 out = out.replace(val, "***")
         return out
 
-    def _run_once(self, task: str, cwd: str, timeout_s: float, dsh_bin: str):
+    def _run_once(self, task: str, cwd: str, timeout_s: float, dsh_bin: str, patch_path: str = ""):
         """单次执行：spawn DSH headless → 回收 stdout/stderr/退出码/耗时."""
         start = time.perf_counter()
+        cmd = [dsh_bin, "--profile", _DSH_PROFILE]
+        if patch_path:
+            cmd += ["--patch", patch_path]
+        cmd.append(task)
         proc = subprocess.Popen(
-            [dsh_bin, "--profile", _DSH_PROFILE, task],
+            cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -300,6 +325,28 @@ class DshTaskTool:
             out, err = proc.communicate()
             return "timeout", out, err, time.perf_counter() - start
         return proc.returncode, out, err, time.perf_counter() - start
+
+    def _write_effort_patch(self, effort: str) -> str:
+        """生成 DSH --patch 文件（覆盖 agent-default-model 的 reasoningEffort）.
+
+        rc.7 验证格式（DSH 实测 dump 确认 low 生效）:
+          - id: agent-default-model
+            config:
+              reasoningEffort: low
+        返回 patch 文件路径（临时文件）；调用方负责传给 --patch。
+        """
+        import tempfile
+
+        patch = (
+            "- id: agent-default-model\n"
+            "  config:\n"
+            f"    reasoningEffort: {effort}\n"
+        )
+        fd, path = tempfile.mkstemp(suffix=".yml", prefix="dsh_effort_")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(patch)
+        logger.info("dsh_task reasoning_effort patch 已生成: %s (%s)", path, effort)
+        return path
 
     def _fail(self, kwargs, detail: str) -> ToolResult:
         return ToolResult(
