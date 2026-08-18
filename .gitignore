@@ -51,3 +51,9 @@ experiences/
 webui/node_modules/
 webui/dist/
 webui/tsconfig.tsbuildinfo
+
+# SWE-bench 评测产物（本地跑评测输出，不入库——22 个 json 污染工作区）
+llm-first-loop.swe-*.json
+
+# 评测日志（run_evaluation 产物，35M 体量）
+logs/
