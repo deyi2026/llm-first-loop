@@ -244,3 +244,47 @@ def test_resume_after_done_returns_none(monkeypatch):
     # 清理
     with r._guard:
         r._registry.pop("sess-d", None)
+
+
+def test_eventbus_replay_history():
+    """EVO-20260818（DSH 014）: EventBus 重放缓冲——新订阅者先收到已生成事件.
+
+    刷新/切回场景：resume 订阅先重放 run 期间 delta，再收实时。缓存零影响（不改历史序列）.
+    """
+    bus = EventBus()
+    # 先 emit 2 条（run 期间产生）
+    bus.emit({"type": "answer_delta", "data": "你好"})
+    bus.emit({"type": "answer_delta", "data": "世界"})
+    # 新订阅者（模拟刷新后 resume）→ 应先收到已生成 2 条
+    q = bus.subscribe()
+    first = q.get(timeout=1.0)
+    second = q.get(timeout=1.0)
+    assert first["data"] == "你好"
+    assert second["data"] == "世界"
+    # 之后实时事件也能收到
+    bus.emit({"type": "answer_delta", "data": "!"})
+    third = q.get(timeout=1.0)
+    assert third["data"] == "!"
+
+
+def test_eventbus_replay_bounded():
+    """重放缓冲有界（_HISTORY_MAX 内），超限丢弃最旧."""
+    bus = EventBus()
+    for i in range(EventBus._HISTORY_MAX + 50):
+        bus.emit({"type": "answer_delta", "data": str(i)})
+    q = bus.subscribe()
+    # 应只回放最近 _HISTORY_MAX 条（丢弃最旧 50）
+    first = q.get(timeout=1.0)
+    assert int(first["data"]) == 50  # 0-49 被丢弃
+
+
+def test_eventbus_replay_after_subscribe_live_only():
+    """订阅后 emit → 只实时收（不重复重放）."""
+    bus = EventBus()
+    q = bus.subscribe()
+    assert q.empty()
+    bus.emit({"type": "answer_delta", "data": "live"})
+    got = q.get(timeout=1.0)
+    assert got["data"] == "live"
+    # 不会重复收到旧事件
+    assert q.empty()
