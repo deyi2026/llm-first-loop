@@ -132,7 +132,13 @@ def _archive_index_dir(messages: list[Message]) -> str:
     from collections import Counter
 
     roles = Counter(m.role for m in messages if m.content)
-    tools = Counter(m.tool_name for m in messages if m.tool_name)
+    # DSH 借鉴（2026-08-18 拷问产出）: 归档目录【去动态计数】——N/角色/工具计数每轮变
+    # → 前缀持续漂移。改为固定文本（字节稳定——压缩断点后前缀稳定）；检索词由 search_archive
+    # 自行索引（AI 需要时主动检索——RULE-AI-00）。
+    from collections import Counter as _Counter
+
+    roles = _Counter(m.role for m in messages if m.content)
+    tools = _Counter(m.tool_name for m in messages if m.tool_name)
     n = len(messages)
     chars = sum(len(m.content) for m in messages)
     lines = [
@@ -166,6 +172,23 @@ def _adaptive_tool_trim_age(total_chars: int, max_chars: int) -> int:
     if ratio < 0.7:
         return 10
     return 5
+
+
+def _prune_oversized_tool_result(content: str, limit: int = 200_000) -> str:
+    """DSH 借鉴（2026-08-18 拷问产出）: 超长工具结果【中间剪枝标记】（保留头尾）.
+
+    与归档不同——不触发归档目录变化（前缀稳定）；保留头尾（AI 可见关键信息）。
+    仅提交视图剪枝（不动原消息）。超过 limit 的单条 tool 结果在此截断。
+    """
+    if content is None or len(content) <= limit:
+        return content
+    head = content[: limit // 2]
+    tail = content[-limit // 2 :]
+    return (
+        head
+        + f"\n\n[... 工具结果中间已剪枝（{len(content) - limit:,} 字符）——原文可 search_archive 检索 ...]\n\n"
+        + tail
+    )
 
 
 def _layer_trim(
@@ -488,7 +511,10 @@ def build_history_messages(
             # system 区 → 前缀不因耗尽注入持续分叉（缓存 MISS 收敛）
             if skip_injected_system and m.role == "system" and (m.metadata or {}).get("consumed"):
                 continue
-            _append_or_merge(m.to_llm_dict(), dynamic=_is_dynamic_inject(m))
+            _d = m.to_llm_dict()
+            if _d.get("role") == "tool" and _d.get("content"):
+                _d["content"] = _prune_oversized_tool_result(_d["content"])
+            _append_or_merge(_d, dynamic=_is_dynamic_inject(m))
         return _repair_tool_call_pairing(out)
 
     # ── 超长: 从最新往回保留，最旧的先"另存提取"再精简注入（不静默丢弃）──
@@ -622,7 +648,10 @@ def build_history_messages(
         if m.role == "system":
             _append_or_merge(m.to_llm_dict(), dynamic=_is_dynamic_inject(m))
         else:
-            out.append(m.to_llm_dict())
+            _d = m.to_llm_dict()
+            if _d.get("role") == "tool" and _d.get("content"):
+                _d["content"] = _prune_oversized_tool_result(_d["content"])
+            out.append(_d)
     if archived:
         # EVO-9794797e: 主动压缩——对被丢弃的旧消息做"另存 + 可见标注"
         # （原文已完整另存至压缩档案保信息零丢失，fail-open）
