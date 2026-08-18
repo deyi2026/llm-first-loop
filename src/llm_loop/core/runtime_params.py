@@ -163,7 +163,7 @@ class RuntimeParams:
         ranges = {
             "max_iterations": (5, HARD_CAP_MAX_ITERATIONS),
             "timeout_s": (5, 600),
-            "history_budget": (1000, 1000000),
+            "history_budget": (1000, 200000),  # EVO-20260818: 收敛上限 1M→200K（spec §5.1.1-2）
             "memory_top_k": (1, 50),
             "extract_interval_msgs": (5, 200),
             "retrieve_semantic_top_k": (1, 100),

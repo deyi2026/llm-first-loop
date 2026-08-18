@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from collections.abc import Iterator
@@ -21,6 +22,9 @@ from typing import Any
 
 import httpx
 
+from llm_loop.cache_guard.guard import (
+    PromptGuard,  # EVO-20260818: 顶层 import（guard 无内部依赖，无循环）——guard property 类型标注
+)
 from llm_loop.core.message import ToolCall
 from llm_loop.llm.errors import (
     LLMError,
@@ -29,8 +33,6 @@ from llm_loop.llm.errors import (
     LLMTimeoutError,
 )
 from llm_loop.llm.schemas import ToolCallDeltaAggregator
-
-import logging
 
 logger = logging.getLogger(__name__)
   # finish() 含 json.loads 归一（约束 C5）
@@ -79,7 +81,11 @@ class _StreamAcc:
 
 
 def _finish_response(
-    acc: _StreamAcc, agg: ToolCallDeltaAggregator, provider: str
+    acc: _StreamAcc,
+    agg: ToolCallDeltaAggregator,
+    provider: str,
+    client: LLMClient | None = None,  # EVO-20260818: 修复基线 bug——模块级函数原引用
+    # 不存在的 self → record_result 回馈从未生效（NameError 被吞 → 规则 G 窗口恒空）
 ) -> LLMResponse:
     raw_calls = agg.finish()
     tool_calls: list[ToolCall] = [
@@ -87,9 +93,15 @@ def _finish_response(
     ]
     # 2026-08-18 cache_guard 规则 G: 响应后回馈命中（闭环——guard 跟踪会话命中率）
     try:
-        _pg = getattr(self, "_pg", None)
-        if _pg is not None and self.guard_session_id:
-            _pg.record_result(self.guard_session_id, acc.prompt_tokens, acc.prompt_cache_hit_tokens)
+        _pg = getattr(client, "_pg", None) if client is not None else None
+        if _pg is not None and client.guard_session_id:
+            _pg.record_result(
+                client.guard_session_id,
+                acc.prompt_tokens,
+                acc.prompt_cache_hit_tokens,
+                provider=client.provider,
+                model=client.model,
+            )
     except Exception:  # noqa: BLE001
         pass
     return LLMResponse(
@@ -156,6 +168,11 @@ class LLMClient:
             return self.thinking_supported
         return self.provider == "deepseek" or "deepseek.com" in self.base_url
 
+    @property
+    def guard(self) -> PromptGuard | None:
+        """cache_guard 实例（懒创建，chat_stream 内初始化；供 architecture_status 注入快照）."""
+        return getattr(self, "_pg", None)
+
     def close(self) -> None:
         self._client.close()
 
@@ -184,7 +201,15 @@ class LLMClient:
                 )
                 _guard = getattr(self, "_pg", None)
                 if _guard is None:
-                    _guard = PromptGuard()
+                    # EVO-20260818（spec §6.2-6，grill-me 2.2）: 命中回执开关——
+                    # lms-chat 等本地推理无命中回执（三字段兜底后仍恒 0）→ 规则 G 停用
+                    # 防恒 0 误拦；env CACHE_GUARD_HIT_TELEMETRY 显式覆盖
+                    _hit_tel = os.environ.get("CACHE_GUARD_HIT_TELEMETRY")
+                    if _hit_tel is not None:
+                        _tel = _hit_tel not in ("0", "false", "False")
+                    else:
+                        _tel = self.wire_protocol != "lms-chat"
+                    _guard = PromptGuard(hit_telemetry=_tel)
                     self._pg = _guard
                 # 模型切换 → 重置窗口（不同模型前缀不同——旧窗口命中率无意义）
                 if self.guard_last_model and self.guard_last_model != self.model:
@@ -196,6 +221,9 @@ class LLMClient:
                     messages=messages,
                     tools=tools,
                     compress_count_this_run=self.guard_compress_count,
+                    # EVO-20260818（spec §4.3-2）: 审计真实 provider/model（消除硬编码）
+                    provider=self.provider,
+                    model=self.model,
                 )
                 if _d.rule == "submit_ratio" and _d.verdict == "WARN":
                     # 规则 F WARN 升级：注入提示（AI 可见——接近超限提前处理）
@@ -358,7 +386,7 @@ class LLMClient:
             raise
         except httpx.HTTPError as exc:
             raise LLMNetworkError(f"LLM HTTP 异常: {exc}") from exc
-        return _finish_response(acc, agg, self.provider)
+        return _finish_response(acc, agg, self.provider, client=self)
 
     # ── Anthropic Messages API（wire_protocol=anthropic，P3-5） ──
     def _anthropic_cache_enabled(self) -> bool:
@@ -494,7 +522,7 @@ class LLMClient:
             raise
         except httpx.HTTPError as exc:
             raise LLMNetworkError(f"LLM HTTP 异常: {exc}") from exc
-        return _finish_response(acc, agg, self.provider)
+        return _finish_response(acc, agg, self.provider, client=self)
 
     # ── Google Gemini API（wire_protocol=google，P3-5） ──
     def _stream_google(
@@ -583,7 +611,7 @@ class LLMClient:
             raise
         except httpx.HTTPError as exc:
             raise LLMNetworkError(f"LLM HTTP 异常: {exc}") from exc
-        return _finish_response(acc, agg, self.provider)
+        return _finish_response(acc, agg, self.provider, client=self)
 
     # ── LM Studio /api/v1/chat（wire_protocol=lms-chat，EVO-20260817 用户需求） ──
     def _stream_lms_chat(
@@ -909,7 +937,7 @@ class LLMClient:
         orphan_ids = [tid for tid in pending_use_ids if tid not in consumed]
         if orphan_ids:
             orphan_set = set(orphan_ids)
-            for idx, ids in assistant_blocks:
+            for idx, _ids in assistant_blocks:
                 msgs = out[idx]
                 blocks = msgs.get("content") or []
                 keep = [b for b in blocks if not (b.get("type") == "tool_use" and b.get("id") in orphan_set)]

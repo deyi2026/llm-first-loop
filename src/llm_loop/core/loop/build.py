@@ -18,15 +18,25 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from llm_loop.core.cache_health import GATE_NOTE_CONTENT  # 门禁干预知情标记
-from llm_loop.core.history import stable_digest, projection_ver, projection_check  # 投影门闸
-from llm_loop.core.message import Message
+
+# EVO-20260818: projection_ver/check 提升到模块级（消除函数内 import 遮蔽导致的 F823）——
+# 与 engine.py 顶部 re-export 同模式；stable_digest 既有模块级使用
+from llm_loop.core.history import (
+    projection_check,  # noqa: F401 (history 工具, 函数内使用)
+    projection_ver,  # noqa: F401 (history 工具, 函数内使用)
+    stable_digest,  # 投影门闸
+)
+
+# build_session_snapshot_text 定义于 engine（loop 包内）——顶层 import 会触发
+# engine→build→loop/__init__ 循环（engine import build 在前），故用函数内延迟 import
+from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.prompt import build_system_prompt
 
 if TYPE_CHECKING:
-    from llm_loop.core.loop.engine import LoopEngine
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +89,10 @@ class _BuildMixin:
                             evo_summary = s if isinstance(s, dict) else None
                         except Exception:
                             evo_summary = None
+                    # EVO-20260818: 函数内延迟 import（engine 已加载，防顶层循环；修复
+                    # 基线 NameError——原无任何 import，快照注入从未生效（被 fail-open 吞掉））
+                    from llm_loop.core.loop.engine import build_session_snapshot_text
+
                     snapshot = Message(
                         role="system",
                         content=build_session_snapshot_text(
@@ -148,11 +162,13 @@ class _BuildMixin:
             history_anchor=anchor_arg,
             anchor_out=anchor_box,
             # EVO-20260817-9d3e1f2c: 缓存友好压缩——保留锚点头部（前缀命中）只归档中段;
-            # HEAD_KEEP_RATIO=预算比例（默认 0.10；0=关闭回到锚点前移行为；env 可调）
-            # EVO-20260817-72fcd94a L3 拦截: 命中率告警/门禁预检后强制 ≥15% 保留头部（锚点不动→前缀稳定）
+            # EVO-20260818: HEAD_KEEP_RATIO 默认 0.10→0.15（压缩轮即命中 system+头部 ≥70%）;
+            # force 档位 HEAD_KEEP_FORCE_RATIO 默认 0.20（L3 拦截强制保留——须高于常规档位，
+            # max() 两侧同值会吞掉强制语义，grill-me 2.10）; 0=关闭回到锚点前移行为；env 可调
             head_keep_chars=max(
-                int(effective_budget * float(os.environ.get("HEAD_KEEP_RATIO", "0.10"))),
-                int(effective_budget * 0.15) if self._cache_monitor.force_head_keep else 0,
+                int(effective_budget * float(os.environ.get("HEAD_KEEP_RATIO", "0.15"))),
+                int(effective_budget * float(os.environ.get("HEAD_KEEP_FORCE_RATIO", "0.20")))
+                if self._cache_monitor.force_head_keep else 0,
             ),
         )
         # P1-10: 锚点推进持久化（换算回会话索引, clamp 防御）
@@ -170,6 +186,17 @@ class _BuildMixin:
             if sess.history_anchors is None:
                 sess.history_anchors = {}
             sess.history_anchors[provider_id] = new_anchor
+        # EVO-20260818（spec §5.3.1-1 c/d，grill-me B1）: interop 外部协调注入——
+        # 尾部追加（GATE_NOTE 模式，转 user），system+稳定历史前缀字节不变（注入轮不断前缀）;
+        # env INTEROP_INJECT_TAIL=0 回退旧行为（头部插入，见 interop.py）
+        tail_msgs = getattr(self, "_interop_tail_messages", None)
+        if tail_msgs:
+            for _m in tail_msgs:
+                _d = _m.to_llm_dict()
+                if _d.get("role") == "system":
+                    _d["role"] = "user"  # system 静态: 转独立 user 尾部追加
+                built.append(_d)
+            self._interop_tail_messages = None  # 一次性消费（每轮重扫 pending）
         # EVO-20260817-72fcd94a: 门禁干预知情标记——干预激活首轮在 built 末尾追加固定
         # system 消息（末尾追加缓存友好，不破坏前缀；让 AI 感知上下文结构变化）
         if self._cache_monitor.take_gate_note():
@@ -178,8 +205,6 @@ class _BuildMixin:
         # seq（消息数）负责"历史追加"水印；ver（构建参数+动态输入指纹）负责参数水印；
         # ver+seq 匹配而 built_hash 不同 → 非确定性构建/历史被改 → 告警（只读，不阻断）。
         try:
-            from llm_loop.core.history import stable_digest, projection_ver, projection_check
-
             _fp = lambda msgs: stable_digest([(m.role, m.content) for m in msgs])  # noqa: E731
             _settings_fp = stable_digest({
                 "tool_trim_enabled": getattr(self.settings, "tool_trim_enabled", False),
@@ -189,10 +214,18 @@ class _BuildMixin:
                 "skip_injected_system": not self._provider_inject_notices(planned_label),
                 "extract_interval_msgs": getattr(self.settings, "extract_interval_msgs", 20),
             })
+            # EVO-20260818: interop 尾部追加后 base[:prefix_len] 仅 memory 段——
+            # interop_fp 改为对注入消息指纹（tail 模式）或 memory+inbox 段（旧模式），
+            # 保证 ver 与 built 中的尾部注入内容一致（投影一致性不误报）
+            _interop_for_fp = (
+                tail_msgs
+                if tail_msgs is not None
+                else [m for m in base[:prefix_len]]
+            )
             _ver = projection_ver(
                 model=planned_label, budget=effective_budget, anchor=sess_anchor,
                 memory_fp=_fp(memory_msgs),
-                interop_fp=stable_digest([(m.role, m.content) for m in base[:prefix_len]]),
+                interop_fp=stable_digest([(m.role, m.content) for m in _interop_for_fp]),
                 system_fp=stable_digest(system_prompt),
                 settings_fp=_settings_fp,
             )
@@ -223,7 +256,7 @@ class _BuildMixin:
 
             _guards[provider_id] = {
                 "ver": _ver, "seq": _seq, "built_hash": _built_hash,
-                "ts": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+                "ts": _dt.datetime.now(_dt.UTC).isoformat(),
             }
             sess.projection_guard = _guards
         except Exception:  # noqa: BLE001 — 门闸失败 fail-open，不阻断 run

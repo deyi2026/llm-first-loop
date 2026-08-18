@@ -25,6 +25,53 @@ from llm_loop.core.message import Message, MessageSource
 # 裁到 60% → 留 40% 增长空间 → 稳定期纯追加高命中（97%+）。可经环境变量覆盖（缓存纪律: 配置低频改）。
 _COMPRESS_TARGET_RATIO = float(os.environ.get("COMPRESS_TARGET_RATIO", "0.6"))
 
+# EVO-20260818 cache_window_converge（spec §5.1.1-1/2/4/5）: 窗口收敛上限守卫。
+# - value=None → 按模型窗口自适应 min(200000, max(100000, int(window*2*0.08)))（×2 字符/token 估算，
+#   1M=1,000,000 十进制；自适应仅对窗口 ≥625K tokens 生效，其余取兜底 100K）; 窗口未知 → 100K 兜底。
+# - 显式 ∈ [1000, 200000] → 原值生效 (value, None)。
+# - 显式 > 200K → 显式豁免保留原值 + 告警 note（2026-08-18 用户拍板: 兼容"方案A"大预算实践）。
+# - 非法（<1000 / 非整数 / 负数）→ 兜底 100K + note。
+# 纯函数: 无副作用、不抛异常、不读 env/不写日志; 供 factory.py 装配期与 runtime.py 运行期同源复用。
+_HISTORY_BUDGET_MAX = 200_000  # 收敛上限（默认/自适应路径强制; 显式配置豁免）
+_HISTORY_BUDGET_DEFAULT = 100_000  # 兜底默认值（与 max_chars 形参默认一致）
+
+
+def converge_history_budget(
+    value: int | None,
+    *,
+    model_window: int | None,
+) -> tuple[int, str | None]:
+    """窗口收敛上限守卫（spec §5.1.1-1/2/4/5）.
+
+    Args:
+        value: 显式配置值（None=未配置，按窗口自适应）.
+        model_window: 模型窗口上限（tokens），None=未知.
+
+    Returns:
+        (收敛后预算, 告警说明或 None). 默认/自适应路径预算 ∈ [100000, 200000];
+        显式配置 >200K 豁免保留原值（note 含"显式豁免"）; 非法输入兜底 100K.
+    """
+    if value is None:
+        if model_window is None:
+            return _HISTORY_BUDGET_DEFAULT, "窗口未知兜底 100K"
+        try:
+            adaptive = int(model_window * 2 * 0.08)
+        except (TypeError, ValueError):
+            return _HISTORY_BUDGET_DEFAULT, "窗口非法兜底 100K"
+        if adaptive <= 0:
+            return _HISTORY_BUDGET_DEFAULT, "窗口非法兜底 100K"
+        return min(_HISTORY_BUDGET_MAX, max(_HISTORY_BUDGET_DEFAULT, adaptive)), None
+    if not isinstance(value, int) or isinstance(value, bool):
+        return _HISTORY_BUDGET_DEFAULT, "输入非法兜底 100K"
+    if value < 1000:
+        return _HISTORY_BUDGET_DEFAULT, f"输入非法兜底 100K（{value} < 1000）"
+    if value > _HISTORY_BUDGET_MAX:
+        return value, (
+            f"显式配置 {value} 超收敛上限 200K（显式豁免，已保留）；"
+            "如需收敛请配置 ≤200K"
+        )
+    return value, None
+
 
 def _top_keywords(messages: list[Message], top: int = 5) -> list[str]:
     """从消息内容抽取高频词作为检索建议词（极简词频，fail-open 由调用方包裹）."""
@@ -353,7 +400,7 @@ def _is_injected_system(m: Message) -> bool:
 def build_history_messages(
     session_messages: list[Message],
     system_prompt: str,
-    max_chars: int = 1000000,
+    max_chars: int = 100000,  # EVO-20260818: 默认值 1M→100K（spec §5.1.1-3，与 config 兜底一致）
     *,
     compact_ratio: float = 1.0,  # EVO-20260817: 主动压缩阈值（预算比例; 1.0=现行为超限才压;
     # <1.0 在预算附近提前整理压缩——裁到 COMPRESS_TARGET_RATIO 留缓冲, 避免撞顶被动压缩）
@@ -610,6 +657,27 @@ def build_history_messages(
         kept_groups.insert(0, group)
         archive_budget -= group_len
 
+    # EVO-20260818（spec §5.5.1-7，grill-me Q4）: 压缩余量不足降级——head 保留 + 归档目标
+    # 后提交仍 >95% 预算（单轮裁不动: 超大消息/头部占比高；head 不占 archive_budget，
+    # 压缩后提交 ≈ head(15-20%) + archive(60%)）→ 放弃 head 保留（锚点前移式压缩），
+    # 防规则 F 反复 BLOCK 与压缩风暴；head 与最老保留组一并归档（信息零丢失）。
+    _downgraded_head = False
+    if head_keep_chars > 0 and head_groups and kept_groups:
+        _kept_total = head_chars + sum(len(mm.content) for g in kept_groups for mm in g)
+        if len(system_prompt) + _kept_total > int(max_chars * 0.95):
+            _downgraded_head = True
+            for g in head_groups:
+                archived.extend(g)
+            head_groups = []
+            head_count = 0
+            head_chars = 0
+            # head 归档后仍超（system 巨大场景）→ 继续归档最老保留组（kept_groups 末尾最老）
+            while kept_groups:
+                _cur = sum(len(mm.content) for g in kept_groups for mm in g)
+                if len(system_prompt) + _cur <= int(max_chars * 0.95):
+                    break
+                archived.extend(kept_groups.pop())
+
     # 另存被丢弃消息（信息零丢失）
     if archive_sink is not None and session_id and archived:
         for m in archived:
@@ -620,7 +688,10 @@ def build_history_messages(
 
                 logging.getLogger(__name__).warning("archive sink 异常（fail-open）", exc_info=True)
 
-    kept_flat = [m for g in kept_groups for m in g]
+    # EVO-20260818 修复基线 bug（仿真测试暴露）: kept_flat 原实现从不包含 head_groups——
+    # 头部消息既不在提交也不在归档（静默丢失）→ "缓存友好压缩保留锚点头部"从未真正生效，
+    # 压缩轮命中率仅 system 占比（spec §5.3.1-3b ≥70% 不可达）。head 组并入提交最前。
+    kept_flat = [m for g in head_groups for m in g] + [m for g in kept_groups for m in g]
     kept_flat = _apply_reasoning_tail(
         _layer_trim(
             kept_flat,
@@ -701,6 +772,18 @@ def build_history_messages(
         extras.append(
             compression_message(len(archived), sum(len(a.content) for a in archived))
         )
+        # EVO-20260818（spec §5.5.1-7）: 压缩余量不足降级知情标注（固定文本，便于检索归因）
+        if _downgraded_head:
+            extras.append(
+                Message(
+                    role="system",
+                    content=(
+                        "[缓存降级] 压缩余量不足已降级（锚点前移）——头部保留被放弃，"
+                        "本轮起前缀重建；被归档原文（含头部）均可经 search_archive 检索"
+                    ),
+                    source=MessageSource.SYSTEM,
+                )
+            )
         # P1-QWEN-SYS-SINGLE: extras（压缩关键事实/档案目录/压缩标注，均为 system）
         # 必须并入开头唯一 system —— qwen 系模板(9B/27B) 只允许 1 条 system 消息，
         # 多条 system（即便都在开头）也会触发 "System message must be at the beginning"。

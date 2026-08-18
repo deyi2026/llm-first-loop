@@ -1,4 +1,4 @@
-"""cache_guard 规则引擎（5 类规则——前缀稳定工程保证）.
+"""cache_guard 规则引擎（7 类规则 A-G——前缀稳定工程保证）.
 
 校验输入（请求组装后、发送前）:
 - system_text: 本次 system prompt（str）
@@ -23,8 +23,8 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ def _check_injection_discipline(messages: list[dict]) -> GuardDecision | None:
 
 def _check_tool_results(messages: list[dict]) -> GuardDecision | None:
     """规则 C: 工具结果体积——超长未归档（提示 WARN）."""
-    for i, m in enumerate(messages):
+    for m in messages:
         if m.get("role") == "tool":
             c = m.get("content") or ""
             if len(c) > _TOOL_RESULT_MAX_CHARS:
@@ -193,6 +193,15 @@ def _check_privacy(messages: list[dict], system_text: str) -> GuardDecision | No
     return None
 
 
+def _resolve_audit_path(audit_file: str | Path | None) -> Path:
+    """审计文件路径解析（validate_request / record_result 共用；fail-open 由调用方包裹）."""
+    if audit_file:
+        return Path(audit_file)
+    if os.environ.get("LFL_DATA_DIR"):
+        return Path(os.environ["LFL_DATA_DIR"]) / "audit" / "guarded_requests.jsonl"
+    return Path(__file__).resolve().parents[3] / "data" / "audit" / "guarded_requests.jsonl"
+
+
 def validate_request(
     *,
     system_text: str,
@@ -201,9 +210,11 @@ def validate_request(
     meta: dict | None = None,
     audit_file: str | Path | None = None,
 ) -> GuardDecision:
-    """请求前校验（唯一出入口核心）——5 类规则——fail-open（校验失败不阻断）.
+    """请求前校验（唯一出入口核心）——7 类规则（A-F 本函数主循环校验；规则 G 命中率
+    由 PromptGuard.check 闭环调用，因需 _hit_win 状态）——fail-open（校验失败不阻断）.
 
-    审计: 全量请求记录（guarded_requests.jsonl——账单对账闭合）。
+    审计: 全量请求记录（guarded_requests.jsonl——账单对账闭合；token 回执经
+    PromptGuard.record_result 追加对账行，spec §4.3-2）。
     """
     meta = meta or {}
     decision = GuardDecision(verdict="ALLOW")
@@ -229,11 +240,11 @@ def validate_request(
         logger.warning("cache_guard 校验异常（fail-open 放行）", exc_info=True)
         decision = GuardDecision(verdict="ALLOW", detail="guard 异常 fail-open")
 
-    # 审计落盘（全量——对账闭合）
+    # 审计落盘（全量——对账闭合；token 回执经 record_result 追加对账行）
     decision.audit = {
-        "ts": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+        "ts": datetime.now(UTC).isoformat(),
         "session_id": meta.get("session_id", ""),
-        "provider": meta.get("provider", ""),
+        "provider": meta.get("provider", "openai-compat"),
         "model": meta.get("model", ""),
         "run_round": meta.get("run_round"),
         "system_fp": _stable_fp(system_text)[:16],
@@ -244,11 +255,7 @@ def validate_request(
         "detail": decision.detail,
     }
     try:
-        path = Path(audit_file) if audit_file else (
-            Path(os.environ.get("LFL_DATA_DIR", "")) / "audit" / "guarded_requests.jsonl"
-            if os.environ.get("LFL_DATA_DIR")
-            else Path(__file__).resolve().parents[3] / "data" / "audit" / "guarded_requests.jsonl"
-        )
+        path = _resolve_audit_path(audit_file)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(decision.audit, ensure_ascii=False) + "\n")
@@ -267,7 +274,12 @@ class CacheGuardBlockedError(Exception):
 class PromptGuard:
     """MCP 出入口的进程内接口（校验 + 基线维护 + 命中率闭环）——MCP server 复用本类."""
 
-    def __init__(self, audit_file: str | Path | None = None) -> None:
+    def __init__(
+        self, audit_file: str | Path | None = None, *, hit_telemetry: bool = True
+    ) -> None:
+        # EVO-20260818（spec §6.2-6，grill-me 2.2）: 规则 G 命中回执开关——lms-chat 等本地
+        # 推理无命中回执（client 三字段兜底后仍恒 0）→ False 时规则 G 不判定防误拦。
+        self.hit_telemetry = hit_telemetry
         self._baselines: dict[str, str] = {}  # session_id → system fp
         self.audit_file = audit_file
         # 规则 G: 会话级命中率窗口（近 N 次请求的 hit/in——响应回馈）
@@ -284,10 +296,19 @@ class PromptGuard:
         except Exception:  # noqa: BLE001
             pass
 
-    def record_result(self, session_id: str, tokens_in: int, tokens_hit: int) -> None:
+    def record_result(
+        self,
+        session_id: str,
+        tokens_in: int,
+        tokens_hit: int,
+        *,
+        provider: str = "",
+        model: str = "",
+    ) -> None:
         """响应后回馈（闭环）——记录该会话本次请求的命中——规则 G 数据源.
 
-        fail-open：记录失败不影响请求。
+        EVO-20260818（spec §4.3-2，grill-me 2.1）: 同步追加审计对账行（tokens_in/tokens_hit/
+        provider/model——命中率事后复算与账单对账闭合）。fail-open：记录失败不影响请求。
         """
         try:
             if tokens_in <= 0:
@@ -296,6 +317,20 @@ class PromptGuard:
             win.append((tokens_in, tokens_hit))
             if len(win) > 10:
                 del win[:-10]  # 窗口最近 10 次
+            # 对账行（append-only；与发送行经 ts/session_id 关联）
+            row = {
+                "ts": datetime.now(UTC).isoformat(),
+                "event": "llm_result",
+                "session_id": session_id,
+                "provider": provider or "openai-compat",
+                "model": model,
+                "tokens_in": tokens_in,
+                "tokens_hit": tokens_hit,
+            }
+            path = _resolve_audit_path(self.audit_file)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
         except Exception:  # noqa: BLE001
             logger.debug("guard record_result 失败（fail-open）")
 
@@ -308,13 +343,57 @@ class PromptGuard:
         hi = sum(h for _, h in win)
         return (hi / ti) if ti > 0 else None
 
-    def _check_hit_rate(self, session_id: str) -> GuardDecision | None:
+    def snapshot(self, session_id: str = "") -> dict:
+        """cache_guard 状态快照（spec §5.4.1-2，供 architecture_status 注入）.
+
+        EVO-20260818（grill-me 2.7）: session_id 空 = 最近活跃会话 + 聚合信息
+        （多会话下按会话展示由调用方传 session_id）；hit_telemetry=False 时
+        recent_hit_rate 恒 None 且 telemetry="n/a"（规则 G 停用）。
+        """
+        try:
+            if session_id and session_id not in self._hit_win:
+                recent = None
+                win_size = 0
+            else:
+                sid = session_id or (
+                    max(self._hit_win, key=lambda s: len(self._hit_win[s]))
+                    if self._hit_win
+                    else ""
+                )
+                win = self._hit_win.get(sid) or []
+                recent = self._recent_hit_rate(sid) if sid else None
+                win_size = len(win)
+            return {
+                "recent_hit_rate": recent if self.hit_telemetry else None,
+                "hit_win_size": win_size,
+                "block_streak": dict(self._block_streak),
+                "baselines_count": len(self._baselines),
+                "sessions_count": len(self._hit_win),
+                "telemetry": "on" if self.hit_telemetry else "n/a",
+                "config": {
+                    "hit_block": _HIT_RATE_BLOCK,
+                    "hit_warn": _HIT_RATE_WARN,
+                    "hit_sample_min": _HIT_SAMPLE_MIN,
+                    "block_escape_max": _BLOCK_ESCAPE_MAX,
+                },
+            }
+        except Exception:  # noqa: BLE001 — fail-open
+            logger.debug("guard snapshot 异常（fail-open）")
+            return {}
+
+    def _check_hit_rate(
+        self, session_id: str, compress_count: int = 0
+    ) -> GuardDecision | None:
         """规则 G: 近期命中率低 → 拦截——但【区分冷启动 vs 持续异常】.
 
         2026-08-18 用户反馈（'第一条新信息命中率肯定低'）:
         - 冷启动（前缀在构建——in 递增）低命中 = 预期——不拦（降级 WARN）
         - 前缀稳定（最近两次 in 相近——同前缀）却低命中 = 异常——BLOCK
+        EVO-20260818（spec §5.3.1-2 f，grill-me Q3）: 压缩轮（compress_count>0，in 骤降）
+        不判冷启动——压缩后低命中按前缀稳定规则正常裁决（头部保留时前缀应稳定）。
         """
+        if not self.hit_telemetry:
+            return None  # EVO-20260818（spec §6.2-6）: 无命中回执的 provider（lms-chat）不判
         win = self._hit_win.get(session_id) or []
         if len(win) < _HIT_SAMPLE_MIN:
             return None  # 样本不足（含新会话第一条）——不判
@@ -329,14 +408,15 @@ class PromptGuard:
             and abs(last_in[1] - last_in[0]) / last_in[1] < 0.15
         )
         if rate < _HIT_RATE_BLOCK:
-            if prefix_stable:
+            if prefix_stable or compress_count > 0:
                 return GuardDecision(
                     verdict="BLOCK",
                     rule="low_hit_rate",
                     detail=(
                         f"该会话近期命中率 {rate*100:.0f}%（<{_HIT_RATE_BLOCK*100:.0f}%——"
-                        "前缀稳定（最近两次 in 相近）却持续低命中——前缀漂移/压缩风暴）。"
-                        "建议：先压缩 checkpoint / 换新会话 / 排查前缀漂移——再发"
+                        "前缀稳定（最近两次 in 相近）却持续低命中——前缀漂移/压缩风暴"
+                        + ("；本轮为压缩轮（in 骤降不计冷启动）" if compress_count > 0 else "")
+                        + "）。建议：先压缩 checkpoint / 换新会话 / 排查前缀漂移——再发"
                     ),
                 )
             # 冷启动（前缀在构建——in 递增）——预期低——不拦（仅 WARN 知悉）
@@ -365,6 +445,8 @@ class PromptGuard:
         tools: list[dict] | None = None,
         run_round: int | None = None,
         compress_count_this_run: int = 0,
+        provider: str = "",
+        model: str = "",
     ) -> GuardDecision:
         baseline = self._baselines.get(session_id)
         decision = validate_request(
@@ -373,8 +455,10 @@ class PromptGuard:
             baseline=baseline,
             meta={
                 "session_id": session_id,
-                "provider": "openai-compat",
-                "model": "",
+                # EVO-20260818（spec §4.3-2）: 真实 provider/model（调用方传入；
+                # 默认兜底 openai-compat 零回归——消除硬编码）
+                "provider": provider or "openai-compat",
+                "model": model,
                 "run_round": run_round,
                 "tools": tools or [],
                 "compress_count_this_run": compress_count_this_run,
@@ -383,7 +467,7 @@ class PromptGuard:
         )
         # 规则 G: 低命中拦截（优先级高于普通 WARN——命中是结果闭环）
         if decision.verdict == "ALLOW" or decision.verdict == "WARN":
-            hit_d = self._check_hit_rate(session_id)
+            hit_d = self._check_hit_rate(session_id, compress_count=compress_count_this_run)
             if hit_d is not None and (
                 hit_d.verdict == "BLOCK"
                 or (hit_d.verdict == "WARN" and decision.verdict == "ALLOW")

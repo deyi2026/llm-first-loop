@@ -168,8 +168,45 @@ def test_build_messages_injects_inbox_after_memory(tmp_path, monkeypatch):
     content = out[0]["content"]
     assert "MEM-1" not in content and "20260816-006" not in content  # 注入不进主体
     # 注入内容在 user 消息中保留（AI 可见）——且 inbox 在 memory 之后
+    # （EVO-20260818 tail 模式: inbox 更靠后——提交尾部追加，前缀 system+memory 稳定）
     users = [m["content"] for m in out if m["role"] == "user"]
     joined = "\n".join(users)
     assert "MEM-1" in joined              # memory 注入生效（转 user 保留）
     assert "20260816-006" in joined       # inbox 注入生效（每轮必感知）
     assert joined.index("20260816-006") > joined.index("MEM-1")  # inbox 在 memory 之后
+
+
+def test_tail_mode_keeps_base_and_stores_tail(tmp_path, monkeypatch):
+    """EVO-20260818（spec §5.3.1-1 c/d，grill-me B1）: tail 模式——base 原样
+    （前缀不插注入，system+稳定历史前缀字节不变），注入消息存 _interop_tail_messages
+    供 build 末尾追加."""
+    from llm_loop.core.message import Message, MessageSource
+
+    inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
+    inbox.mkdir(parents=True)
+    _write_msg(inbox, "t2.json", "task", "尾部注入验证", msg_id="t2")
+    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
+    eng = _bare_engine()
+    base = [Message(role="user", content="H1", source=MessageSource.USER)]
+    out, prefix_len = eng._inject_interop_messages(list(base), 0, "s1")
+    assert out == base  # base 原样（前缀不变）
+    assert prefix_len == 0
+    tail = getattr(eng, "_interop_tail_messages", None)
+    assert tail is not None and len(tail) == 1
+    assert "尾部注入验证" in tail[0].content
+
+
+def test_prefix_mode_restores_old_behavior(tmp_path, monkeypatch):
+    """INTEROP_INJECT_TAIL=0 → 回退旧行为（注入插 memory 之后、历史之前）."""
+    from llm_loop.core.message import Message, MessageSource
+
+    inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
+    inbox.mkdir(parents=True)
+    _write_msg(inbox, "t3.json", "task", "前缀注入验证", msg_id="t3")
+    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("INTEROP_INJECT_TAIL", "0")
+    eng = _bare_engine()
+    base = [Message(role="user", content="H1", source=MessageSource.USER)]
+    out, prefix_len = eng._inject_interop_messages(list(base), 0, "s1")
+    assert len(out) == 2 and "前缀注入验证" in out[0].content  # 注入在 base 之前
+    assert prefix_len == 1

@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from llm_loop.core.history import converge_history_budget  # EVO-20260818: 运行期同源收敛
+
 if TYPE_CHECKING:
     from llm_loop.core.loop.engine import LoopEngine
 
@@ -44,7 +46,8 @@ class _RuntimeParamsMixin:
             if ctx_lim is not None and def_model is not None:
                 limit = ctx_lim(def_model())
                 if limit:
-                    return max(10000, int(limit * _CHARS_PER_TOKEN_EST * 0.08))
+                    # EVO-20260818: 与装配期同源收敛（converge_history_budget——兜底 100K / 上限 200K）
+                    return converge_history_budget(None, model_window=limit)[0]
         except Exception:  # noqa: BLE001 — 窗口查询失败兜底旧默认
             pass
         return 100000

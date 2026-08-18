@@ -62,8 +62,13 @@ export function SessionStats({ sessionId }: { sessionId: string }) {
       <span className="v2-stats-sep">|</span>
       <span>首 token 平均 {(stats.ttft_avg_ms / 1000).toFixed(1)}s · {stats.tok_s} tok/s</span>
       <span className="v2-stats-sep">|</span>
-      <span className={stats.cache_hit_rate >= 90 ? "v2-stats-ok" : "v2-stats-warn"}>
-        缓存命中 {stats.cache_hit_rate}%
+      <span
+        className={stats.cache_hit_rate >= 90 ? "v2-stats-ok" : "v2-stats-warn"}
+        // EVO-20260818（spec §5.4.1-1，grill-me Q6）: 口径标注——本处为会话累计口径；
+        // 命中率权威口径为"会话近 10 次窗口"（architecture_status.cache_guard.recent_hit_rate）
+        title={"会话累计口径（tokens_hit/tokens_in）；命中率权威口径为近 10 次窗口（architecture_status.cache_guard）"}
+      >
+        缓存命中 {stats.cache_hit_rate}%（累计）
       </span>
       <span className="v2-stats-sep">|</span>
       <span>输入 {fmtTok(stats.tokens_in)} tok · 输出 {fmtTok(stats.tokens_out)} tok</span>

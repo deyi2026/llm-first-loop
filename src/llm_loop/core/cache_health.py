@@ -159,6 +159,53 @@ class CacheHealthMonitor:
         except Exception:  # noqa: BLE001
             logger.debug("anchor_move 计数异常（fail-open）", exc_info=True)
 
+    def recent_attribution(self) -> dict | None:
+        """命中率归因判定（spec §5.4.1-3，借鉴 token-optimizer-mcp 按行归因的类别级版本）.
+
+        likely_cause ∈ {anchor_moved, gate_drift, cold_start, unknown}；
+        样本不足（_win_runs < _min_runs）→ None；fail-open。
+        """
+        try:
+            if self._win_runs < self._min_runs:
+                return None
+            rate = self._win_hit / self._win_in if self._win_in else None
+            if rate is None:
+                return None
+            if self._anchor_moved_in_win > 0:
+                cause = "anchor_moved"
+            elif self._gate_drift_count > 0:
+                cause = "gate_drift"
+            elif self._win_runs < self._min_runs * 2:
+                cause = "cold_start"  # 窗口仍在早期构建
+            else:
+                cause = "unknown"
+            return {
+                "rate": rate,
+                "anchor_moved_in_win": self._anchor_moved_in_win,
+                "gate_drift_count": self._gate_drift_count,
+                "likely_cause": cause,
+            }
+        except Exception:  # noqa: BLE001 — fail-open
+            logger.debug("归因判定异常（fail-open）", exc_info=True)
+            return None
+
+    def reset(self, reason: str = "") -> None:
+        """模型切换/会话变更窗口重置（spec §5.4.1-3 注记，grill-me C1）.
+
+        清空窗口/基线/归因计数/强制头部标志；保留 _fail_alerted（防刷屏，跨重置有效）。
+        """
+        try:
+            self._reset_window()
+            self._anchor_move_runs = 0
+            self._baselines = {}
+            self._gate_drift_count = 0
+            self._force_head_keep = False
+            self._gate_note_pending = False
+            if reason:
+                logger.info("cache_health 重置: %s", reason)
+        except Exception:  # noqa: BLE001 — fail-open
+            logger.debug("cache_health reset 异常（fail-open）", exc_info=True)
+
     @property
     def force_head_keep(self) -> bool:
         return self._force_head_keep

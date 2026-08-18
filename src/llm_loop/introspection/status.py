@@ -111,6 +111,9 @@ class ArchitectureStatusProvider:
         self._pending_actions_fn: Callable[[], dict] | None = None
         # P2-2: 备份状态回调（AI 经 architecture_status.recovery 感知待恢复备份）
         self._recovery_status_fn: Callable[[], dict] | None = None
+        # EVO-20260818（spec §5.4.1-2）: 缓存健康/cache_guard 快照回调（未注入 → None 零回归）
+        self._cache_health_fn: Callable[[], dict | None] | None = None
+        self._cache_guard_fn: Callable[[str], dict | None] | None = None  # session 透传（grill-me Q11）
 
     # ── 采集（循环事件附带调用，零侵入）──
     def record_phase(self, phase: str) -> None:
@@ -366,6 +369,22 @@ class ArchitectureStatusProvider:
         """
         self._recovery_status_fn = fn
 
+    def set_cache_health_fn(self, fn) -> None:
+        """注入 cache_health 快照回调（EVO-20260818 spec §5.4.1-2）.
+
+        fn() -> dict | None（CacheHealthMonitor.snapshot）；未注入 → context_usage.cache_health
+        为 None（向后兼容）。与既有 set_context_breakdown_fn 同构。
+        """
+        self._cache_health_fn = fn
+
+    def set_cache_guard_fn(self, fn) -> None:
+        """注入 cache_guard 快照回调（EVO-20260818 spec §5.4.1-2，grill-me Q11）.
+
+        fn(session_id: str) -> dict | None（PromptGuard.snapshot——窗口 per-session，
+        snapshot() 透传当前会话，空串=最近活跃会话聚合）；未注入 → 字段 None。
+        """
+        self._cache_guard_fn = fn
+
     def snapshot(self, session_id: str = "", dimensions: list[str] | None = None) -> dict:
         """构造八维状态快照（紧凑 JSON，维度可按需裁剪）.
 
@@ -414,6 +433,10 @@ class ArchitectureStatusProvider:
                     if getattr(self, "_context_breakdown_fn", None)
                     else None
                 ),
+                # EVO-20260818（spec §5.4.1-2）: 缓存健康/cache_guard 快照（fail-open——
+                # 回调异常字段置 None 不抛穿 architecture_status）
+                "cache_health": self._cache_health_snapshot(),
+                "cache_guard": self._cache_guard_snapshot(session_id),
                 "records_hint": "完整历史运行记录可用 search_records 检索（不限于内存窗口）",
             },
             "exception_log": [
@@ -448,6 +471,23 @@ class ArchitectureStatusProvider:
                 )
             return out
         return avail
+
+    # ── 缓存快照辅助（fail-open）──
+    def _cache_health_snapshot(self) -> dict | None:
+        if getattr(self, "_cache_health_fn", None) is None:
+            return None
+        try:
+            return self._cache_health_fn()
+        except Exception:  # noqa: BLE001 — 回调异常如实置 None
+            return None
+
+    def _cache_guard_snapshot(self, session_id: str) -> dict | None:
+        if getattr(self, "_cache_guard_fn", None) is None:
+            return None
+        try:
+            return self._cache_guard_fn(session_id)
+        except Exception:  # noqa: BLE001 — 回调异常如实置 None
+            return None
 
     # ── 工具 ──
     def _write_audit(self, filename: str, record: dict) -> None:
