@@ -137,6 +137,24 @@ class TestValidateRequest:
         d = g.check(session_id="s-1", system_text="sys", messages=_sys("sys"))
         assert d.verdict == "ALLOW"
 
+    def test_cold_start_not_blocked(self, tmp_path):
+        """冷启动（前缀构建——in 递增）低命中 → 不拦（仅 WARN）. """
+        g = PromptGuard(audit_file=tmp_path / "g.jsonl")
+        # 模拟冷启动：in 递增（10K→50K→100K——前缀在构建），命中 0
+        for i, n in enumerate((10000, 50000, 100000)):
+            g.record_result("s-cold", n, 0)
+        d = g.check(session_id="s-cold", system_text="sys", messages=_sys("sys"))
+        assert d.verdict == "WARN"  # 不拦（冷启动预期低）
+
+    def test_stable_prefix_low_hit_blocked(self, tmp_path):
+        """前缀稳定（in 相近）却低命中 → BLOCK（真异常）. """
+        g = PromptGuard(audit_file=tmp_path / "g.jsonl")
+        for _ in range(3):
+            g.record_result("s-bad", 100000, 5000)  # in 恒定 + 低命中
+        d = g.check(session_id="s-bad", system_text="sys", messages=_sys("sys"))
+        assert d.verdict == "BLOCK"
+        assert d.rule == "low_hit_rate"
+
     def test_fail_open(self, tmp_path, monkeypatch):
         """校验异常 → ALLOW（fail-open——不阻断主流程）."""
         import llm_loop.cache_guard.guard as mod
