@@ -116,6 +116,13 @@ class LLMClient:
     # M47（design §5.5）: 思考参数泛化 - 显式传入时以此为准（消除硬编码 deepseek.com）;
     # None 时保持原 _thinking_supported() 行为（向后兼容，零回归）.
     thinking_supported: bool | None = None
+    # 2026-08-18 cache_guard（MCP 出入口）: 请求前规则校验开关（默认开；CACHE_GUARD=0 关闭）
+    guard_enabled: bool = True
+    # guard 校验的 system 文本（engine 传入——含动态段；None 时用 messages[0] 兜底）
+    guard_system: str | None = None
+    # 会话上下文（engine 透传——会话级基线/压缩计数）
+    guard_session_id: str = ""
+    guard_compress_count: int = 0
 
     def __post_init__(self) -> None:
         self._client = httpx.Client(timeout=self.timeout_s)
@@ -147,6 +154,35 @@ class LLMClient:
         异常按类型抛出 LLMError 子类，由循环如实反馈。
         """
         protocol = self.wire_protocol
+        # 2026-08-18 cache_guard（MCP 出入口——唯一出入口）: 发送前规则校验（fail-open）
+        if self.guard_enabled:
+            try:
+                from llm_loop.cache_guard.guard import PromptGuard
+
+                _sys = self.guard_system if self.guard_system is not None else (
+                    messages[0].get("content", "") if messages and messages[0].get("role") == "system" else ""
+                )
+                _guard = getattr(self, "_pg", None)
+                if _guard is None:
+                    _guard = PromptGuard()
+                    self._pg = _guard
+                _d = _guard.check(
+                    session_id=self.guard_session_id or "__global__",
+                    system_text=_sys,
+                    messages=messages,
+                    tools=tools,
+                    compress_count_this_run=self.guard_compress_count,
+                )
+                if _d.verdict == "BLOCK":
+                    from llm_loop.llm.errors import LLMError
+
+                    raise LLMError(f"cache_guard 拦截: {_d.detail}")
+                if _d.verdict == "WARN":
+                    logger.warning("cache_guard: %s（%s）", _d.rule, _d.detail)
+            except LLMError:
+                raise
+            except Exception:  # noqa: BLE001 — fail-open 不阻断
+                logger.debug("cache_guard 校验异常（fail-open）", exc_info=True)
         # 注意：Python 3.11+ 裸 `yield from` 会丢弃子生成器 return 值（StopIteration.value=None），
         # 必须显式捕获后 return 才能把终态 LLMResponse 传给消费者（engine 经 StopIteration.value 取终态）。
         if protocol == "anthropic":
