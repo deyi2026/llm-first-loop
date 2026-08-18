@@ -229,3 +229,99 @@ def test_gate_note_not_pending_when_healthy():
         m.record(20000, 19500)
     assert m.snapshot()["gate_note_pending"] is False
     assert m.take_gate_note() is False
+
+
+# ── EVO-20260818: recent_attribution 归因判定（spec §5.4.1-3）──
+
+def test_recent_attribution_insufficient_samples():
+    """样本不足（_win_runs < min_runs）→ None."""
+    m = CacheHealthMonitor(min_runs=5)
+    for _ in range(4):
+        m.record(20000, 1000)
+    assert m.recent_attribution() is None
+
+
+def test_recent_attribution_anchor_moved():
+    """窗口内锚点前移 → anchor_moved（破坏型）.
+
+    注意: 低命中（<alert_thr）会触发告警并 reset 窗口——归因样本会被清空，
+    故用高命中 record 构造（归因只看 _anchor_moved_in_win，与命中率无关）。
+    """
+    m = CacheHealthMonitor(min_runs=3, min_tokens=1)
+    for _ in range(3):
+        m.record(20000, 15000)  # 75% 命中（不触发告警路径）
+    m.note_anchor_moved()
+    m.record(20000, 15000)
+    a = m.recent_attribution()
+    assert a is not None and a["likely_cause"] == "anchor_moved"
+
+
+def test_recent_attribution_gate_drift():
+    """门禁漂移（锚点未动）→ gate_drift."""
+    m = CacheHealthMonitor(min_runs=3, min_tokens=1)
+    for _ in range(3):
+        m.record(20000, 15000)  # 高命中（避免告警 reset）
+    m.postcheck("s1", "fp-A")  # 建基线
+    m.preflight("s1", "fp-B")  # 漂移 → gate_drift_count++
+    m.record(20000, 15000)
+    a = m.recent_attribution()
+    assert a is not None and a["likely_cause"] == "gate_drift"
+
+
+def test_recent_attribution_cold_start():
+    """早期窗口（runs < min_runs*2）且无锚点移动/漂移 → cold_start."""
+    m = CacheHealthMonitor(min_runs=3, min_tokens=1)
+    for _ in range(4):  # 4 < 3*2=6
+        m.record(20000, 8000)
+    a = m.recent_attribution()
+    assert a is not None and a["likely_cause"] == "cold_start"
+
+
+def test_recent_attribution_unknown():
+    """窗口成熟且无锚点/漂移 → unknown."""
+    m = CacheHealthMonitor(min_runs=3, min_tokens=1)
+    for _ in range(10):  # >= min_runs*2=6
+        m.record(20000, 8000)
+    a = m.recent_attribution()
+    assert a is not None and a["likely_cause"] == "unknown"
+    assert a["rate"] == 0.4  # 8000/20000
+
+
+# ── EVO-20260818: reset 模型切换窗口重置（spec §5.4.1-3 注记）──
+
+def test_reset_clears_window_baselines_and_gate():
+    """reset 清空窗口/基线/归因/强制标志；保留 fail_alerted."""
+    m = CacheHealthMonitor(min_runs=3, min_tokens=1)
+    for _ in range(6):
+        m.record(20000, 2000)  # 低命中（触发告警路径）
+    m.note_anchor_moved()
+    m.preflight("s1", "fp-A")
+    m.postcheck("s1", "fp-A")
+    assert m.snapshot()["fail_alerted"] is False  # 未触发恢复失败
+    m.reset(reason="model_switch:test")
+    snap = m.snapshot()
+    assert snap["win_runs"] == 0
+    assert snap["win_in"] == 0
+    assert snap["anchor_move_runs"] == 0
+    assert snap["anchor_moved_in_win"] == 0
+    assert snap["gate_drift_count"] == 0
+    assert snap["baselines"] == {}
+    assert snap["force_head_keep"] is False
+    assert m.recent_attribution() is None  # 重置后样本不足
+
+
+def test_reset_keeps_fail_alerted_flag():
+    """reset 保留 _fail_alerted（防刷屏跨重置有效）."""
+    m = CacheHealthMonitor(min_runs=2, min_tokens=1, recovery_timeout_runs=2)
+    # 激活告警（破坏型: 锚点前移 + 低命中）
+    m.note_anchor_moved()
+    for _ in range(2):
+        m.record(20000, 2000)
+    assert m.snapshot()["alerted"] is True
+    # 拦截期锚点持续移动（good_streak 归零）→ 超 recovery_timeout_runs → 恢复失败提示
+    for _ in range(2):
+        m.note_anchor_moved()
+        m.record(20000, 2000)
+    assert m.snapshot()["fail_alerted"] is True
+    m.reset(reason="model_switch")
+    assert m.snapshot()["fail_alerted"] is True  # 保留

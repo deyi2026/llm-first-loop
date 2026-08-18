@@ -15,6 +15,7 @@ from contextlib import suppress
 from typing import Any
 
 from llm_loop.config import Settings
+from llm_loop.core.history import converge_history_budget
 from llm_loop.core.loop import LoopEngine
 from llm_loop.core.message import ToolResult
 from llm_loop.core.session import SessionStore
@@ -124,9 +125,10 @@ def build_engine(settings: Settings) -> LoopEngine:
 
         registry = load_registry(settings)
         provider_id, model_id = registry.resolve(settings.llm_model)
-        # EVO-20260816-3af5dee3: history_max_chars 未显式配置（None）→ 按默认模型窗口 8% 自适应，
-        # 取代固定 100K（1M 窗口仅 10% 过保守 / 262K 窗口达 38% 偏激进）。装配期一次解析归一，
-        # 后续所有消费方（RuntimeParams/engine/routes 校验）拿到非 None 值。
+        # EVO-20260818 cache_window_converge（spec §5.1.1）: 窗口收敛上限守卫统一委托
+        # converge_history_budget——未配置（None）→ 按窗口自适应（兜底 100K / 上限 200K）并写回
+        # 非 None；显式 ≤200K → 原值生效；显式 >200K → 显式豁免保留原值 + 强告警（不降级，
+        # 2026-08-18 用户拍板兼容"方案A"大预算）；显式非法（<1000）→ 兜底写回纠错。
         if settings.history_max_chars is None:
             _limit: int | None = None
             try:
@@ -134,10 +136,19 @@ def build_engine(settings: Settings) -> LoopEngine:
                 _limit = _spec.context if _spec else None
             except Exception:  # noqa: BLE001 — 窗口未知兜底旧默认
                 _limit = None
-            _default_budget = int(_limit * 2 * 0.08) if _limit else 100000
-            _default_budget = max(10000, _default_budget)
-            settings = dataclasses.replace(settings, history_max_chars=_default_budget)
-            logger.info("history_max_chars 未配置 → 按模型窗口自适应: %d 字符", _default_budget)
+            _budget, _note = converge_history_budget(None, model_window=_limit)
+            settings = dataclasses.replace(settings, history_max_chars=_budget)
+            if _note:
+                logger.warning("history_max_chars 未配置 → %s（生效: %d）", _note, _budget)
+            else:
+                logger.info("history_max_chars 未配置 → 按模型窗口自适应: %d 字符", _budget)
+        else:
+            _budget, _note = converge_history_budget(settings.history_max_chars, model_window=None)
+            if _note:
+                logger.warning("%s（当前生效: %d）", _note, _budget)
+                # 非法输入兜底 → 写回纠错；豁免场景 budget==原值 → 不写回（保留用户配置）
+                if _budget != settings.history_max_chars:
+                    settings = dataclasses.replace(settings, history_max_chars=_budget)
         thinking_supported = registry.supports_thinking(provider_id, model_id)
         model_registry_resolved = True
         if "/" in settings.llm_model:
@@ -693,6 +704,17 @@ def build_engine(settings: Settings) -> LoopEngine:
 
     # R1: 上下文占用分解注入 architecture_status（AI 每轮可见，自主决策压缩/切换）
     status_provider.set_context_breakdown_fn(lambda: getattr(engine, "_last_breakdown", None))
+    # EVO-20260818（spec §5.4.1-2）: cache_health/cache_guard 对外可观测注入——
+    # cache_guard 回调透传 session_id（guard 窗口 per-session，grill-me Q11）；fail-open
+    try:
+        status_provider.set_cache_health_fn(lambda: engine._cache_monitor.snapshot())
+        status_provider.set_cache_guard_fn(
+            lambda sid: (
+                llm.guard.snapshot(session_id=sid) if llm.guard is not None else None
+            )
+        )
+    except Exception:  # noqa: BLE001 — 注入失败 fail-open（字段 None，不影响 engine）
+        logger.warning("cache_health/cache_guard 可观测注入失败（fail-open）")
     # T3: 上下文占用率注入 runtime（memory_top_k 自适应消费；breakdown 不可用时走默认值零回归）
     def _context_usage_ratio() -> float:
         bd = getattr(engine, "_last_breakdown", None)

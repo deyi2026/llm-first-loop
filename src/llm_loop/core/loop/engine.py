@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -21,6 +20,11 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.config import Settings
+from llm_loop.core.history import (  # noqa: F401 (history 工具)
+    projection_check,
+    projection_ver,
+    stable_digest,
+)
 
 # M53 拆分: 职责 mixin（signals 信号检查 / runtime 运行时参数 / fallback 模型降级链 / routing 模型路由 / overflow overflow 处理 / tool_exec 工具执行）
 from llm_loop.core.loop.archive import _ArchiveMixin
@@ -42,10 +46,7 @@ from llm_loop.core.loop.tool_exec import (
     _tool_args_summary,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
     _ToolExecMixin,
 )
-from llm_loop.core.cache_health import GATE_NOTE_CONTENT  # 门禁干预知情标记（build 注入）
-from llm_loop.core.history import stable_digest, projection_ver, projection_check  # noqa: F401 (history 工具)
 from llm_loop.core.message import Message, MessageSource
-from llm_loop.core.prompt import build_system_prompt
 from llm_loop.core.run_context import (
     current_session_id as _current_session_id,
 )
@@ -220,6 +221,9 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         from llm_loop.core.cache_health import CacheHealthMonitor
 
         self._cache_monitor = CacheHealthMonitor()
+        # EVO-20260818（spec §5.4.1-3 注记，grill-me C1）: 模型切换检测——每轮对比实际
+        # 模型，变化时 reset cache_health 窗口（防跨模型归因污染）
+        self._cache_last_model: str | None = None
         self._cache_gate_stable_fp = ""  # 门禁: 本次稳定段指纹（system+注入）
         self._cache_gate_hint: str | None = None  # 门禁: 后检漂移提示（run 末注入 final_answer）
         # EVO-20260817-b6554376: 投影一致性门闸最近状态（ok/miss/mismatch；构建后更新）
@@ -429,6 +433,12 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             llm_client = routing.llm_client
             model_used = routing.model_used
             chat_model_arg = routing.chat_model_arg
+            # EVO-20260818（spec §5.4.1-3 注记）: 模型切换 → cache_health 窗口重置
+            # （guard 侧 client 已按 guard_last_model 重置；cache_health 侧防跨模型归因污染）
+            if model_used and model_used != self._cache_last_model:
+                if self._cache_last_model is not None:
+                    self._cache_monitor.reset(reason=f"model_switch:{model_used}")
+                self._cache_last_model = model_used
             if routing.final_answer_override is not None:
                 _run_end_reason = "routing_override"
                 final_answer = routing.final_answer_override
@@ -463,12 +473,19 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                     # 2026-08-18 cache_guard（MCP 出入口）: 透传会话上下文供规则校验
                     # （system 稳定基线按会话维护；压缩计数供窗口漂移检测）
                     try:
-                        llm_client.guard_system = system_prompt if "system_prompt" in dir() else (
-                            messages[0].get("content", "") if messages and messages[0].get("role") == "system" else None
+                        # EVO-20260818: 简化——原 dir() 局部变量检查脆弱（拷问 F1）且
+                        # 该作用域恒无 system_prompt（build 内的局部变量），等价取 messages[0]
+                        llm_client.guard_system = (
+                            messages[0].get("content", "")
+                            if messages and messages[0].get("role") == "system"
+                            else None
                         )
                         llm_client.guard_session_id = session_id
                         llm_client.guard_compress_count = getattr(self, "_compress_count_this_run", 0)
-                        llm_client.guard_history_budget = int(self._runtime_history_budget() or 0)
+                        # EVO-20260818（spec §5.3.1-2 注记 / §5.5.1-8 b，grill-me Q18b）:
+                        # 规则 F 预算口径与构建预算同源（M54 窗口感知 effective）——否则
+                        # 切小窗口模型时占比被全局预算稀释（131K 构建 + 1M 口径 → 95% 算成 13%）
+                        llm_client.guard_history_budget = int(effective_budget or 0)
                     except Exception:  # noqa: BLE001 — 透传失败不影响请求
                         pass
                     it = stream_fn(

@@ -56,14 +56,14 @@ class _InteropMixin:
             out: list[Message] = []
             # 审查 P2 修复: 注入上限——pending 堆积（如 DSH 批量发消息）时
             # 只注入最新 8 条，防单轮上下文被协调消息撑爆（剩余下轮再注入）
-            _MAX_INBOX_INJECT = 8
+            _max_inbox_inject = 8  # 注入上限（函数内局部，小写命名）
             files = sorted(base.glob("*.json"))
             # EVO-20260817-c35c9178: notify 已注入指纹（进程级，重启后 pending 已 done 无重复）
             seen = getattr(self, "_notify_injected", None)
             if seen is None:
                 seen = self._notify_injected = set()
             notify_archives: list[Path] = []  # 命中指纹 → 本轮自动归档
-            for f in files[-_MAX_INBOX_INJECT:]:
+            for f in files[-_max_inbox_inject:]:
                 try:
                     d = json.loads(f.read_text(encoding="utf-8"))
                 except (OSError, ValueError):
@@ -90,12 +90,12 @@ class _InteropMixin:
                     source=MessageSource.SYSTEM,
                     metadata={"interop_source": f.name},  # DSH 借鉴: 注入事件溯源文件名
                 ))
-            if len(files) > _MAX_INBOX_INJECT:
+            if len(files) > _max_inbox_inject:
                 out.insert(0, Message(
                     role="system",
                     content=(
-                        f"[外部协调] 另有 {len(files) - _MAX_INBOX_INJECT} 条待处理消息"
-                        f"（超出单轮注入上限 {_MAX_INBOX_INJECT}，将在后续轮次注入）"
+                        f"[外部协调] 另有 {len(files) - _max_inbox_inject} 条待处理消息"
+                        f"（超出单轮注入上限 {_max_inbox_inject}，将在后续轮次注入）"
                     ),
                     source=MessageSource.SYSTEM,
                 ))
@@ -129,21 +129,24 @@ class _InteropMixin:
     def _inject_interop_messages(
         self, base: list[Message], prefix_len: int, session_id: str = ""
     ) -> tuple[list[Message], int]:
-        """装配点调用: inbox 消息注入到 memory 之后、历史之前（返回注入后的 base 与 prefix_len）.
+        """装配点调用: inbox 消息注入（返回注入后的 base 与 prefix_len）.
 
         engine._build_llm_messages 调用（每轮 run 必感知）；任何异常回落原值（fail-open）。
         session_id: 注入目标会话（供 interop.spliced 事件溯源，缺省不记）。
-        注入位置语义（2026-08-16 优化，P1-10 前缀稳定）:
-        - base[:prefix_len] = memory 段（前置注入，字节级稳定）
-        - inbox 插入 memory 之后 → 与 memory 同机制: 最终由 build_history_messages 的
-          _append_or_merge（P1-FEISHU）合并追加进 system_prompt 末尾——追加式合并保持
-          system 原内容前缀命中（服务端 KV 前缀缓存），有消息轮仅重算 inbox 段
-          （=其自身长度，几百字符一次性）；无消息轮零影响
-        - prefix_len 仍 +len(inbox)（锚点换算口径不变: history 在完整序列中的起始偏移）
+
+        注入位置（EVO-20260818 cache_window_converge spec §5.3.1-1 c/d，grill-me B1）:
+        - 默认尾部追加（env INTEROP_INJECT_TAIL=1，GATE_NOTE 模式）: inbox 存入
+          _interop_tail_messages，由 build 在提交末尾追加（转 user）——system+稳定历史
+          前缀字节不变，注入轮不断前缀（原实现插在 memory 之后、历史之前 = 前缀区，
+          每轮变化即断）。base/prefix_len 原样返回。
+        - INTEROP_INJECT_TAIL=0 回退旧行为: 插入 memory 之后、历史之前（2026-08-16 优化）。
         """
+        import os
+
         try:
             inbox = self._interop_inbox_messages()
             if inbox:
+                _tail = os.environ.get("INTEROP_INJECT_TAIL", "1") == "1"
                 # DSH 借鉴(2026-08-17): interop.spliced 注入事件（对齐 agent/inbox/spliced）——
                 # 记录来源/条数/位置，缓存审计可追溯"哪轮请求含外部注入"（fail-open）
                 try:
@@ -154,7 +157,8 @@ class _InteropMixin:
                             "session_id": session_id or "?",
                             "round": 0,  # 构建期不知轮次，如实置 0
                             "count": len(inbox),
-                            "start": prefix_len,
+                            "start": prefix_len if not _tail else -1,  # tail 模式无前缀偏移
+                            "position": "tail" if _tail else "prefix",
                             "sources": [
                                 (m.metadata or {}).get("interop_source", "")
                                 for m in inbox
@@ -164,6 +168,9 @@ class _InteropMixin:
                     )
                 except Exception:  # noqa: BLE001 — 注入事件失败 fail-open（不影响注入本身）
                     logger.warning("interop.spliced 事件写入失败（fail-open）")
+                if _tail:
+                    self._interop_tail_messages = inbox
+                    return base, prefix_len
                 return base[:prefix_len] + inbox + base[prefix_len:], prefix_len + len(inbox)
         except Exception:
             logger.warning("协调通道 inbox 注入失败（fail-open）", exc_info=True)

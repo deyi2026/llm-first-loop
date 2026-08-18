@@ -371,7 +371,9 @@ export function MessageItem({
               ? ` · ${formatTokens(msg.tokens_in)}入/${formatTokens(msg.tokens_out)}出`
               : ""}
             {msg.tokens_in && msg.tokens_cache_hit !== undefined && msg.tokens_cache_hit !== null
-              ? ` · ⚡ ${((msg.tokens_cache_hit / msg.tokens_in) * 100).toFixed(1)}%`
+              ? // EVO-20260818（spec §5.4.1-1，grill-me Q6）: 口径标注——本轮请求命中率；
+                // 权威口径为会话近 10 次窗口（architecture_status.cache_guard）
+                ` · ⚡ ${((msg.tokens_cache_hit / msg.tokens_in) * 100).toFixed(1)}%（本轮）`
               : ""}
           </div>
         ) : null}
