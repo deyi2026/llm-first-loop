@@ -467,34 +467,28 @@ def test_archive_key_facts_both_empty_returns_empty():
 
 
 def test_build_history_messages_merges_multiple_system_messages():
-    """P1-FEISHU: qwen3 heretic 模板拒绝 [system, system, ...] 序列.
+    """(2026-08-18 对齐 DSH) 非首个 system 转 user 独立——system 主体静态跨会话.
 
-    根因: _build_llm_messages 会注入 snapshot (role=system) 到 base[0],
-    build_history_messages 又独立 push system_prompt,导致连续两个 system。
-    LM Studio qwen3 模板抛 "System message must be at the beginning" → 500。
-
-    修复: build_history_messages 合并额外 system 消息到首个 system.content。
+    原行为: 合并进主体（每会话数量不同 → 主体跨会话不一致 → 首轮不命中）。
+    新行为: 主体字节静态（跨会话一致——首轮命中稳定段）；注入内容转 user 保留。
     """
-    from llm_loop.core.history import build_history_messages
-    from llm_loop.core.message import Message, MessageSource
-
-    base = [
-        Message(role="system", content="快照: 5 轮, 3 记忆", source=MessageSource.SYSTEM),
-        Message(role="user", content="你是什么大模型？", source=MessageSource.USER),
+    sp = "SYS"
+    msgs = [
+        _m("system", "A1"),
+        _m("user", "u1"),
+        _m("system", "S2"),
+        _m("user", "u2"),
     ]
-    out = build_history_messages(base, "你是 helpful AI")
-
-    # 必须仅 1 条 system（合并）
-    sys_count = sum(1 for m in out if m["role"] == "system")
-    assert sys_count == 1, f"应合并为 1 条 system, 实际 {sys_count}: {out}"
-    # 合并内容应包含两者
-    assert "helpful AI" in out[0]["content"], f"system_prompt 内容应保留: {out[0]['content'][:80]}"
-    assert "快照" in out[0]["content"], f"snapshot 内容应保留: {out[0]['content'][:80]}"
-    # user 应在第二位
-    assert out[1]["role"] == "user"
+    out = build_history_messages(msgs, system_prompt=sp, max_chars=10000)
+    assert out[0]["role"] == "system"
+    assert out[0]["content"] == sp, "主体静态（不含注入）"
+    users = [m for m in out if m["role"] == "user"]
+    contents = [m["content"] for m in users]
+    assert "A1" in contents, "system 注入转 user 保留"
+    assert "S2" in contents, "后续 system 转 user 保留"
+    assert "u1" in contents and "u2" in contents
 
 
-# ── S2/A2 协议配对自检 ──
 
 def test_validate_pairing_ok():
     """S2: 正常序列（assistant(tool_calls) + 全量 tool 消息）返回空列表."""

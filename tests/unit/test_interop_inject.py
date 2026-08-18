@@ -163,8 +163,13 @@ def test_build_messages_injects_inbox_after_memory(tmp_path, monkeypatch):
     # memory 注入非空时，inbox 必须在 memory 之后（合并进 system 前缀, 追加式保持前缀稳定）
     mem = Message(role="system", content="MEM-1: 记忆片段", source=MessageSource.SYSTEM)
     out = engine._build_llm_messages(engine.session.load(sess), [mem], max_chars=200000)
-    assert len(out) == 1 and out[0]["role"] == "system"  # P1-FEISHU: system 全合并进 out[0]
+    # 2026-08-18 对齐 DSH: system 主体静态——注入（memory/inbox）转独立 user 消息
+    assert out[0]["role"] == "system"  # 主体
     content = out[0]["content"]
-    assert "MEM-1" in content                 # memory 注入生效
-    assert "20260816-006" in content          # inbox 注入生效（每轮必感知）
-    assert content.index("20260816-006") > content.index("MEM-1")  # inbox 在 memory 之后
+    assert "MEM-1" not in content and "20260816-006" not in content  # 注入不进主体
+    # 注入内容在 user 消息中保留（AI 可见）——且 inbox 在 memory 之后
+    users = [m["content"] for m in out if m["role"] == "user"]
+    joined = "\n".join(users)
+    assert "MEM-1" in joined              # memory 注入生效（转 user 保留）
+    assert "20260816-006" in joined       # inbox 注入生效（每轮必感知）
+    assert joined.index("20260816-006") > joined.index("MEM-1")  # inbox 在 memory 之后

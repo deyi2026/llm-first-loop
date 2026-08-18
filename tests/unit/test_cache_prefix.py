@@ -75,15 +75,18 @@ def test_system_prompt_not_truncated_by_dynamic_injects():
     """
     sp = build_system_prompt()
     assert len(sp) > 4000, "前置: system_prompt 已超 max_sys_merge_chars（测试前提成立）"
-    merged = _build_with_system_injects(sp, [
-        _fake_msg("system", "MEM-1: 记忆片段"),
-        _fake_msg("system", "[外部协调·from DSH] 20260816-006 请复核"),
-    ])
-    # system_prompt 主体完整出现（不被截断）
-    assert sp in merged, "system_prompt 主体必须完整保留（前缀缓存锚）"
-    # 动态段追加在尾部, 且顺序保持
-    assert merged.index("MEM-1") > merged.index(sp[:50])
-    assert merged.index("20260816-006") > merged.index("MEM-1")
+    out = build_history_messages(
+        [_fake_msg("system", "MEM-1: 记忆片段"),
+         _fake_msg("system", "[外部协调·from DSH] 20260816-006 请复核")],
+        sp, max_chars=200000,
+    )
+    # 2026-08-18 对齐 DSH: system 主体纯静态（注入不进主体——转独立 user 消息）
+    assert out[0]["role"] == "system"
+    assert out[0]["content"] == sp, "system 主体字节级静态（跨会话一致——首轮命中稳定段）"
+    # 注入转 user——内容仍在（AI 可见）
+    users = [m for m in out if m["role"] == "user"]
+    assert any("MEM-1" in m["content"] for m in users), "memory 注入转 user 保留"
+    assert any("20260816-006" in m["content"] for m in users), "协调注入转 user 保留"
 
 
 def test_prefix_stable_with_and_without_inbox():
@@ -94,19 +97,18 @@ def test_prefix_stable_with_and_without_inbox():
     with_inbox = _build_with_system_injects(sp, base_sys + [
         _fake_msg("system", "[外部协调·from DSH] 20260816-006 请复核")
     ])
-    # 无注入轮是严格前缀（inbox 在尾部追加, 原前缀字节级保持）
-    assert with_inbox.startswith(no_inbox), "有注入轮必须保持无注入轮前缀（追加式合并）"
-    assert len(with_inbox) > len(no_inbox)
-    assert "20260816-006" in with_inbox[len(no_inbox):]  # inbox 段严格在尾部
+    # 2026-08-18 对齐 DSH: system 主体跨会话字节一致（注入不进主体——转 user）
+    assert no_inbox == with_inbox == sp, "system 主体静态（有无注入轮完全一致——跨会话命中稳定段）"
 
 
-def test_system_inject_truncation_still_guarded():
-    """5. 防累积上限仍生效: 动态段超限截尾部保留最新（原 P1-FEISHU 意图不变）."""
+def test_system_inject_no_merge_no_truncation():
+    """5. (2026-08-18 对齐 DSH) 注入转 user——无合并无截断——主体静态不受注入量影响."""
     sp = build_system_prompt()
-    # 构造动态段超限: system_prompt + 大量 system 帧
+    # 大量 system 帧（原超限场景）——现在转 user 独立——主体不受影响
     heavy = [_fake_msg("system", f"STATE-{i}: " + "x" * 500) for i in range(30)]
-    merged = _build_with_system_injects(sp, heavy)
-    assert sp in merged, "system_prompt 主体仍完整"
-    dyn = merged[len(sp):]
-    assert len(dyn) <= 4000 * 1.5 + 100, f"动态段应被上限约束, 实际 {len(dyn)}"
-    assert "STATE-29" in merged, "保留最新 state 帧（原意图: 状态帧意义在即时性）"
+    out = build_history_messages(heavy, sp, max_chars=200000)
+    assert out[0]["role"] == "system"
+    assert out[0]["content"] == sp, "主体字节静态（不受注入量影响）"
+    users = [m for m in out if m["role"] == "user"]
+    assert len(users) == 30, "30 个注入帧全部转 user 保留（信息零丢失）"
+    assert any("STATE-29" in m["content"] for m in users)
