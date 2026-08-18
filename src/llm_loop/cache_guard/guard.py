@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -48,6 +49,25 @@ _HIT_SAMPLE_MIN = int(os.environ.get("CACHE_GUARD_HIT_SAMPLE", "3"))
 # 逃生（拷问③——2026-08-18）: 连续 BLOCK N 次后自动降级 WARN（防死锁——AI 不处理时
 # 不无限拦截；降级后 AI 可行动）
 _BLOCK_ESCAPE_MAX = int(os.environ.get("CACHE_GUARD_BLOCK_ESCAPE", "3"))
+# EVO-20260818（实测）: provider 前缀缓存 TTL（秒）——MiniMax 约 130s 失效
+# （间隔 134s 即全 miss，剩 128 tokens 特征最小命中）; 请求间隔超 TTL 的低命中属
+# 缓存过期（provider 侧行为）→ 规则 G 降级 WARN 不 BLOCK（防误拦，grill-me 2.3 实证落地）
+_CACHE_TTL_S: dict[str, int] = {
+    "minimax": 90,     # 实测 ~130s，保守下限
+    "deepseek": 7200,  # 官方数小时
+    "kimi": 300,
+    "openai": 300,
+}
+_DEFAULT_CACHE_TTL_S = 300
+
+
+def _cache_ttl_for(provider: str) -> int:
+    """按 provider 匹配缓存 TTL（子串匹配，未知回退默认 300s）."""
+    p = (provider or "").lower()
+    for key, ttl in _CACHE_TTL_S.items():
+        if key in p:
+            return ttl
+    return _DEFAULT_CACHE_TTL_S
 _SENSITIVE_PATTERNS = [
     re.compile(r"sk-[A-Za-z0-9]{16,}"),  # API key
     re.compile(r"AKIA[0-9A-Z]{16}"),  # AWS key
@@ -314,7 +334,8 @@ class PromptGuard:
             if tokens_in <= 0:
                 return
             win = self._hit_win.setdefault(session_id, [])
-            win.append((tokens_in, tokens_hit))
+            # EVO-20260818: 元组加时间戳（TTL 过期判定——间隔 > provider 缓存 TTL）
+            win.append((tokens_in, tokens_hit, time.time()))
             if len(win) > 10:
                 del win[:-10]  # 窗口最近 10 次
             # 对账行（append-only；与发送行经 ts/session_id 关联）
@@ -339,8 +360,8 @@ class PromptGuard:
         win = self._hit_win.get(session_id) or []
         if len(win) < _HIT_SAMPLE_MIN:
             return None
-        ti = sum(i for i, _ in win)
-        hi = sum(h for _, h in win)
+        ti = sum(i for i, _, _ in win)
+        hi = sum(h for _, h, _ in win)
         return (hi / ti) if ti > 0 else None
 
     def snapshot(self, session_id: str = "") -> dict:
@@ -382,7 +403,7 @@ class PromptGuard:
             return {}
 
     def _check_hit_rate(
-        self, session_id: str, compress_count: int = 0
+        self, session_id: str, compress_count: int = 0, provider: str = ""
     ) -> GuardDecision | None:
         """规则 G: 近期命中率低 → 拦截——但【区分冷启动 vs 持续异常】.
 
@@ -391,6 +412,8 @@ class PromptGuard:
         - 前缀稳定（最近两次 in 相近——同前缀）却低命中 = 异常——BLOCK
         EVO-20260818（spec §5.3.1-2 f，grill-me Q3）: 压缩轮（compress_count>0，in 骤降）
         不判冷启动——压缩后低命中按前缀稳定规则正常裁决（头部保留时前缀应稳定）。
+        EVO-20260818（grill-me 2.3 实证）: 请求间隔 > provider 缓存 TTL（MiniMax ~130s 实测）
+        → 低命中属缓存过期（provider 侧行为）——降级 WARN 不 BLOCK（防误拦）。
         """
         if not self.hit_telemetry:
             return None  # EVO-20260818（spec §6.2-6）: 无命中回执的 provider（lms-chat）不判
@@ -401,13 +424,34 @@ class PromptGuard:
         if rate is None:
             return None
         # 前缀稳定性：最近两次请求的 in 是否相近（±15%——同前缀应命中）
-        last_in = [i for i, _ in win[-2:]]
+        last_in = [i for i, _, _ in win[-2:]]
         prefix_stable = (
             len(last_in) == 2
             and last_in[1] > 0
             and abs(last_in[1] - last_in[0]) / last_in[1] < 0.15
         )
+        # TTL 过期判定: 最近两次请求间隔 > provider 缓存 TTL
+        ttl_gap_s: float | None = None
+        if len(win) >= 2:
+            _t1 = win[-2][2]
+            _t2 = win[-1][2]
+            if _t1 and _t2:
+                _gap = _t2 - _t1
+                _ttl = _cache_ttl_for(provider)
+                if _gap > _ttl:
+                    ttl_gap_s = _gap
         if rate < _HIT_RATE_BLOCK:
+            if ttl_gap_s is not None:
+                # 缓存 TTL 过期（间隔超 provider 缓存寿命）——预期 miss，不拦
+                return GuardDecision(
+                    verdict="WARN",
+                    rule="low_hit_rate_ttl",
+                    detail=(
+                        f"该会话近期命中率 {rate*100:.0f}%（低命中）——请求间隔 "
+                        f"{ttl_gap_s:.0f}s 超 {_cache_ttl_for(provider)}s 缓存 TTL"
+                        f"（{provider or 'provider'} 侧缓存已过期，属预期；短间隔请求将恢复命中）"
+                    ),
+                )
             if prefix_stable or compress_count > 0:
                 return GuardDecision(
                     verdict="BLOCK",
@@ -467,7 +511,11 @@ class PromptGuard:
         )
         # 规则 G: 低命中拦截（优先级高于普通 WARN——命中是结果闭环）
         if decision.verdict == "ALLOW" or decision.verdict == "WARN":
-            hit_d = self._check_hit_rate(session_id, compress_count=compress_count_this_run)
+            hit_d = self._check_hit_rate(
+                session_id,
+                compress_count=compress_count_this_run,
+                provider=provider,  # TTL 过期判定（MiniMax ~130s 等）
+            )
             if hit_d is not None and (
                 hit_d.verdict == "BLOCK"
                 or (hit_d.verdict == "WARN" and decision.verdict == "ALLOW")

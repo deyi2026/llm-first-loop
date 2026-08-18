@@ -4,8 +4,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 from llm_loop.cache_guard.guard import PromptGuard, validate_request
 
@@ -193,3 +191,41 @@ class TestValidateRequest:
         monkeypatch.setattr(mod, "_check_system_stability", boom)
         d = validate_request(system_text="a", messages=_sys("a"), meta={}, audit_file=tmp_path / "g.jsonl")
         assert d.verdict == "ALLOW"
+
+    def test_ttl_expiry_warns_not_blocks(self, tmp_path):
+        """EVO-20260818: 请求间隔 > provider 缓存 TTL（MiniMax ~130s 实测）→ 低命中
+        属缓存过期——WARN 不 BLOCK（防误拦 TTL miss 的正常用户）."""
+        import time
+
+        g = PromptGuard(audit_file=tmp_path / "g.jsonl")
+        now = time.time()
+        # 直接注入窗口（模拟间隔 200s > minimax TTL 90s）: 前缀稳定（in 相近）+ 低命中
+        g._hit_win["s-ttl"] = [
+            (100000, 5000, now - 300),
+            (100000, 5000, now - 200),
+            (100000, 5000, now),  # 末次间隔 200s > minimax TTL 90s
+        ]
+        d = g.check(
+            session_id="s-ttl", system_text="sys", messages=_sys("sys"),
+            provider="minimax",
+        )
+        assert d.verdict == "WARN"
+        assert d.rule == "low_hit_rate_ttl"
+
+    def test_ttl_within_windows_still_blocks(self, tmp_path):
+        """间隔未超 TTL 的低命中 → 正常 BLOCK（TTL 判定不掩盖真异常）."""
+        import time
+
+        g = PromptGuard(audit_file=tmp_path / "g.jsonl")
+        now = time.time()
+        g._hit_win["s-hot"] = [
+            (100000, 5000, now - 20),
+            (100000, 5000, now - 10),
+            (100000, 5000, now),  # 末次间隔 10s < TTL 90s
+        ]
+        d = g.check(
+            session_id="s-hot", system_text="sys", messages=_sys("sys"),
+            provider="minimax",
+        )
+        assert d.verdict == "BLOCK"
+        assert d.rule == "low_hit_rate"
