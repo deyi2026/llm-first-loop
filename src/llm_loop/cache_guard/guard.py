@@ -40,7 +40,10 @@ _SUBMIT_RATIO_WARN = 0.85  # >85% → WARN（提示接近超限）
 # 会话近期命中率 < 阈值且样本足够 → BLOCK（前缀不稳定——先压缩 checkpoint/换会话）
 # 阈值 env 化（拷问④——2026-08-18）: 可用 CACHE_GUARD_* 覆盖
 _HIT_RATE_BLOCK = float(os.environ.get("CACHE_GUARD_HIT_BLOCK", "0.30"))
-_HIT_RATE_WARN = float(os.environ.get("CACHE_GUARD_HIT_WARN", "0.50"))
+# 2026-08-18 用户反馈（'78% 也是低的'）: WARN 阈值 0.50 → 0.85——低于预期的命中
+# （工具轮/前缀微变化）也应提示 AI（'命中低于预期——注意前缀稳定性'）；BLOCK 保持 0.30
+# （真异常才拦——防误伤工具轮正常场景）
+_HIT_RATE_WARN = float(os.environ.get("CACHE_GUARD_HIT_WARN", "0.85"))
 _HIT_SAMPLE_MIN = int(os.environ.get("CACHE_GUARD_HIT_SAMPLE", "3"))
 # 逃生（拷问③——2026-08-18）: 连续 BLOCK N 次后自动降级 WARN（防死锁——AI 不处理时
 # 不无限拦截；降级后 AI 可行动）

@@ -124,6 +124,15 @@ class TestValidateRequest:
         assert d.verdict == "WARN"
         assert d.rule == "low_hit_rate"
 
+    def test_mid_hit_rate_warn(self, tmp_path):
+        """2026-08-18 用户反馈（'78% 也低'）: 80% 也应 WARN（工具轮——低于预期提示）."""
+        g = PromptGuard(audit_file=tmp_path / "g.jsonl")
+        for _ in range(3):
+            g.record_result("s-mid", 10000, 8000)  # 80% —— <85% WARN 区间
+        d = g.check(session_id="s-mid", system_text="sys", messages=_sys("sys"))
+        assert d.verdict == "WARN"
+        assert d.rule == "low_hit_rate"
+
     def test_high_hit_rate_allow(self, tmp_path):
         g = PromptGuard(audit_file=tmp_path / "g.jsonl")
         for _ in range(3):
