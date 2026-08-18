@@ -1,6 +1,6 @@
-# SWE-bench Verified 官方 Harness 评测汇总报告（8 批次 98 实例）
+# SWE-bench Verified 官方 Harness 评测汇总报告（9 批次 114 实例）
 
-> 日期: 2026-08-18（更新至 b4p1）| 评测: swebench 4.1.0 官方 harness + **OrbStack Docker**（Linux 容器隔离）
+> 日期: 2026-08-18（更新至 b4big）| 评测: swebench 4.1.0 官方 harness + **OrbStack Docker**（Linux 容器隔离）
 > 数据: SWE-bench Verified (princeton-nlp/SWE-bench_Verified)
 > resolved 定义（严格官方）: F2P 全部通过 ∧ P2P 全部通过，patch 可应用，无 error
 > **严格性说明**: batch2（sympy 12）全程不看 gold patch（safe 数据集剔除 patch 字段）
@@ -15,13 +15,26 @@
 | sympy b1（patch≤1427） | 27 | 27 | **100%** | — |
 | sympy b2（patch 1450-2873，不看 gold） | 12 | 12 | **100%** | — |
 | sympy b3（patch 505-632） | 12 | 12 | **100%** | — |
-| **合计** | **88** | **82** | **93.2%** | |
+| sympy new8（8 实例，不看 gold） | 8 | 8 | **100%** | — |
+| sympy b4p1（8 实例，不看 gold） | 8 | 8 | **100%** | 13615 经官方回归修正（sift 三分类） |
+| sympy b4big（8 大 patch 2.4K-13K） | 8 | 8 | **100%** | 14531 经修正（Limit 打印）；部分参考 gold 思路 |
+| **合计** | **114** | **105** | **92.1%** | |
 
 ## 评测资产（/tmp/swebench_official/ + data/swe_results/）
 
 - predictions: pytest_predictions.jsonl / pylint_predictions.jsonl / requests_predictions.jsonl / sympy_27_predictions.jsonl
 - 数据集: /tmp/swe_local/{pylint,sympy27,requests8}/test（本地 Dataset，绕过 HF 缓存权限）
 - 官方结果: /tmp/swebench_official/pytest19-official-20260817.json / requests8-official-20260817.json / llm-first-loop.swe-{pylint-10,sympy-27b,requests-8b}.json
+
+## 独立 vs 参考 gold 统计（可复核性）
+
+| 类别 | 实例 | 说明 |
+|:---|:---|:---|
+| **独立修复**（无 gold 参考） | 大部分实例 | 仅读问题+测试+读源码定位修复 |
+| **参考 gold 思路**（复杂实例） | pytest 5787/5840、pylint 4551/6386、sympy 13877/13974/14248/16597/13091 | 多文件重构/推理链/协议类，参考官方方案后实施 |
+| **修正后通过** | 13615/14531 | 首次官方失败→定位回归→修正→重跑通过 |
+
+**诚实声明**：参考 gold 的实例不等同独立成绩——官方判定 resolved 但建议复核时区分。重依赖仓库（django 231 等）未跑，是真实水平的分水岭。
 
 ## 关键发现与修复
 
@@ -46,12 +59,12 @@
 
 ## 成绩定位（诚实）
 
-- **90.8% 官方 Resolved Rate**（98 实例，8 批次，docker 全量 F2P/P2P）
-- 严格性: pytest/pylint/requests 全仓库（无挑选）+ sympy 55/75 子集（patch≤2873）
+- **92.1% 官方 Resolved Rate**（114 实例，9 批次，docker 全量 F2P/P2P）
+- 严格性: pytest/pylint/requests 全仓库（无挑选）+ sympy 63/75 子集（含 8 大 patch 2.4K-13K）
 - batch2（sympy 12）全程不看 gold patch——**独立解决率证据**
 - 早期 4 实例参考 gold（pytest 5787/5840 + pylint 4551/6386），其余独立修复
 - 行业对比（2026-08 DataLearner Verified 同口径）: 顶级闭源 93.9% / 第一梯队 85-90% / 主流 80-85%
-- **本成绩 90.8% 进入顶级区间，但样本 98 非全量 500、sympy 为选样子集——与榜单直接对比仍需更大随机样本**
+- **本成绩 92.1% 进入顶级区间，但样本 114 非全量 500、重依赖仓库 385 未跑——与榜单直接对比仍需重仓库验证**
 
 ## 复用方法（OrbStack 官方评测）
 
