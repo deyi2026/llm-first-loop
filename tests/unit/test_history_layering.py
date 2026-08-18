@@ -236,19 +236,22 @@ def test_skip_injected_system_not_submitted():
     )
     msgs = [injected, func_sys, _user("问题1")]
 
-    # 默认（False）: 全部提交（零回归）
+    # 默认（False）: 全部提交（2026-08-18 system 静态化——注入转独立 user 消息，主体纯静态）
     out_default = build_history_messages(msgs, "SYS", max_chars=100000)
-    assert "[架构上报]" in out_default[0]["content"]
-    assert "[模型降级]" in out_default[0]["content"]
+    assert out_default[0]["content"] == "SYS"  # 主体字节静态
+    default_users = " ".join(m["content"] for m in out_default if m["role"] == "user")
+    assert "[架构上报]" in default_users
+    assert "[模型降级]" in default_users
 
-    # 开启跳过: 仅 injected 标记的 system 不进提交, 其余保留
+    # 开启跳过: 仅 injected 标记的 system 不进提交, 其余保留（转 user）
     out_skip = build_history_messages(
         msgs, "SYS", max_chars=100000, skip_injected_system=True
     )
-    sys_content = out_skip[0]["content"]
-    assert "[架构上报]" not in sys_content
-    assert "[模型降级]" in sys_content
-    assert len(out_skip) == 2  # system(含 func_sys 合并) + user
+    assert out_skip[0]["content"] == "SYS"
+    skip_users = " ".join(m["content"] for m in out_skip if m["role"] == "user")
+    assert "[架构上报]" not in skip_users
+    assert "[模型降级]" in skip_users
+    assert len(out_skip) == 3  # system + user(模型降级) + user(问题1)
 
 
 def test_skip_injected_system_survives_long_path():

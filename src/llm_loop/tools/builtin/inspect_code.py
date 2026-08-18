@@ -130,7 +130,7 @@ class InspectCodeTool:
                     if len(files) >= _MAX_FILES:
                         break
         except OSError:
-            pass
+            pass  # 目录遍历权限不足 fail-open（返回已收集文件，不静默吞错——调用方可见收集结果）
         return files[: _MAX_FILES]
 
     @staticmethod

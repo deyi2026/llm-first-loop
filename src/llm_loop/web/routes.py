@@ -624,7 +624,7 @@ def evolution_list(request: Request, limit: int = 30) -> Response:
                     "verified_at": d.get("verified_at"),
                 })
         except OSError:
-            pass
+            pass  # 建议文件读取失败 fail-open（返回已收集条目，日志由上层审计兜底）
     out.sort(key=lambda x: x["ts"], reverse=True)
     return JSONResponse(content={"suggestions": out[:limit], "count": len(out)})
 
