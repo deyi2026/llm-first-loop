@@ -173,6 +173,23 @@ class LLMClient:
         """cache_guard 实例（懒创建，chat_stream 内初始化；供 architecture_status 注入快照）."""
         return getattr(self, "_pg", None)
 
+    def ensure_guard(self) -> PromptGuard:
+        """预创建 cache_guard（幂等；EVO-20260818: factory 装配后调用使
+        architecture_status 快照进程启动即可用——懒创建会让 web 端点在首个请求前无数据）."""
+        _guard = getattr(self, "_pg", None)
+        if _guard is None:
+            # EVO-20260818（spec §6.2-6，grill-me 2.2）: 命中回执开关——
+            # lms-chat 等本地推理无命中回执（三字段兜底后仍恒 0）→ 规则 G 停用
+            # 防恒 0 误拦；env CACHE_GUARD_HIT_TELEMETRY 显式覆盖
+            _hit_tel = os.environ.get("CACHE_GUARD_HIT_TELEMETRY")
+            if _hit_tel is not None:
+                _tel = _hit_tel not in ("0", "false", "False")
+            else:
+                _tel = self.wire_protocol != "lms-chat"
+            _guard = PromptGuard(hit_telemetry=_tel)
+            self._pg = _guard
+        return _guard
+
     def close(self) -> None:
         self._client.close()
 
@@ -194,23 +211,10 @@ class LLMClient:
         self._guard_start_ts = 0
         if self.guard_enabled:
             try:
-                from llm_loop.cache_guard.guard import PromptGuard
-
                 _sys = self.guard_system if self.guard_system is not None else (
                     messages[0].get("content", "") if messages and messages[0].get("role") == "system" else ""
                 )
-                _guard = getattr(self, "_pg", None)
-                if _guard is None:
-                    # EVO-20260818（spec §6.2-6，grill-me 2.2）: 命中回执开关——
-                    # lms-chat 等本地推理无命中回执（三字段兜底后仍恒 0）→ 规则 G 停用
-                    # 防恒 0 误拦；env CACHE_GUARD_HIT_TELEMETRY 显式覆盖
-                    _hit_tel = os.environ.get("CACHE_GUARD_HIT_TELEMETRY")
-                    if _hit_tel is not None:
-                        _tel = _hit_tel not in ("0", "false", "False")
-                    else:
-                        _tel = self.wire_protocol != "lms-chat"
-                    _guard = PromptGuard(hit_telemetry=_tel)
-                    self._pg = _guard
+                _guard = self.ensure_guard()
                 # 模型切换 → 重置窗口（不同模型前缀不同——旧窗口命中率无意义）
                 if self.guard_last_model and self.guard_last_model != self.model:
                     _guard.reset_session(self.guard_session_id or "__global__")
