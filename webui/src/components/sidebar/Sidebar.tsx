@@ -50,6 +50,8 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
       loadedHistoryCount: 0,
       streamStartedAt: null,
     });
+    // 2026-08-19: 清草稿防 Composer 草稿恢复 effect 回填旧输入
+    localStorage.removeItem("lfl-draft-new");
   };
 
   const handleDelete = async (sid: string) => {
