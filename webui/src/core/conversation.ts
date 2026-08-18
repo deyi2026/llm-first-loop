@@ -65,6 +65,11 @@ export async function loadHistory(sessionId: string): Promise<void> {
   ) {
     stopStreaming();
   }
+  // 2026-08-18 修复串行：切换会话时中止进行中的 resume 订阅（防串写进新会话视图）
+  if (resumeAbort) {
+    resumeAbort.abort();
+    resumeAbort = null;
+  }
   const resp = await fetchHistory(sessionId, HISTORY_PAGE_SIZE, 0);
   const messages = resp.messages.map(toChatMessage);
   conversationStore.setState({
@@ -82,6 +87,9 @@ export async function loadHistory(sessionId: string): Promise<void> {
 }
 
 let bgPollTimer: number | undefined;
+// 对齐 DSH（2026-08-18 修复串行）: resume 订阅的 abort 控制器——切换会话时中止，
+// 防 A 会话的 resume 流式串写进 B 会话视图
+let resumeAbort: AbortController | null = null;
 
 /** 后台 run 检查：running → resume 订阅（重放已生成内容+实时流式——对齐 DSH 刷新可见中间状态）；
  *  订阅失败/非 running → 回退轮询直到完成重载。 */
@@ -107,6 +115,7 @@ export async function checkBackgroundRun(sessionId: string): Promise<void> {
  *  后端重放已生成 delta（EventBus 有界缓冲 c3c6c6d）+ 实时流式；done 后重载完整结果。 */
 async function resumeBackgroundStream(sessionId: string): Promise<boolean> {
   try {
+    resumeAbort = new AbortController();
     // 流式占位（重放内容实时渲染——同正常发送路径）
     const cur = conversationStore.getState();
     const placeholder: ChatMessage = {
@@ -128,20 +137,26 @@ async function resumeBackgroundStream(sessionId: string): Promise<boolean> {
       lastError: null,
     });
     const acc = { answer: "", reasoning: "" };
+    const sid = sessionId;
     const outcome = await streamChatRequest(
-      { message: "resume", session_id: sessionId, resume: true },
+      { message: "resume", session_id: sid, resume: true },
       {
         onAnswerDelta: (d) => {
+          // 会话守卫：当前会话已切换 → 停止渲染（防串写）
+          if (sessionStore.getState().currentSessionId !== sid) return;
           acc.answer += d;
           patchStreaming({ content: acc.answer });
         },
         onReasoningDelta: (d) => {
+          if (sessionStore.getState().currentSessionId !== sid) return;
           acc.reasoning += d;
           patchStreaming({ reasoningContent: acc.reasoning });
         },
         onToolRound: () => undefined,
-      }
+      },
+      resumeAbort?.signal
     );
+    resumeAbort = null;
     if (outcome.ok && outcome.data) {
       conversationStore.setState({ streaming: false, backgroundRunning: false });
       void loadHistory(sessionId); // 终态 → 重载完整结果（含工具调用）
