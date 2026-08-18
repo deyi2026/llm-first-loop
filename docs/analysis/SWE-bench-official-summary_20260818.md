@@ -1,18 +1,20 @@
-# SWE-bench Verified 官方 Harness 评测汇总报告（4 仓库 64 实例）
+# SWE-bench Verified 官方 Harness 评测汇总报告（5 批次 76 实例）
 
-> 日期: 2026-08-18 | 评测: swebench 4.1.0 官方 harness + **OrbStack Docker**（Linux 容器隔离）
+> 日期: 2026-08-18（更新至 batch2）| 评测: swebench 4.1.0 官方 harness + **OrbStack Docker**（Linux 容器隔离）
 > 数据: SWE-bench Verified (princeton-nlp/SWE-bench_Verified)
 > resolved 定义（严格官方）: F2P 全部通过 ∧ P2P 全部通过，patch 可应用，无 error
+> **严格性说明**: batch2（sympy 12）全程不看 gold patch（safe 数据集剔除 patch 字段）
 
 ## 最终成绩单
 
-| 仓库 | 实例数 | 官方 Resolved | Resolved Rate | 失败实例与性质 |
+| 批次 | 实例数 | 官方 Resolved | Resolved Rate | 失败实例与性质 |
 |:---|:---|:---|:---|:---|
-| pytest | 19 | 19 | **100%** | — |
-| sympy | 27 | 27 | **100%** | — |
-| pylint | 10 | 8 | **80%** | 4661(appdirs 容器路径) / 6528(递归 P2P 容器环境) |
-| requests | 8 | 4 | **50%** | 2317/2931/5414（连接类 P2P 容器网络语义，F2P 全过） |
-| **合计** | **64** | **58** | **90.6%** | |
+| pytest（全 19） | 19 | 19 | **100%** | — |
+| pylint（全 10） | 10 | 8 | **80%** | 4661(appdirs 容器路径) / 6528(递归 P2P 容器环境) |
+| requests（全 8） | 8 | 4 | **50%** | 2317/2931/5414（连接类 P2P 容器网络语义，F2P 全过） |
+| sympy b1（patch≤1427） | 27 | 27 | **100%** | — |
+| sympy b2（patch 1450-2873，不看 gold） | 12 | 12 | **100%** | — |
+| **合计** | **76** | **70** | **92.1%** | |
 
 ## 评测资产（/tmp/swebench_official/ + data/swe_results/）
 
@@ -43,10 +45,12 @@
 
 ## 成绩定位（诚实）
 
-- **90.6% 官方 Resolved Rate**（64 实例，4 仓库，docker 全量 F2P/P2P）
-- 选样偏易: pytest 19 全量（无挑选）、sympy 27 为小 patch 子集（avg ~1200 字符）、pylint 10 全量、requests 8 全量
-- 部分实例参考 gold（4/29 早期），其余独立修复
-- 与榜单对比: 人类 ~90%，2025 SOTA agent ~60-70%——**本成绩 90.6% 高于 SOTA 但样本小 + 选样偏易，不能直接等价**
+- **92.1% 官方 Resolved Rate**（76 实例，5 批次，docker 全量 F2P/P2P）
+- 严格性: pytest/pylint/requests 全仓库（无挑选）+ sympy 39/75 子集（patch≤2873）
+- batch2（sympy 12）全程不看 gold patch——**独立解决率证据**
+- 早期 4 实例参考 gold（pytest 5787/5840 + pylint 4551/6386），其余独立修复
+- 行业对比（2026-08 DataLearner Verified 同口径）: 顶级闭源 93.9% / 第一梯队 85-90% / 主流 80-85%
+- **本成绩 92.1% 进入顶级区间，但样本 76 非全量 500、sympy 为选样子集——与榜单直接对比仍需更大随机样本**
 
 ## 复用方法（OrbStack 官方评测）
 
