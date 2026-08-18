@@ -9,6 +9,7 @@ const state = {
   sessions: [],
   attachments: [], // M39 上传附件上下文（发送时作为 user 消息前缀注入）
   model: null, // M47 当前模型（模型切换下拉，None=装配默认）
+  pendingNewSession: false, // 2026-08-18: /new 后待发标志（下次消息强制新建会话）
   availableModels: [], // M47 服务端声明的可用模型列表（/model 命令校验用）
   typewriterPending: false, // T3: 最新 assistant 回复是否用假流式打字机渲染
   hasMoreHistory: false, // D2: 是否还有更早历史消息（懒加载）

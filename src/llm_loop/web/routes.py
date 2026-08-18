@@ -165,6 +165,11 @@ def chat(
                 },
             )
         session_id = payload.session_id
+    elif getattr(payload, "new_session", False):
+        # 2026-08-18: /new 语义——强制新建会话（前端清 currentSessionId 但后端复用共享当前
+        # 导致"新开不成功"）；新建后设为共享当前（后续消息复用新会话）
+        session_id = engine.session.create()
+        engine.session.set_shared_current(session_id)
     else:
         # P2-3: 无 sid 解析（复用共享/新建+设共享）在模块级 guard 内原子完成
         session_id = _resolve_session_id_locked(engine, request, None)
@@ -372,6 +377,10 @@ def chat_stream(
                 },
             )
         session_id = payload.session_id
+    elif getattr(payload, "new_session", False):
+        # 2026-08-18: /new 语义——强制新建（同 chat 端点）
+        session_id = engine.session.create()
+        engine.session.set_shared_current(session_id)
     else:
         # P2-3: 无 sid 解析在模块级 guard 内原子完成（与 chat 端点同一事务语义）
         session_id = _resolve_session_id_locked(engine, request, None)
@@ -1493,3 +1502,4 @@ def list_dirs(request: Request, path: str = "") -> Response:
             "dirs": [p.name for p in children[:500]],  # 单层上限防超载
         }
     )
+

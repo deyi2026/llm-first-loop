@@ -43,6 +43,10 @@ async function sendMessage() {
 
   try {
     const body = { message: effectiveText };
+    if (state.pendingNewSession) {
+      body.new_session = true; // 2026-08-18: /new 语义——强制后端新建会话
+      state.pendingNewSession = false;
+    }
     if (state.currentSessionId) body.session_id = state.currentSessionId;
     if (state.model) body.model = state.model; // M47 模型切换：对当前请求生效
     state.retryRequest = body; // D2 断流重试：保存请求体供重试复用
