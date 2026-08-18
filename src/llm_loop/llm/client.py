@@ -28,7 +28,12 @@ from llm_loop.llm.errors import (
     LLMNetworkError,
     LLMTimeoutError,
 )
-from llm_loop.llm.schemas import ToolCallDeltaAggregator  # finish() 含 json.loads 归一（约束 C5）
+from llm_loop.llm.schemas import ToolCallDeltaAggregator
+
+import logging
+
+logger = logging.getLogger(__name__)
+  # finish() 含 json.loads 归一（约束 C5）
 
 
 @dataclass
