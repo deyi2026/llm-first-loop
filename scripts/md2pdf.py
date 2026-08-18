@@ -5,15 +5,20 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+
+# 注册 CJK 字体（中文支持，STSong-Light 为 reportlab 内置 CID 字体）
+pdfmetrics.registerFont(UnicodeCIDFont('STSong-Light'))
 
 def md2pdf(md_path, pdf_path):
     md = open(md_path).read()
     doc = SimpleDocTemplate(pdf_path, pagesize=A4,
                             leftMargin=15*mm, rightMargin=15*mm, topMargin=15*mm, bottomMargin=15*mm)
     styles = getSampleStyleSheet()
-    h1 = ParagraphStyle('h1c', parent=styles['Heading1'], fontSize=16, spaceAfter=8)
-    h2 = ParagraphStyle('h2c', parent=styles['Heading2'], fontSize=13, spaceAfter=6)
-    body = ParagraphStyle('bodyc', parent=styles['BodyText'], fontSize=9, leading=13)
+    h1 = ParagraphStyle('h1c', parent=styles['Heading1'], fontName='STSong-Light', fontSize=16, spaceAfter=8)
+    h2 = ParagraphStyle('h2c', parent=styles['Heading2'], fontName='STSong-Light', fontSize=13, spaceAfter=6)
+    body = ParagraphStyle('bodyc', parent=styles['BodyText'], fontName='STSong-Light', fontSize=9, leading=13)
     story = []
     lines = md.splitlines()
     i = 0
@@ -37,6 +42,7 @@ def md2pdf(md_path, pdf_path):
                     ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#e8e8e8')),
                     ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
                     ('FONTSIZE', (0,0), (-1,-1), 8),
+                    ('FONTNAME', (0,0), (-1,-1), 'STSong-Light'),
                     ('VALIGN', (0,0), (-1,-1), 'TOP'),
                 ]))
                 story.append(t); story.append(Spacer(1, 6))
