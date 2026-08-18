@@ -1,6 +1,6 @@
 # SWE-bench Verified 官方 Harness 评测汇总报告（5 批次 76 实例）
 
-> 日期: 2026-08-18（更新至 batch2）| 评测: swebench 4.1.0 官方 harness + **OrbStack Docker**（Linux 容器隔离）
+> 日期: 2026-08-18（更新至 batch3）| 评测: swebench 4.1.0 官方 harness + **OrbStack Docker**（Linux 容器隔离）
 > 数据: SWE-bench Verified (princeton-nlp/SWE-bench_Verified)
 > resolved 定义（严格官方）: F2P 全部通过 ∧ P2P 全部通过，patch 可应用，无 error
 > **严格性说明**: batch2（sympy 12）全程不看 gold patch（safe 数据集剔除 patch 字段）
@@ -14,7 +14,8 @@
 | requests（全 8） | 8 | 4 | **50%** | 2317/2931/5414（连接类 P2P 容器网络语义，F2P 全过） |
 | sympy b1（patch≤1427） | 27 | 27 | **100%** | — |
 | sympy b2（patch 1450-2873，不看 gold） | 12 | 12 | **100%** | — |
-| **合计** | **76** | **70** | **92.1%** | |
+| sympy b3（patch 505-632） | 12 | 12 | **100%** | — |
+| **合计** | **88** | **82** | **93.2%** | |
 
 ## 评测资产（/tmp/swebench_official/ + data/swe_results/）
 
