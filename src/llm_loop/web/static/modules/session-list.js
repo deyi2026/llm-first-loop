@@ -118,6 +118,9 @@ function selectSession(sessionId) {
 function newSession() {
   state.currentSessionId = null;
   state.messages = [];
+  // 2026-08-18: /new 标记——下次发消息带 new_session=true（后端强制新建会话，
+  // 修复"清 currentSessionId 但后端复用共享当前导致新开不成功"）
+  state.pendingNewSession = true;
   renderMessages();
   renderSessions();
   els.messageInput.focus();

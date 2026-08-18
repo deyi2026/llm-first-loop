@@ -461,3 +461,33 @@ def test_feedback_validations(build_test_engine, fake_settings, tmp_path, monkey
         ).status_code
         == 404
     )
+
+
+def test_chat_new_session_forces_create(build_test_engine, fake_settings):
+    """2026-08-18: new_session=true → 强制新建会话并设为共享当前（/new 语义）."""
+    engine, fake = build_test_engine([])
+    fake._responses = [__import__("llm_loop.llm.client", fromlist=["LLMResponse"]).LLMResponse(content="完成", tool_calls=[], provider="fake")]
+    cli = _make_client(engine)
+    # 先建一个共享会话
+    sid0 = engine.session.create()
+    engine.session.set_shared_current(sid0)
+
+    # new_session=true 发消息（fake LLM 返回完成）
+    r = cli.post("/api/v1/chat", json={"message": "hi", "new_session": True})
+    assert r.status_code == 200
+    new_sid = r.json()["session_id"]
+    assert new_sid != sid0, "应新建会话而非复用旧会话"
+    # 共享当前已更新为新会话
+    assert engine.session.get_shared_current() == new_sid
+
+
+def test_chat_without_new_session_reuses_shared(build_test_engine, fake_settings):
+    """不带 new_session → 复用共享当前（原逻辑零回归）."""
+    engine, fake = build_test_engine([])
+    fake._responses = [__import__("llm_loop.llm.client", fromlist=["LLMResponse"]).LLMResponse(content="完成", tool_calls=[], provider="fake")]
+    cli = _make_client(engine)
+    sid0 = engine.session.create()
+    engine.session.set_shared_current(sid0)
+    r = cli.post("/api/v1/chat", json={"message": "hi"})
+    assert r.status_code == 200
+    assert r.json()["session_id"] == sid0
