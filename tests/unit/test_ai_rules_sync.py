@@ -171,6 +171,7 @@ def test_rules_consistent_both_sides():
                 "RULE-AI-09",
                 "RULE-AI-10",
                 "RULE-AI-12",  # 身份条款多子规则（EVO-91044aa7）
+                "RULE-AI-11",  # 2026-08-18 工具输出截断段加长（对齐 DSH）
             }
             else 600
         )
