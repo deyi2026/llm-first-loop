@@ -16,6 +16,11 @@ function refreshFromSync(): void {
 export async function refreshSessionsAndCurrent(): Promise<void> {
   const sessions = await fetchSessions();
   sessionStore.setSessions(sessions);
+  // 2026-08-19 修复跳回旧会话: 用户主动"新建/清除上下文"（newSessionPending=true）时，
+  // 空 currentSessionId 是新会话语义——SSE 同步（sessions_updated/看门狗/聚焦）不得
+  // 回填为最近/共享会话；首条消息发送时由 conversation.ts 消费标记（new_session=true）
+  // 并切换到服务端新建的会话。发送前若有其他路径需要会话 id，由发起方自行处理。
+  if (sessionStore.getState().newSessionPending) return;
   if (!sessionStore.getState().currentSessionId) {
     const shared = await fetchSharedCurrent();
     if (shared) {

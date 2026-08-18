@@ -4,7 +4,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { zh } from "../../i18n/zh";
-import { sendMessage, stopStreaming, useConversation } from "../../core/conversation";
+import { sendMessage, stopStreaming, useConversation, conversationStore } from "../../core/conversation";
 import { fetchModels, uploadFileBase64 } from "../../core/chat";
 import { sessionStore, useModel, useReasoningEffort } from "../../core/stores";
 
@@ -74,9 +74,19 @@ export function Composer() {
         name: "new",
         desc: "新建会话",
         run: () => {
+          // 2026-08-19 修复跳回旧会话: 不再 reload（reload 丢内存态，加载后 SSE 同步
+          // 会把 currentSessionId 回填为最近/共享会话）——与 Sidebar.handleNew 对齐
           sessionStore.setCurrentSession("");
           sessionStore.setNewSessionPending(true);
-          window.location.reload();
+          conversationStore.setState({
+            messages: [],
+            hasMoreHistory: false,
+            loadedHistoryCount: 0,
+            streamStartedAt: null,
+          });
+          // 草稿 key 随 currentSessionId 变为 "lfl-draft-new"——若不清除，草稿恢复
+          // effect 会把刚输入的命令文本（如 "/new"）恢复回来（stage2 测试实证）
+          localStorage.removeItem("lfl-draft-new");
         },
       },
       {
@@ -85,7 +95,13 @@ export function Composer() {
         run: () => {
           sessionStore.setCurrentSession("");
           sessionStore.setNewSessionPending(true);
-          window.location.reload();
+          conversationStore.setState({
+            messages: [],
+            hasMoreHistory: false,
+            loadedHistoryCount: 0,
+            streamStartedAt: null,
+          });
+          localStorage.removeItem("lfl-draft-new");
         },
       },
       {
