@@ -27,6 +27,7 @@ from llm_loop.cache_guard.guard import (
 )
 from llm_loop.core.message import ToolCall
 from llm_loop.llm.errors import (
+    LLMEmptyResponseError,
     LLMError,
     LLMHTTPError,
     LLMNetworkError,
@@ -252,6 +253,13 @@ class LLMClient:
             result = yield from self._stream_lms_chat(messages, tools, timeout_s=timeout_s, model=model)
         else:
             result = yield from self._stream_openai(messages, tools, timeout_s=timeout_s, model=model)
+        # EVO-20260818-92bd97d6: 空响应兜底——流正常结束但无任何内容/工具调用
+        # 视为异常（流被截断/模型异常），抛异常走如实反馈，不再静默记为 content=(空)
+        if result is not None and not result.content and not result.tool_calls:
+            raise LLMEmptyResponseError(
+                f"模型返回空响应（无内容且无工具调用，provider={self.provider}，model={self.model}）",
+                provider=self.provider,
+            )
         return result
 
     # ── OpenAI 兼容（既有行为，零回归） ──
