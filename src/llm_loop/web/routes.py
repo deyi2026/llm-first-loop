@@ -264,6 +264,18 @@ def _stream_background(
     """
     handle, q = runner.start(session_id, message, model=model, resume=resume)
     if q is None:
+        if resume:
+            # DSH 017 ② 语义区分：resume 场景无进行中 run（已结束/不存在）→
+            # no_active_run（前端据此直接重载已生成内容），区别于真正 busy
+            yield _sse(
+                "error",
+                {
+                    "error": "no_active_run",
+                    "detail": "没有进行中的后台任务（run 已结束或不存在），可直接刷新查看结果",
+                    "status": {},
+                },
+            )
+            return
         # 提交被拒（同会话已有 running run）→ 附状态信息，前端可轮询
         snap = runner.get_handle(session_id) or {}
         yield _sse(
