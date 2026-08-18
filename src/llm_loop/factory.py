@@ -707,6 +707,7 @@ def build_engine(settings: Settings) -> LoopEngine:
     # EVO-20260818（spec §5.4.1-2）: cache_health/cache_guard 对外可观测注入——
     # cache_guard 回调透传 session_id（guard 窗口 per-session，grill-me Q11）；fail-open
     try:
+        llm.ensure_guard()  # 预创建 guard——快照进程启动即可用（懒创建会让端点首请求前无数据）
         status_provider.set_cache_health_fn(lambda: engine._cache_monitor.snapshot())
         status_provider.set_cache_guard_fn(
             lambda sid: (
