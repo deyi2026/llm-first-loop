@@ -94,7 +94,11 @@ class _RoutingMixin:
         # 未知模型 context（无 pool/裸标签）→ 跳过守卫, 不阻断
         context_limit = self._current_context_limit(model_used)
         if context_limit:
-            refusal = self._check_context_fit(messages, tools_param, context_limit, model_used)
+            refusal = self._check_context_fit(
+                messages, tools_param, context_limit, model_used,
+                # EVO-20260818: 输出预算占用窗口——local(16384)/minimax(65536) 等
+                max_tokens=getattr(llm_client, "max_tokens", 0) or 0,
+            )
             if refusal is not None:
                 self._record_action("action.llm_decide", "context_overflow", refusal[:200])
                 return _RouteDecision(
@@ -191,10 +195,13 @@ class _RoutingMixin:
         tools_param: list[dict],
         context_limit: int,
         model_label: str,
+        max_tokens: int = 0,  # EVO-20260818: 输出预算（占用窗口，边距须扣除）
     ) -> str | None:
         """M53: 载荷 vs 模型上下文上限校验.
 
         估算口径: JSON 序列化字符数 / 2 ≈ tokens（中文混合保守估计）+ 10% 安全边距。
+        EVO-20260818: 0.9 边距未覆盖 max_tokens 的场景（如 local 131K 窗口 +
+        16K 输出 = 12.2% > 10%）——允许输入须再扣除输出预算，防"输入+输出超窗口"。
         超限 → 返回如实拒绝文案（不发送请求）；未超 → None。
         """
         payload_chars = sum(len(_json_dumps_args(m)) for m in messages) + len(
@@ -202,6 +209,8 @@ class _RoutingMixin:
         )
         est_tokens = payload_chars // _CHARS_PER_TOKEN_EST
         allowed = int(context_limit * _CONTEXT_SAFETY_MARGIN)
+        if max_tokens and max_tokens > 0:
+            allowed = min(allowed, context_limit - max_tokens)
         if est_tokens <= allowed:
             return None
         return (
