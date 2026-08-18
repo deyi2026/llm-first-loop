@@ -410,6 +410,14 @@ def build_history_messages(
             out.append(msg_dict)
             return
         if msg_dict.get("role") == "system" and out and out[0].get("role") == "system":
+            # 2026-08-18 对齐 DSH（用户反馈'DSH 开始就高'）: 非首个 system 不再合并进主体——
+            # 架构上报/警告等每会话数量不同 → 合并后主体跨会话不一致 → 新会话首轮 system 段
+            # 不命中（0%）。转独立 user 消息——system 主体纯静态（跨会话字节一致——
+            # 首轮命中稳定段；内容仍在上下文中——AI 可见）。
+            msg_dict = dict(msg_dict)
+            msg_dict["role"] = "user"
+            out.append(msg_dict)
+            return
             new_content = msg_dict.get("content", "")
             if not new_content:
                 return
