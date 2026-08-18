@@ -72,9 +72,8 @@ def test_status_dimensions_non_list_falls_back_full():
 
 def test_run_status_tool_entry_string_dimensions():
     """工具入口（run_status）字符串维度同样归一化."""
-    from types import SimpleNamespace
-
     import json
+    from types import SimpleNamespace
 
     from llm_loop.introspection.tools_status import run_status
 
