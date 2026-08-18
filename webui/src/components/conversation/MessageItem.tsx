@@ -370,7 +370,7 @@ export function MessageItem({
             {msg.tokens_in || msg.tokens_out
               ? ` · ${formatTokens(msg.tokens_in)}入/${formatTokens(msg.tokens_out)}出`
               : ""}
-            {msg.tokens_in && msg.tokens_cache_hit
+            {msg.tokens_in && msg.tokens_cache_hit !== undefined && msg.tokens_cache_hit !== null
               ? ` · ⚡ ${((msg.tokens_cache_hit / msg.tokens_in) * 100).toFixed(1)}%`
               : ""}
           </div>

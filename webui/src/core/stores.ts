@@ -12,6 +12,8 @@ interface SessionState {
   model: string | null;
   /** 会话级推理等级覆盖（对齐 DSH 模型+推理等级选择；chat 请求携带） */
   reasoningEffort: string | null;
+  /** /new 语义标记（2026-08-18 修复跳回旧会话）: handleNew 后发送需 new_session=true */
+  newSessionPending: boolean;
 }
 
 const listeners = new Set<() => void>();
@@ -37,6 +39,7 @@ const sessionStoreRaw = createStore<SessionState>({
   currentSessionId: null,
   model: null,
   reasoningEffort: null,
+  newSessionPending: false,
 });
 
 export const sessionStore = {
@@ -45,6 +48,7 @@ export const sessionStore = {
   setCurrentSession: (sessionId: string) => sessionStoreRaw.setState({ currentSessionId: sessionId }),
   setModel: (model: string | null) => sessionStoreRaw.setState({ model }),
   setReasoningEffort: (effort: string | null) => sessionStoreRaw.setState({ reasoningEffort: effort }),
+  setNewSessionPending: (v: boolean) => sessionStoreRaw.setState({ newSessionPending: v }),
   subscribe: sessionStoreRaw.subscribe,
 };
 

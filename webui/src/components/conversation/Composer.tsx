@@ -75,6 +75,7 @@ export function Composer() {
         desc: "新建会话",
         run: () => {
           sessionStore.setCurrentSession("");
+          sessionStore.setNewSessionPending(true);
           window.location.reload();
         },
       },
@@ -83,6 +84,7 @@ export function Composer() {
         desc: "清除上下文（下一条消息进入全新会话）",
         run: () => {
           sessionStore.setCurrentSession("");
+          sessionStore.setNewSessionPending(true);
           window.location.reload();
         },
       },
