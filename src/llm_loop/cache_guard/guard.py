@@ -95,13 +95,18 @@ def _check_system_stability(system_text: str, baseline: str | None) -> GuardDeci
 
 
 def _check_injection_discipline(messages: list[dict]) -> GuardDecision | None:
-    """规则 B: 注入纪律——非尾部 system 消息（中间插入/重排→前缀断）."""
+    """规则 B: 注入纪律——非首位 system 消息（中间注入/重排→前缀断）.
+
+    2026-08-18 system 静态化后: 提交层非首个 system 自动转 user——正常路径不触发。
+    保留为【防御性】规则: 若未来某处绕过转 user（直接塞 system 进序列）仍告警——
+    防前缀破坏回归（对齐 DSH: system 主体必须字节静态——注入一律独立消息）。
+    """
     for i, m in enumerate(messages):
         if m.get("role") == "system" and i != 0:
             return GuardDecision(
                 verdict="WARN",
                 rule="injection_discipline",
-                detail=f"第 {i} 条消息是 system（非首位——中间注入/重排——前缀断风险）",
+                detail=f"第 {i} 条消息是 system（非首位——中间注入/重排——前缀断风险；提交层应已转 user）",
             )
     return None
 
