@@ -327,7 +327,11 @@ export function MessageItem({
     return (
       <div className="v2-msg user" data-testid="msg-user">
         <div className="v2-msg-bubble user">
-          <div className="v2-msg-text">{msg.content}</div>
+          {/* EVO-20260818: 用户输入消息与 assistant 同格式渲染（markdown/代码块/表格/
+              公式/路径点击）——输入端（Composer）直接输入 markdown 语法即可 */}
+          <div className="v2-msg-text">
+            <Markdown text={msg.content} clickablePaths={producedPaths} />
+          </div>
         </div>
         <div className="v2-msg-actions">
           <CopyButton text={msg.content} />
