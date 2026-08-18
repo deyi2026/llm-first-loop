@@ -60,20 +60,34 @@ class RunHandle:
 
 
 class EventBus:
-    """每 run 事件总线：订阅者队列集合 + 广播（thread-safe）.
+    """每 run 事件总线：订阅者队列集合 + 广播（thread-safe）+ 重放缓冲.
 
     emit 对当前订阅者逐一 put（快照副本，避免遍历中变更）；订阅者退出 unsubscribe
     后不再接收；单个订阅者 put 失败不影响其余（fail-open）。
+
+    EVO-20260818（DSH 014 REFRESH-LIVE-CONTENT）: 重放缓冲——run 期间保留有界 delta
+    历史（_history，上限 _HISTORY_MAX 条），subscribe 时先回放历史再实时。刷新/切回
+    场景：新订阅者先收到已生成内容（中间状态可见），再收实时 delta。
+    缓存影响：重放只进响应不落盘、不改历史序列 → 前缀缓存零影响。
     """
+
+    _HISTORY_MAX = 500  # 有界缓冲：最多保留 500 条事件（约覆盖最近几分钟流式）
 
     def __init__(self) -> None:
         self._subs: set[queue.Queue] = set()
         self._guard = threading.Lock()
+        self._history: list[dict] = []
 
     def subscribe(self) -> queue.Queue:
         q: queue.Queue = queue.Queue()
         with self._guard:
             self._subs.add(q)
+            # 重放缓冲：新订阅者先收到已生成事件（刷新/切回可见中间内容）
+            for evt in self._history:
+                try:
+                    q.put(evt)
+                except Exception:  # noqa: BLE001 — 重放失败不影响
+                    break
         return q
 
     def unsubscribe(self, q: queue.Queue) -> None:
@@ -82,6 +96,10 @@ class EventBus:
 
     def emit(self, event: dict) -> None:
         with self._guard:
+            # 缓冲写入（有界：超限丢弃最旧）
+            self._history.append(event)
+            if len(self._history) > self._HISTORY_MAX:
+                self._history = self._history[-self._HISTORY_MAX:]
             subs = list(self._subs)
         for q in subs:
             try:
