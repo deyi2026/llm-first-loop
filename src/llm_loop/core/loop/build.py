@@ -45,6 +45,7 @@ class _BuildMixin:
     def _build_llm_messages(
         self, sess, memory_msgs: list[Message], max_chars: int | None = None,
         model: str | None = None,  # P1-7: per-call 模型覆盖（判定本地 provider 跳过推送式注入）
+        emergency_compact: bool = False,  # EVO-20260818: M53 拒绝逃生——head_keep=0 锚点前移激进压缩
     ) -> list[dict]:
         """构造提交 LLM 的消息序列（system prompt + 记忆注入 + 历史 + 压缩另存）.
 
@@ -165,7 +166,9 @@ class _BuildMixin:
             # EVO-20260818: HEAD_KEEP_RATIO 默认 0.10→0.15（压缩轮即命中 system+头部 ≥70%）;
             # force 档位 HEAD_KEEP_FORCE_RATIO 默认 0.20（L3 拦截强制保留——须高于常规档位，
             # max() 两侧同值会吞掉强制语义，grill-me 2.10）; 0=关闭回到锚点前移行为；env 可调
-            head_keep_chars=max(
+            # emergency_compact（M53 拒绝逃生）: 强制 head_keep=0——head 保留时锚点不前移
+            # （history.py），超限会话历史永不缩小 → 拒绝死循环；锚点前移归档才真正缩小
+            head_keep_chars=0 if emergency_compact else max(
                 int(effective_budget * float(os.environ.get("HEAD_KEEP_RATIO", "0.15"))),
                 int(effective_budget * float(os.environ.get("HEAD_KEEP_FORCE_RATIO", "0.20")))
                 if self._cache_monitor.force_head_keep else 0,

@@ -425,6 +425,9 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 tool_schema_chars=len(_json_dumps_args({"tools": tools_param})),
                 budget=effective_budget,
             )
+            # EVO-20260818: 预算归属模型标注（防误读——provider 级预算如 minimax 40K
+            # 与全局 1M 并存，AI 看到 ratio>1 需知 budget 属于哪个模型）
+            self._last_breakdown["model"] = planned_label
 
             # ── 行动：LLM 决策 ──
             self._phase("action.llm_decide")
@@ -440,8 +443,28 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                     self._cache_monitor.reset(reason=f"model_switch:{model_used}")
                 self._cache_last_model = model_used
             if routing.final_answer_override is not None:
+                # EVO-20260818（M53 拒绝逃生，防死循环）: 提交超模型窗口被拒时，AI 无 LLM
+                # 调用无法自救（无法 switch_model/开新会话/调工具）——现场: 2a3385da 会话
+                # 107 万字符超限连续拒绝 3+ 轮卡死。自动执行一次紧急压缩（emergency_compact:
+                # head_keep=0 → 锚点前移归档，历史真正缩小），本轮如实告知，下轮提交正常。
+                _escape_note = ""
+                try:
+                    self._build_llm_messages(
+                        sess, memory_msgs, max_chars=effective_budget,
+                        model=model, emergency_compact=True,
+                    )
+                    _escape_note = (
+                        "\n[自动压缩] 本次提交超模型窗口被守卫拦截——已自动执行紧急压缩"
+                        "（放弃头部保留、锚点前移归档，信息零丢失可 search_archive 检索）；"
+                        "下次请求将基于缩小后的历史正常发送。若仍超限建议 /model 切换更大窗口。"
+                    )
+                except Exception:  # noqa: BLE001 — 自动压缩失败 fail-open（保留原建议）
+                    _escape_note = (
+                        "\n[自动压缩失败] 紧急压缩未生效——请手动 /model 切换更大窗口模型"
+                        "或 /new 开新会话（历史可经 search_archive 找回）。"
+                    )
                 _run_end_reason = "routing_override"
-                final_answer = routing.final_answer_override
+                final_answer = routing.final_answer_override + _escape_note
                 break
             # HARNESS-02(2026-08-14): 每轮请求快照进事件日志（fail-open）——routing/fallback
             # 可能中途换模型，事件回放据此确知"当时用的哪个模型/挂了哪些工具/预算多少"，
