@@ -82,3 +82,17 @@ def test_check_context_fit_allows_within():
     """未超限 → None（放行）."""
     msgs = [{"role": "user", "content": "hi" * 1000}]
     assert _RoutingMixin._check_context_fit(msgs, [], 131072, "test/m") is None
+
+
+def test_check_context_fit_accounts_max_tokens_output_budget():
+    # EVO-20260818: 输出预算占用窗口——local 131K + 16K 输出时允许输入须扣减
+    # 旧逻辑 allowed=117965（0.9 边距）；+16K 输出=134349 > 131072 窗口（超窗口）
+    big = 'x' * 240_000  # 120K tokens 载荷: 旧逻辑 117965 放行（超窗口），新逻辑拒绝
+    msgs = [{'role': 'user', 'content': big}]
+    refusal = _RoutingMixin._check_context_fit(msgs, [], 131072, 'local/m', max_tokens=16384)
+    assert refusal is not None, '输入 120K + 输出 16K 超 131K 窗口——应拒绝'
+    # 110K tokens 载荷（220K 字符）: <= 114688（131072-16384）→ 放行
+    msgs2 = [{'role': 'user', 'content': 'x' * 220_000}]
+    assert _RoutingMixin._check_context_fit(msgs2, [], 131072, 'local/m', max_tokens=16384) is None
+    # 无 max_tokens（默认 0）→ 行为不变（0.9 边距）
+    assert _RoutingMixin._check_context_fit(msgs, [], 131072, 'test/m') is not None
