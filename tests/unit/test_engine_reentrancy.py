@@ -176,11 +176,16 @@ def test_concurrent_runs_isolated_state_and_archive(build_test_engine, tmp_path)
     assert engine._run_states[sid_a].stagnation_state["count"] >= 3
     assert engine._run_states[sid_b].stagnation_state["count"] <= 1
 
-    # B 的超长输出归档到 B 会话（contextvar 传播进只读池线程）
-    stats_b = engine.archive.stats(sid_b)
+    # B 的超长输出: 2026-08-18 truncate_output（TOOL_TRIM_MAX=3000）在工具内截断 +
+    # 完整输出落盘 DATA_DIR/audit/tool_outputs/——不再走 ArchiveStore 归档（原 archived_count
+    # 断言随截断机制同步；串台防护保留: B 的产物不得落入 A）
     stats_a = engine.archive.stats(sid_a)
-    assert stats_b["archived_count"] >= 1, f"B 的超长输出未归档: {stats_b}"
     assert stats_a["archived_count"] == 0, f"B 的归档串台落入 A: {stats_a}"
+    sess_b = engine.session.load(sid_b)
+    tool_msgs = [m for m in sess_b.messages if m.role == "tool"]
+    assert any("[输出已截断]" in (m.content or "") for m in tool_msgs), (
+        "B 的超长输出未截断（truncate_output 未生效）"
+    )
 
 
 # ── 4. switch_model override 绑定按会话解析 ──
