@@ -129,7 +129,7 @@ def test_chat_reasoning_content_missing():
 
 def test_chat_payload_thinking_deepseek():
     """M20 THK-01: provider=deepseek → payload 含 thinking + reasoning_effort."""
-    lines = ['data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}', "data: [DONE]"]
+    lines = ['data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}', "data: [DONE]"]
     with mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
         c = _client(provider="deepseek")
@@ -141,7 +141,7 @@ def test_chat_payload_thinking_deepseek():
 
 def test_chat_payload_thinking_base_url_match():
     """M20 CFG-03: base_url 含 deepseek.com → 发送（不依赖 provider 字段）."""
-    lines = ['data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}', "data: [DONE]"]
+    lines = ['data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}', "data: [DONE]"]
     with mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
         c = LLMClient(api_key="k", base_url="https://api.deepseek.com/v1", model="m")
@@ -152,7 +152,7 @@ def test_chat_payload_thinking_base_url_match():
 
 def test_chat_payload_thinking_non_deepseek_no():
     """M20 CFG-03: 非 DeepSeek（默认 fake.local）→ 无 thinking（零回归）."""
-    lines = ['data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}', "data: [DONE]"]
+    lines = ['data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}', "data: [DONE]"]
     with mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
         c = _client()  # fake.local
@@ -163,7 +163,7 @@ def test_chat_payload_thinking_non_deepseek_no():
 
 def test_chat_payload_thinking_disabled():
     """M20 THK-01: thinking_mode=False → 无 thinking（VAL-01 对比组）."""
-    lines = ['data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}', "data: [DONE]"]
+    lines = ['data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}', "data: [DONE]"]
     with mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
         c = _client(provider="deepseek", thinking_mode=False)
@@ -174,7 +174,7 @@ def test_chat_payload_thinking_disabled():
 
 def test_chat_payload_tools_empty_thinking():
     """M21 AUX-03: tools=[] + thinking enabled → payload 含思考参数且 tools 为空数组（协议边界锁定）."""
-    lines = ['data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}', "data: [DONE]"]
+    lines = ['data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}', "data: [DONE]"]
     with mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
         c = _client(provider="deepseek")  # thinking 默认开 + deepseek provider
@@ -670,6 +670,7 @@ def test_anthropic_cache_control_remote_off():
     """远端 base_url 默认不启用 cache_control（零回归, 第三方端点兼容）."""
     lines = [
         'data: {"type":"message_start","message":{"usage":{"input_tokens":1,"output_tokens":0}}}',
+        'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"ok"}}',
         'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
         "data: [DONE]",
     ]

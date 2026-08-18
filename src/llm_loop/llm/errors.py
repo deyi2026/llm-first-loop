@@ -37,6 +37,14 @@ class LLMProtocolError(LLMError):
     """响应协议解析失败（流式/字段缺失等）."""
 
 
+class LLMEmptyResponseError(LLMError):
+    """LLM 返回空内容（无文本且无工具调用）——流被截断/模型异常，不应静默记为成功.
+
+    EVO-20260818-92bd97d6: 此前空响应被静默记为 llm_response content=(空)，
+    用户看到"无回答输出"且无异常记录；现在抛此异常走如实反馈路径。
+    """
+
+
 # R4: provider 返回的上下文溢出错误模式（如实反馈让 AI 决策，不自动重试）
 _OVERFLOW_PATTERNS = (
     "context length exceeded",
