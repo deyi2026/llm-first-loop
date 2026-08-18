@@ -201,6 +201,7 @@ export function toChatMessage(m: HistoryMessage): ChatMessage {
     model_used: m.model_used ?? "",
     tokens_in: m.tokens_in ?? 0,
     tokens_out: m.tokens_out ?? 0,
+    tokens_cache_hit: (m as { tokens_cache_hit?: number }).tokens_cache_hit ?? 0,
   };
 }
 
