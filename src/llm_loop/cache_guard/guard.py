@@ -58,7 +58,11 @@ def _stable_fp(system_text: str) -> str:
 
 
 def _check_system_stability(system_text: str, baseline: str | None) -> GuardDecision | None:
-    """规则 A: system 稳定性——与基线 diff（超阈值 WARN）."""
+    """规则 A: system 稳定性——与基线 diff（超阈值 WARN）.
+
+    DSH 借鉴（2026-08-18 拷问产出）: checkpoint rejection 语义的轻量版——
+    发送前检测前缀漂移 → 提示（AI 决策：接受断点 or 先压缩 checkpoint 再发）.
+    """
     if not baseline:
         return None  # 首次——建立基线（无基线不判）
     if system_text == baseline:
@@ -69,7 +73,10 @@ def _check_system_stability(system_text: str, baseline: str | None) -> GuardDeci
         return GuardDecision(
             verdict="WARN",
             rule="system_stability",
-            detail=f"system 相对基线变化 {diff} 字符（缓存前缀将失效——开发变更/动态注入？）",
+            detail=(
+                f"system 相对基线变化 {diff} 字符（缓存前缀将失效——开发变更/动态注入？）。"
+                "DSH 语义：可先触发压缩 checkpoint（前缀重建）再发——或接受本次断点（下次恢复稳定）"
+            ),
         )
     return None
 
