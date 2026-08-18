@@ -1,6 +1,6 @@
-# SWE-bench Verified 官方 Harness 评测汇总报告（5 批次 76 实例）
+# SWE-bench Verified 官方 Harness 评测汇总报告（8 批次 98 实例）
 
-> 日期: 2026-08-18（更新至 batch3）| 评测: swebench 4.1.0 官方 harness + **OrbStack Docker**（Linux 容器隔离）
+> 日期: 2026-08-18（更新至 b4p1）| 评测: swebench 4.1.0 官方 harness + **OrbStack Docker**（Linux 容器隔离）
 > 数据: SWE-bench Verified (princeton-nlp/SWE-bench_Verified)
 > resolved 定义（严格官方）: F2P 全部通过 ∧ P2P 全部通过，patch 可应用，无 error
 > **严格性说明**: batch2（sympy 12）全程不看 gold patch（safe 数据集剔除 patch 字段）
@@ -46,12 +46,12 @@
 
 ## 成绩定位（诚实）
 
-- **91.1% 官方 Resolved Rate**（90 实例，7 批次，docker 全量 F2P/P2P）
-- 严格性: pytest/pylint/requests 全仓库（无挑选）+ sympy 47/75 子集（patch≤2873）
+- **90.8% 官方 Resolved Rate**（98 实例，8 批次，docker 全量 F2P/P2P）
+- 严格性: pytest/pylint/requests 全仓库（无挑选）+ sympy 55/75 子集（patch≤2873）
 - batch2（sympy 12）全程不看 gold patch——**独立解决率证据**
 - 早期 4 实例参考 gold（pytest 5787/5840 + pylint 4551/6386），其余独立修复
 - 行业对比（2026-08 DataLearner Verified 同口径）: 顶级闭源 93.9% / 第一梯队 85-90% / 主流 80-85%
-- **本成绩 91.1% 进入顶级区间，但样本 90 非全量 500、sympy 为选样子集——与榜单直接对比仍需更大随机样本**
+- **本成绩 90.8% 进入顶级区间，但样本 98 非全量 500、sympy 为选样子集——与榜单直接对比仍需更大随机样本**
 
 ## 复用方法（OrbStack 官方评测）
 
