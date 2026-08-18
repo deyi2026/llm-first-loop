@@ -32,6 +32,10 @@ logger = logging.getLogger(__name__)
 _SYSTEM_DIFF_WARN_THRESHOLD = 40  # system 相对基线变化字符数（超→WARN）
 _TOOL_RESULT_MAX_CHARS = 200_000  # 单条工具结果上限（超→WARN 归档提示）
 _COMPRESS_STORM_PER_RUN = 10  # 单 run 压缩次数上限（超→WARN）
+# 规则 F（2026-08-18 用户反馈'不应出去的'）：提交体积占比——
+# 消息总字符 / 预算 > 阈值 → BLOCK（先压缩 checkpoint 或换会话——避免注定低命中的请求出去）
+_SUBMIT_RATIO_BLOCK = 0.95  # >95% 预算 → BLOCK（强制先决策）
+_SUBMIT_RATIO_WARN = 0.85  # >85% → WARN（提示接近超限）
 _SENSITIVE_PATTERNS = [
     re.compile(r"sk-[A-Za-z0-9]{16,}"),  # API key
     re.compile(r"AKIA[0-9A-Z]{16}"),  # AWS key
@@ -119,6 +123,37 @@ def _check_compress_storm(meta: dict) -> GuardDecision | None:
     return None
 
 
+def _check_submit_ratio(messages: list[dict], meta: dict) -> GuardDecision | None:
+    """规则 F（2026-08-18）: 提交体积占比——历史接近预算上限时注定低命中（压缩在即）.
+
+    DSH checkpoint rejection 语义的完整版：发送前检查"前缀可持久性"——
+    占比 >95% 预算 → BLOCK（先压缩 checkpoint / 换会话——再发）；
+    >85% → WARN（提示接近超限——AI 决策提前处理）。
+    """
+    budget = int(meta.get("history_budget") or 0)
+    if budget <= 0:
+        return None
+    total_chars = sum(len(str(m.get("content") or "")) for m in messages)
+    ratio = total_chars / budget
+    if ratio > _SUBMIT_RATIO_BLOCK:
+        return GuardDecision(
+            verdict="BLOCK",
+            rule="submit_ratio",
+            detail=(
+                f"提交 {total_chars:,} 字符 = 预算 {budget:,} 的 {ratio*100:.0f}%"
+                f"（>{_SUBMIT_RATIO_BLOCK*100:.0f}%——压缩在即——本次请求注定低命中全价）。"
+                "建议：先压缩 checkpoint 或换新会话再发（DSH checkpoint rejection 语义）"
+            ),
+        )
+    if ratio > _SUBMIT_RATIO_WARN:
+        return GuardDecision(
+            verdict="WARN",
+            rule="submit_ratio",
+            detail=f"提交占比 {ratio*100:.0f}%（>{_SUBMIT_RATIO_WARN*100:.0f}%——接近超限——建议提前压缩/换会话）",
+        )
+    return None
+
+
 def _check_privacy(messages: list[dict], system_text: str) -> GuardDecision | None:
     """规则 E: 隐私泄漏——API key/私钥/敏感 env 值进 prompt（硬拦截）."""
     blob = system_text + "\n" + "\n".join(str(m.get("content") or "") for m in messages[:3])
@@ -161,6 +196,7 @@ def validate_request(
             lambda: _check_injection_discipline(messages),
             lambda: _check_tool_results(messages),
             lambda: _check_compress_storm(meta),
+            lambda: _check_submit_ratio(messages, meta),
             lambda: _check_privacy(messages, system_text),
         ):
             r = check()

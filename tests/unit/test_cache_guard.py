@@ -79,6 +79,33 @@ class TestValidateRequest:
         assert d3.verdict == "WARN"
         assert d3.rule == "system_stability"
 
+    def test_submit_ratio_block(self, tmp_path):
+        """提交占比 >95% 预算 → BLOCK（不应出去的请求）. """
+        msgs = [{"role": "system", "content": "s" * 1000}, {"role": "user", "content": "u" * 5000}]
+        d = validate_request(
+            system_text="s" * 1000, messages=msgs,
+            meta={"history_budget": 6000}, audit_file=tmp_path / "g.jsonl",
+        )
+        assert d.verdict == "BLOCK"
+        assert d.rule == "submit_ratio"
+
+    def test_submit_ratio_warn(self, tmp_path):
+        msgs = [{"role": "system", "content": "s" * 1000}, {"role": "user", "content": "u" * 4200}]
+        d = validate_request(
+            system_text="s" * 1000, messages=msgs,
+            meta={"history_budget": 6000}, audit_file=tmp_path / "g.jsonl",
+        )
+        assert d.verdict == "WARN"
+        assert d.rule == "submit_ratio"
+
+    def test_submit_ratio_allow(self, tmp_path):
+        msgs = [{"role": "system", "content": "s" * 1000}, {"role": "user", "content": "u" * 2000}]
+        d = validate_request(
+            system_text="s" * 1000, messages=msgs,
+            meta={"history_budget": 6000}, audit_file=tmp_path / "g.jsonl",
+        )
+        assert d.verdict == "ALLOW"
+
     def test_fail_open(self, tmp_path, monkeypatch):
         """校验异常 → ALLOW（fail-open——不阻断主流程）."""
         import llm_loop.cache_guard.guard as mod

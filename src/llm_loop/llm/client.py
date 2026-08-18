@@ -120,9 +120,10 @@ class LLMClient:
     guard_enabled: bool = True
     # guard 校验的 system 文本（engine 传入——含动态段；None 时用 messages[0] 兜底）
     guard_system: str | None = None
-    # 会话上下文（engine 透传——会话级基线/压缩计数）
+    # 会话上下文（engine 透传——会话级基线/压缩计数/预算）
     guard_session_id: str = ""
     guard_compress_count: int = 0
+    guard_history_budget: int = 0
     # M3 适配（2026-08-18）: <think> 标签流式剥离状态（跨 delta 累积）
     _think_buf: str = ""
     _in_think: bool = False
@@ -176,6 +177,9 @@ class LLMClient:
                     tools=tools,
                     compress_count_this_run=self.guard_compress_count,
                 )
+                if _d.rule == "submit_ratio" and _d.verdict == "WARN":
+                    # 规则 F WARN 升级：注入提示（AI 可见——接近超限提前处理）
+                    self.guard_warn_injected = getattr(self, "guard_warn_injected", False)
                 if _d.verdict == "BLOCK":
                     from llm_loop.llm.errors import LLMError
 

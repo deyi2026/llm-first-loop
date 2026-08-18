@@ -468,6 +468,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                         )
                         llm_client.guard_session_id = session_id
                         llm_client.guard_compress_count = getattr(self, "_compress_count_this_run", 0)
+                        llm_client.guard_history_budget = int(self._runtime_history_budget() or 0)
                     except Exception:  # noqa: BLE001 — 透传失败不影响请求
                         pass
                     it = stream_fn(
