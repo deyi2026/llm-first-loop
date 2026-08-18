@@ -508,6 +508,18 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                     )
                     _llm_round_ms = (time.perf_counter() - _llm_sync_start) * 1000.0
             except LLMError as exc:
+                # 拷问⑥（2026-08-18）: cache_guard BLOCK——直接如实反馈 AI
+                # （不重试/不走 overflow reinject——重试同样被拦=浪费循环；AI 需先
+                # 压缩/换会话自救）
+                from llm_loop.cache_guard.guard import CacheGuardBlockedError
+
+                if isinstance(exc, CacheGuardBlockedError):
+                    self._record_action("action.llm_decide", "guard_block", str(exc)[:200])
+                    if self.status:
+                        self.status.record_exception("guard_block", exc)
+                    _run_end_reason = "guard_blocked"
+                    final_answer = f"[缓存守卫拦截] {exc}\n\n建议：压缩 checkpoint 或换新会话后重试。"
+                    break
                 self._record_action("action.llm_decide", "llm_error", str(exc)[:200])
                 if self.status:
                     self.status.record_exception("llm_call", exc)

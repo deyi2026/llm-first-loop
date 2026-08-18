@@ -131,6 +131,8 @@ class LLMClient:
     guard_session_id: str = ""
     guard_compress_count: int = 0
     guard_history_budget: int = 0
+    # 模型切换检测（拷问②）: 记录上次模型——切换时重置 guard 窗口（防旧模型低命中误拦）
+    guard_last_model: str = ""
     # M3 适配（2026-08-18）: <think> 标签流式剥离状态（跨 delta 累积）
     _think_buf: str = ""
     _in_think: bool = False
@@ -178,6 +180,10 @@ class LLMClient:
                 if _guard is None:
                     _guard = PromptGuard()
                     self._pg = _guard
+                # 模型切换 → 重置窗口（不同模型前缀不同——旧窗口命中率无意义）
+                if self.guard_last_model and self.guard_last_model != self.model:
+                    _guard.reset_session(self.guard_session_id or "__global__")
+                self.guard_last_model = self.model
                 _d = _guard.check(
                     session_id=self.guard_session_id or "__global__",
                     system_text=_sys,
@@ -189,9 +195,9 @@ class LLMClient:
                     # 规则 F WARN 升级：注入提示（AI 可见——接近超限提前处理）
                     self.guard_warn_injected = getattr(self, "guard_warn_injected", False)
                 if _d.verdict == "BLOCK":
-                    from llm_loop.llm.errors import LLMError
+                    from llm_loop.cache_guard.guard import CacheGuardBlockedError
 
-                    raise LLMError(f"cache_guard 拦截: {_d.detail}")
+                    raise CacheGuardBlockedError(f"cache_guard 拦截: {_d.detail}")
                 if _d.verdict == "WARN":
                     logger.warning("cache_guard: %s（%s）", _d.rule, _d.detail)
             except LLMError:
