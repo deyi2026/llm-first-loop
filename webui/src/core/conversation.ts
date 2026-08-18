@@ -83,12 +83,16 @@ export async function loadHistory(sessionId: string): Promise<void> {
 
 let bgPollTimer: number | undefined;
 
-/** 后台 run 检查：running → 显示生成中 + 轮询；完成 → 重载历史显示结果（对齐 DSH 后台任务可见性）. */
+/** 后台 run 检查：running → resume 订阅（重放已生成内容+实时流式——对齐 DSH 刷新可见中间状态）；
+ *  订阅失败/非 running → 回退轮询直到完成重载。 */
 export async function checkBackgroundRun(sessionId: string): Promise<void> {
   window.clearInterval(bgPollTimer);
   const status = await fetchStreamStatus(sessionId);
   if (!status || !status.running) return;
   conversationStore.setState({ backgroundRunning: true });
+  const resumed = await resumeBackgroundStream(sessionId);
+  if (resumed) return; // 订阅成功——流式接管（done 后自动重载）
+  // 回退：轮询直到完成（订阅失败/不支持——run 已结束或网络异常）
   bgPollTimer = window.setInterval(async () => {
     const s = await fetchStreamStatus(sessionId);
     if (!s || !s.running) {
@@ -97,6 +101,61 @@ export async function checkBackgroundRun(sessionId: string): Promise<void> {
       void loadHistory(sessionId); // 后台完成 → 重载显示完整结果
     }
   }, 2000);
+}
+
+/** 对齐 DSH（2026-08-18）: 刷新/切回时后台 run 进行中 → resume 订阅已有 run——
+ *  后端重放已生成 delta（EventBus 有界缓冲 c3c6c6d）+ 实时流式；done 后重载完整结果。 */
+async function resumeBackgroundStream(sessionId: string): Promise<boolean> {
+  try {
+    // 流式占位（重放内容实时渲染——同正常发送路径）
+    const cur = conversationStore.getState();
+    const placeholder: ChatMessage = {
+      role: "assistant",
+      content: "",
+      reasoningContent: "",
+      toolCalls: null,
+      note: null,
+      streaming: true,
+      streamStartedAt: Date.now(),
+      tokens_in: 0,
+      tokens_out: 0,
+      tokens_cache_hit: 0,
+    };
+    conversationStore.setState({
+      messages: [...cur.messages, placeholder],
+      streaming: true,
+      streamingIndex: cur.messages.length,
+      lastError: null,
+    });
+    const acc = { answer: "", reasoning: "" };
+    const outcome = await streamChatRequest(
+      { message: "resume", session_id: sessionId, resume: true },
+      {
+        onAnswerDelta: (d) => {
+          acc.answer += d;
+          patchStreaming({ content: acc.answer });
+        },
+        onReasoningDelta: (d) => {
+          acc.reasoning += d;
+          patchStreaming({ reasoningContent: acc.reasoning });
+        },
+        onToolRound: () => undefined,
+      }
+    );
+    if (outcome.ok && outcome.data) {
+      conversationStore.setState({ streaming: false, backgroundRunning: false });
+      void loadHistory(sessionId); // 终态 → 重载完整结果（含工具调用）
+      return true;
+    }
+    // 失败（run 已结束/网络）→ 移除占位、回退轮询
+    conversationStore.setState({
+      messages: conversationStore.getState().messages.slice(0, -1),
+      streaming: false,
+    });
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 export async function loadEarlierHistory(sessionId: string): Promise<void> {

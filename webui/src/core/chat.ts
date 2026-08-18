@@ -21,7 +21,7 @@ export interface StreamHandlers {
 }
 
 export async function streamChatRequest(
-  body: { message: string; session_id?: string | null; model?: string | null },
+  body: { message: string; session_id?: string | null; model?: string | null; resume?: boolean },
   handlers: StreamHandlers,
   signal?: AbortSignal
 ): Promise<StreamOutcome> {
