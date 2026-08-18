@@ -5,7 +5,6 @@
 M53 拒绝逃生（紧急压缩锚点前移）。
 """
 
-
 from llm_loop.cache_guard.guard import PromptGuard
 from llm_loop.core.history import build_history_messages
 from llm_loop.core.message import Message, MessageSource
@@ -46,7 +45,8 @@ def test_new_session_guard_cold_start_no_judge():
 def test_compression_round_preserves_prefix():
     """压缩轮: head_keep>0 → system + 头部组保留在提交（前缀稳定），中段归档."""
     history = [
-        _msg("user", f"旧消息-{i:03d}-" + "x" * 5000) for i in range(30)  # 30×5K ≈ 150K
+        _msg("user", f"旧消息-{i:03d}-" + "x" * 5000)
+        for i in range(30)  # 30×5K ≈ 150K
     ] + [_msg("assistant", "y" * 5000)] * 5
     archived: list[Message] = []
 
@@ -85,7 +85,8 @@ def test_budget_feasibility_131k_window():
 def test_compression_downgrade_notice_on_exhaustion():
     """压缩余量不足（spec §5.5.1-7）: head 保留过大 + 极端 system → 降级标注注入 + 头部被归档."""
     history = [
-        _msg("user", f"big-{i}-" + "q" * 8000) for i in range(20)  # 20×8K = 160K
+        _msg("user", f"big-{i}-" + "q" * 8000)
+        for i in range(20)  # 20×8K = 160K
     ]
     archived: list[Message] = []
 
@@ -96,8 +97,12 @@ def test_compression_downgrade_notice_on_exhaustion():
     # 必然 ≤ 95% 预算 → 不触发降级；用极端 system 场景验证降级路径
     big_sys = SYSTEM_PROMPT + "S" * 45000  # system 45K + 历史 160K → 单轮裁不动
     built2 = build_history_messages(
-        history, big_sys, max_chars=60000,
-        session_id="s1", archive_sink=sink, head_keep_chars=18000,
+        history,
+        big_sys,
+        max_chars=60000,
+        session_id="s1",
+        archive_sink=sink,
+        head_keep_chars=18000,
     )
     joined2 = "".join(str(m.get("content", "")) for m in built2)
     if "[缓存降级]" in joined2:
@@ -119,9 +124,14 @@ def test_emergency_compact_forces_anchor_advance():
     # 普通压缩: head_keep>0 → 锚点不前移
     box1: list[int] = []
     build_history_messages(
-        history, SYSTEM_PROMPT, max_chars=60000, session_id="s1",
-        archive_sink=sink, head_keep_chars=12000,
-        history_anchor=10, anchor_out=box1,
+        history,
+        SYSTEM_PROMPT,
+        max_chars=60000,
+        session_id="s1",
+        archive_sink=sink,
+        head_keep_chars=12000,
+        history_anchor=10,
+        anchor_out=box1,
     )
     assert box1 == [10], f"head 保留时锚点不应前移: {box1}"
 
@@ -133,12 +143,39 @@ def test_emergency_compact_forces_anchor_advance():
         arch2.append(m)
 
     built = build_history_messages(
-        history, SYSTEM_PROMPT, max_chars=60000, session_id="s1",
-        archive_sink=sink2, head_keep_chars=0,
-        history_anchor=10, anchor_out=box2,
+        history,
+        SYSTEM_PROMPT,
+        max_chars=60000,
+        session_id="s1",
+        archive_sink=sink2,
+        head_keep_chars=0,
+        history_anchor=10,
+        anchor_out=box2,
     )
     assert box2[0] > 10, f"紧急压缩锚点应前移: {box2}"  # 锚点前移（精确值受 extras 影响，断言方向）
     assert len(arch2) > 0  # 归档发生（信息零丢失）
     # 提交显著缩小（≤ 预算）
     total = sum(len(str(m.get("content", ""))) for m in built)
     assert total <= 60000 + len(SYSTEM_PROMPT)
+
+
+def test_submission_single_system_after_fix():
+    """2026-08-18 注入纪律修复: skip_injected_system=True 时提交视图仅 system 主体一个
+    system——推送式注入（架构上报等）剔除不进提交；功能性 system 注入（memory 检索）转
+    user 保留（AI 可见）——守卫规则 B（非首位 system）无触发源."""
+    msgs = [
+        Message(
+            role="system",
+            content="[架构上报] 测试注入",
+            source=MessageSource.SYSTEM,
+            metadata={"injected_system": True},
+        ),
+        _msg("user", "h1"),
+        Message(role="system", content="[相关记忆]\n- [fact] x", source=MessageSource.MEMORY),
+    ]
+    built = build_history_messages(msgs, SYSTEM_PROMPT, max_chars=100000, skip_injected_system=True)
+    roles = [m["role"] for m in built]
+    assert roles.count("system") == 1 and roles[0] == "system"
+    contents = "\n".join(m.get("content", "") for m in built)
+    assert "[架构上报]" not in contents  # 推送式注入不进提交
+    assert "[相关记忆]" in contents  # memory 转 user 保留（AI 可见）

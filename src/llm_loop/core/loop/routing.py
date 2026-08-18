@@ -8,7 +8,6 @@ move 自 engine.py 内联路由段与守卫段（327-368）及辅助方法（648
 # pyright: reportAttributeAccessIssue=false, reportGeneralTypeIssues=false
 # (mixin 模式: self 属性来自混入类 LoopEngine.__init__，pyright 无法静态解析，故文件级关闭这两条；参数/返回类型等其余检查保留)
 
-
 from __future__ import annotations
 
 import logging
@@ -95,7 +94,10 @@ class _RoutingMixin:
         context_limit = self._current_context_limit(model_used)
         if context_limit:
             refusal = self._check_context_fit(
-                messages, tools_param, context_limit, model_used,
+                messages,
+                tools_param,
+                context_limit,
+                model_used,
                 # EVO-20260818: 输出预算占用窗口——local(16384)/minimax(65536) 等
                 max_tokens=getattr(llm_client, "max_tokens", 0) or 0,
             )
@@ -147,6 +149,9 @@ class _RoutingMixin:
     def _provider_inject_notices(self: LoopEngine, model_label: str) -> bool:
         """该 provider 的推送式 system 注入是否进提交视图（P1-7 本地慢模型接入）.
 
+        ⚠️ 2026-08-18 审计断点归因后废弃（spec §5.3.1-5 绝对化）: 提交层
+        skip_injected_system 恒 True，推送式注入一律不进提交视图——本函数不再被调用，
+        保留仅作 provider 配置面（inject_system_notices 字段解析）兼容与回退参考。
         provider 配置 inject_system_notices=false（本地模型用）→ False: 架构上报/预警/
         快照等仅落会话不进提交, system 前缀保持静态 → llama.cpp 引擎前缀缓存每轮命中
         （首 token 大幅缩短）。未知/未配置 → True（零回归）。
@@ -178,7 +183,9 @@ class _RoutingMixin:
         )
         return frozenset(n.strip() for n in names.split(",") if n.strip())
 
-    def _filter_local_tools(self: LoopEngine, tool_schemas: list[dict], model_label: str) -> list[dict]:
+    def _filter_local_tools(
+        self: LoopEngine, tool_schemas: list[dict], model_label: str
+    ) -> list[dict]:
         """本地 provider（local/*）工具精简: 只注入白名单核心工具（固定前缀+省 token）.
 
         非 local provider → 原样返回（零回归）。

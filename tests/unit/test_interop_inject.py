@@ -21,11 +21,21 @@ def _bare_engine() -> LoopEngine:
 def test_inject_pending_message(tmp_path, monkeypatch):
     inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
     inbox.mkdir(parents=True)
-    (inbox / "20260816-005_dsh-test.json").write_text(json.dumps({
-        "id": "20260816-005", "from": "dsh", "to": "lfl",
-        "ts": "2026-08-16T20:00:00", "topic": "task", "ref": "",
-        "body": "请复核风险清单", "status": "pending",
-    }), encoding="utf-8")
+    (inbox / "20260816-005_dsh-test.json").write_text(
+        json.dumps(
+            {
+                "id": "20260816-005",
+                "from": "dsh",
+                "to": "lfl",
+                "ts": "2026-08-16T20:00:00",
+                "topic": "task",
+                "ref": "",
+                "body": "请复核风险清单",
+                "status": "pending",
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
 
     msgs = _bare_engine()._interop_inbox_messages()
@@ -43,13 +53,27 @@ def test_inject_pending_message(tmp_path, monkeypatch):
 def test_skip_done_and_bad_files(tmp_path, monkeypatch):
     inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
     inbox.mkdir(parents=True)
-    (inbox / "a.json").write_text(json.dumps({
-        "id": "a", "status": "done", "body": "已处理",
-    }), encoding="utf-8")   # done → 跳过
+    (inbox / "a.json").write_text(
+        json.dumps(
+            {
+                "id": "a",
+                "status": "done",
+                "body": "已处理",
+            }
+        ),
+        encoding="utf-8",
+    )  # done → 跳过
     (inbox / "b.json").write_text("not json{", encoding="utf-8")  # 格式坏 → 跳过
-    (inbox / "c.json").write_text(json.dumps({
-        "id": "c", "status": "pending", "body": "  ",
-    }), encoding="utf-8")   # 空 body → 跳过
+    (inbox / "c.json").write_text(
+        json.dumps(
+            {
+                "id": "c",
+                "status": "pending",
+                "body": "  ",
+            }
+        ),
+        encoding="utf-8",
+    )  # 空 body → 跳过
     monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
 
     assert _bare_engine()._interop_inbox_messages() == []
@@ -61,11 +85,21 @@ def test_missing_dir_fail_open(tmp_path, monkeypatch):
 
 
 def _write_msg(inbox, name, topic, body, ref="", msg_id=None):
-    (inbox / name).write_text(json.dumps({
-        "id": msg_id or name, "from": "dsh", "to": "lfl",
-        "ts": "2026-08-17T12:00:00", "topic": topic, "ref": ref,
-        "body": body, "status": "pending",
-    }), encoding="utf-8")
+    (inbox / name).write_text(
+        json.dumps(
+            {
+                "id": msg_id or name,
+                "from": "dsh",
+                "to": "lfl",
+                "ts": "2026-08-17T12:00:00",
+                "topic": topic,
+                "ref": ref,
+                "body": body,
+                "status": "pending",
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_notify_duplicate_auto_archive(tmp_path, monkeypatch):
@@ -140,21 +174,36 @@ def test_build_messages_injects_inbox_after_memory(tmp_path, monkeypatch):
             return _gen()
 
     settings = Settings(
-        llm_api_key="k", llm_base_url="https://x/v1", llm_model="m",
-        data_dir=str(tmp_path / "data"), extract_enabled=False, summary_mode="off",
+        llm_api_key="k",
+        llm_base_url="https://x/v1",
+        llm_model="m",
+        data_dir=str(tmp_path / "data"),
+        extract_enabled=False,
+        summary_mode="off",
     )
     engine = LoopEngine(
-        llm_client=_Fake(), registry=ToolRegistry(),
-        memory=None, session=SessionStore(tmp_path / "sessions"),
+        llm_client=_Fake(),
+        registry=ToolRegistry(),
+        memory=None,
+        session=SessionStore(tmp_path / "sessions"),
         settings=settings,
     )
     # 装配点真实路径: 写 inbox 文件 → 不 monkeypatch 方法，走真实扫描
     inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
     inbox.mkdir(parents=True)
-    (inbox / "20260816-006_dsh-x.json").write_text(json.dumps({
-        "id": "20260816-006", "from": "dsh", "to": "lfl",
-        "topic": "notify", "body": "通道注入装配点验证", "status": "pending",
-    }), encoding="utf-8")
+    (inbox / "20260816-006_dsh-x.json").write_text(
+        json.dumps(
+            {
+                "id": "20260816-006",
+                "from": "dsh",
+                "to": "lfl",
+                "topic": "notify",
+                "body": "通道注入装配点验证",
+                "status": "pending",
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
 
     sess = engine.session.create("interop-test") if hasattr(engine.session, "create") else None
@@ -171,8 +220,8 @@ def test_build_messages_injects_inbox_after_memory(tmp_path, monkeypatch):
     # （EVO-20260818 tail 模式: inbox 更靠后——提交尾部追加，前缀 system+memory 稳定）
     users = [m["content"] for m in out if m["role"] == "user"]
     joined = "\n".join(users)
-    assert "MEM-1" in joined              # memory 注入生效（转 user 保留）
-    assert "20260816-006" in joined       # inbox 注入生效（每轮必感知）
+    assert "MEM-1" in joined  # memory 注入生效（转 user 保留）
+    assert "20260816-006" in joined  # inbox 注入生效（每轮必感知）
     assert joined.index("20260816-006") > joined.index("MEM-1")  # inbox 在 memory 之后
 
 
@@ -210,3 +259,65 @@ def test_prefix_mode_restores_old_behavior(tmp_path, monkeypatch):
     out, prefix_len = eng._inject_interop_messages(list(base), 0, "s1")
     assert len(out) == 2 and "前缀注入验证" in out[0].content  # 注入在 base 之前
     assert prefix_len == 1
+
+
+def test_build_messages_memory_tail_and_gate_note_user(tmp_path, monkeypatch):
+    """2026-08-18 注入纪律修复装配验证（spec §5.3.1-1c / §5.3.1-5）:
+
+    - memory 检索注入 → 提交尾部 user 消息（不再前置 system 段——前置随查询变化会断前缀）
+    - 门禁干预标记 → 提交尾部 user 消息（非 system，消除守卫规则 B 误报源）
+    - 提交视图仅 system 主体一个 system 角色
+    """
+    from llm_loop.config import Settings
+    from llm_loop.core.cache_health import GATE_NOTE_CONTENT
+    from llm_loop.core.message import Message, MessageSource
+    from llm_loop.core.session import SessionStore
+    from llm_loop.llm.client import LLMResponse
+    from llm_loop.tools.registry import ToolRegistry
+
+    class _Fake:
+        def chat(self, messages, tools, **kw):
+            return LLMResponse(content="ok", tool_calls=[], provider="fake")
+
+        def chat_stream(self, messages, tools, **kw):
+            def _gen():
+                yield from ()
+                return LLMResponse(content="ok", tool_calls=[], provider="fake")
+
+            return _gen()
+
+    settings = Settings(
+        llm_api_key="k",
+        llm_base_url="https://x/v1",
+        llm_model="m",
+        data_dir=str(tmp_path / "data"),
+        extract_enabled=False,
+        summary_mode="off",
+    )
+    engine = LoopEngine(
+        llm_client=_Fake(),
+        registry=ToolRegistry(),
+        memory=None,
+        session=SessionStore(tmp_path / "sessions"),
+        settings=settings,
+    )
+    sess = engine.session.create("gate-build-test") if hasattr(engine.session, "create") else None
+    if sess is None:
+        pytest.skip("SessionStore 无 create 接口")
+    # 激活门禁干预: 修复后稳定段 = system+固定注入（恒定指纹），preflight 永不漂移——
+    # 漂移检测激活路径由 test_cache_monitor 覆盖；此处直接置位验证装配（build 内消费）
+    engine._cache_monitor._gate_note_pending = True
+    # memory 注入（检索结果，随查询变化）→ 应尾部追加
+    mem = Message(role="system", content="MEM-TAIL: 记忆", source=MessageSource.SYSTEM)
+    out = engine._build_llm_messages(engine.session.load(sess), [mem], max_chars=200000)
+    roles = [m["role"] for m in out]
+    # 纪律: 仅 out[0] 为 system（主体）——无任何非首位 system（守卫规则 B 无触发源）
+    assert roles[0] == "system"
+    assert all(r != "system" for r in roles[1:])
+    # memory 尾部 user 保留（AI 可见），不进 system 主体
+    assert "MEM-TAIL" not in out[0]["content"]
+    tail_join = "\n".join(m.get("content", "") for m in out[1:])
+    assert "MEM-TAIL" in tail_join
+    # 门禁干预标记: 尾部 user（非 system），固定文本可辨识
+    assert out[-1]["role"] == "user"
+    assert GATE_NOTE_CONTENT in out[-1]["content"]

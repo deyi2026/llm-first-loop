@@ -5,14 +5,12 @@
 协调通道 inbox + 窗口锚定 + 预算分级压缩 + 缓存门禁 + 投影一致性门闸）。
 
 纯重构: 方法体原样迁移（零行为变更），原路径可导入语义保持（REQ-REF-06 对齐）。
-依赖（engine 其他 mixin）: _planned_model_label / _provider_inject_notices /
-_record_action / _runtime_extract_interval / _runtime_history_budget /
+依赖（engine 其他 mixin）: _planned_model_label / _record_action / _runtime_extract_interval / _runtime_history_budget /
 _inject_interop_messages / _cache_monitor / _last_snapshot_count / _last_compact_ratio。
 """
 
 # pyright: reportAttributeAccessIssue=false, reportGeneralTypeIssues=false
 # (mixin 模式: self 属性来自混入类 LoopEngine.__init__，pyright 无法静态解析，故文件级关闭这两条)
-
 
 from __future__ import annotations
 
@@ -43,7 +41,10 @@ logger = logging.getLogger(__name__)
 
 class _BuildMixin:
     def _build_llm_messages(
-        self, sess, memory_msgs: list[Message], max_chars: int | None = None,
+        self,
+        sess,
+        memory_msgs: list[Message],
+        max_chars: int | None = None,
         model: str | None = None,  # P1-7: per-call 模型覆盖（判定本地 provider 跳过推送式注入）
         emergency_compact: bool = False,  # EVO-20260818: M53 拒绝逃生——head_keep=0 锚点前移激进压缩
     ) -> list[dict]:
@@ -59,9 +60,12 @@ class _BuildMixin:
         anchors = sess.history_anchors or {}
         sess_anchor = int(anchors.get(provider_id, 0) or 0)
         system_prompt = build_system_prompt()
-        # 记忆消息作为前置注入
-        base = [m for m in memory_msgs] + list(sess.messages)
-        prefix_len = len(memory_msgs)
+        # EVO-2026XXXX（spec §5.3.1-1c）: memory 检索注入不再前置——检索结果（top_k 语义/
+        # 关键词召回）随本轮查询变化，前置在 system 之后会每轮改变前缀首段 → 前缀断
+        # （2026-08-18 审计断点归因: 96%→2% 全量失效，delta 仅 614 tokens）。
+        # 改为提交视图尾部追加（GATE_NOTE 模式，转 user），system+稳定历史前缀字节不变。
+        base = list(sess.messages)
+        prefix_len = 0
         # RULE-AI-14 协调通道: 程序级自动注入 DSH→LFL 待处理消息（每轮 run 必感知，
         # 非仅提示词引导；实现见 core/loop/interop.py _InteropMixin，fail-open）
         # 注入位置: memory 之后、历史之前（2026-08-16 优化: system_prompt+memory 前缀
@@ -79,12 +83,17 @@ class _BuildMixin:
         # EVO-20260811-9ccdec97: 会话状态快照节流——每间隔注入状态帧（定位锚点，fail-open）
         # M58 配置面收敛: 间隔走 runtime（动态优先，AI 可调）
         # P1-10: 仅无锚时注入（锚定后快照为推送式注入（已打标被跳过提交）, 且避免锚点换算复杂化）
+        # EVO-20260818-8c8791c2: 快照【尾部追加】而非 insert(0)——前缀区只留 system+稳定历史头，
+        # 快照内容（消息数/记忆数/演进摘要）每轮变化，驻留前缀区即每轮断前缀（gate_drift_count=12
+        # 实证，命中 17%↔98% 间歇）；尾部追加后变化只影响尾部新增段，前缀字节稳定（对齐 memory/interop）
         if sess_anchor == 0:
             try:
                 interval = self._runtime_extract_interval()
                 if len(sess.messages) - self._last_snapshot_count >= interval:
                     evo_summary = None
-                    if self.evolution_store is not None and hasattr(self.evolution_store, "summary"):
+                    if self.evolution_store is not None and hasattr(
+                        self.evolution_store, "summary"
+                    ):
                         try:
                             s = self.evolution_store.summary()
                             evo_summary = s if isinstance(s, dict) else None
@@ -100,15 +109,21 @@ class _BuildMixin:
                             len(sess.messages), self.memory.count(), evo_summary
                         ),
                         source=MessageSource.SYSTEM,
-                        metadata={"injected_system": True},  # P1-7: 快照=推送式注入（本地 provider 下不进提交）
+                        metadata={
+                            "injected_system": True
+                        },  # P1-7: 快照=推送式注入（本地 provider 下不进提交）
                     )
-                    base.insert(0, snapshot)
-                    prefix_len += 1
+                    base.append(
+                        snapshot
+                    )  # EVO-20260818-8c8791c2: 尾部追加（原 insert(0) 驻留前缀区断前缀）
+                    # prefix_len 不再 +1（快照不进前缀区——稳定段指纹 base[:prefix_len] 不含动态内容）
                     self._last_snapshot_count = len(sess.messages)
             except Exception:
                 import logging
 
-                logging.getLogger(__name__).warning("会话状态快照注入失败（fail-open）", exc_info=True)
+                logging.getLogger(__name__).warning(
+                    "会话状态快照注入失败（fail-open）", exc_info=True
+                )
         from llm_loop.core.history import build_history_messages
 
         archive_sink = None
@@ -131,12 +146,15 @@ class _BuildMixin:
             _compact_ratio = float(os.environ.get("COMPACT_RATIO", "0.9"))
             if 0 < _compact_ratio < 1.0:
                 _prep_at = effective_budget * 0.8
-                if _history_total > _prep_at and _history_total <= effective_budget * _compact_ratio:
+                if (
+                    _history_total > _prep_at
+                    and _history_total <= effective_budget * _compact_ratio
+                ):
                     self._record_action(
                         "understand.compact_prep",
                         "approaching_budget",
                         f"history {_history_total} 字符 ≥预算 80%（{int(_prep_at)}），"
-                        f"下一轮可能在 {int(effective_budget*_compact_ratio)} 触发主动压缩整理；"
+                        f"下一轮可能在 {int(effective_budget * _compact_ratio)} 触发主动压缩整理；"
                         "压缩保留关键事实帧+档案零丢失，不影响推理",
                     )
         except Exception:  # noqa: BLE001
@@ -153,12 +171,22 @@ class _BuildMixin:
             session_id=sess.session_id,
             archive_sink=archive_sink,
             # RULE-AI-00: 不再传 summarizer（压缩路径不自动 LLM 摘要，AI 主动触发）
-            layer_tool_trim=getattr(self.settings, "tool_trim_enabled", False),  # EVO-20260811-7baa2737: 历史分层降级
+            layer_tool_trim=getattr(
+                self.settings, "tool_trim_enabled", False
+            ),  # EVO-20260811-7baa2737: 历史分层降级
             tool_trim_age=getattr(self.settings, "tool_trim_age", 0),  # R3: 0=自适应
-            tool_trim_threshold=getattr(self.settings, "tool_trim_threshold", 8000),  # EVO-A: 降级长度阈值（默认 8000）
+            tool_trim_threshold=getattr(
+                self.settings, "tool_trim_threshold", 8000
+            ),  # EVO-A: 降级长度阈值（默认 8000）
+            tool_tail=getattr(
+                self.settings, "tool_tail", 0
+            ),  # EVO-20260818-f675796c: 工具结果 tail 窗口（0=关闭；>0 只保留最近 N 条）
             reasoning_tail=getattr(self.settings, "reasoning_tail", 2),  # M66 思考链瘦身
-            # P1-7: provider（inject_system_notices=false）跳过推送式注入 → system 前缀静态 → 引擎缓存命中
-            skip_injected_system=not self._provider_inject_notices(planned_label),
+            # P1-7/spec §5.3.1-5（2026-08-18 审计断点归因绝对化）: 推送式注入（架构上报/
+            # 预算预警/轮数预警/声明提醒/自我评估提醒/快照）一律不进提交视图——不再受
+            # provider inject_system_notices 开关影响（原按 provider 放行 → 注入消息转 user
+            # 后仍插历史中部 → 前缀断）。AI 感知走 architecture_status 等工具，不依赖注入。
+            skip_injected_system=True,
             # P1-10: 窗口锚定
             history_anchor=anchor_arg,
             anchor_out=anchor_box,
@@ -168,10 +196,13 @@ class _BuildMixin:
             # max() 两侧同值会吞掉强制语义，grill-me 2.10）; 0=关闭回到锚点前移行为；env 可调
             # emergency_compact（M53 拒绝逃生）: 强制 head_keep=0——head 保留时锚点不前移
             # （history.py），超限会话历史永不缩小 → 拒绝死循环；锚点前移归档才真正缩小
-            head_keep_chars=0 if emergency_compact else max(
+            head_keep_chars=0
+            if emergency_compact
+            else max(
                 int(effective_budget * float(os.environ.get("HEAD_KEEP_RATIO", "0.15"))),
                 int(effective_budget * float(os.environ.get("HEAD_KEEP_FORCE_RATIO", "0.20")))
-                if self._cache_monitor.force_head_keep else 0,
+                if self._cache_monitor.force_head_keep
+                else 0,
             ),
         )
         # P1-10: 锚点推进持久化（换算回会话索引, clamp 防御）
@@ -192,6 +223,14 @@ class _BuildMixin:
         # EVO-20260818（spec §5.3.1-1 c/d，grill-me B1）: interop 外部协调注入——
         # 尾部追加（GATE_NOTE 模式，转 user），system+稳定历史前缀字节不变（注入轮不断前缀）;
         # env INTEROP_INJECT_TAIL=0 回退旧行为（头部插入，见 interop.py）
+        # EVO-2026XXXX（spec §5.3.1-1c）: memory 检索注入尾部追加（GATE_NOTE 模式，转 user）——
+        # 检索结果随查询变化（top_k 语义/关键词召回），前置注入每轮改变前缀首段 → 前缀断；
+        # 尾部追加保持 system+稳定历史前缀字节不变（命中率不因 memory 变化受损）。
+        for _m in memory_msgs:
+            _d = _m.to_llm_dict()
+            if _d.get("role") == "system":
+                _d["role"] = "user"  # system 静态: 转独立 user 尾部追加
+            built.append(_d)
         tail_msgs = getattr(self, "_interop_tail_messages", None)
         if tail_msgs:
             for _m in tail_msgs:
@@ -201,32 +240,36 @@ class _BuildMixin:
                 built.append(_d)
             self._interop_tail_messages = None  # 一次性消费（每轮重扫 pending）
         # EVO-20260817-72fcd94a: 门禁干预知情标记——干预激活首轮在 built 末尾追加固定
-        # system 消息（末尾追加缓存友好，不破坏前缀；让 AI 感知上下文结构变化）
+        # user 消息（末尾追加缓存友好，不破坏前缀；转 user 避免守卫规则 B 误报
+        # "非首位 system"——2026-08-18 审计 WARN 实证；让 AI 感知上下文结构变化）
         if self._cache_monitor.take_gate_note():
-            built = list(built) + [{"role": "system", "content": GATE_NOTE_CONTENT}]
+            built = list(built) + [{"role": "user", "content": GATE_NOTE_CONTENT}]
         # EVO-20260817-b6554376: 投影一致性门闸（借鉴 DSH seq 水印，fail-open 不阻断 run）
         # seq（消息数）负责"历史追加"水印；ver（构建参数+动态输入指纹）负责参数水印；
         # ver+seq 匹配而 built_hash 不同 → 非确定性构建/历史被改 → 告警（只读，不阻断）。
         try:
             _fp = lambda msgs: stable_digest([(m.role, m.content) for m in msgs])  # noqa: E731
-            _settings_fp = stable_digest({
-                "tool_trim_enabled": getattr(self.settings, "tool_trim_enabled", False),
-                "tool_trim_age": getattr(self.settings, "tool_trim_age", 0),
-                "tool_trim_threshold": getattr(self.settings, "tool_trim_threshold", 8000),
-                "reasoning_tail": getattr(self.settings, "reasoning_tail", 2),
-                "skip_injected_system": not self._provider_inject_notices(planned_label),
-                "extract_interval_msgs": getattr(self.settings, "extract_interval_msgs", 20),
-            })
+            _settings_fp = stable_digest(
+                {
+                    "tool_trim_enabled": getattr(self.settings, "tool_trim_enabled", False),
+                    "tool_trim_age": getattr(self.settings, "tool_trim_age", 0),
+                    "tool_trim_threshold": getattr(self.settings, "tool_trim_threshold", 8000),
+                    "tool_tail": getattr(
+                        self.settings, "tool_tail", 0
+                    ),  # EVO-20260818-f675796c: tail 窗口
+                    "reasoning_tail": getattr(self.settings, "reasoning_tail", 2),
+                    "skip_injected_system": True,  # spec §5.3.1-5: 推送式注入一律不进提交
+                    "extract_interval_msgs": getattr(self.settings, "extract_interval_msgs", 20),
+                }
+            )
             # EVO-20260818: interop 尾部追加后 base[:prefix_len] 仅 memory 段——
             # interop_fp 改为对注入消息指纹（tail 模式）或 memory+inbox 段（旧模式），
             # 保证 ver 与 built 中的尾部注入内容一致（投影一致性不误报）
-            _interop_for_fp = (
-                tail_msgs
-                if tail_msgs is not None
-                else [m for m in base[:prefix_len]]
-            )
+            _interop_for_fp = tail_msgs if tail_msgs is not None else [m for m in base[:prefix_len]]
             _ver = projection_ver(
-                model=planned_label, budget=effective_budget, anchor=sess_anchor,
+                model=planned_label,
+                budget=effective_budget,
+                anchor=sess_anchor,
                 memory_fp=_fp(memory_msgs),
                 interop_fp=stable_digest([(m.role, m.content) for m in _interop_for_fp]),
                 system_fp=stable_digest(system_prompt),
@@ -235,9 +278,7 @@ class _BuildMixin:
             _seq = len(sess.messages)
             # 知情标记剔除: 门闸比较的 built 不含门禁干预注（末尾固定 system 消息）
             _built_for_hash = (
-                built[:-1]
-                if built and built[-1].get("content") == GATE_NOTE_CONTENT
-                else built
+                built[:-1] if built and built[-1].get("content") == GATE_NOTE_CONTENT else built
             )
             _built_hash = stable_digest(_built_for_hash)
             # EVO-20260817: 压缩轮判定——主动/被动压缩归档（built 消息数 < base）属合法
@@ -258,7 +299,9 @@ class _BuildMixin:
             import datetime as _dt
 
             _guards[provider_id] = {
-                "ver": _ver, "seq": _seq, "built_hash": _built_hash,
+                "ver": _ver,
+                "seq": _seq,
+                "built_hash": _built_hash,
                 "ts": _dt.datetime.now(_dt.UTC).isoformat(),
             }
             sess.projection_guard = _guards
@@ -300,4 +343,3 @@ class _BuildMixin:
         except Exception:  # noqa: BLE001
             pass
         return built
-
