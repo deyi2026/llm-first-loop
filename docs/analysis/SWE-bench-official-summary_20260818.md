@@ -46,12 +46,12 @@
 
 ## 成绩定位（诚实）
 
-- **92.1% 官方 Resolved Rate**（76 实例，5 批次，docker 全量 F2P/P2P）
-- 严格性: pytest/pylint/requests 全仓库（无挑选）+ sympy 39/75 子集（patch≤2873）
+- **91.1% 官方 Resolved Rate**（90 实例，7 批次，docker 全量 F2P/P2P）
+- 严格性: pytest/pylint/requests 全仓库（无挑选）+ sympy 47/75 子集（patch≤2873）
 - batch2（sympy 12）全程不看 gold patch——**独立解决率证据**
 - 早期 4 实例参考 gold（pytest 5787/5840 + pylint 4551/6386），其余独立修复
 - 行业对比（2026-08 DataLearner Verified 同口径）: 顶级闭源 93.9% / 第一梯队 85-90% / 主流 80-85%
-- **本成绩 92.1% 进入顶级区间，但样本 76 非全量 500、sympy 为选样子集——与榜单直接对比仍需更大随机样本**
+- **本成绩 91.1% 进入顶级区间，但样本 90 非全量 500、sympy 为选样子集——与榜单直接对比仍需更大随机样本**
 
 ## 复用方法（OrbStack 官方评测）
 
