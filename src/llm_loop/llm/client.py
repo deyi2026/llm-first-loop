@@ -23,6 +23,7 @@ import httpx
 
 from llm_loop.core.message import ToolCall
 from llm_loop.llm.errors import (
+    LLMError,
     LLMHTTPError,
     LLMNetworkError,
     LLMTimeoutError,
