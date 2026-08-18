@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
@@ -28,6 +29,13 @@ def run_status(ctx: Any, status_provider: Any, args: dict) -> ToolResult:
             tool_name="architecture_status",
         )
     dims = args.get("dimensions")
+    # EVO-20260818 防御归一化: 模型可能把 array 传成字符串（如 "context_usage"）——
+    # 原实现按字符迭代导致全部维度 unavailable；字符串按逗号/空白拆分，
+    # 非列表（数字/对象等）一律回落全量。
+    if isinstance(dims, str):
+        dims = [d.strip() for d in re.split(r"[,，\s]+", dims) if d.strip()] or None
+    if not isinstance(dims, list):
+        dims = None
     snap = status_provider.snapshot(dimensions=dims)
     text = json.dumps(snap, ensure_ascii=False, indent=2)
     # M19 FIX-03: 8000 字符静默截断如实标注（标注拼接在截断段之后，保证标注可见）

@@ -45,3 +45,40 @@ def test_status_cache_callback_exception_fail_open():
     snap = sp.snapshot()
     assert snap["context_usage"]["cache_health"] is None
     assert snap["context_usage"]["cache_guard"] is None
+
+
+# ── EVO-20260818: dimensions 防御归一化（字符串被按字符解析的 bug 回归）──
+
+def test_status_dimensions_string_not_char_split():
+    """字符串维度（模型传错类型）→ 解析为单维度，不再按字符拆解."""
+    sp = _provider()
+    snap = sp.snapshot(dimensions="context_usage")
+    assert "context_usage" in snap  # 修复前: 返回 {"unavailable": "维度 'c' 暂不可用"}
+
+
+def test_status_dimensions_csv_string_splits():
+    """逗号/空白分隔字符串 → 拆分多维度."""
+    sp = _provider()
+    snap = sp.snapshot(dimensions="context_usage, architecture_config")
+    assert set(snap.keys()) == {"context_usage", "architecture_config"}
+
+
+def test_status_dimensions_non_list_falls_back_full():
+    """非列表类型（数字等）→ 回落全量快照（绝不按字符拆）."""
+    sp = _provider()
+    snap = sp.snapshot(dimensions=123)
+    assert "context_usage" in snap and "action_trace" in snap
+
+
+def test_run_status_tool_entry_string_dimensions():
+    """工具入口（run_status）字符串维度同样归一化."""
+    from types import SimpleNamespace
+
+    import json
+
+    from llm_loop.introspection.tools_status import run_status
+
+    sp = _provider()
+    res = run_status(SimpleNamespace(), sp, {"dimensions": "context_usage"})
+    assert res.status.value == "success"
+    assert "context_usage" in json.loads(res.content)

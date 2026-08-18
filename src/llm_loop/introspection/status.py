@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -459,6 +460,15 @@ class ArchitectureStatusProvider:
             # R2/A6: 程序故障计数（fail-open 聚合，AI 可感知"程序故障率"）
             "program_faults": dict(self._program_faults),
         }
+        # EVO-20260818 防御归一化: dimensions 可能被模型传成字符串/其他类型——
+        # 字符串按字符迭代会导致"维度 'c' 暂不可用"（按字符拆解 bug）;
+        # 非列表一律回落全量（绝不按字符拆）。
+        if isinstance(dimensions, str):
+            dimensions = [
+                d.strip() for d in re.split(r"[,，\s]+", dimensions) if d.strip()
+            ] or None
+        if not isinstance(dimensions, list):
+            dimensions = None
         if dimensions:
             out: dict = {}
             for d in dimensions:
