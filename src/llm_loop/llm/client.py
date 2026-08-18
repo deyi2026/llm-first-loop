@@ -79,6 +79,13 @@ def _finish_response(
     tool_calls: list[ToolCall] = [
         ToolCall(id=c["id"], name=c["name"], arguments=c["arguments"]) for c in raw_calls
     ]
+    # 2026-08-18 cache_guard 规则 G: 响应后回馈命中（闭环——guard 跟踪会话命中率）
+    try:
+        _pg = getattr(self, "_pg", None)
+        if _pg is not None and self.guard_session_id:
+            _pg.record_result(self.guard_session_id, acc.prompt_tokens, acc.prompt_cache_hit_tokens)
+    except Exception:  # noqa: BLE001
+        pass
     return LLMResponse(
         content="".join(acc.content_parts) or None,
         tool_calls=tool_calls,
@@ -159,6 +166,7 @@ class LLMClient:
         """
         protocol = self.wire_protocol
         # 2026-08-18 cache_guard（MCP 出入口——唯一出入口）: 发送前规则校验（fail-open）
+        self._guard_start_ts = 0
         if self.guard_enabled:
             try:
                 from llm_loop.cache_guard.guard import PromptGuard

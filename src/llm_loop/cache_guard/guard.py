@@ -36,6 +36,11 @@ _COMPRESS_STORM_PER_RUN = 10  # 单 run 压缩次数上限（超→WARN）
 # 消息总字符 / 预算 > 阈值 → BLOCK（先压缩 checkpoint 或换会话——避免注定低命中的请求出去）
 _SUBMIT_RATIO_BLOCK = 0.95  # >95% 预算 → BLOCK（强制先决策）
 _SUBMIT_RATIO_WARN = 0.85  # >85% → WARN（提示接近超限）
+# 规则 G（2026-08-18 用户反馈：'低命中'应拦截——命中是结果——需响应回馈闭环）：
+# 会话近期命中率 < 阈值且样本足够 → BLOCK（前缀不稳定——先压缩 checkpoint/换会话）
+_HIT_RATE_BLOCK = 0.30  # 近期命中率 <30% → BLOCK
+_HIT_RATE_WARN = 0.50  # <50% → WARN
+_HIT_SAMPLE_MIN = 3  # 最少样本数（样本不足不判——避免冷启动误拦）
 _SENSITIVE_PATTERNS = [
     re.compile(r"sk-[A-Za-z0-9]{16,}"),  # API key
     re.compile(r"AKIA[0-9A-Z]{16}"),  # AWS key
@@ -241,11 +246,60 @@ def validate_request(
 
 
 class PromptGuard:
-    """MCP 出入口的进程内接口（校验 + 基线维护）——MCP server 复用本类."""
+    """MCP 出入口的进程内接口（校验 + 基线维护 + 命中率闭环）——MCP server 复用本类."""
 
     def __init__(self, audit_file: str | Path | None = None) -> None:
         self._baselines: dict[str, str] = {}  # session_id → system fp
         self.audit_file = audit_file
+        # 规则 G: 会话级命中率窗口（近 N 次请求的 hit/in——响应回馈）
+        self._hit_win: dict[str, list[tuple[int, int]]] = {}  # session → [(in, hit)...]
+
+    def record_result(self, session_id: str, tokens_in: int, tokens_hit: int) -> None:
+        """响应后回馈（闭环）——记录该会话本次请求的命中——规则 G 数据源.
+
+        fail-open：记录失败不影响请求。
+        """
+        try:
+            if tokens_in <= 0:
+                return
+            win = self._hit_win.setdefault(session_id, [])
+            win.append((tokens_in, tokens_hit))
+            if len(win) > 10:
+                del win[:-10]  # 窗口最近 10 次
+        except Exception:  # noqa: BLE001
+            logger.debug("guard record_result 失败（fail-open）")
+
+    def _recent_hit_rate(self, session_id: str) -> float | None:
+        """该会话近期命中率（窗口样本不足返回 None——不判）. """
+        win = self._hit_win.get(session_id) or []
+        if len(win) < _HIT_SAMPLE_MIN:
+            return None
+        ti = sum(i for i, _ in win)
+        hi = sum(h for _, h in win)
+        return (hi / ti) if ti > 0 else None
+
+    def _check_hit_rate(self, session_id: str) -> GuardDecision | None:
+        """规则 G: 近期命中率低 → 拦截（前缀不稳定——注定低命中的请求不应出去）. """
+        rate = self._recent_hit_rate(session_id)
+        if rate is None:
+            return None
+        if rate < _HIT_RATE_BLOCK:
+            return GuardDecision(
+                verdict="BLOCK",
+                rule="low_hit_rate",
+                detail=(
+                    f"该会话近期 {_HIT_SAMPLE_MIN}+ 次请求命中率 {rate*100:.0f}%"
+                    f"（<{_HIT_RATE_BLOCK*100:.0f}%——前缀持续不稳定）。"
+                    "建议：先压缩 checkpoint / 换新会话 / 排查前缀漂移——再发（避免注定低命中的全价请求）"
+                ),
+            )
+        if rate < _HIT_RATE_WARN:
+            return GuardDecision(
+                verdict="WARN",
+                rule="low_hit_rate",
+                detail=f"该会话近期命中率 {rate*100:.0f}%（<{_HIT_RATE_WARN*100:.0f}%——注意前缀稳定性）",
+            )
+        return None
 
     def check(
         self,
@@ -272,6 +326,14 @@ class PromptGuard:
             },
             audit_file=self.audit_file,
         )
+        # 规则 G: 低命中拦截（优先级高于普通 WARN——命中是结果闭环）
+        if decision.verdict == "ALLOW" or decision.verdict == "WARN":
+            hit_d = self._check_hit_rate(session_id)
+            if hit_d is not None and (
+                hit_d.verdict == "BLOCK"
+                or (hit_d.verdict == "WARN" and decision.verdict == "ALLOW")
+            ):
+                decision = hit_d
         # 基线维护：ALLOW 且无 WARN（system 稳定）时更新基线；有 WARN 不动（下次继续检测）
         if decision.verdict == "ALLOW":
             self._baselines[session_id] = system_text

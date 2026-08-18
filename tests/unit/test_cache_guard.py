@@ -106,6 +106,37 @@ class TestValidateRequest:
         )
         assert d.verdict == "ALLOW"
 
+    def test_low_hit_rate_block(self, tmp_path):
+        """规则 G: 会话近期命中率低 → BLOCK（闭环——不应出去的）. """
+        g = PromptGuard(audit_file=tmp_path / "g.jsonl")
+        # 灌入低命中历史（3 次——命中率 10%）
+        for _ in range(3):
+            g.record_result("s-low", 10000, 1000)
+        d = g.check(session_id="s-low", system_text="sys", messages=_sys("sys"))
+        assert d.verdict == "BLOCK"
+        assert d.rule == "low_hit_rate"
+
+    def test_low_hit_rate_warn(self, tmp_path):
+        g = PromptGuard(audit_file=tmp_path / "g.jsonl")
+        for _ in range(3):
+            g.record_result("s-warn", 10000, 4000)  # 40% —— WARN 区间
+        d = g.check(session_id="s-warn", system_text="sys", messages=_sys("sys"))
+        assert d.verdict == "WARN"
+        assert d.rule == "low_hit_rate"
+
+    def test_high_hit_rate_allow(self, tmp_path):
+        g = PromptGuard(audit_file=tmp_path / "g.jsonl")
+        for _ in range(3):
+            g.record_result("s-ok", 10000, 9900)  # 99% —— 放行
+        d = g.check(session_id="s-ok", system_text="sys", messages=_sys("sys"))
+        assert d.verdict == "ALLOW"
+
+    def test_insufficient_sample(self, tmp_path):
+        g = PromptGuard(audit_file=tmp_path / "g.jsonl")
+        g.record_result("s-1", 10000, 0)  # 仅 1 次——样本不足不判
+        d = g.check(session_id="s-1", system_text="sys", messages=_sys("sys"))
+        assert d.verdict == "ALLOW"
+
     def test_fail_open(self, tmp_path, monkeypatch):
         """校验异常 → ALLOW（fail-open——不阻断主流程）."""
         import llm_loop.cache_guard.guard as mod
