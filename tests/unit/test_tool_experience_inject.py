@@ -36,7 +36,9 @@ description: LLM 前缀缓存命中排查技能——缓存命中率异常低时
 class _Stub(_ToolExecMixin):
     """LoopEngine 最小桩（mixin 方法所需属性；继承 mixin 获得 _match_skills）."""
 
-    def __init__(self, enabled: bool, exp_dir: str | Path, skills_dir: str | Path = "nonexistent_skills") -> None:
+    def __init__(
+        self, enabled: bool, exp_dir: str | Path, skills_dir: str | Path = "nonexistent_skills"
+    ) -> None:
         self.settings = SimpleNamespace(
             tool_experience_inject=enabled,
             experiences_dir=str(exp_dir),
@@ -68,7 +70,9 @@ def test_inject_hit(tmp_path):
     assert msg.role == "system"
     assert "[经验提示]" in msg.content
     assert "web_fetch" in msg.content
-    assert msg.metadata.get("injected_system") is True
+    # 2026-08-18 修复: 功能性注入不打 injected_system 标记——打标会被
+    # skip_injected_system（spec §5.3.1-5 绝对化后恒 True）剔除 → 经验提示失效
+    assert not (msg.metadata or {}).get("injected_system")
     assert len(stub.events) == 1
 
 

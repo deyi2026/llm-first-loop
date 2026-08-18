@@ -9,7 +9,6 @@ move 自 engine.py 内联工具段（492-553）与辅助方法（888-913）及�
 # pyright: reportAttributeAccessIssue=false, reportGeneralTypeIssues=false
 # (mixin 模式: self 属性来自混入类 LoopEngine.__init__，pyright 无法静态解析，故文件级关闭这两条；参数/返回类型等其余检查保留)
 
-
 from __future__ import annotations
 
 import logging
@@ -48,7 +47,11 @@ def _tool_args_summary(arguments: Any) -> str:
     import json as _json
 
     try:
-        s = _json.dumps(arguments, ensure_ascii=False) if isinstance(arguments, dict) else str(arguments)
+        s = (
+            _json.dumps(arguments, ensure_ascii=False)
+            if isinstance(arguments, dict)
+            else str(arguments)
+        )
     except (TypeError, ValueError):
         s = str(arguments)
     return s[:200] + "…" if len(s) > 200 else s
@@ -252,7 +255,10 @@ class _ToolExecMixin:
                 role="system",
                 content=content,
                 source=MessageSource.SYSTEM,
-                metadata={"injected_system": True},
+                # ⚠️ 不打 injected_system 标记（2026-08-18 修复）: 经验提示是功能性注入
+                # （工具执行后即时决策辅助，RULE-AI-18 机制），非推送式提醒；打标会被
+                # skip_injected_system 通道剔除（spec §5.3.1-5 绝对化后恒 True）→ 功能失效。
+                # 转 user 尾部追加（history.py 459 分支），前缀稳定不受影响。
             )
             sess.messages.append(msg)
             self._append_message_event(sess, msg)
@@ -278,7 +284,9 @@ class _ToolExecMixin:
             if not base.is_dir():
                 return []
             try:
-                dir_mtime = max((p.stat().st_mtime for p in base.iterdir() if p.is_dir()), default=0.0)
+                dir_mtime = max(
+                    (p.stat().st_mtime for p in base.iterdir() if p.is_dir()), default=0.0
+                )
             except OSError:
                 dir_mtime = 0.0
             if self._skills_cache[0] == dir_mtime:
@@ -294,7 +302,7 @@ class _ToolExecMixin:
                             for line in fm.group(1).splitlines():
                                 m = re.match(r"(\w+):\s*(.*)", line)
                                 if m:
-                                    meta[m.group(1).strip()] = m.group(2).strip().strip('"\'')
+                                    meta[m.group(1).strip()] = m.group(2).strip().strip("\"'")
                         if meta.get("name") and meta.get("description"):
                             cached.append((meta["name"], meta["description"][:200]))
                     except (OSError, UnicodeDecodeError):
@@ -345,7 +353,9 @@ class _ToolExecMixin:
                 reminder = stagnation_reminder_message(tc.name, state["count"])
                 sess.messages.append(reminder)
                 self._append_message_event(sess, reminder)
-                self._record_action("stagnation.reminder", "injected", f"{tc.name} x{state['count']}")
+                self._record_action(
+                    "stagnation.reminder", "injected", f"{tc.name} x{state['count']}"
+                )
             except Exception:
                 logger.warning("停滞提醒注入失败（fail-open）", exc_info=True)
 
