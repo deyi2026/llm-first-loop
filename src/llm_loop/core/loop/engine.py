@@ -460,6 +460,16 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 if stream_fn is not None:
                     _llm_start = time.perf_counter()
                     _ttft_done = False
+                    # 2026-08-18 cache_guard（MCP 出入口）: 透传会话上下文供规则校验
+                    # （system 稳定基线按会话维护；压缩计数供窗口漂移检测）
+                    try:
+                        llm_client.guard_system = system_prompt if "system_prompt" in dir() else (
+                            messages[0].get("content", "") if messages and messages[0].get("role") == "system" else None
+                        )
+                        llm_client.guard_session_id = session_id
+                        llm_client.guard_compress_count = getattr(self, "_compress_count_this_run", 0)
+                    except Exception:  # noqa: BLE001 — 透传失败不影响请求
+                        pass
                     it = stream_fn(
                         messages=messages,
                         tools=tools_param,
