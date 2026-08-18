@@ -279,18 +279,43 @@ class PromptGuard:
         return (hi / ti) if ti > 0 else None
 
     def _check_hit_rate(self, session_id: str) -> GuardDecision | None:
-        """规则 G: 近期命中率低 → 拦截（前缀不稳定——注定低命中的请求不应出去）. """
+        """规则 G: 近期命中率低 → 拦截——但【区分冷启动 vs 持续异常】.
+
+        2026-08-18 用户反馈（'第一条新信息命中率肯定低'）:
+        - 冷启动（前缀在构建——in 递增）低命中 = 预期——不拦（降级 WARN）
+        - 前缀稳定（最近两次 in 相近——同前缀）却低命中 = 异常——BLOCK
+        """
+        win = self._hit_win.get(session_id) or []
+        if len(win) < _HIT_SAMPLE_MIN:
+            return None  # 样本不足（含新会话第一条）——不判
         rate = self._recent_hit_rate(session_id)
         if rate is None:
             return None
+        # 前缀稳定性：最近两次请求的 in 是否相近（±15%——同前缀应命中）
+        last_in = [i for i, _ in win[-2:]]
+        prefix_stable = (
+            len(last_in) == 2
+            and last_in[1] > 0
+            and abs(last_in[1] - last_in[0]) / last_in[1] < 0.15
+        )
         if rate < _HIT_RATE_BLOCK:
+            if prefix_stable:
+                return GuardDecision(
+                    verdict="BLOCK",
+                    rule="low_hit_rate",
+                    detail=(
+                        f"该会话近期命中率 {rate*100:.0f}%（<{_HIT_RATE_BLOCK*100:.0f}%——"
+                        "前缀稳定（最近两次 in 相近）却持续低命中——前缀漂移/压缩风暴）。"
+                        "建议：先压缩 checkpoint / 换新会话 / 排查前缀漂移——再发"
+                    ),
+                )
+            # 冷启动（前缀在构建——in 递增）——预期低——不拦（仅 WARN 知悉）
             return GuardDecision(
-                verdict="BLOCK",
+                verdict="WARN",
                 rule="low_hit_rate",
                 detail=(
-                    f"该会话近期 {_HIT_SAMPLE_MIN}+ 次请求命中率 {rate*100:.0f}%"
-                    f"（<{_HIT_RATE_BLOCK*100:.0f}%——前缀持续不稳定）。"
-                    "建议：先压缩 checkpoint / 换新会话 / 排查前缀漂移——再发（避免注定低命中的全价请求）"
+                    f"近期命中率 {rate*100:.0f}%（冷启动/前缀构建中——预期低——"
+                    "前缀稳定后将回升；若持续请排查）"
                 ),
             )
         if rate < _HIT_RATE_WARN:
