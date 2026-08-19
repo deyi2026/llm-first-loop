@@ -270,3 +270,27 @@ def build_test_engine(fake_settings):
         return engine, fake
 
     return _build
+
+
+# ── EVO-20260811-f1e43351: 测试副作用审计（pytest 收集后自动检查，告警不阻断）──
+def pytest_collection_finish(session):
+    """收集完成时跑测试副作用审计；仅告警不阻断（--strict 语义由脚本自身控制）。
+
+    复用 scripts/audit_test_side_effects.py 的审计逻辑；跳过即视为已隔离。
+    默认告警不阻断（与脚本 exit 0 一致）；需阻断可在 .env 设 TEST_SIDE_EFFECT_AUDIT_STRICT=1。
+    """
+    import os
+    import subprocess
+    import sys
+
+    if os.environ.get("TEST_SIDE_EFFECT_AUDIT", "1") == "0":
+        return
+    script = Path(__file__).resolve().parent.parent / "scripts" / "audit_test_side_effects.py"
+    if not script.exists():
+        return
+    strict = os.environ.get("TEST_SIDE_EFFECT_AUDIT_STRICT", "0") == "1"
+    cmd = [sys.executable, str(script)] + (["--strict"] if strict else [])
+    try:
+        subprocess.run(cmd, cwd=script.parent.parent, timeout=30)
+    except Exception:  # noqa: BLE001 — 审计失败不阻断测试
+        pass
