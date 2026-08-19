@@ -25,6 +25,7 @@ class ReadFileTool:
             "path": {"type": "string", "description": "要读取的文件路径"},
             "offset": {"type": "integer", "description": "起始行号（0-based，默认 0）"},
             "limit": {"type": "integer", "description": "最多读取行数（默认全部）"},
+            "full": {"type": "boolean", "description": "按需全量（默认 false）：true=跳过 3000 字符截断，一次返回完整内容（需全文时用；内容大占用上下文，谨慎使用）"},
         },
         "required": ["path"],
     }
@@ -33,6 +34,8 @@ class ReadFileTool:
         path = str(kwargs.get("path", "")).strip()
         offset = int(kwargs.get("offset", 0) or 0)
         limit = kwargs.get("limit")
+        # EVO-20260819 full=true（按需全量）：跳过本工具截断（注册表层仍保硬上限安全阀）
+        full = bool(kwargs.get("full", False))
 
         if not path:
             return ToolResult(
@@ -82,7 +85,9 @@ class ReadFileTool:
             note = f"\n[共 {total} 行，已显示 {len(selected)} 行]" if len(selected) < total else ""
             content = numbered + note + _link_note
             # 2026-08-18 对齐 DSH: 大文件读取截断（首尾+落盘可检索——尾部新增小=命中高）
-            content = truncate_output(content, source=str(p))
+            # EVO-20260819 full=true: 跳过截断（注册表层仍保硬上限安全阀）
+            if not full:
+                content = truncate_output(content, source=str(p))
             return ToolResult(
                 status=ToolResultStatus.SUCCESS,
                 content=content,

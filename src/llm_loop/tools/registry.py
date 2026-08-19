@@ -743,7 +743,20 @@ class ToolRegistry:
         # 输出分层注入（EVO-20260811-22a7d3e1）:
         # - 超过 summary_threshold: 默认注入首/尾摘要（全文另存可检索，信息零丢失）
         # - 超过 max_output_chars（硬上限）: 全文另存 + 截断（T22 既有逻辑）
-        if len(result.content) > self.summary_threshold:
+        # - EVO-20260819 full=true（按需全量）: AI 显式声明全量时跳过摘要层；
+        #   硬上限仍作安全阀（防单条结果撑爆上下文）。默认路径零回归。
+        _full_mode = isinstance(call.arguments, dict) and bool(call.arguments.get("full"))
+        if _full_mode:
+            if len(result.content) > self.max_output_chars:
+                full = result.content
+                self._archive_oversize_output(call, full)
+                result.content = (
+                    full[: self.max_output_chars]
+                    + f"\n…[结果超长，已截断，共 {len(full)} 字符（硬上限: {self.max_output_chars}，full 模式仅保此安全阀）]；"
+                    "完整结果已另存至压缩档案，可用 search_archive 检索找回…\n"
+                    + self._DISTILL_GUIDANCE
+                )
+        elif len(result.content) > self.summary_threshold:
             full = result.content
             self._archive_oversize_output(call, full)  # 原文完整另存（信息零丢失）
             result.content = self._summarize_output(full, call=call)

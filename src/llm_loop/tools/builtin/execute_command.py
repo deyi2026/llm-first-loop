@@ -135,6 +135,10 @@ class ExecuteCommandTool:
                 "type": "boolean",
                 "description": "后台运行（可选，默认 false）。true 时立即返回 job_id，不阻塞等待；用 job_output 查询输出、job_kill 终止。适合长任务（测试/安装/编译）。",
             },
+            "full": {
+                "type": "boolean",
+                "description": "按需全量（默认 false）：true=跳过 3000 字符截断，一次返回完整输出（需全文时用；内容大占用上下文，谨慎使用）",
+            },
         },
         "required": ["command"],
     }
@@ -312,7 +316,9 @@ class ExecuteCommandTool:
         if proc.returncode != 0:
             content = f"[命令退出码 {proc.returncode}] {content}"
 
-        content = _truncate_output(content, command)
+        # EVO-20260819 full=true: 跳过本工具截断（注册表层仍保硬上限安全阀）
+        if not bool(kwargs.get("full", False)):
+            content = _truncate_output(content, command)
 
         return ToolResult(
             status=status,

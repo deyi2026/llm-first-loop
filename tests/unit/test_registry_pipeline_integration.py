@@ -53,6 +53,26 @@ def test_default_no_pipeline_zero_regression():
     assert "ok:" in r.content
 
 
+def test_full_mode_skips_summary_layer():
+    """EVO-20260819 full=true: 超 summary_threshold 跳过摘要层，全文直返；默认路径仍摘要."""
+    long_text = "A" * 20000  # 超默认 summary_threshold=12000
+
+    class _BigTool:
+        name = "big_tool"
+        description = "big"
+        parameters = {"type": "object", "properties": {"full": {"type": "boolean"}}}
+
+        def execute(self, **kwargs):
+            return long_text
+
+    reg = ToolRegistry(summary_threshold=1000)  # 小阈值便于测试
+    reg._tools["big_tool"] = _BigTool()
+    r_default = reg.execute(ToolCall(id="t1", name="big_tool", arguments={}))
+    assert "[输出摘要]" in r_default.content  # 默认摘要
+    r_full = reg.execute(ToolCall(id="t2", name="big_tool", arguments={"full": True}))
+    assert r_full.content == long_text  # 全文直返，无摘要、无截断
+
+
 def test_pipeline_disabled_zero_regression():
     # 装配但 enabled=False → 行为与无 pipeline 一致
     p = ToolExecutionPipeline(PipelineConfig(enabled=False, materialize=True, guard=True))
