@@ -232,6 +232,11 @@ class _BuildMixin:
                 _d["role"] = "user"  # system 静态: 转独立 user 尾部追加
             built.append(_d)
         tail_msgs = getattr(self, "_interop_tail_messages", None)
+        # EVO-20260819-7bb7d689: 经验提示尾部追加槽并入统一消费（与 interop 同机制）——
+        # 不进历史存储，build 末尾一次性追加（转 user），system+稳定历史前缀字节不变
+        tip_msgs = getattr(self, "_tip_tail_messages", None)
+        if tip_msgs:
+            tail_msgs = (tail_msgs or []) + tip_msgs
         if tail_msgs:
             for _m in tail_msgs:
                 _d = _m.to_llm_dict()
@@ -239,6 +244,7 @@ class _BuildMixin:
                     _d["role"] = "user"  # system 静态: 转独立 user 尾部追加
                 built.append(_d)
             self._interop_tail_messages = None  # 一次性消费（每轮重扫 pending）
+            self._tip_tail_messages = None  # 经验提示同机制一次性消费（下轮工具执行再注入）
         # EVO-20260817-72fcd94a: 门禁干预知情标记——干预激活首轮在 built 末尾追加固定
         # user 消息（末尾追加缓存友好，不破坏前缀；转 user 避免守卫规则 B 误报
         # "非首位 system"——2026-08-18 审计 WARN 实证；让 AI 感知上下文结构变化）
