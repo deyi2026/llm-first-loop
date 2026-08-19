@@ -169,7 +169,8 @@ def test_concurrent_runs_isolated_state_and_archive(build_test_engine, tmp_path)
     assert not errors, f"并发 run 抛异常: {errors[:2]}"
 
     res_b = results["b"]
-    assert res_b.final_answer == "B 完成", f"B 被串台（停滞熔断/预警互吞）: {res_b.final_answer[:120]}"
+    # 2026-08-20 方案B（3489082）: 回答末尾追加命中率行——断言主体仍须为 B 完成（尾部 ⚡ 行属展示层）
+    assert res_b.final_answer.startswith("B 完成"), f"B 被串台（停滞熔断/预警互吞）: {res_b.final_answer[:120]}"
     assert res_b.rounds == 2, f"B 轮数异常: {res_b.rounds}"
 
     # 停滞桶按会话独立：A 触发提醒/熔断（count>=3），B 干净
