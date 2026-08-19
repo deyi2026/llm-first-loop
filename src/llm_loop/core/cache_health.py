@@ -153,6 +153,25 @@ class CacheHealthMonitor:
             logger.warning("缓存窗口监控异常（fail-open）", exc_info=True)
             return None
 
+    def format_health_note(self) -> str | None:
+        """EVO-20260819-2254e3b4 延伸（用户批准方案B）: 常态缓存命中率摘要（回答末尾展示）.
+
+        与告警路径（record 返回）互不干扰：仅当窗口有数据且当前未处于拦截/告警期时
+        返回一行精简命中率（近 N 轮窗口），供 engine 注入 final_answer 末尾。
+        fail-open: 任何异常返回 None，不阻断 run。
+        """
+        try:
+            if self._win_runs <= 0 or (self._alerted or self._force_head_keep):
+                return None
+            rate = self._win_hit / self._win_in if self._win_in else 1.0
+            return (
+                f"⚡ 缓存命中率 {rate*100:.1f}%"
+                f"（近 {self._win_runs} 轮，{self._win_hit:,}/{self._win_in:,} tokens）"
+            )
+        except Exception:  # noqa: BLE001 — fail-open
+            logger.warning("缓存命中率摘要格式化异常（fail-open）", exc_info=True)
+            return None
+
     def _reset_window(self) -> None:
         self._win_in = self._win_hit = self._win_runs = 0
         self._anchor_moved_in_win = 0

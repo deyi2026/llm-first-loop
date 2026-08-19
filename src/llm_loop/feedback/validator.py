@@ -70,6 +70,24 @@ _COMPLETION_MARKERS = ["已", "了", "成功", "完成", "did", "has ", "have ",
 # 仅当句子不含完成标志时豁免（"已执行计划中的迁移"仍保留校验）
 _PLAN_MARKERS = ["下一步", "建议执行", "优先级", "计划", "待办", "接下来", "后续将", "即将"]
 
+# EVO-20260819-2254e3b4（用户批准）: 声明分类强化——否定/将来/条件/疑问/建议/
+# 状态描述/程序转述语句一律豁免，仅"完成声明"参与回执比对（SE-20260819-002-f658
+# 实证 26 条误报全为此类: "未执行"/"将更新"/"若 resolved"/"执行中"/"程序执行了"等）。
+_NEGATION_MARKERS = ["未", "无", "没有", "尚未", "不", "没"]  # 否定（"未执行"→豁免）
+# 将来/条件/疑问/建议（"将更新"/"若完成"/"是否执行"/"建议批准转执行"→豁免）
+_FUTURE_MARKERS = [
+    "将", "若", "如果", "是否", "请", "建议", "待", "稍后", "到时",
+    "拟", "打算", "能否", "要不要", "之后会", "后续会",
+]
+# 状态/过程描述（"当前状态"/"执行中"/"执行过程"→豁免）
+_STATE_MARKERS = ["当前状态", "状态为", "执行中", "执行过程", "进行中", "要点", "状态："]
+# 程序/系统转述（"程序执行了紧急压缩"→豁免，非 AI 完成声明）
+_TRANSCRIPT_MARKERS = ["程序执行", "程序已", "系统已", "系统执行"]
+# 英文过去分词 = 天然完成时态（直接视为完成声明）
+_EN_COMPLETED_VERBS = (
+    r"\b(written|created|deleted|saved|modified|executed|installed|downloaded|updated)\b"
+)
+
 # B3 markdown 结构行（代码 fence/表格行/引用块）为引用内容，不进入声明抽取
 _MARKDOWN_STRUCT_PREFIXES = ("|", ">")
 
@@ -162,8 +180,35 @@ class DeclarationValidator:
             # 本质无回执可佐证，跳过；含完成标志（"已执行计划中的命令"）不豁免
             if self._is_plan_statement(text):
                 continue
+            # EVO-20260819-2254e3b4: 非完成声明（否定/将来/条件/疑问/建议/
+            # 状态描述/程序转述/无完成标志）一律豁免，仅"完成声明"参与回执比对
+            if self._is_non_completion_statement(text):
+                continue
             decls.append(text)
         return decls
+
+    @staticmethod
+    def _is_non_completion_statement(text: str) -> bool:
+        """EVO-20260819-2254e3b4: 非完成声明过滤（用户批准，SE-20260819-002-f658
+        实证 26 条误报归因）——否定/将来/条件/疑问/建议/状态描述/程序转述语句
+        一律豁免；完成声明须含完成标志（中文"已/了/成功/完成"或英文过去分词）。
+
+        例: "未执行"→否定豁免; "将更新 status"→将来豁免; "执行中"→状态豁免;
+            "程序执行了紧急压缩"→转述豁免; "已更新落盘"→保留校验（含"已"）。
+        """
+        lower = text.lower()
+        if any(m in text for m in _NEGATION_MARKERS):
+            return True
+        if any(m in text for m in _FUTURE_MARKERS):
+            return True
+        if any(m in text for m in _STATE_MARKERS):
+            return True
+        if any(m in text for m in _TRANSCRIPT_MARKERS):
+            return True
+        # 完成性要求: 中文完成标志 或 英文过去分词，否则视为描述/承诺/过程
+        has_cn_completion = any(m in text for m in _COMPLETION_MARKERS)
+        has_en_completion = re.search(_EN_COMPLETED_VERBS, lower) is not None
+        return not (has_cn_completion or has_en_completion)
 
     @staticmethod
     def _strip_markdown_structures(answer: str) -> str:

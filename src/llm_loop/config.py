@@ -271,6 +271,7 @@ class Settings:
     tool_materialize_enabled: bool = False  # 参数物化+深冻结（TOOL_MATERIALIZE_ENABLED）
     tool_guard_enabled: bool = False  # 单调守卫（TOOL_GUARD_ENABLED）
     runner_background: bool = True  # 后台 run 执行器（RUNNER_BACKGROUND；0=回退旧 SSE 直驱）
+    cache_hit_show_in_answer: bool = True  # 回答末尾常态展示缓存命中率（CACHE_HIT_SHOW_IN_ANSWER，方案B）
     # ── EVO-20260816-62977206: 工具执行后经验提示注入（默认开，可关）──
     tool_experience_inject: bool = True  # 按工具名检索经验库并注入提示（TOOL_EXPERIENCE_INJECT）
 
@@ -430,6 +431,7 @@ class Settings:
             "tool_materialize_enabled": self.tool_materialize_enabled,
             "tool_guard_enabled": self.tool_guard_enabled,
             "runner_background": self.runner_background,
+            "cache_hit_show_in_answer": self.cache_hit_show_in_answer,
             "tool_experience_inject": self.tool_experience_inject,
             "history_max_chars": self.history_max_chars,
             "memory_top_k": self.memory_top_k,
@@ -549,6 +551,8 @@ def load_settings() -> Settings:
         tool_materialize_enabled=_env_bool("TOOL_MATERIALIZE_ENABLED", False),
         tool_guard_enabled=_env_bool("TOOL_GUARD_ENABLED", False),
         runner_background=_env_bool("RUNNER_BACKGROUND", True),  # EVO 后台 run 改造: 默认开
+        # EVO-20260819-2254e3b4 方案B（用户批准）: 回答末尾常态展示缓存命中率
+        cache_hit_show_in_answer=_env_bool("CACHE_HIT_SHOW_IN_ANSWER", True),
         tool_experience_inject=_env_bool("TOOL_EXPERIENCE_INJECT", True),  # EVO-20260816-62977206: 默认开
         history_max_chars=_env_int_or_none("HISTORY_MAX_CHARS"),  # EVO-20260816-3af5dee3: None=未配置→按窗口自适应
         memory_top_k=_env_int("MEMORY_TOP_K", 5),

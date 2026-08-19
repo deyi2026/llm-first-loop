@@ -846,6 +846,36 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 )
                 if final_answer:
                     final_answer = f"{final_answer}\n\n{_cache_hint}"
+            else:
+                # EVO-20260819-2254e3b4 方案B（用户批准）: 常态缓存命中率展示——
+                # 无告警时若开启 CACHE_HIT_SHOW_IN_ANSWER 且窗口有数据，回答末尾附一行
+                # 命中率摘要（仅展示，不影响缓存/前缀机制；fail-open）
+                try:
+                    if (
+                        getattr(self.settings, "cache_hit_show_in_answer", True)
+                        and final_answer
+                        and self._cache_monitor is not None
+                    ):
+                        _note = self._cache_monitor.format_health_note()
+                        if _note:
+                            final_answer = f"{final_answer}\n\n{_note}"
+                except Exception:  # noqa: BLE001 — fail-open
+                    logger.warning("常态缓存命中率注入异常（fail-open）", exc_info=True)
+            # EVO-20260819 方案B 修复: 注入发生在 sess.messages.append / session.save
+            # 之后——回写 session 消息并重新保存，保证飞书 cross_sync（从 session 读）
+            # 端可见命中率行（web 显示返回值已含，此处补飞书链路；fail-open）
+            if final_answer and sess.messages:
+                try:
+                    _last_asst = None
+                    for _m in reversed(sess.messages):
+                        if _m.role == "assistant":
+                            _last_asst = _m
+                            break
+                    if _last_asst is not None and _last_asst.content != final_answer:
+                        _last_asst.content = final_answer
+                        self.session.save(sess)
+                except Exception:  # noqa: BLE001 — 回写失败 fail-open
+                    logger.warning("命中率注入回写 session 失败（fail-open）", exc_info=True)
         except Exception:  # noqa: BLE001 — 监控失败 fail-open，不阻断 run
             logger.warning("缓存健康闭环监控异常（fail-open）", exc_info=True)
         # P1-1(2026-08-15): run 末事件日志滚动检查钩子（大小/天数触发；fail-open 不阻断）
