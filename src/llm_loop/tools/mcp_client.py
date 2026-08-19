@@ -1,9 +1,11 @@
 """MCP 客户端接入（P3-1，2026-08-15）.
 
 `MCP_SERVERS` env JSON 配置 stdio MCP 服务器；启动时连接握手 + 拉取工具清单，
-以 `mcp.<server>.<tool>` 名注册进 ToolRegistry（inputSchema 透传为 parameters），
-执行走统一注册表通道（线程超时 / 输出分层 / 审计复用），结果五态包装
-（success / failure / blocked / timeout / error，对齐 ToolResultStatus）。
+以 `mcp_<server>_<tool>` 名注册进 ToolRegistry（LLM 协议工具名约束
+`^[a-zA-Z0-9_-]+$`，原始 `mcp.<server>.<tool>` 中的点号替换为下划线；
+inputSchema 透传为 parameters），执行走统一注册表通道（线程超时 / 输出分层 /
+审计复用），结果五态包装（success / failure / blocked / timeout / error，
+对齐 ToolResultStatus）。
 
 诚实边界（fail-open）：
 - 服务器启动/握手失败 → 该服务器工具不注册，其余服务器/工具不受影响（日志如实）
@@ -17,6 +19,7 @@ import json
 import logging
 import os
 import queue
+import re
 import subprocess
 import threading
 from dataclasses import dataclass, field
@@ -29,6 +32,15 @@ logger = logging.getLogger(__name__)
 MCP_PROTOCOL_VERSION = "2024-11-05"
 _CALL_TIMEOUT_S = 120.0
 _HANDSHAKE_TIMEOUT_S = 15.0
+
+# LLM 协议工具名约束（OpenAI 兼容: ^[a-zA-Z0-9_-]+$）——mcp.<server>.<tool> 含点号
+# 会被提供方 400 拒绝，注册名统一替换为下划线；底层 MCP 调用仍用原始 tool 名。
+_REGISTRY_NAME_RE = re.compile(r"[^a-zA-Z0-9_-]")
+
+
+def _registry_name(server_name: str, tool_name: str) -> str:
+    """注册表工具名（协议合法）：mcp.<server>.<tool> → mcp_<server>_<tool>（非法字符 → _）."""
+    return _REGISTRY_NAME_RE.sub("_", f"mcp.{server_name}.{tool_name}")
 
 
 @dataclass(frozen=True)
@@ -254,7 +266,7 @@ class McpTool:
     """MCP 工具适配器（注册表 Tool 协议：name/description/parameters/execute）."""
 
     def __init__(self, server_name: str, conn: McpConnection, tool_def: McpToolDef) -> None:
-        self.name = f"mcp.{server_name}.{tool_def.name}"
+        self.name = _registry_name(server_name, tool_def.name)
         self._server = server_name
         self._mcp_name = tool_def.name
         self._conn = conn
@@ -268,6 +280,11 @@ class McpTool:
             "properties": schema.get("properties") or {},
             "required": schema.get("required") or [],
         }
+
+    @property
+    def description(self) -> str:
+        """注册表 Tool 协议公开字段（registry.schemas/get_tool_schema 依赖）."""
+        return self._description
 
     def execute(self, **kwargs: Any) -> ToolResult:
         try:
@@ -317,9 +334,73 @@ def register_mcp_tools(registry: Any, raw_servers: str) -> list[str]:
         for tool_def in tools:
             try:
                 registry.register(McpTool(spec.name, conn, tool_def))
-                registered.append(f"mcp.{spec.name}.{tool_def.name}")
+                registered.append(_registry_name(spec.name, tool_def.name))
                 count += 1
             except Exception:  # noqa: BLE001 — 单工具注册失败跳过
-                logger.warning("MCP 工具注册失败: mcp.%s.%s", spec.name, tool_def.name)
+                logger.warning("MCP 工具注册失败: %s", _registry_name(spec.name, tool_def.name))
         logger.info("MCP 服务器 %s 已连接，注册 %d 个工具", spec.name, count)
     return registered
+
+
+def _close_server_conns(registry: Any, server_name: str) -> None:
+    """关闭某服务器全部现存工具持有的连接（幂等；供 refresh 重建用）."""
+    seen: set[int] = set()
+    prefix = _registry_name(server_name, "")
+    for name in list(registry.names()):
+        if not name.startswith(prefix):
+            continue
+        try:
+            tool = registry.get(name)
+            conn = getattr(tool, "_conn", None)
+            if conn is not None and id(conn) not in seen:
+                seen.add(id(conn))
+                conn.close()
+        except Exception:  # noqa: BLE001 — 关闭失败不影响刷新主流程
+            logger.warning("MCP 连接关闭失败（忽略）: %s", name)
+
+
+def refresh_mcp_tools(registry: Any, raw_servers: str) -> tuple[list[str], list[str]]:
+    """热刷新 MCP 工具（EVO-20260819-f9e7ce23 二期：即装即用）.
+
+    对每个服务器：关闭旧连接 → 重连 + 重拉 tools/list → 与注册表 diff
+    （新增 register / 消失 unregister）。每服务器独立 fail-open。
+
+    Returns:
+        (registered_names, unregistered_names) — 供调用方日志/状态展示。
+    """
+    registered: list[str] = []
+    unregistered: list[str] = []
+    for spec in parse_servers(raw_servers):
+        prefix = _registry_name(spec.name, "")
+        old_names = {n for n in registry.names() if n.startswith(prefix)}
+        # 1) 卸载旧工具 + 关闭旧连接（连接与工具解耦，先关后建防泄漏）
+        _close_server_conns(registry, spec.name)
+        for name in old_names:
+            if registry.unregister(name):
+                unregistered.append(name)
+        # 2) 禁用服务器：到此为止（工具已卸载）
+        if not spec.enabled:
+            logger.info("MCP 服务器 %s 已禁用（enabled=false），工具已卸载", spec.name)
+            continue
+        # 3) 重连 + 重拉清单
+        try:
+            conn = McpConnection(spec)
+            tools = conn.connect()
+        except Exception as exc:  # noqa: BLE001 — 单服务器失败不阻断整体
+            logger.warning("MCP 服务器 %s 刷新连接失败（fail-open）: %s", spec.name, exc)
+            continue
+        # 4) diff 注册（消失的工具不再注册）
+        for tool_def in tools:
+            name = _registry_name(spec.name, tool_def.name)
+            try:
+                registry.register(McpTool(spec.name, conn, tool_def))
+                registered.append(name)
+            except Exception:  # noqa: BLE001 — 单工具注册失败跳过
+                logger.warning("MCP 工具注册失败: %s", name)
+        logger.info(
+            "MCP 服务器 %s 刷新完成：注册 %d 个，卸载 %d 个",
+            spec.name,
+            len(tools),
+            len(old_names),
+        )
+    return registered, unregistered
