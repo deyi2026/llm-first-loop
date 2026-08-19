@@ -355,18 +355,37 @@ ArchiveSink = Callable[[str, Message], None]
 def _apply_reasoning_tail(
     messages: list[Message], reasoning_tail: int
 ) -> list[Message]:
-    """M66 思考链瘦身: 历史中仅保留最近 N 轮 assistant 思考链（reasoning_content）.
+    """M66 思考链瘦身: 历史中省略 assistant 思考链（reasoning_content）.
 
     更早轮次的思考链在**提交给 LLM 时**省略（内容/工具调用完整保留），
     体积显著减小且不影响事实完整性；不修改原消息（仅提交视图瘦身）。
 
     - reasoning_tail <= 0 → 保留全部（向后兼容，零回归）
+    - reasoning_tail == -1 → 方案 A（EVO-20260819，用户批准）: 仅【携带 tool_calls
+      的 assistant 消息】保留 reasoning_content（协议必需，M20 THK-04: 携带
+      tool_calls 必须回传否则 400），其余思考链一律省略。与旧"最近 N 轮"不同：
+      N 轮窗口随轮次滚动 → 历史中消息的 reasoning 从有到无每轮改前缀 → 断点；
+      按属性（是否带 tool_calls）省略 → 每条消息 reasoning 有无固定不变 →
+      前缀字节稳定 + 输入最小化（思考链是每轮最大动态块）。
     - 最近一轮的 reasoning 必须保留（M20 THK-04: 携带 tool_calls 必须回传，
       否则协议 400）——本实现始终保留最近 N 轮，覆盖最近一轮。
     """
+    from dataclasses import replace
+
+    if reasoning_tail == -1:
+        out: list[Message] = []
+        for m in messages:
+            if (
+                m.role == "assistant"
+                and m.reasoning_content
+                and not m.tool_calls
+            ):
+                out.append(replace(m, reasoning_content=None))  # 仅提交视图省略，不动原消息
+            else:
+                out.append(m)
+        return out
     if reasoning_tail <= 0:
         return messages
-    from dataclasses import replace
 
     idx = [i for i, m in enumerate(messages) if m.role == "assistant" and m.reasoning_content]
     keep = set(idx[-reasoning_tail:]) if idx else set()
