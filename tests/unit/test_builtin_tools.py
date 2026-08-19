@@ -204,3 +204,29 @@ def test_web_fetch_public_url_not_blocked(monkeypatch):
     # 公网 IP 字面量放行（域名测试受沙箱 DNS 劫持到 198.18/15 测试段影响——该段本身应拦截）
     assert _blocked_private_url("http://8.8.8.8/path") == ""
     assert _blocked_private_url("https://1.1.1.1/") == ""
+
+
+def test_web_fetch_full_skips_truncation():
+    """EVO-20260819 full=true: 超过 max_chars 不截断，一次返回全部正文."""
+    tool = WebFetchTool()
+    long_body = "X" * 2500
+    with mock.patch.object(tool, "_request", return_value=_FakeResponse(200, f"<html>{long_body}</html>")):
+        r = tool.execute(url="https://example.com", max_chars=1000)
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "已截断" in r.content  # 默认截断
+    with mock.patch.object(tool, "_request", return_value=_FakeResponse(200, f"<html>{long_body}</html>")):
+        r2 = tool.execute(url="https://example.com", max_chars=1000, full=True)
+    assert "已截断" not in r2.content
+    assert long_body in r2.content  # 全文返回
+
+
+def test_read_file_full_skips_truncation(tmp_path):
+    """EVO-20260819 full=true: 跳过 3000 字符截断，返回完整内容."""
+    p = tmp_path / "big.txt"
+    p.write_text("\n".join(f"line-{i}" for i in range(600)), encoding="utf-8")
+    tool = ReadFileTool()
+    r_default = tool.execute(path=str(p))
+    assert "截断" in r_default.content  # 默认截断（>3000 字符）
+    r_full = tool.execute(path=str(p), full=True)
+    assert "截断" not in r_full.content
+    assert "line-599" in r_full.content  # 尾部内容完整返回

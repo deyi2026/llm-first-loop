@@ -301,6 +301,7 @@ class WebFetchTool:
             "max_chars": {"type": "integer", "description": "返回内容最大字符数（默认 100000）"},
             "start": {"type": "integer", "description": "分页续读起始偏移（字符，默认 0）。正文超长被截断后，用 start=上次位置 续读下一段"},
             "count": {"type": "integer", "description": "分页续读每段长度（字符，默认 max_chars）。start 与 count 正交：start 定起点、count 定段长（分页续读语义）"},
+            "full": {"type": "boolean", "description": "按需全量（默认 false）：true=跳过本工具 max_chars 截断，一次返回全部正文（需全文推理时用；内容大占用上下文，谨慎使用）"},
         },
         "required": ["url"],
     }
@@ -487,6 +488,8 @@ class WebFetchTool:
     def execute(self, **kwargs) -> ToolResult:
         url = str(kwargs.get("url", "")).strip()
         max_chars = int(kwargs.get("max_chars", 100000) or 100000)
+        # EVO-20260819 full=true（按需全量）：跳过本工具截断（注册表层仍保硬上限安全阀）
+        full = bool(kwargs.get("full", False))
         start = int(kwargs.get("start", 0) or 0)
         if start < 0:
             start = 0
@@ -651,7 +654,7 @@ class WebFetchTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
-        if len(body) > max_chars:
+        if not full and len(body) > max_chars:
             body = body[:max_chars] + f"\n…[内容超长，已截断，共 {len(body)} 字符；可用 start={max_chars} 续读]…"
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
