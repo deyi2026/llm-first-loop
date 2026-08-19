@@ -246,10 +246,13 @@ def _layer_trim(
     age: int,
     session_id: str,
     archive_sink: ArchiveSink | None,
+    tail_keep: int = 0,  # EVO-20260818-f675796c: 工具结果 tail 窗口（0=关闭/零回归；>0 距最新 >= tail_keep 条强制降级）
 ) -> list[Message]:
     """历史分层降级（EVO-20260811-7baa2737）: 旧的长 tool 消息降级为首尾摘要.
 
-    规则: role=tool 且 content 超 threshold 且距最新消息 >= age 条 → 降级。
+    规则: role=tool 且 content 超 threshold 且距最新消息 >= age 条 → 降级；
+    tail_keep>0 时（tail 窗口模式）距最新 >= tail_keep 条的工具消息【无条件】降级
+    （不论长度——提交视图只保留最近 tail_keep 条工具结果，中间全部归档降级）。
     原文经 archive_sink 归档（信息零丢失），消息本身保留（role/tool_name/status 不变），
     仅 content 替换为摘要 + 检索指引。返回新消息列表（无副作用，不动原消息）。
     """
@@ -257,10 +260,19 @@ def _layer_trim(
         return list(messages)
     out: list[Message] = []
     n = len(messages)
+    # EVO-20260818-f675796c: tail 窗口按【tool 消息序】计数（非消息索引——中间夹 assistant
+    # 消息会让按索引计数的保留数少于 N）。取最后 tail_keep 个 tool 消息为保留集，其余降级。
+    keep_set: set[int] = set()
+    if tail_keep > 0:
+        tool_idxs = [i for i, m in enumerate(messages) if m.role == "tool" and m.content]
+        keep_set = set(tool_idxs[max(0, len(tool_idxs) - tail_keep):])
     for idx, m in enumerate(messages):
-        is_old_tool = (
-            m.role == "tool" and m.content and len(m.content) > threshold and (n - 1 - idx) >= age
-        )
+        if tail_keep > 0:
+            is_old_tool = m.role == "tool" and m.content and idx not in keep_set
+        else:
+            is_old_tool = (
+                m.role == "tool" and m.content and len(m.content) > threshold and (n - 1 - idx) >= age
+            )
         if not is_old_tool:
             out.append(m)
             continue
@@ -410,6 +422,7 @@ def build_history_messages(
     layer_tool_trim: bool = False,  # EVO-20260811-7baa2737: 历史分层降级（默认关=零回归，loop 装配时按 settings 启用）
     tool_trim_threshold: int = 8000,  # tool 消息 content 超此长度才降级（默认 8000，EVO-20260815 调大减少折叠触发）
     tool_trim_age: int = 0,  # R3: 0=自适应（按占用率自动调）；>0=固定值禁用自适应
+    tool_tail: int = 0,  # EVO-20260818-f675796c: 工具结果 tail 窗口（0=关闭/零回归；>0 距最新 >= N 条强制降级，提交视图只保留最近 N 条）
     reasoning_tail: int = 2,  # M66: 历史中仅保留最近 N 轮 assistant 思考链（0=全部保留）
     skip_injected_system: bool = False,  # P1-7: 跳过推送式 system 注入（metadata.injected_system）
     # —— 仅落会话不进提交, system 前缀保持静态 → 引擎前缀缓存命中; 功能性注入不受影响
@@ -545,6 +558,7 @@ def build_history_messages(
                 age=tool_trim_age,
                 session_id=session_id,
                 archive_sink=archive_sink,
+                tail_keep=tool_tail,  # EVO-20260818-f675796c: tail 窗口
             )
             total_chars = sum(len(m.content) for m in session_messages)
     if total_chars <= compact_limit:
@@ -556,6 +570,7 @@ def build_history_messages(
                 age=tool_trim_age,
                 session_id=session_id,
                 archive_sink=archive_sink,
+                tail_keep=tool_tail,  # EVO-20260818-f675796c: tail 窗口
             ),
             reasoning_tail,
         ):

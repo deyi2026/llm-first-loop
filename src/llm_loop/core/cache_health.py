@@ -15,9 +15,14 @@
 
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# EVO-20260818-f68163b7: 基线持久化路径（session_id→稳定段指纹，跨重启保留观测能力）
+_DEFAULT_BASELINES_PATH = Path(__file__).resolve().parents[2] / "data/state/cache_baselines.json"
 
 # EVO-20260817-72fcd94a: 门禁干预知情标记（固定文本，一次性注入 built 末尾——缓存友好，
 # 不破坏前缀；让 AI 感知本轮上下文结构变化，消除困惑）
@@ -39,6 +44,7 @@ class CacheHealthMonitor:
         recover_thr: float = 0.8,
         force_head_ratio: float = 0.15,
         recovery_timeout_runs: int = 20,
+        baselines_path: str | Path | None = None,  # EVO-20260818-f68163b7: 持久化路径（默认 data/state；测试可传 tmp）
     ) -> None:
         # 窗口状态
         self._win_in = 0
@@ -53,7 +59,9 @@ class CacheHealthMonitor:
         self._force_head_keep = False
         self._fail_alerted = False  # 恢复失败已提示（每进程一次，防刷屏）
         # 发送前门禁（per-session 基线: 不同会话注入/记忆不同，互不干扰）
-        self._baselines: dict[str, str] = {}  # session_id → 稳定段指纹（system+注入）
+        # EVO-20260818-f68163b7: 基线持久化——重启加载，跨重启保留漂移对比/门禁观测能力
+        self._baselines_path = Path(baselines_path) if baselines_path else _DEFAULT_BASELINES_PATH
+        self._baselines: dict[str, str] = self._load_baselines()  # session_id → 稳定段指纹（system+注入）
         self._gate_drift_count = 0
         self._gate_note_pending = False  # 知情标记待注入（干预激活首轮一次性）
         # 参数
@@ -198,6 +206,7 @@ class CacheHealthMonitor:
             self._reset_window()
             self._anchor_move_runs = 0
             self._baselines = {}
+            self._save_baselines()  # EVO-20260818-f68163b7: 模型切换清盘（防跨模型基线污染）
             self._gate_drift_count = 0
             self._force_head_keep = False
             self._gate_note_pending = False
@@ -233,6 +242,8 @@ class CacheHealthMonitor:
         try:
             prev = self._baselines.get(session_id)
             self._baselines[session_id] = stable_fp  # 总是更新为最新（受控变化即新基线）
+            if prev is None or stable_fp != prev:
+                self._save_baselines()  # EVO-20260818-f68163b7: 首建/漂移时落盘（跨重启保留）
             if prev is None:
                 return None
             if stable_fp != prev:
@@ -256,6 +267,35 @@ class CacheHealthMonitor:
         except Exception:  # noqa: BLE001
             logger.debug("知情标记消费异常（fail-open）", exc_info=True)
             return False
+
+    # ── 基线持久化（EVO-20260818-f68163b7: 跨重启保留观测能力，fail-open 降级内存态）──
+    def _load_baselines(self) -> dict[str, str]:
+        """启动加载落盘基线；IO 异常/格式非法 → 空（纯内存态，不阻断）。"""
+        try:
+            if self._baselines_path.exists():
+                data = json.loads(self._baselines_path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return {
+                        str(k): str(v)
+                        for k, v in data.items()
+                        if isinstance(k, str) and isinstance(v, str)
+                    }
+        except Exception:  # noqa: BLE001
+            logger.debug("缓存基线加载失败（fail-open，纯内存态）", exc_info=True)
+        return {}
+
+    def _save_baselines(self) -> None:
+        """落盘基线（原子写: 临时文件 + rename）；IO 异常降级内存态，不抛不阻断。"""
+        try:
+            self._baselines_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._baselines_path.with_suffix(".tmp")
+            tmp.write_text(
+                json.dumps(self._baselines, ensure_ascii=False, sort_keys=True),
+                encoding="utf-8",
+            )
+            tmp.replace(self._baselines_path)
+        except Exception:  # noqa: BLE001
+            logger.debug("缓存基线持久化失败（fail-open，保持内存态）", exc_info=True)
 
     # ── 状态快照（可观测/测试）──
     def snapshot(self) -> dict:

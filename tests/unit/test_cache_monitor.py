@@ -6,7 +6,18 @@
 
 from __future__ import annotations
 
+import pytest
+
 from llm_loop.core.cache_health import CacheHealthMonitor
+
+
+@pytest.fixture(autouse=True)
+def _isolate_baselines(tmp_path, monkeypatch):
+    """EVO-20260818-f68163b7: 基线持久化默认路径隔离到 tmp_path——防测试间/真实文件互相污染."""
+    monkeypatch.setattr(
+        "llm_loop.core.cache_health._DEFAULT_BASELINES_PATH",
+        tmp_path / "cache_baselines.json",
+    )
 
 
 def _mon(**kw) -> CacheHealthMonitor:
@@ -201,6 +212,56 @@ def test_gate_first_send_builds_baseline():
     assert hint is None
     assert m.postcheck("s1", "fp-first") is None
     assert m.snapshot()["baselines"].get("s1") == "fp-first"  # 基线按 session 建立
+
+
+def test_baselines_persist_across_restart(tmp_path):
+    """EVO-20260818-f68163b7: 基线落盘→新实例（模拟重启）加载→漂移对比/观测能力保留."""
+    p = tmp_path / "cache_baselines.json"
+    m1 = CacheHealthMonitor(baselines_path=p)
+    m1.postcheck("s1", "fp-A")  # 首建基线 → 落盘
+    assert p.exists()
+    # 模拟重启: 新实例从落盘加载
+    m2 = CacheHealthMonitor(baselines_path=p)
+    assert m2.snapshot()["baselines"].get("s1") == "fp-A"
+    # 重启后首轮即有 prev → 漂移可对比（preflight 触发门禁）
+    m2.preflight("s1", "fp-B")
+    assert m2.snapshot()["force_head_keep"] is True
+    assert m2.snapshot()["gate_drift_count"] >= 1
+
+
+def test_baselines_reset_clears_disk(tmp_path):
+    """EVO-20260818-f68163b7: reset（模型切换）清内存 + 清盘——防跨模型基线污染."""
+    p = tmp_path / "cache_baselines.json"
+    m = CacheHealthMonitor(baselines_path=p)
+    m.postcheck("s1", "fp-A")
+    assert p.exists()
+    m.reset("model switch")
+    assert m.snapshot()["baselines"] == {}
+    assert not p.exists() or p.read_text(encoding="utf-8") == "{}"
+
+
+def test_baselines_load_fail_open(tmp_path):
+    """EVO-20260818-f68163b7: 落盘文件损坏 → 加载降级纯内存态，不抛不阻断."""
+    p = tmp_path / "cache_baselines.json"
+    p.write_text("{invalid json!!", encoding="utf-8")
+    m = CacheHealthMonitor(baselines_path=p)  # 不应抛异常
+    assert m.snapshot()["baselines"] == {}
+    # 后续 postcheck 正常建基线且可写回
+    m.postcheck("s1", "fp-A")
+    assert m.snapshot()["baselines"].get("s1") == "fp-A"
+
+
+def test_baselines_save_fail_open(tmp_path):
+    """EVO-20260818-f68163b7: 写盘失败（只读目录）→ 降级内存态，不抛不阻断."""
+    ro = tmp_path / "ro"
+    ro.mkdir()
+    ro.chmod(0o500)
+    try:
+        m = CacheHealthMonitor(baselines_path=ro / "sub" / "b.json")
+        m.postcheck("s1", "fp-A")  # mkdir 失败 → fail-open
+        assert m.snapshot()["baselines"].get("s1") == "fp-A"  # 内存基线仍工作
+    finally:
+        ro.chmod(0o700)
 
 
 def test_gate_note_injected_once_on_activation():

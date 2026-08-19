@@ -245,11 +245,16 @@ class Settings:
     # EVO-20260811-7baa2737: 历史分层降级（旧长 tool 消息降级为摘要，原文归档）
     tool_trim_enabled: bool = True
     # R3: tool_trim 自适应降级年龄（0=自适应：按占用率自动调 <40%→20/40-70%→10/>70%→5；>0=固定值禁用自适应）
-    tool_trim_age: int = 0  # auto-adaptive (existing): 0=按占用率自适应
+    # EVO-20260818-f675796c: 默认 0→2（固定小值，绕过占用率自适应——1M 豁免预算下占用率恒低，
+    # 自适应恒返回 20 导致旧工具结果 20 轮不降级、提交体积无界增长稀释命中率）
+    tool_trim_age: int = 2  # EVO-20260818-f675796c: 固定 2（env TOOL_TRIM_AGE 可调；0=回到自适应）
     # EVO-A: tool_trim 降级长度阈值（tool 消息 content 超过此长度且达到年龄才降级；
-    # 默认 8000：常规工具输出（grep/读文件片段/短日志）不触发折叠，大输出（长日志/抓取全文）才降级；
+    # EVO-20260818-f675796c: 默认 8000→2500（收紧：常规工具输出也参与降级，配合 tail 窗口保持提交尾部小）
     # 折叠时提取关键事实摘要优先、首尾截断兜底；越小越省 token，越大越少折叠触发）
-    tool_trim_threshold: int = 8000
+    tool_trim_threshold: int = 2500
+    # EVO-20260818-f675796c: 工具结果 tail 窗口（0=关闭/零回归；>0 提交视图只保留最近 N 条 tool 消息，
+    # 更早的 tool 消息一律分层降级（原文归档可检索）——头/尾稳定、中间不进提交 → 长任务命中率不随轮数下降）
+    tool_tail: int = 16  # 对齐 local LMS_CHAT_TAIL=16（env TOOL_TAIL 可调）
     mcp_servers_raw: str = ""  # P3-1: MCP_SERVERS JSON（stdio MCP 服务器列表）
     # ── EXEC_MODE 命令分级（EVO-20260810-2549e9b6）──
     # 默认空 = 不启用分级（AI 可执行 shell，仅灾难性硬阻断）；可选 readonly/allowlist/blocked 安全分级
@@ -532,8 +537,9 @@ def load_settings() -> Settings:
         tool_max_output_chars=_env_int("TOOL_MAX_OUTPUT_CHARS", 100000),
         tool_summary_threshold=_env_int("TOOL_SUMMARY_THRESHOLD", 12000),  # 2026-08-15 放大字数
         tool_trim_enabled=_env_bool("TOOL_TRIM_ENABLED", True),
-        tool_trim_age=_env_int("TOOL_TRIM_AGE", 0),
-        tool_trim_threshold=_env_int("TOOL_TRIM_THRESHOLD", 8000),
+        tool_trim_age=_env_int("TOOL_TRIM_AGE", 2),
+        tool_trim_threshold=_env_int("TOOL_TRIM_THRESHOLD", 2500),
+        tool_tail=_env_int("TOOL_TAIL", 16),
         mcp_servers_raw=os.environ.get("MCP_SERVERS", "").strip(),  # P3-1 MCP stdio 服务器
         exec_mode=_env_exec_mode("EXEC_MODE"),
         exec_allowlist=os.environ.get("EXEC_ALLOWLIST", "").strip(),

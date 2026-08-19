@@ -640,3 +640,59 @@ def test_compact_ratio_one_is_legacy():
     msgs2 = [_m("user", "u"), _m("assistant", "x" * 10500)]
     out2 = build_history_messages(msgs2, system_prompt="SYS", max_chars=10000, compact_ratio=1.0)
     assert any("[上下文压缩]" in str(m.get("content", "")) for m in out2)
+
+
+def test_tool_tail_window_keeps_recent_degrades_old():
+    """EVO-20260818-f675796c: tool_tail>0 时提交视图只保留最近 N 条工具结果，更早的无条件降级（原文归档）。
+
+    T22 验收: 头/尾稳定、中间不进提交 → 长任务命中率不随轮数下降；信息零丢失（归档）。
+    """
+    msgs = [_m("user", "q")]
+    # 5 轮工具调用（每条 < threshold，验证 tail 窗口不依赖长度阈值）
+    for i in range(5):
+        msgs.append(_m("assistant", f"call{i}"))
+        msgs.append(Message(
+            role="tool", content=f"result-{i}: " + "x" * 50,
+            source=MessageSource.TOOL, tool_call_id=f"tc{i}", tool_name="demo",
+        ))
+    archived: list[Message] = []
+
+    def _sink(session_id: str, m: Message) -> None:
+        archived.append(m)
+
+    out = build_history_messages(
+        msgs, system_prompt="SYS", max_chars=100000,
+        layer_tool_trim=True, tool_tail=2,  # 只保留最近 2 条工具结果
+        session_id="test-tail-session",  # 归档需 session_id 非空（防误归档）
+        archive_sink=_sink,
+    )
+    # 断言: 最近 2 条 tool 结果原文保留，前 3 条被降级为摘要
+    tool_msgs = [m for m in out if m.get("role") == "tool"]
+    assert len(tool_msgs) == 5  # 消息数不变（降级非删除）
+    assert any("result-4" in m.get("content", "") for m in tool_msgs)
+    assert any("result-3" in m.get("content", "") for m in tool_msgs)
+    # 旧的被降级（含 "[工具输出已分层]" 标注 + 归档）
+    degraded = [m for m in tool_msgs if "[工具输出已分层]" in m.get("content", "")]
+    assert len(degraded) == 3
+    assert len(archived) == 3  # 原文已归档（零丢失）
+    # 降级消息内容含检索指引
+    assert all("search_archive" in m.get("content", "") for m in degraded)
+
+
+def test_tool_tail_zero_legacy_no_trim():
+    """EVO-20260818-f675796c: tool_tail=0（默认）零回归——短工具结果不降级（旧行为）。"""
+    msgs = [_m("user", "q")]
+    for i in range(3):
+        msgs.append(_m("assistant", f"call{i}"))
+        msgs.append(Message(
+            role="tool", content=f"result-{i}: " + "x" * 50,
+            source=MessageSource.TOOL, tool_call_id=f"tc{i}", tool_name="demo",
+        ))
+    out = build_history_messages(
+        msgs, system_prompt="SYS", max_chars=100000,
+        layer_tool_trim=True, tool_tail=0,  # 默认关闭
+    )
+    tool_msgs = [m for m in out if m.get("role") == "tool"]
+    assert len(tool_msgs) == 3
+    assert all("result-" in m.get("content", "") for m in tool_msgs)  # 原文全保留
+    assert not any("[工具输出已分层]" in m.get("content", "") for m in tool_msgs)
