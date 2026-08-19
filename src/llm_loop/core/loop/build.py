@@ -178,9 +178,9 @@ class _BuildMixin:
             tool_trim_threshold=getattr(
                 self.settings, "tool_trim_threshold", 8000
             ),  # EVO-A: 降级长度阈值（默认 8000）
-            tool_tail=getattr(
-                self.settings, "tool_tail", 0
-            ),  # EVO-20260818-f675796c: 工具结果 tail 窗口（0=关闭；>0 只保留最近 N 条）
+            # 2026-08-20 回滚修复: 移除悬空 tool_tail 参数——history.py 的
+            # build_history_messages() 不接受该参数（3点基线无此功能，config 恒为 0），
+            # 回滚后每次对话 TypeError；参数支持在 backup/20260819-after-3am 分支
             reasoning_tail=getattr(self.settings, "reasoning_tail", 2),  # M66 思考链瘦身
             # P1-7/spec §5.3.1-5（2026-08-18 审计断点归因绝对化）: 推送式注入（架构上报/
             # 预算预警/轮数预警/声明提醒/自我评估提醒/快照）一律不进提交视图——不再受
