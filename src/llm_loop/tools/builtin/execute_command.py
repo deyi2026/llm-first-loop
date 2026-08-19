@@ -85,7 +85,7 @@ def _truncate_output(content: str, command: str = "") -> str:
         [w for w in command.split() if w.isalnum() and len(w) >= 2 and w not in _NOISE_WORDS][:3]
     )
     # 完整输出落盘（f485acac）——仅超阈值时；data/ 已 gitignore 不入库
-    saved_note = ""
+    dump_path_str = ""
     try:
         import os
         import time
@@ -97,16 +97,15 @@ def _truncate_output(content: str, command: str = "") -> str:
         safe_cmd = "".join(c if c.isalnum() or c in "-_." else "_" for c in command[:40])
         dump_path = out_dir / f"{time.strftime('%Y%m%d-%H%M%S')}_{safe_cmd[:24] or 'cmd'}.log"
         dump_path.write_text(content, encoding="utf-8")
-        saved_note = f"\n完整输出已落盘: {dump_path}（可 read_file 按需读取全文，无需重跑命令）"
+        dump_path_str = str(dump_path)
     except Exception:  # noqa: BLE001 — 落盘失败不阻断截断
-        saved_note = ""
+        dump_path_str = ""
+    # 2026-08-20: 标记统一走共享 truncation_marker（事实+动作两段式——防重跑循环）
+    from llm_loop.tools.trim import truncation_marker
+
     return (
         f"{head}\n"
-        f"[输出已截断] 事实: 完整输出 {len(content)} 字符，仅展示首 {keep_head} + 末 {keep_tail} 字符"
-        f"（触发阈值: {max_chars} 字符，TOOL_TRIM_MAX/HEAD/TAIL 环境变量可调）。"
-        f"\n原因: 上下文优化（方案 4 工具输出截断）。"
-        f"\n建议: 如需完整内容可用 search_archive 检索{'，搜索关键词: ' + kw if kw else '（按命令相关词检索）'}。"
-        f"{saved_note}\n"
+        f"{truncation_marker(len(content), keep_head, keep_tail, max_chars, kw, dump_path_str)}\n"
         f"{tail}"
     )
 
@@ -119,8 +118,8 @@ class ExecuteCommandTool:
         "失败对策: 非零退出码会如实返回并标注；破坏性命令（rm -rf 根目录等）会被安全边界硬阻断，请改用安全方案。"
         "状态契约: 每次调用是独立 shell 进程——cd/环境变量/命令历史不跨调用持久（用 workdir 参数或命令内 cd && 串联）；"
         "run_in_background 任务跨调用持久，经 job_output/job_kill 管理；"
-        "输出超 3000 字符将截断为首 1500 + 末 1500（完整原文另存压缩档案可 search_archive 检索；"
-        "阈值由 TOOL_TRIM_MAX/HEAD/TAIL 环境变量控制）；"
+        "输出超 3000 字符将截断为首 1500 + 末 1500（完整原文落盘可 read_file 读取，或 search_archive 检索，"
+        "或加 full=true 参数一次取全文；阈值由 TOOL_TRIM_MAX/HEAD/TAIL 环境变量控制）；"
         "长任务拆多次中型调用防超时丢进度，大量中间产物落盘文件而非全靠回显。"
     )
     parameters = {
