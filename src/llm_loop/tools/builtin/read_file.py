@@ -16,7 +16,8 @@ class ReadFileTool:
         "何时不用: 需要列出目录或查找文件时（应选目录/查找类工具）；URL 不是文件路径。"
         "失败对策: 文件不存在/无权限会如实返回失败原因，请核对路径后重试或换工具。"
         "状态契约: 长输出超 3000 字符将截断（首尾保留 + 完整原文落盘 data/audit/tool_outputs/，"
-        "可 read_file 落盘路径或 search_archive 检索全文——零信息丢失；TOOL_TRIM_MAX 可调）"
+        "可 read_file 落盘路径、search_archive 检索全文，或加 full=true 一次取全文——零信息丢失；"
+        "TOOL_TRIM_MAX 可调）"
         "——超大文件建议直接用 offset/limit 分段读取。"
     )
     parameters = {

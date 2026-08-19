@@ -27,6 +27,33 @@ def trim_config() -> tuple[int, int, int]:
     )
 
 
+def truncation_marker(
+    total: int,
+    keep_head: int,
+    keep_tail: int,
+    max_chars: int,
+    keywords: str = "",
+    dump_path: str = "",
+) -> str:
+    """截断标记（事实 + 动作两段式，2026-08-20 停滞循环排查落地）.
+
+    事实段如实告知截断与确定性；动作段显式声明"重跑相同命令/重读同一路径不会得到
+    新信息"，并给出取全文通道（full=true / read_file 落盘 / search_archive）——
+    封死"截断视图 → 重跑同命令 → 同视图"的空转循环（事故: 20fdd562 会话连续 5 次
+    相同参数重跑 grep 被停滞熔断）。
+
+    2026-08-20 精简（token 用量反馈）: 标记随历史每轮重发，冗长解释按 token 计费——
+    保留防重跑声明 + 三条取全文路径，砍掉原因/可调参数/建议等冗余说明（~410→~170 字符）。
+    """
+    dump = f" {dump_path}" if dump_path else ""
+    kw = keywords or "按相关词"
+    return (
+        f"[输出已截断] 完整 {total} 字符，仅首 {keep_head} + 尾 {keep_tail}"
+        f"（阈值 {max_chars}）。截断确定性: 重跑得同结果勿重跑。"
+        f"取全文: full=true 重调 / read_file 读取落盘全文{dump} / search_archive 关键词 {kw}。"
+    )
+
+
 def truncate_output(content: str, source: str = "") -> str:
     """截断长输出：保留首 N + 末 M 字符，中间附截断说明；超阈值完整输出落盘.
 
@@ -39,24 +66,24 @@ def truncate_output(content: str, source: str = "") -> str:
     head = content[:keep_head]
     tail = content[-keep_tail:]
     kw = " ".join(
-        w for w in source.split() if w.isalnum() and len(w) >= 2 and w not in {"and", "or", "not", "the", "for", "with", "echo"}
-    )[:3]
-    saved_note = ""
+        [
+            w
+            for w in source.split()
+            if w.isalnum() and len(w) >= 2 and w not in {"and", "or", "not", "the", "for", "with", "echo"}
+        ][:3]
+    )
+    dump_path_str = ""
     try:
         out_dir = Path(os.environ.get("DATA_DIR", "data")) / "audit" / "tool_outputs"
         out_dir.mkdir(parents=True, exist_ok=True)
         safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in source[:40]) or "out"
         dump_path = out_dir / f"{time.strftime('%Y%m%d-%H%M%S')}_{safe[:24]}.log"
         dump_path.write_text(content, encoding="utf-8")
-        saved_note = f"\n完整输出已落盘: {dump_path}（可 read_file 按需读取全文）"
+        dump_path_str = str(dump_path)
     except Exception:  # noqa: BLE001 — 落盘失败不阻断截断
-        saved_note = ""
+        dump_path_str = ""
     return (
         f"{head}\n"
-        f"[输出已截断] 事实: 完整输出 {len(content)} 字符，仅展示首 {keep_head} + 末 {keep_tail} 字符"
-        f"（触发阈值: {max_chars} 字符，TOOL_TRIM_MAX/HEAD/TAIL 环境变量可调）。"
-        f"\n原因: 上下文优化（方案 4 工具输出截断——对齐 DSH——尾部新增小=缓存命中高）。"
-        f"\n建议: 如需完整内容可用 search_archive 检索{'，搜索关键词: ' + kw if kw else '（按相关词检索）'}。"
-        f"{saved_note}\n"
+        f"{truncation_marker(len(content), keep_head, keep_tail, max_chars, kw, dump_path_str)}\n"
         f"{tail}"
     )
