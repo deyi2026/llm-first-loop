@@ -19,6 +19,20 @@ description: 网页/文章链接抓取与分析的最快路径技能——用户
 
 ## 标准流程（3 步决策树）
 
+### Step 0（头条专属，最快 0.3s）: info/v2 JSON 接口
+
+```bash
+UA="Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+# 文章 ID 从链接提取：article/<ID> 或 ?group_id=<ID> 或 i<ID>/
+curl -s -A "$UA" "https://m.toutiao.com/i<文章ID>/info/v2/" -o /tmp/x.json
+```
+
+返回 JSON（2026-08-20 实测，字段在 `data` 内）：
+- `data.title` / `data.content`（HTML 正文段落）/ `data.publish_time` / `data.comment_count` / `data.impression_count` / `data.is_original`
+- 解析：`data.content` 清洗 HTML（`re.sub(r'<[^>]+>', '\n', ...)` + `html.unescape`）即得纯文本正文
+
+**成功即完成，无需探针**——比 HTML 路径少一步。失败（非 JSON / 无 `data.content` / 被限流）再走 Step 1 HTML 路径兜底。
+
 ### Step 1: curl 抓移动版 HTML（0.5s）
 
 ```bash
@@ -66,7 +80,7 @@ text = ihtml.unescape(text)
 print(re.sub(r'\n{3,}', '\n\n', text).strip())
 ```
 
-**注意头条两路径字段结构不同**：`/article/<ID>` 用 `articleInfo.content`（HTML 含 `</p>`），`/w/<ID>` 用 `articleInfo.thread.threadBase.richContent`（HTML 只含 `<br/>`）。默认抽 `articleInfo.content` 在 `/w/` 路径会 NoneType 崩溃——**先判 URL 路径再选字段**。
+**注意头条多路径字段结构不同**：`info/v2` 接口用 `data.content`（HTML 含 `</p>`，最快路径）；`/article/<ID>` 用 `articleInfo.content`（HTML 含 `</p>`）；`/w/<ID>` 用 `articleInfo.thread.threadBase.richContent`（HTML 只含 `<br/>`）。默认抽 `articleInfo.content` 在 `/w/` 路径会 NoneType 崩溃——**先判 URL 路径/接口再选字段**。
 
 ### Step 3: 读取正文 → 直接分析/回答
 
