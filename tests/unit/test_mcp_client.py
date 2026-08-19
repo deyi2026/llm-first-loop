@@ -111,24 +111,24 @@ def test_register_mcp_tools_and_execute():
     registry = ToolRegistry()
     raw = json.dumps([{"name": "fake", "command": "python3", "args": [str(_FIXTURE)]}])
     registered = register_mcp_tools(registry, raw)
-    assert "mcp.fake.echo" in registered
-    assert "mcp.fake.boom" in registered
+    assert "mcp_fake_echo" in registered
+    assert "mcp_fake_boom" in registered
 
     def _exec(name: str, args: dict):
         return registry.execute(ToolCall(id=f"c-{name}", name=name, arguments=args))
 
     # echo → success
-    r = _exec("mcp.fake.echo", {"text": "hi"})
+    r = _exec("mcp_fake_echo", {"text": "hi"})
     assert r.status == ToolResultStatus.SUCCESS
     assert "echo:hi" in r.content
 
     # boom → failure
-    r = _exec("mcp.fake.boom", {})
+    r = _exec("mcp_fake_boom", {})
     assert r.status == ToolResultStatus.FAILURE
     assert "boom 错误详情" in r.content
 
     # 未注册工具 → failure（fail-closed）
-    r = _exec("mcp.fake.missing", {})
+    r = _exec("mcp_fake_missing", {})
     assert r.status == ToolResultStatus.FAILURE
 
 
@@ -141,9 +141,9 @@ def test_register_fail_open_when_server_down(caplog: pytest.LogCaptureFixture):
         {"name": "fake", "command": "python3", "args": [str(_FIXTURE)]},
     ])
     registered = register_mcp_tools(registry, raw)
-    assert "mcp.dead.echo" not in registered  # 死服务器 fail-open
-    assert "mcp.fake.echo" in registered  # 健康服务器不受影响
-    r = registry.execute(ToolCall(id="c-d", name="mcp.dead.echo", arguments={}))
+    assert "mcp_dead_echo" not in registered  # 死服务器 fail-open
+    assert "mcp_fake_echo" in registered  # 健康服务器不受影响
+    r = registry.execute(ToolCall(id="c-d", name="mcp_dead_echo", arguments={}))
     assert r.status == ToolResultStatus.FAILURE
 
 
