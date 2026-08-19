@@ -83,6 +83,8 @@ export function Composer() {
             hasMoreHistory: false,
             loadedHistoryCount: 0,
             streamStartedAt: null,
+            // 归属复位：新建会话视图不接收旧会话流式写入
+            sessionId: null,
           });
           // 草稿 key 随 currentSessionId 变为 "lfl-draft-new"——若不清除，草稿恢复
           // effect 会把刚输入的命令文本（如 "/new"）恢复回来（stage2 测试实证）
@@ -100,6 +102,8 @@ export function Composer() {
             hasMoreHistory: false,
             loadedHistoryCount: 0,
             streamStartedAt: null,
+            // 归属复位：清除上下文视图不接收旧会话流式写入
+            sessionId: null,
           });
           localStorage.removeItem("lfl-draft-new");
         },

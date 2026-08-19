@@ -49,6 +49,8 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
       hasMoreHistory: false,
       loadedHistoryCount: 0,
       streamStartedAt: null,
+      // 归属复位：新会话视图不接收旧会话流式写入（防内容串显）
+      sessionId: null,
     });
     // 2026-08-19: 清草稿防 Composer 草稿恢复 effect 回填旧输入
     localStorage.removeItem("lfl-draft-new");
@@ -69,6 +71,8 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
         hasMoreHistory: false,
         loadedHistoryCount: 0,
         streamStartedAt: null,
+        // 归属复位：被删会话的流式写入不得进入空视图
+        sessionId: null,
       });
     }
     await refreshSessionsAndCurrent();
@@ -155,7 +159,13 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
         onWorkspaceChanged={() => {
           // 新工作区无旧会话上下文：清空当前会话与对话区（对齐 handleNew）
           sessionStore.setCurrentSession("");
-          conversationStore.setState({ messages: [], hasMoreHistory: false, loadedHistoryCount: 0 });
+          conversationStore.setState({
+            messages: [],
+            hasMoreHistory: false,
+            loadedHistoryCount: 0,
+            // 归属复位：旧工作区会话的流式写入不得进入新工作区视图
+            sessionId: null,
+          });
           void refreshSessionsAndCurrent();
         }}
       >

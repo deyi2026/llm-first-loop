@@ -20,7 +20,19 @@ export function Conversation() {
     if (currentId) {
       void loadHistory(currentId);
     } else {
-      conversationStore.setState({ messages: [], hasMoreHistory: false, loadedHistoryCount: 0 });
+      // 新建会话：清空视图并复位归属标记（防旧会话流式终态写入新会话视图）
+      conversationStore.setState({
+        messages: [],
+        hasMoreHistory: false,
+        loadedHistoryCount: 0,
+        streaming: false,
+        streamingIndex: -1,
+        backgroundRunning: false,
+        lastError: null,
+        streamStartedAt: null,
+        sessionId: null,
+        loading: false,
+      });
     }
   }, [currentId]);
 

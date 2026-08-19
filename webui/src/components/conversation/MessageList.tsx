@@ -38,6 +38,14 @@ export function MessageList() {
   }, [conv.messages, atBottom]);
 
   if (conv.messages.length === 0) {
+    // 切换会话后历史加载中：显示加载态（区别于空会话引导，防"别的会话内容"误解）
+    if (conv.loading) {
+      return (
+        <div className="v2-conversation-empty" data-testid="loading-state">
+          <p className="v2-conversation-loading">⏳ 加载中…</p>
+        </div>
+      );
+    }
     return (
       <div className="v2-conversation-empty" data-testid="empty-state">
         <h2>{zh.emptyHeroTitle}</h2>
