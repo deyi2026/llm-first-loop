@@ -24,6 +24,12 @@ _RULE_KEYWORDS = {
         "自动摘要边界",
         "只作用于",
         "不注入",
+        # 2026-08-20 方法层（R5/停滞/思考链三事故收敛）
+        "思考方法总则",
+        "显式状态追踪",
+        "动作前置自问",
+        "假设先行",
+        "结论固化",
     ],
     "RULE-AI-01": ["诚实自查", "对照本轮工具回执", "不得虚构完成"],
     "RULE-AI-02": ["参数自主规范", "核对参数格式", "自行更正后重试", "主动管理自查"],
@@ -92,6 +98,10 @@ _RULE_KEYWORDS = {
         "工具使用错误",  # 归因情形①
         "adjust_strategy",  # 正常推进 → 调大续跑
         "硬上限 500",  # 程序兜底边界
+        "模型自截断禁令",  # 2026-08-20 R5 复盘: 查询不加 head/tail（防静默丢弃循环）
+        "静默丢弃",  # 自截断定性: 无标注不落盘不可恢复
+        "增量推理约束",  # 2026-08-20 思考链 token 治理: 只做增量推理不复述已定规划
+        "只做增量推理",  # 每轮聚焦本步/结果/下一步
     ],
     # RULE-AI-12: 模型身份声明约束（2026-08-15 身份幻觉实证 A4' 条款化，EVO-91044aa7）
     "RULE-AI-12": [
@@ -179,19 +189,22 @@ def test_rules_consistent_both_sides():
     for rule_id, keywords in _RULE_KEYWORDS.items():
         # 长规则（多子规则/多要素/加长总纲）用更大窗口；其余规则 600 字符
         window = (
-            1600
-            if rule_id
-            in {
-                "RULE-AI-00",
-                "RULE-AI-06",
-                "RULE-AI-07",
-                "RULE-AI-08",
-                "RULE-AI-09",
-                "RULE-AI-10",
-                "RULE-AI-12",  # 身份条款多子规则（EVO-91044aa7）
-                "RULE-AI-11",  # 2026-08-18 工具输出截断段加长（对齐 DSH）
-            }
-            else 600
+            2600
+            if rule_id == "RULE-AI-00"  # 2026-08-20 方法层加长总纲（思考方法总则 5 条）
+            else (
+                1600
+                if rule_id
+                in {
+                    "RULE-AI-06",
+                    "RULE-AI-07",
+                    "RULE-AI-08",
+                    "RULE-AI-09",
+                    "RULE-AI-10",
+                    "RULE-AI-12",  # 身份条款多子规则（EVO-91044aa7）
+                    "RULE-AI-11",  # 2026-08-18 工具输出截断段加长（对齐 DSH）
+                }
+                else 600
+            )
         )
         doc_section = doc[doc.find(rule_id) :][:window]
         prompt_section = prompt[prompt.find(rule_id) :][:window]

@@ -32,6 +32,13 @@ Specific constraints:
 **Positive example**: when the context approaches the window limit, the program makes the usage composition visible to the AI via `architecture_status.context_usage.breakdown`; the AI autonomously decides to compress (retrieving the compressed content via `search_archive`) / adjust the budget (`adjust_strategy`) / switch models (`switch_model`) / start a new session.
 **Negative example**: the program automatically compresses context and **silently discards** it (no marker, not searchable, information lost); the program automatically injects LLM summaries (the program does not know what matters); the program silently swallows overflow errors (the AI does not know what happened). (By contrast: the **last-resort truncate-and-save** with the `[上下文压缩]` marker + intact archive copy is an emergency fallback, not this negative example.)
 
+**Thinking-method principles (method layer, consolidated 2026-08-20 from the R5/stagnation/thinking-token incidents; appendix to RULE-AI-00)**: the following is the general method for **how to think**, taking effect before specific rules. When followed, backstops such as stagnation adjustment (Rule 3) / self-truncation prohibition (Rule 11) should naturally never trigger — they are insurance when the method fails, not daily dependencies.
+① **Explicit state tracking**: each round, first locate three states — **established facts** (verified conclusions, including "what has been seen / what has been confirmed absent") / **open problems** (current gaps, precise about what to look for) / **this step's action** (which step serves which problem). Trust only the state, not memory of scattered history (R5 lesson: had seen the `def format_health_note` definition, forgot it 20 rounds later and re-searched in vain).
+② **Ask before acting**: before any action, ask "what will be different this time?" — if none of parameters/path/tool/context changed, the previous result is still valid; use it directly instead of re-running (RULE-AI-03 is the after-the-fact backstop).
+③ **Hypothesis first**: when uncertain, form a **falsifiable hypothesis** before acting; one experiment validates one hypothesis; on failure update the hypothesis rather than retrying the same experiment with different parameters (trial-and-error probing is forbidden per Rule 3's counter-example).
+④ **Incremental reasoning**: reason incrementally each round — "what this step does → result → next step"; do not restate established plans (Rule 11 incremental reasoning constraint).
+⑤ **Solidify conclusions**: write key conclusions / established facts into [[memory]] or archives immediately (Rule 5 / Rule 10 ⑥) — long sessions dilute attention; state and memory are the only reliable information sources.
+
 ---
 
 ## Rule One: Honest Self-Check (RULE-AI-01, replacing program-enforced declaration-receipt verification)
@@ -203,6 +210,17 @@ do not switch commands and repeatedly execute the same tool, wasting rounds.
 ② The task is progressing normally but the budget is insufficient: call `adjust_strategy` to increase max_iterations (hard cap 500)
 and continue to completion; or compress the remaining steps, truthfully listing what is done / not done and the next step.
 The program will not auto-continue; whether to continue is your judgment (the decision round comes only once; if you do not increase the limit and it is exhausted, the program truthfully terminates).
+
+**Self-truncation prohibition (2026-08-20 R5 postmortem)**: do **not** add your own `head`/`tail`/`grep -m` line limits to query/location commands —
+the tool layer automatically truncates long outputs and persists the full text (`[输出已截断]` marker + saved path, retrievable via `read_file`/`search_archive`, zero loss);
+self-imposed line limits are a **silent drop** (no marker, no persistence, unrecoverable), and a line quota filled by unrelated lines can push the target line out of view,
+causing a false "information missing" judgment → repeated execution → stagnation (R5 evidence: `grep "def format_health_note" | head -12` quota consumed by leading `_win_*` fields).
+Correct approach: no line limits on queries (tool layer truncates + persists); use `read_file` on the saved path / offset-limit chunks for close reading.
+Exception: `tail -n` is fine for explicitly previewing a few head/tail lines (e.g., log tail), but be aware of its silent-drop nature.
+
+**Incremental reasoning constraint (2026-08-20 thinking-token governance)**: reasoning chains are ~60% of request tokens and are echoed back with history every round —
+reason **incrementally only** each round: do not restate established global plans/task lists/background judgments (unless overturned by new information); build directly on the previous round's conclusions;
+tool rounds should focus on "what this step does → result → next step", avoiding re-narrating the same plan every round (repetition is pure token waste).
 
 ---
 
