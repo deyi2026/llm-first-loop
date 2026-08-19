@@ -46,6 +46,8 @@ class _Stub(_ToolExecMixin):
         )
         self.messages = []
         self.events = []
+        # EVO-20260819-7bb7d689: 经验提示尾部追加槽（build 末尾消费，不进历史存储）
+        self._tip_tail_messages = []
         # 重置类级 skill 缓存（跨测试隔离）
         type(self)._skills_cache = (0.0, [])
 
@@ -61,19 +63,18 @@ def _make_exp_dir(tmp_path: Path) -> Path:
 
 
 def test_inject_hit(tmp_path):
-    """命中: 工具名匹配经验 → 末尾注入 [经验提示] system 消息."""
+    """命中: 工具名匹配经验 → 尾部追加槽注入 [经验提示] system 消息."""
     d = _make_exp_dir(tmp_path)
     stub = _Stub(True, d)
     _ToolExecMixin._inject_experience_tips(stub, stub, ["web_fetch"])
-    assert len(stub.messages) == 1
-    msg = stub.messages[0]
+    assert len(stub._tip_tail_messages) == 1
+    msg = stub._tip_tail_messages[0]
     assert msg.role == "system"
     assert "[经验提示]" in msg.content
     assert "web_fetch" in msg.content
     # 2026-08-18 修复: 功能性注入不打 injected_system 标记——打标会被
     # skip_injected_system（spec §5.3.1-5 绝对化后恒 True）剔除 → 经验提示失效
     assert not (msg.metadata or {}).get("injected_system")
-    assert len(stub.events) == 1
 
 
 def test_inject_no_hit_no_inject(tmp_path):
@@ -81,7 +82,7 @@ def test_inject_no_hit_no_inject(tmp_path):
     d = _make_exp_dir(tmp_path)
     stub = _Stub(True, d)
     _ToolExecMixin._inject_experience_tips(stub, stub, ["nonexistent_tool"])
-    assert stub.messages == []
+    assert stub._tip_tail_messages == []
 
 
 def test_inject_disabled(tmp_path):
@@ -89,14 +90,14 @@ def test_inject_disabled(tmp_path):
     d = _make_exp_dir(tmp_path)
     stub = _Stub(False, d)
     _ToolExecMixin._inject_experience_tips(stub, stub, ["web_fetch"])
-    assert stub.messages == []
+    assert stub._tip_tail_messages == []
 
 
 def test_inject_dir_missing_fail_open(tmp_path):
     """经验目录不存在: fail-open 不抛、不注入."""
     stub = _Stub(True, tmp_path / "no_such_dir")
     _ToolExecMixin._inject_experience_tips(stub, stub, ["web_fetch"])
-    assert stub.messages == []
+    assert stub._tip_tail_messages == []
 
 
 def _make_skills_dir(tmp_path: Path, name: str = "cache-hit-debug") -> Path:
@@ -113,8 +114,8 @@ def test_skill_inject_hit(tmp_path):
     stub = _Stub(True, d, sd)
     _ToolExecMixin._inject_experience_tips(stub, stub, ["architecture_status"])
     # 经验库无 architecture_status 命中 → 走 skill 匹配（kw_pool 含 cache/debug）
-    assert len(stub.messages) == 1
-    msg = stub.messages[0]
+    assert len(stub._tip_tail_messages) == 1
+    msg = stub._tip_tail_messages[0]
     assert "[经验提示]" in msg.content
     assert "cache-hit-debug" in msg.content
     assert "skill_load" in msg.content
@@ -125,7 +126,7 @@ def test_skill_no_dir_no_inject(tmp_path):
     d = _make_exp_dir(tmp_path)
     stub = _Stub(True, d)  # skills_dir 默认 nonexistent_skills
     _ToolExecMixin._inject_experience_tips(stub, stub, ["architecture_status"])
-    assert stub.messages == []
+    assert stub._tip_tail_messages == []
 
 
 def test_skill_unmatched_no_inject(tmp_path):
@@ -134,4 +135,4 @@ def test_skill_unmatched_no_inject(tmp_path):
     sd = _make_skills_dir(tmp_path)
     stub = _Stub(True, d, sd)
     _ToolExecMixin._inject_experience_tips(stub, stub, ["zzz_unrelated_tool"])
-    assert stub.messages == []
+    assert stub._tip_tail_messages == []

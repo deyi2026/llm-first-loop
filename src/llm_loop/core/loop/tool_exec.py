@@ -258,10 +258,16 @@ class _ToolExecMixin:
                 # ⚠️ 不打 injected_system 标记（2026-08-18 修复）: 经验提示是功能性注入
                 # （工具执行后即时决策辅助，RULE-AI-18 机制），非推送式提醒；打标会被
                 # skip_injected_system 通道剔除（spec §5.3.1-5 绝对化后恒 True）→ 功能失效。
-                # 转 user 尾部追加（history.py 459 分支），前缀稳定不受影响。
             )
-            sess.messages.append(msg)
-            self._append_message_event(sess, msg)
+            # EVO-20260819-7bb7d689: 经验提示不再落 sess.messages（历史）——system 消息
+            # 在 history.py 459 分支被抽出转 user 重排到提交末尾，与稳定历史错位 → 每轮
+            # 前缀分叉 → 缓存命中率 65-76%（实测 round3 hit 12,800 < round2 in 16,907）。
+            # 改为尾部动态追加槽 _tip_tail_messages（build 提交末尾消费、转 user、一次性），
+            # 与 interop 协调消息同机制：system+稳定历史前缀字节不变（注入轮不断前缀）。
+            tips = getattr(self, "_tip_tail_messages", None)
+            if tips is None:
+                tips = self._tip_tail_messages = []
+            tips.append(msg)
             # EVO-20260817-20cc3f91: 注入成功后标记——本会话不再为该工具名重复注入
             seen.update(candidate)
         except Exception:  # noqa: BLE001 — 经验检索 fail-open（不阻断主循环）
