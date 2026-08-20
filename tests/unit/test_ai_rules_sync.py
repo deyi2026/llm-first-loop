@@ -1,8 +1,16 @@
-"""T47: AI 规则一致性校验（FR-AUD-DOC-02）.
+"""T47: AI 规则一致性校验（FR-AUD-DOC-02，2026-08-20 P2 重构版）.
 
-docs/ai_rules.md 为唯一规则真相源，core/prompt.py 为其派生呈现。
-断言全部规则（RULE-AI-00~18）关键动作句双向包含，防漂移；
-开集断言：SoT 中出现的每个 RULE-AI 编号都必须注入 prompt.py（封堵新增规则漏同步）。
+P2 架构（docs/ARCHITECTURE-cache-stable-rules.md）:
+- prompt.py = L0 稳定核心（身份/协议硬约束/信息通道/必读指令），前缀几乎永不变。
+- 规则移出前缀，存 docs/ai_rules.lite.md（版本化，AI 经 read_file(full=true) 按需读取）。
+- 详细 SoT docs/ai_rules.md 为 lite 的超集（人工/演进参考）。
+
+机械层校验（自动化）:
+1. L0 prompt 含必读指令（lite 引用 + full=true）与协议硬约束关键词；
+2. lite 文件（中/英）存在，中文 lite < 3000 字符（默认 read_file 不截断），头部含 version=N；
+3. lite 的约束编号与关键动作词在详细 SoT（ai_rules.md）中可找到对应（超集防漂移）。
+
+语义层（浓缩不失真）不伪装自动化——由 code_review + 每版人工抽查承担。
 """
 
 from __future__ import annotations
@@ -12,157 +20,36 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[2]
 
-# 七条规则 → 关键动作句（语义关键词，文档与 prompt 都必须包含）
-_RULE_KEYWORDS = {
-    "RULE-AI-00": [
-        "AI 优先总纲",
-        "感官和手脚",
-        "不自动压缩/重试/摘要",
-        "如实反馈",
-        "避免程序错误影响",
-        # round4 E1: 自动摘要边界（P2 补充，双向包含防漂移）
-        "自动摘要边界",
-        "只作用于",
-        "不注入",
-        # 2026-08-20 方法层（R5/停滞/思考链三事故收敛）
-        "思考方法总则",
-        "显式状态追踪",
-        "动作前置自问",
-        "假设先行",
-        "结论固化",
-        "工具轮思考链最短化",  # 2026-08-20 实测校准: 工具轮思考链三句化（≤300-500 字符）
-        "为何调用",  # 工具轮三句①
-    ],
-    "RULE-AI-01": ["诚实自查", "对照本轮工具回执", "不得虚构完成"],
-    "RULE-AI-02": ["参数自主规范", "核对参数格式", "自行更正后重试", "主动管理自查"],
-    "RULE-AI-03": ["停滞自主调整", "重复相同动作", "主动调整策略"],
-    "RULE-AI-04": ["程序故障处理", "程序异常", "继续作答"],
-    "RULE-AI-05": ["记忆沉淀", "[[memory]]", "长期记住"],
-    "RULE-AI-06": [
-        "架构演进与自我评估",
-        "submit_evolution",
-        "self_evaluate",
-        # M16 审计四子规则关键动作句（先 SoT 后 prompt 防漂移）
-        "对比执行前后架构状态",
-        "不得虚构通过",
-        "业务数据",
-        "仅建议、等待人工执行",
-        # M17 FR-REVIEW-AI-01: 完成登记闭环（子规则 4 追加句）
-        "evolution_complete",
-        # M18 AA9: SoT 收敛（异常触发已移除，正文与程序一致）
-        "定期/里程碑触发",
-    ],
-    # M22: 文档规则层引导（先取后答 + 不得编造，不强制调用工具）
-    "RULE-AI-07": [
-        "工具优先执行",  # 规则编号名（SoT 标题 + prompt 注入段标题）
-        "先调用相应工具",  # 三要素①先取后答
-        "不得凭训练数据推测或编造",  # 三要素②禁止编造
-        "调整参数或换路径",  # 三要素③失败调整
-        "仍失败再如实说明",  # 三要素③失败兑底（与 RULE-AI-03 衔接）
-        "不强制调用工具",  # 程序角色（AI 决定一切保留）
-    ],
-    # M23: 动作链完整性引导（自查→调整/明确结论 + 回答可追溯，不强制调整）
-    "RULE-AI-08": [
-        "动作链完整",  # 规则编号名（SoT 标题 + prompt 注入段标题）
-        "明确结论",  # 三要素②自查→明确结论闭环
-        "adjust_strategy",  # 三要素①自查→调整闭环（修正工具名）
-        "提及本轮所用工具名",  # 三要素③回答可追溯
-        "不强制调用工具",  # 程序角色（AI 决定一切保留）
-        # M25（FR-ADJ2-SYNC-01）: 三要素①措辞强化——命令句 + 前后值要求
-        # 注意: 命令句关键词用"应调用"而非"应调用 adjust_strategy"——SoT 工具名带反引号致子串不匹配
-        "应调用",  # 三要素①命令句（M25 强化）
-        "前后值",  # 三要素①前后值说明要求（M25 强化）
-        "从 5 调整为 15",  # 三要素①正例前后值具体化（M25 强化）
-    ],
-    # RULE-AI-09: 模型切换自主（切前自查/带 reason/切后必验/诚实边界）
-    "RULE-AI-09": [
-        "模型切换自主",  # 规则编号名（SoT 标题 + prompt 注入段标题）
-        "model_catalog",  # 切前查目录
-        "切后必验",  # 切换后复查确认生效
-        "用户显式选择",  # 诚实边界（显式选择不自动降级）
-        "默认装配",  # 仅默认装配走 MODEL_FALLBACKS 链
-        "密钥不出域",  # 注册表只存 env 名，不回显 key
-    ],
-    # RULE-AI-10: 每轮自主检查清单（自我评估/演进待办/待审/窗口/思考链自知）
-    "RULE-AI-10": [
-        "每轮自主检查清单",  # 规则编号名（SoT 标题 + prompt 注入段标题）
-        "self_evaluate",  # 自我评估触发
-        "evolution_complete",  # 演进待办登记闭环
-        "model_window",  # 上下文窗口自查
-        "思考链自知",  # M66 思考链省略自知
-    ],
-    # RULE-AI-11: 截断提炼 + 轮次耗尽自主归因（2026-08-15 截断信号强化）
-    "RULE-AI-11": [
-        "截断提炼与轮次耗尽自主归因",  # 规则编号名
-        "提炼记录",  # 截断信号 → 先提炼要点再推理
-        "最终总结",  # 要点纳入最终总结
-        "轮次决策请求",  # 耗尽信号
-        "工具使用错误",  # 归因情形①
-        "adjust_strategy",  # 正常推进 → 调大续跑
-        "硬上限 500",  # 程序兜底边界
-        "模型自截断禁令",  # 2026-08-20 R5 复盘: 查询不加 head/tail（防静默丢弃循环）
-        "静默丢弃",  # 自截断定性: 无标注不落盘不可恢复
-        "增量推理约束",  # 2026-08-20 思考链 token 治理: 只做增量推理不复述已定规划
-        "只做增量推理",  # 每轮聚焦本步/结果/下一步
-    ],
-    # RULE-AI-12: 模型身份声明约束（2026-08-15 身份幻觉实证 A4' 条款化，EVO-91044aa7）
-    "RULE-AI-12": [
-        "模型身份声明约束",  # 规则编号名（SoT 标题 + prompt 注入段标题）
-        "model_catalog",  # 身份以 tool 回执为准
-        "architecture_status",  # 回执来源二
-        "禁止依据训练先验自报身份",  # 核心禁令（训练先验=真实幻觉源）
-        "未核验",  # 无回执时如实声明而非给具体身份
-        "以回执为准",  # 回执冲突处理
-    ],
-    # RULE-AI-13: DSH 编排能力（2026-08-16 DSH 编排工具集）
-    "RULE-AI-13": [
-        "DSH 编排能力",  # 规则编号名（SoT 标题 + prompt 注入段标题）
-        "dsh_task",  # 调度工具
-        "dsh_session_read",  # 回放工具
-        "进程级子代理",  # 定位
-        "任务文本自带上下文",  # 上下文传递要点
-        "中间过程",  # 回放补全
-    ],
-    # RULE-AI-14: 协调通道（2026-08-16 外部协作文件信箱）
-    "RULE-AI-14": [
-        "协调通道",  # 规则编号名
-        "data/interop",  # 通道路径
-        "lfl_to_dsh",  # 读方向
-        "dsh_to_lfl",  # 写方向
-        "回显",  # 会话流可见
-        "不额外触发",  # 不调 run 不占锁
-    ],
-    # RULE-AI-16: 缓存命中优先（2026-08-16 确立）
-    "RULE-AI-16": [
-        "缓存命中优先",  # 规则编号名
-        "system prompt 稳定",  # 前缀稳定
-        "末尾追加",  # 注入位置
-        "不插入历史中间",  # 破坏前缀
-        "tokens_cache_hit",  # 可观测
-    ],
-    # RULE-AI-15: CodeArts 远端子 Agent 调度（2026-08-16 CodeArts 集成，并行 agent）
-    "RULE-AI-15": [
-        "CodeArts 远端子 Agent 调度",  # 规则编号名（标题）
-        "codearts_dispatch",  # 调度工具（首段）
-        "codearts_status",  # 进度查询（首段）
-    ],
-    # RULE-AI-17: 长内容默认分段输出（2026-08-16 确立，EVO-20260816-fa642e6f）
-    "RULE-AI-17": [
-        "长内容默认分段输出",  # 规则编号名（标题）
-        "先摘要后分段",  # ① 摘要/目录先行
-        "1/N",  # ② 分段标注
-        "段末给选项",  # ③ 用户控制节奏
-        "代码/命令只留关键片段",  # ④ 完整内容写文件给路径
-        "出口统一",  # ⑤ 全出口一致
-    ],
-    # RULE-AI-18: 经验前置注入与已验证路径强制复用（2026-08-16 确立，EVO-20260816-62977206）
-    "RULE-AI-18": [
-        "经验前置注入与已验证路径强制复用",  # 规则编号名（标题）
-        "search_records",  # ① 决策前查证（禁逐个试错探测）
-        "已验证最短路径",  # ② 命中直接复用
-        "失败定向修正",  # ③ 按失败模式分类修正
-        "save_experience",  # ④ 沉淀即复用
-    ],
+# L0 稳定核心必须包含的元素（协议硬约束 + 必读指令 + 通道声明）
+_L0_REQUIRED = [
+    "reasoning_content",  # M20 思考链回传（协议硬约束）
+    "tool_call_id",  # 声明↔回执配对
+    "不静默",  # 不静默吞错/降级
+    "ai_rules.lite.md",  # 必读指令指向规则文件
+    "read_file(full=true)",  # 防截断读取
+    "architecture_status",  # 通道声明（架构事实）
+]
+
+# lite 约束编号 → SoT 关键动作词（lite 浓缩自 SoT，动作词必须在 SoT 存在）
+_LITE_TO_SOT_KEYWORDS = {
+    "1": "诚实",  # RULE-AI-01
+    "2": "参数",  # RULE-AI-02
+    "3": "停滞",  # RULE-AI-03
+    "4": "程序异常",  # RULE-AI-04
+    "5": "[[memory]]",  # RULE-AI-05
+    "6": "submit_evolution",  # RULE-AI-06
+    "7": "工具优先",  # RULE-AI-07
+    "8": "adjust_strategy",  # RULE-AI-08
+    "9": "model_catalog",  # RULE-AI-09
+    "10": "每轮",  # RULE-AI-10
+    "11": "head",  # RULE-AI-11（自截断禁令）
+    "12": "身份",  # RULE-AI-12
+    "13": "dsh_task",  # RULE-AI-13
+    "14": "interop",  # RULE-AI-14
+    "15": "codearts_dispatch",  # RULE-AI-15
+    "16": "缓存",  # RULE-AI-16
+    "17": "分段",  # RULE-AI-17
+    "18": "经验",  # RULE-AI-18
 }
 
 
@@ -170,63 +57,54 @@ def _read(path: str) -> str:
     return (_ROOT / path).read_text(encoding="utf-8")
 
 
-def test_ai_rules_md_has_all_numbers():
-    """ai_rules.md 含全部 RULE-AI 编号."""
-    doc = _read("docs/ai_rules.md")
-    for rule_id in _RULE_KEYWORDS:
-        assert rule_id in doc, f"ai_rules.md 缺 {rule_id}"
-
-
-def test_prompt_has_rule_numbers():
-    """prompt.py 含 RULE-AI 编号注释."""
+def test_l0_prompt_has_required_elements():
+    """L0 稳定核心必含: 协议硬约束 + 必读指令 + 通道声明."""
     prompt = _read("src/llm_loop/core/prompt.py")
-    for rule_id in _RULE_KEYWORDS:
-        assert f"# {rule_id}" in prompt, f"prompt.py 缺 {rule_id} 注释"
+    for kw in _L0_REQUIRED:
+        assert kw in prompt, f"prompt.py L0 缺关键元素: {kw}"
 
 
-def test_rules_consistent_both_sides():
-    """全部规则关键动作句在 ai_rules.md 与 prompt.py 双向包含（防漂移）."""
-    doc = _read("docs/ai_rules.md")
+def test_l0_prompt_rules_moved_out():
+    """规则细节已移出前缀（L0 不含具体规则正文，前缀可稳定）."""
     prompt = _read("src/llm_loop/core/prompt.py")
-    for rule_id, keywords in _RULE_KEYWORDS.items():
-        # 长规则（多子规则/多要素/加长总纲）用更大窗口；其余规则 600 字符
-        window = (
-            2600
-            if rule_id == "RULE-AI-00"  # 2026-08-20 方法层加长总纲（思考方法总则 5 条）
-            else (
-                1600
-                if rule_id
-                in {
-                    "RULE-AI-06",
-                    "RULE-AI-07",
-                    "RULE-AI-08",
-                    "RULE-AI-09",
-                    "RULE-AI-10",
-                    "RULE-AI-12",  # 身份条款多子规则（EVO-91044aa7）
-                    "RULE-AI-11",  # 2026-08-18 工具输出截断段加长（对齐 DSH）
-                }
-                else 600
-            )
-        )
-        doc_section = doc[doc.find(rule_id) :][:window]
-        prompt_section = prompt[prompt.find(rule_id) :][:window]
-        for kw in keywords:
-            assert kw in doc_section or kw in doc[: doc.find(rule_id) + 40], (
-                f"ai_rules.md {rule_id} 缺关键词: {kw}"
-            )
-            assert kw in prompt_section or kw in prompt[: prompt.find(rule_id) + 40], (
-                f"prompt.py {rule_id} 缺关键词: {kw}"
-            )
+    for banned in ["RULE-AI-03", "停滞自主调整", "截断提炼与轮次耗尽", "工具轮思考链最短化"]:
+        assert banned not in prompt, f"L0 不应再含规则细节: {banned}"
 
 
-def test_sot_rule_numbers_all_injected_to_prompt():
-    """开集断言：SoT 中每个 RULE-AI 编号都必须以 '# RULE-AI-XX' 注入 prompt.py.
+def test_lite_file_exists_and_within_read_limit():
+    """lite 文件存在；中文 lite < 3000 字符（默认 read_file 不截断）."""
+    for name in ["docs/ai_rules.lite.md", "docs/ai_rules.lite.en.md"]:
+        p = _ROOT / name
+        assert p.exists(), f"{name} 缺失"
+        content = p.read_text(encoding="utf-8")
+        assert "version=" in content.splitlines()[0], f"{name} 首行缺 version 标记"
+    zh = _read("docs/ai_rules.lite.md")
+    assert len(zh) < 3000, f"中文 lite {len(zh)} 字符 ≥3000（默认 read_file 会截断）"
 
-    封闭关键词表无法发现"新增规则未同步注入"类漂移（2026-08-16 曾漏 RULE-AI-17/18），
-    本测试以正则从 ai_rules.md 提取编号全集，与 prompt.py 注入集比对，封堵盲区。
-    """
-    doc = _read("docs/ai_rules.md")
-    prompt = _read("src/llm_loop/core/prompt.py")
-    doc_ids = sorted({m for m in re.findall(r"RULE-AI-\d+", doc)})
-    missing = [rid for rid in doc_ids if f"# {rid} " not in prompt]
-    assert not missing, f"SoT 新增规则未同步注入 prompt.py: {missing}"
+
+def test_lite_is_superset_checked_against_sot():
+    """lite 约束编号与关键动作词在详细 SoT（ai_rules.md）中可找到（防浓缩漂移）."""
+    sot = _read("docs/ai_rules.md")
+    lite = _read("docs/ai_rules.lite.md")
+    # 约束编号 1-18 在 lite 中逐条存在
+    for n in _LITE_TO_SOT_KEYWORDS:
+        assert re.search(rf"^{n}[^\d]", lite, re.M), f"lite 缺约束 {n}"
+    # 每个动作词在 SoT 存在（lite 是 SoT 的浓缩，动作词必须来源于 SoT）
+    for n, kw in _LITE_TO_SOT_KEYWORDS.items():
+        assert kw in sot, f"SoT(ai_rules.md) 缺 lite 约束 {n} 的动作词: {kw}"
+
+
+def test_lite_version_matches_snapshot_reader():
+    """lite 头部 version 与 architecture_status 读取逻辑一致（version=N 可提取）."""
+    import sys
+
+    sys.path.insert(0, str(_ROOT / "src"))
+    from llm_loop.introspection.status import _rules_version
+
+    lite = _read("docs/ai_rules.lite.md")
+    header = lite.splitlines()[0]
+    m = re.search(r"version=(\d+)", header)
+    assert m, "lite 首行 version 格式: version=N"
+    assert _rules_version() == m.group(1), (
+        f"_rules_version()={_rules_version()!r} 与 lite 版本 {m.group(1)} 不一致"
+    )

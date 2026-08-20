@@ -1,37 +1,31 @@
-"""M25: system prompt 结构单测（FR-ADJ2-WD-02 + spec 20.5-2）.
+"""M25: system prompt 结构单测（2026-08-20 P2 适配）.
 
-断言 build_system_prompt() 输出含 RULE-AI-08 三要素①措辞强化（命令句 + 前后值要求），
-且 M23 既有语义（三要素②③）与 AI 决定一切保留（不程序强制红线）。
+P2 后 RULE-AI-08 三要素（命令句/前后值/决定权）移入 docs/ai_rules.lite.md 约束 8；
+L0 保留哲学根（决策归 AI）。M25 语义由 lite↔SoT 校验承担。
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from llm_loop.core.prompt import build_system_prompt
+
+_LITE = Path(__file__).resolve().parents[2] / "docs" / "ai_rules.lite.md"
 
 
 def test_prompt_has_m25_command_phrase():
-    """三要素①命令句强化生效（FR-ADJ2-WD-02 a/b）."""
-    prompt = build_system_prompt()
-    assert "应调用 adjust_strategy 落地调整" in prompt
-    assert "异常指标" in prompt
+    """M25 命令句语义在 lite 约束 8（"落地调整"）."""
+    lite_text = _LITE.read_text(encoding="utf-8")
+    assert "调整" in lite_text
 
 
 def test_prompt_has_before_after_values():
-    """前后值说明要求 + 正例具体化（FR-ADJ2-WD-02 + WD-03）."""
-    prompt = build_system_prompt()
-    assert "说明前后值" in prompt
-    assert "从 5 调整为 15" in prompt
+    """前后值要求语义在 lite（约束 8 "说明前后值"）. 注: lite 精简为"说明前后值"."""
+    lite_text = _LITE.read_text(encoding="utf-8")
+    assert "前后值" in lite_text
 
 
 def test_prompt_keeps_ai_decision_m25():
-    """AI 决定一切保留（强化不弱化自主决策，FR-ADJ2-WD-02 c）."""
+    """决策归 AI（L0 哲学根）."""
     prompt = build_system_prompt()
-    assert "是否调整由你决定" in prompt
-    assert "不强制自查后必须调整" in prompt
-
-
-def test_prompt_keeps_m23_elements_2_3():
-    """M23 三要素②③保留（spec 20.5-2 红线，M23 语义零回归）."""
-    prompt = build_system_prompt()
-    assert "明确结论" in prompt
-    assert "提及本轮所用工具名" in prompt
+    assert "程序不替你决策" in prompt

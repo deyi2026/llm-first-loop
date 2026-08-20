@@ -445,6 +445,8 @@ class ArchitectureStatusProvider:
                 for e in self._exception_log[-10:]
             ],
             "architecture_config": self._config_status(),
+            # 2026-08-20 P2 规则版本信号: 读 docs/ai_rules.lite.md 头部 version（AI 感知版本变化→重读）
+            "rules_version": _rules_version(),
             # P1-12(2026-08-16): 工作区变更检测（guard 检测 .env/providers.json/src/skills 变化
             # 后写 flag → AI 经 architecture_status 自查可见; None = 无变更/未配置）
             "workspace_changed": (
@@ -460,15 +462,11 @@ class ArchitectureStatusProvider:
             # R2/A6: 程序故障计数（fail-open 聚合，AI 可感知"程序故障率"）
             "program_faults": dict(self._program_faults),
         }
-        # EVO-20260818 防御归一化: dimensions 可能被模型传成字符串/其他类型——
-        # 字符串按字符迭代会导致"维度 'c' 暂不可用"（按字符拆解 bug）;
-        # 非列表一律回落全量（绝不按字符拆）。
-        if isinstance(dimensions, str):
-            dimensions = [
-                d.strip() for d in re.split(r"[,，\s]+", dimensions) if d.strip()
-            ] or None
-        if not isinstance(dimensions, list):
-            dimensions = None
+        # EVO-20260818/2026-08-20 防御归一化: dimensions 可能被模型传成字符串/残缺 JSON
+        # （实测: `"["architecture_config", ..."` 截断字符串被拆成垃圾维度名 →
+        # 全部 unavailable 假错误）。增强: JSON 字符串优先解析 → 逗号/空白拆分 →
+        # 过滤到已知维度集 → 全部非法回落全量（模型拿到可用快照而非假错误）。
+        dimensions = _normalize_dimensions(dimensions, set(avail.keys()))
         if dimensions:
             out: dict = {}
             for d in dimensions:
@@ -559,3 +557,51 @@ def cleanup_audit_logs(audit_dir: str | Path, ttl_days: int) -> dict:
             )
             continue
     return {"pruned_files": files, "pruned_entries": total}
+
+
+# 2026-08-20 P2: 规则文件版本读取（fail-open，读取失败返回 ""）
+def _rules_version() -> str:
+    """读 docs/ai_rules.lite.md 头部 version=N；失败/缺失返回空串.
+
+    根目录基于本模块位置推导（不受 DATA_DIR/测试隔离影响）。
+    """
+    try:
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[3]
+        p = root / "docs" / "ai_rules.lite.md"
+        for line in p.read_text(encoding="utf-8").splitlines()[:3]:
+            if "version=" in line:
+                return line.split("version=", 1)[1].split("；")[0].split(";")[0].strip()
+    except Exception:  # noqa: BLE001 — fail-open
+        pass
+    return ""
+
+
+# 2026-08-20: 维度参数鲁棒归一化（EVO-20260820-6857bf41 修复）
+def _normalize_dimensions(dimensions, known: set[str]) -> list[str] | None:
+    """把 dimensions 归一化为合法维度名列表；全部非法/缺失 → None（回落全量）.
+
+    处理: list / JSON 数组字符串（"["x","y"]"，含截断残缺）/ 逗号空白串 / 其他类型。
+    """
+    if isinstance(dimensions, str):
+        d = dimensions.strip()
+        try:  # JSON 数组字符串（含残缺: json.loads 失败则退逗号拆分）
+            parsed = json.loads(d)
+            if isinstance(parsed, list):
+                dimensions = parsed
+            else:
+                dimensions = [parsed]
+        except Exception:  # noqa: BLE001
+            dimensions = re.split(r"[,\s]+", d)
+    if not isinstance(dimensions, list):
+        return None
+    out = [re.sub(r'^[\[\"\s]+|[\"\]\s]+$', '', str(x)) for x in dimensions]
+    out = [x for x in out if x]
+    if not out:
+        return None
+    # 部分合法 → 返回全部清洗项（未知项由调用方标注 unavailable，信息性保留）；
+    # 全部非法 → None（回落全量，避免"维度 'garbage' 暂不可用"假错误）
+    if any(d in known for d in out):
+        return out
+    return None

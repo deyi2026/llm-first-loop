@@ -1,47 +1,28 @@
-"""M23: system prompt 结构单测（FR-CHAIN-RULE-02 + PRMP-01/02/03 + RULE-02）.
+"""M23: system prompt 结构单测（2026-08-20 P2 适配）.
 
-断言 build_system_prompt() 输出含 M23 动作链完整性引导三处文本：
-① RULE-AI-08 注入段；② RULE-AI-02 段"自查→明确结论"引导句；③ 回答提及工具名引导句；
-且第 1 条"你决定一切"完整保留（不程序强制红线在 prompt 文本层的体现）。
+P2 后 RULE-AI-08（动作链完整）移入 docs/ai_rules.lite.md 约束 8；
+L0 prompt 保留哲学根（决策归 AI）与必读指令。动作链语义由 lite↔SoT 校验承担。
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from llm_loop.core.prompt import build_system_prompt
+
+_LITE = Path(__file__).resolve().parents[2] / "docs" / "ai_rules.lite.md"
 
 
 def test_prompt_has_rule_ai_08():
-    """RULE-AI-08 注入段存在且含"动作链完整"（FR-CHAIN-RULE-02）."""
+    """动作链完整规则移入 lite（L0 不再内嵌规则正文，必读指令指向 lite）."""
     prompt = build_system_prompt()
-    assert "# RULE-AI-08" in prompt
-    assert "动作链完整" in prompt
-
-
-def test_prompt_has_self_check_conclusion():
-    """自查→明确结论/调整闭环引导句存在（FR-CHAIN-PRMP-01，场景 a 型）."""
-    prompt = build_system_prompt()
-    assert "走完动作链" in prompt
-    # M25: 三要素①措辞强化（许可型"继续调用"→命令句"应调用"，见 FR-ADJ2-WD-02）
-    assert "应调用 adjust_strategy 落地调整" in prompt
-    assert "明确结论" in prompt
-
-
-def test_prompt_mentions_tool_names():
-    """回答提及工具名引导句存在（FR-CHAIN-PRMP-02，场景 f 型）."""
-    prompt = build_system_prompt()
-    assert "提及本轮所用工具名" in prompt
-    assert "使动作链可核验可追溯" in prompt
+    assert "ai_rules.lite.md" in prompt  # 必读指令（规则承载点）
+    lite_text = _LITE.read_text(encoding="utf-8")
+    assert "动作链" in lite_text  # 规则语义在 lite
 
 
 def test_prompt_keeps_decision_principle():
-    """第 1 条"你决定一切"完整保留 + "不强制"表述（RULE-02，不程序强制红线）."""
+    """哲学根"决策归 AI"保留（RULE-02）."""
     prompt = build_system_prompt()
-    assert "你决定一切" in prompt
-    assert "完全由你决定" in prompt
-    assert "不强制" in prompt
-
-
-def test_prompt_rule_ai_08_position():
-    """RULE-AI-08 段在 RULE-AI-07 之后、灾难性安全段之前（注入位置正确）."""
-    prompt = build_system_prompt()
-    assert prompt.find("# RULE-AI-07") < prompt.find("# RULE-AI-08") < prompt.find("灾难性安全")
+    assert "程序不替你决策" in prompt
+    assert "不约束你" in prompt

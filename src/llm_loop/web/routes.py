@@ -741,6 +741,7 @@ def session_stats(session_id: str, request: Request) -> Any:
 
     # ── 统计字段：优先 request.usage 事件（持久化真相源），回退消息字段 ──
     tokens_in = tokens_out = cache_hit = 0
+    by_model: dict[str, dict[str, int]] = {}  # 2026-08-20: 分模型命中率分桶
     llm_ms = tool_ms = 0.0
     ttft_sum = 0.0
     ttft_n = 0
@@ -754,6 +755,13 @@ def session_stats(session_id: str, request: Request) -> Any:
                     continue
                 p = e.payload or {}
                 usage_events += 1
+                # 2026-08-20（镜像, 观测正确性）: 按模型分桶——跨端交替模型
+                # （web=minimax / feishu=deepseek）时总命中率被另一模型轮次稀释,
+                # 分模型口径才能正确归因（缓存按 provider 独立预热）。
+                _mdl = str(p.get("model") or "unknown")
+                _b = by_model.setdefault(_mdl, {"tokens_in": 0, "cache_hit": 0})
+                _b["tokens_in"] += p.get("tokens_in") or 0
+                _b["cache_hit"] += p.get("cache_hit") or 0
                 tokens_in += p.get("tokens_in") or 0
                 tokens_out += p.get("tokens_out") or 0
                 cache_hit += p.get("cache_hit") or 0
@@ -781,6 +789,17 @@ def session_stats(session_id: str, request: Request) -> Any:
                 tool_ms += getattr(m, "duration_ms", 0.0) or 0.0
     hit_rate = round(cache_hit / tokens_in * 100, 1) if tokens_in > 0 else 0.0
     tok_s = round(tokens_out / (llm_ms / 1000.0), 1) if llm_ms > 0 else 0.0
+    # 2026-08-20（镜像）: 分模型命中率——跨模型交替时总口径被稀释, 分模型口径
+    # 揭示真实缓存行为（每模型独立预热）
+    by_model_out = {
+        _mdl: {
+            "tokens_in": _b["tokens_in"],
+            "cache_hit": _b["cache_hit"],
+            "cache_hit_rate": round(_b["cache_hit"] / _b["tokens_in"] * 100, 1)
+            if _b["tokens_in"] > 0 else 0.0,
+        }
+        for _mdl, _b in sorted(by_model.items())
+    }
     return {
         "turns": turns,
         "steps": steps,
@@ -788,6 +807,7 @@ def session_stats(session_id: str, request: Request) -> Any:
         "tokens_out": tokens_out,
         "cache_hit": cache_hit,
         "cache_hit_rate": hit_rate,
+        "by_model": by_model_out,
         "llm_ms": round(llm_ms, 1),
         "tool_ms": round(tool_ms, 1),
         "ttft_avg_ms": round(ttft_sum / ttft_n, 1) if ttft_n else 0.0,

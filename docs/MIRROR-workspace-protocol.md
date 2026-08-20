@@ -33,11 +33,12 @@ rsync -a --exclude='data' --exclude='.venv' --exclude='webui/node_modules' \
   --exclude='.pytest_cache' --exclude='.ruff_cache' --exclude='.coverage' --exclude='logs' \
   /Users/yyj/Project/llm-first-loop/ $M/
 
-# 镜像测试（在镜像目录，用主区同一解释器）
-cd $M && .venv/bin/python -m pytest tests/ -q
+# 镜像测试（⚠️ 必须 PYTHONPATH=镜像src——共享 venv 的 editable 安装指向主区 src，
+# 不带 PYTHONPATH 会测试到主区代码，镜像验证失效）
+cd $M && PYTHONPATH=$M/src .venv/bin/python -m pytest tests/ -q
 
 # 镜像 web（端口 8903，独立数据）
-cd $M && set -a && source .env && set +a && WEB_PORT=8903 nohup .venv/bin/python -m llm_loop.web > data/mirror-web.log 2>&1 &
+cd $M && set -a && source .env && set +a && WEB_PORT=8903 PYTHONPATH=$M/src nohup .venv/bin/python -m llm_loop.web > data/mirror-web.log 2>&1 &
 
 # 产出 diff（镜像 vs 主区，用于审批）
 diff -ru /Users/yyj/Project/llm-first-loop/src $M/src   # 按目录逐个
@@ -74,5 +75,6 @@ diff -ru /Users/yyj/Project/llm-first-loop/src $M/src   # 按目录逐个
 | experiences/ skills/ | **独立副本（会漂移）** | 权威源 = 主区；镜像工作产出的经验/技能经 promotion 带回 |
 | .env | **独立副本（会漂移）** | 配置变更在镜像改，审批时列 .env diff，promotion 一并应用 |
 | 端口 | 8902 主区 / 8903 镜像 | 互不监听 |
+| Python 包解析 | **必须 PYTHONPATH=镜像src**（共享 venv editable 安装指向主区 src；不带则镜像加载主区代码） | 测试/启动镜像 web 一律带 PYTHONPATH |
 
 **防混乱总则**：运行时权威（记忆/经验/会话/配置生效值）永远以主区为准；镜像只是"变更实验场"，其任何产出只有经审批 promotion 才进入权威源。

@@ -830,7 +830,9 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             logger.warning("耗尽消息消费标记异常（fail-open）", exc_info=True)
         # EVO-20260817-72fcd94a L3: 缓存健康闭环（窗口兜底，fail-open；逻辑在 cache_health.py）
         try:
-            _cache_hint = self._cache_monitor.record(tokens_in, tokens_cache_hit)
+            _cache_hint = self._cache_monitor.record(
+                tokens_in, tokens_cache_hit, model_ref=model_used
+            )
             # 发送前门禁·后检漂移提示（build 时记录）一并注入 final_answer（告警发给用户）
             if self._cache_gate_hint:
                 _cache_hint = (

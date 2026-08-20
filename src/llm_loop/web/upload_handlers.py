@@ -122,12 +122,89 @@ def _extract_text(data: bytes, filename: str) -> ExtractResult:
     )
 
 
+def _recognize_doc_images(images: list[tuple[str, bytes]]) -> str:
+    """文档内图片视觉识别（2026-08-20 镜像, 用户定: 默认关 + 单文档 5 张上限）.
+
+    文字层文档（PDF/docx）内的图片（报告截图/插图/图表）内容, 文本提取拿不到——
+    每张图走 MiniMax 视觉转录, 追加标注到提取文本。单张失败跳过（不阻塞）。
+
+    Returns:
+        追加块（含来源标注）；开关关 / 无图 / 全失败 → ""。
+    """
+    import os as _os
+
+    if _os.environ.get("WEB_DOC_IMAGE_RECOGNITION", "0").strip().lower() in (
+        "0", "off", "false", "no",
+    ):
+        return ""
+    try:
+        max_n = max(1, min(20, int(_os.environ.get("WEB_DOC_IMAGE_MAX", "5"))))
+    except ValueError:
+        max_n = 5
+    if not images:
+        return ""
+    from llm_loop.web.vision import _sniff_mime, describe_image
+
+    parts: list[str] = []
+    for name, img_bytes in images[:max_n]:
+        try:
+            text = describe_image(img_bytes, mime=_sniff_mime(img_bytes), settings=None)
+            text = (text or "").strip()
+            if text:
+                parts.append(f"[文档图片识别: {name}]\n{text}")
+        except Exception:  # noqa: BLE001 — 单张失败跳过
+            continue
+    if not parts:
+        return ""
+    return "\n\n" + "\n\n".join(parts)
+
+
+def _collect_pdf_images(reader) -> list[tuple[str, bytes]]:
+    """收集 PDF 页面内嵌图片（pypdf page.images; 失败/不支持 → 空）."""
+    out: list[tuple[str, bytes]] = []
+    try:
+        for page in reader.pages[:50]:
+            for im in page.images or []:
+                try:
+                    data = im.data if hasattr(im, "data") else bytes(im.image)
+                    name = getattr(im, "name", "") or f"page_img_{len(out)}.png"
+                    if data:
+                        out.append((name, data))
+                except Exception:  # noqa: BLE001
+                    continue
+    except Exception:  # noqa: BLE001 — 图片收集失败不影响文本
+        return []
+    return out
+
+
 def _extract_docx(data: bytes, filename: str) -> ExtractResult:
     """docx 提取（zipfile + XML 标准库，零额外依赖）."""
+    # 2026-08-20（借鉴 SYAGI P3-5）: zip 压缩炸弹防护——10MB 压缩包可膨胀为超大 XML,
+    # 先查展开大小再读取。
+    _DOCX_XML_MAX_BYTES = 20 * 1024 * 1024
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            try:
+                xml_info = zf.getinfo("word/document.xml")
+            except KeyError as exc:
+                return ExtractResult(
+                    source_filename=filename,
+                    content_type="docx",
+                    status="error",
+                    detail=f"[程序异常] docx 解析失败（{type(exc).__name__}: {exc}）。",
+                )
+            if xml_info.file_size > _DOCX_XML_MAX_BYTES:
+                return ExtractResult(
+                    source_filename=filename,
+                    content_type="docx",
+                    status="error",
+                    detail=(
+                        f"[程序异常] docx 内部 document.xml 展开超过 "
+                        f"{_DOCX_XML_MAX_BYTES // 1024 // 1024}MB 上限，已拒绝解析。"
+                    ),
+                )
             xml = zf.read("word/document.xml").decode("utf-8", errors="ignore")
-    except (zipfile.BadZipFile, KeyError) as exc:
+    except zipfile.BadZipFile as exc:
         return ExtractResult(
             source_filename=filename,
             content_type="docx",
@@ -139,6 +216,27 @@ def _extract_docx(data: bytes, filename: str) -> ExtractResult:
     text = text.replace("</w:tc>", " | ").replace("<w:br/>", "\n")
     text = re.sub(r"<[^>]+>", "", text)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    # 2026-08-20（诚实性）: 空文档如实标注（对照 PDF 扫描件检查）
+    if not text:
+        return ExtractResult(
+            source_filename=filename,
+            content_type="docx",
+            status="error",
+            detail="docx 未提取到文字（文档可能全为图片/空文档）。",
+        )
+    # 2026-08-20: 文档内图片识别（默认关 + 5 张上限; 用户定）——word/media/* 提取
+    media_images: list[tuple[str, bytes]] = []
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            for n in zf.namelist():
+                if n.startswith("word/media/") and n.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp")):
+                    try:
+                        media_images.append((n.rsplit("/", 1)[-1], zf.read(n)))
+                    except Exception:  # noqa: BLE001
+                        continue
+    except zipfile.BadZipFile:
+        pass
+    text += _recognize_doc_images(media_images)
     text, truncated = _truncate(text)
     return ExtractResult(
         source_filename=filename,
@@ -149,6 +247,55 @@ def _extract_docx(data: bytes, filename: str) -> ExtractResult:
     )
 
 
+def _extract_pdf_vision(data: bytes, filename: str) -> str | None:
+    """扫描件 PDF 视觉转录兜底（2026-08-20 镜像）: macOS sips 渲染页面 → 图片识别转录.
+
+    无文字层 PDF（扫描件/纯图片）用系统自带 sips 渲染成 PNG, 走 describe_image
+    （MiniMax 视觉, 真实可用）转录页面文字。诚实标注来源（视觉转录 ≠ 文字层提取）。
+
+    Returns:
+        转录文本（非空）；渲染/识别失败 → None（调用方保持原 error 提示）。
+    """
+    import os as _os
+    import shutil as _shutil
+    import subprocess as _sp
+    import tempfile as _tf
+
+    if _shutil.which("sips") is None:
+        return None
+    if _os.environ.get("WEB_PDF_VISION_FALLBACK", "1").strip().lower() in ("0", "off", "false", "no"):
+        return None
+    tmp_pdf = None
+    try:
+        with _tf.NamedTemporaryFile(suffix=".pdf", delete=False) as tf:
+            tmp_pdf = tf.name
+            tf.write(data)
+        out_png = tmp_pdf + ".png"
+        proc = _sp.run(
+            ["sips", "-s", "format", "png", tmp_pdf, "--out", out_png],
+            capture_output=True, text=True, timeout=60,
+        )
+        if proc.returncode != 0 or not Path(out_png).exists():
+            return None
+        from llm_loop.web.vision import _sniff_mime, describe_image
+
+        img = Path(out_png).read_bytes()
+        if not img:
+            return None
+        text = describe_image(img, mime=_sniff_mime(img), settings=None)
+        text = text.strip()
+        return text or None
+    except Exception:  # noqa: BLE001 — 渲染/识别失败 → None（保持原 error 路径）
+        return None
+    finally:
+        import contextlib as _ctx
+
+        with _ctx.suppress(OSError):
+            if tmp_pdf:
+                Path(tmp_pdf).unlink(missing_ok=True)
+                Path(tmp_pdf + ".png").unlink(missing_ok=True)
+
+
 def _extract_pdf(data: bytes, filename: str) -> ExtractResult:
     """PDF 提取（pypdf 逐页，50 页上限对齐 本地既有实现）."""
     try:
@@ -156,18 +303,51 @@ def _extract_pdf(data: bytes, filename: str) -> ExtractResult:
         total_pages = len(reader.pages)
         max_pages = min(total_pages, PDF_MAX_PAGES)
         parts: list[str] = []
+        pages_text: list[str] = []
         for i in range(max_pages):
-            parts.append(f"[第 {i + 1} 页]\n" + (reader.pages[i].extract_text() or ""))
+            page_t = reader.pages[i].extract_text() or ""
+            pages_text.append(page_t)
+            parts.append(f"[第 {i + 1} 页]\n" + page_t)
         if total_pages > PDF_MAX_PAGES:
             parts.append(f"\n...[截断] PDF 共 {total_pages} 页，仅提取前 {PDF_MAX_PAGES} 页")
         text = "\n".join(parts).strip()
-    except Exception as exc:  # pypdf 解析失败如实反馈
+    except Exception as exc:  # pypdf 解析失败如实反馈（加密文档明确提示）
+        detail = f"[程序异常] PDF 解析失败（{type(exc).__name__}: {exc}）。"
+        if "encrypt" in str(exc).lower() or "password" in str(exc).lower():
+            detail = "PDF 已加密（需密码），无法解析。请提供未加密或已解密的 PDF。"
         return ExtractResult(
             source_filename=filename,
             content_type="pdf",
             status="error",
-            detail=f"[程序异常] PDF 解析失败（{type(exc).__name__}: {exc}）。",
+            detail=detail,
         )
+    # 2026-08-20（诚实性）: 无文字层 PDF（扫描件/纯图片）——先试视觉转录兜底,
+    # 失败则如实标注 error（防幻觉 + 用户知情）。
+    if not any(pt.strip() for pt in pages_text):
+        try:
+            vision_text = _extract_pdf_vision(data, filename)
+        except Exception:  # noqa: BLE001 — 兜底失败保持 error
+            vision_text = None
+        if vision_text:
+            return ExtractResult(
+                source_filename=filename,
+                content_type="pdf",
+                status="ok",
+                result_text=vision_text,
+                detail="（扫描件 PDF 视觉转录，来源: 图片识别）",
+            )
+        return ExtractResult(
+            source_filename=filename,
+            content_type="pdf",
+            status="error",
+            detail=(
+                "PDF 无文字层（可能是扫描件/纯图片文档），本地无法提取文字，"
+                "视觉转录亦失败。可将 PDF 页面导出为图片走图片识别，"
+                "或提供带文字层的 PDF。"
+            ),
+        )
+    # 2026-08-20: 文字层 PDF 内嵌图片识别（默认关 + 5 张上限; 用户定）
+    text += _recognize_doc_images(_collect_pdf_images(reader))
     text, truncated = _truncate(text)
     return ExtractResult(
         source_filename=filename,
@@ -184,6 +364,7 @@ def _extract_doc_arkcli(data: bytes, filename: str, prompt: str) -> str | None:
 
     返回抽取文本；CLI 缺失/调用失败/解析失败 → None（调用方本地提取兜底，fail-open）。
     鉴权失败也走兜底（本地文本提取仍有真实内容，不伪装 arkcli 成功）。
+    2026-08-20: 默认不启用（WEB_DOC_BACKEND 默认 local）——arkcli 未登录时不再白跑。
     """
     import json as _json
     import os as _os
@@ -191,7 +372,9 @@ def _extract_doc_arkcli(data: bytes, filename: str, prompt: str) -> str | None:
     import subprocess as _sp
     import tempfile as _tf
 
-    if _os.environ.get("WEB_DOC_BACKEND", "arkcli").strip().lower() == "local":
+    # 2026-08-20: 默认 local（本地解析优先, fail-open 已有）；arkcli 结构化抽取仅显式
+    # WEB_DOC_BACKEND=arkcli 时启用（未登录账号不占默认链, 同 vision 调整原则）
+    if _os.environ.get("WEB_DOC_BACKEND", "local").strip().lower() != "arkcli":
         return None
     if _shutil.which("arkcli") is None:
         return None
