@@ -80,15 +80,23 @@ def test_arkcli_missing_cli_hint(monkeypatch):
 
 
 def test_minimax_backend_opt_in_preserved(monkeypatch):
-    """WEB_VISION_BACKEND=minimax → 旧路径保留（httpx 调用）."""
+    """WEB_VISION_BACKEND=minimax → Anthropic 端点（2026-08-20 修正，真实视觉）."""
     monkeypatch.setenv("WEB_VISION_BACKEND", "minimax")
     monkeypatch.setenv("MINIMAX_API_KEY", "k")
     with mock.patch("llm_loop.web.vision.httpx.post") as post:
         post.return_value.status_code = 200
         post.return_value.raise_for_status.return_value = None
-        post.return_value.json.return_value = {"choices": [{"message": {"content": "描述文本"}}]}
+        post.return_value.json.return_value = {
+            "content": [{"type": "text", "text": "描述文本"}]
+        }
         text = vision.describe_image(b"PNGDATA", prompt="描述")
     assert text == "描述文本"
+    # 断言走 Anthropic 端点路径（/anthropic/v1/messages + image base64 block）
+    call_kwargs = post.call_args
+    assert "/v1/messages" in call_kwargs[0][0]
+    sent = call_kwargs[1]["json"]
+    assert sent["messages"][0]["content"][0]["type"] == "image"
+    assert sent["messages"][0]["content"][0]["source"]["type"] == "base64"
 
 
 def test_doc_extract_arkcli_priority_then_local_fallback(monkeypatch, tmp_path):
