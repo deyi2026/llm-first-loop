@@ -75,7 +75,8 @@ def test_system_prompt_not_truncated_by_dynamic_injects():
     修复后: 静态主体完整保留, 只对动态追加段设上限.
     """
     sp = build_system_prompt()
-    assert len(sp) > 4000, "前置: system_prompt 已超 max_sys_merge_chars（测试前提成立）"
+    # 2026-08-20 P2: L0 稳定核心 < max_sys_merge_chars(4000) → 动态合并截断分支结构性不触发
+    assert len(sp) < 4000, f"L0 应小于合并上限 4000（现 {len(sp)}）——截断风险结构性消除"
     out = build_history_messages(
         [_fake_msg("system", "MEM-1: 记忆片段"),
          _fake_msg("system", "[外部协调·from DSH] 20260816-006 请复核")],

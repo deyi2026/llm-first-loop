@@ -80,14 +80,16 @@ def test_declaration_light_reminder_no_block(build_test_engine):
 
 
 def test_prompt_contains_ai_rules(build_test_engine):
-    """T40: system prompt 含四类 AI 自主规则（诚实/参数/停滞/故障）."""
+    """T40（P2 适配）: L0 prompt 含协议硬约束 + 必读指令（规则移入 docs/ai_rules.lite.md）.
+
+    规则细节（诚实/参数/停滞/故障）由 lite 文件承载，经 test_ai_rules_sync 校验 lite↔SoT。
+    """
     from llm_loop.core.prompt import build_system_prompt
 
     prompt = build_system_prompt()
-    assert "诚实自查" in prompt
-    assert "参数自主规范" in prompt
-    assert "停滞自主调整" in prompt
-    assert "程序故障处理" in prompt
+    assert "reasoning_content" in prompt  # 协议硬约束（M20）
+    assert "ai_rules.lite.md" in prompt  # 必读指令
+    assert "read_file(full=true)" in prompt  # 防截断读取
 
 
 def test_prompt_system_extra_env(monkeypatch, build_test_engine):
