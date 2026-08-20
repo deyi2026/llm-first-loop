@@ -10,8 +10,9 @@
 - arkcli：仅团队工具，失败即报错（含 `arkcli auth login volc-sso` / `arkcli auth apikey` 指引）。
 - provider：仅注册表视觉模型（OpenAI 兼容 chat/completions + image_url；WEB_VISION_MODEL
   显式 "provider/model" 优先，否则扫描注册表首个 multimodal 模型；api_key 走 api_key_env）。
-- minimax（旧路径 opt-in）：MiniMax 端点（M3/M2.x 实测均无真实视觉，M2.x 返回凭空
-  猜测属伪成功幻觉，仅显式开启）。
+- minimax（opt-in）：MiniMax **Anthropic 兼容端点**（/anthropic/v1/messages +
+  image base64 block，2026-08-20 修正：旧 OpenAI 兼容端点实测无真实视觉；
+  Anthropic 端点经 SYAGI 实测真实可用，失败如实报错不编造）。
 
 独立于核心 LLM 主链路（不修改 LoopEngine/prompt）；失败如实反馈。
 """
@@ -233,13 +234,23 @@ def _describe_arkcli(image_bytes: bytes, mime: str, prompt: str) -> str:
 
 
 def _describe_minimax(image_bytes: bytes, mime: str, prompt: str) -> str:
-    """旧路径：MiniMax OpenAI 兼容端点（仅显式 opt-in；见模块 docstring 实测结论）."""
+    """MiniMax Anthropic 兼容端点（2026-08-20 修正，借鉴 SYAGI 可用视觉实现）.
+
+    旧实现走 OpenAI 兼容端点（/v1/chat/completions + image_url），实测 M3/M2.x 均无
+    真实视觉（M2.x 返回凭空猜测属伪成功幻觉）。MiniMax 的真实多模态视觉走 Anthropic
+    兼容端点（/anthropic/v1/messages + image base64 block），SYAGI 实测可用。
+    失败如实抛错（HTTP/API 错误/空结果），不编造描述。
+    """
     api_key = os.environ.get("MINIMAX_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError("MINIMAX_API_KEY 未配置，无法使用视觉识别")
+    if not image_bytes:
+        raise RuntimeError("图片内容为空")
     model = _vision_model() or "MiniMax-M3"
     b64 = base64.b64encode(image_bytes).decode("ascii")
-    base_url = os.environ.get("MINIMAX_BASE_URL", "https://api.minimax.chat").rstrip("/")
+    base_url = os.environ.get(
+        "MINIMAX_ANTHROPIC_BASE_URL", "https://api.minimax.chat/anthropic"
+    ).rstrip("/")
     payload = {
         "model": model,
         "max_tokens": 2048,
@@ -247,27 +258,39 @@ def _describe_minimax(image_bytes: bytes, mime: str, prompt: str) -> str:
             {
                 "role": "user",
                 "content": [
-                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+                    {
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": mime, "data": b64},
+                    },
                     {"type": "text", "text": prompt.strip() or VISION_DEFAULT_PROMPT},
                 ],
             }
         ],
     }
     resp = httpx.post(
-        f"{base_url}/v1/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        f"{base_url}/v1/messages",
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        },
         json=payload,
         timeout=_vision_timeout(),
     )
-    resp.raise_for_status()
+    if resp.status_code != 200:
+        raise RuntimeError(f"vision API HTTP {resp.status_code}: {resp.text[:300]}")
     data = resp.json()
-    try:
-        text = (data["choices"][0]["message"]["content"] or "").strip()
-    except (KeyError, IndexError, TypeError) as exc:
-        raise RuntimeError(f"视觉识别响应结构异常（{type(exc).__name__}）") from exc
-    if not text:
-        raise RuntimeError("视觉识别返回空结果")
-    return text.strip()
+    if data.get("type") == "error" or data.get("error"):
+        raise RuntimeError(f"vision API error: {str(data.get('error'))[:300]}")
+    texts = [
+        block.get("text", "")
+        for block in (data.get("content") or [])
+        if isinstance(block, dict) and block.get("type") == "text"
+    ]
+    result = "\n".join(t for t in texts if t).strip()
+    if not result:
+        raise RuntimeError("vision API 返回空描述 (模型可能不支持图片输入)")
+    return result
 
 
 def describe_image(image_bytes: bytes, mime: str = "", prompt: str = "", settings: Any = None) -> str:
@@ -292,7 +315,8 @@ def describe_image(image_bytes: bytes, mime: str = "", prompt: str = "", setting
         return _describe_arkcli_with_hint(image_bytes, mime, prompt)
     if backend == "provider":
         return _describe_provider(image_bytes, mime, prompt, settings)
-    # auto：团队识别工具优先（产文本），不可用/未认证 → provider 模型兜底 → 明确报错
+    # auto：团队识别工具优先（产文本），不可用/未认证 → MiniMax Anthropic 端点
+    # （2026-08-20 实测真实可用）→ 注册表视觉模型 → 明确报错
     if shutil.which("arkcli") is not None:
         try:
             return _describe_arkcli_with_hint(image_bytes, mime, prompt)
@@ -302,14 +326,27 @@ def describe_image(image_bytes: bytes, mime: str = "", prompt: str = "", setting
             )
             if not auth_failed:
                 raise  # 非鉴权失败：如实上报工具错误
-            # 工具未认证 → 降级到注册表视觉模型（如实；detail 由调用方透传）
+            # 工具未认证 → MiniMax（Anthropic 端点，MINIMAX_API_KEY 可用时）→ provider
             try:
-                return _describe_provider(image_bytes, mime, prompt, settings)
-            except RuntimeError as prov_exc:
-                raise RuntimeError(
-                    f"arkcli 未认证（{str(exc)}）且注册表视觉模型亦失败（{prov_exc}）。{_AUTH_HINT}"
-                ) from prov_exc
-    return _describe_provider(image_bytes, mime, prompt, settings)
+                return _describe_minimax(image_bytes, mime, prompt)
+            except RuntimeError as mm_exc:
+                try:
+                    return _describe_provider(image_bytes, mime, prompt, settings)
+                except RuntimeError as prov_exc:
+                    raise RuntimeError(
+                        f"arkcli 未认证（{str(exc)}）、MiniMax 失败（{mm_exc}）"
+                        f"且注册表视觉模型亦失败（{prov_exc}）。{_AUTH_HINT}"
+                    ) from prov_exc
+    # arkcli 未安装 → 直接 MiniMax → provider
+    try:
+        return _describe_minimax(image_bytes, mime, prompt)
+    except RuntimeError as mm_exc:
+        try:
+            return _describe_provider(image_bytes, mime, prompt, settings)
+        except RuntimeError as prov_exc:
+            raise RuntimeError(
+                f"MiniMax 失败（{mm_exc}）且注册表视觉模型亦失败（{prov_exc}）。{_AUTH_HINT}"
+            ) from prov_exc
 
 
 def _describe_arkcli_with_hint(image_bytes: bytes, mime: str, prompt: str) -> str:
