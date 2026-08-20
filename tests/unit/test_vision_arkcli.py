@@ -208,63 +208,63 @@ def test_provider_backend_explicit_model(tmp_path, monkeypatch):
 
 # ── auto 自动链（2026-08-15：团队识别工具优先，模型兜底） ──
 
-def test_auto_chain_arkcli_auth_failure_falls_back_to_provider(tmp_path, monkeypatch):
-    """auto：arkcli 未认证 → 自动降级注册表视觉模型（kimi）并成功."""
+# ── auto 自动链（2026-08-20：MiniMax Anthropic 端点优先，provider 兜底；arkcli 显式 opt-in） ──
+
+def test_auto_chain_minimax_first(monkeypatch):
+    """auto：MiniMax（Anthropic 端点）优先成功（不调 provider）."""
     monkeypatch.setenv("WEB_VISION_BACKEND", "auto")
+    monkeypatch.setenv("MINIMAX_API_KEY", "k-mm")
+    with mock.patch("llm_loop.web.vision.httpx.post") as post:
+        post.return_value.status_code = 200
+        post.return_value.raise_for_status.return_value = None
+        post.return_value.json.return_value = {"content": [{"type": "text", "text": "描述文本"}]}
+        text = vision.describe_image(b"PNGDATA", prompt="颜色")
+    assert text == "描述文本"
+    assert "/anthropic/v1/messages" in post.call_args.args[0]
+
+
+def test_auto_chain_minimax_failure_falls_back_to_provider(tmp_path, monkeypatch):
+    """auto：MiniMax 失败（无 key）→ 自动降级注册表视觉模型并成功."""
+    monkeypatch.setenv("WEB_VISION_BACKEND", "auto")
+    monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
     monkeypatch.setenv("KIMI_API_KEY", "k-kimi")
     monkeypatch.setenv("LLM_API_KEY", "k-ds")
     monkeypatch.setenv("LLM_BASE_URL", "http://t")
     settings = _settings_with_kimi_multimodal(tmp_path, monkeypatch)
-    auth_err = json.dumps({"ok": False, "error": {"message": "not logged in, SSO token expired"}})
-    with (
-        mock.patch("llm_loop.web.vision.shutil.which", return_value="/bin/arkcli"),
-        mock.patch("llm_loop.web.vision.subprocess.run", return_value=_proc("", code=1, err=auth_err)),
-        mock.patch("llm_loop.web.vision.httpx.post") as post,
-    ):
+    with mock.patch("llm_loop.web.vision.httpx.post") as post:
         post.return_value.status_code = 200
         post.return_value.raise_for_status.return_value = None
         post.return_value.json.return_value = {"choices": [{"message": {"content": "红色（kimi 兜底）"}}]}
-        post.return_value.text = "{}"
         text = vision.describe_image(b"PNG", prompt="颜色", settings=settings)
     assert text == "红色（kimi 兜底）"
     assert "api.kimi.com" in post.call_args.args[0]
 
 
-def test_auto_chain_tool_first_when_ok(monkeypatch, tmp_path):
-    """auto：arkcli 可用且成功 → 工具优先（不调 provider）."""
+def test_auto_chain_both_fail_gives_hint(monkeypatch, tmp_path):
+    """auto：MiniMax 与注册表模型都失败 → 组合错误（诚实，含可操作指引）."""
     monkeypatch.setenv("WEB_VISION_BACKEND", "auto")
+    monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
     monkeypatch.setenv("KIMI_API_KEY", "k-kimi")
     monkeypatch.setenv("LLM_API_KEY", "k-ds")
     monkeypatch.setenv("LLM_BASE_URL", "http://t")
     settings = _settings_with_kimi_multimodal(tmp_path, monkeypatch)
+    with mock.patch("llm_loop.web.vision.httpx.post") as post:
+        post.return_value.status_code = 200
+        post.return_value.raise_for_status.return_value = None
+        post.return_value.json.return_value = {"choices": [{"message": {"content": ""}}]}
+        with pytest.raises(RuntimeError, match="MiniMax 失败"):
+            vision.describe_image(b"PNG", prompt="颜色", settings=settings)
+    # provider 也被尝试过（kimi 调用存在）
+    assert any("kimi.com" in c.args[0] for c in post.call_args_list)
+
+
+def test_arkcli_backend_still_opt_in(monkeypatch):
+    """WEB_VISION_BACKEND=arkcli 显式指定时仍走 arkcli（opt-in 保留）."""
+    monkeypatch.setenv("WEB_VISION_BACKEND", "arkcli")
     ok = json.dumps({"content": "工具识别文本"})
     with (
         mock.patch("llm_loop.web.vision.shutil.which", return_value="/bin/arkcli"),
         mock.patch("llm_loop.web.vision.subprocess.run", return_value=_proc(ok)),
-        mock.patch("llm_loop.web.vision.httpx.post") as post,
     ):
-        text = vision.describe_image(b"PNG", prompt="颜色", settings=settings)
+        text = vision.describe_image(b"PNG", prompt="颜色")
     assert text == "工具识别文本"
-    post.assert_not_called()
-
-
-def test_auto_chain_both_fail_gives_hint(monkeypatch, tmp_path):
-    """auto：工具未认证且模型不可用 → 组合错误 + 登录指引."""
-    monkeypatch.setenv("WEB_VISION_BACKEND", "auto")
-    monkeypatch.setenv("KIMI_API_KEY", "k-kimi")
-    monkeypatch.setenv("LLM_API_KEY", "k-ds")
-    monkeypatch.setenv("LLM_BASE_URL", "http://t")
-    settings = _settings_with_kimi_multimodal(tmp_path, monkeypatch)
-    auth_err = json.dumps({"ok": False, "error": {"message": "not logged in, SSO token expired"}})
-    with (
-        mock.patch("llm_loop.web.vision.shutil.which", return_value="/bin/arkcli"),
-        mock.patch("llm_loop.web.vision.subprocess.run", return_value=_proc("", code=1, err=auth_err)),
-        mock.patch("llm_loop.web.vision.httpx.post") as post,
-    ):
-        post.return_value.status_code = 500
-        post.return_value.raise_for_status.side_effect = RuntimeError("boom")
-        post.return_value.text = "err"
-        with pytest.raises(RuntimeError) as ei:
-            vision.describe_image(b"PNG", prompt="颜色", settings=settings)
-    assert "arkcli 未认证" in str(ei.value)
-    assert "arkcli auth login volc-sso" in str(ei.value)
