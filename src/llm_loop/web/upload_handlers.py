@@ -206,6 +206,7 @@ def _extract_doc_arkcli(data: bytes, filename: str, prompt: str) -> str | None:
 
     返回抽取文本；CLI 缺失/调用失败/解析失败 → None（调用方本地提取兜底，fail-open）。
     鉴权失败也走兜底（本地文本提取仍有真实内容，不伪装 arkcli 成功）。
+    2026-08-20: 默认不启用（WEB_DOC_BACKEND 默认 local）——arkcli 未登录时不再白跑。
     """
     import json as _json
     import os as _os
@@ -213,7 +214,9 @@ def _extract_doc_arkcli(data: bytes, filename: str, prompt: str) -> str | None:
     import subprocess as _sp
     import tempfile as _tf
 
-    if _os.environ.get("WEB_DOC_BACKEND", "arkcli").strip().lower() == "local":
+    # 2026-08-20: 默认 local（本地解析优先, fail-open 已有）；arkcli 结构化抽取仅显式
+    # WEB_DOC_BACKEND=arkcli 时启用（未登录账号不占默认链, 同 vision 调整原则）
+    if _os.environ.get("WEB_DOC_BACKEND", "local").strip().lower() != "arkcli":
         return None
     if _shutil.which("arkcli") is None:
         return None
