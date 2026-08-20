@@ -37,6 +37,11 @@ class MemoryEntry:
     summary_source: str = "deterministic"  # P1: llm/deterministic
     deposit_path: str = "inline"  # P1: inline（即时沉淀）/ extract（独立提取）
     content_fingerprint: str = ""  # P1: 内容规范化 SHA-256（去重）
+    # ── 记忆分级（2026-08-20 防污染，架构: docs/ARCHITECTURE-cache-stable-rules.md §5）──
+    # scope=global（默认）: 通用决策/约定/经验，跨会话可召回复用。
+    # scope=session: 会话瞬时性内容（调试现场/进度快照/路径/PID），仅原会话（或查询含
+    #   对应会话标识）可召回——防 A 会话调试现场污染 B 会话判断。
+    scope: str = "global"
     # ── Phase 2 增强（EVO-20260810-baae4016）──
     access_count: int = 0            # 检索命中次数
     last_access_at: str = ""         # 最近访问时间 ISO（空=从未被检索）

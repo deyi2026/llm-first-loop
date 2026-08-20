@@ -94,8 +94,9 @@ def test_app_copy_uses_plaintext():
     assert "copyMessage(msg.content" in app_js
 
 
-def test_frontend_served(build_test_engine, fake_settings):
+def test_frontend_served(build_test_engine, fake_settings, tmp_path, monkeypatch):
     engine, _ = build_test_engine([])
+    monkeypatch.setenv("UI_V2_DIR", str(tmp_path / "nonexistent"))
     client = _make_client(engine)
     resp = client.get("/")
     assert resp.status_code == 200

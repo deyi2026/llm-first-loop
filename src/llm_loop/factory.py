@@ -36,6 +36,7 @@ from llm_loop.tools.builtin.inspect_code import InspectCodeTool
 from llm_loop.tools.builtin.job_kill import JobKillTool
 from llm_loop.tools.builtin.job_output import JobOutputTool
 from llm_loop.tools.builtin.read_file import ReadFileTool
+from llm_loop.tools.builtin.read_image import ReadImageTool
 from llm_loop.tools.builtin.schedule import ScheduleCancelTool, ScheduleTool
 from llm_loop.tools.builtin.search_files import SearchFilesTool
 from llm_loop.tools.builtin.spawn_subagent import SpawnSubAgentTool
@@ -261,6 +262,8 @@ def build_engine(settings: Settings) -> LoopEngine:
             registry.register(tool)
 
     _register_basic("read_file", ReadFileTool())
+    # EVO-20260820-5d0a7b99: 图像转结构化文本证据（元信息 + 内容识别，借鉴 DSH rc.8 工具层视觉）
+    _register_basic("read_image", ReadImageTool())
     # EVO-20260817: 代码结构概览（AST 索引，最高 ROI 能力工具——大项目定位提速）
     _register_basic("inspect_code", InspectCodeTool())
     # M51: 四段式文件修改（read→match→diff→apply+verify，替代 sed/heredoc 盲替换）

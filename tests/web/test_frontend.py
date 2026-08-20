@@ -24,7 +24,22 @@ def test_index_html_exists():
     assert "app.js" in content
 
 
-def test_root_returns_html(build_test_engine, fake_settings):
+def test_root_redirects_to_ui_v2(build_test_engine, fake_settings, tmp_path, monkeypatch):
+    """默认入口为 Web V2：产物存在 → 307 重定向 /ui/v2/（2026-08-20 起旧版逐步弃用）."""
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html><body>Web V2</body></html>", encoding="utf-8")
+    monkeypatch.setenv("UI_V2_DIR", str(dist))
+    engine, _ = build_test_engine([])
+    client = _make_client(engine)
+    resp = client.get("/", follow_redirects=False)
+    assert resp.status_code == 307
+    assert resp.headers["location"] == "/ui/v2/"
+
+
+def test_root_falls_back_to_legacy_html(build_test_engine, fake_settings, tmp_path, monkeypatch):
+    """产物缺失（CI/未构建）→ 回退旧版聊天页 200 HTML（旧版保留兜底）."""
+    monkeypatch.setenv("UI_V2_DIR", str(tmp_path / "nonexistent"))
     engine, _ = build_test_engine([])
     client = _make_client(engine)
     resp = client.get("/")
