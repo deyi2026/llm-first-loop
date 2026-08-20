@@ -4,10 +4,12 @@
 **无视觉能力的主模型**使用——本模块产出的 result_text 由调用方注入对话上下文。
 
 后端策略（env WEB_VISION_BACKEND，默认 auto 自动链）:
-- auto（默认）：**团队识别工具优先**（arkcli +understand image-caption，豆包视觉）——
-  工具不可用/未认证（SSO 过期等）时如实降级链：→ provider（注册表 multimodal 模型，
-  如 Kimi k3，实测真实视觉可用）→ 明确报错。识别来源在结果 detail 中如实标注。
-- arkcli：仅团队工具，失败即报错（含 `arkcli auth login volc-sso` / `arkcli auth apikey` 指引）。
+- auto（默认）：MiniMax **Anthropic 兼容端点**（真实视觉，MINIMAX_API_KEY 已配置）
+  → provider（注册表 multimodal 模型）→ 明确报错。识别来源在结果 detail 中如实标注。
+  （2026-08-20 调整：arkcli 未认证且非本机默认工具，不再占 auto 链首位——需要时
+  显式 WEB_VISION_BACKEND=arkcli。）
+- arkcli：仅显式 opt-in（`WEB_VISION_BACKEND=arkcli`），失败即报错（含
+  `arkcli auth login volc-sso` / `arkcli auth apikey` 指引）。
 - provider：仅注册表视觉模型（OpenAI 兼容 chat/completions + image_url；WEB_VISION_MODEL
   显式 "provider/model" 优先，否则扫描注册表首个 multimodal 模型；api_key 走 api_key_env）。
 - minimax（opt-in）：MiniMax **Anthropic 兼容端点**（/anthropic/v1/messages +
@@ -51,7 +53,7 @@ _AUTH_HINT = (
 
 
 def _vision_backend() -> str:
-    """识别后端：auto（默认，arkcli 工具优先 + provider 兜底）/ arkcli / provider / minimax."""
+    """识别后端：auto（默认，MiniMax 优先 + provider 兜底）/ arkcli / provider / minimax."""
     return os.environ.get("WEB_VISION_BACKEND", "auto").strip().lower() or "auto"
 
 
@@ -91,8 +93,8 @@ def vision_enabled(settings: Any = None) -> bool:
     has_provider = _pick_provider_model(reg, os.environ.get("WEB_VISION_MODEL", "")) is not None
     if backend == "provider":
         return has_provider
-    # auto：工具或模型任一可用即可
-    return has_provider or shutil.which("arkcli") is not None
+    # auto：MiniMax（Anthropic 端点真实可用）或注册表视觉模型任一可用即可
+    return has_provider or bool(os.environ.get("MINIMAX_API_KEY", "").strip())
 
 
 def _pick_provider_model(reg: Any, explicit: str) -> tuple[str, str] | None:
@@ -315,29 +317,8 @@ def describe_image(image_bytes: bytes, mime: str = "", prompt: str = "", setting
         return _describe_arkcli_with_hint(image_bytes, mime, prompt)
     if backend == "provider":
         return _describe_provider(image_bytes, mime, prompt, settings)
-    # auto：团队识别工具优先（产文本），不可用/未认证 → MiniMax Anthropic 端点
-    # （2026-08-20 实测真实可用）→ 注册表视觉模型 → 明确报错
-    if shutil.which("arkcli") is not None:
-        try:
-            return _describe_arkcli_with_hint(image_bytes, mime, prompt)
-        except RuntimeError as exc:
-            auth_failed = any(
-                k in str(exc) for k in ("not logged in", "API Key is required", "AccessDenied", "SSO")
-            )
-            if not auth_failed:
-                raise  # 非鉴权失败：如实上报工具错误
-            # 工具未认证 → MiniMax（Anthropic 端点，MINIMAX_API_KEY 可用时）→ provider
-            try:
-                return _describe_minimax(image_bytes, mime, prompt)
-            except RuntimeError as mm_exc:
-                try:
-                    return _describe_provider(image_bytes, mime, prompt, settings)
-                except RuntimeError as prov_exc:
-                    raise RuntimeError(
-                        f"arkcli 未认证（{str(exc)}）、MiniMax 失败（{mm_exc}）"
-                        f"且注册表视觉模型亦失败（{prov_exc}）。{_AUTH_HINT}"
-                    ) from prov_exc
-    # arkcli 未安装 → 直接 MiniMax → provider
+    # auto（2026-08-20 调整）：MiniMax Anthropic 端点（真实可用，key 已配置）优先
+    # → 注册表视觉模型 → 明确报错。arkcli 未认证/非默认工具, 不再占链首（显式 opt-in）。
     try:
         return _describe_minimax(image_bytes, mime, prompt)
     except RuntimeError as mm_exc:
