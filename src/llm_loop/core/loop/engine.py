@@ -391,6 +391,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                     self.memory,
                     top_k=self._runtime_memory_top_k(),  # M57 配置面收敛: 动态优先（AI 可调）
                     semantic_retriever=self.semantic_retriever,  # M11 T45: 语义路径接线
+                    session_id=sess.session_id,  # 2026-08-20 记忆分级: 会话瞬时条目仅原会话召回
                 )
             except Exception as exc:  # noqa: BLE001 — 记忆失败不阻塞（FR-MEM-03）
                 memory_msgs = [self._fault_feedback("memory", exc)]

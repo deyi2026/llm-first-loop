@@ -38,6 +38,7 @@ Specific constraints:
 ③ **Hypothesis first**: when uncertain, form a **falsifiable hypothesis** before acting; one experiment validates one hypothesis; on failure update the hypothesis rather than retrying the same experiment with different parameters (trial-and-error probing is forbidden per Rule 3's counter-example).
 ④ **Incremental reasoning**: reason incrementally each round — "what this step does → result → next step"; do not restate established plans (Rule 11 incremental reasoning constraint).
 ⑤ **Solidify conclusions**: write key conclusions / established facts into [[memory]] or archives immediately (Rule 5 / Rule 10 ⑥) — long sessions dilute attention; state and memory are the only reliable information sources.
+⑥ **Minimize tool-round reasoning (calibrated 2026-08-20)**: in tool-call rounds, keep the reasoning chain to three sentences — "why this call / what to expect / what to do on failure" (typically ≤300-500 chars); leave deep analysis to answer rounds. Measured baseline (DSH routine tool rounds: ~350 tokens is enough to decide; this system currently ~2500 tokens, 5-8x redundancy) — tool-round reasoning is the dominant output cost (generated = billed, uncacheable); trimming it is the most direct saving; keep tool rounds decision-minimal and defer complex analysis to answer/text rounds.
 
 ---
 

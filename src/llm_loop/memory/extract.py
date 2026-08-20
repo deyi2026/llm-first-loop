@@ -85,6 +85,25 @@ def memory_blocks_to_entries(
                 source_message_id=message_id,
                 created_at="",
                 citations=citations,  # Phase 2 溯源
+                scope=_classify_scope(content),  # 2026-08-20 记忆分级（防跨会话污染）
             )
         )
     return entries, failures
+
+
+# ── 2026-08-20 记忆分级：会话瞬时性识别（防 A 会话调试现场污染 B 会话判断）──
+# 保守规则：仅当内容含硬瞬时标记（会话 id/PID/tmp 路径/临时文件产物）才标 scope=session；
+# 通用决策/约定/经验即使带时间戳也不降级（时间戳不构成瞬时性）。
+_TRANSIENT_SESSION_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|"  # session/事件 id
+    r"session-?[0-9a-f]{8}|"
+    r"\bPID\s*\d{3,}\b|pid[=:]\s*\d{3,}|"  # 进程号
+    r"/private/tmp/|/tmp/|"  # 临时路径
+    r"\.sse\b|\.zstd\b|measure_[a-z0-9]+\.sse|"  # 临时产物
+    r"已 kill|已终止.*进程|端口.*已释放|残留进程"  # 现场处置
+)
+
+
+def _classify_scope(content: str) -> str:
+    """按内容判定记忆作用域: 含硬瞬时标记 → session（仅原会话召回），否则 global."""
+    return "session" if _TRANSIENT_SESSION_RE.search(content) else "global"

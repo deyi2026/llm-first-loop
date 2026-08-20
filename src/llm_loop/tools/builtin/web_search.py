@@ -248,8 +248,13 @@ class WebSearchTool:
     parameters = {
         "type": "object",
         "properties": {
-            "query": {"type": "string", "description": "搜索关键词"},
-            "limit": {"type": "integer", "description": "返回结果条数（默认 5，最大 10）"},
+            "query": {"type": "string", "description": "搜索关键词（单查询用；与 queries 二选一）"},
+            "queries": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "可选：多个查询并发执行并聚合去重（≥2 个生效；多角度调研一次完成，EVO-20260820-14ccd432）",
+            },
+            "limit": {"type": "integer", "description": "每个查询返回结果条数（默认 5，最大 10）"},
             "channel": {
                 "type": "string",
                 "enum": ["general", "scholar", "code", "auto"],
@@ -300,6 +305,12 @@ class WebSearchTool:
         )
 
     def execute(self, **kwargs) -> ToolResult:
+        # EVO-20260820-14ccd432: 多查询并发聚合（借鉴 DSH rc.8 web_search 并发查询）
+        queries_raw = kwargs.get("queries")
+        if isinstance(queries_raw, (list, tuple)):
+            queries = [str(q).strip() for q in queries_raw if str(q) and str(q).strip()]
+            if len(queries) >= 2:
+                return self._execute_concurrent(queries, kwargs)
         query = str(kwargs.get("query", "")).strip()
         limit = min(max(int(kwargs.get("limit", 5) or 5), 1), 10)
         channel = str(kwargs.get("channel", "general") or "general").strip().lower()
@@ -340,6 +351,66 @@ class WebSearchTool:
         return ToolResult(
             status=ToolResultStatus.FAILURE,
             content=f"[搜索失败] 所有后端均不可用: {'; '.join(errors)}",
+            tool_call_id="",
+            tool_name=self.name,
+        )
+
+    # EVO-20260820-14ccd432: 多查询并发聚合（借鉴 DSH rc.8 web_search 并发查询）.
+    # 一次调研 = 多个 query 并发 + 结果聚合去重，减少串行往返轮数。
+    _CONCURRENT_MAX_WORKERS = 4
+
+    def _execute_concurrent(self, queries: list[str], kwargs: dict) -> ToolResult:
+        """并发执行多个独立查询并聚合（块级去重 + 如实标注失败）.
+
+        每个查询独立走单查询路径（general/scholar/code 各自路由），
+        ThreadPoolExecutor 并发（网络 IO 为主，无共享可变状态）；
+        聚合按内容块去重（相同块只留一次），失败查询如实列出不吞错。
+        """
+        import concurrent.futures
+
+        limit = min(max(int(kwargs.get("limit", 5) or 5), 1), 10)
+        channel = str(kwargs.get("channel", "general") or "general").strip().lower()
+
+        def _one(q: str) -> tuple[str, ToolResult]:
+            ch = channel
+            if ch == "auto":
+                ch = _route_channel(q)
+            return q, self.execute(query=q, limit=limit, channel=ch)
+
+        workers = min(len(queries), self._CONCURRENT_MAX_WORKERS)
+        ok: list[str] = []
+        failed: list[str] = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+            futures = {ex.submit(_one, q): q for q in queries}
+            for fut in concurrent.futures.as_completed(futures):
+                q, r = fut.result()
+                if r.status == ToolResultStatus.SUCCESS:
+                    ok.append(r.content)
+                else:
+                    failed.append(f"[query] {q} -> {r.content}")
+
+        # 块级去重（保持首次出现顺序）
+        seen: set[str] = set()
+        blocks: list[str] = []
+        for c in ok:
+            if c not in seen:
+                seen.add(c)
+                blocks.append(c)
+        head = f"[web_search 并发] 查询 {len(queries)} 个，成功 {len(ok)}，聚合去重 {len(blocks)} 块"
+        lines = [head, ""] + blocks
+        if failed:
+            lines += ["", "[失败查询（如实标注）]"] + failed
+        if not blocks:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content="\n".join(lines),
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        content = truncate_output("\n".join(lines), source="|".join(queries[:5]))
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content=content,
             tool_call_id="",
             tool_name=self.name,
         )

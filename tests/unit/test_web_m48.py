@@ -328,6 +328,56 @@ def test_auto_routing():
     assert "[channel] code" in r.content
 
 
+# ── EVO-20260820-14ccd432: 多查询并发聚合（借鉴 DSH rc.8 web_search 并发查询）──
+
+def test_web_search_concurrent_queries():
+    """queries 列表并发执行并聚合去重（成功块保留 + 计数）."""
+    tool = WebSearchTool()
+    html_a = '<ol><li><h2><a href="https://a.com/x">Alpha 结果</a></h2></li></ol>'
+    html_b = '<ol><li><h2><a href="https://b.com/y">Beta 结果</a></h2></li></ol>'
+
+    def _side(url, headers=None, **kw):
+        if "alpha" in url.lower():
+            return _FakeResponse(200, html_a)
+        return _FakeResponse(200, html_b)
+
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.__enter__.return_value.get.side_effect = _side
+        r = tool.execute(queries=["alpha llm", "beta agent"], limit=3)
+    assert r.status == ToolResultStatus.SUCCESS
+    assert "[web_search 并发]" in r.content
+    assert "成功 2" in r.content
+    assert "Alpha 结果" in r.content and "Beta 结果" in r.content
+
+
+def test_web_search_concurrent_partial_failure_honest():
+    """部分查询失败：成功块保留 + 失败如实标注（不吞错）."""
+    tool = WebSearchTool()
+
+    def _side(url, headers=None, **kw):
+        if "ok" in url.lower():
+            return _FakeResponse(200, '<ol><li><h2><a href="https://ok.com">OK 结果</a></h2></li></ol>')
+        raise __import__("httpx").ConnectError("boom")
+
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.__enter__.return_value.get.side_effect = _side
+        r = tool.execute(queries=["ok query", "bad query"], limit=3)
+    assert r.status == ToolResultStatus.SUCCESS  # 有成功块 → 整体成功
+    assert "[失败查询（如实标注）]" in r.content
+    assert "bad query" in r.content
+    assert "成功 1" in r.content
+
+
+def test_web_search_concurrent_all_fail():
+    """全部查询失败 → 整体 FAILURE 如实报."""
+    tool = WebSearchTool()
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.__enter__.return_value.get.side_effect = __import__("httpx").ConnectError("down")
+        r = tool.execute(queries=["a", "b"], limit=3)
+    assert r.status == ToolResultStatus.FAILURE
+    assert "[失败查询" in r.content
+
+
 def test_merge_dedupe():
     from llm_loop.tools.builtin.web_search import _merge_dedupe
     g1 = [{"title": "A", "url": "u1"}, {"title": "B", "url": "u2"}]
