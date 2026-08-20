@@ -58,6 +58,38 @@ def test_runner_collects_reports(build_test_engine, tmp_path, monkeypatch):
     assert msg["ref"].startswith("subagent_")
 
 
+def test_report_delivery_injects_to_parent(build_test_engine, tmp_path, monkeypatch):
+    """EVO-20260820-7f0c8e47 reportDelivery: 报告即触发一次注入（父侧 interop 注入器可见）.
+
+    语义对齐: 子代理中途报告写 interop inbox（topic=notify）→ 父会话后续轮
+    _interop_inbox_messages 注入可见；报告不改变子代理生命周期（子代理继续到结束）。
+    """
+    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
+    engine, fake = build_test_engine([])
+    runner = SubAgentRunner(
+        llm=fake, registry=engine.registry, session_store=engine.session
+    )
+    # 子代理: 报告一次 → 再报告一次 → 结束（报告不打断生命周期，全部收集）
+    fake._responses = [
+        LLMResponse(content="", tool_calls=[ToolCall(id="c1", name="subagent_report", arguments={"content": "关键发现A"})], provider="fake"),
+        LLMResponse(content="", tool_calls=[ToolCall(id="c2", name="subagent_report", arguments={"content": "关键发现B"})], provider="fake"),
+        LLMResponse(content="子代理完成", tool_calls=[], provider="fake"),
+    ]
+    result = runner.run(task="长任务拆解", depth=0)
+    assert result.reports == ["关键发现A", "关键发现B"]  # 生命周期未被打断
+    # 父侧注入器可见全部报告（报告即触发注入，不改变子代理生命周期）
+    from llm_loop.core.loop.interop import _InteropMixin
+
+    parent_eng = _InteropMixin()
+    msgs = parent_eng._interop_inbox_messages()
+    injected = [m.content for m in msgs]
+    assert len(injected) >= 1
+    joined = " ".join(injected)
+    assert "关键发现A" in joined and "关键发现B" in joined
+    # 来源可溯: 报告 body 前缀 [子代理进展]（subagent_report 写入时固定），注入器回显
+    assert "[子代理进展]" in joined
+
+
 def test_runner_multiple_reports_all_collected(build_test_engine, tmp_path, monkeypatch):
     """多次报告: 全部按序收集."""
     monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))

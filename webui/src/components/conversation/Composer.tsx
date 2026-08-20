@@ -211,7 +211,9 @@ export function Composer() {
 
   const doSend = async () => {
     const trimmed = text.trim();
-    if (!trimmed || conv.streaming) return;
+    // 2026-08-20: 允许"纯附件"发送（图片/文件无文字）——附件内容经 sendMessage
+    // 拼入 effectiveText（[附件 x] result_text），后端 message 非空可接收
+    if ((!trimmed && attachments.length === 0) || conv.streaming) return;
     // 命令分支（纯前端，对齐 M39）
     if (trimmed.startsWith("/")) {
       const [name, ...rest] = trimmed.slice(1).split(/\s+/);
@@ -393,7 +395,7 @@ export function Composer() {
                 type="button"
                 className="v2-btn primary"
                 onClick={() => void doSend()}
-                disabled={!text.trim()}
+                disabled={conv.streaming || (!text.trim() && attachments.length === 0)}
               >
                 {zh.send}
               </button>

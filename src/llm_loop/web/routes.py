@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 
 from llm_loop.core.loop.runner import SessionBusyError
 from llm_loop.feedback.honesty import session_deleted_message, session_not_found_message
@@ -493,7 +493,12 @@ _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 @router.get("/")
 def root() -> Response:
-    """服务根路径：返回 Web 聊天页面（M37 前端 UI）."""
+    """服务根路径：默认重定向到 Web V2（/ui/v2，2026-08-20 起默认入口）；
+    产物缺失时回退旧版聊天页面（M37 前端 UI，旧版逐步弃用但保留兜底）."""
+    # 与 build_app 挂载逻辑同源：函数内求值（测试可 monkeypatch UI_V2_DIR）
+    ui_v2 = Path(os.environ.get("UI_V2_DIR", "") or Path(__file__).resolve().parents[3] / "webui" / "dist")
+    if ui_v2.is_dir():
+        return RedirectResponse("/ui/v2/", status_code=307)
     index = _STATIC_DIR / "index.html"
     if not index.exists():
         return JSONResponse(

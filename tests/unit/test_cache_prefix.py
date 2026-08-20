@@ -32,8 +32,9 @@ def test_system_prompt_static():
     sp1 = build_system_prompt()
     sp2 = build_system_prompt()
     assert sp1 == sp2, "system_prompt 两次调用必须字节级一致（含时间戳/计数器即破坏前缀）"
-    # 无动态模式: 日期、uuid、随机
-    assert not re.search(r"\d{4}-\d{2}-\d{2}", sp1), "system_prompt 不得含日期"
+    # 无动态模式: 时间戳、uuid、随机（静态规则文本的历史日期如"2026-08-20 R5 事故复盘"
+    # 是固定文本允许——测试防的是动态时间注入破坏前缀，sp1==sp2 已证字节级静态）
+    assert not re.search(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}", sp1), "system_prompt 不得含 ISO/日期时间戳"
     assert not re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-", sp1), "system_prompt 不得含 uuid"
     assert not re.search(r"random|uuid|time\.", sp1, re.I), "system_prompt 不得引用动态源"
 

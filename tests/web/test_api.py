@@ -128,8 +128,9 @@ def test_health_no_llm_call(build_test_engine, fake_settings):
     assert len(fake.calls) == 0  # 健康检查不调 LLM
 
 
-def test_root_returns_service_info(build_test_engine, fake_settings):
-    """根路径 M37 起返回聊天页面 HTML（不再是 JSON 服务信息）."""
+def test_root_returns_service_info(build_test_engine, fake_settings, tmp_path, monkeypatch):
+    """根路径：Web V2 产物缺失（CI）时回退旧版聊天页 HTML（M37 兼容兜底）."""
+    monkeypatch.setenv("UI_V2_DIR", str(tmp_path / "nonexistent"))
     engine, fake = build_test_engine([])
     client = _make_client(engine)
     resp = client.get("/")
