@@ -179,6 +179,55 @@ def _extract_docx(data: bytes, filename: str) -> ExtractResult:
     )
 
 
+def _extract_pdf_vision(data: bytes, filename: str) -> str | None:
+    """扫描件 PDF 视觉转录兜底（2026-08-20 镜像）: macOS sips 渲染页面 → 图片识别转录.
+
+    无文字层 PDF（扫描件/纯图片）用系统自带 sips 渲染成 PNG, 走 describe_image
+    （MiniMax 视觉, 真实可用）转录页面文字。诚实标注来源（视觉转录 ≠ 文字层提取）。
+
+    Returns:
+        转录文本（非空）；渲染/识别失败 → None（调用方保持原 error 提示）。
+    """
+    import os as _os
+    import shutil as _shutil
+    import subprocess as _sp
+    import tempfile as _tf
+
+    if _shutil.which("sips") is None:
+        return None
+    if _os.environ.get("WEB_PDF_VISION_FALLBACK", "1").strip().lower() in ("0", "off", "false", "no"):
+        return None
+    tmp_pdf = None
+    try:
+        with _tf.NamedTemporaryFile(suffix=".pdf", delete=False) as tf:
+            tmp_pdf = tf.name
+            tf.write(data)
+        out_png = tmp_pdf + ".png"
+        proc = _sp.run(
+            ["sips", "-s", "format", "png", tmp_pdf, "--out", out_png],
+            capture_output=True, text=True, timeout=60,
+        )
+        if proc.returncode != 0 or not Path(out_png).exists():
+            return None
+        from llm_loop.web.vision import _sniff_mime, describe_image
+
+        img = Path(out_png).read_bytes()
+        if not img:
+            return None
+        text = describe_image(img, mime=_sniff_mime(img), settings=None)
+        text = text.strip()
+        return text or None
+    except Exception:  # noqa: BLE001 — 渲染/识别失败 → None（保持原 error 路径）
+        return None
+    finally:
+        import contextlib as _ctx
+
+        with _ctx.suppress(OSError):
+            if tmp_pdf:
+                Path(tmp_pdf).unlink(missing_ok=True)
+                Path(tmp_pdf + ".png").unlink(missing_ok=True)
+
+
 def _extract_pdf(data: bytes, filename: str) -> ExtractResult:
     """PDF 提取（pypdf 逐页，50 页上限对齐 本地既有实现）."""
     try:
@@ -201,16 +250,29 @@ def _extract_pdf(data: bytes, filename: str) -> ExtractResult:
             status="error",
             detail=f"[程序异常] PDF 解析失败（{type(exc).__name__}: {exc}）。",
         )
-    # 2026-08-20（诚实性）: 无文字层 PDF（扫描件/纯图片）如实标注——不返回空 ok,
-    # 前端据此标注"内容未包含, 请勿猜测"（防幻觉）; 用户知情可转图片/OCR 通道。
+    # 2026-08-20（诚实性）: 无文字层 PDF（扫描件/纯图片）——先试视觉转录兜底,
+    # 失败则如实标注 error（防幻觉 + 用户知情）。
     if not any(pt.strip() for pt in pages_text):
+        try:
+            vision_text = _extract_pdf_vision(data, filename)
+        except Exception:  # noqa: BLE001 — 兜底失败保持 error
+            vision_text = None
+        if vision_text:
+            return ExtractResult(
+                source_filename=filename,
+                content_type="pdf",
+                status="ok",
+                result_text=vision_text,
+                detail="（扫描件 PDF 视觉转录，来源: 图片识别）",
+            )
         return ExtractResult(
             source_filename=filename,
             content_type="pdf",
             status="error",
             detail=(
-                "PDF 无文字层（可能是扫描件/纯图片文档），本地无法提取文字。"
-                "可将 PDF 页面导出为图片走图片识别，或提供带文字层的 PDF。"
+                "PDF 无文字层（可能是扫描件/纯图片文档），本地无法提取文字，"
+                "视觉转录亦失败。可将 PDF 页面导出为图片走图片识别，"
+                "或提供带文字层的 PDF。"
             ),
         )
     text, truncated = _truncate(text)
