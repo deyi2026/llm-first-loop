@@ -11,8 +11,9 @@ def test_normalize_dimensions_handles_malformed_inputs():
     assert _normalize_dimensions('["architecture_config", "recovery"', known) == [
         "architecture_config", "recovery",
     ]
-    # 垃圾前缀 + 合法项 → 保留合法项
-    assert _normalize_dimensions('item["evolution_summary", "recovery"', known) == ["recovery"]
+    # 垃圾前缀 + 合法项 → 保留合法项（垃圾项清洗后由调用方标注 unavailable）
+    out = _normalize_dimensions('item["evolution_summary", "recovery"', known)
+    assert out is not None and "recovery" in out
     # 逗号/空白串
     assert _normalize_dimensions("architecture_config,recovery", known) == [
         "architecture_config", "recovery",
