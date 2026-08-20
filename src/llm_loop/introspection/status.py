@@ -445,6 +445,8 @@ class ArchitectureStatusProvider:
                 for e in self._exception_log[-10:]
             ],
             "architecture_config": self._config_status(),
+            # 2026-08-20 P2 规则版本信号: 读 docs/ai_rules.lite.md 头部 version（AI 感知版本变化→重读）
+            "rules_version": _rules_version(),
             # P1-12(2026-08-16): 工作区变更检测（guard 检测 .env/providers.json/src/skills 变化
             # 后写 flag → AI 经 architecture_status 自查可见; None = 无变更/未配置）
             "workspace_changed": (
@@ -559,3 +561,23 @@ def cleanup_audit_logs(audit_dir: str | Path, ttl_days: int) -> dict:
             )
             continue
     return {"pruned_files": files, "pruned_entries": total}
+
+
+# 2026-08-20 P2: 规则文件版本读取（fail-open，读取失败返回 ""）
+def _rules_version() -> str:
+    """读 docs/ai_rules.lite.md 头部 version=N；失败/缺失返回空串.
+
+    根目录基于本模块位置推导（不受 DATA_DIR/测试隔离影响）。
+    """
+    try:
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[3]
+        p = root / "docs" / "ai_rules.lite.md"
+        for line in p.read_text(encoding="utf-8").splitlines()[:3]:
+            if "version=" in line:
+                return line.split("version=", 1)[1].split("；")[0].split(";")[0].strip()
+    except Exception:  # noqa: BLE001 — fail-open
+        pass
+    return ""
+
