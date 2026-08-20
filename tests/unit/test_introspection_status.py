@@ -20,5 +20,8 @@ def test_normalize_dimensions_handles_malformed_inputs():
     # 全部非法 → None（回落全量，避免"维度 'garbage' 暂不可用"假错误）
     assert _normalize_dimensions("garbage", known) is None
     assert _normalize_dimensions(123, known) is None
-    # 列表混合
-    assert _normalize_dimensions(["recovery", "bogus"], known) == ["recovery"]
+    # 列表混合: 部分合法 → 保留全部清洗项（未知项由调用方标注 unavailable）
+    assert _normalize_dimensions(["recovery", "bogus"], known) == ["recovery", "bogus"]
+    # 部分合法时垃圾项被清洗（前导 [ 引号剥除）
+    out = _normalize_dimensions('item["evolution_summary", "recovery"', known)
+    assert out is not None and "recovery" in out

@@ -598,6 +598,10 @@ def _normalize_dimensions(dimensions, known: set[str]) -> list[str] | None:
         return None
     out = [re.sub(r'^[\[\"\s]+|[\"\]\s]+$', '', str(x)) for x in dimensions]
     out = [x for x in out if x]
-    # 过滤到已知维度集；全部非法 → None（全量，避免假错误）
-    valid = [d for d in out if d in known]
-    return valid or None
+    if not out:
+        return None
+    # 部分合法 → 返回全部清洗项（未知项由调用方标注 unavailable，信息性保留）；
+    # 全部非法 → None（回落全量，避免"维度 'garbage' 暂不可用"假错误）
+    if any(d in known for d in out):
+        return out
+    return None
