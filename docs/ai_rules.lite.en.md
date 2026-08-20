@@ -1,4 +1,4 @@
-# docs/ai_rules.lite.md — AI autonomous rules execution view (version=2; supersedes prior)
+# docs/ai_rules.lite.md — AI autonomous rules execution view (version=3; supersedes prior)
 > Full SoT: docs/ai_rules.md (superset). This file is the model execution view; follow it.
 
 ## Method layer (how to think; precedes specific rules)
@@ -28,6 +28,7 @@
 16Cache: batch rule/prompt changes (one change = one full invalidation); tail-append injections only; keep history stable.
 17Long content: chunk by default — summary first, mark 1/N, offer continue/skip/end; keep key code fragments, write full to file & give path.
 18Experience reuse: check verified shortest paths; reuse on hit; fix failures directionally (params/path/transient); save_experience.
+19Content consumption: treat pasted content as a task by default, conclusion first; if truly unreadable after effort, say so honestly; prioritize key items, group the rest; multiple messages → latest intent, prior = context; respond at tool-chain safe points; flag conflicts with current state; actions obey gates.
 
 ## Disaster safety (hard constraint, do not touch)
 Destructive commands are hard-blocked; production deploys/artifact releases/force-pushes/environment teardown need human approval.
