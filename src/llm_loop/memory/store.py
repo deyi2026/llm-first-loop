@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -83,6 +84,8 @@ class MemoryStore:
         self._dir.mkdir(parents=True, exist_ok=True)
         self._index_path = self._dir / "index.json"
         self._entries: list[MemoryEntry] = []
+        # 2026-08-20（d8a76517, 镜像）: 跨进程/线程并发写防护——写前合并磁盘最新态
+        self._lock = threading.Lock()
         self._load()
 
     def _load(self) -> None:
@@ -107,17 +110,38 @@ class MemoryStore:
                 self._entries = []
 
     def _save(self) -> None:
-        # 原子写（tmp+rename）：Web/飞书跨进程共享记忆时防半写损坏/交错覆盖
-        payload = json.dumps(
-            [e.to_dict() for e in self._entries], ensure_ascii=False, indent=2
-        )
+        # 2026-08-20（d8a76517, 镜像）: 写前合并磁盘最新态（防覆盖其他进程写入）+
+        # 线程锁（同进程多线程安全）
+        with self._lock:
+            self._merge_remote_changes()
+            # 原子写（tmp+rename）：Web/飞书跨进程共享记忆时防半写损坏/交错覆盖
+            payload = json.dumps(
+                [e.to_dict() for e in self._entries], ensure_ascii=False, indent=2
+            )
+            try:
+                tmp = self._index_path.with_suffix(".tmp")
+                tmp.write_text(payload, encoding="utf-8")
+                tmp.replace(self._index_path)
+            except OSError:
+                # 原子写失败回退直写（fail-open，尽力而为）
+                self._index_path.write_text(payload, encoding="utf-8")
+
+    # 2026-08-20（d8a76517, 镜像）: 写前合并磁盘最新态——磁盘独有条目并入内存,
+    # 同 id 以内存为准（本进程最新改动优先）; 损坏磁盘不合并（避免覆盖）。
+    def _merge_remote_changes(self) -> None:
+        if not self._index_path.exists():
+            return
         try:
-            tmp = self._index_path.with_suffix(".tmp")
-            tmp.write_text(payload, encoding="utf-8")
-            tmp.replace(self._index_path)
-        except OSError:
-            # 原子写失败回退直写（fail-open，尽力而为）
-            self._index_path.write_text(payload, encoding="utf-8")
+            disk = json.loads(self._index_path.read_text(encoding="utf-8"))
+            disk_entries = [MemoryEntry(**e) for e in disk]
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return  # 磁盘损坏: _load 已有备份逻辑, 此处不合并防覆盖
+        mem_ids = {e.id for e in self._entries}
+        remote_only = [de for de in disk_entries if de.id not in mem_ids]
+        if remote_only:
+            # 磁盘顺序在前, 本进程新增在后（保持时间序稳定）
+            self._entries = remote_only + self._entries
+
 
     # ── 版本化与去重（EVO-20260811-cbd6c52a）──
     def _compute_fingerprint(self, entry: MemoryEntry) -> str:
