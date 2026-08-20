@@ -161,6 +161,14 @@ def _extract_docx(data: bytes, filename: str) -> ExtractResult:
     text = text.replace("</w:tc>", " | ").replace("<w:br/>", "\n")
     text = re.sub(r"<[^>]+>", "", text)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    # 2026-08-20（诚实性）: 空文档如实标注（对照 PDF 扫描件检查）
+    if not text:
+        return ExtractResult(
+            source_filename=filename,
+            content_type="docx",
+            status="error",
+            detail="docx 未提取到文字（文档可能全为图片/空文档）。",
+        )
     text, truncated = _truncate(text)
     return ExtractResult(
         source_filename=filename,
@@ -178,8 +186,11 @@ def _extract_pdf(data: bytes, filename: str) -> ExtractResult:
         total_pages = len(reader.pages)
         max_pages = min(total_pages, PDF_MAX_PAGES)
         parts: list[str] = []
+        pages_text: list[str] = []
         for i in range(max_pages):
-            parts.append(f"[第 {i + 1} 页]\n" + (reader.pages[i].extract_text() or ""))
+            page_t = reader.pages[i].extract_text() or ""
+            pages_text.append(page_t)
+            parts.append(f"[第 {i + 1} 页]\n" + page_t)
         if total_pages > PDF_MAX_PAGES:
             parts.append(f"\n...[截断] PDF 共 {total_pages} 页，仅提取前 {PDF_MAX_PAGES} 页")
         text = "\n".join(parts).strip()
@@ -189,6 +200,18 @@ def _extract_pdf(data: bytes, filename: str) -> ExtractResult:
             content_type="pdf",
             status="error",
             detail=f"[程序异常] PDF 解析失败（{type(exc).__name__}: {exc}）。",
+        )
+    # 2026-08-20（诚实性）: 无文字层 PDF（扫描件/纯图片）如实标注——不返回空 ok,
+    # 前端据此标注"内容未包含, 请勿猜测"（防幻觉）; 用户知情可转图片/OCR 通道。
+    if not any(pt.strip() for pt in pages_text):
+        return ExtractResult(
+            source_filename=filename,
+            content_type="pdf",
+            status="error",
+            detail=(
+                "PDF 无文字层（可能是扫描件/纯图片文档），本地无法提取文字。"
+                "可将 PDF 页面导出为图片走图片识别，或提供带文字层的 PDF。"
+            ),
         )
     text, truncated = _truncate(text)
     return ExtractResult(
