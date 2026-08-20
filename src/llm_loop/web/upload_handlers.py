@@ -122,6 +122,61 @@ def _extract_text(data: bytes, filename: str) -> ExtractResult:
     )
 
 
+def _recognize_doc_images(images: list[tuple[str, bytes]]) -> str:
+    """文档内图片视觉识别（2026-08-20 镜像, 用户定: 默认关 + 单文档 5 张上限）.
+
+    文字层文档（PDF/docx）内的图片（报告截图/插图/图表）内容, 文本提取拿不到——
+    每张图走 MiniMax 视觉转录, 追加标注到提取文本。单张失败跳过（不阻塞）。
+
+    Returns:
+        追加块（含来源标注）；开关关 / 无图 / 全失败 → ""。
+    """
+    import os as _os
+
+    if _os.environ.get("WEB_DOC_IMAGE_RECOGNITION", "0").strip().lower() in (
+        "0", "off", "false", "no",
+    ):
+        return ""
+    try:
+        max_n = max(1, min(20, int(_os.environ.get("WEB_DOC_IMAGE_MAX", "5"))))
+    except ValueError:
+        max_n = 5
+    if not images:
+        return ""
+    from llm_loop.web.vision import _sniff_mime, describe_image
+
+    parts: list[str] = []
+    for name, img_bytes in images[:max_n]:
+        try:
+            text = describe_image(img_bytes, mime=_sniff_mime(img_bytes), settings=None)
+            text = (text or "").strip()
+            if text:
+                parts.append(f"[文档图片识别: {name}]\n{text}")
+        except Exception:  # noqa: BLE001 — 单张失败跳过
+            continue
+    if not parts:
+        return ""
+    return "\n\n" + "\n\n".join(parts)
+
+
+def _collect_pdf_images(reader) -> list[tuple[str, bytes]]:
+    """收集 PDF 页面内嵌图片（pypdf page.images; 失败/不支持 → 空）."""
+    out: list[tuple[str, bytes]] = []
+    try:
+        for page in reader.pages[:50]:
+            for im in page.images or []:
+                try:
+                    data = im.data if hasattr(im, "data") else bytes(im.image)
+                    name = getattr(im, "name", "") or f"page_img_{len(out)}.png"
+                    if data:
+                        out.append((name, data))
+                except Exception:  # noqa: BLE001
+                    continue
+    except Exception:  # noqa: BLE001 — 图片收集失败不影响文本
+        return []
+    return out
+
+
 def _extract_docx(data: bytes, filename: str) -> ExtractResult:
     """docx 提取（zipfile + XML 标准库，零额外依赖）."""
     # 2026-08-20（借鉴 SYAGI P3-5）: zip 压缩炸弹防护——10MB 压缩包可膨胀为超大 XML,
@@ -169,6 +224,19 @@ def _extract_docx(data: bytes, filename: str) -> ExtractResult:
             status="error",
             detail="docx 未提取到文字（文档可能全为图片/空文档）。",
         )
+    # 2026-08-20: 文档内图片识别（默认关 + 5 张上限; 用户定）——word/media/* 提取
+    media_images: list[tuple[str, bytes]] = []
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            for n in zf.namelist():
+                if n.startswith("word/media/") and n.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp")):
+                    try:
+                        media_images.append((n.rsplit("/", 1)[-1], zf.read(n)))
+                    except Exception:  # noqa: BLE001
+                        continue
+    except zipfile.BadZipFile:
+        pass
+    text += _recognize_doc_images(media_images)
     text, truncated = _truncate(text)
     return ExtractResult(
         source_filename=filename,
@@ -243,12 +311,15 @@ def _extract_pdf(data: bytes, filename: str) -> ExtractResult:
         if total_pages > PDF_MAX_PAGES:
             parts.append(f"\n...[截断] PDF 共 {total_pages} 页，仅提取前 {PDF_MAX_PAGES} 页")
         text = "\n".join(parts).strip()
-    except Exception as exc:  # pypdf 解析失败如实反馈
+    except Exception as exc:  # pypdf 解析失败如实反馈（加密文档明确提示）
+        detail = f"[程序异常] PDF 解析失败（{type(exc).__name__}: {exc}）。"
+        if "encrypt" in str(exc).lower() or "password" in str(exc).lower():
+            detail = "PDF 已加密（需密码），无法解析。请提供未加密或已解密的 PDF。"
         return ExtractResult(
             source_filename=filename,
             content_type="pdf",
             status="error",
-            detail=f"[程序异常] PDF 解析失败（{type(exc).__name__}: {exc}）。",
+            detail=detail,
         )
     # 2026-08-20（诚实性）: 无文字层 PDF（扫描件/纯图片）——先试视觉转录兜底,
     # 失败则如实标注 error（防幻觉 + 用户知情）。
@@ -275,6 +346,8 @@ def _extract_pdf(data: bytes, filename: str) -> ExtractResult:
                 "或提供带文字层的 PDF。"
             ),
         )
+    # 2026-08-20: 文字层 PDF 内嵌图片识别（默认关 + 5 张上限; 用户定）
+    text += _recognize_doc_images(_collect_pdf_images(reader))
     text, truncated = _truncate(text)
     return ExtractResult(
         source_filename=filename,
