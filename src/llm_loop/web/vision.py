@@ -28,6 +28,21 @@ import httpx
 
 VISION_DEFAULT_PROMPT = "请详细描述这张图片的内容，尽量转录图中文字。若无法识别图片，请如实说明。"
 
+# 2026-08-20（借鉴 SYAGI P1 修复）: 飞书图片消息不带扩展名, 此前 mime 恒 image/png,
+# jpg/gif/webp 错报致部分识别失败。按文件头 magic bytes 嗅探; 嗅探失败按 png 兜底。
+def _sniff_mime(image_bytes: bytes) -> str:
+    if image_bytes[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if image_bytes[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if image_bytes[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    if image_bytes[:2] == b"BM":
+        return "image/bmp"
+    return "image/png"
+
 _AUTH_HINT = (
     "请先运行 `arkcli auth login volc-sso` 刷新登录，或 `arkcli auth apikey` 选择 API Key"
     "（数据面调用需 ARK API Key）；当前账户无法完成图片识别。"
@@ -255,7 +270,7 @@ def _describe_minimax(image_bytes: bytes, mime: str, prompt: str) -> str:
     return text.strip()
 
 
-def describe_image(image_bytes: bytes, mime: str = "image/png", prompt: str = "", settings: Any = None) -> str:
+def describe_image(image_bytes: bytes, mime: str = "", prompt: str = "", settings: Any = None) -> str:
     """调用图片识别能力描述图片，返回描述文本（非空）.
 
     识别结果即**文本**（供无视觉能力的主模型使用），调用方注入对话上下文。
@@ -268,6 +283,8 @@ def describe_image(image_bytes: bytes, mime: str = "image/png", prompt: str = ""
     """
     if not image_bytes:
         raise RuntimeError("图片内容为空")
+    if not mime:
+        mime = _sniff_mime(image_bytes)
     backend = _vision_backend()
     if backend == "minimax":
         return _describe_minimax(image_bytes, mime, prompt)
