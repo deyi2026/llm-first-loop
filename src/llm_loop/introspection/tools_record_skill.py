@@ -155,7 +155,8 @@ def run_record_skill(ctx: Any, audit: Any, args: dict) -> ToolResult:
             tool_call_id="", tool_name="record_skill",
         )
 
-    parameters_hint = args.get("parameters_hint") or []
+    from llm_loop.tools.arg_coerce import coerce_str_list
+    parameters_hint = coerce_str_list(args.get("parameters_hint"))
 
     pattern = _detect_pattern(action_log)
     skill_md = _generate_skill_md(skill_name, pattern, action_log, parameters_hint)
