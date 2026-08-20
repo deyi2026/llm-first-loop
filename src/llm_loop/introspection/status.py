@@ -462,15 +462,11 @@ class ArchitectureStatusProvider:
             # R2/A6: 程序故障计数（fail-open 聚合，AI 可感知"程序故障率"）
             "program_faults": dict(self._program_faults),
         }
-        # EVO-20260818 防御归一化: dimensions 可能被模型传成字符串/其他类型——
-        # 字符串按字符迭代会导致"维度 'c' 暂不可用"（按字符拆解 bug）;
-        # 非列表一律回落全量（绝不按字符拆）。
-        if isinstance(dimensions, str):
-            dimensions = [
-                d.strip() for d in re.split(r"[,，\s]+", dimensions) if d.strip()
-            ] or None
-        if not isinstance(dimensions, list):
-            dimensions = None
+        # EVO-20260818/2026-08-20 防御归一化: dimensions 可能被模型传成字符串/残缺 JSON
+        # （实测: `"["architecture_config", ..."` 截断字符串被拆成垃圾维度名 →
+        # 全部 unavailable 假错误）。增强: JSON 字符串优先解析 → 逗号/空白拆分 →
+        # 过滤到已知维度集 → 全部非法回落全量（模型拿到可用快照而非假错误）。
+        dimensions = _normalize_dimensions(dimensions, set(avail.keys()))
         if dimensions:
             out: dict = {}
             for d in dimensions:
@@ -581,3 +577,27 @@ def _rules_version() -> str:
         pass
     return ""
 
+
+# 2026-08-20: 维度参数鲁棒归一化（EVO-20260820-6857bf41 修复）
+def _normalize_dimensions(dimensions, known: set[str]) -> list[str] | None:
+    """把 dimensions 归一化为合法维度名列表；全部非法/缺失 → None（回落全量）.
+
+    处理: list / JSON 数组字符串（"["x","y"]"，含截断残缺）/ 逗号空白串 / 其他类型。
+    """
+    if isinstance(dimensions, str):
+        d = dimensions.strip()
+        try:  # JSON 数组字符串（含残缺: json.loads 失败则退逗号拆分）
+            parsed = json.loads(d)
+            if isinstance(parsed, list):
+                dimensions = parsed
+            else:
+                dimensions = [parsed]
+        except Exception:  # noqa: BLE001
+            dimensions = re.split(r"[,\s]+", d)
+    if not isinstance(dimensions, list):
+        return None
+    out = [re.sub(r'^[\[\"\s]+|[\"\]\s]+$', '', str(x)) for x in dimensions]
+    out = [x for x in out if x]
+    # 过滤到已知维度集；全部非法 → None（全量，避免假错误）
+    valid = [d for d in out if d in known]
+    return valid or None
