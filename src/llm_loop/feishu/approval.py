@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -96,6 +97,11 @@ def _allowed_open_ids() -> set[str]:
     return out
 
 
+def _now() -> str:
+    """当前 UTC ISO 时间戳（Approval UX v2 批 1: reviewed_at 落盘）."""
+    return datetime.now(UTC).isoformat()
+
+
 def list_pending(store: Any, limit: int = 5) -> str:
     """列出待审建议（pending_review 优先 + accepted 待执行）."""
     try:
@@ -131,29 +137,41 @@ def approve(store: Any, evo_id: str) -> tuple[bool, str, bool]:
         target = store.review(evo_id, "accepted")
         if target is None:
             return False, f"⚠️ 审批失败：未找到 {evo_id}", False
+        # Approval UX v2 批 1: 批准落审批时间戳（reviewed_at）
+        try:
+            store.transition(evo_id, status="accepted", reviewed_at=_now())
+        except Exception:  # noqa: BLE001 — 时间戳落盘失败不影响审批结果
+            pass
         return True, f"✅ 已批准 {evo_id} → accepted", True
     except Exception as exc:  # noqa: BLE001
         return False, f"⚠️ 审批异常：{type(exc).__name__}: {exc}", False
 
 
 def reject(store: Any, evo_id: str, reason: str = "") -> tuple[bool, str]:
-    """拒绝：review(rejected)，理由落盘 note. 返回 (ok, 回执文本)."""
+    """拒绝：review(rejected)，理由落盘 rejected_reason（追加不覆盖）. 返回 (ok, 回执文本)."""
     try:
         cur = _find(store, evo_id)
         if cur is None:
             return False, f"⚠️ 未找到 {evo_id}（可回复「审批列表」查看）"
         if cur.get("status") in ("executed", "failed", "rolled_back"):
             return False, f"ℹ️ {evo_id} 已处于 {cur.get('status')} 状态，无需拒绝。"
-        target = store.review(evo_id, "rejected")
+        if not reason:
+            return False, f"❌ 拒绝 {evo_id} 须提供理由（web 端拒绝理由必填）。"
+        # Approval UX v2 批 1: 拒绝落 rejected_reason/reviewed_at；已有理由→追加 reason_history 不覆盖
+        prev_reason = cur.get("rejected_reason", "") or ""
+        hist = list(cur.get("reason_history", []) or [])
+        if prev_reason and prev_reason != reason:
+            hist.append({"reason": prev_reason, "at": cur.get("reviewed_at", "") or ""})
+        target = store.transition(
+            evo_id,
+            status="rejected",
+            rejected_reason=reason,
+            reviewed_at=_now(),
+            reason_history=hist,
+        )
         if target is None:
             return False, f"⚠️ 拒绝失败：未找到 {evo_id}"
-        # 理由落盘 note（review() 不接收 note，用 _transition 补充——幂等，不改变状态）
-        try:
-            if reason:
-                store._transition(evo_id, status="rejected", note=reason)
-        except Exception:  # noqa: BLE001 — 理由落盘失败不影响拒绝结果
-            pass
-        return True, f"❌ 已拒绝 {evo_id}" + (f"（理由：{reason}）" if reason else "")
+        return True, f"❌ 已拒绝 {evo_id}（理由：{reason}）"
     except Exception as exc:  # noqa: BLE001
         return False, f"⚠️ 拒绝异常：{type(exc).__name__}: {exc}"
 
