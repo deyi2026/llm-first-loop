@@ -52,6 +52,8 @@ class CacheHealthMonitor:
         self._anchor_moved_since_record = False  # 上次 record 后锚点是否前移（拦截期逐轮判定）
         self._force_head_keep = False
         self._fail_alerted = False  # 恢复失败已提示（每进程一次，防刷屏）
+        # 2026-08-20: 上次 record 的模型 ref（跨模型交替时缓存按 provider 独立预热）
+        self._last_model_ref: str | None = None
         # 发送前门禁（per-session 基线: 不同会话注入/记忆不同，互不干扰）
         self._baselines: dict[str, str] = {}  # session_id → 稳定段指纹（system+注入）
         self._gate_drift_count = 0
@@ -65,18 +67,40 @@ class CacheHealthMonitor:
         self._recovery_timeout_runs = recovery_timeout_runs
 
     # ── 窗口监控（run 末尾调用）──
-    def record(self, tokens_in: int, tokens_hit: int) -> str | None:
+    def record(self, tokens_in: int, tokens_hit: int, model_ref: str | None = None) -> str | None:
         """累计窗口并做告警/恢复判定，返回注入提示或 None（fail-open）.
+
+        2026-08-20（镜像，观测正确性）: model_ref 感知——模型切换（如跨端 web=minimax /
+        飞书=deepseek 交替，或 fallback 切模型）时**缓存按 provider 独立预热**，切换后
+        低命中是设计型（新模型无前缀），**不是锚点漂移**。此时重置窗口并返回归因提示，
+        不触发"锚点前移破坏"告警/拦截（避免误报误导）。
 
         归因判定（2026-08-17 DSH 043）:
         - 破坏型（窗口内锚点前移 > 0）: 低命中 → 告警 + 拦截（保留头部可救回前缀）。
         - 设计型（窗口内锚点前移 = 0）: 低命中为设计值（小窗口物理决定），只观察不拦截。
+        - 模型切换（2026-08-20）: 设计型子类——新模型前缀从零预热，重置窗口+归因提示。
         恢复（不再依赖命中率回升——设计 8% 达不到 80%，原条件死锁）:
         - 拦截期锚点未再前移连续 min_runs 轮 → 解除。
         - 超时兜底: 拦截期累计 recovery_timeout_runs 轮未恢复 → 恢复失败短消息 + 解除
           （每进程一次，防刷屏）。
         """
         try:
+            # 2026-08-20: 模型切换检测——切换后缓存按新 provider 独立预热（设计型低命中）
+            switched = model_ref is not None and self._last_model_ref not in (None, model_ref)
+            if model_ref is not None:
+                self._last_model_ref = model_ref
+            if switched:
+                # 2026-08-20: 模型切换 → 重置窗口并**累加切换轮**（新模型第一轮计入
+                # 新窗口）→ 返回归因提示, 不进入锚点漂移告警判定
+                _from = self._last_model_ref
+                self._reset_window()
+                self._win_in += tokens_in
+                self._win_hit += tokens_hit
+                self._win_runs += 1
+                return (
+                    f"[模型切换 {_from}→{model_ref}] 缓存按模型独立预热（新模型无前缀），"
+                    "命中率将从新模型重新统计；非前缀漂移，无需干预。"
+                )
             self._win_in += tokens_in
             self._win_hit += tokens_hit
             self._win_runs += 1
