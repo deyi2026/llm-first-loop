@@ -86,11 +86,14 @@ def build_memory_messages(
     top_k: int = 5,
     *,
     semantic_retriever: Any | None = None,
+    session_id: str = "",  # 2026-08-20 记忆分级: 当前会话 id，scope=session 条目仅原会话召回
 ) -> list[Message]:
     """检索相关记忆并构造 source=memory 的前置消息（FR-MEM-02 / P1 语义检索）.
 
     语义检索可用时先语义召回（mode 标注）；否则关键词兜底。
     无命中 → 空列表（不伪造记忆）；检索异常由调用方捕获标注。
+    记忆分级（2026-08-20，docs/ARCHITECTURE-cache-stable-rules.md §5）: scope=session
+    条目仅在当前会话 == 条目来源会话时召回，防跨会话污染；scope=global 不受限。
     """
     keywords = extract_keywords(text)
     keyword_hits = store.search(keywords, top_k=top_k) if keywords else []
@@ -123,6 +126,16 @@ def build_memory_messages(
             note = f"语义检索不可用：{exc}，已降级为关键词检索"
             entries = keyword_hits
 
+    if not entries:
+        return []
+
+    # 2026-08-20 记忆分级: 过滤会话瞬时条目（scope=session 且来源会话 != 当前会话 → 不召回）
+    entries = [
+        e
+        for e in entries
+        if getattr(e, "scope", "global") != "session"
+        or (session_id and e.source_session_id == session_id)
+    ]
     if not entries:
         return []
     final = entries[:top_k]

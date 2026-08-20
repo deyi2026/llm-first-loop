@@ -133,6 +133,10 @@ def fake_settings(isolated_data_dir):
         llm_model="fake-model",
         data_dir=str(isolated_data_dir),
         max_iterations=10,
+        # EVO-20260819-2254e3b4 方案B 适配: 测试环境关闭"回答末尾常态展示缓存命中率"
+        # （FakeLLM 无真实缓存数据，尾注会破坏 web 协议精确断言；功能本身由
+        # test_cache_monitor.py::test_format_health_note_* 专项覆盖，真实运行默认 True 不受影响）
+        cache_hit_show_in_answer=False,
     )
 
 

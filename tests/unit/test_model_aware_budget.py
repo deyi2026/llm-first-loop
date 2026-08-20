@@ -68,7 +68,7 @@ def test_small_window_model_compresses_proactively(tmp_path, monkeypatch: pytest
     _stuff_history(engine, sid, 300000)  # 30万字符 > 26万预算, < 全局 1M
 
     result = engine.run(sid, "新问题")
-    assert result.final_answer == "默认回答"
+    assert result.final_answer.startswith("默认回答")  # 方案B尾行适配（EVO-20260819-2254e3b4，展示层不参与断言）
     # 全局 1M 预算不会压缩 30万; k3-256k 预算 (262144*2*0.5=262144) 应压缩
     received = _received_history_chars(fake)
     assert received < 290000, f"应压缩到预算内, 实际 {received}"
@@ -95,7 +95,7 @@ def test_large_window_model_unchanged(tmp_path, monkeypatch: pytest.MonkeyPatch)
     _stuff_history(engine, sid, 300000)
 
     result = engine.run(sid, "新问题")
-    assert result.final_answer == "默认回答"
+    assert result.final_answer.startswith("默认回答")  # 方案B尾行适配
     received = _received_history_chars(fake)
     assert received >= 290000, f"1M 窗不应压缩 30万字符, 实际 {received}"
 
@@ -197,7 +197,7 @@ def test_provider_history_budget_compresses_sent_context(
     _stuff_history(engine, sid, 300000)
 
     result = engine.run(sid, "新问题")
-    assert result.final_answer == "默认回答"
+    assert result.final_answer.startswith("默认回答")  # 方案B尾行适配
     received = _received_history_chars(fake)
     # 发送载荷压到 ~12K 预算量级（含 system prompt）, 远小于全局 1M
     assert received < 40000, f"应压到 provider 预算内, 实际 {received}"
