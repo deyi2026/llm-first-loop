@@ -525,6 +525,32 @@ class FeishuRestClient:
             logger.debug("feishu reaction delete error: %s", exc)
 
     # ── 附件下载（FR-SDK-DLD-01/03）──
+
+
+    # 2026-08-20（借鉴 SYAGI）: 飞书 OCR（basic_recognize）——vision 全失败时的文字兑底。
+    # 返回识别出的文本行；失败抛 RuntimeError（调用方 fail-open 如实处理）。
+    def ocr_image(self, image_bytes: bytes) -> list[str]:
+        import base64  # noqa: PLC0415
+
+        from lark_oapi.api.optical_char_recognition.v1.model import (  # noqa: PLC0415
+            BasicRecognizeImageRequest,
+            BasicRecognizeImageRequestBody,
+        )
+
+        req = (
+            BasicRecognizeImageRequest.builder()
+            .request_body(
+                BasicRecognizeImageRequestBody.builder()
+                .image(base64.b64encode(image_bytes).decode("ascii"))
+                .build()
+            )
+            .build()
+        )
+        resp = self._lark_client.optical_char_recognition.v1.image.basic_recognize(req)
+        if not resp.success():
+            raise RuntimeError(f"basic_recognize failed: code={resp.code} msg={resp.msg}")
+        return list(resp.data.text_list or [])
+
     def download_resource(self, message_id: str, file_key: str, resource_type: str) -> bytes:
         """下载消息附件（lark.im.v1.message_resource.get）.
 
