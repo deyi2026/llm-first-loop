@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -25,6 +26,9 @@ import threading
 from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
+
+# Approval UX v2 批 1（补丁 B/Q6）: 影响面文件/模块提取正则（提交时从 impact_scope/content 提取）
+_IMPACT_FILE_RE = re.compile(r"[\w./\-]+\.(?:py|tsx?|jsx?|json|md|css|sh|yaml|yml|toml|txt)")
 
 # 非 POSIX 平台 flock 不可得时的进程内回退锁（对齐 session.py P0-4 模式）
 _FALLBACK_LOCK = threading.Lock()
@@ -83,6 +87,11 @@ class EvolutionSuggestion:
     executed_at: str = ""  # 流转时间戳（EXEC-07 验收"状态流转完整记录"）
     verified_at: str = ""
     rolled_back_at: str = ""
+    # ── Approval UX v2 批 1（EVO 拷问补丁，2026-08-21 镜像）──
+    impact_files: list[str] = field(default_factory=list)  # 影响面文件/模块（提交时提取）
+    rejected_reason: str = ""  # 拒绝理由（持久化留痕）
+    reviewed_at: str = ""      # 审批时间戳（approve/reject 时落）
+    reason_history: list[dict] = field(default_factory=list)  # 理由补录只追加: [{reason, at}]
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -101,6 +110,23 @@ class EvolutionStore:
         """范围边界判定（EVOLVE-03）: 涉安全/协议/数据完整性 → 需人工决策."""
         hay = f"{impact_scope} {content}".lower()
         return any(m in hay for m in _BOUNDARY_MARKERS)
+
+    @staticmethod
+    def _extract_impact_files(impact_scope: str, content: str) -> list[str]:
+        """影响面文件/模块提取（Approval UX v2 批 1 补丁 B/Q6）.
+
+        提交时从 impact_scope/content 正则提取文件路径（如 src/xx.py、webui/src/xx.tsx）；
+        去重保序，最多 10 个；无匹配返回空（读取侧降级用 impact_scope/content 摘要）。
+        """
+        seen: list[str] = []
+        hay = f"{impact_scope}\n{content}"
+        for m in _IMPACT_FILE_RE.finditer(hay):
+            tok = m.group(0).strip()
+            if tok and tok not in seen:
+                seen.append(tok)
+            if len(seen) >= 10:
+                break
+        return seen
 
     def submit(
         self,
@@ -123,6 +149,7 @@ class EvolutionStore:
         scope_norm = scope if scope in {"global", "session"} else "global"
         if requires_human:
             scope_norm = "global"  # 涉边界强制人工审，AI 指定 session 被覆盖（如实由回执标注）
+        impact_files = self._extract_impact_files(impact_scope, content)
         suggestion = EvolutionSuggestion(
             id=f"EVO-{datetime.now(UTC).strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}",
             ts=datetime.now(UTC).isoformat(),
@@ -136,6 +163,7 @@ class EvolutionStore:
             actions=list(actions) if actions else [],
             eval_id=eval_id,
             scope=scope_norm,
+            impact_files=impact_files,  # Approval UX v2 批 1（补丁 B/Q6）: 提交时提取影响面快照
         )
         with self._path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(suggestion.to_dict(), ensure_ascii=False) + "\n")
@@ -171,6 +199,11 @@ class EvolutionStore:
             ("verified_at", ""),
             ("rolled_back_at", ""),
             ("scope", "global"),  # M49: 旧记录默认 global（保守，维持原人工审语义）
+            # Approval UX v2 批 1: 新字段旧记录缺省补默认（零破坏）
+            ("impact_files", []),
+            ("rejected_reason", ""),
+            ("reviewed_at", ""),
+            ("reason_history", []),
         ):
             if key not in entry:
                 entry[key] = default
