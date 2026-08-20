@@ -5,10 +5,10 @@
 
 ## 🔴 高优先（用户已批列入）
 
-### E1. d8a76517 MemoryStore 外部进程直写覆盖风险
-- **事故关联**: 2026-08-20 曾因直写 data/memory/index.json 被运行中进程的 stale 内存覆盖（MEM-20260820-bad62330 丢失）
-- **方案**: MemoryStore 写前 reload 最新磁盘态再合并（或进程级锁）——镜像先行
-- **验证**: 并发写测试（双进程写入不丢失）
+### E1. d8a76517 MemoryStore 外部进程直写覆盖风险 ✅ 已完成（镜像 2026-08-20）
+- **修复**: `_save()` 写前 `_merge_remote_changes()`（磁盘独有条目并入内存, 同 id 内存优先）+ threading.Lock（同进程线程安全）
+- **测试**: test_memory_concurrent_write.py 3 项（跨进程写不丢/同 id 内存优先/线程安全 20 条保留）+ memory 套件 22 全绿
+- **待办**: 审批后推主区（随 promotion 包）
 
 ### E2. dca86eef Web 端模型全限定名透传 LLM 400
 - **现象**: 高频 "[LLM 调用异常] 400"（历史曾复现）
