@@ -234,6 +234,12 @@ export function Composer() {
   };
 
   const onPickFile = async (file: File) => {
+    // 2026-08-20（用户反馈"上传慢"）: 先加 pending 占位即时反馈——图片/扫描件识别
+    // 走远程视觉 API（约 5-10s）, 白等无反馈像卡住; 占位显示"识别中…"诚实预期
+    setAttachments((prev) => [
+      ...prev,
+      { filename: file.name, result_text: "", status: "pending" },
+    ]);
     const reader = new FileReader();
     reader.onload = async () => {
       const b64 = String(reader.result).split(",")[1] ?? "";
@@ -246,17 +252,20 @@ export function Composer() {
           status: (data.status as AttachStatus) ?? "error",
           detail: data.detail,
         };
-        setAttachments((prev) => [...prev, attach]);
+        setAttachments((prev) => prev.map((a) => (a.filename === file.name ? attach : a)));
       } else {
-        setAttachments((prev) => [
-          ...prev,
-          {
-            filename: file.name,
-            result_text: "",
-            status: "error",
-            detail: `上传失败（${status}）：${data.detail ?? "未知错误"}`,
-          },
-        ]);
+        setAttachments((prev) =>
+          prev.map((a) =>
+            a.filename === file.name
+              ? {
+                  filename: file.name,
+                  result_text: "",
+                  status: "error",
+                  detail: `上传失败（${status}）：${data.detail ?? "未知错误"}`,
+                }
+              : a
+          )
+        );
       }
     };
     reader.readAsDataURL(file);
@@ -276,6 +285,7 @@ export function Composer() {
               {a.preview ? <img src={a.preview} alt={a.filename} /> : <span>📄</span>}
               <span className="v2-attachment-name" title={a.detail ?? ""}>
                 {a.filename}
+                {a.status === "pending" ? "（识别中… 远程视觉约 5-10s）" : ""}
                 {a.status === "degraded" || a.status === "error" ? "（降级/失败）" : ""}
               </span>
               <button

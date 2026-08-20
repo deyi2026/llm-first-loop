@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from llm_loop.tools.arg_coerce import coerce_obj, coerce_str_list
 from llm_loop.experiences.document import ExperienceDocument
 from llm_loop.experiences.store import ExperienceStore
 
@@ -35,8 +36,8 @@ def run_save_experience(
         root_cause=root_cause,
         solution=solution,
         evidence=evidence,
-        tags=tags or [],
-        source=source or {},
+        tags=coerce_str_list(tags),
+        source=coerce_obj(source),
         status="active",
         created_at=now,
         updated_at=now,

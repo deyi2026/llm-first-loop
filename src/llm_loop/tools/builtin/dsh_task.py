@@ -159,7 +159,8 @@ class DshTaskTool:
         retry = max(0, min(retry, _MAX_RETRY))
         report_format = bool(kwargs.get("report_format", True))
         ctx_path = str(kwargs.get("ctx_path", "") or "").strip()
-        acceptance = [str(a).strip() for a in (kwargs.get("acceptance") or []) if str(a).strip()]
+        from llm_loop.tools.arg_coerce import coerce_str_list
+        acceptance = coerce_str_list(kwargs.get("acceptance"))
         background = bool(kwargs.get("background", False))
         reasoning_effort = str(kwargs.get("reasoning_effort") or "").strip().lower()
         if reasoning_effort and reasoning_effort not in ("low", "medium", "high", "max"):

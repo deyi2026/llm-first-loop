@@ -58,7 +58,8 @@ class SpawnSubAgentTool:
         context = str(kwargs.get("context", "")).strip()
         inherit = bool(kwargs.get("inherit", False))
         depth = int(kwargs.get("depth", 0) or 0)
-        acceptance = [str(a).strip() for a in (kwargs.get("acceptance") or []) if str(a).strip()]
+        from llm_loop.tools.arg_coerce import coerce_str_list
+        acceptance = coerce_str_list(kwargs.get("acceptance"))
 
         if not task:
             return ToolResult(

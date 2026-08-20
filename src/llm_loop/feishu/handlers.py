@@ -345,12 +345,23 @@ class FeishuMessageHandler:
             return
         try:
             text = describe_image(
-                data, mime="image/png", settings=getattr(self._engine, "settings", None)
+                data, settings=getattr(self._engine, "settings", None)
             )
         except Exception as exc:  # 识别失败如实降级（无伪造描述）
-            logger.exception("feishu image vision failed")
-            self._audit(msg, "attachment_error", str(exc)[:200])
-            self._reply(msg, f"图片识别失败（{type(exc).__name__}: {exc}），图片已跳过。")
+            logger.info("feishu image vision failed (%s), OCR fallback: %s", filename, exc)
+            # 2026-08-20（借鉴 SYAGI）: vision 全失败 → 飞书 OCR 文字兑底（诚实标注来源）
+            ocr_lines: list[str] = []
+            if getattr(self, "_rest_client", None) is not None and data:
+                try:
+                    ocr_lines = self._rest_client.ocr_image(data)
+                except Exception as oexc:  # noqa: BLE001 — OCR 失败如实 fail-open
+                    logger.warning("feishu image ocr failed: %s", oexc)
+            body = "\n".join(ocr_lines).strip()
+            if not body:
+                self._audit(msg, "attachment_error", str(exc)[:200])
+                self._reply(msg, f"图片识别失败（{type(exc).__name__}: {exc}），图片已跳过。")
+                return
+            self._inject_and_reply(msg, f"[附件 图片 {filename} OCR 文字提取]\n{body}")
             return
         self._inject_and_reply(msg, f"[附件 图片 {filename} 识别结果]\n{text}")
 

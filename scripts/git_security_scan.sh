@@ -49,8 +49,8 @@ _ALLOWLIST=(
   'tests/unit/test_history_layering.py'  # 测试数据占位符
   'tests/codearts/test_audit.py'          # 脱敏测试：夹具用 AWS 文档示例密钥验证 AK 不落日志
   'docs/local/'                          # 本地过程文档（不入库，此处兜底）
+  'docs/MIRROR-workspace-protocol.md' # 镜像协议文档（合法引用工作区路径，非泄露）
     "tests/unit/test_cache_guard.py"  # 缓存守卫测试样例（sk- 模式用例）
-    'docs/MIRROR-workspace-protocol.md'  # 镜像工作区协议（含双工作区绝对路径说明, 与镜像 allowlist 一致）
 )
 
 # macOS/Linux 兼容的 stat 大小
