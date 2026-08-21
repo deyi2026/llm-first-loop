@@ -398,7 +398,7 @@ SYSTEM_PROMPT_EXTRA="## 附加规则\n...你的自定义规则..." python -m llm
 
 **背景**：配置是决策边界（程序不自检、等配置）。每项配置三问——程序能否自判（能则程序自适应，不该有配置）？是否必须运行时人/AI 决策（是则保留）？是否仍被读取（否则诚实删除）？
 
-**变更门禁（2026-08-20 用户批准，强制）**：涉及 LFL 自身代码/文件（src/、docs/ai_rules.md、prompt.py、.env、scripts/、tests/、webui/）的修改，一律先在镜像工作区（`llm-first-loop-mirror`，端口 8903）修改并验证，产出 diff 与验证证据后提交用户审批，批准后才能应用到主区并重启；详见 `docs/MIRROR-workspace-protocol.md`。例外：data/ 运行时状态（记忆/经验/日志/会话）属正常运行不走镜像；用户明确指示立即执行时豁免但事后补验证。
+**变更门禁（2026-08-20 用户批准，强制）**：涉及 LFL 自身代码/文件（src/、docs/ai_rules.md、prompt.py、.env、scripts/、tests/、webui/）的修改，一律先在镜像工作区（主区同级的 `*-mirror` 目录，端口 8903；路径见 `docs/MIRROR-workspace-protocol.md` §3 变量定义）修改并验证，产出 diff 与验证证据后提交用户审批，批准后才能应用到主区并重启；详见 `docs/MIRROR-workspace-protocol.md`。例外：data/ 运行时状态（记忆/经验/日志/会话）属正常运行不走镜像；用户明确指示立即执行时豁免但事后补验证。
 
 **约束**（AI 新增配置/修改配置时遵守）：
 1. **新增配置必带生命周期**：临时开关（如 INBOX_WAKEUP、TOOL_GUARD_ENABLED）必须在 .env 注释写 `[验证计划] 何时验证/ [回收条件] 何时恢复或永久化`；验证完成后闭环（恢复/永久化二选一，标注实测依据），不留黑盒开关。
