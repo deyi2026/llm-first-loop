@@ -908,7 +908,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 # 命中率摘要（仅展示，不影响缓存/前缀机制；fail-open）
                 try:
                     if (
-                        getattr(self.settings, "cache_hit_show_in_answer", True)
+                        getattr(self.settings, "cache_hit_show_in_answer", False)
                         and final_answer
                         and self._cache_monitor is not None
                     ):
