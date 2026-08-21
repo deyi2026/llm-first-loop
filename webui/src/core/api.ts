@@ -42,9 +42,19 @@ export async function fetchHealth(): Promise<HealthInfo | null> {
   return status === 200 ? data : null;
 }
 
-export async function fetchSessions(): Promise<SessionMeta[]> {
-  const { status, data } = await api<SessionListResponse>("/api/v1/sessions");
+export async function fetchSessions(includeArchived = false): Promise<SessionMeta[]> {
+  const { status, data } = await api<SessionListResponse>(
+    `/api/v1/sessions${includeArchived ? "?include_archived=true" : ""}`
+  );
   return status === 200 && Array.isArray(data.sessions) ? data.sessions : [];
+}
+
+export async function archiveSession(sessionId: string, archived: boolean): Promise<boolean> {
+  const resp = await fetch(
+    `/api/v1/sessions/${encodeURIComponent(sessionId)}/archive?archived=${archived}`,
+    { method: "POST" }
+  );
+  return resp.ok;
 }
 
 export async function fetchSharedCurrent(): Promise<string | null> {
