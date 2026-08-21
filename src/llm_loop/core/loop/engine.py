@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import hashlib
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -977,6 +978,24 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             )
         except Exception:  # noqa: BLE001 — run.end 失败 fail-open（不影响返回）
             logger.debug("run.end 事件写入失败（fail-open）")
+
+        # EVO-20260820-5bf342ae ②（审查采纳仅②，①剔除）: 长回答自动落盘——
+        # final_answer 超长（>8000 chars）时落盘 data_dir/audit/long_answers/ 并在末尾附路径，
+        # 信息零丢失 + 回复仍可短（防截断尾部丢失）；fail-open 不阻断 run
+        # 2026-08-21 修复: 路径用内容哈希（非时间戳）——final_answer 作为 assistant 消息
+        # 进历史后续轮次回传，时间戳路径每轮变 → 该消息字节变 → 前缀断（12 实验规律）；
+        # 内容哈希: 同一回答→同路径（回传稳定命中），不同回答→不同路径（新内容本就 miss）。
+        try:
+            if final_answer and len(final_answer) > 8000:
+                _la_dir = Path(self.settings.data_dir) / "audit" / "long_answers"
+                _la_dir.mkdir(parents=True, exist_ok=True)
+                _la_digest = hashlib.sha256(final_answer.encode("utf-8", errors="replace")).hexdigest()[:16]
+                _la_file = _la_dir / f"{session_id[:8]}-{_la_digest}.md"
+                _la_file.write_text(final_answer, encoding="utf-8")
+                final_answer = f"{final_answer}\n\n[长回答已落盘] {_la_file}"
+                logger.info("长回答落盘: %s (%d chars)", _la_file, len(final_answer))
+        except Exception:  # noqa: BLE001 — 落盘失败 fail-open
+            logger.debug("长回答落盘失败（fail-open）")
 
         return LoopResult(
             session_id=session_id,
