@@ -399,6 +399,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         # D1: 会话首次落库生成 session.created + 用户消息事件（fail-open）
         self._ensure_session_created(sess)
         self._append_message_event(sess, user_msg)
+        self._inject_interruption_recovery(session_id, sess)
         self._phase("ingress")
 
         final_answer = ""
