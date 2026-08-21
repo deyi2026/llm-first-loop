@@ -157,3 +157,33 @@ def test_replay_forked_reserved_noop():
     # 预留类型不触发行为：无额外标注
 
     assert view["session_id"] == "s1"
+
+
+def test_replay_idx_conflict_keeps_all_messages():
+    """2026-08-21 修复: run 中断导致 idx 重复 → replay 按 seq 保留全部（不覆盖）.
+
+    回归: 180c662a 事故——"评估"和"继续"两条 user 消息都 idx=4, 原实现
+    按 idx 排序后到覆盖先到 → 丢任务; 修复后按 seq 顺序收集 → 全部保留。
+    """
+    from llm_loop.event_log.replay import replay_session
+
+    class E:
+        def __init__(self, seq, sid, typ, payload):
+            self.seq = seq
+            self.session_id = sid
+            self.type = typ
+            self.payload = payload
+
+    events = [
+        E(1, "sid", "session.created", {"session_id": "sid"}),
+        E(2, "sid", "message.appended", {"index": 0, "role": "user", "content": "第一个问题"}),
+        E(3, "sid", "message.appended", {"index": 1, "role": "assistant", "content": "回答1"}),
+        # 中断后恢复: idx 回到 1（内存回滚）, 新消息 idx 冲突
+        E(4, "sid", "message.appended", {"index": 1, "role": "user", "content": "继续任务"}),
+    ]
+    view = replay_session(events)
+    msgs = view.get("messages", [])
+    contents = [str(m.get("content", "")) for m in msgs]
+    assert "第一个问题" in contents, "第一条 user 应保留"
+    assert "继续任务" in contents, "冲突 idx 的后续消息也应保留（不覆盖）"
+    assert contents.index("第一个问题") < contents.index("继续任务"), "顺序应按 seq"
