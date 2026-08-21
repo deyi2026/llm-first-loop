@@ -196,6 +196,27 @@ class _EventsMixin:
             audit_dir=self.settings.audit_dir,
         )
 
+    def _persist_long_answer(self, session_id: str, final_answer: str) -> str:
+        """EVO-20260820-5bf342ae ②: 长回答（>8000 chars）落盘并附路径（信息零丢失）.
+
+        路径用内容哈希（非时间戳）——final_answer 作为 assistant 消息进历史后续轮次
+        回传，时间戳路径每轮变 → 该消息字节变 → 前缀断（12 实验规律，2026-08-21 修复）；
+        内容哈希: 同一回答→同路径（回传稳定命中）。fail-open: 落盘失败返回原样不阻断。
+        """
+        try:
+            if final_answer and len(final_answer) > 8000:
+                import hashlib
+
+                _la_dir = Path(self.settings.data_dir) / "audit" / "long_answers"
+                _la_dir.mkdir(parents=True, exist_ok=True)
+                _la_digest = hashlib.sha256(final_answer.encode("utf-8", errors="replace")).hexdigest()[:16]
+                _la_file = _la_dir / f"{session_id[:8]}-{_la_digest}.md"
+                _la_file.write_text(final_answer, encoding="utf-8")
+                return f"{final_answer}\n\n[长回答已落盘] {_la_file}"
+        except Exception:  # noqa: BLE001 — 落盘失败 fail-open
+            logger.debug("长回答落盘失败（fail-open）")
+        return final_answer
+
     def _set_session_override(self, sess, value: str | None) -> None:
         """M48（design §5.3）: switch_model 调用的会话 override 写入回调.
 
