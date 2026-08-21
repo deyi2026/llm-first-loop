@@ -84,7 +84,11 @@ class ReadFileTool:
                 )
             numbered = "\n".join(f"{start + i + 1} | {ln}" for i, ln in enumerate(selected))
             note = f"\n[共 {total} 行，已显示 {len(selected)} 行]" if len(selected) < total else ""
-            content = numbered + note + _link_note
+            # 2026-08-21 摘要前置（用户洞察: 截断区保留必要信息）: 元信息放首行——
+            # 大文件截断（truncate_output 保留首 1500）时，AI 先看到"路径/行数/范围"
+            # 再是内容；避免截断后只有内容无元信息（原实现 numbered 开头，首行是文件内容）。
+            meta = f"[read_file] {p} 共 {total} 行，显示 {start + 1}-{start + len(selected)} 行"
+            content = meta + "\n" + numbered + note + _link_note
             # 2026-08-18 对齐 DSH: 大文件读取截断（首尾+落盘可检索——尾部新增小=命中高）
             # EVO-20260819 full=true: 跳过截断（注册表层仍保硬上限安全阀）
             if not full:

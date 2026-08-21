@@ -27,8 +27,10 @@ def test_workdir_applies_to_subprocess():
     with tempfile.TemporaryDirectory() as d:
         r = _tool().execute(command="pwd", workdir=d)
         assert r.status.name == "SUCCESS", f"status={r.status}, content={r.content}"
+        # 2026-08-21 摘要前置: 输出 = 元信息行 + 实际输出（取末行）
+        out = r.content.strip().splitlines()[-1]
         # macOS /var → /private/var 符号链接，用 resolve 归一
-        assert Path(r.content.strip()) == Path(d).resolve(), f"pwd 应为 {d}, 实际 {r.content}"
+        assert Path(out) == Path(d).resolve(), f"pwd 应为 {d}, 实际 {r.content}"
 
 
 def test_workdir_missing_returns_failure():
@@ -42,14 +44,16 @@ def test_no_workdir_defaults_cwd():
     """未指定 workdir → 继承进程 cwd（零回归）."""
     r = _tool().execute(command="pwd")
     assert r.status.name == "SUCCESS"
-    assert r.content.strip() == os.getcwd()
+    out = r.content.strip().splitlines()[-1]
+    assert out == os.getcwd()
 
 
 def test_llm_exec_cwd_injected():
     """LLM_EXEC_CWD 环境事实注入子进程."""
     r = _tool().execute(command="echo $LLM_EXEC_CWD")
     assert r.status.name == "SUCCESS"
-    assert r.content.strip() == os.getcwd()
+    # 2026-08-21 摘要前置: 元信息行后为实际输出
+    assert os.getcwd() in r.content
 
 
 def test_trim_config_env_override():
@@ -74,7 +78,9 @@ def test_trim_config_default_no_truncate():
     os.environ.pop("TOOL_TRIM_TAIL", None)
     r = _tool().execute(command="printf 'hello'")
     assert "[输出已截断]" not in r.content
-    assert r.content.strip() == "hello"
+    # 2026-08-21 摘要前置: 输出含 [命令] 元信息行 + 原始内容（行为变更）
+    assert "[命令]" in r.content
+    assert "hello" in r.content
 
 
 def test_trim_config_invalid_falls_back():
