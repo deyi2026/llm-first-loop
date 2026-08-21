@@ -47,6 +47,7 @@ class _BuildMixin:
         max_chars: int | None = None,
         model: str | None = None,  # P1-7: per-call 模型覆盖（判定本地 provider 跳过推送式注入）
         emergency_compact: bool = False,  # EVO-20260818: M53 拒绝逃生——head_keep=0 锚点前移激进压缩
+        tool_round_zero: bool = False,  # 2026-08-21: 工具轮零历史——只发 system+摘要+最近结果
     ) -> list[dict]:
         """构造提交 LLM 的消息序列（system prompt + 记忆注入 + 历史 + 压缩另存）.
 
@@ -65,6 +66,12 @@ class _BuildMixin:
         # （2026-08-18 审计断点归因: 96%→2% 全量失效，delta 仅 614 tokens）。
         # 改为提交视图尾部追加（GATE_NOTE 模式，转 user），system+稳定历史前缀字节不变。
         base = list(sess.messages)
+        # 2026-08-21 工具轮零历史（TOOL_ROUND_ZERO_HISTORY=1）: 工具轮只发
+        # system+摘要+最近 2 条（工具结果+声明）——前缀（system+摘要）固定 → KV 命中
+        # → prefill 秒级（本地模型实测 4-13 tokens prefill 仅 0.2-0.8s）。
+        # 注意: 至少保留最近配对组（assistant(tool_calls)+tool 结果, C1 协议约束）。
+        if tool_round_zero:
+            base = base[-2:] if len(base) >= 2 else base
         prefix_len = 0
         # RULE-AI-14 协调通道: 程序级自动注入 DSH→LFL 待处理消息（每轮 run 必感知，
         # 非仅提示词引导；实现见 core/loop/interop.py _InteropMixin，fail-open）

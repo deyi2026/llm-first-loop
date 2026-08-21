@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -444,13 +445,26 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             # M54: 模型窗口感知的主动压缩 — 先定模型标签, 再按其窗口收紧历史预算
             planned_label = self._planned_model_label(model, sess)
             effective_budget = self._effective_history_budget(planned_label)
+            # 2026-08-21 工具轮小前缀/零历史: 上轮带 tool_calls → 小预算; TOOL_ROUND_ZERO_HISTORY=1 时零历史
+            _tb = int(os.environ.get("TOOL_ROUND_BUDGET", "8000"))
+            _last_tool = next((bool(getattr(m, "tool_calls", None))
+                               for m in reversed(sess.messages) if m.role == "assistant"), False)
+            _tool_round_zero = os.environ.get("TOOL_ROUND_ZERO_HISTORY", "0") == "1" and _last_tool
+            if _tool_round_zero:
+                effective_budget = min(effective_budget, 4000)
+            elif _tb > 0 and _last_tool:
+                effective_budget = min(effective_budget, _tb)
+            if _tool_round_zero or (_tb > 0 and _last_tool):
+                self._record_action("understand.build_messages", "tool_round_small_prefix",
+                                    "零历史" if _tool_round_zero else "小前缀")
             if effective_budget < self._runtime_history_budget():
                 self._record_action(
                     "understand.build_messages",
                     "model_aware_budget",
                     f"{planned_label}: {self._runtime_history_budget()}→{effective_budget}",
                 )
-            messages = self._build_llm_messages(sess, memory_msgs, max_chars=effective_budget, model=model)
+            messages = self._build_llm_messages(sess, memory_msgs, max_chars=effective_budget, model=model,
+                                                tool_round_zero=_tool_round_zero)
             if len(messages) < len(sess.messages) + len(memory_msgs) + 1:
                 truncation_noted = True
             tool_schemas = self.registry.schemas(lazy=self.settings.tool_schema_lazy)
