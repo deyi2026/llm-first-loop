@@ -204,6 +204,9 @@ class _BuildMixin:
                 if self._cache_monitor.force_head_keep
                 else 0,
             ),
+            # 2026-08-21 追加式压缩: 归档后追加确定性摘要（APPEND_COMPRESSION=1 启用,
+            # 默认关零回归）——任务语义连贯 + 前缀稳定（同归档→同摘要字节→缓存命中）
+            _append_summary_enabled=os.environ.get("APPEND_COMPRESSION", "0") == "1",
         )
         # P1-10: 锚点推进持久化（换算回会话索引, clamp 防御）
         if anchor_box:
