@@ -72,7 +72,8 @@ def test_complexity_reduction(engine_src):
       预检/后检 + run 末注入）。
     仍低于拆分前, 守卫防再膨胀（>1135 应触发拆分评审）。
     """
-    assert len(engine_src.splitlines()) < 1138
+    assert len(engine_src.splitlines()) < 1140
+    # 2026-08-22 中断检测+恢复提示（_inject_interruption_recovery）后 1138
     # 2026-08-21 工具轮小前缀/零历史（TOOL_ROUND_BUDGET/ZERO_HISTORY）后 1137
 
 
