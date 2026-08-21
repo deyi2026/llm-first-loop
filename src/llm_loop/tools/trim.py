@@ -3,11 +3,16 @@
 EVO-20260817-f485acac 模式（execute_command 首创）: 超阈值输出落盘 +
 保留首尾 + search_archive 可检索——read_file/web_search 对齐同款——
 控制尾部新增体积（缓存命中率：尾部新增段无缓存——小=命中高）。
+
+2026-08-21 修复（缓存前缀确定性）: 落盘路径由时间戳改为内容哈希——
+时间戳使路径每轮变化 → 发送视图前缀字节变 → 服务端缓存全 miss
+（12 实验规律: 已发送内容任何修改=全 miss）。内容哈希: 相同内容→
+相同路径（前缀稳定可命中）；不同内容→不同路径（不误读旧文件）。
 """
 from __future__ import annotations
 
+import hashlib
 import os
-import time
 from pathlib import Path
 
 
@@ -77,7 +82,10 @@ def truncate_output(content: str, source: str = "") -> str:
         out_dir = Path(os.environ.get("DATA_DIR", "data")) / "audit" / "tool_outputs"
         out_dir.mkdir(parents=True, exist_ok=True)
         safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in source[:40]) or "out"
-        dump_path = out_dir / f"{time.strftime('%Y%m%d-%H%M%S')}_{safe[:24]}.log"
+        # 2026-08-21 修复: 内容哈希替代时间戳——确定性路径（相同内容→同路径，
+        # 前缀稳定缓存命中；不同内容→不同路径，不误读）。保留源名前缀便于检索。
+        digest = hashlib.sha256(content.encode("utf-8", errors="replace")).hexdigest()[:16]
+        dump_path = out_dir / f"{digest}_{safe[:24]}.log"
         dump_path.write_text(content, encoding="utf-8")
         dump_path_str = str(dump_path)
     except Exception:  # noqa: BLE001 — 落盘失败不阻断截断
