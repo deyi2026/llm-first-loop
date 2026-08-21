@@ -61,3 +61,4 @@ llm-first-loop.swe-*.json
 
 # 评测日志（run_evaluation 产物，35M 体量）
 logs/
+.feishu.env.dsh
