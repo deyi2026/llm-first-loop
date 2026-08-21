@@ -129,4 +129,11 @@ class EvolutionReviewRequest(BaseModel):
 
     id: str = Field(min_length=4, description="演进建议 ID（EVO-xxx）")
     decision: str = Field(pattern="^(accepted|rejected)$", description="accepted / rejected")
-    reason: str = Field(default="", max_length=500, description="拒绝理由（可选）")
+    reason: str = Field(default="", max_length=500, description="拒绝理由（拒绝必填）")
+    expected_status: str = Field(
+        default="", description="乐观锁: 客户端当前看到的 status，CAS 校验（Approval UX v2 批 1）"
+    )
+    extra_confirm: bool = Field(
+        default=False,
+        description="涉边界项（requires_human）单条批准额外确认标志（Approval UX v2 批 1，验证清单 #9）",
+    )

@@ -235,7 +235,7 @@ def _extract_docx(data: bytes, filename: str) -> ExtractResult:
                     except Exception:  # noqa: BLE001
                         continue
     except zipfile.BadZipFile:
-        pass
+        pass  # 非 docx/损坏 zip: 无媒体图片，fail-open 继续（不阻断文本提取）
     text += _recognize_doc_images(media_images)
     text, truncated = _truncate(text)
     return ExtractResult(

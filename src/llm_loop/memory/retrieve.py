@@ -96,7 +96,7 @@ def build_memory_messages(
     条目仅在当前会话 == 条目来源会话时召回，防跨会话污染；scope=global 不受限。
     """
     keywords = extract_keywords(text)
-    keyword_hits = store.search(keywords, top_k=top_k) if keywords else []
+    keyword_hits = store.search(keywords, top_k=top_k, session_id=session_id) if keywords else []
 
     # P1 语义检索（预算内，失败/不可用如实降级为关键词）
     note = ""

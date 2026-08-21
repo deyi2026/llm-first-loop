@@ -234,6 +234,42 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         # None = 不通知（零回归）；观察者异常 fail-open 不影响主循环
         self._action_observer: Callable[[str, dict], None] | None = None
 
+    # ── 2026-08-20 (DESIGN-v3 v2 落地): 切换通知注入（AI 主导上下文选择第一步）──
+    def _inject_switch_notice(self, switch_from: str, switch_to: str) -> None:
+        """模型切换 → 填充切换感知帧到 _tip_tail_messages 槽.
+
+        复用 _tip_tail_messages 机制（tool_exec.py 填充 / build.py 消费）:
+        尾部追加、转 user、一次性消费——system+稳定历史前缀字节不变（缓存友好）。
+        仅本轮注入不持久化（瞬时性事件，对齐 ARCHITECTURE §5 瞬时条目不持久化）。
+        首轮全量 miss 是物理事实（build→routing→452 时序），如实告知 + 给 AI 动作选项。
+        fail-open: 注入异常不阻断切换。
+        """
+        try:
+            if not switch_from or not switch_to or switch_from == switch_to:
+                return
+            notice = (
+                "[模型切换感知] 当前模型已从 "
+                f"{switch_from} 切换到 {switch_to}。新缓存池无此前缀，"
+                "本轮首轮全量 miss（物理事实，成本已发生）；第二轮起尾部瘦身生效。"
+                "如任务需要早期历史，可调用 search_archive(query=...) 检索关键帧；"
+                "后续如需声明上下文窗口，可经 declare_context 工具（若已注册）。"
+            )
+            tips = getattr(self, "_tip_tail_messages", None)
+            if tips is None:
+                tips = self._tip_tail_messages = []
+            tips.append(Message(
+                role="system",
+                content=notice,
+                source=MessageSource.SYSTEM,
+                metadata={"injected_system": True},
+            ))
+        except Exception:  # noqa: BLE001 — fail-open 不阻断切换
+            import logging
+
+            logging.getLogger(__name__).debug(
+                "切换通知注入异常（fail-open）", exc_info=True
+            )
+
     # ── 主入口 ──
     def run_stream(
         self, session_id: str, user_text: str, model: str | None = None,
@@ -308,6 +344,14 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         # 会话恢复（重启继续对话，DFX-REL-03）
         sess = self.session.load(session_id)
         if not self.session.exists(session_id):
+            # 2026-08-20 (EVO-20260820-0b96348d, 用户决策): 新会话首轮仅重置活动窗口与
+            # 模型游标（note_new_session），**保留模型桶**——桶是模型生命周期统计，
+            # 跨会话/跨切换持久，保证连续切换模型对话时各模型命中率统计稳定连续。
+            try:
+                if self._cache_monitor is not None:
+                    self._cache_monitor.note_new_session(session_id=session_id)
+            except Exception:  # noqa: BLE001 — fail-open
+                logger.debug("新会话缓存健康重置异常（fail-open）", exc_info=True)
             try:
                 self.session.save(sess)
             except Exception as exc:
@@ -439,10 +483,19 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             chat_model_arg = routing.chat_model_arg
             # EVO-20260818（spec §5.4.1-3 注记）: 模型切换 → cache_health 窗口重置
             # （guard 侧 client 已按 guard_last_model 重置；cache_health 侧防跨模型归因污染）
+            # 2026-08-20 (EVO-20260820-0b96348d, 用户决策): clear_buckets=False 保留模型桶——
+            # 桶是模型生命周期统计，切换时不清（切回热检查、模型级累计跨切换持久）。
             if model_used and model_used != self._cache_last_model:
-                if self._cache_last_model is not None:
-                    self._cache_monitor.reset(reason=f"model_switch:{model_used}")
+                _switch_from = self._cache_last_model
+                if _switch_from is not None:
+                    self._cache_monitor.reset(reason=f"model_switch:{model_used}",
+                                              clear_buckets=False)
                 self._cache_last_model = model_used
+                # 2026-08-20 (DESIGN-v3 v2 落地): 切换通知——AI 主导上下文选择第一步。
+                # 注入切换感知帧（_tip_tail_messages 槽: 尾部追加/转 user/一次性，
+                # system+稳定历史前缀字节不变）。首轮全量 miss 是物理事实（build→routing
+                # →452 时序），如实告知 + 给 AI 动作选项。仅本轮注入不持久化。
+                self._inject_switch_notice(_switch_from or "", model_used)
             if routing.final_answer_override is not None:
                 # EVO-20260818（M53 拒绝逃生，防死循环）: 提交超模型窗口被拒时，AI 无 LLM
                 # 调用无法自救（无法 switch_model/开新会话/调工具）——现场: 2a3385da 会话
@@ -855,7 +908,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 # 命中率摘要（仅展示，不影响缓存/前缀机制；fail-open）
                 try:
                     if (
-                        getattr(self.settings, "cache_hit_show_in_answer", True)
+                        getattr(self.settings, "cache_hit_show_in_answer", False)
                         and final_answer
                         and self._cache_monitor is not None
                     ):
@@ -924,6 +977,20 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             )
         except Exception:  # noqa: BLE001 — run.end 失败 fail-open（不影响返回）
             logger.debug("run.end 事件写入失败（fail-open）")
+
+        # EVO-20260820-5bf342ae ②（审查采纳仅②，①剔除）: 长回答自动落盘——
+        # final_answer 超长（>8000 chars）时落盘 data_dir/audit/long_answers/ 并在末尾附路径，
+        # 信息零丢失 + 回复仍可短（防截断尾部丢失）；fail-open 不阻断 run
+        try:
+            if final_answer and len(final_answer) > 8000:
+                _la_dir = Path(self.settings.data_dir) / "audit" / "long_answers"
+                _la_dir.mkdir(parents=True, exist_ok=True)
+                _la_file = _la_dir / f"{session_id}-{time.strftime('%Y%m%d-%H%M%S')}.md"
+                _la_file.write_text(final_answer, encoding="utf-8")
+                final_answer = f"{final_answer}\n\n[长回答已落盘] {_la_file}"
+                logger.info("长回答落盘: %s (%d chars)", _la_file, len(final_answer))
+        except Exception:  # noqa: BLE001 — 落盘失败 fail-open
+            logger.debug("长回答落盘失败（fail-open）")
 
         return LoopResult(
             session_id=session_id,

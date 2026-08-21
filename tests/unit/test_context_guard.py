@@ -72,7 +72,7 @@ def test_under_limit_proceeds(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None
     engine = _make_engine(tmp_path, pool, settings)
 
     result = engine.run(engine.session.create(), "你好")
-    assert result.final_answer == "默认回答"
+    assert result.final_answer.startswith("默认回答")  # 尾部可能有缓存命中率展示行（方案B）
     assert len(fake.calls) == 1
 
 
@@ -82,7 +82,7 @@ def test_guard_skipped_without_pool(build_test_engine) -> None:
     fake.model = "fake-model"
     engine.llm_pool = None
     result = engine.run(engine.session.create(), "你好")
-    assert result.final_answer == "你好"
+    assert result.final_answer.startswith("你好")  # 尾部可能有缓存命中率展示行（方案B）
 
 
 def test_guard_skipped_for_unknown_model(tmp_path) -> None:
@@ -94,5 +94,5 @@ def test_guard_skipped_for_unknown_model(tmp_path) -> None:
     engine = _make_engine(tmp_path, pool, settings)
 
     result = engine.run(engine.session.create(), "你好")
-    assert result.final_answer == "默认回答"
+    assert result.final_answer.startswith("默认回答")  # 尾部可能有缓存命中率展示行（方案B）
     assert len(fake.calls) == 1

@@ -1148,6 +1148,111 @@
   word-break: break-all;
 }
 
+/* ── Approval UX v2 批 1（2026-08-21 镜像）── */
+.v2-evo-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--dsw-alias-divider-color, #e5e7eb);
+}
+
+.v2-evo-tab {
+  border: 1px solid var(--dsw-alias-divider-color, #e5e7eb);
+  background: transparent;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--dsw-alias-label-secondary, #6b7280);
+}
+
+.v2-evo-tab.active {
+  background: var(--dsw-alias-state-info, #2563eb);
+  border-color: var(--dsw-alias-state-info, #2563eb);
+  color: #fff;
+}
+
+.v2-evo-batchbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  font-size: 11px;
+  background: rgba(37, 99, 235, 0.06);
+  border-bottom: 1px solid var(--dsw-alias-divider-color, #e5e7eb);
+}
+
+.v2-evo-btn.ghost {
+  background: transparent;
+  border: 1px solid var(--dsw-alias-divider-color, #e5e7eb);
+  color: var(--dsw-alias-label-secondary, #6b7280);
+}
+
+.v2-evo-check {
+  margin-right: 4px;
+  vertical-align: middle;
+  accent-color: var(--dsw-alias-state-info, #2563eb);
+}
+
+.v2-evo-impact {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--dsw-alias-state-info, #2563eb);
+  word-break: break-all;
+}
+
+.v2-evo-reject-reason {
+  color: var(--dsw-alias-state-danger, #dc2626);
+}
+
+.v2-evo-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.v2-evo-modal-box {
+  background: var(--dsw-alias-bg, #fff);
+  border-radius: 8px;
+  padding: 14px;
+  width: min(420px, 90vw);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+
+.v2-evo-modal-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.v2-evo-modal-note {
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary, #6b7280);
+  margin-bottom: 8px;
+}
+
+.v2-evo-reason-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 6px;
+  border: 1px solid var(--dsw-alias-divider-color, #e5e7eb);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.v2-evo-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
 /* 会话树：父会话折叠箭头 */
 .v2-session-arrow {
   border: none;

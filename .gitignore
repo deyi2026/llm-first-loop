@@ -20,6 +20,7 @@ data/
 .env
 .env.local
 .env.bak-*
+.env.bak.*
 
 # 系统
 .DS_Store

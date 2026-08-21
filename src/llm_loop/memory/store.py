@@ -109,11 +109,14 @@ class MemoryStore:
                     pass  # 备份失败尽力而为
                 self._entries = []
 
-    def _save(self) -> None:
+    def _save(self, *, merge: bool = True) -> None:
         # 2026-08-20（d8a76517, 镜像）: 写前合并磁盘最新态（防覆盖其他进程写入）+
-        # 线程锁（同进程多线程安全）
+        # 线程锁（同进程多线程安全）。
+        # merge=False: 本进程有明确淘汰/清理语义（cleanup）时跳过磁盘合并——否则
+        # 磁盘旧状态会把刚淘汰的条目回填合并，淘汰失效（2026-08-20 镜像实测回归）。
         with self._lock:
-            self._merge_remote_changes()
+            if merge:
+                self._merge_remote_changes()
             # 原子写（tmp+rename）：Web/飞书跨进程共享记忆时防半写损坏/交错覆盖
             payload = json.dumps(
                 [e.to_dict() for e in self._entries], ensure_ascii=False, indent=2
@@ -212,13 +215,20 @@ class MemoryStore:
         self._save()
         return entry
 
-    def search(self, keywords: list[str], top_k: int = 5) -> list[MemoryEntry]:
-        """关键词检索 + 衰减排序（Phase 2）: 检索命中更新访问统计（内存），不即时全量落盘."""
+    def search(self, keywords: list[str], top_k: int = 5, session_id: str = "") -> list[MemoryEntry]:
+        """关键词检索 + 衰减排序（Phase 2）: 检索命中更新访问统计（内存），不即时全量落盘.
+
+        记忆分级（2026-08-20，docs/ARCHITECTURE-cache-stable-rules.md §5）: scope=session
+        条目仅当传入 session_id 且等于条目 source_session_id 时召回（防跨会话污染）；
+        scope=global 条目不受限。默认 session_id="" → 仅召回 global。
+        """
         if not keywords:
             return []
         scored: list[tuple[float, MemoryEntry]] = []
         now = datetime.now(UTC).isoformat()
         for e in self._entries:
+            if e.scope == "session" and not (session_id and e.source_session_id == session_id):
+                continue
             hay = " ".join([e.content, *e.keywords]).lower()
             score = sum(1 for k in keywords if k.lower() in hay)
             if score > 0:
@@ -302,7 +312,9 @@ class MemoryStore:
         )
         doomed = {id(e) for e in sorted_entries[:excess]}
         self._entries = [e for e in self._entries if id(e) not in doomed]
-        self._save()
+        # merge=False: 淘汰是本进程权威决定，落盘跳过磁盘合并——否则磁盘旧状态
+        # 把刚淘汰条目回填（2026-08-20 E1 回归实测）。
+        self._save(merge=False)
         return {"pruned": excess}
 
     def all(self) -> list[MemoryEntry]:

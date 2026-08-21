@@ -334,7 +334,7 @@ def test_default_model_429_triggers_fallback_to_next(
     result = engine.run(sid, "请回答我")
 
     # 验证 final_answer 取自降级响应
-    assert result.final_answer == "（降级后回答）"
+    assert result.final_answer.startswith("（降级后回答）")  # 尾部可能有缓存命中率展示行（方案B）
     # 验证消息流含 [模型降级: 标注（AI 可见, design 原则 2）
     sess = engine.session.load(sid)
     fallback_msgs = [m for m in sess.messages if "[模型降级:" in m.content]
@@ -401,7 +401,7 @@ def test_default_model_timeout_triggers_fallback_chain(
     sid = engine.session.create()
     result = engine.run(sid, "请回答我")
 
-    assert result.final_answer == "（降级到 local 成功）"
+    assert result.final_answer.startswith("（降级到 local 成功）")  # 尾部可能有缓存命中率展示行（方案B）
     # 降级链走通: 命中第一个候选 local
     assert fallback_client_1.calls  # 确认 fallback_client_1 确实被调用
     # 审计记录

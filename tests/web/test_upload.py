@@ -77,7 +77,7 @@ def test_upload_docx_bad_zip(build_test_engine, fake_settings):
 def test_upload_pdf_ok(build_test_engine, fake_settings):
     engine, _ = build_test_engine([])
     client = _make_client(engine)
-    # 用 pypdf 生成最小 PDF
+    # 用 pypdf 生成最小 PDF（带文字层，否则走"无文字层→视觉转录兜底"诚实性路径返回 error）
     from pypdf import PdfWriter
 
     writer = PdfWriter()
@@ -86,11 +86,37 @@ def test_upload_pdf_ok(build_test_engine, fake_settings):
 
     bio = _io.BytesIO()
     writer.write(bio)
-    resp = _upload(client, "test.pdf", bio.getvalue())
+    # 在空白页上叠加文字层：pypdf 无法直接写入文本，改用最小手工 PDF 对象——
+    # 直接构造含文字流的最小 PDF 字节（含 BT/ET 文本对象，pypdf 可提取）
+    _text_pdf = (
+        b"%PDF-1.4\n"
+        b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n"
+        b"2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n"
+        b"3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] "
+        b"/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj\n"
+        b"4 0 obj << /Length 44 >> stream\n"
+        b"BT /F1 12 Tf 72 100 Td (Hello PDF) Tj ET\n"
+        b"endstream endobj\n"
+        b"5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n"
+        b"xref\n"
+        b"0 6\n"
+        b"0000000000 65535 f \n"
+        b"0000000009 00000 n \n"
+        b"0000000058 00000 n \n"
+        b"0000000115 00000 n \n"
+        b"0000000236 00000 n \n"
+        b"0000000335 00000 n \n"
+        b"trailer << /Size 6 /Root 1 0 R >>\n"
+        b"startxref\n"
+        b"421\n"
+        b"%%EOF\n"
+    )
+    resp = _upload(client, "test.pdf", _text_pdf)
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "ok"
     assert body["content_type"] == "pdf"
+    assert "Hello PDF" in body["result_text"]
 
 
 def test_upload_pdf_corrupt(build_test_engine, fake_settings):

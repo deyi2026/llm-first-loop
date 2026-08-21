@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import json
 import re
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
 from llm_loop.core.message import Message, ToolResultStatus
+from llm_loop.core.run_context import current_session_id as _current_session_id
 
 # 声明动词表（写入/创建/删除/保存/修改/执行/更新/安装/下载…）
 _DECLARE_VERBS = [
@@ -82,6 +84,7 @@ class DeclarationCheckResult:
     declarations: list[str] = field(default_factory=list)
     discrepancies: list[str] = field(default_factory=list)  # 声明了什么 vs 实际事实
     receipt_summary: list[str] = field(default_factory=list)
+    cross_round_hits: list[str] = field(default_factory=list)  # EVO-20260820-409f3f60: 近 N 轮回执命中（跨轮引用）
 
 
 class DeclarationValidator:
@@ -93,10 +96,24 @@ class DeclarationValidator:
         *,
         semantic_matcher: Callable[[str, str], float] | None = None,
         semantic_threshold: float = 0.75,
+        recent_window: int = 3,
     ) -> None:
         self._audit_dir = Path(audit_dir) if audit_dir else None
         self._semantic_matcher = semantic_matcher  # P1: 轻量语义匹配（默认 None → 纯关键词/路径）
         self._semantic_threshold = semantic_threshold
+        # EVO-20260820-409f3f60: 近 N 轮回执窗口（按会话隔离）——压缩/归档移出内存的
+        # 早期轮次成功回执，从历史缓存补证，区分"跨轮引用"与"真实不诚实"。
+        self._recent_window = max(1, int(recent_window))
+        self._recent_by_session: dict[str, deque[str]] = {}
+
+    def _session_buf(self) -> deque[str]:
+        """当前会话的近 N 轮回执缓存（deque maxlen=recent_window）."""
+        sid = _current_session_id.get() or ""
+        buf = self._recent_by_session.get(sid)
+        if buf is None:
+            buf = deque(maxlen=self._recent_window)
+            self._recent_by_session[sid] = buf
+        return buf
 
     def check(
         self,
@@ -123,22 +140,40 @@ class DeclarationValidator:
         # 提取完成声明
         declarations = self._extract_declarations(final_answer)
 
+        # EVO-20260820-409f3f60: 近 N 轮历史回执（跨轮引用补证）——压缩/归档可能已把
+        # 更早轮次 tool 消息移出会话消息，从本校验器维护的滚动窗口补证。
+        buf = self._session_buf()
+        history: list[str] = [r for past in buf for r in past]
+
         discrepancies: list[str] = []
         matched_by: list[str] = []
+        cross_round_hits: list[str] = []
         for decl in declarations:
             matched = self._declaration_matches_receipt(decl, receipts)
             if matched:
                 matched_by.append(matched)
             else:
-                discrepancies.append(
-                    f"声明: {decl} — 但本轮工具回执中未见对应成功记录（回执: {receipts[:3] or '无'}）"
-                )
+                # 跨轮引用判定: 近 N 轮历史回执命中 → 标记跨轮引用（非真实不诚实）
+                cross = self._declaration_matches_receipt(decl, history)
+                if cross:
+                    cross_round_hits.append(
+                        f"声明: {decl}（近 {self._recent_window} 轮回执命中: {cross}）"
+                    )
+                else:
+                    discrepancies.append(
+                        f"声明: {decl} — 但本轮及近 {self._recent_window} 轮回执中均未见对应成功记录（回执: {receipts[:3] or '无'}）"
+                    )
+
+        # 本轮成功回执滚入近 N 轮窗口（供下轮跨轮引用补证）
+        if receipts:
+            buf.append(receipts)
 
         result = DeclarationCheckResult(
             consistent=not discrepancies,
             declarations=declarations,
             discrepancies=discrepancies,
             receipt_summary=receipts,
+            cross_round_hits=cross_round_hits,
         )
         self._audit(final_answer, tool_messages, result, matched_by=matched_by)
         return result
@@ -256,6 +291,7 @@ class DeclarationValidator:
             "consistent": result.consistent,
             "declarations": result.declarations,
             "discrepancies": result.discrepancies,
+            "cross_round_hits": result.cross_round_hits,  # EVO-20260820-409f3f60: 跨轮引用命中可审计
             "receipts": result.receipt_summary,
             "matched_by": matched_by or [],  # P1: keyword/semantic（匹配方式可审计）
             "answer_preview": answer[:200],
