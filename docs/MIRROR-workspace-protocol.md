@@ -1,7 +1,10 @@
 # 镜像工作区协议（Mirror Workspace Protocol）
 
 > 生效: 2026-08-20（用户批准）| 状态: 强制 | 适用范围: **一切涉及 LFL 自身代码/文件的修改**
-> 位置: 主区 /Users/yyj/Project/llm-first-loop · 镜像 /Users/yyj/Project/llm-first-loop-mirror
+> 位置: 主区 = 部署 LFL 的工作区根（部署时由环境定义，如 `$LFL_ROOT` 或当前工作目录）;
+> 镜像 = 主区同级的 `*-mirror` 目录（如 `$LFL_ROOT` 为 `.../llm-first-loop` 时镜像为 `.../llm-first-loop-mirror`）。
+> ⚠️ 不硬编码绝对路径（2026-08-21 完善）: 换机器/换目录部署时路径变化，文档用变量/相对关系描述，
+> 部署方在 shell 中定义 `M=<镜像绝对路径>` 即可，勿把单机路径写进协议。
 
 ## 1. 为什么（背景）
 
@@ -11,7 +14,7 @@
 ## 2. 强制流程（LFL 自身代码/文件修改一律走此流程）
 
 ```
-① 在镜像工作区修改（/Users/yyj/Project/llm-first-loop-mirror）
+① 在镜像工作区修改（$M，见 §3 定义）
    - 环境与主区一致（.venv / node_modules / webui/dist 符号链接同源）
    - 镜像 web 端口 8903（主区 8902 不受影响），独立 data/（会话/记忆/日志隔离）
 ② 在镜像验证
@@ -26,23 +29,27 @@
 ## 3. 镜像操作速查
 
 ```bash
-M=/Users/yyj/Project/llm-first-loop-mirror
+# 2026-08-21 完善: 部署方定义镜像路径变量（勿硬编码单机路径）
+# 主区 = $MAIN（部署时定义，如 export MAIN=$PWD 或主区绝对路径）
+# 镜像 = $M（如 export M=$MAIN-mirror）
+MAIN="${MAIN:-/path/to/llm-first-loop}"   # ← 部署时改为实际主区路径
+M="${M:-${MAIN}-mirror}"                  # ← 镜像默认主区同级 -mirror
 # 同步镜像（拉取主区最新代码，排除运行时数据）
 rsync -a --exclude='data' --exclude='.venv' --exclude='webui/node_modules' \
   --exclude='.DS_Store' --exclude='*.pyc' --exclude='__pycache__' \
   --exclude='.pytest_cache' --exclude='.ruff_cache' --exclude='.coverage' --exclude='logs' \
-  /Users/yyj/Project/llm-first-loop/ $M/
+  "$MAIN"/ "$M"/
 
 # 镜像测试（⚠️ 必须 PYTHONPATH=镜像src——共享 venv 的 editable 安装指向主区 src，
 # 不带 PYTHONPATH 会测试到主区代码，镜像验证失效）
-cd $M && PYTHONPATH=$M/src .venv/bin/python -m pytest tests/ -q
+cd "$M" && PYTHONPATH="$M/src" .venv/bin/python -m pytest tests/ -q
 
 # 镜像 web（端口 8903，独立数据）
-cd $M && set -a && source .env && set +a && WEB_PORT=8903 PYTHONPATH=$M/src nohup .venv/bin/python -m llm_loop.web > data/mirror-web.log 2>&1 &
+cd "$M" && set -a && source .env && set +a && WEB_PORT=8903 PYTHONPATH="$M/src" nohup .venv/bin/python -m llm_loop.web > data/mirror-web.log 2>&1 &
 
 # 产出 diff（镜像 vs 主区，用于审批）
-diff -ru /Users/yyj/Project/llm-first-loop/src $M/src   # 按目录逐个
-# 或 git（镜像含 .git 副本）: cd $M && git diff
+diff -ru "$MAIN/src" "$M/src"   # 按目录逐个
+# 或 git（镜像含 .git 副本）: cd "$M" && git diff
 ```
 
 ## 4. 边界与例外
