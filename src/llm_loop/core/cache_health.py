@@ -54,6 +54,11 @@ class CacheHealthMonitor:
         self._fail_alerted = False  # 恢复失败已提示（每进程一次，防刷屏）
         # 2026-08-20: 上次 record 的模型 ref（跨模型交替时缓存按 provider 独立预热）
         self._last_model_ref: str | None = None
+        # 2026-08-20 (EVO-20260820-0b96348d 镜像检验): 按模型分桶累计（跨切换持久）——
+        # 活动窗口（_win_*）仍按"切换即重置"语义（既有测试锁定），桶数据附加保留，
+        # 供双口径展示与"切回热检查"（hit>0 说明旧桶缓存仍热，可继续累加不误清零）。
+        # 桶结构: {model_ref: {"in": int, "hit": int, "runs": int}}
+        self._buckets: dict[str, dict[str, int]] = {}
         # 发送前门禁（per-session 基线: 不同会话注入/记忆不同，互不干扰）
         self._baselines: dict[str, str] = {}  # session_id → 稳定段指纹（system+注入）
         self._gate_drift_count = 0
@@ -87,16 +92,34 @@ class CacheHealthMonitor:
         try:
             # 2026-08-20: 模型切换检测——切换后缓存按新 provider 独立预热（设计型低命中）
             switched = model_ref is not None and self._last_model_ref not in (None, model_ref)
+            # 2026-08-20 (EVO-20260820-0b96348d): 每轮累计进当前模型桶（跨切换持久）
+            if model_ref is not None:
+                self._accum_bucket(model_ref, tokens_in, tokens_hit)
+            _prev_model = self._last_model_ref  # 切换前的旧模型（覆盖前取值）
             if model_ref is not None:
                 self._last_model_ref = model_ref
             if switched:
                 # 2026-08-20: 模型切换 → 重置窗口并**累加切换轮**（新模型第一轮计入
                 # 新窗口）→ 返回归因提示, 不进入锚点漂移告警判定
-                _from = self._last_model_ref
+                _from = _prev_model
                 self._reset_window()
                 self._win_in += tokens_in
                 self._win_hit += tokens_hit
                 self._win_runs += 1
+                # 2026-08-20 (EVO-20260820-0b96348d): 切回热检查——切回的目标模型若
+                # 已有历史桶且命中（前缀曾热，TTL 内），提示可继续累加而非从头预热；
+                # 无历史/冷桶 → 常规提示（新模型无前缀）。
+                # 注意: 本轮已把切回轮累计进目标桶，须用**累计前**的历史值判断
+                # （排除本轮刚累加的高命中，避免"切回首轮正常命中"被误判为历史热）。
+                _target_bucket = self._buckets.get(model_ref) if model_ref else None
+                _hist_runs = max(0, (_target_bucket or {}).get("runs", 0) - 1)
+                _hist_hit = max(0, (_target_bucket or {}).get("hit", 0) - tokens_hit)
+                if _hist_runs > 0 and _hist_hit > 0:
+                    return (
+                        f"[模型切换 {_from}→{model_ref}] 缓存按模型独立预热；"
+                        f"目标模型历史桶命中 {_hist_hit:,}/{(_target_bucket['in'] - tokens_in):,}"
+                        " tokens 仍热（TTL 内），切回可继续累加不误清零；非前缀漂移，无需干预。"
+                    )
                 return (
                     f"[模型切换 {_from}→{model_ref}] 缓存按模型独立预热（新模型无前缀），"
                     "命中率将从新模型重新统计；非前缀漂移，无需干预。"
@@ -169,21 +192,45 @@ class CacheHealthMonitor:
             logger.warning("缓存窗口监控异常（fail-open）", exc_info=True)
             return None
 
+    def _accum_bucket(self, model_ref: str, tokens_in: int, tokens_hit: int) -> None:
+        """累计当前模型桶（跨切换持久；EVO-20260820-0b96348d 镜像检验）."""
+        try:
+            b = self._buckets.setdefault(model_ref, {"in": 0, "hit": 0, "runs": 0})
+            b["in"] += tokens_in
+            b["hit"] += tokens_hit
+            b["runs"] += 1
+        except Exception:  # noqa: BLE001 — fail-open
+            logger.debug("模型桶累计异常（fail-open）", exc_info=True)
+
     def format_health_note(self) -> str | None:
         """EVO-20260819-2254e3b4 延伸（用户批准方案B）: 常态缓存命中率摘要（回答末尾展示）.
 
         与告警路径（record 返回）互不干扰：仅当窗口有数据且当前未处于拦截/告警期时
         返回一行精简命中率（近 N 轮窗口），供 engine 注入 final_answer 末尾。
+        2026-08-20 (EVO-20260820-0b96348d 镜像检验): 双口径展示——本模型累计（桶，
+        跨切换持久）+ 近 N 轮（活动窗口，近期热状态）。口径明确标注，避免跨模型累计稀释误导。
         fail-open: 任何异常返回 None，不阻断 run。
         """
         try:
             if self._win_runs <= 0 or (self._alerted or self._force_head_keep):
                 return None
             rate = self._win_hit / self._win_in if self._win_in else 1.0
-            return (
-                f"⚡ 缓存命中率 {rate*100:.1f}%"
-                f"（近 {self._win_runs} 轮，{self._win_hit:,}/{self._win_in:,} tokens）"
-            )
+            parts = [
+                f"⚡ 缓存命中率 {rate*100:.1f}%",
+                f"（近 {self._win_runs} 轮，{self._win_hit:,}/{self._win_in:,} tokens",
+            ]
+            # 本模型累计口径（桶持久数据；模型切换不清零，只随真实累计增长）
+            cur = self._buckets.get(self._last_model_ref or "")
+            if cur and cur.get("runs", 0) > 0:
+                total = cur["hit"] / cur["in"] if cur.get("in") else None
+                if total is not None:
+                    _model_name = (self._last_model_ref or "").split("/")[-1] or "本模型"
+                    parts.append(
+                        f"；本模型({_model_name})累计 {cur['runs']} 轮 {total*100:.1f}%"
+                        f" {cur['hit']:,}/{cur['in']:,} tokens"
+                    )
+            parts.append("）")
+            return "".join(parts)
         except Exception:  # noqa: BLE001 — fail-open
             logger.warning("缓存命中率摘要格式化异常（fail-open）", exc_info=True)
             return None
@@ -232,10 +279,14 @@ class CacheHealthMonitor:
             logger.debug("归因判定异常（fail-open）", exc_info=True)
             return None
 
-    def reset(self, reason: str = "") -> None:
-        """模型切换/会话变更窗口重置（spec §5.4.1-3 注记，grill-me C1）.
+    def reset(self, reason: str = "", clear_buckets: bool = True) -> None:
+        """显式全量重置（spec §5.4.1-3 注记，grill-me C1）.
 
         清空窗口/基线/归因计数/强制头部标志；保留 _fail_alerted（防刷屏，跨重置有效）。
+        2026-08-20 (EVO-20260820-0b96348d) 语义拆分（用户决策: 每个模型各自连续统计）:
+        - clear_buckets=True（默认）: 显式重置（如 /clear 会话、诊断复位）→ 连模型桶一起清。
+        - clear_buckets=False: 模型切换/新会话用轻量重置——保留桶（切回热检查、模型级
+          累计统计跨会话持久，不因切换/换会话丢失）。
         """
         try:
             self._reset_window()
@@ -244,10 +295,28 @@ class CacheHealthMonitor:
             self._gate_drift_count = 0
             self._force_head_keep = False
             self._gate_note_pending = False
+            if clear_buckets:
+                self._buckets = {}
             if reason:
                 logger.info("cache_health 重置: %s", reason)
         except Exception:  # noqa: BLE001 — fail-open
             logger.debug("cache_health reset 异常（fail-open）", exc_info=True)
+
+    def note_new_session(self, session_id: str = "") -> None:
+        """新会话首轮调用（用户决策 2026-08-20）: 只重置活动窗口 + 模型游标，保留模型桶.
+
+        原则: 桶 = 模型生命周期统计（跨会话/跨切换持久，每个模型各自连续累计）；
+        窗口 = 近期状态（新会话从零起算）；游标 _last_model_ref 复位 None——
+        避免新会话首轮把上个会话的模型误判为"切换"（误报切换提示）。
+        连续切换模型对话时，各模型命中率统计保持稳定连续，不受会话边界影响。
+        """
+        try:
+            self._reset_window()
+            self._last_model_ref = None
+            if session_id:
+                logger.debug("cache_health 新会话: %s", session_id)
+        except Exception:  # noqa: BLE001 — fail-open
+            logger.debug("cache_health note_new_session 异常（fail-open）", exc_info=True)
 
     @property
     def force_head_keep(self) -> bool:
@@ -317,4 +386,6 @@ class CacheHealthMonitor:
             "gate_drift_count": self._gate_drift_count,
             "gate_note_pending": self._gate_note_pending,
             "baselines": dict(self._baselines),
+            # 2026-08-20 (EVO-20260820-0b96348d): 模型桶快照（双口径展示数据源）
+            "buckets": {k: dict(v) for k, v in self._buckets.items()},
         }

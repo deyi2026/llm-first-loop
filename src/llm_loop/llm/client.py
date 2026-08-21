@@ -157,7 +157,11 @@ class LLMClient:
     _in_think: bool = False
 
     def __post_init__(self) -> None:
-        self._client = httpx.Client(timeout=self.timeout_s)
+        # 2026-08-20 (Sub2API Grok 兼容): Connection: close 关闭连接复用——
+        # 复用的 httpx 连接池对 ai.mxnook.com 网关的 keepalive 不兼容（流式请求挂起/HTTP 400）；
+        # 每次新连接对 DeepSeek/MiniMax/本地 provider 实测零功能影响（仅少一次连接复用）。
+        self._client = httpx.Client(timeout=self.timeout_s,
+                                    headers={"Connection": "close"})
 
     def _thinking_supported(self) -> bool:
         """思考参数发送判定（M20 CFG-03 + M47 §5.5）.
@@ -275,11 +279,21 @@ class LLMClient:
         payload: dict[str, Any] = {
             "model": self.model if model is None else model,
             "messages": messages,
-            "tools": tools,
-            "tool_choice": "auto",  # 约束 C6
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        # 2026-08-20 (Sub2API Grok 兼容): 对第三方网关（base_url 含 mxnook.com 等），
+        # tools 为空数组时省略 tools/tool_choice——该网关对 `tools: []` + thinking 字段
+        # 组合返回 HTTP 400（单独都正常）。OpenAI 规范允许省略空 tools；
+        # 其余 provider 保持原行为（M21 AUX-03: 空数组原样携带，协议边界锁定）。
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"  # 约束 C6
+        elif "mxnook.com" in self.base_url:
+            pass  # 第三方网关: 省略空 tools/tool_choice
+        else:
+            payload["tools"] = []
+            payload["tool_choice"] = "auto"  # 约束 C6
         # 2026-08-15: 显式输出预算（None=不发字段，模型默认——思考链模型默认 4096 时
         # 思考占大半、最终分析被截断，用户现场反馈"回答被截断"根因）
         if self.max_tokens is not None:

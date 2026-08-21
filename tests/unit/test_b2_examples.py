@@ -95,7 +95,7 @@ def test_run_single_convenience_entry(tmp_path, monkeypatch):
         settings=settings,
     )
     result = engine.run_single("你好")
-    assert result.final_answer == "一次性回答"
+    assert result.final_answer.startswith("一次性回答")  # 尾部可能有缓存命中率展示行（方案B）
     assert result.session_id  # 自动创建了会话
     assert engine.session.exists(result.session_id)  # 会话已落盘可追溯
 
@@ -198,7 +198,7 @@ def test_example01_assembly_chain_runs(tmp_path, monkeypatch):
 
     sid = engine.session.create()
     result = engine.run(sid, "你好")
-    assert result.final_answer == "装配链路回答"
+    assert result.final_answer.startswith("装配链路回答")  # 尾部可能有缓存命中率展示行（方案B）
     assert result.rounds >= 1
     assert engine.session.exists(sid)
 

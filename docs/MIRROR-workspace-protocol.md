@@ -78,3 +78,10 @@ diff -ru /Users/yyj/Project/llm-first-loop/src $M/src   # 按目录逐个
 | Python 包解析 | **必须 PYTHONPATH=镜像src**（共享 venv editable 安装指向主区 src；不带则镜像加载主区代码） | 测试/启动镜像 web 一律带 PYTHONPATH |
 
 **防混乱总则**：运行时权威（记忆/经验/会话/配置生效值）永远以主区为准；镜像只是"变更实验场"，其任何产出只有经审批 promotion 才进入权威源。
+
+**镜像进程运行形态（2026-08-20 实测确认，消除"漂移"错觉）**：
+镜像 web 进程（8903）默认 = **主区代码**（共享 .venv 的 editable 安装指向主区
+src，未带 PYTHONPATH 时 __file__ 解析到主区）+ **镜像 data**（cwd 在镜像 →
+相对路径读镜像文件）。因此"代码/规则版本"以 __file__ 所在区（主区）为准，
+"文件读取/命令 cwd"以进程 cwd（镜像）为准——两者不同源是**预期架构事实，
+非缺陷**。需要代码与文件同源时：启动/测试一律带 PYTHONPATH=<镜像>/src。

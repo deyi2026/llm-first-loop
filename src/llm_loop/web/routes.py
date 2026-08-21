@@ -624,8 +624,12 @@ def architecture_status_web(request: Request, session_id: str = "") -> Response:
 
 
 @router.get("/api/v1/evolution/list")
-def evolution_list(request: Request, limit: int = 30) -> Response:
-    """演进建议列表（只读——web 审批状态展示数据源；审批走飞书/CLI）."""
+def evolution_list(request: Request, limit: int = 30, status: str = "") -> Response:
+    """演进建议列表（只读——web 审批状态展示数据源；Approval UX v2 批 1）.
+
+    status 可选过滤（pending_review/accepted/rejected/executed）；返回摘要
+    （content 前 120 字）+ impact_hint（影响面），完整内容走 detail 端点（懒加载）。
+    """
     from pathlib import Path
 
     base = Path(os.environ.get("LFL_DATA_DIR", "") or Path(__file__).resolve().parents[3] / "data")
@@ -641,13 +645,23 @@ def evolution_list(request: Request, limit: int = 30) -> Response:
                     d = json.loads(line)
                 except Exception:  # noqa: BLE001 — 单行坏数据跳过
                     continue
+                if status and d.get("status") != status:
+                    continue
+                content = d.get("content") or ""
+                impact_files = d.get("impact_files") or []
+                impact_hint = ", ".join(impact_files[:5]) if impact_files else (
+                    (d.get("impact_scope") or "")[:120] or content[:120]
+                )
                 out.append({
                     "id": d.get("id", ""),
                     "ts": d.get("ts", ""),
                     "status": d.get("status", ""),
                     "priority": d.get("priority", ""),
                     "requires_human": bool(d.get("requires_human")),
-                    "content": (d.get("content") or "")[:200],
+                    "content": content[:120],  # 摘要；全文走 detail 端点
+                    "impact_hint": impact_hint,
+                    "rejected_reason": d.get("rejected_reason", ""),
+                    "reviewed_at": d.get("reviewed_at", ""),
                     "executed_at": d.get("executed_at"),
                     "verified_at": d.get("verified_at"),
                 })
@@ -655,6 +669,49 @@ def evolution_list(request: Request, limit: int = 30) -> Response:
             pass  # 建议文件读取失败 fail-open（返回已收集条目，日志由上层审计兜底）
     out.sort(key=lambda x: x["ts"], reverse=True)
     return JSONResponse(content={"suggestions": out[:limit], "count": len(out)})
+
+
+@router.get("/api/v1/evolution/detail")
+def evolution_detail(request: Request, id: str = "") -> Response:
+    """演进建议详情（Approval UX v2 批 1: 完整内容懒加载，列表只回摘要）."""
+    from pathlib import Path
+
+    if not id:
+        return UTF8JSONResponse(status_code=400, content={"error": "invalid_params", "detail": "id 必填。"})
+    base = Path(os.environ.get("LFL_DATA_DIR", "") or Path(__file__).resolve().parents[3] / "data")
+    f = base / "audit" / "evolution_suggestions.jsonl"
+    if not f.exists():
+        return UTF8JSONResponse(status_code=404, content={"error": "not_found", "detail": f"建议文件不存在"})
+    try:
+        for line in f.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = json.loads(line)
+            except Exception:  # noqa: BLE001
+                continue
+            if d.get("id") == id:
+                return JSONResponse(content={
+                    "id": d.get("id", ""),
+                    "ts": d.get("ts", ""),
+                    "status": d.get("status", ""),
+                    "priority": d.get("priority", ""),
+                    "requires_human": bool(d.get("requires_human")),
+                    "scope": d.get("scope", "global"),
+                    "content": d.get("content", ""),
+                    "evidence": d.get("evidence", ""),
+                    "impact_scope": d.get("impact_scope", ""),
+                    "impact_files": d.get("impact_files") or [],
+                    "rejected_reason": d.get("rejected_reason", ""),
+                    "reviewed_at": d.get("reviewed_at", ""),
+                    "executed_at": d.get("executed_at", ""),
+                    "verified_at": d.get("verified_at", ""),
+                    "reason_history": d.get("reason_history") or [],
+                })
+        return UTF8JSONResponse(status_code=404, content={"error": "not_found", "detail": f"未找到 {id}"})
+    except OSError:
+        return UTF8JSONResponse(status_code=500, content={"error": "read_failed", "detail": "建议文件读取失败。"})
 
 
 @router.post("/api/v1/evolution/review")
@@ -681,6 +738,37 @@ def evolution_review(payload: EvolutionReviewRequest, request: Request) -> Respo
             status_code=400,
             content={"error": "invalid_params", "detail": "id 必填，decision 须为 accepted/rejected。"},
         )
+    if decision == "rejected" and not reason:
+        return UTF8JSONResponse(
+            status_code=400,
+            content={"error": "reason_required", "detail": "拒绝须提供理由（Approval UX v2 批 1: 拒绝理由必填留痕）。"},
+        )
+    # Approval UX v2 批 1（验证清单 #9）: 涉边界项单条批准需额外确认标志（extra_confirm）
+    if decision == "accepted":
+        cur_for_confirm = _find_suggestion(store, evo_id)
+        if cur_for_confirm is not None and bool(cur_for_confirm.get("requires_human")) and not payload.extra_confirm:
+            return UTF8JSONResponse(
+                status_code=409,
+                content={
+                    "error": "confirm_required",
+                    "detail": "涉边界项（requires_human）批准须额外确认（extra_confirm=true）。",
+                    "requires_human": True,
+                },
+            )
+    # Approval UX v2 批 1: 乐观锁 CAS——expected_status 不匹配 → 409 提示刷新（防双端状态竞争）
+    if payload.expected_status:
+        cur_for_cas = _find_suggestion(store, evo_id)
+        if cur_for_cas is None:
+            return UTF8JSONResponse(status_code=404, content={"error": "not_found", "detail": f"未找到 {evo_id}"})
+        if cur_for_cas.get("status") != payload.expected_status:
+            return UTF8JSONResponse(
+                status_code=409,
+                content={
+                    "error": "status_conflict",
+                    "detail": f"状态已变（期望 {payload.expected_status}，当前 {cur_for_cas.get('status')}），已刷新。",
+                    "current_status": cur_for_cas.get("status"),
+                },
+            )
     try:
         if decision == "accepted":
             ok, resp, reviewed = approve(store, evo_id)
@@ -704,6 +792,117 @@ def evolution_review(payload: EvolutionReviewRequest, request: Request) -> Respo
         content={"ok": ok, "message": resp},
         status_code=200 if ok else 400,
     )
+
+
+@router.post("/api/v1/evolution/review-batch")
+def evolution_review_batch(request: Request) -> Response:
+    """演进建议批量审批（Approval UX v2 批 1）.
+
+    body: {"items": [{"id","decision","reason","expected_status"}], "decision":"accepted|rejected"}
+    服务端硬校验：跳过 requires_human=true（涉边界必须单条审批）+ 拒绝理由必填；
+    逐条独立事务（成功 n / 失败 m，不整体回滚）。
+    """
+    engine = _engine_from(request)
+    store = getattr(engine, "evolution_store", None)
+    if store is None:
+        return UTF8JSONResponse(
+            status_code=400,
+            content={"error": "evolve_disabled", "detail": "演进功能未启用（EVOLVE_ENABLED=0）。"},
+        )
+    try:
+        body = request.json() if hasattr(request, "json") else {}
+    except Exception:  # noqa: BLE001
+        body = {}
+    items = body.get("items") or []
+    default_decision = (body.get("decision") or "").strip()
+    if not items or default_decision not in {"accepted", "rejected"}:
+        return UTF8JSONResponse(
+            status_code=400,
+            content={"error": "invalid_params", "detail": "items 必填且 decision 须为 accepted/rejected。"},
+        )
+    results: list[dict] = []
+    ok_count = fail_count = 0
+    for it in items:
+        evo_id = str(it.get("id") or "").strip()
+        decision = str(it.get("decision") or default_decision).strip()
+        reason = str(it.get("reason") or "").strip()
+        expected = str(it.get("expected_status") or "").strip()
+        if not evo_id or decision not in {"accepted", "rejected"}:
+            results.append({"id": evo_id, "ok": False, "message": "参数非法"})
+            fail_count += 1
+            continue
+        # 服务端硬校验：涉边界跳过（禁止批量）
+        cur = _find_suggestion(store, evo_id)
+        if cur is not None and bool(cur.get("requires_human")):
+            results.append({"id": evo_id, "ok": False, "message": "涉边界（requires_human），须单条审批", "skipped": True})
+            fail_count += 1
+            continue
+        # CAS 乐观锁
+        if expected and cur is not None and cur.get("status") != expected:
+            results.append({"id": evo_id, "ok": False, "message": f"状态冲突（期望 {expected}，当前 {cur.get('status')}）"})
+            fail_count += 1
+            continue
+        try:
+            if decision == "accepted":
+                ok, resp, reviewed = approve(store, evo_id)
+            else:
+                if not reason:
+                    results.append({"id": evo_id, "ok": False, "message": "拒绝须提供理由"})
+                    fail_count += 1
+                    continue
+                ok, resp = reject(store, evo_id, reason)
+            results.append({"id": evo_id, "ok": bool(ok), "message": resp})
+            ok_count += bool(ok)
+            fail_count += not ok
+        except Exception as exc:  # noqa: BLE001 — 单条失败不影响其余
+            results.append({"id": evo_id, "ok": False, "message": f"异常: {type(exc).__name__}: {exc}"})
+            fail_count += 1
+    return UTF8JSONResponse(
+        content={"ok_count": ok_count, "fail_count": fail_count, "results": results},
+        status_code=200,
+    )
+
+
+@router.get("/api/v1/evolution/diff")
+def evolution_diff(request: Request, id: str = "") -> Response:
+    """演进建议关联 diff 预览（Approval UX v2 批 1: 只读）.
+
+    仅返回建议自身 actions/impact_files 摘要（不含 prompt/密钥）；
+    无关联改动 → 404（明确语义，非空壳 200）。
+    """
+    from pathlib import Path
+
+    if not id:
+        return UTF8JSONResponse(status_code=400, content={"error": "invalid_params", "detail": "id 必填。"})
+    base = Path(os.environ.get("LFL_DATA_DIR", "") or Path(__file__).resolve().parents[3] / "data")
+    f = base / "audit" / "evolution_suggestions.jsonl"
+    if not f.exists():
+        return UTF8JSONResponse(status_code=404, content={"error": "not_found", "detail": "建议文件不存在"})
+    try:
+        for line in f.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                d = json.loads(line)
+            except Exception:  # noqa: BLE001
+                continue
+            if d.get("id") == id:
+                if d.get("status") == "rejected":
+                    return UTF8JSONResponse(status_code=404, content={"error": "no_diff", "detail": "已拒绝建议无 diff。"})
+                actions = d.get("actions") or []
+                impact_files = d.get("impact_files") or []
+                if not actions and not impact_files:
+                    return UTF8JSONResponse(status_code=404, content={"error": "no_diff", "detail": "该建议无关联改动。"})
+                return JSONResponse(content={
+                    "id": id,
+                    "impact_files": impact_files,
+                    "actions": [a for a in actions if isinstance(a, dict)][:20],
+                    "note": "只读摘要（不含 prompt/密钥）",
+                })
+        return UTF8JSONResponse(status_code=404, content={"error": "not_found", "detail": f"未找到 {id}"})
+    except OSError:
+        return UTF8JSONResponse(status_code=500, content={"error": "read_failed", "detail": "建议文件读取失败。"})
 
 
 def _find_suggestion(store: Any, evo_id: str) -> dict | None:

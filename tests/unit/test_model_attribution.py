@@ -243,7 +243,7 @@ def test_fallback_success_label_is_fallback_model(
     engine = _make_engine(tmp_path, pool, settings)
 
     result = engine.run(engine.session.create(), "你好")
-    assert result.final_answer == "降级回答"
+    assert result.final_answer.startswith("降级回答")  # 尾部可能有缓存命中率展示行（方案B）
     assert result.model_used == "minimax/MiniMax-M3"
 
 
