@@ -312,8 +312,12 @@ class ExecuteCommandTool:
         content = "\n".join(parts) if parts else "（命令执行成功，无输出）"
 
         status = ToolResultStatus.SUCCESS if proc.returncode == 0 else ToolResultStatus.FAILURE
-        if proc.returncode != 0:
-            content = f"[命令退出码 {proc.returncode}] {content}"
+        # 2026-08-21 摘要前置（用户洞察: 截断区保留必要信息）: 统一前置
+        # [命令] + 退出码 + 输出行数——成功/失败都可见元信息，截断时首行即摘要。
+        # （原实现仅失败时前置退出码，成功时直接是输出内容）
+        _cmd_preview = " ".join(command.split()[:8]) if command else "?"
+        _out_lines = len(content.splitlines())
+        content = f"[命令] {_cmd_preview} [退出码 {proc.returncode}] [输出 {_out_lines} 行]\n{content}"
 
         # EVO-20260819 full=true: 跳过本工具截断（注册表层仍保硬上限安全阀）
         if not bool(kwargs.get("full", False)):
