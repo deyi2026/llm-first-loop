@@ -705,6 +705,20 @@ class LLMClient:
                             acc.content_parts.append(c)
                             yield StreamDelta(text=c)
                     elif etype == "chat.end":
+                        # 2026-08-22 补 usage 解析: lms-chat 的 chat.end.result.stats 含
+                        # input_tokens/total_output_tokens（此前 acc 恒 0, 本地模型用量统计失真）。
+                        # 注: stats 不含 cached_tokens（lms-chat 协议限制, KV 命中不可观测——
+                        # 需走 OpenAI 协议直连 llama-server 才能拿 prompt_tokens_details）。
+                        try:
+                            _stats = (chunk.get("result") or {}).get("stats") or {}
+                            _it = _stats.get("input_tokens")
+                            _ot = _stats.get("total_output_tokens")
+                            if _it:
+                                acc.prompt_tokens = int(_it)
+                            if _ot:
+                                acc.completion_tokens = int(_ot)
+                        except Exception:  # noqa: BLE001 — 解析失败 fail-open（不影响输出）
+                            pass
                         break
         except httpx.TimeoutException as exc:
             raise LLMTimeoutError(f"LLM 请求超时（{effective_timeout}s）") from exc
