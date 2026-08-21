@@ -795,7 +795,7 @@ def evolution_review(payload: EvolutionReviewRequest, request: Request) -> Respo
 
 
 @router.post("/api/v1/evolution/review-batch")
-def evolution_review_batch(request: Request) -> Response:
+async def evolution_review_batch(request: Request) -> Response:
     """演进建议批量审批（Approval UX v2 批 1）.
 
     body: {"items": [{"id","decision","reason","expected_status"}], "decision":"accepted|rejected"}
@@ -810,7 +810,7 @@ def evolution_review_batch(request: Request) -> Response:
             content={"error": "evolve_disabled", "detail": "演进功能未启用（EVOLVE_ENABLED=0）。"},
         )
     try:
-        body = request.json() if hasattr(request, "json") else {}
+        body = await request.json() if hasattr(request, "json") else {}
     except Exception:  # noqa: BLE001
         body = {}
     items = body.get("items") or []
