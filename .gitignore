@@ -19,7 +19,8 @@ data/
 # 环境与密钥
 .env
 .env.local
-.env.bak-*
+.env.bak*
+# 密钥备份一律不入库（含 .env.bak.YYYYMMDD 点分格式与 .env.bak-* 连字符格式）
 
 # 系统
 .DS_Store
