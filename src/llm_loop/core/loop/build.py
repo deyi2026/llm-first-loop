@@ -41,6 +41,21 @@ logger = logging.getLogger(__name__)
 
 
 class _BuildMixin:
+    def _local_skip_inject(self, provider_id: str, kind: str) -> bool:
+        """EVO-20260822-9fde48f1 第 4 条: local 轮按白名单跳过低价值注入.
+
+        LOCAL_INJECT_SKIP（逗号分隔, 默认空=全保留零回归）: snapshot/tips/archive_summary。
+        本地慢模型 prefill 随输入线性涨, 低价值注入=秒级成本; 高价值（记忆/协调）不在此列。
+        fail-open: 配置读取失败放行（零回归）。
+        """
+        try:
+            if provider_id != "local":
+                return False
+            skip = getattr(self.settings, "tool_local_inject_skip", "") or ""
+            return kind in {s.strip() for s in skip.split(",") if s.strip()}
+        except Exception:  # noqa: BLE001 — 读取失败放行（fail-open）
+            return False
+
     def _tail_injection_msg(self, _m: Message, _anchor: str) -> dict:
         """注入统一包装（EVO-20260822-9fde48f1 第 6 条集中）: system→user + wrap.
 
@@ -109,7 +124,7 @@ class _BuildMixin:
         # EVO-20260818-8c8791c2: 快照【尾部追加】而非 insert(0)——前缀区只留 system+稳定历史头，
         # 快照内容（消息数/记忆数/演进摘要）每轮变化，驻留前缀区即每轮断前缀（gate_drift_count=12
         # 实证，命中 17%↔98% 间歇）；尾部追加后变化只影响尾部新增段，前缀字节稳定（对齐 memory/interop）
-        if sess_anchor == 0:
+        if sess_anchor == 0 and not self._local_skip_inject(provider_id, "snapshot"):
             try:
                 interval = self._runtime_extract_interval()
                 if len(sess.messages) - self._last_snapshot_count >= interval:
@@ -263,7 +278,9 @@ class _BuildMixin:
         # EVO-20260819-7bb7d689: 经验提示尾部追加槽并入统一消费（与 interop 同机制）——
         # 不进历史存储，build 末尾一次性追加（转 user），system+稳定历史前缀字节不变
         tip_msgs = getattr(self, "_tip_tail_messages", None)
-        if tip_msgs:
+        # EVO-20260822-9fde48f1 第 4 条: local 轮白名单含 tips 时跳过经验提示
+        # （低价值注入=本地慢模型 prefill 秒级成本；高价值记忆/协调不在此列）
+        if tip_msgs and not self._local_skip_inject(provider_id, "tips"):
             tail_msgs = (tail_msgs or []) + tip_msgs
         if tail_msgs:
             # 2026-08-22 任务锚点 + 注入统一包装（focus 模块, 用户决策）——

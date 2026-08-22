@@ -248,6 +248,11 @@ class Settings:
     tool_summary_local_threshold: int = 0
     tool_summary_local_head_chars: int = 800
     tool_summary_local_tail_chars: int = 800
+    # EVO-20260822-9fde48f1 第 4 条: local 轮跳过注入白名单（逗号分隔, 默认空=全保留零回归）。
+    # 可选: snapshot(会话状态快照)/tips(经验提示)/archive_summary(归档摘要)——本地慢模型
+    # prefill 随输入线性涨, 低价值注入=秒级成本; 高价值（记忆检索/协调通道）不在此列。
+    # 风格对齐 LOCAL_TOOL_NAMES（固定白名单, 逗号分隔）。
+    tool_local_inject_skip: str = ""
     # EVO-20260811-7baa2737: 历史分层降级（旧长 tool 消息降级为摘要，原文归档）
     tool_trim_enabled: bool = True
     # R3: tool_trim 自适应降级年龄（0=自适应：按占用率自动调 <40%→20/40-70%→10/>70%→5；>0=固定值禁用自适应）
@@ -430,6 +435,8 @@ class Settings:
             "tool_summary_local_threshold": self.tool_summary_local_threshold,
             "tool_summary_local_head_chars": self.tool_summary_local_head_chars,
             "tool_summary_local_tail_chars": self.tool_summary_local_tail_chars,
+            # EVO-20260822-9fde48f1 第 4 条: local 轮跳过注入白名单
+            "tool_local_inject_skip": self.tool_local_inject_skip,
             "tool_trim_enabled": self.tool_trim_enabled,
             "tool_schema_lazy": self.tool_schema_lazy,
             "tool_pipeline_enabled": self.tool_pipeline_enabled,
@@ -547,6 +554,8 @@ def load_settings() -> Settings:
         tool_summary_local_threshold=_env_int("TOOL_SUMMARY_LOCAL_THRESHOLD", 0),
         tool_summary_local_head_chars=_env_int("TOOL_SUMMARY_LOCAL_HEAD_CHARS", 800),
         tool_summary_local_tail_chars=_env_int("TOOL_SUMMARY_LOCAL_TAIL_CHARS", 800),
+        # EVO-20260822-9fde48f1 第 4 条: local 轮跳过注入白名单（默认空=全保留零回归）
+        tool_local_inject_skip=os.environ.get("LOCAL_INJECT_SKIP", "").strip(),
         tool_trim_enabled=_env_bool("TOOL_TRIM_ENABLED", True),
         tool_trim_age=_env_int("TOOL_TRIM_AGE", 0),
         tool_trim_threshold=_env_int("TOOL_TRIM_THRESHOLD", 8000),
