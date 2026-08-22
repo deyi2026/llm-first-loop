@@ -95,7 +95,7 @@ export function EvolutionPanel() {
       .catch(() => undefined);
   };
 
-  const review = (id: string, decision: string, reason: string) => {
+  const review = (id: string, decision: string, reason: string, extraConfirm = false) => {
     setBusy(true);
     setActionMsg("");
     return fetch("/api/v1/evolution/review", {
@@ -106,6 +106,7 @@ export function EvolutionPanel() {
         decision,
         reason,
         expected_status: "pending_review", // CAS：仅待审批可操作
+        extra_confirm: extraConfirm, // 涉边界项单条批准额外确认（Approval UX v2 批 1）
       }),
     })
       .then(async (r) => {
@@ -272,7 +273,7 @@ export function EvolutionPanel() {
                         disabled={busy}
                         onClick={(e) => {
                           e.stopPropagation();
-                          setConfirm({ id: it.id, decision: "accepted" });
+                          setConfirm({ id: it.id, decision: "accepted", requires_human: it.requires_human });
                         }}
                       >
                         ✅ 批准
@@ -283,7 +284,7 @@ export function EvolutionPanel() {
                         disabled={busy}
                         onClick={(e) => {
                           e.stopPropagation();
-                          setConfirm({ id: it.id, decision: "rejected" });
+                          setConfirm({ id: it.id, decision: "rejected", requires_human: it.requires_human });
                         }}
                       >
                         ❌ 拒绝
@@ -344,7 +345,12 @@ export function EvolutionPanel() {
                 }
                 data-testid="evo-confirm-ok"
                 onClick={() => {
-                  void review(confirm.id, confirm.decision, confirm.decision === "rejected" ? rejectReason.trim() : "");
+                  void review(
+                    confirm.id,
+                    confirm.decision,
+                    confirm.decision === "rejected" ? rejectReason.trim() : "",
+                    confirm.requires_human ? extraConfirmChecked : false
+                  );
                   setConfirm(null);
                   setRejectReason("");
                 }}
