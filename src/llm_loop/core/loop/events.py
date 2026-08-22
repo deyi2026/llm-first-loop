@@ -224,8 +224,9 @@ class _EventsMixin:
             _note = (
                 f"[会话中断恢复] 检测到 event_logs 有 {_el_count} 条消息, "
                 f"当前会话内存仅 {_mem_count} 条——中断丢失 {_el_count - _mem_count} 条。"
-                "先用 read_file 读 data/event_logs/<session_id>.jsonl 核对缺失段, "
-                "找回中断前的真实任务/上下文, 再继续（勿凭记忆猜测）。"
+                "用 read_file 读 data/event_logs/<session_id>.jsonl **核对一次**缺失段, "
+                "找回中断前的真实任务/上下文后**立即继续**——核对后不再反复搜索/检索, "
+                "勿凭记忆猜测, 也勿过度确认（已确认的任务继续推进, 不要重复搜索之前的事）。"
             )
             from llm_loop.core.message import Message
 
