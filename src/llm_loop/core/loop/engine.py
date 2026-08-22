@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -235,23 +236,44 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         self._action_observer: Callable[[str, dict], None] | None = None
 
     # ── 2026-08-20 (DESIGN-v3 v2 落地): 切换通知注入（AI 主导上下文选择第一步）──
-    def _inject_switch_notice(self, switch_from: str, switch_to: str) -> None:
+    def _inject_switch_notice(self, switch_from: str, switch_to: str, sess=None) -> None:
         """模型切换 → 填充切换感知帧到 _tip_tail_messages 槽.
 
         复用 _tip_tail_messages 机制（tool_exec.py 填充 / build.py 消费）:
         尾部追加、转 user、一次性消费——system+稳定历史前缀字节不变（缓存友好）。
         仅本轮注入不持久化（瞬时性事件，对齐 ARCHITECTURE §5 瞬时条目不持久化）。
         首轮全量 miss 是物理事实（build→routing→452 时序），如实告知 + 给 AI 动作选项。
+        2026-08-22 补充: 告知"继续当前任务"——新模型不从零开始, 从会话历史找回任务
+        目标（最后 user 消息 + 最近 assistant 进度）直接继续, 而非"状态确认"或"请给出
+        任务"（实证: 98605ad7 切换后 AI 说'请给出任务'丢失'配置飞书'任务）。
         fail-open: 注入异常不阻断切换。
         """
         try:
             if not switch_from or not switch_to or switch_from == switch_to:
                 return
+            # 从会话历史提取当前任务（最后 user 消息 + 最近 assistant 进度摘要）
+            _task_hint = ""
+            if sess is not None and getattr(sess, "messages", None):
+                _recent = [m for m in sess.messages
+                           if getattr(m, "role", "") in ("user", "assistant")
+                           and getattr(m, "content", None)][-2:]
+                _hints = []
+                for _m in _recent:
+                    _role = getattr(_m, "role", "")
+                    _c = str(getattr(_m, "content", ""))[:120]
+                    if _role == "user":
+                        _hints.append(f"用户最近指令: {_c}")
+                    else:
+                        _hints.append(f"AI 最近进度: {_c}")
+                if _hints:
+                    _task_hint = "\n".join(_hints) + "\n"
             notice = (
                 "[模型切换感知] 当前模型已从 "
                 f"{switch_from} 切换到 {switch_to}。新缓存池无此前缀，"
-                "本轮首轮全量 miss（物理事实，成本已发生）；第二轮起尾部瘦身生效。"
-                "如任务需要早期历史，可调用 search_archive(query=...) 检索关键帧；"
+                "本轮首轮全量 miss（物理事实，成本已发生）；第二轮起尾部瘦身生效。\n"
+                f"{_task_hint}"
+                "**切换不改变任务：继续推进当前会话任务（勿'状态确认'或'请给出任务'）。**"
+                "如需要早期历史细节，可调用 search_archive(query=...) 检索关键帧；"
                 "后续如需声明上下文窗口，可经 declare_context 工具（若已注册）。"
             )
             tips = getattr(self, "_tip_tail_messages", None)
@@ -398,6 +420,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         # D1: 会话首次落库生成 session.created + 用户消息事件（fail-open）
         self._ensure_session_created(sess)
         self._append_message_event(sess, user_msg)
+        self._inject_interruption_recovery(session_id, sess)
         self._phase("ingress")
 
         final_answer = ""
@@ -444,13 +467,26 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             # M54: 模型窗口感知的主动压缩 — 先定模型标签, 再按其窗口收紧历史预算
             planned_label = self._planned_model_label(model, sess)
             effective_budget = self._effective_history_budget(planned_label)
+            _tb = int(os.environ.get("TOOL_ROUND_BUDGET", "8000"))
+            _last_tool = next((bool(getattr(m, "tool_calls", None))
+                               for m in reversed(sess.messages) if m.role == "assistant"), False)
+            _is_local_tool = _last_tool and planned_label.split("/", 1)[0] == "local"
+            _tool_round_zero = _is_local_tool and os.environ.get("TOOL_ROUND_ZERO_HISTORY", "0") == "1"  # noqa: E501
+            if _tool_round_zero:
+                effective_budget = min(effective_budget, 4000)
+            elif _tb > 0 and _is_local_tool:
+                effective_budget = min(effective_budget, _tb)
+            if _tool_round_zero or (_tb > 0 and _is_local_tool):
+                self._record_action("understand.build_messages", "tool_round_small_prefix",
+                                    "零历史" if _tool_round_zero else "小前缀")
             if effective_budget < self._runtime_history_budget():
                 self._record_action(
                     "understand.build_messages",
                     "model_aware_budget",
                     f"{planned_label}: {self._runtime_history_budget()}→{effective_budget}",
                 )
-            messages = self._build_llm_messages(sess, memory_msgs, max_chars=effective_budget, model=model)
+            messages = self._build_llm_messages(sess, memory_msgs, max_chars=effective_budget, model=model,
+                                                tool_round_zero=_tool_round_zero)
             if len(messages) < len(sess.messages) + len(memory_msgs) + 1:
                 truncation_noted = True
             tool_schemas = self.registry.schemas(lazy=self.settings.tool_schema_lazy)
@@ -495,7 +531,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 # 注入切换感知帧（_tip_tail_messages 槽: 尾部追加/转 user/一次性，
                 # system+稳定历史前缀字节不变）。首轮全量 miss 是物理事实（build→routing
                 # →452 时序），如实告知 + 给 AI 动作选项。仅本轮注入不持久化。
-                self._inject_switch_notice(_switch_from or "", model_used)
+                self._inject_switch_notice(_switch_from or "", model_used, sess)
             if routing.final_answer_override is not None:
                 # EVO-20260818（M53 拒绝逃生，防死循环）: 提交超模型窗口被拒时，AI 无 LLM
                 # 调用无法自救（无法 switch_model/开新会话/调工具）——现场: 2a3385da 会话
@@ -764,10 +800,17 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             # 程序不自动压缩历史——压缩只由 AI 主动触发）
             _bd = getattr(self, "_last_breakdown", None)
             _ratio = (_bd or {}).get("ratio")
+            # 2026-08-22: 快模型（9B fast_model 轮）不注入预警——其上下文本就精简,
+            # 预警是噪音（实证 98605ad7: 9B 收到预警后分心"处理预算"导致任务漂移）
+            _is_fast_round = (
+                "qwythos" in str(model_used)
+                or (model_used or "").split("/", 1)[-1].startswith("qwythos")
+            )
             if (
                 not self._context_warning_injected
                 and _ratio is not None
                 and _ratio >= 0.8
+                and not _is_fast_round
             ):
                 self._context_warning_injected = True
                 _used = (_bd or {}).get("total", {}).get("chars", 0)
@@ -978,19 +1021,9 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         except Exception:  # noqa: BLE001 — run.end 失败 fail-open（不影响返回）
             logger.debug("run.end 事件写入失败（fail-open）")
 
-        # EVO-20260820-5bf342ae ②（审查采纳仅②，①剔除）: 长回答自动落盘——
-        # final_answer 超长（>8000 chars）时落盘 data_dir/audit/long_answers/ 并在末尾附路径，
-        # 信息零丢失 + 回复仍可短（防截断尾部丢失）；fail-open 不阻断 run
-        try:
-            if final_answer and len(final_answer) > 8000:
-                _la_dir = Path(self.settings.data_dir) / "audit" / "long_answers"
-                _la_dir.mkdir(parents=True, exist_ok=True)
-                _la_file = _la_dir / f"{session_id}-{time.strftime('%Y%m%d-%H%M%S')}.md"
-                _la_file.write_text(final_answer, encoding="utf-8")
-                final_answer = f"{final_answer}\n\n[长回答已落盘] {_la_file}"
-                logger.info("长回答落盘: %s (%d chars)", _la_file, len(final_answer))
-        except Exception:  # noqa: BLE001 — 落盘失败 fail-open
-            logger.debug("长回答落盘失败（fail-open）")
+        # EVO-20260820-5bf342ae ②: 长回答落盘（实现抽 events.py _persist_long_answer,
+        # 防 engine 膨胀守卫 1136——2026-08-21 内联版触顶后抽取）
+        final_answer = self._persist_long_answer(session_id, final_answer or "")
 
         return LoopResult(
             session_id=session_id,
