@@ -49,6 +49,9 @@ from llm_loop.core.loop.tool_exec import (
 )
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.run_context import (
+    current_model_label as _current_model_label,
+)
+from llm_loop.core.run_context import (
     current_session_id as _current_session_id,
 )
 from llm_loop.core.run_context import (
@@ -341,6 +344,8 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         # 工作区根跟随（工具相对路径/命令默认 cwd；与会话同生命周期）
         _prev_ws = _current_workspace_root.get()
         _current_workspace_root.set(self.workspace_root or "")
+        # EVO-20260822-b3e7105e: 模型标签注入（每轮 planned_label 更新，run 结束恢复 prev）
+        _prev_model_label = _current_model_label.get()
         # DSH 对齐（2026-08-17）: 每请求推理等级 override——请求期设置/finally 恢复
         _prev_effort = getattr(self.llm, "reasoning_effort", None)
         if reasoning_effort is not None and reasoning_effort != _prev_effort:
@@ -353,6 +358,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             with self._sync_guard:
                 self._sync_active.discard(session_id)
             _current_workspace_root.set(_prev_ws)
+            _current_model_label.set(_prev_model_label)
             _current_session_id.set(_prev_sid)
 
     def _run_stream_inner(
@@ -471,6 +477,10 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
 
             # M54: 模型窗口感知的主动压缩 — 先定模型标签, 再按其窗口收紧历史预算
             planned_label = self._planned_model_label(model, sess)
+            # EVO-20260822-b3e7105e: 模型标签注入 contextvar——工具输出分层按模型
+            # 预算联动（local 收紧摘要阈值/窗口，云端零回归）。execute_many 只读池
+            # 线程经 copy_context 传播（与 current_session_id 同机制）。
+            _current_model_label.set(planned_label)
             effective_budget = self._effective_history_budget(planned_label)
             _tb = int(os.environ.get("TOOL_ROUND_BUDGET", "8000"))
             _last_tool = next((bool(getattr(m, "tool_calls", None))

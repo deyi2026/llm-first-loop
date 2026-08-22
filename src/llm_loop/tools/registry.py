@@ -38,6 +38,12 @@ class ToolRegistry:
         tool_timeout_s: float = 60.0,
         max_output_chars: int = 100000,
         summary_threshold: int = 12000,  # 2026-08-15 放大字数（5000→12000）
+        # EVO-20260822-b3e7105e: 本地模型（local provider）收紧分层参数——预算联动。
+        # 默认 None = 不启用（云端零回归）；装配时按 local 预算×50% 配置阈值，
+        # 首尾窗口随之收紧（当前 2500/2500 对 local 预算 8000 占比 62% 过大）。
+        summary_local_threshold: int | None = None,
+        summary_local_head_chars: int = 800,
+        summary_local_tail_chars: int = 800,
         archive_store: Any | None = None,
         failure_guidance_enabled: bool = True,
         # EVO-d78b270c: 经验库（MemoryStore）注入——失败回执按错误关键词检索
@@ -65,6 +71,10 @@ class ToolRegistry:
         self.tool_timeout_s = tool_timeout_s
         self.max_output_chars = max_output_chars
         self.summary_threshold = summary_threshold
+        # EVO-20260822-b3e7105e: 本地模型收紧参数（None = 未启用，云端零回归）
+        self.summary_local_threshold = summary_local_threshold
+        self.summary_local_head_chars = summary_local_head_chars
+        self.summary_local_tail_chars = summary_local_tail_chars
         self.failure_guidance_enabled = failure_guidance_enabled
         self._memory_store = memory_store  # EVO-d78b270c: 经验库（fail-open 零回归）
         self.exec_mode = exec_mode  # readonly/allowlist/blocked（空 = 不启用分级）
@@ -546,13 +556,23 @@ class ToolRegistry:
                         h.guidance_used_at = datetime.now(UTC).isoformat()
                         # 2) 若该经验已累计风险（注入后同场景仍失败）→ 附带风险提示，让 AI 谨慎参考
                         risk = int(getattr(h, "guidance_risk", 0) or 0)
+                        # 参考边界 + 时效标注（后缀式, 保留 [经验参考] 标准前缀）:
+                        # 让 AI 把经验当"历史参考"而非"当前推荐", 需要时自行用工具核验
+                        # （RULE-AI-12/07: 判断归 AI, 程序只给事实）
+                        created = str(getattr(h, "created_at", "") or "")[:10]
+                        suffix = (
+                            f"（经验创建于 {created}，历史记录仅参考，"
+                            "当前是否适用请用工具核验）"
+                            if created
+                            else "（历史记录仅参考，当前是否适用请用工具核验）"
+                        )
                         if risk >= 2:
                             return (
-                                f"[经验参考] {solution}\n"
+                                f"[经验参考] {solution}{suffix}\n"
                                 f"[经验风险] 该经验已被注入 {risk} 次但同场景仍失败，"
                                 f"建议谨慎参考或换用其他方法（执行感知反馈环标记）"
                             )
-                        return f"[经验参考] {solution}"
+                        return f"[经验参考] {solution}{suffix}"
                     except Exception:  # noqa: BLE001 — 记录失败不影响注入
                         return f"[经验参考] {solution}"
         # 2026-08-18 失败→经验沉淀闭环（B）: 失败且经验库无命中 → 提示 AI 主动沉淀
@@ -745,6 +765,22 @@ class ToolRegistry:
         # - 超过 max_output_chars（硬上限）: 全文另存 + 截断（T22 既有逻辑）
         # - EVO-20260819 full=true（按需全量）: AI 显式声明全量时跳过摘要层；
         #   硬上限仍作安全阀（防单条结果撑爆上下文）。默认路径零回归。
+        # - EVO-20260822-b3e7105e: local 模型按预算收紧阈值/窗口（预算联动，
+        #   消除"中间地带全量注入"——全局 15000 阈值对 local 8000 预算失配；
+        #   云端无 contextvar 或非 local → 全局配置，零回归）
+        try:
+            from llm_loop.core.run_context import current_model_label as _cml
+            _model_label = _cml.get() or ""
+        except Exception:  # noqa: BLE001 — contextvar 读取失败走全局配置（fail-open）
+            _model_label = ""
+        _is_local = bool(_model_label) and _model_label.split("/", 1)[0] == "local"
+        _use_local = _is_local and bool(self.summary_local_threshold)
+        _threshold = self.summary_local_threshold if _use_local else self.summary_threshold
+        _head, _tail = (
+            (self.summary_local_head_chars, self.summary_local_tail_chars)
+            if _use_local
+            else (2500, 2500)
+        )
         _full_mode = isinstance(call.arguments, dict) and bool(call.arguments.get("full"))
         if _full_mode:
             if len(result.content) > self.max_output_chars:
@@ -756,16 +792,16 @@ class ToolRegistry:
                     "完整结果已另存至压缩档案，可用 search_archive 检索找回…\n"
                     + self._DISTILL_GUIDANCE
                 )
-        elif len(result.content) > self.summary_threshold:
+        elif len(result.content) > _threshold:
             full = result.content
             self._archive_oversize_output(call, full)  # 原文完整另存（信息零丢失）
-            result.content = self._summarize_output(full, call=call)
+            result.content = self._summarize_output(full, head_chars=_head, tail_chars=_tail, call=call)
             # 硬上限安全阀: 摘要后仍超限才截断（原文已存档，无需重复存档）
             if len(result.content) > self.max_output_chars:
                 result.content = (
                     result.content[: self.max_output_chars]
                     + f"\n…[结果超长，已截断，共 {len(result.content)} 字符"
-                    f"（阈值: 摘要 {self.summary_threshold}/硬上限 {self.max_output_chars}）]；"
+                    f"（阈值: 摘要 {_threshold}/硬上限 {self.max_output_chars}）]；"
                     "完整内容已另存至压缩档案，可用 search_archive 检索找回…\n"
                     + self._DISTILL_GUIDANCE
                 )

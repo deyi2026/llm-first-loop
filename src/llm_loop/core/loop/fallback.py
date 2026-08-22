@@ -273,7 +273,8 @@ class _FallbackMixin:
             f"[模型降级: {from_model}→{to_model}, 原因: {reason}] "
             f"事实: 默认模型 {from_model} 调用失败,已自动降级到 {to_model} 继续本次任务。\n"
             f"原因: {type(primary_error).__name__}: {str(primary_error)[:160]}。\n"
-            f"建议: 当前任务继续使用 {to_model};如需回退默认,可用 switch_model 切换。"
+            f"建议: 当前已降级至 {to_model} 继续执行（可回退）；如需评估更合适模型，"
+            f"可用 model_catalog 自主查看候选后决定（判断归你，程序仅提供事实）。"
         )
         return Message(
             role="system",
