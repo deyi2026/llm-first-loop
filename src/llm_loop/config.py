@@ -242,6 +242,12 @@ class Settings:
     tool_max_output_chars: int = 100000
     # EVO-20260811-22a7d3e1: 工具输出分层注入阈值（超过则默认注入首/尾摘要，原文另存可检索）
     tool_summary_threshold: int = 12000  # 2026-08-15 放大字数（5000→12000；截断信号强化批次）
+    # EVO-20260822-b3e7105e: 本地模型（local provider）工具输出分层收紧参数（预算联动）。
+    # 默认 0 = 未启用（云端零回归）；local 场景按 预算×50% 配置阈值（TOOL_ROUND_BUDGET=8000 → 4000），
+    # 首尾窗口随之收紧（800/800，原 2500/2500 对 local 预算占比 62% 过大）。
+    tool_summary_local_threshold: int = 0
+    tool_summary_local_head_chars: int = 800
+    tool_summary_local_tail_chars: int = 800
     # EVO-20260811-7baa2737: 历史分层降级（旧长 tool 消息降级为摘要，原文归档）
     tool_trim_enabled: bool = True
     # R3: tool_trim 自适应降级年龄（0=自适应：按占用率自动调 <40%→20/40-70%→10/>70%→5；>0=固定值禁用自适应）
@@ -420,6 +426,10 @@ class Settings:
             "tool_timeout_s": self.tool_timeout_s,
             "tool_max_output_chars": self.tool_max_output_chars,
             "tool_summary_threshold": self.tool_summary_threshold,
+            # EVO-20260822-b3e7105e: local 收紧参数（架构状态可见，供 AI 感知）
+            "tool_summary_local_threshold": self.tool_summary_local_threshold,
+            "tool_summary_local_head_chars": self.tool_summary_local_head_chars,
+            "tool_summary_local_tail_chars": self.tool_summary_local_tail_chars,
             "tool_trim_enabled": self.tool_trim_enabled,
             "tool_schema_lazy": self.tool_schema_lazy,
             "tool_pipeline_enabled": self.tool_pipeline_enabled,
@@ -533,6 +543,10 @@ def load_settings() -> Settings:
         tool_timeout_s=float(_env_int("TOOL_TIMEOUT_S", 60)),
         tool_max_output_chars=_env_int("TOOL_MAX_OUTPUT_CHARS", 100000),
         tool_summary_threshold=_env_int("TOOL_SUMMARY_THRESHOLD", 12000),  # 2026-08-15 放大字数
+        # EVO-20260822-b3e7105e: local 模型收紧阈值/窗口（默认 0=未启用，云端零回归）
+        tool_summary_local_threshold=_env_int("TOOL_SUMMARY_LOCAL_THRESHOLD", 0),
+        tool_summary_local_head_chars=_env_int("TOOL_SUMMARY_LOCAL_HEAD_CHARS", 800),
+        tool_summary_local_tail_chars=_env_int("TOOL_SUMMARY_LOCAL_TAIL_CHARS", 800),
         tool_trim_enabled=_env_bool("TOOL_TRIM_ENABLED", True),
         tool_trim_age=_env_int("TOOL_TRIM_AGE", 0),
         tool_trim_threshold=_env_int("TOOL_TRIM_THRESHOLD", 8000),

@@ -22,8 +22,10 @@ def _load(monkeypatch, **envs) -> object:
     monkeypatch.setenv("LLM_BASE_URL", "https://x/v1")
     monkeypatch.setenv("LLM_MODEL", "m")
     # 测试隔离（EVO-20260811-db60d36d 同类）: 清理外部注入的配置 env，
-    # 避免 shell 环境残留（如 RETRIEVE_TIMEOUT_S=1.0 浮点）污染"未设置"断言
-    for k in ("RETRIEVE_TIMEOUT_S", "VALIDATE_SEMANTIC_THRESHOLD", "VALIDATE_SEMANTIC"):
+    # 避免 shell 环境残留（如 RETRIEVE_TIMEOUT_S=1.0 浮点、LLM_REASONING_EFFORT=medium）
+    # 污染"未设置"断言（2026-08-22 实测：shell 残留 medium 使 test_unset_produces_no_note 误报）
+    for k in ("RETRIEVE_TIMEOUT_S", "VALIDATE_SEMANTIC_THRESHOLD", "VALIDATE_SEMANTIC",
+              "LLM_REASONING_EFFORT"):
         monkeypatch.delenv(k, raising=False)
     for k, v in envs.items():
         monkeypatch.setenv(k, v)

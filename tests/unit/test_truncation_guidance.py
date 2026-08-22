@@ -67,3 +67,78 @@ def test_hard_truncation_carries_distill_guidance():
     assert "已截断" in r.content
     assert "search_archive" in r.content  # 信息零丢失指引保留
     assert "提炼" in r.content
+
+
+# ── EVO-20260822-b3e7105e: 本地模型预算联动收紧摘要（阈值/窗口随模型标签）──
+
+def _set_model_label(label: str) -> None:
+    """设置 current_model_label contextvar（测试用；token 由调用方保存恢复）."""
+    import contextvars
+    from llm_loop.core.run_context import current_model_label
+
+    _tok = current_model_label.set(label)
+    return _tok
+
+
+def test_local_model_tightens_summary_threshold():
+    """local 模型标签下收紧阈值：6K 输出在 4000 阈值触发摘要（全局 15000 下不触发）."""
+    import contextvars
+    from llm_loop.core.run_context import current_model_label
+
+    reg = ToolRegistry(
+        summary_threshold=15000,
+        summary_local_threshold=4000,
+        summary_local_head_chars=800,
+        summary_local_tail_chars=800,
+    )
+    reg.register(_BigTool("x" * 6000))
+    tok = current_model_label.set("local/qwen/qwen3.8-27b")
+    try:
+        r = reg.execute(_call())
+    finally:
+        current_model_label.reset(tok)
+    assert "输出摘要" in r.content, "local 模型 6K 输出在 4000 阈值下应触发摘要分层"
+    assert "search_archive" in r.content  # 信息零丢失指引保留
+
+
+def test_local_model_tightens_summary_window():
+    """local 模型标签下收紧首尾窗口：800 窗口内偏移 1000 的标记不可见（全局 2500 可见）."""
+    import contextvars
+    from llm_loop.core.run_context import current_model_label
+
+    reg = ToolRegistry(
+        summary_threshold=15000,
+        summary_local_threshold=4000,
+        summary_local_head_chars=800,
+        summary_local_tail_chars=800,
+    )
+    # 总长 ~8000，超 local 4000 阈值；MID 位于距头 1000 处——800 首窗口覆盖不到
+    content = "HEAD" + "h" * 996 + "MID1000" + "m" * 6900 + "TAIL"
+    reg.register(_BigTool(content))
+    tok = current_model_label.set("local/qwen/qwen3.8-27b")
+    try:
+        r = reg.execute(_call())
+    finally:
+        current_model_label.reset(tok)
+    assert "输出摘要" in r.content
+    assert "HEAD" in r.content, "800 首窗口应覆盖距头 4 字符的 HEAD"
+    assert "TAIL" in r.content
+    assert "MID1000" not in r.content, "local 800 首窗口不应覆盖距头 1000 处（全局 2500 才可见）"
+
+
+def test_cloud_model_keeps_global_threshold():
+    """云端/无标签模型维持全局配置零回归：6K 输出在 15000 阈值下不触发摘要."""
+    import contextvars
+    from llm_loop.core.run_context import current_model_label
+
+    reg = ToolRegistry(
+        summary_threshold=15000,
+        summary_local_threshold=4000,
+    )
+    reg.register(_BigTool("x" * 6000))
+    tok = current_model_label.set("deepseek/deepseek-v4-flash")
+    try:
+        r = reg.execute(_call())
+    finally:
+        current_model_label.reset(tok)
+    assert "输出摘要" not in r.content, "云端模型 6K 输出在全局 15000 阈值下不应被分层"
