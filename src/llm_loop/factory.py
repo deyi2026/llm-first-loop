@@ -223,6 +223,10 @@ def build_engine(settings: Settings) -> LoopEngine:
         tool_timeout_s=settings.tool_timeout_s,
         max_output_chars=settings.tool_max_output_chars,
         summary_threshold=settings.tool_summary_threshold,
+        # EVO-20260822-b3e7105e: local 模型预算联动收紧参数（默认 0=未启用，云端零回归）
+        summary_local_threshold=settings.tool_summary_local_threshold,
+        summary_local_head_chars=settings.tool_summary_local_head_chars,
+        summary_local_tail_chars=settings.tool_summary_local_tail_chars,
         archive_store=archive,  # T22: 超长工具结果另存
         exec_mode=settings.exec_mode,  # EVO-20260810-2549e9b6: EXEC_MODE 命令分级
         exec_allowlist=settings.exec_allowlist,

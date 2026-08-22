@@ -160,8 +160,16 @@ class LLMClient:
         # 2026-08-20 (Sub2API Grok 兼容): Connection: close 关闭连接复用——
         # 复用的 httpx 连接池对 ai.mxnook.com 网关的 keepalive 不兼容（流式请求挂起/HTTP 400）；
         # 每次新连接对 DeepSeek/MiniMax/本地 provider 实测零功能影响（仅少一次连接复用）。
-        self._client = httpx.Client(timeout=self.timeout_s,
-                                    headers={"Connection": "close"})
+        # 2026-08-21 修复（本地模型 400 根因，见 EXPERIENCE-20260821-urllib-sse-lm-studio-400）:
+        #   Connection: close 与 LM Studio 本地 SSE 冲突——实测连续请求交替 200/400
+        #   （LM Studio 判定客户端提前断开，server 日志 "Client disconnected. Stopping generation"）。
+        #   本地 provider（localhost/127.0.0.1）豁免该头；远程 provider 保留原行为（零回归）。
+        base = (self.base_url or "").lower()
+        if any(h in base for h in ("localhost", "127.0.0.1", "0.0.0.0")):
+            headers: dict[str, str] = {}
+        else:
+            headers = {"Connection": "close"}
+        self._client = httpx.Client(timeout=self.timeout_s, headers=headers)
 
     def _thinking_supported(self) -> bool:
         """思考参数发送判定（M20 CFG-03 + M47 §5.5）.
@@ -697,6 +705,20 @@ class LLMClient:
                             acc.content_parts.append(c)
                             yield StreamDelta(text=c)
                     elif etype == "chat.end":
+                        # 2026-08-22 补 usage 解析: lms-chat 的 chat.end.result.stats 含
+                        # input_tokens/total_output_tokens（此前 acc 恒 0, 本地模型用量统计失真）。
+                        # 注: stats 不含 cached_tokens（lms-chat 协议限制, KV 命中不可观测——
+                        # 需走 OpenAI 协议直连 llama-server 才能拿 prompt_tokens_details）。
+                        try:
+                            _stats = (chunk.get("result") or {}).get("stats") or {}
+                            _it = _stats.get("input_tokens")
+                            _ot = _stats.get("total_output_tokens")
+                            if _it:
+                                acc.prompt_tokens = int(_it)
+                            if _ot:
+                                acc.completion_tokens = int(_ot)
+                        except Exception:  # noqa: BLE001 — 解析失败 fail-open（不影响输出）
+                            pass
                         break
         except httpx.TimeoutException as exc:
             raise LLMTimeoutError(f"LLM 请求超时（{effective_timeout}s）") from exc

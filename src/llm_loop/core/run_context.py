@@ -25,6 +25,13 @@ current_workspace_root: contextvars.ContextVar[str] = contextvars.ContextVar(
     "llm_loop_current_workspace_root", default=""
 )
 
+# EVO-20260822-b3e7105e: 当前执行上下文所属的模型标签（engine 每轮按 planned_label 设置；
+# 工具输出分层按模型预算联动——local 收紧摘要阈值/首尾窗口，云端维持全局配置零回归。
+# 无上下文的老调用方（CLI 直跑/测试桩）读到空串 → 走全局配置回退）
+current_model_label: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "llm_loop_current_model_label", default=""
+)
+
 
 def workspace_base() -> str:
     """工具相对路径/命令默认 cwd 的基准目录（工作区根优先，空则进程 cwd）."""

@@ -68,6 +68,12 @@ def replay_session(events: list[Event]) -> dict:
             idx = _as_int(event.payload.get("index"))
             if idx is None:
                 idx = len(messages_by_index)
+            # 2026-08-21 修复（中断索引错乱）: 事件按 seq 排序处理, 先到的是真实顺序。
+            # 若 idx 已被占用（run 中断导致内存 len(sess.messages) 回滚 → 索引重复,
+            # 实测 180c662a: idx=4 被"评估"和"继续"两条 user 消息占用, 后者覆盖前者
+            # 丢任务）——不再覆盖, 用递增 idx 追加（全部消息保留, 顺序按 seq 保真）。
+            while idx in messages_by_index:
+                idx += 1
             messages_by_index[idx] = msg
         elif event.type == "session.meta_changed":
             _apply_meta_change(view, event.payload)
@@ -96,7 +102,7 @@ def replay_session(events: list[Event]) -> dict:
             unknown_types.append(event.type)
         # 已登记但未分派的类型：静默跳过（如实不伪造）
 
-    view["messages"] = [messages_by_index[i] for i in sorted(messages_by_index)]
+    view["messages"] = _ordered_messages(messages_by_index, ordered)
     if gaps:
         view["event_log_gaps"] = gaps
     if unknown_types:
@@ -145,3 +151,19 @@ def _as_int(value) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _ordered_messages(messages_by_index: dict, ordered_events: list) -> list[dict]:
+    """按事件 seq 顺序输出消息（2026-08-21 修复中断索引错乱）.
+
+    原实现按 idx 排序——run 中断时内存 len(sess.messages) 回滚导致多条消息 idx 重复
+    （实测 180c662a: "评估"和"继续"都 idx=4）, dict 后到覆盖先到 → 丢消息/顺序错乱。
+    修复: 按 seq 遍历 message.appended 事件, 依出现顺序收集（idx 冲突时后到的追加
+    到尾部, 不覆盖先到的）——全部消息保留且顺序按 seq 保真。
+    """
+    out: list[dict] = []
+    for event in ordered_events:
+        if event.type != "message.appended":
+            continue
+        out.append(_build_message(event.payload))
+    return out

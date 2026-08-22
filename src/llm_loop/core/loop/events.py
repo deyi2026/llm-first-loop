@@ -196,6 +196,70 @@ class _EventsMixin:
             audit_dir=self.settings.audit_dir,
         )
 
+    def _inject_interruption_recovery(self, session_id: str, sess) -> None:
+        """2026-08-22 中断检测 + 恢复提示: event_logs 消息数 > 会话内存 = 中断丢数据.
+
+        进程被杀/run 未完成 → session JSON 落后于 event_logs 真相源。检测到差异时
+        注入"先核对 event_logs"提示（尾部追加 GATE_NOTE 模式, 不破坏前缀）——
+        与规则 19 呼应, 让 AI 主动恢复而非被动等"记忆不符"才触发。fail-open。
+
+        防反复（2026-08-22 补充）: 注入后置 sess._interruption_notified=True——
+        中断提示只进 _tip_tail 槽（一次性消费, 不 append 到 sess.messages）,
+        否则每轮差异仍存在 → 反复注入干扰。标记仅进程内（会话重启后可重新检测）。
+        """
+        try:
+            if getattr(sess, "_interruption_notified", False):
+                return  # 已提醒过, 不反复注入
+            _estore = getattr(self, "_event_store", None)
+            if _estore is None or not getattr(_estore, "enabled", False):
+                return
+            _el_count = (
+                sum(1 for e in _estore.read(session_id) if e.type == "message.appended")
+                if _estore.exists(session_id)
+                else 0
+            )
+            _mem_count = len(sess.messages)
+            if _el_count <= _mem_count:
+                return
+            _note = (
+                f"[会话中断恢复] 检测到 event_logs 有 {_el_count} 条消息, "
+                f"当前会话内存仅 {_mem_count} 条——中断丢失 {_el_count - _mem_count} 条。"
+                "先用 read_file 读 data/event_logs/<session_id>.jsonl 核对缺失段, "
+                "找回中断前的真实任务/上下文, 再继续（勿凭记忆猜测）。"
+            )
+            from llm_loop.core.message import Message
+
+            tips = getattr(self, "_tip_tail_messages", None) or []
+            self._tip_tail_messages = tips
+            tips.append(Message(
+                role="system", content=_note, source=MessageSource.SYSTEM,
+                metadata={"injected_system": True, "interruption_recovery": True},
+            ))
+            sess._interruption_notified = True  # 防反复注入
+        except Exception:  # noqa: BLE001 — 中断检测失败 fail-open（不影响 run）
+            logger.debug("中断检测异常（fail-open）")
+
+    def _persist_long_answer(self, session_id: str, final_answer: str) -> str:
+        """EVO-20260820-5bf342ae ②: 长回答（>8000 chars）落盘并附路径（信息零丢失）.
+
+        路径用内容哈希（非时间戳）——final_answer 作为 assistant 消息进历史后续轮次
+        回传，时间戳路径每轮变 → 该消息字节变 → 前缀断（12 实验规律，2026-08-21 修复）；
+        内容哈希: 同一回答→同路径（回传稳定命中）。fail-open: 落盘失败返回原样不阻断。
+        """
+        try:
+            if final_answer and len(final_answer) > 8000:
+                import hashlib
+
+                _la_dir = Path(self.settings.data_dir) / "audit" / "long_answers"
+                _la_dir.mkdir(parents=True, exist_ok=True)
+                _la_digest = hashlib.sha256(final_answer.encode("utf-8", errors="replace")).hexdigest()[:16]
+                _la_file = _la_dir / f"{session_id[:8]}-{_la_digest}.md"
+                _la_file.write_text(final_answer, encoding="utf-8")
+                return f"{final_answer}\n\n[长回答已落盘] {_la_file}"
+        except Exception:  # noqa: BLE001 — 落盘失败 fail-open
+            logger.debug("长回答落盘失败（fail-open）")
+        return final_answer
+
     def _set_session_override(self, sess, value: str | None) -> None:
         """M48（design §5.3）: switch_model 调用的会话 override 写入回调.
 

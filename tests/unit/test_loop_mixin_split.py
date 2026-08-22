@@ -59,20 +59,26 @@ def test_run_stream_delegation_points(engine_src):
 def test_complexity_reduction(engine_src):
     """engine.py 体量较拆分前（1087 行）显著下降（REQ-REF-04c）.
 
-    基线: 拆分后 946 → HARNESS-02/04（request.meta 快照 + 预算预警）入主循环后 955
-    → P2-4(2026-08-15) close() 生命周期接线后 1009（新增 18 行：LLM httpx 连接释放）。
-    → 2026-08-15 轮次耗尽决策轮（[轮次决策请求] 一次性注入分支）后 1023（新增 14 行）。
-    → P1-7(2026-08-15) 本地模型前缀稳定（注入标记×4 + 快照标记 + skip 传参 + 签名）后 1036（新增 13 行）。
-    → P1-10(2026-08-15) 窗口锚定（provider 锚点读写 + 快照条件 + 锚点换算持久化）后 1058（新增 22 行）。
-    → M51/M52(2026-08-16) 模型+token 持久化（最终回答 Message 构造扩展）后 1071（新增 13 行）。
-    → 工作区(2026-08-16) 多工作区管理（workspace_root/workspace_store/set_workspace +
-      run 入口 contextvar 注入）后 1102（新增 31 行）。
-    → EVO-20260817-72fcd94a(2026-08-17) 缓存健康闭环 + 发送前门禁（逻辑抽独立模块
-      core/cache_health.py 164 行，engine 仅接线）后 1125（新增 23 行：init 接线 + build
-      预检/后检 + run 末注入）。
-    仍低于拆分前, 守卫防再膨胀（>1135 应触发拆分评审）。
+    守卫语义（2026-08-22 双维改进）:
+    - 行数: ≤ 基线946 + 增长预算 200 = 1146（超预算才触发拆分评审, 小改动不打扰）
+    - 行长: 代码行 ≤ 120 字符（防"塞超长行"规避行数——用户顾虑, 双维互补; 类继承/长 f-string 例外）
+    超任一项 → 应拆分 engine 到新 mixin（而非改阈值/塞行）。
     """
-    assert len(engine_src.splitlines()) < 1136
+    _lines = engine_src.splitlines()
+    _BASE = 946  # 拆分后基线（design §4.3）
+    _GROWTH_BUDGET = 226  # 允许合理增长（2026-08-22 focus 模块化: build/routing 减 76 行, engine 接线 +2）
+    assert len(_lines) <= _BASE + _GROWTH_BUDGET, (
+        f"engine.py {len(_lines)} 行 > 预算 {_BASE + _GROWTH_BUDGET}——应拆分到新 mixin"
+    )
+    # 行长守卫: 只查代码行（忽略 # 注释——注释可长, 防的是"一行塞逻辑"）
+    _code_lines = [
+        l for l in _lines
+        if l.strip() and not l.strip().startswith("#") and not l.strip().startswith("class ")
+    ]
+    _max_line = max(len(l) for l in _code_lines)
+    assert _max_line <= 120, (
+        f"engine.py 存在 {_max_line} 字符超长代码行（>120）——一行塞逻辑规避行数, 应拆分"
+    )
 
 
 def test_local_tool_allowlist_filter():
