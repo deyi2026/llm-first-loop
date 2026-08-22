@@ -41,6 +41,22 @@ logger = logging.getLogger(__name__)
 
 
 class _BuildMixin:
+    def _tail_injection_msg(self, _m: Message, _anchor: str) -> dict:
+        """注入统一包装（EVO-20260822-9fde48f1 第 6 条集中）: system→user + wrap.
+
+        memory 检索/tail 消息（interop/经验/提醒）统一走此转换——role 转换与
+        wrap_injection 集中一处（防逐点重复）。metadata 保留在 Message 对象层
+        （history._is_injected_system 双通道判定用），提交 dict 格式不含 metadata
+        系既有行为（to_llm_dict 契约），零回归。
+        """
+        _d = _m.to_llm_dict()
+        if _d.get("role") == "system":
+            _d["role"] = "user"  # system 静态: 转独立 user 尾部追加
+            _c = str(_d.get("content") or "")
+            if _c:
+                _d["content"] = wrap_injection(_c, _anchor)
+        return _d
+
     def _build_llm_messages(
         self,
         sess,
@@ -242,13 +258,7 @@ class _BuildMixin:
         # 15+ 次 search_archive/search_records 死循环）。与 tail_msgs 同包装机制。
         _anchor = build_task_anchor(self._focus.anchor_sess)
         for _m in memory_msgs:
-            _d = _m.to_llm_dict()
-            if _d.get("role") == "system":
-                _d["role"] = "user"  # system 静态: 转独立 user 尾部追加
-                _c = str(_d.get("content") or "")
-                if _c:
-                    _d["content"] = wrap_injection(_c, _anchor)
-            built.append(_d)
+            built.append(self._tail_injection_msg(_m, _anchor))
         tail_msgs = getattr(self, "_interop_tail_messages", None)
         # EVO-20260819-7bb7d689: 经验提示尾部追加槽并入统一消费（与 interop 同机制）——
         # 不进历史存储，build 末尾一次性追加（转 user），system+稳定历史前缀字节不变
@@ -260,13 +270,7 @@ class _BuildMixin:
             # 从会话提取任务目标/进度附带注入, AI 被打断后知道做什么/做到哪
             _anchor = build_task_anchor(self._focus.anchor_sess)
             for _m in tail_msgs:
-                _d = _m.to_llm_dict()
-                if _d.get("role") == "system":
-                    _d["role"] = "user"  # system 静态: 转独立 user 尾部追加
-                    _c = str(_d.get("content") or "")
-                    if _c:
-                        _d["content"] = wrap_injection(_c, _anchor)
-                built.append(_d)
+                built.append(self._tail_injection_msg(_m, _anchor))
             self._interop_tail_messages = None  # 一次性消费（每轮重扫 pending）
             self._tip_tail_messages = None  # 经验提示同机制一次性消费（下轮工具执行再注入）
         # EVO-20260817-72fcd94a: 门禁干预知情标记——干预激活首轮在 built 末尾追加固定
