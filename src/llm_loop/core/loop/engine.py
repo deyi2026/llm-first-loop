@@ -33,6 +33,7 @@ from llm_loop.core.loop.build import _BuildMixin  # EVO-20260817-e63f712f: 消�
 from llm_loop.core.loop.events import _EventsMixin
 from llm_loop.core.loop.fallback import _FallbackMixin
 from llm_loop.core.loop.interop import _InteropMixin
+from llm_loop.core.loop.kpi import _KpiMixin
 from llm_loop.core.loop.overflow import _OverflowMixin
 from llm_loop.core.loop.routing import (
     _CHARS_PER_TOKEN_EST,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
@@ -48,9 +49,6 @@ from llm_loop.core.loop.tool_exec import (
     _ToolExecMixin,
 )
 from llm_loop.core.message import Message, MessageSource
-from llm_loop.core.run_context import (
-    current_model_label as _current_model_label,
-)
 from llm_loop.core.run_context import (
     current_session_id as _current_session_id,
 )
@@ -129,7 +127,7 @@ def build_session_snapshot_text(
     parts.append("若你对当前任务/已完成/下一步/未决事项的定位漂移，以本条为锚点重新校准。")
     return "；".join(parts)
 
-class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _OverflowMixin, _ToolExecMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin):
+class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _OverflowMixin, _ToolExecMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin, _KpiMixin):
     """五阶段核心循环控制器."""
 
     # EVO 后台 run 执行器（factory 动态装配 BackgroundRunner；声明类型供 pyright 静态检查）
@@ -199,9 +197,8 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         self.workspace_root: str = ""
         # 工作区注册表（factory 装配注入；web 层切换工作区入口）
         self.workspace_store: Any | None = None
-        # P0-5(2026-08-15): per-session 运行状态表（审计发现 #7 可重入修复）——
-        # 停滞指纹/overflow 计数/预警标志/快照节流/breakdown 按 session_id 分桶，
-        # 跨会话并发 run 不再共享污染。属性 shim（下方）保持既有读写接口不变。
+        # P0-5: per-session 运行状态表（停滞指纹/overflow/预警/快照/breakdown 按
+        # session_id 分桶防并发污染；属性 shim 保持接口不变）。
         self._run_states: dict[str, _RunState] = {}
         self._run_states_guard = threading.Lock()
         # P0-5: 每会话 in-memory Session 绑定表（switch_model 等按 contextvar 解析
@@ -209,10 +206,8 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         self._run_sessions: dict[str, Any] = {}
         # P0-5: 最近活跃会话（out-of-run 时属性 shim 的回退锚点，保持 run 后复查语义）
         self._last_active_sid: str = ""
-        # EVO-20260817 审查 P0-3: 同步 run 活跃会话集合——后台 start 互斥用。
-        # 同步 run_stream 只经 registry 互斥（registry 仅跟踪后台 run），后台 start
-        # 检查不到同步 run → 双 run 竞写会话文件（last-write-wins 丢消息）。
-        # 双向互斥: 同步 run 首 next 注册、finally 注销；后台 start 检查本集合拒绝。
+        # EVO-20260817 审查 P0-3: 同步 run 活跃会话集合——双向互斥防双 run 竞写
+        # 会话文件（后台 start 检查不到同步 run → last-write-wins 丢消息）。
         self._sync_active: set[str] = set()
         self._sync_guard = threading.Lock()
         # EVO-20260811-9ccdec97: 会话状态快照节流（上次快照注入时的消息数）—— P0-5 起经 shim 入 per-session 桶
@@ -313,10 +308,8 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         当前执行上下文归属本会话；结束后复位，避免残留泄漏到复用线程的无关代码。
         run 后可读性由 `_run_state()` 的 `_last_active_sid` 回退保留（测试复查语义）。
         """
-        # SSE/ASGI 消费方可能在不同 Context 中驱动本生成器（Token.reset 要求同一
-        # Context，跨 Context 抛 ValueError）——改用 值快照 + set 还原（set 不挑 Context）。
-        # EVO 后台 run 改造（B5/B7）: 跨入口互斥——同会话已有后台 run 进行中则拒绝
-        # （后台工作线程自身调用放行 is_worker；生成器惰性，检查在首 next 时执行）
+        # SSE/ASGI 跨 Context 驱动生成器（Token.reset 挑 Context）→ 值快照 + set 还原。
+        # EVO B5/B7: 跨入口互斥——同会话已有后台 run 进行中则拒绝（is_worker 放行）。
         runner = getattr(self, "runner", None)
         if (
             runner is not None
@@ -344,8 +337,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         # 工作区根跟随（工具相对路径/命令默认 cwd；与会话同生命周期）
         _prev_ws = _current_workspace_root.get()
         _current_workspace_root.set(self.workspace_root or "")
-        # EVO-20260822-b3e7105e: 模型标签注入（每轮 planned_label 更新，run 结束恢复 prev）
-        _prev_model_label = _current_model_label.get()
+        _prev_model_label = self._save_model_label_ctx()
         # DSH 对齐（2026-08-17）: 每请求推理等级 override——请求期设置/finally 恢复
         _prev_effort = getattr(self.llm, "reasoning_effort", None)
         if reasoning_effort is not None and reasoning_effort != _prev_effort:
@@ -358,7 +350,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             with self._sync_guard:
                 self._sync_active.discard(session_id)
             _current_workspace_root.set(_prev_ws)
-            _current_model_label.set(_prev_model_label)
+            self._restore_model_label_ctx(_prev_model_label)
             _current_session_id.set(_prev_sid)
 
     def _run_stream_inner(
@@ -449,6 +441,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         tokens_cache_hit = 0  # M58: 本次 run 前缀缓存命中 token（省钱可观测）
         llm_ms_total = 0.0  # M59: 本次 run LLM 调用总耗时（首 token 埋点聚合）
         ttft_first_ms: float | None = None  # M59: 首个 token 延迟（首 token 平均数据源）
+        self._kpi_reset()  # EVO-20260822-9fde48f1 第 10 条: KPI 三件套重置（对比基线用）
         resp: Any = None  # M20 THK-04: 最终回答轮思考链来源（LLM 异常/停滞路径为 None）
 
         while True:
@@ -477,10 +470,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
 
             # M54: 模型窗口感知的主动压缩 — 先定模型标签, 再按其窗口收紧历史预算
             planned_label = self._planned_model_label(model, sess)
-            # EVO-20260822-b3e7105e: 模型标签注入 contextvar——工具输出分层按模型
-            # 预算联动（local 收紧摘要阈值/窗口，云端零回归）。execute_many 只读池
-            # 线程经 copy_context 传播（与 current_session_id 同机制）。
-            _current_model_label.set(planned_label)
+            self._set_model_label_ctx(planned_label)
             effective_budget = self._effective_history_budget(planned_label)
             _tb = int(os.environ.get("TOOL_ROUND_BUDGET", "8000"))
             _last_tool = next((bool(getattr(m, "tool_calls", None))
@@ -503,6 +493,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             self._focus.anchor_sess = sess  # 2026-08-22 任务锚点数据源（build 注入包装用）
             messages = self._build_llm_messages(sess, memory_msgs, max_chars=effective_budget, model=model,
                                                 tool_round_zero=_tool_round_zero)
+            self._kpi_accumulate_inject()
             if len(messages) < len(sess.messages) + len(memory_msgs) + 1:
                 truncation_noted = True
             tool_schemas = self.registry.schemas(lazy=self.settings.tool_schema_lazy)
@@ -511,10 +502,8 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             tool_schemas = self._filter_local_tools(tool_schemas, planned_label)
             tools_param = [self._schema_to_param(t) for t in tool_schemas]
 
-            # R1: 计算组件级占用分解（含 tool_schema_chars，供 architecture_status.context_usage.breakdown 注入）
-            # 口径: **实际发送载荷**（构建后 messages）而非原始会话——已压缩归档的历史
-            # 不再计入"当前占用"（旧口径在本地慢模型收紧预算后会把占用虚高数十倍，
-            # 误导 [预算预警]/AI 压缩决策）。_last_build_info 保留（其他消费方兼容）。
+            # R1: 组件级占用分解（实际发送载荷口径；压缩归档历史不计入当前占用）
+            # 供 architecture_status.context_usage.breakdown 注入；_last_build_info 保留。
             from llm_loop.core.history import compute_breakdown_from_dicts
 
             self._last_breakdown = compute_breakdown_from_dicts(
@@ -544,9 +533,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                                               clear_buckets=False)
                 self._cache_last_model = model_used
                 # 2026-08-20 (DESIGN-v3 v2 落地): 切换通知——AI 主导上下文选择第一步。
-                # 注入切换感知帧（_tip_tail_messages 槽: 尾部追加/转 user/一次性，
-                # system+稳定历史前缀字节不变）。首轮全量 miss 是物理事实（build→routing
-                # →452 时序），如实告知 + 给 AI 动作选项。仅本轮注入不持久化。
+                # 注入切换感知帧（_tip_tail_messages 槽: 尾部追加/转 user/一次性，前缀不变）。
                 self._inject_switch_notice(_switch_from or "", model_used, sess)
             if routing.final_answer_override is not None:
                 # EVO-20260818（M53 拒绝逃生，防死循环）: 提交超模型窗口被拒时，AI 无 LLM
@@ -726,6 +713,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             tokens_out += resp.completion_tokens
             tokens_cache_hit += resp.prompt_cache_hit_tokens
             llm_ms_total += _llm_round_ms
+            self._kpi_accumulate_llm(planned_label, _llm_round_ms)
             # DSH 借鉴(2026-08-17): 本轮响应 usage 明细落盘（fail-open）——命中/miss
             # token 逐轮可审计，命中率实时可算（不依赖 CSV 账单/流式 M58 盲区）。
             try:
@@ -748,6 +736,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
 
             # 无工具调用 → 最终回答 → 真诚回答阶段
             if not resp.tool_calls:
+                self._kpi_note_no_tool()
                 self._phase("honest_answer")
                 # H-UI: 进入回答生成
                 self._notify_action("answer")
@@ -1032,6 +1021,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                     "model_used": model_used,
                     "truncated": truncation_noted,
                     "answer_preview": (final_answer or "")[:200],
+                    **self._kpi_snapshot(),
                 },
             )
         except Exception:  # noqa: BLE001 — run.end 失败 fail-open（不影响返回）

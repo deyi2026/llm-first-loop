@@ -57,7 +57,6 @@ class _BuildMixin:
         前缀稳定命中引擎/服务端缓存; 锚点写入 sess.history_anchors 随会话持久化。
         """
         planned_label = self._planned_model_label(model, sess)
-        planned_label = self._planned_model_label(model, sess)
         provider_id = planned_label.partition("/")[0] or "default"
         anchors = sess.history_anchors or {}
         sess_anchor = int(anchors.get(provider_id, 0) or 0)
@@ -373,4 +372,27 @@ class _BuildMixin:
                 )
         except Exception:  # noqa: BLE001
             pass
+        # EVO-20260822-9fde48f1 第 10 条: KPI 埋点——注入占比统计（响应式，不推送）。
+        # 定义: 注入消息（[相关记忆]/[上下文注入/快照/经验/压缩关键事实/GATE_NOTE）字符
+        # 占提交总字符比例。仅存 self._last_inject_stats（engine run.end 读取落盘），
+        # 不进 LLM 上下文（方案第 7 条: 统计响应式，AI 主动查才见，标注非任务信息）。
+        try:
+            _markers = (
+                "[相关记忆]", "[上下文注入", "[会话状态快照]", "[经验提示]",
+                "[压缩关键事实]", "[压缩推理结论]", GATE_NOTE_CONTENT[:16],
+            )
+            _inj = [
+                (i, m) for i, m in enumerate(built)
+                if any(mk in str(m.get("content", "")) for mk in _markers)
+            ]
+            _inj_chars = sum(len(str(m.get("content", ""))) for _, m in _inj)
+            _total_chars = sum(len(str(m.get("content", ""))) for m in built)
+            self._last_inject_stats = {
+                "inject_msgs": len(_inj),
+                "inject_chars": _inj_chars,
+                "total_chars": _total_chars,
+                "inject_ratio": round(_inj_chars / _total_chars, 4) if _total_chars else 0.0,
+            }
+        except Exception:  # noqa: BLE001 — KPI 埋点失败 fail-open
+            self._last_inject_stats = None
         return built
