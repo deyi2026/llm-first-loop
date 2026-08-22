@@ -222,6 +222,10 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         from llm_loop.core.cache_health import CacheHealthMonitor
 
         self._cache_monitor = CacheHealthMonitor()
+        # 2026-08-22 任务聚焦状态（focus 模块: 单向切换锁定 + 任务锚点数据源）
+        from llm_loop.core.loop.focus import TaskFocusState
+
+        self._focus = TaskFocusState()
         # EVO-20260818（spec §5.4.1-3 注记，grill-me C1）: 模型切换检测——每轮对比实际
         # 模型，变化时 reset cache_health 窗口（防跨模型归因污染）
         self._cache_last_model: str | None = None
@@ -431,10 +435,8 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         # 默认 completed——未标记即正常完成。fail-open 不阻断）
         _run_end_reason = "completed"
         _run_started_at = time.monotonic()
-        self._reset_overflow_state()  # R4 增强: 每次 run 重置 overflow 注入计数
-        # 2026-08-22 单向切换锁定重置: 每次 run 从"未升级"开始——简单任务首轮可切 9B,
-        # 一旦本轮判复杂 → 置位 → 本 run 后续轮保持 27B（不切回 9B）
-        self._task_escalated = False
+        self._reset_overflow_state()  # R4: 每次 run 重置 overflow 注入计数
+        self._focus.reset()  # 2026-08-22 单向切换锁定重置
         model_used = ""  # M51: 本轮实际使用的模型标签（每轮 LLM 调用时刷新）
         tokens_in = 0  # M52: 本次 run 累计 prompt tokens
         tokens_out = 0
@@ -488,7 +490,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                     "model_aware_budget",
                     f"{planned_label}: {self._runtime_history_budget()}→{effective_budget}",
                 )
-            self._anchor_sess = sess  # 2026-08-22 任务锚点数据源（build 注入包装用）
+            self._focus.anchor_sess = sess  # 2026-08-22 任务锚点数据源（build 注入包装用）
             messages = self._build_llm_messages(sess, memory_msgs, max_chars=effective_budget, model=model,
                                                 tool_round_zero=_tool_round_zero)
             if len(messages) < len(sess.messages) + len(memory_msgs) + 1:

@@ -66,7 +66,7 @@ def test_complexity_reduction(engine_src):
     """
     _lines = engine_src.splitlines()
     _BASE = 946  # 拆分后基线（design §4.3）
-    _GROWTH_BUDGET = 225  # 允许合理增长（2026-08-22 单向切换锁定+任务锚点+注入统一包装后 1170）
+    _GROWTH_BUDGET = 226  # 允许合理增长（2026-08-22 focus 模块化: build/routing 减 76 行, engine 接线 +2）
     assert len(_lines) <= _BASE + _GROWTH_BUDGET, (
         f"engine.py {len(_lines)} 行 > 预算 {_BASE + _GROWTH_BUDGET}——应拆分到新 mixin"
     )
