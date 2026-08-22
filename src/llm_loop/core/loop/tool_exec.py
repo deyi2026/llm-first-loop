@@ -212,6 +212,11 @@ class _ToolExecMixin:
         使请求前缀在追加点分叉，其后全部历史（含 87% 工具结果）从缓存命中变全价
         MISS（实测命中率 ~1-5%，成本放大 ~50 倍）。
         """
+        # 2026-08-22: 快模型（9B fast_model 轮）不注入经验提示——9B 上下文本就精简,
+        # 经验提示是噪音（实证 98605ad7: 9B 收到经验后转去"同步架构状态"任务漂移）
+        _cur = getattr(self, "_cache_last_model", "") or ""
+        if "qwythos" in str(_cur):
+            return
         if not getattr(self.settings, "tool_experience_inject", True):
             return
         try:
