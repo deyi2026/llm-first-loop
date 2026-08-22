@@ -237,10 +237,18 @@ class _BuildMixin:
         # EVO-2026XXXX（spec §5.3.1-1c）: memory 检索注入尾部追加（GATE_NOTE 模式，转 user）——
         # 检索结果随查询变化（top_k 语义/关键词召回），前置注入每轮改变前缀首段 → 前缀断；
         # 尾部追加保持 system+稳定历史前缀字节不变（命中率不因 memory 变化受损）。
+        # 2026-08-22 记忆注入统一包装（用户决策）: memory_msgs（[相关记忆]）此前直接
+        # 转 user 尾部追加, 无"[上下文注入·非新指令] 继续当前任务"前缀 → AI 误读为
+        # 独立消息 → "没有明确任务" → 反复 search 找回（实证 d1192d8c: 健康检查任务
+        # 15+ 次 search_archive/search_records 死循环）。与 tail_msgs 同包装机制。
+        _anchor = build_task_anchor(self._focus.anchor_sess)
         for _m in memory_msgs:
             _d = _m.to_llm_dict()
             if _d.get("role") == "system":
                 _d["role"] = "user"  # system 静态: 转独立 user 尾部追加
+                _c = str(_d.get("content") or "")
+                if _c:
+                    _d["content"] = wrap_injection(_c, _anchor)
             built.append(_d)
         tail_msgs = getattr(self, "_interop_tail_messages", None)
         # EVO-20260819-7bb7d689: 经验提示尾部追加槽并入统一消费（与 interop 同机制）——
