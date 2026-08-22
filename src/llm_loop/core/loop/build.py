@@ -282,6 +282,22 @@ class _BuildMixin:
         # （低价值注入=本地慢模型 prefill 秒级成本；高价值记忆/协调不在此列）
         if tip_msgs and not self._local_skip_inject(provider_id, "tips"):
             tail_msgs = (tail_msgs or []) + tip_msgs
+        # 2026-08-23 任务1（本地模型行为增强）: local 轮固定尾部追加轻量行为提示。
+        # 内容=给动作/给默认规则/引用代号带证据（对治评测三短板）；走 tail 统一通道
+        # （转 user + 非新指令包装，tail_msgs 已纳入投影指纹不破坏一致性），尾部追加
+        # 缓存友好（system+稳定历史前缀字节不变）；不受 LOCAL_INJECT_SKIP 影响（高价值行为约束）。
+        if provider_id == "local":
+            tail_msgs = (tail_msgs or []) + [
+                Message(
+                    role="system",
+                    content=(
+                        "本地模型行为提示：①回答给'你可以这样做'的具体动作，不只说态度；"
+                        "②边界模糊时主动声明默认规则（改≤3文件自主执行、>3或涉生产先列方案等你确认）；"
+                        "③引用代号(M22/r4等)须附一句话证据；④不确定先 search_records/search_archive 检索再答。"
+                    ),
+                    source=MessageSource.SYSTEM,
+                )
+            ]
         if tail_msgs:
             # 2026-08-22 任务锚点 + 注入统一包装（focus 模块, 用户决策）——
             # 从会话提取任务目标/进度附带注入, AI 被打断后知道做什么/做到哪
