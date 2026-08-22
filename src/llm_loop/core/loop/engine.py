@@ -800,10 +800,17 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             # 程序不自动压缩历史——压缩只由 AI 主动触发）
             _bd = getattr(self, "_last_breakdown", None)
             _ratio = (_bd or {}).get("ratio")
+            # 2026-08-22: 快模型（9B fast_model 轮）不注入预警——其上下文本就精简,
+            # 预警是噪音（实证 98605ad7: 9B 收到预警后分心"处理预算"导致任务漂移）
+            _is_fast_round = (
+                "qwythos" in str(model_used)
+                or (model_used or "").split("/", 1)[-1].startswith("qwythos")
+            )
             if (
                 not self._context_warning_injected
                 and _ratio is not None
                 and _ratio >= 0.8
+                and not _is_fast_round
             ):
                 self._context_warning_injected = True
                 _used = (_bd or {}).get("total", {}).get("chars", 0)

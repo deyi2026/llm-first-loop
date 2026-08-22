@@ -87,6 +87,22 @@ class _RoutingMixin:
         else:
             llm_client = self.llm
             model_used = self._default_model_label()
+        # EVO-20260821-69e7f172（用户批准）+ B2（2026-08-21 审批）: 本地简单任务自动路由
+        # 仅 local provider 且配置 fast_model 时生效; per-call 显式 model 为 local 时同样参与
+        # （B2 用户审批: Web/飞书切 local 27B 后简单任务自动走 9B）; deepseek/minimax 零回归
+        # （_local_fast_route_ref 首判 provider==local）; 非 local per-call 完全不受影响。
+        # 简单任务（输入短 + 无工具历史）→ fast_model（9B 快 3.3x），复杂 → 默认模型（质量优先）。
+        # fast 模型不可用 → 静默保持默认（零回归）; 不配置 fast_model → 本段直接跳过。
+        if self.llm_pool is not None:
+            fast_ref = self._local_fast_route_ref(model_used, messages)
+            if fast_ref:
+                try:
+                    llm_client = self.llm_pool.get_client(fast_ref)
+                    model_used = fast_ref
+                    self._record_action("action.llm_decide", "auto_route_fast", fast_ref)
+                except ValueError as exc:
+                    # fast 模型 resolve 失败（配置后注册表未同步等）→ 保持默认，如实记录
+                    self._record_action("action.llm_decide", "fast_route_failed", str(exc)[:200])
         # ── M53: 上下文超限前置守卫 ──
         # 载荷估算超模型注册表 context 上限 → 如实拒绝, 不发注定失败的请求
         # (如 kimi/k3-256k 仅 256K 窗口, 1M 预算装配的历史必被 provider 拒绝)
@@ -195,6 +211,72 @@ class _RoutingMixin:
         allow = _RoutingMixin._local_tool_allowlist()
         kept = [t for t in tool_schemas if t.get("name") in allow]
         return kept if kept else tool_schemas
+
+    def _local_fast_route_ref(
+        self: LoopEngine, model_label: str, messages: list[dict]
+    ) -> str | None:
+        """EVO-20260821-69e7f172（用户批准）: 本地简单任务 → 快模型自动路由判定.
+
+        返回快模型全限定 ref（"provider/model"）; 不满足条件返回 None（保持默认装配，零回归）。
+        判定（保守，避免复杂任务误路由到无 thinking 快模型）:
+        - 仅 local provider 且配置了 fast_model;
+        - 本轮简单任务（见 _is_simple_task: 输入短 + 无工具历史）;
+        - fast_model 必须在注册表内（否则 resolve 失败 → 保持默认）。
+        """
+        if not (model_label and "/" in model_label and model_label.split("/", 1)[0] == "local"):
+            return None
+        if self.llm_pool is None:
+            return None
+        pid, _mid = model_label.split("/", 1)
+        spec = self.llm_pool.registry.providers.get(pid)
+        if spec is None or not spec.fast_model:
+            return None
+        if not self._is_simple_task(messages):
+            return None
+        fast_ref = f"{pid}/{spec.fast_model}"
+        try:
+            self.llm_pool.registry.resolve(fast_ref)
+        except ValueError:
+            return None  # 快模型未注册/不可用 → 保持默认（零回归）
+        return fast_ref
+
+    @staticmethod
+    def _is_simple_task(messages: list[dict], max_user_chars: int = 500) -> bool:
+        """保守简单任务判定: 本轮用户输入短 + 无工具调用历史 + 非复杂任务指令.
+
+        输入长 / 已出现工具调用（复杂任务信号）/ 指令含复杂任务动词 → 返回 False
+        （用默认模型保质量）。阈值 max_user_chars 可经 env LOCAL_FAST_MAX_USER_CHARS 覆盖。
+        2026-08-22 收紧: 复杂任务动词识别——"配置/修改/部署/实现/重构/接入/集成/迁移/
+        排查/分析"等指令即使短（如"给镜像LFL配置飞书"）也判复杂（实证 98605ad7:
+        该指令被误判简单 → 切 9B → 任务漂移）。简单 = 短问题/短说明，无状态变更意图。
+        """
+        import os
+
+        try:
+            max_user_chars = int(os.environ.get("LOCAL_FAST_MAX_USER_CHARS", str(max_user_chars)))
+        except (ValueError, TypeError):
+            pass
+        # 复杂任务动词（含动作意图 → 需工具/多轮 → 快模型 9B 能力不足）
+        _COMPLEX_VERBS = (
+            "配置", "修改", "部署", "实现", "重构", "接入", "集成", "迁移",
+            "排查", "分析", "修复", "安装", "设置", "编写", "开发", "创建",
+            "添加", "删除", "更新", "优化", "调试", "测试", "检查", "同步",
+            "归档", "压缩", "切换", "恢复", "继续", "查看", "读取", "搜索",
+        )
+        last_user = ""
+        for m in reversed(messages):
+            if m.get("role") == "user":
+                content = m.get("content") or ""
+                last_user = content if isinstance(content, str) else ""
+                break
+        if not last_user or len(last_user) > max_user_chars:
+            return False
+        if any(v in last_user for v in _COMPLEX_VERBS):
+            return False  # 指令含状态变更意图 → 复杂（不切快模型）
+        for m in messages:
+            if m.get("role") == "tool" or m.get("tool_calls"):
+                return False
+        return True
 
     @staticmethod
     def _check_context_fit(
