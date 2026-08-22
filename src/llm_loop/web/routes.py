@@ -795,7 +795,7 @@ def evolution_review(payload: EvolutionReviewRequest, request: Request) -> Respo
 
 
 @router.post("/api/v1/evolution/review-batch")
-def evolution_review_batch(request: Request) -> Response:
+async def evolution_review_batch(request: Request) -> Response:
     """演进建议批量审批（Approval UX v2 批 1）.
 
     body: {"items": [{"id","decision","reason","expected_status"}], "decision":"accepted|rejected"}
@@ -810,7 +810,7 @@ def evolution_review_batch(request: Request) -> Response:
             content={"error": "evolve_disabled", "detail": "演进功能未启用（EVOLVE_ENABLED=0）。"},
         )
     try:
-        body = request.json() if hasattr(request, "json") else {}
+        body = await request.json() if hasattr(request, "json") else {}
     except Exception:  # noqa: BLE001
         body = {}
     items = body.get("items") or []
@@ -1112,6 +1112,38 @@ def set_session_pin(session_id: str, request: Request, pinned: bool = False) -> 
             content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
         )
     return UTF8JSONResponse(content={"status": "ok", "session_id": session_id, "pinned": pinned})
+
+
+@router.post(
+    "/api/v1/sessions/{session_id}/archive",
+    response_model=None,
+    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+)
+def set_session_archive(session_id: str, request: Request, archived: bool = False) -> Response:
+    """会话归档/取消归档（2026-08-21: 归档文件夹——旧会话收拢防误操作）."""
+    engine = _engine_from(request)
+    if not engine.session.exists(session_id):
+        return UTF8JSONResponse(
+            status_code=404,
+            content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
+        )
+    try:
+        ok = engine.session.archive(session_id) if archived else engine.session.unarchive(session_id)
+    except Exception as exc:
+        logger.exception("session archive failed: session_id=%s", session_id)
+        return UTF8JSONResponse(
+            status_code=500,
+            content={
+                "error": "archive_failed",
+                "detail": f"[程序异常] 会话归档失败（{type(exc).__name__}: {exc}）。",
+            },
+        )
+    if not ok:
+        return UTF8JSONResponse(
+            status_code=404,
+            content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
+        )
+    return UTF8JSONResponse(content={"status": "ok", "session_id": session_id, "archived": archived})
 
 
 @router.post(

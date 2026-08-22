@@ -19,6 +19,7 @@ import os
 from typing import TYPE_CHECKING
 
 from llm_loop.core.cache_health import GATE_NOTE_CONTENT  # 门禁干预知情标记
+from llm_loop.core.loop.focus import build_task_anchor, wrap_injection
 
 # EVO-20260818: projection_ver/check 提升到模块级（消除函数内 import 遮蔽导致的 F823）——
 # 与 engine.py 顶部 re-export 同模式；stable_digest 既有模块级使用
@@ -47,6 +48,7 @@ class _BuildMixin:
         max_chars: int | None = None,
         model: str | None = None,  # P1-7: per-call 模型覆盖（判定本地 provider 跳过推送式注入）
         emergency_compact: bool = False,  # EVO-20260818: M53 拒绝逃生——head_keep=0 锚点前移激进压缩
+        tool_round_zero: bool = False,  # 2026-08-21: 工具轮零历史——只发 system+摘要+最近结果
     ) -> list[dict]:
         """构造提交 LLM 的消息序列（system prompt + 记忆注入 + 历史 + 压缩另存）.
 
@@ -65,6 +67,12 @@ class _BuildMixin:
         # （2026-08-18 审计断点归因: 96%→2% 全量失效，delta 仅 614 tokens）。
         # 改为提交视图尾部追加（GATE_NOTE 模式，转 user），system+稳定历史前缀字节不变。
         base = list(sess.messages)
+        # 2026-08-21 工具轮零历史（TOOL_ROUND_ZERO_HISTORY=1）: 工具轮只发
+        # system+摘要+最近 2 条（工具结果+声明）——前缀（system+摘要）固定 → KV 命中
+        # → prefill 秒级（本地模型实测 4-13 tokens prefill 仅 0.2-0.8s）。
+        # 注意: 至少保留最近配对组（assistant(tool_calls)+tool 结果, C1 协议约束）。
+        if tool_round_zero:
+            base = base[-2:] if len(base) >= 2 else base
         prefix_len = 0
         # RULE-AI-14 协调通道: 程序级自动注入 DSH→LFL 待处理消息（每轮 run 必感知，
         # 非仅提示词引导；实现见 core/loop/interop.py _InteropMixin，fail-open）
@@ -204,6 +212,9 @@ class _BuildMixin:
                 if self._cache_monitor.force_head_keep
                 else 0,
             ),
+            # 2026-08-21 追加式压缩: 归档后追加确定性摘要（APPEND_COMPRESSION=1 启用,
+            # 默认关零回归）——任务语义连贯 + 前缀稳定（同归档→同摘要字节→缓存命中）
+            _append_summary_enabled=os.environ.get("APPEND_COMPRESSION", "0") == "1",
         )
         # P1-10: 锚点推进持久化（换算回会话索引, clamp 防御）
         if anchor_box:
@@ -226,10 +237,18 @@ class _BuildMixin:
         # EVO-2026XXXX（spec §5.3.1-1c）: memory 检索注入尾部追加（GATE_NOTE 模式，转 user）——
         # 检索结果随查询变化（top_k 语义/关键词召回），前置注入每轮改变前缀首段 → 前缀断；
         # 尾部追加保持 system+稳定历史前缀字节不变（命中率不因 memory 变化受损）。
+        # 2026-08-22 记忆注入统一包装（用户决策）: memory_msgs（[相关记忆]）此前直接
+        # 转 user 尾部追加, 无"[上下文注入·非新指令] 继续当前任务"前缀 → AI 误读为
+        # 独立消息 → "没有明确任务" → 反复 search 找回（实证 d1192d8c: 健康检查任务
+        # 15+ 次 search_archive/search_records 死循环）。与 tail_msgs 同包装机制。
+        _anchor = build_task_anchor(self._focus.anchor_sess)
         for _m in memory_msgs:
             _d = _m.to_llm_dict()
             if _d.get("role") == "system":
                 _d["role"] = "user"  # system 静态: 转独立 user 尾部追加
+                _c = str(_d.get("content") or "")
+                if _c:
+                    _d["content"] = wrap_injection(_c, _anchor)
             built.append(_d)
         tail_msgs = getattr(self, "_interop_tail_messages", None)
         # EVO-20260819-7bb7d689: 经验提示尾部追加槽并入统一消费（与 interop 同机制）——
@@ -238,10 +257,16 @@ class _BuildMixin:
         if tip_msgs:
             tail_msgs = (tail_msgs or []) + tip_msgs
         if tail_msgs:
+            # 2026-08-22 任务锚点 + 注入统一包装（focus 模块, 用户决策）——
+            # 从会话提取任务目标/进度附带注入, AI 被打断后知道做什么/做到哪
+            _anchor = build_task_anchor(self._focus.anchor_sess)
             for _m in tail_msgs:
                 _d = _m.to_llm_dict()
                 if _d.get("role") == "system":
                     _d["role"] = "user"  # system 静态: 转独立 user 尾部追加
+                    _c = str(_d.get("content") or "")
+                    if _c:
+                        _d["content"] = wrap_injection(_c, _anchor)
                 built.append(_d)
             self._interop_tail_messages = None  # 一次性消费（每轮重扫 pending）
             self._tip_tail_messages = None  # 经验提示同机制一次性消费（下轮工具执行再注入）

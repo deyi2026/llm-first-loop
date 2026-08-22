@@ -67,6 +67,7 @@ class ProviderSpec:
     api_key_env: str
     models: dict[str, ModelSpec] = field(default_factory=dict)
     default_model: str = ""
+    fast_model: str = ""  # 2026-08-21 分级路由: 简单任务快速模型 ref（无配置=不走分级, 零回归）
     timeout_s: float | None = None
     history_budget_chars: int | None = None
     max_tokens: int | None = None  # 2026-08-15: provider 级输出预算（None=全局 LLM_MAX_TOKENS）
@@ -176,9 +177,26 @@ class ProviderRegistry:
                     f"环境变量 {spec.api_key_env} 未设置或为空"
                 )
 
+        base_url = spec.base_url
+        # 2026-08-22 直连 llama-server（输入提速, KV 缓存命中）: local provider 指向
+        # LM Studio 代理（1234）时自动发现真实 llama-server 端口/key 直连——代理每次
+        # 新请求不复用 KV（全量 prefill 慢）; 直连同 slot 固定前缀 → KV 命中 97%
+        # （只 prefill 增量 → 输入秒级）。LMS_DIRECT=0 关闭（回退代理, 零回归）。
+        if (
+            provider_id == "local"
+            and os.environ.get("LMS_DIRECT", "1") == "1"
+            and ("localhost" in base_url or "127.0.0.1" in base_url)
+        ):
+            try:
+                _lms = _discover_llama_server()
+                if _lms:
+                    base_url, api_key = _lms
+            except Exception:  # noqa: BLE001 — 发现失败回退配置（fail-open）
+                pass
+
         return {
             "api_key": api_key,
-            "base_url": spec.base_url,
+            "base_url": base_url,
             "model": model_id,
             # provider 级超时仅显式配置时下发（None 由 pool 回退全局 LLM_TIMEOUT_S）;
             # 未配置不含该键, 与既有返回契约零差异
@@ -263,6 +281,35 @@ def _parse_wire_protocol(pid: str, mid: str, mval: dict[str, Any]) -> str:
             pid, mid, raw,
         )
     return "openai"
+
+
+def _discover_llama_server() -> tuple[str, str] | None:
+    """2026-08-22 直连 llama-server（输入提速, KV 缓存命中）: 扫描本地 llama-server 进程.
+
+    从进程命令行解析 --port / --api-key（LM Studio 后端 llama.cpp）。重启后端口变化
+    也能自动发现。失败返回 None（调用方回退配置 base_url）。仅用于 local provider 直连。
+    """
+    try:
+        import subprocess
+
+        out = subprocess.run(
+            ["ps", "aux"], capture_output=True, text=True, timeout=5
+        ).stdout
+        for line in out.splitlines():
+            if "llama-server" not in line or "Qwen" not in line:
+                continue
+            parts = line.split()
+            port = api_key = None
+            for i, p in enumerate(parts):
+                if p == "--port" and i + 1 < len(parts):
+                    port = parts[i + 1]
+                elif p == "--api-key" and i + 1 < len(parts):
+                    api_key = parts[i + 1]
+            if port:
+                return f"http://127.0.0.1:{port}/v1", api_key or ""
+    except Exception:  # noqa: BLE001 — 发现失败 fail-open
+        pass
+    return None
 
 
 def _parse_model_spec(pid: str, mid: str, mval: dict[str, Any]) -> ModelSpec:
@@ -395,6 +442,7 @@ def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
                 api_key_env=api_key_env,
                 models=models,
                 default_model=default_model,
+                fast_model=str(val.get("fast_model", "") or ""),  # 2026-08-21 分级路由
                 timeout_s=timeout_s,
                 history_budget_chars=history_budget_chars,
                 max_tokens=max_tokens,

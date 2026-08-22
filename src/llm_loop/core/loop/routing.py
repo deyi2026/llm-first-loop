@@ -14,6 +14,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from llm_loop.core.loop.focus import is_simple_task
 from llm_loop.core.loop.tool_exec import _json_dumps_args
 from llm_loop.feedback.honesty import model_unavailable_text
 from llm_loop.llm.client import LLMClient
@@ -220,8 +221,14 @@ class _RoutingMixin:
         返回快模型全限定 ref（"provider/model"）; 不满足条件返回 None（保持默认装配，零回归）。
         判定（保守，避免复杂任务误路由到无 thinking 快模型）:
         - 仅 local provider 且配置了 fast_model;
-        - 本轮简单任务（见 _is_simple_task: 输入短 + 无工具历史）;
+        - 本轮简单任务（见 focus.is_simple_task: 输入短 + 无工具历史 + 非复杂动词）;
         - fast_model 必须在注册表内（否则 resolve 失败 → 保持默认）。
+
+        2026-08-22 单向锁定（用户决策）: 同一个任务只允许"简单→复杂"单向升级,
+        不允许做途中"复杂→简单"切回（来回切换不聚焦, 实证 98605ad7）。实现:
+        - run 级 _task_escalated 标记: 本轮判复杂（切到 27B）→ 置位 → 本 run 后续
+          轮次即使输入短也保持 27B（不切回 9B）, 直到 run 结束（engine 重置）。
+        - 会话级: 消息含工具历史（任务已进入执行）→ 判复杂 → 天然不切 9B。
         """
         if not (model_label and "/" in model_label and model_label.split("/", 1)[0] == "local"):
             return None
@@ -231,7 +238,12 @@ class _RoutingMixin:
         spec = self.llm_pool.registry.providers.get(pid)
         if spec is None or not spec.fast_model:
             return None
-        if not self._is_simple_task(messages):
+        # 单向锁定: 本 run 已升级到复杂（27B）→ 不再切回 9B（防来回切换）
+        if getattr(self._focus, "escalated", False):
+            return None
+        if not is_simple_task(messages):
+            # 本轮复杂 → 置位锁定: 本 run 后续轮保持 27B（简单→复杂单向）
+            self._focus.mark_escalated()
             return None
         fast_ref = f"{pid}/{spec.fast_model}"
         try:
@@ -241,43 +253,6 @@ class _RoutingMixin:
         return fast_ref
 
     @staticmethod
-    def _is_simple_task(messages: list[dict], max_user_chars: int = 500) -> bool:
-        """保守简单任务判定: 本轮用户输入短 + 无工具调用历史 + 非复杂任务指令.
-
-        输入长 / 已出现工具调用（复杂任务信号）/ 指令含复杂任务动词 → 返回 False
-        （用默认模型保质量）。阈值 max_user_chars 可经 env LOCAL_FAST_MAX_USER_CHARS 覆盖。
-        2026-08-22 收紧: 复杂任务动词识别——"配置/修改/部署/实现/重构/接入/集成/迁移/
-        排查/分析"等指令即使短（如"给镜像LFL配置飞书"）也判复杂（实证 98605ad7:
-        该指令被误判简单 → 切 9B → 任务漂移）。简单 = 短问题/短说明，无状态变更意图。
-        """
-        import os
-
-        try:
-            max_user_chars = int(os.environ.get("LOCAL_FAST_MAX_USER_CHARS", str(max_user_chars)))
-        except (ValueError, TypeError):
-            pass
-        # 复杂任务动词（含动作意图 → 需工具/多轮 → 快模型 9B 能力不足）
-        _COMPLEX_VERBS = (
-            "配置", "修改", "部署", "实现", "重构", "接入", "集成", "迁移",
-            "排查", "分析", "修复", "安装", "设置", "编写", "开发", "创建",
-            "添加", "删除", "更新", "优化", "调试", "测试", "检查", "同步",
-            "归档", "压缩", "切换", "恢复", "继续", "查看", "读取", "搜索",
-        )
-        last_user = ""
-        for m in reversed(messages):
-            if m.get("role") == "user":
-                content = m.get("content") or ""
-                last_user = content if isinstance(content, str) else ""
-                break
-        if not last_user or len(last_user) > max_user_chars:
-            return False
-        if any(v in last_user for v in _COMPLEX_VERBS):
-            return False  # 指令含状态变更意图 → 复杂（不切快模型）
-        for m in messages:
-            if m.get("role") == "tool" or m.get("tool_calls"):
-                return False
-        return True
-
     @staticmethod
     def _check_context_fit(
         messages: list[dict],

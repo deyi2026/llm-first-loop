@@ -439,6 +439,9 @@ def build_history_messages(
     head_keep_chars: int = 0,  # EVO-20260817-9d3e1f2c: 缓存友好压缩——保留锚点头部字符预算
     # （0=关闭/现有行为零回归）。>0 时归档路径保留最旧 head_keep_chars 字符的组（提交前缀
     # 稳定命中），只归档中段；锚点不推进（仅头部被归档兜底时才前移）。
+    _append_summary_enabled: bool = False,  # 2026-08-21 追加式压缩: 归档后追加确定性摘要
+    # （默认关=零回归）。启用后归档消息生成固定格式摘要追加提交尾部——任务语义连贯
+    # + 前缀稳定（同归档内容→同摘要字节→缓存命中）。
 ) -> list[dict]:
     """组装提交 LLM 的消息序列（保序 + 超长另存压缩 + 如实标注）.
 
@@ -706,6 +709,42 @@ def build_history_messages(
                 import logging
 
                 logging.getLogger(__name__).warning("archive sink 异常（fail-open）", exc_info=True)
+
+    # 2026-08-21 (追加式压缩, APPEND_COMPRESSION=1 启用): 归档后追加确定性摘要——
+    # 被归档的旧历史用"固定格式摘要"追加到提交尾部（转 user 消息），AI 保留任务语义
+    # 连贯（知道做过什么），同时摘要字节确定性（同归档内容→同摘要）→ 前缀稳定缓存命中。
+    # 与 slim-first（归档即删, 只能 search_archive 检索）不同: 追加摘要保持上下文连贯。
+    # 注意: 摘要追加在【归档消息之后】即提交尾部, 不影响 system+保留历史前缀。
+    if (
+        _append_summary_enabled
+        and archived
+        and not _downgraded_head  # 降级 head 场景（已放弃前缀稳定）不追加（语义回归现状）
+    ):
+        try:
+            import logging
+
+            _total_archived = sum(len(mm.content) for mm in archived)
+            _summary_text = " | ".join(
+                (mm.content or "")[:60].replace("\n", " ")
+                for mm in archived[:3]
+                if mm.content
+            )[:400]
+            _summary_msg = (
+                f"[上下文归档摘要] 已归档 {len(archived)} 条消息（约 {_total_archived} 字符）。"
+                f"归档内容概要: {_summary_text}"
+                f"{'…' if len(archived) > 3 else ''}"
+                f"[归档可检索: search_archive]"
+            )
+            _d = {
+                "role": "user",
+                "content": _summary_msg,
+                "metadata": {"archived_summary": True, "archived_count": len(archived)},
+            }
+            out.append(_d)
+        except Exception:  # noqa: BLE001 — 摘要追加失败 fail-open
+            import logging
+
+            logging.getLogger(__name__).debug("归档摘要追加失败（fail-open）")
 
     # EVO-20260818 修复基线 bug（仿真测试暴露）: kept_flat 原实现从不包含 head_groups——
     # 头部消息既不在提交也不在归档（静默丢失）→ "缓存友好压缩保留锚点头部"从未真正生效，

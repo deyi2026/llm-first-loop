@@ -94,10 +94,16 @@ class Session:
     # 精确水印哨兵：ver+seq 匹配而 built_hash 不同 = 非确定性构建/历史被改 → 告警。
     # 缺省向后兼容（旧 JSON 无键 → {}）
     projection_guard: dict[str, dict] = field(default_factory=dict)
+    # 2026-08-21 (追加式压缩, version 5): 摘要链——压缩时归档旧历史, 增量摘要尾部追加。
+    # 前缀稳定原则（12 实验）: fixed_summary 生成后程序强制不可变; summary_chain 只尾部追加
+    # （新摘要追加, 旧摘要不动）→ system+固定摘要+保留历史字节稳定 → 服务端缓存命中。
+    # 缺省向后兼容（旧 JSON 无键 → 空）
+    fixed_summary: str = ""                       # 核心固定摘要（首次压缩生成, 永不更新）
+    summary_chain: list[str] = field(default_factory=list)  # 增量摘要链（尾部追加, 低频合并）
 
     def to_dict(self) -> dict:
         return {
-            "version": 4,
+            "version": 5,
             "session_id": self.session_id,
             "created_at": self.created_at,
             "title": self.title,
@@ -111,6 +117,8 @@ class Session:
             "channel": self.channel,
             "history_anchors": self.history_anchors,
             "projection_guard": self.projection_guard,  # EVO-20260817-b6554376 投影门闸缓存行
+            "fixed_summary": self.fixed_summary,        # 2026-08-21 追加式压缩: 核心固定摘要
+            "summary_chain": self.summary_chain,        # 2026-08-21 追加式压缩: 增量摘要链
             "messages": [
                 {
                     "role": m.role,
@@ -484,6 +492,9 @@ class SessionStore:
                 model_override=view.get("model_override"),
                 pinned=bool(view.get("pinned", False)),
                 channel=view.get("channel", "web"),
+                # 2026-08-21 (追加式压缩, version 5): 摘要链缺省向后兼容
+                fixed_summary=view.get("fixed_summary", ""),
+                summary_chain=list(view.get("summary_chain") or []),
             )
         except Exception as exc:  # noqa: BLE001 — fail-open
             logger.warning("event_log replay 重建异常（fail-open）: %s: %s", session_id, exc)
@@ -516,6 +527,9 @@ class SessionStore:
                 history_anchors=data.get("history_anchors") or {},
                 # EVO-20260817-b6554376: projection_guard 缺省向后兼容（旧 JSON 无键 → {}）
                 projection_guard=data.get("projection_guard") or {},
+                # 2026-08-21 (追加式压缩, version 5): 摘要链缺省向后兼容（旧 JSON 无键 → 空）
+                fixed_summary=data.get("fixed_summary", ""),
+                summary_chain=list(data.get("summary_chain") or []),
             )
         except (json.JSONDecodeError, KeyError, ValueError):
             # 如实降级：文件损坏时备份原始文件（不覆盖丢数据），返回新会话（不伪造恢复）
