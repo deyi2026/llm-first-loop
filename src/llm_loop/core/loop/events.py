@@ -206,6 +206,10 @@ class _EventsMixin:
         防反复（2026-08-22 补充）: 注入后置 sess._interruption_notified=True——
         中断提示只进 _tip_tail 槽（一次性消费, 不 append 到 sess.messages）,
         否则每轮差异仍存在 → 反复注入干扰。标记仅进程内（会话重启后可重新检测）。
+
+        EVO-20260822-9fde48f1 第 5 条（规则引导优先）: 注入只保留【事实数字】
+        + 一行规则 19 引用——不重复规则全文（完整动作在 system prompt 规则 19 中,
+        重复=干扰）。程序负责告知"发生了中断+差多少", 规则负责教 AI 怎么办。
         """
         try:
             if getattr(sess, "_interruption_notified", False):
@@ -222,10 +226,8 @@ class _EventsMixin:
             if _el_count <= _mem_count:
                 return
             _note = (
-                f"[会话中断恢复] 检测到 event_logs 有 {_el_count} 条消息, "
-                f"当前会话内存仅 {_mem_count} 条——中断丢失 {_el_count - _mem_count} 条。"
-                "先用 read_file 读 data/event_logs/<session_id>.jsonl 核对缺失段, "
-                "找回中断前的真实任务/上下文, 再继续（勿凭记忆猜测）。"
+                f"[会话中断恢复] event_logs {_el_count} 条 > 会话内存 {_mem_count} 条"
+                f"（中断丢失 {_el_count - _mem_count} 条）。按规则 19 读 event_logs 核对缺失段后继续。"
             )
             from llm_loop.core.message import Message
 
