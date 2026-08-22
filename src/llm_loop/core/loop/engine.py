@@ -236,23 +236,44 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         self._action_observer: Callable[[str, dict], None] | None = None
 
     # ── 2026-08-20 (DESIGN-v3 v2 落地): 切换通知注入（AI 主导上下文选择第一步）──
-    def _inject_switch_notice(self, switch_from: str, switch_to: str) -> None:
+    def _inject_switch_notice(self, switch_from: str, switch_to: str, sess=None) -> None:
         """模型切换 → 填充切换感知帧到 _tip_tail_messages 槽.
 
         复用 _tip_tail_messages 机制（tool_exec.py 填充 / build.py 消费）:
         尾部追加、转 user、一次性消费——system+稳定历史前缀字节不变（缓存友好）。
         仅本轮注入不持久化（瞬时性事件，对齐 ARCHITECTURE §5 瞬时条目不持久化）。
         首轮全量 miss 是物理事实（build→routing→452 时序），如实告知 + 给 AI 动作选项。
+        2026-08-22 补充: 告知"继续当前任务"——新模型不从零开始, 从会话历史找回任务
+        目标（最后 user 消息 + 最近 assistant 进度）直接继续, 而非"状态确认"或"请给出
+        任务"（实证: 98605ad7 切换后 AI 说'请给出任务'丢失'配置飞书'任务）。
         fail-open: 注入异常不阻断切换。
         """
         try:
             if not switch_from or not switch_to or switch_from == switch_to:
                 return
+            # 从会话历史提取当前任务（最后 user 消息 + 最近 assistant 进度摘要）
+            _task_hint = ""
+            if sess is not None and getattr(sess, "messages", None):
+                _recent = [m for m in sess.messages
+                           if getattr(m, "role", "") in ("user", "assistant")
+                           and getattr(m, "content", None)][-2:]
+                _hints = []
+                for _m in _recent:
+                    _role = getattr(_m, "role", "")
+                    _c = str(getattr(_m, "content", ""))[:120]
+                    if _role == "user":
+                        _hints.append(f"用户最近指令: {_c}")
+                    else:
+                        _hints.append(f"AI 最近进度: {_c}")
+                if _hints:
+                    _task_hint = "\n".join(_hints) + "\n"
             notice = (
                 "[模型切换感知] 当前模型已从 "
                 f"{switch_from} 切换到 {switch_to}。新缓存池无此前缀，"
-                "本轮首轮全量 miss（物理事实，成本已发生）；第二轮起尾部瘦身生效。"
-                "如任务需要早期历史，可调用 search_archive(query=...) 检索关键帧；"
+                "本轮首轮全量 miss（物理事实，成本已发生）；第二轮起尾部瘦身生效。\n"
+                f"{_task_hint}"
+                "**切换不改变任务：继续推进当前会话任务（勿'状态确认'或'请给出任务'）。**"
+                "如需要早期历史细节，可调用 search_archive(query=...) 检索关键帧；"
                 "后续如需声明上下文窗口，可经 declare_context 工具（若已注册）。"
             )
             tips = getattr(self, "_tip_tail_messages", None)
@@ -510,7 +531,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 # 注入切换感知帧（_tip_tail_messages 槽: 尾部追加/转 user/一次性，
                 # system+稳定历史前缀字节不变）。首轮全量 miss 是物理事实（build→routing
                 # →452 时序），如实告知 + 给 AI 动作选项。仅本轮注入不持久化。
-                self._inject_switch_notice(_switch_from or "", model_used)
+                self._inject_switch_notice(_switch_from or "", model_used, sess)
             if routing.final_answer_override is not None:
                 # EVO-20260818（M53 拒绝逃生，防死循环）: 提交超模型窗口被拒时，AI 无 LLM
                 # 调用无法自救（无法 switch_model/开新会话/调工具）——现场: 2a3385da 会话
