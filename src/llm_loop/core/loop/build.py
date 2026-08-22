@@ -40,6 +40,38 @@ logger = logging.getLogger(__name__)
 
 
 class _BuildMixin:
+    def _task_anchor(self) -> str:
+        """2026-08-22 任务锚点: 从会话最近消息提取"当前任务目标 + 最近进度".
+
+        用于注入消息统一包装时附带——AI 被打断（模型切换/记忆/经验注入）后知道
+        自己在做什么、做到哪，不再重复探测/绕路（实证 98605ad7: 48 次工具调用
+        一半是重复 grep/read_file）。fail-open: 提取失败返回空串（不阻断）。
+        """
+        try:
+            sess = getattr(self, "_anchor_sess", None)
+            if sess is None or not getattr(sess, "messages", None):
+                return ""
+            _last_user = ""
+            _recent_tools: list[str] = []
+            for m in reversed(sess.messages):
+                role = getattr(m, "role", "")
+                content = str(getattr(m, "content", "") or "")
+                if role == "user" and not _last_user and content and not content.startswith("[上下文注入"):
+                    _last_user = content[:100]
+                elif role == "tool" and content and len(_recent_tools) < 2:
+                    _t = content[:60].replace("\n", " ")
+                    _recent_tools.append(_t)
+                if _last_user and len(_recent_tools) >= 2:
+                    break
+            _parts = []
+            if _last_user:
+                _parts.append(f"当前任务: {_last_user}")
+            if _recent_tools:
+                _parts.append("最近动作: " + " | ".join(_recent_tools))
+            return "\n".join(_parts)
+        except Exception:  # noqa: BLE001 — fail-open
+            return ""
+
     def _build_llm_messages(
         self,
         sess,
@@ -248,10 +280,25 @@ class _BuildMixin:
         if tip_msgs:
             tail_msgs = (tail_msgs or []) + tip_msgs
         if tail_msgs:
+            # 2026-08-22 任务锚点（用户决策+实证 98605ad7）: 从会话最近消息提取
+            # "当前任务目标 + 最近进度"，注入时附带——AI 被打断（切换/注入）后知道
+            # 自己在做什么、做到哪，不再重复探测/绕路（48 次工具调用一半是重复探测）。
+            _anchor = self._task_anchor()
             for _m in tail_msgs:
                 _d = _m.to_llm_dict()
                 if _d.get("role") == "system":
                     _d["role"] = "user"  # system 静态: 转独立 user 尾部追加
+                    # 2026-08-22 注入统一包装（用户决策+实证 98605ad7）: 系统注入
+                    # （切换感知/记忆/经验/提醒）被 AI 误读为"独立消息/新任务"→ 绕路
+                    # （"状态已同步就绪"/"Let me understand the context"）。统一前缀
+                    # 明确"非新指令, 继续当前任务"——AI 不再停下来理解注入, 直接推进任务。
+                    _c = str(_d.get("content") or "")
+                    if _c and not _c.startswith("[上下文注入·非新指令]"):
+                        _d["content"] = (
+                            "[上下文注入·非新指令] 继续当前任务，勿当新消息/新指令处理。\n"
+                            + (_anchor + "\n" if _anchor else "")
+                            + _c
+                        )
                 built.append(_d)
             self._interop_tail_messages = None  # 一次性消费（每轮重扫 pending）
             self._tip_tail_messages = None  # 经验提示同机制一次性消费（下轮工具执行再注入）

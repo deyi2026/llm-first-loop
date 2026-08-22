@@ -432,6 +432,9 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         _run_end_reason = "completed"
         _run_started_at = time.monotonic()
         self._reset_overflow_state()  # R4 增强: 每次 run 重置 overflow 注入计数
+        # 2026-08-22 单向切换锁定重置: 每次 run 从"未升级"开始——简单任务首轮可切 9B,
+        # 一旦本轮判复杂 → 置位 → 本 run 后续轮保持 27B（不切回 9B）
+        self._task_escalated = False
         model_used = ""  # M51: 本轮实际使用的模型标签（每轮 LLM 调用时刷新）
         tokens_in = 0  # M52: 本次 run 累计 prompt tokens
         tokens_out = 0
@@ -485,6 +488,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                     "model_aware_budget",
                     f"{planned_label}: {self._runtime_history_budget()}→{effective_budget}",
                 )
+            self._anchor_sess = sess  # 2026-08-22 任务锚点数据源（build 注入包装用）
             messages = self._build_llm_messages(sess, memory_msgs, max_chars=effective_budget, model=model,
                                                 tool_round_zero=_tool_round_zero)
             if len(messages) < len(sess.messages) + len(memory_msgs) + 1:
