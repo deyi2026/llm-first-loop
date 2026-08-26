@@ -2,7 +2,7 @@
 // 阶段 3：管理交互（pin/delete 两步确认/fork）——删除与分支后自动刷新并切换。
 
 import { useEffect, useState } from "react";
-import { channelLabel, deleteSession, fetchAgentsTree, forkSession, setSessionPin, type SessionMeta } from "../../core/api";
+import { channelLabel, archiveSession, deleteSession, fetchAgentsTree, fetchSessions, forkSession, setSessionPin, type SessionMeta } from "../../core/api";
 import { refreshSessionsAndCurrent } from "../../core/events";
 import { sessionStore, useCurrentSessionId, useSessions } from "../../core/stores";
 import { conversationStore } from "../../core/conversation";
@@ -18,7 +18,16 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
   const [query, setQuery] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   // 对齐 DSH：侧栏视图切换（会话列表 ↔ 文件树）
-  const [view, setView] = useState<"sessions" | "files" | "evo">("sessions");
+  const [view, setView] = useState<"sessions" | "files" | "evo" | "archived">("sessions");
+  // 2026-08-21: 归档文件夹——旧会话收拢防误操作（fetchSessions(true) 含归档）
+  const [archived, setArchived] = useState<SessionMeta[]>([]);
+  useEffect(() => {
+    if (view === "archived") {
+      void fetchSessions(true).then((list) =>
+        setArchived(list.filter((s) => s.status === "archived"))
+      );
+    }
+  }, [view]);
   // 对齐 DSH 会话树：parent_id 映射（fetchAgentsTree 合并——会话树状层级）
   const [parentMap, setParentMap] = useState<Map<string, string | null>>(new Map());
   // 会话树：展开的父会话集合（默认折叠——每个主会话可展开子代理区域）
@@ -130,11 +139,58 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
         >
           📋 {zh.evolutionShort}
         </button>
+        <button
+          type="button"
+          className={`v2-tab ${view === "archived" ? "active" : ""}`}
+          onClick={() => setView("archived")}
+          data-testid="tab-archived"
+        >
+          🗄 归档
+        </button>
       </div>
       {view === "files" ? (
         <FileTree />
       ) : view === "evo" ? (
         <EvolutionPanel />
+      ) : view === "archived" ? (
+        <div className="v2-archived-list" data-testid="archived-list">
+          {archived.length === 0 ? (
+            <div style={{ padding: 12, fontSize: 12, color: "var(--dsw-alias-label-tertiary)" }}>
+              （归档文件夹为空）
+            </div>
+          ) : (
+            archived.map((s) => (
+              <div key={s.session_id} className="v2-session-row" data-testid="archived-item">
+                <button
+                  type="button"
+                  className="v2-session-item"
+                  onClick={() => sessionStore.setCurrentSession(s.session_id)}
+                >
+                  <span className="v2-session-title">🗄 {s.title || "未命名"}</span>
+                  <span className="v2-session-preview">
+                    {s.last_message_preview || "（空会话）"}
+                    {s.updated_at ? ` · ${formatRelative(s.updated_at)}` : ""}
+                  </span>
+                  <span className="v2-session-count">{s.message_count} 条 · 已归档</span>
+                </button>
+                <div className="v2-session-actions">
+                  <button
+                    type="button"
+                    className="v2-icon-btn"
+                    title="恢复为活跃会话"
+                    onClick={() =>
+                      void archiveSession(s.session_id, false).then(() =>
+                        setArchived((prev) => prev.filter((x) => x.session_id !== s.session_id))
+                      )
+                    }
+                  >
+                    ↪
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
       ) : (
       <>
       <input
@@ -242,6 +298,14 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                       onClick={() => void handleFork(s.session_id)}
                     >
                       ⑂
+                    </button>
+                    <button
+                      type="button"
+                      className="v2-icon-btn"
+                      title="归档到归档文件夹（防误操作）"
+                      onClick={() => void archiveSession(s.session_id, true).then(() => refreshSessionsAndCurrent())}
+                    >
+                      📁
                     </button>
                     <button
                       type="button"

@@ -34,6 +34,10 @@ let state: ConversationState = {
 };
 
 let abortCtrl: AbortController | null = null;
+let abortSessionId: string | null = null;
+let resumeAbort: AbortController | null = null;
+let resumeSessionId: string | null = null;
+let bgPollTimer: number | undefined;
 
 function emit(): void {
   listeners.forEach((l) => l());
@@ -55,22 +59,49 @@ export function useConversation(): ConversationState {
   return useSyncExternalStore(conversationStore.subscribe, () => conversationStore.getState());
 }
 
-export async function loadHistory(sessionId: string): Promise<void> {
-  // 对齐 DSH（2026-08-17 用户需求）：切换会话时正在进行的操作内容不丢——
-  // 当前流式 abort（SSE 断连 → 后端转后台继续执行）；切回时 checkBackgroundRun
-  // 轮询到完成自动重载，过程内容完整保留。
-  if (
-    conversationStore.getState().streaming &&
-    sessionStore.getState().currentSessionId !== sessionId
-  ) {
-    stopStreaming();
+function abortForegroundSubscription(): void {
+  const ctrl = abortCtrl;
+  if (!ctrl) return;
+  ctrl.abort();
+  if (abortCtrl === ctrl) {
+    abortCtrl = null;
+    abortSessionId = null;
   }
-  // 2026-08-18 修复串行：切换会话时中止进行中的 resume 订阅（防串写进新会话视图）
-  if (resumeAbort) {
-    resumeAbort.abort();
+}
+
+function abortResumeSubscription(): void {
+  const ctrl = resumeAbort;
+  if (!ctrl) return;
+  ctrl.abort();
+  if (resumeAbort === ctrl) {
     resumeAbort = null;
+    resumeSessionId = null;
   }
+}
+
+/** 会话切换只 detach 旧 SSE，不调用 cancel：后台 run 继续，切回可 resume。 */
+function detachSubscriptionsForSession(nextSessionId: string | null): void {
+  if (abortCtrl && abortSessionId !== nextSessionId) abortForegroundSubscription();
+  if (resumeAbort && resumeSessionId !== nextSessionId) abortResumeSubscription();
+}
+
+let observedSessionId = sessionStore.getState().currentSessionId;
+sessionStore.subscribe(() => {
+  const nextSessionId = sessionStore.getState().currentSessionId;
+  if (nextSessionId === observedSessionId) return;
+  observedSessionId = nextSessionId;
+  detachSubscriptionsForSession(nextSessionId);
+  if (bgPollTimer !== undefined) {
+    window.clearInterval(bgPollTimer);
+    bgPollTimer = undefined;
+  }
+});
+
+export async function loadHistory(sessionId: string): Promise<void> {
+  // setCurrentSession 通常先发生；owner-aware detach 不依赖 store 的“当前值”猜旧流归属。
+  detachSubscriptionsForSession(sessionId);
   const resp = await fetchHistory(sessionId, HISTORY_PAGE_SIZE, 0);
+  if (sessionStore.getState().currentSessionId !== sessionId) return;
   const messages = resp.messages.map(toChatMessage);
   conversationStore.setState({
     messages,
@@ -86,25 +117,30 @@ export async function loadHistory(sessionId: string): Promise<void> {
   void checkBackgroundRun(sessionId);
 }
 
-let bgPollTimer: number | undefined;
-// 对齐 DSH（2026-08-18 修复串行）: resume 订阅的 abort 控制器——切换会话时中止，
-// 防 A 会话的 resume 流式串写进 B 会话视图
-let resumeAbort: AbortController | null = null;
-
 /** 后台 run 检查：running → resume 订阅（重放已生成内容+实时流式——对齐 DSH 刷新可见中间状态）；
  *  订阅失败/非 running → 回退轮询直到完成重载。 */
 export async function checkBackgroundRun(sessionId: string): Promise<void> {
-  window.clearInterval(bgPollTimer);
+  if (bgPollTimer !== undefined) window.clearInterval(bgPollTimer);
+  bgPollTimer = undefined;
   const status = await fetchStreamStatus(sessionId);
+  if (sessionStore.getState().currentSessionId !== sessionId) return;
   if (!status || !status.running) return;
   conversationStore.setState({ backgroundRunning: true });
   const resumed = await resumeBackgroundStream(sessionId);
+  if (sessionStore.getState().currentSessionId !== sessionId) return;
   if (resumed) return; // 订阅成功——流式接管（done 后自动重载）
   // 回退：轮询直到完成（订阅失败/不支持——run 已结束或网络异常）
   bgPollTimer = window.setInterval(async () => {
+    if (sessionStore.getState().currentSessionId !== sessionId) {
+      if (bgPollTimer !== undefined) window.clearInterval(bgPollTimer);
+      bgPollTimer = undefined;
+      return;
+    }
     const s = await fetchStreamStatus(sessionId);
+    if (sessionStore.getState().currentSessionId !== sessionId) return;
     if (!s || !s.running) {
-      window.clearInterval(bgPollTimer);
+      if (bgPollTimer !== undefined) window.clearInterval(bgPollTimer);
+      bgPollTimer = undefined;
       conversationStore.setState({ backgroundRunning: false });
       void loadHistory(sessionId); // 后台完成 → 重载显示完整结果
     }
@@ -114,8 +150,10 @@ export async function checkBackgroundRun(sessionId: string): Promise<void> {
 /** 对齐 DSH（2026-08-18）: 刷新/切回时后台 run 进行中 → resume 订阅已有 run——
  *  后端重放已生成 delta（EventBus 有界缓冲 c3c6c6d）+ 实时流式；done 后重载完整结果。 */
 async function resumeBackgroundStream(sessionId: string): Promise<boolean> {
+  const controller = new AbortController();
+  resumeAbort = controller;
+  resumeSessionId = sessionId;
   try {
-    resumeAbort = new AbortController();
     // 流式占位（重放内容实时渲染——同正常发送路径）
     const cur = conversationStore.getState();
     const placeholder: ChatMessage = {
@@ -154,9 +192,13 @@ async function resumeBackgroundStream(sessionId: string): Promise<boolean> {
         },
         onToolRound: () => undefined,
       },
-      resumeAbort?.signal
+      controller.signal
     );
-    resumeAbort = null;
+    if (resumeAbort === controller) {
+      resumeAbort = null;
+      resumeSessionId = null;
+    }
+    if (sessionStore.getState().currentSessionId !== sessionId) return true;
     if (outcome.ok && outcome.data) {
       conversationStore.setState({ streaming: false, backgroundRunning: false });
       void loadHistory(sessionId); // 终态 → 重载完整结果（含工具调用）
@@ -169,6 +211,12 @@ async function resumeBackgroundStream(sessionId: string): Promise<boolean> {
     });
     return false;
   } catch {
+    if (resumeAbort === controller) {
+      resumeAbort = null;
+      resumeSessionId = null;
+    }
+    // 会话已切换时这是主动 detach，不得为旧会话启动回退轮询。
+    if (sessionStore.getState().currentSessionId !== sessionId) return true;
     return false;
   }
 }
@@ -185,9 +233,20 @@ export async function loadEarlierHistory(sessionId: string): Promise<void> {
 }
 
 export function stopStreaming(): void {
-  if (abortCtrl) {
-    abortCtrl.abort();
-    abortCtrl = null;
+  // Stop 与会话切换不同：先捕获“实际流 owner”，再断订阅并请求后端真取消。
+  let sid: string | null = null;
+  if (abortCtrl) sid = abortSessionId;
+  else if (resumeAbort) sid = resumeSessionId;
+  else sid = sessionStore.getState().currentSessionId;
+  abortForegroundSubscription();
+  abortResumeSubscription();
+  // fail-open: 取消失败不影响前端状态（后端 run 终会自然结束落盘）。
+  if (sid) {
+    void fetch("/api/v1/chat/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sid }),
+    }).catch(() => undefined);
   }
 }
 
@@ -252,28 +311,42 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
     reasoning_effort: sessionStore.getState().reasoningEffort,
     new_session: newSessionPending || undefined,
   };
-  abortCtrl = new AbortController();
+  const controller = new AbortController();
+  abortCtrl = controller;
+  abortSessionId = sessionId;
   const acc = { answer: "", reasoning: "", toolRounds: 0 };
 
   const outcome = await streamChatRequest(
     body,
     {
       onAnswerDelta: (d) => {
+        // 会话守卫（2026-08-23 多会话串扰修复）: 当前会话已切换 → 停止渲染（防 A 串写 B 视图）
+        if (sessionStore.getState().currentSessionId !== sessionId) return;
         acc.answer += d;
         patchStreaming({ content: acc.answer });
       },
       onReasoningDelta: (d) => {
+        if (sessionStore.getState().currentSessionId !== sessionId) return;
         acc.reasoning += d;
         patchStreaming({ reasoningContent: acc.reasoning });
       },
       onToolRound: () => {
+        if (sessionStore.getState().currentSessionId !== sessionId) return;
         acc.toolRounds += 1;
         patchStreaming({ note: `工具调用进行中（${acc.toolRounds} 轮）…` });
       },
     },
-    abortCtrl.signal
+    controller.signal
   );
-  abortCtrl = null;
+  if (abortCtrl === controller) {
+    abortCtrl = null;
+    abortSessionId = null;
+  }
+
+  // 终态守卫: 会话已切换 → 不写回（防 A 完成时把结果写进 B 视图）
+  if (sessionStore.getState().currentSessionId !== sessionId) {
+    return;
+  }
 
   const st = conversationStore.getState();
   const finalize = (msg: ChatMessage) => {
