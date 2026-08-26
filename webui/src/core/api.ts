@@ -9,9 +9,14 @@ export async function api<T = unknown>(
   url: string,
   options?: RequestInit
 ): Promise<ApiResult<T>> {
-  const resp = await fetch(url, options);
-  const data = (await resp.json().catch(() => ({}))) as T;
-  return { status: resp.status, data };
+  try {
+    const resp = await fetch(url, options);
+    const data = (await resp.json().catch(() => ({}))) as T;
+    return { status: resp.status, data };
+  } catch {
+    // 读路径统一 fail-open：离线/卸载后的迟到请求不产生 unhandled rejection。
+    return { status: 0, data: {} as T };
+  }
 }
 
 export interface HealthInfo {
@@ -42,9 +47,19 @@ export async function fetchHealth(): Promise<HealthInfo | null> {
   return status === 200 ? data : null;
 }
 
-export async function fetchSessions(): Promise<SessionMeta[]> {
-  const { status, data } = await api<SessionListResponse>("/api/v1/sessions");
+export async function fetchSessions(includeArchived = false): Promise<SessionMeta[]> {
+  const { status, data } = await api<SessionListResponse>(
+    `/api/v1/sessions${includeArchived ? "?include_archived=true" : ""}`
+  );
   return status === 200 && Array.isArray(data.sessions) ? data.sessions : [];
+}
+
+export async function archiveSession(sessionId: string, archived: boolean): Promise<boolean> {
+  const resp = await fetch(
+    `/api/v1/sessions/${encodeURIComponent(sessionId)}/archive?archived=${archived}`,
+    { method: "POST" }
+  );
+  return resp.ok;
 }
 
 export async function fetchSharedCurrent(): Promise<string | null> {
