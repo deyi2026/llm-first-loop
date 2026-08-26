@@ -18,7 +18,7 @@ import os
 from collections.abc import Callable
 from typing import Any
 
-from llm_loop.core.message import Message, MessageSource
+from llm_loop.core.message import Message, MessageSource, ToolCall
 
 
 def _wire_size(m: Message) -> int:
@@ -34,8 +34,12 @@ def _wire_size(m: Message) -> int:
     if m.role == "assistant":
         n += len(m.reasoning_content or "")
         for tc in m.tool_calls or []:
-            fn = (tc or {}).get("function") or {}
-            n += len(str(fn.get("arguments") or "")) + len(str(fn.get("name") or ""))
+            # ToolCall dataclass（扁平 name/arguments）或 OpenAI wire dict（嵌套 function）兼容
+            if isinstance(tc, ToolCall):
+                n += len(str(tc.arguments or "")) + len(str(tc.name or ""))
+            else:
+                fn = (tc or {}).get("function") or {}
+                n += len(str(fn.get("arguments") or "")) + len(str(fn.get("name") or ""))
     return n
 
 
@@ -500,7 +504,7 @@ def build_history_messages(
     layer_tool_trim: bool = False,  # EVO-20260811-7baa2737: 历史分层降级（默认关=零回归，loop 装配时按 settings 启用）
     tool_trim_threshold: int = 8000,  # tool 消息 content 超此长度才降级（默认 8000，EVO-20260815 调大减少折叠触发）
     tool_trim_age: int = 0,  # R3: 0=自适应（按占用率自动调）；>0=固定值禁用自适应
-    reasoning_tail: int = 2,  # M66: 历史中仅保留最近 N 轮 assistant 思考链（0=全部保留）
+    reasoning_tail: int = 0,  # M66: 历史中仅保留最近 N 轮思考链（默认 0=全保留，T-P0-1-1 capability-first）
     skip_injected_system: bool = False,  # P1-7: 跳过推送式 system 注入（metadata.injected_system）
     # —— 仅落会话不进提交, system 前缀保持静态 → 引擎前缀缓存命中; 功能性注入不受影响
     history_anchor: int = 0,  # P1-10: 历史窗口锚点（相对 session_messages 的索引; 0=无锚现有行为）
