@@ -20,6 +20,34 @@ from typing import Any
 
 from llm_loop.core.message import Message, MessageSource
 
+
+def _wire_size(m: Message) -> int:
+    """提交视图口径体积（与守卫估算 routing._estimate_request_chars 对齐）.
+
+    content + reasoning_content + tool_calls 参数。history 压缩预算原只看
+    content——reasoning_content 可占 40%+（实测 fb8f8987: 287K/598K 全字段），
+    压缩器看不见 → 恒不触发 → emergency_compact 空转（2026-08-26 glm 超限
+    死循环根因：守卫按全字段 907K tokens 拦截、压缩按 content 159K<255K 判
+    不超）。预算判定一律改用本口径；纯展示/审计统计不变。
+    """
+    n = len(m.content or "")
+    if m.role == "assistant":
+        n += len(m.reasoning_content or "")
+        for tc in m.tool_calls or []:
+            fn = (tc or {}).get("function") or {}
+            n += len(str(fn.get("arguments") or "")) + len(str(fn.get("name") or ""))
+    return n
+
+
+def _dict_wire_size(d: dict) -> int:
+    """to_llm_dict 后的提交口径体积（out 列表元素用）."""
+    n = len(str(d.get("content") or ""))
+    n += len(str(d.get("reasoning_content") or ""))
+    for tc in d.get("tool_calls") or []:
+        fn = (tc or {}).get("function") or {}
+        n += len(str(fn.get("arguments") or "")) + len(str(fn.get("name") or ""))
+    return n
+
 # EVO-20260816-380f1c2e: 压缩目标比例（裁到预算×此值，留缓冲降低断点频率）。
 # 实证: 前缀缓存下压缩轮必断点；裁到 100% → 每轮压缩 → 永久断点（命中率 ~1%）；
 # 裁到 60% → 留 40% 增长空间 → 稳定期纯追加高命中（97%+）。可经环境变量覆盖（缓存纪律: 配置低频改）。
@@ -617,7 +645,7 @@ def build_history_messages(
         else:
             out.append(msg_dict)
 
-    total_chars = sum(len(m.content) for m in session_messages)
+    total_chars = sum(_wire_size(m) for m in session_messages)
     # P1-10: 窗口锚定——起点固定（锚点前的消息已归档, 不再参与构建/重复归档）
     if history_anchor > 0 and history_anchor < len(session_messages):
         session_messages = session_messages[history_anchor:]
@@ -653,14 +681,14 @@ def build_history_messages(
                 dropped_orphans,
             )
         session_messages = kept_msgs
-        total_chars = sum(len(m.content) for m in session_messages)
+        total_chars = sum(_wire_size(m) for m in session_messages)
     elif cache_archive_provider:
         session_messages = [
             m
             for m in session_messages
             if not is_cache_compacted_for(m, cache_archive_provider)
         ]
-        total_chars = sum(len(m.content) for m in session_messages)
+        total_chars = sum(_wire_size(m) for m in session_messages)
     # R3: tool_trim_age=0 时按占用率自适应（AI 无感零配置）
     if tool_trim_age <= 0:
         tool_trim_age = _adaptive_tool_trim_age(total_chars, max_chars)
@@ -681,7 +709,7 @@ def build_history_messages(
             filtered = [m for m in session_messages if not _is_injected_system(m)]
             if len(filtered) != len(session_messages):
                 session_messages = filtered
-                total_chars = sum(len(m.content) for m in session_messages)
+                total_chars = sum(_wire_size(m) for m in session_messages)
         if total_chars > compact_limit and layer_tool_trim:
             session_messages = _layer_trim(
                 session_messages,
@@ -692,7 +720,7 @@ def build_history_messages(
                 archive_sink=archive_sink,
                 require_archive_success=require_archive_success,
             )
-            total_chars = sum(len(m.content) for m in session_messages)
+            total_chars = sum(_wire_size(m) for m in session_messages)
     if total_chars <= compact_limit:
         for m in _apply_reasoning_tail(
             _layer_trim(
@@ -760,7 +788,7 @@ def build_history_messages(
     if head_keep_chars > 0:
         acc = 0
         for g in atomic_groups:  # 从最旧端累积头部保留组（前缀核心）
-            gl = sum(len(mm.content) for mm in g)
+            gl = sum(_wire_size(mm) for mm in g)
             if acc + gl > head_keep_chars:
                 break
             head_groups.append(g)
@@ -778,7 +806,7 @@ def build_history_messages(
         head_chars = acc
         while head_groups and head_chars > _head_cap:
             g = head_groups.pop()  # 收缩时去掉最新头部组（靠近中段，前缀核心不变）
-            head_chars -= sum(len(mm.content) for mm in g)
+            head_chars -= sum(_wire_size(mm) for mm in g)
     head_count = len(head_groups)
     if head_keep_chars > 0 and head_count == 0:
         # EVO-20260825 任务6.3: head 预算过小/首组即超 → 自动降级 head_keep=0 全量归档
@@ -806,7 +834,7 @@ def build_history_messages(
         _fold_left = progressive_fold
         _fold_count = 0
         while kept_groups:
-            _kept_chars = sum(len(mm.content) for g in kept_groups for mm in g)
+            _kept_chars = sum(_wire_size(mm) for g in kept_groups for mm in g)
             _total_now = len(system_prompt) + head_chars + _kept_chars
             if cache_archive_provider:
                 # provider中段压缩已有稳定head + 持久化隐藏标记，不再需要靠K小步保护
@@ -829,11 +857,11 @@ def build_history_messages(
         _fold_cap = 0
         _fold_count = 0
         for group in reversed(atomic_groups[head_count:]):
-            group_len = sum(len(mm.content) for mm in group)
+            group_len = sum(_wire_size(mm) for mm in group)
             if _fold_cap > 0 and _fold_count >= _fold_cap:
                 # 已达渐进折叠上限: 评估保留后是否 ≤95% 预算——是则保留（平滑停折）;
                 # 否则突破上限继续归档（保命, 防 guard 规则 F BLOCK / 提交超限 400）。
-                _cur_kept = head_chars + sum(len(mm.content) for g in kept_groups for mm in g)
+                _cur_kept = head_chars + sum(_wire_size(mm) for g in kept_groups for mm in g)
                 if len(system_prompt) + _cur_kept + group_len <= int(max_chars * 0.95):
                     kept_groups.insert(0, group)
                     archive_budget -= group_len
@@ -879,7 +907,7 @@ def build_history_messages(
     # 防规则 F 反复 BLOCK 与压缩风暴；head 与最老保留组一并归档（信息零丢失）。
     _downgraded_head = False
     if head_keep_chars > 0 and head_groups and kept_groups:
-        _kept_total = head_chars + sum(len(mm.content) for g in kept_groups for mm in g)
+        _kept_total = head_chars + sum(_wire_size(mm) for g in kept_groups for mm in g)
         if len(system_prompt) + _kept_total > int(max_chars * 0.95):
             _downgraded_head = True
             for g in head_groups:
@@ -889,7 +917,7 @@ def build_history_messages(
             head_chars = 0
             # head 归档后仍超（system 巨大场景）→ 继续从最老端连续归档，保护最新语义尾部。
             while kept_groups:
-                _cur = sum(len(mm.content) for g in kept_groups for mm in g)
+                _cur = sum(_wire_size(mm) for g in kept_groups for mm in g)
                 if len(system_prompt) + _cur <= int(max_chars * 0.95):
                     break
                 archived.extend(kept_groups.pop(0))
@@ -932,7 +960,7 @@ def build_history_messages(
         try:
             import logging
 
-            _total_archived = sum(len(mm.content) for mm in archived)
+            _total_archived = sum(_wire_size(mm) for mm in archived)
             _summary_text = " | ".join(
                 (mm.content or "")[:60].replace("\n", " ")
                 for mm in archived[:3]
@@ -1103,7 +1131,7 @@ def build_history_messages(
     if compact_view_stats is not None and archived:
         try:
             _pre_chars = len(system_prompt) + total_chars
-            _post_chars = sum(len(str(m.get("content") or "")) for m in out)
+            _post_chars = sum(_dict_wire_size(m) for m in out)
             _drop_pct = (
                 (max(1, _pre_chars) - _post_chars) / max(1, _pre_chars) * 100.0
             )
