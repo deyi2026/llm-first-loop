@@ -344,8 +344,9 @@ class Settings:
     precheck_enabled: bool = False  # 路径 A 参数预检（缺参拦截+字段级引导反馈）
     fix_loop_enabled: bool = False  # 路径 I 修复循环
     # M66 思考链瘦身: 提交给 LLM 的历史中仅保留最近 N 轮 assistant 思考链
-    # （0=全部保留；缩减上下文体积，最近轮 THK-04 回传不受影响）
-    reasoning_tail: int = 2
+    # （默认 0=全保留——capability-first（EVO-20260820 能力一票否决）；仅触顶
+    # 且 breaker 未冻结且配置 -1 时才授权裁剪，见 build.py 触顶判定）
+    reasoning_tail: int = 0
 
     # ── P1 校验语义匹配（FR-P1-OPT-01, §3.6）──
     validate_semantic: bool = False
@@ -633,7 +634,7 @@ def load_settings() -> Settings:
         extract_interval_msgs=_env_int("EXTRACT_INTERVAL_MSGS", 20),
         precheck_enabled=_env_bool("PRECHECK_ENABLED", False),  # EVO-20260822-8b7a41c0 env 化持久化
         fix_loop_enabled=_env_bool("FIX_LOOP_ENABLED", False),
-        reasoning_tail=_env_int("REASONING_TAIL", 2),  # M66 思考链瘦身（0=全部保留）
+        reasoning_tail=_env_int("REASONING_TAIL", 0),  # M66 思考链瘦身（默认 0=全保留，capability-first）
         extract_cooldown_s=float(_env_int("EXTRACT_COOLDOWN_S", 600)),
         extract_max_input_chars=_env_int("EXTRACT_MAX_INPUT_CHARS", 100000),
         extract_timeout_s=float(_env_int("EXTRACT_TIMEOUT_S", 60)),
