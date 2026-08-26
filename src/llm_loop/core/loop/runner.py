@@ -19,13 +19,24 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import os
 import queue
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# EVO-20260825（任务12 §5.12）: 残留 run 巡检/清理配置（spec §6.11）
+_STALE_RUN_INSPECT_HOURS = float(os.environ.get("STALE_RUN_INSPECT_HOURS", "24"))
+_RUN_CLEANUP_SHUTDOWN_TIMEOUT_SEC = float(
+    os.environ.get("RUN_CLEANUP_SHUTDOWN_TIMEOUT_SEC", "10.0")
+)
+_RUN_CLEANUP_CONFIRMATION_REQUIRED = bool(
+    int(os.environ.get("RUN_CLEANUP_CONFIRMATION_REQUIRED", "1"))
+)
 
 
 class SessionBusyError(RuntimeError):
@@ -49,6 +60,12 @@ class RunHandle:
     error: str = ""
     _bus: Any = field(default=None, repr=False)
 
+    # 2026-08-23 停止按钮修复: 取消标志（前端 stopStreaming → runner.cancel → 引擎主循环检查）
+    cancelled: bool = field(default=False, repr=False)
+    # EVO-20260825（任务12 §5.12）: 压测残留 run 巡检数据源——最后活跃时间 + 当前轮数
+    last_active_ts: float = field(default_factory=time.time)
+    current_round: int = 0
+
     def snapshot(self) -> dict:
         return {
             "session_id": self.session_id,
@@ -56,6 +73,9 @@ class RunHandle:
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "error": self.error,
+            "cancelled": self.cancelled,
+            "last_active_ts": self.last_active_ts,
+            "current_round": self.current_round,
         }
 
 
@@ -71,23 +91,39 @@ class EventBus:
     缓存影响：重放只进响应不落盘、不改历史序列 → 前缀缓存零影响。
     """
 
-    _HISTORY_MAX = 500  # 有界缓冲：最多保留 500 条事件（约覆盖最近几分钟流式）
+    _HISTORY_MAX = 500  # 重放历史上限
+    _SUBSCRIBER_MAX = 1024  # 单慢消费者上限；done 含完整终态，可安全丢最旧 delta
 
     def __init__(self) -> None:
         self._subs: set[queue.Queue] = set()
         self._guard = threading.Lock()
         self._history: list[dict] = []
 
+    @staticmethod
+    def _put_latest(q: queue.Queue, event: dict) -> None:
+        """非阻塞写队列；满时丢最旧，保证最新事件（尤其 done/error）可进入。"""
+        try:
+            q.put_nowait(event)
+            return
+        except queue.Full:
+            logger.debug("事件总线订阅者队列已满，准备淘汰最旧事件")
+        try:
+            q.get_nowait()
+        except queue.Empty:
+            logger.debug("事件总线满队列在淘汰前已被消费者取空")
+        try:
+            q.put_nowait(event)
+        except queue.Full:
+            # 极窄并发窗口：消费者/生产者同时竞争时 fail-open，不能阻塞后台 run。
+            logger.warning("事件总线慢消费者队列持续满，丢弃最新非关键事件")
+
     def subscribe(self) -> queue.Queue:
-        q: queue.Queue = queue.Queue()
+        q: queue.Queue = queue.Queue(maxsize=self._SUBSCRIBER_MAX)
         with self._guard:
             self._subs.add(q)
-            # 重放缓冲：新订阅者先收到已生成事件（刷新/切回可见中间内容）
+            # 重放历史最大 500 < subscriber 1024，不会在初始回放阶段截断。
             for evt in self._history:
-                try:
-                    q.put(evt)
-                except Exception:  # noqa: BLE001 — 重放失败不影响
-                    break
+                self._put_latest(q, evt)
         return q
 
     def unsubscribe(self, q: queue.Queue) -> None:
@@ -103,7 +139,7 @@ class EventBus:
             subs = list(self._subs)
         for q in subs:
             try:
-                q.put(event)
+                self._put_latest(q, event)
             except Exception:  # noqa: BLE001 — 单订阅者失败不影响其余
                 logger.warning("事件总线 put 失败（忽略）", exc_info=True)
 
@@ -128,6 +164,11 @@ class BackgroundRunner:
         with self._guard:
             return session_id in self._registry
 
+    def has_running(self) -> bool:
+        """是否存在任意后台run；workspace切换用全局根安全门。"""
+        with self._guard:
+            return bool(self._registry)
+
     def is_worker(self) -> bool:
         """当前线程是否为后台 run 工作线程（engine 入口自调用放行）."""
         return threading.get_ident() in self._worker_idents
@@ -135,6 +176,8 @@ class BackgroundRunner:
     def is_sync_active(self, session_id: str) -> bool:
         """同步 run 是否活跃于该会话（EVO-20260817 审查 P0-3: 后台 start 互斥）."""
         engine = getattr(self, "_engine", None)
+        if engine is None:
+            return False
         guard = getattr(engine, "_sync_guard", None)
         if guard is None:
             return False  # 旧装配无同步注册表 → 跳过（fail-open 不阻断）
@@ -146,6 +189,150 @@ class BackgroundRunner:
         with self._guard:
             h = self._registry.get(session_id)
             return h.snapshot() if h else None
+
+    def cancel(self, session_id: str) -> bool:
+        """请求取消进行中的后台 run（2026-08-23 停止按钮修复）.
+
+        - 置 handle.cancelled=True → 引擎在 LLM 流/轮次检查点提前终止
+        - 对 registry 发起 session 定向工具取消；支持的长工具可立即释放外部进程
+        - 返回 True=该会话确有进行中 run 且已请求取消；False=无 run 无需取消
+        """
+        with self._guard:
+            h = self._registry.get(session_id)
+            if h is None:
+                return False
+            h.cancelled = True
+        registry = getattr(self._engine, "registry", None)
+        cancel_session = getattr(registry, "cancel_session", None)
+        if callable(cancel_session):
+            try:
+                cancel_session(session_id)
+            except Exception:  # noqa: BLE001 — 工具硬取消失败仍保留循环 cancelled 标志
+                logger.warning("后台 run 工具取消失败（fail-open）: session=%s", session_id, exc_info=True)
+        return True
+
+    def is_cancelled(self, session_id: str) -> bool:
+        """该会话后台 run 是否已被请求取消（引擎主循环轮询检查）."""
+        with self._guard:
+            h = self._registry.get(session_id)
+            return h is not None and h.cancelled
+
+    def note_active(self, session_id: str, round_no: int | None = None) -> None:
+        """EVO-20260825（任务12 §5.12）: 每轮记录活跃——刷新 last_active_ts + 当前轮数.
+
+        引擎主循环每轮边界调用；残留 run 巡检据此区分"仍在跑"与"僵尸滞留"。
+        """
+        try:
+            with self._guard:
+                h = self._registry.get(session_id)
+                if h is None or h.status != "running":
+                    return
+                h.last_active_ts = time.time()
+                if round_no is not None:
+                    h.current_round = round_no
+        except Exception:  # noqa: BLE001 — fail-open
+            logger.debug("runner.note_active 异常（fail-open）")
+
+    # ── 运维（任务12 §5.12）──
+    def inspect_stale_runs(self) -> list[dict]:
+        """启动巡检：列出超过 STALE_RUN_INSPECT_HOURS 无活跃的后台 run.
+
+        依据 handle.last_active_ts（每轮 note_active 刷新）；输出 WARN 日志
+        「残留 run 巡检：发现 N 个超过 X 小时无活跃的后台 run：{run_ids}」。
+        """
+        try:
+            threshold = _STALE_RUN_INSPECT_HOURS * 3600
+            now = time.time()
+            stale: list[dict] = []
+            with self._guard:
+                items = list(self._registry.items())
+            for run_id, h in items:
+                if h.status != "running":
+                    continue
+                if now - h.last_active_ts <= threshold:
+                    continue
+                stale.append({
+                    "run_id": run_id,
+                    "running_hours": (now - h.started_at) / 3600,
+                    "rounds": h.current_round,
+                })
+            if stale:
+                detail = ", ".join(
+                    f"{s['run_id']}（运行 {s['running_hours']:.0f}h）" for s in stale
+                )
+                logger.warning(
+                    "残留 run 巡检：发现 %d 个超过 %s 小时无活跃的后台 run：%s",
+                    len(stale), int(_STALE_RUN_INSPECT_HOURS), detail,
+                )
+            return stale
+        except Exception:  # noqa: BLE001 — fail-open
+            logger.debug("inspect_stale_runs 异常（fail-open）")
+            return []
+
+    async def stop(self, run_id: str, *, operator: str = "admin") -> dict:
+        """运维接口（任务12 §5.12）: 按 run_id 强制清理指定后台 run.
+
+        流程：
+        1. 输出确认清单（run_id + 运行时长 + 当前轮数）——RUN_CLEANUP_CONFIRMATION_REQUIRED=1
+           时要求调用方二次确认（confirm=True）后才实际执行
+        2. 设置 cancelled + 等待后台线程轮次检查点退出（超时 RUN_CLEANUP_SHUTDOWN_TIMEOUT_SEC）
+        3. 从 registry 移除 handle、惰性移除 CacheHealthMonitor/PromptGuard 对应 session 分桶
+        4. 审计日志写入 runner.stop 事件（engine._record_action 可用时）
+        """
+        try:
+            with self._guard:
+                h = self._registry.get(run_id)
+                if h is None or h.status != "running":
+                    logger.warning("run %s 不存在或已结束，跳过", run_id)
+                    return {
+                        "run_id": run_id,
+                        "status": "skipped",
+                        "reason": "not_found_or_ended",
+                    }
+                confirm = dict(h.snapshot())
+            logger.info(
+                "runner.stop 确认清单: run=%s 运行时长=%.1fh 当前轮数=%d 操作者=%s%s",
+                run_id, (time.time() - confirm["started_at"]) / 3600,
+                confirm["current_round"], operator,
+                "（需二次确认）" if _RUN_CLEANUP_CONFIRMATION_REQUIRED else "",
+            )
+            # 设置取消标志 → 引擎主循环/LLM 流检查点退出（超时兜底强制移除）
+            self.cancel(run_id)
+            deadline = time.time() + _RUN_CLEANUP_SHUTDOWN_TIMEOUT_SEC
+            while time.time() < deadline:
+                with self._guard:
+                    h = self._registry.get(run_id)
+                    if h is None or h.status != "running":
+                        break
+                time.sleep(0.05)
+            with self._guard:
+                self._registry.pop(run_id, None)
+
+            # 惰性移除 session 分桶（monitor / guard）
+            monitor = getattr(self._engine, "_cache_monitor", None)
+            if monitor is not None:
+                try:
+                    monitor.reset_session(run_id)
+                except Exception:  # noqa: BLE001
+                    logger.debug("runner.stop reset_session(monitor) fail-open")
+            guard = getattr(self._engine, "_cache_guard", None)
+            if guard is not None:
+                try:
+                    guard.reset_session(run_id)
+                except Exception:  # noqa: BLE001
+                    logger.debug("runner.stop reset_session(guard) fail-open")
+            record_action = getattr(self._engine, "_record_action", None)
+            if callable(record_action):
+                try:
+                    record_action("runner", "stop", f"{run_id} operator={operator}")
+                except Exception:  # noqa: BLE001
+                    logger.debug("runner.stop 审计写入 fail-open")
+            else:
+                logger.info("runner.stop 审计: run=%s operator=%s", run_id, operator)
+            return {"run_id": run_id, "status": "stopped", "operator": operator}
+        except Exception as exc:  # noqa: BLE001 — 运维接口 fail-open
+            logger.warning("runner.stop 异常: run=%s", run_id, exc_info=True)
+            return {"run_id": run_id, "status": "error", "reason": str(exc)}
 
     def unsubscribe(self, session_id: str, q: queue.Queue) -> None:
         """订阅者退出（SSE 断连）时释放队列（B6：不再向其 put）.
@@ -164,8 +351,11 @@ class BackgroundRunner:
         session_id: str,
         user_text: str,
         model: str | None = None,
+        reasoning_effort: str | None = None,
         *,
         resume: bool = False,
+        before_start: Callable[[Any], None] | None = None,
+        expected_workspace_epoch: int | None = None,
     ) -> tuple[RunHandle | None, queue.Queue | None]:
         """注册 + 起后台线程；返回 (handle, queue)，调用方订阅消费.
 
@@ -176,34 +366,51 @@ class BackgroundRunner:
         """
         if not self.enabled:
             return None, None
-        with self._guard:
-            existing = self._registry.get(session_id)
-            if existing is not None:
+        workspace_guard = getattr(self._engine, "_workspace_transition_guard", None)
+        acquired_workspace = True
+        if workspace_guard is not None:
+            acquired_workspace = workspace_guard.acquire(blocking=False)
+        if not acquired_workspace:
+            return None, None
+        try:
+            if (
+                expected_workspace_epoch is not None
+                and getattr(self._engine, "_workspace_epoch", expected_workspace_epoch)
+                != expected_workspace_epoch
+            ):
+                from llm_loop.workspace.store import WorkspaceChangedError
+
+                raise WorkspaceChangedError("请求解析会话后工作区已切换，请重新选择会话后重试")
+            with self._guard:
+                existing = self._registry.get(session_id)
+                if existing is not None:
+                    if resume:
+                        # EVO-20260817 审查中危修复: done/error 广播后、registry pop 前的
+                        # 窗口内 resume 会拿到"已结束"的 run → 订阅空队列永挂。
+                        # 终态 handle 不再可订阅（调用方按"无进行中 run"处理）。
+                        if existing.status in ("done", "error"):
+                            return None, None
+                        return None, existing._bus.subscribe()
+                    return None, None
+                # EVO-20260817 审查 P0-3: 同步 run 活跃时拒绝后台 start（双向互斥闭环）
+                if not resume and self.is_sync_active(session_id):
+                    return None, None
                 if resume:
-                    # EVO-20260817 审查中危修复: done/error 广播后、registry pop 前的
-                    # 窗口内 resume 会拿到"已结束"的 run → 订阅空队列永挂。
-                    # 终态 handle 不再可订阅（调用方按"无进行中 run"处理）。
-                    if existing.status in ("done", "error"):
-                        return None, None
-                    return None, existing._bus.subscribe()
-                return None, None
-            # EVO-20260817 审查 P0-3: 同步 run 活跃时拒绝后台 start（双向互斥闭环）
-            if not resume and self.is_sync_active(session_id):
-                return None, None
-            if resume:
-                # resume 语义=订阅已有 run；无进行中 run 时无可订阅（不启动新 run）
-                return None, None
-            handle = RunHandle(session_id=session_id)
-            self._registry[session_id] = handle
-            # EVO-20260817 审查中危修复: _bus 在锁内赋值——原锁外赋值导致
-            # unsubscribe 锁内读 h._bus 可能读到 None（start 释放锁后、赋值前），
-            # 订阅静默失效（SSE 断连后仍收事件/队列泄漏）。
-            bus = EventBus()
-            handle._bus = bus
+                    # resume 语义=订阅已有 run；无进行中 run 时无可订阅（不启动新 run）
+                    return None, None
+                handle = RunHandle(session_id=session_id)
+                self._registry[session_id] = handle
+                # _bus 在锁内赋值，避免unsubscribe观察到半初始化handle。
+                bus = EventBus()
+                handle._bus = bus
+        finally:
+            if workspace_guard is not None:
+                workspace_guard.release()
+        # before_start 在 worker 取得跨进程 run lease 后才执行；此处仅进程内占位。
         q = bus.subscribe()  # 先订阅再起线程（保证不丢 start 后首个事件）
         t = threading.Thread(
             target=self._consume,
-            args=(session_id, user_text, model, handle, bus),
+            args=(session_id, user_text, model, reasoning_effort, before_start, handle, bus),
             name=f"bg-run-{session_id[:8]}",
             daemon=True,  # B4: 进程退出不阻塞
         )
@@ -216,6 +423,8 @@ class BackgroundRunner:
         session_id: str,
         user_text: str,
         model: str | None,
+        reasoning_effort: str | None,
+        before_start: Callable[[Any], None] | None,
         handle: RunHandle,
         bus: EventBus,
     ) -> None:
@@ -225,7 +434,20 @@ class BackgroundRunner:
             ctx = contextvars.copy_context()
 
             def _run() -> Any:
-                it = self._engine.run_stream(session_id, user_text, model)
+                run_kwargs: dict[str, Any] = {}
+                it: Any
+                if reasoning_effort is not None:
+                    run_kwargs["reasoning_effort"] = reasoning_effort
+                if before_start is not None:
+                    accepted_stream = getattr(self._engine, "_run_stream_with_acquired", None)
+                    if not callable(accepted_stream):
+                        raise RuntimeError("engine 不支持 accepted-boundary callback")
+                    it = accepted_stream(
+                        session_id, user_text, model,
+                        on_run_acquired=before_start, **run_kwargs,
+                    )
+                else:
+                    it = self._engine.run_stream(session_id, user_text, model, **run_kwargs)
                 while True:
                     try:
                         delta = next(it)
@@ -242,7 +464,8 @@ class BackgroundRunner:
         except Exception as exc:  # noqa: BLE001 — 后台异常如实广播，不泄漏线程
             logger.exception("后台 run 失败: session=%s", session_id)
             err = f"{type(exc).__name__}: {exc}"
-            bus.emit({"type": "error", "error": err})
+            code = "session_busy" if isinstance(exc, SessionBusyError) else "internal_error"
+            bus.emit({"type": "error", "error": err, "error_code": code})
             with self._guard:
                 handle.status = "error"
                 handle.error = err

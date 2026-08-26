@@ -17,11 +17,13 @@ import json
 import logging
 import re
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-_PATH_TOKEN_RE = re.compile(r"[\w./\\\-]+\.\w{1,8}|[/\\][\w.\-]+(?:[/\\][\w.\-]+)*")
+_PATH_TOKEN_RE = re.compile(r"[\w./\\\-]+")
+_FILE_EXT_RE = re.compile(r"\.\w{1,8}$")
 _URL_RE = re.compile(r"https?://\S+")
 
 
@@ -38,6 +40,7 @@ class ArchiveEntry:
     role: str
     source: str
     content: str  # 原文（完整另存）
+    session_id: str = ""  # 新格式显式owner，消除legacy `<sid>-N.jsonl`命名歧义
     summary: str = ""  # 摘要/头尾片段（检索索引）
     key_facts: list[str] = field(default_factory=list)  # 关键事实/要点
     key_paths: list[str] = field(default_factory=list)  # 关键路径/URL（检索索引）
@@ -63,9 +66,15 @@ def extract_key_info(
     # 关键路径: 文件路径 token + URL
     paths: list[str] = []
     seen: set[str] = set()
-    for m in _PATH_TOKEN_RE.findall(text):
-        tok = m.strip()
+    # 先线性扫描允许出现在路径中的连续 token，再做 O(1) 形态判定。
+    # 旧实现把“任意长 token + 必须出现扩展名”写进同一个正则；对于
+    # `"k" * 300_000` 这类大工具输出，findall 会从每个起点反复回溯，
+    # 呈 O(n²) 并让摘要/归档路径卡住数分钟。
+    for m in _PATH_TOKEN_RE.finditer(text):
+        tok = m.group(0).strip()
         if len(tok) >= 4 and tok not in seen:
+            if "/" not in tok and "\\" not in tok and _FILE_EXT_RE.search(tok) is None:
+                continue
             seen.add(tok)
             paths.append(tok)
     for m in _URL_RE.findall(text):
@@ -95,12 +104,27 @@ def extract_key_info(
     return facts, paths, summary
 
 
+def _validate_session_id(session_id: str) -> str:
+    """档案会话ID必须是安全basename；同时拒绝glob元字符扩大段匹配。"""
+    if not isinstance(session_id, str) or not session_id:
+        raise ValueError("非法 session_id: 不能为空")
+    if (
+        session_id in {".", ".."}
+        or "/" in session_id
+        or "\\" in session_id
+        or "\x00" in session_id
+        or any(ch in session_id for ch in "*?[]")
+    ):
+        raise ValueError("非法 session_id: 不得包含路径分隔符、NUL、目录跳转或glob元字符")
+    return session_id
+
+
 class ArchiveStore:
     """压缩档案存储（JSONL 分片 + sidecar 检索索引，T3b/T3c）.
 
-    单会话条目存 `data/archives/<session_id>.jsonl`；单文件达到 segment_bytes
-    阈值后开新段 `<session_id>-<seq>.jsonl`（seq 递增，旧文件视为 seq 0 兼容）。
-    读路径按段遍历（最近段优先），旧单文件零迁移兼容。
+    单会话base存 `data/archives/<session_id>.jsonl`；单文件达到 segment_bytes
+    阈值后新写 `<session_id>.segments/<seq>.jsonl`。旧 `<session_id>-<seq>.jsonl`
+    仍可读，但通过entry session_id/外部已知session证据避免与合法数字后缀sid串台。
 
     T3c sidecar 索引：每段伴随 `<segment>.idx` 追加写（id/ts/chars/summary/key_facts/
     key_paths/content_head/tool_call_id/offset），检索走"索引快速通道 + 全文补齐"
@@ -110,13 +134,19 @@ class ArchiveStore:
     _CONTENT_HEAD_CHARS = 800  # 索引 content_head 截断（对齐 search content_preview 口径）
 
     def __init__(
-        self, archive_dir: str | Path, *, segment_bytes: int = 100 * 1024 * 1024
+        self,
+        archive_dir: str | Path,
+        *,
+        segment_bytes: int = 100 * 1024 * 1024,
+        known_session_id_fn: Callable[[str], bool] | None = None,
     ) -> None:
         self._dir = Path(archive_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
         self._segment_bytes = segment_bytes  # T3b: 单文件分片阈值（0=不分片，兼容旧行为）
+        self._known_session_id_fn = known_session_id_fn
 
     def _path(self, session_id: str) -> Path:
+        session_id = _validate_session_id(session_id)
         return self._dir / f"{session_id}.jsonl"
 
     @staticmethod
@@ -128,27 +158,146 @@ class ArchiveStore:
 
     @staticmethod
     def _segment_seq(path: Path) -> tuple[str, int]:
-        """解析段文件 → (session_id, seq)：`<sid>.jsonl` = seq 0；`<sid>-N.jsonl` = seq N."""
+        """解析legacy扁平段：`<sid>.jsonl`=0；`<sid>-N.jsonl`=N。"""
         stem = path.stem
         dash = stem.rfind("-")
         if dash > 0 and stem[dash + 1 :].isdigit():
             return stem[:dash], int(stem[dash + 1 :])
         return stem, 0
 
+    def _segments_dir(self, session_id: str) -> Path:
+        session_id = _validate_session_id(session_id)
+        return self._dir / f"{session_id}.segments"
+
+    def _declared_session_id(self, path: Path) -> str | None:
+        """读取新条目显式owner；legacy段无字段返回None，混合owner则fail-closed。"""
+        owners: set[str] = set()
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                for raw in f:
+                    line = raw.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    owner = entry.get("session_id")
+                    if isinstance(owner, str) and owner:
+                        owners.add(owner)
+                        if len(owners) > 1:
+                            raise ValueError(f"档案段包含多个session_id owner: {path}")
+        except OSError as exc:
+            raise ValueError(f"档案段不可读，无法判定owner: {path}: {exc}") from exc
+        return next(iter(owners), None)
+
+    def _known_session_id(self, session_id: str) -> bool:
+        if self._known_session_id_fn is None:
+            return False
+        try:
+            return bool(self._known_session_id_fn(session_id))
+        except Exception as exc:  # noqa: BLE001 — 无法证明不是邻居时fail-closed排除legacy候选
+            logging.getLogger(__name__).warning(
+                "档案session ownership探针失败（按已占用处理）: %s: %s", session_id, exc
+            )
+            return True
+
+    def _segment_owner(self, path: Path) -> str:
+        """段文件真实owner：新目录/entry元数据优先，legacy才回退文件名。"""
+        if path.parent != self._dir and path.parent.name.endswith(".segments"):
+            return path.parent.name[: -len(".segments")]
+        declared = self._declared_session_id(path)
+        if declared:
+            return declared
+        candidate_sid = path.stem
+        if self._known_session_id(candidate_sid):
+            return candidate_sid
+        return self._segment_seq(path)[0]
+
+    def all_segment_paths(self) -> list[Path]:
+        """枚举全部base/legacy/new-layout JSONL段（供索引/盘点/全局检索）。"""
+        paths = list(self._dir.glob("*.jsonl"))
+        for seg_dir in self._dir.glob("*.segments"):
+            if seg_dir.is_dir():
+                paths.extend(
+                    p for p in seg_dir.glob("*.jsonl") if p.stem.isdigit()
+                )
+        return sorted(set(paths), key=lambda p: str(p))
+
+    def session_ids(self) -> list[str]:
+        """从段owner元数据/目录/legacy证据枚举唯一session ids。"""
+        owners: set[str] = set()
+        for path in self.all_segment_paths():
+            try:
+                owner = self._segment_owner(path)
+                if owner:
+                    owners.add(owner)
+            except ValueError as exc:
+                logging.getLogger(__name__).warning("档案owner不可判定（全局枚举跳过）: %s", exc)
+        return sorted(owners)
+
+    def _segment_order(self, session_id: str, path: Path) -> int:
+        if path == self._path(session_id):
+            return 0
+        if path.parent == self._segments_dir(session_id) and path.stem.isdigit():
+            return int(path.stem)
+        return self._segment_seq(path)[1]
+
     def _segment_paths(self, session_id: str) -> list[Path]:
-        """枚举会话全部段文件（seq 升序；主文件 <sid>.jsonl 在前，兼容旧存储）."""
-        segs = list(self._dir.glob(f"{session_id}*.jsonl"))
-        segs.sort(key=lambda p: self._segment_seq(p)[1])
+        """枚举精确sid段：base + 新`.segments` + 可证明归属的legacy flat段。"""
+        session_id = _validate_session_id(session_id)
+        segs: list[Path] = []
+        base = self._path(session_id)
+        if base.exists():
+            owner = self._segment_owner(base)
+            if owner != session_id:
+                raise ValueError(
+                    f"档案base owner不匹配: path={base.name} owner={owner} expected={session_id}"
+                )
+            segs.append(base)
+
+        prefix = f"{session_id}-"
+        for path in self._dir.glob(f"{session_id}-*.jsonl"):
+            suffix = path.stem[len(prefix) :] if path.stem.startswith(prefix) else ""
+            if not suffix.isdigit():
+                continue
+            if self._segment_owner(path) == session_id:
+                segs.append(path)
+
+        seg_dir = self._segments_dir(session_id)
+        if seg_dir.is_dir():
+            segs.extend(p for p in seg_dir.glob("*.jsonl") if p.stem.isdigit())
+        segs = list(dict.fromkeys(segs))
+        segs.sort(key=lambda p: self._segment_order(session_id, p))
         return segs
 
+    def delete_session(self, session_id: str) -> int:
+        """物理删除精确sid全部base/legacy/new segments及sidecar索引。"""
+        session_id = _validate_session_id(session_id)
+        removed = 0
+        for segment in self._segment_paths(session_id):
+            idx = self._index_path(segment)
+            if idx.exists():
+                idx.unlink()
+                removed += 1
+            if segment.exists():
+                segment.unlink()
+                removed += 1
+        seg_dir = self._segments_dir(session_id)
+        if seg_dir.exists():
+            seg_dir.rmdir()  # 非空说明存在未知sidecar/段，必须失败而非误报物理删除完成
+        return removed
+
     def _append_path(self, session_id: str) -> Path:
-        """追加目标段：最后一段超阈值（>0 时）→ 开新段；否则沿用最后一段."""
+        """追加目标段：新分片只写`<sid>.segments/<seq>.jsonl`，不再制造扁平歧义。"""
         segs = self._segment_paths(session_id)
         if segs:
             last = segs[-1]
             if self._segment_bytes > 0 and last.stat().st_size >= self._segment_bytes:
-                last_seq = self._segment_seq(last)[1]
-                return self._dir / f"{session_id}-{last_seq + 1}.jsonl"
+                last_seq = max(self._segment_order(session_id, p) for p in segs)
+                seg_dir = self._segments_dir(session_id)
+                seg_dir.mkdir(parents=True, exist_ok=True)
+                return seg_dir / f"{last_seq + 1}.jsonl"
             return last
         return self._path(session_id)
 
@@ -172,6 +321,7 @@ class ArchiveStore:
             role=role,
             source=source,
             content=content,
+            session_id=session_id,
             summary=summary,
             key_facts=facts,
             key_paths=paths,
@@ -182,6 +332,7 @@ class ArchiveStore:
             reasoning_content=reasoning_content,
         )
         p = self._append_path(session_id)  # T3b: 超阈值开新段
+        p.parent.mkdir(parents=True, exist_ok=True)
         # T3c: 二进制追加取字节偏移（sidecar 索引定位用），UTF-8 无 BOM 下偏移稳定
         line_bytes = (json.dumps(entry.to_dict(), ensure_ascii=False) + "\n").encode("utf-8")
         with p.open("ab") as f:
@@ -198,6 +349,7 @@ class ArchiveStore:
         try:
             rec = {
                 "id": entry.id,
+                "session_id": entry.session_id,
                 "ts": entry.ts,
                 "chars": entry.chars,
                 "summary": entry.summary,
@@ -240,6 +392,7 @@ class ArchiveStore:
                             continue  # 损坏行跳过（fail-open）
                         rec = {
                             "id": entry.get("id", ""),
+                            "session_id": entry.get("session_id", ""),
                             "ts": entry.get("ts", ""),
                             "chars": entry.get("chars", 0),
                             "summary": entry.get("summary", ""),
@@ -269,7 +422,7 @@ class ArchiveStore:
         total_segments = 0
         total_entries = 0
         failed = 0
-        for p in sorted(self._dir.glob("*.jsonl")):
+        for p in self.all_segment_paths():
             total_segments += 1
             try:
                 total_entries += self.rebuild_segment_index(p)
@@ -306,7 +459,10 @@ class ArchiveStore:
         全文补齐该段（保证 content 尾部命中/索引缺失条目不漏），索引缺失/损坏
         直接全文扫描（fail-open）。最终判定始终在全文，limit 截断语义等价。
         """
-        segs = self._segment_paths(session_id)
+        try:
+            segs = self._segment_paths(session_id)
+        except ValueError:
+            return []
         if not segs:
             return []
         q = query.lower()
@@ -457,7 +613,11 @@ class ArchiveStore:
         """
         if not tool_call_id:
             return None
-        for p in reversed(self._segment_paths(session_id)):  # T3b: 最近段优先
+        try:
+            segs = self._segment_paths(session_id)
+        except ValueError:
+            return None
+        for p in reversed(segs):  # T3b: 最近段优先
             idx = self._index_path(p)
             if idx.exists():
                 # 快速通道：索引 tool_call_id 精确匹配 → 偏移定位原文
@@ -499,7 +659,11 @@ class ArchiveStore:
         """压缩档案统计（供 architecture_status 展示，跨段累加）."""
         count = 0
         chars = 0
-        for p in self._segment_paths(session_id):  # T3b: 跨段累加
+        try:
+            segs = self._segment_paths(session_id)
+        except ValueError:
+            return {"archived_count": 0, "archived_chars": 0}
+        for p in segs:  # T3b: 跨段累加
             with p.open("r", encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
@@ -547,7 +711,7 @@ class ArchiveStore:
 
     def _entry_session_path(self, entry_id: str) -> Path | None:
         """定位条目所在段文件（线性扫描全部段；T3b 返回完整路径，分片正确）."""
-        for p in self._dir.glob("*.jsonl"):
+        for p in self.all_segment_paths():
             with p.open("r", encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
@@ -580,14 +744,13 @@ class ArchiveStore:
         total_pruned = 0
         pruned_files = 0
 
-        # 按会话分组（T3b：单会话多段跨段处理；组内按 seq 升序——注意字符串排序
-        # 会把 `-1.jsonl` 排到 `.jsonl` 前（'-' < '.'），必须按 seq 数字排序）
+        # 按ArchiveStore的真实owner分组，不能再从`sid-N`文件名猜session归属。
         groups: dict[str, list[Path]] = {}
-        for p in self._dir.glob("*.jsonl"):
-            sid, _ = self._segment_seq(p)
-            groups.setdefault(sid, []).append(p)
-        for segs in groups.values():
-            segs.sort(key=lambda p: self._segment_seq(p)[1])
+        for sid in self.session_ids():
+            try:
+                groups[sid] = self._segment_paths(sid)
+            except ValueError as exc:
+                logging.getLogger(__name__).warning("档案GC owner不可判定（跳过）: %s", exc)
 
         cutoff_ts = None
         if ttl_days > 0:
@@ -641,9 +804,14 @@ class ArchiveStore:
                         continue
                     if kept:
                         p.write_text("\n".join(kept) + "\n", encoding="utf-8")
+                        self.rebuild_segment_index(p)
                     else:
                         p.unlink(missing_ok=True)
+                        self._index_path(p).unlink(missing_ok=True)
                     pruned_files += 1
+                seg_dir = self._segments_dir(sid)
+                if seg_dir.is_dir() and not any(seg_dir.iterdir()):
+                    seg_dir.rmdir()
             except Exception as exc:  # noqa: BLE001 — 单会话清理失败 fail-open
                 logging.getLogger(__name__).warning("档案 GC 失败（fail-open）: %s: %s", sid, exc)
                 continue

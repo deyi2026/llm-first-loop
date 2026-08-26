@@ -136,6 +136,11 @@ def build_memory_messages(
         if getattr(e, "scope", "global") != "session"
         or (session_id and e.source_session_id == session_id)
     ]
+    # EVO-20260822-cc3f8e7a 记忆注入分级: inject_policy=recall_only 条目不主动注入
+    # （身份纠错/历史决策类低价值记忆；仍可经 search_records/search_archive 显式检索找回）
+    entries = [
+        e for e in entries if getattr(e, "inject_policy", "auto") != "recall_only"
+    ]
     if not entries:
         return []
     final = entries[:top_k]

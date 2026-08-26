@@ -18,7 +18,11 @@ if TYPE_CHECKING:
     from llm_loop.core.loop.engine import LoopEngine
 
 # EVO-20260816-3af5dee3: 字符/token 估算（与 routing._effective_history_budget 同源）
-_CHARS_PER_TOKEN_EST = 2
+# 2026-08-24 校准（拷问产出）: 2 → 0.6 —— 实测大上下文(>100K tokens) 1.676 tok/char、
+# 全量加权 1.230 tok/char；旧值 0.5 低估 3.35 倍 → 上下文守卫形同虚设、缓存边界显示失真
+# （688K tokens 实际 ≈41 万字符, 旧估算写成 137 万）。0.6 ≈ 1.67 tok/char 对齐大上下文实测,
+# 中小上下文略保守（宁可多拦不漏拦）。
+_CHARS_PER_TOKEN_EST = 0.6
 
 
 class _RuntimeParamsMixin:

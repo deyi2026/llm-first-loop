@@ -57,6 +57,7 @@ def execute(name: str, args: dict, host: RegistryHost) -> ToolResult | None:
         from llm_loop.introspection.tools_model import run_switch_model
 
         binding = _resolve_binding(host.ctx)
+        getter = binding[0] if binding is not None else None
         setter = binding[1] if binding is not None else host.ctx.session_set_override
         return run_switch_model(
             host.ctx,
@@ -64,6 +65,7 @@ def execute(name: str, args: dict, host: RegistryHost) -> ToolResult | None:
             setter,
             host.audit,
             args,
+            session_get_override=getter,
         )
 
     return None

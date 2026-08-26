@@ -27,6 +27,11 @@ import time as _time
 import httpx
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.tools.source_recovery_contract import (
+    SHARED_SOURCE_RECOVERY_CONTRACT,
+    SourceRecoveryKind,
+    source_recovery_guidance,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -293,6 +298,8 @@ class WebFetchTool:
     description = (
         "抓取网页/URL 并返回文本内容（含标题与正文提取）。何时用: 获取网页信息、读取在线文档、查询外部数据。"
         "何时不用: 本地文件用 read_file；需执行命令用 execute_command。失败对策: URL 无效/HTTP 错误/超时会如实返回原因，请核对 URL 后重试。"
+        + SHARED_SOURCE_RECOVERY_CONTRACT
+        + source_recovery_guidance(SourceRecoveryKind.WEB_FETCH)
     )
     parameters = {
         "type": "object",
@@ -301,7 +308,7 @@ class WebFetchTool:
             "max_chars": {"type": "integer", "description": "返回内容最大字符数（默认 100000）"},
             "start": {"type": "integer", "description": "分页续读起始偏移（字符，默认 0）。正文超长被截断后，用 start=上次位置 续读下一段"},
             "count": {"type": "integer", "description": "分页续读每段长度（字符，默认 max_chars）。start 与 count 正交：start 定起点、count 定段长（分页续读语义）"},
-            "full": {"type": "boolean", "description": "按需全量（默认 false）：true=跳过本工具 max_chars 截断，一次返回全部正文（需全文推理时用；内容大占用上下文，谨慎使用）"},
+            "full": {"type": "boolean", "description": "legacy 模式 true=跳过本工具 max_chars 截断；Evidence enforce 模式默认抓取 observation 先持久化，模型视图仍受统一 projection budget，完整内容用 read_evidence 恢复"},
         },
         "required": ["url"],
     }
@@ -654,11 +661,18 @@ class WebFetchTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
-        if not full and len(body) > max_chars:
+        from llm_loop.core.run_context import (
+            current_evidence_enforce_enabled,
+            current_evidence_shadow_enabled,
+        )
+
+        raw_observation = body if current_evidence_shadow_enabled.get() else None
+        if not full and len(body) > max_chars and not current_evidence_enforce_enabled.get():
             body = body[:max_chars] + f"\n…[内容超长，已截断，共 {len(body)} 字符；可用 start={max_chars} 续读]…"
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=body,
             tool_call_id="",
             tool_name=self.name,
+            raw_observation=raw_observation,
         )

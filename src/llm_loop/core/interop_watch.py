@@ -25,8 +25,9 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Callable, Sequence
+from datetime import datetime
 from pathlib import Path
-from typing import Callable, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,14 @@ _WAKEUP_ENABLED = os.environ.get("INBOX_WAKEUP", "0").strip().lower() in {
     "1", "true", "yes", "on",
 }
 _WAKEUP_MIN_INTERVAL_S = float(os.environ.get("INBOX_WAKEUP_MIN_INTERVAL_S", "300"))
+# EVO-20260825 任务9（§5.4）: pending 堆积治理——
+# 启动巡检清理过期 job/sched（>TTL 迁移 processed/）、堆积超限告警。
+_PENDING_TTL_HOURS = float(os.environ.get("INBOX_PENDING_TTL_HOURS", "24"))
+_PENDING_CLEANUP_ON_START = (
+    os.environ.get("INBOX_PENDING_CLEANUP_ON_START", "1").strip().lower()
+    in {"1", "true", "yes", "on"}
+)
+_PENDING_MAX = int(os.environ.get("INBOX_PENDING_MAX", "20"))
 
 
 class InboxWatcher:
@@ -71,6 +80,7 @@ class InboxWatcher:
         self._last_wakeup = 0.0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._backlog_alerted = False  # 任务9: 堆积告警去抖（回落时复位）
 
     # ── 生命周期 ──
     def start(self) -> None:
@@ -81,6 +91,11 @@ class InboxWatcher:
             target=self._loop, name="interop-inbox-watch", daemon=True
         )
         self._thread.start()
+        # EVO-20260825 任务9（§5.4.1-3）: 启动巡检——存量过期堆积一次性清理
+        try:
+            self._startup_cleanup()
+        except Exception:  # noqa: BLE001 — 巡检失败 fail-open（不影响监视主循环）
+            logger.warning("协调 pending 启动巡检异常（fail-open）", exc_info=True)
         logger.info("协调 inbox 监视已启动（%.1fs，wakeup=%s）", self._poll_s, self._wakeup_enabled)
 
     def stop(self) -> None:
@@ -101,6 +116,8 @@ class InboxWatcher:
         except OSError as exc:  # noqa: BLE001 — 目录缺失/权限 → fail-open
             logger.debug("协调 inbox 扫描失败（fail-open）: %s", exc)
             return
+        # EVO-20260825 任务9（§5.4.1-2）: 堆积检测与告警（独立于消费线程，阻塞也告警）
+        self._check_backlog(files)
         if not self._baselined:
             # 首轮建基线: 存量不触发 wakeup（防启动风暴），但通知一次——
             # 2026-08-17 修复: 此前存量静默吞入基线，重启后启动前到达的
@@ -136,6 +153,86 @@ class InboxWatcher:
                         self._wakeup_fn(names)
                     except Exception:  # noqa: BLE001 — wakeup 失败 fail-open
                         logger.warning("协调 inbox wakeup 失败（fail-open）", exc_info=True)
+
+    # ── EVO-20260825 任务9（§5.4）: pending 堆积治理 ──
+    def _startup_cleanup(self) -> None:
+        """启动巡检: 迁移超过 TTL 的过期 job/sched 消息到 processed/（按日期分目录）.
+
+        存量堆积（如 20260820→20260825 长期未消费的 job/sched）一次性清理——
+        不直接删除（保留审计追溯），近 TTL 内的消息保留待消费。写审计日志
+        interop.pending_cleanup（fail-open）。
+        """
+        if not _PENDING_CLEANUP_ON_START:
+            return
+        if not self._inbox_dir.is_dir():
+            return
+        now = time.time()
+        ttl_s = _PENDING_TTL_HOURS * 3600
+        moved = 0
+        total = 0
+        for f in sorted(self._inbox_dir.glob("*.json")):
+            total += 1
+            try:
+                d = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue  # 坏文件不动（dead 隔离属消费路径，见 interop.py）
+            if str(d.get("topic", "")) not in ("job", "sched"):
+                continue
+            try:
+                ts = float(d.get("ts") or 0)
+            except (TypeError, ValueError):
+                continue  # ts 缺失/非数值 → 保守保留待消费
+            if now - ts <= ttl_s:
+                continue
+            try:
+                day = datetime.fromtimestamp(ts).strftime("%Y%m%d")
+                target_dir = self._inbox_dir / "processed" / day
+                target_dir.mkdir(parents=True, exist_ok=True)
+                target = target_dir / f.name
+                if target.exists():  # 防覆盖: 同名 → 时间戳后缀
+                    target = target_dir / f"{f.stem}-{int(time.time())}{f.suffix}"
+                f.rename(target)
+                moved += 1
+            except OSError:
+                logger.warning("协调 pending 清理迁移失败（fail-open）: %s", f.name)
+        if moved:
+            logger.info(
+                "协调 pending 清理：迁移 %d 条过期消息到 processed/，保留 %d 条待消费"
+                "（审计事件 interop.pending_cleanup）",
+                moved,
+                total - moved,
+            )
+
+    def _check_backlog(self, files: Sequence[Path]) -> None:
+        """pending 堆积检测: >INBOX_PENDING_MAX → WARN；超 2 倍 → 消费疑似阻塞诊断.
+
+        去抖: 超限后仅告警一次，数量回落复位后再次超限再告警（防每轮刷屏）。
+        """
+        try:
+            count = len(files)
+            if count <= _PENDING_MAX:
+                self._backlog_alerted = False
+                return
+            if not self._backlog_alerted:
+                self._backlog_alerted = True
+                logger.warning(
+                    "协调 pending 堆积 %d 条（上限 %d）——审计事件 interop.pending_backlog",
+                    count,
+                    _PENDING_MAX,
+                )
+            if count > _PENDING_MAX * 2:
+                try:
+                    newest = max(f.stat().st_mtime for f in files)
+                    age_min = (time.time() - newest) / 60
+                    logger.warning(
+                        "协调 pending 堆积 %d 条（消费疑似阻塞，最新文件龄 %.1f 分钟）",
+                        count,
+                        age_min,
+                    )
+                except OSError:
+                    logger.debug("pending 最新文件龄计算失败（忽略）", exc_info=True)
+        except Exception:  # noqa: BLE001 — 堆积检测失败 fail-open
+            logger.debug("协调 pending 堆积检测异常（fail-open）", exc_info=True)
 
     @staticmethod
     def _topics_of(files: Sequence[Path]) -> set[str]:

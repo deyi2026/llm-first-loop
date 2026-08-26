@@ -46,6 +46,8 @@ _TOP_FIELDS = (
     "model_override",
     "pinned",
     "channel",
+    "fixed_summary",
+    "summary_chain",
 )
 
 
@@ -254,33 +256,24 @@ def _is_compressed_marker(content: str) -> bool:
 
 
 def _lookup_archive_chars(archives_dir: Path, session_id: str, tool_call_id) -> int | None:
-    """从 archives/<session_id>.jsonl 按 tool_call_id 取原文长度（fail-open，找不到返回 None）."""
+    """跨base/legacy/new archive segments按tool_call_id取原文长度（fail-open）。"""
     if not tool_call_id:
         return None
-    p = archives_dir / f"{session_id}.jsonl"
-    if not p.is_file():
-        return None
     try:
-        with p.open("r", encoding="utf-8") as f:
-            for raw in f:
-                line = raw.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(entry, dict) and entry.get("tool_call_id") == tool_call_id:
-                    chars = entry.get("chars")
-                    if isinstance(chars, int):
-                        return chars
-                    content = entry.get("content")
-                    if isinstance(content, str):
-                        return len(content)
-                    return None
-    except OSError as exc:
-        logger.warning("档案读取失败（fail-open）: %s: %s", p, exc)
-    return None
+        from llm_loop.memory.archive import ArchiveStore
+
+        entry = ArchiveStore(archives_dir, segment_bytes=0).get_by_tool_call_id(
+            session_id, tool_call_id
+        )
+    except (OSError, ValueError):
+        return None
+    if entry is None:
+        return None
+    chars = entry.get("chars")
+    if isinstance(chars, int):
+        return chars
+    content = entry.get("content")
+    return len(content) if isinstance(content, str) else None
 
 
 def run_rollback(

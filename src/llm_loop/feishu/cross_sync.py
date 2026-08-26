@@ -209,6 +209,11 @@ class CrossSyncWatcher:
                 if getattr(m, "tokens_cache_hit", 0):
                     footer += f" · 缓存{format_tokens(m.tokens_cache_hit)}"
                 line += footer
+            # P1 遥测内容/传输分层（2026-08-25）: 权威遥测在 metadata.cache_health
+            # （正文=纯回答），transport 层在此渲染 canonical 一份（用户批准的展示）。
+            _health = (m.metadata or {}).get("cache_health") if getattr(m, "metadata", None) else None
+            if isinstance(_health, dict) and _health.get("note"):
+                line += f"\n{_health['note']}"
             lines.append(line)
         body = "\n".join(lines)
         budget = max(50, self._max_chars - len(header) - 8)  # 预留段头/段标空间

@@ -43,6 +43,11 @@ class MemoryEntry:
     # scope=session: 会话瞬时性内容（调试现场/进度快照/路径/PID），仅原会话（或查询含
     #   对应会话标识）可召回——防 A 会话调试现场污染 B 会话判断。
     scope: str = "global"
+    # ── 记忆注入分级（EVO-20260822-cc3f8e7a，镜像）──
+    # inject_policy=auto（默认）: 正常参与 build_memory_messages top_k 主动注入。
+    # inject_policy=recall_only: 不主动注入（身份纠错/历史决策/一次性决策类低价值记忆），
+    #   仅显式检索可找回（search_records/search_archive）——信息不丢失，只是不占注入预算。
+    inject_policy: str = "auto"
     # ── Phase 2 增强（EVO-20260810-baae4016）──
     access_count: int = 0            # 检索命中次数
     last_access_at: str = ""         # 最近访问时间 ISO（空=从未被检索）

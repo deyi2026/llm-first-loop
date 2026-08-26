@@ -73,10 +73,7 @@ class InspectCodeTool:
                 content=f"[不支持] 非 Python 文件: {path}（inspect_code 仅解析 .py）",
                 tool_call_id="", tool_name=self.name,
             )
-        if p.is_file():
-            files = [p]
-        else:
-            files = self._collect_files(p, depth)
+        files = [p] if p.is_file() else self._collect_files(p, depth)
 
         if not files:
             return ToolResult(
@@ -161,7 +158,7 @@ class InspectCodeTool:
                 args.append("**" + node.args.kwarg.arg)
             return f"{node.name}({', '.join(args)})"
 
-        def _doc(node: ast.AST) -> str:
+        def _doc(node: ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef) -> str:
             if not with_doc:
                 return ""
             ds = ast.get_docstring(node)

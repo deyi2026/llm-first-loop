@@ -44,6 +44,9 @@ class RegistryHost(Protocol):
     def recovery_sessions_dir(self) -> str | Path | None: ...
 
     @property
+    def recovery_session_store(self) -> Any: ...
+
+    @property
     def recovery_memory_dir(self) -> str | Path | None: ...
 
     @property

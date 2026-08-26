@@ -62,7 +62,12 @@ def execute(name: str, args: dict, host: RegistryHost) -> ToolResult | None:
             on_conflict=args.get("on_conflict", "abort"),
             sessions_dir=host.recovery_sessions_dir,
             memory_dir=host.recovery_memory_dir,
+            session_store=getattr(host, "recovery_session_store", None),
         )
-        status = ToolResultStatus.SUCCESS if content.startswith("[recover_from_backup]") else ToolResultStatus.FAILURE
+        status = (
+            ToolResultStatus.SUCCESS
+            if content.startswith("[recover_from_backup] 已恢复")
+            else ToolResultStatus.FAILURE
+        )
         return ToolResult(status=status, content=content, tool_call_id="", tool_name="recover_from_backup")
     return None

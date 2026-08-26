@@ -13,13 +13,12 @@ B. 会话树: GET /api/v1/agents/tree（会话→子代理层级）
 
 from __future__ import annotations
 
+import json
 import logging
-import os
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
-
-import json
+from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -45,7 +44,7 @@ def _resolve_under_root(raw: str, engine: Any) -> Path | None:
 
     相对路径基于工作区根；绝对路径 resolve 后必须仍在根内。
     """
-    root = Path(getattr(engine, "workspace_root", "") or "") 
+    root = Path(getattr(engine, "workspace_root", "") or "")
     if not root or not root.exists():
         root = Path(__file__).resolve().parents[3]  # 项目根兜底
     root = root.resolve()

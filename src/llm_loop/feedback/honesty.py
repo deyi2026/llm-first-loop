@@ -9,6 +9,14 @@ AI 无需二次推理即可决策。
 
 from __future__ import annotations
 
+import json
+import logging
+import os
+import threading
+import uuid
+from contextlib import contextmanager, suppress
+from pathlib import Path
+
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.llm.errors import LLMEmptyResponseError, is_quota_error
 
@@ -162,6 +170,24 @@ def stagnation_reminder_message(tool_name: str, streak: int) -> Message:
     )
 
 
+def empty_search_reminder_message(tool_name: str, streak: int) -> Message:
+    """[搜索空结果提醒] 搜索类工具连续空结果提醒（EVO-20260823-9bb27899，阈值 2）.
+
+    针对"记忆断言与实际不符 → 换深度/换目录/换工具反复搜同一目标"的求证循环：
+    空结果即前提失效信号，提醒 AI 以工具回执为准停止求证，转向如实说明/询问。
+    """
+    return Message(
+        role="system",
+        content=(
+            f"[搜索空结果提醒] 事实: 搜索类工具 {tool_name} 已连续 {streak} 次返回空结果。\n"
+            f"原因: 目标可能不存在、或搜索前提（记忆/路径）与实际不符——重复换参数搜同一目标不会产生新信息。\n"
+            f"建议: 以工具回执为准：目标不存在即停止该目标搜索，标注'记忆待修正'，如实说明并询问用户；"
+            f"确需继续请换全新目标或改向用户求证。"
+        ),
+        source=MessageSource.SYSTEM,
+    )
+
+
 def stagnation_feedback(tool_name: str, streak: int, trace: list[str]) -> Message:
     """[停滞熔断] 连续相同指纹工具调用熔断如实结束（EVO-20260814-aab7eb0b P2，阈值 5）."""
     trace_str = "; ".join(trace[-10:]) if trace else "（无动作记录）"
@@ -267,3 +293,109 @@ def overflow_feedback(
             f"模型窗口: {model_window.get('label', '?')} context={model_window.get('context', '?')}"
         )
     return "\n".join(lines)
+
+
+_FEEDBACK_FALLBACK_LOCK = threading.Lock()
+_feedback_logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _feedback_lock(path: Path):
+    """feedback.jsonl stable cross-process lock; lock acquisition failure is fatal."""
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    try:
+        import fcntl
+    except ImportError:
+        with _FEEDBACK_FALLBACK_LOCK:
+            yield
+        return
+
+    lock_file = None
+    try:
+        lock_file = lock_path.open("a", encoding="utf-8")
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+    except OSError:
+        if lock_file is not None:
+            lock_file.close()
+        raise
+    try:
+        yield
+    finally:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            _feedback_logger.warning("feedback lock release failed: %s", lock_path, exc_info=True)
+        finally:
+            lock_file.close()
+
+
+def _feedback_fsync_parent(path: Path) -> None:
+    """Best-effort directory fsync; file fsync remains mandatory."""
+    fd: int | None = None
+    try:
+        fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        os.fsync(fd)
+    except OSError as exc:
+        _feedback_logger.warning(
+            "feedback parent fsync unavailable (write completed, durability degraded): %s: %s",
+            path.parent,
+            exc,
+        )
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+def append_feedback(path: str | Path, record: dict) -> None:
+    """Append one feedback record under the same stable lock used by physical purge."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    encoded = json.dumps(record, ensure_ascii=False) + "\n"
+    with _feedback_lock(target):
+        created = not target.exists()
+        with target.open("a", encoding="utf-8") as f:
+            f.write(encoded)
+            f.flush()
+            os.fsync(f.fileno())
+        if created:
+            _feedback_fsync_parent(target)
+
+
+def delete_feedback_for_session(path: str | Path, session_id: str) -> int:
+    """Physically remove exact-session feedback records; malformed rows fail closed."""
+    target = Path(path)
+    if not target.exists():
+        return 0
+    with _feedback_lock(target):
+        if not target.exists():
+            return 0
+        kept: list[str] = []
+        removed = 0
+        for line_no, raw in enumerate(target.read_text(encoding="utf-8").splitlines(), 1):
+            if not raw.strip():
+                continue
+            try:
+                entry = json.loads(raw)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"feedback.jsonl line {line_no} is corrupt; cannot determine session ownership"
+                ) from exc
+            if str(entry.get("session_id", "")) == session_id:
+                removed += 1
+            else:
+                kept.append(raw)
+        if removed == 0:
+            return 0
+        tmp = target.with_name(f".{target.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+        try:
+            with tmp.open("w", encoding="utf-8") as f:
+                if kept:
+                    f.write("\n".join(kept) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, target)
+            _feedback_fsync_parent(target)
+        finally:
+            with suppress(OSError):
+                tmp.unlink(missing_ok=True)
+        return removed

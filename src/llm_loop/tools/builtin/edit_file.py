@@ -169,6 +169,7 @@ class EditFileTool:
                 n=2,
             )
         )
+        full_diff_text = "\n".join(diff_lines)
         truncated = len(diff_lines) > _DIFF_MAX_LINES
         diff_text = "\n".join(diff_lines[:_DIFF_MAX_LINES])
         if truncated:
@@ -177,15 +178,25 @@ class EditFileTool:
         removed = sum(1 for ln in diff_lines if ln.startswith("-") and not ln.startswith("---"))
 
         if dry_run:
+            visible_content = (
+                f"[预览模式 dry_run: 未写入] {path_str}\n"
+                f"匹配 {count} 处，变更 +{added}/-{removed} 行。确认无误后去掉 dry_run 应用。\n"
+                f"```diff\n{diff_text}\n```"
+            )
+            raw_content = (
+                f"[预览模式 dry_run: 未写入] {path_str}\n"
+                f"匹配 {count} 处，变更 +{added}/-{removed} 行。确认无误后去掉 dry_run 应用。\n"
+                f"```diff\n{full_diff_text}\n```"
+            )
+            from llm_loop.core.run_context import current_evidence_shadow_enabled
+
             return ToolResult(
                 status=ToolResultStatus.SUCCESS,
-                content=(
-                    f"[预览模式 dry_run: 未写入] {path_str}\n"
-                    f"匹配 {count} 处，变更 +{added}/-{removed} 行。确认无误后去掉 dry_run 应用。\n"
-                    f"```diff\n{diff_text}\n```"
-                ),
+                content=visible_content,
                 tool_call_id="",
                 tool_name=self.name,
+                raw_observation=raw_content if current_evidence_shadow_enabled.get() else None,
+                evidence_source_version_token=f"stat:{baseline[0]}:{baseline[1]}",
             )
 
         # ── 段4: apply（基线校验 + 原子写入）+ verify（写后复读校验）──
@@ -237,15 +248,33 @@ class EditFileTool:
         if ending != "\n":
             preserved.append("CRLF")
         preserved_note = f"（已保留原 {', '.join(preserved)}）" if preserved else ""
+        # EVO-20260823-12be9cac: 写成功 → 翻转登记（文件已存在，否定帧失效）
+        try:
+            from llm_loop.tools.path_registry import register_exists
+
+            register_exists(str(path))
+        except Exception:  # noqa: BLE001 — fail-open
+            pass
+        visible_content = (
+            f"[修改完成并已校验] {path_str}\n"
+            f"替换 {count} 处，变更 +{added}/-{removed} 行（原子写入，写后复读一致{preserved_note}）。\n"
+            f"```diff\n{diff_text}\n```"
+        )
+        raw_content = (
+            f"[修改完成并已校验] {path_str}\n"
+            f"替换 {count} 处，变更 +{added}/-{removed} 行（原子写入，写后复读一致{preserved_note}）。\n"
+            f"```diff\n{full_diff_text}\n```"
+        )
+        from llm_loop.core.run_context import current_evidence_shadow_enabled
+
+        post_stat = path.stat()
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
-            content=(
-                f"[修改完成并已校验] {path_str}\n"
-                f"替换 {count} 处，变更 +{added}/-{removed} 行（原子写入，写后复读一致{preserved_note}）。\n"
-                f"```diff\n{diff_text}\n```"
-            ),
+            content=visible_content,
             tool_call_id="",
             tool_name=self.name,
+            raw_observation=raw_content if current_evidence_shadow_enabled.get() else None,
+            evidence_source_version_token=f"stat:{post_stat.st_mtime_ns}:{post_stat.st_size}",
         )
 
     @staticmethod

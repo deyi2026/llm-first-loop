@@ -12,7 +12,7 @@ move 自 engine.py 内联 overflow 段（397-425）与每 run 计数重置（265
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.feedback.honesty import overflow_feedback
@@ -25,7 +25,14 @@ logger = logging.getLogger(__name__)
 
 
 class _OverflowMixin:
-    def _handle_overflow(self: LoopEngine, exc: LLMError, sess, model_used: str) -> tuple[str, str | None]:
+    def _handle_overflow(
+        self: LoopEngine,
+        exc: LLMError,
+        sess,
+        model_used: str,
+        *,
+        model_window: dict[str, Any] | None = None,
+    ) -> tuple[str, str | None]:
         """R4: overflow 如实反馈（move 自 engine.py:397-425，不自动重试/不自动压缩，决策权归 AI）.
 
         Returns:
@@ -35,12 +42,9 @@ class _OverflowMixin:
         """
         if not is_overflow_error(exc):
             return ("not_overflow", None)
-        ctx_limit = self._current_context_limit(model_used)
-        model_window = (
-            {"label": model_used, "context": ctx_limit}
-            if ctx_limit
-            else {"label": model_used, "context": None}
-        )
+        if model_window is None:
+            ctx_limit = self._current_context_limit(model_used)
+            model_window = {"label": model_used, "context": ctx_limit}
         feedback_text = overflow_feedback(
             exc,
             getattr(self, "_last_breakdown", None),

@@ -16,8 +16,10 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
+logger = logging.getLogger(__name__)
 
 # ── 单向切换锁定状态 ──
 @dataclass
@@ -63,7 +65,7 @@ def is_simple_task(messages: list[dict], max_user_chars: int = 500) -> bool:
     try:
         max_user_chars = int(os.environ.get("LOCAL_FAST_MAX_USER_CHARS", str(max_user_chars)))
     except (ValueError, TypeError):
-        pass
+        logger.debug("LOCAL_FAST_MAX_USER_CHARS 非法，保留调用方阈值 %s", max_user_chars)
     last_user = ""
     for m in reversed(messages):
         if m.get("role") == "user":
@@ -74,10 +76,7 @@ def is_simple_task(messages: list[dict], max_user_chars: int = 500) -> bool:
         return False
     if any(v in last_user for v in _COMPLEX_VERBS):
         return False  # 指令含状态变更意图 → 复杂（不切快模型）
-    for m in messages:
-        if m.get("role") == "tool" or m.get("tool_calls"):
-            return False
-    return True
+    return all(not (m.get("role") == "tool" or m.get("tool_calls")) for m in messages)
 
 
 # ── 任务锚点 ──
