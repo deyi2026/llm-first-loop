@@ -19,6 +19,7 @@ from llm_loop.core.message import ToolCall
 
 # ── 1. 参数无损 JSON 物化边界 + 深冻结 ──────────────────────────────
 
+
 class MaterializationError(ValueError):
     """参数物化失败（非法 JSON / 不可序列化结构）→ 上层应拒绝调用并审计."""
 
@@ -45,9 +46,7 @@ def deep_freeze(obj: Any) -> Any:
     保证策略检查后到执行分发间参数不被篡改。
     """
     if isinstance(obj, dict):
-        return types.MappingProxyType(
-            {k: deep_freeze(v) for k, v in obj.items()}
-        )
+        return types.MappingProxyType({k: deep_freeze(v) for k, v in obj.items()})
     if isinstance(obj, list):
         return tuple(deep_freeze(v) for v in obj)
     if isinstance(obj, tuple):
@@ -75,6 +74,7 @@ def deep_unfreeze(obj: Any) -> Any:
 
 
 # ── 2. 单调守卫 MonotonicGuard（权限只收紧不放松）──────────────────
+
 
 class GuardViolationError(RuntimeError):
     """守卫违反：试图放松权限 / 启动时守卫集比内核种子更宽松."""
@@ -133,9 +133,7 @@ class MonotonicGuard:
     # ── 添加 allow（仅当无 deny 冲突，否则视为放松）──
     def add_allow(self, tool: str) -> None:
         if tool in self._deny:
-            raise GuardViolationError(
-                f"单调守卫: 试图对已 deny 的 {tool} 添加 allow（放松），拒绝"
-            )
+            raise GuardViolationError(f"单调守卫: 试图对已 deny 的 {tool} 添加 allow（放松），拒绝")
         self._allow.add(tool)
 
     # ── 查询 ──
@@ -156,6 +154,7 @@ class MonotonicGuard:
 
 # ── 3. 不可变 result（权威结果快照）───────────────────────────────
 
+
 @dataclass(frozen=True)
 class ImmutableResult:
     """执行结果的不可变快照（审计/后续消费统一入口）."""
@@ -169,13 +168,14 @@ class ImmutableResult:
 
 # ── 4. 统一执行管线（pre 钩子瀑布 + 守卫 + 物化 → 分发）──────────
 
+
 @dataclass
 class PipelineConfig:
     """瀑布开关（渐进式启用，默认全关保持零回归）."""
 
-    enabled: bool = False          # 总开关（对应 TOOL_PIPELINE_ENABLED）
-    materialize: bool = False      # 参数物化+深冻结（TOOL_MATERIALIZE_ENABLED）
-    guard: bool = False            # 单调守卫（TOOL_GUARD_ENABLED）
+    enabled: bool = False  # 总开关（对应 TOOL_PIPELINE_ENABLED）
+    materialize: bool = False  # 参数物化+深冻结（TOOL_MATERIALIZE_ENABLED）
+    guard: bool = False  # 单调守卫（TOOL_GUARD_ENABLED）
 
 
 class ToolExecutionPipeline:
@@ -194,19 +194,45 @@ class ToolExecutionPipeline:
         self._pre_hooks: list[Callable[[ToolCall], None]] = []
         self._post_hooks: list[Callable[[ImmutableResult], ImmutableResult | None]] = []
         self._guard: MonotonicGuard | None = None
+        self._evidence_enforce_locked = False
 
     # ── 钩子注册（可重排：按列表顺序执行）──
     def add_pre_hook(self, hook: Callable[[ToolCall], None]) -> None:
+        if self._evidence_enforce_locked:
+            raise RuntimeError(
+                "Evidence enforce-compatible pipeline is locked; pre hook integration is undefined"
+            )
         self._pre_hooks.append(hook)
 
     def add_post_hook(self, hook: Callable[[ImmutableResult], ImmutableResult | None]) -> None:
+        if self._evidence_enforce_locked:
+            raise RuntimeError(
+                "Evidence enforce-compatible pipeline is locked; post hook integration is undefined"
+            )
         self._post_hooks.append(hook)
+
+    def lock_for_evidence_enforce(self) -> None:
+        """Freeze the subset whose ordering is already compatible with Evidence enforce.
+
+        Registry materialization and monotonic guard execute before source resolution/capture.
+        Pipeline pre/post hooks do not yet have a policy-safe Evidence ordering, so an enabled
+        pipeline carrying either hook type remains fail-closed.
+        """
+        if not self.config.enabled:
+            return
+        if self._pre_hooks:
+            raise RuntimeError("Evidence enforce cannot combine with pipeline pre hooks yet")
+        if self._post_hooks:
+            raise RuntimeError("Evidence enforce cannot combine with pipeline post hooks yet")
+        self._evidence_enforce_locked = True
 
     def set_guard(self, guard: MonotonicGuard) -> None:
         self._guard = guard
 
     # ── 主流程 ──
-    def execute(self, tool: Any, call: ToolCall, invoke: Callable[[Any, ToolCall], Any]) -> ImmutableResult:
+    def execute(
+        self, tool: Any, call: ToolCall, invoke: Callable[[Any, ToolCall], Any]
+    ) -> ImmutableResult:
         """瀑布执行. invoke 是底层实际工具调用（注入，便于测试隔离）."""
         # 1. pre 钩子瀑布
         for hook in self._pre_hooks:

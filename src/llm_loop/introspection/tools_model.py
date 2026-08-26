@@ -153,6 +153,8 @@ def run_switch_model(
     session_set_override: Callable[[str | None], None] | None,
     audit: Callable[[str, dict, str], None] | None,
     args: dict,
+    *,
+    session_get_override: Callable[[], str | None] | None = None,
 ) -> ToolResult:
     """switch_model: 切换会话级 model_override + 审计落盘 + 如实回执.
 
@@ -191,8 +193,15 @@ def run_switch_model(
             tool_name="switch_model",
         )
 
-    # 当前会话 override（用于审计 from→to 标注）
-    current_override = getattr(ctx, "session_model_override", None) if ctx else None
+    # 当前会话 override（用于审计/回执 from→to 标注）。并发run优先使用本会话getter，
+    # 避免共享CorrectionContext.session_model_override被其他session覆盖后造成事实串台。
+    if session_get_override is not None:
+        try:
+            current_override = session_get_override()
+        except Exception:  # noqa: BLE001 — getter异常回退旧ctx兼容路径
+            current_override = getattr(ctx, "session_model_override", None) if ctx else None
+    else:
+        current_override = getattr(ctx, "session_model_override", None) if ctx else None
     from_label = current_override if current_override else pool.get_default_model()
 
     # 特殊语义: model="default" → 清除 override 回装配默认

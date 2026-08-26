@@ -265,11 +265,23 @@ def _child_env() -> dict:
     }
 
 
+def _validate_session_name(session: str) -> str:
+    """playwright产物session必须是单个目录名；该校验是cwd边界，不宣称进程沙箱。"""
+    if not isinstance(session, str) or not session:
+        raise ValueError("非法 session: 不能为空")
+    if session in {".", ".."} or "/" in session or "\\" in session or "\x00" in session:
+        raise ValueError("非法 session: 不得包含路径分隔符、NUL 或目录跳转")
+    return session
+
+
 def _child_workdir(session: str) -> Path:
     """子进程 cwd：限定 data/e2e/<session>/（模型代码相对路径访问被限定在产物目录）."""
-    wd = Path("data/e2e") / session
+    session = _validate_session_name(session)
+    root = Path("data/e2e").resolve()
+    wd = (root / session).resolve()
+    wd.relative_to(root)
     wd.mkdir(parents=True, exist_ok=True)
-    return wd.resolve()
+    return wd
 
 
 def run_playwright_exec(ctx: Any, audit: Any, args: dict) -> ToolResult:
@@ -284,6 +296,15 @@ def run_playwright_exec(ctx: Any, audit: Any, args: dict) -> ToolResult:
             status=ToolResultStatus.FAILURE,
             content="[参数错误] 事实: code 为空。原因: 必填。建议: 传入使用预置 helper 的 Python 脚本。",
             tool_call_id="", tool_name=TOOL_NAME,
+        )
+    try:
+        session = _validate_session_name(session)
+    except ValueError as exc:
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content=f"[参数错误] 事实: {exc}。原因: session 只能是 data/e2e 下单个目录名。",
+            tool_call_id="",
+            tool_name=TOOL_NAME,
         )
 
     ok, err = _scan_code(code)

@@ -8,17 +8,22 @@ DeclarationValidator + RecordSearcher 装配为 LoopEngine。
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import logging
 import os
-from collections.abc import Callable
+import shutil
+from collections.abc import Callable, Sequence
 from contextlib import suppress
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from llm_loop.config import Settings
 from llm_loop.core.history import converge_history_budget
 from llm_loop.core.loop import LoopEngine
 from llm_loop.core.message import ToolResult
-from llm_loop.core.session import SessionStore
+from llm_loop.core.session import SessionStore, _validate_session_id
+from llm_loop.feedback.honesty import delete_feedback_for_session
 from llm_loop.feedback.validator import DeclarationValidator
 from llm_loop.introspection.corrections import CorrectionContext, CorrectionToolRegistry
 from llm_loop.introspection.docs_search import DocsSearcher
@@ -51,9 +56,14 @@ from llm_loop.tools.registry import ToolRegistry
 _RUN_MODE_HIDDEN_TOOLS: dict[str, set[str]] = {
     # minimal: 外围/重工具禁用（web 检索、飞书出站、playwright、record_skill 等）
     "minimal": {
-        "web_fetch", "web_search",
-        "send_feishu_message", "create_feishu_doc", "send_feishu_attachment",
-        "playwright_test", "playwright_exec", "record_skill",
+        "web_fetch",
+        "web_search",
+        "send_feishu_message",
+        "create_feishu_doc",
+        "send_feishu_attachment",
+        "playwright_test",
+        "playwright_exec",
+        "record_skill",
     },
     # ptc: 命令执行主路径——web 检索类降级（LLM 少走低效 web 往返）；
     # playwright 隐藏（EVO-20260816-96215428 阶段一门控：浏览器执行类工具仅 standard/creative 可见，
@@ -67,6 +77,7 @@ _RUN_MODE_HIDDEN_TOOLS: dict[str, set[str]] = {
 
 def _run_mode_hidden(run_mode: str) -> set[str]:
     return _RUN_MODE_HIDDEN_TOOLS.get(run_mode, set())
+
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +117,8 @@ def _read_workspace_changed_flag(data_dir: str) -> dict | None:
 
 def build_engine(settings: Settings) -> LoopEngine:
     """装配全部组件并返回 LoopEngine."""
+    # ERC rollout is explicit.  ``off`` remains the default; shadow/enforce stores are only
+    # constructed when the corresponding mode is requested.  No provider call occurs here.
     settings.ensure_dirs()
 
     # M47（design §5.1/§5.5）: 从注册表查思考支持（消除 _thinking_supported() 硬编码 deepseek.com）.
@@ -190,10 +203,37 @@ def build_engine(settings: Settings) -> LoopEngine:
         model_fallbacks_raw=settings.model_fallbacks_raw,
     )
 
-    # 存储（记忆 + 压缩档案 + 会话）
+    # 存储（记忆 + 压缩档案 + 会话 + fail-open恢复备份）
+    from llm_loop.recovery.backup import BackupStore
+
     memory = MemoryStore(settings.memory_dir)
+    backup_store = BackupStore(settings.recovery_dir)
+
+    def archive_known_session_id(session_id: str) -> bool:
+        """legacy flat archive段的外部owner证据；无法判定时按已占用处理。"""
+        base = Path(settings.sessions_dir)
+        if Path(session_id).name != session_id:
+            return True
+        if (base / ".identity" / f"{session_id}.json").is_file():
+            return True
+        if (base / f"{session_id}.json").is_file():
+            return True
+        try:
+            for child in base.iterdir():
+                if child.name == ".identity" or not child.is_dir():
+                    continue
+                if (child / f"{session_id}.json").is_file():
+                    return True
+        except OSError:
+            return True
+        return False
+
     archive = (
-        ArchiveStore(settings.archive_dir, segment_bytes=settings.archive_segment_bytes)
+        ArchiveStore(
+            settings.archive_dir,
+            segment_bytes=settings.archive_segment_bytes,
+            known_session_id_fn=archive_known_session_id,
+        )
         if settings.archive_enabled
         else None
     )
@@ -212,10 +252,43 @@ def build_engine(settings: Settings) -> LoopEngine:
                 )
         except Exception:  # noqa: BLE001 — GC 失败不影响启动
             logger.warning("档案 GC 启动清理失败（fail-open）", exc_info=True)
+    event_store = _build_event_store(settings)
+
+    def identity_history_exists(session_id: str) -> bool:
+        if archive is None:
+            return False
+        return int(archive.stats(session_id).get("archived_count", 0)) > 0
+
+    def delete_session_sidecars(session_id: str) -> None:
+        sid = _validate_session_id(session_id)
+        if archive is not None:
+            archive.delete_session(sid)
+        backup_store.delete_source(sid, target_type="session")
+        delete_feedback_for_session(Path(settings.data_dir) / "feedback.jsonl", sid)
+        long_answer_dir = Path(settings.data_dir) / "audit" / "long_answers" / sid
+        if long_answer_dir.is_symlink():
+            long_answer_dir.unlink()
+        elif long_answer_dir.exists():
+            shutil.rmtree(long_answer_dir)
+        # Evidence ownership outlives the current rollout mode.  Deleting a session while
+        # EVIDENCE_MODE=off must still retire any records created by a previous shadow/enforce run.
+        evidence_root = settings.evidence_dir
+        if (evidence_root / "ledger").exists():
+            from llm_loop.memory.evidence import BlobStore, EvidenceLedgerStore
+            from llm_loop.memory.evidence_legacy import EvidenceLifecycle
+
+            EvidenceLifecycle(
+                BlobStore(evidence_root / "blobs"),
+                EvidenceLedgerStore(evidence_root / "ledger"),
+            ).delete_session(sid)
+
     session_store = SessionStore(
         settings.sessions_dir,
-        event_store=_build_event_store(settings),
+        event_store=event_store,
         read_path_source=getattr(settings, "read_path_source", "session_json"),
+        identity_root=settings.sessions_dir,
+        identity_history_exists_fn=identity_history_exists,
+        delete_sidecars_fn=delete_session_sidecars,
     )
 
     # 工具注册表（3 基础工具 + 自省/修正/检索工具）
@@ -234,6 +307,207 @@ def build_engine(settings: Settings) -> LoopEngine:
         approval_audit_path=settings.audit_dir / "approval_audit.jsonl",  # T5a: 审批审计落盘
         safety_audit_dir=settings.audit_dir,  # P0-1: 灾难性阻断审计 safety_blocks.jsonl
     )
+    # ERC v1.1 rollout: explicit opt-in only.  Default ``off`` creates no Evidence store
+    # and installs no hook.  ``shadow`` dual-writes legacy bytes; ``enforce`` performs
+    # capture-before-projection and emits a bounded recovery capsule.
+    _legacy_evidence_migrate_workspace_fn: Callable[[str], object] | None = None
+    if settings.evidence_mode in {"shadow", "enforce"}:
+        from llm_loop.core.run_context import current_session_id, workspace_base
+        from llm_loop.memory.evidence import (
+            BlobStore,
+            EvidenceCapture,
+            EvidenceLedgerStore,
+            OwnerScope,
+            ProjectionEngine,
+        )
+
+        evidence_root = settings.evidence_dir
+        evidence_blobs = BlobStore(evidence_root / "blobs")
+        evidence_ledger = EvidenceLedgerStore(evidence_root / "ledger")
+        evidence_capture = EvidenceCapture(evidence_blobs, evidence_ledger)
+
+        def _evidence_owner_for_session(session_id: str) -> OwnerScope:
+            if not session_id:
+                raise RuntimeError("evidence capture 缺少 current session id")
+            return OwnerScope(
+                workspace_id=os.path.abspath(workspace_base()),
+                session_id=session_id,
+            )
+
+        def _evidence_owner() -> OwnerScope:
+            sid = current_session_id.get() or registry._session_id
+            return _evidence_owner_for_session(sid)
+
+        if settings.evidence_mode == "shadow":
+            from llm_loop.tools.evidence_shadow import EvidenceShadowRecorder
+
+            registry.set_evidence_shadow_hook(
+                EvidenceShadowRecorder(evidence_capture, owner_resolver=_evidence_owner)
+            )
+            logger.info(
+                "Evidence Recoverability shadow dual-write 已启用（不改变 prompt/tool 可见输出）"
+            )
+        else:
+            from llm_loop.memory.evidence import (
+                Coverage,
+                EvidenceFreshness,
+                EvidenceRef,
+                EvidenceSearch,
+                ManifestProjector,
+                Provenance,
+                SourceIdentity,
+                SourceKind,
+                SourceVersionPolicy,
+                make_capture_request,
+                render_recovery_manifest,
+            )
+            from llm_loop.tools.evidence_enforce import EvidenceEnforcer
+            from llm_loop.tools.evidence_source_resolver import EvidenceSourceResolver
+            from llm_loop.tools.evidence_tools import (
+                EvidenceListTool,
+                EvidenceReadTool,
+                EvidenceSearchTool,
+                SearchArchiveCompatTool,
+            )
+
+            evidence_freshness = EvidenceFreshness(evidence_ledger)
+            evidence_search = EvidenceSearch(evidence_blobs, evidence_ledger)
+            evidence_manifest = ManifestProjector(evidence_ledger)
+            registry.set_evidence_enforcer(
+                EvidenceEnforcer(
+                    evidence_capture,
+                    projection=ProjectionEngine(),
+                    owner_resolver=_evidence_owner,
+                    projection_budget_chars=min(
+                        settings.tool_max_output_chars, settings.tool_summary_threshold, 5000
+                    ),
+                )
+            )
+            registry.set_evidence_source_resolver(
+                EvidenceSourceResolver(
+                    evidence_ledger,
+                    freshness=evidence_freshness,
+                    owner_resolver=_evidence_owner,
+                )
+            )
+            registry.register(
+                EvidenceReadTool(
+                    evidence_blobs,
+                    evidence_ledger,
+                    freshness=evidence_freshness,
+                    owner_resolver=_evidence_owner,
+                )
+            )
+            registry.register(
+                EvidenceSearchTool(
+                    evidence_search,
+                    freshness=evidence_freshness,
+                    owner_resolver=_evidence_owner,
+                )
+            )
+            registry.register(
+                SearchArchiveCompatTool(
+                    evidence_search,
+                    freshness=evidence_freshness,
+                    owner_resolver=_evidence_owner,
+                )
+            )
+            registry.register(
+                EvidenceListTool(
+                    evidence_ledger,
+                    freshness=evidence_freshness,
+                    owner_resolver=_evidence_owner,
+                )
+            )
+
+            def _evidence_manifest_provider(limit: int) -> str:
+                owner = _evidence_owner()
+                manifest = evidence_manifest.build_recent(owner=owner, limit=max(1, limit))
+                for entry in manifest.entries:
+                    evidence_freshness.refresh(owner=owner, evidence_ref=entry.evidence_ref)
+                return render_recovery_manifest(
+                    evidence_manifest.build_recent(owner=owner, limit=max(1, limit))
+                )
+
+            def _capture_compressed_history(
+                session_id: str, msg, msg_seq: int | None, archive_id: str | None
+            ) -> str | None:
+                owner = _evidence_owner_for_session(session_id)
+                existing = str((msg.metadata or {}).get("evidence_ref", "") or "")
+                if existing:
+                    try:
+                        existing_ref = EvidenceRef(existing)
+                        evidence_ledger.require_authorized(owner, existing_ref)
+                        return existing_ref.ref
+                    except Exception:  # noqa: BLE001 - invalid/stale metadata falls through to capture
+                        logger.debug(
+                            "compressed message evidence_ref 无法复用，重新建立记录", exc_info=True
+                        )
+                if msg.tool_call_id:
+                    for prior in evidence_ledger.find_by_tool_call_id(owner, msg.tool_call_id):
+                        if not msg.tool_name or prior.tool_name == msg.tool_name:
+                            return prior.evidence_ref.ref
+                digest = hashlib.sha256(
+                    f"{msg.role}\0{msg.tool_call_id or ''}\0{msg.content}".encode()
+                ).hexdigest()
+                if msg_seq is not None:
+                    stable_capture_id = f"history-msg:{msg_seq}"
+                    source_slot = str(msg_seq)
+                elif archive_id:
+                    stable_capture_id = f"history-archive:{archive_id}"
+                    source_slot = archive_id
+                else:
+                    # `Message.ts` is persisted session identity.  Include it so two distinct
+                    # observations with identical text do not collapse into one logical record,
+                    # while provider replay of the same Message remains deterministic.
+                    ts_ns = int(float(getattr(msg, "ts", 0.0) or 0.0) * 1_000_000_000)
+                    stable_capture_id = f"history-ts:{ts_ns}:{msg.role}:{digest}"
+                    source_slot = f"ts-{ts_ns}"
+                acquired_at = datetime.fromtimestamp(float(getattr(msg, "ts", 0.0) or 0.0), UTC)
+                result = evidence_capture.capture(
+                    make_capture_request(
+                        owner=owner,
+                        stable_capture_id=stable_capture_id,
+                        raw_observation=msg.content,
+                        acquired_at=acquired_at,
+                        tool_name=msg.tool_name or f"history_{msg.role}",
+                        tool_call_id=msg.tool_call_id,
+                        source=SourceIdentity(
+                            kind=SourceKind.CONVERSATION,
+                            locator=f"conversation:{msg.role}:{source_slot}",
+                            version_policy=SourceVersionPolicy.SNAPSHOT_ONLY,
+                        ),
+                        coverage=Coverage(
+                            unit="message", start=0, end_exclusive=None, source_complete=True
+                        ),
+                        provenance=Provenance(
+                            producer="history_compression",
+                            authority="session_message",
+                            scope=msg.role,
+                        ),
+                    )
+                )
+                return result.evidence_ref.ref
+
+            registry.set_evidence_manifest_provider(_evidence_manifest_provider)
+            registry.set_evidence_history_capture_hook(_capture_compressed_history)
+
+            from llm_loop.memory.evidence_legacy import LegacySidecarMigrator
+
+            def _migrate_legacy_evidence_for_workspace(workspace_root: str) -> object:
+                return LegacySidecarMigrator(
+                    data_dir=settings.data_dir,
+                    sessions=session_store,
+                    capture=evidence_capture,
+                    ledger=evidence_ledger,
+                    workspace_id=os.path.abspath(workspace_root),
+                ).migrate_all()
+
+            _legacy_evidence_migrate_workspace_fn = _migrate_legacy_evidence_for_workspace
+            logger.info(
+                "Evidence Recoverability enforce 已启用（capture-before-projection + read/search/list + manifest）"
+            )
+
     # EVO-20260813-9ced1f4c: 工具执行瀑布装配（默认全关零回归；开关经 .env 启用）
     from llm_loop.tools.pipeline import PipelineConfig, ToolExecutionPipeline
 
@@ -305,8 +579,16 @@ def build_engine(settings: Settings) -> LoopEngine:
     def _change_log_hook(call):
         from llm_loop.introspection.proc_version import record_change_log
 
-        if call.name in ("execute_command", "write_file", "edit_file", "delete_file", "append_file"):
-            record_change_log(call.name, f"arguments={str(call.arguments)[:200]}", session_id=registry._session_id)
+        if call.name in (
+            "execute_command",
+            "write_file",
+            "edit_file",
+            "delete_file",
+            "append_file",
+        ):
+            record_change_log(
+                call.name, f"arguments={str(call.arguments)[:200]}", session_id=registry._session_id
+            )
 
     registry.add_pre_execute_hook(_change_log_hook)
 
@@ -356,6 +638,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         # 变化后写 data/workspace_changed.json, AI 经 architecture_status 自查可见
         workspace_changed_fn=lambda: _read_workspace_changed_flag(settings.data_dir),
     )
+
     # M56 B5（ANALYSIS-20260811）: 当前模型窗口注入 architecture_status（AI 可查后
     # 自主决策上下文压缩；resolve 失败/未知模型如实返回 label+context=None，不伪造）
     def _model_window_snapshot() -> dict:
@@ -425,7 +708,9 @@ def build_engine(settings: Settings) -> LoopEngine:
     # P1-2: 经验库装配（fail-open，目录不存在时检索如实返回未命中）
     from llm_loop.experiences.store import ExperienceStore
 
-    experience_store = ExperienceStore(settings.experiences_dir, embedder=embedder)  # T5: 注入 embedder 供语义检索
+    experience_store = ExperienceStore(
+        settings.experiences_dir, embedder=embedder
+    )  # T5: 注入 embedder 供语义检索
     searcher = RecordSearcher(
         audit_dir=settings.audit_dir,
         memory_store=memory,
@@ -433,6 +718,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         experience_store=experience_store,  # P1-2: 经验库检索接入
         semantic_retriever=semantic_retriever,  # T31: 语义召回
     )
+
     # EVO-20260814: 适配器同时支持 search_records（可调用）与 event_stream（对象方法）
     class _RecordSearcherAdapter:
         """可调用 + 方法双接口（search 走调用，event_stream 走方法）."""
@@ -470,13 +756,12 @@ def build_engine(settings: Settings) -> LoopEngine:
 
         corrections._search_docs_fn = _DocsSearcherAdapter(docs_searcher)  # noqa: SLF001
     except Exception:  # noqa: BLE001 — 装配失败不阻断启动
-        logger.warning("docs/ 检索装配失败（fail-open），search_docs 将回执'检索不可用'", exc_info=True)
+        logger.warning(
+            "docs/ 检索装配失败（fail-open），search_docs 将回执'检索不可用'", exc_info=True
+        )
 
     # P2-2: fail-open 数据丢失恢复通道装配
-    from llm_loop.recovery.backup import BackupStore
     from llm_loop.recovery.channel import RecoveryChannel
-
-    backup_store = BackupStore(settings.recovery_dir)
 
     def _recovery_action_trace(action_type: str, detail: str) -> None:
         with suppress(Exception):
@@ -494,14 +779,18 @@ def build_engine(settings: Settings) -> LoopEngine:
     except Exception:  # noqa: BLE001 — GC 失败不影响启动
         logger.warning("恢复备份 GC 启动清理失败（fail-open）", exc_info=True)
     corrections._recovery_channel = recovery_channel  # noqa: SLF001 — P2-2: 工具分派注入
-    corrections._recovery_sessions_dir = settings.sessions_dir  # noqa: SLF001
+    corrections._recovery_sessions_dir = settings.sessions_dir  # noqa: SLF001 — 兼容fallback
+    corrections._recovery_sessions_dir_fn = lambda: session_store.root  # noqa: SLF001 — workspace动态根
+    corrections._recovery_session_store = session_store  # noqa: SLF001 — 复用全局sid归属/原子恢复
     corrections._recovery_memory_dir = settings.memory_dir  # noqa: SLF001
     corrections._skills_dir = settings.skills_dir or None  # noqa: SLF001 — B3: 插件化 Skill 目录注入
     status_provider.set_recovery_status_fn(backup_store.status_summary)
 
     # 自省/修正/检索工具注册进 ToolRegistry（LLM 可见）
     # EVO-20260814 P1-A: RUN_MODE=minimal 时过滤外围工具（飞书出站/playwright/record_skill）
-    _corr_hidden = _run_mode_hidden(_run_mode)
+    _corr_hidden = set(_run_mode_hidden(_run_mode))
+    if settings.evidence_mode == "enforce":
+        _corr_hidden.add("search_archive")
     for td in corrections.tool_defs():
         if td["name"] in _corr_hidden:
             continue
@@ -609,6 +898,9 @@ def build_engine(settings: Settings) -> LoopEngine:
         event_store=_build_event_store(settings),  # D1: 事件源化（共享同一实例）
     )
 
+    if _legacy_evidence_migrate_workspace_fn is not None:
+        engine._evidence_legacy_migrate_workspace_fn = _legacy_evidence_migrate_workspace_fn
+
     # M50（design §5.6）: 注入增强版 refresh_config executor — 重读 providers.json
     install_refresh_executor(engine)
 
@@ -637,7 +929,7 @@ def build_engine(settings: Settings) -> LoopEngine:
     try:
         from llm_loop.core.interop_watch import InboxWatcher
 
-        def _on_inbox_notify(names: list[str]) -> None:
+        def _on_inbox_notify(names: Sequence[str]) -> None:
             try:
                 # 事件写最近活跃会话（web 可查）。engine 无持久 session_id 属性，
                 # 此前 getattr → "?" 导致通知写进 ?.jsonl、web 端不可见（2026-08-17 修复）。
@@ -651,14 +943,19 @@ def build_engine(settings: Settings) -> LoopEngine:
                 except Exception:  # noqa: BLE001 — 会话探测失败用 default（fail-open）
                     pass
                 engine._event_append(
-                    sid, "interop.pending_notify",
-                    {"count": len(names), "files": names,
-                     "hint": "协调通道新消息待处理（下轮 run 自动注入，或 evolve-review 等入口可见）"},
+                    sid,
+                    "interop.pending_notify",
+                    {
+                        "count": len(names),
+                        "files": names,
+                        "hint": "协调通道新消息待处理（下轮 run 自动注入，或 evolve-review 等入口可见）",
+                    },
                 )
                 # action_trace 审计（search_records 可跨会话检索，双通道保可见）
                 try:
                     engine._record_action(
-                        "interop.pending_notify", "new",
+                        "interop.pending_notify",
+                        "new",
                         f"协调通道新消息 {len(names)} 条: {', '.join(names)}",
                     )
                 except Exception:  # noqa: BLE001 — 审计失败 fail-open
@@ -666,7 +963,7 @@ def build_engine(settings: Settings) -> LoopEngine:
             except Exception:  # noqa: BLE001 — 审计事件失败 fail-open
                 logger.warning("interop.pending_notify 事件写入失败（fail-open）")
 
-        def _inbox_wakeup(names: list[str]) -> None:
+        def _inbox_wakeup(names: Sequence[str]) -> None:
             """INBOX_WAKEUP=1 时: 对默认/最近会话触发轻量 run 处理协调消息."""
             runner = getattr(engine, "runner", None)
             if runner is None or not getattr(runner, "enabled", False):
@@ -685,7 +982,8 @@ def build_engine(settings: Settings) -> LoopEngine:
             runner.start(sid, "协调通道有新消息待处理，请查收并处理（见本轮注入）")
 
         engine.inbox_watcher = InboxWatcher(
-            on_notify=_on_inbox_notify, wakeup_fn=_inbox_wakeup,
+            on_notify=_on_inbox_notify,
+            wakeup_fn=_inbox_wakeup,
         )
         engine.inbox_watcher.start()
     except Exception:  # noqa: BLE001 — 监视装配失败不影响核心链路
@@ -694,20 +992,26 @@ def build_engine(settings: Settings) -> LoopEngine:
 
     # 工作区管理（对齐 DSH Workspace）：注册表 + 旧会话迁移 + 引擎挂载当前工作区。
     # 默认工作区 = 启动 cwd（当前行为一致：工具/会话根=项目根，零回归）。
-    from llm_loop.workspace.store import WorkspaceStore
+    from llm_loop.workspace.store import WorkspaceMigrationConflictError, WorkspaceStore
 
     workspace_store = WorkspaceStore(settings.data_dir)
     default_ws = workspace_store.register(os.getcwd())  # 幂等注册
     try:
         workspace_store.migrate_legacy_sessions(settings.data_dir, default_ws)
-    except Exception:  # noqa: BLE001 — 迁移失败不影响启动（旧会话仍在原目录可读）
-        logger.warning("工作区旧会话迁移失败（fail-open），旧会话留在原目录", exc_info=True)
+    except WorkspaceMigrationConflictError:
+        logger.error(
+            "工作区旧会话迁移存在数据冲突，拒绝自动选择任一副本；请人工核对后再启动",
+            exc_info=True,
+        )
+        raise
+    except Exception:  # noqa: BLE001 — 非数据冲突的迁移异常仍保留启动兼容
+        logger.warning("工作区旧会话迁移失败（fail-open）；未完成文件保留在旧根", exc_info=True)
     # 首次装配（注册表无 current）→ 默认工作区设为 current 并持久化
     if workspace_store.get_current() is None:
         workspace_store.switch(default_ws.id)
     current_ws = workspace_store.get_current() or default_ws
-    engine.set_workspace(current_ws.path)
-    engine.workspace_store = workspace_store  # web 层切换工作区入口
+    engine.workspace_store = workspace_store  # 先挂注册表，set_workspace 可精确按path/id分区
+    engine.set_workspace(current_ws.path, current_ws.id)
 
     # R1: 上下文占用分解注入 architecture_status（AI 每轮可见，自主决策压缩/切换）
     status_provider.set_context_breakdown_fn(lambda: getattr(engine, "_last_breakdown", None))
@@ -715,14 +1019,35 @@ def build_engine(settings: Settings) -> LoopEngine:
     # cache_guard 回调透传 session_id（guard 窗口 per-session，grill-me Q11）；fail-open
     try:
         llm.ensure_guard()  # 预创建 guard——快照进程启动即可用（懒创建会让端点首请求前无数据）
-        status_provider.set_cache_health_fn(lambda: engine._cache_monitor.snapshot())
+
+        def _cache_health_with_window() -> dict | None:
+            """cache_health 快照 + 缓存窗口镜像（2026-08-24: cache.window 可观测）."""
+            snap = engine._cache_monitor.snapshot()
+            if snap is None:
+                return None
+            win = getattr(engine, "_last_cache_window", None)
+            if win is None:
+                return snap
+            snap = dict(snap)
+            snap["window"] = {
+                "summary": win.summary(),
+                "cached_tokens": win.cached_tokens,
+                "prompt_tokens": win.prompt_tokens,
+                "hit_ratio": round(win.hit_ratio, 4),
+                "boundary_chars": win.boundary_chars,
+                "boundary_msg_index": win.boundary_msg_index,
+                "cached_msgs": win.cached_msgs[-8:],  # 展示截断（完整见事件日志）
+                "new_msgs": win.new_msgs[-8:],
+            }
+            return snap
+
+        status_provider.set_cache_health_fn(_cache_health_with_window)
         status_provider.set_cache_guard_fn(
-            lambda sid: (
-                llm.guard.snapshot(session_id=sid) if llm.guard is not None else None
-            )
+            lambda sid: llm.guard.snapshot(session_id=sid) if llm.guard is not None else None
         )
     except Exception:  # noqa: BLE001 — 注入失败 fail-open（字段 None，不影响 engine）
         logger.warning("cache_health/cache_guard 可观测注入失败（fail-open）")
+
     # T3: 上下文占用率注入 runtime（memory_top_k 自适应消费；breakdown 不可用时走默认值零回归）
     def _context_usage_ratio() -> float:
         bd = getattr(engine, "_last_breakdown", None)
@@ -731,6 +1056,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         total = getattr(bd, "total_chars", 0) or 0
         cap = getattr(bd, "max_chars", 0) or 0
         return total / cap if cap > 0 else 0.0
+
     runtime.set_context_usage_fn(_context_usage_ratio)
     # T4（spec.md 5.3.1）: 待办聚合注入 architecture_status（AI 一站式感知系统待办）
     status_provider.set_pending_actions_fn(_build_pending_actions_fn(settings))
@@ -762,15 +1088,19 @@ def build_engine(settings: Settings) -> LoopEngine:
         enabled_fn=lambda: getattr(runtime, "precheck_enabled", False),
     )
     # FixLoopTool（动态开关：关闭时 execute 回执未启用）
-    registry.register(FixLoopTool(
-        registry=registry,
-        subagent_runner=subagent_runner,
-        error_locator=ErrorLocator(event_store=_event_store),
-        event_store=_event_store,
-        audit_dir=settings.audit_dir,
-        enabled_fn=lambda: getattr(runtime, "fix_loop_enabled", False),
-    ))
-    logger.info("task_quality 装配完成: precheck_layer + fix_loop 已注册（开关经 adjust_strategy 动态控制）")
+    registry.register(
+        FixLoopTool(
+            registry=registry,
+            subagent_runner=subagent_runner,
+            error_locator=ErrorLocator(event_store=_event_store),
+            event_store=_event_store,
+            audit_dir=settings.audit_dir,
+            enabled_fn=lambda: getattr(runtime, "fix_loop_enabled", False),
+        )
+    )
+    logger.info(
+        "task_quality 装配完成: precheck_layer + fix_loop 已注册（开关经 adjust_strategy 动态控制）"
+    )
     # EVO-20260814 P1-B: 工作流编排（parallel 聚合 / pipeline 串联，对齐 Harness 多 Agent 编排）
     workflow_tool = WorkflowRunTool(subagent_runner)
     registry.register(workflow_tool)
@@ -782,10 +1112,25 @@ def build_engine(settings: Settings) -> LoopEngine:
     # CODEARTS_ENABLED=false 或凭证缺失/校验失败 → 跳过装配 + 日志标注，主运行时零回归
     _assemble_codearts(settings, registry, session_store, engine, workflow_tool)
 
+    # 任务12（§5.12）: 启动时残留 run 巡检——超过 STALE_RUN_INSPECT_HOURS 无活跃的后台
+    # run 输出 WARN 清单供运维决策（压测残留清理入口 runner.stop）。fail-open 不阻断启动。
+    try:
+        runner = getattr(engine, "runner", None)
+        if runner is not None and getattr(runner, "enabled", False):
+            runner.inspect_stale_runs()
+    except Exception:  # noqa: BLE001 — 巡检失败不影响启动
+        logger.debug("启动残留 run 巡检失败（忽略）", exc_info=True)
+
     return engine
 
 
-def _assemble_codearts(settings: Settings, registry: ToolRegistry, session_store: Any, engine: Any, workflow_tool: Any = None) -> None:
+def _assemble_codearts(
+    settings: Settings,
+    registry: ToolRegistry,
+    session_store: Any,
+    engine: Any,
+    workflow_tool: Any = None,
+) -> None:
     """装配 CodeArts 子 Agent 调度集成（fail-open 全分支覆盖）.
 
     分支:
@@ -835,8 +1180,10 @@ def _assemble_codearts(settings: Settings, registry: ToolRegistry, session_store
             client, credential_provider, handle_registry, event_store, ca
         )
         result_collector = ResultCollector(
-            client, event_store,
-            result_max_bytes=ca.result_max_bytes, max_retries=ca.max_retries,
+            client,
+            event_store,
+            result_max_bytes=ca.result_max_bytes,
+            max_retries=ca.max_retries,
         )
         # 审批回调：CLI 交互模式注入 notify.confirm；Web/飞书/测试不注入 → fail-closed
         approval_callback = _build_codearts_approval_callback(settings)
@@ -1107,10 +1454,10 @@ def _sum_archive_stats(archive: Any) -> dict:
     total_count = 0
     total_chars = 0
     try:
-        for p in archive._dir.glob("*.jsonl"):  # noqa: SLF001
-            s = archive.stats(p.stem)
-            total_count += s["archived_count"]
-            total_chars += s["archived_chars"]
+        for sid in archive.session_ids():
+            stats = archive.stats(sid)
+            total_count += stats["archived_count"]
+            total_chars += stats["archived_chars"]
     except Exception:
         return {"archived_count": total_count, "archived_chars": total_chars}
     return {"archived_count": total_count, "archived_chars": total_chars}

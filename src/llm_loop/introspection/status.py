@@ -482,18 +482,20 @@ class ArchitectureStatusProvider:
 
     # ── 缓存快照辅助（fail-open）──
     def _cache_health_snapshot(self) -> dict | None:
-        if getattr(self, "_cache_health_fn", None) is None:
+        fn = self._cache_health_fn
+        if fn is None:
             return None
         try:
-            return self._cache_health_fn()
+            return fn()
         except Exception:  # noqa: BLE001 — 回调异常如实置 None
             return None
 
     def _cache_guard_snapshot(self, session_id: str) -> dict | None:
-        if getattr(self, "_cache_guard_fn", None) is None:
+        fn = self._cache_guard_fn
+        if fn is None:
             return None
         try:
-            return self._cache_guard_fn(session_id)
+            return fn(session_id)
         except Exception:  # noqa: BLE001 — 回调异常如实置 None
             return None
 
@@ -588,10 +590,7 @@ def _normalize_dimensions(dimensions, known: set[str]) -> list[str] | None:
         d = dimensions.strip()
         try:  # JSON 数组字符串（含残缺: json.loads 失败则退逗号拆分）
             parsed = json.loads(d)
-            if isinstance(parsed, list):
-                dimensions = parsed
-            else:
-                dimensions = [parsed]
+            dimensions = parsed if isinstance(parsed, list) else [parsed]
         except Exception:  # noqa: BLE001
             dimensions = re.split(r"[,\s]+", d)
     if not isinstance(dimensions, list):

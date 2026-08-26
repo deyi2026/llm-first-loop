@@ -137,6 +137,8 @@ class RecoveryChannel:
         target_write_fn: Callable[[bytes | str], None],
         target_exists_fn: Callable[[], bool],
         on_conflict: str = "abort",
+        expected_source_id: str | None = None,
+        expected_target_type: str | None = None,
     ) -> RecoveryResult:
         """从备份恢复数据到正式位置（design §2.3.2.2）.
 
@@ -147,6 +149,25 @@ class RecoveryChannel:
         archive = self._backup_store.get_archive(backup_id)
         if archive is None:
             return RecoveryResult(status="not_found", error=f"备份不存在: {backup_id}")
+
+        if expected_source_id is not None:
+            actual_source = BackupStore.sanitize_source_id(archive.source_id)
+            if actual_source != expected_source_id:
+                return RecoveryResult(
+                    status="corrupt",
+                    error=(
+                        "备份元数据与文件名不一致: "
+                        f"source_id={actual_source!r} expected={expected_source_id!r}"
+                    ),
+                )
+        if expected_target_type is not None and archive.target_type != expected_target_type:
+            return RecoveryResult(
+                status="corrupt",
+                error=(
+                    "备份元数据与文件名不一致: "
+                    f"target_type={archive.target_type!r} expected={expected_target_type!r}"
+                ),
+            )
 
         # 检查备份是否损坏（get_archive 已处理 JSON 解析，此处 payload 为空视为损坏）
         if not archive.payload:

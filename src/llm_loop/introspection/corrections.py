@@ -22,6 +22,7 @@ from llm_loop.introspection import (
     registry_evolution,
     registry_experience,
     registry_feishu,
+    registry_goal,
     registry_introspection,
     registry_model,
     registry_playwright,
@@ -35,6 +36,7 @@ _REGISTRIES = (
     registry_correction,
     registry_experience,
     registry_evolution,
+    registry_goal,
     registry_eval,
     registry_feishu,
     registry_skills,
@@ -105,6 +107,8 @@ class CorrectionToolRegistry:
         self._experience_store: Any | None = None
         self._recovery_channel: Any | None = None
         self._recovery_sessions_dir: str | Path | None = None
+        self._recovery_sessions_dir_fn: Callable[[], str | Path | None] | None = None
+        self._recovery_session_store: Any | None = None
         self._recovery_memory_dir: str | Path | None = None
         self._skills_dir: str | None = None  # B3: 插件化 Skill 目录（None=未注入零回归）
 
@@ -117,10 +121,17 @@ class CorrectionToolRegistry:
         "search_docs_fn": "_search_docs_fn",
         "experience_store": "_experience_store",
         "recovery_channel": "_recovery_channel",
-        "recovery_sessions_dir": "_recovery_sessions_dir",
+        "recovery_session_store": "_recovery_session_store",
         "recovery_memory_dir": "_recovery_memory_dir",
         "skills_dir": "_skills_dir",  # B3: 插件化 Skill 目录
     }
+
+    @property
+    def recovery_sessions_dir(self) -> str | Path | None:
+        """会话恢复正式根；正常装配时动态跟随当前SessionStore workspace分区。"""
+        if self._recovery_sessions_dir_fn is not None:
+            return self._recovery_sessions_dir_fn()
+        return self._recovery_sessions_dir
 
     def __getattr__(self, name: str) -> Any:
         priv = type(self)._PUBLIC_MAP.get(name)

@@ -81,12 +81,14 @@ def run_submit_evolution(
                 "（可能拼写错误），建议核对 eval_id 或先调用 self_evaluate 生成。"
             )
     requested_scope = str(args.get("scope", "global") or "global")
+    from llm_loop.introspection.tools_status import current_session_id
+
     suggestion = ctx.evolution_store.submit(
         content=content,
         evidence=evidence,
         impact_scope=str(args.get("impact_scope", "")),
         priority=str(args.get("priority", "medium")),
-        session_id=ctx.session_id,
+        session_id=current_session_id(ctx),
         eval_id=eval_id,
         scope=requested_scope,
     )

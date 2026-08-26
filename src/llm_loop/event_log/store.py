@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import threading
 import time
 import uuid
@@ -25,6 +26,15 @@ logger = logging.getLogger(__name__)
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _validate_session_id(session_id: str) -> str:
+    """事件日志会话ID必须是单个安全文件名组件。"""
+    if not isinstance(session_id, str) or not session_id:
+        raise ValueError("非法 session_id: 不能为空")
+    if session_id in {".", ".."} or "/" in session_id or "\\" in session_id or "\x00" in session_id:
+        raise ValueError("非法 session_id: 不得包含路径分隔符、NUL 或目录跳转")
+    return session_id
 
 
 class EventStore:
@@ -64,10 +74,12 @@ class EventStore:
 
     def _path(self, session_id: str) -> Path:
         """单文件形态路径（D1 既有）."""
+        session_id = _validate_session_id(session_id)
         return self._dir / f"{session_id}.jsonl"
 
     def _segment_dir(self, session_id: str) -> Path:
         """多段形态目录路径."""
+        session_id = _validate_session_id(session_id)
         return self._dir / session_id
 
     def _is_multi_segment(self, session_id: str) -> bool:
@@ -95,12 +107,12 @@ class EventStore:
 
     # ── P1-1: 会话级稳定锁（滚动+追加同锁，闭合审计 #9 竞态）──
     @contextmanager
-    def _session_flock(self, session_id: str):
-        """会话级稳定锁（`<sid>.lock` flock；fcntl 不可用回退进程内锁；锁失败告警降级）.
+    def _session_flock(self, session_id: str, *, strict: bool = False):
+        """会话级稳定锁；append锁失败可降级，物理删除要求strict互斥。
 
-        锁文件独立于事件文件——滚动会移动/新建事件文件（inode 变化），
-        文件锁无法跨越迁移边界提供互斥，稳定锁文件可以。
+        仅锁获取阶段处理OSError；yield体业务I/O异常必须原样传播，不能误标成锁故障。
         """
+        session_id = _validate_session_id(session_id)
         lock_path = self._dir / f"{session_id}.lock"
         try:
             import fcntl
@@ -110,17 +122,29 @@ class EventStore:
             with lock:
                 yield
             return
+
+        lock_file = None
         try:
-            with lock_path.open("a") as lf:
-                fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
-                try:
-                    yield
-                finally:
-                    fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+            lock_file = lock_path.open("a")
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
         except OSError as exc:
-            # 锁不可用降级（fail-open 保可用性，与 append 的写失败语义一致）
+            if lock_file is not None:
+                lock_file.close()
+            if strict:
+                raise
             logger.warning("事件日志会话锁不可用（降级无锁写入）: %s", exc)
             yield
+            return
+
+        try:
+            yield
+        finally:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                logger.warning("事件日志会话锁释放失败: %s", lock_path, exc_info=True)
+            finally:
+                lock_file.close()
 
     def check_rotate(self, session_id: str) -> None:
         """公开滚动检查（引擎 run 末钩子/运维入口）：完整检查不节流，fail-open 不抛."""
@@ -154,10 +178,14 @@ class EventStore:
             logger.warning("事件日志滚动检查失败（fail-open）: sid=%s", session_id, exc_info=True)
 
     def last_seq(self, session_id: str) -> int:
-        """会话内最大 seq（无事件返回 0）.
+        """会话内最大 seq（无事件/非法ID返回 0）.
 
         P1-7(2026-08-15, 性能): 原实现全文件扫描，改为各段尾部读取取大（O(1)）。
         """
+        try:
+            session_id = _validate_session_id(session_id)
+        except ValueError:
+            return 0
         if self._is_multi_segment(session_id):
             last = 0
             for p in self._all_segment_paths(session_id):
@@ -166,7 +194,27 @@ class EventStore:
         return self._tail_last_seq(self._path(session_id))
 
     def exists(self, session_id: str) -> bool:
+        try:
+            session_id = _validate_session_id(session_id)
+        except ValueError:
+            return False
         return self._path(session_id).exists() or self._is_multi_segment(session_id)
+
+    def delete_session(self, session_id: str) -> int:
+        """物理删除单会话全部事件数据；保留稳定锁文件，失败向上抛。"""
+        session_id = _validate_session_id(session_id)
+        removed = 0
+        with self._session_flock(session_id, strict=True):
+            single = self._path(session_id)
+            if single.exists():
+                single.unlink()
+                removed += 1
+            seg_dir = self._segment_dir(session_id)
+            if seg_dir.exists():
+                removed += sum(1 for p in seg_dir.rglob("*") if p.is_file())
+                shutil.rmtree(seg_dir)
+            self._rotate_checked_at.pop(session_id, None)
+        return removed
 
     def append(
         self,
@@ -185,6 +233,11 @@ class EventStore:
             已落盘事件；写入不可用/失败返回 None（调用方经日志感知，不抛穿主循环）。
         """
         if not self._enabled:
+            return None
+        try:
+            session_id = _validate_session_id(session_id)
+        except ValueError as exc:
+            logger.warning("事件日志拒绝非法 session_id: %s", exc)
             return None
         if not self._ensure_dir():
             return None
@@ -299,6 +352,11 @@ class EventStore:
         """
         if not self._enabled:
             return None
+        try:
+            session_id = _validate_session_id(session_id)
+        except ValueError as exc:
+            logger.warning("事件日志拒绝非法 session_id: %s", exc)
+            return None
         if not self._ensure_dir():
             return None
         # P1-1: 与 append 同一把会话级稳定锁（fork 复制目标可能是多段形态）
@@ -331,10 +389,15 @@ class EventStore:
         return new_event
 
     def read(self, session_id: str) -> list[Event]:
-        """读全部事件（按 seq 升序；损坏行如实跳过；文件不存在返回空列表）.
+        """读全部事件（按 seq 升序；损坏行如实跳过；文件不存在/非法ID返回空列表）.
 
         多段形态时跨段合并——按 segment_seq 递增依次读取各段事件，合并后按 seq 升序返回。
         """
+        try:
+            session_id = _validate_session_id(session_id)
+        except ValueError:
+            self.last_read_skipped = 0
+            return []
         # 多段形态：跨段合并
         if self._is_multi_segment(session_id):
             events: list[Event] = []

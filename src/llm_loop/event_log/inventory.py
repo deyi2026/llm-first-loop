@@ -104,7 +104,7 @@ def run_inventory(data_dir: str | Path) -> InventoryReport:
     if not archives_dir.is_dir():
         missing.append("archives")
     else:
-        files = sorted(archives_dir.glob("*.jsonl"))
+        files = sorted(archives_dir.rglob("*.jsonl"))
         entries = 0
         sample_fields: set[str] = set()
         for p in files:

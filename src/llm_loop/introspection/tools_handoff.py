@@ -111,7 +111,7 @@ def _memory_section(include: bool) -> str:
 
 
 def _next_steps(urgency: str, pressure: float) -> str:
-    """下一步建议（按紧急程度生成）."""
+    """下一步建议（按紧急程度生成；EVO-20260824-3cd4d74b: 恢复先验证外部状态再依赖）."""
     lines = [f"1. 紧急度: **{urgency}**（上下文压力 {pressure:.0%}）"]
     if pressure >= _PRESSURE_HIGH_THRESHOLD:
         lines.append("2. ⚠️ **必须立即交接**——继续追加消息将丢失早期上下文")
@@ -119,7 +119,9 @@ def _next_steps(urgency: str, pressure: float) -> str:
         lines.append("2. ⚠️ 建议交接——避免核心上下文被压缩")
     else:
         lines.append("2. 可继续当前会话（压力尚可）")
-    lines.append("3. 新会话读取 handoff.md 后，调用 `architecture_status` 验证状态")
+    lines.append("3. 新会话读取 handoff.md 后，先验证外部状态再依赖内容（RULE-AI-12）：")
+    lines.append("   ① `architecture_status` 验证引擎状态；② git status 核对 worktree 改动归属；")
+    lines.append("   ③ 关键文件 mtime 确认无意外变更；④ 演进建议状态（pending_review/accepted/executing）")
     lines.append("4. 继续未完成任务清单")
     return "\n".join(lines)
 

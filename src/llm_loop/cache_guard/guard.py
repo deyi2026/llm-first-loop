@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from llm_loop.llm.errors import LLMError
+
 logger = logging.getLogger(__name__)
 
 # ── 规则配置（初始保守——可调） ──
@@ -45,7 +47,31 @@ _HIT_RATE_BLOCK = float(os.environ.get("CACHE_GUARD_HIT_BLOCK", "0.30"))
 # （工具轮/前缀微变化）也应提示 AI（'命中低于预期——注意前缀稳定性'）；BLOCK 保持 0.30
 # （真异常才拦——防误伤工具轮正常场景）
 _HIT_RATE_WARN = float(os.environ.get("CACHE_GUARD_HIT_WARN", "0.85"))
+# 任务2（2026-08-25 §5.2）: WARN 阈值按会话规模自适应——小型会话正常命中率物理性
+# 低于大型稳定会话（前缀建立中），固定 0.85 会导致小会话持续误 WARN 刷屏（"WARN 阈值
+# 不敏感"问题）。自适应分段: tokens_in 越大 → 期望命中率越高 → 阈值越高。
+_ADAPTIVE_ENABLED = bool(int(os.environ.get("CACHE_GUARD_HIT_WARN_ADAPTIVE", "1")))
+_WARN_TIERS: list[list[float]] = json.loads(
+    os.environ.get(
+        "CACHE_GUARD_HIT_WARN_TIERS",
+        '[[30000,0.65],[80000,0.75],[200000,0.80]]',
+    )
+)
 _HIT_SAMPLE_MIN = int(os.environ.get("CACHE_GUARD_HIT_SAMPLE", "3"))
+
+
+def _adaptive_warn_threshold(tokens_in: int) -> float:
+    """按会话规模（最近一次 tokens_in）分段查表返回 WARN 阈值.
+
+    分段（默认）: <30K→0.65；30K≤x<80K→0.75；80K≤x<200K→0.80；≥200K 或
+    tier 耗尽→_HIT_RATE_WARN（0.85）。规模越大前缀越稳定 → 期望命中率越高。
+    """
+    thr = _HIT_RATE_WARN
+    for _tokens_thr, _warn in _WARN_TIERS:
+        if tokens_in < _tokens_thr:
+            thr = float(_warn)
+            break
+    return thr
 # 逃生（拷问③——2026-08-18）: 连续 BLOCK N 次后自动降级 WARN（防死锁——AI 不处理时
 # 不无限拦截；降级后 AI 可行动）
 _BLOCK_ESCAPE_MAX = int(os.environ.get("CACHE_GUARD_BLOCK_ESCAPE", "3"))
@@ -166,6 +192,9 @@ def _check_submit_ratio(messages: list[dict], meta: dict) -> GuardDecision | Non
     DSH checkpoint rejection 语义的完整版：发送前检查"前缀可持久性"——
     占比 >95% 预算 → BLOCK（先压缩 checkpoint / 换会话——再发）；
     >85% → WARN（提示接近超限——AI 决策提前处理）。
+    P0 压缩风暴熔断协调（2026-08-25）: breaker 冻结期（breaker_active）程序压缩
+    已冻结，超限载荷由 engine 前置 context_pressure 管控（安全水位 = 0.95 与
+    本规则 BLOCK 阈值对齐）——此处 BLOCK 降级 WARN，避免"禁压缩 + 禁提交"双拦死锁。
     """
     budget = int(meta.get("history_budget") or 0)
     if budget <= 0:
@@ -173,6 +202,29 @@ def _check_submit_ratio(messages: list[dict], meta: dict) -> GuardDecision | Non
     total_chars = sum(len(str(m.get("content") or "")) for m in messages)
     ratio = total_chars / budget
     if ratio > _SUBMIT_RATIO_BLOCK:
+        # 任务3（§5.9）: breaker_active=None（传递丢失）——无法确认冻结期状态，
+        # 保守降级 WARN（防"禁压缩 + 禁提交"双拦死锁：宁可放行让 breaker 的
+        # context_pressure 前置管控，也不在传递链断裂时双重拦截）。
+        if meta.get("breaker_active") is None:
+            return GuardDecision(
+                verdict="WARN",
+                rule="submit_ratio_breaker_missing",
+                detail=(
+                    f"提交 {total_chars:,} 字符 = 预算 {budget:,} 的 {ratio*100:.0f}%"
+                    "（>95%——但 breaker_active 标志传递丢失（None），无法确认熔断冻结期；"
+                    "降级 WARN 防双拦死锁，超限载荷由前置 context_pressure 管控）"
+                ),
+            )
+        if meta.get("breaker_active"):
+            return GuardDecision(
+                verdict="WARN",
+                rule="submit_ratio_breaker",
+                detail=(
+                    f"提交 {total_chars:,} 字符 = 预算 {budget:,} 的 {ratio*100:.0f}%"
+                    "（>95%——但压缩风暴熔断冻结期，压缩已由 breaker 冻结；超限载荷"
+                    "由前置 context_pressure 管控，本条降级 WARN 防双拦死锁）"
+                ),
+            )
         return GuardDecision(
             verdict="BLOCK",
             rule="submit_ratio",
@@ -284,7 +336,7 @@ def validate_request(
     return decision
 
 
-class CacheGuardBlockedError(Exception):
+class CacheGuardBlockedError(LLMError):
     """cache_guard BLOCK 专用异常（拷问⑥——2026-08-18）: 与普通 LLM 错误区分——
 
     engine 直接如实反馈 AI（不重试/不走 overflow reinject——重试同样被拦=浪费循环）.
@@ -303,9 +355,11 @@ class PromptGuard:
         self._baselines: dict[str, str] = {}  # session_id → system fp
         self.audit_file = audit_file
         # 规则 G: 会话级命中率窗口（近 N 次请求的 hit/in——响应回馈）
-        self._hit_win: dict[str, list[tuple[int, int]]] = {}  # session → [(in, hit)...]
+        self._hit_win: dict[str, list[tuple[int, int, float]]] = {}  # session → [(in, hit, ts)...]
         # 逃生（拷问③）: 每会话连续 BLOCK 计数——达上限自动降级 WARN
         self._block_streak: dict[str, int] = {}
+        # provider client 可跨多个模型复用；模型游标必须按 session 隔离。
+        self._last_model_by_session: dict[str, str] = {}
 
     def reset_session(self, session_id: str) -> None:
         """重置会话状态（拷问②——模型切换/换会话时调用）——清窗口/基线/逃生计数. """
@@ -313,6 +367,7 @@ class PromptGuard:
             self._hit_win.pop(session_id, None)
             self._baselines.pop(session_id, None)
             self._block_streak.pop(session_id, None)
+            self._last_model_by_session.pop(session_id, None)
         except Exception:  # noqa: BLE001
             pass
 
@@ -402,6 +457,19 @@ class PromptGuard:
             logger.debug("guard snapshot 异常（fail-open）")
             return {}
 
+    def _get_warn_threshold(self, session_id: str) -> float:
+        """任务2（§5.2）: 按会话规模取 WARN 阈值——启用自适应时查分段表，
+        禁用 / 窗口不可用时回退固定 _HIT_RATE_WARN（零回归）."""
+        try:
+            if not _ADAPTIVE_ENABLED:
+                return _HIT_RATE_WARN
+            win = self._hit_win.get(session_id) or []
+            if not win:
+                return _HIT_RATE_WARN
+            return _adaptive_warn_threshold(int(win[-1][0]))
+        except Exception:  # noqa: BLE001 — fail-open
+            return _HIT_RATE_WARN
+
     def _check_hit_rate(
         self, session_id: str, compress_count: int = 0, provider: str = ""
     ) -> GuardDecision | None:
@@ -452,15 +520,29 @@ class PromptGuard:
                         f"（{provider or 'provider'} 侧缓存已过期，属预期；短间隔请求将恢复命中）"
                     ),
                 )
-            if prefix_stable or compress_count > 0:
+            if compress_count > 0:
+                # P0 修复（2026-08-25 实测 MiniMax/DeepSeek）: 压缩轮低命中 = 前缀物理
+                # 断（折叠/归档改写历史，设计内，EVO-20260824 渐进折叠承认的代价）——
+                # BLOCK 会阻止压缩轮提交 → 缓存永远无法回温 → 会话死锁（实测 guard G
+                # 连续 BLOCK，会话零进展）。降级 WARN（与 TTL 过期同语义：预期 miss），
+                # 提交成功即回温；压缩后持续低命中才属异常（前缀漂移/风暴——breaker 管）。
+                return GuardDecision(
+                    verdict="WARN",
+                    rule="low_hit_rate_compressing",
+                    detail=(
+                        f"该会话近期命中率 {rate*100:.0f}%（<{_HIT_RATE_BLOCK*100:.0f}%"
+                        "——本轮为压缩轮，历史被改写、命中低属预期——提交成功即回温；"
+                        "压缩轮后持续低命中再排查前缀漂移/风暴）"
+                    ),
+                )
+            if prefix_stable:
                 return GuardDecision(
                     verdict="BLOCK",
                     rule="low_hit_rate",
                     detail=(
                         f"该会话近期命中率 {rate*100:.0f}%（<{_HIT_RATE_BLOCK*100:.0f}%——"
-                        "前缀稳定（最近两次 in 相近）却持续低命中——前缀漂移/压缩风暴"
-                        + ("；本轮为压缩轮（in 骤降不计冷启动）" if compress_count > 0 else "")
-                        + "）。建议：先压缩 checkpoint / 换新会话 / 排查前缀漂移——再发"
+                        "前缀稳定（最近两次 in 相近）却持续低命中——前缀漂移/压缩风暴）。"
+                        "建议：先压缩 checkpoint / 换新会话 / 排查前缀漂移——再发"
                     ),
                 )
             # 冷启动（前缀在构建——in 递增）——预期低——不拦（仅 WARN 知悉）
@@ -472,11 +554,17 @@ class PromptGuard:
                     "前缀稳定后将回升；若持续请排查）"
                 ),
             )
-        if rate < _HIT_RATE_WARN:
+        # 任务2（§5.2）: WARN 阈值按会话规模自适应（BLOCK 阈值不参与自适应）
+        _warn_thr = self._get_warn_threshold(session_id)
+        if rate < _warn_thr:
+            _last_in = win[-1][0] if win else 0
             return GuardDecision(
                 verdict="WARN",
                 rule="low_hit_rate",
-                detail=f"该会话近期命中率 {rate*100:.0f}%（<{_HIT_RATE_WARN*100:.0f}%——注意前缀稳定性）",
+                detail=(
+                    f"该会话近期命中率 {rate*100:.0f}%（<{_warn_thr*100:.0f}%——"
+                    f"自适应阈值，当前 tokens_in≈{_last_in}）"
+                ),
             )
         return None
 
@@ -489,9 +577,18 @@ class PromptGuard:
         tools: list[dict] | None = None,
         run_round: int | None = None,
         compress_count_this_run: int = 0,
+        history_budget: int = 0,
         provider: str = "",
         model: str = "",
+        breaker_active: bool | None = None,  # P0（2026-08-25）: 压缩风暴熔断冻结期标志
+        # 任务3（§5.9）: None=engine 未传递该标志（传递丢失）——不同于 False（非冻结期
+        # 正常传递）。None 时规则 F 降级 WARN（防"禁压缩+禁提交"双拦死锁）。
     ) -> GuardDecision:
+        previous_model = self._last_model_by_session.get(session_id)
+        if model and previous_model and previous_model != model:
+            self.reset_session(session_id)
+        if model:
+            self._last_model_by_session[session_id] = model
         baseline = self._baselines.get(session_id)
         decision = validate_request(
             system_text=system_text,
@@ -505,7 +602,9 @@ class PromptGuard:
                 "model": model,
                 "run_round": run_round,
                 "tools": tools or [],
+                "breaker_active": breaker_active,
                 "compress_count_this_run": compress_count_this_run,
+                "history_budget": history_budget,
             },
             audit_file=self.audit_file,
         )
@@ -520,9 +619,21 @@ class PromptGuard:
                 hit_d.verdict == "BLOCK"
                 or (hit_d.verdict == "WARN" and decision.verdict == "ALLOW")
             ):
-                # 逃生（拷问③）: 连续 BLOCK 达上限 → 降级 WARN（防死锁——AI 不处理时
-                # 不无限拦截——AI 可行动（压缩/换会话）后重试）
-                if hit_d.verdict == "BLOCK":
+                # P0 压缩风暴熔断协调（2026-08-25）: breaker 冻结/恢复期低命中属
+                # 风暴后遗症（恢复需提交成功才能回温）——BLOCK 降级 WARN，防与
+                # breaker 的 context_pressure/逃生轮互锁（双拦死锁）。
+                if hit_d.verdict == "BLOCK" and breaker_active:
+                    hit_d = GuardDecision(
+                        verdict="WARN",
+                        rule="low_hit_rate_breaker",
+                        detail=(
+                            "压缩风暴熔断期低命中 BLOCK 降级 WARN（breaker 管控恢复，"
+                            "提交成功才能回温前缀——不再重复拦截）"
+                        ),
+                    )
+                elif hit_d.verdict == "BLOCK":
+                    # 逃生（拷问③）: 连续 BLOCK 达上限 → 降级 WARN（防死锁——AI 不处理时
+                    # 不无限拦截——AI 可行动（压缩/换会话）后重试）
                     streak = self._block_streak.get(session_id, 0) + 1
                     self._block_streak[session_id] = streak
                     if streak > _BLOCK_ESCAPE_MAX:

@@ -26,6 +26,7 @@ from llm_loop.cache_guard.guard import (
     PromptGuard,  # EVO-20260818: 顶层 import（guard 无内部依赖，无循环）——guard property 类型标注
 )
 from llm_loop.core.message import ToolCall
+from llm_loop.core.run_context import current_reasoning_effort
 from llm_loop.llm.errors import (
     LLMEmptyResponseError,
     LLMError,
@@ -68,6 +69,20 @@ class StreamDelta:
     tool_round: ToolRoundInfo | None = None
 
 
+@dataclass(frozen=True)
+class GuardRequestContext:
+    """单次 LLM 请求的 cache_guard 元数据；不可变且绝不存放在共享 client 状态。"""
+
+    session_id: str = ""
+    system_text: str | None = None
+    compress_count_this_run: int = 0
+    history_budget: int = 0
+    run_round: int | None = None
+    provider: str = ""
+    model: str = ""
+    breaker_active: bool = False  # P0（2026-08-25）: 压缩风暴熔断冻结期（规则 F 降级协调）
+
+
 @dataclass
 class _StreamAcc:
     """协议无关的流式聚合状态."""
@@ -81,30 +96,93 @@ class _StreamAcc:
     prompt_cache_hit_tokens: int = 0
 
 
+_THINK_OPEN = "<think>"
+_THINK_CLOSE = "</think>"
+
+
+@dataclass
+class _ThinkTagStreamParser:
+    """请求局部的 `<think>` 增量状态机，支持标签跨任意 SSE delta 分片."""
+
+    buffer: str = ""
+    in_think: bool = False
+
+    @staticmethod
+    def _partial_marker_suffix(text: str, marker: str) -> int:
+        """返回 text 尾部与 marker 前缀重合长度，完整 marker 留给 find 处理."""
+        for size in range(min(len(text), len(marker) - 1), 0, -1):
+            if marker.startswith(text[-size:]):
+                return size
+        return 0
+
+    def feed(self, content: str) -> list[tuple[str, str]]:
+        self.buffer += content
+        out: list[tuple[str, str]] = []
+        while self.buffer:
+            marker = _THINK_CLOSE if self.in_think else _THINK_OPEN
+            kind = "reasoning" if self.in_think else "content"
+            idx = self.buffer.find(marker)
+            if idx >= 0:
+                before = self.buffer[:idx]
+                self.buffer = self.buffer[idx + len(marker):]
+                if before:
+                    out.append((kind, before))
+                self.in_think = not self.in_think
+                continue
+
+            keep = self._partial_marker_suffix(self.buffer, marker)
+            safe_end = len(self.buffer) - keep
+            if safe_end > 0:
+                out.append((kind, self.buffer[:safe_end]))
+            self.buffer = self.buffer[safe_end:]
+            break
+        return out
+
+    def flush(self) -> list[tuple[str, str]]:
+        """正常流结束时排空残片并重置；状态绝不跨请求存活."""
+        text = self.buffer
+        kind = "reasoning" if self.in_think else "content"
+        self.buffer = ""
+        self.in_think = False
+        return [(kind, text)] if text else []
+
+
 def _finish_response(
     acc: _StreamAcc,
     agg: ToolCallDeltaAggregator,
     provider: str,
-    client: LLMClient | None = None,  # EVO-20260818: 修复基线 bug——模块级函数原引用
-    # 不存在的 self → record_result 回馈从未生效（NameError 被吞 → 规则 G 窗口恒空）
+    client: LLMClient | None = None,
+    guard_context: GuardRequestContext | None = None,
 ) -> LLMResponse:
     raw_calls = agg.finish()
     tool_calls: list[ToolCall] = [
         ToolCall(id=c["id"], name=c["name"], arguments=c["arguments"]) for c in raw_calls
     ]
-    # 2026-08-18 cache_guard 规则 G: 响应后回馈命中（闭环——guard 跟踪会话命中率）
+    # cache_guard 规则 G 回馈必须使用本请求快照，不能在长 stream 结束时再读取
+    # provider 级共享 client.guard_session_id（跨会话并发会串台）。无显式上下文时
+    # 仅为旧直接调用方保留 legacy 字段回退。
     try:
-        _pg = getattr(client, "_pg", None) if client is not None else None
-        if _pg is not None and client.guard_session_id:
-            _pg.record_result(
-                client.guard_session_id,
-                acc.prompt_tokens,
-                acc.prompt_cache_hit_tokens,
-                provider=client.provider,
-                model=client.model,
-            )
-    except Exception:  # noqa: BLE001
-        pass
+        if client is not None:
+            _pg = getattr(client, "_pg", None)
+            _sid = (guard_context.session_id if guard_context is not None else client.guard_session_id)
+            if _pg is not None and _sid:
+                _pg.record_result(
+                    _sid,
+                    acc.prompt_tokens,
+                    acc.prompt_cache_hit_tokens,
+                    provider=(
+                        guard_context.provider
+                        if guard_context is not None and guard_context.provider
+                        else client.provider
+                    ),
+                    model=(
+                        guard_context.model
+                        if guard_context is not None and guard_context.model
+                        else client.model
+                    ),
+                )
+    except Exception:  # noqa: BLE001 — cache telemetry fail-open，不影响主响应
+        logger.debug("cache guard response feedback failed (fail-open)", exc_info=True)
     return LLMResponse(
         content="".join(acc.content_parts) or None,
         tool_calls=tool_calls,
@@ -144,18 +222,14 @@ class LLMClient:
     thinking_supported: bool | None = None
     # 2026-08-18 cache_guard（MCP 出入口）: 请求前规则校验开关（默认开；CACHE_GUARD=0 关闭）
     guard_enabled: bool = True
-    # guard 校验的 system 文本（engine 传入——含动态段；None 时用 messages[0] 兜底）
+    # legacy guard 字段：仅兼容直接调用方。主 engine 使用 GuardRequestContext，
+    # 不再把 per-request 元数据写进 provider 级共享 LLMClient。
     guard_system: str | None = None
-    # 会话上下文（engine 透传——会话级基线/压缩计数/预算）
     guard_session_id: str = ""
     guard_compress_count: int = 0
     guard_history_budget: int = 0
     # 模型切换检测（拷问②）: 记录上次模型——切换时重置 guard 窗口（防旧模型低命中误拦）
     guard_last_model: str = ""
-    # M3 适配（2026-08-18）: <think> 标签流式剥离状态（跨 delta 累积）
-    _think_buf: str = ""
-    _in_think: bool = False
-
     def __post_init__(self) -> None:
         # 2026-08-20 (Sub2API Grok 兼容): Connection: close 关闭连接复用——
         # 复用的 httpx 连接池对 ai.mxnook.com 网关的 keepalive 不兼容（流式请求挂起/HTTP 400）；
@@ -164,12 +238,25 @@ class LLMClient:
         #   Connection: close 与 LM Studio 本地 SSE 冲突——实测连续请求交替 200/400
         #   （LM Studio 判定客户端提前断开，server 日志 "Client disconnected. Stopping generation"）。
         #   本地 provider（localhost/127.0.0.1）豁免该头；远程 provider 保留原行为（零回归）。
+        # 2026-08-24 本地直连忽略系统代理（根因修复）: httpx 默认 trust_env=True 经 urllib
+        # 读取 macOS 系统代理（Surge 等代理工具把 127.0.0.1:6152 设为系统代理）→ 回环 LLM
+        # 请求被转给代理 → Surge 无法代理自身回环 → 503 Connection Closed（SGErrorDomain）
+        # → 表现即"本地模型出错"。本地推理必须直连（llama-server KV 前缀缓存依赖同 slot
+        # 直连; 见 EXPERIENCE-local-model-config）；远程 provider 保持默认（需代理访问
+        # API 的场景零回归）。env LLM_TRUST_ENV 显式覆盖（1=启用系统代理, 0=禁用）。
         base = (self.base_url or "").lower()
-        if any(h in base for h in ("localhost", "127.0.0.1", "0.0.0.0")):
+        _is_local_base = any(h in base for h in ("localhost", "127.0.0.1", "0.0.0.0"))
+        self._is_local_base = _is_local_base  # 2026-08-24: 供 _stream_openai 判本地关 thinking
+        if _is_local_base:
             headers: dict[str, str] = {}
         else:
             headers = {"Connection": "close"}
-        self._client = httpx.Client(timeout=self.timeout_s, headers=headers)
+        _trust_override = os.environ.get("LLM_TRUST_ENV")
+        if _trust_override is not None:
+            trust_env = _trust_override.strip().lower() in ("1", "true", "yes", "on")
+        else:
+            trust_env = not _is_local_base
+        self._client = httpx.Client(timeout=self.timeout_s, headers=headers, trust_env=trust_env)
 
     def _thinking_supported(self) -> bool:
         """思考参数发送判定（M20 CFG-03 + M47 §5.5）.
@@ -214,33 +301,48 @@ class LLMClient:
         *,
         timeout_s: float | None = None,  # PARAM-01: 每次调用可覆盖超时（None 用构造值）
         model: str | None = None,  # WEB: 每次调用可覆盖模型（None 用构造值，供 Web 模型切换）
+        guard_context: GuardRequestContext | None = None,
     ) -> Iterator[StreamDelta]:
         """流式请求，逐 content delta yield；generator 结束返回完整 LLMResponse.
 
         异常按类型抛出 LLMError 子类，由循环如实反馈。
         """
         protocol = self.wire_protocol
-        # 2026-08-18 cache_guard（MCP 出入口——唯一出入口）: 发送前规则校验（fail-open）
+        actual_model = self.model if model is None else model
+        # 每请求 guard 快照：显式上下文优先；legacy 直接调用仍从兼容字段构造一次
+        # 局部快照，后续整个流（含终态 telemetry）都不再读取共享 per-request 字段。
+        _guard_ctx = guard_context or GuardRequestContext(
+            session_id=self.guard_session_id or "__global__",
+            system_text=(
+                self.guard_system
+                if self.guard_system is not None
+                else (
+                    messages[0].get("content", "")
+                    if messages and messages[0].get("role") == "system"
+                    else ""
+                )
+            ),
+            compress_count_this_run=self.guard_compress_count,
+            history_budget=self.guard_history_budget,
+            provider=self.provider,
+            model=actual_model,
+        )
+        # cache_guard（MCP 出入口——唯一出入口）: 发送前规则校验（fail-open）
         self._guard_start_ts = 0
         if self.guard_enabled:
             try:
-                _sys = self.guard_system if self.guard_system is not None else (
-                    messages[0].get("content", "") if messages and messages[0].get("role") == "system" else ""
-                )
                 _guard = self.ensure_guard()
-                # 模型切换 → 重置窗口（不同模型前缀不同——旧窗口命中率无意义）
-                if self.guard_last_model and self.guard_last_model != self.model:
-                    _guard.reset_session(self.guard_session_id or "__global__")
-                self.guard_last_model = self.model
                 _d = _guard.check(
-                    session_id=self.guard_session_id or "__global__",
-                    system_text=_sys,
+                    session_id=_guard_ctx.session_id or "__global__",
+                    system_text=_guard_ctx.system_text or "",
                     messages=messages,
                     tools=tools,
-                    compress_count_this_run=self.guard_compress_count,
-                    # EVO-20260818（spec §4.3-2）: 审计真实 provider/model（消除硬编码）
-                    provider=self.provider,
-                    model=self.model,
+                    run_round=_guard_ctx.run_round,
+                    compress_count_this_run=_guard_ctx.compress_count_this_run,
+                    history_budget=_guard_ctx.history_budget,
+                    provider=_guard_ctx.provider or self.provider,
+                    model=_guard_ctx.model or actual_model,
+                    breaker_active=_guard_ctx.breaker_active,
                 )
                 if _d.rule == "submit_ratio" and _d.verdict == "WARN":
                     # 规则 F WARN 升级：注入提示（AI 可见——接近超限提前处理）
@@ -258,13 +360,19 @@ class LLMClient:
         # 注意：Python 3.11+ 裸 `yield from` 会丢弃子生成器 return 值（StopIteration.value=None），
         # 必须显式捕获后 return 才能把终态 LLMResponse 传给消费者（engine 经 StopIteration.value 取终态）。
         if protocol == "anthropic":
-            result = yield from self._stream_anthropic(messages, tools, timeout_s=timeout_s, model=model)
+            result = yield from self._stream_anthropic(
+                messages, tools, timeout_s=timeout_s, model=model, guard_context=_guard_ctx
+            )
         elif protocol == "google":
-            result = yield from self._stream_google(messages, tools, timeout_s=timeout_s, model=model)
+            result = yield from self._stream_google(
+                messages, tools, timeout_s=timeout_s, model=model, guard_context=_guard_ctx
+            )
         elif protocol == "lms-chat":
             result = yield from self._stream_lms_chat(messages, tools, timeout_s=timeout_s, model=model)
         else:
-            result = yield from self._stream_openai(messages, tools, timeout_s=timeout_s, model=model)
+            result = yield from self._stream_openai(
+                messages, tools, timeout_s=timeout_s, model=model, guard_context=_guard_ctx
+            )
         # EVO-20260818-92bd97d6: 空响应兜底——流正常结束但无任何内容/工具调用
         # 视为异常（流被截断/模型异常），抛异常走如实反馈，不再静默记为 content=(空)
         if result is not None and not result.content and not result.tool_calls:
@@ -282,6 +390,7 @@ class LLMClient:
         *,
         timeout_s: float | None,
         model: str | None,
+        guard_context: GuardRequestContext | None = None,
     ) -> Iterator[StreamDelta]:
         url = f"{self.base_url.rstrip('/')}/chat/completions"
         payload: dict[str, Any] = {
@@ -310,9 +419,13 @@ class LLMClient:
         # P1-FEISHU: 本地 provider (LM Studio) 不发 OpenAI 的 `thinking` 字段
         if self.thinking_mode and self._thinking_supported() and self.api_key:
             payload["thinking"] = {"type": "enabled"}
-            payload["reasoning_effort"] = self.reasoning_effort
-        # P1-FEISHU: 本地 provider（api_key 为空）显式关闭 thinking
-        if not self.api_key:
+            payload["reasoning_effort"] = current_reasoning_effort.get() or self.reasoning_effort
+        # 2026-08-24 本地 thinking 开关（SWE 对照实验定论, 见 docs/swe_ab_report.md）:
+        # A 臂（关思考, 4 次独立尝试）0/4 通过 F2P, 全漏第二修复点; B 臂（开思考）通过。
+        # → 本地默认【开启】thinking（能力优先）; env LOCAL_ENABLE_THINKING=0 显式关闭
+        # （纯速度场景, 如交互闲聊）。llama.cpp qwen 模板默认思考开启, OpenAI 协议
+        # thinking 字段不被尊重, 故用 chat_template_kwargs 显式控制。
+        if getattr(self, "_is_local_base", False) and os.environ.get("LOCAL_ENABLE_THINKING", "1") == "0":
             payload["chat_template_kwargs"] = {"enable_thinking": False}
         # 本地 provider（api_key 为空）不发 Authorization 头
         headers: dict[str, str] = {"Content-Type": "application/json"}
@@ -321,8 +434,22 @@ class LLMClient:
 
         acc = _StreamAcc()
         agg = ToolCallDeltaAggregator()
+        effective_timeout = timeout_s if timeout_s is not None else self.timeout_s
+        # EVO-20260824: 大上下文流式断连重试（默认 1 次，env LLM_RETRY_DISCONNECT 可调/关）——
+        # 观测: 150K+ 字符上下文下 deepseek 流式偶发 peer closed connection
+        # （incomplete chunked read），同请求重试因前缀缓存命中率高、代价极低；
+        # 仅在「尚无任何输出已产出」时重试（已有 content/reasoning/tool delta
+        # 产出则重试会造成 UI 重复/工具重复执行，故不重试）。
         try:
-            effective_timeout = timeout_s if timeout_s is not None else self.timeout_s
+            _retry_disconnect = int(os.environ.get("LLM_RETRY_DISCONNECT", "1"))
+        except ValueError:  # 非法 env 兜底 1
+            _retry_disconnect = 1
+        _tc_seen = False
+
+        def _openai_stream_once() -> Iterator[StreamDelta]:
+            """单次流式请求（yield delta；传输异常向上抛，由外层重试判定）."""
+            nonlocal _tc_seen
+            think_parser = _ThinkTagStreamParser()
             with self._client.stream(
                 "POST", url, json=payload, headers=headers, timeout=effective_timeout
             ) as resp:
@@ -364,47 +491,21 @@ class LLMClient:
                     delta = choice.get("delta") or {}
                     content = delta.get("content")
                     if content:
-                        # 2026-08-18 MiniMax-M3 适配（场景 B）: M3 把思考链放 content 的
-                        # <think>...</think> 标签（reasoning_content 字段为空）——流式剥离到 reasoning
-                        self._think_buf = getattr(self, "_think_buf", "") + content
-                        _in_think = getattr(self, "_in_think", False)
-                        while True:
-                            if not _in_think:
-                                idx = self._think_buf.find("<think>")
-                                if idx == -1:
-                                    normal = self._think_buf
-                                    self._think_buf = ""
-                                    if normal:
-                                        acc.content_parts.append(normal)
-                                        yield StreamDelta(text=normal)
-                                    break
-                                normal = self._think_buf[:idx]
-                                self._think_buf = self._think_buf[idx:]
-                                if normal:
-                                    acc.content_parts.append(normal)
-                                    yield StreamDelta(text=normal)
-                                _in_think = True
+                        # MiniMax-M3 等 provider 可能把思考链放 content 的 <think> 标签；
+                        # parser 必须请求局部且保留潜在 marker 前缀，避免分片泄漏/跨会话污染。
+                        for kind, text in think_parser.feed(content):
+                            if kind == "reasoning":
+                                acc.reasoning_parts.append(text)
+                                yield StreamDelta(text="", reasoning=text)
                             else:
-                                end = self._think_buf.find("</think>")
-                                if end == -1:
-                                    think = self._think_buf
-                                    self._think_buf = ""
-                                    if think:
-                                        acc.reasoning_parts.append(think)
-                                        yield StreamDelta(text="", reasoning=think)
-                                    break
-                                think = self._think_buf[:end]
-                                self._think_buf = self._think_buf[end + len("</think>"):]
-                                _in_think = False
-                                if think:
-                                    acc.reasoning_parts.append(think)
-                                    yield StreamDelta(text="", reasoning=think)
-                        self._in_think = _in_think
+                                acc.content_parts.append(text)
+                                yield StreamDelta(text=text)
                     rc = delta.get("reasoning_content")
                     if rc:
                         acc.reasoning_parts.append(rc)
                         yield StreamDelta(text="", reasoning=rc)
                     if delta.get("tool_calls"):
+                        _tc_seen = True
                         for tc in delta["tool_calls"]:
                             agg.add_delta(tc)
                     fr = choice.get("finish_reason")
@@ -412,15 +513,36 @@ class LLMClient:
                         acc.finish_reason = fr
                     if acc.finish_reason == "length":
                         acc.truncated = True
-        except httpx.TimeoutException as exc:
-            raise LLMTimeoutError(f"LLM 请求超时（{effective_timeout}s）") from exc
-        except httpx.NetworkError as exc:
-            raise LLMNetworkError(f"LLM 网络不可达: {exc}") from exc
-        except LLMHTTPError:
-            raise
-        except httpx.HTTPError as exc:
-            raise LLMNetworkError(f"LLM HTTP 异常: {exc}") from exc
-        return _finish_response(acc, agg, self.provider, client=self)
+                for kind, text in think_parser.flush():
+                    if kind == "reasoning":
+                        acc.reasoning_parts.append(text)
+                        yield StreamDelta(text="", reasoning=text)
+                    else:
+                        acc.content_parts.append(text)
+                        yield StreamDelta(text=text)
+        _attempt = 0
+        while True:
+            _attempt += 1
+            try:
+                yield from _openai_stream_once()
+                break  # 流完整结束（含 [DONE]）
+            except httpx.TimeoutException as exc:
+                raise LLMTimeoutError(f"LLM 请求超时（{effective_timeout}s）") from exc
+            except (httpx.NetworkError, httpx.ProtocolError) as exc:
+                # 传输级断连（peer closed / 连接重置 / 协议中断）→ 无输出已产出时重试一次
+                _output_seen = bool(acc.content_parts or acc.reasoning_parts) or _tc_seen
+                if _attempt <= _retry_disconnect and not _output_seen:
+                    logger.warning(
+                        "LLM 流式传输中断（尚无输出已产出），重试 %d/%d: %s",
+                        _attempt, _retry_disconnect, exc,
+                    )
+                    continue
+                raise LLMNetworkError(f"LLM 网络不可达: {exc}") from exc
+            except LLMHTTPError:
+                raise
+            except httpx.HTTPError as exc:
+                raise LLMNetworkError(f"LLM HTTP 异常: {exc}") from exc
+        return _finish_response(acc, agg, self.provider, client=self, guard_context=guard_context)
 
     # ── Anthropic Messages API（wire_protocol=anthropic，P3-5） ──
     def _anthropic_cache_enabled(self) -> bool:
@@ -440,6 +562,7 @@ class LLMClient:
         *,
         timeout_s: float | None,
         model: str | None,
+        guard_context: GuardRequestContext | None = None,
     ) -> Iterator[StreamDelta]:
         # EVO-20260817: base_url 已含 /v1 时（如 LM Studio http://localhost:1234/v1）
         # 避免拼出 /v1/v1/messages 404——归一化后两种配置均正确，官方 API 零回归
@@ -556,7 +679,7 @@ class LLMClient:
             raise
         except httpx.HTTPError as exc:
             raise LLMNetworkError(f"LLM HTTP 异常: {exc}") from exc
-        return _finish_response(acc, agg, self.provider, client=self)
+        return _finish_response(acc, agg, self.provider, client=self, guard_context=guard_context)
 
     # ── Google Gemini API（wire_protocol=google，P3-5） ──
     def _stream_google(
@@ -566,6 +689,7 @@ class LLMClient:
         *,
         timeout_s: float | None,
         model: str | None,
+        guard_context: GuardRequestContext | None = None,
     ) -> Iterator[StreamDelta]:
         model_id = self.model if model is None else model
         url = (
@@ -645,7 +769,7 @@ class LLMClient:
             raise
         except httpx.HTTPError as exc:
             raise LLMNetworkError(f"LLM HTTP 异常: {exc}") from exc
-        return _finish_response(acc, agg, self.provider, client=self)
+        return _finish_response(acc, agg, self.provider, client=self, guard_context=guard_context)
 
     # ── LM Studio /api/v1/chat（wire_protocol=lms-chat，EVO-20260817 用户需求） ──
     def _stream_lms_chat(
@@ -985,6 +1109,7 @@ class LLMClient:
         orphan_ids = [tid for tid in pending_use_ids if tid not in consumed]
         if orphan_ids:
             orphan_set = set(orphan_ids)
+            remove_indices: set[int] = set()
             for idx, _ids in assistant_blocks:
                 msgs = out[idx]
                 blocks = msgs.get("content") or []
@@ -993,8 +1118,9 @@ class LLMClient:
                     out[idx]["content"] = keep
                 else:
                     # 该 assistant 消息只剩孤立 tool_use → 整条删除
-                    out[idx] = None
-            out = [m for m in out if m is not None]
+                    remove_indices.add(idx)
+            if remove_indices:
+                out = [m for idx, m in enumerate(out) if idx not in remove_indices]
         return out
 
     @staticmethod
@@ -1063,9 +1189,12 @@ class LLMClient:
         *,
         timeout_s: float | None = None,  # PARAM-01: 每次调用可覆盖超时（None 用构造值）
         model: str | None = None,
+        guard_context: GuardRequestContext | None = None,
     ) -> LLMResponse:
         """非流式：内部走流式聚合（终态与流式一致，含思考链/截断/用量）."""
-        it = self.chat_stream(messages, tools, timeout_s=timeout_s, model=model)
+        it = self.chat_stream(
+            messages, tools, timeout_s=timeout_s, model=model, guard_context=guard_context
+        )
         result: LLMResponse | None = None
         while True:  # 消费全部 delta；终态 LLMResponse 经 StopIteration.value 捕获
             try:

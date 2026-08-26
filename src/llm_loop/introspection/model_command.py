@@ -127,6 +127,7 @@ def _switch_reply(
         ctx.session_set_override,
         audit,
         {"model": model_ref, "reason": "M50 CLI/飞书 /model 指令切换"},
+        session_get_override=(lambda: session.model_override) if session is not None else None,
     )
     success = result.status.value == "success"
     # changed 语义: 成功且回执包含"已切换/已清除"标记

@@ -351,9 +351,10 @@ class FeishuMessageHandler:
             logger.info("feishu image vision failed (%s), OCR fallback: %s", filename, exc)
             # 2026-08-20（借鉴 SYAGI）: vision 全失败 → 飞书 OCR 文字兑底（诚实标注来源）
             ocr_lines: list[str] = []
-            if getattr(self, "_rest_client", None) is not None and data:
+            rest_client = self._rest_client
+            if rest_client is not None and data:
                 try:
-                    ocr_lines = self._rest_client.ocr_image(data)
+                    ocr_lines = rest_client.ocr_image(data)
                 except Exception as oexc:  # noqa: BLE001 — OCR 失败如实 fail-open
                     logger.warning("feishu image ocr failed: %s", oexc)
             body = "\n".join(ocr_lines).strip()

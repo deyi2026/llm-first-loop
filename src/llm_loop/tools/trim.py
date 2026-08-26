@@ -1,7 +1,7 @@
 """工具输出截断公共实现（2026-08-18 对齐 DSH——统一模式）.
 
 EVO-20260817-f485acac 模式（execute_command 首创）: 超阈值输出落盘 +
-保留首尾 + search_archive 可检索——read_file/web_search 对齐同款——
+保留首尾；全文通过显式落盘路径 read_file 取回——read_file/web_search 对齐同款——
 控制尾部新增体积（缓存命中率：尾部新增段无缓存——小=命中高）。
 
 2026-08-21 修复（缓存前缀确定性）: 落盘路径由时间戳改为内容哈希——
@@ -43,19 +43,23 @@ def truncation_marker(
     """截断标记（事实 + 动作两段式，2026-08-20 停滞循环排查落地）.
 
     事实段如实告知截断与确定性；动作段显式声明"重跑相同命令/重读同一路径不会得到
-    新信息"，并给出取全文通道（full=true / read_file 落盘 / search_archive）——
+    新信息"，并给出真实可用的取全文通道（full=true / read_file 落盘）——
     封死"截断视图 → 重跑同命令 → 同视图"的空转循环（事故: 20fdd562 会话连续 5 次
     相同参数重跑 grep 被停滞熔断）。
 
     2026-08-20 精简（token 用量反馈）: 标记随历史每轮重发，冗长解释按 token 计费——
-    保留防重跑声明 + 三条取全文路径，砍掉原因/可调参数/建议等冗余说明（~410→~170 字符）。
+    保留防重跑声明 + 两条真实取全文路径，砍掉原因/可调参数/建议等冗余说明。
+
+    2026-08-24 如实化：本 helper 自己只写 data/audit/tool_outputs 显式文件，并未写
+    ArchiveStore；且 ToolRegistry 看到的是已经裁剪后的结果，无法再归档原始全文。
+    因此不得提示 search_archive，避免 AI 检索一个实际不存在的档案。
     """
+    del keywords  # 兼容旧调用签名；本 helper 不写 ArchiveStore，关键词不能凭空变成档案索引。
     dump = f" {dump_path}" if dump_path else ""
-    kw = keywords or "按相关词"
     return (
         f"[输出已截断] 完整 {total} 字符，仅首 {keep_head} + 尾 {keep_tail}"
         f"（阈值 {max_chars}）。截断确定性: 重跑得同结果勿重跑。"
-        f"取全文: full=true 重调 / read_file 读取落盘全文{dump} / search_archive 关键词 {kw}。"
+        f"取全文: full=true 重调 / read_file 读取落盘全文{dump}。"
     )
 
 
