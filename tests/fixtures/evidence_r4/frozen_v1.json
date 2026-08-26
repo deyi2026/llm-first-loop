@@ -1,0 +1,30 @@
+{
+  "schema": "evidence-r4-frozen-v1",
+  "date": "2026-08-26",
+  "matrix_count": 36,
+  "providers": [
+    "minimax/MiniMax-M3",
+    "deepseek/deepseek-v4-flash"
+  ],
+  "artifacts": {
+    "docs/RECOVERABILITY-R4-PRE-REGISTRATION-v1.md": "41657039e462d595f11620d5bb1666f46c4b2c716ca8634cd8e3e7dff925fe88",
+    "tests/fixtures/evidence_r4/fixtures_v1.json": "15baeb91209cd19b3afee5b9ef8c015af64c2368f02597fdb1c2c034623d0ae3",
+    "tests/fixtures/evidence_r4/matrix_v1.json": "c3eb8b469887394477785ef49e7c90f3b6ffd74fc9f9e8dc06922365b15f6997",
+    "scripts/evidence/r4/fixtures.py": "e20c383d9c1f6930f39ad9d090aebe5066786bc15526307602dd6c5f5c4ae522",
+    "scripts/evidence/r4/runner.py": "d12ee171e6b51d6a51a58a91960a72be2f0fe2b94d383743f1e83b3dc1d43aff",
+    "scripts/evidence/r4/score.py": "371339825b70e772e486f08cee7b02420c965b4b32e4df7c823ab69ee9fe248a",
+    "src/llm_loop/tools/evidence_tools.py": "a4407ab27861fb4d32c1ed8a64ef55cdb053c6efdaf729bee371f9bf57293487",
+    "src/llm_loop/memory/evidence.py": "706120777747fad9a23ea428b330bb77fe4f575c12374015f1ad6a7579f6c9f1",
+    "src/llm_loop/tools/evidence_enforce.py": "15092cadfc2bce9e6c340d249d2c6a3d68b0fbc4b899b64f9656fb39f6dcb6ff",
+    "src/llm_loop/tools/registry.py": "9b0e6e110664dda70945666338159e2df55294643d1068514bb4a6230bd9c9df",
+    "src/llm_loop/tools/builtin/read_file.py": "f9103d28ae1815b8eee2af0826b9cd74c80defb2c6e8ae6804510455ef1c5c13",
+    "data/providers.json": "a5e6221a344d08d37c0135931762e95e9371c4073d9dd1cd33903e3599a4a874",
+    "docs/RECOVERABILITY-R3-CONSUMPTION-RESULT-v1.1.md": "d55e813e812026afd02470f12ca1656154a73320056edf705f5478eefc0877a7"
+  },
+  "rules": {
+    "no_post_freeze_edit": true,
+    "single_runner_lock_required": true,
+    "unresolved_started_row_auto_replay_forbidden": true,
+    "scorer_frozen_before_request_1": true
+  }
+}

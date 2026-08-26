@@ -225,8 +225,11 @@ def test_client_params_missing_key_truthful_error(monkeypatch: pytest.MonkeyPatc
         reg.client_params("deepseek", "deepseek-v4-flash")
 
 
-def test_client_params_no_auth_provider() -> None:
-    """api_key_env 为空（本地 provider）→ 无需 key."""
+def test_client_params_no_auth_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """api_key_env 为空（本地 provider）→ 无需 key（直连发现隔离, 环境无关）."""
+    # LMS_DIRECT 直连发现会扫到本机真实 llama-server 并返回其 api-key（环境敏感）——
+    # 本测试隔离发现逻辑: 模拟未发现直连服务器 → 走配置 base_url + 无 key
+    monkeypatch.setattr("llm_loop.llm.providers._discover_llama_server", lambda _model=None: None)
     reg = load_registry(_settings(model_providers_raw=_TWO_PROVIDER_JSON))
     params = reg.client_params("local", "qwen3.6-27b")
     assert params["api_key"] == ""
@@ -330,6 +333,98 @@ def test_provider_history_budget_invalid_warns_and_defaults(
     assert reg.providers["local"].history_budget_chars is None
     assert not reg.degraded
     assert any("history_budget_chars" in r.message and "local" in r.message for r in caplog.records)
+
+
+# ── EVO-20260824: provider 级字符/token 估算（chars_per_token, 本地 qwen tokenizer 校准）──
+
+
+def _cpt_provider_json(cpt: object) -> str:
+    return json.dumps(
+        {
+            "local": {
+                "base_url": "http://localhost:1234/v1",
+                "api_key_env": "",
+                "chars_per_token": cpt,
+                "models": {"qwen3.6-27b": {"context": 131072}},
+                "default_model": "qwen3.6-27b",
+            }
+        }
+    )
+
+
+def test_provider_chars_per_token_parsed() -> None:
+    """provider 级 chars_per_token 正常解析（local 0.9 — qwen tokenizer 效率更高）."""
+    reg = load_registry(_settings(model_providers_raw=_cpt_provider_json(0.9)))
+    assert reg.providers["local"].chars_per_token == 0.9
+
+
+def test_provider_chars_per_token_absent_defaults_none() -> None:
+    """未配置 → None（全局 0.6 兜底, 零回归——deepseek 中文混合实测 1.676 tok/char）."""
+    reg = load_registry(_settings(model_providers_raw=_TWO_PROVIDER_JSON))
+    assert reg.providers["local"].chars_per_token is None
+    assert reg.providers["deepseek"].chars_per_token is None
+
+
+@pytest.mark.parametrize("bad", ["abc", -1, 0, "0.6k"])
+def test_provider_chars_per_token_invalid_warns_and_defaults(
+    bad, caplog: pytest.LogCaptureFixture
+) -> None:
+    """非法 chars_per_token → warning 如实告警 + 回退 None（不拖垮注册表）."""
+    with caplog.at_level(logging.WARNING, logger="llm_loop.llm.providers"):
+        reg = load_registry(_settings(model_providers_raw=_cpt_provider_json(bad)))
+    assert reg.providers["local"].chars_per_token is None
+    assert not reg.degraded
+    assert any("chars_per_token" in r.message and "local" in r.message for r in caplog.records)
+
+
+# ── 2026-08-24 本地工具轮极小窗口（tool_round_zero_history, KV 前缀稳定）──
+
+
+def _tool_zero_provider_json(value: object) -> str:
+    return json.dumps(
+        {
+            "local": {
+                "base_url": "http://localhost:1234/v1",
+                "api_key_env": "",
+                "tool_round_zero_history": value,
+                "models": {"qwen3.6-27b": {"context": 131072}},
+                "default_model": "qwen3.6-27b",
+            }
+        }
+    )
+
+
+def test_provider_tool_round_zero_parsed_true() -> None:
+    """local 配置 tool_round_zero_history=true → 工具轮极小窗口启用."""
+    reg = load_registry(_settings(model_providers_raw=_tool_zero_provider_json(True)))
+    assert reg.providers["local"].tool_round_zero_history is True
+
+
+def test_provider_tool_round_zero_absent_defaults_false() -> None:
+    """未配置 → False（云端/缺省零回归）."""
+    reg = load_registry(_settings(model_providers_raw=_TWO_PROVIDER_JSON))
+    assert reg.providers["local"].tool_round_zero_history is False
+    assert reg.providers["deepseek"].tool_round_zero_history is False
+
+
+@pytest.mark.parametrize("bad", ["maybe", {"x": 1}])
+def test_provider_tool_round_zero_invalid_warns_and_defaults(
+    bad, caplog: pytest.LogCaptureFixture
+) -> None:
+    """非法 tool_round_zero_history → warning 如实告警 + 回退 False（不拖垮注册表）."""
+    with caplog.at_level(logging.WARNING, logger="llm_loop.llm.providers"):
+        reg = load_registry(_settings(model_providers_raw=_tool_zero_provider_json(bad)))
+    assert reg.providers["local"].tool_round_zero_history is False
+    assert not reg.degraded
+    assert any("tool_round_zero_history" in r.message and "local" in r.message for r in caplog.records)
+
+
+def test_provider_tool_round_zero_string_forms() -> None:
+    """字符串布尔形态严格解析（"true"/"false"，防 bool("false")==True 陷阱）."""
+    reg_true = load_registry(_settings(model_providers_raw=_tool_zero_provider_json("true")))
+    assert reg_true.providers["local"].tool_round_zero_history is True
+    reg_false = load_registry(_settings(model_providers_raw=_tool_zero_provider_json("false")))
+    assert reg_false.providers["local"].tool_round_zero_history is False
 
 
 def test_catalog_summary_shows_provider_history_budget() -> None:
@@ -644,3 +739,89 @@ def test_wire_protocol_invalid_falls_back(caplog: pytest.LogCaptureFixture) -> N
     )
     assert reg.providers["p1"].models["m1"].wire_protocol == "openai"
     assert any("wire_protocol" in r.message and "回退" in r.message for r in caplog.records)
+
+
+# ── llama-server 直连发现：多模型选择安全性 ──
+
+def _fake_ps_result(stdout: str):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(stdout=stdout)
+
+
+def test_discover_llama_server_selects_requested_model_among_multiple(monkeypatch):
+    """多个 Qwen server 并存时必须按 requested model 选端口，不能取第一个。"""
+    from llm_loop.llm.providers import _discover_llama_server
+
+    ps = (
+        "u 1 0 0 0 0 ?? S 0:00 /opt/llama-server -m /m/Qwen3.6-27B.gguf "
+        "--port 1111 --api-key fake-a\n"
+        "u 2 0 0 0 0 ?? S 0:00 /opt/llama-server --model /m/Qwen3.8-27B.gguf "
+        "--port 2222 --api-key fake-b\n"
+    )
+    monkeypatch.setattr(
+        "subprocess.run", lambda *a, **k: _fake_ps_result(ps)
+    )
+    got = _discover_llama_server("qwen3.8-27b-mlx")
+    assert got is not None
+    assert got[0] == "http://127.0.0.1:2222/v1"
+    assert got[1] == "fake-b"
+
+
+def test_discover_llama_server_ambiguous_multiple_falls_back(monkeypatch):
+    """多个候选却无法唯一识别 requested model 时必须返回 None，禁止猜第一个。"""
+    from llm_loop.llm.providers import _discover_llama_server
+
+    ps = (
+        "u 1 0 0 0 0 ?? S 0:00 /opt/llama-server -m /m/Qwen3.6-27B.gguf --port 1111\n"
+        "u 2 0 0 0 0 ?? S 0:00 /opt/llama-server -m /m/Qwen3.8-27B.gguf --port 2222\n"
+    )
+    monkeypatch.setattr(
+        "subprocess.run", lambda *a, **k: _fake_ps_result(ps)
+    )
+    assert _discover_llama_server("qwythos-9b") is None
+
+
+def test_discover_llama_server_single_known_mismatch_falls_back(monkeypatch):
+    """唯一候选也不能忽略明确的Qwen版本/规模冲突，否则上层会把3.6误标成3.8。"""
+    from llm_loop.llm.providers import _discover_llama_server
+
+    ps = (
+        "u 1 0 0 0 0 ?? S 0:00 /opt/llama-server -m /m/Qwen3.6-27B.gguf "
+        "--port 1111 --api-key fake-a\n"
+    )
+    monkeypatch.setattr(
+        "subprocess.run", lambda *a, **k: _fake_ps_result(ps)
+    )
+    assert _discover_llama_server("qwen3.8-27b") is None
+
+
+def test_discover_llama_server_single_candidate_keeps_compat(monkeypatch):
+    """只有一个有效 Qwen server 时保持旧自动直连，即使名字无法映射。"""
+    from llm_loop.llm.providers import _discover_llama_server
+
+    ps = (
+        "u 1 0 0 0 0 ?? S 0:00 /opt/llama-server -m /m/Qwen-custom.gguf "
+        "--port 3333 --api-key fake-one\n"
+    )
+    monkeypatch.setattr(
+        "subprocess.run", lambda *a, **k: _fake_ps_result(ps)
+    )
+    assert _discover_llama_server("unmapped-local-model") == (
+        "http://127.0.0.1:3333/v1", "fake-one"
+    )
+
+
+def test_client_params_passes_requested_model_to_local_discovery(monkeypatch):
+    """client_params 必须把 model_id 传给发现器，否则多 server 无法安全选路。"""
+    seen: list[str | None] = []
+
+    def fake_discover(requested_model=None):
+        seen.append(requested_model)
+        return None
+
+    monkeypatch.setattr("llm_loop.llm.providers._discover_llama_server", fake_discover)
+    reg = load_registry(_settings(model_providers_raw=_TWO_PROVIDER_JSON))
+    params = reg.client_params("local", "qwen3.6-27b")
+    assert params["base_url"] == "http://localhost:1234/v1"
+    assert seen == ["qwen3.6-27b"]

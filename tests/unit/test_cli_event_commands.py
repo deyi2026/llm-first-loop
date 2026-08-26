@@ -200,3 +200,23 @@ def test_event_cmd_dispatch_registered_without_engine(tmp_path, monkeypatch):
     data_dir = _setup_data(tmp_path)
     # event-inventory 入口特判早于 build_engine
     assert _dispatch_command(["event-inventory", "--data-dir", data_dir]) == 0
+
+
+
+def test_event_verify_rejects_session_path_traversal_before_source_read(tmp_path, capsys):
+    """CLI --session不得越出sessions根读取兄弟JSON；非法ID应参数错误exit2。"""
+    data = tmp_path / "data"
+    sessions = data / "sessions"
+    sessions.mkdir(parents=True)
+    sibling = data / "other"
+    sibling.mkdir(parents=True)
+    (sibling / "victim.json").write_text("{corrupt", encoding="utf-8")
+
+    rc = _cmd_event_verify(
+        ["--data-dir", str(data), "--session", "../other/victim"]
+    )
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert "参数错误" in captured.err
+    assert "源解析失败" not in captured.out

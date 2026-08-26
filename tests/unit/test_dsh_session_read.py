@@ -145,3 +145,27 @@ def test_dsh_home_redirect(monkeypatch, tmp_path):
     r = tool.execute(workspace="/fake/ws")
     assert r.status == ToolResultStatus.SUCCESS
     assert "session-h" in r.content
+
+
+
+def test_session_id_path_traversal_cannot_read_other_workspace(monkeypatch, tmp_path):
+    """AI可控session_id不得用../跳到另一个workspace-key读取DSH日志。"""
+    root = tmp_path / "dsh"
+    key_a = workspace_key("/fake/ws-a")
+    key_b = workspace_key("/fake/ws-b")
+    base_a = root / key_a
+    base_b = root / key_b
+    base_a.mkdir(parents=True)
+    secret_events = _events()
+    secret_events[3]["data"]["message"]["content"][1]["text"] = "SECRET-WORKSPACE-B"
+    _write_session(base_b, "session-secret", secret_events)
+    tool = _make(monkeypatch, tmp_path, root)
+
+    r = tool.execute(
+        workspace="/fake/ws-a",
+        session_id=f"../{key_b}/session-secret",
+    )
+
+    assert r.status == ToolResultStatus.FAILURE
+    assert "非法 session_id" in r.content
+    assert "SECRET-WORKSPACE-B" not in r.content

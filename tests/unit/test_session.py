@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.session import SessionStore, _make_title
 
@@ -360,3 +362,102 @@ def test_create_default_model_override_none(tmp_path):
     store = _store(tmp_path)
     sid = store.create()
     assert store.load(sid).model_override is None
+
+
+
+def test_session_id_path_traversal_cannot_cross_workspace_roots(tmp_path):
+    """外部session_id不得用../跨workspace读/删兄弟会话。"""
+    base = tmp_path / "sessions"
+    store_a = SessionStore(base / "workspace-A")
+    store_b = SessionStore(base / "workspace-B")
+    victim_id = store_b.create()
+    store_b.append(victim_id, _msg("SECRET-B"))
+    victim_path = base / "workspace-B" / f"{victim_id}.json"
+    traversal = f"../workspace-B/{victim_id}"
+
+    assert store_a.exists(traversal) is False
+    with pytest.raises(ValueError, match="非法 session_id"):
+        store_a.load(traversal)
+    assert store_a.delete(traversal) is False
+    assert victim_path.exists(), "workspace-A不得删除workspace-B会话"
+    assert store_b.load(victim_id).messages[-1].content == "SECRET-B"
+
+
+
+def test_safe_legacy_session_id_remains_supported(tmp_path):
+    """安全legacy basename仍可读写，修复不得强制只接受UUID。"""
+    from llm_loop.core.session import Session
+
+    store = _store(tmp_path)
+    session = Session(session_id="shared-session")
+    session.messages.append(_msg("legacy-ok"))
+    store.save(session)
+
+    assert store.exists("shared-session") is True
+    assert store.load("shared-session").messages[-1].content == "legacy-ok"
+
+
+def test_invalid_session_id_cannot_escape_through_lock_paths(tmp_path):
+    """run/management锁路径也必须验证ID，不能仅保护JSON路径。"""
+    store = _store(tmp_path)
+    escape = "../outside"
+
+    with pytest.raises(ValueError, match="非法 session_id"), store.run_lease(escape):
+        pass
+    with pytest.raises(ValueError, match="非法 session_id"), store.management_lease(escape):
+        pass
+
+    assert not (tmp_path / "outside.run.lock").exists()
+
+
+def test_delete_sidecar_failure_keeps_primary_session(tmp_path):
+    """关联sidecar清理失败时主JSON保留，但deleted tombstone让会话fail-closed等待重试。"""
+    import pytest
+
+    from llm_loop.core.session import SessionIdConflictError
+
+    def fail_sidecars(_session_id):
+        raise OSError("sidecar-delete-failed-sentinel")
+
+    store = SessionStore(tmp_path / "sessions", delete_sidecars_fn=fail_sidecars)
+    sid = store.create()
+
+    assert store.delete(sid) is False
+    assert store.exists(sid) is True
+    with pytest.raises(SessionIdConflictError, match="删除|不可恢复"):
+        store.load(sid)
+
+
+def test_deleted_session_id_cannot_be_reused_in_same_workspace(tmp_path):
+    """不可恢复删除后，即使同owner workspace也不得用旧sid重新save成新会话。"""
+    import pytest
+
+    from llm_loop.core.session import Session, SessionIdConflictError
+
+    store = SessionStore(tmp_path / "sessions")
+    sid = store.create()
+    assert store.delete(sid) is True
+    assert not store.exists(sid)
+
+    with pytest.raises(SessionIdConflictError, match="删除|不可恢复"):
+        store.save(Session(session_id=sid))
+
+
+def test_delete_partial_sidecar_failure_is_retryable(tmp_path):
+    """deleted tombstone写入后若sidecar首次失败，第二次DELETE应可继续清理主JSON并成功。"""
+    attempts = 0
+
+    def flaky_sidecars(_session_id):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("first-delete-failure")
+
+    store = SessionStore(tmp_path / "sessions", delete_sidecars_fn=flaky_sidecars)
+    sid = store.create()
+
+    assert store.delete(sid) is False
+    assert store.exists(sid) is True
+    assert store.delete(sid) is True
+    assert store.exists(sid) is False
+    assert attempts == 2

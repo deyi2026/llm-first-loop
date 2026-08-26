@@ -103,3 +103,21 @@ def test_exec_visible_in_standard_and_creative(tmp_path):
     for mode in ("standard", "creative"):
         names = _registered_names(build_engine(_settings(tmp_path / mode, mode)))
         assert "playwright_exec" in names, f"playwright_exec 应在 {mode} 可见"
+
+
+
+def test_dry_run_rejects_path_traversal_session(tmp_path, monkeypatch):
+    """即使dry-run也应先拒绝非法session，而不是把它当合法归类名。"""
+    monkeypatch.chdir(tmp_path)
+    r = run_playwright_exec(
+        None,
+        None,
+        {
+            "code": '# 步骤\nprint("ok")',
+            "session": "../outside",
+            "confirm": False,
+        },
+    )
+    assert r.status.value == "failure"
+    assert "参数错误" in r.content and "session" in r.content
+    assert not (tmp_path / "data" / "outside").exists()

@@ -1,0 +1,511 @@
+{
+  "schema": "evidence-r2-matrix-v1",
+  "random_seed": 20260826,
+  "count": 72,
+  "runs": [
+    {
+      "provider": "deepseek",
+      "seed_id": "F5",
+      "condition": "E1",
+      "rep": 2,
+      "run_id": "R2-001"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F3",
+      "condition": "B0",
+      "rep": 3,
+      "run_id": "R2-002"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F6",
+      "condition": "B0",
+      "rep": 1,
+      "run_id": "R2-003"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F6",
+      "condition": "B0",
+      "rep": 1,
+      "run_id": "R2-004"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F1",
+      "condition": "B0",
+      "rep": 1,
+      "run_id": "R2-005"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F4",
+      "condition": "E1",
+      "rep": 1,
+      "run_id": "R2-006"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F5",
+      "condition": "E1",
+      "rep": 1,
+      "run_id": "R2-007"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F3",
+      "condition": "B0",
+      "rep": 1,
+      "run_id": "R2-008"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F1",
+      "condition": "B0",
+      "rep": 2,
+      "run_id": "R2-009"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F2",
+      "condition": "E1",
+      "rep": 2,
+      "run_id": "R2-010"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F4",
+      "condition": "E1",
+      "rep": 2,
+      "run_id": "R2-011"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F5",
+      "condition": "E1",
+      "rep": 2,
+      "run_id": "R2-012"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F6",
+      "condition": "B0",
+      "rep": 3,
+      "run_id": "R2-013"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F2",
+      "condition": "B0",
+      "rep": 1,
+      "run_id": "R2-014"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F4",
+      "condition": "E1",
+      "rep": 3,
+      "run_id": "R2-015"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F1",
+      "condition": "E1",
+      "rep": 2,
+      "run_id": "R2-016"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F2",
+      "condition": "B0",
+      "rep": 3,
+      "run_id": "R2-017"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F4",
+      "condition": "B0",
+      "rep": 1,
+      "run_id": "R2-018"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F4",
+      "condition": "B0",
+      "rep": 3,
+      "run_id": "R2-019"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F2",
+      "condition": "B0",
+      "rep": 3,
+      "run_id": "R2-020"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F3",
+      "condition": "E1",
+      "rep": 2,
+      "run_id": "R2-021"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F3",
+      "condition": "B0",
+      "rep": 1,
+      "run_id": "R2-022"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F2",
+      "condition": "E1",
+      "rep": 2,
+      "run_id": "R2-023"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F6",
+      "condition": "E1",
+      "rep": 3,
+      "run_id": "R2-024"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F1",
+      "condition": "B0",
+      "rep": 2,
+      "run_id": "R2-025"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F4",
+      "condition": "E1",
+      "rep": 3,
+      "run_id": "R2-026"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F3",
+      "condition": "E1",
+      "rep": 1,
+      "run_id": "R2-027"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F6",
+      "condition": "E1",
+      "rep": 3,
+      "run_id": "R2-028"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F5",
+      "condition": "B0",
+      "rep": 1,
+      "run_id": "R2-029"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F4",
+      "condition": "E1",
+      "rep": 1,
+      "run_id": "R2-030"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F3",
+      "condition": "B0",
+      "rep": 2,
+      "run_id": "R2-031"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F4",
+      "condition": "B0",
+      "rep": 1,
+      "run_id": "R2-032"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F4",
+      "condition": "E1",
+      "rep": 2,
+      "run_id": "R2-033"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F5",
+      "condition": "E1",
+      "rep": 1,
+      "run_id": "R2-034"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F6",
+      "condition": "E1",
+      "rep": 1,
+      "run_id": "R2-035"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F3",
+      "condition": "E1",
+      "rep": 1,
+      "run_id": "R2-036"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F1",
+      "condition": "E1",
+      "rep": 1,
+      "run_id": "R2-037"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F2",
+      "condition": "B0",
+      "rep": 2,
+      "run_id": "R2-038"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F3",
+      "condition": "E1",
+      "rep": 3,
+      "run_id": "R2-039"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F6",
+      "condition": "B0",
+      "rep": 2,
+      "run_id": "R2-040"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F2",
+      "condition": "E1",
+      "rep": 1,
+      "run_id": "R2-041"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F2",
+      "condition": "E1",
+      "rep": 3,
+      "run_id": "R2-042"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F5",
+      "condition": "E1",
+      "rep": 3,
+      "run_id": "R2-043"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F6",
+      "condition": "E1",
+      "rep": 2,
+      "run_id": "R2-044"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F1",
+      "condition": "E1",
+      "rep": 3,
+      "run_id": "R2-045"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F3",
+      "condition": "E1",
+      "rep": 3,
+      "run_id": "R2-046"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F3",
+      "condition": "B0",
+      "rep": 3,
+      "run_id": "R2-047"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F6",
+      "condition": "B0",
+      "rep": 2,
+      "run_id": "R2-048"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F5",
+      "condition": "B0",
+      "rep": 2,
+      "run_id": "R2-049"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F1",
+      "condition": "B0",
+      "rep": 1,
+      "run_id": "R2-050"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F4",
+      "condition": "B0",
+      "rep": 3,
+      "run_id": "R2-051"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F6",
+      "condition": "E1",
+      "rep": 2,
+      "run_id": "R2-052"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F6",
+      "condition": "E1",
+      "rep": 1,
+      "run_id": "R2-053"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F5",
+      "condition": "B0",
+      "rep": 3,
+      "run_id": "R2-054"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F3",
+      "condition": "B0",
+      "rep": 2,
+      "run_id": "R2-055"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F1",
+      "condition": "B0",
+      "rep": 3,
+      "run_id": "R2-056"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F4",
+      "condition": "B0",
+      "rep": 2,
+      "run_id": "R2-057"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F1",
+      "condition": "B0",
+      "rep": 3,
+      "run_id": "R2-058"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F2",
+      "condition": "B0",
+      "rep": 1,
+      "run_id": "R2-059"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F2",
+      "condition": "E1",
+      "rep": 3,
+      "run_id": "R2-060"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F1",
+      "condition": "E1",
+      "rep": 2,
+      "run_id": "R2-061"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F5",
+      "condition": "B0",
+      "rep": 2,
+      "run_id": "R2-062"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F2",
+      "condition": "B0",
+      "rep": 2,
+      "run_id": "R2-063"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F3",
+      "condition": "E1",
+      "rep": 2,
+      "run_id": "R2-064"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F5",
+      "condition": "B0",
+      "rep": 3,
+      "run_id": "R2-065"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F5",
+      "condition": "E1",
+      "rep": 3,
+      "run_id": "R2-066"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F4",
+      "condition": "B0",
+      "rep": 2,
+      "run_id": "R2-067"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F1",
+      "condition": "E1",
+      "rep": 1,
+      "run_id": "R2-068"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F2",
+      "condition": "E1",
+      "rep": 1,
+      "run_id": "R2-069"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "F1",
+      "condition": "E1",
+      "rep": 3,
+      "run_id": "R2-070"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F6",
+      "condition": "B0",
+      "rep": 3,
+      "run_id": "R2-071"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "F5",
+      "condition": "B0",
+      "rep": 1,
+      "run_id": "R2-072"
+    }
+  ]
+}

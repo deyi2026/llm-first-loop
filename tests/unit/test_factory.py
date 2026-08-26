@@ -13,6 +13,8 @@ import json
 import logging
 from unittest import mock
 
+import pytest
+
 from llm_loop.config import Settings
 
 
@@ -208,3 +210,236 @@ def test_workspace_changed_dimension_in_status(tmp_path):
     }), encoding="utf-8")
     snap2 = engine.status.snapshot()
     assert snap2["workspace_changed"]["changed_files"] == ["src/x.py"]
+
+
+
+def test_workspace_migration_conflict_stops_engine_startup(tmp_path, monkeypatch):
+    """两份不同会话数据的迁移冲突必须阻止启动，不能catch后自动选择target副本。"""
+    from llm_loop.core.interop_watch import InboxWatcher
+    from llm_loop.factory import build_engine
+    from llm_loop.workspace.store import WorkspaceMigrationConflictError, WorkspaceStore
+
+    monkeypatch.setattr(InboxWatcher, "start", lambda self: None)
+
+    def raise_conflict(self, data_dir, default_workspace):
+        raise WorkspaceMigrationConflictError("会话迁移冲突: same.json")
+
+    monkeypatch.setattr(WorkspaceStore, "migrate_legacy_sessions", raise_conflict)
+    with pytest.raises(WorkspaceMigrationConflictError, match="迁移冲突"):
+        build_engine(_settings(tmp_path))  # type: ignore[arg-type]
+
+
+def test_recovery_sessions_dir_follows_session_store_workspace_root(tmp_path, monkeypatch):
+    """恢复工具的session正式位置必须动态跟随当前workspace分区，不能固定在全局sessions根。"""
+    from llm_loop.core.interop_watch import InboxWatcher
+    from llm_loop.factory import build_engine
+
+    monkeypatch.setattr(InboxWatcher, "start", lambda self: None)
+    settings = _settings(tmp_path)
+    engine = build_engine(settings)  # type: ignore[arg-type]
+
+    assert engine.corrections is not None
+    assert engine.corrections.recovery_sessions_dir == engine.session.root
+
+    other = tmp_path / "other-workspace"
+    other.mkdir()
+    ws = engine.workspace_store.register(other)
+    engine.workspace_store.switch(ws.id)
+    engine.set_workspace(ws.path, ws.id)
+
+    assert engine.corrections.recovery_sessions_dir == engine.session.root
+
+
+def test_recover_from_backup_restores_session_into_current_workspace_partition(tmp_path, monkeypatch):
+    """真实恢复工具成功后，session必须落当前workspace分区并立即可被SessionStore读取。"""
+    from llm_loop.core.interop_watch import InboxWatcher
+    from llm_loop.core.session import Session
+    from llm_loop.factory import build_engine
+    from llm_loop.recovery.backup import BackupArchive, BackupStore
+
+    monkeypatch.setattr(InboxWatcher, "start", lambda self: None)
+    settings = _settings(tmp_path)
+    engine = build_engine(settings)  # type: ignore[arg-type]
+    assert engine.corrections is not None
+
+    other = tmp_path / "recovery-workspace"
+    other.mkdir()
+    ws = engine.workspace_store.register(other)
+    engine.workspace_store.switch(ws.id)
+    engine.set_workspace(ws.path, ws.id)
+
+    source_id = "recover-workspace-session"
+    payload = json.dumps(Session(session_id=source_id).to_dict(), ensure_ascii=False)
+    store = BackupStore(settings.recovery_dir)
+    backup_id = store.save_archive(
+        BackupArchive(
+            source_id=source_id,
+            backup_at="2026-08-25T07:40:00+08:00",
+            target_type="session",
+            payload=payload,
+            retry_count=1,
+            trigger_point="loop_end_save",
+        )
+    )
+
+    result = engine.corrections.execute(
+        "recover_from_backup",
+        {"backup_id": backup_id, "on_conflict": "abort"},
+    )
+
+    assert result.status.value == "success"
+    assert "已恢复" in result.content
+    assert (engine.session.root / f"{source_id}.json").exists()
+    assert not (settings.sessions_dir / f"{source_id}.json").exists()
+    recovered = engine.session.load(source_id)
+    assert recovered is not None and recovered.session_id == source_id
+
+
+def test_recover_session_rejects_same_session_id_owned_by_other_workspace(tmp_path, monkeypatch):
+    """Event/Archive按sid全局键，因此恢复不得把同sid复制进第二个workspace分区。"""
+    from llm_loop.core.interop_watch import InboxWatcher
+    from llm_loop.core.session import Session
+    from llm_loop.factory import build_engine
+    from llm_loop.recovery.backup import BackupArchive, BackupStore
+
+    monkeypatch.setattr(InboxWatcher, "start", lambda self: None)
+    settings = _settings(tmp_path)
+    engine = build_engine(settings)  # type: ignore[arg-type]
+    assert engine.corrections is not None
+    source_id = "global-unique-recovery-session"
+    payload = json.dumps(Session(session_id=source_id).to_dict(), ensure_ascii=False)
+    backups = BackupStore(settings.recovery_dir)
+
+    first_backup = backups.save_archive(
+        BackupArchive(
+            source_id=source_id,
+            backup_at="2026-08-25T07:50:00+08:00",
+            target_type="session",
+            payload=payload,
+            retry_count=1,
+            trigger_point="loop_end_save",
+        )
+    )
+    first_root = engine.session.root
+    first = engine.corrections.execute(
+        "recover_from_backup", {"backup_id": first_backup, "on_conflict": "abort"}
+    )
+    assert first.status.value == "success"
+    assert (first_root / f"{source_id}.json").exists()
+
+    other = tmp_path / "second-recovery-workspace"
+    other.mkdir()
+    ws = engine.workspace_store.register(other)
+    engine.workspace_store.switch(ws.id)
+    engine.set_workspace(ws.path, ws.id)
+    second_root = engine.session.root
+    second_backup = backups.save_archive(
+        BackupArchive(
+            source_id=source_id,
+            backup_at="2026-08-25T07:51:00+08:00",
+            target_type="session",
+            payload=payload,
+            retry_count=1,
+            trigger_point="loop_end_save",
+        )
+    )
+
+    second = engine.corrections.execute(
+        "recover_from_backup", {"backup_id": second_backup, "on_conflict": "abort"}
+    )
+
+    assert second.status.value == "failure"
+    assert "其他工作区" in second.content or "全局唯一" in second.content
+    assert not (second_root / f"{source_id}.json").exists()
+    assert (first_root / f"{source_id}.json").exists()
+
+
+def test_recover_from_backup_conflict_is_tool_failure(tmp_path, monkeypatch):
+    """on_conflict=abort未执行恢复必须返回ToolResult FAILURE，不能因文本前缀误报success。"""
+    from llm_loop.core.interop_watch import InboxWatcher
+    from llm_loop.factory import build_engine
+    from llm_loop.recovery.backup import BackupArchive, BackupStore
+
+    monkeypatch.setattr(InboxWatcher, "start", lambda self: None)
+    settings = _settings(tmp_path)
+    engine = build_engine(settings)  # type: ignore[arg-type]
+    assert engine.corrections is not None
+    sid = engine.session.create()
+    payload = (engine.session.root / f"{sid}.json").read_text(encoding="utf-8")
+    backup_id = BackupStore(settings.recovery_dir).save_archive(
+        BackupArchive(
+            source_id=sid,
+            backup_at="2026-08-25T08:02:00+08:00",
+            target_type="session",
+            payload=payload,
+            retry_count=1,
+            trigger_point="loop_end_save",
+        )
+    )
+
+    result = engine.corrections.execute(
+        "recover_from_backup", {"backup_id": backup_id, "on_conflict": "abort"}
+    )
+
+    assert result.status.value == "failure"
+    assert "冲突" in result.content
+    assert "未覆盖" in result.content
+
+
+def test_physical_delete_purges_archive_content(tmp_path, monkeypatch):
+    """Web/CLI语义称删除不可恢复，因此物理delete后压缩档案也不得继续按sid检索。"""
+    from llm_loop.core.interop_watch import InboxWatcher
+    from llm_loop.factory import build_engine
+
+    monkeypatch.setattr(InboxWatcher, "start", lambda self: None)
+    settings = _settings(tmp_path)
+    engine = build_engine(settings)  # type: ignore[arg-type]
+    assert engine.archive is not None
+    sid = engine.session.create()
+    engine.archive.archive(
+        sid,
+        role="user",
+        source="user",
+        content="delete-private-archive-token-OMEGA",
+    )
+    assert engine.archive.search(sid, "OMEGA")
+
+    assert engine.session.delete(sid) is True
+
+    assert engine.archive.search(sid, "OMEGA") == []
+
+
+def test_deleted_session_cannot_be_restored_from_recovery_backup(tmp_path, monkeypatch):
+    """Web/CLI明确删除不可恢复；已有recovery backup也不得把旧sid复活。"""
+    from llm_loop.core.interop_watch import InboxWatcher
+    from llm_loop.factory import build_engine
+    from llm_loop.recovery.backup import BackupArchive, BackupStore
+
+    monkeypatch.setattr(InboxWatcher, "start", lambda self: None)
+    settings = _settings(tmp_path)
+    engine = build_engine(settings)  # type: ignore[arg-type]
+    assert engine.corrections is not None
+    sid = engine.session.create()
+    payload = (engine.session.root / f"{sid}.json").read_text(encoding="utf-8")
+    backup_id = BackupStore(settings.recovery_dir).save_archive(
+        BackupArchive(
+            source_id=sid,
+            backup_at="2026-08-25T08:35:00+08:00",
+            target_type="session",
+            payload=payload,
+            retry_count=1,
+            trigger_point="loop_end_save",
+        )
+    )
+    assert engine.session.delete(sid) is True
+    assert not engine.session.exists(sid)
+    backups = BackupStore(settings.recovery_dir)
+    assert backups.get_archive(backup_id) is None
+
+    result = engine.corrections.execute(
+        "recover_from_backup", {"backup_id": backup_id, "on_conflict": "abort"}
+    )
+
+    assert result.status.value == "failure"
+    assert "未找到" in result.content or "备份不存在" in result.content
+    assert not engine.session.exists(sid)

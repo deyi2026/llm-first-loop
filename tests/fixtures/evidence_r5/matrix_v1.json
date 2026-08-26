@@ -1,0 +1,151 @@
+{
+  "schema": "evidence-r5-matrix-v1",
+  "random_seed": 20260826,
+  "count": 24,
+  "runs": [
+    {
+      "provider": "minimax",
+      "seed_id": "J3",
+      "rep": 2,
+      "run_id": "R5-001"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "J4",
+      "rep": 2,
+      "run_id": "R5-002"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "J4",
+      "rep": 2,
+      "run_id": "R5-003"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "J2",
+      "rep": 3,
+      "run_id": "R5-004"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "J3",
+      "rep": 1,
+      "run_id": "R5-005"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "J1",
+      "rep": 1,
+      "run_id": "R5-006"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "J3",
+      "rep": 3,
+      "run_id": "R5-007"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "J2",
+      "rep": 1,
+      "run_id": "R5-008"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "J1",
+      "rep": 1,
+      "run_id": "R5-009"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "J4",
+      "rep": 3,
+      "run_id": "R5-010"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "J1",
+      "rep": 3,
+      "run_id": "R5-011"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "J1",
+      "rep": 2,
+      "run_id": "R5-012"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "J4",
+      "rep": 3,
+      "run_id": "R5-013"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "J3",
+      "rep": 3,
+      "run_id": "R5-014"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "J4",
+      "rep": 1,
+      "run_id": "R5-015"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "J3",
+      "rep": 1,
+      "run_id": "R5-016"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "J2",
+      "rep": 2,
+      "run_id": "R5-017"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "J2",
+      "rep": 2,
+      "run_id": "R5-018"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "J4",
+      "rep": 1,
+      "run_id": "R5-019"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "J1",
+      "rep": 3,
+      "run_id": "R5-020"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "J1",
+      "rep": 2,
+      "run_id": "R5-021"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "J3",
+      "rep": 2,
+      "run_id": "R5-022"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "J2",
+      "rep": 3,
+      "run_id": "R5-023"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "J2",
+      "rep": 1,
+      "run_id": "R5-024"
+    }
+  ]
+}
