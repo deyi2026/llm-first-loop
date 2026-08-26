@@ -78,11 +78,12 @@ class TestValidateRequest:
         assert d3.rule == "system_stability"
 
     def test_submit_ratio_block(self, tmp_path):
-        """提交占比 >95% 预算 → BLOCK（不应出去的请求）. """
+        """提交占比 >95% 预算 → BLOCK（不应出去的请求）——显式 breaker_active=False
+        （非冻结期正常传递）维持拦截语义."""
         msgs = [{"role": "system", "content": "s" * 1000}, {"role": "user", "content": "u" * 5000}]
         d = validate_request(
             system_text="s" * 1000, messages=msgs,
-            meta={"history_budget": 6000}, audit_file=tmp_path / "g.jsonl",
+            meta={"history_budget": 6000, "breaker_active": False}, audit_file=tmp_path / "g.jsonl",
         )
         assert d.verdict == "BLOCK"
         assert d.rule == "submit_ratio"
@@ -123,10 +124,11 @@ class TestValidateRequest:
         assert d.rule == "low_hit_rate"
 
     def test_mid_hit_rate_warn(self, tmp_path):
-        """2026-08-18 用户反馈（'78% 也低'）: 80% 也应 WARN（工具轮——低于预期提示）."""
+        """2026-08-18 用户反馈（'78% 也低'）: 大型稳定会话 80% 也应 WARN（低于预期提示）.
+        任务2（§5.2）适配: tokens_in=300K（≥200K → 自适应阈值 0.85）→ 80% 仍 WARN."""
         g = PromptGuard(audit_file=tmp_path / "g.jsonl")
         for _ in range(3):
-            g.record_result("s-mid", 10000, 8000)  # 80% —— <85% WARN 区间
+            g.record_result("s-mid", 300000, 240000)  # 80% —— 大会话 <85% WARN 区间
         d = g.check(session_id="s-mid", system_text="sys", messages=_sys("sys"))
         assert d.verdict == "WARN"
         assert d.rule == "low_hit_rate"
@@ -228,4 +230,57 @@ class TestValidateRequest:
             provider="minimax",
         )
         assert d.verdict == "BLOCK"
+        assert d.rule == "low_hit_rate"
+
+    # ── 任务2（§5.2）: WARN 阈值按会话规模自适应 ──
+
+    def test_adaptive_warn_threshold_tiers(self):
+        """2.1: _adaptive_warn_threshold 四段分段查表边界（纯函数）."""
+        import llm_loop.cache_guard.guard as mod
+
+        cases = [
+            (0, 0.65),          # <30K → 0.65
+            (29999, 0.65),      # 边界下
+            (30000, 0.75),      # ≥30K → 0.75
+            (79999, 0.75),
+            (80000, 0.80),      # ≥80K → 0.80
+            (199999, 0.80),
+            (200000, 0.85),     # ≥200K → 默认 _HIT_RATE_WARN
+            (10_000_000, 0.85),  # tier 耗尽
+        ]
+        for tokens_in, expected in cases:
+            assert mod._adaptive_warn_threshold(tokens_in) == expected, (
+                f"tokens_in={tokens_in} 应返回 {expected}"
+            )
+
+    def test_small_session_80pct_allowed(self, tmp_path):
+        """2.2: 小型会话（10K tokens → 自适应阈值 0.65）80% 命中 → ALLOW——
+        修复前固定 0.85 会误 WARN 刷屏（'WARN 阈值不敏感'问题）."""
+        g = PromptGuard(audit_file=tmp_path / "g.jsonl")
+        for _ in range(3):
+            g.record_result("s-small", 10000, 8000)  # 80% —— 小型会话已达标
+        d = g.check(session_id="s-small", system_text="sys", messages=_sys("sys"))
+        assert d.verdict == "ALLOW"
+
+    def test_large_session_80pct_warns(self, tmp_path):
+        """2.2: 大型会话（300K tokens → 自适应阈值 0.85）80% 命中 → WARN
+        （大型稳定会话预期更高命中——仍提示）."""
+        g = PromptGuard(audit_file=tmp_path / "g.jsonl")
+        for _ in range(3):
+            g.record_result("s-large", 300000, 240000)  # 80%
+        d = g.check(session_id="s-large", system_text="sys", messages=_sys("sys"))
+        assert d.verdict == "WARN"
+        assert "自适应阈值" in d.detail and "tokens_in≈300000" in d.detail
+
+    def test_adaptive_disabled_falls_back_fixed(self, tmp_path, monkeypatch):
+        """2.2: 禁用自适应（CACHE_GUARD_HIT_WARN_ADAPTIVE=0）→ 回退固定 0.85——
+        小型会话 80% 恢复 WARN（零回归路径）."""
+        import llm_loop.cache_guard.guard as mod
+
+        monkeypatch.setattr(mod, "_ADAPTIVE_ENABLED", False)
+        g = PromptGuard(audit_file=tmp_path / "g.jsonl")
+        for _ in range(3):
+            g.record_result("s-fixed", 10000, 8000)  # 80% —— 固定阈值 0.85 → WARN
+        d = g.check(session_id="s-fixed", system_text="sys", messages=_sys("sys"))
+        assert d.verdict == "WARN"
         assert d.rule == "low_hit_rate"

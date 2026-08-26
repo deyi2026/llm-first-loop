@@ -10,10 +10,12 @@
 
 from __future__ import annotations
 
+import gc
 import types
 from unittest import mock
 
 from llm_loop.core.loop import LoopEngine
+from llm_loop.llm.client import LLMClient
 from llm_loop.llm.pool import ModelClientPool
 
 
@@ -145,6 +147,98 @@ def test_pool_clear_cache_fail_open():
 
     assert ok.close_calls == 1
     assert pool.cached_provider_ids() == []
+
+
+class _ReloadRegistry:
+    """replace_registry 并发退休测试用最小 registry。"""
+
+    def __init__(self, base_url: str) -> None:
+        self.base_url = base_url
+
+    def resolve(self, model_ref: str) -> tuple[str, str]:
+        assert model_ref == "p/m"
+        return "p", "m"
+
+    def client_params(self, provider_id: str, model_id: str) -> dict:
+        assert (provider_id, model_id) == ("p", "m")
+        return {
+            "api_key": "k",
+            "base_url": self.base_url,
+            "model": model_id,
+            "timeout_s": None,
+            "max_tokens": None,
+            "wire_protocol": "openai",
+        }
+
+    def supports_thinking(self, provider_id: str, model_id: str) -> bool:
+        assert (provider_id, model_id) == ("p", "m")
+        return False
+
+
+def test_stale_registry_snapshot_client_is_uncached_and_retires_on_release():
+    """round持旧snapshot跨过refresh时可完成本轮，但一次性旧client不能污染新cache且最终自动close。"""
+    transports: list[_CloseTracker] = []
+
+    def make_transport(*_args, **_kwargs):
+        transport = _CloseTracker()
+        transports.append(transport)
+        return transport
+
+    with mock.patch("llm_loop.llm.client.httpx.Client", side_effect=make_transport):
+        default = LLMClient(api_key="k", base_url="http://default/v1", model="default")
+        pool = ModelClientPool(
+            registry=_ReloadRegistry("http://old/v1"),  # type: ignore[arg-type]
+            default_client=default,
+        )
+        old_snapshot = pool.registry_snapshot()
+        pool.replace_registry(_ReloadRegistry("http://new/v1"))  # type: ignore[arg-type]
+
+        stale, _pid, _mid = pool.get_resolved_client("p/m", registry=old_snapshot)
+        stale_transport = stale._client  # noqa: SLF001 — 验证一次性旧client退休
+        assert stale.base_url == "http://old/v1"
+        assert pool.cached_provider_ids() == [], "stale snapshot client不得写入current cache"
+        assert stale_transport.close_calls == 0
+
+        del stale
+        gc.collect()
+        assert stale_transport.close_calls == 1
+
+        current = pool.get_client("p/m")
+        assert current.base_url == "http://new/v1"
+        assert pool.cached_provider_ids() == ["p"]
+        pool.close()
+
+
+def test_replace_registry_retires_cached_llm_until_last_reference():
+    """热重载摘缓存后，在途/已路由旧 client 活到最后引用释放；新请求只见新表。"""
+    transports: list[_CloseTracker] = []
+
+    def make_transport(*_args, **_kwargs):
+        transport = _CloseTracker()
+        transports.append(transport)
+        return transport
+
+    with mock.patch("llm_loop.llm.client.httpx.Client", side_effect=make_transport):
+        default = LLMClient(api_key="k", base_url="http://default/v1", model="default")
+        pool = ModelClientPool(
+            registry=_ReloadRegistry("http://old/v1"),  # type: ignore[arg-type]
+            default_client=default,
+        )
+        old_client = pool.get_client("p/m")
+        old_transport = old_client._client  # noqa: SLF001 — 验证底层连接退休时机
+
+        pool.replace_registry(_ReloadRegistry("http://new/v1"))  # type: ignore[arg-type]
+        assert pool.cached_provider_ids() == []
+        assert old_transport.close_calls == 0, "仍有外部引用的旧 client 不得被热重载强关"
+
+        new_client = pool.get_client("p/m")
+        assert new_client is not old_client
+        assert new_client.base_url == "http://new/v1"
+
+        del old_client
+        gc.collect()
+        assert old_transport.close_calls == 1, "最后引用释放后旧 transport 应自动关闭"
+        pool.close()
 
 
 # ── LoopEngine.close ──

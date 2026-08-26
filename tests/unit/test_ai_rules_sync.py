@@ -50,7 +50,8 @@ _LITE_TO_SOT_KEYWORDS = {
     "16": "缓存",  # RULE-AI-16
     "17": "分段",  # RULE-AI-17
     "18": "经验",  # RULE-AI-18
-    "19": "内容消费",  # RULE-AI-19（2026-08-20 对齐 DSH 交互范式）
+    "19": "中断恢复",  # RULE-AI-19（会话恢复 + 工作区归属）
+    "20": "有界推进",  # RULE-AI-20（Goal 里程碑 + 有界推进）
 }
 
 
@@ -74,11 +75,16 @@ def test_l0_prompt_rules_moved_out():
 
 def test_lite_file_exists_and_within_read_limit():
     """lite 文件存在；中文 lite < 3000 字符（默认 read_file 不截断）."""
+    versions: set[str] = set()
     for name in ["docs/ai_rules.lite.md", "docs/ai_rules.lite.en.md"]:
         p = _ROOT / name
         assert p.exists(), f"{name} 缺失"
         content = p.read_text(encoding="utf-8")
-        assert "version=" in content.splitlines()[0], f"{name} 首行缺 version 标记"
+        header = content.splitlines()[0]
+        match = re.search(r"version=(\d+)", header)
+        assert match, f"{name} 首行缺 version=N 标记"
+        versions.add(match.group(1))
+    assert len(versions) == 1, f"中英文 lite 版本漂移: {versions}"
     zh = _read("docs/ai_rules.lite.md")
     assert len(zh) < 3000, f"中文 lite {len(zh)} 字符 ≥3000（默认 read_file 会截断）"
 
@@ -87,7 +93,7 @@ def test_lite_is_superset_checked_against_sot():
     """lite 约束编号与关键动作词在详细 SoT（ai_rules.md）中可找到（防浓缩漂移）."""
     sot = _read("docs/ai_rules.md")
     lite = _read("docs/ai_rules.lite.md")
-    # 约束编号 1-18 在 lite 中逐条存在
+    # 约束编号 1-20 在 lite 中逐条存在
     for n in _LITE_TO_SOT_KEYWORDS:
         assert re.search(rf"^{n}[^\d]", lite, re.M), f"lite 缺约束 {n}"
     # 每个动作词在 SoT 存在（lite 是 SoT 的浓缩，动作词必须来源于 SoT）

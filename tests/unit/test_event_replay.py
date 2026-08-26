@@ -13,6 +13,7 @@ from __future__ import annotations
 from llm_loop.event_log.model import (
     EVENT_CONTEXT_COMPRESSED,
     EVENT_MESSAGE_APPENDED,
+    EVENT_MESSAGE_CACHE_COMPACTED,
     EVENT_SESSION_CREATED,
     EVENT_SESSION_META_CHANGED,
     Event,
@@ -102,6 +103,23 @@ def test_replay_compressed_marker_preserved():
     ]
 
 
+def test_replay_provider_cache_compacted_updates_message_metadata():
+    """中段折叠状态必须可由event-log独立重建，且支持多provider累加。"""
+    src = _source_session()
+    events = _events_from_session(src)
+    events.extend(
+        [
+            _event(100, EVENT_MESSAGE_CACHE_COMPACTED, msg_seq=0, provider_id="deepseek"),
+            _event(101, EVENT_MESSAGE_CACHE_COMPACTED, msg_seq=0, provider_id="minimax"),
+        ]
+    )
+    view = replay_session(events)
+    assert view["messages"][0]["metadata"]["cache_compacted_for"] == [
+        "deepseek",
+        "minimax",
+    ]
+
+
 def test_replay_meta_changed_updates_top_level():
     events = _events_from_session(_source_session())
     events.append(_event(99, EVENT_SESSION_META_CHANGED,
@@ -187,3 +205,16 @@ def test_replay_idx_conflict_keeps_all_messages():
     assert "第一个问题" in contents, "第一条 user 应保留"
     assert "继续任务" in contents, "冲突 idx 的后续消息也应保留（不覆盖）"
     assert contents.index("第一个问题") < contents.index("继续任务"), "顺序应按 seq"
+
+
+def test_replay_version5_summary_meta_change():
+    events = [
+        _event(1, EVENT_SESSION_CREATED, version=5, fixed_summary="", summary_chain=[]),
+        _event(2, EVENT_SESSION_META_CHANGED, field="summary_state", changes={
+            "fixed_summary": {"from": "", "to": "固定"},
+            "summary_chain": {"from": [], "to": ["一", "二"]},
+        }),
+    ]
+    view = replay_session(events)
+    assert view["fixed_summary"] == "固定"
+    assert view["summary_chain"] == ["一", "二"]

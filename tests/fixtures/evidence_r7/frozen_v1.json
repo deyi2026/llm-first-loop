@@ -1,0 +1,26 @@
+{
+  "schema": "evidence-r7-frozen-v1",
+  "created_at": "2026-08-26T12:27:14.942000+00:00",
+  "artifacts": {
+    "docs/RECOVERABILITY-R7-PRE-REGISTRATION-v1.md": "7a12114c24db2f0cd2165408d60398ef94109e9d3dc3d28db05f9317c14c8bba",
+    "docs/RECOVERABILITY-R7-FROZEN-v1.md": "928ca1f537b9adddd81ee8502e3a0104dd2575ecd0d974ce1deb47ca6b9a1a41",
+    "docs/RECOVERABILITY-R6-SOURCE-RECOVERY-CONTRACT-v1.md": "e91be383ca48d072c4b022a28337dc9c697e5aa572951c97e75f60c34e060df3",
+    "docs/RECOVERABILITY-R6-RESULT-v1.md": "9f37124f5e268d1e68ab4d064a2add97bd34e62bc94334d5778d0e40981b66bb",
+    "scripts/evidence/r7/fixtures.py": "717b2b19e879c0eae169f90b8e40987ca781737793bff88686327b2095a80ec3",
+    "scripts/evidence/r7/build_artifacts.py": "6858729ebf1a2817c613a0c1057b314190cc600cf4f41c99d1ede53c2b9cfd9f",
+    "scripts/evidence/r7/runner.py": "87c811398c01a89fbdaae830c4d94a8c85d371abf90867d39e6c23635ed9ce65",
+    "scripts/evidence/r7/score.py": "c624d04394486c241af968cd067cd3f7b747dba531d4204dcb8cb59b6f0bbd33",
+    "tests/unit/test_evidence_r7_runner.py": "973f0faf637ce557647943af06d2b68a11d7c3a7bed36fefae2cb0f5776cbbb9",
+    "tests/fixtures/evidence_r7/fixtures_v1.json": "f0510eeac1fbcd0d194ecef9a133befb32bba3487984a4070a94c62780d8f84f",
+    "tests/fixtures/evidence_r7/matrix_v1.json": "6aff9fc40eee7bdfc64f9bce9721d2b3b07c9df11b09bc3f76b2c90f4d550934",
+    "src/llm_loop/tools/source_recovery_contract.py": "c3224925cc95c2dfd8af923cb52b89d091a08a657862eb22192554abb028a2c4",
+    "src/llm_loop/tools/builtin/read_file.py": "b464b6352b9dd372644d0fdbdab3365475201ce9809461b1f09881527d8856d0",
+    "src/llm_loop/tools/evidence_enforce.py": "15092cadfc2bce9e6c340d249d2c6a3d68b0fbc4b899b64f9656fb39f6dcb6ff",
+    "src/llm_loop/tools/evidence_tools.py": "a4407ab27861fb4d32c1ed8a64ef55cdb053c6efdaf729bee371f9bf57293487",
+    "src/llm_loop/memory/evidence.py": "706120777747fad9a23ea428b330bb77fe4f575c12374015f1ad6a7579f6c9f1",
+    "src/llm_loop/tools/registry.py": "9b0e6e110664dda70945666338159e2df55294643d1068514bb4a6230bd9c9df",
+    "scripts/evidence/r4/runner.py": "dc0bf273adc72d365dd050762bcb70db3076f6e5b3dd076d3f4270de8352c6e5",
+    "data/providers.json": "a5e6221a344d08d37c0135931762e95e9371c4073d9dd1cd33903e3599a4a874",
+    "data/audit/evidence_r7/provider_snapshot_v1.json": "b23c41f3a55f1cf07b0f76822e3e5c60f5a53516eebfbfb5f804f035f0498aa4"
+  }
+}

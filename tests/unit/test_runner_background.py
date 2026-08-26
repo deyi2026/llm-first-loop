@@ -7,6 +7,7 @@ FakeEngine 提供 run_stream 生成器（yield delta + return result），不依
 
 from __future__ import annotations
 
+import asyncio
 import queue
 import threading
 import time
@@ -197,6 +198,110 @@ def test_handle_snapshot_readonly():
     assert handle.status == "running"  # 快照修改不影响原 handle
 
 
+# ── EVO-20260825（任务12 §5.12）: 压测残留 run 清理 + 巡检 ──
+
+class _OpsEngine(FakeEngine):
+    """带 cache monitor + 审计记录的 engine 桩（验证 stop 清理侧链）."""
+
+    def __init__(self, **kw) -> None:
+        super().__init__(**kw)
+        from llm_loop.core.cache_health import CacheHealthMonitor
+
+        self._cache_monitor = CacheHealthMonitor(min_runs=2, min_tokens=1000)
+        self.audit_events: list[tuple[str, str, str]] = []
+
+    def _record_action(self, phase: str, action_type: str, detail: str) -> None:
+        self.audit_events.append((phase, action_type, detail))
+
+
+def test_stop_unknown_run_skipped():
+    """run 不存在或已结束 → skipped（异常场景 §5.12.3-1）."""
+    r = BackgroundRunner(FakeEngine())
+    result = asyncio.run(r.stop("ghost-run"))
+    assert result == {"run_id": "ghost-run", "status": "skipped", "reason": "not_found_or_ended"}
+
+
+def test_stop_active_run_cleans_registry_and_sessions():
+    """stop 活跃 run → cancelled + registry 移除 + monitor reset_session（分桶惰性清理）."""
+    eng = _OpsEngine(deltas=50, delay=0.02)
+    r = BackgroundRunner(eng)
+    handle, q = r.start("sess-70766073", "hi")
+    assert handle is not None
+    # 预热 monitor 分桶（模拟压测残留统计）
+    for _ in range(3):
+        eng._cache_monitor.record(20000, 2000, session_id="sess-70766073")
+    assert eng._cache_monitor.snapshot("sess-70766073")["win_runs"] == 3
+    r.note_active("sess-70766073", round_no=2)
+    assert handle.current_round == 2
+
+    result = asyncio.run(r.stop("sess-70766073", operator="ops"))
+    assert result["status"] == "stopped"
+    # 后台线程在轮次检查点退出 → registry 已清
+    deadline = time.time() + 5
+    while r.is_running("sess-70766073") and time.time() < deadline:
+        time.sleep(0.01)
+    assert r.is_running("sess-70766073") is False
+    # monitor 分桶惰性移除
+    snap = eng._cache_monitor.snapshot("sess-70766073")
+    assert snap["win_runs"] == 0 and snap["win_in"] == 0
+    # 审计事件（engine._record_action 可用时）
+    assert any(a[0] == "runner" and a[1] == "stop" for a in eng.audit_events)
+
+
+def test_stop_broadcasts_cancelled_terminal():
+    """stop 后 run 以 cancelled 语义结束（done 广播 + handle 终态），不残留运行态."""
+    eng = FakeEngine(deltas=100, delay=0.01)
+    r = BackgroundRunner(eng)
+    handle, q = r.start("sess-cancel", "hi")
+    assert handle is not None
+    asyncio.run(r.stop("sess-cancel"))
+    deadline = time.time() + 5
+    while r.is_running("sess-cancel") and time.time() < deadline:
+        time.sleep(0.01)
+    assert r.is_running("sess-cancel") is False
+    # 终态 handle（done/error 均可），非 running
+    assert handle.status in ("done", "error")
+
+
+def test_inspect_stale_runs_detects_idle_only():
+    """巡检：仅超过阈值无活跃的 run 被列为残留；活跃 run 不受影响."""
+    eng = FakeEngine(deltas=100, delay=0.05)
+    r = BackgroundRunner(eng)
+    h_active, _ = r.start("sess-active", "hi")
+    h_idle, _ = r.start("sess-idle", "hi")
+    assert h_active is not None and h_idle is not None
+    r.note_active("sess-active", round_no=3)
+    # 模拟 sess-idle 长期无活跃（回拨 last_active_ts 到阈值之前）
+    with r._guard:
+        r._registry["sess-idle"].last_active_ts = time.time() - 25 * 3600
+        r._registry["sess-idle"].started_at = time.time() - 25 * 3600
+        r._registry["sess-idle"].current_round = 1
+    stale = r.inspect_stale_runs()
+    stale_ids = {s["run_id"] for s in stale}
+    assert "sess-idle" in stale_ids
+    assert "sess-active" not in stale_ids
+    # 字段齐备（run_id + 运行时长 + 轮数）
+    idle = next(s for s in stale if s["run_id"] == "sess-idle")
+    assert idle["rounds"] == 1 and idle["running_hours"] >= 24
+    # 清理后台线程，避免泄漏
+    asyncio.run(r.stop("sess-active"))
+    asyncio.run(r.stop("sess-idle"))
+
+
+def test_note_active_updates_handle():
+    """note_active 刷新 last_active_ts 与 current_round（巡检数据源）."""
+    eng = FakeEngine(deltas=50, delay=0.02)
+    r = BackgroundRunner(eng)
+    handle, q = r.start("sess-note", "hi")
+    assert handle is not None
+    ts0 = handle.last_active_ts
+    time.sleep(0.01)
+    r.note_active("sess-note", round_no=7)
+    assert handle.current_round == 7
+    assert handle.last_active_ts > ts0
+    asyncio.run(r.stop("sess-note"))
+
+
 # ── EVO-20260817 审查 P0-3: 同步 vs 后台并发互斥（双向） ──
 
 class _SyncEngine(FakeEngine):
@@ -288,3 +393,69 @@ def test_eventbus_replay_after_subscribe_live_only():
     assert got["data"] == "live"
     # 不会重复收到旧事件
     assert q.empty()
+
+
+def test_eventbus_subscriber_queue_bounded_keeps_terminal():
+    """慢消费者不应无限吃内存；满时丢最旧但 done 必须保留。"""
+    bus = EventBus()
+    q = bus.subscribe()
+    assert q.maxsize == EventBus._SUBSCRIBER_MAX
+
+    for i in range(EventBus._SUBSCRIBER_MAX + 200):
+        bus.emit({"type": "delta", "i": i})
+    bus.emit({"type": "done", "result": "FINAL"})
+
+    assert q.qsize() <= EventBus._SUBSCRIBER_MAX
+    events = []
+    while not q.empty():
+        events.append(q.get_nowait())
+    assert events[-1] == {"type": "done", "result": "FINAL"}
+    assert events[0].get("i", 0) > 0, "队列超限后应淘汰最旧 delta"
+
+
+def test_background_active_blocks_workspace_switch(build_test_engine, tmp_path):
+    """后台handle存续期间workspace根不可切换；run完成后旧分区仍是唯一session落点。"""
+    from llm_loop.llm.client import LLMResponse, StreamDelta
+
+    engine, fake = build_test_engine([])
+    workspace_a = tmp_path / "workspace-a"
+    workspace_b = tmp_path / "workspace-b"
+    workspace_a.mkdir()
+    workspace_b.mkdir()
+    engine.set_workspace(str(workspace_a), "ws-a")
+    sid = engine.session.create()
+    root_a = engine.session.root
+    release = threading.Event()
+
+    def slow_stream(**_kwargs):
+        yield StreamDelta(text="A")
+        assert release.wait(5), "test release timeout"
+        yield StreamDelta(text="B")
+        return LLMResponse(content="AB", tool_calls=[], provider="fake")
+
+    fake.chat_stream = slow_stream
+    runner = BackgroundRunner(engine)
+    engine.runner = runner
+    handle, q = runner.start(sid, "hello")
+    assert handle is not None and q is not None
+    first = q.get(timeout=5)
+    assert first["type"] == "delta" and first["delta"].text == "A"
+
+    try:
+        try:
+            engine.set_workspace(str(workspace_b), "ws-b")
+            raise AssertionError("active background run期间workspace切换必须被拒绝")
+        except RuntimeError as exc:
+            assert "运行" in str(exc) or "workspace" in str(exc) or "工作区" in str(exc)
+        assert engine.session.root == root_a
+    finally:
+        release.set()
+
+    deadline = time.time() + 5
+    while runner.is_running(sid) and time.time() < deadline:
+        time.sleep(0.01)
+    assert runner.is_running(sid) is False
+    assert handle.status == "done"
+    stored = engine.session.load(sid)
+    assert any(m.role == "assistant" and "AB" in m.content for m in stored.messages)
+    assert not (engine.settings.sessions_dir / "ws-b" / f"{sid}.json").exists()

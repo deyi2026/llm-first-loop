@@ -21,10 +21,11 @@ from llm_loop.event_log.model import (
     EVENT_CODEARTS_STATUS_SYNCED,
     EVENT_CODEARTS_STATUS_UNKNOWN,
     EVENT_CONTEXT_COMPRESSED,
+    EVENT_INTEROP_SPLICED,
     EVENT_MESSAGE_APPENDED,
+    EVENT_MESSAGE_CACHE_COMPACTED,
     EVENT_REQUEST_META,
     EVENT_REQUEST_USAGE,
-    EVENT_INTEROP_SPLICED,
     EVENT_RUN_END,
     EVENT_SESSION_CREATED,
     EVENT_SESSION_FORKED,
@@ -101,6 +102,7 @@ def test_registry_covers_five_types_with_fields():
         EVENT_SESSION_CREATED,
         EVENT_MESSAGE_APPENDED,
         EVENT_CONTEXT_COMPRESSED,
+        EVENT_MESSAGE_CACHE_COMPACTED,
         EVENT_SESSION_META_CHANGED,
         EVENT_SESSION_FORKED,
         EVENT_REQUEST_META,  # HARNESS-02: request.meta 请求快照
@@ -343,3 +345,65 @@ def test_request_meta_registered_replay_ignored(tmp_path):
     assert view["session_id"] == sid  # 视图正常重建
     assert "unknown_event_types" not in view  # 已登记类型不记 unknown
     assert view["messages"] == []  # request.meta 不产生消息
+
+
+def test_long_answer_persist_uses_pathlib_and_is_content_stable(tmp_path):
+    """baseline 回归：>8000 字回答应真实落盘；events.py 缺 Path 时这里会 NameError 后静默不落盘。"""
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from llm_loop.core.loop.events import _EventsMixin
+
+    class _Dummy(_EventsMixin):
+        settings = SimpleNamespace(data_dir=str(tmp_path))
+
+    answer = "长回答" * 3000
+    out1 = _Dummy()._persist_long_answer("session-12345678", answer)
+    out2 = _Dummy()._persist_long_answer("session-12345678", answer)
+
+    assert out1.startswith(answer)
+    marker = "[长回答已落盘] "
+    path1 = Path(out1.split(marker, 1)[1])
+    path2 = Path(out2.split(marker, 1)[1])
+    assert path1 == path2, "同内容应使用内容哈希稳定路径，避免回传历史前缀漂移"
+    assert path1.is_file()
+    assert path1.read_text(encoding="utf-8") == answer
+
+
+
+def test_event_store_rejects_session_id_path_traversal(tmp_path):
+    """EventStore不可用../跨事件根读取或追加；fail-open查询/写契约保持。"""
+    store_a = EventStore(tmp_path / "ev-A")
+    store_b = EventStore(tmp_path / "ev-B")
+    store_a.append("safe", EVENT_MESSAGE_APPENDED, {"owner": "A"})
+    store_b.append("victim", EVENT_MESSAGE_APPENDED, {"secret": "B"})
+    traversal = "../ev-B/victim"
+    victim = tmp_path / "ev-B" / "victim.jsonl"
+    before = victim.read_bytes()
+
+    assert store_a.exists(traversal) is False
+    assert store_a.read(traversal) == []
+    assert store_a.last_seq(traversal) == 0
+    assert store_a.append(traversal, EVENT_MESSAGE_APPENDED, {"attack": True}) is None
+    assert victim.read_bytes() == before
+
+
+def test_delete_session_purges_single_and_segmented_event_data_but_keeps_lock(tmp_path):
+    """物理删除应覆盖single+rolled segments，同时保留稳定lock inode。"""
+    store = EventStore(tmp_path, enabled=True)
+    sid = "delete-multi-event"
+    store.append(sid, EVENT_SESSION_CREATED, {"version": 5})
+    seg_dir = tmp_path / sid
+    seg_dir.mkdir()
+    (seg_dir / "1.jsonl").write_text("{}\n", encoding="utf-8")
+    (seg_dir / "2.jsonl").write_text("{}\n", encoding="utf-8")
+    lock_path = tmp_path / f"{sid}.lock"
+    lock_path.touch()
+
+    removed = store.delete_session(sid)
+
+    assert removed == 3
+    assert not (tmp_path / f"{sid}.jsonl").exists()
+    assert not seg_dir.exists()
+    assert lock_path.exists()
+    assert store.exists(sid) is False

@@ -121,3 +121,16 @@ def test_single_file_zero_regression(tmp_path):
     events = es.read(sid)
     assert len(events) > 0
     assert es.last_seq(sid) == events[-1].seq
+
+
+
+def test_list_segments_rejects_session_id_path_traversal(tmp_path):
+    """CLI可控session不得让list_segments越出event_logs根枚举兄弟目录。"""
+    event_logs = tmp_path / "event_logs"
+    event_logs.mkdir()
+    sibling = EventStore(tmp_path / "other", enabled=True)
+    sibling.append("victim", "message.appended", {"index": 0, "role": "user", "content": "SECRET"})
+    RotateManager(sibling, rotate_bytes=1, rotate_days=0).check_and_rotate("victim")
+
+    assert (tmp_path / "other" / "victim" / "1.jsonl").exists()
+    assert RotateManager.list_segments(event_logs, "../other/victim") == []

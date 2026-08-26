@@ -14,6 +14,17 @@ def _tool_msg(content: str, name: str = "read_file") -> Message:
     )
 
 
+def _tool_pair(content: str, name: str = "read_file") -> list[Message]:
+    """严格 FC 合法 fixture：声明与回执必须成组，避免测试依赖孤立 tool 容忍。"""
+    return [
+        Message(
+            role="assistant", content=f"调用 {name}", source=MessageSource.USER,
+            tool_calls=[{"id": "c1", "name": name, "arguments": "{}"}],
+        ),
+        _tool_msg(content, name),
+    ]
+
+
 def _user(content: str) -> Message:
     return Message(role="user", content=content, source=MessageSource.USER)
 
@@ -22,7 +33,7 @@ def test_budget_in_layer_trims_old_long_tool():
     """预算内：距最新 >= age 条的旧长 tool 消息降级（含首尾/检索指引），原文归档."""
     archived: list[Message] = []
     # tool 消息在 idx0，距最新 = 24 条（>= age=20）→ 触发降级
-    msgs = [_tool_msg("D" * 5000)] + [_user(f"问题{i}") for i in range(24)]
+    msgs = _tool_pair("D" * 5000) + [_user(f"问题{i}") for i in range(24)]
     sink = lambda sid, m: archived.append(m)  # noqa: E731
     out = build_history_messages(
         msgs, system_prompt="SYS", max_chars=100000, session_id="s1",
@@ -46,7 +57,7 @@ def test_trim_uses_key_facts_digest():
         "- 验证: tests/unit/test_history_layering.py 全部通过\n"
         "正文细节（不应出现在摘要里）: 大量展开内容" * 80
     )
-    msgs = [_tool_msg(content)] + [_user(f"问题{i}") for i in range(24)]
+    msgs = _tool_pair(content) + [_user(f"问题{i}") for i in range(24)]
     out = build_history_messages(
         msgs, system_prompt="SYS", max_chars=100000, session_id="s1",
         archive_sink=lambda sid, m: archived.append(m), layer_tool_trim=True,
@@ -64,7 +75,7 @@ def test_trim_uses_key_facts_digest():
 
 def test_recent_tool_not_trimmed():
     """距最新消息 < age 条的 tool 消息保留完整（保护最近上下文）."""
-    msgs = [_user("问题0"), _tool_msg("E" * 5000), _user("最新问题")]
+    msgs = [_user("问题0"), *_tool_pair("E" * 5000), _user("最新问题")]
     out = build_history_messages(
         msgs, system_prompt="SYS", max_chars=100000, session_id="s1",
         layer_tool_trim=True, tool_trim_threshold=100,  # 显式小阈值：测 age 逻辑（最近保留）而非长度
@@ -76,7 +87,7 @@ def test_recent_tool_not_trimmed():
 
 def test_short_tool_not_trimmed():
     """短 tool 消息不降级."""
-    msgs = [_tool_msg("S" * 100), _user("问题1"), _user("最新问题")]
+    msgs = _tool_pair("S" * 100) + [_user("问题1"), _user("最新问题")]
     out = build_history_messages(
         msgs, system_prompt="SYS", max_chars=100000, session_id="s1",
         layer_tool_trim=True,
@@ -87,7 +98,7 @@ def test_short_tool_not_trimmed():
 
 def test_default_off_zero_regression():
     """默认 layer_tool_trim=False → 行为不变（不降级）."""
-    msgs = [_tool_msg("D" * 5000), _user("问题1"), _user("最新问题")]
+    msgs = _tool_pair("D" * 5000) + [_user("问题1"), _user("最新问题")]
     out = build_history_messages(
         msgs, system_prompt="SYS", max_chars=100000, session_id="s1"
     )
@@ -103,8 +114,7 @@ def test_compression_path_layering_non_interfering():
     分层降级主战场在预算内主动瘦身；此处验证压缩路径下开关开启无副作用。
     """
     archived: list[Message] = []
-    msgs = [
-        _tool_msg("G" * 3000),
+    msgs = _tool_pair("G" * 3000) + [
         _user("q" * 500),
         _user("最新问题"),
     ]
@@ -152,7 +162,7 @@ def test_adaptive_age_zero_max_chars():
 def test_adaptive_age_via_build_history():
     """tool_trim_age=0 自适应：占用高时 age=5，距最新 8 条的旧 tool 降级."""
     # 8 < 20（低占用时不降级）但 8 >= 5（高占用 age=5 时降级）
-    msgs = [_tool_msg("X" * 5000)] + [_user(f"q{i}") for i in range(8)]
+    msgs = _tool_pair("X" * 5000) + [_user(f"q{i}") for i in range(8)]
     sink = lambda sid, m: None  # noqa: E731
     # 高占用：total~5016, max=7000 → 71% > 70% → age=5 → 距最新 8 >= 5 → 降级
     out_high = build_history_messages(
@@ -171,7 +181,7 @@ def test_adaptive_age_via_build_history():
 
 def test_fixed_age_disables_adaptive():
     """tool_trim_age=20 固定值禁用自适应（向后兼容）."""
-    msgs = [_tool_msg("X" * 5000)] + [_user(f"q{i}") for i in range(8)]
+    msgs = _tool_pair("X" * 5000) + [_user(f"q{i}") for i in range(8)]
     sink = lambda sid, m: None  # noqa: E731
     # 固定 age=20，距最新 8 < 20 → 不降级（即使占用高）
     out = build_history_messages(
@@ -334,7 +344,7 @@ def test_sink_failure_note_honest():
     """审查中危: archive_sink 失败时标注如实声明"归档失败"，不谎称已另存."""
     def _boom(sid, m):
         raise OSError("disk full")
-    msgs = [_tool_msg("D" * 5000)] + [_user(f"问题{i}") for i in range(24)]
+    msgs = _tool_pair("D" * 5000) + [_user(f"问题{i}") for i in range(24)]
     out = build_history_messages(
         msgs, system_prompt="SYS", max_chars=100000, session_id="s1",
         archive_sink=_boom, layer_tool_trim=True,
@@ -354,7 +364,7 @@ def test_anchor_beyond_len_no_loss():
     回归: 极端并发/持久化异常下 anchor 可能越界；防御逻辑（>0 and <len 才裁）
     保证越界时走全量（不丢历史、不崩溃）。
     """
-    msgs = [_tool_msg("x")] + [_user(f"问题{i}") for i in range(5)]
+    msgs = _tool_pair("x") + [_user(f"问题{i}") for i in range(5)]
     box: list[int] = []
     out = build_history_messages(
         msgs, system_prompt="SYS", max_chars=100000,
@@ -364,4 +374,4 @@ def test_anchor_beyond_len_no_loss():
     # 全部消息仍提交（无裁切）
     roles = [m.get("role") for m in out if m.get("role") in ("user", "tool")]
     assert roles == ["tool"] + ["user"] * 5, f"越界锚点导致历史丢失: {roles}"
-    assert len(out) == 7  # SYS + 6 条消息
+    assert len(out) == 8  # SYS + assistant 声明 + tool 回执 + 5 user

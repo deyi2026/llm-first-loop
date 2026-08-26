@@ -210,7 +210,7 @@ def test_gate_note_injected_once_on_activation():
     # 激活（低命中告警）
     for _ in range(5):
         m.record(20000, 2000)
-    snap = m.snapshot()
+    snap = m.snapshot("__default__")
     assert snap["gate_note_pending"] is True
     # 一次性消费
     assert m.take_gate_note() is True
@@ -218,8 +218,8 @@ def test_gate_note_injected_once_on_activation():
     # 漂移激活也会置 pending
     m.postcheck("s1", "fp-A")
     m.preflight("s1", "fp-B")
-    assert m.snapshot()["gate_note_pending"] is True
-    assert m.take_gate_note() is True
+    assert m.snapshot("s1")["gate_note_pending"] is True
+    assert m.take_gate_note("s1") is True
 
 
 def test_gate_note_not_pending_when_healthy():
@@ -227,7 +227,7 @@ def test_gate_note_not_pending_when_healthy():
     m = CacheHealthMonitor()
     for _ in range(6):
         m.record(20000, 19500)
-    assert m.snapshot()["gate_note_pending"] is False
+    assert m.snapshot("__default__")["gate_note_pending"] is False
     assert m.take_gate_note() is False
 
 
@@ -297,9 +297,9 @@ def test_reset_clears_window_baselines_and_gate():
     m.note_anchor_moved()
     m.preflight("s1", "fp-A")
     m.postcheck("s1", "fp-A")
-    assert m.snapshot()["fail_alerted"] is False  # 未触发恢复失败
+    assert m.snapshot("__default__")["fail_alerted"] is False  # 未触发恢复失败
     m.reset(reason="model_switch:test")
-    snap = m.snapshot()
+    snap = m.snapshot("__default__")
     assert snap["win_runs"] == 0
     assert snap["win_in"] == 0
     assert snap["anchor_move_runs"] == 0
@@ -317,11 +317,11 @@ def test_reset_keeps_fail_alerted_flag():
     m.note_anchor_moved()
     for _ in range(2):
         m.record(20000, 2000)
-    assert m.snapshot()["alerted"] is True
+    assert m.snapshot("__default__")["alerted"] is True
     # 拦截期锚点持续移动（good_streak 归零）→ 超 recovery_timeout_runs → 恢复失败提示
     for _ in range(2):
         m.note_anchor_moved()
         m.record(20000, 2000)
-    assert m.snapshot()["fail_alerted"] is True
+    assert m.snapshot("__default__")["fail_alerted"] is True
     m.reset(reason="model_switch")
-    assert m.snapshot()["fail_alerted"] is True  # 保留
+    assert m.snapshot("__default__")["fail_alerted"] is True  # 保留

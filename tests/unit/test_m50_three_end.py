@@ -610,8 +610,7 @@ def test_refresh_registry_reload_new_provider(tmp_path):
     # 重新加载
     new_settings = _make_settings(tmp_path, model_providers_raw="")
     msg, new_registry = refresh_provider_registry(old_pool, new_settings, re_read_settings=False)
-    old_pool.registry = new_registry
-    old_pool.clear_cache()
+    old_pool.replace_registry(new_registry)
 
     assert len(old_pool.registry.providers) == 2
     assert "minimax" in old_pool.registry.providers
@@ -682,6 +681,28 @@ def test_refresh_registry_via_corrections(tmp_path, build_test_engine, monkeypat
 # ── 7. 边界 & 集成 ──
 
 
+def test_handle_model_command_uses_fresh_session_override_for_from_label(tmp_path):
+    """run外CLI/飞书/model回执必须以本次fresh Session为事实源，不受ctx上次残值影响。"""
+    settings = _make_settings(tmp_path)
+    store = SessionStore(str(tmp_path / "sessions"))
+    pool = _make_pool(settings, _FakeLLM())
+    ctx = CorrectionContext()
+    ctx.model_pool = pool
+    ctx.session_model_override = "deepseek/deepseek-v4-pro"  # 上次run/命令残值
+    sid = store.create()
+    sess = store.load(sid)
+    sess.model_override = "minimax/MiniMax-M3"
+    store.save(sess)
+
+    result = handle_model_command("/model default", ctx, sess, store)
+
+    assert result is not None and result.success is True
+    assert sess.model_override is None
+    assert store.load(sid).model_override is None
+    assert "minimax/MiniMax-M3 → default" in result.reply
+    assert "deepseek/deepseek-v4-pro → default" not in result.reply
+
+
 def test_handle_model_command_non_model_text_returns_none(tmp_path):
     """handle_model_command 非 /model 文本 → 返回 None (调用方应继续走原路径)."""
     settings = _make_settings(tmp_path)
@@ -733,11 +754,15 @@ def _executor_env(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("LLM_WIRE_PROTOCOL", "openai")
 
 
-def test_refresh_executor_syncs_default_client_credentials(tmp_path, monkeypatch):
-    """EVO-20260815-b3339561: env 变更后 executor 原地同步 default_client 凭据 + 回执区分两类."""
+def test_refresh_executor_does_not_mutate_default_client_in_place(tmp_path, monkeypatch):
+    """默认 client 的 endpoint/key/model/protocol 不做并发不安全的原地热改，变更如实要求重启。"""
     _write_providers_json(tmp_path, json.loads(_TWO_PROVIDER_JSON))
     settings = _make_settings(tmp_path, model_providers_raw="")
-    fake = _FakeLLM()  # 无 api_key/base_url 属性（旧装配未注入）→ getattr None → 必同步
+    fake = _FakeLLM()
+    before = {
+        name: getattr(fake, name, None)
+        for name in ("api_key", "base_url", "model", "wire_protocol")
+    }
     pool = _make_pool(settings, fake)
     engine = _FakeEngine(pool)
     install_refresh_executor(engine)
@@ -749,11 +774,89 @@ def test_refresh_executor_syncs_default_client_credentials(tmp_path, monkeypatch
 
     msg = engine.correction_ctx.refresh_executor()
 
-    assert fake.api_key == "brand-new-key"
-    assert fake.base_url == "https://api.kimi.com/coding/v1"
-    assert fake.model == "k3"
-    assert "已原地同步" in msg and "api_key" in msg
-    assert "需重启" in msg  # 冻结字段如实标注（诚实回执）
+    after = {name: getattr(fake, name, None) for name in before}
+    assert after == before, "热重载不得逐字段改写共享 default client"
+    assert "默认 client" in msg and "需重启" in msg
+
+
+def test_refresh_executor_rebinds_independent_summary_client(tmp_path, monkeypatch):
+    """SUMMARY_MODEL 长期 client 必须在 registry 热重载后换到新 cache，不能永久持旧 endpoint/key。"""
+    _write_providers_json(tmp_path, json.loads(_TWO_PROVIDER_JSON))
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "summary-key")
+    settings = _make_settings(
+        tmp_path, model_providers_raw="", summary_model="deepseek/deepseek-v4-pro"
+    )
+    pool = _make_pool(settings, _FakeLLM())
+    old_summary = pool.get_client(settings.summary_model)
+    summarizer = mock.Mock()
+    summarizer.llm = old_summary
+
+    engine = _FakeEngine(pool)
+    engine.settings = settings
+    engine.summarizer = summarizer
+    engine.correction_ctx.summarizer = summarizer
+    install_refresh_executor(engine)
+
+    _executor_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.deepseek.com/v1")
+    monkeypatch.setenv("LLM_MODEL", "deepseek-v4-flash")
+
+    engine.correction_ctx.refresh_executor()
+    current_summary = pool.get_client(settings.summary_model)
+
+    assert current_summary is not old_summary, "registry 替换后应产生新的summary client"
+    assert summarizer.llm is current_summary, "长期Summarizer引用必须同步到新client"
+    pool.close()
+
+
+def test_refresh_executor_drops_removed_summary_model_client(tmp_path, monkeypatch):
+    """新目录移除启动时 SUMMARY_MODEL 时必须释放旧client并降级，不能继续旧凭据。"""
+    _write_providers_json(tmp_path, json.loads(_TWO_PROVIDER_JSON))
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "summary-key")
+    settings = _make_settings(
+        tmp_path, model_providers_raw="", summary_model="deepseek/deepseek-v4-pro"
+    )
+    pool = _make_pool(settings, _FakeLLM())
+    old_summary = pool.get_client(settings.summary_model)
+    summarizer = mock.Mock()
+    summarizer.llm = old_summary
+
+    engine = _FakeEngine(pool)
+    engine.settings = settings
+    engine.summarizer = summarizer
+    engine.correction_ctx.summarizer = summarizer
+    install_refresh_executor(engine)
+
+    # 新目录保留 provider，但移除运行时已选择的独立摘要模型。
+    _write_providers_json(
+        tmp_path,
+        {
+            "deepseek": {
+                "base_url": "https://api.deepseek.com/v1",
+                "api_key_env": "DEEPSEEK_API_KEY",
+                "models": {
+                    "deepseek-v4-flash": {
+                        "context": 1000000,
+                        "thinking": True,
+                        "cost_tier": "low",
+                    }
+                },
+                "default_model": "deepseek-v4-flash",
+            }
+        },
+    )
+    _executor_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.deepseek.com/v1")
+    monkeypatch.setenv("LLM_MODEL", "deepseek-v4-flash")
+
+    msg = engine.correction_ctx.refresh_executor()
+
+    assert summarizer.llm is None
+    assert "独立摘要模型" in msg and "不可用" in msg and "确定性摘要" in msg
+    assert old_summary is not pool.get_client("deepseek/deepseek-v4-flash")
+    pool.close()
 
 
 def test_refresh_executor_no_credential_change_reports_verified(tmp_path, monkeypatch):

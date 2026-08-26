@@ -133,3 +133,199 @@ def test_chat_stream_background_disabled_fallback(build_test_engine):
     events = _parse_sse(resp.text)
     assert events[-1]["type"] == "done"
     assert events[-1]["data"]["final_answer"] == "直驱回答"
+
+
+def test_chat_stream_busy_does_not_persist_model_override(build_test_engine):
+    """后台 run 拒绝 busy 请求时必须零副作用：不得修改会话模型 override。"""
+    engine, _ = build_test_engine([])
+    sid = engine.session.create()
+
+    class _BusyRunner:
+        enabled = True
+
+        def start(
+            self, session_id, message, model=None, reasoning_effort=None, *,
+            resume=False, before_start=None, expected_workspace_epoch=None,
+        ):
+            return None, None
+
+        def get_handle(self, session_id):
+            return {"session_id": session_id, "status": "running", "started_at": 1.0}
+
+        def unsubscribe(self, session_id, q):
+            return None
+
+    engine.runner = _BusyRunner()
+    client = _make_client(engine)
+    resp = client.post(
+        "/api/v1/chat/stream",
+        json={"message": "busy", "session_id": sid, "model": "fake-model"},
+    )
+    assert "session_busy" in resp.text
+    assert engine.session.load(sid).model_override is None
+
+
+def test_chat_stream_accepted_persists_canonical_model_override(build_test_engine):
+    """真正接单的后台流仍持久化 Web 模型选择，供飞书/CLI 后续共享。"""
+    engine, _ = build_test_engine([])
+    engine.llm_pool.default_client = StreamingFakeLLM("ok")
+    for pid in list(engine.llm_pool._provider_cache):
+        engine.llm_pool._provider_cache[pid] = engine.llm_pool.default_client
+    from llm_loop.core.loop.runner import BackgroundRunner
+
+    engine.runner = BackgroundRunner(engine, enabled=True)
+    sid = engine.session.create()
+    pid, mid = engine.llm_pool.registry.resolve("fake-model")
+    expected = f"{pid}/{mid}"
+    client = _make_client(engine)
+    resp = client.post(
+        "/api/v1/chat/stream",
+        json={"message": "hi", "session_id": sid, "model": "fake-model"},
+    )
+    assert resp.status_code == 200
+    assert _parse_sse(resp.text)[-1]["type"] == "done"
+    assert engine.session.load(sid).model_override == expected
+
+
+class _EffortRecordingLLM(StreamingFakeLLM):
+    def __init__(self, content: str) -> None:
+        super().__init__(content)
+        self.efforts_seen: list[str] = []
+
+    def chat_stream(self, messages, tools, *, timeout_s=None, model=None):
+        from llm_loop.core.run_context import current_reasoning_effort
+
+        self.efforts_seen.append(current_reasoning_effort.get())
+        return super().chat_stream(messages, tools, timeout_s=timeout_s, model=model)
+
+
+def test_chat_stream_reasoning_effort_reaches_background_runner(build_test_engine):
+    engine, _ = build_test_engine([])
+    recorder = _EffortRecordingLLM("后台 effort")
+    engine.llm_pool.default_client = recorder
+    from llm_loop.core.loop.runner import BackgroundRunner
+
+    engine.runner = BackgroundRunner(engine, enabled=True)
+    client = _make_client(engine)
+    resp = client.post(
+        "/api/v1/chat/stream",
+        json={"message": "hi", "reasoning_effort": "low"},
+    )
+    assert _parse_sse(resp.text)[-1]["type"] == "done"
+    assert recorder.efforts_seen == ["low"]
+    assert recorder.reasoning_effort == "high", "请求 override 不得改共享 client 默认"
+
+
+def test_chat_stream_reasoning_effort_reaches_direct_fallback(build_test_engine):
+    engine, _ = build_test_engine([])
+    recorder = _EffortRecordingLLM("直驱 effort")
+    engine.llm_pool.default_client = recorder
+    from llm_loop.core.loop.runner import BackgroundRunner
+
+    engine.runner = BackgroundRunner(engine, enabled=False)
+    client = _make_client(engine)
+    resp = client.post(
+        "/api/v1/chat/stream",
+        json={"message": "hi", "reasoning_effort": "medium"},
+    )
+    assert _parse_sse(resp.text)[-1]["type"] == "done"
+    assert recorder.efforts_seen == ["medium"]
+    assert recorder.reasoning_effort == "high"
+
+
+def test_chat_stream_new_session_wins_over_session_id(build_test_engine):
+    engine, _ = build_test_engine([])
+    engine.llm_pool.default_client = StreamingFakeLLM("新会话")
+    old_sid = engine.session.create()
+    client = _make_client(engine)
+    resp = client.post(
+        "/api/v1/chat/stream",
+        json={"message": "hi", "session_id": old_sid, "new_session": True},
+    )
+    done = _parse_sse(resp.text)[-1]["data"]
+    assert done["session_id"] != old_sid
+    assert engine.session.get_shared_current() == done["session_id"]
+
+
+def test_chat_stream_cross_process_busy_has_no_model_side_effect(build_test_engine):
+    from llm_loop.core.loop.runner import BackgroundRunner
+    from llm_loop.core.session import SessionStore
+
+    engine, _ = build_test_engine([])
+    engine.runner = BackgroundRunner(engine, enabled=True)
+    sid = engine.session.create()
+    blocker = SessionStore(engine.session._dir)  # noqa: SLF001 — 模拟另一服务进程
+    client = _make_client(engine)
+    with blocker.run_lease(sid) as acquired:
+        assert acquired is True
+        resp = client.post(
+            "/api/v1/chat/stream",
+            json={"message": "busy", "session_id": sid, "model": "fake-model"},
+        )
+    events = _parse_sse(resp.text)
+    assert events[-1]["type"] == "error"
+    assert events[-1]["data"]["error"] == "session_busy"
+    assert engine.session.load(sid).model_override is None
+
+
+def test_chat_stream_direct_cross_process_busy_has_no_model_side_effect(build_test_engine):
+    from llm_loop.core.loop.runner import BackgroundRunner
+    from llm_loop.core.session import SessionStore
+
+    engine, _ = build_test_engine([])
+    engine.runner = BackgroundRunner(engine, enabled=False)
+    sid = engine.session.create()
+    blocker = SessionStore(engine.session._dir)  # noqa: SLF001
+    client = _make_client(engine)
+    with blocker.run_lease(sid) as acquired:
+        assert acquired is True
+        resp = client.post(
+            "/api/v1/chat/stream",
+            json={"message": "busy", "session_id": sid, "model": "fake-model"},
+        )
+    events = _parse_sse(resp.text)
+    assert events[-1]["type"] == "error"
+    assert events[-1]["data"]["error"] == "session_busy"
+    assert engine.session.load(sid).model_override is None
+
+
+def test_chat_stream_rejects_session_if_workspace_changes_before_background_admission(
+    build_test_engine, tmp_path, monkeypatch
+):
+    """session在A解析后、runner.start前切到B时必须拒绝，不能把A的sid带入B。"""
+    from llm_loop.core.loop.runner import BackgroundRunner
+
+    engine, _ = build_test_engine([])
+    workspace_a = tmp_path / "epoch-a"
+    workspace_b = tmp_path / "epoch-b"
+    workspace_a.mkdir()
+    workspace_b.mkdir()
+    engine.set_workspace(str(workspace_a), "epoch-a")
+    sid = engine.session.create()
+    root_a = engine.session.root
+
+    runner = BackgroundRunner(engine, enabled=True)
+    engine.runner = runner
+    original_start = runner.start
+    switched = False
+
+    def switch_then_start(*args, **kwargs):
+        nonlocal switched
+        if not switched:
+            engine.set_workspace(str(workspace_b), "epoch-b")
+            switched = True
+        return original_start(*args, **kwargs)
+
+    monkeypatch.setattr(runner, "start", switch_then_start)
+    client = _make_client(engine)
+    resp = client.post(
+        "/api/v1/chat/stream",
+        json={"message": "must-not-cross-workspace", "session_id": sid},
+    )
+    events = _parse_sse(resp.text)
+
+    assert switched is True
+    assert events[-1]["type"] == "error"
+    assert events[-1]["data"]["error"] == "workspace_changed"
+    assert (root_a / f"{sid}.json").exists()
+    assert not (engine.settings.sessions_dir / "epoch-b" / f"{sid}.json").exists()

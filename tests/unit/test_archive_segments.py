@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from llm_loop.memory.archive import ArchiveStore
 
 _SID = "aaaaaaaa-bbbb-cccc-dddd-eeeeffff0000"
@@ -47,6 +49,27 @@ def test_segment_sort_order(tmp_path):
     assert names == [f"{_SID}.jsonl", f"{_SID}-1.jsonl", f"{_SID}-2.jsonl", f"{_SID}-3.jsonl"]
 
 
+def test_legacy_flat_segment_without_session_id_remains_searchable(tmp_path):
+    """历史`<sid>-N.jsonl`无owner字段时，在无邻居证据下继续兼容读取。"""
+    store = ArchiveStore(tmp_path, segment_bytes=0)
+    legacy = {
+        "id": "legacy-1",
+        "ts": "2026-08-20T00:00:00+00:00",
+        "role": "user",
+        "source": "legacy",
+        "content": "legacy-flat-keyword-ORANGE",
+        "summary": "",
+        "chars": 26,
+    }
+    (tmp_path / f"{_SID}-1.jsonl").write_text(
+        json.dumps(legacy, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+    hits = store.search(_SID, "ORANGE")
+    assert len(hits) == 1
+    assert hits[0]["id"] == "legacy-1"
+
+
 def test_new_segment_when_exceeding_threshold(tmp_path):
     """单文件达到阈值 → 下次写入开新段，旧文件不再增长（确定性构造）."""
     store = ArchiveStore(tmp_path, segment_bytes=200)
@@ -54,15 +77,19 @@ def test_new_segment_when_exceeding_threshold(tmp_path):
     # 手动把主段撑过阈值（模拟历史大文件，不依赖 JSON 序列化大小）
     with open(tmp_path / f"{_SID}.jsonl", "a", encoding="utf-8") as f:
         f.write("x" * 300 + "\n")
-    _mk(store, _SID, "y" * 100)  # 主段已 ≥200B → 开新段 -1
+    _mk(store, _SID, "y" * 100)  # 主段已 ≥200B → 新布局开 `.segments/1.jsonl`
     segs = _seg_files(store, _SID)
-    assert [s.name for s in segs] == [f"{_SID}.jsonl", f"{_SID}-1.jsonl"]
+    assert segs == [tmp_path / f"{_SID}.jsonl", tmp_path / f"{_SID}.segments" / "1.jsonl"]
     seg1 = segs[1].read_text(encoding="utf-8")
     assert "y" * 100 in seg1
-    # 再写：-1 段 JSON 已超 200B → 继续开新段（每段 1 条，旧文件不再增长）
+    # 再写：segment1 已超 200B → `.segments/2.jsonl`（每段1条）
     _mk(store, _SID, "z" * 100)
     segs = _seg_files(store, _SID)
-    assert [s.name for s in segs] == [f"{_SID}.jsonl", f"{_SID}-1.jsonl", f"{_SID}-2.jsonl"]
+    assert segs == [
+        tmp_path / f"{_SID}.jsonl",
+        tmp_path / f"{_SID}.segments" / "1.jsonl",
+        tmp_path / f"{_SID}.segments" / "2.jsonl",
+    ]
     assert "z" * 100 in segs[2].read_text(encoding="utf-8")
 
 
@@ -82,11 +109,11 @@ def test_search_across_segments_newest_first(tmp_path):
     _mk(store, _SID, "新段关键词 apple")
     hits = store.search(_SID, "apple", limit=10)
     assert len(hits) == 2
-    # 最近段条目在前（每条 JSON 超阈值 → 每段 1 条，最新在 -2.jsonl）
+    # 最近段条目在前（每条 JSON 超阈值 → 每段1条，最新在 `.segments/2.jsonl`）
     assert "新段关键词" in hits[0]["content_preview"]
     assert "早段关键词" in hits[1]["content_preview"]
     assert Path(hits[0]["file"]).stem != _SID  # 来自段文件而非主文件
-    assert Path(hits[0]["file"]).name == f"{_SID}-2.jsonl"
+    assert Path(hits[0]["file"]) == tmp_path / f"{_SID}.segments" / "2.jsonl"
 
 
 def test_search_limit_stops_at_newest_segments(tmp_path):
@@ -98,7 +125,7 @@ def test_search_limit_stops_at_newest_segments(tmp_path):
     _mk(store, _SID, "新二")
     hits = store.search(_SID, "apple", limit=1)
     assert len(hits) == 1
-    assert Path(hits[0]["file"]).name == f"{_SID}-2.jsonl"  # "新 apple" 所在段（每段 1 条）
+    assert Path(hits[0]["file"]) == tmp_path / f"{_SID}.segments" / "2.jsonl"
 
 
 def test_get_by_tool_call_id_across_segments(tmp_path):
@@ -202,6 +229,54 @@ def test_corrupt_segment_fail_open(tmp_path):
     seg0 = tmp_path / f"{_SID}.jsonl"
     seg0.write_text("{broken json line\n", encoding="utf-8")
     hits = store.search(_SID, "banana", limit=10)
-    assert len(hits) == 1  # 最后段（-2.jsonl）仍命中
+    assert len(hits) == 1  # 最后段（`.segments/2.jsonl`）仍命中
     assert hits[0]["content_preview"] == "第二段 banana"
-    assert Path(hits[0]["file"]).name == f"{_SID}-2.jsonl"
+    assert Path(hits[0]["file"]) == tmp_path / f"{_SID}.segments" / "2.jsonl"
+
+
+
+def test_archive_store_rejects_session_id_path_traversal(tmp_path):
+    """ArchiveStore查询/写入都不得通过../跨档案根访问兄弟会话。"""
+    store_a = ArchiveStore(tmp_path / "ar-A", segment_bytes=0)
+    store_b = ArchiveStore(tmp_path / "ar-B", segment_bytes=0)
+    _mk(store_a, "safe-session", "A")
+    _mk(store_b, "victim", "ARCHIVE-B")
+    traversal = "../ar-B/victim"
+    victim = tmp_path / "ar-B" / "victim.jsonl"
+    before = victim.read_bytes()
+
+    assert store_a.search(traversal, "ARCHIVE-B", limit=5) == []
+    assert store_a.get_by_tool_call_id(traversal, "call-x") is None
+    with pytest.raises(ValueError, match="非法 session_id"):
+        store_a.archive(traversal, role="tool", source="test", content="ATTACK")
+    assert victim.read_bytes() == before
+
+
+
+def test_archive_store_rejects_session_id_glob_injection(tmp_path):
+    """session_id中的glob元字符不得扩大到其它会话段。"""
+    store = ArchiveStore(tmp_path, segment_bytes=0)
+    _mk(store, "victim-one", "SECRET-ONE")
+    _mk(store, "victim-two", "SECRET-TWO")
+
+    assert store.search("victim*", "SECRET", limit=10) == []
+    assert store.stats("victim*") == {"archived_count": 0, "archived_chars": 0}
+    with pytest.raises(ValueError, match="非法 session_id"):
+        store.archive("victim*", role="tool", source="test", content="ATTACK")
+
+
+def test_delete_session_purges_all_segments_and_indexes(tmp_path):
+    """档案物理删除必须覆盖主段、分片及每段sidecar索引。"""
+    store = ArchiveStore(tmp_path, segment_bytes=1)
+    _mk(store, _SID, "alpha")
+    _mk(store, _SID, "beta")
+    segments = store._segment_paths(_SID)
+    assert len(segments) >= 2
+    assert all(store._index_path(segment).exists() for segment in segments)
+
+    removed = store.delete_session(_SID)
+
+    assert removed == len(segments) * 2
+    assert store._segment_paths(_SID) == []
+    assert not list(tmp_path.glob(f"{_SID}*.idx"))
+    assert store.search(_SID, "alpha") == []

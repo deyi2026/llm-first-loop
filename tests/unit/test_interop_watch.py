@@ -130,3 +130,76 @@ def test_done_status_not_in_wakeup_topic(tmp_path: Path):
     _write(inbox, "h.json", topic="coordinate", status="done")
     w.poll_once()
     assert wakeups == []
+
+
+# ── EVO-20260825 任务9（§5.4）: 启动巡检清理 + pending 堆积告警 ──
+
+
+def _write_full(inbox: Path, name: str, *, topic: str, ts: float) -> None:
+    (inbox / name).write_text(
+        json.dumps(
+            {"id": name, "topic": topic, "status": "pending", "body": "x", "ts": ts}
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_startup_cleanup_moves_stale_job_sched(tmp_path, monkeypatch):
+    """任务9.1（§5.4.1-3）: 启动巡检迁移超过 TTL 的 job/sched 到 pending/processed/.
+
+    近 TTL 内的消息保留；非 job/sched（coordinate）不清理（协议消息待消费）。"""
+    import time
+
+    import llm_loop.core.interop_watch as iw
+
+    monkeypatch.setattr(iw, "_PENDING_TTL_HOURS", 24.0)
+    monkeypatch.setattr(iw, "_PENDING_CLEANUP_ON_START", True)
+    inbox = tmp_path / "pending"
+    inbox.mkdir(parents=True)
+    now = time.time()
+    _write_full(inbox, "old-job.json", topic="job", ts=now - 48 * 3600)
+    _write_full(inbox, "old-sched.json", topic="sched", ts=now - 50 * 3600)
+    _write_full(inbox, "recent-job.json", topic="job", ts=now - 3600)
+    _write_full(inbox, "coord.json", topic="coordinate", ts=now - 100 * 3600)
+
+    _watcher(inbox)._startup_cleanup()
+
+    assert not (inbox / "old-job.json").exists(), "过期 job 应迁移出 pending/"
+    assert not (inbox / "old-sched.json").exists(), "过期 sched 应迁移出 pending/"
+    proc = inbox / "processed"
+    assert any(p.name == "old-job.json" for p in proc.rglob("*.json"))
+    assert any(p.name == "old-sched.json" for p in proc.rglob("*.json"))
+    assert (inbox / "recent-job.json").exists(), "近 TTL 内消息保留待消费"
+    assert (inbox / "coord.json").exists(), "非 job/sched 消息不参与启动清理"
+
+
+def test_pending_backlog_warns(tmp_path, monkeypatch, caplog):
+    """任务9.2（§5.4.1-2）: pending 堆积超上限 → WARN（去抖：超限期间仅告警一次）."""
+    import llm_loop.core.interop_watch as iw
+
+    monkeypatch.setattr(iw, "_PENDING_MAX", 3)
+    inbox = tmp_path / "pending"
+    inbox.mkdir(parents=True)
+    for i in range(5):
+        _write(inbox, f"m{i}.json")
+    w = _watcher(inbox)
+    with caplog.at_level("WARNING", logger="llm_loop.core.interop_watch"):
+        w.poll_once()
+        w.poll_once()
+    assert any("pending 堆积" in r.message for r in caplog.records), "超限应 WARN"
+    assert sum("pending 堆积" in r.message for r in caplog.records) == 1, "去抖：仅告警一次"
+
+
+def test_pending_backlog_blocked_diagnosis(tmp_path, monkeypatch, caplog):
+    """任务9.2: 堆积超 2× 上限 → 附加"消费疑似阻塞"诊断（含最新文件龄）."""
+    import llm_loop.core.interop_watch as iw
+
+    monkeypatch.setattr(iw, "_PENDING_MAX", 2)
+    inbox = tmp_path / "pending"
+    inbox.mkdir(parents=True)
+    for i in range(6):
+        _write(inbox, f"n{i}.json")
+    w = _watcher(inbox)
+    with caplog.at_level("WARNING", logger="llm_loop.core.interop_watch"):
+        w.poll_once()
+    assert any("消费疑似阻塞" in r.message for r in caplog.records)

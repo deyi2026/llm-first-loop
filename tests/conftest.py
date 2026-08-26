@@ -274,3 +274,25 @@ def build_test_engine(fake_settings):
         return engine, fake
 
     return _build
+
+
+# ── EVO-20260811-f1e43351: 测试副作用审计（pytest 启动时 fail-open 告警，不阻断）──
+def pytest_configure(config):
+    """扫描 tests/ 未 Mock 的真实副作用高风险特征，仅告警不阻断."""
+    try:
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parent
+        script = root.parent / "scripts" / "audit_test_side_effects.py"
+        if script.exists():
+            r = subprocess.run(
+                [sys.executable, str(script), str(root)],
+                capture_output=True, text=True, timeout=30,
+            )
+            out = (r.stdout or "").strip()
+            if out:
+                print(out, file=sys.stderr)
+    except Exception:  # noqa: BLE001 — fail-open，审计异常绝不阻断 pytest
+        pass
