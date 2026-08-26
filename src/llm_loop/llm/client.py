@@ -294,6 +294,98 @@ class LLMClient:
         self._client.close()
 
     # ── 统一入口（协议分发） ──
+    @staticmethod
+    def _sanitize_openai_tool_pairs(messages: list[dict]) -> list[dict]:
+        """EVO-20260827 V2: OpenAI 路径 tool_calls↔tool 配对双向清洗（连续 400 根因修复）.
+
+        取证（eb5c2686/6485b02b 等 5+ 会话，跨 provider 复现）:
+        "An assistant message with 'tool_calls' must be followed by tool messages
+        responding to each 'tool_call_id'" —— 反向孤儿（声明在、应答被
+        cache_compacted_for 过滤/锚点裁剪切断）是主签名；正向孤儿（tool 无声明）
+        为次签名。上游 history.py 过滤不校验配对（689-695），此处为客户端最后防线。
+        双向修复（copy-on-write，不改调用方消息对象）:
+        - 正向: 孤儿 tool（无在案声明/重复应答）→ 删该 tool 消息
+        - 反向: assistant tool_call 无应答（含被 user/system 插队截断、序列末尾悬空）
+          → 从 tool_calls 剔除该 id；剔空后无文本则整条删
+        fail-open + warning 如实记录两个方向的修复量。
+        """
+        has_tool = any(m.get("role") == "tool" for m in messages)
+        has_tc = any(m.get("tool_calls") for m in messages)
+        if not (has_tool or has_tc):
+            return messages  # 快速路径：无配对结构原样返回（零开销）
+
+        out: list[dict] = []
+        pending: dict[str, int] = {}  # tool_call_id -> 其 assistant 在 out 中的下标
+        removed_tool = 0
+        stripped_ids = 0
+        dropped_assistant = 0
+
+        def _strip_pending() -> None:
+            # pending 中剩余的 id 即"无应答孤儿"（主签名），从 assistant 剔除之
+            nonlocal stripped_ids, dropped_assistant
+            if not pending:
+                return
+            by_idx: dict[int, list[str]] = {}
+            for tid, i in pending.items():
+                by_idx.setdefault(i, []).append(tid)
+            for i, orphan_tids in by_idx.items():
+                orphan_set = set(orphan_tids)
+                tcs = out[i].get("tool_calls") or []
+                keep = [tc for tc in tcs if (tc or {}).get("id") not in orphan_set]
+                stripped_ids += len(tcs) - len(keep)
+                if keep:
+                    out[i]["tool_calls"] = keep
+                else:
+                    out[i].pop("tool_calls", None)
+                    if not out[i].get("content"):  # 无文本且无 tool_calls → 整条删
+                        out[i] = None  # 占位，尾部统一压缩
+                        dropped_assistant += 1
+            pending.clear()
+
+        for m in messages:
+            role = m.get("role")
+            if role == "assistant":
+                if pending:  # 新 assistant 前仍有悬空声明 → 反向孤儿
+                    _strip_pending()
+                    pending.clear()
+                tcs = m.get("tool_calls") or []
+                if tcs:
+                    m2 = dict(m)  # copy-on-write
+                    out.append(m2)
+                    for tc in tcs:
+                        tid = (tc or {}).get("id")
+                        if tid:
+                            pending[tid] = len(out) - 1
+                else:
+                    out.append(m)
+            elif role == "tool":
+                tid = m.get("tool_call_id") or ""
+                if tid and tid in pending:
+                    out.append(m)
+                    del pending[tid]  # 首个应答有效；重复应答按孤儿删
+                else:
+                    removed_tool += 1
+            else:  # user/system：插队即截断悬空声明
+                if pending:
+                    _strip_pending()
+                    pending.clear()
+                out.append(m)
+        if pending:  # 序列末尾悬空
+            _strip_pending()
+        out = [m for m in out if m is not None]
+        if removed_tool:
+            logger.warning(
+                "提交视图修复: 删除 %d 条孤儿 tool 消息（无在案声明/重复应答）", removed_tool
+            )
+        if stripped_ids or dropped_assistant:
+            logger.warning(
+                "提交视图修复: 剔除 %d 个无应答 tool_call_id，删除 %d 条空 assistant"
+                "（反向孤儿——连续 400 主签名，EVO-20260827 V2）",
+                stripped_ids,
+                dropped_assistant,
+            )
+        return out
+
     def chat_stream(
         self,
         messages: list[dict],
@@ -359,6 +451,11 @@ class LLMClient:
                 logger.debug("cache_guard 校验异常（fail-open）", exc_info=True)
         # 注意：Python 3.11+ 裸 `yield from` 会丢弃子生成器 return 值（StopIteration.value=None），
         # 必须显式捕获后 return 才能把终态 LLMResponse 传给消费者（engine 经 StopIteration.value 取终态）。
+        # EVO-20260827: OpenAI 兼容路径孤儿 tool 清洗（anthropic 在 _to_anthropic_messages
+        # 内已有对称清洗；google 的 functionCall 结构不同不适用）——防压缩切配对/注入
+        # 插队产生的孤儿 tool 消息被 provider 拒收（连续 400 根因，跨 provider 取证）
+        if protocol not in ("anthropic", "google"):
+            messages = self._sanitize_openai_tool_pairs(messages)
         if protocol == "anthropic":
             result = yield from self._stream_anthropic(
                 messages, tools, timeout_s=timeout_s, model=model, guard_context=_guard_ctx
