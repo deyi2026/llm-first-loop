@@ -19,9 +19,11 @@ data/
 # 环境与密钥
 .env
 .env.local
-.env.bak-*
-.env.bak.*
+.env.bak*
+# 密钥备份一律不入库（含 .env.bak.YYYYMMDD 点分格式与 .env.bak-* 连字符格式）
 
+*.bak-*
+# 代码修改备份不入库
 # 系统
 .DS_Store
 # 含密钥的本地启动脚本（勿提交）
@@ -59,3 +61,6 @@ llm-first-loop.swe-*.json
 
 # 评测日志（run_evaluation 产物，35M 体量）
 logs/
+
+# 本地 Surge 代理导出/修复配置（含代理凭据，禁止入库）
+Nexitally_Surge.fixed.conf
