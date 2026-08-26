@@ -471,7 +471,7 @@ class _BuildMixin:
             # 2026-08-20 回滚修复: 移除悬空 tool_tail 参数——history.py 的
             # build_history_messages() 不接受该参数（3点基线无此功能，config 恒为 0），
             # 回滚后每次对话 TypeError；参数支持在 backup/20260819-after-3am 分支
-            reasoning_tail=getattr(self.settings, "reasoning_tail", 2),  # M66 思考链瘦身
+            reasoning_tail=getattr(self.settings, "reasoning_tail", 0),  # M66 思考链瘦身（T-P0-1-1 默认 0=全保留）
             # P1-7/spec §5.3.1-5（2026-08-18 审计断点归因绝对化）: 推送式注入（架构上报/
             # 预算预警/轮数预警/声明提醒/自我评估提醒/快照）一律不进提交视图——不再受
             # provider inject_system_notices 开关影响（原按 provider 放行 → 注入消息转 user
@@ -735,7 +735,7 @@ class _BuildMixin:
                     "tool_tail": getattr(
                         self.settings, "tool_tail", 0
                     ),  # EVO-20260818-f675796c: tail 窗口
-                    "reasoning_tail": getattr(self.settings, "reasoning_tail", 2),
+                    "reasoning_tail": getattr(self.settings, "reasoning_tail", 0),
                     "skip_injected_system": True,  # spec §5.3.1-5: 推送式注入一律不进提交
                     "extract_interval_msgs": getattr(self.settings, "extract_interval_msgs", 20),
                     # Phase5: manifest changes are legitimate projection changes, not nondeterminism.
