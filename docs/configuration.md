@@ -34,12 +34,14 @@
 
 | 变量 | 默认 | 说明 / 坑 |
 |:---|:---|:---|
-| `HISTORY_MAX_CHARS` | 100000 | 提交给 LLM 的历史预算（字符 ≈ 50K tokens）。**坑**：1M 会撑爆窗口导致所有调用失败（已收敛 100K）；1M 窗口模型可调大，小窗模型调小。**provider 级覆盖**：在 `data/providers.json` 的 provider 条目加 `"history_budget_chars": 12000`（本地慢模型专用——prefill 成本随上下文线性涨，收紧预算显著缩短首 token 时延；旧历史经压缩归档可检索，信息零丢失）；未配置时用全局值 |
+| `HISTORY_MAX_CHARS` | 100000 | 提交给 LLM 的历史预算（字符 ≈ 50K tokens）。**坑**：1M 会撑爆窗口导致所有调用失败（已收敛 100K）；1M 窗口模型可调大，小窗模型调小。**provider 级覆盖**：在 `data/providers.json` 的 provider 条目加 `"history_budget_chars"`——本地慢模型用 `12000`（prefill 成本随上下文线性涨，收紧预算显著缩短首 token 时延）；deepseek 用 **`150000`**（2026-08-24 校准：大上下文流式断连根因修复，见「常见坑速查」第 2 条）；旧历史经压缩归档可检索，信息零丢失；未配置时用全局值 |
 | `REASONING_TAIL` | 2 | 提交历史中保留最近 N 轮思考链（更早省略，可 search_records 回溯） |
 | `TOOL_TRIM_ENABLED` | 1 | 旧 tool 消息分层降级（超阈值→首尾摘要+归档检索指引） |
 | `TOOL_TRIM_THRESHOLD` / `TOOL_TRIM_AGE` | 2000 / 0 | 降级阈值（字符）/ 年龄（距最新消息条数） |
 | `TOOL_MAX_OUTPUT_CHARS` | 100000 | 工具输出上限（超出→另存档案+截断标注，信息可检索找回） |
 | `TOOL_SUMMARY_THRESHOLD` | 12000 | 工具输出分层阈值（超出→首/尾各 2500 字符摘要注入 + 原文另存可检索 + 提炼要点行动指引；v0.5.0 由 5000 放大） |
+| `EVIDENCE_MODE` | off | Evidence Recoverability v1.1 rollout：`off`=旧链路零行为；`shadow`=工具投影前 observation 双写入 `DATA_DIR/evidence/`，**不改变模型可见 prompt/tool result**；`enforce`=Phase3 capture-before-projection + bounded evidence capsule，当前仅用于离线/受控验证；Phase4 `read/search/list_evidence`、Phase5 compression/provider-neutral Recovery Manifest、Phase6 legacy ownership/quarantine/refcount GC 与 Phase7 Full-R0 aggregate gate 均已完成，**Full R0 deterministic PASS**。但当前 `TOOL_PIPELINE_ENABLED=1` 与 enforce 组合仍 fail-closed；按冻结设计继续 R1 historical replay / R2 provider confirmation 后再决定生产 enforce。推荐 rollout 为 `off -> shadow -> enforce`。此外当前 `TOOL_PIPELINE_ENABLED=1` 与 enforce 组合会 fail-closed，需先定义 post-hook/capsule 顺序。shadow/enforce 都未在 `.env` 默认开启 |
+| `EVIDENCE_MANIFEST_LIMIT` | 8 | Evidence enforce 每轮从 durable Ledger 再生的 Recovery Manifest 条目上限；运行时钳制 1..20。Manifest 走动态尾部，不进入 system/tools 稳定前缀。 |
 | `FALLBACK_NOTICE_COOLDOWN_S` | 86400 | 模型降级提示限频（2026-08-16，EVO-20260816-37633629③）：同一降级对（from→to）的主消息流提示在该间隔内只注入一次（nudge without nagging）；仅抑制消息注入，status/审计/action_trace 每次照常记录；0=关闭限频。stamp 落盘 `<data_dir>/state/fallback_notice_stamps.json` |
 
 ## 四、记忆与检索
@@ -141,9 +143,10 @@
 ## 常见坑速查
 
 1. **所有模型调用失败/超时** → 查 `HISTORY_MAX_CHARS` 是否超过模型窗口（默认 100K 安全）。
-2. **本地模型（LM Studio/Ollama）调用超时 `LLM 请求超时（120.0s）`** → 本地大模型 prefill 慢（27B 量化实测 ~5s/千字，40K 字上下文首 token 需 200s+），120s 必然超时。三步：① `data/providers.json` 的 `local` 条目设 `"timeout_s": 600` + `"history_budget_chars": 12000`（已默认配置，后者把发给本地模型的历史压到 ~12K 字符≈9K tokens，prefill 降到 1-2 分钟内）；若仍报 120s（而非 600s），说明请求未走 providers.json 的 `local` 条目（如用 `LLM_BASE_URL` 直配的默认通道）——请在模型下拉/`/model` 目录里选 `local/qwen3.6-…` 走注册表路径（600s 生效），或直接调大 `LLM_TIMEOUT_S`；② 控制上下文——本地模型窗口小（如 131K tokens），大会话需先压缩/新开会话；③ 仍慢则换更小模型（如 9B Q4）。`[预算预警]` 的占用率统计的是**实际发送载荷**（已压缩归档的历史不计入），数字可信。
-2. **"经常到轮数上限"** → `LLM_MAX_ITERATIONS` 调大（默认 40；AI 也会在 80% 时收到 `[轮数预警]` 并可自行调大）。
-3. **AI 无法执行命令** → 检查是否显式设置了 `EXEC_MODE`（readonly/blocked 会拦；默认不设=不拦）。
-4. **AI 能主动发飞书消息？** → 不会：`FEISHU_OUTBOUND_ENABLED` 默认 false（安全边界）。
-5. **改了 .env 没生效** → web/feishu 需要 `bash scripts/restart_system.sh restart`（CLI 免重启）。
-6. **AI 调参不生效** → `adjust_strategy` 白名单仅限 max_iterations/timeout_s/history_budget/memory_top_k/extract_interval_msgs/retrieve_semantic_top_k，且受 `PARAM_ADJUST_PER_ROUND` 与全局硬上限约束。
+2. **deepseek 流式断连 `peer closed connection (incomplete chunked read)`（"出错了"）** → 大上下文（150K+ 字符）下 deepseek 服务端流式偶发不稳（2026-08-24 实测：150K-230K 字符会话 0 压缩、多次断连、单轮 50 万+ tokens 白烧）。修复：`data/providers.json` deepseek 条目 `history_budget_chars` 保持 **150000**（≈75K tokens）——80% `[预算预警]` 与 90% 程序兜底压缩自动前移到 ~120K/~135K 字符，载荷被约束在失效线以下；另有断连自动重试（`LLM_RETRY_DISCONNECT`，默认 1 次，仅在尚无输出已产出时重试）。**教训**：预算不是越大越好——它同时决定"何时预警/何时兜底压缩"，须落在模型服务端稳定区间内；压缩断缓存是物理必然，但断连白烧更贵。
+3. **本地模型（LM Studio/Ollama）调用超时 `LLM 请求超时（120.0s）`** → 本地大模型 prefill 慢（27B 量化实测 ~5s/千字，40K 字上下文首 token 需 200s+），120s 必然超时。三步：① `data/providers.json` 的 `local` 条目设 `"timeout_s": 600` + `"history_budget_chars": 12000`（已默认配置，后者把发给本地模型的历史压到 ~12K 字符≈9K tokens，prefill 降到 1-2 分钟内）；若仍报 120s（而非 600s），说明请求未走 providers.json 的 `local` 条目（如用 `LLM_BASE_URL` 直配的默认通道）——请在模型下拉/`/model` 目录里选 `local/qwen3.6-…` 走注册表路径（600s 生效），或直接调大 `LLM_TIMEOUT_S`；② 控制上下文——本地模型窗口小（如 131K tokens），大会话需先压缩/新开会话；③ 仍慢则换更小模型（如 9B Q4）。`[预算预警]` 的占用率统计的是**实际发送载荷**（已压缩归档的历史不计入），数字可信。
+3. **"经常到轮数上限"** → `LLM_MAX_ITERATIONS` 调大（默认 40；AI 也会在 80% 时收到 `[轮数预警]` 并可自行调大）。
+4. **AI 无法执行命令** → 检查是否显式设置了 `EXEC_MODE`（readonly/blocked 会拦；默认不设=不拦）。
+5. **AI 能主动发飞书消息？** → 不会：`FEISHU_OUTBOUND_ENABLED` 默认 false（安全边界）。
+6. **改了 .env 没生效** → web/feishu 需要 `bash scripts/restart_system.sh restart`（CLI 免重启）。
+7. **AI 调参不生效** → `adjust_strategy` 白名单仅限 max_iterations/timeout_s/history_budget/memory_top_k/extract_interval_msgs/retrieve_semantic_top_k，且受 `PARAM_ADJUST_PER_ROUND` 与全局硬上限约束。

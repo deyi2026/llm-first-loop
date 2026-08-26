@@ -114,3 +114,176 @@ def test_system_inject_no_merge_no_truncation():
     users = [m for m in out if m["role"] == "user"]
     assert len(users) == 30, "30 个注入帧全部转 user 保留（信息零丢失）"
     assert any("STATE-29" in m["content"] for m in users)
+
+
+def test_head_keep_fold0_three_action_compaction():
+    """任务6.1: head_keep 一次性大裁（fold=0）三动作协作（69715765 事故根因回归）——
+    ① 归档中段 + ② cache_compacted_out 视图排除（尾部保留组绝不参与）+ ③ 体积验证：
+    压缩后视图真正缩小，且再次 build 同一批不重复归档中段."""
+    history = [_fake_msg("user", f"m{i:03d}-" + "x" * 900) for i in range(320)]
+    archived: list[Message] = []
+
+    def sink(session_id: str, m: Message) -> None:
+        archived.append(m)
+
+    cache_box: list[Message] = []
+    stats_box: list[dict] = []
+    built = build_history_messages(
+        history,
+        "S" * 500,
+        max_chars=320000,
+        compact_ratio=0.9,
+        session_id="s-tri",
+        archive_sink=sink,
+        head_keep_chars=48000,
+        cache_archive_provider="minimax",
+        cache_compacted_out=cache_box,
+        compact_view_stats=stats_box,
+    )
+    # ① 归档中段发生（信息零丢失）
+    assert archived, "压缩应归档中段"
+    # ② 视图排除：归档中段全部被 per-provider 标记（cache_compacted_out 事件链同步）
+    assert len(cache_box) == len(archived), "视图排除应标记全部归档中段"
+    # 视图排除严格限定中段：最新尾部消息（m319）必须在提交视图（不被排除）
+    post = "\n".join(str(m.get("content", "")) for m in built)
+    assert "m319" in post, "最新尾部消息必须在提交视图（视图排除不越界到尾部保留组）"
+    # ③ 体积验证（6.2）：压缩后视图真正缩小 ≥10%
+    assert stats_box and stats_box[0]["drop_pct"] >= 10, f"首轮压缩 drop 应 ≥10%，实际 {stats_box}"
+    # 再次 build 同一批：视图排除使已标记中段不进入构建 → 不重复归档（事故修复核心）
+    archived2: list[Message] = []
+
+    def sink2(session_id: str, m: Message) -> None:
+        archived2.append(m)
+
+    cache_box2: list[Message] = []
+    build_history_messages(
+        history,
+        "S" * 500,
+        max_chars=320000,
+        compact_ratio=0.9,
+        session_id="s-tri",
+        archive_sink=sink2,
+        head_keep_chars=48000,
+        cache_archive_provider="minimax",
+        cache_compacted_out=cache_box2,
+    )
+    assert len(archived2) <= max(2, len(archived) // 5), (
+        f"再次 build 不应重复归档中段: 首次 {len(archived)}，再次 {len(archived2)}"
+    )
+
+
+def test_compact_view_stats_warns_when_view_not_shrinking(caplog):
+    """任务6.2: 压缩发生但视图几乎没缩小（drop<5%）→ 体积验证 WARN
+    （压缩风暴前兆——head 保留 + 归档目标使 post≈pre 时归因可见）."""
+    history = [_fake_msg("user", f"m{i:03d}-" + "x" * 850) for i in range(262)]
+    stats_box: list[dict] = []
+    archived: list[Message] = []
+
+    def sink(session_id: str, m: Message) -> None:
+        archived.append(m)
+
+    with caplog.at_level("WARNING", logger="llm_loop.core.history"):
+        build_history_messages(
+            history,
+            "S" * 500,
+            max_chars=320000,
+            compact_ratio=0.7,
+            session_id="s-tiny",
+            archive_sink=sink,
+            head_keep_chars=60000,
+            cache_archive_provider="minimax",
+            compact_view_stats=stats_box,
+        )
+    assert stats_box, "压缩应填充体积统计"
+    assert stats_box[0]["drop_pct"] < 5, f"构造的微降场景 drop 应 <5%，实际 {stats_box[0]}"
+    assert any("head_keep 大裁后视图未缩小" in r.message for r in caplog.records), (
+        "drop<5% 时应发出 WARN「head_keep 大裁后视图未缩小」"
+    )
+
+
+def test_head_keep_empty_head_groups_degrades_to_full_archive():
+    """任务6.3: head_keep 预算过小（首组即超）→ head 保留组为空 → 自动降级
+    head_keep=0 全量归档（锚点前移式，前缀重建一轮）——归档仍发生、信息零丢失."""
+    history = [_fake_msg("user", "H" * 5000) for _ in range(60)]  # 每条 5K——首组就超 head
+    box: list[int] = []
+    archived: list[Message] = []
+
+    def sink(session_id: str, m: Message) -> None:
+        archived.append(m)
+
+    build_history_messages(
+        history,
+        "S" * 500,
+        max_chars=100000,
+        session_id="s-empty",
+        archive_sink=sink,
+        head_keep_chars=10,  # 极小 head 预算 → 首组（5K）即超 → head 组为空
+        history_anchor=0,
+        anchor_out=box,
+    )
+    assert len(archived) > 0, "head 保留组为空时应全量归档（信息零丢失）"
+    assert box and box[0] > 0, "降级 head_keep=0 语义 → 锚点前移（历史真正缩小）"
+
+
+# ── 任务7（2026-08-25 §5.7）: progressive_fold 缺失 archive_provider 降级防护 ──
+
+def _make_pairs(n: int, body: str = "x" * 1000) -> list[Message]:
+    msgs: list[Message] = []
+    for i in range(n):
+        msgs.append(_fake_msg("user", f"任务{i} " + body))
+        msgs.append(_fake_msg("assistant", f"回答{i} " + body))
+    return msgs
+
+
+def test_fold_missing_provider_degrades_with_head_keep_restored():
+    """任务7.1: fold>0 + 无 provider + head_keep>0 → 降级.
+
+    验证: 降级事件填充（kind=degraded）、head_keep 恢复调用者原值（不得置 0）、
+    提交视图保留头部 3000 chars、中段归档仍发生（一次性大裁）。"""
+    msgs = _make_pairs(30)
+    archived: list[Message] = []
+    degrade_box: list[dict] = []
+
+    def sink(session_id: str, m: Message) -> None:
+        archived.append(m)
+
+    out = build_history_messages(
+        msgs,
+        "system",
+        max_chars=20000,
+        compact_ratio=0.9,
+        session_id="s-deg",
+        progressive_fold=3,
+        head_keep_chars=3000,
+        archive_sink=sink,
+        degrade_out=degrade_box,
+    )
+    assert degrade_box and degrade_box[0]["kind"] == "degraded", "降级事件应填充"
+    assert degrade_box[0]["head_keep_chars"] == 3000, "降级必须恢复调用者原值 3000"
+    assert "cache_archive_provider" in degrade_box[0]["reason"]
+    joined = "\n".join(str(m.get("content", "")) for m in out)
+    assert "任务0 " in joined, "降级后 head_keep 生效：头部保留在提交前缀"
+    assert archived, "降级后中段归档仍发生（信息零丢失）"
+
+
+def test_fold_missing_provider_head_keep_zero_uses_default(monkeypatch):
+    """任务7.1（§5.7.3-1）: fold>0 + 无 provider + head_keep=0 → 强制默认 2000."""
+    import llm_loop.core.history as hist
+
+    monkeypatch.setattr(hist, "_DEFAULT_HEAD_KEEP_CHARS_ON_DEGRADE", 2000)
+    msgs = _make_pairs(20)
+    degrade_box: list[dict] = []
+    out = build_history_messages(
+        msgs,
+        "system",
+        max_chars=20000,
+        compact_ratio=0.9,
+        session_id="s-deg0",
+        progressive_fold=3,
+        head_keep_chars=0,
+        degrade_out=degrade_box,
+    )
+    assert degrade_box and degrade_box[0]["kind"] == "degraded"
+    assert degrade_box[0]["head_keep_chars"] == 2000, "head_keep=0 降级应用默认 2000"
+    joined = "\n".join(str(m.get("content", "")) for m in out)
+    assert "任务0 " in joined, "默认 head_keep 生效：前缀仍稳定"
