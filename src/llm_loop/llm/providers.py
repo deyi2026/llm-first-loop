@@ -49,6 +49,7 @@ class ModelSpec:
     long_context: bool = False
     multimodal: bool = False
     wire_protocol: str = "openai"  # P3-5: openai / anthropic / google（客户端协议分发）
+    capability_tier: str = "unknown"  # T-P2-1-1: strong/weak/unknown（spec §6.5 漂移治理动态调权依据; unknown=保守视为弱模型）
 
 
 @dataclass(frozen=True)
@@ -389,6 +390,28 @@ def _discover_llama_server(requested_model: str | None = None) -> tuple[str, str
         return None
 
 
+def _parse_capability_tier(pid: str, mid: str, mval: dict[str, Any]) -> str:
+    """T-P2-1-1: capability_tier 解析（白名单 strong/weak/unknown, spec §10.4）.
+
+    缺失 → unknown + 降级日志（保守视为弱模型, 完整三层拷问）;
+    非法 → unknown + warning 如实告警（不拖垮注册表加载）。
+    """
+    if "capability_tier" not in mval:
+        logger.info(
+            "模型 %s/%s 未配置 capability_tier，按 unknown 处理（保守视为弱模型，"
+            "建议显式配置 strong/weak）", pid, mid,
+        )
+        return "unknown"
+    v = str(mval["capability_tier"]).strip().lower()
+    if v in ("strong", "weak", "unknown"):
+        return v
+    logger.warning(
+        "模型 %s/%s capability_tier=%r 非白名单值（strong/weak/unknown），回退 unknown",
+        pid, mid, mval["capability_tier"],
+    )
+    return "unknown"
+
+
 def _parse_model_spec(pid: str, mid: str, mval: dict[str, Any]) -> ModelSpec:
     """解析单模型条目 → ModelSpec（P1-3 审计 #14 加固）.
 
@@ -404,6 +427,8 @@ def _parse_model_spec(pid: str, mid: str, mval: dict[str, Any]) -> ModelSpec:
         multimodal=_parse_bool_field(pid, mid, "multimodal", mval),
         # P3-5: 协议白名单（非法值回退 openai + 如实告警，不拖垮注册表）
         wire_protocol=_parse_wire_protocol(pid, mid, mval),
+        # T-P2-1-1: 能力档白名单（缺失/非法 → unknown + 降级日志，不拖垮注册表）
+        capability_tier=_parse_capability_tier(pid, mid, mval),
     )
 
 
