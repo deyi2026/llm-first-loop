@@ -516,3 +516,13 @@ pkill -f 'llm_loop\.<svc>'
 4. 按 Phase 1 构造唯一 delivery manifest；
 5. 经明确授权后，再进入 stage/candidate-tree 验证阶段。
 
+---
+
+## 10. 新增待办（2026-08-26 补录）
+
+### 10.1 [P2·UI 缺陷] 演进审批 review 动作 404 静默无提示
+
+- **实证**：主区 web.log（8902）`POST /api/v1/evolution/review → 404 Not Found` ×5，前端弹窗确认后无任何反馈——用户以为「点了没反应」。根因：EVO 条目落盘在镜像区 data/（data/ 完全隔离），主区查无此 id；且 detail 接口对不存在 id 返回 200（空体），只有 review 写操作才暴露 404。
+- **修复建议**：① review/detail 接口对不存在 id 返回 404 时，前端 toast 明确提示「条目不在本工作区（data/ 隔离），请到对应端口审批」（主区 8902 / 镜像 8903）；② detail 接口空体也应 404，避免「弹窗能弹出」误导用户认为条目存在。
+- **关联**：EVO-20260826-81f8f674（任务接力热卡）审批过程踩到；修复属 webui/ + web API，走镜像协议。
+

@@ -29,6 +29,7 @@ from llm_loop.core.history import (
     stable_digest,  # 投影门闸
 )
 from llm_loop.core.loop.focus import build_task_anchor, wrap_injection
+from llm_loop.core.loop.hotcard import pop_hotcard, write_hotcard
 
 # build_session_snapshot_text 定义于 engine（loop 包内）——顶层 import 会触发
 # engine→build→loop/__init__ 循环（engine import build 在前），故用函数内延迟 import
@@ -698,6 +699,24 @@ class _BuildMixin:
                 built.append(_d)
             self._interop_tail_messages = None  # 一次性消费（每轮重扫 pending）
             self._tip_tail_messages = None  # 经验提示同机制一次性消费（下轮工具执行再注入）
+        # EVO-20260826-81f8f674: 任务接力热卡注入——压缩时刻写的热卡在新会话 build 时
+        # 取出注入（仅跨会话未消费；pop 即标记 consumed 防陈旧卡反复注入；尾部追加
+        # 不破坏前缀缓存；fail-open 绝不阻断构建）。冲突语义: RULE-AI-20 第 7 条兜底。
+        try:
+            _hotcard_text = pop_hotcard(
+                session_id=sess.session_id, data_dir=self.settings.data_dir
+            )
+            if _hotcard_text:
+                built.append(
+                    {
+                        "role": "user",
+                        "content": wrap_injection(
+                            _hotcard_text, build_task_anchor(self._focus.anchor_sess)
+                        ),
+                    }
+                )
+        except Exception:  # noqa: BLE001 — fail-open
+            pass
         # EVO-20260817-72fcd94a: 门禁干预知情标记——干预激活首轮在 built 末尾追加固定
         # user 消息（末尾追加缓存友好，不破坏前缀；转 user 避免守卫规则 B 误报
         # "非首位 system"——2026-08-18 审计 WARN 实证；让 AI 感知上下文结构变化）
@@ -800,6 +819,14 @@ class _BuildMixin:
                     f"history {locals().get('_history_total', '?')}→{_built_chars} 字符"
                     f"{'，关键事实帧已注入（推理信息整理完备）' if _facts_injected else '，关键事实帧缺失（告警）'}，"
                     "稳定段未变→门禁合规，投影门闸豁免（压缩属合法变化）",
+                )
+                # EVO-20260826-81f8f674: 压缩黄金窗口写任务热卡（anchor=最近用户指令+
+                # 最近动作；active Goal/checkpoint 与待审演进由 hotcard 模块自取；
+                # fail-open 失败仅告警不阻断压缩）
+                write_hotcard(
+                    origin_session=sess.session_id,
+                    anchor=build_task_anchor(self._focus.anchor_sess),
+                    data_dir=self.settings.data_dir,
                 )
         except Exception:  # noqa: BLE001
             pass
