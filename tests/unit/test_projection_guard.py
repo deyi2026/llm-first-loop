@@ -5,7 +5,7 @@
 """
 from pathlib import Path
 
-from llm_loop.core.history import stable_digest, projection_ver, projection_check
+from llm_loop.core.history import projection_check, projection_ver, stable_digest
 from llm_loop.core.session import Session, SessionStore
 
 

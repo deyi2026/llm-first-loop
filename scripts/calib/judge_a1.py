@@ -4,15 +4,18 @@ Primary judge is always the other anchor provider. Secondary judge runs for the
 preselected sample and all mandatory cases; disagreement means ABSTAIN.
 """
 from __future__ import annotations
-import argparse, json, sys
+
+import argparse
+import json
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
-from llm_loop.config import load_env_file
-from scripts.calib.fixtures_a1 import INITIAL_PACKETS_A1, ORACLES_A1
-from scripts.calib.semantic_judge_v21 import judge_case, derive_core_score
-from scripts.calib.treatments import build_task_prompt
+from llm_loop.config import load_env_file  # noqa: E402
+from scripts.calib.fixtures_a1 import INITIAL_PACKETS_A1, ORACLES_A1  # noqa: E402
+from scripts.calib.semantic_judge_v21 import derive_core_score, judge_case  # noqa: E402
+from scripts.calib.treatments import build_task_prompt  # noqa: E402
 
 RUNS = ROOT / "data/calib/runs_a1"
 JDIR = ROOT / "data/calib/a1_judges"

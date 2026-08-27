@@ -20,13 +20,14 @@
 from __future__ import annotations  # 注解延迟求值（兼容 Python 3.9：`X | None` 不在定义时求值）
 
 import atexit
-from pathlib import Path
+import contextlib
 import os
 import signal
 import socket
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -43,7 +44,7 @@ def _listener_pids(port: int) -> list[int]:
     """返回监听指定端口的 pid 列表（lsof；失败返回 []）. """
     try:
         out = subprocess.run(
-            ['lsof', '-tiTCP:%d' % port, '-sTCP:LISTEN'],
+            ['lsof', f'-tiTCP:{port}', '-sTCP:LISTEN'],
             capture_output=True, text=True, timeout=5,
         )
         return [int(p) for p in out.stdout.split() if p.strip().isdigit()]
@@ -88,21 +89,15 @@ def _port_ready(port: int, timeout: float = 10.0) -> bool:
 
 def _kill_group(proc: subprocess.Popen) -> None:
     """SIGTERM 整个进程组（terminate 其间接子进程），超时 SIGKILL 兜底."""
-    try:
+    with contextlib.suppress(ProcessLookupError, PermissionError):  # 进程组已退出
         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-    except (ProcessLookupError, PermissionError):
-        pass  # 进程组已退出
     try:
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        try:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
-        try:
+        with contextlib.suppress(subprocess.TimeoutExpired):
             proc.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            pass
 
 
 def _stop_raw_server() -> None:
@@ -191,10 +186,8 @@ def _on_signal(signum, frame):
 
 def _install_signal_handlers() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
-        try:
+        with contextlib.suppress(ValueError, OSError):  # 非主线程/环境限制
             signal.signal(sig, _on_signal)
-        except (ValueError, OSError):  # 非主线程/环境限制
-            pass
 
 
 # ── 主流程 ──
@@ -215,7 +208,8 @@ def main(argv: list[str] | None = None):
     _start_raw_server(sweep=sweep)
     try:
         # 3. 跑标准 harness（参数与 run_harness_mock.py 一致）
-        from swebench.harness.run_evaluation import main as harness_main, parse_args
+        from swebench.harness.run_evaluation import main as harness_main
+        from swebench.harness.run_evaluation import parse_args
         sys.argv = ['run_eval',
             '-d', 'data/swe_results/standard/pylint_dataset.json',
             '-s', 'test',

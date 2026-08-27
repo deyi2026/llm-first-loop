@@ -505,8 +505,10 @@ class TestEngineRecovery:
         m = Message(role="system", content="interop 协调消息", source=MessageSource.SYSTEM)
         engine._interop_tail_messages = [m]
         engine.run(sid, "任务A")
-        # 恢复轮后 interop 槽已回填
-        assert engine._interop_tail_messages and engine._interop_tail_messages[0] is m
+        # 恢复轮后 interop 槽已回填（P1 9.1: AGGREGATED 拆解重建 Message，内容级匹配）
+        assert engine._interop_tail_messages and any(
+            x.content == "interop 协调消息" for x in engine._interop_tail_messages
+        )
         engine.run(sid, "任务B")  # 下一 run
         # 重注入消息进入第二轮提交（is 身份匹配消费 → defer_replayed）
         second_msgs = fake.calls[2]["messages"]
@@ -515,6 +517,85 @@ class TestEngineRecovery:
             for x in second_msgs
         )
         assert all(r is not m for r in (engine._deferred_replay_refs or []))
+
+    def test_multi_slot_aggregated_recovery(self, tmp_path, monkeypatch):
+        """B-1（verdict_p1 4.1）: 四槽全活跃 → 剥离单条 AGGREGATED 重试 + defer 四槽复位."""
+        engine, fake = _mk(tmp_path, monkeypatch, responses=[_e1210(), _resp()])
+        sid = engine.session.create()
+        _arm_compact_first(engine, sid)
+        # 四槽武装
+        engine._interop_tail_messages = [
+            Message(role="system", content="interop 协调", source=MessageSource.SYSTEM)
+        ]
+        engine._tip_tail_messages = [
+            Message(role="system", content="经验提示 tip", source=MessageSource.SYSTEM)
+        ]
+        write_hotcard(origin_session="origin-sess", anchor="任务锚点",
+                      data_dir=engine.settings.data_dir)
+        engine._cache_monitor._get_bucket(sid).gate_note_pending = True
+        result = engine.run(sid, "四槽全活跃")
+        assert "恢复后的正常回答" in result.final_answer
+        assert len(fake.calls) == 2  # 重试恰好 1 次
+        orig, retry = fake.calls[0]["messages"], fake.calls[1]["messages"]
+        _slot_user = lambda ms: [  # noqa: E731
+            d for d in ms
+            if isinstance(d, dict) and d.get("role") == "user"
+            and "--- [slot:" in str(d.get("content", ""))
+        ]
+        # ① 聚合形态: 原请求尾部注入 = 单条 AGGREGATED；重试尾部注入 user = 0
+        orig_tail = _slot_user(orig)
+        assert len(orig_tail) == 1, f"聚合条数 {len(orig_tail)} != 1（P1 9.1 单条）"
+        inj = engine._last_build_injections
+        assert inj and all(e.slot_kind == SlotKind.AGGREGATED for e in inj)
+        assert _slot_user(retry) == [], "重试请求尾部仍含注入 user（应剥离干净）"
+        # ② 公共前缀逐字节一致（重试 = 原请求剥尾前缀）
+        assert retry == orig[: len(orig) - len(inj)]
+        assert orig[: len(retry)] == retry
+        # ③ defer 拆解回存后四槽各自复位
+        assert engine._interop_tail_messages and any(
+            x.content == "interop 协调" for x in engine._interop_tail_messages
+        ), "interop: 未回填"
+        assert engine._tip_tail_messages and any(
+            x.content == "经验提示 tip" for x in engine._tip_tail_messages
+        ), "tip: 未回填"
+        assert pop_hotcard(session_id=sid,
+                           data_dir=engine.settings.data_dir) is not None, "hotcard: 未复位"
+        assert engine._cache_monitor.take_gate_note(sid) is True, "gate_note: 未复位"
+
+    def test_defer_plus_active_slots_single_agg(self, tmp_path, monkeypatch):
+        """B-2（verdict_p1 4.2）: defer 回放 + 当轮新槽并存 → 单条聚合 + defer 段先于活跃段."""
+        engine, fake = _mk(
+            tmp_path, monkeypatch,
+            responses=[_e1210(), _resp(), _resp("第二轮回答")],
+        )
+        sid = engine.session.create()
+        _arm_compact_first(engine, sid)
+        # 首轮: interop 活跃 → 1210 → defer 回存
+        engine._interop_tail_messages = [
+            Message(role="system", content="defer 回放的协调", source=MessageSource.SYSTEM)
+        ]
+        engine.run(sid, "第一轮")
+        assert engine._interop_tail_messages and any(
+            x.content == "defer 回放的协调" for x in engine._interop_tail_messages
+        ), "首轮 defer 未回填 interop 槽"
+        # 第二轮前武装当轮新槽（defer 回填 interop 保留 + 当轮新 tip）
+        engine._tip_tail_messages = [
+            Message(role="system", content="当轮新 tip", source=MessageSource.SYSTEM)
+        ]
+        engine.run(sid, "第二轮")
+        second = fake.calls[2]["messages"]
+        agg = [d for d in second
+               if isinstance(d, dict) and d.get("role") == "user"
+               and "--- [slot:" in str(d.get("content", ""))]
+        # ① 尾部注入聚合为单条（defer + 活跃并存轮 wire 产物约束）
+        assert len(agg) == 1, f"聚合条数 {len(agg)} != 1"
+        content = str(agg[0]["content"])
+        # ② 段序: defer 回放段（interop 承载）先于当轮活跃段（tip）
+        i_defer = content.find("--- [slot:interop] ---")
+        i_active = content.find("--- [slot:tip] ---")
+        assert i_defer != -1 and i_active != -1, "段标记缺失"
+        assert i_defer < i_active, "defer 回放段应先于当轮活跃段（spec 6.2-3）"
+        assert "defer 回放的协调" in content[:i_active], "defer 内容未在活跃段之前"
 
     def test_second_1210_no_third_retry(self, tmp_path, monkeypatch):
         """T5.4a: 连续两次 1210 → 第二次不再重发（耗尽上抛，spec 5.1.1-4a）."""

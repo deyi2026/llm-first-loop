@@ -94,10 +94,7 @@ def _is_refused_or_noncommittal(clause: str, keyword: str) -> bool:
         return True
 
     # Describing the risk/property of an action is not deciding to execute it.
-    if any(m in suffix for m in _DESCRIPTIVE_SUFFIX):
-        return True
-
-    return False
+    return any(m in suffix for m in _DESCRIPTIVE_SUFFIX)
 
 
 def committed_action_matches(text: str, keywords: list[str]) -> list[str]:

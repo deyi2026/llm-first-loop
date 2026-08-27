@@ -103,18 +103,18 @@ class FixLoopTool:
         max_rounds = int(kwargs.get("max_rounds", self._default_max_rounds) or self._default_max_rounds)
         fuse_count = int(kwargs.get("fuse_count", self._default_fuse_count) or self._default_fuse_count)
         # 审查低危修复: 上限钳制（LLM 可传超大值触发资源失控；超限钳到上限并如实标注）
-        _MAX_ROUNDS_CAP, _MAX_FUSE_CAP = 20, 10
+        _max_rounds_cap, _max_fuse_cap = 20, 10
         clamped = []
-        if max_rounds > _MAX_ROUNDS_CAP:
-            max_rounds = _MAX_ROUNDS_CAP
-            clamped.append(f"max_rounds 钳制到 {_MAX_ROUNDS_CAP}")
-        if fuse_count > _MAX_FUSE_CAP:
-            fuse_count = _MAX_FUSE_CAP
-            clamped.append(f"fuse_count 钳制到 {_MAX_FUSE_CAP}")
+        if max_rounds > _max_rounds_cap:
+            max_rounds = _max_rounds_cap
+            clamped.append(f"max_rounds 钳制到 {_max_rounds_cap}")
+        if fuse_count > _max_fuse_cap:
+            fuse_count = _max_fuse_cap
+            clamped.append(f"fuse_count 钳制到 {_max_fuse_cap}")
         if max_rounds < 1 or fuse_count < 1:
             return ToolResult(
                 status=ToolResultStatus.FAILURE,
-                content=f"[参数错误] max_rounds/fuse_count 必须 ≥ 1",
+                content="[参数错误] max_rounds/fuse_count 必须 ≥ 1",
                 tool_call_id="", tool_name=self.name,
             )
         fix_hint = str(kwargs.get("fix_hint", "") or "")

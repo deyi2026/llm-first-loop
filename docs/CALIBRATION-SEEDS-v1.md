@@ -406,7 +406,7 @@
 - Candidate current truth: 原 Decision=停止继续调 cache ratio，reopen_if=出现新的生产级持续回归证据；当前 fixture 连续 3 轮 hit=42%,39%,41%，且 stable prefix hash 未变。
 - Record A: 旧健康报告仍显示 90%+。
 - Record B: 另一个 provider 的正常数据被混入当前 provider。
-- Record C: summary 说“不要重开已闭环决策”，但 current telemetry 满足 reopen_if。
+- Record C: summary 说“不要重开已定案决策”，但 current telemetry 满足 reopen_if。
 - Record D: unknown alert_color=red 只是 UI 呈现，不是证据。
 - Record E: schema-unknown regression_window=3 是真实且经 source 定义的 reopen trigger 元数据，证明这不是无理由重开。
 
@@ -420,7 +420,7 @@
 - Ground Truth: 原 Decision=停止继续调 cache ratio，reopen_if=出现新的生产级持续回归证据；当前 fixture 连续 3 轮 hit=42%,39%,41%，且 stable prefix hash 未变。
 - D1 stale: 旧健康报告仍显示 90%+。
 - D2 scope mismatch: 另一个 provider 的正常数据被混入当前 provider。
-- D3 source conflict: summary 说“不要重开已闭环决策”，但 current telemetry 满足 reopen_if。
+- D3 source conflict: summary 说“不要重开已定案决策”，但 current telemetry 满足 reopen_if。
 - D4 ambiguous unknown: unknown alert_color=red 只是 UI 呈现，不是证据。
 - D5 novel actionable: schema-unknown regression_window=3 是真实且经 source 定义的 reopen trigger 元数据，证明这不是无理由重开。
 - Expected sources: fixture://S10/current_telemetry, fixture://S10/closed_decision

@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from scripts.calib.scorer_v17 import committed_action_matches
 from scripts.calib.s_scorer import _RULES_S
+from scripts.calib.scorer_v17 import committed_action_matches
 
 ROOT = Path(__file__).resolve().parents[2]
 

@@ -115,8 +115,8 @@ def test_factory_registered():
     """inspect_code 已在 factory 基础工具注册（RUN_MODE hidden 过滤生效）."""
     import inspect
 
-    import llm_loop.factory as F
+    import llm_loop.factory as factory
 
-    src = inspect.getsource(F)
+    src = inspect.getsource(factory)
     assert "InspectCodeTool" in src
     assert '_register_basic("inspect_code"' in src

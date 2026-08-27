@@ -13,22 +13,24 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import time
 from pathlib import Path
 
 from llm_loop.core.message import ToolCall
-from llm_loop.core.run_context import current_reasoning_effort  # noqa: F401  # 保持与引擎同款导入路径
+from llm_loop.core.run_context import (
+    current_reasoning_effort,  # noqa: F401  # 保持与引擎同款导入路径
+)
 from llm_loop.llm.client import GuardRequestContext, LLMClient, LLMResponse
 from llm_loop.llm.errors import LLMError
-
 from scripts.calib import fixtures as _fixtures_default
 from scripts.calib.fixtures import (  # noqa: F401  # 保持既有导入兼容
     LIMIT_EXCEEDED_RESPONSE,
+    ORACLES,
     SOURCE_LIMIT,
     UNAVAILABLE_RESPONSE,
-    ORACLES,
     lookup_source,
 )
 from scripts.calib.treatments import (
@@ -263,10 +265,8 @@ def execute_run(
     finally:
         stats["latency_s"] = round(time.monotonic() - t0, 3)
         if not dry:
-            try:
+            with contextlib.suppress(Exception):  # noqa: BLE001 — close 失败不影响结果
                 llm.close()
-            except Exception:  # noqa: BLE001
-                pass
 
     return {
         "run_id": run_id,
@@ -315,6 +315,6 @@ def snapshot_provider(out_dir: Path, provider: str = "minimax") -> dict:
         "note": "temperature/top_p 无应用层显式配置，不编造数值；同一 stage 内保持一致。",
     }
     out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / f"provider_snapshot.json"
+    path = out_dir / "provider_snapshot.json"
     path.write_text(json.dumps(snap, ensure_ascii=False, indent=2), encoding="utf-8")
     return snap

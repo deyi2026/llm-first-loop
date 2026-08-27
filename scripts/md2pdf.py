@@ -18,8 +18,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-from reportlab.platypus import (Image, Paragraph, SimpleDocTemplate, Spacer,
-                                Table, TableStyle)
+from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 # 注册 CJK 字体（中文支持，STSong-Light 为 reportlab 内置 CID 字体）
 pdfmetrics.registerFont(UnicodeCIDFont('STSong-Light'))
@@ -82,7 +81,8 @@ def render_table(rows, styles):
 # ---------- 主流程 ----------
 def md2pdf(md_path, pdf_path, no_images=False, title='', image_filter=None):
     """渲染 Markdown 到 PDF。image_filter：只嵌入文件名含该关键词的图片（用于多图报告出单图版本）。"""
-    md = open(md_path, encoding='utf-8').read()
+    with open(md_path, encoding='utf-8') as f:
+        md = f.read()
     base_dir = os.path.dirname(os.path.abspath(md_path))
     styles = build_styles()
 

@@ -10,6 +10,7 @@
   python scripts/usage_cost_report.py <bill.csv>
   python scripts/usage_cost_report.py <bill.csv> --hourly   # 逐小时明细
 """
+
 import csv
 import sys
 from collections import defaultdict
@@ -29,7 +30,9 @@ def hour_key(start_iso: str) -> str:
 
 
 def build_report(rows: list[dict]) -> dict:
-    per_hour = defaultdict(lambda: {"hit": 0, "miss": 0, "out": 0, "req": 0, "cost": 0.0, "key": ""})
+    per_hour = defaultdict(
+        lambda: {"hit": 0, "miss": 0, "out": 0, "req": 0, "cost": 0.0, "key": ""}
+    )
     totals = {"hit": 0, "miss": 0, "out": 0, "req": 0, "cost": 0.0}
     for r in rows:
         typ = r.get("type", "")
@@ -48,11 +51,14 @@ def build_report(rows: list[dict]) -> dict:
             totals["req"] += amt
             continue
         if typ == "input_cache_hit_tokens":
-            per_hour[hk]["hit"] += amt; totals["hit"] += amt
+            per_hour[hk]["hit"] += amt
+            totals["hit"] += amt
         elif typ == "input_cache_miss_tokens":
-            per_hour[hk]["miss"] += amt; totals["miss"] += amt
+            per_hour[hk]["miss"] += amt
+            totals["miss"] += amt
         elif typ == "output_tokens":
-            per_hour[hk]["out"] += amt; totals["out"] += amt
+            per_hour[hk]["out"] += amt
+            totals["out"] += amt
         cost = price * amt
         per_hour[hk]["cost"] += cost
         per_hour[hk]["key"] = key
@@ -65,7 +71,9 @@ def render(report: dict, hourly: bool = False) -> str:
     lines = []
     hit_rate = t["hit"] / (t["hit"] + t["miss"]) * 100 if (t["hit"] + t["miss"]) else 0.0
     lines.append(f"总请求 {t['req']} | 命中率 {hit_rate:.1f}% | 总费用 ${t['cost']:.2f}")
-    lines.append(f"  构成: hit ${t['hit']*0.00000005:.2f} / miss ${t['miss']*0.0000015:.2f} / out ${t['out']*0.0000045:.2f} (参考单价)")
+    lines.append(
+        f"  构成: hit ${t['hit'] * 0.00000005:.2f} / miss ${t['miss'] * 0.0000015:.2f} / out ${t['out'] * 0.0000045:.2f} (参考单价)"
+    )
     if hourly:
         lines.append("")
         lines.append(f"{'时段':8s}{'请求':>5s}{'命中率':>8s}{'费用$':>9s}")

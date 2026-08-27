@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 from datetime import UTC, datetime
@@ -140,7 +141,6 @@ def _apply_setup(engine, setup: dict) -> None:
                 from llm_loop.core.message import Message, MessageSource
 
                 sess = getattr(engine, "session", None)
-                sid = getattr(engine, "session_id", "")
                 if sess is not None:
                     msg = Message(
                         role="system",
@@ -152,10 +152,8 @@ def _apply_setup(engine, setup: dict) -> None:
                         source=MessageSource.SYSTEM,
                         metadata={"injected_system": True},
                     )
-                    try:
+                    with contextlib.suppress(Exception):  # noqa: BLE001 — 注入失败 fail-open
                         sess.messages.append(msg)
-                    except Exception:  # noqa: BLE001 — 注入失败 fail-open
-                        pass
             except Exception:  # noqa: BLE001 — 引导注入失败 fail-open
                 pass
     except Exception:  # noqa: BLE001 — 注入失败 fail-open

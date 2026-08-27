@@ -206,7 +206,13 @@ class TestMetricsCli:
         assert out_json.exists()
         data = json.loads(out_json.read_text(encoding="utf-8"))
         assert data["metrics"]["compact_first_1210_rate"] == 1.0
-        assert data["schema"] == "err1210_metrics_v1"
+        # v1.1（verdict_p1 B-3）: schema 升级 + 新键（裸数值键零变更）
+        assert data["schema"] == "err1210_metrics_v1.1"
+        assert data["metrics"]["compact_first_1210_rate_detail"] == {
+            "numerator": 2, "denominator": 2, "rate": 1.0,
+        }
+        assert "aggregated_tail_user_max" in data["metrics"]
+        assert "aggregated_tail_user_fallback_rounds" in data["metrics"]
 
     def test_render_summary_none_rates(self):
         """无样本场景: 发生率/成功率/完整率均为 n/a（非除零崩溃）."""
