@@ -127,9 +127,18 @@ class TestTraceRotation:
             text=True,
         )
         hits = [line for line in r.stdout.splitlines() if line.strip()]
-        # 允许的写入侧: client.py 的 trace 函数本体 + 轮转实现（写入路径/清理/诊断）
+
+        def _is_comment_ref(line: str) -> bool:
+            # git grep 输出格式 src/path:lineno:content——注释行（# 开头）是说明性引用非读取方
+            content = line.split(":", 2)[-1].lstrip()
+            return content.startswith("#")
+
+        # 允许: ① client.py 写入侧本体（trace 函数/轮转/清理/诊断）② 任意文件的注释性提及
+        # （如 err1210.py trace_key 注释——git grep 只搜 tracked 文件，e9a2e6b 落库后
+        # 该注释进入扫描范围；本测试防的是"读取方代码"，注释不构成读取）
         allowed = all(
-            ("llm/client.py" in line or "llm\\client.py" in line) and "read" not in line.lower()
+            (("llm/client.py" in line or "llm\\client.py" in line) or _is_comment_ref(line))
+            and "read" not in line.lower()
             for line in hits
         )
         assert allowed, f"payload_trace 出现了写入侧之外的引用:\n{chr(10).join(hits)}"
