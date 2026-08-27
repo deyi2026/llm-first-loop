@@ -48,6 +48,7 @@ from llm_loop.core.loop.tool_exec import (
     _tool_args_summary,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
     _ToolExecMixin,
 )
+from llm_loop.core.loop.turn_context import _TurnContextMixin
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.run_context import (
     current_reasoning_effort as _current_reasoning_effort,
@@ -64,7 +65,6 @@ from llm_loop.introspection.corrections import CorrectionContext, CorrectionTool
 from llm_loop.introspection.status import ArchitectureStatusProvider
 from llm_loop.llm.client import GuardRequestContext, LLMClient, StreamDelta
 from llm_loop.llm.errors import LLMError
-from llm_loop.memory.retrieve import build_memory_messages
 from llm_loop.memory.store import MemoryStore
 from llm_loop.tools.registry import ToolRegistry
 
@@ -140,7 +140,7 @@ def build_session_snapshot_text(
     parts.append("若你对当前任务/已完成/下一步/未决事项的定位漂移，以本条为锚点重新校准。")
     return "；".join(parts)
 
-class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _OverflowMixin, _ToolExecMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin, _KpiMixin, _LifecycleMixin):
+class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _OverflowMixin, _ToolExecMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin, _KpiMixin, _LifecycleMixin, _TurnContextMixin):
     """五阶段核心循环控制器."""
 
     # EVO 后台 run 执行器（factory 动态装配 BackgroundRunner；声明类型供 pyright 静态检查）
@@ -247,7 +247,8 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         self._focus = TaskFocusState()
         # EVO-20260818（spec §5.4.1-3 注记，grill-me C1）: 模型切换检测——每轮对比实际
         # 模型，变化时 reset cache_health 窗口（防跨模型归因污染）
-        self._cache_last_model: str | None = None
+        self._cache_last_model: str | None = None  # 最近活跃模型（兼容诊断；切换判定不再用全局值）
+        self._cache_last_model_by_session: dict[str, str] = {}  # 2026-08-27: 防跨会话模型状态污染
         self._cache_gate_stable_fp = ""  # 门禁: 本次稳定段指纹（system+注入）
         self._cache_gate_hint: str | None = None  # 门禁: 后检漂移提示（run 末注入 final_answer）
         # EVO-20260817-b6554376: 投影一致性门闸最近状态（ok/miss/mismatch；构建后更新）
@@ -299,15 +300,25 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 "如需要早期历史细节，可调用 search_archive(query=...) 检索关键帧；"
                 "后续如需声明上下文窗口，可经 declare_context 工具（若已注册）。"
             )
-            tips = getattr(self, "_tip_tail_messages", None)
-            if tips is None:
-                tips = self._tip_tail_messages = []
-            tips.append(Message(
-                role="system",
-                content=notice,
-                source=MessageSource.SYSTEM,
-                metadata={"injected_system": True},
-            ))
+            # 2026-08-27: 模型切换通知必须持久化。旧的一次性 tail 会在下一请求
+            # 被 assistant/新 user 顶替，制造字节前缀断点；且动态 anchor 会继续漂移。
+            if sess is None:
+                return
+            from llm_loop.core.loop.focus import wrap_injection
+
+            msg = Message(
+                role="user",
+                content=wrap_injection(notice),
+                source=MessageSource.USER,
+                metadata={
+                    "persisted_injection": True,
+                    "injection_kind": "model_switch_notice",
+                    "switch_from": switch_from,
+                    "switch_to": switch_to,
+                },
+            )
+            sess.messages.append(msg)
+            self._append_message_event(sess, msg)
         except Exception:  # noqa: BLE001 — fail-open 不阻断切换
             import logging
 
@@ -414,6 +425,10 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         self._ensure_session_created(sess)
         self._append_message_event(sess, user_msg)
         self._inject_interruption_recovery(session_id, sess)
+        _turn_ref = len(sess.messages) - 1  # user_msg seq（turn 身份）
+        self._current_turn_ref = _turn_ref  # experience tip / build 回退对齐
+        self._turn_tip_injected = False  # T2: run 级经验提示一次
+        _turn_memory_msgs = self._inject_turn_memory_snapshot(sess, user_text, _turn_ref)
         self._phase("ingress")
 
         final_answer = ""
@@ -451,19 +466,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             if self.status:
                 self.status.record_llm_round()
 
-            # ── 理解：记忆检索 + 上下文构造 ──
-            memory_msgs: list[Message] = []
-            try:
-                memory_msgs = build_memory_messages(
-                    user_text,
-                    self.memory,
-                    top_k=self._runtime_memory_top_k(),  # M57 配置面收敛: 动态优先（AI 可调）
-                    semantic_retriever=self.semantic_retriever,  # M11 T45: 语义路径接线
-                    session_id=sess.session_id,  # 2026-08-20 记忆分级: 会话瞬时条目仅原会话召回
-                )
-            except Exception as exc:  # noqa: BLE001 — 记忆失败不阻塞（FR-MEM-03）
-                memory_msgs = [self._fault_feedback("memory", exc)]
-                self._record_program_fault("memory")
+            # ── 理解：上下文构造（memory 已上移 run 入口；_turn_memory_msgs 仅 build 回退）──
 
             # 热重载一致性：每个 LLM round 捕获一次 current/default/planning 不可变 registry 快照。
             _round_registry, _default_registry, _planning_registry = (
@@ -476,6 +479,10 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             )
             self._set_model_label_ctx(planned_label)
             effective_budget = self._effective_history_budget(
+                planned_label, registry_snapshot=_planning_registry
+            )
+            # P0-B: 预算归因（architecture_status.context_usage.budget 消费）
+            self._last_budget_info = self._effective_history_budget_detail(
                 planned_label, registry_snapshot=_planning_registry
             )
             _tb = int(os.environ.get("TOOL_ROUND_BUDGET", "8000"))
@@ -515,7 +522,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 final_answer = _pressure_block
                 break
             messages = self._build_llm_messages(
-                sess, memory_msgs, max_chars=effective_budget, model=model,
+                sess, _turn_memory_msgs, max_chars=effective_budget, model=model,
                 planned_label=planned_label, tool_round_zero=_tool_round_zero,
             )
             self._kpi_accumulate_inject()
@@ -557,15 +564,21 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             # （PromptGuard 按 session/model 重置；cache_health 侧防跨模型归因污染）
             # 2026-08-20 (EVO-20260820-0b96348d, 用户决策): clear_buckets=False 保留模型桶——
             # 桶是模型生命周期统计，切换时不清（切回热检查、模型级累计跨切换持久）。
-            if model_used and model_used != self._cache_last_model:
-                _switch_from = self._cache_last_model
+            # 2026-08-27: 模型切换必须按 session 判定。旧 `_cache_last_model` 是 Engine
+            # 全局值，多会话交错使用不同模型时会把“别的会话刚用了 DeepSeek”误判成
+            # “本会话从 DeepSeek 切到 GLM”，导致新会话也被塞入瞬时切换通知并断前缀。
+            _sid = sess.session_id
+            _switch_from = self._cache_last_model_by_session.get(_sid)
+            if model_used and model_used != _switch_from:
                 if _switch_from is not None:
-                    self._cache_monitor.reset(reason=f"model_switch:{model_used}",
-                                              clear_buckets=False)
-                self._cache_last_model = model_used
-                # 2026-08-20 (DESIGN-v3 v2 落地): 切换通知——AI 主导上下文选择第一步。
-                # 注入切换感知帧（_tip_tail_messages 槽: 尾部追加/转 user/一次性，前缀不变）。
+                    self._cache_monitor.reset(
+                        reason=f"model_switch:{model_used}", clear_buckets=False
+                    )
+                self._cache_last_model_by_session[_sid] = model_used
+                self._cache_last_model = model_used  # 仅兼容最近活跃模型诊断
                 self._inject_switch_notice(_switch_from or "", model_used, sess)
+            elif model_used:
+                self._cache_last_model = model_used
             if routing.final_answer_override is not None:
                 # EVO-20260818（M53 拒绝逃生，防死循环）: 提交超模型窗口被拒时，AI 无 LLM
                 # 调用无法自救（无法 switch_model/开新会话/调工具）——现场: 2a3385da 会话
@@ -574,7 +587,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 _escape_note = ""
                 try:
                     self._build_llm_messages(
-                        sess, memory_msgs, max_chars=effective_budget,
+                        sess, _turn_memory_msgs, max_chars=effective_budget,
                         model=model, planned_label=planned_label, emergency_compact=True,
                     )
                     # EVO-20260825 任务8（§5.8）: 记录紧急压缩——供 switch_model 覆盖
