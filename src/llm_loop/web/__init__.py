@@ -12,7 +12,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 
-from llm_loop.config import load_settings
+from llm_loop.config import load_env_file, load_settings
 from llm_loop.factory import build_engine
 
 from .auth import is_loopback, require_api_key, validate_auth_require, validate_binding
@@ -162,6 +162,7 @@ def _install_exit_signal_log() -> None:
 
 def main() -> None:
     """服务启动入口（python -m llm_loop.web）."""
+    load_env_file()  # 补齐手动启动缺口：shell 未注入 .env 时也能可靠读配置（MCP_SERVERS 等）
     # EVO-20260811-f94e5306: 记录进程启动版本（一致性检测）
     from llm_loop.introspection.proc_version import record_process_start
 
