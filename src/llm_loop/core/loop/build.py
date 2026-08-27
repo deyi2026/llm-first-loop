@@ -28,6 +28,11 @@ from llm_loop.core.history import (
     projection_ver,  # noqa: F401 (history 工具, 函数内使用)
     stable_digest,  # 投影门闸
 )
+from llm_loop.core.loop.err1210 import (
+    InjectedEntry,
+    SlotKind,
+    content_prefix_sha,
+)
 from llm_loop.core.loop.focus import build_task_anchor, wrap_injection
 from llm_loop.core.loop.hotcard import pop_hotcard, write_hotcard
 
@@ -289,6 +294,10 @@ class _BuildMixin:
             else self._planned_model_label(model, sess)
         )
         provider_id = resolved_label.partition("/")[0] or "default"
+        # err1210 T4.1（spec err1210_locating）: 注入登记旁路重置——每轮 build 覆盖，
+        # 消费后不清除（供审计补查）；纯旁路记录，不向注入产物 dict 添加任何自定义键。
+        self._last_build_injections = []
+        self._last_build_defer_replayed = False
         anchors = sess.history_anchors or {}
         sess_anchor = int(anchors.get(provider_id, 0) or 0)
         system_prompt = build_system_prompt()
@@ -559,6 +568,11 @@ class _BuildMixin:
                 {"msg_seq": _msg_seq, "provider_id": provider_id},
             )
         self._last_history_compacted = bool(compacted_box and compacted_box[0])
+        # err1210 T4.1: compact 事件序列号——False→True 转变递增（per-session × per-compact-事件
+        # 耗尽标记的"事件标识"，engine 侧 _err1210_attempted 据此判定新事件清除旧标记）
+        if self._last_history_compacted and not getattr(self, "_compact_event_was_compacted", False):
+            self._compact_event_seq = getattr(self, "_compact_event_seq", 0) + 1
+        self._compact_event_was_compacted = self._last_history_compacted
         # EVO-20260825 任务6.2: 压缩后视图体积验证——drop<5%（压缩但视图几乎没缩小）
         # → breaker 审计事件 view_not_shrinking_after_compact（压缩风暴前兆归因）
         if compact_view_box:
@@ -691,9 +705,11 @@ class _BuildMixin:
                         _d["content"] = wrap_injection(_c, _anchor)
                 built.append(_d)
         tail_msgs = getattr(self, "_interop_tail_messages", None)
+        _interop_orig = tail_msgs  # err1210 T4.1: 身份匹配用（区分 interop/tip/local 提示）
         # EVO-20260819-7bb7d689: 经验提示尾部追加槽并入统一消费（与 interop 同机制）——
         # 不进历史存储，build 末尾一次性追加（转 user），system+稳定历史前缀字节不变
         tip_msgs = getattr(self, "_tip_tail_messages", None)
+        _tip_orig = tip_msgs
         if tip_msgs:
             tail_msgs = (tail_msgs or []) + tip_msgs
         # 2026-08-23 任务1（本地模型行为增强，镜像区同步）: local 轮固定尾部追加轻量行为提示。
@@ -724,6 +740,30 @@ class _BuildMixin:
                     if _c:
                         _d["content"] = wrap_injection(_c, _anchor)
                 built.append(_d)
+                # err1210 T4.1: 一次性消费槽旁路登记（local 行为提示非消费槽不登记）；
+                # defer 回填消息消费时记 defer_replayed（is 身份匹配，spec 4.4-2）
+                _slot = None
+                if _interop_orig and any(_m is _x for _x in _interop_orig):
+                    _slot = SlotKind.INTEROP
+                elif _tip_orig and any(_m is _x for _x in _tip_orig):
+                    _slot = SlotKind.TIP
+                if _slot is not None:
+                    self._last_build_injections.append(
+                        InjectedEntry(
+                            msg_idx=len(built) - 1,
+                            slot_kind=_slot,
+                            prefix_sha=content_prefix_sha(str(_d.get("content") or "")),
+                            message_ref=_m,
+                        )
+                    )
+                    _refs = getattr(self, "_deferred_replay_refs", None) or []
+                    for _r_slot, _r_ref in _refs:
+                        if _r_ref is _m:
+                            self._note_defer_replayed(sess.session_id, _r_slot)
+                            break
+                    self._deferred_replay_refs = [
+                        (_s, _r) for _s, _r in _refs if _r is not _m
+                    ]
             self._interop_tail_messages = None  # 一次性消费（每轮重扫 pending）
             self._tip_tail_messages = None  # 经验提示同机制一次性消费（下轮工具执行再注入）
         # EVO-20260826-81f8f674: 任务接力热卡注入——压缩时刻写的热卡在新会话 build 时
@@ -734,14 +774,24 @@ class _BuildMixin:
                 session_id=sess.session_id, data_dir=self.settings.data_dir
             )
             if _hotcard_text:
-                built.append(
-                    {
-                        "role": "user",
-                        "content": wrap_injection(
-                            _hotcard_text, build_task_anchor(self._focus.anchor_sess)
-                        ),
-                    }
+                _hc_content = wrap_injection(
+                    _hotcard_text, build_task_anchor(self._focus.anchor_sess)
                 )
+                built.append({"role": "user", "content": _hc_content})
+                # err1210 T4.1: hotcard 登记与 defer 重注入检测
+                self._last_build_injections.append(
+                    InjectedEntry(
+                        msg_idx=len(built) - 1,
+                        slot_kind=SlotKind.HOTCARD,
+                        prefix_sha=content_prefix_sha(_hc_content),
+                        message_ref=None,
+                    )
+                )
+                _slots = getattr(self, "_deferred_replay_slots", None) or set()
+                if str(SlotKind.HOTCARD) in _slots:
+                    self._note_defer_replayed(sess.session_id, SlotKind.HOTCARD)
+                    _slots.discard(str(SlotKind.HOTCARD))
+                    self._deferred_replay_slots = _slots
         except Exception:  # noqa: BLE001 — fail-open
             pass
         # EVO-20260817-72fcd94a: 门禁干预知情标记——干预激活首轮在 built 末尾追加固定
@@ -749,6 +799,20 @@ class _BuildMixin:
         # "非首位 system"——2026-08-18 审计 WARN 实证；让 AI 感知上下文结构变化）
         if self._cache_monitor.take_gate_note(session_id=sess.session_id):
             built = list(built) + [{"role": "user", "content": GATE_NOTE_CONTENT}]
+            # err1210 T4.1: gate_note 登记与 defer 重注入检测
+            self._last_build_injections.append(
+                InjectedEntry(
+                    msg_idx=len(built) - 1,
+                    slot_kind=SlotKind.GATE_NOTE,
+                    prefix_sha=content_prefix_sha(GATE_NOTE_CONTENT),
+                    message_ref=None,
+                )
+            )
+            _slots = getattr(self, "_deferred_replay_slots", None) or set()
+            if str(SlotKind.GATE_NOTE) in _slots:
+                self._note_defer_replayed(sess.session_id, SlotKind.GATE_NOTE)
+                _slots.discard(str(SlotKind.GATE_NOTE))
+                self._deferred_replay_slots = _slots
         # EVO-20260817-b6554376: 投影一致性门闸（借鉴 DSH seq 水印，fail-open 不阻断 run）
         # seq（消息数）负责"历史追加"水印；ver（构建参数+动态输入指纹）负责参数水印；
         # ver+seq 匹配而 built_hash 不同 → 非确定性构建/历史被改 → 告警（只读，不阻断）。

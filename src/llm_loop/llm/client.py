@@ -15,9 +15,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -195,6 +197,67 @@ def _finish_response(
     )
 
 
+# err1210 任务组 1（spec 4.4-1）: trace 按日轮转——进程内节流时间戳（每小时至多一次实际 stat）
+_TRACE_ROTATE_LAST_CHECK = 0.0
+
+
+def _cleanup_trace_shards(active: Path) -> None:
+    """删除超过保留期的历史分片（LLM_PAYLOAD_TRACE_RETAIN_DAYS，默认 7 天；≤0 禁用）."""
+    try:
+        retain_days = int(os.environ.get("LLM_PAYLOAD_TRACE_RETAIN_DAYS", "7") or "7")
+    except ValueError:
+        retain_days = 7
+    if retain_days <= 0:
+        return
+    cutoff = time.time() - retain_days * 86400
+    try:
+        for shard in active.parent.glob(f"{active.stem}-*{active.suffix}"):
+            try:
+                if shard.stat().st_mtime < cutoff:
+                    shard.unlink()
+            except OSError:
+                pass  # 分片刚被并发移除/暂不可访问——跳过，继续清理其余分片
+    except Exception:  # noqa: BLE001 — 清理失败 fail-open
+        logger.debug("payload_trace 过期分片清理失败（fail-open）", exc_info=True)
+
+
+def _maybe_rotate_trace_file(path: str) -> str:
+    """[err1210 T1.1/T1.2] 写入前节流轮转检查: trace 文件 mtime 跨日 → 切分为历史分片.
+
+    - 节流: 进程内模块级时间戳，每小时至多触发一次实际 stat（写入热路径零负担）。
+    - 轮转: 活跃文件 mtime 所在日 ≠ 今日 → os.replace 为 payload_trace-YYYYMMDD.jsonl，
+      当日请求继续写活跃文件（open "a" 自动新建）。
+    - 同名分片已存在（时钟回拨/手动复制）→ 追加合并防丢后移除活跃文件。
+    - 顺带执行过期分片清理（_cleanup_trace_shards）。
+    - 全路径 fail-open: 任何异常返回原路径，不影响主请求写入。
+    """
+    global _TRACE_ROTATE_LAST_CHECK
+    now = time.time()
+    if now - _TRACE_ROTATE_LAST_CHECK < 3600.0:
+        return path
+    _TRACE_ROTATE_LAST_CHECK = now
+    try:
+        from datetime import datetime
+
+        active = Path(path)
+        if not active.exists():
+            return path
+        mtime_day = datetime.fromtimestamp(active.stat().st_mtime).strftime("%Y%m%d")
+        today = datetime.now().strftime("%Y%m%d")
+        if mtime_day != today:
+            archived = active.with_name(f"{active.stem}-{mtime_day}{active.suffix}")
+            if archived.exists():
+                with open(archived, "ab") as dst, open(active, "rb") as src:
+                    shutil.copyfileobj(src, dst)
+                active.unlink()
+            else:
+                os.replace(active, archived)
+        _cleanup_trace_shards(active)
+    except Exception:  # noqa: BLE001 — 轮转失败 fail-open（写入继续走活跃文件）
+        logger.debug("payload_trace 轮转检查失败（fail-open）", exc_info=True)
+    return path
+
+
 def _trace_payload_fingerprint(
     payload: dict[str, Any], messages: list[dict], *, session_id: str, provider: str, model: str
 ) -> None:
@@ -274,6 +337,7 @@ def _trace_payload_fingerprint(
             ],
         }
         path = os.environ.get("LLM_PAYLOAD_TRACE_PATH", "data/audit/payload_trace.jsonl")
+        path = _maybe_rotate_trace_file(path)
         parent = os.path.dirname(path)
         if parent:
             os.makedirs(parent, exist_ok=True)

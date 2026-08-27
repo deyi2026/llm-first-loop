@@ -1007,6 +1007,18 @@ class CacheHealthMonitor:
             logger.debug("知情标记消费异常（fail-open）", exc_info=True)
             return False
 
+    def restore_gate_note(self, session_id: str = "") -> None:
+        """[err1210 T2.3，defer 回存 gate_note 槽] 置回被消费的门禁知情标记.
+
+        P0 剥离重试成功后调用——重试成功的下一轮 build take_gate_note 再次
+        返回 True 重注入（幂等：布尔置位语义，重复执行不累积）。
+        fail-open：对不存在桶 _get_bucket 惰性建桶后置位，异常仅 debug。
+        """
+        try:
+            self._get_bucket(session_id).gate_note_pending = True
+        except Exception:  # noqa: BLE001
+            logger.debug("知情标记置回异常（fail-open）", exc_info=True)
+
     # ── 状态快照（可观测/测试）──
     def snapshot(self, session_id: str = "") -> dict:
         """EVO-20260825: per-session 快照——session_id 非空返回该分桶快照，
