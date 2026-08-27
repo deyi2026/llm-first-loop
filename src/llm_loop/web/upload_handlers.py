@@ -181,7 +181,7 @@ def _extract_docx(data: bytes, filename: str) -> ExtractResult:
     """docx 提取（zipfile + XML 标准库，零额外依赖）."""
     # 2026-08-20（借鉴 SYAGI P3-5）: zip 压缩炸弹防护——10MB 压缩包可膨胀为超大 XML,
     # 先查展开大小再读取。
-    _DOCX_XML_MAX_BYTES = 20 * 1024 * 1024
+    _docx_xml_max_bytes = 20 * 1024 * 1024
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
             try:
@@ -193,14 +193,14 @@ def _extract_docx(data: bytes, filename: str) -> ExtractResult:
                     status="error",
                     detail=f"[程序异常] docx 解析失败（{type(exc).__name__}: {exc}）。",
                 )
-            if xml_info.file_size > _DOCX_XML_MAX_BYTES:
+            if xml_info.file_size > _docx_xml_max_bytes:
                 return ExtractResult(
                     source_filename=filename,
                     content_type="docx",
                     status="error",
                     detail=(
                         f"[程序异常] docx 内部 document.xml 展开超过 "
-                        f"{_DOCX_XML_MAX_BYTES // 1024 // 1024}MB 上限，已拒绝解析。"
+                        f"{_docx_xml_max_bytes // 1024 // 1024}MB 上限，已拒绝解析。"
                     ),
                 )
             xml = zf.read("word/document.xml").decode("utf-8", errors="ignore")

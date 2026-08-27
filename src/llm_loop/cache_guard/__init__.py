@@ -6,6 +6,6 @@
 - 稳定后可内化 engine（规则引擎函数化——MCP 层可撤）
 """
 
-from llm_loop.cache_guard.guard import GuardDecision, validate_request, PromptGuard
+from llm_loop.cache_guard.guard import GuardDecision, PromptGuard, validate_request
 
 __all__ = ["GuardDecision", "validate_request", "PromptGuard"]

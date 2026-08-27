@@ -106,10 +106,8 @@ class DepGraph:
         try:
             rel = fp.relative_to(self._src_root)
         except ValueError:
-            if self._test_root:
-                rel = fp.relative_to(self._test_root)
-            else:
-                rel = Path(fp.name)  # 兜底（极端场景）
+            # 兜底（极端场景）：无 test_root 时用文件名
+            rel = fp.relative_to(self._test_root) if self._test_root else Path(fp.name)
         # 审查中危修复: TEST 判断优先用 _test_root（tests 在 src 外时原硬编码
         # "tests" in parts 判断失效 → 回归子集恒空）；无显式 test_root 时回退路径判断
         is_test = False
@@ -210,7 +208,7 @@ class DepGraph:
                 else:
                     needs_full = False
                     files = list(changed_files)
-                    for cf in changed_files:
+                    for _cf in changed_files:
                         if time.perf_counter() - start > self._increment_timeout_s:
                             logger.warning("依赖图增量更新超时 → 重建")
                             needs_full = True
