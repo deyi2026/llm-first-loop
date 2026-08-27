@@ -50,7 +50,9 @@ def pick_font(preferred):
 
 def parse_plain(fn):
     nodes, gh = {}, None
-    for line in open(fn, encoding='utf-8'):
+    with open(fn, encoding='utf-8') as f:
+        lines = f.readlines()
+    for line in lines:
         p = line.split()
         if not p:
             continue
@@ -76,7 +78,7 @@ def main():
 
     nodes, gh = parse_plain(args.plain)
     img = Image.open(args.png_in).convert('RGBA')
-    W, H = img.size
+    w, h = img.size
     sx = args.dpi  # px/inch
     font_path = pick_font(args.font)
     if not font_path:
@@ -132,10 +134,10 @@ def main():
     # ---- 图例 ----
     if args.legend:
         lh = 48
-        ly = H - lh - 8
+        ly = h - lh - 8
         leg = Image.new('RGBA', img.size, (0, 0, 0, 0))
         dl = ImageDraw.Draw(leg)
-        dl.rectangle([12, ly, W - 12, H - 8], fill=(250, 250, 250, 235), outline=(200, 200, 200, 255))
+        dl.rectangle([12, ly, w - 12, h - 8], fill=(250, 250, 250, 235), outline=(200, 200, 200, 255))
         items = [seg.strip() for seg in re.split(r'\s+', args.legend) if seg.strip()]
         x = 32
         for item in items:

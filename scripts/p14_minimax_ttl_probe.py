@@ -3,11 +3,17 @@
 方法: 同前缀定时重发，间隔递增，观测 cached_tokens 何时归零（命中消失）→ 反推 TTL 区间。
 前缀: ~2.5K tokens 稳定前缀（官方 <512 不缓存，必须超阈值）。
 """
-import os, sys, time, json
+import json
+import os
+import sys
+import time
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from dotenv import load_dotenv
+
 load_dotenv()
-from llm_loop.llm.client import LLMClient
+from llm_loop.llm.client import LLMClient  # noqa: E402
+
 
 def main():
     api_key = os.environ.get("MINIMAX_API_KEY")
@@ -36,7 +42,8 @@ def main():
             break
     else:
         print("  → 10min 内未消失（TTL > 10min 或持续请求自动续期）", flush=True)
-    json.dump(results, open("/tmp/p14_minimax_ttl_results.json", "w"), indent=2)
+    with open("/tmp/p14_minimax_ttl_results.json", "w") as f:
+        json.dump(results, f, indent=2)
 
 if __name__ == "__main__":
     main()
