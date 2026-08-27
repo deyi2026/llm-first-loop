@@ -1,8 +1,11 @@
 """err1210 P0 恢复组件（.codeartsdoer/specs/err1210_locating，tasks 任务组 3）.
 
-根因（spec r3 附录 D）: 智谱 GLM 400/1210 全部命中 cache_compact 折叠后首请求，
-唯一共变差异是尾部一次性注入槽（interop/tip/gate_note/hotcard → wrap 转 user）
-形成的 5-6 条连续 user 注入群。P0 = 剥离尾部注入 → defer 回存槽位 → 单次重试。
+根因口径（P0-C 降级，err1210_locating 组 8 待证）: 智谱 GLM 400/1210 命中
+cache_compact 折叠后首请求；尾部一次性注入槽（interop/tip/gate_note/hotcard →
+wrap 转 user）是伴生现象而非充分根因——Snapshot 2（b85a3010）strip 后仍 1210。
+真根因方向为 compact 后 wire-view 结构/身份变化（组 8 双轨 oracle 定位中）。
+P0 = 安全诊断/降级框架（剥离尾部注入 → defer 回存槽位 → 单次重试；
+恢复有效性 unproven: trigger=11 / retry 1 / success 0）。
 
 关键约束（design 1.1.2 / 2.1.3-P0）:
 - 注入产物 dict 不打标（wire 字节敏感）——剥离识别依赖 build 旁路登记 + 前缀复核双保险；
@@ -24,11 +27,13 @@ import time
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from llm_loop.llm.errors import LLMError, LLMHTTPError, parse_provider_error_code
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from llm_loop.core.message import Message
     from llm_loop.core.session import ModelSession
 
@@ -196,13 +201,8 @@ class _Err1210Mixin:
     """P0 状态机（engine 挂载；self 属性由 LoopEngine.__init__ 提供）."""
 
     if TYPE_CHECKING:
-        _last_build_injections: list[InjectedEntry]
         _err1210_attempted: dict[str, int]
         _last_request_msg_count_by_session: dict[str, int]
-        _compact_event_seq: int
-        _last_build_defer_replayed: bool
-        _deferred_replay_refs: list[tuple[SlotKind, Message]]
-        _deferred_replay_slots: set[str]
 
     # ── 3.2 compact 首请求判定 ──
 
@@ -343,7 +343,7 @@ class _Err1210Mixin:
                     if reset_hotcard_consumed(
                         session_id=sess.session_id, data_dir=self.settings.data_dir
                     ):
-                        self._deferred_replay_slots = set(getattr(self, "_deferred_replay_slots", None) or ())
+                        self._deferred_replay_slots = set(self._deferred_replay_slots)
                         self._deferred_replay_slots.add(str(SlotKind.HOTCARD))
                         record_defer_event(
                             "defer_stored", sess.session_id, str(SlotKind.HOTCARD), {}
@@ -359,7 +359,7 @@ class _Err1210Mixin:
             if SlotKind.GATE_NOTE in by_slot:
                 try:
                     self._cache_monitor.restore_gate_note(sess.session_id)
-                    self._deferred_replay_slots = set(getattr(self, "_deferred_replay_slots", None) or ())
+                    self._deferred_replay_slots = set(self._deferred_replay_slots)
                     self._deferred_replay_slots.add(str(SlotKind.GATE_NOTE))
                     record_defer_event("defer_stored", sess.session_id, str(SlotKind.GATE_NOTE), {})
                 except Exception:  # noqa: BLE001
@@ -375,7 +375,7 @@ class _Err1210Mixin:
     def _try_err1210_recovery(
         self,
         *,
-        exc: LLMHTTPError,
+        exc: LLMError,
         sess: ModelSession,
         messages: list[dict],
         tools_param: list[dict],
@@ -517,7 +517,7 @@ class _Err1210Mixin:
         stream_fn = getattr(llm_client, "chat_stream", None)
         try:
             if callable(stream_fn):
-                it = stream_fn(**kwargs)
+                it = cast("Iterator[Any]", stream_fn(**kwargs))
                 while True:  # 完整消费至流尾；StopIteration.value 即完整 resp（client 侧聚合）
                     try:
                         next(it)
@@ -544,22 +544,16 @@ class _Err1210Mixin:
     # ── engine 接线点（任务组 4.3 瘦身: engine.py 行数守卫只留最小调用）──
 
     def _err1210_init(self) -> None:
-        """engine.__init__ 调用（tasks 4.2）: 恢复状态字段初始化.
+        """engine.__init__ 调用（tasks 4.2）: per-session 恢复状态字段初始化.
 
-        - _last_build_injections: build 旁路注入登记（剥离识别权威依据，每轮 build 覆盖）
         - _err1210_attempted: per-session 耗尽标记（值 = compact 事件 seq；新事件自然不等 → 降级机会重获）
         - _last_request_msg_count_by_session: 骤降兜底判定数据源（每次成功请求后更新）
-        - _deferred_replay_refs/_deferred_replay_slots: defer 重注入检测（build 消费点身份匹配）
-        - _last_build_defer_replayed: 重注入轮失败检测标记（每轮 build 重置，错误链终点消费）
+
+        其余六个恢复状态字段（注入登记/compact 事件 seq/defer 重注入检测等）已迁
+        _RunState per-session 桶（runstate.py，属性 shim 保旧名——err1210 P0-A）。
         """
-        self._last_build_injections: list[InjectedEntry] = []
         self._err1210_attempted: dict[str, int] = {}
         self._last_request_msg_count_by_session: dict[str, int] = {}
-        self._compact_event_seq: int = 0
-        self._compact_event_was_compacted: bool = False
-        self._last_build_defer_replayed: bool = False
-        self._deferred_replay_refs: list[tuple[str, Message]] = []
-        self._deferred_replay_slots: set[str] = set()
 
     def _err1210_attempt_recovery(
         self,

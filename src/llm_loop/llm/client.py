@@ -536,7 +536,7 @@ class LLMClient:
         if not (has_tool or has_tc):
             return messages  # 快速路径：无配对结构原样返回（零开销）
 
-        out: list[dict] = []
+        out: list[dict | None] = []
         pending: dict[str, int] = {}  # tool_call_id -> 其 assistant 在 out 中的下标
         removed_tool = 0
         stripped_ids = 0
@@ -552,14 +552,17 @@ class LLMClient:
                 by_idx.setdefault(i, []).append(tid)
             for i, orphan_tids in by_idx.items():
                 orphan_set = set(orphan_tids)
-                tcs = out[i].get("tool_calls") or []
+                m_i = out[i]
+                if m_i is None:
+                    continue  # 理论不可达: pending 下标指向 append 后未被压缩的条目
+                tcs = m_i.get("tool_calls") or []
                 keep = [tc for tc in tcs if (tc or {}).get("id") not in orphan_set]
                 stripped_ids += len(tcs) - len(keep)
                 if keep:
-                    out[i]["tool_calls"] = keep
+                    m_i["tool_calls"] = keep
                 else:
-                    out[i].pop("tool_calls", None)
-                    if not out[i].get("content"):  # 无文本且无 tool_calls → 整条删
+                    m_i.pop("tool_calls", None)
+                    if not m_i.get("content"):  # 无文本且无 tool_calls → 整条删
                         out[i] = None  # 占位，尾部统一压缩
                         dropped_assistant += 1
             pending.clear()
@@ -594,7 +597,7 @@ class LLMClient:
                 out.append(m)
         if pending:  # 序列末尾悬空
             _strip_pending()
-        out = [m for m in out if m is not None]
+        compacted: list[dict] = [m for m in out if m is not None]
         if removed_tool:
             logger.warning(
                 "提交视图修复: 删除 %d 条孤儿 tool 消息（无在案声明/重复应答）", removed_tool
@@ -606,7 +609,7 @@ class LLMClient:
                 stripped_ids,
                 dropped_assistant,
             )
-        return out
+        return compacted
 
     def chat_stream(
         self,

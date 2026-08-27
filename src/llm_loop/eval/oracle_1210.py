@@ -472,6 +472,7 @@ def run_oracle(
         resp: Any = None
         t0 = time_fn()
         try:
+            assert client is not None  # 类型收窄（client_factory 装配契约；dry_run 已前置返回）
             resp = client.chat(
                 variant.messages,
                 sample.tools,
