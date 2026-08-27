@@ -5,6 +5,9 @@
 
 from __future__ import annotations
 
+import json
+import re
+
 
 class LLMError(Exception):
     """LLM 调用基类异常."""
@@ -92,3 +95,45 @@ def is_quota_error(exc: LLMError) -> bool:
         body = (exc.body or "").lower()
         return "access_terminated" in body
     return False
+
+
+# err1210 T2.1（design 2.2.2-①）: provider 业务错误码提取——正则兜底模式
+_PROVIDER_CODE_RE = re.compile(r'"code"\s*:\s*"?(\d+)"?')
+
+
+def parse_provider_error_code(body: str) -> str | None:
+    """[err1210] 从 LLMHTTPError.body 提取 provider 业务错误码（如 "1210"）.
+
+    两级策略:
+    1. json.loads(body)["error"]["code"] —— 循环解包至多 3 层（覆盖转义 JSON /
+       双层转义——body 为字符串化 JSON 时 loads 得到 str 再解）;
+    2. 正则 ``"code"\\s*:\\s*"?(\\d+)?"`` 兜底（覆盖前后缀噪音/半截 body）。
+
+    任何失败返回 None（保守判非 1210，spec 5.1.3-4——调用方据此走既有路径）。
+    纯函数无副作用；内部全捕获，永不抛出。
+    """
+    if not body:
+        return None
+    try:
+        data: object = body
+        for _ in range(3):
+            if not isinstance(data, str):
+                break
+            try:
+                data = json.loads(data)
+            except (json.JSONDecodeError, ValueError):
+                break
+        if isinstance(data, dict):
+            err = data.get("error")
+            if isinstance(err, dict):
+                code = err.get("code")
+                if code is not None:
+                    return str(code)
+            elif err is not None:
+                return str(err)
+        m = _PROVIDER_CODE_RE.search(body)
+        if m:
+            return m.group(1)
+        return None
+    except Exception:  # noqa: BLE001 — 保守判定，永不抛出
+        return None
