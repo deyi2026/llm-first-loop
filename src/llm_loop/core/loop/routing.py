@@ -455,6 +455,100 @@ class _RoutingMixin:
             return provider_cpt
         return _CHARS_PER_TOKEN_EST
 
+    def _effective_history_budget_detail(
+        self: LoopEngine,
+        model_label: str,
+        *,
+        registry_snapshot: ProviderRegistry | None = None,
+    ) -> dict:
+        """EVO-20260827-ed4c1350（P0-B）: effective history budget 全口径归因.
+
+        消除三口径误读（.env 全局 1M / provider 300K / AI 白名单 200K 并存，
+        审计实测 DeepSeek effective 恒为 300K 而配置面看似 1M）——
+        architecture_status.context_usage.budget 直接展示，AI 与人无需自行推算。
+        limited_by ∈ {runtime_override, global_budget, window_adaptive,
+        provider_budget, model_window, unknown_model_default}。
+        行为与 _effective_history_budget 完全同源（该方法是本 detail 的
+        effective_budget 投影，零回归）。
+        """
+        configured_global = getattr(self.settings, "history_max_chars", None)
+        runtime_override = None
+        if self.runtime is not None:
+            try:
+                runtime_override = self.runtime.get("history_budget", None)
+            except Exception:  # noqa: BLE001 — 归因失败不阻塞预算计算
+                runtime_override = None
+        global_budget = self._runtime_history_budget()
+        if runtime_override is not None:
+            limited_by = "runtime_override"
+        elif configured_global is not None:
+            limited_by = "global_budget"
+        else:
+            limited_by = "window_adaptive"
+        provider_budget: int | None = None
+        cpt = (
+            self._provider_chars_per_token(model_label)
+            if registry_snapshot is None
+            else self._provider_chars_per_token(
+                model_label, registry_snapshot=registry_snapshot
+            )
+        )
+        if self.llm_pool is not None and "/" in model_label:
+            pid, _mid = model_label.split("/", 1)
+            registry = registry_snapshot or self._pool_registry_snapshot()
+            spec = registry.providers.get(pid) if registry is not None else None
+            if spec is not None:
+                provider_budget = spec.history_budget_chars
+        if provider_budget and provider_budget < global_budget:
+            global_budget = provider_budget
+            limited_by = "provider_budget"
+        limit = (
+            self._current_context_limit(model_label)
+            if registry_snapshot is None
+            else self._current_context_limit(
+                model_label, registry_snapshot=registry_snapshot
+            )
+        )
+        model_budget: int | None = None
+        if not limit:
+            # EVO-20260811-10dc2533 P0: 未注册模型保守默认窗口预算（防本地小窗口必超限）。
+            if self.llm_pool is not None and "/" in model_label:
+                eff = min(global_budget, _UNKNOWN_MODEL_BUDGET_CHARS)
+                if global_budget > _UNKNOWN_MODEL_BUDGET_CHARS:
+                    limited_by = "unknown_model_default"
+                return {
+                    "configured_global_budget": configured_global,
+                    "runtime_override": runtime_override,
+                    "provider_budget": provider_budget,
+                    "model_window_budget": None,
+                    "effective_budget": eff,
+                    "limited_by": limited_by,
+                    "model": model_label,
+                }
+            return {
+                "configured_global_budget": configured_global,
+                "runtime_override": runtime_override,
+                "provider_budget": provider_budget,
+                "model_window_budget": None,
+                "effective_budget": global_budget,
+                "limited_by": limited_by,
+                "model": model_label,
+            }
+        model_budget = int(limit * cpt * 0.5)
+        if model_budget < global_budget:
+            eff, limited_by = model_budget, "model_window"
+        else:
+            eff = global_budget
+        return {
+            "configured_global_budget": configured_global,
+            "runtime_override": runtime_override,
+            "provider_budget": provider_budget,
+            "model_window_budget": model_budget,
+            "effective_budget": eff,
+            "limited_by": limited_by,
+            "model": model_label,
+        }
+
     def _effective_history_budget(
         self: LoopEngine,
         model_label: str,

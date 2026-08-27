@@ -352,6 +352,15 @@ class ArchitectureStatusProvider:
         """
         self._context_breakdown_fn = fn
 
+    def set_budget_fn(self, fn) -> None:
+        """注入有效历史预算归因回调（EVO-20260827-ed4c1350 P0-B）.
+
+        fn() -> dict | None，如 {"effective_budget": 300000, "limited_by":
+        "provider_budget", "configured_global_budget": 1000000, ...}；
+        未注入 → snapshot 中 budget 为 None（向后兼容）。
+        """
+        self._budget_fn = fn
+
     def set_pending_actions_fn(self, fn) -> None:
         """注入待办聚合回调（T4: AI 一站式感知系统待办，纯聚合无判断）.
 
@@ -433,6 +442,11 @@ class ArchitectureStatusProvider:
                     self._context_breakdown_fn()
                     if getattr(self, "_context_breakdown_fn", None)
                     else None
+                ),
+                # EVO-20260827-ed4c1350（P0-B）: 有效预算全口径归因（消除
+                # 1M/300K/200K 三口径误读——AI 直接见 effective + limited_by）
+                "budget": (
+                    self._budget_fn() if getattr(self, "_budget_fn", None) else None
                 ),
                 # EVO-20260818（spec §5.4.1-2）: 缓存健康/cache_guard 快照（fail-open——
                 # 回调异常字段置 None 不抛穿 architecture_status）
