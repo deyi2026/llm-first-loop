@@ -172,17 +172,23 @@ def test_head_keep_fold0_three_action_compaction():
     )
 
 
-def test_compact_view_stats_warns_when_view_not_shrinking(caplog):
+def test_compact_view_stats_warns_when_view_not_shrinking(caplog, monkeypatch):
     """任务6.2: 压缩发生但视图几乎没缩小（drop<5%）→ 体积验证 WARN
     （压缩风暴前兆——head 保留 + 归档目标使 post≈pre 时归因可见）.
 
-    构造边界（2026-08-27 修正，EVO-20260827-ed4c1350 收口定位）: progressive_fold=0
-    路径下 head 组不占 archive_budget——实测（n=300 归档 43 组）装载能力
-    = head 70 + kept 187 ≈ 257 组，kept 系数实为 0.5 非 0.6（320K×0.5/855≈187，
-    早前按 0.6 推导的 n=300 构造在本 HEAD 上未经实测、drop 13.9% 越界）。
-    n=266 → 归档 9 组 → drop≈9×855/227K≈3.4%<5%，WARN 场景稳定且远离边界。
+    构造边界（2026-08-27 二次修正 + 系数钉死加固）: progressive_fold=0 路径下
+    head 组不占 archive_budget，装载能力 = head 组数 + ⌊archive_budget/组宽⌋，
+    随 _COMPRESS_TARGET_RATIO 漂移——模块默认 0.6（history.py import 时求值），
+    而 .env 运行态配置为 0.5，两口径装载能力分别为 294/257 组。测试构造必须
+    显式钉死系数（monkeypatch 模块常量），否则环境加载顺序不同 → 同一 n 在
+    "全保留零归档（stats 不填充）"与"大裁 drop 越界"之间漂移（两次预存失败根因）。
+    钉死 0.6 + n=300: head 70 + kept 224 → 归档 6 组 → drop ≈ 6×855/257K
+    ≈ 2.0% < 5%，WARN 场景稳定且远离边界（两侧余量 ≥6 组 / ≥3 个百分点）。
     """
-    history = [_fake_msg("user", f"m{i:03d}-" + "x" * 850) for i in range(266)]
+    import llm_loop.core.history as history_mod
+
+    monkeypatch.setattr(history_mod, "_COMPRESS_TARGET_RATIO", 0.6)
+    history = [_fake_msg("user", f"m{i:03d}-" + "x" * 850) for i in range(300)]
     stats_box: list[dict] = []
     archived: list[Message] = []
 
