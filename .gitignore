@@ -66,3 +66,4 @@ logs/
 # 本地 Surge 代理导出/修复配置（含代理凭据，禁止入库）
 Nexitally_Surge.fixed.conf
 .venv
+/tasks.md
