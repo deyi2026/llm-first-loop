@@ -155,3 +155,74 @@ def test_search_records_new_kinds(tmp_path):
     all_hits = searcher.search(kind="all", query="", limit=50)
     kinds = {h["kind"] for h in all_hits}
     assert {"change_log", "proc_versions", "feishu_audit"} <= kinds
+
+
+def test_archive_session_prefix_does_not_cross_match_or_delete_neighbor(tmp_path):
+    """sid前缀相同时，检索/物理删除都只能命中精确sid段，不能碰邻居会话。"""
+    store = ArchiveStore(tmp_path)
+    store.archive("sess", role="user", source="user", content="ONLY-SHORT-ALPHA")
+    store.archive("sess-long", role="user", source="user", content="ONLY-LONG-BETA")
+
+    assert store.search("sess", "BETA") == []
+    assert store.search("sess-long", "BETA")
+
+    assert store.delete_session("sess") >= 1
+    assert store.search("sess", "ALPHA") == []
+    assert store.search("sess-long", "BETA")
+
+
+def test_archive_numeric_suffix_session_id_does_not_alias_legacy_segment(tmp_path):
+    """`sess-1.jsonl`不能同时被解释为sess的segment1与sess-1的主档案。"""
+    store = ArchiveStore(tmp_path)
+    store.archive("sess", role="user", source="user", content="SHORT-ALPHA")
+    store.archive("sess-1", role="user", source="user", content="NUMERIC-BETA")
+
+    assert store.search("sess", "BETA") == []
+    assert store.search("sess-1", "BETA")
+
+    store.delete_session("sess")
+    assert store.search("sess-1", "BETA")
+
+
+def test_legacy_numeric_suffix_neighbor_uses_known_session_evidence(tmp_path):
+    """旧flat段无session_id时，外部已知session证据必须阻止`sess`吞掉真实`sess-1`。"""
+    import json
+
+    short = {
+        "id": "legacy-short",
+        "ts": "2026-08-20T00:00:00+00:00",
+        "role": "user",
+        "source": "legacy",
+        "content": "LEGACY-SHORT-ALPHA",
+        "summary": "",
+        "chars": 18,
+    }
+    neighbor = {
+        "id": "legacy-neighbor",
+        "ts": "2026-08-20T00:00:01+00:00",
+        "role": "user",
+        "source": "legacy",
+        "content": "LEGACY-NEIGHBOR-BETA",
+        "summary": "",
+        "chars": 20,
+    }
+    (tmp_path / "sess.jsonl").write_text(
+        json.dumps(short, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    neighbor_path = tmp_path / "sess-1.jsonl"
+    neighbor_path.write_text(
+        json.dumps(neighbor, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    store = ArchiveStore(
+        tmp_path,
+        known_session_id_fn=lambda sid: sid == "sess-1",
+    )
+
+    assert store.search("sess", "BETA") == []
+    hits = store.search("sess-1", "BETA")
+    assert len(hits) == 1 and hits[0]["id"] == "legacy-neighbor"
+
+    store.delete_session("sess")
+    assert neighbor_path.exists()
+    hits_after = store.search("sess-1", "BETA")
+    assert len(hits_after) == 1 and hits_after[0]["id"] == "legacy-neighbor"

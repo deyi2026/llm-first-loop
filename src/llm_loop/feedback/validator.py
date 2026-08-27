@@ -104,9 +104,9 @@ class DeclarationValidator:
         # EVO-20260820-409f3f60: 近 N 轮回执窗口（按会话隔离）——压缩/归档移出内存的
         # 早期轮次成功回执，从历史缓存补证，区分"跨轮引用"与"真实不诚实"。
         self._recent_window = max(1, int(recent_window))
-        self._recent_by_session: dict[str, deque[str]] = {}
+        self._recent_by_session: dict[str, deque[list[str]]] = {}
 
-    def _session_buf(self) -> deque[str]:
+    def _session_buf(self) -> deque[list[str]]:
         """当前会话的近 N 轮回执缓存（deque maxlen=recent_window）."""
         sid = _current_session_id.get() or ""
         buf = self._recent_by_session.get(sid)

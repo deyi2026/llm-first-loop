@@ -34,6 +34,14 @@ class ToolResultStatus(StrEnum):
     BLOCKED = "blocked"  # 灾难性安全硬阻断
 
 
+class RecoverabilityStatus(StrEnum):
+    """Evidence durability is orthogonal to the source action result."""
+
+    NOT_CONFIGURED = "not_configured"
+    RECORDED = "recorded"
+    FAILED = "failed"
+
+
 @dataclass(frozen=True)
 class ToolCall:
     """LLM 声明的工具调用（tool_call_id 由程序统一管理生命周期）.
@@ -72,7 +80,9 @@ class Message:
     llm_ms: float = 0.0  # M59: 本轮 run LLM 调用总耗时（毫秒；0=未记录）
     ttft_ms: float = 0.0  # M59: 首 token 延迟（毫秒；0=未记录/无文本）
     duration_ms: float = 0.0  # M59: 工具执行耗时（毫秒，tool 消息）
-    ts: float = field(default_factory=time.time)  # 消息时间戳（epoch 秒；web 端时间显示，缺省=创建时）
+    ts: float = field(
+        default_factory=time.time
+    )  # 消息时间戳（epoch 秒；web 端时间显示，缺省=创建时）
     metadata: dict = field(default_factory=dict)  # 截断标注/降级标注等
 
     def to_llm_dict(self) -> dict:
@@ -115,6 +125,22 @@ class ToolResult:
     error_detail: str | None = None  # 完整错误描述（类型+原因+上下文）
     partial_output: str | None = None  # 超时时的部分结果（TIMEOUT 时）
     duration_ms: float = 0.0
+    # ERC Phase2 shadow-only: pre-projection observation retained only when the explicit
+    # shadow context is enabled. to_message()/to_llm_dict() never expose this field.
+    raw_observation: str | None = None
+    # ERC Phase3: recoverability is independent from action status.  These structured
+    # fields are copied to Message.metadata; the deterministic capsule in content is the
+    # model-visible recovery handle because Message.metadata does not go on the LLM wire.
+    recoverability_status: RecoverabilityStatus = RecoverabilityStatus.NOT_CONFIGURED
+    evidence_ref: str | None = None
+    evidence_representation: str | None = None
+    evidence_projection_complete: bool | None = None
+    # Internal capture metadata; never sent to the model directly.  A probeable source can
+    # later be compared against this token without re-executing the source action.
+    evidence_source_version_token: str | None = None
+    # ERC R9: distinguish logical source resolution from physical acquisition.
+    source_resolution_mode: str | None = None
+    source_execution_performed: bool | None = None
     # EVO-d78b270c: 经验驱动注入（M41 升级）——registry 失败时按错误关键词检索
     # MemoryStore，命中 procedure 经验条目的【已验解法】段写入此字段，tool 消息带出。
     # 默认空串 = 零回归（无经验库/未命中时行为与旧版完全一致）。
@@ -135,6 +161,19 @@ class ToolResult:
             content = f"{content}\n[部分结果] {self.partial_output}"
         elif self.status == ToolResultStatus.BLOCKED and self.error_detail:
             content = f"{content}\n[阻断依据] {self.error_detail}"
+        metadata: dict = {}
+        if self.recoverability_status is not RecoverabilityStatus.NOT_CONFIGURED:
+            metadata["recoverability_status"] = self.recoverability_status.value
+            if self.evidence_ref:
+                metadata["evidence_ref"] = self.evidence_ref
+            if self.evidence_representation is not None:
+                metadata["evidence_representation"] = self.evidence_representation
+            if self.evidence_projection_complete is not None:
+                metadata["evidence_projection_complete"] = self.evidence_projection_complete
+        if self.source_resolution_mode is not None:
+            metadata["source_resolution_mode"] = self.source_resolution_mode
+        if self.source_execution_performed is not None:
+            metadata["source_execution_performed"] = self.source_execution_performed
         return Message(
             role="tool",
             content=content
@@ -146,4 +185,5 @@ class ToolResult:
             tool_name=self.tool_name,
             error_detail=self.error_detail,
             duration_ms=self.duration_ms,
+            metadata=metadata,
         )

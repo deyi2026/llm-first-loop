@@ -186,3 +186,45 @@ def test_memory_cleanup_zero_max_entries_noop(tmp_path):
     result = store.cleanup(max_entries=0)
     assert result == {"pruned": 0}
     assert store.count() == 3
+
+
+def test_cleanup_legacy_numeric_suffix_neighbor_respects_known_session_owner(tmp_path):
+    """旧flat档案的GC也必须用known-session证据分组，不能把`sess-1`当`sess`分片清掉。"""
+    import json
+
+    old = {
+        "id": "old-short",
+        "ts": "2020-01-01T00:00:00+00:00",
+        "role": "user",
+        "source": "legacy",
+        "content": "OLD-SHORT",
+        "summary": "",
+        "chars": 9,
+    }
+    keep = {
+        "id": "keep-neighbor",
+        "ts": "2099-01-01T00:00:00+00:00",
+        "role": "user",
+        "source": "legacy",
+        "content": "KEEP-NEIGHBOR-BETA",
+        "summary": "",
+        "chars": 18,
+    }
+    (tmp_path / "sess.jsonl").write_text(
+        json.dumps(old, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    neighbor_path = tmp_path / "sess-1.jsonl"
+    neighbor_path.write_text(
+        json.dumps(keep, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    store = ArchiveStore(
+        tmp_path,
+        known_session_id_fn=lambda sid: sid == "sess-1",
+    )
+
+    report = store.cleanup(ttl_days=30)
+
+    assert report["pruned_entries"] >= 1
+    assert neighbor_path.exists()
+    hits = store.search("sess-1", "BETA")
+    assert len(hits) == 1 and hits[0]["id"] == "keep-neighbor"

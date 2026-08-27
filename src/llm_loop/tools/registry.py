@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 
 # execute 包裹的扩展钩子（由外部装配: 如架构自省 record_action）
 PreExecuteHook = Callable[[ToolCall], None]
+EvidenceShadowHook = Callable[[ToolCall, ToolResult], None]
+EvidenceManifestProvider = Callable[[int], str]
+EvidenceHistoryCaptureHook = Callable[[str, Message, int | None, str | None], str | None]
 
 
 class ToolRegistry:
@@ -67,6 +70,10 @@ class ToolRegistry:
     ) -> None:
         self._tools: dict[str, Any] = {}
         self._lock = threading.Lock()
+        # 后台 Stop 的会话定向取消：不同 session 共享 registry/tool 实例，
+        # 因此活跃执行必须按 current_session_id 分桶，禁止全局 terminate 误杀其他会话。
+        self._active_exec_guard = threading.Lock()
+        self._active_exec: dict[str, list[tuple[Any, Any]]] = {}
         self.safety = safety_guard or CatastrophicGuard(audit_dir=safety_audit_dir)
         self.tool_timeout_s = tool_timeout_s
         self.max_output_chars = max_output_chars
@@ -80,6 +87,13 @@ class ToolRegistry:
         self.exec_mode = exec_mode  # readonly/allowlist/blocked（空 = 不启用分级）
         self.exec_allowlist = [s.strip() for s in (exec_allowlist or "").split(",") if s.strip()]
         self._pre_execute_hooks: list[PreExecuteHook] = []
+        # ERC Phase2 shadow and Phase3 enforce are mutually exclusive.  ``off`` means both
+        # are None and preserves the exact legacy path.
+        self._evidence_shadow_hook: EvidenceShadowHook | None = None
+        self._evidence_enforcer: Any | None = None
+        self._evidence_source_resolver: Any | None = None
+        self._evidence_manifest_provider: EvidenceManifestProvider | None = None
+        self._evidence_history_capture_hook: EvidenceHistoryCaptureHook | None = None
         self.precheck_layer = precheck_layer  # task_quality 路径 A（None=关闭零回归）
         self._archive_store = archive_store  # ArchiveStore（T22 超长结果另存）
         # P0-5(2026-08-15): 显式注入的会话 id（set_session_id 写入，无 contextvar
@@ -135,11 +149,99 @@ class ToolRegistry:
         """由循环注入当前会话（压缩档案关联；无 contextvar 上下文时的回退值）."""
         self._session_id_explicit = session_id
 
-    def set_pipeline(self, pipeline: Any) -> None:
-        """装配工具执行瀑布（EVO-20260813-9ced1f4c）.
+    @property
+    def evidence_mode(self) -> str:
+        if self._evidence_enforcer is not None:
+            return "enforce"
+        if self._evidence_shadow_hook is not None:
+            return "shadow"
+        return "off"
 
-        pipeline 为 None 或 config.enabled=False 时主链路行为完全不变（零回归）。
+    def set_evidence_shadow_hook(self, hook: EvidenceShadowHook | None) -> None:
+        """Install/remove the ERC shadow observer without changing model-visible output."""
+        if hook is not None and self._evidence_enforcer is not None:
+            raise RuntimeError("evidence shadow/enforce modes are mutually exclusive")
+        self._evidence_shadow_hook = hook
+
+    @staticmethod
+    def _lock_pipeline_for_evidence_enforce(pipeline: Any) -> None:
+        pipeline_enabled = bool(
+            pipeline is not None and getattr(getattr(pipeline, "config", None), "enabled", False)
+        )
+        if not pipeline_enabled:
+            return
+        lock = getattr(pipeline, "lock_for_evidence_enforce", None)
+        if not callable(lock):
+            raise RuntimeError(
+                "enabled tool pipeline lacks Evidence enforce compatibility contract"
+            )
+        lock()
+
+    def set_evidence_enforcer(self, enforcer: Any | None) -> None:
+        """Install/remove the Phase3 capture-before-projection enforcer."""
+        if enforcer is not None and self._evidence_shadow_hook is not None:
+            raise RuntimeError("evidence shadow/enforce modes are mutually exclusive")
+        if enforcer is not None:
+            self._lock_pipeline_for_evidence_enforce(self._pipeline)
+        self._evidence_enforcer = enforcer
+
+    def set_evidence_source_resolver(self, resolver: Any | None) -> None:
+        """Install/remove the enforce-only Evidence-aware source resolver."""
+        self._evidence_source_resolver = resolver
+
+    def set_evidence_manifest_provider(self, provider: EvidenceManifestProvider | None) -> None:
+        self._evidence_manifest_provider = provider
+
+    def evidence_recovery_manifest(self, *, limit: int = 8) -> str:
+        if self._evidence_manifest_provider is None:
+            return ""
+        return self._evidence_manifest_provider(limit)
+
+    def set_evidence_history_capture_hook(self, hook: EvidenceHistoryCaptureHook | None) -> None:
+        self._evidence_history_capture_hook = hook
+
+    @property
+    def evidence_history_capture_enabled(self) -> bool:
+        return self._evidence_history_capture_hook is not None
+
+    def capture_archived_message(
+        self,
+        *,
+        session_id: str,
+        message: Message,
+        msg_seq: int | None,
+        archive_id: str | None = None,
+    ) -> str | None:
+        if self._evidence_history_capture_hook is None:
+            return None
+        return self._evidence_history_capture_hook(session_id, message, msg_seq, archive_id)
+
+    def _evidence_projection_budget(self) -> int:
+        """Bound immediate tool projection without coupling HOT relevance to full bytes."""
+        try:
+            from llm_loop.core.run_context import current_model_label
+
+            model_label = current_model_label.get() or ""
+        except Exception:  # noqa: BLE001 - context lookup failure falls back to cloud defaults
+            model_label = ""
+        is_local = bool(model_label) and model_label.split("/", 1)[0] == "local"
+        if is_local and self.summary_local_threshold:
+            threshold = int(self.summary_local_threshold)
+            head_tail = self.summary_local_head_chars + self.summary_local_tail_chars
+        else:
+            threshold = self.summary_threshold
+            head_tail = 5000
+        return max(128, min(self.max_output_chars, threshold, head_tail))
+
+    def set_pipeline(self, pipeline: Any) -> None:
+        """装配工具执行瀑布（EVO-20260813-9ced1f4c + ERC R12）.
+
+        pipeline 为 None 或 config.enabled=False 时主链路行为完全不变。Evidence enforce
+        可与 registry 已明确定义顺序的 materialize/monotonic-guard 子集共存；pre/post
+        hook 顺序尚未定义，因此由 pipeline Evidence lock 在装配期 fail-closed。
         """
+        if self._evidence_enforcer is not None:
+            self._lock_pipeline_for_evidence_enforce(pipeline)
         self._pipeline = pipeline
 
     def _archive_oversize_output(self, call: ToolCall, full_content: str) -> None:
@@ -214,6 +316,52 @@ class ToolRegistry:
     def names(self) -> list[str]:
         with self._lock:
             return sorted(self._tools)
+
+    def _track_active(self, session_id: str, future: Any, tool: Any) -> None:
+        if not session_id:
+            return
+        with self._active_exec_guard:
+            self._active_exec.setdefault(session_id, []).append((future, tool))
+
+    def _untrack_active(self, session_id: str, future: Any) -> None:
+        if not session_id:
+            return
+        with self._active_exec_guard:
+            entries = self._active_exec.get(session_id, [])
+            kept = [entry for entry in entries if entry[0] is not future]
+            if kept:
+                self._active_exec[session_id] = kept
+            else:
+                self._active_exec.pop(session_id, None)
+
+    def cancel_session(self, session_id: str) -> int:
+        """尽力取消指定会话正在执行的工具，不触碰其他 session。
+
+        future.cancel() 仅能取消尚未开始的线程任务；运行中的外部进程必须由工具
+        提供 ``terminate_session(session_id)`` 才会被硬终止。刻意不回退到无参数
+        terminate()，因为工具实例跨会话共享，全局终止可能误杀别的会话。
+        """
+        with self._active_exec_guard:
+            entries = list(self._active_exec.get(session_id, []))
+        seen_tools: set[int] = set()
+        for future, tool in entries:
+            future.cancel()
+            ident = id(tool)
+            if ident in seen_tools:
+                continue
+            seen_tools.add(ident)
+            terminate_session = getattr(tool, "terminate_session", None)
+            if callable(terminate_session):
+                try:
+                    terminate_session(session_id)
+                except Exception:  # noqa: BLE001 — Stop 是 best-effort，失败仍由循环取消标志收尾
+                    logger.warning(
+                        "会话工具终止失败（fail-open）: session=%s tool=%s",
+                        session_id,
+                        getattr(tool, "name", type(tool).__name__),
+                        exc_info=True,
+                    )
+        return len(entries)
 
     def schemas(self, lazy: bool = False) -> list[dict]:
         """生成 LLM tools 参数（JSON Schema，约束 C4）.
@@ -368,7 +516,9 @@ class ToolRegistry:
                             duration_ms=0.0,
                         )
                 else:
-                    self._approval_log("no_callback", call.name, json.dumps(call.arguments, ensure_ascii=False))
+                    self._approval_log(
+                        "no_callback", call.name, json.dumps(call.arguments, ensure_ascii=False)
+                    )
                     return ToolResult(
                         status=ToolResultStatus.BLOCKED,
                         content=f"[权限拦截] {blocked}",
@@ -380,7 +530,12 @@ class ToolRegistry:
 
         # EVO-20260813-9ced1f4c: 单调守卫（瀑布，默认关闭零回归）
         # 守卫拒绝 → BLOCKED（与灾难性安全同语义）；守卫只收紧不放松（fail-closed）
-        if pipeline is not None and pipeline.config.enabled and pipeline.config.guard and pipeline._guard is not None:
+        if (
+            pipeline is not None
+            and pipeline.config.enabled
+            and pipeline.config.guard
+            and pipeline._guard is not None
+        ):
             reason = pipeline._guard.check(call.name)
             if reason is not None:
                 return self._result(
@@ -442,6 +597,10 @@ class ToolRegistry:
             )
 
     # EVO-20260810-750e985a: 工具并发控制
+    _EVIDENCE_CONTROL_TOOLS = frozenset(
+        {"read_evidence", "search_evidence", "list_evidence", "search_archive"}
+    )
+
     _READONLY_TOOLS = frozenset(
         {
             "read_file",
@@ -449,6 +608,9 @@ class ToolRegistry:
             "architecture_status",
             "search_archive",
             "search_records",
+            "read_evidence",
+            "search_evidence",
+            "list_evidence",
         }
     )
     _READONLY_MAX_WORKERS = 4
@@ -561,8 +723,7 @@ class ToolRegistry:
                         # （RULE-AI-12/07: 判断归 AI, 程序只给事实）
                         created = str(getattr(h, "created_at", "") or "")[:10]
                         suffix = (
-                            f"（经验创建于 {created}，历史记录仅参考，"
-                            "当前是否适用请用工具核验）"
+                            f"（经验创建于 {created}，历史记录仅参考，当前是否适用请用工具核验）"
                             if created
                             else "（历史记录仅参考，当前是否适用请用工具核验）"
                         )
@@ -628,22 +789,51 @@ class ToolRegistry:
 
     # 2026-08-15 截断信号强化（用户需求）：行动指引统一文案——摘要/截断回执均附。
     # 程序只发信号不替 AI 摘要（RULE-AI-00）：提炼与纳入最终总结由 AI 完成。
+    # EVO-20260820-be72efb1 建议②（截断高亮）: 截断/摘要回执附诚实性高亮——缺失部分
+    # 未核验, 禁止基于摘要推断"已完成/成功", 需 search_archive 取回原文核验后再声明。
     _DISTILL_GUIDANCE = (
         "行动指引：中部/被省略内容不在当前上下文——继续推理前，请先把可见要点与"
         "待核实缺口提炼记录（写入你的推理链或 [[memory]] 记忆块），最终总结时请纳入"
-        "这些要点与缺口说明。"
+        "这些要点与缺口说明。\n"
+        "⚠️ 截断高亮：本回执已截断/摘要化，缺失部分数据未核验——请勿基于摘要断言"
+        "“已完成/成功”，需用 search_archive 取回原文核验后再如实声明（RULE-AI-12）。"
     )
 
     @staticmethod
-    def _summarize_output(full: str, head_chars: int = 2500, tail_chars: int = 2500, call=None) -> str:
-        """输出分层摘要: 首部 + 尾部 + 规模 + 检索指引（命令输出关键信息常在尾部）.
+    def _summarize_output(
+        full: str, head_chars: int = 2500, tail_chars: int = 2500, call=None
+    ) -> str:
+        """输出分层摘要: 关键信息提取优先（extract_key_info 规则提取零 LLM），
+        提取不到回退首尾截断兜底；附规模 + 检索指引 + 截断高亮。
 
         原文已由调用方完整另存至压缩档案（信息零丢失），此处仅注入摘要。
-        内容未超首尾窗口时完整展示但仍带"输出摘要"标注（AI 可感知已分层）。
-        EVO-20260814-e5b045d3: 指引升级为可直接照抄的 search_archive 调用示例
-        （query 取路径 basename/命令前缀 + tool_name 过滤），避免 AI 换命令重读原文空耗轮数。
-        2026-08-15 放大字数：首尾窗口 600/600 → 2500/2500；附提炼要点行动指引。
+        EVO-20260823 摘要方式升级: 复用 history.py 折叠层已实证模式（EVO-20260815）——
+        机械首尾截断会把中间关键信息（路径/URL/错误行）丢给 AI，迫使二次检索浪费 token；
+        extract_key_info 确定性提取路径/URL/动作信号行，前缀稳定、体积更小
+        （关键事实+路径 ~600 字符 vs 首尾窗口 1600+），历史膨胀再降；
+        提取不到（无路径/URL/信号词）才回退首尾截断兜底。
         """
+        # 摘要优先: extract_key_info 规则提取（确定性→前缀稳定，零 LLM 成本；fail-open）
+        digest = ""
+        try:
+            from llm_loop.memory.archive import extract_key_info
+
+            facts, paths, _s = extract_key_info(full, max_facts=5)
+            parts: list[str] = []
+            if facts:
+                # 清洗: facts 可能保留原文行前缀（"- "等），避免 join 后 "- - xxx" 重复噪音
+                cleaned = [f.strip().lstrip("-").strip() for f in facts if f.strip()]
+                cleaned = [f for f in cleaned if f]
+                if cleaned:
+                    parts.append(
+                        "关键事实（规则提取，非语义总结；细节以原文为准）：\n- "
+                        + "\n- ".join(cleaned)
+                    )
+            if paths:
+                parts.append("关键路径/URL：\n- " + "\n- ".join(paths[:8]))
+            digest = "\n\n".join(parts)
+        except Exception:  # noqa: BLE001 — fail-open：提取失败回退首尾截断
+            digest = ""
         hint = (
             f"查看完整原文请直接调用 {ToolRegistry._archive_query_hint(call)}"
             "（一次取回，勿换命令重复执行同一工具）"
@@ -651,6 +841,12 @@ class ToolRegistry:
             else "可用 search_archive 检索找回"
         )
         n = len(full)
+        if digest:
+            return (
+                f"[输出摘要] 共 {n} 字符，关键信息如下"
+                f"（完整内容已另存至压缩档案，{hint}）：\n{digest}\n"
+                f"{ToolRegistry._DISTILL_GUIDANCE}"
+            )
         if n <= head_chars + tail_chars:
             return (
                 f"[输出摘要] 共 {n} 字符，内容未超首尾窗口故完整展示"
@@ -693,7 +889,9 @@ class ToolRegistry:
                 from llm_loop.tools.safety import is_readonly_command
 
                 if not is_readonly_command(command):
-                    return "当前 EXEC_MODE=readonly，仅放行只读命令（该命令涉及写/变更，需人工执行）"
+                    return (
+                        "当前 EXEC_MODE=readonly，仅放行只读命令（该命令涉及写/变更，需人工执行）"
+                    )
                 return ""
             if self.exec_mode == "allowlist":
                 for prefix in self.exec_allowlist:
@@ -712,6 +910,18 @@ class ToolRegistry:
 
     def _run_with_timeout(self, tool: Any, call: ToolCall) -> ToolResult:
         """真实执行 + 超时控制 + 输出截断标注."""
+        # ERC R9: resolve probeable source requests from verified-current covering Evidence
+        # before physical I/O. This is state/coverage resolution, not repeat suppression.
+        if self._evidence_enforcer is not None and self._evidence_source_resolver is not None:
+            try:
+                reused = self._evidence_source_resolver.resolve(call)
+            except Exception:  # noqa: BLE001 - resolution failure must not hide source truth
+                logger.warning(
+                    "Evidence source resolver 异常（fail-open 执行 source）", exc_info=True
+                )
+                reused = None
+            if reused is not None:
+                return reused
         # execute_command 可传 shell=True 场景由工具自身处理；
         # 此处统一超时控制（工具 execute 同步阻塞，用线程 + join 兜底）
         import concurrent.futures
@@ -719,8 +929,26 @@ class ToolRegistry:
 
         # P0-5: 超时包裹的内层线程同样传播上下文（current_session_id 等）——
         # 工具 execute 本体在内层线程执行，缺传播则 contextvar 读到空串
+        from llm_loop.core.run_context import (
+            current_evidence_enforce_enabled,
+            current_evidence_shadow_enabled,
+            current_session_id,
+        )
+
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        future = pool.submit(contextvars.copy_context().run, tool.execute, **call.arguments)
+        capture_enabled = (
+            self._evidence_shadow_hook is not None or self._evidence_enforcer is not None
+        )
+        shadow_token = current_evidence_shadow_enabled.set(capture_enabled)
+        enforce_token = current_evidence_enforce_enabled.set(self._evidence_enforcer is not None)
+        try:
+            tool_context = contextvars.copy_context()
+        finally:
+            current_evidence_enforce_enabled.reset(enforce_token)
+            current_evidence_shadow_enabled.reset(shadow_token)
+        future = pool.submit(tool_context.run, tool.execute, **call.arguments)
+        active_session_id = current_session_id.get()
+        self._track_active(active_session_id, future, tool)
         try:
             result = future.result(timeout=self.tool_timeout_s)
         except concurrent.futures.TimeoutError:
@@ -733,8 +961,12 @@ class ToolRegistry:
             # 残余如实标注: 工作线程非 daemon 无法强杀，无钩子工具残余线程最多存活
             # 到工具自身超时/自然结束（期间解释器退出会被其阻塞等待）。
             future.cancel()
+            terminate_session = getattr(tool, "terminate_session", None)
             terminate = getattr(tool, "terminate", None)
-            if callable(terminate):
+            if active_session_id and callable(terminate_session):
+                with contextlib.suppress(Exception):
+                    terminate_session(active_session_id)
+            elif callable(terminate):
                 with contextlib.suppress(Exception):
                     terminate()
             pool.shutdown(wait=False, cancel_futures=True)
@@ -750,6 +982,8 @@ class ToolRegistry:
             future.cancel()
             pool.shutdown(wait=False, cancel_futures=True)
             raise
+        finally:
+            self._untrack_active(active_session_id, future)
         # 正常完成：线程已结束，等待回收（不泄漏）
         pool.shutdown(wait=True)
         if not isinstance(result, ToolResult):
@@ -760,6 +994,43 @@ class ToolRegistry:
                 tool_call_id=call.id,
                 tool_name=call.name,
             )
+        # Recovery control-plane tools read already-captured Evidence.  Re-capturing their own
+        # bounded outputs would create recursive ledger noise ("read Evidence -> new Evidence").
+        if self._evidence_enforcer is not None and call.name in self._EVIDENCE_CONTROL_TOOLS:
+            if result.tool_call_id != call.id:
+                result.tool_call_id = call.id
+            if not result.tool_name:
+                result.tool_name = call.name
+            return result
+
+        # ERC Phase3 enforce: tool returned an unprojected observation.  Durable capture must
+        # happen before any model-visible projection; the enforcer also emits the recovery capsule.
+        if self._evidence_enforcer is not None:
+            result = self._evidence_enforcer.apply(
+                call,
+                result,
+                budget_chars=self._evidence_projection_budget(),
+                temperature="hot",
+            )
+            if result.tool_call_id != call.id:
+                result.tool_call_id = call.id
+            if not result.tool_name:
+                result.tool_name = call.name
+            if call.name == "read_file":
+                result.source_resolution_mode = "source_execution"
+                result.source_execution_performed = True
+            return result
+
+        # ERC Phase2 shadow dual-write: observe the pre-Registry-projection result.
+        # Any capture failure is recoverability degradation only; it must never rewrite action truth.
+        if self._evidence_shadow_hook is not None:
+            try:
+                self._evidence_shadow_hook(call, result)
+            except Exception:  # noqa: BLE001 - shadow capture is deliberately fail-open
+                logger.warning(
+                    "evidence shadow capture failed (action result preserved)", exc_info=True
+                )
+
         # 输出分层注入（EVO-20260811-22a7d3e1）:
         # - 超过 summary_threshold: 默认注入首/尾摘要（全文另存可检索，信息零丢失）
         # - 超过 max_output_chars（硬上限）: 全文另存 + 截断（T22 既有逻辑）
@@ -770,12 +1041,16 @@ class ToolRegistry:
         #   云端无 contextvar 或非 local → 全局配置，零回归）
         try:
             from llm_loop.core.run_context import current_model_label as _cml
+
             _model_label = _cml.get() or ""
         except Exception:  # noqa: BLE001 — contextvar 读取失败走全局配置（fail-open）
             _model_label = ""
         _is_local = bool(_model_label) and _model_label.split("/", 1)[0] == "local"
         _use_local = _is_local and bool(self.summary_local_threshold)
-        _threshold = self.summary_local_threshold if _use_local else self.summary_threshold
+        if _use_local and self.summary_local_threshold is not None:
+            _threshold = self.summary_local_threshold
+        else:
+            _threshold = self.summary_threshold
         _head, _tail = (
             (self.summary_local_head_chars, self.summary_local_tail_chars)
             if _use_local
@@ -795,7 +1070,9 @@ class ToolRegistry:
         elif len(result.content) > _threshold:
             full = result.content
             self._archive_oversize_output(call, full)  # 原文完整另存（信息零丢失）
-            result.content = self._summarize_output(full, head_chars=_head, tail_chars=_tail, call=call)
+            result.content = self._summarize_output(
+                full, head_chars=_head, tail_chars=_tail, call=call
+            )
             # 硬上限安全阀: 摘要后仍超限才截断（原文已存档，无需重复存档）
             if len(result.content) > self.max_output_chars:
                 result.content = (
@@ -812,8 +1089,7 @@ class ToolRegistry:
             result.content = (
                 full[: self.max_output_chars]
                 + f"\n…[结果超长，已截断，共 {len(full)} 字符（硬上限: {self.max_output_chars}）]；"
-                "完整结果已另存至压缩档案，可用 search_archive 检索找回…\n"
-                + self._DISTILL_GUIDANCE
+                "完整结果已另存至压缩档案，可用 search_archive 检索找回…\n" + self._DISTILL_GUIDANCE
             )
         # 约束 C1 绑定: 工具返回的 tool_call_id 必须等于声明 id（空/不一致都纠正为
         # call.id，防 execute_many 索引键错位导致 KeyError 中断整轮）

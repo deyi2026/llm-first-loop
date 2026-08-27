@@ -53,6 +53,48 @@ def test_c3_archive_sink_failure_injects_feedback(build_test_engine, fake_settin
     assert any("[程序异常]" in t and "archive_sink" in t for t in texts), texts
 
 
+def test_c3_archive_sink_failure_during_active_run_updates_bound_session(
+    build_test_engine, fake_settings
+):
+    """真实run持whole-run lease时，archive失败反馈必须写入已绑定Session，不能reload后被自己gate掉。"""
+    engine, _fake = build_test_engine([])
+    sid = engine.session.create()
+    if engine.archive is None:
+        return
+
+    active = engine.session.load(sid)
+    token = None
+    with engine.session.run_lease(sid) as acquired:
+        assert acquired is True
+        token = engine.session._activate_run_save_token(sid)  # noqa: SLF001 — 模拟lifecycle真实run边界
+        try:
+            from llm_loop.core.run_context import current_session_id
+
+            engine.session._bind_run_save_token(active, token)  # noqa: SLF001
+            with engine._run_states_guard:  # noqa: SLF001 — 与engine真实run绑定表一致
+                engine._run_sessions[sid] = active  # noqa: SLF001
+            ctx_token = current_session_id.set(sid)
+            try:
+                msg = Message(role="user", content="active-run archive failure", source=MessageSource.USER)
+                with mock.patch.object(engine.archive, "archive", side_effect=OSError("archive fail in run")):
+                    engine._archive_sink(sid, msg)
+            finally:
+                current_session_id.reset(ctx_token)
+
+            texts = [m.content for m in active.messages]
+            assert any("[程序异常]" in t and "archive_sink" in t for t in texts), texts
+            # 活动对象已绑定run token，保存必须成功；用于证明反馈能随run最终落盘。
+            engine.session.save(active)
+        finally:
+            with engine._run_states_guard:  # noqa: SLF001
+                engine._run_sessions.pop(sid, None)  # noqa: SLF001
+            if token is not None:
+                engine.session._deactivate_run_save_token(sid, token)  # noqa: SLF001
+
+    stored = engine.session.load(sid)
+    assert any("[程序异常]" in m.content and "archive_sink" in m.content for m in stored.messages)
+
+
 def test_b5_model_window_in_status_snapshot():
     """architecture_status snapshot 支持注入模型窗口查询（B5；未注入向后兼容 None）."""
     from llm_loop.introspection.status import ArchitectureStatusProvider

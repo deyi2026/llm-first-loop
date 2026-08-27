@@ -279,3 +279,73 @@ def test_engine_event_write_exception_fail_open(build_test_engine, tmp_path):
     for _ in engine.run_stream("s1", "你好"):  # 事件写入异常不抛穿主循环
         pass
     assert engine.session.exists("s1")
+
+
+def test_migration_preserves_version5_summary_state(tmp_path):
+    """version 5 摘要字段必须进入 session.created/replay，迁移不能静默清空。"""
+    sessions_dir = tmp_path / "sessions"
+    logs_dir = tmp_path / "event_logs"
+    _write_source_session(sessions_dir)
+    raw = json.loads((sessions_dir / "s1.json").read_text(encoding="utf-8"))
+    raw["fixed_summary"] = "固定核心事实"
+    raw["summary_chain"] = ["增量一", "增量二"]
+    (sessions_dir / "s1.json").write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    rep = run_migration(sessions_dir, logs_dir)
+    assert rep.migrated == 1, rep.failed
+    events = EventStore(logs_dir).read("s1")
+    from llm_loop.event_log.replay import replay_session
+
+    view = replay_session(events)
+    assert view["fixed_summary"] == "固定核心事实"
+    assert view["summary_chain"] == ["增量一", "增量二"]
+
+
+def test_save_backfill_syncs_version5_summary_changes(tmp_path):
+    """session.created 后摘要生成/增长时，event_log 读路径必须跟随最新状态。"""
+    sessions_dir = tmp_path / "sessions"
+    logs_dir = tmp_path / "event_logs"
+    event_store = EventStore(logs_dir)
+    store = SessionStore(sessions_dir, event_store=event_store)
+    sid = store.create()
+
+    session = store.load(sid)
+    session.fixed_summary = "固定摘要"
+    session.summary_chain = ["增量1"]
+    store.save(session)
+    session.summary_chain.append("增量2")
+    store.save(session)
+
+    replay_store = SessionStore(
+        sessions_dir,
+        event_store=event_store,
+        read_path_source="event_log",
+    )
+    restored = replay_store.load(sid)
+    assert restored.fixed_summary == "固定摘要"
+    assert restored.summary_chain == ["增量1", "增量2"]
+    meta_events = [e for e in event_store.read(sid) if e.type == "session.meta_changed"]
+    assert len(meta_events) == 2, "相同摘要状态不得重复落 meta_changed"
+
+
+def test_migrate_archive_chars_lookup_reads_new_segment_layout(tmp_path):
+    """迁移压缩引用必须能从新`.segments`分片取回tool原文长度。"""
+    from llm_loop.event_log.migrate import _lookup_archive_chars
+    from llm_loop.memory.archive import ArchiveStore
+
+    archives = tmp_path / "archives"
+    archive = ArchiveStore(archives, segment_bytes=1)
+    archive.archive("s1", role="user", source="user", content="filler")
+    content = "new-segment-tool-content" * 4
+    archive.archive(
+        "s1",
+        role="tool",
+        source="tool",
+        content=content,
+        tool_name="demo",
+        tool_call_id="call-new-segment",
+        status="success",
+    )
+    assert (archives / "s1.segments" / "1.jsonl").exists()
+
+    assert _lookup_archive_chars(archives, "s1", "call-new-segment") == len(content)

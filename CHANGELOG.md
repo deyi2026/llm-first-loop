@@ -2,6 +2,25 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+### 任务接力热卡 + 紧急压缩空转修复（2026-08-26）
+- **任务接力热卡机制**（feat）：用户中途切换意图时，自动生成「热卡」（上一任务关键进度/证据/下一步摘要）注入新上下文——任务交接连续性保留，无需翻档案从头恢复；含单元测试（test_task_hotcard.py）。配套规则：RULE-AI-20 第 7 条「意图切换即时登记」。
+- **紧急压缩空转修复**（fix）：历史压缩预算原先只统计消息正文（content），不含思维链（reasoning_content）与工具调用参数——实测部分会话思维链占比 40%+，导致「提交超模型窗口被守卫拦截 → 紧急压缩判定未超预算不缩历史 → 下轮仍超限再拦截」空转死循环（会话 fb8f8987 连续 3 次紧急压缩后历史体积 300K 纹丝不动）。现改为按全字段（wire 口径）统计，紧急压缩后历史真正缩小，下轮提交恢复。
+
+### 压缩风暴熔断（P0 breaker）+ 缓存遥测内容/传输分层（P1）（2026-08-25）
+- **背景**：8/24 命中率 98.2%→87.8% 归因 = 两个大上下文会话进入「压缩风暴」（每轮归档 20-90 条消息 + 锚点持续前移 → 历史字节每轮被改写 → provider 前缀缓存只命中 system+tools 固定段 8,320 tokens，命中率钉死 3-4%，连续 40+ 轮）——去掉两个异常会话后 deepseek 命中率回到 97.2%（审计 `guarded_requests.jsonl` 复算）。风暴根因 = 有效预算（窗口×0.6×0.5≈300K 字符）与重工具会话体积的剪刀差，cache monitor 的 `force_head_keep` 恢复条件（锚点连续 N 轮不前移）在风暴期永不满足 → 自持。
+- **P0 compression-storm breaker**（`cache_health.py` + `history.py` + `build.py` + `engine.py`）：
+  - 触发 = 连续 (context.compressed 且 anchor 前移 且 压缩后仍超压缩线) 达 `BREAKER_TRIGGER_RUNS`（默认 5）+ 命中共信号（独立滚动窗口 < `BREAKER_HIT_THR` 0.5，防渐进折叠误判——折叠轮命中高）。
+  - 冻结 = 禁止程序兜底压缩 + 锚点不前移（`freeze_compression` 进 `build_history_messages`，不归档/不分层降级）；冻结期超安全水位（预算×0.95，与 cache_guard 规则 F BLOCK 阈值对齐）→ `context_pressure` 前置拦截（不提交——AI 先 checkpoint/换会话），规则 F 在 breaker 期降级 WARN（防双拦死锁）。
+  - 退出 = 明确 hysteresis：cooldown 轮数下限 + 上下文低于退出水位（预算×0.8）+ anchor 连续稳定，非仅时间。
+  - 逃生 = 连续 context_pressure 达 `BREAKER_PRESSURE_ESCAPE_MAX`（默认 6）→ 放行一次受控压缩（烧损有界，防永久死锁）。
+  - 审计 = `data/audit/cache_breaker.jsonl`（storm_count/anchor/breaker_enter/breaker_exit/context_pressure/escape_armed + reason），复发可直接从 JSONL 判定；`architecture_status`/snapshot 暴露 per-session 熔断状态。
+  - 水位口径：锚定视图字符（实际提交量）——锚点压缩不删会话消息，全量口径会让压力永不解除。
+- **P1 遥测内容/传输分层**（`engine.py` + `build.py` + `cross_sync.py`）：
+  - 问题：程序把 `⚡ 缓存命中率` 写回 assistant 历史 → 下一轮 LLM 可见 → 模型可模仿伪造同格式行（实测 8/25 msg[128] 同条消息出现模型伪造 93.6% + 程序真实 90.4% 双行，伪造行分母 773,371 在审计中不存在）。
+  - 修复：`assistant.content` 只存纯回答；权威遥测进 `metadata.cache_health`（结构化）；build 时剥离 legacy 历史中的 ⚡ 行 + 剥离模型本轮伪造行；transport 层（web 返回值 / 飞书 cross_sync）渲染 canonical 一份。
+- **PROGRESSIVE_FOLD_K=3**（.env 开启）：P0/P1 之后启用——每次最多折最老 3 个配对组，平滑 anchor 跳跃曲线（非消灭压缩；超 95% 预算保命兜底仍突破上限）。
+- **验证**：单测 +12（`test_cache_breaker.py` / `test_cache_breaker_engine.py` 全链路：风暴→breaker→context_pressure→逃生→恢复，含不误触发/隔离/规则 F 降级），全量 2222 passed；真实 DeepSeek 重工具长会话冒烟（逐 request 曲线）。
+
 ### SWE 对照实验定论：本地 thinking 默认开启（回退早前"默认关闭"决策，2026-08-24）
 - **实验**：同一任务（SWE-bench requests-2317）、同一模型（qwen3.8-27b）、唯一变量 = `LOCAL_ENABLE_THINKING` 开关，判据只有 F2P（`test_encoded_methods`）。
 - **结果**：关思考 4 次独立尝试 **0/4 通过**（全漏第二修复点 `sessions.py builtin_str`）；开思考 1 次 **通过**（对照实验 + wire 抓包 `B'GET'` 溯源，双点修复，回归 135 通过无确定性回归）。

@@ -360,7 +360,9 @@ class DshTaskTool:
     @staticmethod
     def _clip(text: str) -> str:
         text = text or ""
-        if len(text) <= _MAX_OUTPUT_CHARS:
+        from llm_loop.core.run_context import current_evidence_enforce_enabled
+
+        if current_evidence_enforce_enabled.get() or len(text) <= _MAX_OUTPUT_CHARS:
             return text
         return (
             text[:_MAX_OUTPUT_CHARS]

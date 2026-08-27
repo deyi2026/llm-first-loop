@@ -46,7 +46,11 @@ _current_pid() {
     fi
   fi
   # PID 文件失效 → pgrep 兜底（防残留误判）
-  pid="$(pgrep -f "$BRIDGE_MOD" | head -1 || true)"
+  # 2026-08-22 镜像修复：pgrep 加工作区路径精确匹配，防误匹配主区桥进程
+  # （主/镜像 .venv 同源符号链接，命令行 `python -m llm_loop.feishu` 相同；
+  # 不加路径前缀会 stop/restart 误杀主区桥，MIRROR 隔离要求主区零接触）
+  local match="$PROJECT_DIR/.venv/bin/python -m $BRIDGE_MOD"
+  pid="$(pgrep -f "$match" | head -1 || true)"
   printf '%s' "$pid"
 }
 
@@ -132,6 +136,9 @@ _start() {
   fi
   _load_credentials
   _load_llm
+  # MIRROR 协议 §3（2026-08-22）：共享 venv 的 editable 安装指向主区 src，
+  # 不带 PYTHONPATH 会加载主区代码 → 镜像 src 优先（隔离要求，主区零接触）
+  export PYTHONPATH="${PROJECT_DIR}/src${PYTHONPATH:+:$PYTHONPATH}"
   mkdir -p "$PROJECT_DIR/data"
   # P1-3-R2: 注入优雅退出时间契约（wait+drain ≤ GRACE_S−余量；10+3=13 ≤ 15，env 可覆盖）
   export FEISHU_EXIT_WAIT_S="${FEISHU_EXIT_WAIT_S:-10}"

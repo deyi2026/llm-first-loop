@@ -40,7 +40,6 @@ def _scan_file(py: Path) -> list[str]:
             continue
         if in_doc or s.startswith(("#", '"', "'", "//", "<", "*")):
             continue
-        rel = f"{py.relative_to(py.parent.parent.parent) if False else py}"
         if _REAL_DATA.search(line) or _REAL_DATA_SESSIONS.search(line):
             hits.append(f"{py}:{i} 真实data写入: {line.strip()[:80]}")
         m = _REAL_BASE_URL.search(line)

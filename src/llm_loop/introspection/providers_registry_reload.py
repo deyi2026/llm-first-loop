@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from llm_loop.config import Settings
@@ -25,7 +25,7 @@ def refresh_provider_registry(
     """刷新 provider 注册表: 重读 env + data/providers.json → 重建 ProviderRegistry.
 
     Args:
-        pool: ModelClientPool（提供 registry 重写入口 + clear_cache 通道）.
+        pool: ModelClientPool（提供 replace_registry 原子切表与旧 client 退休通道）.
         settings: 当前 Settings（用于 load_registry 优先级链）.
         re_read_settings: 是否重新调用 load_settings()（重读 env）；
             测试场景设为 False 可避免 env vars 缺失异常，生产默认 True.
@@ -37,7 +37,7 @@ def refresh_provider_registry(
 
     Notes:
         - 失败语义: 加载失败 → 旧 registry 保留, 回执如实标注（fail-open, DFX-REL-08）
-        - 成功: 返回 (msg, new_registry), 调用方应 `pool.registry = new_registry` + `pool.clear_cache()`
+        - 成功: 返回 (msg, new_registry), 调用方应 `pool.replace_registry(new_registry)` 原子切表并退休旧缓存
     """
     from llm_loop.llm.providers import load_registry as _load_registry
 
@@ -116,8 +116,8 @@ def install_refresh_executor(engine: object) -> None:
         # EVO-20260815-b3339561 Phase 1（2026-08-15）:
         # 原缺口: 回执声明"重载完成"但 default_client 持启动时旧凭据（MINIMAX_API_KEY
         # 写入 .env 后重载，新 provider 生效而默认路由仍用旧 key）——声明未真实生效。
-        # 修复: executor 自行重读 env + settings（幂等），对比并原地同步 default_client
-        # 凭据（LLMClient 非冻结 dataclass），回执如实区分即时生效/需重启两类。
+        # 当前语义: provider registry 热重载即时生效；共享 default_client 只检测差异并要求重启，
+        # 避免并发原地改写与底层 transport 配置不一致。
         from llm_loop.config import load_env_file, load_settings
 
         try:
@@ -126,14 +126,49 @@ def install_refresh_executor(engine: object) -> None:
         except Exception as exc:  # noqa: BLE001 — env/settings 读取失败如实回执，不动 registry
             return f"[重载失败] 配置读取失败: {type(exc).__name__}: {exc}。当前保持旧注册表与旧凭据。"
 
-        msg, new_registry = refresh_provider_registry(model_pool, new_settings, re_read_settings=False)
-        # 成功: 应用 new_registry (失败 → new_registry == pool.registry, 写入无副作用)
-        model_pool.registry = new_registry
-        model_pool.clear_cache()
+        old_registry = model_pool.registry
+        msg, new_registry = refresh_provider_registry(
+            model_pool, new_settings, re_read_settings=False
+        )
+        # 失败时 helper 返回原 registry：不摘缓存、不制造无意义退休。
+        summary_note = ""
+        if new_registry is not old_registry:
+            model_pool.replace_registry(new_registry)
 
-        # ── default_client 凭据原地同步（变更才写，无变更不动）──
+            # 独立 SUMMARY_MODEL client 是长期对象，不能在切表后永久持旧 endpoint/key。
+            # 这里只重绑定“本进程启动时已选择的 summary_model”；如果新 Settings 改了
+            # SUMMARY_MODEL 本身，仍按下方 restart 语义处理，不在运行中偷偷切模型。
+            runtime_settings = getattr(engine, "settings", None)
+            summary_model = getattr(runtime_settings, "summary_model", "") or ""
+            if not isinstance(summary_model, str):
+                summary_model = ""
+            summarizers: list[Any] = []
+            for candidate in (
+                getattr(engine, "summarizer", None),
+                getattr(ctx, "summarizer", None),
+            ):
+                if candidate is not None and all(candidate is not item for item in summarizers):
+                    summarizers.append(candidate)
+            if summary_model and summarizers:
+                try:
+                    summary_client = model_pool.get_client(summary_model)
+                except Exception as exc:  # noqa: BLE001 — 摘要失败应降级，不保留旧凭据/client
+                    for summarizer in summarizers:
+                        summarizer.llm = None
+                    summary_note = (
+                        f" 独立摘要模型 {summary_model} 在新注册表中不可用"
+                        f"（{type(exc).__name__}），已释放旧 client 并降级为确定性摘要。"
+                    )
+                else:
+                    for summarizer in summarizers:
+                        summarizer.llm = summary_client
+                    summary_note = f" 独立摘要模型 {summary_model} client 已切换到新注册表。"
+
+        # default_client 同时被 engine/extractor/summarizer 等长期共享。逐字段原地热改会让
+        # 并发请求观察到半新半旧配置，且底层 httpx transport 仍是启动时配置。
+        # 因此这里只检测差异并如实要求重启；provider override 目录已通过上面的原子切表生效。
         default_client = getattr(model_pool, "default_client", None)
-        synced: list[str] = []
+        changed: list[str] = []
         if default_client is not None:
             for attr, new_val in (
                 ("api_key", new_settings.llm_api_key),
@@ -142,17 +177,20 @@ def install_refresh_executor(engine: object) -> None:
                 ("wire_protocol", new_settings.llm_wire_protocol),
             ):
                 if new_val and getattr(default_client, attr, None) != new_val:
-                    setattr(default_client, attr, new_val)
-                    synced.append(attr)
+                    changed.append(attr)
 
-        if synced:
-            hot_note = f"默认 client 已原地同步（变更: {', '.join(synced)}），即时生效。"
+        if changed:
+            hot_note = (
+                "⚠️ 默认 client 配置检测到变更（字段: "
+                + ", ".join(changed)
+                + "）；为保证在途请求与底层连接配置一致，本次未原地热改，需重启进程生效。"
+            )
         else:
-            hot_note = "默认 client 凭据已核验与新配置一致（无需变更）。"
+            hot_note = "默认 client 配置已核验与新配置一致（无需变更）。"
         restart_note = (
             "其余 Settings 字段为启动时装配（冻结），变更需重启进程生效；"
             "运行参数（max_iterations/timeout_s/history_budget）请用 adjust_strategy 即时调整。"
         )
-        return f"{msg} {hot_note}{restart_note}"
+        return f"{msg} {hot_note}{summary_note}{restart_note}"
 
     ctx.refresh_executor = _refresh_executor

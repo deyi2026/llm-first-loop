@@ -98,3 +98,20 @@ def test_inventory_readonly_untouched(tmp_path):
             mtime, digest = snapshots[str(p)]
             assert p.stat().st_mtime_ns == mtime
             assert hashlib.sha256(p.read_bytes()).hexdigest() == digest
+
+
+def test_inventory_counts_new_archive_segment_directory(tmp_path):
+    """盘点必须包含新`<sid>.segments/*.jsonl`，不能只看archives顶层。"""
+    from llm_loop.memory.archive import ArchiveStore
+
+    data = tmp_path / "data"
+    (data / "sessions").mkdir(parents=True)
+    archive = ArchiveStore(data / "archives", segment_bytes=1)
+    archive.archive("s1", role="user", source="user", content="first")
+    archive.archive("s1", role="user", source="user", content="second")
+    assert (data / "archives" / "s1.segments" / "1.jsonl").exists()
+
+    report = run_inventory(data)
+
+    assert report.archives["file_count"] == 2
+    assert report.archives["entry_count"] == 2

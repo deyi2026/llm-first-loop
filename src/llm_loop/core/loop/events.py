@@ -15,14 +15,13 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 from llm_loop.core.message import Message, MessageSource
+from llm_loop.core.session import _validate_session_id
 from llm_loop.event_log.model import build_message_payload
 from llm_loop.introspection.events import ArchitectureEvent, ArchitectureEventType
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +44,7 @@ class _EventsMixin:
             if self.status is not None:
                 self.status.record_program_fault(kind)
         except Exception:  # noqa: BLE001 — 计数失败 fail-open
-            pass
+            logger.debug("程序故障计数失败（fail-open）: %s", kind, exc_info=True)
 
     def _notify_action(self, event_type: str, **payload) -> None:
         """动作事件通知（fail-open：观察者异常/缺失均不阻断主循环）."""
@@ -130,14 +129,24 @@ class _EventsMixin:
         """
         try:
             sess = self._run_sessions.get(session_id) or self.session.load(session_id)
+            # build_history_messages 常态保留原 Message 对象引用；先用 identity 精确定位，
+            # 避免长回答/重复工具回执内容相同导致 content fallback 永远命中第一条。
+            for i, m in enumerate(sess.messages):
+                if m is msg:
+                    return i
             for i, m in enumerate(sess.messages):
                 if msg.tool_call_id and m.tool_call_id == msg.tool_call_id:
                     return i
             for i, m in enumerate(sess.messages):
                 if m.role == msg.role and m.content == msg.content:
                     return i
+            # prompt-view 清理可能通过 dataclasses.replace 生成等价副本，使 content 与
+            # session 原文不同；ts 在 replace 时保持不变，可作为最终稳定定位兜底。
+            for i, m in enumerate(sess.messages):
+                if m.role == msg.role and m.ts == msg.ts:
+                    return i
         except Exception:  # noqa: BLE001 — 定位失败如实 None
-            pass
+            logger.debug("消息序号定位失败（fail-open）: session=%s", session_id, exc_info=True)
         return None
 
     # ── 阶段记录（架构自省）──
@@ -206,6 +215,10 @@ class _EventsMixin:
         防反复（2026-08-22 补充）: 注入后置 sess._interruption_notified=True——
         中断提示只进 _tip_tail 槽（一次性消费, 不 append 到 sess.messages）,
         否则每轮差异仍存在 → 反复注入干扰。标记仅进程内（会话重启后可重新检测）。
+
+        EVO-20260822-9fde48f1 第 5 条（规则引导优先）: 注入只保留【事实数字】
+        + 一行规则 19 引用——不重复规则全文（完整动作在 system prompt 规则 19 中,
+        重复=干扰）。程序负责告知"发生了中断+差多少", 规则负责教 AI 怎么办。
         """
         try:
             if getattr(sess, "_interruption_notified", False):
@@ -222,11 +235,8 @@ class _EventsMixin:
             if _el_count <= _mem_count:
                 return
             _note = (
-                f"[会话中断恢复] 检测到 event_logs 有 {_el_count} 条消息, "
-                f"当前会话内存仅 {_mem_count} 条——中断丢失 {_el_count - _mem_count} 条。"
-                "用 read_file 读 data/event_logs/<session_id>.jsonl **核对一次**缺失段, "
-                "找回中断前的真实任务/上下文后**立即继续**——核对后不再反复搜索/检索, "
-                "勿凭记忆猜测, 也勿过度确认（已确认的任务继续推进, 不要重复搜索之前的事）。"
+                f"[会话中断恢复] event_logs {_el_count} 条 > 会话内存 {_mem_count} 条"
+                f"（中断丢失 {_el_count - _mem_count} 条）。按规则 19 读 event_logs 核对缺失段后继续。"
             )
             from llm_loop.core.message import Message
 
@@ -250,12 +260,19 @@ class _EventsMixin:
         try:
             if final_answer and len(final_answer) > 8000:
                 import hashlib
+                import uuid
 
-                _la_dir = Path(self.settings.data_dir) / "audit" / "long_answers"
+                _sid = _validate_session_id(session_id)
+                _la_dir = Path(self.settings.data_dir) / "audit" / "long_answers" / _sid
                 _la_dir.mkdir(parents=True, exist_ok=True)
                 _la_digest = hashlib.sha256(final_answer.encode("utf-8", errors="replace")).hexdigest()[:16]
-                _la_file = _la_dir / f"{session_id[:8]}-{_la_digest}.md"
-                _la_file.write_text(final_answer, encoding="utf-8")
+                _la_file = _la_dir / f"{_la_digest}.md"
+                _tmp = _la_dir / f".{_la_file.name}.{uuid.uuid4().hex}.tmp"
+                try:
+                    _tmp.write_text(final_answer, encoding="utf-8")
+                    _tmp.replace(_la_file)
+                finally:
+                    _tmp.unlink(missing_ok=True)
                 return f"{final_answer}\n\n[长回答已落盘] {_la_file}"
         except Exception:  # noqa: BLE001 — 落盘失败 fail-open
             logger.debug("长回答落盘失败（fail-open）")
@@ -270,6 +287,14 @@ class _EventsMixin:
         sess.model_override = value
         if self.correction_ctx is not None:
             self.correction_ctx.session_model_override = value
+        # EVO-20260825 任务8（§5.8）: emergency_compact 后 60s 内 switch_model →
+        # wasted 审计（紧急压缩锚点前移归档被模型切换覆盖——前缀按新模型重建白做）。
+        try:
+            _cm = getattr(self, "_cache_monitor", None)
+            if _cm is not None and value:
+                _cm.note_switch_model_after_compact(sess.session_id, value)
+        except Exception:  # noqa: BLE001 — fail-open
+            logger.debug("switch_model 覆盖检测审计异常（fail-open）", exc_info=True)
 
     def _resolve_session_binding(self, session_id: str):
         """P0-5: 按会话解析 switch_model 绑定（getter/setter），供 registry_model 经

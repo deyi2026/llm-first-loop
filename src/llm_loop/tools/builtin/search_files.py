@@ -243,7 +243,8 @@ class SearchFilesTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
-        _kind_cn = {"dir": "目录", "file": "文件", "other": "其他"}.get(info.get("kind"), info.get("kind"))
+        _kind = str(info.get("kind") or "other")
+        _kind_cn = {"dir": "目录", "file": "文件", "other": "其他"}.get(_kind, _kind)
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=(

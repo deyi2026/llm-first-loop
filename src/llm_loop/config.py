@@ -172,6 +172,21 @@ def _env_exec_mode(name: str) -> str:
     return "blocked"
 
 
+def _env_evidence_mode(name: str) -> str:
+    """ERC rollout mode: off/shadow/enforce; invalid values fail safe to off.
+
+    ``enforce`` is an explicit experimental mode. Production enablement remains gated by
+    the deterministic ERC rollout phases and compatibility checks in factory/registry.
+    """
+    raw = _raw_env(name).strip().lower()
+    if not raw:
+        return "off"
+    if raw in {"off", "shadow", "enforce"}:
+        return raw
+    _note_invalid_fallback(name, "off", "非 off/shadow/enforce 字符串")
+    return "off"
+
+
 def _env_run_mode(name: str) -> str:
     """RUN_MODE 运行模式解析（EVO-20260814 P1-A，对齐 Harness 四种运行模式）.
 
@@ -221,6 +236,9 @@ class Settings:
 
     # ── 数据目录 ──
     data_dir: str = "./data"
+    # ERC v1.1 rollout: off=legacy only; shadow=dual-write no prompt change; enforce=Phase3 capture-before-projection (experimental/offline until R0 completes).
+    evidence_mode: str = "off"
+    evidence_manifest_limit: int = 8  # Phase5 bounded Recovery Manifest; build clamps 1..20
     # ── D1 事件日志（单一真相源，design.md §2.2.1）──
     # 关闭时事件写入零行为零回归（读路径/既有写路径不受影响）
     event_log_enabled: bool = True
@@ -248,6 +266,11 @@ class Settings:
     tool_summary_local_threshold: int = 0
     tool_summary_local_head_chars: int = 800
     tool_summary_local_tail_chars: int = 800
+    # EVO-20260822-9fde48f1 第 4 条: local 轮跳过注入白名单（逗号分隔, 默认空=全保留零回归）。
+    # 可选: snapshot(会话状态快照)/tips(经验提示)/archive_summary(归档摘要)——本地慢模型
+    # prefill 随输入线性涨, 低价值注入=秒级成本; 高价值（记忆检索/协调通道）不在此列。
+    # 风格对齐 LOCAL_TOOL_NAMES（固定白名单, 逗号分隔）。
+    tool_local_inject_skip: str = ""
     # EVO-20260811-7baa2737: 历史分层降级（旧长 tool 消息降级为摘要，原文归档）
     tool_trim_enabled: bool = True
     # R3: tool_trim 自适应降级年龄（0=自适应：按占用率自动调 <40%→20/40-70%→10/>70%→5；>0=固定值禁用自适应）
@@ -317,9 +340,13 @@ class Settings:
     extract_cooldown_s: float = 600.0
     extract_max_input_chars: int = 100000
     extract_timeout_s: float = 60.0
+    # ── task_quality 六路径开关（EVO-20260822-8b7a41c0 env 化持久化；默认关零回归）──
+    precheck_enabled: bool = False  # 路径 A 参数预检（缺参拦截+字段级引导反馈）
+    fix_loop_enabled: bool = False  # 路径 I 修复循环
     # M66 思考链瘦身: 提交给 LLM 的历史中仅保留最近 N 轮 assistant 思考链
-    # （0=全部保留；缩减上下文体积，最近轮 THK-04 回传不受影响）
-    reasoning_tail: int = 2
+    # （默认 0=全保留——capability-first（EVO-20260820 能力一票否决）；仅触顶
+    # 且 breaker 未冻结且配置 -1 时才授权裁剪，见 build.py 触顶判定）
+    reasoning_tail: int = 0
 
     # ── P1 校验语义匹配（FR-P1-OPT-01, §3.6）──
     validate_semantic: bool = False
@@ -383,6 +410,11 @@ class Settings:
         return Path(self.data_dir) / "sessions"
 
     @property
+    def evidence_dir(self) -> Path:
+        """ERC physical/logical store root; created only when an Evidence store is instantiated."""
+        return Path(self.data_dir) / "evidence"
+
+    @property
     def event_logs_dir(self) -> Path:
         """事件日志目录（D1 单一真相源；EVENT_LOGS_DIR 覆盖，默认 data_dir/event_logs）."""
         if self.event_logs_dir_override:
@@ -430,6 +462,8 @@ class Settings:
             "tool_summary_local_threshold": self.tool_summary_local_threshold,
             "tool_summary_local_head_chars": self.tool_summary_local_head_chars,
             "tool_summary_local_tail_chars": self.tool_summary_local_tail_chars,
+            # EVO-20260822-9fde48f1 第 4 条: local 轮跳过注入白名单
+            "tool_local_inject_skip": self.tool_local_inject_skip,
             "tool_trim_enabled": self.tool_trim_enabled,
             "tool_schema_lazy": self.tool_schema_lazy,
             "tool_pipeline_enabled": self.tool_pipeline_enabled,
@@ -438,6 +472,9 @@ class Settings:
             "runner_background": self.runner_background,
             "cache_hit_show_in_answer": self.cache_hit_show_in_answer,
             "tool_experience_inject": self.tool_experience_inject,
+            # ERC v1.1 rollout state is safe to expose; no paths/refs/secrets included.
+            "evidence_mode": self.evidence_mode,
+            "evidence_manifest_limit": self.evidence_manifest_limit,
             "history_max_chars": self.history_max_chars,
             "memory_top_k": self.memory_top_k,
             "self_inspection_enabled": self.self_inspection_enabled,
@@ -448,6 +485,8 @@ class Settings:
             "extract_enabled": self.extract_enabled,
             "extract_interval_msgs": self.extract_interval_msgs,
             "validate_semantic": self.validate_semantic,
+            "precheck_enabled": self.precheck_enabled,
+            "fix_loop_enabled": self.fix_loop_enabled,
             # EVO-20260814 P1-A: RUN_MODE 运行模式（standard/ptc/minimal/creative，可查可验证）
             "run_mode": self.run_mode,
             # M12 深化（EXEC-01/08 + EVAL-02/03，architecture_config 可查）
@@ -532,6 +571,8 @@ def load_settings() -> Settings:
         llm_max_tokens=_env_int("LLM_MAX_TOKENS", 8192),  # 2026-08-15 显式输出预算
         llm_wire_protocol=os.environ.get("LLM_WIRE_PROTOCOL", "openai").strip().lower() or "openai",
         data_dir=os.environ.get("DATA_DIR", "./data").strip(),
+        evidence_mode=_env_evidence_mode("EVIDENCE_MODE"),
+        evidence_manifest_limit=_env_int("EVIDENCE_MANIFEST_LIMIT", 8),
         # D1 事件日志（EVENT_LOG_ENABLED / EVENT_LOGS_DIR 透传）
         event_log_enabled=_env_bool("EVENT_LOG_ENABLED", True),
         event_logs_dir_override=os.environ.get("EVENT_LOGS_DIR", "").strip(),
@@ -547,6 +588,8 @@ def load_settings() -> Settings:
         tool_summary_local_threshold=_env_int("TOOL_SUMMARY_LOCAL_THRESHOLD", 0),
         tool_summary_local_head_chars=_env_int("TOOL_SUMMARY_LOCAL_HEAD_CHARS", 800),
         tool_summary_local_tail_chars=_env_int("TOOL_SUMMARY_LOCAL_TAIL_CHARS", 800),
+        # EVO-20260822-9fde48f1 第 4 条: local 轮跳过注入白名单（默认空=全保留零回归）
+        tool_local_inject_skip=os.environ.get("LOCAL_INJECT_SKIP", "").strip(),
         tool_trim_enabled=_env_bool("TOOL_TRIM_ENABLED", True),
         tool_trim_age=_env_int("TOOL_TRIM_AGE", 0),
         tool_trim_threshold=_env_int("TOOL_TRIM_THRESHOLD", 8000),
@@ -589,7 +632,9 @@ def load_settings() -> Settings:
         retrieve_semantic_top_k=_env_int("RETRIEVE_SEMANTIC_TOP_K", 20),
         extract_enabled=_env_bool("EXTRACT_ENABLED", True),
         extract_interval_msgs=_env_int("EXTRACT_INTERVAL_MSGS", 20),
-        reasoning_tail=_env_int("REASONING_TAIL", 2),  # M66 思考链瘦身（0=全部保留）
+        precheck_enabled=_env_bool("PRECHECK_ENABLED", False),  # EVO-20260822-8b7a41c0 env 化持久化
+        fix_loop_enabled=_env_bool("FIX_LOOP_ENABLED", False),
+        reasoning_tail=_env_int("REASONING_TAIL", 0),  # M66 思考链瘦身（默认 0=全保留，capability-first）
         extract_cooldown_s=float(_env_int("EXTRACT_COOLDOWN_S", 600)),
         extract_max_input_chars=_env_int("EXTRACT_MAX_INPUT_CHARS", 100000),
         extract_timeout_s=float(_env_int("EXTRACT_TIMEOUT_S", 60)),

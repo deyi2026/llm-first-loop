@@ -37,6 +37,8 @@ function createStore<T extends object>(initial: T) {
 // 2026-08-18 模型选择持久化（用户反馈'刷新跳回 deepseek 混乱'）:
 // localStorage 保存选择——刷新恢复所选（对齐主题持久化模式）
 const MODEL_KEY = "lfl.selected.model";
+// 2026-08-20（用户反馈）: 刷新时模型等级也要保持——effort 与 model 同模式持久化
+const EFFORT_KEY = "lfl.selected.effort";
 
 function readSavedModel(): string | null {
   try {
@@ -48,11 +50,21 @@ function readSavedModel(): string | null {
   }
 }
 
+function readSavedEffort(): string | null {
+  try {
+    if (typeof window === "undefined") return null;
+    const v = localStorage.getItem(EFFORT_KEY);
+    return v || null;
+  } catch {
+    return null;
+  }
+}
+
 const sessionStoreRaw = createStore<SessionState>({
   sessions: [],
   currentSessionId: null,
   model: readSavedModel(),
-  reasoningEffort: null,
+  reasoningEffort: readSavedEffort(),
   newSessionPending: false,
 });
 
@@ -69,7 +81,15 @@ export const sessionStore = {
     }
     sessionStoreRaw.setState({ model });
   },
-  setReasoningEffort: (effort: string | null) => sessionStoreRaw.setState({ reasoningEffort: effort }),
+  setReasoningEffort: (effort: string | null) => {
+    try {
+      if (effort) localStorage.setItem(EFFORT_KEY, effort);
+      else localStorage.removeItem(EFFORT_KEY);
+    } catch {
+      /* fail-open */
+    }
+    sessionStoreRaw.setState({ reasoningEffort: effort });
+  },
   setNewSessionPending: (v: boolean) => sessionStoreRaw.setState({ newSessionPending: v }),
   subscribe: sessionStoreRaw.subscribe,
 };

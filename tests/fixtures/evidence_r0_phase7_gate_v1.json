@@ -1,0 +1,81 @@
+{
+  "version": "R0-PHASE7-GATE-v1",
+  "oracle_fixture": "tests/fixtures/evidence_recoverability_r0.json",
+  "network_policy": "deny",
+  "all_cases_blocking": true,
+  "cases": [
+    {
+      "id": "R0-1",
+      "covers": ["stable_evidence_ref", "queryless_recovery", "exact_middle_hydration", "source_execution_count_1"],
+      "selectors": ["tests/unit/test_evidence_phase5.py::test_canonical_root_cause_recovery_chain_reads_source_once"]
+    },
+    {
+      "id": "R0-2",
+      "covers": ["same_bytes_same_blob_ref", "different_owner_different_evidence_ref", "different_capture_different_evidence_ref"],
+      "selectors": ["tests/unit/test_evidence_phase1.py::test_blob_identity_is_physical_but_evidence_identity_is_owner_scoped"]
+    },
+    {
+      "id": "R0-3",
+      "covers": ["cross_owner_read_denied", "cross_owner_list_hidden", "blob_ref_not_model_credential"],
+      "selectors": [
+        "tests/unit/test_evidence_phase1.py::test_owner_authorization_blocks_cross_session_hydration_and_listing",
+        "tests/unit/test_evidence_phase1.py::test_blob_ref_is_not_accepted_as_model_facing_evidence_ref"
+      ]
+    },
+    {
+      "id": "R0-4",
+      "covers": ["text_char_exact", "line_exact", "bounded_limit", "next_start", "range_sha256"],
+      "selectors": [
+        "tests/unit/test_evidence_phase1.py::test_unicode_text_char_and_line_hydration_are_exact_and_bounded",
+        "tests/unit/test_evidence_phase4.py::test_agent_read_evidence_limit_is_hard_bounded"
+      ]
+    },
+    {
+      "id": "R0-5",
+      "covers": ["recent_manifest_from_durable_ledger", "bounded_manifest", "no_query_required"],
+      "selectors": ["tests/unit/test_evidence_phase1.py::test_recent_manifest_is_bounded_queryless_and_durable_across_reopen"]
+    },
+    {
+      "id": "R0-6",
+      "covers": ["file_probeable", "command_snapshot_only", "web_volatile", "runtime_versioned_or_unknown"],
+      "selectors": [
+        "tests/unit/test_evidence_phase4.py::test_file_freshness_current_then_stale_after_change",
+        "tests/unit/test_evidence_phase4.py::test_non_file_freshness_never_fabricates_current"
+      ]
+    },
+    {
+      "id": "R0-7",
+      "covers": ["action_success", "recoverability_failed", "no_automatic_rerun"],
+      "selectors": ["tests/unit/test_evidence_enforce.py::test_enforce_capture_failure_preserves_side_effect_action_truth_and_does_not_rerun"]
+    },
+    {
+      "id": "R0-8",
+      "covers": ["default_and", "explicit_or", "quoted_phrase", "middle_match_visible", "owner_isolation"],
+      "selectors": ["tests/unit/test_evidence_phase4.py::test_search_gold_fixture_precision_recall_visible_matches"]
+    },
+    {
+      "id": "R0-9",
+      "covers": ["raw_projection_may_differ", "authorized_evidence_set_equal", "manifest_refs_equal"],
+      "selectors": ["tests/unit/test_evidence_phase7_gate.py::test_r0_09_provider_projection_switch_keeps_exact_evidence_set"]
+    },
+    {
+      "id": "R0-10",
+      "covers": ["proven_owner_migrates", "orphan_not_model_visible", "shared_blob_survives_first_owner_delete", "zero_ref_blob_deletable"],
+      "selectors": [
+        "tests/unit/test_evidence_phase6.py::test_owned_tool_output_sidecar_migrates_with_exact_proof",
+        "tests/unit/test_evidence_phase6.py::test_orphan_sidecar_inventory_only_never_enters_ledger",
+        "tests/unit/test_evidence_phase6.py::test_shared_blob_gc_waits_for_last_owner"
+      ]
+    },
+    {
+      "id": "R0-11",
+      "covers": ["hot_does_not_force_full", "large_hot_can_excerpt_with_ref"],
+      "selectors": ["tests/unit/test_evidence_enforce.py::test_hot_large_evidence_is_excerpt_not_forced_full"]
+    },
+    {
+      "id": "R0-12",
+      "covers": ["no_action_guard", "no_prompt_patch", "no_fixed_summary_activation", "no_semantic_heuristic", "no_real_provider"],
+      "selectors": ["tests/unit/test_evidence_phase7_gate.py::test_r0_12_non_target_guardrails_and_no_provider_policy"]
+    }
+  ]
+}

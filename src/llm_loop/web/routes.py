@@ -10,6 +10,7 @@ import logging
 import os
 import queue
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -23,8 +24,18 @@ from fastapi.responses import (
 )
 
 from llm_loop.core.loop.runner import SessionBusyError
-from llm_loop.feedback.honesty import session_deleted_message, session_not_found_message
-from llm_loop.workspace.store import workspace_key
+from llm_loop.core.session import SessionMutationBusyError
+from llm_loop.feedback.honesty import (
+    append_feedback,
+    session_deleted_message,
+    session_not_found_message,
+)
+from llm_loop.workspace.store import (
+    WorkspaceBusyError,
+    WorkspaceChangedError,
+    WorkspacePathUnavailableError,
+    WorkspacePersistenceError,
+)
 
 from .schemas import (
     ChatCancelRequest,
@@ -162,24 +173,29 @@ def chat(
             },
         )
 
-    if payload.session_id is not None:
-        if not engine.session.exists(payload.session_id):
-            return UTF8JSONResponse(
-                status_code=404,
-                content={
-                    "error": "session_not_found",
-                    "detail": session_not_found_message(payload.session_id),
-                },
-            )
-        session_id = payload.session_id
-    elif getattr(payload, "new_session", False):
-        # 2026-08-18: /new 语义——强制新建会话（前端清 currentSessionId 但后端复用共享当前
-        # 导致"新开不成功"）；新建后设为共享当前（后续消息复用新会话）
-        session_id = engine.session.create()
-        engine.session.set_shared_current(session_id)
-    else:
-        # P2-3: 无 sid 解析（复用共享/新建+设共享）在模块级 guard 内原子完成
-        session_id = _resolve_session_id_locked(engine, request, None)
+    try:
+        with engine.workspace_snapshot() as workspace_epoch:
+            if getattr(payload, "new_session", False):
+                # schema 契约：new_session 与 session_id 同传时强制新建优先。
+                session_id = engine.session.create()
+                engine.session.set_shared_current(session_id)
+            elif payload.session_id is not None:
+                if not engine.session.exists(payload.session_id):
+                    return UTF8JSONResponse(
+                        status_code=404,
+                        content={
+                            "error": "session_not_found",
+                            "detail": session_not_found_message(payload.session_id),
+                        },
+                    )
+                session_id = payload.session_id
+            else:
+                session_id = _resolve_session_id_locked(engine, request, None)
+    except WorkspaceBusyError as exc:
+        return UTF8JSONResponse(
+            status_code=409,
+            content={"error": "workspace_busy", "detail": str(exc)},
+        )
 
     # T5.1: 会话级并发锁（同会话串行，不同会话并行，spec.md 5.4.1）
     lock = _get_session_lock(request, session_id)
@@ -191,9 +207,21 @@ def chat(
         )
     if lock is not None:
         acquired = True
+    _persist_model_ref = _canonical_persist_model(engine, payload.model)
+    _on_run_acquired = (
+        (lambda sess: _apply_session_model_override(sess, _persist_model_ref))
+        if _persist_model_ref else None
+    )
     try:
-        result = engine.run(
-            session_id, payload.message, model=payload.model, reasoning_effort=payload.reasoning_effort
+        result = engine._run_with_acquired(
+            session_id, payload.message, model=payload.model,
+            reasoning_effort=payload.reasoning_effort, on_run_acquired=_on_run_acquired,
+            expected_workspace_epoch=workspace_epoch,
+        )
+    except WorkspaceChangedError as exc:
+        return UTF8JSONResponse(
+            status_code=409,
+            content={"error": "workspace_changed", "detail": str(exc)},
         )
     except SessionBusyError as exc:
         # EVO 后台 run 改造（B5/B7）: 同会话已有后台 run 进行中 → 503（与锁超时同语义）
@@ -213,20 +241,6 @@ def chat(
     finally:
         if acquired and lock is not None:
             lock.release()
-
-    # EVO-20260823-方案A: web 端模型选择持久化到会话 override（三端共享一致）——
-    # 根因: web 切模型走 per-call（engine.run model=payload.model），不写 sess.model_override；
-    # 飞书复用共享会话时 per-call=None + override 为空 → 回退默认装配（deepseek）。
-    # 修复: chat 请求带 model 时写入会话 override + 持久化，飞书/CLI 复用共享会话即继承。
-    # fail-open: 持久化失败不影响本次对话（per-call 已生效）。
-    if payload.model:
-        try:
-            _sess = engine.session.load(session_id)
-            if getattr(_sess, "model_override", None) != payload.model:
-                _sess.model_override = payload.model
-                engine.session.save(_sess)
-        except Exception as exc:  # noqa: BLE001 — 持久化失败 fail-open（不阻断响应）
-            logger.debug("web 模型 override 持久化失败（fail-open）: %s", type(exc).__name__)
 
     # M56：飞书来源会话 → 后台推送用户消息 + 回答到飞书（fail-open 不阻断响应）
     try:
@@ -272,8 +286,36 @@ def _fmt_ts(ts: float | None) -> str:
         return ""
 
 
+def _canonical_persist_model(engine: Any, model: str | None) -> str | None:
+    """返回可安全持久化的规范模型引用；未知模型不持久化但仍由本次请求如实处理。"""
+    if not model:
+        return None
+    pool = getattr(engine, "llm_pool", None)
+    if pool is None:
+        return model
+    try:
+        pid, mid = pool.registry.resolve(model)
+        return f"{pid}/{mid}"
+    except ValueError:
+        return None
+
+
+def _apply_session_model_override(session: Any, model_ref: str | None) -> None:
+    """接单成功后修改本轮 run-owned Session；持久化由 engine accepted 边界统一执行。"""
+    if model_ref and getattr(session, "model_override", None) != model_ref:
+        session.model_override = model_ref
+
+
 def _stream_background(
-    runner: Any, session_id: str, message: str, model: str | None, *, resume: bool = False
+    runner: Any,
+    session_id: str,
+    message: str,
+    model: str | None,
+    reasoning_effort: str | None = None,
+    *,
+    resume: bool = False,
+    before_start: Callable[[Any], None] | None = None,
+    expected_workspace_epoch: int | None = None,
 ) -> Any:
     """后台 run 订阅生成器（EVO 后台 run 改造）：提交 → 消费事件 → 分片 yield SSE.
 
@@ -283,7 +325,15 @@ def _stream_background(
     - error: 引擎异常如实回执
     - finally: unsubscribe（SSE 断连只停订阅，后台线程不受影响、继续落盘）
     """
-    handle, q = runner.start(session_id, message, model=model, resume=resume)
+    try:
+        handle, q = runner.start(
+            session_id, message, model=model, reasoning_effort=reasoning_effort,
+            resume=resume, before_start=before_start,
+            expected_workspace_epoch=expected_workspace_epoch,
+        )
+    except WorkspaceChangedError as exc:
+        yield _sse("error", {"error": "workspace_changed", "detail": str(exc)})
+        return
     if q is None:
         if resume:
             # DSH 017 ② 语义区分：resume 场景无进行中 run（已结束/不存在）→
@@ -360,13 +410,13 @@ def _stream_background(
                 )
                 return
             elif etype == "error":
-                yield _sse(
-                    "error",
-                    {
-                        "error": "internal_error",
-                        "detail": f"[程序异常] 引擎执行失败（{ev['error']}）。",
-                    },
+                code = ev.get("error_code", "internal_error")
+                detail = (
+                    "会话繁忙，请稍后重试"
+                    if code == "session_busy"
+                    else f"[程序异常] 引擎执行失败（{ev['error']}）。"
                 )
+                yield _sse("error", {"error": code, "detail": detail})
                 return
     finally:
         runner.unsubscribe(session_id, q)  # 断连/完成：停止订阅，后台线程不受影响
@@ -399,44 +449,53 @@ def chat_stream(
             },
         )
 
-    # 会话存在性检查（与 chat 端点一致）
-    if payload.session_id is not None:
-        if not engine.session.exists(payload.session_id):
-            return UTF8JSONResponse(
-                status_code=404,
-                content={
-                    "error": "session_not_found",
-                    "detail": session_not_found_message(payload.session_id),
-                },
-            )
-        session_id = payload.session_id
-    elif getattr(payload, "new_session", False):
-        # 2026-08-18: /new 语义——强制新建（同 chat 端点）
-        session_id = engine.session.create()
-        engine.session.set_shared_current(session_id)
-    else:
-        # P2-3: 无 sid 解析在模块级 guard 内原子完成（与 chat 端点同一事务语义）
-        session_id = _resolve_session_id_locked(engine, request, None)
+    # 会话查/建与workspace切换互斥；响应生成延迟执行时再用epoch复核归属。
+    try:
+        with engine.workspace_snapshot() as workspace_epoch:
+            if getattr(payload, "new_session", False):
+                session_id = engine.session.create()
+                engine.session.set_shared_current(session_id)
+            elif payload.session_id is not None:
+                if not engine.session.exists(payload.session_id):
+                    return UTF8JSONResponse(
+                        status_code=404,
+                        content={
+                            "error": "session_not_found",
+                            "detail": session_not_found_message(payload.session_id),
+                        },
+                    )
+                session_id = payload.session_id
+            else:
+                session_id = _resolve_session_id_locked(engine, request, None)
+    except WorkspaceBusyError as exc:
+        return UTF8JSONResponse(
+            status_code=409,
+            content={"error": "workspace_busy", "detail": str(exc)},
+        )
 
-    # EVO-20260823-方案A: web 端模型选择持久化到会话 override（三端共享一致）——
-    # 前端实际走 /api/v1/chat/stream（SSE 流式），此处与同步 chat 端点同逻辑：
-    # chat 请求带 model 时写入会话 override + 持久化，飞书/CLI 复用共享会话即继承。
-    # fail-open: 持久化失败不影响本次对话（per-call 已生效）。
-    if payload.model:
-        try:
-            _sess = engine.session.load(session_id)
-            if getattr(_sess, "model_override", None) != payload.model:
-                _sess.model_override = payload.model
-                engine.session.save(_sess)
-        except Exception as exc:  # noqa: BLE001 — 持久化失败 fail-open（不阻断响应）
-            logger.debug("stream 模型 override 持久化失败（fail-open）: %s", type(exc).__name__)
+    # Web 模型选择只在请求成功接单后持久化。未知模型不写 session，
+    # 仍交本次 per-call 路由生成“模型不可用”反馈；busy/resume 必须零副作用。
+    _persist_model_ref = _canonical_persist_model(engine, payload.model)
 
     def event_stream():
         # 后台 run 模式（EVO 后台 run 改造，对齐 DSH）：提交 + 订阅；断连只停订阅
         runner = getattr(engine, "runner", None)
+        _resume = bool(getattr(payload, "resume", False))
+        _before_start = (
+            (lambda sess: _apply_session_model_override(sess, _persist_model_ref))
+            if (_persist_model_ref and not _resume)
+            else None
+        )
         if runner is not None and runner.enabled:
             yield from _stream_background(
-                runner, session_id, payload.message, payload.model, resume=bool(getattr(payload, "resume", False))
+                runner,
+                session_id,
+                payload.message,
+                payload.model,
+                reasoning_effort=payload.reasoning_effort,
+                resume=_resume,
+                before_start=_before_start,
+                expected_workspace_epoch=workspace_epoch,
             )
             return
         # 回退旧路径（生成器直驱，原行为；RUNNER_BACKGROUND=0 或未装配）
@@ -448,7 +507,11 @@ def chat_stream(
         if lock is not None:
             acquired = True
         try:
-            it = engine.run_stream(session_id, payload.message, model=payload.model)
+            it = engine._run_stream_with_acquired(
+                session_id, payload.message, model=payload.model,
+                reasoning_effort=payload.reasoning_effort, on_run_acquired=_before_start,
+                expected_workspace_epoch=workspace_epoch,
+            )
             while True:
                 try:
                     delta = next(it)
@@ -471,6 +534,12 @@ def chat_stream(
                 except StopIteration as exc:
                     result = exc.value
                     break
+        except WorkspaceChangedError as exc:
+            yield _sse("error", {"error": "workspace_changed", "detail": str(exc)})
+            return
+        except SessionBusyError as exc:
+            yield _sse("error", {"error": "session_busy", "detail": str(exc)})
+            return
         except Exception as exc:  # noqa: BLE001 — 引擎异常如实反馈（已生成分片不撤回）
             logger.exception("engine.run_stream failed: session_id=%s", session_id)
             yield _sse(
@@ -1137,7 +1206,7 @@ def get_shared_current(request: Request) -> JSONResponse:
 @router.post(
     "/api/v1/sessions/{session_id}/pin",
     response_model=None,
-    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    responses={409: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
 )
 def set_session_pin(session_id: str, request: Request, pinned: bool = False) -> Response:
     """会话置顶/取消置顶（M56，Web 端列表置顶优先）."""
@@ -1149,6 +1218,11 @@ def set_session_pin(session_id: str, request: Request, pinned: bool = False) -> 
         )
     try:
         ok = engine.session.set_pinned(session_id, pinned)
+    except SessionMutationBusyError as exc:
+        return UTF8JSONResponse(
+            status_code=409,
+            content={"error": "session_busy", "detail": str(exc)},
+        )
     except Exception as exc:
         logger.exception("session pin failed: session_id=%s", session_id)
         return UTF8JSONResponse(
@@ -1169,7 +1243,7 @@ def set_session_pin(session_id: str, request: Request, pinned: bool = False) -> 
 @router.post(
     "/api/v1/sessions/{session_id}/archive",
     response_model=None,
-    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    responses={409: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
 )
 def set_session_archive(session_id: str, request: Request, archived: bool = False) -> Response:
     """会话归档/取消归档（2026-08-21: 归档文件夹——旧会话收拢防误操作）."""
@@ -1181,6 +1255,11 @@ def set_session_archive(session_id: str, request: Request, archived: bool = Fals
         )
     try:
         ok = engine.session.archive(session_id) if archived else engine.session.unarchive(session_id)
+    except SessionMutationBusyError as exc:
+        return UTF8JSONResponse(
+            status_code=409,
+            content={"error": "session_busy", "detail": str(exc)},
+        )
     except Exception as exc:
         logger.exception("session archive failed: session_id=%s", session_id)
         return UTF8JSONResponse(
@@ -1201,7 +1280,7 @@ def set_session_archive(session_id: str, request: Request, archived: bool = Fals
 @router.post(
     "/api/v1/sessions/{session_id}/fork",
     response_model=None,
-    responses={404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    responses={409: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
 )
 def fork_session_endpoint(
     session_id: str,
@@ -1220,12 +1299,18 @@ def fork_session_endpoint(
         )
     event_store = getattr(engine.session, "_event_store", None)
     try:
-        report = fork_session(
-            event_store,
-            engine.session,
-            session_id,
-            fork_point=fork_point,
-            branch_summary=summary,
+        with engine.session.management_lease(session_id):
+            report = fork_session(
+                event_store,
+                engine.session,
+                session_id,
+                fork_point=fork_point,
+                branch_summary=summary,
+            )
+    except SessionMutationBusyError as exc:
+        return UTF8JSONResponse(
+            status_code=409,
+            content={"error": "session_busy", "detail": str(exc)},
         )
     except Exception as exc:
         logger.exception("session fork failed: session_id=%s", session_id)
@@ -1267,48 +1352,58 @@ def submit_message_feedback(
     仅审计记录，不修改会话内容；index 越界/非法 feedback 如实 400。
     """
     engine = _engine_from(request)
-    if not engine.session.exists(session_id):
-        return UTF8JSONResponse(
-            status_code=404,
-            content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
-        )
     if payload.feedback not in ("up", "down"):
         return UTF8JSONResponse(
             status_code=400,
             content={"error": "invalid_feedback", "detail": "feedback 仅支持 up / down。"},
         )
     try:
-        sess = engine.session.load(session_id)
-        if payload.message_index >= len(sess.messages):
-            return UTF8JSONResponse(
-                status_code=400,
-                content={
-                    "error": "index_out_of_range",
-                    "detail": f"message_index {payload.message_index} 超出会话消息数 {len(sess.messages)}。",
+        with engine.session.management_lease(session_id):
+            if not engine.session.exists(session_id):
+                return UTF8JSONResponse(
+                    status_code=404,
+                    content={
+                        "error": "session_not_found",
+                        "detail": session_not_found_message(session_id),
+                    },
+                )
+            sess = engine.session.load(session_id)
+            if payload.message_index >= len(sess.messages):
+                return UTF8JSONResponse(
+                    status_code=400,
+                    content={
+                        "error": "index_out_of_range",
+                        "detail": (
+                            f"message_index {payload.message_index} "
+                            f"超出会话消息数 {len(sess.messages)}。"
+                        ),
+                    },
+                )
+            feedback_file = Path(getattr(engine.settings, "data_dir", "./data")) / "feedback.jsonl"
+            append_feedback(
+                feedback_file,
+                {
+                    "ts": __import__("time").time(),
+                    "session_id": session_id,
+                    "message_index": payload.message_index,
+                    "role": sess.messages[payload.message_index].role,
+                    "feedback": payload.feedback,
+                    "note": payload.note,
                 },
             )
-        data_dir = Path(getattr(engine.settings, "data_dir", "./data"))
-        feedback_file = data_dir / "feedback.jsonl"
-        with open(feedback_file, "a", encoding="utf-8") as f:
-            f.write(
-                json.dumps(
-                    {
-                        "ts": __import__("time").time(),
-                        "session_id": session_id,
-                        "message_index": payload.message_index,
-                        "role": sess.messages[payload.message_index].role,
-                        "feedback": payload.feedback,
-                        "note": payload.note,
-                    },
-                    ensure_ascii=False,
-                )
-                + "\n"
-            )
+    except SessionMutationBusyError as exc:
+        return UTF8JSONResponse(
+            status_code=409,
+            content={"error": "session_busy", "detail": str(exc)},
+        )
     except Exception as exc:  # noqa: BLE001 — 反馈失败如实 500（不影响主链路）
         logger.exception("message feedback failed: session=%s", session_id)
         return UTF8JSONResponse(
             status_code=500,
-            content={"error": "feedback_failed", "detail": f"[程序异常] 反馈记录失败（{type(exc).__name__}: {exc}）"},
+            content={
+                "error": "feedback_failed",
+                "detail": f"[程序异常] 反馈记录失败（{type(exc).__name__}: {exc}）",
+            },
         )
     return UTF8JSONResponse(content={"status": "ok", "session_id": session_id})
 
@@ -1337,11 +1432,25 @@ def _sessions_fingerprint(sessions_dir: str | Path) -> str:
         return "err"
 
 
+def _session_events_fingerprint(engine: Any) -> str:
+    """当前SessionStore根 + 内容指纹；workspace切换本身也视为会话视图变化。"""
+    session = getattr(engine, "session", None)
+    sessions_dir = getattr(session, "root", None)
+    if sessions_dir is None:
+        sessions_dir = (
+            getattr(getattr(engine, "settings", None), "sessions_dir", None)
+            or "./data/sessions"
+        )
+    root = Path(sessions_dir)
+    return f"{root}:{_sessions_fingerprint(root)}"
+
+
 @router.get("/api/v1/events")
 async def stream_session_events(request: Request) -> StreamingResponse:
     """SSE 会话更新事件流（M56：Web 端实时刷新）.
 
-    轮询共享会话目录指纹（文件数 + 最新 mtime），变化即推送 sessions_updated 事件；
+    动态轮询当前 SessionStore 根指纹（workspace根 + 文件数 + 最新mtime），变化即推送
+    sessions_updated 事件；workspace切换本身也触发刷新，长连接无需重建。
     Web 前端收到后刷新会话列表与当前会话消息。零新依赖（同进程内 asyncio 轮询）。
 
     2026-08-15 修复：SSE 命名事件必须带 `event: <type>` 行——此前只发
@@ -1351,8 +1460,7 @@ async def stream_session_events(request: Request) -> StreamingResponse:
     keepalive 注释行防中间层/浏览器超时掐断长连接。
     """
     engine = _engine_from(request)
-    sessions_dir = getattr(getattr(engine, "settings", None), "sessions_dir", None) or "./data/sessions"
-    initial = _sessions_fingerprint(sessions_dir)
+    initial = _session_events_fingerprint(engine)
 
     async def gen():
         nonlocal initial
@@ -1372,7 +1480,7 @@ async def stream_session_events(request: Request) -> StreamingResponse:
                 last_beat = now
                 yield ": keepalive\n\n"
                 continue
-            current = _sessions_fingerprint(sessions_dir)
+            current = _session_events_fingerprint(engine)
             if current != initial and current != "err":
                 initial = current
                 last_beat = now
@@ -1507,7 +1615,12 @@ def delete_session(session_id: str, request: Request, confirm: bool = False) -> 
         )
 
     try:
-        engine.session.delete(session_id)
+        deleted = engine.session.delete(session_id)
+    except SessionMutationBusyError as exc:
+        return UTF8JSONResponse(
+            status_code=409,
+            content={"error": "session_busy", "detail": str(exc)},
+        )
     except Exception as exc:
         logger.exception("session delete failed: session_id=%s", session_id)
         return UTF8JSONResponse(
@@ -1515,6 +1628,14 @@ def delete_session(session_id: str, request: Request, confirm: bool = False) -> 
             content={
                 "error": "delete_failed",
                 "detail": f"[程序异常] 会话删除失败（{type(exc).__name__}: {exc}）。",
+            },
+        )
+    if not deleted:
+        return UTF8JSONResponse(
+            status_code=500,
+            content={
+                "error": "delete_failed",
+                "detail": "[删除失败] 会话或关联事件/档案未能完整清理，请检查后重试。",
             },
         )
 
@@ -1635,10 +1756,11 @@ def preview_file(request: Request, path: str) -> Response:
     # 工作区跟随: 预览根 = 当前工作区根（无工作区 → 仓库根兜底）
     engine = _engine_from(request)
     root = Path(getattr(engine, "workspace_root", "") or _PREVIEW_ROOT)
+    root_resolved = root.resolve()
     # 相对路径基于工作区根；绝对路径亦接受（resolve 后必须仍在根内，越界拒绝）
     raw = Path(path)
-    target = raw.resolve() if raw.is_absolute() else (root / raw).resolve()
-    if not target.is_relative_to(root.resolve()):
+    target = raw.resolve() if raw.is_absolute() else (root_resolved / raw).resolve()
+    if not target.is_relative_to(root_resolved):
         return UTF8JSONResponse(
             status_code=400,
             content={"error": "out_of_bounds", "detail": "路径越出项目根，已拒绝。"},
@@ -1647,15 +1769,21 @@ def preview_file(request: Request, path: str) -> Response:
     # 根下直接解析失败时，在工作区常见目录内按 basename 唯一匹配（多命中 → 409 歧义
     # 提示，宁可不猜不错开；防误开原则）。
     if not target.is_file() and not raw.is_absolute() and "/" not in path and "\\" not in path:
+        candidates: list[Path] = []
+        unsafe_matches = 0
         try:
-            candidates = [
-                p.resolve()
-                for base in ("docs", "src", "tests", "scripts", "skills", "webui")
-                for p in (root / base).rglob(path)
-                if p.is_file()
-            ]
+            for base in ("docs", "src", "tests", "scripts", "skills", "webui"):
+                for candidate in (root_resolved / base).rglob(path):
+                    if not candidate.is_file():
+                        continue
+                    resolved = candidate.resolve()
+                    if resolved.is_relative_to(root_resolved):
+                        candidates.append(resolved)
+                    else:
+                        unsafe_matches += 1
         except OSError:
             candidates = []
+            unsafe_matches = 0
         if len(candidates) == 1:
             target = candidates[0]
         elif len(candidates) > 1:
@@ -1666,6 +1794,17 @@ def preview_file(request: Request, path: str) -> Response:
                     "detail": f"文件名 {path} 在工作区内有 {len(candidates)} 处，请用完整路径。",
                 },
             )
+        elif unsafe_matches:
+            return UTF8JSONResponse(
+                status_code=400,
+                content={"error": "out_of_bounds", "detail": "文件名匹配到项目根外链接，已拒绝。"},
+            )
+    # 纵深防御：任何 fallback/未来分支最终都必须再次通过解析后根边界。
+    if not target.is_relative_to(root_resolved):
+        return UTF8JSONResponse(
+            status_code=400,
+            content={"error": "out_of_bounds", "detail": "路径越出项目根，已拒绝。"},
+        )
     if not target.is_file():
         return UTF8JSONResponse(
             status_code=404,
@@ -1721,7 +1860,7 @@ def list_workspace_sessions(workspace_id: str, request: Request) -> JSONResponse
             content={"error": "workspace_not_found", "detail": f"工作区未注册: {workspace_id}"},
         )
     metas = engine.session.list_sessions_in(
-        Path(engine.settings.sessions_dir) / workspace_key(ws.path)
+        Path(engine.settings.sessions_dir) / ws.id
     )
     return JSONResponse(
         {
@@ -1754,10 +1893,33 @@ def register_workspace(request: Request, body: WorkspaceRequest) -> Response:
             content={"error": "workspace_unavailable", "detail": "工作区存储未装配。"},
         )
     path = body.path.strip()
+    prepared_sessions_dir: Path | None = None
+
+    def prepare_runtime(ws: Any) -> None:
+        nonlocal prepared_sessions_dir
+        prepared_sessions_dir = engine.prepare_workspace(ws.path, ws.id)
+
     try:
-        ws = store.register(path)
-        store.switch(ws.id)
-        engine.set_workspace(ws.path)
+        with engine.workspace_transition():
+            ws = store.register_and_switch(path, precommit=prepare_runtime)
+            engine.set_workspace(
+                ws.path, ws.id, prepared_sessions_dir=prepared_sessions_dir
+            )
+    except WorkspaceBusyError as exc:
+        return UTF8JSONResponse(
+            status_code=409,
+            content={"error": "workspace_busy", "detail": str(exc)},
+        )
+    except WorkspacePersistenceError as exc:
+        return UTF8JSONResponse(
+            status_code=500,
+            content={"error": "workspace_persist_failed", "detail": str(exc)},
+        )
+    except OSError as exc:
+        return UTF8JSONResponse(
+            status_code=500,
+            content={"error": "workspace_runtime_prepare_failed", "detail": str(exc)},
+        )
     except ValueError as exc:
         return UTF8JSONResponse(
             status_code=400,
@@ -1776,9 +1938,38 @@ def switch_workspace(request: Request, body: WorkspaceSwitchRequest) -> Response
             status_code=500,
             content={"error": "workspace_unavailable", "detail": "工作区存储未装配。"},
         )
+    prepared_sessions_dir: Path | None = None
+
+    def prepare_runtime(ws: Any) -> None:
+        nonlocal prepared_sessions_dir
+        prepared_sessions_dir = engine.prepare_workspace(ws.path, ws.id)
+
     try:
-        ws = store.switch(body.id)
-        engine.set_workspace(ws.path)
+        with engine.workspace_transition():
+            ws = store.switch(body.id, precommit=prepare_runtime)
+            engine.set_workspace(
+                ws.path, ws.id, prepared_sessions_dir=prepared_sessions_dir
+            )
+    except WorkspaceBusyError as exc:
+        return UTF8JSONResponse(
+            status_code=409,
+            content={"error": "workspace_busy", "detail": str(exc)},
+        )
+    except WorkspacePersistenceError as exc:
+        return UTF8JSONResponse(
+            status_code=500,
+            content={"error": "workspace_persist_failed", "detail": str(exc)},
+        )
+    except WorkspacePathUnavailableError as exc:
+        return UTF8JSONResponse(
+            status_code=409,
+            content={"error": "workspace_path_unavailable", "detail": str(exc)},
+        )
+    except OSError as exc:
+        return UTF8JSONResponse(
+            status_code=500,
+            content={"error": "workspace_runtime_prepare_failed", "detail": str(exc)},
+        )
     except ValueError as exc:
         return UTF8JSONResponse(
             status_code=400,
@@ -1797,7 +1988,14 @@ def remove_workspace(workspace_id: str, request: Request) -> Response:
             status_code=500,
             content={"error": "workspace_unavailable", "detail": "工作区存储未装配。"},
         )
-    if not store.remove(workspace_id):
+    try:
+        removed = store.remove(workspace_id)
+    except WorkspacePersistenceError as exc:
+        return UTF8JSONResponse(
+            status_code=500,
+            content={"error": "workspace_persist_failed", "detail": str(exc)},
+        )
+    if not removed:
         return UTF8JSONResponse(
             status_code=409,
             content={

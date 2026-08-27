@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from llm_loop.recovery.backup import BackupStore
 from llm_loop.recovery.channel import RecoveryChannel
 
 
@@ -16,6 +17,8 @@ def _parse_backup_id(backup_id: str) -> tuple[str, str, str] | None:
 
     格式: <source_id>.<YYYYMMDDHHMMSS>.<target_type>.pending.json
     """
+    if not BackupStore.is_safe_backup_id(backup_id):
+        return None
     parts = backup_id.rsplit(".", 4)
     if len(parts) != 5:
         return None
@@ -32,6 +35,7 @@ def run_recover_from_backup(
     on_conflict: str = "abort",
     sessions_dir: str | Path | None = None,
     memory_dir: str | Path | None = None,
+    session_store: object | None = None,
 ) -> str:
     """recover_from_backup 工具逻辑：校验 → 恢复 → 如实回执.
 
@@ -51,15 +55,29 @@ def run_recover_from_backup(
     if target_type == "session":
         if sessions_dir is None:
             return "[程序异常] sessions_dir 未注入，无法恢复会话"
-        target_path = Path(sessions_dir) / f"{source_id}.json"
+        sessions_root = Path(sessions_dir).resolve()
+        target_path = (sessions_root / f"{source_id}.json").resolve()
+        try:
+            target_path.relative_to(sessions_root)
+        except ValueError:
+            return "[参数错误] backup_id source_id 越出 sessions_dir（未执行恢复）"
 
-        def target_write_fn(payload: bytes | str) -> None:
-            content = payload.decode("utf-8") if isinstance(payload, bytes) else payload
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            target_path.write_text(content, encoding="utf-8")
+        if session_store is not None and hasattr(session_store, "restore_payload"):
+            def target_write_fn(payload: bytes | str) -> None:
+                session_store.restore_payload(  # type: ignore[attr-defined]
+                    source_id, payload, overwrite=on_conflict == "overwrite"
+                )
 
-        def target_exists_fn() -> bool:
-            return target_path.exists()
+            def target_exists_fn() -> bool:
+                return bool(session_store.exists(source_id))  # type: ignore[attr-defined]
+        else:
+            def target_write_fn(payload: bytes | str) -> None:
+                content = payload.decode("utf-8") if isinstance(payload, bytes) else payload
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                target_path.write_text(content, encoding="utf-8")
+
+            def target_exists_fn() -> bool:
+                return target_path.exists()
 
     elif target_type == "memory_stats":
         if memory_dir is None:
@@ -83,6 +101,8 @@ def run_recover_from_backup(
             target_write_fn=target_write_fn,
             target_exists_fn=target_exists_fn,
             on_conflict=on_conflict,
+            expected_source_id=source_id,
+            expected_target_type=target_type,
         )
     except OSError as exc:
         return f"[程序异常] 恢复失败（{type(exc).__name__}: {exc}），备份保留"

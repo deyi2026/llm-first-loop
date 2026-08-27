@@ -18,9 +18,45 @@ _SEARCH_RECORDS_KIND_HINT = (
     "self_eval/change_log/proc_versions/feishu_audit/experience/all"
 )
 
+# EVO-20260826: architecture_status() 无 dimensions 时默认返回精简子集，
+# 避免全量快照 >8000 字符被截断且不归档→search_archive 取不回（RULE-AI-11.1 截断类型 c）。
+# 默认子集为 AI 定向所需轻量维度；重维度（action_trace/tool_history/message_flow/
+# memory_state/architecture_config/process_versions/recovery/model_fallback）按需 dimensions=<维度> 分页查询。
+_DEFAULT_DIMS = [
+    "current_phase",
+    "context_usage",
+    "pending_actions",
+    "exception_log",
+    "rules_version",
+    "program_faults",
+]
+
+# 完整维度清单（与 status.py ArchitectureStatusProvider.snapshot 的 avail 键保持同步；
+# test_status_all_dims_in_sync 守护防漂移）。
+_ALL_DIMS = [
+    "current_phase",
+    "action_trace",
+    "tool_history",
+    "message_flow",
+    "memory_state",
+    "context_usage",
+    "exception_log",
+    "architecture_config",
+    "rules_version",
+    "workspace_changed",
+    "process_versions",
+    "model_fallback",
+    "pending_actions",
+    "recovery",
+    "program_faults",
+]
+
 
 def run_status(ctx: Any, status_provider: Any, args: dict) -> ToolResult:
-    """architecture_status: 拉取架构状态快照（维度可按需裁剪）."""
+    """architecture_status: 拉取架构状态快照（维度可按需裁剪）.
+
+    EVO-20260826: 无 dimensions 时默认返回精简子集 + 分页提示（避免全量>8000 截断不可检索）。
+    """
     if status_provider is None:
         return ToolResult(
             status=ToolResultStatus.FAILURE,
@@ -36,16 +72,29 @@ def run_status(ctx: Any, status_provider: Any, args: dict) -> ToolResult:
         dims = [d.strip() for d in re.split(r"[,，\s]+", dims) if d.strip()] or None
     if not isinstance(dims, list):
         dims = None
+    default_view = dims is None
+    if default_view:
+        dims = _DEFAULT_DIMS
     snap = status_provider.snapshot(dimensions=dims)
+    if default_view:
+        snap["_default_view_hint"] = (
+            "[默认精简视图] 显示维度: " + ", ".join(_DEFAULT_DIMS)
+            + "。完整维度: " + ", ".join(_ALL_DIMS)
+            + "。按 dimensions=<维度> 分页查询（如 architecture_status(dimensions=[\"architecture_config\"])）。"
+        )
     text = json.dumps(snap, ensure_ascii=False, indent=2)
     # M19 FIX-03: 8000 字符静默截断如实标注（标注拼接在截断段之后，保证标注可见）
+    # EVO-20260826: 默认精简视图后截断罕见（仅当单维度本身极大），保留作安全网。
     if len(text) > 8000:
+        from llm_loop.core.run_context import current_evidence_shadow_enabled
+
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=text[:8000]
             + "\n[快照截断] 超出 8000 字符部分未显示（可缩小 dimensions 精确查询，如仅查 architecture_config）。",
             tool_call_id="",
             tool_name="architecture_status",
+            raw_observation=text if current_evidence_shadow_enabled.get() else None,
         )
     return ToolResult(
         status=ToolResultStatus.SUCCESS,
@@ -224,10 +273,12 @@ def run_search_records(ctx: Any, search_fn: Any, args: dict, session_id_fn: Any)
             tool_name="search_records",
         )
     lines: list[str] = []
+    raw_lines: list[str] = []
     for r in result[:limit]:
-        lines.append(
-            f"[{r.get('ts', '')}] {r.get('kind', kind)}: {str(r.get('summary', ''))[:200]}"
-        )
+        summary = str(r.get("summary", ""))
+        prefix = f"[{r.get('ts', '')}] {r.get('kind', kind)}: "
+        lines.append(prefix + summary[:200])
+        raw_lines.append(prefix + summary)
     content = "[search_records] 命中 " + str(len(result)) + " 条:\n" + "\n".join(lines[:6])
     # M19 FIX-02: 命中 > 展示数时如实标注（真实命中数 len(result)，非截断后计数）
     if len(result) > 6:
@@ -235,11 +286,15 @@ def run_search_records(ctx: Any, search_fn: Any, args: dict, session_id_fn: Any)
             f"\n[仅显示前 6 条] 共 {len(result)} 条命中（limit={limit}）。"
             "可缩小 query 或提高 limit 精确检索。"
         )
+    from llm_loop.core.run_context import current_evidence_shadow_enabled
+
+    raw_content = "[search_records] 命中 " + str(len(result)) + " 条:\n" + "\n".join(raw_lines)
     return ToolResult(
         status=ToolResultStatus.SUCCESS,
         content=content,
         tool_call_id="",
         tool_name="search_records",
+        raw_observation=raw_content if current_evidence_shadow_enabled.get() else None,
     )
 
 

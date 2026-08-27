@@ -22,12 +22,13 @@ def engine_src() -> str:
 
 def test_loop_mixin_split_layout():
     """新 Mixin 模块布局：类定义 + 文件级 pyright 豁免 + TYPE_CHECKING 循环规避."""
-    for fname in ("routing.py", "overflow.py", "tool_exec.py"):
+    for fname in ("routing.py", "overflow.py", "tool_exec.py", "lifecycle.py"):
         src = (LOOP_DIR / fname).read_text(encoding="utf-8")
         mixin = {
             "routing.py": "_RoutingMixin",
             "overflow.py": "_OverflowMixin",
             "tool_exec.py": "_ToolExecMixin",
+            "lifecycle.py": "_LifecycleMixin",
         }[fname]
         assert f"class {mixin}:" in src, f"{fname} 缺 {mixin} 类定义"
         assert "reportAttributeAccessIssue=false" in src, f"{fname} 缺 pyright 文件级豁免"
@@ -43,7 +44,8 @@ def test_loop_reexport_kept():
         _tool_args_summary,
     )
 
-    assert _CHARS_PER_TOKEN_EST == 2
+    # 2026-08-24 校准（拷问产出）: 2 → 0.6（实测大上下文 1.676 tok/char, 旧值低估 3.35 倍）
+    assert _CHARS_PER_TOKEN_EST == 0.6
     assert _CONTEXT_SAFETY_MARGIN == 0.9
     assert _tool_args_summary({"path": "/tmp/file.txt"}) == '{"path": "/tmp/file.txt"}'
     assert _json_dumps_args({"a": 1}) == '{"a": 1}'

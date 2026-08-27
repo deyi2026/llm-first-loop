@@ -169,7 +169,7 @@ class SelfEvaluator:
             self._metric_tool_efficiency(tool_history),
             self._metric_honesty_rate(declaration_checks),
             self._metric_stagnation_rate(action_trace),
-            self._metric_exception_rate(exceptions, llm_rounds),
+            self._metric_exception_rate(exceptions, llm_rounds, action_trace),
         ]
         summary = self._build_summary(metrics)
         notes = [m.note for m in metrics if m.note]
@@ -280,41 +280,72 @@ class SelfEvaluator:
         )
 
     def _metric_stagnation_rate(self, action_trace: list[dict]) -> EvalMetric:
-        """停滞率 ← action_trace: 近 span 条重复动作（同工具同参数指纹）占比."""
+        """停滞率 ← action_trace 近 span 条『连续重复动作』占比（EVO-20260827-03416178）.
+
+        判定口径: 连续两条指纹相同才计一次重复——真实退化循环必然背靠背重试
+        同一动作；正常交替工作流中的同类调用（decile→tool 对、跨任务的同工具）
+        不再误判为停滞。understand.* 程序记账动作（每轮必发，如 model_aware_budget）
+        不参与判定，避免结构性虚高。
+        """
         recent = action_trace[-self._span :]
-        if len(recent) < self._min_samples:
+        eligible = [
+            a for a in recent if not str(a.get("phase", "")).startswith("understand.")
+        ]
+        if len(eligible) < self._min_samples:
             return EvalMetric(
                 name="stagnation_rate",
                 value=None,
-                sample_size=len(recent),
+                sample_size=len(eligible),
                 source="action_trace",
-                note=f"样本不足（{len(recent)} < {self._min_samples}）",
+                note=f"样本不足（记账剔除后 {len(eligible)} < {self._min_samples}）",
             )
-        seen: set[str] = set()
-        repeats = 0
-        for a in recent:
-            fingerprint = f"{a.get('phase', '')}|{a.get('action_type', '')}|{a.get('detail', '')}"
-            if fingerprint in seen:
-                repeats += 1
-            else:
-                seen.add(fingerprint)
+
+        def _fp(a: dict) -> str:
+            return f"{a.get('phase', '')}|{a.get('action_type', '')}|{a.get('detail', '')}"
+
+        repeats = sum(
+            1
+            for i in range(1, len(eligible))
+            if _fp(eligible[i]) == _fp(eligible[i - 1])
+        )
+        exempt = len(recent) - len(eligible)
         return EvalMetric(
             name="stagnation_rate",
-            value=round(repeats / len(recent), 4),
-            sample_size=len(recent),
+            value=round(repeats / len(eligible), 4),
+            sample_size=len(eligible),
             source="action_trace",
+            note=(f"连续重复口径（剔除程序记账 {exempt} 条）" if exempt else "连续重复口径"),
         )
 
-    def _metric_exception_rate(self, exceptions: list[dict], llm_rounds: int) -> EvalMetric:
-        """异常率 ← exception_log + record_llm_round: 近 span 条异常数 / 轮数."""
+    def _metric_exception_rate(
+        self, exceptions: list[dict], llm_rounds: int, action_trace: list[dict] | None = None
+    ) -> EvalMetric:
+        """异常率 ← exception_log / 评估窗口内 llm 轮次（EVO-20260827-c6908267）.
+
+        口径对齐修复: 分母不再取当前进程 llm_rounds 快照（短新会话必然虚高），
+        优先用评估时间窗内 action_trace 的 record_llm_round 计数——与分子
+        （时间窗过滤后的异常条数）同一窗口，口径自洽；无法计数时回退进程快照。
+        note 固定写明分子/分母构成，使数字自带口径可审计；无轮次依据时如实置 None。
+        """
         recent = exceptions[-self._span :]
+        rounds_src = "process_snapshot"
+        if action_trace:
+            win_rounds = sum(
+                1
+                for a in action_trace
+                if a.get("phase", "") == "action.llm_decide"
+                and a.get("action_type", "") == "llm_response"
+            )
+            if win_rounds > 0:
+                llm_rounds = win_rounds
+                rounds_src = "window_action_trace"
         if llm_rounds < self._min_samples:
             return EvalMetric(
                 name="exception_rate",
                 value=None,
                 sample_size=llm_rounds,
                 source="exception_log",
-                note=f"样本不足（{llm_rounds} 轮 < {self._min_samples}）",
+                note=f"样本不足（{rounds_src} {llm_rounds} 轮 < {self._min_samples}）",
             )
         value = round(len(recent) / llm_rounds, 4)
         return EvalMetric(
@@ -322,6 +353,7 @@ class SelfEvaluator:
             value=min(value, 1.0),
             sample_size=llm_rounds,
             source="exception_log",
+            note=f"分子={len(recent)} 条(近span)/分母={llm_rounds} 轮({rounds_src})",
         )
 
     def _build_summary(self, metrics: list[EvalMetric]) -> str:

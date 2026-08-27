@@ -155,12 +155,12 @@ def test_exec_cmd_find_empty_counts_and_registers():
     pr.reset()
     eng, sess = _StubEngine(), _Sess()
     eng._track_stagnation(
-        _tc(name="execute_command", command="find /tmp/work/proj -name ANALYSIS-2026*.md"),
+        _tc(name="execute_command", command="find wkdir -name ANALYSIS-2026*.md"),
         sess, [],
         result=_empty_result("（命令执行成功，无输出）"),
     )
     eng._track_stagnation(
-        _tc(name="execute_command", command="find /tmp/work/proj -maxdepth 3 -name ANALYSIS-2026*.md"),
+        _tc(name="execute_command", command="find wkdir -maxdepth 3 -name ANALYSIS-2026*.md"),
         sess, [],
         result=_empty_result("（命令执行成功，无输出）"),
     )
@@ -169,7 +169,7 @@ def test_exec_cmd_find_empty_counts_and_registers():
     assert len(reminders) == 1
     assert eng.actions and eng.actions[-1][0] == "empty_search.reminder"
     # 否定帧已登记（目标键 cmd:...）
-    assert pr.check_known_missing("cmd:find /tmp/work/proj -name ANALYSIS-2026*.md")
+    assert pr.check_known_missing("cmd:find wkdir -name ANALYSIS-2026*.md")
 
 
 def test_exec_cmd_non_search_empty_not_counted():

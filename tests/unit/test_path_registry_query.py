@@ -10,6 +10,7 @@ def _setup(monkeypatch, tmp_path):
     pr.reset()
     monkeypatch.setattr(pr, "_REGISTRY_PATH", None)
     monkeypatch.setattr(pr, "_LOADED", None)
+    monkeypatch.setattr(pr, "_LOADED_PATH", None)
 
     def fake_registry_file():
         return tmp_path / "path_registry.json"
@@ -67,7 +68,7 @@ def test_negative_frame_short_circuit(monkeypatch, tmp_path):
 
 def test_search_files_path_query(monkeypatch, tmp_path):
     """search_files(path=...) 精确路径查询: 存在→SUCCESS 元数据; 不存在→FAILURE + 提示."""
-    pr_mod = _setup(monkeypatch, tmp_path)
+    _setup(monkeypatch, tmp_path)
     tool = SearchFilesTool()
     f = tmp_path / "known.py"
     f.write_text("x = 1")
@@ -77,3 +78,66 @@ def test_search_files_path_query(monkeypatch, tmp_path):
     r2 = tool.execute(path=str(tmp_path / "no_such.py"))
     assert r2.status.value == "failure"
     assert "路径不存在" in r2.content
+
+
+def test_negative_frame_revalidates_when_file_created(monkeypatch, tmp_path):
+    """负帧期间外部新建文件后，精确查询必须以 stat 真相翻转为存在。"""
+    pr_mod = _setup(monkeypatch, tmp_path)
+    f = tmp_path / "created_later.txt"
+    pr_mod.register_missing(str(f))
+    assert pr_mod.check_known_missing(str(f)) is True
+    f.write_text("now exists")
+    info = pr_mod.query_path(str(f))
+    assert info["exists"] is True
+    assert info["from"] == "stat"
+    assert pr_mod.check_known_missing(str(f)) is False
+
+
+def test_relative_query_follows_current_workspace(monkeypatch, tmp_path):
+    """search_files(path=相对路径) 必须跟随 current_workspace_root，而非进程 cwd。"""
+    from llm_loop.core.run_context import current_workspace_root
+
+    pr_mod = _setup(monkeypatch, tmp_path / "registry")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "known.py").write_text("x = 1")
+    token = current_workspace_root.set(str(workspace))
+    try:
+        info = pr_mod.query_path("known.py")
+        assert info["exists"] is True
+        assert info["kind"] == "file"
+    finally:
+        current_workspace_root.reset(token)
+
+
+def test_registry_file_switches_with_workspace(monkeypatch, tmp_path):
+    """默认 registry 文件不得缓存首个 workspace；切换工作区必须物理隔离。"""
+    from llm_loop.core.run_context import current_workspace_root
+
+    monkeypatch.setattr(pr, "_REGISTRY_PATH", None)
+    monkeypatch.setattr(pr, "_LOADED", None)
+    monkeypatch.setattr(pr, "_LOADED_PATH", None)
+    w1 = tmp_path / "w1"
+    w2 = tmp_path / "w2"
+    w1.mkdir()
+    w2.mkdir()
+
+    t1 = current_workspace_root.set(str(w1))
+    try:
+        pr.register_missing("same.txt", source="test")
+        p1 = pr._registry_file()
+        assert pr.check_known_missing("same.txt") is True
+    finally:
+        current_workspace_root.reset(t1)
+
+    (w2 / "same.txt").write_text("exists in w2")
+    t2 = current_workspace_root.set(str(w2))
+    try:
+        p2 = pr._registry_file()
+        assert p2 != p1
+        info = pr.query_path("same.txt")
+        assert info["exists"] is True
+        assert info["from"] == "stat"
+        assert pr.check_known_missing("same.txt") is False
+    finally:
+        current_workspace_root.reset(t2)

@@ -2,8 +2,8 @@
 
 def test_truncated_receipt_tagged(monkeypatch):
     """EVO-20260820-be72efb1: 截断回执标注 ⚠️截断，声明比对感知未核验数据."""
-    from llm_loop.feedback.validator import DeclarationValidator
     from llm_loop.core.message import Message, MessageSource, ToolResultStatus
+    from llm_loop.feedback.validator import DeclarationValidator
 
     checker = DeclarationValidator(audit_dir=None)
     # 截断回执（内容含截断标记）

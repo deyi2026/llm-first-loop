@@ -139,6 +139,24 @@ def test_chat_payload_thinking_deepseek():
     assert payload["reasoning_effort"] == "high"
 
 
+def test_chat_payload_reasoning_effort_context_override_is_request_local():
+    """请求级 context override 优先于共享 client 默认，结束后不改实例属性。"""
+    from llm_loop.core.run_context import current_reasoning_effort
+
+    lines = ['data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}', "data: [DONE]"]
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
+        c = _client(provider="deepseek", reasoning_effort="high")
+        token = current_reasoning_effort.set("low")
+        try:
+            c.chat(messages=[{"role": "user", "content": "hi"}], tools=[])
+        finally:
+            current_reasoning_effort.reset(token)
+    payload = client_cls.return_value.stream.call_args.kwargs["json"]
+    assert payload["reasoning_effort"] == "low"
+    assert c.reasoning_effort == "high"
+
+
 def test_chat_payload_thinking_base_url_match():
     """M20 CFG-03: base_url 含 deepseek.com → 发送（不依赖 provider 字段）."""
     lines = ['data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}', "data: [DONE]"]
@@ -831,3 +849,86 @@ def test_llm_trust_env_override(monkeypatch):
     monkeypatch.setenv("LLM_TRUST_ENV", "0")
     c2 = _client(base_url="https://api.deepseek.com/v1")
     assert c2._client.trust_env is False
+
+
+def test_chat_think_tags_strip_markers_exactly():
+    """M3 content-think: 完整标签应只把内部内容归为 reasoning，不泄漏标签。"""
+    lines = [
+        'data: {"choices": [{"delta": {"content": "前缀<think>秘密推理</think>答案"}}]}',
+        'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
+        resp = _client().chat(messages=[{"role": "user", "content": "hi"}], tools=[])
+    assert resp.content == "前缀答案"
+    assert resp.reasoning_content == "秘密推理"
+
+
+def test_chat_think_tags_can_split_across_sse_chunks():
+    """opening/closing 标签任意跨 delta 分片时也不能泄漏进正文或 reasoning。"""
+    lines = [
+        'data: {"choices": [{"delta": {"content": "前缀<th"}}]}',
+        'data: {"choices": [{"delta": {"content": "ink>秘密推"}}]}',
+        'data: {"choices": [{"delta": {"content": "理</th"}}]}',
+        'data: {"choices": [{"delta": {"content": "ink>答案"}}]}',
+        'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
+        resp = _client().chat(messages=[{"role": "user", "content": "hi"}], tools=[])
+    assert resp.content == "前缀答案"
+    assert resp.reasoning_content == "秘密推理"
+
+
+def test_unclosed_think_does_not_poison_next_request():
+    """同一 client 上一请求异常结束在 think 内，下一请求必须从干净 parser 状态开始。"""
+    from llm_loop.llm.errors import LLMEmptyResponseError
+
+    first = _FakeStreamCtx([
+        'data: {"choices": [{"delta": {"content": "<think>未闭合推理"}}]}',
+        "data: [DONE]",
+    ])
+    second = _FakeStreamCtx([
+        'data: {"choices": [{"delta": {"content": "下一轮正文"}}]}',
+        'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ])
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.side_effect = [first, second]
+        c = _client()
+        with pytest.raises(LLMEmptyResponseError):
+            c.chat(messages=[{"role": "user", "content": "first"}], tools=[])
+        resp = c.chat(messages=[{"role": "user", "content": "second"}], tools=[])
+    assert resp.content == "下一轮正文"
+    assert resp.reasoning_content is None
+
+
+def test_concurrent_streams_on_same_client_have_isolated_think_state():
+    """共享 provider client 的并发 session 不得共享 think parser 状态。"""
+    first = _FakeStreamCtx([
+        'data: {"choices": [{"delta": {"content": "<think>A"}}]}',
+        # 第二个 reasoning delta 让旧实现先把 self._in_think=True 写回共享 client，
+        # 再把 generator 停在下一次 yield；此时启动 g2 可稳定暴露跨会话污染。
+        'data: {"choices": [{"delta": {"content": "B"}}]}',
+        'data: {"choices": [{"delta": {"content": "</think>done-a"}}]}',
+        "data: [DONE]",
+    ])
+    second = _FakeStreamCtx([
+        'data: {"choices": [{"delta": {"content": "visible-b"}}]}',
+        "data: [DONE]",
+    ])
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.side_effect = [first, second]
+        c = _client()
+        g1 = c.chat_stream([{"role": "user", "content": "a"}], [])
+        d1 = next(g1)
+        assert d1.reasoning
+        d1b = next(g1)
+        assert d1b.reasoning
+        g2 = c.chat_stream([{"role": "user", "content": "b"}], [])
+        d2 = next(g2)
+        assert d2.text == "visible-b"
+        g1.close()
+        g2.close()

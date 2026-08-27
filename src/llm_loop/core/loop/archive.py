@@ -22,6 +22,20 @@ if TYPE_CHECKING:
 
 class _ArchiveMixin:
 
+    def _archive_feedback_session(self: LoopEngine, session_id: str):
+        """archive故障反馈优先复用当前run的token-bound Session；run外仍从磁盘加载。"""
+        from llm_loop.core.run_context import current_session_id
+
+        if current_session_id.get() == session_id:
+            try:
+                with self._run_states_guard:
+                    active = self._run_sessions.get(session_id)
+                if active is not None:
+                    return active
+            except Exception:  # noqa: BLE001 — 绑定表不可用时回退既有load路径
+                logger.debug("archive故障反馈解析active session失败，回退load", exc_info=True)
+        return self.session.load(session_id)
+
     def _archive_sink(self: LoopEngine, session_id: str, msg: Message) -> None:
         """压缩另存回调（T22）: 将被丢弃的消息原文完整另存到 ArchiveStore.
 
@@ -30,7 +44,35 @@ class _ArchiveMixin:
         RULE-AI-00 自动摘要边界内: 只作用于已压缩存档的档案条目、回填 summary 字段、
         不注入当前上下文、不丢信息、可经 search_archive(with_summary=true) 检索。
         """
+        msg_seq = self._resolve_msg_seq(session_id, msg)
+        evidence_ref: str | None = None
+        registry = getattr(self, "registry", None)
+        try:
+            if registry is not None and getattr(
+                registry, "evidence_history_capture_enabled", False
+            ):
+                evidence_ref = registry.capture_archived_message(
+                    session_id=session_id,
+                    message=msg,
+                    msg_seq=msg_seq,
+                )
+        except Exception:  # noqa: BLE001 - enforce must not shrink bytes without canonical recovery
+            logger.warning("压缩消息 Evidence capture 失败；enforce 模式拒绝继续压缩", exc_info=True)
+            raise
+
         if self.archive is None:
+            if evidence_ref:
+                self._event_append(
+                    session_id,
+                    "context.compressed",
+                    {
+                        "archive_ref": None,
+                        "evidence_ref": evidence_ref,
+                        "tool_call_id": msg.tool_call_id,
+                        "msg_seq": msg_seq,
+                        "chars": len(msg.content),
+                    },
+                )
             return
         try:
             entry = self.archive.archive(
@@ -43,15 +85,15 @@ class _ArchiveMixin:
                 status=msg.status.value if msg.status else None,
                 reasoning_content=getattr(msg, "reasoning_content", None) or None,
             )
-            # D1: context.compressed 事件（与原文另存同一事务点，fail-open）——
-            # archive_ref 优先 tool_call_id（与 web 展开端点 get_by_tool_call_id 契约一致）
+            # D1: context.compressed 事件（legacy archive + provider-neutral Evidence ref）.
             self._event_append(
                 session_id,
                 "context.compressed",
                 {
                     "archive_ref": msg.tool_call_id or getattr(entry, "id", None),
+                    "evidence_ref": evidence_ref,
                     "tool_call_id": msg.tool_call_id,
-                    "msg_seq": self._resolve_msg_seq(session_id, msg),
+                    "msg_seq": msg_seq,
                     "chars": getattr(entry, "chars", None) or len(msg.content),
                 },
             )
@@ -68,6 +110,6 @@ class _ArchiveMixin:
             from contextlib import suppress
 
             with suppress(Exception):
-                s = self.session.load(session_id)
+                s = self._archive_feedback_session(session_id)
                 s.messages.append(self._fault_feedback("archive_sink", exc))
                 self.session.save(s)

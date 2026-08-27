@@ -298,4 +298,4 @@ def test_action_observer_exception_fail_open(tmp_path):
 
     engine.set_action_observer(boom)
     result = engine.run_single("任务")
-    assert result.final_answer == "回答"  # 观察者异常不影响结果
+    assert result.final_answer.startswith("回答")  # 观察者异常不影响结果；尾部可能有缓存命中率展示行（方案B）

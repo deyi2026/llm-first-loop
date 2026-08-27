@@ -34,6 +34,17 @@ WEB_HOST="127.0.0.1"
 
 _log() { echo "[mirror] $(date '+%H:%M:%S') $*"; }
 
+# DSH 环境隔离（2026-08-23 拷问修复 P1）:
+#   1. DSH_HOME 重定向到镜像区项目内 data/dsh-home —— 否则落到全局 ~/.dsh，
+#      dsh_task/dsh_session_read 的 session 目录按镜像区 workspace_key 找不到 → 失败。
+#   2. 清理主区 DSH 环境残留（DSH_SESSION_JSONL/DSH_SESSION_ID/DSH_SHELL/DSH_WEB_URL）
+#      —— 镜像进程若从主区 DSH 会话环境启动会携带这些变量，路径解析错指主区。
+_prep_dsh_env() {
+  export DSH_HOME="$MIRROR_DIR/data/dsh-home"
+  mkdir -p "$DSH_HOME"
+  unset DSH_SESSION_JSONL DSH_SESSION_ID DSH_SHELL DSH_WEB_URL 2>/dev/null || true
+}
+
 # 按端口找监听进程（只杀目标端口，不碰主区）
 _port_pid() {
   lsof -nP -iTCP:"$1" -sTCP:LISTEN 2>/dev/null | awk 'NR==2 {print $2}'
@@ -61,6 +72,7 @@ _stop_port() {
 
 _start_web() {
   _log "启动 web(port $WEB_PORT)..."
+  _prep_dsh_env
   set -a && source .env && set +a
   PYTHONPATH="$MIRROR_DIR/src" WEB_PORT="$WEB_PORT" \
     nohup "$VENV_PY" -m llm_loop.web >> data/web.log 2>&1 &
@@ -79,6 +91,7 @@ _start_web() {
 
 _start_feishu() {
   _log "启动飞书桥..."
+  _prep_dsh_env
   set -a && source .env && set +a
   PYTHONPATH="$MIRROR_DIR/src" \
     nohup "$VENV_PY" -m llm_loop.feishu >> data/feishu.log 2>&1 &

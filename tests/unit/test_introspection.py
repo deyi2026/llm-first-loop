@@ -211,6 +211,28 @@ def test_architecture_status_tool_snapshot_json():
     assert "current_phase" in data
 
 
+def test_submit_evolution_uses_current_run_session_id(tmp_path):
+    """并发run时演进建议归属必须取ContextVar当前session，而不是共享ctx最后写入者。"""
+    from llm_loop.core.run_context import current_session_id
+    from llm_loop.introspection.evolution import EvolutionStore
+
+    store = EvolutionStore(tmp_path / "audit")
+    ctx = CorrectionContext(evolution_store=store, session_id="session-B")
+    reg = CorrectionToolRegistry(ctx)
+    token = current_session_id.set("session-A")
+    try:
+        result = reg.execute(
+            "submit_evolution",
+            {"content": "并发归属测试", "impact_scope": "introspection/"},
+        )
+    finally:
+        current_session_id.reset(token)
+
+    assert result.status == ToolResultStatus.SUCCESS
+    rows = store.list()
+    assert rows and rows[0]["session_id"] == "session-A"
+
+
 def test_submit_evolution_receipt_level0_same_as_before(tmp_path):
     """EVOLVE_LOCAL_EXEC=0（默认）回执与现状一致（P0 零回归，EXEC-01）."""
     from llm_loop.introspection.evolution import EvolutionStore
@@ -259,6 +281,32 @@ def test_submit_evolution_receipt_boundary(tmp_path):
     )
     assert r.status == ToolResultStatus.SUCCESS
     assert "需人工决策" in r.content
+
+
+def test_self_evaluate_uses_current_run_session_id():
+    """并发run时自评必须评估ContextVar当前session，而不是共享ctx最后写入者。"""
+    from types import SimpleNamespace
+
+    from llm_loop.core.run_context import current_session_id
+
+    captured = {}
+
+    class _Evaluator:
+        def evaluate(self, *, session_id, trigger):
+            captured["session_id"] = session_id
+            captured["trigger"] = trigger
+            return SimpleNamespace(eval_id="SE-CURRENT", metrics=[])
+
+    ctx = CorrectionContext(evaluator=_Evaluator(), session_id="session-B")
+    reg = CorrectionToolRegistry(ctx)
+    token = current_session_id.set("session-A")
+    try:
+        result = reg.execute("self_evaluate", {"trigger": "manual"})
+    finally:
+        current_session_id.reset(token)
+
+    assert result.status == ToolResultStatus.SUCCESS
+    assert captured == {"session_id": "session-A", "trigger": "manual"}
 
 
 def test_self_evaluate_tool(tmp_path):
@@ -477,7 +525,10 @@ def test_search_truncation_note(tmp_path):
 
 
 def test_status_snapshot_truncation_note(tmp_path):
-    """M19 FIX-03: architecture_status 超 8000 字符 → 截断标注（位于截断段后）."""
+    """M19 FIX-03 / EVO-20260826 安全网: 即使默认精简子集，单维度本身 >8000 → 仍截断标注（位于截断段后）.
+
+    _BigStatus 忽略 dimensions 参数（模拟某维度本身极大），默认视图仍触发截断安全网。
+    """
     from llm_loop.introspection.tools_status import run_status
 
     class _BigStatus:
@@ -488,6 +539,46 @@ def test_status_snapshot_truncation_note(tmp_path):
     assert r.status.value == "success"
     assert "[快照截断] 超出 8000 字符" in r.content
     assert r.content.rfind("[快照截断]") > 8000  # 标注在截断段之后
+
+
+def test_status_default_returns_lean_subset_with_hint(tmp_path):
+    """EVO-20260826: architecture_status() 无 dimensions → 默认精简子集 + 分页提示，不触发截断."""
+    from llm_loop.introspection.tools_status import run_status
+
+    class _RespectingStatus:
+        """snapshot 遵重 dimensions 参数（真实 provider 行为）."""
+        _all = {
+            "current_phase": "idle", "action_trace": [], "tool_history": [],
+            "message_flow": [], "memory_state": {}, "context_usage": {"llm_rounds": 1},
+            "exception_log": [], "architecture_config": {"heavy": "H" * 6000},
+            "rules_version": "4", "workspace_changed": None, "process_versions": {},
+            "model_fallback": {}, "pending_actions": {}, "recovery": {}, "program_faults": {},
+        }
+        def snapshot(self, dimensions=None):
+            if dimensions is None:
+                return self._all
+            return {d: self._all.get(d, {}) for d in dimensions}
+
+    r = run_status(CorrectionContext(), _RespectingStatus(), {})
+    assert r.status.value == "success"
+    assert "[快照截断]" not in r.content  # 精简子集小，不触发截断
+    data = json.loads(r.content)
+    assert "_default_view_hint" in data
+    assert "current_phase" in data  # 轻维度在子集中
+    assert "context_usage" in data
+    assert "architecture_config" not in data  # 重维度被排除
+    assert "H" * 6000 not in r.content  # 重维度 payload 不出现
+
+
+def test_status_all_dims_in_sync():
+    """EVO-20260826 守护: tools_status._ALL_DIMS 与 ArchitectureStatusProvider.snapshot 全量键一致（防漂移）."""
+    from llm_loop.introspection.tools_status import _ALL_DIMS
+
+    p = ArchitectureStatusProvider()
+    actual = set(p.snapshot().keys())
+    assert set(_ALL_DIMS) == actual, (
+        f"_ALL_DIMS 与 snapshot 键漂移: 缺 {actual - set(_ALL_DIMS)}, 多 {set(_ALL_DIMS) - actual}"
+    )
 
 
 def test_submit_evolution_eval_id_hint(tmp_path):
@@ -642,3 +733,20 @@ def test_engine_fault_recording(tmp_path):
     assert result.final_answer  # 记忆故障不阻断
     faults = engine.status.snapshot()["program_faults"]
     assert faults.get("memory", 0) >= 1  # 记忆故障已计数
+
+
+def test_record_searcher_global_archive_search_sees_new_segment_layout(tmp_path):
+    """无session过滤的全局archive检索必须经ArchiveStore枚举命中新分片。"""
+    from llm_loop.introspection.search import RecordSearcher
+    from llm_loop.memory.archive import ArchiveStore
+
+    archive = ArchiveStore(tmp_path / "archives", segment_bytes=1)
+    archive.archive("s1", role="user", source="user", content="filler")
+    archive.archive("s1", role="user", source="user", content="new-layout-NEEDLE")
+    assert (tmp_path / "archives" / "s1.segments" / "1.jsonl").exists()
+
+    searcher = RecordSearcher(audit_dir=tmp_path / "audit", archive_store=archive)
+    hits = searcher.search(kind="archive", query="NEEDLE", limit=10)
+
+    assert len(hits) == 1
+    assert "NEEDLE" in hits[0]["content_preview"]

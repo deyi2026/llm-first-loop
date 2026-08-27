@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -48,6 +49,7 @@ class ModelSpec:
     long_context: bool = False
     multimodal: bool = False
     wire_protocol: str = "openai"  # P3-5: openai / anthropic / google（客户端协议分发）
+    capability_tier: str = "unknown"  # T-P2-1-1: strong/weak/unknown（spec §6.5 漂移治理动态调权依据; unknown=保守视为弱模型）
 
 
 @dataclass(frozen=True)
@@ -71,6 +73,9 @@ class ProviderSpec:
     timeout_s: float | None = None
     history_budget_chars: int | None = None
     max_tokens: int | None = None  # 2026-08-15: provider 级输出预算（None=全局 LLM_MAX_TOKENS）
+    chars_per_token: float | None = None  # EVO-20260824: provider 级字符/token 估算（None=全局 0.6）
+    # deepseek 中文混合实测 1.676 tok/char → 0.6 chars/token；local qwen 中文 tokenizer 效率更高
+    # （1 token≈1-1.5 中文字）→ 0.9。守卫/预算按 provider 取值，未配置回退全局（零回归）。
     inject_system_notices: bool = True  # 推送式 system 注入（架构上报/预警/快照）是否进提交视图;
     # False（本地慢模型用）= 仅落会话不进提交 —— system 前缀保持静态, llama.cpp 引擎前缀缓存
     # 每轮命中（首 token 大幅缩短）; 功能性注入（压缩标注/降级通知/overflow 回注等）不受影响。
@@ -192,7 +197,7 @@ class ProviderRegistry:
             and ("localhost" in base_url or "127.0.0.1" in base_url)
         ):
             try:
-                _lms = _discover_llama_server()
+                _lms = _discover_llama_server(model_id)
                 if _lms:
                     base_url, api_key = _lms
             except Exception:  # noqa: BLE001 — 发现失败回退配置（fail-open）
@@ -287,11 +292,27 @@ def _parse_wire_protocol(pid: str, mid: str, mval: dict[str, Any]) -> str:
     return "openai"
 
 
-def _discover_llama_server() -> tuple[str, str] | None:
-    """2026-08-22 直连 llama-server（输入提速, KV 缓存命中）: 扫描本地 llama-server 进程.
+def _qwen_model_signature(text: str) -> tuple[str, str] | None:
+    """提取 Qwen 主版本/规模（如 Qwen3.8-27B → ("3.8", "27")）供安全消歧。"""
+    match = re.search(
+        r"qwen\s*([0-9]+(?:[._][0-9]+)*)[^0-9a-z]+([0-9]+(?:\.[0-9]+)?)b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    return match.group(1).replace("_", "."), match.group(2)
 
-    从进程命令行解析 --port / --api-key（LM Studio 后端 llama.cpp）。重启后端口变化
-    也能自动发现。失败返回 None（调用方回退配置 base_url）。仅用于 local provider 直连。
+
+def _discover_llama_server(requested_model: str | None = None) -> tuple[str, str] | None:
+    """扫描本地 llama-server；多候选时仅在 requested model 可唯一匹配时直连。
+
+    LM Studio 可能同时托管多个 Qwen llama-server。旧实现返回 ``ps aux`` 中第一个
+    Qwen 进程，会把请求模型 B 静默送到模型 A，同时上层仍标注 B。现在先收集全部
+    有效候选：
+    - 只有一个候选：requested model 无可识别签名时保持旧兼容；若双方签名可识别则必须一致；
+    - 多候选：按模型名紧凑匹配或 Qwen 主版本+规模签名唯一消歧；
+    - 无法唯一匹配：返回 None，让调用方回退配置 base_url，绝不猜第一个。
     """
     try:
         import subprocess
@@ -299,21 +320,96 @@ def _discover_llama_server() -> tuple[str, str] | None:
         out = subprocess.run(
             ["ps", "aux"], capture_output=True, text=True, timeout=5
         ).stdout
+        candidates: list[tuple[str, str, str]] = []
         for line in out.splitlines():
-            if "llama-server" not in line or "Qwen" not in line:
+            lower_line = line.lower()
+            if "llama-server" not in lower_line or "qwen" not in lower_line:
                 continue
             parts = line.split()
-            port = api_key = None
-            for i, p in enumerate(parts):
-                if p == "--port" and i + 1 < len(parts):
+            port: str | None = None
+            api_key = ""
+            for i, part in enumerate(parts):
+                if part == "--port" and i + 1 < len(parts):
                     port = parts[i + 1]
-                elif p == "--api-key" and i + 1 < len(parts):
+                elif part.startswith("--port="):
+                    port = part.split("=", 1)[1]
+                elif part == "--api-key" and i + 1 < len(parts):
                     api_key = parts[i + 1]
-            if port:
-                return f"http://127.0.0.1:{port}/v1", api_key or ""
+                elif part.startswith("--api-key="):
+                    api_key = part.split("=", 1)[1]
+            if not port:
+                continue
+            try:
+                port_num = int(port)
+            except ValueError:
+                continue
+            if not 1 <= port_num <= 65535:
+                continue
+            candidates.append((f"http://127.0.0.1:{port_num}/v1", api_key, line))
+
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            base_url, api_key, line = candidates[0]
+            requested_sig = _qwen_model_signature(requested_model or "")
+            if requested_sig is not None:
+                candidate_sig = _qwen_model_signature(line)
+                if candidate_sig != requested_sig:
+                    return None
+            return base_url, api_key
+        if not requested_model:
+            return None
+
+        requested_leaf = requested_model.rsplit("/", 1)[-1]
+        requested_compact = re.sub(r"[^a-z0-9]+", "", requested_leaf.lower())
+        exactish = [
+            candidate
+            for candidate in candidates
+            if requested_compact
+            and requested_compact in re.sub(r"[^a-z0-9]+", "", candidate[2].lower())
+        ]
+        if len(exactish) == 1:
+            base_url, api_key, _line = exactish[0]
+            return base_url, api_key
+        if len(exactish) > 1:
+            return None
+
+        requested_sig = _qwen_model_signature(requested_model)
+        if requested_sig is None:
+            return None
+        signature_matches = [
+            candidate
+            for candidate in candidates
+            if _qwen_model_signature(candidate[2]) == requested_sig
+        ]
+        if len(signature_matches) == 1:
+            base_url, api_key, _line = signature_matches[0]
+            return base_url, api_key
+        return None
     except Exception:  # noqa: BLE001 — 发现失败 fail-open
-        pass
-    return None
+        return None
+
+
+def _parse_capability_tier(pid: str, mid: str, mval: dict[str, Any]) -> str:
+    """T-P2-1-1: capability_tier 解析（白名单 strong/weak/unknown, spec §10.4）.
+
+    缺失 → unknown + 降级日志（保守视为弱模型, 完整三层拷问）;
+    非法 → unknown + warning 如实告警（不拖垮注册表加载）。
+    """
+    if "capability_tier" not in mval:
+        logger.info(
+            "模型 %s/%s 未配置 capability_tier，按 unknown 处理（保守视为弱模型，"
+            "建议显式配置 strong/weak）", pid, mid,
+        )
+        return "unknown"
+    v = str(mval["capability_tier"]).strip().lower()
+    if v in ("strong", "weak", "unknown"):
+        return v
+    logger.warning(
+        "模型 %s/%s capability_tier=%r 非白名单值（strong/weak/unknown），回退 unknown",
+        pid, mid, mval["capability_tier"],
+    )
+    return "unknown"
 
 
 def _parse_model_spec(pid: str, mid: str, mval: dict[str, Any]) -> ModelSpec:
@@ -331,6 +427,8 @@ def _parse_model_spec(pid: str, mid: str, mval: dict[str, Any]) -> ModelSpec:
         multimodal=_parse_bool_field(pid, mid, "multimodal", mval),
         # P3-5: 协议白名单（非法值回退 openai + 如实告警，不拖垮注册表）
         wire_protocol=_parse_wire_protocol(pid, mid, mval),
+        # T-P2-1-1: 能力档白名单（缺失/非法 → unknown + 降级日志，不拖垮注册表）
+        capability_tier=_parse_capability_tier(pid, mid, mval),
     )
 
 
@@ -457,6 +555,26 @@ def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
                     "provider 条目 %r 的 tool_round_zero_history=%r 非法, 回退默认 False",
                     pid, raw_tool_zero,
                 )
+            # EVO-20260824: provider 级字符/token 估算（chars_per_token）——本地 qwen tokenizer
+            # 效率高于 deepseek（1 token≈1-1.5 中文字），统一 0.6 会让本地载荷高估 1.7-2 倍
+            # → 守卫误拦 + 预算过紧。非法/缺失 → None（全局 0.6 兜底，零回归）。
+            chars_per_token: float | None = None
+            raw_cpt = val.get("chars_per_token")
+            if raw_cpt is not None:
+                try:
+                    parsed_cpt = float(raw_cpt)
+                    if parsed_cpt > 0:
+                        chars_per_token = parsed_cpt
+                    else:
+                        logger.warning(
+                            "provider 条目 %r 的 chars_per_token=%r 非正数, 回退全局估算",
+                            pid, raw_cpt,
+                        )
+                except (ValueError, TypeError):
+                    logger.warning(
+                        "provider 条目 %r 的 chars_per_token=%r 非法, 回退全局估算",
+                        pid, raw_cpt,
+                    )
             out[str(pid)] = ProviderSpec(
                 id=str(pid),
                 base_url=base_url,
@@ -467,6 +585,7 @@ def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
                 timeout_s=timeout_s,
                 history_budget_chars=history_budget_chars,
                 max_tokens=max_tokens,
+                chars_per_token=chars_per_token,
                 inject_system_notices=inject_notices,
                 tool_round_zero_history=tool_round_zero,
             )

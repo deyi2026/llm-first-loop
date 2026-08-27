@@ -6,6 +6,8 @@
 - 发现 3: URL 白名单正则逃逸（userinfo@host/域后缀 → host 精确校验拦截）
 """
 
+import pytest
+
 from llm_loop.introspection.tools_playwright import _validate_url
 from llm_loop.introspection.tools_playwright_exec import _PREAMBLE, _scan_code
 
@@ -105,14 +107,14 @@ def test_child_env_strips_sensitive_keys(monkeypatch):
     monkeypatch.setenv("MY_TOKEN", "tok")
     monkeypatch.setenv("DB_PASSWORD", "pw")
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
-    monkeypatch.setenv("HOME", "/Users/test")
+    monkeypatch.setenv("HOME", "home-tmp")
     env = _child_env()
     assert "OPENAI_API_KEY" not in env
     assert "FEISHU_APP_SECRET" not in env
     assert "MY_TOKEN" not in env
     assert "DB_PASSWORD" not in env
     assert env["PATH"] == "/usr/bin:/bin"
-    assert env["HOME"] == "/Users/test"
+    assert env["HOME"] == "home-tmp"
 
 
 def test_child_workdir_limits_to_session(tmp_path, monkeypatch):
@@ -123,3 +125,15 @@ def test_child_workdir_limits_to_session(tmp_path, monkeypatch):
     wd = _child_workdir("secreview-test")
     assert wd == (tmp_path / "data" / "e2e" / "secreview-test").resolve()
     assert wd.exists()
+
+
+
+def test_child_workdir_rejects_path_traversal_before_mkdir(tmp_path, monkeypatch):
+    """session只能是e2e根下单个目录名，../不得先创建逃逸目录。"""
+    from llm_loop.introspection.tools_playwright_exec import _child_workdir
+
+    monkeypatch.chdir(tmp_path)
+    outside = tmp_path / "data" / "outside"
+    with pytest.raises(ValueError, match="非法 session"):
+        _child_workdir("../outside")
+    assert not outside.exists()

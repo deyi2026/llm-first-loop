@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from llm_loop.event_log.model import REGISTRY, Event
+from llm_loop.event_log.model import EVENT_MESSAGE_CACHE_COMPACTED, REGISTRY, Event
 
 # 对齐 Session.to_dict() 的顶层字段默认值（session.created 缺失字段如实置空）
 _TOP_LEVEL_DEFAULTS: dict = {
@@ -30,7 +30,28 @@ _TOP_LEVEL_DEFAULTS: dict = {
     "model_override": None,
     "pinned": False,
     "channel": "web",
+    # Session version 5: 追加式压缩摘要链。旧事件日志无字段时语义默认为空。
+    "fixed_summary": "",
+    "summary_chain": [],
 }
+
+
+def _apply_cache_compacted(message: dict, provider_id: str) -> None:
+    """Replay provider-scoped prompt-view compaction into message metadata."""
+    metadata = message.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    raw = metadata.get("cache_compacted_for")
+    if isinstance(raw, str):
+        providers = [raw]
+    elif isinstance(raw, (list, tuple, set)):
+        providers = [str(item) for item in raw if item]
+    else:
+        providers = []
+    if provider_id not in providers:
+        providers.append(provider_id)
+    metadata["cache_compacted_for"] = providers
+    message["metadata"] = metadata
 
 
 def replay_session(events: list[Event]) -> dict:
@@ -86,6 +107,11 @@ def replay_session(events: list[Event]) -> dict:
                     "chars": event.payload.get("chars"),
                 }
             )
+        elif event.type == EVENT_MESSAGE_CACHE_COMPACTED:
+            idx = _as_int(event.payload.get("msg_seq"))
+            provider_id = str(event.payload.get("provider_id") or "")
+            if idx is not None and provider_id and idx in messages_by_index:
+                _apply_cache_compacted(messages_by_index[idx], provider_id)
         elif event.type == "session.forked":
             # D3: 提取 fork 元信息写入视图标注字段（不改变既有顶层字段重建语义）
             view.setdefault(
@@ -161,9 +187,8 @@ def _ordered_messages(messages_by_index: dict, ordered_events: list) -> list[dic
     修复: 按 seq 遍历 message.appended 事件, 依出现顺序收集（idx 冲突时后到的追加
     到尾部, 不覆盖先到的）——全部消息保留且顺序按 seq 保真。
     """
-    out: list[dict] = []
-    for event in ordered_events:
-        if event.type != "message.appended":
-            continue
-        out.append(_build_message(event.payload))
-    return out
+    # messages_by_index 本身按 event seq 处理顺序插入；idx 冲突时上游会递增到空位，
+    # 因此 dict insertion order 就是保真的消息顺序。必须返回这里的对象，而不能再次
+    # 从 message.appended payload 重建，否则后续 message.cache_compacted 等增量事件
+    # 对 metadata 的修改会被丢掉。
+    return list(messages_by_index.values())

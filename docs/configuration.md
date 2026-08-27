@@ -40,6 +40,8 @@
 | `TOOL_TRIM_THRESHOLD` / `TOOL_TRIM_AGE` | 2000 / 0 | 降级阈值（字符）/ 年龄（距最新消息条数） |
 | `TOOL_MAX_OUTPUT_CHARS` | 100000 | 工具输出上限（超出→另存档案+截断标注，信息可检索找回） |
 | `TOOL_SUMMARY_THRESHOLD` | 12000 | 工具输出分层阈值（超出→首/尾各 2500 字符摘要注入 + 原文另存可检索 + 提炼要点行动指引；v0.5.0 由 5000 放大） |
+| `EVIDENCE_MODE` | off | Evidence Recoverability v1.1 rollout：`off`=旧链路零行为；`shadow`=工具投影前 observation 双写入 `DATA_DIR/evidence/`，**不改变模型可见 prompt/tool result**；`enforce`=Phase3 capture-before-projection + bounded evidence capsule，当前仅用于离线/受控验证；Phase4 `read/search/list_evidence`、Phase5 compression/provider-neutral Recovery Manifest、Phase6 legacy ownership/quarantine/refcount GC 与 Phase7 Full-R0 aggregate gate 均已完成，**Full R0 deterministic PASS**。但当前 `TOOL_PIPELINE_ENABLED=1` 与 enforce 组合仍 fail-closed；按冻结设计继续 R1 historical replay / R2 provider confirmation 后再决定生产 enforce。推荐 rollout 为 `off -> shadow -> enforce`。此外当前 `TOOL_PIPELINE_ENABLED=1` 与 enforce 组合会 fail-closed，需先定义 post-hook/capsule 顺序。shadow/enforce 都未在 `.env` 默认开启 |
+| `EVIDENCE_MANIFEST_LIMIT` | 8 | Evidence enforce 每轮从 durable Ledger 再生的 Recovery Manifest 条目上限；运行时钳制 1..20。Manifest 走动态尾部，不进入 system/tools 稳定前缀。 |
 | `FALLBACK_NOTICE_COOLDOWN_S` | 86400 | 模型降级提示限频（2026-08-16，EVO-20260816-37633629③）：同一降级对（from→to）的主消息流提示在该间隔内只注入一次（nudge without nagging）；仅抑制消息注入，status/审计/action_trace 每次照常记录；0=关闭限频。stamp 落盘 `<data_dir>/state/fallback_notice_stamps.json` |
 
 ## 四、记忆与检索
