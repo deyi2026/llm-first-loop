@@ -101,6 +101,26 @@ class ScheduleStore:
         except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
             logger.warning("schedule 存储加载失败（fail-open）: %s", exc)
 
+    def refresh(self) -> None:
+        """读侧同步（2026-08-27 BUGFIX 配套）: 以磁盘 SoT 重载内存.
+
+        其他 Store 实例/进程 add 后本实例 due() 立即可见。
+        磁盘不存在/损坏 → 保持内存现状（fail-open，不静默清空——
+        磁盘损坏可能是暂时性 IO，清空会经 due 触发后的 mark_triggered
+        把空状态写回磁盘造成真丢失）。
+        """
+        try:
+            if not self._path.exists():
+                return
+            data = json.loads(self._path.read_text(encoding="utf-8"))
+            with self._lock:
+                self._entries = {
+                    e.sid: e
+                    for e in (ScheduleEntry.from_dict(d) for d in data)
+                }
+        except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
+            logger.warning("schedule 存储刷新失败（fail-open，沿用内存）: %s", exc)
+
     @contextmanager
     def _file_lock(self) -> Iterator[None]:
         """跨进程写锁（flock LOCK_EX；非 POSIX 回退进程内锁，对齐 session.py）."""
@@ -195,11 +215,23 @@ class ScheduleStore:
         return bool(removed and removed[0])
 
     def list(self) -> list[dict]:
+        """列出当前提醒（读侧 SoT: 先 refresh 磁盘，与 due() 一致——
+        其他实例/进程的 add/cancel 立即可见，本实例内存不滞后）."""
+        self.refresh()
         with self._lock:
             return [e.to_dict() for e in self._entries.values()]
 
     def due(self, now: float | None = None) -> list[ScheduleEntry]:
-        """到点条目（不删除；由触发方处理后调用 complete/fail）."""
+        """到点条目（不删除；由触发方处理后调用 complete/fail）.
+
+        BUGFIX(2026-08-27 读侧SoT): 先 refresh 磁盘再扫——原实现只扫内存
+        self._entries，而注册侧（ScheduleTool）与检查侧（SchedulerThread）
+        可能持有不同 Store 实例（factory 装配分裂）或分属不同进程
+        （web/feishu/CLI），内存互不可见 → 注册的提醒永不触发
+        （实证 sched-649240a2/sched-aa53e496 count=0 零触发）。
+        schedule.json 是 SoT，内存只是 cache。
+        """
+        self.refresh()
         now = now if now is not None else time.time()
         due: list[ScheduleEntry] = []
         with self._lock:

@@ -426,8 +426,8 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         self._append_message_event(sess, user_msg)
         self._inject_interruption_recovery(session_id, sess)
         _turn_ref = len(sess.messages) - 1  # user_msg seq（turn 身份）
-        self._current_turn_ref = _turn_ref  # experience tip / build 回退对齐
-        self._turn_tip_injected = False  # T2: run 级经验提示一次
+        # T5: per-session RunState 分桶（串台修复）；tip 判断改 SoT 派生（tool_exec）
+        self._current_turn_ref = _turn_ref
         _turn_memory_msgs = self._inject_turn_memory_snapshot(sess, user_text, _turn_ref)
         self._phase("ingress")
 
@@ -502,9 +502,9 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 effective_budget = min(effective_budget, 4000)
             elif _tb > 0 and _is_local_tool:
                 effective_budget = min(effective_budget, _tb)
-            if _tool_round_zero or (_tb > 0 and _is_local_tool):
-                self._record_action("understand.build_messages", "tool_round_small_prefix",
-                                    "零历史" if _tool_round_zero else "小前缀")
+            self._note_tool_round_budget(
+                _tool_round_zero, _is_local_tool, _tb, effective_budget
+            )
             if effective_budget < self._runtime_history_budget():
                 self._record_action(
                     "understand.build_messages",

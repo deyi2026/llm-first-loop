@@ -455,25 +455,27 @@ class _RoutingMixin:
             return provider_cpt
         return _CHARS_PER_TOKEN_EST
 
-    def _effective_history_budget_detail(
+    def _resolve_history_budget(
         self: LoopEngine,
         model_label: str,
         *,
         registry_snapshot: ProviderRegistry | None = None,
     ) -> dict:
-        """EVO-20260827-ed4c1350（P0-B）: effective history budget 全口径归因.
+        """T5(GPT 复审) 单源 resolver: effective history budget 全口径归因.
 
-        消除三口径误读（.env 全局 1M / provider 300K / AI 白名单 200K 并存，
-        审计实测 DeepSeek effective 恒为 300K 而配置面看似 1M）——
+        原实现 detail 与 _effective_history_budget 是两份独立 min 链（漂移
+        风险：显示值与执行值可能脱节），T5 收敛为本方法单源，两个公开方法
+        均为薄委托。消除三口径误读（.env 全局 1M / provider 300K / AI 白名单
+        200K 并存，审计实测 DeepSeek effective 恒为 300K 而配置面看似 1M）——
         architecture_status.context_usage.budget 直接展示，AI 与人无需自行推算。
         limited_by ∈ {runtime_override, global_budget, window_adaptive,
         provider_budget, model_window, unknown_model_default}。
-        行为与 _effective_history_budget 完全同源（该方法是本 detail 的
-        effective_budget 投影，零回归）。
         """
         configured_global = getattr(self.settings, "history_max_chars", None)
         runtime_override = None
-        if self.runtime is not None:
+        # T5 修正: 防御式访问（旧 _effective_history_budget 路径不触 self.runtime，
+        # 测试桩/老调用方最小依赖面无该属性——单源化后统一 fail-open 风格）
+        if getattr(self, "runtime", None) is not None:
             try:
                 runtime_override = self.runtime.get("history_budget", None)
             except Exception:  # noqa: BLE001 — 归因失败不阻塞预算计算
@@ -549,55 +551,56 @@ class _RoutingMixin:
             "model": model_label,
         }
 
+    def _effective_history_budget_detail(
+        self: LoopEngine,
+        model_label: str,
+        *,
+        registry_snapshot: ProviderRegistry | None = None,
+    ) -> dict:
+        """T5: 单源委托（防双实现漂移）."""
+        return self._resolve_history_budget(
+            model_label, registry_snapshot=registry_snapshot
+        )
+
     def _effective_history_budget(
         self: LoopEngine,
         model_label: str,
         *,
         registry_snapshot: ProviderRegistry | None = None,
     ) -> int:
-        """M54: 模型窗口感知的历史压缩预算.
+        """M54: 模型窗口感知的历史压缩预算（T5: resolver 单源投影）.
 
         effective = min(全局预算, 模型 context × chars_per_token × 0.5 压缩系数,
-        provider history_budget_chars 若配置)。
-        例: k3-256k (262144 tokens) → ~26万字符（而不是全局 1M）→ 历史先压到窗口内再调用。
-        例: local provider 配 history_budget_chars=12000（本地模型 prefill 随上下文线性涨,
-        收紧预算显著缩短首 token 时延; 旧历史经压缩归档可检索, 信息零丢失）。
-        EVO-20260824: 字符/token 估算按 provider 级 chars_per_token 取值（deepseek 0.6 /
-        local 0.9——qwen 中文 tokenizer 效率更高, 统一 0.6 会让本地载荷高估 1.7-2 倍）。
-        无 pool / 未知模型 → 全局预算（零回归）。
+        provider history_budget_chars 若配置)。完整归因字段见
+        _resolve_history_budget。
         """
-        global_budget = self._runtime_history_budget()
-        # provider 级预算（本地慢模型收紧; 未配置 None → 跳过）
-        provider_budget: int | None = None
-        cpt = (
-            self._provider_chars_per_token(model_label)
-            if registry_snapshot is None
-            else self._provider_chars_per_token(
-                model_label, registry_snapshot=registry_snapshot
-            )
-        )  # EVO-20260824: provider 级估算
-        if self.llm_pool is not None and "/" in model_label:
-            pid, _mid = model_label.split("/", 1)
-            registry = registry_snapshot or self._pool_registry_snapshot()
-            spec = registry.providers.get(pid) if registry is not None else None
-            if spec is not None:
-                provider_budget = spec.history_budget_chars
-        if provider_budget:
-            global_budget = min(global_budget, provider_budget)
-        limit = (
-            self._current_context_limit(model_label)
-            if registry_snapshot is None
-            else self._current_context_limit(
-                model_label, registry_snapshot=registry_snapshot
-            )
+        return self._resolve_history_budget(
+            model_label, registry_snapshot=registry_snapshot
+        )["effective_budget"]
+
+    def _note_tool_round_budget(
+        self: LoopEngine,
+        tool_round_zero: bool,
+        is_local_tool: bool,
+        tb: int,
+        effective_budget: int,
+    ) -> None:
+        """T5(GPT 复审): tool-round clamp 进预算归因（routing mixin——engine 体量守卫 1172，新逻辑不进主体）.
+
+        status 显示值 = build 实际值（感官与执行同源；此前 status 报 base 300K
+        而实际 local tool round 用 8K/4K，误导 AI 与人）。
+        """
+        if not (tool_round_zero or (tb > 0 and is_local_tool)):
+            return
+        self._record_action(
+            "understand.build_messages",
+            "tool_round_small_prefix",
+            "零历史" if tool_round_zero else "小前缀",
         )
-        if not limit:
-            # EVO-20260811-10dc2533 P0: 未注册模型保守默认窗口预算（防本地小窗口必超限）。
-            # 有 pool 且模型未注册（真·未知模型，如本地 Ollama/llama.cpp 未配置 context）
-            # → 用保守默认 8K 替代全局 budget（避免 4K/8K/32K 模型超限硬拒绝，M53 兜底）；
-            # 无 pool（测试 FakeLLM 场景）→ 保持全局预算（零回归）。
-            if self.llm_pool is not None and "/" in model_label:
-                return min(global_budget, _UNKNOWN_MODEL_BUDGET_CHARS)
-            return global_budget
-        model_budget = int(limit * cpt * 0.5)
-        return min(global_budget, model_budget)
+        if isinstance(self._last_budget_info, dict):
+            self._last_budget_info = {
+                **self._last_budget_info,
+                "base_effective_budget": self._last_budget_info.get("effective_budget"),
+                "effective_budget": effective_budget,
+                "limited_by": "tool_round_zero" if tool_round_zero else "tool_round_clamp",
+            }
