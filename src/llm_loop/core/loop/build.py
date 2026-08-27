@@ -328,6 +328,25 @@ class _BuildMixin:
         # （system+摘要）固定 → KV 命中 → prefill 秒级（本地模型实测 4-13 tokens
         # prefill 仅 0.2-0.8s）。
         # 注意: 保留最近配对组而非固定 -2 条（2026-08-24: 多回执截断会破坏 C1 配对）。
+        # P0-B2（2026-08-28 批准）: 程序反馈投影语义标记——历史中的程序反馈 assistant
+        # 消息（错误/熔断/守卫/耗尽文本）投影时加前缀，防下轮模型误读为"assistant
+        # 已回答过"（恢复链语义污染治理）。前缀判定同时覆盖 B1 落库前存量（source
+        # 仍为 USER 的历史错误消息）；存储原文不动，仅提交视图（同遥测剥离模式）。
+        from dataclasses import replace
+
+        from llm_loop.feedback.honesty import PROGRAM_FEEDBACK_PREFIXES
+
+        base = [
+            (
+                replace(m, content=f"[程序反馈·非模型回答] {m.content}")
+                if (
+                    m.role == "assistant"
+                    and str(m.content or "").startswith(PROGRAM_FEEDBACK_PREFIXES)
+                )
+                else m
+            )
+            for m in base
+        ]
         if tool_round_zero:
             base = _tool_round_zero_tail(base)
         prefix_len = 0
