@@ -505,8 +505,10 @@ class TestEngineRecovery:
         m = Message(role="system", content="interop 协调消息", source=MessageSource.SYSTEM)
         engine._interop_tail_messages = [m]
         engine.run(sid, "任务A")
-        # 恢复轮后 interop 槽已回填
-        assert engine._interop_tail_messages and engine._interop_tail_messages[0] is m
+        # 恢复轮后 interop 槽已回填（P1 9.1: AGGREGATED 拆解重建 Message，内容级匹配）
+        assert engine._interop_tail_messages and any(
+            x.content == "interop 协调消息" for x in engine._interop_tail_messages
+        )
         engine.run(sid, "任务B")  # 下一 run
         # 重注入消息进入第二轮提交（is 身份匹配消费 → defer_replayed）
         second_msgs = fake.calls[2]["messages"]
