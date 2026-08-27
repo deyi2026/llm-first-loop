@@ -5,6 +5,7 @@ measurement calibration. Each task exposes three possible sources and allows at
 most two effective requests. Candidate truth intentionally gives no answer.
 """
 from __future__ import annotations
+
 import json
 
 _NO_HINT = "未提供；必须从当前材料和必要的原始证据自行解析。"

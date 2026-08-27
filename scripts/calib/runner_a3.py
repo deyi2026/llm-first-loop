@@ -5,15 +5,20 @@ All A3 variants use the exact same Full-Slim-v1 prompt; only action mechanics va
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import time
 
 from llm_loop.core.message import ToolCall
-from llm_loop.llm.errors import LLMError
 from llm_loop.llm.client import LLMResponse
-
+from llm_loop.llm.errors import LLMError
 from scripts.calib import runner as base
-from scripts.calib.action_guard import GuardConfig, GuardState, handle_request_fixture, visible_tools
+from scripts.calib.action_guard import (
+    GuardConfig,
+    GuardState,
+    handle_request_fixture,
+    visible_tools,
+)
 from scripts.calib.treatments import build_task_prompt, request_fixture_tool_spec
 from scripts.calib.treatments_a2 import build_system_prompt_a2
 
@@ -192,10 +197,8 @@ def execute_run_a3(
     finally:
         stats["latency_s"] = round(time.monotonic() - t0, 3)
         if not dry and llm_override is None:
-            try:
+            with contextlib.suppress(Exception):  # close 失败不影响结果
                 llm.close()
-            except Exception:
-                pass
 
     return {
         "run_id": run_id,

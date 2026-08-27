@@ -1,13 +1,16 @@
 """A1 component-ablation generation runner. Semantic scoring is separate."""
 from __future__ import annotations
-import argparse, json, sys
+
+import argparse
+import json
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
-from llm_loop.config import load_env_file
-from scripts.calib import fixtures_a1 as f
-from scripts.calib.runner_a1 import execute_run_a1
+from llm_loop.config import load_env_file  # noqa: E402
+from scripts.calib import fixtures_a1 as f  # noqa: E402
+from scripts.calib.runner_a1 import execute_run_a1  # noqa: E402
 
 MATRIX = ROOT / "data/calib/a1_matrix_v1.json"
 OUT = ROOT / "data/calib/runs_a1"

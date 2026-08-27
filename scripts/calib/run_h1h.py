@@ -8,8 +8,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
-from llm_loop.config import load_env_file
-from scripts.calib.semantic_judge_v21 import JUDGE_VERSION, derive_core_score, judge_case
+from llm_loop.config import load_env_file  # noqa: E402
+from scripts.calib.semantic_judge_v21 import (  # noqa: E402
+    JUDGE_VERSION,
+    derive_core_score,
+    judge_case,
+)
 
 BANK = ROOT / "data" / "calib" / "h1h_control_bank.json"
 OUT_DIR = ROOT / "data" / "calib" / "h1h_judges"

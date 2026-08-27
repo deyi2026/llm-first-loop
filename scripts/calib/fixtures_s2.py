@@ -4,6 +4,7 @@ Entirely new from all calibration P/J/K/L/M families. These fixtures are for
 Architecture effectiveness screening, not measurement calibration.
 """
 from __future__ import annotations
+
 import json
 
 INITIAL_PACKETS_S2 = {
