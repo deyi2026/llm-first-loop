@@ -475,9 +475,10 @@ class _RoutingMixin:
         runtime_override = None
         # T5 修正: 防御式访问（旧 _effective_history_budget 路径不触 self.runtime，
         # 测试桩/老调用方最小依赖面无该属性——单源化后统一 fail-open 风格）
-        if getattr(self, "runtime", None) is not None:
+        runtime_view = getattr(self, "runtime", None)
+        if runtime_view is not None:
             try:
-                runtime_override = self.runtime.get("history_budget", None)
+                runtime_override = runtime_view.get("history_budget", None)
             except Exception:  # noqa: BLE001 — 归因失败不阻塞预算计算
                 runtime_override = None
         global_budget = self._runtime_history_budget()
