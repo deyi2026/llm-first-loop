@@ -210,6 +210,37 @@ def test_model_catalog_pool_unavailable_truthful() -> None:
 # ── switch_model: 成功路径 ──
 
 
+def test_switch_model_active_binding_uses_session_getter_for_from_label(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """active run并发时from_label必须来自resolver getter，不能读共享ctx残值。"""
+    from llm_loop.core.run_context import current_session_id
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "real-key")
+    pool = _build_pool(_settings(model_providers_raw=_TWO_PROVIDER_JSON))
+    ctx = _build_ctx(pool)
+    ctx.session_model_override = "deepseek/deepseek-v4-pro"  # 模拟另一session最后写入的共享残值
+    current = {"value": "local/qwen3.6-27b"}
+    ctx.session_binding_resolver = lambda _sid: (
+        lambda: current["value"],
+        lambda value: current.__setitem__("value", value),
+    )
+    corrections = _build_corrections(ctx, tmp_path)
+
+    token = current_session_id.set("session-a")
+    try:
+        result = corrections.execute(
+            "switch_model", {"model": "default", "reason": "并发事实标注测试"}
+        )
+    finally:
+        current_session_id.reset(token)
+
+    assert result.status.value == "success"
+    assert current["value"] is None
+    assert "local/qwen3.6-27b → default" in result.content
+    assert "deepseek/deepseek-v4-pro → default" not in result.content
+
+
 def test_switch_model_success_writes_session_and_audit(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """成功路径: override 落会话 + 审计记录 + 回执文案含 from→to + 思考参数标注."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "real-key")
@@ -500,24 +531,28 @@ def test_pool_returns_default_when_no_override() -> None:
     assert client is pool.default_client
 
 
-def test_pool_resolves_and_caches_by_provider() -> None:
-    """get_client(override) → resolve → client_params → 缓存（同 provider 复用）."""
+def test_pool_resolves_and_caches_by_provider_model() -> None:
+    """同 full model 复用 client；同 provider 不同 model 必须隔离 endpoint/capability。"""
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setenv("DEEPSEEK_API_KEY", "real-key")
     try:
         settings = _settings(model_providers_raw=_TWO_PROVIDER_JSON)
         pool = _build_pool(settings)
-        # 首次: 切到 deepseek-v4-pro
         client1 = pool.get_client("deepseek/deepseek-v4-pro")
         assert client1 is not pool.default_client
         assert client1.model == "deepseek-v4-pro"
-        # 同 provider 再访问: 命中缓存
+        assert pool.get_client("deepseek/deepseek-v4-pro") is client1
+
+        # 同 provider 的另一个模型必须有独立 client，避免首模型的 endpoint/能力污染。
         client2 = pool.get_client("deepseek/deepseek-v4-flash")
-        assert client2 is client1  # 缓存按 provider 复用
-        # local provider: 独立缓存
+        assert client2 is not client1
+        assert client2.model == "deepseek-v4-flash"
+        assert pool.get_client("deepseek/deepseek-v4-flash") is client2
+
         client3 = pool.get_client("local/qwen3.6-27b")
         assert client3 is not client1
         assert client3.model == "qwen3.6-27b"
+        # 对外调试接口仍只暴露 provider 集合，不泄露内部 per-model key 细节。
         assert pool.cached_provider_ids() == ["deepseek", "local"]
     finally:
         monkeypatch.undo()

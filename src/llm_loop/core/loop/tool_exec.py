@@ -31,6 +31,70 @@ logger = logging.getLogger(__name__)
 _STAGNATION_REMIND_AT = 3
 _STAGNATION_BREAK_AT = 5
 
+# EVO-20260823-9bb27899: 搜索/定位类工具目标级停滞检测
+# 背景: 原指纹 = 工具名 + 完整参数 JSON 全等匹配；"换深度/换目录/换工具搜同一目标"时
+# 每次指纹都变 → 连续计数恒为 1 → 检测失效（实测 28 次搜索循环未被拦截）。
+# 对策: ① 对搜索类工具提取"目标指纹"（同目标不同细节参数 → 同一指纹 → 计数累计）；
+#       ② 搜索类工具连续空结果达阈值 → 注入 [搜索空结果提醒]（目标可能不存在/前提失效）。
+_SEARCH_LIKE_TOOLS = {"search_files", "search_records", "search_archive", "search_docs"}
+# 各搜索类工具用于判定"找什么"的核心字段（忽略 limit/root/offset 等细节参数）
+_SEARCH_TARGET_FIELDS = {
+    "search_files": ("pattern", "content"),
+    "search_records": ("kind", "query"),
+    "search_archive": ("query", "role", "tool_name"),
+    "search_docs": ("query", "doc_type"),
+}
+_EMPTY_SEARCH_REMIND_AT = 2  # 连续空结果达此数 → 注入 [搜索空结果提醒]（一次）
+
+
+def _is_search_like_command(command: str) -> bool:
+    """execute_command 是否为定位/搜索类只读命令（find/grep/rg/locate/which 前缀）.
+
+    边界①补全（EVO-20260823-12be9cac）: 上轮 28 次搜索循环里有大量 execute_command
+    变体（find 换深度/换目录反复搜同一目标），其空结果同样应触发停滞提醒——否则
+    "find/grep 空结果反复重试"这条腿没被斩断。严格限定只读定位类前缀，防误判
+    （如 python 脚本正常无输出不视为搜索空结果）。
+    """
+    cmd = (command or "").strip().lstrip()
+    return cmd.startswith(("find ", "grep ", "rg ", "locate ", "which "))
+
+
+def _is_search_like_call(tc) -> bool:
+    """判定一次工具调用是否属"定位/搜索类"（结构化搜索工具 或 execute_command 搜索命令）."""
+    if tc.name in _SEARCH_LIKE_TOOLS:
+        return True
+    if tc.name == "execute_command":
+        cmd = str((tc.arguments or {}).get("command", ""))
+        return _is_search_like_command(cmd)
+    return False
+
+
+def _search_target_key(tc) -> str:
+    """提取搜索类调用的"目标"登记键（用于否定帧，同目标跨工具/跨会话命中）."""
+    args = tc.arguments or {}
+    if tc.name == "execute_command":
+        return f"cmd:{str(args.get('command', ''))[:200]}"
+    if tc.name == "search_files":
+        return f"pattern:{args.get('pattern') or args.get('content') or ''}"
+    # search_records / search_archive / search_docs: 用 query 作目标
+    return f"query:{args.get('query') or ''}"
+
+
+def _is_empty_search_result(result) -> bool:
+    """搜索类工具是否空结果（EVO-20260823-9bb27899: 前提失效信号）.
+
+    宽松判定: 结果为空、或无匹配/未找到/空列表类标记（不依赖精确格式，fail-safe）。
+    """
+    if result is None:
+        return False
+    if result.status and result.status.value != "success":
+        return False
+    content = (result.content or "").strip()
+    if not content:
+        return True
+    markers = ("未找到匹配", "无匹配", "未命中", "空列表", "未检索到匹配", "无输出")
+    return any(m in content for m in markers)
+
 
 def _json_dumps_args(arguments: dict) -> str:
     """工具参数序列化为 JSON 字符串（FC 协议 function.arguments 要求）."""
@@ -170,7 +234,8 @@ class _ToolExecMixin:
                     # D1: tool 回执消息事件（fail-open）
                     self._append_message_event(sess, tool_msg)
                     # EVO-20260814-aab7eb0b P2: 运行中停滞指纹追踪（evaluator.py:271 同构指纹）
-                    self._track_stagnation(tc, sess, tool_trace)
+                    # EVO-20260823-9bb27899: 传 result 供搜索类工具空结果计数
+                    self._track_stagnation(tc, sess, tool_trace, result=result)
                 # EVO-20260816-62977206: 工具执行后经验提示注入（末尾追加，无命中不注入）
                 self._inject_experience_tips(sess, [tc.name for tc in valid_calls])
             # 注：唯一中断点 = tool_round yield（内层 except GeneratorExit 已合成+落盘+重抛）；
@@ -359,18 +424,31 @@ class _ToolExecMixin:
     # ── EVO-20260814-aab7eb0b P2: 循环实时停滞检测 ──
 
     def _stagnation_fingerprint(self: LoopEngine, tc) -> str:
-        """单次工具调用指纹（evaluator.py:271 同构: 名称 + 规范化参数 JSON）."""
+        """单次工具调用指纹（evaluator.py:271 同构: 名称 + 规范化参数 JSON）.
+
+        EVO-20260823-9bb27899: 搜索类工具取"目标指纹"——仅保留判定"找什么"的核心字段
+        （_SEARCH_TARGET_FIELDS），忽略 limit/root/offset 等细节参数；
+        使"换深度/换目录/换工具搜同一目标"也能连续累计停滞计数。
+        """
+        if tc.name in _SEARCH_LIKE_TOOLS:
+            fields = _SEARCH_TARGET_FIELDS.get(tc.name, ())
+            target = {k: v for k, v in (tc.arguments or {}).items() if k in fields}
+            return f"{tc.name}|{_json_dumps_args(target)}"
         return f"{tc.name}|{_json_dumps_args(tc.arguments)}"
 
-    def _track_stagnation(self: LoopEngine, tc, sess, tool_trace: list[dict]) -> None:
-        """每次工具执行后更新连续同指纹计数；达提醒阈值注入 [停滞提醒]（一次，AI 自主决策）。
+    def _track_stagnation(self: LoopEngine, tc, sess, tool_trace: list[dict], result=None) -> None:
+        """每次工具执行后更新停滞计数（目标级指纹 + 搜索空结果），达阈值注入提醒。
 
         熔断决策在 engine 主循环（能 break 的位置）读取 _stagnation_should_break() 完成。
         """
         fp = self._stagnation_fingerprint(tc)
         state = getattr(self, "_stagnation_state", None)
         if state is None:
-            state = self._stagnation_state = {"fp": None, "count": 0, "reminded": False}
+            state = self._stagnation_state = {
+                "fp": None, "count": 0, "reminded": False,
+                "empty_count": 0, "empty_reminded": False,
+            }
+        # ① 同目标指纹连续计数（原逻辑，指纹已升级为目标级）
         if state["fp"] == fp:
             state["count"] += 1
         else:
@@ -390,6 +468,35 @@ class _ToolExecMixin:
                 )
             except Exception:
                 logger.warning("停滞提醒注入失败（fail-open）", exc_info=True)
+        # ② 搜索类调用连续空结果计数（EVO-20260823-9bb27899 + 12be9cac 边界①补全）:
+        #    结构化搜索工具 + execute_command 搜索命令（find/grep/rg/locate/which）——空结果=前提失效信号
+        if _is_search_like_call(tc) and _is_empty_search_result(result):
+            state["empty_count"] = state.get("empty_count", 0) + 1
+            # 边界①补全: 搜索空结果登记否定帧（跨会话复用，防同目标反复搜索）
+            try:
+                from llm_loop.tools.path_registry import register_missing
+
+                register_missing(_search_target_key(tc), source="tool:search")
+            except Exception:
+                logger.warning("搜索空结果登记失败（fail-open）", exc_info=True)
+        else:
+            state["empty_count"] = 0
+            state["empty_reminded"] = False
+        if state.get("empty_count", 0) >= _EMPTY_SEARCH_REMIND_AT and not state.get(
+            "empty_reminded", False
+        ):
+            state["empty_reminded"] = True
+            try:
+                from llm_loop.feedback.honesty import empty_search_reminder_message
+
+                reminder = empty_search_reminder_message(tc.name, state["empty_count"])
+                sess.messages.append(reminder)
+                self._append_message_event(sess, reminder)
+                self._record_action(
+                    "empty_search.reminder", "injected", f"{tc.name} 空结果 x{state['empty_count']}"
+                )
+            except Exception:
+                logger.warning("空结果提醒注入失败（fail-open）", exc_info=True)
 
     def _stagnation_should_break(self: LoopEngine) -> tuple[bool, str, int]:
         """是否达熔断阈值（engine 主循环每轮工具执行后调用）。."""

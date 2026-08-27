@@ -74,14 +74,21 @@ def test_small_window_model_compresses_proactively(tmp_path, monkeypatch: pytest
     assert received < 290000, f"应压缩到预算内, 实际 {received}"
 
 
-def test_large_window_model_unchanged(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """1M 窗模型 (kimi/k3): 30万字符历史 → 不压缩（预算 min(1M, 1M)=1M）."""
+def test_large_window_model_calibrated_budget(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """1M 窗模型 (kimi/k3): 30万字符历史 → 按校准后预算压缩（M54 + 2026-08-24 估算校准）.
+
+    估算 2→0.6（实测大上下文 1.676 tok/char）后 model_budget = 1M×0.6×0.5 = 300K 字符
+    （实际 ≈503K tokens = 窗口 50%, 留 50% 输出空间）——30万字符 > 270K 压缩阈值 → 压缩。
+    2026-08-25: 钉住 PROGRESSIVE_FOLD_K=0——本测试验证一次性大裁路径的预算校准，
+    渐进折叠（单轮只折 K 组）是独立特性（env 默认开 3），不参与本口径。
+    """
     monkeypatch.setenv("KIMI_API_KEY", "k")
+    monkeypatch.setenv("PROGRESSIVE_FOLD_K", "0")
     settings = _settings(
         tmp_path,
         model_providers_raw=_K256_JSON,
         llm_model="k3-256k",
-        history_max_chars=1_000_000,  # T2(2026-08-14): 显式 1M 全局预算（类默认已收敛 100K），保持"1M 窗不压缩"测试意图
+        history_max_chars=1_000_000,  # T2(2026-08-14): 显式 1M 全局预算，保持"窗口公式生效"测试意图
     )
     fake = _FakeLLMClient("k3-256k")
     pool = _make_pool(settings, fake, cached={"kimi": fake})
@@ -97,7 +104,7 @@ def test_large_window_model_unchanged(tmp_path, monkeypatch: pytest.MonkeyPatch)
     result = engine.run(sid, "新问题")
     assert result.final_answer.startswith("默认回答")  # 方案B尾行适配
     received = _received_history_chars(fake)
-    assert received >= 290000, f"1M 窗不应压缩 30万字符, 实际 {received}"
+    assert received < 290000, f"1M 窗校准预算(300K)下 30万字符应压缩, 实际 {received}"
 
 
 def test_effective_budget_math(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -113,12 +120,12 @@ def test_effective_budget_math(tmp_path, monkeypatch: pytest.MonkeyPatch) -> Non
     pool = _make_pool(settings, fake)
     engine = _make_engine(tmp_path, pool, settings)
 
-    # 256K 窗: 262144 × 2 × 0.5 = 262144
-    assert engine._effective_history_budget("kimi/k3-256k") == 262144
-    # 1M 窗: min(1M全局, 1000000×2×0.5=1M) = 1M 全局
-    assert engine._effective_history_budget("kimi/k3") == 1_000_000
-    # 未知模型 → 全局预算
-    assert engine._effective_history_budget("ghost/x") == 1_000_000
+    # 256K 窗: 262144 × 0.6 × 0.5 = 78643（2026-08-24 估算校准: 2→0.6）
+    assert engine._effective_history_budget("kimi/k3-256k") == 78643
+    # 1M 窗: min(1M全局, 1000000×0.6×0.5=300000) = 300000
+    assert engine._effective_history_budget("kimi/k3") == 300_000
+    # 未知模型（有 pool 且 "/"）→ 8K 保守兜底（M53: 防 4K/8K/32K 小窗口模型超限硬拒绝）
+    assert engine._effective_history_budget("ghost/x") == 8000
 
 
 def test_no_pool_zero_regression(build_test_engine) -> None:
@@ -174,8 +181,8 @@ def test_provider_history_budget_caps_global(tmp_path, monkeypatch: pytest.Monke
     assert engine._effective_history_budget("local/qwen3.6-27b") == 12000
     # local 9B（1M 窗）: provider 预算仍压到 12000（窗口大 ≠ prefill 快）
     assert engine._effective_history_budget("local/qwen9b") == 12000
-    # 未配置 provider: 窗口公式不变
-    assert engine._effective_history_budget("kimi/k3-256k") == 262144
+    # 未配置 provider: 窗口公式不变（2026-08-24 估算校准: 262144×0.6×0.5=78643）
+    assert engine._effective_history_budget("kimi/k3-256k") == 78643
 
 
 def test_provider_history_budget_compresses_sent_context(

@@ -14,13 +14,20 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 
 from llm_loop.core.loop.runner import SessionBusyError
 from llm_loop.feedback.honesty import session_deleted_message, session_not_found_message
 from llm_loop.workspace.store import workspace_key
 
 from .schemas import (
+    ChatCancelRequest,
     ChatRequest,
     ChatResponse,
     ErrorResponse,
@@ -206,6 +213,20 @@ def chat(
     finally:
         if acquired and lock is not None:
             lock.release()
+
+    # EVO-20260823-方案A: web 端模型选择持久化到会话 override（三端共享一致）——
+    # 根因: web 切模型走 per-call（engine.run model=payload.model），不写 sess.model_override；
+    # 飞书复用共享会话时 per-call=None + override 为空 → 回退默认装配（deepseek）。
+    # 修复: chat 请求带 model 时写入会话 override + 持久化，飞书/CLI 复用共享会话即继承。
+    # fail-open: 持久化失败不影响本次对话（per-call 已生效）。
+    if payload.model:
+        try:
+            _sess = engine.session.load(session_id)
+            if getattr(_sess, "model_override", None) != payload.model:
+                _sess.model_override = payload.model
+                engine.session.save(_sess)
+        except Exception as exc:  # noqa: BLE001 — 持久化失败 fail-open（不阻断响应）
+            logger.debug("web 模型 override 持久化失败（fail-open）: %s", type(exc).__name__)
 
     # M56：飞书来源会话 → 后台推送用户消息 + 回答到飞书（fail-open 不阻断响应）
     try:
@@ -397,6 +418,19 @@ def chat_stream(
         # P2-3: 无 sid 解析在模块级 guard 内原子完成（与 chat 端点同一事务语义）
         session_id = _resolve_session_id_locked(engine, request, None)
 
+    # EVO-20260823-方案A: web 端模型选择持久化到会话 override（三端共享一致）——
+    # 前端实际走 /api/v1/chat/stream（SSE 流式），此处与同步 chat 端点同逻辑：
+    # chat 请求带 model 时写入会话 override + 持久化，飞书/CLI 复用共享会话即继承。
+    # fail-open: 持久化失败不影响本次对话（per-call 已生效）。
+    if payload.model:
+        try:
+            _sess = engine.session.load(session_id)
+            if getattr(_sess, "model_override", None) != payload.model:
+                _sess.model_override = payload.model
+                engine.session.save(_sess)
+        except Exception as exc:  # noqa: BLE001 — 持久化失败 fail-open（不阻断响应）
+            logger.debug("stream 模型 override 持久化失败（fail-open）: %s", type(exc).__name__)
+
     def event_stream():
         # 后台 run 模式（EVO 后台 run 改造，对齐 DSH）：提交 + 订阅；断连只停订阅
         runner = getattr(engine, "runner", None)
@@ -486,6 +520,24 @@ def chat_stream_status(session_id: str, request: Request) -> Response:
     if snap is None:
         return UTF8JSONResponse(content={"running": False})
     return UTF8JSONResponse(content={"running": True, **snap})
+
+
+@router.post("/api/v1/chat/cancel")
+def chat_cancel(payload: ChatCancelRequest, request: Request) -> Response:
+    """停止当前会话的后台 run（2026-08-23 停止按钮修复）.
+
+    前端 stopStreaming 在 abort SSE 订阅后调用本端点——SSE 断连只停订阅、
+    后台 run 线程会继续执行（EVO 后台 run 语义），需显式请求取消：
+    runner.cancel() 置 handle.cancelled → 引擎主循环每轮检查后提前终止。
+    """
+    engine = _engine_from(request)
+    runner = getattr(engine, "runner", None)
+    if runner is None or not runner.enabled:
+        return UTF8JSONResponse(
+            content={"cancelled": False, "detail": "后台 run 未启用（无取消需求）"}
+        )
+    ok = runner.cancel(payload.session_id)
+    return UTF8JSONResponse(content={"cancelled": ok})
 
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -681,7 +733,7 @@ def evolution_detail(request: Request, id: str = "") -> Response:
     base = Path(os.environ.get("LFL_DATA_DIR", "") or Path(__file__).resolve().parents[3] / "data")
     f = base / "audit" / "evolution_suggestions.jsonl"
     if not f.exists():
-        return UTF8JSONResponse(status_code=404, content={"error": "not_found", "detail": f"建议文件不存在"})
+        return UTF8JSONResponse(status_code=404, content={"error": "not_found", "detail": "建议文件不存在"})
     try:
         for line in f.read_text(encoding="utf-8").splitlines():
             line = line.strip()

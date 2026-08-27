@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from llm_loop.tools.trim import truncate_output
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.tools.safety import link_shaped_paths
+from llm_loop.tools.trim import truncate_output
 
 
 class ReadFileTool:
@@ -56,9 +56,19 @@ class ReadFileTool:
         _link_note = f"\n[symlink] 路径含符号链接: {' → '.join(_links)}" if _links else ""
         try:
             if not p.exists():
+                # EVO-20260823-12be9cac: 失败登记否定帧 + 回执内嵌"已登记不存在"提示
+                from llm_loop.tools.path_registry import (
+                    known_missing_note,
+                    register_missing,
+                )
+
+                register_missing(str(p), source="tool:read_file")
                 return ToolResult(
                     status=ToolResultStatus.FAILURE,
-                    content=f"[文件不存在] {p} 不存在。请检查路径是否正确（可先用 list 类工具确认）。",
+                    content=(
+                        f"[文件不存在] {p} 不存在。请检查路径是否正确"
+                        f"（可先用 list 类工具确认）。{known_missing_note(str(p))}"
+                    ),
                     tool_call_id="",
                     tool_name=self.name,
                 )
@@ -93,6 +103,16 @@ class ReadFileTool:
             # EVO-20260819 full=true: 跳过截断（注册表层仍保硬上限安全阀）
             if not full:
                 content = truncate_output(content, source=str(p))
+            # EVO-20260823-12be9cac: 成功翻转 + 登记正帧（存在 + 元数据，查询时 stat 对账）
+            from llm_loop.tools.path_registry import register_seen
+
+            st = p.stat()
+            register_seen(
+                str(p),
+                mtime=st.st_mtime_ns,
+                size=st.st_size,
+                kind="dir" if p.is_dir() else ("file" if p.is_file() else "other"),
+            )
             return ToolResult(
                 status=ToolResultStatus.SUCCESS,
                 content=content,

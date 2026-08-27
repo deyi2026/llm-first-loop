@@ -117,7 +117,30 @@ _load_llm() {
   fi
 }
 
-# ── 进程定位（PID 文件 + pgrep 双校验，防误杀）──
+# ── 进程归属过滤（2026-08-23: 主区/镜像同名服务共存，防误杀）──
+# 主区与镜像的 feishu/web 命令行均含 `llm_loop.<svc>`，pgrep 全匹配无法区分，
+# 重启一侧会把另一侧一起停掉（实证 2026-08-23: restart_system.sh stop feishu 误杀镜像）。
+# 正确做法: 按进程 cwd 归属判断（只操作 cwd == PROJECT_DIR 的进程），与镜像脚本
+# （restart_mirror.sh 按端口/绝对路径锚定）互补。
+_belongs_to_project() {
+  local pid="$1"
+  local cwd
+  cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | grep '^n' | cut -c2-)"
+  [[ "$cwd" == "$PROJECT_DIR" ]]
+}
+
+# 返回本项目内匹配 pgrep 模式的 pid（每行一个，仅保留 cwd 归属本项目的进程）
+_project_pgrep() {
+  local pattern="$1"
+  local pid
+  for pid in $(pgrep -f "$pattern" 2>/dev/null || true); do
+    if _belongs_to_project "$pid"; then
+      printf '%s\n' "$pid"
+    fi
+  done
+}
+
+# ── 进程定位（PID 文件 + 项目内 pgrep 双校验，防误杀）──
 _service_pid() {
   local svc="$1"
   local pid_file="$DATA_DIR/${svc}.pid"
@@ -129,34 +152,37 @@ _service_pid() {
       return 0
     fi
   fi
-  pid="$(pgrep -f "llm_loop\\.${svc}" | head -1 || true)"
+  pid="$(_project_pgrep "llm_loop\\.${svc}" | head -1 || true)"
   printf '%s' "$pid"
 }
 
-# ── 优雅停止单个服务（停所有匹配进程，防多进程残留）──
+# ── 优雅停止单个服务（停本项目内匹配进程，防多进程残留；不误杀镜像）──
 _stop_service() {
   local svc="$1"
   local pattern="llm_loop\\.${svc}"
   local pids
-  pids="$(pgrep -f "$pattern" || true)"
+  pids="$(_project_pgrep "$pattern" || true)"
   if [[ -z "$pids" ]]; then
-    _log "[${svc}] 未运行，跳过停止"
+    _log "[${svc}] 本项目内未运行，跳过停止"
     rm -f "$DATA_DIR/${svc}.pid"
     return 0
   fi
   _log "[${svc}] 停止进程 $(echo "$pids" | tr '\n' ' ')（SIGTERM，等待 ${GRACE_S}s）..."
-  # P2: 停所有匹配进程（防多进程残留），逐个 SIGTERM
+  # P2: 停本项目内所有匹配进程（防多进程残留），逐个 SIGTERM
   for pid in $pids; do
     kill "$pid" 2>/dev/null || true
   done
   local waited=0
-  while pgrep -f "$pattern" >/dev/null 2>&1 && (( waited < GRACE_S )); do
+  while _project_pgrep "$pattern" >/dev/null 2>&1 && (( waited < GRACE_S )); do
     sleep 1
     (( waited += 1 ))
   done
-  if pgrep -f "$pattern" >/dev/null 2>&1; then
-    _log "[${svc}] 超时未退出，SIGKILL 强杀"
-    pkill -9 -f "$pattern" 2>/dev/null || true
+  if _project_pgrep "$pattern" >/dev/null 2>&1; then
+    _log "[${svc}] 超时未退出，SIGKILL 强杀（仅本项目进程）"
+    local pid2
+    for pid2 in $(_project_pgrep "$pattern" || true); do
+      kill -9 "$pid2" 2>/dev/null || true
+    done
     sleep 1
   else
     _log "[${svc}] 已优雅退出（${waited}s）"
@@ -357,12 +383,12 @@ _start_all() {
 _verify_single_instance() {
   local svc pids count port_pids
   for svc in $SERVICES; do
-    pids="$(pgrep -f "llm_loop\\.${svc}" || true)"
+    pids="$(_project_pgrep "llm_loop\\.${svc}" || true)"
     count="$(printf '%s\n' "$pids" | grep -c . || true)"
     if [[ -n "$pids" ]] && (( count > 1 )); then
-      _log "[${svc}] ⚠️ 检测到 ${count} 个实例（残留）: $(echo "$pids" | tr '\n' ' ')。建议手动清理: pkill -f 'llm_loop\\.${svc}' 后重跑 restart"
+      _log "[${svc}] ⚠️ 检测到 ${count} 个实例（残留）: $(echo "$pids" | tr '\n' ' ')。建议手动清理本项目内实例后重跑 restart"
     else
-      _log "[${svc}] 实例数 ${count} ✓"
+      _log "[${svc}] 本项目内实例数 ${count} ✓"
     fi
   done
   # web 端口单一监听校验

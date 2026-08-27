@@ -2,6 +2,37 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+### SWE 对照实验定论：本地 thinking 默认开启（回退早前"默认关闭"决策，2026-08-24）
+- **实验**：同一任务（SWE-bench requests-2317）、同一模型（qwen3.8-27b）、唯一变量 = `LOCAL_ENABLE_THINKING` 开关，判据只有 F2P（`test_encoded_methods`）。
+- **结果**：关思考 4 次独立尝试 **0/4 通过**（全漏第二修复点 `sessions.py builtin_str`）；开思考 1 次 **通过**（对照实验 + wire 抓包 `B'GET'` 溯源，双点修复，回归 135 通过无确定性回归）。
+- **结论**：本地 27B 的能力边界 = 思考深度——缓存/内存优化解决"跑得更快"，thinking 决定"能否修对"。早前"本地默认关思考提速"的决策被实证否决。
+- **变更**：`client.py` 本地 thinking **默认开启**（不再发 enable_thinking=False）；`LOCAL_ENABLE_THINKING=0` 显式关闭（纯速度场景）。测试双态断言更新。完整过程见 `docs/swe_ab_report.md`。
+
+### 缓存窗口镜像：让"缓存里有什么"可见可审计（2026-08-24）
+- **能力**：每轮把服务端上报的 `cached_tokens`（前缀命中 token 数）映射回提交载荷的**消息级窗口**——缓存覆盖到哪条消息、哪些是新增（miss 区）。落点：事件日志 `cache.window` 事件（完整可回放）+ `architecture_status.context_usage.cache_health.window`（AI 每轮自查）。
+- **信息补充决策原则**（对齐前缀缓存语义，RULE-AI-00）：①补充=尾部追加（前缀不变, miss 仅新增段）；②引用缓存区内信息=零额外 prefill；③中插/重排/压缩=断前缀（当次全量 miss）。
+- **实现**：`src/llm_loop/core/cache_window.py`（纯函数 `describe_cache_window`）+ engine 事件钩子 + factory 快照合并；测试 `tests/unit/test_cache_window.py`；文档 `docs/cache_window.md`。
+- **实证发现（工具轮模板硬约束）**：llama.cpp Qwen 聊天模板要求载荷含 user 消息——零历史工具轮只发配对组会 500「No user query found」；`_tool_round_zero_tail` 已修复为 [最近 user 指令 + 最近完整配对组]（中间轮次裁剪，任务锚点摘要补偿）。
+
+### 本地模型"出错"根因修复：系统代理劫持回环 LLM 请求（2026-08-24）
+- **根因**：httpx 默认 `trust_env=True` 经 urllib 读取 **macOS 系统代理**（Surge 等代理工具把 `127.0.0.1:6152` 设为系统代理）→ **所有 LLM 请求（含本地回环直连）被转给 Surge 代理** → Surge 无法代理自身回环 → 503 Connection Closed（SGErrorDomain）→ 表现即"本地模型出错"。curl 直连正常（不走 urllib）而 LFL 全挂——本地模型 2026-08-22 能用是因为当时 Surge 系统代理未开启。
+- **修复**：`LLMClient.__post_init__` 本地 base_url（localhost/127.0.0.1）→ `trust_env=False` 直连（llama-server KV 前缀缓存本就依赖同 slot 直连）；远程 provider 保持默认（需代理访问 API 场景零回归）；env `LLM_TRUST_ENV` 显式覆盖（1=启用系统代理/0=禁用）。
+- **实测（Qwen3.8-27B 直连）**：一般形态 精确重发命中 99.5%（1.87s→87ms，21 倍）、前缀+追加 97.3%；工具轮形态 命中 98.4%（1.13s→365ms）——「稳定前缀 + 尾部追加」在本地成立的实证。
+- **附带假设（待验证）**：deepseek 大上下文流式断连（incomplete chunked read）可能部分是 SSE 长流经 Surge 代理被掐断——可用 `LLM_TRUST_ENV=0` 让远程也直连对比断连频率。
+
+### 本地模型高缓存命中：工具轮极小窗口默认启用 + 配对组修复（2026-08-24）
+- **方案**：本地工具轮「稳定前缀 + 极小窗口」——system prompt + 工具白名单 schema 字节稳定（记忆/快照/提醒全部尾部追加，此前已落地），工具轮只发 system+工具+最近**完整协议配对组**（assistant(tool_calls)+全部 tool 回执）→ llama.cpp KV 前缀复用命中（LMS_DIRECT 直连 llama-server 已是默认路径，注释实测命中 97% / prefill 秒级）。
+- **改动 1（默认启用）**：`data/providers.json` local 条目加 `"tool_round_zero_history": true`（ProviderSpec 新字段，env `TOOL_ROUND_ZERO_HISTORY` 显式覆盖；云端缺省 False 零回归）——工具轮历史从 8000 字符预算进一步收成极小配对组。
+- **改动 2（配对组修复）**：原 `base[-2:]` 在并行多工具回执时截断声明↔回执配对组 → C1 协议违规（"声明 3 个调用仅 1 条回执"）；改为从最后一条 tool_calls 声明起保留整组（`_tool_round_zero_tail`）。
+- **改动 3（可观测）**：`scripts/local_cache_probe.py` 三实验探针（A 冷/B 同 payload/C 前缀+追加），直连 llama-server 验证 KV 命中率与 prefill 提速。
+- **附带**：修复 `test_client_params_no_auth_provider` 环境敏感（本机有 llama-server 时直连发现返回真实 key）——隔离 `_discover_llama_server` 使测试环境无关。
+
+### deepseek 大上下文断连修复：预算收敛 1M→150K + 流式断连自动重试（2026-08-24）
+- **根因**：`.env` HISTORY_MAX_CHARS 与 `data/providers.json` deepseek `history_budget_chars` 均为 100 万字符（2026-08-18 缓存方案 A 显式豁免）——`[预算预警]`（80%）与程序兜底压缩（90%）被推到 800K/900K 字符，飞书长会话膨胀到 150K-230K 字符仍 0 次压缩、AI 从未收到压缩信号；deepseek 在该量级流式偶发 `peer closed connection (incomplete chunked read)`，断连整轮 50 万+ tokens 白烧（实测 535s/1.26M tokens 的 run 中断，飞书侧表现为"出错了"）。
+- **修复 1（预算校准）**：`data/providers.json` deepseek `history_budget_chars` 1000000 → **150000**（≈75K tokens）。既有机制自动前移生效：80% 预算预警 ≈120K 字符注入、90% 程序兜底压缩 ≈135K 字符触发（原文另存 + `[上下文压缩]` 标注，零丢失可 search_archive 检索）；提交载荷被约束在观测失效线（150K+）以下。与 EVO-20260818「收敛上限 1M→200K」既定方向一致。
+- **修复 2（断连重试）**：`LLMClient._stream_openai` 对传输级断连（httpx NetworkError/ProtocolError，含 peer closed / incomplete chunked read）在**尚无任何输出已产出**时同请求自动重试 1 次（env `LLM_RETRY_DISCONNECT` 可调/关，默认 1）——前缀缓存命中率高、重试成本极低；已有 content/reasoning/tool delta 产出则不重试（防 UI 重复/工具重复执行）。
+- **预期代价（明示）**：压缩轮必断一次前缀缓存（物理必然），缓存命中率从 ~99% 周期回落到 ~86% 量级；换取不再整轮白烧与飞书"出错了"。实测三会话 0 压缩的根因由「AI 忘了压缩」修正为「预算校准缺口」——机制齐备，缺的是预算落在服务端稳定区间。
+
 ### 历史预算基准更新 + 缓存命中修复（审查完善项，2026-08-17）
 - `history_budget_chars` 全局基准 60000 → **800000**（预算链修复：此前预算过短导致历史截断/提交不完整 → 前缀缓存 0 命中；修复后命中率 98%+）
 - 缓存纪律沉淀：system 前缀锚定 + 压缩留缓冲 + M58 命中可观测

@@ -436,12 +436,19 @@ def build_history_messages(
     # —— 锚定后起点固定（只追加不挤旧, 超预算优先降级中段）, system+历史前缀稳定 → 前缀缓存命中
     anchor_out: list[int] | None = None,  # P1-10: 输出容器——构建后填充新锚点（相对传入列表）;
     # 正常提交（无归档）不填充（锚点保持不变, engine 沿用旧值）; 超长归档后填充推进值
+    compacted_out: list[bool] | None = None,  # 显式报告“本次真实进入归档压缩路径”
     head_keep_chars: int = 0,  # EVO-20260817-9d3e1f2c: 缓存友好压缩——保留锚点头部字符预算
     # （0=关闭/现有行为零回归）。>0 时归档路径保留最旧 head_keep_chars 字符的组（提交前缀
     # 稳定命中），只归档中段；锚点不推进（仅头部被归档兜底时才前移）。
     _append_summary_enabled: bool = False,  # 2026-08-21 追加式压缩: 归档后追加确定性摘要
     # （默认关=零回归）。启用后归档消息生成固定格式摘要追加提交尾部——任务语义连贯
     # + 前缀稳定（同归档内容→同摘要字节→缓存命中）。
+    progressive_fold: int = 0,  # EVO-20260824-54d46549（billion-context 拷问产出）: 渐进折叠 K 值。
+    # >0 时压缩改为"每次最多归档最老 K 个配对组"（K 小, 默认建议 3-5），不一次裁到预算×0.6；
+    # 0=一次性大裁（现有行为, 零回归）。诚实定位（字节级前缀缓存下"前缀保持"不存在——
+    # billion README 宣传已被推翻）: 渐进价值是命中率曲线平滑 + cache_guard 不 BLOCK
+    # + 智力无断崖（每次只丢几组, AI 可逐步适应/检索），而非省 token（单次 miss 范围不变）。
+    # 折叠后注入折叠标注（AI 有感知, 减少"刚引用的内容已被折掉"的落空）。
 ) -> list[dict]:
     """组装提交 LLM 的消息序列（保序 + 超长另存压缩 + 如实标注）.
 
@@ -456,6 +463,8 @@ def build_history_messages(
         LLM 协议消息列表（dict）。压缩发生时消息序列含 `[上下文压缩]` 标注。
     """
     out: list[dict] = []
+    if compacted_out is not None:
+        compacted_out[:] = [False]
     if system_prompt:
         out.append({"role": "system", "content": system_prompt})
     # Cache-First (2026-08-16): system_prompt 静态主体长度——永不截断（前缀缓存锚）。
@@ -594,6 +603,9 @@ def build_history_messages(
             _append_or_merge(_d, dynamic=_is_dynamic_inject(m))
         return _repair_tool_call_pairing(out)
 
+    if compacted_out is not None:
+        compacted_out[0] = True
+
     # ── 超长: 从最新往回保留，最旧的先"另存提取"再精简注入（不静默丢弃）──
     # ── M40 修复（tool_calls 配对原子性）: assistant(tool_calls) 与其紧跟的 tool 响应
     #    组成"配对组"整体保留/归档/精简——否则 LLM 协议报
@@ -628,6 +640,7 @@ def build_history_messages(
     # （全量失效后重新锚定）; 保留头部后压缩轮即命中 system+头部（~70%+），次轮 99%，无断崖。
     # 头部保留代价: 每轮多占预算（命中价 ~1/10），换来压缩轮无全量失效; head_keep_chars=0 关闭。
     head_groups: list[list[Message]] = []
+    head_chars = 0  # 兜底初始化: head_keep_chars=0 时无头部保留, 渐进折叠分支引用不炸（2026-08-24 镜像实证 UnboundLocalError）
     if head_keep_chars > 0:
         acc = 0
         for g in atomic_groups:  # 从最旧端累积头部保留组（前缀核心）
@@ -645,10 +658,26 @@ def build_history_messages(
     # 最新组单条超限兜底仍按全预算判断（不因留缓冲而更激进截断单条消息;
     # 该分支语义=单条消息就超整个预算的极端场景, 保留语义与留缓冲解耦）。
     trim_budget = max_chars
+    # EVO-20260824-54d46549 渐进折叠: 每次最多归档最老 K 个配对组（K 小, 平滑曲线）——
+    # 常规超限只折 K 组即停（guard 不 BLOCK + 智力无断崖）; 若折满 K 组后提交仍
+    # >预算×0.95（guard 规则 F BLOCK 阈值）→ 突破 K 上限继续归档（保命兜底）。
+    _fold_cap = progressive_fold if progressive_fold > 0 else 0
+    _fold_count = 0
     for group in reversed(atomic_groups[head_count:]):
         group_len = sum(len(mm.content) for mm in group)
+        if _fold_cap > 0 and _fold_count >= _fold_cap:
+            # 已达渐进折叠上限: 评估保留后是否 ≤95% 预算——是则保留（平滑停折）;
+            # 否则突破上限继续归档（保命, 防 guard 规则 F BLOCK / 提交超限 400）。
+            _cur_kept = head_chars + sum(len(mm.content) for g in kept_groups for mm in g)
+            if len(system_prompt) + _cur_kept + group_len <= int(max_chars * 0.95):
+                kept_groups.insert(0, group)
+                archive_budget -= group_len
+                continue
+            # 超限兜底: 落入下方归档分支（不因 K 上限而拒绝归档）
         if archive_budget - group_len < 0 and kept_groups:
             archived.extend(group)  # 整组归档（配对原子性：不拆散）
+            if _fold_cap > 0:
+                _fold_count += 1
             continue
         if group_len > trim_budget and not kept_groups:
             # 最新组单条/整组超限: 另存全文 + 精简注入（组内字段保留，仅 content 截断）
@@ -830,6 +859,21 @@ def build_history_messages(
         extras.append(
             compression_message(len(archived), sum(len(a.content) for a in archived))
         )
+        # EVO-20260824-54d46549 渐进折叠知情标注: 渐进模式（progressive_fold>0）下折叠发生 →
+        # 明确告知 AI"本轮只折了最老 K 组, 其余保留, 可检索"——减少"刚引用的内容已被
+        # 折掉"的推理落空; 固定文本含 K 值（折叠组数即 _fold_count, 便于归因）。
+        if progressive_fold > 0 and _fold_count > 0:
+            extras.append(
+                Message(
+                    role="system",
+                    content=(
+                        f"[渐进折叠] 本轮仅折叠最老 {_fold_count} 个配对组（其余历史保留, "
+                        "未一次性大裁）——命中率曲线平滑, 被折叠原文可经 search_archive 检索；"
+                        "若需引用已折叠内容, 先检索再作答。"
+                    ),
+                    source=MessageSource.SYSTEM,
+                )
+            )
         # EVO-20260818（spec §5.5.1-7）: 压缩余量不足降级知情标注（固定文本，便于检索归因）
         if _downgraded_head:
             extras.append(
@@ -979,6 +1023,59 @@ def _pairing_gap(messages: list[dict], i: int) -> tuple[list[str], list[str], in
     return declared, missing, j
 
 
+def _pairing_direction_b_orphans(messages: list[dict]) -> set[int]:
+    """方向 B（2026-08-24 主区故障: "Messages with role 'tool' must be a
+    response to a preceding message with 'tool_calls'"）: 孤立/多余 tool 回执下标集合.
+
+    - 孤立: tool 消息前向最近的声明不是 assistant(tool_calls)（含首条即 tool /
+      前一条为 user / 声明已被裁剪）——协议要求 tool 必须紧跟 assistant(tool_calls)。
+    - 多余: tool 回执的 tool_call_id 未在最近声明的 id 集合中被消费（声明数量
+      不足 / id 不匹配）——同样触发协议 400（tool_call_id not found 类）。
+
+    配对语义与 _pairing_gap 一致（id 精确优先 + 空 id 位置兜底兼容存量）。
+    纯函数无副作用；调用方（validate/repair）据此报违规或丢弃提交视图条目。
+    """
+    orphans: set[int] = set()
+    n = len(messages)
+    i = 0
+    while i < n:
+        m = messages[i]
+        if not isinstance(m, dict):
+            i += 1
+            continue
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            declared = [
+                str(c.get("id") or "") for c in m.get("tool_calls") if isinstance(c, dict)
+            ]
+            consumed = [False] * len(declared)
+            j = i + 1
+            while j < n and isinstance(messages[j], dict) and messages[j].get("role") == "tool":
+                rid = str(messages[j].get("tool_call_id") or "")
+                matched = False
+                for di, did in enumerate(declared):
+                    if consumed[di]:
+                        continue
+                    if did and did == rid:
+                        consumed[di] = True
+                        matched = True
+                        break
+                if not matched:
+                    for di in range(len(declared)):  # 空 id / 未匹配声明位置兜底
+                        if not consumed[di]:
+                            consumed[di] = True
+                            matched = True
+                            break
+                if not matched:
+                    orphans.add(j)  # 声明已全部消费 / 无匹配 → 多余回执
+                j += 1
+            i = j
+        else:
+            if m.get("role") == "tool":
+                orphans.add(i)  # 前无声明 → 孤立
+            i += 1
+    return orphans
+
+
 def validate_tool_call_pairing(messages: list[dict]) -> list[str]:
     """S2/A2: LLM 消息序列 tool_calls↔tool 消息配对自检（纯函数，无副作用）.
 
@@ -1009,6 +1106,14 @@ def validate_tool_call_pairing(messages: list[dict]) -> list[str]:
                     f"第 {i} 轮 assistant(tool_calls) 声明 {len(declared)} 个工具调用，"
                     f"其后仅 {len(declared) - len(missing)} 条 tool 回执，缺 {len(missing)} 条"
                 )
+        # 方向 B（2026-08-24 主区故障: "Messages with role 'tool' must be a
+        # response to a preceding message with 'tool_calls'"）: 孤立/多余 tool 回执
+        # ——统一判定见 _pairing_direction_b_orphans（id 精确 + 段首回溯），报违规供 repair。
+        for idx in sorted(_pairing_direction_b_orphans(messages)):
+            violations.append(
+                f"第 {idx} 条 tool 回执孤立/多余（前无匹配的 assistant(tool_calls) 声明），"
+                f"tool_call_id={messages[idx].get('tool_call_id')!r}"
+            )
         return violations
     except Exception as exc:  # noqa: BLE001 — 自检异常如实标注，不静默不阻断
         return [f"配对自检异常: {type(exc).__name__}: {exc}"]
@@ -1037,18 +1142,33 @@ def _repair_tool_call_pairing(messages: list[dict]) -> list[dict]:
         "tool_calls↔tool 配对自检发现违规，已补齐占位（协议配对自检）: %s",
         "; ".join(violations),
     )
+    # 方向 B（2026-08-24 主区故障）: 孤立/多余 tool 回执统一判定（id 精确 + 段首回溯）
+    orphans = _pairing_direction_b_orphans(messages)
     out: list[dict] = []
     n = len(messages)
     i = 0
     while i < n:
         m = messages[i]
+        # 方向 B: 孤立/多余 tool 回执——提交视图丢弃（原始会话数据不动、零丢失）并
+        # 如实标注日志；协议要求 tool 必须响应某条 assistant(tool_calls) 声明，否则
+        # DeepSeek/OpenAI 报 400 "Messages with role 'tool' must be a response to a
+        # preceding message with 'tool_calls'"（或 tool_call_id not found）。
+        # 不伪造声明、不静默丢弃。
+        if i in orphans:
+            logging.getLogger(__name__).warning(
+                "丢弃孤立/多余 tool 回执（协议配对自检，提交视图处理）: tool_call_id=%s",
+                m.get("tool_call_id"),
+            )
+            i += 1
+            continue
         out.append(m)
         if isinstance(m, dict) and m.get("role") == "assistant" and m.get("tool_calls"):
             # P1-6: id 精确配对 + 空 id 位置兜底（审计 #16，缺口语义与自检一致）
             _declared, missing, j = _pairing_gap(messages, i)
-            # 既有 tool 回执原序追加（占位补在真实回执之后）
+            # 既有 tool 回执原序追加（跳过方向 B 孤儿；占位补在真实回执之后）
             for t in range(i + 1, j):
-                out.append(messages[t])
+                if t not in orphans:
+                    out.append(messages[t])
             # 按声明顺序补齐缺失占位（沿用缺口声明 id；空 id 用占位 id）
             for k, did in enumerate(missing):
                 out.append(

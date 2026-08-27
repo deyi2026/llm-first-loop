@@ -49,6 +49,9 @@ class RunHandle:
     error: str = ""
     _bus: Any = field(default=None, repr=False)
 
+    # 2026-08-23 停止按钮修复: 取消标志（前端 stopStreaming → runner.cancel → 引擎主循环检查）
+    cancelled: bool = field(default=False, repr=False)
+
     def snapshot(self) -> dict:
         return {
             "session_id": self.session_id,
@@ -56,6 +59,7 @@ class RunHandle:
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "error": self.error,
+            "cancelled": self.cancelled,
         }
 
 
@@ -146,6 +150,26 @@ class BackgroundRunner:
         with self._guard:
             h = self._registry.get(session_id)
             return h.snapshot() if h else None
+
+    def cancel(self, session_id: str) -> bool:
+        """请求取消进行中的后台 run（2026-08-23 停止按钮修复）.
+
+        - 置 handle.cancelled=True → 引擎主循环每轮检查后提前终止
+        - 返回 True=该会话确有进行中 run 且已请求取消；False=无 run 无需取消
+        - 取消是协作式（引擎在下一轮循环检查点响应），非硬杀线程
+        """
+        with self._guard:
+            h = self._registry.get(session_id)
+            if h is None:
+                return False
+            h.cancelled = True
+            return True
+
+    def is_cancelled(self, session_id: str) -> bool:
+        """该会话后台 run 是否已被请求取消（引擎主循环轮询检查）."""
+        with self._guard:
+            h = self._registry.get(session_id)
+            return h is not None and h.cancelled
 
     def unsubscribe(self, session_id: str, q: queue.Queue) -> None:
         """订阅者退出（SSE 断连）时释放队列（B6：不再向其 put）.

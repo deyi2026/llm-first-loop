@@ -218,15 +218,14 @@ def test_chat_with_auth_header_when_api_key_present():
     assert headers.get("Authorization") == "Bearer secret"
 
 
-def test_local_provider_disables_thinking_in_payload():
-    """本地 provider (api_key 空) 必须正确处理 thinking 字段.
+def test_local_provider_disables_thinking_in_payload(monkeypatch):
+    """本地 provider thinking 开关（2026-08-24 SWE 对照实验定论, 见 docs/swe_ab_report.md）.
 
-    根因 (P1-FEISHU):
-      1. qwen3 默认 enable_thinking=true → think 块耗尽 max_tokens → content 空 + truncated
-      2. LM Studio 优先 OpenAI `thinking.type=enabled`，忽略 `chat_template_kwargs.enable_thinking=False`
-         → 两者并存时仍输出 think 块（用户看到"你好 → 空回答 + 截断"）。
-
-    修复: 本地 provider 跳过 OpenAI `thinking` 分支 + 仅发 chat_template_kwargs。
+    - 默认（LOCAL_ENABLE_THINKING 未设）: 本地【开启】thinking——A/B 实验证明
+      关思考 0/4 漏掉第二修复点、开思考通过 F2P → 能力优先, 不发 enable_thinking=False。
+    - 显式 LOCAL_ENABLE_THINKING=0: 发 chat_template_kwargs.enable_thinking=False
+      （纯速度场景, 交互闲聊）。
+    不变项: 本地不发 OpenAI `thinking` 字段（LM Studio 优先级冲突, P1-FEISHU）。
     """
     from unittest.mock import patch
     captured = {}
@@ -236,17 +235,27 @@ def test_local_provider_disables_thinking_in_payload():
         raise RuntimeError("STOP")
 
     from llm_loop.llm.client import LLMClient
-    client = LLMClient(api_key="", base_url="http://localhost:1234/v1", model="m", timeout_s=5)
-    with patch("httpx.Client.stream", fake_stream), contextlib.suppress(RuntimeError):
-        list(client.chat_stream([{"role": "user", "content": "hi"}], tools=[]))
 
+    # 默认: 不开 enable_thinking=False（思考保持开启）
+    monkeypatch.delenv("LOCAL_ENABLE_THINKING", raising=False)
+    with patch("httpx.Client.stream", fake_stream), contextlib.suppress(RuntimeError):
+        list(LLMClient(api_key="", base_url="http://localhost:1234/v1", model="m", timeout_s=5)
+             .chat_stream([{"role": "user", "content": "hi"}], tools=[]))
     p = captured.get("json", {})
-    # 必须 1: chat_template_kwargs.enable_thinking=False
-    assert "chat_template_kwargs" in p, f"本地 provider 缺 chat_template_kwargs, payload={p}"
+    assert "chat_template_kwargs" not in p, f"默认应保持思考开启, 实际={p.get('chat_template_kwargs')}"
+    assert "thinking" not in p, f"本地 provider 不应发 OpenAI thinking 字段, payload={p}"
+
+    # 显式 LOCAL_ENABLE_THINKING=0: 发 enable_thinking=False
+    monkeypatch.setenv("LOCAL_ENABLE_THINKING", "0")
+    captured.clear()
+    with patch("httpx.Client.stream", fake_stream), contextlib.suppress(RuntimeError):
+        list(LLMClient(api_key="", base_url="http://localhost:1234/v1", model="m", timeout_s=5)
+             .chat_stream([{"role": "user", "content": "hi"}], tools=[]))
+    p = captured.get("json", {})
+    assert "chat_template_kwargs" in p, f"显式关闭时缺 chat_template_kwargs, payload={p}"
     assert p["chat_template_kwargs"].get("enable_thinking") is False, \
-        f"本地 provider 必须 enable_thinking=False, 实际={p['chat_template_kwargs']}"
-    # 必须 2: 不应同时发 OpenAI thinking 字段（LM Studio 优先级冲突）
-    assert "thinking" not in p, f"本地 provider 不应发 OpenAI thinking 字段（与 chat_template_kwargs 冲突）, payload={p}"
+        f"LOCAL_ENABLE_THINKING=0 必须 enable_thinking=False, 实际={p['chat_template_kwargs']}"
+    assert "thinking" not in p, f"本地 provider 不应发 OpenAI thinking 字段, payload={p}"
 
 
 # ── 2026-08-15: max_tokens 显式装配（回答不再被模型默认 4096 截断）──
@@ -699,3 +708,126 @@ def test_anthropic_cache_control_env_override(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_CACHE_CONTROL", "1")
     client2 = _client(wire_protocol="anthropic", api_key="k", base_url="https://remote.example.com/v1")
     assert client2._anthropic_cache_enabled() is True
+
+
+# ── EVO-20260824: 大上下文流式断连重试（deepseek 150K+ 字符偶发 peer closed connection）──
+def test_chat_disconnect_retry_no_output():
+    """断连发生在「尚无输出已产出」时 → 同请求自动重试 1 次成功（UI 无重复）."""
+    import httpx
+
+    from llm_loop.llm.errors import LLMNetworkError
+
+    lines = [
+        'data: {"choices": [{"delta": {"content": "你好"}}]}',
+        'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
+    good = _FakeStreamCtx(lines)
+    state = {"called": False}
+
+    def _side_effect(*_a, **_k):
+        if not state["called"]:
+            state["called"] = True
+            raise httpx.RemoteProtocolError(
+                "peer closed connection without sending complete message body (incomplete chunked read)"
+            )
+        return good
+
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.side_effect = _side_effect
+        resp = _client().chat(messages=[{"role": "user", "content": "hi"}], tools=[])
+    assert resp.content == "你好"
+    assert client_cls.return_value.stream.call_count == 2
+    assert not isinstance(resp, LLMNetworkError)
+
+
+def test_chat_disconnect_no_retry_after_output():
+    """已有输出已产出后断连 → 不重试（防 UI/工具重复）→ LLMNetworkError."""
+    import httpx
+
+    from llm_loop.llm.errors import LLMNetworkError
+
+    class _DisconnectAfterOne(_FakeStreamCtx):
+        def __init__(self) -> None:
+            super().__init__([])
+
+        def iter_lines(self):
+            yield 'data: {"choices": [{"delta": {"content": "部分"}}]}'
+            raise httpx.RemoteProtocolError(
+                "peer closed connection without sending complete message body (incomplete chunked read)"
+            )
+
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _DisconnectAfterOne()
+        with pytest.raises(LLMNetworkError):
+            _client().chat(messages=[{"role": "user", "content": "hi"}], tools=[])
+    # 只调用一次（有输出已产出 → 不重试）
+    assert client_cls.return_value.stream.call_count == 1
+
+
+def test_chat_disconnect_retry_disabled(monkeypatch):
+    """env LLM_RETRY_DISCONNECT=0 关闭重试 → 断连直接如实报错."""
+    import httpx
+
+    from llm_loop.llm.errors import LLMNetworkError
+
+    monkeypatch.setenv("LLM_RETRY_DISCONNECT", "0")
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.side_effect = httpx.RemoteProtocolError("peer closed connection")
+        with pytest.raises(LLMNetworkError):
+            _client().chat(messages=[{"role": "user", "content": "hi"}], tools=[])
+    assert client_cls.return_value.stream.call_count == 1
+
+
+def test_chat_disconnect_retry_tool_delta_no_retry():
+    """工具 delta 已产出后断连 → 不重试（防工具重复执行）→ LLMNetworkError."""
+    import httpx
+
+    from llm_loop.llm.errors import LLMNetworkError
+
+    class _DisconnectAfterTool(_FakeStreamCtx):
+        def __init__(self) -> None:
+            super().__init__([])
+
+        def iter_lines(self):
+            yield (
+                'data: {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_9", '
+                '"type": "function", "function": {"name": "read_file", "arguments": "{}"}}]}}]}'
+            )
+            raise httpx.RemoteProtocolError("peer closed connection")
+
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _DisconnectAfterTool()
+        with pytest.raises(LLMNetworkError):
+            _client().chat(messages=[{"role": "user", "content": "读文件"}], tools=[])
+    assert client_cls.return_value.stream.call_count == 1
+
+
+# ── 2026-08-24 本地直连忽略系统代理（trust_env）──
+# httpx 默认 trust_env=True 经 urllib 读取 macOS 系统代理（Surge 等把 127.0.0.1:6152
+# 设为系统代理）→ 回环 LLM 请求被转给代理 → 503 Connection Closed → "本地模型出错"。
+# 本地 base_url → trust_env=False 直连; 远程保持默认; env LLM_TRUST_ENV 显式覆盖。
+
+
+def test_local_client_trust_env_false(monkeypatch):
+    """本地 base_url → trust_env=False（回环直连, 忽略系统代理）."""
+    monkeypatch.delenv("LLM_TRUST_ENV", raising=False)
+    c = _client(base_url="http://127.0.0.1:1234/v1")
+    assert c._client.trust_env is False
+
+
+def test_remote_client_trust_env_default(monkeypatch):
+    """远程 base_url → trust_env=True（保持系统代理能力, 零回归）."""
+    monkeypatch.delenv("LLM_TRUST_ENV", raising=False)
+    c = _client(base_url="https://api.deepseek.com/v1")
+    assert c._client.trust_env is True
+
+
+def test_llm_trust_env_override(monkeypatch):
+    """env LLM_TRUST_ENV 显式覆盖（本地可启用代理, 远程可禁用）."""
+    monkeypatch.setenv("LLM_TRUST_ENV", "1")
+    c = _client(base_url="http://127.0.0.1:1234/v1")
+    assert c._client.trust_env is True
+    monkeypatch.setenv("LLM_TRUST_ENV", "0")
+    c2 = _client(base_url="https://api.deepseek.com/v1")
+    assert c2._client.trust_env is False

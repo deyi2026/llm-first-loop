@@ -45,6 +45,10 @@ class SearchFilesTool:
                 "type": "integer",
                 "description": "最大返回条数（默认 20）",
             },
+            "path": {
+                "type": "string",
+                "description": "精确路径查询（可选）：不走 glob/内容搜索，直接 stat 对账返回该路径存在性/类型/大小/mtime（O(1)，查询时保证新鲜）。用于快速确认某路径是否存在、是文件还是目录。",
+            },
         },
         "required": [],
     }
@@ -55,6 +59,7 @@ class SearchFilesTool:
             content = str(kwargs.get("content", "") or "").strip()
             root = str(kwargs.get("root", "") or "").strip()
             max_results = int(kwargs.get("max_results", 20) or 20)
+            path_q = str(kwargs.get("path", "") or "").strip()
         except (TypeError, ValueError) as exc:
             # 审查低危修复: 参数类型转换异常如实返回 FAILURE（原实现直接外抛）
             return ToolResult(
@@ -63,6 +68,10 @@ class SearchFilesTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
+        # EVO-20260823-12be9cac 三层文件事实: path 精确查询分支（O(1) stat 对账）
+        if path_q:
+            return self._query_path(path_q)
+
         # 审查低危修复: max_results 钳制（防 LLM 传超大值扫全盘耗尽资源）
         if max_results < 1:
             max_results = 20
@@ -194,6 +203,54 @@ class SearchFilesTool:
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=body,
+            tool_call_id="",
+            tool_name=self.name,
+        )
+
+    def _query_path(self, path_q: str) -> ToolResult:
+        """精确路径查询（EVO-20260823-12be9cac 三层文件事实 L2）.
+
+        走 path_registry.query_path: 负帧命中→判不存在；正帧 mtime 未变→O(1) 缓存；
+        未登记/过期→stat 真相对账并刷新登记。任何时刻返回的都是真的（查询时保证新鲜）。
+        """
+        from llm_loop.tools.path_registry import query_path
+
+        try:
+            info = query_path(path_q)
+        except Exception:  # noqa: BLE001 — fail-open
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[路径查询失败] 无法校验 {path_q}（登记层异常，fail-open）",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        if info.get("exists") is None:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[路径查询失败] 无法校验 {path_q}",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        if not info["exists"]:
+            from llm_loop.tools.path_registry import known_missing_note
+
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=(
+                    f"[路径不存在] {path_q}（来源: {info.get('from')}）。"
+                    f"请核对路径或改用 pattern 搜索定位。{known_missing_note(path_q)}"
+                ),
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        _kind_cn = {"dir": "目录", "file": "文件", "other": "其他"}.get(info.get("kind"), info.get("kind"))
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content=(
+                f"[路径查询] {path_q} 存在（{_kind_cn}）"
+                f" | mtime_ns={info.get('mtime')} | size={info.get('size')} 字节"
+                f" | 来源: {info.get('from')}"
+            ),
             tool_call_id="",
             tool_name=self.name,
         )

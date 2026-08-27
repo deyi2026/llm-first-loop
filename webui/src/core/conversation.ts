@@ -316,6 +316,17 @@ export function stopStreaming(): void {
       body: JSON.stringify({ session_id: sid }),
     }).catch(() => undefined);
   }
+  // EVO-20260823 停止按钮修复: SSE abort 只停订阅（后台 run 线程继续执行），
+  // 需调后端 cancel API 请求真正取消（runner.cancel → 引擎主循环检查点终止）。
+  // fail-open: 取消失败不影响前端状态（后端 run 终会自然结束落盘）。
+  const sid = sessionStore.getState().currentSessionId;
+  if (sid) {
+    void fetch("/api/v1/chat/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: sid }),
+    }).catch(() => undefined);
+  }
 }
 
 /** 发送消息（含附件前缀注入；流式渲染思考/工具轮/正文；done 终态覆盖；错误可重试） */
@@ -411,6 +422,11 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
   if (abortCtrl === controller) {
     abortCtrl = null;
     abortSessionId = null;
+  }
+
+  // 终态守卫: 会话已切换 → 不写回（防 A 完成时把结果写进 B 视图）
+  if (sessionStore.getState().currentSessionId !== sessionId) {
+    return;
   }
 
   // 终态守卫: 会话已切换 → 不写回（防 A 完成时把结果写进 B 视图）
