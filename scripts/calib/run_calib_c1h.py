@@ -39,9 +39,11 @@ from pathlib import Path
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
-from scripts.calib import fixtures_h2  # noqa: E402
-from scripts.calib import fixtures_h2b  # noqa: E402
-from scripts.calib import fixtures_h2c  # noqa: E402
+from scripts.calib import (  # noqa: E402
+    fixtures_h2,  # noqa: E402
+    fixtures_h2b,  # noqa: E402
+    fixtures_h2c,  # noqa: E402
+)
 from scripts.calib.h2_scorer import score_run_h2  # noqa: E402
 from scripts.calib.runner import execute_run, snapshot_provider, write_run_result  # noqa: E402
 

@@ -65,10 +65,10 @@ def _to_run(control: dict) -> dict:
 
 
 def _binary_metrics(gold: list[int], pred: list[int]) -> dict:
-    tp = sum(1 for g, p in zip(gold, pred) if g == 1 and p == 1)
-    fp = sum(1 for g, p in zip(gold, pred) if g == 0 and p == 1)
-    fn = sum(1 for g, p in zip(gold, pred) if g == 1 and p == 0)
-    tn = sum(1 for g, p in zip(gold, pred) if g == 0 and p == 0)
+    tp = sum(1 for g, p in zip(gold, pred, strict=False) if g == 1 and p == 1)
+    fp = sum(1 for g, p in zip(gold, pred, strict=False) if g == 0 and p == 1)
+    fn = sum(1 for g, p in zip(gold, pred, strict=False) if g == 1 and p == 0)
+    tn = sum(1 for g, p in zip(gold, pred, strict=False) if g == 0 and p == 0)
     sens = tp / (tp + fn) if (tp + fn) else None
     spec = tn / (tn + fp) if (tn + fp) else None
     balanced = ((sens or 1.0) + (spec or 1.0)) / 2 if (sens is not None or spec is not None) else None
@@ -169,9 +169,9 @@ def main(argv: list[str] | None = None) -> int:
     stages = ["N0", "N1", "N2", "N3", "N4"]
     gold_stage = [r["gold"]["novel_stage"] for r in detail]
     pred_stage = [r["pred"]["novel_stage"] for r in detail]
-    exact_novel = sum(1 for g, p in zip(gold_stage, pred_stage) if g == p)
+    exact_novel = sum(1 for g, p in zip(gold_stage, pred_stage, strict=False) if g == p)
     conf: dict[str, Counter] = {s: Counter() for s in stages}
-    for g, p in zip(gold_stage, pred_stage):
+    for g, p in zip(gold_stage, pred_stage, strict=False):
         conf[g][p] += 1
     print("\n=== novel_stage confusion matrix（gold rows -> pred cols） ===")
     print(f"  {'gold\\pred':<10}" + "".join(f"{s:>5}" for s in stages))

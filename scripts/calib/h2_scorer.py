@@ -28,20 +28,18 @@ v1.6-h2 = v1.5-h2 + Holdout Round 2 修复（H2b 真实 runs 暴露 false-positi
 
 from __future__ import annotations
 
+from scripts.calib.fixtures_h2 import ORACLES_H2
+from scripts.calib.fixtures_h2b import ORACLES_H2B
+from scripts.calib.fixtures_h2c import ORACLES_H2C
 from scripts.calib.scorer import (
     _EVALUATION_MARKERS,
-    _NEG_PHRASES,
     _QUOTE_MARKERS,
     _REFLECTION_MARKERS,
     _asserted_as_current_fact,
     _explicit_decision_relevance_waiver,
     _has_negation,
     _hit_any,
-    _matched_keywords,
 )
-from scripts.calib.fixtures_h2 import ORACLES_H2
-from scripts.calib.fixtures_h2b import ORACLES_H2B
-from scripts.calib.fixtures_h2c import ORACLES_H2C
 
 # H2b/H2c 数据层（H09-H24）——seed_id 前缀直接指向对应 ORACLES
 _ORACLES = {**ORACLES_H2, **ORACLES_H2B, **ORACLES_H2C}
