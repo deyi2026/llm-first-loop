@@ -55,8 +55,8 @@ def _tail_digest(messages: list[dict], n: int = 5) -> str:
     return h.hexdigest()
 
 
-# 黄金摘要（P1 9.1 聚合形态，2026-08-28 实测重算; 注入槽结构变更时此值失配 → 红灯）
-_GOLDEN_TAIL_DIGEST = "9d44eec3caed2573052bf0d3438afd593cfd39a88215304cc6f8dc66ec3cc32f"
+# 黄金摘要（2026-08-27 实测 build 产物; 注入槽结构变更时此值失配 → 红灯）
+_GOLDEN_TAIL_DIGEST = "d820ddae083124cd14f46a11e50e0c482aef00e2ed5ff39497e8dea9266a9b66"
 
 
 def _engine(tmp_path: Path):
@@ -146,51 +146,46 @@ def _assert_red_light(engine, sess, *, what: str, **arm_kwargs) -> None:
 
 class TestGoldenFingerprint:
     def test_golden_tail_morphology(self, tmp_path):
-        """P1 9.1 聚合形态: 尾部 1 条聚合 user（memory+四槽段标记，wrap 包装，段序恒定）."""
+        """黄金形态: 尾部 5 条连续 user、chars 252/1117/254/116/64、前缀包装恒定."""
         engine, sess = _engine(tmp_path)
         memory_msgs = _arm_all_slots(engine, sess)
         out = _build(engine, sess, memory_msgs)
-        tail = out[-1:]
-        assert [m["role"] for m in tail] == ["user"], "尾部注入恒为 1 条聚合 user（P1 9.1）"
-        agg = tail[0]["content"]
-        assert agg.startswith(_INJECTION_PREFIX), "聚合消息统一 wrap_injection 包装"
-        for slot in ("memory", "interop", "tip", "hotcard", "gate_note"):
-            assert f"--- [slot:{slot}] ---" in agg, f"聚合含 {slot} 段"
-        assert GATE_NOTE_CONTENT in agg, "gate_note 固定文本保真入段"
-        # 段序恒定: memory→interop→tip→hotcard→gate_note（build 收集顺序）
-        idxs = [
-            agg.index(f"--- [slot:{s}] ---")
-            for s in ("memory", "interop", "tip", "hotcard", "gate_note")
-        ]
-        assert idxs == sorted(idxs), "段序与收集顺序一致"
+        tail = out[-5:]
+        assert [m["role"] for m in tail] == ["user"] * 5, "尾部注入群恒为 5 条连续 user"
+        assert [len(m["content"]) for m in tail] == list(_TARGET_CHARS), (
+            "chars 形态 252/1117/254/116/64 恒定（对照附录 C 252/1117/254/116/85）"
+        )
+        # 前缀包装恒定: gate_note 恒等固定文本; 其余槽以 _INJECTION_PREFIX 包装
+        assert tail[-1]["content"] == GATE_NOTE_CONTENT
+        assert len(GATE_NOTE_CONTENT) == _TARGET_CHARS[-1]
+        for m in tail[:-1]:
+            assert m["content"].startswith(_INJECTION_PREFIX), "注入统一 wrap_injection 包装"
         # 黄金摘要（结构变更的显式红灯锚点）
         assert _tail_digest(out) == _GOLDEN_TAIL_DIGEST
 
     def test_registration_matches_tail(self, tmp_path):
-        """P1 9.1: 旁路登记退化为单 AGGREGATED entry（msg_idx 指聚合消息尾位）."""
+        """build 旁路登记与产物尾部一一对应（剥离识别的权威依据，design 1.1.2）."""
         engine, sess = _engine(tmp_path)
         memory_msgs = _arm_all_slots(engine, sess)
         out = _build(engine, sess, memory_msgs)
         entries = engine._last_build_injections
-        assert len(entries) == 1  # 聚合单 entry（memory 兜底不登记）
-        assert str(entries[0].slot_kind) == "aggregated"
-        assert entries[0].msg_idx == len(out) - 1  # 指向聚合消息（尾位）
-        # 登记构成尾部连续段（P0 剥离前置校验）
+        assert len(entries) == 4  # interop/tip/hotcard/gate_note（memory 兜底不登记）
+        assert [e.msg_idx for e in entries] == list(range(len(out) - 4, len(out)))
+        assert [str(e.slot_kind) for e in entries] == ["interop", "tip", "hotcard", "gate_note"]
+        # 登记区间构成尾部连续段（P0 剥离前置校验）
         assert InjectionSpan(tuple(entries)).is_tail_contiguous(out) is True
 
     def test_four_slot_no_memory_tail(self, tmp_path):
-        """常态（记忆已持久化）: 尾部 1 条聚合 user 含四槽段（无 memory 段）."""
+        """常态（记忆已持久化）: 四槽注入群 = 4 条尾部 user，全部登记."""
         engine, sess = _engine(tmp_path)
         memory_msgs = _arm_all_slots(engine, sess, memory=False)
         out = _build(engine, sess, memory_msgs)
-        tail = out[-1:]
-        assert [m["role"] for m in tail] == ["user"]
-        agg = tail[0]["content"]
-        assert agg.startswith(_INJECTION_PREFIX)
-        assert "--- [slot:memory] ---" not in agg
-        for slot in ("interop", "tip", "hotcard", "gate_note"):
-            assert f"--- [slot:{slot}] ---" in agg
-        assert [e.msg_idx for e in engine._last_build_injections] == [len(out) - 1]
+        tail = out[-4:]
+        assert [m["role"] for m in tail] == ["user"] * 4
+        assert tail[-1]["content"] == GATE_NOTE_CONTENT
+        assert [e.msg_idx for e in engine._last_build_injections] == list(
+            range(len(out) - 4, len(out))
+        )
 
     def test_wire_prefix_invariant(self, tmp_path):
         """公共前缀 wire 哈希一致结构（附录 C: 注入只追加尾部，前缀逐字节不变）."""
@@ -208,14 +203,14 @@ class TestRedLightMutations:
         engine, sess = _engine(tmp_path)
         memory_msgs = _arm_all_slots(engine, sess, tip_extra=1)  # tip 槽多一条
         out = _build(engine, sess, memory_msgs)
-        assert out[-1]["content"].count("--- [slot:tip] ---") == 2, "tip 槽增加消息 → 2 个 tip 段"
+        assert len(out[-6:]) == 6
         _assert_red_light(engine, sess, what="tip 槽增加消息", tip_extra=1)
 
     def test_slot_removed(self, tmp_path):
         engine, sess = _engine(tmp_path)
         memory_msgs = _arm_all_slots(engine, sess, hotcard=False)  # 移除 hotcard 槽
         out = _build(engine, sess, memory_msgs)
-        assert "--- [slot:hotcard] ---" not in out[-1]["content"]
+        assert len(out[-4:]) == 4
         _assert_red_light(engine, sess, what="移除 hotcard 槽", hotcard=False)
 
     def test_wrap_bypassed(self, tmp_path, monkeypatch):

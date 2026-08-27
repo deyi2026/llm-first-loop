@@ -23,7 +23,6 @@ import hashlib
 import json
 import logging
 import os
-import re
 import time
 from dataclasses import dataclass
 from enum import StrEnum
@@ -61,34 +60,6 @@ class SlotKind(StrEnum):
     TIP = "tip"
     HOTCARD = "hotcard"
     GATE_NOTE = "gate_note"
-    AGGREGATED = "aggregated"  # P1 9.1: 四槽聚合单条（strip/defer 消费端拆解分支）
-
-
-_AGG_SLOT_RE = re.compile(r"^--- \[slot:(interop|tip|hotcard|gate_note|memory|hint)\] ---$")
-
-
-def parse_aggregated_slots(content: str) -> list[tuple[str, str]]:
-    """聚合消息 content → [(slot, seg)] 段列表（P1 9.1 defer 拆解用）.
-
-    build 统一聚合器产物格式: 各段以 "--- [slot:xxx] ---" 行起始（build.py 9.1）。
-    hint 段为非消费提示（local 行为提示），仅透传内容不参与槽复位。
-    解析不到任何段标记时返回空列表（调用方按 fail-open 处理）。
-    """
-    parts: list[tuple[str, str]] = []
-    cur: str | None = None
-    buf: list[str] = []
-    for ln in content.split("\n"):
-        m = _AGG_SLOT_RE.match(ln)
-        if m:
-            if cur is not None:
-                parts.append((cur, "\n".join(buf).strip("\n")))
-            cur = m.group(1)
-            buf = []
-        elif cur is not None:
-            buf.append(ln)
-    if cur is not None:
-        parts.append((cur, "\n".join(buf).strip("\n")))
-    return parts
 
 
 @dataclass(frozen=True)
@@ -304,91 +275,16 @@ class _Err1210Mixin:
 
     # ── 3.4 defer 回存（槽位复位语义）──
 
-    def _defer_store(
-        self,
-        sess: ModelSession,
-        entries: list[InjectedEntry],
-        messages: list[dict] | None = None,
-    ) -> bool:
+    def _defer_store(self, sess: ModelSession, entries: list[InjectedEntry]) -> bool:
         """按 slot_kind 分派复位；幂等；≤8 上限超限优先保留 interop（spec 6.3-5）.
 
         回存失败仅 WARN 不阻断重试（spec 4.2-2）。返回是否全部成功（观测用）。
-        messages 为 build 产物（P1 9.1 AGGREGATED 拆解用，可空）。
         """
         ok = True
         try:
             by_slot: dict[SlotKind, list[InjectedEntry]] = {}
             for e in entries:
                 by_slot.setdefault(e.slot_kind, []).append(e)
-            # P1 9.1: AGGREGATED 拆解——聚合 entry 还原段级槽位后回存。
-            # interop/tip 段重建 Message（原 message_ref 聚合时已弃，内容语义保真）；
-            # hotcard/gate_note 段回流 by_slot 复用既有复位分支；hint 段跳过。
-            agg_es = by_slot.pop(SlotKind.AGGREGATED, None) or []
-            for e in agg_es:
-                try:
-                    m = (
-                        messages[e.msg_idx]
-                        if messages and 0 <= e.msg_idx < len(messages)
-                        else {}
-                    )
-                    segs = parse_aggregated_slots(str(m.get("content") or ""))
-                except Exception:  # noqa: BLE001 — 取段失败按空处理
-                    segs = []
-                if not segs:
-                    logger.warning(
-                        "err1210: AGGREGATED 拆解为空（idx=%d），该聚合条目按丢失处理（fail-open）",
-                        e.msg_idx,
-                    )
-                    ok = False
-                    continue
-                from llm_loop.core.message import Message, MessageSource
-
-                for slot_s, seg in segs:
-                    if not seg:
-                        continue
-                    try:
-                        k = SlotKind(slot_s)
-                    except ValueError:
-                        continue  # hint 段非消费槽
-                    try:
-                        if k in (SlotKind.INTEROP, SlotKind.TIP):
-                            attr = (
-                                "_interop_tail_messages"
-                                if k == SlotKind.INTEROP
-                                else "_tip_tail_messages"
-                            )
-                            r = Message(
-                                role="system", content=seg, source=MessageSource.SYSTEM
-                            )
-                            active = getattr(self, attr, None) or []
-                            setattr(self, attr, [r] + active)  # 前置拼接（旧先注入）
-                            self._deferred_replay_refs = list(
-                                getattr(self, "_deferred_replay_refs", None) or []
-                            )
-                            self._deferred_replay_refs.append((k, r))
-                            record_defer_event(
-                                "defer_stored",
-                                sess.session_id,
-                                str(k),
-                                {"count": 1, "via": "aggregated"},
-                            )
-                        else:
-                            # hotcard/gate_note 段回流既有复位分支（338 行后）
-                            by_slot.setdefault(k, []).append(
-                                InjectedEntry(
-                                    msg_idx=e.msg_idx,
-                                    slot_kind=k,
-                                    prefix_sha=content_prefix_sha(seg),
-                                    message_ref=None,
-                                )
-                            )
-                    except Exception:  # noqa: BLE001 — 单段失败不阻断其余段
-                        ok = False
-                        logger.warning(
-                            "err1210: AGGREGATED 段回存失败 slot=%s（fail-open）",
-                            slot_s,
-                            exc_info=True,
-                        )
             # 总量 ≤8（interop/tip 按消息条数，hotcard/gate_note 各 1）
             total = sum(len(v) for k, v in by_slot.items() if k in (SlotKind.INTEROP, SlotKind.TIP))
             total += 1 if SlotKind.HOTCARD in by_slot else 0
@@ -542,8 +438,7 @@ class _Err1210Mixin:
             )
 
             # ② defer 回存（消费过的槽复位——无论剥离成败，防注入随一次性消费丢失）
-            # P1 9.1: 传 messages 供 AGGREGATED 拆解（聚合 entry → 段级槽位复位）
-            result.deferred_ok = self._defer_store(sess, entries, messages)
+            result.deferred_ok = self._defer_store(sess, entries)
 
             # ③ 剥离
             stripped = self._strip_tail_injections(messages)
