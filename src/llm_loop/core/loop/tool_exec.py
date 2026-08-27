@@ -214,10 +214,17 @@ class _ToolExecMixin:
         """
         # 2026-08-22: 快模型（9B fast_model 轮）不注入经验提示——9B 上下文本就精简,
         # 经验提示是噪音（实证 98605ad7: 9B 收到经验后转去"同步架构状态"任务漂移）
-        _cur = getattr(self, "_cache_last_model", "") or ""
+        _sid = str(getattr(sess, "session_id", "") or "")
+        _by_session = getattr(self, "_cache_last_model_by_session", {}) or {}
+        _cur = _by_session.get(_sid) or getattr(self, "_cache_last_model", "") or ""
         if "qwythos" in str(_cur):
             return
         if not getattr(self.settings, "tool_experience_inject", True):
+            return
+        # EVO-20260827-ed4c1350 批次1（P0-A/T2）: run 级一次——本 user turn 已注入
+        # 过经验提示则跳过（tool round 反复触发不重复膨胀；实测 09c44093 会话
+        # experience 类 25 条/最高重复 x10）。flag 由 engine 在 run 入口重置。
+        if getattr(self, "_turn_tip_injected", False):
             return
         try:
             seen = getattr(self, "_injected_tip_tools", None)
@@ -256,25 +263,31 @@ class _ToolExecMixin:
             )
             if len(content) > 800:
                 content = content[:800] + "…"  # 注入最小化（RULE-AI-16）
+            # 2026-08-27 缓存断崖根因修复：模型可见的动态尾注入必须持久化。
+            # 旧实现把经验提示仅放入 _tip_tail_messages，一次请求后即消失；下一请求中
+            # 同一位置被 assistant/新 user 顶替，所以上一请求并不是下一请求的字节前缀。
+            # 实测工具链 request2→request3 仅保留 6/7 条消息，最后 573 字经验提示即该断点。
+            # 这里直接以 user 注入落 session；下一轮即时可见，之后自然成为稳定历史前缀。
+            from llm_loop.core.loop.focus import wrap_injection
+
             msg = Message(
-                role="system",
-                content=content,
-                source=MessageSource.SYSTEM,
-                # ⚠️ 不打 injected_system 标记（2026-08-18 修复）: 经验提示是功能性注入
-                # （工具执行后即时决策辅助，RULE-AI-18 机制），非推送式提醒；打标会被
-                # skip_injected_system 通道剔除（spec §5.3.1-5 绝对化后恒 True）→ 功能失效。
+                role="user",
+                content=wrap_injection(content),
+                source=MessageSource.USER,
+                metadata={
+                    "persisted_injection": True,
+                    "injection_kind": "experience_tip",
+                    "experience_tip_tools": list(candidate),
+                    # EVO-20260827-ed4c1350 T2: turn 身份对齐（memory_snapshot 同源）
+                    "turn_ref": getattr(self, "_current_turn_ref", None),
+                },
             )
-            # EVO-20260819-7bb7d689: 经验提示不再落 sess.messages（历史）——system 消息
-            # 在 history.py 459 分支被抽出转 user 重排到提交末尾，与稳定历史错位 → 每轮
-            # 前缀分叉 → 缓存命中率 65-76%（实测 round3 hit 12,800 < round2 in 16,907）。
-            # 改为尾部动态追加槽 _tip_tail_messages（build 提交末尾消费、转 user、一次性），
-            # 与 interop 协调消息同机制：system+稳定历史前缀字节不变（注入轮不断前缀）。
-            tips = getattr(self, "_tip_tail_messages", None)
-            if tips is None:
-                tips = self._tip_tail_messages = []
-            tips.append(msg)
+            sess.messages.append(msg)
+            self._append_message_event(sess, msg)
             # EVO-20260817-20cc3f91: 注入成功后标记——本会话不再为该工具名重复注入
             seen.update(candidate)
+            # EVO-20260827-ed4c1350 T2: 本 turn 经验提示配额已用（run 入口重置）
+            self._turn_tip_injected = True
         except Exception:  # noqa: BLE001 — 经验检索 fail-open（不阻断主循环）
             logger.warning("经验提示注入失败（fail-open）", exc_info=True)
 

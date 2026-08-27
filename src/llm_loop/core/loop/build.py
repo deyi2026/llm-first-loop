@@ -241,15 +241,42 @@ class _BuildMixin:
         # 转 user 尾部追加, 无"[上下文注入·非新指令] 继续当前任务"前缀 → AI 误读为
         # 独立消息 → "没有明确任务" → 反复 search 找回（实证 d1192d8c: 健康检查任务
         # 15+ 次 search_archive/search_records 死循环）。与 tail_msgs 同包装机制。
-        _anchor = build_task_anchor(self._focus.anchor_sess)
-        for _m in memory_msgs:
-            _d = _m.to_llm_dict()
-            if _d.get("role") == "system":
-                _d["role"] = "user"  # system 静态: 转独立 user 尾部追加
-                _c = str(_d.get("content") or "")
-                if _c:
-                    _d["content"] = wrap_injection(_c, _anchor)
-            built.append(_d)
+        # EVO-20260827-f42496bc: memory 注入已改为一次性持久化（engine 检索后
+        # wrap+append 进 sess.messages，见 engine.py 理解段）——本函数不再追加
+        # 动态 memory 段：历史投影自然带出持久化注入（存储字节稳定，下轮前缀
+        # 命中不断崖）。此前每轮在此重新包装追加（含动态 anchor），下一轮真实
+        # 回复顶替注入位置 → 前缀字节分叉 → provider 前缀缓存全断（断崖根因）。
+        # memory_msgs 参数保留（签名兼容 + fail-open 路径: engine 持久化异常时
+        # 仍可走旧动态注入，见下方 fallback 判断）。
+        # EVO-20260827-ed4c1350: turn 快照注入位于 turn 入口（会话前部），多轮后
+        # 尾部 8 条不再包含它——检查升级为 turn_ref 身份匹配（本 turn 已持久化
+        # 即视为成功）；无 turn 上下文（旧会话/直调 build）回退旧尾部检查（零回归）。
+        _turn_ref = getattr(self, "_current_turn_ref", None)
+        if _turn_ref is not None:
+            _persisted_ok = any(
+                (getattr(_m, "metadata", None) or {}).get("turn_ref") == _turn_ref
+                and (getattr(_m, "metadata", None) or {}).get("injection_kind")
+                == "memory_snapshot"
+                for _m in sess.messages
+            )
+        else:
+            _persisted_ok = any(
+                getattr(_m, "metadata", None)
+                and _m.metadata.get("persisted_injection")
+                for _m in sess.messages[-8:]
+            )
+        if not _persisted_ok and memory_msgs:
+            # fail-open 回退: 持久化失败（engine 异常路径）→ 旧行为兜底（动态注入
+            # 好过丢内容；此路径罕见，不构成常态漂移源）
+            _anchor = build_task_anchor(self._focus.anchor_sess)
+            for _m in memory_msgs:
+                _d = _m.to_llm_dict()
+                if _d.get("role") == "system":
+                    _d["role"] = "user"  # system 静态: 转独立 user 尾部追加
+                    _c = str(_d.get("content") or "")
+                    if _c:
+                        _d["content"] = wrap_injection(_c, _anchor)
+                built.append(_d)
         tail_msgs = getattr(self, "_interop_tail_messages", None)
         # EVO-20260819-7bb7d689: 经验提示尾部追加槽并入统一消费（与 interop 同机制）——
         # 不进历史存储，build 末尾一次性追加（转 user），system+稳定历史前缀字节不变
