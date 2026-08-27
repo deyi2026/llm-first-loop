@@ -3,16 +3,15 @@ import socket
 import subprocess
 import sys
 import time
-
-import sys, os
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import run_harness_mock_managed as M
+import run_harness_mock_managed as managed
 
 
 def port_free() -> bool:
     try:
-        with socket.create_connection(('127.0.0.1', M.PORT), timeout=0.5):
+        with socket.create_connection(('127.0.0.1', managed.PORT), timeout=0.5):
             return False
     except OSError:
         return True
@@ -20,11 +19,11 @@ def port_free() -> bool:
 
 def test_normal_start_stop():
     assert port_free(), "前置: 8765 应空闲"
-    p = M._start_raw_server()
+    p = managed._start_raw_server()
     assert p is not None, "应自启 raw server"
     time.sleep(0.5)
     assert not port_free(), "启动后端口应被监听"
-    M._stop_raw_server()
+    managed._stop_raw_server()
     time.sleep(0.5)
     assert port_free(), "停止后端口应释放"
     print("TEST1 正常启动/停止回收: PASS")
@@ -33,15 +32,15 @@ def test_normal_start_stop():
 def test_stale_orphan_sweep():
     # 模拟前次中断残留：手动起一个无人管理的 raw server
     orphan = subprocess.Popen(
-        [sys.executable, M.RAW_SERVER, str(M.PORT)],
+        [sys.executable, managed.RAW_SERVER, str(managed.PORT)],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     time.sleep(1.0)
     assert not port_free(), "孤儿 server 应监听"
     # monkeypatch 检测命中（真实环境 ps/proc 可识别 raw_server.py；沙箱禁 ps 故模拟）
-    _orig = M._cmdline_has_raw_server
-    M._cmdline_has_raw_server = lambda pid: True
-    ok = M._sweep_stale_raw_server(sweep=True)
+    _orig = managed._cmdline_has_raw_server
+    managed._cmdline_has_raw_server = lambda pid: True
+    ok = managed._sweep_stale_raw_server(sweep=True)
     time.sleep(0.5)
     assert ok, "清扫应返回可自启"
     assert port_free(), "清扫后端口应释放"
@@ -52,12 +51,12 @@ def test_stale_orphan_sweep():
 def test_sweep_reuse_when_detection_unavailable():
     """检测不可用（ps 被禁等）→ 不误杀，转复用."""
     orphan = subprocess.Popen(
-        [sys.executable, M.RAW_SERVER, str(M.PORT)],
+        [sys.executable, managed.RAW_SERVER, str(managed.PORT)],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     time.sleep(1.0)
-    M._cmdline_has_raw_server = lambda pid: False
-    ok = M._sweep_stale_raw_server(sweep=True)
+    managed._cmdline_has_raw_server = lambda pid: False
+    ok = managed._sweep_stale_raw_server(sweep=True)
     time.sleep(0.3)
     assert ok is False, "检测不到时应返回复用（不误杀）"
     assert orphan.poll() is None, "孤儿不应被误杀"
@@ -73,15 +72,15 @@ def test_signal_interrupt_cleanup():
     # 子进程: 装信号处理器 + 自启 server 后挂起；父进程 SIGTERM → 验证子进程退出且端口释放
     # 子进程注入脚本目录（动态构造，避免硬编码机器绝对路径——git 安全扫描拒绝 /Users/*/）
     _scripts_dir = str(Path(__file__).resolve().parent)
-    child_code = r'''
+    child_code = f'''
 import sys, time
-sys.path.insert(0, r'%s')
-import run_harness_mock_managed as M
-M._install_signal_handlers()
-M._start_raw_server(sweep=True)
+sys.path.insert(0, r'{_scripts_dir}')
+import run_harness_mock_managed as managed
+managed._install_signal_handlers()
+managed._start_raw_server(sweep=True)
 print("READY", flush=True)
 time.sleep(120)
-''' % _scripts_dir
+'''
     child = subprocess.Popen(
         [sys.executable, '-c', child_code],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,

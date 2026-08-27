@@ -28,16 +28,18 @@
   3. 隐形边横跨两个 rank 组会把两组顶开 → 对纯保序用途加 [style=invis, weight=100, constraint=false]。
 """
 import argparse
+import os
 import subprocess
 import sys
 import tempfile
-import os
 
 
 def parse_plain(fn):
     """解析 dot -Tplain 输出：nodes[name]=(x,y,w,h)；edges=[(src,dst,pts,style)]"""
     nodes, edges = {}, []
-    for line in open(fn, encoding='utf-8'):
+    with open(fn, encoding='utf-8') as f:
+        lines = f.readlines()
+    for line in lines:
         p = line.split()
         if not p:
             continue
