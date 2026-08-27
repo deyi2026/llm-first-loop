@@ -17,7 +17,6 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 from llm_loop.config import Settings
@@ -33,6 +32,8 @@ from llm_loop.core.loop.build import _BuildMixin  # EVO-20260817-e63f712f: 消�
 from llm_loop.core.loop.events import _EventsMixin
 from llm_loop.core.loop.fallback import _FallbackMixin
 from llm_loop.core.loop.interop import _InteropMixin
+from llm_loop.core.loop.kpi import _KpiMixin
+from llm_loop.core.loop.lifecycle import _LifecycleMixin
 from llm_loop.core.loop.overflow import _OverflowMixin
 from llm_loop.core.loop.routing import (
     _CHARS_PER_TOKEN_EST,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
@@ -47,15 +48,10 @@ from llm_loop.core.loop.tool_exec import (
     _tool_args_summary,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
     _ToolExecMixin,
 )
+from llm_loop.core.loop.turn_context import _TurnContextMixin
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.run_context import (
-    current_model_label as _current_model_label,
-)
-from llm_loop.core.run_context import (
-    current_session_id as _current_session_id,
-)
-from llm_loop.core.run_context import (
-    current_workspace_root as _current_workspace_root,
+    current_reasoning_effort as _current_reasoning_effort,
 )
 from llm_loop.core.session import SessionStore
 from llm_loop.feedback.honesty import (
@@ -67,14 +63,29 @@ from llm_loop.feedback.honesty import (
 from llm_loop.feedback.validator import DeclarationValidator, build_discrepancy_feedback
 from llm_loop.introspection.corrections import CorrectionContext, CorrectionToolRegistry
 from llm_loop.introspection.status import ArchitectureStatusProvider
-from llm_loop.llm.client import LLMClient, StreamDelta
+from llm_loop.llm.client import GuardRequestContext, LLMClient, StreamDelta
 from llm_loop.llm.errors import LLMError
-from llm_loop.memory.extract import extract_memory_blocks, memory_blocks_to_entries
-from llm_loop.memory.retrieve import build_memory_messages
 from llm_loop.memory.store import MemoryStore
 from llm_loop.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
+
+_CANCELLED_ANSWER = "（已停止——用户点击停止按钮，本轮回答终止）"
+
+
+def _background_cancelled(engine: Any, session_id: str) -> bool:
+    runner = getattr(engine, "runner", None)
+    return bool(runner is not None and runner.enabled and runner.is_cancelled(session_id))
+
+
+def _background_note_active(engine: Any, session_id: str, round_no: int) -> None:
+    """任务12（§5.12）: 每轮刷新后台 run 活跃时间（残留 run 巡检数据源）."""
+    runner = getattr(engine, "runner", None)
+    if runner is not None:
+        try:
+            runner.note_active(session_id, round_no)
+        except Exception:  # noqa: BLE001 — fail-open
+            logger.debug("runner.note_active 失败（忽略）", exc_info=True)
 
 # M53 拆分: _json_dumps_args/_tool_args_summary → llm_loop/core/loop/tool_exec.py（_ToolExecMixin）
 # 迁移注释保留（REQ-REF-06）: 原路径可导入（对齐 test_tool_round_visible.py），行为与迁移前一致。
@@ -129,13 +140,15 @@ def build_session_snapshot_text(
     parts.append("若你对当前任务/已完成/下一步/未决事项的定位漂移，以本条为锚点重新校准。")
     return "；".join(parts)
 
-class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _OverflowMixin, _ToolExecMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin):
+class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _OverflowMixin, _ToolExecMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin, _KpiMixin, _LifecycleMixin, _TurnContextMixin):
     """五阶段核心循环控制器."""
 
     # EVO 后台 run 执行器（factory 动态装配 BackgroundRunner；声明类型供 pyright 静态检查）
     runner: Any | None = None
     # DSH-PLUGINS-20260816 ②: 调度提醒线程（factory 装配；声明类型供 pyright 静态检查）
     scheduler: Any | None = None
+    # ERC Phase6: optional workspace-activation legacy sidecar migration hook.
+    _evidence_legacy_migrate_workspace_fn: Callable[[str], object] | None = None
 
     def __init__(
         self,
@@ -199,22 +212,26 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         self.workspace_root: str = ""
         # 工作区注册表（factory 装配注入；web 层切换工作区入口）
         self.workspace_store: Any | None = None
-        # P0-5(2026-08-15): per-session 运行状态表（审计发现 #7 可重入修复）——
-        # 停滞指纹/overflow 计数/预警标志/快照节流/breakdown 按 session_id 分桶，
-        # 跨会话并发 run 不再共享污染。属性 shim（下方）保持既有读写接口不变。
+        # 协调 inbox 监视器由 factory 可选装配；显式声明避免运行时 shape 依赖动态属性。
+        self.inbox_watcher: Any | None = None
+        # P0-5: per-session 运行状态表（停滞指纹/overflow/预警/快照/breakdown 按
+        # session_id 分桶防并发污染；属性 shim 保持接口不变）。
         self._run_states: dict[str, _RunState] = {}
         self._run_states_guard = threading.Lock()
         # P0-5: 每会话 in-memory Session 绑定表（switch_model 等按 contextvar 解析
-        # 本会话 sess，避免并发 run 互踩 override 回调；会话数级内存占用，不实清理）
+        # 本会话 sess，避免并发 run 互踩 override 回调；run finally 立即清理完整Session引用）
         self._run_sessions: dict[str, Any] = {}
         # P0-5: 最近活跃会话（out-of-run 时属性 shim 的回退锚点，保持 run 后复查语义）
         self._last_active_sid: str = ""
-        # EVO-20260817 审查 P0-3: 同步 run 活跃会话集合——后台 start 互斥用。
-        # 同步 run_stream 只经 registry 互斥（registry 仅跟踪后台 run），后台 start
-        # 检查不到同步 run → 双 run 竞写会话文件（last-write-wins 丢消息）。
-        # 双向互斥: 同步 run 首 next 注册、finally 注销；后台 start 检查本集合拒绝。
+        # EVO-20260817 审查 P0-3: 同步 run 活跃会话集合——双向互斥防双 run 竞写
+        # 会话文件（后台 start 检查不到同步 run → last-write-wins 丢消息）。
         self._sync_active: set[str] = set()
         self._sync_guard = threading.Lock()
+        self._workspace_transition_guard = threading.RLock()  # run admission / workspace切换同门
+        self._workspace_epoch = 0
+        # accepted-boundary callback不扩展public API，也不依赖ContextVar。
+        self._run_acquired_callbacks: dict[str, Any] = {}
+        self._run_acquired_callbacks_guard = threading.Lock()
         # EVO-20260811-9ccdec97: 会话状态快照节流（上次快照注入时的消息数）—— P0-5 起经 shim 入 per-session 桶
         self._last_snapshot_count = 0
         # R4 增强: overflow 反馈注入次数（同一 run 内最多注入 1 次后让 AI 决策，第二次直接结束）
@@ -223,7 +240,6 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         # 低命中率 → final_answer 注入诊断 + action_trace 审计，fail-open）
         # EVO-20260817-72fcd94a L3（闭环）: 缓存健康监控 + 发送前门禁（独立模块，程序常态锚点管理）
         from llm_loop.core.cache_health import CacheHealthMonitor
-
         self._cache_monitor = CacheHealthMonitor()
         # 2026-08-22 任务聚焦状态（focus 模块: 单向切换锁定 + 任务锚点数据源）
         from llm_loop.core.loop.focus import TaskFocusState
@@ -231,7 +247,8 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         self._focus = TaskFocusState()
         # EVO-20260818（spec §5.4.1-3 注记，grill-me C1）: 模型切换检测——每轮对比实际
         # 模型，变化时 reset cache_health 窗口（防跨模型归因污染）
-        self._cache_last_model: str | None = None
+        self._cache_last_model: str | None = None  # 最近活跃模型（兼容诊断；切换判定不再用全局值）
+        self._cache_last_model_by_session: dict[str, str] = {}  # 2026-08-27: 防跨会话模型状态污染
         self._cache_gate_stable_fp = ""  # 门禁: 本次稳定段指纹（system+注入）
         self._cache_gate_hint: str | None = None  # 门禁: 后检漂移提示（run 末注入 final_answer）
         # EVO-20260817-b6554376: 投影一致性门闸最近状态（ok/miss/mismatch；构建后更新）
@@ -283,15 +300,25 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 "如需要早期历史细节，可调用 search_archive(query=...) 检索关键帧；"
                 "后续如需声明上下文窗口，可经 declare_context 工具（若已注册）。"
             )
-            tips = getattr(self, "_tip_tail_messages", None)
-            if tips is None:
-                tips = self._tip_tail_messages = []
-            tips.append(Message(
-                role="system",
-                content=notice,
-                source=MessageSource.SYSTEM,
-                metadata={"injected_system": True},
-            ))
+            # 2026-08-27: 模型切换通知必须持久化。旧的一次性 tail 会在下一请求
+            # 被 assistant/新 user 顶替，制造字节前缀断点；且动态 anchor 会继续漂移。
+            if sess is None:
+                return
+            from llm_loop.core.loop.focus import wrap_injection
+
+            msg = Message(
+                role="user",
+                content=wrap_injection(notice),
+                source=MessageSource.USER,
+                metadata={
+                    "persisted_injection": True,
+                    "injection_kind": "model_switch_notice",
+                    "switch_from": switch_from,
+                    "switch_to": switch_to,
+                },
+            )
+            sess.messages.append(msg)
+            self._append_message_event(sess, msg)
         except Exception:  # noqa: BLE001 — fail-open 不阻断切换
             import logging
 
@@ -299,83 +326,45 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 "切换通知注入异常（fail-open）", exc_info=True
             )
 
-    # ── 主入口 ──
-    def run_stream(
-        self, session_id: str, user_text: str, model: str | None = None,
-        reasoning_effort: str | None = None,
-    ) -> Iterator[StreamDelta]:
-        """单条用户消息的完整循环（流式）：逐 content delta yield，结束返回 LoopResult.
-
-        model: 可选，本次对话覆盖使用的 LLM 模型（None 用装配模型，Web 模型切换用）。
-        与 run 共享同一核心，唯一差异是每轮 LLM 调用处走 chat_stream 并外泄 delta。
-
-        P0-5: contextvar 在包装层 set/reset——run 存续期（含客户端断连 GeneratorExit）
-        当前执行上下文归属本会话；结束后复位，避免残留泄漏到复用线程的无关代码。
-        run 后可读性由 `_run_state()` 的 `_last_active_sid` 回退保留（测试复查语义）。
-        """
-        # SSE/ASGI 消费方可能在不同 Context 中驱动本生成器（Token.reset 要求同一
-        # Context，跨 Context 抛 ValueError）——改用 值快照 + set 还原（set 不挑 Context）。
-        # EVO 后台 run 改造（B5/B7）: 跨入口互斥——同会话已有后台 run 进行中则拒绝
-        # （后台工作线程自身调用放行 is_worker；生成器惰性，检查在首 next 时执行）
-        runner = getattr(self, "runner", None)
-        if (
-            runner is not None
-            and runner.enabled
-            and not runner.is_worker()
-            and runner.is_running(session_id)
-        ):
-            from llm_loop.core.loop.runner import SessionBusyError
-
-            raise SessionBusyError(
-                f"会话 {session_id} 已有进行中的 run（跨入口互斥，请稍后重试）"
-            )
-        # EVO-20260817 审查 P0-3: 同步 run 注册活跃（后台 start 互斥）；
-        # 同步 run 本身同会话重入也拒绝（双同步 run 同样竞写）
-        with self._sync_guard:
-            if session_id in self._sync_active:
-                from llm_loop.core.loop.runner import SessionBusyError
-
-                raise SessionBusyError(
-                    f"会话 {session_id} 已有进行中的同步 run（互斥，请稍后重试）"
-                )
-            self._sync_active.add(session_id)
-        _prev_sid = _current_session_id.get()
-        _current_session_id.set(session_id)
-        # 工作区根跟随（工具相对路径/命令默认 cwd；与会话同生命周期）
-        _prev_ws = _current_workspace_root.get()
-        _current_workspace_root.set(self.workspace_root or "")
-        # EVO-20260822-b3e7105e: 模型标签注入（每轮 planned_label 更新，run 结束恢复 prev）
-        _prev_model_label = _current_model_label.get()
-        # DSH 对齐（2026-08-17）: 每请求推理等级 override——请求期设置/finally 恢复
-        _prev_effort = getattr(self.llm, "reasoning_effort", None)
-        if reasoning_effort is not None and reasoning_effort != _prev_effort:
-            self.llm.reasoning_effort = reasoning_effort
-        try:
-            return (yield from self._run_stream_inner(session_id, user_text, model))
-        finally:
-            if _prev_effort is not None:
-                self.llm.reasoning_effort = _prev_effort
-            with self._sync_guard:
-                self._sync_active.discard(session_id)
-            _current_workspace_root.set(_prev_ws)
-            _current_model_label.set(_prev_model_label)
-            _current_session_id.set(_prev_sid)
-
+    # ── 主循环本体（public run_stream 生命周期包装见 lifecycle.py）──
     def _run_stream_inner(
-        self, session_id: str, user_text: str, model: str | None = None
+        self, session_id: str, user_text: str, model: str | None = None,
+        *, run_save_token: object | None = None, on_run_acquired: Any = None,
     ) -> Iterator[StreamDelta]:
         """run_stream 的循环本体（P0-5 包装层拆出；逻辑与拆分前逐行一致）."""
         # P0-5: 记录最近活跃会话（out-of-run 的属性 shim 回退锚点，保持测试复查语义）
         self._last_active_sid = session_id
         tool_trace: list[dict] = []
         # EVO-20260814-aab7eb0b P2: 每次 run/run_stream 重置实时停滞检测状态（跨会话不泄漏）
-        self._stagnation_state = {"fp": None, "count": 0, "reminded": False}
+        # EVO-20260823-9bb27899: 增加搜索空结果计数字段
+        self._stagnation_state = {
+            "fp": None, "count": 0, "reminded": False,
+            "empty_count": 0, "empty_reminded": False,
+        }
         # HARNESS-04(2026-08-14): 上下文预算预警——每次 run 独立判断（上下文随 run 累积）
         self._context_warning_injected = False
 
         # 会话恢复（重启继续对话，DFX-REL-03）
+        session_existed = self.session.exists(session_id)
         sess = self.session.load(session_id)
-        if not self.session.exists(session_id):
+        if run_save_token is not None:
+            self.session._bind_run_save_token(sess, run_save_token)
+        accepted_changed = False
+        if on_run_acquired is not None:
+            try:
+                on_run_acquired(sess)
+                accepted_changed = True
+            except TypeError:
+                # BackgroundRunner.before_start 历史兼容：旧内部调用方可能仍传零参 callback。
+                try:
+                    on_run_acquired()
+                    accepted_changed = True
+                except Exception:  # noqa: BLE001 — accepted 辅助动作 fail-open
+                    logger.warning("run accepted callback 失败（fail-open）", exc_info=True)
+            except Exception:  # noqa: BLE001 — accepted 辅助动作 fail-open
+                logger.warning("run accepted callback 失败（fail-open）", exc_info=True)
+
+        if not session_existed:
             # 2026-08-20 (EVO-20260820-0b96348d, 用户决策): 新会话首轮仅重置活动窗口与
             # 模型游标（note_new_session），**保留模型桶**——桶是模型生命周期统计，
             # 跨会话/跨切换持久，保证连续切换模型对话时各模型命中率统计稳定连续。
@@ -406,6 +395,11 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 sess.messages.append(msg)
                 # D1: 系统注入消息事件（fail-open）
                 self._append_message_event(sess, msg)
+        elif accepted_changed:
+            try:
+                self.session.save(sess)
+            except Exception:  # noqa: BLE001 — accepted 辅助持久化失败不阻断本次 run
+                logger.warning("run accepted 状态持久化失败（fail-open）", exc_info=True)
         # T22/T23: 注入当前会话到注册表与修正上下文（压缩档案/检索关联）
         from contextlib import suppress
 
@@ -431,6 +425,10 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         self._ensure_session_created(sess)
         self._append_message_event(sess, user_msg)
         self._inject_interruption_recovery(session_id, sess)
+        _turn_ref = len(sess.messages) - 1  # user_msg seq（turn 身份）
+        self._current_turn_ref = _turn_ref  # experience tip / build 回退对齐
+        self._turn_tip_injected = False  # T2: run 级经验提示一次
+        _turn_memory_msgs = self._inject_turn_memory_snapshot(sess, user_text, _turn_ref)
         self._phase("ingress")
 
         final_answer = ""
@@ -449,10 +447,17 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         tokens_cache_hit = 0  # M58: 本次 run 前缀缓存命中 token（省钱可观测）
         llm_ms_total = 0.0  # M59: 本次 run LLM 调用总耗时（首 token 埋点聚合）
         ttft_first_ms: float | None = None  # M59: 首个 token 延迟（首 token 平均数据源）
+        self._kpi_reset()  # EVO-20260822-9fde48f1 第 10 条: KPI 三件套重置（对比基线用）
         resp: Any = None  # M20 THK-04: 最终回答轮思考链来源（LLM 异常/停滞路径为 None）
 
         while True:
+            # 后台 Stop：轮次边界兜底；LLM 流内另有细粒度检查。
+            if _background_cancelled(self, session_id):
+                _run_end_reason = "cancelled"
+                final_answer = _CANCELLED_ANSWER
+                break
             rounds += 1
+            _background_note_active(self, session_id, rounds)
             if self.runtime is not None:
                 self.runtime.reset_round()
             # H-UI: 每轮思考开始（实时状态条）
@@ -461,32 +466,38 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             if self.status:
                 self.status.record_llm_round()
 
-            # ── 理解：记忆检索 + 上下文构造 ──
-            memory_msgs: list[Message] = []
-            try:
-                memory_msgs = build_memory_messages(
-                    user_text,
-                    self.memory,
-                    top_k=self._runtime_memory_top_k(),  # M57 配置面收敛: 动态优先（AI 可调）
-                    semantic_retriever=self.semantic_retriever,  # M11 T45: 语义路径接线
-                    session_id=sess.session_id,  # 2026-08-20 记忆分级: 会话瞬时条目仅原会话召回
-                )
-            except Exception as exc:  # noqa: BLE001 — 记忆失败不阻塞（FR-MEM-03）
-                memory_msgs = [self._fault_feedback("memory", exc)]
-                self._record_program_fault("memory")
+            # ── 理解：上下文构造（memory 已上移 run 入口；_turn_memory_msgs 仅 build 回退）──
 
-            # M54: 模型窗口感知的主动压缩 — 先定模型标签, 再按其窗口收紧历史预算
-            planned_label = self._planned_model_label(model, sess)
-            # EVO-20260822-b3e7105e: 模型标签注入 contextvar——工具输出分层按模型
-            # 预算联动（local 收紧摘要阈值/窗口，云端零回归）。execute_many 只读池
-            # 线程经 copy_context 传播（与 current_session_id 同机制）。
-            _current_model_label.set(planned_label)
-            effective_budget = self._effective_history_budget(planned_label)
+            # 热重载一致性：每个 LLM round 捕获一次 current/default/planning 不可变 registry 快照。
+            _round_registry, _default_registry, _planning_registry = (
+                self._round_registry_snapshots(model, sess)
+            )
+
+            # M54: 模型窗口感知的主动压缩 — 先定模型标签, 再按其同一快照窗口收紧历史预算
+            planned_label = self._planned_model_label(
+                model, sess, registry_snapshot=_planning_registry
+            )
+            self._set_model_label_ctx(planned_label)
+            effective_budget = self._effective_history_budget(
+                planned_label, registry_snapshot=_planning_registry
+            )
+            # P0-B: 预算归因（architecture_status.context_usage.budget 消费）
+            self._last_budget_info = self._effective_history_budget_detail(
+                planned_label, registry_snapshot=_planning_registry
+            )
             _tb = int(os.environ.get("TOOL_ROUND_BUDGET", "8000"))
             _last_tool = next((bool(getattr(m, "tool_calls", None))
                                for m in reversed(sess.messages) if m.role == "assistant"), False)
             _is_local_tool = _last_tool and planned_label.split("/", 1)[0] == "local"
-            _tool_round_zero = _is_local_tool and os.environ.get("TOOL_ROUND_ZERO_HISTORY", "0") == "1"  # noqa: E501
+            # 2026-08-24: 工具轮零历史开关 = env TOOL_ROUND_ZERO_HISTORY 显式 > provider 级
+            # tool_round_zero_history 配置（local 已配 true → 工具轮极小窗口默认启用;
+            # 云端不配 → False 零回归）。零历史 = 只发 system+工具 schema+最近完整协议
+            # 配对组 → KV 前缀稳定命中 + prefill 秒级（本地实测 4-13 tokens prefill 0.2-0.8s）
+            _zero_env = os.environ.get("TOOL_ROUND_ZERO_HISTORY")
+            if _zero_env is None and _planning_registry is not None and "/" in planned_label:
+                _spec_tmp = _planning_registry.providers.get(planned_label.split("/", 1)[0])
+                _zero_env = "1" if (_spec_tmp is not None and _spec_tmp.tool_round_zero_history) else "0"
+            _tool_round_zero = _is_local_tool and (_zero_env or "0") == "1"  # noqa: E501
             if _tool_round_zero:
                 effective_budget = min(effective_budget, 4000)
             elif _tb > 0 and _is_local_tool:
@@ -501,9 +512,21 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                     f"{planned_label}: {self._runtime_history_budget()}→{effective_budget}",
                 )
             self._focus.anchor_sess = sess  # 2026-08-22 任务锚点数据源（build 注入包装用）
-            messages = self._build_llm_messages(sess, memory_msgs, max_chars=effective_budget, model=model,
-                                                tool_round_zero=_tool_round_zero)
-            if len(messages) < len(sess.messages) + len(memory_msgs) + 1:
+            # P0 压缩风暴熔断（2026-08-25 规格）: 冻结期超安全水位 → context_pressure
+            # （实现在 _BuildMixin._breaker_pressure_block——engine 只接线）
+            _pressure_block = self._breaker_pressure_block(
+                sess, effective_budget, planned_label
+            )
+            if _pressure_block:
+                _run_end_reason = "breaker_context_pressure"
+                final_answer = _pressure_block
+                break
+            messages = self._build_llm_messages(
+                sess, _turn_memory_msgs, max_chars=effective_budget, model=model,
+                planned_label=planned_label, tool_round_zero=_tool_round_zero,
+            )
+            self._kpi_accumulate_inject()
+            if getattr(self, "_last_history_compacted", False):
                 truncation_noted = True
             tool_schemas = self.registry.schemas(lazy=self.settings.tool_schema_lazy)
             # EVO-20260817 本地模型工具精简（用户需求）: local provider 只注入
@@ -511,10 +534,8 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             tool_schemas = self._filter_local_tools(tool_schemas, planned_label)
             tools_param = [self._schema_to_param(t) for t in tool_schemas]
 
-            # R1: 计算组件级占用分解（含 tool_schema_chars，供 architecture_status.context_usage.breakdown 注入）
-            # 口径: **实际发送载荷**（构建后 messages）而非原始会话——已压缩归档的历史
-            # 不再计入"当前占用"（旧口径在本地慢模型收紧预算后会把占用虚高数十倍，
-            # 误导 [预算预警]/AI 压缩决策）。_last_build_info 保留（其他消费方兼容）。
+            # R1: 组件级占用分解（实际发送载荷口径；压缩归档历史不计入当前占用）
+            # 供 architecture_status.context_usage.breakdown 注入；_last_build_info 保留。
             from llm_loop.core.history import compute_breakdown_from_dicts
 
             self._last_breakdown = compute_breakdown_from_dicts(
@@ -529,25 +550,35 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             # ── 行动：LLM 决策 ──
             self._phase("action.llm_decide")
             # M53 拆分: 路由决策 + 上下文守卫 → _RoutingMixin._route_model（move 语义，行为零变化）
-            routing = self._route_model(model, sess, messages, tools_param)
+            routing = self._route_model(
+                model, sess, messages, tools_param,
+                registry_snapshot=_round_registry,
+                default_registry_snapshot=_default_registry,
+            )
             llm_client = routing.llm_client
             model_used = routing.model_used
             chat_model_arg = routing.chat_model_arg
+            _response_context_limit = routing.context_limit
+            _response_chars_per_token = routing.chars_per_token
             # EVO-20260818（spec §5.4.1-3 注记）: 模型切换 → cache_health 窗口重置
-            # （guard 侧 client 已按 guard_last_model 重置；cache_health 侧防跨模型归因污染）
+            # （PromptGuard 按 session/model 重置；cache_health 侧防跨模型归因污染）
             # 2026-08-20 (EVO-20260820-0b96348d, 用户决策): clear_buckets=False 保留模型桶——
             # 桶是模型生命周期统计，切换时不清（切回热检查、模型级累计跨切换持久）。
-            if model_used and model_used != self._cache_last_model:
-                _switch_from = self._cache_last_model
+            # 2026-08-27: 模型切换必须按 session 判定。旧 `_cache_last_model` 是 Engine
+            # 全局值，多会话交错使用不同模型时会把“别的会话刚用了 DeepSeek”误判成
+            # “本会话从 DeepSeek 切到 GLM”，导致新会话也被塞入瞬时切换通知并断前缀。
+            _sid = sess.session_id
+            _switch_from = self._cache_last_model_by_session.get(_sid)
+            if model_used and model_used != _switch_from:
                 if _switch_from is not None:
-                    self._cache_monitor.reset(reason=f"model_switch:{model_used}",
-                                              clear_buckets=False)
-                self._cache_last_model = model_used
-                # 2026-08-20 (DESIGN-v3 v2 落地): 切换通知——AI 主导上下文选择第一步。
-                # 注入切换感知帧（_tip_tail_messages 槽: 尾部追加/转 user/一次性，
-                # system+稳定历史前缀字节不变）。首轮全量 miss 是物理事实（build→routing
-                # →452 时序），如实告知 + 给 AI 动作选项。仅本轮注入不持久化。
+                    self._cache_monitor.reset(
+                        reason=f"model_switch:{model_used}", clear_buckets=False
+                    )
+                self._cache_last_model_by_session[_sid] = model_used
+                self._cache_last_model = model_used  # 仅兼容最近活跃模型诊断
                 self._inject_switch_notice(_switch_from or "", model_used, sess)
+            elif model_used:
+                self._cache_last_model = model_used
             if routing.final_answer_override is not None:
                 # EVO-20260818（M53 拒绝逃生，防死循环）: 提交超模型窗口被拒时，AI 无 LLM
                 # 调用无法自救（无法 switch_model/开新会话/调工具）——现场: 2a3385da 会话
@@ -556,9 +587,17 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 _escape_note = ""
                 try:
                     self._build_llm_messages(
-                        sess, memory_msgs, max_chars=effective_budget,
-                        model=model, emergency_compact=True,
+                        sess, _turn_memory_msgs, max_chars=effective_budget,
+                        model=model, planned_label=planned_label, emergency_compact=True,
                     )
+                    # EVO-20260825 任务8（§5.8）: 记录紧急压缩——供 switch_model 覆盖
+                    # 检测（60s 内切模型 → wasted 审计：锚点前移归档白做）。
+                    try:
+                        self._cache_monitor.note_emergency_compact(
+                            sess.session_id, effective_budget
+                        )
+                    except Exception:  # noqa: BLE001 — fail-open
+                        logger.debug("emergency_compact 审计注入异常（fail-open）", exc_info=True)
                     _escape_note = (
                         "\n[自动压缩] 本次提交超模型窗口被守卫拦截——已自动执行紧急压缩"
                         "（放弃头部保留、锚点前移归档，信息零丢失可 search_archive 检索）；"
@@ -584,7 +623,10 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                         # model_used 在无 pool 场景可能为空 → 回退装配模型名（如实标注）
                         "model": model_used or getattr(self.settings, "llm_model", ""),
                         "thinking": bool(self.settings.thinking_mode),
-                        "reasoning_effort": str(getattr(self.settings, "reasoning_effort", "")),
+                        "reasoning_effort": str(
+                            _current_reasoning_effort.get()
+                            or getattr(llm_client, "reasoning_effort", "")
+                        ),
                         "tools_count": len(tools_param),
                         "history_chars": sum(len(str(m.get("content", ""))) for m in messages),
                         "budget": effective_budget,
@@ -593,66 +635,123 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 )
             except Exception:  # noqa: BLE001 — 快照失败 fail-open（不影响主循环）
                 logger.debug("request.meta 事件写入失败（fail-open）")
+            _cancelled_during_llm = False
             try:
                 stream_fn = getattr(llm_client, "chat_stream", None)
                 _llm_round_ms = 0.0
-                if stream_fn is not None:
-                    _llm_start = time.perf_counter()
-                    _ttft_done = False
-                    # 2026-08-18 cache_guard（MCP 出入口）: 透传会话上下文供规则校验
-                    # （system 稳定基线按会话维护；压缩计数供窗口漂移检测）
-                    try:
-                        # EVO-20260818: 简化——原 dir() 局部变量检查脆弱（拷问 F1）且
-                        # 该作用域恒无 system_prompt（build 内的局部变量），等价取 messages[0]
-                        llm_client.guard_system = (
-                            messages[0].get("content", "")
-                            if messages and messages[0].get("role") == "system"
+                # EVO-20260821-e172ed11 P0: 本地模型工具轮 thinking 降档（隐藏耗时大头——
+                # thinking token 按 decode 逐 token 生成；工具轮仅需执行而非深度推理）。
+                # _is_local_tool 已在循环内判定（本地 provider + 上轮 tool_calls）；仅本地生效，云端零影响。
+                _effort_ctx_saved: str | None = None
+                if stream_fn is not None and _is_local_tool and os.environ.get(
+                    "TOOL_ROUND_THINKING_LOW", "1"
+                ) == "1":
+                    _effort_ctx_saved = _current_reasoning_effort.get()
+                    _current_reasoning_effort.set("low")
+                try:
+                    if stream_fn is not None:
+                        _llm_start = time.perf_counter()
+                        _ttft_done = False
+                        # cache_guard 每请求上下文：只对真实 LLMClient 显式传参，FakeLLM/
+                        # 第三方 duck-typed client 保持旧签名兼容。绝不写 provider 级共享
+                        # client.guard_* 字段，避免并发 session 在流开始/结束时串台。
+                        _guard_ctx = (
+                            GuardRequestContext(
+                                session_id=session_id,
+                                system_text=(
+                                    messages[0].get("content", "")
+                                    if messages and messages[0].get("role") == "system"
+                                    else None
+                                ),
+                                compress_count_this_run=getattr(
+                                    self, "_compress_count_this_run", 0
+                                ),
+                                history_budget=int(effective_budget or 0),
+                                breaker_active=self._cache_monitor.breaker_active_for(
+                                    session_id
+                                ),
+                                run_round=rounds,
+                                provider=getattr(llm_client, "provider", ""),
+                                model=chat_model_arg or getattr(llm_client, "model", ""),
+                            )
+                            if isinstance(llm_client, LLMClient)
                             else None
                         )
-                        llm_client.guard_session_id = session_id
-                        llm_client.guard_compress_count = getattr(self, "_compress_count_this_run", 0)
-                        # EVO-20260818（spec §5.3.1-2 注记 / §5.5.1-8 b，grill-me Q18b）:
-                        # 规则 F 预算口径与构建预算同源（M54 窗口感知 effective）——否则
-                        # 切小窗口模型时占比被全局预算稀释（131K 构建 + 1M 口径 → 95% 算成 13%）
-                        llm_client.guard_history_budget = int(effective_budget or 0)
-                    except Exception:  # noqa: BLE001 — 透传失败不影响请求
-                        pass
-                    it = stream_fn(
-                        messages=messages,
-                        tools=tools_param,
-                        timeout_s=self._runtime_timeout(),
-                        model=chat_model_arg,
-                    )
-                    partial_parts: list[str] = []  # P1-6: 流式部分回答累积（断连落盘用）
-                    while True:
-                        try:
-                            d = next(it)
-                            if not _ttft_done and getattr(d, "text", ""):
-                                _ttft_done = True
-                                ttft_first_ms = (time.perf_counter() - _llm_start) * 1000.0
-                            if getattr(d, "text", ""):
-                                partial_parts.append(d.text)
-                            yield d
-                        except StopIteration as exc:
-                            resp = exc.value
-                            _llm_round_ms = (time.perf_counter() - _llm_start) * 1000.0
-                            break
-                        except GeneratorExit:
-                            # P1-6(2026-08-15，审计发现 #17)：客户端断连——部分回答如实
-                            # 落会话（中断标注不伪装完整）并立即保存，闭合"事件日志已追加
-                            # 而 session JSON 未保存"的双轨漂移。
-                            self._on_stream_disconnect(sess, partial_parts)
-                            raise
-                else:
-                    # 无 chat_stream 的客户端（如测试 FakeLLM）→ 同步 chat（不 yield，行为与 run 一致）
-                    _llm_sync_start = time.perf_counter()
-                    resp = llm_client.chat(
-                        messages=messages,
-                        tools=tools_param,
-                        timeout_s=self._runtime_timeout(),
-                        model=chat_model_arg,
-                    )
-                    _llm_round_ms = (time.perf_counter() - _llm_sync_start) * 1000.0
+                        _stream_kwargs: dict[str, Any] = {
+                            "messages": messages,
+                            "tools": tools_param,
+                            "timeout_s": self._runtime_timeout(),
+                            "model": chat_model_arg,
+                        }
+                        if _guard_ctx is not None:
+                            _stream_kwargs["guard_context"] = _guard_ctx
+                        it = stream_fn(**_stream_kwargs)
+                        partial_parts: list[str] = []  # P1-6: 流式部分回答累积（断连落盘用）
+                        while True:
+                            try:
+                                d = next(it)
+                                if _background_cancelled(self, session_id):
+                                    _cancelled_during_llm = True
+                                    _llm_round_ms = (time.perf_counter() - _llm_start) * 1000.0
+                                    close_stream = getattr(it, "close", None)
+                                    if callable(close_stream):
+                                        try:
+                                            close_stream()
+                                        except Exception:  # noqa: BLE001 — 取消时释放流 fail-open
+                                            logger.debug("LLM stream close 失败（fail-open）", exc_info=True)
+                                    break
+                                if not _ttft_done and getattr(d, "text", ""):
+                                    _ttft_done = True
+                                    ttft_first_ms = (time.perf_counter() - _llm_start) * 1000.0
+                                if getattr(d, "text", ""):
+                                    partial_parts.append(d.text)
+                                yield d
+                            except StopIteration as exc:
+                                resp = exc.value
+                                _llm_round_ms = (time.perf_counter() - _llm_start) * 1000.0
+                                break
+                            except GeneratorExit:
+                                # P1-6(2026-08-15，审计发现 #17)：客户端断连——部分回答如实
+                                # 落会话（中断标注不伪装完整）并立即保存，闭合"事件日志已追加
+                                # 而 session JSON 未保存"的双轨漂移。
+                                self._on_stream_disconnect(sess, partial_parts)
+                                raise
+                    else:
+                        # 无 chat_stream 的客户端（如测试 FakeLLM）→ 同步 chat（不 yield，行为与 run 一致）
+                        _llm_sync_start = time.perf_counter()
+                        _chat_kwargs: dict[str, Any] = {
+                            "messages": messages,
+                            "tools": tools_param,
+                            "timeout_s": self._runtime_timeout(),
+                            "model": chat_model_arg,
+                        }
+                        if isinstance(llm_client, LLMClient):
+                            _chat_kwargs["guard_context"] = GuardRequestContext(
+                                session_id=session_id,
+                                system_text=(
+                                    messages[0].get("content", "")
+                                    if messages and messages[0].get("role") == "system"
+                                    else None
+                                ),
+                                compress_count_this_run=getattr(
+                                    self, "_compress_count_this_run", 0
+                                ),
+                                history_budget=int(effective_budget or 0),
+                                breaker_active=self._cache_monitor.breaker_active_for(
+                                    session_id
+                                ),
+                                run_round=rounds,
+                                provider=getattr(llm_client, "provider", ""),
+                                model=chat_model_arg or getattr(llm_client, "model", ""),
+                            )
+                        resp = llm_client.chat(**_chat_kwargs)
+                        _llm_round_ms = (time.perf_counter() - _llm_sync_start) * 1000.0
+                    if _background_cancelled(self, session_id):
+                        _cancelled_during_llm = True
+                finally:
+                    # 恢复本请求的推理等级 context（无论正常/异常/断连）；不改共享 client。
+                    if _effort_ctx_saved is not None:
+                        _current_reasoning_effort.set(_effort_ctx_saved)
             except LLMError as exc:
                 # 拷问⑥（2026-08-18）: cache_guard BLOCK——直接如实反馈 AI
                 # （不重试/不走 overflow reinject——重试同样被拦=浪费循环；AI 需先
@@ -672,7 +771,10 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 self._record_program_fault("llm_call")
                 # M53 拆分: overflow 如实反馈（不自动重试/不自动压缩，决策权归 AI）
                 # → _OverflowMixin._handle_overflow（move 语义，行为零变化）
-                overflow_action, overflow_final = self._handle_overflow(exc, sess, model_used)
+                overflow_action, overflow_final = self._handle_overflow(
+                    exc, sess, model_used,
+                    model_window={"label": model_used, "context": _response_context_limit},
+                )
                 if overflow_action == "reinject":
                     continue  # 首次注入 system 消息让 AI 自主决策
                 if overflow_action == "end" and overflow_final is not None:
@@ -688,12 +790,12 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                     sess.model_override is None and chat_model_arg is None
                 )
                 if is_default_assembled and self._is_fallback_eligible_error(exc):
+                    _fallback_metadata: dict[str, Any] = {}
                     fallback_resp, inject_msgs, fallback_ref = self._try_fallback_chain(
-                        messages=messages,
-                        tools=tools_param,
-                        timeout_s=self._runtime_timeout(),
-                        primary_error=exc,
-                        session_id=sess.session_id,
+                        messages=messages, tools=tools_param,
+                        timeout_s=self._runtime_timeout(), primary_error=exc,
+                        session_id=sess.session_id, run_round=rounds,
+                        metadata_out=_fallback_metadata,
                     )
                     # 注入降级提示到主消息流（AI 可见, design 原则 2）
                     for m in inject_msgs:
@@ -705,6 +807,9 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                         resp = fallback_resp
                         if fallback_ref:
                             model_used = fallback_ref  # M51: 如实标注为降级后的模型
+                        _response_context_limit, _response_chars_per_token = self._merge_fallback_metadata(
+                            _fallback_metadata, _response_context_limit, _response_chars_per_token
+                        )
                     else:
                         # 链全失败 → 已注入汇总提示, 走原异常如实反馈路径
                         from llm_loop.feedback.honesty import llm_error_text
@@ -720,12 +825,19 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                     final_answer = llm_error_text(exc)
                     break
 
+            if _cancelled_during_llm:
+                _run_end_reason = "cancelled"
+                final_answer = _CANCELLED_ANSWER
+                resp = None  # 防止上一轮响应残留参与 usage/reasoning/finalize
+                break
+
             self._record_action("action.llm_decide", "llm_response", self._resp_summary(resp))
             # M52: 聚合本轮 token 用量（含 fallback 成功响应；0 = provider 未提供）
             tokens_in += resp.prompt_tokens
             tokens_out += resp.completion_tokens
             tokens_cache_hit += resp.prompt_cache_hit_tokens
             llm_ms_total += _llm_round_ms
+            self._kpi_accumulate_llm(planned_label, _llm_round_ms)
             # DSH 借鉴(2026-08-17): 本轮响应 usage 明细落盘（fail-open）——命中/miss
             # token 逐轮可审计，命中率实时可算（不依赖 CSV 账单/流式 M58 盲区）。
             try:
@@ -746,8 +858,41 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             except Exception:  # noqa: BLE001 — usage 明细失败 fail-open（不影响主循环）
                 logger.debug("request.usage 事件写入失败（fail-open）")
 
+            # 2026-08-24 缓存窗口镜像（cache.window 事件）: 把服务端 cached_tokens
+            # （前缀命中 token 数）映射回提交载荷的消息级窗口——缓存覆盖到哪条消息、
+            # 哪些是新增（miss 区）。供 architecture_status 观察 + 信息补充决策
+            # （引用缓存区内信息零额外 prefill; 新增信息尾部追加保持命中; 中插/压缩断前缀）。
+            try:
+                from llm_loop.core.cache_window import describe_cache_window
+
+                _win = describe_cache_window(
+                    messages, resp.prompt_cache_hit_tokens, resp.prompt_tokens,
+                    # EVO-20260824: 缓存边界换算与估算同源（provider 级 chars_per_token）
+                    chars_per_token=_response_chars_per_token,
+                )
+                self._last_cache_window = _win
+                self._event_append(
+                    session_id,
+                    "cache.window",
+                    {
+                        "round": rounds,
+                        "model": model_used or getattr(self.settings, "llm_model", ""),
+                        "cached_tokens": _win.cached_tokens,
+                        "prompt_tokens": _win.prompt_tokens,
+                        "hit_ratio": round(_win.hit_ratio, 4),
+                        "boundary_chars": _win.boundary_chars,
+                        "boundary_msg_index": _win.boundary_msg_index,
+                        "cached_msgs": _win.cached_msgs,
+                        "new_msgs": _win.new_msgs,
+                        "summary": _win.summary(),
+                    },
+                )
+            except Exception:  # noqa: BLE001 — 窗口镜像失败 fail-open（不影响主循环）
+                logger.debug("cache.window 事件写入失败（fail-open）")
+
             # 无工具调用 → 最终回答 → 真诚回答阶段
             if not resp.tool_calls:
+                self._kpi_note_no_tool()
                 self._phase("honest_answer")
                 # H-UI: 进入回答生成
                 self._notify_action("answer")
@@ -765,10 +910,15 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                             verification_note = build_discrepancy_feedback(check)
                             # 注入一条如实提示（不重入循环），最终回答直接输出
                             reminder = Message(
-                                role="system",
+                                # 可见化（EVO-20260823-xxx）: system+injected_system 标记会被
+                                # history.py _is_injected_system/skip_injected_system 剔除——
+                                # 程序自我提醒但 LLM 不可见（诚实率上不去根因）。改 user role
+                                # 尾部追加（对齐 GATE_NOTE 转 user 模式），user role 天然绕过
+                                # 过滤（_is_injected_system 只判 system），LLM 可见且前缀稳定。
+                                role="user",
                                 content=f"[声明提醒] 你的最终回答中存在与工具回执不符的完成声明，请知悉（不影响本次输出，后续请如实声明）。\n{verification_note}",
-                                source=MessageSource.SYSTEM,
-                                metadata={"injected_system": True},  # P1-7: 推送式注入标记
+                                source=MessageSource.USER,
+                                metadata={},  # 不再打推送式注入标记（user role 已天然可见）
                             )
                             sess.messages.append(reminder)
                             # D1: 系统注入消息事件（fail-open）
@@ -940,59 +1090,10 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                         m.metadata = md
         except Exception:  # noqa: BLE001 — 消费标记失败不阻断 run
             logger.warning("耗尽消息消费标记异常（fail-open）", exc_info=True)
-        # EVO-20260817-72fcd94a L3: 缓存健康闭环（窗口兜底，fail-open；逻辑在 cache_health.py）
-        try:
-            _cache_hint = self._cache_monitor.record(
-                tokens_in, tokens_cache_hit, model_ref=model_used
-            )
-            # 发送前门禁·后检漂移提示（build 时记录）一并注入 final_answer（告警发给用户）
-            if self._cache_gate_hint:
-                _cache_hint = (
-                    f"{_cache_hint}\n\n{self._cache_gate_hint}"
-                    if _cache_hint
-                    else self._cache_gate_hint
-                )
-                self._cache_gate_hint = None
-            if _cache_hint:
-                self._record_action(
-                    "run.cache_monitor",
-                    "recovered" if "已恢复" in _cache_hint else "alert",
-                    _cache_hint,
-                )
-                if final_answer:
-                    final_answer = f"{final_answer}\n\n{_cache_hint}"
-            else:
-                # EVO-20260819-2254e3b4 方案B（用户批准）: 常态缓存命中率展示——
-                # 无告警时若开启 CACHE_HIT_SHOW_IN_ANSWER 且窗口有数据，回答末尾附一行
-                # 命中率摘要（仅展示，不影响缓存/前缀机制；fail-open）
-                try:
-                    if (
-                        getattr(self.settings, "cache_hit_show_in_answer", False)
-                        and final_answer
-                        and self._cache_monitor is not None
-                    ):
-                        _note = self._cache_monitor.format_health_note()
-                        if _note:
-                            final_answer = f"{final_answer}\n\n{_note}"
-                except Exception:  # noqa: BLE001 — fail-open
-                    logger.warning("常态缓存命中率注入异常（fail-open）", exc_info=True)
-            # EVO-20260819 方案B 修复: 注入发生在 sess.messages.append / session.save
-            # 之后——回写 session 消息并重新保存，保证飞书 cross_sync（从 session 读）
-            # 端可见命中率行（web 显示返回值已含，此处补飞书链路；fail-open）
-            if final_answer and sess.messages:
-                try:
-                    _last_asst = None
-                    for _m in reversed(sess.messages):
-                        if _m.role == "assistant":
-                            _last_asst = _m
-                            break
-                    if _last_asst is not None and _last_asst.content != final_answer:
-                        _last_asst.content = final_answer
-                        self.session.save(sess)
-                except Exception:  # noqa: BLE001 — 回写失败 fail-open
-                    logger.warning("命中率注入回写 session 失败（fail-open）", exc_info=True)
-        except Exception:  # noqa: BLE001 — 监控失败 fail-open，不阻断 run
-            logger.warning("缓存健康闭环监控异常（fail-open）", exc_info=True)
+        # EVO-20260817-72fcd94a L3: 缓存健康闭环（fail-open；实现在 _BuildMixin）
+        final_answer = self._post_run_cache_health(
+            final_answer, sess, tokens_in, tokens_cache_hit, model_used
+        )
         # P1-1(2026-08-15): run 末事件日志滚动检查钩子（大小/天数触发；fail-open 不阻断）
         self._check_event_rotate(session_id)
         # H-UI: 循环结束（状态条可收尾）
@@ -1032,6 +1133,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                     "model_used": model_used,
                     "truncated": truncation_noted,
                     "answer_preview": (final_answer or "")[:200],
+                    **self._kpi_snapshot(),
                 },
             )
         except Exception:  # noqa: BLE001 — run.end 失败 fail-open（不影响返回）
@@ -1055,48 +1157,6 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             reasoning_content=resp.reasoning_content if resp is not None else None,
         )
 
-    def run(
-        self, session_id: str, user_text: str, model: str | None = None,
-        reasoning_effort: str | None = None,
-    ) -> LoopResult:
-        """单条用户消息的完整循环（run_stream 的同步聚合包装，签名/返回不变）.
-
-        model: 可选，本次对话覆盖使用的 LLM 模型（None 用装配模型，Web 模型切换用）。
-        """
-        it = self.run_stream(session_id, user_text, model, reasoning_effort=reasoning_effort)
-        while True:
-            try:
-                next(it)
-            except StopIteration as exc:
-                return exc.value
-
-    def run_single(self, user_text: str, model: str | None = None) -> LoopResult:
-        """B5(2026-08-14) 一次性便捷入口：自动创建新会话并执行完整循环.
-
-        外部嵌入（examples/01 模式）无需手动 session.create()；等价于
-        `run(create(), text)`。会话按正常路径落盘（可 list/search 追溯）。
-        """
-        session_id = self.session.create()
-        return self.run(session_id, user_text, model=model)
-
-    def close(self) -> None:
-        """P2-4(2026-08-15): 释放底层 LLM 客户端连接（httpx）.
-
-        优先关闭 llm_pool（默认 client + provider 缓存一次全部释放）；
-        pool 未装配（None）时关闭装配默认 client（self.llm）。
-        duck-typing getattr 防御（无 close 的可注入实现跳过）；
-        幂等（可重复调用，httpx.Client.close 幂等）+ fail-open
-        （关闭异常记 warning 不抛穿，避免影响停机流程）。
-        """
-        target = self.llm_pool if self.llm_pool is not None else self.llm
-        closer = getattr(target, "close", None)
-        if closer is None:
-            return
-        try:
-            closer()
-        except Exception as exc:  # noqa: BLE001 — 关闭失败 fail-open
-            logger.warning("LLM 客户端关闭失败（fail-open）: %s", exc)
-
     # M53 拆分: 模型路由辅助方法族 → llm_loop/core/loop/routing.py（_RoutingMixin）
     # 迁移注释保留（test_silent_pass_cleanup 源码断言）: 模型标签 resolve 失败时回退裸名（fail-open），
     # 行为与迁移前一致；有 pool 时经注册表 resolve 为全限定 ref。
@@ -1109,74 +1169,4 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
     #   _schema_to_param / _resp_summary / _record_tool_history
     # 模块级函数 _json_dumps_args/_tool_args_summary 经模块级 re-export 保持原路径可导入。
 
-    def set_workspace(self, workspace_root: str) -> None:
-        """切换工作区（对齐 DSH Workspace）：工具根 + 会话存储分区跟随.
-
-        空串 → 复位为进程 cwd 单根（零回归）；非空 → 会话根切到
-        data/sessions/<workspace_key>，工具相对路径/命令默认 cwd 由
-        run 入口注入的 contextvar 跟随本根。
-        """
-        self.workspace_root = workspace_root or ""
-        base = Path(self.settings.sessions_dir)
-        if self.workspace_root:
-            from llm_loop.workspace.store import workspace_key
-
-            self.session.set_root(base / workspace_key(self.workspace_root))
-        else:
-            self.session.set_root(base)
-
-
-    def _persist_with_recovery_note(
-        self,
-        *,
-        target_type: str,
-        source_id: str,
-        write_fn: Any,
-        payload: str,
-        trigger_point: str,
-    ) -> str:
-        """P2-2: 调 RecoveryChannel.persist_with_recovery 并返回标注文本.
-
-        self.recovery 为 None 时返回空串（零回归）。
-        """
-        if self.recovery is None:
-            return ""
-        try:
-            receipt = self.recovery.persist_with_recovery(
-                target_type=target_type,
-                source_id=source_id,
-                write_fn=write_fn,
-                payload=payload,
-                trigger_point=trigger_point,
-            )
-        except Exception:  # noqa: BLE001 — 恢复通道自身失败不中断主循环
-            logger.warning("恢复通道异常（fail-open）", exc_info=True)
-            return "[恢复通道异常] 重试/备份均未完成"
-        if receipt.status == "retried_ok":
-            return f"[恢复通道] 已重试 {receipt.retries} 次后成功落盘"
-        if receipt.status == "backed_up":
-            return f"[恢复通道] 重试 {receipt.retries} 次仍失败，已备份 {receipt.backup_id}"
-        return f"[恢复通道] 重试 {receipt.retries} 次仍失败，备份也失败: {receipt.error}"
-
-    def _remember(self, final_answer: str, session_id: str, sess) -> None:
-        """解析最终回答的记忆块并落盘（FR-MEM-01/03，失败不阻塞）."""
-        if not final_answer.strip():
-            return
-        try:
-            blocks = extract_memory_blocks(final_answer)
-            if not blocks:
-                return
-            entries, failures = memory_blocks_to_entries(
-                blocks,
-                session_id=session_id,
-                message_id=str(len(sess.messages)),
-            )
-            for e in entries:
-                e.deposit_path = "inline"  # T33: 即时沉淀标记
-                self.memory.save_entry(e)
-            if failures:
-                logger.warning(
-                    "记忆块解析失败 %d 条（如实记录，不丢弃回答）: %s", len(failures), failures[:2]
-                )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("记忆沉淀失败（不阻塞主循环）: %s", exc)
+    # 生命周期/持久化包装已迁至 lifecycle.py（_LifecycleMixin）。
