@@ -39,6 +39,13 @@ let resumeAbort: AbortController | null = null;
 let resumeSessionId: string | null = null;
 let bgPollTimer: number | undefined;
 
+// ── 空闲增量轮询（飞书桥等外部通道写入后 Web 及时刷新，无需手动切会话）──
+const IDLE_POLL_INTERVAL_MS = 20_000;
+let idlePollTimer: number | undefined;
+let idlePollSession: string | null = null;
+/** 上次探针的服务端最新消息指纹（与服务端自比对，消除本地 toChatMessage 映射差异） */
+let idleProbeFp: string | null = null;
+
 function emit(): void {
   listeners.forEach((l) => l());
 }
@@ -95,7 +102,46 @@ sessionStore.subscribe(() => {
     window.clearInterval(bgPollTimer);
     bgPollTimer = undefined;
   }
+  // 切换会话：停上一会话的空闲轮询（新会话由 loadHistory 重新 ensure）
+  stopIdlePoll();
 });
+
+/** 服务端最新消息指纹（limit=1 探针，成本低） */
+function fingerprintLatest(m: ChatMessage | undefined): string | null {
+  if (!m) return null;
+  return JSON.stringify([m.role, m.content, m.note ?? null]);
+}
+
+/** 空闲轮询一跳：非空闲/无会话直接退出；指纹变化 → 重载整窗 */
+async function idlePollTick(sessionId: string): Promise<void> {
+  const st = conversationStore.getState();
+  if (st.streaming || st.backgroundRunning || st.loadedHistoryCount === 0) return;
+  const resp = await fetchHistory(sessionId, 1, 0);
+  if (sessionStore.getState().currentSessionId !== sessionId) return;
+  const fp = fingerprintLatest(resp.messages[0] as ChatMessage | undefined);
+  if (fp === null) return; // 会话被清空等异常形态：不触发重载（下次探针再判）
+  if (idleProbeFp === null) {
+    idleProbeFp = fp; // 基线跳
+    return;
+  }
+  if (fp !== idleProbeFp) void loadHistory(sessionId); // 有新写入 → 全量重载（终态可靠）
+}
+
+function stopIdlePoll(): void {
+  if (idlePollTimer !== undefined) {
+    window.clearInterval(idlePollTimer);
+    idlePollTimer = undefined;
+  }
+}
+
+/** 启动空闲增量轮询（幂等；仅当前会话；流式/后台 run 时自动退避不请求） */
+export function ensureIdlePoll(sessionId: string): void {
+  if (idlePollTimer !== undefined && idlePollSession === sessionId) return;
+  stopIdlePoll();
+  idlePollSession = sessionId;
+  idleProbeFp = null;
+  idlePollTimer = window.setInterval(() => void idlePollTick(sessionId), IDLE_POLL_INTERVAL_MS);
+}
 
 export async function loadHistory(sessionId: string): Promise<void> {
   // setCurrentSession 通常先发生；owner-aware detach 不依赖 store 的“当前值”猜旧流归属。
@@ -114,6 +160,9 @@ export async function loadHistory(sessionId: string): Promise<void> {
     backgroundRunning: false,
   });
   // EVO 后台 run：加载后查后台生成状态——running 则轮询直到完成（刷新/切换后可见进行中任务）
+  // 空闲增量轮询：飞书桥等外部写入 → Web 20s 内自动刷新；基线指纹直接取自本次加载，省一次探针
+  ensureIdlePoll(sessionId);
+  idleProbeFp = fingerprintLatest(messages[messages.length - 1]);
   void checkBackgroundRun(sessionId);
 }
 
@@ -263,6 +312,8 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
   // 空串归一为 null：新工作区/新会话无会话时后端按"新建会话"处理
   // （不可在此 return，否则新工作区发消息被静默拦截）
   const sessionId = sessionStore.getState().currentSessionId || null;
+  // 本地发送即将写入/产生新消息：停空闲轮询防竞态（基线由完成后的重载路径重建）
+  stopIdlePoll();
   // 识别成功/待处理附件：内容注入上下文
   const okPrefix = attachments
     .filter((a) => a.status === "ok" || a.status === "pending")
