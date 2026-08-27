@@ -43,6 +43,10 @@ _prep_dsh_env() {
   export DSH_HOME="$MIRROR_DIR/data/dsh-home"
   mkdir -p "$DSH_HOME"
   unset DSH_SESSION_JSONL DSH_SESSION_ID DSH_SHELL DSH_WEB_URL 2>/dev/null || true
+
+# P1(2026-08-28) 跨区数据锚点污染防御（主区实证事故对称防护）: 清空继承锚点键,
+# 由本区 .env/默认相对路径接管
+unset LFL_DATA_DIR DSH_HOME
 }
 
 # 按端口找监听进程（只杀目标端口，不碰主区）
