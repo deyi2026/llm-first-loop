@@ -22,6 +22,7 @@ from llm_loop.config import Settings
 from llm_loop.core.history import converge_history_budget
 from llm_loop.core.loop import LoopEngine
 from llm_loop.core.message import ToolResult
+from llm_loop.core.scheduler import ScheduleStore  # 2026-08-27 BUGFIX: 共享实例装配
 from llm_loop.core.session import SessionStore, _validate_session_id
 from llm_loop.feedback.honesty import delete_feedback_for_session
 from llm_loop.feedback.validator import DeclarationValidator
@@ -558,8 +559,16 @@ def build_engine(settings: Settings) -> LoopEngine:
     # DSH-PLUGINS-20260816 ③: 文件搜索（glob + 内容 grep，工具优先免碎调用）
     _register_basic("search_files", SearchFilesTool())
     # DSH-PLUGINS-20260816 ②: 定时提醒（at/after/rate → interop notify 注入会话）
-    _register_basic("schedule", ScheduleTool())
-    _register_basic("schedule_cancel", ScheduleCancelTool())
+    # BUGFIX(2026-08-27 双Store分裂): 注册工具与 SchedulerThread 共享同一
+    # ScheduleStore 实例——原 ScheduleTool() 惰性自建与下方 engine.scheduler
+    # 装配处 ScheduleStore() 分裂为两个实例，due() 只扫内存互不可见 → 永不触发；
+    # 路径从 settings.data_dir 绝对化派生，消除 LFL_DATA_DIR env 与进程 cwd
+    # 双基准导致的落点分裂（实证：注册与调度写读不同 schedule.json）。
+    _schedule_store = ScheduleStore(
+        Path(settings.data_dir).resolve() / "schedule.json"
+    )
+    _register_basic("schedule", ScheduleTool(store=_schedule_store))
+    _register_basic("schedule_cancel", ScheduleCancelTool(store=_schedule_store))
     _register_basic("web_fetch", WebFetchTool(timeout_s=_tool_timeout))
     # M48: 网络搜索（Bing/百度双后端降级）
     _register_basic("web_search", WebSearchTool(timeout_s=_tool_timeout))
@@ -912,10 +921,12 @@ def build_engine(settings: Settings) -> LoopEngine:
     logger.info("后台 run 执行器已装配 enabled=%s", settings.runner_background)
 
     # DSH-PLUGINS-20260816 ②: 调度提醒线程（到点写 interop notify，LFL 下轮 run 回显）
+    # BUGFIX(2026-08-27): 复用上方工具注册处的 _schedule_store（原此处再建
+    # 新实例，双 Store 内存互不可见 → 提醒永不触发）
     try:
-        from llm_loop.core.scheduler import SchedulerThread, ScheduleStore
+        from llm_loop.core.scheduler import SchedulerThread
 
-        engine.scheduler = SchedulerThread(ScheduleStore())
+        engine.scheduler = SchedulerThread(_schedule_store)
         engine.scheduler.start()
     except Exception:  # noqa: BLE001 — 调度装配失败不影响核心链路
         logger.exception("调度提醒线程装配失败（fail-open）")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 
@@ -125,6 +126,68 @@ def test_scheduler_thread_notify(tmp_path):
         SchedulerThread._notify_via_interop = orig
 
 
+def test_due_sees_other_store_add(tmp_path):
+    """BUGFIX(2026-08-27) oracle: 运行中 Store A 必须看到另一实例 B 后注册的提醒.
+
+    原实现 due() 只扫内存 self._entries，factory 双实例装配下注册侧与
+    检查侧互不可见 → 提醒永不触发（实证 sched-649240a2/aa53e496 count=0）。
+    修复后 due() 先 refresh 磁盘（SoT）再扫。
+    """
+    p = tmp_path / "schedule.json"
+    store_a = ScheduleStore(path=p)  # 模拟 SchedulerThread 侧（先启动）
+    store_b = ScheduleStore(path=p)  # 模拟 ScheduleTool 侧（后注册）
+    sid = store_b.add("跨实例提醒", after=0)
+    # store_a 不重建——due() 必须自己看到磁盘新增
+    due = store_a.due()
+    assert [e.sid for e in due] == [sid]
+    assert [e.message for e in due] == ["跨实例提醒"]
+
+
+def test_due_refresh_keeps_memory_on_disk_error(tmp_path):
+    """BUGFIX 配套: 磁盘损坏时 refresh 保持内存现状（fail-open 不清空）.
+
+    若清空内存，due() 空转后 mark_triggered 会把空状态写回磁盘 → 真丢失。
+    """
+    p = tmp_path / "schedule.json"
+    s = ScheduleStore(path=p)
+    s.add("要保住的提醒", after=3600)  # 未来触发，驻留内存+磁盘
+    p.write_text("{corrupted json", encoding="utf-8")  # 磁盘损坏
+    due = s.due(now=time.time())
+    assert [e.message for e in due] == []  # 未到点不触发
+    assert [e["message"] for e in s.list()] == ["要保住的提醒"]  # 内存未被清空
+
+
+def test_scheduler_thread_cross_store_trigger(tmp_path):
+    """线程级 oracle: SchedulerThread(store_A) 先启动，store_B 后注册也能触发.
+
+    完整复刻 factory 装配分裂场景（双实例 + 线程已运行 + 后注册）。
+    修复前该测试必红（线程只扫 A 的空内存）。
+    """
+    p = tmp_path / "schedule.json"
+    store_a = ScheduleStore(path=p)
+    fired: list[str] = []
+    ev = threading.Event()
+
+    def notify(entry):
+        fired.append(entry.sid)
+        ev.set()
+
+    th = SchedulerThread(store_a, tick_interval=0.05, notify=notify)
+    th.start()
+    try:
+        store_b = ScheduleStore(path=p)  # 另一实例后注册（after=0 立即到点）
+        sid = store_b.add("线程跨实例", after=0)
+        assert ev.wait(timeout=3.0), "3s 内未触发——读侧 SoT 修复失效"
+        assert fired == [sid]
+        # notify 回调先于 mark_triggered 落盘（线程 finally），轮询等最终一致
+        deadline = time.time() + 3.0
+        while store_b.list() != [] and time.time() < deadline:
+            time.sleep(0.02)
+        assert store_b.list() == [], "触发后 3s 内未从磁盘删除（经 A 的 mark_triggered）"
+    finally:
+        th.stop()
+
+
 def test_multi_store_no_overwrite(tmp_path):
     """审查中危: 多实例（模拟多进程）add 不互相覆盖——修复前后写覆盖先写丢条目."""
     p = tmp_path / "schedule.json"
@@ -152,7 +215,6 @@ def test_multi_store_mark_no_resurrect(tmp_path):
     """审查中危: 多实例场景触发删除不复活（磁盘删除语义跨实例一致）."""
     p = tmp_path / "schedule.json"
     s1 = ScheduleStore(p)
-    s2 = ScheduleStore(p)
     sid = s1.add("立即", after=0)
     s1.mark_triggered(sid)
     s3 = ScheduleStore(p)

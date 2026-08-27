@@ -171,7 +171,7 @@ def test_memory_fault_fail_open():
 class _TipStub(_ToolExecMixin):
     """LoopEngine 最小桩（_inject_experience_tips 依赖面）."""
 
-    def __init__(self, exp_dir: str | Path, turn_flag: bool, turn_ref=None) -> None:
+    def __init__(self, exp_dir: str | Path, turn_ref=None) -> None:
         self.settings = SimpleNamespace(
             tool_experience_inject=True,
             experiences_dir=str(exp_dir),
@@ -180,7 +180,7 @@ class _TipStub(_ToolExecMixin):
         self.messages = []
         self.events = []
         self._tip_tail_messages = []
-        self._turn_tip_injected = turn_flag
+        # T5: shadow flag 已删——turn 身份与注入历史均从 sess.messages SoT 派生
         self._current_turn_ref = turn_ref
         self._cache_last_model_by_session = {}
         self._cache_last_model = ""
@@ -197,23 +197,35 @@ def _make_exp_dir(tmp_path: Path) -> Path:
     return d
 
 
-def test_tip_turn_flag_blocks_reinject(tmp_path):
-    """T2: 本 turn 已注入过经验提示（flag=True）→ 直接跳过."""
+def test_tip_turn_done_blocks_reinject_sot(tmp_path):
+    """T5: 本 turn 已注入（消息已有 experience_tip ∧ turn_ref 匹配）→ 零新增."""
     d = _make_exp_dir(tmp_path)
-    stub = _TipStub(d, turn_flag=True, turn_ref=3)
+    stub = _TipStub(d, turn_ref=3)
+    stub.messages.append(
+        Message(
+            role="user",
+            content="[经验提示] 已注入",
+            source=MessageSource.USER,
+            metadata={
+                "persisted_injection": True,
+                "injection_kind": "experience_tip",
+                "turn_ref": 3,
+                "experience_tip_tools": ["web_fetch"],
+            },
+        )
+    )
     _ToolExecMixin._inject_experience_tips(stub, stub, ["web_fetch"])
-    assert stub.messages == []
+    assert len(stub.messages) == 1  # SoT 判定本 turn 已注入 → 不再追加
 
 
-def test_tip_inject_sets_flag_and_turn_ref(tmp_path):
-    """T2: 命中注入 → flag 置位 + metadata 带 turn_ref；再次调用不重复注入."""
+def test_tip_inject_persists_turn_ref_and_quota(tmp_path):
+    """T5: 命中注入 → metadata 落 turn_ref（SoT 即配额）；同 turn 再次调用不重复."""
     d = _make_exp_dir(tmp_path)
-    stub = _TipStub(d, turn_flag=False, turn_ref=3)
+    stub = _TipStub(d, turn_ref=3)
     _ToolExecMixin._inject_experience_tips(stub, stub, ["web_fetch"])
     assert len(stub.messages) == 1
     md = stub.messages[0].metadata or {}
     assert md.get("injection_kind") == "experience_tip"
     assert md.get("turn_ref") == 3
-    assert stub._turn_tip_injected is True
     _ToolExecMixin._inject_experience_tips(stub, stub, ["web_fetch", "other_tool"])
-    assert len(stub.messages) == 1  # run 级一次：本 turn 不再注入
+    assert len(stub.messages) == 1  # run 级一次（SoT 派生，无内存 flag）
