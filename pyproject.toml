@@ -19,6 +19,8 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.15",
     "pyright>=1.1.390",
+    "Pillow>=10.0",
+    "reportlab>=4.0",
 ]
 
 [build-system]
