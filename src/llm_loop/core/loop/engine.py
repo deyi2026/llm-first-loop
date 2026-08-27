@@ -29,6 +29,9 @@ from llm_loop.core.history import (  # noqa: F401 (history 工具)
 # M53 拆分: 职责 mixin（signals 信号检查 / runtime 运行时参数 / fallback 模型降级链 / routing 模型路由 / overflow overflow 处理 / tool_exec 工具执行）
 from llm_loop.core.loop.archive import _ArchiveMixin
 from llm_loop.core.loop.build import _BuildMixin  # EVO-20260817-e63f712f: 消息构建拆分
+from llm_loop.core.loop.err1210 import (
+    _Err1210Mixin,  # err1210 P0 恢复（tasks 4.2/4.3；状态字段/接线方法均在 err1210.py）
+)
 from llm_loop.core.loop.events import _EventsMixin
 from llm_loop.core.loop.fallback import _FallbackMixin
 from llm_loop.core.loop.interop import _InteropMixin
@@ -140,7 +143,7 @@ def build_session_snapshot_text(
     parts.append("若你对当前任务/已完成/下一步/未决事项的定位漂移，以本条为锚点重新校准。")
     return "；".join(parts)
 
-class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _OverflowMixin, _ToolExecMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin, _KpiMixin, _LifecycleMixin, _TurnContextMixin):
+class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _OverflowMixin, _Err1210Mixin, _ToolExecMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin, _KpiMixin, _LifecycleMixin, _TurnContextMixin):
     """五阶段核心循环控制器."""
 
     # EVO 后台 run 执行器（factory 动态装配 BackgroundRunner；声明类型供 pyright 静态检查）
@@ -241,6 +244,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         # EVO-20260817-72fcd94a L3（闭环）: 缓存健康监控 + 发送前门禁（独立模块，程序常态锚点管理）
         from llm_loop.core.cache_health import CacheHealthMonitor
         self._cache_monitor = CacheHealthMonitor()
+        self._err1210_init()  # err1210 P0 恢复状态字段（tasks 4.2；字段语义见 err1210.py）
         # 2026-08-22 任务聚焦状态（focus 模块: 单向切换锁定 + 任务锚点数据源）
         from llm_loop.core.loop.focus import TaskFocusState
 
@@ -259,72 +263,6 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         # None = 不通知（零回归）；观察者异常 fail-open 不影响主循环
         self._action_observer: Callable[[str, dict], None] | None = None
 
-    # ── 2026-08-20 (DESIGN-v3 v2 落地): 切换通知注入（AI 主导上下文选择第一步）──
-    def _inject_switch_notice(self, switch_from: str, switch_to: str, sess=None) -> None:
-        """模型切换 → 填充切换感知帧到 _tip_tail_messages 槽.
-
-        复用 _tip_tail_messages 机制（tool_exec.py 填充 / build.py 消费）:
-        尾部追加、转 user、一次性消费——system+稳定历史前缀字节不变（缓存友好）。
-        仅本轮注入不持久化（瞬时性事件，对齐 ARCHITECTURE §5 瞬时条目不持久化）。
-        首轮全量 miss 是物理事实（build→routing→452 时序），如实告知 + 给 AI 动作选项。
-        2026-08-22 补充: 告知"继续当前任务"——新模型不从零开始, 从会话历史找回任务
-        目标（最后 user 消息 + 最近 assistant 进度）直接继续, 而非"状态确认"或"请给出
-        任务"（实证: 98605ad7 切换后 AI 说'请给出任务'丢失'配置飞书'任务）。
-        fail-open: 注入异常不阻断切换。
-        """
-        try:
-            if not switch_from or not switch_to or switch_from == switch_to:
-                return
-            # 从会话历史提取当前任务（最后 user 消息 + 最近 assistant 进度摘要）
-            _task_hint = ""
-            if sess is not None and getattr(sess, "messages", None):
-                _recent = [m for m in sess.messages
-                           if getattr(m, "role", "") in ("user", "assistant")
-                           and getattr(m, "content", None)][-2:]
-                _hints = []
-                for _m in _recent:
-                    _role = getattr(_m, "role", "")
-                    _c = str(getattr(_m, "content", ""))[:120]
-                    if _role == "user":
-                        _hints.append(f"用户最近指令: {_c}")
-                    else:
-                        _hints.append(f"AI 最近进度: {_c}")
-                if _hints:
-                    _task_hint = "\n".join(_hints) + "\n"
-            notice = (
-                "[模型切换感知] 当前模型已从 "
-                f"{switch_from} 切换到 {switch_to}。新缓存池无此前缀，"
-                "本轮首轮全量 miss（物理事实，成本已发生）；第二轮起尾部瘦身生效。\n"
-                f"{_task_hint}"
-                "**切换不改变任务：继续推进当前会话任务（勿'状态确认'或'请给出任务'）。**"
-                "如需要早期历史细节，可调用 search_archive(query=...) 检索关键帧；"
-                "后续如需声明上下文窗口，可经 declare_context 工具（若已注册）。"
-            )
-            # 2026-08-27: 模型切换通知必须持久化。旧的一次性 tail 会在下一请求
-            # 被 assistant/新 user 顶替，制造字节前缀断点；且动态 anchor 会继续漂移。
-            if sess is None:
-                return
-            from llm_loop.core.loop.focus import wrap_injection
-
-            msg = Message(
-                role="user",
-                content=wrap_injection(notice),
-                source=MessageSource.USER,
-                metadata={
-                    "persisted_injection": True,
-                    "injection_kind": "model_switch_notice",
-                    "switch_from": switch_from,
-                    "switch_to": switch_to,
-                },
-            )
-            sess.messages.append(msg)
-            self._append_message_event(sess, msg)
-        except Exception:  # noqa: BLE001 — fail-open 不阻断切换
-            import logging
-
-            logging.getLogger(__name__).debug(
-                "切换通知注入异常（fail-open）", exc_info=True
-            )
 
     # ── 主循环本体（public run_stream 生命周期包装见 lifecycle.py）──
     def _run_stream_inner(
@@ -635,6 +573,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 )
             except Exception:  # noqa: BLE001 — 快照失败 fail-open（不影响主循环）
                 logger.debug("request.meta 事件写入失败（fail-open）")
+
             _cancelled_during_llm = False
             try:
                 stream_fn = getattr(llm_client, "chat_stream", None)
@@ -780,7 +719,16 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 if overflow_action == "end" and overflow_final is not None:
                     _run_end_reason = "overflow"
                     final_answer = overflow_final
+                    self._err1210_note_defer_lost(session_id, "overflow")  # 二阶失败观测
                     break
+                # ── err1210 P0（tasks 4.3）: compact 首请求 1210 定向降级重试（mixin 封装，
+                # 编排与控制流语义见 err1210.py；恢复成功 → 新 resp 走下方正常路径，
+                # 失败 → 原样继续既有错误链；env ERR1210_RECOVERY=0 完全旁路）──
+                _e1210_recovered, resp, _llm_round_ms = self._err1210_attempt_recovery(
+                    exc=exc, sess=sess, messages=messages, tools_param=tools_param,
+                    llm_client=llm_client, chat_model_arg=chat_model_arg,
+                    session_id=session_id, current_resp=resp, current_round_ms=_llm_round_ms,
+                )
                 # ── M49（design §5.4）: 降级逻辑 ──
                 # 仅当当前模型为默认装配（sess.model_override is None 且 per-call override 也为 None）
                 # 才沿 fallback 链尝试；会话显式 override（含用户/AI 经 switch_model 选择）=
@@ -789,7 +737,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 is_default_assembled = (
                     sess.model_override is None and chat_model_arg is None
                 )
-                if is_default_assembled and self._is_fallback_eligible_error(exc):
+                if not _e1210_recovered and is_default_assembled and self._is_fallback_eligible_error(exc):
                     _fallback_metadata: dict[str, Any] = {}
                     fallback_resp, inject_msgs, fallback_ref = self._try_fallback_chain(
                         messages=messages, tools=tools_param,
@@ -816,13 +764,15 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
 
                         _run_end_reason = "llm_error"
                         final_answer = llm_error_text(exc)
+                        self._err1210_note_defer_lost(session_id, "fallback_exhausted")  # 二阶失败观测
                         break
-                else:
+                elif not _e1210_recovered:
                     # 严格模式 / 非降级错误 → 如实反馈（DFX-REL-02）
                     from llm_loop.feedback.honesty import llm_error_text
 
                     _run_end_reason = "llm_error"
                     final_answer = llm_error_text(exc)
+                    self._err1210_note_defer_lost(session_id, "llm_error")  # 二阶失败观测（spec 5.1.3-5）
                     break
 
             if _cancelled_during_llm:
@@ -832,6 +782,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 break
 
             self._record_action("action.llm_decide", "llm_response", self._resp_summary(resp))
+            self._err1210_note_request_count(session_id, len(messages))  # T4.2: 骤降兜底数据源（仅成功轮更新，语义见 err1210.py）
             # M52: 聚合本轮 token 用量（含 fallback 成功响应；0 = provider 未提供）
             tokens_in += resp.prompt_tokens
             tokens_out += resp.completion_tokens

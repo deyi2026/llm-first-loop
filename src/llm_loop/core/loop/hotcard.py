@@ -172,3 +172,28 @@ def pop_hotcard(*, session_id: str, data_dir: str | Path) -> str | None:
     except Exception:  # noqa: BLE001 — fail-open
         logger.warning("hotcard: 读取/消费失败（fail-open 不注入）", exc_info=True)
         return None
+
+
+def reset_hotcard_consumed(*, session_id: str, data_dir: str | Path) -> bool:
+    """[err1210 T2.2，defer 回存 hotcard 槽] 复位被本会话消费的热卡 consumed 标记.
+
+    身份校验: 仅当 consumed == True 且 consumed_by == session_id 时复位
+    （consumed=False、清空 consumed_by/consumed_ts）——防复活已被新压缩事件
+    覆盖的陈旧卡。文件缺失/校验不匹配/写失败返回 False（fail-open）。
+    复位后下一轮 build pop_hotcard 可再次取出注入（幂等：重复复位返回 False）。
+    """
+    path = hotcard_path(data_dir)
+    try:
+        if not path.exists():
+            return False
+        card = json.loads(path.read_text(encoding="utf-8"))
+        if card.get("consumed") is not True or card.get("consumed_by") != session_id:
+            return False
+        card["consumed"] = False
+        card["consumed_by"] = ""
+        card.pop("consumed_ts", None)
+        _atomic_write_json(path, card)
+        return True
+    except Exception:  # noqa: BLE001 — fail-open
+        logger.warning("hotcard: consumed 复位失败（fail-open）", exc_info=True)
+        return False
