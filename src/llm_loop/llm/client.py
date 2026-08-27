@@ -295,6 +295,76 @@ class LLMClient:
 
     # ── 统一入口（协议分发） ──
     @staticmethod
+    def _normalize_tool_call_args(messages: list[dict]) -> tuple[list[dict], dict | None]:
+        """EVO-20260827 V3: tool_call.function.arguments 非 str → 强制串化（智谱 1210 唯一探明触发器）.
+
+        取证（6485b02b 会话排查 + 智谱 coding 端点二分探测）:
+        - 15 个请求变体中仅「arguments 缺失(D4)/为 dict(D5)」复现 HTTP 400
+          {"code":"1210","API 调用参数有误"}；孤儿配对/null content/额外键等全过。
+        - ToolCall dataclass 标注 arguments: dict（core/message.py:54），存在隐式
+          dict 构建分支——任何未经 json.dumps 的 wire 重建都会整轮 400，且 provider
+          只回笼统 1210 无定位信息。
+        两遍扫描 + copy-on-write（不改调用方消息）；fail-open 不阻断；
+        返回 (新消息列表, 首个修复项诊断 {msg_idx, call_idx, tool}) 供异常归因。
+        """
+        needs = False
+        for m in messages:
+            for tc in m.get("tool_calls") or []:
+                fn = tc.get("function") if isinstance(tc, dict) else None
+                if isinstance(fn, dict) and not isinstance(fn.get("arguments"), str):
+                    needs = True
+                    break
+            if needs:
+                break
+        if not needs:
+            return messages, None
+
+        out: list[dict] = []
+        first_fixed: dict | None = None
+        fixed_count = 0
+        for mi, m in enumerate(messages):
+            tcs = m.get("tool_calls")
+            if not tcs:
+                out.append(m)
+                continue
+            new_tcs: list[dict] = []
+            changed = False
+            for ti, tc in enumerate(tcs):
+                fn = tc.get("function") if isinstance(tc, dict) else None
+                args = fn.get("arguments") if isinstance(fn, dict) else None
+                if isinstance(args, str):
+                    new_tcs.append(tc)
+                    continue
+                fn2 = dict(fn or {})
+                fn2["arguments"] = json.dumps(args if args is not None else {}, ensure_ascii=False)
+                tc2 = dict(tc) if isinstance(tc, dict) else {}
+                tc2["function"] = fn2
+                new_tcs.append(tc2)
+                changed = True
+                fixed_count += 1
+                if first_fixed is None:
+                    first_fixed = {
+                        "msg_idx": mi,
+                        "call_idx": ti,
+                        "tool": (fn2.get("name") if isinstance(fn2.get("name"), str) else "") or "?",
+                    }
+            if changed:
+                m2 = dict(m)
+                m2["tool_calls"] = new_tcs
+                out.append(m2)
+            else:
+                out.append(m)
+        logger.warning(
+            "提交视图修复(V3): %d 处 tool_call.arguments 非 str 已强制串化"
+            "（首个 msg#%d call#%d %s）——智谱 1210 触发器防御",
+            fixed_count,
+            (first_fixed or {}).get("msg_idx", -1),
+            (first_fixed or {}).get("call_idx", -1),
+            (first_fixed or {}).get("tool", "?"),
+        )
+        return out, first_fixed
+
+    @staticmethod
     def _sanitize_openai_tool_pairs(messages: list[dict]) -> list[dict]:
         """EVO-20260827 V2: OpenAI 路径 tool_calls↔tool 配对双向清洗（连续 400 根因修复）.
 
@@ -454,22 +524,38 @@ class LLMClient:
         # EVO-20260827: OpenAI 兼容路径孤儿 tool 清洗（anthropic 在 _to_anthropic_messages
         # 内已有对称清洗；google 的 functionCall 结构不同不适用）——防压缩切配对/注入
         # 插队产生的孤儿 tool 消息被 provider 拒收（连续 400 根因，跨 provider 取证）
+        _v3_diag: dict | None = None  # EVO-20260827 V3: arguments 串化诊断（1210 归因用）
         if protocol not in ("anthropic", "google"):
             messages = self._sanitize_openai_tool_pairs(messages)
-        if protocol == "anthropic":
-            result = yield from self._stream_anthropic(
-                messages, tools, timeout_s=timeout_s, model=model, guard_context=_guard_ctx
-            )
-        elif protocol == "google":
-            result = yield from self._stream_google(
-                messages, tools, timeout_s=timeout_s, model=model, guard_context=_guard_ctx
-            )
-        elif protocol == "lms-chat":
-            result = yield from self._stream_lms_chat(messages, tools, timeout_s=timeout_s, model=model)
-        else:
-            result = yield from self._stream_openai(
-                messages, tools, timeout_s=timeout_s, model=model, guard_context=_guard_ctx
-            )
+            messages, _v3_diag = self._normalize_tool_call_args(messages)
+        try:
+            if protocol == "anthropic":
+                result = yield from self._stream_anthropic(
+                    messages, tools, timeout_s=timeout_s, model=model, guard_context=_guard_ctx
+                )
+            elif protocol == "google":
+                result = yield from self._stream_google(
+                    messages, tools, timeout_s=timeout_s, model=model, guard_context=_guard_ctx
+                )
+            elif protocol == "lms-chat":
+                result = yield from self._stream_lms_chat(messages, tools, timeout_s=timeout_s, model=model)
+            else:
+                result = yield from self._stream_openai(
+                    messages, tools, timeout_s=timeout_s, model=model, guard_context=_guard_ctx
+                )
+        except LLMHTTPError as exc:
+            # EVO-20260827 V3: 参数类 400（如智谱 1210 笼统无定位）携带本轮 arguments
+            # 串化诊断，异常侧日志可直接归因到消息位置/工具名。
+            if _v3_diag:
+                logger.error(
+                    "LLM HTTP 错误伴随 V3 诊断: 本请求有 %d 处非串 arguments 已强制串化"
+                    "（首个 msg#%s call#%s %s）——若仍 400 属其他结构残留",
+                    _v3_diag.get("fixed_total", 0),
+                    _v3_diag.get("msg_idx"),
+                    _v3_diag.get("call_idx"),
+                    _v3_diag.get("tool"),
+                )
+            raise
         # EVO-20260818-92bd97d6: 空响应兜底——流正常结束但无任何内容/工具调用
         # 视为异常（流被截断/模型异常），抛异常走如实反馈，不再静默记为 content=(空)
         if result is not None and not result.content and not result.tool_calls:
