@@ -12,7 +12,7 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 
-from llm_loop.config import load_settings
+from llm_loop.config import load_env_file, load_settings
 from llm_loop.factory import build_engine
 
 from .auth import is_loopback, require_api_key, validate_auth_require, validate_binding
@@ -162,6 +162,11 @@ def _install_exit_signal_log() -> None:
 
 def main() -> None:
     """服务启动入口（python -m llm_loop.web）."""
+    # 补齐手动启动缺口：shell 未注入 .env 时也能可靠读配置（MCP_SERVERS 等）。
+    # 锚定 CWD（与 data_dir="./data" 同约定，重启脚本均 cd 到各自项目根）；
+    # 不可用默认 __file__ 锚定——共享代码（venv .pth 指向镜像 src）会让主区进程
+    # 误读镜像 .env 的 WEB_PORT=8903/LFL_DATA_DIR，主区 web 绑镜像端口直接起不来。
+    load_env_file(Path.cwd() / ".env")
     # EVO-20260811-f94e5306: 记录进程启动版本（一致性检测）
     from llm_loop.introspection.proc_version import record_process_start
 

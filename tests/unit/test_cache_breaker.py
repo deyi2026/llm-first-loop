@@ -244,18 +244,18 @@ def test_strip_telemetry_lines():
 
 # ── P0: cache_guard 规则 F 协调 ──
 
-def test_guard_rule_g_downgraded_when_breaker_active(tmp_path):
-    """breaker 期规则 G（低命中 BLOCK）降级 WARN——防与 breaker 互锁."""
+def test_guard_rule_g_provider_miss_warns_with_or_without_breaker(tmp_path):
+    """无结构漂移证据的 provider 低命中始终 WARN；breaker 不应依赖旧的误 BLOCK。"""
     g = PromptGuard(audit_file=str(tmp_path / "guard2.jsonl"))
     # 制造低命中窗口（3 次 BLOCK 阈值内的低命中记录）
     for _ in range(4):
         g.record_result("sg1", tokens_in=20000, tokens_hit=2000, provider="deepseek")
     d = g.check(session_id="sg1", system_text="sys", messages=[{"role": "user", "content": "hi"}],
                 breaker_active=False)
-    assert d.verdict == "BLOCK" and d.rule == "low_hit_rate"
+    assert d.verdict == "WARN" and d.rule == "low_hit_rate_provider"
     d2 = g.check(session_id="sg1", system_text="sys", messages=[{"role": "user", "content": "hi"}],
                  breaker_active=True)
-    assert d2.verdict == "WARN" and d2.rule == "low_hit_rate_breaker"
+    assert d2.verdict == "WARN" and d2.rule == "low_hit_rate_provider"
 
 
 def test_guard_rule_f_downgraded_when_breaker_active(tmp_path):
@@ -420,8 +420,8 @@ def test_provider_mid_fold_keeps_head_and_does_not_rearchive(tmp_path):
     assert marked_sample in other_joined, "provider级折叠状态不得污染另一provider"
 
 
-def test_guard_g_compression_round_downgraded(tmp_path):
-    """压缩轮（compress_count>0）低命中 BLOCK → WARN（防压缩轮提交死锁）."""
+def test_guard_g_compression_round_has_specific_warn(tmp_path):
+    """压缩轮保留专用 WARN；普通 provider 低命中也只 WARN，二者归因文字不同。"""
     g = PromptGuard(audit_file=str(tmp_path / "guard3.jsonl"))
     for _ in range(4):
         g.record_result("sg2", tokens_in=20000, tokens_hit=2000, provider="deepseek")
@@ -429,7 +429,7 @@ def test_guard_g_compression_round_downgraded(tmp_path):
                 messages=[{"role": "user", "content": "hi"}],
                 compress_count_this_run=1)
     assert d.verdict == "WARN" and d.rule == "low_hit_rate_compressing"
-    # 非压缩轮同命中 → BLOCK
+    # 非压缩轮同命中：无结构漂移证据，仅 provider-side WARN
     d2 = g.check(session_id="sg2", system_text="sys",
                  messages=[{"role": "user", "content": "hi"}])
-    assert d2.verdict == "BLOCK" and d2.rule == "low_hit_rate"
+    assert d2.verdict == "WARN" and d2.rule == "low_hit_rate_provider"

@@ -60,7 +60,7 @@ class TestValidateRequest:
     def test_audit_written(self, tmp_path):
         f = tmp_path / "g.jsonl"
         validate_request(system_text="a", messages=_sys("a"), meta={"session_id": "s1"}, audit_file=f)
-        lines = [json.loads(l) for l in f.read_text().splitlines() if l.strip()]
+        lines = [json.loads(line) for line in f.read_text().splitlines() if line.strip()]
         assert len(lines) == 1
         assert lines[0]["session_id"] == "s1"
         assert lines[0]["verdict"] == "ALLOW"
@@ -105,15 +105,14 @@ class TestValidateRequest:
         )
         assert d.verdict == "ALLOW"
 
-    def test_low_hit_rate_block(self, tmp_path):
-        """规则 G: 会话近期命中率低 → BLOCK（闭环——不应出去的）. """
+    def test_low_hit_rate_does_not_block_without_structural_drift(self, tmp_path):
+        """低命中 + tokens_in 相近不能证明前缀漂移；provider 冷缓存/分片也会出现同形态。"""
         g = PromptGuard(audit_file=tmp_path / "g.jsonl")
-        # 灌入低命中历史（3 次——命中率 10%）
         for _ in range(3):
             g.record_result("s-low", 10000, 1000)
         d = g.check(session_id="s-low", system_text="sys", messages=_sys("sys"))
-        assert d.verdict == "BLOCK"
-        assert d.rule == "low_hit_rate"
+        assert d.verdict == "WARN"
+        assert d.rule == "low_hit_rate_provider"
 
     def test_low_hit_rate_warn(self, tmp_path):
         g = PromptGuard(audit_file=tmp_path / "g.jsonl")
@@ -150,29 +149,29 @@ class TestValidateRequest:
         """冷启动（前缀构建——in 递增）低命中 → 不拦（仅 WARN）. """
         g = PromptGuard(audit_file=tmp_path / "g.jsonl")
         # 模拟冷启动：in 递增（10K→50K→100K——前缀在构建），命中 0
-        for i, n in enumerate((10000, 50000, 100000)):
+        for n in (10000, 50000, 100000):
             g.record_result("s-cold", n, 0)
         d = g.check(session_id="s-cold", system_text="sys", messages=_sys("sys"))
         assert d.verdict == "WARN"  # 不拦（冷启动预期低）
 
-    def test_stable_prefix_low_hit_blocked(self, tmp_path):
-        """前缀稳定（in 相近）却低命中 → BLOCK（真异常）. """
+    def test_similar_tokens_in_is_not_prefix_stability_proof(self, tmp_path):
+        """tokens_in 恒定只证明尺寸相近，不证明字节前缀稳定；不得据此 BLOCK。"""
         g = PromptGuard(audit_file=tmp_path / "g.jsonl")
         for _ in range(3):
-            g.record_result("s-bad", 100000, 5000)  # in 恒定 + 低命中
+            g.record_result("s-bad", 100000, 5000)
         d = g.check(session_id="s-bad", system_text="sys", messages=_sys("sys"))
-        assert d.verdict == "BLOCK"
-        assert d.rule == "low_hit_rate"
+        assert d.verdict == "WARN"
+        assert d.rule == "low_hit_rate_provider"
 
-    def test_block_escape(self, tmp_path):
-        """连续 BLOCK 达上限 → 自动降级 WARN（防死锁）. """
+    def test_repeated_provider_low_hit_remains_warn(self, tmp_path):
+        """连续 provider miss 不应制造 BLOCK/escape 循环；必须持续允许请求预热缓存。"""
         g = PromptGuard(audit_file=tmp_path / "g.jsonl")
         for _ in range(3):
-            g.record_result("s-esc", 100000, 5000)  # 稳定前缀低命中
-        for _ in range(4):  # 连续 4 次（>3 逃生上限）
+            g.record_result("s-esc", 100000, 5000)
+        for _ in range(4):
             d = g.check(session_id="s-esc", system_text="sys", messages=_sys("sys"))
-        assert d.verdict == "WARN"  # 逃生降级
-        assert d.rule == "low_hit_rate_escape"
+        assert d.verdict == "WARN"
+        assert d.rule == "low_hit_rate_provider"
 
     def test_reset_session(self, tmp_path):
         """reset_session（模型切换）清窗口——恢复不判（冷启动）. """
@@ -214,8 +213,8 @@ class TestValidateRequest:
         assert d.verdict == "WARN"
         assert d.rule == "low_hit_rate_ttl"
 
-    def test_ttl_within_windows_still_blocks(self, tmp_path):
-        """间隔未超 TTL 的低命中 → 正常 BLOCK（TTL 判定不掩盖真异常）."""
+    def test_ttl_within_window_still_warns_without_drift_evidence(self, tmp_path):
+        """短间隔连续低命中仍可能是 provider 冷缓存/分片；无结构漂移证据不得 BLOCK。"""
         import time
 
         g = PromptGuard(audit_file=tmp_path / "g.jsonl")
@@ -229,8 +228,8 @@ class TestValidateRequest:
             session_id="s-hot", system_text="sys", messages=_sys("sys"),
             provider="minimax",
         )
-        assert d.verdict == "BLOCK"
-        assert d.rule == "low_hit_rate"
+        assert d.verdict == "WARN"
+        assert d.rule == "low_hit_rate_provider"
 
     # ── 任务2（§5.2）: WARN 阈值按会话规模自适应 ──
 

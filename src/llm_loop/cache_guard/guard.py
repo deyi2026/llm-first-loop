@@ -476,8 +476,9 @@ class PromptGuard:
         """规则 G: 近期命中率低 → 拦截——但【区分冷启动 vs 持续异常】.
 
         2026-08-18 用户反馈（'第一条新信息命中率肯定低'）:
-        - 冷启动（前缀在构建——in 递增）低命中 = 预期——不拦（降级 WARN）
-        - 前缀稳定（最近两次 in 相近——同前缀）却低命中 = 异常——BLOCK
+        - 冷启动（前缀在构建——in 递增）低命中 = 预期——不拦（WARN）
+        - 2026-08-27 实证修正：tokens_in 相近只能证明尺寸相近，不能证明字节前缀稳定；
+          provider 冷缓存/TTL淘汰/分片也会产生该形态，因此无结构漂移证据时不得 BLOCK。
         EVO-20260818（spec §5.3.1-2 f，grill-me Q3）: 压缩轮（compress_count>0，in 骤降）
         不判冷启动——压缩后低命中按前缀稳定规则正常裁决（头部保留时前缀应稳定）。
         EVO-20260818（grill-me 2.3 实证）: 请求间隔 > provider 缓存 TTL（MiniMax ~130s 实测）
@@ -535,23 +536,23 @@ class PromptGuard:
                         "压缩轮后持续低命中再排查前缀漂移/风暴）"
                     ),
                 )
-            if prefix_stable:
-                return GuardDecision(
-                    verdict="BLOCK",
-                    rule="low_hit_rate",
-                    detail=(
-                        f"该会话近期命中率 {rate*100:.0f}%（<{_HIT_RATE_BLOCK*100:.0f}%——"
-                        "前缀稳定（最近两次 in 相近）却持续低命中——前缀漂移/压缩风暴）。"
-                        "建议：先压缩 checkpoint / 换新会话 / 排查前缀漂移——再发"
-                    ),
-                )
-            # 冷启动（前缀在构建——in 递增）——预期低——不拦（仅 WARN 知悉）
+            # 2026-08-27 生产实证：tokens_in 相近 != 字节前缀稳定。
+            # GLM-Flash 在 tools/system/params/既有消息哈希均稳定时仍可出现 provider-side
+            # 0-hit；若在这里 BLOCK，会切断后续预热请求，形成“低命中 -> 永久不可用”自锁。
+            # 因此没有结构漂移证据时，无论 in 是否相近均只 WARN。prefix_stable 只用于
+            # 诊断说明，不再作为阻断证据。
             return GuardDecision(
                 verdict="WARN",
-                rule="low_hit_rate",
+                rule="low_hit_rate_provider",
                 detail=(
-                    f"近期命中率 {rate*100:.0f}%（冷启动/前缀构建中——预期低——"
-                    "前缀稳定后将回升；若持续请排查）"
+                    f"该会话近期命中率 {rate*100:.0f}%（<{_HIT_RATE_BLOCK*100:.0f}%——"
+                    + (
+                        "最近两次 tokens_in 相近，但尺寸相近不能证明字节前缀稳定；"
+                        if prefix_stable
+                        else ""
+                    )
+                    + "可能为 provider 冷缓存/TTL淘汰/分片路由，允许请求继续以完成缓存预热；"
+                    "若伴随 system/tools/payload 指纹变化或 context.compressed，再按结构漂移排查）"
                 ),
             )
         # 任务2（§5.2）: WARN 阈值按会话规模自适应（BLOCK 阈值不参与自适应）

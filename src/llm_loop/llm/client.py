@@ -195,6 +195,94 @@ def _finish_response(
     )
 
 
+def _trace_payload_fingerprint(
+    payload: dict[str, Any], messages: list[dict], *, session_id: str, provider: str, model: str
+) -> None:
+    """[临时诊断 2026-08-27] 请求分段指纹追踪——定位轮间前缀漂移段（缓存命中暴跌排查）.
+
+    背景: 上游裸调健康、生产请求参数恒定，但轮间命中钉死在工具块头部——怀疑
+    messages/tools 之外或极靠前位置存在轮间漂移元素，且对规则 A（system）与
+    cache.window（消息）均不可见。本函数在发送前对请求体做确定性分段哈希：
+    - tools 整块哈希 + 数量（工具 schema 轮间漂移 → 一眼可见）
+    - 除 messages/tools 外的顶层参数哈希（thinking/effort/tool_choice 等）
+    - 逐消息 sha256（canonical JSON：含 role/content/tool_calls 全字段）
+    逐请求一行 JSON 追加 data/audit/payload_trace.jsonl（可用 env 改路径）。
+    只读不改 payload；任何异常吞掉 fail-open，绝不影响主请求。
+    env LLM_PAYLOAD_TRACE=0 关闭（默认开，根因定位后建议关闭）。
+    """
+    if os.environ.get("LLM_PAYLOAD_TRACE", "1") != "1":
+        return
+    try:
+        import hashlib
+
+        def _h(obj: Any) -> str:
+            canon = json.dumps(obj, ensure_ascii=False, sort_keys=True)
+            return hashlib.sha256(canon.encode("utf-8")).hexdigest()[:16]
+
+        def _hw(obj: Any) -> str:
+            """wire 级哈希：不排序、ensure_ascii=True——与 httpx json= 实际发出的字节一致.
+
+            键插入序漂移（canonical sort_keys 哈希会掩盖）在此层现形。
+            """
+            wire = json.dumps(obj)  # httpx 默认序列化行为（插入序 + ASCII 转义）
+            return hashlib.sha256(wire.encode("utf-8")).hexdigest()[:16]
+
+        def _type_tag(a: Any) -> str:
+            if isinstance(a, str):
+                return "str"
+            if isinstance(a, dict):
+                return "dict"
+            if a is None:
+                return "None"
+            return f"other_{type(a).__name__}"
+
+        def _arg_type(tc: Any) -> str:
+            """单个 tool_call 的 arguments 形态标记（1210 归因：区分 str/dict/缺失/扁平）."""
+            if not isinstance(tc, dict):
+                return "tc_non_dict"
+            fn = tc.get("function")
+            if isinstance(fn, dict):
+                if "arguments" not in fn:
+                    return "missing"
+                return _type_tag(fn["arguments"])
+            if "arguments" in tc:
+                return "flat_" + _type_tag(tc["arguments"])
+            return "flat_no_args"
+
+        top = {k: v for k, v in payload.items() if k not in ("messages", "tools")}
+        record = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "session_id": session_id,
+            "provider": provider,
+            "model": model,
+            "tools_hash": _h(payload.get("tools") or []),
+            "tools_wire": _hw(payload.get("tools") or []),
+            "tools_n": len(payload.get("tools") or []),
+            "params": {
+                k: (_h(v) if isinstance(v, dict | list) else v) for k, v in sorted(top.items())
+            },
+            "msgs": [
+                {
+                    "i": i,
+                    "role": m.get("role"),
+                    "chars": len(m.get("content") or "") if isinstance(m.get("content"), str) else -1,
+                    "h": _h(m),
+                    "w": _hw(m),
+                    "args": [_arg_type(tc) for tc in m.get("tool_calls") or []] or None,
+                }
+                for i, m in enumerate(messages)
+            ],
+        }
+        path = os.environ.get("LLM_PAYLOAD_TRACE_PATH", "data/audit/payload_trace.jsonl")
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:  # noqa: BLE001 — 纯诊断，失败静默
+        logger.debug("payload 指纹追踪写入失败", exc_info=True)
+
+
 @dataclass
 class LLMClient:
     """多协议流式客户端（OpenAI 兼容 / Anthropic / Google；wire_protocol 分发）.
@@ -543,7 +631,7 @@ class LLMClient:
                 result = yield from self._stream_openai(
                     messages, tools, timeout_s=timeout_s, model=model, guard_context=_guard_ctx
                 )
-        except LLMHTTPError as exc:
+        except LLMHTTPError:
             # EVO-20260827 V3: 参数类 400（如智谱 1210 笼统无定位）携带本轮 arguments
             # 串化诊断，异常侧日志可直接归因到消息位置/工具名。
             if _v3_diag:
@@ -614,6 +702,15 @@ class LLMClient:
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
+        # [临时诊断 2026-08-27] 分段指纹落盘（见 _trace_payload_fingerprint docstring）——
+        # 放在 payload 完整组装后、发送前；BLOCK 的请求在 chat_stream 层已被拦，不会到达这里。
+        _trace_payload_fingerprint(
+            payload,
+            messages,
+            session_id=(guard_context.session_id if guard_context else "") or "__global__",
+            provider=self.provider,
+            model=payload.get("model", "") or self.model,
+        )
 
         acc = _StreamAcc()
         agg = ToolCallDeltaAggregator()
