@@ -73,7 +73,6 @@ def test_hard_truncation_carries_distill_guidance():
 
 def _set_model_label(label: str) -> None:
     """设置 current_model_label contextvar（测试用；token 由调用方保存恢复）."""
-    import contextvars
     from llm_loop.core.run_context import current_model_label
 
     _tok = current_model_label.set(label)
@@ -82,7 +81,6 @@ def _set_model_label(label: str) -> None:
 
 def test_local_model_tightens_summary_threshold():
     """local 模型标签下收紧阈值：6K 输出在 4000 阈值触发摘要（全局 15000 下不触发）."""
-    import contextvars
     from llm_loop.core.run_context import current_model_label
 
     reg = ToolRegistry(
@@ -103,7 +101,6 @@ def test_local_model_tightens_summary_threshold():
 
 def test_local_model_tightens_summary_window():
     """local 模型标签下收紧首尾窗口：800 窗口内偏移 1000 的标记不可见（全局 2500 可见）."""
-    import contextvars
     from llm_loop.core.run_context import current_model_label
 
     reg = ToolRegistry(
@@ -128,7 +125,6 @@ def test_local_model_tightens_summary_window():
 
 def test_cloud_model_keeps_global_threshold():
     """云端/无标签模型维持全局配置零回归：6K 输出在 15000 阈值下不触发摘要."""
-    import contextvars
     from llm_loop.core.run_context import current_model_label
 
     reg = ToolRegistry(

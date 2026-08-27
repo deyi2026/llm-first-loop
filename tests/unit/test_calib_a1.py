@@ -1,11 +1,12 @@
 from __future__ import annotations
+
 import json
 from pathlib import Path
 
 from scripts.calib.fixtures_a1 import INITIAL_PACKETS_A1, ORACLES_A1, SOURCE_LIMIT_A1
+from scripts.calib.runner_a1 import execute_run_a1
 from scripts.calib.treatments import build_system_prompt, build_task_prompt
 from scripts.calib.treatments_a1 import A1_VARIANTS, build_system_prompt_a1
-from scripts.calib.runner_a1 import execute_run_a1
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 MATRIX = ROOT / "data/calib/a1_matrix_v1.json"

@@ -17,7 +17,7 @@ from llm_loop.core.message import ToolCall
 from llm_loop.llm.client import LLMResponse
 from llm_loop.subagent.runner import SubAgentRunner
 from llm_loop.tools.builtin.spawn_subagent import SpawnSubAgentTool
-from llm_loop.tools.builtin.subagent_report import SubagentReportTool, _SUBAGENT_REPORT_CTX
+from llm_loop.tools.builtin.subagent_report import _SUBAGENT_REPORT_CTX, SubagentReportTool
 
 
 def _inbox_files(tmp_path: Path) -> list[Path]:
