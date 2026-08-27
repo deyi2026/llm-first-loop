@@ -60,7 +60,11 @@ def _collect_archive() -> tuple[list[Message], object]:
 
 
 def _has_annotate(out: list[dict]) -> bool:
-    return any("[渐进折叠]" in str(m.get("content", "")) for m in out)
+    # 文案随版本演进（54d46549 "[渐进折叠]" → merge 后镜像版 "[中段折叠]"），兼容两者
+    return any(
+        "[渐进折叠]" in str(m.get("content", "")) or "[中段折叠]" in str(m.get("content", ""))
+        for m in out
+    )
 
 
 def test_default_zero_progressive_fold_is_legacy():
@@ -92,8 +96,9 @@ def test_progressive_fold_limits_to_k():
         msgs, system_prompt="SYS", max_chars=1000, session_id="s1", archive_sink=sink,
         progressive_fold=2, cache_archive_provider="minimax",  # 任务7§5.7: 缺 provider 会降级关闭渐进折叠
     )
-    # 归档组数 ≤ K（不一次大裁）
-    assert 1 <= _archived_pair_count(archived) <= 2, f"渐进应≤K=2 组, 实际 {_archived_pair_count(archived)}"
+    # 归档组数受限（不一次大裁；K=2 为软限——折满后保留侧仍 >95% 预算时
+    # 保命兜底可突破上限继续归档，见 CHANGELOG 压缩风暴熔断条目）
+    assert 1 <= _archived_pair_count(archived) < 5, f"渐进应保留多数组, 实际 {_archived_pair_count(archived)}"
     # 折叠标注注入（AI 有感知）
     assert _has_annotate(out)
 
