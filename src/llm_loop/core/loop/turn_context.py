@@ -39,6 +39,16 @@ class _TurnContextMixin:
         持久化异常由 build 回退路径兜底（返回值仍供动态注入）。
         返回: 检索结果（供 build fail-open 回退；正常路径已持久化）。
         """
+        # T5(GPT 复审): 操作幂等——消息幂等 ≠ 操作幂等。重入若本 turn 已持久化
+        # snapshot，直接返回不检索不 mark_injected（防污染 memory 使用统计：
+        # 12 次重入曾致 search/mark_injected 各 12 次而消息仅 1 条）。
+        for _m in getattr(sess, "messages", []) or []:
+            _md = getattr(_m, "metadata", None) or {}
+            if (
+                _md.get("injection_kind") == "memory_snapshot"
+                and _md.get("turn_ref") == turn_ref
+            ):
+                return []
         try:
             memory_msgs = build_memory_messages(
                 user_text,
