@@ -4,6 +4,7 @@ Entirely new from A1 F01-F08, S2 E01-E08 and all calibration families.
 Each seed has three available sources and at most two effective requests.
 """
 from __future__ import annotations
+
 import json
 
 _NO_HINT = "未提供；必须根据当前材料与必要原始证据自行判断。"

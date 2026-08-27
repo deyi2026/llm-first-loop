@@ -5,9 +5,9 @@ It does NOT know benchmark oracles, decision relevance, or expected sources.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import json
-from typing import Callable
+from collections.abc import Callable
+from dataclasses import dataclass, field
 
 DUPLICATE_SUPPRESSED = "DUPLICATE_SUPPRESSED"
 TOOL_BUDGET_EXHAUSTED = "TOOL_BUDGET_EXHAUSTED"

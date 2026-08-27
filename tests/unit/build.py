@@ -19,7 +19,6 @@ import os
 from typing import TYPE_CHECKING
 
 from llm_loop.core.cache_health import GATE_NOTE_CONTENT  # 门禁干预知情标记
-from llm_loop.core.loop.focus import build_task_anchor, wrap_injection
 
 # EVO-20260818: projection_ver/check 提升到模块级（消除函数内 import 遮蔽导致的 F823）——
 # 与 engine.py 顶部 re-export 同模式；stable_digest 既有模块级使用
@@ -28,6 +27,7 @@ from llm_loop.core.history import (
     projection_ver,  # noqa: F401 (history 工具, 函数内使用)
     stable_digest,  # 投影门闸
 )
+from llm_loop.core.loop.focus import build_task_anchor, wrap_injection
 
 # build_session_snapshot_text 定义于 engine（loop 包内）——顶层 import 会触发
 # engine→build→loop/__init__ 循环（engine import build 在前），故用函数内延迟 import

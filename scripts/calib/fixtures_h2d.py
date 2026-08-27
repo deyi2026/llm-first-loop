@@ -3,6 +3,7 @@
 J01-J04 are new domains/text. They are frozen before the first real H2d request.
 """
 from __future__ import annotations
+
 import json
 
 INITIAL_PACKETS_H2D={

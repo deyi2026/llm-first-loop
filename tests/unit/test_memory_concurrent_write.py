@@ -40,7 +40,7 @@ def test_remote_write_not_lost_on_save(tmp_path):
 def test_same_id_keeps_local_override(tmp_path):
     """同 id 条目: 本进程内存版优先（不重复合并旧版）."""
     a = MemoryStore(tmp_path)
-    e = a.save_entry(_mk_entry("原始内容"))
+    a.save_entry(_mk_entry("原始内容"))
     # 模拟磁盘被其他进程更新为同 id 新版
     disk = json.loads((tmp_path / "index.json").read_text())
     disk[0]["content"] = "磁盘新版"
@@ -59,7 +59,6 @@ def test_same_id_keeps_local_override(tmp_path):
 def test_thread_safety_concurrent_saves(tmp_path):
     """同进程多线程并发 save_entry 不丢条目（线程锁）."""
     store = MemoryStore(tmp_path)
-    results: list[Exception | None] = []
     errors: list[Exception] = []
 
     def worker(n: int):

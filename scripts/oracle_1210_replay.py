@@ -7,7 +7,7 @@
 
 参数:
   --snapshot <path>      模块 C 快照 JSON（data/audit/offending_payloads/ 产出）
-  --track both|skeleton|bisect   执行轨道（默认 both = 两轨必跑；单轨不产 Verdict，
+  --track both|skeleton|bisect|struct  执行轨道（默认 both = 两轨必跑；单轨不产 Verdict，
                          遵守 R3 禁止项——禁止仅骨架轨下结论，spec 5.2.1-5）
   --budget N             每样本预算（默认取 env ORACLE_1210_BUDGET，缺省 20）
   --qps X                限流（默认取 env ORACLE_1210_QPS，缺省 0.5）
@@ -63,7 +63,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="err1210 双轨 oracle 重放（P2 人工触发入口）",
     )
     p.add_argument("--snapshot", required=True, help="模块 C 快照 JSON 路径")
-    p.add_argument("--track", choices=("both", "skeleton", "bisect"), default="both")
+    p.add_argument("--track", choices=("both", "skeleton", "bisect", "struct"), default="both")
     p.add_argument(
         "--budget",
         type=int,
@@ -179,7 +179,7 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
     # 校验变体构造（骨架/二分初始对照）——dry-run 与 live 共用同一构造路径
-    for track in ("skeleton", "bisect"):
+    for track in ("skeleton", "bisect", "struct"):
         if args.track == "both" or args.track == track:
             vs = build_variants(sample, track=track)
             if not vs:

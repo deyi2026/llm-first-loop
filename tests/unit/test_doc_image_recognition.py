@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import io
 import zipfile
-from pathlib import Path
 
-import pytest
 from PIL import Image, ImageDraw
-from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
+from reportlab.pdfgen import canvas
 
 from llm_loop.web.upload_handlers import (
     _extract_docx,
@@ -51,7 +49,6 @@ def test_recognize_disabled_by_default(monkeypatch):
 
 def test_recognize_enabled_with_limit(monkeypatch):
     """开 + 上限 5: 最多识别 5 张, 结果含来源标注."""
-    import llm_loop.web.upload_handlers as uh
     import llm_loop.web.vision as vision_mod
 
     monkeypatch.setenv("WEB_DOC_IMAGE_RECOGNITION", "1")
@@ -72,7 +69,6 @@ def test_recognize_enabled_with_limit(monkeypatch):
 
 def test_pdf_image_appended_when_enabled(monkeypatch):
     """文字层 PDF 内嵌图片 → 开关开时追加识别块."""
-    import llm_loop.web.upload_handlers as uh
     import llm_loop.web.vision as vision_mod
 
     monkeypatch.setenv("WEB_DOC_IMAGE_RECOGNITION", "1")
@@ -87,7 +83,6 @@ def test_pdf_image_appended_when_enabled(monkeypatch):
 
 def test_docx_image_appended_when_enabled(monkeypatch):
     """docx media 图片 → 开关开时追加识别块."""
-    import llm_loop.web.upload_handlers as uh
     import llm_loop.web.vision as vision_mod
 
     monkeypatch.setenv("WEB_DOC_IMAGE_RECOGNITION", "1")

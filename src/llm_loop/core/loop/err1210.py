@@ -1,8 +1,13 @@
 """err1210 P0 恢复组件（.codeartsdoer/specs/err1210_locating，tasks 任务组 3）.
 
-根因（spec r3 附录 D）: 智谱 GLM 400/1210 全部命中 cache_compact 折叠后首请求，
-唯一共变差异是尾部一次性注入槽（interop/tip/gate_note/hotcard → wrap 转 user）
-形成的 5-6 条连续 user 注入群。P0 = 剥离尾部注入 → defer 回存槽位 → 单次重试。
+根因口径（2026-08-28 归档：结构触发已定位，回执 .codeartsdoer/specs/
+err1210_verdict_p1/receipt.md；历史时点 P0-C 降级口径见 1f167f3）:
+智谱 GLM 400/1210 根因 = 请求尾部连续 user 角色消息条数（结构触发，
+内容无关；实测尾部 1 条成功、5/8 条失败，精确边界 ∈ [2,7] 待工单）。
+compact 首请求必带尾部注入群 5-8 条连续 user，故 11/11 必犯。
+P1 = 尾部注入聚合（AGGREGATED 单条 user，主控裁决合规重放 81c0503）。
+P0 = 安全诊断/降级框架保留（剥离尾部注入 → defer 回存槽位 → 单次重试；
+观测落差已归因：trigger=11 / retry 1 / success 0，逐项解释见 verdict.md 三A）。
 
 关键约束（design 1.1.2 / 2.1.3-P0）:
 - 注入产物 dict 不打标（wire 字节敏感）——剥离识别依赖 build 旁路登记 + 前缀复核双保险；
@@ -20,15 +25,18 @@ import hashlib
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from llm_loop.llm.errors import LLMError, LLMHTTPError, parse_provider_error_code
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from llm_loop.core.message import Message
     from llm_loop.core.session import ModelSession
 
@@ -55,6 +63,34 @@ class SlotKind(StrEnum):
     TIP = "tip"
     HOTCARD = "hotcard"
     GATE_NOTE = "gate_note"
+    AGGREGATED = "aggregated"  # P1 9.1: 四槽聚合单条（strip/defer 消费端拆解分支）
+
+
+_AGG_SLOT_RE = re.compile(r"^--- \[slot:(interop|tip|hotcard|gate_note|memory|hint)\] ---$")
+
+
+def parse_aggregated_slots(content: str) -> list[tuple[str, str]]:
+    """聚合消息 content → [(slot, seg)] 段列表（P1 9.1 defer 拆解用）.
+
+    build 统一聚合器产物格式: 各段以 "--- [slot:xxx] ---" 行起始（build.py 9.1）。
+    hint 段为非消费提示（local 行为提示），仅透传内容不参与槽复位。
+    解析不到任何段标记时返回空列表（调用方按 fail-open 处理）。
+    """
+    parts: list[tuple[str, str]] = []
+    cur: str | None = None
+    buf: list[str] = []
+    for ln in content.split("\n"):
+        m = _AGG_SLOT_RE.match(ln)
+        if m:
+            if cur is not None:
+                parts.append((cur, "\n".join(buf).strip("\n")))
+            cur = m.group(1)
+            buf = []
+        elif cur is not None:
+            buf.append(ln)
+    if cur is not None:
+        parts.append((cur, "\n".join(buf).strip("\n")))
+    return parts
 
 
 @dataclass(frozen=True)
@@ -196,13 +232,8 @@ class _Err1210Mixin:
     """P0 状态机（engine 挂载；self 属性由 LoopEngine.__init__ 提供）."""
 
     if TYPE_CHECKING:
-        _last_build_injections: list[InjectedEntry]
         _err1210_attempted: dict[str, int]
         _last_request_msg_count_by_session: dict[str, int]
-        _compact_event_seq: int
-        _last_build_defer_replayed: bool
-        _deferred_replay_refs: list[tuple[SlotKind, Message]]
-        _deferred_replay_slots: set[str]
 
     # ── 3.2 compact 首请求判定 ──
 
@@ -275,16 +306,91 @@ class _Err1210Mixin:
 
     # ── 3.4 defer 回存（槽位复位语义）──
 
-    def _defer_store(self, sess: ModelSession, entries: list[InjectedEntry]) -> bool:
+    def _defer_store(
+        self,
+        sess: ModelSession,
+        entries: list[InjectedEntry],
+        messages: list[dict] | None = None,
+    ) -> bool:
         """按 slot_kind 分派复位；幂等；≤8 上限超限优先保留 interop（spec 6.3-5）.
 
         回存失败仅 WARN 不阻断重试（spec 4.2-2）。返回是否全部成功（观测用）。
+        messages 为 build 产物（P1 9.1 AGGREGATED 拆解用，可空）。
         """
         ok = True
         try:
             by_slot: dict[SlotKind, list[InjectedEntry]] = {}
             for e in entries:
                 by_slot.setdefault(e.slot_kind, []).append(e)
+            # P1 9.1: AGGREGATED 拆解——聚合 entry 还原段级槽位后回存。
+            # interop/tip 段重建 Message（原 message_ref 聚合时已弃，内容语义保真）；
+            # hotcard/gate_note 段回流 by_slot 复用既有复位分支；hint 段跳过。
+            agg_es = by_slot.pop(SlotKind.AGGREGATED, None) or []
+            for e in agg_es:
+                try:
+                    m = (
+                        messages[e.msg_idx]
+                        if messages and 0 <= e.msg_idx < len(messages)
+                        else {}
+                    )
+                    segs = parse_aggregated_slots(str(m.get("content") or ""))
+                except Exception:  # noqa: BLE001 — 取段失败按空处理
+                    segs = []
+                if not segs:
+                    logger.warning(
+                        "err1210: AGGREGATED 拆解为空（idx=%d），该聚合条目按丢失处理（fail-open）",
+                        e.msg_idx,
+                    )
+                    ok = False
+                    continue
+                from llm_loop.core.message import Message, MessageSource
+
+                for slot_s, seg in segs:
+                    if not seg:
+                        continue
+                    try:
+                        k = SlotKind(slot_s)
+                    except ValueError:
+                        continue  # hint 段非消费槽
+                    try:
+                        if k in (SlotKind.INTEROP, SlotKind.TIP):
+                            attr = (
+                                "_interop_tail_messages"
+                                if k == SlotKind.INTEROP
+                                else "_tip_tail_messages"
+                            )
+                            r = Message(
+                                role="system", content=seg, source=MessageSource.SYSTEM
+                            )
+                            active = getattr(self, attr, None) or []
+                            setattr(self, attr, [r] + active)  # 前置拼接（旧先注入）
+                            self._deferred_replay_refs = list(
+                                getattr(self, "_deferred_replay_refs", None) or []
+                            )
+                            self._deferred_replay_refs.append((k, r))
+                            record_defer_event(
+                                "defer_stored",
+                                sess.session_id,
+                                str(k),
+                                {"count": 1, "via": "aggregated"},
+                            )
+                        else:
+                            # hotcard/gate_note 段回流既有复位分支（338 行后）
+                            by_slot.setdefault(k, []).append(
+                                InjectedEntry(
+                                    msg_idx=e.msg_idx,
+                                    slot_kind=k,
+                                    prefix_sha=content_prefix_sha(seg),
+                                    message_ref=None,
+                                )
+                            )
+                    except Exception:  # noqa: BLE001 — 单段失败不阻断其余段
+                        ok = False
+                        logger.warning(
+                            "err1210: AGGREGATED 段回存失败 slot=%s（fail-open）",
+                            slot_s,
+                            exc_info=True,
+                        )
             # 总量 ≤8（interop/tip 按消息条数，hotcard/gate_note 各 1）
             total = sum(len(v) for k, v in by_slot.items() if k in (SlotKind.INTEROP, SlotKind.TIP))
             total += 1 if SlotKind.HOTCARD in by_slot else 0
@@ -343,7 +449,7 @@ class _Err1210Mixin:
                     if reset_hotcard_consumed(
                         session_id=sess.session_id, data_dir=self.settings.data_dir
                     ):
-                        self._deferred_replay_slots = set(getattr(self, "_deferred_replay_slots", None) or ())
+                        self._deferred_replay_slots = set(self._deferred_replay_slots)
                         self._deferred_replay_slots.add(str(SlotKind.HOTCARD))
                         record_defer_event(
                             "defer_stored", sess.session_id, str(SlotKind.HOTCARD), {}
@@ -359,7 +465,7 @@ class _Err1210Mixin:
             if SlotKind.GATE_NOTE in by_slot:
                 try:
                     self._cache_monitor.restore_gate_note(sess.session_id)
-                    self._deferred_replay_slots = set(getattr(self, "_deferred_replay_slots", None) or ())
+                    self._deferred_replay_slots = set(self._deferred_replay_slots)
                     self._deferred_replay_slots.add(str(SlotKind.GATE_NOTE))
                     record_defer_event("defer_stored", sess.session_id, str(SlotKind.GATE_NOTE), {})
                 except Exception:  # noqa: BLE001
@@ -375,7 +481,7 @@ class _Err1210Mixin:
     def _try_err1210_recovery(
         self,
         *,
-        exc: LLMHTTPError,
+        exc: LLMError,
         sess: ModelSession,
         messages: list[dict],
         tools_param: list[dict],
@@ -438,7 +544,8 @@ class _Err1210Mixin:
             )
 
             # ② defer 回存（消费过的槽复位——无论剥离成败，防注入随一次性消费丢失）
-            result.deferred_ok = self._defer_store(sess, entries)
+            # P1 9.1: 传 messages 供 AGGREGATED 拆解（聚合 entry → 段级槽位复位）
+            result.deferred_ok = self._defer_store(sess, entries, messages)
 
             # ③ 剥离
             stripped = self._strip_tail_injections(messages)
@@ -517,7 +624,7 @@ class _Err1210Mixin:
         stream_fn = getattr(llm_client, "chat_stream", None)
         try:
             if callable(stream_fn):
-                it = stream_fn(**kwargs)
+                it = cast("Iterator[Any]", stream_fn(**kwargs))
                 while True:  # 完整消费至流尾；StopIteration.value 即完整 resp（client 侧聚合）
                     try:
                         next(it)
@@ -544,22 +651,16 @@ class _Err1210Mixin:
     # ── engine 接线点（任务组 4.3 瘦身: engine.py 行数守卫只留最小调用）──
 
     def _err1210_init(self) -> None:
-        """engine.__init__ 调用（tasks 4.2）: 恢复状态字段初始化.
+        """engine.__init__ 调用（tasks 4.2）: per-session 恢复状态字段初始化.
 
-        - _last_build_injections: build 旁路注入登记（剥离识别权威依据，每轮 build 覆盖）
         - _err1210_attempted: per-session 耗尽标记（值 = compact 事件 seq；新事件自然不等 → 降级机会重获）
         - _last_request_msg_count_by_session: 骤降兜底判定数据源（每次成功请求后更新）
-        - _deferred_replay_refs/_deferred_replay_slots: defer 重注入检测（build 消费点身份匹配）
-        - _last_build_defer_replayed: 重注入轮失败检测标记（每轮 build 重置，错误链终点消费）
+
+        其余六个恢复状态字段（注入登记/compact 事件 seq/defer 重注入检测等）已迁
+        _RunState per-session 桶（runstate.py，属性 shim 保旧名——err1210 P0-A）。
         """
-        self._last_build_injections: list[InjectedEntry] = []
         self._err1210_attempted: dict[str, int] = {}
         self._last_request_msg_count_by_session: dict[str, int] = {}
-        self._compact_event_seq: int = 0
-        self._compact_event_was_compacted: bool = False
-        self._last_build_defer_replayed: bool = False
-        self._deferred_replay_refs: list[tuple[str, Message]] = []
-        self._deferred_replay_slots: set[str] = set()
 
     def _err1210_attempt_recovery(
         self,

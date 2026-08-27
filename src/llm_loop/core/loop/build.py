@@ -328,6 +328,25 @@ class _BuildMixin:
         # （system+摘要）固定 → KV 命中 → prefill 秒级（本地模型实测 4-13 tokens
         # prefill 仅 0.2-0.8s）。
         # 注意: 保留最近配对组而非固定 -2 条（2026-08-24: 多回执截断会破坏 C1 配对）。
+        # P0-B2（2026-08-28 批准）: 程序反馈投影语义标记——历史中的程序反馈 assistant
+        # 消息（错误/熔断/守卫/耗尽文本）投影时加前缀，防下轮模型误读为"assistant
+        # 已回答过"（恢复链语义污染治理）。前缀判定同时覆盖 B1 落库前存量（source
+        # 仍为 USER 的历史错误消息）；存储原文不动，仅提交视图（同遥测剥离模式）。
+        from dataclasses import replace
+
+        from llm_loop.feedback.honesty import PROGRAM_FEEDBACK_PREFIXES
+
+        base = [
+            (
+                replace(m, content=f"[程序反馈·非模型回答] {m.content}")
+                if (
+                    m.role == "assistant"
+                    and str(m.content or "").startswith(PROGRAM_FEEDBACK_PREFIXES)
+                )
+                else m
+            )
+            for m in base
+        ]
         if tool_round_zero:
             base = _tool_round_zero_tail(base)
         prefix_len = 0
@@ -692,18 +711,14 @@ class _BuildMixin:
                 and _m.metadata.get("persisted_injection")
                 for _m in sess.messages[-8:]
             )
+        _inject_parts: list[tuple[str | None, str]] = []  # (slot|None=hint, content)——P1 9.1 聚合收集
         if not _persisted_ok and memory_msgs:
-            # fail-open 回退: 持久化失败（engine 异常路径）→ 旧行为兜底（动态注入
-            # 好过丢内容；此路径罕见，不构成常态漂移源）
-            _anchor = build_task_anchor(self._focus.anchor_sess)
+            # fail-open 回退: 持久化失败（engine 异常路径）→ 兜底收集进聚合
+            # （P1 9.1: 旧独立 wrap+append 撤销——保尾部连续 user ≤1；memory 非消费槽）
             for _m in memory_msgs:
-                _d = _m.to_llm_dict()
-                if _d.get("role") == "system":
-                    _d["role"] = "user"  # system 静态: 转独立 user 尾部追加
-                    _c = str(_d.get("content") or "")
-                    if _c:
-                        _d["content"] = wrap_injection(_c, _anchor)
-                built.append(_d)
+                _c = str(_m.to_llm_dict().get("content") or "")
+                if _c:
+                    _inject_parts.append(("memory", _c))
         tail_msgs = getattr(self, "_interop_tail_messages", None)
         _interop_orig = tail_msgs  # err1210 T4.1: 身份匹配用（区分 interop/tip/local 提示）
         # EVO-20260819-7bb7d689: 经验提示尾部追加槽并入统一消费（与 interop 同机制）——
@@ -728,44 +743,38 @@ class _BuildMixin:
                     source=MessageSource.SYSTEM,
                 )
             ]
-        if tail_msgs:
-            # 2026-08-22 任务锚点 + 注入统一包装（focus 模块, 用户决策）——
-            # 从会话提取任务目标/进度附带注入, AI 被打断后知道做什么/做到哪
-            _anchor = build_task_anchor(self._focus.anchor_sess)
-            for _m in tail_msgs:
-                _d = _m.to_llm_dict()
-                if _d.get("role") == "system":
-                    _d["role"] = "user"  # system 静态: 转独立 user 尾部追加
-                    _c = str(_d.get("content") or "")
-                    if _c:
-                        _d["content"] = wrap_injection(_c, _anchor)
-                built.append(_d)
-                # err1210 T4.1: 一次性消费槽旁路登记（local 行为提示非消费槽不登记）；
-                # defer 回填消息消费时记 defer_replayed（is 身份匹配，spec 4.4-2）
-                _slot = None
-                if _interop_orig and any(_m is _x for _x in _interop_orig):
-                    _slot = SlotKind.INTEROP
-                elif _tip_orig and any(_m is _x for _x in _tip_orig):
-                    _slot = SlotKind.TIP
-                if _slot is not None:
-                    self._last_build_injections.append(
-                        InjectedEntry(
-                            msg_idx=len(built) - 1,
-                            slot_kind=_slot,
-                            prefix_sha=content_prefix_sha(str(_d.get("content") or "")),
-                            message_ref=_m,
-                        )
-                    )
-                    _refs = getattr(self, "_deferred_replay_refs", None) or []
-                    for _r_slot, _r_ref in _refs:
-                        if _r_ref is _m:
-                            self._note_defer_replayed(sess.session_id, _r_slot)
-                            break
-                    self._deferred_replay_refs = [
-                        (_s, _r) for _s, _r in _refs if _r is not _m
-                    ]
-            self._interop_tail_messages = None  # 一次性消费（每轮重扫 pending）
-            self._tip_tail_messages = None  # 经验提示同机制一次性消费（下轮工具执行再注入）
+        # ── P1 尾部注入聚合（err1210 8.4 Verdict: STRUCTURE_TRIGGER 尾部连续 user 条数，
+        # tasks 9.1 方案 A）：四槽产物合并单条 user（--- [slot:xxx] --- 分段标记保留语义），
+        # wrap_injection 只包装一次、anchor 单份——build 尾部连续 user 条数恒 ≤1，
+        # compact 首请求 1210 结构性消除（merge 变体双样本生产验证）。
+        for _m in tail_msgs or []:
+            _d = _m.to_llm_dict()
+            if _d.get("role") == "system":
+                _d["role"] = "user"  # system 静态: 转独立 user 尾部追加
+                _c = str(_d.get("content") or "")
+                if _c:
+                    _d["content"] = _c
+            _slot = None
+            if _interop_orig and any(_m is _x for _x in _interop_orig):
+                _slot = SlotKind.INTEROP
+            elif _tip_orig and any(_m is _x for _x in _tip_orig):
+                _slot = SlotKind.TIP
+            _inject_parts.append((_slot, str(_d.get("content") or "")))
+        # err1210 T4.1→9.1: defer 回填消息消费检测（is 身份匹配，聚合收尾统一处理）
+        _refs = getattr(self, "_deferred_replay_refs", None) or []
+        if _refs and tail_msgs:
+            _consumed_ids = {id(_m) for _m in tail_msgs}
+            _kept = [
+                (_r_slot, _r_ref)
+                for _r_slot, _r_ref in _refs
+                if not (
+                    id(_r_ref) in _consumed_ids
+                    and self._note_defer_replayed(sess.session_id, _r_slot)
+                )
+            ]
+            self._deferred_replay_refs = _kept
+        self._interop_tail_messages = None  # 一次性消费（每轮重扫 pending）
+        self._tip_tail_messages = None  # 经验提示同机制一次性消费（下轮工具执行再注入）
         # EVO-20260826-81f8f674: 任务接力热卡注入——压缩时刻写的热卡在新会话 build 时
         # 取出注入（仅跨会话未消费；pop 即标记 consumed 防陈旧卡反复注入；尾部追加
         # 不破坏前缀缓存；fail-open 绝不阻断构建）。冲突语义: RULE-AI-20 第 7 条兜底。
@@ -774,19 +783,9 @@ class _BuildMixin:
                 session_id=sess.session_id, data_dir=self.settings.data_dir
             )
             if _hotcard_text:
-                _hc_content = wrap_injection(
-                    _hotcard_text, build_task_anchor(self._focus.anchor_sess)
-                )
-                built.append({"role": "user", "content": _hc_content})
-                # err1210 T4.1: hotcard 登记与 defer 重注入检测
-                self._last_build_injections.append(
-                    InjectedEntry(
-                        msg_idx=len(built) - 1,
-                        slot_kind=SlotKind.HOTCARD,
-                        prefix_sha=content_prefix_sha(_hc_content),
-                        message_ref=None,
-                    )
-                )
+                # P1 聚合（9.1）: 收集原文，wrap 延后到统一聚合器（原独立 wrap+append 撤销）
+                _inject_parts.append((SlotKind.HOTCARD, _hotcard_text))
+                # err1210 T4.1: hotcard defer 重注入检测
                 _slots = getattr(self, "_deferred_replay_slots", None) or set()
                 if str(SlotKind.HOTCARD) in _slots:
                     self._note_defer_replayed(sess.session_id, SlotKind.HOTCARD)
@@ -798,21 +797,37 @@ class _BuildMixin:
         # user 消息（末尾追加缓存友好，不破坏前缀；转 user 避免守卫规则 B 误报
         # "非首位 system"——2026-08-18 审计 WARN 实证；让 AI 感知上下文结构变化）
         if self._cache_monitor.take_gate_note(session_id=sess.session_id):
-            built = list(built) + [{"role": "user", "content": GATE_NOTE_CONTENT}]
-            # err1210 T4.1: gate_note 登记与 defer 重注入检测
-            self._last_build_injections.append(
-                InjectedEntry(
-                    msg_idx=len(built) - 1,
-                    slot_kind=SlotKind.GATE_NOTE,
-                    prefix_sha=content_prefix_sha(GATE_NOTE_CONTENT),
-                    message_ref=None,
-                )
-            )
+            # P1 聚合（9.1）: 收集固定文本（wrap 延后到统一聚合器）
+            _inject_parts.append((SlotKind.GATE_NOTE, GATE_NOTE_CONTENT))
             _slots = getattr(self, "_deferred_replay_slots", None) or set()
             if str(SlotKind.GATE_NOTE) in _slots:
                 self._note_defer_replayed(sess.session_id, SlotKind.GATE_NOTE)
                 _slots.discard(str(SlotKind.GATE_NOTE))
                 self._deferred_replay_slots = _slots
+        # ── P1 统一聚合器（9.1）: 四槽 parts → 单条 user；sidecar 单 AGGREGATED entry ──
+        # 尾部连续 user 恒 ≤1（1210 结构性消除）；聚合失败 fail-open 降级零注入（不阻断构建）
+        if _inject_parts:
+            try:
+                _anchor = build_task_anchor(self._focus.anchor_sess)
+                _agg = "\n\n".join(
+                    f"--- [slot:{s if s else 'hint'}] ---\n{c}"
+                    for s, c in _inject_parts
+                )
+                _agg_content = wrap_injection(_agg, _anchor)
+                built.append({"role": "user", "content": _agg_content})
+                # err1210 9.1: 聚合登记（单 entry；strip/defer 消费端经 AGGREGATED 分支）
+                self._last_build_injections.append(
+                    InjectedEntry(
+                        msg_idx=len(built) - 1,
+                        slot_kind=SlotKind.AGGREGATED,
+                        prefix_sha=content_prefix_sha(_agg_content),
+                        message_ref=None,
+                    )
+                )
+            except Exception:  # noqa: BLE001 — 聚合失败 fail-open（零注入降级 + WARN）
+                logger.warning(
+                    "build: 尾部注入聚合失败，本轮零注入降级（fail-open）", exc_info=True
+                )
         # EVO-20260817-b6554376: 投影一致性门闸（借鉴 DSH seq 水印，fail-open 不阻断 run）
         # seq（消息数）负责"历史追加"水印；ver（构建参数+动态输入指纹）负责参数水印；
         # ver+seq 匹配而 built_hash 不同 → 非确定性构建/历史被改 → 告警（只读，不阻断）。
@@ -847,9 +862,18 @@ class _BuildMixin:
                 settings_fp=_settings_fp,
             )
             _seq = len(sess.messages)
-            # 知情标记剔除: 门闸比较的 built 不含门禁干预注（末尾固定 system 消息）
+            # 知情标记剔除: 门闸比较的 built 不含门禁干预注（末尾固定 system 消息）；
+            # P1 9.1 聚合后 gate_note 埋入聚合消息（--- [slot:gate_note] --- 段），
+            # 含该段的聚合消息整条剔除（近似等价：知情标记不参与投影 hash）
+            _c_tail = built[-1].get("content") if built else None
             _built_for_hash = (
-                built[:-1] if built and built[-1].get("content") == GATE_NOTE_CONTENT else built
+                built[:-1]
+                if isinstance(_c_tail, str)
+                and (
+                    _c_tail == GATE_NOTE_CONTENT
+                    or "--- [slot:gate_note] ---" in _c_tail
+                )
+                else built
             )
             _built_hash = stable_digest(_built_for_hash)
             # EVO-20260817: 压缩轮判定——主动/被动压缩归档（built 消息数 < base）属合法

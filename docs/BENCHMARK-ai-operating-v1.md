@@ -144,7 +144,7 @@ rate = 1.0 - (reopened / total) if total > 0 else 1.0
 |---------------|---------------------|---------|
 | Information-Gain Tool Ratio | fixture 提供 discriminative power / cost oracle；candidate_next_actions 仅诊断 | oracle 判定的高信息增益动作 / 总工具调用 |
 | Duplicate Tool Call Rate | `temporary_observations` | 重复搜索相同内容 / 总工具调用 |
-| Unnecessary Reopen Rate | `decisions.reopen_if` | 重新验证已闭环事实 / 总验证次数 |
+| Unnecessary Reopen Rate | `decisions.reopen_if` | 重新验证已定案事实 / 总验证次数 |
 
 **计算逻辑**：
 

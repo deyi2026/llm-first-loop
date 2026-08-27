@@ -89,13 +89,16 @@ def strip_cache_telemetry_lines(content: str | None, *, audit_log: bool = False)
     """
     if not content or "缓存命中率" not in content:
         return content or ""
-    lines = content.splitlines(keepends=True)
+    lines: list[str | None] = list(content.splitlines(keepends=True))
     n = len(lines)
     limit = _STRIP_TAIL_LINES
     start = 0 if limit <= 0 or n <= limit else n - limit
     removed = 0
     for i in range(start, n):
-        if _TELEMETRY_LINE_RE.match(lines[i]) or _TELEMETRY_LINE_EOF_RE.match(lines[i]):
+        line = lines[i]
+        if line is not None and (
+            _TELEMETRY_LINE_RE.match(line) or _TELEMETRY_LINE_EOF_RE.match(line)
+        ):
             lines[i] = None
             removed += 1
     if not removed:

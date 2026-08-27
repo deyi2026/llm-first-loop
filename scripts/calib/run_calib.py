@@ -27,8 +27,8 @@ from pathlib import Path
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
-from scripts.calib.runner import execute_run, snapshot_provider, write_run_result
-from scripts.calib.scorer import score_run
+from scripts.calib.runner import execute_run, snapshot_provider, write_run_result  # noqa: E402
+from scripts.calib.scorer import score_run  # noqa: E402
 
 # 冻结矩阵（CALIBRATION-MATRIX-v1.md）：Seq → (run_id, seed, variant)
 FROZEN_MATRIX: list[tuple[str, str, str]] = [

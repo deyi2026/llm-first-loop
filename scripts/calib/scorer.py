@@ -24,9 +24,7 @@ reasoning 长度/过度反思计数作为 verbosity 维度进入 Decision Latenc
 
 from __future__ import annotations
 
-import json
-
-from scripts.calib.fixtures import ORACLES, SOURCES, SOURCE_LIMIT
+from scripts.calib.fixtures import ORACLES
 
 _NEGATIONS = [
     "不是", "并非", "错误", "旧", "过时", "stale", "过期", "不可信", "不适用",
@@ -265,7 +263,7 @@ def _hit_any(text: str, keywords: list[str]) -> bool:
     return any(k.lower() in text_l for k in keywords)
 
 
-import re as _re
+import re as _re  # noqa: E402
 
 _NEG_RE = _re.compile(r"(不|未|没|无|不是|不会|不能|无需|不应|不采用|不做|并非|不能作为|不采用)(的)?$")
 

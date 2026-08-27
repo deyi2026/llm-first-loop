@@ -13,6 +13,7 @@ maybe_auto_execute_from_engine（与 CLI 共用公共函数，防分叉）。
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from datetime import UTC, datetime
@@ -137,11 +138,9 @@ def approve(store: Any, evo_id: str) -> tuple[bool, str, bool]:
         target = store.review(evo_id, "accepted")
         if target is None:
             return False, f"⚠️ 审批失败：未找到 {evo_id}", False
-        # Approval UX v2 批 1: 批准落审批时间戳（reviewed_at）
-        try:
+        # Approval UX v2 批 1: 批准落审批时间戳（reviewed_at）；落盘失败不影响审批结果
+        with contextlib.suppress(Exception):
             store.transition(evo_id, status="accepted", reviewed_at=_now())
-        except Exception:  # noqa: BLE001 — 时间戳落盘失败不影响审批结果
-            pass
         return True, f"✅ 已批准 {evo_id} → accepted", True
     except Exception as exc:  # noqa: BLE001
         return False, f"⚠️ 审批异常：{type(exc).__name__}: {exc}", False

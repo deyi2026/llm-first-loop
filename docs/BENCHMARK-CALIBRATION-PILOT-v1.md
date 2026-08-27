@@ -697,7 +697,7 @@ Calibration Drift Injection 场景不强求真实用户介入。
 
 ```text
 错误 Decision 后的自我撤销
-重复调查已闭环问题
+重复调查已定案问题
 错误 action 后恢复
 需要 fixture 注入 correction 才恢复
 ```

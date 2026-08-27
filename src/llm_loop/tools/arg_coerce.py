@@ -33,10 +33,7 @@ def coerce_str_list(value: Any) -> list[str]:
             return []
         try:
             parsed = json.loads(s)
-            if isinstance(parsed, list):
-                items = parsed
-            else:
-                items = [parsed]
+            items = parsed if isinstance(parsed, list) else [parsed]
         except Exception:  # noqa: BLE001 — 非 JSON，按分隔串/单串处理
             items = re.split(r"[,，\s]+", s)
     else:

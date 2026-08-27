@@ -7,6 +7,7 @@ fresh effectiveness-screening tasks, separate from calibration holdouts.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import time
@@ -15,7 +16,6 @@ from pathlib import Path
 from llm_loop.core.message import ToolCall
 from llm_loop.llm.client import GuardRequestContext, LLMClient, LLMResponse
 from llm_loop.llm.errors import LLMError
-
 from scripts.calib import fixtures_s
 from scripts.calib.treatments import build_system_prompt
 
@@ -225,10 +225,8 @@ def execute_screening_run(
     finally:
         stats["latency_s"] = round(time.monotonic() - t0, 3)
         if not dry:
-            try:
+            with contextlib.suppress(Exception):  # noqa: BLE001 — close 失败不影响结果
                 llm.close()
-            except Exception:  # noqa: BLE001
-                pass
 
     return {
         "run_id": run_id,

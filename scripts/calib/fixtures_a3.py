@@ -4,6 +4,7 @@ New family: no A1/A2/S2/calibration fixture reuse. Each seed exposes three
 sources and a two-execution action budget. The guard never receives oracle data.
 """
 from __future__ import annotations
+
 import json
 
 _NO_HINT="未提供；必须根据当前材料与必要原始证据自行判断。"

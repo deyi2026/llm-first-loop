@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 import zipfile
 
-from llm_loop.web.upload_handlers import _extract_docx, MAX_UPLOAD_BYTES
+from llm_loop.web.upload_handlers import MAX_UPLOAD_BYTES, _extract_docx
 
 
 def _make_docx_with_big_xml(size: int) -> bytes:
@@ -33,7 +33,7 @@ def test_extract_docx_normal_docx_still_works():
     """正常小 docx 不受影响."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("word/document.xml", "<w:p><w:t>hello</w:t></w:p>".encode())
+        zf.writestr("word/document.xml", b"<w:p><w:t>hello</w:t></w:p>")
     result = _extract_docx(buf.getvalue(), "ok.docx")
     assert result.status in ("ok", "success")
     assert "hello" in (result.result_text or "")

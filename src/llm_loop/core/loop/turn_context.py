@@ -12,9 +12,15 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from typing import TYPE_CHECKING, Any
 
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.memory.retrieve import build_memory_messages
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from llm_loop.memory.store import MemoryStore
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +32,15 @@ class _TurnContextMixin:
     memory / semantic_retriever / _runtime_memory_top_k() / _fault_feedback() /
     _record_program_fault() / _append_message_event()
     """
+
+    if TYPE_CHECKING:
+        # 宿主属性声明（LoopEngine.__init__/各 mixin 提供；err1210.py TYPE_CHECKING 先例）
+        memory: MemoryStore
+        semantic_retriever: Any | None
+        _runtime_memory_top_k: Callable[[], int]
+        _fault_feedback: Callable[[str, Exception], Message]
+        _record_program_fault: Callable[[str], None]
+        _append_message_event: Callable[[Any, Message], None]
 
     def _inject_turn_memory_snapshot(
         self, sess, user_text: str, turn_ref: int

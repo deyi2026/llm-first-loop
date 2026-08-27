@@ -43,6 +43,24 @@ def compression_message(archived_count: int, archived_chars: int) -> Message:
     )
 
 
+# P0-B（2026-08-28 用户批准，specs/err1210_locating/P0-B-program-feedback-separation.md）:
+# 程序反馈前缀清单——engine 收尾 source 判定 + memory extractor 过滤共用（单一真相源）。
+# 覆盖: 错误/熔断/守卫/耗尽/压缩提醒等程序生成文本；pressure_block/routing refusal
+# 等动态文案未覆盖（漏标时 source 保持 USER，行为与现状一致，不劣化）。
+PROGRAM_FEEDBACK_PREFIXES = (
+    "[LLM 调用异常]",
+    "[已达轮数上限]",
+    "[停滞熔断]",
+    "[停滞提醒]",
+    "[缓存守卫拦截]",
+    "[上下文超限]",
+    "[上下文压缩]",
+    "[搜索空结果提醒]",
+    "[程序异常]",
+    "（已停止——",
+)
+
+
 def llm_error_text(error: Exception) -> str:
     """LLM 调用异常如实反馈文本（DFX-REL-02，不伪造回答，三件套）.
 
