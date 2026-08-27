@@ -20,7 +20,8 @@ import logging
 import os
 import re
 import time
-from dataclasses import dataclass
+from collections import deque
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -153,6 +154,11 @@ class _SessionBucket:
     anchor_moved_since_record: bool = False
     force_head_keep: bool = False
     gate_note_pending: bool = False
+    # EVO-20260827-ad73251b: 命中趋势转折点观测（滚动 30 轮，纯内存 fail-open）。
+    # 判定语义: first_recovery_round 存在且 current_streak 高 → 冷启动暂时态；
+    # anchor_moved>0 且 streak 低 → 破坏型（持续断点）。模型切换重建桶时自然重置。
+    trend: deque = field(default_factory=lambda: deque(maxlen=30))
+    trend_rounds: int = 0
 
 # EVO-20260817-72fcd94a: 门禁干预知情标记（固定文本，一次性注入 built 末尾——缓存友好，
 # 不破坏前缀；让 AI 感知本轮上下文结构变化，消除困惑）
@@ -240,6 +246,32 @@ class CacheHealthMonitor:
             self._session_buckets[sid] = b
         return b
 
+    @staticmethod
+    def _trend_append(b: _SessionBucket, tokens_in: int, tokens_hit: int) -> None:
+        """趋势采样（fail-open 由调用方 try 包裹；环形缓冲 maxlen 自动淘汰旧样本）."""
+        b.trend_rounds += 1
+        b.trend.append({"round": b.trend_rounds, "tokens_in": tokens_in, "hit": tokens_hit})
+
+    @staticmethod
+    def _trend_summary(b: _SessionBucket) -> dict:
+        """派生转折点指标: first_recovery_round（首个 hit>0 轮）+ current_streak."""
+        first_recovery = next(
+            (s["round"] for s in b.trend if s["hit"] > 0), None
+        )
+        streak = 0
+        for s in reversed(b.trend):
+            if s["hit"] > 0:
+                streak += 1
+            else:
+                break
+        return {
+            "first_recovery_round": first_recovery,
+            "current_streak": streak,
+            "samples": len(b.trend),
+            "total_rounds": b.trend_rounds,
+            "recent": list(b.trend)[-10:],
+        }
+
     # ── 窗口监控（run 末尾调用）──
     def record(self, tokens_in: int, tokens_hit: int, model_ref: str | None = None,
                session_id: str = "") -> str | None:
@@ -269,6 +301,9 @@ class CacheHealthMonitor:
             win = self._breaker_hit_win.setdefault(sid, [])
             win.append((tokens_in, tokens_hit))
             del win[:-8]
+            # EVO-20260827-ad73251b: 趋势转折点采样（切换轮在重建桶后单独补记，此处
+            # 切换轮写入旧桶会被丢弃，无双计）
+            self._trend_append(b, tokens_in, tokens_hit)
             # 2026-08-20: 模型切换检测——切换后缓存按新 provider 独立预热（设计型低命中）
             switched = model_ref is not None and self._last_model_ref not in (None, model_ref)
             # 2026-08-20 (EVO-20260820-0b96348d): 每轮累计进当前模型桶（跨切换持久）
@@ -286,6 +321,7 @@ class CacheHealthMonitor:
                 b.win_hit += tokens_hit
                 b.win_runs += 1
                 b.last_update_ts = time.time()
+                self._trend_append(b, tokens_in, tokens_hit)  # 切换轮计入新桶趋势
                 # 2026-08-20 (EVO-20260820-0b96348d): 切回热检查——切回的目标模型若
                 # 已有历史桶且命中（前缀曾热，TTL 内），提示可继续累加而非从头预热；
                 # 无历史/冷桶 → 常规提示（新模型无前缀）。
@@ -1024,6 +1060,7 @@ class CacheHealthMonitor:
                     "win_runs": bucket.win_runs,
                     "alerted": bucket.alerted,
                     "force_head_keep": bucket.force_head_keep,
+                    "trend": self._trend_summary(bucket),  # EVO-20260827-ad73251b
                 }
             _agg = _SessionBucket()
             for bucket in self._session_buckets.values():
