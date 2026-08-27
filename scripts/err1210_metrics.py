@@ -200,7 +200,7 @@ def _compact_first_rows(rows: list[dict]) -> list[dict]:
     """同会话相邻请求消息数骤降（≥30% 且 ≥8 条）→ compact 首请求（spec 术语）."""
     by_sess: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
-        sid = r.get("session_id")
+        sid: str = str(r.get("session_id") or "")
         if sid in _SKIP_SESSIONS:
             continue
         by_sess[sid].append(r)
