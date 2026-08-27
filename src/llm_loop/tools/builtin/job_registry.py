@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_MAX_CONCURRENT = 5
 
 
-class JobLimitExceeded(RuntimeError):
+class JobLimitExceeded(RuntimeError):  # noqa: N818 — 公开 API 异常名（execute_command/dsh_task 捕获），改名破坏外部兼容
     """活跃后台任务数达上限，拒绝创建新任务."""
 
 
