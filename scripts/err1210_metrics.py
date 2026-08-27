@@ -171,6 +171,31 @@ def _load_defer_rows(data_dir: Path, as_of: datetime | None) -> list[dict]:
     return out
 
 
+def _aggregated_tail_user(payload_rows: list[dict]) -> dict:
+    """P1 聚合观测（verdict_p1 B-3）: 尾部连续 user 重算（与指纹 _tail_digest 同口径）.
+
+    aggregated_tail_user_max: 全轮次尾部连续 user 条数最大值（聚合目标 ≤1）
+    aggregated_tail_user_fallback_rounds: 尾部连续 user >1 的轮计数（聚合未生效/fail-safe 回退）
+    无 trace 数据（payload_rows 空）→ 两键 None（fail-open，不阻断其余指标）。
+    """
+    if not payload_rows:
+        return {"aggregated_tail_user_max": None, "aggregated_tail_user_fallback_rounds": None}
+    max_tail = 0
+    fallback = 0
+    for row in payload_rows:
+        msgs = row.get("msgs") or []
+        n = 0
+        for m in reversed(msgs):
+            if m.get("role") == "user":
+                n += 1
+            else:
+                break
+        max_tail = max(max_tail, n)
+        if n > 1:
+            fallback += 1
+    return {"aggregated_tail_user_max": max_tail, "aggregated_tail_user_fallback_rounds": fallback}
+
+
 def _compact_first_rows(rows: list[dict]) -> list[dict]:
     """同会话相邻请求消息数骤降（≥30% 且 ≥8 条）→ compact 首请求（spec 术语）."""
     by_sess: dict[str, list[dict]] = defaultdict(list)
@@ -372,9 +397,10 @@ def compute_metrics(data_dir: str | Path, as_of: str | None = None) -> dict:
     defer = _defer_ledger(defer_rows)
     cf_total = len(cf_rows)
     cf_1210 = len(triggers)
+    agg = _aggregated_tail_user(payload_rows)
 
     report = {
-        "schema": "err1210_metrics_v1",
+        "schema": "err1210_metrics_v1.1",
         "as_of": as_of or None,
         "generated_at": datetime.now(_LOCAL_TZ).strftime("%Y-%m-%dT%H:%M:%S%z"),
         "timezone_note": "exception_log UTC→本地+8；payload_trace/defer_trace 本地；归因窗口±6s",
@@ -389,12 +415,21 @@ def compute_metrics(data_dir: str | Path, as_of: str | None = None) -> dict:
             "compact_first_total": cf_total,
             "compact_first_1210_count": cf_1210,
             "compact_first_1210_rate": round(cf_1210 / cf_total, 4) if cf_total else None,
+            # v1.1: 率值结构体（分子分母可复核）；裸数值键保留（既有消费者/测试零回归）
+            "compact_first_1210_rate_detail": {
+                "numerator": cf_1210,
+                "denominator": cf_total,
+                "rate": round(cf_1210 / cf_total, 4) if cf_total else None,
+            },
             # 2. P0 触发次数（场景口径）
             "p0_trigger_count": cf_1210,
             # 3. 重试成功率
             **retry,
             # 4. defer 回放完整率（[r3-P2] 口径）
             **defer,
+            # 5-6. P1 聚合观测（verdict_p1 B-3）。上线后验收口径: max ≤1 且
+            # compact_first_1210_rate=0，观察期 ≥7 天且 compact 轮 ≥20（promotion 后生效）
+            **agg,
         },
         "details": {
             "compact_first_rows": cf_rows,
@@ -436,6 +471,9 @@ def render_summary(report: dict) -> str:
         f" = {m['defer_replay_completeness'] if m['defer_replay_completeness'] is not None else 'n/a'}",
         f"     单列: lost_on_reinject={m['defer_lost_on_reinject_count']} "
         f"未回放候选={len(m['defer_unreplayed_candidates'])}",
+        f"  ⑤ P1 聚合尾部 user 最大值: {m.get('aggregated_tail_user_max', 'n/a')}（目标 ≤1）",
+        f"  ⑥ 聚合回退轮计数: {m.get('aggregated_tail_user_fallback_rounds', 'n/a')}"
+        f"  率值结构: {m.get('compact_first_1210_rate_detail')}",
     ]
     if "cross_check_action_trace" in report["details"]:
         cc = report["details"]["cross_check_action_trace"]
