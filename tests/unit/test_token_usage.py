@@ -115,10 +115,11 @@ def test_loop_aggregates_tokens_across_rounds(tmp_path, monkeypatch: pytest.Monk
     engine = _make_engine(tmp_path, pool, settings)
 
     result = engine.run(engine.session.create(), "读文件")
-    # 2026-08-20 (EVO-20260820-0b96348d): format_health_note 双口径尾部附加——
-    # final_answer 以"完成"开头并附命中率摘要（含本模型累计口径），断言放宽
+    # 2026-08-20 (EVO-20260820-a637d2d7, P0-1): 常态命中率注入默认关闭——
+    # final_answer 以"完成"开头且不再附带"缓存命中率"摘要（异常/切换告警走
+    # _cache_hint 分支不受此开关影响）；token 累加断言不变
     assert result.final_answer.startswith("完成")
-    assert "缓存命中率" in result.final_answer
+    assert "缓存命中率" not in result.final_answer
     assert result.tokens_in == 300  # 100 + 200 累加
     assert result.tokens_out == 30  # 10 + 20 累加
     assert result.tokens_cache_hit == 120  # 50 + 70 累加（M58 缓存命中）

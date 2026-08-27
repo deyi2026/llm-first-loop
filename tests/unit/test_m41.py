@@ -65,7 +65,7 @@ def test_failure_guidance_appended():
     )
     msg = tool_result_to_message(result)
     assert "[状态: failure]" in msg.content
-    assert "建议" in msg.content
+    assert "可选项" in msg.content  # 对齐 registry.py failure 引导实际文案（原"建议"已改"可选项"）
     assert "RULE-AI-02/07" in msg.content
 
 

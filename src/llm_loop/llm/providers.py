@@ -74,6 +74,10 @@ class ProviderSpec:
     inject_system_notices: bool = True  # 推送式 system 注入（架构上报/预警/快照）是否进提交视图;
     # False（本地慢模型用）= 仅落会话不进提交 —— system 前缀保持静态, llama.cpp 引擎前缀缓存
     # 每轮命中（首 token 大幅缩短）; 功能性注入（压缩标注/降级通知/overflow 回注等）不受影响。
+    tool_round_zero_history: bool = False  # 2026-08-24 本地工具轮极小窗口:
+    # True（本地用）= 工具轮只发 system+工具 schema+最近完整协议配对组（assistant(tool_calls)+
+    # 全部 tool 回执）——KV 前缀稳定 + prefill 秒级; env TOOL_ROUND_ZERO_HISTORY 显式覆盖
+    # （未设时取本配置）; 其他 provider 缺省 False 零回归。
 
 
 @dataclass(frozen=True)
@@ -436,6 +440,23 @@ def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
                     "provider 条目 %r 的 inject_system_notices=%r 非法, 回退默认 True",
                     pid, raw_inject,
                 )
+            # 2026-08-24 本地工具轮极小窗口开关（严格布尔语义同 inject_system_notices）;
+            # 非法 → warning + 默认 False（零回归）
+            tool_round_zero: bool = False
+            raw_tool_zero = val.get("tool_round_zero_history", False)
+            if isinstance(raw_tool_zero, bool):
+                tool_round_zero = raw_tool_zero
+            elif isinstance(raw_tool_zero, int):
+                tool_round_zero = bool(raw_tool_zero)
+            elif isinstance(raw_tool_zero, str) and raw_tool_zero.strip().lower() in _TRUTHY_STRINGS:
+                tool_round_zero = True
+            elif isinstance(raw_tool_zero, str) and raw_tool_zero.strip().lower() in _FALSY_STRINGS:
+                tool_round_zero = False
+            else:
+                logger.warning(
+                    "provider 条目 %r 的 tool_round_zero_history=%r 非法, 回退默认 False",
+                    pid, raw_tool_zero,
+                )
             out[str(pid)] = ProviderSpec(
                 id=str(pid),
                 base_url=base_url,
@@ -447,6 +468,7 @@ def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
                 history_budget_chars=history_budget_chars,
                 max_tokens=max_tokens,
                 inject_system_notices=inject_notices,
+                tool_round_zero_history=tool_round_zero,
             )
         except (ValueError, TypeError) as exc:
             # P1-3: provider 条目级兜底（意外转换异常也不拖垮整个注册表）

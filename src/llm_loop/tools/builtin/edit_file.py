@@ -237,6 +237,13 @@ class EditFileTool:
         if ending != "\n":
             preserved.append("CRLF")
         preserved_note = f"（已保留原 {', '.join(preserved)}）" if preserved else ""
+        # EVO-20260823-12be9cac: 写成功 → 翻转登记（文件已存在，否定帧失效）
+        try:
+            from llm_loop.tools.path_registry import register_exists
+
+            register_exists(str(path))
+        except Exception:  # noqa: BLE001 — fail-open
+            pass
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=(

@@ -63,7 +63,7 @@ def is_simple_task(messages: list[dict], max_user_chars: int = 500) -> bool:
     try:
         max_user_chars = int(os.environ.get("LOCAL_FAST_MAX_USER_CHARS", str(max_user_chars)))
     except (ValueError, TypeError):
-        pass
+        pass  # env 非法值 → 沿用默认（fail-open，不中断聚焦态初始化）
     last_user = ""
     for m in reversed(messages):
         if m.get("role") == "user":

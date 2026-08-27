@@ -45,11 +45,14 @@ def test_reasoning_tail_zero_keeps_all():
     assert [m.get("reasoning_content") for m in dicts] == ["R1", "R2", "R3"]
 
 
-def test_reasoning_tail_default_two():
-    """默认 reasoning_tail=2（优化生效）：3 轮历史时最旧轮思考链省略."""
+def test_reasoning_tail_default_keep_all():
+    """默认 reasoning_tail=0（全保留，capability-first）：3 轮历史思考链全部保留.
+
+    T-P0-1-1（2026-08-27）: 默认值 2→0——缓存命中不得以裁剪思考链为代价。
+    """
     out = build_history_messages(_assistant_msgs(3), "", max_chars=10**6)
     dicts = _assistant_dicts(out)
-    assert dicts[0].get("reasoning_content") is None
+    assert dicts[0]["reasoning_content"] == "R1"
     assert dicts[1]["reasoning_content"] == "R2"
 
 

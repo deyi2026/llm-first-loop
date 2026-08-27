@@ -33,7 +33,19 @@ def extract_memory_blocks(answer: str) -> list[dict[str, Any]]:
             else:
                 blocks.append({"_parse_error": f"记忆块必须是 JSON 对象: {raw[:100]}"})
         except json.JSONDecodeError:
-            blocks.append({"_parse_error": f"记忆块 JSON 解析失败: {raw[:100]}"})
+            # EVO-20260812-2bd55cf3: 双大括号自动纠错——AI 常照抄 prompt 模板的 {{ }}（Jinja2 转义）
+            # 导致 json.loads 失败、记忆静默不落盘。先试单大括号替换；仍失败才如实报错并标注该特征。
+            fixed = raw.replace("{{", "{").replace("}}", "}")
+            if fixed != raw:
+                try:
+                    data = json.loads(fixed)
+                    if isinstance(data, dict):
+                        blocks.append(data)
+                        continue
+                except json.JSONDecodeError:
+                    pass  # 非法 JSON 块跳过，继续解析后续块（fail-open）
+            hint = "（常见错误: 若你写了 {{ }} 双大括号，请改为 { } 单大括号）"
+            blocks.append({"_parse_error": f"记忆块 JSON 解析失败: {raw[:100]}{hint}"})
     return blocks
 
 

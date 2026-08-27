@@ -176,6 +176,11 @@ def test_correction_clear_state_removed():
         "create_feishu_doc",
         "send_feishu_attachment",
         "recover_from_backup",
+        # EVO-20260824-3cd4d74b: 任务级 Goal 状态机（MCP Console Goal 借鉴）
+        "create_goal",
+        "checkpoint_goal",
+        "get_goal",
+        "update_goal",
         # Codex 风格 Skills 工具（2026-08-13 头条文章盘点补齐）
         "code_review",
         "grill_me",

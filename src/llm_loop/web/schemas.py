@@ -20,7 +20,6 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     """对话响应（LoopResult 七字段如实透传, M51 增 model_used）."""
-
     session_id: str
     final_answer: str
     verification_note: str | None = None
@@ -32,6 +31,12 @@ class ChatResponse(BaseModel):
     tokens_out: int = 0  # M52: 本轮 completion tokens
     tokens_cache_hit: int = 0  # M58: 本轮前缀缓存命中 token（0=未提供/未命中）
     reasoning_content: str | None = None  # P1-1: 最终回答轮思考链透传（缺失/思考模式关闭为 None）
+
+
+class ChatCancelRequest(BaseModel):
+    """停止请求（POST /api/v1/chat/cancel body，2026-08-23 停止按钮修复）."""
+
+    session_id: str = Field(description="要停止的会话 ID（必填）")
 
 
 class SessionMetaItem(BaseModel):

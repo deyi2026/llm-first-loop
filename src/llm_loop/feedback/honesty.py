@@ -162,6 +162,24 @@ def stagnation_reminder_message(tool_name: str, streak: int) -> Message:
     )
 
 
+def empty_search_reminder_message(tool_name: str, streak: int) -> Message:
+    """[搜索空结果提醒] 搜索类工具连续空结果提醒（EVO-20260823-9bb27899，阈值 2）.
+
+    针对"记忆断言与实际不符 → 换深度/换目录/换工具反复搜同一目标"的求证循环：
+    空结果即前提失效信号，提醒 AI 以工具回执为准停止求证，转向如实说明/询问。
+    """
+    return Message(
+        role="system",
+        content=(
+            f"[搜索空结果提醒] 事实: 搜索类工具 {tool_name} 已连续 {streak} 次返回空结果。\n"
+            f"原因: 目标可能不存在、或搜索前提（记忆/路径）与实际不符——重复换参数搜同一目标不会产生新信息。\n"
+            f"建议: 以工具回执为准：目标不存在即停止该目标搜索，标注'记忆待修正'，如实说明并询问用户；"
+            f"确需继续请换全新目标或改向用户求证。"
+        ),
+        source=MessageSource.SYSTEM,
+    )
+
+
 def stagnation_feedback(tool_name: str, streak: int, trace: list[str]) -> Message:
     """[停滞熔断] 连续相同指纹工具调用熔断如实结束（EVO-20260814-aab7eb0b P2，阈值 5）."""
     trace_str = "; ".join(trace[-10:]) if trace else "（无动作记录）"

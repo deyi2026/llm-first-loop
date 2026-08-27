@@ -18,6 +18,7 @@ def test_config_p1_defaults_and_env(monkeypatch):
     monkeypatch.setenv("LLM_BASE_URL", "https://x/v1")
     monkeypatch.setenv("LLM_MODEL", "m")
     monkeypatch.delenv("DATA_DIR", raising=False)
+    monkeypatch.delenv("EMBEDDING_PROVIDER", raising=False)  # 清外部 .env 残留，测纯默认值
     s = load_settings()
     # 默认值
     assert s.summary_mode == "off"

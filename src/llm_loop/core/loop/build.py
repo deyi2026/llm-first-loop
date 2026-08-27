@@ -40,6 +40,70 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _growth_nudge_kind(
+    history_total: int,
+    prev_total: int | None,
+    *,
+    prep_at: float,
+    force_at: float,
+    growth_floor: int,
+) -> str | None:
+    """增长率 nudge 判定（EVO-20260824-54d46549，billion-context 拷问产出, 双轨）.
+
+    - "force"  : history_total > 预算×compact_ratio（90% 默认）→ 必警（压缩在即, bypass 增长率）
+    - "growth" : 80% 准备态 + 距上次预警增长 ≥ 阈值 → 增长率门控触发（重任务早提示）
+    - None     : 首轮基线（无增长参照）/ 未到 80% / 增长不足 / 已在压缩态——不警
+
+    纯函数（无 self 依赖），供 _build_llm_messages 预警逻辑调用与单测。
+    """
+    if history_total > force_at:
+        return "force"
+    if prev_total is None:
+        return None  # 首轮建立基线, 不预警（无增长参照）
+    growth = history_total - prev_total
+    if history_total > prep_at and growth >= growth_floor and history_total <= force_at:
+        return "growth"
+    return None
+
+
+def _tool_round_zero_tail(msgs: list[Message]) -> list[Message]:
+    """工具轮极小窗口: 保留【最近用户指令 + 最近完整协议配对组】.
+
+    结构: [user(当前任务), assistant(tool_calls 最后声明), ...其全部 tool 回执]。
+    中间轮次（早期配对组）不入载荷——极小窗口本意（任务锚点摘要补偿早期动作）。
+
+    两项硬约束（2026-08-24 实证修复）:
+    1. C1 协议: 声明↔回执必须同窗（原固定 base[-2:] 在多回执时截断配对组 → 孤儿回执;
+       实证 "声明 3 个工具调用仅 1 条回执缺 2 条"）。
+    2. 聊天模板: llama.cpp Qwen 模板要求载荷含 user 消息, 缺 user 直接 500
+       "No user query found in messages"（实证 llama-server Qwen3.8 500）——
+       故必须带上最近一条 user（任务指令）, 不能只发配对组。
+    """
+    n = len(msgs)
+    if n == 0:
+        return msgs
+    group_start = -1
+    for i in range(n - 1, -1, -1):
+        if getattr(msgs[i], "role", "") == "assistant" and getattr(msgs[i], "tool_calls", None):
+            group_start = i
+            break
+    user_idx = -1
+    for i in range(n - 1, -1, -1):
+        if getattr(msgs[i], "role", "") == "user":
+            user_idx = i
+            break
+    if user_idx >= 0 and group_start >= 0:
+        if user_idx >= group_start:
+            # 最近 user 已在配对组之后（中断恢复/续跑）→ 整段保留, 不重复前置
+            return msgs[group_start:]
+        return msgs[user_idx : user_idx + 1] + msgs[group_start:]
+    if user_idx >= 0:  # 无配对组 → 从任务指令起（模型可能直接回答）
+        return msgs[user_idx:]
+    if group_start >= 0:  # 无 user（异常会话）→ 配对组兜底（模板可能拒, 但保协议）
+        return msgs[group_start:]
+    return msgs[-2:] if n >= 2 else msgs
+
+
 class _BuildMixin:
     def _build_llm_messages(
         self,
@@ -67,12 +131,13 @@ class _BuildMixin:
         # （2026-08-18 审计断点归因: 96%→2% 全量失效，delta 仅 614 tokens）。
         # 改为提交视图尾部追加（GATE_NOTE 模式，转 user），system+稳定历史前缀字节不变。
         base = list(sess.messages)
-        # 2026-08-21 工具轮零历史（TOOL_ROUND_ZERO_HISTORY=1）: 工具轮只发
-        # system+摘要+最近 2 条（工具结果+声明）——前缀（system+摘要）固定 → KV 命中
-        # → prefill 秒级（本地模型实测 4-13 tokens prefill 仅 0.2-0.8s）。
-        # 注意: 至少保留最近配对组（assistant(tool_calls)+tool 结果, C1 协议约束）。
+        # 2026-08-21 工具轮零历史（TOOL_ROUND_ZERO_HISTORY=1 / provider 配置）: 工具轮只发
+        # system+摘要+最近完整协议配对组（assistant(tool_calls)+全部 tool 回执）——前缀
+        # （system+摘要）固定 → KV 命中 → prefill 秒级（本地模型实测 4-13 tokens
+        # prefill 仅 0.2-0.8s）。
+        # 注意: 保留最近配对组而非固定 -2 条（2026-08-24: 多回执截断会破坏 C1 配对）。
         if tool_round_zero:
-            base = base[-2:] if len(base) >= 2 else base
+            base = _tool_round_zero_tail(base)
         prefix_len = 0
         # RULE-AI-14 协调通道: 程序级自动注入 DSH→LFL 待处理消息（每轮 run 必感知，
         # 非仅提示词引导；实现见 core/loop/interop.py _InteropMixin，fail-open）
@@ -154,23 +219,52 @@ class _BuildMixin:
             _compact_ratio = float(os.environ.get("COMPACT_RATIO", "0.9"))
             if 0 < _compact_ratio < 1.0:
                 _prep_at = effective_budget * 0.8
-                if (
-                    _history_total > _prep_at
-                    and _history_total <= effective_budget * _compact_ratio
-                ):
+                # EVO-20260824-54d46549 增长率 nudge（billion-context 拷问产出, 双轨）:
+                # - 强制轨: 超预算×compact_ratio（90% 默认）→ 必预警（压缩在即, bypass 增长率）
+                # - 增长率轨: 80% 准备态 → 距上次预警增长 ≥ 阈值（预算×5% 或 20K 字符）才预警
+                #   （重任务增长快早提示, 普通对话增长慢不打扰——替换原固定 80% 每轮必警）
+                _force_at = effective_budget * _compact_ratio
+                _growth_floor = max(
+                    int(effective_budget * 0.05),
+                    int(os.environ.get("NUDGE_GROWTH_CHARS", "20000")),
+                )
+                _prev_total = getattr(self, "_last_nudge_total", None)
+                _kind = _growth_nudge_kind(
+                    _history_total,
+                    _prev_total,
+                    prep_at=_prep_at,
+                    force_at=_force_at,
+                    growth_floor=_growth_floor,
+                )
+                if _kind == "force":
                     self._record_action(
                         "understand.compact_prep",
                         "approaching_budget",
+                        f"history {_history_total} 字符 超预算×{_compact_ratio}（{int(_force_at)}），"
+                        f"本轮/下轮触发主动压缩整理；压缩保留关键事实帧+档案零丢失，不影响推理",
+                    )
+                    self._last_nudge_total = _history_total
+                elif _kind == "growth" and _prev_total is not None:
+                    _growth = _history_total - int(_prev_total)
+                    self._record_action(
+                        "understand.compact_prep",
+                        "growth_nudge",
                         f"history {_history_total} 字符 ≥预算 80%（{int(_prep_at)}），"
-                        f"下一轮可能在 {int(effective_budget * _compact_ratio)} 触发主动压缩整理；"
+                        f"距上次预警增长 {_growth} ≥ {_growth_floor}（增长率门控触发）——"
+                        f"下一轮可能在 {int(_force_at)} 触发主动压缩整理；"
                         "压缩保留关键事实帧+档案零丢失，不影响推理",
                     )
+                    self._last_nudge_total = _history_total
         except Exception:  # noqa: BLE001
             _compact_ratio = 1.0
         self._last_compact_ratio = _compact_ratio
+        # EVO-20260824-54d46549 渐进折叠配置（env, 默认关零回归）: PROGRESSIVE_FOLD_K>0 时
+        # 压缩改为"每次最多折最老 K 个配对组"（平滑曲线 + guard 不 BLOCK + 智力无断崖）
+        _progressive_fold_k = int(os.environ.get("PROGRESSIVE_FOLD_K", "0"))
         # P1-10: 锚点相对传入列表 = 会话锚点 + 前置（memory/快照）长度
         anchor_arg = sess_anchor + prefix_len if sess_anchor > 0 else 0
         anchor_box: list[int] = []
+        compacted_box: list[bool] = []
         built = build_history_messages(
             base,
             system_prompt,
@@ -198,6 +292,7 @@ class _BuildMixin:
             # P1-10: 窗口锚定
             history_anchor=anchor_arg,
             anchor_out=anchor_box,
+            compacted_out=compacted_box,
             # EVO-20260817-9d3e1f2c: 缓存友好压缩——保留锚点头部（前缀命中）只归档中段;
             # EVO-20260818: HEAD_KEEP_RATIO 默认 0.10→0.15（压缩轮即命中 system+头部 ≥70%）;
             # force 档位 HEAD_KEEP_FORCE_RATIO 默认 0.20（L3 拦截强制保留——须高于常规档位，
@@ -215,7 +310,11 @@ class _BuildMixin:
             # 2026-08-21 追加式压缩: 归档后追加确定性摘要（APPEND_COMPRESSION=1 启用,
             # 默认关零回归）——任务语义连贯 + 前缀稳定（同归档→同摘要字节→缓存命中）
             _append_summary_enabled=os.environ.get("APPEND_COMPRESSION", "0") == "1",
+            # EVO-20260824-54d46549 渐进折叠: PROGRESSIVE_FOLD_K>0 时压缩每次最多折最老 K 个
+            # 配对组（平滑曲线 + guard 不 BLOCK + 智力无断崖）；0=一次性大裁（零回归）
+            progressive_fold=_progressive_fold_k,
         )
+        self._last_history_compacted = bool(compacted_box and compacted_box[0])
         # P1-10: 锚点推进持久化（换算回会话索引, clamp 防御）
         if anchor_box:
             new_anchor = anchor_box[0] - prefix_len

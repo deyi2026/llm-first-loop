@@ -20,12 +20,19 @@ def _tool_msg(content: str, status=ToolResultStatus.SUCCESS) -> Message:
 
 
 def test_p0_keyword_behavior_without_matcher(tmp_path):
-    """semantic_matcher=None → 纯关键词/路径匹配（P0 回归）."""
+    """semantic_matcher=None → 纯关键词/路径匹配（P0 回归）+ 跨轮引用判定（EVO-20260820-409f3f60）."""
     v = DeclarationValidator(audit_dir=tmp_path / "audit")
     r = v.check("我已写入文件 output.txt", [_tool_msg("写入 output.txt 成功")])
     assert r.consistent
+    # 近 N 轮窗口内有等价成功记录 → 跨轮引用（非真实不诚实），仍 consistent + 命中标记
     r2 = v.check("我已写入文件 output.txt", [_tool_msg("读取 data/notes.txt 成功")])
-    assert not r2.consistent
+    assert r2.consistent
+    assert r2.cross_round_hits  # 跨轮引用命中已标记（可审计）
+    # 全新校验器（无历史窗口）且本轮无等价回执 → 真实不诚实，判 False
+    v2 = DeclarationValidator(audit_dir=tmp_path / "audit2")
+    r3 = v2.check("我已写入文件 output.txt", [_tool_msg("读取 data/notes.txt 成功")])
+    assert not r3.consistent
+    assert not r3.cross_round_hits
 
 
 def test_semantic_match_when_keyword_fails(tmp_path):

@@ -225,8 +225,11 @@ def test_client_params_missing_key_truthful_error(monkeypatch: pytest.MonkeyPatc
         reg.client_params("deepseek", "deepseek-v4-flash")
 
 
-def test_client_params_no_auth_provider() -> None:
-    """api_key_env 为空（本地 provider）→ 无需 key."""
+def test_client_params_no_auth_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """api_key_env 为空（本地 provider）→ 无需 key（直连发现隔离, 环境无关）."""
+    # LMS_DIRECT 直连发现会扫到本机真实 llama-server 并返回其 api-key（环境敏感）——
+    # 本测试隔离发现逻辑: 模拟未发现直连服务器 → 走配置 base_url + 无 key
+    monkeypatch.setattr("llm_loop.llm.providers._discover_llama_server", lambda: None)
     reg = load_registry(_settings(model_providers_raw=_TWO_PROVIDER_JSON))
     params = reg.client_params("local", "qwen3.6-27b")
     assert params["api_key"] == ""
@@ -330,6 +333,56 @@ def test_provider_history_budget_invalid_warns_and_defaults(
     assert reg.providers["local"].history_budget_chars is None
     assert not reg.degraded
     assert any("history_budget_chars" in r.message and "local" in r.message for r in caplog.records)
+
+
+# ── 2026-08-24 本地工具轮极小窗口（tool_round_zero_history, KV 前缀稳定）──
+
+
+def _tool_zero_provider_json(value: object) -> str:
+    return json.dumps(
+        {
+            "local": {
+                "base_url": "http://localhost:1234/v1",
+                "api_key_env": "",
+                "tool_round_zero_history": value,
+                "models": {"qwen3.6-27b": {"context": 131072}},
+                "default_model": "qwen3.6-27b",
+            }
+        }
+    )
+
+
+def test_provider_tool_round_zero_parsed_true() -> None:
+    """local 配置 tool_round_zero_history=true → 工具轮极小窗口启用."""
+    reg = load_registry(_settings(model_providers_raw=_tool_zero_provider_json(True)))
+    assert reg.providers["local"].tool_round_zero_history is True
+
+
+def test_provider_tool_round_zero_absent_defaults_false() -> None:
+    """未配置 → False（云端/缺省零回归）."""
+    reg = load_registry(_settings(model_providers_raw=_TWO_PROVIDER_JSON))
+    assert reg.providers["local"].tool_round_zero_history is False
+    assert reg.providers["deepseek"].tool_round_zero_history is False
+
+
+@pytest.mark.parametrize("bad", ["maybe", {"x": 1}])
+def test_provider_tool_round_zero_invalid_warns_and_defaults(
+    bad, caplog: pytest.LogCaptureFixture
+) -> None:
+    """非法 tool_round_zero_history → warning 如实告警 + 回退 False（不拖垮注册表）."""
+    with caplog.at_level(logging.WARNING, logger="llm_loop.llm.providers"):
+        reg = load_registry(_settings(model_providers_raw=_tool_zero_provider_json(bad)))
+    assert reg.providers["local"].tool_round_zero_history is False
+    assert not reg.degraded
+    assert any("tool_round_zero_history" in r.message and "local" in r.message for r in caplog.records)
+
+
+def test_provider_tool_round_zero_string_forms() -> None:
+    """字符串布尔形态严格解析（"true"/"false"，防 bool("false")==True 陷阱）."""
+    reg_true = load_registry(_settings(model_providers_raw=_tool_zero_provider_json("true")))
+    assert reg_true.providers["local"].tool_round_zero_history is True
+    reg_false = load_registry(_settings(model_providers_raw=_tool_zero_provider_json("false")))
+    assert reg_false.providers["local"].tool_round_zero_history is False
 
 
 def test_catalog_summary_shows_provider_history_budget() -> None:
