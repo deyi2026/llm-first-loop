@@ -25,6 +25,11 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_DIR"
 
+# P0(2026-08-27) venv 污染事故防御: 清空继承的 PYTHONPATH——外部环境（harness 等）
+# 可能注入镜像 src 路径导致本区服务 import 镜像代码（editable .pth 已指向本区，
+# 无需 PYTHONPATH 旁路；镜像工作区跑测试/服务时应显式设自己的 PYTHONPATH）
+unset PYTHONPATH
+
 VENV_PY="$PROJECT_DIR/.venv/bin/python"
 DATA_DIR="$PROJECT_DIR/data"
 WS_HOST="msg-frontier.feishu.cn"
