@@ -292,14 +292,24 @@ class _ToolExecMixin:
             return
         # EVO-20260827-ed4c1350 批次1（P0-A/T2）: run 级一次——本 user turn 已注入
         # 过经验提示则跳过（tool round 反复触发不重复膨胀；实测 09c44093 会话
-        # experience 类 25 条/最高重复 x10）。flag 由 engine 在 run 入口重置。
-        if getattr(self, "_turn_tip_injected", False):
+        # experience 类 25 条/最高重复 x10）。
+        # T5(GPT 复审 P0): 判断依据从 Engine shadow state（_turn_tip_injected/
+        # _injected_tip_tools——多会话串台 + 进程重启丢失）改为 sess.messages
+        # 持久 metadata SoT 派生——跨进程可重建、多会话天然隔离、可审计。
+        _turn_ref = getattr(self, "_current_turn_ref", None)
+        _tip_done = False
+        seen: set = set()
+        for _m in getattr(sess, "messages", []) or []:
+            _md = getattr(_m, "metadata", None) or {}
+            if _md.get("injection_kind") != "experience_tip":
+                continue
+            if _md.get("turn_ref") == _turn_ref:
+                _tip_done = True
+            seen.update(_md.get("experience_tip_tools") or [])
+        if _tip_done:
             return
         try:
-            seen = getattr(self, "_injected_tip_tools", None)
-            if seen is None:
-                seen = self._injected_tip_tools = set()
-            # 会话级去重：只处理本会话尚未注入过的工具名
+            # 会话级去重：只处理本会话尚未注入过的工具名（seen 为 SoT 派生值，见上）
             candidate = [n for n in dict.fromkeys(tool_names) if n not in seen]
             if not candidate:
                 return  # 全部已注入过——零注入，前缀完全稳定
@@ -353,10 +363,8 @@ class _ToolExecMixin:
             )
             sess.messages.append(msg)
             self._append_message_event(sess, msg)
-            # EVO-20260817-20cc3f91: 注入成功后标记——本会话不再为该工具名重复注入
-            seen.update(candidate)
-            # EVO-20260827-ed4c1350 T2: 本 turn 经验提示配额已用（run 入口重置）
-            self._turn_tip_injected = True
+            # T5: 注入即持久化到消息 metadata（turn 配额/工具名去重的 SoT）——
+            # 无内存标记：跨进程重启由消息重建，多会话天然隔离
         except Exception:  # noqa: BLE001 — 经验检索 fail-open（不阻断主循环）
             logger.warning("经验提示注入失败（fail-open）", exc_info=True)
 

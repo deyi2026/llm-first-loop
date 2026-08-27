@@ -42,6 +42,11 @@ class _RunState:
     last_snapshot_count: int = 0
     last_breakdown: Any = None
     last_build_info: Any = None
+    # T5(GPT 复审 P0 串台修复): turn 身份与预算归因入 per-session 桶
+    # （此前是 Engine 实例全局 self._current_turn_ref/_last_budget_info——
+    #   同一 Engine 服务多 session（Web/飞书/Headless）时并发 run 互相覆盖）
+    current_turn_ref: int | None = None
+    last_budget_info: Any = None
 
 
 class _RunStateMixin:
@@ -121,3 +126,20 @@ class _RunStateMixin:
     @_last_build_info.setter
     def _last_build_info(self, value: Any) -> None:
         self._run_state().last_build_info = value
+
+    # T5: turn 身份 / 预算归因 per-session shim（接口不变，读写落当前会话桶）
+    @property
+    def _current_turn_ref(self) -> int | None:
+        return self._run_state().current_turn_ref
+
+    @_current_turn_ref.setter
+    def _current_turn_ref(self, value: int | None) -> None:
+        self._run_state().current_turn_ref = value
+
+    @property
+    def _last_budget_info(self) -> Any:
+        return self._run_state().last_budget_info
+
+    @_last_budget_info.setter
+    def _last_budget_info(self, value: Any) -> None:
+        self._run_state().last_budget_info = value
