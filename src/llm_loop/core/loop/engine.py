@@ -981,11 +981,22 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             except Exception:
                 logger.warning("独立提取触发失败（fail-open）", exc_info=True)
 
+        # P0-B1（2026-08-28 批准）: 程序反馈语义分离——错误/熔断/守卫/耗尽类文本
+        # source=SYSTEM（非模型产出的如实标注；防下轮模型误读"assistant 已回答过"，
+        # 并作为 extractor 过滤/投影标记的判定依据）。正常回答保持 USER 不变
+        # （M51/M52 token 统计依赖零破坏）。
+        from llm_loop.feedback.honesty import PROGRAM_FEEDBACK_PREFIXES
+
+        _pf_source = (
+            MessageSource.SYSTEM
+            if final_answer.startswith(PROGRAM_FEEDBACK_PREFIXES)
+            else MessageSource.USER
+        )
         sess.messages.append(
             Message(
                 role="assistant",
                 content=final_answer,
-                source=MessageSource.USER,
+                source=_pf_source,
                 # M51/M52: 模型 + 本轮 run token 消耗持久化（web/feishu 页脚数据源）
                 model_used=model_used,
                 tokens_in=tokens_in,
@@ -995,7 +1006,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 ttft_ms=ttft_first_ms or 0.0,
             )
             if final_answer
-            else Message(role="assistant", content="（无回答输出）", source=MessageSource.USER)
+            else Message(role="assistant", content="（无回答输出）", source=_pf_source)
         )
         # M20 THK-04: 最终回答轮 assistant 消息也回传思考链（官方"后续所有请求"语义，防下一轮 400）
         if final_answer and resp is not None and resp.reasoning_content:
