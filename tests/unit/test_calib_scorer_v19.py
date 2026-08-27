@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
-from scripts.calib.scorer_v19 import novel_stage,truth_integrated,source_successfully_verified
+
+from scripts.calib.scorer_v19 import novel_stage, source_successfully_verified, truth_integrated
+
 ROOT=Path(__file__).resolve().parents[2]
 
 def tr(source,result):return [{'name':'request_fixture','source':source,'result_full':result,'round':1}]

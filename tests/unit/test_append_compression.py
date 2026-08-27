@@ -7,8 +7,6 @@
 """
 from __future__ import annotations
 
-import pytest
-
 from llm_loop.core.history import build_history_messages
 from llm_loop.core.message import Message, MessageSource
 

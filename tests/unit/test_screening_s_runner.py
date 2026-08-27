@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-from scripts.calib.screening_runner import build_screening_task_prompt, execute_screening_run, load_manifest
 from scripts.calib.s_scorer import score_run_s
+from scripts.calib.screening_runner import (
+    build_screening_task_prompt,
+    execute_screening_run,
+    load_manifest,
+)
 
 
 def test_s_task_prompt_has_no_candidate_truth():

@@ -17,7 +17,6 @@ import os
 
 import pytest
 
-from llm_loop.config import Settings
 from llm_loop.llm.client import LLMClient
 
 

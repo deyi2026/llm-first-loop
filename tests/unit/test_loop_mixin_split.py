@@ -67,17 +67,17 @@ def test_complexity_reduction(engine_src):
     超任一项 → 应拆分 engine 到新 mixin（而非改阈值/塞行）。
     """
     _lines = engine_src.splitlines()
-    _BASE = 946  # 拆分后基线（design §4.3）
-    _GROWTH_BUDGET = 226  # 允许合理增长（2026-08-22 focus 模块化: build/routing 减 76 行, engine 接线 +2）
-    assert len(_lines) <= _BASE + _GROWTH_BUDGET, (
-        f"engine.py {len(_lines)} 行 > 预算 {_BASE + _GROWTH_BUDGET}——应拆分到新 mixin"
+    _base = 946  # 拆分后基线（design §4.3）
+    _growth_budget = 226  # 允许合理增长（2026-08-22 focus 模块化: build/routing 减 76 行, engine 接线 +2）
+    assert len(_lines) <= _base + _growth_budget, (
+        f"engine.py {len(_lines)} 行 > 预算 {_base + _growth_budget}——应拆分到新 mixin"
     )
     # 行长守卫: 只查代码行（忽略 # 注释——注释可长, 防的是"一行塞逻辑"）
     _code_lines = [
-        l for l in _lines
-        if l.strip() and not l.strip().startswith("#") and not l.strip().startswith("class ")
+        line for line in _lines
+        if line.strip() and not line.strip().startswith("#") and not line.strip().startswith("class ")
     ]
-    _max_line = max(len(l) for l in _code_lines)
+    _max_line = max(len(line) for line in _code_lines)
     assert _max_line <= 120, (
         f"engine.py 存在 {_max_line} 字符超长代码行（>120）——一行塞逻辑规避行数, 应拆分"
     )
