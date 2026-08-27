@@ -304,6 +304,50 @@ class _Err1210Mixin:
             logger.warning("err1210: 剥离过程异常，放弃降级（fail-open）", exc_info=True)
             return None
 
+    # ── 3.3b 尾部连续 user 聚合（1210 结构触发的兜底恢复，EXPERIENCE-20260828-glm-1210-user）──
+    # 实验实锤(2026-08-28, 快照 20260827T190036788Z 单变量重放): 智谱 GLM 端点对尾部
+    # 连续多条 user 做结构校验触发 1210——原样重放复现 400/1210, 仅将尾部 6 条 user
+    # 合并为 1 条(内容逐字保留)后 HTTP 200。压缩产物帧(归档摘要/压缩声明等)不在注入
+    # 槽登记内, 剥离路径对 compact 首请求的该形态 8/8 失效——本聚合分支为其兜底。
+
+    _AGG_SEPARATOR: str = "\n\n" + "=" * 28 + "\n\n"
+    _AGG_MAX_TAIL_USERS: int = 16  # 群条数上限(防误聚真实多轮 user 对话)
+
+    def _aggregate_tail_users(self, messages: list[dict]) -> list[dict] | None:
+        """尾部连续 user 群(≥2 条, 全 str content)聚合为单条 user(逐字保留).
+
+        copy-on-write: 前缀列表对象复用(逐字节不变); 任一不满足返回 None 记 INFO。
+        聚合消息 role=user、content=各条原文以 _AGG_SEPARATOR 连接——仅结构变化,
+        语义零损失(实验 B 变体验证: finish=tool_calls 正常, 80404 tokens)。
+        """
+        try:
+            tail_start = len(messages)
+            for i in range(len(messages) - 1, -1, -1):
+                if messages[i].get("role") != "user":
+                    tail_start = i + 1
+                    break
+            else:
+                tail_start = 0  # 全 user 极端形态(理论不可达, 防御)
+            n_tail = len(messages) - tail_start
+            if n_tail < 2:
+                return None
+            if n_tail > self._AGG_MAX_TAIL_USERS:
+                logger.info(
+                    "err1210: 尾部 user 群 %d 条超上限 %d, 放弃聚合", n_tail, self._AGG_MAX_TAIL_USERS
+                )
+                return None
+            parts: list[str] = []
+            for m in messages[tail_start:]:
+                c = m.get("content")
+                if not isinstance(c, str):  # 多模态/空内容不聚, 安全侧放弃
+                    return None
+                parts.append(c)
+            merged = self._AGG_SEPARATOR.join(parts)
+            return messages[:tail_start] + [{"role": "user", "content": merged}]
+        except Exception:  # noqa: BLE001 — 聚合失败 fail-open(放弃, 走既有上抛)
+            logger.warning("err1210: 聚合过程异常，放弃（fail-open）", exc_info=True)
+            return None
+
     # ── 3.4 defer 回存（槽位复位语义）──
 
     def _defer_store(
@@ -547,19 +591,31 @@ class _Err1210Mixin:
             # P1 9.1: 传 messages 供 AGGREGATED 拆解（聚合 entry → 段级槽位复位）
             result.deferred_ok = self._defer_store(sess, entries, messages)
 
-            # ③ 剥离
+            # ③ 剥离（登记注入槽形态）→ 失败则尾部 user 聚合兜底（压缩帧形态，
+            #    1210 结构触发实锤：连续多条 user 触发智谱校验，EXPERIENCE-20260828-glm-1210-user）
+            retry_mode = "strip"
             stripped = self._strip_tail_injections(messages)
-            if stripped is None:
+            if stripped is not None:
+                retry_messages, span = stripped
+                result.stripped_count = len(span.entries)
+            else:
+                aggregated = self._aggregate_tail_users(messages)
+                if aggregated is None:
+                    self._record_action(
+                        "err1210.recovery",
+                        "aborted",
+                        f"剥离与聚合均不适用放弃降级；defer_ok={result.deferred_ok}",
+                    )
+                    # 耗尽标记仍写入（本 compact 事件不再尝试，防循环）
+                    self._err1210_attempted = {**attempted, session_id: seq}
+                    return result
+                retry_messages = aggregated
+                retry_mode = "aggregate"
                 self._record_action(
                     "err1210.recovery",
-                    "aborted",
-                    f"剥离校验失败放弃降级；defer_ok={result.deferred_ok}",
+                    "aggregate_retry",
+                    f"剥离校验失败，尾部连续 user 群聚合后重试（mode=aggregate）",
                 )
-                # 耗尽标记仍写入（本 compact 事件不再尝试，防循环）
-                self._err1210_attempted = {**attempted, session_id: seq}
-                return result
-            retry_messages, span = stripped
-            result.stripped_count = len(span.entries)
 
             # ④ 单次重试（先标记防循环——本 compact 事件至多一次降级）
             self._err1210_attempted = {**attempted, session_id: seq}
@@ -571,23 +627,26 @@ class _Err1210Mixin:
                 timeout_s=timeout_s,
                 session_id=session_id,
             )
+            mode_desc = (
+                f"剥离 {result.stripped_count} 条后" if retry_mode == "strip" else "尾部 user 聚合后"
+            )
             if resp is not None:
                 result.resp = resp
                 result.recovered = True
                 self._record_action(
                     "err1210.recovery",
                     "recovered",
-                    f"剥离 {result.stripped_count} 条后重试成功；defer_ok={result.deferred_ok}",
+                    f"{mode_desc}重试成功；defer_ok={result.deferred_ok}；mode={retry_mode}",
                 )
             elif retry_exc is not None and is_err1210(retry_exc):
                 result.exhausted = True
                 record_defer_event(
-                    "defer_exhausted", session_id, "all", {"stripped": result.stripped_count}
+                    "defer_exhausted", session_id, "all", {"stripped": result.stripped_count, "mode": retry_mode}
                 )
                 self._record_action(
                     "err1210.recovery",
                     "exhausted",
-                    f"剥离 {result.stripped_count} 条后重试仍 1210（耗尽上抛）",
+                    f"{mode_desc}重试仍 1210（耗尽上抛）；mode={retry_mode}",
                 )
             else:
                 # 非 1210 二次异常（网络/超时）：recovered=False，原 1210 语义不被掩盖，
