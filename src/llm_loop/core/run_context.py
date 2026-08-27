@@ -32,6 +32,25 @@ current_model_label: contextvars.ContextVar[str] = contextvars.ContextVar(
     "llm_loop_current_model_label", default=""
 )
 
+# 当前请求推理等级 override。只存 request-local 值，不写共享 LLMClient 实例属性；
+# 空串表示使用该 provider client 自身的装配默认。
+current_reasoning_effort: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "llm_loop_current_reasoning_effort", default=""
+)
+
+# ERC R0/Phase2 shadow only: tools preserve their pre-trim observation only when an explicit
+# registry shadow hook is installed. Default false keeps legacy memory/runtime behavior unchanged.
+current_evidence_shadow_enabled: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "llm_loop_current_evidence_shadow_enabled", default=False
+)
+
+# ERC Phase3 enforce only: when true, participating tools must return the unprojected
+# observation to ToolRegistry and skip their legacy internal trim.  Registry captures it
+# durably before any model-visible projection.
+current_evidence_enforce_enabled: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "llm_loop_current_evidence_enforce_enabled", default=False
+)
+
 
 def workspace_base() -> str:
     """工具相对路径/命令默认 cwd 的基准目录（工作区根优先，空则进程 cwd）."""

@@ -18,6 +18,7 @@ from typing import Any
 EVENT_SESSION_CREATED = "session.created"
 EVENT_MESSAGE_APPENDED = "message.appended"
 EVENT_CONTEXT_COMPRESSED = "context.compressed"
+EVENT_MESSAGE_CACHE_COMPACTED = "message.cache_compacted"
 EVENT_SESSION_META_CHANGED = "session.meta_changed"
 EVENT_SESSION_FORKED = "session.forked"  # D3 预留：本期登记不触发行为
 EVENT_REQUEST_META = "request.meta"  # HARNESS-02(2026-08-14): 每轮请求快照（模型/思考/工具目录/预算）
@@ -160,6 +161,8 @@ REGISTRY.register(
             "model_override": "会话级模型覆盖（None=用装配默认）",
             "pinned": "置顶",
             "channel": "来源通道",
+            "fixed_summary": "version 5 固定摘要（生成后不可变）",
+            "summary_chain": "version 5 增量摘要链（尾部追加）",
         },
     )
 )
@@ -191,6 +194,16 @@ REGISTRY.register(
             "tool_call_id": "原消息定位（tool 消息绑定 id）",
             "msg_seq": "原消息在会话中的序号",
             "chars": "原文长度",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_MESSAGE_CACHE_COMPACTED,
+        version=1,
+        fields={
+            "msg_seq": "原消息在会话中的序号",
+            "provider_id": "该折叠状态所属 provider",
         },
     )
 )

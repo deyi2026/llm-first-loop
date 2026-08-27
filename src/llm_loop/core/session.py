@@ -8,12 +8,14 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import logging
+import os
 import threading
 import uuid
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,8 +26,64 @@ from llm_loop.event_log.model import build_message_payload
 
 logger = logging.getLogger(__name__)
 
+_IDENTITY_FALLBACK_GUARD = threading.Lock()
+_IDENTITY_FALLBACK_LOCKS: dict[str, threading.Lock] = {}
+
 _ACTIVE = "active"
 _ARCHIVED = "archived"
+
+
+def _validate_session_id(session_id: str) -> str:
+    """会话ID必须是单个文件名组件；保留legacy非UUID ID但禁止路径穿越。"""
+    if not isinstance(session_id, str) or not session_id:
+        raise ValueError("非法 session_id: 不能为空")
+    if session_id in {".", ".."} or "/" in session_id or "\\" in session_id or "\x00" in session_id:
+        raise ValueError("非法 session_id: 不得包含路径分隔符、NUL 或目录跳转")
+    return session_id
+
+
+class SessionMutationBusyError(RuntimeError):
+    """目标会话正被 whole-run lease 占用，管理写必须 fail-fast。"""
+
+
+class SessionIdConflictError(RuntimeError):
+    """session_id 已由另一个workspace持有；全局Event/Archive键禁止复用。"""
+
+
+class SessionDeletedError(SessionIdConflictError):
+    """session_id 已物理删除且不可恢复/复用。"""
+
+
+class _FallbackRunGate:
+    """无 fcntl 平台的进程内读写门：run=独占，管理事务=共享，全部非阻塞。"""
+
+    def __init__(self) -> None:
+        self._guard = threading.Lock()
+        self._readers = 0
+        self._writer = False
+
+    def acquire_exclusive(self) -> bool:
+        with self._guard:
+            if self._writer or self._readers:
+                return False
+            self._writer = True
+            return True
+
+    def release_exclusive(self) -> None:
+        with self._guard:
+            self._writer = False
+
+    def acquire_shared(self) -> bool:
+        with self._guard:
+            if self._writer:
+                return False
+            self._readers += 1
+            return True
+
+    def release_shared(self) -> None:
+        with self._guard:
+            if self._readers:
+                self._readers -= 1
 
 # D1: session.created 事件承载的顶层字段（与 Session.to_dict() 对齐，缺失如实置空）
 _EVENT_TOP_FIELDS = (
@@ -40,6 +98,8 @@ _EVENT_TOP_FIELDS = (
     "model_override",
     "pinned",
     "channel",
+    "fixed_summary",
+    "summary_chain",
 )
 
 
@@ -197,20 +257,331 @@ class SessionStore:
         *,
         event_store: Any | None = None,
         read_path_source: str = "session_json",
+        identity_root: str | Path | None = None,
+        identity_history_exists_fn: Callable[[str], bool] | None = None,
+        delete_sidecars_fn: Callable[[str], object] | None = None,
     ) -> None:
         self._dir = Path(sessions_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
+        self._identity_root_pinned = identity_root is not None
+        self._identity_root = Path(identity_root) if identity_root is not None else self._dir
+        self._identity_root.mkdir(parents=True, exist_ok=True)
+        self._identity_verified: set[str] = set()
+        self._identity_history_exists_fn = identity_history_exists_fn
+        self._delete_sidecars_fn = delete_sidecars_fn
         self._event_store = event_store
         self._read_path_source = read_path_source
         # P0-4(2026-08-15): 非 POSIX 平台 flock 不可得时的进程内回退锁表
         self._fallback_locks: dict[str, threading.Lock] = {}
+        self._fallback_run_gates: dict[str, _FallbackRunGate] = {}
+        self._fallback_locks_guard = threading.Lock()
+        # run 内 save 的显式所有权：仅绑定到本轮 load 出来的 Session 对象。
+        # 不依赖 ContextVar（ASGI 生成器可跨 Context resume），也不会序列化到 JSON。
+        self._run_save_tokens: dict[str, object] = {}
+        self._run_save_tokens_guard = threading.Lock()
+
+    @property
+    def root(self) -> Path:
+        """当前会话持久化根；workspace切换时原子更新。"""
+        return self._dir
+
+    def prepare_root(self, sessions_dir: str | Path) -> Path:
+        """预创建/验证会话根；失败时不改变当前SessionStore状态。"""
+        target = Path(sessions_dir)
+        target.mkdir(parents=True, exist_ok=True)
+        if not target.is_dir():
+            raise OSError(f"会话根不可用: {target}")
+        return target
+
+    def activate_prepared_root(self, sessions_dir: str | Path) -> None:
+        """激活已准备好的会话根；不执行文件系统I/O。"""
+        self._dir = Path(sessions_dir)
+        if not self._identity_root_pinned:
+            self._identity_root = self._dir
+        self._identity_verified.clear()
+        self._fallback_locks.clear()
+        self._fallback_run_gates.clear()
+        self._fallback_locks_guard = threading.Lock()
+        with self._run_save_tokens_guard:
+            self._run_save_tokens.clear()
 
     def set_root(self, sessions_dir: str | Path) -> None:
-        """切换会话根目录（工作区管理：按工作区分区隔离；锁表随目录重建）."""
-        self._dir = Path(sessions_dir)
-        self._dir.mkdir(parents=True, exist_ok=True)
-        self._fallback_locks.clear()
-        self._fallback_locks_guard = threading.Lock()
+        """切换会话根目录；先准备成功再原子更新内存根。"""
+        target = self.prepare_root(sessions_dir)
+        self.activate_prepared_root(target)
+
+    @property
+    def identity_root(self) -> Path:
+        """跨workspace session_id 全局归属根（Event/Archive共享键空间）。"""
+        return self._identity_root
+
+    def _identity_owner_key(self) -> str:
+        base = self._identity_root.resolve()
+        current = self._dir.resolve()
+        try:
+            rel = current.relative_to(base)
+        except ValueError as exc:
+            raise SessionIdConflictError(
+                f"当前会话根 {current} 越出 identity_root {base}，拒绝声明 session_id"
+            ) from exc
+        return "." if rel == Path(".") else rel.as_posix()
+
+    def _identity_history_in_use(self, session_id: str) -> bool:
+        """无session JSON时检查全局Event/Archive历史是否已占用该sid；探针异常fail-closed。"""
+        try:
+            if self._event_store is not None and self._event_store.exists(session_id):
+                return True
+            if self._identity_history_exists_fn is not None:
+                return bool(self._identity_history_exists_fn(session_id))
+            return False
+        except Exception as exc:  # noqa: BLE001 — 无法证明未使用时禁止重新claim
+            raise SessionIdConflictError(
+                f"无法验证 session_id {session_id} 的历史全局占用，拒绝重新分配"
+            ) from exc
+
+    def _legacy_identity_owners(self, session_id: str) -> list[str]:
+        """首次引入owner tombstone时从现有session JSON推断历史归属。"""
+        session_id = _validate_session_id(session_id)
+        base = self._identity_root.resolve()
+        owners: list[str] = []
+        base_file = base / f"{session_id}.json"
+        if base_file.is_file():
+            owners.append(".")
+        try:
+            children = list(base.iterdir())
+        except OSError as exc:
+            raise SessionIdConflictError(f"无法扫描session_id全局归属: {exc}") from exc
+        for child in children:
+            if child.name == ".identity":
+                continue
+            try:
+                resolved = child.resolve()
+                resolved.relative_to(base)
+            except (OSError, ValueError):
+                continue
+            if not resolved.is_dir():
+                continue
+            if (resolved / f"{session_id}.json").is_file():
+                owners.append(resolved.relative_to(base).as_posix())
+        return sorted(set(owners))
+
+    @contextmanager
+    def _identity_lock(self, session_id: str) -> Iterator[None]:
+        """跨workspace/跨进程稳定per-sid锁；owner claim不可fail-open。"""
+        session_id = _validate_session_id(session_id)
+        identity_dir = self._identity_root / ".identity"
+        try:
+            identity_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise SessionIdConflictError(f"session_id归属锁目录不可用: {exc}") from exc
+        lock_path = identity_dir / f"{session_id}.lock"
+        try:
+            import fcntl
+        except ImportError:
+            key = f"{self._identity_root.resolve()}::{session_id}"
+            with _IDENTITY_FALLBACK_GUARD:
+                lock = _IDENTITY_FALLBACK_LOCKS.setdefault(key, threading.Lock())
+            with lock:
+                yield
+            return
+        lock_file = None
+        try:
+            lock_file = lock_path.open("a", encoding="utf-8")
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        except OSError as exc:
+            if lock_file is not None:
+                lock_file.close()
+            raise SessionIdConflictError(f"session_id全局归属锁不可用: {exc}") from exc
+
+        try:
+            yield
+        finally:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                logger.warning("session_id全局归属锁释放失败: %s", lock_path, exc_info=True)
+            finally:
+                lock_file.close()
+
+    def _durable_replace_text(self, path: Path, content: str) -> None:
+        """durable原子替换：文件fsync + rename + 父目录fsync；任一步失败均向上抛。"""
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+        dir_fd: int | None = None
+        try:
+            with tmp.open("w", encoding="utf-8") as f:
+                f.write(content)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, path)
+            flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            try:
+                dir_fd = os.open(path.parent, flags)
+                os.fsync(dir_fd)
+            except OSError as exc:
+                # 目录fsync并非所有平台/文件系统可用；文件本体已fsync+replace，
+                # 此处只降级崩溃耐久性，不能让明确支持的非POSIX fallback完全不可用。
+                logger.warning(
+                    "durable replace父目录fsync不可用（写入已完成，耐久性降级）: %s: %s",
+                    path.parent,
+                    exc,
+                )
+        finally:
+            if dir_fd is not None:
+                os.close(dir_fd)
+            with suppress(OSError):
+                tmp.unlink(missing_ok=True)
+
+    def _check_identity_read(self, session_id: str) -> None:
+        """只读验证现有全局归属；不存在于任何workspace的sid不得因读取被claim。"""
+        session_id = _validate_session_id(session_id)
+        if session_id in self._identity_verified:
+            return
+        with self._identity_lock(session_id):
+            identity_dir = self._identity_root / ".identity"
+            owner_path = identity_dir / f"{session_id}.json"
+            current_owner = self._identity_owner_key()
+            if owner_path.exists():
+                try:
+                    record = json.loads(owner_path.read_text(encoding="utf-8"))
+                    owner = str(record["owner"])
+                except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+                    raise SessionIdConflictError(
+                        f"session_id {session_id} 的全局归属记录损坏，拒绝猜测"
+                    ) from exc
+                if record.get("deleted_at"):
+                    raise SessionDeletedError(
+                        f"session_id {session_id} 已删除且不可恢复/复用"
+                    )
+                if owner != current_owner:
+                    raise SessionIdConflictError(
+                        f"session_id {session_id} 已被其他工作区占用（owner={owner}）"
+                    )
+                self._identity_verified.add(session_id)
+                return
+
+            owners = self._legacy_identity_owners(session_id)
+            if len(owners) > 1:
+                raise SessionIdConflictError(
+                    f"session_id {session_id} 已存在于多个历史工作区，拒绝继续读取"
+                )
+            if not owners:
+                if self._identity_history_in_use(session_id):
+                    raise SessionIdConflictError(
+                        f"session_id {session_id} 存在历史Event/Archive但workspace归属不可确定"
+                    )
+                return  # 纯读取全局未使用sid：不claim，不产生owner副作用
+
+            owner = owners[0]
+            self._durable_replace_text(
+                owner_path,
+                json.dumps({"owner": owner, "claimed_at": _now()}, ensure_ascii=False),
+            )
+            if owner != current_owner:
+                raise SessionIdConflictError(
+                    f"session_id {session_id} 已被其他工作区占用（owner={owner}）"
+                )
+            self._identity_verified.add(session_id)
+
+    def _ensure_identity_owner(self, session_id: str, *, allow_deleted: bool = False) -> None:
+        """声明/验证session_id的稳定workspace归属；删除session也不释放全局ID。"""
+        session_id = _validate_session_id(session_id)
+        if session_id in self._identity_verified:
+            return
+        with self._identity_lock(session_id):
+            identity_dir = self._identity_root / ".identity"
+            owner_path = identity_dir / f"{session_id}.json"
+            current_owner = self._identity_owner_key()
+            if owner_path.exists():
+                try:
+                    record = json.loads(owner_path.read_text(encoding="utf-8"))
+                    owner = str(record["owner"])
+                except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+                    raise SessionIdConflictError(
+                        f"session_id {session_id} 的全局归属记录损坏，拒绝猜测"
+                    ) from exc
+                if record.get("deleted_at"):
+                    if allow_deleted and owner == current_owner:
+                        self._identity_verified.discard(session_id)
+                        return
+                    raise SessionDeletedError(
+                        f"session_id {session_id} 已删除且不可恢复/复用"
+                    )
+                if owner != current_owner:
+                    raise SessionIdConflictError(
+                        f"session_id {session_id} 已被其他工作区占用（owner={owner}）"
+                    )
+            else:
+                owners = self._legacy_identity_owners(session_id)
+                if len(owners) > 1:
+                    raise SessionIdConflictError(
+                        f"session_id {session_id} 已存在于多个历史工作区，拒绝继续写入"
+                    )
+                if not owners and self._identity_history_in_use(session_id):
+                    raise SessionIdConflictError(
+                        f"session_id {session_id} 存在历史Event/Archive但workspace归属不可确定"
+                    )
+                owner = owners[0] if owners else current_owner
+                self._durable_replace_text(
+                    owner_path,
+                    json.dumps({"owner": owner, "claimed_at": _now()}, ensure_ascii=False),
+                )
+                if owner != current_owner:
+                    raise SessionIdConflictError(
+                        f"session_id {session_id} 已被其他工作区占用（owner={owner}）"
+                    )
+            self._identity_verified.add(session_id)
+
+    def _mark_identity_deleted(self, session_id: str) -> None:
+        """durable写删除tombstone；幂等，且删除后所有read/save/restore均fail-closed。"""
+        session_id = _validate_session_id(session_id)
+        self._identity_verified.discard(session_id)
+        self._ensure_identity_owner(session_id, allow_deleted=True)
+        with self._identity_lock(session_id):
+            owner_path = self._identity_root / ".identity" / f"{session_id}.json"
+            current_owner = self._identity_owner_key()
+            try:
+                record = json.loads(owner_path.read_text(encoding="utf-8"))
+                owner = str(record["owner"])
+            except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+                raise SessionIdConflictError(
+                    f"session_id {session_id} 的全局归属记录损坏，无法标记删除"
+                ) from exc
+            if owner != current_owner:
+                raise SessionIdConflictError(
+                    f"session_id {session_id} 已被其他工作区占用（owner={owner}）"
+                )
+            if not record.get("deleted_at"):
+                record["deleted_at"] = _now()
+                self._durable_replace_text(
+                    owner_path, json.dumps(record, ensure_ascii=False)
+                )
+            self._identity_verified.discard(session_id)
+
+    def claim_session_id(self, session_id: str) -> None:
+        """显式声明新session的全局ID归属；供fork在写child EventStore前建立不变量。"""
+        self._ensure_identity_owner(session_id)
+
+    def restore_payload(
+        self, session_id: str, payload: bytes | str, *, overwrite: bool = False
+    ) -> None:
+        """安全恢复原始session JSON：校验ID、全局claim、管理锁、原子替换。"""
+        session_id = _validate_session_id(session_id)
+        content = payload.decode("utf-8") if isinstance(payload, bytes) else payload
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise ValueError("恢复session payload不是合法JSON") from exc
+        payload_sid = str(data.get("session_id", session_id))
+        if payload_sid != session_id:
+            raise ValueError(
+                f"恢复session payload id不匹配: {payload_sid!r} != {session_id!r}"
+            )
+        self._ensure_identity_owner(session_id)
+        with self.management_lease(session_id), self._session_lock(session_id):
+            p = self._path(session_id)
+            if p.exists() and not overwrite:
+                raise FileExistsError(f"正式位置已有会话: {session_id}")
+            self._durable_replace_text(p, content)
 
     # ── P0-4(2026-08-15): 跨进程会话写锁（审计发现 #8 lost update 修复）──
     # Web 与飞书为独立进程共享同一 data/ 目录；load→modify→save 全程加 flock
@@ -223,6 +594,7 @@ class SessionStore:
         注意不可重入：同一线程对同一 sid 嵌套 acquire 会自死锁（flock 按
         打开文件描述符互斥）。持锁路径内部必须走 ``_save_locked``。
         """
+        session_id = _validate_session_id(session_id)
         lock_path = self._dir / f"{session_id}.lock"
         try:
             import fcntl
@@ -232,17 +604,146 @@ class SessionStore:
             with lk:
                 yield
             return
+        lock_file = None
+        try:
+            lock_file = lock_path.open("a", encoding="utf-8")
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        except OSError as exc:
+            if lock_file is not None:
+                lock_file.close()
+            # 锁文件不可写：如实记录后放行（不阻断主链路；并发保护降级）。
+            logger.warning("会话锁不可用（fail-open，并发保护降级）: %s: %s", lock_path, exc)
+            yield
+            return
+        try:
+            yield
+        finally:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                logger.warning("会话锁释放失败: %s", lock_path, exc_info=True)
+            finally:
+                lock_file.close()
+
+    @contextmanager
+    def run_lease(self, session_id: str) -> Iterator[bool]:
+        """同会话 whole-run 跨进程非阻塞 lease（``<sid>.run.lock``）.
+
+        与 ``_session_lock`` 使用独立锁文件：run 内部会多次 save/append 事件，若复用
+        不可重入的写锁会自死锁。返回 True 表示本进程取得整轮所有权；False 表示
+        已被其他进程占用或锁设施不可用。数据完整性优先，后者 fail-closed，调用方
+        应映射为 session_busy 而不是无锁继续造成 last-writer-wins。
+        """
+        session_id = _validate_session_id(session_id)
+        session_id = _validate_session_id(session_id)
+        lock_path = self._dir / f"{session_id}.run.lock"
+        try:
+            import fcntl
+        except ImportError:
+            with self._fallback_locks_guard:
+                gate = self._fallback_run_gates.setdefault(session_id, _FallbackRunGate())
+            if not gate.acquire_exclusive():
+                yield False
+                return
+            try:
+                yield True
+            finally:
+                gate.release_exclusive()
+            return
+
         try:
             with lock_path.open("a", encoding="utf-8") as f:
-                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except OSError as exc:
+                    if exc.errno not in (errno.EACCES, errno.EAGAIN):
+                        logger.warning("会话整轮锁获取失败（fail-closed）: %s: %s", lock_path, exc)
+                    yield False
+                    return
+                try:
+                    yield True
+                finally:
+                    try:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                    except OSError as exc:
+                        logger.warning("会话整轮锁释放失败: %s: %s", lock_path, exc)
+        except OSError as exc:
+            logger.warning("会话整轮锁文件不可用（fail-closed）: %s: %s", lock_path, exc)
+            yield False
+
+    def _activate_run_save_token(self, session_id: str) -> object:
+        """为已取得 whole-run lease 的本轮创建 opaque save token。"""
+        token = object()
+        with self._run_save_tokens_guard:
+            self._run_save_tokens[session_id] = token
+        return token
+
+    def _bind_run_save_token(self, session: Session, token: object) -> None:
+        """把 token 绑定到本轮内存 Session；动态属性不参与 dataclass/asdict/to_dict。"""
+        session.__dict__["_run_save_token"] = token
+
+    def _deactivate_run_save_token(self, session_id: str, token: object) -> None:
+        """run 结束后仅按 identity 注销，防迟到清理误删下一轮 token。"""
+        with self._run_save_tokens_guard:
+            if self._run_save_tokens.get(session_id) is token:
+                self._run_save_tokens.pop(session_id, None)
+
+    def _is_run_owned_session(self, session: Session) -> bool:
+        token = getattr(session, "_run_save_token", None)
+        if token is None:
+            return False
+        with self._run_save_tokens_guard:
+            return self._run_save_tokens.get(session.session_id) is token
+
+    @contextmanager
+    def management_lease(self, session_id: str) -> Iterator[None]:
+        """run 外管理事务共享门；多个管理写可并存，由 `_session_lock` 串行实际 RMW。
+
+        POSIX 用 `<sid>.run.lock` 的 `LOCK_SH|LOCK_NB`：任一 whole-run 独占锁存在时
+        立即报 busy；管理事务之间共享该门，因此不会把正常 append/rename 并发误判为
+        run busy。真正 load→modify→write 仍由 `<sid>.lock` 的排他锁保证顺序一致。
+        """
+        session_id = _validate_session_id(session_id)
+        lock_path = self._dir / f"{session_id}.run.lock"
+        try:
+            import fcntl
+        except ImportError:
+            with self._fallback_locks_guard:
+                gate = self._fallback_run_gates.setdefault(session_id, _FallbackRunGate())
+            if not gate.acquire_shared():
+                raise SessionMutationBusyError(
+                    f"会话 {session_id} 正在运行，管理操作已拒绝；请在本轮结束后重试"
+                ) from None
+            try:
+                yield
+            finally:
+                gate.release_shared()
+            return
+
+        try:
+            with lock_path.open("a", encoding="utf-8") as f:
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+                except OSError as exc:
+                    if exc.errno not in (errno.EACCES, errno.EAGAIN):
+                        logger.warning("会话管理门获取失败（fail-closed）: %s: %s", lock_path, exc)
+                    raise SessionMutationBusyError(
+                        f"会话 {session_id} 正在运行，管理操作已拒绝；请在本轮结束后重试"
+                    ) from exc
                 try:
                     yield
                 finally:
-                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                    try:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                    except OSError as exc:
+                        logger.warning("会话管理门释放失败: %s: %s", lock_path, exc)
+        except SessionMutationBusyError:
+            raise
         except OSError as exc:
-            # 锁文件不可写：如实记录后放行（不阻断主链路；并发保护降级如实标注）
-            logger.warning("会话锁不可用（fail-open，并发保护降级）: %s: %s", lock_path, exc)
-            yield
+            logger.warning("会话管理门锁文件不可用（fail-closed）: %s: %s", lock_path, exc)
+            raise SessionMutationBusyError(
+                f"会话 {session_id} 的并发保护不可用，管理操作已拒绝；请稍后重试"
+            ) from exc
 
     @contextmanager
     def _shared_file_lock(self, name: str) -> Iterator[None]:
@@ -295,11 +796,29 @@ class SessionStore:
                 store.append(session.session_id, "session.created", payload)
                 existing: set[int] = set()
             else:
+                events = store.read(session.session_id)
                 existing = {
                     e.payload.get("index")
-                    for e in store.read(session.session_id)
+                    for e in events
                     if e.type == "message.appended" and isinstance(e.payload.get("index"), int)
                 }
+                # version 5 摘要链是在 session.created 之后才产生/增长的。只补消息会让
+                # event_log 读路径永远看到空摘要；用已有 meta_changed 事件表达完整当前值。
+                from llm_loop.event_log.replay import replay_session
+
+                view = replay_session(events)
+                changes = {}
+                for field_name in ("fixed_summary", "summary_chain"):
+                    current = getattr(session, field_name)
+                    previous = view.get(field_name, "" if field_name == "fixed_summary" else [])
+                    if previous != current:
+                        changes[field_name] = {"from": previous, "to": current}
+                if changes:
+                    store.append(
+                        session.session_id,
+                        "session.meta_changed",
+                        {"field": "summary_state", "changes": changes},
+                    )
             for i, m in enumerate(session.messages):
                 if i in existing:
                     continue  # 已落库消息事件跳过（零重复）
@@ -357,6 +876,7 @@ class SessionStore:
 
     def set_shared_current(self, session_id: str) -> None:
         """写跨端共享当前会话（原子写 + P0-4 跨进程文件锁，fail-open 不阻断主链路）."""
+        session_id = _validate_session_id(session_id)
         p = self._dir / self._SHARED_SESSION_FILE
         try:
             with self._shared_file_lock("shared_current_session"):
@@ -371,22 +891,25 @@ class SessionStore:
             pass  # fail-open（共享会话写入失败不阻断 Web/飞书主链路）
 
     def _path(self, session_id: str) -> Path:
+        session_id = _validate_session_id(session_id)
         return self._dir / f"{session_id}.json"
 
     def save(self, session: Session) -> None:
-        """保存会话（统一维护 title/updated_at，覆盖 append/run/fork 全路径）.
+        """保存会话；本轮显式 run-owned 快照复用独占 lease，其余写先取管理门。
 
-        EVO-20260811（管理完善）: 此前仅 append() 更新 updated_at 与生成 title，
-        LoopEngine.run 走 save() 导致会话列表"未命名 + 时间不更新"。现在保存即统一维护：
-        - updated_at 每次保存更新为当前时间（列表排序/时间显示正确）
-        - title 为空且有用户消息时补首条用户消息标题（幂等，不覆盖已有标题）
-
-        P0-4(2026-08-15): 写阶段持会话锁（与 append/rename 等持锁路径互斥）。
-        如实标注：本方法只保护"写"这一瞬——调用方若在锁外先 load 再 save
-        （如 engine 长 run 持有内存态整轮），跨进程 lost update 残差仍在；
-        完整防护须走 append/rename 等持锁的 load→modify→save 整段路径。
+        ASGI/生成器可能跨 ``contextvars.Context`` 驱动，因此不能用
+        ``current_session_id`` 判断“是否 run 内”。LoopEngine 在取得 whole-run lease 后
+        为本轮 load 出来的 Session 绑定 opaque token；只有该对象且 token 仍 active 时
+        才可绕过 management shared gate。外部重新 load 的 Session 没有 token，仍会
+        fail-fast，避免长 run 最终 save 覆盖并发管理写。
         """
-        with self._session_lock(session.session_id):
+        self._ensure_identity_owner(session.session_id)
+        if self._is_run_owned_session(session):
+            with self._session_lock(session.session_id):
+                self._save_locked(session)
+            return
+
+        with self.management_lease(session.session_id), self._session_lock(session.session_id):
             self._save_locked(session)
 
     def _save_locked(self, session: Session) -> None:
@@ -417,30 +940,23 @@ class SessionStore:
         self._event_backfill(session)
 
     def rename(self, session_id: str, new_title: str) -> bool:
-        """重命名会话标题（管理完善：手动设置可识别标题）.
-
-        Returns:
-            True 成功；False 会话不存在或新标题为空。
-        """
-        if not self.exists(session_id):
-            return False
+        """重命名会话标题；运行中会话 fail-fast，避免被 run 末旧快照覆盖。"""
         title = (new_title or "").strip()
-        if not title:
+        if not title or not self.exists(session_id):
             return False
-        # P0-4: load→modify→save 整段持锁
-        with self._session_lock(session_id):
-            session = self.load(session_id)
-            old_title = session.title
-            session.title = title
-            self._save_locked(session)
-        self._event_append(
-            session_id,
-            "session.meta_changed",
-            {
-                "field": "title",
-                "changes": {"title": {"from": old_title, "to": title}},
-            },
-        )
+        with self.management_lease(session_id):
+            if not self.exists(session_id):
+                return False
+            with self._session_lock(session_id):
+                session = self.load(session_id)
+                old_title = session.title
+                session.title = title
+                self._save_locked(session)
+            self._event_append(
+                session_id,
+                "session.meta_changed",
+                {"field": "title", "changes": {"title": {"from": old_title, "to": title}}},
+            )
         return True
 
     def load(self, session_id: str) -> Session:
@@ -450,6 +966,8 @@ class SessionStore:
         ``session_json``（默认）读 session JSON（零回归）；
         ``event_log`` 从事件日志 replay 重建（退役后切换），replay 异常 fail-open 回退。
         """
+        session_id = _validate_session_id(session_id)
+        self._check_identity_read(session_id)
         if self._read_path_source == "event_log" and self._event_store is not None:
             session = self._load_from_event_log(session_id)
             if session is not None:
@@ -541,17 +1059,32 @@ class SessionStore:
             return Session(session_id=session_id)
 
     def append(self, session_id: str, message: Message) -> None:
-        # P0-4: load→modify→save 整段持锁（跨进程 lost update 防护）
-        with self._session_lock(session_id):
+        """追加消息；run 外 append 与 whole-run 互斥，避免长 run 覆盖追加内容。"""
+        with self.management_lease(session_id), self._session_lock(session_id):
             session = self.load(session_id)
             session.messages.append(message)
             session.updated_at = _now()
-            # T24: 标题仅首条用户消息生成一次（确定性，不调 LLM）
             if not session.title and message.role == "user":
                 session.title = _make_title(message.content)
             self._save_locked(session)
+
     # ── EVO-20260814: 会话瘦身（保留近期 + 早期摘要到压缩档案，可逆）──
     def trim_session(
+        self,
+        session_id: str,
+        *,
+        keep_recent: int = 200,
+        archived_dir: str | Path | None = None,
+    ) -> dict | None:
+        """会话瘦身；与 whole-run lease 互斥，防运行中旧快照覆盖/备份漂移。"""
+        if not self.exists(session_id):
+            return None
+        with self.management_lease(session_id):
+            return self._trim_session_unleased(
+                session_id, keep_recent=keep_recent, archived_dir=archived_dir
+            )
+
+    def _trim_session_unleased(
         self,
         session_id: str,
         *,
@@ -623,7 +1156,10 @@ class SessionStore:
             }
 
     def exists(self, session_id: str) -> bool:
-        return self._path(session_id).exists()
+        try:
+            return self._path(session_id).exists()
+        except ValueError:
+            return False
 
     # ── P1 多会话方法（FR-P1-SES 系列）──
     def _to_meta(self, session: Session) -> SessionMeta:
@@ -691,52 +1227,49 @@ class SessionStore:
 
     # ── M56（Web/飞书会话同步）：置顶 + 来源通道 ──
     def set_pinned(self, session_id: str, pinned: bool) -> bool:
-        """置顶/取消置顶会话（Web 端会话列表置顶优先）.
-
-        Returns:
-            True 成功；False 会话不存在。
-        """
+        """置顶/取消置顶；运行中会话拒绝管理写。"""
         if not self.exists(session_id):
             return False
-        # P0-4: load→modify→save 整段持锁
-        with self._session_lock(session_id):
-            session = self.load(session_id)
-            old_pinned = session.pinned
-            session.pinned = bool(pinned)
-            self._save_locked(session)
-        self._event_append(
-            session_id,
-            "session.meta_changed",
-            {
-                "field": "pinned",
-                "changes": {"pinned": {"from": old_pinned, "to": bool(pinned)}},
-            },
-        )
+        with self.management_lease(session_id):
+            if not self.exists(session_id):
+                return False
+            with self._session_lock(session_id):
+                session = self.load(session_id)
+                old_pinned = session.pinned
+                session.pinned = bool(pinned)
+                self._save_locked(session)
+            self._event_append(
+                session_id,
+                "session.meta_changed",
+                {
+                    "field": "pinned",
+                    "changes": {"pinned": {"from": old_pinned, "to": bool(pinned)}},
+                },
+            )
         return True
 
     def set_channel(self, session_id: str, channel: str) -> bool:
-        """标记会话来源通道（"web" / "feishu:p2p:{open_id}" / "feishu:group:{chat_id}"）.
-
-        幂等：已标记（非默认）则不覆盖，保留首建端来源。返回 False 表示会话不存在。
-        """
+        """标记会话来源通道；运行中会话拒绝覆盖元数据。"""
         if not self.exists(session_id):
             return False
-        # P0-4: load→modify→save 整段持锁（幂等判定也须读到最新值）
-        with self._session_lock(session_id):
-            session = self.load(session_id)
-            if session.channel != "web" and session.channel:
-                return True  # 已标记来源，不覆盖
-            old_channel = session.channel
-            session.channel = channel or "web"
-            self._save_locked(session)
-        self._event_append(
-            session_id,
-            "session.meta_changed",
-            {
-                "field": "channel",
-                "changes": {"channel": {"from": old_channel, "to": session.channel}},
-            },
-        )
+        with self.management_lease(session_id):
+            if not self.exists(session_id):
+                return False
+            with self._session_lock(session_id):
+                session = self.load(session_id)
+                if session.channel != "web" and session.channel:
+                    return True
+                old_channel = session.channel
+                session.channel = channel or "web"
+                self._save_locked(session)
+            self._event_append(
+                session_id,
+                "session.meta_changed",
+                {
+                    "field": "channel",
+                    "changes": {"channel": {"from": old_channel, "to": session.channel}},
+                },
+            )
         return True
 
     def search(self, query: str, top_k: int = 10) -> list[dict]:
@@ -792,63 +1325,72 @@ class SessionStore:
         return hits
 
     def archive(self, session_id: str) -> bool:
-        """归档会话（仅改状态，内容完整保留可检索）."""
+        """归档会话；运行中会话拒绝管理写。"""
         if not self.exists(session_id):
             return False
-        # P0-4: load→modify→save 整段持锁
-        with self._session_lock(session_id):
-            session = self.load(session_id)
-            old_status = session.status
-            session.status = _ARCHIVED
-            self._save_locked(session)
-        self._event_append(
-            session_id,
-            "session.meta_changed",
-            {
-                "field": "status",
-                "changes": {"status": {"from": old_status, "to": _ARCHIVED}},
-            },
-        )
+        with self.management_lease(session_id):
+            if not self.exists(session_id):
+                return False
+            with self._session_lock(session_id):
+                session = self.load(session_id)
+                old_status = session.status
+                session.status = _ARCHIVED
+                self._save_locked(session)
+            self._event_append(
+                session_id,
+                "session.meta_changed",
+                {
+                    "field": "status",
+                    "changes": {"status": {"from": old_status, "to": _ARCHIVED}},
+                },
+            )
         return True
 
     def unarchive(self, session_id: str) -> bool:
-        """取消归档（恢复活跃）."""
+        """取消归档；运行中会话拒绝管理写。"""
         if not self.exists(session_id):
             return False
-        # P0-4: load→modify→save 整段持锁
-        with self._session_lock(session_id):
-            session = self.load(session_id)
-            old_status = session.status
-            session.status = _ACTIVE
-            self._save_locked(session)
-        self._event_append(
-            session_id,
-            "session.meta_changed",
-            {
-                "field": "status",
-                "changes": {"status": {"from": old_status, "to": _ACTIVE}},
-            },
-        )
+        with self.management_lease(session_id):
+            if not self.exists(session_id):
+                return False
+            with self._session_lock(session_id):
+                session = self.load(session_id)
+                old_status = session.status
+                session.status = _ACTIVE
+                self._save_locked(session)
+            self._event_append(
+                session_id,
+                "session.meta_changed",
+                {
+                    "field": "status",
+                    "changes": {"status": {"from": old_status, "to": _ACTIVE}},
+                },
+            )
         return True
 
     def delete(self, session_id: str) -> bool:
-        """物理删除会话 JSON 文件（须经用户确认，确认在 CLI 层 T26）.
-
-        删除不销毁该会话已沉淀的记忆/压缩档案/审计（来源可溯仍指向 session_id）。
-        P0-4: 持锁删除（防与进行中写竞态），并清理配套锁文件。
-        """
-        p = self._path(session_id)
-        if not p.exists():
+        """物理删除主会话 + Event/Archive sidecar；任一清理失败不得误报成功。"""
+        if not self.exists(session_id):
             return False
-        try:
-            with self._session_lock(session_id):
-                p.unlink()
-            # 锁文件随会话删除清理（ best-effort；锁竞争方持有的是已 unlink 的旧 fd，
-            # 后续 acquire 会新建锁文件——与 EventStore 目录级语义一致的已知残差）
-            (self._dir / f"{session_id}.lock").unlink(missing_ok=True)
-            return True
-        except OSError:
-            return False
+        with self.management_lease(session_id):
+            p = self._path(session_id)
+            if not p.exists():
+                return False
+            try:
+                with self._session_lock(session_id):
+                    # 先durable标记不可恢复；崩溃/部分清理后也绝不允许旧sid重新活跃。
+                    self._mark_identity_deleted(session_id)
+                    if self._delete_sidecars_fn is not None:
+                        self._delete_sidecars_fn(session_id)
+                    event_delete = getattr(self._event_store, "delete_session", None)
+                    if callable(event_delete):
+                        event_delete(session_id)
+                    p.unlink()
+                # owner tombstone与稳定lock/run.lock故意保留：旧sid不可跨workspace重新分配。
+                return True
+            except Exception:  # noqa: BLE001 — destructive cleanup失败必须如实返回false
+                logger.exception("物理删除会话失败（可能已部分清理sidecar）: sid=%s", session_id)
+                return False
 
     # ── EVO-20260810-3188682f: 会话分支 ──
     def fork(
@@ -857,28 +1399,19 @@ class SessionStore:
         branch_point_index: int | None = None,
         branch_summary: str = "",
     ) -> str:
-        """从指定会话分叉出新分支会话（旧会话不覆盖不删除，可回溯）.
-
-        Args:
-            session_id: 父会话 id.
-            branch_point_index: 分叉点（保留前 N 条消息，即 messages[:N]；None=末尾全部）.
-            branch_summary: 显式分支摘要；缺省自动提炼.
-
-        Returns:
-            新分支会话 session_id.
-
-        Raises:
-            ValueError: fork 点越界或源会话事件日志不存在（spec §5.1.3，从"钳位"改为"报错"）.
-        """
+        """从稳定父快照分叉；父会话运行中时 fail-fast，避免分到旧持久化状态。"""
         from llm_loop.event_log.fork import fork_session
 
-        report = fork_session(
-            self._event_store,
-            self,
-            session_id,
-            fork_point=branch_point_index,
-            branch_summary=branch_summary,
-        )
+        if not self.exists(session_id):
+            raise ValueError(f"源会话不存在: {session_id}")
+        with self.management_lease(session_id):
+            report = fork_session(
+                self._event_store,
+                self,
+                session_id,
+                fork_point=branch_point_index,
+                branch_summary=branch_summary,
+            )
         if not report.success:
             raise ValueError(report.error)
         return report.new_session_id

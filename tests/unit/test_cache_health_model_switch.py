@@ -15,7 +15,7 @@ def test_model_switch_resets_window_with_honest_note():
     assert hint is not None
     assert "模型切换" in hint and "独立预热" in hint and "非前缀漂移" in hint
     # 窗口已重置: 新模型第二轮才算窗口（低命中不触发锚点告警）
-    assert m._win_runs == 1  # 仅切后第一轮计入
+    assert m._get_bucket().win_runs == 1  # 仅切后第一轮计入
 
 
 def test_model_switch_not_reported_as_anchor_break():
@@ -24,8 +24,8 @@ def test_model_switch_not_reported_as_anchor_break():
     m.record(100000, 98000, model_ref="minimax/MiniMax-M3")
     # 切到 deepseek 后连续低命中
     m.record(100000, 0, model_ref="deepseek/deepseek-v4-flash")
-    assert m._alerted is False  # 未被误判为破坏型 → 未拦截
-    assert m._force_head_keep is False
+    assert m._get_bucket().alerted is False  # 未被误判为破坏型 → 未拦截
+    assert m._get_bucket().force_head_keep is False
 
 
 def test_same_model_continuous_no_reset():
@@ -33,4 +33,4 @@ def test_same_model_continuous_no_reset():
     m = CacheHealthMonitor(min_runs=2, min_tokens=1000)
     m.record(100000, 98000, model_ref="minimax/MiniMax-M3")
     m.record(100000, 97000, model_ref="minimax/MiniMax-M3")
-    assert m._win_runs == 2  # 未重置, 正常累积
+    assert m._get_bucket().win_runs == 2  # 未重置, 正常累积

@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from llm_loop.event_log.store import EventStore
+from llm_loop.event_log.store import EventStore, _validate_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +131,10 @@ class RotateManager:
     @staticmethod
     def list_segments(event_logs_dir: str | Path, session_id: str) -> list[SegmentInfo]:
         """按 session_id 列出全部段（spec §5.3.1-5）."""
+        try:
+            session_id = _validate_session_id(session_id)
+        except ValueError:
+            return []
         seg_dir = Path(event_logs_dir) / session_id
         if not seg_dir.is_dir():
             return []

@@ -188,6 +188,33 @@ def test_chat_session_not_found_no_create(build_test_engine, fake_settings):
     assert len(engine.session.list_sessions()) == before  # 不静默新建
 
 
+
+
+
+def test_chat_rejects_path_traversal_session_id_before_engine_run(
+    build_test_engine, fake_settings, monkeypatch
+):
+    """恶意session_id必须在存储exists边界被拒绝，不能进入LLM/run路径。"""
+    engine, _ = build_test_engine([])
+    client = _make_client(engine)
+    called = False
+
+    def forbidden_run(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("非法session_id不得触发engine run")
+
+    monkeypatch.setattr(engine, "_run_with_acquired", forbidden_run)
+    resp = client.post(
+        "/api/v1/chat",
+        json={"message": "x", "session_id": "../workspace-B/victim"},
+    )
+
+    assert resp.status_code == 404
+    assert resp.json()["error"] == "session_not_found"
+    assert called is False
+
+
 def test_get_session_messages(build_test_engine, fake_settings):
     engine, _ = build_test_engine([{"content": "回答"}])
     client = _make_client(engine)
@@ -492,3 +519,130 @@ def test_chat_without_new_session_reuses_shared(build_test_engine, fake_settings
     r = cli.post("/api/v1/chat", json={"message": "hi"})
     assert r.status_code == 200
     assert r.json()["session_id"] == sid0
+
+
+def test_chat_new_session_wins_when_session_id_also_sent(build_test_engine):
+    """schema 明示冲突时 new_session 优先，不能意外续写显式旧 sid。"""
+    from llm_loop.llm.client import LLMResponse
+
+    engine, fake = build_test_engine([])
+    fake._responses = [LLMResponse(content="fresh", tool_calls=[], provider="fake")]
+    old_sid = engine.session.create()
+    cli = _make_client(engine)
+    r = cli.post(
+        "/api/v1/chat",
+        json={"message": "hi", "session_id": old_sid, "new_session": True},
+    )
+    assert r.status_code == 200
+    new_sid = r.json()["session_id"]
+    assert new_sid != old_sid
+    assert engine.session.get_shared_current() == new_sid
+
+
+def test_chat_cross_process_busy_does_not_persist_model_override(build_test_engine):
+    from llm_loop.core.session import SessionStore
+
+    engine, fake = build_test_engine([])
+    sid = engine.session.create()
+    blocker = SessionStore(engine.session._dir)  # noqa: SLF001 — 模拟另一服务进程
+    cli = _make_client(engine)
+    with blocker.run_lease(sid) as acquired:
+        assert acquired is True
+        r = cli.post(
+            "/api/v1/chat",
+            json={"message": "busy", "session_id": sid, "model": "fake-model"},
+        )
+    assert r.status_code == 503
+    assert r.json()["error"] == "session_busy"
+    assert engine.session.load(sid).model_override is None
+
+    from llm_loop.llm.client import LLMResponse
+
+    fake._responses = [LLMResponse(content="accepted later", tool_calls=[], provider="fake")]
+    r2 = cli.post(
+        "/api/v1/chat",
+        json={"message": "accepted", "session_id": sid, "model": "fake-model"},
+    )
+    assert r2.status_code == 200
+    pid, mid = engine.llm_pool.registry.resolve("fake-model")
+    assert engine.session.load(sid).model_override == f"{pid}/{mid}"
+
+
+def test_management_routes_busy_during_external_run_lease(build_test_engine):
+    """另一进程持 whole-run lease 时，管理 API 返回 409 而不是改写/删除旧快照。"""
+    from llm_loop.core.session import SessionStore
+
+    engine, _ = build_test_engine([])
+    client = _make_client(engine)
+    sid = engine.session.create()
+    blocker = SessionStore(engine.session._dir)  # noqa: SLF001 — 模拟另一进程
+
+    with blocker.run_lease(sid) as acquired:
+        assert acquired is True
+        responses = [
+            client.post(f"/api/v1/sessions/{sid}/pin?pinned=true"),
+            client.post(f"/api/v1/sessions/{sid}/archive?archived=true"),
+            client.post(f"/api/v1/sessions/{sid}/fork"),
+            client.delete(f"/api/v1/sessions/{sid}?confirm=true"),
+        ]
+        for response in responses:
+            assert response.status_code == 409, response.text
+            assert response.json()["error"] == "session_busy"
+        current = engine.session.load(sid)
+        assert current.pinned is False
+        assert current.status == "active"
+        assert engine.session.exists(sid) is True
+
+    assert client.post(f"/api/v1/sessions/{sid}/pin?pinned=true").status_code == 200
+    assert client.delete(f"/api/v1/sessions/{sid}?confirm=true").status_code == 200
+    assert engine.session.exists(sid) is False
+
+
+def test_chat_rejects_session_if_workspace_changes_before_sync_admission(
+    build_test_engine, tmp_path, monkeypatch
+):
+    """同步chat在session解析后切workspace时应409，不得在新分区用旧sid起run。"""
+    engine, _ = build_test_engine([{"content": "should-not-run"}])
+    workspace_a = tmp_path / "sync-epoch-a"
+    workspace_b = tmp_path / "sync-epoch-b"
+    workspace_a.mkdir()
+    workspace_b.mkdir()
+    engine.set_workspace(str(workspace_a), "sync-epoch-a")
+    sid = engine.session.create()
+    root_a = engine.session.root
+    original = engine._run_with_acquired
+    switched = False
+
+    def switch_then_run(*args, **kwargs):
+        nonlocal switched
+        if not switched:
+            engine.set_workspace(str(workspace_b), "sync-epoch-b")
+            switched = True
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(engine, "_run_with_acquired", switch_then_run)
+    client = _make_client(engine)
+    resp = client.post(
+        "/api/v1/chat",
+        json={"message": "must-not-cross-workspace", "session_id": sid},
+    )
+
+    assert switched is True
+    assert resp.status_code == 409
+    assert resp.json()["error"] == "workspace_changed"
+    assert (root_a / f"{sid}.json").exists()
+    assert not (engine.settings.sessions_dir / "sync-epoch-b" / f"{sid}.json").exists()
+
+
+def test_delete_session_cleanup_failure_returns_500(build_test_engine, fake_settings, monkeypatch):
+    """底层物理清理失败时Web不得仍返回deleted 200。"""
+    engine, _ = build_test_engine([{"content": "a"}])
+    client = _make_client(engine)
+    sid = client.post("/api/v1/chat", json={"message": "a"}).json()["session_id"]
+    monkeypatch.setattr(engine.session, "delete", lambda _sid: False)
+
+    resp = client.delete(f"/api/v1/sessions/{sid}?confirm=true")
+
+    assert resp.status_code == 500
+    assert resp.json()["error"] == "delete_failed"
+    assert engine.session.exists(sid)

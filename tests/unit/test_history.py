@@ -640,3 +640,15 @@ def test_compact_ratio_one_is_legacy():
     msgs2 = [_m("user", "u"), _m("assistant", "x" * 10500)]
     out2 = build_history_messages(msgs2, system_prompt="SYS", max_chars=10000, compact_ratio=1.0)
     assert any("[上下文压缩]" in str(m.get("content", "")) for m in out2)
+
+
+def test_compacted_out_reports_real_budget_compression_only():
+    """协议修复/普通构建不冒充截断；只有真实预算压缩才置 compacted_out=True。"""
+    clean = [Message(role="user", content="hello", source=MessageSource.USER)]
+    box: list[bool] = []
+    build_history_messages(clean, "SYS", max_chars=1000, compacted_out=box)
+    assert box == [False]
+
+    long = [Message(role="user", content="x" * 2000, source=MessageSource.USER)]
+    build_history_messages(long, "SYS", max_chars=500, compacted_out=box)
+    assert box == [True]

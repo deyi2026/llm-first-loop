@@ -9,9 +9,9 @@ channel=scholar 学术（OpenAlex/Crossref/PubMed 多源合并去重）；channe
 """
 
 from __future__ import annotations
-from llm_loop.tools.trim import truncate_output
 
 import contextlib
+import contextvars
 import html as _html
 import json
 import re
@@ -20,6 +20,12 @@ from urllib.parse import quote_plus
 import httpx
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.tools.source_recovery_contract import (
+    SHARED_SOURCE_RECOVERY_CONTRACT,
+    SourceRecoveryKind,
+    source_recovery_guidance,
+)
+from llm_loop.tools.trim import truncate_output
 
 _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -244,6 +250,8 @@ class WebSearchTool:
         "状态契约: 结果超 3000 字符将截断（首尾保留 + 完整落盘 data/audit/tool_outputs/ 可检索——TOOL_TRIM_MAX 可调）。"
         "何时不用: 已知确切 URL 时用 web_fetch 直接抓取；本地检索用 search_records/search_archive。"
         "失败对策: 后端被限流/超时会自动降级到备用后端并如实标注来源；全部失败如实返回原因。"
+        + SHARED_SOURCE_RECOVERY_CONTRACT
+        + source_recovery_guidance(SourceRecoveryKind.WEB_SEARCH)
     )
     parameters = {
         "type": "object",
@@ -295,13 +303,21 @@ class WebSearchTool:
         if errors:
             lines.append(f"[降级记录] 部分源失败: {'; '.join(errors)}")
         content = "\n".join(lines)
-        # 2026-08-18 对齐 DSH: 搜索结果截断（首尾+落盘可检索——尾部新增小=命中高）
-        content = truncate_output(content, source=query)
+        from llm_loop.core.run_context import (
+            current_evidence_enforce_enabled,
+            current_evidence_shadow_enabled,
+        )
+
+        raw_observation = content if current_evidence_shadow_enabled.get() else None
+        # Phase3 enforce defers projection until Registry has committed Evidence.
+        if not current_evidence_enforce_enabled.get():
+            content = truncate_output(content, source=query)
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=content,
             tool_call_id="",
             tool_name=self.name,
+            raw_observation=raw_observation,
         )
 
     def execute(self, **kwargs) -> ToolResult:
@@ -378,28 +394,32 @@ class WebSearchTool:
             return q, self.execute(query=q, limit=limit, channel=ch)
 
         workers = min(len(queries), self._CONCURRENT_MAX_WORKERS)
-        ok: list[str] = []
+        ok: list[tuple[str, str]] = []
         failed: list[str] = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
-            futures = {ex.submit(_one, q): q for q in queries}
+            futures = {ex.submit(contextvars.copy_context().run, _one, q): q for q in queries}
             for fut in concurrent.futures.as_completed(futures):
                 q, r = fut.result()
                 if r.status == ToolResultStatus.SUCCESS:
-                    ok.append(r.content)
+                    ok.append((r.content, r.raw_observation or r.content))
                 else:
                     failed.append(f"[query] {q} -> {r.content}")
 
         # 块级去重（保持首次出现顺序）
         seen: set[str] = set()
         blocks: list[str] = []
-        for c in ok:
-            if c not in seen:
-                seen.add(c)
-                blocks.append(c)
+        raw_blocks: list[str] = []
+        for visible, raw in ok:
+            if visible not in seen:
+                seen.add(visible)
+                blocks.append(visible)
+                raw_blocks.append(raw)
         head = f"[web_search 并发] 查询 {len(queries)} 个，成功 {len(ok)}，聚合去重 {len(blocks)} 块"
         lines = [head, ""] + blocks
+        raw_lines = [head, ""] + raw_blocks
         if failed:
             lines += ["", "[失败查询（如实标注）]"] + failed
+            raw_lines += ["", "[失败查询（如实标注）]"] + failed
         if not blocks:
             return ToolResult(
                 status=ToolResultStatus.FAILURE,
@@ -407,10 +427,20 @@ class WebSearchTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
-        content = truncate_output("\n".join(lines), source="|".join(queries[:5]))
+        raw_content = "\n".join(raw_lines)
+        from llm_loop.core.run_context import (
+            current_evidence_enforce_enabled,
+            current_evidence_shadow_enabled,
+        )
+
+        raw_observation = raw_content if current_evidence_shadow_enabled.get() else None
+        content = "\n".join(lines)
+        if not current_evidence_enforce_enabled.get():
+            content = truncate_output(content, source="|".join(queries[:5]))
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=content,
             tool_call_id="",
             tool_name=self.name,
+            raw_observation=raw_observation,
         )

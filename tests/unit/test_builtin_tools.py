@@ -235,7 +235,7 @@ def test_read_file_full_skips_truncation(tmp_path):
 # ── 2026-08-20: 截断标记"事实+动作"两段式（停滞循环排查落地）──
 
 def test_truncate_output_marker_has_action_guidance(tmp_path, monkeypatch):
-    """截断标记含动作段: 防重跑声明 + full=true / 落盘 / search_archive 取全文路径."""
+    """截断标记含动作段: 防重跑声明 + full=true / 显式落盘取全文路径."""
     from llm_loop.tools.trim import truncate_output
 
     monkeypatch.setenv("DATA_DIR", str(tmp_path))  # 落盘隔离到临时目录
@@ -244,7 +244,7 @@ def test_truncate_output_marker_has_action_guidance(tmp_path, monkeypatch):
     assert "[输出已截断]" in out
     assert "重跑得同结果勿重跑" in out  # 防循环声明（精简版）
     assert "full=true" in out  # 动作①
-    assert "search_archive" in out  # 动作③
+    assert "search_archive" not in out  # 未写 ArchiveStore，不得虚构检索路径
     assert "读取落盘全文" in out  # 动作②（DATA_DIR 可写时）
 
     # 无全文需求时仍保留首尾内容
@@ -261,4 +261,4 @@ def test_execute_command_truncate_marker_uses_shared_action(tmp_path, monkeypatc
     assert "[输出已截断]" in out
     assert "重跑得同结果勿重跑" in out
     assert "full=true" in out
-    assert "search_archive" in out
+    assert "search_archive" not in out

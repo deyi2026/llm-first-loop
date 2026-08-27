@@ -61,4 +61,11 @@ llm-first-loop.swe-*.json
 
 # 评测日志（run_evaluation 产物，35M 体量）
 logs/
+<<<<<<< HEAD
 .feishu.env.dsh
+=======
+
+# 本地 Surge 代理导出/修复配置（含代理凭据，禁止入库）
+Nexitally_Surge.fixed.conf
+>>>>>>> mirrorrepo/HEAD
+.venv

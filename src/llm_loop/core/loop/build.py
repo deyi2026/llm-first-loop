@@ -19,15 +19,17 @@ import os
 from typing import TYPE_CHECKING
 
 from llm_loop.core.cache_health import GATE_NOTE_CONTENT  # 门禁干预知情标记
-from llm_loop.core.loop.focus import build_task_anchor, wrap_injection
 
 # EVO-20260818: projection_ver/check 提升到模块级（消除函数内 import 遮蔽导致的 F823）——
 # 与 engine.py 顶部 re-export 同模式；stable_digest 既有模块级使用
 from llm_loop.core.history import (
+    is_cache_compacted_for,
     projection_check,  # noqa: F401 (history 工具, 函数内使用)
     projection_ver,  # noqa: F401 (history 工具, 函数内使用)
     stable_digest,  # 投影门闸
 )
+from llm_loop.core.loop.focus import build_task_anchor, wrap_injection
+from llm_loop.core.loop.hotcard import pop_hotcard, write_hotcard
 
 # build_session_snapshot_text 定义于 engine（loop 包内）——顶层 import 会触发
 # engine→build→loop/__init__ 循环（engine import build 在前），故用函数内延迟 import
@@ -38,6 +40,15 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+
+def _provider_visible_chars(messages: list[Message], provider_id: str, start: int = 0) -> int:
+    """Count history chars actually visible to one provider after mid-compaction."""
+    return sum(
+        len(m.content)
+        for m in messages[max(0, start) :]
+        if not is_cache_compacted_for(m, provider_id)
+    )
 
 
 def _growth_nudge_kind(
@@ -105,12 +116,164 @@ def _tool_round_zero_tail(msgs: list[Message]) -> list[Message]:
 
 
 class _BuildMixin:
+    def _post_run_cache_health(
+        self,
+        final_answer: str,
+        sess,
+        tokens_in: int,
+        tokens_cache_hit: int,
+        model_used: str,
+    ) -> str:
+        """EVO-20260817-72fcd94a L3: 缓存健康闭环（run 末尾，fail-open）.
+
+        P1 遥测内容/传输分层（2026-08-25 规格）: ①剥离模型本轮自行生成的同格式
+        遥测行（⚡ 缓存命中率 ...）——正文只留纯回答；②程序 canonical 遥测只装饰
+        返回值（transport 展示），会话正文存纯回答 + metadata.cache_health
+        （结构化）——下一轮 LLM 永远看不到程序遥测，杜绝模型伪造循环。
+        """
+        try:
+            if final_answer and "缓存命中率" in final_answer:
+                from llm_loop.core.cache_health import strip_cache_telemetry_lines
+
+                final_answer = strip_cache_telemetry_lines(final_answer)
+            _cache_hint = self._cache_monitor.record(
+                tokens_in, tokens_cache_hit, model_ref=model_used, session_id=sess.session_id
+            )
+            # 发送前门禁·后检漂移提示（build 时记录）一并注入 final_answer（告警发给用户）
+            if self._cache_gate_hint:
+                _cache_hint = (
+                    f"{_cache_hint}\n\n{self._cache_gate_hint}"
+                    if _cache_hint
+                    else self._cache_gate_hint
+                )
+                self._cache_gate_hint = None
+            _telemetry_note: str | None = None  # 程序 canonical 遥测（进 metadata，不进正文）
+            if _cache_hint:
+                self._record_action(
+                    "run.cache_monitor",
+                    "recovered" if "已恢复" in _cache_hint else "alert",
+                    _cache_hint,
+                )
+                # P1 分层（2026-08-25 §5.5）: alert 路径遥测不进 final_answer 正文——
+                # 正文只存纯回答（LLM 永远看不到程序遥测，杜绝模型伪造循环）；
+                # 遥测走 metadata.cache_health 结构化 + _record_action 审计，transport 层渲染。
+                _telemetry_note = _cache_hint
+            else:
+                # EVO-20260819-2254e3b4 方案B（用户批准）: 常态缓存命中率展示——
+                # 无告警时若开启 CACHE_HIT_SHOW_IN_ANSWER 且窗口有数据，回答末尾附一行
+                # 命中率摘要（仅展示，不影响缓存/前缀机制；fail-open）
+                try:
+                    if (
+                        getattr(self.settings, "cache_hit_show_in_answer", False)
+                        and final_answer
+                        and self._cache_monitor is not None
+                    ):
+                        _note = self._cache_monitor.format_health_note(session_id=sess.session_id)
+                        if _note:
+                            final_answer = f"{final_answer}\n\n{_note}"
+                            _telemetry_note = _note
+                except Exception:  # noqa: BLE001 — fail-open
+                    logger.warning("常态缓存命中率注入异常（fail-open）", exc_info=True)
+            # P1 内容/传输分层回写: 正文只存纯回答（已剥离伪造行），遥测进
+            # metadata.cache_health（结构化），transport 层（web 返回值已含 /
+            # 飞书 cross_sync 按 metadata 渲染）再展示。
+            if final_answer and sess.messages:
+                try:
+                    _last_asst = None
+                    for _m in reversed(sess.messages):
+                        if _m.role == "assistant":
+                            _last_asst = _m
+                            break
+                    if _last_asst is not None:
+                        _pure = (
+                            strip_cache_telemetry_lines(_last_asst.content or "")
+                            if "缓存命中率" in (_last_asst.content or "")
+                            else (_last_asst.content or "")
+                        )
+                        _old_md = dict(_last_asst.metadata or {})
+                        _md = dict(_old_md)
+                        _degrade_note = getattr(self, "_cache_degrade_note", None)
+                        if _degrade_note:
+                            # 任务7（§5.7）: 降级事件优先进 metadata.cache_health（kind="degraded"）
+                            _md["cache_health"] = {"note": _degrade_note, "kind": "degraded"}
+                            self._cache_degrade_note = None
+                        elif _telemetry_note:
+                            _md["cache_health"] = {
+                                "note": _telemetry_note,
+                                "kind": "alert" if _cache_hint else "normal",
+                            }
+                        elif "cache_health" in _md:
+                            del _md["cache_health"]
+                        _content_changed = _last_asst.content != _pure
+                        _metadata_changed = _md != _old_md
+                        if _content_changed:
+                            _last_asst.content = _pure
+                        _last_asst.metadata = _md
+                        if _content_changed or _metadata_changed:
+                            self.session.save(sess)
+                except Exception:  # noqa: BLE001 — 回写失败 fail-open
+                    logger.warning("命中率注入回写 session 失败（fail-open）", exc_info=True)
+        except Exception:  # noqa: BLE001 — 监控失败 fail-open，不阻断 run
+            logger.warning("缓存健康闭环监控异常（fail-open）", exc_info=True)
+        return final_answer
+
+    def _breaker_pressure_block(
+        self,
+        sess,
+        effective_budget: int,
+        planned_label: str,
+    ) -> str | None:
+        """P0 压缩风暴熔断（2026-08-25 规格）: 冻结期超安全水位 → context_pressure.
+
+        返回 final_answer 拦截文案（None=放行）。不提交——程序压缩已冻结，超限
+        提交=继续制造不可恢复前缀；AI 先 checkpoint/换会话。与 cache_guard 规则 F
+        协调: 安全水位 = 预算×BREAKER_PRESSURE_RATIO（默认 0.95 = 规则 F BLOCK
+        阈值），breaker 前置拦截后规则 F 永不双拦；逃生轮（pressure_escape）
+        放行一次受控压缩提交。
+        """
+        try:
+            if not self._cache_monitor.breaker_active_for(sess.session_id):
+                return None
+            # 锚定视图口径（实际提交量——锚点压缩不删 sess.messages，全量口径
+            # 会让上下文压力永不解除）
+            _anchors = sess.history_anchors or {}
+            _provider_id = planned_label.partition("/")[0] or "default"
+            _a = int(_anchors.get(_provider_id, 0) or 0)
+            _chars_now = _provider_visible_chars(
+                sess.messages, _provider_id, min(_a, len(sess.messages))
+            )
+            if not self._cache_monitor.context_pressure_decision(
+                sess.session_id, _chars_now, effective_budget
+            ):
+                return None
+            self._cache_monitor.note_context_pressure(
+                sess.session_id,
+                reason="over_safety_cap",
+                chars_total=_chars_now,
+                budget=effective_budget,
+                model_ref=planned_label,
+            )
+            self._record_action(
+                "action.llm_decide",
+                "breaker_context_pressure",
+                f"chars={_chars_now:,} budget={effective_budget:,}",
+            )
+            return (
+                f"[上下文压力] 压缩风暴熔断中：上下文 {_chars_now:,} 字符已超"
+                f"安全水位（预算 {effective_budget:,}），程序压缩已冻结"
+                "（防止前缀持续失效、命中率钉死）。请先执行压缩 checkpoint"
+                "（归档历史可 search_archive 检索找回）或换新会话后继续。"
+            )
+        except Exception:  # noqa: BLE001 — fail-open
+            return None
+
     def _build_llm_messages(
         self,
         sess,
         memory_msgs: list[Message],
         max_chars: int | None = None,
         model: str | None = None,  # P1-7: per-call 模型覆盖（判定本地 provider 跳过推送式注入）
+        planned_label: str | None = None,  # 热重载一致性: 复用本轮已解析标签，避免构造期二次读registry
         emergency_compact: bool = False,  # EVO-20260818: M53 拒绝逃生——head_keep=0 锚点前移激进压缩
         tool_round_zero: bool = False,  # 2026-08-21: 工具轮零历史——只发 system+摘要+最近结果
     ) -> list[dict]:
@@ -120,9 +283,12 @@ class _BuildMixin:
         P1-10: 窗口锚定——按 provider 固定历史起点（只追加不挤旧, 超预算优先降级中段),
         前缀稳定命中引擎/服务端缓存; 锚点写入 sess.history_anchors 随会话持久化。
         """
-        planned_label = self._planned_model_label(model, sess)
-        planned_label = self._planned_model_label(model, sess)
-        provider_id = planned_label.partition("/")[0] or "default"
+        resolved_label: str = (
+            planned_label
+            if planned_label is not None
+            else self._planned_model_label(model, sess)
+        )
+        provider_id = resolved_label.partition("/")[0] or "default"
         anchors = sess.history_anchors or {}
         sess_anchor = int(anchors.get(provider_id, 0) or 0)
         system_prompt = build_system_prompt()
@@ -131,6 +297,23 @@ class _BuildMixin:
         # （2026-08-18 审计断点归因: 96%→2% 全量失效，delta 仅 614 tokens）。
         # 改为提交视图尾部追加（GATE_NOTE 模式，转 user），system+稳定历史前缀字节不变。
         base = list(sess.messages)
+        # P1 遥测内容/传输分层（2026-08-25）: legacy 历史（旧会话已把 ⚡ 缓存命中率
+        # 行写进 assistant 正文）与模型伪造行——build 提交视图一律剥离（正文=纯回答；
+        # 权威遥测走 metadata.cache_health → transport 渲染）。剥离只影响提交视图，
+        # 存档/存储原文不动（archive_sink 收到的是剥离后副本——遥测行属噪音，无信息损失）。
+        if any(
+            m.role == "assistant" and "缓存命中率" in (m.content or "") for m in base
+        ):
+            from dataclasses import replace
+
+            from llm_loop.core.cache_health import strip_cache_telemetry_lines
+
+            base = [
+                replace(m, content=strip_cache_telemetry_lines(m.content))
+                if (m.role == "assistant" and "缓存命中率" in (m.content or ""))
+                else m
+                for m in base
+            ]
         # 2026-08-21 工具轮零历史（TOOL_ROUND_ZERO_HISTORY=1 / provider 配置）: 工具轮只发
         # system+摘要+最近完整协议配对组（assistant(tool_calls)+全部 tool 回执）——前缀
         # （system+摘要）固定 → KV 命中 → prefill 秒级（本地模型实测 4-13 tokens
@@ -200,7 +383,9 @@ class _BuildMixin:
         from llm_loop.core.history import build_history_messages
 
         archive_sink = None
-        if self.archive is not None:
+        if self.archive is not None or getattr(
+            self.registry, "evidence_history_capture_enabled", False
+        ):
             archive_sink = self._archive_sink
         # R1: 存构建中间值，供主循环在 tools_param 构造后计算 breakdown（含 tool_schema_chars）
         effective_budget = max_chars if max_chars is not None else self._runtime_history_budget()
@@ -215,15 +400,15 @@ class _BuildMixin:
         # 关键事实帧+档案零丢失，不打断推理）；②90% 压缩态（compact_ratio, env 可调）:
         # 预算附近提前平滑压缩（裁到 COMPRESS_TARGET_RATIO 留缓冲），优于撞顶被动压缩。
         try:
-            _history_total = sum(len(m.content) for m in base)
+            _history_total = _provider_visible_chars(sess.messages, provider_id, sess_anchor)
             _compact_ratio = float(os.environ.get("COMPACT_RATIO", "0.9"))
             if 0 < _compact_ratio < 1.0:
-                _prep_at = effective_budget * 0.8
                 # EVO-20260824-54d46549 增长率 nudge（billion-context 拷问产出, 双轨）:
                 # - 强制轨: 超预算×compact_ratio（90% 默认）→ 必预警（压缩在即, bypass 增长率）
                 # - 增长率轨: 80% 准备态 → 距上次预警增长 ≥ 阈值（预算×5% 或 20K 字符）才预警
                 #   （重任务增长快早提示, 普通对话增长慢不打扰——替换原固定 80% 每轮必警）
                 _force_at = effective_budget * _compact_ratio
+                _prep_at = effective_budget * 0.8
                 _growth_floor = max(
                     int(effective_budget * 0.05),
                     int(os.environ.get("NUDGE_GROWTH_CHARS", "20000")),
@@ -265,6 +450,9 @@ class _BuildMixin:
         anchor_arg = sess_anchor + prefix_len if sess_anchor > 0 else 0
         anchor_box: list[int] = []
         compacted_box: list[bool] = []
+        cache_compacted_box: list[Message] = []
+        compact_view_box: list[dict] = []
+        degrade_box: list[dict] = []
         built = build_history_messages(
             base,
             system_prompt,
@@ -283,7 +471,7 @@ class _BuildMixin:
             # 2026-08-20 回滚修复: 移除悬空 tool_tail 参数——history.py 的
             # build_history_messages() 不接受该参数（3点基线无此功能，config 恒为 0），
             # 回滚后每次对话 TypeError；参数支持在 backup/20260819-after-3am 分支
-            reasoning_tail=getattr(self.settings, "reasoning_tail", 2),  # M66 思考链瘦身
+            reasoning_tail=getattr(self.settings, "reasoning_tail", 0),  # M66 思考链瘦身（T-P0-1-1 默认 0=全保留）
             # P1-7/spec §5.3.1-5（2026-08-18 审计断点归因绝对化）: 推送式注入（架构上报/
             # 预算预警/轮数预警/声明提醒/自我评估提醒/快照）一律不进提交视图——不再受
             # provider inject_system_notices 开关影响（原按 provider 放行 → 注入消息转 user
@@ -294,18 +482,51 @@ class _BuildMixin:
             anchor_out=anchor_box,
             compacted_out=compacted_box,
             # EVO-20260817-9d3e1f2c: 缓存友好压缩——保留锚点头部（前缀命中）只归档中段;
-            # EVO-20260818: HEAD_KEEP_RATIO 默认 0.10→0.15（压缩轮即命中 system+头部 ≥70%）;
-            # force 档位 HEAD_KEEP_FORCE_RATIO 默认 0.20（L3 拦截强制保留——须高于常规档位，
+            # EVO-20260818: HEAD_KEEP_RATIO 默认 0.10→0.15；2026-08-25 DeepSeek 生产实测
+            # 中段分叉只有“曾作为完整请求端点”的 fixed-head 能稳定复用，因此 DeepSeek
+            # 默认提高到 effective budget 的 0.35（其它 provider 仍 0.15）。配合压缩目标
+            # 0.5，相当于 fixed-head 最多约占压缩后历史水位 70%，同时保留最近尾部语义。
+            # 生产等价直连实测：300K→150K 视图首次压缩命中 71.1%（不含工具schema固定
+            # 前缀）；0.30/0.65 档仅57.2%。force 档位 DeepSeek 默认 0.40 / 其它 provider
+            # 0.20（L3 拦截强制保留——须高于常规档位，
             # max() 两侧同值会吞掉强制语义，grill-me 2.10）; 0=关闭回到锚点前移行为；env 可调
             # emergency_compact（M53 拒绝逃生）: 强制 head_keep=0——head 保留时锚点不前移
             # （history.py），超限会话历史永不缩小 → 拒绝死循环；锚点前移归档才真正缩小
-            head_keep_chars=0
-            if emergency_compact
-            else max(
-                int(effective_budget * float(os.environ.get("HEAD_KEEP_RATIO", "0.15"))),
-                int(effective_budget * float(os.environ.get("HEAD_KEEP_FORCE_RATIO", "0.20")))
-                if self._cache_monitor.force_head_keep
-                else 0,
+            # 2026-08-25 中段压缩: progressive fold 重新允许 head_keep。被折中段写入
+            # provider级 cache_compacted_for 标记，后续 build 自动过滤，所以无需靠锚点
+            # 前移来防重复归档；压缩轮缓存断点从序列开头推到固定头部之后。
+            head_keep_chars=(
+                0  # emergency_compact 仍保留从头推进的最终逃生语义
+                if emergency_compact
+                else max(
+                    int(
+                        effective_budget
+                        * float(
+                            os.environ.get(
+                                "HEAD_KEEP_RATIO", "0.35" if provider_id == "deepseek" else "0.15"
+                            )
+                        )
+                    ),
+                    int(
+                        effective_budget
+                        * float(
+                            os.environ.get(
+                                "HEAD_KEEP_FORCE_RATIO",
+                                "0.40" if provider_id == "deepseek" else "0.20",
+                            )
+                        )
+                    )
+                    if self._cache_monitor.force_head_keep
+                    else 0,
+                )
+            ),
+            # fixed-head 占压缩目标水位上限。历史层默认 0.50 保持旧行为；DeepSeek 提到
+            # 0.70，允许 0.35×effective_budget 的 head 真正留下（target=.5 时占70%），
+            # 仍给最近 tail 约30%目标水位；原子组边界会自然留出更多。env 可显式覆盖调参。
+            head_keep_target_ratio=float(
+                os.environ.get(
+                    "HEAD_KEEP_TARGET_RATIO", "0.70" if provider_id == "deepseek" else "0.50"
+                )
             ),
             # 2026-08-21 追加式压缩: 归档后追加确定性摘要（APPEND_COMPRESSION=1 启用,
             # 默认关零回归）——任务语义连贯 + 前缀稳定（同归档→同摘要字节→缓存命中）
@@ -313,15 +534,72 @@ class _BuildMixin:
             # EVO-20260824-54d46549 渐进折叠: PROGRESSIVE_FOLD_K>0 时压缩每次最多折最老 K 个
             # 配对组（平滑曲线 + guard 不 BLOCK + 智力无断崖）；0=一次性大裁（零回归）
             progressive_fold=_progressive_fold_k,
+            # P0 压缩风暴熔断冻结（2026-08-25）: 冻结期禁压缩/禁锚点前移（前缀字节稳定）
+            freeze_compression=self._cache_monitor.breaker_freeze_compression(
+                sess.session_id
+            ),
+            cache_archive_provider=provider_id,
+            cache_compacted_out=cache_compacted_box,
+            compact_view_stats=compact_view_box,
+            degrade_out=degrade_box,
+            require_archive_success=getattr(self.registry, "evidence_mode", "off") == "enforce",
         )
+        for _compacted_msg in cache_compacted_box:
+            _msg_seq = self._resolve_msg_seq(sess.session_id, _compacted_msg)
+            if _msg_seq is None:
+                logger.warning(
+                    "provider中段压缩事件未定位消息序号: sid=%s provider=%s",
+                    sess.session_id,
+                    provider_id,
+                )
+                continue
+            self._event_append(
+                sess.session_id,
+                "message.cache_compacted",
+                {"msg_seq": _msg_seq, "provider_id": provider_id},
+            )
         self._last_history_compacted = bool(compacted_box and compacted_box[0])
+        # EVO-20260825 任务6.2: 压缩后视图体积验证——drop<5%（压缩但视图几乎没缩小）
+        # → breaker 审计事件 view_not_shrinking_after_compact（压缩风暴前兆归因）
+        if compact_view_box:
+            try:
+                _stats = compact_view_box[0]
+                if _stats.get("drop_pct", 0) < 5:
+                    self._cache_monitor.note_view_not_shrinking(
+                        pre_chars=_stats["pre_chars"],
+                        post_chars=_stats["post_chars"],
+                        drop_pct=_stats["drop_pct"],
+                        session_id=sess.session_id,
+                        model_ref=resolved_label,
+                    )
+            except Exception:  # noqa: BLE001 — fail-open
+                logger.debug("view_not_shrinking 审计注入异常（fail-open）", exc_info=True)
+        # EVO-20260825 任务7（§5.7）: 渐进折叠 archive_provider 缺失降级——审计 +
+        # 降级提示注入 metadata.cache_health（kind="degraded"，_post_run_cache_health 回写）
+        if degrade_box:
+            try:
+                _deg = degrade_box[0]
+                self._cache_monitor.note_degraded(
+                    reason=_deg.get("reason", "progressive_fold 要求 cache_archive_provider"),
+                    head_keep_chars=_deg.get("head_keep_chars", 0),
+                    session_id=sess.session_id,
+                    model_ref=resolved_label,
+                )
+                self._cache_degrade_note = (
+                    f"[渐进折叠降级] {_deg.get('reason')}——已关闭渐进折叠，"
+                    f"head_keep 预算 {_deg.get('head_keep_chars')} 字符"
+                )
+            except Exception:  # noqa: BLE001 — fail-open
+                logger.debug("archive_provider 降级注入异常（fail-open）", exc_info=True)
         # P1-10: 锚点推进持久化（换算回会话索引, clamp 防御）
+        _anchor_moved_this_build = False
         if anchor_box:
             new_anchor = anchor_box[0] - prefix_len
             new_anchor = max(0, min(len(sess.messages), new_anchor))
             # EVO-20260817-72fcd94a L3 归因: 锚点实际前移（≠旧锚点）→ 记入缓存失效归因窗口
             if new_anchor != sess_anchor:
-                self._cache_monitor.note_anchor_moved()
+                self._cache_monitor.note_anchor_moved(session_id=sess.session_id)
+                _anchor_moved_this_build = True
             # 2026-08-16 锚点推进对齐工具轮边界（现场：tool_call_id is not found 根因）：
             # 锚点不得落在声明↔回执组内——若锚点处是 tool 回执（其声明在锚点前），
             # 拉回至该轮声明起点（整组保留，防孤儿回执）。
@@ -330,6 +608,42 @@ class _BuildMixin:
             if sess.history_anchors is None:
                 sess.history_anchors = {}
             sess.history_anchors[provider_id] = new_anchor
+        # P0 压缩风暴熔断（2026-08-25）: 每轮 build 结果通知 monitor——
+        # 连续 (compacted 且 anchor_moved) 计数 → 达阈值进入 breaker（冻结压缩+锚点）。
+        # chars_total 用锚定视图口径（实际提交量——锚点压缩只前移锚点不删 sess.messages，
+        # 全量口径会让压力永不解除）。
+        try:
+            _view_start = min(sess_anchor, len(sess.messages))
+            self._cache_monitor.note_build_result(
+                compacted=self._last_history_compacted,
+                anchor_moved=_anchor_moved_this_build,
+                chars_total=_provider_visible_chars(
+                    sess.messages, provider_id, _view_start
+                ),
+                budget=effective_budget,
+                session_id=sess.session_id,
+                model_ref=resolved_label,
+            )
+        except Exception:  # noqa: BLE001 — fail-open
+            pass
+        # ERC Phase5: provider-neutral Recovery Manifest is regenerated from the durable
+        # Evidence Ledger on every build and appended in the dynamic tail.  It is never part
+        # of the stable system/tools prefix and never relies on the previous build's text.
+        _evidence_manifest_content = ""
+        try:
+            if getattr(self.registry, "evidence_mode", "off") == "enforce":
+                _manifest_limit = max(
+                    1, min(20, int(getattr(self.settings, "evidence_manifest_limit", 8) or 8))
+                )
+                _evidence_manifest_content = self.registry.evidence_recovery_manifest(
+                    limit=_manifest_limit
+                )
+                if _evidence_manifest_content:
+                    built.append({"role": "user", "content": _evidence_manifest_content})
+        except Exception:  # noqa: BLE001 - recovery tools remain available even if tail render fails
+            logger.warning("Evidence Recovery Manifest 构建失败（fail-open）", exc_info=True)
+            _evidence_manifest_content = ""
+
         # EVO-20260818（spec §5.3.1-1 c/d，grill-me B1）: interop 外部协调注入——
         # 尾部追加（GATE_NOTE 模式，转 user），system+稳定历史前缀字节不变（注入轮不断前缀）;
         # env INTEROP_INJECT_TAIL=0 回退旧行为（头部插入，见 interop.py）
@@ -412,10 +726,28 @@ class _BuildMixin:
                 built.append(_d)
             self._interop_tail_messages = None  # 一次性消费（每轮重扫 pending）
             self._tip_tail_messages = None  # 经验提示同机制一次性消费（下轮工具执行再注入）
+        # EVO-20260826-81f8f674: 任务接力热卡注入——压缩时刻写的热卡在新会话 build 时
+        # 取出注入（仅跨会话未消费；pop 即标记 consumed 防陈旧卡反复注入；尾部追加
+        # 不破坏前缀缓存；fail-open 绝不阻断构建）。冲突语义: RULE-AI-20 第 7 条兜底。
+        try:
+            _hotcard_text = pop_hotcard(
+                session_id=sess.session_id, data_dir=self.settings.data_dir
+            )
+            if _hotcard_text:
+                built.append(
+                    {
+                        "role": "user",
+                        "content": wrap_injection(
+                            _hotcard_text, build_task_anchor(self._focus.anchor_sess)
+                        ),
+                    }
+                )
+        except Exception:  # noqa: BLE001 — fail-open
+            pass
         # EVO-20260817-72fcd94a: 门禁干预知情标记——干预激活首轮在 built 末尾追加固定
         # user 消息（末尾追加缓存友好，不破坏前缀；转 user 避免守卫规则 B 误报
         # "非首位 system"——2026-08-18 审计 WARN 实证；让 AI 感知上下文结构变化）
-        if self._cache_monitor.take_gate_note():
+        if self._cache_monitor.take_gate_note(session_id=sess.session_id):
             built = list(built) + [{"role": "user", "content": GATE_NOTE_CONTENT}]
         # EVO-20260817-b6554376: 投影一致性门闸（借鉴 DSH seq 水印，fail-open 不阻断 run）
         # seq（消息数）负责"历史追加"水印；ver（构建参数+动态输入指纹）负责参数水印；
@@ -430,9 +762,11 @@ class _BuildMixin:
                     "tool_tail": getattr(
                         self.settings, "tool_tail", 0
                     ),  # EVO-20260818-f675796c: tail 窗口
-                    "reasoning_tail": getattr(self.settings, "reasoning_tail", 2),
+                    "reasoning_tail": getattr(self.settings, "reasoning_tail", 0),
                     "skip_injected_system": True,  # spec §5.3.1-5: 推送式注入一律不进提交
                     "extract_interval_msgs": getattr(self.settings, "extract_interval_msgs", 20),
+                    # Phase5: manifest changes are legitimate projection changes, not nondeterminism.
+                    "evidence_manifest_fp": stable_digest(_evidence_manifest_content),
                 }
             )
             # EVO-20260818: interop 尾部追加后 base[:prefix_len] 仅 memory 段——
@@ -440,7 +774,7 @@ class _BuildMixin:
             # 保证 ver 与 built 中的尾部注入内容一致（投影一致性不误报）
             _interop_for_fp = tail_msgs if tail_msgs is not None else [m for m in base[:prefix_len]]
             _ver = projection_ver(
-                model=planned_label,
+                model=resolved_label,
                 budget=effective_budget,
                 anchor=sess_anchor,
                 memory_fp=_fp(memory_msgs),
@@ -456,7 +790,7 @@ class _BuildMixin:
             _built_hash = stable_digest(_built_for_hash)
             # EVO-20260817: 压缩轮判定——主动/被动压缩归档（built 消息数 < base）属合法
             # 变化（缓存友好压缩锚点不动 → ver 不变但 built 变短），豁免投影 mismatch 误报
-            _compressed_this_build = len(built) < len(base)
+            _compressed_this_build = bool(self._last_history_compacted) or len(built) < len(base)
             _guards = sess.projection_guard if sess.projection_guard is not None else {}
             _prev = _guards.get(provider_id)
             _state = projection_check(_prev, ver=_ver, seq=_seq, built_hash=_built_hash)
@@ -512,6 +846,14 @@ class _BuildMixin:
                     f"history {locals().get('_history_total', '?')}→{_built_chars} 字符"
                     f"{'，关键事实帧已注入（推理信息整理完备）' if _facts_injected else '，关键事实帧缺失（告警）'}，"
                     "稳定段未变→门禁合规，投影门闸豁免（压缩属合法变化）",
+                )
+                # EVO-20260826-81f8f674: 压缩黄金窗口写任务热卡（anchor=最近用户指令+
+                # 最近动作；active Goal/checkpoint 与待审演进由 hotcard 模块自取；
+                # fail-open 失败仅告警不阻断压缩）
+                write_hotcard(
+                    origin_session=sess.session_id,
+                    anchor=build_task_anchor(self._focus.anchor_sess),
+                    data_dir=self.settings.data_dir,
                 )
         except Exception:  # noqa: BLE001
             pass

@@ -659,3 +659,178 @@ class TestArchitectureStatusRecovery:
         assert "action_trace" in snapshot
         assert "pending_actions" in snapshot
         assert "recovery" in snapshot
+
+
+
+def test_backup_store_rejects_traversal_backup_id(tmp_path):
+    """读取/标记backup_id也必须basename安全，不能只在save时sanitize。"""
+    store_a = BackupStore(tmp_path / "recovery-A")
+    store_b = BackupStore(tmp_path / "recovery-B")
+    store_a.save_archive(
+        BackupArchive(
+            source_id="safe-a",
+            backup_at="2026-08-13T10:29:00+08:00",
+            target_type="session",
+            payload="{}",
+            retry_count=1,
+            trigger_point="initial_save",
+        )
+    )
+    archive = BackupArchive(
+        source_id="victim",
+        backup_at="2026-08-13T10:30:00+08:00",
+        target_type="session",
+        payload='{"secret":"B"}',
+        retry_count=1,
+        trigger_point="initial_save",
+    )
+    bid = store_b.save_archive(archive)
+    traversal = f"../recovery-B/{bid}"
+
+    assert store_a.get_archive(traversal) is None
+    assert store_a.mark_recovered(traversal) is False
+    loaded = store_b.get_archive(bid)
+    assert loaded is not None and loaded.recovered is False
+
+
+def test_recover_from_backup_cannot_cross_recovery_or_session_roots(tmp_path):
+    """恶意backup_id不得跨recovery根读备份，再用路径型source_id写到sessions根外。"""
+    from llm_loop.introspection.tools_recovery import run_recover_from_backup
+
+    recovery_a = tmp_path / "recovery-A"
+    recovery_b = tmp_path / "recovery-B"
+    sessions_a = tmp_path / "sessions-A"
+    store_a = BackupStore(recovery_a)
+    store_b = BackupStore(recovery_b)
+    store_a.save_archive(
+        BackupArchive(
+            source_id="safe-a",
+            backup_at="2026-08-13T10:29:00+08:00",
+            target_type="session",
+            payload="{}",
+            retry_count=1,
+            trigger_point="initial_save",
+        )
+    )
+    archive = BackupArchive(
+        source_id="victim",
+        backup_at="2026-08-13T10:30:00+08:00",
+        target_type="session",
+        payload='{"secret":"B"}',
+        retry_count=1,
+        trigger_point="initial_save",
+    )
+    bid = store_b.save_archive(archive)
+    traversal = f"../recovery-B/{bid}"
+    escaped_target = recovery_b / "victim.json"
+
+    result = run_recover_from_backup(
+        RecoveryChannel(backup_store=store_a),
+        backup_id=traversal,
+        sessions_dir=sessions_a,
+        on_conflict="overwrite",
+    )
+
+    assert result.startswith("[参数错误]")
+    assert not escaped_target.exists()
+    loaded = store_b.get_archive(bid)
+    assert loaded is not None and loaded.recovered is False
+
+
+
+def test_recover_from_backup_rejects_filename_archive_metadata_mismatch(tmp_path):
+    """安全basename文件被改名后，文件名source/type必须与备份内部元数据一致。"""
+    from llm_loop.introspection.tools_recovery import run_recover_from_backup
+
+    recovery = tmp_path / ".recovery"
+    sessions = tmp_path / "sessions"
+    store = BackupStore(recovery)
+    archive = BackupArchive(
+        source_id="victim",
+        backup_at="2026-08-13T10:30:00+08:00",
+        target_type="session",
+        payload='{"secret":"victim"}',
+        retry_count=1,
+        trigger_point="initial_save",
+    )
+    original_id = store.save_archive(archive)
+    renamed_id = original_id.replace("victim.", "other.", 1)
+    (recovery / original_id).rename(recovery / renamed_id)
+
+    result = run_recover_from_backup(
+        RecoveryChannel(backup_store=store),
+        backup_id=renamed_id,
+        sessions_dir=sessions,
+        on_conflict="overwrite",
+    )
+
+    assert result.startswith("[备份损坏]")
+    assert not (sessions / "other.json").exists()
+    loaded = store.get_archive(renamed_id)
+    assert loaded is not None
+    assert loaded.source_id == "victim"
+    assert loaded.recovered is False
+
+
+def test_session_restore_payload_fsyncs_file_and_parent_directory(tmp_path, monkeypatch):
+    """恢复工具报成功前，恢复session文件与workspace目录都必须durable。"""
+    import os
+    from pathlib import Path
+
+    from llm_loop.core.session import Session, SessionStore
+
+    sessions_base = tmp_path / "sessions"
+    workspace = sessions_base / "workspace-a"
+    store = SessionStore(workspace, identity_root=sessions_base)
+    sid = "durable-recovery-id"
+    payload = json.dumps(Session(session_id=sid).to_dict(), ensure_ascii=False)
+    real_open = os.open
+    real_fsync = os.fsync
+    dir_fds: list[int] = []
+    fsynced: list[int] = []
+
+    def track_open(path, flags, *args, **kwargs):
+        fd = real_open(path, flags, *args, **kwargs)
+        if Path(path) == workspace:
+            dir_fds.append(fd)
+        return fd
+
+    def track_fsync(fd):
+        fsynced.append(fd)
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "open", track_open)
+    monkeypatch.setattr(os, "fsync", track_fsync)
+    store.restore_payload(sid, payload)
+
+    assert len(fsynced) >= 4, "owner + recovery文件及两级目录均应完成fsync"
+    assert dir_fds, "恢复replace后应显式打开workspace目录"
+    assert any(fd in fsynced for fd in dir_fds), "恢复文件父目录fd必须fsync"
+
+
+def test_backup_delete_source_uses_original_source_id_not_sanitized_prefix(tmp_path):
+    """两个source sanitize到同basename时，物理删除只能删原始source精确匹配者。"""
+    store = BackupStore(tmp_path / ".recovery")
+    a = BackupArchive(
+        source_id="a/b",
+        backup_at="2026-08-25T08:40:00+08:00",
+        target_type="session",
+        payload="secret-A",
+        retry_count=1,
+        trigger_point="loop_end_save",
+    )
+    b = BackupArchive(
+        source_id="a-b",
+        backup_at="2026-08-25T08:41:00+08:00",
+        target_type="session",
+        payload="secret-B",
+        retry_count=1,
+        trigger_point="loop_end_save",
+    )
+    a_id = store.save_archive(a)
+    b_id = store.save_archive(b)
+
+    assert store.delete_source("a/b", target_type="session") == 1
+    assert store.get_archive(a_id) is None
+    remaining = store.get_archive(b_id)
+    assert remaining is not None and remaining.payload == "secret-B"

@@ -1,0 +1,223 @@
+{
+  "schema": "evidence-r4-matrix-v1",
+  "random_seed": 20260826,
+  "count": 36,
+  "runs": [
+    {
+      "provider": "minimax",
+      "seed_id": "K4",
+      "rep": 2,
+      "run_id": "R4-001"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "K5",
+      "rep": 2,
+      "run_id": "R4-002"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "K4",
+      "rep": 3,
+      "run_id": "R4-003"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "K6",
+      "rep": 3,
+      "run_id": "R4-004"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "K4",
+      "rep": 3,
+      "run_id": "R4-005"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "K1",
+      "rep": 1,
+      "run_id": "R4-006"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "K2",
+      "rep": 3,
+      "run_id": "R4-007"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "K5",
+      "rep": 3,
+      "run_id": "R4-008"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "K3",
+      "rep": 2,
+      "run_id": "R4-009"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "K3",
+      "rep": 3,
+      "run_id": "R4-010"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "K6",
+      "rep": 1,
+      "run_id": "R4-011"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "K1",
+      "rep": 1,
+      "run_id": "R4-012"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "K3",
+      "rep": 2,
+      "run_id": "R4-013"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "K2",
+      "rep": 1,
+      "run_id": "R4-014"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "K4",
+      "rep": 1,
+      "run_id": "R4-015"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "K1",
+      "rep": 3,
+      "run_id": "R4-016"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "K4",
+      "rep": 1,
+      "run_id": "R4-017"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "K3",
+      "rep": 1,
+      "run_id": "R4-018"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "K2",
+      "rep": 2,
+      "run_id": "R4-019"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "K4",
+      "rep": 2,
+      "run_id": "R4-020"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "K1",
+      "rep": 2,
+      "run_id": "R4-021"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "K5",
+      "rep": 2,
+      "run_id": "R4-022"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "K3",
+      "rep": 3,
+      "run_id": "R4-023"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "K2",
+      "rep": 3,
+      "run_id": "R4-024"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "K6",
+      "rep": 1,
+      "run_id": "R4-025"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "K5",
+      "rep": 1,
+      "run_id": "R4-026"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "K2",
+      "rep": 1,
+      "run_id": "R4-027"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "K6",
+      "rep": 3,
+      "run_id": "R4-028"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "K3",
+      "rep": 1,
+      "run_id": "R4-029"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "K6",
+      "rep": 2,
+      "run_id": "R4-030"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "K5",
+      "rep": 3,
+      "run_id": "R4-031"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "K1",
+      "rep": 2,
+      "run_id": "R4-032"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "K2",
+      "rep": 2,
+      "run_id": "R4-033"
+    },
+    {
+      "provider": "minimax",
+      "seed_id": "K1",
+      "rep": 3,
+      "run_id": "R4-034"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "K6",
+      "rep": 2,
+      "run_id": "R4-035"
+    },
+    {
+      "provider": "deepseek",
+      "seed_id": "K5",
+      "rep": 1,
+      "run_id": "R4-036"
+    }
+  ]
+}

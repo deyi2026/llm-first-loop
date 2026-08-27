@@ -41,6 +41,15 @@ class TestStopAllProcesses:
         assert "pids=\"$(pgrep -f" in text
         assert "pkill -9 -f" in text
 
+    def test_stop_service_is_scoped_to_current_workspace(self):
+        """镜像 stop/restart 不得泛匹配同名模块，必须限定 PROJECT_DIR。"""
+        text = _read("scripts/restart_system.sh")
+        start = text.index("_stop_service()")
+        end = text.index("# ── 运行日志轮转", start)
+        block = text[start:end]
+        assert 'local pattern="$PROJECT_DIR/.venv/bin/python -m llm_loop' in block
+        assert 'local pattern="llm_loop' not in block
+
 
 class TestPidWriteBack:
     def test_start_service_writes_back_pid(self):

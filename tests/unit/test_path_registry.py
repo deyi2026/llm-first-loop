@@ -15,6 +15,7 @@ def _reset_and_run(monkeypatch, tmp_path):
 
     monkeypatch.setattr(pr, "_registry_file", fake_registry_file)
     monkeypatch.setattr(pr, "_LOADED", None)
+    monkeypatch.setattr(pr, "_LOADED_PATH", None)
     return pr
 
 
@@ -83,3 +84,60 @@ def test_read_file_integration(monkeypatch, tmp_path):
     r3 = tool.execute(path=str(tmp_f))
     assert r3.status.value == "success"
     assert pr_mod.check_known_missing(str(tmp_f)) is False
+
+
+def test_cross_process_register_merge_preserves_both(tmp_path):
+    """两个独立进程基于同一旧快照写不同路径，最终不得 last-writer-wins 丢记录。"""
+    import json
+    import os
+    import subprocess
+    import sys
+    import time
+    from pathlib import Path
+
+    registry = tmp_path / "path_registry.json"
+    go = tmp_path / "go"
+    worker = r"""
+import sys, time
+from pathlib import Path
+from llm_loop.tools import path_registry as pr
+registry, ready, go, target = map(Path, sys.argv[1:])
+pr._REGISTRY_PATH = registry
+pr._LOADED = None
+pr._LOADED_PATH = None
+pr._load()  # 两个进程都先缓存同一个空快照，稳定复现旧 RMW 竞态
+ready.write_text('ready')
+while not go.exists():
+    time.sleep(0.005)
+pr.register_missing(str(target), source='cross-process-test')
+"""
+    ready1 = tmp_path / "ready1"
+    ready2 = tmp_path / "ready2"
+    target1 = tmp_path / "a.txt"
+    target2 = tmp_path / "b.txt"
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[2] / "src")
+    p1 = subprocess.Popen(
+        [sys.executable, "-c", worker, str(registry), str(ready1), str(go), str(target1)],
+        env=env,
+    )
+    p2 = subprocess.Popen(
+        [sys.executable, "-c", worker, str(registry), str(ready2), str(go), str(target2)],
+        env=env,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while not (ready1.exists() and ready2.exists()) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ready1.exists() and ready2.exists(), "子进程未完成同步预热"
+        go.write_text("go")
+        assert p1.wait(timeout=5) == 0
+        assert p2.wait(timeout=5) == 0
+    finally:
+        for proc in (p1, p2):
+            if proc.poll() is None:
+                proc.kill()
+
+    data = json.loads(registry.read_text(encoding="utf-8"))
+    assert str(target1.resolve()) in data
+    assert str(target2.resolve()) in data

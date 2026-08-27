@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
-from llm_loop.introspection.goal import GoalStore, GOAL_STATUSES
+from llm_loop.introspection.goal import GoalStore, GoalStoreCorruptionError
 
 CREATE_GOAL_TOOL_DEF: dict = {
     "name": "create_goal",
@@ -110,7 +110,13 @@ def run_create_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
     store = _store(ctx, str(host.audit_dir) if host.audit_dir else None)
     if store is None:
         return ToolResult(ToolResultStatus.FAILURE, "[goal 存储不可用] audit_dir 未装配", "", "create_goal")
-    sid = str(args.get("session_id", "") or getattr(ctx, "session_id", ""))
+    explicit_sid = str(args.get("session_id", "") or "").strip()
+    if explicit_sid:
+        sid = explicit_sid
+    else:
+        from llm_loop.introspection.tools_status import current_session_id
+
+        sid = current_session_id(ctx)
     g = store.create(objective, session_id=sid)
     return ToolResult(
         ToolResultStatus.SUCCESS,
@@ -135,6 +141,13 @@ def run_checkpoint_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
             path=str(args.get("path", "")).strip(),
             next_step=str(args.get("next", "")).strip(),
         )
+    except GoalStoreCorruptionError as exc:
+        return ToolResult(
+            ToolResultStatus.FAILURE,
+            f"[goal 存储损坏] {exc}",
+            "",
+            "checkpoint_goal",
+        )
     except ValueError as exc:
         return ToolResult(ToolResultStatus.FAILURE, f"[参数错误] {exc}", "", "checkpoint_goal")
     if updated is None:
@@ -152,8 +165,23 @@ def run_get_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
     if store is None:
         return ToolResult(ToolResultStatus.FAILURE, "[goal 存储不可用] audit_dir 未装配", "", "get_goal")
     gid = str(args.get("goal_id", "") or "").strip()
-    g = store.get(gid or None)
+    try:
+        if gid:
+            g = store.get(gid)
+        else:
+            from llm_loop.introspection.tools_status import current_session_id
+
+            g = store.get(prefer_session_id=current_session_id(ctx))
+    except GoalStoreCorruptionError as exc:
+        return ToolResult(
+            ToolResultStatus.FAILURE,
+            f"[goal 存储损坏] {exc}\n请先检查/修复 goals.jsonl，再恢复任务；程序不会猜测旧 Goal。",
+            "",
+            "get_goal",
+        )
     if g is None:
+        if gid:
+            return ToolResult(ToolResultStatus.FAILURE, f"[目标不存在] {gid}", "", "get_goal")
         return ToolResult(ToolResultStatus.SUCCESS, "[无活动目标] 尚未 create_goal", "", "get_goal")
     cps = g.get("checkpoints", [])
     recent = cps[-3:][::-1]
@@ -164,7 +192,7 @@ def run_get_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
             lines.append(f"  [{cp.get('ts','')[11:19]}] {str(cp.get('what',''))[:80]}")
     else:
         lines.append("checkpoints: 无（首个里程碑后 checkpoint_goal）")
-    lines.append("恢复注意: 先验证 worktree/外部状态再依赖上述内容（RULE-AI-12）")
+    lines.append("恢复注意: 先验证 worktree/外部状态再依赖上述内容（RULE-AI-20）")
     return ToolResult(ToolResultStatus.SUCCESS, "\n".join(lines), "", "get_goal")
 
 
@@ -175,8 +203,18 @@ def run_update_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
     gid = str(args.get("goal_id", "")).strip()
     status = str(args.get("status", "")).strip()
     if not gid or status not in ("complete", "blocked"):
-        return ToolResult(ToolResultStatus.FAILURE, f"[参数错误] goal_id + status ∈ {{complete, blocked}}", "", "update_goal")
-    g = store.update(gid, status, reason=str(args.get("reason", "")).strip())
+        return ToolResult(ToolResultStatus.FAILURE, "[参数错误] goal_id + status ∈ {complete, blocked}", "", "update_goal")
+    try:
+        g = store.update(gid, status, reason=str(args.get("reason", "")).strip())
+    except GoalStoreCorruptionError as exc:
+        return ToolResult(
+            ToolResultStatus.FAILURE,
+            f"[goal 存储损坏] {exc}",
+            "",
+            "update_goal",
+        )
+    except ValueError as exc:
+        return ToolResult(ToolResultStatus.FAILURE, f"[状态更新拒绝] {exc}", "", "update_goal")
     if g is None:
         return ToolResult(ToolResultStatus.FAILURE, f"[更新失败] 目标 {gid} 不存在", "", "update_goal")
     return ToolResult(

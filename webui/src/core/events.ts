@@ -2,6 +2,7 @@
 // 对齐 v0.5.6 前端加固：失联自愈看门狗 + 标签页聚焦即刷）
 
 import { fetchSessions, fetchSharedCurrent } from "./api";
+import { refreshCurrentSessionMessages } from "./conversation";
 import { sessionStore } from "./stores";
 
 let lastSyncEvent = Date.now();
@@ -11,6 +12,9 @@ const staleThresholdMs = 25000;
 
 function refreshFromSync(): void {
   void refreshSessionsAndCurrent();
+  // 2026-08-27 缺口修复：此前只刷会话列表不刷消息区——飞书桥写入后当前会话
+  // 的回答在 Web 空闲停留时不可见（须手动切会话）。现推送信号直达消息区重载。
+  void refreshCurrentSessionMessages();
 }
 
 export async function refreshSessionsAndCurrent(): Promise<void> {

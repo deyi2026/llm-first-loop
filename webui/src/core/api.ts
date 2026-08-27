@@ -9,9 +9,14 @@ export async function api<T = unknown>(
   url: string,
   options?: RequestInit
 ): Promise<ApiResult<T>> {
-  const resp = await fetch(url, options);
-  const data = (await resp.json().catch(() => ({}))) as T;
-  return { status: resp.status, data };
+  try {
+    const resp = await fetch(url, options);
+    const data = (await resp.json().catch(() => ({}))) as T;
+    return { status: resp.status, data };
+  } catch {
+    // 读路径统一 fail-open：离线/卸载后的迟到请求不产生 unhandled rejection。
+    return { status: 0, data: {} as T };
+  }
 }
 
 export interface HealthInfo {

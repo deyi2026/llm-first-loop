@@ -1,6 +1,6 @@
 """LLM 客户端路由池（M48 / design §5.3 + M49 / design §5.4）.
 
-- 持有 ProviderRegistry（M47）+ 装配默认 LLMClient + provider 级客户端缓存
+- 持有 ProviderRegistry（M47）+ 装配默认 LLMClient + provider/model 级客户端缓存
 - get_client(model_override) 按会话级 override 路由：None → 默认；非空 → resolve → 缓存/新建
 - fallback_candidates() 解析 MODEL_FALLBACKS env 为合法 provider/model 列表（M49）；
   非法条目跳过并 logging.warning（如实标注），空 = 不启用降级（零回归）
@@ -13,7 +13,10 @@
 from __future__ import annotations
 
 import logging
+import threading
+import weakref
 from dataclasses import dataclass, field
+from typing import Any
 
 from llm_loop.llm.client import LLMClient
 from llm_loop.llm.providers import ProviderRegistry
@@ -23,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ModelClientPool:
-    """Provider 级 LLMClient 缓存 + 路由 (M48 / design §5.3).
+    """Provider/model 级 LLMClient 缓存 + 路由 (M48 / design §5.3).
 
     工作流程:
     - get_client(None)            → 直接返回装配默认 client (零回归快路径)
@@ -32,37 +35,55 @@ class ModelClientPool:
     - get_default_model()         → 默认 client 的模型名（model_catalog 工具复用）
     - fallback_candidates()       → 解析 MODEL_FALLBACKS env 为合法 (provider, model) 列表 (design §5.4)
 
-    线程安全: dict 操作 GIL 保护；如需严格并发由外层加锁（本池本身不假设并发）。
+    线程安全: registry/cache 读写由内部 RLock 保护；热重载通过 replace_registry 原子切表。
     """
 
     registry: ProviderRegistry
     default_client: LLMClient
     _provider_cache: dict[str, LLMClient] = field(default_factory=dict)
+    _guard: Any = field(default_factory=threading.RLock, init=False, repr=False)
+    _default_registry: ProviderRegistry = field(init=False, repr=False)
+    _retired_refs: list[tuple[weakref.ReferenceType[LLMClient], Any]] = field(
+        default_factory=list, init=False, repr=False
+    )
+    _retired_ducks: list[Any] = field(default_factory=list, init=False, repr=False)
     # M49（design §5.4）: MODEL_FALLBACKS env 原始字符串（构造时由 builder 注入）
     # 解析在 fallback_candidates() 中按调用执行（每次取最新值，避免启动时缓存过期）
     model_fallbacks_raw: str = ""
 
-    def get_client(self, model_override: str | None) -> LLMClient:
-        """按会话级 model_override 路由到对应 LLMClient.
+    def __post_init__(self) -> None:
+        # default_client 不参与 provider 热重载；其能力/窗口元数据也必须绑定启动快照。
+        self._default_registry = self.registry
 
-        Args:
-            model_override: 会话级模型覆盖（None=用装配默认; "provider/model" 或裸模型名）.
+    def registry_snapshot(self) -> ProviderRegistry:
+        """返回当前不可变 ProviderRegistry 快照（与replace_registry互斥读取）."""
+        with self._guard:
+            return self.registry
 
-        Returns:
-            LLMClient 实例. None 永远返回 default_client；非空 resolve 失败抛 ValueError
-            （带候选列表，如实反馈）。
-        """
-        if model_override is None:
-            return self.default_client
-        provider_id, model_id = self.registry.resolve(model_override)
-        cached = self._provider_cache.get(provider_id)
-        if cached is not None:
-            return cached
-        params = self.registry.client_params(provider_id, model_id)
-        # 思考参数按注册表元数据判定（消除原 _thinking_supported 硬编码 deepseek.com）
-        thinking_supported = self.registry.supports_thinking(provider_id, model_id)
-        # 超时: provider 级 timeout_s（providers.json 显式配置, 本地慢模型放大）优先,
-        # 否则继承默认 client 的运行参数（全局 LLM_TIMEOUT_S, 零回归）
+    def default_registry_snapshot(self) -> ProviderRegistry:
+        """返回 default_client 对应的启动 registry 快照。"""
+        return self._default_registry
+
+    def _get_client_locked(
+        self,
+        registry: ProviderRegistry,
+        provider_id: str,
+        model_id: str,
+        *,
+        use_cache: bool = True,
+    ) -> LLMClient:
+        """_guard 已持有时按已解析 provider/model 取或构造 client。"""
+        cache_key = f"{provider_id}/{model_id}"
+        if use_cache:
+            cached = self._provider_cache.get(cache_key)
+            if cached is not None:
+                return cached
+            # 兼容测试/外部旧注入：历史上 provider-only key 用于预置 FakeLLM 避免触网。
+            legacy_cached = self._provider_cache.get(provider_id)
+            if legacy_cached is not None:
+                return legacy_cached
+        params = registry.client_params(provider_id, model_id)
+        thinking_supported = registry.supports_thinking(provider_id, model_id)
         provider_timeout = params.get("timeout_s")
         provider_max_tokens = params.get("max_tokens")
         provider_wire_protocol = params.get("wire_protocol")
@@ -75,13 +96,11 @@ class ModelClientPool:
                 if provider_timeout is not None
                 else self.default_client.timeout_s
             ),
-            # 2026-08-15: provider 级输出预算优先，否则继承默认 client（全局 LLM_MAX_TOKENS）
             max_tokens=(
                 provider_max_tokens
                 if provider_max_tokens is not None
                 else self.default_client.max_tokens
             ),
-            # P3-5: 协议优先 provider 元数据，否则继承默认 client
             wire_protocol=(
                 provider_wire_protocol
                 if provider_wire_protocol is not None
@@ -91,55 +110,123 @@ class ModelClientPool:
             reasoning_effort=self.default_client.reasoning_effort,
             thinking_supported=thinking_supported,
         )
-        self._provider_cache[provider_id] = client
+        if use_cache:
+            self._provider_cache[cache_key] = client
+        return client
+
+    def get_resolved_client(
+        self, model_ref: str, *, registry: ProviderRegistry | None = None
+    ) -> tuple[LLMClient, str, str]:
+        """在指定不可变registry快照内解析并取client；stale快照不污染current cache。"""
+        retire_after = False
+        with self._guard:
+            selected = registry if registry is not None else self.registry
+            provider_id, model_id = selected.resolve(model_ref)
+            use_cache = selected is self.registry
+            client = self._get_client_locked(
+                selected, provider_id, model_id, use_cache=use_cache
+            )
+            retire_after = not use_cache
+        if retire_after:
+            # round已捕获旧快照而refresh已切表：本轮仍按旧快照完成；一次性client最后引用释放后关闭。
+            self._retire_client(client)
+        return client, provider_id, model_id
+
+    def get_client(self, model_override: str | None) -> LLMClient:
+        """按会话级 model_override 路由到对应 LLMClient。"""
+        if model_override is None:
+            with self._guard:
+                return self.default_client
+        client, _provider_id, _model_id = self.get_resolved_client(model_override)
         return client
 
     def get_thinking(self, model_override: str | None) -> bool:
-        """查询指定 override 是否支持思考参数（model_catalog / switch_model 回执复用）.
-
-        Args:
-            model_override: 会话级模型覆盖（None → 用默认 client 的模型判定）.
-        """
-        if model_override is None:
-            return self.default_client.thinking_supported is True
-        try:
-            provider_id, model_id = self.registry.resolve(model_override)
-        except ValueError:
-            return False
-        return self.registry.supports_thinking(provider_id, model_id)
+        """查询指定 override 是否支持思考参数（与热重载 registry 取同一快照）."""
+        with self._guard:
+            if model_override is None:
+                return self.default_client.thinking_supported is True
+            registry = self.registry
+            try:
+                provider_id, model_id = registry.resolve(model_override)
+            except ValueError:
+                return False
+            return registry.supports_thinking(provider_id, model_id)
 
     def get_default_model(self) -> str:
-        """装配默认 client 的模型名（model_catalog 当前模型标注用）."""
-        return self.default_client.model
+        """装配默认 client 的模型名（默认 client 热重载不原地改写）."""
+        with self._guard:
+            return self.default_client.model
 
     def cached_provider_ids(self) -> list[str]:
-        """已缓存的 provider id 列表（测试/调试用）."""
-        return sorted(self._provider_cache.keys())
+        """已缓存的 provider id 列表（隐藏 per-model cache key 细节）."""
+        with self._guard:
+            return sorted({key.split("/", 1)[0] for key in self._provider_cache})
+
+    @staticmethod
+    def _close_transport(transport: Any) -> None:
+        """退休 finalizer 使用：只持底层 transport，不反向持有 LLMClient。"""
+        closer = getattr(transport, "close", None)
+        if not callable(closer):
+            return
+        try:
+            closer()
+        except Exception:  # noqa: BLE001 — GC/退休清理绝不能抛穿
+            logger.warning("退休 LLM transport 关闭失败（fail-open）", exc_info=True)
+
+    def _retire_client(self, client: Any) -> None:
+        """热重载退休旧 client；真实 LLMClient 最后引用释放后再关闭 transport。"""
+        if isinstance(client, LLMClient):
+            transport = getattr(client, "_client", None)
+            if transport is not None:
+                finalizer = weakref.finalize(
+                    client, ModelClientPool._close_transport, transport
+                )
+                with self._guard:
+                    self._retired_refs = [
+                        pair for pair in self._retired_refs if pair[0]() is not None
+                    ]
+                    self._retired_refs.append((weakref.ref(client), finalizer))
+            return
+        # duck/injected client 无法安全拆出 transport；保守持有到 pool.close。
+        with self._guard:
+            if all(existing is not client for existing in self._retired_ducks):
+                self._retired_ducks.append(client)
+
+    def replace_registry(self, new_registry: ProviderRegistry) -> None:
+        """原子替换 registry 并退休旧 cache（refresh_config 并发安全入口）."""
+        with self._guard:
+            old_clients = list({id(c): c for c in self._provider_cache.values()}.values())
+            self.registry = new_registry
+            self._provider_cache.clear()
+        for client in old_clients:
+            self._retire_client(client)
 
     def close(self) -> None:
-        """P2-4(2026-08-15): 关闭 default_client 与全部缓存 client（释放 httpx 连接）.
-
-        - default_client 与 _provider_cache 中每个 client 依次关闭；
-          单个关闭失败 fail-open（记 warning 继续，不中断整体关闭）
-        - 幂等: 可重复调用（httpx.Client.close 幂等；缓存清空后不再有重复关闭项）
-        - 关闭完成后清空缓存（已关闭的 client 不再被 get_client 复用）
-        """
-        self._close_client(self.default_client)
-        for client in list(self._provider_cache.values()):
+        """关闭 default/current/退休 clients；单对象或 finalizer 只执行一次。"""
+        with self._guard:
+            clients = [self.default_client, *self._provider_cache.values(), *self._retired_ducks]
+            retired_finalizers = [finalizer for _ref, finalizer in self._retired_refs]
+            self._provider_cache.clear()
+            self._retired_refs.clear()
+            self._retired_ducks.clear()
+        seen: set[int] = set()
+        for client in clients:
+            ident = id(client)
+            if ident in seen:
+                continue
+            seen.add(ident)
             self._close_client(client)
-        self._provider_cache.clear()
+        for finalizer in retired_finalizers:
+            if getattr(finalizer, "alive", False):
+                finalizer()
 
     def clear_cache(self) -> None:
-        """清空 provider 缓存（refresh_config / 测试用；不影响 default_client）.
-
-        P2-4(2026-08-15): 语义更新——清空前先关闭被丢弃的缓存 client。
-        providers 热重载路径（refresh_config → providers_registry_reload.py）调用
-        本方法，旧 client 关闭后才丢弃，防止 httpx 连接泄漏。
-        default_client 不归 cache 管理，不在本方法关闭（由 close() 统一处理）。
-        """
-        for client in list(self._provider_cache.values()):
+        """显式清缓存：立即关闭当前缓存 client（保留既有管理/测试契约）."""
+        with self._guard:
+            clients = list({id(c): c for c in self._provider_cache.values()}.values())
+            self._provider_cache.clear()
+        for client in clients:
             self._close_client(client)
-        self._provider_cache.clear()
 
     def _close_client(self, client: LLMClient) -> None:
         """P2-4(2026-08-15): 单个 client 关闭（duck-typing getattr 防御 + fail-open）.
@@ -154,7 +241,9 @@ class ModelClientPool:
         except Exception as exc:  # noqa: BLE001 — 单个关闭失败 fail-open
             logger.warning("LLM 客户端关闭失败（fail-open）: %s", exc)
 
-    def fallback_candidates(self) -> list[str]:
+    def fallback_candidates(
+        self, *, registry: ProviderRegistry | None = None
+    ) -> list[str]:
         """解析 MODEL_FALLBACKS env 为合法 provider/model 引用列表 (M49 / design §5.4).
 
         返回:
@@ -174,7 +263,9 @@ class ModelClientPool:
         - 返回的列表是"当前合法候选"，实际降级触发在 loop.py（M49 降级逻辑）
         - 本方法仅做"候选筛选"，不构造 LLMClient；构造在降级触发时按需走 get_client
         """
-        raw = (self.model_fallbacks_raw or "").strip()
+        with self._guard:
+            raw = (self.model_fallbacks_raw or "").strip()
+            selected_registry = registry if registry is not None else self.registry
         if not raw:
             return []
 
@@ -185,14 +276,14 @@ class ModelClientPool:
                 # 空条目（如连续逗号/首尾逗号）→ 静默跳过
                 continue
             try:
-                provider_id, model_id = self.registry.resolve(ref)
+                provider_id, model_id = selected_registry.resolve(ref)
             except ValueError as exc:
                 # resolve 失败 → 跳过 + 如实标注（fail-soft；非法配置不阻断降级链）
                 logger.warning("MODEL_FALLBACKS 跳过非法条目 '%s': %s", ref, exc)
                 continue
             # 预检 api_key（client_params 触发按需读取 env var）
             try:
-                self.registry.client_params(provider_id, model_id)
+                selected_registry.client_params(provider_id, model_id)
             except ValueError as exc:
                 # key 缺失 → 跳过 + 如实标注含 env var 名字（设计原则 4 密钥不出域: 仅日志回显 env 名, 不回显 key）
                 logger.warning(

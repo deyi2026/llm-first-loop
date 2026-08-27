@@ -45,7 +45,13 @@ def test_inject_pending_message(tmp_path, monkeypatch):
     assert "20260816-005" in m.content
     assert "task" in m.content
     assert "请复核风险清单" in m.content
-    assert "data/interop/lfl_to_dsh/pending/20260816-005_dsh-test.json" in m.content
+    # EVO-20260825 任务9（§5.4.1-4）: 原子化消费——注入后文件已移到 processed/
+    assert "data/interop/lfl_to_dsh/pending/processed/20260816-005_dsh-test.json" in m.content
+    assert not (inbox / "20260816-005_dsh-test.json").exists(), "消费后文件应移出 pending/"
+    assert any(
+        p.name == "20260816-005_dsh-test.json"
+        for p in (inbox / "processed").rglob("*.json")
+    ), "消费后文件应在 pending/processed/"
     # 不打 injected_system 标记（本地 provider 也须可见）
     assert not (m.metadata or {}).get("injected_system")
 
@@ -77,6 +83,10 @@ def test_skip_done_and_bad_files(tmp_path, monkeypatch):
     monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
 
     assert _bare_engine()._interop_inbox_messages() == []
+    # EVO-20260825 任务9（§5.4.1-5）: 解析失败文件应隔离到 dead/（不静默滞留）
+    dead = inbox / "dead" / "b.json"
+    assert dead.exists(), "格式坏文件应隔离到 pending/dead/"
+    assert not (inbox / "b.json").exists()
 
 
 def test_missing_dir_fail_open(tmp_path, monkeypatch):
@@ -110,10 +120,13 @@ def test_notify_duplicate_auto_archive(tmp_path, monkeypatch):
     monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
     eng = _bare_engine()
 
-    # 首见 → 注入回显，文件仍在 pending（AI 按协议处理）
+    # 首见 → 注入回显，文件被原子化消费移到 processed/（EVO-20260825 §5.4.1-4）
     msgs = eng._interop_inbox_messages()
     assert len(msgs) == 1 and "job-1 完成" in msgs[0].content
-    assert (inbox / "n1.json").exists()
+    assert not (inbox / "n1.json").exists(), "首见 notify 已被消费（processed/，不重复注入）"
+    assert any(
+        p.name == "n1.json" for p in (inbox / "processed").rglob("*.json")
+    )
 
     # 同指纹重复（scheduler 重复写同提醒）→ 不注入 + 自动归档（done + 移走）
     _write_msg(inbox, "n1-dup.json", "notify", "job-1 完成", ref="job-1", msg_id="n1-dup")
@@ -126,26 +139,31 @@ def test_notify_duplicate_auto_archive(tmp_path, monkeypatch):
 
 
 def test_notify_first_seen_not_archived(tmp_path, monkeypatch):
-    """首见 notify 不自动归档（可见性不变，等待 AI 按协议处理）."""
+    """首见 notify 注入回显（可见性不变），原子化消费移到 processed/."""
     inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
     inbox.mkdir(parents=True)
     _write_msg(inbox, "n2.json", "notify", "job-2 完成", ref="job-2", msg_id="n2")
     monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
     msgs = _bare_engine()._interop_inbox_messages()
-    assert len(msgs) == 1 and (inbox / "n2.json").exists()
+    assert len(msgs) == 1 and "job-2 完成" in msgs[0].content
+    assert not (inbox / "n2.json").exists(), "首见 notify 已被消费（processed/）"
 
 
 def test_coordinate_not_auto_archived(tmp_path, monkeypatch):
-    """coordinate/task 类消息不自动归档（保持原协议，AI 处理）."""
+    """coordinate/task 类消息原子化消费（EVO-20260825 §5.4.1-4）——注入一次后移走，
+    后续扫描不再重复注入（幂等），防前缀缓存持续被协调消息漂移破坏."""
     inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
     inbox.mkdir(parents=True)
     _write_msg(inbox, "t1.json", "task", "请复核风险清单", ref="", msg_id="t1")
     monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
     eng = _bare_engine()
-    for _ in range(2):  # 两次扫描都不自动归档（非 notify）
-        msgs = eng._interop_inbox_messages()
-        assert len(msgs) == 1 and "请复核风险清单" in msgs[0].content
-        assert (inbox / "t1.json").exists()
+    # 首轮: 注入 + 原子化消费（移走）
+    msgs = eng._interop_inbox_messages()
+    assert len(msgs) == 1 and "请复核风险清单" in msgs[0].content
+    assert not (inbox / "t1.json").exists(), "coordinate 应被消费移走（processed/）"
+    # 次轮: 不再注入（幂等）
+    msgs2 = eng._interop_inbox_messages()
+    assert msgs2 == []
 
 
 def test_build_messages_injects_inbox_after_memory(tmp_path, monkeypatch):
@@ -305,11 +323,13 @@ def test_build_messages_memory_tail_and_gate_note_user(tmp_path, monkeypatch):
     if sess is None:
         pytest.skip("SessionStore 无 create 接口")
     # 激活门禁干预: 修复后稳定段 = system+固定注入（恒定指纹），preflight 永不漂移——
-    # 漂移检测激活路径由 test_cache_monitor 覆盖；此处直接置位验证装配（build 内消费）
-    engine._cache_monitor._gate_note_pending = True
+    # 漂移检测激活路径由 test_cache_monitor 覆盖；此处直接置位验证装配（build 内消费）。
+    # EVO-20260825 任务1（§5.3）: per-session 分桶后 gate_note_pending 走 bucket。
+    loaded = engine.session.load(sess)
+    engine._cache_monitor._get_bucket(loaded.session_id).gate_note_pending = True
     # memory 注入（检索结果，随查询变化）→ 应尾部追加
     mem = Message(role="system", content="MEM-TAIL: 记忆", source=MessageSource.SYSTEM)
-    out = engine._build_llm_messages(engine.session.load(sess), [mem], max_chars=200000)
+    out = engine._build_llm_messages(loaded, [mem], max_chars=200000)
     roles = [m["role"] for m in out]
     # 纪律: 仅 out[0] 为 system（主体）——无任何非首位 system（守卫规则 B 无触发源）
     assert roles[0] == "system"

@@ -80,9 +80,26 @@ class BackupStore:
     """
 
     _MAX_SOURCE_ID_LEN = 128
+    _BACKUP_ID_RE = re.compile(
+        r"^(?P<source>[A-Za-z0-9][A-Za-z0-9._-]{0,127})\."
+        r"(?P<ts>\d{14})\.(?P<target>session|memory_stats)\.pending\.json$"
+    )
 
     def __init__(self, recovery_dir: str | Path) -> None:
         self._dir = Path(recovery_dir)
+
+    @classmethod
+    def is_safe_backup_id(cls, backup_id: str) -> bool:
+        """backup_id 必须是规范pending备份basename；读取/标记同样禁止路径穿越。"""
+        if not isinstance(backup_id, str) or not backup_id:
+            return False
+        if backup_id in {".", ".."} or "/" in backup_id or "\\" in backup_id or "\x00" in backup_id:
+            return False
+        match = cls._BACKUP_ID_RE.fullmatch(backup_id)
+        if match is None:
+            return False
+        source = match.group("source")
+        return cls.sanitize_source_id(source) == source
 
     @staticmethod
     def sanitize_source_id(source_id: str) -> str:
@@ -98,6 +115,8 @@ class BackupStore:
         """写入备份归档文件，返回 backup_id."""
         self._dir.mkdir(parents=True, exist_ok=True)
         backup_id = archive.backup_id
+        if not self.is_safe_backup_id(backup_id):
+            raise ValueError(f"非法 backup_id: {backup_id!r}")
         path = self._dir / backup_id
         path.write_text(
             json.dumps(archive.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
@@ -105,7 +124,9 @@ class BackupStore:
         return backup_id
 
     def get_archive(self, backup_id: str) -> BackupArchive | None:
-        """读取并解析备份归档（不存在/损坏返回 None）."""
+        """读取并解析备份归档（不存在/损坏/非法ID返回 None）."""
+        if not self.is_safe_backup_id(backup_id):
+            return None
         path = self._dir / backup_id
         if not path.exists():
             return None
@@ -136,6 +157,8 @@ class BackupStore:
 
     def mark_recovered(self, backup_id: str) -> bool:
         """标记备份为已恢复（更新文件内 recovered=True，不删除文件）."""
+        if not self.is_safe_backup_id(backup_id):
+            return False
         path = self._dir / backup_id
         if not path.exists():
             return False
@@ -146,6 +169,33 @@ class BackupStore:
             return True
         except (json.JSONDecodeError, KeyError, ValueError, OSError):
             return False
+
+    def delete_source(self, source_id: str, *, target_type: str = "session") -> int:
+        """物理删除精确source_id备份；sanitize碰撞只按文件内容原始source判定。
+
+        若同sanitize命名空间存在损坏文件，无法证明其不属于目标source，fail-closed。
+        """
+        if target_type not in {"session", "memory_stats"}:
+            raise ValueError(f"非法 target_type: {target_type!r}")
+        if not self._dir.exists():
+            return 0
+        safe_source = self.sanitize_source_id(source_id)
+        removed = 0
+        for path in self._dir.glob("*.pending.json"):
+            match = self._BACKUP_ID_RE.fullmatch(path.name)
+            if match is None or match.group("source") != safe_source:
+                continue
+            try:
+                archive = BackupArchive.from_dict(json.loads(path.read_text(encoding="utf-8")))
+            except (OSError, json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
+                raise OSError(
+                    f"无法判定恢复备份归属，拒绝物理删除: {path.name}"
+                ) from exc
+            if archive.source_id != source_id or archive.target_type != target_type:
+                continue
+            path.unlink()
+            removed += 1
+        return removed
 
     def status_summary(self) -> dict:
         """返回 {pending_count, oldest_backup_at, by_type}（如实，不伪造）."""

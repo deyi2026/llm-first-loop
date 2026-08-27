@@ -9,13 +9,20 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import threading
 from contextlib import suppress
 from pathlib import Path
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.core.run_context import current_session_id
 from llm_loop.tools.builtin.job_registry import JobLimitExceeded, JobRegistry
+from llm_loop.tools.source_recovery_contract import (
+    SHARED_SOURCE_RECOVERY_CONTRACT,
+    SourceRecoveryKind,
+    source_recovery_guidance,
+)
 
-# 方案 4: 工具输出截断（context 优化——长输出只发头尾，完整内容可经 search_archive 检索）
+# 方案 4: 工具输出截断（context 优化——长输出只发头尾，完整内容落盘后可经 read_file 取回）
 # EVO-20260814: 裁剪阈值可配置化（对齐 Harness toolResultPruner 思路）——
 # TOOL_TRIM_MAX/HEAD/TAIL 环境变量可调，未设置用默认；非法值回退默认（零回归）。
 _NOISE_WORDS = {"and", "or", "not", "the", "for", "with", "echo"}
@@ -88,14 +95,19 @@ def _truncate_output(content: str, command: str = "") -> str:
     dump_path_str = ""
     try:
         import os
-        import time
 
         out_dir = (
             Path(os.environ.get("DATA_DIR", "data")) / "audit" / "cmd_outputs"
         )
         out_dir.mkdir(parents=True, exist_ok=True)
         safe_cmd = "".join(c if c.isalnum() or c in "-_." else "_" for c in command[:40])
-        dump_path = out_dir / f"{time.strftime('%Y%m%d-%H%M%S')}_{safe_cmd[:24] or 'cmd'}.log"
+        # EVO-20260824 对齐 trim.py 先例: 内容哈希替代时间戳——确定性路径（相同输出→
+        # 同路径，前缀稳定缓存命中；不同输出→不同路径，不误读旧文件）。
+        # 原时间戳使同命令重跑路径每轮变化 → 回执字节变 → 服务端缓存全 miss。
+        import hashlib
+
+        digest = hashlib.sha256(content.encode("utf-8", errors="replace")).hexdigest()[:16]
+        dump_path = out_dir / f"{digest}_{safe_cmd[:24] or 'cmd'}.log"
         dump_path.write_text(content, encoding="utf-8")
         dump_path_str = str(dump_path)
     except Exception:  # noqa: BLE001 — 落盘失败不阻断截断
@@ -118,9 +130,11 @@ class ExecuteCommandTool:
         "失败对策: 非零退出码会如实返回并标注；破坏性命令（rm -rf 根目录等）会被安全边界硬阻断，请改用安全方案。"
         "状态契约: 每次调用是独立 shell 进程——cd/环境变量/命令历史不跨调用持久（用 workdir 参数或命令内 cd && 串联）；"
         "run_in_background 任务跨调用持久，经 job_output/job_kill 管理；"
-        "输出超 3000 字符将截断为首 1500 + 末 1500（完整原文落盘可 read_file 读取，或 search_archive 检索，"
-        "或加 full=true 参数一次取全文；阈值由 TOOL_TRIM_MAX/HEAD/TAIL 环境变量控制）；"
+        "输出超 3000 字符将截断为首 1500 + 末 1500（完整原文落盘 data/audit/cmd_outputs/，"
+        "legacy 模式可 read_file 落盘路径或 full=true 取全文；Evidence enforce 模式完整 observation 先持久化，再用 read_evidence 恢复；"
         "长任务拆多次中型调用防超时丢进度，大量中间产物落盘文件而非全靠回显。"
+        + SHARED_SOURCE_RECOVERY_CONTRACT
+        + source_recovery_guidance(SourceRecoveryKind.COMMAND_SNAPSHOT)
     )
     parameters = {
         "type": "object",
@@ -136,7 +150,7 @@ class ExecuteCommandTool:
             },
             "full": {
                 "type": "boolean",
-                "description": "按需全量（默认 false）：true=跳过 3000 字符截断，一次返回完整输出（需全文时用；内容大占用上下文，谨慎使用）",
+                "description": "legacy 模式 true=跳过工具内 3000 字符截断；Evidence enforce 模式仍受统一 projection budget，完整 observation 用 read_evidence 恢复",
             },
         },
         "required": ["command"],
@@ -145,33 +159,44 @@ class ExecuteCommandTool:
     def __init__(self, timeout_s: float | None = None) -> None:
         """工具内兜底超时（M18 AA8: 读配置值，默认 30s 兜底向后兼容；注册表另有线程级超时）."""
         self._timeout_s = 30.0 if timeout_s is None else float(timeout_s)
-        # P1-5(审计发现 #11): 当前前台子进程句柄（注册表线程级超时的 terminate 钩子用）。
-        # 由执行线程写、注册表线程读——GIL 下简单属性赋值原子，竞态窗口仅进程刚启动的
-        # 瞬间，错过则退化为工具自身超时兜底（如实标注，不静默吞掉）。
-        self._active_proc: subprocess.Popen | None = None
+        # P1-5 + Stop: 工具实例跨 session 共享，单 `_active_proc` 会被并发覆盖并
+        # 导致超时/Stop 杀错进程。按 current_session_id 保存前台进程，锁保护跨线程访问。
+        self._active_procs: dict[str, subprocess.Popen] = {}
+        self._active_proc_guard = threading.Lock()
         self._sandbox_note: str = ""  # P3-3: 本次执行沙箱说明（bwrap 启用时如实标注）
 
-    def terminate(self) -> None:
-        """注册表超时兜底钩子：终止正在执行的前台子进程（整树 SIGKILL）.
-
-        P1-5(审计发现 #11): 注册表线程级超时先于工具内超时触发时，工作线程仍阻塞在
-        communicate() 等子进程——本钩子整树击杀后 communicate 立即返回，线程可回收，
-        孤儿子进程不再残留。尽力而为：击杀失败只记残留，不抛穿。
-        """
-        proc = self._active_proc
-        if proc is None:
-            return
+    @staticmethod
+    def _terminate_proc(proc: subprocess.Popen) -> None:
         try:
             if proc.poll() is not None:
-                return  # 已结束（无需终止）
+                return
         except Exception:  # noqa: BLE001 — 句柄异常按已结束处理（防御）
             return
         with suppress(OSError):
-            # start_new_session=True → proc.pid 即进程组 id；整树 SIGKILL（超时强制
-            # 终止，比 job_kill 的 SIGTERM 更果断——本钩子只在已超时后触发）
+            # start_new_session=True → proc.pid 即进程组 id；整树 SIGKILL。
             os.killpg(proc.pid, signal.SIGKILL)
         with suppress(Exception):  # noqa: BLE001 — 组击杀失败时兜底单进程
             proc.kill()
+
+    def terminate_session(self, session_id: str) -> None:
+        """只终止指定会话当前 execute_command 子进程，绝不波及其他会话。"""
+        key = session_id or "__default__"
+        with self._active_proc_guard:
+            proc = self._active_procs.get(key)
+        if proc is not None:
+            self._terminate_proc(proc)
+
+    def terminate(self) -> None:
+        """超时兼容钩子；有会话上下文时定向终止，无上下文仅单活跃时终止。"""
+        session_id = current_session_id.get()
+        if session_id:
+            self.terminate_session(session_id)
+            return
+        with self._active_proc_guard:
+            procs = list(self._active_procs.values())
+        # 无 session 上下文且存在多个并发执行时宁可不杀，也不能猜测目标误杀。
+        if len(procs) == 1:
+            self._terminate_proc(procs[0])
 
     def execute(self, **kwargs) -> ToolResult:
         command = str(kwargs.get("command", "")).strip()
@@ -276,7 +301,9 @@ class ExecuteCommandTool:
                 start_new_session=True,
             )
             self._sandbox_note = sandbox_note
-            self._active_proc = proc
+            _proc_key = current_session_id.get() or "__default__"
+            with self._active_proc_guard:
+                self._active_procs[_proc_key] = proc
             try:
                 stdout, stderr = proc.communicate(timeout=self._timeout_s)
             except subprocess.TimeoutExpired:
@@ -300,7 +327,12 @@ class ExecuteCommandTool:
                 error_detail=str(exc),
             )
         finally:
-            self._active_proc = None
+            _proc_key = locals().get("_proc_key")
+            _proc = locals().get("proc")
+            if _proc_key is not None:
+                with self._active_proc_guard:
+                    if self._active_procs.get(_proc_key) is _proc:
+                        self._active_procs.pop(_proc_key, None)
 
         parts: list[str] = []
         if self._sandbox_note:
@@ -318,9 +350,15 @@ class ExecuteCommandTool:
         _cmd_preview = " ".join(command.split()[:8]) if command else "?"
         _out_lines = len(content.splitlines())
         content = f"[命令] {_cmd_preview} [退出码 {proc.returncode}] [输出 {_out_lines} 行]\n{content}"
+        from llm_loop.core.run_context import (
+            current_evidence_enforce_enabled,
+            current_evidence_shadow_enabled,
+        )
 
-        # EVO-20260819 full=true: 跳过本工具截断（注册表层仍保硬上限安全阀）
-        if not bool(kwargs.get("full", False)):
+        raw_observation = content if current_evidence_shadow_enabled.get() else None
+
+        # Phase3 enforce: return raw observation to Registry; projection happens after capture.
+        if not bool(kwargs.get("full", False)) and not current_evidence_enforce_enabled.get():
             content = _truncate_output(content, command)
 
         return ToolResult(
@@ -328,4 +366,5 @@ class ExecuteCommandTool:
             content=content,
             tool_call_id="",
             tool_name=self.name,
+            raw_observation=raw_observation,
         )

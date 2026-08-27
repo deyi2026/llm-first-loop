@@ -406,13 +406,11 @@ class RecordSearcher:
         if session_id:
             keyword_hits = self._tag_kind(self._archive.search(session_id, query, limit=limit))
         else:
-            archive_dir = getattr(self._archive, "_dir", None)
-            if archive_dir is None:
-                return []
             keyword_hits = []
-            for p in sorted(Path(archive_dir).glob("*.jsonl")):
-                sid = p.stem
-                keyword_hits += self._archive.search(sid, query, limit=limit - len(keyword_hits))
+            for sid in self._archive.session_ids():
+                keyword_hits += self._archive.search(
+                    sid, query, limit=limit - len(keyword_hits)
+                )
                 if len(keyword_hits) >= limit:
                     break
             keyword_hits = self._tag_kind(keyword_hits)

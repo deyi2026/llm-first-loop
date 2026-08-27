@@ -20,7 +20,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 # 与 runtime._CHARS_PER_TOKEN_EST 同源（字符/token 估算, 服务端 tokenizer 精度外皆用此）
-_CHARS_PER_TOKEN = 2
+# 2026-08-24 校准（拷问产出）: 2 → 0.6 —— 缓存边界字符估算随同源修正（688K tokens 实际 ≈41 万字符）
+_CHARS_PER_TOKEN = 0.6
 
 
 @dataclass
@@ -54,7 +55,7 @@ def describe_cache_window(
     messages: list[dict],
     cached_tokens: int,
     prompt_tokens: int,
-    chars_per_token: int = _CHARS_PER_TOKEN,
+    chars_per_token: float = _CHARS_PER_TOKEN,
 ) -> CacheWindow:
     """从提交载荷 + 服务端 cached_tokens 计算缓存窗口（纯函数, fail-open）.
 
@@ -62,7 +63,7 @@ def describe_cache_window(
         messages: 本轮实际提交给 LLM 的消息列表（dict, 含 role/content）.
         cached_tokens: 服务端上报的命中前缀 token 数（0 = 未命中）.
         prompt_tokens: 服务端上报的输入 token 总数（0 = 未提供, 窗口按无缓存处理）.
-        chars_per_token: 字符/token 估算（默认 2, 与 runtime 同源; 测试可覆盖）.
+        chars_per_token: 字符/token 估算（默认 0.6, 与 runtime 同源; 测试可覆盖）.
 
     Returns:
         CacheWindow（消息为空/参数异常 → 空窗口, 不抛异常）.

@@ -43,7 +43,7 @@ def extract_memory_blocks(answer: str) -> list[dict[str, Any]]:
                         blocks.append(data)
                         continue
                 except json.JSONDecodeError:
-                    pass  # 非法 JSON 块跳过，继续解析后续块（fail-open）
+                    data = None  # 双大括号纠错仍失败；下方统一返回可见 parse_error
             hint = "（常见错误: 若你写了 {{ }} 双大括号，请改为 { } 单大括号）"
             blocks.append({"_parse_error": f"记忆块 JSON 解析失败: {raw[:100]}{hint}"})
     return blocks

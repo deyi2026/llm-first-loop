@@ -92,3 +92,37 @@ def test_trim_config_invalid_falls_back():
         assert "ok" in r.content
     finally:
         os.environ.pop("TOOL_TRIM_MAX", None)
+
+
+def test_dump_path_content_hash_deterministic(tmp_path, monkeypatch):
+    """EVO-20260824 Q1.3: 落盘路径用内容哈希——同输出→同路径（前缀稳定），不同输出→不同路径（不误读）.
+
+    修复前 execute_command 落盘含时间戳 → 同命令重跑路径每轮变 → 回执字节变 → 缓存全 miss。
+    """
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    from llm_loop.tools.builtin.execute_command import _truncate_output
+
+    out_dir = tmp_path / "audit" / "cmd_outputs"
+    # 同内容两次 → 覆盖写同一路径 → 目录仅 1 个文件
+    _truncate_output("x" * 5000, command="printf")
+    _truncate_output("x" * 5000, command="printf")
+    files = list(out_dir.glob("*.log"))
+    assert len(files) == 1, f"同输出应同路径, 实际 {len(files)} 个文件"
+    # 不同内容 → 不同路径 → 2 个文件
+    _truncate_output("y" * 5000, command="printf")
+    files = list(out_dir.glob("*.log"))
+    assert len(files) == 2
+    # 文件名不再含时间戳模式（确定性路径）——覆盖全部已生成路径（刷新后断言，勿漏第三次落盘）
+    import re
+
+    for f in files:
+        assert not re.search(r"\d{8}-\d{6}", f.name), f"路径不应含时间戳: {f.name}"
+
+
+def test_truncation_marker_no_search_archive_hint():
+    """EVO-20260824 Q4.4: 截断标记不再提示 search_archive（落盘文件不在 ArchiveStore，提示=名不副实）."""
+    from llm_loop.tools.trim import truncation_marker
+
+    m = truncation_marker(1000, 100, 100, 300, "kw", "/tmp/xxx.log")
+    assert "search_archive" not in m  # 如实化：落盘是显式文件，read_file 路径取全文
+    assert "/tmp/xxx.log" in m

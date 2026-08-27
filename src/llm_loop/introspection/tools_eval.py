@@ -53,8 +53,10 @@ def run_self_evaluate(ctx: Any, audit: Any, args: dict) -> ToolResult:
             tool_call_id="",
             tool_name="self_evaluate",
         )
+    from llm_loop.introspection.tools_status import current_session_id
+
     try:
-        report = evaluator.evaluate(session_id=ctx.session_id, trigger=trigger)
+        report = evaluator.evaluate(session_id=current_session_id(ctx), trigger=trigger)
     except Exception as exc:  # noqa: BLE001 — 评估异常如实降级（fail-open）
         return ToolResult(
             status=ToolResultStatus.FAILURE,

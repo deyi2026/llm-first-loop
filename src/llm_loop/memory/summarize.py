@@ -94,12 +94,15 @@ class Summarizer:
 
     # ── 同步 LLM 摘要 ──
     def _llm_sync(self, text: str, *, truncated: bool) -> SummaryResult:
-        if self.llm is None:
+        # 热重载可能原子替换 self.llm；局部强引用保证本次已开始的摘要用同一个 client
+        # 跑到结束，旧 client 的 weakref 退休随后再安全关闭 transport。
+        llm = self.llm
+        if llm is None:
             return self._deterministic(
                 text, note="LLM 摘要不可用（未装配 llm_client），已降级为确定性摘要"
             )
         try:
-            resp = self.llm.chat(
+            resp = llm.chat(
                 messages=[
                     {"role": "user", "content": _SUMMARY_PROMPT.format(content=text)},
                 ],

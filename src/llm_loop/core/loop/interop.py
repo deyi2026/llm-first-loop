@@ -67,7 +67,10 @@ class _InteropMixin:
                 try:
                     d = json.loads(f.read_text(encoding="utf-8"))
                 except (OSError, ValueError):
-                    continue  # 读失败/格式坏 → 跳过（fail-open）
+                    # EVO-20260825 任务9（§5.4.1-5）: 解析失败 → 隔离到 dead/ + ERROR
+                    # （原实现静默跳过——损坏文件长期滞留堆积，阻塞消费诊断）
+                    self._quarantine_interop_bad(f)
+                    continue
                 if d.get("status") != "pending":
                     continue
                 body = str(d.get("body", "")).strip()
@@ -79,13 +82,18 @@ class _InteropMixin:
                         notify_archives.append(f)  # 重复通知 → 归档不注入（幂等）
                         continue
                     seen.add(fp)                   # 首见 → 注入并记录指纹
+                # EVO-20260825 任务9（§5.4.1-4/5）: 原子化消费——先移动文件到
+                # processed/（原子 rename，防重复注入），移动成功后注入内容；
+                # 移动失败（已被并发消费/竞态）→ 跳过（幂等，不重复注入）。
+                if not self._consume_interop_file(f):
+                    continue
                 out.append(Message(
                     role="system",
                     content=(
                         f"[外部协调·from DSH] {d.get('id', f.stem)}"
                         f"[{d.get('topic', '')}] {body}\n"
-                        f"（文件: data/interop/lfl_to_dsh/pending/{f.name}；"
-                        f"处理完按协议 status 改 done 并移入 done/）"
+                        f"（消息已由本端消费归档: data/interop/lfl_to_dsh/pending/processed/{f.name}；"
+                        f"如需再处理请让 DSH 重新下发）"
                     ),
                     source=MessageSource.SYSTEM,
                     metadata={"interop_source": f.name},  # DSH 借鉴: 注入事件溯源文件名
@@ -106,6 +114,43 @@ class _InteropMixin:
         except Exception:
             logger.warning("协调通道 inbox 扫描失败（fail-open）", exc_info=True)
             return []
+
+    def _consume_interop_file(self, f: Path) -> bool:
+        """EVO-20260825 任务9（§5.4.1-4）: 原子化消费——移动到 processed/（按日期分目录）.
+
+        Path.rename() 本地文件系统原子；已被并发消费/竞态（FileNotFoundError）→
+        返回 False（调用方跳过，幂等）；移动成功 → True（内容已读入内存，随调用方注入）。
+        """
+        try:
+            day = time.strftime("%Y%m%d")
+            target_dir = f.parent / "processed" / day
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target = target_dir / f.name
+            if target.exists():  # 防覆盖: processed 已有同名 → 时间戳后缀
+                target = target_dir / f"{f.stem}-{int(time.time())}{f.suffix}"
+            f.rename(target)
+            return True
+        except FileNotFoundError:
+            return False  # 已被消费（竞态）→ 幂等跳过
+        except OSError:
+            logger.warning("协调 pending 消费移动失败（fail-open，跳过该条）: %s", f.name)
+            return False
+
+    def _quarantine_interop_bad(self, f: Path) -> None:
+        """EVO-20260825 任务9（§5.4.1-5）: 解析失败的 pending 文件隔离到 dead/ + ERROR.
+
+        不静默跳过（原实现长期滞留堆积），隔离保留审计追溯。
+        """
+        try:
+            dead_dir = f.parent / "dead"
+            dead_dir.mkdir(parents=True, exist_ok=True)
+            target = dead_dir / f.name
+            if target.exists():
+                target = dead_dir / f"{f.stem}-{int(time.time())}{f.suffix}"
+            f.rename(target)
+            logger.error("协调 pending 解析失败，已隔离到 dead/: %s", f.name)
+        except OSError:
+            logger.warning("协调 pending 坏文件隔离失败（fail-open，保留原位）: %s", f.name)
 
     def _archive_interop_notify(self, f: Path) -> None:
         """重复 notify 自动归档: status→done + 移入 done/（EVO-20260817-c35c9178）.

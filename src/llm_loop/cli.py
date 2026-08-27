@@ -13,7 +13,7 @@ from datetime import UTC
 from pathlib import Path
 
 from llm_loop.config import load_settings
-from llm_loop.core.session import SessionStore
+from llm_loop.core.session import SessionMutationBusyError, SessionStore
 
 
 def _run_single(engine, text: str, session_id: str | None = None) -> None:
@@ -207,7 +207,12 @@ def _cmd_delete(engine, session_id: str, yes: bool) -> int:
         if answer != "y":
             print("已取消删除（输入非 y，未执行删除）")
             return 1
-    if engine.session.delete(session_id):
+    try:
+        deleted = engine.session.delete(session_id)
+    except SessionMutationBusyError as exc:
+        print(f"[会话繁忙] {exc}")
+        return 1
+    if deleted:
         print(session_deleted_message(session_id))
         return 0
     print("[删除失败] 事实: 无法删除会话。原因: 文件不存在或 IO 异常。建议: 检查后重试。")
@@ -217,7 +222,11 @@ def _cmd_delete(engine, session_id: str, yes: bool) -> int:
 def _cmd_archive(engine, session_id: str, archived: bool) -> int:
     from llm_loop.feedback.honesty import session_archived_message
 
-    ok = engine.session.archive(session_id) if archived else engine.session.unarchive(session_id)
+    try:
+        ok = engine.session.archive(session_id) if archived else engine.session.unarchive(session_id)
+    except SessionMutationBusyError as exc:
+        print(f"[会话繁忙] {exc}")
+        return 1
     if not ok:
         from llm_loop.feedback.honesty import session_not_found_message
 
@@ -667,7 +676,7 @@ def _cmd_event_verify(argv: list[str]) -> int:
     """
     from llm_loop.event_log.reconcile import reconcile
     from llm_loop.event_log.replay import replay_session
-    from llm_loop.event_log.store import EventStore
+    from llm_loop.event_log.store import EventStore, _validate_session_id
 
     parser = argparse.ArgumentParser(
         prog="llm_loop event-verify",
@@ -689,6 +698,11 @@ def _cmd_event_verify(argv: list[str]) -> int:
 
     targets: list[str] = []
     if args.session:
+        try:
+            _validate_session_id(args.session)
+        except ValueError as exc:
+            print(f"❌ 参数错误: {exc}", file=sys.stderr)
+            return 2
         targets = [args.session]
     else:
         targets = sorted(p.stem for p in Path(sessions_dir).glob("*.json")) if Path(
@@ -1099,7 +1113,12 @@ def _cmd_rename(engine, session_id: str, new_title: str) -> int:
     用法: llm_loop rename <session_id> "<新标题>"
     """
     store: SessionStore = engine.session
-    if store.rename(session_id, new_title):
+    try:
+        renamed = store.rename(session_id, new_title)
+    except SessionMutationBusyError as exc:
+        print(f"[会话繁忙] {exc}", file=sys.stderr)
+        return 2
+    if renamed:
         meta = store.get_meta(session_id)
         print(f"✅ 已重命名: {session_id[:10]} → {meta.title if meta else new_title}")
         return 0

@@ -16,11 +16,29 @@ def _m(role: str, content: str) -> dict:
 def test_full_hit_all_cached():
     """cached >= prompt（全命中）→ 全部消息在缓存区, 无新增."""
     msgs = [_m("system", "S" * 100), _m("user", "U" * 100), _m("assistant", "A" * 100)]
-    win = describe_cache_window(msgs, cached_tokens=150, prompt_tokens=150)
+    # 显式 chars_per_token=2（ASCII 载荷旧估算口径）: 150 tokens = 300 字符 = 全载荷
+    win = describe_cache_window(msgs, cached_tokens=150, prompt_tokens=150, chars_per_token=2)
     assert win.hit_ratio == 1.0
     assert len(win.new_msgs) == 0
     assert len(win.cached_msgs) == 3
     assert win.boundary_msg_index == 2
+
+
+def test_default_ratio_calibrated():
+    """默认估算已校准（2026-08-24 拷问产出）: 0.6 chars/token（≈1.67 tok/char, 实测大上下文）.
+
+    与旧值 2 的差异是**有意校准**（旧值低估 token 3.35 倍 → 守卫失效/边界失真）——
+    此测试钉住新默认, 防止误回退。
+    """
+    from llm_loop.core.cache_window import _CHARS_PER_TOKEN
+    from llm_loop.core.loop.routing import _CHARS_PER_TOKEN_EST as _R
+    from llm_loop.core.loop.runtime import _CHARS_PER_TOKEN_EST
+
+    assert _CHARS_PER_TOKEN == 0.6
+    assert _CHARS_PER_TOKEN_EST == 0.6
+    assert _R == 0.6
+    # 示例: 688K tokens（08-23 实测峰值）按 0.6 → ~41 万字符边界（旧估算 137 万, 失真）
+    assert int(688_808 * 0.6) == 413_284
 
 
 def test_zero_hit_all_new():
@@ -37,7 +55,7 @@ def test_partial_boundary_mid_message():
     """边界落在某条消息内容中间 → 该条标记 partial, 其后为新增区."""
     msgs = [_m("system", "S" * 100), _m("user", "U" * 100), _m("assistant", "A" * 100)]
     # 100+100=200 字符 ≈ 100 tokens; cached 80 tokens = 160 字符 → 边界落在 user 中间
-    win = describe_cache_window(msgs, cached_tokens=80, prompt_tokens=200)
+    win = describe_cache_window(msgs, cached_tokens=80, prompt_tokens=200, chars_per_token=2)
     assert win.boundary_msg_index == 1
     assert win.cached_msgs[-1]["partial"] is True
     assert len(win.new_msgs) == 1  # assistant 为新增
@@ -48,7 +66,7 @@ def test_boundary_at_message_edge():
     """边界恰好落在消息边界 → 该条整条缓存（非 partial）."""
     msgs = [_m("system", "S" * 100), _m("user", "U" * 100), _m("assistant", "A" * 100)]
     # 100 字符 = 50 tokens → 边界在 system/user 交界
-    win = describe_cache_window(msgs, cached_tokens=50, prompt_tokens=200)
+    win = describe_cache_window(msgs, cached_tokens=50, prompt_tokens=200, chars_per_token=2)
     assert win.boundary_msg_index == 0
     assert win.cached_msgs[-1]["partial"] is False
     assert len(win.new_msgs) == 2
@@ -87,7 +105,7 @@ def test_answer_round_long_history_cached():
         _m(("user" if i % 2 == 0 else "assistant"), "M" * 100) for i in range(10)
     ]
     # 总 2000 字符 = 1000 tokens; cached 950 tokens = 1900 字符 → 缓存至 M8, 仅 M9 新增
-    win = describe_cache_window(msgs, cached_tokens=950, prompt_tokens=1000)
+    win = describe_cache_window(msgs, cached_tokens=950, prompt_tokens=1000, chars_per_token=2)
     assert win.hit_ratio == 0.95
     assert len(win.new_msgs) == 1
     assert win.new_msgs[0]["index"] == 10  # 最后一条 user 为新增

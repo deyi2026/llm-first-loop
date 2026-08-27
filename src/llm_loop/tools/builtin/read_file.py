@@ -6,6 +6,11 @@ from pathlib import Path
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.tools.safety import link_shaped_paths
+from llm_loop.tools.source_recovery_contract import (
+    SHARED_SOURCE_RECOVERY_CONTRACT,
+    SourceRecoveryKind,
+    source_recovery_guidance,
+)
 from llm_loop.tools.trim import truncate_output
 
 
@@ -16,9 +21,11 @@ class ReadFileTool:
         "何时不用: 需要列出目录或查找文件时（应选目录/查找类工具）；URL 不是文件路径。"
         "失败对策: 文件不存在/无权限会如实返回失败原因，请核对路径后重试或换工具。"
         "状态契约: 长输出超 3000 字符将截断（首尾保留 + 完整原文落盘 data/audit/tool_outputs/，"
-        "可 read_file 落盘路径、search_archive 检索全文，或加 full=true 一次取全文——零信息丢失；"
-        "TOOL_TRIM_MAX 可调）"
-        "——超大文件建议直接用 offset/limit 分段读取。"
+        "legacy 模式可 read_file 落盘路径取全文或 full=true；Evidence enforce 模式改用稳定 EvidenceRef + read_evidence 恢复完整 observation；"
+        "TOOL_TRIM_MAX 可调）。"
+        + SHARED_SOURCE_RECOVERY_CONTRACT
+        + source_recovery_guidance(SourceRecoveryKind.PROBEABLE_FILE)
+        + "Evidence enforce 中 verified-current 且 coverage 已覆盖时可直接由 resolver 复用 Evidence；force_refresh=true 才显式要求物理重读。legacy/off 模式下超大文件仍可用 offset/limit 分段读取。"
     )
     parameters = {
         "type": "object",
@@ -26,7 +33,14 @@ class ReadFileTool:
             "path": {"type": "string", "description": "要读取的文件路径"},
             "offset": {"type": "integer", "description": "起始行号（0-based，默认 0）"},
             "limit": {"type": "integer", "description": "最多读取行数（默认全部）"},
-            "full": {"type": "boolean", "description": "按需全量（默认 false）：true=跳过 3000 字符截断，一次返回完整内容（需全文时用；内容大占用上下文，谨慎使用）"},
+            "full": {
+                "type": "boolean",
+                "description": "legacy 模式 true=跳过工具内 3000 字符截断；Evidence enforce 模式仍受统一 projection budget，完整 observation 用 read_evidence 恢复",
+            },
+            "force_refresh": {
+                "type": "boolean",
+                "description": "Evidence enforce 模式显式要求物理重新读取，即使 verified-current Evidence 已覆盖；默认 false",
+            },
         },
         "required": ["path"],
     }
@@ -79,7 +93,16 @@ class ReadFileTool:
                     tool_call_id="",
                     tool_name=self.name,
                 )
-            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+            st_before = p.stat()
+            file_text = p.read_text(encoding="utf-8", errors="replace")
+            st_after = p.stat()
+            version_token = (
+                f"stat:{st_after.st_mtime_ns}:{st_after.st_size}"
+                if (st_before.st_mtime_ns, st_before.st_size)
+                == (st_after.st_mtime_ns, st_after.st_size)
+                else None
+            )
+            lines = file_text.splitlines()
             total = len(lines)
             start = max(0, min(offset, total))
             selected = lines[start:]
@@ -91,6 +114,7 @@ class ReadFileTool:
                     content=f"[空文件] {p} 为空或无内容。",
                     tool_call_id="",
                     tool_name=self.name,
+                    evidence_source_version_token=version_token,
                 )
             numbered = "\n".join(f"{start + i + 1} | {ln}" for i, ln in enumerate(selected))
             note = f"\n[共 {total} 行，已显示 {len(selected)} 行]" if len(selected) < total else ""
@@ -99,25 +123,32 @@ class ReadFileTool:
             # 再是内容；避免截断后只有内容无元信息（原实现 numbered 开头，首行是文件内容）。
             meta = f"[read_file] {p} 共 {total} 行，显示 {start + 1}-{start + len(selected)} 行"
             content = meta + "\n" + numbered + note + _link_note
-            # 2026-08-18 对齐 DSH: 大文件读取截断（首尾+落盘可检索——尾部新增小=命中高）
-            # EVO-20260819 full=true: 跳过截断（注册表层仍保硬上限安全阀）
-            if not full:
+            from llm_loop.core.run_context import (
+                current_evidence_enforce_enabled,
+                current_evidence_shadow_enabled,
+            )
+
+            raw_observation = content if current_evidence_shadow_enabled.get() else None
+            # Phase3 enforce: Registry must see/capture the unprojected observation first.
+            # off/shadow preserve the exact legacy tool-internal trim behavior.
+            if not full and not current_evidence_enforce_enabled.get():
                 content = truncate_output(content, source=str(p))
             # EVO-20260823-12be9cac: 成功翻转 + 登记正帧（存在 + 元数据，查询时 stat 对账）
             from llm_loop.tools.path_registry import register_seen
 
-            st = p.stat()
             register_seen(
                 str(p),
-                mtime=st.st_mtime_ns,
-                size=st.st_size,
-                kind="dir" if p.is_dir() else ("file" if p.is_file() else "other"),
+                mtime=st_after.st_mtime_ns,
+                size=st_after.st_size,
+                kind="file",
             )
             return ToolResult(
                 status=ToolResultStatus.SUCCESS,
                 content=content,
                 tool_call_id="",
                 tool_name=self.name,
+                raw_observation=raw_observation,
+                evidence_source_version_token=version_token,
             )
         except PermissionError:
             return ToolResult(

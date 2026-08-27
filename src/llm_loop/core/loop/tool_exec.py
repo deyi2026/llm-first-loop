@@ -207,6 +207,10 @@ class _ToolExecMixin:
                         raise  # 正常生成器关闭语义（重新抛 GeneratorExit）
                     except Exception:  # noqa: BLE001 — fail-open
                         logger.warning("tool_round yield 失败（fail-open）", exc_info=True)
+                runner = getattr(self, "runner", None)
+                if runner is not None and runner.enabled and runner.is_cancelled(sess.session_id):
+                    self._synthesize_cancelled(sess, valid_calls, executed_ids=set())
+                    return
                 results = self.registry.execute_many(valid_calls)
                 # 对账不变量: 声明数 == 结果数（缺失 → 合成取消，防孤儿声明落盘）
                 if len(results) != len(valid_calls):

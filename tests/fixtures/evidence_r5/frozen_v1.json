@@ -1,0 +1,35 @@
+{
+  "schema": "evidence-r5-frozen-v1",
+  "date": "2026-08-26",
+  "matrix_count": 24,
+  "providers": [
+    "minimax/MiniMax-M3",
+    "deepseek/deepseek-v4-flash"
+  ],
+  "artifacts": {
+    "docs/RECOVERABILITY-R5-PRE-REGISTRATION-v1.md": "562103bcdf3b6cd7e2a1466a8a560c16e86947cc35ba32b0ca870454d36f1f62",
+    "tests/fixtures/evidence_r5/fixtures_v1.json": "2635700dd93e02688ef277d68f44a21d0f647107b0875c827fe7892be954b2a5",
+    "tests/fixtures/evidence_r5/matrix_v1.json": "d8011bd945e24e08b33a32fe4f0b2c84dce823cfcefd9f4f090ebf2d5d97c8ba",
+    "scripts/evidence/r5/fixtures.py": "dab57cda713bf09291d72bd5fc616b31ba7faccec8c4b1c11e8fec473ecd913b",
+    "scripts/evidence/r5/build_artifacts.py": "54d3f38a360c3a8a885619a4671bad12306614de43ec73e4c629c7803a63d67e",
+    "scripts/evidence/r5/runner.py": "52c7d71b716381d74b7005b39a965d1d0c49c27f4d045e14fb2a9c87b1088411",
+    "scripts/evidence/r5/score.py": "fe42d11f6c01790bee1088d3c1f19d8ec20fb87d16d00c501f9333405bd7e3d1",
+    "scripts/evidence/r4/runner.py": "dc0bf273adc72d365dd050762bcb70db3076f6e5b3dd076d3f4270de8352c6e5",
+    "src/llm_loop/tools/evidence_tools.py": "a4407ab27861fb4d32c1ed8a64ef55cdb053c6efdaf729bee371f9bf57293487",
+    "src/llm_loop/memory/evidence.py": "706120777747fad9a23ea428b330bb77fe4f575c12374015f1ad6a7579f6c9f1",
+    "src/llm_loop/tools/evidence_enforce.py": "15092cadfc2bce9e6c340d249d2c6a3d68b0fbc4b899b64f9656fb39f6dcb6ff",
+    "src/llm_loop/tools/registry.py": "9b0e6e110664dda70945666338159e2df55294643d1068514bb4a6230bd9c9df",
+    "src/llm_loop/tools/builtin/read_file.py": "f9103d28ae1815b8eee2af0826b9cd74c80defb2c6e8ae6804510455ef1c5c13",
+    "data/providers.json": "a5e6221a344d08d37c0135931762e95e9371c4073d9dd1cd33903e3599a4a874",
+    "docs/RECOVERABILITY-R3-CONSUMPTION-RESULT-v1.1.md": "d55e813e812026afd02470f12ca1656154a73320056edf705f5478eefc0877a7",
+    "docs/RECOVERABILITY-R4-RESULT-v1.md": "e9ecd481e5e8aa4b44b880d15936140b6b7030001ce73c4650fb495ecf346150"
+  },
+  "rules": {
+    "preacquire_before_provider_request": true,
+    "raw_preacquire_result_not_in_conversation": true,
+    "single_runner_lock_required": true,
+    "unresolved_started_row_auto_replay_forbidden": true,
+    "scorer_frozen_before_request_1": true,
+    "production_r3_unchanged": true
+  }
+}

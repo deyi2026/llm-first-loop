@@ -29,6 +29,15 @@ _MAX_OUTPUT_CHARS = 30_000
 _MAX_EVENTS_DEFAULT = 40  # 默认提取事件上限（防超大日志淹没回执）
 
 
+def _validate_session_id(session_id: str) -> str:
+    """DSH session id 必须是单个目录名；空值由调用方保留为“取最新”。"""
+    if not session_id:
+        return ""
+    if session_id in {".", ".."} or "/" in session_id or "\\" in session_id or "\x00" in session_id:
+        raise ValueError("非法 session_id: 不得包含路径分隔符、NUL 或目录跳转")
+    return session_id
+
+
 class DshSessionReadTool:
     name = "dsh_session_read"
     description = (
@@ -68,6 +77,15 @@ class DshSessionReadTool:
 
             workspace = workspace_base()
         session_id = str(kwargs.get("session_id", "") or "").strip()
+        try:
+            session_id = _validate_session_id(session_id)
+        except ValueError as exc:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[状态: failure] {exc}",
+                tool_call_id="",
+                tool_name=self.name,
+            )
         keyword = str(kwargs.get("keyword", "") or "").strip()
         limit = int(kwargs.get("limit") or _MAX_EVENTS_DEFAULT)
         limit = max(1, min(limit, 200))
@@ -130,7 +148,13 @@ class DshSessionReadTool:
     def _pick_session_dir(base: Path, session_id: str) -> Path | None:
         """选 session 目录：指定 id 精确匹配；否则取最新（按 mtime）."""
         if session_id:
-            cand = base / session_id
+            session_id = _validate_session_id(session_id)
+            root = base.resolve()
+            cand = (root / session_id).resolve()
+            try:
+                cand.relative_to(root)
+            except ValueError:
+                return None
             if cand.is_dir():
                 return cand
             return None
@@ -218,7 +242,9 @@ class DshSessionReadTool:
         if not parts:
             parts.append("（无可提取事件，或关键词无匹配）")
         joined = "\n".join(parts)
-        if len(joined) > _MAX_OUTPUT_CHARS:
+        from llm_loop.core.run_context import current_evidence_enforce_enabled
+
+        if len(joined) > _MAX_OUTPUT_CHARS and not current_evidence_enforce_enabled.get():
             joined = joined[:_MAX_OUTPUT_CHARS] + "\n…[摘要截断]…"
         # 上限保护：只保留前 limit 段
         kept = joined.split("\n")

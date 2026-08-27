@@ -22,7 +22,9 @@ def _probe(expr: str) -> str:
     """在子进程内求值 expr，返回 'True/False' 序列."""
     r = _run(f'python3 -c "import os; print({expr})"')
     assert r.status == ToolResultStatus.SUCCESS, r.content
-    return r.content.strip()
+    # execute_command 现在会前置 [命令]/退出码/输出行数元信息；安全断言只取
+    # 子进程实际 stdout 最后一行，不能因为可观测性前缀把已生效的环境净化误判失败。
+    return r.content.strip().splitlines()[-1]
 
 
 def _set_env(key: str, value: str):

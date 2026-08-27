@@ -115,8 +115,20 @@ def fork_session(
         )
         effective_fp = snapped_fp
 
-    # 生成新 session_id
-    new_id = str(uuid.uuid4())
+    # 生成并先声明全局唯一session_id；Event/Archive以sid为全局键，必须在写child事件前claim。
+    from llm_loop.core.session import SessionIdConflictError
+
+    for _attempt in range(8):
+        new_id = str(uuid.uuid4())
+        try:
+            claim = getattr(session_store, "claim_session_id", None)
+            if callable(claim):
+                claim(new_id)
+            break
+        except SessionIdConflictError:
+            continue
+    else:
+        return _report(error="无法生成未被占用的全局唯一 session_id")
 
     # 截断消息前缀 + 分支摘要
     prefix = source_session.messages[:effective_fp]

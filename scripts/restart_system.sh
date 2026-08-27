@@ -117,30 +117,7 @@ _load_llm() {
   fi
 }
 
-# ── 进程归属过滤（2026-08-23: 主区/镜像同名服务共存，防误杀）──
-# 主区与镜像的 feishu/web 命令行均含 `llm_loop.<svc>`，pgrep 全匹配无法区分，
-# 重启一侧会把另一侧一起停掉（实证 2026-08-23: restart_system.sh stop feishu 误杀镜像）。
-# 正确做法: 按进程 cwd 归属判断（只操作 cwd == PROJECT_DIR 的进程），与镜像脚本
-# （restart_mirror.sh 按端口/绝对路径锚定）互补。
-_belongs_to_project() {
-  local pid="$1"
-  local cwd
-  cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | grep '^n' | cut -c2-)"
-  [[ "$cwd" == "$PROJECT_DIR" ]]
-}
-
-# 返回本项目内匹配 pgrep 模式的 pid（每行一个，仅保留 cwd 归属本项目的进程）
-_project_pgrep() {
-  local pattern="$1"
-  local pid
-  for pid in $(pgrep -f "$pattern" 2>/dev/null || true); do
-    if _belongs_to_project "$pid"; then
-      printf '%s\n' "$pid"
-    fi
-  done
-}
-
-# ── 进程定位（PID 文件 + 项目内 pgrep 双校验，防误杀）──
+# ── 进程定位（PID 文件 + pgrep 双校验，防误杀）──
 _service_pid() {
   local svc="$1"
   local pid_file="$DATA_DIR/${svc}.pid"
@@ -152,37 +129,38 @@ _service_pid() {
       return 0
     fi
   fi
-  pid="$(_project_pgrep "llm_loop\\.${svc}" | head -1 || true)"
+  # 2026-08-22 镜像修复：pgrep 加工作区路径精确匹配，防误匹配主区进程
+  # （主/镜像 .venv 同源符号链接，命令行相同；不加前缀会 stop/restart 误杀主区桥）
+  pid="$(pgrep -f "$PROJECT_DIR/.venv/bin/python -m llm_loop\\.${svc}" | head -1 || true)"
   printf '%s' "$pid"
 }
 
-# ── 优雅停止单个服务（停本项目内匹配进程，防多进程残留；不误杀镜像）──
+# ── 优雅停止单个服务（停所有匹配进程，防多进程残留）──
 _stop_service() {
   local svc="$1"
-  local pattern="llm_loop\\.${svc}"
+  # MIRROR 隔离：仅匹配当前 PROJECT_DIR 启动的进程，禁止泛匹配同名模块误停主区。
+  # 与 _service_pid 的项目限定口径保持一致。
+  local pattern="$PROJECT_DIR/.venv/bin/python -m llm_loop\\.${svc}"
   local pids
-  pids="$(_project_pgrep "$pattern" || true)"
+  pids="$(pgrep -f "$pattern" || true)"
   if [[ -z "$pids" ]]; then
-    _log "[${svc}] 本项目内未运行，跳过停止"
+    _log "[${svc}] 未运行，跳过停止"
     rm -f "$DATA_DIR/${svc}.pid"
     return 0
   fi
   _log "[${svc}] 停止进程 $(echo "$pids" | tr '\n' ' ')（SIGTERM，等待 ${GRACE_S}s）..."
-  # P2: 停本项目内所有匹配进程（防多进程残留），逐个 SIGTERM
+  # P2: 停所有匹配进程（防多进程残留），逐个 SIGTERM
   for pid in $pids; do
     kill "$pid" 2>/dev/null || true
   done
   local waited=0
-  while _project_pgrep "$pattern" >/dev/null 2>&1 && (( waited < GRACE_S )); do
+  while pgrep -f "$pattern" >/dev/null 2>&1 && (( waited < GRACE_S )); do
     sleep 1
     (( waited += 1 ))
   done
-  if _project_pgrep "$pattern" >/dev/null 2>&1; then
-    _log "[${svc}] 超时未退出，SIGKILL 强杀（仅本项目进程）"
-    local pid2
-    for pid2 in $(_project_pgrep "$pattern" || true); do
-      kill -9 "$pid2" 2>/dev/null || true
-    done
+  if pgrep -f "$pattern" >/dev/null 2>&1; then
+    _log "[${svc}] 超时未退出，SIGKILL 强杀"
+    pkill -9 -f "$pattern" 2>/dev/null || true
     sleep 1
   else
     _log "[${svc}] 已优雅退出（${waited}s）"
@@ -244,6 +222,9 @@ _start_service() {
   fi
   _load_credentials
   _load_llm
+  # MIRROR 协议 §3（2026-08-22）：共享 venv 的 editable 安装指向主区 src，
+  # 不带 PYTHONPATH 会加载主区代码 → 镜像 src 优先（隔离要求，主区零接触）
+  export PYTHONPATH="${PROJECT_DIR}/src${PYTHONPATH:+:$PYTHONPATH}"
 
   # DSH 编排（2026-08-16）：DSH_HOME 重定向到项目内 data/dsh-home（服务进程对 data/ 有写
   # 权限）——规避 macOS TCC/沙箱对 ~/.dsh 的写入授权限制（dsh_task 真实调用依赖该目录可写；
@@ -330,26 +311,65 @@ SERVICES="web feishu cli"
 WEB_BEFORE_FEISHU="web feishu"   # 启动序：web 先（依赖 LLM/端口）；cli 交互式不参与常驻启动
 FEISHU_BEFORE_WEB="feishu web"   # 停止序：feishu 先（桥先断，web 后）
 
-# ── 重启前检测（2026-08-16）：长任务处理中 → 警告确认，防重启打断导致无反馈 ──
-_restart_precheck() {
-  local mid
-  mid="$(python3 -c "
+# ── 重启前检测（2026-08-16；2026-08-26 优雅性批1/批2 优化）──
+# 批1: ① FORCE=1 非交互出口（自动化/AI 代执行场景：read 遇 EOF 永远取消的死锁出口）
+# 批2: ② RESTART_WAIT_IDLE=1 → 等任务跑完再重启（poll 心跳至空闲，超时回退确认流程）
+#       ③ 同时检测 queue_depth（排队消息同样会被打断，不只 processing_msg_id）
+_heartbeat_busy() {
+  # 心跳忙状态（空闲输出空串；忙输出 "processing:消息ID queue:N"）
+  python3 -c "
 import json
-p = '$DATA_DIR/feishu_heartbeat.json'
 try:
-    d = json.load(open(p))
-    print(d.get('processing_msg_id', '') or '')
+    d = json.load(open('$DATA_DIR/feishu_heartbeat.json'))
 except Exception:
-    print('')
-" 2>/dev/null)"
-  if [[ -n "$mid" ]]; then
-    echo "[restart_system] ⚠️ 飞书桥正在处理消息 ${mid:0:12}（长任务进行中）——重启会中断该任务且无回复。"
-    echo -n "确认继续重启? (y/N) "
-    read -r ans
-    if [[ ! "$ans" =~ ^[yY]$ ]]; then
-      echo "[restart_system] 已取消重启（保护进行中的长任务）。"
-      exit 1
-    fi
+    raise SystemExit(0)
+mid = (d.get('processing_msg_id') or '').strip()
+q = d.get('queue_depth') or 0
+try:
+    q = int(q)
+except Exception:
+    q = 0
+parts = []
+if mid:
+    parts.append('processing:' + mid[:12])
+if q > 0:
+    parts.append('queue:%d' % q)
+if parts:
+    print(' '.join(parts))
+" 2>/dev/null
+}
+_restart_precheck() {
+  local waited=0 busy
+  if [[ "${RESTART_WAIT_IDLE:-0}" == "1" ]]; then
+    local idle_timeout="${RESTART_WAIT_IDLE_TIMEOUT_S:-300}"
+    local idle_poll="${RESTART_WAIT_IDLE_POLL_S:-5}"
+    while :; do
+      busy="$(_heartbeat_busy)"
+      if [[ -z "$busy" ]]; then
+        (( waited > 0 )) && _log "飞书桥已空闲（等待 ${waited}s），继续重启"
+        return 0
+      fi
+      if (( waited >= idle_timeout )); then
+        _log "等待空闲超时（${waited}s ≥ ${idle_timeout}s），回退确认流程"
+        break
+      fi
+      _log "飞书桥忙（${busy}），等待任务完成（${waited}/${idle_timeout}s）..."
+      sleep "$idle_poll"
+      (( waited += idle_poll ))
+    done
+  fi
+  busy="$(_heartbeat_busy)"
+  [[ -z "$busy" ]] && return 0
+  _log "⚠️ 飞书桥忙（${busy}）——重启会中断该任务且无回复。"
+  if [[ "${FORCE:-0}" == "1" ]]; then
+    _log "FORCE=1：跳过交互确认，强制继续（自动化模式，责任在调用方）"
+    return 0
+  fi
+  echo -n "确认继续重启? (y/N) "
+  read -r ans
+  if [[ ! "$ans" =~ ^[yY]$ ]]; then
+    _log "已取消重启（保护进行中的长任务）。"
+    exit 1
   fi
 }
 
@@ -377,18 +397,35 @@ _start_all() {
   # 2026-08-16: 重启后一键验证（对齐孤儿进程排查经验）——每服务 pgrep 应恰好 1 行、
   # web 端口监听应单一 PID；多实例残留如实告警（fail-open 不阻断，防旧连接抢消息）
   _verify_single_instance
+  _print_code_baseline   # 批2⑤: 全局 restart 路径的代码基线回执（单服务在各自分支调用）
+}
+
+# ── 重启后代码基线回执（批2⑤：让每次重启自带"新代码是否生效"信号）──
+# 背景 EVO-20260826-3b2bd663：进程代码过期 30h 未被发现——重启动机常是加载新代码，
+# 但脚本从不打印版本基线。现在 stop 前记录 HEAD，start 后对比并如实报告。
+_print_code_baseline() {
+  local head_now dirty_n tag
+  head_now="$(git -C "$PROJECT_DIR" rev-parse --short HEAD 2>/dev/null || echo '?')"
+  dirty_n="$(git -C "$PROJECT_DIR" status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
+  tag="未变"
+  if [[ -n "${_BASELINE_HEAD_BEFORE:-}" && "$head_now" != "$_BASELINE_HEAD_BEFORE" ]]; then
+    tag="已更新"
+  fi
+  _log "代码基线: ${head_now}（重启前 ${_BASELINE_HEAD_BEFORE:-?}，${tag}；工作区 ${dirty_n} 处未提交）"
 }
 
 # ── 重启后验证（防多实例残留：健康检查只看主 PID，残留进程会抢端口/抢飞书消息）──
 _verify_single_instance() {
   local svc pids count port_pids
   for svc in $SERVICES; do
-    pids="$(_project_pgrep "llm_loop\\.${svc}" || true)"
+    # 2026-08-26 批1修复: 与 _service_pid/_stop_service 同口径加 PROJECT_DIR 前缀——
+    # 原裸匹配会把主区同服务进程误报为"残留"，且建议的 pkill 命令会误杀主区桥
+    pids="$(pgrep -f "$PROJECT_DIR/.venv/bin/python -m llm_loop\\.${svc}" || true)"
     count="$(printf '%s\n' "$pids" | grep -c . || true)"
     if [[ -n "$pids" ]] && (( count > 1 )); then
-      _log "[${svc}] ⚠️ 检测到 ${count} 个实例（残留）: $(echo "$pids" | tr '\n' ' ')。建议手动清理本项目内实例后重跑 restart"
+      _log "[${svc}] ⚠️ 检测到 ${count} 个实例（残留）: $(echo "$pids" | tr '\n' ' ')。建议手动清理: pkill -f "$PROJECT_DIR/.venv/bin/python -m llm_loop\\\\.${svc}" 后重跑 restart"
     else
-      _log "[${svc}] 本项目内实例数 ${count} ✓"
+      _log "[${svc}] 实例数 ${count} ✓"
     fi
   done
   # web 端口单一监听校验
@@ -418,14 +455,20 @@ case "${1:-}" in
     case "$ACTION" in
       start)   _start_service "$1" ;;
       stop)    _stop_service "$1" ;;
-      restart) touch "$MAINTENANCE_LOCK"; _MAINTENANCE_LOCK_ACTIVE=1; _stop_service "$1"; _start_service "$1"; rm -f "$MAINTENANCE_LOCK"; _MAINTENANCE_LOCK_ACTIVE=0 ;;
+      restart) if [[ "$1" == "feishu" ]]; then _restart_precheck; fi   # 批1: 单服务 restart 补长任务保护（原仅全局 restart 有）
+               _BASELINE_HEAD_BEFORE="$(git -C "$PROJECT_DIR" rev-parse --short HEAD 2>/dev/null || echo '?')"
+               touch "$MAINTENANCE_LOCK"; _MAINTENANCE_LOCK_ACTIVE=1; _stop_service "$1"; _start_service "$1"
+               rm -f "$MAINTENANCE_LOCK"; _MAINTENANCE_LOCK_ACTIVE=0
+               _print_code_baseline ;;
       status)  _status_service "$1" ;;
       *)       _die "未知命令: ${ACTION}（支持 start/stop/restart/status）" ;;
     esac
     ;;
   start)   _start_all ;;
   stop)    _stop_all; _MAINTENANCE_LOCK_ACTIVE=0 ;;  # stop 故意保留 lock 防 guard 拉起
-  restart) _restart_precheck; _stop_all; _start_all ;;  # precheck: 长任务处理中警告确认
+  restart) _restart_precheck
+           _BASELINE_HEAD_BEFORE="$(git -C "$PROJECT_DIR" rev-parse --short HEAD 2>/dev/null || echo '?')"
+           _stop_all; _start_all ;;  # precheck: 长任务等待/确认（批1+批2；_print_code_baseline 在 _start_all 末尾）
   status)  _status_all ;;
   *)       _die "用法: $0 [web|feishu] [start|stop|restart|status] 或 $0 [start|stop|restart|status]" ;;
 esac

@@ -15,13 +15,13 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from llm_loop.core.loop.engine import LoopEngine
 
 from llm_loop.core.message import Message, MessageSource
-from llm_loop.llm.client import LLMResponse
+from llm_loop.llm.client import GuardRequestContext, LLMClient, LLMResponse
 from llm_loop.llm.errors import (
     LLMError,
     LLMHTTPError,
@@ -117,6 +117,16 @@ class _FallbackMixin:
             return exc.status_code == 429 or exc.status_code >= 500
         return False
 
+    @staticmethod
+    def _merge_fallback_metadata(
+        metadata: dict[str, Any], context_limit: Any, chars_per_token: float
+    ) -> tuple[Any, float]:
+        """把成功fallback的局部snapshot元数据合并回engine本轮响应观测。"""
+        return (
+            metadata.get("context_limit", context_limit),
+            float(metadata.get("chars_per_token", chars_per_token)),
+        )
+
     def _try_fallback_chain(
         self: LoopEngine,
         *,
@@ -125,6 +135,8 @@ class _FallbackMixin:
         timeout_s: float | None,
         primary_error: LLMError,
         session_id: str,
+        run_round: int | None = None,
+        metadata_out: dict[str, Any] | None = None,
     ) -> tuple[LLMResponse | None, list[Message], str | None]:
         """沿 fallback 链尝试下一个候选（design §5.4 行为规则表 + 原则 2 如实反馈）.
 
@@ -150,7 +162,19 @@ class _FallbackMixin:
             # 池未装配（如某些测试路径）→ 不启用降级, 调用方如实反馈
             return None, [], None
 
-        candidates = self.llm_pool.fallback_candidates()
+        # 真实ModelClientPool支持不可变snapshot：候选筛选、client构造和GuardRequestContext
+        # 必须绑定同一表，避免refresh夹在fallback链中造成client=A而budget/context=B。
+        # 最小duck pool（测试/外部注入）没有这些API时完整保留旧接口。
+        snapshot_fn = getattr(self.llm_pool, "registry_snapshot", None)
+        resolved_fn = getattr(self.llm_pool, "get_resolved_client", None)
+        fallback_registry: Any = None
+        if callable(snapshot_fn) and callable(resolved_fn):
+            fallback_registry = snapshot_fn()
+
+        if fallback_registry is not None:
+            candidates = self.llm_pool.fallback_candidates(registry=fallback_registry)
+        else:
+            candidates = self.llm_pool.fallback_candidates()
         if not candidates:
             # MODEL_FALLBACKS 未配置/全非法 → 不启用降级（零回归路径）
             return None, [], None
@@ -161,14 +185,54 @@ class _FallbackMixin:
         candidate_failures: list[tuple[str, str, str]] = []  # (model_ref, error_type, error_msg)
         for ref in candidates:
             try:
-                client = self.llm_pool.get_client(ref)
+                if fallback_registry is not None and callable(resolved_fn):
+                    client, provider_id, model_id = resolved_fn(
+                        ref, registry=fallback_registry
+                    )
+                else:
+                    # duck pool兼容：fallback_candidates公开契约仍是规范化provider/model ref。
+                    # 模型id本身允许包含"/"，因此只切第一段provider。
+                    provider_id, sep, model_id = ref.partition("/")
+                    if not sep or not provider_id or not model_id:
+                        raise ValueError(f"非法 fallback 模型引用: {ref!r}")
+                    client = self.llm_pool.get_client(ref)
             except ValueError as exc:
-                # resolve / client_params 失败（不应当发生, pool.fallback_candidates 已预检过）
+                # 候选格式 / client 构造失败：记录后继续下一个候选（fail-soft）。
                 candidate_failures.append((ref, type(exc).__name__, str(exc)[:200]))
                 continue
 
             try:
-                resp = client.chat(messages=messages, tools=tools, timeout_s=timeout_s)
+                chat_kwargs: dict = {
+                    "messages": messages,
+                    "tools": tools,
+                    "timeout_s": timeout_s,
+                    "model": model_id,
+                }
+                if isinstance(client, LLMClient):
+                    fallback_label = f"{provider_id}/{model_id}"
+                    fallback_budget = (
+                        self._effective_history_budget(
+                            fallback_label, registry_snapshot=fallback_registry
+                        )
+                        if fallback_registry is not None
+                        else self._effective_history_budget(fallback_label)
+                    )
+                    chat_kwargs["guard_context"] = GuardRequestContext(
+                        session_id=session_id,
+                        system_text=(
+                            messages[0].get("content", "")
+                            if messages and messages[0].get("role") == "system"
+                            else None
+                        ),
+                        compress_count_this_run=getattr(
+                            self, "_compress_count_this_run", 0
+                        ),
+                        history_budget=int(fallback_budget or 0),
+                        run_round=run_round,
+                        provider=provider_id,
+                        model=model_id,
+                    )
+                resp = client.chat(**chat_kwargs)
             except LLMError as exc:
                 # 该候选也失败, 继续尝试下一个; 记录 (model_ref, error_type, error_msg)
                 candidate_failures.append((ref, type(exc).__name__, str(exc)[:200]))
@@ -176,6 +240,18 @@ class _FallbackMixin:
 
             # ── 降级成功 ──
             to_model = ref
+            if metadata_out is not None:
+                label = f"{provider_id}/{model_id}"
+                if fallback_registry is not None:
+                    metadata_out["context_limit"] = self._current_context_limit(
+                        label, registry_snapshot=fallback_registry
+                    )
+                    metadata_out["chars_per_token"] = self._provider_chars_per_token(
+                        label, registry_snapshot=fallback_registry
+                    )
+                else:
+                    metadata_out["context_limit"] = self._current_context_limit(label)
+                    metadata_out["chars_per_token"] = self._provider_chars_per_token(label)
             reason = primary_reason
             self._record_action(
                 "action.llm_decide",

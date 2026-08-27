@@ -205,7 +205,9 @@ def _dry_injection_selfcheck() -> None:
         {"inject_failures": 2, "inject_exception": True},
     )
 
-    result = run_status(ctx=None, status_provider=status, args={})
+    result = run_status(
+        ctx=None, status_provider=status, args={"dimensions": ["tool_history", "exception_log"]}
+    )
     if result.status != ToolResultStatus.SUCCESS:
         raise RuntimeError(
             f"dry 注入自检失败: architecture_status 快照生产失败（status={result.status.value}）"

@@ -107,11 +107,20 @@ export async function fetchHistory(
   limit: number,
   offset: number
 ): Promise<HistoryResponse> {
-  const resp = await fetch(
-    `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages?limit=${limit}&offset=${offset}`
-  );
-  if (!resp.ok) return { messages: [], has_more: false };
-  return (await resp.json()) as HistoryResponse;
+  const empty: HistoryResponse = { messages: [], has_more: false };
+  try {
+    const resp = await fetch(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages?limit=${limit}&offset=${offset}`
+    );
+    if (!resp.ok) return empty;
+    const data = (await resp.json().catch(() => ({}))) as Partial<HistoryResponse>;
+    return {
+      messages: Array.isArray(data.messages) ? data.messages : [],
+      has_more: data.has_more === true,
+    };
+  } catch {
+    return empty;
+  }
 }
 
 export interface ModelCatalog {
@@ -121,13 +130,17 @@ export interface ModelCatalog {
 
 /** /api/v1/models 真实契约：{models: string[], current: string|null}（模型 id 为字符串） */
 export async function fetchModels(): Promise<ModelCatalog> {
-  const resp = await fetch("/api/v1/models");
-  if (!resp.ok) return { models: [], current: null };
-  const data = (await resp.json()) as { models?: unknown; current?: unknown };
-  return {
-    models: Array.isArray(data.models) ? data.models.map(String).filter(Boolean) : [],
-    current: typeof data.current === "string" ? data.current : null,
-  };
+  try {
+    const resp = await fetch("/api/v1/models");
+    if (!resp.ok) return { models: [], current: null };
+    const data = (await resp.json().catch(() => ({}))) as { models?: unknown; current?: unknown };
+    return {
+      models: Array.isArray(data.models) ? data.models.map(String).filter(Boolean) : [],
+      current: typeof data.current === "string" ? data.current : null,
+    };
+  } catch {
+    return { models: [], current: null };
+  }
 }
 
 export async function uploadFileBase64(

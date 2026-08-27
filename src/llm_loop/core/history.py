@@ -18,12 +18,84 @@ import os
 from collections.abc import Callable
 from typing import Any
 
-from llm_loop.core.message import Message, MessageSource
+from llm_loop.core.message import Message, MessageSource, ToolCall
+
+
+def _wire_size(m: Message) -> int:
+    """提交视图口径体积（与守卫估算 routing._estimate_request_chars 对齐）.
+
+    content + reasoning_content + tool_calls 参数。history 压缩预算原只看
+    content——reasoning_content 可占 40%+（实测 fb8f8987: 287K/598K 全字段），
+    压缩器看不见 → 恒不触发 → emergency_compact 空转（2026-08-26 glm 超限
+    死循环根因：守卫按全字段 907K tokens 拦截、压缩按 content 159K<255K 判
+    不超）。预算判定一律改用本口径；纯展示/审计统计不变。
+    """
+    n = len(m.content or "")
+    if m.role == "assistant":
+        n += len(m.reasoning_content or "")
+        for tc in m.tool_calls or []:
+            # ToolCall dataclass（扁平 name/arguments）或 OpenAI wire dict（嵌套 function）兼容
+            if isinstance(tc, ToolCall):
+                n += len(str(tc.arguments or "")) + len(str(tc.name or ""))
+            else:
+                fn = (tc or {}).get("function") or {}
+                n += len(str(fn.get("arguments") or "")) + len(str(fn.get("name") or ""))
+    return n
+
+
+def _dict_wire_size(d: dict) -> int:
+    """to_llm_dict 后的提交口径体积（out 列表元素用）."""
+    n = len(str(d.get("content") or ""))
+    n += len(str(d.get("reasoning_content") or ""))
+    for tc in d.get("tool_calls") or []:
+        fn = (tc or {}).get("function") or {}
+        n += len(str(fn.get("arguments") or "")) + len(str(fn.get("name") or ""))
+    return n
 
 # EVO-20260816-380f1c2e: 压缩目标比例（裁到预算×此值，留缓冲降低断点频率）。
 # 实证: 前缀缓存下压缩轮必断点；裁到 100% → 每轮压缩 → 永久断点（命中率 ~1%）；
 # 裁到 60% → 留 40% 增长空间 → 稳定期纯追加高命中（97%+）。可经环境变量覆盖（缓存纪律: 配置低频改）。
 _COMPRESS_TARGET_RATIO = float(os.environ.get("COMPRESS_TARGET_RATIO", "0.6"))
+
+_CACHE_COMPACTED_FOR_META = "cache_compacted_for"
+
+# 任务7（§5.7）: progressive_fold 要求 cache_archive_provider（provider 级折叠标记）
+# 缺失时的降级 head 预算——降级后 head_keep_chars 原值 ≤0 时使用（env 可配，默认 2000）。
+_DEFAULT_HEAD_KEEP_CHARS_ON_DEGRADE = int(
+    os.environ.get("DEFAULT_HEAD_KEEP_CHARS_ON_DEGRADE", "2000")
+)
+
+
+def is_cache_compacted_for(message: Message, provider_id: str) -> bool:
+    """Return whether a message is hidden from one provider's prompt view."""
+    if not provider_id:
+        return False
+    raw = (message.metadata or {}).get(_CACHE_COMPACTED_FOR_META)
+    if isinstance(raw, str):
+        return raw == provider_id
+    if isinstance(raw, (list, tuple, set)):
+        return provider_id in raw
+    return False
+
+
+def _mark_cache_compacted_for(message: Message, provider_id: str) -> bool:
+    """Persist a provider-scoped prompt-view compaction marker."""
+    if not provider_id:
+        return False
+    meta = message.metadata if isinstance(message.metadata, dict) else {}
+    raw = meta.get(_CACHE_COMPACTED_FOR_META)
+    if isinstance(raw, str):
+        providers = [raw]
+    elif isinstance(raw, (list, tuple, set)):
+        providers = [str(item) for item in raw if item]
+    else:
+        providers = []
+    if provider_id in providers:
+        return False
+    providers.append(provider_id)
+    meta[_CACHE_COMPACTED_FOR_META] = providers
+    message.metadata = meta
+    return True
 
 # EVO-20260818 cache_window_converge（spec §5.1.1-1/2/4/5）: 窗口收敛上限守卫。
 # - value=None → 按模型窗口自适应 min(200000, max(100000, int(window*2*0.08)))（×2 字符/token 估算，
@@ -246,6 +318,7 @@ def _layer_trim(
     age: int,
     session_id: str,
     archive_sink: ArchiveSink | None,
+    require_archive_success: bool = False,
 ) -> list[Message]:
     """历史分层降级（EVO-20260811-7baa2737）: 旧的长 tool 消息降级为首尾摘要.
 
@@ -276,6 +349,8 @@ def _layer_trim(
                 logging.getLogger(__name__).warning(
                     "分层降级原文归档失败（fail-open，标注如实声明）", exc_info=True
                 )
+                if require_archive_success:
+                    raise
         # 审查中危修复: sink 失败时标注如实声明"未能归档"——原实现失败仍写
         # "原文已另存"（信息零丢失承诺失实，AI 检索必空手而归）。
         if archived:
@@ -429,7 +504,7 @@ def build_history_messages(
     layer_tool_trim: bool = False,  # EVO-20260811-7baa2737: 历史分层降级（默认关=零回归，loop 装配时按 settings 启用）
     tool_trim_threshold: int = 8000,  # tool 消息 content 超此长度才降级（默认 8000，EVO-20260815 调大减少折叠触发）
     tool_trim_age: int = 0,  # R3: 0=自适应（按占用率自动调）；>0=固定值禁用自适应
-    reasoning_tail: int = 2,  # M66: 历史中仅保留最近 N 轮 assistant 思考链（0=全部保留）
+    reasoning_tail: int = 0,  # M66: 历史中仅保留最近 N 轮思考链（默认 0=全保留，T-P0-1-1 capability-first）
     skip_injected_system: bool = False,  # P1-7: 跳过推送式 system 注入（metadata.injected_system）
     # —— 仅落会话不进提交, system 前缀保持静态 → 引擎前缀缓存命中; 功能性注入不受影响
     history_anchor: int = 0,  # P1-10: 历史窗口锚点（相对 session_messages 的索引; 0=无锚现有行为）
@@ -440,6 +515,9 @@ def build_history_messages(
     head_keep_chars: int = 0,  # EVO-20260817-9d3e1f2c: 缓存友好压缩——保留锚点头部字符预算
     # （0=关闭/现有行为零回归）。>0 时归档路径保留最旧 head_keep_chars 字符的组（提交前缀
     # 稳定命中），只归档中段；锚点不推进（仅头部被归档兜底时才前移）。
+    head_keep_target_ratio: float = 0.5,  # fixed-head 最多占压缩目标水位的比例；默认保持旧 50%
+    # provider 中段压缩可调高（DeepSeek 生产建议 0.65），给稳定前缀更多目标预算，同时
+    # 至少给最近尾部预留约 35% 水位；避免为了命中把最近语义全部挤出。
     _append_summary_enabled: bool = False,  # 2026-08-21 追加式压缩: 归档后追加确定性摘要
     # （默认关=零回归）。启用后归档消息生成固定格式摘要追加提交尾部——任务语义连贯
     # + 前缀稳定（同归档内容→同摘要字节→缓存命中）。
@@ -449,6 +527,18 @@ def build_history_messages(
     # billion README 宣传已被推翻）: 渐进价值是命中率曲线平滑 + cache_guard 不 BLOCK
     # + 智力无断崖（每次只丢几组, AI 可逐步适应/检索），而非省 token（单次 miss 范围不变）。
     # 折叠后注入折叠标注（AI 有感知, 减少"刚引用的内容已被折掉"的落空）。
+    freeze_compression: bool = False,  # P0 压缩风暴熔断（2026-08-25）: 冻结期禁止
+    # 一切程序压缩/归档/分层降级（前缀字节稳定），且锚点不前移（anchor_out 不填充）。
+    # 仅用于熔断冻结轮——超预算时由 engine 前置 context_pressure 管控，不在此提交超限载荷。
+    cache_archive_provider: str = "",  # provider级提交视图压缩标记；非空时中段只折一次
+    cache_compacted_out: list[Message] | None = None,  # 本轮新写标记的原消息，供事件链同步
+    compact_view_stats: list[dict] | None = None,  # EVO-20260825 任务6: 压缩后视图体积验证
+    # 输出容器——大裁/折叠发生后填充 [{pre_chars, post_chars, drop_pct, archived_count}]，
+    # 供调用方（build.py）写 breaker 审计事件 view_not_shrinking_after_compact（drop<5% 时）。
+    degrade_out: list[dict] | None = None,  # EVO-20260825 任务7（§5.7）: 渐进折叠降级输出容器
+    # ——progressive_fold>0 但 cache_archive_provider 缺失时填充
+    # [{kind: "degraded", reason, head_keep_chars}]，供调用方写 metadata.cache_health。
+    require_archive_success: bool = False,  # ERC enforce: hidden bytes must be durable before shrink
 ) -> list[dict]:
     """组装提交 LLM 的消息序列（保序 + 超长另存压缩 + 如实标注）.
 
@@ -465,6 +555,43 @@ def build_history_messages(
     out: list[dict] = []
     if compacted_out is not None:
         compacted_out[:] = [False]
+    if cache_compacted_out is not None:
+        cache_compacted_out.clear()
+    if degrade_out is not None:
+        degrade_out.clear()
+    # 直接调用者若没有 provider 级折叠标记，仍保持旧防御：fold+head_keep 会重复
+    # 归档同一中段。LoopEngine 会传 cache_archive_provider，因此可安全保留固定头部。
+    if progressive_fold > 0 and not cache_archive_provider:
+        # 任务7（§5.7）: archive_provider 缺失——无法写入 provider 级 cache_compacted_for
+        # 标记，"固定头部 + 渐进折叠"会重复归档同一中段。降级：强制关闭渐进折叠
+        # （回一次性大裁），head_keep_chars 恢复原值（不得因降级而错误置 0）；
+        # 原值 ≤0 时用 DEFAULT_HEAD_KEEP_CHARS_ON_DEGRADE（env 可配，默认 2000）。
+        import logging
+
+        _deg_log = logging.getLogger(__name__)
+        _deg_log.warning(
+            "渐进折叠降级: progressive_fold=%d 要求 cache_archive_provider（当前缺省）"
+            "——强制关闭渐进折叠，head_keep_chars 恢复原值 %d（session=%s）",
+            progressive_fold,
+            head_keep_chars,
+            session_id,
+        )
+        if head_keep_chars <= 0:
+            head_keep_chars = _DEFAULT_HEAD_KEEP_CHARS_ON_DEGRADE
+            _deg_log.error(
+                "渐进折叠降级后 head_keep_chars 仍 ≤0，使用默认 %d（session=%s）",
+                _DEFAULT_HEAD_KEEP_CHARS_ON_DEGRADE,
+                session_id,
+            )
+        progressive_fold = 0
+        if degrade_out is not None:
+            degrade_out[:] = [
+                {
+                    "kind": "degraded",
+                    "reason": "progressive_fold 要求 cache_archive_provider（缺省）",
+                    "head_keep_chars": head_keep_chars,
+                }
+            ]
     if system_prompt:
         out.append({"role": "system", "content": system_prompt})
     # Cache-First (2026-08-16): system_prompt 静态主体长度——永不截断（前缀缓存锚）。
@@ -522,10 +649,16 @@ def build_history_messages(
         else:
             out.append(msg_dict)
 
-    total_chars = sum(len(m.content) for m in session_messages)
+    total_chars = sum(_wire_size(m) for m in session_messages)
     # P1-10: 窗口锚定——起点固定（锚点前的消息已归档, 不再参与构建/重复归档）
     if history_anchor > 0 and history_anchor < len(session_messages):
         session_messages = session_messages[history_anchor:]
+        if cache_archive_provider:
+            session_messages = [
+                m
+                for m in session_messages
+                if not is_cache_compacted_for(m, cache_archive_provider)
+            ]
         # 2026-08-16 锚点对齐工具轮边界（现场：tool_call_id is not found 根因）：
         # 锚点落在声明↔回执组内会把声明裁掉、留下孤儿回执（API 拒绝）。
         # 裁后窗口内"无对应声明"的 tool 回执 → 丢弃（如实标注；声明必在回执前，
@@ -552,13 +685,26 @@ def build_history_messages(
                 dropped_orphans,
             )
         session_messages = kept_msgs
-        total_chars = sum(len(m.content) for m in session_messages)
+        total_chars = sum(_wire_size(m) for m in session_messages)
+    elif cache_archive_provider:
+        session_messages = [
+            m
+            for m in session_messages
+            if not is_cache_compacted_for(m, cache_archive_provider)
+        ]
+        total_chars = sum(_wire_size(m) for m in session_messages)
     # R3: tool_trim_age=0 时按占用率自适应（AI 无感零配置）
     if tool_trim_age <= 0:
         tool_trim_age = _adaptive_tool_trim_age(total_chars, max_chars)
     # EVO-20260817: 主动压缩阈值（预算×compact_ratio; 1.0=现行为超限才压,
     # <1.0 预算附近提前整理——用户决策: 长任务大几率撞顶, 提前平滑压缩优于被动撞顶）
     compact_limit = max(1, int(max_chars * compact_ratio))
+    # P0 压缩风暴熔断冻结: 冻结期不走任何归档/压缩/分层降级路径（提交前缀字节稳定），
+    # 且锚点不前移（正常路径不填充 anchor_out）。超限载荷由 engine 前置 context_pressure
+    # 管控，不在此硬提交。
+    if freeze_compression:
+        compact_limit = max(1, total_chars)  # 恒走正常路径（只序列化，不改写）
+        layer_tool_trim = False  # 分层降级改写中段 → 冻结期一并禁用
     # P1-10: 锚定模式超预算 → 依次: ①剔除注入消息（推送式 system 不进提交, 剔除对提交
     # 零影响且不产生归档/extras——提交前缀完全稳定）; ②分层降级中段旧 tool 消息（不移动锚点）;
     # 仍超才走归档路径（锚点前移, 前缀断一次后重新锚定）
@@ -567,7 +713,7 @@ def build_history_messages(
             filtered = [m for m in session_messages if not _is_injected_system(m)]
             if len(filtered) != len(session_messages):
                 session_messages = filtered
-                total_chars = sum(len(m.content) for m in session_messages)
+                total_chars = sum(_wire_size(m) for m in session_messages)
         if total_chars > compact_limit and layer_tool_trim:
             session_messages = _layer_trim(
                 session_messages,
@@ -576,8 +722,9 @@ def build_history_messages(
                 age=tool_trim_age,
                 session_id=session_id,
                 archive_sink=archive_sink,
+                require_archive_success=require_archive_success,
             )
-            total_chars = sum(len(m.content) for m in session_messages)
+            total_chars = sum(_wire_size(m) for m in session_messages)
     if total_chars <= compact_limit:
         for m in _apply_reasoning_tail(
             _layer_trim(
@@ -587,6 +734,7 @@ def build_history_messages(
                 age=tool_trim_age,
                 session_id=session_id,
                 archive_sink=archive_sink,
+                require_archive_success=require_archive_success,
             ),
             reasoning_tail,
         ):
@@ -644,69 +792,118 @@ def build_history_messages(
     if head_keep_chars > 0:
         acc = 0
         for g in atomic_groups:  # 从最旧端累积头部保留组（前缀核心）
-            gl = sum(len(mm.content) for mm in g)
+            gl = sum(_wire_size(mm) for mm in g)
             if acc + gl > head_keep_chars:
                 break
             head_groups.append(g)
             acc += gl
-        # 上限保护: 头部不超过归档预算一半（防配置过大挤占尾部/超 max_chars）
+        # 上限保护: 默认仍不超过归档预算一半；provider 中段压缩可显式提高到例如 0.65，
+        # 让压缩轮保留更大的、曾作为早期请求端点出现过的 fixed-head。DeepSeek 实测：
+        # “长 prompt → 中段分叉”不会自动复用全部共同前缀，但若 fixed-head 边界曾作为
+        # 完整请求端点出现，则后续分叉可几乎完整复用该 head。自然增长会产生这些端点。
+        try:
+            _head_target_ratio = float(head_keep_target_ratio)
+        except (TypeError, ValueError):
+            _head_target_ratio = 0.5
+        _head_target_ratio = max(0.1, min(_head_target_ratio, 0.85))
+        _head_cap = int(archive_budget * _head_target_ratio)
         head_chars = acc
-        while head_groups and head_chars > archive_budget // 2:
+        while head_groups and head_chars > _head_cap:
             g = head_groups.pop()  # 收缩时去掉最新头部组（靠近中段，前缀核心不变）
-            head_chars -= sum(len(mm.content) for mm in g)
+            head_chars -= sum(_wire_size(mm) for mm in g)
     head_count = len(head_groups)
+    if head_keep_chars > 0 and head_count == 0:
+        # EVO-20260825 任务6.3: head 预算过小/首组即超 → 自动降级 head_keep=0 全量归档
+        # （与 head_keep_chars=0 行为一致：锚点前移式归档，前缀重建一轮后恢复）。
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "head_keep 保留组为空（首组已超 head 预算），自动降级为 head_keep=0 全量归档: "
+            "head_keep_chars=%d session=%s",
+            head_keep_chars,
+            session_id,
+        )
     # 最新组单条超限兜底仍按全预算判断（不因留缓冲而更激进截断单条消息;
     # 该分支语义=单条消息就超整个预算的极端场景, 保留语义与留缓冲解耦）。
     trim_budget = max_chars
     # EVO-20260824-54d46549 渐进折叠: 每次最多归档最老 K 个配对组（K 小, 平滑曲线）——
     # 常规超限只折 K 组即停（guard 不 BLOCK + 智力无断崖）; 若折满 K 组后提交仍
     # >预算×0.95（guard 规则 F BLOCK 阈值）→ 突破 K 上限继续归档（保命兜底）。
-    _fold_cap = progressive_fold if progressive_fold > 0 else 0
-    _fold_count = 0
-    for group in reversed(atomic_groups[head_count:]):
-        group_len = sum(len(mm.content) for mm in group)
-        if _fold_cap > 0 and _fold_count >= _fold_cap:
-            # 已达渐进折叠上限: 评估保留后是否 ≤95% 预算——是则保留（平滑停折）;
-            # 否则突破上限继续归档（保命, 防 guard 规则 F BLOCK / 提交超限 400）。
-            _cur_kept = head_chars + sum(len(mm.content) for g in kept_groups for mm in g)
-            if len(system_prompt) + _cur_kept + group_len <= int(max_chars * 0.95):
-                kept_groups.insert(0, group)
-                archive_budget -= group_len
+    # P0 修复（2026-08-25 实测）: fold 必须【从最老端连续折】——原实现混用"从最新
+    # 保留预算"逻辑，预算边界拆散消息对 → 归档区/保留区交错 → 锚点无法推进到
+    # 归档边界 → 同一批消息每轮重复归档（archive_ref ×N）→ 提交永不缩小 →
+    # guard 规则 F 永久 BLOCK。fold 语义 = 最老 K 组连续折 + 锚点同步前移。
+    if progressive_fold > 0:
+        kept_groups = list(atomic_groups[head_count:])
+        _fold_left = progressive_fold
+        _fold_count = 0
+        while kept_groups:
+            _kept_chars = sum(_wire_size(mm) for g in kept_groups for mm in g)
+            _total_now = len(system_prompt) + head_chars + _kept_chars
+            if cache_archive_provider:
+                # provider中段压缩已有稳定head + 持久化隐藏标记，不再需要靠K小步保护
+                # 前缀。一次压到目标水位，换取更长纯追加区间，避免90-95%附近每轮压缩。
+                if _total_now <= archive_budget:
+                    break
+            else:
+                if _fold_left <= 0:
+                    # 兼容旧渐进语义: 折满K后≤95%即可停；否则突破K继续折（保命）
+                    if _total_now <= int(max_chars * 0.95):
+                        break
+                elif _total_now <= archive_budget:
+                    break
+            g = kept_groups.pop(0)  # 最老组（连续折——归档区=视图头部连续段）
+            archived.extend(g)
+            _fold_count += 1
+            if _fold_left > 0:
+                _fold_left -= 1
+    else:
+        _fold_cap = 0
+        _fold_count = 0
+        for group in reversed(atomic_groups[head_count:]):
+            group_len = sum(_wire_size(mm) for mm in group)
+            if _fold_cap > 0 and _fold_count >= _fold_cap:
+                # 已达渐进折叠上限: 评估保留后是否 ≤95% 预算——是则保留（平滑停折）;
+                # 否则突破上限继续归档（保命, 防 guard 规则 F BLOCK / 提交超限 400）。
+                _cur_kept = head_chars + sum(_wire_size(mm) for g in kept_groups for mm in g)
+                if len(system_prompt) + _cur_kept + group_len <= int(max_chars * 0.95):
+                    kept_groups.insert(0, group)
+                    archive_budget -= group_len
+                    continue
+                # 超限兜底: 落入下方归档分支（不因 K 上限而拒绝归档）
+            if archive_budget - group_len < 0 and kept_groups:
+                archived.extend(group)  # 整组归档（配对原子性：不拆散）
+                if _fold_cap > 0:
+                    _fold_count += 1
                 continue
-            # 超限兜底: 落入下方归档分支（不因 K 上限而拒绝归档）
-        if archive_budget - group_len < 0 and kept_groups:
-            archived.extend(group)  # 整组归档（配对原子性：不拆散）
-            if _fold_cap > 0:
-                _fold_count += 1
-            continue
-        if group_len > trim_budget and not kept_groups:
-            # 最新组单条/整组超限: 另存全文 + 精简注入（组内字段保留，仅 content 截断）
-            archived.extend(group)
-            trimmed_group: list[Message] = []
-            for mm in group:
-                trimmed = (
-                    mm.content[: max(trim_budget - 100, 100)]
-                    + "\n…[本消息已压缩，完整内容已另存，可用 search_archive 检索]…"
-                )
-                trimmed_group.append(
-                    Message(
-                        role=mm.role,
-                        content=trimmed,
-                        source=mm.source,
-                        tool_call_id=mm.tool_call_id,
-                        status=mm.status,
-                        tool_name=mm.tool_name,
-                        error_detail=mm.error_detail,
-                        tool_calls=mm.tool_calls,
-                        reasoning_content=mm.reasoning_content,  # M20 THK-04: 压缩后回传链不因截断断裂
-                        metadata=mm.metadata,
+            if group_len > trim_budget and not kept_groups:
+                # 最新组单条/整组超限: 另存全文 + 精简注入（组内字段保留，仅 content 截断）
+                archived.extend(group)
+                trimmed_group: list[Message] = []
+                for mm in group:
+                    trimmed = (
+                        mm.content[: max(trim_budget - 100, 100)]
+                        + "\n…[本消息已压缩，完整内容已另存，可用 search_archive 检索]…"
                     )
-                )
-                archive_budget -= len(trimmed)
-            kept_groups.insert(0, trimmed_group)
-            continue
-        kept_groups.insert(0, group)
-        archive_budget -= group_len
+                    trimmed_group.append(
+                        Message(
+                            role=mm.role,
+                            content=trimmed,
+                            source=mm.source,
+                            tool_call_id=mm.tool_call_id,
+                            status=mm.status,
+                            tool_name=mm.tool_name,
+                            error_detail=mm.error_detail,
+                            tool_calls=mm.tool_calls,
+                            reasoning_content=mm.reasoning_content,  # M20 THK-04: 压缩后回传链不因截断断裂
+                            metadata=mm.metadata,
+                        )
+                    )
+                    archive_budget -= len(trimmed)
+                kept_groups.insert(0, trimmed_group)
+                continue
+            kept_groups.insert(0, group)
+            archive_budget -= group_len
 
     # EVO-20260818（spec §5.5.1-7，grill-me Q4）: 压缩余量不足降级——head 保留 + 归档目标
     # 后提交仍 >95% 预算（单轮裁不动: 超大消息/头部占比高；head 不占 archive_budget，
@@ -714,7 +911,7 @@ def build_history_messages(
     # 防规则 F 反复 BLOCK 与压缩风暴；head 与最老保留组一并归档（信息零丢失）。
     _downgraded_head = False
     if head_keep_chars > 0 and head_groups and kept_groups:
-        _kept_total = head_chars + sum(len(mm.content) for g in kept_groups for mm in g)
+        _kept_total = head_chars + sum(_wire_size(mm) for g in kept_groups for mm in g)
         if len(system_prompt) + _kept_total > int(max_chars * 0.95):
             _downgraded_head = True
             for g in head_groups:
@@ -722,12 +919,12 @@ def build_history_messages(
             head_groups = []
             head_count = 0
             head_chars = 0
-            # head 归档后仍超（system 巨大场景）→ 继续归档最老保留组（kept_groups 末尾最老）
+            # head 归档后仍超（system 巨大场景）→ 继续从最老端连续归档，保护最新语义尾部。
             while kept_groups:
-                _cur = sum(len(mm.content) for g in kept_groups for mm in g)
+                _cur = sum(_wire_size(mm) for g in kept_groups for mm in g)
                 if len(system_prompt) + _cur <= int(max_chars * 0.95):
                     break
-                archived.extend(kept_groups.pop())
+                archived.extend(kept_groups.pop(0))
 
     # 另存被丢弃消息（信息零丢失）
     if archive_sink is not None and session_id and archived:
@@ -738,12 +935,27 @@ def build_history_messages(
                 import logging
 
                 logging.getLogger(__name__).warning("archive sink 异常（fail-open）", exc_info=True)
+                if require_archive_success:
+                    raise
+
+    # provider级提交视图压缩：原文仍保留在 Session/事件链/归档，只让后续该 provider
+    # build 跳过本轮已经折叠的中段，解决 head_keep + fold 重复归档。
+    if cache_archive_provider and archived:
+        for m in archived:
+            if _mark_cache_compacted_for(m, cache_archive_provider) and cache_compacted_out is not None:
+                cache_compacted_out.append(m)
 
     # 2026-08-21 (追加式压缩, APPEND_COMPRESSION=1 启用): 归档后追加确定性摘要——
     # 被归档的旧历史用"固定格式摘要"追加到提交尾部（转 user 消息），AI 保留任务语义
     # 连贯（知道做过什么），同时摘要字节确定性（同归档内容→同摘要）→ 前缀稳定缓存命中。
     # 与 slim-first（归档即删, 只能 search_archive 检索）不同: 追加摘要保持上下文连贯。
-    # 注意: 摘要追加在【归档消息之后】即提交尾部, 不影响 system+保留历史前缀。
+    #
+    # 重要: 此处只能【生成】摘要，不能立刻 append 到 out。out 当前仅含 system；真正的
+    # fixed-head/kept history 尚在下方序列化。若这里先 append，会把压缩轮序列变成
+    # `system -> archive-summary -> fixed-head...`，使服务端缓存恰好在 system 后断裂；
+    # 线上 DeepSeek 实测表现就是压缩后 tokens_hit 固定回落到 8,960。摘要必须等
+    # kept_flat 写完后再追加，才能保持 `system -> fixed-head` 的共同字节前缀。
+    _archive_summary_dict: dict | None = None
     if (
         _append_summary_enabled
         and archived
@@ -752,7 +964,7 @@ def build_history_messages(
         try:
             import logging
 
-            _total_archived = sum(len(mm.content) for mm in archived)
+            _total_archived = sum(_wire_size(mm) for mm in archived)
             _summary_text = " | ".join(
                 (mm.content or "")[:60].replace("\n", " ")
                 for mm in archived[:3]
@@ -764,12 +976,11 @@ def build_history_messages(
                 f"{'…' if len(archived) > 3 else ''}"
                 f"[归档可检索: search_archive]"
             )
-            _d = {
+            _archive_summary_dict = {
                 "role": "user",
                 "content": _summary_msg,
                 "metadata": {"archived_summary": True, "archived_count": len(archived)},
             }
-            out.append(_d)
         except Exception:  # noqa: BLE001 — 摘要追加失败 fail-open
             import logging
 
@@ -799,7 +1010,22 @@ def build_history_messages(
         if head_count > 0:
             anchor_out.append(history_anchor)
         else:
-            anchor_out.append(history_anchor + (len(session_messages) - len(kept_flat)))
+            # EVO-20260825 任务6.3: 锚点推进边界安全防护——越界 clamp + WARN
+            # （防御：归档计数理论上 ≤ 窗口内消息数，但保留组含 head 并入的极端场景
+            #  下差值不得越过窗口上界，防锚点漂移到未知位置）
+            _adv_raw = history_anchor + (len(session_messages) - len(kept_flat))
+            _adv_cap = len(session_messages)
+            _adv = min(_adv_raw, _adv_cap)
+            if _adv != _adv_raw:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "锚点推进越界，已安全截断: target=%d cap=%d session=%s",
+                    _adv_raw,
+                    _adv_cap,
+                    session_id,
+                )
+            anchor_out.append(_adv)
     for m in kept_flat:
         if skip_injected_system and _is_injected_system(m):
             continue  # P1-7: 推送式注入仅落会话, 不进提交（system 前缀稳定）
@@ -818,6 +1044,10 @@ def build_history_messages(
             if _d.get("role") == "tool" and _d.get("content"):
                 _d["content"] = _prune_oversized_tool_result(_d["content"])
             out.append(_d)
+    # APPEND_COMPRESSION 的摘要必须位于 kept history【之后】。这既符合“追加式”语义，
+    # 也保证压缩前/后的共同前缀至少延伸到 fixed-head 末端；后续动态 extras 同样只在尾部。
+    if _archive_summary_dict is not None:
+        out.append(_archive_summary_dict)
     if archived:
         # EVO-9794797e: 主动压缩——对被丢弃的旧消息做"另存 + 可见标注"
         # （原文已完整另存至压缩档案保信息零丢失，fail-open）
@@ -863,14 +1093,17 @@ def build_history_messages(
         # 明确告知 AI"本轮只折了最老 K 组, 其余保留, 可检索"——减少"刚引用的内容已被
         # 折掉"的推理落空; 固定文本含 K 值（折叠组数即 _fold_count, 便于归因）。
         if progressive_fold > 0 and _fold_count > 0:
+            _fold_note = (
+                f"[中段折叠] 本轮折叠 {_fold_count} 个最老中段配对组并回落到目标水位；"
+                "固定头部保持不变，被折叠原文可经 search_archive 检索；"
+                if cache_archive_provider
+                else f"[渐进折叠] 本轮仅折叠最老 {_fold_count} 个配对组（其余历史保留, "
+                "未一次性大裁）——命中率曲线平滑, 被折叠原文可经 search_archive 检索；"
+            )
             extras.append(
                 Message(
                     role="system",
-                    content=(
-                        f"[渐进折叠] 本轮仅折叠最老 {_fold_count} 个配对组（其余历史保留, "
-                        "未一次性大裁）——命中率曲线平滑, 被折叠原文可经 search_archive 检索；"
-                        "若需引用已折叠内容, 先检索再作答。"
-                    ),
+                    content=_fold_note + "若需引用已折叠内容, 先检索再作答。",
                     source=MessageSource.SYSTEM,
                 )
             )
@@ -896,6 +1129,53 @@ def build_history_messages(
             # system 主体字节稳定 → 前缀缓存命中；qwen 单 system 模板兼容）
             em.metadata["_dynamic"] = True
             _append_or_merge(em.to_llm_dict(), dynamic=_is_dynamic_inject(em))
+    # EVO-20260825 任务6.2: 压缩后视图体积验证——pre vs post 对比（drop<5% → WARN +
+    # 审计事件由调用方写 breaker）。pre 口径 = 压缩前完整载荷（system + 窗口历史）；
+    # post 口径 = 实际提交协议视图（含 head/kept/extras）。
+    if compact_view_stats is not None and archived:
+        try:
+            _pre_chars = len(system_prompt) + total_chars
+            _post_chars = sum(_dict_wire_size(m) for m in out)
+            _drop_pct = (
+                (max(1, _pre_chars) - _post_chars) / max(1, _pre_chars) * 100.0
+            )
+            compact_view_stats.append(
+                {
+                    "pre_chars": _pre_chars,
+                    "post_chars": _post_chars,
+                    "drop_pct": round(_drop_pct, 1),
+                    "archived_count": len(archived),
+                }
+            )
+            if _drop_pct < 5:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "head_keep 大裁后视图未缩小: pre=%d post=%d drop=%.1f%% "
+                    "archived=%d session=%s",
+                    _pre_chars,
+                    _post_chars,
+                    _drop_pct,
+                    len(archived),
+                    session_id,
+                )
+            else:
+                import logging
+
+                logging.getLogger(__name__).debug(
+                    "压缩视图验证: pre=%d post=%d drop=%.1f%% archived=%d session=%s",
+                    _pre_chars,
+                    _post_chars,
+                    _drop_pct,
+                    len(archived),
+                    session_id,
+                )
+        except Exception:  # noqa: BLE001 — fail-open
+            import logging
+
+            logging.getLogger(__name__).debug(
+                "压缩视图统计失败（fail-open）", exc_info=True
+            )
     return _repair_tool_call_pairing(out)
 
 
@@ -1015,10 +1295,16 @@ def _pairing_gap(messages: list[dict], i: int) -> tuple[list[str], list[str], in
         if did and did in remaining:
             remaining.remove(did)
             answered.add(di)
-    # 空 id 声明/回执按位置兜底（存量兼容，不丢弃真实回执）
+    # 仅空 id 参与位置兜底（存量兼容）。两个不同的非空 id 绝不能按位置视为
+    # 已配对，否则 provider 仍会因 tool_call_id not found 拒绝请求。
     unanswered = [di for di in range(len(declared)) if di not in answered]
-    for di, _rid in zip(unanswered, remaining, strict=False):
-        answered.add(di)
+    for di in unanswered:
+        did = declared[di]
+        for ri, rid in enumerate(remaining):
+            if not did or not rid:
+                remaining.pop(ri)
+                answered.add(di)
+                break
     missing = [declared[di] for di in range(len(declared)) if di not in answered]
     return declared, missing, j
 
@@ -1045,7 +1331,7 @@ def _pairing_direction_b_orphans(messages: list[dict]) -> set[int]:
             continue
         if m.get("role") == "assistant" and m.get("tool_calls"):
             declared = [
-                str(c.get("id") or "") for c in m.get("tool_calls") if isinstance(c, dict)
+                str(c.get("id") or "") for c in (m.get("tool_calls") or []) if isinstance(c, dict)
             ]
             consumed = [False] * len(declared)
             j = i + 1
@@ -1060,8 +1346,10 @@ def _pairing_direction_b_orphans(messages: list[dict]) -> set[int]:
                         matched = True
                         break
                 if not matched:
-                    for di in range(len(declared)):  # 空 id / 未匹配声明位置兜底
-                        if not consumed[di]:
+                    # 存量兼容只允许“声明 id 为空”或“回执 id 为空”时按位置兜底；
+                    # 两个不同的非空 id 必须判为孤儿/错配。
+                    for di, did in enumerate(declared):
+                        if not consumed[di] and (not did or not rid):
                             consumed[di] = True
                             matched = True
                             break
