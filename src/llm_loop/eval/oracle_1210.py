@@ -104,6 +104,7 @@ class ReplayVariant:
     messages: list[dict]
     label: str = ""  # 人读说明（keep_all/strip_all/bisect 半集描述）
     keep_idx: tuple[int, ...] | None = None  # 二分半集保留的 msg_idx（对照轮为 None）
+    tools_override: list[dict] | None = None  # 结构轨变体级 tools 覆盖（drop-tools 用；None=沿用 sample.tools）
 
 
 @dataclass
@@ -239,7 +240,9 @@ def build_variants(sample: OracleSample, *, track: str) -> list[ReplayVariant]:
                 label="strip_all",
             ),
         ]
-    raise ValueError(f"未知轨道: {track}（skeleton | bisect）")
+    if track == "struct":
+        return _struct_variants(sample)
+    raise ValueError(f"未知轨道: {track}（skeleton | bisect | struct）")
 
 
 def _bisect_variants(
@@ -270,6 +273,43 @@ def _bisect_variants(
                 keep_idx=tuple(half),
             )
         )
+    return out
+
+
+def _struct_variants(sample: OracleSample) -> list[ReplayVariant]:
+    """结构二分变体（组 8 第二批）: 骨架复现已证结构触发，单变量分流结构特征.
+
+    三变体各只改一个结构维度、内容保真（区别于 skeleton 轨的内容洗牌）：
+    - merge-tail-user: 尾部连续 user 合并 1 条（测"连续 user 条数"维度）
+    - drop-tools: tools 清空（测"tools 数量/形态"维度）
+    - truncate-tail: 消息截半保尾部（测"消息规模"维度；切点后移避开孤儿 tool）
+    """
+    msgs = [dict(m) for m in sample.messages]
+    out: list[ReplayVariant] = []
+    i = len(msgs) - 1
+    while i >= 0 and msgs[i].get("role") == "user":
+        i -= 1
+    run = msgs[i + 1 :]
+    if len(run) >= 2:
+        merged = dict(run[0])
+        merged["content"] = "\n\n".join(str(m.get("content") or "") for m in run)
+        out.append(ReplayVariant(
+            variant_id="struct-merge-tail-user", track="struct", keep_mask=(),
+            messages=msgs[: i + 1] + [merged], label=f"tail_user_{len(run)}to1",
+        ))
+    out.append(ReplayVariant(
+        variant_id="struct-drop-tools", track="struct", keep_mask=(),
+        messages=[dict(m) for m in msgs], label=f"tools_{len(sample.tools)}to0",
+        tools_override=[],
+    ))
+    cut = max(1, len(msgs) // 2)
+    while cut < len(msgs) and msgs[cut].get("role") == "tool":
+        cut += 1
+    trunc = (msgs[:1] + msgs[cut:]) if msgs[:1] and msgs[0].get("role") == "system" else msgs[cut:]
+    out.append(ReplayVariant(
+        variant_id="struct-truncate-tail", track="struct", keep_mask=(),
+        messages=trunc, label=f"msgs_{len(msgs)}to{len(trunc)}",
+    ))
     return out
 
 
@@ -419,8 +459,8 @@ def run_oracle(
     aborted = ""
 
     # ── 轨道选择 + 工单例外条款（spec 5.2.1-5b）──
-    if track not in ("both", "skeleton", "bisect"):
-        raise ValueError(f"未知轨道: {track}（both | skeleton | bisect）")
+    if track not in ("both", "skeleton", "bisect", "struct"):
+        raise ValueError(f"未知轨道: {track}（both | skeleton | bisect | struct）")
     tracks: tuple[str, ...] = ("skeleton", "bisect") if track == "both" else (track,)
     ticket = dict(ticket_evidence or {})
     if ticket and "skeleton" in tracks:
@@ -475,7 +515,7 @@ def run_oracle(
             assert client is not None  # 类型收窄（client_factory 装配契约；dry_run 已前置返回）
             resp = client.chat(
                 variant.messages,
-                sample.tools,
+                variant.tools_override if variant.tools_override is not None else sample.tools,
                 timeout_s=sample.params.get("timeout_s"),
                 model=sample.model or None,
             )
@@ -496,6 +536,13 @@ def run_oracle(
         skel_variant = build_variants(sample, track="skeleton")[0]
         skel_result = _run_variant(skel_variant)
         sample.skeleton_ok = skel_result.outcome != "preflight_failed"
+
+    # ── 结构轨: 单变量结构变体（组 8 第二批——骨架复现已证结构触发的维度定位）──
+    if "struct" in tracks and not aborted:
+        for v in build_variants(sample, track="struct"):
+            _run_variant(v)
+            if aborted:
+                break
 
     # ── 轨道一: 内容保真二分（对照轮 + 递归半集轮）──
     keep_all_res: VariantResult | None = None
