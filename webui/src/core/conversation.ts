@@ -143,6 +143,25 @@ export function ensureIdlePoll(sessionId: string): void {
   idlePollTimer = window.setInterval(() => void idlePollTick(sessionId), IDLE_POLL_INTERVAL_MS);
 }
 
+// ── 外部同步信号刷新（SSE sessions_updated / 看门狗 / 聚焦共用入口）──
+let syncRefreshBusy = false;
+
+/** 空闲态重载当前会话消息区：飞书桥等外部写入的推送级可见路径（EVO-20260827-23d33f32）。
+ *  async 闩防抖（信号风暴只保留一个在途重载）；run 进行中让路（流式/后台轮询已接管）。 */
+export async function refreshCurrentSessionMessages(): Promise<void> {
+  if (syncRefreshBusy) return;
+  const sessionId = sessionStore.getState().currentSessionId;
+  if (!sessionId) return; // 空 current 是"新会话待建"语义（见 events.ts newSessionPending 注释）
+  const st = conversationStore.getState();
+  if (st.streaming || st.backgroundRunning || st.loadedHistoryCount === 0) return;
+  syncRefreshBusy = true;
+  try {
+    await loadHistory(sessionId);
+  } finally {
+    syncRefreshBusy = false;
+  }
+}
+
 export async function loadHistory(sessionId: string): Promise<void> {
   // setCurrentSession 通常先发生；owner-aware detach 不依赖 store 的“当前值”猜旧流归属。
   detachSubscriptionsForSession(sessionId);

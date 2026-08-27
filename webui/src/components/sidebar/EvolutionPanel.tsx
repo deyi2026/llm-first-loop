@@ -118,8 +118,12 @@ export function EvolutionPanel() {
           setActionMsg(d.message || (r.ok ? "已处理" : `失败(${r.status})`));
           if (r.ok) load();
         }
+        return r.ok; // UX 修复: 返回成败信号，弹窗据此决定关闭与否
       })
-      .catch((err) => setActionMsg(`请求失败: ${String(err)}`))
+      .catch((err) => {
+        setActionMsg(`请求失败: ${String(err)}`);
+        return false;
+      })
       .finally(() => setBusy(false));
   };
 
@@ -192,6 +196,11 @@ export function EvolutionPanel() {
           </button>
         ))}
       </div>
+
+      {/* 面板级操作反馈（UX 修复: 原渲染在条目 map 内，条目刷新消失后消息跟着消失 → 用户感知"没反应"） */}
+      {actionMsg && (
+        <div className="v2-evo-action-msg" data-testid="evo-action-msg">{actionMsg}</div>
+      )}
 
       {/* 批量栏（仅待审批 Tab + 有可选） */}
       {tab === "pending_review" && selected.size > 0 && (
@@ -291,7 +300,6 @@ export function EvolutionPanel() {
                       </button>
                     </div>
                   )}
-                  {actionMsg && <div className="v2-evo-action-msg" data-testid="evo-action-msg">{actionMsg}</div>}
                   {it.status !== "pending_review" && <div className="v2-evo-hint">{zh.evoHint}</div>}
                 </div>
               )}
@@ -350,9 +358,12 @@ export function EvolutionPanel() {
                     confirm.decision,
                     confirm.decision === "rejected" ? rejectReason.trim() : "",
                     confirm.requires_human ? extraConfirmChecked : false
-                  );
-                  setConfirm(null);
-                  setRejectReason("");
+                  ).then((ok) => {
+                    if (ok) {
+                      setConfirm(null); // UX 修复: 成功才关弹窗；失败保持弹窗可重试（消息面板级显示）
+                      setRejectReason("");
+                    }
+                  });
                 }}
               >
                 确定
