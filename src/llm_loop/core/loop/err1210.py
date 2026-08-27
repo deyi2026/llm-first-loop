@@ -1,11 +1,13 @@
 """err1210 P0 恢复组件（.codeartsdoer/specs/err1210_locating，tasks 任务组 3）.
 
-根因口径（P0-C 降级，err1210_locating 组 8 待证）: 智谱 GLM 400/1210 命中
-cache_compact 折叠后首请求；尾部一次性注入槽（interop/tip/gate_note/hotcard →
-wrap 转 user）是伴生现象而非充分根因——Snapshot 2（b85a3010）strip 后仍 1210。
-真根因方向为 compact 后 wire-view 结构/身份变化（组 8 双轨 oracle 定位中）。
-P0 = 安全诊断/降级框架（剥离尾部注入 → defer 回存槽位 → 单次重试；
-恢复有效性 unproven: trigger=11 / retry 1 / success 0）。
+根因口径（2026-08-28 归档：结构触发已定位，回执 .codeartsdoer/specs/
+err1210_verdict_p1/receipt.md；历史时点 P0-C 降级口径见 1f167f3）:
+智谱 GLM 400/1210 根因 = 请求尾部连续 user 角色消息条数（结构触发，
+内容无关；实测尾部 1 条成功、5/8 条失败，精确边界 ∈ [2,7] 待工单）。
+compact 首请求必带尾部注入群 5-8 条连续 user，故 11/11 必犯。
+P1 = 尾部注入聚合（AGGREGATED 单条 user，主控裁决合规重放 81c0503）。
+P0 = 安全诊断/降级框架保留（剥离尾部注入 → defer 回存槽位 → 单次重试；
+观测落差已归因：trigger=11 / retry 1 / success 0，逐项解释见 verdict.md 三A）。
 
 关键约束（design 1.1.2 / 2.1.3-P0）:
 - 注入产物 dict 不打标（wire 字节敏感）——剥离识别依赖 build 旁路登记 + 前缀复核双保险；
