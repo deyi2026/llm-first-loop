@@ -17,6 +17,29 @@ if TYPE_CHECKING:
 
 
 class _SignalsMixin:
+    def _append_report_once(self: LoopEngine, sess, msg) -> bool:
+        """EVO-20260827-f42496bc: 上报注入内容级幂等 append（去重兜底）.
+
+        实证 02:35:21 同轮 flush 7 条架构上报、其中 4 条内容完全相同（冷却 key
+        变化/多路径调用穿透 60s 冷却）→ 存储层每轮膨胀重复 system 消息 → 加速
+        触顶压缩（压缩轮必 miss）。兜底: 尾部 12 条内已有相同 role+content 的
+        注入则跳过 append（首条保留，信息零丢失）。
+        """
+        if msg is None:
+            return False
+        msg.metadata = {**(msg.metadata or {}), "injected_system": True}
+        _content = msg.content or ""
+        for _pm in sess.messages[-12:]:
+            _meta = getattr(_pm, "metadata", None) or {}
+            if (
+                getattr(_pm, "role", "") == "system"
+                and _meta.get("injected_system")
+                and (getattr(_pm, "content", "") or "") == _content
+            ):
+                return False
+        sess.messages.append(msg)
+        return True
+
     def _check_loop_signals(self: LoopEngine, sess, rounds: int) -> None:
         """每轮末信号检测统一入口（M56 收敛，ANALYSIS-20260811）.
 
@@ -42,8 +65,7 @@ class _SignalsMixin:
             event.event_type, fact=event.fact, reason=event.reason, suggestion=event.suggestion
         )
         if msg is not None:
-            msg.metadata = {**msg.metadata, "injected_system": True}
-            sess.messages.append(msg)
+            self._append_report_once(sess, msg)  # EVO-20260827-f42496bc: 内容级幂等 append
 
     def _check_eval_trigger(self: LoopEngine, sess, rounds: int, *, milestone: bool = False) -> None:
         """自我评估触发检测（T63/T65: 每轮末 + run 完成里程碑）.
@@ -61,8 +83,7 @@ class _SignalsMixin:
             event.event_type, fact=event.fact, reason=event.reason, suggestion=event.suggestion
         )
         if msg is not None:
-            msg.metadata = {**msg.metadata, "injected_system": True}  # P1-7: 推送式注入标记
-            sess.messages.append(msg)
+            self._append_report_once(sess, msg)  # EVO-20260827-f42496bc: 内容级幂等 append
 
     def _check_evolution_executing(self: LoopEngine, sess) -> None:
         """M17 FR-REVIEW-AI-02: executing 演进待办提醒（每轮末，仅提示不强制）.
@@ -78,8 +99,7 @@ class _SignalsMixin:
             event.event_type, fact=event.fact, reason=event.reason, suggestion=event.suggestion
         )
         if msg is not None:
-            msg.metadata = {**msg.metadata, "injected_system": True}  # P1-7: 推送式注入标记
-            sess.messages.append(msg)
+            self._append_report_once(sess, msg)  # EVO-20260827-f42496bc: 内容级幂等 append
 
     def _check_pending_review(self: LoopEngine, sess) -> None:
         """EVO-20260810-86e777d1: pending_review 演进弹窗提醒（每轮末，仅提示不强制）.
@@ -95,5 +115,4 @@ class _SignalsMixin:
             event.event_type, fact=event.fact, reason=event.reason, suggestion=event.suggestion
         )
         if msg is not None:
-            msg.metadata = {**msg.metadata, "injected_system": True}  # P1-7: 推送式注入标记
-            sess.messages.append(msg)
+            self._append_report_once(sess, msg)  # EVO-20260827-f42496bc: 内容级幂等 append

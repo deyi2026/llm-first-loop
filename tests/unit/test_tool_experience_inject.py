@@ -46,8 +46,7 @@ class _Stub(_ToolExecMixin):
         )
         self.messages = []
         self.events = []
-        # EVO-20260819-7bb7d689: 经验提示尾部追加槽（build 末尾消费，不进历史存储）
-        self._tip_tail_messages = []
+        self._tip_tail_messages = []  # 兼容其他临时注入槽；经验提示修复后不再使用
         # 重置类级 skill 缓存（跨测试隔离）
         type(self)._skills_cache = (0.0, [])
 
@@ -63,18 +62,19 @@ def _make_exp_dir(tmp_path: Path) -> Path:
 
 
 def test_inject_hit(tmp_path):
-    """命中: 工具名匹配经验 → 尾部追加槽注入 [经验提示] system 消息."""
+    """命中: 工具经验持久化为 user 注入，下一轮可见且后续保持稳定历史前缀。"""
     d = _make_exp_dir(tmp_path)
     stub = _Stub(True, d)
     _ToolExecMixin._inject_experience_tips(stub, stub, ["web_fetch"])
-    assert len(stub._tip_tail_messages) == 1
-    msg = stub._tip_tail_messages[0]
-    assert msg.role == "system"
+    assert stub._tip_tail_messages == []
+    assert len(stub.messages) == 1
+    msg = stub.messages[0]
+    assert msg.role == "user"
     assert "[经验提示]" in msg.content
     assert "web_fetch" in msg.content
-    # 2026-08-18 修复: 功能性注入不打 injected_system 标记——打标会被
-    # skip_injected_system（spec §5.3.1-5 绝对化后恒 True）剔除 → 经验提示失效
-    assert not (msg.metadata or {}).get("injected_system")
+    assert (msg.metadata or {}).get("persisted_injection") is True
+    assert (msg.metadata or {}).get("injection_kind") == "experience_tip"
+    assert stub.events == [msg]
 
 
 def test_inject_no_hit_no_inject(tmp_path):
@@ -114,8 +114,9 @@ def test_skill_inject_hit(tmp_path):
     stub = _Stub(True, d, sd)
     _ToolExecMixin._inject_experience_tips(stub, stub, ["architecture_status"])
     # 经验库无 architecture_status 命中 → 走 skill 匹配（kw_pool 含 cache/debug）
-    assert len(stub._tip_tail_messages) == 1
-    msg = stub._tip_tail_messages[0]
+    assert stub._tip_tail_messages == []
+    assert len(stub.messages) == 1
+    msg = stub.messages[0]
     assert "[经验提示]" in msg.content
     assert "cache-hit-debug" in msg.content
     assert "skill_load" in msg.content
