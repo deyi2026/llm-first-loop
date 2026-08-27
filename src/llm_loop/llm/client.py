@@ -26,6 +26,7 @@ from llm_loop.cache_guard.guard import (
     PromptGuard,  # EVO-20260818: 顶层 import（guard 无内部依赖，无循环）——guard property 类型标注
 )
 from llm_loop.core.message import ToolCall
+from llm_loop.core.run_context import current_reasoning_effort
 from llm_loop.llm.errors import (
     LLMEmptyResponseError,
     LLMError,
@@ -68,6 +69,20 @@ class StreamDelta:
     tool_round: ToolRoundInfo | None = None
 
 
+@dataclass(frozen=True)
+class GuardRequestContext:
+    """单次 LLM 请求的 cache_guard 元数据；不可变且绝不存放在共享 client 状态。"""
+
+    session_id: str = ""
+    system_text: str | None = None
+    compress_count_this_run: int = 0
+    history_budget: int = 0
+    run_round: int | None = None
+    provider: str = ""
+    model: str = ""
+    breaker_active: bool = False  # P0（2026-08-25）: 压缩风暴熔断冻结期（规则 F 降级协调）
+
+
 @dataclass
 class _StreamAcc:
     """协议无关的流式聚合状态."""
@@ -81,30 +96,93 @@ class _StreamAcc:
     prompt_cache_hit_tokens: int = 0
 
 
+_THINK_OPEN = "<think>"
+_THINK_CLOSE = "</think>"
+
+
+@dataclass
+class _ThinkTagStreamParser:
+    """请求局部的 `<think>` 增量状态机，支持标签跨任意 SSE delta 分片."""
+
+    buffer: str = ""
+    in_think: bool = False
+
+    @staticmethod
+    def _partial_marker_suffix(text: str, marker: str) -> int:
+        """返回 text 尾部与 marker 前缀重合长度，完整 marker 留给 find 处理."""
+        for size in range(min(len(text), len(marker) - 1), 0, -1):
+            if marker.startswith(text[-size:]):
+                return size
+        return 0
+
+    def feed(self, content: str) -> list[tuple[str, str]]:
+        self.buffer += content
+        out: list[tuple[str, str]] = []
+        while self.buffer:
+            marker = _THINK_CLOSE if self.in_think else _THINK_OPEN
+            kind = "reasoning" if self.in_think else "content"
+            idx = self.buffer.find(marker)
+            if idx >= 0:
+                before = self.buffer[:idx]
+                self.buffer = self.buffer[idx + len(marker):]
+                if before:
+                    out.append((kind, before))
+                self.in_think = not self.in_think
+                continue
+
+            keep = self._partial_marker_suffix(self.buffer, marker)
+            safe_end = len(self.buffer) - keep
+            if safe_end > 0:
+                out.append((kind, self.buffer[:safe_end]))
+            self.buffer = self.buffer[safe_end:]
+            break
+        return out
+
+    def flush(self) -> list[tuple[str, str]]:
+        """正常流结束时排空残片并重置；状态绝不跨请求存活."""
+        text = self.buffer
+        kind = "reasoning" if self.in_think else "content"
+        self.buffer = ""
+        self.in_think = False
+        return [(kind, text)] if text else []
+
+
 def _finish_response(
     acc: _StreamAcc,
     agg: ToolCallDeltaAggregator,
     provider: str,
-    client: LLMClient | None = None,  # EVO-20260818: 修复基线 bug——模块级函数原引用
-    # 不存在的 self → record_result 回馈从未生效（NameError 被吞 → 规则 G 窗口恒空）
+    client: LLMClient | None = None,
+    guard_context: GuardRequestContext | None = None,
 ) -> LLMResponse:
     raw_calls = agg.finish()
     tool_calls: list[ToolCall] = [
         ToolCall(id=c["id"], name=c["name"], arguments=c["arguments"]) for c in raw_calls
     ]
-    # 2026-08-18 cache_guard 规则 G: 响应后回馈命中（闭环——guard 跟踪会话命中率）
+    # cache_guard 规则 G 回馈必须使用本请求快照，不能在长 stream 结束时再读取
+    # provider 级共享 client.guard_session_id（跨会话并发会串台）。无显式上下文时
+    # 仅为旧直接调用方保留 legacy 字段回退。
     try:
-        _pg = getattr(client, "_pg", None) if client is not None else None
-        if _pg is not None and client.guard_session_id:
-            _pg.record_result(
-                client.guard_session_id,
-                acc.prompt_tokens,
-                acc.prompt_cache_hit_tokens,
-                provider=client.provider,
-                model=client.model,
-            )
-    except Exception:  # noqa: BLE001
-        pass
+        if client is not None:
+            _pg = getattr(client, "_pg", None)
+            _sid = (guard_context.session_id if guard_context is not None else client.guard_session_id)
+            if _pg is not None and _sid:
+                _pg.record_result(
+                    _sid,
+                    acc.prompt_tokens,
+                    acc.prompt_cache_hit_tokens,
+                    provider=(
+                        guard_context.provider
+                        if guard_context is not None and guard_context.provider
+                        else client.provider
+                    ),
+                    model=(
+                        guard_context.model
+                        if guard_context is not None and guard_context.model
+                        else client.model
+                    ),
+                )
+    except Exception:  # noqa: BLE001 — cache telemetry fail-open，不影响主响应
+        logger.debug("cache guard response feedback failed (fail-open)", exc_info=True)
     return LLMResponse(
         content="".join(acc.content_parts) or None,
         tool_calls=tool_calls,
@@ -115,6 +193,94 @@ def _finish_response(
         completion_tokens=acc.completion_tokens,
         prompt_cache_hit_tokens=acc.prompt_cache_hit_tokens,
     )
+
+
+def _trace_payload_fingerprint(
+    payload: dict[str, Any], messages: list[dict], *, session_id: str, provider: str, model: str
+) -> None:
+    """[临时诊断 2026-08-27] 请求分段指纹追踪——定位轮间前缀漂移段（缓存命中暴跌排查）.
+
+    背景: 上游裸调健康、生产请求参数恒定，但轮间命中钉死在工具块头部——怀疑
+    messages/tools 之外或极靠前位置存在轮间漂移元素，且对规则 A（system）与
+    cache.window（消息）均不可见。本函数在发送前对请求体做确定性分段哈希：
+    - tools 整块哈希 + 数量（工具 schema 轮间漂移 → 一眼可见）
+    - 除 messages/tools 外的顶层参数哈希（thinking/effort/tool_choice 等）
+    - 逐消息 sha256（canonical JSON：含 role/content/tool_calls 全字段）
+    逐请求一行 JSON 追加 data/audit/payload_trace.jsonl（可用 env 改路径）。
+    只读不改 payload；任何异常吞掉 fail-open，绝不影响主请求。
+    env LLM_PAYLOAD_TRACE=0 关闭（默认开，根因定位后建议关闭）。
+    """
+    if os.environ.get("LLM_PAYLOAD_TRACE", "1") != "1":
+        return
+    try:
+        import hashlib
+
+        def _h(obj: Any) -> str:
+            canon = json.dumps(obj, ensure_ascii=False, sort_keys=True)
+            return hashlib.sha256(canon.encode("utf-8")).hexdigest()[:16]
+
+        def _hw(obj: Any) -> str:
+            """wire 级哈希：不排序、ensure_ascii=True——与 httpx json= 实际发出的字节一致.
+
+            键插入序漂移（canonical sort_keys 哈希会掩盖）在此层现形。
+            """
+            wire = json.dumps(obj)  # httpx 默认序列化行为（插入序 + ASCII 转义）
+            return hashlib.sha256(wire.encode("utf-8")).hexdigest()[:16]
+
+        def _type_tag(a: Any) -> str:
+            if isinstance(a, str):
+                return "str"
+            if isinstance(a, dict):
+                return "dict"
+            if a is None:
+                return "None"
+            return f"other_{type(a).__name__}"
+
+        def _arg_type(tc: Any) -> str:
+            """单个 tool_call 的 arguments 形态标记（1210 归因：区分 str/dict/缺失/扁平）."""
+            if not isinstance(tc, dict):
+                return "tc_non_dict"
+            fn = tc.get("function")
+            if isinstance(fn, dict):
+                if "arguments" not in fn:
+                    return "missing"
+                return _type_tag(fn["arguments"])
+            if "arguments" in tc:
+                return "flat_" + _type_tag(tc["arguments"])
+            return "flat_no_args"
+
+        top = {k: v for k, v in payload.items() if k not in ("messages", "tools")}
+        record = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "session_id": session_id,
+            "provider": provider,
+            "model": model,
+            "tools_hash": _h(payload.get("tools") or []),
+            "tools_wire": _hw(payload.get("tools") or []),
+            "tools_n": len(payload.get("tools") or []),
+            "params": {
+                k: (_h(v) if isinstance(v, dict | list) else v) for k, v in sorted(top.items())
+            },
+            "msgs": [
+                {
+                    "i": i,
+                    "role": m.get("role"),
+                    "chars": len(m.get("content") or "") if isinstance(m.get("content"), str) else -1,
+                    "h": _h(m),
+                    "w": _hw(m),
+                    "args": [_arg_type(tc) for tc in m.get("tool_calls") or []] or None,
+                }
+                for i, m in enumerate(messages)
+            ],
+        }
+        path = os.environ.get("LLM_PAYLOAD_TRACE_PATH", "data/audit/payload_trace.jsonl")
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:  # noqa: BLE001 — 纯诊断，失败静默
+        logger.debug("payload 指纹追踪写入失败", exc_info=True)
 
 
 @dataclass
@@ -144,18 +310,14 @@ class LLMClient:
     thinking_supported: bool | None = None
     # 2026-08-18 cache_guard（MCP 出入口）: 请求前规则校验开关（默认开；CACHE_GUARD=0 关闭）
     guard_enabled: bool = True
-    # guard 校验的 system 文本（engine 传入——含动态段；None 时用 messages[0] 兜底）
+    # legacy guard 字段：仅兼容直接调用方。主 engine 使用 GuardRequestContext，
+    # 不再把 per-request 元数据写进 provider 级共享 LLMClient。
     guard_system: str | None = None
-    # 会话上下文（engine 透传——会话级基线/压缩计数/预算）
     guard_session_id: str = ""
     guard_compress_count: int = 0
     guard_history_budget: int = 0
     # 模型切换检测（拷问②）: 记录上次模型——切换时重置 guard 窗口（防旧模型低命中误拦）
     guard_last_model: str = ""
-    # M3 适配（2026-08-18）: <think> 标签流式剥离状态（跨 delta 累积）
-    _think_buf: str = ""
-    _in_think: bool = False
-
     def __post_init__(self) -> None:
         # 2026-08-20 (Sub2API Grok 兼容): Connection: close 关闭连接复用——
         # 复用的 httpx 连接池对 ai.mxnook.com 网关的 keepalive 不兼容（流式请求挂起/HTTP 400）；
@@ -164,12 +326,25 @@ class LLMClient:
         #   Connection: close 与 LM Studio 本地 SSE 冲突——实测连续请求交替 200/400
         #   （LM Studio 判定客户端提前断开，server 日志 "Client disconnected. Stopping generation"）。
         #   本地 provider（localhost/127.0.0.1）豁免该头；远程 provider 保留原行为（零回归）。
+        # 2026-08-24 本地直连忽略系统代理（根因修复）: httpx 默认 trust_env=True 经 urllib
+        # 读取 macOS 系统代理（Surge 等代理工具把 127.0.0.1:6152 设为系统代理）→ 回环 LLM
+        # 请求被转给代理 → Surge 无法代理自身回环 → 503 Connection Closed（SGErrorDomain）
+        # → 表现即"本地模型出错"。本地推理必须直连（llama-server KV 前缀缓存依赖同 slot
+        # 直连; 见 EXPERIENCE-local-model-config）；远程 provider 保持默认（需代理访问
+        # API 的场景零回归）。env LLM_TRUST_ENV 显式覆盖（1=启用系统代理, 0=禁用）。
         base = (self.base_url or "").lower()
-        if any(h in base for h in ("localhost", "127.0.0.1", "0.0.0.0")):
+        _is_local_base = any(h in base for h in ("localhost", "127.0.0.1", "0.0.0.0"))
+        self._is_local_base = _is_local_base  # 2026-08-24: 供 _stream_openai 判本地关 thinking
+        if _is_local_base:
             headers: dict[str, str] = {}
         else:
             headers = {"Connection": "close"}
-        self._client = httpx.Client(timeout=self.timeout_s, headers=headers)
+        _trust_override = os.environ.get("LLM_TRUST_ENV")
+        if _trust_override is not None:
+            trust_env = _trust_override.strip().lower() in ("1", "true", "yes", "on")
+        else:
+            trust_env = not _is_local_base
+        self._client = httpx.Client(timeout=self.timeout_s, headers=headers, trust_env=trust_env)
 
     def _thinking_supported(self) -> bool:
         """思考参数发送判定（M20 CFG-03 + M47 §5.5）.
@@ -207,6 +382,168 @@ class LLMClient:
         self._client.close()
 
     # ── 统一入口（协议分发） ──
+    @staticmethod
+    def _normalize_tool_call_args(messages: list[dict]) -> tuple[list[dict], dict | None]:
+        """EVO-20260827 V3: tool_call.function.arguments 非 str → 强制串化（智谱 1210 唯一探明触发器）.
+
+        取证（6485b02b 会话排查 + 智谱 coding 端点二分探测）:
+        - 15 个请求变体中仅「arguments 缺失(D4)/为 dict(D5)」复现 HTTP 400
+          {"code":"1210","API 调用参数有误"}；孤儿配对/null content/额外键等全过。
+        - ToolCall dataclass 标注 arguments: dict（core/message.py:54），存在隐式
+          dict 构建分支——任何未经 json.dumps 的 wire 重建都会整轮 400，且 provider
+          只回笼统 1210 无定位信息。
+        两遍扫描 + copy-on-write（不改调用方消息）；fail-open 不阻断；
+        返回 (新消息列表, 首个修复项诊断 {msg_idx, call_idx, tool}) 供异常归因。
+        """
+        needs = False
+        for m in messages:
+            for tc in m.get("tool_calls") or []:
+                fn = tc.get("function") if isinstance(tc, dict) else None
+                if isinstance(fn, dict) and not isinstance(fn.get("arguments"), str):
+                    needs = True
+                    break
+            if needs:
+                break
+        if not needs:
+            return messages, None
+
+        out: list[dict] = []
+        first_fixed: dict | None = None
+        fixed_count = 0
+        for mi, m in enumerate(messages):
+            tcs = m.get("tool_calls")
+            if not tcs:
+                out.append(m)
+                continue
+            new_tcs: list[dict] = []
+            changed = False
+            for ti, tc in enumerate(tcs):
+                fn = tc.get("function") if isinstance(tc, dict) else None
+                args = fn.get("arguments") if isinstance(fn, dict) else None
+                if isinstance(args, str):
+                    new_tcs.append(tc)
+                    continue
+                fn2 = dict(fn or {})
+                fn2["arguments"] = json.dumps(args if args is not None else {}, ensure_ascii=False)
+                tc2 = dict(tc) if isinstance(tc, dict) else {}
+                tc2["function"] = fn2
+                new_tcs.append(tc2)
+                changed = True
+                fixed_count += 1
+                if first_fixed is None:
+                    first_fixed = {
+                        "msg_idx": mi,
+                        "call_idx": ti,
+                        "tool": (fn2.get("name") if isinstance(fn2.get("name"), str) else "") or "?",
+                    }
+            if changed:
+                m2 = dict(m)
+                m2["tool_calls"] = new_tcs
+                out.append(m2)
+            else:
+                out.append(m)
+        logger.warning(
+            "提交视图修复(V3): %d 处 tool_call.arguments 非 str 已强制串化"
+            "（首个 msg#%d call#%d %s）——智谱 1210 触发器防御",
+            fixed_count,
+            (first_fixed or {}).get("msg_idx", -1),
+            (first_fixed or {}).get("call_idx", -1),
+            (first_fixed or {}).get("tool", "?"),
+        )
+        return out, first_fixed
+
+    @staticmethod
+    def _sanitize_openai_tool_pairs(messages: list[dict]) -> list[dict]:
+        """EVO-20260827 V2: OpenAI 路径 tool_calls↔tool 配对双向清洗（连续 400 根因修复）.
+
+        取证（eb5c2686/6485b02b 等 5+ 会话，跨 provider 复现）:
+        "An assistant message with 'tool_calls' must be followed by tool messages
+        responding to each 'tool_call_id'" —— 反向孤儿（声明在、应答被
+        cache_compacted_for 过滤/锚点裁剪切断）是主签名；正向孤儿（tool 无声明）
+        为次签名。上游 history.py 过滤不校验配对（689-695），此处为客户端最后防线。
+        双向修复（copy-on-write，不改调用方消息对象）:
+        - 正向: 孤儿 tool（无在案声明/重复应答）→ 删该 tool 消息
+        - 反向: assistant tool_call 无应答（含被 user/system 插队截断、序列末尾悬空）
+          → 从 tool_calls 剔除该 id；剔空后无文本则整条删
+        fail-open + warning 如实记录两个方向的修复量。
+        """
+        has_tool = any(m.get("role") == "tool" for m in messages)
+        has_tc = any(m.get("tool_calls") for m in messages)
+        if not (has_tool or has_tc):
+            return messages  # 快速路径：无配对结构原样返回（零开销）
+
+        out: list[dict] = []
+        pending: dict[str, int] = {}  # tool_call_id -> 其 assistant 在 out 中的下标
+        removed_tool = 0
+        stripped_ids = 0
+        dropped_assistant = 0
+
+        def _strip_pending() -> None:
+            # pending 中剩余的 id 即"无应答孤儿"（主签名），从 assistant 剔除之
+            nonlocal stripped_ids, dropped_assistant
+            if not pending:
+                return
+            by_idx: dict[int, list[str]] = {}
+            for tid, i in pending.items():
+                by_idx.setdefault(i, []).append(tid)
+            for i, orphan_tids in by_idx.items():
+                orphan_set = set(orphan_tids)
+                tcs = out[i].get("tool_calls") or []
+                keep = [tc for tc in tcs if (tc or {}).get("id") not in orphan_set]
+                stripped_ids += len(tcs) - len(keep)
+                if keep:
+                    out[i]["tool_calls"] = keep
+                else:
+                    out[i].pop("tool_calls", None)
+                    if not out[i].get("content"):  # 无文本且无 tool_calls → 整条删
+                        out[i] = None  # 占位，尾部统一压缩
+                        dropped_assistant += 1
+            pending.clear()
+
+        for m in messages:
+            role = m.get("role")
+            if role == "assistant":
+                if pending:  # 新 assistant 前仍有悬空声明 → 反向孤儿
+                    _strip_pending()
+                    pending.clear()
+                tcs = m.get("tool_calls") or []
+                if tcs:
+                    m2 = dict(m)  # copy-on-write
+                    out.append(m2)
+                    for tc in tcs:
+                        tid = (tc or {}).get("id")
+                        if tid:
+                            pending[tid] = len(out) - 1
+                else:
+                    out.append(m)
+            elif role == "tool":
+                tid = m.get("tool_call_id") or ""
+                if tid and tid in pending:
+                    out.append(m)
+                    del pending[tid]  # 首个应答有效；重复应答按孤儿删
+                else:
+                    removed_tool += 1
+            else:  # user/system：插队即截断悬空声明
+                if pending:
+                    _strip_pending()
+                    pending.clear()
+                out.append(m)
+        if pending:  # 序列末尾悬空
+            _strip_pending()
+        out = [m for m in out if m is not None]
+        if removed_tool:
+            logger.warning(
+                "提交视图修复: 删除 %d 条孤儿 tool 消息（无在案声明/重复应答）", removed_tool
+            )
+        if stripped_ids or dropped_assistant:
+            logger.warning(
+                "提交视图修复: 剔除 %d 个无应答 tool_call_id，删除 %d 条空 assistant"
+                "（反向孤儿——连续 400 主签名，EVO-20260827 V2）",
+                stripped_ids,
+                dropped_assistant,
+            )
+        return out
+
     def chat_stream(
         self,
         messages: list[dict],
@@ -214,33 +551,48 @@ class LLMClient:
         *,
         timeout_s: float | None = None,  # PARAM-01: 每次调用可覆盖超时（None 用构造值）
         model: str | None = None,  # WEB: 每次调用可覆盖模型（None 用构造值，供 Web 模型切换）
+        guard_context: GuardRequestContext | None = None,
     ) -> Iterator[StreamDelta]:
         """流式请求，逐 content delta yield；generator 结束返回完整 LLMResponse.
 
         异常按类型抛出 LLMError 子类，由循环如实反馈。
         """
         protocol = self.wire_protocol
-        # 2026-08-18 cache_guard（MCP 出入口——唯一出入口）: 发送前规则校验（fail-open）
+        actual_model = self.model if model is None else model
+        # 每请求 guard 快照：显式上下文优先；legacy 直接调用仍从兼容字段构造一次
+        # 局部快照，后续整个流（含终态 telemetry）都不再读取共享 per-request 字段。
+        _guard_ctx = guard_context or GuardRequestContext(
+            session_id=self.guard_session_id or "__global__",
+            system_text=(
+                self.guard_system
+                if self.guard_system is not None
+                else (
+                    messages[0].get("content", "")
+                    if messages and messages[0].get("role") == "system"
+                    else ""
+                )
+            ),
+            compress_count_this_run=self.guard_compress_count,
+            history_budget=self.guard_history_budget,
+            provider=self.provider,
+            model=actual_model,
+        )
+        # cache_guard（MCP 出入口——唯一出入口）: 发送前规则校验（fail-open）
         self._guard_start_ts = 0
         if self.guard_enabled:
             try:
-                _sys = self.guard_system if self.guard_system is not None else (
-                    messages[0].get("content", "") if messages and messages[0].get("role") == "system" else ""
-                )
                 _guard = self.ensure_guard()
-                # 模型切换 → 重置窗口（不同模型前缀不同——旧窗口命中率无意义）
-                if self.guard_last_model and self.guard_last_model != self.model:
-                    _guard.reset_session(self.guard_session_id or "__global__")
-                self.guard_last_model = self.model
                 _d = _guard.check(
-                    session_id=self.guard_session_id or "__global__",
-                    system_text=_sys,
+                    session_id=_guard_ctx.session_id or "__global__",
+                    system_text=_guard_ctx.system_text or "",
                     messages=messages,
                     tools=tools,
-                    compress_count_this_run=self.guard_compress_count,
-                    # EVO-20260818（spec §4.3-2）: 审计真实 provider/model（消除硬编码）
-                    provider=self.provider,
-                    model=self.model,
+                    run_round=_guard_ctx.run_round,
+                    compress_count_this_run=_guard_ctx.compress_count_this_run,
+                    history_budget=_guard_ctx.history_budget,
+                    provider=_guard_ctx.provider or self.provider,
+                    model=_guard_ctx.model or actual_model,
+                    breaker_active=_guard_ctx.breaker_active,
                 )
                 if _d.rule == "submit_ratio" and _d.verdict == "WARN":
                     # 规则 F WARN 升级：注入提示（AI 可见——接近超限提前处理）
@@ -257,14 +609,41 @@ class LLMClient:
                 logger.debug("cache_guard 校验异常（fail-open）", exc_info=True)
         # 注意：Python 3.11+ 裸 `yield from` 会丢弃子生成器 return 值（StopIteration.value=None），
         # 必须显式捕获后 return 才能把终态 LLMResponse 传给消费者（engine 经 StopIteration.value 取终态）。
-        if protocol == "anthropic":
-            result = yield from self._stream_anthropic(messages, tools, timeout_s=timeout_s, model=model)
-        elif protocol == "google":
-            result = yield from self._stream_google(messages, tools, timeout_s=timeout_s, model=model)
-        elif protocol == "lms-chat":
-            result = yield from self._stream_lms_chat(messages, tools, timeout_s=timeout_s, model=model)
-        else:
-            result = yield from self._stream_openai(messages, tools, timeout_s=timeout_s, model=model)
+        # EVO-20260827: OpenAI 兼容路径孤儿 tool 清洗（anthropic 在 _to_anthropic_messages
+        # 内已有对称清洗；google 的 functionCall 结构不同不适用）——防压缩切配对/注入
+        # 插队产生的孤儿 tool 消息被 provider 拒收（连续 400 根因，跨 provider 取证）
+        _v3_diag: dict | None = None  # EVO-20260827 V3: arguments 串化诊断（1210 归因用）
+        if protocol not in ("anthropic", "google"):
+            messages = self._sanitize_openai_tool_pairs(messages)
+            messages, _v3_diag = self._normalize_tool_call_args(messages)
+        try:
+            if protocol == "anthropic":
+                result = yield from self._stream_anthropic(
+                    messages, tools, timeout_s=timeout_s, model=model, guard_context=_guard_ctx
+                )
+            elif protocol == "google":
+                result = yield from self._stream_google(
+                    messages, tools, timeout_s=timeout_s, model=model, guard_context=_guard_ctx
+                )
+            elif protocol == "lms-chat":
+                result = yield from self._stream_lms_chat(messages, tools, timeout_s=timeout_s, model=model)
+            else:
+                result = yield from self._stream_openai(
+                    messages, tools, timeout_s=timeout_s, model=model, guard_context=_guard_ctx
+                )
+        except LLMHTTPError:
+            # EVO-20260827 V3: 参数类 400（如智谱 1210 笼统无定位）携带本轮 arguments
+            # 串化诊断，异常侧日志可直接归因到消息位置/工具名。
+            if _v3_diag:
+                logger.error(
+                    "LLM HTTP 错误伴随 V3 诊断: 本请求有 %d 处非串 arguments 已强制串化"
+                    "（首个 msg#%s call#%s %s）——若仍 400 属其他结构残留",
+                    _v3_diag.get("fixed_total", 0),
+                    _v3_diag.get("msg_idx"),
+                    _v3_diag.get("call_idx"),
+                    _v3_diag.get("tool"),
+                )
+            raise
         # EVO-20260818-92bd97d6: 空响应兜底——流正常结束但无任何内容/工具调用
         # 视为异常（流被截断/模型异常），抛异常走如实反馈，不再静默记为 content=(空)
         if result is not None and not result.content and not result.tool_calls:
@@ -282,6 +661,7 @@ class LLMClient:
         *,
         timeout_s: float | None,
         model: str | None,
+        guard_context: GuardRequestContext | None = None,
     ) -> Iterator[StreamDelta]:
         url = f"{self.base_url.rstrip('/')}/chat/completions"
         payload: dict[str, Any] = {
@@ -310,19 +690,46 @@ class LLMClient:
         # P1-FEISHU: 本地 provider (LM Studio) 不发 OpenAI 的 `thinking` 字段
         if self.thinking_mode and self._thinking_supported() and self.api_key:
             payload["thinking"] = {"type": "enabled"}
-            payload["reasoning_effort"] = self.reasoning_effort
-        # P1-FEISHU: 本地 provider（api_key 为空）显式关闭 thinking
-        if not self.api_key:
+            payload["reasoning_effort"] = current_reasoning_effort.get() or self.reasoning_effort
+        # 2026-08-24 本地 thinking 开关（SWE 对照实验定论, 见 docs/swe_ab_report.md）:
+        # A 臂（关思考, 4 次独立尝试）0/4 通过 F2P, 全漏第二修复点; B 臂（开思考）通过。
+        # → 本地默认【开启】thinking（能力优先）; env LOCAL_ENABLE_THINKING=0 显式关闭
+        # （纯速度场景, 如交互闲聊）。llama.cpp qwen 模板默认思考开启, OpenAI 协议
+        # thinking 字段不被尊重, 故用 chat_template_kwargs 显式控制。
+        if getattr(self, "_is_local_base", False) and os.environ.get("LOCAL_ENABLE_THINKING", "1") == "0":
             payload["chat_template_kwargs"] = {"enable_thinking": False}
         # 本地 provider（api_key 为空）不发 Authorization 头
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
+        # [临时诊断 2026-08-27] 分段指纹落盘（见 _trace_payload_fingerprint docstring）——
+        # 放在 payload 完整组装后、发送前；BLOCK 的请求在 chat_stream 层已被拦，不会到达这里。
+        _trace_payload_fingerprint(
+            payload,
+            messages,
+            session_id=(guard_context.session_id if guard_context else "") or "__global__",
+            provider=self.provider,
+            model=payload.get("model", "") or self.model,
+        )
 
         acc = _StreamAcc()
         agg = ToolCallDeltaAggregator()
+        effective_timeout = timeout_s if timeout_s is not None else self.timeout_s
+        # EVO-20260824: 大上下文流式断连重试（默认 1 次，env LLM_RETRY_DISCONNECT 可调/关）——
+        # 观测: 150K+ 字符上下文下 deepseek 流式偶发 peer closed connection
+        # （incomplete chunked read），同请求重试因前缀缓存命中率高、代价极低；
+        # 仅在「尚无任何输出已产出」时重试（已有 content/reasoning/tool delta
+        # 产出则重试会造成 UI 重复/工具重复执行，故不重试）。
         try:
-            effective_timeout = timeout_s if timeout_s is not None else self.timeout_s
+            _retry_disconnect = int(os.environ.get("LLM_RETRY_DISCONNECT", "1"))
+        except ValueError:  # 非法 env 兜底 1
+            _retry_disconnect = 1
+        _tc_seen = False
+
+        def _openai_stream_once() -> Iterator[StreamDelta]:
+            """单次流式请求（yield delta；传输异常向上抛，由外层重试判定）."""
+            nonlocal _tc_seen
+            think_parser = _ThinkTagStreamParser()
             with self._client.stream(
                 "POST", url, json=payload, headers=headers, timeout=effective_timeout
             ) as resp:
@@ -364,47 +771,21 @@ class LLMClient:
                     delta = choice.get("delta") or {}
                     content = delta.get("content")
                     if content:
-                        # 2026-08-18 MiniMax-M3 适配（场景 B）: M3 把思考链放 content 的
-                        # <think>...</think> 标签（reasoning_content 字段为空）——流式剥离到 reasoning
-                        self._think_buf = getattr(self, "_think_buf", "") + content
-                        _in_think = getattr(self, "_in_think", False)
-                        while True:
-                            if not _in_think:
-                                idx = self._think_buf.find("<think>")
-                                if idx == -1:
-                                    normal = self._think_buf
-                                    self._think_buf = ""
-                                    if normal:
-                                        acc.content_parts.append(normal)
-                                        yield StreamDelta(text=normal)
-                                    break
-                                normal = self._think_buf[:idx]
-                                self._think_buf = self._think_buf[idx:]
-                                if normal:
-                                    acc.content_parts.append(normal)
-                                    yield StreamDelta(text=normal)
-                                _in_think = True
+                        # MiniMax-M3 等 provider 可能把思考链放 content 的 <think> 标签；
+                        # parser 必须请求局部且保留潜在 marker 前缀，避免分片泄漏/跨会话污染。
+                        for kind, text in think_parser.feed(content):
+                            if kind == "reasoning":
+                                acc.reasoning_parts.append(text)
+                                yield StreamDelta(text="", reasoning=text)
                             else:
-                                end = self._think_buf.find("</think>")
-                                if end == -1:
-                                    think = self._think_buf
-                                    self._think_buf = ""
-                                    if think:
-                                        acc.reasoning_parts.append(think)
-                                        yield StreamDelta(text="", reasoning=think)
-                                    break
-                                think = self._think_buf[:end]
-                                self._think_buf = self._think_buf[end + len("</think>"):]
-                                _in_think = False
-                                if think:
-                                    acc.reasoning_parts.append(think)
-                                    yield StreamDelta(text="", reasoning=think)
-                        self._in_think = _in_think
+                                acc.content_parts.append(text)
+                                yield StreamDelta(text=text)
                     rc = delta.get("reasoning_content")
                     if rc:
                         acc.reasoning_parts.append(rc)
                         yield StreamDelta(text="", reasoning=rc)
                     if delta.get("tool_calls"):
+                        _tc_seen = True
                         for tc in delta["tool_calls"]:
                             agg.add_delta(tc)
                     fr = choice.get("finish_reason")
@@ -412,15 +793,36 @@ class LLMClient:
                         acc.finish_reason = fr
                     if acc.finish_reason == "length":
                         acc.truncated = True
-        except httpx.TimeoutException as exc:
-            raise LLMTimeoutError(f"LLM 请求超时（{effective_timeout}s）") from exc
-        except httpx.NetworkError as exc:
-            raise LLMNetworkError(f"LLM 网络不可达: {exc}") from exc
-        except LLMHTTPError:
-            raise
-        except httpx.HTTPError as exc:
-            raise LLMNetworkError(f"LLM HTTP 异常: {exc}") from exc
-        return _finish_response(acc, agg, self.provider, client=self)
+                for kind, text in think_parser.flush():
+                    if kind == "reasoning":
+                        acc.reasoning_parts.append(text)
+                        yield StreamDelta(text="", reasoning=text)
+                    else:
+                        acc.content_parts.append(text)
+                        yield StreamDelta(text=text)
+        _attempt = 0
+        while True:
+            _attempt += 1
+            try:
+                yield from _openai_stream_once()
+                break  # 流完整结束（含 [DONE]）
+            except httpx.TimeoutException as exc:
+                raise LLMTimeoutError(f"LLM 请求超时（{effective_timeout}s）") from exc
+            except (httpx.NetworkError, httpx.ProtocolError) as exc:
+                # 传输级断连（peer closed / 连接重置 / 协议中断）→ 无输出已产出时重试一次
+                _output_seen = bool(acc.content_parts or acc.reasoning_parts) or _tc_seen
+                if _attempt <= _retry_disconnect and not _output_seen:
+                    logger.warning(
+                        "LLM 流式传输中断（尚无输出已产出），重试 %d/%d: %s",
+                        _attempt, _retry_disconnect, exc,
+                    )
+                    continue
+                raise LLMNetworkError(f"LLM 网络不可达: {exc}") from exc
+            except LLMHTTPError:
+                raise
+            except httpx.HTTPError as exc:
+                raise LLMNetworkError(f"LLM HTTP 异常: {exc}") from exc
+        return _finish_response(acc, agg, self.provider, client=self, guard_context=guard_context)
 
     # ── Anthropic Messages API（wire_protocol=anthropic，P3-5） ──
     def _anthropic_cache_enabled(self) -> bool:
@@ -440,6 +842,7 @@ class LLMClient:
         *,
         timeout_s: float | None,
         model: str | None,
+        guard_context: GuardRequestContext | None = None,
     ) -> Iterator[StreamDelta]:
         # EVO-20260817: base_url 已含 /v1 时（如 LM Studio http://localhost:1234/v1）
         # 避免拼出 /v1/v1/messages 404——归一化后两种配置均正确，官方 API 零回归
@@ -556,7 +959,7 @@ class LLMClient:
             raise
         except httpx.HTTPError as exc:
             raise LLMNetworkError(f"LLM HTTP 异常: {exc}") from exc
-        return _finish_response(acc, agg, self.provider, client=self)
+        return _finish_response(acc, agg, self.provider, client=self, guard_context=guard_context)
 
     # ── Google Gemini API（wire_protocol=google，P3-5） ──
     def _stream_google(
@@ -566,6 +969,7 @@ class LLMClient:
         *,
         timeout_s: float | None,
         model: str | None,
+        guard_context: GuardRequestContext | None = None,
     ) -> Iterator[StreamDelta]:
         model_id = self.model if model is None else model
         url = (
@@ -645,7 +1049,7 @@ class LLMClient:
             raise
         except httpx.HTTPError as exc:
             raise LLMNetworkError(f"LLM HTTP 异常: {exc}") from exc
-        return _finish_response(acc, agg, self.provider, client=self)
+        return _finish_response(acc, agg, self.provider, client=self, guard_context=guard_context)
 
     # ── LM Studio /api/v1/chat（wire_protocol=lms-chat，EVO-20260817 用户需求） ──
     def _stream_lms_chat(
@@ -985,6 +1389,7 @@ class LLMClient:
         orphan_ids = [tid for tid in pending_use_ids if tid not in consumed]
         if orphan_ids:
             orphan_set = set(orphan_ids)
+            remove_indices: set[int] = set()
             for idx, _ids in assistant_blocks:
                 msgs = out[idx]
                 blocks = msgs.get("content") or []
@@ -993,8 +1398,9 @@ class LLMClient:
                     out[idx]["content"] = keep
                 else:
                     # 该 assistant 消息只剩孤立 tool_use → 整条删除
-                    out[idx] = None
-            out = [m for m in out if m is not None]
+                    remove_indices.add(idx)
+            if remove_indices:
+                out = [m for idx, m in enumerate(out) if idx not in remove_indices]
         return out
 
     @staticmethod
@@ -1063,9 +1469,12 @@ class LLMClient:
         *,
         timeout_s: float | None = None,  # PARAM-01: 每次调用可覆盖超时（None 用构造值）
         model: str | None = None,
+        guard_context: GuardRequestContext | None = None,
     ) -> LLMResponse:
         """非流式：内部走流式聚合（终态与流式一致，含思考链/截断/用量）."""
-        it = self.chat_stream(messages, tools, timeout_s=timeout_s, model=model)
+        it = self.chat_stream(
+            messages, tools, timeout_s=timeout_s, model=model, guard_context=guard_context
+        )
         result: LLMResponse | None = None
         while True:  # 消费全部 delta；终态 LLMResponse 经 StopIteration.value 捕获
             try:

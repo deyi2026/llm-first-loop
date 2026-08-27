@@ -9,7 +9,7 @@ import logging
 import os
 import sys
 
-from llm_loop.config import load_settings
+from llm_loop.config import load_env_file, load_settings
 from llm_loop.factory import build_engine
 
 from .bridge import FeishuWsBridge
@@ -104,6 +104,7 @@ def start_bridge(bridge: FeishuWsBridge) -> bool:
 
 def main() -> None:
     """飞书桥启动入口（python -m llm_loop.feishu）."""
+    load_env_file()  # 补齐手动启动缺口：shell 未注入 .env 时也能可靠读配置（MCP_SERVERS 等）
     # EVO-20260811-f94e5306: 记录进程启动版本（一致性检测）
     from llm_loop.introspection.proc_version import record_process_start
 
