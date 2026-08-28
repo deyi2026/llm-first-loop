@@ -192,6 +192,16 @@ def run_get_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
             lines.append(f"  [{cp.get('ts','')[11:19]}] {str(cp.get('what',''))[:80]}")
     else:
         lines.append("checkpoints: 无（首个里程碑后 checkpoint_goal）")
+    # DESIGN-20260828: 任务图摘要（跨会话恢复一并可见，fail-open）
+    if host.audit_dir:
+        try:
+            from llm_loop.introspection.task_store import TaskStore
+
+            _ts = TaskStore(str(host.audit_dir)).summary_line(str(g.get("id", "")))
+            if _ts:
+                lines.append(_ts)
+        except Exception:  # noqa: BLE001
+            pass
     lines.append("恢复注意: 先验证 worktree/外部状态再依赖上述内容（RULE-AI-20）")
     return ToolResult(ToolResultStatus.SUCCESS, "\n".join(lines), "", "get_goal")
 
@@ -204,6 +214,24 @@ def run_update_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
     status = str(args.get("status", "")).strip()
     if not gid or status not in ("complete", "blocked"):
         return ToolResult(ToolResultStatus.FAILURE, "[参数错误] goal_id + status ∈ {complete, blocked}", "", "update_goal")
+    # DESIGN-20260828 Task Frontier §2.1: complete 前置校验——任务图存在 open 任务时
+    # 拒绝收口（pending/in_progress 需推进终态；blocked/failed 需取消或人工 waive）。
+    if status == "complete" and host.audit_dir:
+        try:
+            from llm_loop.introspection.task_store import TaskStore
+
+            _ok, _detail = TaskStore(str(host.audit_dir)).goal_completion_ready(gid)
+            if not _ok:
+                return ToolResult(
+                    ToolResultStatus.FAILURE,
+                    f"[收口拒绝] goal {gid} 任务图仍有 open 任务（{_detail}）。\n"
+                    "先 task_update 推进终态（done/failed/cancelled）；blocked/failed 的"
+                    "残留如需放弃，转 cancelled 并在 goal reason 说明，或请人工确认 waive。",
+                    "",
+                    "update_goal",
+                )
+        except Exception:  # noqa: BLE001 — fail-open: 任务账本不可用不阻断 goal 流转
+            pass
     try:
         g = store.update(gid, status, reason=str(args.get("reason", "")).strip())
     except GoalStoreCorruptionError as exc:
