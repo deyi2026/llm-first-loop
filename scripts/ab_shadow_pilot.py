@@ -110,7 +110,7 @@ def run_phase(tag: str, phase: str, model: str, task: str, rep: int) -> dict:
     data_dir.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
     env["LFL_DATA_DIR"] = str(data_dir)
-    env["COG_RUNTIME_MODE"] = "off" if phase == "control" else "shadow"
+    env["COG_RUNTIME_MODE"] = "off" if phase == "control" else phase  # canary: enforce 透传（driver 子进程边界，不动 src/）
     env["COG_RUNTIME_TELEMETRY"] = "1"
     env["PYTHONPATH"] = str(ROOT / "src")
     # glm-minimax-2 教训: providers.json 定位 {data_dir}/providers.json（优先级 2）——
@@ -251,6 +251,11 @@ def main() -> None:
             for model in MODELS:
                 for rep in (1, 2):
                     plan.append((phase, model, "mem2t", rep))
+    elif tag.endswith("-canary"):  # bounded enforce canary: control(off)→enforce × mem2t 8 runs
+        for phase in ("control", "enforce"):
+            for model in MODELS:
+                for rep in (1, 2):
+                    plan.append((phase, model, "mem2t", rep))
     else:
         for phase in ("control", "shadow"):
             for model in MODELS:
@@ -263,7 +268,10 @@ def main() -> None:
     # provider 互不干扰限流）；两阶段契约保持: control 全部完成后才 shadow。
     workers = 1 if smoke else 2
     from concurrent.futures import ThreadPoolExecutor
-    for phase in ("control", "shadow"):
+    phases_seq = (
+        ("control", "enforce") if tag.endswith("-canary") else ("control", "shadow")
+    )
+    for phase in phases_seq:
         phase_plan = [p for p in plan if p[0] == phase]
         print(f"[dispatch] phase={phase} n={len(phase_plan)} workers={workers}", flush=True)
         with ThreadPoolExecutor(max_workers=workers) as ex:
