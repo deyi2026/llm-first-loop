@@ -36,6 +36,16 @@ from llm_loop.core.loop.err1210 import (
 from llm_loop.core.loop.focus import build_task_anchor, wrap_injection
 from llm_loop.core.loop.hotcard import pop_hotcard, write_hotcard
 
+# Cognitive Runtime（tasks 2.3/2.5/2.6）: tier 分级聚合 + 语义投影替代锚点。
+# 惰性容错导入（cognitive 子包独立演进，import 失败时聚合器回退原平铺行为）。
+try:  # noqa: SIM105
+    from llm_loop.cognitive.compiler import compile_decision_packet, semantic_projection
+    from llm_loop.cognitive.state import SemanticStateStore
+except Exception:  # noqa: BLE001 — fail-open 回退平铺聚合（零回归）
+    compile_decision_packet = None  # type: ignore[assignment]
+    semantic_projection = None  # type: ignore[assignment]
+    SemanticStateStore = None  # type: ignore[assignment]
+
 # build_session_snapshot_text 定义于 engine（loop 包内）——顶层 import 会触发
 # engine→build→loop/__init__ 循环（engine import build 在前），故用函数内延迟 import
 from llm_loop.core.message import Message, MessageSource
@@ -810,13 +820,46 @@ class _BuildMixin:
                 self._deferred_replay_slots = _slots
         # ── P1 统一聚合器（9.1）: 四槽 parts → 单条 user；sidecar 单 AGGREGATED entry ──
         # 尾部连续 user 恒 ≤1（1210 结构性消除）；聚合失败 fail-open 降级零注入（不阻断构建）
+        # Cognitive Runtime（tasks 2.3/2.5/2.6，spec 5.2/5.1.1-3b）:
+        # - COG_RUNTIME_TIER_ENABLED 原子切换 tier 分级聚合（在 T1 单管线之上叠加，不新建
+        #   第二条聚合管线；=0 回退平铺原行为零回归，spec 5.2.3-1）
+        # - COG_RUNTIME_ANCHOR_MODE 三态: semantic=投影替代锚点 / anchor=旧行为 / auto=投影
+        #   可用则替代否则回退（design 2.1.3.4 冻结点④）；投影=wrap_injection 的 anchor 位
+        #   前导（决策包 HOT 首行，落在尾部聚合条内，不插前缀区——design 1.2.4 缓存约束）
+        # - COG_RUNTIME_DUAL_SOURCE_GUARD: 检测锚点与投影同轮并存 → 告警剔除锚点（fail-open）
         if _inject_parts:
             try:
+                _anchor_mode = str(getattr(self.settings, "cog_runtime_anchor_mode", "auto"))
+                _tier_on = bool(getattr(self.settings, "cog_runtime_tier_enabled", True))
+                _sem_state = None
+                _projection = ""
+                if _anchor_mode in ("semantic", "auto") and SemanticStateStore is not None:
+                    try:
+                        _sem_state = SemanticStateStore(
+                            os.path.join(self.settings.data_dir, "audit")
+                        ).load()
+                    except Exception:  # noqa: BLE001 — 状态读取 fail-open → 回退 anchor
+                        _sem_state = None
+                    if _sem_state is not None and semantic_projection is not None:
+                        _projection = semantic_projection(_sem_state)
                 _anchor = build_task_anchor(self._focus.anchor_sess)
-                _agg = "\n\n".join(
-                    f"--- [slot:{s if s else 'hint'}] ---\n{c}"
-                    for s, c in _inject_parts
-                )
+                if _projection:
+                    if _anchor and bool(
+                        getattr(self.settings, "cog_runtime_dual_source_guard", True)
+                    ):
+                        logger.warning(
+                            "build: 锚点与投影同轮并存，fail-open 剔除锚点（DUAL_SOURCE_GUARD）"
+                        )
+                    _anchor = _projection  # 投影替代锚点（演进不并存，spec 5.2.1-7）
+                elif _anchor_mode == "semantic":
+                    _anchor = ""  # semantic 严格态: 语义不可用不回退锚点（可观测零指针）
+                if _tier_on and compile_decision_packet is not None:
+                    _agg = compile_decision_packet(_inject_parts, _sem_state).render_slots()
+                else:
+                    _agg = "\n\n".join(
+                        f"--- [slot:{s if s else 'hint'}] ---\n{c}"
+                        for s, c in _inject_parts
+                    )
                 _agg_content = wrap_injection(_agg, _anchor)
                 built.append({"role": "user", "content": _agg_content})
                 # err1210 9.1: 聚合登记（单 entry；strip/defer 消费端经 AGGREGATED 分支）

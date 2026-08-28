@@ -66,13 +66,20 @@ class SlotKind(StrEnum):
     AGGREGATED = "aggregated"  # P1 9.1: 四槽聚合单条（strip/defer 消费端拆解分支）
 
 
-_AGG_SLOT_RE = re.compile(r"^--- \[slot:(interop|tip|hotcard|gate_note|memory|hint)\] ---$")
+_AGG_SLOT_RE = re.compile(
+    # Cognitive Runtime 2.3（tier 分级）: 兼容两种段标记——
+    # 新: --- [tier:hot][slot:interop] ---（COG_RUNTIME_TIER_ENABLED=1，compiler.py 打标）
+    # 旧: --- [slot:interop] ---（TIER_ENABLED=0 回退平铺，原行为零回归）
+    # group(1) 恒为 slot 名（defer 回存按槽位复位，tier 为投射信息不参与复位）。
+    r"^--- \[(?:tier:(?:hot|warm|cold)\]\[)?slot:(interop|tip|hotcard|gate_note|memory|hint)\] ---$"
+)
 
 
 def parse_aggregated_slots(content: str) -> list[tuple[str, str]]:
     """聚合消息 content → [(slot, seg)] 段列表（P1 9.1 defer 拆解用）.
 
-    build 统一聚合器产物格式: 各段以 "--- [slot:xxx] ---" 行起始（build.py 9.1）。
+    build 统一聚合器产物格式: 各段以 "--- [slot:xxx] ---" 或 tier 分级变体
+    "--- [tier:hot][slot:xxx] ---" 行起始（build.py 9.1 / cognitive compiler 2.3）。
     hint 段为非消费提示（local 行为提示），仅透传内容不参与槽复位。
     解析不到任何段标记时返回空列表（调用方按 fail-open 处理）。
     """

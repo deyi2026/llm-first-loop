@@ -200,6 +200,47 @@ def _extract_reasoning_facts(messages: list[Message], max_facts: int = 6) -> lis
     return facts
 
 
+def _cog_anchor_mode() -> str:
+    """读 COG_RUNTIME_ANCHOR_MODE（对齐 config._env_cog_anchor_mode 语义；模块级 env 惯例）."""
+    import os
+
+    raw = os.environ.get("COG_RUNTIME_ANCHOR_MODE", "").strip().lower()
+    return raw if raw in ("semantic", "anchor", "auto") else "auto"
+
+
+def _persist_semantic_state(session_id: str = "") -> bool:
+    """压缩黄金窗口: 从 GoalStore 派生语义状态并原子落盘（Cognitive Runtime tasks 2.4）.
+
+    决策线（T2 [当前决策]+[下一步] 独立注入帧）升级演进为 SemanticTaskState 投影——
+    压缩时把决策指针持久化（rebuild+save），build 每轮从状态文件投影为决策包 HOT 首行
+    （尾部聚合条内），代码演进不并存（spec 5.1.1-3b）。
+    fail-open: GoalStore 不可用/无活跃 goal/损坏 → False（不阻断压缩主流程）。
+    audit 路径 = LFL_DATA_DIR（镜像/跨区隔离锚点）或 data/（主区默认）。
+    """
+    try:
+        import os
+        from pathlib import Path as _P
+
+        from llm_loop.cognitive.state import SemanticStateStore, rebuild_state
+        from llm_loop.introspection.goal import GoalStore
+
+        base = os.environ.get("LFL_DATA_DIR", "data")
+        audit = _P(base) / "audit"
+        goal = GoalStore(audit).get(prefer_session_id=session_id)
+        state = rebuild_state(goal)
+        if state is None:
+            return False  # 无活跃 goal：不覆盖既有状态文件（保留旧指针）
+        SemanticStateStore(audit).save(state)
+        return True
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "语义状态持久化失败（fail-open）", exc_info=True
+        )
+        return False
+
+
 def _decision_line_frame(session_id: str = "") -> str:
     """能力 B 决策线（injection_hygiene 5.2）: 活跃 goal + 最近 checkpoint 两行指针.
 
@@ -1093,9 +1134,10 @@ def build_history_messages(
                 source=MessageSource.SYSTEM,
                 # P1 聚合适配: archived_summary 标记透传（测试/探测方按标记定位归档
                 # 摘要——test_append_summary_deterministic / cache_round_sim 依赖）
+                # pyright 修复: Message.metadata 类型为 dict（非 dict|None），空标记用 {}
                 metadata={"archived_summary": True}
                 if (_archive_summary_dict.get("metadata") or {}).get("archived_summary")
-                else None,
+                else {},
             )
         )
     if archived:
@@ -1106,15 +1148,21 @@ def build_history_messages(
         # EVO-20260811-1e68f400: 附加压缩档案目录（主动检索意识，fail-open）
         extras: list[Message] = []
 
-        # 能力 B 决策线（injection_hygiene 5.2）: 压缩产物帧首行——[压缩关键事实]
-        # 之前，恢复从「检索式」变「指针式」；fail-open（无活跃 goal/GoalStore 不可
-        # 用 → 空串省略，压缩正常，spec 6-1）。
+        # 能力 B 决策线（injection_hygiene 5.2）→ Cognitive Runtime tasks 2.4 升级演进:
+        # semantic/auto: 压缩黄金窗口持久化语义状态（决策指针两行，_persist_semantic_state），
+        #   build 每轮从状态文件投影为决策包 HOT 首行（尾部聚合条内）；不再注入独立
+        #   决策线帧（代码演进不并存，spec 5.1.1-3b）。
+        # anchor（过渡回退态，design 2.1.3.4 冻结点④）: 保留旧决策线帧（零回归）。
+        # 两套路径同轮互斥（spec 4.2-3 单管线）。
         try:
-            _dl = _decision_line_frame(session_id)
-            if _dl:
-                extras.append(
-                    Message(role="system", content=_dl, source=MessageSource.SYSTEM)
-                )
+            if _cog_anchor_mode() == "anchor":
+                _dl = _decision_line_frame(session_id)
+                if _dl:
+                    extras.append(
+                        Message(role="system", content=_dl, source=MessageSource.SYSTEM)
+                    )
+            else:
+                _persist_semantic_state(session_id)
         except Exception:
             import logging
 

@@ -61,10 +61,15 @@ def test_append_summary_deterministic():
 
 
 def test_decision_line_injected_with_active_goal(tmp_path, monkeypatch):
-    """能力B决策线（injection_hygiene 5.2-3）: 有活跃 goal → 压缩产物含 [当前决策] 且一致."""
+    """能力B决策线（injection_hygiene 5.2-3）: 有活跃 goal → 压缩产物含 [当前决策] 且一致.
+
+    Cognitive Runtime（tasks 2.4）: 缺省 auto 走语义状态持久化不注入帧；
+    本测试固定 anchor 模式验证旧决策线路径零回归。
+    """
     from llm_loop.introspection.goal import GoalStore
 
     monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("COG_RUNTIME_ANCHOR_MODE", "anchor")
     store = GoalStore(tmp_path / "audit")
     g = store.create(objective="验证决策线注入", session_id="test")
     store.checkpoint(g.id, what="里程碑", evidence="e", path="p", next_step="跑专项测试")
@@ -82,7 +87,12 @@ def test_decision_line_injected_with_active_goal(tmp_path, monkeypatch):
 
 
 def test_decision_line_omitted_without_goal(tmp_path, monkeypatch):
-    """能力B fail-open: 无活跃 goal → 决策线省略、压缩正常（spec 6-1）."""
+    """能力B fail-open: 无活跃 goal → 决策线省略、压缩正常（spec 6-1）.
+
+    Cognitive Runtime（tasks 2.4）: 固定 anchor 模式，测"anchor 路径下无 goal 省略"
+    （缺省 auto 不注入帧，测不到该分支）。
+    """
     monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))  # 空目录：无 goal 文件
+    monkeypatch.setenv("COG_RUNTIME_ANCHOR_MODE", "anchor")
     out = _run(max_chars=1500, append_summary=False)
     assert not any("[当前决策]" in str(m.get("content", "")) for m in out)
