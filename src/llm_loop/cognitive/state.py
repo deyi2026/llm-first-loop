@@ -366,6 +366,9 @@ class ResetResult:
     metric_after: int = 0  # reset 后字段数
     estimated_token_delta: int = 0  # 估算清除 token（缩略度量）
     first_miss_expected: bool = False  # 清空会触发缓存前缀重建 → 预期首 miss
+    # Cognitive Runtime（tasks 3.3）: 清空后的最小 Durable 状态（供 A/B 编排 reset 组
+    # 重建会话使用；字段只增不改，design 2.3.1 兼容策略）
+    cleared: "SemanticTaskState | None" = None
 
 
 class SemanticResetController:
@@ -406,6 +409,7 @@ class SemanticResetController:
             metric_after=_count_state_fields(cleared),
             estimated_token_delta=_estimate_tokens("".join(removed_texts)),
             first_miss_expected=True,
+            cleared=cleared,
         )
 
 
