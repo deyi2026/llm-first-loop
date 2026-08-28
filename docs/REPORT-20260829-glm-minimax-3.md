@@ -110,3 +110,34 @@ Enforce Canary readiness        READY — 待用户批准 bounded canary
 memory_snapshot → turn 快照注入 → _packet_parts → WARM 生产链在真实 provider
 run 中 4/4 全轮激活且回答忠实度完美；control 对照成立。**3c PASS，满足进入
 bounded enforce canary 的全部前提。**
+
+---
+
+## Bounded Enforce Canary Stage 1（enforce-canary，HEAD=a4a78c1，8 runs）
+
+用户批准规格：driver 子进程边界（不动 src/，无 session-prefix 分支）、control=off 非 shadow
+（首轮因果问题：Decision Packet 真进 prompt 后质量/认知成本变化）、沿用 mem2t、不接 COLD。
+
+### 判定: 五门全过 → Enforce Canary Stage 1 PASS
+
+| 门 | 结果 |
+|---|---|
+| Safety | cross-session=0；wrong active goal=0（enforce 4/4 goal attribution 正确）；**revision regression=0**（packet_compile state 世代 0,0,1,1,2,2,2 严格单调，t2 首轮正确继承 rev=2；state_rebuild 事件 rev=0 为事件在重建完成前发出的时序口径，非 state regression——记为 telemetry 语义观察项）；evidence loss=0 |
+| Runtime | exit 8/8=0；packet_compile==rounds 4/4（7/7, 8/8, 13/13, 5/5） |
+| Activation | enforce 4/4 memory WARM 真进 packet 且全轮激活（warmA=rounds；warmS 48-112）；tier_degraded 4/4 全 0 |
+| Quality | 576/3000 忠实度 4/4；verified completion 不低于 control（enforce ans 595-779 vs control 496-623） |
+| Protocol | 1210 无新增系统性异常（enforce 4 runs 无 1210 事件；control 侧 1210 引用为既有 defer 机制正常运作） |
+
+### Efficiency（promotion signal，n=4 不设显著门）
+- uncached tokens（cache_miss）：control 均值 15,732 vs enforce 16,166（+2.8%，噪声内持平；enfo mini r1 的 25,777 对应 13 轮长任务）
+- total in：control Σ440K vs enforce Σ493K（+12%，与 packet+warm 注入语义一致）
+- rounds：6.75 vs 8.25；dup：10 vs 10 持平；ans：enforce 更完整
+- **结论：无一致性恶化，Quality 方向性更优 → 满足 promotion signal**
+
+### 首次因果问题的回答
+Decision Packet 真正进入 prompt 后：**质量（忠实度/完成度）不降反升，认知成本
+（uncached tokens/重复工作）持平，总 token 增幅 +12% 可由注入语义解释**。
+enforce 在隔离实验边界内可用。
+
+### 下一步（按用户升级判定路径）
+真实隔离会话 allowlist（仍非全局默认）→ 少量生产任务 enforce → default 保持 shadow。
