@@ -222,6 +222,10 @@ def _persist_semantic_state(session_id: str = "") -> bool:
     import os as _os_mod
     if _os_mod.environ.get("COG_RUNTIME_MODE", "shadow").strip().lower() == "off":
         return False
+    # CR-R1.1a: Semantic State 是会话级认知寄存器；缺失会话身份时禁止
+    # 退化到 GoalStore 全局恢复语义，避免 compact 边界把他会 Goal 写入当前 shard。
+    if not session_id:
+        return False
     try:
         import os
         from datetime import datetime
@@ -238,7 +242,9 @@ def _persist_semantic_state(session_id: str = "") -> bool:
 
         base = os.environ.get("LFL_DATA_DIR", "data")
         audit = _Path(base) / "audit"
-        goal = GoalStore(audit).get(prefer_session_id=session_id)
+        goal = GoalStore(audit).get(
+            prefer_session_id=session_id, strict_session=True
+        )
         store = SemanticStateStore(audit)
         state = rebuild_state(goal)
         if state is None:
@@ -293,6 +299,8 @@ def _decision_line_frame(session_id: str = "") -> str:
     全路径 fail-open: GoalStore 不可用/无活跃 goal → 空串省略（禁阻塞压缩主流程）。
     audit 路径 = LFL_DATA_DIR（镜像/跨区隔离锚点）或 data/（主区默认）。
     """
+    if not session_id:
+        return ""
     try:
         import os
         from pathlib import Path as _Path
@@ -300,7 +308,9 @@ def _decision_line_frame(session_id: str = "") -> str:
         from llm_loop.introspection.goal import GoalStore
 
         base = os.environ.get("LFL_DATA_DIR", "data")
-        g = GoalStore(_Path(base) / "audit").get(prefer_session_id=session_id)
+        g = GoalStore(_Path(base) / "audit").get(
+            prefer_session_id=session_id, strict_session=True
+        )
         if not g or g.get("status") != "active":
             return ""
         obj = str(g.get("objective", ""))

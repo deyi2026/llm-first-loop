@@ -241,3 +241,32 @@ def test_shadow_isomorphic_telemetry_rows_exist(tmp_path, monkeypatch):
     pc = next(r for r in rows if r.get("event") == "packet_compile")
     assert pc.get("goal_id"), "goal_id 归因（_env.identity 来源，旧写法恒空）"
     assert int(pc.get("state_revision") or 0) >= 1, "state_revision 归因"
+
+
+def test_shadow_quiet_round_runs_cognitive_compute(tmp_path, monkeypatch):
+    """CR-R1.1a: zero-slot quiet shadow 也必须 rebuild/compile/telemetry，但不改 prompt."""
+    import json as _json
+
+    engine, sess = _engine(tmp_path)
+    monkeypatch.setenv("COG_RUNTIME_TELEMETRY", "1")
+    audit = Path(engine.settings.data_dir) / "audit"
+    GoalStore(audit).create("quiet shadow 目标", session_id=sess.session_id)
+    # 默认 shadow；刻意不 arm 任一 injection slot，也不预建 envelope。
+    out = _build(engine, sess, [])
+    joined = "\n".join(str(m.get("content") or "") for m in out)
+    assert "[当前决策]" not in joined, "shadow 只计算，不得把 semantic header 放进 prompt"
+
+    env = SemanticStateStore(audit).load(sess.session_id)
+    assert isinstance(env, StateEnvelope), "quiet shadow 首轮也应经 Read Barrier 建立可信 envelope"
+    assert env.state is not None and env.state.objective == "quiet shadow 目标"
+
+    tpath = audit / "cognitive_telemetry.jsonl"
+    rows = [
+        _json.loads(ln)
+        for ln in tpath.read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
+    pcs = [r for r in rows if r.get("event") == "packet_compile"]
+    assert pcs, "quiet shadow 不得漏掉 packet_compile telemetry"
+    assert pcs[-1]["mode"] == "shadow"
+    assert pcs[-1]["goal_id"] == env.identity.goal_id

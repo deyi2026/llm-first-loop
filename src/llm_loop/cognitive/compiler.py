@@ -171,7 +171,23 @@ def compile_decision_packet(
             interop_seen += 1
             if interop_seen > _INTEROP_INLINE_FIRST:
                 tier = ContextTier.WARM  # 堆积折叠：首条 HOT，其余 WARM
-        packet.slots.append(TieredSlot(slot_kind=slot, content=str(content), tier=tier))
+        # CR-R1.1a: production COLD 不能只有“已折叠”提示，必须携带可执行的
+        # stable EvidenceRef。当前真实输入以 slot_kind=evidence://v1/... 表达引用；
+        # 仅对合法 scheme 自动物化，evidence_refs 等泛化槽名仍保持 None。
+        evidence_ref = (
+            str(slot)
+            if tier is ContextTier.COLD
+            and str(slot or "").lower().startswith("evidence://v1/")
+            else None
+        )
+        packet.slots.append(
+            TieredSlot(
+                slot_kind=slot,
+                content=str(content),
+                tier=tier,
+                evidence_ref=evidence_ref,
+            )
+        )
 
     if budget_chars is not None:
         # CR-R1 4.1: 预算按投影后长度计（WARM 投影=compact_repr 或首行截断，非原文）

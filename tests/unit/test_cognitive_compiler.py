@@ -185,3 +185,23 @@ def test_decision_line_frame_anchor_mode_unchanged():
     os.environ.pop("LFL_DATA_DIR", None)
     # 无 GoalStore 环境 → fail-open 空串（不抛异常）
     assert isinstance(_decision_line_frame("no-such"), str)
+
+def test_history_cognitive_reads_are_strict_session(tmp_path: Path, monkeypatch):
+    """CR-R1.1a: compact/legacy decision line 都不得回退到他会 active Goal."""
+    from llm_loop.core.history import _decision_line_frame, _persist_semantic_state
+    from llm_loop.introspection.goal import GoalStore
+
+    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
+    store = GoalStore(tmp_path / "audit")
+    ga = store.create("A 已完成目标", session_id="session-A")
+    store.update(ga.id, "complete")
+    store.create("B foreign active", session_id="session-B")
+
+    # 旧版这里会把 B active 写进 A shard；strict-session 后 A 只看到自己的终态。
+    assert _persist_semantic_state("session-A") is False
+    assert SemanticStateStore(tmp_path / "audit").load("session-A") is None
+    # anchor 过渡路径同样不得把 B 的 active Goal 显示成 A 的决策线。
+    assert _decision_line_frame("session-A") == ""
+    # 缺失会话身份 fail-closed，不允许退化成 GoalStore 全局读取。
+    assert _persist_semantic_state("") is False
+    assert _decision_line_frame("") == ""

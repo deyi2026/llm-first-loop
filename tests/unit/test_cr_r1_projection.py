@@ -57,6 +57,20 @@ def test_cold_ref_only_raw_zero():
     assert "A" * 400 not in out and "B" * 400 not in out  # raw=0
 
 
+def test_compile_cold_auto_materializes_evidence_ref():
+    """CR-R1.1a: production compile path 从 evidence:// slot 自动携带 stable ref."""
+    ref = "evidence://v1/prod-ref"
+    raw = "raw payload should stay out of model view"
+    pkt = compile_decision_packet([(ref, raw)])
+    assert len(pkt.slots) == 1
+    slot = pkt.slots[0]
+    assert slot.tier is ContextTier.COLD
+    assert slot.evidence_ref == ref
+    wire = pkt.render_slots()
+    assert f"(ref: {ref})" in wire
+    assert raw not in wire
+
+
 # ── 不变量⑧：超预算 degraded（投影长度口径）──────────────────────────
 
 

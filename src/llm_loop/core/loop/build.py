@@ -857,22 +857,26 @@ class _BuildMixin:
         # - COG_RUNTIME_DUAL_SOURCE_GUARD: 检测锚点与投影同轮并存 → 告警剔除锚点（fail-open）
         # CR-R1（tasks 3.2）: enforce+semantic/auto 时空 slots 亦进块——header-only 注入
         # （零注入安静轮 decision_visible=True，不变量⑤）；其余模式无 parts 不造空条。
-        _cog_sem_candidate = (
+        _cog_mode_candidate = (
             str(getattr(self.settings, "cog_runtime_mode", "shadow")).strip().lower()
-            == "enforce"
+        )
+        if _cog_mode_candidate not in ("off", "shadow", "enforce"):
+            _cog_mode_candidate = "shadow"
+        _cog_compute_candidate = (
+            _cog_mode_candidate in ("shadow", "enforce")
             and str(getattr(self.settings, "cog_runtime_anchor_mode", "auto"))
             in ("semantic", "auto")
         )
-        if _inject_parts or _cog_sem_candidate:
+        # CR-R1.1a: quiet shadow 也必须进入与 enforce 同构的 cognitive compute
+        # path；否则没有四槽时 shadow 会系统性漏掉 packet/rebuild telemetry。
+        if _inject_parts or _cog_compute_candidate:
             try:
                 _anchor_mode = str(getattr(self.settings, "cog_runtime_anchor_mode", "auto"))
                 _tier_on = bool(getattr(self.settings, "cog_runtime_tier_enabled", True))
                 # CR-R1（tasks 2.2）: COG_RUNTIME_MODE 三态——off/shadow 时 cognitive
                 # 不进 prompt（anchor+平铺旧行为；shadow 保留构造计算供 telemetry，
                 # 任务 6.2 接线打点）；enforce 时按 ANCHOR_MODE/TIER_ENABLED 现行语义进 prompt。
-                _cog_mode = str(getattr(self.settings, "cog_runtime_mode", "shadow")).strip().lower()
-                if _cog_mode not in ("off", "shadow", "enforce"):
-                    _cog_mode = "shadow"
+                _cog_mode = _cog_mode_candidate
                 # CR-R1.1（审查项6）: shadow 同构——仅 off 彻底关闭计算；shadow 完整跑
                 # load/barrier/compile/telemetry（与 enforce 同一 compiler 产物，shadow
                 # 数据可预演 enforce），仅两处进 prompt 门控（投影替代锚点 + packet

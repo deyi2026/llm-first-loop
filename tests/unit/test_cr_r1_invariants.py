@@ -208,12 +208,15 @@ def test_invariant_07b_cold_ref_only():
 
     raw = "RAWDATA-" + "Z" * 200
     # 走 classify_tier 真实路径: evidence* slot_kind → COLD
-    packet = compile_decision_packet([("evidence://v1/abc123", raw)])
+    ref = "evidence://v1/abc123"
+    packet = compile_decision_packet([(ref, raw)])
     cold = [s for s in packet.slots if s.tier is ContextTier.COLD]
     assert cold, "evidence* slot_kind 应分级为 COLD"
+    assert cold[0].evidence_ref == ref, "production compiler 必须自动物化 stable EvidenceRef"
     wire = packet.render_slots()
+    assert f"(ref: {ref})" in wire, "production COLD 必须是可恢复的 ref-only，而非匿名折叠提示"
     assert raw not in wire, "COLD 段不得 inline raw content（不变量⑦）"
-    # 带 evidence_ref 的 COLD 段: 仅 (ref: ...) 引用位
+    # 显式 evidence_ref 的 renderer 路径仍保持兼容。
     pkt2 = DecisionPacket(
         slots=[
             TieredSlot(
