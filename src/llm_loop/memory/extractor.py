@@ -17,11 +17,11 @@ import re
 import threading
 import time
 from dataclasses import dataclass, field
-from llm_loop.feedback.honesty import PROGRAM_FEEDBACK_PREFIXES  # P0-B3
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from llm_loop.feedback.honesty import PROGRAM_FEEDBACK_PREFIXES  # P0-B3
 from llm_loop.memory.extract import extract_memory_blocks, memory_blocks_to_entries
 from llm_loop.memory.store import MemoryEntry, MemoryStore
 

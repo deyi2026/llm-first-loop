@@ -764,6 +764,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
 
                         _run_end_reason = "llm_error"
                         final_answer = llm_error_text(exc)
+                        resp = None  # 程序反馈不得继承上一轮成功响应的 reasoning（GPT 审计 P0：stale reasoning 嫁接）
                         self._err1210_note_defer_lost(session_id, "fallback_exhausted")  # 二阶失败观测
                         break
                 elif not _e1210_recovered:
@@ -772,6 +773,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
 
                     _run_end_reason = "llm_error"
                     final_answer = llm_error_text(exc)
+                    resp = None  # 程序反馈不得继承上一轮成功响应的 reasoning（GPT 审计 P0：stale reasoning 嫁接）
                     self._err1210_note_defer_lost(session_id, "llm_error")  # 二阶失败观测（spec 5.1.3-5）
                     break
 
