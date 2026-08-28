@@ -336,12 +336,16 @@ class _BuildMixin:
 
         from llm_loop.feedback.honesty import PROGRAM_FEEDBACK_PREFIXES
 
+        # GPT 审计批次2: answer_origin 优先（保存点写入的单一真相源），prefix 仅 legacy 兜底
         base = [
             (
                 replace(m, content=f"[程序反馈·非模型回答] {m.content}")
                 if (
                     m.role == "assistant"
-                    and str(m.content or "").startswith(PROGRAM_FEEDBACK_PREFIXES)
+                    and (
+                        (m.metadata or {}).get("answer_origin") == "program"
+                        or str(m.content or "").startswith(PROGRAM_FEEDBACK_PREFIXES)
+                    )
                 )
                 else m
             )

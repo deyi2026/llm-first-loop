@@ -226,9 +226,11 @@ class MemoryExtractor:
             # P0-B3（2026-08-28 批准）: 程序反馈（错误/熔断/守卫/耗尽）不进长期记忆
             # 提取——防"错误文本 → 记忆 → 召回误用"架构性污染通道。2026-08-28 抽查
             # 590 条无实质污染（4 命中均为机制元知识），纯防御性关闭通道（成本极低）。
-            if role == "assistant" and str(m.content or "").startswith(
-                PROGRAM_FEEDBACK_PREFIXES
-            ):
+            # GPT 审计批次2: origin 单一真相源过滤（含 system 原生程序反馈），
+            # prefix 仅 legacy 兜底（老消息无 metadata）
+            if (m.metadata or {}).get("answer_origin") == "program":
+                continue
+            if str(m.content or "").startswith(PROGRAM_FEEDBACK_PREFIXES):
                 continue
             lines.append(f"[{role}] {content}")
         return "\n".join(lines)
