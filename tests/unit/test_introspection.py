@@ -155,7 +155,11 @@ def test_correction_clear_state_removed():
     # + EVO-20260813-432813b2 主动出站飞书（send_feishu_message / create_feishu_doc / send_feishu_attachment）
     # + P2-2 recover_from_backup（fail-open 数据丢失恢复通道）
     # + P2-3 search_docs（docs/ 文档语义检索入口）
-    assert set(names) == {
+    # 2026-09-01: == 改为 >=（超集断言）——注册表随 EVO 演进动态扩工具
+    # （task_create/task_update/task_frontier、create_goal、code_review、
+    # playwright_exec、skill_list 等按需注册），静态全量 == 与演进机制冲突;
+    # 基线集合防既有工具丢失, clear_state 防复活由上方 not in 断言保证。
+    assert set(names) >= {
         "architecture_status",
         "search_archive",
         "search_records",
