@@ -989,16 +989,22 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         # （M51/M52 token 统计依赖零破坏）。
         from llm_loop.feedback.honesty import PROGRAM_FEEDBACK_PREFIXES
 
+        # GPT 审计批次2: answer_origin 单一真相源——run_end_reason 显式信号优先，
+        # prefix 仅 legacy 兜底（老消息无 metadata/未覆盖出口）
+        _answer_origin = "model" if _run_end_reason == "completed" else "program"
         _pf_source = (
             MessageSource.SYSTEM
-            if final_answer.startswith(PROGRAM_FEEDBACK_PREFIXES)
+            if _answer_origin == "program"
+            or final_answer.startswith(PROGRAM_FEEDBACK_PREFIXES)
             else MessageSource.USER
         )
+        _origin_metadata = {"answer_origin": _answer_origin, "run_end_reason": _run_end_reason}
         sess.messages.append(
             Message(
                 role="assistant",
                 content=final_answer,
                 source=_pf_source,
+                metadata=_origin_metadata,
                 # M51/M52: 模型 + 本轮 run token 消耗持久化（web/feishu 页脚数据源）
                 model_used=model_used,
                 tokens_in=tokens_in,
@@ -1008,10 +1014,13 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 ttft_ms=ttft_first_ms or 0.0,
             )
             if final_answer
-            else Message(role="assistant", content="（无回答输出）", source=_pf_source)
+            else Message(
+                role="assistant", content="（无回答输出）", source=_pf_source, metadata=_origin_metadata
+            )
         )
         # M20 THK-04: 最终回答轮 assistant 消息也回传思考链（官方"后续所有请求"语义，防下一轮 400）
-        if final_answer and resp is not None and resp.reasoning_content:
+        # GPT 审计批次2 双保险: 程序反馈（answer_origin != model）不携带任何 reasoning
+        if final_answer and resp is not None and resp.reasoning_content and _answer_origin == "model":
             last = sess.messages[-1]
             last.reasoning_content = resp.reasoning_content
         # D1: 最终回答消息事件（fail-open）
