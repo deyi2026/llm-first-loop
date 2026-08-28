@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -537,10 +538,12 @@ class TestEngineRecovery:
         assert "恢复后的正常回答" in result.final_answer
         assert len(fake.calls) == 2  # 重试恰好 1 次
         orig, retry = fake.calls[0]["messages"], fake.calls[1]["messages"]
+        # Cognitive Runtime（tasks 2.3）: 段标记升级为 --- [tier:x][slot:y] ---（tier 开启），
+        # 兼容旧格式 --- [slot:y] ---（tier 关闭回退路径）
         _slot_user = lambda ms: [  # noqa: E731
             d for d in ms
             if isinstance(d, dict) and d.get("role") == "user"
-            and "--- [slot:" in str(d.get("content", ""))
+            and re.search(r"--- (?:\[tier:\w+\])?\[slot:", str(d.get("content", "")))
         ]
         # ① 聚合形态: 原请求尾部注入 = 单条 AGGREGATED；重试尾部注入 user = 0
         orig_tail = _slot_user(orig)
@@ -586,14 +589,17 @@ class TestEngineRecovery:
         second = fake.calls[2]["messages"]
         agg = [d for d in second
                if isinstance(d, dict) and d.get("role") == "user"
-               and "--- [slot:" in str(d.get("content", ""))]
+               and re.search(r"--- (?:\[tier:\w+\])?\[slot:", str(d.get("content", "")))
+        ]
         # ① 尾部注入聚合为单条（defer + 活跃并存轮 wire 产物约束）
         assert len(agg) == 1, f"聚合条数 {len(agg)} != 1"
         content = str(agg[0]["content"])
         # ② 段序: defer 回放段（interop 承载）先于当轮活跃段（tip）
-        i_defer = content.find("--- [slot:interop] ---")
-        i_active = content.find("--- [slot:tip] ---")
-        assert i_defer != -1 and i_active != -1, "段标记缺失"
+        # 段标记兼容新旧格式（--- [tier:x][slot:y] --- / --- [slot:y] ---）
+        _m_defer = re.search(r"--- (?:\[tier:\w+\])?\[slot:interop\] ---", content)
+        _m_active = re.search(r"--- (?:\[tier:\w+\])?\[slot:tip\] ---", content)
+        assert _m_defer and _m_active, "段标记缺失"
+        i_defer, i_active = _m_defer.start(), _m_active.start()
         assert i_defer < i_active, "defer 回放段应先于当轮活跃段（spec 6.2-3）"
         assert "defer 回放的协调" in content[:i_active], "defer 内容未在活跃段之前"
 

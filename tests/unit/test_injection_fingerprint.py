@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 
 import llm_loop.core.loop.build as build_mod
@@ -55,8 +56,18 @@ def _tail_digest(messages: list[dict], n: int = 5) -> str:
     return h.hexdigest()
 
 
-# 黄金摘要（P1 9.1 聚合形态，2026-08-28 实测重算; 注入槽结构变更时此值失配 → 红灯）
-_GOLDEN_TAIL_DIGEST = "9d44eec3caed2573052bf0d3438afd593cfd39a88215304cc6f8dc66ec3cc32f"
+def _slot_re(slot: str) -> re.Pattern[str]:
+    """段标记匹配（Cognitive Runtime tasks 2.3）: 兼容新旧两种格式.
+
+    tier 开启: --- [tier:{hot|warm|cold}][slot:xxx] ---
+    tier 关闭: --- [slot:xxx] ---（回退平铺零回归路径）
+    """
+    return re.compile(rf"--- (?:\[tier:\w+\])?\[slot:{slot}\] ---")
+
+
+# 黄金摘要（P1 9.1 聚合形态；Cognitive Runtime tasks 2.3 tier 段标记升级后 2026-08-28 实测重算;
+# 注入槽结构变更时此值失配 → 红灯）
+_GOLDEN_TAIL_DIGEST = "a9457e7e8211f08c3886fad1263cbe270341c43e8994001d1c4bedabddc2de90"
 
 
 def _engine(tmp_path: Path):
@@ -155,13 +166,15 @@ class TestGoldenFingerprint:
         agg = tail[0]["content"]
         assert agg.startswith(_INJECTION_PREFIX), "聚合消息统一 wrap_injection 包装"
         for slot in ("memory", "interop", "tip", "hotcard", "gate_note"):
-            assert f"--- [slot:{slot}] ---" in agg, f"聚合含 {slot} 段"
+            assert _slot_re(slot).search(agg), f"聚合含 {slot} 段"
         assert GATE_NOTE_CONTENT in agg, "gate_note 固定文本保真入段"
         # 段序恒定: memory→interop→tip→hotcard→gate_note（build 收集顺序）
-        idxs = [
-            agg.index(f"--- [slot:{s}] ---")
+        marks = [
+            _slot_re(s).search(agg)
             for s in ("memory", "interop", "tip", "hotcard", "gate_note")
         ]
+        assert all(marks), "段标记齐全"
+        idxs = [m.start() for m in marks]  # type: ignore[union-attr]
         assert idxs == sorted(idxs), "段序与收集顺序一致"
         # 黄金摘要（结构变更的显式红灯锚点）
         assert _tail_digest(out) == _GOLDEN_TAIL_DIGEST
@@ -187,9 +200,9 @@ class TestGoldenFingerprint:
         assert [m["role"] for m in tail] == ["user"]
         agg = tail[0]["content"]
         assert agg.startswith(_INJECTION_PREFIX)
-        assert "--- [slot:memory] ---" not in agg
+        assert _slot_re("memory").search(agg) is None
         for slot in ("interop", "tip", "hotcard", "gate_note"):
-            assert f"--- [slot:{slot}] ---" in agg
+            assert _slot_re(slot).search(agg)
         assert [e.msg_idx for e in engine._last_build_injections] == [len(out) - 1]
 
     def test_wire_prefix_invariant(self, tmp_path):
@@ -208,14 +221,14 @@ class TestRedLightMutations:
         engine, sess = _engine(tmp_path)
         memory_msgs = _arm_all_slots(engine, sess, tip_extra=1)  # tip 槽多一条
         out = _build(engine, sess, memory_msgs)
-        assert out[-1]["content"].count("--- [slot:tip] ---") == 2, "tip 槽增加消息 → 2 个 tip 段"
+        assert len(_slot_re("tip").findall(out[-1]["content"])) == 2, "tip 槽增加消息 → 2 个 tip 段"
         _assert_red_light(engine, sess, what="tip 槽增加消息", tip_extra=1)
 
     def test_slot_removed(self, tmp_path):
         engine, sess = _engine(tmp_path)
         memory_msgs = _arm_all_slots(engine, sess, hotcard=False)  # 移除 hotcard 槽
         out = _build(engine, sess, memory_msgs)
-        assert "--- [slot:hotcard] ---" not in out[-1]["content"]
+        assert _slot_re("hotcard").search(out[-1]["content"]) is None
         _assert_red_light(engine, sess, what="移除 hotcard 槽", hotcard=False)
 
     def test_wrap_bypassed(self, tmp_path, monkeypatch):
