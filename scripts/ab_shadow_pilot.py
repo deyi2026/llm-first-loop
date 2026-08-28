@@ -56,6 +56,51 @@ INTEROP_SEEDS = [
 
 MODELS = ["glm/glm-5.3", "minimax/MiniMax-M3"]
 
+# ── 3c 定向: 两-turn memory 任务（真实激活 memory_snapshot → WARM 生产链）──
+# 3b 根因: turn 快照在 run 入口（turn 边界）执行且 build_memory_messages 命中才注入；
+# 单 turn 任务首入口时库空 → 永不触发。两 turn: t1 撑起完整工具轮 + t2 语义查询，
+# t2 入口快照检索命中 driver 预填种子记忆（上游数据预置，同 _seed_interop 先例，
+# 非构造注入消息——注入链本身=生产路径）。
+TASKS_2T: dict[str, tuple[str, str]] = {
+    "mem2t": (
+        """记忆存取任务第一阶段（多步执行，按顺序完成）：
+1. 用 create_goal 创建目标：验证跨 turn 记忆存取链路。
+2. 用 save_experience 记录一条经验：标题「项目审计基准事实」，正文写入三个具体基准数字——测试基线 576 条、认知分层 3 级、工具输出截断阈值 3000 字符；scenario 填「A/B 跨 turn 记忆验证」，solution 填「基准数字已记录」。
+3. 用 search_files 在 docs/ 目录按内容关键词「认知运行时」检索，选 1 份最相关文档用 read_file 读取前 40 行，记下其文件名。
+4. 用 update_goal 将本阶段标记 complete。最终回答总结：三个基准数字 + 文档文件名 + 一句「第一阶段完成」。
+""",
+        """记忆存取任务第二阶段：现在不许重新调用 save_experience/search_records/search_archive/read_evidence 检索历史，直接凭你在第一阶段记录的内容与会话内可见的记忆注入回答：
+1. 项目审计的三个基准数字分别是什么？各自含义一句话。
+2. 第一阶段读的文档文件名是什么？
+3. 判断：你的回答依据来自记忆注入还是本轮上下文？一句话说明。
+最终回答必须包含三个数字与文档文件名。
+""",
+    ),
+}
+
+
+def _seed_memory(engine, sid: str) -> None:
+    """3c 记忆种子: 预填一条 scope=global 事实记忆（上游数据预置，_seed_interop 先例）.
+
+    快照注入链（检索→wrap→append→packet 投影）全部走生产路径；种子仅保证
+    turn 入口检索可命中（fresh data_dir 记忆库为空时单 turn 任务永不触发）。
+    """
+    from llm_loop.memory.store import MemoryEntry
+
+    engine.memory.save_entry(
+        MemoryEntry(
+            id="ab-seed-mem-3c",
+            type="fact",
+            content=(
+                "项目审计基准事实：测试基线 576 条；认知分层 3 级；"
+                "工具输出截断阈值 3000 字符（2026-08 审计确认，"
+                "来源 A/B 跨 turn 记忆验证任务）"
+            ),
+            keywords=["基准", "数字", "审计", "记忆", "基线", "576"],
+            scope="global",
+        )
+    )
+
 # Recovery 工具白名单（CognitiveOverheadMeter 同源口径）
 RECOVERY_TOOLS = {"read_evidence", "search_archive", "search_records"}
 
@@ -123,7 +168,13 @@ def phase_main(tag: str, phase: str, model: str, task: str, rep: int) -> None:
     if task == "interop":
         _seed_interop(Path(data_dir_str))
     sid = engine.session.create()
-    result = engine.run(sid, TASKS[task], model=model)
+    if task == "mem2t":  # 3c 两-turn: 种子预填 + 两次 run（同 sid 同 session，t2 入口触发快照）
+        _seed_memory(engine, sid)
+        t1, t2 = TASKS_2T[task]
+        engine.run(sid, t1, model=model)
+        result = engine.run(sid, t2, model=model)
+    else:
+        result = engine.run(sid, TASKS[task], model=model)
     answer = getattr(result, "final_answer", "")
 
     # ── 采集 ──
@@ -195,6 +246,11 @@ def main() -> None:
     # 两阶段顺序: 全部 control 先（Phase A 基线），后 shadow——对齐 benchmark 契约
     if smoke:  # fixture 有效性单点验证: 最难形态（evid）× GLM × shadow × 1 rep
         plan = [("shadow", MODELS[0], "evid", 1)]
+    elif tag.endswith("-3c"):  # 3c 定向: mem2t only × 8 runs（两阶段契约保持）
+        for phase in ("control", "shadow"):
+            for model in MODELS:
+                for rep in (1, 2):
+                    plan.append((phase, model, "mem2t", rep))
     else:
         for phase in ("control", "shadow"):
             for model in MODELS:
