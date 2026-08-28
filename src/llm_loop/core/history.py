@@ -200,6 +200,40 @@ def _extract_reasoning_facts(messages: list[Message], max_facts: int = 6) -> lis
     return facts
 
 
+def _decision_line_frame(session_id: str = "") -> str:
+    """能力 B 决策线（injection_hygiene 5.2）: 活跃 goal + 最近 checkpoint 两行指针.
+
+    注入位置 = 压缩产物帧首行（[压缩关键事实] 之前）——压缩后恢复从「检索式」变
+    「指针式」（AI 不必 search 重建上下文，直接知道当前在做什么/下一步）。
+    内容 ≤400 字符（spec 5.2-2）；只带 goal_id 指针不带 evidence 全文（5.2-4）。
+    全路径 fail-open: GoalStore 不可用/无活跃 goal → 空串省略（禁阻塞压缩主流程）。
+    audit 路径 = LFL_DATA_DIR（镜像/跨区隔离锚点）或 data/（主区默认）。
+    """
+    try:
+        import os
+        from pathlib import Path as _P
+
+        from llm_loop.introspection.goal import GoalStore
+
+        base = os.environ.get("LFL_DATA_DIR", "data")
+        g = GoalStore(_P(base) / "audit").get(prefer_session_id=session_id)
+        if not g or g.get("status") != "active":
+            return ""
+        obj = str(g.get("objective", ""))
+        cps = g.get("checkpoints") or []
+        nxt = str((cps[-1] or {}).get("next", "")) if cps else ""
+        line1 = f"[当前决策] goal={str(g.get('id', ''))[:12]} | {obj}"
+        line2 = f"[下一步] {nxt}" if nxt else "[下一步] （无 checkpoint；见 objective）"
+        return (line1 + "\n" + line2)[:400]
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "决策线读取失败（fail-open 省略）", exc_info=True
+        )
+        return ""
+
+
 def _archive_key_facts(messages: list[Message], max_facts: int = 8) -> str:
     """RULE-AI-00 增强: 压缩注入"确定性关键事实清单"（规则提取零 LLM）.
 
@@ -1071,6 +1105,22 @@ def build_history_messages(
         # 自动摘要可能误导 + 增计费）；LLM 语义摘要由 AI 主动触发（search_archive with_summary=true）。
         # EVO-20260811-1e68f400: 附加压缩档案目录（主动检索意识，fail-open）
         extras: list[Message] = []
+
+        # 能力 B 决策线（injection_hygiene 5.2）: 压缩产物帧首行——[压缩关键事实]
+        # 之前，恢复从「检索式」变「指针式」；fail-open（无活跃 goal/GoalStore 不可
+        # 用 → 空串省略，压缩正常，spec 6-1）。
+        try:
+            _dl = _decision_line_frame(session_id)
+            if _dl:
+                extras.append(
+                    Message(role="system", content=_dl, source=MessageSource.SYSTEM)
+                )
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "决策线注入失败（fail-open）", exc_info=True
+            )
 
         # RULE-AI-00 增强: 确定性关键事实清单（规则提取零 LLM，AI 快速感知旧内容要点）
         try:
