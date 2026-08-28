@@ -225,7 +225,14 @@ class _ToolExecMixin:
                             len(missing),
                         )
                 for tc, result in zip(valid_calls, results, strict=False):
-                    tool_trace.append({"id": tc.id, "name": tc.name, "arguments": tc.arguments})
+                    tool_trace.append(
+                        {
+                            "id": tc.id,
+                            "name": tc.name,
+                            "arguments": tc.arguments,
+                            "status": result.status.value,  # GPT 审计批次4: 证据有效性门
+                        }
+                    )
                     self._record_tool_history(result)
                     # H-UI: 工具结果（实时状态条）
                     self._notify_action(
