@@ -38,6 +38,13 @@ def run_phase(tag: str, phase: str, model: str) -> dict:
     env["COG_RUNTIME_MODE"] = "off" if phase == "control" else "shadow"
     env["COG_RUNTIME_TELEMETRY"] = "1"
     env["PYTHONPATH"] = str(ROOT / "src")
+    # glm-minimax-2 教训: providers.json 定位 {data_dir}/providers.json（providers.py
+    # 优先级 2）——fresh data_dir 隔离把模型注册表也隔离掉 → ValueError 未知 provider
+    # → routing_override 假跑（2ms 出错误文案）。经优先级 1（MODEL_PROVIDERS env
+    # JSON）显式注入注册表，隔离 data_dir 而不隔离全局模型配置。
+    _providers_p = ROOT / "data" / "providers.json"
+    if _providers_p.exists():
+        env["MODEL_PROVIDERS"] = _providers_p.read_text(encoding="utf-8")
     proc = subprocess.run(
         [sys.executable, Path(__file__).resolve(), "phase", tag, phase, model],
         env=env, cwd=str(ROOT), capture_output=True, text=True, timeout=3600,
