@@ -28,6 +28,7 @@ from llm_loop.introspection import (
     registry_playwright,
     registry_recovery,
     registry_skills,
+    registry_task,
 )
 from llm_loop.introspection.status import ArchitectureStatusProvider
 
@@ -40,6 +41,7 @@ _REGISTRIES = (
     registry_eval,
     registry_feishu,
     registry_skills,
+    registry_task,
     registry_model,
     registry_recovery,
     registry_playwright,
