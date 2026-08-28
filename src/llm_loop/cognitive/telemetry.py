@@ -42,6 +42,8 @@ def emit_cognitive_event(
     cold_ref_count: int = 0,
     packet_tokens: int = 0,
     mode: str = "",
+    configured_mode: str = "",
+    promoted: bool = False,
 ) -> bool:
     """追加一条 cognitive 事件；返回是否实际写入（未启用/写失败 → False）."""
     if not telemetry_enabled():
@@ -60,6 +62,8 @@ def emit_cognitive_event(
         "cold_ref_count": cold_ref_count,
         "packet_tokens": packet_tokens,
         "mode": mode,
+        "configured_mode": configured_mode,
+        "promoted": promoted,
     }
     try:
         path = Path(data_dir) / "audit" / "cognitive_telemetry.jsonl"

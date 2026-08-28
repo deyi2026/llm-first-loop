@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from llm_loop.core.cache_health import GATE_NOTE_CONTENT  # 门禁干预知情标记
 
@@ -77,6 +77,8 @@ class _CogPacketEvt(TypedDict):
     cold_ref_count: int
     packet_tokens: int
     mode: str
+    configured_mode: str
+    promoted: bool
 
 
 if TYPE_CHECKING:
@@ -156,6 +158,35 @@ def _tool_round_zero_tail(msgs: list[Message]) -> list[Message]:
     if group_start >= 0:  # 无 user（异常会话）→ 配对组兜底（模板可能拒, 但保协议）
         return msgs[group_start:]
     return msgs[-2:] if n >= 2 else msgs
+
+
+def _cog_allowlist_hit(settings: Any, sess: Any) -> bool:
+    """Stage 2 allowlist 求值（DESIGN-20260901 rev2 P0-1/P0-2/P1-3，fail-closed）.
+
+    任何失败（空配置/相对路径/sid 空/文件缺失/OSError/超 64KiB/超 256 条）→ False
+    （保持 shadow）。每轮 build 重读——热更语义（删行下一轮生效）；文件为
+    operator-owned 控制面授权态：仅绝对路径生效（P0-1，agent 可写目录路径语义
+    上不可信，相对路径=配置无效）。
+    """
+    try:
+        path_s = str(getattr(settings, "cog_enforce_file", "") or "")
+        if not path_s:
+            return False
+        if not os.path.isabs(path_s):  # P0-1: 相对路径=配置无效
+            return False
+        sid = str(getattr(sess, "session_id", "") or "")
+        if not sid:
+            return False
+        if os.path.getsize(path_s) > 65536:  # P1-3: 64 KiB 硬上限
+            return False
+        with open(path_s, encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+        valid = [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
+        if len(valid) > 256:  # P1-3: 256 有效条目硬上限
+            return False
+        return sid in valid
+    except Exception:  # noqa: BLE001 — P0-2: fail-closed，任何异常→shadow
+        return False
 
 
 class _BuildMixin:
@@ -897,6 +928,12 @@ class _BuildMixin:
         )
         if _cog_mode_candidate not in ("off", "shadow", "enforce"):
             _cog_mode_candidate = "shadow"
+        # Stage 2（DESIGN-20260901 rev2）: session 级 allowlist 提升——off 硬关前置
+        # （名单不可覆盖 P0-2）；fail-closed 全语义在 _cog_allowlist_hit。
+        _cog_promoted = False
+        if _cog_mode_candidate == "shadow" and _cog_allowlist_hit(self.settings, sess):
+            _cog_mode_candidate = "enforce"
+            _cog_promoted = True
         _cog_compute_candidate = (
             _cog_mode_candidate in ("shadow", "enforce")
             and str(getattr(self.settings, "cog_runtime_anchor_mode", "auto"))
@@ -1013,6 +1050,13 @@ class _BuildMixin:
                                             data_dir=self.settings.data_dir,
                                             session_id=_cog_sid,
                                             goal_id=str(_goal.get("id", "")),
+                                            mode=_cog_mode,  # Stage 2 P1-4 同套归因
+                                            configured_mode=str(
+                                                getattr(
+                                                    self.settings, "cog_runtime_mode", ""
+                                                )
+                                            ),
+                                            promoted=_cog_promoted,
                                         )
                             else:
                                 _sem_state = None  # goal 缺失→宁缺勿错（header=None）
@@ -1103,7 +1147,11 @@ class _BuildMixin:
                             warm_tokens=_warm_chars // 4,
                             cold_ref_count=_cold_n,
                             packet_tokens=len(_packet_text) // 4,
-                            mode=str(getattr(self.settings, "cog_runtime_mode", "")),
+                            mode=_cog_mode,  # Stage 2 P1-4: effective mode（含 allowlist 提升）
+                            configured_mode=str(
+                                getattr(self.settings, "cog_runtime_mode", "")
+                            ),
+                            promoted=_cog_promoted,
                         )
                         emit_cognitive_event("packet_compile", **_evt)
                         if getattr(_packet, "degraded", False):
