@@ -358,6 +358,8 @@ class TaskStore:
                         age = (now_dt - datetime.fromisoformat(t.updated_at)).total_seconds()
                         entry["stalled"] = age > STALLED_AFTER_SECONDS
                     except ValueError:
+                        # fail-open: updated_at 非法格式时不标 stalled（视为未知，
+                        # 交由模型经 frontier 自行判断），不阻断 frontier 构建
                         pass
                 in_progress.append(entry)
             elif t.status == "blocked":
