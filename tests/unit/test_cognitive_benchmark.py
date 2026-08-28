@@ -1,7 +1,7 @@
 """cognitive/benchmark 语义重置基准单测（tasks 3.5）.
 
 覆盖:
-- CognitiveEfficiencyMeter 分子/分母口径提取正确性 + 口径冻结锁定（spec 6.3 / 5.3.3-2）
+- CognitiveOverheadMeter 分子/分母口径提取正确性 + 口径冻结锁定（spec 6.3 / 5.3.3-2）
 - FixtureRegistry 双轨加载与 reset/control 1:1 配对 + 风险点①回退缩小标注
 - SemanticResetBenchmark: 前置依赖阻断（结论暂缓）、基线先于优化、首 miss 分子组（spec 5.3）
 - state.ResetResult.cleared 增量字段（A/B 编排 reset 组消费）
@@ -16,7 +16,7 @@ import pytest
 
 from llm_loop.cognitive.benchmark import (
     CostEstimate,
-    CognitiveEfficiencyMeter,
+    CognitiveOverheadMeter,
     FixtureRegistry,
     FixtureSpec,
     PreconditionState,
@@ -38,7 +38,7 @@ def _write_jsonl(path: Path, rows: list[dict]) -> Path:
     return path
 
 
-# ── T3.1 CognitiveEfficiencyMeter 口径 ──
+# ── T3.1 CognitiveOverheadMeter 口径 ──
 
 
 class TestEfficiencyMeter:
@@ -76,7 +76,7 @@ class TestEfficiencyMeter:
     def test_numerator_denominator_extraction(self, tmp_path: Path):
         """分子=恢复性动作 detail + 活跃 goal checkpoint 投影；分母=Σ(in+out)（口径锁定）."""
         trace, goals, usage = self._meter_inputs(tmp_path)
-        m = CognitiveEfficiencyMeter().measure(
+        m = CognitiveOverheadMeter().measure(
             action_trace=trace, goal_checkpoints=goals, usage_cost=usage
         )
         # 分子①: 40//4 + 80//4 + 20//4 = 10+20+5 = 35（run_tool 非恢复性不计入）
@@ -93,7 +93,7 @@ class TestEfficiencyMeter:
 
     def test_measurement_spec_frozen(self):
         """口径冻结锁定（spec 5.3.3-2）: 动作表/冻结标记变更即本用例红灯."""
-        meter = CognitiveEfficiencyMeter()
+        meter = CognitiveOverheadMeter()
         assert meter.MEASUREMENT_FROZEN is True
         assert meter.NUMERATOR_ACTION_PREFIXES == (
             "memory_search",
@@ -105,7 +105,7 @@ class TestEfficiencyMeter:
 
     def test_missing_inputs_marked_not_zero_faked(self, tmp_path: Path):
         """输入缺失 → inputs_missing 标注（不以 0 冒充存在，分母 0 → ratio 0.0）."""
-        m = CognitiveEfficiencyMeter().measure(
+        m = CognitiveOverheadMeter().measure(
             action_trace=tmp_path / "nope1.jsonl",
             goal_checkpoints=tmp_path / "nope2.jsonl",
             usage_cost=tmp_path / "nope3.jsonl",
@@ -119,7 +119,7 @@ class TestEfficiencyMeter:
         trace, goals, _ = self._meter_inputs(tmp_path)
         empty = tmp_path / "empty.jsonl"
         empty.write_text("", encoding="utf-8")
-        m = CognitiveEfficiencyMeter().measure(
+        m = CognitiveOverheadMeter().measure(
             action_trace=trace, goal_checkpoints=goals, usage_cost=empty
         )
         assert m.denominator_tokens == 0
@@ -216,7 +216,7 @@ def _fake_outcome(sample):
             triggered=triggered, token_delta=1000 if triggered else 0,
             latency_delta_ms=500.0 if triggered else 0.0,
         ),
-        efficiency=CognitiveEfficiencyMeter().measure(
+        efficiency=CognitiveOverheadMeter().measure(
             action_trace=_write_jsonl(
                 Path(sample.source_path).parent / f"trace-{sample.sample_id}.jsonl",
                 [{"action_type": "memory_search", "detail": "字" * 40}],
@@ -318,3 +318,42 @@ class TestResetResultCleared:
         assert result.cleared.hard_constraints == ["禁止改动 src 外文件"]
         assert len(result.cleared.confirmed_facts) == 1  # 已确认事实不因 reset 丢失
         assert result.cleared.ephemeral.hypotheses == []  # Ephemeral 清空
+
+
+# ── CR-R1 5.4：两阶段执行序列 + 前置硬阻断（不变量⑨⑩）──
+
+
+class TestCrR1TwoPhaseAndHardBlock:
+    def test_pair_up_two_phase_control_first(self, tmp_path: Path):
+        """不变量⑨: 执行序列 control 全部先于 reset（Phase A 冻结 baseline 再 Phase B）."""
+        for i in range(6):
+            (tmp_path / f"llm-first-loop.swe-{i}.json").write_text("{}", encoding="utf-8")
+        spec = FixtureSpec(track="A", root=tmp_path, limit=6)
+        samples = FixtureRegistry().load(spec)
+        groups = [s.group for s in samples]
+        assert len(samples) == 6
+        # control 全部在前半、reset 全部在后半（两阶段序列）
+        assert groups == ["control"] * 3 + ["reset"] * 3
+        # 配对关系保持（每对共享 pair_id）
+        assert len({s.pair_id for s in samples}) == 3
+
+    def test_hard_block_unmet_zero_runner_calls(self, tmp_path: Path):
+        """不变量⑩: 前置依赖未满足 → run() 硬阻断，runner 零调用（provider_calls=0）."""
+        for i in range(4):
+            (tmp_path / f"llm-first-loop.swe-{i}.json").write_text("{}", encoding="utf-8")
+        calls: list = []
+
+        def counting_runner(s):
+            calls.append(s)
+            raise AssertionError("硬阻断生效时 runner 不应被调用")
+
+        bench = SemanticResetBenchmark(
+            preconditions=PreconditionState(),  # 两项 None → unmet 非空
+            runner=counting_runner,
+        )
+        spec = FixtureSpec(track="A", root=tmp_path, limit=4)
+        report = bench.run(spec, track="A")
+        assert len(calls) == 0  # runner 零调用
+        assert report.conclusion_deferred is True
+        assert report.pending_dependencies  # 阻断原因可读
+        assert report.baseline == {} and report.comparison == {}  # 不产出结论（默认空 dict）

@@ -87,8 +87,11 @@ class EfficiencyMetric:
     measurement_frozen: bool = True
 
 
-class CognitiveEfficiencyMeter:
-    """认知效率度量（spec 6.3 分子/分母口径冻结）.
+class CognitiveOverheadMeter:
+    """认知开销度量（CR-R1 5.3 更名；spec 6.3 分子/分母口径冻结）.
+
+    ratio = 恢复寄存器开销 token / 本轮总 token——**越小越好**（认知开销占比；
+    原名 EfficiencyMeter 语义反转易误读，更名后语义与读法一致）。
 
     分子（恢复寄存器开销）提取来源:
     1. action_trace 中恢复性读取动作（memory_search / search_archive / search_records /
@@ -285,8 +288,10 @@ class FixtureRegistry:
         used = sources[:max_sources]
         oracle = self.ORACLE_A if spec.track == "A" else self.ORACLE_B
         samples: list[Sample] = []
-        for i, src in enumerate(used):
-            for group in ("reset", "control"):
+        # CR-R1 5.1（不变量⑨）: 两阶段执行序列——Phase A 全部 control 先跑完冻结
+        # baseline → Phase B 全部 reset；同一 pair_id 配对不变，仅执行顺序调整。
+        for group in ("control", "reset"):
+            for i, src in enumerate(used):
                 samples.append(
                     Sample(
                         sample_id=f"{spec.track}-{i:03d}-{group}",
@@ -394,12 +399,12 @@ class SemanticResetBenchmark:
         *,
         preconditions: PreconditionState | None = None,
         runner: Callable[[Sample], SampleOutcome] | None = None,
-        meter: CognitiveEfficiencyMeter | None = None,
+        meter: CognitiveOverheadMeter | None = None,
         registry: FixtureRegistry | None = None,
     ) -> None:
         self._preconditions = preconditions or PreconditionState()
         self._runner = runner
-        self._meter = meter or CognitiveEfficiencyMeter()
+        self._meter = meter or CognitiveOverheadMeter()
         self._registry = registry or FixtureRegistry()
 
     def estimate_cost(self, spec: FixtureSpec) -> CostEstimate:
@@ -445,6 +450,10 @@ class SemanticResetBenchmark:
         )
         if self._runner is None:
             # dry-run: 只产计划（配对/成本/前置依赖），不产 baseline/comparison 收益结论
+            return report
+        if pending:
+            # CR-R1 5.2（不变量⑩）: 前置依赖未满足 → 硬阻断——planning_report 即终态，
+            # runner 零调用（provider_calls=0），不产出 baseline/comparison。
             return report
 
         outcomes = [self._runner(s) for s in samples]
@@ -504,7 +513,7 @@ class SemanticResetBenchmark:
 
 
 __all__ = [
-    "CognitiveEfficiencyMeter",
+    "CognitiveOverheadMeter",
     "EfficiencyMetric",
     "FixtureRegistry",
     "FixtureSpec",
