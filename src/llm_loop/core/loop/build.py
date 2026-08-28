@@ -846,6 +846,23 @@ class _BuildMixin:
                 self._note_defer_replayed(sess.session_id, SlotKind.GATE_NOTE)
                 _slots.discard(str(SlotKind.GATE_NOTE))
                 self._deferred_replay_slots = _slots
+        # CR-R1.1 批次D（审查项6 补全）: packet 编译输入面 = 真实注入面。memory 自
+        # EVO-20260827-f42496bc 改为一次性持久化（engine wrap+append 进
+        # sess.messages）后不再进 _inject_parts（仅 fail-open 才进，见上方
+        # fallback），但 packet 编译必须覆盖它——否则 slots 恒空、warm_tokens
+        # 恒 0（glm-minimax-3 实测 24/24 warm_active=0 的根因），shadow 无法
+        # 预演 enforce（审查项6 同构语义：shadow 与 enforce 使用同一 compiler
+        # 产物）。投影全量 memory_snapshot（每 turn 一条，多轮堆积由 compiler
+        # budget_chars 降级兜底——WARM 超界降级本身即 tier_degraded 生产可达
+        # 路径）；wire 平铺仍用 _inject_parts 原语义，持久化原文已由历史投影
+        # 带出，不重复注入。
+        _packet_parts: list[tuple[str | None, str]] = list(_inject_parts)
+        for _m in sess.messages:
+            _md = getattr(_m, "metadata", None) or {}
+            if _md.get("injection_kind") == "memory_snapshot":
+                _c = str(getattr(_m, "content", "") or "")
+                if _c.strip():
+                    _packet_parts.append(("memory", _c))
         # ── P1 统一聚合器（9.1）: 四槽 parts → 单条 user；sidecar 单 AGGREGATED entry ──
         # 尾部连续 user 恒 ≤1（1210 结构性消除）；聚合失败 fail-open 降级零注入（不阻断构建）
         # Cognitive Runtime（tasks 2.3/2.5/2.6，spec 5.2/5.1.1-3b）:
@@ -1006,7 +1023,7 @@ class _BuildMixin:
                 # anchor 位，旧行为保留）。
                 _packet = (
                     compile_decision_packet(
-                        _inject_parts,
+                        _packet_parts,  # CR-R1.1 批次D: packet 输入面=真实注入面（含持久化 memory_snapshot 投影）
                         _sem_state,
                         # CR-R1 4.2: 生产预算接线——超上界降级仅 HOT（compiler degraded
                         # 路径生产可达，不变量⑧）

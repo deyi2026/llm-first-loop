@@ -186,6 +186,15 @@ def compile_decision_packet(
                 content=str(content),
                 tier=tier,
                 evidence_ref=evidence_ref,
+                # CR-R1.1 批次D: WARM 槽物化 compact_repr（首行 ≤120 截断，与
+                # render_slots fallback/L195 预算口径一致）——telemetry warm_tokens
+                # 统计 compact_repr 字段，生产留空导致 warm 恒 0（glm-minimax-3
+                # 24/24 warm_active=0 第二层根因）；同时消除渲染投影与字段漂移。
+                compact_repr=(
+                    str(content).split("\n", 1)[0][:120]
+                    if tier is ContextTier.WARM
+                    else ""
+                ),
             )
         )
 
