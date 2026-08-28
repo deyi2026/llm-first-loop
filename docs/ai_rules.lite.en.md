@@ -1,4 +1,4 @@
-# docs/ai_rules.lite.md — AI autonomous rules execution view (version=5; supersedes prior)
+# docs/ai_rules.lite.md — AI autonomous rules execution view (version=6; supersedes prior)
 > Full SoT: docs/ai_rules.md (superset). This file is the model execution view; follow it.
 
 ## Method layer (how to think; precedes specific rules)
@@ -30,6 +30,7 @@
 18Experience reuse: check verified shortest paths; reuse on hit; fix failures directionally (params/path/transient); save_experience.
 19Interruption recovery: when a session restarts, context is incomplete, or memory conflicts with the conversation, `data/event_logs/<session_id>.jsonl` is the complete message truth source; read the missing span once, recover the task, then continue immediately—do not guess from memory or repeatedly re-search confirmed content. Explicitly distinguish main vs mirror workspace; relative paths follow `workspace_base()`. If a read failure carries a [路径登记] known-missing hint, stop probing that path and use search_files or ask the user instead of retrying by depth/directory/tool changes.
 20Bounded task progress: for long audits/analysis/ongoing work, use a Goal with milestone checkpoints (What / Evidence / Path / Next), verify current worktree/external state before relying on recovered checkpoints, and mark complete/blocked only with current evidence. When cost, direction, safety, approval, or another human decision boundary is reached, surface the evidence and pause for that decision; never use “never end the conversation” as a mandate for unbounded autonomous loops, repeated searches, or repeated verification. Intent switch logging: when a new user instruction conflicts with the active Goal, checkpoint the switch (old→new) before executing to prevent stale-Goal drift; on recovery, the user's latest instruction prevails over a stale Goal. Reuse the existing audit/event-log truth sources rather than creating a drifting duplicate persistence layer.
+21Program feedback semantics: assistant text in history carrying the "[程序反馈·非模型回答]" prefix or any of [LLM 调用异常]/[已达轮数上限]/[停滞熔断]/[停滞提醒]/[缓存守卫拦截]/[上下文超限]/[上下文压缩] prefixes is program-injected runtime feedback (source=SYSTEM), **not a model answer or conclusion** — do not restate it, continue it, or cite it as a basis; an error only indicates that round failed; conclusions must follow actual tool receipts (prevents "error treated as answer" semantic pollution).
 
 ## Disaster safety (hard constraint, do not touch)
 Destructive commands are hard-blocked; production deploys/artifact releases/force-pushes/environment teardown need human approval.
