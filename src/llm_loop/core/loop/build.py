@@ -857,6 +857,7 @@ class _BuildMixin:
                     _anchor_mode = "anchor"
                     _tier_on = False
                 _sem_state = None
+                _env = None  # CR-R1.1: 预初始化——load 失败时 Barrier 仍走 GoalStore 重建
                 _projection = ""
                 # CR-R1.1（审查项1）: 认知运行时会话身份与任务锚点解耦——anchor_sess
                 # 是 Session 对象（build_task_anchor 专用），Cognitive 路径全部使用
@@ -880,35 +881,56 @@ class _BuildMixin:
                         )
                     except Exception:  # noqa: BLE001 — 状态读取 fail-open → 回退 anchor
                         _sem_state = None
-                    # CR-R1（tasks 3.1）: Read Barrier——信封与 GoalStore 活跃 goal 一致性
-                    # 核验：一致→用 / 不一致→rebuild_state+回存（telemetry 钩子 tasks 6.2）/
-                    # 无法判断（goal 缺失/异常）→ 宁缺勿错置 None（header 不注入）。
+                    # CR-R1（tasks 3.1）+ CR-R1.1（审查项4）: Read Barrier——信封与
+                    # GoalStore 严格会话读的一致性核验，三路统一：
+                    #   信封在场且 identity 匹配 → 直接用；
+                    #   信封 mismatch/缺失/STALE_UNTRUSTED → strict 读 GoalStore：
+                    #     能安全确认 goal → rebuild+回存（envelope 缺失不再等 compact
+                    #     触发 _persist_semantic_state——冷启动首轮即建 header）；
+                    #   goal 缺失/终态/异常 → 宁缺勿错置 None（header 不注入）。
+                    # "没有 envelope"本身不是"不可信"——GoalStore 无法安全确定当前
+                    # Goal 才是不可信（审查报告 §4）。墓碑防复活由三态解包
+                    # （_sem_state=None）+ rebuild_state(终态)→None 双层保障。
                     if (
-                        _sem_state is not None
-                        and StateEnvelope is not None
+                        StateEnvelope is not None
                         and rebuild_state is not None
-                        and isinstance(_env, StateEnvelope)
                     ):
+                        _env_candidate = (
+                            _env if isinstance(_env, StateEnvelope) else None
+                        )
                         try:
                             from llm_loop.introspection.goal import GoalStore
 
                             _goal = GoalStore(
                                 os.path.join(self.settings.data_dir, "audit")
                             ).get(prefer_session_id=_cog_sid, strict_session=True)
-                            if _goal and _goal.get("id") and _env.identity.matches(_goal):
+                            if (
+                                _env_candidate is not None
+                                and _goal
+                                and _goal.get("id")
+                                and _env_candidate.identity.matches(_goal)
+                            ):
                                 pass  # 一致：信封可信，直接用
                             elif _goal and _goal.get("id"):
-                                _rb = rebuild_state(_goal)  # 不一致→重建（终态→None）
+                                _rb = rebuild_state(_goal)  # 重建（终态→None 防复活）
                                 if _rb is None:
                                     _sem_state = None  # goal 已终态：投影不可用
                                 else:
                                     _cps = _goal.get("checkpoints") or [{}]
+                                    # CR-R1.1（审查项11）: state_revision 单调继承——
+                                    # 在场 mismatch → old+1；缺失/STALE 首建 → 1。
+                                    _prev_rev = (
+                                        _env_candidate.identity.state_revision
+                                        if _env_candidate is not None
+                                        else 0
+                                    )
                                     _env = StateEnvelope(
                                         identity=StateIdentity(
                                             session_id=_cog_sid,
                                             goal_id=str(_goal.get("id", "")),
                                             goal_updated_at=str(_goal.get("updated_at", "")),
                                             checkpoint_ts=str((_cps[-1] or {}).get("ts", "")),
+                                            state_revision=_prev_rev + 1,
                                         ),
                                         state=_rb,
                                     )

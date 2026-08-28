@@ -151,3 +151,61 @@ def test_shadow_default_no_header(tmp_path):
     out = _build(engine, sess, [])
     tail = _tail(out)
     assert "[当前决策]" not in tail
+
+
+# ── CR-R1.1（审查项4）: envelope 缺失 → 主动 rebuild（冷启动首轮建 header）──
+
+
+def test_cold_start_missing_envelope_rebuilds_on_first_round(tmp_path):
+    """envelope 缺失 + active goal 在场：首轮 build 即 rebuild+save，header 注入.
+
+    审查实测旧行为：无 envelope → _sem_state=None → 前置门不进 GoalStore →
+    不 rebuild 不 save → header 一直缺席（直到 compact 恰好触发 persist）。
+    新逻辑："没有 envelope"不是"不可信"，GoalStore 能安全确认即重建。
+    """
+    engine, sess = _engine(tmp_path)
+    audit = Path(engine.settings.data_dir) / "audit"
+    GoalStore(audit).create("冷启动目标", session_id=sess.session_id)
+    _enforce(engine)
+    _arm_all_slots(engine, sess)
+    out = _build(engine, sess, [])
+    tail = _tail(out)
+    # 首轮即注入 header（不再等 compact 触发）
+    assert "[当前决策] 冷启动目标" in tail
+    # envelope 已回存且身份同源（后续轮次走一致路径）
+    env = SemanticStateStore(audit).load(sess.session_id)
+    assert isinstance(env, StateEnvelope)
+    assert env.identity.session_id == sess.session_id
+    assert env.identity.goal_id  # 非 GOAL- 占位
+
+
+def test_rebuild_revision_monotonic_inheritance(tmp_path):
+    """CR-R1.1（审查项11）: mismatch rebuild 继承旧 revision+1，不再回退到 1."""
+    engine, sess = _engine(tmp_path)
+    audit = Path(engine.settings.data_dir) / "audit"
+    gs = GoalStore(audit)
+    goal = gs.create("演进目标", session_id=sess.session_id)
+    store = SemanticStateStore(audit)
+    # 预置 revision=7 的信封，identity 故意陈旧（updated_at 不一致 → mismatch）
+    store.save(
+        sess.session_id,
+        StateEnvelope(
+            identity=StateIdentity(
+                session_id=sess.session_id,
+                goal_id=str(goal.id),
+                goal_updated_at="old-ts",
+                checkpoint_ts="old-cp",
+                state_revision=7,
+            ),
+            state=SemanticTaskState(
+                objective="旧状态",
+                checkpoint=CheckpointPointer(what="w", next="n"),
+            ),
+        ),
+    )
+    _enforce(engine)
+    _arm_all_slots(engine, sess)
+    _build(engine, sess, [])
+    env = store.load(sess.session_id)
+    assert isinstance(env, StateEnvelope)
+    assert env.identity.state_revision == 8  # 7+1（单调），而非回退 1
