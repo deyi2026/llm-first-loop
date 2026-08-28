@@ -40,6 +40,7 @@ from llm_loop.core.loop.hotcard import pop_hotcard, write_hotcard
 # 惰性容错导入（cognitive 子包独立演进，import 失败时聚合器回退原平铺行为）。
 try:  # noqa: SIM105
     from llm_loop.cognitive.compiler import compile_decision_packet, semantic_projection
+    from llm_loop.cognitive.telemetry import emit_cognitive_event
     from llm_loop.cognitive.state import (
         SemanticStateStore,
         StateEnvelope,
@@ -49,6 +50,7 @@ try:  # noqa: SIM105
 except Exception:  # noqa: BLE001 — fail-open 回退平铺聚合（零回归）
     compile_decision_packet = None  # type: ignore[assignment]
     semantic_projection = None  # type: ignore[assignment]
+    emit_cognitive_event = None  # type: ignore[assignment]
     SemanticStateStore = None  # type: ignore[assignment]
     StateEnvelope = None  # type: ignore[assignment]
 
@@ -912,6 +914,13 @@ class _BuildMixin:
                                         "build: Read Barrier 不一致→重建语义状态并回存 goal=%s",
                                         _goal.get("id"),
                                     )
+                                    if emit_cognitive_event is not None:  # CR-R1 6.2
+                                        emit_cognitive_event(
+                                            "state_rebuild",
+                                            data_dir=self.settings.data_dir,
+                                            session_id=self._focus.anchor_sess or "",
+                                            goal_id=str(_goal.get("id", "")),
+                                        )
                             else:
                                 _sem_state = None  # goal 缺失→宁缺勿错（header=None）
                         except Exception:  # noqa: BLE001 — Barrier fail-open：宁缺勿错
@@ -953,6 +962,35 @@ class _BuildMixin:
                 if _packet is not None:
                     _agg = _packet.render()  # header 在前 + tier 槽位（空 slots→header-only）
                     _agg_anchor = _anchor if not _packet.render_header() else ""
+                    if emit_cognitive_event is not None:  # CR-R1 6.2: packet_compile/tier_degraded
+                        _tier_of = lambda _s: str(getattr(getattr(_s, "tier", None), "value", ""))  # noqa: E731
+                        _hot_chars = sum(
+                            len(getattr(_s, "content", "") or "")
+                            for _s in _packet.slots
+                            if _tier_of(_s) == "hot"
+                        )
+                        _warm_chars = sum(
+                            len(getattr(_s, "compact_repr", "") or "")
+                            for _s in _packet.slots
+                            if _tier_of(_s) == "warm"
+                        )
+                        _cold_n = sum(1 for _s in _packet.slots if _tier_of(_s) == "cold")
+                        _evt = dict(
+                            data_dir=self.settings.data_dir,
+                            session_id=self._focus.anchor_sess or "",
+                            goal_id=str(
+                                getattr(getattr(_sem_state, "identity", None), "goal_id", "")
+                                or ""
+                            ),
+                            hot_tokens=_hot_chars // 4,
+                            warm_tokens=_warm_chars // 4,
+                            cold_ref_count=_cold_n,
+                            packet_tokens=len(_agg) // 4,
+                            mode=str(getattr(self.settings, "cog_runtime_mode", "")),
+                        )
+                        emit_cognitive_event("packet_compile", **_evt)
+                        if getattr(_packet, "degraded", False):
+                            emit_cognitive_event("tier_degraded", **_evt)
                 else:
                     _agg = "\n\n".join(
                         f"--- [slot:{s if s else 'hint'}] ---\n{c}"

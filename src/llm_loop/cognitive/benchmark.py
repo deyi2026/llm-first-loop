@@ -107,14 +107,18 @@ class CognitiveOverheadMeter:
     """
 
     MEASUREMENT_FROZEN = True
-    # 分子动作表（冻结）: 恢复性读取——重建"我是谁/做到哪/为什么"的检索代价
-    NUMERATOR_ACTION_PREFIXES: tuple[str, ...] = (
+    # CR-R1 6.3 口径修正: 真实 trace 中恢复性读取记录为 action_type=="tool_call"
+    # 且 detail==工具名（白名单匹配），废除旧版 action_type 前缀匹配 + detail
+    # 长度/4 token 估算（工具名本身极短，长度估算无意义——按次数计数）。
+    RECOVERY_TOOLS: tuple[str, ...] = (
         "memory_search",
         "search_archive",
         "search_records",
         "state_rebuild",
         "checkpoint_replay",
     )
+    # 兼容别名（旧引用面，口径以 RECOVERY_TOOLS 为准）
+    NUMERATOR_ACTION_PREFIXES = RECOVERY_TOOLS
     DENOMINATOR_NOTE = "Σ(tokens_in+tokens_out)，含模型输入输出；工具往返结果计入 tokens_in"
 
     def measure(
@@ -136,14 +140,15 @@ class CognitiveOverheadMeter:
         if not usage_rows and not Path(usage_cost).exists():
             missing.append("usage_cost")
 
-        # 分子①: 恢复性读取动作 detail 估算
+        # 分子①: 恢复性读取动作计数（CR-R1 6.3: tool_call + RECOVERY_TOOLS 白名单；
+        # 废除 detail 长度/4 估算——tokens 记 0，次数为口径主体）
         retrieval_tokens = 0
         retrieval_count = 0
         for row in trace_rows:
             action = str(row.get("action_type", ""))
-            if action.startswith(self.NUMERATOR_ACTION_PREFIXES):
+            detail = str(row.get("detail", ""))
+            if action == "tool_call" and detail in self.RECOVERY_TOOLS:
                 retrieval_count += 1
-                retrieval_tokens += _estimate_tokens(str(row.get("detail", "")))
         # 分子②: 活跃 goal checkpoint 投影估算（what+next+evidence 三要素回读）
         checkpoint_tokens = 0
         active_goals = 0

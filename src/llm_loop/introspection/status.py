@@ -42,6 +42,9 @@ class ActionTraceItem:
             "phase": self.phase,
             "action_type": self.action_type,
             "detail": self.detail,
+            # CR-R1 6.1: 补 session_id（dataclass 已有字段，to_dict 此前漏写；
+            # 旧 trace 行缺此字段，读侧 .get() null 容忍）
+            "session_id": self.session_id,
         }
 
 

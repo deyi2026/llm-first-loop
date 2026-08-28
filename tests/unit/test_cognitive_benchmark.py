@@ -46,10 +46,12 @@ class TestEfficiencyMeter:
         trace = _write_jsonl(
             tmp_path / "action_trace.jsonl",
             [
-                {"ts": "t1", "phase": "p", "action_type": "memory_search", "detail": "字" * 40},
-                {"ts": "t2", "phase": "p", "action_type": "search_archive", "detail": "档" * 80},
-                {"ts": "t3", "phase": "p", "action_type": "run_tool", "detail": "x" * 400},
-                {"ts": "t4", "phase": "p", "action_type": "checkpoint_replay", "detail": "回" * 20},
+                # CR-R1 6.3: 真实 trace 结构——恢复性读取 = tool_call + detail=工具名
+                {"ts": "t1", "phase": "p", "action_type": "tool_call", "detail": "memory_search"},
+                {"ts": "t2", "phase": "p", "action_type": "tool_call", "detail": "search_archive"},
+                {"ts": "t3", "phase": "p", "action_type": "tool_call", "detail": "read_file"},
+                {"ts": "t4", "phase": "p", "action_type": "tool_call", "detail": "checkpoint_replay"},
+                {"ts": "t5", "phase": "p", "action_type": "memory_search", "detail": "字" * 40},
             ],
         )
         goals = _write_jsonl(
@@ -79,13 +81,15 @@ class TestEfficiencyMeter:
         m = CognitiveOverheadMeter().measure(
             action_trace=trace, goal_checkpoints=goals, usage_cost=usage
         )
-        # 分子①: 40//4 + 80//4 + 20//4 = 10+20+5 = 35（run_tool 非恢复性不计入）
+        # 分子①（CR-R1 6.3 修正）: 废除 detail 长度/4 估算 → tokens=0 仅计数
+        #   （3 次: memory_search/search_archive/checkpoint_replay；read_file 非
+        #   白名单、t5 旧结构行非 tool_call 均不计入——前缀匹配已废除）
         # 分子②: (20+20+20)//4 = 15（complete goal 不计入）
-        assert m.numerator_tokens == 35 + 15
-        assert m.retrieval_action_count == 3
+        assert m.numerator_tokens == 0 + 15
+        assert m.retrieval_action_count == 3  # 真实结构 trace 上计数非零
         assert m.checkpoint_replay_tokens == 15
         assert m.denominator_tokens == 32000  # 10500 + 21500
-        assert m.ratio == round((35 + 15) / 32000, 6)
+        assert m.ratio == round((0 + 15) / 32000, 6)
         assert m.inputs_missing == ()
         assert m.measurement_frozen is True
         # 口径可追溯: 分子/分母来源明细非空（spec 6.3-1 注明提取来源）
@@ -95,6 +99,7 @@ class TestEfficiencyMeter:
         """口径冻结锁定（spec 5.3.3-2）: 动作表/冻结标记变更即本用例红灯."""
         meter = CognitiveOverheadMeter()
         assert meter.MEASUREMENT_FROZEN is True
+        assert meter.RECOVERY_TOOLS == meter.NUMERATOR_ACTION_PREFIXES  # 兼容别名同源
         assert meter.NUMERATOR_ACTION_PREFIXES == (
             "memory_search",
             "search_archive",
@@ -357,3 +362,77 @@ class TestCrR1TwoPhaseAndHardBlock:
         assert report.conclusion_deferred is True
         assert report.pending_dependencies  # 阻断原因可读
         assert report.baseline == {} and report.comparison == {}  # 不产出结论（默认空 dict）
+
+
+# ── CR-R1 6.4：telemetry 事件流 + to_dict session_id（不变量⑪）──
+
+
+class TestCrR1Telemetry:
+    def test_to_dict_contains_session_id(self):
+        """6.1: ActionTraceItem.to_dict 含 session_id（旧 trace 行读侧 .get() 容忍）."""
+        from llm_loop.introspection.status import ActionTraceItem
+
+        item = ActionTraceItem(
+            ts="t", phase="p", action_type="tool_call", detail="memory_search", session_id="s-123"
+        )
+        d = item.to_dict()
+        assert d["session_id"] == "s-123"
+
+    def test_emit_env_off_no_write(self, tmp_path, monkeypatch):
+        """6.2: env COG_RUNTIME_TELEMETRY 未开 → 零写入."""
+        from llm_loop.cognitive import telemetry
+
+        monkeypatch.delenv("COG_RUNTIME_TELEMETRY", raising=False)
+        wrote = telemetry.emit_cognitive_event(
+            "packet_compile", data_dir=tmp_path, session_id="s1"
+        )
+        assert wrote is False
+        assert not (tmp_path / "audit" / "cognitive_telemetry.jsonl").exists()
+
+    def test_emit_event_four_elements_and_fields(self, tmp_path, monkeypatch):
+        """6.2: 事件四要素（session/run/round/goal_id）+ 认知维度字段齐全落盘."""
+        from llm_loop.cognitive import telemetry
+
+        monkeypatch.setenv("COG_RUNTIME_TELEMETRY", "1")
+        wrote = telemetry.emit_cognitive_event(
+            "state_rebuild",
+            data_dir=tmp_path,
+            session_id="s-abc",
+            run_id="run-1",
+            round_no=7,
+            goal_id="G-9",
+            cognitive_epoch=2,
+            state_revision=11,
+            hot_tokens=40,
+            warm_tokens=10,
+            cold_ref_count=3,
+            packet_tokens=64,
+            mode="enforce",
+        )
+        assert wrote is True
+        rows = [
+            __import__("json").loads(ln)
+            for ln in (tmp_path / "audit" / "cognitive_telemetry.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        assert len(rows) == 1
+        r = rows[0]
+        assert r["event"] == "state_rebuild"
+        # 四要素
+        assert r["session_id"] == "s-abc" and r["run_id"] == "run-1"
+        assert r["round"] == 7 and r["goal_id"] == "G-9"
+        # 认知维度
+        assert r["cognitive_epoch"] == 2 and r["state_revision"] == 11
+        assert (r["hot_tokens"], r["warm_tokens"], r["cold_ref_count"]) == (40, 10, 3)
+        assert r["packet_tokens"] == 64 and r["mode"] == "enforce"
+
+    def test_emit_fail_open_on_bad_path(self, monkeypatch):
+        """6.2: 写失败 fail-open（返回 False，不抛出）."""
+        from llm_loop.cognitive import telemetry
+
+        monkeypatch.setenv("COG_RUNTIME_TELEMETRY", "1")
+        wrote = telemetry.emit_cognitive_event(
+            "tier_degraded", data_dir="/dev/null/不可写路径", session_id="s1"
+        )
+        assert wrote is False
