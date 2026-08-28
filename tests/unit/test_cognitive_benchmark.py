@@ -307,13 +307,14 @@ class TestSemanticResetBenchmark:
 
 class TestResetResultCleared:
     def test_reset_returns_cleared_minimal_durable(self):
-        """reset 成功 → cleared=最小 Durable（objective+checkpoint 保留，其余清空）."""
-        state = SemanticTaskState(objective="任务目标")
+        """reset 成功 → cleared 保留最小 Durable + 硬约束/已确认事实不丢（spec 4.2-1）."""
+        state = SemanticTaskState(objective="任务目标", hard_constraints=["禁止改动 src 外文件"])
         state.confirmed_facts.append(ConfirmedFact(claim="事实"))
         state.ephemeral.hypotheses.append("假设")
         result = SemanticResetController().reset(state)
         assert result.ok is True
         assert result.cleared is not None
         assert result.cleared.objective == "任务目标"
-        assert result.cleared.confirmed_facts == []
-        assert result.cleared.ephemeral.hypotheses == []
+        assert result.cleared.hard_constraints == ["禁止改动 src 外文件"]
+        assert len(result.cleared.confirmed_facts) == 1  # 已确认事实不因 reset 丢失
+        assert result.cleared.ephemeral.hypotheses == []  # Ephemeral 清空

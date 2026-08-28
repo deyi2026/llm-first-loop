@@ -163,12 +163,16 @@ def test_reset_keeps_pointer_clears_rest():
         checkpoint=CheckpointPointer(what="里程碑"),
         hard_constraints=["硬约束A"],
     )
-    state.ephemeral.hypotheses.append("假设X")
+    state.ephemeral.hypotheses.append("待验证临时假设：模块间存在隐藏耦合需要实验确认")
     result = ctl.reset(state)
     assert result.ok is True
     assert result.metric_before > result.metric_after
     assert result.estimated_token_delta > 0
     assert result.first_miss_expected is True
+    # spec 4.2-1/4.3-1: 不因 reset 丢失硬约束；Ephemeral 假设清空
+    assert result.cleared is not None
+    assert result.cleared.hard_constraints == ["硬约束A"]
+    assert result.cleared.ephemeral.hypotheses == []
 
 
 def test_reset_require_confirmation():
