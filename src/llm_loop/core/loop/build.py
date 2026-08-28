@@ -1029,12 +1029,17 @@ class _BuildMixin:
                     _agg_content = wrap_injection(_agg, _agg_anchor)
                     built.append({"role": "user", "content": _agg_content})
                     # err1210 9.1: 聚合登记（单 entry；strip/defer 消费端经 AGGREGATED 分支）
+                    # CR-R1.1（审查项5）: seg_sources 携带投影前原始段——defer 恢复
+                    # 不从 wire 反推（WARM 投影截断会永久丢失原文）。
                     self._last_build_injections.append(
                         InjectedEntry(
                             msg_idx=len(built) - 1,
                             slot_kind=SlotKind.AGGREGATED,
                             prefix_sha=content_prefix_sha(_agg_content),
                             message_ref=None,
+                            seg_sources=tuple(
+                                (str(_k), _c) for _k, _c in _inject_parts
+                            ),
                         )
                     )
                 # 空 slots 且无 header：安静轮零注入（不造空条、不登记）
