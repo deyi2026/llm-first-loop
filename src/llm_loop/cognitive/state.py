@@ -374,7 +374,9 @@ class ResetResult:
 class SemanticResetController:
     """受控清空重载（spec 4.2-2 / 4.3-2 / design 2.1.4）。
 
-    reset 保留最小 Durable（objective + checkpoint 指针），清空其余累积状态；
+    reset 清空累积认知负担（Ephemeral 假设等），保留最小必要 Durable：
+    objective + checkpoint 指针 + 硬约束 + 已确认事实（spec 4.2-1「不因 reset
+    丢失已确认事实与硬约束」/ 4.3-1「硬约束不可被优化掉」）；
     先写内存快照，清空失败回滚（不产生半清空态）。
     """
 
@@ -389,20 +391,19 @@ class SemanticResetController:
             )
         snapshot = state.to_dict()
         try:
+            # spec 4.2-1/4.3-1/5.1.1-5a: 不因 reset 丢失已确认事实与硬约束——
+            # 清空的是累积认知负担（Ephemeral 假设等），硬约束/已确认事实属"不丢"半边
             cleared = SemanticTaskState(
                 objective=state.objective,
                 checkpoint=state.checkpoint,
                 version=state.version,
+                hard_constraints=list(state.hard_constraints),
+                confirmed_facts=list(state.confirmed_facts),
             )
         except Exception:
             logger.warning("语义 reset 清空失败，回滚快照", exc_info=True)
             return ResetResult(failed=True, metric_before=metric_before, metric_after=metric_before)
-        removed_texts = list(snapshot.get("hard_constraints", []))
-        removed_texts.extend(
-            f.get("claim", "") + (f.get("provenance") or "")
-            for f in snapshot.get("confirmed_facts", [])
-        )
-        removed_texts.extend(state.ephemeral.hypotheses)
+        removed_texts = list(state.ephemeral.hypotheses)
         return ResetResult(
             ok=True,
             metric_before=metric_before,
