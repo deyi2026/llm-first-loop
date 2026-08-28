@@ -157,8 +157,14 @@ def _assert_red_light(engine, sess, *, what: str, **arm_kwargs) -> None:
 
 class TestGoldenFingerprint:
     def test_golden_tail_morphology(self, tmp_path):
-        """P1 9.1 聚合形态: 尾部 1 条聚合 user（memory+四槽段标记，wrap 包装，段序恒定）."""
+        """P1 9.1 聚合形态: 尾部 1 条聚合 user（memory+四槽段标记，wrap 包装，段序恒定）.
+
+        CR-R1（tasks 2.2）后默认 MODE=shadow（平铺+锚点旧行为），黄金摘要锚定的是
+        生产 enforce 形态（tier 聚合），故本用例显式切 enforce 后再构建。
+        """
         engine, sess = _engine(tmp_path)
+        # Settings 为 frozen dataclass，经 object.__setattr__ 切 enforce（绕过冻结检查）
+        object.__setattr__(engine.settings, "cog_runtime_mode", "enforce")
         memory_msgs = _arm_all_slots(engine, sess)
         out = _build(engine, sess, memory_msgs)
         tail = out[-1:]

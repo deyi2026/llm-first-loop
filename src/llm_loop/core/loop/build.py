@@ -832,6 +832,15 @@ class _BuildMixin:
             try:
                 _anchor_mode = str(getattr(self.settings, "cog_runtime_anchor_mode", "auto"))
                 _tier_on = bool(getattr(self.settings, "cog_runtime_tier_enabled", True))
+                # CR-R1（tasks 2.2）: COG_RUNTIME_MODE 三态——off/shadow 时 cognitive
+                # 不进 prompt（anchor+平铺旧行为；shadow 保留构造计算供 telemetry，
+                # 任务 6.2 接线打点）；enforce 时按 ANCHOR_MODE/TIER_ENABLED 现行语义进 prompt。
+                _cog_mode = str(getattr(self.settings, "cog_runtime_mode", "shadow")).strip().lower()
+                if _cog_mode not in ("off", "shadow", "enforce"):
+                    _cog_mode = "shadow"
+                if _cog_mode != "enforce":
+                    _anchor_mode = "anchor"
+                    _tier_on = False
                 _sem_state = None
                 _projection = ""
                 if _anchor_mode in ("semantic", "auto") and SemanticStateStore is not None:

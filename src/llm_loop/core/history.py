@@ -216,7 +216,11 @@ def _persist_semantic_state(session_id: str = "") -> bool:
     （尾部聚合条内），代码演进不并存（spec 5.1.1-3b）。
     fail-open: GoalStore 不可用/无活跃 goal/损坏 → False（不阻断压缩主流程）。
     audit 路径 = LFL_DATA_DIR（镜像/跨区隔离锚点）或 data/（主区默认）。
+    CR-R1（tasks 2.2）: COG_RUNTIME_MODE=off 时短路——连 store 写也不做（纯旧行为）。
     """
+    import os as _os_mod
+    if _os_mod.environ.get("COG_RUNTIME_MODE", "shadow").strip().lower() == "off":
+        return False
     try:
         import os
         from datetime import datetime, timezone as _tz

@@ -206,6 +206,16 @@ def _env_run_mode(name: str) -> str:
     return "standard"
 
 
+def _env_cog_mode(name: str) -> str:
+    """COG_RUNTIME_MODE 三态解析: off/shadow/enforce；非法回退 shadow（CR-R1 tasks 2.1）。"""
+    raw = _raw_env(name).strip().lower()
+    if raw in {"off", "shadow", "enforce"}:
+        return raw
+    if raw:
+        _note_invalid_fallback(name, "shadow", "非 off/shadow/enforce 字符串")
+    return "shadow"
+
+
 def _env_cog_anchor_mode(name: str) -> str:
     """COG_RUNTIME_ANCHOR_MODE 三态解析: semantic/anchor/auto；非法回退 auto（design 2.1.3.4）。"""
     raw = _raw_env(name).strip().lower()
@@ -328,6 +338,8 @@ class Settings:
     cog_runtime_state_version: str = "v0.1"
     # HOT/WARM/COLD 分级总闸（0 回退平铺聚合原行为；spec 5.2.3-1）
     cog_runtime_tier_enabled: bool = True
+    cog_runtime_mode: str = "shadow"  # CR-R1: off|shadow|enforce（非法回退 shadow）
+    cog_runtime_packet_budget: int = 2000  # CR-R1: 生产 decision packet 预算（chars）
 
     # ── 上下文 ──
     history_max_chars: int | None = None  # T2(2026-08-14): 默认 100K 收敛（1M 曾撑爆窗口，30000 过保守）；
@@ -640,6 +652,8 @@ def load_settings() -> Settings:
         cog_runtime_dual_source_guard=_env_bool("COG_RUNTIME_DUAL_SOURCE_GUARD", True),
         cog_runtime_state_version=_env_cog_state_version("COG_RUNTIME_STATE_VERSION"),
         cog_runtime_tier_enabled=_env_bool("COG_RUNTIME_TIER_ENABLED", True),
+        cog_runtime_mode=_env_cog_mode("COG_RUNTIME_MODE"),
+        cog_runtime_packet_budget=_env_int("COG_RUNTIME_PACKET_BUDGET", 2000),
         history_max_chars=_env_int_or_none("HISTORY_MAX_CHARS"),  # EVO-20260816-3af5dee3: None=未配置→按窗口自适应
         memory_top_k=_env_int("MEMORY_TOP_K", 5),
         self_inspection_enabled=_env_bool("SELF_INSPECTION_ENABLED", True),
