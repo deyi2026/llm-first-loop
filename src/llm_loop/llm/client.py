@@ -336,7 +336,11 @@ def _trace_payload_fingerprint(
                 for i, m in enumerate(messages)
             ],
         }
-        path = os.environ.get("LLM_PAYLOAD_TRACE_PATH", "data/audit/payload_trace.jsonl")
+        # GPT 审计批次3: 默认路径跟 LFL_DATA_DIR（测试隔离不再污染生产 data/audit）
+        path = os.environ.get(
+            "LLM_PAYLOAD_TRACE_PATH",
+            os.path.join(os.environ.get("LFL_DATA_DIR", "data"), "audit", "payload_trace.jsonl"),
+        )
         path = _maybe_rotate_trace_file(path)
         parent = os.path.dirname(path)
         if parent:
