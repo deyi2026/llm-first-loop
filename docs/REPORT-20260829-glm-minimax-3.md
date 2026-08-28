@@ -70,3 +70,43 @@ dup: control 33 vs shadow 31（3: 48/35）；rounds 总体相当。
 - Activation 完全覆盖（mem 形态）依赖 driver 侧任务设计改进（触发 turn 快照/
   经验检索注入），不阻塞 shadow→enforce 评审的设施前提
 - 下一步：向用户提交 shadow→enforce promotion 评审（附 3/3b 数据）
+
+---
+
+## 3c 定向复判（mem2t 两-turn，HEAD=727299a，8 runs）
+
+用户决策路径：不直接全局 enforce，先补 production memory_snapshot→WARM 真实激活，
+PASS 后进入 bounded enforce canary。
+
+### 任务设计（生产链自然发生，非组件测试）
+- 两 turn 同 session：t1 完整工具轮（create_goal/save_experience/search_files/
+  read_file/update_goal）→ t2 记忆回查（禁再检索，凭 t1 记录+记忆注入回答）
+- driver 种子预填（_seed_memory，scope=global 事实，_seed_interop 先例——预置
+  上游数据，不构造注入消息；注入链本身全生产路径）
+- 3b mem=0 根因消除：turn 快照在 run 入口（turn 边界）执行且检索命中才注入；
+  单 turn 任务首入口库空永不触发 → 两 turn 结构让 t2 入口快照真实命中
+
+### 硬门判定: PASS
+
+| 门 | 结果 |
+|---|---|
+| Safety | exit 8/8=0；cross-session 污染 0；goal 归因 shadow 3/4（mini r2 goal_id='' 为诚实归因：t2 时 goal 已 complete，strict 语义无 active goal，非缺陷） |
+| **Activation** | **shadow 4/4 warm_active>0 且全轮激活（warmA=rounds: 8/8, 5/5, 7/7, 7/7）**；control 4/4 全 0 对照成立；packet_compile==rounds 4/4 |
+| Quality | t2 答案忠实度 4/4：576/3000/3 全命中（objective fidelity 完美）；ans 460-806 全非空 |
+| Efficiency（观察） | dup: control 14 vs shadow 6（shadow 方向性更好，n=4 不定论） |
+
+### 状态板（对齐用户定义）
+
+```
+CR Facilities Validation        PASS
+HOT / WARM interop              PASS（3b 4/4）
+WARM memory                     PASS（3c 4/4 全轮激活 + 忠实度 4/4）
+COLD                            N/A — production unreachable（诚实标注，不伪造）
+Global Enforce                  NOT YET（按用户决策）
+Enforce Canary readiness        READY — 待用户批准 bounded canary
+```
+
+### 结论
+memory_snapshot → turn 快照注入 → _packet_parts → WARM 生产链在真实 provider
+run 中 4/4 全轮激活且回答忠实度完美；control 对照成立。**3c PASS，满足进入
+bounded enforce canary 的全部前提。**
