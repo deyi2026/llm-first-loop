@@ -227,10 +227,11 @@ class MemoryExtractor:
             # 提取——防"错误文本 → 记忆 → 召回误用"架构性污染通道。2026-08-28 抽查
             # 590 条无实质污染（4 命中均为机制元知识），纯防御性关闭通道（成本极低）。
             # GPT 审计批次2: origin 单一真相源过滤（含 system 原生程序反馈），
-            # prefix 仅 legacy 兜底（老消息无 metadata）
+            # prefix 仅 legacy 兜底（老消息无 metadata，老程序反馈落 assistant/system）。
+            # B3 边界修正：prefix 兜底过滤 assistant/system，不误伤 user 角色同前缀正常文本
             if (m.metadata or {}).get("answer_origin") == "program":
                 continue
-            if str(m.content or "").startswith(PROGRAM_FEEDBACK_PREFIXES):
+            if role in ("assistant", "system") and str(m.content or "").startswith(PROGRAM_FEEDBACK_PREFIXES):
                 continue
             lines.append(f"[{role}] {content}")
         return "\n".join(lines)
