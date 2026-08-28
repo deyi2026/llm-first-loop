@@ -58,3 +58,31 @@ def test_append_summary_deterministic():
     s1 = [m for m in out1 if m.get("metadata", {}).get("archived_summary")][0]["content"]
     s2 = [m for m in out2 if m.get("metadata", {}).get("archived_summary")][0]["content"]
     assert s1 == s2, "同输入摘要必须相同（前缀稳定）"
+
+
+def test_decision_line_injected_with_active_goal(tmp_path, monkeypatch):
+    """能力B决策线（injection_hygiene 5.2-3）: 有活跃 goal → 压缩产物含 [当前决策] 且一致."""
+    from llm_loop.introspection.goal import GoalStore
+
+    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
+    store = GoalStore(tmp_path / "audit")
+    g = store.create(objective="验证决策线注入", session_id="test")
+    store.checkpoint(g.id, what="里程碑", evidence="e", path="p", next_step="跑专项测试")
+
+    out = _run(max_chars=1500, append_summary=False)
+    frames = [m for m in out if "[当前决策]" in str(m.get("content", ""))]
+    assert frames, "压缩产物应含决策线帧"
+    c = frames[0]["content"]
+    assert "验证决策线注入" in c, "决策线须与活跃 goal objective 一致"
+    assert "跑专项测试" in c, "决策线须带最近 checkpoint next（指针式恢复）"
+    # 位置: 决策线在 [压缩关键事实] 之前（spec 5.2-1 帧首行）
+    allc = "\n".join(str(m.get("content", "")) for m in out)
+    di, kf = allc.find("[当前决策]"), allc.find("[压缩关键事实]")
+    assert di != -1 and (kf == -1 or di < kf), "决策线应在压缩关键事实之前"
+
+
+def test_decision_line_omitted_without_goal(tmp_path, monkeypatch):
+    """能力B fail-open: 无活跃 goal → 决策线省略、压缩正常（spec 6-1）."""
+    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))  # 空目录：无 goal 文件
+    out = _run(max_chars=1500, append_summary=False)
+    assert not any("[当前决策]" in str(m.get("content", "")) for m in out)
