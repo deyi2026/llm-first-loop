@@ -75,12 +75,21 @@ def phase_main(tag: str, phase: str, model: str) -> None:
     sid = engine.session.create()
     result = engine.run(sid, TASK, model=model)
 
-    # 采集: 轮次（guarded_requests 行数; 引擎 API 直调不写 usage_cost）+ cognitive telemetry
+    # 采集: usage 实测（event_logs request.usage——引擎逐轮落盘, tokens/cache_hit/miss）。
+    # 教训: guarded_requests 每轮 2 行（请求+响应）致轮次虚高一倍; usage_cost.jsonl 引擎不写。
     data_dir = Path(os.environ["LFL_DATA_DIR"])
-    usage_rows = []
-    usage_p = data_dir / "audit" / "guarded_requests.jsonl"
-    if usage_p.exists():
-        usage_rows = [json.loads(x) for x in usage_p.read_text(encoding="utf-8").splitlines() if x.strip()]
+    el = data_dir / "event_logs" / f"{sid}.jsonl"
+    us: list[dict] = []
+    if el.exists():
+        for x in el.read_text(encoding="utf-8").splitlines():
+            if not x.strip():
+                continue
+            try:
+                r = json.loads(x)
+            except ValueError:
+                continue
+            if r.get("type") == "request.usage":
+                us.append(r.get("payload") or {})
     telem_rows = []
     telem_p = data_dir / "audit" / "cognitive_telemetry.jsonl"
     if telem_p.exists():
@@ -89,9 +98,11 @@ def phase_main(tag: str, phase: str, model: str) -> None:
     answer = getattr(result, "final_answer", None) or ""
     report = {
         "tag": tag, "phase": phase, "model": model,
-        "rounds": len(usage_rows),
-        "tokens_in": sum(int(r.get("tokens_in", 0) or 0) for r in usage_rows),
-        "tokens_out": sum(int(r.get("tokens_out", 0) or 0) for r in usage_rows),
+        "rounds": len(us),
+        "tokens_in": sum(int(r.get("tokens_in", 0) or 0) for r in us),
+        "tokens_out": sum(int(r.get("tokens_out", 0) or 0) for r in us),
+        "cache_hit": sum(int(r.get("cache_hit", 0) or 0) for r in us),
+        "cache_miss": sum(int(r.get("cache_miss", 0) or 0) for r in us),
         "telemetry_events": len(telem_rows),
         "packet_compile_n": len(pcs),
         "state_rebuild_n": sum(1 for r in telem_rows if r.get("event") == "state_rebuild"),
