@@ -395,6 +395,14 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 final_answer = _CANCELLED_ANSWER
                 break
             rounds += 1
+            # CR-R1.1（审查项7）: 轮次入 contextvar——cognitive telemetry 等 build 期
+            # 组件归因 round 用（此前 packet_compile 的 round 恒 0）
+            try:
+                from llm_loop.core.run_context import current_round_no
+
+                current_round_no.set(rounds)
+            except Exception:  # noqa: BLE001 — set 失败不阻断主循环
+                pass
             _background_note_active(self, session_id, rounds)
             if self.runtime is not None:
                 self.runtime.reset_round()

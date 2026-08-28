@@ -853,7 +853,13 @@ class _BuildMixin:
                 _cog_mode = str(getattr(self.settings, "cog_runtime_mode", "shadow")).strip().lower()
                 if _cog_mode not in ("off", "shadow", "enforce"):
                     _cog_mode = "shadow"
-                if _cog_mode != "enforce":
+                # CR-R1.1（审查项6）: shadow 同构——仅 off 彻底关闭计算；shadow 完整跑
+                # load/barrier/compile/telemetry（与 enforce 同一 compiler 产物，shadow
+                # 数据可预演 enforce），仅两处进 prompt 门控（投影替代锚点 + packet
+                # 渲染）由 _cog_enforce 控制。旧行为（shadow 即跳过全部 cognitive
+                # 计算）导致 shadow 下 telemetry rows=0、无法验证 enforce。
+                _cog_enforce = _cog_mode == "enforce"
+                if _cog_mode == "off":
                     _anchor_mode = "anchor"
                     _tier_on = False
                 _sem_state = None
@@ -960,7 +966,7 @@ class _BuildMixin:
                     if _sem_state is not None and semantic_projection is not None:
                         _projection = semantic_projection(_sem_state)
                 _anchor = build_task_anchor(self._focus.anchor_sess)
-                if _projection:
+                if _projection and _cog_enforce:  # CR-R1.1（审查项6）: shadow 投影仅度量不进 prompt
                     if _anchor and bool(
                         getattr(self.settings, "cog_runtime_dual_source_guard", True)
                     ):
@@ -968,7 +974,7 @@ class _BuildMixin:
                             "build: 锚点与投影同轮并存，fail-open 剔除锚点（DUAL_SOURCE_GUARD）"
                         )
                     _anchor = _projection  # 投影替代锚点（演进不并存，spec 5.2.1-7）
-                elif _anchor_mode == "semantic":
+                elif _anchor_mode == "semantic" and _cog_enforce:
                     _anchor = ""  # semantic 严格态: 语义不可用不回退锚点（可观测零指针）
                 # CR-R1（tasks 3.2）: packet 组装重构——header 先行（Barrier 通过即含投影
                 # 前导），空 slots 不抑制 header；header+slots 合并单条聚合条（header 在前，
@@ -988,8 +994,16 @@ class _BuildMixin:
                     else None
                 )
                 if _packet is not None:
-                    _agg = _packet.render()  # header 在前 + tier 槽位（空 slots→header-only）
-                    _agg_anchor = _anchor if not _packet.render_header() else ""
+                    _packet_text = _packet.render()  # header 在前 + tier 槽位（空 slots→header-only）
+                    if _cog_enforce:  # CR-R1.1（审查项6）: shadow 产物仅 telemetry 度量
+                        _agg = _packet_text
+                        _agg_anchor = _anchor if not _packet.render_header() else ""
+                    else:
+                        _agg = "\n\n".join(  # shadow: prompt 走平铺旧行为（不进投影）
+                            f"--- [slot:{s if s else 'hint'}] ---\n{c}"
+                            for s, c in _inject_parts
+                        )
+                        _agg_anchor = _anchor
                     if emit_cognitive_event is not None:  # CR-R1 6.2: packet_compile/tier_degraded
                         _tier_of = lambda _s: str(getattr(getattr(_s, "tier", None), "value", ""))  # noqa: E731
                         _hot_chars = sum(
@@ -1003,17 +1017,33 @@ class _BuildMixin:
                             if _tier_of(_s) == "warm"
                         )
                         _cold_n = sum(1 for _s in _packet.slots if _tier_of(_s) == "cold")
+                        # CR-R1.1（审查项7）: 归因修正——goal_id/state_revision 改从
+                        # _env.identity（StateEnvelope）取：_sem_state（SemanticTaskState）
+                        # 无 identity 属性，旧写法恒取空串；round 接 current_round_no
+                        # contextvar（engine run 循环每轮 set）；run_id 生产无来源
+                        # 留默认空（诚实归因，不编造）。
+                        _ctx_round = 0
+                        try:
+                            from llm_loop.core.run_context import current_round_no
+
+                            _ctx_round = int(current_round_no.get() or 0)
+                        except Exception:  # noqa: BLE001 — contextvar 未设按 0
+                            _ctx_round = 0
                         _evt = dict(
                             data_dir=self.settings.data_dir,
                             session_id=_cog_sid,
+                            round_no=_ctx_round,
                             goal_id=str(
-                                getattr(getattr(_sem_state, "identity", None), "goal_id", "")
-                                or ""
+                                getattr(getattr(_env, "identity", None), "goal_id", "") or ""
+                            ),
+                            state_revision=int(
+                                getattr(getattr(_env, "identity", None), "state_revision", 0)
+                                or 0
                             ),
                             hot_tokens=_hot_chars // 4,
                             warm_tokens=_warm_chars // 4,
                             cold_ref_count=_cold_n,
-                            packet_tokens=len(_agg) // 4,
+                            packet_tokens=len(_packet_text) // 4,
                             mode=str(getattr(self.settings, "cog_runtime_mode", "")),
                         )
                         emit_cognitive_event("packet_compile", **_evt)

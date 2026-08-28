@@ -152,6 +152,16 @@ class ArchitectureStatusProvider:
     ) -> None:
         if not self.enabled:
             return
+        # CR-R1.1（审查项7）: session_id 缺省时自动读 current_session_id contextvar
+        # （对齐 record_phase 模式）——此前 _ActionMixin 调用链不传 sid，导致
+        # action_trace.jsonl 的 session_id 字段恒为空（生产归因断裂）
+        if not session_id:
+            try:
+                from llm_loop.core.run_context import current_session_id
+
+                session_id = current_session_id.get()
+            except Exception:  # noqa: BLE001 — contextvar 未设按空处理
+                session_id = ""
         item = ActionTraceItem(
             ts=_now(), phase=phase, action_type=action_type, detail=detail, session_id=session_id
         )

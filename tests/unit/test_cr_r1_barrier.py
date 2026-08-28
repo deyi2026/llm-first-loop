@@ -209,3 +209,35 @@ def test_rebuild_revision_monotonic_inheritance(tmp_path):
     env = store.load(sess.session_id)
     assert isinstance(env, StateEnvelope)
     assert env.identity.state_revision == 8  # 7+1（单调），而非回退 1
+
+
+# ── CR-R1.1（审查项6）: shadow 同构——telemetry 照发，投影不进 prompt ─────
+
+
+def test_shadow_isomorphic_telemetry_rows_exist(tmp_path, monkeypatch):
+    """shadow 完整跑 load/barrier/compile 并发 packet_compile 事件（旧行为 rows=0）.
+
+    shadow 与 enforce 共享同一 compiler 产物（shadow 数据可预演 enforce）；
+    仅投影/header 不进 prompt（平铺旧行为）。归因断言（审查项7）：
+    goal_id 非空（旧写法从 _sem_state.identity 恒取空串）、revision≥1。
+    """
+    import json as _json
+
+    engine, sess = _engine(tmp_path)
+    monkeypatch.setenv("COG_RUNTIME_TELEMETRY", "1")
+    _seed(engine, sess, tmp_path, state_synced=True)  # 一致信封（barrier 通过）
+    _arm_all_slots(engine, sess)
+    out = _build(engine, sess, [])
+    tail = _tail(out)
+    assert "[当前决策]" not in tail  # shadow: 投影不进 prompt
+    tpath = Path(engine.settings.data_dir) / "audit" / "cognitive_telemetry.jsonl"
+    assert tpath.exists(), "shadow 同构后应产生 telemetry（旧行为 rows=0）"
+    rows = [
+        _json.loads(ln)
+        for ln in tpath.read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
+    assert any(r.get("event") == "packet_compile" for r in rows)
+    pc = next(r for r in rows if r.get("event") == "packet_compile")
+    assert pc.get("goal_id"), "goal_id 归因（_env.identity 来源，旧写法恒空）"
+    assert int(pc.get("state_revision") or 0) >= 1, "state_revision 归因"

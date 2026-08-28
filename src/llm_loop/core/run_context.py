@@ -20,6 +20,12 @@ current_session_id: contextvars.ContextVar[str] = contextvars.ContextVar(
     "llm_loop_current_session_id", default=""
 )
 
+# CR-R1.1（审查项7）: 当前 LLM 轮次（engine run 循环每轮 set；cognitive
+# telemetry 归因用——此前 packet_compile 事件的 round 恒 0，attribution 断裂）
+current_round_no: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "llm_loop_current_round_no", default=0
+)
+
 # 当前工作区根目录（工作区管理：工具相对路径/命令默认 cwd 跟随；无工作区 → 空串走进程 cwd）
 current_workspace_root: contextvars.ContextVar[str] = contextvars.ContextVar(
     "llm_loop_current_workspace_root", default=""
