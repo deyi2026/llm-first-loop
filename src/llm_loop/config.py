@@ -206,6 +206,26 @@ def _env_run_mode(name: str) -> str:
     return "standard"
 
 
+def _env_cog_anchor_mode(name: str) -> str:
+    """COG_RUNTIME_ANCHOR_MODE 三态解析: semantic/anchor/auto；非法回退 auto（design 2.1.3.4）。"""
+    raw = _raw_env(name).strip().lower()
+    if raw in {"semantic", "anchor", "auto"}:
+        return raw
+    if raw:
+        _note_invalid_fallback(name, "auto", "非 semantic/anchor/auto 字符串")
+    return "auto"
+
+
+def _env_cog_state_version(name: str) -> str:
+    """COG_RUNTIME_STATE_VERSION 分级解析: v0.1/v0.2；非法回退 v0.1（保守起步）。"""
+    raw = _raw_env(name).strip().lower()
+    if raw in {"v0.1", "v0.2"}:
+        return raw
+    if raw:
+        _note_invalid_fallback(name, "v0.1", "非 v0.1/v0.2 字符串")
+    return "v0.1"
+
+
 def _count_fallbacks(raw: str) -> int:
     """MODEL_FALLBACKS 计数（仅统计非空逗号分隔项，非法判定由 pool.fallback_candidates 完成）.
 
@@ -298,6 +318,16 @@ class Settings:
     cache_hit_show_in_answer: bool = False  # EVO-a637d2d7: 常态展示默认关（省固定尾部 token + 根治 AI 复述尾巴）；异常/切换告警注入独立保留（_cache_hint 分支不受此开关影响）
     # ── EVO-20260816-62977206: 工具执行后经验提示注入（默认开，可关）──
     tool_experience_inject: bool = True  # 按工具名检索经验库并注入提示（TOOL_EXPERIENCE_INJECT）
+
+    # ── 认知运行时（Cognitive Runtime v1，design.md §2.1.2 新增 env，缺省零回归）──
+    # anchor 退役过渡开关（三态 semantic/anchor/auto，缺省 auto；design 2.1.3.4 冻结点④）
+    cog_runtime_anchor_mode: str = "auto"
+    # 锚点与投影同轮并存检测门闸（fail-open 剔除锚点；spec 5.2.1-7）
+    cog_runtime_dual_source_guard: bool = True
+    # 语义状态字段分级路线（v0.1/v0.2，缺省 v0.1；design 2.1.3.3 冻结点③）
+    cog_runtime_state_version: str = "v0.1"
+    # HOT/WARM/COLD 分级总闸（0 回退平铺聚合原行为；spec 5.2.3-1）
+    cog_runtime_tier_enabled: bool = True
 
     # ── 上下文 ──
     history_max_chars: int | None = None  # T2(2026-08-14): 默认 100K 收敛（1M 曾撑爆窗口，30000 过保守）；
@@ -605,6 +635,11 @@ def load_settings() -> Settings:
         # EVO-20260819-2254e3b4 方案B（用户批准）: 回答末尾常态展示缓存命中率
         cache_hit_show_in_answer=_env_bool("CACHE_HIT_SHOW_IN_ANSWER", False),
         tool_experience_inject=_env_bool("TOOL_EXPERIENCE_INJECT", True),  # EVO-20260816-62977206: 默认开
+        # 认知运行时（Cognitive Runtime v1，缺省零回归）
+        cog_runtime_anchor_mode=_env_cog_anchor_mode("COG_RUNTIME_ANCHOR_MODE"),
+        cog_runtime_dual_source_guard=_env_bool("COG_RUNTIME_DUAL_SOURCE_GUARD", True),
+        cog_runtime_state_version=_env_cog_state_version("COG_RUNTIME_STATE_VERSION"),
+        cog_runtime_tier_enabled=_env_bool("COG_RUNTIME_TIER_ENABLED", True),
         history_max_chars=_env_int_or_none("HISTORY_MAX_CHARS"),  # EVO-20260816-3af5dee3: None=未配置→按窗口自适应
         memory_top_k=_env_int("MEMORY_TOP_K", 5),
         self_inspection_enabled=_env_bool("SELF_INSPECTION_ENABLED", True),
