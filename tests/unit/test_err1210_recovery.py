@@ -700,3 +700,96 @@ class TestExhaustLifecycle:
         )
         assert result.attempted is True and result.exhausted is True
         assert result.recovered is False
+
+
+# ── GPT 审计批次1（2026-08-28）: 聚合兜底直接单测 + normalize 接线 + P0 stale reasoning ──
+
+class TestAggregateTailUsers:
+    """_aggregate_tail_users 直接矩阵（GPT 审计第六条: 1/2/16/17/non-str/prefix/order）。"""
+
+    def test_single_tail_user_no_aggregate(self):
+        stub = _StripStub([])
+        msgs = [{"role": "assistant", "content": "a"}, {"role": "user", "content": "u1"}]
+        assert stub._aggregate_tail_users(msgs) is None
+
+    def test_two_tail_users_aggregate(self):
+        stub = _StripStub([])
+        msgs = [
+            {"role": "assistant", "content": "a"},
+            {"role": "user", "content": "u1"},
+            {"role": "user", "content": "u2"},
+        ]
+        out = stub._aggregate_tail_users(msgs)
+        assert out is not None and len(out) == 2
+        assert out[-1]["role"] == "user"
+        assert out[-1]["content"] == stub._AGG_SEPARATOR.join(["u1", "u2"])
+
+    def test_sixteen_users_aggregate(self):
+        stub = _StripStub([])
+        msgs = [{"role": "user", "content": f"u{i}"} for i in range(16)]
+        out = stub._aggregate_tail_users(msgs)
+        assert out is not None and len(out) == 1
+
+    def test_seventeen_users_reject(self):
+        stub = _StripStub([])
+        msgs = [{"role": "user", "content": f"u{i}"} for i in range(17)]
+        assert stub._aggregate_tail_users(msgs) is None
+
+    def test_non_str_content_reject(self):
+        stub = _StripStub([])
+        msgs = [
+            {"role": "user", "content": "u1"},
+            {"role": "user", "content": [{"type": "text", "text": "mm"}]},
+        ]
+        assert stub._aggregate_tail_users(msgs) is None
+
+    def test_prefix_bytes_untouched_and_order_preserved(self):
+        stub = _StripStub([])
+        prefix = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "q1"},
+            {"role": "assistant", "content": "a1"},
+        ]
+        msgs = prefix + [{"role": "user", "content": f"tail{i}"} for i in range(3)]
+        out = stub._aggregate_tail_users(msgs)
+        assert out is not None
+        assert out[:3] == prefix  # 前缀对象逐字节复用（copy-on-write）
+        body = out[-1]["content"]
+        idxs = [body.index(f"tail{i}") for i in range(3)]
+        assert idxs == sorted(idxs)  # 内容顺序保留
+
+
+class TestNormalizeWiring:
+    """strip 成功后残留检查接线断言（GPT 审计第五条: strip + normalize + one retry）。"""
+
+    def test_strip_branch_wires_residual_aggregate(self):
+        from pathlib import Path
+
+        src = (Path(__file__).resolve().parents[2] / "src/llm_loop/core/loop/err1210.py").read_text(
+            encoding="utf-8"
+        )
+        # strip 分支内必须对 strip 结果做残留聚合检查，且保持单次重试（不新增 provider 调用）
+        assert "residual = self._aggregate_tail_users(retry_messages)" in src
+        assert '"strip+aggregate"' in src
+        # strip 失败分支的原聚合路径保留（双入口）
+        assert "aggregated = self._aggregate_tail_users(messages)" in src
+
+
+class TestLlmErrorBranchesClearResp:
+    """P0（GPT 审计第一条）: 两处 llm_error 分支 break 前必须清 resp，防 stale reasoning 嫁接。"""
+
+    def test_llm_error_branches_clear_resp(self):
+        import re
+        from pathlib import Path
+
+        src = (Path(__file__).resolve().parents[2] / "src/llm_loop/core/loop/engine.py").read_text(
+            encoding="utf-8"
+        )
+        # 锚点用分支内独特语句（"llm_error" 字符串在文件更早处出现，不可作锚）
+        matches = list(re.finditer(r"final_answer = llm_error_text\(exc\)", src))
+        assert len(matches) >= 2, f"llm_error 分支应 ≥2 处（fallback_exhausted/llm_error），实际 {len(matches)}"
+        for m in matches:
+            window = src[m.end() : m.end() + 300]
+            assert "resp = None" in window, (
+                f"llm_error 分支（offset={m.start()}）未清 resp：stale reasoning 会嫁接到程序反馈"
+            )
