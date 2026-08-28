@@ -67,7 +67,7 @@ def _slot_re(slot: str) -> re.Pattern[str]:
 
 # 黄金摘要（P1 9.1 聚合形态；Cognitive Runtime tasks 2.3 tier 段标记升级后 2026-08-28 实测重算;
 # 注入槽结构变更时此值失配 → 红灯）
-_GOLDEN_TAIL_DIGEST = "a9457e7e8211f08c3886fad1263cbe270341c43e8994001d1c4bedabddc2de90"
+_GOLDEN_TAIL_DIGEST = "19f395eb9425f2beb578fb852d1456f504dc560ab818233991d82584c06ebb0a"
 
 
 def _engine(tmp_path: Path):

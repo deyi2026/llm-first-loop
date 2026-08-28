@@ -938,7 +938,15 @@ class _BuildMixin:
                 # 沿 P1 形态）；header 已含投影 → anchor 位不重复注入（tier 关时投影仍占
                 # anchor 位，旧行为保留）。
                 _packet = (
-                    compile_decision_packet(_inject_parts, _sem_state)
+                    compile_decision_packet(
+                        _inject_parts,
+                        _sem_state,
+                        # CR-R1 4.2: 生产预算接线——超上界降级仅 HOT（compiler degraded
+                        # 路径生产可达，不变量⑧）
+                        budget_chars=int(
+                            getattr(self.settings, "cog_runtime_packet_budget", 2000)
+                        ),
+                    )
                     if _tier_on and compile_decision_packet is not None
                     else None
                 )
