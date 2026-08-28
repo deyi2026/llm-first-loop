@@ -1046,8 +1046,24 @@ def build_history_messages(
             out.append(_d)
     # APPEND_COMPRESSION 的摘要必须位于 kept history【之后】。这既符合“追加式”语义，
     # 也保证压缩前/后的共同前缀至少延伸到 fixed-head 末端；后续动态 extras 同样只在尾部。
+    # P1 压缩帧聚合（err1210 9.1 方案A / 8.4 Verdict=STRUCTURE_TRIGGER）: 归档摘要与
+    # extras 不再逐条独立 append——统一合并为单条动态 system（各帧自带 [xxx] 标题、
+    # 内容逐字保留），提交视图转 user 后尾部连续 user 条数不随压缩帧数线性增长
+    # （merge-tail-user 9→1 变体生产验证恢复 200；16:01 聚合重试成功同源）。
+    _compact_frames: list[Message] = []
     if _archive_summary_dict is not None:
-        out.append(_archive_summary_dict)
+        _compact_frames.append(
+            Message(
+                role="system",
+                content=str(_archive_summary_dict.get("content") or ""),
+                source=MessageSource.SYSTEM,
+                # P1 聚合适配: archived_summary 标记透传（测试/探测方按标记定位归档
+                # 摘要——test_append_summary_deterministic / cache_round_sim 依赖）
+                metadata={"archived_summary": True}
+                if (_archive_summary_dict.get("metadata") or {}).get("archived_summary")
+                else None,
+            )
+        )
     if archived:
         # EVO-9794797e: 主动压缩——对被丢弃的旧消息做"另存 + 可见标注"
         # （原文已完整另存至压缩档案保信息零丢失，fail-open）
@@ -1123,12 +1139,32 @@ def build_history_messages(
         # 必须并入开头唯一 system —— qwen 系模板(9B/27B) 只允许 1 条 system 消息，
         # 多条 system（即便都在开头）也会触发 "System message must be at the beginning"。
         # 原实现 out.insert(1+i) 绕过 _append_or_merge → 产生多条独立 system → 400。
-        for em in extras:
-            # DSH 修复（EVO-20260817 缓存 0 命中）: 压缩 extras（关键事实/档案目录/压缩标注）
-            # 每轮归档内容变化 → 标记 _dynamic → 转独立 user 消息（不并入 system 主体，
-            # system 主体字节稳定 → 前缀缓存命中；qwen 单 system 模板兼容）
-            em.metadata["_dynamic"] = True
-            _append_or_merge(em.to_llm_dict(), dynamic=_is_dynamic_inject(em))
+        # P1 压缩帧聚合（err1210 9.1 方案A）: extras 并入 _compact_frames → 合并单条
+        # 动态 system append。_dynamic 语义保留（每轮归档内容变化不进 system 主体 →
+        # system 主体字节稳定 → 前缀缓存命中；qwen 单 system 模板兼容）；
+        # 唯一变化 = 逐条 append 改单条合并（各帧 [xxx] 标题天然分段、内容逐字保留），
+        # 提交视图尾部连续 user 条数从 1+N 降为恒 1（1210 结构性消除）。
+        _compact_frames.extend(extras)
+        if _compact_frames:
+            _merged = Message(
+                role="system",
+                content="\n\n".join(str(f.content or "") for f in _compact_frames),
+                source=MessageSource.SYSTEM,
+            )
+            _merged.metadata["_dynamic"] = True
+            # P1 聚合适配: archived_summary 标记透传到合并条（探测方定位归档摘要依赖）
+            if any(
+                (f.metadata or {}).get("archived_summary") for f in _compact_frames
+            ):
+                _merged.metadata["archived_summary"] = True
+            _merged_d = _merged.to_llm_dict()
+            if _merged.metadata:
+                # to_llm_dict 只输出 {role, content}——metadata 显式补进 dict
+                # （探测方按 m["metadata"]["archived_summary"] 定位归档摘要）
+                _merged_d["metadata"] = dict(_merged.metadata)
+            _append_or_merge(
+                _merged_d, dynamic=_is_dynamic_inject(_merged)
+            )
     # EVO-20260825 任务6.2: 压缩后视图体积验证——pre vs post 对比（drop<5% → WARN +
     # 审计事件由调用方写 breaker）。pre 口径 = 压缩前完整载荷（system + 窗口历史）；
     # post 口径 = 实际提交协议视图（含 head/kept/extras）。
