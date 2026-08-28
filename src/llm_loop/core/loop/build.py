@@ -856,6 +856,24 @@ class _BuildMixin:
         # budget_chars 降级兜底——WARM 超界降级本身即 tier_degraded 生产可达
         # 路径）；wire 平铺仍用 _inject_parts 原语义，持久化原文已由历史投影
         # 带出，不重复注入。
+        # DESIGN-20260828 Task Frontier: 有任务图时注入当前 frontier（程序记账/
+        # 模型决策——ready/blocked/unreachable 可执行集每轮可见，替代从历史重推）。
+        # fail-open: 账本不可用/无 goal/空图均不注入（零噪音，缓存友好——尾部聚合条）。
+        try:
+            from llm_loop.introspection.goal import GoalStore
+            from llm_loop.introspection.task_store import TaskStore
+
+            _tf_audit = os.path.join(self.settings.data_dir, "audit")
+            _tf_goal = GoalStore(_tf_audit).get(prefer_session_id=sess.session_id)
+            _tf_gid = str((_tf_goal or {}).get("id", "") or "")
+            if _tf_gid and str((_tf_goal or {}).get("status", "")) == "active":
+                _tf_store = TaskStore(_tf_audit)
+                if _tf_store.count_for_goal(_tf_gid) > 0:
+                    _inject_parts.append(
+                        ("task_frontier", _tf_store.render_frontier(_tf_gid))
+                    )
+        except Exception:  # noqa: BLE001 — fail-open: 任务账本异常不阻断构建
+            logger.debug("build: Task Frontier 注入失败（fail-open 跳过）", exc_info=True)
         _packet_parts: list[tuple[str | None, str]] = list(_inject_parts)
         for _m in sess.messages:
             _md = getattr(_m, "metadata", None) or {}
