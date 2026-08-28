@@ -598,6 +598,18 @@ class _Err1210Mixin:
             if stripped is not None:
                 retry_messages, span = stripped
                 result.stripped_count = len(span.entries)
+                # Snapshot 2 形态（GPT 审计第五条）：strip 后尾部仍残留 ≥2 连续 user
+                # （部分注入剥离后残留压缩帧连续 user）→ strip 结果上二次聚合，
+                # 保持单次重试不增 provider 调用（strip + normalize + one retry）
+                residual = self._aggregate_tail_users(retry_messages)
+                if residual is not None:
+                    retry_messages = residual
+                    retry_mode = "strip+aggregate"
+                    self._record_action(
+                        "err1210.recovery",
+                        "aggregate_retry",
+                        "剥离后尾部仍残留连续 user 群，二次聚合后重试（mode=strip+aggregate）",
+                    )
             else:
                 aggregated = self._aggregate_tail_users(messages)
                 if aggregated is None:
@@ -614,7 +626,7 @@ class _Err1210Mixin:
                 self._record_action(
                     "err1210.recovery",
                     "aggregate_retry",
-                    f"剥离校验失败，尾部连续 user 群聚合后重试（mode=aggregate）",
+                    "剥离校验失败，尾部连续 user 群聚合后重试（mode=aggregate）",
                 )
 
             # ④ 单次重试（先标记防循环——本 compact 事件至多一次降级）
