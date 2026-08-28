@@ -40,7 +40,12 @@ from llm_loop.core.loop.hotcard import pop_hotcard, write_hotcard
 # 惰性容错导入（cognitive 子包独立演进，import 失败时聚合器回退原平铺行为）。
 try:  # noqa: SIM105
     from llm_loop.cognitive.compiler import compile_decision_packet, semantic_projection
-    from llm_loop.cognitive.state import SemanticStateStore, StateEnvelope
+    from llm_loop.cognitive.state import (
+        SemanticStateStore,
+        StateEnvelope,
+        StateIdentity,
+        rebuild_state,
+    )
 except Exception:  # noqa: BLE001 — fail-open 回退平铺聚合（零回归）
     compile_decision_packet = None  # type: ignore[assignment]
     semantic_projection = None  # type: ignore[assignment]
@@ -828,7 +833,15 @@ class _BuildMixin:
         #   可用则替代否则回退（design 2.1.3.4 冻结点④）；投影=wrap_injection 的 anchor 位
         #   前导（决策包 HOT 首行，落在尾部聚合条内，不插前缀区——design 1.2.4 缓存约束）
         # - COG_RUNTIME_DUAL_SOURCE_GUARD: 检测锚点与投影同轮并存 → 告警剔除锚点（fail-open）
-        if _inject_parts:
+        # CR-R1（tasks 3.2）: enforce+semantic/auto 时空 slots 亦进块——header-only 注入
+        # （零注入安静轮 decision_visible=True，不变量⑤）；其余模式无 parts 不造空条。
+        _cog_sem_candidate = (
+            str(getattr(self.settings, "cog_runtime_mode", "shadow")).strip().lower()
+            == "enforce"
+            and str(getattr(self.settings, "cog_runtime_anchor_mode", "auto"))
+            in ("semantic", "auto")
+        )
+        if _inject_parts or _cog_sem_candidate:
             try:
                 _anchor_mode = str(getattr(self.settings, "cog_runtime_anchor_mode", "auto"))
                 _tier_on = bool(getattr(self.settings, "cog_runtime_tier_enabled", True))
@@ -859,6 +872,54 @@ class _BuildMixin:
                         )
                     except Exception:  # noqa: BLE001 — 状态读取 fail-open → 回退 anchor
                         _sem_state = None
+                    # CR-R1（tasks 3.1）: Read Barrier——信封与 GoalStore 活跃 goal 一致性
+                    # 核验：一致→用 / 不一致→rebuild_state+回存（telemetry 钩子 tasks 6.2）/
+                    # 无法判断（goal 缺失/异常）→ 宁缺勿错置 None（header 不注入）。
+                    if (
+                        _sem_state is not None
+                        and StateEnvelope is not None
+                        and rebuild_state is not None
+                        and isinstance(_env, StateEnvelope)
+                    ):
+                        try:
+                            from llm_loop.introspection.goal import GoalStore
+
+                            _goal = GoalStore(
+                                os.path.join(self.settings.data_dir, "audit")
+                            ).get(prefer_session_id=self._focus.anchor_sess)
+                            if _goal and _goal.get("id") and _env.identity.matches(_goal):
+                                pass  # 一致：信封可信，直接用
+                            elif _goal and _goal.get("id"):
+                                _rb = rebuild_state(_goal)  # 不一致→重建（终态→None）
+                                if _rb is None:
+                                    _sem_state = None  # goal 已终态：投影不可用
+                                else:
+                                    _cps = _goal.get("checkpoints") or [{}]
+                                    _env = StateEnvelope(
+                                        identity=StateIdentity(
+                                            session_id=self._focus.anchor_sess,
+                                            goal_id=str(_goal.get("id", "")),
+                                            goal_updated_at=str(_goal.get("updated_at", "")),
+                                            checkpoint_ts=str((_cps[-1] or {}).get("ts", "")),
+                                        ),
+                                        state=_rb,
+                                    )
+                                    SemanticStateStore(
+                                        os.path.join(self.settings.data_dir, "audit")
+                                    ).save(self._focus.anchor_sess, _env)
+                                    _sem_state = _rb
+                                    logger.info(  # telemetry(state_rebuild)（tasks 6.2 接线）
+                                        "build: Read Barrier 不一致→重建语义状态并回存 goal=%s",
+                                        _goal.get("id"),
+                                    )
+                            else:
+                                _sem_state = None  # goal 缺失→宁缺勿错（header=None）
+                        except Exception:  # noqa: BLE001 — Barrier fail-open：宁缺勿错
+                            _sem_state = None
+                            logger.debug(
+                                "build: Read Barrier 核验异常，fail-open 降级无投影",
+                                exc_info=True,
+                            )
                     if _sem_state is not None and semantic_projection is not None:
                         _projection = semantic_projection(_sem_state)
                 _anchor = build_task_anchor(self._focus.anchor_sess)
@@ -872,24 +933,37 @@ class _BuildMixin:
                     _anchor = _projection  # 投影替代锚点（演进不并存，spec 5.2.1-7）
                 elif _anchor_mode == "semantic":
                     _anchor = ""  # semantic 严格态: 语义不可用不回退锚点（可观测零指针）
-                if _tier_on and compile_decision_packet is not None:
-                    _agg = compile_decision_packet(_inject_parts, _sem_state).render_slots()
+                # CR-R1（tasks 3.2）: packet 组装重构——header 先行（Barrier 通过即含投影
+                # 前导），空 slots 不抑制 header；header+slots 合并单条聚合条（header 在前，
+                # 沿 P1 形态）；header 已含投影 → anchor 位不重复注入（tier 关时投影仍占
+                # anchor 位，旧行为保留）。
+                _packet = (
+                    compile_decision_packet(_inject_parts, _sem_state)
+                    if _tier_on and compile_decision_packet is not None
+                    else None
+                )
+                if _packet is not None:
+                    _agg = _packet.render()  # header 在前 + tier 槽位（空 slots→header-only）
+                    _agg_anchor = _anchor if not _packet.render_header() else ""
                 else:
                     _agg = "\n\n".join(
                         f"--- [slot:{s if s else 'hint'}] ---\n{c}"
                         for s, c in _inject_parts
                     )
-                _agg_content = wrap_injection(_agg, _anchor)
-                built.append({"role": "user", "content": _agg_content})
-                # err1210 9.1: 聚合登记（单 entry；strip/defer 消费端经 AGGREGATED 分支）
-                self._last_build_injections.append(
-                    InjectedEntry(
-                        msg_idx=len(built) - 1,
-                        slot_kind=SlotKind.AGGREGATED,
-                        prefix_sha=content_prefix_sha(_agg_content),
-                        message_ref=None,
+                    _agg_anchor = _anchor  # 平铺路径：投影/锚点经 anchor 位（旧行为）
+                if _agg.strip():
+                    _agg_content = wrap_injection(_agg, _agg_anchor)
+                    built.append({"role": "user", "content": _agg_content})
+                    # err1210 9.1: 聚合登记（单 entry；strip/defer 消费端经 AGGREGATED 分支）
+                    self._last_build_injections.append(
+                        InjectedEntry(
+                            msg_idx=len(built) - 1,
+                            slot_kind=SlotKind.AGGREGATED,
+                            prefix_sha=content_prefix_sha(_agg_content),
+                            message_ref=None,
+                        )
                     )
-                )
+                # 空 slots 且无 header：安静轮零注入（不造空条、不登记）
             except Exception:  # noqa: BLE001 — 聚合失败 fail-open（零注入降级 + WARN）
                 logger.warning(
                     "build: 尾部注入聚合失败，本轮零注入降级（fail-open）", exc_info=True
