@@ -40,11 +40,12 @@ from llm_loop.core.loop.hotcard import pop_hotcard, write_hotcard
 # 惰性容错导入（cognitive 子包独立演进，import 失败时聚合器回退原平铺行为）。
 try:  # noqa: SIM105
     from llm_loop.cognitive.compiler import compile_decision_packet, semantic_projection
-    from llm_loop.cognitive.state import SemanticStateStore
+    from llm_loop.cognitive.state import SemanticStateStore, StateEnvelope
 except Exception:  # noqa: BLE001 — fail-open 回退平铺聚合（零回归）
     compile_decision_packet = None  # type: ignore[assignment]
     semantic_projection = None  # type: ignore[assignment]
     SemanticStateStore = None  # type: ignore[assignment]
+    StateEnvelope = None  # type: ignore[assignment]
 
 # build_session_snapshot_text 定义于 engine（loop 包内）——顶层 import 会触发
 # engine→build→loop/__init__ 循环（engine import build 在前），故用函数内延迟 import
@@ -835,9 +836,18 @@ class _BuildMixin:
                 _projection = ""
                 if _anchor_mode in ("semantic", "auto") and SemanticStateStore is not None:
                     try:
-                        _sem_state = SemanticStateStore(
+                        _env = SemanticStateStore(
                             os.path.join(self.settings.data_dir, "audit")
-                        ).load()
+                        ).load(self._focus.anchor_sess)
+                        # CR-R1（tasks 1.2）：schema v2 三态解包——仅可信信封且无墓碑
+                        # 才投影；STALE_UNTRUSTED/None/墓碑 → 不注入（宁缺勿错，spec 3.2-1）
+                        _sem_state = (
+                            _env.state
+                            if StateEnvelope is not None
+                            and isinstance(_env, StateEnvelope)
+                            and _env.tombstone is None
+                            else None
+                        )
                     except Exception:  # noqa: BLE001 — 状态读取 fail-open → 回退 anchor
                         _sem_state = None
                     if _sem_state is not None and semantic_projection is not None:

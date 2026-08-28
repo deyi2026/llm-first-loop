@@ -16,6 +16,7 @@ from llm_loop.cognitive.compiler import (
     compile_decision_packet,
     semantic_projection,
 )
+from llm_loop.cognitive.state import StateEnvelope
 from llm_loop.cognitive.state import (
     CheckpointPointer,
     SemanticStateStore,
@@ -160,11 +161,13 @@ def test_persist_semantic_state_roundtrip(tmp_path: Path, monkeypatch):
     store.checkpoint(g.id, what="完成阶段一", next_step="开始阶段二")
 
     assert _persist_semantic_state("s1") is True
-    loaded = SemanticStateStore(tmp_path / "audit").load()
-    assert loaded is not None
-    assert loaded.objective == "压缩后目标任务"
-    assert loaded.checkpoint is not None
-    assert loaded.checkpoint.next == "开始阶段二"
+    loaded_env = SemanticStateStore(tmp_path / "audit").load("s1")
+    assert isinstance(loaded_env, StateEnvelope)
+    assert loaded_env.identity.session_id == "s1"  # CR-R1：identity 头随分片写入
+    assert loaded_env.state is not None
+    assert loaded_env.state.objective == "压缩后目标任务"
+    assert loaded_env.state.checkpoint is not None
+    assert loaded_env.state.checkpoint.next == "开始阶段二"
 
 
 def test_persist_semantic_state_no_goal_keeps_old(tmp_path: Path, monkeypatch):
@@ -172,7 +175,7 @@ def test_persist_semantic_state_no_goal_keeps_old(tmp_path: Path, monkeypatch):
 
     monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
     assert _persist_semantic_state("s-none") is False  # 无 goal → 不覆盖
-    assert SemanticStateStore(tmp_path / "audit").load() is None
+    assert SemanticStateStore(tmp_path / "audit").load("s-none") is None
 
 
 def test_decision_line_frame_anchor_mode_unchanged():

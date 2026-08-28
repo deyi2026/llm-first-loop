@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from llm_loop.cognitive.state import StateEnvelope, StateIdentity
 from llm_loop.cognitive.state import (
     CheckpointPointer,
     ConfirmedFact,
@@ -105,7 +106,7 @@ def test_is_durable_any_signal():
 
 def test_store_roundtrip_durable_only(tmp_path: Path):
     store = SemanticStateStore(str(tmp_path))
-    assert store.load() is None  # 无文件 → None
+    assert store.load("s1test00") is None  # 无文件 → None（CR-R1 新签名：按会话分片）
 
     state = SemanticTaskState(
         objective="任务目标",
@@ -118,10 +119,18 @@ def test_store_roundtrip_durable_only(tmp_path: Path):
     )
     state.ephemeral.hypotheses.append("本轮临时假设")  # Ephemeral 不应落盘
 
-    store.save(state)
-    assert store.path.exists()
+    env = StateEnvelope(
+        identity=StateIdentity(
+            session_id="s1test00", goal_id="g1", goal_updated_at="t1", checkpoint_ts="c1"
+        ),
+        state=state,
+    )
+    store.save("s1test00", env)
+    assert store.path_for("s1test00").exists()
 
-    loaded = store.load()
+    loaded_env = store.load("s1test00")
+    assert isinstance(loaded_env, StateEnvelope)
+    loaded = loaded_env.state
     assert loaded is not None
     assert loaded.objective == "任务目标"
     assert loaded.checkpoint is not None
@@ -139,18 +148,29 @@ def test_store_roundtrip_durable_only(tmp_path: Path):
 def test_store_load_corrupt_returns_none(tmp_path: Path):
     store = SemanticStateStore(str(tmp_path))
     store._dir.mkdir(parents=True, exist_ok=True)
-    store.path.write_text("{ not valid json ]", encoding="utf-8")
-    assert store.load() is None  # 损坏 → None，由 rebuild_state 派生（fail-open）
+    store.path_for("s1test00").write_text("{ not valid json ]", encoding="utf-8")
+    assert store.load("s1test00") is None  # 损坏 → None，由 rebuild_state 派生（fail-open）
 
 
 def test_store_atomic_visible_only_new(tmp_path: Path):
     store = SemanticStateStore(str(tmp_path))
-    store.save(SemanticTaskState(objective="v1"))
-    loaded_after_save = store.load()
-    assert loaded_after_save.objective == "v1"
+    def _env(obj: str) -> StateEnvelope:
+        return StateEnvelope(
+            identity=StateIdentity(
+                session_id="s1test00", goal_id="g1", goal_updated_at="t1", checkpoint_ts="c1"
+            ),
+            state=SemanticTaskState(objective=obj),
+        )
+
+    store.save("s1test00", _env("v1"))
+    loaded_env = store.load("s1test00")
+    assert loaded_env is not None and loaded_env.state is not None
+    assert loaded_env.state.objective == "v1"
     # 覆盖写：reader 应见最新
-    store.save(SemanticTaskState(objective="v2"))
-    assert store.load().objective == "v2"
+    store.save("s1test00", _env("v2"))
+    loaded_env2 = store.load("s1test00")
+    assert loaded_env2 is not None and loaded_env2.state is not None
+    assert loaded_env2.state.objective == "v2"
 
 
 # ── 受控重置 ──

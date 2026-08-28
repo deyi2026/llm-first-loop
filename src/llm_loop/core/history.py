@@ -219,18 +219,52 @@ def _persist_semantic_state(session_id: str = "") -> bool:
     """
     try:
         import os
+        from datetime import datetime, timezone as _tz
         from pathlib import Path as _P
 
-        from llm_loop.cognitive.state import SemanticStateStore, rebuild_state
+        from llm_loop.cognitive.state import (
+            STALE_UNTRUSTED,
+            SemanticStateStore,
+            StateEnvelope,
+            StateIdentity,
+            Tombstone,
+            rebuild_state,
+        )
         from llm_loop.introspection.goal import GoalStore
 
         base = os.environ.get("LFL_DATA_DIR", "data")
         audit = _P(base) / "audit"
         goal = GoalStore(audit).get(prefer_session_id=session_id)
+        store = SemanticStateStore(audit)
         state = rebuild_state(goal)
         if state is None:
+            # spec 4.1-3 墓碑：goal 终态（complete/blocked）→ 对现存分片打 tombstone，
+            # 不删除（供审计）；无 goal 时保留旧分片不覆盖（原语义）。
+            if goal and str(goal.get("status", "")) in ("complete", "blocked"):
+                old = store.load(session_id)
+                if isinstance(old, StateEnvelope) and old.tombstone is None:
+                    old.tombstone = Tombstone(
+                        reason=f"goal_{str(goal.get('status', ''))}",
+                        ts=datetime.now(_tz.utc).isoformat(),
+                    )
+                    store.save(session_id, old)
             return False  # 无活跃 goal：不覆盖既有状态文件（保留旧指针）
-        SemanticStateStore(audit).save(state)
+        cps = goal.get("checkpoints") or []
+        identity = StateIdentity(
+            session_id=session_id or "_",
+            goal_id=str(goal.get("id", "")),
+            goal_updated_at=str(goal.get("updated_at", "")),
+            checkpoint_ts=str((cps[-1] or {}).get("ts", "")) if cps else "",
+        )
+        old = store.load(session_id)
+        if isinstance(old, StateEnvelope):
+            # revision 语义：源未变（identity matches）保留；源变更 +1（design §2.1）
+            identity.state_revision = (
+                old.identity.state_revision
+                if old.identity.matches(goal)
+                else old.identity.state_revision + 1
+            )
+        store.save(session_id, StateEnvelope(identity=identity, state=state))
         return True
     except Exception:
         import logging
