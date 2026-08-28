@@ -206,15 +206,32 @@ def empty_search_reminder_message(tool_name: str, streak: int) -> Message:
     )
 
 
-def stagnation_feedback(tool_name: str, streak: int, trace: list[str]) -> Message:
-    """[停滞熔断] 连续相同指纹工具调用熔断如实结束（EVO-20260814-aab7eb0b P2，阈值 5）."""
+def stagnation_feedback(
+    tool_name: str, streak: int, trace: list[str], *, has_evidence: bool = True
+) -> Message:
+    """[停滞熔断] 连续相同指纹工具调用熔断如实结束（EVO-20260814-aab7eb0b P2，阈值 5）.
+
+    GPT 审计批次4（P2 evidence-validity gate）: 无成功回执（无有效证据）时不得暗示
+    "基于已获得的信息"可作答——改报 unresolved 需 replan，禁止推测性结论。
+    """
     trace_str = "; ".join(trace[-10:]) if trace else "（无动作记录）"
+    if has_evidence:
+        advice = (
+            "建议: 基于已获得的信息给出最终回答；若确需继续，请明确说明还需要什么、"
+            "换不同参数或不同工具。"
+        )
+    else:
+        advice = (
+            "建议: 本 run 尚未获得任何成功的工具回执（无有效证据），不能基于已有信息作答——"
+            "请如实向用户报告任务未解决（unresolved），说明已尝试路径与失败原因，"
+            "并提出 replan 方向（换工具/换参数/换路径或补充外部输入）；禁止给出推测性结论。"
+        )
     return Message(
         role="system",
         content=(
             f"[停滞熔断] 事实: 已连续 {streak} 次以相同参数调用工具 {tool_name}，循环被程序如实终止。\n"
             f"原因: 重复调用无法产生新信息，继续执行只会耗尽轮数预算。已执行轨迹: {trace_str}。\n"
-            f"建议: 基于已获得的信息给出最终回答；若确需继续，请明确说明还需要什么、换不同参数或不同工具。"
+            + advice
         ),
         source=MessageSource.SYSTEM,
     )

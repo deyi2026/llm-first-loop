@@ -887,8 +887,13 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             if _should_break:
                 self._phase("terminate.stagnation")
                 _run_end_reason = "stagnation"
+                # GPT 审计批次4: 证据有效性门——无成功回执时不得暗示"基于已获得的信息"可作答
+                _has_evidence = any(t.get("status") == "success" for t in tool_trace)
                 final_answer = stagnation_feedback(
-                    _tool_name, _streak, [t["name"] for t in tool_trace]
+                    _tool_name,
+                    _streak,
+                    [t["name"] for t in tool_trace],
+                    has_evidence=_has_evidence,
                 ).content
                 self._record_action("stagnation.break", "terminated", f"{_tool_name} x{_streak}")
                 break
