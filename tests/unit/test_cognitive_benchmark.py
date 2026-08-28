@@ -15,14 +15,14 @@ from pathlib import Path
 import pytest
 
 from llm_loop.cognitive.benchmark import (
-    CostEstimate,
     CognitiveOverheadMeter,
+    CostEstimate,
+    FirstMissCost,
     FixtureRegistry,
     FixtureSpec,
     PreconditionState,
     SampleOutcome,
     SemanticResetBenchmark,
-    FirstMissCost,
 )
 from llm_loop.cognitive.state import (
     ConfirmedFact,
@@ -130,6 +130,33 @@ class TestEfficiencyMeter:
         assert m.denominator_tokens == 0
         assert m.ratio == 0.0
         assert m.inputs_missing == ()
+
+    def test_recovery_rate_scales_token_unknown(self, tmp_path: Path):
+        """CR-R1.1（审查项8）: 拆分双指标——rate 随次数变化，token 未计量标 unknown.
+
+        审查复现场景：多次恢复性调用 vs 0 次——旧 ratio 同为 0.0（numerator
+        恒 0），不可作为 A/B 主指标；rate（次数口径）与 token overhead（计量
+        口径）分离，未计量显式标 unknown 不以 0 冒充。
+        """
+        trace, goals, usage = self._meter_inputs(tmp_path)
+        m = CognitiveOverheadMeter().measure(
+            action_trace=trace, goal_checkpoints=goals, usage_cost=usage
+        )
+        # fixture: 3 次白名单恢复动作 / 2 决策轮（usage 行数）→ rate=1.5
+        assert m.retrieval_action_count == 3
+        assert m.recovery_action_rate == 1.5
+        assert m.token_overhead_known is False  # retrieval_tokens 恒 0 → unknown
+        # 0 次恢复（非白名单 trace）→ rate 0.0，token 仍 unknown（非 0 冒充）
+        trace0 = _write_jsonl(
+            tmp_path / "trace0.jsonl",
+            [{"action_type": "tool_call", "detail": "read_file"}],
+        )
+        m0 = CognitiveOverheadMeter().measure(
+            action_trace=trace0, goal_checkpoints=goals, usage_cost=usage
+        )
+        assert m0.retrieval_action_count == 0
+        assert m0.recovery_action_rate == 0.0
+        assert m0.token_overhead_known is False
 
 
 # ── T3.2 FixtureRegistry 双轨 ──

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
 from llm_loop.core.cache_health import GATE_NOTE_CONTENT  # 门禁干预知情标记
 
@@ -58,6 +58,26 @@ except Exception:  # noqa: BLE001 — fail-open 回退平铺聚合（零回归�
 # engine→build→loop/__init__ 循环（engine import build 在前），故用函数内延迟 import
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.prompt import build_system_prompt
+
+
+class _CogPacketEvt(TypedDict):
+    """CR-R1.1（审查项10）: packet telemetry 事件显式键型.
+
+    替代裸 dict[str, str|int] 联合——TypedDict 使 **_evt 展开时逐参数
+    类型可检（emit_cognitive_event 具名签名对齐），消除 24 处 union 报错。
+    """
+
+    data_dir: str
+    session_id: str
+    round_no: int
+    goal_id: str
+    state_revision: int
+    hot_tokens: int
+    warm_tokens: int
+    cold_ref_count: int
+    packet_tokens: int
+    mode: str
+
 
 if TYPE_CHECKING:
     pass
@@ -1029,7 +1049,7 @@ class _BuildMixin:
                             _ctx_round = int(current_round_no.get() or 0)
                         except Exception:  # noqa: BLE001 — contextvar 未设按 0
                             _ctx_round = 0
-                        _evt = dict(
+                        _evt = _CogPacketEvt(
                             data_dir=self.settings.data_dir,
                             session_id=_cog_sid,
                             round_no=_ctx_round,

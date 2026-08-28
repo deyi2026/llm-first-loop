@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 from collections.abc import Callable
+from datetime import UTC
 from typing import Any
 
 from llm_loop.core.message import Message, MessageSource, ToolCall
@@ -223,11 +224,10 @@ def _persist_semantic_state(session_id: str = "") -> bool:
         return False
     try:
         import os
-        from datetime import datetime, timezone as _tz
-        from pathlib import Path as _P
+        from datetime import datetime
+        from pathlib import Path as _Path
 
         from llm_loop.cognitive.state import (
-            STALE_UNTRUSTED,
             SemanticStateStore,
             StateEnvelope,
             StateIdentity,
@@ -237,7 +237,7 @@ def _persist_semantic_state(session_id: str = "") -> bool:
         from llm_loop.introspection.goal import GoalStore
 
         base = os.environ.get("LFL_DATA_DIR", "data")
-        audit = _P(base) / "audit"
+        audit = _Path(base) / "audit"
         goal = GoalStore(audit).get(prefer_session_id=session_id)
         store = SemanticStateStore(audit)
         state = rebuild_state(goal)
@@ -249,10 +249,15 @@ def _persist_semantic_state(session_id: str = "") -> bool:
                 if isinstance(old, StateEnvelope) and old.tombstone is None:
                     old.tombstone = Tombstone(
                         reason=f"goal_{str(goal.get('status', ''))}",
-                        ts=datetime.now(_tz.utc).isoformat(),
+                        ts=datetime.now(UTC).isoformat(),
                     )
                     store.save(session_id, old)
             return False  # 无活跃 goal：不覆盖既有状态文件（保留旧指针）
+        if goal is None:
+            # CR-R1.1（审查项10 pyright 归零）: 有 state 无 goal——identity 无从派生
+            # （宁缺勿错，同上语义不覆盖）；显式收窄 Optional，替代原先 .get 隐式
+            # AttributeError→except 兜底（行为等价：均 return False）。
+            return False
         cps = goal.get("checkpoints") or []
         identity = StateIdentity(
             session_id=session_id or "_",
@@ -290,12 +295,12 @@ def _decision_line_frame(session_id: str = "") -> str:
     """
     try:
         import os
-        from pathlib import Path as _P
+        from pathlib import Path as _Path
 
         from llm_loop.introspection.goal import GoalStore
 
         base = os.environ.get("LFL_DATA_DIR", "data")
-        g = GoalStore(_P(base) / "audit").get(prefer_session_id=session_id)
+        g = GoalStore(_Path(base) / "audit").get(prefer_session_id=session_id)
         if not g or g.get("status") != "active":
             return ""
         obj = str(g.get("objective", ""))

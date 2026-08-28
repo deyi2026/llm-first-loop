@@ -74,6 +74,9 @@ class EfficiencyMetric:
 
     ratio = numerator_tokens / denominator_tokens（分母 0 → 0.0 且 denominator_missing 标注，
     不以 0 冒充分母存在——对齐 spec 5.3.3-1「不以 0 冒充」精神）。
+    CR-R1.1（审查项8）拆分双指标：RecoveryActionRate（次数/决策轮，retrieval
+    token 无真实计量时的可用口径）与 CognitiveTokenOverhead（ratio；恢复性
+    token 未计量时 token_overhead_known=False=unknown，不以 0 冒充）。
     """
 
     numerator_tokens: int  # 分子: 恢复寄存器 token（恢复性读取代价）
@@ -85,6 +88,10 @@ class EfficiencyMetric:
     denominator_sources: tuple[str, ...]
     inputs_missing: tuple[str, ...] = ()  # 缺失输入标注（缺失时禁止断言优化收益）
     measurement_frozen: bool = True
+    # CR-R1.1（审查项8）: 次数与 token 不再互冒充（审查实测旧 ratio 10 次恢复
+    # 与 0 次同为 0.0——numerator 恒 0 时 ratio 不可作为 A/B 主指标）
+    recovery_action_rate: float = 0.0  # RecoveryActionRate = 恢复动作数 / 决策轮数
+    token_overhead_known: bool = False  # 恢复性 token 是否真实计量（False=unknown）
 
 
 class CognitiveOverheadMeter:
@@ -168,6 +175,13 @@ class CognitiveOverheadMeter:
             for r in usage_rows
         )
         ratio = (numerator / denominator) if denominator > 0 else 0.0
+        # CR-R1.1（审查项8）: 次数拆独立 rate——retrieval_tokens 无真实计量（恒 0）
+        # 时不再以 0 token 冒充（token_overhead_known=False=unknown）；
+        # RecoveryActionRate = 恢复动作数/决策轮数（决策轮=usage 行数）。
+        decision_rounds = len(usage_rows)
+        recovery_action_rate = (
+            retrieval_count / decision_rounds if decision_rounds > 0 else 0.0
+        )
 
         return EfficiencyMetric(
             numerator_tokens=numerator,
@@ -175,11 +189,14 @@ class CognitiveOverheadMeter:
             ratio=round(ratio, 6),
             retrieval_action_count=retrieval_count,
             checkpoint_replay_tokens=checkpoint_tokens,
+            recovery_action_rate=round(recovery_action_rate, 6),
+            token_overhead_known=retrieval_tokens > 0,
             numerator_sources=(
-                f"action_trace:{retrieval_count} 条恢复性读取 ≈{retrieval_tokens} tok",
+                f"action_trace:{retrieval_count} 条恢复性读取"
+                "（token 计量 unknown，见 token_overhead_known）",
                 f"goals.jsonl:{active_goals} 活跃 goal checkpoint 投影 ≈{checkpoint_tokens} tok",
             ),
-            denominator_sources=(f"usage_cost:{len(usage_rows)} 轮 {self.DENOMINATOR_NOTE}",),
+            denominator_sources=(f"usage_cost:{decision_rounds} 轮 {self.DENOMINATOR_NOTE}",),
             inputs_missing=tuple(missing),
         )
 
