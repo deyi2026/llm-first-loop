@@ -140,6 +140,20 @@
 
 ---
 
+## 认知运行时（Cognitive Runtime · CR-R1）
+
+| env | 默认 | 说明 |
+|---|---|---|
+| COG_RUNTIME_MODE | shadow | 三态：off=语义分支整体短路（纯旧行为）；shadow=全构造+全 telemetry 但 packet 不进 prompt；enforce=packet 进 prompt（前置条件：`tests/unit/test_cr_r1_invariants.py` 11 不变量 CI 全绿；非法值回退 shadow） |
+| COG_RUNTIME_PACKET_BUDGET | 2000 | decision packet 预算（chars）；超预算降级 HOT-only（compiler 既有降级路径，telemetry 记 tier_degraded） |
+| COG_RUNTIME_TELEMETRY | 1 | cognitive_telemetry.jsonl 事件流开关（state_rebuild/packet_compile/tier_degraded，事件含 session/run/round 归因） |
+| COG_RUNTIME_TIER_ENABLED | 1 | tier 分级聚合：HOT 原文 inline / WARM compact_repr（原文零 inline）/ COLD 仅 evidence ref（raw=0）；=0 回退平铺原行为 |
+| COG_RUNTIME_ANCHOR_MODE | auto | semantic=语义投影替代锚点 / anchor=旧行为 / auto=投影可用则替代否则回退 |
+
+- **信封分片**：`data/audit/cognitive/state.<sid8>.yaml`（schema v2 身份头）；旧无头文件读为 `STALE_UNTRUSTED` → 自动 rebuild，零手工迁移。
+- **Read Barrier**：信封与 GoalStore 活跃 goal 一致性核验（goal_id + goal_updated_at + 最近 checkpoint_ts）；不一致 → rebuild + 回存；无法判断 → 宁缺勿错（header 不注入）。
+- **冷启动例外**：会话首轮信封缺失时 header 不注入（宁缺勿错）；首轮 build 后信封持久化，第二轮起 header 在场。
+
 ## 常见坑速查
 
 1. **所有模型调用失败/超时** → 查 `HISTORY_MAX_CHARS` 是否超过模型窗口（默认 100K 安全）。
