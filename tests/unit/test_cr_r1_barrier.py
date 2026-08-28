@@ -8,8 +8,6 @@
 """
 from pathlib import Path
 
-from tests.unit.test_injection_fingerprint import _arm_all_slots, _build, _engine
-
 from llm_loop.cognitive.state import (
     CheckpointPointer,
     SemanticStateStore,
@@ -18,10 +16,12 @@ from llm_loop.cognitive.state import (
     StateIdentity,
 )
 from llm_loop.introspection.goal import GoalStore
+from tests.unit.test_injection_fingerprint import _arm_all_slots, _build, _engine
 
 
 def _seed(
     engine,
+    sess,
     tmp_path: Path,
     *,
     checkpoint_next: str = "执行B",
@@ -34,7 +34,7 @@ def _seed(
     - state_synced=True: 信封 state 内容与 goal 同步（一致路径下的正常态）；
       False 时 state 为陈旧内容（rebuild 用例的对照）。
     """
-    sid = engine._focus.anchor_sess
+    sid = sess.session_id  # CR-R1.1: 与 build cognitive 路径同源（sess.session_id）
     audit = Path(engine.settings.data_dir) / "audit"  # 与 build 同源（data_dir=<tmp>/data）
     gs = GoalStore(audit)
     g = gs.create("测试目标X", session_id=sid)
@@ -75,7 +75,7 @@ def _tail(out) -> str:
 
 def test_barrier_consistent_header_visible(tmp_path):
     engine, sess = _engine(tmp_path)
-    _seed(engine, tmp_path, state_synced=True)  # 一致信封 + 内容同步（正常态）
+    _seed(engine, sess, tmp_path, state_synced=True)  # 一致信封 + 内容同步（正常态）
     _enforce(engine)
     out = _build(engine, sess, [])
     tail = _tail(out)
@@ -88,7 +88,7 @@ def test_barrier_consistent_header_visible(tmp_path):
 
 def test_barrier_mismatch_rebuilds_and_persists(tmp_path):
     engine, sess = _engine(tmp_path)
-    goal = _seed(engine, tmp_path, checkpoint_next="执行B", stale_identity=True)
+    goal = _seed(engine, sess, tmp_path, checkpoint_next="执行B", stale_identity=True)
     _enforce(engine)
     out = _build(engine, sess, [])
     tail = _tail(out)
@@ -97,7 +97,7 @@ def test_barrier_mismatch_rebuilds_and_persists(tmp_path):
     assert "[下一步] 执行B" in tail
     assert "陈旧目标" not in tail
     # 回存：分片 identity 与 goal 一致（rebuild+save 生效）
-    env = SemanticStateStore(Path(engine.settings.data_dir) / "audit").load(engine._focus.anchor_sess)
+    env = SemanticStateStore(Path(engine.settings.data_dir) / "audit").load(sess.session_id)
     assert isinstance(env, StateEnvelope)
     assert env.identity.matches(goal) is True
 
@@ -107,7 +107,7 @@ def test_barrier_mismatch_rebuilds_and_persists(tmp_path):
 
 def test_quiet_round_header_only_visible(tmp_path):
     engine, sess = _engine(tmp_path)
-    _seed(engine, tmp_path, state_synced=True)  # 有效一致信封
+    _seed(engine, sess, tmp_path, state_synced=True)  # 有效一致信封
     _enforce(engine)
     out = _build(engine, sess, [])  # 不 arm 任何槽位
     tail = _tail(out)
@@ -121,7 +121,7 @@ def test_quiet_round_header_only_visible(tmp_path):
 
 def test_goal_missing_no_header(tmp_path):
     engine, sess = _engine(tmp_path)
-    sid = engine._focus.anchor_sess
+    sid = sess.session_id  # CR-R1.1: 与 build cognitive 路径同源
     # 信封存在但 GoalStore 无该会话活跃 goal（不 seed goal）
     env = StateEnvelope(
         identity=StateIdentity(
@@ -145,7 +145,7 @@ def test_goal_missing_no_header(tmp_path):
 
 def test_shadow_default_no_header(tmp_path):
     engine, sess = _engine(tmp_path)
-    _seed(engine, tmp_path)  # 有效一致信封
+    _seed(engine, sess, tmp_path)  # 有效一致信封
     # 不切 enforce（默认 shadow）
     _arm_all_slots(engine, sess)
     out = _build(engine, sess, [])

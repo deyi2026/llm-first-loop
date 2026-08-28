@@ -9,20 +9,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
+# ── ⑨⑩⑪ 类方法承载（TestCrR1TwoPhaseAndHardBlock/TestCrR1Telemetry），薄封装保 fixture 语义 ──
+from tests.unit.test_cognitive_benchmark import (  # noqa: F401
+    TestCrR1Telemetry,
+    TestCrR1TwoPhaseAndHardBlock,
+)
+from tests.unit.test_cognitive_compiler import (  # noqa: F401
+    test_compile_budget_degrades_to_hot_only as test_invariant_08_budget_live,
+)
+
 # ── ⑥-⑪ re-export（承载测试见各文件；断言核心见 spec §5.3）──
 from tests.unit.test_cognitive_compiler import (  # noqa: F401
     test_compile_interop_first_hot_rest_warm as test_invariant_06_warm_bounded,
 )
 from tests.unit.test_cognitive_compiler import (  # noqa: F401
     test_render_slots_tier_markers as test_invariant_07_cold_ref_only,
-)
-from tests.unit.test_cognitive_compiler import (  # noqa: F401
-    test_compile_budget_degrades_to_hot_only as test_invariant_08_budget_live,
-)
-# ── ⑨⑩⑪ 类方法承载（TestCrR1TwoPhaseAndHardBlock/TestCrR1Telemetry），薄封装保 fixture 语义 ──
-from tests.unit.test_cognitive_benchmark import (  # noqa: F401
-    TestCrR1Telemetry,
-    TestCrR1TwoPhaseAndHardBlock,
 )
 
 
@@ -118,10 +119,9 @@ def _prime_goal_and_envelope(engine, sess, objective):
 
     audit = os.path.join(engine.settings.data_dir, "audit")
     goal = GoalStore(audit).create(objective, session_id=sess.session_id)
-    # anchor_sess 默认 None → load(None) 与 save 分片路径错位（L865 实测），显式设锚
-    if not getattr(engine._focus, "anchor_sess", None):
-        engine._focus.anchor_sess = sess.session_id
-    anchor = engine._focus.anchor_sess
+    # CR-R1.1: build cognitive 路径已与 anchor_sess 解耦（统一 sess.session_id），
+    # 不再需要"显式设锚"workaround——测试与生产同一身份链路（审查项9）。
+    anchor = sess.session_id
     g = goal.to_dict() if hasattr(goal, "to_dict") else goal
     state = rebuild_state(g)
     assert state is not None, "active goal 必可 rebuild"

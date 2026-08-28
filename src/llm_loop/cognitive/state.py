@@ -239,7 +239,7 @@ class Tombstone:
 
 def _source_digest(goal_id: str, goal_updated_at: str, checkpoint_ts: str) -> str:
     """identity 源摘要（sha256 前 12 位）：goal + checkpoint 变更即变（design §2.1）。"""
-    payload = f"{goal_id}|{goal_updated_at}|{checkpoint_ts}".encode("utf-8")
+    payload = f"{goal_id}|{goal_updated_at}|{checkpoint_ts}".encode()
     return hashlib.sha256(payload).hexdigest()[:12]
 
 
@@ -280,8 +280,14 @@ class StateIdentity:
         )
 
     def matches(self, goal: dict) -> bool:
-        """Read Barrier 一致性键：goal.id + goal.updated_at + 最新 checkpoint ts（design §2.2）。"""
+        """Read Barrier 一致性键：session + goal.id + goal.updated_at + 最新 checkpoint ts.
+
+        CR-R1.1: 补 session_id 比对——不变量①要求信封与 goal 同会话；goal 缺
+        session_id 字段（旧格式）视为不匹配，触发一次 rebuild 后回到稳态。
+        """
         if not goal:
+            return False
+        if str(goal.get("session_id", "")) != self.session_id:
             return False
         if str(goal.get("id", "")) != self.goal_id:
             return False
@@ -370,7 +376,7 @@ def rebuild_state(goal: dict | None, version: SemanticStateVersion | None = None
 class SemanticStateStore:
     """语义状态 YAML(JSON) 持久化（schema v2，按会话分片；原子写 + flock，复用 GoalStore 模式）。
 
-    分片路径 = ``<audit_dir>/cognitive/state.<sid8>.yaml``（sid8=会话 id 前 8 位，design §2.1）——
+    分片路径 = ``<audit_dir>/cognitive/state.<sha16>.yaml``（sha16=sha256(session_id)[:16]，CR-R1.1 升级 64-bit 碰撞域）——
     会话写竞争隔离，Session A 物理上读不到 B 的分片（spec 4.1-1 不变量①）。
     旧全局 ``state.yaml``（无 identity 头）→ load 返回 STALE_UNTRUSTED，调用方 rebuild 后
     写入新分片（零手工迁移；旧文件留存不再读，供审计）。
@@ -383,15 +389,18 @@ class SemanticStateStore:
 
     def path_for(self, session_id: str) -> Path:
         """会话分片路径（不变量①：按 sid 分片隔离）。"""
-        sid8 = (session_id or "_")[:8]
-        return self._dir / f"state.{sid8}.yaml"
+        # CR-R1.1: 分片键改 sha256[:16]（64-bit）——sid8 仅 32-bit 碰撞域，前缀相同
+        # 的不同会话会共享分片文件（审查实测可互读）。旧 sid8 路径不再读取，
+        # 缺失走 rebuild 派生（安全方向：宁缺勿错）。
+        shard = hashlib.sha256((session_id or "_").encode("utf-8")).hexdigest()[:16]
+        return self._dir / f"state.{shard}.yaml"
 
     @property
     def path(self) -> Path:
         """向后兼容诊断入口：无会话语义的默认分片。"""
         return self.path_for("")
 
-    def load(self, session_id: str) -> "StateEnvelope | None | _StaleUntrusted":
+    def load(self, session_id: str) -> StateEnvelope | None | _StaleUntrusted:
         """按会话读取语义状态信封（schema v2）。
 
         返回三态：StateEnvelope（含墓碑标记时由调用方决定不投影）/ None（无状态）/
@@ -417,10 +426,22 @@ class SemanticStateStore:
             logger.warning("语义状态分片损坏，load 返回 None（由 rebuild 派生）: %s", p)
             return None
         try:
-            return StateEnvelope.from_dict(data)
+            env = StateEnvelope.from_dict(data)
         except ValueError:
             logger.warning("语义状态分片缺 identity 头，视为不可信（STALE_UNTRUSTED）: %s", p)
             return STALE_UNTRUSTED
+        if env.identity.session_id != (session_id or ""):
+            # CR-R1.1: 分片身份校验——shard 碰撞/污染（读到他会的 state）不得直接
+            # 返回，降级 STALE_UNTRUSTED 走 rebuild 派生（宁缺勿错）。
+            logger.warning(
+                "语义状态分片会话身份不匹配（shard 污染/碰撞）→ STALE_UNTRUSTED: %s "
+                "envelope_sid=%r requested=%r",
+                p,
+                env.identity.session_id,
+                session_id,
+            )
+            return STALE_UNTRUSTED
+        return env
 
     def save(self, session_id: str, envelope: StateEnvelope) -> None:
         p = self.path_for(session_id)
@@ -511,7 +532,7 @@ class ResetResult:
     first_miss_expected: bool = False  # 清空会触发缓存前缀重建 → 预期首 miss
     # Cognitive Runtime（tasks 3.3）: 清空后的最小 Durable 状态（供 A/B 编排 reset 组
     # 重建会话使用；字段只增不改，design 2.3.1 兼容策略）
-    cleared: "SemanticTaskState | None" = None
+    cleared: SemanticTaskState | None = None
 
 
 class SemanticResetController:
@@ -532,7 +553,6 @@ class SemanticResetController:
                 metric_before=metric_before,
                 metric_after=metric_before,
             )
-        snapshot = state.to_dict()
         try:
             # spec 4.2-1/4.3-1/5.1.1-5a: 不因 reset 丢失已确认事实与硬约束——
             # 清空的是累积认知负担（Ephemeral 假设等），硬约束/已确认事实属"不丢"半边

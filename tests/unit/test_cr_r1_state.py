@@ -16,12 +16,19 @@ from llm_loop.cognitive.state import (
 )
 
 
-def _goal(status="active", updated_at="2026-08-28T00:00:00+00:00", goal_id="GOAL-1", n_cps=1):
+def _goal(
+    status="active",
+    updated_at="2026-08-28T00:00:00+00:00",
+    goal_id="GOAL-1",
+    n_cps=1,
+    session_id="s1",
+):
     # key 结构对齐 Goal.to_dict（asdict）：字段名是 id（goal.py L39），非 goal_id
     return {
         "id": goal_id,
         "objective": "测试目标",
         "status": status,
+        "session_id": session_id,
         "updated_at": updated_at,
         "checkpoints": [
             {"what": f"cp{i}", "next": f"nx{i}", "ts": f"2026-08-28T00:0{i}:00+00:00"}
@@ -63,11 +70,36 @@ def test_shard_isolation_session_a_invisible_to_b(tmp_path):
 def test_shard_file_layout(tmp_path):
     store = SemanticStateStore(tmp_path)
     store.save("AAAABBBB", _envelope())
-    # 分片文件按 sid8 命名
-    assert (tmp_path / "cognitive" / "state.AAAABBBB.yaml").exists()
-    # 同 sid8 前缀（更长会话 id）共享分片
-    loaded = store.load("AAAABBBB-extra")
-    assert isinstance(loaded, StateEnvelope)
+    # CR-R1.1: 分片文件按 sha256(session_id)[:16] 命名（64-bit 碰撞域）
+    import hashlib
+
+    shard = hashlib.sha256(b"AAAABBBB").hexdigest()[:16]
+    assert (tmp_path / "cognitive" / f"state.{shard}.yaml").exists()
+    # CR-R1.1: 同 sid8 前缀（更长会话 id）不再共享分片——32-bit 碰撞域已修复
+    assert store.load("AAAABBBB-extra") is None
+
+
+def test_shard_prefix_collision_isolated(tmp_path):
+    """CR-R1.1 回归：sid8 前缀相同的两个会话必须物理隔离（审查实测旧版互读）."""
+    store = SemanticStateStore(tmp_path)
+    store.save("12345678-A", _envelope(session_id="12345678-A", goal_id="GOAL-A"))
+    # B（同 sid8 前缀）读到的是自己的空分片，而非 A 的内容
+    loaded_b = store.load("12345678-B")
+    assert loaded_b is None
+    # 两个会话的分片路径物理不同
+    assert store.path_for("12345678-A") != store.path_for("12345678-B")
+
+
+def test_shard_foreign_identity_rejected(tmp_path):
+    """CR-R1.1 回归：分片文件身份头与请求会话不符 → STALE_UNTRUSTED（污染不外泄）."""
+    store = SemanticStateStore(tmp_path)
+    store.save("session-A", _envelope(session_id="session-A", goal_id="GOAL-1"))
+    # 手工把 A 的分片内容拷到 B 的 shard 路径（模拟碰撞/污染写入）
+    src = store.path_for("session-A")
+    dst = store.path_for("session-B")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    assert store.load("session-B") is STALE_UNTRUSTED  # type: ignore[truthy-bool]
 
 
 # ── 迁移：旧无头 state.yaml → STALE_UNTRUSTED ────────────────────────
@@ -97,14 +129,14 @@ def test_rebuild_writes_new_shard_after_stale(tmp_path):
 def test_corrupted_shard_returns_none(tmp_path):
     store = SemanticStateStore(tmp_path)
     store.save("AAAABBBB", _envelope())
-    p = tmp_path / "cognitive" / "state.AAAABBBB.yaml"
+    p = store.path_for("AAAABBBB")  # CR-R1.1: 动态取分片路径（sha256 命名）
     p.write_text("{not json", encoding="utf-8")
     assert store.load("AAAABBBB") is None
 
 
 def test_shard_missing_identity_header_is_stale(tmp_path):
     store = SemanticStateStore(tmp_path)
-    p = tmp_path / "cognitive" / "state.AAAABBBB.yaml"
+    p = store.path_for("AAAABBBB")  # CR-R1.1: 动态取分片路径（sha256 命名）
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps({"objective": "无头分片"}), encoding="utf-8")
     assert store.load("AAAABBBB") is STALE_UNTRUSTED

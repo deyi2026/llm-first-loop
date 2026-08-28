@@ -40,13 +40,13 @@ from llm_loop.core.loop.hotcard import pop_hotcard, write_hotcard
 # 惰性容错导入（cognitive 子包独立演进，import 失败时聚合器回退原平铺行为）。
 try:  # noqa: SIM105
     from llm_loop.cognitive.compiler import compile_decision_packet, semantic_projection
-    from llm_loop.cognitive.telemetry import emit_cognitive_event
     from llm_loop.cognitive.state import (
         SemanticStateStore,
         StateEnvelope,
         StateIdentity,
         rebuild_state,
     )
+    from llm_loop.cognitive.telemetry import emit_cognitive_event
 except Exception:  # noqa: BLE001 — fail-open 回退平铺聚合（零回归）
     compile_decision_packet = None  # type: ignore[assignment]
     semantic_projection = None  # type: ignore[assignment]
@@ -858,11 +858,17 @@ class _BuildMixin:
                     _tier_on = False
                 _sem_state = None
                 _projection = ""
+                # CR-R1.1（审查项1）: 认知运行时会话身份与任务锚点解耦——anchor_sess
+                # 是 Session 对象（build_task_anchor 专用），Cognitive 路径全部使用
+                # sess.session_id 字符串。此前混用导致 StateStore 分片对 Session 对象
+                # 切片 TypeError 被 fail-open 吞掉、语义投影静默消失（enforce 下
+                # Semantic Header 实际不工作）。
+                _cog_sid = str(getattr(sess, "session_id", "") or "")
                 if _anchor_mode in ("semantic", "auto") and SemanticStateStore is not None:
                     try:
                         _env = SemanticStateStore(
                             os.path.join(self.settings.data_dir, "audit")
-                        ).load(self._focus.anchor_sess)
+                        ).load(_cog_sid)
                         # CR-R1（tasks 1.2）：schema v2 三态解包——仅可信信封且无墓碑
                         # 才投影；STALE_UNTRUSTED/None/墓碑 → 不注入（宁缺勿错，spec 3.2-1）
                         _sem_state = (
@@ -888,7 +894,7 @@ class _BuildMixin:
 
                             _goal = GoalStore(
                                 os.path.join(self.settings.data_dir, "audit")
-                            ).get(prefer_session_id=self._focus.anchor_sess)
+                            ).get(prefer_session_id=_cog_sid, strict_session=True)
                             if _goal and _goal.get("id") and _env.identity.matches(_goal):
                                 pass  # 一致：信封可信，直接用
                             elif _goal and _goal.get("id"):
@@ -899,7 +905,7 @@ class _BuildMixin:
                                     _cps = _goal.get("checkpoints") or [{}]
                                     _env = StateEnvelope(
                                         identity=StateIdentity(
-                                            session_id=self._focus.anchor_sess,
+                                            session_id=_cog_sid,
                                             goal_id=str(_goal.get("id", "")),
                                             goal_updated_at=str(_goal.get("updated_at", "")),
                                             checkpoint_ts=str((_cps[-1] or {}).get("ts", "")),
@@ -908,7 +914,7 @@ class _BuildMixin:
                                     )
                                     SemanticStateStore(
                                         os.path.join(self.settings.data_dir, "audit")
-                                    ).save(self._focus.anchor_sess, _env)
+                                    ).save(_cog_sid, _env)
                                     _sem_state = _rb
                                     logger.info(  # telemetry(state_rebuild)（tasks 6.2 接线）
                                         "build: Read Barrier 不一致→重建语义状态并回存 goal=%s",
@@ -918,7 +924,7 @@ class _BuildMixin:
                                         emit_cognitive_event(
                                             "state_rebuild",
                                             data_dir=self.settings.data_dir,
-                                            session_id=self._focus.anchor_sess or "",
+                                            session_id=_cog_sid,
                                             goal_id=str(_goal.get("id", "")),
                                         )
                             else:
@@ -977,7 +983,7 @@ class _BuildMixin:
                         _cold_n = sum(1 for _s in _packet.slots if _tier_of(_s) == "cold")
                         _evt = dict(
                             data_dir=self.settings.data_dir,
-                            session_id=self._focus.anchor_sess or "",
+                            session_id=_cog_sid,
                             goal_id=str(
                                 getattr(getattr(_sem_state, "identity", None), "goal_id", "")
                                 or ""
