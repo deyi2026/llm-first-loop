@@ -105,12 +105,14 @@ def _hit(path: str, sid: str = "s-stage2") -> bool:
 def test_s2_allowlist_hit(tmp_path: Path):
     p = tmp_path / "allow.txt"
     p.write_text("# operator owned\ns-stage2\n", encoding="utf-8")
+    p.chmod(0o444)  # R3 P0-1: operator-owned——运行用户只读
     assert _hit(str(p)) is True
 
 
 def test_s2_allowlist_miss(tmp_path: Path):
     p = tmp_path / "allow.txt"
     p.write_text("other-sid\n", encoding="utf-8")
+    p.chmod(0o444)
     assert _hit(str(p)) is False
 
 
@@ -131,17 +133,22 @@ def test_s2_missing_file(tmp_path: Path):
 def test_s2_oversize_64kib(tmp_path: Path):
     p = tmp_path / "allow.txt"
     p.write_text("x" * 70000, encoding="utf-8")
-    assert _hit(str(p)) is False  # P1-3: >64KiB
+    p.chmod(0o444)
+    assert _hit(str(p)) is False  # P1-3: >64KiB（bounded read 硬界）
 
 
 def test_s2_over_256_entries(tmp_path: Path):
     p = tmp_path / "allow.txt"
     p.write_text("\n".join(f"sid-{i}" for i in range(300)), encoding="utf-8")
+    p.chmod(0o444)
     assert _hit(str(p)) is False  # P1-3: >256 有效条目
 
 
 def test_s2_oserror_fail_closed(tmp_path: Path):
-    assert _hit(str(tmp_path)) is False  # 目录当文件 OSError → False（P0-2）
+    p = tmp_path / "noread.txt"
+    p.write_text("s-stage2\n", encoding="utf-8")
+    p.chmod(0o000)  # 无读权限 → open 抛 PermissionError(OSError) → False
+    assert _hit(str(p)) is False
 
 
 # ── 集成层: build 路径（P0-2 off 硬关 / P1-4 三字段 / E2E 热删）──
@@ -170,6 +177,7 @@ def test_s2_off_hard_blocks_allowlist(tmp_path, monkeypatch):
     engine, sess = _engine(tmp_path)
     allow = tmp_path / "allow.txt"
     allow.write_text(sess.session_id + "\n", encoding="utf-8")
+    allow.chmod(0o444)  # R3 P0-1: operator-owned
     import dataclasses
 
     engine.settings = dataclasses.replace(
@@ -188,6 +196,7 @@ def test_s2_promoted_telemetry_fields(tmp_path, monkeypatch):
     engine, sess = _engine(tmp_path)
     allow = tmp_path / "allow.txt"
     allow.write_text(sess.session_id + "\n", encoding="utf-8")
+    allow.chmod(0o444)  # R3 P0-1: operator-owned
     import dataclasses
 
     engine.settings = dataclasses.replace(
@@ -209,6 +218,7 @@ def test_s2_hot_removal_round_n_n1(tmp_path, monkeypatch):
     engine, sess = _engine(tmp_path)
     allow = tmp_path / "allow.txt"
     allow.write_text(sess.session_id + "\n", encoding="utf-8")
+    allow.chmod(0o444)  # R3 P0-1: operator-owned
     import dataclasses
 
     engine.settings = dataclasses.replace(
@@ -217,7 +227,9 @@ def test_s2_hot_removal_round_n_n1(tmp_path, monkeypatch):
     _build(engine, sess, [])  # round N
     ev1 = _s2_last_pc(engine)
     assert (ev1["mode"], ev1["promoted"]) == ("enforce", True)
-    allow.write_text("", encoding="utf-8")  # operator rollback: 删 sid
+    allow.unlink()  # operator rollback: 删 sid（0o444 不可写，父目录可写可删）
+    allow.write_text("", encoding="utf-8")
+    allow.chmod(0o444)
     _build(engine, sess, [])  # round N+1（同 session 下一轮 build）
     ev2 = _s2_last_pc(engine)
     assert (ev2["mode"], ev2["promoted"], ev2["configured_mode"]) == (
@@ -225,3 +237,36 @@ def test_s2_hot_removal_round_n_n1(tmp_path, monkeypatch):
         False,
         "shadow",
     )
+
+
+# ── review R3 fail-closed 强化（CANARY HOLD 三修的机械复现）──
+
+
+def test_s2_writable_file_rejected(tmp_path: Path):
+    """P0-1 R3: 运行用户可写文件（含正确 sid）→ 控制面不可信 → False.
+
+    self-promote 攻击链闭合点: agent 同 Unix 用户可写 ~/.config 类路径。
+    """
+    p = tmp_path / "allow.txt"
+    p.write_text("s-stage2\n", encoding="utf-8")  # 0o644 owner 可写
+    assert _hit(str(p)) is False
+
+
+def test_s2_malformed_line_fail_closed(tmp_path: Path):
+    """P0-2 R3: 非法行+正确 sid 并存 → 整份名单 False（all-valid-or-no-promotion）."""
+    p = tmp_path / "allow.txt"
+    p.write_text("good-session\n../bad\n", encoding="utf-8")
+    p.chmod(0o444)
+    assert _hit(str(p), sid="good-session") is False
+
+
+def test_s2_bounded_read_boundary(tmp_path: Path):
+    """P1-3 R3: 恰 65536B 通过硬界走到比对 / 65537B 拒（TOCTOU 免疫）."""
+    p1 = tmp_path / "exact.txt"
+    p1.write_text("#" * 65536, encoding="utf-8")  # 恰满：全注释无条目
+    p1.chmod(0o444)
+    p2 = tmp_path / "over.txt"
+    p2.write_text("#" * 65537, encoding="utf-8")  # 超一字节
+    p2.chmod(0o444)
+    assert _hit(str(p1)) is False  # 边界内：走到 sid 比对 miss
+    assert _hit(str(p2)) is False  # 边界外：bounded read 硬界拒
