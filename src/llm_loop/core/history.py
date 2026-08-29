@@ -971,6 +971,18 @@ def build_history_messages(
     # 头部保留代价: 每轮多占预算（命中价 ~1/10），换来压缩轮无全量失效; head_keep_chars=0 关闭。
     head_groups: list[list[Message]] = []
     head_chars = 0  # 兜底初始化: head_keep_chars=0 时无头部保留, 渐进折叠分支引用不炸（2026-08-24 镜像实证 UnboundLocalError）
+    # 锚点保护总量上限（2026-08-29 回归修复 test_search_archive_in_loop_after_compression）:
+    # 保护有效性 = 锚点区间（锚点组起至最新）+ head 总体积 + system ≤ max_chars。
+    # 锚点区自身超整个预算（如用户单条贴长文）时保护失效退回正常折叠——否则该组
+    # 永久穿透预算不归档（提交持续超载 + 档案零命中，信息反而不可检索）。失效后
+    # 原文正常入档（零丢失），AI 经压缩标注检索指引 search_archive 找回。
+    _anchor_protect_valid = True
+    if _anchor_group_idx is not None:
+        _anchor_zone_chars = sum(
+            _wire_size(mm) for g in atomic_groups[_anchor_group_idx:] for mm in g
+        )
+        if len(system_prompt) + head_chars + _anchor_zone_chars > max_chars:
+            _anchor_protect_valid = False
     if head_keep_chars > 0:
         acc = 0
         for g in atomic_groups:  # 从最旧端累积头部保留组（前缀核心）
@@ -1021,9 +1033,16 @@ def build_history_messages(
         _fold_count = 0
         _next_group_idx = head_count  # kept_groups 首组对应的原列表索引（锚点保护用）
         while kept_groups:
-            if _anchor_group_idx is not None and _next_group_idx >= _anchor_group_idx:
+            if (
+                _anchor_group_idx is not None
+                and _next_group_idx >= _anchor_group_idx
+                and _anchor_protect_valid
+            ):
                 # 任务锚点保护（漂移修复 2026-08-29）: 首组已达锚点组——剩余组全在
-                # 保护边界内，停止折叠（穿透预算保留，锚点丢失代价 > 超限 BLOCK 兜底）
+                # 保护边界内，停止折叠（穿透预算保留，锚点丢失代价 > 超限 BLOCK 兜底）。
+                # 保护失效例外（回归修复）: _anchor_protect_valid=False（锚点区超整
+                # 预算）时不 break——继续折叠使原文入档（零丢失），防单条大锚点永久
+                # 占满预算 + 档案零命中。
                 break
             _kept_chars = sum(_wire_size(mm) for g in kept_groups for mm in g)
             _total_now = len(system_prompt) + head_chars + _kept_chars
@@ -1062,7 +1081,11 @@ def build_history_messages(
             if (
                 archive_budget - group_len < 0
                 and kept_groups
-                and not (_anchor_group_idx is not None and _gi >= _anchor_group_idx)
+                and not (
+                    _anchor_protect_valid
+                    and _anchor_group_idx is not None
+                    and _gi >= _anchor_group_idx
+                )
             ):
                 # 漂移修复（2026-08-29）: 保护边界内（锚点组起）不归档——穿透预算
                 # 保留任务锚点，锚点丢失代价 > 超限 BLOCK 兜底
@@ -1070,8 +1093,16 @@ def build_history_messages(
                 if _fold_cap > 0:
                     _fold_count += 1
                 continue
-            if group_len > trim_budget and not kept_groups:
+            if group_len > trim_budget and (
+                not kept_groups
+                or (_anchor_group_idx is not None and _gi >= _anchor_group_idx)
+            ):
                 # 最新组单条/整组超限: 另存全文 + 精简注入（组内字段保留，仅 content 截断）
+                # 2026-08-29 回归修复（test_search_archive_in_loop_after_compression）:
+                # 锚点组自身超 trim_budget 时也走本兜底——原实现 1062 归档分支被锚点
+                # 保护排除、本分支又被 not kept_groups 排除 → 单条大锚点（如用户贴长文）
+                # 永久穿透预算不归档（提交持续超载 + 档案零命中）。本兜底归档原文
+                # （信息零丢失）+ 提交保留截断版（锚点残迹在，防漂移语义保留）。
                 archived.extend(group)
                 trimmed_group: list[Message] = []
                 for mm in group:

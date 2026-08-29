@@ -699,3 +699,47 @@ def test_no_real_user_message_all_injected_still_compacts():
     )
     assert archived, "无锚点场景归档照常发生（零回归）"
     assert len(out) >= 1
+
+
+def test_anchor_protection_cap_invalid_when_oversized():
+    """锚点保护上限（2026-08-29 回归修复）: 锚点区自身超整预算时保护失效退回归档.
+
+    场景: 用户单条贴长文（大锚点）——保护它 = 永久穿透预算 + 档案零命中；
+    失效后原文入档（信息零丢失），可经 search_archive 检索找回。
+    """
+    archived: list[Message] = []
+    msgs = [
+        _m("user", "很老的历史" + "A" * 100),
+        _m("user", "请分析这个超长文档：" + "B" * 800),  # 锚点，锚点区超 max_chars
+    ]
+
+    def sink(session_id: str, msg: Message) -> None:
+        archived.append(msg)
+
+    out = build_history_messages(
+        msgs, system_prompt="SYS", max_chars=300, session_id="s1", archive_sink=sink
+    )
+    # 保护失效: 大锚点原文被归档（零丢失）
+    assert any("超长文档" in str(x.content) for x in archived), "超预算锚点须入档"
+    contents = [str(m.get("content", "")) for m in out]
+    assert any("压缩" in c or "超长文档" in c for c in contents), "提交须有压缩标注或锚点残迹"
+
+
+def test_anchor_protection_valid_when_fits_budget():
+    """对照: 锚点区在预算内时保护正常生效（穿透 archive_budget 保留）."""
+    archived: list[Message] = []
+    msgs = [
+        _m("user", "很老的历史" + "A" * 400),  # 组0: 归档目标
+        _m("user", "请分析这篇文章"),  # 组1: 锚点（小，锚点区在预算内）
+        _m("user", "[相关记忆] 注入" + "C" * 100),  # 组2: 锚点后保护
+    ]
+
+    def sink(session_id: str, msg: Message) -> None:
+        archived.append(msg)
+
+    out = build_history_messages(
+        msgs, system_prompt="SYS", max_chars=300, session_id="s2", archive_sink=sink
+    )
+    contents = [str(m.get("content", "")) for m in out]
+    assert any("请分析这篇文章" in c for c in contents), "预算内锚点必须穿透保留"
+    assert any("很老的历史" in str(x.content) for x in archived), "锚点前旧历史正常归档"
