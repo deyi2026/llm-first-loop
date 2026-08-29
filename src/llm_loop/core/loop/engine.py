@@ -254,6 +254,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         self._cache_last_model: str | None = None  # 最近活跃模型（兼容诊断；切换判定不再用全局值）
         self._cache_last_model_by_session: dict[str, str] = {}  # 2026-08-27: 防跨会话模型状态污染
         self._cache_gate_stable_fp = ""  # 门禁: 本次稳定段指纹（system+注入）
+        self._cache_gate_skeleton_fp = ""  # EVO-20260829-8ff2cdbe: 骨架指纹（剔除 dynamic 注入）
         self._cache_gate_hint: str | None = None  # 门禁: 后检漂移提示（run 末注入 final_answer）
         # EVO-20260817-b6554376: 投影一致性门闸最近状态（ok/miss/mismatch；构建后更新）
         self._projection_guard_state: str = "miss"

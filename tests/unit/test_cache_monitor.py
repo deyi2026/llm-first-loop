@@ -325,3 +325,52 @@ def test_reset_keeps_fail_alerted_flag():
     assert m.snapshot("__default__")["fail_alerted"] is True
     m.reset(reason="model_switch")
     assert m.snapshot("__default__")["fail_alerted"] is True  # 保留
+
+
+# ---- EVO-20260829-8ff2cdbe H3': 门禁信号分级（受控变更 vs 意外漂移）----
+
+
+def test_gate_controlled_change_no_drift():
+    """stable_fp 变但骨架未变 → 受控变更: 不 force_head_keep、不计 drift、无提示."""
+    m = CacheHealthMonitor()
+    m.postcheck("s1", "stable-a", "skel-a")  # 建基线（stable + skel）
+    m.preflight("s1", "stable-b", "skel-a")  # 动态注入更新（memory/interop），骨架不变
+    assert m.force_head_keep is False  # 未触发强制压缩
+    assert m.snapshot()["gate_drift_count"] == 0
+    hint = m.postcheck("s1", "stable-b", "skel-a")  # 后检 → 受控，仅换基线
+    assert hint is None
+    assert m.snapshot()["controlled_change_count"] == 1
+    # 基线已换 → 后续 stable-b 合规
+    assert m.postcheck("s1", "stable-b", "skel-a") is None
+
+
+def test_gate_skeleton_change_counts_drift():
+    """骨架也变 → 意外漂移: force_head_keep + drift 计数 + 提示（现行为不变）."""
+    m = CacheHealthMonitor()
+    m.postcheck("s1", "stable-a", "skel-a")
+    m.preflight("s1", "stable-b", "skel-b")
+    assert m.force_head_keep is True
+    assert m.snapshot()["gate_drift_count"] == 1
+    hint = m.postcheck("s1", "stable-b", "skel-b")
+    assert hint and "拼装合规提示" in hint
+
+
+def test_gate_missing_skeleton_conservative_drift():
+    """skeleton_fp 缺失（旧调用方/传递失败）→ 保守按意外漂移（宁可多报不漏报）."""
+    m = CacheHealthMonitor()
+    m.postcheck("s1", "stable-a", "skel-a")
+    m.preflight("s1", "stable-b")  # 无 skeleton → drift
+    assert m.force_head_keep is True
+    assert m.snapshot()["gate_drift_count"] == 1
+    assert m.postcheck("s1", "stable-b") is not None
+
+
+def test_gate_skeleton_baseline_not_updated_when_empty():
+    """skeleton 为空时不更新骨架基线——下轮带 skeleton 且与旧骨架对齐 → 受控."""
+    m = CacheHealthMonitor()
+    m.postcheck("s1", "stable-a", "skel-a")
+    m.postcheck("s1", "stable-b")  # 空 skeleton: drift，skel 基线保持 skel-a
+    assert m.snapshot()["gate_drift_count"] == 1
+    # 动态注入再变（stable-c），骨架与基线 skel-a 一致 → 受控
+    assert m.postcheck("s1", "stable-c", "skel-a") is None
+    assert m.snapshot()["controlled_change_count"] == 1

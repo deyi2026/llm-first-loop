@@ -23,6 +23,7 @@ from llm_loop.core.cache_health import GATE_NOTE_CONTENT  # 门禁干预知情�
 # EVO-20260818: projection_ver/check 提升到模块级（消除函数内 import 遮蔽导致的 F823）——
 # 与 engine.py 顶部 re-export 同模式；stable_digest 既有模块级使用
 from llm_loop.core.history import (
+    _is_dynamic_inject,
     is_cache_compacted_for,
     projection_check,  # noqa: F401 (history 工具, 函数内使用)
     projection_ver,  # noqa: F401 (history 工具, 函数内使用)
@@ -453,9 +454,22 @@ class _BuildMixin:
             self._cache_gate_stable_fp = stable_digest(
                 [(m.role, m.content) for m in base[:prefix_len]] + [system_prompt]
             )
-            self._cache_monitor.preflight(sess.session_id, self._cache_gate_stable_fp)
+            # EVO-20260829-8ff2cdbe H3': 骨架指纹 = 稳定段剔除 dynamic 注入（memory 检索/
+            # interop inbox）——骨架不变而 stable_fp 变 = 受控变更，门禁信号分级用（fail-open）
+            self._cache_gate_skeleton_fp = stable_digest(
+                [
+                    (m.role, m.content)
+                    for m in base[:prefix_len]
+                    if not _is_dynamic_inject(m)
+                ]
+                + [system_prompt]
+            )
+            self._cache_monitor.preflight(
+                sess.session_id, self._cache_gate_stable_fp, self._cache_gate_skeleton_fp
+            )
         except Exception:  # noqa: BLE001
             self._cache_gate_stable_fp = ""
+            self._cache_gate_skeleton_fp = ""
         # EVO-20260811-9ccdec97: 会话状态快照节流——每间隔注入状态帧（定位锚点，fail-open）
         # M58 配置面收敛: 间隔走 runtime（动态优先，AI 可调）
         # P1-10: 仅无锚时注入（锚定后快照为推送式注入（已打标被跳过提交）, 且避免锚点换算复杂化）
@@ -1281,7 +1295,9 @@ class _BuildMixin:
         # 基线一致；不一致 → 审计 + hint（run 末注入 final_answer），fail-open 不阻断发送。
         try:
             self._cache_gate_hint = self._cache_monitor.postcheck(
-                sess.session_id, self._cache_gate_stable_fp
+                sess.session_id,
+                self._cache_gate_stable_fp,
+                getattr(self, "_cache_gate_skeleton_fp", "") or None,
             )
             if self._cache_gate_hint:
                 self._record_action("run.cache_gate", "drift", self._cache_gate_hint)
