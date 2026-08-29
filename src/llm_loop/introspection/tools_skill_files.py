@@ -42,10 +42,17 @@ def _skills_dir(host: Any) -> str | None:
 def run_skill_list(host: Any, args: dict) -> ToolResult:
     """skill_list: 扫描并列出技能（name + description，来源可追溯）."""
     metas = scan_skills_dir(_skills_dir(host))
+    dsh_section = ""
+    try:  # SDD-20260829 T3: dsh 索引段失败不影响本地技能清单（零回归）
+        from llm_loop.introspection.tools_skill_dsh import dsh_index_section
+
+        dsh_section = dsh_index_section(host)
+    except Exception:  # noqa: BLE001 — 适配器任何异常不侵入 skill_list 主路径
+        dsh_section = ""
     if not metas:
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
-            content="[技能清单] 无外部技能（未配置 skills/ 目录或目录为空）。配置方式: 在 skills/<name>/SKILL.md 放置技能文件。",
+            content="[技能清单] 无外部技能（未配置 skills/ 目录或目录为空）。配置方式: 在 skills/<name>/SKILL.md 放置技能文件。" + dsh_section,
             tool_call_id="",
             tool_name="skill_list",
         )
@@ -54,7 +61,7 @@ def run_skill_list(host: Any, args: dict) -> ToolResult:
         lines.append(f"- {m.name}: {m.description}（{m.path}）")
     return ToolResult(
         status=ToolResultStatus.SUCCESS,
-        content="\n".join(lines),
+        content="\n".join(lines) + dsh_section,
         tool_call_id="",
         tool_name="skill_list",
     )
@@ -70,6 +77,10 @@ def run_skill_load(host: Any, args: dict) -> ToolResult:
             tool_call_id="",
             tool_name="skill_load",
         )
+    if name.startswith("dsh:"):  # SDD-20260829 T4: DSH 插件卡路由
+        from llm_loop.introspection.tools_skill_dsh import run_dsh_skill_load
+
+        return run_dsh_skill_load(host, name[4:])
     meta = find_skill(_skills_dir(host), name)
     if meta is None:
         available = ", ".join(m.name for m in scan_skills_dir(_skills_dir(host)))
