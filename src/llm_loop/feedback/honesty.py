@@ -18,7 +18,12 @@ from contextlib import contextmanager, suppress
 from pathlib import Path
 
 from llm_loop.core.message import Message, MessageSource
-from llm_loop.llm.errors import LLMEmptyResponseError, is_quota_error
+from llm_loop.llm.errors import (
+    LLMEmptyResponseError,
+    LLMHTTPError,
+    is_quota_error,
+    parse_provider_error_code,
+)
 
 # 统一标注常量（FR-HON-03: 任何兜底/降级带显式来源标注）
 MEMORY_UNAVAILABLE = "[记忆不可用] 记忆服务异常，本次未注入记忆"
@@ -61,6 +66,19 @@ PROGRAM_FEEDBACK_PREFIXES = (
 )
 
 
+def _is_err1210(exc: Exception) -> bool:
+    """口径对齐 core/loop/err1210.is_err1210（LLMHTTPError + status 400 + provider code 1210）.
+
+    本地复用底层原语（llm/errors.py）实现，避免 feedback 模块拉入
+    core.loop.err1210 重依赖链（feedback 被 memory/engine 广泛引用，防未来环）。
+    """
+    return (
+        isinstance(exc, LLMHTTPError)
+        and exc.status_code == 400
+        and parse_provider_error_code(exc.body or "") == "1210"
+    )
+
+
 def llm_error_text(error: Exception) -> str:
     """LLM 调用异常如实反馈文本（DFX-REL-02，不伪造回答，三件套）.
 
@@ -78,6 +96,17 @@ def llm_error_text(error: Exception) -> str:
             f"原因: {type(error).__name__}: {error}\n"
             f"建议: API 配额周期已用尽（billing quota exhausted），本周期内无法继续；"
             f"非网络/Key/模型配置问题。请等待配额刷新或升级套餐后重试；本次未能获得回答。"
+        )
+    # 1210 结构性触发（err1210_locating 已定位: 会话尾部连续多条 user 消息触发
+    # provider 结构校验，与内容无关）: 定向文案——非网络/Key/模型名问题；
+    # 到达本出口时 err1210.recovery 降级（剥离注入/尾部聚合）已尝试且未恢复。
+    if _is_err1210(error):
+        return (
+            f"[LLM 调用异常] 事实: LLM 调用失败。\n"
+            f"原因: {type(error).__name__}: {error}\n"
+            f"建议: 该错误码为结构性触发（会话尾部连续多条 user 消息触发 provider 校验），"
+            f"非网络/Key/模型名问题；系统已自动尝试降级重试（剥离注入/尾部聚合）未恢复。"
+            f"请直接重发本轮（下一轮上下文重建后通常自愈）；本次未能获得回答。"
         )
     # EVO-20260818-92bd97d6: 空响应专门文案（流被截断/模型抖动，重试可自愈）
     if isinstance(error, LLMEmptyResponseError):
