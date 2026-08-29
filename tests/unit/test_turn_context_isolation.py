@@ -212,10 +212,10 @@ def test_budget_single_source_no_drift():
     eff = eng._effective_history_budget("deepseek/x")
     assert detail["effective_budget"] == eff == 50000
     assert detail["limited_by"] == "global_budget"
-    # 窗口限制分支：65536 × 0.6 × 0.5 = 19660 < 50000
+    # 窗口限制分支：EVO-20260811-10dc2533 L2 → (65536−2048) × 0.6 × 0.5 = 19046 < 50000
     eng._current_context_limit = lambda *a, **k: 65536
     detail2 = eng._effective_history_budget_detail("deepseek/x")
     eff2 = eng._effective_history_budget("deepseek/x")
-    assert detail2["effective_budget"] == eff2 == 19660
+    assert detail2["effective_budget"] == eff2 == 19046
     assert detail2["limited_by"] == "model_window"
-    assert detail2["model_window_budget"] == 19660
+    assert detail2["model_window_budget"] == 19046

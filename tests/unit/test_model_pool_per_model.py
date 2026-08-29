@@ -502,7 +502,8 @@ def test_fallback_guard_budget_uses_same_registry_snapshot_as_candidate_client(
 
     assert resp is not None and ref == "backup/m"
     assert captured["guard"] is not None
-    assert captured["guard"].history_budget == 50_000
+    # EVO-20260811-10dc2533 L2: (100000−2048)×1.0×0.5 = 48976（旧快照同源预算，语义不变）
+    assert captured["guard"].history_budget == 48_976
     pool.close()
 
 

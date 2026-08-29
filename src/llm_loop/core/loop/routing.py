@@ -10,8 +10,11 @@ move 自 engine.py 内联路由段与守卫段（327-368）及辅助方法（648
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 from llm_loop.core.loop.focus import is_simple_task
@@ -34,6 +37,39 @@ _CONTEXT_SAFETY_MARGIN = 0.9
 # EVO-20260811-10dc2533 P0: 未注册模型保守默认窗口预算（字符）——本地 Ollama/llama.cpp/mlx
 # 等未配置 context 的模型，用 8K 保守预算替代全局 budget，防小窗口模型超限硬拒绝。
 _UNKNOWN_MODEL_BUDGET_CHARS = 8000
+# EVO-20260811-10dc2533 L2: 预算侧 completion 显式预留 + 小窗口安全系数。
+# 守卫侧已有 _CONTEXT_SAFETY_MARGIN=0.9（拦截层），此处是预算计算层先行分账：
+# 历史预算 = (window − reserve) × cpt × ratio——先扣生成预留再按窗口档位分配。
+_COMPLETION_RESERVE_TOKENS = 2048  # 生成输出预留（建议值域 2048-4096 取下限）
+_SMALL_WINDOW_TOKENS = 32768  # 小窗口阈值：< 此值历史占比 0.5→0.3（本地 4K/8K/16K 档）
+_SMALL_WINDOW_RATIO = 0.3  # 小窗口历史占比系数（本地模型保守，剩余给工具输出+生成）
+
+
+@lru_cache(maxsize=1)
+def _model_context_env_overrides() -> dict[str, int]:
+    """EVO-20260811-10dc2533 L1: MODEL_CONTEXT_OVERRIDE env 快速窗口覆盖.
+
+    格式: JSON dict，key 为 "provider/model" 全限定或裸 "model" 名，value 为 token 数。
+    用途: 不改 providers.json 的临时窗口修正（如本地模型换量化档/实测修正）。
+    fail-open: env 未设/JSON 非法/值非数值 → {}（零回归），坏值 debug 日志。
+    """
+    raw = os.environ.get("MODEL_CONTEXT_OVERRIDE", "")
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("top-level must be object")
+        out: dict[str, int] = {}
+        for k, v in data.items():
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                continue
+            if int(v) > 0:
+                out[str(k)] = int(v)
+        return out
+    except (ValueError, TypeError) as exc:
+        logger.debug("MODEL_CONTEXT_OVERRIDE 解析失败（fail-open 忽略）: %s", exc)
+        return {}
 
 
 @dataclass
@@ -252,6 +288,14 @@ class _RoutingMixin:
         if self.llm_pool is None or not model_label or "/" not in model_label:
             return None
         pid, mid = model_label.split("/", 1)
+        # EVO-20260811-10dc2533 L1: env 覆盖优先于注册表（全限定 "provider/model"
+        # 精确匹配优先，裸 "model" 兜底）——注册表查询失败/未注册模型也可经 env 修正。
+        _ov = _model_context_env_overrides()
+        if _ov:
+            if model_label in _ov:
+                return _ov[model_label]
+            if mid in _ov:
+                return _ov[mid]
         registry = registry_snapshot or self._pool_registry_snapshot()
         if registry is None:
             return None
@@ -537,7 +581,11 @@ class _RoutingMixin:
                 "limited_by": limited_by,
                 "model": model_label,
             }
-        model_budget = int(limit * cpt * 0.5)
+        # EVO-20260811-10dc2533 L2: 先扣 completion 预留再按窗口档位分历史预算。
+        # ≥32K 窗口沿用 0.5 占比（语义不变，数值因显式 reserve 微收紧 ~1.6%）；
+        # <32K 小窗口 0.3——本地 4K/8K/16K 模型历史占比压低，剩余给工具输出与生成。
+        _ratio = _SMALL_WINDOW_RATIO if limit < _SMALL_WINDOW_TOKENS else 0.5
+        model_budget = int(max(0, limit - _COMPLETION_RESERVE_TOKENS) * cpt * _ratio)
         if model_budget < global_budget:
             eff, limited_by = model_budget, "model_window"
         else:
