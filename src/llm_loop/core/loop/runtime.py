@@ -23,6 +23,9 @@ if TYPE_CHECKING:
 # （688K tokens 实际 ≈41 万字符, 旧估算写成 137 万）。0.6 ≈ 1.67 tok/char 对齐大上下文实测,
 # 中小上下文略保守（宁可多拦不漏拦）。
 _CHARS_PER_TOKEN_EST = 0.6
+# EVO-20260811-10dc2533 L3: 小窗口注入联动阈值（与 routing._SMALL_WINDOW_TOKENS
+# 同值异名——避免 runtime→routing 的 mixin 循环 import，语义同源注释锚定）
+_SMALL_WINDOW_TOPK_TOKENS = 32768
 
 
 class _RuntimeParamsMixin:
@@ -63,10 +66,29 @@ class _RuntimeParamsMixin:
         return getattr(self.settings, "extract_interval_msgs", 20) or 20
 
     def _runtime_memory_top_k(self: LoopEngine) -> int:
-        """记忆检索条数（M57 配置面收敛: 动态优先、静态兜底）."""
+        """记忆检索条数（M57 配置面收敛: 动态优先、静态兜底）.
+
+        EVO-20260811-10dc2533 L3: 小窗口注入联动——默认模型窗口 <32K 时 top_k
+        降档（≥8K→2，<8K→1），防记忆注入挤占本地小窗口模型预算。fail-open:
+        窗口感知失败（无 pool/未知模型/异常）回退 base，零回归。
+        """
+        base: int
         if self.runtime is not None:
-            return self.runtime.memory_top_k
-        return getattr(self.settings, "memory_top_k", 5)
+            base = self.runtime.memory_top_k
+        else:
+            base = getattr(self.settings, "memory_top_k", 5)
+        if base <= 1:
+            return base
+        try:
+            limit_fn = getattr(self, "_current_context_limit", None)
+            label_fn = getattr(self, "_default_model_label", None)
+            if limit_fn is not None and label_fn is not None:
+                limit = limit_fn(label_fn())
+                if limit and limit < _SMALL_WINDOW_TOPK_TOKENS:
+                    return min(base, 2 if limit >= 8192 else 1)
+        except Exception:  # noqa: BLE001 — 窗口感知 fail-open，感知失败回退 base
+            pass
+        return base
 
     def _runtime_timeout(self: LoopEngine) -> float | None:
         """LLM 调用超时（PARAM-01: 动态优先、静态兜底）.

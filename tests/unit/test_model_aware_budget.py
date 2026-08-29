@@ -120,10 +120,10 @@ def test_effective_budget_math(tmp_path, monkeypatch: pytest.MonkeyPatch) -> Non
     pool = _make_pool(settings, fake)
     engine = _make_engine(tmp_path, pool, settings)
 
-    # 256K 窗: 262144 × 0.6 × 0.5 = 78643（2026-08-24 估算校准: 2→0.6）
-    assert engine._effective_history_budget("kimi/k3-256k") == 78643
-    # 1M 窗: min(1M全局, 1000000×0.6×0.5=300000) = 300000
-    assert engine._effective_history_budget("kimi/k3") == 300_000
+    # 256K 窗: EVO-20260811-10dc2533 L2 → (262144−2048) × 0.6 × 0.5 = 78028
+    assert engine._effective_history_budget("kimi/k3-256k") == 78028
+    # 1M 窗: min(1M全局, (1000000−2048)×0.6×0.5=299385) = 299385
+    assert engine._effective_history_budget("kimi/k3") == 299_385
     # 未知模型（有 pool 且 "/"）→ 8K 保守兜底（M53: 防 4K/8K/32K 小窗口模型超限硬拒绝）
     assert engine._effective_history_budget("ghost/x") == 8000
 
@@ -181,8 +181,8 @@ def test_provider_history_budget_caps_global(tmp_path, monkeypatch: pytest.Monke
     assert engine._effective_history_budget("local/qwen3.6-27b") == 12000
     # local 9B（1M 窗）: provider 预算仍压到 12000（窗口大 ≠ prefill 快）
     assert engine._effective_history_budget("local/qwen9b") == 12000
-    # 未配置 provider: 窗口公式不变（2026-08-24 估算校准: 262144×0.6×0.5=78643）
-    assert engine._effective_history_budget("kimi/k3-256k") == 78643
+    # 未配置 provider: 窗口公式（EVO-20260811-10dc2533 L2: (262144−2048)×0.6×0.5=78028）
+    assert engine._effective_history_budget("kimi/k3-256k") == 78028
 
 
 def test_provider_history_budget_compresses_sent_context(
