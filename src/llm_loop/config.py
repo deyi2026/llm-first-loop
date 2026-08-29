@@ -294,6 +294,11 @@ class Settings:
     # 默认 0 = 未启用（云端零回归）；local 场景按 预算×50% 配置阈值（TOOL_ROUND_BUDGET=8000 → 4000），
     # 首尾窗口随之收紧（800/800，原 2500/2500 对 local 预算占比 62% 过大）。
     tool_summary_local_threshold: int = 0
+
+    # ── 会话汇总档案（EVO-20260829-06c96021 / SDD-20260830）──
+    # 过程-终局两阶段：工具 SUCCESS 的 L1 摘要块 append-only 聚合，尾部槽注入。
+    # 关闭（false）= 现状零回归（NFR-3）。
+    digest_enabled: bool = True
     tool_summary_local_head_chars: int = 800
     tool_summary_local_tail_chars: int = 800
     # EVO-20260822-9fde48f1 第 4 条: local 轮跳过注入白名单（逗号分隔, 默认空=全保留零回归）。
@@ -320,6 +325,9 @@ class Settings:
     # ── EVO-d5db88d9: 工具 Schema 索引化（TOOL_SCHEMA_LAZY=1 时 LLM 只见精简索引，按需读完整 Schema）──
     # EVO-20260814: 默认开（节 token；环境变量仍可覆盖回 0 兼容旧用户）
     tool_schema_lazy: bool = True
+    # ── GOAL-20260829-7483e375 T2: 分层前缀（锚层 Top8 全量+80字符索引 / 动态层追加式）──
+    # PREFIX_LAYERED=1 启用；默认关（零回归，A/B 基线 = 现行 tool_schema_lazy 路径）
+    prefix_layered: bool = False
     # ── EVO-20260813-9ced1f4c: 工具执行瀑布（pipeline.py，默认全关零回归）──
     tool_pipeline_enabled: bool = False  # 总开关（TOOL_PIPELINE_ENABLED）
     tool_materialize_enabled: bool = False  # 参数物化+深冻结（TOOL_MATERIALIZE_ENABLED）
@@ -512,6 +520,7 @@ class Settings:
             "tool_local_inject_skip": self.tool_local_inject_skip,
             "tool_trim_enabled": self.tool_trim_enabled,
             "tool_schema_lazy": self.tool_schema_lazy,
+            "prefix_layered": self.prefix_layered,
             "tool_pipeline_enabled": self.tool_pipeline_enabled,
             "tool_materialize_enabled": self.tool_materialize_enabled,
             "tool_guard_enabled": self.tool_guard_enabled,
@@ -632,6 +641,7 @@ def load_settings() -> Settings:
         tool_summary_threshold=_env_int("TOOL_SUMMARY_THRESHOLD", 12000),  # 2026-08-15 放大字数
         # EVO-20260822-b3e7105e: local 模型收紧阈值/窗口（默认 0=未启用，云端零回归）
         tool_summary_local_threshold=_env_int("TOOL_SUMMARY_LOCAL_THRESHOLD", 0),
+        digest_enabled=_env_bool("DIGEST_ENABLED", True),
         tool_summary_local_head_chars=_env_int("TOOL_SUMMARY_LOCAL_HEAD_CHARS", 800),
         tool_summary_local_tail_chars=_env_int("TOOL_SUMMARY_LOCAL_TAIL_CHARS", 800),
         # EVO-20260822-9fde48f1 第 4 条: local 轮跳过注入白名单（默认空=全保留零回归）
@@ -644,6 +654,7 @@ def load_settings() -> Settings:
         exec_allowlist=os.environ.get("EXEC_ALLOWLIST", "").strip(),
         run_mode=_env_run_mode("RUN_MODE"),
         tool_schema_lazy=_env_bool("TOOL_SCHEMA_LAZY", True),  # EVO-20260814: 默认开
+        prefix_layered=_env_bool("PREFIX_LAYERED", False),  # GOAL-20260829-7483e375 T2: 默认关零回归
         tool_pipeline_enabled=_env_bool("TOOL_PIPELINE_ENABLED", False),
         tool_materialize_enabled=_env_bool("TOOL_MATERIALIZE_ENABLED", False),
         tool_guard_enabled=_env_bool("TOOL_GUARD_ENABLED", False),

@@ -434,6 +434,24 @@ class _BuildMixin:
         except Exception:  # noqa: BLE001 — fail-open
             return None
 
+    def _session_digest(self, sess):
+        """会话汇总档案实例缓存（EVO-20260829-06c96021；生命周期随会话）.
+
+        lazy getattr 初始化——mixin 无 __init__ 契约，不侵入宿主类装配。
+        MVP 内存态；持久化（P2 FR-6）落地后经 persist_dir 接入。
+        """
+        cache = getattr(self, "_digest_cache", None)
+        if cache is None:
+            cache = {}
+            self._digest_cache = cache  # type: ignore[attr-defined]
+        d = cache.get(sess.session_id)
+        if d is None:
+            from llm_loop.core.session_digest import SessionDigest
+
+            d = SessionDigest(sess.session_id)
+            cache[sess.session_id] = d
+        return d
+
     def _build_llm_messages(
         self,
         sess,
@@ -909,6 +927,23 @@ class _BuildMixin:
                     source=MessageSource.SYSTEM,
                 )
             ]
+        # EVO-20260829-06c96021（SDD-20260830 FR-1/FR-2）: 会话汇总档案尾部槽——
+        # 工具 SUCCESS 的 L1 摘要块 append-only 聚合，每轮全量注入尾部（过程薄/
+        # 终局全量在场）。缓存契约：已有块字节零改动（前缀不变式），新块=唯一
+        # miss 源；异常 fail-open 不阻断组装。DIGEST_ENABLED=0 时零注入（NFR-3）。
+        if getattr(getattr(self, "settings", None), "digest_enabled", False):
+            try:
+                _digest = self._session_digest(sess)
+                _digest.update_from_messages(sess.messages)
+                _digest_view = _digest.render()
+                if _digest_view:
+                    tail_msgs = (tail_msgs or []) + [
+                        Message(
+                            role="system", content=_digest_view, source=MessageSource.SYSTEM
+                        )
+                    ]
+            except Exception:  # noqa: BLE001 — 档案槽 fail-open
+                pass
         # ── P1 尾部注入聚合（err1210 8.4 Verdict: STRUCTURE_TRIGGER 尾部连续 user 条数，
         # tasks 9.1 方案 A）：四槽产物合并单条 user（--- [slot:xxx] --- 分段标记保留语义），
         # wrap_injection 只包装一次、anchor 单份——build 尾部连续 user 条数恒 ≤1，
