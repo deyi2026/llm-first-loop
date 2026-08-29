@@ -535,8 +535,8 @@ class TestEngineRecovery:
         assert retry == orig[: len(orig) - n_inj]  # 剥离只删尾部（前缀逐字节一致）
         # defer: gate_note 已复位（下一轮可重注入）
         assert engine._cache_monitor.take_gate_note(sid) is True
-        # 耗尽标记已写（本 compact 事件不再二次降级）
-        assert engine._err1210_attempted.get(sid) == engine._compact_event_seq
+        # 耗尽标记已写（本 run 不再二次降级——修复A per-run 语义）
+        assert engine._err1210_attempted.get(sid) == engine._err1210_run_seq
 
     def test_defer_reinject_next_round(self, tmp_path, monkeypatch):
         """T5.2a: P0 恢复后 defer 的 interop 消息在下一 run 的 build 重注入."""
@@ -690,7 +690,7 @@ class TestEngineRecovery:
         assert "[LLM 调用异常]" in (result.final_answer or "")
 
     def test_new_compact_event_rearms(self, tmp_path, monkeypatch):
-        """T5.4d: 新 compact 事件后耗尽标记清除、降级机会重获."""
+        """T5.4d: 新 run 后降级机会重获（修复A per-run 语义，原 compact 事件口径）."""
         engine, fake = _mk(
             tmp_path, monkeypatch,
             responses=[_e1210(), _e1210(), _e1210(), _resp("第三次成功")],
@@ -700,28 +700,31 @@ class TestEngineRecovery:
         engine._cache_monitor._get_bucket(sid).gate_note_pending = True  # 需有注入登记可供剥离
         engine.run(sid, "任务")  # 原请求 + 重试 1210 → 耗尽（2 次调用）
         assert len(fake.calls) == 2
-        # 模拟新 compact 事件（seq 递增）
-        engine._compact_event_seq += 1
+        # 修复A: 新 run 自动重获降级机会（run seq 递增，无需手动 compact 事件）
         _arm_compact_first(engine, sid)
         engine._cache_monitor._get_bucket(sid).gate_note_pending = True
         result = engine.run(sid, "新压缩后继续")
-        assert len(fake.calls) == 4  # 新事件 → 再次降级（第 3 次调用 1210 + 第 4 次成功）
+        assert len(fake.calls) == 4  # 新 run → 再次降级（第 3 次调用 1210 + 第 4 次成功）
         assert "第三次成功" in result.final_answer
 
     def test_second_order_failure_records_event(self, tmp_path, monkeypatch):
-        """T5.2d 二阶失败 [r3-P2]: 重注入轮再 1210 → 不触发 P0 + defer_lost_on_reinject 记录."""
+        """T5.2d 二阶失败 [r3-P2 修订]: 重注入轮再 1210 → 新 run 降级重试仍失败 → defer_lost_on_reinject 记录.
+
+        修复A（2026-08-29）语义更新: 门禁移除后第二 run 重新获得一次降级机会
+        （attempted 键 = run seq 自动递增），重试仍 1210 → 耗尽上抛 → 二阶失败。
+        """
         engine, fake = _mk(
             tmp_path, monkeypatch,
-            responses=[_e1210(), _resp(), _e1210()],
+            responses=[_e1210(), _resp(), _e1210(), _e1210()],
         )
         sid = engine.session.create()
         _arm_compact_first(engine, sid)
         engine._cache_monitor._get_bucket(sid).gate_note_pending = True
         engine.run(sid, "任务A")  # 第一 run: 恢复成功
-        # defer 回存完成；第二轮 run: build 重注入 gate_note（defer_replayed）
-        engine.run(sid, "任务B")  # 第三次调用 1210 → 二阶失败
-        assert len(fake.calls) == 3
-        # 二阶失败: 该轮不满足 compact 首请求（prev 已是本轮量级）→ 不重试
+        # defer 回存完成；第二 run: build 重注入 gate_note（defer_replayed）
+        engine.run(sid, "任务B")  # 第 3 次调用 1210 → 新 run 降级 → 第 4 次仍 1210 → 耗尽
+        assert len(fake.calls) == 4
+        # 二阶失败: 重试仍 1210（每 run 至多一次降级）
         # defer_lost_on_reinject 已记录
         trace = Path(os.environ.get("LFL_DATA_DIR", "data")) / "audit" / "defer_trace.jsonl"
         # conftest isolated_data_dir 设置了 LFL_DATA_DIR
@@ -729,6 +732,36 @@ class TestEngineRecovery:
         events = [json.loads(x) for x in trace.read_text(encoding="utf-8").splitlines() if x.strip()]
         assert any(e["event"] == "defer_lost_on_reinject" for e in events)
         assert any(e["event"] == "defer_replayed" for e in events)
+
+    def test_noncompact_1210_recovery(self, tmp_path, monkeypatch):
+        """修复A核心: 非 compact 轮 1210（主区 883b4725 形态）→ 降级重试不再静默跳过.
+
+        旧语义: _is_compact_first_request 门禁在此静默 return（无 compact 事件、
+        无骤降信号 → recovery 未触发 → 1210 直接上抛，主区三连败实证）。
+        """
+        engine, fake = _mk(tmp_path, monkeypatch, responses=[_e1210(), _resp()])
+        sid = engine.session.create()
+        # 刻意不 arm compact_first——非 compact、无骤降形态
+        engine._cache_monitor._get_bucket(sid).gate_note_pending = True
+        result = engine.run(sid, "长任务继续")
+        assert "恢复后的正常回答" in result.final_answer
+        assert len(fake.calls) == 2  # 旧语义 1 次（静默上抛），新语义降级重试成功
+
+    def test_request_count_updated_on_failure(self, tmp_path, monkeypatch):
+        """修复B: 失败轮也更新骤降数据源（旧语义死锁式失效——连续失败 prev 越陈旧）."""
+        engine, fake = _mk(
+            tmp_path, monkeypatch,
+            responses=[_e1210(), _e1210()],
+        )
+        sid = engine.session.create()
+        engine._cache_monitor._get_bucket(sid).gate_note_pending = True
+        result = engine.run(sid, "任务")
+        assert len(fake.calls) == 2  # 重试 1 次仍 1210 → 耗尽
+        assert "[LLM 调用异常]" in (result.final_answer or "")
+        # 修复B: llm_error break 前已更新（engine 侧本轮原 messages 的量）
+        assert engine._last_request_msg_count_by_session.get(sid) == len(
+            fake.calls[0]["messages"]
+        )
 
 
 class TestExhaustLifecycle:
