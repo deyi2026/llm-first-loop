@@ -49,6 +49,10 @@ def _mk_engine(tmp_path, monkeypatch, responses):
     fake = _FakeLLMClient("zhipu/glm-5")
     fake.queue(responses)
     engine = _make_engine(tmp_path, _make_pool(settings, fake, cached={"zhipu": fake}), settings)
+    # 语义迁移对齐（修复A 配套，err1210.py _err1210_run_begin 注释）: attempted 键
+    # 已从"compact 事件 seq"迁移为"run seq"——本测试直接调 _try_err1210_recovery
+    # 不走 engine.run，需模拟 run 入口递增，使 attempted 期望值与真实 run 一致（首个 run → 1）。
+    engine._err1210_run_begin()
     return engine, fake
 
 
@@ -89,7 +93,7 @@ def _attempt(engine, fake, sid: str, msgs: list[dict]):
 
 class TestTwoSessionInterleaving:
     def test_interleaved_a1_to_a6(self, tmp_path, monkeypatch):
-        engine, fake = _mk_engine(tmp_path, monkeypatch, responses=[_e1210(), _e1210()])
+        engine, fake = _mk_engine(tmp_path, monkeypatch, responses=[_e1210(), _e1210(), _e1210(), _e1210()])
         with _switch_session("A"):
             msgs_a = _arm_build(engine, 5, "A")
             _compact_event(engine)  # A compact → A 桶 seq=1

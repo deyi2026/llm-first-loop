@@ -15,6 +15,8 @@ import json
 import os
 import re
 import time
+
+import pytest
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -518,6 +520,13 @@ def _arm_compact_first(engine, sid, *, prev_count=100):
 
 
 class TestEngineRecovery:
+    # GOAL-20260829-a9a6c0f0: blind retry 默认开会前置一次原样重发，改变本类
+    # "剥离重试"断言口径 → 本类显式关闭 blind，保留 strip/aggregate 回退路径
+    # 的独立回归（blind 行为见 test_err1210_blind_retry.py）。
+    @pytest.fixture(autouse=True)
+    def _no_blind_retry(self, monkeypatch):
+        monkeypatch.setenv("ERR1210_BLIND_RETRY", "0")
+
     def test_basic_recovery(self, tmp_path, monkeypatch):
         """T5.1: 首调 1210 → 重试恰好 1 次、公共前缀一致、resp 正常合流、登记正确."""
         engine, fake = _mk(tmp_path, monkeypatch, responses=[_e1210(), _resp()])

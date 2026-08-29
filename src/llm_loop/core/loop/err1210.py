@@ -611,6 +611,43 @@ class _Err1210Mixin:
                 data_dir=self.settings.data_dir,
             )
 
+            # ①.5 blind retry——原样重发（2026-08-29 定位实证，GOAL-20260829-a9a6c0f0）:
+            # GLM 对 compact 后首请求间歇性 1210 拒绝，同 payload 重发 5/5 必成功；
+            # 失败请求尾部仅 1 条归档摘要、无注入群可剥，strip 方向打偏（主区 883b4725
+            # 6/6 恢复失败实证）。原样重试优先：成功零内容损失且不消费/复位任何槽位。
+            # 失败（仍 1210 或网络异常）→ 回退既有 strip/aggregate 路径（保底不删）。
+            # provider 调用预算：原始失败 1 + blind 1 + strip 重试 1 ≤ 3（异常路径，可控）。
+            # env ERR1210_BLIND_RETRY=0 单独关闭本分支（回退 9088d4e 行为）。
+            blind_attempted = False
+            if os.environ.get("ERR1210_BLIND_RETRY", "1") == "1":
+                blind_attempted = True
+                resp_b, exc_b = self._retry_consume_stream(
+                    llm_client=llm_client,
+                    messages=messages,
+                    tools_param=tools_param,
+                    chat_model_arg=chat_model_arg,
+                    timeout_s=timeout_s,
+                    session_id=session_id,
+                )
+                if resp_b is not None:
+                    result.resp = resp_b
+                    result.recovered = True
+                    # 耗尽标记（对齐 ④ 语义：blind 成功也消耗本 run 降级机会，防二次尝试）
+                    self._err1210_attempted = {**attempted, session_id: seq}
+                    self._record_action(
+                        "err1210.recovery",
+                        "blind_retry_ok",
+                        "原样重发成功（零内容损失，未走剥离/聚合）；mode=blind",
+                    )
+                    return result
+                self._record_action(
+                    "err1210.recovery",
+                    "blind_retry_1210" if (exc_b is not None and is_err1210(exc_b)) else "blind_retry_err",
+                    "原样重发未恢复（"
+                    + ("仍 1210" if (exc_b is not None and is_err1210(exc_b)) else "非 1210 异常")
+                    + "），回退剥离/聚合路径；mode=blind-fail",
+                )
+
             # ② defer 回存（消费过的槽复位——无论剥离成败，防注入随一次性消费丢失）
             # P1 9.1: 传 messages 供 AGGREGATED 拆解（聚合 entry → 段级槽位复位）
             result.deferred_ok = self._defer_store(sess, entries, messages)
@@ -637,21 +674,36 @@ class _Err1210Mixin:
             else:
                 aggregated = self._aggregate_tail_users(messages)
                 if aggregated is None:
+                    if blind_attempted:
+                        # blind 已消耗一次（如网络瞬态失败）+ 剥离/聚合均不适用 →
+                        # 原样单次重试兜底（主区 883b4725 实证：compact 首请求
+                        # 1210 原样重发高成功率；耗尽标记照写防循环，本 run 至多一次）。
+                        # blind 关闭（env ERR1210_BLIND_RETRY=0）时保持 9088d4e
+                        # aborted 语义不变（无法区分则放弃，安全侧不盲试）。
+                        retry_messages = messages
+                        retry_mode = "raw-fallback"
+                        self._record_action(
+                            "err1210.recovery",
+                            "raw_retry",
+                            "剥离与聚合均不适用，blind 失败后原样单次重试兜底；mode=raw-fallback",
+                        )
+                    else:
+                        self._record_action(
+                            "err1210.recovery",
+                            "aborted",
+                            f"剥离与聚合均不适用放弃降级；defer_ok={result.deferred_ok}",
+                        )
+                        # 耗尽标记仍写入（本 compact 事件不再尝试，防循环）
+                        self._err1210_attempted = {**attempted, session_id: seq}
+                        return result
+                else:
+                    retry_messages = aggregated
+                    retry_mode = "aggregate"
                     self._record_action(
                         "err1210.recovery",
-                        "aborted",
-                        f"剥离与聚合均不适用放弃降级；defer_ok={result.deferred_ok}",
+                        "aggregate_retry",
+                        "剥离校验失败，尾部连续 user 群聚合后重试（mode=aggregate）",
                     )
-                    # 耗尽标记仍写入（本 compact 事件不再尝试，防循环）
-                    self._err1210_attempted = {**attempted, session_id: seq}
-                    return result
-                retry_messages = aggregated
-                retry_mode = "aggregate"
-                self._record_action(
-                    "err1210.recovery",
-                    "aggregate_retry",
-                    "剥离校验失败，尾部连续 user 群聚合后重试（mode=aggregate）",
-                )
 
             # ④ 单次重试（先标记防循环——本 compact 事件至多一次降级）
             self._err1210_attempted = {**attempted, session_id: seq}
@@ -664,7 +716,11 @@ class _Err1210Mixin:
                 session_id=session_id,
             )
             mode_desc = (
-                f"剥离 {result.stripped_count} 条后" if retry_mode == "strip" else "尾部 user 聚合后"
+                f"剥离 {result.stripped_count} 条后"
+                if retry_mode == "strip"
+                else "原样重发后"
+                if retry_mode == "raw-fallback"
+                else "尾部 user 聚合后"
             )
             if resp is not None:
                 result.resp = resp
