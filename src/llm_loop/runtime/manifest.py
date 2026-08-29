@@ -167,3 +167,23 @@ def health_identity(data_dir: str | Path | None = None) -> dict:
         "provider": m.get("provider_id", ""),
         "config_hash": m.get("config_hash", ""),
     }
+
+
+def write_runtime_manifest(service: str, data_dir: "str | Path | None" = None) -> "Path | None":
+    """R3 便捷落盘: 身份事实 + 配置指纹 + providers 三 hash → runtime_manifest.json.
+
+    （2026-08-30 重写——恢复半改工作区丢失的未提交 API；原"无参 write_manifest()"
+    的等价物，显式 service 参数更清晰。）
+
+    fail-open: 任何异常返回 None 不抛——服务启动路径不因 manifest 落盘失败阻断
+    （与垫片期的 try/except 语义一致）。返回落盘文件 Path。
+    """
+    try:
+        from llm_loop.runtime.identity import compute_identity
+        from llm_loop.runtime.resolver import resolve_effective
+
+        report = compute_identity()
+        ec = resolve_effective(service)
+        return write_manifest(build_manifest(service, ec, report), data_dir or default_data_dir())
+    except Exception:  # noqa: BLE001 — R3 语义: fail-open 不阻断启动
+        return None

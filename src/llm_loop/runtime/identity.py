@@ -134,3 +134,31 @@ def check_identity(mode: str | None = None) -> IdentityReport:
         # shadow：只打告警，不阻断（观察期）
         print(f"[runtime-identity][shadow][WARN] {FATAL_TAG}: {report.detail}", file=sys.stderr)
     return report
+
+
+def enforce_identity(workspace: "Path | None" = None) -> IdentityReport:
+    """R1 服务入口严格守卫（2026-08-30 重写——半改工作区丢失的未提交 API）.
+
+    与 check_identity 的差异：除模块归属核验（resolve(llm_loop) ∈ workspace/src）
+    外，追加 CWD 锚定核验——传入 workspace（服务启动目录，通常 Path.cwd()）必须
+    与身份计算的实际 workspace_root 一致。共享 venv/PYTHONPATH 串区（模块来自
+    别区而 CWD 在本区）会被此层捕获。
+
+    - shadow（默认）: stderr 告警不阻断，返回 ok=False 的 report
+    - enforce: 违规 raise RuntimeIdentityError（拒绝启动）
+    """
+    import dataclasses
+
+    report = compute_identity()
+    expected = (workspace if workspace is not None else Path.cwd()).resolve()
+    cwd_match = Path(report.workspace_root).resolve() == expected
+    if report.ok and cwd_match:
+        return report
+    detail = dict(report.detail)
+    detail["expected_workspace"] = str(expected)
+    detail["cwd_match"] = cwd_match
+    bad = dataclasses.replace(report, ok=False, detail=detail)
+    if report.mode == "enforce":
+        raise RuntimeIdentityError(bad)
+    print(f"[runtime-identity][shadow][WARN] {bad.to_fatal_text()}", file=sys.stderr)
+    return bad

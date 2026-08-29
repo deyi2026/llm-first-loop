@@ -162,6 +162,11 @@ def _install_exit_signal_log() -> None:
 
 def main() -> None:
     """服务启动入口（python -m llm_loop.web）."""
+    # R1（RUNTIME-SOT-WIRE）: workspace 身份守卫——错配时 shadow 仅告警/enforce 拒绝启动。
+    # 锚定 CWD（与下方 .env 同约定）；模块 repo 与 CWD 不一致 = 共享 venv/PYTHONPATH 串区。
+    from llm_loop.runtime.identity import enforce_identity
+
+    enforce_identity(Path.cwd())
     # 补齐手动启动缺口：shell 未注入 .env 时也能可靠读配置（MCP_SERVERS 等）。
     # 锚定 CWD（与 data_dir="./data" 同约定，重启脚本均 cd 到各自项目根）；
     # 不可用默认 __file__ 锚定——共享代码（venv .pth 指向镜像 src）会让主区进程
@@ -171,6 +176,11 @@ def main() -> None:
     from llm_loop.introspection.proc_version import record_process_start
 
     record_process_start("web")
+    # R3（RUNTIME-SOT-WIRE）: 进程身份+配置指纹落盘（fail-open 不阻断启动）；
+    # /health 读回暴露——跨区污染秒级诊断。
+    from llm_loop.runtime.manifest import write_runtime_manifest
+
+    write_runtime_manifest("web")
     host = os.environ.get("WEB_HOST", "127.0.0.1").strip()
     port = int(os.environ.get("WEB_PORT", "8902").strip())
 

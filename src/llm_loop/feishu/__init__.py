@@ -105,6 +105,10 @@ def start_bridge(bridge: FeishuWsBridge) -> bool:
 
 def main() -> None:
     """飞书桥启动入口（python -m llm_loop.feishu）."""
+    # R1（RUNTIME-SOT-WIRE）: workspace 身份守卫——错配时 shadow 仅告警/enforce 拒绝启动。
+    from llm_loop.runtime.identity import enforce_identity
+
+    enforce_identity(Path.cwd())
     # 补齐手动启动缺口：shell 未注入 .env 时也能可靠读配置（MCP_SERVERS 等）。
     # 锚定 CWD（与 data_dir="./data" 同约定，重启脚本均 cd 到各自项目根）；
     # 不可用默认 __file__ 锚定——共享代码（venv .pth 指向镜像 src）会让主区进程
