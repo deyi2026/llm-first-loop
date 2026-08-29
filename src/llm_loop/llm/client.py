@@ -27,6 +27,10 @@ import httpx
 from llm_loop.cache_guard.guard import (
     PromptGuard,  # EVO-20260818: 顶层 import（guard 无内部依赖，无循环）——guard property 类型标注
 )
+from llm_loop.cognitive.cache_tags import (  # M4.3 认知缓存标记（研究线）
+    apply_cognitive_cache_tags,
+    tagging_enabled_for,
+)
 from llm_loop.core.message import ToolCall
 from llm_loop.core.run_context import current_reasoning_effort
 from llm_loop.llm.errors import (
@@ -687,6 +691,10 @@ class LLMClient:
         if protocol not in ("anthropic", "google"):
             messages = self._sanitize_openai_tool_pairs(messages)
             messages, _v3_diag = self._normalize_tool_call_args(messages)
+            # M4.3 认知缓存标记（研究线）: 仅 COGNITIVE_TAG_ENDPOINTS 命中的端点生效，
+            # 云端 provider 零接触（cache_tag 非标字段，GLM 1210 前科）。
+            if tagging_enabled_for(getattr(self, "base_url", None)):
+                messages = apply_cognitive_cache_tags(messages)
         try:
             if protocol == "anthropic":
                 result = yield from self._stream_anthropic(
