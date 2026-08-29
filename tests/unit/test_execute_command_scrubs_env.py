@@ -92,7 +92,7 @@ def test_control_plane_env_scrubbed():
 
     非 secret 但暴露路径即暴露 self-promote 攻击面（同 Unix 用户可写目录）。
     """
-    restore = _set_env("COG_RUNTIME_ENFORCE_FILE", "/Users/xxx/.config/lfl/allowlist")
+    restore = _set_env("COG_RUNTIME_ENFORCE_FILE", "/opt/lfl-test/allowlist")
     try:
         probe = _probe("'COG_RUNTIME_ENFORCE_FILE' in os.environ")
         assert probe == "False", f"控制面路径泄露: {probe}"

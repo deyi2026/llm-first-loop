@@ -22,10 +22,10 @@ from pathlib import Path
 
 from llm_loop.cognitive.benchmark import (
     CognitiveOverheadMeter,
+    FirstMissCost,
     PreconditionState,
     SampleOutcome,
     SemanticResetBenchmark,
-    FirstMissCost,
 )
 from llm_loop.cognitive.compiler import (
     ContextTier,
@@ -165,8 +165,8 @@ def _engine(tmp_path: Path):
 
 
 def _arm_slots(engine, sess) -> None:
-    from llm_loop.core.message import Message, MessageSource
     from llm_loop.core.loop.hotcard import write_hotcard
+    from llm_loop.core.message import Message, MessageSource
 
     engine._interop_tail_messages = [
         Message(role="system", content="跨模块协调信息", source=MessageSource.SYSTEM)

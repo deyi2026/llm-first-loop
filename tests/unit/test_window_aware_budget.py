@@ -6,7 +6,7 @@ _check_context_fit（M53: 超限载荷拒绝不发送——豁免配置切小窗
 
 from types import SimpleNamespace
 
-from llm_loop.core.loop.routing import _RoutingMixin, _model_context_env_overrides
+from llm_loop.core.loop.routing import _model_context_env_overrides, _RoutingMixin
 
 
 class _ModelEntry:
@@ -174,14 +174,14 @@ def test_env_override_invalid_json_fail_open(monkeypatch):
 
 def test_top_k_small_window_dedup():
     """L3: 小窗口 top_k 降档——<32K→2、<8K→1、大窗口/未知零回归."""
-    from types import SimpleNamespace as _NS
+    from types import SimpleNamespace
 
     from llm_loop.core.loop.runtime import _RuntimeParamsMixin
 
     class _TopK(_RuntimeParamsMixin):
         def __init__(self, ctx):
             self.runtime = None
-            self.settings = _NS(memory_top_k=5)
+            self.settings = SimpleNamespace(memory_top_k=5)
             self._ctx = ctx
 
         def _current_context_limit(self, model_label: str) -> int | None:
