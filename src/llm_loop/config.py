@@ -14,6 +14,12 @@ from typing import Any
 
 from llm_loop.codearts.config import CodeArtsSettings
 
+# EVO-20260830（split-brain 修复）: data_dir 默认值从相对 "./data" 改为基于包位置的绝对路径。
+# 根因: 相对路径随进程 cwd 漂移——主区服务进程 cwd=镜像目录时，EvolutionStore/会话/审计
+# 落盘镜像区（实例: EVO-20260829-6a78d4bb/06c96021 落镜像 data/audit/，主区 web 审阅页看不到）。
+# 绝对化后: 代码所在区=数据所在区，两区天然隔离，不随 cwd 漂移。显式 DATA_DIR env/传参不受影响。
+_DEFAULT_DATA_DIR = str((Path(__file__).resolve().parents[2] / "data"))
+
 logger = logging.getLogger(__name__)
 
 
@@ -264,8 +270,8 @@ class Settings:
     llm_max_tokens: int = 8192
     llm_wire_protocol: str = "openai"  # P3-5: 默认 client 协议（openai/anthropic/google）  # 2026-08-15: 显式输出预算（默认 8192，防模型默认 4096 截断长分析；思考链也占此预算）
 
-    # ── 数据目录 ──
-    data_dir: str = "./data"
+    # ── 数据目录 ──（EVO-20260830: 默认绝对路径 _DEFAULT_DATA_DIR，防 cwd 漂移 split-brain）
+    data_dir: str = _DEFAULT_DATA_DIR
     # ERC v1.1 rollout: off=legacy only; shadow=dual-write no prompt change; enforce=Phase3 capture-before-projection (experimental/offline until R0 completes).
     evidence_mode: str = "off"
     evidence_manifest_limit: int = 8  # Phase5 bounded Recovery Manifest; build clamps 1..20
@@ -625,7 +631,7 @@ def load_settings() -> Settings:
         llm_timeout_s=float(_env_int("LLM_TIMEOUT_S", 120)),
         llm_max_tokens=_env_int("LLM_MAX_TOKENS", 8192),  # 2026-08-15 显式输出预算
         llm_wire_protocol=os.environ.get("LLM_WIRE_PROTOCOL", "openai").strip().lower() or "openai",
-        data_dir=os.environ.get("DATA_DIR", "./data").strip(),
+        data_dir=os.environ.get("DATA_DIR", _DEFAULT_DATA_DIR).strip(),
         evidence_mode=_env_evidence_mode("EVIDENCE_MODE"),
         evidence_manifest_limit=_env_int("EVIDENCE_MANIFEST_LIMIT", 8),
         # D1 事件日志（EVENT_LOG_ENABLED / EVENT_LOGS_DIR 透传）
