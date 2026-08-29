@@ -34,7 +34,7 @@ from llm_loop.core.loop.err1210 import (
     SlotKind,
     content_prefix_sha,
 )
-from llm_loop.core.loop.focus import build_task_anchor, wrap_injection
+from llm_loop.core.loop.focus import _INJECTION_PREFIX, build_task_anchor, wrap_injection
 from llm_loop.core.loop.hotcard import pop_hotcard, write_hotcard
 
 # Cognitive Runtime（tasks 2.3/2.5/2.6）: tier 分级聚合 + 语义投影替代锚点。
@@ -59,6 +59,57 @@ except Exception:  # noqa: BLE001 — fail-open 回退平铺聚合（零回归�
 # engine→build→loop/__init__ 循环（engine import build 在前），故用函数内延迟 import
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.prompt import build_system_prompt
+
+
+def merge_persisted_tail_injections(
+    built: list[dict], registered_idx: set[int]
+) -> tuple[int, list[dict], list[int]]:
+    """方向 C（2026-08-29）: 尾部持久化注入 wire 级合并（build 出口调用）.
+
+    背景: EVO-20260827-f42496bc 将 memory 注入改为持久化（engine wrap+append 进
+    sess.messages）后，历史投影尾部出现"用户消息+持久化注入"连续 user 对（主区
+    883b4725 实测 510/511 形态，1210 结构触发根因形态）；_inject_parts 聚合只
+    覆盖动态消费槽，不含已持久化消息。
+
+    规则: 尾部连续 user 群（≥2 条）中，不在 registered_idx（动态注入登记）且
+    content 以 _INJECTION_PREFIX 开头的持久化注入条，并入前一条 user（content
+    追加 "\\n\\n"+原文，逐字保留）。群首注入（无前一条可并）/用户真实消息/登记条
+    一律保留原位。
+
+    返回 (tail_start, kept, removed): tail_start=尾部群起点下标；kept=重建后的
+    尾部消息列表（元素为原 dict 引用，被并入目标的 content 原地修改）；removed=
+    被并入的原下标列表（调用方据此重映射 InjectedEntry.msg_idx）。
+    群 <2 条时返回 (tail_start, [], [])——调用方不动作。
+    """
+    tail_start = len(built)
+    for i in range(len(built) - 1, -1, -1):
+        if built[i].get("role") != "user":
+            tail_start = i + 1
+            break
+    else:
+        tail_start = 0  # 全 user 极端形态（防御）
+    if len(built) - tail_start < 2:
+        return tail_start, [], []
+    kept: list[dict] = []
+    removed: list[int] = []
+    for j in range(tail_start, len(built)):
+        cand = built[j]
+        if (
+            kept
+            and j not in registered_idx
+            and str(cand.get("content") or "").startswith(_INJECTION_PREFIX)
+        ):
+            prev = kept[-1]
+            if prev.get("role") == "user":  # 群内恒真，防御性保留
+                prev["content"] = (
+                    str(prev.get("content") or "")
+                    + "\n\n"
+                    + str(cand.get("content") or "")
+                )
+                removed.append(j)
+                continue
+        kept.append(cand)
+    return tail_start, kept, removed
 
 
 class _CogPacketEvt(TypedDict):
@@ -1217,6 +1268,22 @@ class _BuildMixin:
                 logger.warning(
                     "build: 尾部注入聚合失败，本轮零注入降级（fail-open）", exc_info=True
                 )
+        # ── 方向 C（2026-08-29）: 持久化注入 wire 级合并——尾部连续 user 源头消除 ──
+        # 只并"未登记 InjectedEntry 且 wrap 前缀"的持久化注入条（wire 级，storage
+        # 不动）；动态聚合条（strip/defer 消费对象）保护不参与。合并删条后同步重
+        # 映射登记 msg_idx（strip 按尾部条数剥离，错位会误删用户消息）。fail-open。
+        try:
+            _reg_idx = {e.msg_idx for e in self._last_build_injections}
+            _ts, _kept, _removed = merge_persisted_tail_injections(built, _reg_idx)
+            if _removed:
+                built[_ts:] = _kept
+                for e in self._last_build_injections:
+                    if e.msg_idx >= _ts:
+                        e.msg_idx -= sum(1 for r in _removed if r < e.msg_idx)
+        except Exception:  # noqa: BLE001 — 合并失败 fail-open（原样发送）
+            logger.warning(
+                "build: 方向 C 持久化注入合并失败，原样发送（fail-open）", exc_info=True
+            )
         # EVO-20260817-b6554376: 投影一致性门闸（借鉴 DSH seq 水印，fail-open 不阻断 run）
         # seq（消息数）负责"历史追加"水印；ver（构建参数+动态输入指纹）负责参数水印；
         # ver+seq 匹配而 built_hash 不同 → 非确定性构建/历史被改 → 告警（只读，不阻断）。
