@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 
 from llm_loop.cognitive.benchmark import (
-    CognitiveEfficiencyMeter,
+    CognitiveOverheadMeter,
     PreconditionState,
     SampleOutcome,
     SemanticResetBenchmark,
@@ -63,9 +63,27 @@ class TestCrossBoundaryRecovery:
         """持久化 → 重载（模拟重启）: Durable 完整 / Ephemeral 丢弃（spec 4.2-1）."""
         store = SemanticStateStore(tmp_path / "audit")
         state = _rich_state()
-        store.save(state)
-        # "重启": 新 Store 实例从磁盘加载
-        reloaded = SemanticStateStore(tmp_path / "audit").load()
+        # CR-R1 T1: save/load 已 envelope 化（save(session_id, envelope)/load(session_id)）
+        from llm_loop.cognitive.state import StateEnvelope, StateIdentity
+
+        store.save(
+            "itest-sess",
+            StateEnvelope(
+                identity=StateIdentity(
+                    session_id="itest-sess",
+                    goal_id="itest-goal",
+                    goal_updated_at="2026-08-28T00:00:00",
+                    checkpoint_ts="2026-08-28T00:00:00",
+                    state_revision=1,
+                    source_digest="0" * 12,
+                ),
+                state=state,
+            ),
+        )
+        # "重启": 新 Store 实例从磁盘加载（CR-R1 T1: load(session_id) 三态返回）
+        _env_reloaded = SemanticStateStore(tmp_path / "audit").load("itest-sess")
+        assert _env_reloaded is not None
+        reloaded = _env_reloaded.state  # 解包 envelope
         assert reloaded is not None
         assert reloaded.objective == state.objective
         assert reloaded.checkpoint is not None
@@ -166,6 +184,8 @@ class TestSinglePipelineAndDegradation:
         from llm_loop.core.loop.focus import _INJECTION_PREFIX
 
         engine, sess = _engine(tmp_path)
+        # CR-R1 T2: 默认 MODE=shadow（packet 不进 prompt），tier 标记断言需 enforce
+        object.__setattr__(engine.settings, "cog_runtime_mode", "enforce")
         _arm_slots(engine, sess)
         out = engine._build_llm_messages(sess, [], max_chars=200_000, planned_label="zhipu/glm-5")
         tail_users = [m for m in out if m.get("role") == "user"][-1:]
@@ -228,7 +248,7 @@ class TestSinglePipelineAndDegradation:
                     token_delta=2345 if triggered else 0,
                     latency_delta_ms=890.0 if triggered else 0.0,
                 ),
-                efficiency=CognitiveEfficiencyMeter().measure(
+                efficiency=CognitiveOverheadMeter().measure(
                     action_trace=tmp_path / "t.jsonl",
                     goal_checkpoints=tmp_path / "g.jsonl",
                     usage_cost=tmp_path / "u.jsonl",

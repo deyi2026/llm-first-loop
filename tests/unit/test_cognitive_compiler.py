@@ -16,6 +16,7 @@ from llm_loop.cognitive.compiler import (
     compile_decision_packet,
     semantic_projection,
 )
+from llm_loop.cognitive.state import StateEnvelope
 from llm_loop.cognitive.state import (
     CheckpointPointer,
     SemanticStateStore,
@@ -160,11 +161,13 @@ def test_persist_semantic_state_roundtrip(tmp_path: Path, monkeypatch):
     store.checkpoint(g.id, what="完成阶段一", next_step="开始阶段二")
 
     assert _persist_semantic_state("s1") is True
-    loaded = SemanticStateStore(tmp_path / "audit").load()
-    assert loaded is not None
-    assert loaded.objective == "压缩后目标任务"
-    assert loaded.checkpoint is not None
-    assert loaded.checkpoint.next == "开始阶段二"
+    loaded_env = SemanticStateStore(tmp_path / "audit").load("s1")
+    assert isinstance(loaded_env, StateEnvelope)
+    assert loaded_env.identity.session_id == "s1"  # CR-R1：identity 头随分片写入
+    assert loaded_env.state is not None
+    assert loaded_env.state.objective == "压缩后目标任务"
+    assert loaded_env.state.checkpoint is not None
+    assert loaded_env.state.checkpoint.next == "开始阶段二"
 
 
 def test_persist_semantic_state_no_goal_keeps_old(tmp_path: Path, monkeypatch):
@@ -172,7 +175,7 @@ def test_persist_semantic_state_no_goal_keeps_old(tmp_path: Path, monkeypatch):
 
     monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
     assert _persist_semantic_state("s-none") is False  # 无 goal → 不覆盖
-    assert SemanticStateStore(tmp_path / "audit").load() is None
+    assert SemanticStateStore(tmp_path / "audit").load("s-none") is None
 
 
 def test_decision_line_frame_anchor_mode_unchanged():
@@ -182,3 +185,23 @@ def test_decision_line_frame_anchor_mode_unchanged():
     os.environ.pop("LFL_DATA_DIR", None)
     # 无 GoalStore 环境 → fail-open 空串（不抛异常）
     assert isinstance(_decision_line_frame("no-such"), str)
+
+def test_history_cognitive_reads_are_strict_session(tmp_path: Path, monkeypatch):
+    """CR-R1.1a: compact/legacy decision line 都不得回退到他会 active Goal."""
+    from llm_loop.core.history import _decision_line_frame, _persist_semantic_state
+    from llm_loop.introspection.goal import GoalStore
+
+    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
+    store = GoalStore(tmp_path / "audit")
+    ga = store.create("A 已完成目标", session_id="session-A")
+    store.update(ga.id, "complete")
+    store.create("B foreign active", session_id="session-B")
+
+    # 旧版这里会把 B active 写进 A shard；strict-session 后 A 只看到自己的终态。
+    assert _persist_semantic_state("session-A") is False
+    assert SemanticStateStore(tmp_path / "audit").load("session-A") is None
+    # anchor 过渡路径同样不得把 B 的 active Goal 显示成 A 的决策线。
+    assert _decision_line_frame("session-A") == ""
+    # 缺失会话身份 fail-closed，不允许退化成 GoalStore 全局读取。
+    assert _persist_semantic_state("") is False
+    assert _decision_line_frame("") == ""

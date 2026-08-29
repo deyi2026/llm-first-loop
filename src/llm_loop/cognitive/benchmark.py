@@ -74,6 +74,9 @@ class EfficiencyMetric:
 
     ratio = numerator_tokens / denominator_tokens（分母 0 → 0.0 且 denominator_missing 标注，
     不以 0 冒充分母存在——对齐 spec 5.3.3-1「不以 0 冒充」精神）。
+    CR-R1.1（审查项8）拆分双指标：RecoveryActionRate（次数/决策轮，retrieval
+    token 无真实计量时的可用口径）与 CognitiveTokenOverhead（ratio；恢复性
+    token 未计量时 token_overhead_known=False=unknown，不以 0 冒充）。
     """
 
     numerator_tokens: int  # 分子: 恢复寄存器 token（恢复性读取代价）
@@ -85,10 +88,17 @@ class EfficiencyMetric:
     denominator_sources: tuple[str, ...]
     inputs_missing: tuple[str, ...] = ()  # 缺失输入标注（缺失时禁止断言优化收益）
     measurement_frozen: bool = True
+    # CR-R1.1（审查项8）: 次数与 token 不再互冒充（审查实测旧 ratio 10 次恢复
+    # 与 0 次同为 0.0——numerator 恒 0 时 ratio 不可作为 A/B 主指标）
+    recovery_action_rate: float = 0.0  # RecoveryActionRate = 恢复动作数 / 决策轮数
+    token_overhead_known: bool = False  # 恢复性 token 是否真实计量（False=unknown）
 
 
-class CognitiveEfficiencyMeter:
-    """认知效率度量（spec 6.3 分子/分母口径冻结）.
+class CognitiveOverheadMeter:
+    """认知开销度量（CR-R1 5.3 更名；spec 6.3 分子/分母口径冻结）.
+
+    ratio = 恢复寄存器开销 token / 本轮总 token——**越小越好**（认知开销占比；
+    原名 EfficiencyMeter 语义反转易误读，更名后语义与读法一致）。
 
     分子（恢复寄存器开销）提取来源:
     1. action_trace 中恢复性读取动作（memory_search / search_archive / search_records /
@@ -104,14 +114,18 @@ class CognitiveEfficiencyMeter:
     """
 
     MEASUREMENT_FROZEN = True
-    # 分子动作表（冻结）: 恢复性读取——重建"我是谁/做到哪/为什么"的检索代价
-    NUMERATOR_ACTION_PREFIXES: tuple[str, ...] = (
+    # CR-R1 6.3 口径修正: 真实 trace 中恢复性读取记录为 action_type=="tool_call"
+    # 且 detail==工具名（白名单匹配），废除旧版 action_type 前缀匹配 + detail
+    # 长度/4 token 估算（工具名本身极短，长度估算无意义——按次数计数）。
+    RECOVERY_TOOLS: tuple[str, ...] = (
         "memory_search",
         "search_archive",
         "search_records",
         "state_rebuild",
         "checkpoint_replay",
     )
+    # 兼容别名（旧引用面，口径以 RECOVERY_TOOLS 为准）
+    NUMERATOR_ACTION_PREFIXES = RECOVERY_TOOLS
     DENOMINATOR_NOTE = "Σ(tokens_in+tokens_out)，含模型输入输出；工具往返结果计入 tokens_in"
 
     def measure(
@@ -133,14 +147,15 @@ class CognitiveEfficiencyMeter:
         if not usage_rows and not Path(usage_cost).exists():
             missing.append("usage_cost")
 
-        # 分子①: 恢复性读取动作 detail 估算
+        # 分子①: 恢复性读取动作计数（CR-R1 6.3: tool_call + RECOVERY_TOOLS 白名单；
+        # 废除 detail 长度/4 估算——tokens 记 0，次数为口径主体）
         retrieval_tokens = 0
         retrieval_count = 0
         for row in trace_rows:
             action = str(row.get("action_type", ""))
-            if action.startswith(self.NUMERATOR_ACTION_PREFIXES):
+            detail = str(row.get("detail", ""))
+            if action == "tool_call" and detail in self.RECOVERY_TOOLS:
                 retrieval_count += 1
-                retrieval_tokens += _estimate_tokens(str(row.get("detail", "")))
         # 分子②: 活跃 goal checkpoint 投影估算（what+next+evidence 三要素回读）
         checkpoint_tokens = 0
         active_goals = 0
@@ -160,6 +175,13 @@ class CognitiveEfficiencyMeter:
             for r in usage_rows
         )
         ratio = (numerator / denominator) if denominator > 0 else 0.0
+        # CR-R1.1（审查项8）: 次数拆独立 rate——retrieval_tokens 无真实计量（恒 0）
+        # 时不再以 0 token 冒充（token_overhead_known=False=unknown）；
+        # RecoveryActionRate = 恢复动作数/决策轮数（决策轮=usage 行数）。
+        decision_rounds = len(usage_rows)
+        recovery_action_rate = (
+            retrieval_count / decision_rounds if decision_rounds > 0 else 0.0
+        )
 
         return EfficiencyMetric(
             numerator_tokens=numerator,
@@ -167,11 +189,14 @@ class CognitiveEfficiencyMeter:
             ratio=round(ratio, 6),
             retrieval_action_count=retrieval_count,
             checkpoint_replay_tokens=checkpoint_tokens,
+            recovery_action_rate=round(recovery_action_rate, 6),
+            token_overhead_known=retrieval_tokens > 0,
             numerator_sources=(
-                f"action_trace:{retrieval_count} 条恢复性读取 ≈{retrieval_tokens} tok",
+                f"action_trace:{retrieval_count} 条恢复性读取"
+                "（token 计量 unknown，见 token_overhead_known）",
                 f"goals.jsonl:{active_goals} 活跃 goal checkpoint 投影 ≈{checkpoint_tokens} tok",
             ),
-            denominator_sources=(f"usage_cost:{len(usage_rows)} 轮 {self.DENOMINATOR_NOTE}",),
+            denominator_sources=(f"usage_cost:{decision_rounds} 轮 {self.DENOMINATOR_NOTE}",),
             inputs_missing=tuple(missing),
         )
 
@@ -285,8 +310,10 @@ class FixtureRegistry:
         used = sources[:max_sources]
         oracle = self.ORACLE_A if spec.track == "A" else self.ORACLE_B
         samples: list[Sample] = []
-        for i, src in enumerate(used):
-            for group in ("reset", "control"):
+        # CR-R1 5.1（不变量⑨）: 两阶段执行序列——Phase A 全部 control 先跑完冻结
+        # baseline → Phase B 全部 reset；同一 pair_id 配对不变，仅执行顺序调整。
+        for group in ("control", "reset"):
+            for i, src in enumerate(used):
                 samples.append(
                     Sample(
                         sample_id=f"{spec.track}-{i:03d}-{group}",
@@ -394,12 +421,12 @@ class SemanticResetBenchmark:
         *,
         preconditions: PreconditionState | None = None,
         runner: Callable[[Sample], SampleOutcome] | None = None,
-        meter: CognitiveEfficiencyMeter | None = None,
+        meter: CognitiveOverheadMeter | None = None,
         registry: FixtureRegistry | None = None,
     ) -> None:
         self._preconditions = preconditions or PreconditionState()
         self._runner = runner
-        self._meter = meter or CognitiveEfficiencyMeter()
+        self._meter = meter or CognitiveOverheadMeter()
         self._registry = registry or FixtureRegistry()
 
     def estimate_cost(self, spec: FixtureSpec) -> CostEstimate:
@@ -445,6 +472,10 @@ class SemanticResetBenchmark:
         )
         if self._runner is None:
             # dry-run: 只产计划（配对/成本/前置依赖），不产 baseline/comparison 收益结论
+            return report
+        if pending:
+            # CR-R1 5.2（不变量⑩）: 前置依赖未满足 → 硬阻断——planning_report 即终态，
+            # runner 零调用（provider_calls=0），不产出 baseline/comparison。
             return report
 
         outcomes = [self._runner(s) for s in samples]
@@ -504,7 +535,7 @@ class SemanticResetBenchmark:
 
 
 __all__ = [
-    "CognitiveEfficiencyMeter",
+    "CognitiveOverheadMeter",
     "EfficiencyMetric",
     "FixtureRegistry",
     "FixtureSpec",

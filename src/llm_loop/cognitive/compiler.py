@@ -51,6 +51,7 @@ class TieredSlot:
     content: str
     tier: ContextTier
     evidence_ref: str | None = None  # COLD 项携带 evidence://v1 引用
+    compact_repr: str = ""  # CR-R1 4.1: WARM 投影用紧凑摘要（空则首行 120 chars 截断+ref）
 
 
 @dataclass
@@ -75,12 +76,29 @@ class DecisionPacket:
         return "\n".join(lines)
 
     def render_slots(self) -> str:
-        """槽位段（tier 分段标记，err1210._AGG_SLOT_RE 同步兼容）。空槽不注入占位段。"""
+        """槽位段（tier 分段标记，err1210._AGG_SLOT_RE 同步兼容）。空槽不注入占位段。
+
+        CR-R1 4.1 真投影规则（不变量⑥⑦）：
+        - HOT  → 原文 inline（逐轮可见）
+        - WARM → compact_repr（原文零 inline）；空 compact_repr 回退首行 120 chars 截断+ref
+        - COLD → 仅 evidence ref（raw=0，不变量⑦）
+        """
         segments: list[str] = []
         for s in self.slots:
             if not s.content.strip():
                 continue  # spec 5.2.1-3 空槽不占位
-            segments.append(f"--- [tier:{s.tier.value}][slot:{s.slot_kind or 'hint'}] ---\n{s.content}")
+            if s.tier is ContextTier.HOT:
+                body = s.content  # HOT 原文 inline
+            elif s.tier is ContextTier.WARM:
+                if s.compact_repr.strip():
+                    body = s.compact_repr
+                else:
+                    first = s.content.split("\n", 1)[0][:120]
+                    ref = f"  (+ref: {s.evidence_ref})" if s.evidence_ref else ""
+                    body = first + ref
+            else:  # COLD
+                body = f"(ref: {s.evidence_ref})" if s.evidence_ref else "（内容已折叠，按需检索）"
+            segments.append(f"--- [tier:{s.tier.value}][slot:{s.slot_kind or 'hint'}] ---\n{body}")
         return "\n\n".join(segments)
 
     def render(self) -> str:
@@ -153,10 +171,40 @@ def compile_decision_packet(
             interop_seen += 1
             if interop_seen > _INTEROP_INLINE_FIRST:
                 tier = ContextTier.WARM  # 堆积折叠：首条 HOT，其余 WARM
-        packet.slots.append(TieredSlot(slot_kind=slot, content=str(content), tier=tier))
+        # CR-R1.1a: production COLD 不能只有“已折叠”提示，必须携带可执行的
+        # stable EvidenceRef。当前真实输入以 slot_kind=evidence://v1/... 表达引用；
+        # 仅对合法 scheme 自动物化，evidence_refs 等泛化槽名仍保持 None。
+        evidence_ref = (
+            str(slot)
+            if tier is ContextTier.COLD
+            and str(slot or "").lower().startswith("evidence://v1/")
+            else None
+        )
+        packet.slots.append(
+            TieredSlot(
+                slot_kind=slot,
+                content=str(content),
+                tier=tier,
+                evidence_ref=evidence_ref,
+                # CR-R1.1 批次D: WARM 槽物化 compact_repr（首行 ≤120 截断，与
+                # render_slots fallback/L195 预算口径一致）——telemetry warm_tokens
+                # 统计 compact_repr 字段，生产留空导致 warm 恒 0（glm-minimax-3
+                # 24/24 warm_active=0 第二层根因）；同时消除渲染投影与字段漂移。
+                compact_repr=(
+                    str(content).split("\n", 1)[0][:120]
+                    if tier is ContextTier.WARM
+                    else ""
+                ),
+            )
+        )
 
     if budget_chars is not None:
-        warm_chars = sum(len(s.content) for s in packet.slots if s.tier is ContextTier.WARM)
+        # CR-R1 4.1: 预算按投影后长度计（WARM 投影=compact_repr 或首行截断，非原文）
+        warm_chars = sum(
+            len(s.compact_repr.strip() or s.content.split("\n", 1)[0][:120])
+            for s in packet.slots
+            if s.tier is ContextTier.WARM
+        )
         if warm_chars > budget_chars:
             packet.slots = [s for s in packet.slots if s.tier is ContextTier.HOT]
             packet.degraded = True
