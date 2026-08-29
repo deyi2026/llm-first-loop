@@ -68,3 +68,29 @@ def test_llm_error_text_non_quota_regression():
     exc = LLMHTTPError("bad gateway", status_code=502)
     text = llm_error_text(exc)
     assert "检查网络/Key/模型名配置后重试" in text
+
+
+def test_llm_error_text_1210_structural_specialized():
+    """1210（智谱结构性触发: 尾部连续多条 user）→ 定向文案，非误导性泛化建议."""
+    exc = LLMHTTPError(
+        "HTTP 400: Bad Request",
+        status_code=400,
+        body='{"error":{"code":"1210","message":"API 调用参数有误，请检查文档。"}}',
+    )
+    text = llm_error_text(exc)
+    assert "结构性触发" in text
+    assert "非网络/Key/模型名问题" in text
+    assert "降级重试" in text
+    assert "本次未能获得回答" in text  # 如实三件套保留
+    assert "检查网络/Key/模型名配置后重试" not in text  # 不再走误导性泛化建议
+
+
+def test_llm_error_text_400_non_1210_regression():
+    """400 但非 1210（其他 provider 校验错）→ 仍走泛化反馈（零回归）."""
+    exc = LLMHTTPError(
+        "HTTP 400: Bad Request",
+        status_code=400,
+        body='{"error":{"code":"400","message":"invalid request body"}}',
+    )
+    text = llm_error_text(exc)
+    assert "检查网络/Key/模型名配置后重试" in text

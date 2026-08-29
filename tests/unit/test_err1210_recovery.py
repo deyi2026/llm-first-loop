@@ -418,6 +418,49 @@ class TestDeferStore:
         card = json.loads(hotcard_path(tmp_path).read_text(encoding="utf-8"))
         assert card["consumed"] is True and card["consumed_by"] == "sess-d1"  # hotcard 未被复位
 
+    def test_aggregated_seg_sources_restores_full_content(self, tmp_path):
+        """CR-R1.1（审查项5）: AGGREGATED defer 优先 seg_sources 恢复投影前原文.
+
+        WARM 投影把 wire 段截到 120 chars——wire 反推会把 314 chars 原文永久
+        缩水；seg_sources 是唯一恢复源（Projection 是 view 不是 Source of Truth）。
+        """
+        stub = _DeferStub(tmp_path)
+        long_interop = "I" * 300
+        long_tip = "T" * 314  # 审查实测场景：原文 314 → WARM 投影 wire 120
+        wire = (
+            "--- [tier:warm][slot:interop] ---\n" + long_interop[:120] + "\n"
+            "--- [tier:warm][slot:tip] ---\n" + long_tip[:120] + "\n"
+        )
+        entries = [
+            InjectedEntry(
+                msg_idx=0,
+                slot_kind=SlotKind.AGGREGATED,
+                prefix_sha="a" * 64,
+                seg_sources=(
+                    ("interop", long_interop),
+                    ("tip", long_tip),
+                ),
+            )
+        ]
+        messages = [{"role": "user", "content": wire}]
+        assert stub._defer_store(self._sess(), entries, messages) is True
+        # 恢复的是投影前全文，而非 wire 截断版（后 194 chars 不丢失）
+        assert stub._interop_tail_messages[0].content == long_interop
+        assert stub._tip_tail_messages[0].content == long_tip
+        assert len(stub._tip_tail_messages[0].content) == 314
+
+    def test_aggregated_fallback_wire_without_seg_sources(self, tmp_path):
+        """无 seg_sources（旧 entry/构造缺省）时 fallback wire 反推，行为兼容不变."""
+        stub = _DeferStub(tmp_path)
+        seg = "旧路径兼容段"
+        wire = "--- [slot:tip] ---\n" + seg + "\n"
+        entries = [
+            InjectedEntry(msg_idx=0, slot_kind=SlotKind.AGGREGATED, prefix_sha="a" * 64)
+        ]
+        messages = [{"role": "user", "content": wire}]
+        assert stub._defer_store(self._sess(), entries, messages) is True
+        assert stub._tip_tail_messages[0].content == seg
+
 
 class TestDeferTraceEvents:
     def test_events_written(self, tmp_path, monkeypatch):

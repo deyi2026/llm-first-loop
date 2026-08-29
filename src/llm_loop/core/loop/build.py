@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from llm_loop.core.cache_health import GATE_NOTE_CONTENT  # 门禁干预知情标记
 
@@ -40,16 +40,46 @@ from llm_loop.core.loop.hotcard import pop_hotcard, write_hotcard
 # 惰性容错导入（cognitive 子包独立演进，import 失败时聚合器回退原平铺行为）。
 try:  # noqa: SIM105
     from llm_loop.cognitive.compiler import compile_decision_packet, semantic_projection
-    from llm_loop.cognitive.state import SemanticStateStore
+    from llm_loop.cognitive.state import (
+        SemanticStateStore,
+        StateEnvelope,
+        StateIdentity,
+        rebuild_state,
+    )
+    from llm_loop.cognitive.telemetry import emit_cognitive_event
 except Exception:  # noqa: BLE001 — fail-open 回退平铺聚合（零回归）
     compile_decision_packet = None  # type: ignore[assignment]
     semantic_projection = None  # type: ignore[assignment]
+    emit_cognitive_event = None  # type: ignore[assignment]
     SemanticStateStore = None  # type: ignore[assignment]
+    StateEnvelope = None  # type: ignore[assignment]
 
 # build_session_snapshot_text 定义于 engine（loop 包内）——顶层 import 会触发
 # engine→build→loop/__init__ 循环（engine import build 在前），故用函数内延迟 import
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.prompt import build_system_prompt
+
+
+class _CogPacketEvt(TypedDict):
+    """CR-R1.1（审查项10）: packet telemetry 事件显式键型.
+
+    替代裸 dict[str, str|int] 联合——TypedDict 使 **_evt 展开时逐参数
+    类型可检（emit_cognitive_event 具名签名对齐），消除 24 处 union 报错。
+    """
+
+    data_dir: str
+    session_id: str
+    round_no: int
+    goal_id: str
+    state_revision: int
+    hot_tokens: int
+    warm_tokens: int
+    cold_ref_count: int
+    packet_tokens: int
+    mode: str
+    configured_mode: str
+    promoted: bool
+
 
 if TYPE_CHECKING:
     pass
@@ -128,6 +158,35 @@ def _tool_round_zero_tail(msgs: list[Message]) -> list[Message]:
     if group_start >= 0:  # 无 user（异常会话）→ 配对组兜底（模板可能拒, 但保协议）
         return msgs[group_start:]
     return msgs[-2:] if n >= 2 else msgs
+
+
+def _cog_allowlist_hit(settings: Any, sess: Any) -> bool:
+    """Stage 2 allowlist 求值（DESIGN-20260901 rev2 P0-1/P0-2/P1-3，fail-closed）.
+
+    任何失败（空配置/相对路径/sid 空/文件缺失/OSError/超 64KiB/超 256 条）→ False
+    （保持 shadow）。每轮 build 重读——热更语义（删行下一轮生效）；文件为
+    operator-owned 控制面授权态：仅绝对路径生效（P0-1，agent 可写目录路径语义
+    上不可信，相对路径=配置无效）。
+    """
+    try:
+        path_s = str(getattr(settings, "cog_enforce_file", "") or "")
+        if not path_s:
+            return False
+        if not os.path.isabs(path_s):  # P0-1: 相对路径=配置无效
+            return False
+        sid = str(getattr(sess, "session_id", "") or "")
+        if not sid:
+            return False
+        if os.path.getsize(path_s) > 65536:  # P1-3: 64 KiB 硬上限
+            return False
+        with open(path_s, encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+        valid = [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
+        if len(valid) > 256:  # P1-3: 256 有效条目硬上限
+            return False
+        return sid in valid
+    except Exception:  # noqa: BLE001 — P0-2: fail-closed，任何异常→shadow
+        return False
 
 
 class _BuildMixin:
@@ -818,6 +877,16 @@ class _BuildMixin:
                 self._note_defer_replayed(sess.session_id, SlotKind.GATE_NOTE)
                 _slots.discard(str(SlotKind.GATE_NOTE))
                 self._deferred_replay_slots = _slots
+        # CR-R1.1 批次D（审查项6 补全）: packet 编译输入面 = 真实注入面。memory 自
+        # EVO-20260827-f42496bc 改为一次性持久化（engine wrap+append 进
+        # sess.messages）后不再进 _inject_parts（仅 fail-open 才进，见上方
+        # fallback），但 packet 编译必须覆盖它——否则 slots 恒空、warm_tokens
+        # 恒 0（glm-minimax-3 实测 24/24 warm_active=0 的根因），shadow 无法
+        # 预演 enforce（审查项6 同构语义：shadow 与 enforce 使用同一 compiler
+        # 产物）。投影全量 memory_snapshot（每 turn 一条，多轮堆积由 compiler
+        # budget_chars 降级兜底——WARM 超界降级本身即 tier_degraded 生产可达
+        # 路径）；wire 平铺仍用 _inject_parts 原语义，持久化原文已由历史投影
+        # 带出，不重复注入。
         # DESIGN-20260828 Task Frontier: 有任务图时注入当前 frontier（程序记账/
         # 模型决策——ready/blocked/unreachable 可执行集每轮可见，替代从历史重推）。
         # fail-open: 账本不可用/无 goal/空图均不注入（零噪音，缓存友好——尾部聚合条）。
@@ -836,6 +905,13 @@ class _BuildMixin:
                     )
         except Exception:  # noqa: BLE001 — fail-open: 任务账本异常不阻断构建
             logger.debug("build: Task Frontier 注入失败（fail-open 跳过）", exc_info=True)
+        _packet_parts: list[tuple[str | None, str]] = list(_inject_parts)
+        for _m in sess.messages:
+            _md = getattr(_m, "metadata", None) or {}
+            if _md.get("injection_kind") == "memory_snapshot":
+                _c = str(getattr(_m, "content", "") or "")
+                if _c.strip():
+                    _packet_parts.append(("memory", _c))
         # ── P1 统一聚合器（9.1）: 四槽 parts → 单条 user；sidecar 单 AGGREGATED entry ──
         # 尾部连续 user 恒 ≤1（1210 结构性消除）；聚合失败 fail-open 降级零注入（不阻断构建）
         # Cognitive Runtime（tasks 2.3/2.5/2.6，spec 5.2/5.1.1-3b）:
@@ -845,23 +921,155 @@ class _BuildMixin:
         #   可用则替代否则回退（design 2.1.3.4 冻结点④）；投影=wrap_injection 的 anchor 位
         #   前导（决策包 HOT 首行，落在尾部聚合条内，不插前缀区——design 1.2.4 缓存约束）
         # - COG_RUNTIME_DUAL_SOURCE_GUARD: 检测锚点与投影同轮并存 → 告警剔除锚点（fail-open）
-        if _inject_parts:
+        # CR-R1（tasks 3.2）: enforce+semantic/auto 时空 slots 亦进块——header-only 注入
+        # （零注入安静轮 decision_visible=True，不变量⑤）；其余模式无 parts 不造空条。
+        _cog_mode_candidate = (
+            str(getattr(self.settings, "cog_runtime_mode", "shadow")).strip().lower()
+        )
+        if _cog_mode_candidate not in ("off", "shadow", "enforce"):
+            _cog_mode_candidate = "shadow"
+        # Stage 2（DESIGN-20260901 rev2）: session 级 allowlist 提升——off 硬关前置
+        # （名单不可覆盖 P0-2）；fail-closed 全语义在 _cog_allowlist_hit。
+        _cog_promoted = False
+        if _cog_mode_candidate == "shadow" and _cog_allowlist_hit(self.settings, sess):
+            _cog_mode_candidate = "enforce"
+            _cog_promoted = True
+        _cog_compute_candidate = (
+            _cog_mode_candidate in ("shadow", "enforce")
+            and str(getattr(self.settings, "cog_runtime_anchor_mode", "auto"))
+            in ("semantic", "auto")
+        )
+        # CR-R1.1a: quiet shadow 也必须进入与 enforce 同构的 cognitive compute
+        # path；否则没有四槽时 shadow 会系统性漏掉 packet/rebuild telemetry。
+        if _inject_parts or _cog_compute_candidate:
             try:
                 _anchor_mode = str(getattr(self.settings, "cog_runtime_anchor_mode", "auto"))
                 _tier_on = bool(getattr(self.settings, "cog_runtime_tier_enabled", True))
+                # CR-R1（tasks 2.2）: COG_RUNTIME_MODE 三态——off/shadow 时 cognitive
+                # 不进 prompt（anchor+平铺旧行为；shadow 保留构造计算供 telemetry，
+                # 任务 6.2 接线打点）；enforce 时按 ANCHOR_MODE/TIER_ENABLED 现行语义进 prompt。
+                _cog_mode = _cog_mode_candidate
+                # CR-R1.1（审查项6）: shadow 同构——仅 off 彻底关闭计算；shadow 完整跑
+                # load/barrier/compile/telemetry（与 enforce 同一 compiler 产物，shadow
+                # 数据可预演 enforce），仅两处进 prompt 门控（投影替代锚点 + packet
+                # 渲染）由 _cog_enforce 控制。旧行为（shadow 即跳过全部 cognitive
+                # 计算）导致 shadow 下 telemetry rows=0、无法验证 enforce。
+                _cog_enforce = _cog_mode == "enforce"
+                if _cog_mode == "off":
+                    _anchor_mode = "anchor"
+                    _tier_on = False
                 _sem_state = None
+                _env = None  # CR-R1.1: 预初始化——load 失败时 Barrier 仍走 GoalStore 重建
                 _projection = ""
+                # CR-R1.1（审查项1）: 认知运行时会话身份与任务锚点解耦——anchor_sess
+                # 是 Session 对象（build_task_anchor 专用），Cognitive 路径全部使用
+                # sess.session_id 字符串。此前混用导致 StateStore 分片对 Session 对象
+                # 切片 TypeError 被 fail-open 吞掉、语义投影静默消失（enforce 下
+                # Semantic Header 实际不工作）。
+                _cog_sid = str(getattr(sess, "session_id", "") or "")
                 if _anchor_mode in ("semantic", "auto") and SemanticStateStore is not None:
                     try:
-                        _sem_state = SemanticStateStore(
+                        _env = SemanticStateStore(
                             os.path.join(self.settings.data_dir, "audit")
-                        ).load()
+                        ).load(_cog_sid)
+                        # CR-R1（tasks 1.2）：schema v2 三态解包——仅可信信封且无墓碑
+                        # 才投影；STALE_UNTRUSTED/None/墓碑 → 不注入（宁缺勿错，spec 3.2-1）
+                        _sem_state = (
+                            _env.state
+                            if StateEnvelope is not None
+                            and isinstance(_env, StateEnvelope)
+                            and _env.tombstone is None
+                            else None
+                        )
                     except Exception:  # noqa: BLE001 — 状态读取 fail-open → 回退 anchor
                         _sem_state = None
+                    # CR-R1（tasks 3.1）+ CR-R1.1（审查项4）: Read Barrier——信封与
+                    # GoalStore 严格会话读的一致性核验，三路统一：
+                    #   信封在场且 identity 匹配 → 直接用；
+                    #   信封 mismatch/缺失/STALE_UNTRUSTED → strict 读 GoalStore：
+                    #     能安全确认 goal → rebuild+回存（envelope 缺失不再等 compact
+                    #     触发 _persist_semantic_state——冷启动首轮即建 header）；
+                    #   goal 缺失/终态/异常 → 宁缺勿错置 None（header 不注入）。
+                    # "没有 envelope"本身不是"不可信"——GoalStore 无法安全确定当前
+                    # Goal 才是不可信（审查报告 §4）。墓碑防复活由三态解包
+                    # （_sem_state=None）+ rebuild_state(终态)→None 双层保障。
+                    if (
+                        StateEnvelope is not None
+                        and rebuild_state is not None
+                    ):
+                        _env_candidate = (
+                            _env if isinstance(_env, StateEnvelope) else None
+                        )
+                        try:
+                            from llm_loop.introspection.goal import GoalStore
+
+                            _goal = GoalStore(
+                                os.path.join(self.settings.data_dir, "audit")
+                            ).get(prefer_session_id=_cog_sid, strict_session=True)
+                            if (
+                                _env_candidate is not None
+                                and _goal
+                                and _goal.get("id")
+                                and _env_candidate.identity.matches(_goal)
+                            ):
+                                pass  # 一致：信封可信，直接用
+                            elif _goal and _goal.get("id"):
+                                _rb = rebuild_state(_goal)  # 重建（终态→None 防复活）
+                                if _rb is None:
+                                    _sem_state = None  # goal 已终态：投影不可用
+                                else:
+                                    _cps = _goal.get("checkpoints") or [{}]
+                                    # CR-R1.1（审查项11）: state_revision 单调继承——
+                                    # 在场 mismatch → old+1；缺失/STALE 首建 → 1。
+                                    _prev_rev = (
+                                        _env_candidate.identity.state_revision
+                                        if _env_candidate is not None
+                                        else 0
+                                    )
+                                    _env = StateEnvelope(
+                                        identity=StateIdentity(
+                                            session_id=_cog_sid,
+                                            goal_id=str(_goal.get("id", "")),
+                                            goal_updated_at=str(_goal.get("updated_at", "")),
+                                            checkpoint_ts=str((_cps[-1] or {}).get("ts", "")),
+                                            state_revision=_prev_rev + 1,
+                                        ),
+                                        state=_rb,
+                                    )
+                                    SemanticStateStore(
+                                        os.path.join(self.settings.data_dir, "audit")
+                                    ).save(_cog_sid, _env)
+                                    _sem_state = _rb
+                                    logger.info(  # telemetry(state_rebuild)（tasks 6.2 接线）
+                                        "build: Read Barrier 不一致→重建语义状态并回存 goal=%s",
+                                        _goal.get("id"),
+                                    )
+                                    if emit_cognitive_event is not None:  # CR-R1 6.2
+                                        emit_cognitive_event(
+                                            "state_rebuild",
+                                            data_dir=self.settings.data_dir,
+                                            session_id=_cog_sid,
+                                            goal_id=str(_goal.get("id", "")),
+                                            mode=_cog_mode,  # Stage 2 P1-4 同套归因
+                                            configured_mode=str(
+                                                getattr(
+                                                    self.settings, "cog_runtime_mode", ""
+                                                )
+                                            ),
+                                            promoted=_cog_promoted,
+                                        )
+                            else:
+                                _sem_state = None  # goal 缺失→宁缺勿错（header=None）
+                        except Exception:  # noqa: BLE001 — Barrier fail-open：宁缺勿错
+                            _sem_state = None
+                            logger.debug(
+                                "build: Read Barrier 核验异常，fail-open 降级无投影",
+                                exc_info=True,
+                            )
                     if _sem_state is not None and semantic_projection is not None:
                         _projection = semantic_projection(_sem_state)
                 _anchor = build_task_anchor(self._focus.anchor_sess)
-                if _projection:
+                if _projection and _cog_enforce:  # CR-R1.1（审查项6）: shadow 投影仅度量不进 prompt
                     if _anchor and bool(
                         getattr(self.settings, "cog_runtime_dual_source_guard", True)
                     ):
@@ -869,26 +1077,109 @@ class _BuildMixin:
                             "build: 锚点与投影同轮并存，fail-open 剔除锚点（DUAL_SOURCE_GUARD）"
                         )
                     _anchor = _projection  # 投影替代锚点（演进不并存，spec 5.2.1-7）
-                elif _anchor_mode == "semantic":
+                elif _anchor_mode == "semantic" and _cog_enforce:
                     _anchor = ""  # semantic 严格态: 语义不可用不回退锚点（可观测零指针）
-                if _tier_on and compile_decision_packet is not None:
-                    _agg = compile_decision_packet(_inject_parts, _sem_state).render_slots()
+                # CR-R1（tasks 3.2）: packet 组装重构——header 先行（Barrier 通过即含投影
+                # 前导），空 slots 不抑制 header；header+slots 合并单条聚合条（header 在前，
+                # 沿 P1 形态）；header 已含投影 → anchor 位不重复注入（tier 关时投影仍占
+                # anchor 位，旧行为保留）。
+                _packet = (
+                    compile_decision_packet(
+                        _packet_parts,  # CR-R1.1 批次D: packet 输入面=真实注入面（含持久化 memory_snapshot 投影）
+                        _sem_state,
+                        # CR-R1 4.2: 生产预算接线——超上界降级仅 HOT（compiler degraded
+                        # 路径生产可达，不变量⑧）
+                        budget_chars=int(
+                            getattr(self.settings, "cog_runtime_packet_budget", 2000)
+                        ),
+                    )
+                    if _tier_on and compile_decision_packet is not None
+                    else None
+                )
+                if _packet is not None:
+                    _packet_text = _packet.render()  # header 在前 + tier 槽位（空 slots→header-only）
+                    if _cog_enforce:  # CR-R1.1（审查项6）: shadow 产物仅 telemetry 度量
+                        _agg = _packet_text
+                        _agg_anchor = _anchor if not _packet.render_header() else ""
+                    else:
+                        _agg = "\n\n".join(  # shadow: prompt 走平铺旧行为（不进投影）
+                            f"--- [slot:{s if s else 'hint'}] ---\n{c}"
+                            for s, c in _inject_parts
+                        )
+                        _agg_anchor = _anchor
+                    if emit_cognitive_event is not None:  # CR-R1 6.2: packet_compile/tier_degraded
+                        _tier_of = lambda _s: str(getattr(getattr(_s, "tier", None), "value", ""))  # noqa: E731
+                        _hot_chars = sum(
+                            len(getattr(_s, "content", "") or "")
+                            for _s in _packet.slots
+                            if _tier_of(_s) == "hot"
+                        )
+                        _warm_chars = sum(
+                            len(getattr(_s, "compact_repr", "") or "")
+                            for _s in _packet.slots
+                            if _tier_of(_s) == "warm"
+                        )
+                        _cold_n = sum(1 for _s in _packet.slots if _tier_of(_s) == "cold")
+                        # CR-R1.1（审查项7）: 归因修正——goal_id/state_revision 改从
+                        # _env.identity（StateEnvelope）取：_sem_state（SemanticTaskState）
+                        # 无 identity 属性，旧写法恒取空串；round 接 current_round_no
+                        # contextvar（engine run 循环每轮 set）；run_id 生产无来源
+                        # 留默认空（诚实归因，不编造）。
+                        _ctx_round = 0
+                        try:
+                            from llm_loop.core.run_context import current_round_no
+
+                            _ctx_round = int(current_round_no.get() or 0)
+                        except Exception:  # noqa: BLE001 — contextvar 未设按 0
+                            _ctx_round = 0
+                        _evt = _CogPacketEvt(
+                            data_dir=self.settings.data_dir,
+                            session_id=_cog_sid,
+                            round_no=_ctx_round,
+                            goal_id=str(
+                                getattr(getattr(_env, "identity", None), "goal_id", "") or ""
+                            ),
+                            state_revision=int(
+                                getattr(getattr(_env, "identity", None), "state_revision", 0)
+                                or 0
+                            ),
+                            hot_tokens=_hot_chars // 4,
+                            warm_tokens=_warm_chars // 4,
+                            cold_ref_count=_cold_n,
+                            packet_tokens=len(_packet_text) // 4,
+                            mode=_cog_mode,  # Stage 2 P1-4: effective mode（含 allowlist 提升）
+                            configured_mode=str(
+                                getattr(self.settings, "cog_runtime_mode", "")
+                            ),
+                            promoted=_cog_promoted,
+                        )
+                        emit_cognitive_event("packet_compile", **_evt)
+                        if getattr(_packet, "degraded", False):
+                            emit_cognitive_event("tier_degraded", **_evt)
                 else:
                     _agg = "\n\n".join(
                         f"--- [slot:{s if s else 'hint'}] ---\n{c}"
                         for s, c in _inject_parts
                     )
-                _agg_content = wrap_injection(_agg, _anchor)
-                built.append({"role": "user", "content": _agg_content})
-                # err1210 9.1: 聚合登记（单 entry；strip/defer 消费端经 AGGREGATED 分支）
-                self._last_build_injections.append(
-                    InjectedEntry(
-                        msg_idx=len(built) - 1,
-                        slot_kind=SlotKind.AGGREGATED,
-                        prefix_sha=content_prefix_sha(_agg_content),
-                        message_ref=None,
+                    _agg_anchor = _anchor  # 平铺路径：投影/锚点经 anchor 位（旧行为）
+                if _agg.strip():
+                    _agg_content = wrap_injection(_agg, _agg_anchor)
+                    built.append({"role": "user", "content": _agg_content})
+                    # err1210 9.1: 聚合登记（单 entry；strip/defer 消费端经 AGGREGATED 分支）
+                    # CR-R1.1（审查项5）: seg_sources 携带投影前原始段——defer 恢复
+                    # 不从 wire 反推（WARM 投影截断会永久丢失原文）。
+                    self._last_build_injections.append(
+                        InjectedEntry(
+                            msg_idx=len(built) - 1,
+                            slot_kind=SlotKind.AGGREGATED,
+                            prefix_sha=content_prefix_sha(_agg_content),
+                            message_ref=None,
+                            seg_sources=tuple(
+                                (str(_k), _c) for _k, _c in _inject_parts
+                            ),
+                        )
                     )
-                )
+                # 空 slots 且无 header：安静轮零注入（不造空条、不登记）
             except Exception:  # noqa: BLE001 — 聚合失败 fail-open（零注入降级 + WARN）
                 logger.warning(
                     "build: 尾部注入聚合失败，本轮零注入降级（fail-open）", exc_info=True
