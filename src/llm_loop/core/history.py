@@ -552,6 +552,11 @@ def _apply_reasoning_tail(
     体积显著减小且不影响事实完整性；不修改原消息（仅提交视图瘦身）。
 
     - reasoning_tail <= 0 → 保留全部（向后兼容，零回归）
+    - reasoning_tail == -2 → 全省略档（2026-08-29 镜像本地模型复读修复）：所有
+      assistant reasoning_content 一律省略（含 tool_calls 轮）。THK-04 是云端
+      provider（deepseek/glm）协议约束（不回传则 400）；本地端点（mlx_lm.server
+      等 OpenAI 兼容）无此校验，回传 tool_calls 轮思考链反而强化弱模型自模仿复读
+      （实证 68fed5f5 会话：5 轮 tool_calls reasoning 收敛复读不发散）。
     - reasoning_tail == -1 → 方案 A（2026-08-20 从 backup/20260819-after-3am 重新应用，
       思考链 token 治理——占请求 ~60%）：仅【携带 tool_calls 的 assistant 消息】保留
       reasoning_content（协议必需，M20 THK-04: 携带 tool_calls 必须回传否则 400），
@@ -563,6 +568,14 @@ def _apply_reasoning_tail(
     """
     from dataclasses import replace
 
+    if reasoning_tail == -2:
+        # 全省略档：含 tool_calls 轮（本地/无 THK-04 约束端点用）
+        return [
+            replace(m, reasoning_content=None)
+            if m.role == "assistant" and m.reasoning_content
+            else m
+            for m in messages
+        ]
     if reasoning_tail == -1:
         out: list[Message] = []
         for m in messages:
@@ -617,6 +630,34 @@ def _is_injected_system(m: Message) -> bool:
         return True
     content = m.content or ""
     return any(content.startswith(p) for p in _INJECTED_SYSTEM_PREFIXES)
+
+
+# 漂移修复（2026-08-29 会话 68fed5f5 实证）: user 通道注入块前缀——程序注入的
+# [上下文注入]/[声明提醒]/[相关记忆] 等块非用户真实指令，任务锚点保护时须排除。
+_INJECTED_USER_PREFIXES = (
+    "[上下文注入",
+    "[声明提醒",
+    "[声明提示",
+    "[声明-回执校验",
+    "[相关记忆",
+    "[经验提示",
+    "[模型切换感知",
+    "[架构上报",
+    "[预算预警",
+    "[搜索空结果提醒",
+    "[程序反馈",
+)
+
+
+def _is_injected_block(m: Message) -> bool:
+    """user 消息是否为程序注入块（漂移修复 2026-08-29）.
+
+    判定依据: 内容前缀（存量会话消息无 metadata 标记，与会话实测注入块标头对齐）。
+    """
+    if m.role != "user":
+        return False
+    content = (m.content or "").lstrip()
+    return any(content.startswith(p) for p in _INJECTED_USER_PREFIXES)
 
 
 def build_history_messages(
@@ -904,6 +945,19 @@ def build_history_messages(
             atomic_groups.append([m])
             i += 1
 
+    # 漂移修复（2026-08-29 会话 68fed5f5 实证）: 任务锚点保护——最后一条真实用户
+    # 指令（非注入块）所在组起、到最新端的组强制保留，不参与归档。实证机制: 用户
+    # 任务指令在会话早段（如第 13 条），预算超载折叠按最老端连续折把任务指令归档，
+    # 残余上下文 68% 为注入块（[相关记忆]/[声明提醒] 含身份话题），本地弱模型被
+    # 带偏答非所问。保护代价: 锚点组穿透 archive_budget（最多多保留锚点组+其后本
+    # 就保留的组），远小于任务锚点丢失的漂移代价；极端场景（锚点组超大仍超限）由
+    # engine 侧规则 F BLOCK 兜底，不在此破坏配对原子性。
+    _anchor_group_idx: int | None = None
+    for _gi in range(len(atomic_groups) - 1, -1, -1):
+        if any(mm.role == "user" and not _is_injected_block(mm) for mm in atomic_groups[_gi]):
+            _anchor_group_idx = _gi
+            break
+
     kept_groups: list[list[Message]] = []
     archived: list[Message] = []
     # EVO-20260816-380f1c2e（缓存友好压缩）: 归档目标从"裁到预算上限"改为"裁到预算×0.6 留缓冲"。
@@ -965,7 +1019,12 @@ def build_history_messages(
         kept_groups = list(atomic_groups[head_count:])
         _fold_left = progressive_fold
         _fold_count = 0
+        _next_group_idx = head_count  # kept_groups 首组对应的原列表索引（锚点保护用）
         while kept_groups:
+            if _anchor_group_idx is not None and _next_group_idx >= _anchor_group_idx:
+                # 任务锚点保护（漂移修复 2026-08-29）: 首组已达锚点组——剩余组全在
+                # 保护边界内，停止折叠（穿透预算保留，锚点丢失代价 > 超限 BLOCK 兜底）
+                break
             _kept_chars = sum(_wire_size(mm) for g in kept_groups for mm in g)
             _total_now = len(system_prompt) + head_chars + _kept_chars
             if cache_archive_provider:
@@ -988,7 +1047,8 @@ def build_history_messages(
     else:
         _fold_cap = 0
         _fold_count = 0
-        for group in reversed(atomic_groups[head_count:]):
+        for _gi in range(len(atomic_groups) - 1, head_count - 1, -1):
+            group = atomic_groups[_gi]
             group_len = sum(_wire_size(mm) for mm in group)
             if _fold_cap > 0 and _fold_count >= _fold_cap:
                 # 已达渐进折叠上限: 评估保留后是否 ≤95% 预算——是则保留（平滑停折）;
@@ -999,7 +1059,13 @@ def build_history_messages(
                     archive_budget -= group_len
                     continue
                 # 超限兜底: 落入下方归档分支（不因 K 上限而拒绝归档）
-            if archive_budget - group_len < 0 and kept_groups:
+            if (
+                archive_budget - group_len < 0
+                and kept_groups
+                and not (_anchor_group_idx is not None and _gi >= _anchor_group_idx)
+            ):
+                # 漂移修复（2026-08-29）: 保护边界内（锚点组起）不归档——穿透预算
+                # 保留任务锚点，锚点丢失代价 > 超限 BLOCK 兜底
                 archived.extend(group)  # 整组归档（配对原子性：不拆散）
                 if _fold_cap > 0:
                     _fold_count += 1

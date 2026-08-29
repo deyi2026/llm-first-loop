@@ -611,7 +611,9 @@ def test_compact_ratio_preemptive_compression():
     预算 10000，history 9500（95%）——1.0 不压（<10000），0.9 压（>9000）.
     预压缩只归档旧消息（消息数减少），最新消息在预算内不截断（平滑整理不打断推理）.
     """
-    msgs = [_m("user", "旧消息" + "y" * 500), _m("assistant", "x" * 8900)]
+    # 锚点保护（2026-08-29 漂移修复）适配: 首条改为注入块前缀——注入块不构成任务
+    # 锚点、不受保护、归档行为不变；若为真实用户指令则成锚点、保护阻止其被归档（预期行为）
+    msgs = [_m("user", "[相关记忆] 旧消息" + "y" * 500), _m("assistant", "x" * 8900)]
     # 默认 1.0: 95% 未超限 → 不压缩
     out_full = build_history_messages(msgs, system_prompt="SYS", max_chars=10000)
     assert not any("[上下文压缩]" in str(m.get("content", "")) for m in out_full)
@@ -652,3 +654,48 @@ def test_compacted_out_reports_real_budget_compression_only():
     long = [Message(role="user", content="x" * 2000, source=MessageSource.USER)]
     build_history_messages(long, "SYS", max_chars=500, compacted_out=box)
     assert box == [True]
+
+
+def test_anchor_protects_last_real_user_on_compaction():
+    """漂移修复 2026-08-29（会话 68fed5f5 实证）: 预算超载折叠保留最后一条真实用户消息.
+
+    场景复现: 锚点（真实用户任务指令）在早段，其后全是注入块；预算超载时原逻辑
+    从预算边界外把锚点一并归档 → 残余上下文只剩注入块 → 本地弱模型答非所问。
+    修复后: 锚点组穿透预算强制保留。
+    """
+    archived: list[Message] = []
+    msgs = [
+        _m("user", "很老的早期历史" + "A" * 400),  # 组0: 预算耗尽后归档
+        _m("user", "请分析这篇头条文章的内容"),  # 组1: ← 任务锚点（最后一条真实用户指令）
+        _m("user", "[相关记忆] 注入噪声" + "D" * 150),  # 组2: 锚点后保护
+        _m("user", "[声明提醒] 注入噪声" + "E" * 150),  # 组3: 锚点后保护
+    ]
+
+    def sink(session_id: str, msg: Message) -> None:
+        archived.append(msg)
+
+    out = build_history_messages(
+        msgs, system_prompt="SYS", max_chars=250, session_id="s1", archive_sink=sink
+    )
+    contents = [str(m.get("content", "")) for m in out]
+    assert any("请分析这篇头条文章" in c for c in contents), "任务锚点必须穿透预算保留在提交里"
+    assert any("很老的早期历史" in str(x.content) for x in archived), "锚点前的旧历史仍正常归档"
+
+
+def test_no_real_user_message_all_injected_still_compacts():
+    """零回归: 全注入块会话（无真实用户指令）无锚点保护对象，压缩行为不变."""
+    archived: list[Message] = []
+    msgs = [
+        _m("user", "[上下文注入] 块A" + "A" * 300),
+        _m("user", "[相关记忆] 块B" + "B" * 200),
+        _m("user", "[声明提醒] 块C" + "C" * 200),
+    ]
+
+    def sink(session_id: str, msg: Message) -> None:
+        archived.append(msg)
+
+    out = build_history_messages(
+        msgs, system_prompt="SYS", max_chars=400, session_id="s2", archive_sink=sink
+    )
+    assert archived, "无锚点场景归档照常发生（零回归）"
+    assert len(out) >= 1

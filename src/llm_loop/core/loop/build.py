@@ -259,6 +259,29 @@ def _cog_allowlist_hit(settings: Any, sess: Any) -> bool:
         return False
 
 
+def _reasoning_tail_for(settings: Any) -> int:
+    """M66 端点适配（2026-08-29 镜像本地模型复读修复）：-1 档遇本地端点升级 -2.
+
+    THK-04（tool_calls 轮必须回传 reasoning 否则 400）是云端 provider 协议
+    约束；本地端点（mlx_lm.server 等 OpenAI 兼容服务）无此校验——对本地回传
+    tool_calls 轮思考链反而强化弱模型自模仿复读（实证镜像会话 68fed5f5：
+    5 轮 reasoning 收敛复读不发散）。其余档位原样透传（0=全保留/N 轮窗口）。
+    """
+    tail = getattr(settings, "reasoning_tail", 0)
+    if tail != -1:
+        return tail
+    base = str(getattr(settings, "llm_base_url", "") or "")
+    try:
+        from urllib.parse import urlparse
+
+        host = (urlparse(base).hostname or "").lower()
+    except Exception:  # noqa: BLE001 — 解析失败按非本地（保守：云端协议约束优先）
+        return tail
+    if host in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+        return -2
+    return tail
+
+
 class _BuildMixin:
     def _post_run_cache_health(
         self,
@@ -642,7 +665,7 @@ class _BuildMixin:
             # 2026-08-20 回滚修复: 移除悬空 tool_tail 参数——history.py 的
             # build_history_messages() 不接受该参数（3点基线无此功能，config 恒为 0），
             # 回滚后每次对话 TypeError；参数支持在 backup/20260819-after-3am 分支
-            reasoning_tail=getattr(self.settings, "reasoning_tail", 0),  # M66 思考链瘦身（T-P0-1-1 默认 0=全保留）
+            reasoning_tail=_reasoning_tail_for(self.settings),  # M66 思考链瘦身 + 2026-08-29 端点适配（本地端点 -1→-2 全省略：THK-04 仅云端约束）
             # P1-7/spec §5.3.1-5（2026-08-18 审计断点归因绝对化）: 推送式注入（架构上报/
             # 预算预警/轮数预警/声明提醒/自我评估提醒/快照）一律不进提交视图——不再受
             # provider inject_system_notices 开关影响（原按 provider 放行 → 注入消息转 user
@@ -1283,7 +1306,7 @@ class _BuildMixin:
                     "tool_tail": getattr(
                         self.settings, "tool_tail", 0
                     ),  # EVO-20260818-f675796c: tail 窗口
-                    "reasoning_tail": getattr(self.settings, "reasoning_tail", 0),
+                    "reasoning_tail": _reasoning_tail_for(self.settings),
                     "skip_injected_system": True,  # spec §5.3.1-5: 推送式注入一律不进提交
                     "extract_interval_msgs": getattr(self.settings, "extract_interval_msgs", 20),
                     # Phase5: manifest changes are legitimate projection changes, not nondeterminism.

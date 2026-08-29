@@ -162,8 +162,12 @@ class DeclarationValidator:
                         f"声明: {decl}（近 {self._recent_window} 轮回执命中: {cross}）"
                     )
                 else:
+                    # 漂移修复（2026-08-29 会话 68fed5f5 实证）: 回执样本就近取样——
+                    # 原 receipts[:3] 取最早回执（本轮首个工具），漂移轮被最早轮的
+                    # model_catalog（身份话题）样本直接诱导复读"系统状态"。取最新
+                    # 3 条（[-3:]）让提醒贴近当前动作，旧话题文本引用体积同步最小化。
                     discrepancies.append(
-                        f"声明: {decl} — 但本轮及近 {self._recent_window} 轮回执中均未见对应成功记录（回执: {receipts[:3] or '无'}）"
+                        f"声明: {decl} — 但本轮及近 {self._recent_window} 轮回执中均未见对应成功记录（回执: {receipts[-3:] or '无'}）"
                     )
 
         # 本轮成功回执滚入近 N 轮窗口（供下轮跨轮引用补证）
