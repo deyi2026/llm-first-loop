@@ -378,6 +378,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         _run_end_reason = "completed"
         _run_started_at = time.monotonic()
         self._reset_overflow_state()  # R4: 每次 run 重置 overflow 注入计数
+        self._err1210_run_begin()  # 修复A: per-run 降级机会（attempted 键 = run seq）
         self._focus.reset()  # 2026-08-22 单向切换锁定重置
         model_used = ""  # M51: 本轮实际使用的模型标签（每轮 LLM 调用时刷新）
         tokens_in = 0  # M52: 本次 run 累计 prompt tokens
@@ -774,6 +775,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                         final_answer = llm_error_text(exc)
                         resp = None  # 程序反馈不得继承上一轮成功响应的 reasoning（GPT 审计 P0：stale reasoning 嫁接）
                         self._err1210_note_defer_lost(session_id, "fallback_exhausted")  # 二阶失败观测
+                        self._err1210_note_request_count(session_id, len(messages))  # 修复B: 失败轮也更新骤降数据源
                         break
                 elif not _e1210_recovered:
                     # 严格模式 / 非降级错误 → 如实反馈（DFX-REL-02）
@@ -783,6 +785,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                     final_answer = llm_error_text(exc)
                     resp = None  # 程序反馈不得继承上一轮成功响应的 reasoning（GPT 审计 P0：stale reasoning 嫁接）
                     self._err1210_note_defer_lost(session_id, "llm_error")  # 二阶失败观测（spec 5.1.3-5）
+                    self._err1210_note_request_count(session_id, len(messages))  # 修复B: 失败轮也更新骤降数据源
                     break
 
             if _cancelled_during_llm:
@@ -792,7 +795,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 break
 
             self._record_action("action.llm_decide", "llm_response", self._resp_summary(resp))
-            self._err1210_note_request_count(session_id, len(messages))  # T4.2: 骤降兜底数据源（仅成功轮更新，语义见 err1210.py）
+            self._err1210_note_request_count(session_id, len(messages))  # T4.2: 骤降兜底数据源（成功+失败轮均更新——修复B，语义见 err1210.py）
             # M52: 聚合本轮 token 用量（含 fallback 成功响应；0 = provider 未提供）
             tokens_in += resp.prompt_tokens
             tokens_out += resp.completion_tokens

@@ -568,18 +568,19 @@ class _Err1210Mixin:
         try:
             if not is_err1210(exc):
                 return result
-            if not self._is_compact_first_request(sess, messages):
-                return result
-            seq = getattr(self, "_compact_event_seq", 0)
+            # 修复A: 门禁移除——任意 1210 均尝试降级（原"compact 首请求"边界外的
+            # 场景: 注入叠加尾部连续 user 的非 compact 轮，主区 883b4725 实证）。
+            # compact_first 降级为快照标记信号（真实判定），不再作触发门禁。
+            seq = getattr(self, "_err1210_run_seq", 0)
             attempted = getattr(self, "_err1210_attempted", None) or {}
             if attempted.get(session_id) == seq:
-                # 本 compact 事件内已耗尽（spec 5.1.1-4：单次重试防循环）
+                # 本 run 内已尝试（单次重试防循环，per-run 语义）
                 result.attempted = True
                 result.exhausted = True
                 return result
             result.attempted = True
 
-            compact_first = True
+            compact_first = self._is_compact_first_request(sess, messages)
             model_ref = (
                 chat_model_arg
                 or getattr(llm_client, "model", "")
@@ -755,6 +756,17 @@ class _Err1210Mixin:
         """
         self._err1210_attempted: dict[str, int] = {}
         self._last_request_msg_count_by_session: dict[str, int] = {}
+        # 修复A（2026-08-29 用户批准 B+A 组合）: per-run 降级机会序号。
+        self._err1210_run_seq: int = 0
+
+    def _err1210_run_begin(self) -> None:
+        """engine 每 run 入口调用（对齐 _reset_overflow_state 先例）: run seq 递增.
+
+        attempted 键语义从"compact 事件 seq"迁移为"run seq"——非 compact 轮的
+        1210（注入叠加尾部连续 user 形态，主区 883b4725 实证）同样获得一次
+        降级机会；每 run 至多一次，防循环语义不劣化。
+        """
+        self._err1210_run_seq = getattr(self, "_err1210_run_seq", 0) + 1
 
     def _err1210_attempt_recovery(
         self,
@@ -800,8 +812,10 @@ class _Err1210Mixin:
             self._last_build_defer_replayed = False
 
     def _err1210_note_request_count(self, session_id: str, msg_count: int) -> None:
-        """骤降兜底判定数据源（tasks 4.2）: 仅成功轮更新本会话最近请求消息数.
+        """骤降兜底判定数据源（tasks 4.2 + 修复B 2026-08-29）: 成功与失败轮均更新.
 
-        失败轮不更新——P0 判定读到的 prev 恒为上一次成功请求，骤降语义正确。
+        原语义"仅成功轮更新"存在死锁式失效：连续失败轮越多，prev 越陈旧，
+        骤降判定越不可能触发（主区 883b4725 三连败实证）。失败轮也更新后
+        prev 恒为最近一次请求，骤降语义即"相邻两次请求"如实反映。
         """
         self._last_request_msg_count_by_session[session_id] = msg_count
