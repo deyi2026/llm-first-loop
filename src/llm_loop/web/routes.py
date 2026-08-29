@@ -717,8 +717,21 @@ def list_models(request: Request) -> dict:
 
 @router.get("/health")
 def health() -> dict:
-    """健康检查：纯服务层探活，不调用 LLM、不含凭证."""
-    return {"status": "ok", "service": SERVICE_NAME, "version": SERVICE_VERSION}
+    """健康检查：纯服务层探活，不调用 LLM、不含凭证.
+
+    R3: runtime 字段读回启动时落盘的 manifest 摘要（身份+配置指纹）——
+    跨区污染诊断（module_repo_root 指向哪个区、端口对不对）秒级完成。
+    health_identity() 读回而非实时 compute（identity 含 git subprocess，探活高频不可跑）；
+    fail-open：manifest 缺失时返回空 identity 仍可诊断。
+    """
+    from llm_loop.runtime.manifest import health_identity
+
+    return {
+        "status": "ok",
+        "service": SERVICE_NAME,
+        "version": SERVICE_VERSION,
+        "identity": health_identity(),
+    }
 
 
 @router.get("/api/v1/architecture_status")
@@ -1739,6 +1752,12 @@ def upload_file(payload: UploadRequest, request: Request) -> UploadResponse | Re
 # ── 出产物文件预览（Web V2 对齐 DSH deliverables：编辑的文件可点击打开） ──
 _PREVIEW_ROOT = Path(__file__).resolve().parents[3]  # 项目根（与 _ui_v2_dir 同模式）
 _PREVIEW_MAX_CHARS = 200_000  # 预览上限（超限截断提示，不整读）
+_PREVIEW_IMAGE_MAX_BYTES = 5 * 1024 * 1024  # 图片预览上限（超限拒绝，如实提示）
+_PREVIEW_IMAGE_MIME = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+}
 
 
 @router.get("/api/v1/files/preview")
@@ -1805,6 +1824,63 @@ def preview_file(request: Request, path: str) -> Response:
             status_code=400,
             content={"error": "out_of_bounds", "detail": "路径越出项目根，已拒绝。"},
         )
+    # 目录 → 单层列表预览（对齐 fs/tree 语义：文档/文件夹/文件皆可点开浏览）
+    if target.is_dir():
+        try:
+            dirs, files = [], []
+            for p in sorted(target.iterdir(), key=lambda q: q.name.lower()):
+                if p.name.startswith(".") or p.name == "__pycache__":
+                    continue
+                if p.is_dir():
+                    dirs.append(p.name)
+                elif p.is_file():
+                    files.append({"name": p.name, "size": p.stat().st_size})
+        except OSError as exc:
+            logger.exception("file preview dir list failed: path=%s", path)
+            return UTF8JSONResponse(
+                status_code=403,
+                content={"error": "dir_unreadable", "detail": f"目录不可读（{type(exc).__name__}）。"},
+            )
+        # parent 相对根返回（根自身/根外 → "."；前端据此隐藏"返回上级"）
+        try:
+            rel_parent = str(target.parent.relative_to(root_resolved)) or "."
+        except ValueError:
+            rel_parent = "."
+        return UTF8JSONResponse(
+            content={
+                "type": "dir",
+                "path": path,
+                "parent": rel_parent,
+                "dirs": dirs[:500],
+                "files": files[:500],
+            }
+        )
+    # 图片 → base64 内联预览（≤5MB；前端 data:image/ URI 渲染，img 上下文不执行脚本）
+    mime = _PREVIEW_IMAGE_MIME.get(target.suffix.lower())
+    if mime:
+        import base64
+        try:
+            blob = target.read_bytes()
+        except OSError as exc:
+            logger.exception("file preview image read failed: path=%s", path)
+            return UTF8JSONResponse(
+                status_code=500,
+                content={"error": "read_failed", "detail": f"[程序异常] 读取失败（{type(exc).__name__}）。"},
+            )
+        if len(blob) > _PREVIEW_IMAGE_MAX_BYTES:
+            return UTF8JSONResponse(
+                status_code=413,
+                content={"error": "image_too_large", "detail": f"图片 {len(blob)} 字节超预览上限 5MB。"},
+            )
+        return UTF8JSONResponse(
+            content={
+                "type": "image",
+                "path": path,
+                "size": len(blob),
+                "mime": mime,
+                "content_base64": base64.b64encode(blob).decode("ascii"),
+            }
+        )
     if not target.is_file():
         return UTF8JSONResponse(
             status_code=404,
@@ -1821,6 +1897,7 @@ def preview_file(request: Request, path: str) -> Response:
     truncated = len(raw) > _PREVIEW_MAX_CHARS
     return UTF8JSONResponse(
         content={
+            "type": "text",
             "path": path,
             "size": len(raw),
             "truncated": truncated,

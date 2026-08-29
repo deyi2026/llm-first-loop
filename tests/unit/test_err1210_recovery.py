@@ -656,26 +656,26 @@ class TestEngineRecovery:
         assert "defer 回放的协调" in content[:i_active], "defer 内容未在活跃段之前"
 
     def test_second_1210_no_third_retry(self, tmp_path, monkeypatch):
-        """T5.4a: 连续两次 1210 → 第二次不再重发（耗尽上抛，spec 5.1.1-4a）."""
+        """T5.4a: 恢复机会一次性——三链路耗尽后不再第四发（spec 5.1.1-4a，f8e106d 口径）."""
         engine, fake = _mk(
             tmp_path, monkeypatch,
-            responses=[_e1210(), _e1210(), _resp("不该出现")],
+            responses=[_e1210(), _e1210(), _e1210(), _resp("不该出现")],
         )
         sid = engine.session.create()
         _arm_compact_first(engine, sid)
         engine._cache_monitor._get_bucket(sid).gate_note_pending = True
         result = engine.run(sid, "长任务继续")
-        assert len(fake.calls) == 2  # 原请求 + 1 次重试，无第三次
+        assert len(fake.calls) == 3  # 原始+blind+strip/raw 耗尽；每 run 机会一次，第四不发生
         assert "[LLM 调用异常]" in (result.final_answer or "")  # 如实反馈（llm_error）
         assert "不该出现" not in (result.final_answer or "")
 
     def test_no_trigger_without_compact(self, tmp_path, monkeypatch):
-        """T5.3a: 非 compact 场景 1210 不触发剥离（保持现行行为）."""
-        engine, fake = _mk(tmp_path, monkeypatch, responses=[_e1210()])
+        """T5.3a: 非 compact 场景 1210 不触发剥离（R9 语义更新: 续跑兜底一次）."""
+        engine, fake = _mk(tmp_path, monkeypatch, responses=[_e1210(), _e1210()])
         sid = engine.session.create()
         # 不武装骤降、无 compact 标记
         result = engine.run(sid, "普通任务")
-        assert len(fake.calls) == 1  # 无重试
+        assert len(fake.calls) == 2  # 无恢复素材 → 恢复链未触发；R9 续跑兜底一轮后终止
         assert "[LLM 调用异常]" in (result.final_answer or "")
 
     def test_no_trigger_on_unparseable_400(self, tmp_path, monkeypatch):
@@ -702,18 +702,18 @@ class TestEngineRecovery:
         """T5.4d: 新 run 后降级机会重获（修复A per-run 语义，原 compact 事件口径）."""
         engine, fake = _mk(
             tmp_path, monkeypatch,
-            responses=[_e1210(), _e1210(), _e1210(), _resp("第三次成功")],
+            responses=[_e1210(), _e1210(), _e1210(), _e1210(), _resp("第三次成功")],
         )
         sid = engine.session.create()
         _arm_compact_first(engine, sid)
         engine._cache_monitor._get_bucket(sid).gate_note_pending = True  # 需有注入登记可供剥离
-        engine.run(sid, "任务")  # 原请求 + 重试 1210 → 耗尽（2 次调用）
-        assert len(fake.calls) == 2
+        engine.run(sid, "任务")  # f8e106d blind-first: 原始+blind+strip(剥gate_note) 3 次耗尽
+        assert len(fake.calls) == 3
         # 修复A: 新 run 自动重获降级机会（run seq 递增，无需手动 compact 事件）
         _arm_compact_first(engine, sid)
         engine._cache_monitor._get_bucket(sid).gate_note_pending = True
         result = engine.run(sid, "新压缩后继续")
-        assert len(fake.calls) == 4  # 新 run → 再次降级（第 3 次调用 1210 + 第 4 次成功）
+        assert len(fake.calls) == 5  # run2: 原始 1210(4) + blind 恢复成功(5)——rearm 生效
         assert "第三次成功" in result.final_answer
 
     def test_second_order_failure_records_event(self, tmp_path, monkeypatch):
@@ -724,15 +724,15 @@ class TestEngineRecovery:
         """
         engine, fake = _mk(
             tmp_path, monkeypatch,
-            responses=[_e1210(), _resp(), _e1210(), _e1210()],
+            responses=[_e1210(), _resp(), _e1210(), _e1210(), _e1210()],
         )
         sid = engine.session.create()
         _arm_compact_first(engine, sid)
         engine._cache_monitor._get_bucket(sid).gate_note_pending = True
-        engine.run(sid, "任务A")  # 第一 run: 恢复成功
+        engine.run(sid, "任务A")  # 第一 run: blind(第2次)恢复成功，共 2 次调用
         # defer 回存完成；第二 run: build 重注入 gate_note（defer_replayed）
-        engine.run(sid, "任务B")  # 第 3 次调用 1210 → 新 run 降级 → 第 4 次仍 1210 → 耗尽
-        assert len(fake.calls) == 4
+        engine.run(sid, "任务B")  # run2: 原始(3)+blind(4)+strip(5) 均 1210 → 耗尽
+        assert len(fake.calls) == 5
         # 二阶失败: 重试仍 1210（每 run 至多一次降级）
         # defer_lost_on_reinject 已记录
         trace = Path(os.environ.get("LFL_DATA_DIR", "data")) / "audit" / "defer_trace.jsonl"
@@ -760,16 +760,16 @@ class TestEngineRecovery:
         """修复B: 失败轮也更新骤降数据源（旧语义死锁式失效——连续失败 prev 越陈旧）."""
         engine, fake = _mk(
             tmp_path, monkeypatch,
-            responses=[_e1210(), _e1210()],
+            responses=[_e1210(), _e1210(), _e1210()],
         )
         sid = engine.session.create()
         engine._cache_monitor._get_bucket(sid).gate_note_pending = True
         result = engine.run(sid, "任务")
-        assert len(fake.calls) == 2  # 重试 1 次仍 1210 → 耗尽
+        assert len(fake.calls) == 3  # 原始+blind+raw-fallback 耗尽 break（与 R9 互斥，不再续跑）
         assert "[LLM 调用异常]" in (result.final_answer or "")
-        # 修复B: llm_error break 前已更新（engine 侧本轮原 messages 的量）
+        # 修复B: llm_error break 前已更新——msg_count 对齐失败轮原始 messages 量
         assert engine._last_request_msg_count_by_session.get(sid) == len(
-            fake.calls[0]["messages"]
+            fake.calls[2]["messages"]
         )
 
 
@@ -876,8 +876,9 @@ class TestLlmErrorBranchesClearResp:
         src = (Path(__file__).resolve().parents[2] / "src/llm_loop/core/loop/engine.py").read_text(
             encoding="utf-8"
         )
-        # 锚点用分支内独特语句（"llm_error" 字符串在文件更早处出现，不可作锚）
-        matches = list(re.finditer(r"final_answer = llm_error_text\(exc\)", src))
+        # 锚点用分支内独特语句（"llm_error" 字符串在文件更早处出现，不可作锚）；
+        # 2026-08-29 拆块后两分支收敛为 _e1210_llm_error_finalize 调用（语义等价）
+        matches = list(re.finditer(r"final_answer = self\._e1210_llm_error_finalize\(", src))
         assert len(matches) >= 2, f"llm_error 分支应 ≥2 处（fallback_exhausted/llm_error），实际 {len(matches)}"
         for m in matches:
             window = src[m.end() : m.end() + 300]

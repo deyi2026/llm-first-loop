@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from llm_loop.llm.errors import LLMError, LLMHTTPError, parse_provider_error_code
+from llm_loop.core.message import Message, MessageSource
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -814,6 +815,8 @@ class _Err1210Mixin:
         self._last_request_msg_count_by_session: dict[str, int] = {}
         # 修复A（2026-08-29 用户批准 B+A 组合）: per-run 降级机会序号。
         self._err1210_run_seq: int = 0
+        # R9（2026-08-29 用户需求「1210 自动继续」）: 程序化重发计数（每 run 限 1 次）
+        self._auto_continue_1210: int = 0
 
     def _err1210_run_begin(self) -> None:
         """engine 每 run 入口调用（对齐 _reset_overflow_state 先例）: run seq 递增.
@@ -823,6 +826,8 @@ class _Err1210Mixin:
         降级机会；每 run 至多一次，防循环语义不劣化。
         """
         self._err1210_run_seq = getattr(self, "_err1210_run_seq", 0) + 1
+        # R9: 每 run 重置程序化重发计数（防循环语义）
+        self._auto_continue_1210 = 0
 
     def _err1210_attempt_recovery(
         self,
@@ -866,6 +871,53 @@ class _Err1210Mixin:
                 "defer_lost_on_reinject", session_id, "all", {"reason": reason}
             )
             self._last_build_defer_replayed = False
+
+    def _err1210_try_auto_continue(self, exc: Exception, sess: Any) -> bool:
+        """R9（2026-08-29 用户需求「1210 自动继续」）: 恢复链未覆盖路径的续跑兜底.
+
+        1210 实证「下一轮上下文重建后通常自愈」（wire 归档/注入消费状态变化——
+        20:28 实测尾部 user=1 亦 1210、下一轮 build 即成功），程序化「用户重发」：
+        注入续跑消息由 engine continue 一轮（每 run 限 1 次防循环；续跑轮再失败
+        走原终止路径如实反馈，绝不静默吞错）。ERR1210_RECOVERY=0 完全旁路
+        （与恢复链同门，T5.3c）。
+        """
+        try:
+            if getattr(self, "_auto_continue_1210", 0) >= 1:
+                return False
+            if not is_err1210(exc):
+                return False
+            if os.environ.get("ERR1210_RECOVERY", "1") != "1":
+                return False
+        except Exception:  # noqa: BLE001 — 判定失败不阻断原路径
+            return False
+        self._auto_continue_1210 = 1
+        self._record_action(
+            "llm_call",
+            "auto_continue_1210",
+            "1210 恢复链耗尽，程序化重发（注入续跑消息 continue 一轮）",
+        )
+        _cont_msg = Message(
+            role="user",
+            content=(
+                "[程序续跑] 上一轮 LLM 调用 1210（恢复链耗尽）。"
+                "已自动等效重发（上下文已重建）。请继续当前任务，"
+                "勿重复已完成动作，勿重新声明已交付内容。"
+            ),
+            source=MessageSource.SYSTEM,
+        )
+        sess.messages.append(_cont_msg)
+        self._append_message_event(sess, _cont_msg)  # D1: 系统注入消息事件（fail-open）
+        return True
+
+    def _e1210_llm_error_finalize(
+        self, session_id: str, exc: Exception, msg_count: int, defer_reason: str
+    ) -> str:
+        """llm_error 终止前置（fallback_exhausted / llm_error 两处共用）: 观测收敛 + 反馈文本."""
+        from llm_loop.feedback.honesty import llm_error_text
+
+        self._err1210_note_defer_lost(session_id, defer_reason)  # 二阶失败观测（spec 5.1.3-5）
+        self._err1210_note_request_count(session_id, msg_count)  # 修复B: 失败轮也更新骤降数据源
+        return llm_error_text(exc)
 
     def _err1210_note_request_count(self, session_id: str, msg_count: int) -> None:
         """骤降兜底判定数据源（tasks 4.2 + 修复B 2026-08-29）: 成功与失败轮均更新.

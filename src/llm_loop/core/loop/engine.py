@@ -70,6 +70,7 @@ from llm_loop.llm.client import GuardRequestContext, LLMClient, StreamDelta
 from llm_loop.llm.errors import LLMError
 from llm_loop.memory.store import MemoryStore
 from llm_loop.tools.registry import ToolRegistry
+from llm_loop.tools.prefix_layer import LayeredPrefixState, build_layered_schemas  # GOAL-20260829-7483e375 T2
 
 logger = logging.getLogger(__name__)
 
@@ -249,6 +250,8 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         from llm_loop.core.loop.focus import TaskFocusState
 
         self._focus = TaskFocusState()
+        # GOAL-20260829-7483e375 T2: 分层前缀动态层状态（会话级只增不减，保前缀缓存稳定）
+        self._prefix_state = LayeredPrefixState()
         # EVO-20260818（spec §5.4.1-3 注记，grill-me C1）: 模型切换检测——每轮对比实际
         # 模型，变化时 reset cache_health 窗口（防跨模型归因污染）
         self._cache_last_model: str | None = None  # 最近活跃模型（兼容诊断；切换判定不再用全局值）
@@ -475,7 +478,19 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             self._kpi_accumulate_inject()
             if getattr(self, "_last_history_compacted", False):
                 truncation_noted = True
-            tool_schemas = self.registry.schemas(lazy=self.settings.tool_schema_lazy)
+            if getattr(self.settings, "prefix_layered", False):
+                # GOAL-20260829-7483e375 T2: 分层前缀——锚层（Top8 全量+80字符索引）
+                # + 动态层（任务文本检索，只增不减）；设计 docs/local/DESIGN-PREFIX-LAYERED-20260829.md
+                task_text = ""
+                for _m in messages:
+                    if _m.get("role") == "user":
+                        task_text = str(_m.get("content", ""))
+                        break
+                tool_schemas = build_layered_schemas(
+                    self.registry, task_text, self._prefix_state
+                )
+            else:
+                tool_schemas = self.registry.schemas(lazy=self.settings.tool_schema_lazy)
             # EVO-20260817 本地模型工具精简（用户需求）: local provider 只注入
             # 固化白名单核心工具（固定前缀稳定 + prefill 大减），完整目录按需读取。
             tool_schemas = self._filter_local_tools(tool_schemas, planned_label)
@@ -769,23 +784,19 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                         )
                     else:
                         # 链全失败 → 已注入汇总提示, 走原异常如实反馈路径
-                        from llm_loop.feedback.honesty import llm_error_text
-
                         _run_end_reason = "llm_error"
-                        final_answer = llm_error_text(exc)
+                        final_answer = self._e1210_llm_error_finalize(
+                            session_id, exc, len(messages), "fallback_exhausted"
+                        )
                         resp = None  # 程序反馈不得继承上一轮成功响应的 reasoning（GPT 审计 P0：stale reasoning 嫁接）
-                        self._err1210_note_defer_lost(session_id, "fallback_exhausted")  # 二阶失败观测
-                        self._err1210_note_request_count(session_id, len(messages))  # 修复B: 失败轮也更新骤降数据源
                         break
                 elif not _e1210_recovered:
                     # 严格模式 / 非降级错误 → 如实反馈（DFX-REL-02）
-                    from llm_loop.feedback.honesty import llm_error_text
-
+                    if self._err1210_try_auto_continue(exc, sess):  # R9 续跑兜底（每 run 限 1 次，err1210.py）
+                        continue
                     _run_end_reason = "llm_error"
-                    final_answer = llm_error_text(exc)
+                    final_answer = self._e1210_llm_error_finalize(session_id, exc, len(messages), "llm_error")
                     resp = None  # 程序反馈不得继承上一轮成功响应的 reasoning（GPT 审计 P0：stale reasoning 嫁接）
-                    self._err1210_note_defer_lost(session_id, "llm_error")  # 二阶失败观测（spec 5.1.3-5）
-                    self._err1210_note_request_count(session_id, len(messages))  # 修复B: 失败轮也更新骤降数据源
                     break
 
             if _cancelled_during_llm:
