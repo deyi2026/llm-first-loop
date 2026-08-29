@@ -18,6 +18,20 @@ import pytest
 from llm_loop.core.message import ToolCall
 from llm_loop.llm.client import LLMResponse
 
+# ── calib/screening 系测试依赖 data/calib/*.json 运行时数据（.gitignore 设计不入库）──
+# CI checkout 无 data/ 时整体跳过收集，避免 collection error / FileNotFoundError；
+# 本地有数据则照常收集执行（b4eb4f8 单文件 guard 方案的推广，覆盖全部 8 个文件）。
+_CALIB_DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "calib"
+collect_ignore: list[str] = []
+if not _CALIB_DATA_DIR.exists():
+    _unit_dir = Path(__file__).resolve().parent / "unit"
+    collect_ignore = [
+        str(p.relative_to(Path(__file__).resolve().parent))
+        for p in sorted(_unit_dir.glob("test_calib_*.py"))
+    ]
+    if (_unit_dir / "test_screening_s_runner.py").exists():
+        collect_ignore.append("unit/test_screening_s_runner.py")
+
 # ── M64 测试环境污染全局防御（pytest 收集前执行）──
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _REAL_DATA_DIR = str((_PROJECT_ROOT / "data").resolve())
