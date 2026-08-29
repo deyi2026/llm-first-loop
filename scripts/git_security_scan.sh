@@ -51,6 +51,7 @@ _ALLOWLIST=(
   'docs/local/'                          # 本地过程文档（不入库，此处兜底）
   'docs/MIRROR-workspace-protocol.md' # 镜像协议文档（合法引用工作区路径，非泄露）
     "tests/unit/test_cache_guard.py"  # 缓存守卫测试样例（sk- 模式用例）
+  'skills/mirror-restart/SKILL.md'  # 镜像重启标准操作技能（命令需绝对路径，同镜像协议文档先例，非泄露）
 )
 
 # macOS/Linux 兼容的 stat 大小
