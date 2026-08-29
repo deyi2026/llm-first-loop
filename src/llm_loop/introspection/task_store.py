@@ -18,11 +18,11 @@ import os
 import re
 import threading
 from collections import deque
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ class Task:
         return asdict(self)
 
     @staticmethod
-    def from_dict(d: dict) -> "Task":
+    def from_dict(d: dict) -> Task:
         t = Task(
             task_id=str(d.get("task_id", "")),
             goal_id=str(d.get("goal_id", "")),
