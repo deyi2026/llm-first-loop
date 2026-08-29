@@ -9,6 +9,10 @@ from scripts.calib.h2_scorer import score_run_h2
 
 _H1C_BANK_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "calib" / "h1c_control_bank.json"
 
+if not _H1C_BANK_PATH.exists():
+    # CI checkout 无 data/ 运行时数据（.gitignore 设计），h2_scorer 模块级读取会炸 collection
+    pytest.skip("data/calib/h1c_control_bank.json 不存在（CI 无运行时 calib 数据）", allow_module_level=True)
+
 
 def _result(seed: str, answer: str, sources: list[str] | None = None, reasoning: str | None = None) -> dict:
     trace = [
