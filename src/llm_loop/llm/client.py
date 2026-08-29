@@ -262,6 +262,14 @@ def _maybe_rotate_trace_file(path: str) -> str:
     return path
 
 
+_PREFIX_TRACE_STATE: dict[tuple[str, str], list[tuple[str, int]]] = {}
+"""FR-3 前缀命中埋点状态: (session_id, model) → 上轮 wire 消息序列 [(wire哈希, chars)].
+
+进程内增量比对（NFR-2: O(消息数) 非 O(全字节)）；trace 行落盘后供离线与
+usage.cached_tokens 对齐分析。不落盘自身（进程重启冷启动=首轮无理论值，正常）。
+"""
+
+
 def _trace_payload_fingerprint(
     payload: dict[str, Any], messages: list[dict], *, session_id: str, provider: str, model: str
 ) -> None:
@@ -340,6 +348,23 @@ def _trace_payload_fingerprint(
                 for i, m in enumerate(messages)
             ],
         }
+        # FR-3 前缀命中埋点（EVO-20260829-06c96021/SDD-20260830）: 与上轮 wire 消息
+        # 序列逐位比对（哈希不等即断点）→ 公共前缀消息数与字节和。core 自检不变式：
+        # 理论前缀命中 ≈ 实测 cached_tokens（偏离即结构破损——离线对齐 usage 分析）。
+        # 消息级粒度（消息内字节变化→断于该消息前，二分可细化）；fail-open。
+        try:
+            _key = (session_id, model)
+            _cur = [(mm["w"], mm["chars"]) for mm in record["msgs"]]
+            _prev = _PREFIX_TRACE_STATE.get(_key)
+            if _prev is not None:
+                k = 0
+                while k < len(_cur) and k < len(_prev) and _cur[k][0] == _prev[k][0]:
+                    k += 1
+                record["prefix_hit_msgs"] = k
+                record["prefix_hit_chars"] = sum(c for _, c in _cur[:k])
+            _PREFIX_TRACE_STATE[_key] = _cur
+        except Exception:  # noqa: BLE001 — 埋点 fail-open
+            pass
         # GPT 审计批次3: 默认路径跟 LFL_DATA_DIR（测试隔离不再污染生产 data/audit）
         path = os.environ.get(
             "LLM_PAYLOAD_TRACE_PATH",
