@@ -452,6 +452,42 @@ def test_goal_implicit_get_allows_new_valid_after_older_corrupt_record(tmp_path,
     assert any("较旧损坏行" in record.message for record in caplog.records)
 
 
+# ── CR-R1.1: strict_session 严格会话读（审查项2：跨会话 Goal 污染回归）──
+
+
+def test_get_strict_session_no_cross_session_fallback(tmp_path):
+    """CR-R1.1 回归：strict 读禁止跨会话回退——A 看不到 B 的 active goal.
+
+    审查实测：A 无候选 + B active 时旧版 get(prefer_session_id=A) 返回 B 的
+    active goal（全局回退链），且 B 的 objective 随后写入 A 的语义分片。
+    """
+    store = _store(tmp_path)
+    gb = store.create("B 活跃目标", session_id="session-B")
+
+    # strict：A 会话读不到 B 的 active（宁缺勿错，不变量①）
+    got = store.get(prefer_session_id="session-A", strict_session=True)
+    assert got is None
+    # 默认（恢复性读取）保持全局回退语义不变——B 的 active 可见
+    relaxed = store.get(prefer_session_id="session-A")
+    assert relaxed is not None and relaxed["id"] == gb.id
+    # strict 下本会话 active 可见
+    own = store.get(prefer_session_id="session-B", strict_session=True)
+    assert own is not None and own["id"] == gb.id
+
+
+def test_get_strict_session_prefers_own_latest_over_foreign_active(tmp_path):
+    """CR-R1.1: strict 下 preferred latest（本会话终态）优先于全局 active."""
+    store = _store(tmp_path)
+    ga = store.create("A 已完成目标", session_id="session-A")
+    store.update(ga.id, "complete")
+    store.create("B 活跃目标", session_id="session-B")
+
+    got = store.get(prefer_session_id="session-A", strict_session=True)
+    # 返回的是 A 自己的（终态）而非 B 的 active；rebuild_state 对终态返回
+    # None → header 不注入（宁缺勿错），不会把 B 的目标投影进 A 的 prompt。
+    assert got is not None and got["id"] == ga.id
+
+
 
 def test_checkpoint_goal_reports_corruption_when_target_may_be_malformed(tmp_path):
     """checkpoint目标未命中但文件有坏行时，不能误报不存在/非active。"""

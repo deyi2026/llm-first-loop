@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 from collections.abc import Callable
+from datetime import UTC
 from typing import Any
 
 from llm_loop.core.message import Message, MessageSource, ToolCall
@@ -216,21 +217,69 @@ def _persist_semantic_state(session_id: str = "") -> bool:
     （尾部聚合条内），代码演进不并存（spec 5.1.1-3b）。
     fail-open: GoalStore 不可用/无活跃 goal/损坏 → False（不阻断压缩主流程）。
     audit 路径 = LFL_DATA_DIR（镜像/跨区隔离锚点）或 data/（主区默认）。
+    CR-R1（tasks 2.2）: COG_RUNTIME_MODE=off 时短路——连 store 写也不做（纯旧行为）。
     """
+    import os as _os_mod
+    if _os_mod.environ.get("COG_RUNTIME_MODE", "shadow").strip().lower() == "off":
+        return False
+    # CR-R1.1a: Semantic State 是会话级认知寄存器；缺失会话身份时禁止
+    # 退化到 GoalStore 全局恢复语义，避免 compact 边界把他会 Goal 写入当前 shard。
+    if not session_id:
+        return False
     try:
         import os
-        from pathlib import Path as _P
+        from datetime import datetime
+        from pathlib import Path as _Path
 
-        from llm_loop.cognitive.state import SemanticStateStore, rebuild_state
+        from llm_loop.cognitive.state import (
+            SemanticStateStore,
+            StateEnvelope,
+            StateIdentity,
+            Tombstone,
+            rebuild_state,
+        )
         from llm_loop.introspection.goal import GoalStore
 
         base = os.environ.get("LFL_DATA_DIR", "data")
-        audit = _P(base) / "audit"
-        goal = GoalStore(audit).get(prefer_session_id=session_id)
+        audit = _Path(base) / "audit"
+        goal = GoalStore(audit).get(
+            prefer_session_id=session_id, strict_session=True
+        )
+        store = SemanticStateStore(audit)
         state = rebuild_state(goal)
         if state is None:
+            # spec 4.1-3 墓碑：goal 终态（complete/blocked）→ 对现存分片打 tombstone，
+            # 不删除（供审计）；无 goal 时保留旧分片不覆盖（原语义）。
+            if goal and str(goal.get("status", "")) in ("complete", "blocked"):
+                old = store.load(session_id)
+                if isinstance(old, StateEnvelope) and old.tombstone is None:
+                    old.tombstone = Tombstone(
+                        reason=f"goal_{str(goal.get('status', ''))}",
+                        ts=datetime.now(UTC).isoformat(),
+                    )
+                    store.save(session_id, old)
             return False  # 无活跃 goal：不覆盖既有状态文件（保留旧指针）
-        SemanticStateStore(audit).save(state)
+        if goal is None:
+            # CR-R1.1（审查项10 pyright 归零）: 有 state 无 goal——identity 无从派生
+            # （宁缺勿错，同上语义不覆盖）；显式收窄 Optional，替代原先 .get 隐式
+            # AttributeError→except 兜底（行为等价：均 return False）。
+            return False
+        cps = goal.get("checkpoints") or []
+        identity = StateIdentity(
+            session_id=session_id or "_",
+            goal_id=str(goal.get("id", "")),
+            goal_updated_at=str(goal.get("updated_at", "")),
+            checkpoint_ts=str((cps[-1] or {}).get("ts", "")) if cps else "",
+        )
+        old = store.load(session_id)
+        if isinstance(old, StateEnvelope):
+            # revision 语义：源未变（identity matches）保留；源变更 +1（design §2.1）
+            identity.state_revision = (
+                old.identity.state_revision
+                if old.identity.matches(goal)
+                else old.identity.state_revision + 1
+            )
+        store.save(session_id, StateEnvelope(identity=identity, state=state))
         return True
     except Exception:
         import logging
@@ -250,14 +299,18 @@ def _decision_line_frame(session_id: str = "") -> str:
     全路径 fail-open: GoalStore 不可用/无活跃 goal → 空串省略（禁阻塞压缩主流程）。
     audit 路径 = LFL_DATA_DIR（镜像/跨区隔离锚点）或 data/（主区默认）。
     """
+    if not session_id:
+        return ""
     try:
         import os
-        from pathlib import Path as _P
+        from pathlib import Path as _Path
 
         from llm_loop.introspection.goal import GoalStore
 
         base = os.environ.get("LFL_DATA_DIR", "data")
-        g = GoalStore(_P(base) / "audit").get(prefer_session_id=session_id)
+        g = GoalStore(_Path(base) / "audit").get(
+            prefer_session_id=session_id, strict_session=True
+        )
         if not g or g.get("status") != "active":
             return ""
         obj = str(g.get("objective", ""))
