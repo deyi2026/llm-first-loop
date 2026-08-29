@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -221,15 +222,134 @@ def promote_ephemeral(state: SemanticTaskState) -> list[str]:
     return durable
 
 
+@dataclass
+class Tombstone:
+    """终态退役标记（spec 4.1-3）：goal complete/blocked 后禁止任何投影复活。"""
+
+    reason: str
+    ts: str
+
+    def to_dict(self) -> dict:
+        return {"reason": self.reason, "ts": self.ts}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> Tombstone:
+        return cls(reason=str(data.get("reason", "")), ts=str(data.get("ts", "")))
+
+
+def _source_digest(goal_id: str, goal_updated_at: str, checkpoint_ts: str) -> str:
+    """identity 源摘要（sha256 前 12 位）：goal + checkpoint 变更即变（design §2.1）。"""
+    payload = f"{goal_id}|{goal_updated_at}|{checkpoint_ts}".encode()
+    return hashlib.sha256(payload).hexdigest()[:12]
+
+
+@dataclass
+class StateIdentity:
+    """state schema v2 身份头（spec 4.1-1）：会话隔离 + Read Barrier 比对键。"""
+
+    session_id: str
+    goal_id: str
+    goal_updated_at: str
+    checkpoint_ts: str
+    state_revision: int = 1
+    source_digest: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.source_digest:
+            self.source_digest = _source_digest(self.goal_id, self.goal_updated_at, self.checkpoint_ts)
+
+    def to_dict(self) -> dict:
+        return {
+            "session_id": self.session_id,
+            "goal_id": self.goal_id,
+            "goal_updated_at": self.goal_updated_at,
+            "checkpoint_ts": self.checkpoint_ts,
+            "state_revision": self.state_revision,
+            "source_digest": self.source_digest,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> StateIdentity:
+        return cls(
+            session_id=str(data.get("session_id", "")),
+            goal_id=str(data.get("goal_id", "")),
+            goal_updated_at=str(data.get("goal_updated_at", "")),
+            checkpoint_ts=str(data.get("checkpoint_ts", "")),
+            state_revision=int(data.get("state_revision", 1) or 1),
+            source_digest=str(data.get("source_digest", "")),
+        )
+
+    def matches(self, goal: dict) -> bool:
+        """Read Barrier 一致性键：session + goal.id + goal.updated_at + 最新 checkpoint ts.
+
+        CR-R1.1: 补 session_id 比对——不变量①要求信封与 goal 同会话；goal 缺
+        session_id 字段（旧格式）视为不匹配，触发一次 rebuild 后回到稳态。
+        """
+        if not goal:
+            return False
+        if str(goal.get("session_id", "")) != self.session_id:
+            return False
+        if str(goal.get("id", "")) != self.goal_id:
+            return False
+        if str(goal.get("updated_at", "")) != self.goal_updated_at:
+            return False
+        cps = goal.get("checkpoints") or []
+        latest_ts = str((cps[-1] or {}).get("ts", "")) if cps else ""
+        return latest_ts == self.checkpoint_ts
+
+
+@dataclass
+class StateEnvelope:
+    """state schema v2 信封：identity 头 + 墓碑 + 语义状态体（design §2.1）。"""
+
+    identity: StateIdentity
+    tombstone: Tombstone | None = None
+    state: SemanticTaskState | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "identity": self.identity.to_dict(),
+            "tombstone": self.tombstone.to_dict() if self.tombstone else None,
+            "state": self.state.to_dict() if self.state else None,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> StateEnvelope:
+        identity_raw = data.get("identity")
+        if not isinstance(identity_raw, dict):
+            raise ValueError("envelope missing identity header")
+        tombstone_raw = data.get("tombstone")
+        state_raw = data.get("state")
+        return cls(
+            identity=StateIdentity.from_dict(identity_raw),
+            tombstone=Tombstone.from_dict(tombstone_raw) if isinstance(tombstone_raw, dict) else None,
+            state=SemanticTaskState.from_dict(state_raw) if isinstance(state_raw, dict) else None,
+        )
+
+
+class _StaleUntrusted:
+    """旧无头 state.yaml 的哨兵标记：不可信 → 调用方应 rebuild（design §2.1 迁移）。"""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return "STALE_UNTRUSTED"
+
+
+STALE_UNTRUSTED = _StaleUntrusted()
+
+
 def rebuild_state(goal: dict | None, version: SemanticStateVersion | None = None) -> SemanticTaskState | None:
     """从 GoalStore.get() 返回的 goal dict 派生 SemanticTaskState（design 2.1.3.1）。
 
-    - Goal 为空/非 active → None（无状态可派生）。
+    - Goal 为空/**非 active（complete/blocked 终态）** → None（spec 4.1-3 墓碑前置检查）。
     - fail-closed: 调用方应先经 GoalStore.get() 读取——其抛出的 GoalStoreCorruptionError
       已含损坏文件路径+行范围，本函数不吞该异常（调用方据此保留既有状态）。
     - 空 what checkpoint 回退上一有效 checkpoint + warn（spec 5.1.3-2）。
     """
     if not goal:
+        return None
+    if str(goal.get("status", "")) in ("complete", "blocked"):
         return None
     objective = str(goal.get("objective", "")).strip()
     if not objective:
@@ -254,47 +374,91 @@ def rebuild_state(goal: dict | None, version: SemanticStateVersion | None = None
 
 
 class SemanticStateStore:
-    """语义状态 YAML(JSON) 持久化（原子写 + flock，复用 GoalStore 模式）。
+    """语义状态 YAML(JSON) 持久化（schema v2，按会话分片；原子写 + flock，复用 GoalStore 模式）。
 
-    持久化路径 = ``<audit_dir>/cognitive/state.yaml``（audit_dir 与 GoalStore 同源，如 data/audit）。
-    无状态文件时 load() 返回 None，由 rebuild_state 派生初始化（design 2.3.1）。
+    分片路径 = ``<audit_dir>/cognitive/state.<sha16>.yaml``（sha16=sha256(session_id)[:16]，CR-R1.1 升级 64-bit 碰撞域）——
+    会话写竞争隔离，Session A 物理上读不到 B 的分片（spec 4.1-1 不变量①）。
+    旧全局 ``state.yaml``（无 identity 头）→ load 返回 STALE_UNTRUSTED，调用方 rebuild 后
+    写入新分片（零手工迁移；旧文件留存不再读，供审计）。
+    无分片且无遗留 → load 返回 None，由 rebuild_state 派生初始化。
     """
 
     def __init__(self, audit_dir: str | Path) -> None:
         self._dir = Path(audit_dir) / "cognitive"
-        self._path = self._dir / "state.yaml"
+        self._legacy_path = self._dir / "state.yaml"
+
+    def path_for(self, session_id: str) -> Path:
+        """会话分片路径（不变量①：按 sid 分片隔离）。"""
+        # CR-R1.1: 分片键改 sha256[:16]（64-bit）——sid8 仅 32-bit 碰撞域，前缀相同
+        # 的不同会话会共享分片文件（审查实测可互读）。旧 sid8 路径不再读取，
+        # 缺失走 rebuild 派生（安全方向：宁缺勿错）。
+        shard = hashlib.sha256((session_id or "_").encode("utf-8")).hexdigest()[:16]
+        return self._dir / f"state.{shard}.yaml"
 
     @property
     def path(self) -> Path:
-        return self._path
+        """向后兼容诊断入口：无会话语义的默认分片。"""
+        return self.path_for("")
 
-    def load(self) -> SemanticTaskState | None:
-        if not self._path.exists():
+    def load(self, session_id: str) -> StateEnvelope | None | _StaleUntrusted:
+        """按会话读取语义状态信封（schema v2）。
+
+        返回三态：StateEnvelope（含墓碑标记时由调用方决定不投影）/ None（无状态）/
+        STALE_UNTRUSTED（旧无头遗留不可信 → 调用方 rebuild）。
+        """
+        p = self.path_for(session_id)
+        if not p.exists():
+            if self._legacy_path.exists():
+                raw_legacy = self._legacy_path.read_text(encoding="utf-8").strip()
+                if raw_legacy:
+                    logger.info(
+                        "检测到旧全局语义状态（无 identity 头），视为不可信触发 rebuild: %s",
+                        self._legacy_path,
+                    )
+                    return STALE_UNTRUSTED
             return None
-        raw = self._path.read_text(encoding="utf-8").strip()
+        raw = p.read_text(encoding="utf-8").strip()
         if not raw:
             return None
         try:
-            return SemanticTaskState.from_dict(json.loads(raw))
-        except (json.JSONDecodeError, ValueError):
-            logger.warning("语义状态文件损坏，load 返回 None（由 rebuild_state 派生）: %s", self._path)
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning("语义状态分片损坏，load 返回 None（由 rebuild 派生）: %s", p)
             return None
+        try:
+            env = StateEnvelope.from_dict(data)
+        except ValueError:
+            logger.warning("语义状态分片缺 identity 头，视为不可信（STALE_UNTRUSTED）: %s", p)
+            return STALE_UNTRUSTED
+        if env.identity.session_id != (session_id or ""):
+            # CR-R1.1: 分片身份校验——shard 碰撞/污染（读到他会的 state）不得直接
+            # 返回，降级 STALE_UNTRUSTED 走 rebuild 派生（宁缺勿错）。
+            logger.warning(
+                "语义状态分片会话身份不匹配（shard 污染/碰撞）→ STALE_UNTRUSTED: %s "
+                "envelope_sid=%r requested=%r",
+                p,
+                env.identity.session_id,
+                session_id,
+            )
+            return STALE_UNTRUSTED
+        return env
 
-    def save(self, state: SemanticTaskState) -> None:
+    def save(self, session_id: str, envelope: StateEnvelope) -> None:
+        p = self.path_for(session_id)
         self._dir.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps(state.to_dict(), ensure_ascii=False)
-        with self._file_lock():
-            self._atomic_rewrite(payload)
+        payload = json.dumps(envelope.to_dict(), ensure_ascii=False)
+        with self._file_lock(p):
+            self._atomic_rewrite(payload, p)
 
-    def _atomic_rewrite(self, payload: str) -> None:
+    def _atomic_rewrite(self, payload: str, path: Path) -> None:
         """原子提交（tmp+fsync+rename，对齐 goal.py:272-297）；reader 只见旧/新，不见半写。"""
-        tmp = self._dir / f".{self._path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+        tmp = self._dir / f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp"
         try:
             with tmp.open("w", encoding="utf-8") as f:
                 f.write(payload + "\n")
                 f.flush()
                 os.fsync(f.fileno())
-            os.replace(tmp, self._path)
+            os.replace(tmp, path)
             dir_fd: int | None = None
             try:
                 flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
@@ -312,9 +476,9 @@ class SemanticStateStore:
                 logger.debug("语义状态临时文件清理失败: %s", tmp, exc_info=True)
 
     @contextmanager
-    def _file_lock(self) -> Iterator[None]:
+    def _file_lock(self, path: Path) -> Iterator[None]:
         """跨进程写锁（flock），对齐 goal.py:299-329；仅锁获取失败时 fail-open。"""
-        lock_path = self._path.with_suffix(self._path.suffix + ".lock")
+        lock_path = path.with_suffix(path.suffix + ".lock")
         try:
             import fcntl
         except ImportError:
@@ -368,7 +532,7 @@ class ResetResult:
     first_miss_expected: bool = False  # 清空会触发缓存前缀重建 → 预期首 miss
     # Cognitive Runtime（tasks 3.3）: 清空后的最小 Durable 状态（供 A/B 编排 reset 组
     # 重建会话使用；字段只增不改，design 2.3.1 兼容策略）
-    cleared: "SemanticTaskState | None" = None
+    cleared: SemanticTaskState | None = None
 
 
 class SemanticResetController:
@@ -389,7 +553,6 @@ class SemanticResetController:
                 metric_before=metric_before,
                 metric_after=metric_before,
             )
-        snapshot = state.to_dict()
         try:
             # spec 4.2-1/4.3-1/5.1.1-5a: 不因 reset 丢失已确认事实与硬约束——
             # 清空的是累积认知负担（Ephemeral 假设等），硬约束/已确认事实属"不丢"半边

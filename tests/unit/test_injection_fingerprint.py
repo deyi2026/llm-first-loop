@@ -67,7 +67,7 @@ def _slot_re(slot: str) -> re.Pattern[str]:
 
 # 黄金摘要（P1 9.1 聚合形态；Cognitive Runtime tasks 2.3 tier 段标记升级后 2026-08-28 实测重算;
 # 注入槽结构变更时此值失配 → 红灯）
-_GOLDEN_TAIL_DIGEST = "a9457e7e8211f08c3886fad1263cbe270341c43e8994001d1c4bedabddc2de90"
+_GOLDEN_TAIL_DIGEST = "19f395eb9425f2beb578fb852d1456f504dc560ab818233991d82584c06ebb0a"
 
 
 def _engine(tmp_path: Path):
@@ -157,8 +157,14 @@ def _assert_red_light(engine, sess, *, what: str, **arm_kwargs) -> None:
 
 class TestGoldenFingerprint:
     def test_golden_tail_morphology(self, tmp_path):
-        """P1 9.1 聚合形态: 尾部 1 条聚合 user（memory+四槽段标记，wrap 包装，段序恒定）."""
+        """P1 9.1 聚合形态: 尾部 1 条聚合 user（memory+四槽段标记，wrap 包装，段序恒定）.
+
+        CR-R1（tasks 2.2）后默认 MODE=shadow（平铺+锚点旧行为），黄金摘要锚定的是
+        生产 enforce 形态（tier 聚合），故本用例显式切 enforce 后再构建。
+        """
         engine, sess = _engine(tmp_path)
+        # Settings 为 frozen dataclass，经 object.__setattr__ 切 enforce（绕过冻结检查）
+        object.__setattr__(engine.settings, "cog_runtime_mode", "enforce")
         memory_msgs = _arm_all_slots(engine, sess)
         out = _build(engine, sess, memory_msgs)
         tail = out[-1:]
