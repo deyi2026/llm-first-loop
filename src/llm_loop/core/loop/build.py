@@ -161,12 +161,20 @@ def _tool_round_zero_tail(msgs: list[Message]) -> list[Message]:
 
 
 def _cog_allowlist_hit(settings: Any, sess: Any) -> bool:
-    """Stage 2 allowlist 求值（DESIGN-20260901 rev2 P0-1/P0-2/P1-3，fail-closed）.
+    """Stage 2 allowlist 求值（review R3 fail-closed 强化版）.
 
-    任何失败（空配置/相对路径/sid 空/文件缺失/OSError/超 64KiB/超 256 条）→ False
-    （保持 shadow）。每轮 build 重读——热更语义（删行下一轮生效）；文件为
-    operator-owned 控制面授权态：仅绝对路径生效（P0-1，agent 可写目录路径语义
-    上不可信，相对路径=配置无效）。
+    任何失败（空配置/相对路径/sid 空/文件缺失/OSError/超 64KiB/超 256 条/
+    运行用户可写/非 UTF-8/任意有效行非法 session_id）→ False（保持 shadow）。
+    每轮 build 重读——热更语义（删行下一轮生效）。
+
+    P0-1 R3: operator-owned 边界运行时验证——运行用户对文件可写即视为
+    控制面不可信（self-promote 攻击链闭合点：agent 可写文件+可见路径）。
+    绝对路径是必要非充分条件；root 运行时 os.access 恒真，须配合只读
+    挂载/容器部署（见 DESIGN 部署约束）。
+    P0-2 R3: all-valid-or-no-promotion——任意非注释有效行非法（非单个
+    文件名组件/路径穿越/NUL）→ 整份名单 False，不静默跳过坏行。
+    P1-3 R3: bounded read（read(65537) 硬界）——stat 后无界 read 的
+    TOCTOU 免疫，最多读 65537B；严格 UTF-8 decode。
     """
     try:
         path_s = str(getattr(settings, "cog_enforce_file", "") or "")
@@ -177,11 +185,22 @@ def _cog_allowlist_hit(settings: Any, sess: Any) -> bool:
         sid = str(getattr(sess, "session_id", "") or "")
         if not sid:
             return False
-        if os.path.getsize(path_s) > 65536:  # P1-3: 64 KiB 硬上限
+        if os.access(path_s, os.W_OK):  # P0-1 R3: 运行用户可写=控制面越界
             return False
-        with open(path_s, encoding="utf-8") as fh:
-            lines = fh.read().splitlines()
-        valid = [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
+        with open(path_s, "rb") as fh:  # P1-3 R3: bounded read 硬界
+            raw = fh.read(65537)
+        if len(raw) > 65536:
+            return False
+        text = raw.decode("utf-8")  # 非 UTF-8 → UnicodeDecodeError → False
+        from llm_loop.core.session import _validate_session_id
+
+        valid: list[str] = []
+        for ln in text.splitlines():
+            s = ln.strip()
+            if not s or s.startswith("#"):
+                continue
+            _validate_session_id(s)  # P0-2 R3: 非法 raise → 整份名单 False
+            valid.append(s)
         if len(valid) > 256:  # P1-3: 256 有效条目硬上限
             return False
         return sid in valid

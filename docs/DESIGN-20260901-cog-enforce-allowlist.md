@@ -8,7 +8,7 @@
 
 | # | 约束 | 实施 |
 |---|---|---|
-| P0-1 | 名单=control-plane authorization state，operator-owned；不得位于 agent 可写目录（data/audit、workspace）——防 self-promotion | 路径语义: 仅绝对路径生效；推荐 ~/.config/lfl/ 或 /etc/lfl/（进程外 operator 目录）。**相对路径=配置无效→fail-closed shadow**。agent 工具（edit_file/execute_command）对 workspace 有写权，故 workspace 内路径语义上不可信 |
+| P0-1 | 名单=control-plane authorization state，operator-owned；不得位于 agent 可写目录（data/audit、workspace）——防 self-promotion | 路径语义: 绝对路径 + **运行用户不可写（os.access W_OK 拒绝）双条件**（review R3：绝对路径是必要非充分条件——同 Unix 用户下 ~/.config 类路径可写，self-promote 攻击链闭合）。推荐 `/etc/lfl/cog_enforce_allowlist`（root/operator 所有，LFL 运行用户只读）；`~/.config/lfl/` 在同用户执行模型下**不构成安全边界**。root 运行时 os.access 恒真，须配合只读挂载/容器。**相对路径=配置无效→fail-closed shadow**。COG_RUNTIME_ENFORCE_FILE 已从 execute_command 子进程环境剔除（控制面 capability metadata，agent 无业务理由可见） |
 | P0-2 | promotion fail-closed: 文件缺失/读取失败/格式异常/超限 → shadow；mode=off 永远硬关，名单不可覆盖 | `_allowlist_hit` 全异常捕获返回 False；off 分支在名单判断之前 |
 | P1-3 | 每轮读取硬上限: ≤64 KiB、≤256 有效条目（防无界读取） | stat().st_size > 65536 → False；有效行 > 256 → False |
 | P1-4 | telemetry: `mode`=effective_mode，另加 `configured_mode` + `promoted`；packet_compile / tier_degraded / state_rebuild 同套归因 | emit 事件统一三字段 |
