@@ -181,9 +181,17 @@ class GoalStore:
             return target
 
     def get(
-        self, goal_id: str | None = None, *, prefer_session_id: str = ""
+        self,
+        goal_id: str | None = None,
+        *,
+        prefer_session_id: str = "",
+        strict_session: bool = False,
     ) -> dict | None:
         """获取目标：显式id精确匹配；否则当前session active优先，再回退全局active/latest。
+
+        strict_session=True（CR-R1.1）：只返回 session_id 严格匹配 prefer_session_id
+        的候选（preferred active → preferred latest），禁止跨会话全局回退——供
+        Cognitive Runtime 等会话隔离读取方使用；恢复性读取（CLI 展示等）保持默认。
 
         JSONL 若有损坏记录，禁止把较旧可解析 Goal 猜成当前目标：
         - 显式 id 已解析命中：直接返回（已知事实可用）；
@@ -221,7 +229,11 @@ class GoalStore:
             if malformed_lines:
                 raise self._corruption_error(malformed_lines, "显式 goal_id 未命中")
             return None
-        selected = active_preferred or active or latest_preferred or latest
+        if strict_session and prefer_session_id:
+            # CR-R1.1: 严格会话读——禁止跨会话回退（全局 active/latest 均不可见）
+            selected = active_preferred or latest_preferred
+        else:
+            selected = active_preferred or active or latest_preferred or latest
         if selected is None:
             if malformed_lines:
                 raise self._corruption_error(malformed_lines, "无可解析 Goal")

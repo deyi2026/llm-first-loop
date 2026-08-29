@@ -108,6 +108,10 @@ class InjectedEntry:
     slot_kind: SlotKind
     prefix_sha: str  # content 前 32 字符 sha256（剥离时身份复核）
     message_ref: Message | None = None  # interop/tip 原 Message（defer 回填）；hotcard/gate_note 为 None
+    # CR-R1.1（审查项5）: AGGREGATED 恢复源——投影前各段 (slot, 原始内容)。
+    # Projection 是 view 不是 Source of Truth：WARM 投影截断后 wire 反推会把
+    # 原文永久缩水（审查实测 314→120 chars），defer 恢复必须走此原始记录。
+    seg_sources: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -374,19 +378,31 @@ class _Err1210Mixin:
             for e in entries:
                 by_slot.setdefault(e.slot_kind, []).append(e)
             # P1 9.1: AGGREGATED 拆解——聚合 entry 还原段级槽位后回存。
-            # interop/tip 段重建 Message（原 message_ref 聚合时已弃，内容语义保真）；
             # hotcard/gate_note 段回流 by_slot 复用既有复位分支；hint 段跳过。
+            # CR-R1.1（审查项5）: interop/tip 段恢复源优先 entry.seg_sources
+            # （投影前原始内容）——Projection 是 view 不是 Source of Truth；
+            # WARM 投影截断后 wire 反推会把原文永久缩水（314→120 chars）。
+            # 无 seg_sources（旧 entry/构造缺省）时 fallback wire 解析（标注风险）。
             agg_es = by_slot.pop(SlotKind.AGGREGATED, None) or []
             for e in agg_es:
-                try:
-                    m = (
-                        messages[e.msg_idx]
-                        if messages and 0 <= e.msg_idx < len(messages)
-                        else {}
-                    )
-                    segs = parse_aggregated_slots(str(m.get("content") or ""))
-                except Exception:  # noqa: BLE001 — 取段失败按空处理
-                    segs = []
+                _src_segs = [(s, c) for s, c in (e.seg_sources or ()) if c]
+                if _src_segs:
+                    segs = _src_segs
+                else:
+                    try:
+                        m = (
+                            messages[e.msg_idx]
+                            if messages and 0 <= e.msg_idx < len(messages)
+                            else {}
+                        )
+                        segs = parse_aggregated_slots(str(m.get("content") or ""))
+                    except Exception:  # noqa: BLE001 — 取段失败按空处理
+                        segs = []
+                    if segs:
+                        logger.debug(
+                            "err1210: AGGREGATED defer 走 wire 反推（无 seg_sources）——"
+                            "WARM 投影段可能截断，恢复语义可能失真",
+                        )
                 if not segs:
                     logger.warning(
                         "err1210: AGGREGATED 拆解为空（idx=%d），该聚合条目按丢失处理（fail-open）",
