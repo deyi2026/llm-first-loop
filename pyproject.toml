@@ -52,6 +52,10 @@ reportMissingImports = "none"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --import-mode=importlib -m \"not real_llm\""
+# 修复（2026-08-29）: .venv 的 __editable__.pth 指向主区 src，pytest 无 PYTHONPATH
+# 时实际测主区代码（6 collection errors + 3 假 FAIL 根源）。pythonpath 相对
+# rootdir 解析——镜像测镜像、主区测主区，双侧一致。
+pythonpath = ["src"]
 markers = [
     "real_llm: 真实 LLM 冒烟测试（需真实 key + 网络，默认不随全量运行）",
 ]
