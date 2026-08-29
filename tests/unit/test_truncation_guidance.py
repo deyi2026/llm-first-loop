@@ -123,6 +123,41 @@ def test_local_model_tightens_summary_window():
     assert "MID1000" not in r.content, "local 800 首窗口不应覆盖距头 1000 处（全局 2500 才可见）"
 
 
+def test_evidence_tool_exempt_from_local_tightening():
+    """证据型工具豁免本地收紧（漂移修复 2026-08-29 会话 68fed5f5 实证）.
+
+    web_fetch 6K 输出走全局 15000 阈值全量注入——此前被本地 4000 阈值压成首尾
+    1600c 摘要，DFlash 文档证据不完整导致弱模型生成漂移（答非所问输出能力清单）。
+    """
+
+    from llm_loop.core.run_context import current_model_label
+
+    class _WebFetchTool(_BigTool):
+        def __init__(self, content: str):
+            super().__init__(content)
+            self.name = "web_fetch"
+
+        def execute(self, **kwargs):
+            r = super().execute(**kwargs)
+            r.tool_name = "web_fetch"
+            return r
+
+    reg = ToolRegistry(
+        summary_threshold=15000,
+        summary_local_threshold=4000,
+        summary_local_head_chars=800,
+        summary_local_tail_chars=800,
+    )
+    reg.register(_WebFetchTool("x" * 6000))
+    tok = current_model_label.set("local/qwen/qwen3.8-27b")
+    try:
+        r = reg.execute(ToolCall(id="c1", name="web_fetch", arguments={}))
+    finally:
+        current_model_label.reset(tok)
+    assert "输出摘要" not in r.content, "证据工具 6K < 全局 15000 阈值应全量注入（豁免本地 4000 收紧）"
+    assert len(r.content) >= 6000, "6K 证据内容应完整到达（不被摘要化）"
+
+
 def test_cloud_model_keeps_global_threshold():
     """云端/无标签模型维持全局配置零回归：6K 输出在 15000 阈值下不触发摘要."""
     from llm_loop.core.run_context import current_model_label

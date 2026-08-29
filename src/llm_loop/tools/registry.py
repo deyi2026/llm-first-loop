@@ -398,6 +398,28 @@ class ToolRegistry:
             "required": list(params.get("required", [])),
         }
 
+    def index_schemas(self, desc_chars: int = 80) -> list[dict]:
+        """分层前缀 PoC（GOAL-20260829-7483e375 T2）索引模式.
+
+        name + desc_chars 截断描述 + required 字段名（并入 description 尾部，
+        parameters 用合法最小 schema {"type":"object"} —— 不用非标准键，
+        规避 provider 参数校验拒绝（ERR-1210 风险））。
+        设计依据: docs/local/DESIGN-PREFIX-LAYERED-20260829.md（样本实验证明
+        lazy 200 字符截断仍占 61%，80 字符两级设计方可达标）。
+        """
+        defs: list[dict] = []
+        with self._lock:
+            for t in self._tools.values():
+                params = getattr(t, "parameters", {}) or {}
+                required = list(params.get("required", []))
+                desc = (t.description or "")[:desc_chars]
+                if required:
+                    desc = f"{desc} | 必填: {', '.join(required)}"
+                defs.append(
+                    {"name": t.name, "description": desc, "parameters": {"type": "object"}}
+                )
+        return defs
+
     def add_pre_execute_hook(self, hook: PreExecuteHook) -> None:
         """注册执行前钩子（如架构自省动作轨迹采集，零侵入）."""
         self._pre_execute_hooks.append(hook)
@@ -791,6 +813,16 @@ class ToolRegistry:
     # 程序只发信号不替 AI 摘要（RULE-AI-00）：提炼与纳入最终总结由 AI 完成。
     # EVO-20260820-be72efb1 建议②（截断高亮）: 截断/摘要回执附诚实性高亮——缺失部分
     # 未核验, 禁止基于摘要推断"已完成/成功", 需 search_archive 取回原文核验后再声明。
+    # 证据型工具（漂移修复 2026-08-29 会话 68fed5f5 实证）: 内容承载型回执是任务
+    # 分析的直接依据。本地通道 4000 阈值把 web_fetch 全文压成首尾 1600c 摘要——
+    # 证据在场但不完整，弱模型据此生成时被上下文尾部元状态带偏（DFlash 文档被摘要
+    # 后答非所问输出能力清单）。豁免本地收紧走全局阈值；膨胀由 history 压缩 +
+    # 锚点保护（history.py 2026-08-29）兜底，硬上限安全阀不变。
+    EVIDENCE_TOOL_NAMES = frozenset({
+        "web_fetch", "web_search", "read_file", "search_records",
+        "search_archive", "search_docs", "dsh_session_read", "inspect_code",
+    })
+
     _DISTILL_GUIDANCE = (
         "行动指引：中部/被省略内容不在当前上下文——继续推理前，请先把可见要点与"
         "待核实缺口提炼记录（写入你的推理链或 [[memory]] 记忆块），最终总结时请纳入"
@@ -1046,7 +1078,14 @@ class ToolRegistry:
         except Exception:  # noqa: BLE001 — contextvar 读取失败走全局配置（fail-open）
             _model_label = ""
         _is_local = bool(_model_label) and _model_label.split("/", 1)[0] == "local"
-        _use_local = _is_local and bool(self.summary_local_threshold)
+        # 证据型工具本地豁免（漂移修复 2026-08-29）: 见 EVIDENCE_TOOL_NAMES 注释——
+        # 豁免后 threshold/head/tail 全走全局分支（15000 / 2500 / 2500）
+        _evidence_tool = getattr(call, "name", "") in self.EVIDENCE_TOOL_NAMES
+        _use_local = (
+            _is_local
+            and bool(self.summary_local_threshold)
+            and not _evidence_tool
+        )
         if _use_local and self.summary_local_threshold is not None:
             _threshold = self.summary_local_threshold
         else:

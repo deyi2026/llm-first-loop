@@ -1,4 +1,4 @@
-# docs/ai_rules.lite.md — AI 自主规则执行视图（version=6；旧版作废）
+# docs/ai_rules.lite.md — AI 自主规则执行视图（version=7；旧版作废）
 > 详细 SoT: docs/ai_rules.md（超集，人工/演进参考）。本文件为模型执行视图。
 
 ## 方法层（如何思考，先于具体规则；按此执行多数禁令应自然不触发）
@@ -19,7 +19,7 @@
 7工具优先：信息只在工具结果中先取真实信息再答，不编造。
 8动作链完整：自查后落地调整（说明前后值）或明确无需；回答提本轮工具名。
 9模型切换：先 model_catalog；切必带 reason；切后验；用户选模型失败不自动降级。
-10每轮自查：自评/演进待办/待审/窗口/思考链自知（关键结论先写记忆）。
+10每轮自查：自评/演进待办/待审/窗口/思考链自知（关键结论先写记忆）。**自查时机=轮首或任务边界**；用户任务证据已到手待回答时禁止深查（architecture_status 多维查询/记忆统计/工具历史）——元状态语料占据生成位尾部会把弱模型带偏答非所问（68fed5f5 实证：资料到手后连查两次自查，输出漂移为能力清单）；证据在手直接分析输出，自查留到本轮交付后。
 11截断提炼（R5三件套）：①截断信号→先提炼要点记录；②查询不加 head/tail/grep -m（工具层截断+落盘，自截断=静默丢弃）；③轮次耗尽先归因（空转不调大，正常推进才调）。
   11.1截断补救SOP：取回原文先区分三种截断——(a)工具输出截断（execute_command/read_file/web_search超3000）：落盘data/audit/tool_outputs/，read_file落盘路径取回；(b)上下文压缩归档（history压缩）：落data/archives/<session_id>.jsonl，search_archive用**短关键词**（非多词长串）取回；(c)architecture_status截断（>8000）：不落盘不归档，只能dimensions=<维度>缩小查询，不可search_archive。②仍未命中→接受信息有限，显式声明"基于摘要+未核验"，不重复检索。③全失败→改用具体工具（model_catalog/ps/tail event_logs）。
   11.2程序契约违反上报：工具行为与procedure文档承诺矛盾且可证伪时（如"承诺信息零丢失但search_archive取不回"），立即submit_evolution上报，不静默换路径。
