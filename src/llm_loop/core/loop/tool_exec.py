@@ -538,7 +538,10 @@ class _ToolExecMixin:
                     reminder.content, InjectionLayer.STATUS
                 )
                 reminder.metadata = origin_metadata(
-                    InjectionLayer.STATUS, injection_kind="stagnation_reminder"
+                    InjectionLayer.STATUS,
+                    injection_kind="stagnation_reminder",
+                    prompt_lifecycle="current_turn",
+                    turn_ref=getattr(self, "_current_turn_ref", None),
                 )
                 sess.messages.append(reminder)
                 self._append_message_event(sess, reminder)
@@ -573,7 +576,10 @@ class _ToolExecMixin:
                     reminder.content, InjectionLayer.STATUS
                 )
                 reminder.metadata = origin_metadata(
-                    InjectionLayer.STATUS, injection_kind="empty_search_reminder"
+                    InjectionLayer.STATUS,
+                    injection_kind="empty_search_reminder",
+                    prompt_lifecycle="current_turn",
+                    turn_ref=getattr(self, "_current_turn_ref", None),
                 )
                 sess.messages.append(reminder)
                 self._append_message_event(sess, reminder)

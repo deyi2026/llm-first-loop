@@ -434,3 +434,9 @@ E31 `tool_schemas` is now **DONE** for the current R8.7 scope. Local and cloud p
 Detached clean-source pre-commit evidence: 61 all-lazy tools / 22,699 chars; simple CORE9 / 3,425 raw lazy chars (3,714 provider wrapper), a 84.9% reduction. `web_fetch` is task-eligible rather than universal and has typed preflight/failure recovery; matching typed advice replaces generic/experience recovery prose.
 
 This closes only the tool-schema eligibility surface. The seven existing non-tool canary blockers remain unchanged, so model-profile behavior canary stays frozen. Authoritative evidence: `docs/injection-governance/tool-eligibility/r87-report.md` plus the tool eligibility matrix/recovery policy.
+
+## R8.9 — Ephemeral program-control lifecycle closure (2026-08-31)
+
+R8.9 closes E14/E15/E16/E17/E27 around a single timing/authority defect: a program control may be useful during later rounds of the same human request without gaining permission to become next-human-turn prompt history. Declaration and fallback notices were even later in time—the model response already existed before their old prompt messages were created—so they now remain observability/current-result state only. Stagnation, empty-search, and overflow controls use exact current-turn identity and centrally expire after the active human turn. Legacy compatibility is conservative: known system-control prefixes are denied only as historical program frames, and declaration migration uses the complete historical fixed sentence rather than the generic label.
+
+Implementation and evidence: `src/llm_loop/core/prompt_eligibility.py`, `core/loop/{build,engine,tool_exec,overflow}.py`, targeted lifecycle/fallback/declaration tests, and `eligibility/r89-report.md`. Matrix state after this batch: `DONE=19`, `PARTIAL=11`, `OPEN=3`, `KEEP=1`. Final detached-clean fixed-point is required before `r8_9_status` becomes PASS.

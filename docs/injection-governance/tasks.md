@@ -148,3 +148,11 @@
 - 资料按需化可能损失“无意识相关性”；以任务切换检测 + 主动检索补偿。
 - user truth 尾位不得通过新增第二条 user 实现，必须服从 provider wire contract。
 - REASONING_TAIL 思维链回传不并入本专项。
+
+## R8.9 Ephemeral Control Lifecycle — 🟡 IMPLEMENTATION PASS / FIXED-POINT PENDING
+- Root cause: same-human-turn control state was persisted as ordinary session history and therefore regained prompt authority on later human turns; declaration/fallback notices were generated after the response they allegedly guided.
+- E14: declaration discrepancy => LoopResult/UI + validator audit/action only; no prompt-history append; legacy exact fixed sentence safely retired.
+- E15/E16/E17: stagnation, empty-search, overflow => `prompt_lifecycle=current_turn` + exact `turn_ref`; same turn visible, next turn denied; legacy system frames denied centrally.
+- E27: post-fallback notice => no session prompt append; status/audit/action remains; all-failed detail goes to current program final result.
+- Verification so far: production pyright 0/0; clean/new test pyright 0/0; focused+adjacent 22-file suite PASS; history/reference 77/77 PASS.
+- Gate: exact staging + detached-clean fixed-point + R0 four gates/frozen hash pending. No behavior canary/R9 start.

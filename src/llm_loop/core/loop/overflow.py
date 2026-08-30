@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from llm_loop.core.injection_labels import InjectionLayer, origin_metadata
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.feedback.honesty import overflow_feedback
 from llm_loop.llm.errors import LLMError, is_overflow_error
@@ -59,6 +60,12 @@ class _OverflowMixin:
                     role="system",
                     content=feedback_text,
                     source=MessageSource.SYSTEM,
+                    metadata=origin_metadata(
+                        InjectionLayer.STATUS,
+                        injection_kind="overflow_feedback",
+                        prompt_lifecycle="current_turn",
+                        turn_ref=getattr(self, "_current_turn_ref", None),
+                    ),
                 )
             )
             return ("reinject", None)

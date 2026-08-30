@@ -835,11 +835,19 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                         session_id=sess.session_id, run_round=rounds,
                         metadata_out=_fallback_metadata,
                     )
-                    # 注入降级提示到主消息流（AI 可见, design 原则 2）
-                    for m in inject_msgs:
-                        sess.messages.append(m)
-                        # D1: 系统注入消息事件（fail-open）
-                        self._append_message_event(sess, m)
+                    # R8.9: fallback notices are produced only after the fallback call
+                    # already returned.  Persisting them as chat history cannot influence
+                    # that response and only pollutes later turns.  Existing corrections/
+                    # status telemetry remains the durable observability path.
+                    if inject_msgs:
+                        try:
+                            self._record_action(
+                                "model.fallback",
+                                "notice_observed",
+                                f"count={len(inject_msgs)}",
+                            )
+                        except Exception:  # noqa: BLE001 — fallback result remains authoritative
+                            pass
                     if fallback_resp is not None:
                         # 降级成功: 响应以新模型运行, 进入后续正常路径
                         resp = fallback_resp
@@ -854,6 +862,10 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                         final_answer = self._e1210_llm_error_finalize(
                             session_id, exc, len(messages), "fallback_exhausted"
                         )
+                        if inject_msgs:
+                            # The all-failed summary is useful to the current user, not
+                            # to a future model turn. Surface it in this program result.
+                            final_answer = f"{final_answer}\n\n{inject_msgs[-1].content}"
                         resp = None  # 程序反馈不得继承上一轮成功响应的 reasoning（GPT 审计 P0：stale reasoning 嫁接）
                         break
                 elif not _e1210_recovered:
@@ -949,26 +961,18 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                         check = self.validator.check(final_answer, tool_msgs)
                         if not check.consistent:
                             verification_note = build_discrepancy_feedback(check)
-                            # 注入一条如实提示（不重入循环），最终回答直接输出
-                            reminder = Message(
-                                # R1/L1: program-origin 状态通知显式进入非用户语义层；
-                                # user role 仅是 provider wire 兼容形态，不再冒充人类消息。
-                                role="user",
-                                content=render_program_appendix(
-                                    "[声明提醒] 最终回答与工具回执存在不一致事实。\n"
-                                    + verification_note,
-                                    InjectionLayer.STATUS,
-                                ),
-                                source=MessageSource.USER,
-                                metadata=origin_metadata(
-                                    InjectionLayer.STATUS,
-                                    injection_kind="declaration_reminder",
-                                    persisted_injection=True,
-                                ),
-                            )
-                            sess.messages.append(reminder)
-                            # D1: 系统注入消息事件（fail-open）
-                            self._append_message_event(sess, reminder)
+                            # R8.9: this check runs after the model has already produced
+                            # its final answer, so a prompt message cannot repair that answer.
+                            # Keep the discrepancy in LoopResult/UI + action telemetry only;
+                            # do not create future conversational authority.
+                            try:
+                                self._record_action(
+                                    "declaration.check",
+                                    "discrepancy",
+                                    verification_note[:200],
+                                )
+                            except Exception:  # noqa: BLE001 — result note remains authoritative
+                                pass
                 break
 
             # ── 行动：执行工具（tool_calls）──

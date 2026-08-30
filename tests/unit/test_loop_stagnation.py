@@ -22,6 +22,7 @@ class _StubEngine(_ToolExecMixin):
 
     def __init__(self):
         self._stagnation_state = {"fp": None, "count": 0, "reminded": False}
+        self._current_turn_ref = 11
         self.events = []
         self.actions = []
 
@@ -51,6 +52,8 @@ def test_reminder_injected_once_at_threshold():
     reminders = [m for m in sess.messages if "[停滞提醒]" in m.content]
     assert len(reminders) == 1  # 只提醒一次
     assert "read_file" in reminders[0].content
+    assert reminders[0].metadata.get("prompt_lifecycle") == "current_turn"
+    assert reminders[0].metadata.get("turn_ref") == 11
     assert eng.actions and eng.actions[0][0] == "stagnation.reminder"
 
 
@@ -118,6 +121,8 @@ def test_search_empty_result_reminder_at_threshold():
     reminders = [m for m in sess.messages if "[搜索空结果提醒]" in m.content]
     assert len(reminders) == 1
     assert "search_records" in reminders[0].content
+    assert reminders[0].metadata.get("prompt_lifecycle") == "current_turn"
+    assert reminders[0].metadata.get("turn_ref") == 11
     assert eng.actions and eng.actions[-1][0] == "empty_search.reminder"
 
 

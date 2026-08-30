@@ -69,10 +69,10 @@ def test_fallback_500_triggers_chain_success(build_test_engine, fake_settings, m
     # ① 回答来自降级模型
     assert result.final_answer == "降级模型回答"
     assert fake_fb.calls, "降级候选未被调用"
-    # ② 会话注入 [模型降级] 回执（system 消息，AI 可见）
+    # ② R8.9: fallback call 已经完成后不再把 notice 写进未来 prompt history。
     sess = engine.session.load(sid)
-    assert any("[模型降级:" in (m.content or "") and "fb/fb-model" in m.content for m in sess.messages)
-    # ③ architecture_status 快照降级态可见
+    assert not any("[模型降级:" in (m.content or "") for m in sess.messages)
+    # ③ architecture_status 快照降级态仍可见
     snap = engine.status.snapshot(session_id=sid)
     fb_state = snap.get("model_fallback") or snap.get("fallback") or {}
     assert fb_state.get("active") is True, f"快照降级态不可见: {list(snap)[:8]}"
@@ -111,6 +111,9 @@ def test_fallback_chain_all_failed_summary(build_test_engine, fake_settings, mon
     result = engine.run(sid, "hello")
 
     sess = engine.session.load(sid)
-    assert any("[模型降级] 事实" in (m.content or "") and "降级链全部失败" in m.content
-               for m in sess.messages), "链全失败汇总未注入会话"
+    assert not any(
+        m.role == "system" and "[模型降级] 事实" in (m.content or "")
+        for m in sess.messages
+    )
     assert "[LLM 调用异常]" in result.final_answer
+    assert "降级链全部失败" in result.final_answer

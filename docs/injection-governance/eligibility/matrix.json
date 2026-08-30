@@ -2,7 +2,7 @@
   "schema": "prompt-eligibility-audit-v1",
   "audit_base_commit": "31df1a3",
   "audit_date": "2026-08-30",
-  "phase": "R8.8_PROMPT_ELIGIBILITY_BLOCKER_CLOSURE",
+  "phase": "R8.9_EPHEMERAL_CONTROL_LIFECYCLE_CLOSURE",
   "production_behavior_changed": true,
   "behavior_canary_allowed": true,
   "status_semantics": {
@@ -232,57 +232,73 @@
     {
       "id": "E14",
       "surface": "declaration_reminder",
-      "current_status": "PARTIAL",
+      "current_status": "DONE",
       "target_class": "OBSERVABILITY_ONLY",
       "priority": "P0",
-      "current_behavior": "declaration_reminder is still persisted before the final assistant and cannot repair that already-generated answer. For new proven resolved episodes, R8.5 marks and retires it with the episode so it no longer leaks to the next turn. Legacy reminders and the wrong write location remain to be cleaned up.",
+      "current_behavior": "R8.9 removes declaration_reminder from prompt/session history entirely. Declaration validation happens after the model final answer already exists, so discrepancies now remain in LoopResult/UI plus declaration_check audit/action telemetry. New runs emit no reminder message; pre-R8.9 legacy reminders are denied only when they match the exact historical fixed program sentence, preserving genuine user discussion of the label.",
       "target_rule": "Audit/UI or pre-delivery correction only; never persist as next-turn prompt material.",
-      "retrieval_path": "declaration_check audit record; resolved episode ref for surrounding visible transcript",
+      "retrieval_path": "LoopResult.verification_note / declaration_check audit / action telemetry",
       "evidence": [
         "src/llm_loop/core/loop/engine.py",
-        "src/llm_loop/core/episode_history.py",
-        "tests/unit/test_resolved_episode.py"
+        "src/llm_loop/core/prompt_eligibility.py",
+        "src/llm_loop/core/loop/build.py",
+        "tests/unit/test_m41.py",
+        "tests/unit/test_prompt_eligibility_r88.py",
+        "docs/injection-governance/eligibility/r89-report.md"
       ]
     },
     {
       "id": "E15",
       "surface": "stagnation_reminder",
-      "current_status": "OPEN",
+      "current_status": "DONE",
       "target_class": "ACTIVE_EPHEMERAL",
       "priority": "P1",
-      "current_behavior": "Injected into session when repeated tool calls hit the reminder threshold; no generic run-end consumed retirement is applied.",
+      "current_behavior": "R8.9 stamps stagnation_reminder with prompt_lifecycle=current_turn and exact human turn_ref. It remains visible to later LLM/tool rounds inside that human turn, then loses prompt eligibility on the next human ingress. Legacy unlabelled stagnation system frames are centrally denied as historical control state.",
       "target_rule": "If model guidance is still needed, visible only inside the unresolved run. Program-side breaker/telemetry owns persistence.",
       "retrieval_path": "action_trace / stagnation audit",
       "evidence": [
-        "src/llm_loop/core/loop/tool_exec.py:500-550",
-        "src/llm_loop/feedback/honesty.py:215-244"
+        "src/llm_loop/core/loop/tool_exec.py",
+        "src/llm_loop/core/prompt_eligibility.py",
+        "src/llm_loop/core/loop/build.py",
+        "tests/unit/test_loop_stagnation.py",
+        "tests/unit/test_prompt_eligibility_r88.py",
+        "docs/injection-governance/eligibility/r89-report.md"
       ]
     },
     {
       "id": "E16",
       "surface": "empty_search_reminder",
-      "current_status": "OPEN",
+      "current_status": "DONE",
       "target_class": "ACTIVE_EPHEMERAL",
       "priority": "P1",
-      "current_behavior": "Injected after repeated empty searches and persisted in session; path_registry already records negative evidence programmatically.",
+      "current_behavior": "R8.9 stamps empty_search_reminder with prompt_lifecycle=current_turn and exact human turn_ref. It can guide retries inside the unresolved human turn but cannot survive into the next human task. Legacy unlabelled empty-search system frames are centrally denied; path_registry/action truth remains durable.",
       "target_rule": "Prefer program-side negative-evidence handling. If visible to model, consume at run end and never leak to next independent task.",
       "retrieval_path": "path_registry / action_trace",
       "evidence": [
-        "src/llm_loop/core/loop/tool_exec.py:550-585",
-        "src/llm_loop/feedback/honesty.py:228-244"
+        "src/llm_loop/core/loop/tool_exec.py",
+        "src/llm_loop/core/prompt_eligibility.py",
+        "src/llm_loop/core/loop/build.py",
+        "tests/unit/test_loop_stagnation.py",
+        "tests/unit/test_prompt_eligibility_r88.py",
+        "docs/injection-governance/eligibility/r89-report.md"
       ]
     },
     {
       "id": "E17",
       "surface": "overflow_feedback",
-      "current_status": "OPEN",
+      "current_status": "DONE",
       "target_class": "ACTIVE_EPHEMERAL",
       "priority": "P1",
-      "current_behavior": "First overflow appends a system feedback message for another attempt but the message is ordinary session history and has no generic consumed lifecycle marker.",
+      "current_behavior": "R8.9 gives overflow_feedback explicit STATUS/program metadata, prompt_lifecycle=current_turn, and exact human turn_ref. The first-overflow reinjection remains available to the next LLM attempt in the same human turn, then expires automatically; legacy unlabelled overflow system frames are centrally denied.",
       "target_rule": "Same-run control only; audit/runtime state after consumption.",
       "retrieval_path": "exception/action audit",
       "evidence": [
-        "src/llm_loop/core/loop/overflow.py:30-67"
+        "src/llm_loop/core/loop/overflow.py",
+        "src/llm_loop/core/prompt_eligibility.py",
+        "src/llm_loop/core/loop/build.py",
+        "tests/unit/test_overflow_lifecycle.py",
+        "tests/unit/test_prompt_eligibility_r88.py",
+        "docs/injection-governance/eligibility/r89-report.md"
       ]
     },
     {
@@ -421,15 +437,21 @@
     {
       "id": "E27",
       "surface": "fallback_success_or_all_failed_notice",
-      "current_status": "OPEN",
+      "current_status": "DONE",
       "target_class": "ACTIVE_EPHEMERAL",
       "priority": "P1",
-      "current_behavior": "Fallback notices are appended as ordinary system messages without a generic consumed marker. A successful fallback response may already exist before the notice is appended.",
-      "target_rule": "Routing status is runtime/event state. If the model truly needs it during the unresolved run, make it one-shot ephemeral; never carry it into a later task.",
-      "retrieval_path": "model_fallback status/event",
+      "current_behavior": "R8.9 stops appending post-fallback notices to session prompt history because the fallback call has already returned before the notice exists. Successful fallback state remains in model_fallback status/audit/action observability. When all candidates fail, the detailed fallback summary is surfaced in the current program final result rather than as a future system prompt notice. Legacy fallback system notices are centrally denied.",
+      "target_rule": "Fallback routing/status is observability. Current all-failed details belong in the current program result; no post-response fallback notice has future prompt authority.",
+      "retrieval_path": "model_fallback status/event/action; current all-failed program result",
       "evidence": [
-        "src/llm_loop/core/loop/engine.py:804-825",
-        "src/llm_loop/core/loop/fallback.py:361-405"
+        "src/llm_loop/core/loop/engine.py",
+        "src/llm_loop/core/prompt_eligibility.py",
+        "src/llm_loop/core/loop/build.py",
+        "src/llm_loop/core/loop/fallback.py",
+        "tests/unit/test_fallback_integration.py",
+        "tests/unit/test_model_fallback.py",
+        "tests/unit/test_fallback_notice_stamp.py",
+        "docs/injection-governance/eligibility/r89-report.md"
       ]
     },
     {
@@ -583,5 +605,7 @@
   "r8_7_evidence": "docs/injection-governance/tool-eligibility/r87-report.md",
   "r8_8_status": "PASS",
   "r8_8_evidence": "docs/injection-governance/eligibility/r88-report.md",
-  "behavior_canary_gate_state": "READY"
+  "behavior_canary_gate_state": "READY",
+  "r8_9_status": "PASS_PENDING_FIXED_POINT",
+  "r8_9_evidence": "docs/injection-governance/eligibility/r89-report.md"
 }

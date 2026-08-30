@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from llm_loop.feedback.validator import DeclarationCheckResult
 from llm_loop.llm.client import LLMResponse
 from llm_loop.tools.registry import ToolResult, ToolResultStatus, tool_result_to_message
 
@@ -92,3 +93,22 @@ def test_guidance_disabled():
     )
     msg = tool_result_to_message(result, failure_guidance_enabled=False)
     assert "建议" not in msg.content
+
+def test_declaration_discrepancy_is_result_only_not_prompt_history(build_test_engine):
+    engine, _ = build_test_engine([_full_resp("我已完成全部任务。")])
+    sid = engine.session.create()
+
+    class _Validator:
+        def check(self, final_answer, tool_msgs):  # noqa: ARG002
+            return DeclarationCheckResult(
+                consistent=False,
+                declarations=["已完成全部任务"],
+                discrepancies=["没有对应成功工具回执"],
+                receipt_summary=[],
+            )
+
+    engine.validator = _Validator()
+    result = engine.run(sid, "完成任务")
+    assert result.verification_note and "没有对应成功工具回执" in result.verification_note
+    sess = engine.session.load(sid)
+    assert not any("[声明提醒]" in (m.content or "") for m in sess.messages)

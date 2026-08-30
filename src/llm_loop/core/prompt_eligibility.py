@@ -65,3 +65,57 @@ def memory_snapshot_prompt_eligible(message: Any, *, current_turn_ref: int | Non
         return int(raw_turn_ref) == int(current_turn_ref)
     except (TypeError, ValueError):
         return False
+
+# Legacy program-control frames predate lifecycle metadata.  New emitters MUST carry
+# ``prompt_lifecycle=current_turn``; an unlabelled system frame with one of these exact
+# prefixes is therefore historical control state and has no automatic prompt entitlement.
+_LEGACY_EPHEMERAL_SYSTEM_PREFIXES = (
+    "[停滞提醒]",
+    "[搜索空结果提醒]",
+    "[上下文溢出]",
+    "[模型降级:",
+    "[模型降级] 事实:",
+)
+_LEGACY_DECLARATION_REMINDER_PREFIX = (
+    "[声明提醒] 你的最终回答中存在与工具回执不符的完成声明，请知悉"
+    "（不影响本次输出，后续请如实声明）。"
+)
+
+
+def current_turn_program_prompt_eligible(
+    message: Any, *, current_turn_ref: int | None
+) -> bool:
+    """Gate persisted current-turn-only program controls by human-turn identity.
+
+    A current-turn program frame may be replayed across tool/LLM rounds inside one human
+    turn, but it loses prompt authority as soon as a new human turn starts.  Legacy
+    unlabelled system control frames are deny-by-default because their controlling event
+    has already happened and durable action/event state remains the source of truth.
+    """
+
+    md = getattr(message, "metadata", None) or {}
+    lifecycle = str(md.get("prompt_lifecycle") or "").strip().lower()
+    if lifecycle == "current_turn":
+        if current_turn_ref is None:
+            return False
+        raw_turn_ref = md.get("turn_ref")
+        if raw_turn_ref is None:
+            return False
+        try:
+            return int(raw_turn_ref) == int(current_turn_ref)
+        except (TypeError, ValueError):
+            return False
+    if lifecycle:
+        # Unknown persisted lifecycle is not an eligibility grant.
+        return False
+
+    role = str(getattr(message, "role", "") or "")
+    content = str(getattr(message, "content", "") or "").lstrip()
+    if role == "system" and any(content.startswith(p) for p in _LEGACY_EPHEMERAL_SYSTEM_PREFIXES):
+        return False
+    # Pre-R8.9 declaration reminders were program-generated as role=user without
+    # metadata.  Match the exact historical sentence rather than the generic label so a
+    # human discussing "[声明提醒]" remains ordinary user truth.
+    if role in {"user", "system"} and content.startswith(_LEGACY_DECLARATION_REMINDER_PREFIX):
+        return False
+    return True

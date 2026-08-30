@@ -335,12 +335,10 @@ def test_default_model_429_triggers_fallback_to_next(
 
     # 验证 final_answer 取自降级响应
     assert result.final_answer.startswith("（降级后回答）")  # 尾部可能有缓存命中率展示行（方案B）
-    # 验证消息流含 [模型降级: 标注（AI 可见, design 原则 2）
+    # R8.9: post-response fallback status stays in audit/status, not future prompt history.
     sess = engine.session.load(sid)
     fallback_msgs = [m for m in sess.messages if "[模型降级:" in m.content]
-    assert len(fallback_msgs) == 1
-    assert "deepseek-v4-flash→local/qwen3.6-27b" in fallback_msgs[0].content
-    assert "429 限流" in fallback_msgs[0].content
+    assert fallback_msgs == []
 
     # 验证审计落盘（self_correction_log.jsonl 含 model_fallback success 记录）
     log = audit_dir / "self_correction_log.jsonl"
@@ -555,15 +553,18 @@ def test_all_fallbacks_fail_summarizes_reasons(
     assert "LLM 调用异常" in result.final_answer
     assert "503" in result.final_answer
 
-    # 验证消息流注入汇总提示（含每个候选失败原因）
+    # 全失败详情直接进入本次 program result，不写入后续 prompt history。
     sess_loaded = engine.session.load(sid)
-    summary_msgs = [m for m in sess_loaded.messages if "[模型降级]" in m.content and "全部失败" in m.content]
-    assert len(summary_msgs) == 1
-    summary_content = summary_msgs[0].content
-    assert "deepseek/deepseek-v4-flash" in summary_content  # 默认主模型
-    assert "deepseek/deepseek-v4-flash" in summary_content  # 候选1
-    assert "local/qwen3.6-27b" in summary_content  # 候选2
-    assert "minimax/MiniMax-M3" in summary_content  # 候选3
+    summary_msgs = [
+        m for m in sess_loaded.messages
+        if m.role == "system" and "[模型降级]" in m.content and "全部失败" in m.content
+    ]
+    assert summary_msgs == []
+    summary_content = result.final_answer
+    assert "降级链全部失败" in summary_content
+    assert "deepseek/deepseek-v4-flash" in summary_content
+    assert "local/qwen3.6-27b" in summary_content
+    assert "minimax/MiniMax-M3" in summary_content
     assert "网络不可达" in summary_content
     assert "请求超时" in summary_content
     assert "429" in summary_content

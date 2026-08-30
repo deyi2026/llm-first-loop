@@ -42,6 +42,7 @@ from llm_loop.core.program_recovery import (
     is_program_recovery_message,
 )
 from llm_loop.core.prompt_eligibility import (
+    current_turn_program_prompt_eligible,
     dynamic_prompt_layer,
     memory_snapshot_prompt_eligible,
 )
@@ -573,6 +574,38 @@ class _BuildMixin:
                     "action.prompt_eligibility",
                     "memory_snapshot_retired",
                     f"count={_stale_memory_count}",
+                )
+            except Exception:  # noqa: BLE001 — provider hygiene is already applied
+                pass
+        # R8.9: same-human-turn program controls may guide later LLM/tool rounds, but
+        # lose automatic prompt authority on the next human ingress.  Legacy unlabelled
+        # stagnation/search/overflow/fallback system frames are historical control state
+        # and are filtered by the same central eligibility policy.
+        _expired_program_control_count = sum(
+            1
+            for _m in base
+            if not current_turn_program_prompt_eligible(
+                _m, current_turn_ref=_eligibility_turn_ref
+            )
+        )
+        if _expired_program_control_count:
+            base = [
+                _m
+                for _m in base
+                if current_turn_program_prompt_eligible(
+                    _m, current_turn_ref=_eligibility_turn_ref
+                )
+            ]
+            _base_original_indices = [
+                _original_base_index_by_id[id(_m)]
+                for _m in base
+                if id(_m) in _original_base_index_by_id
+            ]
+            try:
+                self._record_action(
+                    "action.prompt_eligibility",
+                    "program_control_retired",
+                    f"count={_expired_program_control_count}",
                 )
             except Exception:  # noqa: BLE001 — provider hygiene is already applied
                 pass
