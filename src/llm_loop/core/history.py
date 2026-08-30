@@ -733,6 +733,7 @@ def build_history_messages(
     # ——progressive_fold>0 但 cache_archive_provider 缺失时填充
     # [{kind: "degraded", reason, head_keep_chars}]，供调用方写 metadata.cache_health。
     require_archive_success: bool = False,  # ERC enforce: hidden bytes must be durable before shrink
+    preserve_last_human_exact: bool = False,  # R6 initial ingress: never replace current human truth with a compact surrogate
 ) -> list[dict]:
     """组装提交 LLM 的消息序列（保序 + 超长另存压缩 + 如实标注）.
 
@@ -982,6 +983,15 @@ def build_history_messages(
         if any(mm.role == "user" and not _is_injected_block(mm) for mm in atomic_groups[_gi]):
             _anchor_group_idx = _gi
             break
+    # R6: the current ingress human text is a semantic invariant, not a compression source.
+    # When requested by LoopEngine initial-ingress build, keep the final real-user atomic group
+    # byte-for-byte even if it alone exceeds history budget; routing/context guard may then reject
+    # the oversized request explicitly. Silent trim/archive substitution would change the user's task.
+    _exact_human_group = (
+        atomic_groups[_anchor_group_idx]
+        if preserve_last_human_exact and _anchor_group_idx is not None
+        else None
+    )
 
     kept_groups: list[list[Message]] = []
     archived: list[Message] = []
@@ -1070,6 +1080,8 @@ def build_history_messages(
         _fold_count = 0
         _next_group_idx = head_count  # kept_groups 首组对应的原列表索引（锚点保护用）
         while kept_groups:
+            if _exact_human_group is not None and kept_groups[0] is _exact_human_group:
+                break  # R6: never fold the current human ingress group
             if (
                 _next_group_idx in _anchor_protected_groups
                 and _anchor_protect_valid
@@ -1105,6 +1117,10 @@ def build_history_messages(
         for _gi in range(len(atomic_groups) - 1, head_count - 1, -1):
             group = atomic_groups[_gi]
             group_len = sum(_wire_size(mm) for mm in group)
+            if _exact_human_group is not None and group is _exact_human_group:
+                kept_groups.insert(0, group)
+                archive_budget -= group_len
+                continue  # R6: exact human truth may pierce history budget; routing owns hard model limit
             if _fold_cap > 0 and _fold_count >= _fold_cap:
                 # 已达渐进折叠上限: 评估保留后是否 ≤95% 预算——是则保留（平滑停折）;
                 # 否则突破上限继续归档（保命, 防 guard 规则 F BLOCK / 提交超限 400）。
@@ -1184,6 +1200,8 @@ def build_history_messages(
                 _cur = sum(_wire_size(mm) for g in kept_groups for mm in g)
                 if len(system_prompt) + _cur <= int(max_chars * 0.95):
                     break
+                if _exact_human_group is not None and kept_groups[0] is _exact_human_group:
+                    break  # R6: explicit over-budget is safer than silently replacing the user text
                 archived.extend(kept_groups.pop(0))
 
     # 另存被丢弃消息（信息零丢失）

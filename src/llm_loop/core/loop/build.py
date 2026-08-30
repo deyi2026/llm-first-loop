@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from llm_loop.core.cache_health import GATE_NOTE_CONTENT  # 门禁干预知情标记
@@ -35,6 +36,10 @@ from llm_loop.core.reference_injection import (
     DEFAULT_REFERENCE_AUTO_TURNS,
     reference_auto_decision,
     seen_injection_set,
+)
+from llm_loop.core.user_truth_wire import (
+    current_ingress_user_truth,
+    project_user_truth_tail,
 )
 
 # EVO-20260818: projection_ver/check 提升到模块级（消除函数内 import 遮蔽导致的 F823）——
@@ -503,6 +508,11 @@ class _BuildMixin:
         # （2026-08-18 审计断点归因: 96%→2% 全量失效，delta 仅 614 tokens）。
         # 改为提交视图尾部追加（GATE_NOTE 模式，转 user），system+稳定历史前缀字节不变。
         base = list(sess.messages)
+        # R6: freeze the canonical current human ingress before history/compact projects it.
+        # Tool-followup rounds return None and retain assistant(tool_calls)->tool(result) order.
+        _r6_ingress_truth = current_ingress_user_truth(
+            sess.messages, getattr(self, "_current_turn_ref", None)
+        )
         # P1 遥测内容/传输分层（2026-08-25）: legacy 历史（旧会话已把 ⚡ 缓存命中率
         # 行写进 assistant 正文）与模型伪造行——build 提交视图一律剥离（正文=纯回答；
         # 权威遥测走 metadata.cache_health → transport 渲染）。剥离只影响提交视图，
@@ -772,6 +782,7 @@ class _BuildMixin:
             compact_view_stats=compact_view_box,
             degrade_out=degrade_box,
             require_archive_success=getattr(self.registry, "evidence_mode", "off") == "enforce",
+            preserve_last_human_exact=_r6_ingress_truth is not None,
         )
         for _compacted_msg in cache_compacted_box:
             _msg_seq = self._resolve_msg_seq(sess.session_id, _compacted_msg)
@@ -1502,22 +1513,82 @@ class _BuildMixin:
                 logger.warning(
                     "build: 尾部注入聚合失败，本轮零注入降级（fail-open）", exc_info=True
                 )
-        # ── 方向 C（2026-08-29）: 持久化注入 wire 级合并——尾部连续 user 源头消除 ──
-        # 只并"未登记 InjectedEntry 且 wrap 前缀"的持久化注入条（wire 级，storage
-        # 不动）；动态聚合条（strip/defer 消费对象）保护不参与。合并删条后同步重
-        # 映射登记 msg_idx（strip 按尾部条数剥离，错位会误删用户消息）。fail-open。
-        try:
-            _reg_idx = {e.msg_idx for e in self._last_build_injections}
-            _ts, _kept, _removed = merge_persisted_tail_injections(built, _reg_idx)
-            if _removed:
-                built[_ts:] = _kept
-                for e in self._last_build_injections:
-                    if e.msg_idx >= _ts:
-                        e.msg_idx -= sum(1 for r in _removed if r < e.msg_idx)
-        except Exception:  # noqa: BLE001 — 合并失败 fail-open（原样发送）
-            logger.warning(
-                "build: 方向 C 持久化注入合并失败，原样发送（fail-open）", exc_info=True
-            )
+        # ── INJECTION-GOVERNANCE R6: initial human-ingress wire projection ──
+        # Storage/event history remains untouched. Only the provider view is projected to
+        # `program appendix -> fixed boundary -> exact user truth` in one user envelope.
+        # Tool-followup rounds are deliberately excluded by current_ingress_user_truth() so
+        # assistant(tool_calls)->tool(result) pairing is never reordered and user text is
+        # never replayed on round 2+.
+        _r6_truth = _r6_ingress_truth
+        _r6_applied = False
+        if _r6_truth is not None:
+            try:
+                _r6 = project_user_truth_tail(built, _r6_truth)
+                if _r6.violation:
+                    logger.error(
+                        "build: R6 user-truth wire invariant 未能投影（%s），保持原 payload 供上层拒绝/诊断",
+                        _r6.violation,
+                    )
+                    try:
+                        self._record_action(
+                            "action.user_truth_wire", "violation", _r6.violation
+                        )
+                    except Exception:  # noqa: BLE001 — invariant telemetry fail-open
+                        pass
+                elif _r6.changed:
+                    _seg_sources: list[tuple[str, str]] = []
+                    for _entry in self._last_build_injections:
+                        if _entry.msg_idx in set(_r6.absorbed_indices):
+                            _seg_sources.extend(_entry.seg_sources or ())
+                    built[:] = _r6.messages
+                    self._last_build_injections = [
+                        InjectedEntry(
+                            msg_idx=_r6.envelope_index,
+                            slot_kind=SlotKind.USER_ENVELOPE,
+                            prefix_sha=content_prefix_sha(
+                                str(built[_r6.envelope_index].get("content") or "")
+                            ),
+                            message_ref=None,
+                            seg_sources=tuple(_seg_sources),
+                            user_truth=_r6_truth,
+                        )
+                    ]
+                    _r6_applied = True
+                    try:
+                        self._record_action(
+                            "action.user_truth_wire",
+                            "projected",
+                            f"absorbed={len(_r6.absorbed_indices)}; envelope_idx={_r6.envelope_index}",
+                        )
+                    except Exception:  # noqa: BLE001 — invariant telemetry fail-open
+                        pass
+            except Exception:  # noqa: BLE001 — do not silently rewrite user text on error
+                logger.exception("build: R6 user-truth projection 异常，保持原 payload")
+
+        # ── 方向 C（2026-08-29）: legacy/tool-followup tail merge ──
+        # R6 initial ingress already owns the single-envelope contract. Direction C remains
+        # only for non-ingress/tool-followup/legacy direct-build paths; it must never append
+        # program material after a current human truth that R6 has just projected.
+        if not _r6_applied and _r6_truth is None:
+            try:
+                _reg_idx = {e.msg_idx for e in self._last_build_injections}
+                _ts, _kept, _removed = merge_persisted_tail_injections(built, _reg_idx)
+                if _removed:
+                    built[_ts:] = _kept
+                    # InjectedEntry is frozen; remap by replacement rather than mutating
+                    # msg_idx in place.  Otherwise strip/defer may target the pre-merge index.
+                    self._last_build_injections = [
+                        replace(
+                            _entry,
+                            msg_idx=_entry.msg_idx
+                            - sum(1 for _removed_idx in _removed if _removed_idx < _entry.msg_idx),
+                        )
+                        for _entry in self._last_build_injections
+                    ]
+            except Exception:  # noqa: BLE001 — 合并失败 fail-open（原样发送）
+                logger.warning(
+                    "build: 方向 C 持久化注入合并失败，原样发送（fail-open）", exc_info=True
+                )
         # EVO-20260817-b6554376: 投影一致性门闸（借鉴 DSH seq 水印，fail-open 不阻断 run）
         # seq（消息数）负责"历史追加"水印；ver（构建参数+动态输入指纹）负责参数水印；
         # ver+seq 匹配而 built_hash 不同 → 非确定性构建/历史被改 → 告警（只读，不阻断）。

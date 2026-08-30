@@ -88,6 +88,20 @@ R1 **没有**实现预算、按需/去重、恢复单边界、身份剥离、use
 
 R3 **没有**实现恢复单边界、身份问答剥离、user-truth 物理尾位 / provider wire invariant 或行为 A/B。
 
+## 4D. R6 已验收的 User Truth Tail / Wire Invariant
+
+权威报告：`docs/injection-governance/r6/report.md`。
+
+- initial human-ingress provider view 有 program 时必须是单 user envelope：`program appendix → fixed separator → exact user truth`；无 program 正常请求保持 byte-identical no-op。
+- exact user truth 来自 canonical Session current turn，byte-for-byte、不复制、不追加 program suffix；未知第二 human 不得被吞并。
+- tool-followup 不重复 user truth，必须保持 assistant/tool pairing。
+- compact 不得用摘要/指针/截断文本替换 current human truth；truth 自身超 history budget 时保留原文并由上层 context guard 显式拒绝。
+- err1210 USER_ENVELOPE 降级只剥 program prefix，retry 保留 exact human；one-shot program sources 由 sidecar defer。
+- R2×R6 15 点矩阵含 fixed separator 后仍 `generated_program_chars <= accounting used <= budget`，且 `tail_user_run=1`。
+- 最终扩展回归 413/413 PASS；R0 frozen 0-byte diff；touched production pyright 0/0。
+
+R6 **没有**实施 R4 recovery 单动作策略、R5 identity stripping、R7 A/B 或 R8 model tiering。
+
 ## 5. 非目标
 
 - 不修改 LLM 本体。

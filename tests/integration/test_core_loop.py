@@ -179,10 +179,14 @@ def test_memory_persist_across_runs(build_test_engine):
     sid = engine.session.create()
     engine.run(sid, "记住我喜欢 7")
     assert engine.memory.count() >= 1
-    # 第二轮: 检索到记忆（FakeLLM 第二次调用应含 [相关记忆]）
-    engine.run(sid, "我喜欢几来着？")
+    # R3/R6: 第二轮检索到 memory pointer，程序资料位于同一 user envelope 前部，
+    # 本轮 exact query 保持语义尾位。
+    query = "我喜欢几来着？"
+    engine.run(sid, query)
     second_call = fake.calls[-1]["messages"]
-    assert any("[相关记忆]" in str(m.get("content", "")) for m in second_call)
+    assert any("ref=memory:" in str(m.get("content", "")) for m in second_call)
+    assert second_call[-1].get("role") == "user"
+    assert str(second_call[-1].get("content", "")).endswith(query)
 
 
 def test_search_archive_in_loop_after_compression(build_test_engine):
@@ -257,9 +261,11 @@ def test_cross_session_memory_reuse(build_test_engine):
     # 新会话 B
     sid_b = engine.session.create()
     engine.run(sid_b, "XSKEY 相关的内容是什么")
-    # 第二次调用应注入 [相关记忆]
+    # R3/R6: 跨会话复用以 stable memory ref 进入单 envelope，真实 user query 最后。
     last_call = fake.calls[-1]["messages"]
-    assert any("[相关记忆]" in str(m.get("content", "")) for m in last_call)
+    assert any("ref=memory:" in str(m.get("content", "")) for m in last_call)
+    assert last_call[-1].get("role") == "user"
+    assert str(last_call[-1].get("content", "")).endswith("XSKEY 相关的内容是什么")
 
 
 def test_session_switch_and_continue(build_test_engine):

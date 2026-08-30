@@ -82,3 +82,34 @@ class TestMerge:
         ts, kept, removed = merge_persisted_tail_injections(built, set())
         assert ts == 3
         assert kept == [] and removed == []
+
+
+def test_build_direction_c_remaps_registered_dynamic_entry_after_persisted_merge(tmp_path):
+    """Legacy/tool-followup view: removing persisted user must not leave err1210 index stale."""
+    from llm_loop.core.injection_labels import InjectionLayer, origin_metadata, render_program_appendix
+    from llm_loop.core.message import Message, MessageSource
+    from llm_loop.core.loop.err1210 import content_prefix_sha
+    from tests.unit.test_injection_fingerprint import _build, _engine
+
+    engine, sess = _engine(tmp_path)
+    engine._current_turn_ref = None
+    persisted = render_program_appendix("persisted reference", InjectionLayer.REFERENCE)
+    sess.messages.append(
+        Message(
+            role="user",
+            content=persisted,
+            source=MessageSource.USER,
+            metadata=origin_metadata(InjectionLayer.REFERENCE, persisted_injection=True),
+        )
+    )
+    engine._interop_tail_messages = [
+        Message(role="system", content="dynamic interop", source=MessageSource.SYSTEM)
+    ]
+
+    out = _build(engine, sess, [])
+
+    assert len(engine._last_build_injections) == 1
+    entry = engine._last_build_injections[0]
+    assert 0 <= entry.msg_idx < len(out)
+    assert content_prefix_sha(str(out[entry.msg_idx].get("content") or "")) == entry.prefix_sha
+    assert persisted in str(out[entry.msg_idx - 1].get("content") or "")

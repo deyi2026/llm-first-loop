@@ -1,0 +1,232 @@
+"""INJECTION-GOVERNANCE R6: user-truth semantic tail + wire invariant."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from llm_loop.core.injection_labels import InjectionLayer, origin_metadata, render_program_appendix
+from llm_loop.core.message import Message, MessageSource
+
+
+def _human(text: str) -> Message:
+    return Message(
+        role="user",
+        content=text,
+        source=MessageSource.USER,
+        metadata=origin_metadata(InjectionLayer.USER_INSTRUCTION),
+    )
+
+
+def _program(text: str) -> Message:
+    return Message(
+        role="user",
+        content=render_program_appendix(text, InjectionLayer.STATUS),
+        source=MessageSource.USER,
+        metadata=origin_metadata(InjectionLayer.STATUS),
+    )
+
+
+def _tail_user_run(messages: list[dict]) -> int:
+    n = 0
+    for m in reversed(messages):
+        if m.get("role") != "user":
+            break
+        n += 1
+    return n
+
+
+def test_current_ingress_user_truth_allows_program_after_but_not_tool_followup() -> None:
+    from llm_loop.core.user_truth_wire import current_ingress_user_truth
+
+    msgs = [_human("exact user"), _program("status")]
+    assert current_ingress_user_truth(msgs, 0) == "exact user"
+
+    msgs.append(
+        Message(
+            role="assistant",
+            content="",
+            source=MessageSource.SYSTEM,
+            tool_calls=[
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": "{}"},
+                }
+            ],
+        )
+    )
+    assert current_ingress_user_truth(msgs, 0) is None
+
+
+def test_current_ingress_user_truth_rejects_program_turn_ref() -> None:
+    from llm_loop.core.user_truth_wire import current_ingress_user_truth
+
+    msgs = [_human("real"), _program("not human")]
+    assert current_ingress_user_truth(msgs, 1) is None
+
+
+def test_projection_moves_program_both_sides_before_exact_user_truth() -> None:
+    from llm_loop.core.user_truth_wire import USER_TRUTH_SEPARATOR, project_user_truth_tail
+
+    truth = "用户原文 byte-for-byte\n第二行"
+    p0 = render_program_appendix("persisted before", InjectionLayer.REFERENCE)
+    p1 = render_program_appendix("compact after", InjectionLayer.STATUS)
+    p2 = render_program_appendix("dynamic after", InjectionLayer.STATUS)
+    built = [
+        {"role": "system", "content": "SYS"},
+        {"role": "assistant", "content": "previous answer"},
+        {"role": "user", "content": p0},
+        {"role": "user", "content": truth},
+        {"role": "user", "content": p1},
+        {"role": "user", "content": p2},
+    ]
+
+    result = project_user_truth_tail(built, truth)
+
+    assert result.changed is True
+    assert result.violation == ""
+    assert result.absorbed_indices == (2, 4, 5)
+    assert result.envelope_index == 2
+    assert len(result.messages) == 3
+    envelope = result.messages[-1]
+    assert envelope["role"] == "user"
+    assert envelope["content"].endswith(truth)
+    assert envelope["content"].count(USER_TRUTH_SEPARATOR) == 1
+    assert envelope["content"].index(p0) < envelope["content"].index(p1)
+    assert envelope["content"].index(p1) < envelope["content"].index(p2)
+    assert envelope["content"].index(p2) < envelope["content"].index(USER_TRUTH_SEPARATOR)
+    assert _tail_user_run(result.messages) == 1
+
+
+def test_projection_is_byte_identical_noop_when_no_program_tail() -> None:
+    from llm_loop.core.user_truth_wire import project_user_truth_tail
+
+    built = [
+        {"role": "system", "content": "SYS"},
+        {"role": "assistant", "content": "old"},
+        {"role": "user", "content": "exact"},
+    ]
+    result = project_user_truth_tail(built, "exact")
+    assert result.changed is False
+    assert result.violation == ""
+    assert result.messages is built
+
+
+def test_projection_refuses_to_absorb_unknown_second_human_user() -> None:
+    from llm_loop.core.user_truth_wire import project_user_truth_tail
+
+    built = [
+        {"role": "system", "content": "SYS"},
+        {"role": "user", "content": "current truth"},
+        {"role": "user", "content": "another genuine human message"},
+    ]
+    result = project_user_truth_tail(built, "current truth")
+    assert result.changed is False
+    assert result.violation == "trailing_non_program_user"
+    assert result.messages is built
+
+
+def test_build_initial_round_envelope_ends_with_exact_user_truth(tmp_path: Path) -> None:
+    from llm_loop.core.user_truth_wire import USER_TRUTH_SEPARATOR
+    from tests.unit.test_injection_fingerprint import _arm_all_slots, _build, _engine
+
+    engine, sess = _engine(tmp_path)
+    object.__setattr__(engine.settings, "cog_runtime_mode", "enforce")
+    engine._current_turn_ref = 0
+    truth = sess.messages[0].content
+    memory_msgs = _arm_all_slots(engine, sess)
+    out = _build(engine, sess, memory_msgs)
+
+    assert _tail_user_run(out) == 1
+    envelope = out[-1]
+    assert envelope["role"] == "user"
+    assert envelope["content"].endswith(truth)
+    assert envelope["content"].count(USER_TRUTH_SEPARATOR) == 1
+    assert envelope["content"].index("[程序附录·非用户输入]") < envelope["content"].index(USER_TRUTH_SEPARATOR)
+    # Current user truth is no longer a separate message before the program appendix.
+    assert not any(m.get("content") == truth for m in out[:-1])
+
+
+def test_build_tool_followup_does_not_reappend_user_truth(tmp_path: Path) -> None:
+    from llm_loop.core.user_truth_wire import USER_TRUTH_SEPARATOR
+    from tests.unit.test_injection_fingerprint import _build, _engine
+
+    engine, sess = _engine(tmp_path)
+    engine._current_turn_ref = 0
+    truth = sess.messages[0].content
+    sess.messages.append(
+        Message(
+            role="assistant",
+            content="",
+            source=MessageSource.SYSTEM,
+            tool_calls=[
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": "{}"},
+                }
+            ],
+        )
+    )
+    sess.messages.append(
+        Message(
+            role="tool",
+            content="tool result",
+            source=MessageSource.TOOL,
+            tool_call_id="c1",
+            tool_name="read_file",
+        )
+    )
+
+    out = _build(engine, sess, [])
+
+    assert all(USER_TRUTH_SEPARATOR not in str(m.get("content") or "") for m in out)
+    assert sum(str(m.get("content") or "") == truth for m in out) == 1
+    assistant_idx = next(i for i, m in enumerate(out) if m.get("tool_calls"))
+    assert out[assistant_idx + 1].get("role") == "tool"
+    assert out[assistant_idx + 1].get("tool_call_id") == "c1"
+
+
+def test_build_compact_initial_round_keeps_exact_truth_as_semantic_tail(tmp_path: Path) -> None:
+    from llm_loop.core.user_truth_wire import USER_TRUTH_SEPARATOR
+    from tests.unit.test_injection_fingerprint import _engine
+
+    engine, sess = _engine(tmp_path)
+    current = sess.messages[0]
+    old: list[Message] = []
+    for i in range(4):
+        old.append(Message(role="user", content=f"old-u{i}-" + "U" * 600, source=MessageSource.USER))
+        old.append(Message(role="assistant", content=f"old-a{i}-" + "A" * 600, source=MessageSource.SYSTEM))
+    sess.messages = old + [current]
+    engine._current_turn_ref = len(sess.messages) - 1
+
+    out = engine._build_llm_messages(
+        sess, [], max_chars=1800, planned_label="zhipu/glm-5"
+    )
+
+    assert engine._last_history_compacted is True
+    assert out[-1]["role"] == "user"
+    assert str(out[-1]["content"]).endswith(current.content)
+    assert USER_TRUTH_SEPARATOR in str(out[-1]["content"])
+    assert _tail_user_run(out) == 1
+
+
+def test_build_oversized_current_user_is_never_replaced_by_compact_surrogate(tmp_path: Path) -> None:
+    """R6 chooses explicit over-budget pressure over silently changing the user's task."""
+    from llm_loop.core.user_truth_wire import USER_TRUTH_SEPARATOR
+    from tests.unit.test_injection_fingerprint import _engine
+
+    engine, sess = _engine(tmp_path)
+    truth = "X" * 5000
+    sess.messages[0].content = truth
+    engine._current_turn_ref = 0
+
+    out = engine._build_llm_messages(
+        sess, [], max_chars=1200, planned_label="zhipu/glm-5"
+    )
+
+    assert engine._last_history_compacted is True
+    assert out[-1] == {"role": "user", "content": truth}
+    assert USER_TRUTH_SEPARATOR not in str(out[-1]["content"])
+    assert sum(len(str(m.get("content") or "")) for m in out) > 1200
+    assert not any("本消息已压缩" in str(m.get("content") or "") for m in out)

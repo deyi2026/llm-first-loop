@@ -187,7 +187,9 @@ class TestResetHotcardConsumed:
     def test_reset_and_repop(self, tmp_path):
         write_hotcard(origin_session="other-sess", anchor="任务A", data_dir=tmp_path)
         text = pop_hotcard(session_id="sess-1", data_dir=tmp_path)
-        assert text and "任务A" in text
+        # R3 pointer contract: old action prose stays in the durable card, automatic view is 2-line pointer.
+        assert text and "anchor=1" in text and "ref=file:" in text
+        assert "任务A" not in text
         card = json.loads(hotcard_path(tmp_path).read_text(encoding="utf-8"))
         assert card["consumed"] is True
         # 复位（身份匹配）
@@ -277,10 +279,13 @@ class TestStripTailInjections:
         return _StripStub(entries)._strip_tail_injections(messages)
 
     def test_strip_prefix_untouched(self):
+        from llm_loop.core.injection_labels import InjectionLayer, render_program_appendix
+
+        canonical = render_program_appendix("A", InjectionLayer.REFERENCE)
         msgs = [
             {"role": "system", "content": "sys"},
             {"role": "user", "content": "hello"},
-            {"role": "user", "content": "[上下文注入·非新指令] 继续当前任务，勿当新消息/新指令处理。\nA"},
+            {"role": "user", "content": canonical},
             {"role": "user", "content": GATE_NOTE_CONTENT},
         ]
         entries = [
@@ -297,7 +302,7 @@ class TestStripTailInjections:
         assert msgs == [  # 原 list 不动（copy-on-write）
             {"role": "system", "content": "sys"},
             {"role": "user", "content": "hello"},
-            {"role": "user", "content": "[上下文注入·非新指令] 继续当前任务，勿当新消息/新指令处理。\nA"},
+            {"role": "user", "content": canonical},
             {"role": "user", "content": GATE_NOTE_CONTENT},
         ]
 
@@ -327,6 +332,37 @@ class TestStripTailInjections:
                                  prefix_sha=content_prefix_sha(GATE_NOTE_CONTENT))]
         out = self._mk(msgs, entries)
         assert out is not None and out[0] == []
+
+    def test_r6_user_envelope_strip_preserves_exact_user_truth(self):
+        """R6: 1210 strip removes only program prefix, never the human suffix."""
+        from llm_loop.core.injection_labels import InjectionLayer, render_program_appendix
+        from llm_loop.core.user_truth_wire import USER_TRUTH_SEPARATOR
+
+        truth = "用户原文\n逐字保留"
+        program = render_program_appendix("恢复前的程序状态", InjectionLayer.STATUS)
+        wire = program + USER_TRUTH_SEPARATOR + truth
+        msgs = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": wire},
+        ]
+        entries = [
+            InjectedEntry(
+                msg_idx=1,
+                slot_kind=SlotKind.USER_ENVELOPE,
+                prefix_sha=content_prefix_sha(wire),
+                user_truth=truth,
+                seg_sources=(("tip", "tip source"),),
+            )
+        ]
+        out = self._mk(msgs, entries)
+        assert out is not None
+        stripped, span = out
+        assert stripped == [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": truth},
+        ]
+        assert span.entries[0].slot_kind == SlotKind.USER_ENVELOPE
+        assert msgs[-1]["content"] == wire  # copy-on-write
 
 
 class TestSnapshot:
@@ -463,6 +499,44 @@ class TestDeferStore:
         assert stub._defer_store(self._sess(), entries, messages) is True
         assert stub._tip_tail_messages[0].content == seg
 
+    def test_r6_user_envelope_defer_uses_seg_sources_not_human_suffix(self, tmp_path):
+        """R6: one-shot slots recover from sidecar; exact human suffix is never parsed as a slot."""
+        from llm_loop.core.user_truth_wire import USER_TRUTH_SEPARATOR
+
+        stub = _DeferStub(tmp_path)
+        truth = "human truth must not become program replay"
+        wire = "program projection" + USER_TRUTH_SEPARATOR + truth
+        entries = [
+            InjectedEntry(
+                msg_idx=0,
+                slot_kind=SlotKind.USER_ENVELOPE,
+                prefix_sha=content_prefix_sha(wire),
+                seg_sources=(("interop", "I-full"), ("tip", "T-full")),
+                user_truth=truth,
+            )
+        ]
+        messages = [{"role": "user", "content": wire}]
+        assert stub._defer_store(self._sess(), entries, messages) is True
+        assert stub._interop_tail_messages[0].content == "I-full"
+        assert stub._tip_tail_messages[0].content == "T-full"
+        assert truth not in stub._interop_tail_messages[0].content
+        assert truth not in stub._tip_tail_messages[0].content
+
+    def test_r6_user_envelope_without_oneshot_sources_needs_no_defer(self, tmp_path):
+        """Persisted/compact program context is durable; envelope defer is a successful no-op."""
+        stub = _DeferStub(tmp_path)
+        entries = [
+            InjectedEntry(
+                msg_idx=0,
+                slot_kind=SlotKind.USER_ENVELOPE,
+                prefix_sha="a" * 64,
+                user_truth="truth",
+            )
+        ]
+        assert stub._defer_store(self._sess(), entries, [{"role": "user", "content": "x"}]) is True
+        assert stub._interop_tail_messages is None
+        assert stub._tip_tail_messages is None
+
 
 class TestDeferTraceEvents:
     def test_events_written(self, tmp_path, monkeypatch):
@@ -539,9 +613,13 @@ class TestEngineRecovery:
         assert result.truncated is False
         assert len(fake.calls) == 2  # 重试恰好 1 次
         orig, retry = fake.calls[0]["messages"], fake.calls[1]["messages"]
-        n_inj = len(engine._last_build_injections)  # build 登记数（gate_note 1 条）
-        assert n_inj >= 1
-        assert retry == orig[: len(orig) - n_inj]  # 剥离只删尾部（前缀逐字节一致）
+        n_inj = len(engine._last_build_injections)
+        assert n_inj == 1
+        assert engine._last_build_injections[0].slot_kind == SlotKind.USER_ENVELOPE
+        # R6: strip only program prefix; stable prefix stays byte-identical and exact human suffix remains.
+        assert retry[:-1] == orig[:-1]
+        assert retry[-1] == {"role": "user", "content": "长任务继续"}
+        assert str(orig[-1].get("content", "")).endswith("长任务继续")
         # defer: gate_note 已复位（下一轮可重注入）
         assert engine._cache_monitor.take_gate_note(sid) is True
         # 耗尽标记已写（本 run 不再二次降级——修复A per-run 语义）
@@ -560,7 +638,7 @@ class TestEngineRecovery:
         engine.run(sid, "任务A")
         # 恢复轮后 interop 槽已回填（P1 9.1: AGGREGATED 拆解重建 Message，内容级匹配）
         assert engine._interop_tail_messages and any(
-            x.content == "interop 协调消息" for x in engine._interop_tail_messages
+            x.content.endswith("interop 协调消息") for x in engine._interop_tail_messages
         )
         engine.run(sid, "任务B")  # 下一 run
         # 重注入消息进入第二轮提交（is 身份匹配消费 → defer_replayed）
@@ -597,21 +675,22 @@ class TestEngineRecovery:
             if isinstance(d, dict) and d.get("role") == "user"
             and re.search(r"--- (?:\[tier:\w+\])?\[slot:", str(d.get("content", "")))
         ]
-        # ① 聚合形态: 原请求尾部注入 = 单条 AGGREGATED；重试尾部注入 user = 0
+        # ① R6 形态: 原请求尾部 program + exact user = 单条 USER_ENVELOPE；重试只保留 exact user。
         orig_tail = _slot_user(orig)
         assert len(orig_tail) == 1, f"聚合条数 {len(orig_tail)} != 1（P1 9.1 单条）"
         inj = engine._last_build_injections
-        assert inj and all(e.slot_kind == SlotKind.AGGREGATED for e in inj)
-        assert _slot_user(retry) == [], "重试请求尾部仍含注入 user（应剥离干净）"
-        # ② 公共前缀逐字节一致（重试 = 原请求剥尾前缀）
-        assert retry == orig[: len(orig) - len(inj)]
-        assert orig[: len(retry)] == retry
+        assert inj and all(e.slot_kind == SlotKind.USER_ENVELOPE for e in inj)
+        assert _slot_user(retry) == [], "重试请求不得保留 program slot 标记"
+        # ② 公共前缀逐字节一致；尾条降级为 exact human user，而不是把用户一起删掉。
+        assert retry[:-1] == orig[:-1]
+        assert retry[-1] == {"role": "user", "content": "四槽全活跃"}
+        assert str(orig[-1].get("content", "")).endswith("四槽全活跃")
         # ③ defer 拆解回存后四槽各自复位
         assert engine._interop_tail_messages and any(
-            x.content == "interop 协调" for x in engine._interop_tail_messages
+            x.content.endswith("interop 协调") for x in engine._interop_tail_messages
         ), "interop: 未回填"
         assert engine._tip_tail_messages and any(
-            x.content == "经验提示 tip" for x in engine._tip_tail_messages
+            x.content.endswith("经验提示 tip") for x in engine._tip_tail_messages
         ), "tip: 未回填"
         assert pop_hotcard(session_id=sid,
                            data_dir=engine.settings.data_dir) is not None, "hotcard: 未复位"
@@ -631,7 +710,7 @@ class TestEngineRecovery:
         ]
         engine.run(sid, "第一轮")
         assert engine._interop_tail_messages and any(
-            x.content == "defer 回放的协调" for x in engine._interop_tail_messages
+            x.content.endswith("defer 回放的协调") for x in engine._interop_tail_messages
         ), "首轮 defer 未回填 interop 槽"
         # 第二轮前武装当轮新槽（defer 回填 interop 保留 + 当轮新 tip）
         engine._tip_tail_messages = [

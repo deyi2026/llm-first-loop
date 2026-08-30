@@ -47,9 +47,12 @@
 - 验收: identity trap 不进入长期摘要细节；非身份内容零误伤。
 - evidence_required: true
 
-## R6 用户原话尾位 + wire invariant（L2 横切）
-- 内容: 逻辑顺序固定 `stable system → history → program appendix → user truth`；provider 投影不能破坏 system/tool 协议；GLM 等使用单 user envelope，user truth 原文逐字位于末尾。
-- 验收: `injection_after_user_chars=0`；GLM `tail_user_run<=1`；tool pairing 合法；用户原文不复制、不改写。
+## R6 用户原话尾位 + wire invariant（L2 横切）— ✅ PASS
+- 内容: provider-view 出口统一 `program appendix → fixed separator → exact user truth` 单 user envelope；Session/event history 不改序；仅 initial human-ingress 投影，tool-followup 不重放 truth。
+- 产物: `src/llm_loop/core/user_truth_wire.py`、`tests/unit/test_user_truth_wire.py`、`docs/injection-governance/r6/report.md`；`history.py` 只在 initial ingress 保护 current human exact；`err1210.py` 新增 USER_ENVELOPE 安全 strip/defer。
+- 验收: 413/413 扩展回归 PASS；off/shadow/enforce×5 budget 共15点均 `generated<=used<=budget` 且 `tail_user_run=1`；compact 后 exact truth 仍尾位；oversized current user 不再被 surrogate 替换；1210 retry 保留 exact user；R0 frozen 0-byte diff；pyright 0/0。
+- 说明: R6 不改变 R4 recovery 动作策略、R5 identity stripping、R7 A/B 或 R8 model tiering。
+- evidence_required: true
 - evidence_required: true
 
 ## R7 L3 A/B 验证

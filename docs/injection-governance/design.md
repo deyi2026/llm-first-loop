@@ -137,6 +137,8 @@ wire 层按 provider contract 投影：
 
 验收：初始人类 turn 的 provider payload 中，最后一个 user-role 必须包含且以本轮用户原文结束；`injection_after_user_chars == 0`；GLM `tail_user_run <= 1`。
 
+**R6 实现状态（2026-08-30）：PASS。** provider-view 投影已由 `core/user_truth_wire.py` 统一；仅 initial human-ingress 应用，tool-followup 不重放用户原文；compact 对 current human exact 有专门保护，1210 USER_ENVELOPE strip 只剥程序前缀。完整证据见 `docs/injection-governance/r6/report.md`。
+
 ### L2-5 按模型能力分档注入（后置，先 shadow）
 
 方向认可，但**不阻塞 L1、L2-1~L2-4 与上述横切不变量**，避免当前治理同时引入第二套行为变量。

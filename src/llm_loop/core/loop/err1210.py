@@ -70,6 +70,7 @@ class SlotKind(StrEnum):
     HOTCARD = "hotcard"
     GATE_NOTE = "gate_note"
     AGGREGATED = "aggregated"  # P1 9.1: 四槽聚合单条（strip/defer 消费端拆解分支）
+    USER_ENVELOPE = "user_envelope"  # R6: program appendix + fixed boundary + exact user truth
 
 
 _AGG_SLOT_RE = re.compile(
@@ -118,6 +119,8 @@ class InjectedEntry:
     # Projection 是 view 不是 Source of Truth：WARM 投影截断后 wire 反推会把
     # 原文永久缩水（审查实测 314→120 chars），defer 恢复必须走此原始记录。
     seg_sources: tuple[tuple[str, str], ...] = ()
+    # R6: USER_ENVELOPE strip must preserve the exact human suffix. Empty for legacy entries.
+    user_truth: str = ""
 
 
 @dataclass(frozen=True)
@@ -295,6 +298,7 @@ class _Err1210Mixin:
                 return None
             from llm_loop.core.cache_health import GATE_NOTE_CONTENT
             from llm_loop.core.loop.focus import _INJECTION_PREFIX
+            from llm_loop.core.user_truth_wire import USER_TRUTH_SEPARATOR
 
             for e in entries:
                 m = messages[e.msg_idx]
@@ -305,7 +309,18 @@ class _Err1210Mixin:
                 if content_prefix_sha(content) != e.prefix_sha:
                     logger.warning("err1210: 注入前缀 sha 不匹配，放弃降级 idx=%d", e.msg_idx)
                     return None
-                if e.slot_kind == SlotKind.GATE_NOTE:
+                if e.slot_kind == SlotKind.USER_ENVELOPE:
+                    if (
+                        not e.user_truth
+                        or USER_TRUTH_SEPARATOR not in content
+                        or not content.endswith(e.user_truth)
+                    ):
+                        logger.warning(
+                            "err1210: R6 user envelope 恒等校验失败，放弃降级 idx=%d",
+                            e.msg_idx,
+                        )
+                        return None
+                elif e.slot_kind == SlotKind.GATE_NOTE:
                     if content != GATE_NOTE_CONTENT:
                         logger.warning("err1210: gate_note 恒等校验失败，放弃降级 idx=%d", e.msg_idx)
                         return None
@@ -314,7 +329,17 @@ class _Err1210Mixin:
                         "err1210: 注入前缀标识缺失（绕过 wrap_injection?），放弃降级 idx=%d", e.msg_idx
                     )
                     return None
-            # copy-on-write：新 list，前缀逐字节不变（spec 5.1.1-2a）
+            # R6 envelope 是“program prefix + exact human suffix”单条 user。异常降级只能
+            # 剥 program prefix，绝不能把 user truth 一起删除。当前 build 每轮登记最多一个
+            # USER_ENVELOPE，且它是 provider payload 尾条。
+            if len(entries) == 1 and entries[0].slot_kind == SlotKind.USER_ENVELOPE:
+                e = entries[0]
+                return (
+                    list(messages[: e.msg_idx])
+                    + [{"role": "user", "content": e.user_truth}],
+                    span,
+                )
+            # legacy copy-on-write：新 list，前缀逐字节不变（spec 5.1.1-2a）
             stripped = list(messages[: entries[0].msg_idx])
             return stripped, span
         except Exception:  # noqa: BLE001 — 剥离失败 fail-open（放弃降级）
@@ -389,11 +414,18 @@ class _Err1210Mixin:
             # （投影前原始内容）——Projection 是 view 不是 Source of Truth；
             # WARM 投影截断后 wire 反推会把原文永久缩水（314→120 chars）。
             # 无 seg_sources（旧 entry/构造缺省）时 fallback wire 解析（标注风险）。
-            agg_es = by_slot.pop(SlotKind.AGGREGATED, None) or []
+            agg_es = (by_slot.pop(SlotKind.AGGREGATED, None) or []) + (
+                by_slot.pop(SlotKind.USER_ENVELOPE, None) or []
+            )
             for e in agg_es:
                 _src_segs = [(s, c) for s, c in (e.seg_sources or ()) if c]
                 if _src_segs:
                     segs = _src_segs
+                elif e.slot_kind == SlotKind.USER_ENVELOPE:
+                    # R6 envelope may contain only persisted/compact program context. Those
+                    # sources are durable and need no one-shot defer replay; never parse the
+                    # mixed wire envelope and risk treating the human suffix as program data.
+                    continue
                 else:
                     try:
                         m = (
@@ -889,7 +921,7 @@ class _Err1210Mixin:
         try:
             if getattr(self, "_auto_continue_1210", 0) >= 1:
                 return False
-            if not is_err1210(exc):
+            if not isinstance(exc, LLMError) or not is_err1210(exc):
                 return False
             if os.environ.get("ERR1210_RECOVERY", "1") != "1":
                 return False
