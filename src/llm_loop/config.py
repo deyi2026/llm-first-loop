@@ -198,6 +198,21 @@ def _env_evidence_mode(name: str) -> str:
     return "off"
 
 
+def _env_tool_eligibility_mode(name: str) -> str:
+    """R8.7 tool prompt-visibility mode: off/shadow/enforce.
+
+    Owner-approved default is enforce. Invalid values keep the bounded/core projection
+    instead of silently reopening the full registry prompt surface.
+    """
+    raw = _raw_env(name).strip().lower()
+    if not raw:
+        return "enforce"
+    if raw in {"off", "shadow", "enforce"}:
+        return raw
+    _note_invalid_fallback(name, "enforce", "非 off/shadow/enforce 字符串")
+    return "enforce"
+
+
 def _env_run_mode(name: str) -> str:
     """RUN_MODE 运行模式解析（EVO-20260814 P1-A，对齐 Harness 四种运行模式）.
 
@@ -341,6 +356,8 @@ class Settings:
     # ── EVO-d5db88d9: 工具 Schema 索引化（TOOL_SCHEMA_LAZY=1 时 LLM 只见精简索引，按需读完整 Schema）──
     # EVO-20260814: 默认开（节 token；环境变量仍可覆盖回 0 兼容旧用户）
     tool_schema_lazy: bool = True
+    # R8.7: 工具存在 != 每轮 prompt 可见。enforce=CORE+当前任务/协议按需；shadow=只观测；off=旧行为。
+    tool_eligibility_mode: str = "enforce"
     # ── GOAL-20260829-7483e375 T2: 分层前缀（锚层 Top8 全量+80字符索引 / 动态层追加式）──
     # PREFIX_LAYERED=1 启用；默认关（零回归，A/B 基线 = 现行 tool_schema_lazy 路径）
     prefix_layered: bool = False
@@ -536,6 +553,7 @@ class Settings:
             "tool_local_inject_skip": self.tool_local_inject_skip,
             "tool_trim_enabled": self.tool_trim_enabled,
             "tool_schema_lazy": self.tool_schema_lazy,
+            "tool_eligibility_mode": self.tool_eligibility_mode,
             "prefix_layered": self.prefix_layered,
             "tool_pipeline_enabled": self.tool_pipeline_enabled,
             "tool_materialize_enabled": self.tool_materialize_enabled,
@@ -675,6 +693,7 @@ def load_settings() -> Settings:
         exec_allowlist=os.environ.get("EXEC_ALLOWLIST", "").strip(),
         run_mode=_env_run_mode("RUN_MODE"),
         tool_schema_lazy=_env_bool("TOOL_SCHEMA_LAZY", True),  # EVO-20260814: 默认开
+        tool_eligibility_mode=_env_tool_eligibility_mode("TOOL_ELIGIBILITY_MODE"),
         prefix_layered=_env_bool("PREFIX_LAYERED", False),  # GOAL-20260829-7483e375 T2: 默认关零回归
         tool_pipeline_enabled=_env_bool("TOOL_PIPELINE_ENABLED", False),
         tool_materialize_enabled=_env_bool("TOOL_MATERIALIZE_ENABLED", False),

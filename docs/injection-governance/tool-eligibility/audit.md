@@ -2,7 +2,7 @@
 
 Date: 2026-08-30
 
-Status: **AUDIT PASS / IMPLEMENTATION NOT STARTED**
+Status: **R8.6 AUDIT PASS / R8.7 PASS**
 
 Scope: this phase audits which tools deserve prompt visibility and how failed tools should recover. It does **not** change production tool registration, tool-schema projection, MCP configuration, or model behavior.
 
@@ -213,4 +213,11 @@ tool protocol violations = 0
 R0 frozen diff = 0
 ```
 
-Behavior canary remains **NOT STARTED**. Tool Eligibility implementation should be validated before combining it with model-profile behavior changes.
+Behavior canary remains **NOT STARTED**. R8.7 Tool Eligibility detached clean fixed-point is PASS; the seven non-tool Prompt Eligibility blockers still prevent model-profile behavior canary.
+
+
+## 10. R8.7 implementation update
+
+The implementation stage approved after this audit is now in place. The current code applies CORE9 + current-required projection by default (`TOOL_ELIGIBILITY_MODE=enforce`), preserves `shadow/off` rollback, keeps hidden healthy tools discoverable, quarantines unavailable Playwright tools at both projection and stale-call execution boundaries, closes MCP connections that expose zero tools, and implements typed `web_fetch` recovery as the first policy family.
+
+Clean-source pre-commit measurement after the implementation is 61 / 22,699 all-lazy chars, with a simple-task CORE9 of 3,425 raw lazy chars (3,714 provider-wrapper chars), still **84.9%** below the all-tool raw lazy surface. See `r87-report.md` for implementation and verification evidence. Non-`web_fetch` recovery rules in `recovery-policy.json` remain explicitly PROPOSED.

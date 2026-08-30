@@ -175,7 +175,7 @@ R8 **没有**启用任何 profile 行为。Metadata gate 与 R8.3 shadow soak �
 - behavior canary P0 前置门仍包括：legacy resolved migration evidence、model-switch 当前轮复制、observability prompt chars、unknown producer eligible=0、Evidence Manifest R2 bypass=0、legacy/unresolved packet memory、round-exhaustion consumed 等。R8.5 PASS **不等于 Eligibility 全部实现**。
 - R8.4 权威审计：`eligibility/audit.md`；R8.5 权威实现报告：`eligibility/resolved-episode-report.md`；机器状态只认 `eligibility/matrix.json`。
 
-## 4I. R8.6 Tool Eligibility + Recovery Audit（只审计，行为未实施）
+## 4I. R8.6 Audit + R8.7 Dynamic Tool Eligibility / Recovery
 
 权威审计：`docs/injection-governance/tool-eligibility/audit.md`；机器清单：`tool-eligibility/matrix.json`；恢复规则：`tool-eligibility/recovery-policy.json`。
 
@@ -188,9 +188,14 @@ R8 **没有**启用任何 profile 行为。Metadata gate 与 R8.3 shadow soak �
 - `web_fetch` 标杆：普通静态站点可继续用；Toutiao 等已知 anti-bot domain preflight 优先 `web-fetch-fast`；403/418/JS-shell 不重复同工具；404 先找 canonical URL；timeout/5xx 才允许一次 bounded retry。
 - Skill 本身也受 runtime health：当前 `web-fetch-fast` 的 Chromium 末级 fallback 在本机不可执行，因此实现层必须标出该 fallback unavailable，不能静态照单全收。
 - MCP 当前只有 `dsh` server；initialize/tools-list 成功但 tools=0，因此推荐 no-capability quarantine/disable。重入门：`tools/list>0 + schema valid + health probe + allowlist/dedupe review`。
-- R8.6 当前**不改变** production `registry.schemas()`、local allowlist、MCP env、tool failure content 或 provider payload。Behavior canary / R9 继续冻结。
+- R8.7 已实施中央 prompt-facing tool projection：默认 `enforce`；`shadow/off` 是 rollback。simple task clean-source CORE=9 / raw lazy 3,425 chars（provider wrapper 3,714），满足 default <=12 tools / <=5,000 chars。
+- Hidden healthy tools 不 unregister；`get_tool_schema` 必须提供目录/关键词/exact schema discovery。active assistant-tool protocol 和 typed-recovery-next 必须能把需要的 secondary tool 临时加入 tail。
+- QUARANTINED 工具既不能被 prompt projection 暴露，stale direct call 也必须在 execution boundary 被拒绝；Playwright 当前按 Python runtime prerequisite 执行该规则。
+- MCP `tools/list=0` 视为 no capability：关闭该次连接、注册0工具；不得仅维持一个“在线但无能力”的 stdio 进程。
+- `web_fetch` 是首个 typed recovery SoT：known Toutiao preflight 不执行 generic fetch；403/418/404/429/JS-shell/timeout/5xx/security-block 用结构化 failure class 决定 retry/replacement；matched typed policy 必须替代 generic/experience guidance，避免两套建议。
+- R8.6 其它 recovery rules 仍 PROPOSED，不能因 R8.7 `web_fetch` PASS 宣称全部工具恢复策略已实施。Behavior canary / R9 继续冻结。
 
-实施前硬门：default cloud tool-schema chars <=5,000；universal default tools <=12；hidden-but-needed discovery fixture=100%；quarantined direct calls=0；known deterministic same-tool retries=0；security block unsafe-bypass suggestion=0；tool protocol violation=0；R0 frozen diff=0。
+R8.7 最终硬门：default cloud tool-schema chars <=5,000；universal default tools <=12；hidden-needed discovery fixture=100%；quarantined stale direct execution=0；known deterministic same-tool retries=0；security block unsafe-bypass suggestion=0；tool protocol violation=0；R0 frozen diff=0；detached clean checkout PASS。
 
 ## 5. 非目标
 
@@ -199,4 +204,4 @@ R8 **没有**启用任何 profile 行为。Metadata gate 与 R8.3 shadow soak �
 - 不把强模型排除在结构治理之外；**行为 A/B 重点是弱模型，wire invariant 则跨模型强制**。
 - 不让 `err1210.py` 承担正常注入排序/合并职责。
 - R8.4/R8.5 允许把 historical reasoning 作为 **Prompt Eligibility surface** 治理；R8.5 通过退休 resolved episode 且不复制 `reasoning_content` 来降噪，但不修改 `REASONING_TAIL` 参数或 provider reasoning 协议。
-- R8.6 只审计 tool visibility / recovery policy，不在本阶段修改 tool registry、安装浏览器依赖、改变 MCP server 配置或自动路由工具。
+- R8.7 可以改变 prompt-facing tool projection 与 no-capability MCP connection lifetime，但不安装 Playwright/Chromium、不伪造 MCP capability、不删除 healthy discoverable tools，也不进入 model-profile behavior canary/R9。

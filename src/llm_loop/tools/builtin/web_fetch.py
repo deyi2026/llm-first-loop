@@ -297,7 +297,8 @@ class WebFetchTool:
     name = "web_fetch"
     description = (
         "抓取网页/URL 并返回文本内容（含标题与正文提取）。何时用: 获取网页信息、读取在线文档、查询外部数据。"
-        "何时不用: 本地文件用 read_file；需执行命令用 execute_command。失败对策: URL 无效/HTTP 错误/超时会如实返回原因，请核对 URL 后重试。"
+        "何时不用: 本地文件用 read_file；需执行命令用 execute_command。"
+        "已知反爬域名会由预检返回专用 skill/recovery 路径；失败后不要同参盲重试。"
         + SHARED_SOURCE_RECOVERY_CONTRACT
         + source_recovery_guidance(SourceRecoveryKind.WEB_FETCH)
     )
@@ -621,8 +622,10 @@ class WebFetchTool:
                 status = ToolResultStatus.TIMEOUT if "超时" in httpx_note else ToolResultStatus.FAILURE
                 return ToolResult(
                     status=status,
-                    content=f"[抓取失败] {url}：{httpx_note}；curl 回退亦失败（已轮换 {len(_UA_POOL)} 个 UA）。"
-                    "可换 execute_command 手动排查，或改用 web_search 找替代信源。",
+                    content=(
+                        f"[抓取失败] {url}：{httpx_note}；"
+                        f"curl 回退亦失败（已轮换 {len(_UA_POOL)} 个 UA）。"
+                    ),
                     tool_call_id="",
                     tool_name=self.name,
                 )

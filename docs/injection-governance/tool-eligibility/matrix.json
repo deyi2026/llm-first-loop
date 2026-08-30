@@ -1,18 +1,18 @@
 {
-  "schema": "tool-eligibility-audit-v1",
-  "phase": "R8.6_TOOL_ELIGIBILITY_RECOVERY_AUDIT",
+  "schema": "tool-eligibility-runtime-v2",
+  "phase": "R8.7_DYNAMIC_TOOL_ELIGIBILITY_RUNTIME_RECOVERY",
   "generated_on": "2026-08-30",
   "source_commit": "97a329d",
-  "behavior_changed": false,
+  "behavior_changed": true,
   "current_registry": {
     "tools_total": 61,
-    "cloud_lazy_schema_chars": 22692,
-    "full_schema_chars": 39295,
+    "cloud_lazy_schema_chars": 22699,
+    "full_schema_chars": 39303,
     "current_mcp_registered_tools": 0
   },
   "recommended_default_surface": {
     "universal_core_count": 9,
-    "universal_core_lazy_schema_chars": 3418,
+    "universal_core_lazy_schema_chars": 3425,
     "reduction_vs_all_lazy_pct": 84.9,
     "core_tools": [
       "edit_file",
@@ -278,9 +278,9 @@
         "success": 14,
         "failure": 1
       },
-      "lazy_schema_chars": 255,
-      "full_schema_chars": 292,
-      "reason": ""
+      "lazy_schema_chars": 262,
+      "full_schema_chars": 299,
+      "reason": "R8.7 universal discovery escape hatch: exact schema plus * catalog and ?keyword search using the existing tool_name parameter"
     },
     {
       "name": "grill_me",
@@ -387,7 +387,7 @@
     {
       "name": "playwright_exec",
       "recommended_state": "QUARANTINED",
-      "eligibility_condition": "task/context match required",
+      "eligibility_condition": "task/context match AND runtime health ready; otherwise hidden/quarantined",
       "calls_observed": 22,
       "success_observed": 9,
       "success_rate_pct": 40.9,
@@ -397,12 +397,12 @@
       },
       "lazy_schema_chars": 422,
       "full_schema_chars": 1264,
-      "reason": "current .venv lacks playwright and current host lacks chromium; deterministic environment prerequisite is absent"
+      "reason": "R8.7 runtime health quarantine is active when the Playwright Python prerequisite is absent; stale direct calls are refused with typed recovery"
     },
     {
       "name": "playwright_test",
       "recommended_state": "QUARANTINED",
-      "eligibility_condition": "task/context match required",
+      "eligibility_condition": "task/context match AND runtime health ready; otherwise hidden/quarantined",
       "calls_observed": 1,
       "success_observed": 0,
       "success_rate_pct": 0.0,
@@ -411,7 +411,7 @@
       },
       "lazy_schema_chars": 431,
       "full_schema_chars": 665,
-      "reason": "current .venv lacks playwright and current host lacks chromium; deterministic environment prerequisite is absent"
+      "reason": "R8.7 runtime health quarantine is active when the Playwright Python prerequisite is absent; stale direct calls are refused with typed recovery"
     },
     {
       "name": "read_evidence",
@@ -855,8 +855,8 @@
         "blocked": 1
       },
       "lazy_schema_chars": 437,
-      "full_schema_chars": 1217,
-      "reason": "works well for ordinary static pages but recent evidence shows deterministic domain/failure classes with very low success; use context-aware routing"
+      "full_schema_chars": 1218,
+      "reason": "R8.7 DEGRADED exemplar: current-task only; Toutiao preflight and typed failure recovery prevent deterministic same-tool retries"
     },
     {
       "name": "web_search",
@@ -890,8 +890,8 @@
   "non_registry_capabilities": [
     {
       "name": "mcp:dsh",
-      "state": "QUARANTINED",
-      "reason": "configured stdio server connects but tools/list returns 0; active registry receives no MCP tools",
+      "state": "QUARANTINED_ACTIVE",
+      "reason": "configured stdio server connects but tools/list returns 0; R8.7 closes the no-capability connection and registers no tools",
       "reentry_gate": "tools/list > 0, schema valid, health probe pass, allowlist/dedupe review"
     },
     {
@@ -902,12 +902,52 @@
     }
   ],
   "canary_ready": false,
-  "canary_block_reason": "Tool Eligibility is audit-only; no dynamic tool-surface/recovery-policy implementation has been applied.",
-  "measurement_note": "Canonical schema-size metrics use detached clean committed source with current runtime config and compact JSON serialization of the complete tools array; pre-existing dirty worktree overlay is excluded.",
+  "canary_block_reason": "R8.7 tool-schema eligibility is implemented, but overall Prompt Eligibility still has seven non-tool blockers; model-profile behavior canary remains frozen.",
+  "measurement_note": "R8.7 schema metrics use detached e1e7a12 clean source with only intended R8.7 source overlaid plus current runtime config; final commit must reproduce them in detached clean checkout.",
   "usage_snapshot": {
     "created_at": "2026-08-30T23:37:03+08:00",
     "source": "data/event_logs/*.jsonl point-in-time scan",
     "mutable_after_snapshot": true,
     "note": "calls_observed/success_observed/status_counts are frozen audit evidence at this cutoff and are not fixed-point assertions against later-growing event logs."
+  },
+  "implementation_base_commit": "e1e7a12",
+  "current_policy": {
+    "default_mode": "enforce",
+    "rollback_modes": [
+      "shadow",
+      "off"
+    ],
+    "projection": "stable_core + current_task + active_protocol + typed_recovery_next - runtime_quarantine",
+    "discovery": [
+      "get_tool_schema:*",
+      "get_tool_schema:?keyword",
+      "get_tool_schema:<exact_name>"
+    ],
+    "simple_task_tools": 9,
+    "simple_task_raw_lazy_chars": 3425,
+    "simple_task_provider_wrapper_chars": 3714,
+    "ordinary_url_tools": 10,
+    "ordinary_url_raw_lazy_chars": 3863,
+    "ordinary_url_provider_wrapper_chars": 4183,
+    "schedule_tools": 10,
+    "schedule_raw_lazy_chars": 3866,
+    "schedule_provider_wrapper_chars": 4186
+  },
+  "r8_7_status": "PASS",
+  "verification": {
+    "implementation_commit": "76c2d0f",
+    "focused_tests": "34/34 PASS",
+    "adjacent_tests": "572/572 PASS",
+    "pyright": "0 errors / 0 warnings",
+    "py_compile": "PASS",
+    "r0": "R0-1..R0-4 PASS; byte-identical",
+    "r0_hash": "b54d47a31109a03d9f926f65b7a3d9f6caf3f24c0d42b1bff26fe338ee74b02a",
+    "clean_checkout": "status before/after clean; schema metrics reproduced exactly"
+  },
+  "live_activation": {
+    "restarted": false,
+    "reason": "standard mirror restart loads current worktree src, which still contains unrelated pre-existing dirty Cognitive/scheduler/web source changes; restart would contaminate causal validation",
+    "refresh_config_used": false,
+    "next_gate": "controlled reload only after unrelated dirty source is independently safe"
   }
 }

@@ -51,6 +51,7 @@ from llm_loop.core.loop.routing import (
 from llm_loop.core.loop.runstate import _RunState, _RunStateMixin
 from llm_loop.core.loop.runtime import _RuntimeParamsMixin
 from llm_loop.core.loop.signals import _SignalsMixin
+from llm_loop.core.loop.tool_eligibility import _ToolEligibilityMixin
 from llm_loop.core.loop.tool_exec import (
     _json_dumps_args,
     _tool_args_summary,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
@@ -149,7 +150,7 @@ def build_session_snapshot_text(
     parts.append("若你对当前任务/已完成/下一步/未决事项的定位漂移，以本条为锚点重新校准。")
     return "；".join(parts)
 
-class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _OverflowMixin, _Err1210Mixin, _ToolExecMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin, _KpiMixin, _LifecycleMixin, _TurnContextMixin):
+class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _OverflowMixin, _Err1210Mixin, _ToolEligibilityMixin, _ToolExecMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin, _KpiMixin, _LifecycleMixin, _TurnContextMixin):
     """五阶段核心循环控制器."""
 
     # EVO 后台 run 执行器（factory 动态装配 BackgroundRunner；声明类型供 pyright 静态检查）
@@ -518,16 +519,21 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             self._kpi_accumulate_inject()
             if getattr(self, "_last_history_compacted", False):
                 truncation_noted = True
-            if getattr(self.settings, "prefix_layered", False):
-                # GOAL-20260829-7483e375 T2/P1: 分层前缀——锚层（Top8 全量+80字符索引）
-                # + 当前 user turn 的动态层；状态按 session 隔离，只增不减。
-                # 不能从完整 history 取“第一条 user”，否则长会话永远匹配旧任务。
+            _tool_eligibility_mode = getattr(
+                self.settings, "tool_eligibility_mode", "enforce"
+            )
+            if getattr(self.settings, "prefix_layered", False) and _tool_eligibility_mode != "enforce":
+                # Legacy layered-prefix representation remains available in off/shadow.
+                # R8.7 enforce owns eligibility first and therefore starts from canonical
+                # registry schemas; otherwise CORE tools that were old index-only entries
+                # would lose parameter names/types before the eligibility decision.
                 tool_schemas = self._layered_tool_schemas(session_id, user_text)
             else:
                 tool_schemas = self.registry.schemas(lazy=self.settings.tool_schema_lazy)
-            # EVO-20260817 本地模型工具精简（用户需求）: local provider 只注入
-            # 固化白名单核心工具（固定前缀稳定 + prefill 大减），完整目录按需读取。
-            tool_schemas = self._filter_local_tools(tool_schemas, planned_label)
+            tool_schemas = self._project_tool_schemas_for_round(
+                tool_schemas, planned_label=planned_label, user_text=user_text,
+                session_messages=sess.messages,
+            )
             tools_param = [self._schema_to_param(t) for t in tool_schemas]
 
             # R1: 组件级占用分解（实际发送载荷口径；压缩归档历史不计入当前占用）

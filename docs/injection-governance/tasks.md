@@ -1,7 +1,7 @@
 # 注入治理专项任务图（INJECTION-GOVERNANCE）
 
-> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **R0-R8 PASS；R8.4 Eligibility AUDIT PASS；R8.5 resolved-episode PASS（new/proven，legacy migration 未开始）；R8.6 Tool Eligibility AUDIT PASS / IMPLEMENTATION NOT STARTED；behavior canary / R9 未开始**
-> 依赖链: R0 → R1 → {R2, R3, R4, R5, R6 并行} → R7 → R8 shadow/soak → **R8.4 audit → R8.5 resolved-episode retirement → R8.6 tool eligibility/recovery audit → remaining eligibility implementation** → behavior canary → R9。R0 未过数据门不得进入行为实现；Eligibility P0 未清不得进入 behavior canary。
+> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **R0-R8 PASS；R8.4 Eligibility AUDIT PASS；R8.5 resolved-episode PASS（new/proven，legacy migration 未开始）；R8.6 Tool Eligibility AUDIT PASS；R8.7 Tool Eligibility PASS；behavior canary / R9 未开始**
+> 依赖链: R0 → R1 → {R2, R3, R4, R5, R6 并行} → R7 → R8 shadow/soak → **R8.4 audit → R8.5 resolved-episode retirement → R8.6 tool eligibility/recovery audit → R8.7 dynamic tool eligibility/recovery → remaining eligibility blockers** → behavior canary → R9。R0 未过数据门不得进入行为实现；Eligibility P0 未清不得进入 behavior canary。
 
 ## R0 基线取证与 fixture 建立（数据门）— ✅ PASS
 - 内容: 用真实 `data/event_logs` 重建 human turn，区分 user truth / user-role program appendix / system notice；量化尾后注入、会话级重复、资料祈使污染、provider wire 连续 user；按 model/compact/recovery 分桶；冻结脱敏结构 fixture。
@@ -110,6 +110,19 @@
 - 产物: `docs/injection-governance/tool-eligibility/audit.md`、`matrix.json`、`recovery-policy.json`、`web-fetch-case.md`；Prompt Eligibility `E31 tool_schemas` 同步记录本审计证据。
 - 边界: 本阶段 docs/audit only；**不改 src、不改 registry.schemas/local allowlist/MCP 配置、不启动 behavior canary/R9**。
 - 下一实现门: deterministic dynamic tool projection + runtime health + typed recovery + discovery fixtures；验收 default cloud schema <=5K、default tools <=12、hidden-needed discovery=100%、deterministic retry=0、R0 diff=0。
+- evidence_required: true
+
+## R8.7 Dynamic Tool Eligibility + Runtime Health + Typed Recovery — ✅ PASS
+- Projection: `TOOL_ELIGIBILITY_MODE=enforce` 默认对 local/cloud 统一应用 stable CORE9 + current user task + active tool protocol + latest typed-recovery-next；`shadow/off` 保留旧 provider surface。
+- Discovery: 复用现有 `get_tool_schema(tool_name)`；`*` 列目录、`?keyword` 搜索、exact name 取完整 schema，不新增工具/参数。
+- Runtime health: Playwright Python prerequisite 缺失时 `playwright_exec/test` 不投影，stale direct call 亦被 registry 拒绝并给 replacement；MCP `tools/list=0` 时立即关闭连接并保持 0 capability。
+- Typed recovery exemplar: `web_fetch` Toutiao preflight 不执行 generic network call，直接给 `web-fetch-fast`；403/418/404/429/JS-shell/timeout+5xx/security-block 分类决定 retry/replacement。匹配 typed policy 时不再追加 generic/experience 冲突建议。
+- Clean-source pre-commit evidence: registry61；all lazy22,699/full39,303 chars；simple CORE9 raw3,425 / provider-wrapper3,714（-84.9%）；ordinary URL=10 tools raw3,863；schedule=10 tools raw3,866；browser intent 因 Playwright quarantine 仍9 tools。
+- Verification: detached clean R8.7+MCP+schema focused **34/34**；R1-R8.5/history/tool/fallback/1210/Evidence/factory/MCP/web adjacent **572/572 PASS**；pyright 0/0；py_compile PASS；R0 四门 + frozen hash byte-identical；22-file security/staging boundary PASS；clean status before/after clean。
+- Existing debt (not R8.7 regression): `test_config.py::test_load_settings_full` 在 base e1e7a12 已错误期待 `./data`；`test_loop_mixin_split.py::test_complexity_reduction` base engine 1276 已超过旧1172阈值；本轮不改这两个无关债务。
+- Remaining: R8.6 其余非-web-fetch recovery rules 仍 PROPOSED；Prompt Eligibility 其它7 blockers 未清；behavior canary/R9 继续 NOT STARTED。
+- Live activation: 本阶段未重启 mirror；标准 restart 脚本强制从当前 worktree `src/` 启动，而工作区仍有任务前 unrelated Cognitive/scheduler/web 源码脏改动。为保持因果隔离，不用 stash/临时替换源码冒险重启；待这些 dirty source 独立收口后再 controlled reload。
+- evidence: `docs/injection-governance/tool-eligibility/r87-report.md`、`matrix.json`、`recovery-policy.json`、`tests/unit/test_tool_eligibility_r87.py`。
 - evidence_required: true
 
 ## R9 主区应用与收口

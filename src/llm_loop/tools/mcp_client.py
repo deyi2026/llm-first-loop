@@ -330,6 +330,15 @@ def register_mcp_tools(registry: Any, raw_servers: str) -> list[str]:
         except Exception as exc:  # noqa: BLE001 — 单服务器失败不阻断整体
             logger.warning("MCP 服务器 %s 连接失败（fail-open，工具未注册）: %s", spec.name, exc)
             continue
+        if not tools:
+            # R8.7: a connected MCP server with tools/list=0 has no capability to expose.
+            # Do not keep an idle stdio process alive and do not create prompt surface.
+            conn.close()
+            logger.warning(
+                "MCP 服务器 %s tools/list=0，按 no-capability quarantine 关闭连接",
+                spec.name,
+            )
+            continue
         count = 0
         for tool_def in tools:
             try:
@@ -338,6 +347,13 @@ def register_mcp_tools(registry: Any, raw_servers: str) -> list[str]:
                 count += 1
             except Exception:  # noqa: BLE001 — 单工具注册失败跳过
                 logger.warning("MCP 工具注册失败: %s", _registry_name(spec.name, tool_def.name))
+        if count == 0:
+            conn.close()
+            logger.warning(
+                "MCP 服务器 %s 工具清单非空但有效注册数=0，按 no-capability quarantine 关闭连接",
+                spec.name,
+            )
+            continue
         logger.info("MCP 服务器 %s 已连接，注册 %d 个工具", spec.name, count)
     return registered
 
@@ -389,18 +405,35 @@ def refresh_mcp_tools(registry: Any, raw_servers: str) -> tuple[list[str], list[
         except Exception as exc:  # noqa: BLE001 — 单服务器失败不阻断整体
             logger.warning("MCP 服务器 %s 刷新连接失败（fail-open）: %s", spec.name, exc)
             continue
-        # 4) diff 注册（消失的工具不再注册）
+        # 4) no-capability server: close the fresh connection and keep the registry empty.
+        if not tools:
+            conn.close()
+            logger.warning(
+                "MCP 服务器 %s tools/list=0，按 no-capability quarantine 关闭连接",
+                spec.name,
+            )
+            continue
+        # 5) diff 注册（消失的工具不再注册）
+        registered_count = 0
         for tool_def in tools:
             name = _registry_name(spec.name, tool_def.name)
             try:
                 registry.register(McpTool(spec.name, conn, tool_def))
                 registered.append(name)
+                registered_count += 1
             except Exception:  # noqa: BLE001 — 单工具注册失败跳过
                 logger.warning("MCP 工具注册失败: %s", name)
+        if registered_count == 0:
+            conn.close()
+            logger.warning(
+                "MCP 服务器 %s 刷新后有效注册数=0，按 no-capability quarantine 关闭连接",
+                spec.name,
+            )
+            continue
         logger.info(
             "MCP 服务器 %s 刷新完成：注册 %d 个，卸载 %d 个",
             spec.name,
-            len(tools),
+            registered_count,
             len(old_names),
         )
     return registered, unregistered

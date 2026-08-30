@@ -12,7 +12,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 
 class MessageSource(StrEnum):
@@ -145,6 +145,9 @@ class ToolResult:
     # MemoryStore，命中 procedure 经验条目的【已验解法】段写入此字段，tool 消息带出。
     # 默认空串 = 零回归（无经验库/未命中时行为与旧版完全一致）。
     guidance_extra: str = ""
+    # R8.7: structured recovery advice is internal metadata plus compact model-facing text.
+    # Concrete type lives in llm_loop.tools.recovery to avoid a core->tools import cycle.
+    recovery_advice: Any | None = None
 
     def to_message(self) -> Message:
         """构造为 tool 消息（如实承载状态，AI 视角：状态结构化呈现）.
@@ -174,6 +177,10 @@ class ToolResult:
             metadata["source_resolution_mode"] = self.source_resolution_mode
         if self.source_execution_performed is not None:
             metadata["source_execution_performed"] = self.source_execution_performed
+        if self.recovery_advice is not None:
+            to_dict = getattr(self.recovery_advice, "to_dict", None)
+            if callable(to_dict):
+                metadata["tool_recovery"] = to_dict()
         return Message(
             role="tool",
             content=content

@@ -462,6 +462,41 @@ class ToolRegistry:
                 duration_ms=0.0,
             )
 
+        # R8.7: runtime health + deterministic preflight happen before real execution.
+        # Hidden/quarantined schemas may still be referenced by stale model context; the
+        # execution boundary independently enforces health and returns typed recovery.
+        from llm_loop.tools.eligibility import runtime_tool_health
+        from llm_loop.tools.recovery import health_quarantine_advice, web_fetch_preflight
+
+        health = runtime_tool_health(call.name)
+        if not health.available:
+            advice = health_quarantine_advice(
+                call.name, health.reason_code, health.preferred_next
+            )
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=(
+                    f"[工具隔离] {call.name} 当前运行前置不满足 "
+                    f"({health.reason_code})，本次未执行。"
+                ),
+                tool_call_id=call.id,
+                tool_name=call.name,
+                duration_ms=(time.perf_counter() - start) * 1000,
+                recovery_advice=advice,
+            )
+
+        if call.name == "web_fetch":
+            advice = web_fetch_preflight(str(call.arguments.get("url", "") or ""))
+            if advice is not None:
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content="[预检路由] 已识别为专用抓取路径，本次未执行通用 web_fetch 网络请求。",
+                    tool_call_id=call.id,
+                    tool_name=call.name,
+                    duration_ms=(time.perf_counter() - start) * 1000,
+                    recovery_advice=advice,
+                )
+
         # 1.5 task_quality 路径 A（2026-08-17）: 参数预检（安全检查前，失败拦截不执行）
         # 缺省 None 零回归；schema 缺失/异常 fail-open 放行。
         precheck = getattr(self, "precheck_layer", None)
@@ -606,9 +641,9 @@ class ToolRegistry:
                     result.content = snapshot.content  # replace 回写
                     with contextlib.suppress(ValueError):
                         result.status = ToolResultStatus(snapshot.status)  # 未知 status 保持原样
-            return result
+            return self._attach_typed_recovery(result)
         except Exception as exc:  # noqa: BLE001 — 如实构造异常结果
-            return ToolResult(
+            result = ToolResult(
                 status=ToolResultStatus.ERROR,
                 content=f"[执行异常] {type(exc).__name__}: {exc}",
                 tool_call_id=call.id,
@@ -617,6 +652,7 @@ class ToolRegistry:
                 error_detail=traceback.format_exc(limit=5),
                 duration_ms=(time.perf_counter() - start) * 1000,
             )
+            return self._attach_typed_recovery(result)
 
     # EVO-20260810-750e985a: 工具并发控制
     _EVIDENCE_CONTROL_TOOLS = frozenset(
@@ -688,6 +724,18 @@ class ToolRegistry:
             for c in calls
         ]
 
+    @staticmethod
+    def _attach_typed_recovery(result: ToolResult) -> ToolResult:
+        if result.recovery_advice is not None:
+            return result
+        try:
+            from llm_loop.tools.recovery import classify_tool_recovery
+
+            result.recovery_advice = classify_tool_recovery(result)
+        except Exception:  # noqa: BLE001 — guidance failure must not block tool truth
+            logger.warning("typed tool recovery classification failed (fail-open)", exc_info=True)
+        return result
+
     def _result(
         self, status: ToolResultStatus, call: ToolCall, content: str, *, duration_ms: float
     ) -> ToolResult:
@@ -701,7 +749,7 @@ class ToolRegistry:
         # EVO-d78b270c: 失败/异常/超时 → 经验驱动注入（命中 procedure 已验解法）
         if status in (ToolResultStatus.FAILURE, ToolResultStatus.ERROR, ToolResultStatus.TIMEOUT):
             result.guidance_extra = self._inject_experience_guidance(result)
-        return result
+        return self._attach_typed_recovery(result)
 
     def _inject_experience_guidance(self, result: ToolResult) -> str:
         """按错误关键词检索经验库，命中 procedure 条目则提取【已验解法】段.
@@ -1165,7 +1213,12 @@ def tool_result_to_message(
         if result.content.strip()
         else f"[{result.tool_name} 执行{status_label}]（无输出）"
     )
-    if failure_guidance_enabled and result.status and result.status.value in _FAILURE_GUIDANCE:
+    typed_recovery = result.recovery_advice
+    if failure_guidance_enabled and typed_recovery is not None:
+        render = getattr(typed_recovery, "render", None)
+        if callable(render):
+            content += "\n" + str(render())
+    elif failure_guidance_enabled and result.status and result.status.value in _FAILURE_GUIDANCE:
         content += "\n" + _FAILURE_GUIDANCE[result.status.value]
     # EVO-d78b270c: 经验驱动注入（独立于默认模板；开启引导时带出，未命中为空串零回归）
     # 阶段4-A: experience_guidance_enabled 独立开关（None 跟随主开关；子代理可仅开经验）
@@ -1174,8 +1227,13 @@ def tool_result_to_message(
         if experience_guidance_enabled is None
         else experience_guidance_enabled
     )
-    if exp_enabled and result.guidance_extra:
+    if exp_enabled and result.guidance_extra and typed_recovery is None:
         content += "\n" + result.guidance_extra
+    metadata: dict = {}
+    if typed_recovery is not None:
+        to_dict = getattr(typed_recovery, "to_dict", None)
+        if callable(to_dict):
+            metadata["tool_recovery"] = to_dict()
     return Message(
         role="tool",
         content=content,
@@ -1184,6 +1242,7 @@ def tool_result_to_message(
         status=result.status,
         tool_name=result.tool_name,
         error_detail=result.error_detail,
+        metadata=metadata,
     )
 
 
@@ -1196,9 +1255,9 @@ class GetToolSchemaTool:
 
     name = "get_tool_schema"
     description = (
-        "获取指定工具的完整 JSON Schema 定义（参数格式/必填项/使用说明）。"
-        "何时用: 需要调用某工具但不确定其参数格式时，先读取完整 Schema 再调用。"
-        "何时不用: 已确知工具参数格式时不必调用（直接发起工具调用）。"
+        "获取/发现工具 Schema。精确名返回完整定义；tool_name='*' 列目录；'?关键词' 搜索目录。"
+        "何时用: 当前 CORE 工具不足或不确定参数时按需发现，再加载精确 Schema。"
+        "何时不用: 已确知可见工具参数时直接调用。"
     )
     parameters = {
         "type": "object",
@@ -1222,6 +1281,34 @@ class GetToolSchemaTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
+        if name == "*" or name.lower() == "list" or name.startswith("?"):
+            query = name[1:].strip().lower() if name.startswith("?") else ""
+            from llm_loop.tools.eligibility import runtime_tool_health
+
+            rows: list[str] = []
+            for tool_name in self._registry.names():
+                tool_obj = self._registry.get(tool_name)
+                desc = str(getattr(tool_obj, "description", "") or "").replace("\n", " ")
+                hay = f"{tool_name} {desc}".lower()
+                if query and query not in hay:
+                    continue
+                health = runtime_tool_health(tool_name)
+                rows.append(f"- {tool_name} [{health.state}] — {desc[:100]}")
+            if not rows:
+                return ToolResult(
+                    status=ToolResultStatus.FAILURE,
+                    content=f"[工具目录] 未找到匹配 '{query}' 的工具。",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            title = "[工具目录]" if not query else f"[工具搜索] query={query}"
+            return ToolResult(
+                status=ToolResultStatus.SUCCESS,
+                content=title + "\n" + "\n".join(rows),
+                tool_call_id="",
+                tool_name=self.name,
+            )
+
         try:
             tool = self._registry.get(name)
         except KeyError:
@@ -1242,9 +1329,18 @@ class GetToolSchemaTool:
             ensure_ascii=False,
             indent=2,
         )
+        from llm_loop.tools.eligibility import runtime_tool_health
+
+        health = runtime_tool_health(name)
+        health_note = ""
+        if not health.available:
+            health_note = (
+                f"[runtime_health=quarantined reason={health.reason_code}]\n"
+                f"[preferred_next={','.join(health.preferred_next) or 'none'}]\n"
+            )
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
-            content=f"工具 '{name}' 完整 Schema:\n{schema}",
+            content=health_note + f"工具 '{name}' 完整 Schema:\n{schema}",
             tool_call_id="",
             tool_name=self.name,
         )

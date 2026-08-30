@@ -1,6 +1,6 @@
 # R8.6 benchmark case: `web_fetch` -> `web-fetch-fast`
 
-Status: **AUDITED / POLICY PROPOSED / NOT APPLIED**
+Status: **R8.6 AUDITED / R8.7 POLICY APPLIED**
 
 ## Current behavior
 
@@ -14,7 +14,7 @@ httpx
 -> extraction / pagination / Evidence projection
 ```
 
-Its current generic failure text then suggests manual `execute_command` investigation or `web_search`.
+R8.7 keeps the raw failure body factual; matched next-step guidance is emitted only by the typed recovery policy, so generic and typed routes do not compete.
 
 The implementation therefore should not be characterized as a naive fetcher. Its low aggregate success is primarily a **site/context-routing problem**.
 
@@ -131,3 +131,13 @@ At minimum test:
 6. SSRF block -> no unsafe bypass recommendation;
 7. Skill recommends unavailable Chromium -> runtime-health layer marks that fallback unavailable;
 8. no matched rule -> generic truthful failure remains available.
+
+
+## R8.7 applied behavior
+
+- Toutiao preflight occurs in `ToolRegistry.execute()` before `WebFetchTool.execute()`; fixture asserts the underlying fetch implementation receives zero calls.
+- Ordinary URL tasks still expose `web_fetch`; unrelated tasks do not.
+- 403/418, 404, 429, JS-shell, timeout/5xx, and security-block results map to typed recovery classes.
+- `ToolResult.recovery_advice` is rendered as the sole matched recovery recommendation and copied to `Message.metadata.tool_recovery`; future tool projection may keep its `preferred_next` tool visible.
+- If no typed rule matches, legacy truthful generic guidance remains available.
+- Playwright/Chromium are not installed by this phase; the current Playwright tools are runtime-quarantined instead of being advertised as a working fallback.

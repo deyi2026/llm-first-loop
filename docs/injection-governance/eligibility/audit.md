@@ -409,3 +409,12 @@ Tool schemas are themselves prompt material. R8.6 audited the full current tool 
 Current evidence from runtime config + detached clean source: 61 registry tools / 22,692 compact-JSON cloud lazy tool-array chars. Proposed universal CORE is 9 tools / 3,418 chars (-84.9%); remaining healthy tools become task/state DISCOVERABLE, `web_fetch` is DEGRADED with failure/domain-aware recovery, and currently unavailable Playwright tools are QUARANTINED. The configured dsh MCP server currently connects but returns `tools/list=0`, so it has no active capability to project.
 
 This remains audit-only. E31 `tool_schemas` therefore stays PARTIAL until dynamic projection, runtime health and recovery-policy fixtures are implemented. Authoritative R8.6 files: `docs/injection-governance/tool-eligibility/audit.md`, `matrix.json`, `recovery-policy.json`, `web-fetch-case.md`.
+
+
+## 13. R8.7 implementation — tool schema surface
+
+E31 `tool_schemas` is now **DONE** for the current R8.7 scope. Local and cloud providers use a stable CORE9 plus current task/protocol/recovery-required tail; hidden healthy tools remain registered and can be discovered via `get_tool_schema(* / ?keyword / exact)`. Runtime-quarantined Playwright tools are removed from projection and stale direct calls are refused. MCP `tools/list=0` now closes the no-capability connection instead of leaving an idle live process.
+
+Detached clean-source pre-commit evidence: 61 all-lazy tools / 22,699 chars; simple CORE9 / 3,425 raw lazy chars (3,714 provider wrapper), a 84.9% reduction. `web_fetch` is task-eligible rather than universal and has typed preflight/failure recovery; matching typed advice replaces generic/experience recovery prose.
+
+This closes only the tool-schema eligibility surface. The seven existing non-tool canary blockers remain unchanged, so model-profile behavior canary stays frozen. Authoritative evidence: `docs/injection-governance/tool-eligibility/r87-report.md` plus the tool eligibility matrix/recovery policy.

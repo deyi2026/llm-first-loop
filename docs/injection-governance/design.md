@@ -190,7 +190,7 @@ ACTIVE        -> 再判断 required_now
 
 **R8.4 审计状态（2026-08-30）：AUDIT PASS。R8.5 resolved-episode 最小闭环：PASS（new/proven episodes），legacy migration NOT STARTED。** 新增独立 append-only `EpisodeStore`；只有 non-empty、non-truncated、正常完成的 model answer 获得显式 resolution-candidate proof，durable write + fsync 成功后才标记 stable episode ref 并允许下一 provider view 退休。`search_records(kind=episode)` 复用既有 tool，支持最近 ref / 关键词 / exact bounded hydrate，不新增 tool 或 ref/offset schema 参数。flat history 与 Cognitive packet 都跳过已 resolved ref；history anchor 在 original↔filtered index 间双向映射，保护 current user 与 assistant(tool_calls)→tool pairing；明确 standing user instruction 保留 exact user 原文。旧 session 无 resolution proof 不猜 resolved。`model_switch` 当前轮复制、Evidence Manifest、legacy/unresolved packet memory、local hint、unknown producer、round-exhaustion 等仍未清，因此 **behavior canary 继续冻结**。权威审计/实现证据见 `docs/injection-governance/eligibility/audit.md`、`eligibility/matrix.json`、`eligibility/resolved-episode-report.md`。
 
-### L2-7 Tool Eligibility + Recovery（R8.6 audit gate）
+### L2-7 Tool Eligibility + Recovery（R8.6 audit → R8.7 implementation）
 
 Prompt Eligibility 同样适用于 tool schema：**available is discoverable, not necessarily injectable**。工具存在于 `ToolRegistry`，不等于它应在每个 provider request 中持续占据 prompt。
 
@@ -201,7 +201,7 @@ Prompt Eligibility 同样适用于 tool schema：**available is discoverable, no
 - recovery guidance 必须按失败类型/上下文精准给出 `retry_same_tool / preferred_tool / preferred_skill / precondition`，不得重新做成每轮常驻大段提示；
 - recommended Skill/replacement 也必须经过 runtime-health gate，不能盲信静态 SKILL 文本。
 
-**R8.6 审计状态（2026-08-30）：AUDIT PASS / IMPLEMENTATION NOT STARTED。** current runtime config + detached clean-source registry build=61，cloud lazy tool-array=22,692 chars；建议 universal CORE=9 / 3,418 chars（-84.9%），其余按任务/状态 discovery。分类：CORE=9、DISCOVERABLE=49、DEGRADED=1（`web_fetch`）、QUARANTINED=2（当前 runtime 的 Playwright 工具）。当前 `dsh` MCP stdio initialize 成功但 `tools/list=0`，因此属于 no-capability quarantine；历史 `mcp_dsh_write` 已不在 registry。权威清单见 `docs/injection-governance/tool-eligibility/`。
+**R8.6 审计：PASS；R8.7 动态 Tool Eligibility / runtime health / typed recovery：PASS。** R8.7 统一 local/cloud 工具投影为 stable CORE9 + current-task/protocol/recovery-required tail；healthy hidden tools 通过 `get_tool_schema(* / ?keyword / exact)` 按需发现；`off/shadow` 保留旧行为作 rollback。detached clean-source pre-commit 实测 registry=61、all-lazy=22,699 chars，simple CORE9=3,425 raw chars / 3,714 provider-wrapper chars（-84.9%）。`web_fetch` 成为首个 DEGRADED typed-recovery 标杆；Toutiao 在执行前路由到 `web-fetch-fast`，403/404/429/JS-shell/timeout/5xx/security block 分型处理。Playwright runtime 缺依赖时从投影退出且 stale direct call 被 execution boundary 拒绝；`dsh` MCP `tools/list=0` 时立即关闭连接、注册0工具。其它 R8.6 recovery rules 仍为 proposed；behavior canary/R9 不因此启动。权威清单见 `docs/injection-governance/tool-eligibility/`。
 
 ## L3 A/B 验证（可证伪层）
 

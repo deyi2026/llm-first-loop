@@ -466,15 +466,18 @@
     {
       "id": "E31",
       "surface": "tool_schemas",
-      "current_status": "PARTIAL",
+      "current_status": "DONE",
       "target_class": "REF_ON_DEMAND",
       "priority": "P1",
-      "current_behavior": "R8.6 clean-source audit measured 61 registry tools / 22,692 compact-JSON lazy tool-array chars on the cloud path. Local provider already uses a small fixed allowlist plus get_tool_schema. R8.6 proposes a 9-tool universal CORE (3,418 chars, -84.9%) plus task/state discovery; production projection is not yet changed.",
+      "current_behavior": "R8.7 applies a stable CORE9 plus current task/protocol/recovery-needed tool projection to local and cloud providers. Hidden healthy tools remain registered and discoverable through get_tool_schema catalog/search/exact lookup. Playwright is runtime-quarantined when unavailable; MCP tools/list=0 yields no live capability. Clean-source simple surface is 9 tools / 3,425 raw lazy chars (3,714 provider-wrapper chars) versus 61 / 22,699 all-lazy raw chars.",
       "target_rule": "Expose a stable universal core plus task/state-relevant tools only; discover secondary schemas on demand. DEGRADED/QUARANTINED tools require runtime-health and failure-class recovery policy before visibility.",
       "retrieval_path": "get_tool_schema",
       "evidence": [
-        "src/llm_loop/core/loop/routing.py:290-319",
-        "docs/injection-governance/tool-eligibility/audit.md",
+        "src/llm_loop/tools/eligibility.py",
+        "src/llm_loop/core/loop/tool_eligibility.py",
+        "src/llm_loop/tools/recovery.py",
+        "tests/unit/test_tool_eligibility_r87.py",
+        "docs/injection-governance/tool-eligibility/r87-report.md",
         "docs/injection-governance/tool-eligibility/matrix.json",
         "docs/injection-governance/tool-eligibility/recovery-policy.json"
       ]
@@ -570,5 +573,7 @@
     "round_exhaustion_consumed_predicate_broken_after_R1_wrapper"
   ],
   "r8_5_status": "PASS_CURRENT_FORMAT; LEGACY_MIGRATION_NOT_STARTED",
-  "r8_5_evidence": "docs/injection-governance/eligibility/resolved-episode-report.md"
+  "r8_5_evidence": "docs/injection-governance/eligibility/resolved-episode-report.md",
+  "r8_7_tool_eligibility_status": "PASS",
+  "r8_7_evidence": "docs/injection-governance/tool-eligibility/r87-report.md"
 }

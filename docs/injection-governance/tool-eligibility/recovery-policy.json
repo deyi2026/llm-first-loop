@@ -1,8 +1,8 @@
 {
-  "schema": "tool-recovery-policy-audit-v1",
-  "phase": "R8.6_TOOL_ELIGIBILITY_RECOVERY_AUDIT",
-  "behavior_changed": false,
-  "policy_status": "PROPOSED_NOT_APPLIED",
+  "schema": "tool-recovery-policy-runtime-v2",
+  "phase": "R8.7_DYNAMIC_TOOL_ELIGIBILITY_RUNTIME_RECOVERY",
+  "behavior_changed": true,
+  "policy_status": "PARTIAL_APPLIED_WEB_FETCH_AND_RUNTIME_HEALTH",
   "rules": [
     {
       "id": "WF-PREFLIGHT-TOUTIAO",
@@ -23,7 +23,8 @@
       "preferred_next": [
         "skill_load:web-fetch-fast"
       ],
-      "reason": "recent direct web_fetch evidence: toutiao 0/8; skill contains site-specific info/v2/mobile/RENDER_DATA path"
+      "reason": "recent direct web_fetch evidence: toutiao 0/8; skill contains site-specific info/v2/mobile/RENDER_DATA path",
+      "implementation_status": "APPLIED"
     },
     {
       "id": "WF-403-418",
@@ -41,7 +42,8 @@
         "skill_load:web-fetch-fast",
         "web_search"
       ],
-      "reason": "UA rotation already exhausted inside web_fetch; repeating same tool is low-value"
+      "reason": "UA rotation already exhausted inside web_fetch; repeating same tool is low-value",
+      "implementation_status": "APPLIED"
     },
     {
       "id": "WF-404",
@@ -57,7 +59,8 @@
         "web_search"
       ],
       "guidance": "search for canonical/current URL, then fetch the new URL",
-      "reason": "changing UA/browser does not repair a missing path"
+      "reason": "changing UA/browser does not repair a missing path",
+      "implementation_status": "APPLIED"
     },
     {
       "id": "WF-429",
@@ -72,7 +75,8 @@
       "preferred_next": [
         "web_search"
       ],
-      "guidance": "use alternate source now; retry only after a meaningful backoff if freshness requires the same origin"
+      "guidance": "use alternate source now; retry only after a meaningful backoff if freshness requires the same origin",
+      "implementation_status": "APPLIED"
     },
     {
       "id": "WF-JS-SHELL",
@@ -89,7 +93,8 @@
       "preferred_next": [
         "skill_load:web-fetch-fast"
       ],
-      "reason": "web_fetch already tried httpx and curl fallback; site-specific extractor is the next distinct path"
+      "reason": "web_fetch already tried httpx and curl fallback; site-specific extractor is the next distinct path",
+      "implementation_status": "APPLIED"
     },
     {
       "id": "WF-TIMEOUT-5XX",
@@ -106,7 +111,8 @@
         "retry_tool",
         "web_search"
       ],
-      "guidance": "one bounded retry is allowed; after repeat failure switch source/path"
+      "guidance": "one bounded retry is allowed; after repeat failure switch source/path",
+      "implementation_status": "APPLIED"
     },
     {
       "id": "WF-POLICY-BLOCK",
@@ -119,7 +125,8 @@
       "failure_class": "security_policy_block",
       "retry_same_tool": false,
       "preferred_next": [],
-      "guidance": "stop and report the policy boundary; do not suggest disabling SSRF/private-target protection as an ordinary fallback"
+      "guidance": "stop and report the policy boundary; do not suggest disabling SSRF/private-target protection as an ordinary fallback",
+      "implementation_status": "APPLIED"
     },
     {
       "id": "PW-MISSING-DEPS",
@@ -138,7 +145,8 @@
         "web_fetch",
         "web_search"
       ],
-      "reason": "current .venv has no playwright and host has no chromium"
+      "reason": "current .venv has no playwright and host has no chromium",
+      "implementation_status": "APPLIED"
     },
     {
       "id": "MCP-DSH-WRITE-RO",
@@ -155,7 +163,8 @@
         "edit_file",
         "execute_command"
       ],
-      "guidance": "use edit_file for existing-file changes; use governed file-create path/execute_command only when creation is actually required"
+      "guidance": "use edit_file for existing-file changes; use governed file-create path/execute_command only when creation is actually required",
+      "implementation_status": "RETIRED_HISTORY_ONLY"
     },
     {
       "id": "EVO-COMPLETE-PRECONDITION",
@@ -172,7 +181,8 @@
         "get_tool_schema",
         "search_records"
       ],
-      "guidance": "verify an evolution is in executing state and use the exact required identifier before calling again"
+      "guidance": "verify an evolution is in executing state and use the exact required identifier before calling again",
+      "implementation_status": "PROPOSED"
     },
     {
       "id": "SUBMIT-EVO-ARGS",
@@ -188,7 +198,8 @@
         "get_tool_schema",
         "generate_evolution_template"
       ],
-      "guidance": "load exact schema/template; do not repeat the same invalid payload"
+      "guidance": "load exact schema/template; do not repeat the same invalid payload",
+      "implementation_status": "PROPOSED"
     },
     {
       "id": "HANDOFF-ARGS",
@@ -203,7 +214,8 @@
       "preferred_next": [
         "get_tool_schema"
       ],
-      "guidance": "only expose/call in an actual handoff context and load exact schema first"
+      "guidance": "only expose/call in an actual handoff context and load exact schema first",
+      "implementation_status": "PROPOSED"
     },
     {
       "id": "SCHEDULE-CANCEL-NOTFOUND",
@@ -216,7 +228,8 @@
       "failure_class": "stale_identifier",
       "retry_same_tool": false,
       "preferred_next": [],
-      "guidance": "do not retry the stale sid; only call again with a valid sid from schedule output/current state"
+      "guidance": "do not retry the stale sid; only call again with a valid sid from schedule output/current state",
+      "implementation_status": "PROPOSED"
     },
     {
       "id": "JOB-KILL-BAD-ID",
@@ -232,7 +245,8 @@
       "preferred_next": [
         "job_output"
       ],
-      "guidance": "verify the active job id before attempting another kill"
+      "guidance": "verify the active job id before attempting another kill",
+      "implementation_status": "PROPOSED"
     },
     {
       "id": "EVIDENCE-BAD-REF",
@@ -248,7 +262,8 @@
         "list_evidence",
         "search_evidence"
       ],
-      "guidance": "rediscover a valid stable ref, then read it; do not guess refs"
+      "guidance": "rediscover a valid stable ref, then read it; do not guess refs",
+      "implementation_status": "PROPOSED"
     },
     {
       "id": "DSH-TIMEOUT",
@@ -263,7 +278,8 @@
       "preferred_next": [
         "dsh_session_read"
       ],
-      "guidance": "first inspect any persisted DSH session evidence; retry only if no usable result exists"
+      "guidance": "first inspect any persisted DSH session evidence; retry only if no usable result exists",
+      "implementation_status": "PROPOSED"
     }
   ],
   "principles": [
@@ -272,5 +288,18 @@
     "known deterministic failures route to a distinct capability/skill or stop",
     "security-policy blocks never auto-suggest weakening the policy",
     "replacement/skill hints are context-aware and can override global tool success rate"
-  ]
+  ],
+  "runtime_notes": {
+    "typed_recovery_so_t": "ToolResult.recovery_advice -> tool_result_to_message; matched typed advice replaces generic/experience advice",
+    "mcp_zero_capability": "tools/list=0 closes connection and registers zero tools",
+    "remaining_proposed_rules": [
+      "DSH-TIMEOUT",
+      "EVIDENCE-BAD-REF",
+      "EVO-COMPLETE-PRECONDITION",
+      "HANDOFF-ARGS",
+      "JOB-KILL-BAD-ID",
+      "SCHEDULE-CANCEL-NOTFOUND",
+      "SUBMIT-EVO-ARGS"
+    ]
+  }
 }
