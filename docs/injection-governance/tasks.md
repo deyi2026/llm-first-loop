@@ -1,6 +1,6 @@
 # 注入治理专项任务图（INJECTION-GOVERNANCE）
 
-> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **R0 PASS；R1/L1 PASS；R2+ 未开始**
+> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **R0 PASS；R1/L1 PASS；R2/L2-1 PASS；R3+ 未开始**
 > 依赖链: R0 → R1 → {R2, R3, R4, R5, R6 并行} → R7 → R8(shadow，可后置) → R9。R0 未过数据门不得进入行为实现。
 
 ## R0 基线取证与 fixture 建立（数据门）— ✅ PASS
@@ -23,9 +23,11 @@
 - 说明: R1 只完成来源/语义边界，不宣称消除 R0 的尾后注入、重复或 wire 违规；这些属于 R2-R7。
 - evidence_required: true
 
-## R2 注入预算硬上限（L2-1）
+## R2 注入预算硬上限（L2-1）— ✅ PASS
 - 内容: `INJECTION_BUDGET_CHARS` 候选值 + 统一优先级丢弃 + 非祈使回执；在统一 assembler 门闸实现，不能各注入源各算一套。
-- 验收: 超限整块丢弃、不截断半块；预算永不 >100%；候选值不在 A/B 前冒充最终常量。
+- 产物: `src/llm_loop/core/injection_budget.py`、`tests/unit/test_injection_budget.py`、`docs/injection-governance/r2/report.md`；`config.py` / `.env.example` 接入候选参数，`build.py` 只消费中央 budget plan。
+- 验收: persisted/dynamic/header 三类 program-origin 同一门闸；超限整块丢弃、不截断半块；accounting `used_chars <= budget`；off/shadow/enforce 多预算矩阵实际 wire 均低于 accounting；非祈使 receipt 同预算计费；8000 明示仅候选。
+- 说明: `COG_RUNTIME_PACKET_BUDGET` 保留为 Cognitive packet 内部投影压缩预算，只能进一步减少 packet；跨来源最终硬上限的 SoT 是 R2 `INJECTION_BUDGET_CHARS`。R3+ 未启动。
 - evidence_required: true
 
 ## R3 资料按需化 + 指针化 + 会话级去重（L2-2）

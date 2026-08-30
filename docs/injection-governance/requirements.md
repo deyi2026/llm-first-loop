@@ -1,6 +1,6 @@
 # 注入治理专项（INJECTION-GOVERNANCE）需求规格
 
-> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **设计已审批；R0 PASS；R1/L1 PASS；L2 行为治理未实施**
+> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **设计已审批；R0 PASS；R1/L1 PASS；R2/L2-1 PASS；R3+ 未实施**
 
 ## 1. 问题陈述（实证）
 
@@ -59,6 +59,17 @@
 - focused unit/integration 147 tests PASS；R0 frozen baseline 重放无 diff。
 
 R1 **没有**实现预算、按需/去重、恢复单边界、身份剥离、user truth 物理尾位或行为 A/B。
+
+## 4B. R2 已验收的统一注入预算
+
+- 总预算 SoT：`INJECTION_BUDGET_CHARS`；默认 **8000 仅为候选值**，R7/L3 A/B 前不得宣称最佳/最终。
+- 最小运行值 512 字符，用于保证超限时仍可在同一预算内携带一条非祈使组装回执。
+- 中央 assembler 同时收集：history 已持久化 program-origin、本轮动态 slots、enforce packet/header；Cognitive=off 且无新 slots 也不能绕过。
+- 裁决粒度是完整 block：只保留或整块丢弃，R2 自身不做半块截断。
+- 统一优先级：预算回执 > 程序恢复 > 关键状态（decision/anchor/frontier/interop/gate）> 其他状态 > reference。
+- accounting 对最终渲染采用保守成本估算（含 group/slot/merge 开销），因此 `used_chars <= budget` 是硬门，实际 program-origin wire 字符不高于 accounting。
+- `COG_RUNTIME_PACKET_BUDGET` 属 Cognitive 内部投影压缩，只会进一步减少 packet；它不是跨来源注入总预算，也不能扩大 R2 上限。
+- R2 不实施 session 去重、K 轮按需、身份剥离、恢复次数策略、user-truth 物理尾位重排；分别留给 R3-R6。
 
 ## 5. 非目标
 

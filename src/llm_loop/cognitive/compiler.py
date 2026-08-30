@@ -126,7 +126,7 @@ def classify_tier(
     """
     del content, state  # v0.1 分级仅由 slot_kind 决定（确定性规则，不看内容）
     kind = (slot_kind or "hint").strip().lower()
-    if kind == "gate_note":
+    if kind in ("gate_note", "budget_receipt"):
         return ContextTier.HOT
     if kind == "interop":
         return ContextTier.HOT

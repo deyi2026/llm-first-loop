@@ -19,8 +19,13 @@ import os
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from llm_loop.core.cache_health import GATE_NOTE_CONTENT  # 门禁干预知情标记
+from llm_loop.core.injection_budget import (
+    DEFAULT_INJECTION_BUDGET_CHARS,
+    plan_prompt_injection_budget,
+)
 from llm_loop.core.injection_labels import (
     InjectionLayer,
+    detect_program_layer,
     ensure_semantic_label,
     infer_layer,
     strip_program_appendix_notice,
@@ -1053,7 +1058,10 @@ class _BuildMixin:
             for _slot, _content in _inject_parts
             if str(_content or "").strip()
         ]
+        _inject_keys = [f"dynamic:{i}" for i in range(len(_inject_parts))]
         _packet_parts: list[tuple[str | None, str]] = list(_inject_parts)
+        _packet_keys: list[str] = list(_inject_keys)
+        _packet_memory_seq = 0
         for _m in sess.messages:
             _md = getattr(_m, "metadata", None) or {}
             if _md.get("injection_kind") == "memory_snapshot":
@@ -1071,6 +1079,8 @@ class _BuildMixin:
                             ),
                         )
                     )
+                    _packet_keys.append(f"packet-memory:{_packet_memory_seq}")
+                    _packet_memory_seq += 1
         # ── P1 统一聚合器（9.1）: 四槽 parts → 单条 user；sidecar 单 AGGREGATED entry ──
         # 尾部连续 user 恒 ≤1（1210 结构性消除）；聚合失败 fail-open 降级零注入（不阻断构建）
         # Cognitive Runtime（tasks 2.3/2.5/2.6，spec 5.2/5.1.1-3b）:
@@ -1100,7 +1110,14 @@ class _BuildMixin:
         )
         # CR-R1.1a: quiet shadow 也必须进入与 enforce 同构的 cognitive compute
         # path；否则没有四槽时 shadow 会系统性漏掉 packet/rebuild telemetry。
-        if _inject_parts or _cog_compute_candidate:
+        # R2: 即使 cognitive=off 且本轮无新槽，只要 history 中已有 program-origin
+        # 块也必须进入同一个预算门闸，防持久化 memory/experience 绕过总上限。
+        _has_existing_program = any(
+            detect_program_layer(str(_m.get("content") or ""))
+            not in (None, InjectionLayer.USER_INSTRUCTION)
+            for _m in built
+        )
+        if _inject_parts or _cog_compute_candidate or _has_existing_program:
             try:
                 _anchor_mode = str(getattr(self.settings, "cog_runtime_anchor_mode", "auto"))
                 _tier_on = bool(getattr(self.settings, "cog_runtime_tier_enabled", True))
@@ -1238,6 +1255,105 @@ class _BuildMixin:
                     _anchor = _projection  # 投影替代锚点（演进不并存，spec 5.2.1-7）
                 elif _anchor_mode == "semantic" and _cog_enforce:
                     _anchor = ""  # semantic 严格态: 语义不可用不回退锚点（可观测零指针）
+
+                # INJECTION-GOVERNANCE R2/L2-1: 单一总预算门闸。
+                # 一次性裁决三类真实 prompt 块：① history 已持久化 program-origin；
+                # ② 本轮动态聚合槽；③ enforce packet 额外投影槽/语义 header。
+                # 各来源不得自行另算预算；裁决仅整块保留/丢弃，不截断半块。
+                _budget_use_packet = bool(
+                    _cog_enforce and _tier_on and compile_decision_packet is not None
+                )
+                _budget_parts = _packet_parts if _budget_use_packet else _inject_parts
+                _budget_part_keys = _packet_keys if _budget_use_packet else _inject_keys
+                _budget_header_text = (
+                    _projection if (_budget_use_packet and _projection) else
+                    (_anchor if not _budget_use_packet else "")
+                )
+                _budget_header_slot = (
+                    "decision_header" if _budget_use_packet else "task_anchor"
+                )
+                _budget_plan = plan_prompt_injection_budget(
+                    built,
+                    _budget_parts,
+                    _budget_part_keys,
+                    budget_chars=int(
+                        getattr(
+                            self.settings,
+                            "injection_budget_chars",
+                            DEFAULT_INJECTION_BUDGET_CHARS,
+                        )
+                    ),
+                    header_content=_budget_header_text,
+                    header_slot=_budget_header_slot,
+                )
+                _budget_result = _budget_plan.result
+                self._last_injection_budget = _budget_result
+                if _budget_result.over_budget:
+                    if _budget_plan.dropped_existing_indices:
+                        built[:] = [
+                            _m for _idx, _m in enumerate(built)
+                            if _idx not in _budget_plan.dropped_existing_indices
+                        ]
+                    _budget_keep = _budget_plan.kept_part_keys
+                    if _budget_use_packet:
+                        _packet_pairs = [
+                            (_part, _key)
+                            for _part, _key in zip(_packet_parts, _packet_keys, strict=True)
+                            if _key in _budget_keep
+                        ]
+                        _packet_parts = [_part for _part, _key in _packet_pairs]
+                        _packet_keys = [_key for _part, _key in _packet_pairs]
+                        _dyn_keep = set(_packet_keys)
+                        _inject_pairs = [
+                            (_part, _key)
+                            for _part, _key in zip(_inject_parts, _inject_keys, strict=True)
+                            if _key in _dyn_keep
+                        ]
+                        _inject_parts = [_part for _part, _key in _inject_pairs]
+                        _inject_keys = [_key for _part, _key in _inject_pairs]
+                    else:
+                        _inject_pairs = [
+                            (_part, _key)
+                            for _part, _key in zip(_inject_parts, _inject_keys, strict=True)
+                            if _key in _budget_keep
+                        ]
+                        _inject_parts = [_part for _part, _key in _inject_pairs]
+                        _inject_keys = [_key for _part, _key in _inject_pairs]
+                        # shadow packet 仅 telemetry；其动态槽与真实 prompt 保持同一裁决。
+                        _selected_dynamic = set(_inject_keys)
+                        _packet_pairs = [
+                            (_part, _key)
+                            for _part, _key in zip(_packet_parts, _packet_keys, strict=True)
+                            if (not _key.startswith("dynamic:")) or _key in _selected_dynamic
+                        ]
+                        _packet_parts = [_part for _part, _key in _packet_pairs]
+                        _packet_keys = [_key for _part, _key in _packet_pairs]
+                    if not _budget_plan.header_kept:
+                        if _budget_use_packet:
+                            _sem_state = None
+                            _projection = ""
+                        _anchor = ""
+                    if _budget_result.receipt_content:
+                        _receipt = ensure_semantic_label(
+                            _budget_result.receipt_content,
+                            InjectionLayer.STATUS,
+                            slot_kind="budget_receipt",
+                        )
+                        _inject_parts.append(("budget_receipt", _receipt))
+                        _inject_keys.append("__budget_receipt__")
+                        _packet_parts.append(("budget_receipt", _receipt))
+                        _packet_keys.append("__budget_receipt__")
+                    try:
+                        self._record_action(
+                            "action.injection_budget",
+                            "pruned",
+                            f"used={_budget_result.used_chars}/"
+                            f"{_budget_result.budget_chars}; "
+                            f"dropped={len(_budget_result.dropped_blocks)}",
+                        )
+                    except Exception:  # noqa: BLE001 — 预算已执行，审计失败不回滚
+                        logger.debug("build: injection budget action trace 失败", exc_info=True)
+
                 # CR-R1（tasks 3.2）: packet 组装重构——header 先行（Barrier 通过即含投影
                 # 前导），空 slots 不抑制 header；header+slots 合并单条聚合条（header 在前，
                 # 沿 P1 形态）；header 已含投影 → anchor 位不重复注入（tier 关时投影仍占

@@ -13,6 +13,10 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.codearts.config import CodeArtsSettings
+from llm_loop.core.injection_budget import (
+    DEFAULT_INJECTION_BUDGET_CHARS,
+    MIN_INJECTION_BUDGET_CHARS,
+)
 
 # EVO-20260830（split-brain 修复）: data_dir 默认值从相对 "./data" 改为基于包位置的绝对路径。
 # 根因: 相对路径随进程 cwd 漂移——主区服务进程 cwd=镜像目录时，EvolutionStore/会话/审计
@@ -305,6 +309,9 @@ class Settings:
     # 过程-终局两阶段：工具 SUCCESS 的 L1 摘要块 append-only 聚合，尾部槽注入。
     # 关闭（false）= 现状零回归（NFR-3）。
     digest_enabled: bool = True
+    # INJECTION-GOVERNANCE R2/L2-1: 全部 program-origin 自动附录共用一个硬预算。
+    # 8000 是 R2 候选默认值，不是 A/B 校准后的最终常量；R7 可据实测调整。
+    injection_budget_chars: int = DEFAULT_INJECTION_BUDGET_CHARS
     tool_summary_local_head_chars: int = 800
     tool_summary_local_tail_chars: int = 800
     # EVO-20260822-9fde48f1 第 4 条: local 轮跳过注入白名单（逗号分隔, 默认空=全保留零回归）。
@@ -648,6 +655,10 @@ def load_settings() -> Settings:
         # EVO-20260822-b3e7105e: local 模型收紧阈值/窗口（默认 0=未启用，云端零回归）
         tool_summary_local_threshold=_env_int("TOOL_SUMMARY_LOCAL_THRESHOLD", 0),
         digest_enabled=_env_bool("DIGEST_ENABLED", True),
+        injection_budget_chars=max(
+            MIN_INJECTION_BUDGET_CHARS,
+            _env_int("INJECTION_BUDGET_CHARS", DEFAULT_INJECTION_BUDGET_CHARS),
+        ),
         tool_summary_local_head_chars=_env_int("TOOL_SUMMARY_LOCAL_HEAD_CHARS", 800),
         tool_summary_local_tail_chars=_env_int("TOOL_SUMMARY_LOCAL_TAIL_CHARS", 800),
         # EVO-20260822-9fde48f1 第 4 条: local 轮跳过注入白名单（默认空=全保留零回归）

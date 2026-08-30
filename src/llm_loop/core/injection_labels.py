@@ -95,6 +95,30 @@ def label_for(layer: InjectionLayer | str) -> str:
     return _LABEL_BY_LAYER[InjectionLayer(layer)]
 
 
+def detect_program_layer(content: str) -> InjectionLayer | None:
+    """Return an explicit program-origin layer, or None for ordinary user/model text.
+
+    Unlike ``infer_layer`` this function never classifies an unknown string as STATUS.
+    R2 uses it at the unified assembler boundary to find already-persisted program
+    blocks without mistaking human user text for an injection.
+    """
+    text = (content or "").lstrip()
+    if not text:
+        return None
+    if text.startswith(PROGRAM_APPENDIX_NOTICE):
+        text = strip_program_appendix_notice(text).lstrip()
+    for layer, label in _LABEL_BY_LAYER.items():
+        if text.startswith(label):
+            return layer
+    if text.startswith(_LEGACY_RECOVERY_PREFIXES):
+        return InjectionLayer.PROGRAM_RECOVERY
+    if text.startswith(_LEGACY_REFERENCE_PREFIXES):
+        return InjectionLayer.REFERENCE
+    if text.startswith(_LEGACY_STATUS_PREFIXES):
+        return InjectionLayer.STATUS
+    return None
+
+
 def infer_layer(content: str, *, slot_kind: str = "") -> InjectionLayer:
     """Conservatively infer a program layer for legacy/dynamic slots.
 
