@@ -75,8 +75,8 @@ def test_inject_hit(tmp_path):
     assert len(stub.messages) == 1
     msg = stub.messages[0]
     assert msg.role == "user"
-    assert "[经验提示]" in msg.content
-    assert "web_fetch" in msg.content
+    assert "[experience:web_fetch]" in msg.content
+    assert "ref=experience:EXPERIENCE-test-web-fetch" in msg.content
     assert (msg.metadata or {}).get("persisted_injection") is True
     assert (msg.metadata or {}).get("injection_kind") == "experience_tip"
     assert (msg.metadata or {}).get("origin_layer") == "reference"
@@ -126,7 +126,7 @@ def test_skill_inject_hit(tmp_path):
     assert stub._tip_tail_messages == []
     assert len(stub.messages) == 1
     msg = stub.messages[0]
-    assert "[经验提示]" in msg.content
+    assert "[skill:cache-hit-debug]" in msg.content
     assert "cache-hit-debug" in msg.content
     assert "skill_load" not in msg.content
     assert "ref=skill:cache-hit-debug" in msg.content

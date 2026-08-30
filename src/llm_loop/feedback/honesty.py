@@ -46,10 +46,9 @@ def compression_message(archived_count: int, archived_chars: int) -> Message:
     return Message(
         role="system",
         content=(
-            f"[上下文压缩] 事实: 已将最早的 {archived_count} 条消息（约 {archived_chars} 字符）"
-            f"另存至压缩档案（含关键事实与完整原文）。\n"
-            f"原因: 适配上下文预算。\n"
-            f"建议: 如需找回被压缩的早期信息，可调用 search_archive 检索（信息未丢失）。"
+            f"[上下文压缩] 已将最早的 {archived_count} 条消息（约 {archived_chars} 字符）"
+            "完整另存；旧正文未自动内联。\n"
+            "ref=archive:search_archive"
         ),
         source=MessageSource.SYSTEM,
     )

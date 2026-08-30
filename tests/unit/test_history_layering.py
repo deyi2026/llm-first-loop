@@ -203,7 +203,8 @@ def test_layered_history_hint_includes_tool_name_filter():
 
     src = inspect.getsource(h)
     assert 'search_archive(tool_name="' in src  # 提示中含精确过滤示例
-    assert "勿换命令重复执行同一工具" in src
+    # R1/R3: 检索入口是资料指针，不再用命令式“勿换命令...”干预模型。
+    assert "勿换命令重复执行同一工具" not in src
 
 
 def test_registry_summarize_hint_with_call():

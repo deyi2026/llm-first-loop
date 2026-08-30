@@ -114,9 +114,10 @@ def test_hotcard_historical_next_is_neutralized() -> None:
     assert "现在执行 switch_model" not in text
     assert "立即部署生产" not in text
     assert "立即运行测试并继续部署" not in text
-    assert "ref=hotcard:anchor" in text
-    assert "ref=goal:g1" in text
-    assert "ref=goal:g1:next" in text
+    assert "ref=file:task_hotcard.json" in text
+    assert "ref=hotcard:anchor" not in text
+    assert "ref=goal:g1" not in text
+    assert "ref=goal:g1:next" not in text
     assert not reference_has_imperative(text)
 
 

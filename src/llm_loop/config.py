@@ -17,6 +17,7 @@ from llm_loop.core.injection_budget import (
     DEFAULT_INJECTION_BUDGET_CHARS,
     MIN_INJECTION_BUDGET_CHARS,
 )
+from llm_loop.core.reference_injection import DEFAULT_REFERENCE_AUTO_TURNS
 
 # EVO-20260830（split-brain 修复）: data_dir 默认值从相对 "./data" 改为基于包位置的绝对路径。
 # 根因: 相对路径随进程 cwd 漂移——主区服务进程 cwd=镜像目录时，EvolutionStore/会话/审计
@@ -312,6 +313,8 @@ class Settings:
     # INJECTION-GOVERNANCE R2/L2-1: 全部 program-origin 自动附录共用一个硬预算。
     # 8000 是 R2 候选默认值，不是 A/B 校准后的最终常量；R7 可据实测调整。
     injection_budget_chars: int = DEFAULT_INJECTION_BUDGET_CHARS
+    # R3/L2-2: 自动资料目录仅前 K 个 human turn / 显式任务切换开放。3 为 R0 候选，R7 A/B 可校准。
+    reference_auto_turns: int = DEFAULT_REFERENCE_AUTO_TURNS
     tool_summary_local_head_chars: int = 800
     tool_summary_local_tail_chars: int = 800
     # EVO-20260822-9fde48f1 第 4 条: local 轮跳过注入白名单（逗号分隔, 默认空=全保留零回归）。
@@ -659,6 +662,7 @@ def load_settings() -> Settings:
             MIN_INJECTION_BUDGET_CHARS,
             _env_int("INJECTION_BUDGET_CHARS", DEFAULT_INJECTION_BUDGET_CHARS),
         ),
+        reference_auto_turns=max(0, _env_int("REFERENCE_AUTO_TURNS", DEFAULT_REFERENCE_AUTO_TURNS)),
         tool_summary_local_head_chars=_env_int("TOOL_SUMMARY_LOCAL_HEAD_CHARS", 800),
         tool_summary_local_tail_chars=_env_int("TOOL_SUMMARY_LOCAL_TAIL_CHARS", 800),
         # EVO-20260822-9fde48f1 第 4 条: local 轮跳过注入白名单（默认空=全保留零回归）

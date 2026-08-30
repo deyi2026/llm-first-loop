@@ -111,7 +111,8 @@ def test_turn_snapshot_idempotent_across_rounds():
     assert len(snaps) == 1
     msg = snaps[0]
     assert msg.role == "user"
-    assert "[相关记忆]" in msg.content
+    assert "[memory:fact]" in msg.content
+    assert "ref=memory:m1" in msg.content
     assert msg.content.startswith(PROGRAM_APPENDIX_NOTICE)
     assert REFERENCE_LABEL in msg.content
     md = msg.metadata or {}
@@ -123,8 +124,8 @@ def test_turn_snapshot_idempotent_across_rounds():
     assert len(md.get("query_fp")) == 12
 
 
-def test_new_turn_new_snapshot_and_no_bloat_on_reentry():
-    """新 user turn（新 turn_ref）→ 允许新 snapshot；同 turn 重入不膨胀."""
+def test_new_turn_same_reference_is_not_reinjected():
+    """R3: 新 user turn 再命中同一 stable ref → 不重复完整注入。"""
     eng = _engine(_MemStore([_entry("m1", "database migration runbook 索引重建步骤")]))
     sess = _sess()
     eng._inject_turn_memory_snapshot(sess, "database migration deploy", turn_ref=0)
@@ -138,8 +139,8 @@ def test_new_turn_new_snapshot_and_no_bloat_on_reentry():
         Message(role="user", content="next question", source=MessageSource.USER)
     )  # 新 user msg
     eng._inject_turn_memory_snapshot(sess, "database rollback steps", turn_ref=2)
-    assert len(_snapshots(sess)) == 2  # 新 turn 新快照
-    assert _snapshots(sess)[-1].metadata.get("turn_ref") == 2
+    assert len(_snapshots(sess)) == 1  # memory:m1 已 seen，完整正文每 session 仅一次
+    assert _snapshots(sess)[0].metadata.get("reference_key") == "ref:memory:m1"
 
 
 def test_legacy_messages_no_turn_ref_no_collision():

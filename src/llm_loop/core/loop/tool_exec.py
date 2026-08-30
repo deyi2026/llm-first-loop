@@ -17,9 +17,14 @@ from typing import TYPE_CHECKING, Any
 
 from llm_loop.core.injection_labels import (
     InjectionLayer,
-    neutralize_reference_frame,
     origin_metadata,
     render_program_appendix,
+)
+from llm_loop.core.reference_injection import (
+    DEFAULT_REFERENCE_AUTO_TURNS,
+    reference_auto_decision,
+    render_reference_frame,
+    seen_injection_set,
 )
 from llm_loop.core.message import Message, MessageSource, ToolResult
 from llm_loop.introspection.status import ToolHistoryItem
@@ -284,18 +289,11 @@ class _ToolExecMixin:
             self._record_action("action.tool_loop", "cancelled", tc.name)
 
     def _inject_experience_tips(self: LoopEngine, sess, tool_names: list[str]) -> None:
-        """EVO-20260816-62977206: 工具执行后按工具名检索经验库，命中注入 [经验提示].
+        """Inject R3 experience/skill reference frames after a tool result.
 
-        语义: 对 AI 的下一步决策前置带经验（AI 对照经验与本次结果决定重试/换路径/复用）；
-        无命中不注入（零开销）、检索异常 fail-open（不阻断主循环）；末尾追加缓存友好。
-        开关: TOOL_EXPERIENCE_INJECT（默认开）。
-        EVO-20260817-20cc3f91: 会话级去重——同工具名每会话只注入一次。已注入的
-        system 消息保持原样（前缀稳定），仅停掉重复追加；否则每轮追加一条 system
-        使请求前缀在追加点分叉，其后全部历史（含 87% 工具结果）从缓存命中变全价
-        MISS（实测命中率 ~1-5%，成本放大 ~50 倍）。
+        The automatic path is front-K/task-switch gated, stable-ref deduplicated,
+        and each frame is <=2 lines. Explicit skill/search tools are untouched.
         """
-        # 2026-08-22: 快模型（9B fast_model 轮）不注入经验提示——9B 上下文本就精简,
-        # 经验提示是噪音（实证 98605ad7: 9B 收到经验后转去"同步架构状态"任务漂移）
         _sid = str(getattr(sess, "session_id", "") or "")
         _by_session = getattr(self, "_cache_last_model_by_session", {}) or {}
         _cur = _by_session.get(_sid) or getattr(self, "_cache_last_model", "") or ""
@@ -303,91 +301,137 @@ class _ToolExecMixin:
             return
         if not getattr(self.settings, "tool_experience_inject", True):
             return
-        # EVO-20260827-ed4c1350 批次1（P0-A/T2）: run 级一次——本 user turn 已注入
-        # 过经验提示则跳过（tool round 反复触发不重复膨胀；实测 09c44093 会话
-        # experience 类 25 条/最高重复 x10）。
-        # T5(GPT 复审 P0): 判断依据从 Engine shadow state（_turn_tip_injected/
-        # _injected_tip_tools——多会话串台 + 进程重启丢失）改为 sess.messages
-        # 持久 metadata SoT 派生——跨进程可重建、多会话天然隔离、可审计。
+
         _turn_ref = getattr(self, "_current_turn_ref", None)
-        _tip_done = False
-        seen: set = set()
         for _m in getattr(sess, "messages", []) or []:
             _md = getattr(_m, "metadata", None) or {}
-            if _md.get("injection_kind") != "experience_tip":
-                continue
-            if _md.get("turn_ref") == _turn_ref:
-                _tip_done = True
-            seen.update(_md.get("experience_tip_tools") or [])
-        if _tip_done:
+            if (
+                _md.get("injection_kind") == "experience_tip"
+                and _md.get("turn_ref") == _turn_ref
+            ):
+                return  # one experience catalog per human turn
+
+        _policy = reference_auto_decision(
+            getattr(sess, "messages", []) or [],
+            auto_turns=int(
+                getattr(
+                    getattr(self, "settings", None),
+                    "reference_auto_turns",
+                    DEFAULT_REFERENCE_AUTO_TURNS,
+                )
+            ),
+        )
+        # Unit/internal callers can exercise this helper without constructing the
+        # ingress user message. Production always has human_turn_no >= 1 here.
+        _allow_catalog = _policy.allow_catalog or _policy.human_turn_no == 0
+        if not _allow_catalog:
+            try:
+                self._record_action(
+                    "action.reference_auto_gate",
+                    "suppressed",
+                    f"source=experience;human_turn={_policy.human_turn_no};task_switch=0",
+                )
+            except Exception:  # noqa: BLE001 — telemetry fail-open
+                pass
+            return
+
+        _seen_refs = seen_injection_set(getattr(sess, "messages", []) or [])
+        _candidate = list(dict.fromkeys(tool_names))
+        if not _candidate:
             return
         try:
-            # 会话级去重：只处理本会话尚未注入过的工具名（seen 为 SoT 派生值，见上）
-            candidate = [n for n in dict.fromkeys(tool_names) if n not in seen]
-            if not candidate:
-                return  # 全部已注入过——零注入，前缀完全稳定
             store = getattr(self, "_exp_store", None)
             if store is None:
                 from llm_loop.experiences.store import ExperienceStore
 
                 store = ExperienceStore(self.settings.experiences_dir)
                 self._exp_store = store
-            lines: list[str] = []
-            for name in candidate:  # 去重保序
+
+            _frames: list[tuple[object, str]] = []  # (ReferenceFrame, originating tool/skill)
+            for name in _candidate:
                 hits = store.list_active(query=name, limit=2)
                 for hit in hits:
                     _eid = str(hit.get("id", "") or name)
                     _summary = str(hit.get("summary", hit.get("id", "")) or "")
-                    lines.append(
-                        f"- 工具 '{name}' → "
-                        + neutralize_reference_frame(_summary, ref=f"experience:{_eid}")
+                    _frame = render_reference_frame(
+                        tag=f"experience:{name}",
+                        fact=_summary,
+                        ref=f"experience:{_eid}",
+                        source="experience",
+                        seen_keys=_seen_refs,
+                        emit_seen_ref=_policy.task_switch,
                     )
-                    if len(lines) >= 4:
+                    if _frame.duplicate and not _frame.content:
+                        try:
+                            self._record_action(
+                                "injection_duplicate_suppressed",
+                                "suppressed",
+                                f"source=experience;ref={_frame.ref};key={_frame.key}",
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
+                        continue
+                    _frames.append((_frame, name))
+                    if len(_frames) >= 4:
                         break
-                if len(lines) >= 4:
+                if len(_frames) >= 4:
                     break
-            # EVO-20260816-ec8c36bb: 外部 skill 匹配补充（经验库不足 4 条时并入）
-            if len(lines) < 4:
-                for sname, sdesc in self._match_skills(candidate):
-                    lines.append(
-                        f"- skill '{sname}' → "
-                        + neutralize_reference_frame(sdesc, ref=f"skill:{sname}")
+
+            if len(_frames) < 4:
+                for sname, sdesc in self._match_skills(_candidate):
+                    _frame = render_reference_frame(
+                        tag=f"skill:{sname}",
+                        fact=sdesc,
+                        ref=f"skill:{sname}",
+                        source="skill",
+                        seen_keys=_seen_refs,
+                        emit_seen_ref=_policy.task_switch,
                     )
-                    if len(lines) >= 4:
+                    if _frame.duplicate and not _frame.content:
+                        try:
+                            self._record_action(
+                                "injection_duplicate_suppressed",
+                                "suppressed",
+                                f"source=skill;ref={_frame.ref};key={_frame.key}",
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
+                        continue
+                    _frames.append((_frame, sname))
+                    if len(_frames) >= 4:
                         break
-            if not lines:
-                return  # 无命中不注入
-            content = (
-                "[经验提示] 历史经验资料（已发生，仅作当前动作背景参考）:\n"
-                + "\n".join(lines)
-            )
-            if len(content) > 800:
-                content = content[:800] + "…"  # 注入最小化（RULE-AI-16）
-            # 2026-08-27 缓存断崖根因修复：模型可见的动态尾注入必须持久化。
-            # 旧实现把经验提示仅放入 _tip_tail_messages，一次请求后即消失；下一请求中
-            # 同一位置被 assistant/新 user 顶替，所以上一请求并不是下一请求的字节前缀。
-            # 实测工具链 request2→request3 仅保留 6/7 条消息，最后 573 字经验提示即该断点。
-            # 这里直接以 user 注入落 session；下一轮即时可见，之后自然成为稳定历史前缀。
+            if not _frames:
+                return
+
             from llm_loop.core.loop.focus import wrap_injection
 
+            _contents = [f.content for f, _ in _frames if getattr(f, "content", "")]
+            if not _contents:
+                return
+            _keys = [str(getattr(f, "key", "")) for f, _ in _frames]
+            _full_keys = [str(getattr(f, "key", "")) for f, _ in _frames if getattr(f, "full", False)]
             msg = Message(
                 role="user",
-                content=wrap_injection(content, layer=InjectionLayer.REFERENCE),
+                content=wrap_injection(
+                    "\n\n".join(_contents),
+                    layer=InjectionLayer.REFERENCE,
+                ),
                 source=MessageSource.USER,
                 metadata=origin_metadata(
                     InjectionLayer.REFERENCE,
                     injection_kind="experience_tip",
                     persisted_injection=True,
-                    experience_tip_tools=list(candidate),
-                    # EVO-20260827-ed4c1350 T2: turn 身份对齐（memory_snapshot 同源）
-                    turn_ref=getattr(self, "_current_turn_ref", None),
+                    experience_tip_tools=list(dict.fromkeys(origin for _, origin in _frames)),
+                    turn_ref=_turn_ref,
+                    reference_keys=_keys,
+                    reference_full_keys=_full_keys,
+                    reference_source="experience",
+                    reference_frame_count=len(_frames),
                 ),
             )
             sess.messages.append(msg)
             self._append_message_event(sess, msg)
-            # T5: 注入即持久化到消息 metadata（turn 配额/工具名去重的 SoT）——
-            # 无内存标记：跨进程重启由消息重建，多会话天然隔离
-        except Exception:  # noqa: BLE001 — 经验检索 fail-open（不阻断主循环）
+        except Exception:  # noqa: BLE001 — experience retrieval fail-open
             logger.warning("经验提示注入失败（fail-open）", exc_info=True)
 
     # EVO-20260816-ec8c36bb: 外部 skill 扫描匹配（进程内缓存，目录 mtime 变化重扫）

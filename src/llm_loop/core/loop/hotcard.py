@@ -21,8 +21,6 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
-from llm_loop.core.injection_labels import neutralize_reference_frame
-
 logger = logging.getLogger("llm_loop.core.loop.hotcard")
 
 _SCHEMA = 1
@@ -132,34 +130,21 @@ def write_hotcard(
         return False
 
 
-def _render_card_text(card: dict) -> str:
-    """热卡 → 注入文本（调用方再走 wrap_injection 统一包装）."""
-    lines = ["[任务热卡] 上一会话压缩时刻的任务接力资料:"]
-    if card.get("anchor"):
-        lines.append(
-            "历史任务锚点: "
-            + neutralize_reference_frame(
-                str(card["anchor"]), ref="hotcard:anchor"
-            )
-        )
-    for g in card.get("active_goals") or []:
-        gid = str(g.get("id", "") or "")
-        objective = neutralize_reference_frame(
-            str(g.get("objective", "") or ""), ref=f"goal:{gid or 'unknown'}"
-        )
-        line = f"活跃目标记录: {objective}（{gid}, {g.get('status', '')}）"
-        if g.get("checkpoint_what"):
-            line += "; 最近 checkpoint 记录: " + neutralize_reference_frame(
-                str(g["checkpoint_what"]), ref=f"goal:{gid or 'unknown'}:checkpoint"
-            )
-        if g.get("checkpoint_next"):
-            line += "; checkpoint next 字段: " + neutralize_reference_frame(
-                str(g["checkpoint_next"]), ref=f"goal:{gid or 'unknown'}:next"
-            )
-        lines.append(line)
-    if card.get("pending_evolutions"):
-        lines.append("待用户决策（演进待审）: " + ", ".join(card["pending_evolutions"]))
-    return "\n".join(lines)
+def _render_card_text(card: dict, *, ref_path: str = "") -> str:
+    """Hot-card automatic projection: one status line + one retrievable file ref.
+
+    R3 keeps the full structured card on disk and stops inlining anchor/goal/checkpoint
+    prose. R4 still owns recovery-boundary semantics and consumption/replay policy.
+    """
+    goals = len(card.get("active_goals") or [])
+    pending = len(card.get("pending_evolutions") or [])
+    anchor_present = 1 if str(card.get("anchor", "") or "").strip() else 0
+    line1 = (
+        f"[任务热卡] 上一会话任务接力资料已保存；"
+        f"anchor={anchor_present}; active_goals={goals}; pending_review={pending}。"
+    )
+    ref = str(ref_path or "task_hotcard.json")
+    return f"{line1}\nref=file:{ref}"
 
 
 def pop_hotcard(*, session_id: str, data_dir: str | Path) -> str | None:
@@ -177,7 +162,7 @@ def pop_hotcard(*, session_id: str, data_dir: str | Path) -> str | None:
             return None
         if card.get("origin_session") == session_id:
             return None
-        text = _render_card_text(card)
+        text = _render_card_text(card, ref_path=str(path))
         card["consumed"] = True
         card["consumed_by"] = session_id
         card["consumed_ts"] = _now()

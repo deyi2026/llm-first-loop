@@ -17,6 +17,10 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.core.injection_labels import neutralize_reference_frame
+from llm_loop.core.reference_injection import (
+    ReferenceFrame,
+    reference_key,
+)
 
 
 @dataclass(frozen=True)
@@ -121,6 +125,55 @@ class SessionDigest:
             parts.append("\n".join(lines))
         return "\n\n".join(parts)
 
+    def render_reference_frames(
+        self,
+        *,
+        seen_keys: set[str] | frozenset[str] | None = None,
+        emit_seen_refs: bool = False,
+        limit: int = 8,
+    ) -> list[ReferenceFrame]:
+        """Project digest blocks into R3 <=2-line reference frames.
+
+        ``render()`` remains as the legacy/full diagnostic view; automatic prompt
+        injection uses this compact catalog. Stable identity is tool_call_id. The
+        display pointer names the tool so archived originals can be retrieved with
+        ``search_archive(tool_name=...)`` after compaction.
+        """
+        with self._lock:
+            blocks = list(self._blocks)
+        seen = seen_keys or set()
+        out: list[ReferenceFrame] = []
+        for b in blocks:
+            stable_ref = f"digest:{b.block_id}"
+            key = reference_key("digest", ref=stable_ref)
+            pointer = f"{stable_ref};archive_tool={b.tool_name}"
+            if key in seen:
+                if emit_seen_refs:
+                    out.append(
+                        ReferenceFrame(
+                            key=key,
+                            content=f"ref={pointer}",
+                            ref=pointer,
+                            full=False,
+                            duplicate=True,
+                        )
+                    )
+                continue
+            fact = b.conclusion or (b.facts[0] if b.facts else f"{b.tool_name} 工具结果已记录")
+            fact = neutralize_reference_frame(fact, ref=stable_ref).split("；ref=", 1)[0]
+            out.append(
+                ReferenceFrame(
+                    key=key,
+                    content=f"[digest:{b.tool_name}] {fact}\nref={pointer}",
+                    ref=pointer,
+                    full=True,
+                    duplicate=False,
+                )
+            )
+            if len(out) >= max(1, int(limit)):
+                break
+        return out
+
     def bytes_of(self, block_id: str) -> int:
         """单块渲染字节数（供指标计算 FR-3）."""
         b = next((x for x in self._blocks if x.block_id == block_id), None)
@@ -207,8 +260,11 @@ class SessionDigest:
             pass
 
     def _load_persisted(self) -> None:
+        persist_path = self._persist_path
+        if persist_path is None:
+            return
         try:
-            with open(self._persist_path, encoding="utf-8") as f:
+            with open(persist_path, encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
                     if not line:

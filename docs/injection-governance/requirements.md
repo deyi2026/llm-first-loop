@@ -1,6 +1,6 @@
 # 注入治理专项（INJECTION-GOVERNANCE）需求规格
 
-> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **设计已审批；R0 PASS；R1/L1 PASS；R2/L2-1 PASS；R3+ 未实施**
+> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **设计已审批；R0 PASS；R1/L1 PASS；R2/L2-1 PASS；R3/L2-2 PASS；R4+ 未实施**
 
 ## 1. 问题陈述（实证）
 
@@ -70,6 +70,22 @@ R1 **没有**实现预算、按需/去重、恢复单边界、身份剥离、use
 - accounting 对最终渲染采用保守成本估算（含 group/slot/merge 开销），因此 `used_chars <= budget` 是硬门，实际 program-origin wire 字符不高于 accounting。
 - `COG_RUNTIME_PACKET_BUDGET` 属 Cognitive 内部投影压缩，只会进一步减少 packet；它不是跨来源注入总预算，也不能扩大 R2 上限。
 - R2 不实施 session 去重、K 轮按需、身份剥离、恢复次数策略、user-truth 物理尾位重排；分别留给 R3-R6。
+
+## 4C. R3 已验收的资料按需化 / 指针化 / 去重
+
+权威报告：`docs/injection-governance/r3/report.md`。
+
+- 自动资料窗口由 `REFERENCE_AUTO_TURNS` 控制，默认 3 仍是候选；K+1 默认关闭，显式 task switch 临时重开。
+- 每个自动 reference frame 最多两行：一句中性事实 + stable ref；command-shaped 历史不自动内联。
+- session seen-set 不新增第二份 Session 状态；从持久 message metadata 的 `reference_key(s)` 重建，stable ID 优先、无 ID 用规范化内容 hash，跨 compact 保持。
+- memory / experience / skill / SessionDigest 已按同一策略投影；重复 stable ref 默认零正文，任务切换相关命中最多一行 ref。
+- compact/archive 不再自动回灌旧消息片段、`[压缩关键事实]` 或 `[压缩档案目录]`，只保留两行 `ref=archive:search_archive` 状态；原文仍完整可检索。
+- hotcard 自动表示降为两行状态 + `ref=file:.../task_hotcard.json`；完整结构可 `read_file`，恢复/消费语义未提前进入 R4。
+- 09c44093 x18 重复 trap：同一 `memory:m1` 连续命中 18 次，完整正文只注入一次。
+- R3 暴露并修复了旧 compact anchor 伪 PASS：真实 user anchor 现在保留原消息本体，而不是归档后靠 `[压缩关键事实]` 字符串 echo 假装仍在。
+- focused 237 tests PASS；R2 15 点预算矩阵继续满足 `actual <= used <= budget`；R0 frozen 0-byte diff。
+
+R3 **没有**实现恢复单边界、身份问答剥离、user-truth 物理尾位 / provider wire invariant 或行为 A/B。
 
 ## 5. 非目标
 

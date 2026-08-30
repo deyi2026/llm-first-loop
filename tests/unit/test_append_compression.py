@@ -39,9 +39,10 @@ def test_append_summary_enabled_adds_summary():
     assert len(summaries) >= 1, "应追加归档摘要"
     s = summaries[0]
     assert s["role"] == "user"
-    assert "[上下文归档摘要]" in s["content"]
+    assert "[上下文压缩]" in s["content"]
     assert "已归档" in s["content"]
-    assert "search_archive" in s["content"]
+    assert "ref=archive:search_archive" in s["content"]
+    assert "归档内容概要" not in s["content"]
 
 
 def test_append_summary_disabled_zero_regression():

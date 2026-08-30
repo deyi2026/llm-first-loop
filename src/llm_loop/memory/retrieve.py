@@ -12,7 +12,10 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from llm_loop.core.injection_labels import neutralize_reference_frame
+from llm_loop.core.reference_injection import (
+    reference_metadata,
+    render_reference_frame,
+)
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.memory.store import MemoryStore
 
@@ -87,20 +90,21 @@ def build_memory_messages(
     top_k: int = 5,
     *,
     semantic_retriever: Any | None = None,
-    session_id: str = "",  # 2026-08-20 记忆分级: 当前会话 id，scope=session 条目仅原会话召回
+    session_id: str = "",
+    seen_reference_keys: set[str] | frozenset[str] | None = None,
+    emit_seen_refs: bool = False,
+    suppressed_out: list[dict[str, str]] | None = None,
 ) -> list[Message]:
-    """检索相关记忆并构造 source=memory 的前置消息（FR-MEM-02 / P1 语义检索）.
+    """Retrieve relevant memories and project them as an R3 reference catalog.
 
-    语义检索可用时先语义召回（mode 标注）；否则关键词兜底。
-    无命中 → 空列表（不伪造记忆）；检索异常由调用方捕获标注。
-    记忆分级（2026-08-20，docs/ARCHITECTURE-cache-stable-rules.md §5）: scope=session
-    条目仅在当前会话 == 条目来源会话时召回，防跨会话污染；scope=global 不受限。
+    Automatic frames are deterministic and at most two lines: one neutral fact
+    plus one stable ref. A seen stable ref is omitted by default; callers may
+    request a one-line ref on an explicit task-switch turn. Original memory
+    content remains available through explicit retrieval tools.
     """
     keywords = extract_keywords(text)
     keyword_hits = store.search(keywords, top_k=top_k, session_id=session_id) if keywords else []
 
-    # P1 语义检索（预算内，失败/不可用如实降级为关键词）
-    note = ""
     entries = keyword_hits
     if semantic_retriever is not None and semantic_retriever.semantic_available():
         try:
@@ -119,53 +123,64 @@ def build_memory_messages(
                 e = store._by_id(h.get("id", ""))  # noqa: SLF001
                 if e is not None:
                     entries.append(e)
-            if result.mode == "keyword" and result.note:
-                note = result.note
-            elif result.mode != "keyword":
-                note = f"语义检索生效（mode={result.mode}）"
-        except Exception as exc:  # noqa: BLE001 — 语义失败不阻塞，如实降级
-            note = f"语义检索不可用：{exc}，已降级为关键词检索"
+        except Exception:  # noqa: BLE001 — semantic failure degrades to keyword results
             entries = keyword_hits
 
     if not entries:
         return []
-
-    # 2026-08-20 记忆分级: 过滤会话瞬时条目（scope=session 且来源会话 != 当前会话 → 不召回）
     entries = [
         e
         for e in entries
         if getattr(e, "scope", "global") != "session"
         or (session_id and e.source_session_id == session_id)
     ]
-    # EVO-20260822-cc3f8e7a 记忆注入分级: inject_policy=recall_only 条目不主动注入
-    # （身份纠错/历史决策类低价值记忆；仍可经 search_records/search_archive 显式检索找回）
     entries = [
         e for e in entries if getattr(e, "inject_policy", "auto") != "recall_only"
     ]
     if not entries:
         return []
+
     final = entries[:top_k]
-    # 升格判据事实源（EVO-20260816-fcdbe2e9）：只计真正进入注入消息的条目，
-    # fail-open（计数失败不阻塞记忆注入主流程，FR-MEM-03）
-    try:  # noqa: SIM105 — fail-open 计数，suppress 等价的显式容忍（FR-MEM-03）
-        store.mark_injected(final)
-    except Exception:  # noqa: BLE001 — 计数失败如实容忍（统计非关键路径）
+    seen = seen_reference_keys or set()
+    frames = []
+    emitted_entries = []
+    for e in final:
+        ref = f"memory:{e.id}"
+        frame = render_reference_frame(
+            tag=f"memory:{getattr(e, 'type', 'fact')}",
+            fact=str(e.content or ""),
+            ref=ref,
+            source="memory",
+            seen_keys=seen,
+            emit_seen_ref=emit_seen_refs,
+        )
+        if frame.duplicate and not frame.content:
+            if suppressed_out is not None:
+                suppressed_out.append({"source": "memory", "key": frame.key, "ref": frame.ref})
+            continue
+        frames.append(frame)
+        emitted_entries.append(e)
+
+    if not frames:
+        return []
+    try:
+        store.mark_injected(emitted_entries)
+    except Exception:  # noqa: BLE001 — usage counting is non-critical
         pass
-    # R1/L1: 自动资料帧不得携带命令式历史原文。安全帧保留正文+ref；
-    # 命令形态帧只给中性占位+ref，原文仍可经 memory store 显式检索。
-    lines = [
-        f"- [{e.type}] {neutralize_reference_frame(e.content, ref=f'memory:{e.id}')}"
-        for e in final
-    ]
-    if note:
-        lines.insert(0, f"[记忆检索] {note}")
+
+    md = {
+        "reference_keys": [f.key for f in frames],
+        "reference_full_keys": [f.key for f in frames if f.full],
+        "reference_source": "memory",
+        "reference_frame_count": len(frames),
+    }
+    if len(frames) == 1:
+        md.update(reference_metadata(frames[0], source="memory"))
     return [
         Message(
             role="system",
-            content=(
-                "[相关记忆] 历史检索资料（已发生，仅作当前任务背景参考）\n"
-                + "\n".join(lines)
-            ),
+            content="\n\n".join(f.content for f in frames if f.content),
             source=MessageSource.MEMORY,
+            metadata=md,
         )
     ]

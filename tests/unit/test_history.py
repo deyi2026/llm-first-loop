@@ -257,8 +257,8 @@ def test_history_no_summarizer_backward_compat():
 
 
 # ── EVO-20260811-1e68f400: 压缩档案目录化 ──
-def test_compression_injects_archive_index_dir():
-    """压缩发生时注入 [压缩档案目录]（归档数/角色构成/可检索指引），原文仍完整另存."""
+def test_compression_uses_pointer_not_archive_body_catalog():
+    """R3: 压缩只给 archive pointer，不自动回灌角色/关键词目录正文。"""
     msgs = [
         Message(role="user", content=f"旧消息{i}内容" * 80, source=MessageSource.USER)
         for i in range(10)
@@ -284,15 +284,14 @@ def test_compression_injects_archive_index_dir():
         summarizer=_FakeSummarizer(),
     )
     contents = [str(m.get("content", "")) for m in out]
-    assert any("压缩档案目录" in c for c in contents)
-    dir_msg = next(c for c in contents if "压缩档案目录" in c)
-    assert "归档" in dir_msg and "search_archive" in dir_msg
-    assert "user" in dir_msg  # 角色构成
+    assert not any("压缩档案目录" in c for c in contents)
+    assert any("ref=archive:search_archive" in c for c in contents)
     assert len(archived) >= 1  # 原文仍完整另存
+    assert any("旧消息" in m.content for m in archived)
 
 
-def test_archive_index_dir_without_summarizer():
-    """summarizer=None（纯另存模式）也注入档案目录（保证'有什么可找'可见）."""
+def test_archive_pointer_without_summarizer():
+    """R3: summarizer=None 仍给 search_archive pointer，但不生成正文目录。"""
     msgs = [
         Message(role="user", content="y" * 150, source=MessageSource.USER) for _ in range(10)
     ]
@@ -308,12 +307,13 @@ def test_archive_index_dir_without_summarizer():
         summarizer=None,
     )
     contents = [str(m.get("content", "")) for m in out]
-    assert not any("上下文压缩摘要" in c for c in contents)  # 无摘要
-    assert any("压缩档案目录" in c for c in contents)  # 有目录
+    assert not any("上下文压缩摘要" in c for c in contents)
+    assert not any("压缩档案目录" in c for c in contents)
+    assert any("ref=archive:search_archive" in c for c in contents)
 
 
-def test_archive_index_dir_lists_tool_results():
-    """目录包含工具结果构成（tool_name 统计）."""
+def test_archive_pointer_does_not_replay_tool_result_catalog():
+    """R3: tool_name/结果构成不自动回灌；原始 tool 仍在 archive。"""
     msgs = []
     for k in range(6):
         msgs.append(
@@ -346,13 +346,14 @@ def test_archive_index_dir_lists_tool_results():
         summarizer=None,
     )
     contents = [str(m.get("content", "")) for m in out]
-    dir_msg = next((c for c in contents if "压缩档案目录" in c), "")
-    assert "read_file" in dir_msg  # 工具结果构成
+    assert not any("压缩档案目录" in c for c in contents)
+    assert not any("read_file" in c for c in contents if "ref=archive:search_archive" in c)
+    assert any(m.tool_name == "read_file" for m in archived)
 
 
-# ── RULE-AI-00 增强: 压缩注入确定性关键事实清单（零 LLM）──
-def test_compression_injects_deterministic_key_facts():
-    """压缩注入 [压缩关键事实]（规则提取含信号词的行，非 LLM 摘要）."""
+# ── R3: 压缩资料正文改为按需检索 ──
+def test_compression_does_not_reinject_deterministic_key_facts():
+    """R3: 关键事实仍随原文归档，但不自动重新注入当前 prompt。"""
     msgs = [
         Message(role="user", content="方案对比完成：选定方案 A 作为最终方案", source=MessageSource.USER),
         Message(role="tool", content="read_file 成功，配置读取完成", source=MessageSource.TOOL),
@@ -371,11 +372,12 @@ def test_compression_injects_deterministic_key_facts():
         summarizer=None,
     )
     contents = [str(m.get("content", "")) for m in out]
-    facts_msg = next((c for c in contents if "压缩关键事实" in c), "")
-    assert "选定方案 A" in facts_msg  # 关键动作/结果被提取
-    assert "read_file 成功" in facts_msg  # 工具结果状态被提取
-    # 不注入 LLM 语义摘要
-    assert not any("上下文压缩摘要" in c for c in contents)
+    assert not any("压缩关键事实" in c for c in contents)
+    assert not any("选定方案 A" in c for c in contents)
+    assert not any("read_file 成功" in c for c in contents)
+    assert any("选定方案 A" in m.content for m in archived)
+    assert any("read_file 成功" in m.content for m in archived)
+    assert any("ref=archive:search_archive" in c for c in contents)
 
 
 # ── EVO-3b39134f: 压缩保留推理结论（OpenAI harness 借鉴）──
@@ -623,14 +625,14 @@ def test_compact_ratio_preemptive_compression():
     )
     assert any("[上下文压缩]" in str(m.get("content", "")) for m in out_pre)
     non_sys = [m for m in out_pre if m["role"] != "system"]
-    # DSH 修复（EVO-20260817）: 压缩 extras（关键事实/档案目录/压缩标注）转独立 user 消息
-    # （不并入 system 主体 → system 字节稳定 → 前缀缓存命中）——non_sys = 最新消息 + extras
+    # R3: 压缩 extras 只保留状态/pointer，不再自动回灌关键事实/目录正文。
     latest = [m for m in non_sys if m["content"].startswith("x")]
     assert len(latest) == 1  # 旧消息归档, 只留最新
-    assert any("[压缩档案目录]" in m["content"] for m in non_sys)  # extras 独立可见
-    # system 主体稳定（extras 不入主体）
+    assert any("ref=archive:search_archive" in m["content"] for m in non_sys)
+    assert all("[压缩档案目录]" not in m["content"] for m in non_sys)
+    # system 主体稳定（动态状态/pointer 不入主体）
     sys_msgs = [m for m in out_pre if m["role"] == "system"]
-    assert all("[压缩档案目录]" not in m["content"] for m in sys_msgs)
+    assert all("ref=archive:search_archive" not in m["content"] for m in sys_msgs)
 
 
 def test_compact_ratio_one_is_legacy():

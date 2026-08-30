@@ -996,18 +996,18 @@ def build_history_messages(
     # 头部保留代价: 每轮多占预算（命中价 ~1/10），换来压缩轮无全量失效; head_keep_chars=0 关闭。
     head_groups: list[list[Message]] = []
     head_chars = 0  # 兜底初始化: head_keep_chars=0 时无头部保留, 渐进折叠分支引用不炸（2026-08-24 镜像实证 UnboundLocalError）
-    # 锚点保护总量上限（2026-08-29 回归修复 test_search_archive_in_loop_after_compression）:
-    # 保护有效性 = 锚点区间（锚点组起至最新）+ head 总体积 + system ≤ max_chars。
-    # 锚点区自身超整个预算（如用户单条贴长文）时保护失效退回正常折叠——否则该组
-    # 永久穿透预算不归档（提交持续超载 + 档案零命中，信息反而不可检索）。失效后
-    # 原文正常入档（零丢失），AI 经压缩标注检索指引 search_archive 找回。
-    _anchor_protect_valid = True
+    # R3: 真实任务锚点保护只覆盖“真实对话组”，不覆盖锚点后 program-only user
+    # 附录。旧实现把后续 [相关记忆]/[声明提醒] 也计入保护区，噪声一多就把
+    # _anchor_protect_valid 打成 False，最终真实 user 任务反而被归档；旧
+    # [压缩关键事实] 又把该任务复述回来，形成伪 PASS。program-only 组仍可按普通
+    # archive/budget 规则淘汰，不能获得与用户任务相同的保护权。
+    _anchor_protected_groups: set[int] = set()
     if _anchor_group_idx is not None:
-        _anchor_zone_chars = sum(
-            _wire_size(mm) for g in atomic_groups[_anchor_group_idx:] for mm in g
-        )
-        if len(system_prompt) + head_chars + _anchor_zone_chars > max_chars:
-            _anchor_protect_valid = False
+        for _pgi in range(_anchor_group_idx, len(atomic_groups)):
+            _pg = atomic_groups[_pgi]
+            if not all(_is_injected_block(mm) for mm in _pg):
+                _anchor_protected_groups.add(_pgi)
+    _anchor_protect_valid = True
     if head_keep_chars > 0:
         acc = 0
         for g in atomic_groups:  # 从最旧端累积头部保留组（前缀核心）
@@ -1031,6 +1031,18 @@ def build_history_messages(
             g = head_groups.pop()  # 收缩时去掉最新头部组（靠近中段，前缀核心不变）
             head_chars -= sum(_wire_size(mm) for mm in g)
     head_count = len(head_groups)
+    # head 预算确定后再验证真实对话保护区，避免旧实现“注释计 head、实际未计”的
+    # 时序漂移。只要真实对话保护区本身能放进整个 max_chars，就允许它穿透
+    # 60% archive target；单条超大真实 user 仍走既有 trim+archive 兜底。
+    if _anchor_protected_groups:
+        _anchor_zone_chars = sum(
+            _wire_size(mm)
+            for _pgi in _anchor_protected_groups
+            for mm in atomic_groups[_pgi]
+            if _pgi >= head_count
+        )
+        if len(system_prompt) + head_chars + _anchor_zone_chars > max_chars:
+            _anchor_protect_valid = False
     if head_keep_chars > 0 and head_count == 0:
         # EVO-20260825 任务6.3: head 预算过小/首组即超 → 自动降级 head_keep=0 全量归档
         # （与 head_keep_chars=0 行为一致：锚点前移式归档，前缀重建一轮后恢复）。
@@ -1059,8 +1071,7 @@ def build_history_messages(
         _next_group_idx = head_count  # kept_groups 首组对应的原列表索引（锚点保护用）
         while kept_groups:
             if (
-                _anchor_group_idx is not None
-                and _next_group_idx >= _anchor_group_idx
+                _next_group_idx in _anchor_protected_groups
                 and _anchor_protect_valid
             ):
                 # 任务锚点保护（漂移修复 2026-08-29）: 首组已达锚点组——剩余组全在
@@ -1108,8 +1119,7 @@ def build_history_messages(
                 and kept_groups
                 and not (
                     _anchor_protect_valid
-                    and _anchor_group_idx is not None
-                    and _gi >= _anchor_group_idx
+                    and _gi in _anchor_protected_groups
                 )
             ):
                 # 漂移修复（2026-08-29）: 保护边界内（锚点组起）不归档——穿透预算
@@ -1120,7 +1130,7 @@ def build_history_messages(
                 continue
             if group_len > trim_budget and (
                 not kept_groups
-                or (_anchor_group_idx is not None and _gi >= _anchor_group_idx)
+                or (_anchor_protect_valid and _gi in _anchor_protected_groups)
             ):
                 # 最新组单条/整组超限: 另存全文 + 精简注入（组内字段保留，仅 content 截断）
                 # 2026-08-29 回归修复（test_search_archive_in_loop_after_compression）:
@@ -1215,19 +1225,12 @@ def build_history_messages(
             import logging
 
             _total_archived = sum(_wire_size(mm) for mm in archived)
-            _summary_text = " | ".join(
-                neutralize_reference_frame(
-                    (mm.content or "")[:60].replace("\n", " "),
-                    ref="archive:search_archive",
-                )
-                for mm in archived[:3]
-                if mm.content
-            )[:400]
+            # R3/L2-2: compact 只回传“发生归档 + 检索入口”，不再把旧 user/tool
+            # 正文截取后重新自动内联。资料原文仍在 archive，按需 search_archive。
             _summary_msg = (
-                f"[上下文归档摘要] 已归档 {len(archived)} 条消息（约 {_total_archived} 字符）。"
-                f"归档内容概要: {_summary_text}"
-                f"{'…' if len(archived) > 3 else ''}"
-                f"[归档可检索: search_archive]"
+                f"[上下文压缩] 已归档 {len(archived)} 条旧消息（约 {_total_archived} 字符）；"
+                "旧正文未自动内联。\n"
+                "ref=archive:search_archive"
             )
             _archive_summary_dict = {
                 "role": "user",
@@ -1348,39 +1351,18 @@ def build_history_messages(
                 "决策线注入失败（fail-open）", exc_info=True
             )
 
-        # RULE-AI-00 增强: 确定性关键事实清单（规则提取零 LLM，AI 快速感知旧内容要点）
-        try:
-            key_facts = _archive_key_facts(archived)
-            if key_facts:
-                extras.append(
-                    Message(role="system", content=key_facts, source=MessageSource.SYSTEM)
-                )
-        except Exception:
-            import logging
-
-            logging.getLogger(__name__).warning(
-                "压缩关键事实提取失败（fail-open）", exc_info=True
-            )
-
-        # 档案目录（保证"有什么可找"可见）
-        try:
-            idx_dir = _archive_index_dir(archived)
-            if idx_dir:
-                extras.append(
-                    Message(role="system", content=idx_dir, source=MessageSource.SYSTEM)
-                )
-        except Exception:
-            import logging
-
-            logging.getLogger(__name__).warning(
-                "压缩档案目录生成失败（fail-open）", exc_info=True
-            )
+        # R3/L2-2: 自动“关键事实清单/关键词目录”退役。它们会把已归档正文
+        # 再次推回 prompt，形成 compact 后的第二条投喂链。上方两行状态帧已经给出
+        # search_archive ref；需要事实时由模型主动检索，避免无意识资料持续占注意力。
 
         from llm_loop.feedback.honesty import compression_message
 
-        extras.append(
-            compression_message(len(archived), sum(len(a.content) for a in archived))
-        )
+        # append-summary 模式上方已有同一两行 archive pointer；避免同轮重复两份
+        # “已归档 + search_archive”状态。非 append-summary 路径保留 canonical 状态帧。
+        if _archive_summary_dict is None:
+            extras.append(
+                compression_message(len(archived), sum(len(a.content) for a in archived))
+            )
         # EVO-20260824-54d46549 渐进折叠知情标注: 渐进模式（progressive_fold>0）下折叠发生 →
         # 明确告知 AI"本轮只折了最老 K 组, 其余保留, 可检索"——减少"刚引用的内容已被
         # 折掉"的推理落空; 固定文本含 K 值（折叠组数即 _fold_count, 便于归因）。

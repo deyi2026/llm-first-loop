@@ -16,6 +16,11 @@ from typing import TYPE_CHECKING, Any
 
 from llm_loop.core.injection_labels import InjectionLayer, origin_metadata
 from llm_loop.core.message import Message, MessageSource
+from llm_loop.core.reference_injection import (
+    DEFAULT_REFERENCE_AUTO_TURNS,
+    reference_auto_decision,
+    seen_injection_set,
+)
 from llm_loop.memory.retrieve import build_memory_messages
 
 if TYPE_CHECKING:
@@ -42,6 +47,7 @@ class _TurnContextMixin:
         _fault_feedback: Callable[[str, Exception], Message]
         _record_program_fault: Callable[[str], None]
         _append_message_event: Callable[[Any, Message], None]
+        _record_action: Callable[[str, str, str], None]
 
     def _inject_turn_memory_snapshot(
         self, sess, user_text: str, turn_ref: int
@@ -55,9 +61,12 @@ class _TurnContextMixin:
         持久化异常由 build 回退路径兜底（返回值仍供动态注入）。
         返回: 检索结果（供 build fail-open 回退；正常路径已持久化）。
         """
-        # T5(GPT 复审): 操作幂等——消息幂等 ≠ 操作幂等。重入若本 turn 已持久化
-        # snapshot，直接返回不检索不 mark_injected（防污染 memory 使用统计：
-        # 12 次重入曾致 search/mark_injected 各 12 次而消息仅 1 条）。
+        # R3: 操作幂等覆盖“本轮因 K 门/去重而零注入”的路径；否则同 turn 重入会
+        # 反复检索却没有 snapshot 消息可作为幂等证据。该标记仅在 in-memory Session
+        # 上存活，真实跨 compact/restart 的 seen SoT 仍是持久 message metadata。
+        if getattr(sess, "_memory_reference_checked_turn_ref", None) == turn_ref:
+            return []
+        setattr(sess, "_memory_reference_checked_turn_ref", turn_ref)
         for _m in getattr(sess, "messages", []) or []:
             _md = getattr(_m, "metadata", None) or {}
             if (
@@ -65,6 +74,46 @@ class _TurnContextMixin:
                 and _md.get("turn_ref") == turn_ref
             ):
                 return []
+
+        _policy_messages = list(getattr(sess, "messages", []) or [])
+        _auto_turns = int(
+            getattr(
+                getattr(self, "settings", None),
+                "reference_auto_turns",
+                DEFAULT_REFERENCE_AUTO_TURNS,
+            )
+        )
+        _policy = reference_auto_decision(_policy_messages, auto_turns=_auto_turns)
+        if _policy.human_turn_no == 0 and str(user_text or "").strip():
+            # Direct/internal callers may invoke this helper before appending the user
+            # message; production engine appends first. Use a synthetic view only for
+            # gate calculation, never persist/duplicate the user text.
+            _policy = reference_auto_decision(
+                _policy_messages
+                + [
+                    {
+                        "role": "user",
+                        "content": user_text,
+                        "metadata": {
+                            "origin_layer": "user_instruction",
+                            "program_origin": False,
+                        },
+                    }
+                ],
+                auto_turns=_auto_turns,
+            )
+        if not _policy.allow_catalog:
+            try:
+                self._record_action(
+                    "action.reference_auto_gate",
+                    "suppressed",
+                    f"source=memory;human_turn={_policy.human_turn_no};task_switch=0",
+                )
+            except Exception:  # noqa: BLE001 — telemetry must not affect the run
+                pass
+            return []
+        _seen = seen_injection_set(getattr(sess, "messages", []) or [])
+        _suppressed: list[dict[str, str]] = []
         try:
             memory_msgs = build_memory_messages(
                 user_text,
@@ -72,7 +121,19 @@ class _TurnContextMixin:
                 top_k=self._runtime_memory_top_k(),
                 semantic_retriever=self.semantic_retriever,
                 session_id=sess.session_id,
+                seen_reference_keys=_seen,
+                emit_seen_refs=_policy.task_switch,
+                suppressed_out=_suppressed,
             )
+            for _dup in _suppressed:
+                try:
+                    self._record_action(
+                        "injection_duplicate_suppressed",
+                        "suppressed",
+                        f"source={_dup.get('source', 'memory')};ref={_dup.get('ref', '')};key={_dup.get('key', '')}",
+                    )
+                except Exception:  # noqa: BLE001 — telemetry fail-open
+                    pass
         except Exception as exc:  # noqa: BLE001 — 记忆失败不阻塞（FR-MEM-03）
             memory_msgs = [self._fault_feedback("memory", exc)]
             self._record_program_fault("memory")
@@ -107,6 +168,7 @@ class _TurnContextMixin:
                         if _d.get("role") == "system"
                         else _c
                     )  # 无 anchor: 持久化体字节稳定（anchor 含每轮变化内容）
+                    _ref_md = dict(getattr(_m, "metadata", None) or {})
                     _persist_msg = Message(
                         role="user",
                         content=_wrapped,
@@ -117,6 +179,22 @@ class _TurnContextMixin:
                             persisted_injection=True,
                             turn_ref=turn_ref,
                             query_fp=query_fp,
+                            reference_keys=list(_ref_md.get("reference_keys") or []),
+                            reference_full_keys=list(_ref_md.get("reference_full_keys") or []),
+                            reference_source=_ref_md.get("reference_source", "memory"),
+                            reference_frame_count=int(_ref_md.get("reference_frame_count") or 0),
+                            **(
+                                {
+                                    k: _ref_md[k]
+                                    for k in (
+                                        "reference_key",
+                                        "reference_ref",
+                                        "reference_full",
+                                        "reference_duplicate",
+                                    )
+                                    if k in _ref_md
+                                }
+                            ),
                         ),
                     )
                     sess.messages.append(_persist_msg)

@@ -28,7 +28,13 @@ from llm_loop.core.injection_labels import (
     detect_program_layer,
     ensure_semantic_label,
     infer_layer,
+    origin_metadata,
     strip_program_appendix_notice,
+)
+from llm_loop.core.reference_injection import (
+    DEFAULT_REFERENCE_AUTO_TURNS,
+    reference_auto_decision,
+    seen_injection_set,
 )
 
 # EVO-20260818: projection_ver/check 提升到模块级（消除函数内 import 遮蔽导致的 F823）——
@@ -938,21 +944,54 @@ class _BuildMixin:
                     source=MessageSource.SYSTEM,
                 )
             ]
-        # EVO-20260829-06c96021（SDD-20260830 FR-1/FR-2）: 会话汇总档案尾部槽——
-        # 工具 SUCCESS 的 L1 摘要块 append-only 聚合，每轮全量注入尾部（过程薄/
-        # 终局全量在场）。缓存契约：已有块字节零改动（前缀不变式），新块=唯一
-        # miss 源；异常 fail-open 不阻断组装。DIGEST_ENABLED=0 时零注入（NFR-3）。
+        # R3/L2-2: SessionDigest 不再每轮全量重放。仅前 K human turns / 显式
+        # task-switch 允许把尚未暴露的工具摘要投影成 <=2 行 reference frame；暴露记录
+        # 持久化到 sess.messages metadata，跨 compact/restart 可重建 seen-set。
         if getattr(getattr(self, "settings", None), "digest_enabled", False):
             try:
-                _digest = self._session_digest(sess)
-                _digest.update_from_messages(sess.messages)
-                _digest_view = _digest.render()
-                if _digest_view:
-                    tail_msgs = (tail_msgs or []) + [
-                        Message(
-                            role="system", content=_digest_view, source=MessageSource.SYSTEM
+                _digest_policy = reference_auto_decision(
+                    sess.messages,
+                    auto_turns=int(
+                        getattr(
+                            self.settings,
+                            "reference_auto_turns",
+                            DEFAULT_REFERENCE_AUTO_TURNS,
                         )
-                    ]
+                    ),
+                )
+                if _digest_policy.allow_catalog:
+                    _digest = self._session_digest(sess)
+                    _digest.update_from_messages(sess.messages)
+                    _digest_seen = seen_injection_set(sess.messages)
+                    _digest_frames = _digest.render_reference_frames(
+                        seen_keys=_digest_seen,
+                        # Digest has no relevance query on task switch; do not replay
+                        # all old pointers. Memory/experience provide relevant pointer replay.
+                        emit_seen_refs=False,
+                    )
+                    if _digest_frames:
+                        _digest_msg = Message(
+                            role="user",
+                            content=wrap_injection(
+                                "\n\n".join(f.content for f in _digest_frames),
+                                layer=InjectionLayer.REFERENCE,
+                                slot_kind="digest",
+                            ),
+                            source=MessageSource.USER,
+                            metadata=origin_metadata(
+                                InjectionLayer.REFERENCE,
+                                injection_kind="session_digest_catalog",
+                                persisted_injection=True,
+                                turn_ref=getattr(self, "_current_turn_ref", None),
+                                reference_keys=[f.key for f in _digest_frames],
+                                reference_full_keys=[f.key for f in _digest_frames if f.full],
+                                reference_source="digest",
+                                reference_frame_count=len(_digest_frames),
+                            ),
+                        )
+                        sess.messages.append(_digest_msg)
+                        self._append_message_event(sess, _digest_msg)
+                        tail_msgs = (tail_msgs or []) + [_digest_msg]
             except Exception:  # noqa: BLE001 — 档案槽 fail-open
                 pass
         # ── P1 尾部注入聚合（err1210 8.4 Verdict: STRUCTURE_TRIGGER 尾部连续 user 条数，
@@ -971,6 +1010,8 @@ class _BuildMixin:
                 _slot = SlotKind.INTEROP
             elif _tip_orig and any(_m is _x for _x in _tip_orig):
                 _slot = SlotKind.TIP
+            elif (getattr(_m, "metadata", None) or {}).get("injection_kind") == "session_digest_catalog":
+                _slot = "digest"
             _inject_parts.append((_slot, str(_d.get("content") or "")))
         # err1210 T4.1→9.1: defer 回填消息消费检测（is 身份匹配，聚合收尾统一处理）
         _refs = getattr(self, "_deferred_replay_refs", None) or []
