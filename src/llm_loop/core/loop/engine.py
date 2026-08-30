@@ -255,8 +255,9 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         from llm_loop.core.loop.focus import TaskFocusState
 
         self._focus = TaskFocusState()
-        # GOAL-20260829-7483e375 T2: 分层前缀动态层状态（会话级只增不减，保前缀缓存稳定）
-        self._prefix_state = LayeredPrefixState()
+        # GOAL-20260829-7483e375 T2/P1: 分层前缀状态必须按 session 隔离。
+        # Web/Feishu 共用单 LoopEngine；若只挂一个 state，会把 A 会话动态 schema 泄漏到 B。
+        self._prefix_states: dict[str, LayeredPrefixState] = {}
         # EVO-20260818（spec §5.4.1-3 注记，grill-me C1）: 模型切换检测——每轮对比实际
         # 模型，变化时 reset cache_health 窗口（防跨模型归因污染）
         self._cache_last_model: str | None = None  # 最近活跃模型（兼容诊断；切换判定不再用全局值）
@@ -271,6 +272,20 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         # None = 不通知（零回归）；观察者异常 fail-open 不影响主循环
         self._action_observer: Callable[[str, dict], None] | None = None
 
+
+    def _prefix_state_for(self, session_id: str) -> LayeredPrefixState:
+        """Return a session-scoped layered-prefix state on the shared engine."""
+        state = self._prefix_states.get(session_id)
+        if state is None:
+            state = LayeredPrefixState()
+            self._prefix_states[session_id] = state
+        return state
+
+    def _layered_tool_schemas(self, session_id: str, user_text: str) -> list[dict]:
+        """Build layered schemas from the current user turn without cross-session bleed."""
+        return build_layered_schemas(
+            self.registry, user_text, self._prefix_state_for(session_id)
+        )
 
     # ── 主循环本体（public run_stream 生命周期包装见 lifecycle.py）──
     def _run_stream_inner(
@@ -489,16 +504,10 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             if getattr(self, "_last_history_compacted", False):
                 truncation_noted = True
             if getattr(self.settings, "prefix_layered", False):
-                # GOAL-20260829-7483e375 T2: 分层前缀——锚层（Top8 全量+80字符索引）
-                # + 动态层（任务文本检索，只增不减）；设计 docs/local/DESIGN-PREFIX-LAYERED-20260829.md
-                task_text = ""
-                for _m in messages:
-                    if _m.get("role") == "user":
-                        task_text = str(_m.get("content", ""))
-                        break
-                tool_schemas = build_layered_schemas(
-                    self.registry, task_text, self._prefix_state
-                )
+                # GOAL-20260829-7483e375 T2/P1: 分层前缀——锚层（Top8 全量+80字符索引）
+                # + 当前 user turn 的动态层；状态按 session 隔离，只增不减。
+                # 不能从完整 history 取“第一条 user”，否则长会话永远匹配旧任务。
+                tool_schemas = self._layered_tool_schemas(session_id, user_text)
             else:
                 tool_schemas = self.registry.schemas(lazy=self.settings.tool_schema_lazy)
             # EVO-20260817 本地模型工具精简（用户需求）: local provider 只注入
