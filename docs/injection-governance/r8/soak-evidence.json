@@ -1,0 +1,182 @@
+{
+  "applied": false,
+  "live_primary": {
+    "events": [
+      {
+        "applied": false,
+        "attempt_index": 0,
+        "attempt_kind": "primary",
+        "capability_tier": "strong",
+        "event_index": 1,
+        "label": "strong-short",
+        "mode": "shadow",
+        "model": "local/qwen/qwen3.8-27b",
+        "reason": "strong_reasoning_capability",
+        "recommended_profile": "full",
+        "round": 1,
+        "source": "provider_registry"
+      },
+      {
+        "applied": false,
+        "attempt_index": 0,
+        "attempt_kind": "primary",
+        "capability_tier": "strong",
+        "event_index": 2,
+        "label": "strong-short",
+        "mode": "shadow",
+        "model": "local/qwen/qwen3.8-27b",
+        "reason": "strong_reasoning_capability",
+        "recommended_profile": "full",
+        "round": 1,
+        "source": "provider_registry"
+      },
+      {
+        "applied": false,
+        "attempt_index": 0,
+        "attempt_kind": "primary",
+        "capability_tier": "strong",
+        "event_index": 3,
+        "label": "strong-short",
+        "mode": "shadow",
+        "model": "local/qwen/qwen3.8-27b",
+        "reason": "strong_reasoning_capability",
+        "recommended_profile": "full",
+        "round": 1,
+        "source": "provider_registry"
+      },
+      {
+        "applied": false,
+        "attempt_index": 0,
+        "attempt_kind": "primary",
+        "capability_tier": "weak",
+        "event_index": 1,
+        "label": "weak-long-history",
+        "mode": "shadow",
+        "model": "deepseek/deepseek-v4-flash",
+        "reason": "weak_capability",
+        "recommended_profile": "minimal",
+        "round": 1,
+        "source": "provider_registry"
+      },
+      {
+        "applied": false,
+        "attempt_index": 0,
+        "attempt_kind": "primary",
+        "capability_tier": "weak",
+        "event_index": 1,
+        "label": "weak-short",
+        "mode": "shadow",
+        "model": "deepseek/deepseek-v4-flash",
+        "reason": "weak_capability",
+        "recommended_profile": "minimal",
+        "round": 1,
+        "source": "provider_registry"
+      },
+      {
+        "applied": false,
+        "attempt_index": 0,
+        "attempt_kind": "primary",
+        "capability_tier": "weak",
+        "event_index": 2,
+        "label": "weak-short",
+        "mode": "shadow",
+        "model": "deepseek/deepseek-v4-flash",
+        "reason": "weak_capability",
+        "recommended_profile": "minimal",
+        "round": 1,
+        "source": "provider_registry"
+      },
+      {
+        "applied": false,
+        "attempt_index": 0,
+        "attempt_kind": "primary",
+        "capability_tier": "weak",
+        "event_index": 3,
+        "label": "weak-short",
+        "mode": "shadow",
+        "model": "deepseek/deepseek-v4-flash",
+        "reason": "weak_capability",
+        "recommended_profile": "minimal",
+        "round": 1,
+        "source": "provider_registry"
+      }
+    ],
+    "sessions": [
+      {
+        "capability_tiers": [
+          "strong"
+        ],
+        "label": "strong-short",
+        "models": [
+          "local/qwen/qwen3.8-27b"
+        ],
+        "profile_events": 3,
+        "profiles": [
+          "full"
+        ],
+        "request_usage_events": 3
+      },
+      {
+        "capability_tiers": [
+          "weak"
+        ],
+        "label": "weak-long-history",
+        "models": [
+          "deepseek/deepseek-v4-flash"
+        ],
+        "profile_events": 1,
+        "profiles": [
+          "minimal"
+        ],
+        "request_usage_events": 1
+      },
+      {
+        "capability_tiers": [
+          "weak"
+        ],
+        "label": "weak-short",
+        "models": [
+          "deepseek/deepseek-v4-flash"
+        ],
+        "profile_events": 3,
+        "profiles": [
+          "minimal"
+        ],
+        "request_usage_events": 3
+      }
+    ],
+    "summary": {
+      "nonprimary_attempts": 0,
+      "pass": true,
+      "profile_churn_models": [],
+      "profile_events": 7,
+      "request_usage_events": 7,
+      "sessions": 3,
+      "unattributed_primary_attempts": 0,
+      "violations": 0
+    },
+    "violations": []
+  },
+  "mode": "shadow",
+  "providers_source": {
+    "name": "providers.json",
+    "sha256": "5ae22fa8489083ee37d2e778a18afa1d11f77dbb8da7274ca9c42b317b6e62fa"
+  },
+  "registry": {
+    "capability_tier_counts": {
+      "strong": 1,
+      "weak": 8
+    },
+    "metadata_complete_coverage_pct": 100.0,
+    "metadata_complete_models": 9,
+    "metadata_gate_ready": true,
+    "models_total": 9,
+    "profile_counts": {
+      "full": 1,
+      "minimal": 8
+    },
+    "registry_degraded": false,
+    "unknown_models": 0
+  },
+  "schema": "injection-r8-shadow-soak-v1"
+}

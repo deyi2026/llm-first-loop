@@ -20,7 +20,7 @@ canary_ready=true
 
 R8.2 结束时唯一 remaining unknown 是 `mxnook/glm-5.3-flash`：受控 A/B 12/12 为 HTTP error，独立最小 prompt 在 thinking 开/关时均返回 HTTP 502。因此它从未被误判为 weak。owner 随后明确表示可忽略 mxnook，本轮已将其从 active provider inventory 退役并保留审计记录。
 
-当前结论是 **metadata gate READY（9/9=100%），behavior canary 尚未启动**。下一门是 R8.3 shadow soak，不进入 R9，本轮也不调用 `refresh_config`。
+当前结论是 **metadata gate READY（9/9=100%）**。后续 R8.3 bounded live shadow soak 已 PASS；behavior canary 仍未启动，R9 未开始。详见 `soak-report.md`。
 
 ## 判定规则
 
@@ -111,11 +111,11 @@ R8.2 五模型 weak 后:  e07be3c4...12e9d31
 
 ## 为什么仍不热重载
 
-当前 `MODEL_PROVIDERS` 没有覆盖文件，且 `LFL_DATA_DIR` 指向本 workspace `data/`，所以磁盘文件是后续 refresh/restart 的真实来源。当前 metadata gate 已 `canary_ready=true`，但 `refresh_config` 会重读整套 `.env`，影响面大于本轮“退役 provider”变更；因此本轮继续不热重载。R8.3 应把 live reload/restart 作为受控 shadow-soak 的显式起点。
+当前 `MODEL_PROVIDERS` 没有覆盖文件，且 `LFL_DATA_DIR` 指向本 workspace `data/`，所以磁盘文件是 refresh/restart 的真实来源。Metadata gate 达到 `canary_ready=true` 后，当时仍未调用会重读整套 `.env` 的 `refresh_config`；后续 R8.3 选择了受控 mirror web restart 作为 shadow-soak 显式起点，并已 PASS。
 
 ## 下一门
 
-metadata coverage 已达到 `9/9 = 100%`，`canary_ready=true`。下一阶段应是 **R8.3 shadow soak**：受控 reload/restart 让 live registry 读取当前 metadata，继续保持 `mode=shadow, applied=false`，观察 attribution / alias / fallback / 1210 retry 是否稳定。R8.3 通过前不进入 behavior canary，更不直接进入 R9。
+metadata coverage 已达到 `9/9 = 100%`，`canary_ready=true`。随后 R8.3 已通过受控 mirror restart + bounded live shadow soak 验证 attribution / long-history / fallback / 1210 稳定性，且保持 `mode=shadow, applied=false`。下一阶段只能是另立的 behavior canary，不能直接进入 R9。
 
 ## 验证门
 

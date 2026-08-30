@@ -1,6 +1,6 @@
 # 注入治理专项（INJECTION-GOVERNANCE）需求规格
 
-> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **设计已审批；R0-R8 PASS（R7 exact cognilocal coverage=N/A；R8 shadow PASS / canary NOT READY）；R9 未实施**
+> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **设计已审批；R0-R8 PASS（R7 exact cognilocal coverage=N/A；R8 shadow PASS / R8.3 SOAK PASS / behavior canary NOT STARTED）；R9 未实施**
 
 ## 1. 问题陈述（实证）
 
@@ -153,8 +153,9 @@ R5 **没有**实施 R7 行为 A/B、R8 model-tier shadow 或 R9 主区应用。
 - capability-only A/B 证明：同 model id / system / tools / user，只改能力元数据使推荐从 minimal 变 full，实际 provider `messages + tools` 序列化结果 byte-identical。
 - R8 初验时运行时 inventory 为 11/11 `unknown -> minimal`、覆盖 0%。Post-R8 R8.1 只对有受控证据的模型补 metadata；随后 owner 退役不用的 Qwen3.6，R8.2 远端受控 A/B 后，`mxnook/glm-5.3-flash` 因持续 HTTP 502 且 owner 明确表示可忽略，已从 active provider inventory 退役，transport failure 从未被猜成 weak。当前 active inventory 9/9 已分类：strong=1、weak=8、unknown=0，classified/metadata-complete coverage=100.0%，profile full=1/minimal=8，`canary_ready=true`。这只表示 metadata gate READY；behavior canary 尚未启动。
 - R2×R4×R5×R6 正交矩阵 15/15 PASS；R0 frozen 0-byte；R8/adjacent focused 268/268 PASS（另 4 个 Web/飞书 model-attribution 用例因当前解释器缺 `pypdf` / `lark_oapi` 未纳入，不是 R8 逻辑失败）；touched production + R8 tests pyright 0/0。
+- R8.3 live shadow soak：mirror live registry 已加载 9/9 metadata；strong-short 3 calls、weak-short 3 calls、weak-long-history 1 call，共 `request.usage=7` / `injection.profile.shadow=7`，unattributed=0、profile churn=0、attribution/mode/source violation=0；全部 `mode=shadow, applied=false`。fallback/1210/byte-identity production-path E2E 3/3 PASS；R8.3 + R2/R3/R4/R5/R6 focused 145/145；R0 再次 0-byte。
 
-R8 **没有**启用任何 profile 行为。R8 初验未修改 `data/providers.json`；随后 R8.1 做了可逆 metadata-only 文件更新，但未热重载 live registry。进入行为 canary 前仍必须把 capability metadata 补齐并审核到 100%。
+R8 **没有**启用任何 profile 行为。Metadata gate 与 R8.3 shadow soak 已 PASS，但 behavior canary 仍是独立后续阶段，必须显式批准并使用受控范围/rollback；R9 继续未开始。
 
 ## 5. 非目标
 

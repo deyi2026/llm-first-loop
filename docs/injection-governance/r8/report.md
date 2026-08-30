@@ -1,7 +1,7 @@
 # R8 按模型能力分档注入（Shadow）验证报告
 
 日期：2026-08-30
-状态：**SHADOW PASS；行为 canary NOT READY**
+状态：**SHADOW PASS；R8.3 SOAK PASS；behavior canary NOT STARTED**
 
 ## 1. 范围
 
@@ -158,7 +158,7 @@ recommended profile: full=1, minimal=9
 canary_ready=false
 ```
 
-R8.2 仍未调用 `refresh_config`，live registry 未热重载，`mode=shadow, applied=false` 不变。完整远端证据见 `r8/remote-ab.json` 和 `r8/capability-audit.md`。mxnook provider 持续 HTTP 502；owner 已明确允许忽略，因此从 active inventory 退役。当前 metadata gate 9/9=100% READY；下一阶段应先做 R8.3 shadow soak，仍不直接进入 R9。
+R8.2 当时仍未调用 `refresh_config`，live registry 未热重载，`mode=shadow, applied=false` 不变。完整远端证据见 `r8/remote-ab.json` 和 `r8/capability-audit.md`。mxnook provider 持续 HTTP 502；owner 随后明确允许忽略，因此从 active inventory 退役。当时 metadata gate 达到 9/9=100% READY；后续 R8.3 已完成，见 §6.4。
 
 R8.2 最终门：117/117 focused PASS；remote-runner evaluator 5/5；pyright 0/0；py_compile/diff-check PASS；inventory byte-reproduction PASS；72/72 remote prompt hash PASS；R0 四门 PASS 且 0-byte diff。
 Detached clean checkout 同口径复验 PASS，测试前后 `git status` 均 clean。
@@ -176,7 +176,17 @@ recommended profile: full=1, minimal=8
 canary_ready=true
 ```
 
-这表示 **metadata gate READY**，不是 behavior canary 已启动。下一阶段应先做 R8.3 shadow soak；R9 继续未开始。
+这表示 **metadata gate READY**，不是 behavior canary 已启动。当时下一阶段为 R8.3 shadow soak；现已完成，见 §6.4。R9 继续未开始。
+
+### 6.4 R8.3 bounded live shadow soak — PASS
+
+权威门：`r8/soak-gates.md`；详细报告：`r8/soak-report.md`；脱敏证据：`r8/soak-evidence.json`。
+
+Mirror 8903 已受控加载当前 9-model registry；active metadata 9/9 complete、unknown=0、registry non-degraded。隔离 live soak 覆盖 strong-short 3 calls、weak-short 3 calls、40-message weak long-history 1 call：共 7 个真实 primary provider calls，对应 7 个 `injection.profile.shadow`，unattributed=0、nonprimary=0、profile churn=0、attribution/mode/source violations=0。strong 始终 `full`，weak 始终 `minimal`，全部 `mode=shadow, applied=false`。
+
+Production-path deterministic gate 再验 payload byte-identity + fallback exact attribution + err1210 retry attribution 3/3 PASS；R8.3/R2/R3/R4/R5/R6 focused 145/145；pyright 0/0；R0 frozen 再次 0-byte。Detached clean checkout 同口径复验 PASS（145/145 + static + inventory reproduction + canonical R0 0-byte，status before/after clean）。三个临时 soak session 在证据脱敏后经正式 DELETE API 清理，shared current 指针 byte-identical。
+
+**结论：R8.3 PASS；behavior canary NOT STARTED；R9 NOT STARTED。**
 
 ## 7. 结构/预算正交门
 
@@ -282,7 +292,7 @@ R8 达成当前阶段目标：
 
 ```text
 R8 shadow = PASS
-R8 behavior canary = NOT READY
+R8 behavior canary = NOT STARTED（R8.3 已通过，具备另立 canary 设计条件）
 R9 = NOT STARTED
 ```
 
