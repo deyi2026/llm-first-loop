@@ -1,6 +1,6 @@
 # 注入治理专项任务图（INJECTION-GOVERNANCE）
 
-> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **R0-R7 PASS（R7 exact cognilocal coverage=N/A）；R8+ 未开始**
+> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **R0-R8 PASS（R7 exact cognilocal coverage=N/A；R8 shadow PASS / canary NOT READY）；R9 未开始**
 > 依赖链: R0 → R1 → {R2, R3, R4, R5, R6 并行} → R7 → R8(shadow，可后置) → R9。R0 未过数据门不得进入行为实现。
 
 ## R0 基线取证与 fixture 建立（数据门）— ✅ PASS
@@ -69,9 +69,12 @@
 - evidence: `docs/injection-governance/r7/report.md`、`r7/results-mlx4bit.json`、`r7/results-qwen27b.json`。
 - evidence_required: true
 
-## R8 按模型能力分档（L2-5，后置 shadow）
-- 内容: 基于 model_catalog/provider capability 计算 `minimal/standard/full` 推荐 profile；第一阶段只 shadow，不改变 prompt。
-- 验收: shadow attribution 完整；弱模型建议 minimal；所有 profile 仍受同一预算/去重/尾位/wire invariant 约束。
+## R8 按模型能力分档（L2-5，后置 shadow）— ✅ PASS（canary NOT READY）
+- 内容: 只读取当前路由绑定的 ProviderRegistry/ModelSpec；`weak/unknown -> minimal`，`strong+reasoning=false -> standard`，`strong+reasoning=true -> full`。第一阶段固定 `mode=shadow, applied=false`，不改变 prompt。
+- 归因: 新增独立 `injection.profile.shadow` event；primary / fallback / err1210 retry 逐真实 provider attempt 记录，避免 request.meta 的 round 级模型快照误归因 fallback。
+- 零行为证据: capability-only minimal↔full 对照的实际 `messages+tools` byte-identical；R2×R4×R5×R6 15/15；R0 frozen 0-byte；focused 268/268；pyright 0/0。
+- runtime inventory: 当前 11/11 模型 capability_tier=unknown，显式分类覆盖 0%，因此 canary_ready=false；R8 不修改运行时 providers.json，不把缺元数据伪装成弱模型验收。
+- evidence: `docs/injection-governance/r8/report.md`、`docs/injection-governance/r8/shadow-inventory.json`。
 - evidence_required: true
 
 ## R9 主区应用与收口

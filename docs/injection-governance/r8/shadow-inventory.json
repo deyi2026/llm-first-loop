@@ -1,0 +1,138 @@
+{
+  "applied": false,
+  "mode": "shadow",
+  "models": [
+    {
+      "capability_tier": "unknown",
+      "capability_tier_explicit": false,
+      "metadata_complete_for_canary": false,
+      "model": "cognilocal/qwen3.8-27b-cog",
+      "reason": "unknown_capability_conservative",
+      "reasoning": false,
+      "reasoning_explicit": false,
+      "recommended_injection_profile": "minimal"
+    },
+    {
+      "capability_tier": "unknown",
+      "capability_tier_explicit": false,
+      "metadata_complete_for_canary": false,
+      "model": "deepseek/deepseek-v4-flash",
+      "reason": "unknown_capability_conservative",
+      "reasoning": false,
+      "reasoning_explicit": false,
+      "recommended_injection_profile": "minimal"
+    },
+    {
+      "capability_tier": "unknown",
+      "capability_tier_explicit": false,
+      "metadata_complete_for_canary": false,
+      "model": "deepseek/deepseek-v4-pro",
+      "reason": "unknown_capability_conservative",
+      "reasoning": false,
+      "reasoning_explicit": false,
+      "recommended_injection_profile": "minimal"
+    },
+    {
+      "capability_tier": "unknown",
+      "capability_tier_explicit": false,
+      "metadata_complete_for_canary": false,
+      "model": "glm/glm-5.3",
+      "reason": "unknown_capability_conservative",
+      "reasoning": false,
+      "reasoning_explicit": false,
+      "recommended_injection_profile": "minimal"
+    },
+    {
+      "capability_tier": "unknown",
+      "capability_tier_explicit": false,
+      "metadata_complete_for_canary": false,
+      "model": "glm/glm-5.3-flash",
+      "reason": "unknown_capability_conservative",
+      "reasoning": false,
+      "reasoning_explicit": false,
+      "recommended_injection_profile": "minimal"
+    },
+    {
+      "capability_tier": "unknown",
+      "capability_tier_explicit": false,
+      "metadata_complete_for_canary": false,
+      "model": "local/qwen/qwen3.8-27b",
+      "reason": "unknown_capability_conservative",
+      "reasoning": false,
+      "reasoning_explicit": false,
+      "recommended_injection_profile": "minimal"
+    },
+    {
+      "capability_tier": "unknown",
+      "capability_tier_explicit": false,
+      "metadata_complete_for_canary": false,
+      "model": "local/qwen3.6-27b-fable-fusion-711-uncensored-heretic-nm-dau-neo-max-mtp",
+      "reason": "unknown_capability_conservative",
+      "reasoning": false,
+      "reasoning_explicit": false,
+      "recommended_injection_profile": "minimal"
+    },
+    {
+      "capability_tier": "unknown",
+      "capability_tier_explicit": false,
+      "metadata_complete_for_canary": false,
+      "model": "local/qwen3.8-27b-mlx",
+      "reason": "unknown_capability_conservative",
+      "reasoning": false,
+      "reasoning_explicit": false,
+      "recommended_injection_profile": "minimal"
+    },
+    {
+      "capability_tier": "unknown",
+      "capability_tier_explicit": false,
+      "metadata_complete_for_canary": false,
+      "model": "local/qwythos-9b-claude-mythos-5-1m@q4_k_m",
+      "reason": "unknown_capability_conservative",
+      "reasoning": false,
+      "reasoning_explicit": false,
+      "recommended_injection_profile": "minimal"
+    },
+    {
+      "capability_tier": "unknown",
+      "capability_tier_explicit": false,
+      "metadata_complete_for_canary": false,
+      "model": "minimax/MiniMax-M3",
+      "reason": "unknown_capability_conservative",
+      "reasoning": false,
+      "reasoning_explicit": false,
+      "recommended_injection_profile": "minimal"
+    },
+    {
+      "capability_tier": "unknown",
+      "capability_tier_explicit": false,
+      "metadata_complete_for_canary": false,
+      "model": "mxnook/glm-5.3-flash",
+      "reason": "unknown_capability_conservative",
+      "reasoning": false,
+      "reasoning_explicit": false,
+      "recommended_injection_profile": "minimal"
+    }
+  ],
+  "registry_degraded": false,
+  "schema": "injection-r8-shadow-v1",
+  "source": {
+    "name": "providers.json",
+    "sha256": "fc7afbaab442834d420985cadf19b327d2027931a3d940e48903a5fb037871e1"
+  },
+  "summary": {
+    "canary_block_reason": "capability_metadata_incomplete",
+    "canary_ready": false,
+    "capability_tier_counts": {
+      "unknown": 11
+    },
+    "classified_coverage_pct": 0.0,
+    "classified_models": 0,
+    "metadata_complete_coverage_pct": 0.0,
+    "metadata_complete_models": 0,
+    "models_total": 11,
+    "profile_counts": {
+      "minimal": 11
+    },
+    "unknown_models": 11
+  }
+}

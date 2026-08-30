@@ -22,6 +22,7 @@ from llm_loop.event_log.model import (
     EVENT_CODEARTS_STATUS_UNKNOWN,
     EVENT_CONTEXT_COMPRESSED,
     EVENT_INTEROP_SPLICED,
+    EVENT_INJECTION_PROFILE_SHADOW,
     EVENT_MESSAGE_APPENDED,
     EVENT_MESSAGE_CACHE_COMPACTED,
     EVENT_REQUEST_META,
@@ -109,6 +110,7 @@ def test_registry_covers_registered_types_with_fields():
         EVENT_REQUEST_META,  # HARNESS-02: request.meta 请求快照
         EVENT_REQUEST_USAGE,  # DSH 借鉴: request.usage 响应 usage 明细
         EVENT_INTEROP_SPLICED,  # DSH 借鉴: interop.spliced 协调注入事件
+        EVENT_INJECTION_PROFILE_SHADOW,  # R8: per-attempt shadow 注入 profile 归因
         EVENT_RUN_END,  # DSH 借鉴: run.end run 生命周期结束事件
         EVENT_PROGRAM_RECOVERY,  # R4: runtime-only recovery 的 session 审计事件
         EVENT_CODEARTS_DISPATCHED,

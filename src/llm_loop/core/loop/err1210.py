@@ -591,6 +591,9 @@ class _Err1210Mixin:
         chat_model_arg: str | None,
         timeout_s: float | None,
         session_id: str,
+        model_label: str = "",
+        metadata_registry: Any = None,
+        round_no: int = 0,
     ) -> Err1210RecoveryResult:
         """编排: 判定 → 快照 → 剥离 → defer 回存 → 单次重试 → 耗尽标记（design 2.2.2-④）.
 
@@ -663,6 +666,10 @@ class _Err1210Mixin:
                     chat_model_arg=chat_model_arg,
                     timeout_s=timeout_s,
                     session_id=session_id,
+                    model_label=model_label or model_ref,
+                    metadata_registry=metadata_registry,
+                    round_no=round_no,
+                    attempt_index=1,
                 )
                 if resp_b is not None:
                     result.resp = resp_b
@@ -749,6 +756,10 @@ class _Err1210Mixin:
                 chat_model_arg=chat_model_arg,
                 timeout_s=timeout_s,
                 session_id=session_id,
+                model_label=model_label or model_ref,
+                metadata_registry=metadata_registry,
+                round_no=round_no,
+                attempt_index=2 if blind_attempted else 1,
             )
             mode_desc = (
                 f"剥离 {result.stripped_count} 条后"
@@ -793,6 +804,10 @@ class _Err1210Mixin:
         chat_model_arg: str | None,
         timeout_s: float | None,
         session_id: str,
+        model_label: str = "",
+        metadata_registry: Any = None,
+        round_no: int = 0,
+        attempt_index: int = 1,
     ) -> tuple[Any | None, LLMError | None]:
         """单次重试并完整消费新流（不 yield 增量——外层已过 yield 点，design 风险 6）.
 
@@ -809,6 +824,30 @@ class _Err1210Mixin:
             kwargs["model"] = chat_model_arg
         stream_fn = getattr(llm_client, "chat_stream", None)
         try:
+            # R8: 1210 retries are real provider attempts and need the same
+            # per-attempt shadow attribution as primary/fallback calls.
+            try:
+                from llm_loop.core.injection_profile import shadow_profile_event_payload
+                from llm_loop.event_log.model import EVENT_INJECTION_PROFILE_SHADOW
+
+                self._event_append(
+                    session_id,
+                    EVENT_INJECTION_PROFILE_SHADOW,
+                    shadow_profile_event_payload(
+                        model_label=model_label
+                        or chat_model_arg
+                        or getattr(llm_client, "model", ""),
+                        registry=metadata_registry,
+                        round_no=round_no,
+                        attempt_kind="err1210_retry",
+                        attempt_index=attempt_index,
+                    ),
+                )
+            except Exception:  # noqa: BLE001 — audit never changes retry semantics
+                logger.debug(
+                    "err1210 injection.profile.shadow 写入失败（fail-open）",
+                    exc_info=True,
+                )
             if callable(stream_fn):
                 it = cast("Iterator[Any]", stream_fn(**kwargs))
                 while True:  # 完整消费至流尾；StopIteration.value 即完整 resp（client 侧聚合）
@@ -879,6 +918,9 @@ class _Err1210Mixin:
         session_id: str,
         current_resp: Any,
         current_round_ms: float,
+        model_label: str = "",
+        metadata_registry: Any = None,
+        round_no: int = 0,
     ) -> tuple[bool, Any, float]:
         """engine except 接线点（tasks 4.3）: compact 首请求 1210 定向降级重试.
 
@@ -895,6 +937,8 @@ class _Err1210Mixin:
                 exc=exc, sess=sess, messages=messages, tools_param=tools_param,
                 llm_client=llm_client, chat_model_arg=chat_model_arg,
                 timeout_s=self._runtime_timeout(), session_id=session_id,
+                model_label=model_label, metadata_registry=metadata_registry,
+                round_no=round_no,
             )
             if result.recovered and result.resp is not None:
                 return True, result.resp, 0.0

@@ -1,6 +1,6 @@
 # 注入治理专项（INJECTION-GOVERNANCE）需求规格
 
-> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **设计已审批；R0-R7 PASS（R7 exact cognilocal coverage=N/A）；R8+ 未实施**
+> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **设计已审批；R0-R8 PASS（R7 exact cognilocal coverage=N/A；R8 shadow PASS / canary NOT READY）；R9 未实施**
 
 ## 1. 问题陈述（实证）
 
@@ -31,8 +31,8 @@
 - **R4 程序恢复边界**：auto_continue/recovery 明示“程序恢复、非用户新指令”，只允许一个确定动作。
 - **R5 身份问答剥离**：identity Q&A 不进入长期摘要细节。
 - **R6 user truth 尾位 / wire invariant**：任何 program-user 不得落在本轮用户原文之后；需要同为 user 角色时组装为单 envelope；GLM `tail_user_run<=1`，tool pairing/system 位置同时合法。
-- **R7 模型分档（后置）**：基于 capability 计算 minimal/standard/full，先 shadow；弱模型可零自动资料正文，但所有档位共享同一结构 invariant。
-- **R8 A/B 验证**：弱模型是行为改善主验证对象；结构硬门适用于所有 provider/model，包括 GLM。
+- **R7 A/B 验证**：弱模型是行为改善主验证对象；结构硬门适用于所有 provider/model，包括 GLM。
+- **R8 模型分档（后置）**：基于 provider capability 单一来源计算 minimal/standard/full，第一阶段仅 shadow；所有档位共享同一预算/去重/尾位/wire invariant。
 
 ## 4. R0 已冻结的事实基线
 
@@ -141,6 +141,20 @@ R5 **没有**实施 R7 行为 A/B、R8 model-tier shadow 或 R9 主区应用。
 - B 结构硬门：post-user=0、完整重复=0、reference imperative=0、tail_user_run<=1、exact user suffix=true。
 - 校准：K=3 是 [0,1,3] 中唯一保住 critical T6 的候选；budget=900 是 [512,900,2000,8000] 中最小通过候选。生产默认 8000 在 R7 不变。
 - 原指定 `cognilocal/qwen3.8-27b-cog` 本轮 8901 不提供，覆盖=N/A；未以其它模型冒充。
+
+## 4G. R8 已验收的模型能力分档 Shadow
+
+权威报告：`docs/injection-governance/r8/report.md`。
+
+- 能力事实只取当前路由所绑定的 `ProviderRegistry/ModelSpec` 快照；不按模型名、provider 名、context、价格或 thinking 状态猜档。
+- 沿用既有 `capability_tier=strong/weak/unknown`，不新增第二套 tier 枚举：`weak/unknown -> minimal`；`strong + reasoning=false -> standard`；`strong + reasoning=true -> full`。`unknown` 继续遵守既有“保守视为弱”契约。
+- R8 第一阶段固定 `mode=shadow`、`applied=false`，推荐值不得进入 build、R2 budget、R3 K/seen-set、R4 recovery、R6 provider-view projection 或 provider payload。
+- 归因采用独立 `injection.profile.shadow` 事件而不改写 `request.meta`：primary、每个真实 fallback provider call、err1210 blind/strip retry 均逐 attempt 记录；resolve 失败不冒充 provider attempt。
+- capability-only A/B 证明：同 model id / system / tools / user，只改能力元数据使推荐从 minimal 变 full，实际 provider `messages + tools` 序列化结果 byte-identical。
+- 当前运行时 `data/providers.json` 脱敏 inventory 共 11 个模型，11/11 为 `capability_tier=unknown -> minimal`；显式分类覆盖 0%，`canary_ready=false`。这是“能力元数据未就绪”，不得解释成 11 个模型已验证为弱。
+- R2×R4×R5×R6 正交矩阵 15/15 PASS；R0 frozen 0-byte；R8/adjacent focused 268/268 PASS（另 4 个 Web/飞书 model-attribution 用例因当前解释器缺 `pypdf` / `lark_oapi` 未纳入，不是 R8 逻辑失败）；touched production + R8 tests pyright 0/0。
+
+R8 **没有**启用任何 profile 行为，也没有修改 `data/providers.json`；进入行为 canary 前必须先补齐并人工审核 capability metadata。
 
 ## 5. 非目标
 

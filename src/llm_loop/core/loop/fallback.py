@@ -183,6 +183,7 @@ class _FallbackMixin:
         primary_reason = self._fallback_reason_label(primary_error)
 
         candidate_failures: list[tuple[str, str, str]] = []  # (model_ref, error_type, error_msg)
+        provider_attempt_index = 0  # R8: count only requests that actually reach client.chat
         for ref in candidates:
             try:
                 if fallback_registry is not None and callable(resolved_fn):
@@ -231,6 +232,30 @@ class _FallbackMixin:
                         run_round=run_round,
                         provider=provider_id,
                         model=model_id,
+                    )
+                # R8: attribution follows each actual fallback provider attempt,
+                # not the primary request.meta snapshot.  Resolve failures are not
+                # attempts and therefore do not consume an attempt index.
+                provider_attempt_index += 1
+                try:
+                    from llm_loop.core.injection_profile import shadow_profile_event_payload
+                    from llm_loop.event_log.model import EVENT_INJECTION_PROFILE_SHADOW
+
+                    self._event_append(
+                        session_id,
+                        EVENT_INJECTION_PROFILE_SHADOW,
+                        shadow_profile_event_payload(
+                            model_label=f"{provider_id}/{model_id}",
+                            registry=fallback_registry,
+                            round_no=int(run_round or 0),
+                            attempt_kind="fallback",
+                            attempt_index=provider_attempt_index,
+                        ),
+                    )
+                except Exception:  # noqa: BLE001 — audit must not affect fallback
+                    logger.debug(
+                        "fallback injection.profile.shadow 写入失败（fail-open）",
+                        exc_info=True,
                     )
                 resp = client.chat(**chat_kwargs)
             except LLMError as exc:

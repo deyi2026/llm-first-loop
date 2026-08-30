@@ -50,6 +50,9 @@ class _RouteDecision:
     final_answer_override: str | None = None
     context_limit: int | None = None
     chars_per_token: float = _CHARS_PER_TOKEN_EST
+    # R8: exact immutable registry snapshot that supplied metadata for the
+    # routed model.  Observational only; never consumed by prompt assembly.
+    metadata_registry: ProviderRegistry | None = None
 
 
 class _RoutingMixin:
@@ -212,10 +215,12 @@ class _RoutingMixin:
                     final_answer_override=refusal,
                     context_limit=context_limit,
                     chars_per_token=chars_per_token,
+                    metadata_registry=metadata_registry,
                 )
         return _RouteDecision(
             llm_client=llm_client, model_used=model_used, chat_model_arg=chat_model_arg,
             context_limit=context_limit, chars_per_token=chars_per_token,
+            metadata_registry=metadata_registry,
         )
 
     def _default_model_label(

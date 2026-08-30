@@ -26,6 +26,7 @@ EVENT_REQUEST_USAGE = "request.usage"  # DSH 借鉴(2026-08-17): 每轮响应 us
 EVENT_INTEROP_SPLICED = "interop.spliced"  # DSH 借鉴(2026-08-17): 协调通道 inbox 注入事件（对齐 agent/inbox/spliced）
 EVENT_RUN_END = "run.end"  # DSH 借鉴(2026-08-17): run 生命周期结束事件（对齐 turn/end，结束原因可审计）
 EVENT_PROGRAM_RECOVERY = "program.recovery"  # R4: 一次性程序恢复动作审计（不作为 durable 对话消息）
+EVENT_INJECTION_PROFILE_SHADOW = "injection.profile.shadow"  # R8: per-provider-attempt 注入分档只读归因
 
 # ── CodeArts 子 Agent 调度集成事件类型（design.md §1.1.2，凭证明文绝不入 payload）──
 EVENT_CODEARTS_DISPATCHED = "codearts.dispatched"
@@ -241,6 +242,24 @@ REGISTRY.register(
             "tools_count": "本轮注入的工具 schema 数量",
             "history_chars": "提交历史字符数",
             "budget": "本轮历史预算",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_INJECTION_PROFILE_SHADOW,
+        version=1,
+        fields={
+            "round": "循环轮次",
+            "attempt_kind": "provider attempt 类型（primary/fallback/err1210_retry）",
+            "attempt_index": "同轮同类型 attempt 序号；primary=0，fallback/retry 从1开始",
+            "model": "该次真实 provider attempt 的模型标签",
+            "mode": "R8 注入分档模式；第一阶段固定 shadow",
+            "recommended_injection_profile": "推荐 profile（minimal/standard/full）",
+            "applied": "推荐是否作用到 prompt；R8 必须为 false",
+            "model_capability_tier": "推荐所依据的 ModelSpec capability_tier",
+            "source": "能力归因来源（provider registry 或保守 fallback）",
+            "reason": "稳定的推荐原因码",
         },
     )
 )

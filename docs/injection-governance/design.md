@@ -158,6 +158,8 @@ wire 层按 provider contract 投影：
   - `full`（强模型）：仍受总预算、去重、尾位、去祈使句约束，不恢复“无限投喂”。
 - 任何 profile 都不得绕过 wire invariant 和用户原话尾位纪律。
 
+**R8 实现状态（2026-08-30）：SHADOW PASS / canary NOT READY。** 能力只取当前路由 ProviderRegistry/ModelSpec；沿用既有 strong/weak/unknown，不新增 tier：weak/unknown→minimal，strong+reasoning=false→standard，strong+reasoning=true→full。`injection.profile.shadow` 对 primary/fallback/err1210 retry 按真实 provider attempt 归因，`applied=false`；capability-only 对照 provider payload byte-identical。当前 runtime inventory 11/11 unknown、显式分类覆盖 0%，因此只完成 shadow 基础设施，不具备行为 canary 条件。完整证据见 `docs/injection-governance/r8/report.md`。
+
 ## L3 A/B 验证（可证伪层）
 
 - Fixture: 6 个弱模型任务（含 2 个高吸引陷阱: 会话开头身份问答 + 网页分析任务，复刻 `68fed5f5` 结构），并追加 R0-3 的**指令冲突**与**重复放大** fixture。

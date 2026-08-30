@@ -617,6 +617,28 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             except Exception:  # noqa: BLE001 — 快照失败 fail-open（不影响主循环）
                 logger.debug("request.meta 事件写入失败（fail-open）")
 
+            # R8: one shadow attribution event per real provider attempt.  This
+            # is deliberately separate from request.meta (round snapshot), because
+            # a same-round fallback may call a different model.  Audit failure is
+            # fail-open and never changes the provider payload.
+            try:
+                from llm_loop.core.injection_profile import shadow_profile_event_payload
+                from llm_loop.event_log.model import EVENT_INJECTION_PROFILE_SHADOW
+
+                self._event_append(
+                    session_id,
+                    EVENT_INJECTION_PROFILE_SHADOW,
+                    shadow_profile_event_payload(
+                        model_label=model_used or getattr(self.settings, "llm_model", ""),
+                        registry=routing.metadata_registry,
+                        round_no=rounds,
+                        attempt_kind="primary",
+                        attempt_index=0,
+                    ),
+                )
+            except Exception:  # noqa: BLE001 — shadow telemetry must never block LLM
+                logger.debug("injection.profile.shadow 事件写入失败（fail-open）", exc_info=True)
+
             _cancelled_during_llm = False
             try:
                 stream_fn = getattr(llm_client, "chat_stream", None)
@@ -771,6 +793,8 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                     exc=exc, sess=sess, messages=messages, tools_param=tools_param,
                     llm_client=llm_client, chat_model_arg=chat_model_arg,
                     session_id=session_id, current_resp=resp, current_round_ms=_llm_round_ms,
+                    model_label=model_used or getattr(self.settings, "llm_model", ""),
+                    metadata_registry=routing.metadata_registry, round_no=rounds,
                 )
                 # ── M49（design §5.4）: 降级逻辑 ──
                 # 仅当当前模型为默认装配（sess.model_override is None 且 per-call override 也为 None）
