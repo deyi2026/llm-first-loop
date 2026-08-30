@@ -1,0 +1,276 @@
+{
+  "schema": "tool-recovery-policy-audit-v1",
+  "phase": "R8.6_TOOL_ELIGIBILITY_RECOVERY_AUDIT",
+  "behavior_changed": false,
+  "policy_status": "PROPOSED_NOT_APPLIED",
+  "rules": [
+    {
+      "id": "WF-PREFLIGHT-TOUTIAO",
+      "tool": "web_fetch",
+      "match": {
+        "domain_suffix": [
+          "toutiao.com"
+        ],
+        "intent": [
+          "article_read",
+          "article_summary",
+          "page_extract"
+        ]
+      },
+      "failure_class": "known_domain_anti_bot",
+      "retry_same_tool": false,
+      "preferred_skill": "web-fetch-fast",
+      "preferred_next": [
+        "skill_load:web-fetch-fast"
+      ],
+      "reason": "recent direct web_fetch evidence: toutiao 0/8; skill contains site-specific info/v2/mobile/RENDER_DATA path"
+    },
+    {
+      "id": "WF-403-418",
+      "tool": "web_fetch",
+      "match": {
+        "http_status": [
+          403,
+          418
+        ]
+      },
+      "failure_class": "anti_bot_or_access_reject",
+      "retry_same_tool": false,
+      "preferred_skill": "web-fetch-fast",
+      "preferred_next": [
+        "skill_load:web-fetch-fast",
+        "web_search"
+      ],
+      "reason": "UA rotation already exhausted inside web_fetch; repeating same tool is low-value"
+    },
+    {
+      "id": "WF-404",
+      "tool": "web_fetch",
+      "match": {
+        "http_status": [
+          404
+        ]
+      },
+      "failure_class": "url_not_found",
+      "retry_same_tool": false,
+      "preferred_next": [
+        "web_search"
+      ],
+      "guidance": "search for canonical/current URL, then fetch the new URL",
+      "reason": "changing UA/browser does not repair a missing path"
+    },
+    {
+      "id": "WF-429",
+      "tool": "web_fetch",
+      "match": {
+        "http_status": [
+          429
+        ]
+      },
+      "failure_class": "rate_limited",
+      "retry_same_tool": "not_in_same_round",
+      "preferred_next": [
+        "web_search"
+      ],
+      "guidance": "use alternate source now; retry only after a meaningful backoff if freshness requires the same origin"
+    },
+    {
+      "id": "WF-JS-SHELL",
+      "tool": "web_fetch",
+      "match": {
+        "result_marker": [
+          "JS 壳",
+          "js_shell"
+        ]
+      },
+      "failure_class": "javascript_shell_or_anti_bot",
+      "retry_same_tool": false,
+      "preferred_skill": "web-fetch-fast",
+      "preferred_next": [
+        "skill_load:web-fetch-fast"
+      ],
+      "reason": "web_fetch already tried httpx and curl fallback; site-specific extractor is the next distinct path"
+    },
+    {
+      "id": "WF-TIMEOUT-5XX",
+      "tool": "web_fetch",
+      "match": {
+        "status": [
+          "timeout"
+        ],
+        "http_status_range": "500-599"
+      },
+      "failure_class": "transient_transport_or_server",
+      "retry_same_tool": "once",
+      "preferred_next": [
+        "retry_tool",
+        "web_search"
+      ],
+      "guidance": "one bounded retry is allowed; after repeat failure switch source/path"
+    },
+    {
+      "id": "WF-POLICY-BLOCK",
+      "tool": "web_fetch",
+      "match": {
+        "status": [
+          "blocked"
+        ]
+      },
+      "failure_class": "security_policy_block",
+      "retry_same_tool": false,
+      "preferred_next": [],
+      "guidance": "stop and report the policy boundary; do not suggest disabling SSRF/private-target protection as an ordinary fallback"
+    },
+    {
+      "id": "PW-MISSING-DEPS",
+      "tool": "playwright_exec|playwright_test",
+      "match": {
+        "runtime_health": [
+          "playwright_missing",
+          "chromium_missing"
+        ]
+      },
+      "failure_class": "environment_prerequisite_missing",
+      "retry_same_tool": false,
+      "state_override": "QUARANTINED",
+      "preferred_next": [
+        "web-fetch-fast",
+        "web_fetch",
+        "web_search"
+      ],
+      "reason": "current .venv has no playwright and host has no chromium"
+    },
+    {
+      "id": "MCP-DSH-WRITE-RO",
+      "tool": "mcp_dsh_write",
+      "match": {
+        "error_marker": [
+          "sandbox: file access denied under read-only mode"
+        ]
+      },
+      "failure_class": "deterministic_environment_block",
+      "retry_same_tool": false,
+      "state_override": "RETIRED_HISTORY_ONLY",
+      "preferred_next": [
+        "edit_file",
+        "execute_command"
+      ],
+      "guidance": "use edit_file for existing-file changes; use governed file-create path/execute_command only when creation is actually required"
+    },
+    {
+      "id": "EVO-COMPLETE-PRECONDITION",
+      "tool": "evolution_complete",
+      "match": {
+        "failure_class": [
+          "state_precondition",
+          "invalid_argument"
+        ]
+      },
+      "failure_class": "precondition_or_schema",
+      "retry_same_tool": false,
+      "preferred_next": [
+        "get_tool_schema",
+        "search_records"
+      ],
+      "guidance": "verify an evolution is in executing state and use the exact required identifier before calling again"
+    },
+    {
+      "id": "SUBMIT-EVO-ARGS",
+      "tool": "submit_evolution",
+      "match": {
+        "failure_class": [
+          "invalid_argument"
+        ]
+      },
+      "failure_class": "schema_usage",
+      "retry_same_tool": false,
+      "preferred_next": [
+        "get_tool_schema",
+        "generate_evolution_template"
+      ],
+      "guidance": "load exact schema/template; do not repeat the same invalid payload"
+    },
+    {
+      "id": "HANDOFF-ARGS",
+      "tool": "handoff_now",
+      "match": {
+        "failure_class": [
+          "invalid_argument"
+        ]
+      },
+      "failure_class": "schema_usage",
+      "retry_same_tool": false,
+      "preferred_next": [
+        "get_tool_schema"
+      ],
+      "guidance": "only expose/call in an actual handoff context and load exact schema first"
+    },
+    {
+      "id": "SCHEDULE-CANCEL-NOTFOUND",
+      "tool": "schedule_cancel",
+      "match": {
+        "failure_class": [
+          "not_found"
+        ]
+      },
+      "failure_class": "stale_identifier",
+      "retry_same_tool": false,
+      "preferred_next": [],
+      "guidance": "do not retry the stale sid; only call again with a valid sid from schedule output/current state"
+    },
+    {
+      "id": "JOB-KILL-BAD-ID",
+      "tool": "job_kill",
+      "match": {
+        "failure_class": [
+          "invalid_argument",
+          "not_found"
+        ]
+      },
+      "failure_class": "stale_or_invalid_identifier",
+      "retry_same_tool": false,
+      "preferred_next": [
+        "job_output"
+      ],
+      "guidance": "verify the active job id before attempting another kill"
+    },
+    {
+      "id": "EVIDENCE-BAD-REF",
+      "tool": "read_evidence",
+      "match": {
+        "status": [
+          "failure"
+        ]
+      },
+      "failure_class": "invalid_or_stale_ref",
+      "retry_same_tool": false,
+      "preferred_next": [
+        "list_evidence",
+        "search_evidence"
+      ],
+      "guidance": "rediscover a valid stable ref, then read it; do not guess refs"
+    },
+    {
+      "id": "DSH-TIMEOUT",
+      "tool": "dsh_task",
+      "match": {
+        "status": [
+          "timeout"
+        ]
+      },
+      "failure_class": "bounded_timeout",
+      "retry_same_tool": "once_if_task_still_needed",
+      "preferred_next": [
+        "dsh_session_read"
+      ],
+      "guidance": "first inspect any persisted DSH session evidence; retry only if no usable result exists"
+    }
+  ],
+  "principles": [
+    "failure guidance is emitted only on match, never as a large always-on prompt block",
+    "same-tool retry is allowed only for genuinely transient failures or corrected parameters",
+    "known deterministic failures route to a distinct capability/skill or stop",
+    "security-policy blocks never auto-suggest weakening the policy",
+    "replacement/skill hints are context-aware and can override global tool success rate"
+  ]
+}

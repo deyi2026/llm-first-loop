@@ -469,11 +469,14 @@
       "current_status": "PARTIAL",
       "target_class": "REF_ON_DEMAND",
       "priority": "P1",
-      "current_behavior": "Local provider has a fixed core allowlist and get_tool_schema discovery; non-local providers keep the full schema set by default.",
-      "target_rule": "Expose stable core + task-relevant tools only; discover secondary schemas on demand without hiding tools needed for the current task.",
+      "current_behavior": "R8.6 clean-source audit measured 61 registry tools / 22,692 compact-JSON lazy tool-array chars on the cloud path. Local provider already uses a small fixed allowlist plus get_tool_schema. R8.6 proposes a 9-tool universal CORE (3,418 chars, -84.9%) plus task/state discovery; production projection is not yet changed.",
+      "target_rule": "Expose a stable universal core plus task/state-relevant tools only; discover secondary schemas on demand. DEGRADED/QUARANTINED tools require runtime-health and failure-class recovery policy before visibility.",
       "retrieval_path": "get_tool_schema",
       "evidence": [
-        "src/llm_loop/core/loop/routing.py:290-319"
+        "src/llm_loop/core/loop/routing.py:290-319",
+        "docs/injection-governance/tool-eligibility/audit.md",
+        "docs/injection-governance/tool-eligibility/matrix.json",
+        "docs/injection-governance/tool-eligibility/recovery-policy.json"
       ]
     },
     {

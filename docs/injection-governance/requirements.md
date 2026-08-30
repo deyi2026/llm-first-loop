@@ -175,6 +175,23 @@ R8 **没有**启用任何 profile 行为。Metadata gate 与 R8.3 shadow soak �
 - behavior canary P0 前置门仍包括：legacy resolved migration evidence、model-switch 当前轮复制、observability prompt chars、unknown producer eligible=0、Evidence Manifest R2 bypass=0、legacy/unresolved packet memory、round-exhaustion consumed 等。R8.5 PASS **不等于 Eligibility 全部实现**。
 - R8.4 权威审计：`eligibility/audit.md`；R8.5 权威实现报告：`eligibility/resolved-episode-report.md`；机器状态只认 `eligibility/matrix.json`。
 
+## 4I. R8.6 Tool Eligibility + Recovery Audit（只审计，行为未实施）
+
+权威审计：`docs/injection-governance/tool-eligibility/audit.md`；机器清单：`tool-eligibility/matrix.json`；恢复规则：`tool-eligibility/recovery-policy.json`。
+
+- 新硬原则：**available is discoverable, not necessarily injectable**。ToolRegistry 中存在的能力默认不因此获得每轮 prompt visibility。
+- current runtime config + detached clean-source registry build 为 61 tools；cloud lazy tool-array=22,692 chars。R8.6 建议 universal CORE=9 tools / 3,418 chars，较 clean-source cloud lazy surface 减少 84.9%；其它工具按 task/state eligibility 发现，不等于删除。
+- 四态定义：CORE=默认通用；DISCOVERABLE=工具健康但有任务/状态前置；DEGRADED=上下文/域名相关的部分健康能力；QUARANTINED=当前 runtime 确定性前置不满足或 capability=0。
+- 当前分类：CORE=9、DISCOVERABLE=49、DEGRADED=1（`web_fetch`）、QUARANTINED=2（`playwright_exec`/`playwright_test`；当前 `.venv` 无 playwright 且 host 无 chromium）。
+- 低成功率不得直接等同“坏工具”。必须区分 deterministic environment failure、state/precondition misuse、context/domain mismatch、normal business failure、transient transport failure。
+- recovery policy 必须是 failure/context-aware：确定性失败不重复同工具；transient 最多 bounded retry；stale id 不同参重试；schema/precondition 错误先加载 schema/状态；security-policy block 不得自动建议弱化安全边界。
+- `web_fetch` 标杆：普通静态站点可继续用；Toutiao 等已知 anti-bot domain preflight 优先 `web-fetch-fast`；403/418/JS-shell 不重复同工具；404 先找 canonical URL；timeout/5xx 才允许一次 bounded retry。
+- Skill 本身也受 runtime health：当前 `web-fetch-fast` 的 Chromium 末级 fallback 在本机不可执行，因此实现层必须标出该 fallback unavailable，不能静态照单全收。
+- MCP 当前只有 `dsh` server；initialize/tools-list 成功但 tools=0，因此推荐 no-capability quarantine/disable。重入门：`tools/list>0 + schema valid + health probe + allowlist/dedupe review`。
+- R8.6 当前**不改变** production `registry.schemas()`、local allowlist、MCP env、tool failure content 或 provider payload。Behavior canary / R9 继续冻结。
+
+实施前硬门：default cloud tool-schema chars <=5,000；universal default tools <=12；hidden-but-needed discovery fixture=100%；quarantined direct calls=0；known deterministic same-tool retries=0；security block unsafe-bypass suggestion=0；tool protocol violation=0；R0 frozen diff=0。
+
 ## 5. 非目标
 
 - 不修改 LLM 本体。
@@ -182,3 +199,4 @@ R8 **没有**启用任何 profile 行为。Metadata gate 与 R8.3 shadow soak �
 - 不把强模型排除在结构治理之外；**行为 A/B 重点是弱模型，wire invariant 则跨模型强制**。
 - 不让 `err1210.py` 承担正常注入排序/合并职责。
 - R8.4/R8.5 允许把 historical reasoning 作为 **Prompt Eligibility surface** 治理；R8.5 通过退休 resolved episode 且不复制 `reasoning_content` 来降噪，但不修改 `REASONING_TAIL` 参数或 provider reasoning 协议。
+- R8.6 只审计 tool visibility / recovery policy，不在本阶段修改 tool registry、安装浏览器依赖、改变 MCP server 配置或自动路由工具。

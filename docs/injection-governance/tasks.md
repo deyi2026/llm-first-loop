@@ -1,7 +1,7 @@
 # 注入治理专项任务图（INJECTION-GOVERNANCE）
 
-> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **R0-R8 PASS；R8.4 Eligibility AUDIT PASS；R8.5 resolved-episode PASS（new/proven，legacy migration 未开始）；behavior canary / R9 未开始**
-> 依赖链: R0 → R1 → {R2, R3, R4, R5, R6 并行} → R7 → R8 shadow/soak → **R8.4 audit → R8.5 resolved-episode retirement → remaining eligibility blockers** → behavior canary → R9。R0 未过数据门不得进入行为实现；Eligibility P0 未清不得进入 behavior canary。
+> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **R0-R8 PASS；R8.4 Eligibility AUDIT PASS；R8.5 resolved-episode PASS（new/proven，legacy migration 未开始）；R8.6 Tool Eligibility AUDIT PASS / IMPLEMENTATION NOT STARTED；behavior canary / R9 未开始**
+> 依赖链: R0 → R1 → {R2, R3, R4, R5, R6 并行} → R7 → R8 shadow/soak → **R8.4 audit → R8.5 resolved-episode retirement → R8.6 tool eligibility/recovery audit → remaining eligibility implementation** → behavior canary → R9。R0 未过数据门不得进入行为实现；Eligibility P0 未清不得进入 behavior canary。
 
 ## R0 基线取证与 fixture 建立（数据门）— ✅ PASS
 - 内容: 用真实 `data/event_logs` 重建 human turn，区分 user truth / user-role program appendix / system notice；量化尾后注入、会话级重复、资料祈使污染、provider wire 连续 user；按 model/compact/recovery 分桶；冻结脱敏结构 fixture。
@@ -98,6 +98,18 @@
 - 验证: `tests/unit/test_resolved_episode.py` 13/13；history/cache/tool-round/1210/R1-R8/introspection/factory adjacent suite **420/420 PASS**；changed paths pyright 0/0；R0 四门 PASS 且 r0 directory hash before/after 均 `b54d47a31109a03d9f926f65b7a3d9f6caf3f24c0d42b1bff26fe338ee74b02a`。
 - Remaining blockers: legacy resolved migration proof、model_switch 当前轮复制、Evidence Manifest R2 bypass、legacy/unresolved packet memory、local dynamic hint、unknown producer fail-open、round-exhaustion consumed mismatch。behavior canary 继续 NOT STARTED。
 - evidence: `docs/injection-governance/eligibility/resolved-episode-report.md`、`eligibility/matrix.json`、`tests/unit/test_resolved_episode.py`。
+- evidence_required: true
+
+## R8.6 Tool Eligibility + Recovery Audit — ✅ AUDIT PASS（implementation NOT STARTED）
+- Owner principle: **available is discoverable, not necessarily injectable**。ToolRegistry 存在不等于每轮 provider prompt 都应携带该 schema。
+- Baseline: current runtime config + detached clean-source registry build=61；cloud lazy tool-array=22,692 chars；full tool-array=39,295 chars。建议 universal CORE=9 / 3,418 chars（-84.9%），其它工具按任务/状态 discovery。
+- Classification: CORE=9、DISCOVERABLE=49、DEGRADED=1 (`web_fetch`)、QUARANTINED=2 (`playwright_exec`, `playwright_test`)；当前 Playwright Python 包和 chromium 均缺失。
+- MCP: `.env` 当前仅 1 个 dsh server；stdio initialize+tools/list 可用但 tools=0，因此 active MCP capability=0，建议 quarantine/disable；historical `mcp_dsh_write` 当前不在 registry，历史 0/3 均 sandbox-readonly，应维持 retired。
+- Recovery: 已冻结 proposed 16-rule failure/context policy。`web_fetch` 作为标杆：Toutiao/anti-bot/JS-shell 走 `web-fetch-fast`，404 先找 canonical URL，timeout/5xx 才 bounded retry，security block 不建议关安全策略。
+- Skill health: `web-fetch-fast` 静态文档的 Chromium fallback 当前 runtime 不可执行；后续 routing 必须把 Skill 与 runtime health 取交集。
+- 产物: `docs/injection-governance/tool-eligibility/audit.md`、`matrix.json`、`recovery-policy.json`、`web-fetch-case.md`；Prompt Eligibility `E31 tool_schemas` 同步记录本审计证据。
+- 边界: 本阶段 docs/audit only；**不改 src、不改 registry.schemas/local allowlist/MCP 配置、不启动 behavior canary/R9**。
+- 下一实现门: deterministic dynamic tool projection + runtime health + typed recovery + discovery fixtures；验收 default cloud schema <=5K、default tools <=12、hidden-needed discovery=100%、deterministic retry=0、R0 diff=0。
 - evidence_required: true
 
 ## R9 主区应用与收口

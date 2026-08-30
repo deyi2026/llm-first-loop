@@ -401,3 +401,11 @@ R1-R8 主要解决了“注入怎样更安全”；本轮审计确认下一层�
 权威机器清单：`docs/injection-governance/eligibility/matrix.json`。
 
 R8.5 实现与验证报告：`docs/injection-governance/eligibility/resolved-episode-report.md`。
+
+## 12. R8.6 cross-audit — tool schema eligibility
+
+Tool schemas are themselves prompt material. R8.6 audited the full current tool surface under the same eligibility rule rather than assuming that `ToolRegistry` membership means default prompt visibility.
+
+Current evidence from runtime config + detached clean source: 61 registry tools / 22,692 compact-JSON cloud lazy tool-array chars. Proposed universal CORE is 9 tools / 3,418 chars (-84.9%); remaining healthy tools become task/state DISCOVERABLE, `web_fetch` is DEGRADED with failure/domain-aware recovery, and currently unavailable Playwright tools are QUARANTINED. The configured dsh MCP server currently connects but returns `tools/list=0`, so it has no active capability to project.
+
+This remains audit-only. E31 `tool_schemas` therefore stays PARTIAL until dynamic projection, runtime health and recovery-policy fixtures are implemented. Authoritative R8.6 files: `docs/injection-governance/tool-eligibility/audit.md`, `matrix.json`, `recovery-policy.json`, `web-fetch-case.md`.

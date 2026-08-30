@@ -296,8 +296,9 @@ R8 shadow = PASS
 R8.3 shadow soak = PASS
 R8.4 Prompt Eligibility audit = PASS
 R8.5 resolved episode retirement = PASS（new/proven；legacy migration NOT STARTED）
-R8 behavior canary = NOT STARTED（仍被剩余 eligibility blockers 冻结）
+R8.6 Tool Eligibility + Recovery audit = PASS / implementation NOT STARTED
+R8 behavior canary = NOT STARTED（仍被 eligibility/tool-eligibility implementation gates 冻结）
 R9 = NOT STARTED
 ```
 
-R8.4 的 owner 原则是 **resolved is retrievable, not injectable**。R8.5 已对新/proven episode 完成 durable index → stable ref → bounded hydrate → provider-view retirement，并闭合 resolved memory 的 flat/Cognitive 双路径；但 legacy resolved history 没有 resolution proof，不做猜测迁移，且 model-switch 当前轮复制、evidence-manifest、local hint、unknown producer、round-exhaustion 等仍存在。下一阶段不得直接做 behavior canary。权威清单/证据见 `docs/injection-governance/eligibility/audit.md`、`eligibility/matrix.json`、`eligibility/resolved-episode-report.md`。
+R8.4 的 owner 原则是 **resolved is retrievable, not injectable**。R8.5 已对新/proven episode 完成 durable index → stable ref → bounded hydrate → provider-view retirement，并闭合 resolved memory 的 flat/Cognitive 双路径。R8.6 将同一 eligibility 哲学扩展到工具面：**available is discoverable, not necessarily injectable**。当前 61-tool cloud lazy surface 22,692 chars，审计建议 universal CORE=9 / 3,418 chars，其余 task/state discoverable；`web_fetch` 采用 failure/domain-aware recovery，当前 Playwright 与 no-capability dsh MCP 进入 quarantine 建议。以上 R8.6 仍为 docs/audit only；legacy resolved history、model-switch、evidence-manifest、local hint、unknown producer、round-exhaustion 等 blocker 也仍存在。下一阶段不得直接做 behavior canary。权威清单/证据见 `docs/injection-governance/eligibility/` 与 `docs/injection-governance/tool-eligibility/`。

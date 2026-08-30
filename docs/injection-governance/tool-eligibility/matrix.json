@@ -1,0 +1,913 @@
+{
+  "schema": "tool-eligibility-audit-v1",
+  "phase": "R8.6_TOOL_ELIGIBILITY_RECOVERY_AUDIT",
+  "generated_on": "2026-08-30",
+  "source_commit": "97a329d",
+  "behavior_changed": false,
+  "current_registry": {
+    "tools_total": 61,
+    "cloud_lazy_schema_chars": 22692,
+    "full_schema_chars": 39295,
+    "current_mcp_registered_tools": 0
+  },
+  "recommended_default_surface": {
+    "universal_core_count": 9,
+    "universal_core_lazy_schema_chars": 3418,
+    "reduction_vs_all_lazy_pct": 84.9,
+    "core_tools": [
+      "edit_file",
+      "execute_command",
+      "get_tool_schema",
+      "read_file",
+      "search_files",
+      "search_records",
+      "skill_list",
+      "skill_load",
+      "web_search"
+    ]
+  },
+  "state_counts": {
+    "CORE": 9,
+    "DEGRADED": 1,
+    "DISCOVERABLE": 49,
+    "QUARANTINED": 2
+  },
+  "tools": [
+    {
+      "name": "adjust_strategy",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "after loop-policy diagnosis shows a bounded parameter change is needed",
+      "calls_observed": 2,
+      "success_observed": 2,
+      "success_rate_pct": 100.0,
+      "status_counts": {
+        "success": 2
+      },
+      "lazy_schema_chars": 342,
+      "full_schema_chars": 391,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "architecture_status",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "diagnostic or task-boundary introspection only; not routine every turn",
+      "calls_observed": 322,
+      "success_observed": 322,
+      "success_rate_pct": 100.0,
+      "status_counts": {
+        "success": 322
+      },
+      "lazy_schema_chars": 337,
+      "full_schema_chars": 545,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "brainstorm_design",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "complex design ideation explicitly needed",
+      "calls_observed": 0,
+      "success_observed": 0,
+      "success_rate_pct": null,
+      "status_counts": {},
+      "lazy_schema_chars": 358,
+      "full_schema_chars": 491,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "checkpoint_goal",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "active long-running Goal and meaningful milestone reached",
+      "calls_observed": 72,
+      "success_observed": 68,
+      "success_rate_pct": 94.4,
+      "status_counts": {
+        "success": 68,
+        "failure": 4
+      },
+      "lazy_schema_chars": 451,
+      "full_schema_chars": 651,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "code_review",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "code review/pre-commit verification requested",
+      "calls_observed": 0,
+      "success_observed": 0,
+      "success_rate_pct": null,
+      "status_counts": {},
+      "lazy_schema_chars": 328,
+      "full_schema_chars": 509,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "create_feishu_doc",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "explicit user request for Feishu doc and outbound capability configured",
+      "calls_observed": 0,
+      "success_observed": 0,
+      "success_rate_pct": null,
+      "status_counts": {},
+      "lazy_schema_chars": 359,
+      "full_schema_chars": 464,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "create_goal",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "explicit long-running task requiring durable goal tracking",
+      "calls_observed": 11,
+      "success_observed": 11,
+      "success_rate_pct": 100.0,
+      "status_counts": {
+        "success": 11
+      },
+      "lazy_schema_chars": 339,
+      "full_schema_chars": 400,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "design_review",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "pre-implementation design review requested",
+      "calls_observed": 0,
+      "success_observed": 0,
+      "success_rate_pct": null,
+      "status_counts": {},
+      "lazy_schema_chars": 303,
+      "full_schema_chars": 385,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "dsh_session_read",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "after dsh_task when trajectory/intermediate events are needed",
+      "calls_observed": 3,
+      "success_observed": 3,
+      "success_rate_pct": 100.0,
+      "status_counts": {
+        "success": 3
+      },
+      "lazy_schema_chars": 420,
+      "full_schema_chars": 708,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "dsh_task",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "task specifically benefits from DeepSeek Harness execution",
+      "calls_observed": 4,
+      "success_observed": 3,
+      "success_rate_pct": 75.0,
+      "status_counts": {
+        "success": 3,
+        "timeout": 1
+      },
+      "lazy_schema_chars": 572,
+      "full_schema_chars": 1717,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "edit_file",
+      "recommended_state": "CORE",
+      "eligibility_condition": "always eligible as universal core capability",
+      "calls_observed": 679,
+      "success_observed": 658,
+      "success_rate_pct": 96.9,
+      "status_counts": {
+        "success": 658,
+        "error": 21
+      },
+      "lazy_schema_chars": 478,
+      "full_schema_chars": 937,
+      "reason": ""
+    },
+    {
+      "name": "event_stream",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "audit/trajectory investigation requires event stream",
+      "calls_observed": 34,
+      "success_observed": 34,
+      "success_rate_pct": 100.0,
+      "status_counts": {
+        "success": 34
+      },
+      "lazy_schema_chars": 407,
+      "full_schema_chars": 854,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "evolution_complete",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "an evolution record is currently in executing state",
+      "calls_observed": 32,
+      "success_observed": 11,
+      "success_rate_pct": 34.4,
+      "status_counts": {
+        "failure": 21,
+        "success": 11
+      },
+      "lazy_schema_chars": 414,
+      "full_schema_chars": 625,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "execute_command",
+      "recommended_state": "CORE",
+      "eligibility_condition": "always eligible as universal core capability",
+      "calls_observed": 5025,
+      "success_observed": 4721,
+      "success_rate_pct": 94.0,
+      "status_counts": {
+        "success": 4721,
+        "failure": 230,
+        "error": 15,
+        "timeout": 57,
+        "blocked": 2
+      },
+      "lazy_schema_chars": 433,
+      "full_schema_chars": 1499,
+      "reason": ""
+    },
+    {
+      "name": "fix_loop",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "iterative test-fix loop is required",
+      "calls_observed": 0,
+      "success_observed": 0,
+      "success_rate_pct": null,
+      "status_counts": {},
+      "lazy_schema_chars": 397,
+      "full_schema_chars": 569,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "generate_evolution_template",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "preparing a structured evolution proposal",
+      "calls_observed": 0,
+      "success_observed": 0,
+      "success_rate_pct": null,
+      "status_counts": {},
+      "lazy_schema_chars": 361,
+      "full_schema_chars": 525,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "get_goal",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "Goal recovery/continuation or current Goal state is needed",
+      "calls_observed": 14,
+      "success_observed": 14,
+      "success_rate_pct": 100.0,
+      "status_counts": {
+        "success": 14
+      },
+      "lazy_schema_chars": 295,
+      "full_schema_chars": 327,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "get_tool_schema",
+      "recommended_state": "CORE",
+      "eligibility_condition": "always eligible as universal core capability",
+      "calls_observed": 15,
+      "success_observed": 14,
+      "success_rate_pct": 93.3,
+      "status_counts": {
+        "success": 14,
+        "failure": 1
+      },
+      "lazy_schema_chars": 255,
+      "full_schema_chars": 292,
+      "reason": ""
+    },
+    {
+      "name": "grill_me",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "pre-implementation adversarial questioning requested",
+      "calls_observed": 7,
+      "success_observed": 7,
+      "success_rate_pct": 100.0,
+      "status_counts": {
+        "success": 7
+      },
+      "lazy_schema_chars": 302,
+      "full_schema_chars": 485,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "handoff_now",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "explicit handoff or context pressure requires handoff artifact",
+      "calls_observed": 11,
+      "success_observed": 6,
+      "success_rate_pct": 54.5,
+      "status_counts": {
+        "failure": 5,
+        "success": 6
+      },
+      "lazy_schema_chars": 402,
+      "full_schema_chars": 561,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "inspect_code",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "AST/module structure is specifically needed",
+      "calls_observed": 25,
+      "success_observed": 23,
+      "success_rate_pct": 92.0,
+      "status_counts": {
+        "failure": 2,
+        "success": 23
+      },
+      "lazy_schema_chars": 423,
+      "full_schema_chars": 622,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "job_kill",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "a known active background job id exists and should be stopped",
+      "calls_observed": 10,
+      "success_observed": 8,
+      "success_rate_pct": 80.0,
+      "status_counts": {
+        "success": 8,
+        "failure": 2
+      },
+      "lazy_schema_chars": 253,
+      "full_schema_chars": 305,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "job_output",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "a known background job exists and progress/result is needed",
+      "calls_observed": 201,
+      "success_observed": 196,
+      "success_rate_pct": 97.5,
+      "status_counts": {
+        "success": 196,
+        "failure": 5
+      },
+      "lazy_schema_chars": 274,
+      "full_schema_chars": 326,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "list_evidence",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "Evidence mode active and stable refs must be discovered",
+      "calls_observed": 1,
+      "success_observed": 1,
+      "success_rate_pct": 100.0,
+      "status_counts": {
+        "success": 1
+      },
+      "lazy_schema_chars": 205,
+      "full_schema_chars": 239,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "model_catalog",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "model selection/diagnosis is needed",
+      "calls_observed": 35,
+      "success_observed": 35,
+      "success_rate_pct": 100.0,
+      "status_counts": {
+        "success": 35
+      },
+      "lazy_schema_chars": 276,
+      "full_schema_chars": 262,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "playwright_exec",
+      "recommended_state": "QUARANTINED",
+      "eligibility_condition": "task/context match required",
+      "calls_observed": 22,
+      "success_observed": 9,
+      "success_rate_pct": 40.9,
+      "status_counts": {
+        "failure": 13,
+        "success": 9
+      },
+      "lazy_schema_chars": 422,
+      "full_schema_chars": 1264,
+      "reason": "current .venv lacks playwright and current host lacks chromium; deterministic environment prerequisite is absent"
+    },
+    {
+      "name": "playwright_test",
+      "recommended_state": "QUARANTINED",
+      "eligibility_condition": "task/context match required",
+      "calls_observed": 1,
+      "success_observed": 0,
+      "success_rate_pct": 0.0,
+      "status_counts": {
+        "failure": 1
+      },
+      "lazy_schema_chars": 431,
+      "full_schema_chars": 665,
+      "reason": "current .venv lacks playwright and current host lacks chromium; deterministic environment prerequisite is absent"
+    },
+    {
+      "name": "read_evidence",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "a valid EvidenceRef is already known",
+      "calls_observed": 34,
+      "success_observed": 27,
+      "success_rate_pct": 79.4,
+      "status_counts": {
+        "success": 27,
+        "failure": 7
+      },
+      "lazy_schema_chars": 353,
+      "full_schema_chars": 624,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "read_file",
+      "recommended_state": "CORE",
+      "eligibility_condition": "always eligible as universal core capability",
+      "calls_observed": 1362,
+      "success_observed": 1330,
+      "success_rate_pct": 97.7,
+      "status_counts": {
+        "success": 1330,
+        "failure": 32
+      },
+      "lazy_schema_chars": 444,
+      "full_schema_chars": 1536,
+      "reason": ""
+    },
+    {
+      "name": "read_image",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "task includes a local image that must be understood",
+      "calls_observed": 4,
+      "success_observed": 4,
+      "success_rate_pct": 100.0,
+      "status_counts": {
+        "success": 4
+      },
+      "lazy_schema_chars": 356,
+      "full_schema_chars": 508,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "record_skill",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "user wants to turn repeated actions into a Skill",
+      "calls_observed": 0,
+      "success_observed": 0,
+      "success_rate_pct": null,
+      "status_counts": {},
+      "lazy_schema_chars": 429,
+      "full_schema_chars": 628,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "recover_from_backup",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "recovery status reports pending backup material",
+      "calls_observed": 0,
+      "success_observed": 0,
+      "success_rate_pct": null,
+      "status_counts": {},
+      "lazy_schema_chars": 380,
+      "full_schema_chars": 594,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "refine_experience",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "experience lifecycle maintenance is explicitly needed",
+      "calls_observed": 1,
+      "success_observed": 1,
+      "success_rate_pct": 100.0,
+      "status_counts": {
+        "success": 1
+      },
+      "lazy_schema_chars": 281,
+      "full_schema_chars": 354,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "refresh_config",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "explicit configuration change needs controlled reload",
+      "calls_observed": 7,
+      "success_observed": 7,
+      "success_rate_pct": 100.0,
+      "status_counts": {
+        "success": 7
+      },
+      "lazy_schema_chars": 303,
+      "full_schema_chars": 359,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "retry_tool",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "previous failure is transient or parameters have been corrected",
+      "calls_observed": 0,
+      "success_observed": 0,
+      "success_rate_pct": null,
+      "status_counts": {},
+      "lazy_schema_chars": 365,
+      "full_schema_chars": 365,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "save_experience",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "a stable reusable engineering lesson has been established",
+      "calls_observed": 56,
+      "success_observed": 56,
+      "success_rate_pct": 100.0,
+      "status_counts": {
+        "success": 56
+      },
+      "lazy_schema_chars": 458,
+      "full_schema_chars": 682,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "schedule",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "user explicitly requests a reminder/schedule",
+      "calls_observed": 86,
+      "success_observed": 86,
+      "success_rate_pct": 100.0,
+      "status_counts": {
+        "success": 86
+      },
+      "lazy_schema_chars": 440,
+      "full_schema_chars": 665,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "schedule_cancel",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "a valid schedule id from a previous schedule result exists",
+      "calls_observed": 12,
+      "success_observed": 9,
+      "success_rate_pct": 75.0,
+      "status_counts": {
+        "failure": 3,
+        "success": 9
+      },
+      "lazy_schema_chars": 205,
+      "full_schema_chars": 250,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "search_archive",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "legacy/compact archive lookup is specifically needed; prefer search_records otherwise",
+      "calls_observed": 88,
+      "success_observed": 86,
+      "success_rate_pct": 97.7,
+      "status_counts": {
+        "success": 86,
+        "failure": 2
+      },
+      "lazy_schema_chars": 390,
+      "full_schema_chars": 566,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "search_docs",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "project docs are the target corpus",
+      "calls_observed": 31,
+      "success_observed": 31,
+      "success_rate_pct": 100.0,
+      "status_counts": {
+        "success": 31
+      },
+      "lazy_schema_chars": 388,
+      "full_schema_chars": 669,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "search_evidence",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "Evidence mode active and historical evidence must be searched",
+      "calls_observed": 2,
+      "success_observed": 2,
+      "success_rate_pct": 100.0,
+      "status_counts": {
+        "success": 2
+      },
+      "lazy_schema_chars": 331,
+      "full_schema_chars": 542,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "search_files",
+      "recommended_state": "CORE",
+      "eligibility_condition": "always eligible as universal core capability",
+      "calls_observed": 284,
+      "success_observed": 264,
+      "success_rate_pct": 93.0,
+      "status_counts": {
+        "success": 264,
+        "failure": 20
+      },
+      "lazy_schema_chars": 431,
+      "full_schema_chars": 762,
+      "reason": ""
+    },
+    {
+      "name": "search_records",
+      "recommended_state": "CORE",
+      "eligibility_condition": "always eligible as universal core capability",
+      "calls_observed": 245,
+      "success_observed": 237,
+      "success_rate_pct": 96.7,
+      "status_counts": {
+        "success": 237,
+        "failure": 8
+      },
+      "lazy_schema_chars": 386,
+      "full_schema_chars": 932,
+      "reason": ""
+    },
+    {
+      "name": "self_evaluate",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "explicit evaluation/anomaly diagnosis, not routine every turn",
+      "calls_observed": 12,
+      "success_observed": 9,
+      "success_rate_pct": 75.0,
+      "status_counts": {
+        "failure": 3,
+        "success": 9
+      },
+      "lazy_schema_chars": 329,
+      "full_schema_chars": 458,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "send_feishu_attachment",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "explicit user request + outbound configured + attachment exists",
+      "calls_observed": 0,
+      "success_observed": 0,
+      "success_rate_pct": null,
+      "status_counts": {},
+      "lazy_schema_chars": 407,
+      "full_schema_chars": 588,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "send_feishu_message",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "explicit user request + outbound configured",
+      "calls_observed": 1,
+      "success_observed": 1,
+      "success_rate_pct": 100.0,
+      "status_counts": {
+        "success": 1
+      },
+      "lazy_schema_chars": 478,
+      "full_schema_chars": 784,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "skill_list",
+      "recommended_state": "CORE",
+      "eligibility_condition": "always eligible as universal core capability",
+      "calls_observed": 10,
+      "success_observed": 10,
+      "success_rate_pct": 100.0,
+      "status_counts": {
+        "success": 10
+      },
+      "lazy_schema_chars": 272,
+      "full_schema_chars": 272,
+      "reason": ""
+    },
+    {
+      "name": "skill_load",
+      "recommended_state": "CORE",
+      "eligibility_condition": "always eligible as universal core capability",
+      "calls_observed": 15,
+      "success_observed": 15,
+      "success_rate_pct": 100.0,
+      "status_counts": {
+        "success": 15
+      },
+      "lazy_schema_chars": 296,
+      "full_schema_chars": 338,
+      "reason": ""
+    },
+    {
+      "name": "spawn_subagent",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "complex task has an independent subtask suitable for delegation",
+      "calls_observed": 0,
+      "success_observed": 0,
+      "success_rate_pct": null,
+      "status_counts": {},
+      "lazy_schema_chars": 447,
+      "full_schema_chars": 875,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "stop_slop",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "final prose cleanup is explicitly useful",
+      "calls_observed": 2,
+      "success_observed": 2,
+      "success_rate_pct": 100.0,
+      "status_counts": {
+        "success": 2
+      },
+      "lazy_schema_chars": 266,
+      "full_schema_chars": 332,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "subagent_report",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "only inside a subagent session while reporting progress to parent",
+      "calls_observed": 0,
+      "success_observed": 0,
+      "success_rate_pct": null,
+      "status_counts": {},
+      "lazy_schema_chars": 267,
+      "full_schema_chars": 303,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "submit_evolution",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "a complete evolution proposal with required fields is ready",
+      "calls_observed": 59,
+      "success_observed": 42,
+      "success_rate_pct": 71.2,
+      "status_counts": {
+        "failure": 17,
+        "success": 42
+      },
+      "lazy_schema_chars": 458,
+      "full_schema_chars": 812,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "switch_model",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "current model is unsuitable and model change is needed",
+      "calls_observed": 5,
+      "success_observed": 5,
+      "success_rate_pct": 100.0,
+      "status_counts": {
+        "success": 5
+      },
+      "lazy_schema_chars": 369,
+      "full_schema_chars": 477,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "task_create",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "active long task needs a verifiable task graph",
+      "calls_observed": 11,
+      "success_observed": 11,
+      "success_rate_pct": 100.0,
+      "status_counts": {
+        "success": 11
+      },
+      "lazy_schema_chars": 543,
+      "full_schema_chars": 938,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "task_frontier",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "active task graph exists and next executable nodes are needed",
+      "calls_observed": 4,
+      "success_observed": 4,
+      "success_rate_pct": 100.0,
+      "status_counts": {
+        "success": 4
+      },
+      "lazy_schema_chars": 333,
+      "full_schema_chars": 417,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "task_update",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "an existing task node status must change",
+      "calls_observed": 23,
+      "success_observed": 22,
+      "success_rate_pct": 95.7,
+      "status_counts": {
+        "success": 22,
+        "unknown": 1
+      },
+      "lazy_schema_chars": 554,
+      "full_schema_chars": 1118,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "tdd_red_green",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "task explicitly calls for a TDD red-green cycle",
+      "calls_observed": 0,
+      "success_observed": 0,
+      "success_rate_pct": null,
+      "status_counts": {},
+      "lazy_schema_chars": 282,
+      "full_schema_chars": 362,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "update_goal",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "active Goal status must be changed",
+      "calls_observed": 11,
+      "success_observed": 11,
+      "success_rate_pct": 100.0,
+      "status_counts": {
+        "success": 11
+      },
+      "lazy_schema_chars": 338,
+      "full_schema_chars": 457,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    },
+    {
+      "name": "web_fetch",
+      "recommended_state": "DEGRADED",
+      "eligibility_condition": "task/context match required",
+      "calls_observed": 26,
+      "success_observed": 9,
+      "success_rate_pct": 34.6,
+      "status_counts": {
+        "failure": 16,
+        "success": 9,
+        "blocked": 1
+      },
+      "lazy_schema_chars": 437,
+      "full_schema_chars": 1217,
+      "reason": "works well for ordinary static pages but recent evidence shows deterministic domain/failure classes with very low success; use context-aware routing"
+    },
+    {
+      "name": "web_search",
+      "recommended_state": "CORE",
+      "eligibility_condition": "always eligible as universal core capability",
+      "calls_observed": 49,
+      "success_observed": 45,
+      "success_rate_pct": 91.8,
+      "status_counts": {
+        "success": 45,
+        "failure": 2,
+        "error": 2
+      },
+      "lazy_schema_chars": 413,
+      "full_schema_chars": 1334,
+      "reason": ""
+    },
+    {
+      "name": "workflow_run",
+      "recommended_state": "DISCOVERABLE",
+      "eligibility_condition": "multiple independent subagent tasks need orchestration",
+      "calls_observed": 0,
+      "success_observed": 0,
+      "success_rate_pct": null,
+      "status_counts": {},
+      "lazy_schema_chars": 364,
+      "full_schema_chars": 1497,
+      "reason": "capability is useful but should not occupy every prompt; expose only when task/state preconditions match"
+    }
+  ],
+  "non_registry_capabilities": [
+    {
+      "name": "mcp:dsh",
+      "state": "QUARANTINED",
+      "reason": "configured stdio server connects but tools/list returns 0; active registry receives no MCP tools",
+      "reentry_gate": "tools/list > 0, schema valid, health probe pass, allowlist/dedupe review"
+    },
+    {
+      "name": "mcp_dsh_write",
+      "state": "RETIRED_HISTORY_ONLY",
+      "reason": "not present in current registry; historical calls 0/3 success, all sandbox read-only failures",
+      "replacement": "edit_file for existing files; execute_command or governed file-create path for new files"
+    }
+  ],
+  "canary_ready": false,
+  "canary_block_reason": "Tool Eligibility is audit-only; no dynamic tool-surface/recovery-policy implementation has been applied.",
+  "measurement_note": "Canonical schema-size metrics use detached clean committed source with current runtime config and compact JSON serialization of the complete tools array; pre-existing dirty worktree overlay is excluded.",
+  "usage_snapshot": {
+    "created_at": "2026-08-30T23:37:03+08:00",
+    "source": "data/event_logs/*.jsonl point-in-time scan",
+    "mutable_after_snapshot": true,
+    "note": "calls_observed/success_observed/status_counts are frozen audit evidence at this cutoff and are not fixed-point assertions against later-growing event logs."
+  }
+}

@@ -190,6 +190,19 @@ ACTIVE        -> 再判断 required_now
 
 **R8.4 审计状态（2026-08-30）：AUDIT PASS。R8.5 resolved-episode 最小闭环：PASS（new/proven episodes），legacy migration NOT STARTED。** 新增独立 append-only `EpisodeStore`；只有 non-empty、non-truncated、正常完成的 model answer 获得显式 resolution-candidate proof，durable write + fsync 成功后才标记 stable episode ref 并允许下一 provider view 退休。`search_records(kind=episode)` 复用既有 tool，支持最近 ref / 关键词 / exact bounded hydrate，不新增 tool 或 ref/offset schema 参数。flat history 与 Cognitive packet 都跳过已 resolved ref；history anchor 在 original↔filtered index 间双向映射，保护 current user 与 assistant(tool_calls)→tool pairing；明确 standing user instruction 保留 exact user 原文。旧 session 无 resolution proof 不猜 resolved。`model_switch` 当前轮复制、Evidence Manifest、legacy/unresolved packet memory、local hint、unknown producer、round-exhaustion 等仍未清，因此 **behavior canary 继续冻结**。权威审计/实现证据见 `docs/injection-governance/eligibility/audit.md`、`eligibility/matrix.json`、`eligibility/resolved-episode-report.md`。
 
+### L2-7 Tool Eligibility + Recovery（R8.6 audit gate）
+
+Prompt Eligibility 同样适用于 tool schema：**available is discoverable, not necessarily injectable**。工具存在于 `ToolRegistry`，不等于它应在每个 provider request 中持续占据 prompt。
+
+- universal CORE 只保留跨任务高通用能力与 discovery 入口；
+- 有明确任务/状态前置的工具归为 DISCOVERABLE，满足 eligibility 后才投影；
+- 只在部分 domain/context 健康的工具归为 DEGRADED，并绑定 failure-class recovery；
+- 当前环境缺确定性依赖、或 MCP server 暴露 0 capability 的工具归为 QUARANTINED；
+- recovery guidance 必须按失败类型/上下文精准给出 `retry_same_tool / preferred_tool / preferred_skill / precondition`，不得重新做成每轮常驻大段提示；
+- recommended Skill/replacement 也必须经过 runtime-health gate，不能盲信静态 SKILL 文本。
+
+**R8.6 审计状态（2026-08-30）：AUDIT PASS / IMPLEMENTATION NOT STARTED。** current runtime config + detached clean-source registry build=61，cloud lazy tool-array=22,692 chars；建议 universal CORE=9 / 3,418 chars（-84.9%），其余按任务/状态 discovery。分类：CORE=9、DISCOVERABLE=49、DEGRADED=1（`web_fetch`）、QUARANTINED=2（当前 runtime 的 Playwright 工具）。当前 `dsh` MCP stdio initialize 成功但 `tools/list=0`，因此属于 no-capability quarantine；历史 `mcp_dsh_write` 已不在 registry。权威清单见 `docs/injection-governance/tool-eligibility/`。
+
 ## L3 A/B 验证（可证伪层）
 
 - Fixture: 6 个弱模型任务（含 2 个高吸引陷阱: 会话开头身份问答 + 网页分析任务，复刻 `68fed5f5` 结构），并追加 R0-3 的**指令冲突**与**重复放大** fixture。
