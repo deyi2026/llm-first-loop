@@ -48,7 +48,7 @@ class ArchiveEntry:
     tool_call_id: str | None = None
     status: str | None = None
     chars: int = 0
-    summary_source: str = "deterministic"  # T28: llm/deterministic/none（来源如实标注）
+    summary_source: str = "deterministic"  # T28/R5: llm/deterministic/none/identity_filtered
     embedding: list[float] | None = None  # T35: 可选语义向量（不可用仍可关键词命中）
     reasoning_content: str | None = None  # P0-2: 思考链完整另存（随压缩归档，检索域含）
 
@@ -312,9 +312,23 @@ class ArchiveStore:
         tool_call_id: str | None = None,
         status: str | None = None,
         reasoning_content: str | None = None,  # P0-2: 思考链完整另存
+        summary_override: str | None = None,
+        key_facts_override: list[str] | None = None,
+        key_paths_override: list[str] | None = None,
+        summary_source_override: str | None = None,
     ) -> ArchiveEntry:
-        """另存一条消息/结果为压缩档案条目（原文完整 + 索引）."""
+        """另存一条消息/结果为压缩档案条目（原文完整 + 派生索引）.
+
+        R5 的 override 只改变长期摘要/索引投影；``content`` 与
+        ``reasoning_content`` 始终原样另存，保证 search_archive 可逆恢复。
+        """
         facts, paths, summary = extract_key_info(content)
+        if summary_override is not None:
+            summary = summary_override
+        if key_facts_override is not None:
+            facts = list(key_facts_override)
+        if key_paths_override is not None:
+            paths = list(key_paths_override)
         entry = ArchiveEntry(
             id=f"ARC-{datetime.now(UTC).strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}",
             ts=_now(),
@@ -329,6 +343,7 @@ class ArchiveStore:
             tool_call_id=tool_call_id,
             status=status,
             chars=len(content),
+            summary_source=summary_source_override or "deterministic",
             reasoning_content=reasoning_content,
         )
         p = self._append_path(session_id)  # T3b: 超阈值开新段
@@ -577,6 +592,7 @@ class ArchiveStore:
             "status": entry.get("status"),
             "chars": entry.get("chars"),
             "summary": entry.get("summary", "")[:500],
+            "summary_source": entry.get("summary_source", "deterministic"),
             "key_facts": entry.get("key_facts", [])[:5],
             "key_paths": entry.get("key_paths", [])[:5],
             "content_preview": entry.get("content", "")[:800],
@@ -709,8 +725,13 @@ class ArchiveStore:
                     out.append(line)
                     continue
                 if entry.get("id") == entry_id:
-                    entry["summary"] = summary
-                    entry["summary_source"] = summary_source
+                    # R5: identity_filtered is a sticky derived-state invariant. Normal
+                    # semantic backfill must not reintroduce identity/self-description
+                    # details. A future reversible migration can explicitly rewrite the
+                    # archive outside this generic update path.
+                    if entry.get("summary_source") != "identity_filtered":
+                        entry["summary"] = summary
+                        entry["summary_source"] = summary_source
                     found = True
                 out.append(json.dumps(entry, ensure_ascii=False))
             if found:

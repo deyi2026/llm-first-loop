@@ -162,7 +162,14 @@ def run_search_archive(ctx: Any, archive: Any, args: dict, session_id_fn: Any, s
         header = f"[{ts}] {role_h}/{src}"
         if with_summary:
             content_preview = str(h.get("content_preview", ""))
-            if summarizer is not None and content_preview:
+            # INJECTION-GOVERNANCE R5: a compacted identity episode may keep raw
+            # archive bytes for exact recovery while marking its durable summary as
+            # identity_filtered.  Never feed that raw preview back into Summarizer,
+            # otherwise on-demand summary would reintroduce the details R5 removed.
+            if str(h.get("summary_source", "")) == "identity_filtered":
+                filtered_summary = str(h.get("summary", "") or "[身份问答详情已略]")
+                lines.append(f"{header}: {filtered_summary}")
+            elif summarizer is not None and content_preview:
                 try:
                     result = summarizer.summarize(content_preview)
                     lines.append(

@@ -111,10 +111,15 @@ R0 产物：`baseline.jsonl + baseline-manifest.json + report.md + frozen fixtur
 
 ### L2-3 身份问答剥离
 
-- 位置: 压缩/摘要链路（run.compact 的 summary 生成输入 + fixed_summary 构造）。
-- 规则: “你是什么大模型/介绍你自己/我能做什么”类问答对在摘要时替换为一行：
+- 位置以运行时实证为准：active surface 是 ArchiveStore 持久 `summary/key_facts/key_paths`（含 semantic backfill）与 legacy Session trim `*_summary.jsonl`；`fixed_summary/summary_chain` 当前 inert，不为 R5 重新启用。
+- 规则: “你是什么大模型/介绍你自己/我能做什么”类 identity/self-description episode 的长期摘要只保留一行计数占位：
   `[身份问答 x N 轮，已略——本会话主体任务见下]`
-- 已有记忆约定支撑: “身份询问只在会话开始回答一次”（用户 2026-08-29 决策）。
+- episode 从 genuine human identity-only turn 开始，跨 program-user/tool/assistant，到下一 genuine human turn 结束；raw archive/backup 原文不删。
+- classifier 必须 whole-turn 保守：若身份子句与独立真实任务混合（例如 `你现在是什么模型？上一轮我让你记了什么？`），整条保留。current USER_INSTRUCTION metadata 优先于可见 program label；pre-R1 program-user 仅在缺 metadata 时走 legacy 兼容。
+- 新 identity archive 标记 `summary_source=identity_filtered`，跳过自动 LLM summary backfill；`search_archive(with_summary=true)` 不允许再用 raw preview 二次生成身份摘要，`with_summary=false` 仍保留明确原文检索能力。
+- pre-R5 archive 不做破坏性迁移；R3 已停止 archive summary 自动 prompt 回灌。
+
+**R5 实现状态（2026-08-30）：PASS。** 97/97 focused、542/542 expanded、R2×R4×R5×R6 15/15、R0 0-byte、pyright 0/0；冻结三问题会话各命中 1 个纯 identity opener，clean-control `69715765` 102 个 genuine-human turn identity=0。完整证据见 `docs/injection-governance/r5/report.md`。
 
 ### L2-4 程序恢复边界
 

@@ -1,6 +1,6 @@
 # 注入治理专项任务图（INJECTION-GOVERNANCE）
 
-> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **R0 PASS；R1/L1 PASS；R2/L2-1 PASS；R3/L2-2 PASS；R4/L2-4 PASS；R5+ 未开始**
+> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **R0 PASS；R1/L1 PASS；R2/L2-1 PASS；R3/L2-2 PASS；R4/L2-4 PASS；R5/L2-3 PASS；R6 PASS；R7+ 未开始**
 > 依赖链: R0 → R1 → {R2, R3, R4, R5, R6 并行} → R7 → R8(shadow，可后置) → R9。R0 未过数据门不得进入行为实现。
 
 ## R0 基线取证与 fixture 建立（数据门）— ✅ PASS
@@ -45,9 +45,12 @@
 - evidence: `docs/injection-governance/r4/report.md`
 - evidence_required: true
 
-## R5 身份问答剥离（L2-3）
-- 内容: 压缩/摘要链路过滤身份类问答对，仅保留单行计数占位。
-- 验收: identity trap 不进入长期摘要细节；非身份内容零误伤。
+## R5 身份问答剥离（L2-3）— ✅ PASS
+- 内容: sequence-aware identity/self-description episode 只治理长期 summary/index projection；ArchiveStore raw content/reasoning 与 Session trim backup 原样保留。identity 起点用 `[身份问答 x N 轮，已略——本会话主体任务见下]`，episode 后续详情不进 summary。
+- 实现: `core/identity_summary.py` 保守 classifier + genuine-human episode boundary；`_archive_sink` 对新 identity archive 写 `summary_source=identity_filtered` 并跳过 LLM backfill；`search_archive(with_summary=true)` 不得从 raw preview 二次摘要；legacy Session trim 多轮 identity 聚合成单行 xN。`fixed_summary/summary_chain` 保持 inert。
+- 验收: 97/97 focused、542/542 expanded PASS；冻结三问题会话各命中 1 个纯 identity opener，clean-control 69715765 的 102 个 genuine-human turn identity hit=0；mixed `你现在是什么模型？上一轮我让你记了什么？` 保留；R2×R4×R5×R6 15/15；R0 frozen 0-byte；pyright 0/0。
+- 说明: pre-R5 archive 不做破坏性迁移；R3 已阻止其自动 prompt 回灌。R5 不进入 R7/R8/R9。
+- evidence: `docs/injection-governance/r5/report.md`
 - evidence_required: true
 
 ## R6 用户原话尾位 + wire invariant（L2 横切）— ✅ PASS

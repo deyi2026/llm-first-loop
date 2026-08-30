@@ -1,6 +1,6 @@
 # 注入治理专项（INJECTION-GOVERNANCE）需求规格
 
-> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **设计已审批；R0 PASS；R1/L1 PASS；R2/L2-1 PASS；R3/L2-2 PASS；R4/L2-4 PASS；R5+ 未实施**
+> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **设计已审批；R0 PASS；R1/L1 PASS；R2/L2-1 PASS；R3/L2-2 PASS；R4/L2-4 PASS；R5/L2-3 PASS；R6 PASS；R7+ 未实施**
 
 ## 1. 问题陈述（实证）
 
@@ -114,6 +114,22 @@ R6 **没有**实施 R4 recovery 单动作策略、R5 identity stripping、R7 A/B
 - 143/143 focused、458/458 expanded、R2×R4×R6 15/15、R0 frozen 0-byte、pyright 0/0 全部 PASS。
 
 R4 **没有**实施 R5 identity stripping、R7 行为 A/B 或 R8 model-tier shadow。
+
+## 4F. R5 已验收的身份问答长期摘要剥离
+
+权威报告：`docs/injection-governance/r5/report.md`。
+
+- R5 不删除用户/assistant/tool 原文，只治理 derived long-term summary/index；raw archive、reasoning 与 Session trim backup 保持可逆。
+- active summary surface 经代码审查确定为 ArchiveStore summary/index + legacy Session trim summary JSONL；`fixed_summary/summary_chain` 当前为 inert 兼容字段，R5 不重新激活。
+- identity/self-description episode 由 genuine human identity-only turn 开启，跨 program-user/tool/assistant，下一 genuine human turn 关闭；pre-R1 无 metadata program-user 兼容识别，current `origin_layer=user_instruction` 优先于可见 program-like label。
+- classifier 采用 whole-turn 保守规则：后续子句若出现独立真实任务则整条保留。冻结 clean-control 的 `你现在是什么模型？上一轮我让你记了什么？` 被正确保留。
+- 新 identity archive 的 summary/index 被净化并标记 `summary_source=identity_filtered`；自动 semantic backfill 跳过；`search_archive(with_summary=true)` 不再从 raw preview 二次摘要身份细节。
+- Session trim 在一个早期批次内将多个 identity episode 聚合为单行 `[身份问答 x N 轮，已略——本会话主体任务见下]`；非身份摘要零改写。
+- 冻结 event-log 审查：68fed5f5/09c44093/996e7e52 各命中 1 个纯 identity opener；69715765 genuine-human=102、identity=0。
+- 97/97 focused、542/542 expanded、R2×R4×R5×R6 15/15、R0 frozen 0-byte、pyright 0/0 全部 PASS。
+- pre-R5 archive 不做 destructive migration；R3 已停止 archive summary 自动 prompt 回灌，存量只在显式检索时可见。
+
+R5 **没有**实施 R7 行为 A/B、R8 model-tier shadow 或 R9 主区应用。
 
 ## 5. 非目标
 

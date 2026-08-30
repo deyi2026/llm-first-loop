@@ -45,6 +45,28 @@ class _ArchiveMixin:
         不注入当前上下文、不丢信息、可经 search_archive(with_summary=true) 检索。
         """
         msg_seq = self._resolve_msg_seq(session_id, msg)
+
+        # INJECTION-GOVERNANCE R5: identity Q&A remains exact archive truth but must
+        # not become durable summary detail. Determine episode membership from the
+        # canonical session sequence; no extra per-session state is introduced.
+        _identity_start: int | None = None
+        if msg_seq is not None:
+            try:
+                from llm_loop.core.identity_summary import identity_episode_start
+
+                _identity_session = None
+                try:
+                    with self._run_states_guard:
+                        _identity_session = self._run_sessions.get(session_id)
+                except Exception:  # noqa: BLE001 — run binding unavailable: read fallback
+                    _identity_session = None
+                if _identity_session is None:
+                    _identity_session = self.session.load(session_id)
+                _identity_start = identity_episode_start(_identity_session.messages, msg_seq)
+            except Exception:  # noqa: BLE001 — summary hygiene fail-open must not lose archive bytes
+                logger.debug("identity summary episode detection failed (fail-open)", exc_info=True)
+                _identity_start = None
+
         evidence_ref: str | None = None
         registry = getattr(self, "registry", None)
         try:
@@ -75,6 +97,22 @@ class _ArchiveMixin:
                 )
             return
         try:
+            _summary_override: str | None = None
+            _facts_override: list[str] | None = None
+            _paths_override: list[str] | None = None
+            _summary_source_override: str | None = None
+            if _identity_start is not None:
+                from llm_loop.core.identity_summary import render_identity_summary_placeholder
+
+                _summary_override = (
+                    render_identity_summary_placeholder(1)
+                    if msg_seq == _identity_start
+                    else ""
+                )
+                _facts_override = []
+                _paths_override = []
+                _summary_source_override = "identity_filtered"
+
             entry = self.archive.archive(
                 session_id,
                 role=msg.role,
@@ -84,6 +122,10 @@ class _ArchiveMixin:
                 tool_call_id=msg.tool_call_id,
                 status=msg.status.value if msg.status else None,
                 reasoning_content=getattr(msg, "reasoning_content", None) or None,
+                summary_override=_summary_override,
+                key_facts_override=_facts_override,
+                key_paths_override=_paths_override,
+                summary_source_override=_summary_source_override,
             )
             # D1: context.compressed 事件（legacy archive + provider-neutral Evidence ref）.
             self._event_append(
@@ -99,7 +141,8 @@ class _ArchiveMixin:
             )
             # RULE-AI-00 自动摘要边界内: 压缩档案自动回填语义摘要（async 后台/off 跳过）
             if (
-                self.summarizer is not None
+                _identity_start is None
+                and self.summarizer is not None
                 and getattr(self.summarizer, "mode", "off") != "off"
             ):
                 self.summarizer.summarize_archive(entry.id, msg.content, self.archive)

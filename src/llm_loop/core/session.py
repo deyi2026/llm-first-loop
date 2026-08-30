@@ -1115,7 +1115,20 @@ class SessionStore:
             # 摘要时转 dict（保留原 Message 列表以便 save 序列化）
             msg_dicts = [asdict(m) for m in session.messages]
             keep = list(session.messages[-keep_recent:])  # 完整保留近期（Message 对象）
+            early_messages = list(session.messages[:-keep_recent])
             early = list(msg_dicts[:-keep_recent])        # 早期用 dict 摘要
+
+            # INJECTION-GOVERNANCE R5: legacy trim 的 summary JSONL 也是长期摘要面。
+            # raw backup 仍保留完整消息；仅派生 summary 将所有 identity episodes 聚合
+            # 为一条计数占位，避免模型身份/自我介绍压过主体任务。
+            from llm_loop.core.identity_summary import (
+                identity_episode_map,
+                render_identity_summary_placeholder,
+            )
+
+            _identity_map = identity_episode_map(early_messages)
+            _identity_starts = sorted(set(_identity_map.values()))
+            _identity_first = _identity_starts[0] if _identity_starts else None
 
             def _summarize(m: dict) -> str:
                 role = m.get("role", "")
@@ -1140,8 +1153,18 @@ class SessionStore:
             )
             summary_path = archive_root / f"{session_id}_{ts_slug}_summary.jsonl"
             with summary_path.open("w", encoding="utf-8") as f:
-                for s in [_summarize(m) for m in early]:
-                    f.write(json.dumps({"ts": _now(), "content": s}, ensure_ascii=False) + "\n")
+                for _idx, _message in enumerate(early):
+                    if _idx in _identity_map:
+                        if _idx == _identity_first:
+                            _summary = render_identity_summary_placeholder(len(_identity_starts))
+                        else:
+                            continue
+                    else:
+                        _summary = _summarize(_message)
+                    f.write(
+                        json.dumps({"ts": _now(), "content": _summary}, ensure_ascii=False)
+                        + "\n"
+                    )
 
             session.messages = list(keep)
             session.updated_at = _now()
