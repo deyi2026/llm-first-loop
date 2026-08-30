@@ -158,7 +158,7 @@ wire 层按 provider contract 投影：
   - `full`（强模型）：仍受总预算、去重、尾位、去祈使句约束，不恢复“无限投喂”。
 - 任何 profile 都不得绕过 wire invariant 和用户原话尾位纪律。
 
-**R8 实现状态（2026-08-30）：SHADOW PASS / canary NOT READY。** 能力只取当前路由 ProviderRegistry/ModelSpec；沿用既有 strong/weak/unknown，不新增 tier：weak/unknown→minimal，strong+reasoning=false→standard，strong+reasoning=true→full。`injection.profile.shadow` 对 primary/fallback/err1210 retry 按真实 provider attempt 归因，`applied=false`；capability-only 对照 provider payload byte-identical。R8 初验 runtime inventory 11/11 unknown、显式分类覆盖 0%；Post-R8 R8.1/R8.2 基于受控证据补 metadata；owner 随后退役不用的 Qwen3.6，当前为 9/10 已分类（90.0%，strong=1/weak=8/unknown=1），唯一 unknown 为持续 HTTP 502 的 mxnook，canary 仍 NOT READY。完整证据见 `docs/injection-governance/r8/report.md` 与 `r8/capability-audit.md`。
+**R8 实现状态（2026-08-30）：SHADOW PASS / metadata READY / behavior canary NOT STARTED。** 能力只取当前路由 ProviderRegistry/ModelSpec；沿用既有 strong/weak/unknown，不新增 tier：weak/unknown→minimal，strong+reasoning=false→standard，strong+reasoning=true→full。`injection.profile.shadow` 对 primary/fallback/err1210 retry 按真实 provider attempt 归因，`applied=false`；capability-only 对照 provider payload byte-identical。R8 初验 runtime inventory 11/11 unknown、显式分类覆盖 0%；Post-R8 R8.1/R8.2 基于受控证据补 metadata；owner 随后退役不用的 Qwen3.6，owner 随后允许忽略持续 HTTP 502 的 mxnook 并将其从 active inventory 退役；当前 active inventory 为 9/9 已分类（100.0%，strong=1/weak=8/unknown=0），metadata gate READY，behavior canary 尚未启动。完整证据见 `docs/injection-governance/r8/report.md` 与 `r8/capability-audit.md`。
 
 ## L3 A/B 验证（可证伪层）
 

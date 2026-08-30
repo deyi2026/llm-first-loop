@@ -203,13 +203,6 @@
         "mean_injection_share": 0.1644,
         "hard_structural_gate_pass": true
       }
-    },
-    {
-      "evidence": "r8_remote_ab_transport_incomplete",
-      "model": "mxnook/glm-5.3-flash",
-      "notes": "credential-safe R7 A/B could not classify model because provider returned HTTP 502; simple probe also 502 with thinking on/off",
-      "reasoning_update": null,
-      "tier": "unknown"
     }
   ],
   "policy": {
@@ -220,7 +213,7 @@
     "weak_gate": "completion_rate<0.8 or user_dominance_rate<0.9 on controlled A-arm",
     "transport_gate": "HTTP/network/protocol failure keeps tier=unknown; LLMEmptyResponseError is behavioral completion failure, not transport failure"
   },
-  "providers_sha256_after": "e07be3c4eaf8bee32f0f1467e4ae79b09cd58a69430ed6de736578ade12e9d31",
+  "providers_sha256_after": "5ae22fa8489083ee37d2e778a18afa1d11f77dbb8da7274ca9c42b317b6e62fa",
   "providers_sha256_before": "fc7afbaab442834d420985cadf19b327d2027931a3d940e48903a5fb037871e1",
   "providers_sha256_pre_retirement": "e25e74471ab9a3bf98b770c09a995c66377058aba4d4f2bd64be6447250749cd",
   "retired_models": [
@@ -228,17 +221,22 @@
       "date": "2026-08-30",
       "model": "local/qwen3.6-27b-fable-fusion-711-uncensored-heretic-nm-dau-neo-max-mtp",
       "reason": "operator_retired_unused_model"
+    },
+    {
+      "date": "2026-08-30",
+      "model": "mxnook/glm-5.3-flash",
+      "reason": "operator_excluded_from_active_inventory"
     }
   ],
   "schema": "injection-r8-capability-audit-v1",
   "summary": {
-    "canary_ready": false,
+    "canary_ready": true,
     "classified": 9,
-    "coverage_pct": 90.0,
+    "coverage_pct": 100.0,
     "live_registry_reloaded": false,
-    "models_total": 10,
+    "models_total": 9,
     "strong": 1,
-    "unknown": 1,
+    "unknown": 0,
     "weak": 8
   },
   "providers_sha256_before_r8_2": "bc800ffa713c94510c1fb4841b9034fd0ea74486a8521c02fd877e21472e8f03",

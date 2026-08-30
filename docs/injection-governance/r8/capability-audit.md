@@ -9,18 +9,18 @@
 R8 初验为 11/11 unknown；R8.1 先补本地/可验证模型并按 owner 指令退役不用的 Qwen3.6；R8.2 再通过 credential-safe 远端 A/B 补 5 个云模型。当前脱敏 inventory：
 
 ```text
-models_total=10
-classified=9 (90.0%)
+models_total=9
+classified=9 (100.0%)
 strong=1
 weak=8
-unknown=1
-profile: full=1, minimal=9
-canary_ready=false
+unknown=0
+profile: full=1, minimal=8
+canary_ready=true
 ```
 
-唯一 remaining unknown 是 `mxnook/glm-5.3-flash`：受控 A/B 12/12 为 HTTP error，独立最小 prompt 在 thinking 开/关时均返回 HTTP 502。因此它是**provider/transport 未就绪**，不能把 502 误判成模型 weak。
+R8.2 结束时唯一 remaining unknown 是 `mxnook/glm-5.3-flash`：受控 A/B 12/12 为 HTTP error，独立最小 prompt 在 thinking 开/关时均返回 HTTP 502。因此它从未被误判为 weak。owner 随后明确表示可忽略 mxnook，本轮已将其从 active provider inventory 退役并保留审计记录。
 
-结论仍是 **metadata coverage improved, behavior canary NOT READY**。不进入 R9，不调用 `refresh_config`。
+当前结论是 **metadata gate READY（9/9=100%），behavior canary 尚未启动**。下一门是 R8.3 shadow soak，不进入 R9，本轮也不调用 `refresh_config`。
 
 ## 判定规则
 
@@ -30,7 +30,7 @@ canary_ready=false
 - HTTP/network/protocol transport failure 会让该模型保持 `unknown`，不得据此判 weak。
 - `reasoning`：strong 模型只有在 provider/runtime 有直接证据时才显式填写；weak 模型不依赖 `reasoning` 才能完成 R8 metadata gate。
 
-## 当前 10 模型审计表
+## 当前 9 模型审计表
 
 | 模型 | tier | reasoning 更新 | 证据 | 结论 |
 |---|---|---:|---|---|
@@ -43,9 +43,8 @@ canary_ready=false
 | `local/qwen3.8-27b-mlx` | weak | — | alias 实际映射 `qwen3.8-27b-mlx@4bit`；R7 frozen A：4/6、dominance 0 | 可审核 weak |
 | `local/qwythos-9b-claude-mythos-5-1m@q4_k_m` | weak | — | R7 A：1/6、dominance 0 | 可审核 weak |
 | `minimax/MiniMax-M3` | weak | — | R8.2 A：3/6；独立 T3/T4 dominance=0/2 | 可审核 weak |
-| `mxnook/glm-5.3-flash` | unknown | — | R8.2 A/B 全为 HTTP error；独立简单请求 thinking on/off 均 HTTP 502 | transport incomplete，保持 unknown |
 
-Qwen3.6 自定义模型已按 owner 指令退役，只在 `capability-audit.json:retired_models` 留审计记录，不再参与 coverage 分母。
+Qwen3.6 自定义模型与 mxnook GLM 5.3 Flash 均已按 owner 指令从 active inventory 退役，只在 `capability-audit.json:retired_models` 留审计记录，不再参与 coverage 分母。
 
 ## R8.2 credential-safe 远端 A/B
 
@@ -93,6 +92,7 @@ R8 初始:             fc7afbaa...871e1
 R8.1 四模型 metadata: e25e7447...749cd
 退役 Qwen3.6 后:      bc800ffa...72e8f03
 R8.2 五模型 weak 后:  e07be3c4...12e9d31
+退役 mxnook 后:        5ae22fa8...6e62fa
 ```
 
 当前语义变化累计为：
@@ -105,21 +105,17 @@ R8.2 五模型 weak 后:  e07be3c4...12e9d31
 - GLM 5.3 / 5.3 Flash: `capability_tier=weak`
 - MiniMax M3: `capability_tier=weak`
 - Qwen3.6 自定义模型：owner 退役，从 runtime catalog 删除
-- mxnook GLM 5.3 Flash：仍无 tier，保持 unknown
+- mxnook GLM 5.3 Flash：owner 明确允许忽略，从 active runtime catalog 退役；未判 weak
 
 没有修改 endpoint、模型名、凭据引用、预算、K 值或路由。
 
 ## 为什么仍不热重载
 
-当前 `MODEL_PROVIDERS` 没有覆盖文件，且 `LFL_DATA_DIR` 指向本 workspace `data/`，所以磁盘文件是后续 refresh/restart 的真实来源。但 `refresh_config` 会重读整套 `.env`，其影响面大于 metadata-only 变更；同时 mxnook 仍 unknown，`canary_ready=false`。因此 R8.2 继续不为了 shadow telemetry 扩大 live 变更面。
+当前 `MODEL_PROVIDERS` 没有覆盖文件，且 `LFL_DATA_DIR` 指向本 workspace `data/`，所以磁盘文件是后续 refresh/restart 的真实来源。当前 metadata gate 已 `canary_ready=true`，但 `refresh_config` 会重读整套 `.env`，影响面大于本轮“退役 provider”变更；因此本轮继续不热重载。R8.3 应把 live reload/restart 作为受控 shadow-soak 的显式起点。
 
 ## 下一门
 
-只剩一个 blocker：`mxnook/glm-5.3-flash`。
-
-- 若该 provider 仍在用：先修复/确认 HTTP 502，再重跑相同 A/B；
-- 若 owner 已不用它：可像 Qwen3.6 一样退役，从 capability coverage 分母移除；
-- 达到 `metadata_complete_coverage=100%` 后，下一阶段应是 **R8.3 shadow soak**，不是直接 R9。
+metadata coverage 已达到 `9/9 = 100%`，`canary_ready=true`。下一阶段应是 **R8.3 shadow soak**：受控 reload/restart 让 live registry 读取当前 metadata，继续保持 `mode=shadow, applied=false`，观察 attribution / alias / fallback / 1210 retry 是否稳定。R8.3 通过前不进入 behavior canary，更不直接进入 R9。
 
 ## 验证门
 

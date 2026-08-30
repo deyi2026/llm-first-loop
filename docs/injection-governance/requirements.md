@@ -151,7 +151,7 @@ R5 **没有**实施 R7 行为 A/B、R8 model-tier shadow 或 R9 主区应用。
 - R8 第一阶段固定 `mode=shadow`、`applied=false`，推荐值不得进入 build、R2 budget、R3 K/seen-set、R4 recovery、R6 provider-view projection 或 provider payload。
 - 归因采用独立 `injection.profile.shadow` 事件而不改写 `request.meta`：primary、每个真实 fallback provider call、err1210 blind/strip retry 均逐 attempt 记录；resolve 失败不冒充 provider attempt。
 - capability-only A/B 证明：同 model id / system / tools / user，只改能力元数据使推荐从 minimal 变 full，实际 provider `messages + tools` 序列化结果 byte-identical。
-- R8 初验时运行时 inventory 为 11/11 `unknown -> minimal`、覆盖 0%。Post-R8 R8.1 只对有受控证据的模型补 metadata；随后 owner 退役不用的 Qwen3.6，R8.2 远端受控 A/B 后当前为 9/10 已分类：strong=1、weak=8、unknown=1，classified/metadata-complete coverage=90.0%，profile full=1/minimal=9，`canary_ready=false`；唯一 unknown 为持续 HTTP 502 的 `mxnook/glm-5.3-flash`，不得把 transport failure 猜成 weak。
+- R8 初验时运行时 inventory 为 11/11 `unknown -> minimal`、覆盖 0%。Post-R8 R8.1 只对有受控证据的模型补 metadata；随后 owner 退役不用的 Qwen3.6，R8.2 远端受控 A/B 后，`mxnook/glm-5.3-flash` 因持续 HTTP 502 且 owner 明确表示可忽略，已从 active provider inventory 退役，transport failure 从未被猜成 weak。当前 active inventory 9/9 已分类：strong=1、weak=8、unknown=0，classified/metadata-complete coverage=100.0%，profile full=1/minimal=8，`canary_ready=true`。这只表示 metadata gate READY；behavior canary 尚未启动。
 - R2×R4×R5×R6 正交矩阵 15/15 PASS；R0 frozen 0-byte；R8/adjacent focused 268/268 PASS（另 4 个 Web/飞书 model-attribution 用例因当前解释器缺 `pypdf` / `lark_oapi` 未纳入，不是 R8 逻辑失败）；touched production + R8 tests pyright 0/0。
 
 R8 **没有**启用任何 profile 行为。R8 初验未修改 `data/providers.json`；随后 R8.1 做了可逆 metadata-only 文件更新，但未热重载 live registry。进入行为 canary 前仍必须把 capability metadata 补齐并审核到 100%。

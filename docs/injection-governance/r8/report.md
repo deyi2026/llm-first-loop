@@ -158,10 +158,25 @@ recommended profile: full=1, minimal=9
 canary_ready=false
 ```
 
-R8.2 仍未调用 `refresh_config`，live registry 未热重载，`mode=shadow, applied=false` 不变。完整远端证据见 `r8/remote-ab.json` 和 `r8/capability-audit.md`。唯一剩余 metadata blocker 是持续 HTTP 502 的 mxnook provider；在修复或 owner 明确退役前，不进入 behavior canary/R9。
+R8.2 仍未调用 `refresh_config`，live registry 未热重载，`mode=shadow, applied=false` 不变。完整远端证据见 `r8/remote-ab.json` 和 `r8/capability-audit.md`。mxnook provider 持续 HTTP 502；owner 已明确允许忽略，因此从 active inventory 退役。当前 metadata gate 9/9=100% READY；下一阶段应先做 R8.3 shadow soak，仍不直接进入 R9。
 
 R8.2 最终门：117/117 focused PASS；remote-runner evaluator 5/5；pyright 0/0；py_compile/diff-check PASS；inventory byte-reproduction PASS；72/72 remote prompt hash PASS；R0 四门 PASS 且 0-byte diff。
 Detached clean checkout 同口径复验 PASS，测试前后 `git status` 均 clean。
+
+### 6.3 Owner exclusion of mxnook（current）
+
+R8.2 结束时 `mxnook/glm-5.3-flash` 因持续 HTTP 502 保持 unknown。owner 随后明确表示可以不再考虑 mxnook，因此本轮将该 provider 从 Git-ignored `data/providers.json` active catalog 删除；没有把 502 猜成 weak，也没有调用 `refresh_config`。
+
+当前 active inventory：
+
+```text
+classified=9/9 = 100.0%
+strong=1, weak=8, unknown=0
+recommended profile: full=1, minimal=8
+canary_ready=true
+```
+
+这表示 **metadata gate READY**，不是 behavior canary 已启动。下一阶段应先做 R8.3 shadow soak；R9 继续未开始。
 
 ## 7. 结构/预算正交门
 
