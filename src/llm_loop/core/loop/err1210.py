@@ -32,11 +32,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from llm_loop.core.injection_labels import (
-    InjectionLayer,
-    origin_metadata,
-    render_program_appendix,
-)
+from llm_loop.core.program_recovery import ProgramRecoveryAction, make_program_recovery_message
+from llm_loop.event_log.model import EVENT_PROGRAM_RECOVERY
 from llm_loop.llm.errors import LLMError, LLMHTTPError, parse_provider_error_code
 from llm_loop.core.message import Message, MessageSource
 
@@ -854,6 +851,8 @@ class _Err1210Mixin:
         self._err1210_run_seq: int = 0
         # R9（2026-08-29 用户需求「1210 自动继续」）: 程序化重发计数（每 run 限 1 次）
         self._auto_continue_1210: int = 0
+        # INJECTION-GOVERNANCE R4: recovery 是一次性 runtime slot，不进入 durable 对话历史。
+        self._program_recovery_tail_message: Message | None = None
 
     def _err1210_run_begin(self) -> None:
         """engine 每 run 入口调用（对齐 _reset_overflow_state 先例）: run seq 递增.
@@ -865,6 +864,8 @@ class _Err1210Mixin:
         self._err1210_run_seq = getattr(self, "_err1210_run_seq", 0) + 1
         # R9: 每 run 重置程序化重发计数（防循环语义）
         self._auto_continue_1210 = 0
+        # R4: 异常中断遗留的 pending recovery 不得跨新的 human run 复活。
+        self._program_recovery_tail_message = None
 
     def _err1210_attempt_recovery(
         self,
@@ -931,25 +932,33 @@ class _Err1210Mixin:
         self._record_action(
             "llm_call",
             "auto_continue_1210",
-            "1210 恢复链耗尽，程序化重发（注入续跑消息 continue 一轮）",
+            "1210 恢复链耗尽，武装单次程序恢复动作（next-build only）",
         )
-        _cont_msg = Message(
-            role="user",
-            content=render_program_appendix(
-                "[程序续跑] 上一轮 LLM 调用 1210（恢复链耗尽）。"
-                "已自动等效重发（上下文已重建）。请继续当前任务，"
-                "勿重复已完成动作，勿重新声明已交付内容。",
-                InjectionLayer.PROGRAM_RECOVERY,
-            ),
-            source=MessageSource.SYSTEM,
-            metadata=origin_metadata(
-                InjectionLayer.PROGRAM_RECOVERY,
-                injection_kind="program_recovery",
-                persisted_injection=True,
-            ),
+        # R4: 单恢复动作只武装下一次 build 的 runtime slot。它不 append 到
+        # sess.messages，不会在后续用户轮成为长期高优先级可执行历史。build 消费
+        # 一次后立即清空，并由 R6 放在 exact user truth 之前。
+        _turn_ref = getattr(self, "_current_turn_ref", None)
+        _action = ProgramRecoveryAction.RETRY_CURRENT_REQUEST_ONCE
+        self._program_recovery_tail_message = make_program_recovery_message(
+            turn_ref=_turn_ref, action=_action
         )
-        sess.messages.append(_cont_msg)
-        self._append_message_event(sess, _cont_msg)  # D1: 系统注入消息事件（fail-open）
+        # Durable audit remains session-scoped without making the executable recovery
+        # a durable conversation message.  Failure is fail-open: runtime recovery still runs.
+        try:
+            _estore = getattr(self, "_event_store", None)
+            if _estore is not None and getattr(_estore, "enabled", False):
+                _estore.append(
+                    sess.session_id,
+                    EVENT_PROGRAM_RECOVERY,
+                    {
+                        "action": str(_action),
+                        "trigger": "provider_1210",
+                        "turn_ref": _turn_ref,
+                        "scope": "next_build_only",
+                    },
+                )
+        except Exception:  # noqa: BLE001 — audit failure must not block recovery
+            logger.debug("program.recovery 事件写入失败（fail-open）", exc_info=True)
         return True
 
     def _e1210_llm_error_finalize(

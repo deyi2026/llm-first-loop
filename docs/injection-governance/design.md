@@ -122,6 +122,8 @@ R0 产物：`baseline.jsonl + baseline-manifest.json + report.md + frozen fixtur
 - 恢复块只允许一个、只描述一个恢复动作，不得携带“顺便继续下一阶段/扩展任务”等开放式命令。
 - engine.py 注入点改造，与 compact wire invariant / err1210 尾部治理对齐。
 
+**R4 实现状态（2026-08-30）：PASS。** recovery 已收敛为 closed action enum + per-session one-shot runtime slot；不再写入 conversational history，旧 persisted recovery 仅在 provider view 过滤；durable audit 改由 `program.recovery` 事件承载；R2 统一计费后独立渲染，再由 R6 合入 exact user truth 前。完整证据见 `docs/injection-governance/r4/report.md`。
+
 ### L2 横切不变量：用户原话尾位
 
 内部组装顺序固定为：

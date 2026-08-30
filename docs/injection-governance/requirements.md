@@ -1,6 +1,6 @@
 # 注入治理专项（INJECTION-GOVERNANCE）需求规格
 
-> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **设计已审批；R0 PASS；R1/L1 PASS；R2/L2-1 PASS；R3/L2-2 PASS；R4+ 未实施**
+> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **设计已审批；R0 PASS；R1/L1 PASS；R2/L2-1 PASS；R3/L2-2 PASS；R4/L2-4 PASS；R5+ 未实施**
 
 ## 1. 问题陈述（实证）
 
@@ -101,6 +101,19 @@ R3 **没有**实现恢复单边界、身份问答剥离、user-truth 物理尾�
 - 最终扩展回归 413/413 PASS；R0 frozen 0-byte diff；touched production pyright 0/0。
 
 R6 **没有**实施 R4 recovery 单动作策略、R5 identity stripping、R7 A/B 或 R8 model tiering。
+
+## 4E. R4 已验收的程序恢复单边界
+
+权威报告：`docs/injection-governance/r4/report.md`。
+
+- recovery action 使用 closed `ProgramRecoveryAction`，当前唯一动作是 `retry_current_request_once`；调用方不能夹带自由文本扩展任务。
+- 可执行 recovery 为 per-session `_RunState` one-shot slot，`recovery_turn_ref` 必须匹配 current human turn；build 读取即清空，不能跨 tool-followup、新用户轮或并发 session 复活。
+- pre-R4 persisted recovery 保留 storage/audit truth，但 provider view 永久过滤；真实 `MessageSource.USER` 即使包含 legacy marker 也不得被误判。
+- durable audit 由 `program.recovery` event 承载，而非把可执行 recovery 保存为 `message.appended` 对话历史。
+- recovery 与其它 program-origin 共用 R2 hard budget；budget 决策后从 Cognitive/background appendix 分离，避免被“仅作背景”声明或 WARM projection 改写，再由 R6 合并到 exact user truth 前。
+- 143/143 focused、458/458 expanded、R2×R4×R6 15/15、R0 frozen 0-byte、pyright 0/0 全部 PASS。
+
+R4 **没有**实施 R5 identity stripping、R7 行为 A/B 或 R8 model-tier shadow。
 
 ## 5. 非目标
 

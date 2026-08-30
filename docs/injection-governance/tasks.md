@@ -1,6 +1,6 @@
 # 注入治理专项任务图（INJECTION-GOVERNANCE）
 
-> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **R0 PASS；R1/L1 PASS；R2/L2-1 PASS；R3/L2-2 PASS；R4+ 未开始**
+> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **R0 PASS；R1/L1 PASS；R2/L2-1 PASS；R3/L2-2 PASS；R4/L2-4 PASS；R5+ 未开始**
 > 依赖链: R0 → R1 → {R2, R3, R4, R5, R6 并行} → R7 → R8(shadow，可后置) → R9。R0 未过数据门不得进入行为实现。
 
 ## R0 基线取证与 fixture 建立（数据门）— ✅ PASS
@@ -37,9 +37,12 @@
 - 说明: K=3 仍为候选；seen-set 不新增 Session 顶层状态，而从 durable metadata 重建。hotcard 只改成两行 file pointer，消费/恢复语义留 R4。
 - evidence_required: true
 
-## R4 程序恢复边界（L2-4）
-- 内容: auto_continue 注入统一 `[任务·程序恢复]`；明示非用户发起；单恢复动作、完成即回到当前用户任务边界。
-- 验收: 恢复块最多一个；不携带开放式“顺便继续下一阶段”；恢复后不跑飞。
+## R4 程序恢复边界（L2-4）— ✅ PASS
+- 内容: auto_continue 收敛为 closed `ProgramRecoveryAction` + `[任务·程序恢复]` canonical template；可执行 recovery 不再持久化为 session Message，而是 per-session `_RunState` one-shot slot，next-build 消费后清空；旧 persisted recovery 仅从 provider view 退休，storage/event truth 不删。
+- 审计: 新增 `program.recovery` session event，记录 action/trigger/turn_ref/scope；可审计事实与可执行 prompt 生命周期分离。
+- 验收: 143/143 focused、458/458 expanded PASS；A/B session 并发隔离；真实 1210 E2E 第二 payload 恰好一个 recovery、后续用户轮为 0；R2×R4×R6 15 点全 PASS；R0 frozen 0-byte；pyright 0/0。
+- 说明: R4 不实施 R5 identity stripping、R7 A/B、R8 model tiering。
+- evidence: `docs/injection-governance/r4/report.md`
 - evidence_required: true
 
 ## R5 身份问答剥离（L2-3）

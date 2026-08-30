@@ -1,11 +1,11 @@
 """err1210 P0-A 两会话交错隔离 oracle 测试（.codeartsdoer/specs/err1210_p0_fixes T3）.
 
 旧实现暴露关系登记（spec 5.1.1-2a 红绿验证组，design 1.2.3 机理推演）:
-- a1/a2/a7 在旧 Engine-global 实现（六字段为普通实例属性）下必然失败——
+- a1/a2/a7 在旧 Engine-global 实现（恢复字段为普通实例属性）下必然失败——
   a1: B build 覆盖共享 _last_build_injections → A 剥离读到 B 的 3 条；
   a2: B compact 递增共享 _compact_event_seq → A 错误重获降级机会；
   a7: 六字段驻留 engine.__dict__（property 化后经 shim 落桶，不驻留）；
-- a6 因六字段串台同样必失败（独立价值: 显式覆盖共享 _last_history_compacted
+- a6 因恢复字段串台同样必失败（独立价值: 显式覆盖共享 _last_history_compacted
   与六字段判定的联动路径，该字段本包只测不改）。
 会话身份模拟同 lifecycle.py:84-94 contextvar token set/reset 对；
 defer_trace 经 conftest isolated_data_dir（autouse LFL_DATA_DIR）隔离。
@@ -49,10 +49,9 @@ def _mk_engine(tmp_path, monkeypatch, responses):
     fake = _FakeLLMClient("zhipu/glm-5")
     fake.queue(responses)
     engine = _make_engine(tmp_path, _make_pool(settings, fake, cached={"zhipu": fake}), settings)
-    # 语义迁移对齐（修复A 配套，err1210.py _err1210_run_begin 注释）: attempted 键
-    # 已从"compact 事件 seq"迁移为"run seq"——本测试直接调 _try_err1210_recovery
-    # 不走 engine.run，需模拟 run 入口递增，使 attempted 期望值与真实 run 一致（首个 run → 1）。
-    engine._err1210_run_begin()
+    # 本测试直接调 _try_err1210_recovery，不走 engine.run。R4 起 run sequence
+    # 也进入 per-session RunState，因此各测试须在对应 session context 内显式 begin，
+    # 与生产 lifecycle 的 set(session_id) -> _err1210_run_begin() 顺序一致。
     return engine, fake
 
 
@@ -95,10 +94,12 @@ class TestTwoSessionInterleaving:
     def test_interleaved_a1_to_a6(self, tmp_path, monkeypatch):
         engine, fake = _mk_engine(tmp_path, monkeypatch, responses=[_e1210(), _e1210(), _e1210(), _e1210()])
         with _switch_session("A"):
+            engine._err1210_run_begin()
             msgs_a = _arm_build(engine, 5, "A")
             _compact_event(engine)  # A compact → A 桶 seq=1
             assert engine._compact_event_seq == 1
         with _switch_session("B"):
+            engine._err1210_run_begin()
             msgs_b = _arm_build(engine, 3, "B")
             _compact_event(engine)  # B compact → B 桶 seq=1（独立计数）
             assert engine._compact_event_seq == 1
@@ -126,12 +127,14 @@ class TestTwoSessionInterleaving:
         assert len(engine._deferred_replay_refs) == 3  # a5: 回退锚点切换 → B 桶
 
     def test_a7_no_instance_attribute_leak(self, tmp_path, monkeypatch):
-        """a7: 六旧属性名均不驻留 engine.__dict__（读写全经 property shim 落桶）."""
+        """a7: 恢复属性名均不驻留 engine.__dict__（读写全经 property shim 落桶）."""
         engine, _ = _mk_engine(tmp_path, monkeypatch, responses=[])
         _attrs = {"_last_build_injections": [], "_compact_event_seq": 1,
                   "_compact_event_was_compacted": True,
                   "_last_build_defer_replayed": False,
-                  "_deferred_replay_refs": [], "_deferred_replay_slots": set()}
+                  "_deferred_replay_refs": [], "_deferred_replay_slots": set(),
+                  "_err1210_run_seq": 3, "_auto_continue_1210": 1,
+                  "_program_recovery_tail_message": None}
         with _switch_session("A"):
             for attr, value in _attrs.items():
                 setattr(engine, attr, value)

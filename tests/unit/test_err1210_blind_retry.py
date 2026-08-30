@@ -47,9 +47,12 @@ class TestBlindRetry:
         blind = fake.calls[1]["messages"]
         stripped = fake.calls[2]["messages"]
         assert blind == orig  # blind 原样
-        n_inj = len(engine._last_build_injections)
-        assert n_inj >= 1
-        assert stripped == orig[: len(orig) - n_inj]  # strip 剥离版（回退路径生效）
+        inj = engine._last_build_injections
+        assert len(inj) == 1
+        # R6 contract: strip removes only the program prefix from USER_ENVELOPE;
+        # exact human truth remains as the retry tail instead of deleting the whole user.
+        assert stripped[:-1] == orig[:-1]
+        assert stripped[-1] == {"role": "user", "content": inj[0].user_truth}
         # strip 成功 → defer 回存: gate_note 复位可重注入（与 T5.1 语义一致）
         assert engine._cache_monitor.take_gate_note(sid) is True
 
@@ -64,8 +67,10 @@ class TestBlindRetry:
         assert "恢复后的正常回答" in result.final_answer
         assert len(fake.calls) == 2
         orig, retry = fake.calls[0]["messages"], fake.calls[1]["messages"]
-        n_inj = len(engine._last_build_injections)
-        assert retry == orig[: len(orig) - n_inj]  # 剥离版（旧行为零变化）
+        inj = engine._last_build_injections
+        assert len(inj) == 1
+        assert retry[:-1] == orig[:-1]
+        assert retry[-1] == {"role": "user", "content": inj[0].user_truth}
 
     def test_blind_net_err_fallback_strip(self, tmp_path, monkeypatch):
         """blind 遇非 1210 异常（网络 503）→ 回退 strip 路径恢复，原 1210 语义不被掩盖."""

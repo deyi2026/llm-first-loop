@@ -2,7 +2,7 @@
 
 覆盖:
 - 模型: serialize→parse 往返逐字段一致；损坏行返回 None（fail-open）；
-  未登记类型 validate 报违规；登记表覆盖 5 类事件且字段语义可查询
+  未登记类型 validate 报违规；登记表覆盖全部已注册事件且字段语义可查询
 - 存储: seq 从 1 递增不重号；JSONL 合法且不可变（追加修改被拒绝）；
   多进程并发 append 同会话无行交错；损坏行跳过计数；enabled=False 零写入
 """
@@ -27,6 +27,7 @@ from llm_loop.event_log.model import (
     EVENT_REQUEST_META,
     EVENT_REQUEST_USAGE,
     EVENT_RUN_END,
+    EVENT_PROGRAM_RECOVERY,
     EVENT_SESSION_CREATED,
     EVENT_SESSION_FORKED,
     EVENT_SESSION_META_CHANGED,
@@ -97,7 +98,7 @@ def test_validate_event_type_unregistered():
 
 # ── 模型: 类型登记表 ──
 
-def test_registry_covers_five_types_with_fields():
+def test_registry_covers_registered_types_with_fields():
     names = {
         EVENT_SESSION_CREATED,
         EVENT_MESSAGE_APPENDED,
@@ -109,6 +110,7 @@ def test_registry_covers_five_types_with_fields():
         EVENT_REQUEST_USAGE,  # DSH 借鉴: request.usage 响应 usage 明细
         EVENT_INTEROP_SPLICED,  # DSH 借鉴: interop.spliced 协调注入事件
         EVENT_RUN_END,  # DSH 借鉴: run.end run 生命周期结束事件
+        EVENT_PROGRAM_RECOVERY,  # R4: runtime-only recovery 的 session 审计事件
         EVENT_CODEARTS_DISPATCHED,
         EVENT_CODEARTS_STATUS_SYNCED,
         EVENT_CODEARTS_STATUS_UNKNOWN,

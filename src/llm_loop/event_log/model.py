@@ -25,6 +25,7 @@ EVENT_REQUEST_META = "request.meta"  # HARNESS-02(2026-08-14): 每轮请求快�
 EVENT_REQUEST_USAGE = "request.usage"  # DSH 借鉴(2026-08-17): 每轮响应 usage 明细（命中/miss token 精确落盘）
 EVENT_INTEROP_SPLICED = "interop.spliced"  # DSH 借鉴(2026-08-17): 协调通道 inbox 注入事件（对齐 agent/inbox/spliced）
 EVENT_RUN_END = "run.end"  # DSH 借鉴(2026-08-17): run 生命周期结束事件（对齐 turn/end，结束原因可审计）
+EVENT_PROGRAM_RECOVERY = "program.recovery"  # R4: 一次性程序恢复动作审计（不作为 durable 对话消息）
 
 # ── CodeArts 子 Agent 调度集成事件类型（design.md §1.1.2，凭证明文绝不入 payload）──
 EVENT_CODEARTS_DISPATCHED = "codearts.dispatched"
@@ -143,7 +144,7 @@ class EventTypeRegistry:
         return []
 
 
-# 模块级默认登记表（显式登记 5 类事件）
+# 模块级默认登记表（所有可写事件类型必须显式登记）
 REGISTRY = EventTypeRegistry()
 REGISTRY.register(
     EventTypeSpec(
@@ -274,6 +275,21 @@ REGISTRY.register(
             "start": "注入位置（base 列表索引，对齐 DSH start 语义）",
             "sources": "来源文件列表（data/interop/lfl_to_dsh/pending/*.json）",
             "content_preview": "首条消息内容前 200 字符（审计摘要，不全量落盘）",
+        },
+    )
+)
+# INJECTION-GOVERNANCE R4: executable recovery is runtime-only, so its durable
+# audit truth is an event rather than a message.appended row.  `action` maps to the
+# canonical template in core/program_recovery.py and is sufficient to reconstruct intent.
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_PROGRAM_RECOVERY,
+        version=1,
+        fields={
+            "action": "closed ProgramRecoveryAction value",
+            "trigger": "recovery trigger (currently provider_1210)",
+            "turn_ref": "human turn reference this recovery is bounded to",
+            "scope": "execution lifetime; currently next_build_only",
         },
     )
 )

@@ -37,6 +37,10 @@ from llm_loop.core.reference_injection import (
     reference_auto_decision,
     seen_injection_set,
 )
+from llm_loop.core.program_recovery import (
+    PROGRAM_RECOVERY_SLOT,
+    is_program_recovery_message,
+)
 from llm_loop.core.user_truth_wire import (
     current_ingress_user_truth,
     project_user_truth_tail,
@@ -513,6 +517,20 @@ class _BuildMixin:
         _r6_ingress_truth = current_ingress_user_truth(
             sess.messages, getattr(self, "_current_turn_ref", None)
         )
+        # INJECTION-GOVERNANCE R4: persisted recovery is audit history, not future
+        # executable context.  New recovery never enters sess.messages; this filter retires
+        # pre-R4 durable recovery blocks without mutating storage/event truth.
+        _stale_recovery_count = sum(1 for _m in base if is_program_recovery_message(_m))
+        if _stale_recovery_count:
+            base = [_m for _m in base if not is_program_recovery_message(_m)]
+            try:
+                self._record_action(
+                    "action.program_recovery",
+                    "stale_history_filtered",
+                    f"count={_stale_recovery_count}",
+                )
+            except Exception:  # noqa: BLE001 — provider-view hygiene is already applied
+                pass
         # P1 遥测内容/传输分层（2026-08-25）: legacy 历史（旧会话已把 ⚡ 缓存命中率
         # 行写进 assistant 正文）与模型伪造行——build 提交视图一律剥离（正文=纯回答；
         # 权威遥测走 metadata.cache_health → transport 渲染）。剥离只影响提交视图，
@@ -924,6 +942,25 @@ class _BuildMixin:
                 for _m in sess.messages[-8:]
             )
         _inject_parts: list[tuple[str | None, str]] = []  # (slot|None=hint, content)——P1 9.1 聚合收集
+        # R4: recovery lives in a one-shot runtime slot.  Consume it at build start so it
+        # cannot leak into a later tool-followup/rebuild.  Only an initial human ingress with
+        # matching turn_ref may activate it; otherwise it is safely discarded.
+        _pending_recovery = getattr(self, "_program_recovery_tail_message", None)
+        self._program_recovery_tail_message = None
+        if _pending_recovery is not None:
+            _pr_meta = getattr(_pending_recovery, "metadata", None) or {}
+            _pr_turn_ref = _pr_meta.get("recovery_turn_ref")
+            if _r6_ingress_truth is not None and _pr_turn_ref == _turn_ref:
+                _inject_parts.append((PROGRAM_RECOVERY_SLOT, _pending_recovery.content))
+            else:
+                try:
+                    self._record_action(
+                        "action.program_recovery",
+                        "dropped_without_user_boundary",
+                        f"recovery_turn_ref={_pr_turn_ref}; current_turn_ref={_turn_ref}",
+                    )
+                except Exception:  # noqa: BLE001 — safe drop already applied
+                    pass
         if not _persisted_ok and memory_msgs:
             # fail-open 回退: 持久化失败（engine 异常路径）→ 兜底收集进聚合
             # （P1 9.1: 旧独立 wrap+append 撤销——保尾部连续 user ≤1；memory 非消费槽）
@@ -1169,6 +1206,7 @@ class _BuildMixin:
             not in (None, InjectionLayer.USER_INSTRUCTION)
             for _m in built
         )
+        _recovery_render_parts: list[str] = []
         if _inject_parts or _cog_compute_candidate or _has_existing_program:
             try:
                 _anchor_mode = str(getattr(self.settings, "cog_runtime_anchor_mode", "auto"))
@@ -1195,9 +1233,10 @@ class _BuildMixin:
                 # 切片 TypeError 被 fail-open 吞掉、语义投影静默消失（enforce 下
                 # Semantic Header 实际不工作）。
                 _cog_sid = str(getattr(sess, "session_id", "") or "")
-                if _anchor_mode in ("semantic", "auto") and SemanticStateStore is not None:
+                _state_store_cls = SemanticStateStore
+                if _anchor_mode in ("semantic", "auto") and _state_store_cls is not None:
                     try:
-                        _env = SemanticStateStore(
+                        _env = _state_store_cls(
                             os.path.join(self.settings.data_dir, "audit")
                         ).load(_cog_sid)
                         # CR-R1（tasks 1.2）：schema v2 三态解包——仅可信信封且无墓碑
@@ -1294,8 +1333,9 @@ class _BuildMixin:
                                 "build: Read Barrier 核验异常，fail-open 降级无投影",
                                 exc_info=True,
                             )
-                    if _sem_state is not None and semantic_projection is not None:
-                        _projection = semantic_projection(_sem_state)
+                    _semantic_projection_fn = semantic_projection
+                    if _sem_state is not None and _semantic_projection_fn is not None:
+                        _projection = _semantic_projection_fn(_sem_state)
                 _anchor = build_task_anchor(self._focus.anchor_sess)
                 if _projection and _cog_enforce:  # CR-R1.1（审查项6）: shadow 投影仅度量不进 prompt
                     if _anchor and bool(
@@ -1406,6 +1446,41 @@ class _BuildMixin:
                     except Exception:  # noqa: BLE001 — 预算已执行，审计失败不回滚
                         logger.debug("build: injection budget action trace 失败", exc_info=True)
 
+                # R4: budget selection is shared with all injections, but rendering is not.
+                # PROGRAM_RECOVERY must not sit under the background-only appendix notice or
+                # Cognitive WARM projection.  Pull the at-most-one recovery part out after R2
+                # has decided keep/drop, and remove the same key from packet compilation.
+                _recovery_keys: set[str] = set()
+                for (_part, _key) in zip(_inject_parts, _inject_keys, strict=True):
+                    _slot, _content = _part
+                    if infer_layer(_content, slot_kind=str(_slot or "")) is InjectionLayer.PROGRAM_RECOVERY:
+                        _recovery_keys.add(_key)
+                        _recovery_render_parts.append(_content)
+                if len(_recovery_render_parts) > 1:
+                    # Closed runtime slot should make this unreachable; latest wins defensively.
+                    _recovery_render_parts = [_recovery_render_parts[-1]]
+                    try:
+                        self._record_action(
+                            "action.program_recovery", "duplicate_suppressed", "count>1"
+                        )
+                    except Exception:  # noqa: BLE001
+                        pass
+                if _recovery_keys:
+                    _inject_pairs = [
+                        (_part, _key)
+                        for _part, _key in zip(_inject_parts, _inject_keys, strict=True)
+                        if _key not in _recovery_keys
+                    ]
+                    _inject_parts = [_part for _part, _key in _inject_pairs]
+                    _inject_keys = [_key for _part, _key in _inject_pairs]
+                    _packet_pairs = [
+                        (_part, _key)
+                        for _part, _key in zip(_packet_parts, _packet_keys, strict=True)
+                        if _key not in _recovery_keys
+                    ]
+                    _packet_parts = [_part for _part, _key in _packet_pairs]
+                    _packet_keys = [_key for _part, _key in _packet_pairs]
+
                 # CR-R1（tasks 3.2）: packet 组装重构——header 先行（Barrier 通过即含投影
                 # 前导），空 slots 不抑制 header；header+slots 合并单条聚合条（header 在前，
                 # 沿 P1 形态）；header 已含投影 → anchor 位不重复注入（tier 关时投影仍占
@@ -1491,6 +1566,11 @@ class _BuildMixin:
                         for s, c in _inject_parts
                     )
                     _agg_anchor = _anchor  # 平铺路径：投影/锚点经 anchor 位（旧行为）
+                # R4 recovery is rendered as its own program message before the ordinary
+                # background appendix.  R6 immediately absorbs both into one user envelope,
+                # leaving recovery as the explicit executable exception before exact user truth.
+                if _recovery_render_parts and _r6_ingress_truth is not None:
+                    built.append({"role": "user", "content": _recovery_render_parts[0]})
                 if _agg.strip():
                     _agg_content = wrap_injection(_agg, _agg_anchor)
                     built.append({"role": "user", "content": _agg_content})

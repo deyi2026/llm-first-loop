@@ -51,15 +51,21 @@ class _RunState:
     #   同一 Engine 服务多 session（Web/飞书/Headless）时并发 run 互相覆盖）
     current_turn_ref: int | None = None
     last_budget_info: Any = None
-    # err1210 P0-A(2026-08-28): 六个恢复状态字段入 per-session 桶（此前 Engine
-    # 实例全局 self._xxx——同一 Engine 服务多 session 时并发 run 互相覆盖；
-    # property shim 保旧名，读写落当前会话桶，与既有分桶字段同机制）
+    # err1210 P0-A(2026-08-28) + Injection Governance R4: 恢复状态字段入
+    # per-session 桶（此前 Engine 实例全局 self._xxx——同一 Engine 服务多 session
+    # 时并发 run 互相覆盖；property shim 保旧名，读写落当前会话桶）。
     last_build_injections: list[InjectedEntry] = field(default_factory=list)
     compact_event_seq: int = 0
     compact_event_was_compacted: bool = False
     last_build_defer_replayed: bool = False
     deferred_replay_refs: list[tuple[SlotKind, Message]] = field(default_factory=list)
     deferred_replay_slots: set[str] = field(default_factory=set)
+    # INJECTION-GOVERNANCE R4: recovery lifecycle is session-scoped.  These were
+    # previously Engine-global, which allowed concurrent sessions to share the one-shot
+    # counter/sequence/pending recovery slot.
+    err1210_run_seq: int = 0
+    auto_continue_1210: int = 0
+    program_recovery_tail_message: Message | None = None
 
 
 class _RunStateMixin:
@@ -157,7 +163,7 @@ class _RunStateMixin:
     def _last_budget_info(self, value: Any) -> None:
         self._run_state().last_budget_info = value
 
-    # err1210 P0-A: 六个恢复状态字段 per-session shim（保旧名，读写落当前会话桶）
+    # err1210 P0-A/R4: 恢复状态字段 per-session shim（保旧名，读写落当前会话桶）
     @property
     def _last_build_injections(self) -> list[InjectedEntry]:
         return self._run_state().last_build_injections
@@ -205,3 +211,29 @@ class _RunStateMixin:
     @_deferred_replay_slots.setter
     def _deferred_replay_slots(self, value: set[str]) -> None:
         self._run_state().deferred_replay_slots = value
+
+    # R4: err1210 auto-continue sequence/count/pending slot must follow the same
+    # per-session isolation contract as the rest of the recovery state.
+    @property
+    def _err1210_run_seq(self) -> int:
+        return self._run_state().err1210_run_seq
+
+    @_err1210_run_seq.setter
+    def _err1210_run_seq(self, value: int) -> None:
+        self._run_state().err1210_run_seq = int(value)
+
+    @property
+    def _auto_continue_1210(self) -> int:
+        return self._run_state().auto_continue_1210
+
+    @_auto_continue_1210.setter
+    def _auto_continue_1210(self, value: int) -> None:
+        self._run_state().auto_continue_1210 = int(value)
+
+    @property
+    def _program_recovery_tail_message(self) -> Message | None:
+        return self._run_state().program_recovery_tail_message
+
+    @_program_recovery_tail_message.setter
+    def _program_recovery_tail_message(self, value: Message | None) -> None:
+        self._run_state().program_recovery_tail_message = value
