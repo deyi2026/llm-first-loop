@@ -1,7 +1,7 @@
 # 注入治理专项任务图（INJECTION-GOVERNANCE）
 
-> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **R0-R8 PASS（R7 exact cognilocal coverage=N/A；R8 shadow PASS / R8.3 SOAK PASS / behavior canary NOT STARTED）；R9 未开始**
-> 依赖链: R0 → R1 → {R2, R3, R4, R5, R6 并行} → R7 → R8(shadow，可后置) → R9。R0 未过数据门不得进入行为实现。
+> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **R0-R8 PASS；R8.3 SOAK PASS；R8.4 Prompt Eligibility AUDIT PASS / IMPLEMENTATION NOT STARTED；behavior canary NOT STARTED；R9 未开始**
+> 依赖链: R0 → R1 → {R2, R3, R4, R5, R6 并行} → R7 → R8 shadow/soak → **R8.4 eligibility audit/implementation** → behavior canary → R9。R0 未过数据门不得进入行为实现；R8.4 P0 未清不得进入 behavior canary。
 
 ## R0 基线取证与 fixture 建立（数据门）— ✅ PASS
 - 内容: 用真实 `data/event_logs` 重建 human turn，区分 user truth / user-role program appendix / system notice；量化尾后注入、会话级重复、资料祈使污染、provider wire 连续 user；按 model/compact/recovery 分桶；冻结脱敏结构 fixture。
@@ -76,6 +76,16 @@
 - runtime inventory: R8 初验为 11/11 unknown、覆盖 0%；Post-R8 R8.1 只对有受控证据的模型补 metadata；owner 随后退役不用的 Qwen3.6，R8.2 远端受控 A/B 后，mxnook 持续 HTTP 502，且 owner 明确表示可忽略，现已从 active inventory 退役；当前 active inventory 为 9/9 已分类（strong=1、weak=8、unknown=0，覆盖 100.0%，full=1/minimal=8），`canary_ready=true`。这只表示 metadata gate READY，behavior canary 尚未启动。Git-ignored providers.json 已做 metadata-only 更新，但未调用 refresh_config；不把剩余缺元数据伪装成弱/强。
 - R8.3 soak: mirror live registry 9/9；strong/weak/40-message long-history 共 7 个真实 primary attempts，7/7 profile events，unattributed=0、churn=0、violations=0，全部 shadow/applied=false；fallback/err1210/byte-identity 3/3；focused 145/145；R0 0-byte。
 - evidence: `docs/injection-governance/r8/report.md`、`docs/injection-governance/r8/shadow-inventory.json`、`docs/injection-governance/r8/capability-audit.md`、`docs/injection-governance/r8/soak-gates.md`、`docs/injection-governance/r8/soak-report.md`、`docs/injection-governance/r8/soak-evidence.json`。
+- evidence_required: true
+
+## R8.4 Prompt Eligibility / Resolved Episode Retirement — ✅ AUDIT PASS（实现未开始）
+- Owner principle: **resolved is retrievable, not injectable**。已解决问题/任务的 user+assistant+tool+reasoning 退出自动 working context，只保留可检索 index/archive；真正 follow-up 再按 ref hydrate。
+- 审计状态语义: DONE=provider prompt 已排除；PARTIAL=已降密/去重/ref 化但仍自动可见；OPEN=缺生命周期门或仍有 stale/observability 注入。不得把 PARTIAL 写成“已经不注入”。
+- P0 发现: resolved episode 尚无 provider-view retirement；非 compact resolved history 还缺完整检索索引；model_switch_notice 复制最近 user/assistant 并持久化继续命令；declaration_reminder 在 final 后写 role=user；Evidence Recovery Manifest 当前 enforce 且每 build user-tail/R2 旁路；future Cognitive packet 扫全部 memory_snapshot；local 每轮固定 command-shaped behavior hint；unknown slot fail-open STATUS；round-exhaustion consumed prefix 在 R1 wrapper 后机械复现失效。
+- 运行只读取证: active 62 sessions / 11061 messages；storage 中 memory_snapshot=382、experience_tip=118、model_switch_notice=21、session_digest_catalog=5、declaration_reminder=3；这些是存在性证据，不冒充 provider-wire 计数。
+- 产物: `docs/injection-governance/eligibility/audit.md`、`docs/injection-governance/eligibility/matrix.json`，并同步 design/requirements/tasks。
+- 边界: 本阶段**不改 `src/`、不改变 R8 `applied=false`、不启动 behavior canary、不进入 R9**。
+- 下一实现门: 先补 resolved episode durable index/hydration，再做中央 Eligibility Gate（history + dynamic + packet + evidence + schema），最后以 provider-view telemetry 验证 P0 全清。
 - evidence_required: true
 
 ## R9 主区应用与收口

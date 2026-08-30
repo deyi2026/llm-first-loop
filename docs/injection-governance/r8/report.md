@@ -286,14 +286,17 @@ R8 达成当前阶段目标：
 - primary/fallback/1210 retry 归因完整；
 - profile 变化不会改变 provider payload；
 - R0/R2/R4/R5/R6 不变量继续成立；
-- 当前真实 catalog 的元数据缺口被显式暴露，未被“自动猜档”掩盖。
+- active catalog capability metadata 已收敛到 9/9 complete，未用模型名/transport failure“自动猜档”补齐；
+- R8.3 live shadow soak 已 PASS，但后续 Prompt Eligibility Audit 发现新的 canary 前置门。
 
 因此状态是：
 
 ```text
 R8 shadow = PASS
-R8 behavior canary = NOT STARTED（R8.3 已通过，具备另立 canary 设计条件）
+R8.3 shadow soak = PASS
+R8.4 Prompt Eligibility audit = PASS / implementation NOT STARTED
+R8 behavior canary = NOT STARTED（被 R8.4 eligibility P0 blockers 冻结）
 R9 = NOT STARTED
 ```
 
-下一阶段若要做行为 canary，应先补齐并审核 provider capability metadata，再另立目标；不得从当前 0% classified coverage 直接升级到 enforce。
+R8.4 的 owner 原则是 **resolved is retrievable, not injectable**。审计确认 resolved conversation/tool chain 仍缺 provider-view retirement，且 model-switch/declaration/evidence-manifest/Cognitive packet 等仍存在 stale/旁路风险。下一阶段不得直接做 behavior canary；应先完成 resolved episode durable index/hydration 与中央 Prompt Eligibility Gate。权威清单见 `docs/injection-governance/eligibility/audit.md`、`eligibility/matrix.json`。

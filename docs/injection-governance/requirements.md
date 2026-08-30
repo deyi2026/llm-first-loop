@@ -157,10 +157,24 @@ R5 **没有**实施 R7 行为 A/B、R8 model-tier shadow 或 R9 主区应用。
 
 R8 **没有**启用任何 profile 行为。Metadata gate 与 R8.3 shadow soak 已 PASS，但 behavior canary 仍是独立后续阶段，必须显式批准并使用受控范围/rollback；R9 继续未开始。
 
+## 4H. R8.4 Prompt Eligibility Audit（只审计，行为未实施）
+
+权威审计：`docs/injection-governance/eligibility/audit.md`；机器清单：`docs/injection-governance/eligibility/matrix.json`。
+
+- 新硬原则：**resolved / consumed / superseded / observability 默认不具备 prompt eligibility**；已解决 Q&A、tool chain、reasoning 与旧程序状态应可检索但不自动可见。
+- Eligibility 必须先于 model profile 与 R2 budget。Budget 只决定 eligible material 的 keep/drop，不能把本来不该进入 prompt 的内容合法化。
+- `ACTIVE + REQUIRED_NOW` 才能继续进入 provider context；若程序可自行处理则 0 prompt，若可通过工具/索引按需 hydrate 则默认不内联正文。
+- resolved episode 在 provider-view 退休前必须建立 durable index/archive + stable ref + hydration 验证；当前 `search_archive` 主要覆盖被压缩历史，尚不能据此直接删除所有未压缩 resolved conversation。
+- durable constraints/decisions 只保留当前 effective state；旧版本标记 superseded 后只留历史检索。
+- unknown program producer 默认应 deny；当前 `unknown -> STATUS` 仅满足 R1 语义安全，不满足 Eligibility fail-closed。
+- Eligibility gate 必须覆盖普通会话历史、`_inject_parts`、Cognitive `_packet_parts`、Evidence Recovery Manifest 和 tool schemas，不能只治理 canonical injection_kind。
+- behavior canary 新增 P0 前置门：resolved episode searchable=100%、resolved auto-visible=0、consumed next-turn visible=0、observability prompt chars=0、unknown producer eligible=0、Evidence Manifest R2 bypass=0、flat/packet eligibility parity=100%。
+- R8.4 当前只落盘审计，没有修改 `src/`，因此不得把 AUDIT PASS 写成“Eligibility 已实现”。
+
 ## 5. 非目标
 
 - 不修改 LLM 本体。
 - 不追求“所有程序信息为零”；必要 system notice 可保留，但不得冒充 user truth，也不得破坏稳定前缀/provider 协议。
 - 不把强模型排除在结构治理之外；**行为 A/B 重点是弱模型，wire invariant 则跨模型强制**。
 - 不让 `err1210.py` 承担正常注入排序/合并职责。
-- 不在本专项处理 REASONING_TAIL 思维链回传。
+- R8.4 允许把 historical reasoning 作为 **Prompt Eligibility surface** 审计，但本审计阶段不修改 `REASONING_TAIL` 参数或 provider reasoning 协议。

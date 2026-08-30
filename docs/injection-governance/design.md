@@ -160,6 +160,36 @@ wire 层按 provider contract 投影：
 
 **R8 实现状态（2026-08-30）：SHADOW PASS / metadata READY / R8.3 SOAK PASS / behavior canary NOT STARTED。** 能力只取当前路由 ProviderRegistry/ModelSpec；沿用既有 strong/weak/unknown，不新增 tier：weak/unknown→minimal，strong+reasoning=false→standard，strong+reasoning=true→full。`injection.profile.shadow` 对 primary/fallback/err1210 retry 按真实 provider attempt 归因，`applied=false`；capability-only 对照 provider payload byte-identical。R8.1/R8.2 将 active inventory 收敛到 9/9 已分类（100.0%，strong=1/weak=8/unknown=0）。R8.3 在 mirror live registry 上完成 bounded shadow soak：strong/weak/长历史共 7 次真实 primary call，profile events=7、unattributed=0、churn=0、violations=0；fallback/1210/byte-identity production-path E2E 3/3 PASS；相邻 focused 145/145、R0 frozen 0-byte。仍未应用 profile 行为。完整证据见 `docs/injection-governance/r8/report.md`、`r8/soak-gates.md` 与 `r8/soak-report.md`。
 
+### L2-6 Prompt Eligibility / 生命周期准入（R8.4 audit gate）
+
+R8.3 之后新增一层比 budget/profile 更前置的硬规则：**不是所有已识别为 REFERENCE/STATUS 的程序信息都有资格进入 prompt。**
+
+Owner 冻结原则：
+
+> **Resolved is retrievable, not injectable.** 已解决并回答完成的用户问题/任务退出自动上下文；原问题、答案、tool chain、reasoning 与历史细节保留在可检索 archive/index，需要时按 ref 精确 hydrate。
+
+生命周期先于注入预算：
+
+```text
+RESOLVED      -> archive/index only
+CONSUMED      -> archive/index only
+SUPERSEDED    -> archive/index only
+OBSERVABILITY -> event/tool/UI only
+ACTIVE        -> 再判断 required_now
+```
+
+只有 `ACTIVE + REQUIRED_NOW` 才可继续进入 representation/profile/R2 budget。即使 active，也优先由程序自行处理或通过 tool/ref 按需读取；“最近 K 轮”“已有 ref”“被识别成 STATUS”都**不能单独构成 prompt eligibility**。
+
+实施约束：
+
+- eligibility gate 必须同时覆盖 ordinary history、dynamic `_inject_parts`、Cognitive `_packet_parts`、Evidence Recovery Manifest 与 tool-schema surface；
+- unknown program producer 默认 deny，不再以 `unknown -> STATUS` 获得 prompt 资格；
+- retire provider view 不删除 session/audit truth；resolved episode 在退休前必须先有 stable ref + 可验证 hydration；
+- durable constraint 只保留当前 effective state，旧版本标 superseded 后转 archive；
+- current human truth、assistant/tool protocol pairing、provider system contract 仍是不可破坏的上位不变量。
+
+**R8.4 审计状态（2026-08-30）：AUDIT PASS / IMPLEMENTATION NOT STARTED。** 审计发现 resolved conversation/tool chain 尚无生命周期退休门；`model_switch_notice` 会复制最近 user/assistant 并持久化“继续任务”；`declaration_reminder` 在 final answer 之后写入 role=user；Evidence Recovery Manifest 在当前 `EVIDENCE_MODE=enforce` 下每 build 直接 append user tail 且旁路 R2；未来 Cognitive packet 会扫描历史全部 memory_snapshot；local provider 每轮固定注入 command-shaped 行为提示；unknown program slot 仍 fail-open 为 STATUS；round-exhaustion consumed 前缀判定被 R1 wrapper 破坏。故 **behavior canary 继续冻结**，先完成 Prompt Eligibility/Resolved Episode Retirement。权威审计见 `docs/injection-governance/eligibility/audit.md` 与 `eligibility/matrix.json`。
+
 ## L3 A/B 验证（可证伪层）
 
 - Fixture: 6 个弱模型任务（含 2 个高吸引陷阱: 会话开头身份问答 + 网页分析任务，复刻 `68fed5f5` 结构），并追加 R0-3 的**指令冲突**与**重复放大** fixture。
