@@ -2,7 +2,7 @@
   "schema": "prompt-eligibility-audit-v1",
   "audit_base_commit": "31df1a3",
   "audit_date": "2026-08-30",
-  "phase": "R8.5_RESOLVED_EPISODE_RETIREMENT",
+  "phase": "R8.8_PROMPT_ELIGIBILITY_BLOCKER_CLOSURE",
   "production_behavior_changed": true,
   "behavior_canary_allowed": false,
   "status_semantics": {
@@ -61,19 +61,20 @@
     {
       "id": "E03",
       "surface": "resolved_user_assistant_episode",
-      "current_status": "PARTIAL",
+      "current_status": "DONE",
       "target_class": "RETRIEVABLE_ONLY",
       "priority": "P0",
-      "current_behavior": "R8.5 indexes newly proven non-empty/non-truncated completed model-answer episodes into a durable EpisodeStore, stamps stable resolved_episode_ref only after fsync succeeds, and removes those messages from future provider working context. Pre-R8.5/legacy turns without explicit resolution proof remain visible fail-open and are not guessed resolved.",
+      "current_behavior": "R8.8 keeps the R8.5 durable-first retirement path and adds conservative pre-R8.5 migration proof from durable event logs. A legacy final answer migrates only when one run segment has exactly one matching assistant message.appended followed by run.end(reason=completed,truncated=false) with matching answer_preview; corrupt/missing/ambiguous proof stays provider-visible fail-open. Read-only runtime census: 136/182 legacy completed-model answers were provable across 19/19 legacy sessions; 46 remained unretired rather than guessed.",
       "target_rule": "Once answered/resolved, default future prompt visibility is zero. Explicit follow-up/continuation may hydrate required fragments from an episode index.",
-      "retrieval_path": "search_records(kind=episode, query=\"\") -> stable episode ref; query=<keyword> searches; query=<episode:... ref> hydrates exact visible user/assistant/tool transcript with bounded paging",
+      "retrieval_path": "search_records(kind=episode, query=\"\") -> stable episode ref; keyword/ref hydration with bounded paging; unproven legacy history remains visible until proof exists",
       "evidence": [
         "src/llm_loop/memory/episode.py",
         "src/llm_loop/core/episode_history.py",
         "src/llm_loop/core/loop/engine.py",
         "src/llm_loop/core/loop/build.py",
         "tests/unit/test_resolved_episode.py",
-        "docs/injection-governance/eligibility/resolved-episode-report.md"
+        "docs/injection-governance/eligibility/resolved-episode-report.md",
+        "docs/injection-governance/eligibility/r88-report.md"
       ]
     },
     {
@@ -124,17 +125,20 @@
     {
       "id": "E07",
       "surface": "memory_snapshot",
-      "current_status": "PARTIAL",
+      "current_status": "DONE",
       "target_class": "REF_ON_DEMAND",
       "priority": "P0",
-      "current_behavior": "R3 still governs current-turn automatic memory eligibility. R8.5 now marks memory_snapshot messages inside a proven resolved episode with the episode ref, removes them from flat future provider history, and also skips resolved refs in Cognitive _packet_parts so the packet side-channel cannot resurrect them. Legacy/unresolved snapshots remain governed by existing R3 behavior.",
+      "current_behavior": "R8.8 makes persisted memory automatic eligibility identity-bound rather than recency-bound: only memory_snapshot.metadata.turn_ref exactly equal to the current human turn may remain in flat provider history or Cognitive packet input. Older, legacy-without-turn_ref, and resolved snapshots are omitted from automatic projection while durable search_records(kind=memory) retrieval remains available.",
       "target_rule": "Eligible only for the current active task dependency. Resolved turn snapshots become retrievable-only. Recency/K is not eligibility.",
       "retrieval_path": "search_records(kind=memory) / exact memory ref; resolved visible episode transcript via episode ref",
       "evidence": [
+        "src/llm_loop/core/prompt_eligibility.py",
         "src/llm_loop/core/loop/build.py",
         "src/llm_loop/core/episode_history.py",
-        "src/llm_loop/core/loop/turn_context.py",
-        "tests/unit/test_resolved_episode.py"
+        "tests/unit/test_prompt_eligibility_r88.py",
+        "tests/unit/test_cr_r1_shadow_projection.py",
+        "tests/unit/test_injection_budget.py",
+        "docs/injection-governance/eligibility/r88-report.md"
       ]
     },
     {
@@ -213,15 +217,16 @@
     {
       "id": "E13",
       "surface": "model_switch_notice",
-      "current_status": "PARTIAL",
+      "current_status": "DONE",
       "target_class": "OBSERVABILITY_ONLY",
       "priority": "P0",
-      "current_behavior": "model_switch_notice still duplicates recent user/assistant text during the active run and remains architecturally wrong as runtime observability. R8.5 prevents a notice inside a proven completed episode from leaking into later turns by retiring the whole episode. Current-run duplication is still OPEN work.",
+      "current_behavior": "R8.8 removes model-switch chat-text replay entirely. A real transition records model.switch observability only; it does not copy recent user/assistant text, append session/tail prompt messages, or issue a program \"continue\" command.",
       "target_rule": "Model routing change is runtime state. Zero prompt by default. If an active task must be resumed, hydrate canonical active-task state rather than chat text.",
-      "retrieval_path": "model routing/status event; episode ref prevents stale next-turn replay but does not replace canonical active-task state",
+      "retrieval_path": "model.switch action/event observability; active-task continuity comes from canonical active state or explicit retrieval, never copied recent chat text",
       "evidence": [
-        "src/llm_loop/core/loop/interop.py:225-289",
-        "src/llm_loop/core/episode_history.py"
+        "src/llm_loop/core/loop/interop.py",
+        "tests/unit/test_model_switch_notice.py",
+        "docs/injection-governance/eligibility/r88-report.md"
       ]
     },
     {
@@ -283,17 +288,16 @@
     {
       "id": "E18",
       "surface": "round_exhaustion_decision",
-      "current_status": "OPEN",
+      "current_status": "DONE",
       "target_class": "ACTIVE_EPHEMERAL",
       "priority": "P0",
-      "current_behavior": "A run-end consumed mechanism exists, but it checks the legacy raw prefix after R1 has wrapped the message in PROGRAM_APPENDIX_NOTICE. Mechanical reproduction shows the consumed predicate and _is_injected_system are both false.",
+      "current_behavior": "R8.8 consumes round-exhaustion control by metadata identity injection_kind=round_exhaustion_decision rather than visible prefix, and moves the consumed mutation before session.save so the lifecycle state survives reload. The message remains current-run ephemeral and cannot resurrect in a later human turn.",
       "target_rule": "One current-run decision only; consumed by metadata identity rather than visible string prefix.",
       "retrieval_path": "run.end/action audit",
       "evidence": [
-        "src/llm_loop/core/loop/engine.py:1040-1055",
-        "src/llm_loop/core/loop/engine.py:1138-1153",
-        "src/llm_loop/core/injection_labels.py:169-200",
-        "mechanical: wrapped_prefix=PROGRAM_APPENDIX_NOTICE, legacy_consumed_predicate=false, skip_injected_system=false"
+        "src/llm_loop/core/loop/engine.py",
+        "tests/unit/test_exhaustion_decision.py",
+        "docs/injection-governance/eligibility/r88-report.md"
       ]
     },
     {
@@ -342,16 +346,21 @@
     {
       "id": "E22",
       "surface": "evidence_recovery_manifest",
-      "current_status": "OPEN",
+      "current_status": "DONE",
       "target_class": "REF_ON_DEMAND",
       "priority": "P0",
-      "current_behavior": "With EVIDENCE_MODE=enforce, every build can append a recent evidence index directly as role=user before _inject_parts; this bypasses R2. The manifest itself tells the model to use evidence search/read tools.",
+      "current_behavior": "R8.8 removes every-build Evidence Recovery Manifest projection from build, closing the R2 bypass. Ledger, ManifestProjector, source reuse and read/search/list recovery remain durable control-plane capabilities. list_evidence(scope=recovery) explicitly returns the same bounded prioritized manifest on demand, preserving queryless discovery without automatic prompt bytes.",
       "target_rule": "Evidence ledger remains tool-addressable. Do not inject the manifest/index by default; hydrate only a proven current dependency.",
-      "retrieval_path": "list_evidence / search_evidence / read_evidence",
+      "retrieval_path": "list_evidence(scope=recovery) for bounded queryless discovery; list_evidence(scope=recent) / search_evidence / read_evidence for targeted recovery",
       "evidence": [
-        "src/llm_loop/core/loop/build.py:892-905",
-        "src/llm_loop/memory/evidence.py:1056-1080",
-        "runtime config: EVIDENCE_MODE=enforce"
+        "src/llm_loop/core/loop/build.py",
+        "src/llm_loop/tools/evidence_tools.py",
+        "src/llm_loop/factory.py",
+        "src/llm_loop/memory/evidence.py",
+        "tests/unit/test_evidence_phase4.py",
+        "tests/unit/test_evidence_phase5.py",
+        "tests/unit/test_evidence_phase7_gate.py",
+        "docs/injection-governance/eligibility/r88-report.md"
       ]
     },
     {
@@ -426,14 +435,16 @@
     {
       "id": "E28",
       "surface": "local_model_behavior_hint",
-      "current_status": "OPEN",
+      "current_status": "DONE",
       "target_class": "OBSERVABILITY_ONLY",
       "priority": "P0",
-      "current_behavior": "Every local-provider build appends a command-shaped tail behavior hint, including program-default file-count/autonomy rules and search guidance.",
+      "current_behavior": "R8.8 deletes the provider_id==local per-build command-shaped behavior patch. Local routing no longer grants evaluation/autonomy/search guidance dynamic prompt authority.",
       "target_rule": "Remove from dynamic prompt. If any rule is truly authoritative, place it once in stable system/rules; evaluation patches do not gain production prompt authority.",
       "retrieval_path": "not_applicable",
       "evidence": [
-        "src/llm_loop/core/loop/build.py:979-995"
+        "src/llm_loop/core/loop/build.py",
+        "tests/unit/test_prompt_eligibility_r88.py",
+        "docs/injection-governance/eligibility/r88-report.md"
       ]
     },
     {
@@ -512,15 +523,17 @@
     {
       "id": "E34",
       "surface": "unknown_program_slot_default",
-      "current_status": "OPEN",
+      "current_status": "DONE",
       "target_class": "OBSERVABILITY_ONLY",
       "priority": "P0",
-      "current_behavior": "Unknown program slots are semantically downgraded to STATUS and can continue into prompt aggregation/budget.",
+      "current_behavior": "R8.8 separates semantic labelling from eligibility. Dynamic prompt producers must match an explicit allowlist before label/profile/budget; an unknown or unattributed slot is dropped and audited as action.prompt_eligibility/unknown_producer_denied. infer_layer keeps its legacy STATUS fallback only for rendering compatibility and can no longer grant prompt access.",
       "target_rule": "Unknown prompt producer is not eligible by default. Only an explicit prompt-producer allowlist may enter eligibility/profile/budget.",
       "retrieval_path": "producer telemetry only",
       "evidence": [
-        "src/llm_loop/core/injection_labels.py:137-143",
-        "src/llm_loop/core/loop/build.py:1138-1148"
+        "src/llm_loop/core/prompt_eligibility.py",
+        "src/llm_loop/core/loop/build.py",
+        "tests/unit/test_prompt_eligibility_r88.py",
+        "docs/injection-governance/eligibility/r88-report.md"
       ]
     }
   ],
@@ -563,17 +576,12 @@
       }
     }
   },
-  "canary_blockers": [
-    "legacy_resolved_history_requires_explicit_resolution_evidence_before_migration",
-    "model_switch_still_replays_recent_task_text_in_current_run",
-    "evidence_manifest_auto_injected_and_bypasses_R2",
-    "legacy_or_unresolved_memory_snapshot_can_still_enter_cognitive_packet",
-    "local_behavior_hint_is_dynamic_command_shaped_prompt",
-    "unknown_program_slot_is_prompt_fail_open",
-    "round_exhaustion_consumed_predicate_broken_after_R1_wrapper"
-  ],
+  "canary_blockers": [],
   "r8_5_status": "PASS_CURRENT_FORMAT; LEGACY_MIGRATION_NOT_STARTED",
   "r8_5_evidence": "docs/injection-governance/eligibility/resolved-episode-report.md",
   "r8_7_tool_eligibility_status": "PASS",
-  "r8_7_evidence": "docs/injection-governance/tool-eligibility/r87-report.md"
+  "r8_7_evidence": "docs/injection-governance/tool-eligibility/r87-report.md",
+  "r8_8_status": "PASS_PENDING_FULL_FIXED_POINT",
+  "r8_8_evidence": "docs/injection-governance/eligibility/r88-report.md",
+  "behavior_canary_gate_state": "PENDING_R8_8_FULL_FIXED_POINT"
 }

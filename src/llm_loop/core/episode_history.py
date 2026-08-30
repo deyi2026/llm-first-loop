@@ -143,12 +143,15 @@ def _index_range(
     *,
     start: int,
     end_inclusive: int,
+    resolution_proven: bool = False,
 ) -> str | None:
     if start < 0 or end_inclusive < start or end_inclusive >= len(messages):
         return None
     user_message = messages[start]
     final_message = messages[end_inclusive]
-    if not is_human_user_message(user_message) or not _completed_model_answer(final_message):
+    if not is_human_user_message(user_message):
+        return None
+    if not _completed_model_answer(final_message) and not resolution_proven:
         return None
     existing_ref = resolved_episode_ref(user_message)
     ref = existing_ref or stable_episode_ref(session_id, user_message, start)
@@ -162,18 +165,125 @@ def _index_range(
     return ref
 
 
-def backfill_completed_episodes(store: EpisodeStore | None, session: Any) -> list[str]:
-    """Index prior current-format completed episodes before the next human run.
+def _legacy_resolution_event_indices(
+    event_store: Any | None,
+    session_id: str,
+    messages: list[Message],
+) -> set[int]:
+    """Return legacy final-answer indices proven by durable event correlation.
 
-    This is intentionally conservative: an episode is backfilled only when its
-    last assistant carries the explicit resolution-candidate proof added by
-    R8.5. Older history without that proof remains visible rather than being
-    guessed resolved.
+    Pre-R8.5 ``run_end_reason=completed`` metadata alone is not enough: older
+    providers could truncate while the loop still reached its normal exit.  A
+    legacy answer is therefore accepted only when one event-log run segment has
+    exactly one matching final assistant append and its following ``run.end``
+    says completed + not truncated with a matching answer preview.  Corrupt or
+    ambiguous logs deny the whole legacy migration path for that session.
+    """
+
+    if event_store is None or not session_id:
+        return set()
+    try:
+        events = list(event_store.read(session_id) or [])
+    except Exception:  # noqa: BLE001 — missing audit proof means fail-open visibility
+        logger.warning(
+            "legacy resolved proof 读取失败（保留 provider 可见）: sid=%s",
+            session_id,
+            exc_info=True,
+        )
+        return set()
+    if int(getattr(event_store, "last_read_skipped", 0) or 0) > 0:
+        logger.warning(
+            "legacy resolved proof 含损坏事件（保留 provider 可见）: sid=%s skipped=%s",
+            session_id,
+            getattr(event_store, "last_read_skipped", 0),
+        )
+        return set()
+
+    proven: set[int] = set()
+    segment: list[Any] = []
+    for event in events:
+        if str(getattr(event, "type", "")) != "run.end":
+            segment.append(event)
+            continue
+
+        end_payload = getattr(event, "payload", None) or {}
+        if (
+            end_payload.get("reason") == "completed"
+            and end_payload.get("truncated") is False
+            and str(end_payload.get("answer_preview") or "")
+        ):
+            candidates: list[int] = []
+            for candidate in segment:
+                if str(getattr(candidate, "type", "")) != "message.appended":
+                    continue
+                payload = getattr(candidate, "payload", None) or {}
+                metadata = payload.get("metadata") or {}
+                if (
+                    payload.get("role") != "assistant"
+                    or metadata.get("answer_origin") != "model"
+                    or metadata.get("run_end_reason") != "completed"
+                ):
+                    continue
+                raw_index = payload.get("index")
+                if raw_index is None:
+                    continue
+                try:
+                    index = int(raw_index)
+                except (TypeError, ValueError):
+                    continue
+                if index < 0 or index >= len(messages):
+                    continue
+                saved = messages[index]
+                saved_md = _metadata(saved)
+                # Current-format messages already have the stronger candidate bit;
+                # this event path exists only to migrate legacy records.
+                if EPISODE_RESOLUTION_CANDIDATE_KEY in saved_md:
+                    continue
+                content = str(payload.get("content") or "")
+                saved_content = str(saved.content or "")
+                if (
+                    saved.role != "assistant"
+                    or saved_md.get("answer_origin") != "model"
+                    or saved_md.get("run_end_reason") != "completed"
+                    or not saved_content.strip()
+                    or content != saved_content
+                ):
+                    continue
+                preview = str(end_payload.get("answer_preview") or "")
+                expected = saved_content[:200]
+                preview_matches = (
+                    preview == expected
+                    if len(saved_content) >= 200
+                    else preview.startswith(saved_content)
+                )
+                if preview_matches:
+                    candidates.append(index)
+            if len(candidates) == 1:
+                proven.add(candidates[0])
+        # A run.end is the hard audit boundary.  Never correlate an assistant
+        # append across two runs.
+        segment = []
+    return proven
+
+
+def backfill_completed_episodes(
+    store: EpisodeStore | None,
+    session: Any,
+    *,
+    event_store: Any | None = None,
+) -> list[str]:
+    """Index prior completed episodes before the next human run.
+
+    Current-format answers use the R8.5 resolution-candidate bit.  Legacy answers
+    may migrate only through the stricter append↔run.end durable event proof.
+    Missing/corrupt/ambiguous proof remains provider-visible rather than guessed.
     """
 
     if store is None:
         return []
     messages: list[Message] = list(getattr(session, "messages", []) or [])
+    session_id = str(getattr(session, "session_id", "") or "")
+    legacy_proven = _legacy_resolution_event_indices(event_store, session_id, messages)
     human_starts = [idx for idx, m in enumerate(messages) if is_human_user_message(m)]
     refs: list[str] = []
     for pos, start in enumerate(human_starts):
@@ -184,10 +294,11 @@ def backfill_completed_episodes(store: EpisodeStore | None, session: Any) -> lis
         try:
             ref = _index_range(
                 store,
-                str(getattr(session, "session_id", "") or ""),
+                session_id,
                 messages,
                 start=start,
                 end_inclusive=end,
+                resolution_proven=end in legacy_proven,
             )
         except Exception:  # noqa: BLE001 — one bad legacy episode must not block ingress
             # Do not partially mark a range if the durable index could not be

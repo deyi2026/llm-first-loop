@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from llm_loop.config import Settings
 from llm_loop.core.episode_history import (
     EPISODE_KEEP_PROVIDER_KEY,
@@ -43,6 +45,54 @@ def _final(text: str, *, completed: bool = True, ts: float = 2.0) -> Message:
         },
     )
 
+
+
+
+def _legacy_final(text: str, *, ts: float = 2.0) -> Message:
+    return Message(
+        role="assistant",
+        content=text,
+        source=MessageSource.USER,
+        ts=ts,
+        metadata={"answer_origin": "model", "run_end_reason": "completed"},
+    )
+
+
+class _ProofEvents:
+    def __init__(self, events, *, skipped: int = 0):
+        self._events = events
+        self.last_read_skipped = skipped
+
+    def read(self, session_id: str):
+        return list(self._events)
+
+
+def _event(type_: str, seq: int, payload: dict):
+    return SimpleNamespace(type=type_, seq=seq, payload=payload)
+
+
+def _legacy_proof_events(answer: str, *, truncated: bool = False, preview: str | None = None):
+    return [
+        _event(
+            "message.appended",
+            1,
+            {
+                "index": 1,
+                "role": "assistant",
+                "content": answer,
+                "metadata": {"answer_origin": "model", "run_end_reason": "completed"},
+            },
+        ),
+        _event(
+            "run.end",
+            2,
+            {
+                "reason": "completed",
+                "truncated": truncated,
+                "answer_preview": answer[:200] if preview is None else preview,
+            },
+        ),
+    ]
 
 def test_episode_store_stable_ref_search_and_bounded_hydration(tmp_path):
     store = EpisodeStore(tmp_path / "episodes")
@@ -172,6 +222,59 @@ def test_index_failure_does_not_mark_or_retire_episode():
     except OSError:
         pass
     assert all(RESOLVED_EPISODE_REF_KEY not in m.metadata for m in sess.messages)
+    assert provider_view_without_resolved_episodes(sess.messages) == sess.messages
+
+
+def test_backfill_migrates_legacy_only_with_unique_durable_run_end_proof(tmp_path):
+    store = EpisodeStore(tmp_path / "episodes")
+    answer = _legacy_final("LEGACY-PROVEN-ANSWER")
+    sess = Session(session_id="sid-legacy-proof", messages=[_user("legacy Q"), answer])
+    events = _ProofEvents(_legacy_proof_events(answer.content))
+
+    refs = backfill_completed_episodes(store, sess, event_store=events)
+
+    assert len(refs) == 1
+    assert all(m.metadata.get(RESOLVED_EPISODE_REF_KEY) == refs[0] for m in sess.messages)
+    assert provider_view_without_resolved_episodes(sess.messages) == []
+    hydrated = store.hydrate("sid-legacy-proof", refs[0], max_chars=4096)
+    assert hydrated is not None and "LEGACY-PROVEN-ANSWER" in hydrated["content"]
+
+
+def test_backfill_legacy_proof_fails_closed_on_truncation_preview_mismatch_or_corruption(tmp_path):
+    cases = [
+        ("truncated", _ProofEvents(_legacy_proof_events("A", truncated=True))),
+        ("preview-mismatch", _ProofEvents(_legacy_proof_events("A", preview="OTHER"))),
+        ("corrupt-log", _ProofEvents(_legacy_proof_events("A"), skipped=1)),
+    ]
+    for name, events in cases:
+        store = EpisodeStore(tmp_path / name / "episodes")
+        sess = Session(session_id=f"sid-{name}", messages=[_user("Q"), _legacy_final("A")])
+        assert backfill_completed_episodes(store, sess, event_store=events) == []
+        assert all(RESOLVED_EPISODE_REF_KEY not in m.metadata for m in sess.messages)
+        assert provider_view_without_resolved_episodes(sess.messages) == sess.messages
+
+
+def test_backfill_legacy_proof_requires_exactly_one_final_candidate_per_run(tmp_path):
+    store = EpisodeStore(tmp_path / "episodes")
+    answer = _legacy_final("A")
+    sess = Session(session_id="sid-ambiguous", messages=[_user("Q"), answer])
+    events = _legacy_proof_events("A")
+    events.insert(
+        1,
+        _event(
+            "message.appended",
+            2,
+            {
+                "index": 1,
+                "role": "assistant",
+                "content": "A",
+                "metadata": {"answer_origin": "model", "run_end_reason": "completed"},
+            },
+        ),
+    )
+    for i, event in enumerate(events, start=1):
+        event.seq = i
+    assert backfill_completed_episodes(store, sess, event_store=_ProofEvents(events)) == []
     assert provider_view_without_resolved_episodes(sess.messages) == sess.messages
 
 

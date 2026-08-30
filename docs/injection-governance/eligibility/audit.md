@@ -1,10 +1,10 @@
 # Prompt Eligibility Audit — resolved is retrievable, not injectable
 
-状态：**AUDIT PASS / R8.5 RESOLVED-EPISODE PASS（new/proven） / legacy migration NOT STARTED**
+状态：**AUDIT PASS / R8.8 SEVEN-BLOCKER IMPLEMENTATION PASS（full fixed-point pending）**
 审计基线：`31df1a3 test(injection): validate R8 shadow soak`
-实现基线：`88db821 docs(injection): audit prompt eligibility lifecycle`
-日期：2026-08-30
-范围：R8.4 完成全 surface 审计；R8.5 只实现“先可检索、后退休”的 resolved-episode 最小闭环。**behavior canary 仍未启动，不进入 R9**。
+实现基线：R8.5 `resolved episode` + R8.7 `dynamic tool eligibility` + R8.8 prompt eligibility closure
+日期：2026-08-31
+范围：R8.4 完成全 surface 审计；R8.5 建立 durable resolved-episode retirement；R8.8 关闭 behavior-canary 前剩余 7 个非工具 blocker。**behavior canary / R9 仍未启动；只有 full fixed-point 通过后才允许把 canary gate 标 READY。**
 
 ## 1. 为什么在 R8.3 之后新增这一门
 
@@ -114,9 +114,11 @@ must be inline      -> 进入 profile + R2 budget
 
 注意：`PARTIAL` **不得**被解释为“已经做过不注入”。例如 R3 把正文缩成两行 ref，只代表降低密度，不代表该 ref 已退出自动 prompt。
 
-机器矩阵仍固定 **34 个 prompt surface**。R8.5 后状态为：`DONE=6`、`KEEP=1`、`PARTIAL=16`、`OPEN=11`；behavior-canary blocker 从 9 项收敛为 7 项。具体逐项状态以 `eligibility/matrix.json` 为准，后续实施继续更新该矩阵而不是另建一份口径。
+机器矩阵仍固定 **34 个 prompt surface**。R8.8 当前状态为：`DONE=14`、`KEEP=1`、`PARTIAL=12`、`OPEN=7`；原 7 个 behavior-canary blocker 已逐项闭合。`behavior_canary_allowed` 在 full fixed-point 完成前仍保持 `false`，避免把 focused pass 误写成生产放行。具体逐项状态以 `eligibility/matrix.json` 为准。
 
 ## 5. P0：behavior canary 前必须解决的 Eligibility 缺口
+
+> **R8.8 supersession note（2026-08-31）**：下面 P0-1~P0-8 保留的是 R8.4/R8.5 根因审计上下文；其中本轮 7 个 blocker 的“当前状态”以本节末 **5.9 R8.8 closure** 与 `matrix.json` 为准，不再以旧代码描述作为现状。`declaration_reminder`（P0-4 / E14）不是本轮七 blocker 之一，仍维持 PARTIAL，后续按 observability-only 单独治理。
 
 ### P0-1 resolved Q&A / tool chain 没有退休边界
 
@@ -220,6 +222,20 @@ R8 当前 `applied=false`，所以 R8.3 没有行为问题；但如果直接启�
 这对 R1 的“来源不可伪装”是安全的，但对 Eligibility 是 fail-open：未来模块只要往 `_inject_parts` 塞内容，就可能自动获得 prompt 资格。
 
 目标：**unknown eligibility = deny/not-eligible**。显式 allowlist 的 prompt-capable producer 才能进入后续 profile/budget。
+
+### 5.9 R8.8 七 blocker closure
+
+R8.8 在不启动 behavior canary 的前提下关闭剩余七项前置缺口：
+
+- **resolved legacy migration / E03 → DONE**：pre-R8.5 只接受 durable event proof。`message.appended` assistant 必须与同 run segment 的 `run.end(reason=completed,truncated=false, answer_preview match)` 唯一相关；损坏/缺失/歧义证据继续 provider-visible。当前 storage dry-run 为 182 条 legacy completed-model answer 中 136 条可证明（74.7%），跨 19/19 legacy sessions；46 条不猜 resolved。
+- **memory lifecycle / E07 → DONE**：`memory_snapshot` 自动可见必须 `turn_ref == current human turn`；旧/legacy/unbound snapshot 同时从 flat provider view 与 Cognitive packet 退出，但 `search_records(kind=memory)` 不变。
+- **model switch / E13 → DONE**：routing transition 只写 `model.switch` observability，不再复制最近 user/assistant，也不再下达“继续任务”程序命令。
+- **round exhaustion / E18 → DONE**：消费依据 `injection_kind=round_exhaustion_decision`，且 mutation 前移到 `session.save` 之前，reload 后不会复活。
+- **Evidence Manifest / E22 → DONE**：每 build 自动 user-tail 注入删除，R2 bypass 关闭；Ledger/ManifestProjector/source resolver 保留。显式 `list_evidence(scope=recovery)` 返回同一 bounded prioritized manifest，忘记关键词/path 仍可 queryless recovery。
+- **local behavior hint / E28 → DONE**：local provider 每轮 command-shaped 评测/自治提示整块删除。
+- **unknown producer / E34 → DONE**：dynamic producer 在 semantic label/profile/budget 前先过显式 allowlist；未知/无归属 source deny + telemetry。`infer_layer()` 的 STATUS fallback 只保留兼容渲染，不再授予 prompt eligibility。
+
+验证进度：R8.8 focused/adjacent **112/112 PASS**；touched pyright **0/0**；R0 离线重算四门 PASS 且 frozen hash 仍为 `b54d47a31109a03d9f926f65b7a3d9f6caf3f24c0d42b1bff26fe338ee74b02a`。Repo-wide unit 的已见失败均已做 baseline/isolated 归因，不把 unrelated debt 纳入 R8.8 修复。最终 detached-clean fixed-point 完成前，canary gate 仍保持 false。
 
 ## 6. P1：应退出自动 prompt 或收敛为 active-ephemeral
 

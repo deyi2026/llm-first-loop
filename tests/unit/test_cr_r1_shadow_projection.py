@@ -14,7 +14,7 @@ from llm_loop.core.message import Message, MessageSource
 from tests.unit.test_injection_fingerprint import _build, _engine
 
 
-def _snap(sess, content: str, turn_ref: str = "t1") -> None:
+def _snap(sess, content: str, turn_ref: int | str = "t1") -> None:
     sess.messages.append(
         Message(
             role="user",
@@ -40,13 +40,16 @@ def _telemetry_rows(engine) -> list[dict]:
     ]
 
 
-def test_shadow_packet_covers_persisted_memory(tmp_path, monkeypatch):
-    """持久化 memory_snapshot 必须投影进 packet（warm_tokens>0）——shadow 度量可预演 enforce."""
+def test_shadow_packet_covers_current_turn_memory_only(tmp_path, monkeypatch):
+    """仅当前 human turn 的持久 memory 可进入 packet；旧 snapshot 不复活。"""
     engine, sess = _engine(tmp_path)  # 默认 cog_runtime_mode=shadow
     monkeypatch.setenv("COG_RUNTIME_TELEMETRY", "1")
-    _snap(sess, "[相关记忆] 任务A已完成，正推进批次D")
+    engine._current_turn_ref = 0
+    _snap(sess, "[相关记忆] 任务A已完成，正推进批次D", turn_ref=0)
     _snap(sess, "[相关记忆] 上次评估通过", turn_ref="t2")
-    _build(engine, sess, [])  # 空 memory_msgs: 不走 fail-open，仅持久化投影路径
+    out = _build(engine, sess, [])  # 空 memory_msgs: 仅持久化 current-turn 投影路径
+    assert "任务A已完成" in str(out)
+    assert "上次评估通过" not in str(out)
     pcs = [r for r in _telemetry_rows(engine) if r.get("event") == "packet_compile"]
     assert pcs, "shadow 必须发 packet_compile（同构计算）"
     assert any(int(r.get("warm_tokens") or 0) > 0 for r in pcs), (

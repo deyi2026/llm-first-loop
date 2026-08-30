@@ -1,59 +1,62 @@
-"""模型切换通知：按会话持久化，避免瞬时 tail 破坏下一请求前缀。"""
+"""R8.8 model switch is observability-only and never prompt/history material."""
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 from llm_loop.core.loop.engine import LoopEngine
 
 
-def _engine():
-    eng = object.__new__(LoopEngine)
+def _engine() -> Any:
+    eng: Any = object.__new__(LoopEngine)
     eng._tip_tail_messages = None
-    eng._events = []
-    eng._append_message_event = lambda sess, msg: eng._events.append(msg)
+    eng._actions = []
+    eng._record_action = lambda kind, action, detail: eng._actions.append((kind, action, detail))
     return eng
 
 
 def _sess():
-    return SimpleNamespace(messages=[], session_id="s1")
+    return SimpleNamespace(
+        messages=[
+            SimpleNamespace(role="user", content="SECRET-RECENT-USER-TEXT"),
+            SimpleNamespace(role="assistant", content="SECRET-RECENT-ASSISTANT-TEXT"),
+        ],
+        session_id="s1",
+    )
 
 
-def test_switch_notice_persisted_on_model_change():
+def test_switch_records_observability_without_prompt_mutation():
     eng = _engine()
     sess = _sess()
+    before = list(sess.messages)
     eng._inject_switch_notice("deepseek/deepseek-v4-flash", "minimax/MiniMax-M3", sess)
+    assert sess.messages == before
     assert eng._tip_tail_messages is None
-    assert len(sess.messages) == 1
-    msg = sess.messages[0]
-    assert msg.role == "user"
-    assert "模型切换感知" in msg.content
-    assert "deepseek/deepseek-v4-flash" in msg.content
-    assert "minimax/MiniMax-M3" in msg.content
-    assert "search_archive" in msg.content
-    assert msg.metadata.get("persisted_injection") is True
-    assert msg.metadata.get("injection_kind") == "model_switch_notice"
-    assert eng._events == [msg]
+    assert eng._actions == [
+        ("model.switch", "observed", "deepseek/deepseek-v4-flash->minimax/MiniMax-M3")
+    ]
+    assert "SECRET-RECENT" not in str(eng._actions)
 
 
-def test_switch_notice_noop_same_model():
+def test_switch_noop_same_model():
     eng = _engine()
     sess = _sess()
     eng._inject_switch_notice("deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-flash", sess)
-    assert sess.messages == []
+    assert eng._actions == []
 
 
-def test_switch_notice_accumulates_persistently():
+def test_switch_records_each_real_transition_without_accumulating_messages():
     eng = _engine()
     sess = _sess()
+    before = list(sess.messages)
     eng._inject_switch_notice("deepseek/deepseek-v4-flash", "minimax/MiniMax-M3", sess)
     eng._inject_switch_notice("minimax/MiniMax-M3", "deepseek/deepseek-v4-flash", sess)
-    assert len(sess.messages) == 2
-    assert "minimax/MiniMax-M3" in sess.messages[0].content
-    assert "deepseek/deepseek-v4-flash" in sess.messages[1].content
+    assert sess.messages == before
+    assert len(eng._actions) == 2
 
 
-def test_switch_notice_empty_from_noop():
+def test_switch_empty_from_noop():
     eng = _engine()
     sess = _sess()
     eng._inject_switch_notice("", "minimax/MiniMax-M3", sess)
-    assert sess.messages == []
+    assert eng._actions == []

@@ -227,64 +227,19 @@ class _InteropMixin:
     # 净增后超出预算，按守卫指引将职责就近下沉；行为逐行一致，仅 fail-open 日志
     # 改用本模块 logger）。
     def _inject_switch_notice(self, switch_from: str, switch_to: str, sess=None) -> None:
-        """模型切换 → 填充切换感知帧到 _tip_tail_messages 槽.
+        """Record a provider/model transition without creating prompt material.
 
-        复用 _tip_tail_messages 机制（tool_exec.py 填充 / build.py 消费）:
-        尾部追加、转 user、一次性消费——system+稳定历史前缀字节不变（缓存友好）。
-        仅本轮注入不持久化（瞬时性事件，对齐 ARCHITECTURE §5 瞬时条目不持久化）。
-        首轮全量 miss 是物理事实（build→routing→452 时序），如实告知 + 给 AI 动作选项。
-        2026-08-22 补充: 告知"继续当前任务"——新模型不从零开始, 从会话历史找回任务
-        目标（最后 user 消息 + 最近 assistant 进度摘要）直接继续, 而非"状态确认"或"请给出
-        任务"（实证: 98605ad7 切换后 AI 说'请给出任务'丢失'配置飞书'任务）。
-        fail-open: 注入异常不阻断切换。
+        Routing state is runtime observability, not a user instruction.  R8.8 removes
+        the historical chat-text replay/"continue current task" notice entirely; active
+        task continuity must come from canonical task state or on-demand retrieval.
         """
         try:
             if not switch_from or not switch_to or switch_from == switch_to:
                 return
-            # 从会话历史提取当前任务（最后 user 消息 + 最近 assistant 进度摘要）
-            _task_hint = ""
-            if sess is not None and getattr(sess, "messages", None):
-                _recent = [m for m in sess.messages
-                           if getattr(m, "role", "") in ("user", "assistant")
-                           and getattr(m, "content", None)][-2:]
-                _hints = []
-                for _m in _recent:
-                    _role = getattr(_m, "role", "")
-                    _c = str(getattr(_m, "content", ""))[:120]
-                    if _role == "user":
-                        _hints.append(f"用户最近指令: {_c}")
-                    else:
-                        _hints.append(f"AI 最近进度: {_c}")
-                if _hints:
-                    _task_hint = "\n".join(_hints) + "\n"
-            notice = (
-                "[模型切换感知] 当前模型已从 "
-                f"{switch_from} 切换到 {switch_to}。新缓存池无此前缀，"
-                "本轮首轮全量 miss（物理事实，成本已发生）；第二轮起尾部瘦身生效。\n"
-                f"{_task_hint}"
-                "**切换不改变任务：继续推进当前会话任务（勿'状态确认'或'请给出任务'）。**"
-                "如需要早期历史细节，可调用 search_archive(query=...) 检索关键帧；"
-                "后续如需声明上下文窗口，可经 declare_context 工具（若已注册）。"
+            self._record_action(
+                "model.switch",
+                "observed",
+                f"{switch_from}->{switch_to}",
             )
-            # 2026-08-27: 模型切换通知必须持久化。旧的一次性 tail 会在下一请求
-            # 被 assistant/新 user 顶替，制造字节前缀断点；且动态 anchor 会继续漂移。
-            if sess is None:
-                return
-            from llm_loop.core.loop.focus import wrap_injection
-
-            msg = Message(
-                role="user",
-                content=wrap_injection(notice, layer=InjectionLayer.STATUS),
-                source=MessageSource.USER,
-                metadata=origin_metadata(
-                    InjectionLayer.STATUS,
-                    injection_kind="model_switch_notice",
-                    persisted_injection=True,
-                    switch_from=switch_from,
-                    switch_to=switch_to,
-                ),
-            )
-            sess.messages.append(msg)
-            self._append_message_event(sess, msg)
-        except Exception:  # noqa: BLE001 — fail-open 不阻断切换
-            logger.debug("切换通知注入异常（fail-open）", exc_info=True)
+        except Exception:  # noqa: BLE001 — observability must not block routing
+            logger.debug("模型切换审计记录异常（fail-open）", exc_info=True)

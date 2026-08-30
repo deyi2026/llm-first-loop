@@ -113,10 +113,10 @@ def test_r0_09_provider_projection_switch_keeps_exact_evidence_set(tmp_path):
     assert "MINIMAX_RAW_ONLY" in str(minimax)
     assert refs_before == refs_deepseek == refs_minimax == refs_deepseek_again
     assert blobs_before == blobs_after
-    md = _manifest(deepseek)
-    mm = _manifest(minimax)
-    md2 = _manifest(deepseek_again)
-    assert md and _manifest_refs(md) == _manifest_refs(mm) == _manifest_refs(md2) == refs_before
+    assert _manifest(deepseek) == _manifest(minimax) == _manifest(deepseek_again) == ""
+    md = engine.registry.evidence_recovery_manifest(limit=100)
+    md2 = engine.registry.evidence_recovery_manifest(limit=100)
+    assert md and _manifest_refs(md) == _manifest_refs(md2) == refs_before
 
 
 def test_r0_12_non_target_guardrails_and_no_provider_policy(monkeypatch):

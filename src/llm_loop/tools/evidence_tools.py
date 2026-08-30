@@ -162,7 +162,15 @@ class EvidenceListTool:
     parameters = {
         "type": "object",
         "properties": {
-            "limit": {"type": "integer", "description": "最近条目数，默认 10，最大 20"},
+            "limit": {"type": "integer", "description": "条目数，默认 10，最大 20"},
+            "scope": {
+                "type": "string",
+                "enum": ["recent", "recovery"],
+                "description": (
+                    "recent=最近 Evidence；recovery=按 durable Recovery Manifest 优先级"
+                    "列出最值得恢复的 bounded refs（忘记关键词/path 时优先）"
+                ),
+            },
         },
         "required": [],
     }
@@ -173,10 +181,12 @@ class EvidenceListTool:
         *,
         freshness: EvidenceFreshness,
         owner_resolver: Callable[[], OwnerScope],
+        recovery_manifest_provider: Callable[[int], str] | None = None,
     ) -> None:
         self.ledger = ledger
         self.freshness = freshness
         self.owner_resolver = owner_resolver
+        self.recovery_manifest_provider = recovery_manifest_provider
 
     def execute(self, **kwargs) -> ToolResult:
         try:
@@ -185,6 +195,29 @@ class EvidenceListTool:
             return _failure(self.name, f"[参数错误] {exc}")
         if limit <= 0 or limit > 20:
             return _failure(self.name, "[参数错误] limit 必须在 1..20")
+        scope = str(kwargs.get("scope", "recent") or "recent").strip().lower()
+        if scope not in {"recent", "recovery"}:
+            return _failure(self.name, "[参数错误] scope 必须是 recent 或 recovery")
+        if scope == "recovery":
+            if self.recovery_manifest_provider is None:
+                return _failure(self.name, "[恢复目录不可用] 当前运行时未配置 Recovery Manifest。")
+            try:
+                manifest = str(self.recovery_manifest_provider(limit) or "")
+            except Exception as exc:  # noqa: BLE001 — explicit recovery failure is reported
+                return _failure(self.name, f"[恢复目录不可用] {type(exc).__name__}: {exc}")
+            if not manifest:
+                return ToolResult(
+                    status=ToolResultStatus.SUCCESS,
+                    content="[list_evidence/recovery] 当前会话暂无可恢复 Evidence。",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            return ToolResult(
+                status=ToolResultStatus.SUCCESS,
+                content=manifest,
+                tool_call_id="",
+                tool_name=self.name,
+            )
         owner = self.owner_resolver()
         records = self.ledger.list_recent(owner, limit=limit)
         if not records:

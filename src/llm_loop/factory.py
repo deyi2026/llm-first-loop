@@ -423,6 +423,7 @@ def build_engine(settings: Settings) -> LoopEngine:
                     evidence_ledger,
                     freshness=evidence_freshness,
                     owner_resolver=_evidence_owner,
+                    recovery_manifest_provider=lambda limit: _evidence_manifest_provider(limit),
                 )
             )
 

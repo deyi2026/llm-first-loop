@@ -391,7 +391,9 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         try:
             from llm_loop.core.episode_history import backfill_completed_episodes
 
-            backfill_completed_episodes(self.episode_store, sess)
+            backfill_completed_episodes(
+                self.episode_store, sess, event_store=self._event_store
+            )
         except Exception:  # noqa: BLE001 — retrieval indexing must not block a run
             logger.warning("resolved episode 历史索引失败（fail-open，不退休）", exc_info=True)
 
@@ -1162,6 +1164,20 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             )
         except Exception:  # noqa: BLE001 — indexing failure must not corrupt delivery
             logger.warning("resolved episode 当前轮索引失败（fail-open，不退休）", exc_info=True)
+        # R8.8: round-exhaustion lifecycle is consumed by producer identity before
+        # persistence.  The previous post-save marker was lost on reload even when
+        # classification was correct, allowing the decision prompt to resurrect.
+        try:
+            for m in sess.messages:
+                if m.role != "system":
+                    continue
+                md = dict(m.metadata or {})
+                if md.get("injection_kind") == "round_exhaustion_decision":
+                    if not md.get("consumed"):
+                        md["consumed"] = True
+                        m.metadata = md
+        except Exception:  # noqa: BLE001 — consumption audit must not block delivery
+            logger.warning("耗尽消息消费标记异常（fail-open）", exc_info=True)
         # M12 深化 T65: run 完成里程碑自我评估提醒（仅提示不强制，EVAL-03；追加后随会话保存）
         self._check_eval_trigger(sess, rounds, milestone=True)
         # T39: 会话保存异常 → 如实标注 + 不抛穿（程序故障不影响 AI 发挥）
@@ -1184,22 +1200,6 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 f"本次回答仍有效，但历史可能未持久化。{extra}"
             )
         self._phase("done")
-        # EVO-20260817-cef296f8 L1b: 耗尽注入的 system 消息 run 结束后标记 consumed
-        # （[轮次决策请求]/[已达轮数上限] 不在 _INJECTED_SYSTEM_PREFIXES，注入后进请求
-        # system 区使前缀分叉 → 后续所有 run 持续 MISS；run 内 AI 决策需可见，run 结束
-        # 后消费掉，下个 run 构建时跳过 → 前缀恢复稳定。fail-open 不影响 run。）
-        try:
-            for m in sess.messages:
-                if m.role != "system":
-                    continue
-                c = m.content or ""
-                if c.startswith("[轮次决策请求]") or c.startswith("[已达轮数上限]"):
-                    md = dict(m.metadata or {})
-                    if not md.get("consumed"):
-                        md["consumed"] = True
-                        m.metadata = md
-        except Exception:  # noqa: BLE001 — 消费标记失败不阻断 run
-            logger.warning("耗尽消息消费标记异常（fail-open）", exc_info=True)
         # EVO-20260817-72fcd94a L3: 缓存健康闭环（fail-open；实现在 _BuildMixin）
         final_answer = self._post_run_cache_health(
             final_answer, sess, tokens_in, tokens_cache_hit, model_used

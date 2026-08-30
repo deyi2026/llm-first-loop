@@ -67,6 +67,8 @@ def test_exhaustion_decision_attribution_end(build_test_engine):
     sess = engine.session.load(sid)
     decision_msgs = [m for m in sess.messages if "[轮次决策请求]" in (m.content or "")]
     assert len(decision_msgs) == 1, "决策请求应恰好注入一次"
+    assert decision_msgs[0].metadata.get("injection_kind") == "round_exhaustion_decision"
+    assert decision_msgs[0].metadata.get("consumed") is True
     assert "已达轮数上限" not in result.final_answer  # AI 已归因收尾，不再叠加罐装反馈
 
 

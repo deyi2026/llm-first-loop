@@ -96,12 +96,14 @@ def test_manifest_is_tail_regenerated_and_provider_neutral(tmp_path):
 
     assert "VISIBLE_TO_MINIMAX_ONLY" not in str(deepseek)
     assert "VISIBLE_TO_MINIMAX_ONLY" in str(minimax)
-    md = _manifest(deepseek)
-    mm = _manifest(minimax)
-    md2 = _manifest(deepseek_again)
-    assert md and md == mm == md2
-    assert ref in md
-    assert deepseek[-1]["content"] == md  # no memory/tail extras: manifest is dynamic tail
+    assert _manifest(deepseek) == _manifest(minimax) == _manifest(deepseek_again) == ""
+    md = engine.registry.evidence_recovery_manifest(limit=8)
+    md2 = engine.registry.evidence_recovery_manifest(limit=8)
+    assert md and md == md2 and ref in md
+    listed = engine.registry.execute(
+        ToolCall(id="list-provider-neutral", name="list_evidence", arguments={"limit": 8})
+    )
+    assert ref in listed.content
     assert deepseek[0]["role"] == "system"
 
 
@@ -147,7 +149,8 @@ def test_progressive_compression_captures_history_and_old_tool_ref_survives(tmp_
         out = engine._build_llm_messages(
             sess, [], max_chars=3500, planned_label="deepseek/model"
         )
-        manifest = _manifest(out)
+        assert _manifest(out) == ""
+        manifest = engine.registry.evidence_recovery_manifest(limit=6)
         assert manifest and tool_ref in manifest
         manifests.append(manifest)
         counts.append(ledger.count(owner))
@@ -262,7 +265,8 @@ def test_manifest_also_survives_tool_round_zero_view(tmp_path):
         planned_label="deepseek/model",
         tool_round_zero=True,
     )
-    manifest = _manifest(out)
+    assert _manifest(out) == ""
+    manifest = engine.registry.evidence_recovery_manifest(limit=8)
     assert manifest and ref in manifest
 
 
@@ -364,15 +368,23 @@ def test_canonical_root_cause_recovery_chain_reads_source_once(tmp_path, monkeyp
     providers = ["deepseek/model"] * 5 + ["minimax/model"] * 2 + ["deepseek/model"] * 3
     for provider in providers:  # exactly ten context rebuilds
         last = engine._build_llm_messages(sess, [], max_chars=3600, planned_label=provider)
-        manifest = _manifest(last)
+        assert _manifest(last) == ""
+        manifest = engine.registry.evidence_recovery_manifest(limit=8)
         assert manifest and ref in manifest
         assert calls["target"] == 1
 
     assert last is not None
-    # The original tool projection is no longer a raw context message.  The stable manifest/ref
-    # is the recovery map that survives instead.
-    raw_without_manifest = [row for row in last if row.get("content") != _manifest(last)]
-    assert "TARGET_HEAD" not in str(raw_without_manifest)
+    # The raw tool projection is gone; durable recovery remains out-of-band and
+    # queryless-discoverable through the evidence control plane.
+    assert "TARGET_HEAD" not in str(last)
+    listed = engine.registry.execute(
+        ToolCall(
+            id="list-canonical",
+            name="list_evidence",
+            arguments={"scope": "recovery", "limit": 8},
+        )
+    )
+    assert ref in listed.content
 
     hydrated = engine.registry.execute(
         ToolCall(
@@ -537,7 +549,7 @@ def test_empty_ledger_does_not_inject_empty_manifest(tmp_path):
     assert _manifest(out) == ""
 
 
-def test_manifest_change_is_projection_version_change_not_nondeterminism(tmp_path):
+def test_evidence_ledger_change_does_not_change_prompt_projection(tmp_path):
     _, engine = _build_engine(tmp_path)
     sid = engine.session.create()
     engine.registry.set_session_id(sid)
@@ -547,9 +559,11 @@ def test_manifest_change_is_projection_version_change_not_nondeterminism(tmp_pat
 
     path = tmp_path / "projection-version.txt"
     path.write_text("projection version evidence", encoding="utf-8")
-    _capture_tool_evidence(engine, sid, path)
-    engine._build_llm_messages(sess, [], max_chars=200000, planned_label="deepseek/model")
-    assert engine._projection_guard_state == "miss"
+    ref = _capture_tool_evidence(engine, sid, path)
+    second = engine._build_llm_messages(sess, [], max_chars=200000, planned_label="deepseek/model")
+    assert engine._projection_guard_state == "ok"
+    assert _manifest(second) == ""
+    assert ref in engine.registry.evidence_recovery_manifest(limit=8)
     engine._build_llm_messages(sess, [], max_chars=200000, planned_label="deepseek/model")
     assert engine._projection_guard_state == "ok"
 

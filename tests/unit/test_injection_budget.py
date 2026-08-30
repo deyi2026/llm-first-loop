@@ -100,12 +100,15 @@ def test_build_budget_gate_also_covers_persisted_program_blocks_when_cognitive_o
     object.__setattr__(engine.settings, "cog_runtime_mode", "off")
     object.__setattr__(engine.settings, "injection_budget_chars", 700)
     persisted = render_program_appendix("历史参考事实 " + "Z" * 900, InjectionLayer.REFERENCE)
+    engine._current_turn_ref = 0
     sess.messages.append(
         Message(
             role="user",
             content=persisted,
             source=MessageSource.USER,
-            metadata=origin_metadata(InjectionLayer.REFERENCE, injection_kind="memory_snapshot"),
+            metadata=origin_metadata(
+                InjectionLayer.REFERENCE, injection_kind="memory_snapshot", turn_ref=0
+            ),
         )
     )
     out = _build(engine, sess, [])

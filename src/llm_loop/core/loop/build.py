@@ -41,6 +41,10 @@ from llm_loop.core.program_recovery import (
     PROGRAM_RECOVERY_SLOT,
     is_program_recovery_message,
 )
+from llm_loop.core.prompt_eligibility import (
+    dynamic_prompt_layer,
+    memory_snapshot_prompt_eligible,
+)
 from llm_loop.core.user_truth_wire import (
     current_ingress_user_truth,
     project_user_truth_tail,
@@ -538,6 +542,40 @@ class _BuildMixin:
             ]
         except Exception:  # noqa: BLE001 — eligibility projection fail-open
             logger.warning("build: resolved episode provider-view 过滤失败（fail-open）", exc_info=True)
+        # INJECTION-GOVERNANCE R8.8: persisted memory is durable retrieval state, not a
+        # recency-based prompt entitlement. Only the snapshot bound to the current human
+        # turn may stay in automatic working context; legacy/unbound/older snapshots are
+        # omitted from the flat provider view. Storage and search_records(kind=memory)
+        # remain untouched.
+        _eligibility_turn_ref = getattr(self, "_current_turn_ref", None)
+        _stale_memory_count = sum(
+            1
+            for _m in base
+            if not memory_snapshot_prompt_eligible(
+                _m, current_turn_ref=_eligibility_turn_ref
+            )
+        )
+        if _stale_memory_count:
+            base = [
+                _m
+                for _m in base
+                if memory_snapshot_prompt_eligible(
+                    _m, current_turn_ref=_eligibility_turn_ref
+                )
+            ]
+            _base_original_indices = [
+                _original_base_index_by_id[id(_m)]
+                for _m in base
+                if id(_m) in _original_base_index_by_id
+            ]
+            try:
+                self._record_action(
+                    "action.prompt_eligibility",
+                    "memory_snapshot_retired",
+                    f"count={_stale_memory_count}",
+                )
+            except Exception:  # noqa: BLE001 — provider hygiene is already applied
+                pass
         # INJECTION-GOVERNANCE R4: persisted recovery is audit history, not future
         # executable context.  New recovery never enters sess.messages; this filter retires
         # pre-R4 durable recovery blocks without mutating storage/event truth.
@@ -938,23 +976,11 @@ class _BuildMixin:
             )
         except Exception:  # noqa: BLE001 — fail-open
             pass
-        # ERC Phase5: provider-neutral Recovery Manifest is regenerated from the durable
-        # Evidence Ledger on every build and appended in the dynamic tail.  It is never part
-        # of the stable system/tools prefix and never relies on the previous build's text.
+        # INJECTION-GOVERNANCE R8.8: Evidence Ledger/Manifest remains durable and
+        # queryable through list/search/read_evidence, but the recovery index itself no
+        # longer has automatic prompt eligibility. This also closes the old R2 bypass.
+        # Keep an empty fingerprint field for projection telemetry schema compatibility.
         _evidence_manifest_content = ""
-        try:
-            if getattr(self.registry, "evidence_mode", "off") == "enforce":
-                _manifest_limit = max(
-                    1, min(20, int(getattr(self.settings, "evidence_manifest_limit", 8) or 8))
-                )
-                _evidence_manifest_content = self.registry.evidence_recovery_manifest(
-                    limit=_manifest_limit
-                )
-                if _evidence_manifest_content:
-                    built.append({"role": "user", "content": _evidence_manifest_content})
-        except Exception:  # noqa: BLE001 - recovery tools remain available even if tail render fails
-            logger.warning("Evidence Recovery Manifest 构建失败（fail-open）", exc_info=True)
-            _evidence_manifest_content = ""
 
         # EVO-20260818（spec §5.3.1-1 c/d，grill-me B1）: interop 外部协调注入——
         # 尾部追加（GATE_NOTE 模式，转 user），system+稳定历史前缀字节不变（注入轮不断前缀）;
@@ -1025,22 +1051,8 @@ class _BuildMixin:
         _tip_orig = tip_msgs
         if tip_msgs:
             tail_msgs = (tail_msgs or []) + tip_msgs
-        # 2026-08-23 任务1（本地模型行为增强，镜像区同步）: local 轮固定尾部追加轻量行为提示。
-        # 内容=给动作/给默认规则/引用代号带证据（对治评测三短板）；走 tail 统一通道
-        # （转 user + 非新指令包装，tail_msgs 已纳入投影指纹不破坏一致性），尾部追加
-        # 缓存友好（system+稳定历史前缀字节不变）。
-        if provider_id == "local":
-            tail_msgs = (tail_msgs or []) + [
-                Message(
-                    role="system",
-                    content=(
-                        "本地模型行为提示：①回答给'你可以这样做'的具体动作，不只说态度；"
-                        "②边界模糊时主动声明默认规则（改≤3文件自主执行、>3或涉生产先列方案等你确认）；"
-                        "③引用代号(M22/r4等)须附一句话证据；④不确定先 search_records/search_archive 检索再答。"
-                    ),
-                    source=MessageSource.SYSTEM,
-                )
-            ]
+        # R8.8: provider-local evaluation/behaviour patches are not runtime prompt
+        # authority. The old per-build command-shaped local hint is deliberately gone.
         # R3/L2-2: SessionDigest 不再每轮全量重放。仅前 K human turns / 显式
         # task-switch 允许把尚未暴露的工具摘要投影成 <=2 行 reference frame；暴露记录
         # 持久化到 sess.messages metadata，跨 compact/restart 可重建 seen-set。
@@ -1182,20 +1194,37 @@ class _BuildMixin:
                     )
         except Exception:  # noqa: BLE001 — fail-open: 任务账本异常不阻断构建
             logger.debug("build: Task Frontier 注入失败（fail-open 跳过）", exc_info=True)
-        # R1/L1: 聚合槽进入 compiler/wire 前先带语义层标签；这里只标记来源，
-        # 不做 R2 预算、不做 R3 条件注入/去重。未知 program 槽安全降级 STATUS。
-        _inject_parts = [
-            (
-                _slot,
-                ensure_semantic_label(
-                    strip_program_appendix_notice(_content),
-                    infer_layer(_content, slot_kind=str(_slot or "")),
-                    slot_kind=str(_slot or ""),
-                ),
+        # R8.8 eligibility precedes semantic profile/budget. ``infer_layer`` may retain
+        # its legacy STATUS rendering fallback, but an unknown producer must not gain
+        # prompt access merely by reaching this list.
+        _eligible_inject_parts: list[tuple[str | None, str]] = []
+        for _slot, _content in _inject_parts:
+            if not str(_content or "").strip():
+                continue
+            _eligible_layer = dynamic_prompt_layer(
+                _content, slot_kind=str(_slot or "")
             )
-            for _slot, _content in _inject_parts
-            if str(_content or "").strip()
-        ]
+            if _eligible_layer is None:
+                try:
+                    self._record_action(
+                        "action.prompt_eligibility",
+                        "unknown_producer_denied",
+                        f"slot={str(_slot or '<none>')[:64]}",
+                    )
+                except Exception:  # noqa: BLE001 — deny decision already applied
+                    pass
+                continue
+            _eligible_inject_parts.append(
+                (
+                    _slot,
+                    ensure_semantic_label(
+                        strip_program_appendix_notice(_content),
+                        _eligible_layer,
+                        slot_kind=str(_slot or ""),
+                    ),
+                )
+            )
+        _inject_parts = _eligible_inject_parts
         _inject_keys = [f"dynamic:{i}" for i in range(len(_inject_parts))]
         _packet_parts: list[tuple[str | None, str]] = list(_inject_parts)
         _packet_keys: list[str] = list(_inject_keys)
@@ -1209,6 +1238,10 @@ class _BuildMixin:
             if _md.get("resolved_episode_ref"):
                 continue
             if _md.get("injection_kind") == "memory_snapshot":
+                if not memory_snapshot_prompt_eligible(
+                    _m, current_turn_ref=_eligibility_turn_ref
+                ):
+                    continue
                 _c = str(getattr(_m, "content", "") or "")
                 if _c.strip():
                     # snapshot 自身已有 outer appendix；嵌入 decision packet 时去掉
