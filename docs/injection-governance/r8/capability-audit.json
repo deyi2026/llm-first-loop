@@ -1,0 +1,162 @@
+{
+  "applied_to_prompt": false,
+  "date": "2026-08-30",
+  "mode": "shadow",
+  "models": [
+    {
+      "aggregate_A": {
+        "completion_rate": 0.1667,
+        "drift_rate": 0.1667,
+        "hard_structural_gate_pass": false,
+        "mean_injection_share": 0.3257,
+        "tasks": 6,
+        "user_dominance_rate": 0.0
+      },
+      "evidence": "controlled_r7_A_live",
+      "model": "cognilocal/qwen3.8-27b-cog",
+      "notes": "configured alias accepted by provider; A-arm completion 1/6 and dominance 0",
+      "reasoning_update": null,
+      "tier": "weak"
+    },
+    {
+      "evidence": "not_tested",
+      "model": "deepseek/deepseek-v4-flash",
+      "notes": "audit shell has no provider credential; no controlled A/B, brand/model name is not evidence",
+      "reasoning_update": null,
+      "tier": "unknown"
+    },
+    {
+      "evidence": "not_tested",
+      "model": "deepseek/deepseek-v4-pro",
+      "notes": "audit shell has no provider credential; no controlled A/B, brand/model name is not evidence",
+      "reasoning_update": null,
+      "tier": "unknown"
+    },
+    {
+      "evidence": "not_tested",
+      "model": "glm/glm-5.3",
+      "notes": "audit shell has no provider credential; no controlled A/B",
+      "reasoning_update": null,
+      "tier": "unknown"
+    },
+    {
+      "evidence": "not_tested",
+      "model": "glm/glm-5.3-flash",
+      "notes": "audit shell has no provider credential; no controlled A/B",
+      "reasoning_update": null,
+      "tier": "unknown"
+    },
+    {
+      "aggregate_A": {
+        "completion_rate": 1.0,
+        "drift_rate": 0.0,
+        "hard_structural_gate_pass": false,
+        "mean_injection_share": 0.3257,
+        "tasks": 6,
+        "user_dominance_rate": 1.0
+      },
+      "aggregate_B": {
+        "completion_rate": 1.0,
+        "drift_rate": 0.0,
+        "hard_structural_gate_pass": true,
+        "mean_injection_share": 0.1644,
+        "tasks": 6,
+        "user_dominance_rate": 1.0
+      },
+      "evidence": "r7_frozen",
+      "model": "local/qwen/qwen3.8-27b",
+      "notes": "A-arm 6/6, drift 0, dominance 1.0; reasoning tokens present on all six controlled responses",
+      "reasoning_tokens": [
+        49,
+        55,
+        228,
+        150,
+        51,
+        74
+      ],
+      "reasoning_update": true,
+      "source_sha256": "814d745c4398f44073f7291481db5a269cd02e9fe9f846be53a61c8d971db970",
+      "tier": "strong"
+    },
+    {
+      "evidence": "runtime_unavailable",
+      "model": "local/qwen3.6-27b-fable-fusion-711-uncensored-heretic-nm-dau-neo-max-mtp",
+      "notes": "not advertised by current local catalog and configured model id returned HTTP 400",
+      "reasoning_update": null,
+      "tier": "unknown"
+    },
+    {
+      "aggregate_A": {
+        "completion_rate": 0.6667,
+        "drift_rate": 0.0,
+        "hard_structural_gate_pass": false,
+        "mean_injection_share": 0.3257,
+        "tasks": 6,
+        "user_dominance_rate": 0.0
+      },
+      "aggregate_B": {
+        "completion_rate": 1.0,
+        "drift_rate": 0.0,
+        "hard_structural_gate_pass": true,
+        "mean_injection_share": 0.1644,
+        "tasks": 6,
+        "user_dominance_rate": 1.0
+      },
+      "evidence": "r7_frozen_plus_alias_probe",
+      "model": "local/qwen3.8-27b-mlx",
+      "notes": "configured alias is accepted and provider reports response_model=qwen3.8-27b-mlx@4bit; frozen @4bit A-arm 4/6 with dominance 0. reasoning tokens observed, but reasoning metadata intentionally not asserted for weak tier",
+      "reasoning_update": null,
+      "source_sha256": "df2c9b70e8adc6f2d8204bd16c00cad76c98a1471758a032a25e52f83fc809c8",
+      "tier": "weak"
+    },
+    {
+      "aggregate_A": {
+        "completion_rate": 0.1667,
+        "drift_rate": 0.0,
+        "hard_structural_gate_pass": false,
+        "mean_injection_share": 0.3257,
+        "tasks": 6,
+        "user_dominance_rate": 0.0
+      },
+      "evidence": "controlled_r7_A_live",
+      "model": "local/qwythos-9b-claude-mythos-5-1m@q4_k_m",
+      "notes": "A-arm completion 1/6 and dominance 0; reasoning tokens observed but not used to upgrade tier",
+      "reasoning_update": null,
+      "tier": "weak"
+    },
+    {
+      "evidence": "not_tested",
+      "model": "minimax/MiniMax-M3",
+      "notes": "audit shell has no provider credential; no controlled A/B",
+      "reasoning_update": null,
+      "tier": "unknown"
+    },
+    {
+      "evidence": "not_tested",
+      "model": "mxnook/glm-5.3-flash",
+      "notes": "audit shell has no provider credential; no controlled A/B",
+      "reasoning_update": null,
+      "tier": "unknown"
+    }
+  ],
+  "policy": {
+    "otherwise": "unknown",
+    "reasoning": "for strong models, assert only with direct provider/runtime evidence; weak models do not require reasoning metadata for R8 canary completeness",
+    "strong_gate": "completion_rate=1.0, drift_rate=0.0, user_dominance_rate=1.0 on the 6-fixture controlled A-arm",
+    "tier_source": "controlled R7 legacy-structure A-arm or explicit runtime evidence; never model/provider name, context, cost or thinking flag",
+    "weak_gate": "completion_rate<0.8 or user_dominance_rate<0.9 on controlled A-arm"
+  },
+  "providers_sha256_after": "e25e74471ab9a3bf98b770c09a995c66377058aba4d4f2bd64be6447250749cd",
+  "providers_sha256_before": "fc7afbaab442834d420985cadf19b327d2027931a3d940e48903a5fb037871e1",
+  "schema": "injection-r8-capability-audit-v1",
+  "summary": {
+    "canary_ready": false,
+    "classified": 4,
+    "coverage_pct": 36.36,
+    "live_registry_reloaded": false,
+    "models_total": 11,
+    "strong": 1,
+    "unknown": 7,
+    "weak": 3
+  }
+}

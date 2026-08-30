@@ -128,6 +128,21 @@ canary_block_reason=capability_metadata_incomplete
 
 R8 **没有修改 `data/providers.json`**。
 
+### 6.1 Post-R8 capability audit（R8.1）
+
+R8 验收后按 owner 指令执行 metadata audit；详见 `capability-audit.md/json`。只对有受控实测证据的 4/11 模型补 metadata，当前 inventory 更新为：
+
+```text
+classified=4/11 = 36.36%
+strong=1, weak=3, unknown=7
+recommended profile: full=1, minimal=10
+canary_ready=false
+```
+
+R8.1 修改了 Git-ignored `data/providers.json` 的 5 个 metadata 字段，但没有调用 `refresh_config`，live registry 未热重载；R8 `mode=shadow, applied=false` 不变。剩余 unknown 不按厂商/模型名猜档，R9 继续未开始。
+
+R8.1 验证：runtime registry parse PASS；R8/provider/event focused 112/112 PASS；inventory byte-reproduction PASS；pyright 0/0；R0 四门 PASS 且 0-byte diff。
+
 ## 7. 结构/预算正交门
 
 在 production-shape fixture 上复跑：

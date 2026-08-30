@@ -151,10 +151,10 @@ R5 **没有**实施 R7 行为 A/B、R8 model-tier shadow 或 R9 主区应用。
 - R8 第一阶段固定 `mode=shadow`、`applied=false`，推荐值不得进入 build、R2 budget、R3 K/seen-set、R4 recovery、R6 provider-view projection 或 provider payload。
 - 归因采用独立 `injection.profile.shadow` 事件而不改写 `request.meta`：primary、每个真实 fallback provider call、err1210 blind/strip retry 均逐 attempt 记录；resolve 失败不冒充 provider attempt。
 - capability-only A/B 证明：同 model id / system / tools / user，只改能力元数据使推荐从 minimal 变 full，实际 provider `messages + tools` 序列化结果 byte-identical。
-- 当前运行时 `data/providers.json` 脱敏 inventory 共 11 个模型，11/11 为 `capability_tier=unknown -> minimal`；显式分类覆盖 0%，`canary_ready=false`。这是“能力元数据未就绪”，不得解释成 11 个模型已验证为弱。
+- R8 初验时运行时 inventory 为 11/11 `unknown -> minimal`、覆盖 0%。Post-R8 R8.1 只对有受控证据的 4/11 补 metadata：strong=1、weak=3、unknown=7，classified/metadata-complete coverage=36.36%，profile full=1/minimal=10，`canary_ready=false`；剩余 unknown 不按模型名/provider/context 猜档。
 - R2×R4×R5×R6 正交矩阵 15/15 PASS；R0 frozen 0-byte；R8/adjacent focused 268/268 PASS（另 4 个 Web/飞书 model-attribution 用例因当前解释器缺 `pypdf` / `lark_oapi` 未纳入，不是 R8 逻辑失败）；touched production + R8 tests pyright 0/0。
 
-R8 **没有**启用任何 profile 行为，也没有修改 `data/providers.json`；进入行为 canary 前必须先补齐并人工审核 capability metadata。
+R8 **没有**启用任何 profile 行为。R8 初验未修改 `data/providers.json`；随后 R8.1 做了可逆 metadata-only 文件更新，但未热重载 live registry。进入行为 canary 前仍必须把 capability metadata 补齐并审核到 100%。
 
 ## 5. 非目标
 
