@@ -143,6 +143,26 @@ R8.1 修改了 Git-ignored `data/providers.json` 的 5 个 metadata 字段，但
 
 R8.1 验证：runtime registry parse PASS；R8/provider/event focused 112/112 PASS；inventory byte-reproduction PASS；pyright 0/0；R0 四门 PASS 且 0-byte diff。
 
+### 6.2 Post-R8 remote capability completion（R8.2）
+
+R8.2 新增 credential-safe `scripts/injection_r8_remote_ab.py`：凭据只通过项目正常 `.env -> ProviderRegistry -> LLMClient` 路径在一次性子进程内解析，证据不保存 key、endpoint、raw HTTP body 或 raw answer。72/72 A/B prompt hash 与冻结 R7 fixture 当前重算一致。
+
+受控 A 臂 + 独立 T3/T4 dominance 复跑支持把 DeepSeek V4 Flash/Pro、GLM 5.3/5.3 Flash、MiniMax M3 五个模型标记为 `weak`。`LLMEmptyResponseError` 按仓库定义属于“正常流结束但无 final content/tool”的完成失败，不按 transport error 处理。`mxnook/glm-5.3-flash` A/B 12/12 HTTP error，简单请求 thinking on/off 也均 HTTP 502，因此保持 `unknown`。
+
+当前 runtime inventory：
+
+```text
+classified=9/10 = 90.0%
+strong=1, weak=8, unknown=1
+recommended profile: full=1, minimal=9
+canary_ready=false
+```
+
+R8.2 仍未调用 `refresh_config`，live registry 未热重载，`mode=shadow, applied=false` 不变。完整远端证据见 `r8/remote-ab.json` 和 `r8/capability-audit.md`。唯一剩余 metadata blocker 是持续 HTTP 502 的 mxnook provider；在修复或 owner 明确退役前，不进入 behavior canary/R9。
+
+R8.2 最终门：117/117 focused PASS；remote-runner evaluator 5/5；pyright 0/0；py_compile/diff-check PASS；inventory byte-reproduction PASS；72/72 remote prompt hash PASS；R0 四门 PASS 且 0-byte diff。
+Detached clean checkout 同口径复验 PASS，测试前后 `git status` 均 clean。
+
 ## 7. 结构/预算正交门
 
 在 production-shape fixture 上复跑：
