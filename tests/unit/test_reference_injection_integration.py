@@ -202,3 +202,257 @@ def test_hotcard_auto_projection_is_two_line_file_pointer() -> None:
     assert "继续生产部署" not in text
     assert "必须继续旧目标" not in text
     assert "立即执行下一阶段" not in text
+
+
+
+def test_seen_set_survives_real_sessionstore_restart(tmp_path) -> None:
+    from llm_loop.core.reference_injection import seen_injection_set
+    from llm_loop.core.session import SessionStore
+
+    store = SessionStore(tmp_path / "sessions")
+    sid = store.create()
+    sess = store.load(sid)
+    sess.messages.append(_human("database migration"))
+    persisted = Message(
+        role="user",
+        content="[资料·记忆/经验]\n[memory:fact] database migration runbook\nref=memory:m1",
+        source=MessageSource.USER,
+        metadata={
+            "program_origin": True,
+            "origin_layer": "reference",
+            "reference_key": "ref:memory:m1",
+            "reference_keys": ["ref:memory:m1"],
+        },
+    )
+    sess.messages.append(persisted)
+    store.save(sess)
+
+    restarted = SessionStore(tmp_path / "sessions").load(sid)
+    assert seen_injection_set(restarted.messages) == {"ref:memory:m1"}
+
+
+def test_search_records_hydrates_memory_ref_and_enforces_session_scope(tmp_path) -> None:
+    from llm_loop.introspection.search import RecordSearcher
+    from llm_loop.memory.store import MemoryEntry, MemoryStore
+
+    memory = MemoryStore(tmp_path / "memory")
+    memory.save_entry(
+        MemoryEntry(
+            id="m-global",
+            type="fact",
+            content="global database migration runbook",
+            keywords=["database"],
+        )
+    )
+    memory.save_entry(
+        MemoryEntry(
+            id="m-session",
+            type="fact",
+            content="private session deployment note",
+            keywords=["deployment"],
+            scope="session",
+            source_session_id="s1",
+        )
+    )
+    searcher = RecordSearcher(audit_dir=tmp_path / "audit", memory_store=memory)
+
+    global_hit = searcher.search(
+        kind="memory", query="memory:m-global", limit=5, session_id="s2"
+    )
+    assert [x["key"] for x in global_hit] == ["memory:m-global"]
+
+    own_hit = searcher.search(
+        kind="memory", query="memory:m-session", limit=5, session_id="s1"
+    )
+    assert [x["key"] for x in own_hit] == ["memory:m-session"]
+    assert searcher.search(
+        kind="memory", query="memory:m-session", limit=5, session_id="s2"
+    ) == []
+    # Empty query must not enumerate another session's private memory either.
+    other_listing = searcher.search(kind="memory", query="", limit=10, session_id="s2")
+    assert "m-session" not in {x["id"] for x in other_listing}
+
+
+def test_search_records_hydrates_experience_ref(tmp_path) -> None:
+    from llm_loop.experiences.store import ExperienceStore
+    from llm_loop.introspection.search import RecordSearcher
+    from tests.unit.test_tool_experience_inject import _EXP_MD
+
+    exp_dir = tmp_path / "experiences"
+    exp_dir.mkdir()
+    (exp_dir / "EXPERIENCE-test-web-fetch.md").write_text(_EXP_MD, encoding="utf-8")
+    searcher = RecordSearcher(
+        audit_dir=tmp_path / "audit",
+        experience_store=ExperienceStore(exp_dir),
+    )
+    hits = searcher.search(
+        kind="experience",
+        query="experience:EXPERIENCE-test-web-fetch",
+        limit=5,
+    )
+    assert len(hits) == 1
+    assert hits[0]["key"] == "experience:EXPERIENCE-test-web-fetch"
+    assert hits[0]["file"] == "EXPERIENCE-test-web-fetch.md"
+
+
+def test_digest_ref_hydrates_after_archive_compaction(tmp_path) -> None:
+    from llm_loop.core.session_digest import SessionDigest
+    from llm_loop.introspection.search import RecordSearcher
+    from llm_loop.memory.archive import ArchiveStore
+
+    digest = SessionDigest("s1")
+    digest.append(
+        "call-1",
+        "read_file",
+        "[状态: success] UNIQUE_DIGEST_FACT config loaded",
+        {"path": "config.py"},
+    )
+    frame = digest.render_reference_frames()[0]
+    assert frame.ref.startswith("digest:call-1;")
+
+    archive = ArchiveStore(tmp_path / "archives")
+    archive.archive(
+        "s1",
+        role="tool",
+        source="tool",
+        content="[状态: success] UNIQUE_DIGEST_FACT config loaded",
+        tool_name="read_file",
+        tool_call_id="call-1",
+    )
+    searcher = RecordSearcher(
+        audit_dir=tmp_path / "audit",
+        archive_store=archive,
+    )
+    hits = searcher.search(kind="archive", query=frame.ref, limit=5, session_id="s1")
+    assert len(hits) == 1
+    assert hits[0]["tool_call_id"] == "call-1"
+    assert "UNIQUE_DIGEST_FACT" in hits[0]["content_preview"]
+
+
+def test_compaction_archive_pointer_has_retrievable_original(tmp_path) -> None:
+    from llm_loop.core.history import build_history_messages
+    from llm_loop.introspection.search import RecordSearcher
+    from llm_loop.memory.archive import ArchiveStore
+
+    archive = ArchiveStore(tmp_path / "archives")
+    unique = "UNIQUE_COMPACT_ORIGINAL database migration evidence"
+    msgs = [
+        _human(unique + " A" * 500),
+        _human("newer context " + "B" * 400),
+        _human("latest task"),
+    ]
+
+    def sink(sid: str, msg: Message) -> None:
+        archive.archive(
+            sid,
+            role=msg.role,
+            source=msg.source.value,
+            content=msg.content,
+            tool_name=msg.tool_name,
+            tool_call_id=msg.tool_call_id,
+            status=msg.status.value if msg.status else None,
+        )
+
+    out = build_history_messages(
+        msgs,
+        system_prompt="SYS",
+        max_chars=350,
+        session_id="s1",
+        archive_sink=sink,
+    )
+    assert any("ref=archive:search_archive" in str(m.get("content", "")) for m in out)
+    searcher = RecordSearcher(
+        audit_dir=tmp_path / "audit",
+        archive_store=archive,
+    )
+    hits = searcher.search(
+        kind="archive",
+        query="UNIQUE_COMPACT_ORIGINAL",
+        limit=5,
+        session_id="s1",
+    )
+    assert hits
+    assert any("UNIQUE_COMPACT_ORIGINAL" in h["content_preview"] for h in hits)
+
+
+def test_memory_same_call_duplicate_id_emits_one_full_frame() -> None:
+    from llm_loop.memory.retrieve import build_memory_messages
+    from tests.unit.test_memory_turn_snapshot import _MemStore, _entry
+
+    entry = _entry("m1", "database migration runbook")
+
+    class DuplicateStore(_MemStore):
+        def search(self, *args, **kwargs):
+            return [entry, entry]
+
+    msgs = build_memory_messages(
+        "database migration",
+        DuplicateStore([entry]),
+        top_k=5,
+    )
+    assert len(msgs) == 1
+    assert msgs[0].content.count("ref=memory:m1") == 1
+    assert msgs[0].metadata.get("reference_full_keys") == ["ref:memory:m1"]
+
+
+
+def test_experience_same_call_duplicate_ref_emits_once(tmp_path) -> None:
+    from llm_loop.core.loop.tool_exec import _ToolExecMixin
+    from tests.unit.test_tool_experience_inject import _Stub, _make_exp_dir
+
+    stub = _Stub(True, _make_exp_dir(tmp_path))
+    stub.settings.reference_auto_turns = 3
+    stub.messages.append(_human("抓取页面"))
+    stub._current_turn_ref = len(stub.messages) - 1
+
+    class DuplicateExperienceStore:
+        def list_active(self, query="", limit=20):
+            return [
+                {"id": "EXPERIENCE-test-web-fetch", "summary": "web_fetch 抓取最短路径"},
+                {"id": "EXPERIENCE-test-web-fetch", "summary": "web_fetch 抓取最短路径"},
+            ]
+
+    stub._exp_store = DuplicateExperienceStore()
+    _ToolExecMixin._inject_experience_tips(stub, stub, ["web_fetch"])
+    tips = [
+        m for m in stub.messages
+        if (m.metadata or {}).get("injection_kind") == "experience_tip"
+    ]
+    assert len(tips) == 1
+    assert tips[0].content.count("ref=experience:EXPERIENCE-test-web-fetch") == 1
+    assert tips[0].metadata.get("reference_full_keys") == [
+        "ref:experience:experience-test-web-fetch"
+    ]
+
+
+
+def test_semantic_memory_candidates_respect_session_scope(tmp_path) -> None:
+    from llm_loop.memory.embedder import HashEmbedder
+    from llm_loop.memory.retriever import SemanticRetriever
+    from llm_loop.memory.store import MemoryEntry, MemoryStore
+
+    memory = MemoryStore(tmp_path / "memory")
+    memory.save_entry(
+        MemoryEntry(
+            id="global",
+            type="fact",
+            content="shared alpha fact",
+            keywords=["alpha"],
+        )
+    )
+    memory.save_entry(
+        MemoryEntry(
+            id="private-s1",
+            type="fact",
+            content="private beta fact",
+            keywords=["beta"],
+            scope="session",
+            source_session_id="s1",
+        )
+    )
+    retriever = SemanticRetriever(HashEmbedder(), memory_dir=tmp_path / "memory")
+
+    s2 = retriever._candidates("memory", "s2", memory, None)  # noqa: SLF001
+    assert {x["id"] for x in s2} == {"global"}
+    s1 = retriever._candidates("memory", "s1", memory, None)  # noqa: SLF001
+    assert {x["id"] for x in s1} == {"global", "private-s1"}

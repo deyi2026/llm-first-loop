@@ -13,20 +13,30 @@ from llm_loop.memory.store import MemoryEntry
 
 
 def test_semantic_retriever_injected_and_used(build_test_engine, tmp_path):
-    """M11: semantic_retriever 注入后，语义检索命中（mode 标注注入记忆消息）."""
+    """R3: semantic retriever is called with the current sid; prompt gets pointer form."""
     engine, fake = build_test_engine([{"content": "最终回答。"}])
-    # 装配语义检索器（模拟 EMBEDDING_PROVIDER=hash）
     retriever = SemanticRetriever(HashEmbedder(), memory_dir=str(tmp_path / "data" / "memory"))
+    calls: list[dict] = []
+    original_search = retriever.search
+
+    def counted_search(*args, **kwargs):
+        calls.append(dict(kwargs))
+        return original_search(*args, **kwargs)
+
+    retriever.search = counted_search  # type: ignore[method-assign]
     engine.semantic_retriever = retriever  # type: ignore[attr-defined]
-    # 注入一条语义相关记忆
     engine.memory.save_entry(
         MemoryEntry(id="", type="fact", content="用户喜欢蓝色", keywords=["蓝色"])
     )
     sid = engine.session.create()
     engine.run(sid, "喜欢的色彩是？")
-    # 语义检索标注出现在记忆消息中
+
+    assert calls and calls[0].get("session_id") == sid
     last_call = fake.calls[0]["messages"]
-    assert any("语义检索生效" in str(m.get("content", "")) for m in last_call)
+    joined = "\n".join(str(m.get("content", "")) for m in last_call)
+    assert "[memory:fact] 用户喜欢蓝色" in joined
+    assert "ref=memory:" in joined
+    assert "语义检索生效" not in joined  # R3 不再把检索 mode 当资料正文自动注入
 
 
 def test_default_config_keyword_path_regression(build_test_engine):
@@ -39,4 +49,6 @@ def test_default_config_keyword_path_regression(build_test_engine):
     sid = engine.session.create()
     engine.run(sid, "Python 相关")
     last_call = fake.calls[0]["messages"]
-    assert any("[相关记忆]" in str(m.get("content", "")) for m in last_call)
+    joined = "\n".join(str(m.get("content", "")) for m in last_call)
+    assert "[memory:fact] Python 内容" in joined
+    assert "ref=memory:" in joined

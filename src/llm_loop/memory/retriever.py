@@ -265,6 +265,10 @@ class SemanticRetriever:
         cands: list[dict] = []
         if scope in {"memory", "all"} and memory is not None:
             for e in memory.all():
+                if getattr(e, "scope", "global") == "session" and not (
+                    session_id and getattr(e, "source_session_id", "") == session_id
+                ):
+                    continue
                 cands.append(
                     {
                         "kind": "memory",

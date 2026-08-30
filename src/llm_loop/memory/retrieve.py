@@ -112,6 +112,7 @@ def build_memory_messages(
                 text,
                 top_k=top_k,
                 scope="memory",
+                session_id=session_id,
                 memory=store,
                 keyword_results=[
                     {"kind": "memory", "id": e.id, "content": e.content, "key": f"memory:{e.id}"}
@@ -144,6 +145,7 @@ def build_memory_messages(
     seen = seen_reference_keys or set()
     frames = []
     emitted_entries = []
+    emitted_keys: set[str] = set()
     for e in final:
         ref = f"memory:{e.id}"
         frame = render_reference_frame(
@@ -154,10 +156,11 @@ def build_memory_messages(
             seen_keys=seen,
             emit_seen_ref=emit_seen_refs,
         )
-        if frame.duplicate and not frame.content:
+        if frame.key in emitted_keys or (frame.duplicate and not frame.content):
             if suppressed_out is not None:
                 suppressed_out.append({"source": "memory", "key": frame.key, "ref": frame.ref})
             continue
+        emitted_keys.add(frame.key)
         frames.append(frame)
         emitted_entries.append(e)
 

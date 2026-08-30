@@ -82,8 +82,9 @@ R1 **没有**实现预算、按需/去重、恢复单边界、身份剥离、use
 - compact/archive 不再自动回灌旧消息片段、`[压缩关键事实]` 或 `[压缩档案目录]`，只保留两行 `ref=archive:search_archive` 状态；原文仍完整可检索。
 - hotcard 自动表示降为两行状态 + `ref=file:.../task_hotcard.json`；完整结构可 `read_file`，恢复/消费语义未提前进入 R4。
 - 09c44093 x18 重复 trap：同一 `memory:m1` 连续命中 18 次，完整正文只注入一次。
+- adversarial hardening：human user 中的 `ref=` 不得污染 seen-set；`memory:<id>` / `experience:<id>` / digest archive ref 必须能由对应检索路径精确水合；keyword/semantic memory 检索都在候选层保持 session scope；真实 SessionStore restart 后 seen-set 仍成立。
 - R3 暴露并修复了旧 compact anchor 伪 PASS：真实 user anchor 现在保留原消息本体，而不是归档后靠 `[压缩关键事实]` 字符串 echo 假装仍在。
-- focused 237 tests PASS；R2 15 点预算矩阵继续满足 `actual <= used <= budget`；R0 frozen 0-byte diff。
+- 原 R3 focused 237 tests PASS；post-R3 adversarial audit 扩展为 281/281 PASS；R2 15 点预算矩阵继续满足 `actual <= used <= budget`；R0 frozen 0-byte diff。
 
 R3 **没有**实现恢复单边界、身份问答剥离、user-truth 物理尾位 / provider wire invariant 或行为 A/B。
 

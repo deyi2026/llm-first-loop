@@ -348,6 +348,7 @@ class _ToolExecMixin:
                 self._exp_store = store
 
             _frames: list[tuple[object, str]] = []  # (ReferenceFrame, originating tool/skill)
+            _emitted_ref_keys: set[str] = set()
             for name in _candidate:
                 hits = store.list_active(query=name, limit=2)
                 for hit in hits:
@@ -361,7 +362,7 @@ class _ToolExecMixin:
                         seen_keys=_seen_refs,
                         emit_seen_ref=_policy.task_switch,
                     )
-                    if _frame.duplicate and not _frame.content:
+                    if _frame.key in _emitted_ref_keys or (_frame.duplicate and not _frame.content):
                         try:
                             self._record_action(
                                 "injection_duplicate_suppressed",
@@ -371,6 +372,7 @@ class _ToolExecMixin:
                         except Exception:  # noqa: BLE001
                             pass
                         continue
+                    _emitted_ref_keys.add(_frame.key)
                     _frames.append((_frame, name))
                     if len(_frames) >= 4:
                         break
@@ -387,7 +389,7 @@ class _ToolExecMixin:
                         seen_keys=_seen_refs,
                         emit_seen_ref=_policy.task_switch,
                     )
-                    if _frame.duplicate and not _frame.content:
+                    if _frame.key in _emitted_ref_keys or (_frame.duplicate and not _frame.content):
                         try:
                             self._record_action(
                                 "injection_duplicate_suppressed",
@@ -397,6 +399,7 @@ class _ToolExecMixin:
                         except Exception:  # noqa: BLE001
                             pass
                         continue
+                    _emitted_ref_keys.add(_frame.key)
                     _frames.append((_frame, sname))
                     if len(_frames) >= 4:
                         break

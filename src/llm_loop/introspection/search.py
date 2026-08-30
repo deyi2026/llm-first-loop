@@ -143,7 +143,7 @@ class RecordSearcher:
             raise ValueError(f"kind '{kind}' 不在可选范围: {', '.join(sorted(_VALID_KINDS))}")
 
         if kind == "memory":
-            return self._search_memory(query, limit)
+            return self._search_memory(query, limit, session_id=session_id)
         if kind == "archive":
             return self._search_archive(query, limit, session_id)
         if kind == "experience":  # P1-2: 经验库检索
@@ -266,7 +266,7 @@ class RecordSearcher:
                 content_key="text",
             )
         if kind == "all":
-            results += self._search_memory(query, each_limit)
+            results += self._search_memory(query, each_limit, session_id=session_id)
             results += self._search_archive(query, each_limit, session_id)
             results += self._search_experience(query, each_limit)  # P1-2: 经验库并列返回
         return results[:limit]
@@ -354,50 +354,90 @@ class RecordSearcher:
         return merged
 
     def _search_experience(self, query: str, limit: int) -> list[dict]:
-        """P1-2: 经验库检索（None 时返回空，零回归）。"""
+        """P1-2/R3: experience search with exact ``experience:<id>`` hydration."""
         if self._experience_store is None:
             return []
+        raw = str(query or "").strip()
+        exact = raw[len("experience:") :] if raw.lower().startswith("experience:") else raw
+        if exact:
+            doc = self._experience_store.get(exact)
+            if doc is not None:
+                stem = exact.removesuffix(".md")
+                return [
+                    {
+                        "kind": "experience",
+                        "ts": doc.updated_at or doc.created_at,
+                        "id": stem,
+                        "summary": doc.title,
+                        "file": f"{stem}.md",
+                        "tags": doc.tags,
+                        "source": doc.source,
+                        "status": doc.status,
+                        "key": f"experience:{stem}",
+                    }
+                ][:limit]
         return self._experience_store.list_active(query, limit)
 
-    def _search_memory(self, query: str, limit: int) -> list[dict]:
+    @staticmethod
+    def _memory_visible_in_session(entry: Any, session_id: str) -> bool:
+        return getattr(entry, "scope", "global") != "session" or (
+            bool(session_id) and getattr(entry, "source_session_id", "") == session_id
+        )
+
+    @staticmethod
+    def _memory_record(entry: Any) -> dict:
+        return {
+            "kind": "memory",
+            "ts": entry.created_at,
+            "id": entry.id,
+            "summary": _memory_progressive_summary(entry),
+            "file": "memory/index.json",
+            "key": f"memory:{entry.id}",
+        }
+
+    def _search_memory(
+        self, query: str, limit: int, session_id: str = ""
+    ) -> list[dict]:
+        """R3: keyword search plus exact ``memory:<id>`` hydration with scope isolation."""
         if self._memory is None:
             return []
-        if not query:
-            entries = self._memory.all()
-            return [
-                {
-                    "kind": "memory",
-                    "ts": e.created_at,
-                    "id": e.id,
-                    "summary": e.content[:300],
-                    "file": "memory/index.json",
-                }
-                for e in entries[:limit]
+        raw = str(query or "").strip()
+        exact = raw[len("memory:") :] if raw.lower().startswith("memory:") else raw
+        if exact:
+            entry = self._memory._by_id(exact)  # noqa: SLF001 - exact ref hydration
+            if entry is not None and self._memory_visible_in_session(entry, session_id):
+                return [self._memory_record(entry)][:limit]
+        if not raw:
+            entries = [
+                e
+                for e in self._memory.all()
+                if self._memory_visible_in_session(e, session_id)
             ]
-        keyword_hits = self._memory.search(query.split(), top_k=limit)
-        keyword_dicts = [
-            {
-                "kind": "memory",
-                "ts": e.created_at,
-                "id": e.id,
-                # SkillZip PathHydrate 借鉴（渐进水合）: procedure 命中时优先返回
-                # "已验解法"段（契约级可执行信息），非 procedure 或无法提取则回退整条前 300 字
-                "summary": _memory_progressive_summary(e),
-                "file": "memory/index.json",
-                "key": f"memory:{e.id}",
-            }
-            for e in keyword_hits
-        ]
-        # T31: 语义召回（预算内，失败/不可用如实降级为关键词）
+            return [self._memory_record(e) for e in entries[:limit]]
+        keyword_hits = self._memory.search(
+            raw.split(), top_k=limit, session_id=session_id
+        )
+        keyword_dicts = [self._memory_record(e) for e in keyword_hits]
+        # T31: semantic recall keeps the same session-scoped keyword seed.
         if self._semantic is not None and self._semantic.semantic_available():
             result = self._semantic.search(
-                query,
+                raw,
                 top_k=limit,
                 scope="memory",
+                session_id=session_id,
                 memory=self._memory,
                 keyword_results=keyword_dicts,
             )
-            return self._merge_semantic(result, keyword_dicts, "memory")
+            merged = self._merge_semantic(result, keyword_dicts, "memory")
+            return [
+                h
+                for h in merged
+                if not str(h.get("id", ""))
+                or (
+                    (entry := self._memory._by_id(str(h.get("id", "")))) is None
+                    or self._memory_visible_in_session(entry, session_id)
+                )
+            ][:limit]
         return keyword_dicts
 
     def _search_archive(self, query: str, limit: int, session_id: str) -> list[dict]:

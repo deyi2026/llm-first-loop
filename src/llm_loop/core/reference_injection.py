@@ -17,15 +17,21 @@ import re
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from llm_loop.core.injection_labels import reference_has_imperative
+from llm_loop.core.injection_labels import (
+    InjectionLayer,
+    detect_program_layer,
+    reference_has_imperative,
+)
 
 DEFAULT_REFERENCE_AUTO_TURNS = 3
 MAX_REFERENCE_FACT_CHARS = 180
 
 _TASK_SWITCH_RE = re.compile(
     r"^\s*(?:"
-    r"新任务|新的任务|换个话题|换一个话题|另一个问题|另外一个问题|"
-    r"接下来换|接下来处理|转到|现在改成|改做|重新开始|"
+    r"新任务(?:[：:]|\s|$)|新的任务(?:[：:]|\s|$)|"
+    r"换个话题|换一个话题|另一个问题|另外一个问题|"
+    r"接下来换(?:个|一个)?(?:任务|话题|问题)|"
+    r"换到(?:另一个|新的)(?:任务|话题|问题)|"
     r"new\s+task|switch\s+(?:topic|task)|another\s+(?:question|task)"
     r")",
     re.IGNORECASE,
@@ -123,23 +129,34 @@ def reference_key(source: str, *, ref: str = "", content: str = "") -> str:
 
 
 def seen_injection_set(messages: Iterable[Any]) -> set[str]:
-    """Rebuild the session-scoped seen set from durable message metadata.
+    """Rebuild the session-scoped seen set from durable *program* reference evidence.
 
-    Legacy R1 messages are also recognized from visible ``ref=...`` tokens so an
-    upgraded process does not immediately re-inline already exposed references.
+    Canonical R3 metadata is authoritative. Visible ``ref=...`` parsing exists only
+    for legacy program/reference messages; genuine user text must never be allowed
+    to poison the dedup set merely by mentioning a reference token.
     """
     seen: set[str] = set()
     for message in messages:
         md = _message_metadata(message)
-        one = md.get("reference_key")
-        if isinstance(one, str) and one:
-            seen.add(one)
-        many = md.get("reference_keys")
-        if isinstance(many, (list, tuple, set)):
-            seen.update(str(x) for x in many if str(x))
         content = str(_message_attr(message, "content", "") or "")
-        for match in _REF_TOKEN_RE.finditer(content):
-            seen.add(reference_key("legacy", ref=match.group(1)))
+        layer = str(md.get("origin_layer") or "")
+        canonical_user = layer == InjectionLayer.USER_INSTRUCTION.value and md.get("program_origin") is not True
+        program_reference = (
+            md.get("program_origin") is True
+            or layer == InjectionLayer.REFERENCE.value
+            or detect_program_layer(content) == InjectionLayer.REFERENCE
+        )
+        if canonical_user:
+            continue
+        if program_reference:
+            one = md.get("reference_key")
+            if isinstance(one, str) and one:
+                seen.add(one)
+            many = md.get("reference_keys")
+            if isinstance(many, (list, tuple, set)):
+                seen.update(str(x) for x in many if str(x))
+            for match in _REF_TOKEN_RE.finditer(content):
+                seen.add(reference_key("legacy", ref=match.group(1)))
     return seen
 
 

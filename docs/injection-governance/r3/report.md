@@ -233,12 +233,72 @@ R3 没有：
 
 因此 R3 PASS 的含义是：**自动资料已经从“每轮全文投喂”进入“受控窗口 + 两行目录 + session 级一次正文 + 主动检索”的结构时代**，而不是整个注入治理专项已经结束。
 
-## 9. Clean-checkout 基线完整性说明
+## 9. Clean-checkout 基线完整性债务 — ✅ CLOSED
 
-R3 提交后额外尝试了 detached clean-worktree 复验。collection 在进入 R3 测试逻辑前失败，原因是 **R3 基线 `768ba03` 已存在的仓库完整性债务**：
+R3 提交后 detached clean-worktree 曾在 collection 前失败。根因不是 R3，而是更早的 prefix-layer PoC 提交遗漏文件：
 
-- `src/llm_loop/core/loop/engine.py` 在 `768ba03` 已直接 import `llm_loop.tools.prefix_layer`；
-- 但 `src/llm_loop/tools/prefix_layer.py` 在 `768ba03` 并未被 git 跟踪，当前也仍是专项外 untracked 工作区文件；
-- `git diff 768ba03..R3 -- src/llm_loop/core/loop/engine.py` 为空，R3 未引入这条依赖。
+- `engine.py` 自 commit `5e110ae` 起 unconditional import `llm_loop.tools.prefix_layer`；
+- `prefix_layer.py` 与专项测试当时存在于工作区，但未被 git 跟踪；
+- 因此 `256e9fb` 的纯 git checkout 需要人工 overlay 才能 import `LoopEngine`。
 
-因此纯 git checkout 无法独立 collection `LoopEngine` 相关测试。R3 没有为“让 clean checkout 变绿”而夹带该专项外 prefix-layer 文件。进一步的隔离复验仅把当前那一个既有 `prefix_layer.py` 覆盖进 detached R3 worktree，其他脏工作区修改全部不带入；结果 **237 tests PASS，touched production pyright 0/0，py_compile PASS**。这证明 R3 本身不依赖 scheduler/webui/cognitive 等其他未提交修改，同时保留 prefix-layer 缺失为后续仓库完整性债务。
+该仓库完整性债务已在独立提交 **`d7ec87c fix(prefix): restore layered prefix integrity`** 关闭，且没有夹进 R3 hardening：
+
+- 只提交 `engine.py`、`prefix_layer.py`、`test_prefix_layered.py` 三个文件；
+- 同时修复两个启用态 P1：prefix 动态状态改为 session-scoped，且动态 schema 匹配改用当前 user turn，而非长历史第一条 user；
+- detached clean checkout 无任何 untracked overlay 时 `LoopEngine` import PASS；
+- prefix 13/13、邻接 40/40 PASS；pyright 0/0；验证后 clean worktree 仍为空。
+
+## 10. Post-R3 adversarial audit — ✅ PASS
+
+R3 机械验收后又做了一轮“构造反例优先”的独立审查。目标不是重复跑原测试，而是验证 R3 的三个核心承诺是否真的闭环：**seen-set 不可被用户污染、ref 必须可主动水合、task-switch 不能轻易误开资料窗口**。
+
+### 10.1 审查前可复现的 P1
+
+1. **human ref poisoning**：真实用户消息只要包含 `ref=memory:m1`，旧 `seen_injection_set()` 就会把它当成“程序已注入过”，从而抑制首次自动事实帧。
+2. **memory / experience 假指针**：自动帧虽然显示 `ref=memory:<id>` / `ref=experience:<id>`，但 `search_records` 用该 ref 查询返回空；只能猜内容关键词才能命中。
+3. **task-switch 过宽**：`转到第3页看看`、`接下来处理测试失败`、`重新开始这一步` 均被误判成新任务，K+1 后会重新开放自动资料目录。
+4. **memory 显式检索 scope 缺口**：`RecordSearcher._search_memory()` 未传当前 session_id，空查询也会枚举 session-scoped memory；这与 memory store 的会话隔离契约不一致。
+5. **digest ref 不能按 ref 找回 archive**：`digest:<tool_call_id>;archive_tool=...` 只是一段描述，ArchiveStore 搜索域不含 `tool_call_id/id`，按 ref 查询为空。
+6. **semantic memory scope 绕行**：`SemanticRetriever._candidates(scope="memory")` 直接遍历 `memory.all()`，未按 `scope=session/source_session_id` 过滤；自动注入虽在后段再次过滤，但 semantic 候选生成与显式 search 仍不满足单一会话隔离契约。
+
+### 10.2 Hardening
+
+- seen-set 只接受 canonical program/reference metadata，legacy `ref=` 文本回退也仅允许已识别的 program reference 消息；canonical user text 永不写 seen-set。
+- task-switch detector 收紧为明确任务切换词（如“新任务/换个话题/接下来换一个任务”）；同任务导航、重试、改方案不再重开 catalog。
+- `search_records(kind=memory, query="memory:<id>")` 支持 exact hydration，并强制 global/session scope；keyword/空查询同样带当前 session_id。
+- `search_records(kind=experience, query="experience:<id>")` 支持按 ExperienceStore ID 精确水合。
+- ArchiveStore 搜索域加入 archive id / tool_call_id，并识别 `archive:<id>` 与 `digest:<tool_call_id>;...`，因此 digest pointer 在原工具结果进入 archive 后可直接按 ref 找回。
+- SemanticRetriever 在 memory candidate generation 阶段即按 session scope 过滤；自动注入与 RecordSearcher 均显式传当前 `session_id`，不再依赖结果末端二次过滤兜底。
+- memory / experience / skill 同一次 retrieval 的 stable-ref 也做局部去重，防上游重复结果在单个 catalog 内生成两份完整正文。
+- hash fallback 继续保持“同 source + 规范化内容”身份：仅折叠空白/大小写；内容变化或 source 不同不会碰撞。
+
+### 10.3 对抗式证据
+
+`test_reference_injection_policy.py` + `test_reference_injection_integration.py` 现在覆盖并通过：
+
+- 真实 human `ref=` poisoning = 0；legacy program ref 仍可迁移去重；
+- 真实 `SessionStore.save -> 新 SessionStore.load` 后 seen-set 可从 durable metadata 重建；
+- `memory:<id>` / `experience:<id>` exact ref 可导航；session memory 不跨 sid 暴露；
+- `digest:<tool_call_id>;...` 在 ArchiveStore 中可按 ref 精确找回；
+- `build_history_messages -> ArchiveStore -> RecordSearcher` 可找回 compact 原文；
+- 同次 memory / experience 重复 stable ID 均只产生一份完整帧；
+- 同任务导航短语不触发 switch，明确换话题/新任务仍触发；
+- hash fallback 的 whitespace/case 规范化成立，语义变化和 source 边界不被错误合并。
+- semantic memory candidate：其他 session 的 private memory 在候选生成前即被排除；`test_semantic_wiring.py` 同时锁住主循环 semantic 调用携带当前 sid。
+
+专项 policy/integration 共 **26/26 PASS**。
+
+### 10.4 Post-audit 回归门
+
+在原 R3 验收之外，post-audit 扩展集合实际 collect **281 tests**，覆盖 R1/R2/R3、History/Compact、Digest、Archive/Search、CR-R1 mode/state/projection/barrier/invariants、Cognitive compiler/state/integration，结果 **281/281 PASS**。
+
+冻结门：
+
+- R0 analyzer：R0-1~R0-4 全 PASS，`docs/injection-governance/r0` **0-byte diff**；
+- R2：`off/shadow/enforce × 512/700/900/2000/8000` 15 点全部满足 `actual <= accounting used <= budget`；
+- touched production `py_compile` PASS；
+- touched production `pyright` **0 errors / 0 warnings / 0 informations**；
+- `git diff --check` PASS；
+- `ruff` 仍未安装，不宣称 lint PASS。
+
+该审查仍**没有进入 R4/R5/R6/R7**：未改变 recovery 次数/边界、未做身份问答剥离、未重排 user truth/wire，也未把 K=3 升级为最终值。

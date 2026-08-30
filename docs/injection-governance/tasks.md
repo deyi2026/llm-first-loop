@@ -33,7 +33,7 @@
 ## R3 资料按需化 + 指针化 + 会话级去重（L2-2）— ✅ PASS
 - 内容: `REFERENCE_AUTO_TURNS` 候选 K + 显式任务切换门；每帧 ≤2 行（事实 + ref）；stable ref 优先/hash fallback；seen-set 从持久 message metadata 重建，跨 compact 保持。
 - 产物: `src/llm_loop/core/reference_injection.py`、`tests/unit/test_reference_injection_{policy,integration}.py`、`docs/injection-governance/r3/report.md`；memory/experience/skill/digest/compact/hotcard 自动表示迁移到 pointer-era。
-- 验收: K+1 后 memory 自动检索即停止；09c44093 x18 stable-ref trap 完整正文仅 1 次；显式 task switch 时 seen ref 最多 1 行、新 ref ≤2 行；compact 不再回灌 key facts/index/snippets；主动 `search_records/search_archive` 不回归；237 focused tests PASS；R2 15 点预算矩阵 PASS；R0 frozen diff=0。
+- 验收: K+1 后 memory 自动检索即停止；09c44093 x18 stable-ref trap 完整正文仅 1 次；显式 task switch 时 seen ref 最多 1 行、新 ref ≤2 行；compact 不再回灌 key facts/index/snippets；主动 `search_records/search_archive` 不回归；原 R3 237 focused tests PASS；post-R3 adversarial audit 进一步验证 human-ref poisoning=0、memory/experience/digest ref 可精确水合、session scope 与真实 restart，并以 281/281 扩展回归 PASS；R2 15 点预算矩阵 PASS；R0 frozen diff=0。
 - 说明: K=3 仍为候选；seen-set 不新增 Session 顶层状态，而从 durable metadata 重建。hotcard 只改成两行 file pointer，消费/恢复语义留 R4。
 - evidence_required: true
 

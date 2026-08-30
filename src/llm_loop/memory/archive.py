@@ -465,7 +465,13 @@ class ArchiveStore:
             return []
         if not segs:
             return []
-        q = query.lower()
+        raw_query = str(query or "").strip()
+        lower_query = raw_query.lower()
+        if lower_query.startswith("archive:"):
+            raw_query = raw_query[len("archive:") :].split(";", 1)[0].strip()
+        elif lower_query.startswith("digest:"):
+            raw_query = raw_query[len("digest:") :].split(";", 1)[0].strip()
+        q = raw_query.lower()
         hits: list[dict] = []
         seen_ids: set[str] = set()
         for p in reversed(segs):  # T3b: 最近段优先
@@ -521,6 +527,8 @@ class ArchiveStore:
                         continue
                     hay = " ".join(
                         [
+                            str(rec.get("id", "")),
+                            str(rec.get("tool_call_id", "") or ""),
                             rec.get("summary", ""),
                             " ".join(rec.get("key_facts", [])),
                             " ".join(rec.get("key_paths", [])),
@@ -545,6 +553,8 @@ class ArchiveStore:
             return True
         hay = " ".join(
             [
+                str(entry.get("id", "")),
+                str(entry.get("tool_call_id", "") or ""),
                 entry.get("content", ""),
                 entry.get("summary", ""),
                 " ".join(entry.get("key_facts", [])),

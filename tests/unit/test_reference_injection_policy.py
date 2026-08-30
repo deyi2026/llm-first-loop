@@ -139,3 +139,55 @@ def test_reference_auto_turns_config_is_candidate_and_overridable(monkeypatch) -
     assert load_settings().reference_auto_turns == 5
     monkeypatch.setenv("REFERENCE_AUTO_TURNS", "-1")
     assert load_settings().reference_auto_turns == 0
+
+
+
+def test_human_ref_text_cannot_poison_seen_set() -> None:
+    from llm_loop.core.reference_injection import seen_injection_set
+
+    human = _human("请解释 ref=memory:m1 是什么")
+    assert seen_injection_set([human]) == set()
+
+    legacy_program = Message(
+        role="user",
+        content="[相关记忆] 历史资料\nref=memory:m1",
+        source=MessageSource.USER,
+        metadata={},
+    )
+    assert seen_injection_set([legacy_program]) == {"ref:memory:m1"}
+
+
+def test_task_switch_gate_rejects_same_task_navigation_phrases() -> None:
+    from llm_loop.core.reference_injection import reference_auto_decision
+
+    first = _human("分析数据库迁移")
+    for text in (
+        "转到第3页看看",
+        "接下来处理测试失败",
+        "重新开始这一步",
+        "改做方案B",
+        "现在改成蓝色按钮",
+    ):
+        d = reference_auto_decision([first, _human(text)], auto_turns=1)
+        assert d.task_switch is False, text
+        assert d.allow_catalog is False, text
+
+    for text in (
+        "换个话题：检查天气",
+        "新任务：审查另一个仓库",
+        "接下来换一个任务：生成报告",
+        "switch topic: weather",
+    ):
+        d = reference_auto_decision([first, _human(text)], auto_turns=1)
+        assert d.task_switch is True, text
+        assert d.allow_catalog is True, text
+
+
+
+def test_hash_fallback_preserves_semantic_distinctions_and_source_boundary() -> None:
+    from llm_loop.core.reference_injection import reference_key
+
+    a = reference_key("archive", content="Alpha beta")
+    assert a == reference_key("archive", content=" alpha\nBETA ")
+    assert a != reference_key("archive", content="Alpha beta changed")
+    assert a != reference_key("memory", content="Alpha beta")
