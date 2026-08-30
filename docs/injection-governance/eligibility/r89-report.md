@@ -1,6 +1,6 @@
 # R8.9 Ephemeral Control Lifecycle Closure
 
-Status: **IMPLEMENTATION PASS / detached-clean fixed-point pending**
+Status: **PASS / detached-clean fixed-point verified**
 
 ## Root cause
 
@@ -34,7 +34,7 @@ The owner rule for this batch is:
 - focused + adjacent behavior suite across 22 test files: **PASS**
 - history/reference compatibility subset: **77/77 PASS**
 
-Detached-clean fixed-point, R0 four-gate replay, frozen hash verification, and exact staging are still required before this batch is final.
+Implementation commit `9c208df` passed detached-clean fixed-point: production pyright 0/0, clean/new test pyright 0/0, the 22-file focused+adjacent behavior suite PASS, R0 four-gate replay PASS, frozen R0 hash `b54d47a31109a03d9f926f65b7a3d9f6caf3f24c0d42b1bff26fe338ee74b02a` unchanged, and checkout clean before/after verification.
 
 ## Boundary
 

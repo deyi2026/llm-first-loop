@@ -606,6 +606,6 @@
   "r8_8_status": "PASS",
   "r8_8_evidence": "docs/injection-governance/eligibility/r88-report.md",
   "behavior_canary_gate_state": "READY",
-  "r8_9_status": "PASS_PENDING_FIXED_POINT",
+  "r8_9_status": "PASS",
   "r8_9_evidence": "docs/injection-governance/eligibility/r89-report.md"
 }
