@@ -26,13 +26,24 @@ from __future__ import annotations
 import fnmatch
 import os
 
+from llm_loop.core.injection_labels import (
+    PROGRAM_APPENDIX_NOTICE,
+    PROGRAM_RECOVERY_LABEL,
+    REFERENCE_LABEL,
+    STATUS_LABEL,
+)
+
 # 认知 server PIN_TAGS 对齐（mlx-lm cognitive_cache.py:57）
 PIN_TAGS = frozenset({"goal", "evidence", "identity", "rules"})
 
 _COMPACT_MARKERS = (
     "[上下文压缩]",
     "[context compression]",
-    "[上下文注入·非新指令]",  # 记忆/经验检索注入：内容随轮变化，可再生不 pin（2026-08-29 实测发现）
+    "[上下文注入·非新指令]",  # legacy program appendix
+    PROGRAM_APPENDIX_NOTICE,
+    REFERENCE_LABEL,
+    STATUS_LABEL,
+    PROGRAM_RECOVERY_LABEL,
 )
 _EVIDENCE_MARKER = "evidence://"
 
@@ -58,10 +69,12 @@ def _classify_message(msg: dict, *, is_tail_user: bool) -> str | None:
     if role == "system":
         return "rules"
     if role == "user":
-        if is_tail_user:
-            return "goal"
+        # R1/L1: program-origin user-wire messages must never be pinned as the
+        # human goal merely because they are last. Source semantics precede position.
         if any(m in content for m in _COMPACT_MARKERS):
             return "summary"
+        if is_tail_user:
+            return "goal"
         if _EVIDENCE_MARKER in content:
             return "evidence"
     elif role == "assistant" and _EVIDENCE_MARKER in content:

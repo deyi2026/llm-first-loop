@@ -19,6 +19,12 @@ import os
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from llm_loop.core.cache_health import GATE_NOTE_CONTENT  # 门禁干预知情标记
+from llm_loop.core.injection_labels import (
+    InjectionLayer,
+    ensure_semantic_label,
+    infer_layer,
+    strip_program_appendix_notice,
+)
 
 # EVO-20260818: projection_ver/check 提升到模块级（消除函数内 import 遮蔽导致的 F823）——
 # 与 engine.py 顶部 re-export 同模式；stable_digest 既有模块级使用
@@ -1033,13 +1039,38 @@ class _BuildMixin:
                     )
         except Exception:  # noqa: BLE001 — fail-open: 任务账本异常不阻断构建
             logger.debug("build: Task Frontier 注入失败（fail-open 跳过）", exc_info=True)
+        # R1/L1: 聚合槽进入 compiler/wire 前先带语义层标签；这里只标记来源，
+        # 不做 R2 预算、不做 R3 条件注入/去重。未知 program 槽安全降级 STATUS。
+        _inject_parts = [
+            (
+                _slot,
+                ensure_semantic_label(
+                    strip_program_appendix_notice(_content),
+                    infer_layer(_content, slot_kind=str(_slot or "")),
+                    slot_kind=str(_slot or ""),
+                ),
+            )
+            for _slot, _content in _inject_parts
+            if str(_content or "").strip()
+        ]
         _packet_parts: list[tuple[str | None, str]] = list(_inject_parts)
         for _m in sess.messages:
             _md = getattr(_m, "metadata", None) or {}
             if _md.get("injection_kind") == "memory_snapshot":
                 _c = str(getattr(_m, "content", "") or "")
                 if _c.strip():
-                    _packet_parts.append(("memory", _c))
+                    # snapshot 自身已有 outer appendix；嵌入 decision packet 时去掉
+                    # outer notice，避免一个 appendix 内重复仲裁声明。
+                    _packet_parts.append(
+                        (
+                            "memory",
+                            ensure_semantic_label(
+                                strip_program_appendix_notice(_c),
+                                InjectionLayer.REFERENCE,
+                                slot_kind="memory",
+                            ),
+                        )
+                    )
         # ── P1 统一聚合器（9.1）: 四槽 parts → 单条 user；sidecar 单 AGGREGATED entry ──
         # 尾部连续 user 恒 ≤1（1210 结构性消除）；聚合失败 fail-open 降级零注入（不阻断构建）
         # Cognitive Runtime（tasks 2.3/2.5/2.6，spec 5.2/5.1.1-3b）:
@@ -1227,7 +1258,9 @@ class _BuildMixin:
                 if _packet is not None:
                     _packet_text = _packet.render()  # header 在前 + tier 槽位（空 slots→header-only）
                     if _cog_enforce:  # CR-R1.1（审查项6）: shadow 产物仅 telemetry 度量
-                        _agg = _packet_text
+                        _agg = ensure_semantic_label(
+                            _packet_text, InjectionLayer.STATUS, slot_kind="decision_packet"
+                        )
                         _agg_anchor = _anchor if not _packet.render_header() else ""
                     else:
                         _agg = "\n\n".join(  # shadow: prompt 走平铺旧行为（不进投影）

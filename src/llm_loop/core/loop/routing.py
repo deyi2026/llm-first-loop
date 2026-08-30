@@ -14,6 +14,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from llm_loop.core.injection_labels import InjectionLayer, ensure_semantic_label
 from llm_loop.core.loop.focus import is_simple_task
 from llm_loop.core.loop.tool_exec import _json_dumps_args
 from llm_loop.feedback.honesty import model_unavailable_text
@@ -386,12 +387,15 @@ class _RoutingMixin:
             allowed = min(allowed, context_limit - max_tokens)
         if est_tokens <= allowed:
             return None
-        return (
-            f"[上下文超限] 本次请求载荷约 {est_tokens} tokens（按 {chars_per_token} 字符/token 估算），"
-            f"超过当前模型 {model_label} 的上下文上限 {context_limit}（安全边距后可用 {allowed}）。\n"
-            f"建议：① /model 切换到更大窗口模型；② /new 开新会话（历史另存可经 search_archive 找回）；"
-            f"③ 缩短本次输入。\n"
-            f"（程序守卫：未发送请求，避免必失败调用；估算口径可能有误差，以 provider 实际判定为准）"
+        return ensure_semantic_label(
+            (
+                f"[上下文超限] 本次请求载荷约 {est_tokens} tokens（按 {chars_per_token} 字符/token 估算），"
+                f"超过当前模型 {model_label} 的上下文上限 {context_limit}（安全边距后可用 {allowed}）。\n"
+                f"建议：① /model 切换到更大窗口模型；② /new 开新会话（历史另存可经 search_archive 找回）；"
+                f"③ 缩短本次输入。\n"
+                f"（程序守卫：未发送请求，避免必失败调用；估算口径可能有误差，以 provider 实际判定为准）"
+            ),
+            InjectionLayer.STATUS,
         )
 
     # ── 辅助 ──

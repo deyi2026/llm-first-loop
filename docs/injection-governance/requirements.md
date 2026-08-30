@@ -1,6 +1,6 @@
 # 注入治理专项（INJECTION-GOVERNANCE）需求规格
 
-> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **设计已审批；R0 PASS，行为治理未实施**
+> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **设计已审批；R0 PASS；R1/L1 PASS；L2 行为治理未实施**
 
 ## 1. 问题陈述（实证）
 
@@ -46,6 +46,19 @@
 - clean control `69715765`：user-role injection=0、尾后注入=0、reference duplicate=0、wire tail violation=0。
 
 以上数字由事件日志 SHA 固化，完整 provenance 见 `baseline-manifest.json`。
+
+## 4A. R1 已验收的语义边界
+
+权威报告：`docs/injection-governance/r1/report.md`。
+
+- `injection_labels.py` 为四层语义与 program appendix 仲裁声明的单一真相源。
+- 用户正文保持逐字，不用可见前缀改写；USER_INSTRUCTION 通过 origin metadata 标识。
+- program-user 不再靠 `role=user` 冒充人类来源；memory/experience/model-switch/declaration/recovery 均有 canonical origin metadata。
+- REFERENCE 自动资料中的 command-shaped 历史正文不自动内联，只给中性占位 + ref；原文仍可检索。
+- build/Cognitive 聚合 appendix 的仲裁声明在 production enforce fixture 中严格为 1 条；尾部 program appendix 不再被 cognitive cache tag 误识别为 `goal`。
+- focused unit/integration 147 tests PASS；R0 frozen baseline 重放无 diff。
+
+R1 **没有**实现预算、按需/去重、恢复单边界、身份剥离、user truth 物理尾位或行为 A/B。
 
 ## 5. 非目标
 

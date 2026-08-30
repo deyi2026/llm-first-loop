@@ -14,6 +14,7 @@ import hashlib
 import logging
 from typing import TYPE_CHECKING, Any
 
+from llm_loop.core.injection_labels import InjectionLayer, origin_metadata
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.memory.retrieve import build_memory_messages
 
@@ -96,19 +97,27 @@ class _TurnContextMixin:
                     if not _c:
                         continue
                     _d = _m.to_llm_dict()
+                    _layer = (
+                        InjectionLayer.STATUS
+                        if getattr(_m, "source", None) == MessageSource.SYSTEM
+                        else InjectionLayer.REFERENCE
+                    )
                     _wrapped = (
-                        wrap_injection(_c) if _d.get("role") == "system" else _c
+                        wrap_injection(_c, layer=_layer)
+                        if _d.get("role") == "system"
+                        else _c
                     )  # 无 anchor: 持久化体字节稳定（anchor 含每轮变化内容）
                     _persist_msg = Message(
                         role="user",
                         content=_wrapped,
                         source=MessageSource.USER,
-                        metadata={
-                            "persisted_injection": True,
-                            "injection_kind": "memory_snapshot",
-                            "turn_ref": turn_ref,
-                            "query_fp": query_fp,
-                        },
+                        metadata=origin_metadata(
+                            _layer,
+                            injection_kind="memory_snapshot",
+                            persisted_injection=True,
+                            turn_ref=turn_ref,
+                            query_fp=query_fp,
+                        ),
                     )
                     sess.messages.append(_persist_msg)
                     self._append_message_event(sess, _persist_msg)

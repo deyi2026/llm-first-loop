@@ -20,6 +20,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from llm_loop.config import Settings
+from llm_loop.core.injection_labels import (
+    InjectionLayer,
+    origin_metadata,
+    render_program_appendix,
+)
 from llm_loop.core.history import (  # noqa: F401 (history 工具)
     projection_check,
     projection_ver,
@@ -360,7 +365,12 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 self._run_sessions[session_id] = sess
 
         # ── 消息进：构造用户消息并落库 ──
-        user_msg = Message(role="user", content=user_text, source=MessageSource.USER)
+        user_msg = Message(
+            role="user",
+            content=user_text,
+            source=MessageSource.USER,
+            metadata=origin_metadata(InjectionLayer.USER_INSTRUCTION),
+        )
         sess.messages.append(user_msg)
         # D1: 会话首次落库生成 session.created + 用户消息事件（fail-open）
         self._ensure_session_created(sess)
@@ -885,15 +895,20 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                             verification_note = build_discrepancy_feedback(check)
                             # 注入一条如实提示（不重入循环），最终回答直接输出
                             reminder = Message(
-                                # 可见化（EVO-20260823-xxx）: system+injected_system 标记会被
-                                # history.py _is_injected_system/skip_injected_system 剔除——
-                                # 程序自我提醒但 LLM 不可见（诚实率上不去根因）。改 user role
-                                # 尾部追加（对齐 GATE_NOTE 转 user 模式），user role 天然绕过
-                                # 过滤（_is_injected_system 只判 system），LLM 可见且前缀稳定。
+                                # R1/L1: program-origin 状态通知显式进入非用户语义层；
+                                # user role 仅是 provider wire 兼容形态，不再冒充人类消息。
                                 role="user",
-                                content=f"[声明提醒] 你的最终回答中存在与工具回执不符的完成声明，请知悉（不影响本次输出，后续请如实声明）。\n{verification_note}",
+                                content=render_program_appendix(
+                                    "[声明提醒] 最终回答与工具回执存在不一致事实。\n"
+                                    + verification_note,
+                                    InjectionLayer.STATUS,
+                                ),
                                 source=MessageSource.USER,
-                                metadata={},  # 不再打推送式注入标记（user role 已天然可见）
+                                metadata=origin_metadata(
+                                    InjectionLayer.STATUS,
+                                    injection_kind="declaration_reminder",
+                                    persisted_injection=True,
+                                ),
                             )
                             sess.messages.append(reminder)
                             # D1: 系统注入消息事件（fail-open）
@@ -935,7 +950,14 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             ):
                 self._round_warning_injected = True
                 warning = max_iterations_warning_message(rounds, _budget)
-                warning.metadata = {**warning.metadata, "injected_system": True}  # P1-7: 推送式注入标记
+                warning.content = render_program_appendix(
+                    warning.content, InjectionLayer.STATUS
+                )
+                warning.metadata = origin_metadata(
+                    InjectionLayer.STATUS,
+                    injection_kind="round_warning",
+                    injected_system=True,
+                )
                 sess.messages.append(warning)
                 # D1: 系统注入消息事件（fail-open）
                 self._append_message_event(sess, warning)
@@ -988,6 +1010,12 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 if not self._exhaustion_decision_used:
                     self._exhaustion_decision_used = True
                     decision = max_iterations_decision_message(rounds, _budget)
+                    decision.content = render_program_appendix(
+                        decision.content, InjectionLayer.STATUS
+                    )
+                    decision.metadata = origin_metadata(
+                        InjectionLayer.STATUS, injection_kind="round_exhaustion_decision"
+                    )
                     sess.messages.append(decision)
                     # D1: 系统注入消息事件（fail-open）
                     self._append_message_event(sess, decision)

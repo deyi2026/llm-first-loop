@@ -22,6 +22,7 @@ from pathlib import Path
 import llm_loop.core.loop.build as build_mod
 import llm_loop.core.loop.focus as focus_mod
 from llm_loop.core.cache_health import GATE_NOTE_CONTENT
+from llm_loop.core.injection_labels import PROGRAM_APPENDIX_NOTICE, REFERENCE_LABEL, STATUS_LABEL
 from llm_loop.core.loop.err1210 import InjectionSpan
 from llm_loop.core.loop.focus import _INJECTION_PREFIX
 from llm_loop.core.loop.hotcard import write_hotcard
@@ -67,7 +68,7 @@ def _slot_re(slot: str) -> re.Pattern[str]:
 
 # 黄金摘要（P1 9.1 聚合形态；Cognitive Runtime tasks 2.3 tier 段标记升级后 2026-08-28 实测重算;
 # 注入槽结构变更时此值失配 → 红灯）
-_GOLDEN_TAIL_DIGEST = "19f395eb9425f2beb578fb852d1456f504dc560ab818233991d82584c06ebb0a"
+_GOLDEN_TAIL_DIGEST = "f75520007ac1d5ae1bba8801b1126fd833a0a0a0ec085a38e512f078fc016777"
 
 
 def _engine(tmp_path: Path):
@@ -171,6 +172,9 @@ class TestGoldenFingerprint:
         assert [m["role"] for m in tail] == ["user"], "尾部注入恒为 1 条聚合 user（P1 9.1）"
         agg = tail[0]["content"]
         assert agg.startswith(_INJECTION_PREFIX), "聚合消息统一 wrap_injection 包装"
+        assert agg.count(PROGRAM_APPENDIX_NOTICE) == 1, "单个 program appendix 只能有一次冲突仲裁声明"
+        assert REFERENCE_LABEL in agg, "资料槽必须有 REFERENCE 语义标签"
+        assert STATUS_LABEL in agg, "状态槽必须有 STATUS 语义标签"
         for slot in ("memory", "interop", "tip", "hotcard", "gate_note"):
             assert _slot_re(slot).search(agg), f"聚合含 {slot} 段"
         assert GATE_NOTE_CONTENT in agg, "gate_note 固定文本保真入段"

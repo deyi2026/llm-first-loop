@@ -9,6 +9,11 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+from llm_loop.core.injection_labels import (
+    PROGRAM_APPENDIX_NOTICE,
+    REFERENCE_LABEL,
+    reference_has_imperative,
+)
 from llm_loop.core.loop.tool_exec import _ToolExecMixin
 
 _EXP_MD = """---
@@ -74,6 +79,10 @@ def test_inject_hit(tmp_path):
     assert "web_fetch" in msg.content
     assert (msg.metadata or {}).get("persisted_injection") is True
     assert (msg.metadata or {}).get("injection_kind") == "experience_tip"
+    assert (msg.metadata or {}).get("origin_layer") == "reference"
+    assert (msg.metadata or {}).get("program_origin") is True
+    assert msg.content.startswith(PROGRAM_APPENDIX_NOTICE)
+    assert REFERENCE_LABEL in msg.content
     assert stub.events == [msg]
 
 
@@ -119,7 +128,10 @@ def test_skill_inject_hit(tmp_path):
     msg = stub.messages[0]
     assert "[经验提示]" in msg.content
     assert "cache-hit-debug" in msg.content
-    assert "skill_load" in msg.content
+    assert "skill_load" not in msg.content
+    assert "ref=skill:cache-hit-debug" in msg.content
+    reference_body = msg.content.split(REFERENCE_LABEL, 1)[-1]
+    assert not reference_has_imperative(reference_body)
 
 
 def test_skill_no_dir_no_inject(tmp_path):

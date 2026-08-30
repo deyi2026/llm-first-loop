@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from llm_loop.core.injection_labels import neutralize_reference_frame
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.memory.store import MemoryStore
 
@@ -150,19 +151,20 @@ def build_memory_messages(
         store.mark_injected(final)
     except Exception:  # noqa: BLE001 — 计数失败如实容忍（统计非关键路径）
         pass
-    lines = [f"- [{e.type}] {e.content}" for e in final]
+    # R1/L1: 自动资料帧不得携带命令式历史原文。安全帧保留正文+ref；
+    # 命令形态帧只给中性占位+ref，原文仍可经 memory store 显式检索。
+    lines = [
+        f"- [{e.type}] {neutralize_reference_frame(e.content, ref=f'memory:{e.id}')}"
+        for e in final
+    ]
     if note:
         lines.insert(0, f"[记忆检索] {note}")
-    # 时态标识（2026-08-29 漂移修复续篇，会话 68fed5f5 实证）: 历史记忆无时态标记时，
-    # 本地弱模型把"已发生的事实"当"当前状态"复读（[99]→[100] 引用最早轮回执后复读
-    # 身份话题）；"非新指令"仅排除指令性、未排除执行性——模型仍可能"重新验证"历史。
-    # 三要素: 时态词（历史检索）+ 时间锚（已发生）+ 行为指令（勿重做）。
     return [
         Message(
             role="system",
             content=(
-                "[相关记忆]（历史检索结果——以下均为已发生的事实/经验，供当前任务参考；"
-                "勿重做、勿重新验证其中已完成的操作）\n" + "\n".join(lines)
+                "[相关记忆] 历史检索资料（已发生，仅作当前任务背景参考）\n"
+                + "\n".join(lines)
             ),
             source=MessageSource.MEMORY,
         )

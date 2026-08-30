@@ -32,6 +32,11 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from llm_loop.core.injection_labels import (
+    InjectionLayer,
+    origin_metadata,
+    render_program_appendix,
+)
 from llm_loop.llm.errors import LLMError, LLMHTTPError, parse_provider_error_code
 from llm_loop.core.message import Message, MessageSource
 
@@ -898,12 +903,18 @@ class _Err1210Mixin:
         )
         _cont_msg = Message(
             role="user",
-            content=(
+            content=render_program_appendix(
                 "[程序续跑] 上一轮 LLM 调用 1210（恢复链耗尽）。"
                 "已自动等效重发（上下文已重建）。请继续当前任务，"
-                "勿重复已完成动作，勿重新声明已交付内容。"
+                "勿重复已完成动作，勿重新声明已交付内容。",
+                InjectionLayer.PROGRAM_RECOVERY,
             ),
             source=MessageSource.SYSTEM,
+            metadata=origin_metadata(
+                InjectionLayer.PROGRAM_RECOVERY,
+                injection_kind="program_recovery",
+                persisted_injection=True,
+            ),
         )
         sess.messages.append(_cont_msg)
         self._append_message_event(sess, _cont_msg)  # D1: 系统注入消息事件（fail-open）

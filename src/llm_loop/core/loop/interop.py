@@ -26,6 +26,7 @@ import os
 import time
 from pathlib import Path
 
+from llm_loop.core.injection_labels import InjectionLayer, origin_metadata
 from llm_loop.core.message import Message, MessageSource
 
 logger = logging.getLogger(__name__)
@@ -273,14 +274,15 @@ class _InteropMixin:
 
             msg = Message(
                 role="user",
-                content=wrap_injection(notice),
+                content=wrap_injection(notice, layer=InjectionLayer.STATUS),
                 source=MessageSource.USER,
-                metadata={
-                    "persisted_injection": True,
-                    "injection_kind": "model_switch_notice",
-                    "switch_from": switch_from,
-                    "switch_to": switch_to,
-                },
+                metadata=origin_metadata(
+                    InjectionLayer.STATUS,
+                    injection_kind="model_switch_notice",
+                    persisted_injection=True,
+                    switch_from=switch_from,
+                    switch_to=switch_to,
+                ),
             )
             sess.messages.append(msg)
             self._append_message_event(sess, msg)

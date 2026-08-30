@@ -15,6 +15,12 @@ import logging
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
+from llm_loop.core.injection_labels import (
+    InjectionLayer,
+    neutralize_reference_frame,
+    origin_metadata,
+    render_program_appendix,
+)
 from llm_loop.core.message import Message, MessageSource, ToolResult
 from llm_loop.introspection.status import ToolHistoryItem
 from llm_loop.llm.client import LLMResponse, StreamDelta, ToolRoundInfo
@@ -330,7 +336,12 @@ class _ToolExecMixin:
             for name in candidate:  # 去重保序
                 hits = store.list_active(query=name, limit=2)
                 for hit in hits:
-                    lines.append(f"- 工具 '{name}' → {hit.get('summary', hit.get('id', ''))}")
+                    _eid = str(hit.get("id", "") or name)
+                    _summary = str(hit.get("summary", hit.get("id", "")) or "")
+                    lines.append(
+                        f"- 工具 '{name}' → "
+                        + neutralize_reference_frame(_summary, ref=f"experience:{_eid}")
+                    )
                     if len(lines) >= 4:
                         break
                 if len(lines) >= 4:
@@ -338,14 +349,16 @@ class _ToolExecMixin:
             # EVO-20260816-ec8c36bb: 外部 skill 匹配补充（经验库不足 4 条时并入）
             if len(lines) < 4:
                 for sname, sdesc in self._match_skills(candidate):
-                    lines.append(f"- 可用 skill: {sname} —— {sdesc}（skill_load 加载）")
+                    lines.append(
+                        f"- skill '{sname}' → "
+                        + neutralize_reference_frame(sdesc, ref=f"skill:{sname}")
+                    )
                     if len(lines) >= 4:
                         break
             if not lines:
                 return  # 无命中不注入
             content = (
-                "[经验提示] 以下为历史会话沉淀的已验证经验（已发生——供对照参考；"
-                "仅当与当前动作直接相关时复用，勿因此重做已做过的工作）:\n"
+                "[经验提示] 历史经验资料（已发生，仅作当前动作背景参考）:\n"
                 + "\n".join(lines)
             )
             if len(content) > 800:
@@ -359,15 +372,16 @@ class _ToolExecMixin:
 
             msg = Message(
                 role="user",
-                content=wrap_injection(content),
+                content=wrap_injection(content, layer=InjectionLayer.REFERENCE),
                 source=MessageSource.USER,
-                metadata={
-                    "persisted_injection": True,
-                    "injection_kind": "experience_tip",
-                    "experience_tip_tools": list(candidate),
+                metadata=origin_metadata(
+                    InjectionLayer.REFERENCE,
+                    injection_kind="experience_tip",
+                    persisted_injection=True,
+                    experience_tip_tools=list(candidate),
                     # EVO-20260827-ed4c1350 T2: turn 身份对齐（memory_snapshot 同源）
-                    "turn_ref": getattr(self, "_current_turn_ref", None),
-                },
+                    turn_ref=getattr(self, "_current_turn_ref", None),
+                ),
             )
             sess.messages.append(msg)
             self._append_message_event(sess, msg)
@@ -473,6 +487,12 @@ class _ToolExecMixin:
                 from llm_loop.feedback.honesty import stagnation_reminder_message
 
                 reminder = stagnation_reminder_message(tc.name, state["count"])
+                reminder.content = render_program_appendix(
+                    reminder.content, InjectionLayer.STATUS
+                )
+                reminder.metadata = origin_metadata(
+                    InjectionLayer.STATUS, injection_kind="stagnation_reminder"
+                )
                 sess.messages.append(reminder)
                 self._append_message_event(sess, reminder)
                 self._record_action(
@@ -502,6 +522,12 @@ class _ToolExecMixin:
                 from llm_loop.feedback.honesty import empty_search_reminder_message
 
                 reminder = empty_search_reminder_message(tc.name, state["empty_count"])
+                reminder.content = render_program_appendix(
+                    reminder.content, InjectionLayer.STATUS
+                )
+                reminder.metadata = origin_metadata(
+                    InjectionLayer.STATUS, injection_kind="empty_search_reminder"
+                )
                 sess.messages.append(reminder)
                 self._append_message_event(sess, reminder)
                 self._record_action(

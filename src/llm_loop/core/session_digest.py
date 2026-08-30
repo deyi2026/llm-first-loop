@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from llm_loop.core.injection_labels import neutralize_reference_frame
+
 
 @dataclass(frozen=True)
 class DigestBlock:
@@ -105,9 +107,17 @@ class SessionDigest:
         parts = ["[会话汇总档案]（append-only，工具成功要点；原文经 search_archive 取回）"]
         for b in blocks:
             lines = [f"▸ {b.tool_name}({b.args_key})" if b.args_key else f"▸ {b.tool_name}"]
-            lines.extend(f"  · {f}" for f in b.facts)
+            lines.extend(
+                f"  · {neutralize_reference_frame(f, ref=f'digest:{b.block_id}')}"
+                for f in b.facts
+            )
             if b.conclusion:
-                lines.append(f"  ⇒ {b.conclusion}")
+                lines.append(
+                    "  ⇒ "
+                    + neutralize_reference_frame(
+                        b.conclusion, ref=f"digest:{b.block_id}"
+                    )
+                )
             parts.append("\n".join(lines))
         return "\n\n".join(parts)
 
@@ -126,9 +136,17 @@ class SessionDigest:
     # ── 内部 ──
     def _render_block(self, b: DigestBlock) -> str:
         lines = [f"▸ {b.tool_name}({b.args_key})" if b.args_key else f"▸ {b.tool_name}"]
-        lines.extend(f"  · {f}" for f in b.facts)
+        lines.extend(
+            f"  · {neutralize_reference_frame(f, ref=f'digest:{b.block_id}')}"
+            for f in b.facts
+        )
         if b.conclusion:
-            lines.append(f"  ⇒ {b.conclusion}")
+            lines.append(
+                "  ⇒ "
+                + neutralize_reference_frame(
+                    b.conclusion, ref=f"digest:{b.block_id}"
+                )
+            )
         return "\n".join(lines)
 
     def _args_key(self, arguments: dict | None) -> str:
@@ -138,6 +156,9 @@ class SessionDigest:
         for k in ("path", "url", "command", "query", "pattern", "file_path", "name", "goal_id"):
             v = arguments.get(k)
             if v:
+                if k == "command":
+                    keys.append("command=<recorded>")
+                    continue
                 s = str(v).replace("\n", " ")[: self.ARGS_KEY_MAX]
                 keys.append(f"{k}={s}")
         return " ".join(keys)[: self.ARGS_KEY_MAX]

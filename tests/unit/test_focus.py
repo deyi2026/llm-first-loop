@@ -6,6 +6,11 @@
 
 from __future__ import annotations
 
+from llm_loop.core.injection_labels import (
+    PROGRAM_APPENDIX_NOTICE,
+    REFERENCE_LABEL,
+    STATUS_LABEL,
+)
 from llm_loop.core.loop.focus import (
     TaskFocusState,
     build_task_anchor,
@@ -83,7 +88,9 @@ def test_build_task_anchor_empty():
 def test_wrap_injection():
     """注入统一包装: 前缀 + 锚点 + 原内容; 已包装不重复."""
     wrapped = wrap_injection("[模型切换感知] ...", "当前任务: 配置飞书")
-    assert wrapped.startswith("[上下文注入·非新指令]")
+    assert wrapped.startswith(PROGRAM_APPENDIX_NOTICE)
+    assert wrapped.count(PROGRAM_APPENDIX_NOTICE) == 1
+    assert STATUS_LABEL in wrapped
     assert "配置飞书" in wrapped
     assert "[模型切换感知]" in wrapped
     # 已包装 → 原样返回
@@ -95,5 +102,7 @@ def test_wrap_injection():
 def test_wrap_injection_no_anchor():
     """无锚点时包装仍带前缀."""
     wrapped = wrap_injection("[经验提示] ...")
-    assert wrapped.startswith("[上下文注入·非新指令]")
+    assert wrapped.startswith(PROGRAM_APPENDIX_NOTICE)
+    assert wrapped.count(PROGRAM_APPENDIX_NOTICE) == 1
+    assert REFERENCE_LABEL in wrapped
     assert "[经验提示]" in wrapped

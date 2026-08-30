@@ -15,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+from llm_loop.core.injection_labels import PROGRAM_APPENDIX_NOTICE, REFERENCE_LABEL, STATUS_LABEL
 from llm_loop.core.loop.engine import LoopEngine
 from llm_loop.core.loop.tool_exec import _ToolExecMixin
 from llm_loop.core.message import Message, MessageSource
@@ -111,9 +112,12 @@ def test_turn_snapshot_idempotent_across_rounds():
     msg = snaps[0]
     assert msg.role == "user"
     assert "[相关记忆]" in msg.content
-    assert "[上下文注入·非新指令]" in msg.content  # wrap 包装（非新指令语义）
+    assert msg.content.startswith(PROGRAM_APPENDIX_NOTICE)
+    assert REFERENCE_LABEL in msg.content
     md = msg.metadata or {}
     assert md.get("persisted_injection") is True
+    assert md.get("origin_layer") == "reference"
+    assert md.get("program_origin") is True
     assert md.get("turn_ref") == 0
     assert md.get("query_fp")
     assert len(md.get("query_fp")) == 12
@@ -163,6 +167,8 @@ def test_memory_fault_fail_open():
     # fault 反馈同样走 turn 级持久化（同 kind 幂等——避免每轮重复 fault 注入）
     assert len(_snapshots(sess)) == 1
     assert "程序异常反馈:memory" in sess.messages[0].content
+    assert STATUS_LABEL in sess.messages[0].content
+    assert sess.messages[0].metadata.get("origin_layer") == "status"
     assert eng._faults == ["memory"]
     eng._inject_turn_memory_snapshot(sess, "database migration deploy", turn_ref=0)
     assert len(_snapshots(sess)) == 1  # 重入不膨胀

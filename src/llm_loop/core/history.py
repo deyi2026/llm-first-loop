@@ -19,6 +19,18 @@ from collections.abc import Callable
 from datetime import UTC
 from typing import Any
 
+from llm_loop.core.injection_labels import (
+    PROGRAM_APPENDIX_NOTICE,
+    PROGRAM_RECOVERY_LABEL,
+    REFERENCE_LABEL,
+    STATUS_LABEL,
+    InjectionLayer,
+    ensure_semantic_label,
+    infer_layer,
+    neutralize_reference_frame,
+    origin_metadata,
+    render_program_appendix,
+)
 from llm_loop.core.message import Message, MessageSource, ToolCall
 
 
@@ -350,7 +362,9 @@ def _archive_key_facts(messages: list[Message], max_facts: int = 8) -> str:
             item = item.strip()
             if item and len(item) >= 4 and item not in seen:
                 seen.add(item)
-                facts.append(item)
+                facts.append(
+                    neutralize_reference_frame(item, ref="archive:search_archive")
+                )
             if len(facts) >= max_facts:
                 break
         if len(facts) >= max_facts:
@@ -358,7 +372,10 @@ def _archive_key_facts(messages: list[Message], max_facts: int = 8) -> str:
     # EVO-3b39134f: 动作/结果 + 推理结论（决策+理由）并列注入。
     # 推理结论独立于动作/结果——归档消息若只有决策理由（无动作结果信号词），
     # facts 为空也应注入推理段（否则推理结论丢失，OpenAI 实验痛点复现）。
-    reasoning = _extract_reasoning_facts(messages, max_facts=6)
+    reasoning = [
+        neutralize_reference_frame(item, ref="archive:search_archive")
+        for item in _extract_reasoning_facts(messages, max_facts=6)
+    ]
     if not facts and not reasoning:
         return ""
     parts: list[str] = []
@@ -389,8 +406,8 @@ def _archive_index_dir(messages: list[Message]) -> str:
     n = len(messages)
     chars = sum(len(m.content) for m in messages)
     lines = [
-        f"[压缩档案目录] 本次归档 {n} 条消息（约 {chars} 字符），原文已完整另存，"
-        "可用 search_archive 按关键词检索："
+        f"[压缩档案目录] 本次归档 {n} 条消息（约 {chars} 字符），原文已完整另存；"
+        "检索入口: search_archive。"
     ]
     if roles:
         lines.append("- 消息构成: " + ", ".join(f"{r}×{c}" for r, c in roles.most_common()))
@@ -398,7 +415,7 @@ def _archive_index_dir(messages: list[Message]) -> str:
         lines.append("- 工具结果: " + ", ".join(f"{t}×{c}" for t, c in tools.most_common(6)))
     words = _top_keywords(messages)
     if words:
-        lines.append("- 建议检索词: " + ", ".join(words))
+        lines.append("- 索引关键词: " + ", ".join(words))
     return "\n".join(lines)
 
 
@@ -483,10 +500,9 @@ def _layer_trim(
         # "原文已另存"（信息零丢失承诺失实，AI 检索必空手而归）。
         if archived:
             _hint = (
-                f'查看完整原文请直接调用 search_archive(tool_name="{m.tool_name}")'
-                "（可再加 query= 关键词精确定位；一次取回，勿换命令重复执行同一工具）"
+                f'完整原文检索入口: search_archive(tool_name="{m.tool_name}"); query 可用于关键词定位'
                 if m.tool_name
-                else "可用 search_archive(query=<关键词>) 检索找回"
+                else "完整原文检索入口: search_archive(query=<关键词>)"
             )
             archived_note = "原文已另存压缩档案"
         else:
@@ -635,7 +651,11 @@ def _is_injected_system(m: Message) -> bool:
 # 漂移修复（2026-08-29 会话 68fed5f5 实证）: user 通道注入块前缀——程序注入的
 # [上下文注入]/[声明提醒]/[相关记忆] 等块非用户真实指令，任务锚点保护时须排除。
 _INJECTED_USER_PREFIXES = (
-    "[上下文注入",
+    PROGRAM_APPENDIX_NOTICE,
+    PROGRAM_RECOVERY_LABEL,
+    REFERENCE_LABEL,
+    STATUS_LABEL,
+    "[上下文注入",  # legacy
     "[声明提醒",
     "[声明提示",
     "[声明-回执校验",
@@ -646,6 +666,8 @@ _INJECTED_USER_PREFIXES = (
     "[预算预警",
     "[搜索空结果提醒",
     "[程序反馈",
+    "[程序续跑",
+    "[上下文超限",
 )
 
 
@@ -656,6 +678,9 @@ def _is_injected_block(m: Message) -> bool:
     """
     if m.role != "user":
         return False
+    meta = m.metadata or {}
+    if meta.get("program_origin"):
+        return True
     content = (m.content or "").lstrip()
     return any(content.startswith(p) for p in _INJECTED_USER_PREFIXES)
 
@@ -1108,7 +1133,7 @@ def build_history_messages(
                 for mm in group:
                     trimmed = (
                         mm.content[: max(trim_budget - 100, 100)]
-                        + "\n…[本消息已压缩，完整内容已另存，可用 search_archive 检索]…"
+                        + "\n…[本消息已压缩，完整内容已另存；检索入口: search_archive]…"
                     )
                     trimmed_group.append(
                         Message(
@@ -1191,7 +1216,10 @@ def build_history_messages(
 
             _total_archived = sum(_wire_size(mm) for mm in archived)
             _summary_text = " | ".join(
-                (mm.content or "")[:60].replace("\n", " ")
+                neutralize_reference_frame(
+                    (mm.content or "")[:60].replace("\n", " "),
+                    ref="archive:search_archive",
+                )
                 for mm in archived[:3]
                 if mm.content
             )[:400]
@@ -1367,7 +1395,7 @@ def build_history_messages(
             extras.append(
                 Message(
                     role="system",
-                    content=_fold_note + "若需引用已折叠内容, 先检索再作答。",
+                    content=_fold_note + "已折叠内容检索入口: search_archive。",
                     source=MessageSource.SYSTEM,
                 )
             )
@@ -1394,10 +1422,27 @@ def build_history_messages(
         # 提交视图尾部连续 user 条数从 1+N 降为恒 1（1210 结构性消除）。
         _compact_frames.extend(extras)
         if _compact_frames:
+            _labeled_frames = [
+                ensure_semantic_label(
+                    str(f.content or ""),
+                    infer_layer(str(f.content or "")),
+                )
+                for f in _compact_frames
+                if str(f.content or "").strip()
+            ]
             _merged = Message(
                 role="system",
-                content="\n\n".join(str(f.content or "") for f in _compact_frames),
+                content=(
+                    PROGRAM_APPENDIX_NOTICE
+                    + "\n"
+                    + "\n\n".join(_labeled_frames)
+                ),
                 source=MessageSource.SYSTEM,
+                metadata=origin_metadata(
+                    InjectionLayer.STATUS,
+                    injection_kind="compact_archive_appendix",
+                    program_appendix_mixed=True,
+                ),
             )
             _merged.metadata["_dynamic"] = True
             # P1 聚合适配: archived_summary 标记透传到合并条（探测方定位归档摘要依赖）

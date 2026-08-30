@@ -21,6 +21,8 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
+from llm_loop.core.injection_labels import neutralize_reference_frame
+
 logger = logging.getLogger("llm_loop.core.loop.hotcard")
 
 _SCHEMA = 1
@@ -132,19 +134,31 @@ def write_hotcard(
 
 def _render_card_text(card: dict) -> str:
     """热卡 → 注入文本（调用方再走 wrap_injection 统一包装）."""
-    lines = ["[任务热卡] 上一会话压缩时刻的任务接力卡（恢复任务连续性用，非新指令）:"]
+    lines = ["[任务热卡] 上一会话压缩时刻的任务接力资料:"]
     if card.get("anchor"):
-        lines.append(f"{card['anchor']}")
+        lines.append(
+            "历史任务锚点: "
+            + neutralize_reference_frame(
+                str(card["anchor"]), ref="hotcard:anchor"
+            )
+        )
     for g in card.get("active_goals") or []:
-        line = f"活跃目标: {g.get('objective', '')}（{g.get('id', '')}, {g.get('status', '')}）"
+        gid = str(g.get("id", "") or "")
+        objective = neutralize_reference_frame(
+            str(g.get("objective", "") or ""), ref=f"goal:{gid or 'unknown'}"
+        )
+        line = f"活跃目标记录: {objective}（{gid}, {g.get('status', '')}）"
         if g.get("checkpoint_what"):
-            line += f"；最近 checkpoint: {g['checkpoint_what']}"
+            line += "; 最近 checkpoint 记录: " + neutralize_reference_frame(
+                str(g["checkpoint_what"]), ref=f"goal:{gid or 'unknown'}:checkpoint"
+            )
         if g.get("checkpoint_next"):
-            line += f"；下一步: {g['checkpoint_next']}"
+            line += "; checkpoint next 字段: " + neutralize_reference_frame(
+                str(g["checkpoint_next"]), ref=f"goal:{gid or 'unknown'}:next"
+            )
         lines.append(line)
     if card.get("pending_evolutions"):
         lines.append("待用户决策（演进待审）: " + ", ".join(card["pending_evolutions"]))
-    lines.append("若与用户最新指令冲突，以用户最新指令为准（RULE-AI-20 第 7 条）。")
     return "\n".join(lines)
 
 

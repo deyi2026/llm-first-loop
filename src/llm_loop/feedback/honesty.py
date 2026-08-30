@@ -17,6 +17,13 @@ import uuid
 from contextlib import contextmanager, suppress
 from pathlib import Path
 
+from llm_loop.core.injection_labels import (
+    PROGRAM_RECOVERY_LABEL,
+    STATUS_LABEL,
+    InjectionLayer,
+    origin_metadata,
+    render_program_appendix,
+)
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.llm.errors import (
     LLMEmptyResponseError,
@@ -53,6 +60,8 @@ def compression_message(archived_count: int, archived_chars: int) -> Message:
 # 覆盖: 错误/熔断/守卫/耗尽/压缩提醒等程序生成文本；pressure_block/routing refusal
 # 等动态文案未覆盖（漏标时 source 保持 USER，行为与现状一致，不劣化）。
 PROGRAM_FEEDBACK_PREFIXES = (
+    STATUS_LABEL,
+    PROGRAM_RECOVERY_LABEL,
     "[LLM 调用异常]",
     "[已达轮数上限]",
     "[停滞熔断]",
@@ -273,8 +282,16 @@ def architecture_report_message(fact: str, reason: str, suggestion: str) -> Mess
     """
     return Message(
         role="system",
-        content=f"[架构上报] 事实: {fact}\n原因: {reason}\n建议: {suggestion}",
+        content=render_program_appendix(
+            f"[架构上报] 事实: {fact}\n原因: {reason}\n建议: {suggestion}",
+            InjectionLayer.STATUS,
+        ),
         source=MessageSource.SYSTEM,
+        metadata=origin_metadata(
+            InjectionLayer.STATUS,
+            injection_kind="architecture_report",
+            injected_system=True,
+        ),
     )
 
 

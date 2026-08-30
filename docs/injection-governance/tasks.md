@@ -1,6 +1,6 @@
 # 注入治理专项任务图（INJECTION-GOVERNANCE）
 
-> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **R0 PASS；后续实现未开始**
+> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **R0 PASS；R1/L1 PASS；R2+ 未开始**
 > 依赖链: R0 → R1 → {R2, R3, R4, R5, R6 并行} → R7 → R8(shadow，可后置) → R9。R0 未过数据门不得进入行为实现。
 
 ## R0 基线取证与 fixture 建立（数据门）— ✅ PASS
@@ -16,9 +16,11 @@
 - 说明: 既有 cognilocal 随机行为复测不属于 R0 硬门；用户此前已取消重复基线跑，行为 A/B 统一留到 R7/L3。
 - evidence_required: true
 
-## R1 L1 语义边界落地
+## R1 L1 语义边界落地 — ✅ PASS
 - 内容: `injection_labels.py` 单一真相源；四层标记；每个 program appendix 最多一条冲突仲裁声明；资料块去祈使句。
-- 验收: 全部注入点走统一标签；资料模板 lint 不含禁止式命令；优先级声明不重复。
+- 产物: `src/llm_loop/core/injection_labels.py`、`tests/unit/test_injection_labels.py`、`docs/injection-governance/r1/report.md`，并迁移 memory/experience/archive/hotcard/digest/model-switch/declaration/recovery/status/build 聚合链。
+- 验收: 核心 program-user 全部带 canonical origin metadata；production enforce 夹具仲裁声明计数=1；REFERENCE command-shaped 历史改为中性占位+ref；focused 147 tests PASS；R0 frozen diff=0。
+- 说明: R1 只完成来源/语义边界，不宣称消除 R0 的尾后注入、重复或 wire 违规；这些属于 R2-R7。
 - evidence_required: true
 
 ## R2 注入预算硬上限（L2-1）
