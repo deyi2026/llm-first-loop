@@ -170,6 +170,10 @@ def _provider_visible_chars(messages: list[Message], provider_id: str, start: in
         len(m.content)
         for m in messages[max(0, start) :]
         if not is_cache_compacted_for(m, provider_id)
+        and (
+            not (getattr(m, "metadata", None) or {}).get("resolved_episode_ref")
+            or bool((getattr(m, "metadata", None) or {}).get("resolved_episode_keep_provider"))
+        )
     )
 
 
@@ -512,17 +516,39 @@ class _BuildMixin:
         # （2026-08-18 审计断点归因: 96%→2% 全量失效，delta 仅 614 tokens）。
         # 改为提交视图尾部追加（GATE_NOTE 模式，转 user），system+稳定历史前缀字节不变。
         base = list(sess.messages)
+        _original_base_index_by_id = {id(_m): _idx for _idx, _m in enumerate(base)}
+        _base_original_indices = list(range(len(base)))
         # R6: freeze the canonical current human ingress before history/compact projects it.
         # Tool-followup rounds return None and retain assistant(tool_calls)->tool(result) order.
         _r6_ingress_truth = current_ingress_user_truth(
             sess.messages, getattr(self, "_current_turn_ref", None)
         )
+        # INJECTION-GOVERNANCE R8.5 eligibility: completed episodes are durable
+        # indexed history, not default working context.  Only messages carrying a
+        # proven resolved_episode_ref are retired; current/unresolved/legacy
+        # history remains visible fail-open.  Storage/event truth is untouched.
+        try:
+            from llm_loop.core.episode_history import provider_view_without_resolved_episodes
+
+            base = provider_view_without_resolved_episodes(base)
+            _base_original_indices = [
+                _original_base_index_by_id[id(_m)]
+                for _m in base
+                if id(_m) in _original_base_index_by_id
+            ]
+        except Exception:  # noqa: BLE001 — eligibility projection fail-open
+            logger.warning("build: resolved episode provider-view 过滤失败（fail-open）", exc_info=True)
         # INJECTION-GOVERNANCE R4: persisted recovery is audit history, not future
         # executable context.  New recovery never enters sess.messages; this filter retires
         # pre-R4 durable recovery blocks without mutating storage/event truth.
         _stale_recovery_count = sum(1 for _m in base if is_program_recovery_message(_m))
         if _stale_recovery_count:
             base = [_m for _m in base if not is_program_recovery_message(_m)]
+            _base_original_indices = [
+                _original_base_index_by_id[id(_m)]
+                for _m in base
+                if id(_m) in _original_base_index_by_id
+            ]
             try:
                 self._record_action(
                     "action.program_recovery",
@@ -577,7 +603,14 @@ class _BuildMixin:
             for m in base
         ]
         if tool_round_zero:
+            _pre_zero_base = base
+            _pre_zero_pos = {id(_m): _idx for _idx, _m in enumerate(_pre_zero_base)}
             base = _tool_round_zero_tail(base)
+            _base_original_indices = [
+                _base_original_indices[_pre_zero_pos[id(_m)]]
+                for _m in base
+                if id(_m) in _pre_zero_pos
+            ]
         prefix_len = 0
         # RULE-AI-14 协调通道: 程序级自动注入 DSH→LFL 待处理消息（每轮 run 必感知，
         # 非仅提示词引导；实现见 core/loop/interop.py _InteropMixin，fail-open）
@@ -703,8 +736,17 @@ class _BuildMixin:
         # EVO-20260824-54d46549 渐进折叠配置（env, 默认关零回归）: PROGRESSIVE_FOLD_K>0 时
         # 压缩改为"每次最多折最老 K 个配对组"（平滑曲线 + guard 不 BLOCK + 智力无断崖）
         _progressive_fold_k = int(os.environ.get("PROGRESSIVE_FOLD_K", "0"))
-        # P1-10: 锚点相对传入列表 = 会话锚点 + 前置（memory/快照）长度
-        anchor_arg = sess_anchor + prefix_len if sess_anchor > 0 else 0
+        # P1-10 + R8.5: persisted anchor uses original sess.messages indices,
+        # while resolved/recovery eligibility filters shrink the provider view.
+        # Translate the boundary before build_history_messages and translate it
+        # back after compaction; otherwise a valid old anchor can skip the current
+        # task or orphan a tool group after resolved messages retire.
+        from llm_loop.core.episode_history import filtered_anchor_from_original
+
+        _filtered_sess_anchor = filtered_anchor_from_original(
+            _base_original_indices, sess_anchor
+        )
+        anchor_arg = _filtered_sess_anchor + prefix_len if _filtered_sess_anchor > 0 else 0
         anchor_box: list[int] = []
         compacted_box: list[bool] = []
         cache_compacted_box: list[Message] = []
@@ -857,7 +899,14 @@ class _BuildMixin:
         # P1-10: 锚点推进持久化（换算回会话索引, clamp 防御）
         _anchor_moved_this_build = False
         if anchor_box:
-            new_anchor = anchor_box[0] - prefix_len
+            from llm_loop.core.episode_history import original_anchor_from_filtered
+
+            _filtered_new_anchor = max(0, anchor_box[0] - prefix_len)
+            new_anchor = original_anchor_from_filtered(
+                _base_original_indices,
+                _filtered_new_anchor,
+                original_length=len(sess.messages),
+            )
             new_anchor = max(0, min(len(sess.messages), new_anchor))
             # EVO-20260817-72fcd94a L3 归因: 锚点实际前移（≠旧锚点）→ 记入缓存失效归因窗口
             if new_anchor != sess_anchor:
@@ -1153,6 +1202,12 @@ class _BuildMixin:
         _packet_memory_seq = 0
         for _m in sess.messages:
             _md = getattr(_m, "metadata", None) or {}
+            # R8.5 eligibility is upstream of both flat wire history and the
+            # Cognitive packet compiler.  A resolved turn memory may remain in
+            # durable session storage, but it must not be resurrected through
+            # the packet side-channel after the episode has retired.
+            if _md.get("resolved_episode_ref"):
+                continue
             if _md.get("injection_kind") == "memory_snapshot":
                 _c = str(getattr(_m, "content", "") or "")
                 if _c.strip():

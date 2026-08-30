@@ -32,6 +32,7 @@ from llm_loop.introspection.search import RecordSearcher
 from llm_loop.introspection.status import ArchitectureStatusProvider
 from llm_loop.llm.client import LLMClient
 from llm_loop.memory.archive import ArchiveStore
+from llm_loop.memory.episode import EpisodeStore
 from llm_loop.memory.store import MemoryStore
 from llm_loop.subagent.runner import SubAgentRunner
 from llm_loop.tools.builtin.dsh_session_read import DshSessionReadTool
@@ -209,6 +210,10 @@ def build_engine(settings: Settings) -> LoopEngine:
 
     memory = MemoryStore(settings.memory_dir)
     backup_store = BackupStore(settings.recovery_dir)
+    # INJECTION-GOVERNANCE R8.5: resolved episodes require a durable retrieval
+    # surface independent from ArchiveStore compaction/GC. Session ids already
+    # live in one global identity namespace, so a data-dir scoped store is safe.
+    episode_store = EpisodeStore(Path(settings.data_dir) / "episodes")
 
     def archive_known_session_id(session_id: str) -> bool:
         """legacy flat archive段的外部owner证据；无法判定时按已占用处理。"""
@@ -724,6 +729,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         audit_dir=settings.audit_dir,
         memory_store=memory,
         archive_store=archive,
+        episode_store=episode_store,
         experience_store=experience_store,  # P1-2: 经验库检索接入
         semantic_retriever=semantic_retriever,  # T31: 语义召回
     )
@@ -740,6 +746,9 @@ def build_engine(settings: Settings) -> LoopEngine:
 
         def event_stream(self, **kw: Any) -> list[dict]:
             return self._searcher.event_stream(**kw)
+
+        def hydrate_episode(self, **kw: Any) -> dict | None:
+            return self._searcher.hydrate_episode(**kw)
 
     corrections._search_records_fn = _RecordSearcherAdapter(searcher)  # noqa: SLF001
     corrections._experience_store = experience_store  # noqa: SLF001 — P1-2: 工具分派注入
@@ -905,6 +914,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         llm_pool=model_pool,  # M48（design §5.3）: 会话级模型路由
         recovery=recovery_channel,  # P2-2: fail-open 写失败恢复通道
         event_store=_build_event_store(settings),  # D1: 事件源化（共享同一实例）
+        episode_store=episode_store,  # R8.5: resolved episode durable retrieval
     )
 
     if _legacy_evidence_migrate_workspace_fn is not None:

@@ -157,19 +157,23 @@ R5 **没有**实施 R7 行为 A/B、R8 model-tier shadow 或 R9 主区应用。
 
 R8 **没有**启用任何 profile 行为。Metadata gate 与 R8.3 shadow soak 已 PASS，但 behavior canary 仍是独立后续阶段，必须显式批准并使用受控范围/rollback；R9 继续未开始。
 
-## 4H. R8.4 Prompt Eligibility Audit（只审计，行为未实施）
+## 4H. R8.4 Prompt Eligibility Audit + R8.5 Resolved Episode Retirement
 
 权威审计：`docs/injection-governance/eligibility/audit.md`；机器清单：`docs/injection-governance/eligibility/matrix.json`。
 
 - 新硬原则：**resolved / consumed / superseded / observability 默认不具备 prompt eligibility**；已解决 Q&A、tool chain、reasoning 与旧程序状态应可检索但不自动可见。
 - Eligibility 必须先于 model profile 与 R2 budget。Budget 只决定 eligible material 的 keep/drop，不能把本来不该进入 prompt 的内容合法化。
 - `ACTIVE + REQUIRED_NOW` 才能继续进入 provider context；若程序可自行处理则 0 prompt，若可通过工具/索引按需 hydrate 则默认不内联正文。
-- resolved episode 在 provider-view 退休前必须建立 durable index/archive + stable ref + hydration 验证；当前 `search_archive` 主要覆盖被压缩历史，尚不能据此直接删除所有未压缩 resolved conversation。
+- resolved episode 在 provider-view 退休前必须建立 durable index/archive + stable ref + hydration 验证；R8.5 已对**新/proven episode**用独立 `EpisodeStore` 闭合该链路，旧历史没有 resolution proof 时保持可见，不做猜测式迁移。
 - durable constraints/decisions 只保留当前 effective state；旧版本标记 superseded 后只留历史检索。
 - unknown program producer 默认应 deny；当前 `unknown -> STATUS` 仅满足 R1 语义安全，不满足 Eligibility fail-closed。
 - Eligibility gate 必须覆盖普通会话历史、`_inject_parts`、Cognitive `_packet_parts`、Evidence Recovery Manifest 和 tool schemas，不能只治理 canonical injection_kind。
-- behavior canary 新增 P0 前置门：resolved episode searchable=100%、resolved auto-visible=0、consumed next-turn visible=0、observability prompt chars=0、unknown producer eligible=0、Evidence Manifest R2 bypass=0、flat/packet eligibility parity=100%。
-- R8.4 当前只落盘审计，没有修改 `src/`，因此不得把 AUDIT PASS 写成“Eligibility 已实现”。
+- R8.5 resolution proof 必须强于 `run_end_reason=completed`：仅 non-empty、non-truncated、正常完成的 model answer 可被标为 candidate；durable write 失败、截断、程序回答、legacy 无 proof 一律 fail-open 不退休。
+- R8.5 provider retirement 必须同时覆盖 flat history 与 Cognitive packet；resolved memory snapshot 不得从第二条 packet 路径复活。history anchor 必须在原 session index 与 filtered view index 间双向映射，禁止破坏 current user / assistant-tool pairing。
+- 明确 cross-turn standing user instruction 必须继续 provider-visible；R8.5 先用保守 lexical guard 保护 exact user 原文，完整 effective-state/supersession store 仍是后续工作。
+- retrieval 复用现有 `search_records`，只新增 `kind=episode`；不得为 episode 再新增每轮常驻 tool，且尽量不扩 tool 参数 schema。
+- behavior canary P0 前置门仍包括：legacy resolved migration evidence、model-switch 当前轮复制、observability prompt chars、unknown producer eligible=0、Evidence Manifest R2 bypass=0、legacy/unresolved packet memory、round-exhaustion consumed 等。R8.5 PASS **不等于 Eligibility 全部实现**。
+- R8.4 权威审计：`eligibility/audit.md`；R8.5 权威实现报告：`eligibility/resolved-episode-report.md`；机器状态只认 `eligibility/matrix.json`。
 
 ## 5. 非目标
 
@@ -177,4 +181,4 @@ R8 **没有**启用任何 profile 行为。Metadata gate 与 R8.3 shadow soak �
 - 不追求“所有程序信息为零”；必要 system notice 可保留，但不得冒充 user truth，也不得破坏稳定前缀/provider 协议。
 - 不把强模型排除在结构治理之外；**行为 A/B 重点是弱模型，wire invariant 则跨模型强制**。
 - 不让 `err1210.py` 承担正常注入排序/合并职责。
-- R8.4 允许把 historical reasoning 作为 **Prompt Eligibility surface** 审计，但本审计阶段不修改 `REASONING_TAIL` 参数或 provider reasoning 协议。
+- R8.4/R8.5 允许把 historical reasoning 作为 **Prompt Eligibility surface** 治理；R8.5 通过退休 resolved episode 且不复制 `reasoning_content` 来降噪，但不修改 `REASONING_TAIL` 参数或 provider reasoning 协议。

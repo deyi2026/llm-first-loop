@@ -1,9 +1,10 @@
 # Prompt Eligibility Audit — resolved is retrievable, not injectable
 
-状态：**AUDIT PASS / IMPLEMENTATION NOT STARTED**
-基线：`31df1a3 test(injection): validate R8 shadow soak`
+状态：**AUDIT PASS / R8.5 RESOLVED-EPISODE PASS（new/proven） / legacy migration NOT STARTED**
+审计基线：`31df1a3 test(injection): validate R8 shadow soak`
+实现基线：`88db821 docs(injection): audit prompt eligibility lifecycle`
 日期：2026-08-30
-范围：只审计当前 prompt surface；**本阶段不修改 production `src/` 行为，不启动 behavior canary，不进入 R9**。
+范围：R8.4 完成全 surface 审计；R8.5 只实现“先可检索、后退休”的 resolved-episode 最小闭环。**behavior canary 仍未启动，不进入 R9**。
 
 ## 1. 为什么在 R8.3 之后新增这一门
 
@@ -113,7 +114,7 @@ must be inline      -> 进入 profile + R2 budget
 
 注意：`PARTIAL` **不得**被解释为“已经做过不注入”。例如 R3 把正文缩成两行 ref，只代表降低密度，不代表该 ref 已退出自动 prompt。
 
-本轮机器矩阵共审计 **34 个 prompt surface**：`DONE=6`、`KEEP=1`、`PARTIAL=12`、`OPEN=15`。其中 9 项列为 behavior-canary blocker。具体逐项状态以 `eligibility/matrix.json` 为准，后续实施时直接更新该矩阵而不是另建一份口径。
+机器矩阵仍固定 **34 个 prompt surface**。R8.5 后状态为：`DONE=6`、`KEEP=1`、`PARTIAL=16`、`OPEN=11`；behavior-canary blocker 从 9 项收敛为 7 项。具体逐项状态以 `eligibility/matrix.json` 为准，后续实施继续更新该矩阵而不是另建一份口径。
 
 ## 5. P0：behavior canary 前必须解决的 Eligibility 缺口
 
@@ -128,6 +129,8 @@ must be inline      -> 进入 profile + R2 budget
 1. 当前/明确 continuation episode 保持 active；
 2. resolved episode 退出默认投影；
 3. 如果当前用户显式引用旧问题，再按索引 hydrate 所需片段。
+
+**R8.5 更新：PARTIAL / new-proven path CLOSED。** `EpisodeStore` 已建立 append-only stable ref；只有 non-empty、non-truncated、正常完成的 model answer 获得 `episode_resolution_candidate=true`。durable write + fsync 成功后才给本 episode 标 `resolved_episode_ref`，下一 provider view 才过滤。两轮 engine E2E 已证明上一轮 Q/A/tool 在下一轮 payload 为 0，但可按 ref 完整 hydrate。pre-R8.5 历史无 candidate proof，不做猜测式迁移，因此本项尚不写 DONE。
 
 ### P0-2 立即退休之前，resolved episode 还缺完整 retrieval coverage
 
@@ -145,6 +148,8 @@ resolved episode
 
 这是 **retire-before-delete 的硬前置**。
 
+**R8.5 更新：new/proven path 已满足。** `search_records` 复用现有 tool，仅增加 `kind=episode`：空 query 列最近 refs、关键词查索引、`episode:...` query 精确 hydrate，超长通过 `#offset=N` 分页。没有新增第二个工具，也没有新增 ref/offset/max_chars schema 参数。legacy resolved history 的证据化迁移仍未开始。
+
 ### P0-3 `model_switch_notice` 会主动复活旧任务
 
 `src/llm_loop/core/loop/interop.py:225-289` 当前会：
@@ -158,6 +163,8 @@ resolved episode
 
 目标：model switch 是 routing/runtime 状态，默认 **0 prompt**。若确需恢复 active task，只读取 canonical active-task ref，不复制聊天文本。
 
+**R8.5 更新：OPEN → PARTIAL。** switch notice 如果属于一个新/proven completed episode，会随 episode 退休，不再跨下一 turn 泄漏；但它在当前 active run 内仍复制 recent user/assistant 并下达“继续”程序命令，故 observability-only 目标尚未完成。
+
 ### P0-4 `declaration_reminder` 在 final answer 之后持久化，天然只能污染下一轮
 
 `src/llm_loop/core/loop/engine.py:920-947` 在最终回答已生成后检查声明-回执；不一致时 append 一个 `role=user` 的 `declaration_reminder`，随后 `break`。
@@ -167,6 +174,8 @@ resolved episode
 这条信息来不及修正当前 final answer，只能进入未来 turn。
 
 目标：声明一致性进入 audit/UI，或在**当前回答交付前**纠正；不得生成下一轮 stale prompt message。
+
+**R8.5 更新：OPEN → PARTIAL。** 对新/proven completed episode，declaration reminder 位于 user→final assistant episode 范围内，会随 episode 获得 ref 并从下一 provider view 退休；但它仍在错误的位置被持久化，legacy reminder 也没有 resolution proof，因此仍需后续清理。
 
 ### P0-5 `Evidence Recovery Manifest` 是“可检索索引却仍每轮自动注入”，并旁路 R2
 
@@ -189,6 +198,8 @@ built.append({"role": "user", "content": manifest})
 R8 当前 `applied=false`，所以 R8.3 没有行为问题；但如果直接启动 behavior canary，profile 可能把历史 stale memory 再投影出来。
 
 因此：**Eligibility gate 必须同时位于 flat `_inject_parts` 与 Cognitive `_packet_parts` 之前。** 这也是本审计将 behavior canary 继续冻结的主要原因。
+
+**R8.5 更新：resolved path CLOSED / legacy-unresolved remains。** Cognitive `memory_snapshot` 扫描现在跳过带 `resolved_episode_ref` 的消息，与 flat provider history 同生命周期；legacy/unresolved snapshot 仍按旧路径存在，所以该 blocker 只收窄、不宣称全部 DONE。
 
 ### P0-7 local 每轮固定“行为提示”不是用户任务，也不是稳定控制面
 
@@ -377,6 +388,8 @@ flat / packet eligibility decision parity = 100%
 exact user truth / tool pairing / provider wire regressions = 0
 ```
 
+R8.5 已对**新/proven resolved episode**满足第一阶段的 searchable + auto-visible=0，并验证 anchor/tool pairing；但 legacy migration、model-switch 当前轮复制、evidence manifest、legacy/unresolved packet memory、local hint、unknown producer、round-exhaustion 仍未清，所以 behavior canary 继续冻结。
+
 ## 11. 审计结论
 
 R1-R8 主要解决了“注入怎样更安全”；本轮审计确认下一层根因是：
@@ -386,3 +399,5 @@ R1-R8 主要解决了“注入怎样更安全”；本轮审计确认下一层�
 因此下一实现阶段应围绕 **Prompt Eligibility / Resolved Episode Retirement**，而不是继续单纯降低 budget 或直接启用 minimal/full behavior profile。
 
 权威机器清单：`docs/injection-governance/eligibility/matrix.json`。
+
+R8.5 实现与验证报告：`docs/injection-governance/eligibility/resolved-episode-report.md`。

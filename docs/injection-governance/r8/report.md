@@ -294,9 +294,10 @@ R8 达成当前阶段目标：
 ```text
 R8 shadow = PASS
 R8.3 shadow soak = PASS
-R8.4 Prompt Eligibility audit = PASS / implementation NOT STARTED
-R8 behavior canary = NOT STARTED（被 R8.4 eligibility P0 blockers 冻结）
+R8.4 Prompt Eligibility audit = PASS
+R8.5 resolved episode retirement = PASS（new/proven；legacy migration NOT STARTED）
+R8 behavior canary = NOT STARTED（仍被剩余 eligibility blockers 冻结）
 R9 = NOT STARTED
 ```
 
-R8.4 的 owner 原则是 **resolved is retrievable, not injectable**。审计确认 resolved conversation/tool chain 仍缺 provider-view retirement，且 model-switch/declaration/evidence-manifest/Cognitive packet 等仍存在 stale/旁路风险。下一阶段不得直接做 behavior canary；应先完成 resolved episode durable index/hydration 与中央 Prompt Eligibility Gate。权威清单见 `docs/injection-governance/eligibility/audit.md`、`eligibility/matrix.json`。
+R8.4 的 owner 原则是 **resolved is retrievable, not injectable**。R8.5 已对新/proven episode 完成 durable index → stable ref → bounded hydrate → provider-view retirement，并闭合 resolved memory 的 flat/Cognitive 双路径；但 legacy resolved history 没有 resolution proof，不做猜测迁移，且 model-switch 当前轮复制、evidence-manifest、local hint、unknown producer、round-exhaustion 等仍存在。下一阶段不得直接做 behavior canary。权威清单/证据见 `docs/injection-governance/eligibility/audit.md`、`eligibility/matrix.json`、`eligibility/resolved-episode-report.md`。

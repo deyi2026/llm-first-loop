@@ -15,7 +15,7 @@ from llm_loop.core.message import ToolResult, ToolResultStatus
 _SEARCH_RECORDS_KIND_HINT = (
     "action_trace/exception_log/self_correction_log/declaration_check/"
     "memory/memory_extract/archive/selfheal/param_adjust/evolution/evolution_exec/"
-    "self_eval/change_log/proc_versions/feishu_audit/experience/all"
+    "self_eval/change_log/proc_versions/feishu_audit/experience/episode/all"
 )
 
 # EVO-20260826: architecture_status() 无 dimensions 时默认返回精简子集，
@@ -263,6 +263,75 @@ def run_search_records(ctx: Any, search_fn: Any, args: dict, session_id_fn: Any)
     query = str(args.get("query", "")).strip()
     limit = int(args.get("limit") or 10)
     limit = max(1, min(limit, 50))
+    # R8.5: resolved episodes are index-first history. Reuse the existing query
+    # field so hydration does not permanently expand every request's tool schema:
+    #   kind=episode, query=""                    -> recent refs
+    #   kind=episode, query="keyword"             -> search index
+    #   kind=episode, query="episode:<ref>"       -> bounded hydrate
+    #   kind=episode, query="episode:<ref>#offset=N" -> next page
+    _episode_ref = ""
+    _episode_offset = 0
+    if kind == "episode" and query.startswith("episode:"):
+        _match = re.fullmatch(r"(episode:[^#]+)(?:#offset=(\d+))?", query)
+        if _match is not None:
+            _episode_ref = _match.group(1)
+            _episode_offset = int(_match.group(2) or 0)
+    if kind == "episode" and _episode_ref:
+        hydrate = getattr(search_fn, "hydrate_episode", None)
+        if not callable(hydrate):
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content="[episode hydrate 不可用] resolved episode 检索器未装配。",
+                tool_call_id="",
+                tool_name="search_records",
+            )
+        try:
+            hydrated_raw = hydrate(
+                session_id=session_id_fn(),
+                ref=_episode_ref,
+                offset=_episode_offset,
+                max_chars=6000,
+            )
+        except (TypeError, ValueError) as exc:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[参数错误] episode hydrate 参数无效: {exc}",
+                tool_call_id="",
+                tool_name="search_records",
+            )
+        if hydrated_raw is None:
+            return ToolResult(
+                status=ToolResultStatus.SUCCESS,
+                content=f"[search_records] 未找到 episode ref={_episode_ref}（不伪造结果）。",
+                tool_call_id="",
+                tool_name="search_records",
+            )
+        if not isinstance(hydrated_raw, dict):
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content="[episode hydrate 异常] 检索器返回了非结构化结果。",
+                tool_call_id="",
+                tool_name="search_records",
+            )
+        hydrated: dict[str, Any] = hydrated_raw
+        next_offset = hydrated.get("next_offset")
+        header = (
+            f"[episode hydrate] ref={_episode_ref} offset={hydrated.get('offset', 0)} "
+            f"total_chars={hydrated.get('total_chars', 0)} "
+            f"complete={'true' if hydrated.get('complete') else 'false'}"
+        )
+        if next_offset is not None:
+            header += (
+                f" next_offset={next_offset}"
+                f" next_query={_episode_ref}#offset={next_offset}"
+            )
+        content = header + "\n" + str(hydrated.get("content") or "")
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content=content,
+            tool_call_id="",
+            tool_name="search_records",
+        )
     try:
         result = search_fn(kind=kind, query=query, limit=limit, session_id=session_id_fn())
     except ValueError as exc:

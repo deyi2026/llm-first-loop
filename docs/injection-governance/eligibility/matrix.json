@@ -2,8 +2,8 @@
   "schema": "prompt-eligibility-audit-v1",
   "audit_base_commit": "31df1a3",
   "audit_date": "2026-08-30",
-  "phase": "audit_only",
-  "production_behavior_changed": false,
+  "phase": "R8.5_RESOLVED_EPISODE_RETIREMENT",
+  "production_behavior_changed": true,
   "behavior_canary_allowed": false,
   "status_semantics": {
     "DONE": "current provider-view behavior already satisfies the target eligibility rule",
@@ -61,30 +61,34 @@
     {
       "id": "E03",
       "surface": "resolved_user_assistant_episode",
-      "current_status": "OPEN",
+      "current_status": "PARTIAL",
       "target_class": "RETRIEVABLE_ONLY",
       "priority": "P0",
-      "current_behavior": "Normal completed user/assistant turns remain in sess.messages and are projected until history budget/compact removes them.",
+      "current_behavior": "R8.5 indexes newly proven non-empty/non-truncated completed model-answer episodes into a durable EpisodeStore, stamps stable resolved_episode_ref only after fsync succeeds, and removes those messages from future provider working context. Pre-R8.5/legacy turns without explicit resolution proof remain visible fail-open and are not guessed resolved.",
       "target_rule": "Once answered/resolved, default future prompt visibility is zero. Explicit follow-up/continuation may hydrate required fragments from an episode index.",
-      "retrieval_path": "MISSING: durable resolved-episode index/archive required before retirement",
+      "retrieval_path": "search_records(kind=episode, query=\"\") -> stable episode ref; query=<keyword> searches; query=<episode:... ref> hydrates exact visible user/assistant/tool transcript with bounded paging",
       "evidence": [
-        "src/llm_loop/core/loop/engine.py:1075-1115",
-        "src/llm_loop/core/history.py"
+        "src/llm_loop/memory/episode.py",
+        "src/llm_loop/core/episode_history.py",
+        "src/llm_loop/core/loop/engine.py",
+        "src/llm_loop/core/loop/build.py",
+        "tests/unit/test_resolved_episode.py",
+        "docs/injection-governance/eligibility/resolved-episode-report.md"
       ]
     },
     {
       "id": "E04",
       "surface": "resolved_tool_calls_and_tool_results",
-      "current_status": "OPEN",
+      "current_status": "PARTIAL",
       "target_class": "RETRIEVABLE_ONLY",
       "priority": "P0",
-      "current_behavior": "Tool calls/results remain in ordinary session history after the final answer; trimming is budget/age driven rather than task lifecycle driven.",
+      "current_behavior": "For R8.5-proven resolved episodes, assistant tool-call declarations and tool results are durably indexed before the episode is retired from later provider view. The current unresolved turn keeps full protocol pairing. Legacy turns without resolution proof remain visible.",
       "target_rule": "After the consuming final answer resolves the episode, archive/index the tool chain and remove it from default next-task provider view.",
-      "retrieval_path": "MISSING for non-compacted raw episode; ArchiveStore/search_archive covers compacted history",
+      "retrieval_path": "EpisodeStore stable ref via search_records(kind=episode); exact visible tool chain is hydrated on demand",
       "evidence": [
-        "src/llm_loop/core/loop/tool_exec.py",
-        "src/llm_loop/core/history.py",
-        "src/llm_loop/introspection/registry_introspection.py:63-101"
+        "src/llm_loop/memory/episode.py",
+        "src/llm_loop/core/episode_history.py",
+        "tests/unit/test_resolved_episode.py"
       ]
     },
     {
@@ -93,12 +97,14 @@
       "current_status": "PARTIAL",
       "target_class": "PROTOCOL_ONLY",
       "priority": "P1",
-      "current_behavior": "REASONING_TAIL=-1 removes non-tool-call reasoning in provider view; cloud tool-call reasoning remains for protocol compatibility. Local endpoints map -1 to -2 and remove all reasoning.",
+      "current_behavior": "Existing REASONING_TAIL policy remains. R8.5 additionally retires the entire proven resolved episode from future provider view and deliberately does not duplicate private reasoning_content into EpisodeStore hydration. Legacy/unresolved cloud tool-call reasoning still follows provider protocol policy.",
       "target_rule": "Retain only reasoning bytes still required by the active provider protocol/pairing. Resolved historical reasoning is archive-only.",
-      "retrieval_path": "session/archive raw record",
+      "retrieval_path": "Visible resolved transcript is episode-hydratable; private reasoning is intentionally not duplicated as retrieval content",
       "evidence": [
+        "src/llm_loop/memory/episode.py",
+        "src/llm_loop/core/episode_history.py",
         "src/llm_loop/core/history.py:562-610",
-        "src/llm_loop/core/loop/build.py:288-306"
+        "tests/unit/test_resolved_episode.py"
       ]
     },
     {
@@ -107,12 +113,12 @@
       "current_status": "PARTIAL",
       "target_class": "ACTIVE_STATE",
       "priority": "P0-protect",
-      "current_behavior": "Durable decisions can currently survive through conversational history/memory, but there is no single eligibility-aware effective-state projection that supersedes old wording.",
+      "current_behavior": "R8.5 adds a conservative standing-instruction guard: explicit cross-turn user rules (e.g. 以后/始终/永远/不要再/from now on/always use/never use) keep the exact user message provider-visible even when the surrounding episode retires. A canonical effective-state store with supersession is still not implemented.",
       "target_rule": "Keep only the currently effective constraint/value in active state. Superseded source turns remain retrievable but invisible by default.",
-      "retrieval_path": "decision/memory/history ref; canonical effective-state store to be designed",
+      "retrieval_path": "Exact standing user text stays active; resolved surrounding episode remains available by episode ref; broader decisions remain memory/history retrievable",
       "evidence": [
-        "src/llm_loop/memory/store.py",
-        "src/llm_loop/core/loop/turn_context.py"
+        "src/llm_loop/core/episode_history.py",
+        "tests/unit/test_resolved_episode.py"
       ]
     },
     {
@@ -121,12 +127,14 @@
       "current_status": "PARTIAL",
       "target_class": "REF_ON_DEMAND",
       "priority": "P0",
-      "current_behavior": "R3 limits automatic reference behavior, but turn_context persists memory snapshots into sess.messages with turn_ref/persisted_injection; no resolved-turn retirement gate exists.",
+      "current_behavior": "R3 still governs current-turn automatic memory eligibility. R8.5 now marks memory_snapshot messages inside a proven resolved episode with the episode ref, removes them from flat future provider history, and also skips resolved refs in Cognitive _packet_parts so the packet side-channel cannot resurrect them. Legacy/unresolved snapshots remain governed by existing R3 behavior.",
       "target_rule": "Eligible only for the current active task dependency. Resolved turn snapshots become retrievable-only. Recency/K is not eligibility.",
-      "retrieval_path": "search_records(kind=memory) / exact memory ref",
+      "retrieval_path": "search_records(kind=memory) / exact memory ref; resolved visible episode transcript via episode ref",
       "evidence": [
-        "src/llm_loop/core/loop/turn_context.py:120-204",
-        "docs/injection-governance/r3/report.md"
+        "src/llm_loop/core/loop/build.py",
+        "src/llm_loop/core/episode_history.py",
+        "src/llm_loop/core/loop/turn_context.py",
+        "tests/unit/test_resolved_episode.py"
       ]
     },
     {
@@ -135,12 +143,13 @@
       "current_status": "PARTIAL",
       "target_class": "REF_ON_DEMAND",
       "priority": "P0",
-      "current_behavior": "Experience frames are pointerized/seen-controlled but persisted to session with turn_ref; no resolved episode retirement gate.",
+      "current_behavior": "R3 pointer/seen controls remain for current tasks. Experience-tip messages that belong to a proven resolved episode are now retired with that episode instead of persisting into later working context. Current/legacy eligibility is still not a full required-now gate.",
       "target_rule": "Only task-relevant current experience may surface; resolved experience context returns to the experience index.",
-      "retrieval_path": "search_records(kind=experience) / experience ref",
+      "retrieval_path": "search_records(kind=experience) / experience ref; resolved episode transcript via episode ref",
       "evidence": [
-        "src/llm_loop/core/loop/tool_exec.py:390-437",
-        "docs/injection-governance/r3/report.md"
+        "src/llm_loop/core/episode_history.py",
+        "src/llm_loop/core/loop/tool_exec.py",
+        "tests/unit/test_resolved_episode.py"
       ]
     },
     {
@@ -149,12 +158,13 @@
       "current_status": "PARTIAL",
       "target_class": "REF_ON_DEMAND",
       "priority": "P1",
-      "current_behavior": "R3 reduces digest auto-projection to bounded reference frames but build may still persist/append a session_digest_catalog during the auto window/task switch.",
+      "current_behavior": "R3 bounded catalog behavior remains for active/current turns. A session_digest_catalog persisted inside a newly proven resolved episode is retired with that episode, but catalog auto-surfacing for current tasks still exists.",
       "target_rule": "Catalog stays outside prompt by default; current task asks for a specific historical dependency before a ref is surfaced.",
-      "retrieval_path": "search_archive / digest archive ref",
+      "retrieval_path": "search_archive / digest archive ref; resolved episode ref when catalog belonged to a retired episode",
       "evidence": [
-        "src/llm_loop/core/loop/build.py:1000-1043",
-        "src/llm_loop/core/session_digest.py"
+        "src/llm_loop/core/loop/build.py",
+        "src/llm_loop/core/session_digest.py",
+        "src/llm_loop/core/episode_history.py"
       ]
     },
     {
@@ -203,29 +213,30 @@
     {
       "id": "E13",
       "surface": "model_switch_notice",
-      "current_status": "OPEN",
+      "current_status": "PARTIAL",
       "target_class": "OBSERVABILITY_ONLY",
       "priority": "P0",
-      "current_behavior": "Copies recent user and assistant text, adds a program command to continue the task, and persists the notice into the session.",
+      "current_behavior": "model_switch_notice still duplicates recent user/assistant text during the active run and remains architecturally wrong as runtime observability. R8.5 prevents a notice inside a proven completed episode from leaking into later turns by retiring the whole episode. Current-run duplication is still OPEN work.",
       "target_rule": "Model routing change is runtime state. Zero prompt by default. If an active task must be resumed, hydrate canonical active-task state rather than chat text.",
-      "retrieval_path": "model routing/status event; active task ref if continuation is required",
+      "retrieval_path": "model routing/status event; episode ref prevents stale next-turn replay but does not replace canonical active-task state",
       "evidence": [
-        "src/llm_loop/core/loop/interop.py:225-289"
+        "src/llm_loop/core/loop/interop.py:225-289",
+        "src/llm_loop/core/episode_history.py"
       ]
     },
     {
       "id": "E14",
       "surface": "declaration_reminder",
-      "current_status": "OPEN",
+      "current_status": "PARTIAL",
       "target_class": "OBSERVABILITY_ONLY",
       "priority": "P0",
-      "current_behavior": "Created after final_answer, persisted as role=user, then the run breaks. It cannot repair the current answer and remains eligible for a future turn. _is_injected_system does not filter role=user.",
+      "current_behavior": "declaration_reminder is still persisted before the final assistant and cannot repair that already-generated answer. For new proven resolved episodes, R8.5 marks and retires it with the episode so it no longer leaks to the next turn. Legacy reminders and the wrong write location remain to be cleaned up.",
       "target_rule": "Audit/UI or pre-delivery correction only; never persist as next-turn prompt material.",
-      "retrieval_path": "declaration_check audit record",
+      "retrieval_path": "declaration_check audit record; resolved episode ref for surrounding visible transcript",
       "evidence": [
-        "src/llm_loop/core/loop/engine.py:920-947",
-        "src/llm_loop/core/history.py:633-646",
-        "mechanical: role=user skip_injected_system=false persisted=true"
+        "src/llm_loop/core/loop/engine.py",
+        "src/llm_loop/core/episode_history.py",
+        "tests/unit/test_resolved_episode.py"
       ]
     },
     {
@@ -547,14 +558,14 @@
     }
   },
   "canary_blockers": [
-    "resolved_episode_retrieval_index_missing",
-    "resolved_history_no_provider_retirement_gate",
-    "model_switch_replays_recent_task_text",
-    "declaration_reminder_leaks_to_next_turn",
+    "legacy_resolved_history_requires_explicit_resolution_evidence_before_migration",
+    "model_switch_still_replays_recent_task_text_in_current_run",
     "evidence_manifest_auto_injected_and_bypasses_R2",
-    "cognitive_packet_scans_all_persisted_memory_snapshots",
+    "legacy_or_unresolved_memory_snapshot_can_still_enter_cognitive_packet",
     "local_behavior_hint_is_dynamic_command_shaped_prompt",
     "unknown_program_slot_is_prompt_fail_open",
     "round_exhaustion_consumed_predicate_broken_after_R1_wrapper"
-  ]
+  ],
+  "r8_5_status": "PASS_CURRENT_FORMAT; LEGACY_MIGRATION_NOT_STARTED",
+  "r8_5_evidence": "docs/injection-governance/eligibility/resolved-episode-report.md"
 }

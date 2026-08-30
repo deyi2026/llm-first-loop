@@ -186,6 +186,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         llm_pool: Any | None = None,  # M48（design §5.3）: ModelClientPool（会话级模型路由）
         recovery: Any | None = None,  # P2-2: RecoveryChannel（fail-open 写失败恢复通道）
         event_store: Any | None = None,  # D1: EventStore（事件源化，默认 None 零行为）
+        episode_store: Any | None = None,  # R8.5: resolved episode durable index（None=零回归）
     ) -> None:
         self.llm = llm_client
         self.registry = registry
@@ -216,6 +217,9 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         self.recovery = recovery
         # D1: 事件源化 EventStore（默认 None 零行为；注入时消息/元数据/压缩事件落事件日志）
         self._event_store = event_store
+        # INJECTION-GOVERNANCE R8.5: completed conversation episodes become
+        # retrievable history before they may retire from provider working context.
+        self.episode_store = episode_store
         # 工作区管理（对齐 DSH Workspace）：当前工作区根（空 = 进程 cwd 零回归）；
         # run 入口注入 contextvar 供工具相对路径/命令默认 cwd 跟随
         self.workspace_root: str = ""
@@ -378,6 +382,17 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             # contextvar 解析本会话绑定，上方 ctx 字段保留为无上下文回退）
             with self._run_states_guard:
                 self._run_sessions[session_id] = sess
+
+        # R8.5 eligibility migration-on-use: index only prior episodes whose final
+        # assistant explicitly proves a completed model run.  Legacy/ambiguous
+        # history stays visible fail-open.  This happens before the new user message
+        # is appended, so the current turn can never be mistaken for resolved.
+        try:
+            from llm_loop.core.episode_history import backfill_completed_episodes
+
+            backfill_completed_episodes(self.episode_store, sess)
+        except Exception:  # noqa: BLE001 — retrieval indexing must not block a run
+            logger.warning("resolved episode 历史索引失败（fail-open，不退休）", exc_info=True)
 
         # ── 消息进：构造用户消息并落库 ──
         user_msg = Message(
@@ -1086,7 +1101,21 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             or final_answer.startswith(PROGRAM_FEEDBACK_PREFIXES)
             else MessageSource.USER
         )
-        _origin_metadata = {"answer_origin": _answer_origin, "run_end_reason": _run_end_reason}
+        _episode_resolution_candidate = bool(
+            _answer_origin == "model"
+            and _run_end_reason == "completed"
+            and final_answer.strip()
+            and resp is not None
+            and not resp.truncated
+        )
+        _origin_metadata = {
+            "answer_origin": _answer_origin,
+            "run_end_reason": _run_end_reason,
+            # R8.5: this dedicated bit is stronger than run_end_reason=completed.
+            # Provider-truncated/empty/program answers never become automatically
+            # retireable, and legacy messages lacking the bit remain fail-open.
+            "episode_resolution_candidate": _episode_resolution_candidate,
+        }
         sess.messages.append(
             Message(
                 role="assistant",
@@ -1113,6 +1142,20 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             last.reasoning_content = resp.reasoning_content
         # D1: 最终回答消息事件（fail-open）
         self._append_message_event(sess, sess.messages[-1])
+        # R8.5: durable index first, retirement metadata second.  If the index
+        # write fails, no resolved_episode_ref is attached and future provider
+        # views keep the episode visible (fail-open, information-preserving).
+        try:
+            from llm_loop.core.episode_history import index_current_completed_episode
+
+            index_current_completed_episode(
+                self.episode_store,
+                sess,
+                turn_ref=getattr(self, "_current_turn_ref", None),
+                final_answer_index=len(sess.messages) - 1,
+            )
+        except Exception:  # noqa: BLE001 — indexing failure must not corrupt delivery
+            logger.warning("resolved episode 当前轮索引失败（fail-open，不退休）", exc_info=True)
         # M12 深化 T65: run 完成里程碑自我评估提醒（仅提示不强制，EVAL-03；追加后随会话保存）
         self._check_eval_trigger(sess, rounds, milestone=True)
         # T39: 会话保存异常 → 如实标注 + 不抛穿（程序故障不影响 AI 发挥）

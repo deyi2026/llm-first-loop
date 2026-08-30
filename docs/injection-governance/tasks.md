@@ -1,7 +1,7 @@
 # 注入治理专项任务图（INJECTION-GOVERNANCE）
 
-> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **R0-R8 PASS；R8.3 SOAK PASS；R8.4 Prompt Eligibility AUDIT PASS / IMPLEMENTATION NOT STARTED；behavior canary NOT STARTED；R9 未开始**
-> 依赖链: R0 → R1 → {R2, R3, R4, R5, R6 并行} → R7 → R8 shadow/soak → **R8.4 eligibility audit/implementation** → behavior canary → R9。R0 未过数据门不得进入行为实现；R8.4 P0 未清不得进入 behavior canary。
+> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **R0-R8 PASS；R8.4 Eligibility AUDIT PASS；R8.5 resolved-episode PASS（new/proven，legacy migration 未开始）；behavior canary / R9 未开始**
+> 依赖链: R0 → R1 → {R2, R3, R4, R5, R6 并行} → R7 → R8 shadow/soak → **R8.4 audit → R8.5 resolved-episode retirement → remaining eligibility blockers** → behavior canary → R9。R0 未过数据门不得进入行为实现；Eligibility P0 未清不得进入 behavior canary。
 
 ## R0 基线取证与 fixture 建立（数据门）— ✅ PASS
 - 内容: 用真实 `data/event_logs` 重建 human turn，区分 user truth / user-role program appendix / system notice；量化尾后注入、会话级重复、资料祈使污染、provider wire 连续 user；按 model/compact/recovery 分桶；冻结脱敏结构 fixture。
@@ -78,14 +78,26 @@
 - evidence: `docs/injection-governance/r8/report.md`、`docs/injection-governance/r8/shadow-inventory.json`、`docs/injection-governance/r8/capability-audit.md`、`docs/injection-governance/r8/soak-gates.md`、`docs/injection-governance/r8/soak-report.md`、`docs/injection-governance/r8/soak-evidence.json`。
 - evidence_required: true
 
-## R8.4 Prompt Eligibility / Resolved Episode Retirement — ✅ AUDIT PASS（实现未开始）
+## R8.4 Prompt Eligibility Audit — ✅ PASS
 - Owner principle: **resolved is retrievable, not injectable**。已解决问题/任务的 user+assistant+tool+reasoning 退出自动 working context，只保留可检索 index/archive；真正 follow-up 再按 ref hydrate。
 - 审计状态语义: DONE=provider prompt 已排除；PARTIAL=已降密/去重/ref 化但仍自动可见；OPEN=缺生命周期门或仍有 stale/observability 注入。不得把 PARTIAL 写成“已经不注入”。
 - P0 发现: resolved episode 尚无 provider-view retirement；非 compact resolved history 还缺完整检索索引；model_switch_notice 复制最近 user/assistant 并持久化继续命令；declaration_reminder 在 final 后写 role=user；Evidence Recovery Manifest 当前 enforce 且每 build user-tail/R2 旁路；future Cognitive packet 扫全部 memory_snapshot；local 每轮固定 command-shaped behavior hint；unknown slot fail-open STATUS；round-exhaustion consumed prefix 在 R1 wrapper 后机械复现失效。
 - 运行只读取证: active 62 sessions / 11061 messages；storage 中 memory_snapshot=382、experience_tip=118、model_switch_notice=21、session_digest_catalog=5、declaration_reminder=3；这些是存在性证据，不冒充 provider-wire 计数。
 - 产物: `docs/injection-governance/eligibility/audit.md`、`docs/injection-governance/eligibility/matrix.json`，并同步 design/requirements/tasks。
-- 边界: 本阶段**不改 `src/`、不改变 R8 `applied=false`、不启动 behavior canary、不进入 R9**。
-- 下一实现门: 先补 resolved episode durable index/hydration，再做中央 Eligibility Gate（history + dynamic + packet + evidence + schema），最后以 provider-view telemetry 验证 P0 全清。
+- 边界: R8.4 本身只审计、不改 `src/`；后续实现必须逐项回写同一 matrix，不另起第二套状态口径。
+- evidence_required: true
+
+## R8.5 Resolved Episode durable index + retirement — ✅ PASS（new/proven；legacy migration NOT STARTED）
+- Durable first: 新增 append-only `EpisodeStore`（`data/episodes/<sid>.jsonl`）；stable `episode:` ref；同 ref 幂等、冲突 fail-closed；`flush+fsync` 成功后才允许 `resolved_episode_ref` 标记，写失败不退休。
+- Resolution proof: 仅 `answer_origin=model + run_end_reason=completed + final非空 + resp.truncated=false` 才写 `episode_resolution_candidate=true`。pre-R8.5 history 无 proof 不猜 resolved。
+- Provider retirement: 下一 build 在 history/budget/profile 前过滤 resolved ref；storage/event truth 不删。Cognitive packet 的 persisted memory scan 同样跳过 resolved ref，防第二路径复活。
+- Retrieval: 复用 `search_records(kind=episode)`；query 空列最近 ref、关键词搜索、`episode:...` 精确 hydrate、`#offset=N` 分页；不新增 tool，不新增 ref/offset/max_chars schema 参数。
+- Protocol/cache: original↔filtered history anchor 双向映射；专项 E2E 验证旧 episode 退休后新 turn 的 user + assistant(tool_calls) + tool pairing 完整。provider-visible char 统计也排除已退休内容。
+- Durable-user protect: 明确“以后/始终/永远/不要再/from now on/always use/never use”等 standing instruction 保留 exact genuine user 原文；同轮 answer/tool 仍退休。完整 effective-state/supersession 尚未实现，E06 保持 PARTIAL。
+- Hydration boundary: EpisodeStore 保存 genuine user + visible assistant/tool evidence；不复制 program-only prompt material 和 private `reasoning_content`。
+- 验证: `tests/unit/test_resolved_episode.py` 13/13；history/cache/tool-round/1210/R1-R8/introspection/factory adjacent suite **420/420 PASS**；changed paths pyright 0/0；R0 四门 PASS 且 r0 directory hash before/after 均 `b54d47a31109a03d9f926f65b7a3d9f6caf3f24c0d42b1bff26fe338ee74b02a`。
+- Remaining blockers: legacy resolved migration proof、model_switch 当前轮复制、Evidence Manifest R2 bypass、legacy/unresolved packet memory、local dynamic hint、unknown producer fail-open、round-exhaustion consumed mismatch。behavior canary 继续 NOT STARTED。
+- evidence: `docs/injection-governance/eligibility/resolved-episode-report.md`、`eligibility/matrix.json`、`tests/unit/test_resolved_episode.py`。
 - evidence_required: true
 
 ## R9 主区应用与收口

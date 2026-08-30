@@ -35,6 +35,7 @@ _VALID_KINDS = {
     "proc_versions",  # P2-6: 进程版本记录
     "feishu_audit",  # P2-6: 飞书消息审计
     "experience",  # P1-2: 经验库检索
+    "episode",  # INJECTION-GOVERNANCE R8.5: resolved Q&A/tool-chain index
     "all",
 }
 
@@ -112,12 +113,14 @@ class RecordSearcher:
         audit_dir: str | Path,
         memory_store: Any | None = None,
         archive_store: Any | None = None,
+        episode_store: Any | None = None,
         experience_store: Any | None = None,
         semantic_retriever: Any | None = None,
     ) -> None:
         self._audit_dir = Path(audit_dir)
         self._memory = memory_store
         self._archive = archive_store
+        self._episode_store = episode_store
         self._experience_store = experience_store  # P1-2: 经验库（None 时 _search_experience 返回空）
         self._semantic = semantic_retriever  # T31: 语义检索器（可 None 走关键词）
 
@@ -146,11 +149,13 @@ class RecordSearcher:
             return self._search_memory(query, limit, session_id=session_id)
         if kind == "archive":
             return self._search_archive(query, limit, session_id)
+        if kind == "episode":
+            return self._search_episode(query, limit, session_id)
         if kind == "experience":  # P1-2: 经验库检索
             return self._search_experience(query, limit)
 
         # P1-4: kind=all 时各 kind 均匀分配 limit（避免前序 kind 挤占、后序永远不可见）
-        each_limit = max(1, limit // 13) if kind == "all" else limit
+        each_limit = max(1, limit // 14) if kind == "all" else limit
 
         results: list[dict] = []
         if kind in {"action_trace", "all"}:
@@ -268,8 +273,33 @@ class RecordSearcher:
         if kind == "all":
             results += self._search_memory(query, each_limit, session_id=session_id)
             results += self._search_archive(query, each_limit, session_id)
+            results += self._search_episode(query, each_limit, session_id)
             results += self._search_experience(query, each_limit)  # P1-2: 经验库并列返回
         return results[:limit]
+
+    def _search_episode(self, query: str, limit: int, session_id: str) -> list[dict]:
+        if self._episode_store is None or not session_id:
+            return []
+        return list(self._episode_store.search(session_id, query=query, limit=limit))
+
+    def hydrate_episode(
+        self,
+        *,
+        session_id: str,
+        ref: str,
+        offset: int = 0,
+        max_chars: int = 6000,
+    ) -> dict | None:
+        """Explicit bounded hydration for one resolved episode ref."""
+
+        if self._episode_store is None or not session_id:
+            return None
+        return self._episode_store.hydrate(
+            session_id,
+            ref,
+            offset=offset,
+            max_chars=max_chars,
+        )
 
     # ── EVO-20260814: 统一事件流视图（对齐 Harness Trajectory 思路）──
     _EVENT_STREAMS: dict[str, tuple[str, tuple[str, ...]]] = {
