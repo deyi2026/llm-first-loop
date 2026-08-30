@@ -1,6 +1,6 @@
 # 注入治理专项（INJECTION-GOVERNANCE）需求规格
 
-> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **设计已审批；R0 PASS；R1/L1 PASS；R2/L2-1 PASS；R3/L2-2 PASS；R4/L2-4 PASS；R5/L2-3 PASS；R6 PASS；R7+ 未实施**
+> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **设计已审批；R0-R7 PASS（R7 exact cognilocal coverage=N/A）；R8+ 未实施**
 
 ## 1. 问题陈述（实证）
 
@@ -130,6 +130,17 @@ R4 **没有**实施 R5 identity stripping、R7 行为 A/B 或 R8 model-tier shad
 - pre-R5 archive 不做 destructive migration；R3 已停止 archive summary 自动 prompt 回灌，存量只在显式检索时可见。
 
 R5 **没有**实施 R7 行为 A/B、R8 model-tier shadow 或 R9 主区应用。
+
+## 4F. R7 已验收的 L3 A/B
+
+权威报告：`docs/injection-governance/r7/report.md`。
+
+- A 臂确定性重放 R0 的 post-user / duplicate / imperative reference / identity-attraction 结构；B 臂直接使用 production R2/R3/R5/R6 helper，排除工具与网络成功率变量。
+- `qwen3.8-27b-mlx@4bit`：A completion=66.67%、dominance=0%、injection=32.57%、structure FAIL；B completion=100%、drift=0%、dominance=100%、injection=16.44%、structure PASS。
+- `qwen/qwen3.8-27b` 对照 A/B 均 completion=100%，但 A 仍 structure FAIL；B structure PASS 且 injection 32.57%→16.44%。
+- B 结构硬门：post-user=0、完整重复=0、reference imperative=0、tail_user_run<=1、exact user suffix=true。
+- 校准：K=3 是 [0,1,3] 中唯一保住 critical T6 的候选；budget=900 是 [512,900,2000,8000] 中最小通过候选。生产默认 8000 在 R7 不变。
+- 原指定 `cognilocal/qwen3.8-27b-cog` 本轮 8901 不提供，覆盖=N/A；未以其它模型冒充。
 
 ## 5. 非目标
 

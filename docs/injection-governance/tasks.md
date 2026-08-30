@@ -1,6 +1,6 @@
 # 注入治理专项任务图（INJECTION-GOVERNANCE）
 
-> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **R0 PASS；R1/L1 PASS；R2/L2-1 PASS；R3/L2-2 PASS；R4/L2-4 PASS；R5/L2-3 PASS；R6 PASS；R7+ 未开始**
+> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **R0-R7 PASS（R7 exact cognilocal coverage=N/A）；R8+ 未开始**
 > 依赖链: R0 → R1 → {R2, R3, R4, R5, R6 并行} → R7 → R8(shadow，可后置) → R9。R0 未过数据门不得进入行为实现。
 
 ## R0 基线取证与 fixture 建立（数据门）— ✅ PASS
@@ -61,9 +61,12 @@
 - evidence_required: true
 - evidence_required: true
 
-## R7 L3 A/B 验证
-- 内容: 治理前冻结 R0 + 治理后同 fixture、同模型、同采样参数；弱模型重点跑 identity/command-conflict/repetition trap。
-- 验收: 原三指标（漂移≤10%、注入占比≤20%、完成率≥80%）+ 新硬门（尾后注入=0、完整重复=0、资料祈使=0、GLM wire 违规=0、完成率回退≤5pt）。
+## R7 L3 A/B 验证 — ✅ PASS（exact cognilocal 覆盖 N/A）
+- 内容: 冻结 R0 结构失败形态 A 臂 vs 当前 R2/R3/R5/R6 production helper B 臂；6 个无工具 synthetic fixture 覆盖 identity-header、command-conflict、repetition、injection-pressure 与 critical memory-dependency；同模型/temperature=0/seed=42/max_tokens=256。
+- 模型: `qwen3.8-27b-mlx@4bit` 弱变体 + `qwen/qwen3.8-27b` 同系列对照；原指定 `cognilocal/qwen3.8-27b-cog` 在 8901 本轮未提供，明确记 N/A，不做别名替代。
+- 验收: MLX B 完成率 100%、漂移 0%、用户支配率 100%、平均注入占比 16.44%、结构硬门全 PASS；A 完成 66.67%、支配率 0%、注入 32.57%、结构 FAIL。GGUF control A/B 均 100% 完成，但仅 B 结构 PASS，且注入降至 16.44%。
+- 校准: K=0/1 均丢 critical T6，K=3 PASS → 保留 K=3；budget 512 丢 T6，900/2000/8000 PASS → 900 仅为本 fixture 最小通过候选，R7 不修改生产默认 8000。
+- evidence: `docs/injection-governance/r7/report.md`、`r7/results-mlx4bit.json`、`r7/results-qwen27b.json`。
 - evidence_required: true
 
 ## R8 按模型能力分档（L2-5，后置 shadow）

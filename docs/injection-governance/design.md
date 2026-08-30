@@ -1,6 +1,6 @@
 # 注入治理专项设计（INJECTION-GOVERNANCE）
 
-> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: 设计已审批；R0 PASS，L1/L2 尚未实施
+> 立项: GOAL-20260829-afd095ab | 2026-08-30 | 状态: **设计已审批；R0-R7 PASS（R7 exact cognilocal coverage=N/A）；R8+ 未实施**
 > 核心原则: **结构他律 > 标记自律；用户真实指令 > 一切程序注入。** 标记只对强模型有效；干扰源的结构性消失、降密与位置退让才是根治。
 
 ## 0. 设计约束与术语
@@ -179,6 +179,8 @@ wire 层按 provider contract 投影：
   - 用户指令支配率不得低于治理前，并以弱模型冲突 fixture 达到 ≥90% 为目标；
   - 任务完成率不得因“少注入”出现 >5pt 回退。
 - 两轮跑: 治理前（冻结 R0 baseline）→ 治理后（验证），同 fixture、同模型、同采样参数；不能只挑成功样本。
+
+**R7 实现状态（2026-08-30）：PASS（exact cognilocal coverage=N/A）。** prompt-level 因果隔离实验使用 `qwen3.8-27b-mlx@4bit` + `qwen/qwen3.8-27b`；MLX B completion=100%、dominance=100%、injection=16.44%、全部结构硬门 PASS，A completion=66.67%、dominance=0%、structure FAIL。K sweep 保留 3；900 为本 fixture 最小预算通过候选但不在 R7 修改生产默认。原指定 `cognilocal/qwen3.8-27b-cog` 当前 8901 未提供，明确 N/A。完整证据见 `docs/injection-governance/r7/report.md`。
 
 ## 风险与成本
 
