@@ -1,10 +1,10 @@
 # Prompt Eligibility Audit — resolved is retrievable, not injectable
 
-状态：**AUDIT PASS / R8.8 SEVEN-BLOCKER IMPLEMENTATION PASS（full fixed-point pending）**
+状态：**AUDIT PASS / R8.8 SEVEN-BLOCKER PASS / behavior-canary eligibility gate READY**
 审计基线：`31df1a3 test(injection): validate R8 shadow soak`
 实现基线：R8.5 `resolved episode` + R8.7 `dynamic tool eligibility` + R8.8 prompt eligibility closure
 日期：2026-08-31
-范围：R8.4 完成全 surface 审计；R8.5 建立 durable resolved-episode retirement；R8.8 关闭 behavior-canary 前剩余 7 个非工具 blocker。**behavior canary / R9 仍未启动；只有 full fixed-point 通过后才允许把 canary gate 标 READY。**
+范围：R8.4 完成全 surface 审计；R8.5 建立 durable resolved-episode retirement；R8.8 关闭 behavior-canary 前剩余 7 个非工具 blocker，并已通过 detached-clean fixed-point。**eligibility gate 已 READY，但 behavior canary / R9 仍未启动。**
 
 ## 1. 为什么在 R8.3 之后新增这一门
 
@@ -114,7 +114,7 @@ must be inline      -> 进入 profile + R2 budget
 
 注意：`PARTIAL` **不得**被解释为“已经做过不注入”。例如 R3 把正文缩成两行 ref，只代表降低密度，不代表该 ref 已退出自动 prompt。
 
-机器矩阵仍固定 **34 个 prompt surface**。R8.8 当前状态为：`DONE=14`、`KEEP=1`、`PARTIAL=12`、`OPEN=7`；原 7 个 behavior-canary blocker 已逐项闭合。`behavior_canary_allowed` 在 full fixed-point 完成前仍保持 `false`，避免把 focused pass 误写成生产放行。具体逐项状态以 `eligibility/matrix.json` 为准。
+机器矩阵仍固定 **34 个 prompt surface**。R8.8 当前状态为：`DONE=14`、`KEEP=1`、`PARTIAL=12`、`OPEN=7`；原 7 个 behavior-canary blocker 已逐项闭合。detached-clean fixed-point 通过后，`behavior_canary_allowed=true` / `behavior_canary_gate_state=READY`；这只是下一阶段的 eligibility 前置门，不代表 behavior canary 已启动。具体逐项状态以 `eligibility/matrix.json` 为准。
 
 ## 5. P0：behavior canary 前必须解决的 Eligibility 缺口
 
@@ -235,7 +235,7 @@ R8.8 在不启动 behavior canary 的前提下关闭剩余七项前置缺口：
 - **local behavior hint / E28 → DONE**：local provider 每轮 command-shaped 评测/自治提示整块删除。
 - **unknown producer / E34 → DONE**：dynamic producer 在 semantic label/profile/budget 前先过显式 allowlist；未知/无归属 source deny + telemetry。`infer_layer()` 的 STATUS fallback 只保留兼容渲染，不再授予 prompt eligibility。
 
-验证进度：R8.8 focused/adjacent **112/112 PASS**；touched pyright **0/0**；R0 离线重算四门 PASS 且 frozen hash 仍为 `b54d47a31109a03d9f926f65b7a3d9f6caf3f24c0d42b1bff26fe338ee74b02a`。Repo-wide unit 的已见失败均已做 baseline/isolated 归因，不把 unrelated debt 纳入 R8.8 修复。最终 detached-clean fixed-point 完成前，canary gate 仍保持 false。
+验证：implementation commit `b6050d3` detached clean fixed-point 已 PASS：focused/adjacent **112/112**；context-warning isolation **2/2**；touched pyright **0/0**；py_compile PASS；R0 离线重算四门 PASS 且 frozen hash 仍为 `b54d47a31109a03d9f926f65b7a3d9f6caf3f24c0d42b1bff26fe338ee74b02a`；checkout 验证前后 clean。Repo-wide unit 已见失败均已做 baseline/isolated 归因，不把 unrelated debt 纳入 R8.8 修复。
 
 ## 6. P1：应退出自动 prompt 或收敛为 active-ephemeral
 

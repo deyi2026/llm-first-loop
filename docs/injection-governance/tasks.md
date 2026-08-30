@@ -1,6 +1,6 @@
 # 注入治理专项任务图（INJECTION-GOVERNANCE）
 
-> 立项: GOAL-20260829-afd095ab | 2026-08-31 | 状态: **R0-R8 PASS；R8.4 Eligibility AUDIT PASS；R8.5 resolved-episode PASS；R8.6 Tool Eligibility AUDIT PASS；R8.7 Tool Eligibility PASS；R8.8 seven-blocker closure focused PASS（full fixed-point pending）；behavior canary / R9 未开始**
+> 立项: GOAL-20260829-afd095ab | 2026-08-31 | 状态: **R0-R8 PASS；R8.4 Eligibility AUDIT PASS；R8.5 resolved-episode PASS；R8.6 Tool Eligibility AUDIT PASS；R8.7 Tool Eligibility PASS；R8.8 seven-blocker closure PASS（eligibility gate READY）；behavior canary / R9 未开始**
 > 依赖链: R0 → R1 → {R2, R3, R4, R5, R6 并行} → R7 → R8 shadow/soak → **R8.4 audit → R8.5 resolved-episode retirement → R8.6 tool eligibility/recovery audit → R8.7 dynamic tool eligibility/recovery → R8.8 remaining eligibility blockers** → behavior canary → R9。R0 未过数据门不得进入行为实现；R8.8 full fixed-point 未过不得进入 behavior canary。
 
 ## R0 基线取证与 fixture 建立（数据门）— ✅ PASS
@@ -125,7 +125,7 @@
 - evidence: `docs/injection-governance/tool-eligibility/r87-report.md`、`matrix.json`、`recovery-policy.json`、`tests/unit/test_tool_eligibility_r87.py`。
 - evidence_required: true
 
-## R8.8 Prompt Eligibility 七 blocker closure — 🟡 IMPLEMENTATION PASS / FULL FIXED-POINT PENDING
+## R8.8 Prompt Eligibility 七 blocker closure — ✅ PASS（eligibility gate READY；behavior canary NOT STARTED）
 - Legacy episode: pre-R8.5 仅用 durable event `message.appended ↔ run.end(completed, not truncated, preview match)` 唯一证明迁移；当前只读 census 136/182 可证，46 fail-open 保留，不做猜测式批量 mutation。
 - Memory: persisted `memory_snapshot` 只有 exact current `turn_ref` 自动可见；old/legacy/unbound 同时退出 flat provider + Cognitive packet，但 durable retrieval 不删。
 - Model switch: 零 prompt，仅 `model.switch` observability；不复制 recent chat / 不下达 program continue。
@@ -134,7 +134,7 @@
 - Round exhaustion: 按 metadata identity consume，并在 `session.save` 前持久化 consumed，防 reload resurrection。
 - Focused/adjacent: 112/112 PASS；Evidence Phase4/5/7 31/31；touched pyright 0/0；R0 四门 PASS + frozen hash byte-identical。
 - Repo-wide unit audit: 正确 `.venv` 可完整 collection；已见 rules/P0-prefix/hotcard failures 在 a5bd89c baseline 同红，config/engine-size 是 R8.7 已知 debt；context-warning full-suite order-dependent 红灯在 isolated 当前代码 2/2 PASS（ratio=0.869）。不为 unrelated debt 修改代码。
-- Gate: `behavior_canary_allowed=false` 直到 staged commit 的 detached-clean fixed-point PASS；本阶段绝不自动进入 behavior canary/R9。
+- Gate: implementation commit `b6050d3` detached-clean fixed-point PASS 后，`behavior_canary_allowed=true` / `behavior_canary_gate_state=READY`；这只放行下一阶段审批，本阶段未启动 behavior canary/R9。
 - evidence: `docs/injection-governance/eligibility/r88-report.md`、`eligibility/matrix.json`、`tests/unit/test_prompt_eligibility_r88.py`。
 - evidence_required: true
 

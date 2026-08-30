@@ -4,7 +4,7 @@
   "audit_date": "2026-08-30",
   "phase": "R8.8_PROMPT_ELIGIBILITY_BLOCKER_CLOSURE",
   "production_behavior_changed": true,
-  "behavior_canary_allowed": false,
+  "behavior_canary_allowed": true,
   "status_semantics": {
     "DONE": "current provider-view behavior already satisfies the target eligibility rule",
     "PARTIAL": "mitigation exists but automatic provider visibility or lifecycle leakage remains",
@@ -581,7 +581,7 @@
   "r8_5_evidence": "docs/injection-governance/eligibility/resolved-episode-report.md",
   "r8_7_tool_eligibility_status": "PASS",
   "r8_7_evidence": "docs/injection-governance/tool-eligibility/r87-report.md",
-  "r8_8_status": "PASS_PENDING_FULL_FIXED_POINT",
+  "r8_8_status": "PASS",
   "r8_8_evidence": "docs/injection-governance/eligibility/r88-report.md",
-  "behavior_canary_gate_state": "PENDING_R8_8_FULL_FIXED_POINT"
+  "behavior_canary_gate_state": "READY"
 }

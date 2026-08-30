@@ -1,6 +1,6 @@
 # R8.8 Prompt Eligibility Blocker Closure
 
-Status: **IMPLEMENTATION FOCUSED PASS / full fixed-point pending; behavior canary NOT STARTED**
+Status: **PASS / behavior-canary eligibility gate READY; behavior canary NOT STARTED**
 
 ## Scope
 
@@ -31,8 +31,8 @@ The hard order is unchanged: lifecycle eligibility → retrieval/representation 
 
 Current R8.8 focused and adjacent suite: **112/112 PASS**, covering prompt eligibility, model-switch, exhaustion, episode migration, memory turn isolation/reference projection, Cognitive shadow, injection label/budget/focus, and Evidence Phase4/5/7. Evidence Phase4/5/7 specifically passes **31/31** with automatic Manifest absent from provider prompts and on-demand recovery preserved.
 
-Full adjacent regression, static checks, frozen R0 hash and detached-clean fixed-point are still required before the implementation commit is declared final.
+Detached-clean fixed-point on implementation commit `b6050d3` passed: focused/adjacent 112/112, context-warning isolation 2/2, touched pyright 0/0, py_compile PASS, R0-1~R0-4 PASS, frozen R0 hash byte-identical, and clean status before/after verification.
 
 ## Canary boundary
 
-`eligibility/matrix.json` now has zero substantive entries in `canary_blockers`, but `behavior_canary_allowed` remains `false` until full adjacent regression, static checks, frozen R0 and detached-clean fixed-point all pass. **R8 model-profile behavior canary and R9 are not started by R8.8.**
+`eligibility/matrix.json` now has zero entries in `canary_blockers`, `behavior_canary_allowed=true`, and `behavior_canary_gate_state=READY`. This means only that the Prompt Eligibility prerequisite is satisfied. **R8 model-profile behavior canary and R9 are not started by R8.8.**
