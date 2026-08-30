@@ -130,12 +130,12 @@ R8 **没有修改 `data/providers.json`**。
 
 ### 6.1 Post-R8 capability audit（R8.1）
 
-R8 验收后按 owner 指令执行 metadata audit；详见 `capability-audit.md/json`。只对有受控实测证据的 4/11 模型补 metadata，当前 inventory 更新为：
+R8 验收后按 owner 指令执行 metadata audit；详见 `capability-audit.md/json`。只对有受控实测证据的模型补 metadata；随后 owner 明确退役不用的 Qwen3.6。当前 inventory 更新为：
 
 ```text
-classified=4/11 = 36.36%
-strong=1, weak=3, unknown=7
-recommended profile: full=1, minimal=10
+classified=4/10 = 40.0%
+strong=1, weak=3, unknown=6
+recommended profile: full=1, minimal=9
 canary_ready=false
 ```
 

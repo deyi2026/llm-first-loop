@@ -73,7 +73,7 @@
 - 内容: 只读取当前路由绑定的 ProviderRegistry/ModelSpec；`weak/unknown -> minimal`，`strong+reasoning=false -> standard`，`strong+reasoning=true -> full`。第一阶段固定 `mode=shadow, applied=false`，不改变 prompt。
 - 归因: 新增独立 `injection.profile.shadow` event；primary / fallback / err1210 retry 逐真实 provider attempt 记录，避免 request.meta 的 round 级模型快照误归因 fallback。
 - 零行为证据: capability-only minimal↔full 对照的实际 `messages+tools` byte-identical；R2×R4×R5×R6 15/15；R0 frozen 0-byte；focused 268/268；pyright 0/0。
-- runtime inventory: R8 初验为 11/11 unknown、覆盖 0%；Post-R8 R8.1 只对有受控证据的 4/11 补 metadata（strong=1、weak=3、unknown=7，覆盖 36.36%，full=1/minimal=10），canary_ready 仍为 false。Git-ignored providers.json 已做 metadata-only 更新，但未调用 refresh_config；不把剩余缺元数据伪装成弱/强。
+- runtime inventory: R8 初验为 11/11 unknown、覆盖 0%；Post-R8 R8.1 只对有受控证据的模型补 metadata；owner 随后退役不用的 Qwen3.6，当前为 4/10 已分类（strong=1、weak=3、unknown=6，覆盖 40.0%，full=1/minimal=9），canary_ready 仍为 false。Git-ignored providers.json 已做 metadata-only 更新，但未调用 refresh_config；不把剩余缺元数据伪装成弱/强。
 - evidence: `docs/injection-governance/r8/report.md`、`docs/injection-governance/r8/shadow-inventory.json`、`docs/injection-governance/r8/capability-audit.md`。
 - evidence_required: true
 

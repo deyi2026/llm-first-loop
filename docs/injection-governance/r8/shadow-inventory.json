@@ -63,16 +63,6 @@
       "recommended_injection_profile": "full"
     },
     {
-      "capability_tier": "unknown",
-      "capability_tier_explicit": false,
-      "metadata_complete_for_canary": false,
-      "model": "local/qwen3.6-27b-fable-fusion-711-uncensored-heretic-nm-dau-neo-max-mtp",
-      "reason": "unknown_capability_conservative",
-      "reasoning": false,
-      "reasoning_explicit": false,
-      "recommended_injection_profile": "minimal"
-    },
-    {
       "capability_tier": "weak",
       "capability_tier_explicit": true,
       "metadata_complete_for_canary": true,
@@ -117,25 +107,25 @@
   "schema": "injection-r8-shadow-v1",
   "source": {
     "name": "providers.json",
-    "sha256": "e25e74471ab9a3bf98b770c09a995c66377058aba4d4f2bd64be6447250749cd"
+    "sha256": "bc800ffa713c94510c1fb4841b9034fd0ea74486a8521c02fd877e21472e8f03"
   },
   "summary": {
     "canary_block_reason": "capability_metadata_incomplete",
     "canary_ready": false,
     "capability_tier_counts": {
       "strong": 1,
-      "unknown": 7,
+      "unknown": 6,
       "weak": 3
     },
-    "classified_coverage_pct": 36.36,
+    "classified_coverage_pct": 40.0,
     "classified_models": 4,
-    "metadata_complete_coverage_pct": 36.36,
+    "metadata_complete_coverage_pct": 40.0,
     "metadata_complete_models": 4,
-    "models_total": 11,
+    "models_total": 10,
     "profile_counts": {
       "full": 1,
-      "minimal": 10
+      "minimal": 9
     },
-    "unknown_models": 7
+    "unknown_models": 6
   }
 }

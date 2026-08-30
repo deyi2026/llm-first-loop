@@ -9,12 +9,12 @@
 当前脱敏 inventory：
 
 ```text
-models_total=11
-classified=4 (36.36%)
+models_total=10
+classified=4 (40.0%)
 strong=1
 weak=3
-unknown=7
-profile: full=1, minimal=10
+unknown=6
+profile: full=1, minimal=9
 canary_ready=false
 ```
 
@@ -37,7 +37,6 @@ canary_ready=false
 | `glm/glm-5.3` | unknown | — | 当前审计 shell 无 provider credential | 不猜 |
 | `glm/glm-5.3-flash` | unknown | — | 当前审计 shell 无 provider credential | 不猜 |
 | `local/qwen/qwen3.8-27b` | strong | true | R7 frozen A：6/6、drift 0、dominance 1；6/6 有 reasoning tokens | 可审核 full recommendation |
-| `local/qwen3.6-27b-fable-fusion-711-uncensored-heretic-nm-dau-neo-max-mtp` | unknown | — | 当前 catalog 不存在；配置 ID chat=HTTP 400 | 不猜 |
 | `local/qwen3.8-27b-mlx` | weak | — | alias 实际映射 `qwen3.8-27b-mlx@4bit`；R7 frozen A：4/6、dominance 0 | 可审核 weak |
 | `local/qwythos-9b-claude-mythos-5-1m@q4_k_m` | weak | — | 现跑 R7 A：1/6、dominance 0 | 可审核 weak |
 | `minimax/MiniMax-M3` | unknown | — | 当前审计 shell 无 provider credential | 不猜 |
@@ -51,6 +50,7 @@ canary_ready=false
 - local qwen/qwen3.8-27b: `capability_tier=strong`, `reasoning=true`
 - local qwen3.8-27b-mlx: `capability_tier=weak`
 - local Qwythos 9B q4: `capability_tier=weak`
+- Qwen3.6 自定义模型已按 owner 指令从 runtime provider catalog 删除，不再计入 capability coverage 分母
 
 原文件已在本次执行环境中做可逆备份；tracked evidence 不记录主机本地备份路径。
 
@@ -60,12 +60,12 @@ canary_ready=false
 
 ## 下一门
 
-剩余 7 个 unknown 中，6 个云端/远端模型需要在不暴露凭据的受控运行环境补同一 A/B；Qwen3.6 配置需要先恢复可调用性。只有 `metadata_complete_coverage=100%`，才讨论 R8 behavior canary；在此之前 R9 继续保持未开始。
+剩余 6 个 unknown 均为云端/远端模型，需要在不暴露凭据的受控运行环境补同一 A/B。Qwen3.6 已按 owner 指令退役，不再是待修复项。只有 `metadata_complete_coverage=100%`，才讨论 R8 behavior canary；在此之前 R9 继续保持未开始。
 
 ## 验证门
 
 ```text
-runtime registry parse: PASS (11 models, classified 4, unknown 7)
+runtime registry parse: PASS (10 models, classified 4, unknown 6)
 R8/provider/event focused: 112/112 PASS
 inventory deterministic byte reproduction: PASS
 pyright (R8 production/tests): 0 errors / 0 warnings
