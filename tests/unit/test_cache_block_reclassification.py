@@ -129,7 +129,7 @@ class TestDG5PrivacyBlockRetained:
     def test_privacy_block_on_state(self, tmp_path, monkeypatch):
         monkeypatch.setattr(guard_mod, "_PERF_BLOCK_MODE", "on")
         d = validate_request(
-            system_text="key TESTKEY-ABCDEFGHIJKLMNOPQRSTUVWX1234567890",
+            system_text="key sk-ABCDEFGHIJKLMNOPQRSTUVWX1234567890",
             messages=_sys("k"),
             meta={},
             audit_file=tmp_path / "g.jsonl",
@@ -141,7 +141,7 @@ class TestDG5PrivacyBlockRetained:
         """D-G5 主断言: enforce 态（性能退出）privacy BLOCK 原样保留——开关不作用于硬清单."""
         monkeypatch.setattr(guard_mod, "_PERF_BLOCK_MODE", "enforce")
         d = validate_request(
-            system_text="key TESTKEY-ABCDEFGHIJKLMNOPQRSTUVWX1234567890",
+            system_text="key sk-ABCDEFGHIJKLMNOPQRSTUVWX1234567890",
             messages=_sys("k"),
             meta={},
             audit_file=tmp_path / "g.jsonl",
@@ -151,11 +151,11 @@ class TestDG5PrivacyBlockRetained:
 
     def test_privacy_env_leak_block_both_states(self, tmp_path, monkeypatch):
         """敏感 env 值泄漏（规则 E 第二路径）双态 BLOCK."""
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "TESTKEY-secret-value-1234567890")
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-secret-value-1234567890")
         for mode in ("on", "enforce"):
             monkeypatch.setattr(guard_mod, "_PERF_BLOCK_MODE", mode)
             d = validate_request(
-                system_text="contains TESTKEY-secret-value-1234567890 inside",
+                system_text="contains sk-test-secret-value-1234567890 inside",
                 messages=_sys("k"),
                 meta={},
                 audit_file=tmp_path / "g.jsonl",
