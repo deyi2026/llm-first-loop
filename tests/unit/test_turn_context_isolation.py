@@ -176,17 +176,15 @@ def test_status_budget_session_isolation():
 
 
 def test_experience_tip_session_isolation(tmp_path):
-    """B 会话首次 web_fetch 仍得提示——他会的注入历史不拦本会（无 Engine 级共享）."""
+    """E08: generic experience catalog creates no prompt state in any session."""
     d = _make_exp_dir(tmp_path)
     a = _TipStub(d, turn_ref=1)
     _ToolExecMixin._inject_experience_tips(a, a, ["web_fetch"])
-    assert len(a.messages) == 1  # A 首次 → 注入
-    b = _TipStub(d, turn_ref=1)  # 独立实例（=独立会话语义；旧全局 set 在此拦截）
+    assert a.messages == []
+    b = _TipStub(d, turn_ref=1)
     _ToolExecMixin._inject_experience_tips(b, b, ["web_fetch"])
-    assert len(b.messages) == 1  # B 首次仍注入——修复前 Engine 级 set 使其为 0
     _ToolExecMixin._inject_experience_tips(b, b, ["web_fetch", "other_tool"])
-    assert len(b.messages) == 1  # 同 turn 一次（b 自己的 SoT 配额）
-
+    assert b.messages == []
 
 def test_retrieval_exactly_once_on_reentry():
     """同 turn 12 次重入 → 消息/search/mark_injected 各恰 1（操作幂等）."""

@@ -225,13 +225,9 @@ def test_tip_turn_done_blocks_reinject_sot(tmp_path):
 
 
 def test_tip_inject_persists_turn_ref_and_quota(tmp_path):
-    """T5: 命中注入 → metadata 落 turn_ref（SoT 即配额）；同 turn 再次调用不重复."""
+    """E08: generic tip is not persisted, so no turn-ref prompt quota is created."""
     d = _make_exp_dir(tmp_path)
     stub = _TipStub(d, turn_ref=3)
     _ToolExecMixin._inject_experience_tips(stub, stub, ["web_fetch"])
-    assert len(stub.messages) == 1
-    md = stub.messages[0].metadata or {}
-    assert md.get("injection_kind") == "experience_tip"
-    assert md.get("turn_ref") == 3
     _ToolExecMixin._inject_experience_tips(stub, stub, ["web_fetch", "other_tool"])
-    assert len(stub.messages) == 1  # run 级一次（SoT 派生，无内存 flag）
+    assert stub.messages == []

@@ -91,6 +91,29 @@ def test_current_turn_program_control_expires_by_turn_identity():
     assert current_turn_program_prompt_eligible(current, current_turn_ref=None) is False
 
 
+def test_experience_tip_never_gets_automatic_prompt_authority():
+    tip = Message(
+        role="user",
+        content="[experience:web_fetch] old catalog\nref=experience:e1",
+        source=MessageSource.USER,
+        metadata={
+            "program_origin": True,
+            "origin_layer": "reference",
+            "injection_kind": "experience_tip",
+            "turn_ref": 7,
+        },
+    )
+    # Same-turn identity is still not a required-now grant.
+    assert current_turn_program_prompt_eligible(tip, current_turn_ref=7) is False
+
+    human = Message(
+        role="user",
+        content="我想讨论 experience_tip 这个实现",
+        source=MessageSource.USER,
+    )
+    assert current_turn_program_prompt_eligible(human, current_turn_ref=7) is True
+
+
 def test_legacy_ephemeral_system_controls_are_not_prompt_eligible():
     for text in (
         "[停滞提醒] old",
@@ -138,3 +161,40 @@ def test_build_keeps_same_turn_control_and_retires_old_or_legacy(build_test_engi
     assert "OLD-CONTROL-SHOULD-NOT-PROJECT" not in rendered
     assert "LEGACY-SHOULD-NOT-PROJECT" not in rendered
     assert "CURRENT-CONTROL-SHOULD-PROJECT" in rendered
+
+
+def test_build_retires_legacy_and_r3_experience_tips_even_same_turn(build_test_engine):
+    engine, _ = build_test_engine([{"content": "unused"}])
+    sid = engine.session.create()
+    sess = engine.session.load(sid)
+    legacy = Message(
+        role="user",
+        content="LEGACY-EXPERIENCE-TIP-SHOULD-NOT-PROJECT",
+        source=MessageSource.USER,
+        metadata={"program_origin": True, "injection_kind": "experience_tip", "turn_ref": 0},
+    )
+    current = Message(
+        role="user",
+        content="R3-EXPERIENCE-TIP-SHOULD-NOT-PROJECT",
+        source=MessageSource.USER,
+        metadata={
+            "program_origin": True,
+            "origin_layer": "reference",
+            "injection_kind": "experience_tip",
+            "turn_ref": 3,
+            "reference_keys": ["ref:experience:e1"],
+        },
+    )
+    sess.messages.extend([
+        Message(role="user", content="old human", source=MessageSource.USER),
+        legacy,
+        Message(role="assistant", content="old answer", source=MessageSource.USER),
+        Message(role="user", content="current human", source=MessageSource.USER),
+        current,
+    ])
+    engine._current_turn_ref = 3
+    out = engine._build_llm_messages(sess, [], max_chars=200000, planned_label="deepseek/model")
+    rendered = str(out)
+    assert "LEGACY-EXPERIENCE-TIP-SHOULD-NOT-PROJECT" not in rendered
+    assert "R3-EXPERIENCE-TIP-SHOULD-NOT-PROJECT" not in rendered
+    assert "current human" in rendered

@@ -82,35 +82,18 @@ def test_memory_task_switch_reopens_catalog_with_seen_pointer_only() -> None:
 
 
 def test_experience_front_k_gate_and_switch_pointer(tmp_path) -> None:
+    """E08: front-K/task-switch can reopen retrieval choice, never automatic catalog prompt."""
     from llm_loop.core.loop.tool_exec import _ToolExecMixin
     from tests.unit.test_tool_experience_inject import _Stub, _make_exp_dir
 
     stub = _Stub(True, _make_exp_dir(tmp_path))
     stub.settings.reference_auto_turns = 3
-
-    stub.messages.append(_human("抓取页面"))
-    stub._current_turn_ref = len(stub.messages) - 1
-    _ToolExecMixin._inject_experience_tips(stub, stub, ["web_fetch"])
-    first = [m for m in stub.messages if (m.metadata or {}).get("injection_kind") == "experience_tip"]
-    assert len(first) == 1
-    assert "[experience:web_fetch]" in first[0].content
-
-    for text in ("继续", "继续", "继续"):
+    for text in ("抓取页面", "继续", "继续", "继续", "换个话题：重新抓取网页"):
         stub.messages.append(_human(text))
         stub._current_turn_ref = len(stub.messages) - 1
         _ToolExecMixin._inject_experience_tips(stub, stub, ["web_fetch"])
-    # turn4 is gated, and turns2-3 saw the same stable ref -> no additional full body.
-    assert len([m for m in stub.messages if (m.metadata or {}).get("injection_kind") == "experience_tip"]) == 1
-
-    stub.messages.append(_human("换个话题：重新抓取网页"))
-    stub._current_turn_ref = len(stub.messages) - 1
-    _ToolExecMixin._inject_experience_tips(stub, stub, ["web_fetch"])
     tips = [m for m in stub.messages if (m.metadata or {}).get("injection_kind") == "experience_tip"]
-    assert len(tips) == 2
-    assert "ref=experience:EXPERIENCE-test-web-fetch" in tips[-1].content
-    assert "[experience:web_fetch]" not in tips[-1].content
-    assert tips[-1].metadata.get("reference_full_keys") == []
-
+    assert tips == []
 
 def test_session_digest_reference_projection_is_two_lines_and_seen_once() -> None:
     from llm_loop.core.session_digest import SessionDigest
@@ -397,34 +380,15 @@ def test_memory_same_call_duplicate_id_emits_one_full_frame() -> None:
 
 
 def test_experience_same_call_duplicate_ref_emits_once(tmp_path) -> None:
+    """E08: duplicate experience candidates are not even queried on the automatic path."""
     from llm_loop.core.loop.tool_exec import _ToolExecMixin
     from tests.unit.test_tool_experience_inject import _Stub, _make_exp_dir
 
     stub = _Stub(True, _make_exp_dir(tmp_path))
-    stub.settings.reference_auto_turns = 3
     stub.messages.append(_human("抓取页面"))
-    stub._current_turn_ref = len(stub.messages) - 1
-
-    class DuplicateExperienceStore:
-        def list_active(self, query="", limit=20):
-            return [
-                {"id": "EXPERIENCE-test-web-fetch", "summary": "web_fetch 抓取最短路径"},
-                {"id": "EXPERIENCE-test-web-fetch", "summary": "web_fetch 抓取最短路径"},
-            ]
-
-    stub._exp_store = DuplicateExperienceStore()
     _ToolExecMixin._inject_experience_tips(stub, stub, ["web_fetch"])
-    tips = [
-        m for m in stub.messages
-        if (m.metadata or {}).get("injection_kind") == "experience_tip"
-    ]
-    assert len(tips) == 1
-    assert tips[0].content.count("ref=experience:EXPERIENCE-test-web-fetch") == 1
-    assert tips[0].metadata.get("reference_full_keys") == [
-        "ref:experience:experience-test-web-fetch"
-    ]
-
-
+    tips = [m for m in stub.messages if (m.metadata or {}).get("injection_kind") == "experience_tip"]
+    assert tips == []
 
 def test_semantic_memory_candidates_respect_session_scope(tmp_path) -> None:
     from llm_loop.memory.embedder import HashEmbedder

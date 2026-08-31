@@ -20,12 +20,6 @@ from llm_loop.core.injection_labels import (
     origin_metadata,
     render_program_appendix,
 )
-from llm_loop.core.reference_injection import (
-    DEFAULT_REFERENCE_AUTO_TURNS,
-    reference_auto_decision,
-    render_reference_frame,
-    seen_injection_set,
-)
 from llm_loop.core.message import Message, MessageSource, ToolResult
 from llm_loop.introspection.status import ToolHistoryItem
 from llm_loop.llm.client import LLMResponse, StreamDelta, ToolRoundInfo
@@ -289,153 +283,32 @@ class _ToolExecMixin:
             self._record_action("action.tool_loop", "cancelled", tc.name)
 
     def _inject_experience_tips(self: LoopEngine, sess, tool_names: list[str]) -> None:
-        """Inject R3 experience/skill reference frames after a tool result.
+        """Record that experience/skill references are available on demand.
 
-        The automatic path is front-K/task-switch gated, stable-ref deduplicated,
-        and each frame is <=2 lines. Explicit skill/search tools are untouched.
+        R8.15/E08 retires the generic post-tool catalog from automatic working
+        context. Tool-name similarity, front-K/task-switch state and unseen refs
+        are relevance signals, not proof that a reference is required now.
+
+        Explicit ``search_records(kind=experience)`` and failure-specific tool
+        recovery remain available.  Keep this compatibility method because older
+        callers may still invoke it, but it must never query the experience store,
+        append a Message, or mutate session history.
         """
-        _sid = str(getattr(sess, "session_id", "") or "")
-        _by_session = getattr(self, "_cache_last_model_by_session", {}) or {}
-        _cur = _by_session.get(_sid) or getattr(self, "_cache_last_model", "") or ""
-        if "qwythos" in str(_cur):
-            return
         if not getattr(self.settings, "tool_experience_inject", True):
             return
-
-        _turn_ref = getattr(self, "_current_turn_ref", None)
-        for _m in getattr(sess, "messages", []) or []:
-            _md = getattr(_m, "metadata", None) or {}
-            if (
-                _md.get("injection_kind") == "experience_tip"
-                and _md.get("turn_ref") == _turn_ref
-            ):
-                return  # one experience catalog per human turn
-
-        _policy = reference_auto_decision(
-            getattr(sess, "messages", []) or [],
-            auto_turns=int(
-                getattr(
-                    getattr(self, "settings", None),
-                    "reference_auto_turns",
-                    DEFAULT_REFERENCE_AUTO_TURNS,
-                )
-            ),
-        )
-        # Unit/internal callers can exercise this helper without constructing the
-        # ingress user message. Production always has human_turn_no >= 1 here.
-        _allow_catalog = _policy.allow_catalog or _policy.human_turn_no == 0
-        if not _allow_catalog:
-            try:
-                self._record_action(
-                    "action.reference_auto_gate",
-                    "suppressed",
-                    f"source=experience;human_turn={_policy.human_turn_no};task_switch=0",
-                )
-            except Exception:  # noqa: BLE001 — telemetry fail-open
-                pass
-            return
-
-        _seen_refs = seen_injection_set(getattr(sess, "messages", []) or [])
-        _candidate = list(dict.fromkeys(tool_names))
-        if not _candidate:
+        names = list(dict.fromkeys(str(name) for name in tool_names if str(name)))
+        if not names:
             return
         try:
-            store = getattr(self, "_exp_store", None)
-            if store is None:
-                from llm_loop.experiences.store import ExperienceStore
-
-                store = ExperienceStore(self.settings.experiences_dir)
-                self._exp_store = store
-
-            _frames: list[tuple[object, str]] = []  # (ReferenceFrame, originating tool/skill)
-            _emitted_ref_keys: set[str] = set()
-            for name in _candidate:
-                hits = store.list_active(query=name, limit=2)
-                for hit in hits:
-                    _eid = str(hit.get("id", "") or name)
-                    _summary = str(hit.get("summary", hit.get("id", "")) or "")
-                    _frame = render_reference_frame(
-                        tag=f"experience:{name}",
-                        fact=_summary,
-                        ref=f"experience:{_eid}",
-                        source="experience",
-                        seen_keys=_seen_refs,
-                        emit_seen_ref=_policy.task_switch,
-                    )
-                    if _frame.key in _emitted_ref_keys or (_frame.duplicate and not _frame.content):
-                        try:
-                            self._record_action(
-                                "injection_duplicate_suppressed",
-                                "suppressed",
-                                f"source=experience;ref={_frame.ref};key={_frame.key}",
-                            )
-                        except Exception:  # noqa: BLE001
-                            pass
-                        continue
-                    _emitted_ref_keys.add(_frame.key)
-                    _frames.append((_frame, name))
-                    if len(_frames) >= 4:
-                        break
-                if len(_frames) >= 4:
-                    break
-
-            if len(_frames) < 4:
-                for sname, sdesc in self._match_skills(_candidate):
-                    _frame = render_reference_frame(
-                        tag=f"skill:{sname}",
-                        fact=sdesc,
-                        ref=f"skill:{sname}",
-                        source="skill",
-                        seen_keys=_seen_refs,
-                        emit_seen_ref=_policy.task_switch,
-                    )
-                    if _frame.key in _emitted_ref_keys or (_frame.duplicate and not _frame.content):
-                        try:
-                            self._record_action(
-                                "injection_duplicate_suppressed",
-                                "suppressed",
-                                f"source=skill;ref={_frame.ref};key={_frame.key}",
-                            )
-                        except Exception:  # noqa: BLE001
-                            pass
-                        continue
-                    _emitted_ref_keys.add(_frame.key)
-                    _frames.append((_frame, sname))
-                    if len(_frames) >= 4:
-                        break
-            if not _frames:
-                return
-
-            from llm_loop.core.loop.focus import wrap_injection
-
-            _contents = [f.content for f, _ in _frames if getattr(f, "content", "")]
-            if not _contents:
-                return
-            _keys = [str(getattr(f, "key", "")) for f, _ in _frames]
-            _full_keys = [str(getattr(f, "key", "")) for f, _ in _frames if getattr(f, "full", False)]
-            msg = Message(
-                role="user",
-                content=wrap_injection(
-                    "\n\n".join(_contents),
-                    layer=InjectionLayer.REFERENCE,
-                ),
-                source=MessageSource.USER,
-                metadata=origin_metadata(
-                    InjectionLayer.REFERENCE,
-                    injection_kind="experience_tip",
-                    persisted_injection=True,
-                    experience_tip_tools=list(dict.fromkeys(origin for _, origin in _frames)),
-                    turn_ref=_turn_ref,
-                    reference_keys=_keys,
-                    reference_full_keys=_full_keys,
-                    reference_source="experience",
-                    reference_frame_count=len(_frames),
-                ),
-            )
-            sess.messages.append(msg)
-            self._append_message_event(sess, msg)
-        except Exception:  # noqa: BLE001 — experience retrieval fail-open
-            logger.warning("经验提示注入失败（fail-open）", exc_info=True)
+            action = getattr(self, "_record_action", None)
+            if callable(action):
+                action(
+                    "experience.catalog",
+                    "on_demand_only",
+                    f"tools={','.join(names[:8])};prompt_chars=0",
+                )
+        except Exception:  # noqa: BLE001 — observability is non-authoritative
+            logger.debug("experience catalog observability failed", exc_info=True)
 
     # EVO-20260816-ec8c36bb: 外部 skill 扫描匹配（进程内缓存，目录 mtime 变化重扫）
     _skills_cache: tuple[float, list[tuple[str, str]]] = (0.0, [])

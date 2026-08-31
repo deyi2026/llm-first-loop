@@ -1,7 +1,7 @@
-"""EVO-20260816-62977206: 工具执行后经验提示注入（tool_exec._inject_experience_tips）.
+"""R8.15/E08: post-tool generic experience catalog is on-demand only.
 
-覆盖: 命中注入 / 无命中不注入 / 开关关不注入 / 目录不存在 fail-open 不抛。
-mixin 桩: 提供 settings(mixin 访问) + messages/events(注入落点) + _append_message_event。
+The compatibility hook may record observability, but it must not query the
+experience/skill stores or append prompt/session messages.
 """
 
 from __future__ import annotations
@@ -9,11 +9,6 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from llm_loop.core.injection_labels import (
-    PROGRAM_APPENDIX_NOTICE,
-    REFERENCE_LABEL,
-    reference_has_imperative,
-)
 from llm_loop.core.loop.tool_exec import _ToolExecMixin
 
 _EXP_MD = """---
@@ -30,17 +25,13 @@ updated_at: "2026-08-16T00:00:00+08:00"
 ---
 """
 
-_SKILL_MD = """---
-name: cache-hit-debug
-description: LLM 前缀缓存命中排查技能——缓存命中率异常低时使用；三实验法定位根因。触发工具: architecture_status/execute_command/search_records/search_archive。
----
-# 缓存排查
-"""
+
+class _ExplodingStore:
+    def list_active(self, *args, **kwargs):
+        raise AssertionError("generic catalog must not query ExperienceStore")
 
 
 class _Stub(_ToolExecMixin):
-    """LoopEngine 最小桩（mixin 方法所需属性；继承 mixin 获得 _match_skills）."""
-
     def __init__(
         self, enabled: bool, exp_dir: str | Path, skills_dir: str | Path = "nonexistent_skills"
     ) -> None:
@@ -51,12 +42,16 @@ class _Stub(_ToolExecMixin):
         )
         self.messages = []
         self.events = []
-        self._tip_tail_messages = []  # 兼容其他临时注入槽；经验提示修复后不再使用
-        # 重置类级 skill 缓存（跨测试隔离）
+        self.actions = []
+        self._tip_tail_messages = []
+        self._exp_store = _ExplodingStore()
         type(self)._skills_cache = (0.0, [])
 
     def _append_message_event(self, sess, msg) -> None:
         self.events.append(msg)
+
+    def _record_action(self, kind, status, detail) -> None:
+        self.actions.append((kind, status, detail))
 
 
 def _make_exp_dir(tmp_path: Path) -> Path:
@@ -66,86 +61,49 @@ def _make_exp_dir(tmp_path: Path) -> Path:
     return d
 
 
-def test_inject_hit(tmp_path):
-    """命中: 工具经验持久化为 user 注入，下一轮可见且后续保持稳定历史前缀。"""
-    d = _make_exp_dir(tmp_path)
-    stub = _Stub(True, d)
+def test_catalog_hit_is_on_demand_only(tmp_path):
+    stub = _Stub(True, _make_exp_dir(tmp_path))
     _ToolExecMixin._inject_experience_tips(stub, stub, ["web_fetch"])
-    assert stub._tip_tail_messages == []
-    assert len(stub.messages) == 1
-    msg = stub.messages[0]
-    assert msg.role == "user"
-    assert "[experience:web_fetch]" in msg.content
-    assert "ref=experience:EXPERIENCE-test-web-fetch" in msg.content
-    assert (msg.metadata or {}).get("persisted_injection") is True
-    assert (msg.metadata or {}).get("injection_kind") == "experience_tip"
-    assert (msg.metadata or {}).get("origin_layer") == "reference"
-    assert (msg.metadata or {}).get("program_origin") is True
-    assert msg.content.startswith(PROGRAM_APPENDIX_NOTICE)
-    assert REFERENCE_LABEL in msg.content
-    assert stub.events == [msg]
+    assert stub.messages == [] and stub.events == [] and stub._tip_tail_messages == []
+    assert stub.actions == [
+        ("experience.catalog", "on_demand_only", "tools=web_fetch;prompt_chars=0")
+    ]
 
 
-def test_inject_no_hit_no_inject(tmp_path):
-    """无命中: 不注入（零开销原则）."""
-    d = _make_exp_dir(tmp_path)
-    stub = _Stub(True, d)
+def test_catalog_does_not_evaluate_hit_or_miss(tmp_path):
+    stub = _Stub(True, _make_exp_dir(tmp_path))
     _ToolExecMixin._inject_experience_tips(stub, stub, ["nonexistent_tool"])
-    assert stub._tip_tail_messages == []
+    assert stub.messages == [] and stub.events == []
+    assert stub.actions == [
+        ("experience.catalog", "on_demand_only", "tools=nonexistent_tool;prompt_chars=0")
+    ]
 
 
-def test_inject_disabled(tmp_path):
-    """开关关: 不注入."""
-    d = _make_exp_dir(tmp_path)
-    stub = _Stub(False, d)
+def test_catalog_switch_off_is_silent(tmp_path):
+    stub = _Stub(False, _make_exp_dir(tmp_path))
     _ToolExecMixin._inject_experience_tips(stub, stub, ["web_fetch"])
-    assert stub._tip_tail_messages == []
+    assert stub.messages == [] and stub.events == [] and stub.actions == []
 
 
-def test_inject_dir_missing_fail_open(tmp_path):
-    """经验目录不存在: fail-open 不抛、不注入."""
+def test_catalog_missing_dir_never_reads_storage(tmp_path):
     stub = _Stub(True, tmp_path / "no_such_dir")
     _ToolExecMixin._inject_experience_tips(stub, stub, ["web_fetch"])
-    assert stub._tip_tail_messages == []
+    assert stub.messages == []
+    assert stub.actions == [
+        ("experience.catalog", "on_demand_only", "tools=web_fetch;prompt_chars=0")
+    ]
 
 
-def _make_skills_dir(tmp_path: Path, name: str = "cache-hit-debug") -> Path:
-    d = tmp_path / "skills" / name
-    d.mkdir(parents=True)
-    (d / "SKILL.md").write_text(_SKILL_MD, encoding="utf-8")
-    return tmp_path / "skills"
+def test_catalog_deduplicates_tool_names_without_prompt_state(tmp_path):
+    stub = _Stub(True, _make_exp_dir(tmp_path))
+    _ToolExecMixin._inject_experience_tips(stub, stub, ["web_fetch", "web_fetch", "read_file"])
+    assert stub.messages == []
+    assert stub.actions == [
+        ("experience.catalog", "on_demand_only", "tools=web_fetch,read_file;prompt_chars=0")
+    ]
 
 
-def test_skill_inject_hit(tmp_path):
-    """EVO-20260816-ec8c36bb: 工具名命中 skill → 注入 '可用 skill' 行."""
-    d = _make_exp_dir(tmp_path)  # 经验库为空命中
-    sd = _make_skills_dir(tmp_path)
-    stub = _Stub(True, d, sd)
-    _ToolExecMixin._inject_experience_tips(stub, stub, ["architecture_status"])
-    # 经验库无 architecture_status 命中 → 走 skill 匹配（kw_pool 含 cache/debug）
-    assert stub._tip_tail_messages == []
-    assert len(stub.messages) == 1
-    msg = stub.messages[0]
-    assert "[skill:cache-hit-debug]" in msg.content
-    assert "cache-hit-debug" in msg.content
-    assert "skill_load" not in msg.content
-    assert "ref=skill:cache-hit-debug" in msg.content
-    reference_body = msg.content.split(REFERENCE_LABEL, 1)[-1]
-    assert not reference_has_imperative(reference_body)
-
-
-def test_skill_no_dir_no_inject(tmp_path):
-    """skills 目录不存在: fail-open 不抛、不注入."""
-    d = _make_exp_dir(tmp_path)
-    stub = _Stub(True, d)  # skills_dir 默认 nonexistent_skills
-    _ToolExecMixin._inject_experience_tips(stub, stub, ["architecture_status"])
-    assert stub._tip_tail_messages == []
-
-
-def test_skill_unmatched_no_inject(tmp_path):
-    """无 skill 匹配关键词: 不注入."""
-    d = _make_exp_dir(tmp_path)
-    sd = _make_skills_dir(tmp_path)
-    stub = _Stub(True, d, sd)
-    _ToolExecMixin._inject_experience_tips(stub, stub, ["zzz_unrelated_tool"])
-    assert stub._tip_tail_messages == []
+def test_catalog_empty_tool_list_is_zero_work(tmp_path):
+    stub = _Stub(True, _make_exp_dir(tmp_path))
+    _ToolExecMixin._inject_experience_tips(stub, stub, [])
+    assert stub.messages == [] and stub.actions == []

@@ -97,6 +97,12 @@ def current_turn_program_prompt_eligible(
     """
 
     md = getattr(message, "metadata", None) or {}
+    # R8.15/E08: generic experience catalogs are durable/retrievable reference
+    # state, not automatic working context. Deny every canonical experience_tip,
+    # including one whose turn_ref still matches the current human turn. Explicit
+    # search/tool results use different message kinds and are unaffected.
+    if md.get("injection_kind") == "experience_tip":
+        return False
     lifecycle = str(md.get("prompt_lifecycle") or "").strip().lower()
     if lifecycle == "current_turn":
         if current_turn_ref is None:
