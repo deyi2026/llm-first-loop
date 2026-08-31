@@ -250,3 +250,13 @@
 - Matrix: E10 PARTIAL→DONE；总计 `DONE=28 / KEEP=1 / PARTIAL=5 / OPEN=0`；behavior canary / R9 未启动。
 - evidence: `docs/injection-governance/eligibility/r817-report.md`、`eligibility/matrix.json`、`tests/unit/test_compact_observability_r817.py`、`tests/unit/test_append_compression.py`、`tests/unit/test_progressive_fold.py`、`tests/unit/test_history.py`、`tests/unit/test_reference_injection_integration.py`。
 - evidence_required: true
+
+
+## R8.18 Session Digest Catalog On-Demand Closure — ✅ PASS
+- E09 `session_digest_catalog`: generic digest catalog no longer auto-emits, persists, or joins provider tail; `digest_enabled` is capability-only.
+- Central hard gate: `digest` removed from dynamic producer allowlist; canonical legacy `session_digest_catalog` frames are denied even on the current turn, while ordinary user-authored `ref=digest:*` text is preserved.
+- Retrieval preserved: active tool results remain protocol-visible; historical originals remain available through ArchiveStore / `search_archive`; SessionDigest diagnostic render helpers remain.
+- Verification: implementation `d458484`; main focused **43/43**; detached clean focused **43/43**; production/new-test pyright **0/0**; R0-1~R0-4 PASS; frozen hash `b54d47a31109a03d9f926f65b7a3d9f6caf3f24c0d42b1bff26fe338ee74b02a` unchanged; checkout clean after standard read-only mounts removed.
+- Matrix: E09 PARTIAL→DONE；总计 `DONE=29 / KEEP=1 / PARTIAL=4 / OPEN=0`；behavior canary / R9 未启动。
+- evidence: `docs/injection-governance/eligibility/r818-report.md`、`eligibility/matrix.json`、`tests/unit/test_session_digest_on_demand_r818.py`、`tests/unit/test_prompt_eligibility_r88.py`。
+- evidence_required: true

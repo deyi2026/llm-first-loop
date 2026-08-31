@@ -166,16 +166,19 @@
     {
       "id": "E09",
       "surface": "session_digest_catalog",
-      "current_status": "PARTIAL",
+      "current_status": "DONE",
       "target_class": "REF_ON_DEMAND",
       "priority": "P1",
-      "current_behavior": "R3 bounded catalog behavior remains for active/current turns. A session_digest_catalog persisted inside a newly proven resolved episode is retired with that episode, but catalog auto-surfacing for current tasks still exists.",
-      "target_rule": "Catalog stays outside prompt by default; current task asks for a specific historical dependency before a ref is surfaced.",
+      "current_behavior": "R8.18 retires automatic SessionDigest catalog projection. digest_enabled remains a diagnostic/retrieval capability flag only; build emits/persists zero session_digest_catalog messages. Legacy canonical catalog frames are centrally denied while ordinary human text is preserved.",
+      "target_rule": "Catalog stays outside prompt by default; historical detail is retrieved explicitly through search_archive / digest ref when needed.",
       "retrieval_path": "search_archive / digest archive ref; resolved episode ref when catalog belonged to a retired episode",
       "evidence": [
         "src/llm_loop/core/loop/build.py",
         "src/llm_loop/core/session_digest.py",
-        "src/llm_loop/core/episode_history.py"
+        "src/llm_loop/core/episode_history.py",
+        "src/llm_loop/core/prompt_eligibility.py",
+        "tests/unit/test_session_digest_on_demand_r818.py",
+        "docs/injection-governance/eligibility/r818-report.md"
       ]
     },
     {
@@ -684,5 +687,7 @@
   "r8_16_status": "PASS",
   "r8_16_evidence": "docs/injection-governance/eligibility/r816-report.md",
   "r8_17_status": "PASS",
-  "r8_17_evidence": "docs/injection-governance/eligibility/r817-report.md"
+  "r8_17_evidence": "docs/injection-governance/eligibility/r817-report.md",
+  "r8_18_status": "PASS",
+  "r8_18_evidence": "docs/injection-governance/eligibility/r818-report.md"
 }
