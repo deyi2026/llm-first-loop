@@ -80,16 +80,18 @@
     {
       "id": "E04",
       "surface": "resolved_tool_calls_and_tool_results",
-      "current_status": "PARTIAL",
+      "current_status": "DONE",
       "target_class": "RETRIEVABLE_ONLY",
       "priority": "P0",
-      "current_behavior": "For R8.5-proven resolved episodes, assistant tool-call declarations and tool results are durably indexed before the episode is retired from later provider view. The current unresolved turn keeps full protocol pairing. Legacy turns without resolution proof remain visible.",
-      "target_rule": "After the consuming final answer resolves the episode, archive/index the tool chain and remove it from default next-task provider view.",
-      "retrieval_path": "EpisodeStore stable ref via search_records(kind=episode); exact visible tool chain is hydrated on demand",
+      "current_behavior": "R8.20 adds a consumed-tool-span lifecycle independent from whole-episode resolution. At next human ingress, exact complete assistant(tool_calls)+tool receipt spans are retired only when a later real non-tool model assistant has consumed them and EpisodeStore durably indexes user + raw tool evidence + consumer. User instruction and consumer answer remain visible unless the whole episode separately proves resolved. Incomplete/current protocol and program finals remain visible.",
+      "target_rule": "Raw tool protocol is working context only until a real model consumer exists. After durable toolspan indexing, retire declarations/results from default provider view; keep unresolved task text and consumer answer, and recover exact evidence on demand.",
+      "retrieval_path": "EpisodeStore toolspan ref via search_records(kind=episode), searchable by tool-result transcript content; exact visible chain hydrated on demand with bounded paging",
       "evidence": [
         "src/llm_loop/memory/episode.py",
         "src/llm_loop/core/episode_history.py",
-        "tests/unit/test_resolved_episode.py"
+        "tests/unit/test_resolved_episode.py",
+        "tests/unit/test_consumed_tool_span_r820.py",
+        "docs/injection-governance/eligibility/r820-report.md"
       ]
     },
     {
@@ -695,5 +697,7 @@
   "r8_18_status": "PASS",
   "r8_18_evidence": "docs/injection-governance/eligibility/r818-report.md",
   "r8_19_status": "PASS",
-  "r8_19_evidence": "docs/injection-governance/eligibility/r819-report.md"
+  "r8_19_evidence": "docs/injection-governance/eligibility/r819-report.md",
+  "r8_20_status": "PASS",
+  "r8_20_evidence": "docs/injection-governance/eligibility/r820-report.md"
 }

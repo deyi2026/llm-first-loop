@@ -270,3 +270,14 @@
 - Matrix: E32 PARTIAL→DONE；总计 `DONE=30 / KEEP=1 / PARTIAL=3 / OPEN=0`；behavior canary / R9 未启动。
 - evidence: `docs/injection-governance/eligibility/r819-report.md`、`eligibility/matrix.json`、`tests/unit/test_interruption_recovery_r819.py`、`src/llm_loop/core/loop/events.py`。
 - evidence_required: true
+
+
+## R8.20 Consumed Tool Span Lifecycle Closure — ✅ PASS
+- E04 `resolved_tool_calls_and_tool_results`: tool evidence lifecycle is now independent from whole-task resolution. Complete raw assistant(tool_calls)+tool receipts retire only after a real later non-tool model assistant has consumed them and EpisodeStore fsync-durably indexes a `toolspan:` transcript. Human instruction + consumer answer remain visible unless whole episode separately proves resolved.
+- Fail-closed gates: exact pairing required; current/incomplete/orphan chains remain; program/cancel/error/guard finals are not consumers; index failure writes no retirement metadata. Provider char accounting uses the same visibility predicate.
+- Retrieval: `search_records(kind=episode)` can discover toolspan refs by stored tool-result transcript keywords; bounded hydrate returns exact visible chain. No pointer/catalog auto-injection.
+- Real-data read-only simulation: 559 spans / 9,527 raw protocol messages / **7,656,075 chars** retireable across 80 sessions, **36.61%** of all session message content. Strict residual classification found no real-consumer leak; residuals are no-consumer or program-final only.
+- Verification: implementation `43a878f`; focused **25/25**; broader **244/244**; factory/introspection **65/65**; detached clean focused **25/25** + broader **275/275**; pyright **0/0**; R0 PASS; frozen hash unchanged; checkout clean.
+- Matrix: E04 PARTIAL→DONE；总计 `DONE=31 / KEEP=1 / PARTIAL=2 / OPEN=0`；behavior canary / R9 未启动。
+- evidence: `docs/injection-governance/eligibility/r820-report.md`、`eligibility/matrix.json`、`tests/unit/test_consumed_tool_span_r820.py`、`src/llm_loop/core/episode_history.py`。
+- evidence_required: true
