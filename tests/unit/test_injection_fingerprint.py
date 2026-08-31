@@ -1,7 +1,7 @@
 """err1210 注入形态黄金指纹回归（tasks 7.2；spec 5.2.1-4b 红灯机制）.
 
 以附录 C/D.2 实测形态为黄金指纹（spec 5.4-2/5.2.1-4b，design 风险 5 约束固化）:
-- R8.11 live gate_note 已退出 prompt；黄金形态只覆盖仍具 prompt eligibility 的 memory/interop/tip/hotcard 槽；
+- R8.13 live interop 与 R8.11 gate_note 已退出 prompt；黄金形态只覆盖 memory/tip/hotcard 槽；
 - 公共前缀 wire 哈希一致结构（注入只追加尾部、前缀逐字节不变，附录 C 92/135 条一致）。
 - 注入槽结构变更（增删槽/改包装/绕过 wrap_injection/改固定文本）→ 黄金摘要失配
   显式 fail（红灯），提示更新指纹（spec 5.2.1-4b"红灯提示更新"）。
@@ -30,8 +30,8 @@ from llm_loop.core.message import Message, MessageSource
 # 附录 C/D.2 实测形态的确定性夹具（等长占位正文；wrap 后命中目标 chars）
 _WRAP_OVERHEAD = len(_INJECTION_PREFIX) + 1  # prefix + "\n"（anchor 空时）
 _HOTCARD_RENDER_OVERHEAD = 78  # 热卡渲染模板固定开销（头部/换行/尾部，实测 2026-08-27）
-# 仍具 prompt eligibility 的历史确定性夹具: 记忆兜底/协调/提示/热卡。
-_TARGET_CHARS = (252, 1117, 254, 116)
+# 仍具 live prompt eligibility 的确定性夹具: 记忆兜底/提示/热卡。
+_TARGET_CHARS = (252, 254, 116)
 
 
 def _fixture(target: int, head: str) -> str:
@@ -40,8 +40,7 @@ def _fixture(target: int, head: str) -> str:
 
 
 _MEMORY_FIX = _fixture(_TARGET_CHARS[0], "记忆检索结果：")
-_INTEROP_FIX = _fixture(_TARGET_CHARS[1], "任务协调信息：")
-_TIP_FIX = _fixture(_TARGET_CHARS[2], "经验提示：")
+_TIP_FIX = _fixture(_TARGET_CHARS[1], "经验提示：")
 _HOTCARD_ANCHOR = "热卡AAA"  # 5 字符 → 渲染后 83 字符 → wrap 后 116
 
 
@@ -67,7 +66,7 @@ def _slot_re(slot: str) -> re.Pattern[str]:
 
 # 黄金摘要（P1 9.1 聚合形态；Cognitive Runtime tasks 2.3 tier 段标记升级后 2026-08-28 实测重算;
 # 注入槽结构变更时此值失配 → 红灯）
-_GOLDEN_TAIL_DIGEST = "5ad59bdfa3454f6e62fc030f62ffdf9bc0b5538d94f66842b9ec63d9ec5e6f3e"
+_GOLDEN_TAIL_DIGEST = "6630a4fed4b9dab9fa2da7fe7ad4a8ace9769c3e52c9eea5998164bd04e0e111"
 
 
 def _engine(tmp_path: Path):
@@ -110,9 +109,6 @@ def _engine(tmp_path: Path):
 def _arm_all_slots(engine, sess, *, memory: bool = True, hotcard: bool = True,
                    tip_extra: int = 0, gate_note: bool = True):
     """武装 live slots；gate_note=True 仅验证观测标记不会进入 prompt."""
-    engine._interop_tail_messages = [
-        Message(role="system", content=_INTEROP_FIX, source=MessageSource.SYSTEM)
-    ]
     tips = [Message(role="system", content=_TIP_FIX, source=MessageSource.SYSTEM)]
     tips += [
         Message(role="system", content=_TIP_FIX + f"#{i}", source=MessageSource.SYSTEM)
@@ -157,7 +153,7 @@ def _assert_red_light(engine, sess, *, what: str, **arm_kwargs) -> None:
 
 class TestGoldenFingerprint:
     def test_golden_tail_morphology(self, tmp_path):
-        """P1 9.1 聚合形态: 尾部 1 条聚合 user（memory+四槽段标记，wrap 包装，段序恒定）.
+        """P1 9.1 聚合形态: 尾部 1 条聚合 user（memory+tip+hotcard 段标记，wrap 包装，段序恒定）.
 
         CR-R1（tasks 2.2）后默认 MODE=shadow（平铺+锚点旧行为），黄金摘要锚定的是
         生产 enforce 形态（tier 聚合），故本用例显式切 enforce 后再构建。
@@ -174,14 +170,14 @@ class TestGoldenFingerprint:
         assert agg.count(PROGRAM_APPENDIX_NOTICE) == 1, "单个 program appendix 只能有一次冲突仲裁声明"
         assert REFERENCE_LABEL in agg, "资料槽必须有 REFERENCE 语义标签"
         assert STATUS_LABEL in agg, "状态槽必须有 STATUS 语义标签"
-        for slot in ("memory", "interop", "tip", "hotcard"):
+        for slot in ("memory", "tip", "hotcard"):
             assert _slot_re(slot).search(agg), f"聚合含 {slot} 段"
         assert _slot_re("gate_note").search(agg) is None
         assert GATE_NOTE_CONTENT not in agg
-        # 段序恒定: memory→interop→tip→hotcard（build 收集顺序）
+        # 段序恒定: memory→tip→hotcard（build 收集顺序）
         marks = [
             _slot_re(s).search(agg)
-            for s in ("memory", "interop", "tip", "hotcard")
+            for s in ("memory", "tip", "hotcard")
         ]
         assert all(marks), "段标记齐全"
         idxs = [m.start() for m in marks]  # type: ignore[union-attr]
@@ -202,7 +198,7 @@ class TestGoldenFingerprint:
         assert InjectionSpan(tuple(entries)).is_tail_contiguous(out) is True
 
     def test_four_slot_no_memory_tail(self, tmp_path):
-        """常态（记忆已持久化）: 尾部 1 条聚合 user 含四槽段（无 memory 段）."""
+        """常态（记忆已持久化）: 尾部 1 条聚合 user 含 tip+hotcard 段（无 memory/interop）."""
         engine, sess = _engine(tmp_path)
         memory_msgs = _arm_all_slots(engine, sess, memory=False)
         out = _build(engine, sess, memory_msgs)
@@ -211,7 +207,7 @@ class TestGoldenFingerprint:
         agg = tail[0]["content"]
         assert agg.startswith(_INJECTION_PREFIX)
         assert _slot_re("memory").search(agg) is None
-        for slot in ("interop", "tip", "hotcard"):
+        for slot in ("tip", "hotcard"):
             assert _slot_re(slot).search(agg)
         assert _slot_re("gate_note").search(agg) is None
         assert [e.msg_idx for e in engine._last_build_injections] == [len(out) - 1]

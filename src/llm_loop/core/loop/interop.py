@@ -1,12 +1,13 @@
 """协调通道 inbox 注入 mixin（RULE-AI-14 实现层，2026-08-16）.
 
-程序级自动感知: DSH→LFL 待处理消息由 runtime 扫描；只有真正的 coordinate/task
-候选继续进入 E26 条件外部输入链。notify/backlog 属观测/UI 状态，不进入 LLM prompt。
+程序级自动感知: DSH→LFL 待处理消息由 runtime 扫描。R8.13 起 notify/backlog 与
+coordinate/task 均只进入 interop UI/action 状态；外部内容必须经未来的用户输入侧
+“接受/插入”动作显式授权后，才可升级为模型输入。
 协议见 data/interop/INTEROP.md。
 
 设计要点:
-- 扫描并原子归档 inbox 文件，不触发额外 run、不占会话锁（coordinate wakeup 由独立 watcher 控制）
-- 临时 system 消息，不写会话历史: 处理后文件移走即幂等，未处理每轮重新注入
+- 扫描 inbox 不触发额外 run、不占会话锁；notify 可自动归档 done，coordinate/task 保持 pending 等待用户处理
+- runtime 不构造外部协调 system/user prompt；不猜当前会话/任务，不把外部指令伪装成用户输入
 - 不打 injected_system 标记: 该标记在本地 provider 下会被 skip 跳过提交——
   协调待办是核心消息，所有 provider 均须可见
 - 注入位置在 memory 之后、历史之前（P1-10 前缀稳定）: system_prompt+memory
@@ -27,8 +28,7 @@ import os
 import time
 from pathlib import Path
 
-from llm_loop.core.injection_labels import InjectionLayer, origin_metadata
-from llm_loop.core.message import Message, MessageSource
+from llm_loop.core.message import Message
 
 logger = logging.getLogger(__name__)
 
@@ -39,18 +39,18 @@ class _InteropMixin:
     """协调通道（RULE-AI-14）程序级注入."""
 
     def _interop_inbox_messages(self) -> list[Message]:
-        """扫描协调通道 inbox 待处理消息（DSH→LFL）.
+        """扫描协调通道 inbox；返回值仅为兼容形状，R8.13 live path 恒为空.
 
         基准路径: LFL_DATA_DIR/interop/lfl_to_dsh/pending（与 web/routes.py 一致）。
-        返回仍具 E26 条件外部输入资格的 coordinate/task 临时消息；notify/backlog
-        只落观测/UI 状态。无可注入消息/异常 → 空列表。
+        notify 自动归档到 done；coordinate/task 保持 pending 并仅记录 observability。
+        任何外部正文都不会由 runtime 自动升级为模型 prompt。
 
         R8.12/E25 notify/backlog prompt exit:
         - topic=notify（job completion/subagent/scheduler 普通提醒）直接归档到 done/，
           保留 Web interop UI + action/event 可见性，但不构造 Message、不进入 provider prompt；
         - 同指纹 notify 仍幂等归档，不会因重复文件重新获得 prompt authority；
         - pending backlog 只记录结构化 action/watchdog 状态，不再构造“另有 N 条”提示；
-        - coordinate/task 类消息暂保持 E26 现状（注入 + 原子消费），由下一批单独判定。
+        - R8.13/E26: coordinate/task 也退出自动 prompt；不消费文件，等待用户在输入侧明确接受/插入。
         """
         try:
             base = Path(os.environ.get("LFL_DATA_DIR", "data")) / _INTEROP_INBOX_REL
@@ -98,22 +98,27 @@ class _InteropMixin:
                         except Exception:  # noqa: BLE001 — archive is authoritative
                             logger.debug("interop notify action trace 失败（忽略）", exc_info=True)
                     continue
-                # EVO-20260825 任务9（§5.4.1-4/5）: 原子化消费——先移动文件到
-                # processed/（原子 rename，防重复注入），移动成功后注入内容；
-                # 移动失败（已被并发消费/竞态）→ 跳过（幂等，不重复注入）。
-                if not self._consume_interop_file(f):
-                    continue
-                out.append(Message(
-                    role="system",
-                    content=(
-                        f"[外部协调·from DSH] {d.get('id', f.stem)}"
-                        f"[{d.get('topic', '')}] {body}\n"
-                        f"（消息已由本端消费归档: data/interop/lfl_to_dsh/pending/processed/{f.name}；"
-                        f"如需再处理请让 DSH 重新下发）"
-                    ),
-                    source=MessageSource.SYSTEM,
-                    metadata={"interop_source": f.name},  # DSH 借鉴: 注入事件溯源文件名
-                ))
+                # R8.13/E26: external coordinate/task is not user-authorized input.
+                # Keep the file pending for Web/UI inspection and future explicit input-side
+                # acceptance; record only one compact observation per process/file.
+                topic = str(d.get("topic", "") or "")
+                observed = getattr(self, "_interop_external_observed", None)
+                if observed is None:
+                    observed = self._interop_external_observed = set()
+                if f.name not in observed:
+                    observed.add(f.name)
+                    try:
+                        action = getattr(self, "_record_action", None)
+                        if callable(action):
+                            action(
+                                "interop.external_input",
+                                "awaiting_user_authorization",
+                                f"id={d.get('id', f.stem)};topic={topic};from={d.get('from', '')};"
+                                f"ref={d.get('ref', '')};prompt_chars=0",
+                            )
+                    except Exception:  # noqa: BLE001 — observability only
+                        logger.debug("interop external action trace 失败（忽略）", exc_info=True)
+                continue
             if len(files) > _max_inbox_inject:
                 # R8.12/E25: queue depth is runtime observability, not task semantics.
                 # InboxWatcher also diagnoses backlog; this action gives build-time evidence
@@ -210,6 +215,24 @@ class _InteropMixin:
         import os
 
         try:
+            # R8.13/E26: pre-upgrade err1210 defer state may still hold interop frames in
+            # memory. Retire them here rather than allowing historical external prose to
+            # regain prompt authority after the live producer has been disabled.
+            legacy_tail = getattr(self, "_interop_tail_messages", None) or []
+            if legacy_tail:
+                self._interop_tail_messages = None
+                refs = list(getattr(self, "_deferred_replay_refs", None) or [])
+                self._deferred_replay_refs = [
+                    (slot, ref) for slot, ref in refs if str(slot) != "interop"
+                ]
+                try:
+                    self._record_action(
+                        "interop.external_input",
+                        "legacy_defer_retired",
+                        f"count={len(legacy_tail)};prompt_chars=0",
+                    )
+                except Exception:  # noqa: BLE001 — observability only
+                    logger.debug("interop legacy defer retire trace 失败（忽略）", exc_info=True)
             inbox = self._interop_inbox_messages()
             if inbox:
                 _tail = os.environ.get("INTEROP_INJECT_TAIL", "1") == "1"

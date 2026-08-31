@@ -53,8 +53,8 @@ class TestBlindRetry:
         # exact human truth remains as the retry tail instead of deleting the whole user.
         assert stripped[:-1] == orig[:-1]
         assert stripped[-1] == {"role": "user", "content": inj[0].user_truth}
-        # strip 成功 → defer 回存: interop 可在下一 build 重注入。
-        assert engine._interop_tail_messages
+        # strip 成功 → defer 回存: tip 可在下一 build 重注入。
+        assert engine._tip_tail_messages
 
     def test_blind_env_off_legacy_behavior(self, tmp_path, monkeypatch):
         """ERR1210_BLIND_RETRY=0 → 回退 9088d4e 行为（剥离重试，无 blind 调用）."""

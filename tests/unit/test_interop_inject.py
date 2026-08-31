@@ -2,10 +2,10 @@
 
 验证 engine._interop_inbox_messages:
 - notify/backlog → observability/UI only，零 prompt Message
-- coordinate/task pending → 暂按 E26 现状注入 system 候选（含 id/topic/body/文件路径提示）
+- coordinate/task pending → E26 保持 pending 等用户输入侧授权，零 prompt/零自动消费
 - status=done / 格式坏 / 空 body → 跳过
 - 目录不存在 → 空列表（fail-open，不抛异常）
-- 装配点 _build_llm_messages 首条为 inbox system 消息
+- build/provider wire 不包含任何未授权 interop 正文
 """
 
 import json
@@ -19,10 +19,12 @@ def _bare_engine() -> LoopEngine:
     return LoopEngine.__new__(LoopEngine)  # 纯方法测试，绕过 __init__
 
 
-def test_inject_pending_message(tmp_path, monkeypatch):
+def test_task_pending_waits_for_user_authorization(tmp_path, monkeypatch):
+    """E26: task/coordinate 只保留 pending/UI，不能自动变成模型输入或被消费."""
     inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
     inbox.mkdir(parents=True)
-    (inbox / "20260816-005_dsh-test.json").write_text(
+    path = inbox / "20260816-005_dsh-test.json"
+    path.write_text(
         json.dumps(
             {
                 "id": "20260816-005",
@@ -38,23 +40,20 @@ def test_inject_pending_message(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
+    eng = _bare_engine()
+    actions: list[tuple[str, str, str]] = []
+    eng._record_action = lambda kind, status, detail: actions.append((kind, status, detail))
 
-    msgs = _bare_engine()._interop_inbox_messages()
-    assert len(msgs) == 1
-    m = msgs[0]
-    assert m.role == "system"
-    assert "20260816-005" in m.content
-    assert "task" in m.content
-    assert "请复核风险清单" in m.content
-    # EVO-20260825 任务9（§5.4.1-4）: 原子化消费——注入后文件已移到 processed/
-    assert "data/interop/lfl_to_dsh/pending/processed/20260816-005_dsh-test.json" in m.content
-    assert not (inbox / "20260816-005_dsh-test.json").exists(), "消费后文件应移出 pending/"
-    assert any(
-        p.name == "20260816-005_dsh-test.json"
-        for p in (inbox / "processed").rglob("*.json")
-    ), "消费后文件应在 pending/processed/"
-    # 不打 injected_system 标记（本地 provider 也须可见）
-    assert not (m.metadata or {}).get("injected_system")
+    assert eng._interop_inbox_messages() == []
+    assert path.exists(), "未授权 external task 必须保留 pending，等待用户处理"
+    assert actions == [(
+        "interop.external_input",
+        "awaiting_user_authorization",
+        "id=20260816-005;topic=task;from=dsh;ref=;prompt_chars=0",
+    )]
+    # 同进程再次扫描不重复刷 action。
+    assert eng._interop_inbox_messages() == []
+    assert len(actions) == 1
 
 
 def test_skip_done_and_bad_files(tmp_path, monkeypatch):
@@ -155,7 +154,7 @@ def test_notify_action_trace_has_zero_prompt_chars(tmp_path, monkeypatch):
 
 
 def test_backlog_count_is_observability_only(tmp_path, monkeypatch):
-    """E25: 超过扫描上限只记 action，不生成“另有 N 条”模型提示."""
+    """E25/E26: 堆积只记 action；9 条 task 全保留 pending，不自动消费/注入."""
     inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
     inbox.mkdir(parents=True)
     for i in range(9):
@@ -165,15 +164,13 @@ def test_backlog_count_is_observability_only(tmp_path, monkeypatch):
     actions: list[tuple[str, str, str]] = []
     eng._record_action = lambda kind, status, detail: actions.append((kind, status, detail))
 
-    msgs = eng._interop_inbox_messages()
-    assert len(msgs) == 8  # E26 task 仍按现有上限消费
-    assert all("另有" not in m.content and "待处理消息" not in m.content for m in msgs)
+    assert eng._interop_inbox_messages() == []
+    assert all((inbox / f"t{i}.json").exists() for i in range(9))
     assert (
         "interop.pending_backlog",
         "observed_only",
         "pending=9;scan_limit=8;prompt_chars=0",
     ) in actions
-    assert (inbox / "t0.json").exists(), "最老一条留待后续 E26 消费"
 
 
 def test_build_provider_wire_excludes_notify_but_keeps_done_record(
@@ -204,31 +201,22 @@ def test_build_provider_wire_excludes_notify_but_keeps_done_record(
     assert payload["body"] == "job-sensitive-result-complete"
 
 
-def test_coordinate_not_auto_archived(tmp_path, monkeypatch):
-    """coordinate/task 类消息原子化消费（EVO-20260825 §5.4.1-4）——注入一次后移走，
-    后续扫描不再重复注入（幂等），防前缀缓存持续被协调消息漂移破坏."""
+def test_coordinate_stays_pending_and_never_auto_injects(tmp_path, monkeypatch):
+    """E26: coordinate is not auto-consumed or auto-injected without user authorization."""
     inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
     inbox.mkdir(parents=True)
-    _write_msg(inbox, "t1.json", "task", "请复核风险清单", ref="", msg_id="t1")
+    _write_msg(inbox, "t1.json", "coordinate", "请复核风险清单", ref="coord-1", msg_id="t1")
     monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
     eng = _bare_engine()
-    # 首轮: 注入 + 原子化消费（移走）
-    msgs = eng._interop_inbox_messages()
-    assert len(msgs) == 1 and "请复核风险清单" in msgs[0].content
-    assert not (inbox / "t1.json").exists(), "coordinate 应被消费移走（processed/）"
-    # 次轮: 不再注入（幂等）
-    msgs2 = eng._interop_inbox_messages()
-    assert msgs2 == []
+
+    assert eng._interop_inbox_messages() == []
+    assert (inbox / "t1.json").exists()
+    assert eng._interop_inbox_messages() == []
+    assert (inbox / "t1.json").exists()
 
 
-def test_build_messages_injects_inbox_after_memory(tmp_path, monkeypatch):
-    """装配点验证: _build_llm_messages 中 inbox 注入在 memory 之后（每轮必感知）.
-
-    真实机制（P1-FEISHU _append_or_merge）: system 角色消息全部合并追加进
-    system_prompt（out[0]），非独立消息——故断言顺序而非独立槽位。
-    追加式合并保持 system 原内容前缀稳定（服务端 KV 缓存命中），
-    inbox 段重算成本 = 其自身长度（几百字符，一次性）。
-    """
+def test_build_messages_excludes_unapproved_interop(tmp_path, monkeypatch):
+    """E26 end-to-end: memory 可见，但未授权 task 正文不得进入 provider wire."""
     from llm_loop.config import Settings
     from llm_loop.core.message import Message, MessageSource
     from llm_loop.core.session import SessionStore
@@ -289,19 +277,16 @@ def test_build_messages_injects_inbox_after_memory(tmp_path, monkeypatch):
     assert out[0]["role"] == "system"  # 主体
     content = out[0]["content"]
     assert "MEM-1" not in content and "20260816-006" not in content  # 注入不进主体
-    # 注入内容在 user 消息中保留（AI 可见）——且 inbox 在 memory 之后
-    # （EVO-20260818 tail 模式: inbox 更靠后——提交尾部追加，前缀 system+memory 稳定）
     users = [m["content"] for m in out if m["role"] == "user"]
     joined = "\n".join(users)
-    assert "MEM-1" in joined  # memory 注入生效（转 user 保留）
-    assert "20260816-006" in joined  # E26 task 候选仍注入（本批不改）
-    assert joined.index("20260816-006") > joined.index("MEM-1")  # inbox 在 memory 之后
+    assert "MEM-1" in joined  # memory 语义保持本批现状
+    assert "20260816-006" not in joined
+    assert "通道任务装配点验证" not in joined
+    assert (inbox / "20260816-006_dsh-x.json").exists(), "未授权 task 应保留 pending"
 
 
-def test_tail_mode_keeps_base_and_stores_tail(tmp_path, monkeypatch):
-    """EVO-20260818（spec §5.3.1-1 c/d，grill-me B1）: tail 模式——base 原样
-    （前缀不插注入，system+稳定历史前缀字节不变），注入消息存 _interop_tail_messages
-    供 build 末尾追加."""
+def test_tail_mode_does_not_store_unapproved_interop_tail(tmp_path, monkeypatch):
+    """E26: legacy tail mode cannot turn pending external task into an in-memory prompt slot."""
     from llm_loop.core.message import Message, MessageSource
 
     inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
@@ -311,15 +296,47 @@ def test_tail_mode_keeps_base_and_stores_tail(tmp_path, monkeypatch):
     eng = _bare_engine()
     base = [Message(role="user", content="H1", source=MessageSource.USER)]
     out, prefix_len = eng._inject_interop_messages(list(base), 0, "s1")
-    assert out == base  # base 原样（前缀不变）
+    assert out == base
     assert prefix_len == 0
-    tail = getattr(eng, "_interop_tail_messages", None)
-    assert tail is not None and len(tail) == 1
-    assert "尾部注入验证" in tail[0].content
+    assert getattr(eng, "_interop_tail_messages", None) in (None, [])
+    assert (inbox / "t2.json").exists()
 
 
-def test_prefix_mode_restores_old_behavior(tmp_path, monkeypatch):
-    """INTEROP_INJECT_TAIL=0 → 回退旧行为（注入插 memory 之后、历史之前）."""
+def test_legacy_deferred_interop_tail_is_retired_before_build(tmp_path, monkeypatch):
+    """E26 compatibility: pre-upgrade in-memory interop defer cannot regain prompt authority."""
+    from llm_loop.core.message import Message, MessageSource
+
+    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
+    import threading
+
+    from llm_loop.core.loop.err1210 import SlotKind
+    from llm_loop.core.loop.runstate import _RunState
+
+    eng = _bare_engine()
+    eng._last_active_sid = "s1"
+    eng._run_states = {"s1": _RunState()}
+    eng._run_states_guard = threading.RLock()
+    legacy = Message(role="system", content="legacy interop command", source=MessageSource.SYSTEM)
+    keep = Message(role="system", content="keep tip ref", source=MessageSource.SYSTEM)
+    eng._interop_tail_messages = [legacy]
+    eng._deferred_replay_refs = [(SlotKind.INTEROP, legacy), (SlotKind.TIP, keep)]
+    actions: list[tuple[str, str, str]] = []
+    eng._record_action = lambda kind, status, detail: actions.append((kind, status, detail))
+
+    out, prefix_len = eng._inject_interop_messages([], 0, "s1")
+
+    assert out == [] and prefix_len == 0
+    assert eng._interop_tail_messages is None
+    assert eng._deferred_replay_refs == [(SlotKind.TIP, keep)]
+    assert actions == [(
+        "interop.external_input",
+        "legacy_defer_retired",
+        "count=1;prompt_chars=0",
+    )]
+
+
+def test_prefix_mode_cannot_restore_external_auto_injection(tmp_path, monkeypatch):
+    """E26: INTEROP_INJECT_TAIL=0 no longer restores the retired automatic prompt path."""
     from llm_loop.core.message import Message, MessageSource
 
     inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
@@ -330,8 +347,9 @@ def test_prefix_mode_restores_old_behavior(tmp_path, monkeypatch):
     eng = _bare_engine()
     base = [Message(role="user", content="H1", source=MessageSource.USER)]
     out, prefix_len = eng._inject_interop_messages(list(base), 0, "s1")
-    assert len(out) == 2 and "前缀注入验证" in out[0].content  # 注入在 base 之前
-    assert prefix_len == 1
+    assert out == base
+    assert prefix_len == 0
+    assert (inbox / "t3.json").exists()
 
 
 def test_build_messages_memory_tail_and_gate_note_observability_only(tmp_path, monkeypatch):

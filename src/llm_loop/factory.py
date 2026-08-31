@@ -931,7 +931,8 @@ def build_engine(settings: Settings) -> LoopEngine:
     engine.runner = BackgroundRunner(engine, enabled=settings.runner_background)
     logger.info("后台 run 执行器已装配 enabled=%s", settings.runner_background)
 
-    # DSH-PLUGINS-20260816 ②: 调度提醒线程（到点写 interop notify，LFL 下轮 run 回显）
+    # 调度提醒线程：到点写 interop；R8.12/R8.13 后仅进入 interop UI/action，
+    # 不再自动回显给 LLM 或触发模型 run。
     # BUGFIX(2026-08-27): 复用上方工具注册处的 _schedule_store（原此处再建
     # 新实例，双 Store 内存互不可见 → 提醒永不触发）
     try:
@@ -943,65 +944,33 @@ def build_engine(settings: Settings) -> LoopEngine:
         logger.exception("调度提醒线程装配失败（fail-open）")
         engine.scheduler = None
 
-    # EVO-20260817-6efeb7a0: 协调 inbox 主动感知（A 必做通知 + B 可选 wakeup）
-    # run 之间到达的 DSH 消息静默躺 pending 无人感知 → 常驻线程监视，新消息回调:
-    # - on_notify: 写审计事件 interop.pending_notify（web/飞书可查，人工可感知）
-    # - wakeup_fn: INBOX_WAKEUP=1 且含 coordinate 消息 → BackgroundRunner 轻量 run
-    #   （run 注入机制自动带上 pending 消息，LLM 处理并归档；限频防风暴）
+    # 协调 inbox 主动感知：新 pending 只进入 interop UI/action observability。
+    # R8.13/E26 禁止把未绑定外部消息归因到“最近会话”，也禁止 watcher 伪造
+    # user_text 自动启动模型。未来由输入侧显式“接受/插入”动作完成用户授权。
     try:
         from llm_loop.core.interop_watch import InboxWatcher
 
         def _on_inbox_notify(names: Sequence[str]) -> None:
+            """Record inbox state without guessing a target conversation."""
             try:
-                # 事件写最近活跃会话（web 可查）。engine 无持久 session_id 属性，
-                # 此前 getattr → "?" 导致通知写进 ?.jsonl、web 端不可见（2026-08-17 修复）。
-                sid = "default"
-                try:
-                    store = getattr(engine, "session_store", None)
-                    if store is not None and hasattr(store, "recent_sessions"):
-                        recent = store.recent_sessions(limit=1)
-                        if recent:
-                            sid = recent[0]
-                except Exception:  # noqa: BLE001 — 会话探测失败用 default（fail-open）
-                    pass
-                engine._event_append(
-                    sid,
+                engine._record_action(
                     "interop.pending_notify",
-                    {
-                        "count": len(names),
-                        "files": names,
-                        "hint": "协调通道新消息待处理（下轮 run 自动注入，或 evolve-review 等入口可见）",
-                    },
+                    "awaiting_user_authorization",
+                    f"count={len(names)};files={', '.join(names)};prompt_chars=0",
                 )
-                # action_trace 审计（search_records 可跨会话检索，双通道保可见）
-                try:
-                    engine._record_action(
-                        "interop.pending_notify",
-                        "new",
-                        f"协调通道新消息 {len(names)} 条: {', '.join(names)}",
-                    )
-                except Exception:  # noqa: BLE001 — 审计失败 fail-open
-                    logger.warning("interop.pending_notify 审计写入失败（fail-open）")
-            except Exception:  # noqa: BLE001 — 审计事件失败 fail-open
-                logger.warning("interop.pending_notify 事件写入失败（fail-open）")
+            except Exception:  # noqa: BLE001 — observability failure must not block watcher
+                logger.warning("interop.pending_notify 审计写入失败（fail-open）")
 
         def _inbox_wakeup(names: Sequence[str]) -> None:
-            """INBOX_WAKEUP=1 时: 对默认/最近会话触发轻量 run 处理协调消息."""
-            runner = getattr(engine, "runner", None)
-            if runner is None or not getattr(runner, "enabled", False):
-                logger.info("后台 run 未装配，wakeup 跳过（仅通知）")
-                return
-            # 选最近活动会话（无则默认 "default"）
-            sid = "default"
+            """Legacy INBOX_WAKEUP callback: intentionally no model run after R8.13."""
             try:
-                store = getattr(engine, "session_store", None)
-                if store is not None and hasattr(store, "recent_sessions"):
-                    recent = store.recent_sessions(limit=1)
-                    if recent:
-                        sid = recent[0]
-            except Exception:  # noqa: BLE001 — 会话探测失败用 default（fail-open）
-                pass
-            runner.start(sid, "协调通道有新消息待处理，请查收并处理（见本轮注入）")
+                engine._record_action(
+                    "interop.coordinate_wakeup",
+                    "blocked_no_user_authorization",
+                    f"files={', '.join(names)};prompt_chars=0",
+                )
+            except Exception:  # noqa: BLE001 — observability only
+                logger.warning("interop.coordinate_wakeup 审计写入失败（fail-open）")
 
         engine.inbox_watcher = InboxWatcher(
             on_notify=_on_inbox_notify,

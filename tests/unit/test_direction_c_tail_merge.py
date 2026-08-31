@@ -102,8 +102,8 @@ def test_build_direction_c_remaps_registered_dynamic_entry_after_persisted_merge
             metadata=origin_metadata(InjectionLayer.REFERENCE, persisted_injection=True),
         )
     )
-    engine._interop_tail_messages = [
-        Message(role="system", content="dynamic interop", source=MessageSource.SYSTEM)
+    engine._tip_tail_messages = [
+        Message(role="system", content="dynamic tip", source=MessageSource.SYSTEM)
     ]
 
     out = _build(engine, sess, [])

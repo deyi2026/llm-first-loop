@@ -443,3 +443,53 @@ def test_deleted_session_cannot_be_restored_from_recovery_backup(tmp_path, monke
     assert result.status.value == "failure"
     assert "未找到" in result.content or "备份不存在" in result.content
     assert not engine.session.exists(sid)
+
+
+def test_interop_watcher_observes_without_recent_session_attribution(tmp_path, monkeypatch):
+    """E26: pending external state may be audited, but must not be attached to a guessed recent session."""
+    from llm_loop.core.interop_watch import InboxWatcher
+    from llm_loop.core.scheduler import SchedulerThread
+    from llm_loop.factory import build_engine
+
+    monkeypatch.setattr(InboxWatcher, "start", lambda self: None)
+    monkeypatch.setattr(SchedulerThread, "start", lambda self: None)
+    engine = build_engine(_settings(tmp_path))  # type: ignore[arg-type]
+    assert engine.inbox_watcher is not None
+    actions: list[tuple[str, str, str]] = []
+    engine._record_action = lambda kind, status, detail: actions.append((kind, status, detail))
+    event_calls: list[tuple] = []
+    engine._event_append = lambda *args, **kwargs: event_calls.append(args)
+
+    engine.inbox_watcher._on_notify(["coord.json"])
+
+    assert event_calls == []
+    assert actions == [(
+        "interop.pending_notify",
+        "awaiting_user_authorization",
+        "count=1;files=coord.json;prompt_chars=0",
+    )]
+
+
+def test_interop_wakeup_never_starts_model_without_user_authorization(tmp_path, monkeypatch):
+    """E26: even INBOX_WAKEUP callback cannot fabricate user_text or start a run."""
+    from llm_loop.core.interop_watch import InboxWatcher
+    from llm_loop.core.scheduler import SchedulerThread
+    from llm_loop.factory import build_engine
+
+    monkeypatch.setattr(InboxWatcher, "start", lambda self: None)
+    monkeypatch.setattr(SchedulerThread, "start", lambda self: None)
+    engine = build_engine(_settings(tmp_path))  # type: ignore[arg-type]
+    assert engine.inbox_watcher is not None
+    starts: list[tuple] = []
+    engine.runner.start = lambda *args, **kwargs: starts.append(args) or (None, None)
+    actions: list[tuple[str, str, str]] = []
+    engine._record_action = lambda kind, status, detail: actions.append((kind, status, detail))
+
+    engine.inbox_watcher._wakeup_fn(["coord.json"])
+
+    assert starts == []
+    assert actions == [(
+        "interop.coordinate_wakeup",
+        "blocked_no_user_authorization",
+        "files=coord.json;prompt_chars=0",
+    )]
