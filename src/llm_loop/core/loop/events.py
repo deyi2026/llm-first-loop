@@ -215,6 +215,13 @@ class _EventsMixin:
         That polluted working context and delegated deterministic reconciliation to the
         LLM.
 
+        R8.24-B B-3.3（B-D8, repair-before-lifecycle）: this repair is wired at the
+        run ingress (engine.run, before the main loop) so deterministic mechanical
+        repairs always settle before any lifecycle/prompt-eligibility decision
+        (build-time retirement, turn-ref judgement).  Repair output carries zero
+        model-visible semantics (aligned with E19); ordering is load-bearing and
+        covered by tests.
+
         The current user has already been appended to ``sess`` (and normally to the
         event log) before this hook runs.  Repair therefore preserves that live object,
         validates the pre-user prefix against event replay, inserts only replay-only

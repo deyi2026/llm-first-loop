@@ -40,6 +40,7 @@ class _LifecycleMixin:
     def run_stream(
         self, session_id: str, user_text: str, model: str | None = None,
         reasoning_effort: str | None = None,
+        *, ingress: object | None = None,
     ) -> Iterator[StreamDelta]:
         """单条用户消息的完整循环（流式）：逐 content delta yield，结束返回 LoopResult.
 
@@ -118,6 +119,7 @@ class _LifecycleMixin:
             inner = self._run_stream_inner(
                 session_id, user_text, model,
                 run_save_token=_run_save_token, on_run_acquired=on_run_acquired,
+                ingress=ingress,
             )
 
             while True:
@@ -175,13 +177,17 @@ class _LifecycleMixin:
         user_text: str,
         model: str | None = None,
         reasoning_effort: str | None = None,
+        *,
+        ingress: object | None = None,
     ) -> LoopResult:
         """单条用户消息的完整循环（run_stream 的同步聚合包装，签名/返回不变）.
 
         model: 可选，本次对话覆盖使用的 LLM 模型（None 用装配模型，Web 模型切换用）。
+        ingress: agent_trace_leak 3.5——人类输入通道凭据（缺省 None 向后兼容）。
         """
         it = self.run_stream(
             session_id, user_text, model, reasoning_effort=reasoning_effort,
+            ingress=ingress,
         )
         while True:
             try:
@@ -228,11 +234,13 @@ class _LifecycleMixin:
         *,
         on_run_acquired: Any = None,
         expected_workspace_epoch: int | None = None,
+        ingress: object | None = None,
     ) -> LoopResult:
         """内部同步入口：首个generator推进前校验session解析时的workspace epoch。"""
         marker = self._install_run_acquired_callback(session_id, on_run_acquired)
         it = self.run_stream(
-            session_id, user_text, model=model, reasoning_effort=reasoning_effort
+            session_id, user_text, model=model, reasoning_effort=reasoning_effort,
+            ingress=ingress,
         )
         try:
             # 首次next执行run_stream admission；与epoch校验同处workspace guard内，
@@ -263,11 +271,13 @@ class _LifecycleMixin:
         *,
         on_run_acquired: Any = None,
         expected_workspace_epoch: int | None = None,
+        ingress: object | None = None,
     ):
         """内部流式入口：首次推进时原子校验workspace epoch并完成run admission。"""
         marker = self._install_run_acquired_callback(session_id, on_run_acquired)
         it = self.run_stream(
-            session_id, user_text, model=model, reasoning_effort=reasoning_effort
+            session_id, user_text, model=model, reasoning_effort=reasoning_effort,
+            ingress=ingress,
         )
         try:
             with self._workspace_transition_guard:
@@ -284,10 +294,10 @@ class _LifecycleMixin:
             finally:
                 self._clear_run_acquired_callback(session_id, marker)
 
-    def run_single(self: LoopEngine, user_text: str, model: str | None = None) -> LoopResult:
+    def run_single(self: LoopEngine, user_text: str, model: str | None = None, *, ingress: object | None = None) -> LoopResult:
         """一次性便捷入口：自动创建新会话并执行完整循环."""
         session_id = self.session.create()
-        return self.run(session_id, user_text, model=model)
+        return self.run(session_id, user_text, model=model, ingress=ingress)
 
     def close(self: LoopEngine) -> None:
         """释放底层 LLM 客户端连接，幂等且 fail-open."""

@@ -23,7 +23,12 @@ from llm_loop.config import Settings
 from llm_loop.core.injection_labels import (
     InjectionLayer,
     origin_metadata,
-    render_program_appendix,
+
+)
+from llm_loop.core.trace_leak import leak_events
+from llm_loop.core.trace_leak.invariant import (
+    correct_mislabeled_metadata,
+    metadata_satisfies_invariant,
 )
 from llm_loop.core.history import (  # noqa: F401 (history 工具)
     projection_check,
@@ -59,14 +64,13 @@ from llm_loop.core.loop.tool_exec import (
 )
 from llm_loop.core.loop.turn_context import _TurnContextMixin
 from llm_loop.core.message import Message, MessageSource
+from llm_loop.core.prompt_eligibility import PROGRAM_FINAL_PROTOCOL_BOUNDARY
 from llm_loop.core.run_context import (
     current_reasoning_effort as _current_reasoning_effort,
 )
 from llm_loop.core.session import SessionStore
 from llm_loop.feedback.honesty import (
-    max_iterations_decision_message,
     max_iterations_feedback,
-    max_iterations_warning_message,
     stagnation_feedback,
 )
 from llm_loop.feedback.validator import DeclarationValidator, build_discrepancy_feedback
@@ -309,8 +313,13 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
     def _run_stream_inner(
         self, session_id: str, user_text: str, model: str | None = None,
         *, run_save_token: object | None = None, on_run_acquired: Any = None,
+        ingress: object | None = None,
     ) -> Iterator[StreamDelta]:
-        """run_stream 的循环本体（P0-5 包装层拆出；逻辑与拆分前逐行一致）."""
+        """run_stream 的循环本体（P0-5 包装层拆出；逻辑与拆分前逐行一致）.
+
+        agent_trace_leak 3.5: ingress 为人类输入通道凭据（B2 双因子判定——
+        user_instruction 判定从"调用方传参"升级为"调用方凭据 + 通道白名单"）。
+        """
         # P0-5: 记录最近活跃会话（out-of-run 的属性 shim 回退锚点，保持测试复查语义）
         self._last_active_sid = session_id
         tool_trace: list[dict] = []
@@ -424,6 +433,46 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             source=MessageSource.USER,
             metadata=origin_metadata(InjectionLayer.USER_INSTRUCTION),
         )
+        # agent_trace_leak 3.5: user_instruction 判定双因子收口（凭据 + 白名单；
+        # 合法凭据路径落盘字节零变化——metadata 仅固化 ingress 通道快照两键）。
+        # guard 异常 fail-open 放行 + leak.guard_fault 告警（spec 4.2-1）。
+        try:
+            from llm_loop.core.trace_leak.user_ingress_guard import (
+                GuardAction,
+                guard_user_write,
+            )
+
+            _verdict = guard_user_write(
+                sess, user_msg, ingress, entry="engine.run"
+            )
+            if _verdict.action is GuardAction.DENY:
+                # enforce 拒绝：不落盘不执行循环，如实返回拒绝回执（事件/隔离已留痕）
+                return LoopResult(
+                    session_id=session_id,
+                    final_answer=(
+                        "[写入被拒] 本次 user 身份写入未通过通道白名单校验"
+                        "（leak.channel_denied 事件已留痕，内容已隔离记录）。"
+                    ),
+                    rounds=0,
+                )
+            user_msg = _verdict.message
+        except ImportError:  # pragma: no cover - 装配异常 fail-open
+            logger.warning("user_ingress_guard 不可用（fail-open 放行）", exc_info=True)
+        # agent_trace_leak 2.3: 落盘前恒等式校验（fail-open——异常放行 + 告警；
+        # 违反即纠正为程序附录层标记 + mislabel 事件；仅作用新写入，spec 4.5-1）
+        try:
+            if metadata_satisfies_invariant(user_msg.metadata) is False:
+                leak_events.emit_leak_event(
+                    leak_events.LEAK_MISLABEL_DETECTED,
+                    entry="engine.persist_user_message",
+                    session_id=session_id,
+                    content=user_msg.content,
+                    basis="恒等式违反: program_origin != (origin_layer != user_instruction)",
+                    sink=self._event_append,
+                )
+                user_msg.metadata = correct_mislabeled_metadata(user_msg.metadata)
+        except Exception:  # noqa: BLE001 — fail-open（spec 4.2-1）
+            logger.warning("user 消息落盘恒等式校验异常（fail-open 放行）", exc_info=True)
         sess.messages.append(user_msg)
         # D1: 会话首次落库生成 session.created + 用户消息事件（fail-open）
         self._ensure_session_created(sess)
@@ -496,6 +545,12 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             effective_budget = self._effective_history_budget(
                 planned_label, registry_snapshot=_planning_registry
             )
+            # R8.24-B B-2.2/B-D5: overflow 确定性收缩消费点——首次 overflow 后
+            # _overflow_shrink_factor 生效（预算收紧 → build 链重组，超出部分走
+            # 既有 lossless 归档链；程序侧确定性 compaction，零 prompt 注入）。
+            _shrink = getattr(self, "_overflow_shrink_factor", None)
+            if _shrink is not None and effective_budget:
+                effective_budget = int(effective_budget * _shrink)
             # P0-B: 预算归因（architecture_status.context_usage.budget 消费）
             self._last_budget_info = self._effective_history_budget_detail(
                 planned_label, registry_snapshot=_planning_registry
@@ -840,7 +895,10 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                     model_window={"label": model_used, "context": _response_context_limit},
                 )
                 if overflow_action == "reinject":
-                    continue  # 首次注入 system 消息让 AI 自主决策
+                    # R8.24-B B-D5: 首次 overflow——预算已确定性收缩
+                    # （_overflow_shrink_factor），continue 后下一轮 build 以收紧
+                    # 预算重组（超出部分 lossless 归档），零 prompt 注入。
+                    continue
                 if overflow_action == "end" and overflow_final is not None:
                     _run_end_reason = "overflow"
                     final_answer = overflow_final
@@ -943,12 +1001,33 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                         break
                 elif not _e1210_recovered:
                     # 严格模式 / 非降级错误 → 如实反馈（DFX-REL-02）
-                    if self._err1210_try_auto_continue(exc, sess):  # R9 续跑兜底（每 run 限 1 次，err1210.py）
-                        continue
-                    _run_end_reason = "llm_error"
-                    final_answer = self._e1210_llm_error_finalize(session_id, exc, len(messages), "llm_error")
-                    resp = None  # 程序反馈不得继承上一轮成功响应的 reasoning（GPT 审计 P0：stale reasoning 嫁接）
-                    break
+                    # R8.24-B B-2.4（B-D2）: 恢复链未覆盖的 1210 → runtime
+                    # rebuild+retry once（零 prompt、零模型可见文本——B-G7；
+                    # 原"程序化用户重发"路径退役：不再 continue 多耗一轮 LLM）。
+                    _rt_resp = self._err1210_try_runtime_retry(
+                        exc=exc, sess=sess, session_id=session_id,
+                        llm_client=llm_client, chat_model_arg=chat_model_arg,
+                        timeout_s=self._runtime_timeout(),
+                        model_label=model_used or getattr(self.settings, "llm_model", ""),
+                        metadata_registry=routing.metadata_registry, round_no=rounds,
+                        rebuild_fn=lambda _pl=planned_label, _reg=_planning_registry, _eb=effective_budget: (
+                            self._e1210_rebuild_request(
+                                sess=sess, model=model, planned_label=_pl,
+                                registry_snapshot=_reg,
+                                session_id=session_id, user_text=user_text,
+                                effective_budget=_eb,
+                                turn_memory_msgs=_turn_memory_msgs,
+                            )
+                        ),
+                    )
+                    if _rt_resp is not None:
+                        resp = _rt_resp  # 恢复成功：落回正常路径（与 fallback 成功合流同构）
+                        _llm_round_ms = 0.0  # 恢复轮无 TTFT 单列（design 风险 6，如实不伪造）
+                    else:
+                        _run_end_reason = "llm_error"
+                        final_answer = self._e1210_llm_error_finalize(session_id, exc, len(messages), "llm_error")
+                        resp = None  # 程序反馈不得继承上一轮成功响应的 reasoning（GPT 审计 P0：stale reasoning 嫁接）
+                        break
 
             if _cancelled_during_llm:
                 _run_end_reason = "cancelled"
@@ -1073,8 +1152,9 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             # 触发判断与决策交 AI 自主——RULE-AI-10 每轮自主检查清单）──
             self._check_loop_signals(sess, rounds)
 
-            # ── R10: 轮数预警（达 80% 注入一次，AI 可 adjust_strategy 调大自救）──
-            # 程序只如实告知事实（剩余轮数），"继续/调大/收尾"决策归 AI（RULE-AI-00）
+            # ── R10 → R8.24-B B-2.1（B-D6）: 轮数预警注入路径删除（E18 分量）──
+            # 模型可见面零预警（B-G8）；剩余轮数事实只落观测事件。"继续/调大/收尾"
+            # 决策不再询问模型——到达硬限后直接结束（见下方 exhaustion 段）。
             _budget = self._runtime_max_iterations()
             if (
                 not getattr(self, "_round_warning_injected", False)
@@ -1082,19 +1162,10 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 and rounds >= int(_budget * 0.8)
             ):
                 self._round_warning_injected = True
-                warning = max_iterations_warning_message(rounds, _budget)
-                warning.content = render_program_appendix(
-                    warning.content, InjectionLayer.STATUS
+                self._record_action(
+                    "round.warning", "suppressed",
+                    f"{rounds}/{_budget}; prompt_chars=0",
                 )
-                warning.metadata = origin_metadata(
-                    InjectionLayer.STATUS,
-                    injection_kind="round_warning",
-                    injected_system=True,
-                )
-                sess.messages.append(warning)
-                # D1: 系统注入消息事件（fail-open）
-                self._append_message_event(sess, warning)
-                self._record_action("round.warning", "injected", f"{rounds}/{_budget}")
 
             # ── HARNESS-04(2026-08-14): 上下文预算预警（占用率≥80% 注入一次）──
             # 程序只如实告知事实（占用率/预算），"压缩/收尾"决策归 AI（RULE-AI-00，
@@ -1135,30 +1206,21 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 self._append_message_event(sess, warning)
                 self._record_action("context.warning", "injected", f"{_pct}%")
 
-            # ── 轮数上限（2026-08-15 强化：耗尽先给 AI 一次归因/续跑决策轮）──
-            # 决策轮仅一次（per-session 标志）：AI 调 adjust_strategy 调大（≤500）→
-            # 下轮预算重估自然续跑；AI 纯文本归因 → 走正常最终回答路径收尾；
-            # AI 未调大仍耗竭 → 罐装 [已达轮数上限] 如实终止（程序兜底边界不变）。
+            # ── 轮数上限（R8.24-B B-2.1/B-D6: 硬边界直接结束）──
+            # 删除 N+1 决策轮（不再花一轮 LLM 调用问模型"是否继续"——P0-6：
+            # 到边界就停，等用户）。第 N+1 轮 LLM call=0（B-G4）；终态以 run 终态
+            # 元数据 + UI"用户可继续"提示呈现（衔接 E 包 task_active 授权恢复）。
+            # LFL_E18_HARD_STOP=0 时终态去掉"可继续"提示行（纯事实），硬停行为不变；
+            # 回滚整体语义靠 git revert（enforce 态落地——静态断言要求注入路径
+            # 无生产调用点，开关不再保留旧注入行为）。
             if rounds >= _budget:
-                if not self._exhaustion_decision_used:
-                    self._exhaustion_decision_used = True
-                    decision = max_iterations_decision_message(rounds, _budget)
-                    decision.content = render_program_appendix(
-                        decision.content, InjectionLayer.STATUS
-                    )
-                    decision.metadata = origin_metadata(
-                        InjectionLayer.STATUS, injection_kind="round_exhaustion_decision"
-                    )
-                    sess.messages.append(decision)
-                    # D1: 系统注入消息事件（fail-open）
-                    self._append_message_event(sess, decision)
-                    self._record_action(
-                        "round.exhaustion", "decision_requested", f"{rounds}/{_budget}"
-                    )
-                    continue  # 给 AI 一个决策轮（下一轮 LLM 调用可见该消息）
                 self._phase("terminate.max_iterations")
                 _run_end_reason = "max_iterations"
                 final_answer = max_iterations_feedback([t["name"] for t in tool_trace]).content
+                if os.environ.get("LFL_E18_HARD_STOP", "1") == "1":
+                    final_answer += (
+                        "\n（已达轮数硬边界，run 已结束；发送\"继续\"可开新 run 接续任务。）"
+                    )
                 break
 
         # ── 记住：沉淀记忆（不阻塞回答输出，FR-LOOP-03）──
@@ -1201,10 +1263,36 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             # retireable, and legacy messages lacking the bit remain fail-open.
             "episode_resolution_candidate": _episode_resolution_candidate,
         }
+        # R8.24-B B-3.2/B-D7（E19）: 程序终态全文不再进入 sess.messages——存储面
+        # 只保留 role-shape 协议占位（B-D11 PROTOCOL_ONLY：与 build 链
+        # PROGRAM_FINAL 替换同源常量，字节稳定），全文经 LoopResult（UI）与
+        # program.final 事件（audit）交付；下轮模型可见面零程序通知正文。
+        _program_final = _answer_origin == "program" and bool(final_answer)
+        if _program_final:
+            _origin_metadata = {
+                **_origin_metadata,
+                "program_final_placeholder": True,
+            }
+            try:
+                self._event_append(
+                    session_id,
+                    "program.final",
+                    {
+                        "session_id": session_id,
+                        "reason": _run_end_reason,
+                        "answer_origin": "program",
+                        "full_text": final_answer,
+                    },
+                )
+            except Exception:  # noqa: BLE001 — audit 交付失败 fail-open（UI 轨不受影响）
+                logger.debug("program.final 事件写入失败（fail-open）")
+        _persist_content = (
+            PROGRAM_FINAL_PROTOCOL_BOUNDARY if _program_final else final_answer
+        )
         sess.messages.append(
             Message(
                 role="assistant",
-                content=final_answer,
+                content=_persist_content,
                 source=_pf_source,
                 metadata=_origin_metadata,
                 # M51/M52: 模型 + 本轮 run token 消耗持久化（web/feishu 页脚数据源）
@@ -1345,6 +1433,45 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             reasoning_content=resp.reasoning_content if resp is not None else None,
             cancel_reason=_cancel_reason,
         )
+
+    def _e1210_rebuild_request(
+        self,
+        *,
+        sess: Any,
+        model: str | None,
+        planned_label: str,
+        registry_snapshot: Any,
+        session_id: str,
+        user_text: str,
+        effective_budget: int | None,
+        turn_memory_msgs: list[Message],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]] | None:
+        """R8.24-B B-2.4（B-D2）: 1210 runtime retry 的请求重建.
+
+        1210 自愈机制实证 = "下一轮上下文重建后通常自愈"（wire 归档/注入消费
+        状态变化）；本 helper 在失败点当场按最新 wire 状态重组请求载荷。
+        重建失败 → None（不 retry，走真实终态——副作用安全前提不满足即放弃）。
+        """
+        try:
+            msgs = self._build_llm_messages(
+                sess, turn_memory_msgs, max_chars=effective_budget, model=model,
+                planned_label=planned_label, registry_snapshot=registry_snapshot,
+            )
+            _mode = getattr(self.settings, "tool_eligibility_mode", "enforce")
+            if getattr(self.settings, "prefix_layered", False) and _mode != "enforce":
+                schemas = self._layered_tool_schemas(session_id, user_text)
+            else:
+                schemas = self.registry.schemas(lazy=self.settings.tool_schema_lazy)
+            schemas = self._project_tool_schemas_for_round(
+                schemas, planned_label=planned_label, user_text=user_text,
+                session_messages=sess.messages,
+            )
+            return msgs, [self._schema_to_param(t) for t in schemas]
+        except Exception:  # noqa: BLE001 — 重建失败不 retry（终态路径兜底）
+            logger.warning(
+                "err1210 runtime retry 请求重建失败（fail-open 不重试）", exc_info=True
+            )
+            return None
 
     # M53 拆分: 模型路由辅助方法族 → llm_loop/core/loop/routing.py（_RoutingMixin）
     # 迁移注释保留（test_silent_pass_cleanup 源码断言）: 模型标签 resolve 失败时回退裸名（fail-open），

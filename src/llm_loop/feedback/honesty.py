@@ -145,28 +145,30 @@ def model_unavailable_text(model_ref: str, error: Exception) -> str:
 
 
 def max_iterations_feedback(trace: list[str]) -> Message:
-    """达最大轮数如实结束（已执行轨迹 + 说明 + 续做引导）."""
+    """达最大轮数如实结束（R8.24-B B-D6 收口：纯事实终态，建议段已删除）.
+
+    事实 = 已达轮数上限 N 轮 + 已执行轨迹；"用户可继续"为事实级提示
+    （衔接 E 包 task_active 授权恢复）。§11.1 修订：不再注入建议性自然语言。
+    """
     trace_str = "; ".join(trace[-10:]) if trace else "（无动作记录）"
     return Message(
         role="system",
         content=(
             f"[已达轮数上限] 事实: 已达到最大循环轮数。\n"
             f"原因: 已执行轨迹: {trace_str}。\n"
-            f"建议: 请基于现有信息给出最终回答；若任务尚未完成，请如实说明"
-            f"已完成/未完成与下一步——用户可直接在同一会话继续发消息（历史保留，"
-            f"循环会以新消息重新进入）；或用户调大 LLM_MAX_ITERATIONS 后重试。"
+            f"用户可在同一会话继续发送消息（历史保留，循环以新消息重新进入）。"
         ),
         source=MessageSource.SYSTEM,
     )
 
 
-def max_iterations_decision_message(rounds: int, budget: int) -> Message:
-    """[轮次决策请求] 轮数耗尽时注入一次的归因/续跑决策轮（2026-08-15 用户需求）.
+def max_iterations_decision_message(rounds: int, budget: int) -> Message:  # noqa: ARG001
+    """[轮次决策请求] —— R8.24-B B-D6 已退役（deprecated，无生产调用点）.
 
-    耗尽有两种典型情形，判断归 AI（RULE-AI-00，程序不自动续跑）：
-    ① 工具使用错误/空转（参数错/选错工具/无效重试）→ 如实归因 + 正确做法 + 当前结论收尾；
-    ② 正常任务推进但步骤多 → adjust_strategy 调大 max_iterations（≤500 硬上限）续跑。
-    决策轮仅一次（per-session 标志）；AI 未调大且仍耗竭 → 回到罐装如实终止。
+    到达轮数硬限不再花第 N+1 轮 LLM 调用问模型"是否继续"——硬边界直接
+    结束/暂停 + UI 提示（B-G4: 第 N+1 轮 LLM call=0）。保留函数体仅供
+    历史参照与测试反例自证；生产路径禁止调用（静态断言：
+    tests/unit/test_runtime_zero_prompt_static.py）。
     """
     return Message(
         role="system",
@@ -186,14 +188,11 @@ def max_iterations_decision_message(rounds: int, budget: int) -> Message:
     )
 
 
-def max_iterations_warning_message(rounds: int, budget: int) -> Message:
-    """[轮数预警] 轮数接近上限时注入一次（R10：如实告知事实，决策归 AI）.
+def max_iterations_warning_message(rounds: int, budget: int) -> Message:  # noqa: ARG001
+    """[轮数预警] —— R8.24-B B-D6 已退役（deprecated，无生产调用点）.
 
-    AI 可自主决定：继续按当前节奏收尾 / 调用 adjust_strategy 调大 max_iterations /
-    直接给出最终回答。程序只提供事实，不强制任何选择。
-    2026-08-18（DSH 009 ③）: 追加"拆分后台"引导——长任务重活应委托后台
-    （execute_command 后台 job / dsh_task background / spawn_subagent / workflow 扇出），
-    主循环只调度轮询，勿单循环硬跑（实证：12 实例逐个 execute_command → 40 轮耗尽）。
+    轮数预警注入取消（模型可见面零预警，B-G8）；到达硬限直接结束。
+    保留函数体仅供历史参照与测试反例自证；生产路径禁止调用。
     """
     return Message(
         role="system",
@@ -202,18 +201,19 @@ def max_iterations_warning_message(rounds: int, budget: int) -> Message:
             f"原因: 任务所需工具调用较多时，剩余轮数可能不足以完成全部步骤。\n"
             f"建议: 若预计还需多轮工具调用，可调用 adjust_strategy 将 max_iterations "
             f"调大（白名单可调，上限 500）后继续；或压缩剩余步骤、优先完成关键动作，"
-            f"在最终回答中如实说明未完成部分。\n"
-            f"⚠️ 若任务含大量可并行/独立子步骤（多实例修复、批量处理等），优先拆分为"
-            f"后台任务（execute_command run_in_background=true / dsh_task background / "
-            f"workflow_run 扇出 / spawn_subagent 委派）再轮询汇总（job_output/结果通知）——"
-            f"主循环只做调度，勿单循环逐个硬跑（易耗尽轮数且串行低效）。"
+            f"在最终回答中如实说明未完成部分。"
         ),
         source=MessageSource.SYSTEM,
     )
 
 
-def stagnation_reminder_message(tool_name: str, streak: int) -> Message:
-    """[停滞提醒] 连续相同指纹工具调用提醒（EVO-20260814-aab7eb0b P2，阈值 3）."""
+def stagnation_reminder_message(tool_name: str, streak: int) -> Message:  # noqa: ARG001
+    """[停滞提醒] —— R8.24-B B-D3 已退役（deprecated，无生产调用点）.
+
+    停滞提醒 prompt 注入取消（总审计 §11.3 撤销判定）；计数/阈值/熔断保留，
+    提醒改道事件观测（tool_exec._track_stagnation）。保留函数体仅供历史
+    参照与测试反例自证；生产路径禁止调用。
+    """
     return Message(
         role="system",
         content=(
@@ -225,11 +225,11 @@ def stagnation_reminder_message(tool_name: str, streak: int) -> Message:
     )
 
 
-def empty_search_reminder_message(tool_name: str, streak: int) -> Message:
-    """[搜索空结果提醒] 搜索类工具连续空结果提醒（EVO-20260823-9bb27899，阈值 2）.
+def empty_search_reminder_message(tool_name: str, streak: int) -> Message:  # noqa: ARG001
+    """[搜索空结果提醒] —— R8.24-B B-D4 已退役（deprecated，无生产调用点）.
 
-    针对"记忆断言与实际不符 → 换深度/换目录/换工具反复搜同一目标"的求证循环：
-    空结果即前提失效信号，提醒 AI 以工具回执为准停止求证，转向如实说明/询问。
+    空搜索建议层删除（真实空结果回执已是事实）；否定帧登记保留。
+    保留函数体仅供历史参照与测试反例自证；生产路径禁止调用。
     """
     return Message(
         role="system",
@@ -244,31 +244,28 @@ def empty_search_reminder_message(tool_name: str, streak: int) -> Message:
 
 
 def stagnation_feedback(
-    tool_name: str, streak: int, trace: list[str], *, has_evidence: bool = True
+    tool_name: str, streak: int, trace: list[str], *, has_evidence: bool = True  # noqa: ARG001
 ) -> Message:
-    """[停滞熔断] 连续相同指纹工具调用熔断如实结束（EVO-20260814-aab7eb0b P2，阈值 5）.
+    """[停滞熔断] 熔断如实终止（R8.24-B B-D3 收口：纯事实终态）.
 
-    GPT 审计批次4（P2 evidence-validity gate）: 无成功回执（无有效证据）时不得暗示
-    "基于已获得的信息"可作答——改报 unresolved 需 replan，禁止推测性结论。
+    B-D3: "三路径替代策略"建议文案取消（search_evidence 换路/get_tool_schema
+    复核/基于回执作答——全部删除）；结束原因以 run 终态元数据/事实呈现：
+    stagnation、连续 N 次、ref 各不相同。has_evidence 仅作事实区分
+    （无成功回执时如实说明 unresolved，不给建议性指令——GPT 审计批次4
+    证据有效性门的事实面保留）。
     """
     trace_str = "; ".join(trace[-10:]) if trace else "（无动作记录）"
-    if has_evidence:
-        advice = (
-            "建议: 基于已获得的信息给出最终回答；若确需继续，请明确说明还需要什么、"
-            "换不同参数或不同工具。"
-        )
-    else:
-        advice = (
-            "建议: 本 run 尚未获得任何成功的工具回执（无有效证据），不能基于已有信息作答——"
-            "请如实向用户报告任务未解决（unresolved），说明已尝试路径与失败原因，"
-            "并提出 replan 方向（换工具/换参数/换路径或补充外部输入）；禁止给出推测性结论。"
-        )
+    evidence_fact = (
+        "本 run 已有成功的工具回执（历史回执可经检索复用）。"
+        if has_evidence
+        else "本 run 尚未获得任何成功的工具回执（无有效证据），任务未解决（unresolved）。"
+    )
     return Message(
         role="system",
         content=(
             f"[停滞熔断] 事实: 已连续 {streak} 次以相同参数调用工具 {tool_name}，循环被程序如实终止。\n"
             f"原因: 重复调用无法产生新信息，继续执行只会耗尽轮数预算。已执行轨迹: {trace_str}。\n"
-            + advice
+            f"{evidence_fact}"
         ),
         source=MessageSource.SYSTEM,
     )
@@ -344,13 +341,15 @@ def program_error_message(
 
 def overflow_feedback(
     exc: Exception,
-    breakdown: dict | None = None,
-    model_window: dict | None = None,
+    breakdown: dict | None = None,  # noqa: ARG001
+    model_window: dict | None = None,  # noqa: ARG001
 ) -> str:
-    """R4: overflow 如实反馈（不自动重试，决策权归 AI）.
+    """R4 → R8.24-B B-D5 已退役（deprecated，无生产调用点）.
 
-    告知 AI: 错误事实 + 当前占用 + 模型窗口 + 可选动作（AI 自主选择）。
-    程序不替 AI 压缩/重试（避免丢信息影响大模型决策）。
+    E17 overflow 改 runtime 确定性处理（compact/route/end + telemetry），
+    模型可见面零 overflow 教程、零"继续/压缩"询问（B-G1 E17 分量）。
+    保留函数体仅供历史参照与测试反例自证；生产路径禁止调用
+    （静态断言: tests/unit/test_runtime_zero_prompt_static.py）。
     """
     lines = [
         f"[上下文溢出] 事实: provider 返回 overflow 错误: {exc}",

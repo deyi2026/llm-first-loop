@@ -12,14 +12,10 @@ move 自 engine.py 内联工具段（492-553）与辅助方法（888-913）及�
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
-from llm_loop.core.injection_labels import (
-    InjectionLayer,
-    origin_metadata,
-    render_program_appendix,
-)
 from llm_loop.core.message import Message, MessageSource, ToolResult
 from llm_loop.introspection.status import ToolHistoryItem
 from llm_loop.llm.client import LLMResponse, StreamDelta, ToolRoundInfo
@@ -32,9 +28,22 @@ logger = logging.getLogger(__name__)
 
 # EVO-20260814-aab7eb0b P2: 循环实时停滞检测阈值
 # 连续 N 次相同指纹（tool_name + 规范化参数 JSON）：
-#   >= _STAGNATION_REMIND_AT 注入 [停滞提醒]（一次）；>= _STAGNATION_BREAK_AT 熔断如实结束。
+#   >= _STAGNATION_REMIND_AT 达阈值（事件留痕）；>= _STAGNATION_BREAK_AT 熔断如实结束。
+# R8.24-B B-D3: [停滞提醒] prompt 注入已取消（总审计 §11.3 撤销判定）——计数/阈值/
+# 熔断/BLOCKED 全保留；提醒改为事件观测（LFL_STAGNATION_REMINDER 三态控制事件粒度）。
 _STAGNATION_REMIND_AT = 3
 _STAGNATION_BREAK_AT = 5
+
+
+def _stagnation_reminder_mode() -> str:
+    """R8.24-B B-1.1: 提醒事件观测模式（三态，均零 prompt 注入）.
+
+    - "on"（默认）: 达阈值记 "suppressed" 事件（观测在场）
+    - "shadow":     达阈值记 "suppressed_shadow" 事件（shadow 观测期语义）
+    - "off":        完全静默（仅计数/熔断机械路径）
+    """
+    raw = (os.environ.get("LFL_STAGNATION_REMINDER", "on") or "on").strip().lower()
+    return raw if raw in {"on", "shadow", "off"} else "on"
 
 # EVO-20260823-9bb27899: 搜索/定位类工具目标级停滞检测
 # 背景: 原指纹 = 工具名 + 完整参数 JSON 全等匹配；"换深度/换目录/换工具搜同一目标"时
@@ -403,26 +412,15 @@ class _ToolExecMixin:
             state["reminded"] = False
         if state["count"] >= _STAGNATION_REMIND_AT and not state["reminded"]:
             state["reminded"] = True
-            try:
-                from llm_loop.feedback.honesty import stagnation_reminder_message
-
-                reminder = stagnation_reminder_message(tc.name, state["count"])
-                reminder.content = render_program_appendix(
-                    reminder.content, InjectionLayer.STATUS
-                )
-                reminder.metadata = origin_metadata(
-                    InjectionLayer.STATUS,
-                    injection_kind="stagnation_reminder",
-                    prompt_lifecycle="current_turn",
-                    turn_ref=getattr(self, "_current_turn_ref", None),
-                )
-                sess.messages.append(reminder)
-                self._append_message_event(sess, reminder)
+            # R8.24-B B-D3: 提醒注入取消——改道事件观测（on/shadow 记事件，off 静默）；
+            # 计数/阈值/熔断机械路径不动。sess.messages 零写入（B-G2）。
+            _mode = _stagnation_reminder_mode()
+            if _mode != "off":
                 self._record_action(
-                    "stagnation.reminder", "injected", f"{tc.name} x{state['count']}"
+                    "stagnation.reminder",
+                    "suppressed_shadow" if _mode == "shadow" else "suppressed",
+                    f"{tc.name} x{state['count']} (prompt_injection=0)",
                 )
-            except Exception:
-                logger.warning("停滞提醒注入失败（fail-open）", exc_info=True)
         # ② 搜索类调用连续空结果计数（EVO-20260823-9bb27899 + 12be9cac 边界①补全）:
         #    结构化搜索工具 + execute_command 搜索命令（find/grep/rg/locate/which）——空结果=前提失效信号
         if _is_search_like_call(tc) and _is_empty_search_result(result):
@@ -441,26 +439,16 @@ class _ToolExecMixin:
             "empty_reminded", False
         ):
             state["empty_reminded"] = True
-            try:
-                from llm_loop.feedback.honesty import empty_search_reminder_message
-
-                reminder = empty_search_reminder_message(tc.name, state["empty_count"])
-                reminder.content = render_program_appendix(
-                    reminder.content, InjectionLayer.STATUS
-                )
-                reminder.metadata = origin_metadata(
-                    InjectionLayer.STATUS,
-                    injection_kind="empty_search_reminder",
-                    prompt_lifecycle="current_turn",
-                    turn_ref=getattr(self, "_current_turn_ref", None),
-                )
-                sess.messages.append(reminder)
-                self._append_message_event(sess, reminder)
+            # R8.24-B B-D4: [搜索空结果提醒] 建议层删除——真实空结果回执本身已是事实；
+            # 否定帧登记（上方 register_missing）保留（跨会话复用，事实层）。
+            # 同 LFL_STAGNATION_REMINDER 开关三态事件观测，sess.messages 零写入。
+            _mode = _stagnation_reminder_mode()
+            if _mode != "off":
                 self._record_action(
-                    "empty_search.reminder", "injected", f"{tc.name} 空结果 x{state['empty_count']}"
+                    "empty_search.reminder",
+                    "suppressed_shadow" if _mode == "shadow" else "suppressed",
+                    f"{tc.name} 空结果 x{state['empty_count']} (prompt_injection=0)",
                 )
-            except Exception:
-                logger.warning("空结果提醒注入失败（fail-open）", exc_info=True)
 
     def _stagnation_should_break(self: LoopEngine) -> tuple[bool, str, int]:
         """是否达熔断阈值（engine 主循环每轮工具执行后调用）。."""

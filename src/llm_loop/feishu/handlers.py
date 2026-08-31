@@ -387,7 +387,10 @@ class FeishuMessageHandler:
         sid = self._session_map.get_or_create(self._map_key(msg))
         self._attach_action_observer()  # H-UI: 状态卡实时动作显示
         try:
-            result = self._engine.run(sid, text)
+            # agent_trace_leak 3.7: 人类输入通道签发 ingress 凭据（B2 双因子判定）
+            from llm_loop.core.trace_leak.ingress_token import issue_ingress
+
+            result = self._engine.run(sid, text, ingress=issue_ingress("feishu"))
         finally:
             if hasattr(self._engine, "set_action_observer"):
                 self._engine.set_action_observer(None)
@@ -515,7 +518,10 @@ class FeishuMessageHandler:
         sid = self._session_map.get_or_create(self._map_key(msg))
         self._attach_action_observer()  # H-UI: 状态卡实时动作显示
         try:
-            result = self._engine.run(sid, prefix)
+            # agent_trace_leak 3.7: 用户上传动作触发（user truth 派生输入）签发凭据
+            from llm_loop.core.trace_leak.ingress_token import issue_ingress
+
+            result = self._engine.run(sid, prefix, ingress=issue_ingress("feishu"))
         finally:
             if hasattr(self._engine, "set_action_observer"):
                 self._engine.set_action_observer(None)

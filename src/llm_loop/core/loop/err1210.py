@@ -32,7 +32,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from llm_loop.core.program_recovery import ProgramRecoveryAction, make_program_recovery_message
+
 from llm_loop.event_log.model import EVENT_PROGRAM_RECOVERY
 from llm_loop.llm.errors import LLMError, LLMHTTPError, parse_provider_error_code
 from llm_loop.core.message import Message, MessageSource
@@ -945,40 +945,58 @@ class _Err1210Mixin:
             )
             self._last_build_defer_replayed = False
 
-    def _err1210_try_auto_continue(self, exc: Exception, sess: Any) -> bool:
-        """R9（2026-08-29 用户需求「1210 自动继续」）: 恢复链未覆盖路径的续跑兜底.
+    def _err1210_try_runtime_retry(
+        self,
+        *,
+        exc: Exception,
+        sess: ModelSession,
+        llm_client: Any,
+        chat_model_arg: str | None,
+        session_id: str,
+        timeout_s: float | None = None,
+        model_label: str = "",
+        metadata_registry: Any = None,
+        round_no: int = 0,
+        rebuild_fn: Any = None,
+    ) -> Any | None:
+        """R8.24-B B-2.4（批 B2⑥，B-D2）: 恢复链未覆盖 1210 的 runtime rebuild/retry once.
 
-        1210 实证「下一轮上下文重建后通常自愈」（wire 归档/注入消费状态变化——
-        20:28 实测尾部 user=1 亦 1210、下一轮 build 即成功），程序化「用户重发」：
-        注入续跑消息由 engine continue 一轮（每 run 限 1 次防循环；续跑轮再失败
-        走原终止路径如实反馈，绝不静默吞错）。ERR1210_RECOVERY=0 完全旁路
-        （与恢复链同门，T5.3c）。
+        替代原 R9"程序化用户重发"（_err1210_try_auto_continue——武装 next-build
+        slot、engine continue 多耗一轮 LLM 调用，且 slot 文本进模型可见面）：
+        当场重建请求（1210 自愈机制实证 = wire 归档/注入消费状态变化后重组
+        即成功）并单次重试——零 prompt、零模型可见文本（B-G7
+        programmatic user resend chars=0）。
+
+        - 每 run 限 1 次（沿用 _auto_continue_1210 R9 计数语义防循环）；
+        - ERR1210_RECOVERY=0 完全旁路（与恢复链同门）；
+        - rebuild_fn 为 None / 重建失败 / 非 1210 / 已耗尽 → 返回 None，
+          engine 走真实终态（不 retry——副作用安全前提不满足即放弃）；
+        - 与恢复链既有 blind retry（:643 起）并存，优先级 blind → rebuild → 终态。
         """
         try:
             if getattr(self, "_auto_continue_1210", 0) >= 1:
-                return False
+                return None
             if not isinstance(exc, LLMError) or not is_err1210(exc):
-                return False
+                return None
             if os.environ.get("ERR1210_RECOVERY", "1") != "1":
-                return False
+                return None
+            if rebuild_fn is None:
+                return None
+            rebuilt = rebuild_fn()
+            if not rebuilt:
+                return None
+            messages, tools_param = rebuilt
         except Exception:  # noqa: BLE001 — 判定失败不阻断原路径
-            return False
+            return None
         self._auto_continue_1210 = 1
+        _turn_ref = getattr(self, "_current_turn_ref", None)
         self._record_action(
             "llm_call",
-            "auto_continue_1210",
-            "1210 恢复链耗尽，武装单次程序恢复动作（next-build only）",
+            "runtime_retry_1210",
+            "1210 恢复链耗尽，rebuild + 单次 runtime 重试（零 prompt 注入）",
         )
-        # R4: 单恢复动作只武装下一次 build 的 runtime slot。它不 append 到
-        # sess.messages，不会在后续用户轮成为长期高优先级可执行历史。build 消费
-        # 一次后立即清空，并由 R6 放在 exact user truth 之前。
-        _turn_ref = getattr(self, "_current_turn_ref", None)
-        _action = ProgramRecoveryAction.RETRY_CURRENT_REQUEST_ONCE
-        self._program_recovery_tail_message = make_program_recovery_message(
-            turn_ref=_turn_ref, action=_action
-        )
-        # Durable audit remains session-scoped without making the executable recovery
-        # a durable conversation message.  Failure is fail-open: runtime recovery still runs.
+        # Durable audit remains event-scoped; the retry itself touches no
+        # conversation surface at all (zero-prompt recovery, B-G7).
         try:
             _estore = getattr(self, "_event_store", None)
             if _estore is not None and getattr(_estore, "enabled", False):
@@ -986,15 +1004,35 @@ class _Err1210Mixin:
                     sess.session_id,
                     EVENT_PROGRAM_RECOVERY,
                     {
-                        "action": str(_action),
+                        "action": "runtime_rebuild_retry_once",
                         "trigger": "provider_1210",
                         "turn_ref": _turn_ref,
-                        "scope": "next_build_only",
+                        "scope": "in_process_zero_prompt",
                     },
                 )
         except Exception:  # noqa: BLE001 — audit failure must not block recovery
             logger.debug("program.recovery 事件写入失败（fail-open）", exc_info=True)
-        return True
+        resp, retry_exc = self._retry_consume_stream(
+            llm_client=llm_client,
+            messages=messages,
+            tools_param=tools_param,
+            chat_model_arg=chat_model_arg,
+            timeout_s=timeout_s if timeout_s is not None else self._runtime_timeout(),
+            session_id=session_id,
+            model_label=model_label,
+            metadata_registry=metadata_registry,
+            round_no=round_no,
+            attempt_index=2,
+        )
+        if resp is not None:
+            self._record_action("llm_call", "runtime_retry_1210", "recovered")
+            return resp
+        self._record_action(
+            "llm_call",
+            "runtime_retry_1210",
+            f"retry_failed: {str(retry_exc or exc)[:200]}",
+        )
+        return None
 
     def _e1210_llm_error_finalize(
         self, session_id: str, exc: Exception, msg_count: int, defer_reason: str

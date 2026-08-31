@@ -16,11 +16,19 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import replace
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from llm_loop.core.cache_health import GATE_NOTE_CONTENT  # 门禁干预知情标记
 from llm_loop.core.episode_history import provider_message_visible
+
+# EVO-20260818: projection_ver/check 提升到模块级（消除函数内 import 遮蔽导致的 F823）——
+# 与 engine.py 顶部 re-export 同模式；stable_digest 既有模块级使用
+from llm_loop.core.history import (
+    is_cache_compacted_for,
+    projection_check,  # noqa: F401 (history 工具, 函数内使用)
+    projection_ver,  # noqa: F401 (history 工具, 函数内使用)
+    stable_digest,  # 投影门闸
+)
 from llm_loop.core.injection_budget import (
     DEFAULT_INJECTION_BUDGET_CHARS,
     plan_prompt_injection_budget,
@@ -30,9 +38,15 @@ from llm_loop.core.injection_labels import (
     detect_program_layer,
     ensure_semantic_label,
     infer_layer,
-    origin_metadata,
     strip_program_appendix_notice,
 )
+from llm_loop.core.loop.err1210 import (
+    InjectedEntry,
+    SlotKind,
+    content_prefix_sha,
+)
+from llm_loop.core.loop.focus import _INJECTION_PREFIX, build_task_anchor, wrap_injection
+from llm_loop.core.loop.hotcard import write_hotcard
 from llm_loop.core.program_recovery import (
     PROGRAM_RECOVERY_SLOT,
     is_program_recovery_message,
@@ -48,22 +62,6 @@ from llm_loop.core.user_truth_wire import (
     current_ingress_user_truth,
     project_user_truth_tail,
 )
-
-# EVO-20260818: projection_ver/check 提升到模块级（消除函数内 import 遮蔽导致的 F823）——
-# 与 engine.py 顶部 re-export 同模式；stable_digest 既有模块级使用
-from llm_loop.core.history import (
-    is_cache_compacted_for,
-    projection_check,  # noqa: F401 (history 工具, 函数内使用)
-    projection_ver,  # noqa: F401 (history 工具, 函数内使用)
-    stable_digest,  # 投影门闸
-)
-from llm_loop.core.loop.err1210 import (
-    InjectedEntry,
-    SlotKind,
-    content_prefix_sha,
-)
-from llm_loop.core.loop.focus import _INJECTION_PREFIX, build_task_anchor, wrap_injection
-from llm_loop.core.loop.hotcard import write_hotcard
 
 # Cognitive Runtime（tasks 2.3/2.5/2.6）: tier 分级聚合 + 语义投影替代锚点。
 # 惰性容错导入（cognitive 子包独立演进，import 失败时聚合器回退原平铺行为）。
@@ -301,7 +299,7 @@ def _reasoning_tail_for(
     the selected provider's replay protocol:
 
     - local endpoints: no replay requirement -> strip all (``-2``);
-    - GLM interleaved tools: replay tool-call assistant reasoning only (``-1``);
+    - GLM preserved/interleaved thinking: replay all still-visible reasoning (``0``);
     - DeepSeek tool requests: replay all still-visible assistant reasoning (``0``);
     - MiniMax thinking disabled: strip all; thinking enabled: preserve all because
       interleaved-thinking state is part of its official agent protocol;
@@ -342,7 +340,7 @@ def _reasoning_tail_for(
     if provider_id == "deepseek" or "deepseek.com" in base_lower:
         return 0
     if provider_id in {"glm", "zhipu"} or "bigmodel.cn" in base_lower:
-        return -1
+        return 0
     if provider_id == "minimax" or "minimax.io" in base_lower or "minimax.chat" in base_lower:
         if model_spec is not None and getattr(model_spec, "thinking", None) is False:
             return -2
@@ -663,6 +661,69 @@ class _BuildMixin:
                 )
             except Exception:  # noqa: BLE001 — provider-view hygiene is already applied
                 pass
+        # agent_trace_leak 4.2: α 挂载点——user 消息投影进 provider 视图前泄漏检测
+        # （纯 metadata 单遍，≤1ms；fail-open；处置仅视图层：失真消息剔除 +
+        # 经 render_program_appendix 进既有聚合槽走预算链，会话存储原文零改动，
+        # spec 5.4.1-3）。
+        _leak_downgrade_parts: list[tuple[str | None, str]] = []
+        try:
+            from llm_loop.core.injection_labels import InjectionLayer as _TLLayer
+            from llm_loop.core.injection_labels import render_program_appendix as _rpax
+            from llm_loop.core.trace_leak.leak_detector import detect_leak_at_build
+            from llm_loop.core.trace_leak.trace_signature import (
+                content_matches_signature,
+                current_signature_mode,
+            )
+
+            _findings = detect_leak_at_build(
+                base,
+                session_id=sess.session_id,
+                current_ingress=_r6_ingress_truth,
+            )
+            if _findings:
+                _drop_ids: set[int] = set()
+                for _f in _findings:
+                    if (
+                        _f.action == "downgrade_to_appendix"
+                        and 0 <= _f.message_ref < len(base)
+                    ):
+                        _m = base[_f.message_ref]
+                        _drop_ids.add(id(_m))
+                        _leak_downgrade_parts.append(
+                            (
+                                "leak_downgrade",
+                                _rpax(str(_m.content or ""), _TLLayer.REFERENCE),
+                            )
+                        )
+                if _drop_ids:
+                    base = [_m for _m in base if id(_m) not in _drop_ids]
+                    _base_original_indices = [
+                        _original_base_index_by_id[id(_m)]
+                        for _m in base
+                        if id(_m) in _original_base_index_by_id
+                    ]
+            # 特征兜底（默认 off；warn 仅告警不改视图，spec 5.4.1-2；
+            # 人类凭据消息豁免，spec 5.4.3-2）
+            if current_signature_mode() == "warn":
+                from llm_loop.core.trace_leak import leak_events as _tle
+
+                for _m in base:
+                    _md = getattr(_m, "metadata", None) or {}
+                    if (
+                        getattr(_m, "role", None) == "user"
+                        and _md.get("origin_layer") == "user_instruction"
+                        and not _md.get("ingress_channel")
+                        and content_matches_signature(getattr(_m, "content", ""))
+                    ):
+                        _tle.emit_leak_event(
+                            _tle.LEAK_SIGNATURE_WARNED,
+                            entry="build.trace_signature",
+                            session_id=sess.session_id,
+                            content=str(getattr(_m, "content", "") or ""),
+                            basis="思考过程标记 + 工具调用命令组合特征命中（warn 仅告警不拦截）",
+                        )
+        except Exception:  # noqa: BLE001 — 检测层 fail-open（spec 5.4.3-1）
+            logger.warning("build α 挂载点泄漏检测异常（fail-open 放行）", exc_info=True)
         # P1 遥测内容/传输分层（2026-08-25）: legacy 历史（旧会话已把 ⚡ 缓存命中率
         # 行写进 assistant 正文）与模型伪造行——build 提交视图一律剥离（正文=纯回答；
         # 权威遥测走 metadata.cache_health → transport 渲染）。剥离只影响提交视图，
@@ -1165,6 +1226,32 @@ class _BuildMixin:
             self._deferred_replay_refs = _kept
         self._interop_tail_messages = None  # 一次性消费（每轮重扫 pending）
         self._tip_tail_messages = None  # 经验提示同机制一次性消费（下轮工具执行再注入）
+        # agent_trace_leak 4.3: β 挂载点——休眠 tail 消费链视图出口一致性观测。
+        # 该链路现行生产者恒空（R8.13 后 live path 返回空），本观测不激活不改语义；
+        # 若历史 defer 残留经此出口进入视图，须携带程序层标记（SlotKind 身份
+        # 匹配不破坏，err1210.py:460,534 引用面零影响）。
+        try:
+            if tail_msgs:
+                _tail_no_mark = [
+                    _m
+                    for _m in tail_msgs
+                    if not (getattr(_m, "metadata", None) or {}).get("origin_layer")
+                ]
+                if _tail_no_mark:
+                    from llm_loop.core.trace_leak import leak_events as _tle
+
+                    _tle.emit_leak_event(
+                        _tle.LEAK_CHANNEL_OVERREACH,
+                        entry="build.interop_tail_view",
+                        session_id=sess.session_id,
+                        content=str(getattr(_tail_no_mark[0], "content", "") or ""),
+                        basis=(
+                            f"tail 视图出口存在无程序层标记消息 count={len(_tail_no_mark)}"
+                            "（休眠链路观测；仅视图不落盘）"
+                        ),
+                    )
+        except Exception:  # noqa: BLE001 — 观测 fail-open（spec 5.4.3-1）
+            logger.debug("build β tail 出口观测失败（fail-open）", exc_info=True)
         # R8.14/E24: hotcard remains a durable handoff artifact, not an automatic prompt source.
         # Cross-session is not continuation authorization.  Retire any pre-upgrade defer marker
         # here so a hot-reloaded process cannot resurrect an old HOTCARD slot into a later build.
@@ -1278,6 +1365,35 @@ class _BuildMixin:
                 )
             )
         _inject_parts = _eligible_inject_parts
+        # agent_trace_leak 4.2/4.3: α 降级产物并入聚合尾部（经 render_program_appendix
+        # 包装、REFERENCE 语义已定，走既有预算链纪律）；β 聚合口槽键一致性观测
+        # （未知槽 → overreach 观测事件，不阻断——注入位置 P1-10 缓存前缀零破坏）。
+        if _leak_downgrade_parts:
+            _inject_parts = list(_inject_parts) + [
+                (slot, content) for slot, content in _leak_downgrade_parts
+            ]
+        try:
+            _known_slots = {
+                str(SlotKind.INTEROP),
+                str(SlotKind.TIP),
+                str(PROGRAM_RECOVERY_SLOT),
+                "memory",
+                "task_active",
+                "leak_downgrade",
+            }
+            for _slot, _content in _inject_parts:
+                if _slot is not None and str(_slot) not in _known_slots:
+                    from llm_loop.core.trace_leak import leak_events as _tle
+
+                    _tle.emit_leak_event(
+                        _tle.LEAK_CHANNEL_OVERREACH,
+                        entry="build.inject_parts_aggregate",
+                        session_id=sess.session_id,
+                        content=str(_content or ""),
+                        basis=f"聚合口未知注入槽 slot={str(_slot)[:64]}（来源一致性观测）",
+                    )
+        except Exception:  # noqa: BLE001 — 观测 fail-open
+            logger.debug("build β 聚合口观测失败（fail-open）", exc_info=True)
         _inject_keys = [f"dynamic:{i}" for i in range(len(_inject_parts))]
         _packet_parts: list[tuple[str | None, str]] = list(_inject_parts)
         _packet_keys: list[str] = list(_inject_keys)

@@ -3,17 +3,29 @@
 Eligibility is intentionally stricter than semantic labelling.  A program block may be
 perfectly valid STATUS/REFERENCE material and still be ineligible for automatic prompt
 projection.  Unknown producers are deny-by-default; durable state remains retrievable.
+
+R8.24-B B-3.1（B-D1）: lifecycle describes message age, never authorization.  The
+``current_turn`` grant path is closed; memory snapshots are durable retrieval state
+only.  ``would_have_granted`` observation counters shadow-check that no legitimate
+path was denied during the observation period.
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from llm_loop.core.injection_labels import InjectionLayer, infer_layer
 
+logger = logging.getLogger(__name__)
+
 # Explicit automatic-prompt producer allowlist.  Keep this as plain strings so the
 # eligibility core does not depend on loop/err1210 enums (which would create a cycle).
-PROGRAM_FINAL_PROTOCOL_BOUNDARY = "[程序终止边界·无模型回答]"
+# R8.24-B B-4.1（B-D11）: PROTOCOL_ONLY neutral placeholder——中文语义标签
+# （"[程序终止边界·无模型回答]"）从模型可读面消失；role-shape 兼容保留
+# （user→program-assistant→user 删除会复现 provider 1210 形状——B6 锚点教训），
+# 与 build.py 替换逻辑/engine.py 终态写入同源（wire 字节稳定）。
+PROGRAM_FINAL_PROTOCOL_BOUNDARY = "[program-final]"
 TASK_ACTIVE_PROMPT_PREFIX = "[Task Active]"
 
 
@@ -65,25 +77,45 @@ def is_memory_snapshot(message: Any) -> bool:
     return md.get("injection_kind") == "memory_snapshot"
 
 
-def memory_snapshot_prompt_eligible(message: Any, *, current_turn_ref: int | None) -> bool:
-    """A memory snapshot is automatic context only for the active human turn.
+# R8.24-B B-3.1（B-D1）: would_have_granted 观察期计数——记录"若旧逻辑本会
+# 放行"的次数（B-G6 shadow 核对无误伤；一个观察期后按设计包确认后移除）。
+_WOULD_HAVE_GRANTED: dict[str, int] = {"current_turn": 0, "memory_snapshot": 0}
 
-    Old/legacy snapshots without a matching turn identity are durable/retrievable state, not
-    working context.  ``None`` therefore denies rather than guessing a lifecycle.
-    """
 
-    if not is_memory_snapshot(message):
-        return True
-    if current_turn_ref is None:
-        return False
+def would_have_granted_snapshot() -> dict[str, int]:
+    """Observation-period counters for grants the pre-B-3.1 logic would have made."""
+    return dict(_WOULD_HAVE_GRANTED)
+
+
+def _legacy_turn_match(message: Any, current_turn_ref: int | None) -> bool:
     md = getattr(message, "metadata", None) or {}
     raw_turn_ref = md.get("turn_ref")
-    if raw_turn_ref is None:
+    if current_turn_ref is None or raw_turn_ref is None:
         return False
     try:
         return int(raw_turn_ref) == int(current_turn_ref)
     except (TypeError, ValueError):
         return False
+
+
+def _note_would_have_granted(kind: str, message: Any, current_turn_ref: int | None) -> None:
+    if _legacy_turn_match(message, current_turn_ref):
+        _WOULD_HAVE_GRANTED[kind] = _WOULD_HAVE_GRANTED.get(kind, 0) + 1
+
+
+def memory_snapshot_prompt_eligible(message: Any, *, current_turn_ref: int | None) -> bool:
+    """R8.24-B B-3.1（B-D1）: memory producer 的自动 prompt 权限已闭合.
+
+    生命周期（turn 匹配）只描述消息年龄，不再构成授权——快照恒为可检索的
+    durable 状态而非自动工作上下文（producer 代码移除属 E 包，同文件分批
+    B 先 E 后；本判定不改 producer 注册表）。would_have_granted 观察期计数
+    保留 shadow 核对面。
+    """
+
+    if not is_memory_snapshot(message):
+        return True
+    _note_would_have_granted("memory_snapshot", message, current_turn_ref)
+    return False
 
 # Legacy program-control frames predate lifecycle metadata.  New emitters MUST carry
 # ``prompt_lifecycle=current_turn``; an unlabelled system frame with one of these exact
@@ -124,15 +156,11 @@ def current_turn_program_prompt_eligible(
         return False
     lifecycle = str(md.get("prompt_lifecycle") or "").strip().lower()
     if lifecycle == "current_turn":
-        if current_turn_ref is None:
-            return False
-        raw_turn_ref = md.get("turn_ref")
-        if raw_turn_ref is None:
-            return False
-        try:
-            return int(raw_turn_ref) == int(current_turn_ref)
-        except (TypeError, ValueError):
-            return False
+        # R8.24-B B-3.1（B-D1）: current_turn 生命周期不再作为 prompt 授权——
+        # 生命周期只描述消息年龄（fresh program_recovery 自动权限删除）。
+        # would_have_granted 观察期计数保留 shadow 核对面（B-G6）。
+        _note_would_have_granted("current_turn", message, current_turn_ref)
+        return False
     if lifecycle:
         # Unknown persisted lifecycle is not an eligibility grant.
         return False
