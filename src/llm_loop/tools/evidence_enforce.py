@@ -8,6 +8,8 @@ Capture failure never rewrites the source action status and never re-executes th
 
 from __future__ import annotations
 
+import logging
+import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 
@@ -20,6 +22,22 @@ from llm_loop.memory.evidence import (
     make_capture_request,
 )
 from llm_loop.tools.evidence_shadow import source_for_call
+
+logger = logging.getLogger(__name__)
+
+
+def _capsule_mode() -> str:
+    """R8.24-C C-2.1（C-D4）: evidence capsule 投影模式（三态；默认 on=现状）.
+
+    - "on"（默认）: capsule 照旧拼接（行为零变化）
+    - "shadow":     capsule 照旧投影 + 记"若 enforce 则省略 chars"计数事件
+    - "off":        complete=true 回执不拼接 capsule（metadata 六字段照落审计）；
+                    complete=false 回执以单行事实行（C-D5 三元组）替换 capsule
+    evidence.py render_capsule 本体与存储层零改动（R-4 红线）——开关只落在
+    本调用方（与 D2 status 门 :52 叠加不冲突）。
+    """
+    raw = (os.environ.get("LFL_EVIDENCE_CAPSULE", "on") or "on").strip().lower()
+    return raw if raw in {"on", "shadow", "off"} else "on"
 
 
 class EvidenceEnforcer:
@@ -103,24 +121,69 @@ class EvidenceEnforcer:
             result.evidence_ref = captured.evidence_ref.ref
             result.evidence_representation = "ref_only"
             result.evidence_projection_complete = False
+            # R8.24-C C-2.3（C-G5）: 程序指令/喊话句式退出——纯事实（action 已执行 +
+            # durable Evidence ref + representation/projection 状态事实）；恢复路由由
+            # ref resolver 与 get_tool_schema 按需发现承载（C-D8），不在回执喊话。
             result.content = (
                 "[evidence projection failed] ACTION ALREADY EXECUTED; durable Evidence is "
-                f"available at {captured.evidence_ref.ref}; recover=read_evidence"
+                f"available at {captured.evidence_ref.ref}; representation=ref_only; "
+                "projection=failed"
             )
             return result
 
-        result.content = f"{projection.content}\n{projection.model_capsule}"
         result.recoverability_status = RecoverabilityStatus.RECORDED
         result.evidence_ref = captured.evidence_ref.ref
         result.evidence_representation = projection.metadata.representation.value
         result.evidence_projection_complete = projection.metadata.projection_complete
+        # R8.24-C C-2.1/C-2.2（C-D4/C-D5）: capsule 投影三态开关（默认 on 现状逐字节一致）
+        _mode = _capsule_mode()
+        if _mode == "off":
+            # capsule 完整字段（ref/source/coverage/projection/complete/recover）落
+            # result metadata + 审计事件（不静默丢数据——§7.2 数据持久性强化项）
+            result.evidence_source_label = f"{call.name}:{source.safe_locator}"
+            result.evidence_coverage_label = coverage.label
+            if projection.metadata.projection_complete:
+                # complete=true 面（存量 1,534 条形态）: capsule chars=0
+                result.content = projection.content
+            else:
+                # complete=false 面（存量 104 条形态）: 单行稳定事实行——C-D5 三元组
+                # （≤1 行、仅含 result_truncated/omitted/recovery_ref 三字段；多行
+                # capsule 模板与 recover= 喊话全部退出，路由由 ref resolver 承载）
+                _fact_line = (
+                    f"result_truncated=true omitted=true recovery_ref={captured.evidence_ref.ref}"
+                )
+                result.content = (
+                    f"{projection.content}\n{_fact_line}"
+                    if projection.content
+                    else _fact_line
+                )
+            logger.info(
+                "event=evidence_capsule_omitted tool=%s complete=%s omitted_chars=%d ref=%s",
+                call.name,
+                bool(projection.metadata.projection_complete),
+                len(projection.model_capsule),
+                captured.evidence_ref.ref,
+            )
+        else:
+            if _mode == "shadow":
+                logger.info(
+                    "event=evidence_capsule_shadow_omittable tool=%s complete=%s "
+                    "would_omit_chars=%d ref=%s",
+                    call.name,
+                    bool(projection.metadata.projection_complete),
+                    len(projection.model_capsule),
+                    captured.evidence_ref.ref,
+                )
+            result.content = f"{projection.content}\n{projection.model_capsule}"
         return result
 
     @staticmethod
     def _capture_failure_view(raw: str, *, budget_chars: int) -> str:
+        # R8.24-C C-2.3（C-G5）: "Do not automatically re-run..." 类程序指令退出——
+        # 保留 capture 失败的客观事实（什么动作、什么状态）；重跑与否的决策归模型/用户。
         notice = (
-            "[recoverability: failed] ACTION ALREADY EXECUTED; durable Evidence capture failed. "
-            "Do not automatically re-run the source action solely to recover this output."
+            "[recoverability: failed] ACTION ALREADY EXECUTED; durable Evidence capture "
+            "failed; capture_status=failed; source_action_output=preserved."
         )
         if len(raw) + len(notice) + 1 <= budget_chars:
             return f"{raw}\n{notice}"

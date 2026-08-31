@@ -141,6 +141,13 @@ class ToolResult:
     # ERC R9: distinguish logical source resolution from physical acquisition.
     source_resolution_mode: str | None = None
     source_execution_performed: bool | None = None
+    # R8.24-C C-D4: capsule metadata-only 投影（LFL_EVIDENCE_CAPSULE=off）时补齐
+    # capsule 六字段中的 source/coverage 两项（ref/representation/complete 已有结构化
+    # 字段）；默认 None 零回归（on/shadow 模式不写——capsule 本体已承载）。
+    evidence_source_label: str | None = None
+    evidence_coverage_label: str | None = None
+    # R8.24-C C-D7: read_file 对 evidence:// 引用的参数误用短路标记（事件/审计面）。
+    short_circuit_kind: str | None = None
     # EVO-d78b270c: 经验驱动注入（M41 升级）——registry 失败时按错误关键词检索
     # MemoryStore，命中 procedure 经验条目的【已验解法】段写入此字段，tool 消息带出。
     # 默认空串 = 零回归（无经验库/未命中时行为与旧版完全一致）。
@@ -177,6 +184,13 @@ class ToolResult:
             metadata["source_resolution_mode"] = self.source_resolution_mode
         if self.source_execution_performed is not None:
             metadata["source_execution_performed"] = self.source_execution_performed
+        # R8.24-C: capsule metadata-only 审计补充字段 + 短路标记（默认缺省不写，零回归）
+        if self.evidence_source_label is not None:
+            metadata["evidence_source_label"] = self.evidence_source_label
+        if self.evidence_coverage_label is not None:
+            metadata["evidence_coverage_label"] = self.evidence_coverage_label
+        if self.short_circuit_kind is not None:
+            metadata["short_circuit_kind"] = self.short_circuit_kind
         if self.recovery_advice is not None:
             to_dict = getattr(self.recovery_advice, "to_dict", None)
             if callable(to_dict):

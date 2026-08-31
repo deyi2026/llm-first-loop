@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -23,6 +24,32 @@ from llm_loop.tools.pipeline import ImmutableResult, MaterializationError
 from llm_loop.tools.safety import CatastrophicGuard
 
 logger = logging.getLogger(__name__)
+
+
+def _tool_guidance_mode() -> str:
+    """R8.24-C C-1.1（C-D2）: 工具回执建议源渲染模式（三态；默认 on=现状注入零变化）.
+
+    四建议源: _FAILURE_GUIDANCE / ToolRecoveryAdvice.render() / guidance_extra /
+    _DISTILL_GUIDANCE。typed recovery 分类与 metadata["tool_recovery"]（failure_class
+    输入面，B 包熔断计数依赖）全路径保留，不受本开关影响。
+
+    - "on"（默认）: 四源照旧投影（行为零变化）
+    - "shadow":     建议文本照旧投影 + 记 shadow 观测事件（不进上下文，观测期对账）
+    - "off":        四源模型可见 chars=0（enforce 态）
+    """
+    raw = (os.environ.get("LFL_TOOL_GUIDANCE", "on") or "on").strip().lower()
+    return raw if raw in {"on", "shadow", "off"} else "on"
+
+
+def _emit_guidance_shadow_event(
+    *, tool: str, status: str, source: str, chars: int, failure_class: str = ""
+) -> None:
+    """C-1.1 shadow 观测事件（fail-open；不进上下文，供观测期对账）."""
+    with contextlib.suppress(Exception):
+        logger.info(
+            "event=tool_guidance_shadow tool=%s status=%s source=%s chars=%d failure_class=%s",
+            tool, status, source, chars, failure_class,
+        )
 
 # execute 包裹的扩展钩子（由外部装配: 如架构自省 record_action）
 PreExecuteHook = Callable[[ToolCall], None]
@@ -880,6 +907,22 @@ class ToolRegistry:
     )
 
     @staticmethod
+    def _distill_guidance_or_empty() -> str:
+        """R8.24-C C-D2: _DISTILL_GUIDANCE 受 LFL_TOOL_GUIDANCE 三态控制.
+
+        off=enforce 态模型可见 chars=0（元任务建议退出）；shadow=照旧投影 + 观测事件。
+        """
+        guidance = ToolRegistry._DISTILL_GUIDANCE
+        mode = _tool_guidance_mode()
+        if mode == "off":
+            return ""
+        if mode == "shadow":
+            _emit_guidance_shadow_event(
+                tool="", status="", source="distill_guidance", chars=len(guidance)
+            )
+        return guidance
+
+    @staticmethod
     def _summarize_output(
         full: str, head_chars: int = 2500, tail_chars: int = 2500, call=None
     ) -> str:
@@ -925,7 +968,7 @@ class ToolRegistry:
             return (
                 f"[输出摘要] 共 {n} 字符，关键信息如下"
                 f"（完整内容已另存至压缩档案，{hint}）：\n{digest}\n"
-                f"{ToolRegistry._DISTILL_GUIDANCE}"
+                f"{ToolRegistry._distill_guidance_or_empty()}"
             )
         if n <= head_chars + tail_chars:
             return (
@@ -937,7 +980,8 @@ class ToolRegistry:
         return (
             f"[输出摘要] 共 {n} 字符，以下为首部/尾部关键内容"
             f"（完整内容已另存至压缩档案，{hint}）：\n"
-            f"── 首部 ──\n{head}\n── 尾部 ──\n{tail}\n{ToolRegistry._DISTILL_GUIDANCE}"
+            f"── 首部 ──\n{head}\n── 尾部 ──\n{tail}\n"
+            f"{ToolRegistry._distill_guidance_or_empty()}"
         )
 
     def _is_destructive_tool(self, name: str) -> bool:
@@ -1152,8 +1196,33 @@ class ToolRegistry:
                     full[: self.max_output_chars]
                     + f"\n…[结果超长，已截断，共 {len(full)} 字符（硬上限: {self.max_output_chars}，full 模式仅保此安全阀）]；"
                     "完整结果已另存至压缩档案，可用 search_archive 检索找回…\n"
-                    + self._DISTILL_GUIDANCE
+                    + self._distill_guidance_or_empty()
                 )
+        elif len(result.content) > _threshold:
+            full = result.content
+            self._archive_oversize_output(call, full)  # 原文完整另存（信息零丢失）
+            result.content = self._summarize_output(
+                full, head_chars=_head, tail_chars=_tail, call=call
+            )
+            # 硬上限安全阀: 摘要后仍超限才截断（原文已存档，无需重复存档）
+            if len(result.content) > self.max_output_chars:
+                result.content = (
+                    result.content[: self.max_output_chars]
+                    + f"\n…[结果超长，已截断，共 {len(result.content)} 字符"
+                    f"（阈值: 摘要 {_threshold}/硬上限 {self.max_output_chars}）]；"
+                    "完整内容已另存至压缩档案，可用 search_archive 检索找回…\n"
+                    + self._distill_guidance_or_empty()
+                )
+        elif len(result.content) > self.max_output_chars:
+            # 未超摘要阈值但超硬上限（阈值配置异常）→ 存档 + 截断（T22 既有行为）
+            full = result.content
+            self._archive_oversize_output(call, full)
+            result.content = (
+                full[: self.max_output_chars]
+                + f"\n…[结果超长，已截断，共 {len(full)} 字符（硬上限: {self.max_output_chars}）]；"
+                "完整内容已另存至压缩档案，可用 search_archive 检索找回…\n"
+                + self._distill_guidance_or_empty()
+            )
         elif len(result.content) > _threshold:
             full = result.content
             self._archive_oversize_output(call, full)  # 原文完整另存（信息零丢失）
@@ -1206,6 +1275,10 @@ def tool_result_to_message(
     M41: 失败回执追加引导段（错误类型 + 建议换用工具/重试，衔接 RULE-AI-02/07），
     BLOCKED 不加引导（灾难性拦截语义，不做任何诱导）。五态语义零改动。
     约束 C2: content 非空；AI 视角: AI 无需推断执行状态。
+    R8.24-C C-D2: 三建议源（render()/_FAILURE_GUIDANCE/guidance_extra）受
+    LFL_TOOL_GUIDANCE 三态控制（on=现状/shadow=照旧投影+观测事件/off=chars=0）；
+    typed recovery 分类与 metadata["tool_recovery"] 全路径保留（B 包熔断计数
+    的 failure_class 输入面不受开关影响）。
     """
     status_label = result.status.value if result.status else "unknown"
     content = (
@@ -1214,12 +1287,13 @@ def tool_result_to_message(
         else f"[{result.tool_name} 执行{status_label}]（无输出）"
     )
     typed_recovery = result.recovery_advice
+    _advisory = ""
     if failure_guidance_enabled and typed_recovery is not None:
         render = getattr(typed_recovery, "render", None)
         if callable(render):
-            content += "\n" + str(render())
+            _advisory = str(render())
     elif failure_guidance_enabled and result.status and result.status.value in _FAILURE_GUIDANCE:
-        content += "\n" + _FAILURE_GUIDANCE[result.status.value]
+        _advisory = _FAILURE_GUIDANCE[result.status.value]
     # EVO-d78b270c: 经验驱动注入（独立于默认模板；开启引导时带出，未命中为空串零回归）
     # 阶段4-A: experience_guidance_enabled 独立开关（None 跟随主开关；子代理可仅开经验）
     exp_enabled = (
@@ -1227,8 +1301,36 @@ def tool_result_to_message(
         if experience_guidance_enabled is None
         else experience_guidance_enabled
     )
+    _experience = ""
     if exp_enabled and result.guidance_extra and typed_recovery is None:
-        content += "\n" + result.guidance_extra
+        _experience = result.guidance_extra
+    # R8.24-C C-1.1: 程序建议层三态投影（off=enforce: 建议文本不进模型可见正文）
+    _mode = _tool_guidance_mode()
+    if _mode != "off":
+        if _mode == "shadow":
+            if _advisory:
+                _failure_class = ""
+                if typed_recovery is not None:
+                    _fc = getattr(typed_recovery, "failure_class", "")
+                    _failure_class = str(_fc or "")
+                _emit_guidance_shadow_event(
+                    tool=result.tool_name or "",
+                    status=status_label,
+                    source="typed_recovery_or_failure_guidance",
+                    chars=len(_advisory),
+                    failure_class=_failure_class,
+                )
+            if _experience:
+                _emit_guidance_shadow_event(
+                    tool=result.tool_name or "",
+                    status=status_label,
+                    source="guidance_extra",
+                    chars=len(_experience),
+                )
+        if _advisory:
+            content += "\n" + _advisory
+        if _experience:
+            content += "\n" + _experience
     metadata: dict = {}
     if typed_recovery is not None:
         to_dict = getattr(typed_recovery, "to_dict", None)

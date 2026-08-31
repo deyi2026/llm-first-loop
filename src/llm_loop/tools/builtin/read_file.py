@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
@@ -12,6 +13,32 @@ from llm_loop.tools.source_recovery_contract import (
     source_recovery_guidance,
 )
 from llm_loop.tools.trim import truncate_output
+
+logger = logging.getLogger(__name__)
+
+# R8.24-C C-3.2（C-D6/C-G7）: 短路说明中被指名工具的声明式白名单——T8 式静态扫描
+# 对照注册表逐一校验存在性（R8.7 注册事实原则：不得指名未注册工具）。
+# capsule 退出后回执指名白名单收敛为两处：截断事实行（不含工具名）+ 本短路说明。
+EVIDENCE_SHORT_CIRCUIT_REFERENCED_TOOLS: tuple[str, ...] = (
+    "read_evidence",
+    "get_tool_schema",
+)
+
+
+def evidence_ref_short_circuit_content(path: str) -> str:
+    """C-D7: evidence:// 误用短路说明——陈述式协议事实（无祈使/劝导句式，C-G7 扫描口径）.
+
+    四要素: ①这是 Evidence 引用非文件路径；②对应工具为 read_evidence；
+    ③可经 get_tool_schema 检索发现；④evidence:// 不对应磁盘物理文件。
+    """
+    return (
+        f"[参数误用] path 值 '{path}' 以 evidence:// 开头——这是 Evidence 引用"
+        "（evidence:// scheme），不是文件系统路径；read_file 只处理文件系统路径。"
+        "读取 Evidence 引用内容的工具是 read_evidence（已注册）。"
+        "read_evidence 的完整定义可经 get_tool_schema 查询"
+        "（如 tool_name='read_evidence' 或 '?evidence'）。"
+        "evidence:// 引用不对应磁盘物理文件，物理文件操作需使用真实文件路径。"
+    )
 
 
 class ReadFileTool:
@@ -25,7 +52,9 @@ class ReadFileTool:
         "TOOL_TRIM_MAX 可调）。"
         + SHARED_SOURCE_RECOVERY_CONTRACT
         + source_recovery_guidance(SourceRecoveryKind.PROBEABLE_FILE)
-        + "Evidence enforce 中 verified-current 且 coverage 已覆盖时可直接由 resolver 复用 Evidence；force_refresh=true 才显式要求物理重读。legacy/off 模式下超大文件仍可用 offset/limit 分段读取。"
+        + "Evidence enforce 中 verified-current 且 coverage 已覆盖时由 resolver 复用 Evidence 并内联正文；"
+        "无法内联时该次复用按 failure 如实回执（force_refresh=true 显式要求物理重读）。"
+        "legacy/off 模式下超大文件仍可用 offset/limit 分段读取。"
     )
     parameters = {
         "type": "object",
@@ -47,6 +76,27 @@ class ReadFileTool:
 
     def execute(self, **kwargs) -> ToolResult:
         path = str(kwargs.get("path", "")).strip()
+        # R8.24-C C-D7: evidence:// 引用短路——path 取值后立即判定，先于 path_registry
+        # 否定帧登记与任何磁盘 IO（防 evidence:// 被登记为"永不存在的物理路径"污染
+        # 跨会话复用；r-p-r §0 死循环诱饵根除）。返回参数误用类 FAILURE（调用方式错误，
+        # 非环境异常）+ 陈述式协议事实；失败回执零新 ref 零胶囊由 D2 status 门保证。
+        if path.startswith("evidence://"):
+            logger.info(
+                "event=read_file_evidence_short_circuit kind=misuse_evidence_ref path=%s",
+                path,
+            )
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=evidence_ref_short_circuit_content(path),
+                tool_call_id="",  # 由注册表填充
+                tool_name=self.name,
+                error_type="MisuseEvidenceRef",
+                error_detail=(
+                    "read_file received an evidence:// Evidence reference instead of a "
+                    "filesystem path; read_evidence is the registered tool for Evidence refs"
+                ),
+                short_circuit_kind="misuse_evidence_ref",
+            )
         offset = int(kwargs.get("offset", 0) or 0)
         limit = kwargs.get("limit")
         # EVO-20260819 full=true（按需全量）：跳过本工具截断（注册表层仍保硬上限安全阀）
