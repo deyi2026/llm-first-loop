@@ -574,14 +574,18 @@
     {
       "id": "E32",
       "surface": "interruption_recovery_note",
-      "current_status": "PARTIAL",
+      "current_status": "DONE",
       "target_class": "ACTIVE_EPHEMERAL",
       "priority": "P1",
-      "current_behavior": "A detected event-log/session gap produces a one-process-only tail tip telling the model to read event logs; it is not persisted to sess.messages but is prompt-visible once.",
-      "target_rule": "Prefer program-side repair/index reconciliation. If model participation remains necessary, keep it one-shot current-turn only and bind to a retrieval ref.",
-      "retrieval_path": "event log gap / recovery ref",
+      "current_behavior": "R8.19 removes the model-facing interruption recovery note. When event-log replay contains durable messages missing from the live session view, runtime performs a semantic prefix reconcile and inserts only replay-only historical messages before the live current user. Ambiguous/replay-failure cases fail open to observability only; prompt_chars=0.",
+      "target_rule": "Runtime repairs event/session divergence deterministically. Interruption/recovery occurrence is observability only and never becomes program-authored model context.",
+      "retrieval_path": "event_log replay / SessionStore reconciliation; action telemetry for repair outcome",
       "evidence": [
-        "src/llm_loop/core/loop/events.py:208-252"
+        "src/llm_loop/core/loop/events.py:208-252",
+        "src/llm_loop/core/loop/events.py",
+        "src/llm_loop/core/session.py",
+        "tests/unit/test_interruption_recovery_r819.py",
+        "docs/injection-governance/eligibility/r819-report.md"
       ]
     },
     {
@@ -689,5 +693,7 @@
   "r8_17_status": "PASS",
   "r8_17_evidence": "docs/injection-governance/eligibility/r817-report.md",
   "r8_18_status": "PASS",
-  "r8_18_evidence": "docs/injection-governance/eligibility/r818-report.md"
+  "r8_18_evidence": "docs/injection-governance/eligibility/r818-report.md",
+  "r8_19_status": "PASS",
+  "r8_19_evidence": "docs/injection-governance/eligibility/r819-report.md"
 }

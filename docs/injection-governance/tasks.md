@@ -260,3 +260,13 @@
 - Matrix: E09 PARTIAL→DONE；总计 `DONE=29 / KEEP=1 / PARTIAL=4 / OPEN=0`；behavior canary / R9 未启动。
 - evidence: `docs/injection-governance/eligibility/r818-report.md`、`eligibility/matrix.json`、`tests/unit/test_session_digest_on_demand_r818.py`、`tests/unit/test_prompt_eligibility_r88.py`。
 - evidence_required: true
+
+
+## R8.19 Interruption Recovery Out-of-Band Closure — ✅ PASS
+- E32 `interruption_recovery_note`: deterministic event/session divergence is repaired by runtime replay/reconcile; no `[会话中断恢复]` model tip or `_tip_tail_messages` lifecycle remains.
+- Detection no longer relies only on event/message counts; semantic prefix reconciliation also catches equal-count replacement gaps. Live current user is preserved, replay-only history is inserted before it, and ambiguous/replay-failure paths fail open without prompt mutation.
+- Observability: `run.interruption_recovery` records `repaired` / `repair_failed` with `prompt_chars=0`; event-log-behind/aligned state does not generate noise.
+- Verification: implementation `e2f9fdd`; focused/real-storage **45/45**; broader adjacent **160/160**; pyright **0/0**; py_compile PASS; R0-1~R0-4 PASS; frozen hash `b54d47a31109a03d9f6caf3f24c0d42b1bff26fe338ee74b02a` unchanged; detached clean before/after. Parent `5be8425` independently reproduces the one excluded stale declaration-reminder assertion.
+- Matrix: E32 PARTIAL→DONE；总计 `DONE=30 / KEEP=1 / PARTIAL=3 / OPEN=0`；behavior canary / R9 未启动。
+- evidence: `docs/injection-governance/eligibility/r819-report.md`、`eligibility/matrix.json`、`tests/unit/test_interruption_recovery_r819.py`、`src/llm_loop/core/loop/events.py`。
+- evidence_required: true
