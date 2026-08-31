@@ -38,6 +38,13 @@ _RUN_CLEANUP_CONFIRMATION_REQUIRED = bool(
     int(os.environ.get("RUN_CLEANUP_CONFIRMATION_REQUIRED", "1"))
 )
 
+# 取消原因值域（结构化标记位，可审计；空串=未取消）。
+# reason 为可扩展枚举，本 P1 不实现 RunControl，仅预留与未来统一 cancel contract
+# （Web/Feishu 同源）的接口形状兼容：cancel(session_id, reason="user_stop") 形参
+# 顺序与命名保持稳定，后续新增原因只扩展枚举不改结构。
+CANCEL_REASON_USER_STOP = "user_stop"
+CANCEL_REASON_RUNNER_STOP = "runner_stop"
+
 
 class SessionBusyError(RuntimeError):
     """同会话已有进行中的后台 run（跨入口互斥，设计 B5/B7）.
@@ -62,6 +69,8 @@ class RunHandle:
 
     # 2026-08-23 停止按钮修复: 取消标志（前端 stopStreaming → runner.cancel → 引擎主循环检查）
     cancelled: bool = field(default=False, repr=False)
+    # 取消原因标记位（""=未取消；值域 CANCEL_REASON_*，结构化可审计）
+    cancel_reason: str = ""
     # EVO-20260825（任务12 §5.12）: 压测残留 run 巡检数据源——最后活跃时间 + 当前轮数
     last_active_ts: float = field(default_factory=time.time)
     current_round: int = 0
@@ -157,6 +166,10 @@ class BackgroundRunner:
         self._registry: dict[str, RunHandle] = {}
         self._guard = threading.Lock()
         self._worker_idents: set[int] = set()  # 后台工作线程 ident（自调用 run_stream 放行）
+        # 会话级同步取消登记（sid→reason）：飞书同步 run（engine.run 直驱，登记于
+        # engine._sync_active）不在 registry，/stop 经此落取消标记；生命周期与 run
+        # 对齐（lifecycle 注册时清残留、finally 注销时移除）。
+        self._sync_cancelled: dict[str, str] = {}
 
     # ── 查询 ──
     def is_running(self, session_id: str) -> bool:
@@ -190,18 +203,26 @@ class BackgroundRunner:
             h = self._registry.get(session_id)
             return h.snapshot() if h else None
 
-    def cancel(self, session_id: str) -> bool:
-        """请求取消进行中的后台 run（2026-08-23 停止按钮修复）.
+    def cancel(self, session_id: str, reason: str = CANCEL_REASON_USER_STOP) -> bool:
+        """请求取消进行中的 run（2026-08-23 停止按钮修复；双路径扩展）.
 
-        - 置 handle.cancelled=True → 引擎在 LLM 流/轮次检查点提前终止
-        - 对 registry 发起 session 定向工具取消；支持的长工具可立即释放外部进程
-        - 返回 True=该会话确有进行中 run 且已请求取消；False=无 run 无需取消
+        - 置 handle.cancelled=True（registry 命中，后台 run）或写入 _sync_cancelled
+          登记（registry 未命中且同步 run 活跃，飞书 engine.run 直驱路径）→
+          引擎在 LLM 流/轮次/同步返回检查点提前终止
+        - 对该会话发起 session 定向工具取消；支持的长工具可立即释放外部进程
+        - reason: 取消原因标记位（可扩展枚举，默认 user_stop；Web 停止按钮零改动
+          自动获得同语义，运维清理路径显式传 runner_stop 保持可区分）
+        - 返回 True=该会话确有进行中 run（后台或同步）且已请求取消；False=无 run
         """
         with self._guard:
             h = self._registry.get(session_id)
-            if h is None:
+            if h is not None:
+                h.cancelled = True
+                h.cancel_reason = reason
+            elif self.is_sync_active(session_id):
+                self._sync_cancelled[session_id] = reason
+            else:
                 return False
-            h.cancelled = True
         registry = getattr(self._engine, "registry", None)
         cancel_session = getattr(registry, "cancel_session", None)
         if callable(cancel_session):
@@ -212,10 +233,25 @@ class BackgroundRunner:
         return True
 
     def is_cancelled(self, session_id: str) -> bool:
-        """该会话后台 run 是否已被请求取消（引擎主循环轮询检查）."""
+        """该会话 run 是否已被请求取消（引擎主循环轮询检查；registry 优先+同步登记回查）."""
         with self._guard:
             h = self._registry.get(session_id)
-            return h is not None and h.cancelled
+            if h is not None:
+                return h.cancelled
+            return session_id in self._sync_cancelled
+
+    def cancel_reason(self, session_id: str) -> str:
+        """该会话取消原因（""=未取消；engine 检查点原因捕获数据源，双路径同构）."""
+        with self._guard:
+            h = self._registry.get(session_id)
+            if h is not None:
+                return h.cancel_reason if h.cancelled else ""
+            return self._sync_cancelled.get(session_id, "")
+
+    def discard_sync_cancel(self, session_id: str) -> None:
+        """移除会话级同步取消登记（同步 run 注册清残留/finally 注销时调用，防旧标记误杀下一轮）."""
+        with self._guard:
+            self._sync_cancelled.pop(session_id, None)
 
     def note_active(self, session_id: str, round_no: int | None = None) -> None:
         """EVO-20260825（任务12 §5.12）: 每轮记录活跃——刷新 last_active_ts + 当前轮数.
@@ -296,8 +332,9 @@ class BackgroundRunner:
                 confirm["current_round"], operator,
                 "（需二次确认）" if _RUN_CLEANUP_CONFIRMATION_REQUIRED else "",
             )
-            # 设置取消标志 → 引擎主循环/LLM 流检查点退出（超时兜底强制移除）
-            self.cancel(run_id)
+            # 设置取消标志 → 引擎主循环/LLM 流检查点退出（超时兜底强制移除）；
+            # 运维清理显式传 runner_stop 与用户主动停止保持可区分
+            self.cancel(run_id, reason=CANCEL_REASON_RUNNER_STOP)
             deadline = time.time() + _RUN_CLEANUP_SHUTDOWN_TIMEOUT_SEC
             while time.time() < deadline:
                 with self._guard:

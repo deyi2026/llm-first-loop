@@ -88,6 +88,17 @@ def _background_cancelled(engine: Any, session_id: str) -> bool:
     return bool(runner is not None and runner.enabled and runner.is_cancelled(session_id))
 
 
+def _background_cancel_reason(engine: Any, session_id: str) -> str:
+    """该会话取消原因（""=未取消；与 _background_cancelled 同构，双路径：registry 命中
+    读 handle.cancel_reason，未命中读同步登记值）——检查点原因捕获与伴生异常归因
+    拦截的判定依据（标记位查询，禁止匹配错误文本）."""
+    runner = getattr(engine, "runner", None)
+    if runner is None or not runner.enabled:
+        return ""
+    fn = getattr(runner, "cancel_reason", None)
+    return str(fn(session_id) or "") if callable(fn) else ""
+
+
 def _background_note_active(engine: Any, session_id: str, round_no: int) -> None:
     """任务12（§5.12）: 每轮刷新后台 run 活跃时间（残留 run 巡检数据源）."""
     runner = getattr(engine, "runner", None)
@@ -130,6 +141,8 @@ class LoopResult:
     tokens_cache_hit: int = 0
     # P1-1: 最终回答轮完整思考链（供 Web done 事件透传前端渲染）；工具轮思考链不在此字段
     reasoning_content: str | None = None
+    # 取消原因标记位（""=未取消；值域 user_stop/runner_stop，结构化可审计，spec 6.1.2）
+    cancel_reason: str = ""
 
 def build_session_snapshot_text(
     message_count: int, memory_count: int, evolution_summary: dict | None = None
@@ -422,6 +435,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         # DSH 借鉴(2026-08-17): run 结束原因（统一出口 run.end 事件用；各结束分支标记，
         # 默认 completed——未标记即正常完成。fail-open 不阻断）
         _run_end_reason = "completed"
+        _cancel_reason = ""  # 取消原因标记位（user_stop/runner_stop；""=未取消，收口贯穿 LoopResult）
         _run_started_at = time.monotonic()
         self._reset_overflow_state()  # R4: 每次 run 重置 overflow 注入计数
         self._err1210_run_begin()  # 修复A: per-run 降级机会（attempted 键 = run seq）
@@ -436,8 +450,9 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         resp: Any = None  # M20 THK-04: 最终回答轮思考链来源（LLM 异常/停滞路径为 None）
 
         while True:
-            # 后台 Stop：轮次边界兜底；LLM 流内另有细粒度检查。
-            if _background_cancelled(self, session_id):
+            # 后台 Stop：轮次边界兜底；LLM 流内另有细粒度检查（原因捕获，2.3）。
+            _cancel_reason = _background_cancel_reason(self, session_id)
+            if _cancel_reason:
                 _run_end_reason = "cancelled"
                 final_answer = _CANCELLED_ANSWER
                 break
@@ -717,7 +732,8 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                         while True:
                             try:
                                 d = next(it)
-                                if _background_cancelled(self, session_id):
+                                _cancel_reason = _background_cancel_reason(self, session_id)
+                                if _cancel_reason:
                                     _cancelled_during_llm = True
                                     _llm_round_ms = (time.perf_counter() - _llm_start) * 1000.0
                                     close_stream = getattr(it, "close", None)
@@ -773,13 +789,25 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                             )
                         resp = llm_client.chat(**_chat_kwargs)
                         _llm_round_ms = (time.perf_counter() - _llm_sync_start) * 1000.0
-                    if _background_cancelled(self, session_id):
+                    _cancel_reason = _background_cancel_reason(self, session_id)
+                    if _cancel_reason:
                         _cancelled_during_llm = True
                 finally:
                     # 恢复本请求的推理等级 context（无论正常/异常/断连）；不改共享 client。
                     if _effort_ctx_saved is not None:
                         _current_reasoning_effort.set(_effort_ctx_saved)
             except LLMError as exc:
+                # 取消伴生异常归因拦截（2.4）：取消标记置位后 LLM 抛出的中断异常
+                # （"Operation canceled"/"Model unloaded" 等，文本随运行时漂移）是
+                # 用户主动取消的伴生现象——按标记位归因取消收口（禁止文本匹配，
+                # spec 4.4.1），短路 guard/overflow/err1210/fallback/R9/故障反馈
+                # 全部真实故障路径（spec 5.1.1-6）；标记未置位时行为与现状一致。
+                _cancel_reason = _background_cancel_reason(self, session_id)
+                if _cancel_reason:
+                    _run_end_reason = "cancelled"
+                    final_answer = _CANCELLED_ANSWER
+                    resp = None
+                    break
                 # 拷问⑥（2026-08-18）: cache_guard BLOCK——直接如实反馈 AI
                 # （不重试/不走 overflow reinject——重试同样被拦=浪费循环；AI 需先
                 # 压缩/换会话自救）
@@ -1239,6 +1267,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 {
                     "session_id": session_id,
                     "reason": _run_end_reason,
+                    "cancel_reason": _cancel_reason,
                     "rounds": rounds,
                     "tokens_in": tokens_in,
                     "tokens_out": tokens_out,
@@ -1269,6 +1298,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             tokens_out=tokens_out,
             tokens_cache_hit=tokens_cache_hit,
             reasoning_content=resp.reasoning_content if resp is not None else None,
+            cancel_reason=_cancel_reason,
         )
 
     # M53 拆分: 模型路由辅助方法族 → llm_loop/core/loop/routing.py（_RoutingMixin）

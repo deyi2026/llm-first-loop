@@ -20,6 +20,7 @@ from typing import Any
 import lark_oapi
 
 from llm_loop.core.loop import LoopEngine
+from llm_loop.core.loop.runner import CANCEL_REASON_USER_STOP
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,17 @@ _FOLD_THRESHOLD = 2000
 _FOLDED_MAX = 20  # F4: 折叠全文暂存上限（有界防膨胀）
 _CARD_UPDATE_MIN_INTERVAL_S = 1.0  # F6: 状态卡更新最小间隔（工具密集时合并中间态）
 _FOLD_EXPAND_CMD = "展开全文"  # F4: 用户取回全文指令
+
+# 控制指令集合。只有 /stop 属于 out-of-band fast-lane；/continue 会创建一个
+# 正常的新 user turn，必须继续经过单 worker 串行入口，禁止旁路线程直接跑推理。
+STOP_COMMAND = "/stop"
+CONTINUE_COMMAND = "/continue"
+CONTROL_COMMANDS = {STOP_COMMAND, CONTINUE_COMMAND}
+FASTLANE_CONTROL_COMMANDS = {STOP_COMMAND}
+# 停止收口恢复指引（spec 5.1.1-7；仅飞书端 user_stop 取消追加，全局 _CANCELLED_ANSWER 不变）
+_STOP_RESUME_HINT = "\n\n可发送 /continue 或重新发送消息恢复任务。"
+# user_stop 待收口登记时间窗（覆盖最坏收口时长；超窗惰性剔除）
+_USER_STOP_PENDING_WINDOW_S = 120.0
 
 
 @dataclass
@@ -102,6 +114,10 @@ class FeishuMessageHandler:
         self._folded_store: dict[str, str] = {}
         # F6(2026-08-14): 状态卡更新节流时间戳（观察者内更新）
         self._card_update_ts: float = 0.0
+        # user_stop 待收口登记（双键 sid/回复目标 → 受理时刻；bridge 中断补偿判定
+        # 经 is_user_stop_pending fail-open 查询，spec 4.5.3 防重复补偿）
+        self._user_stop_pending: dict[str, float] = {}
+        self._user_stop_pending_lock = threading.Lock()
 
     def _attach_action_observer(self) -> None:
         """H-UI: 引擎动作 → 状态卡实时更新（对齐 DeepSeek Harness 动作显示条）.
@@ -188,6 +204,11 @@ class FeishuMessageHandler:
         # EVO-20260817 飞书审批 UX（方案 A）: 审批列表/批准/拒绝指令（私聊 + open_id 白名单）
         if self._try_handle_approval_command(msg, text):
             return
+        # 飞书 /stop·/continue 推理控制指令（审批之后、引擎推理路径之前，spec 5.1.1-9）
+        if self._try_handle_stop_command(msg, text):
+            return
+        if self._try_handle_continue_command(msg, text):
+            return
         self._run_with_processing_actions(msg, self._run_text, text)
 
     def _try_handle_approval_command(self, msg: FeishuMessage, text: str) -> bool:
@@ -205,6 +226,98 @@ class FeishuMessageHandler:
             logger.exception("飞书审批指令处理异常: %s", exc)
             self._reply(msg, f"⚠️ 审批指令处理异常：{type(exc).__name__}，请重试或走 CLI。")
             return True
+
+    def _try_handle_stop_command(self, msg: FeishuMessage, text: str) -> bool:
+        """飞书 /stop 停止指令拦截（spec 5.1.1-1/2/3/4/8/9）.
+
+        目标会话经 SessionMap.get() 只读定位（不新建映射，spec 5.1.3-4）；
+        仅作用于发起消息映射的会话（隔离，spec 4.3.1）。
+        Returns: True=已处理；False=非 /stop 指令走原路径。
+        """
+        if text.strip().lower() != STOP_COMMAND:
+            return False
+        try:
+            runner = getattr(self._engine, "runner", None)
+            if runner is None or not getattr(runner, "enabled", False):
+                self._reply(msg, "停止能力未启用（后台 run 执行器未装配）。")
+                self._audit(msg, "stop_degraded", "runner disabled")
+                return True
+            sid = self._session_map.get(self._map_key(msg))
+            if not sid or not runner.cancel(sid, CANCEL_REASON_USER_STOP):
+                self._reply(msg, "当前没有进行中的推理。")
+                self._audit(msg, "stop_noop", f"sid={sid[:8] if sid else 'unmapped'}")
+                return True
+            self._user_stop_register(sid, msg)
+            self._reply(msg, "停止已受理，本轮推理将在稍后终止；终止后可发送 /continue 或重发消息恢复。")
+            self._audit(msg, "stop_accepted", f"sid={sid[:8]} reason=user_stop")
+            return True
+        except Exception as exc:  # noqa: BLE001 — fail-open（spec 4.2.4，指令文本不漏入引擎）
+            logger.exception("飞书 /stop 指令处理异常: %s", exc)
+            self._reply(msg, f"⚠️ 指令处理异常（{type(exc).__name__}），请重试。")
+            self._audit(msg, "stop_error", str(exc)[:200])
+            return True
+
+    def _try_handle_continue_command(self, msg: FeishuMessage, text: str) -> bool:
+        """飞书 /continue 恢复指令拦截（spec 5.2.1-1/2/3/4/5）.
+
+        忙会话拒绝（防并发双轮）→ 空会话防呆（不空转）→ 恢复轮经既有
+        _run_with_processing_actions 包装（状态卡/footer/跨端基线一致）。
+        Returns: True=已处理；False=非 /continue 指令走原路径。
+        """
+        if text.strip().lower() != CONTINUE_COMMAND:
+            return False
+        try:
+            runner = getattr(self._engine, "runner", None)
+            if runner is None or not getattr(runner, "enabled", False):
+                self._reply(msg, "恢复能力未启用（后台 run 执行器未装配）。")
+                self._audit(msg, "continue_degraded", "runner disabled")
+                return True
+            sid = self._session_map.get_or_create(self._map_key(msg))
+            if runner.is_running(sid) or runner.is_sync_active(sid):
+                self._reply(msg, "推理进行中，请先发送 /stop 终止当前推理。")
+                self._audit(msg, "continue_busy", f"sid={sid[:8]}")
+                return True
+            sess = self._engine.session.load(sid)
+            if not sess.messages:
+                self._reply(msg, "当前会话无可恢复内容（会话为空）。")
+                self._audit(msg, "continue_empty", f"sid={sid[:8]}")
+                return True
+            # 用户显式 /continue 本身就是恢复授权。不要再把它翻译成程序撰写的
+            # “[程序恢复] ...”自然语言塞回 prompt；保持 USER_INSTRUCTION provenance，
+            # 由当前未解决会话现场决定继续什么任务。
+            self._run_with_processing_actions(msg, self._run_text, text)
+            self._audit(msg, "continue_accepted", f"sid={sid[:8]}")
+            return True
+        except Exception as exc:  # noqa: BLE001 — fail-open（spec 5.2.3-4，指令文本不漏入引擎）
+            logger.exception("飞书 /continue 指令处理异常: %s", exc)
+            self._reply(msg, f"⚠️ 指令处理异常（{type(exc).__name__}），请重发恢复。")
+            self._audit(msg, "continue_error", str(exc)[:200])
+            return True
+
+    def _user_stop_register(self, sid: str, msg: FeishuMessage) -> None:
+        """user_stop 待收口登记（sid + 回复目标双键；bridge 补偿判定查询，design §2.1.3-5）."""
+        now = time.time()
+        with self._user_stop_pending_lock:
+            self._user_stop_pending[sid] = now
+            self._user_stop_pending[msg.reply_receive_id] = now
+
+    def _user_stop_clear(self, sid: str, msg: FeishuMessage) -> None:
+        """收口回复发出后移除登记（时间窗兜底由读取侧惰性剔除）."""
+        with self._user_stop_pending_lock:
+            self._user_stop_pending.pop(sid, None)
+            self._user_stop_pending.pop(msg.reply_receive_id, None)
+
+    def is_user_stop_pending(self, chat_id: str) -> bool:
+        """该飞书会话是否存在未收口的用户主动停止（bridge 中断补偿判定，fail-open 查询）."""
+        now = time.time()
+        with self._user_stop_pending_lock:
+            stale = [
+                k for k, ts in self._user_stop_pending.items()
+                if now - ts > _USER_STOP_PENDING_WINDOW_S
+            ]
+            for k in stale:
+                self._user_stop_pending.pop(k, None)
+            return chat_id in self._user_stop_pending
 
     def _try_handle_session_command(self, msg: FeishuMessage, text: str) -> bool:
         """M55: 飞书会话指令拦截（/new 新会话 /clear 继续但开新上下文）.
@@ -283,6 +396,11 @@ class FeishuMessageHandler:
             answer += "\n（回答被截断）"
         if result.verification_note:
             answer += f"\n[声明提示] {result.verification_note}"
+        # 停止收口恢复指引分流（3.6，design D5）：仅 user_stop 取消在飞书端追加指引；
+        # 全局 _CANCELLED_ANSWER 保持不变（Web 端共用，零回归）
+        _stopped_by_user = getattr(result, "cancel_reason", "") == CANCEL_REASON_USER_STOP
+        if _stopped_by_user:
+            answer += _STOP_RESUME_HINT
         # P2-4: 公式降级提示（飞书卡片不支持 KaTeX/LaTeX 渲染，如实告知）
         try:
             from llm_loop.feishu.card_utils import detect_math_formula
@@ -311,6 +429,9 @@ class FeishuMessageHandler:
         if self._cross_sync is not None:
             self._cross_sync.mark_processed(sid)
         self._reply_chunked(msg, answer)
+        # 收口回复已发出 → 移除 user_stop 待收口登记（bridge 补偿判定随之失效）
+        if _stopped_by_user:
+            self._user_stop_clear(sid, msg)
         return answer
 
     # ── 附件/图片（复用 M39 web/upload_handlers + vision）──

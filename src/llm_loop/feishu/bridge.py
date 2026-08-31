@@ -22,7 +22,11 @@ import httpx
 import lark_oapi
 
 from llm_loop.feishu.config import FeishuConfig
-from llm_loop.feishu.handlers import FeishuMessage, FeishuMessageHandler
+from llm_loop.feishu.handlers import (
+    FASTLANE_CONTROL_COMMANDS,
+    FeishuMessage,
+    FeishuMessageHandler,
+)
 from llm_loop.feishu.rest import FeishuRestClient, FeishuRestError, _mask_id
 
 logger = logging.getLogger(__name__)
@@ -277,9 +281,18 @@ class _WsConnector:
     def _submit_message(self, payload: dict) -> bool:
         """提交消息到 worker 队列（非阻塞；队列满 fail-open 如实告警丢弃，不阻塞 loop）.
 
+        /stop 走快车道旁路分发（4.1，design D1）——不入队排队等待进行中的
+        推理（spec 4.1.1 受理即时性）。/continue 是新的 user turn，必须照常
+        入单 worker 队列，禁止旁路线程直接进入 engine.run。
         Returns:
-            True=入队成功; False=队列满丢弃（已告警，不抛异常、不向 SDK 冒泡）。
+            True=入队成功或快车道已接管; False=队列满丢弃（已告警，不抛异常、不向 SDK 冒泡）。
         """
+        if self._is_control_command(payload):
+            threading.Thread(
+                target=self._fastlane_dispatch, args=(payload,), name="feishu-fastlane", daemon=True
+            ).start()
+            self._last_message_ts = time.time()
+            return True
         try:
             self._msg_queue.put_nowait(payload)
             # P1-3-R3: 入队成功记录"最近收到消息时刻"（活性字段；队列满丢弃分支不更新）
@@ -294,6 +307,39 @@ class _WsConnector:
                 header.get("event_id", ""),
             )
             return False
+
+    @staticmethod
+    def _is_control_command(payload: dict) -> bool:
+        """快车道预判：仅 /stop 命中（单一事实来源 FASTLANE_CONTROL_COMMANDS）.
+
+        只做低成本文本提取（结构与 _unpack_message 同源），不做会话映射、不触碰
+        SessionStore；post/附件等非 text 类型零开销直通。
+        """
+        event = payload.get("event") or {}
+        message = event.get("message") or {}
+        if message.get("message_type", "") != "text":
+            return False
+        content_raw = message.get("content") or ""
+        try:
+            content = json.loads(content_raw) if isinstance(content_raw, str) else (content_raw or {})
+        except json.JSONDecodeError:
+            return False
+        text = str(content.get("text", "") or "").strip().lower()
+        return text in FASTLANE_CONTROL_COMMANDS
+
+    def _fastlane_dispatch(self, payload: dict) -> None:
+        """快车道旁路线程分发（4.2，daemon）：直接驱动 _on_message（bridge._on_ws_message）.
+
+        复用既有完整链路（双键去重 → _unpack_message → handler.handle），行为与
+        worker 路径由同一入口保证一致；指令在 _handle_text 拦截链被短路、不入引擎；
+        该路径不登记 _processing_msg_id（仅 worker 的 _safe_handle_message 调用），
+        天然不产生指令自身补偿。异常 fail-open（日志；用户可见兜底回执由拦截器
+        内部 try/except 保证）。
+        """
+        try:
+            self._on_message(payload)
+        except Exception as exc:  # noqa: BLE001 — 旁路异常不阻断桥
+            logger.exception("飞书控制指令快车道分发异常（fail-open）: %s", exc)
 
     def _worker_loop(self) -> None:
         """消息处理 worker 线程：串行处理队列消息（单 worker 保证 SessionStore 无并发）.
@@ -668,6 +714,24 @@ class FeishuWsBridge:
         mid = getattr(connector, "_processing_msg_id", "") or ""
         if not mid:
             return  # 无处理中消息 → 正常退出，不产生补偿记录
+        # user_stop 待收口判定（4.3，design D7）：/stop 收口秒级窗口内优雅退出时，
+        # 停止收口回复由 worker 线程正常发出——跳过补偿落盘防重启后重复回复
+        # （spec 4.5.3）；handler 为测试桩/旧实例无该方法时行为与现状一致（fail-open）。
+        pending_fn = getattr(self._handler, "is_user_stop_pending", None)
+        if callable(pending_fn):
+            try:
+                chat_key = (
+                    getattr(connector, "_processing_chat_id", "")
+                    or getattr(connector, "_processing_reply_id", "")
+                    or ""
+                )
+                if chat_key and pending_fn(chat_key) is True:
+                    logger.info(
+                        "user_stop 待收口窗口内优雅退出，跳过中断补偿落盘: msg_id=%s", mid
+                    )
+                    return
+            except Exception:  # noqa: BLE001 — 查询失败按现状落盘（零回归兜底）
+                logger.warning("user_stop 待收口查询异常（fail-open，按现状落盘）", exc_info=True)
         reply_id = getattr(connector, "_processing_reply_id", "") or ""
         if not reply_id:
             return

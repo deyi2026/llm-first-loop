@@ -70,6 +70,20 @@ class _LifecycleMixin:
                     raise SessionBusyError(
                         f"会话 {session_id} 已有进行中的同步 run（互斥，请稍后重试）"
                     )
+            # 同步取消标记生命周期与 run 对齐（1.5）：必须在本轮 active 发布前
+            # 清理上一轮残留。若先 add(active) 再 discard，会存在真实 lost-stop 窗口：
+            # /stop 已观察到 active 并返回“已受理”，随后却被这里清掉。
+            # workspace transition guard 保证标准 admission 不并发；第二次 sync 检查
+            # 保留为防御性互斥，确保清理期间任何尚未发布的 stop 只会得到 noop，
+            # 一旦 active 发布，之后 accepted 的 stop 绝不会再被初始化路径删除。
+            self._sync_cancel_discard(session_id)
+            with self._sync_guard:
+                if session_id in self._sync_active:
+                    from llm_loop.core.loop.runner import SessionBusyError
+
+                    raise SessionBusyError(
+                        f"会话 {session_id} 已有进行中的同步 run（互斥，请稍后重试）"
+                    )
                 self._sync_active.add(session_id)
             run_workspace = self.workspace_root or ""
 
@@ -140,6 +154,19 @@ class _LifecycleMixin:
             _run_stack.close()
             with self._sync_guard:
                 self._sync_active.discard(session_id)
+            # 同步 run 注销 → 同步取消登记一并移除（1.5：标记生命周期与 run 对齐，
+            # 支撑第二次 /stop 幂等与恢复轮可再停止）
+            self._sync_cancel_discard(session_id)
+
+    def _sync_cancel_discard(self: LoopEngine, session_id: str) -> None:
+        """移除会话级同步取消标记（经 runner.discard_sync_cancel；fail-open 兼容旧装配）."""
+        runner = getattr(self, "runner", None)
+        fn = getattr(runner, "discard_sync_cancel", None) if runner is not None else None
+        if callable(fn):
+            try:
+                fn(session_id)
+            except Exception:  # noqa: BLE001 — fail-open 不阻断 run 生命周期
+                logger.warning("同步取消标记清理失败（fail-open）: %s", session_id, exc_info=True)
 
 
     def run(
