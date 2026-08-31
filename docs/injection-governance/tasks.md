@@ -165,3 +165,13 @@
 - Matrix: E33 PARTIAL→DONE；总计 `DONE=20 / KEEP=1 / PARTIAL=10 / OPEN=3`。`behavior_canary_gate_state=READY` 保持，但 behavior canary / R9 **未启动**。
 - evidence: `docs/injection-governance/eligibility/r810-report.md`、`eligibility/matrix.json`、`tests/unit/test_p0b_program_feedback.py`、`tests/unit/test_loop_honest_feedback.py`、`tests/unit/test_memory_turn_snapshot.py`、`tests/integration/test_fault_isolation.py`。
 - evidence_required: true
+
+## R8.11 Observability Receipt Prompt Exit — ✅ PASS
+- E20 `cache_gate_note`: cache gate runtime intervention remains, but `gate_note_pending` is consumed as observability-only state; action trace records `prompt_chars=0`; live producer removed from prompt allowlist; legacy err1210 restore/parser support retained without provider replay。
+- E21 `injection_budget_receipt`: pruning receipt remains in `InjectionBudgetResult.receipt_content` and `action.injection_budget` telemetry only; no synthetic receipt BudgetBlock, no budget reservation/charge, no post-eligibility wire/packet append；`used_chars` now measures actual kept prompt material。
+- morphology: armed gate marker no longer changes provider wire/golden digest；engine-level 1210 recovery fixtures use live interop slot rather than retired gate-note producer。
+- 验证: implementation commit `1114044` detached clean；focused **108/108 PASS**；broader **242/242 PASS**；production pyright **0/0**；R0-1~R0-4 PASS；frozen hash `b54d47a31109a03d9f926f65b7a3d9f6caf3f24c0d42b1bff26fe338ee74b02a` 不变；checkout before/after clean；生产 ruff findings 与父提交基线一致，无新增 lint debt。
+- 工作区隔离: `tests/integration/test_cognitive_integration.py` 的并行 import-order/newline diff 未纳入本批；仅 R8.11 四条行为断言通过 index-only partial staging 提交。
+- Matrix: E20/E21 OPEN→DONE；总计 `DONE=22 / KEEP=1 / PARTIAL=10 / OPEN=1(E25)`；behavior canary 仍只 READY，未启动。
+- evidence: `docs/injection-governance/eligibility/r811-report.md`、`eligibility/matrix.json`、`tests/unit/test_injection_budget.py`、`tests/unit/test_injection_fingerprint.py`、`tests/integration/test_cognitive_integration.py`。
+- evidence_required: true

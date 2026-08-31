@@ -2,7 +2,7 @@
   "schema": "prompt-eligibility-audit-v1",
   "audit_base_commit": "31df1a3",
   "audit_date": "2026-08-30",
-  "phase": "R8.10_PROGRAM_FINAL_AND_FAULT_OBSERVABILITY_CLOSURE",
+  "phase": "R8.11_OBSERVABILITY_RECEIPT_PROMPT_EXIT",
   "production_behavior_changed": true,
   "behavior_canary_allowed": true,
   "status_semantics": {
@@ -334,29 +334,38 @@
     {
       "id": "E20",
       "surface": "cache_gate_note",
-      "current_status": "OPEN",
+      "current_status": "DONE",
       "target_class": "OBSERVABILITY_ONLY",
       "priority": "P1",
-      "current_behavior": "Cache monitor emits a dynamic GATE_NOTE into _inject_parts. The text itself says the model need not handle it.",
-      "target_rule": "Cache/control-plane event only; zero provider prompt chars.",
-      "retrieval_path": "cache event / architecture_status",
+      "current_behavior": "R8.11 consumes cache gate_note_pending as one-shot runtime observability and records run.cache_gate observed_only telemetry with prompt_chars=0. The live build producer is removed and gate_note is no longer in the dynamic prompt allowlist. Legacy GATE_NOTE_CONTENT/restore/parser support remains only for historical err1210/defer compatibility; restored markers are consumed/retired without provider replay.",
+      "target_rule": "Cache/prefix-health intervention state is runtime observability only; it must never add program-authored natural-language advice to provider input.",
+      "retrieval_path": "cache monitor snapshot / architecture status / action trace",
       "evidence": [
-        "src/llm_loop/core/cache_health.py:168+",
-        "src/llm_loop/core/loop/build.py:1096-1108"
+        "src/llm_loop/core/cache_health.py",
+        "src/llm_loop/core/prompt_eligibility.py",
+        "src/llm_loop/core/loop/build.py",
+        "tests/unit/test_cache_monitor.py",
+        "tests/unit/test_interop_inject.py",
+        "tests/unit/test_injection_fingerprint.py",
+        "tests/integration/test_cognitive_integration.py",
+        "docs/injection-governance/eligibility/r811-report.md"
       ]
     },
     {
       "id": "E21",
       "surface": "injection_budget_receipt",
-      "current_status": "OPEN",
+      "current_status": "DONE",
       "target_class": "OBSERVABILITY_ONLY",
       "priority": "P1",
-      "current_behavior": "R2 may insert a budget receipt into the prompt after dropping blocks.",
-      "target_rule": "Budget accounting is program observability. If omitted content is required, retrieval/control logic should act; the model does not need assembler bookkeeping by default.",
-      "retrieval_path": "injection budget telemetry/action trace",
+      "current_behavior": "R8.11 keeps injection-budget pruning as structured InjectionBudgetResult + action telemetry only. receipt_content still describes the pruning decision for observability, but no receipt BudgetBlock is created/reserved/charged and build never appends the receipt to wire or cognitive packet. used_chars now measures actual kept prompt blocks only.",
+      "target_rule": "Prompt-budget bookkeeping is control-plane observability. Budget decisions may prune prompt material but must not themselves consume prompt budget or create model-facing prose.",
+      "retrieval_path": "LoopEngine._last_injection_budget / action.injection_budget trace / architecture status",
       "evidence": [
         "src/llm_loop/core/injection_budget.py",
-        "src/llm_loop/core/loop/build.py:1420-1438"
+        "src/llm_loop/core/loop/build.py",
+        "tests/unit/test_injection_budget.py",
+        "tests/unit/test_prompt_eligibility_r88.py",
+        "docs/injection-governance/eligibility/r811-report.md"
       ]
     },
     {
@@ -617,5 +626,7 @@
   "r8_9_status": "PASS",
   "r8_9_evidence": "docs/injection-governance/eligibility/r89-report.md",
   "r8_10_status": "PASS",
-  "r8_10_evidence": "docs/injection-governance/eligibility/r810-report.md"
+  "r8_10_evidence": "docs/injection-governance/eligibility/r810-report.md",
+  "r8_11_status": "PASS",
+  "r8_11_evidence": "docs/injection-governance/eligibility/r811-report.md"
 }

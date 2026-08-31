@@ -448,3 +448,11 @@ R8.10 extends the owner rule from “resolved/current-turn lifecycle” to runti
 E33 `program_fault_feedback` is now **DONE**. Initial session-persistence, archive-sink, and memory-retrieval faults preserve recovery, selfheal/status/action evidence but no longer append program-authored fault prose into conversational history/current-turn memory. Legacy system `[程序异常]` frames are denied centrally. Loop-end session-save failure remains visible in the current user result for honesty; that program-final result is reduced to the fixed protocol boundary on future provider turns.
 
 Implementation commit `7b5334d` passed detached-clean fixed-point: focused **105/105**, broader adjacent **274/274**, touched production pyright **0/0**, R0 four-gate replay PASS, frozen R0 data unchanged, and checkout clean before/after. Matrix state becomes `DONE=20`, `KEEP=1`, `PARTIAL=10`, `OPEN=3`. Behavior canary/R9 remain not started. Full evidence: `docs/injection-governance/eligibility/r810-report.md`.
+
+## R8.11 — Observability receipt prompt exit (2026-08-31)
+
+E20 `cache_gate_note` and E21 `injection_budget_receipt` are now **DONE / OBSERVABILITY_ONLY**. Cache gate intervention state remains active in the runtime, but the one-shot marker is consumed with `prompt_chars=0`, `gate_note` is removed from the dynamic prompt allowlist, and legacy err1210 gate-note compatibility can no longer resurrect prompt prose. Injection-budget pruning remains fully structured in `InjectionBudgetResult` and action telemetry; its receipt no longer becomes a synthetic highest-priority prompt block, consumes no prompt budget, and is not appended after the eligibility pass.
+
+Implementation commit `1114044` passed detached-clean fixed-point: focused **108/108**, broader **242/242**, touched production pyright **0/0**, R0 four gates PASS, frozen R0 data unchanged, and checkout clean before/after. The production golden morphology now proves that arming a gate marker does not change provider wire. A current artifact scan found the exact historical gate-note phrase 35 times and the current budget-receipt phrase once; these are reachability/artifact counts, not unique-request rates.
+
+Matrix state becomes `DONE=22 / KEEP=1 / PARTIAL=10 / OPEN=1`. Behavior canary/R9 remain not started. Full evidence: `docs/injection-governance/eligibility/r811-report.md`.
