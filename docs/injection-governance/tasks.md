@@ -281,3 +281,15 @@
 - Matrix: E04 PARTIAL→DONE；总计 `DONE=31 / KEEP=1 / PARTIAL=2 / OPEN=0`；behavior canary / R9 未启动。
 - evidence: `docs/injection-governance/eligibility/r820-report.md`、`eligibility/matrix.json`、`tests/unit/test_consumed_tool_span_r820.py`、`src/llm_loop/core/episode_history.py`。
 - evidence_required: true
+
+## R8.21 Provider-Bound Historical Reasoning Replay — ✅ PASS
+- E05 `historical_reasoning_content`: historical reasoning is provider protocol state, not generic working context.
+- Actual-provider policy: local/cognilocal and MiniMax-M3 `thinking=false` replay none; GLM replays only tool-call assistant reasoning; official DeepSeek tools requests retain all still-visible assistant reasoning required by protocol; unknown providers use configured fail-safe rather than guessed capability.
+- Root cause fixed: replay policy is derived from the actual planning provider registry/label instead of the process-wide default endpoint.
+- Fallback isolation: every cross-provider fallback candidate rebuilds messages + tool schemas using its own immutable provider snapshot; primary projection is never reused as semantic truth for another provider.
+- Real-data post-R8.20 simulation: 3,167 reasoning-bearing messages / **6,356,327 chars**; local/cognilocal/MiniMax-M3 remove 100%, GLM removes **1,677,226 chars / 26.39%** while keeping tool-call reasoning, DeepSeek retains protocol-required bytes.
+- Resolved/consumed history is retired before reasoning projection; EpisodeStore does not duplicate private reasoning into retrieval.
+- Verification: implementation `423614e`; detached clean broader **290/290**; pyright **0/0**; py_compile PASS; canonical R0 PASS; checkout clean before/after.
+- Matrix: E05 PARTIAL→DONE；总计 `DONE=32 / KEEP=1 / PARTIAL=1 / OPEN=0`；只剩 E06；behavior canary / R9 未启动。
+- evidence: `docs/injection-governance/eligibility/r821-report.md`、`eligibility/matrix.json`、`tests/unit/test_reasoning_tail.py`、`tests/unit/test_fallback_integration.py`。
+- evidence_required: true

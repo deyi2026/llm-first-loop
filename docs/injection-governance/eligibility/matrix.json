@@ -2,7 +2,7 @@
   "schema": "prompt-eligibility-audit-v1",
   "audit_base_commit": "31df1a3",
   "audit_date": "2026-08-30",
-  "phase": "R8.12_INTEROP_NOTIFY_PROMPT_EXIT",
+  "phase": "R8.21_PROVIDER_BOUND_REASONING_REPLAY",
   "production_behavior_changed": true,
   "behavior_canary_allowed": true,
   "status_semantics": {
@@ -97,17 +97,21 @@
     {
       "id": "E05",
       "surface": "historical_reasoning_content",
-      "current_status": "PARTIAL",
+      "current_status": "DONE",
       "target_class": "PROTOCOL_ONLY",
       "priority": "P1",
-      "current_behavior": "Existing REASONING_TAIL policy remains. R8.5 additionally retires the entire proven resolved episode from future provider view and deliberately does not duplicate private reasoning_content into EpisodeStore hydration. Legacy/unresolved cloud tool-call reasoning still follows provider protocol policy.",
+      "current_behavior": "R8.21 binds historical reasoning replay to the actual provider selected for each request attempt. Local/cognilocal and non-thinking MiniMax replay none; GLM replays only assistant reasoning attached to tool-call turns; DeepSeek official tools requests retain all still-visible assistant reasoning required by protocol; unknown providers fail-safe to configured policy. Cross-provider fallback rebuilds the provider message view for each candidate instead of reusing the primary projection. Resolved/consumed history remains retired before this protocol-only projection, and private reasoning is never duplicated into EpisodeStore hydration.",
       "target_rule": "Retain only reasoning bytes still required by the active provider protocol/pairing. Resolved historical reasoning is archive-only.",
       "retrieval_path": "Visible resolved transcript is episode-hydratable; private reasoning is intentionally not duplicated as retrieval content",
       "evidence": [
         "src/llm_loop/memory/episode.py",
         "src/llm_loop/core/episode_history.py",
         "src/llm_loop/core/history.py:562-610",
-        "tests/unit/test_resolved_episode.py"
+        "src/llm_loop/core/loop/build.py",
+        "src/llm_loop/core/loop/fallback.py",
+        "tests/unit/test_reasoning_tail.py",
+        "tests/unit/test_fallback_integration.py",
+        "docs/injection-governance/eligibility/r821-report.md"
       ]
     },
     {
