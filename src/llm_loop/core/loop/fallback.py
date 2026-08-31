@@ -127,6 +127,106 @@ class _FallbackMixin:
             float(metadata.get("chars_per_token", chars_per_token)),
         )
 
+    def _same_model_retry_gate(
+        self: LoopEngine,
+        *,
+        exc: LLMError,
+        e1210_recovered: bool,
+        is_default_assembled: bool,
+        sess,
+        messages: list[dict],
+        tools_param: list[dict] | None,
+        llm_client,
+        chat_model_arg: str | None,
+        session_id: str,
+        effective_budget: int,
+        rounds: int,
+    ) -> LLMResponse | None:
+        """D'-2.3 ②（R8.24 D-D6-5）engine 接线门（mixin 化——engine 只接线，
+        行数预算见 test_loop_mixin_split 守卫）: 判定 + 限次重试。语义详见
+        _same_model_retry_before_fallback docstring。"""
+        if e1210_recovered or not is_default_assembled:
+            return None
+        if not self._is_fallback_eligible_error(exc):
+            return None
+        return self._same_model_retry_before_fallback(
+            sess=sess, messages=messages, tools_param=tools_param,
+            llm_client=llm_client, chat_model_arg=chat_model_arg,
+            session_id=session_id, effective_budget=effective_budget, rounds=rounds,
+        )
+
+    def _same_model_retry_before_fallback(
+        self: LoopEngine,
+        *,
+        sess,
+        messages: list[dict],
+        tools_param: list[dict] | None,
+        llm_client,
+        chat_model_arg: str | None,
+        session_id: str,
+        effective_budget: int,
+        rounds: int,
+    ) -> LLMResponse | None:
+        """D'-2.3 ②（R8.24 D-D6-5）: 切换降级前的同模型优先限次重试.
+
+        触发条件: 会话存在工具回执（任务已有进行中产物——切换模型会改变工具
+        协议投影/推理风格，代价高于原模型瞬时失败的重试）。无进行中产物的简单
+        对话不重试（行为=现状零变化）。限次 ≤ LFL_SAME_MODEL_RETRY_MAX（默认 2，
+        0=关闭回退现状；禁止无限次——限次防循环）。重试成功 → 返回响应（调用方
+        落回正常路径，与 fallback 成功合流同构）；耗尽/不触发 → None（进链）。
+        """
+        try:
+            max_retries = int(os.environ.get("LFL_SAME_MODEL_RETRY_MAX", "2"))
+        except ValueError:
+            max_retries = 2
+        if max_retries <= 0:
+            return None
+        try:
+            has_wip = any(
+                getattr(m, "role", "") == "tool" for m in (sess.messages or [])
+            )
+        except Exception:  # noqa: BLE001 — 判据失败不重试（回退现状）
+            has_wip = False
+        if not has_wip:
+            return None
+        chat_kwargs: dict[str, Any] = {
+            "messages": messages,
+            "tools": tools_param,
+            "timeout_s": self._runtime_timeout(),
+            "model": chat_model_arg,
+        }
+        if isinstance(llm_client, LLMClient):
+            chat_kwargs["guard_context"] = GuardRequestContext(
+                session_id=session_id,
+                system_text=(
+                    messages[0].get("content", "")
+                    if messages and messages[0].get("role") == "system"
+                    else None
+                ),
+                compress_count_this_run=getattr(self, "_compress_count_this_run", 0),
+                history_budget=int(effective_budget or 0),
+                breaker_active=self._cache_monitor.breaker_active_for(session_id),
+                run_round=rounds,
+                provider=getattr(llm_client, "provider", ""),
+                model=chat_model_arg or getattr(llm_client, "model", ""),
+            )
+        for attempt in range(1, max_retries + 1):
+            try:
+                self._record_action(
+                    "model.fallback",
+                    "same_model_retry",
+                    f"attempt={attempt}/{max_retries}",
+                )
+                return llm_client.chat(**chat_kwargs)
+            except Exception as retry_exc:  # noqa: BLE001 — 单次失败继续限次
+                logger.info(
+                    "event=fallback.same_model_retry_failed attempt=%d/%d error=%s",
+                    attempt,
+                    max_retries,
+                    type(retry_exc).__name__,
+                )
+        return None
+
     def _try_fallback_chain(
         self: LoopEngine,
         *,

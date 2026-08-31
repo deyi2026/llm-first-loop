@@ -412,6 +412,22 @@ def _parse_capability_tier(pid: str, mid: str, mval: dict[str, Any]) -> str:
     return "unknown"
 
 
+def is_below_capability_floor(spec: ModelSpec) -> bool:
+    """D'-2.1（R8.24 D-D6）: capability floor 判据——自动 fallback 链成员能力下限.
+
+    判据主源 = ModelSpec.capability_tier 三档（strong/weak/unknown）:
+    - strong → False（可进自动 fallback 链）
+    - weak / unknown → True（低于下限——unknown 保守视为弱模型）
+
+    细粒度定标（参数量/量化位宽，r-p-r 初值假设 <14B 或 <q6 不进自动链）为
+    【待验证假设】——禁止未经验证的数值进配置；需以 D6 死循环场景（9B 4-bit 档）
+    + 健康检查/长链推理任务做档位对照实测后方可接入（届时在 ModelSpec 增加可选
+    元数据字段，缺省回退本三档判据——解析沿 _parse_capability_tier fail-soft 惯例）。
+    本函数为 floor 唯一判据入口（链构造过滤 D'-2.3 / shadow 标记 D'-2.2 一律经此）。
+    """
+    return spec.capability_tier != "strong"
+
+
 def _parse_model_spec(pid: str, mid: str, mval: dict[str, Any]) -> ModelSpec:
     """解析单模型条目 → ModelSpec（P1-3 审计 #14 加固）.
 

@@ -42,6 +42,23 @@ _SUBMIT_RATIO_WARN = 0.85  # >85% → WARN（提示接近超限）
 # 规则 G（2026-08-18 用户反馈：'低命中'应拦截——命中是结果——需响应回馈闭环）：
 # 会话近期命中率 < 阈值且样本足够 → BLOCK（前缀不稳定——先压缩 checkpoint/换会话）
 # 阈值 env 化（拷问④——2026-08-18）: 可用 CACHE_GUARD_* 覆盖
+# D'-1.1（R8.24 D-D3）: 性能类 BLOCK 分类改造开关——on=现状（性能 BLOCK 保留，
+# 行为逐字节一致）/ enforce=性能类退出 BLOCK 仅 WARN（shadow 期记录 would_block
+# 观测事件，对照基线 25 次 submit_ratio BLOCK 场景；达标后默认切 enforce——
+# D'-1.3 回执留痕，可整体回滚）。
+# 【硬 BLOCK 清单——D-D3 五类保留，不受本开关影响】:
+#   1. privacy/safety（_check_privacy——API key/私钥/敏感 env 泄漏）
+#   2. provider wire invalid
+#   3. 真实 context window 超限
+#   4. 用户成本硬限
+#   5. safety 类拦截
+# 性能类理由（低命中/体积占比）不构成阻断——代价由 cost/observability 面承接。
+_PERF_BLOCK_MODE = os.environ.get("CACHE_GUARD_PERF_BLOCK", "on").strip().lower()
+# D'-1.1 核对结论（2026-08-31）: 规则 G（_check_hit_rate）全路径 WARN-only
+# （low_hit_rate_ttl / low_hit_rate_compressing / low_hit_rate_provider 三分支均
+# 无 BLOCK verdict——_HIT_RATE_BLOCK 仅作阈值比较）；规则 A（system_stability）/
+# 规则 D（compress_storm）核对为 WARN-only。性能 BLOCK 仅存于规则 F submit_ratio
+# 非 breaker 分支，由 _PERF_BLOCK_MODE 管控。
 _HIT_RATE_BLOCK = float(os.environ.get("CACHE_GUARD_HIT_BLOCK", "0.30"))
 # 2026-08-18 用户反馈（'78% 也是低的'）: WARN 阈值 0.50 → 0.85——低于预期的命中
 # （工具轮/前缀微变化）也应提示 AI（'命中低于预期——注意前缀稳定性'）；BLOCK 保持 0.30
@@ -202,6 +219,29 @@ def _check_submit_ratio(messages: list[dict], meta: dict) -> GuardDecision | Non
     total_chars = sum(len(str(m.get("content") or "")) for m in messages)
     ratio = total_chars / budget
     if ratio > _SUBMIT_RATIO_BLOCK:
+        # D'-1.1（R8.24 D-D3）: enforce 态性能类退出 BLOCK——breaker_active 三分支
+        # （None/True/False）降级语义收编统一为 WARN + would_block 观测（性能类理由
+        # 不阻断，低命中全价代价由 cost/observability 面承接）；on 态保持现状三分支
+        # （逐字节一致，可整体回滚）。
+        if _PERF_BLOCK_MODE == "enforce":
+            _ba = meta.get("breaker_active")
+            logger.info(
+                "event=guard.would_block rule=submit_ratio_perf ratio=%.4f chars=%d budget=%d breaker_active=%r",
+                ratio,
+                total_chars,
+                budget,
+                _ba,
+            )
+            return GuardDecision(
+                verdict="WARN",
+                rule="submit_ratio_perf",
+                detail=(
+                    f"提交 {total_chars:,} 字符 = 预算 {budget:,} 的 {ratio*100:.0f}%"
+                    f"（>{_SUBMIT_RATIO_BLOCK*100:.0f}%——历史接近上限，本次请求可能低命中全价；"
+                    f"性能类不阻断仅观测记录，breaker_active={_ba!r}）"
+                ),
+                audit={"would_block": True, "ratio": round(ratio, 4)},
+            )
         # 任务3（§5.9）: breaker_active=None（传递丢失）——无法确认冻结期状态，
         # 保守降级 WARN（防"禁压缩 + 禁提交"双拦死锁：宁可放行让 breaker 的
         # context_pressure 前置管控，也不在传递链断裂时双重拦截）。
@@ -244,7 +284,12 @@ def _check_submit_ratio(messages: list[dict], meta: dict) -> GuardDecision | Non
 
 
 def _check_privacy(messages: list[dict], system_text: str) -> GuardDecision | None:
-    """规则 E: 隐私泄漏——API key/私钥/敏感 env 值进 prompt（硬拦截）."""
+    """规则 E: 隐私泄漏——API key/私钥/敏感 env 值进 prompt（硬拦截）.
+
+    【D-D3 硬 BLOCK 清单成员——绝对保留】: privacy/safety 拦截不受
+    CACHE_GUARD_PERF_BLOCK 开关影响（D'-1.1 性能类退出只作用于性能面——本函数
+    一行不动；D-G5 对照断言一票否决项）。
+    """
     blob = system_text + "\n" + "\n".join(str(m.get("content") or "") for m in messages[:3])
     for pat in _SENSITIVE_PATTERNS:
         if pat.search(blob):
@@ -313,6 +358,9 @@ def validate_request(
         decision = GuardDecision(verdict="ALLOW", detail="guard 异常 fail-open")
 
     # 审计落盘（全量——对账闭合；token 回执经 record_result 追加对账行）
+    # D'-1.1: 规则侧观测字段（would_block/ratio——性能类 shadow 对照清单数据源）
+    # 随规则决策带进出口审计（其余键零变化）。
+    _rule_audit = decision.audit or {}
     decision.audit = {
         "ts": datetime.now(UTC).isoformat(),
         "session_id": meta.get("session_id", ""),
@@ -325,6 +373,7 @@ def validate_request(
         "verdict": decision.verdict,
         "rule": decision.rule,
         "detail": decision.detail,
+        **{k: _rule_audit[k] for k in ("would_block", "ratio") if k in _rule_audit},
     }
     try:
         path = _resolve_audit_path(audit_file)

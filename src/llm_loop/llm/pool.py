@@ -13,13 +13,14 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import weakref
 from dataclasses import dataclass, field
 from typing import Any
 
 from llm_loop.llm.client import LLMClient
-from llm_loop.llm.providers import ProviderRegistry
+from llm_loop.llm.providers import ProviderRegistry, is_below_capability_floor
 
 logger = logging.getLogger(__name__)
 
@@ -293,4 +294,54 @@ class ModelClientPool:
                 )
                 continue
             out.append(f"{provider_id}/{model_id}")
-        return out
+        return self._apply_capability_floor(out, selected_registry)
+
+    def _apply_capability_floor(
+        self, candidates: list[str], registry: ProviderRegistry
+    ) -> list[str]:
+        """D'-2.2/D'-2.3（R8.24 D-D6）: capability floor——shadow 标记 / enforce 过滤.
+
+        - shadow（LFL_FALLBACK_FLOOR 默认）: 链行为与现状零变化——仅对低于 floor
+          候选记录 would_downgrade_below_floor 观测事件（含候选 ref、capability
+          档位、task_complexity 标签字段——pool 层无任务上下文，登记 unknown 由
+          engine 消费侧观测补全；对照 D6 场景: 9B 档候选在链中应被标记）。
+        - enforce: 低于下限候选剔除 + 如实日志含剔除原因（不静默吞）；
+          全部候选被剔除时回退原链（不启用降级优于空链死锁——回退现状可回滚）。
+        判据唯一入口 = providers.is_below_capability_floor（三档: weak/unknown 低于
+        下限，strong 进链；细粒度定标为待验证假设不进配置——见其 docstring）。
+        """
+        mode = os.environ.get("LFL_FALLBACK_FLOOR", "shadow").strip().lower()
+        if not candidates:
+            return candidates
+        kept: list[str] = []
+        for ref in candidates:
+            try:
+                pid, mid = ref.split("/", 1)
+                spec = registry.providers[pid].models.get(mid)
+                below = spec is not None and is_below_capability_floor(spec)
+            except Exception:  # noqa: BLE001 — 判据失败 fail-open 不动链
+                below = False
+            tier = getattr(spec, "capability_tier", "unknown")
+            if not below:
+                kept.append(ref)
+                continue
+            if mode == "enforce":
+                logger.info(
+                    "event=fallback.floor_filtered ref=%s capability_tier=%s"
+                    "（低于能力下限，自动链剔除——shadow 观测达标后 enforce，LFL_FALLBACK_FLOOR 可回滚）",
+                    ref, tier,
+                )
+                continue
+            logger.info(
+                "event=fallback.would_downgrade_below_floor ref=%s capability_tier=%s"
+                " task_complexity=unknown（shadow 观测——链行为不变，仅登记）",
+                ref, tier,
+            )
+            kept.append(ref)
+        if mode == "enforce" and not kept:
+            logger.warning(
+                "event=fallback.floor_exhausted candidates=%d（全部低于能力下限——"
+                "回退原链防空链死锁，可 LFL_FALLBACK_FLOOR=shadow 回滚）", len(candidates),
+            )
+            return candidates
+        return kept
