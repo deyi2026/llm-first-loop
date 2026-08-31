@@ -156,3 +156,12 @@
 - E27: post-fallback notice => no session prompt append; status/audit/action remains; all-failed detail goes to current program final result.
 - Verification so far: production pyright 0/0; clean/new test pyright 0/0; focused+adjacent 22-file suite PASS; history/reference 77/77 PASS.
 - Fixed-point: implementation commit `9c208df` detached clean PASS; production pyright 0/0; clean/new test pyright 0/0; 22-file focused+adjacent suite PASS; R0 four gates PASS; frozen hash unchanged. No behavior canary/R9 start.
+
+## R8.10 Program-final + Program Fault Authority Closure — ✅ PASS
+- Owner rule: **program state is observable/retrievable, not self-injecting**；storage/event truth、current-user disclosure、provider protocol shape 与 prompt authority 分离。
+- Program-final: 历史 `answer_origin=program` assistant 不再把完整错误/取消/守卫/停滞正文自动回灌 provider；只保留 byte-stable assistant 边界 `[程序终止边界·无模型回答]`，并移除 reasoning。真实 census=52 条/22 sessions，8,251 chars → 728 chars，动态历史减少 **91.18%**，同时保持 user→assistant→user 结构，避免重新制造 consecutive-user/1210。
+- E33: `session_persistence` / `archive_sink` / memory retrieval fault 继续保留 recovery、selfheal_log、program-fault status、action telemetry，但不再写 session/system prompt 或 memory_snapshot；legacy system `[程序异常]` provider view 中央退役。loop-end save failure仍向当前用户如实提示，下一 turn 由 program-final 固定边界降密。
+- 验证: implementation commit `7b5334d` detached clean；focused **105/105 PASS**；broader adjacent **274/274 PASS**；production pyright **0/0**；R0-1~R0-4 PASS，frozen hash `b54d47a31109a03d9f926f65b7a3d9f6caf3f24c0d42b1bff26fe338ee74b02a` 不变；checkout before/after clean。
+- Matrix: E33 PARTIAL→DONE；总计 `DONE=20 / KEEP=1 / PARTIAL=10 / OPEN=3`。`behavior_canary_gate_state=READY` 保持，但 behavior canary / R9 **未启动**。
+- evidence: `docs/injection-governance/eligibility/r810-report.md`、`eligibility/matrix.json`、`tests/unit/test_p0b_program_feedback.py`、`tests/unit/test_loop_honest_feedback.py`、`tests/unit/test_memory_turn_snapshot.py`、`tests/integration/test_fault_isolation.py`。
+- evidence_required: true

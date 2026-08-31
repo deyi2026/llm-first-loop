@@ -2,7 +2,7 @@
   "schema": "prompt-eligibility-audit-v1",
   "audit_base_commit": "31df1a3",
   "audit_date": "2026-08-30",
-  "phase": "R8.9_EPHEMERAL_CONTROL_LIFECYCLE_CLOSURE",
+  "phase": "R8.10_PROGRAM_FINAL_AND_FAULT_OBSERVABILITY_CLOSURE",
   "production_behavior_changed": true,
   "behavior_canary_allowed": true,
   "status_semantics": {
@@ -531,15 +531,23 @@
     {
       "id": "E33",
       "surface": "program_fault_feedback",
-      "current_status": "PARTIAL",
+      "current_status": "DONE",
       "target_class": "OBSERVABILITY_ONLY",
       "priority": "P1",
-      "current_behavior": "Auxiliary component failures generate model-facing feedback in some paths even though selfheal_log/action telemetry is also persisted.",
-      "target_rule": "Program faults are tool/runtime state unless the current user task cannot proceed without an explicit model decision. Never persist stale fault prose into later tasks.",
-      "retrieval_path": "search_records(kind=selfheal/exception_log)",
+      "current_behavior": "R8.10 removes automatic prompt authority from auxiliary program faults. Initial session_persistence, archive_sink and memory retrieval failures still emit selfheal/status/action/recovery evidence, but no longer append program-authored fault prose to session history or current-turn memory snapshots. Legacy system [程序异常] frames are centrally denied in provider projection. Loop-end session-save failure remains visible to the current user as a program final result; on future turns R8.10 projects that assistant to the fixed program-final protocol boundary instead of replaying fault detail.",
+      "target_rule": "Program faults are runtime observability/recovery state, not model instructions. Preserve current-user error disclosure where required, but never grant auxiliary fault prose automatic prompt authority; future provider history keeps only protocol shape when needed.",
+      "retrieval_path": "search_records(kind=selfheal/exception_log) / architecture_status / recovery evidence",
       "evidence": [
-        "src/llm_loop/feedback/loop_feedback.py",
-        "src/llm_loop/core/loop/events.py:200-206"
+        "src/llm_loop/core/prompt_eligibility.py",
+        "src/llm_loop/core/loop/build.py",
+        "src/llm_loop/core/loop/engine.py",
+        "src/llm_loop/core/loop/archive.py",
+        "src/llm_loop/core/loop/turn_context.py",
+        "tests/unit/test_p0b_program_feedback.py",
+        "tests/unit/test_loop_honest_feedback.py",
+        "tests/unit/test_memory_turn_snapshot.py",
+        "tests/integration/test_fault_isolation.py",
+        "docs/injection-governance/eligibility/r810-report.md"
       ]
     },
     {
@@ -607,5 +615,7 @@
   "r8_8_evidence": "docs/injection-governance/eligibility/r88-report.md",
   "behavior_canary_gate_state": "READY",
   "r8_9_status": "PASS",
-  "r8_9_evidence": "docs/injection-governance/eligibility/r89-report.md"
+  "r8_9_evidence": "docs/injection-governance/eligibility/r89-report.md",
+  "r8_10_status": "PASS",
+  "r8_10_evidence": "docs/injection-governance/eligibility/r810-report.md"
 }
