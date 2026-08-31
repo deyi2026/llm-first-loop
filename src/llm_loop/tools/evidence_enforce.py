@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-from llm_loop.core.message import RecoverabilityStatus, ToolCall, ToolResult
+from llm_loop.core.message import RecoverabilityStatus, ToolCall, ToolResult, ToolResultStatus
 from llm_loop.memory.evidence import (
     EvidenceCapture,
     OwnerScope,
@@ -49,6 +49,12 @@ class EvidenceEnforcer:
         temperature: str = "hot",
     ) -> ToolResult:
         """Capture raw observation first, then replace content with a bounded projection."""
+        # R8.24-C 止血（design D2 status 门）：非 SUCCESS 回执（FAILURE/ERROR/TIMEOUT/BLOCKED，
+        # 含 status 缺失的保守跳过）不再 capture/投影——失败回执附带的 recover 胶囊会构成
+        # 递归诱饵（read_file 误读 evidence:// 死循环实证），且失败内容无恢复价值。
+        _status = getattr(result, "status", None)
+        if _status is None or str(_status) != ToolResultStatus.SUCCESS:
+            return result
         raw = result.raw_observation if result.raw_observation is not None else result.content
         source, coverage = source_for_call(call, result)
         budget = max(128, budget_chars or self.projection_budget_chars)

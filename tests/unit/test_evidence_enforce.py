@@ -624,3 +624,67 @@ def test_enforce_search_records_captures_all_limited_hits_not_only_six(tmp_path)
     )
     assert "row-9-" in hydrated.content
     assert hydrated.content.count("row-") == 10
+
+
+# R8.24-C 止血回归：design D2 status 门——非 SUCCESS 回执不 capture 不投影（递归诱饵斩断）
+def test_enforce_failure_result_skips_capture_and_projection(tmp_path):
+    """read_file 误读 evidence:// 产生 FAILURE 回执——不得 capture、不得附加 recover 胶囊。"""
+    blobs, ledger, enforcer = _enforcer(tmp_path, projection_budget_chars=700)
+    call = ToolCall(id="fail-1", name="read_file", arguments={"path": "evidence://v1/deadbeef"})
+    raw_content = "[状态: failure] [read_file] 文件不存在: evidence://v1/deadbeef"
+    result = ToolResult(
+        status=ToolResultStatus.FAILURE,
+        content=raw_content,
+        tool_call_id="fail-1",
+        tool_name="read_file",
+    )
+    out = enforcer.apply(call, result)
+    assert out is result
+    assert out.content == raw_content
+    assert out.evidence_ref is None
+    assert "recover=read_evidence" not in out.content
+    assert "[evidence]" not in out.content
+    assert out.recoverability_status is not RecoverabilityStatus.RECORDED
+    assert list((tmp_path / "evidence" / "ledger").glob("*")) == [] or not any(
+        p.name.endswith(".json") for p in (tmp_path / "evidence" / "ledger").rglob("*")
+    )
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        ToolResultStatus.FAILURE,
+        ToolResultStatus.ERROR,
+        ToolResultStatus.TIMEOUT,
+        ToolResultStatus.BLOCKED,
+    ],
+)
+def test_enforce_non_success_statuses_all_skip(tmp_path, status):
+    """四态（FAILURE/ERROR/TIMEOUT/BLOCKED）全跳过 capture——原样返回。"""
+    blobs, ledger, enforcer = _enforcer(tmp_path)
+    call = ToolCall(id="ns-1", name="execute_command", arguments={"cmd": "x"})
+    result = ToolResult(
+        status=status,
+        content=f"[状态: {status.value}] 原始失败回执",
+        tool_call_id="ns-1",
+        tool_name="execute_command",
+    )
+    out = enforcer.apply(call, result)
+    assert out is result
+    assert out.evidence_ref is None
+    assert out.recoverability_status is not RecoverabilityStatus.RECORDED
+
+
+def test_enforce_success_result_still_captures(tmp_path):
+    """SUCCESS 路径零回归——仍走 capture+投影+胶囊。"""
+    blobs, ledger, enforcer = _enforcer(tmp_path, projection_budget_chars=700)
+    call = ToolCall(id="ok-1", name="read_file", arguments={"path": "big.txt"})
+    result = ToolResult(
+        status=ToolResultStatus.SUCCESS,
+        content="A" * 6000,
+        tool_call_id="ok-1",
+        tool_name="read_file",
+    )
+    out = enforcer.apply(call, result)
+    assert out.evidence_ref is not None
+    assert out.recoverability_status is RecoverabilityStatus.RECORDED
