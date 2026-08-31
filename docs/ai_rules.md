@@ -442,3 +442,33 @@ SYSTEM_PROMPT_EXTRA="## 附加规则\n...你的自定义规则..." python -m llm
 5. **默认值≠死配置**：显式 False/0 可能是有意关闭（如 inject_system_notices=False 缓存前缀稳定），删前确认语义，不因"等于默认"就删。
 
 **程序角色**：配置读取/门控由程序实现；生命周期闭环由 AI 负责（程序不强制校验，避免新增配置面）。
+
+---
+
+## R8.24-A 迁移去向指针（2026-08-31 append-only；本节只追加不改写上文）
+
+> 依据：`docs/r824/R8.24-A-model-contract-slimming.md`（A-D1~A-D15）与总审计 §7 规则逐项建议表。
+> 本节登记 `docs/ai_rules.lite.md` v7→v8 迁移中已删除/下沉条目的去向——**本文件（full SoT）为超集留档**，
+> 上文历史正文原样保留（含被 lite 删除条目的完整规则文本，供人工/演进参考）。
+> 逐条对照明细：`.codeartsdoer/specs/r824_ab/lite-v7-v8-diff.md`。
+
+| lite v7 条目 | 去向 | 落点说明 |
+|---|---|---|
+| 方法层①~⑥（状态追踪/前置自问/假设先行/增量推理/结论固化/工具轮三句） | MOVE-SKILL | `skills/long-task-research/SKILL.md`（按需加载；A-D3） |
+| 规则 4 程序故障 | DELETE-GLOBAL（lite） | 机械防护归 R8.24-B 控制面；本 SoT 规则四正文留档 |
+| 规则 5 `[[memory]]` 强制格式 | DELETE-GLOBAL（lite） | 用户显式要求记住时走明确工具；通道面归 R8.24-E（E07）；本 SoT 规则五留档 |
+| 规则 8 动作链完整/回答报工具名 | DELETE-GLOBAL（lite） | `tool_used`/`chain_complete` 保留为 offline 评测 rubric 口径（A-D4），不进 production prompt |
+| 规则 9 模型切换手册 | MOVE-TOOL | `switch_model` tool schema 承载存在性/能力/状态验证；capability floor 归 R8.24-D |
+| 规则 11 截断提炼三件套 | DELETE-GLOBAL（大部分） | 回执事实化归 R8.24-C；11.1 截断补救 SOP 与 11.2 程序契约违反上报整段**归位本 SoT 规则十一**（超集保留，见上文 :227-235） |
+| 规则 10 每轮自查 | DELETE-GLOBAL（lite） | 维护/orchestrator 场景归 maintenance；本 SoT 规则十留档 |
+| 规则 13 DSH | DELETE-GLOBAL（lite） | 对应 tool schema/skill 承载；本 SoT 规则十三留档 |
+| 规则 14 interop | 语义重写 | 旧"自动注入"语义取消（R8.13），改 explicit user accept / retrieval；本 SoT 规则十四留档 |
+| 规则 15 CodeArts | DELETE-GLOBAL（lite） | 对应 tool schema/skill；本 SoT 规则十五留档 |
+| 规则 16 缓存纪律 | DELETE-GLOBAL（lite） | runtime telemetry 归 R8.24-B/D；本 SoT 规则十六留档 |
+| 规则 17 长输出分段 | DELETE-GLOBAL（lite） | transport/UI 承载；本 SoT 规则十七留档 |
+| 规则 18 经验前置 | DELETE-GLOBAL（lite） | on-demand retrieval（对齐 R8.15）；本 SoT 规则十八留档 |
+| 规则 19 中断恢复模型职责 | DELETE-GLOBAL（lite） | program-side reconcile 归 R8.24-B（E32）；本 SoT 规则十九留档 |
+| 规则 20 Goal/checkpoint 通用纪律 | MOVE-SKILL | agent harness/skill 承载；`task_active` 注入面归 R8.24-E；本 SoT 规则二十留档 |
+| 规则 21 程序反馈语义 | 过渡期保留（lite v8 在场） | 过渡属性标注已加；删除条件 = R8.24-B（B-G5）+ R8.24-C 双验收通过（A-D12） |
+| 头部"必读指令"（prompt 侧） | DELETE MANDATORY READ | `src/llm_loop/core/prompt.py` 已改写为最小语义契约（A-D1/A-D13）；lite 文件可发现性保留、义务删除（A-D2） |
+| 配置扩展 SYSTEM_PROMPT_EXTRA | GOVERNED（指针） | 自由文本直拼通道已删除，改为 `LFL_SYSTEM_EXTRA_BUNDLE` 版本化 policy bundle（manifest/hash/大小上限校验；A-D14 方案 2）——上文「配置扩展」节描述的旧通道仅作历史留档 |

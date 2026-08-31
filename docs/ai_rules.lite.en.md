@@ -1,36 +1,21 @@
-# docs/ai_rules.lite.md — AI autonomous rules execution view (version=6; supersedes prior)
-> Full SoT: docs/ai_rules.md (superset). This file is the model execution view; follow it.
+# docs/ai_rules.lite.md — Agent/maintenance playbook (version=8; R8.24-A reclassification)
 
-## Method layer (how to think; precedes specific rules)
-①State tracking: each round locate established facts / open problems / this step's action; trust only the state, not memory of scattered history.
-②Ask before acting: "what will differ this time?" — unchanged params/path/tool/context → previous result valid, don't re-run.
-③Hypothesis first: falsifiable hypothesis before acting; one experiment, one hypothesis; on failure update it, don't retry with different params.
-④Incremental reasoning: "this step → result → next step"; don't restate established plans.
-⑤Solidify conclusions: write key conclusions to [[memory]] or archives immediately.
-⑥Minimize tool-round reasoning: write only "why this call / what to expect / what to do on failure"; deep analysis goes to answer rounds.
+> **Role (R8.24-A A-D2)**: reclassified from "universal model execution rules" to an
+> **Agent/maintenance playbook** — read on demand by maintenance runs and operators;
+> ordinary user runs reference it zero times and inject it into no prompt
+> (standing assertion: tests/unit/test_model_contract_slimming.py).
+> Full SoT: docs/ai_rules.md (superset; R8.24-A migration pointers in its trailing section).
+> v7→v8 per-item disposition: .codeartsdoer/specs/r824_ab/lite-v7-v8-diff.md.
 
-## Key constraints (condensed from RULE-AI-01~20)
+## Key constraints (v8 retained set)
 1Honesty: verify against this round's tool receipts; never fabricate completion.
 2Parameter autonomy: check params before tool calls; correct and retry after guidance.
 3Stagnation: adjust or answer when repeating/no progress; success receipt = confirmation, no re-verify; research unknown commands, no trial-and-error; external wait → one status line then stop.
-4Program faults: on [程序异常], continue from context or switch paths.
-5Memory: append [[memory]] {type,content,keywords} for worth-remembering info.
-6Evolution: submit_evolution; self_evaluate when needed; accepted evolutions execute per permission & register; boundary items human-only.
+6Evolution: submit_evolution; self_evaluate when needed; accepted evolutions execute per permission & register; boundary items human-only. Approval channel priority (mandatory): all human-approval items go through the Web console `http://127.0.0.1:8902/ui/v2/` (Evolution panel) first; CLI and Feishu text commands are fallback only.
 7Tool-first: if info exists only in tool results, fetch it first; never fabricate from priors.
-8Action chains: after self-checks, apply adjust_strategy (state before/after) or conclude none; mention this round's tools.
-9Model switching: consult model_catalog first; include a reason; verify after; don't auto-degrade a user-chosen model.
-10Per-round: self-eval / evolution todos / pending reviews / context window / reasoning awareness (write key conclusions first).
-11Truncation (R5 trio): ①truncation signals → record key points/gaps first; ②no head/tail/grep -m on queries (tool truncates+persists; self-truncation = silent drop); ③rounds exhausted → attribute first (idle: don't raise; progress: adjust_strategy).
 12Identity: model identity follows model_catalog/architecture_status receipts, never priors.
-13DSH: dsh_task for DSH sub-agents (long/cross-project/parallel); own tools for simple tasks.
-14Coordination: external DSH agents via data/interop/ mailboxes; never write secrets.
-15CodeArts: heavy remote tasks; high-risk needs human approval; unattended denies.
-16Cache: batch rule/prompt changes (one change = one full invalidation); tail-append injections only; keep history stable.
-17Long content: chunk by default — summary first, mark 1/N, offer continue/skip/end; keep key code fragments, write full to file & give path.
-18Experience reuse: check verified shortest paths; reuse on hit; fix failures directionally (params/path/transient); save_experience.
-19Interruption recovery: when a session restarts, context is incomplete, or memory conflicts with the conversation, `data/event_logs/<session_id>.jsonl` is the complete message truth source; read the missing span once, recover the task, then continue immediately—do not guess from memory or repeatedly re-search confirmed content. Explicitly distinguish main vs mirror workspace; relative paths follow `workspace_base()`. If a read failure carries a [路径登记] known-missing hint, stop probing that path and use search_files or ask the user instead of retrying by depth/directory/tool changes.
-20Bounded task progress: for long audits/analysis/ongoing work, use a Goal with milestone checkpoints (What / Evidence / Path / Next), verify current worktree/external state before relying on recovered checkpoints, and mark complete/blocked only with current evidence. When cost, direction, safety, approval, or another human decision boundary is reached, surface the evidence and pause for that decision; never use “never end the conversation” as a mandate for unbounded autonomous loops, repeated searches, or repeated verification. Intent switch logging: when a new user instruction conflicts with the active Goal, checkpoint the switch (old→new) before executing to prevent stale-Goal drift; on recovery, the user's latest instruction prevails over a stale Goal. Reuse the existing audit/event-log truth sources rather than creating a drifting duplicate persistence layer.
-21Program feedback semantics: assistant text in history carrying the "[程序反馈·非模型回答]" prefix or any of [LLM 调用异常]/[已达轮数上限]/[停滞熔断]/[停滞提醒]/[缓存守卫拦截]/[上下文超限]/[上下文压缩] prefixes is program-injected runtime feedback (source=SYSTEM), **not a model answer or conclusion** — do not restate it, continue it, or cite it as a basis; an error only indicates that round failed; conclusions must follow actual tool receipts (prevents "error treated as answer" semantic pollution).
+21Program feedback semantics: assistant text in history carrying the "[程序反馈·非模型回答]" prefix or any of [LLM 调用异常]/[已达轮数上限]/[停滞熔断]/[停滞提醒]/[缓存守卫拦截]/[上下文超限]/[上下文压缩] prefixes is program-injected runtime feedback (source=SYSTEM), **not a model answer or conclusion** — do not restate it, continue it, or cite it as a basis; conclusions must follow actual tool receipts.
+  Transitional note (R8.24-A A-D12/A-4.1): migration protection only; deletion condition = both R8.24-B acceptance (B-G5 zero runtime notice in sess.messages) and R8.24-C acceptance (receipt factualization) pass; deletion itself is deferred, not executed this cycle.
 
 ## Disaster safety (hard constraint, do not touch)
 Destructive commands are hard-blocked; production deploys/artifact releases/force-pushes/environment teardown need human approval.
