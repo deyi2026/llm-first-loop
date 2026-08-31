@@ -112,7 +112,12 @@ def _wire_engine(tmp_path: Path):
 class TestBuildAlphaMount:
     """α 挂载: R4 过滤后、投影进 provider 视图前的剔除与降级（wire 层）."""
 
-    def test_mislabel_message_excluded_and_downgraded(self, tmp_path: Path, sink: _CaptureSink) -> None:
+    def test_mislabel_message_excluded_and_downgraded(
+        self, tmp_path: Path, sink: _CaptureSink, monkeypatch
+    ) -> None:
+        # R8.24-D DT-1.1/DT-1.2: 处置面默认 off（quarantine 承接，provider chars=0）；
+        # 本用例显式切 on 验证回滚通道行为与旧现状一致（REFERENCE 附录回喂照旧）。
+        monkeypatch.setenv("LFL_LEAK_QUARANTINE", "on")
         engine, sess = _wire_engine(tmp_path)
         leaked = _user("外部agent轨迹原文片段XYZ", dict(MISLABEL_MD))
         sess.messages = [leaked] + list(sess.messages)
@@ -125,7 +130,7 @@ class TestBuildAlphaMount:
             m.get("role") == "user" and str(m.get("content") or "") == leaked.content
             for m in out
         )
-        # 2) 降级附录进入聚合产物（REFERENCE 语义包装）
+        # 2) on 回滚通道：降级附录进入聚合产物（REFERENCE 语义包装）与旧现状一致
         downgraded = [str(m.get("content") or "") for m in out if leaked.content[:10] in str(m.get("content") or "")]
         assert downgraded, "降级附录应出现在 provider 视图"
         assert any(PROGRAM_APPENDIX_NOTICE in d for d in downgraded)

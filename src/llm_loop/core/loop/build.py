@@ -687,19 +687,34 @@ class _BuildMixin:
             except Exception:  # noqa: BLE001 — provider-view hygiene is already applied
                 pass
         # agent_trace_leak 4.2: α 挂载点——user 消息投影进 provider 视图前泄漏检测
-        # （纯 metadata 单遍，≤1ms；fail-open；处置仅视图层：失真消息剔除 +
-        # 经 render_program_appendix 进既有聚合槽走预算链，会话存储原文零改动，
-        # spec 5.4.1-3）。
+        # （纯 metadata 单遍，≤1ms；fail-open；处置仅视图层：失真消息剔除，
+        # 会话存储原文零改动，spec 5.4.1-3）。
+        # R8.24-D D-D1（DT-1.1）: 处置面按 LFL_LEAK_QUARANTINE 三态分流——
+        # off（默认，enforce）：mislabel 剔除 + write_quarantine 隔离 + leak.quarantined
+        # 事件（event+UI 双通道，不进 sess.messages——沿 B 包 E19 通知面惯例）+
+        # provider chars=0（不再以 REFERENCE appendix 身份回喂）；
+        # shadow：回喂照旧 + leak.would_quarantine 计数事件（行为零变化）；
+        # on：现状回喂（回滚通道，回滚期结束后整段退役）。
         _leak_downgrade_parts: list[tuple[str | None, str]] = []
         try:
             from llm_loop.core.injection_labels import InjectionLayer as _TLLayer
             from llm_loop.core.injection_labels import render_program_appendix as _rpax
+            from llm_loop.core.trace_leak import leak_events as _tle
             from llm_loop.core.trace_leak.leak_detector import detect_leak_at_build
+            from llm_loop.core.trace_leak.leak_events import (
+                LEAK_QUARANTINED,
+                LEAK_WOULD_QUARANTINE,
+                current_quarantine_mode,
+            )
+            from llm_loop.core.trace_leak.leak_events import (
+                write_quarantine as _write_quarantine,
+            )
             from llm_loop.core.trace_leak.trace_signature import (
                 content_matches_signature,
                 current_signature_mode,
             )
 
+            _quarantine_mode = current_quarantine_mode()
             _findings = detect_leak_at_build(
                 base,
                 session_id=sess.session_id,
@@ -714,12 +729,59 @@ class _BuildMixin:
                     ):
                         _m = base[_f.message_ref]
                         _drop_ids.add(id(_m))
-                        _leak_downgrade_parts.append(
-                            (
-                                "leak_downgrade",
-                                _rpax(str(_m.content or ""), _TLLayer.REFERENCE),
+                        _leak_content = str(_m.content or "")
+                        if _quarantine_mode == "off":
+                            # D-D1 quarantine 承接：隔离留痕（0600）+ 事件（不含原文，
+                            # sha1/preview≤200/basis）+ UI 提示；不自动回喂、不一键转正。
+                            _write_quarantine(
+                                LEAK_QUARANTINED,
+                                session_id=sess.session_id,
+                                content=_leak_content,
+                                basis=(
+                                    "build α hook：确认 mislabel 的程序内容隔离"
+                                    f"（{_f.basis}；不降级注入，provider chars=0）"
+                                ),
                             )
-                        )
+                            _tle.emit_leak_event(
+                                LEAK_QUARANTINED,
+                                entry="build.leak_detector",
+                                session_id=sess.session_id,
+                                content=_leak_content,
+                                basis=(
+                                    "确认 mislabel 内容改 quarantine 承接"
+                                    "（有条内容被隔离，可在 trace_leak_quarantine "
+                                    "区复核；不进本轮 prompt）"
+                                ),
+                                extra={
+                                    "provider_chars": 0,
+                                    "quarantine_mode": _quarantine_mode,
+                                },
+                                sink=self._event_append,
+                            )
+                        else:
+                            if _quarantine_mode == "shadow":
+                                # shadow 计数：行为与现状零变化，仅记录 would_quarantine
+                                _tle.emit_leak_event(
+                                    LEAK_WOULD_QUARANTINE,
+                                    entry="build.leak_detector",
+                                    session_id=sess.session_id,
+                                    content=_leak_content,
+                                    basis=(
+                                        "shadow 计数：若 enforce 本条将 quarantine"
+                                        "（现状回喂照旧，行为零变化）"
+                                    ),
+                                    extra={
+                                        "chars": len(_leak_content),
+                                        "quarantine_mode": _quarantine_mode,
+                                    },
+                                    sink=self._event_append,
+                                )
+                            _leak_downgrade_parts.append(
+                                (
+                                    "leak_downgrade",
+                                    _rpax(_leak_content, _TLLayer.REFERENCE),
+                                )
+                            )
                 if _drop_ids:
                     base = [_m for _m in base if id(_m) not in _drop_ids]
                     _base_original_indices = [
@@ -1390,13 +1452,21 @@ class _BuildMixin:
                 )
             )
         _inject_parts = _eligible_inject_parts
-        # agent_trace_leak 4.2/4.3: α 降级产物并入聚合尾部（经 render_program_appendix
-        # 包装、REFERENCE 语义已定，走既有预算链纪律）；β 聚合口槽键一致性观测
-        # （未知槽 → overreach 观测事件，不阻断——注入位置 P1-10 缓存前缀零破坏）。
-        if _leak_downgrade_parts:
-            _inject_parts = list(_inject_parts) + [
-                (slot, content) for slot, content in _leak_downgrade_parts
-            ]
+        # agent_trace_leak 4.2/4.3 + R8.24-D DT-1.2（D-G2）: α 降级产物并入段仅存于
+        # LFL_LEAK_QUARANTINE=on/shadow 回滚分支内（默认 off 不可达；回滚期结束后
+        # 整段退役删除）；β 聚合口槽键一致性观测（未知槽 → overreach 观测事件，
+        # 不阻断——注入位置 P1-10 缓存前缀零破坏）。leak_downgrade 槽键已从
+        # _known_slots 移除（D-G2：allowlist 外旁路身份退役；on 回滚态产物触发
+        # overreach 观测事件 = 回滚通道使用审计留痕）。
+        try:
+            from llm_loop.core.trace_leak.leak_events import current_quarantine_mode
+
+            if _leak_downgrade_parts and current_quarantine_mode() in ("on", "shadow"):
+                _inject_parts = list(_inject_parts) + [
+                    (slot, content) for slot, content in _leak_downgrade_parts
+                ]
+        except Exception:  # noqa: BLE001 — 开关读取失败 fail-open 不回喂（off 语义）
+            pass
         try:
             _known_slots = {
                 str(SlotKind.INTEROP),
@@ -1404,7 +1474,6 @@ class _BuildMixin:
                 str(PROGRAM_RECOVERY_SLOT),
                 "memory",
                 "task_active",
-                "leak_downgrade",
             }
             for _slot, _content in _inject_parts:
                 if _slot is not None and str(_slot) not in _known_slots:

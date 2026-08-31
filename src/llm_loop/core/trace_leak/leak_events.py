@@ -18,6 +18,7 @@ payload 对齐 spec 6.3：类型 / 入口标识 / 目标会话 / 内容 sha1 指
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
 import os
@@ -36,6 +37,11 @@ LEAK_CHANNEL_OVERREACH = "leak.channel_overreach"
 LEAK_SIGNATURE_WARNED = "leak.signature_warned"
 LEAK_GUARD_FAULT = "leak.guard_fault"
 LEAK_DETECTOR_FAULT = "leak.detector_fault"
+# R8.24-D D-D1（DT-1.1）: 确认 mislabel 的程序内容改 quarantine 承接——
+# 事件新增不改名（冻结约束允许扩展）；operator 覆盖审计事件（DT-1.4④）。
+LEAK_QUARANTINED = "leak.quarantined"
+LEAK_GUARD_OVERRIDE = "leak.guard_override"
+LEAK_WOULD_QUARANTINE = "leak.would_quarantine"
 
 FROZEN_EVENT_KINDS: frozenset[str] = frozenset(
     {
@@ -46,6 +52,24 @@ FROZEN_EVENT_KINDS: frozenset[str] = frozenset(
         LEAK_SIGNATURE_WARNED,
     }
 )
+
+# R8.24-D D-D1（DT-1.1③）: REFERENCE 降级回喂 → quarantine 处置开关。
+# 三态：on=现状回喂（回滚通道，回滚期结束后整段退役）/ shadow=回喂照旧 +
+# would_quarantine 计数事件 / off=quarantine+事件+UI+provider chars=0。
+# 本批收尾落地默认 off（enforce；shadow→enforce 留痕见组验收回执）。
+QUARANTINE_MODE_ENV = "LFL_LEAK_QUARANTINE"
+DEFAULT_QUARANTINE_MODE = "off"
+_VALID_QUARANTINE_MODES = frozenset({"on", "shadow", "off"})
+
+
+def current_quarantine_mode() -> str:
+    """读取 quarantine 处置模式（每次现读，供灰度切换与测试 monkeypatch）。"""
+    mode = (
+        str(os.environ.get(QUARANTINE_MODE_ENV, "") or DEFAULT_QUARANTINE_MODE)
+        .strip()
+        .lower()
+    )
+    return mode if mode in _VALID_QUARANTINE_MODES else DEFAULT_QUARANTINE_MODE
 
 # 事件接收器契约：(session_id, event_type, payload) -> None
 EventSink = Callable[[str, str, dict], None]
@@ -72,10 +96,16 @@ def quarantine_root(session_id: str) -> Path:
 
 
 def write_quarantine(kind: str, *, session_id: str, content: str, basis: str) -> Path | None:
-    """被拦截内容隔离留痕（可检索、不静默丢弃）；失败 fail-open 返回 None。"""
+    """被拦截内容隔离留痕（可检索、不静默丢弃）；失败 fail-open 返回 None.
+
+    R8.24-D §7.1 风险"quarantine 自身成为泄漏面"细化（DT-1.1④）：
+    目录与文件权限收敛 0600/0700（仅属主可读写）。
+    """
     try:
         root = quarantine_root(session_id)
         root.mkdir(parents=True, exist_ok=True)
+        with contextlib.suppress(Exception):  # noqa: BLE001 — 权限收敛失败不阻断留痕
+            root.chmod(0o700)
         digest, _ = _content_digest(content)
         target = root / f"{int(time.time())}-{kind.replace('.', '_')}-{digest[:12]}.json"
         if target.exists():
@@ -92,6 +122,8 @@ def write_quarantine(kind: str, *, session_id: str, content: str, basis: str) ->
             ),
             encoding="utf-8",
         )
+        with contextlib.suppress(Exception):  # noqa: BLE001 — 权限收敛失败不阻断留痕
+            target.chmod(0o600)
         return target
     except Exception:  # noqa: BLE001 — 隔离失败 fail-open
         logger.warning("泄漏隔离写入失败（fail-open）", exc_info=True)

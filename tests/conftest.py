@@ -122,6 +122,19 @@ def isolated_data_dir(tmp_path, monkeypatch):
     return data_dir
 
 
+@pytest.fixture(autouse=True)
+def guard_mode_observe_default(monkeypatch):
+    """R8.24-D DT-1.5: guard default 已切 enforce（fail-closed，生产缺省）.
+
+    测试基建统一显式覆盖为 observe（operator 显式覆盖通道的合法使用——生产
+    default enforce 下无凭据 user 写入 drop，而存量测试大量不带 ingress 调用
+    engine.run）。fail-closed 专项断言（无 env 时 default==enforce、无凭据
+    drop、有凭据放行）在 tests/unit/test_trace_leak_quarantine.py 内显式
+    monkeypatch.delenv 验证，不受本覆盖影响。
+    """
+    monkeypatch.setenv("LFL_LEAK_GUARD_MODE", "observe")
+
+
 @pytest.fixture
 def fake_settings(isolated_data_dir):
     """测试用 Settings（Fake key/base_url/model + 隔离 DATA_DIR）."""

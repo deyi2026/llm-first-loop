@@ -213,10 +213,16 @@ def chat(
         if _persist_model_ref else None
     )
     try:
+        # R8.24-D D-D2（DT-1.3）: Web 非流式端点签发人类通道凭据（ingress token）——
+        # guard fail-closed（default enforce）下无凭据 user 写入将被拒绝；本接线使
+        # Web 通道合法输入携带白名单凭据放行（叠加式改动，外部并行改动零触碰）。
+        from llm_loop.core.trace_leak.ingress_token import issue_ingress
+
         result = engine._run_with_acquired(
             session_id, payload.message, model=payload.model,
             reasoning_effort=payload.reasoning_effort, on_run_acquired=_on_run_acquired,
             expected_workspace_epoch=workspace_epoch,
+            ingress=issue_ingress("web"),
         )
     except WorkspaceChangedError as exc:
         return UTF8JSONResponse(
@@ -302,7 +308,18 @@ def _canonical_persist_model(engine: Any, model: str | None) -> str | None:
 
 def _apply_session_model_override(session: Any, model_ref: str | None) -> None:
     """接单成功后修改本轮 run-owned Session；持久化由 engine accepted 边界统一执行。"""
+    # EVO-20260829-ad8c5984 装配漂移防御层：前端 stale state.model 经 payload.model
+    # 无条件写回会静默覆盖 run 内 switch_model 的切换。前端回填（stream-chat.js
+    # buildAssistantNote 用 done.model_used 回填 state.model）已闭合主环；
+    # 此告警为可观测兜底——任何残余漂移尝试都会进日志，便于验证根治效果。
     if model_ref and getattr(session, "model_override", None) != model_ref:
+        old = getattr(session, "model_override", None)
+        if old:
+            logger.warning(
+                "model_override 写回覆盖: %s → %s（前轮 switch_model 可能被 web payload.model 覆盖）",
+                old,
+                model_ref,
+            )
         session.model_override = model_ref
 
 
@@ -326,10 +343,15 @@ def _stream_background(
     - finally: unsubscribe（SSE 断连只停订阅，后台线程不受影响、继续落盘）
     """
     try:
+        # R8.24-D D-D2（DT-1.3④盘点补齐）: 后台 run 提交同样携带 web 通道凭据
+        # （runner 线程体透传 run_stream ingress；resume 不提交新 run 不需要凭据）。
+        from llm_loop.core.trace_leak.ingress_token import issue_ingress
+
         handle, q = runner.start(
             session_id, message, model=model, reasoning_effort=reasoning_effort,
             resume=resume, before_start=before_start,
             expected_workspace_epoch=expected_workspace_epoch,
+            ingress=None if resume else issue_ingress("web"),
         )
     except WorkspaceChangedError as exc:
         yield _sse("error", {"error": "workspace_changed", "detail": str(exc)})
@@ -507,10 +529,15 @@ def chat_stream(
         if lock is not None:
             acquired = True
         try:
+            # R8.24-D D-D2（DT-1.3）: Web 流式端点签发人类通道凭据（ingress token），
+            # 与非流式端点同源（issue_ingress 幂等，双端点共享 web 通道凭据）。
+            from llm_loop.core.trace_leak.ingress_token import issue_ingress
+
             it = engine._run_stream_with_acquired(
                 session_id, payload.message, model=payload.model,
                 reasoning_effort=payload.reasoning_effort, on_run_acquired=_before_start,
                 expected_workspace_epoch=workspace_epoch,
+                ingress=issue_ingress("web"),
             )
             while True:
                 try:
