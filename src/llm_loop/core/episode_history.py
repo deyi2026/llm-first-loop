@@ -12,9 +12,10 @@ import logging
 import re
 from typing import Any
 
-from llm_loop.core.message import Message
+from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.reference_injection import is_human_user_message
-from llm_loop.memory.episode import EpisodeStore, stable_episode_ref
+from llm_loop.feedback.honesty import PROGRAM_FEEDBACK_PREFIXES
+from llm_loop.memory.episode import EpisodeStore, stable_episode_ref, stable_tool_span_ref
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,9 @@ EPISODE_STATE_KEY = "episode_state"
 EPISODE_STATE_RESOLVED = "resolved"
 EPISODE_KEEP_PROVIDER_KEY = "resolved_episode_keep_provider"
 EPISODE_RESOLUTION_CANDIDATE_KEY = "episode_resolution_candidate"
+CONSUMED_TOOL_SPAN_REF_KEY = "consumed_tool_span_ref"
+CONSUMED_TOOL_SPAN_STATE_KEY = "tool_span_state"
+CONSUMED_TOOL_SPAN_STATE = "consumed"
 
 _DURABLE_USER_RE = re.compile(
     r"(?:以后|今后|从现在开始|往后|后续(?:都|一律|始终)|始终|永远|长期|不要再|"
@@ -49,15 +53,34 @@ def is_resolved_episode_message(message: Message) -> bool:
     return bool(resolved_episode_ref(message))
 
 
-def provider_view_without_resolved_episodes(messages: list[Message]) -> list[Message]:
-    """Project working context by retiring only durably indexed episodes."""
+def consumed_tool_span_ref(message: Message) -> str:
+    return str(_metadata(message).get(CONSUMED_TOOL_SPAN_REF_KEY) or "")
 
-    return [
-        m
-        for m in messages
-        if not is_resolved_episode_message(m)
-        or bool(_metadata(m).get(EPISODE_KEEP_PROVIDER_KEY))
-    ]
+
+def is_consumed_tool_span_message(message: Message) -> bool:
+    return bool(consumed_tool_span_ref(message))
+
+
+def provider_message_visible(message: Message) -> bool:
+    """Return whether one persisted message belongs in default provider history."""
+
+    if is_consumed_tool_span_message(message):
+        return False
+    if is_resolved_episode_message(message):
+        return bool(_metadata(message).get(EPISODE_KEEP_PROVIDER_KEY))
+    return True
+
+
+def provider_view_without_resolved_episodes(messages: list[Message]) -> list[Message]:
+    """Project working context after durable lifecycle retirement.
+
+    The historical public name is kept for compatibility.  Besides whole
+    resolved episodes, R8.20 also retires raw tool declaration/result spans only
+    after a later model assistant has consumed them and EpisodeStore has durably
+    indexed the exact visible evidence.
+    """
+
+    return [m for m in messages if provider_message_visible(m)]
 
 
 def has_explicit_durable_user_instruction(message: Message) -> bool:
@@ -313,6 +336,151 @@ def backfill_completed_episodes(
             continue
         if ref:
             refs.append(ref)
+    return refs
+
+
+def _tool_group_end(messages: list[Message], start: int, end_exclusive: int) -> int | None:
+    """Return the exclusive end of one exact assistant(tool_calls)->tool group."""
+
+    if start < 0 or start >= end_exclusive:
+        return None
+    declaration = messages[start]
+    if declaration.role != "assistant" or not declaration.tool_calls:
+        return None
+    declared = [str(call.get("id") or "") for call in declaration.tool_calls if isinstance(call, dict)]
+    if not declared or any(not call_id for call_id in declared) or len(set(declared)) != len(declared):
+        return None
+    idx = start + 1
+    receipts: list[str] = []
+    while idx < end_exclusive and messages[idx].role == "tool":
+        receipts.append(str(messages[idx].tool_call_id or ""))
+        idx += 1
+    if (
+        len(receipts) != len(declared)
+        or any(not receipt for receipt in receipts)
+        or set(receipts) != set(declared)
+    ):
+        return None
+    return idx
+
+
+def _is_tool_consumer(message: Message) -> bool:
+    """A real non-tool model answer proves prior tool evidence was consumed."""
+
+    if message.role != "assistant" or message.tool_calls or not str(message.content or "").strip():
+        return False
+    md = _metadata(message)
+    if md.get("answer_origin") == "program" or message.source == MessageSource.SYSTEM:
+        return False
+    text = str(message.content or "")
+    if text.startswith(PROGRAM_FEEDBACK_PREFIXES):
+        return False
+    # Current format explicitly identifies model answers.  Legacy sessions often
+    # lack answer_origin but retain model_used/source=user; accept those while the
+    # program-feedback guards above deny known synthetic finals.
+    return md.get("answer_origin") == "model" or bool(message.model_used) or message.source == MessageSource.USER
+
+
+def _mark_consumed_tool_indices(messages: list[Message], indices: list[int], ref: str) -> None:
+    for idx in indices:
+        message = messages[idx]
+        md = dict(_metadata(message))
+        md[CONSUMED_TOOL_SPAN_REF_KEY] = ref
+        md[CONSUMED_TOOL_SPAN_STATE_KEY] = CONSUMED_TOOL_SPAN_STATE
+        message.metadata = md
+
+
+def backfill_consumed_tool_spans(store: EpisodeStore | None, session: Any) -> list[str]:
+    """Durably index and retire raw tool evidence already consumed by a model answer.
+
+    This lifecycle is intentionally narrower than whole-episode resolution.  It
+    never retires the human instruction or the consuming assistant answer, and it
+    never touches an incomplete/current tool-followup chain.  Storage/session
+    truth stays exact; only later provider projection omits marked tool material.
+    """
+
+    if store is None:
+        return []
+    messages: list[Message] = list(getattr(session, "messages", []) or [])
+    session_id = str(getattr(session, "session_id", "") or "")
+    human_starts = [idx for idx, message in enumerate(messages) if is_human_user_message(message)]
+    refs: list[str] = []
+
+    for pos, start in enumerate(human_starts):
+        next_start = human_starts[pos + 1] if pos + 1 < len(human_starts) else len(messages)
+        consumer: int | None = None
+        for idx in range(start + 1, next_start):
+            if _is_tool_consumer(messages[idx]):
+                consumer = idx
+                break
+        if consumer is None:
+            continue
+
+        tool_indices: list[int] = []
+        call_ids: list[str] = []
+        cursor = start + 1
+        invalid_group = False
+        while cursor < consumer:
+            message = messages[cursor]
+            if message.role == "assistant" and message.tool_calls:
+                group_end = _tool_group_end(messages, cursor, consumer)
+                if group_end is None:
+                    invalid_group = True
+                    break
+                group_indices = list(range(cursor, group_end))
+                # Whole resolved episodes already have a stronger retirement/ref;
+                # do not create a duplicate tool-span record for those groups.
+                if not all(is_resolved_episode_message(messages[idx]) for idx in group_indices):
+                    if any(is_resolved_episode_message(messages[idx]) for idx in group_indices):
+                        invalid_group = True
+                        break
+                    tool_indices.extend(group_indices)
+                    call_ids.extend(
+                        str(call.get("id") or "")
+                        for call in (message.tool_calls or [])
+                        if isinstance(call, dict)
+                    )
+                cursor = group_end
+                continue
+            cursor += 1
+
+        if invalid_group or not tool_indices:
+            continue
+        existing_refs = {consumed_tool_span_ref(messages[idx]) for idx in tool_indices}
+        existing_refs.discard("")
+        if len(existing_refs) > 1:
+            continue
+        if existing_refs and all(is_consumed_tool_span_message(messages[idx]) for idx in tool_indices):
+            refs.extend(sorted(existing_refs))
+            continue
+
+        ref = next(iter(existing_refs), "") or stable_tool_span_ref(
+            session_id,
+            messages[start],
+            start,
+            consumer,
+            call_ids,
+        )
+        raw_messages = [messages[start], *[messages[idx] for idx in tool_indices], messages[consumer]]
+        try:
+            store.index_tool_span(
+                session_id,
+                ref=ref,
+                user_seq=start,
+                consumer_seq=consumer,
+                raw_messages=raw_messages,
+            )
+        except Exception:  # noqa: BLE001 — durable proof failure means keep provider-visible
+            logger.warning(
+                "consumed tool span 索引失败（保留 provider 可见）: sid=%s start=%d consumer=%d",
+                session_id,
+                start,
+                consumer,
+                exc_info=True,
+            )
+            continue
+        _mark_consumed_tool_indices(messages, tool_indices, ref)
+        refs.append(ref)
     return refs
 
 

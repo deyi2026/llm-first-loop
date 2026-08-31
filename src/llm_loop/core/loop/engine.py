@@ -399,18 +399,23 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             with self._run_states_guard:
                 self._run_sessions[session_id] = sess
 
-        # R8.5 eligibility migration-on-use: index only prior episodes whose final
-        # assistant explicitly proves a completed model run.  Legacy/ambiguous
-        # history stays visible fail-open.  This happens before the new user message
-        # is appended, so the current turn can never be mistaken for resolved.
+        # R8.5/R8.20 lifecycle migration-on-use. Whole episodes retire only with
+        # resolution proof. Independently, complete raw tool spans may retire after a
+        # later non-tool model assistant has consumed them and the exact visible span
+        # is durably indexed. This happens before the new user message is appended, so
+        # the current tool-followup protocol can never be mistaken for historical.
         try:
-            from llm_loop.core.episode_history import backfill_completed_episodes
+            from llm_loop.core.episode_history import (
+                backfill_completed_episodes,
+                backfill_consumed_tool_spans,
+            )
 
             backfill_completed_episodes(
                 self.episode_store, sess, event_store=self._event_store
             )
+            backfill_consumed_tool_spans(self.episode_store, sess)
         except Exception:  # noqa: BLE001 — retrieval indexing must not block a run
-            logger.warning("resolved episode 历史索引失败（fail-open，不退休）", exc_info=True)
+            logger.warning("history lifecycle 索引失败（fail-open，不退休）", exc_info=True)
 
         # ── 消息进：构造用户消息并落库 ──
         user_msg = Message(

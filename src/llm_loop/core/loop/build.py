@@ -20,6 +20,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from llm_loop.core.cache_health import GATE_NOTE_CONTENT  # 门禁干预知情标记
+from llm_loop.core.episode_history import provider_message_visible
 from llm_loop.core.injection_budget import (
     DEFAULT_INJECTION_BUDGET_CHARS,
     plan_prompt_injection_budget,
@@ -172,10 +173,7 @@ def _provider_visible_chars(messages: list[Message], provider_id: str, start: in
         len(m.content)
         for m in messages[max(0, start) :]
         if not is_cache_compacted_for(m, provider_id)
-        and (
-            not (getattr(m, "metadata", None) or {}).get("resolved_episode_ref")
-            or bool((getattr(m, "metadata", None) or {}).get("resolved_episode_keep_provider"))
-        )
+        and provider_message_visible(m)
     )
 
 
@@ -525,10 +523,10 @@ class _BuildMixin:
         _r6_ingress_truth = current_ingress_user_truth(
             sess.messages, getattr(self, "_current_turn_ref", None)
         )
-        # INJECTION-GOVERNANCE R8.5 eligibility: completed episodes are durable
-        # indexed history, not default working context.  Only messages carrying a
-        # proven resolved_episode_ref are retired; current/unresolved/legacy
-        # history remains visible fail-open.  Storage/event truth is untouched.
+        # INJECTION-GOVERNANCE R8.5/R8.20 eligibility: completed episodes and
+        # already-consumed raw tool spans are durable indexed history, not default
+        # working context. Current/incomplete tool protocol remains visible fail-open.
+        # Storage/event truth is untouched.
         try:
             from llm_loop.core.episode_history import provider_view_without_resolved_episodes
 

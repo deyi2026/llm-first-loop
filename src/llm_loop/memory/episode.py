@@ -66,6 +66,32 @@ def stable_episode_ref(session_id: str, user_message: Message, user_seq: int) ->
     return f"episode:{sid}:{user_seq}:{digest}"
 
 
+def stable_tool_span_ref(
+    session_id: str,
+    user_message: Message,
+    user_seq: int,
+    consumer_seq: int,
+    tool_call_ids: Iterable[str],
+) -> str:
+    """Return a deterministic ref for one consumed tool-evidence span.
+
+    A human turn may contain several tool rounds before one non-tool assistant
+    consumes their results.  The span identity therefore binds the human turn,
+    consumer position, and declared call ids without depending on mutable prompt
+    projection details.
+    """
+
+    sid = _validate_session_id(session_id)
+    ts_ns = int(float(getattr(user_message, "ts", 0.0) or 0.0) * 1_000_000_000)
+    calls = "\0".join(str(call_id or "") for call_id in tool_call_ids)
+    raw = (
+        f"{sid}\0{user_seq}\0{consumer_seq}\0{ts_ns}\0"
+        f"{str(getattr(user_message, 'content', '') or '')}\0{calls}"
+    ).encode("utf-8", "replace")
+    digest = hashlib.sha256(raw).hexdigest()[:20]
+    return f"toolspan:{sid}:{user_seq}:{consumer_seq}:{digest}"
+
+
 def _snapshot_message(message: Message) -> dict[str, Any] | None:
     """Snapshot only visible task material, never duplicated hidden reasoning.
 
@@ -250,17 +276,99 @@ class EpisodeStore:
             os.fsync(f.fileno())
         return EpisodeIndexResult(ref=ref, created=True)
 
+    def index_tool_span(
+        self,
+        session_id: str,
+        *,
+        ref: str,
+        user_seq: int,
+        consumer_seq: int,
+        raw_messages: list[Message],
+    ) -> EpisodeIndexResult:
+        """Persist one already-consumed tool span before provider retirement.
+
+        This is deliberately distinct from ``index_episode``: consuming raw tool
+        evidence does not prove that the entire user task is resolved.  The entry
+        reuses the same append-only/search/hydrate surface so no second retrieval
+        store is introduced.
+        """
+
+        sid = _validate_session_id(session_id)
+        snapshots = [snap for m in raw_messages if (snap := _snapshot_message(m)) is not None]
+        if not snapshots or snapshots[0].get("role") != "user":
+            raise ValueError("consumed tool span 缺少首个真实 user message")
+        if not any(m.get("role") == "tool" for m in snapshots):
+            raise ValueError("consumed tool span 缺少 tool evidence")
+        if not any(m.get("role") == "assistant" and m.get("tool_calls") for m in snapshots):
+            raise ValueError("consumed tool span 缺少 assistant tool declaration")
+        if snapshots[-1].get("role") != "assistant" or snapshots[-1].get("tool_calls"):
+            raise ValueError("consumed tool span 缺少 non-tool assistant consumer")
+
+        transcript = _render_transcript(snapshots)
+        transcript_sha256 = hashlib.sha256(transcript.encode("utf-8", "replace")).hexdigest()
+        existing = self.get(sid, ref)
+        if existing is not None:
+            if (
+                str(existing.get("transcript_sha256") or "") != transcript_sha256
+                or str(existing.get("entry_kind") or "tool_span") != "tool_span"
+            ):
+                raise ValueError(f"tool span ref collision: {ref}")
+            return EpisodeIndexResult(ref=ref, created=False)
+
+        question = str(snapshots[0].get("content") or "")
+        assistant_rows = [m for m in snapshots if m.get("role") == "assistant"]
+        final_answer = str(assistant_rows[-1].get("content") or "")
+        tool_names = list(
+            dict.fromkeys(
+                str(m.get("tool_name") or "")
+                for m in snapshots
+                if m.get("role") == "tool" and str(m.get("tool_name") or "")
+            )
+        )
+        indexed_at = _now()
+        entry: dict[str, Any] = {
+            "schema": EPISODE_SCHEMA,
+            "entry_kind": "tool_span",
+            "ref": ref,
+            "session_id": sid,
+            # Keep resolved_at for backward-compatible search ordering; entry_kind
+            # makes clear that this does not claim whole-task resolution.
+            "resolved_at": indexed_at,
+            "indexed_at": indexed_at,
+            "user_seq": int(user_seq),
+            "consumer_seq": int(consumer_seq),
+            "question": question,
+            "final_answer": final_answer,
+            "tool_names": tool_names,
+            "message_count": len(snapshots),
+            "chars": sum(len(str(m.get("content") or "")) for m in snapshots),
+            "transcript_sha256": transcript_sha256,
+            "messages": snapshots,
+        }
+        path = self._path(sid)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = (json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n").encode(
+            "utf-8"
+        )
+        with path.open("ab") as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        return EpisodeIndexResult(ref=ref, created=True)
+
     def search(self, session_id: str, query: str = "", limit: int = 10) -> list[dict[str, Any]]:
         q = str(query or "").strip().casefold()
         rows = self._iter_entries(session_id)
         hits: list[dict[str, Any]] = []
         for entry in reversed(rows):
+            transcript = _render_transcript(entry.get("messages") or [])
             hay = " ".join(
                 [
                     str(entry.get("ref") or ""),
                     str(entry.get("question") or ""),
                     str(entry.get("final_answer") or ""),
                     " ".join(str(x) for x in (entry.get("tool_names") or [])),
+                    transcript,
                 ]
             ).casefold()
             if q and q not in hay:
@@ -268,7 +376,10 @@ class EpisodeStore:
             question = " ".join(str(entry.get("question") or "").split())[:180]
             answer = " ".join(str(entry.get("final_answer") or "").split())[:180]
             tools = ",".join(str(x) for x in (entry.get("tool_names") or [])[:8])
+            subtype = str(entry.get("entry_kind") or "episode")
             summary = f"ref={entry.get('ref')} | Q={question} | A={answer}"
+            if subtype != "episode":
+                summary = f"ref={entry.get('ref')} | type={subtype} | Q={question} | A={answer}"
             if tools:
                 summary += f" | tools={tools}"
             hits.append(
