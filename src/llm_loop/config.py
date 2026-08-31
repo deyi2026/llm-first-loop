@@ -430,9 +430,9 @@ class Settings:
     # ── task_quality 六路径开关（EVO-20260822-8b7a41c0 env 化持久化；默认关零回归）──
     precheck_enabled: bool = False  # 路径 A 参数预检（缺参拦截+字段级引导反馈）
     fix_loop_enabled: bool = False  # 路径 I 修复循环
-    # M66 思考链瘦身: 提交给 LLM 的历史中仅保留最近 N 轮 assistant 思考链
-    # （默认 0=全保留——capability-first（EVO-20260820 能力一票否决）；仅触顶
-    # 且 breaker 未冻结且配置 -1 时才授权裁剪，见 build.py 触顶判定）
+    # M66/R8.21 思考链瘦身: 本字段是 unknown-provider 的保守回退策略；已知
+    # provider 由 build.py 按实际本轮 replay 协议覆盖（local=none、GLM=tool_calls、
+    # DeepSeek=all、MiniMax thinking-off=none），避免 model switch 误用全局默认端点。
     reasoning_tail: int = 0
 
     # ── P1 校验语义匹配（FR-P1-OPT-01, §3.6）──
@@ -739,7 +739,7 @@ def load_settings() -> Settings:
         extract_interval_msgs=_env_int("EXTRACT_INTERVAL_MSGS", 20),
         precheck_enabled=_env_bool("PRECHECK_ENABLED", False),  # EVO-20260822-8b7a41c0 env 化持久化
         fix_loop_enabled=_env_bool("FIX_LOOP_ENABLED", False),
-        reasoning_tail=_env_int("REASONING_TAIL", 0),  # M66 思考链瘦身（默认 0=全保留，capability-first）
+        reasoning_tail=_env_int("REASONING_TAIL", 0),  # R8.21: unknown-provider fail-safe fallback
         extract_cooldown_s=float(_env_int("EXTRACT_COOLDOWN_S", 600)),
         extract_max_input_chars=_env_int("EXTRACT_MAX_INPUT_CHARS", 100000),
         extract_timeout_s=float(_env_int("EXTRACT_TIMEOUT_S", 60)),

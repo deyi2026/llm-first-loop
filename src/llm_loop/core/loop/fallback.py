@@ -15,7 +15,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from llm_loop.core.loop.engine import LoopEngine
@@ -137,6 +137,7 @@ class _FallbackMixin:
         session_id: str,
         run_round: int | None = None,
         metadata_out: dict[str, Any] | None = None,
+        request_builder: Callable[[str, Any], tuple[list[dict], list[dict]]] | None = None,
     ) -> tuple[LLMResponse | None, list[Message], str | None]:
         """沿 fallback 链尝试下一个候选（design §5.4 行为规则表 + 原则 2 如实反馈）.
 
@@ -203,9 +204,26 @@ class _FallbackMixin:
                 continue
 
             try:
+                candidate_messages = messages
+                candidate_tools = tools
+                if request_builder is not None:
+                    # R8.21/E05: a fallback may cross provider replay protocols.
+                    # Never reuse a GLM/local-projected history for DeepSeek (missing
+                    # required reasoning), nor leak DeepSeek historical CoT into a
+                    # provider that does not require it. Rebuild from durable session
+                    # truth using the exact same immutable fallback registry snapshot.
+                    try:
+                        candidate_messages, candidate_tools = request_builder(
+                            f"{provider_id}/{model_id}", fallback_registry
+                        )
+                    except Exception as exc:  # noqa: BLE001 — wrong-provider reuse is unsafe
+                        candidate_failures.append(
+                            (ref, "RequestBuildError", str(exc)[:200])
+                        )
+                        continue
                 chat_kwargs: dict = {
-                    "messages": messages,
-                    "tools": tools,
+                    "messages": candidate_messages,
+                    "tools": candidate_tools,
                     "timeout_s": timeout_s,
                     "model": model_id,
                 }
@@ -221,8 +239,9 @@ class _FallbackMixin:
                     chat_kwargs["guard_context"] = GuardRequestContext(
                         session_id=session_id,
                         system_text=(
-                            messages[0].get("content", "")
-                            if messages and messages[0].get("role") == "system"
+                            candidate_messages[0].get("content", "")
+                            if candidate_messages
+                            and candidate_messages[0].get("role") == "system"
                             else None
                         ),
                         compress_count_this_run=getattr(

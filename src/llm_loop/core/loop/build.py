@@ -289,27 +289,66 @@ def _cog_allowlist_hit(settings: Any, sess: Any) -> bool:
         return False
 
 
-def _reasoning_tail_for(settings: Any) -> int:
-    """M66 端点适配（2026-08-29 镜像本地模型复读修复）：-1 档遇本地端点升级 -2.
+def _reasoning_tail_for(
+    settings: Any,
+    *,
+    resolved_label: str = "",
+    registry_snapshot: Any | None = None,
+) -> int:
+    """R8.21/E05: bind reasoning replay to the actual planned provider.
 
-    THK-04（tool_calls 轮必须回传 reasoning 否则 400）是云端 provider 协议
-    约束；本地端点（mlx_lm.server 等 OpenAI 兼容服务）无此校验——对本地回传
-    tool_calls 轮思考链反而强化弱模型自模仿复读（实证镜像会话 68fed5f5：
-    5 轮 reasoning 收敛复读不发散）。其余档位原样透传（0=全保留/N 轮窗口）。
+    Historical reasoning is not generic task context.  Keep only bytes required by
+    the selected provider's replay protocol:
+
+    - local endpoints: no replay requirement -> strip all (``-2``);
+    - GLM interleaved tools: replay tool-call assistant reasoning only (``-1``);
+    - DeepSeek tool requests: replay all still-visible assistant reasoning (``0``);
+    - MiniMax thinking disabled: strip all; thinking enabled: preserve all because
+      interleaved-thinking state is part of its official agent protocol;
+    - unknown provider: preserve the configured legacy policy fail-safe.
+
+    Crucially this uses ``resolved_label`` + the same immutable planning registry as
+    history budget/model planning.  The former implementation inspected only the
+    global default ``settings.llm_base_url``, so a session model switch could apply
+    the wrong provider's reasoning policy.
     """
-    tail = getattr(settings, "reasoning_tail", 0)
-    if tail != -1:
-        return tail
-    base = str(getattr(settings, "llm_base_url", "") or "")
+    configured = int(getattr(settings, "reasoning_tail", 0) or 0)
+    provider_id = resolved_label.partition("/")[0].strip().lower() if resolved_label else ""
+    model_id = resolved_label.partition("/")[2] if "/" in resolved_label else ""
+    base = ""
+    model_spec = None
+    if registry_snapshot is not None and provider_id:
+        try:
+            provider_spec = registry_snapshot.providers.get(provider_id)
+            if provider_spec is not None:
+                base = str(getattr(provider_spec, "base_url", "") or "")
+                model_spec = (getattr(provider_spec, "models", None) or {}).get(model_id)
+        except Exception:  # noqa: BLE001 — unknown registry shape => configured fail-safe
+            base = ""
+
+    # Compatibility for direct/unit build paths that do not supply a registry snapshot:
+    # only use the global endpoint when there is no explicit provider identity.
+    if not base and not provider_id:
+        base = str(getattr(settings, "llm_base_url", "") or "")
     try:
         from urllib.parse import urlparse
 
         host = (urlparse(base).hostname or "").lower()
     except Exception:  # noqa: BLE001 — 解析失败按非本地（保守：云端协议约束优先）
-        return tail
+        host = ""
     if host in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
         return -2
-    return tail
+    base_lower = base.lower()
+    if provider_id == "deepseek" or "deepseek.com" in base_lower:
+        return 0
+    if provider_id in {"glm", "zhipu"} or "bigmodel.cn" in base_lower:
+        return -1
+    if provider_id == "minimax" or "minimax.io" in base_lower or "minimax.chat" in base_lower:
+        if model_spec is not None and getattr(model_spec, "thinking", None) is False:
+            return -2
+        if model_spec is not None and getattr(model_spec, "thinking", None) is True:
+            return 0
+    return configured
 
 
 class _BuildMixin:
@@ -489,6 +528,7 @@ class _BuildMixin:
         max_chars: int | None = None,
         model: str | None = None,  # P1-7: per-call 模型覆盖（判定本地 provider 跳过推送式注入）
         planned_label: str | None = None,  # 热重载一致性: 复用本轮已解析标签，避免构造期二次读registry
+        registry_snapshot: Any | None = None,  # R8.21: reasoning policy must bind to this round's provider
         emergency_compact: bool = False,  # EVO-20260818: M53 拒绝逃生——head_keep=0 锚点前移激进压缩
         tool_round_zero: bool = False,  # 2026-08-21: 工具轮零历史——只发 system+摘要+最近结果
     ) -> list[dict]:
@@ -837,7 +877,11 @@ class _BuildMixin:
             # 2026-08-20 回滚修复: 移除悬空 tool_tail 参数——history.py 的
             # build_history_messages() 不接受该参数（3点基线无此功能，config 恒为 0），
             # 回滚后每次对话 TypeError；参数支持在 backup/20260819-after-3am 分支
-            reasoning_tail=_reasoning_tail_for(self.settings),  # M66 思考链瘦身 + 2026-08-29 端点适配（本地端点 -1→-2 全省略：THK-04 仅云端约束）
+            reasoning_tail=_reasoning_tail_for(
+                self.settings,
+                resolved_label=resolved_label,
+                registry_snapshot=registry_snapshot,
+            ),
             # P1-7/spec §5.3.1-5（2026-08-18 审计断点归因绝对化）: 推送式注入（架构上报/
             # 预算预警/轮数预警/声明提醒/自我评估提醒/快照）一律不进提交视图——不再受
             # provider inject_system_notices 开关影响（原按 provider 放行 → 注入消息转 user
@@ -1772,7 +1816,11 @@ class _BuildMixin:
                     "tool_tail": getattr(
                         self.settings, "tool_tail", 0
                     ),  # EVO-20260818-f675796c: tail 窗口
-                    "reasoning_tail": _reasoning_tail_for(self.settings),
+                    "reasoning_tail": _reasoning_tail_for(
+                        self.settings,
+                        resolved_label=resolved_label,
+                        registry_snapshot=registry_snapshot,
+                    ),
                     "skip_injected_system": True,  # spec §5.3.1-5: 推送式注入一律不进提交
                     "extract_interval_msgs": getattr(self.settings, "extract_interval_msgs", 20),
                     # Phase5: manifest changes are legitimate projection changes, not nondeterminism.

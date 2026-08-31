@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 
+from llm_loop.core.message import Message, MessageSource
 from llm_loop.llm.client import LLMResponse
 from llm_loop.llm.errors import LLMHTTPError
 from llm_loop.llm.pool import ModelClientPool
@@ -50,7 +51,7 @@ def _wire_fallback_pool(engine, fake_primary, fake_settings, monkeypatch):
         default_client=fake_primary,
         model_fallbacks_raw=new_settings.model_fallbacks_raw,
     )
-    pool._provider_cache["fb"] = fake_fb  # noqa: SLF001 — 预置缓存避免触网
+    pool._provider_cache["fb"] = fake_fb  # type: ignore[assignment]  # noqa: SLF001 — test duck client
     engine.llm_pool = pool
     return fake_fb, new_settings
 
@@ -117,3 +118,80 @@ def test_fallback_chain_all_failed_summary(build_test_engine, fake_settings, mon
     )
     assert "[LLM 调用异常]" in result.final_answer
     assert "降级链全部失败" in result.final_answer
+
+
+def test_cross_provider_fallback_rebuilds_reasoning_projection(
+    build_test_engine, fake_settings, monkeypatch
+):
+    """R8.21: GLM primary -> DeepSeek fallback must rebuild provider-specific history."""
+    import dataclasses
+
+    def raise_500(calls):  # noqa: ARG001
+        raise LLMHTTPError("glm upstream boom", status_code=500, provider="fake")
+
+    engine, primary = build_test_engine([raise_500])
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    settings = dataclasses.replace(
+        fake_settings,
+        model_providers_raw=json.dumps(
+            {
+                "glm": {
+                    "api_key_env": "LLM_API_KEY",
+                    "base_url": "https://open.bigmodel.cn/api/coding/paas/v4",
+                    "models": {"glm-primary": {"thinking": True}},
+                },
+                "deepseek": {
+                    "api_key_env": "LLM_API_KEY",
+                    "base_url": "https://api.deepseek.com/v1",
+                    "models": {"deepseek-backup": {"thinking": True}},
+                },
+            }
+        ),
+        model_fallbacks_raw="deepseek/deepseek-backup",
+    )
+    engine.settings = settings
+    registry = load_registry(settings)
+    primary.model = "glm-primary"
+    backup = FakeLLM(
+        [LLMResponse(content="fallback-ok", tool_calls=[], provider="fake")]
+    )
+    pool = ModelClientPool(  # type: ignore[arg-type]
+        registry=registry,
+        default_client=primary,
+        model_fallbacks_raw=settings.model_fallbacks_raw,
+    )
+    pool._provider_cache["deepseek"] = backup  # type: ignore[assignment]  # noqa: SLF001 — test duck client
+    engine.llm_pool = pool
+
+    sid = engine.session.create()
+    sess = engine.session.load(sid)
+    sess.messages.extend(
+        [
+            Message(role="user", content="OLD-Q", source=MessageSource.USER),
+            Message(
+                role="assistant",
+                content="OLD-A",
+                reasoning_content="OLD-NON-TOOL-REASONING",
+                source=MessageSource.USER,
+                model_used="legacy/model",
+            ),
+        ]
+    )
+    engine.session.save(sess)
+
+    result = engine.run(sid, "NEXT-Q")
+
+    assert result.final_answer == "fallback-ok"
+    assert primary.calls and backup.calls
+    primary_history = primary.calls[0]["messages"]
+    fallback_history = backup.calls[0]["messages"]
+    primary_assistant = next(
+        m for m in primary_history if m.get("role") == "assistant" and m.get("content") == "OLD-A"
+    )
+    fallback_assistant = next(
+        m for m in fallback_history if m.get("role") == "assistant" and m.get("content") == "OLD-A"
+    )
+    assert primary_assistant.get("reasoning_content") is None, "GLM strips non-tool historical reasoning"
+    assert fallback_assistant["reasoning_content"] == "OLD-NON-TOOL-REASONING", (
+        "DeepSeek fallback must rebuild from session truth rather than reuse GLM-projected messages"
+    )

@@ -538,7 +538,8 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 break
             messages = self._build_llm_messages(
                 sess, _turn_memory_msgs, max_chars=effective_budget, model=model,
-                planned_label=planned_label, tool_round_zero=_tool_round_zero,
+                planned_label=planned_label, registry_snapshot=_planning_registry,
+                tool_round_zero=_tool_round_zero,
             )
             self._kpi_accumulate_inject()
             if getattr(self, "_last_history_compacted", False):
@@ -614,7 +615,8 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 try:
                     self._build_llm_messages(
                         sess, _turn_memory_msgs, max_chars=effective_budget,
-                        model=model, planned_label=planned_label, emergency_compact=True,
+                        model=model, planned_label=planned_label,
+                        registry_snapshot=_planning_registry, emergency_compact=True,
                     )
                     # EVO-20260825 任务8（§5.8）: 记录紧急压缩——供 switch_model 覆盖
                     # 检测（60s 内切模型 → wasted 审计：锚点前移归档白做）。
@@ -864,11 +866,47 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 )
                 if not _e1210_recovered and is_default_assembled and self._is_fallback_eligible_error(exc):
                     _fallback_metadata: dict[str, Any] = {}
+
+                    def _fallback_request_builder(
+                        fallback_label: str, fallback_registry: Any
+                    ) -> tuple[list[dict], list[dict]]:
+                        fallback_budget = self._effective_history_budget(
+                            fallback_label, registry_snapshot=fallback_registry
+                        )
+                        fallback_messages = self._build_llm_messages(
+                            sess,
+                            _turn_memory_msgs,
+                            max_chars=fallback_budget,
+                            planned_label=fallback_label,
+                            registry_snapshot=fallback_registry,
+                        )
+                        if (
+                            getattr(self.settings, "prefix_layered", False)
+                            and _tool_eligibility_mode != "enforce"
+                        ):
+                            fallback_schemas = self._layered_tool_schemas(
+                                session_id, user_text
+                            )
+                        else:
+                            fallback_schemas = self.registry.schemas(
+                                lazy=self.settings.tool_schema_lazy
+                            )
+                        fallback_schemas = self._project_tool_schemas_for_round(
+                            fallback_schemas,
+                            planned_label=fallback_label,
+                            user_text=user_text,
+                            session_messages=sess.messages,
+                        )
+                        return fallback_messages, [
+                            self._schema_to_param(schema) for schema in fallback_schemas
+                        ]
+
                     fallback_resp, inject_msgs, fallback_ref = self._try_fallback_chain(
                         messages=messages, tools=tools_param,
                         timeout_s=self._runtime_timeout(), primary_error=exc,
                         session_id=sess.session_id, run_round=rounds,
                         metadata_out=_fallback_metadata,
+                        request_builder=_fallback_request_builder,
                     )
                     # R8.9: fallback notices are produced only after the fallback call
                     # already returned.  Persisting them as chat history cannot influence
