@@ -35,7 +35,10 @@ def _run_single(engine, text: str, session_id: str | None = None) -> None:
     # M50: 启动参数 --model 写会话 override (复用 M48 switch_model 路径，零代码重复)
     if getattr(engine, "_cli_startup_model", None):
         _apply_cli_startup_model(engine, session_store, sid, engine._cli_startup_model)
-    result = engine.run(sid, text)
+    # agent_trace_leak 3.7: CLI 人类输入通道签发 ingress 凭据（B2 双因子判定）
+    from llm_loop.core.trace_leak.ingress_token import issue_ingress
+
+    result = engine.run(sid, text, ingress=issue_ingress("cli"))
     print("\n" + "─" * 60)
     stats = f"[会话 {sid[:8]}] 轮数={result.rounds} 工具调用={len(result.tool_calls)}"
     if result.tokens_in or result.tokens_out:
@@ -157,7 +160,10 @@ def _run_interactive(engine, session_id: str | None = None) -> None:
             if cmd_result is not None:
                 print(f"\n[模型指令] {cmd_result.reply}")
                 continue
-        result = engine.run(sid, text)
+        # agent_trace_leak 3.7: CLI 交互循环人类输入签发 ingress 凭据
+        from llm_loop.core.trace_leak.ingress_token import issue_ingress
+
+        result = engine.run(sid, text, ingress=issue_ingress("cli"))
         print(f"\nAI> {result.final_answer}")
         if result.model_used:
             from llm_loop.core.loop import format_tokens

@@ -54,6 +54,10 @@ class SessionDeletedError(SessionIdConflictError):
     """session_id 已物理删除且不可恢复/复用。"""
 
 
+class _LeakWriteDeniedError(RuntimeError):
+    """agent_trace_leak 3.6: user 身份写入被通道白名单拒绝（enforce 模式）."""
+
+
 class _FallbackRunGate:
     """无 fcntl 平台的进程内读写门：run=独占，管理事务=共享，全部非阻塞。"""
 
@@ -1058,15 +1062,77 @@ class SessionStore:
                 pass  # 备份失败尽力而为
             return Session(session_id=session_id)
 
-    def append(self, session_id: str, message: Message) -> None:
-        """追加消息；run 外 append 与 whole-run 互斥，避免长 run 覆盖追加内容。"""
+    def append(self, session_id: str, message: Message, *, ingress: object | None = None) -> None:
+        """追加消息；run 外 append 与 whole-run 互斥，避免长 run 覆盖追加内容。
+
+        agent_trace_leak 2.3/3.6: user-role 消息先经恒等式校验与通道守卫
+        （白名单外拒绝/降级 + 审计事件；guard 异常 fail-open；仅作用新写入，
+        spec 4.5-1）。非 user-role 消息零影响；测试直调可传 issue_test_ingress()
+        显式凭据（spec 5.3.3-4a 测试专用隔离标记）。
+        """
         with self.management_lease(session_id), self._session_lock(session_id):
             session = self.load(session_id)
+            if message.role == "user":
+                message = self._leak_guard_and_invariant(session, message, ingress)
             session.messages.append(message)
             session.updated_at = _now()
             if not session.title and message.role == "user":
                 session.title = _make_title(message.content)
             self._save_locked(session)
+
+    def _leak_guard_and_invariant(
+        self, session: Session, message: Message, ingress: object | None
+    ) -> Message:
+        """user 写入守卫 + 落盘恒等式校验（fail-open；异常放行 + 告警）."""
+        session_id = session.session_id
+        try:
+            from llm_loop.core.trace_leak.user_ingress_guard import (
+                GuardAction,
+                guard_user_write,
+            )
+
+            verdict = guard_user_write(
+                session, message, ingress, entry="SessionStore.append"
+            )
+            if verdict.action is GuardAction.DENY:
+                # enforce 拒绝：不追加（事件与隔离记录已由 guard 留痕）
+                raise _LeakWriteDeniedError(
+                    f"user 写入被通道白名单拒绝（会话 {session_id}；"
+                    "leak.channel_denied 事件已留痕）"
+                )
+            message = verdict.message
+        except _LeakWriteDeniedError:
+            raise
+        except Exception:  # noqa: BLE001 — fail-open（spec 4.2-1）
+            logging.getLogger(__name__).warning(
+                "append 通道守卫异常（fail-open 放行）", exc_info=True
+            )
+        return self._leak_invariant_check(session_id, message)
+
+    def _leak_invariant_check(self, session_id: str, message: Message) -> Message:
+        """落盘恒等式校验（agent_trace_leak 2.3；异常 fail-open 放行 + 告警）."""
+        try:
+            from llm_loop.core.trace_leak import leak_events
+            from llm_loop.core.trace_leak.invariant import (
+                correct_mislabeled_metadata,
+                metadata_satisfies_invariant,
+            )
+
+            if metadata_satisfies_invariant(message.metadata) is False:
+                leak_events.emit_leak_event(
+                    leak_events.LEAK_MISLABEL_DETECTED,
+                    entry="SessionStore.append",
+                    session_id=session_id,
+                    content=message.content,
+                    basis="恒等式违反: program_origin != (origin_layer != user_instruction)",
+
+                )
+                message.metadata = correct_mislabeled_metadata(message.metadata)
+        except Exception:  # noqa: BLE001 — fail-open（spec 4.2-1）
+            logging.getLogger(__name__).warning(
+                "append 恒等式校验异常（fail-open 放行）", exc_info=True
+            )
+        return message
 
     # ── EVO-20260814: 会话瘦身（保留近期 + 早期摘要到压缩档案，可逆）──
     def trim_session(

@@ -10,6 +10,7 @@ import uuid
 from contextlib import suppress
 from dataclasses import dataclass, field
 
+from llm_loop.core.injection_labels import InjectionLayer, origin_metadata
 from llm_loop.core.message import Message, MessageSource, ToolCall
 from llm_loop.core.session import Session, SessionStore
 from llm_loop.llm.client import LLMClient
@@ -184,7 +185,20 @@ class SubAgentRunner:
                 "\n\n--- 验收清单（最终回答必须逐项自检输出：完成 / 未完成 / 原因）---\n"
                 f"{items}"
             )
-        sess.messages.append(Message(role="user", content=sys_prompt, source=MessageSource.USER))
+        # agent_trace_leak 2.1（决策 D6）: sys_prompt 为程序构造（父代理轨迹派生），
+        # 落盘必须携带程序附录层标记；仅补 metadata，role/source/消息序零改动，
+        # metadata 不进 to_llm_dict() 投影（对子代理 LLM 行为与调用方不可感知）。
+        sess.messages.append(
+            Message(
+                role="user",
+                content=sys_prompt,
+                source=MessageSource.USER,
+                metadata=origin_metadata(
+                    InjectionLayer.PROGRAM_RECOVERY,
+                    injection_kind="subagent_task",
+                ),
+            )
+        )
 
         rounds = 0
         tool_trace: list[dict] = []

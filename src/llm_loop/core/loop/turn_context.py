@@ -88,16 +88,15 @@ class _TurnContextMixin:
             # Direct/internal callers may invoke this helper before appending the user
             # message; production engine appends first. Use a synthetic view only for
             # gate calculation, never persist/duplicate the user text.
+            # agent_trace_leak 2.2: 经单一真相源构造（生产代码零手工 origin_layer
+            # 字面量）；本合成视图 never persist，仅 gate 计算，行为零变化。
             _policy = reference_auto_decision(
                 _policy_messages
                 + [
                     {
                         "role": "user",
                         "content": user_text,
-                        "metadata": {
-                            "origin_layer": "user_instruction",
-                            "program_origin": False,
-                        },
+                        "metadata": origin_metadata(InjectionLayer.USER_INSTRUCTION),
                     }
                 ],
                 auto_turns=_auto_turns,
