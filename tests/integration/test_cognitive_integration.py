@@ -22,10 +22,10 @@ from pathlib import Path
 
 from llm_loop.cognitive.benchmark import (
     CognitiveOverheadMeter,
+    FirstMissCost,
     PreconditionState,
     SampleOutcome,
     SemanticResetBenchmark,
-    FirstMissCost,
 )
 from llm_loop.cognitive.compiler import (
     ContextTier,
@@ -165,8 +165,8 @@ def _engine(tmp_path: Path):
 
 
 def _arm_slots(engine, sess) -> None:
-    from llm_loop.core.message import Message, MessageSource
     from llm_loop.core.loop.hotcard import write_hotcard
+    from llm_loop.core.message import Message, MessageSource
 
     engine._interop_tail_messages = [
         Message(role="system", content="跨模块协调信息", source=MessageSource.SYSTEM)
@@ -194,7 +194,11 @@ class TestSinglePipelineAndDegradation:
         entries = engine._last_build_injections
         assert len(entries) == 1 and entries[0].slot_kind == SlotKind.AGGREGATED
         assert "[tier:hot][slot:gate_note]" not in str(tail_users[0]["content"])
-        assert "[tier:hot][slot:interop]" in str(tail_users[0]["content"])
+        # R8.13/E26: interop live path 恒空 + 手工武装的 _interop_tail_messages 在
+        # _inject_interop_messages 装配点被识别为 legacy defer 并退役（interop.py
+        # legacy_defer_retired）——外部正文不再自动获得 prompt 权威。断言退役语义
+        #（不进包），而非旧的进包行为。
+        assert "[slot:interop]" not in str(tail_users[0]["content"])
 
         # tier 关闭: 原子回退平铺（同单条，旧格式——不叠加第二管线）
         # Settings 为 frozen dataclass，测试内以 __setattr__ 覆盖（不引入新构造路径）
@@ -205,7 +209,9 @@ class TestSinglePipelineAndDegradation:
         tail2 = [m for m in out2 if m.get("role") == "user"][-1:]
         assert len(tail2) == 1
         assert "[slot:gate_note]" not in str(tail2[0]["content"])
-        assert "[slot:interop]" in str(tail2[0]["content"])  # live eligible slot remains
+        # R8.13/E26: interop 退役在 tier 开/关两种模式下均成立（live eligible slot
+        # 同样不进包——外部内容须走用户输入侧显式授权）
+        assert "[slot:interop]" not in str(tail2[0]["content"])
         assert len(engine._last_build_injections) == 1
 
     def test_projection_time_upper_bound(self):

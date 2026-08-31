@@ -27,8 +27,13 @@ def _isolate_data_dir(tmp_path, monkeypatch):
     """隔离协调通道/data 目录（EVO-20260817: 测试进程 cwd=项目根时，_inject_interop_messages
     会读取真实 data/interop/ 残留 pending 消息并注入构建载荷——多轮测试恰好越过 90%
     压缩线导致 user 历史被整组归档、[预算预警] 永不触发。此处把 LFL_DATA_DIR 指到 tmp，
-    让 inbox 为空，测试载荷完全可控。"""
+    让 inbox 为空，测试载荷完全可控。
+    EVO-20260831: 追加固化 COMPACT_RATIO=0.9——test_b2_examples 等测试经 load_env_file()
+    把真实 .env 的 COMPACT_RATIO=0.85 残留进 os.environ（monkeypatch 只回收自设键），
+    压缩线 0.9→0.85 后 85% 预填历史触发主动压缩归档 → 载荷骤降 → 预警永不注入。
+    本测试的预警有效窗口 = (80%预算, 压缩线)，压缩线必须钉死默认值 0.9。"""
     monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("COMPACT_RATIO", "0.9")
     yield
 
 

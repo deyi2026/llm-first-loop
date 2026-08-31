@@ -207,7 +207,12 @@ def test_build_compact_initial_round_keeps_exact_truth_as_semantic_tail(tmp_path
     assert engine._last_history_compacted is True
     assert out[-1]["role"] == "user"
     assert str(out[-1]["content"]).endswith(current.content)
-    assert USER_TRUTH_SEPARATOR in str(out[-1]["content"])
+    # R8.17（b2b18d9 retire compact runtime prompt status）: 压缩运行时状态
+    # （"[上下文压缩] 已归档 N 条…"替身）不再投影进提交视图——压缩后尾部 user
+    # 为裸 truth（无程序附录帧时不再构造 program_text+SEPARATOR+truth 信封）。
+    # 核心语义不变: exact truth 逐字保留于语义尾位、不被替身替换。
+    assert USER_TRUTH_SEPARATOR not in str(out[-1]["content"])
+    assert str(out[-1]["content"]) == current.content
     assert _tail_user_run(out) == 1
 
 

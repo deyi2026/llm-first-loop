@@ -109,9 +109,11 @@ def test_declaration_discrepancy_correction(build_test_engine):
     assert "不符" in result.verification_note
     # 最终回答直接输出（不再强制更正重入）
     assert result.final_answer == "我已写入文件 output.txt"
-    # 会话中注入一条 [声明提醒]（如实提示，不重入）
+    # R8.9 控制面化: 差异只保留在 LoopResult/UI + action telemetry
+    # （declaration.check/discrepancy 事件），不再向会话注入 [声明提醒]——
+    # 已产出回答无法被 prompt 消息修复，注入只会制造后续轮次的会话权威。
     sess = engine.session.load(sid)
-    assert any("[声明提醒]" in m.content for m in sess.messages)
+    assert not any("[声明提醒]" in m.content for m in sess.messages)
 
 
 def test_architecture_status_and_correction_loop(build_test_engine, tmp_path):
@@ -179,14 +181,17 @@ def test_memory_persist_across_runs(build_test_engine):
     sid = engine.session.create()
     engine.run(sid, "记住我喜欢 7")
     assert engine.memory.count() >= 1
-    # R3/R6: 第二轮检索到 memory pointer，程序资料位于同一 user envelope 前部，
-    # 本轮 exact query 保持语义尾位。
+    # R3/R6 → R8.24-B B-3.1: memory producer 自动投影闭合——检索命中不再注入
+    # wire（快照为 durable 检索状态，search_records kind=memory 可达）；本轮
+    # exact query 保持语义尾位（R6 不变）。
     query = "我喜欢几来着？"
     engine.run(sid, query)
     second_call = fake.calls[-1]["messages"]
-    assert any("ref=memory:" in str(m.get("content", "")) for m in second_call)
+    assert not any("ref=memory:" in str(m.get("content", "")) for m in second_call)
     assert second_call[-1].get("role") == "user"
     assert str(second_call[-1].get("content", "")).endswith(query)
+    # durable 检索面不降级（关键词命中沉淀记忆）
+    assert engine.memory.search(["数字"])
 
 
 def test_search_archive_in_loop_after_compression(build_test_engine):
@@ -261,11 +266,13 @@ def test_cross_session_memory_reuse(build_test_engine):
     # 新会话 B
     sid_b = engine.session.create()
     engine.run(sid_b, "XSKEY 相关的内容是什么")
-    # R3/R6: 跨会话复用以 stable memory ref 进入单 envelope，真实 user query 最后。
+    # R3/R6 → R8.24-B B-3.1: 跨会话检索链路保留（durable 状态），自动投影
+    # 闭合——wire 零 memory 注入，真实 user query 语义尾位不变。
     last_call = fake.calls[-1]["messages"]
-    assert any("ref=memory:" in str(m.get("content", "")) for m in last_call)
+    assert not any("ref=memory:" in str(m.get("content", "")) for m in last_call)
     assert last_call[-1].get("role") == "user"
     assert str(last_call[-1].get("content", "")).endswith("XSKEY 相关的内容是什么")
+    assert engine.memory.search(["XSKEY"])
 
 
 def test_session_switch_and_continue(build_test_engine):

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 
@@ -23,12 +25,15 @@ def test_load_settings_full(monkeypatch):
     monkeypatch.setenv("LLM_BASE_URL", "https://x/v1")
     monkeypatch.setenv("LLM_MODEL", "m")
     monkeypatch.setenv("LLM_MAX_ITERATIONS", "30")
-    monkeypatch.delenv("DATA_DIR", raising=False)  # 用默认 ./data
+    monkeypatch.delenv("DATA_DIR", raising=False)  # 用包位置推导的默认 data 目录
     s = load_settings()
     assert s.llm_api_key == "k"
     assert s.max_iterations == 30
     assert s.llm_timeout_s == 120.0
-    assert s.data_dir == "./data"
+    # EVO-20260830（split-brain 修复）: 默认 data_dir 由相对 "./data"（随进程 cwd
+    # 漂移导致两区数据互串）改为基于包位置的绝对路径——代码所在区=数据所在区。
+    assert Path(s.data_dir).is_absolute()
+    assert Path(s.data_dir).name == "data"
     assert s.self_inspection_enabled is True
 
 

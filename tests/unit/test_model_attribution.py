@@ -260,7 +260,7 @@ def test_feishu_reply_has_model_footer(tmp_path) -> None:
     class _StubEngine:
         session = session_store
 
-        def run(self, sid, text):
+        def run(self, sid, text, model=None, reasoning_effort=None, *, ingress=None):
             return SimpleNamespace(
                 session_id=sid,
                 final_answer="模型回答",
@@ -299,7 +299,7 @@ def test_feishu_reply_no_footer_when_label_empty(tmp_path) -> None:
     class _StubEngine:
         session = session_store
 
-        def run(self, sid, text):
+        def run(self, sid, text, model=None, reasoning_effort=None, *, ingress=None):
             return SimpleNamespace(
                 session_id=sid,
                 final_answer="模型回答",
