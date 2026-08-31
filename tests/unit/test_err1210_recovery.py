@@ -593,6 +593,13 @@ def _arm_compact_first(engine, sid, *, prev_count=100):
     engine._last_request_msg_count_by_session[sid] = prev_count
 
 
+def _arm_live_prompt_slot(engine, text="interop 恢复夹具"):
+    """Arm one still-eligible dynamic slot for strip/defer engine tests."""
+    engine._interop_tail_messages = [
+        Message(role="system", content=text, source=MessageSource.SYSTEM)
+    ]
+
+
 class TestEngineRecovery:
     # GOAL-20260829-a9a6c0f0: blind retry 默认开会前置一次原样重发，改变本类
     # "剥离重试"断言口径 → 本类显式关闭 blind，保留 strip/aggregate 回退路径
@@ -606,8 +613,8 @@ class TestEngineRecovery:
         engine, fake = _mk(tmp_path, monkeypatch, responses=[_e1210(), _resp()])
         sid = engine.session.create()
         _arm_compact_first(engine, sid)
-        # 注入槽武装: gate_note（自然走 build 注入+登记）
-        engine._cache_monitor._get_bucket(sid).gate_note_pending = True
+        # 武装仍具 prompt eligibility 的 interop 槽，验证 strip/defer 主链。
+        _arm_live_prompt_slot(engine)
         result = engine.run(sid, "长任务继续")
         assert "恢复后的正常回答" in result.final_answer
         assert result.truncated is False
@@ -620,8 +627,11 @@ class TestEngineRecovery:
         assert retry[:-1] == orig[:-1]
         assert retry[-1] == {"role": "user", "content": "长任务继续"}
         assert str(orig[-1].get("content", "")).endswith("长任务继续")
-        # defer: gate_note 已复位（下一轮可重注入）
-        assert engine._cache_monitor.take_gate_note(sid) is True
+        # defer: live interop 槽已回填；gate_note 不再是 live prompt/defer 槽。
+        assert engine._interop_tail_messages and any(
+            x.content.endswith("interop 恢复夹具") for x in engine._interop_tail_messages
+        )
+        assert engine._cache_monitor.take_gate_note(sid) is False
         # 耗尽标记已写（本 run 不再二次降级——修复A per-run 语义）
         assert engine._err1210_attempted.get(sid) == engine._err1210_run_seq
 
@@ -663,8 +673,8 @@ class TestEngineRecovery:
         ]
         write_hotcard(origin_session="origin-sess", anchor="任务锚点",
                       data_dir=engine.settings.data_dir)
-        engine._cache_monitor._get_bucket(sid).gate_note_pending = True
-        result = engine.run(sid, "四槽全活跃")
+        # gate_note 已于 R8.11 退出 live prompt；三种 live 槽足以覆盖聚合 strip/defer。
+        result = engine.run(sid, "三槽全活跃")
         assert "恢复后的正常回答" in result.final_answer
         assert len(fake.calls) == 2  # 重试恰好 1 次
         orig, retry = fake.calls[0]["messages"], fake.calls[1]["messages"]
@@ -683,9 +693,9 @@ class TestEngineRecovery:
         assert _slot_user(retry) == [], "重试请求不得保留 program slot 标记"
         # ② 公共前缀逐字节一致；尾条降级为 exact human user，而不是把用户一起删掉。
         assert retry[:-1] == orig[:-1]
-        assert retry[-1] == {"role": "user", "content": "四槽全活跃"}
-        assert str(orig[-1].get("content", "")).endswith("四槽全活跃")
-        # ③ defer 拆解回存后四槽各自复位
+        assert retry[-1] == {"role": "user", "content": "三槽全活跃"}
+        assert str(orig[-1].get("content", "")).endswith("三槽全活跃")
+        # ③ defer 拆解回存后 live 三槽各自复位
         assert engine._interop_tail_messages and any(
             x.content.endswith("interop 协调") for x in engine._interop_tail_messages
         ), "interop: 未回填"
@@ -694,7 +704,7 @@ class TestEngineRecovery:
         ), "tip: 未回填"
         assert pop_hotcard(session_id=sid,
                            data_dir=engine.settings.data_dir) is not None, "hotcard: 未复位"
-        assert engine._cache_monitor.take_gate_note(sid) is True, "gate_note: 未复位"
+        assert engine._cache_monitor.take_gate_note(sid) is False, "gate_note 不应作为 live defer 复位"
 
     def test_defer_plus_active_slots_single_agg(self, tmp_path, monkeypatch):
         """B-2（verdict_p1 4.2）: defer 回放 + 当轮新槽并存 → 单条聚合 + defer 段先于活跃段."""
@@ -742,7 +752,7 @@ class TestEngineRecovery:
         )
         sid = engine.session.create()
         _arm_compact_first(engine, sid)
-        engine._cache_monitor._get_bucket(sid).gate_note_pending = True
+        _arm_live_prompt_slot(engine)
         result = engine.run(sid, "长任务继续")
         assert len(fake.calls) == 3  # 原始+blind+strip/raw 耗尽；每 run 机会一次，第四不发生
         assert "[LLM 调用异常]" in (result.final_answer or "")  # 如实反馈（llm_error）
@@ -772,7 +782,7 @@ class TestEngineRecovery:
         engine, fake = _mk(tmp_path, monkeypatch, responses=[_e1210()])
         sid = engine.session.create()
         _arm_compact_first(engine, sid)
-        engine._cache_monitor._get_bucket(sid).gate_note_pending = True
+        _arm_live_prompt_slot(engine)
         result = engine.run(sid, "任务")
         assert len(fake.calls) == 1
         assert "[LLM 调用异常]" in (result.final_answer or "")
@@ -785,12 +795,12 @@ class TestEngineRecovery:
         )
         sid = engine.session.create()
         _arm_compact_first(engine, sid)
-        engine._cache_monitor._get_bucket(sid).gate_note_pending = True  # 需有注入登记可供剥离
+        _arm_live_prompt_slot(engine)  # 需有 live 注入登记可供剥离
         engine.run(sid, "任务")  # f8e106d blind-first: 原始+blind+strip(剥gate_note) 3 次耗尽
         assert len(fake.calls) == 3
         # 修复A: 新 run 自动重获降级机会（run seq 递增，无需手动 compact 事件）
         _arm_compact_first(engine, sid)
-        engine._cache_monitor._get_bucket(sid).gate_note_pending = True
+        _arm_live_prompt_slot(engine)
         result = engine.run(sid, "新压缩后继续")
         assert len(fake.calls) == 5  # run2: 原始 1210(4) + blind 恢复成功(5)——rearm 生效
         assert "第三次成功" in result.final_answer
@@ -798,7 +808,7 @@ class TestEngineRecovery:
     def test_second_order_failure_records_event(self, tmp_path, monkeypatch):
         """T5.2d 二阶失败 [r3-P2 修订]: 重注入轮再 1210 → 新 run 降级重试仍失败 → defer_lost_on_reinject 记录.
 
-        修复A（2026-08-29）语义更新: 门禁移除后第二 run 重新获得一次降级机会
+        修复A（2026-08-29）语义更新: 第二 run 重新获得一次降级机会
         （attempted 键 = run seq 自动递增），重试仍 1210 → 耗尽上抛 → 二阶失败。
         """
         engine, fake = _mk(
@@ -807,9 +817,9 @@ class TestEngineRecovery:
         )
         sid = engine.session.create()
         _arm_compact_first(engine, sid)
-        engine._cache_monitor._get_bucket(sid).gate_note_pending = True
+        _arm_live_prompt_slot(engine)
         engine.run(sid, "任务A")  # 第一 run: blind(第2次)恢复成功，共 2 次调用
-        # defer 回存完成；第二 run: build 重注入 gate_note（defer_replayed）
+        # defer 回存完成；第二 run: build 重注入 interop（defer_replayed）
         engine.run(sid, "任务B")  # run2: 原始(3)+blind(4)+strip(5) 均 1210 → 耗尽
         assert len(fake.calls) == 5
         # 二阶失败: 重试仍 1210（每 run 至多一次降级）
@@ -830,7 +840,7 @@ class TestEngineRecovery:
         engine, fake = _mk(tmp_path, monkeypatch, responses=[_e1210(), _resp()])
         sid = engine.session.create()
         # 刻意不 arm compact_first——非 compact、无骤降形态
-        engine._cache_monitor._get_bucket(sid).gate_note_pending = True
+        _arm_live_prompt_slot(engine)
         result = engine.run(sid, "长任务继续")
         assert "恢复后的正常回答" in result.final_answer
         assert len(fake.calls) == 2  # 旧语义 1 次（静默上抛），新语义降级重试成功
@@ -842,7 +852,7 @@ class TestEngineRecovery:
             responses=[_e1210(), _e1210(), _e1210()],
         )
         sid = engine.session.create()
-        engine._cache_monitor._get_bucket(sid).gate_note_pending = True
+        _arm_live_prompt_slot(engine)
         result = engine.run(sid, "任务")
         assert len(fake.calls) == 3  # 原始+blind+raw-fallback 耗尽 break（与 R9 互斥，不再续跑）
         assert "[LLM 调用异常]" in (result.final_answer or "")

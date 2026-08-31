@@ -163,8 +163,9 @@ class _SessionBucket:
     trend: deque = field(default_factory=lambda: deque(maxlen=30))
     trend_rounds: int = 0
 
-# EVO-20260817-72fcd94a: 门禁干预知情标记（固定文本，一次性注入 built 末尾——缓存友好，
-# 不破坏前缀；让 AI 感知本轮上下文结构变化，消除困惑）
+# Legacy wire compatibility text for pre-R8.11 gate-note history/recovery fixtures.
+# R8.11 no longer emits this text into live provider prompts; cache-gate state is
+# runtime observability and is exposed through monitor/action status instead.
 GATE_NOTE_CONTENT = (
     "[门禁干预] 缓存门禁检测到前缀漂移/低命中，本轮起强制保留历史头部"
     "（锚点未前移，历史更完整属预期）；你无需处理，正常消费即可。"
@@ -400,7 +401,7 @@ class CacheHealthMonitor:
                 _runs, _hit, _in = b.win_runs, b.win_hit, b.win_in
                 b.alerted = True
                 b.force_head_keep = True
-                b.gate_note_pending = True  # 干预激活 → 知情标记待注入（本轮 build 消费）
+                b.gate_note_pending = True  # 干预激活 → 一次性观测标记待消费（R8.11 不进 prompt）
                 # 拦截开始: 只重置窗口累计数据，保留 alerted/force_head_keep/gate_note_pending
                 b.win_in = b.win_hit = b.win_runs = 0
                 b.anchor_moved_in_win = 0
@@ -972,7 +973,7 @@ class CacheHealthMonitor:
                 b = self._get_bucket(session_id)
                 b.force_head_keep = True
                 self._gate_drift_count += 1
-                b.gate_note_pending = True  # 漂移干预 → 知情标记待注入
+                b.gate_note_pending = True  # 漂移干预 → 一次性观测标记待消费（R8.11 不进 prompt）
         except Exception:  # noqa: BLE001
             logger.warning("门禁预检异常（fail-open）", exc_info=True)
 
@@ -998,8 +999,12 @@ class CacheHealthMonitor:
             return None
 
     def take_gate_note(self, session_id: str = "") -> bool:
-        """一次性消费知情标记（干预激活首轮 build 注入一次，消费后不再重复）.
-        EVO-20260825: per-session 分桶——消费对应会话的标记."""
+        """Consume the one-shot cache-gate observability marker.
+
+        R8.11: live build no longer turns this marker into prompt text.  The bool remains
+        for monitor state, action telemetry and legacy err1210 defer compatibility.
+        EVO-20260825: per-session buckets keep consumption session-scoped.
+        """
         try:
             b = self._get_bucket(session_id)
             if b.gate_note_pending:
@@ -1011,11 +1016,11 @@ class CacheHealthMonitor:
             return False
 
     def restore_gate_note(self, session_id: str = "") -> None:
-        """[err1210 T2.3，defer 回存 gate_note 槽] 置回被消费的门禁知情标记.
+        """Restore a legacy/deferred cache-gate marker (compatibility only).
 
-        P0 剥离重试成功后调用——重试成功的下一轮 build take_gate_note 再次
-        返回 True 重注入（幂等：布尔置位语义，重复执行不累积）。
-        fail-open：对不存在桶 _get_bucket 惰性建桶后置位，异常仅 debug。
+        R8.11 live build consumes restored markers as observability-only state and does not
+        re-inject ``GATE_NOTE_CONTENT``.  The API remains for old err1210 snapshots/defer
+        records and is idempotent.  Fail-open: missing buckets are created lazily.
         """
         try:
             self._get_bucket(session_id).gate_note_pending = True

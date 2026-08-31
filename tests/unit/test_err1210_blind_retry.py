@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from llm_loop.llm.errors import LLMHTTPError
 
-from .test_err1210_recovery import _arm_compact_first, _e1210, _mk, _resp
+from .test_err1210_recovery import _arm_compact_first, _arm_live_prompt_slot, _e1210, _mk, _resp
 
 _NET_ERR = LLMHTTPError("503 upstream unavailable", status_code=503, body="")
 
@@ -24,7 +24,7 @@ class TestBlindRetry:
         engine, fake = _mk(tmp_path, monkeypatch, responses=[_e1210(), _resp()])
         sid = engine.session.create()
         _arm_compact_first(engine, sid)
-        engine._cache_monitor._get_bucket(sid).gate_note_pending = True
+        _arm_live_prompt_slot(engine)
         result = engine.run(sid, "长任务继续")
         assert "恢复后的正常回答" in result.final_answer
         assert result.truncated is False
@@ -39,7 +39,7 @@ class TestBlindRetry:
         engine, fake = _mk(tmp_path, monkeypatch, responses=[_e1210(), _e1210(), _resp()])
         sid = engine.session.create()
         _arm_compact_first(engine, sid)
-        engine._cache_monitor._get_bucket(sid).gate_note_pending = True
+        _arm_live_prompt_slot(engine)
         result = engine.run(sid, "任务")
         assert "恢复后的正常回答" in result.final_answer
         assert len(fake.calls) == 3
@@ -53,8 +53,8 @@ class TestBlindRetry:
         # exact human truth remains as the retry tail instead of deleting the whole user.
         assert stripped[:-1] == orig[:-1]
         assert stripped[-1] == {"role": "user", "content": inj[0].user_truth}
-        # strip 成功 → defer 回存: gate_note 复位可重注入（与 T5.1 语义一致）
-        assert engine._cache_monitor.take_gate_note(sid) is True
+        # strip 成功 → defer 回存: interop 可在下一 build 重注入。
+        assert engine._interop_tail_messages
 
     def test_blind_env_off_legacy_behavior(self, tmp_path, monkeypatch):
         """ERR1210_BLIND_RETRY=0 → 回退 9088d4e 行为（剥离重试，无 blind 调用）."""
@@ -62,7 +62,7 @@ class TestBlindRetry:
         engine, fake = _mk(tmp_path, monkeypatch, responses=[_e1210(), _resp()])
         sid = engine.session.create()
         _arm_compact_first(engine, sid)
-        engine._cache_monitor._get_bucket(sid).gate_note_pending = True
+        _arm_live_prompt_slot(engine)
         result = engine.run(sid, "任务")
         assert "恢复后的正常回答" in result.final_answer
         assert len(fake.calls) == 2

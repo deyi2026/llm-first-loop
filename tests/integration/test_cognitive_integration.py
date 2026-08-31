@@ -193,7 +193,8 @@ class TestSinglePipelineAndDegradation:
         assert str(tail_users[0]["content"]).startswith(_INJECTION_PREFIX)
         entries = engine._last_build_injections
         assert len(entries) == 1 and entries[0].slot_kind == SlotKind.AGGREGATED
-        assert "[tier:hot][slot:gate_note]" in str(tail_users[0]["content"])
+        assert "[tier:hot][slot:gate_note]" not in str(tail_users[0]["content"])
+        assert "[tier:hot][slot:interop]" in str(tail_users[0]["content"])
 
         # tier 关闭: 原子回退平铺（同单条，旧格式——不叠加第二管线）
         # Settings 为 frozen dataclass，测试内以 __setattr__ 覆盖（不引入新构造路径）
@@ -203,7 +204,8 @@ class TestSinglePipelineAndDegradation:
         out2 = engine._build_llm_messages(sess, [], max_chars=200_000, planned_label="zhipu/glm-5")
         tail2 = [m for m in out2 if m.get("role") == "user"][-1:]
         assert len(tail2) == 1
-        assert "[slot:gate_note]" in str(tail2[0]["content"])  # 旧格式回退
+        assert "[slot:gate_note]" not in str(tail2[0]["content"])
+        assert "[slot:interop]" in str(tail2[0]["content"])  # live eligible slot remains
         assert len(engine._last_build_injections) == 1
 
     def test_projection_time_upper_bound(self):

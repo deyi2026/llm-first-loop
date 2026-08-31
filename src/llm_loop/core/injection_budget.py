@@ -33,7 +33,6 @@ DYNAMIC_APPENDIX_GROUP_OVERHEAD = len(PROGRAM_APPENDIX_NOTICE) + 32
 class BudgetPriority(IntEnum):
     """Lower value survives first when the hard budget is tight."""
 
-    RECEIPT = 0
     PROGRAM_RECOVERY = 10
     CRITICAL_STATUS = 20
     STATUS = 30
@@ -47,8 +46,6 @@ _CRITICAL_STATUS_SLOTS = frozenset(
         "task_anchor",
         "task_frontier",
         "interop",
-        "gate_note",
-        "budget_receipt",
     }
 )
 
@@ -73,8 +70,6 @@ class BudgetBlock:
 
     @property
     def priority(self) -> BudgetPriority:
-        if self.slot_kind == "budget_receipt":
-            return BudgetPriority.RECEIPT
         if self.layer is InjectionLayer.PROGRAM_RECOVERY:
             return BudgetPriority.PROGRAM_RECOVERY
         if self.layer is InjectionLayer.STATUS:
@@ -136,8 +131,8 @@ def enforce_injection_budget(
 
     Selection is deterministic: semantic priority first, then caller ordinal and
     original list order. A block is accepted only if its *entire* estimated wire
-    cost fits. When pruning occurs, a factual receipt is itself charged to the
-    same budget and survives at the highest priority.
+    cost fits. When pruning occurs, ``receipt_content`` records the decision for
+    observability only; it is not a prompt block and consumes zero prompt budget.
     """
     budget = max(MIN_INJECTION_BUDGET_CHARS, int(budget_chars))
     source = list(blocks)
@@ -153,20 +148,11 @@ def enforce_injection_budget(
         )
 
     receipt = _budget_receipt(budget)
-    receipt_block = BudgetBlock(
-        key="__budget_receipt__",
-        content=receipt,
-        layer=InjectionLayer.STATUS,
-        slot_kind="budget_receipt",
-        group=DYNAMIC_APPENDIX_GROUP,
-        cost_chars_override=len(receipt) + 48,  # tier/slot marker conservative allowance
-        ordinal=-1,
-    )
     ranked_source = sorted(
         enumerate(source),
         key=lambda item: (int(item[1].priority), int(item[1].ordinal), item[0]),
     )
-    ranked = [receipt_block] + [block for _idx, block in ranked_source]
+    ranked = [block for _idx, block in ranked_source]
     kept: list[BudgetBlock] = []
     seen_groups: set[str] = set()
     used = 0
@@ -182,12 +168,10 @@ def enforce_injection_budget(
             overhead += group_inc
             if block.group:
                 seen_groups.add(block.group)
-        elif block.key == "__budget_receipt__":  # defensive only; MIN budget should fit
-            receipt = ""
 
     kept_keys = {b.key for b in kept}
     # Preserve original source ordering in the public kept/dropped lists. Receipt
-    # is signalled separately and is not part of caller block identity.
+    # is observability-only and is not part of caller block identity or used_chars.
     kept_source = tuple(b for b in source if b.key in kept_keys)
     dropped_source = tuple(b for b in source if b.key not in kept_keys)
     return InjectionBudgetResult(

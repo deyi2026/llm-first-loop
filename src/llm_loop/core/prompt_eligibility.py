@@ -23,7 +23,6 @@ PROMPT_DYNAMIC_PRODUCER_SLOTS = frozenset(
         "interop",
         "tip",
         "hotcard",
-        "gate_note",
         "digest",
         "task_frontier",
     }

@@ -19,7 +19,8 @@ def _memory(text: str, turn_ref=None) -> Message:
 def test_unknown_dynamic_producer_is_not_prompt_eligible():
     assert dynamic_prompt_layer("future plugin text", slot_kind="future_plugin") is None
     assert dynamic_prompt_layer("unattributed text", slot_kind=None) is None
-    assert dynamic_prompt_layer("known status", slot_kind="gate_note") is InjectionLayer.STATUS
+    assert dynamic_prompt_layer("known status", slot_kind="gate_note") is None
+    assert dynamic_prompt_layer("active task state", slot_kind="task_frontier") is InjectionLayer.STATUS
     assert dynamic_prompt_layer("[相关记忆] fact", slot_kind="memory") is InjectionLayer.REFERENCE
 
 

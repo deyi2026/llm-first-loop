@@ -1190,17 +1190,23 @@ class _BuildMixin:
                     self._deferred_replay_slots = _slots
         except Exception:  # noqa: BLE001 — fail-open
             pass
-        # EVO-20260817-72fcd94a: 门禁干预知情标记——干预激活首轮在 built 末尾追加固定
-        # user 消息（末尾追加缓存友好，不破坏前缀；转 user 避免守卫规则 B 误报
-        # "非首位 system"——2026-08-18 审计 WARN 实证；让 AI 感知上下文结构变化）
+        # R8.11/E20: cache-gate intervention is runtime observability, not model input.
+        # Consume its one-shot marker so it cannot churn forever, but emit zero prompt chars.
+        # Legacy err1210 may have restored a gate_note slot; retire that replay marker here
+        # rather than resurrecting old program prose into a new provider request.
         if self._cache_monitor.take_gate_note(session_id=sess.session_id):
-            # P1 聚合（9.1）: 收集固定文本（wrap 延后到统一聚合器）
-            _inject_parts.append((SlotKind.GATE_NOTE, GATE_NOTE_CONTENT))
             _slots = getattr(self, "_deferred_replay_slots", None) or set()
             if str(SlotKind.GATE_NOTE) in _slots:
-                self._note_defer_replayed(sess.session_id, SlotKind.GATE_NOTE)
                 _slots.discard(str(SlotKind.GATE_NOTE))
                 self._deferred_replay_slots = _slots
+            try:
+                self._record_action(
+                    "run.cache_gate",
+                    "observed_only",
+                    "prompt_chars=0",
+                )
+            except Exception:  # noqa: BLE001 — observability must not affect build
+                logger.debug("build: cache gate observability action failed", exc_info=True)
         # CR-R1.1 批次D（审查项6 补全）: packet 编译输入面 = 真实注入面。memory 自
         # EVO-20260827-f42496bc 改为一次性持久化（engine wrap+append 进
         # sess.messages）后不再进 _inject_parts（仅 fail-open 才进，见上方
@@ -1548,23 +1554,16 @@ class _BuildMixin:
                             _sem_state = None
                             _projection = ""
                         _anchor = ""
-                    if _budget_result.receipt_content:
-                        _receipt = ensure_semantic_label(
-                            _budget_result.receipt_content,
-                            InjectionLayer.STATUS,
-                            slot_kind="budget_receipt",
-                        )
-                        _inject_parts.append(("budget_receipt", _receipt))
-                        _inject_keys.append("__budget_receipt__")
-                        _packet_parts.append(("budget_receipt", _receipt))
-                        _packet_keys.append("__budget_receipt__")
+                    # R8.11/E21: budget receipt is assembler observability only.  The
+                    # structured result/action trace records pruning; no receipt text is
+                    # appended after eligibility and no prompt budget is spent on bookkeeping.
                     try:
                         self._record_action(
                             "action.injection_budget",
                             "pruned",
                             f"used={_budget_result.used_chars}/"
                             f"{_budget_result.budget_chars}; "
-                            f"dropped={len(_budget_result.dropped_blocks)}",
+                            f"dropped={len(_budget_result.dropped_blocks)};prompt_receipt=0",
                         )
                     except Exception:  # noqa: BLE001 — 预算已执行，审计失败不回滚
                         logger.debug("build: injection budget action trace 失败", exc_info=True)

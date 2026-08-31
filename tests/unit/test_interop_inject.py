@@ -279,11 +279,11 @@ def test_prefix_mode_restores_old_behavior(tmp_path, monkeypatch):
     assert prefix_len == 1
 
 
-def test_build_messages_memory_tail_and_gate_note_user(tmp_path, monkeypatch):
+def test_build_messages_memory_tail_and_gate_note_observability_only(tmp_path, monkeypatch):
     """2026-08-18 注入纪律修复装配验证（spec §5.3.1-1c / §5.3.1-5）:
 
     - memory 检索注入 → 提交尾部 user 消息（不再前置 system 段——前置随查询变化会断前缀）
-    - 门禁干预标记 → 提交尾部 user 消息（非 system，消除守卫规则 B 误报源）
+    - 门禁干预标记 → 仅 runtime observability，零 provider prompt 字符
     - 提交视图仅 system 主体一个 system 角色
     """
     from llm_loop.config import Settings
@@ -338,6 +338,6 @@ def test_build_messages_memory_tail_and_gate_note_user(tmp_path, monkeypatch):
     assert "MEM-TAIL" not in out[0]["content"]
     tail_join = "\n".join(m.get("content", "") for m in out[1:])
     assert "MEM-TAIL" in tail_join
-    # 门禁干预标记: 尾部 user（非 system），固定文本可辨识
-    assert out[-1]["role"] == "user"
-    assert GATE_NOTE_CONTENT in out[-1]["content"]
+    # 门禁干预标记只被消费/观测，不进入 provider prompt。
+    assert GATE_NOTE_CONTENT not in tail_join
+    assert engine._cache_monitor.take_gate_note(loaded.session_id) is False

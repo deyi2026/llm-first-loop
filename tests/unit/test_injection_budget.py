@@ -33,7 +33,7 @@ def test_budget_keeps_whole_blocks_by_priority_and_never_exceeds_limit():
     assert all(content not in {"R" * n for n in range(1, 700)} for content in kept.values())
 
 
-def test_budget_receipt_is_non_imperative_and_counted_inside_budget():
+def test_budget_receipt_is_observability_only_and_not_charged_to_prompt():
     from llm_loop.core.injection_budget import BudgetBlock, enforce_injection_budget
 
     blocks = [
@@ -44,6 +44,7 @@ def test_budget_receipt_is_non_imperative_and_counted_inside_budget():
 
     assert result.receipt_content
     assert result.used_chars <= 512
+    assert result.used_chars == sum(b.cost_chars for b in result.kept_blocks)
     assert not reference_has_imperative(result.receipt_content)
     assert "预算" in result.receipt_content
     assert "部分低优先级块未进入请求" in result.receipt_content
@@ -84,7 +85,9 @@ def test_build_budget_gate_covers_dynamic_appendix_end_to_end(tmp_path):
     actual_chars = sum(len(str(m.get("content") or "")) for m in program_msgs)
     assert actual_chars <= 900
     joined = "\n".join(str(m.get("content") or "") for m in program_msgs)
-    assert "[注入预算]" in joined
+    assert "[注入预算]" not in joined
+    assert engine._last_injection_budget.receipt_content.startswith("[注入预算]")
+    assert "gate_note" not in joined
     # R2 must prune whole slots; this fixture starts with five program slots.
     assert sum(joined.count(f"[slot:{s}]") for s in ("memory", "interop", "tip", "hotcard", "gate_note")) < 5
     # R1 arbitration remains exactly once on the final dynamic appendix.
@@ -114,7 +117,8 @@ def test_build_budget_gate_also_covers_persisted_program_blocks_when_cognitive_o
     out = _build(engine, sess, [])
     joined = "\n".join(str(m.get("content") or "") for m in out)
     assert "Z" * 100 not in joined
-    assert "[注入预算]" in joined
+    assert "[注入预算]" not in joined
+    assert engine._last_injection_budget.receipt_content.startswith("[注入预算]")
     actual = sum(
         len(str(m.get("content") or ""))
         for m in out

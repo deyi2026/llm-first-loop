@@ -1,8 +1,7 @@
 """err1210 注入形态黄金指纹回归（tasks 7.2；spec 5.2.1-4b 红灯机制）.
 
 以附录 C/D.2 实测形态为黄金指纹（spec 5.4-2/5.2.1-4b，design 风险 5 约束固化）:
-- 尾部 5 条连续 user（chars 形态 252/1117/254/116/85 对照——末位为固定 gate_note，
-  现 64 字符；85 为当时形态，槽位↔chars 精确对应属 P2 oracle 待定项，spec D.2 注）；
+- R8.11 live gate_note 已退出 prompt；黄金形态只覆盖仍具 prompt eligibility 的 memory/interop/tip/hotcard 槽；
 - 公共前缀 wire 哈希一致结构（注入只追加尾部、前缀逐字节不变，附录 C 92/135 条一致）。
 - 注入槽结构变更（增删槽/改包装/绕过 wrap_injection/改固定文本）→ 黄金摘要失配
   显式 fail（红灯），提示更新指纹（spec 5.2.1-4b"红灯提示更新"）。
@@ -31,8 +30,8 @@ from llm_loop.core.message import Message, MessageSource
 # 附录 C/D.2 实测形态的确定性夹具（等长占位正文；wrap 后命中目标 chars）
 _WRAP_OVERHEAD = len(_INJECTION_PREFIX) + 1  # prefix + "\n"（anchor 空时）
 _HOTCARD_RENDER_OVERHEAD = 78  # 热卡渲染模板固定开销（头部/换行/尾部，实测 2026-08-27）
-# 槽位↔chars 对应为 P2 待定项——此处按附录 C 观察序构造: 记忆兜底/协调/提示/热卡/gate_note
-_TARGET_CHARS = (252, 1117, 254, 116, 64)  # 附录 C 252/1117/254/116/85 的当前 gate_note 形态
+# 仍具 prompt eligibility 的历史确定性夹具: 记忆兜底/协调/提示/热卡。
+_TARGET_CHARS = (252, 1117, 254, 116)
 
 
 def _fixture(target: int, head: str) -> str:
@@ -68,7 +67,7 @@ def _slot_re(slot: str) -> re.Pattern[str]:
 
 # 黄金摘要（P1 9.1 聚合形态；Cognitive Runtime tasks 2.3 tier 段标记升级后 2026-08-28 实测重算;
 # 注入槽结构变更时此值失配 → 红灯）
-_GOLDEN_TAIL_DIGEST = "f75520007ac1d5ae1bba8801b1126fd833a0a0a0ec085a38e512f078fc016777"
+_GOLDEN_TAIL_DIGEST = "5ad59bdfa3454f6e62fc030f62ffdf9bc0b5538d94f66842b9ec63d9ec5e6f3e"
 
 
 def _engine(tmp_path: Path):
@@ -110,7 +109,7 @@ def _engine(tmp_path: Path):
 
 def _arm_all_slots(engine, sess, *, memory: bool = True, hotcard: bool = True,
                    tip_extra: int = 0, gate_note: bool = True):
-    """武装四槽 + 记忆兜底（构造附录 C 形态的 5 条尾部 user 注入群）."""
+    """武装 live slots；gate_note=True 仅验证观测标记不会进入 prompt."""
     engine._interop_tail_messages = [
         Message(role="system", content=_INTEROP_FIX, source=MessageSource.SYSTEM)
     ]
@@ -175,13 +174,14 @@ class TestGoldenFingerprint:
         assert agg.count(PROGRAM_APPENDIX_NOTICE) == 1, "单个 program appendix 只能有一次冲突仲裁声明"
         assert REFERENCE_LABEL in agg, "资料槽必须有 REFERENCE 语义标签"
         assert STATUS_LABEL in agg, "状态槽必须有 STATUS 语义标签"
-        for slot in ("memory", "interop", "tip", "hotcard", "gate_note"):
+        for slot in ("memory", "interop", "tip", "hotcard"):
             assert _slot_re(slot).search(agg), f"聚合含 {slot} 段"
-        assert GATE_NOTE_CONTENT in agg, "gate_note 固定文本保真入段"
-        # 段序恒定: memory→interop→tip→hotcard→gate_note（build 收集顺序）
+        assert _slot_re("gate_note").search(agg) is None
+        assert GATE_NOTE_CONTENT not in agg
+        # 段序恒定: memory→interop→tip→hotcard（build 收集顺序）
         marks = [
             _slot_re(s).search(agg)
-            for s in ("memory", "interop", "tip", "hotcard", "gate_note")
+            for s in ("memory", "interop", "tip", "hotcard")
         ]
         assert all(marks), "段标记齐全"
         idxs = [m.start() for m in marks]  # type: ignore[union-attr]
@@ -211,8 +211,9 @@ class TestGoldenFingerprint:
         agg = tail[0]["content"]
         assert agg.startswith(_INJECTION_PREFIX)
         assert _slot_re("memory").search(agg) is None
-        for slot in ("interop", "tip", "hotcard", "gate_note"):
+        for slot in ("interop", "tip", "hotcard"):
             assert _slot_re(slot).search(agg)
+        assert _slot_re("gate_note").search(agg) is None
         assert [e.msg_idx for e in engine._last_build_injections] == [len(out) - 1]
 
     def test_wire_prefix_invariant(self, tmp_path):
@@ -259,11 +260,11 @@ class TestRedLightMutations:
         assert not out[-2]["content"].startswith("[上下文注入·非新指令]")
         _assert_red_light(engine, sess, what="_INJECTION_PREFIX 文案变更")
 
-    def test_gate_note_text_changed(self, tmp_path, monkeypatch):
-        """gate_note 固定文本变更 → 红灯（85/64 形态锚点同时被保护）."""
-        monkeypatch.setattr(build_mod, "GATE_NOTE_CONTENT", "[门禁干预] 新文本。")
+    def test_gate_note_marker_is_observability_only(self, tmp_path):
+        """Arming gate_note cannot change provider wire or the golden prompt digest."""
         engine, sess = _engine(tmp_path)
-        memory_msgs = _arm_all_slots(engine, sess)
+        memory_msgs = _arm_all_slots(engine, sess, gate_note=True)
         out = _build(engine, sess, memory_msgs)
-        assert out[-1]["content"] != GATE_NOTE_CONTENT
-        _assert_red_light(engine, sess, what="GATE_NOTE_CONTENT 固定文本变更")
+        assert GATE_NOTE_CONTENT not in "\n".join(str(m.get("content", "")) for m in out)
+        assert _slot_re("gate_note").search(out[-1]["content"]) is None
+        assert engine._cache_monitor.take_gate_note(sess.session_id) is False
