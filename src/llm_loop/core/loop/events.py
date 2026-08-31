@@ -206,49 +206,119 @@ class _EventsMixin:
         )
 
     def _inject_interruption_recovery(self, session_id: str, sess) -> None:
-        """2026-08-22 中断检测 + 恢复提示: event_logs 消息数 > 会话内存 = 中断丢数据.
+        """R8.19/E32: detect an event/session gap and repair it program-side.
 
-        进程被杀/run 未完成 → session JSON 落后于 event_logs 真相源。检测到差异时
-        注入"先核对 event_logs"提示（尾部追加 GATE_NOTE 模式, 不破坏前缀）——
-        与规则 19 呼应, 让 AI 主动恢复而非被动等"记忆不符"才触发。fail-open。
+        ``event_logs`` is the durable truth source.  A killed process can leave the
+        session JSON behind the append-only event stream, but that is a runtime
+        consistency problem, not model work.  The historical implementation emitted a
+        one-shot ``[会话中断恢复]`` system tip and asked the model to inspect event logs.
+        That polluted working context and delegated deterministic reconciliation to the
+        LLM.
 
-        防反复（2026-08-22 补充）: 注入后置 sess._interruption_notified=True——
-        中断提示只进 _tip_tail 槽（一次性消费, 不 append 到 sess.messages）,
-        否则每轮差异仍存在 → 反复注入干扰。标记仅进程内（会话重启后可重新检测）。
-
-        EVO-20260822-9fde48f1 第 5 条（规则引导优先）: 注入只保留【事实数字】
-        + 一行规则 19 引用——不重复规则全文（完整动作在 system prompt 规则 19 中,
-        重复=干扰）。程序负责告知"发生了中断+差多少", 规则负责教 AI 怎么办。
+        The current user has already been appended to ``sess`` (and normally to the
+        event log) before this hook runs.  Repair therefore preserves that live object,
+        validates the pre-user prefix against event replay, inserts only replay-only
+        historical messages before the current user, and records observability with
+        ``prompt_chars=0``.  Replay/prefix failure is fail-open: keep the live session
+        untouched and report the repair failure out of band; never synthesize prompt
+        prose.
         """
         try:
-            if getattr(sess, "_interruption_notified", False):
-                return  # 已提醒过, 不反复注入
             _estore = getattr(self, "_event_store", None)
             if _estore is None or not getattr(_estore, "enabled", False):
                 return
-            _el_count = (
-                sum(1 for e in _estore.read(session_id) if e.type == "message.appended")
-                if _estore.exists(session_id)
-                else 0
-            )
-            _mem_count = len(sess.messages)
-            if _el_count <= _mem_count:
+            if not _estore.exists(session_id):
                 return
-            _note = (
-                f"[会话中断恢复] event_logs {_el_count} 条 > 会话内存 {_mem_count} 条"
-                f"（中断丢失 {_el_count - _mem_count} 条）。按规则 19 读 event_logs 核对缺失段后继续。"
-            )
-            from llm_loop.core.message import Message
+            _events = _estore.read(session_id)
+            _el_count = sum(1 for e in _events if e.type == "message.appended")
+            _mem_count = len(sess.messages)
+            replayed = self.session._load_from_event_log(session_id)  # noqa: SLF001
+            if replayed is None:
+                # If the event stream is not ahead there is nothing deterministic to
+                # recover from it.  A replay failure only becomes recovery telemetry
+                # when the durable stream claims to contain more messages than memory.
+                if _el_count > _mem_count:
+                    self._record_action(
+                        "run.interruption_recovery",
+                        "repair_failed",
+                        f"event_messages={_el_count};memory_messages={_mem_count};reason=replay_failed;prompt_chars=0",
+                    )
+                return
 
-            tips = getattr(self, "_tip_tail_messages", None) or []
-            self._tip_tail_messages = tips
-            tips.append(Message(
-                role="system", content=_note, source=MessageSource.SYSTEM,
-                metadata={"injected_system": True, "interruption_recovery": True},
-            ))
-            sess._interruption_notified = True  # 防反复注入
-        except Exception:  # noqa: BLE001 — 中断检测失败 fail-open（不影响 run）
-            logger.debug("中断检测异常（fail-open）")
+            live = list(sess.messages)
+            current_user = live[-1] if live and live[-1].role == "user" else None
+            live_prefix = live[:-1] if current_user is not None else live
+            replay_messages = list(replayed.messages)
+
+            def _identity(msg: Message) -> tuple[Any, ...]:
+                return (
+                    msg.role,
+                    msg.content,
+                    str(msg.source),
+                    msg.tool_call_id,
+                    str(msg.status) if msg.status is not None else None,
+                    msg.tool_name,
+                    msg.error_detail,
+                    msg.tool_calls,
+                    msg.reasoning_content,
+                    dict(msg.metadata or {}),
+                )
+
+            prefix_len = len(live_prefix)
+            if len(replay_messages) < prefix_len:
+                # Event log is behind the already-loaded historical prefix.  It has no
+                # recovery material for this turn; preserve the live session unchanged.
+                return
+            if [_identity(m) for m in replay_messages[:prefix_len]] != [
+                _identity(m) for m in live_prefix
+            ]:
+                self._record_action(
+                    "run.interruption_recovery",
+                    "repair_failed",
+                    f"event_messages={_el_count};memory_messages={_mem_count};reason=prefix_mismatch;prompt_chars=0",
+                )
+                return
+
+            replay_tail = replay_messages[prefix_len:]
+            if current_user is not None and replay_tail:
+                current_key = _identity(current_user)
+                matching_positions = [
+                    i for i, message in enumerate(replay_tail) if _identity(message) == current_key
+                ]
+                if matching_positions:
+                    # The ingress event must be the final replayed message.  If it is
+                    # found earlier, event ordering is ambiguous and we refuse to guess.
+                    if matching_positions != [len(replay_tail) - 1]:
+                        self._record_action(
+                            "run.interruption_recovery",
+                            "repair_failed",
+                            f"event_messages={_el_count};memory_messages={_mem_count};reason=current_user_order;prompt_chars=0",
+                        )
+                        return
+                    replay_tail = replay_tail[:-1]
+
+            if not replay_tail:
+                return  # normal aligned run, or only the live current-user event differs
+
+            repaired = live_prefix + replay_tail
+            if current_user is not None:
+                repaired.append(current_user)
+            sess.messages[:] = repaired
+            self._record_action(
+                "run.interruption_recovery",
+                "repaired",
+                f"event_messages={_el_count};memory_messages={_mem_count};recovered={len(replay_tail)};prompt_chars=0",
+            )
+        except Exception:  # noqa: BLE001 — deterministic repair failure stays out of prompt
+            logger.debug("中断对账修复异常（fail-open）", exc_info=True)
+            try:
+                self._record_action(
+                    "run.interruption_recovery",
+                    "repair_failed",
+                    "reason=exception;prompt_chars=0",
+                )
+            except Exception:  # noqa: BLE001 — observability must not break the run
+                pass
 
     def _persist_long_answer(self, session_id: str, final_answer: str) -> str:
         """EVO-20260820-5bf342ae ②: 长回答（>8000 chars）落盘并附路径（信息零丢失）.
