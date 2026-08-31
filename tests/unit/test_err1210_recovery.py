@@ -186,34 +186,43 @@ class TestParseProviderErrorCode:
 class TestResetHotcardConsumed:
     def test_reset_and_repop(self, tmp_path):
         write_hotcard(origin_session="other-sess", anchor="任务A", data_dir=tmp_path)
-        text = pop_hotcard(session_id="sess-1", data_dir=tmp_path)
-        # R3 pointer contract: old action prose stays in the durable card, automatic view is 2-line pointer.
+        text = pop_hotcard(session_id="sess-1", data_dir=tmp_path, authorized=True)
+        # R3 pointer contract: old action prose stays in the durable card, explicit view is 2-line pointer.
         assert text and "anchor=1" in text and "ref=file:" in text
         assert "任务A" not in text
         card = json.loads(hotcard_path(tmp_path).read_text(encoding="utf-8"))
         assert card["consumed"] is True
-        # 复位（身份匹配）
-        assert reset_hotcard_consumed(session_id="sess-1", data_dir=tmp_path) is True
+        # 默认 reset 无授权 → 不得复活。
+        assert reset_hotcard_consumed(session_id="sess-1", data_dir=tmp_path) is False
+        assert reset_hotcard_consumed(
+            session_id="sess-1", data_dir=tmp_path, authorized=True
+        ) is True
         card = json.loads(hotcard_path(tmp_path).read_text(encoding="utf-8"))
         assert card["consumed"] is False and card["consumed_by"] == ""
-        # 复位后可再次 pop（重注入语义）
-        again = pop_hotcard(session_id="sess-1", data_dir=tmp_path)
+        # 复位后仍需再次显式授权才能 pop；build 不会调用此路径。
+        again = pop_hotcard(session_id="sess-1", data_dir=tmp_path, authorized=True)
         assert again == text
 
     def test_stale_card_not_reset(self, tmp_path):
         write_hotcard(origin_session="other-sess", anchor="任务A", data_dir=tmp_path)
-        pop_hotcard(session_id="sess-1", data_dir=tmp_path)
+        pop_hotcard(session_id="sess-1", data_dir=tmp_path, authorized=True)
         # 不同会话请求复位 → 拒绝（防复活已被新事件接管的卡）
-        assert reset_hotcard_consumed(session_id="sess-2", data_dir=tmp_path) is False
+        assert reset_hotcard_consumed(
+            session_id="sess-2", data_dir=tmp_path, authorized=True
+        ) is False
 
     def test_missing_card_returns_false(self, tmp_path):
         assert reset_hotcard_consumed(session_id="s", data_dir=tmp_path) is False
 
     def test_idempotent_double_reset(self, tmp_path):
         write_hotcard(origin_session="o", anchor="a", data_dir=tmp_path)
-        pop_hotcard(session_id="s1", data_dir=tmp_path)
-        assert reset_hotcard_consumed(session_id="s1", data_dir=tmp_path) is True
-        assert reset_hotcard_consumed(session_id="s1", data_dir=tmp_path) is False  # 已复位
+        pop_hotcard(session_id="s1", data_dir=tmp_path, authorized=True)
+        assert reset_hotcard_consumed(
+            session_id="s1", data_dir=tmp_path, authorized=True
+        ) is True
+        assert reset_hotcard_consumed(
+            session_id="s1", data_dir=tmp_path, authorized=True
+        ) is False  # 已复位
 
 
 class TestRestoreGateNote:
@@ -427,7 +436,7 @@ class TestDeferStore:
 
     def test_hotcard_and_gate_note_slots(self, tmp_path):
         write_hotcard(origin_session="o", anchor="a", data_dir=tmp_path)
-        pop_hotcard(session_id="sess-d1", data_dir=tmp_path)  # 消费
+        pop_hotcard(session_id="sess-d1", data_dir=tmp_path, authorized=True)  # 显式消费
         stub = _DeferStub(tmp_path)
         entries = [
             InjectedEntry(msg_idx=0, slot_kind=SlotKind.HOTCARD, prefix_sha="h" * 64),
@@ -435,12 +444,16 @@ class TestDeferStore:
         ]
         assert stub._defer_store(self._sess(), entries) is True
         assert stub._cache_monitor.take_gate_note("sess-d1") is True  # 已置位
-        assert pop_hotcard(session_id="sess-d1", data_dir=tmp_path) is not None  # 可再取出
+        card = json.loads(hotcard_path(tmp_path).read_text(encoding="utf-8"))
+        assert card["consumed"] is True and card["consumed_by"] == "sess-d1"
+        assert pop_hotcard(
+            session_id="sess-d1", data_dir=tmp_path, authorized=True
+        ) is None  # err1210 不得复位/复活 HOTCARD
 
     def test_overflow_drops_non_interop(self, tmp_path):
         stub = _DeferStub(tmp_path)
         write_hotcard(origin_session="o", anchor="a", data_dir=tmp_path)
-        pop_hotcard(session_id="sess-d1", data_dir=tmp_path)
+        pop_hotcard(session_id="sess-d1", data_dir=tmp_path, authorized=True)
         interop = [Message(role="system", content=f"协调{i}", source=MessageSource.SYSTEM) for i in range(8)]
         entries = (
             [InjectedEntry(msg_idx=i, slot_kind=SlotKind.INTEROP, prefix_sha="a" * 64, message_ref=m)
@@ -658,8 +671,8 @@ class TestEngineRecovery:
         assert all(r is not m for r in (engine._deferred_replay_refs or []))
 
 
-    def test_multi_slot_aggregated_recovery(self, tmp_path, monkeypatch):
-        """B-1: live tip + hotcard 聚合剥离并 defer 恢复；retired interop 不参与."""
+    def test_tip_recovery_does_not_gain_hotcard_authority(self, tmp_path, monkeypatch):
+        """E24: live tip 可恢复；durable hotcard 不因同轮 1210 获得 prompt/defer 权限."""
         engine, fake = _mk(tmp_path, monkeypatch, responses=[_e1210(), _resp()])
         sid = engine.session.create()
         _arm_compact_first(engine, sid)
@@ -668,7 +681,7 @@ class TestEngineRecovery:
         ]
         write_hotcard(origin_session="origin-sess", anchor="任务锚点",
                       data_dir=engine.settings.data_dir)
-        result = engine.run(sid, "双槽全活跃")
+        result = engine.run(sid, "tip 活跃")
         assert "恢复后的正常回答" in result.final_answer
         assert len(fake.calls) == 2
         orig, retry = fake.calls[0]["messages"], fake.calls[1]["messages"]
@@ -682,17 +695,21 @@ class TestEngineRecovery:
         assert inj and all(e.slot_kind == SlotKind.USER_ENVELOPE for e in inj)
         assert _slot_user(retry) == []
         assert retry[:-1] == orig[:-1]
-        assert retry[-1] == {"role": "user", "content": "双槽全活跃"}
+        assert retry[-1] == {"role": "user", "content": "tip 活跃"}
         assert engine._tip_tail_messages and any(
             x.content.endswith("经验提示 tip") for x in engine._tip_tail_messages
         )
-        assert pop_hotcard(session_id=sid,
-                           data_dir=engine.settings.data_dir) is not None
+        card = json.loads(hotcard_path(engine.settings.data_dir).read_text(encoding="utf-8"))
+        assert card["consumed"] is False
+        assert not any("slot:hotcard" in str(m.get("content", "")) for m in orig)
+        assert pop_hotcard(
+            session_id=sid, data_dir=engine.settings.data_dir, authorized=True
+        ) is not None  # explicit retrieval remains available after the run
         assert engine._interop_tail_messages in (None, [])
 
 
-    def test_defer_plus_active_slots_single_agg(self, tmp_path, monkeypatch):
-        """B-2: deferred tip + new hotcard coexist as one aggregate in stable order."""
+    def test_deferred_tip_ignores_new_durable_hotcard(self, tmp_path, monkeypatch):
+        """E24: deferred tip remains live; a newly written hotcard cannot join its aggregate."""
         engine, fake = _mk(
             tmp_path, monkeypatch,
             responses=[_e1210(), _resp(), _resp("第二轮回答")],
@@ -717,8 +734,10 @@ class TestEngineRecovery:
         content = str(agg[0]["content"])
         m_tip = re.search(r"--- (?:\[tier:\w+\])?\[slot:tip\] ---", content)
         m_hot = re.search(r"--- (?:\[tier:\w+\])?\[slot:hotcard\] ---", content)
-        assert m_tip and m_hot and m_tip.start() < m_hot.start()
-        assert "defer 回放 tip" in content[:m_hot.start()]
+        assert m_tip and m_hot is None
+        assert "defer 回放 tip" in content
+        card = json.loads(hotcard_path(engine.settings.data_dir).read_text(encoding="utf-8"))
+        assert card["consumed"] is False
 
 
     def test_second_1210_no_third_retry(self, tmp_path, monkeypatch):

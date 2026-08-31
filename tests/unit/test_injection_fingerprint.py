@@ -1,7 +1,7 @@
 """err1210 注入形态黄金指纹回归（tasks 7.2；spec 5.2.1-4b 红灯机制）.
 
 以附录 C/D.2 实测形态为黄金指纹（spec 5.4-2/5.2.1-4b，design 风险 5 约束固化）:
-- R8.13 live interop 与 R8.11 gate_note 已退出 prompt；黄金形态只覆盖 memory/tip/hotcard 槽；
+- R8.14 hotcard、R8.13 interop 与 R8.11 gate_note 已退出 prompt；黄金形态只覆盖 memory/tip 槽；
 - 公共前缀 wire 哈希一致结构（注入只追加尾部、前缀逐字节不变，附录 C 92/135 条一致）。
 - 注入槽结构变更（增删槽/改包装/绕过 wrap_injection/改固定文本）→ 黄金摘要失配
   显式 fail（红灯），提示更新指纹（spec 5.2.1-4b"红灯提示更新"）。
@@ -24,14 +24,13 @@ from llm_loop.core.cache_health import GATE_NOTE_CONTENT
 from llm_loop.core.injection_labels import PROGRAM_APPENDIX_NOTICE, REFERENCE_LABEL, STATUS_LABEL
 from llm_loop.core.loop.err1210 import InjectionSpan
 from llm_loop.core.loop.focus import _INJECTION_PREFIX
-from llm_loop.core.loop.hotcard import write_hotcard
+from llm_loop.core.loop.hotcard import hotcard_path, write_hotcard
 from llm_loop.core.message import Message, MessageSource
 
 # 附录 C/D.2 实测形态的确定性夹具（等长占位正文；wrap 后命中目标 chars）
 _WRAP_OVERHEAD = len(_INJECTION_PREFIX) + 1  # prefix + "\n"（anchor 空时）
-_HOTCARD_RENDER_OVERHEAD = 78  # 热卡渲染模板固定开销（头部/换行/尾部，实测 2026-08-27）
-# 仍具 live prompt eligibility 的确定性夹具: 记忆兜底/提示/热卡。
-_TARGET_CHARS = (252, 254, 116)
+# 仍具 live prompt eligibility 的确定性夹具: 记忆兜底/提示。
+_TARGET_CHARS = (252, 254)
 
 
 def _fixture(target: int, head: str) -> str:
@@ -41,7 +40,6 @@ def _fixture(target: int, head: str) -> str:
 
 _MEMORY_FIX = _fixture(_TARGET_CHARS[0], "记忆检索结果：")
 _TIP_FIX = _fixture(_TARGET_CHARS[1], "经验提示：")
-_HOTCARD_ANCHOR = "热卡AAA"  # 5 字符 → 渲染后 83 字符 → wrap 后 116
 
 
 def _tail_digest(messages: list[dict], n: int = 5) -> str:
@@ -66,7 +64,7 @@ def _slot_re(slot: str) -> re.Pattern[str]:
 
 # 黄金摘要（P1 9.1 聚合形态；Cognitive Runtime tasks 2.3 tier 段标记升级后 2026-08-28 实测重算;
 # 注入槽结构变更时此值失配 → 红灯）
-_GOLDEN_TAIL_DIGEST = "6630a4fed4b9dab9fa2da7fe7ad4a8ace9769c3e52c9eea5998164bd04e0e111"
+_GOLDEN_TAIL_DIGEST = "59a823f60750e5b96565bf46057f141e33d7e328ae0b67b3e3a250dfa5ac5e64"
 
 
 def _engine(tmp_path: Path):
@@ -106,18 +104,28 @@ def _engine(tmp_path: Path):
     return engine, sess
 
 
-def _arm_all_slots(engine, sess, *, memory: bool = True, hotcard: bool = True,
-                   tip_extra: int = 0, gate_note: bool = True):
+def _arm_all_slots(
+    engine,
+    sess,
+    *,
+    memory: bool = True,
+    tip: bool = True,
+    durable_hotcard: bool = True,
+    tip_extra: int = 0,
+    gate_note: bool = True,
+):
     """武装 live slots；gate_note=True 仅验证观测标记不会进入 prompt."""
-    tips = [Message(role="system", content=_TIP_FIX, source=MessageSource.SYSTEM)]
-    tips += [
-        Message(role="system", content=_TIP_FIX + f"#{i}", source=MessageSource.SYSTEM)
-        for i in range(tip_extra)
-    ]
-    engine._tip_tail_messages = tips
-    if hotcard:
+    tips = []
+    if tip:
+        tips.append(Message(role="system", content=_TIP_FIX, source=MessageSource.SYSTEM))
+        tips += [
+            Message(role="system", content=_TIP_FIX + f"#{i}", source=MessageSource.SYSTEM)
+            for i in range(tip_extra)
+        ]
+    engine._tip_tail_messages = tips or None
+    if durable_hotcard:
         write_hotcard(
-            origin_session="other-session", anchor=_HOTCARD_ANCHOR,
+            origin_session="other-session", anchor="durable-only-hotcard",
             data_dir=engine.settings.data_dir,
         )
     if gate_note:
@@ -153,7 +161,7 @@ def _assert_red_light(engine, sess, *, what: str, **arm_kwargs) -> None:
 
 class TestGoldenFingerprint:
     def test_golden_tail_morphology(self, tmp_path):
-        """P1 9.1 聚合形态: 尾部 1 条聚合 user（memory+tip+hotcard 段标记，wrap 包装，段序恒定）.
+        """P1 9.1 聚合形态: 尾部 1 条聚合 user（memory+tip；hotcard 已退出 prompt）.
 
         CR-R1（tasks 2.2）后默认 MODE=shadow（平铺+锚点旧行为），黄金摘要锚定的是
         生产 enforce 形态（tier 聚合），故本用例显式切 enforce 后再构建。
@@ -170,14 +178,15 @@ class TestGoldenFingerprint:
         assert agg.count(PROGRAM_APPENDIX_NOTICE) == 1, "单个 program appendix 只能有一次冲突仲裁声明"
         assert REFERENCE_LABEL in agg, "资料槽必须有 REFERENCE 语义标签"
         assert STATUS_LABEL in agg, "状态槽必须有 STATUS 语义标签"
-        for slot in ("memory", "tip", "hotcard"):
+        for slot in ("memory", "tip"):
             assert _slot_re(slot).search(agg), f"聚合含 {slot} 段"
+        assert _slot_re("hotcard").search(agg) is None
         assert _slot_re("gate_note").search(agg) is None
         assert GATE_NOTE_CONTENT not in agg
-        # 段序恒定: memory→tip→hotcard（build 收集顺序）
+        # 段序恒定: memory→tip（build 收集顺序）
         marks = [
             _slot_re(s).search(agg)
-            for s in ("memory", "tip", "hotcard")
+            for s in ("memory", "tip")
         ]
         assert all(marks), "段标记齐全"
         idxs = [m.start() for m in marks]  # type: ignore[union-attr]
@@ -197,8 +206,8 @@ class TestGoldenFingerprint:
         # 登记构成尾部连续段（P0 剥离前置校验）
         assert InjectionSpan(tuple(entries)).is_tail_contiguous(out) is True
 
-    def test_four_slot_no_memory_tail(self, tmp_path):
-        """常态（记忆已持久化）: 尾部 1 条聚合 user 含 tip+hotcard 段（无 memory/interop）."""
+    def test_live_tip_no_memory_tail(self, tmp_path):
+        """常态（记忆已持久化）: 尾部聚合只含 live tip，不含 retired hotcard."""
         engine, sess = _engine(tmp_path)
         memory_msgs = _arm_all_slots(engine, sess, memory=False)
         out = _build(engine, sess, memory_msgs)
@@ -207,8 +216,8 @@ class TestGoldenFingerprint:
         agg = tail[0]["content"]
         assert agg.startswith(_INJECTION_PREFIX)
         assert _slot_re("memory").search(agg) is None
-        for slot in ("tip", "hotcard"):
-            assert _slot_re(slot).search(agg)
+        assert _slot_re("tip").search(agg)
+        assert _slot_re("hotcard").search(agg) is None
         assert _slot_re("gate_note").search(agg) is None
         assert [e.msg_idx for e in engine._last_build_injections] == [len(out) - 1]
 
@@ -231,12 +240,12 @@ class TestRedLightMutations:
         assert len(_slot_re("tip").findall(out[-1]["content"])) == 2, "tip 槽增加消息 → 2 个 tip 段"
         _assert_red_light(engine, sess, what="tip 槽增加消息", tip_extra=1)
 
-    def test_slot_removed(self, tmp_path):
+    def test_live_slot_removed(self, tmp_path):
         engine, sess = _engine(tmp_path)
-        memory_msgs = _arm_all_slots(engine, sess, hotcard=False)  # 移除 hotcard 槽
+        memory_msgs = _arm_all_slots(engine, sess, tip=False)  # 移除仍具 eligibility 的 tip 槽
         out = _build(engine, sess, memory_msgs)
-        assert _slot_re("hotcard").search(out[-1]["content"]) is None
-        _assert_red_light(engine, sess, what="移除 hotcard 槽", hotcard=False)
+        assert _slot_re("tip").search(out[-1]["content"]) is None
+        _assert_red_light(engine, sess, what="移除 tip 槽", tip=False)
 
     def test_wrap_bypassed(self, tmp_path, monkeypatch):
         """绕过 wrap_injection（新槽不接统一包装 → design 风险 5）→ 红灯."""
@@ -264,3 +273,13 @@ class TestRedLightMutations:
         assert GATE_NOTE_CONTENT not in "\n".join(str(m.get("content", "")) for m in out)
         assert _slot_re("gate_note").search(out[-1]["content"]) is None
         assert engine._cache_monitor.take_gate_note(sess.session_id) is False
+
+    def test_durable_hotcard_is_retrievable_only(self, tmp_path):
+        """E24: writing a handoff card cannot alter provider wire or consume the card."""
+        engine, sess = _engine(tmp_path)
+        memory_msgs = _arm_all_slots(engine, sess, durable_hotcard=True)
+        out = _build(engine, sess, memory_msgs)
+        wire = "\n".join(str(m.get("content", "")) for m in out)
+        assert "slot:hotcard" not in wire and "[任务热卡]" not in wire
+        card = json.loads(hotcard_path(engine.settings.data_dir).read_text(encoding="utf-8"))
+        assert card["consumed"] is False and card["consumed_by"] == ""

@@ -8,8 +8,8 @@
 - write_hotcard(): 压缩发生时刻（run.compact 审计点）聚合「任务锚点（最近用户指令+
   最近动作, 复用 focus.build_task_anchor）+ active Goal 及最近 checkpoint（复用
   GoalStore）+ pending_review 演进待审」落盘 JSON；fail-open 绝不阻断压缩。
-- pop_hotcard(): 新会话 build 尾部注入——仅当「来源会话 ≠ 当前会话且未消费」时取出
-  （wrap 由调用方统一），取出即标记 consumed（防陈旧卡反复注入）。
+- pop_hotcard(): 仅供**已获用户输入侧授权**的显式恢复路径取出。跨会话/未消费
+  只是可用性条件，不是授权；默认调用返回 None 且不改变 consumed 状态。
 - 恢复冲突语义由 RULE-AI-20 第 7 条兜底: 热卡与用户最新指令冲突时以用户指令为准。
 """
 
@@ -147,12 +147,19 @@ def _render_card_text(card: dict, *, ref_path: str = "") -> str:
     return f"{line1}\nref=file:{ref}"
 
 
-def pop_hotcard(*, session_id: str, data_dir: str | Path) -> str | None:
-    """取出未消费且来源会话 ≠ 当前会话的热卡文本，并立即标记 consumed.
+def pop_hotcard(
+    *, session_id: str, data_dir: str | Path, authorized: bool = False
+) -> str | None:
+    """显式授权后取出未消费且来源会话 ≠ 当前会话的热卡文本.
 
-    返回 None 的三种情形: 无卡 / 已消费 / 来源即当前会话（同会话压缩已有
-    [压缩关键事实] 帧，不重复注入）。
+    R8.14/E24: ``origin_session != session_id`` 只能证明跨会话，不能证明用户要继续
+    那个任务。调用方必须先经输入侧 accept/restore 获得授权，再传 ``authorized=True``。
+    未授权调用不读取/消费卡，避免普通新会话把陈旧 handoff 自动升级成 prompt authority。
+
+    授权后仍返回 None 的情形: 无卡 / 已消费 / 来源即当前会话。
     """
+    if not authorized:
+        return None
     path = hotcard_path(data_dir)
     try:
         if not path.exists():
@@ -173,14 +180,20 @@ def pop_hotcard(*, session_id: str, data_dir: str | Path) -> str | None:
         return None
 
 
-def reset_hotcard_consumed(*, session_id: str, data_dir: str | Path) -> bool:
-    """[err1210 T2.2，defer 回存 hotcard 槽] 复位被本会话消费的热卡 consumed 标记.
+def reset_hotcard_consumed(
+    *, session_id: str, data_dir: str | Path, authorized: bool = False
+) -> bool:
+    """显式授权恢复路径复位被本会话消费的热卡 consumed 标记.
 
-    身份校验: 仅当 consumed == True 且 consumed_by == session_id 时复位
+    R8.14/E24 后 err1210 不再调用本函数。调用方必须先取得用户恢复授权，并传
+    ``authorized=True``；否则返回 False 且不改文件。授权后仍执行身份校验：仅当
+    consumed == True 且 consumed_by == session_id 时复位
     （consumed=False、清空 consumed_by/consumed_ts）——防复活已被新压缩事件
     覆盖的陈旧卡。文件缺失/校验不匹配/写失败返回 False（fail-open）。
-    复位后下一轮 build pop_hotcard 可再次取出注入（幂等：重复复位返回 False）。
+    复位只恢复显式 handoff 可读性，不赋予 build/prompt authority。
     """
+    if not authorized:
+        return False
     path = hotcard_path(data_dir)
     try:
         if not path.exists():

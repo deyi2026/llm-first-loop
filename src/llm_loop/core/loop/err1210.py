@@ -493,14 +493,25 @@ class _Err1210Mixin:
                             slot_s,
                             exc_info=True,
                         )
-            # 总量 ≤8（interop/tip 按消息条数，hotcard/gate_note 各 1）
+            # R8.14/E24: HOTCARD automatic prompt eligibility is retired.  A legacy
+            # injection entry may still reach this parser after hot reload/retry, but it
+            # must not reset consumed state and thereby regain future prompt authority.
+            if SlotKind.HOTCARD in by_slot:
+                record_defer_event(
+                    "defer_dropped",
+                    sess.session_id,
+                    str(SlotKind.HOTCARD),
+                    {"reason": "prompt_eligibility_retired"},
+                )
+                del by_slot[SlotKind.HOTCARD]
+
+            # 总量 ≤8（interop/tip 按消息条数，gate_note 各 1）
             total = sum(len(v) for k, v in by_slot.items() if k in (SlotKind.INTEROP, SlotKind.TIP))
-            total += 1 if SlotKind.HOTCARD in by_slot else 0
             total += 1 if SlotKind.GATE_NOTE in by_slot else 0
             dropped_overflow: list[SlotKind] = []
             if total > _DEFER_REPLAY_TOTAL_LIMIT:
                 keep_interop = by_slot.get(SlotKind.INTEROP, [])[:_DEFER_REPLAY_TOTAL_LIMIT]
-                for k in (SlotKind.TIP, SlotKind.HOTCARD, SlotKind.GATE_NOTE):
+                for k in (SlotKind.TIP, SlotKind.GATE_NOTE):
                     if k in by_slot:
                         dropped_overflow.append(k)
                         del by_slot[k]
@@ -542,26 +553,6 @@ class _Err1210Mixin:
                 except Exception:  # noqa: BLE001 — 单槽失败不阻断其余
                     ok = False
                     logger.warning("err1210: defer 回填 %s 失败（fail-open）", slot, exc_info=True)
-
-            # hotcard: consumed 复位（身份校验防复活陈旧卡）
-            if SlotKind.HOTCARD in by_slot:
-                try:
-                    from llm_loop.core.loop.hotcard import reset_hotcard_consumed
-
-                    if reset_hotcard_consumed(
-                        session_id=sess.session_id, data_dir=self.settings.data_dir
-                    ):
-                        self._deferred_replay_slots = set(self._deferred_replay_slots)
-                        self._deferred_replay_slots.add(str(SlotKind.HOTCARD))
-                        record_defer_event(
-                            "defer_stored", sess.session_id, str(SlotKind.HOTCARD), {}
-                        )
-                    else:
-                        ok = False
-                        logger.warning("err1210: hotcard consumed 复位未生效（校验不匹配/无卡）")
-                except Exception:  # noqa: BLE001
-                    ok = False
-                    logger.warning("err1210: hotcard 复位异常（fail-open）", exc_info=True)
 
             # gate_note: pending 置位
             if SlotKind.GATE_NOTE in by_slot:

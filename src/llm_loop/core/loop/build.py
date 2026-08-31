@@ -66,7 +66,7 @@ from llm_loop.core.loop.err1210 import (
     content_prefix_sha,
 )
 from llm_loop.core.loop.focus import _INJECTION_PREFIX, build_task_anchor, wrap_injection
-from llm_loop.core.loop.hotcard import pop_hotcard, write_hotcard
+from llm_loop.core.loop.hotcard import write_hotcard
 
 # Cognitive Runtime（tasks 2.3/2.5/2.6）: tier 分级聚合 + 语义投影替代锚点。
 # 惰性容错导入（cognitive 子包独立演进，import 失败时聚合器回退原平铺行为）。
@@ -1172,24 +1172,21 @@ class _BuildMixin:
             self._deferred_replay_refs = _kept
         self._interop_tail_messages = None  # 一次性消费（每轮重扫 pending）
         self._tip_tail_messages = None  # 经验提示同机制一次性消费（下轮工具执行再注入）
-        # EVO-20260826-81f8f674: 任务接力热卡注入——压缩时刻写的热卡在新会话 build 时
-        # 取出注入（仅跨会话未消费；pop 即标记 consumed 防陈旧卡反复注入；尾部追加
-        # 不破坏前缀缓存；fail-open 绝不阻断构建）。冲突语义: RULE-AI-20 第 7 条兜底。
-        try:
-            _hotcard_text = pop_hotcard(
-                session_id=sess.session_id, data_dir=self.settings.data_dir
-            )
-            if _hotcard_text:
-                # P1 聚合（9.1）: 收集原文，wrap 延后到统一聚合器（原独立 wrap+append 撤销）
-                _inject_parts.append((SlotKind.HOTCARD, _hotcard_text))
-                # err1210 T4.1: hotcard defer 重注入检测
-                _slots = getattr(self, "_deferred_replay_slots", None) or set()
-                if str(SlotKind.HOTCARD) in _slots:
-                    self._note_defer_replayed(sess.session_id, SlotKind.HOTCARD)
-                    _slots.discard(str(SlotKind.HOTCARD))
-                    self._deferred_replay_slots = _slots
-        except Exception:  # noqa: BLE001 — fail-open
-            pass
+        # R8.14/E24: hotcard remains a durable handoff artifact, not an automatic prompt source.
+        # Cross-session is not continuation authorization.  Retire any pre-upgrade defer marker
+        # here so a hot-reloaded process cannot resurrect an old HOTCARD slot into a later build.
+        _slots = getattr(self, "_deferred_replay_slots", None) or set()
+        if str(SlotKind.HOTCARD) in _slots:
+            _slots.discard(str(SlotKind.HOTCARD))
+            self._deferred_replay_slots = _slots
+            try:
+                self._record_action(
+                    "handoff.hotcard",
+                    "retired_replay",
+                    "prompt_chars=0;reason=user_authorization_required",
+                )
+            except Exception:  # noqa: BLE001 — observability must not affect build
+                logger.debug("build: hotcard replay retirement action failed", exc_info=True)
         # R8.11/E20: cache-gate intervention is runtime observability, not model input.
         # Consume its one-shot marker so it cannot churn forever, but emit zero prompt chars.
         # Legacy err1210 may have restored a gate_note slot; retire that replay marker here
@@ -1432,7 +1429,7 @@ class _BuildMixin:
                                         ),
                                         state=_rb,
                                     )
-                                    SemanticStateStore(
+                                    _state_store_cls(
                                         os.path.join(self.settings.data_dir, "audit")
                                     ).save(_cog_sid, _env)
                                     _sem_state = _rb

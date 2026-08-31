@@ -21,7 +21,6 @@ PROMPT_DYNAMIC_PRODUCER_SLOTS = frozenset(
         "program_recovery",
         "memory",
         "tip",
-        "hotcard",
         "digest",
         "task_frontier",
     }
