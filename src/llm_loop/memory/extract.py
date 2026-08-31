@@ -98,6 +98,13 @@ def memory_blocks_to_entries(
                 created_at="",
                 citations=citations,  # Phase 2 溯源
                 scope=_classify_scope(content),  # 2026-08-20 记忆分级（防跨会话污染）
+                # R8.22: historical decisions/conventions are searchable state,
+                # not automatic prompt material.  Facts/procedures retain the
+                # existing policy; runtime retrieval independently hard-denies
+                # legacy auto decision/convention entries as well.
+                inject_policy=(
+                    "recall_only" if mtype in {"decision", "convention"} else "auto"
+                ),
             )
         )
     return entries, failures

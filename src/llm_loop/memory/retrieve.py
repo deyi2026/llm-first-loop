@@ -101,6 +101,11 @@ def build_memory_messages(
     plus one stable ref. A seen stable ref is omitted by default; callers may
     request a one-line ref on an explicit task-switch turn. Original memory
     content remains available through explicit retrieval tools.
+
+    R8.22: conversational ``decision`` and ``convention`` memory is historical
+    state, not automatic prompt authority.  Even legacy entries persisted with
+    ``inject_policy=auto`` are recall-only at runtime.  Explicit
+    ``search_records(kind=memory)`` remains unchanged.
     """
     keywords = extract_keywords(text)
     keyword_hits = store.search(keywords, top_k=top_k, session_id=session_id) if keywords else []
@@ -136,7 +141,10 @@ def build_memory_messages(
         or (session_id and e.source_session_id == session_id)
     ]
     entries = [
-        e for e in entries if getattr(e, "inject_policy", "auto") != "recall_only"
+        e
+        for e in entries
+        if getattr(e, "inject_policy", "auto") != "recall_only"
+        and str(getattr(e, "type", "fact") or "fact") not in {"decision", "convention"}
     ]
     if not entries:
         return []

@@ -4,7 +4,6 @@ from types import SimpleNamespace
 
 from llm_loop.config import Settings
 from llm_loop.core.episode_history import (
-    EPISODE_KEEP_PROVIDER_KEY,
     RESOLVED_EPISODE_REF_KEY,
     backfill_completed_episodes,
     filtered_anchor_from_original,
@@ -181,18 +180,19 @@ def test_unresolved_episode_remains_provider_visible(tmp_path):
     assert provider_view_without_resolved_episodes(sess.messages) == sess.messages
 
 
-def test_explicit_standing_user_instruction_survives_episode_retirement(tmp_path):
+def test_explicit_standing_user_instruction_retires_but_remains_retrievable(tmp_path):
     store = EpisodeStore(tmp_path / "episodes")
     user = _user("以后不要自动 stage 其他 dirty files；这次请检查当前提交。", ts=5.0)
     answer = _final("已检查。", ts=6.0)
     sess = Session(session_id="sid-standing", messages=[user, answer])
     ref = index_current_completed_episode(store, sess, turn_ref=0, final_answer_index=1)
     assert ref
-    assert sess.messages[0].metadata.get(EPISODE_KEEP_PROVIDER_KEY) is True
     projected = provider_view_without_resolved_episodes(sess.messages)
-    assert projected == [sess.messages[0]]
+    assert projected == []
     hydrated = store.hydrate("sid-standing", ref, max_chars=4096)
-    assert hydrated is not None and "已检查" in hydrated["content"]
+    assert hydrated is not None
+    assert "以后不要自动 stage 其他 dirty files" in hydrated["content"]
+    assert "已检查" in hydrated["content"]
 
 
 def test_anchor_translation_across_retired_messages():

@@ -67,7 +67,11 @@ def provider_message_visible(message: Message) -> bool:
     if is_consumed_tool_span_message(message):
         return False
     if is_resolved_episode_message(message):
-        return bool(_metadata(message).get(EPISODE_KEEP_PROVIDER_KEY))
+        # R8.22: a historical user turn does not keep prompt authority merely
+        # because its text contains standing-rule language.  Exact source text
+        # remains durable in EpisodeStore and can be hydrated on demand.
+        # ``resolved_episode_keep_provider`` is now legacy storage metadata only.
+        return False
     return True
 
 
@@ -84,12 +88,11 @@ def provider_view_without_resolved_episodes(messages: list[Message]) -> list[Mes
 
 
 def has_explicit_durable_user_instruction(message: Message) -> bool:
-    """Conservative lexical guard for standing user instructions.
+    """Conservative lexical detector for standing user-instruction wording.
 
-    This is deliberately narrow.  It does not try to infer every project
-    decision; those remain retrievable via episode/memory search.  It protects
-    explicit cross-turn behavioural constraints from being hidden merely
-    because the surrounding Q&A episode has completed.
+    R8.22 deliberately separates detection from prompt authority.  This helper
+    may still be useful for audit/migration, but a match never means that the
+    full historical source message must remain provider-visible.
     """
 
     return is_human_user_message(message) and bool(_DURABLE_USER_RE.search(message.content or ""))
@@ -154,8 +157,6 @@ def _mark_range(messages: list[Message], start: int, end_inclusive: int, ref: st
         md = dict(_metadata(message))
         md[RESOLVED_EPISODE_REF_KEY] = ref
         md[EPISODE_STATE_KEY] = EPISODE_STATE_RESOLVED
-        if idx == start and has_explicit_durable_user_instruction(message):
-            md[EPISODE_KEEP_PROVIDER_KEY] = True
         message.metadata = md
 
 
