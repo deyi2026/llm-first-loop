@@ -405,15 +405,23 @@
     {
       "id": "E24",
       "surface": "task_hotcard",
-      "current_status": "PARTIAL",
+      "current_status": "DONE",
       "target_class": "CONDITIONAL_EXTERNAL",
       "priority": "P0",
-      "current_behavior": "Hotcard is automatically consumed when it is unconsumed and originates from another session; cross-session is treated as sufficient to surface a handoff ref.",
-      "target_rule": "Cross-session is not continuation. Hydrate only when user explicitly continues/restores or a canonical active-goal binding proves continuation.",
-      "retrieval_path": "task_hotcard file / handoff ref",
+      "current_behavior": "R8.14 keeps task_hotcard as a durable handoff artifact but removes all automatic prompt authority. build no longer pops/injects/consumes a card on cross-session entry; pop/reset require explicit authorized=True; legacy HOTCARD err1210 defer is dropped rather than reset/replayed; and hotcard is removed from the central dynamic prompt producer allowlist.",
+      "target_rule": "Cross-session, unconsumed state, recency, or origin mismatch never proves continuation. A hotcard may be read/consumed only after an explicit input-side user restore/accept action (or another future canonical authorization mechanism with equivalent user authority). Durable handoff/archive state remains retrievable without entering provider working context by default.",
+      "retrieval_path": "data/handoff/task_hotcard.json via read_file; handoff_now artifact + ArchiveStore/search_archive; explicit authorized pop helper",
       "evidence": [
-        "src/llm_loop/core/loop/hotcard.py:150-170",
-        "src/llm_loop/core/loop/build.py:1079-1095"
+        "src/llm_loop/core/loop/hotcard.py",
+        "src/llm_loop/core/loop/build.py",
+        "src/llm_loop/core/loop/err1210.py",
+        "src/llm_loop/core/prompt_eligibility.py",
+        "tests/unit/test_task_hotcard.py",
+        "tests/unit/test_handoff_archive.py",
+        "tests/unit/test_err1210_recovery.py",
+        "tests/unit/test_injection_fingerprint.py",
+        "tests/unit/test_prompt_eligibility_r88.py",
+        "docs/injection-governance/eligibility/r814-report.md"
       ]
     },
     {
@@ -645,5 +653,7 @@
   "r8_12_status": "PASS",
   "r8_12_evidence": "docs/injection-governance/eligibility/r812-report.md",
   "r8_13_status": "PASS",
-  "r8_13_evidence": "docs/injection-governance/eligibility/r813-report.md"
+  "r8_13_evidence": "docs/injection-governance/eligibility/r813-report.md",
+  "r8_14_status": "PASS",
+  "r8_14_evidence": "docs/injection-governance/eligibility/r814-report.md"
 }

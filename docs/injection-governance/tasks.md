@@ -198,3 +198,17 @@
 - Matrix: E26 PARTIAL→DONE；总计 `DONE=24 / KEEP=1 / PARTIAL=9 / OPEN=0`；behavior canary / R9 未启动。
 - evidence: `docs/injection-governance/eligibility/r813-report.md`、`eligibility/matrix.json`、`tests/unit/test_interop_inject.py`、`tests/unit/test_factory.py`、`tests/unit/test_prompt_eligibility_r88.py`。
 - evidence_required: true
+
+## R8.14 Task Handoff Authorization Closure — ✅ PASS
+- E24 `task_hotcard`: cross-session / unconsumed / recency no longer grants prompt authority. `write_hotcard` remains durable; normal build does not pop/inject/consume it.
+- Real counterexample: current `data/handoff/task_hotcard.json` was `consumed=false` while its anchor belonged to an unrelated MLX/model task and its active-goal checkpoint was an older injection-governance R0→R1 state. This proves session inequality is not continuation intent.
+- `pop_hotcard` / `reset_hotcard_consumed`: default deny; only an already user-authorized restore/accept path may pass `authorized=True`.
+- err1210: legacy HOTCARD entry => `defer_dropped(reason=prompt_eligibility_retired)`; no consumed reset, no replay marker, no re-injection.
+- central hard gate: `hotcard` removed from `PROMPT_DYNAMIC_PRODUCER_SLOTS`; semantic reference classification alone cannot grant automatic prompt access.
+- retrieval preserved: full card JSON remains at `data/handoff/task_hotcard.json`; `handoff_now` + ArchiveStore/search_archive remains an independent explicit recovery channel.
+- reachability census: current event-log payload content has 0 runtime-like `[任务热卡]` frames; three literal occurrences were tool/source-code output. Risk was reachable/currently armed, not asserted as widespread request pollution.
+- golden: live morphology now memory+tip only; reviewed digest `59a823f60750e5b96565bf46057f141e33d7e328ae0b67b3e3a250dfa5ac5e64`; writing a hotcard is proven wire-neutral and leaves consumed=false.
+- verification: implementation `223472c`; detached clean production pyright 0/0; focused **89/89**; broader **289/289**; R0-1~R0-4 PASS; checkout before/after clean. Pre-batch `test_task_hotcard` had 2 stale R3 pointer-content assertions; replaced by current authorization contract.
+- Matrix: E24 PARTIAL→DONE；总计 `DONE=25 / KEEP=1 / PARTIAL=8 / OPEN=0`；behavior canary / R9 未启动。
+- evidence: `docs/injection-governance/eligibility/r814-report.md`、`eligibility/matrix.json`、`tests/unit/test_task_hotcard.py`、`tests/unit/test_handoff_archive.py`、`tests/unit/test_err1210_recovery.py`、`tests/unit/test_injection_fingerprint.py`、`tests/unit/test_prompt_eligibility_r88.py`。
+- evidence_required: true
