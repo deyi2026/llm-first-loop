@@ -3,7 +3,7 @@
 验证:
 - 子代理调用 subagent_report → 报告收集进 SubAgentResult.reports
 - 回执含 [中途报告] 摘要
-- interop inbox 出现 from=subagent-report 通知（父会话后续轮可见）
+- interop inbox 仍保留 from=subagent-report 通知用于 UI/audit，但父模型不靠该通知回注；reports 已随工具回执直接返回
 - 非子代理上下文调用 → 拒绝
 - 白名单放行（不被 blocked）
 """
@@ -58,11 +58,11 @@ def test_runner_collects_reports(build_test_engine, tmp_path, monkeypatch):
     assert msg["ref"].startswith("subagent_")
 
 
-def test_report_delivery_injects_to_parent(build_test_engine, tmp_path, monkeypatch):
-    """EVO-20260820-7f0c8e47 reportDelivery: 报告即触发一次注入（父侧 interop 注入器可见）.
+def test_report_delivery_does_not_duplicate_into_parent_prompt(build_test_engine, tmp_path, monkeypatch):
+    """R8.12/E25: subagent report 已随 SubAgentResult/tool receipt 回父级，notify 只留 UI/audit.
 
-    语义对齐: 子代理中途报告写 interop inbox（topic=notify）→ 父会话后续轮
-    _interop_inbox_messages 注入可见；报告不改变子代理生命周期（子代理继续到结束）。
+    报告不改变子代理生命周期；interop 扫描把 notify 归档到 done/，不再把同一工作产物
+    第二次作为程序消息塞给父模型。
     """
     monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
     engine, fake = build_test_engine([])
@@ -77,17 +77,19 @@ def test_report_delivery_injects_to_parent(build_test_engine, tmp_path, monkeypa
     ]
     result = runner.run(task="长任务拆解", depth=0)
     assert result.reports == ["关键发现A", "关键发现B"]  # 生命周期未被打断
-    # 父侧注入器可见全部报告（报告即触发注入，不改变子代理生命周期）
+    # 父级唯一语义通道已经是 result.reports / spawn_subagent tool receipt；
+    # interop notify 只做观测归档，不能重复进入父模型 prompt。
     from llm_loop.core.loop.interop import _InteropMixin
 
     parent_eng = _InteropMixin()
-    msgs = parent_eng._interop_inbox_messages()
-    injected = [m.content for m in msgs]
-    assert len(injected) >= 1
-    joined = " ".join(injected)
-    assert "关键发现A" in joined and "关键发现B" in joined
-    # 来源可溯: 报告 body 前缀 [子代理进展]（subagent_report 写入时固定），注入器回显
-    assert "[子代理进展]" in joined
+    assert parent_eng._interop_inbox_messages() == []
+    done_dir = tmp_path / "interop" / "lfl_to_dsh" / "done"
+    payloads = [json.loads(f.read_text(encoding="utf-8")) for f in sorted(done_dir.glob("*.json"))]
+    assert len(payloads) == 2
+    bodies = " ".join(str(x.get("body", "")) for x in payloads)
+    assert "关键发现A" in bodies and "关键发现B" in bodies
+    assert all(x.get("status") == "done" for x in payloads)
+    assert all(x.get("from") == "subagent-report" for x in payloads)
 
 
 def test_runner_multiple_reports_all_collected(build_test_engine, tmp_path, monkeypatch):

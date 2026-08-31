@@ -1,10 +1,11 @@
 """协调通道 inbox 注入 mixin（RULE-AI-14 实现层，2026-08-16）.
 
-程序级自动感知: DSH→LFL 待处理消息每轮 run 装配时注入 LLM 上下文——
-不再依赖提示词引导（LLM 可能跳过）。协议见 data/interop/INTEROP.md。
+程序级自动感知: DSH→LFL 待处理消息由 runtime 扫描；只有真正的 coordinate/task
+候选继续进入 E26 条件外部输入链。notify/backlog 属观测/UI 状态，不进入 LLM prompt。
+协议见 data/interop/INTEROP.md。
 
 设计要点:
-- 只读文件系统，不触发 run、不占会话锁（接收方在自己 run 里顺手读）
+- 扫描并原子归档 inbox 文件，不触发额外 run、不占会话锁（coordinate wakeup 由独立 watcher 控制）
 - 临时 system 消息，不写会话历史: 处理后文件移走即幂等，未处理每轮重新注入
 - 不打 injected_system 标记: 该标记在本地 provider 下会被 skip 跳过提交——
   协调待办是核心消息，所有 provider 均须可见
@@ -41,14 +42,15 @@ class _InteropMixin:
         """扫描协调通道 inbox 待处理消息（DSH→LFL）.
 
         基准路径: LFL_DATA_DIR/interop/lfl_to_dsh/pending（与 web/routes.py 一致）。
-        返回临时 system 消息列表；无消息/异常 → 空列表。
+        返回仍具 E26 条件外部输入资格的 coordinate/task 临时消息；notify/backlog
+        只落观测/UI 状态。无可注入消息/异常 → 空列表。
 
-        notify 自动归档（EVO-20260817-c35c9178，已人工 accepted）:
-        - topic=notify 通知类消息首见仍注入回显（协议可见性不变，AI 按协议处理归档）
-        - 同指纹 (from, ref, body) 已注入过的 notify → 不重复注入 + 自动归档
-          （status→done + 移入 done/）——防高频通知堆积持续破坏前缀缓存
-          （RULE-AI-16 注入最小化；实证: 14 条 job 通知堆积 → 每轮注入漂移 → 命中率 8.2%）
-        - coordinate/task 类消息保持原协议（注入 + AI 处理），不自动归档
+        R8.12/E25 notify/backlog prompt exit:
+        - topic=notify（job completion/subagent/scheduler 普通提醒）直接归档到 done/，
+          保留 Web interop UI + action/event 可见性，但不构造 Message、不进入 provider prompt；
+        - 同指纹 notify 仍幂等归档，不会因重复文件重新获得 prompt authority；
+        - pending backlog 只记录结构化 action/watchdog 状态，不再构造“另有 N 条”提示；
+        - coordinate/task 类消息暂保持 E26 现状（注入 + 原子消费），由下一批单独判定。
         """
         try:
             base = Path(os.environ.get("LFL_DATA_DIR", "data")) / _INTEROP_INBOX_REL
@@ -63,7 +65,6 @@ class _InteropMixin:
             seen = getattr(self, "_notify_injected", None)
             if seen is None:
                 seen = self._notify_injected = set()
-            notify_archives: list[Path] = []  # 命中指纹 → 本轮自动归档
             for f in files[-_max_inbox_inject:]:
                 try:
                     d = json.loads(f.read_text(encoding="utf-8"))
@@ -79,10 +80,24 @@ class _InteropMixin:
                     continue
                 if d.get("topic") == "notify":
                     fp = (str(d.get("from", "")), str(d.get("ref", "")), body)
-                    if fp in seen:
-                        notify_archives.append(f)  # 重复通知 → 归档不注入（幂等）
-                        continue
-                    seen.add(fp)                   # 首见 → 注入并记录指纹
+                    duplicate = fp in seen
+                    seen.add(fp)
+                    # R8.12/E25: notification is user/runtime state, never model input.
+                    # Move it to done/ so Web UI/retrieval keeps the body instead of hiding it
+                    # in processed/, then emit only compact structured action telemetry.
+                    if self._archive_interop_notify(f):
+                        try:
+                            action = getattr(self, "_record_action", None)
+                            if callable(action):
+                                action(
+                                    "interop.notify",
+                                    "duplicate_archived" if duplicate else "observed_only",
+                                    f"id={d.get('id', f.stem)};from={d.get('from', '')};"
+                                    f"ref={d.get('ref', '')};prompt_chars=0",
+                                )
+                        except Exception:  # noqa: BLE001 — archive is authoritative
+                            logger.debug("interop notify action trace 失败（忽略）", exc_info=True)
+                    continue
                 # EVO-20260825 任务9（§5.4.1-4/5）: 原子化消费——先移动文件到
                 # processed/（原子 rename，防重复注入），移动成功后注入内容；
                 # 移动失败（已被并发消费/竞态）→ 跳过（幂等，不重复注入）。
@@ -100,17 +115,19 @@ class _InteropMixin:
                     metadata={"interop_source": f.name},  # DSH 借鉴: 注入事件溯源文件名
                 ))
             if len(files) > _max_inbox_inject:
-                out.insert(0, Message(
-                    role="system",
-                    content=(
-                        f"[外部协调] 另有 {len(files) - _max_inbox_inject} 条待处理消息"
-                        f"（超出单轮注入上限 {_max_inbox_inject}，将在后续轮次注入）"
-                    ),
-                    source=MessageSource.SYSTEM,
-                ))
-            # EVO-20260817-c35c9178: 重复 notify 自动归档（fail-open，异常仅告警不阻塞注入）
-            for f in notify_archives:
-                self._archive_interop_notify(f)
+                # R8.12/E25: queue depth is runtime observability, not task semantics.
+                # InboxWatcher also diagnoses backlog; this action gives build-time evidence
+                # without spending prompt characters or distracting the model.
+                try:
+                    action = getattr(self, "_record_action", None)
+                    if callable(action):
+                        action(
+                            "interop.pending_backlog",
+                            "observed_only",
+                            f"pending={len(files)};scan_limit={_max_inbox_inject};prompt_chars=0",
+                        )
+                except Exception:  # noqa: BLE001 — observability only
+                    logger.debug("interop backlog action trace 失败（忽略）", exc_info=True)
             return out
         except Exception:
             logger.warning("协调通道 inbox 扫描失败（fail-open）", exc_info=True)
@@ -153,24 +170,27 @@ class _InteropMixin:
         except OSError:
             logger.warning("协调 pending 坏文件隔离失败（fail-open，保留原位）: %s", f.name)
 
-    def _archive_interop_notify(self, f: Path) -> None:
-        """重复 notify 自动归档: status→done + 移入 done/（EVO-20260817-c35c9178）.
+    def _archive_interop_notify(self, f: Path) -> bool:
+        """Archive notify to user-visible ``done/`` without granting prompt authority.
 
-        注入即回显（首见已注入本会话），重复文件不再注入 → 自动归档防堆积。
-        fail-open: 任何异常仅告警，文件保留 pending 待人工处理（不静默丢消息）。
+        R8.12/E25 applies this to first-seen and duplicate notify alike.  The JSON body is
+        preserved for Web/retrieval, only ``status`` becomes ``done``.  On failure the file
+        remains pending and the caller can retry on a later scan; no silent data loss.
         """
         try:
             done_dir = f.parent.parent / "done"
             done_dir.mkdir(parents=True, exist_ok=True)
-            txt = f.read_text(encoding="utf-8")
-            txt = txt.replace('"status": "pending"', '"status": "done"')
+            payload = json.loads(f.read_text(encoding="utf-8"))
+            payload["status"] = "done"
             target = done_dir / f.name
             if target.exists():  # 防覆盖: done 已有同名 → 时间戳后缀
                 target = done_dir / f"{f.stem}-{int(time.time())}{f.suffix}"
-            target.write_text(txt, encoding="utf-8")
+            target.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             f.unlink()
+            return True
         except Exception:  # noqa: BLE001 — 归档失败 fail-open，消息保留待人工处理
-            logger.warning(f"notify 自动归档失败（fail-open，保留 pending）: {f.name}", exc_info=True)
+            logger.warning("notify 自动归档失败（fail-open，保留 pending）: %s", f.name, exc_info=True)
+            return False
 
     def _inject_interop_messages(
         self, base: list[Message], prefix_len: int, session_id: str = ""

@@ -1,7 +1,8 @@
 """协调通道程序级注入测试（RULE-AI-14 实现层，2026-08-16）.
 
 验证 engine._interop_inbox_messages:
-- pending 消息 → 注入 system 消息（含 id/topic/body/文件路径提示）
+- notify/backlog → observability/UI only，零 prompt Message
+- coordinate/task pending → 暂按 E26 现状注入 system 候选（含 id/topic/body/文件路径提示）
 - status=done / 格式坏 / 空 body → 跳过
 - 目录不存在 → 空列表（fail-open，不抛异常）
 - 装配点 _build_llm_messages 首条为 inbox system 消息
@@ -112,23 +113,24 @@ def _write_msg(inbox, name, topic, body, ref="", msg_id=None):
     )
 
 
-def test_notify_duplicate_auto_archive(tmp_path, monkeypatch):
-    """EVO-20260817-c35c9178: 重复 notify（同 from/ref/body 指纹）→ 不注入 + 自动归档."""
+def test_notify_first_and_duplicate_are_observability_only(tmp_path, monkeypatch):
+    """R8.12/E25: 首见/重复 notify 均归档到 done，零 prompt Message."""
     inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
     inbox.mkdir(parents=True)
     _write_msg(inbox, "n1.json", "notify", "job-1 完成", ref="job-1", msg_id="n1")
     monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
     eng = _bare_engine()
 
-    # 首见 → 注入回显，文件被原子化消费移到 processed/（EVO-20260825 §5.4.1-4）
+    # 首见 → 不构造模型消息，直接转 done/ 供 UI/retrieval。
     msgs = eng._interop_inbox_messages()
-    assert len(msgs) == 1 and "job-1 完成" in msgs[0].content
-    assert not (inbox / "n1.json").exists(), "首见 notify 已被消费（processed/，不重复注入）"
-    assert any(
-        p.name == "n1.json" for p in (inbox / "processed").rglob("*.json")
-    )
+    assert msgs == []
+    assert not (inbox / "n1.json").exists()
+    done1 = tmp_path / "interop" / "lfl_to_dsh" / "done" / "n1.json"
+    assert done1.exists()
+    first = json.loads(done1.read_text())
+    assert first["status"] == "done" and first["body"] == "job-1 完成"
 
-    # 同指纹重复（scheduler 重复写同提醒）→ 不注入 + 自动归档（done + 移走）
+    # 同指纹重复（scheduler 重复写同提醒）→ 同样只归档，不重新获得 prompt authority。
     _write_msg(inbox, "n1-dup.json", "notify", "job-1 完成", ref="job-1", msg_id="n1-dup")
     msgs2 = eng._interop_inbox_messages()
     assert msgs2 == []
@@ -138,15 +140,68 @@ def test_notify_duplicate_auto_archive(tmp_path, monkeypatch):
     assert json.loads(done.read_text())["status"] == "done"
 
 
-def test_notify_first_seen_not_archived(tmp_path, monkeypatch):
-    """首见 notify 注入回显（可见性不变），原子化消费移到 processed/."""
+def test_notify_action_trace_has_zero_prompt_chars(tmp_path, monkeypatch):
+    """notify 的结构化 observability 保留，但内容不进入模型."""
     inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
     inbox.mkdir(parents=True)
     _write_msg(inbox, "n2.json", "notify", "job-2 完成", ref="job-2", msg_id="n2")
     monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
-    msgs = _bare_engine()._interop_inbox_messages()
-    assert len(msgs) == 1 and "job-2 完成" in msgs[0].content
-    assert not (inbox / "n2.json").exists(), "首见 notify 已被消费（processed/）"
+    eng = _bare_engine()
+    actions: list[tuple[str, str, str]] = []
+    eng._record_action = lambda kind, status, detail: actions.append((kind, status, detail))
+
+    assert eng._interop_inbox_messages() == []
+    assert actions == [("interop.notify", "observed_only", "id=n2;from=dsh;ref=job-2;prompt_chars=0")]
+
+
+def test_backlog_count_is_observability_only(tmp_path, monkeypatch):
+    """E25: 超过扫描上限只记 action，不生成“另有 N 条”模型提示."""
+    inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
+    inbox.mkdir(parents=True)
+    for i in range(9):
+        _write_msg(inbox, f"t{i}.json", "task", f"task-{i}", msg_id=f"t{i}")
+    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
+    eng = _bare_engine()
+    actions: list[tuple[str, str, str]] = []
+    eng._record_action = lambda kind, status, detail: actions.append((kind, status, detail))
+
+    msgs = eng._interop_inbox_messages()
+    assert len(msgs) == 8  # E26 task 仍按现有上限消费
+    assert all("另有" not in m.content and "待处理消息" not in m.content for m in msgs)
+    assert (
+        "interop.pending_backlog",
+        "observed_only",
+        "pending=9;scan_limit=8;prompt_chars=0",
+    ) in actions
+    assert (inbox / "t0.json").exists(), "最老一条留待后续 E26 消费"
+
+
+def test_build_provider_wire_excludes_notify_but_keeps_done_record(
+    build_test_engine, tmp_path, monkeypatch
+):
+    """E25 end-to-end: pending notify is consumed to done/UI and never appears in provider wire."""
+    inbox = tmp_path / "interop" / "lfl_to_dsh" / "pending"
+    inbox.mkdir(parents=True)
+    _write_msg(
+        inbox,
+        "n-wire.json",
+        "notify",
+        "job-sensitive-result-complete",
+        ref="job-wire",
+        msg_id="notify-wire-id",
+    )
+    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
+    engine, _fake = build_test_engine([])
+    sid = engine.session.create()
+
+    out = engine._build_llm_messages(engine.session.load(sid), [], max_chars=200_000)
+    wire = json.dumps(out, ensure_ascii=False)
+    assert "notify-wire-id" not in wire
+    assert "job-sensitive-result-complete" not in wire
+    done = tmp_path / "interop" / "lfl_to_dsh" / "done" / "n-wire.json"
+    payload = json.loads(done.read_text(encoding="utf-8"))
+    assert payload["status"] == "done"
+    assert payload["body"] == "job-sensitive-result-complete"
 
 
 def test_coordinate_not_auto_archived(tmp_path, monkeypatch):
@@ -215,8 +270,8 @@ def test_build_messages_injects_inbox_after_memory(tmp_path, monkeypatch):
                 "id": "20260816-006",
                 "from": "dsh",
                 "to": "lfl",
-                "topic": "notify",
-                "body": "通道注入装配点验证",
+                "topic": "task",
+                "body": "通道任务装配点验证",
                 "status": "pending",
             }
         ),
@@ -239,7 +294,7 @@ def test_build_messages_injects_inbox_after_memory(tmp_path, monkeypatch):
     users = [m["content"] for m in out if m["role"] == "user"]
     joined = "\n".join(users)
     assert "MEM-1" in joined  # memory 注入生效（转 user 保留）
-    assert "20260816-006" in joined  # inbox 注入生效（每轮必感知）
+    assert "20260816-006" in joined  # E26 task 候选仍注入（本批不改）
     assert joined.index("20260816-006") > joined.index("MEM-1")  # inbox 在 memory 之后
 
 
