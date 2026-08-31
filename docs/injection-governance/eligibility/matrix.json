@@ -2,7 +2,7 @@
   "schema": "prompt-eligibility-audit-v1",
   "audit_base_commit": "31df1a3",
   "audit_date": "2026-08-30",
-  "phase": "R8.21_PROVIDER_BOUND_REASONING_REPLAY",
+  "phase": "R8.22_HISTORICAL_STATE_ON_DEMAND",
   "production_behavior_changed": true,
   "behavior_canary_allowed": true,
   "status_semantics": {
@@ -117,15 +117,19 @@
     {
       "id": "E06",
       "surface": "durable_effective_constraints_and_decisions",
-      "current_status": "PARTIAL",
-      "target_class": "ACTIVE_STATE",
+      "current_status": "DONE",
+      "target_class": "REF_ON_DEMAND",
       "priority": "P0-protect",
-      "current_behavior": "R8.5 adds a conservative standing-instruction guard: explicit cross-turn user rules (e.g. 以后/始终/永远/不要再/from now on/always use/never use) keep the exact user message provider-visible even when the surrounding episode retires. A canonical effective-state store with supersession is still not implemented.",
-      "target_rule": "Keep only the currently effective constraint/value in active state. Superseded source turns remain retrievable but invisible by default.",
-      "retrieval_path": "Exact standing user text stays active; resolved surrounding episode remains available by episode ref; broader decisions remain memory/history retrievable",
+      "current_behavior": "R8.22 removes conversational history as an automatic authority source. A resolved user turn retires even if it contains standing-rule wording or a legacy resolved_episode_keep_provider marker; exact source text remains EpisodeStore-hydratable. MemoryStore decision/convention entries are runtime recall-only for automatic projection, including legacy inject_policy=auto entries, while new decision/convention extraction persists recall_only directly. Current user instructions remain exact inline under E01. Stable always-on rules belong to the versioned rule/config/control plane rather than an old chat turn.",
+      "target_rule": "Historical conversational decisions/constraints are retrievable by default, not automatically projected. Current user instructions stay inline; any truly always-on rule must have explicit stable rule/config authority rather than inheriting authority from historical wording.",
+      "retrieval_path": "Resolved source turn via EpisodeStore/search_records(kind=episode); decision/convention via search_records(kind=memory) including exact memory:<id>; MemoryStore current version + version_history preserve supersession history",
       "evidence": [
         "src/llm_loop/core/episode_history.py",
-        "tests/unit/test_resolved_episode.py"
+        "src/llm_loop/memory/retrieve.py",
+        "src/llm_loop/memory/extract.py",
+        "tests/unit/test_resolved_episode.py",
+        "tests/unit/test_durable_state_on_demand_r822.py",
+        "docs/injection-governance/eligibility/r822-report.md"
       ]
     },
     {

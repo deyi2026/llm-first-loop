@@ -293,3 +293,15 @@
 - Matrix: E05 PARTIAL→DONE；总计 `DONE=32 / KEEP=1 / PARTIAL=1 / OPEN=0`；只剩 E06；behavior canary / R9 未启动。
 - evidence: `docs/injection-governance/eligibility/r821-report.md`、`eligibility/matrix.json`、`tests/unit/test_reasoning_tail.py`、`tests/unit/test_fallback_integration.py`。
 - evidence_required: true
+
+## R8.22 Historical Decisions / Constraints On Demand — ✅ PASS
+- E06 `durable_effective_constraints_and_decisions`: historical conversational rules/decisions no longer gain automatic prompt authority from wording alone.
+- Current user input remains exact inline; durably resolved historical source turns retire even when they contain standing-rule markers or legacy `resolved_episode_keep_provider=true` metadata. Exact source remains EpisodeStore-hydratable.
+- Memory automatic projection hard-denies `decision`/`convention`, including legacy `inject_policy=auto`; new extraction stores these types as `recall_only`. Explicit `search_records(kind=memory)` / `memory:<id>` remains available.
+- MemoryStore current-version + `version_history` remains the supersession record; no natural-language semantic overwrite guessing is introduced into prompt admission.
+- Census: 114 standing-marker source turns / **409,422 chars** (p90 12,223, max 54,933); 261 decision+convention memory entries / **37,645 chars**, all legacy auto, 103 versioned / 452 history versions.
+- Verification: implementation `efdb5aa`; main focused **29/29** + broader **182/182** + core/factory **39/39**; detached clean combined **221/221**; pyright **0/0**; py_compile PASS; R0 PASS; clean before/after.
+- Matrix: E06 PARTIAL→DONE；总计 `DONE=33 / KEEP=1 / PARTIAL=0 / OPEN=0`。
+- Canary/R9 remain NOT STARTED pending a strict 34-surface re-audit under the stronger no-program-self-injection rule.
+- evidence: `docs/injection-governance/eligibility/r822-report.md`、`eligibility/matrix.json`、`tests/unit/test_durable_state_on_demand_r822.py`、`src/llm_loop/core/episode_history.py`、`src/llm_loop/memory/retrieve.py`。
+- evidence_required: true
