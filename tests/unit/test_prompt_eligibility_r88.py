@@ -22,9 +22,25 @@ def test_unknown_dynamic_producer_is_not_prompt_eligible():
     assert dynamic_prompt_layer("known status", slot_kind="gate_note") is None
     assert dynamic_prompt_layer("external task", slot_kind="interop") is None
     assert dynamic_prompt_layer("cross-session handoff", slot_kind="hotcard") is None
+    assert dynamic_prompt_layer("digest catalog", slot_kind="digest") is None
     assert dynamic_prompt_layer("full task graph", slot_kind="task_frontier") is None
     assert dynamic_prompt_layer("active task state", slot_kind="task_active") is InjectionLayer.STATUS
     assert dynamic_prompt_layer("[相关记忆] fact", slot_kind="memory") is InjectionLayer.REFERENCE
+
+
+def test_session_digest_catalog_is_retrievable_not_prompt_eligible():
+    msg = Message(
+        role="user",
+        content="[digest:read_file] fact\nref=digest:call-1;archive_tool=read_file",
+        source=MessageSource.USER,
+        metadata={
+            "program_origin": True,
+            "origin_layer": "reference",
+            "injection_kind": "session_digest_catalog",
+            "turn_ref": 7,
+        },
+    )
+    assert current_turn_program_prompt_eligible(msg, current_turn_ref=7) is False
 
 
 def test_memory_snapshot_requires_exact_current_turn_identity():

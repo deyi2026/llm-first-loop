@@ -32,11 +32,6 @@ from llm_loop.core.injection_labels import (
     origin_metadata,
     strip_program_appendix_notice,
 )
-from llm_loop.core.reference_injection import (
-    DEFAULT_REFERENCE_AUTO_TURNS,
-    reference_auto_decision,
-    seen_injection_set,
-)
 from llm_loop.core.program_recovery import (
     PROGRAM_RECOVERY_SLOT,
     is_program_recovery_message,
@@ -1089,56 +1084,13 @@ class _BuildMixin:
             tail_msgs = (tail_msgs or []) + tip_msgs
         # R8.8: provider-local evaluation/behaviour patches are not runtime prompt
         # authority. The old per-build command-shaped local hint is deliberately gone.
-        # R3/L2-2: SessionDigest 不再每轮全量重放。仅前 K human turns / 显式
-        # task-switch 允许把尚未暴露的工具摘要投影成 <=2 行 reference frame；暴露记录
-        # 持久化到 sess.messages metadata，跨 compact/restart 可重建 seen-set。
-        if getattr(getattr(self, "settings", None), "digest_enabled", False):
-            try:
-                _digest_policy = reference_auto_decision(
-                    sess.messages,
-                    auto_turns=int(
-                        getattr(
-                            self.settings,
-                            "reference_auto_turns",
-                            DEFAULT_REFERENCE_AUTO_TURNS,
-                        )
-                    ),
-                )
-                if _digest_policy.allow_catalog:
-                    _digest = self._session_digest(sess)
-                    _digest.update_from_messages(sess.messages)
-                    _digest_seen = seen_injection_set(sess.messages)
-                    _digest_frames = _digest.render_reference_frames(
-                        seen_keys=_digest_seen,
-                        # Digest has no relevance query on task switch; do not replay
-                        # all old pointers. Memory/experience provide relevant pointer replay.
-                        emit_seen_refs=False,
-                    )
-                    if _digest_frames:
-                        _digest_msg = Message(
-                            role="user",
-                            content=wrap_injection(
-                                "\n\n".join(f.content for f in _digest_frames),
-                                layer=InjectionLayer.REFERENCE,
-                                slot_kind="digest",
-                            ),
-                            source=MessageSource.USER,
-                            metadata=origin_metadata(
-                                InjectionLayer.REFERENCE,
-                                injection_kind="session_digest_catalog",
-                                persisted_injection=True,
-                                turn_ref=getattr(self, "_current_turn_ref", None),
-                                reference_keys=[f.key for f in _digest_frames],
-                                reference_full_keys=[f.key for f in _digest_frames if f.full],
-                                reference_source="digest",
-                                reference_frame_count=len(_digest_frames),
-                            ),
-                        )
-                        sess.messages.append(_digest_msg)
-                        self._append_message_event(sess, _digest_msg)
-                        tail_msgs = (tail_msgs or []) + [_digest_msg]
-            except Exception:  # noqa: BLE001 — 档案槽 fail-open
-                pass
+        # R8.18/E09: SessionDigest remains a deterministic diagnostic/retrieval helper,
+        # but build no longer turns its generic catalog into prompt material or durable
+        # session history.  Current tool results are already present in the active history
+        # when the old catalog was emitted; after compaction the exact tool_call_id is
+        # searchable through ArchiveStore/search_archive (which accepts ``digest:`` refs).
+        # ``digest_enabled`` is therefore a compatibility capability flag, not an
+        # automatic-prompt entitlement.
         # ── P1 尾部注入聚合（err1210 8.4 Verdict: STRUCTURE_TRIGGER 尾部连续 user 条数，
         # tasks 9.1 方案 A）：四槽产物合并单条 user（--- [slot:xxx] --- 分段标记保留语义），
         # wrap_injection 只包装一次、anchor 单份——build 尾部连续 user 条数恒 ≤1，
@@ -1155,8 +1107,6 @@ class _BuildMixin:
                 _slot = SlotKind.INTEROP
             elif _tip_orig and any(_m is _x for _x in _tip_orig):
                 _slot = SlotKind.TIP
-            elif (getattr(_m, "metadata", None) or {}).get("injection_kind") == "session_digest_catalog":
-                _slot = "digest"
             _inject_parts.append((_slot, str(_d.get("content") or "")))
         # err1210 T4.1→9.1: defer 回填消息消费检测（is 身份匹配，聚合收尾统一处理）
         _refs = getattr(self, "_deferred_replay_refs", None) or []

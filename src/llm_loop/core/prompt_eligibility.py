@@ -22,7 +22,6 @@ PROMPT_DYNAMIC_PRODUCER_SLOTS = frozenset(
         "program_recovery",
         "memory",
         "tip",
-        "digest",
         "task_active",
     }
 )
@@ -117,11 +116,11 @@ def current_turn_program_prompt_eligible(
     """
 
     md = getattr(message, "metadata", None) or {}
-    # R8.15/E08: generic experience catalogs are durable/retrievable reference
-    # state, not automatic working context. Deny every canonical experience_tip,
-    # including one whose turn_ref still matches the current human turn. Explicit
-    # search/tool results use different message kinds and are unaffected.
-    if md.get("injection_kind") == "experience_tip":
+    # R8.15/E08 + R8.18/E09: generic reference catalogs are durable/retrievable
+    # state, not automatic working context. Deny canonical catalog frames even when
+    # their turn_ref still matches the current human turn. Explicit search/tool
+    # results use different message kinds and are unaffected.
+    if md.get("injection_kind") in {"experience_tip", "session_digest_catalog"}:
         return False
     lifecycle = str(md.get("prompt_lifecycle") or "").strip().lower()
     if lifecycle == "current_turn":
