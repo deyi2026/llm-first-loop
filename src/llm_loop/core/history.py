@@ -1223,42 +1223,11 @@ def build_history_messages(
             if _mark_cache_compacted_for(m, cache_archive_provider) and cache_compacted_out is not None:
                 cache_compacted_out.append(m)
 
-    # 2026-08-21 (追加式压缩, APPEND_COMPRESSION=1 启用): 归档后追加确定性摘要——
-    # 被归档的旧历史用"固定格式摘要"追加到提交尾部（转 user 消息），AI 保留任务语义
-    # 连贯（知道做过什么），同时摘要字节确定性（同归档内容→同摘要）→ 前缀稳定缓存命中。
-    # 与 slim-first（归档即删, 只能 search_archive 检索）不同: 追加摘要保持上下文连贯。
-    #
-    # 重要: 此处只能【生成】摘要，不能立刻 append 到 out。out 当前仅含 system；真正的
-    # fixed-head/kept history 尚在下方序列化。若这里先 append，会把压缩轮序列变成
-    # `system -> archive-summary -> fixed-head...`，使服务端缓存恰好在 system 后断裂；
-    # 线上 DeepSeek 实测表现就是压缩后 tokens_hit 固定回落到 8,960。摘要必须等
-    # kept_flat 写完后再追加，才能保持 `system -> fixed-head` 的共同字节前缀。
-    _archive_summary_dict: dict | None = None
-    if (
-        _append_summary_enabled
-        and archived
-        and not _downgraded_head  # 降级 head 场景（已放弃前缀稳定）不追加（语义回归现状）
-    ):
-        try:
-            import logging
-
-            _total_archived = sum(_wire_size(mm) for mm in archived)
-            # R3/L2-2: compact 只回传“发生归档 + 检索入口”，不再把旧 user/tool
-            # 正文截取后重新自动内联。资料原文仍在 archive，按需 search_archive。
-            _summary_msg = (
-                f"[上下文压缩] 已归档 {len(archived)} 条旧消息（约 {_total_archived} 字符）；"
-                "旧正文未自动内联。\n"
-                "ref=archive:search_archive"
-            )
-            _archive_summary_dict = {
-                "role": "user",
-                "content": _summary_msg,
-                "metadata": {"archived_summary": True, "archived_count": len(archived)},
-            }
-        except Exception:  # noqa: BLE001 — 摘要追加失败 fail-open
-            import logging
-
-            logging.getLogger(__name__).debug("归档摘要追加失败（fail-open）")
+    # R8.17/E10: compression/archive occurrence is runtime observability, not working
+    # context.  ``APPEND_COMPRESSION`` is retained as a compatibility setting but no
+    # longer grants prompt authority to archive counts/pointers.  The stable system
+    # prompt already advertises search_archive; durable ArchiveStore remains the truth.
+    del _append_summary_enabled
 
     # EVO-20260818 修复基线 bug（仿真测试暴露）: kept_flat 原实现从不包含 head_groups——
     # 头部消息既不在提交也不在归档（静默丢失）→ "缓存友好压缩保留锚点头部"从未真正生效，
@@ -1318,27 +1287,10 @@ def build_history_messages(
             if _d.get("role") == "tool" and _d.get("content"):
                 _d["content"] = _prune_oversized_tool_result(_d["content"])
             out.append(_d)
-    # APPEND_COMPRESSION 的摘要必须位于 kept history【之后】。这既符合“追加式”语义，
-    # 也保证压缩前/后的共同前缀至少延伸到 fixed-head 末端；后续动态 extras 同样只在尾部。
-    # P1 压缩帧聚合（err1210 9.1 方案A / 8.4 Verdict=STRUCTURE_TRIGGER）: 归档摘要与
-    # extras 不再逐条独立 append——统一合并为单条动态 system（各帧自带 [xxx] 标题、
-    # 内容逐字保留），提交视图转 user 后尾部连续 user 条数不随压缩帧数线性增长
-    # （merge-tail-user 9→1 变体生产验证恢复 200；16:01 聚合重试成功同源）。
+    # R8.17: compact runtime status itself is no longer projected.  This frame list is
+    # retained only for the legacy anchor-mode *active decision* compatibility path,
+    # which is a separate active-state surface and must not be removed as E10 cleanup.
     _compact_frames: list[Message] = []
-    if _archive_summary_dict is not None:
-        _compact_frames.append(
-            Message(
-                role="system",
-                content=str(_archive_summary_dict.get("content") or ""),
-                source=MessageSource.SYSTEM,
-                # P1 聚合适配: archived_summary 标记透传（测试/探测方按标记定位归档
-                # 摘要——test_append_summary_deterministic / cache_round_sim 依赖）
-                # pyright 修复: Message.metadata 类型为 dict（非 dict|None），空标记用 {}
-                metadata={"archived_summary": True}
-                if (_archive_summary_dict.get("metadata") or {}).get("archived_summary")
-                else {},
-            )
-        )
     if archived:
         # EVO-9794797e: 主动压缩——对被丢弃的旧消息做"另存 + 可见标注"
         # （原文已完整另存至压缩档案保信息零丢失，fail-open）
@@ -1369,57 +1321,10 @@ def build_history_messages(
                 "决策线注入失败（fail-open）", exc_info=True
             )
 
-        # R3/L2-2: 自动“关键事实清单/关键词目录”退役。它们会把已归档正文
-        # 再次推回 prompt，形成 compact 后的第二条投喂链。上方两行状态帧已经给出
-        # search_archive ref；需要事实时由模型主动检索，避免无意识资料持续占注意力。
-
-        from llm_loop.feedback.honesty import compression_message
-
-        # append-summary 模式上方已有同一两行 archive pointer；避免同轮重复两份
-        # “已归档 + search_archive”状态。非 append-summary 路径保留 canonical 状态帧。
-        if _archive_summary_dict is None:
-            extras.append(
-                compression_message(len(archived), sum(len(a.content) for a in archived))
-            )
-        # EVO-20260824-54d46549 渐进折叠知情标注: 渐进模式（progressive_fold>0）下折叠发生 →
-        # 明确告知 AI"本轮只折了最老 K 组, 其余保留, 可检索"——减少"刚引用的内容已被
-        # 折掉"的推理落空; 固定文本含 K 值（折叠组数即 _fold_count, 便于归因）。
-        if progressive_fold > 0 and _fold_count > 0:
-            _fold_note = (
-                f"[中段折叠] 本轮折叠 {_fold_count} 个最老中段配对组并回落到目标水位；"
-                "固定头部保持不变，被折叠原文可经 search_archive 检索；"
-                if cache_archive_provider
-                else f"[渐进折叠] 本轮仅折叠最老 {_fold_count} 个配对组（其余历史保留, "
-                "未一次性大裁）——命中率曲线平滑, 被折叠原文可经 search_archive 检索；"
-            )
-            extras.append(
-                Message(
-                    role="system",
-                    content=_fold_note + "已折叠内容检索入口: search_archive。",
-                    source=MessageSource.SYSTEM,
-                )
-            )
-        # EVO-20260818（spec §5.5.1-7）: 压缩余量不足降级知情标注（固定文本，便于检索归因）
-        if _downgraded_head:
-            extras.append(
-                Message(
-                    role="system",
-                    content=(
-                        "[缓存降级] 压缩余量不足已降级（锚点前移）——头部保留被放弃，"
-                        "本轮起前缀重建；被归档原文（含头部）均可经 search_archive 检索"
-                    ),
-                    source=MessageSource.SYSTEM,
-                )
-            )
-        # P1-QWEN-SYS-SINGLE: extras（压缩关键事实/档案目录/压缩标注，均为 system）
-        # 必须并入开头唯一 system —— qwen 系模板(9B/27B) 只允许 1 条 system 消息，
-        # 多条 system（即便都在开头）也会触发 "System message must be at the beginning"。
-        # 原实现 out.insert(1+i) 绕过 _append_or_merge → 产生多条独立 system → 400。
-        # P1 压缩帧聚合（err1210 9.1 方案A）: extras 并入 _compact_frames → 合并单条
-        # 动态 system append。_dynamic 语义保留（每轮归档内容变化不进 system 主体 →
-        # system 主体字节稳定 → 前缀缓存命中；qwen 单 system 模板兼容）；
-        # 唯一变化 = 逐条 append 改单条合并（各帧 [xxx] 标题天然分段、内容逐字保留），
-        # 提交视图尾部连续 user 条数从 1+N 降为恒 1（1210 结构性消除）。
+        # R8.17/E10: archive/fold/cache-degrade occurrence and dynamic counts are now
+        # telemetry only.  Do not append compression_message, fold notes, or cache-degrade
+        # prose here.  ArchiveStore + compact_view_stats + message.cache_compacted events
+        # preserve recovery/observability without consuming provider attention.
         _compact_frames.extend(extras)
         if _compact_frames:
             _labeled_frames = [
@@ -1440,16 +1345,11 @@ def build_history_messages(
                 source=MessageSource.SYSTEM,
                 metadata=origin_metadata(
                     InjectionLayer.STATUS,
-                    injection_kind="compact_archive_appendix",
-                    program_appendix_mixed=True,
+                    injection_kind="compact_active_state_appendix",
+                    program_appendix_mixed=len(_labeled_frames) > 1,
                 ),
             )
             _merged.metadata["_dynamic"] = True
-            # P1 聚合适配: archived_summary 标记透传到合并条（探测方定位归档摘要依赖）
-            if any(
-                (f.metadata or {}).get("archived_summary") for f in _compact_frames
-            ):
-                _merged.metadata["archived_summary"] = True
             _merged_d = _merged.to_llm_dict()
             if _merged.metadata:
                 # to_llm_dict 只输出 {role, content}——metadata 显式补进 dict

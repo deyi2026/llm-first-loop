@@ -1895,28 +1895,26 @@ class _BuildMixin:
                 self._record_action("run.cache_gate", "drift", self._cache_gate_hint)
         except Exception:  # noqa: BLE001 — 门禁失败 fail-open
             self._cache_gate_hint = None
-        # EVO-20260817: 压缩产物合规检验（锚点固化模式）——压缩轮审计产物状态:
-        # 稳定段指纹（system+注入）不变 → 门禁 preflight/postcheck 自动合规（不误报）;
-        # 关键事实帧+档案目录已由 build 注入（AI 持续推理所需信息整理好）;
-        # 配对原子性由 _repair_tool_call_pairing 保证。检验通过才出闸（记录 ok）。
+        # R8.17/E10: compression is program/runtime state.  R3 retired automatic key-fact
+        # replay and R8.17 retires compression/fold status prose itself, so the old
+        # "关键事实帧缺失 => warn" check is no longer a valid health signal.  Record the
+        # actual compact-view statistics instead; search_archive remains the retrieval path
+        # advertised by the stable system prompt.
         try:
             _compressed = locals().get("_compressed_this_build", False)
             if _compressed:
                 _built_chars = sum(len(m.get("content", "")) for m in built)
-                _facts_injected = any(
-                    isinstance(m, dict)
-                    and (
-                        "[压缩关键事实]" in m.get("content", "")
-                        or "[压缩推理结论]" in m.get("content", "")
-                    )
-                    for m in built[-8:]
-                )
+                _compact_stats = compact_view_box[0] if compact_view_box else {}
+                _pre_chars = _compact_stats.get("pre_chars", locals().get("_history_total", "?"))
+                _post_chars = _compact_stats.get("post_chars", _built_chars)
+                _archived_count = _compact_stats.get("archived_count", "?")
+                _drop_pct = _compact_stats.get("drop_pct", "?")
                 self._record_action(
                     "run.compact",
-                    "ok" if _facts_injected else "warn",
-                    f"history {locals().get('_history_total', '?')}→{_built_chars} 字符"
-                    f"{'，关键事实帧已注入（推理信息整理完备）' if _facts_injected else '，关键事实帧缺失（告警）'}，"
-                    "稳定段未变→门禁合规，投影门闸豁免（压缩属合法变化）",
+                    "ok",
+                    f"view {_pre_chars}→{_post_chars} chars; archived={_archived_count}; "
+                    f"drop_pct={_drop_pct}; anchor_moved={int(_anchor_moved_this_build)}; "
+                    "prompt_chars=0; retrieval=search_archive; stable_prefix_guard=pass",
                 )
                 # EVO-20260826-81f8f674: 压缩黄金窗口写任务热卡（anchor=最近用户指令+
                 # 最近动作；active Goal/checkpoint 与待审演进由 hotcard 模块自取；

@@ -343,7 +343,7 @@ def test_compaction_archive_pointer_has_retrievable_original(tmp_path) -> None:
         session_id="s1",
         archive_sink=sink,
     )
-    assert any("ref=archive:search_archive" in str(m.get("content", "")) for m in out)
+    assert not any("ref=archive:search_archive" in str(m.get("content", "")) for m in out)
     searcher = RecordSearcher(
         audit_dir=tmp_path / "audit",
         archive_store=archive,

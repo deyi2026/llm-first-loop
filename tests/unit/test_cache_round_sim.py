@@ -69,8 +69,8 @@ def test_compression_round_preserves_prefix():
     assert "旧消息-000" in joined
     # 中段被归档（信息零丢失）
     assert len(archived) > 0
-    # 压缩标注注入
-    assert any("[上下文压缩]" in str(m.get("content", "")) for m in built)
+    # R8.17/E10: 压缩发生事实不再作为动态 provider 消息回灌。
+    assert not any("[上下文压缩]" in str(m.get("content", "")) for m in built)
 
 
 def test_provider_mid_compression_extends_common_prefix_beyond_system():
@@ -96,8 +96,8 @@ def test_provider_mid_compression_extends_common_prefix_beyond_system():
     assert compressed[1]["content"].startswith("m000-")
 
 
-def test_provider_mid_compression_with_append_summary_keeps_fixed_head_before_summary():
-    """生产 APPEND_COMPRESSION=1: 归档摘要只能尾部追加，不能插到 fixed-head 前断缓存。"""
+def test_provider_mid_compression_append_flag_is_wire_neutral():
+    """R8.17: APPEND_COMPRESSION 兼容开关不再制造动态归档摘要。"""
     history = [_msg("user", f"m{i:03d}-" + "x" * 2500) for i in range(36)]
     before = build_history_messages(history, SYSTEM_PROMPT, max_chars=1_000_000)
     compressed = build_history_messages(
@@ -117,12 +117,8 @@ def test_provider_mid_compression_with_append_summary_keeps_fixed_head_before_su
             break
         common += 1
     assert common >= 3, f"追加摘要启用后共同前缀仍应包含fixed-head，实际仅{common}条"
-    summary_idx = next(
-        i
-        for i, msg in enumerate(compressed)
-        if (msg.get("metadata") or {}).get("archived_summary")
-    )
-    assert summary_idx > 1
+    assert not any((msg.get("metadata") or {}).get("archived_summary") for msg in compressed)
+    assert not any("[上下文压缩]" in str(msg.get("content", "")) for msg in compressed)
     assert compressed[1]["content"].startswith("m000-")
 
 
@@ -278,6 +274,7 @@ def test_compression_downgrade_notice_on_exhaustion():
     # 头部保留上限保护: head ≤ archive_budget//2 = 18000 → 压缩后提交 ≈ 0.6×60K+system
     # 必然 ≤ 95% 预算 → 不触发降级；用极端 system 场景验证降级路径
     big_sys = SYSTEM_PROMPT + "S" * 45000  # system 45K + 历史 160K → 单轮裁不动
+    degrade_box: list[dict] = []
     built2 = build_history_messages(
         history,
         big_sys,
@@ -285,11 +282,14 @@ def test_compression_downgrade_notice_on_exhaustion():
         session_id="s1",
         archive_sink=sink,
         head_keep_chars=18000,
+        degrade_out=degrade_box,
     )
     joined2 = "".join(str(m.get("content", "")) for m in built2)
-    if "[缓存降级]" in joined2:
-        # 降级触发时: 头部消息被归档（信息零丢失）+ 标注可见
-        assert any("[缓存降级]" in str(m.get("content", "")) for m in built2)
+    # R8.17/E10: 即使程序侧发生降级，状态也只走 degrade_out/cache monitor，
+    # 不再生成动态 provider 文案。
+    assert "[缓存降级]" not in joined2
+    if degrade_box:
+        assert degrade_box[0].get("kind") == "degraded"
     # 无论是否降级: system 保留 + 无异常
     assert built2[0]["content"] == big_sys
 

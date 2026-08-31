@@ -108,7 +108,7 @@ def test_default_off_zero_regression():
 
 
 def test_compression_path_layering_non_interfering():
-    """压缩路径：分层开关不干扰压缩主流程（归档 + 压缩标注正常，短 tool 消息不误伤）.
+    """压缩路径：分层开关不干扰归档主流程，状态不回灌 prompt.
 
     注: 超预算时旧长 tool 消息会被"最旧先压"整组归档（不进保留组），
     分层降级主战场在预算内主动瘦身；此处验证压缩路径下开关开启无副作用。
@@ -124,7 +124,7 @@ def test_compression_path_layering_non_interfering():
         archive_sink=sink, layer_tool_trim=True,
     )
     contents = [str(m.get("content", "")) for m in out]
-    assert any("[上下文压缩]" in c for c in contents)  # 压缩标注正常
+    assert not any("[上下文压缩]" in c for c in contents)
     assert any("最新问题" in c for c in contents)  # 最新消息保留
     assert len(archived) >= 1  # 归档正常
 
@@ -279,8 +279,8 @@ def test_skip_injected_system_survives_long_path():
     )
     sys_content = out[0]["content"]
     assert "[预算预警]" not in sys_content
-    # 压缩标注（功能性 extras）仍注入
-    assert "压缩" in sys_content or any("压缩" in str(m.get("content", "")) for m in out)
+    # R8.17/E10: 压缩功能仍执行，但压缩状态 extras 不再进 provider view。
+    assert not any("[上下文压缩]" in str(m.get("content", "")) for m in out)
 
 
 # ── P1-10: 窗口锚定（固定起点, 前缀稳定 → 缓存命中）──

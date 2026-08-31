@@ -64,7 +64,10 @@ def _slot_re(slot: str) -> re.Pattern[str]:
 
 # 黄金摘要（P1 9.1 聚合形态；Cognitive Runtime tasks 2.3 tier 段标记升级后 2026-08-28 实测重算;
 # 注入槽结构变更时此值失配 → 红灯）
-_GOLDEN_TAIL_DIGEST = "59a823f60750e5b96565bf46057f141e33d7e328ae0b67b3e3a250dfa5ac5e64"
+# R8.17/E10: stable system capability text stopped claiming retired automatic
+# compression-status/catalog/key-fact frames.  The semantic slot morphology remains
+# memory→tip; this one-time stable-prefix correction intentionally changes the digest.
+_GOLDEN_TAIL_DIGEST = "7c33f2ad3ba0ba985c94520452123d7e97b7d3beb6f21dd83ab9009a61bf7a52"
 
 
 def _engine(tmp_path: Path):

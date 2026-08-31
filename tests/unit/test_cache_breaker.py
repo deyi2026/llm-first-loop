@@ -203,10 +203,12 @@ def test_freeze_compression_skips_archive():
     msgs = _big_history()
     sys_p = "system prompt"
     budget = 5000  # 远小于历史 → 正常应触发压缩
+    normal_compacted: list[bool] = []
     built = build_history_messages(msgs, sys_p, max_chars=budget, compact_ratio=0.9,
-                                   session_id="s1")
+                                   session_id="s1", compacted_out=normal_compacted)
     assert len(built) < len(msgs)  # 压缩路径只保留尾部少量消息
-    assert any("上下文压缩" in str(m.get("content", "")) for m in built)
+    assert normal_compacted == [True]
+    assert not any("上下文压缩" in str(m.get("content", "")) for m in built)
     compacted_box: list[bool] = []
     anchor_box: list[int] = []
     built2 = build_history_messages(msgs, sys_p, max_chars=budget, compact_ratio=0.9,

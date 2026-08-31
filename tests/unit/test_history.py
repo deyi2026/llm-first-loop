@@ -29,7 +29,7 @@ def test_history_order_preserved():
 
 
 def test_history_compression_archives_oldest():
-    """T22: 超长时最旧消息被另存（archive_sink 收到）+ 注入压缩标注."""
+    """T22/R8.17: 超长时最旧消息另存；压缩状态不自动进入 prompt."""
     archived: list[Message] = []
     msgs = [_m("user", "A" * 1000), _m("user", "B" * 1000), _m("user", "C" * 10)]
 
@@ -42,9 +42,8 @@ def test_history_compression_archives_oldest():
     # 被压缩的旧消息全部另存（信息零丢失）
     assert len(archived) >= 1
     assert all(a.content for a in archived)  # 原文完整
-    # 注入压缩标注（含 search_archive 指引）
-    assert any("[上下文压缩]" in str(m.get("content", "")) for m in out)
-    assert any("search_archive" in str(m.get("content", "")) for m in out)
+    assert not any("[上下文压缩]" in str(m.get("content", "")) for m in out)
+    assert not any("ref=archive:search_archive" in str(m.get("content", "")) for m in out)
     # 最新消息保留
     contents = [m.get("content", "") for m in out if m["role"] != "system"]
     assert any("C" in c for c in contents)
@@ -177,7 +176,7 @@ def test_compression_archives_tool_pairs_atomic():
 def test_history_compression_no_auto_llm_summary():
     """RULE-AI-00: 压缩不再自动调用 summarizer 注入 LLM 摘要（AI 主动触发 search_archive）.
 
-    压缩标注 + 档案目录仍注入（"有什么可找"可见），原文仍完整另存。
+    压缩状态/目录不再自动注入；原文仍完整另存，检索能力由稳定系统提示提供。
     """
     msgs = [
         Message(role="user", content=f"旧消息{i}内容" * 80, source=MessageSource.USER)
@@ -207,11 +206,11 @@ def test_history_compression_no_auto_llm_summary():
     contents = [str(m.get("content", "")) for m in out]
     assert not any("上下文压缩摘要" in c for c in contents)  # 不再自动注入 LLM 摘要
     assert not any("这是旧消息的语义摘要内容" in c for c in contents)
-    assert any("search_archive" in c for c in contents)  # 压缩标注仍注入
+    assert not any("ref=archive:search_archive" in c for c in contents)
 
 
 def test_history_compression_summary_fail_open():
-    """summarizer 异常 → fail-open：不阻断、无摘要注入，压缩标注仍注入."""
+    """summarizer 异常 → fail-open：不阻断、无摘要/状态注入."""
     msgs = [
         Message(role="user", content="x" * 200, source=MessageSource.USER) for _ in range(10)
     ]
@@ -232,11 +231,11 @@ def test_history_compression_summary_fail_open():
     )
     contents = [str(m.get("content", "")) for m in out]
     assert not any("上下文压缩摘要" in c for c in contents)  # fail-open 无摘要
-    assert any("search_archive" in c for c in contents)  # 压缩标注仍注入
+    assert not any("ref=archive:search_archive" in c for c in contents)
 
 
 def test_history_no_summarizer_backward_compat():
-    """summarizer=None → 行为不变（纯另存 + 压缩标注，无摘要注入）."""
+    """summarizer=None → 纯另存，无自动摘要/压缩状态注入."""
     msgs = [
         Message(role="user", content="y" * 150, source=MessageSource.USER) for _ in range(10)
     ]
@@ -253,12 +252,12 @@ def test_history_no_summarizer_backward_compat():
     )
     contents = [str(m.get("content", "")) for m in out]
     assert not any("上下文压缩摘要" in c for c in contents)
-    assert any("search_archive" in c for c in contents)
+    assert not any("ref=archive:search_archive" in c for c in contents)
 
 
 # ── EVO-20260811-1e68f400: 压缩档案目录化 ──
-def test_compression_uses_pointer_not_archive_body_catalog():
-    """R3: 压缩只给 archive pointer，不自动回灌角色/关键词目录正文。"""
+def test_compression_archive_body_and_pointer_are_both_on_demand():
+    """R8.17: 归档正文和动态 pointer 都不自动回灌 provider。"""
     msgs = [
         Message(role="user", content=f"旧消息{i}内容" * 80, source=MessageSource.USER)
         for i in range(10)
@@ -285,13 +284,13 @@ def test_compression_uses_pointer_not_archive_body_catalog():
     )
     contents = [str(m.get("content", "")) for m in out]
     assert not any("压缩档案目录" in c for c in contents)
-    assert any("ref=archive:search_archive" in c for c in contents)
+    assert not any("ref=archive:search_archive" in c for c in contents)
     assert len(archived) >= 1  # 原文仍完整另存
     assert any("旧消息" in m.content for m in archived)
 
 
-def test_archive_pointer_without_summarizer():
-    """R3: summarizer=None 仍给 search_archive pointer，但不生成正文目录。"""
+def test_archive_pointer_without_summarizer_is_prompt_neutral():
+    """R8.17: summarizer=None 同样不生成正文目录或动态 pointer。"""
     msgs = [
         Message(role="user", content="y" * 150, source=MessageSource.USER) for _ in range(10)
     ]
@@ -309,7 +308,7 @@ def test_archive_pointer_without_summarizer():
     contents = [str(m.get("content", "")) for m in out]
     assert not any("上下文压缩摘要" in c for c in contents)
     assert not any("压缩档案目录" in c for c in contents)
-    assert any("ref=archive:search_archive" in c for c in contents)
+    assert not any("ref=archive:search_archive" in c for c in contents)
 
 
 def test_archive_pointer_does_not_replay_tool_result_catalog():
@@ -377,7 +376,7 @@ def test_compression_does_not_reinject_deterministic_key_facts():
     assert not any("read_file 成功" in c for c in contents)
     assert any("选定方案 A" in m.content for m in archived)
     assert any("read_file 成功" in m.content for m in archived)
-    assert any("ref=archive:search_archive" in c for c in contents)
+    assert not any("ref=archive:search_archive" in c for c in contents)
 
 
 # ── EVO-3b39134f: 压缩保留推理结论（OpenAI harness 借鉴）──
@@ -620,15 +619,18 @@ def test_compact_ratio_preemptive_compression():
     out_full = build_history_messages(msgs, system_prompt="SYS", max_chars=10000)
     assert not any("[上下文压缩]" in str(m.get("content", "")) for m in out_full)
     # 0.9: 95% > 90% → 主动压缩（归档最旧，保留最新）
+    compacted: list[bool] = []
     out_pre = build_history_messages(
-        msgs, system_prompt="SYS", max_chars=10000, compact_ratio=0.9
+        msgs, system_prompt="SYS", max_chars=10000, compact_ratio=0.9,
+        compacted_out=compacted,
     )
-    assert any("[上下文压缩]" in str(m.get("content", "")) for m in out_pre)
+    assert compacted == [True]
+    assert not any("[上下文压缩]" in str(m.get("content", "")) for m in out_pre)
     non_sys = [m for m in out_pre if m["role"] != "system"]
     # R3: 压缩 extras 只保留状态/pointer，不再自动回灌关键事实/目录正文。
     latest = [m for m in non_sys if m["content"].startswith("x")]
     assert len(latest) == 1  # 旧消息归档, 只留最新
-    assert any("ref=archive:search_archive" in m["content"] for m in non_sys)
+    assert all("ref=archive:search_archive" not in m["content"] for m in non_sys)
     assert all("[压缩档案目录]" not in m["content"] for m in non_sys)
     # system 主体稳定（动态状态/pointer 不入主体）
     sys_msgs = [m for m in out_pre if m["role"] == "system"]
@@ -642,8 +644,13 @@ def test_compact_ratio_one_is_legacy():
     assert not any("[上下文压缩]" in str(m.get("content", "")) for m in out)
     # 超限（105%）仍压
     msgs2 = [_m("user", "u"), _m("assistant", "x" * 10500)]
-    out2 = build_history_messages(msgs2, system_prompt="SYS", max_chars=10000, compact_ratio=1.0)
-    assert any("[上下文压缩]" in str(m.get("content", "")) for m in out2)
+    compacted: list[bool] = []
+    out2 = build_history_messages(
+        msgs2, system_prompt="SYS", max_chars=10000, compact_ratio=1.0,
+        compacted_out=compacted,
+    )
+    assert compacted == [True]
+    assert not any("[上下文压缩]" in str(m.get("content", "")) for m in out2)
 
 
 def test_compacted_out_reports_real_budget_compression_only():

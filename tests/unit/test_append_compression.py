@@ -1,9 +1,9 @@
-"""2026-08-21 (追加式压缩): 归档后追加确定性摘要——前缀稳定 + 语义连贯.
+"""Compression/archive prompt authority regression tests.
 
 验证:
-- _append_summary_enabled=True 时归档后追加摘要消息（确定性字节）
-- 默认 False 零回归（不追加）
-- 摘要格式含归档计数/字符数/search_archive 提示
+- archive operation remains intact;
+- APPEND_COMPRESSION compatibility setting cannot re-enable prompt prose;
+- legacy anchor-mode active decision frame remains separate from E10 observability cleanup.
 """
 from __future__ import annotations
 
@@ -32,17 +32,14 @@ def _run(max_chars: int = 1500, append_summary: bool = False) -> list[dict]:
     )
 
 
-def test_append_summary_enabled_adds_summary():
-    """启用后归档 → 追加摘要消息（含归档计数/字符数/search_archive 提示）."""
+def test_append_summary_enabled_is_prompt_neutral():
+    """Compatibility flag cannot grant archive status automatic prompt authority."""
     out = _run(max_chars=1500, append_summary=True)
     summaries = [m for m in out if m.get("metadata", {}).get("archived_summary")]
-    assert len(summaries) >= 1, "应追加归档摘要"
-    s = summaries[0]
-    assert s["role"] == "user"
-    assert "[上下文压缩]" in s["content"]
-    assert "已归档" in s["content"]
-    assert "ref=archive:search_archive" in s["content"]
-    assert "归档内容概要" not in s["content"]
+    assert summaries == []
+    joined = "\n".join(str(m.get("content", "")) for m in out)
+    assert "[上下文压缩]" not in joined
+    assert "ref=archive:search_archive" not in joined
 
 
 def test_append_summary_disabled_zero_regression():
@@ -53,12 +50,10 @@ def test_append_summary_disabled_zero_regression():
 
 
 def test_append_summary_deterministic():
-    """同输入两次构建 → 摘要字节相同（确定性, 缓存前缀稳定）."""
+    """Compatibility flag is wire-neutral after E10 retirement."""
     out1 = _run(max_chars=1500, append_summary=True)
-    out2 = _run(max_chars=1500, append_summary=True)
-    s1 = [m for m in out1 if m.get("metadata", {}).get("archived_summary")][0]["content"]
-    s2 = [m for m in out2 if m.get("metadata", {}).get("archived_summary")][0]["content"]
-    assert s1 == s2, "同输入摘要必须相同（前缀稳定）"
+    out2 = _run(max_chars=1500, append_summary=False)
+    assert out1 == out2, "APPEND_COMPRESSION 不应再改变 provider wire"
 
 
 def test_decision_line_injected_with_active_goal(tmp_path, monkeypatch):

@@ -6,7 +6,7 @@ billion-context 拷问产出: 字节级前缀缓存下"小范围折叠保前缀"
 
 覆盖:
 1. progressive_fold=0（默认）→ 一次性大裁（零回归, 无渐进标注）
-2. progressive_fold=K → 只折最老 K 个配对组（归档组数 ≤ K）+ 折叠标注注入
+2. progressive_fold=K → 只折最老 K 个配对组（归档组数 ≤ K），折叠状态不进 prompt
 3. 折满 K 仍超限 → 突破 K 继续归档（保命兜底, 防 guard 规则 F BLOCK）
 4. 配对原子性（配对组不拆散, 无孤儿 tool 回执）
 """
@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from llm_loop.core.history import build_history_messages
+from llm_loop.core.history import ArchiveSink, build_history_messages
 from llm_loop.core.message import Message, MessageSource
 
 _Role = Literal["user", "assistant", "tool", "system"]
@@ -50,7 +50,7 @@ def _archived_pair_count(archived: list[Message]) -> int:
     return len({str(m.tool_call_id) for m in archived if m.tool_call_id})
 
 
-def _collect_archive() -> tuple[list[Message], object]:
+def _collect_archive() -> tuple[list[Message], ArchiveSink]:
     archived: list[Message] = []
 
     def sink(session_id: str, msg: Message) -> None:
@@ -84,7 +84,7 @@ def test_default_zero_progressive_fold_is_legacy():
 
 
 def test_progressive_fold_limits_to_k():
-    """progressive_fold=2: 只折最老 2 个配对组（归档组数 ≤ 2）+ 折叠标注注入.
+    """progressive_fold=2: 只折最老 2 个配对组；折叠状态为程序观测而非 prompt.
 
     渐进语义: 每次只折 K 组（智力无断崖）, 其余保留——归档组数受 K 限制。
     """
@@ -99,8 +99,8 @@ def test_progressive_fold_limits_to_k():
     # 归档组数受限（不一次大裁；K=2 为软限——折满后保留侧仍 >95% 预算时
     # 保命兜底可突破上限继续归档，见 CHANGELOG 压缩风暴熔断条目）
     assert 1 <= _archived_pair_count(archived) < 5, f"渐进应保留多数组, 实际 {_archived_pair_count(archived)}"
-    # 折叠标注注入（AI 有感知）
-    assert _has_annotate(out)
+    # R8.17/E10: fold occurrence/count is observability-only.
+    assert not _has_annotate(out)
 
 
 def test_progressive_fold_bailout_breaks_k():
