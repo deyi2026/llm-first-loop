@@ -919,10 +919,22 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 # 才沿 fallback 链尝试；会话显式 override（含用户/AI 经 switch_model 选择）=
                 # 严格模式,失败直接如实反馈不降级（design §5.4 行为规则表核心）。
                 # 4xx (非 429) 不降级：请求本身有问题,换模型无用（design §5.4 行为表注）。
+                # D'-2.3 ③（R8.24 D-D6-3）: strict override 强化——用户选择权 >
+                # 能力下限（floor 只作用于自动链；显式选定模型照执行不静默换链）。
                 is_default_assembled = (
                     sess.model_override is None and chat_model_arg is None
                 )
-                if not _e1210_recovered and is_default_assembled and self._is_fallback_eligible_error(exc):
+                # D'-2.3 ②（D-D6-5）: 同模型优先重试 ≤2 次（门与实现在 fallback.py）。
+                _same_model_resp = self._same_model_retry_gate(
+                    exc=exc, e1210_recovered=_e1210_recovered, sess=sess,
+                    is_default_assembled=is_default_assembled, rounds=rounds,
+                    messages=messages, tools_param=tools_param, llm_client=llm_client,
+                    chat_model_arg=chat_model_arg, session_id=session_id,
+                    effective_budget=effective_budget,
+                )
+                if _same_model_resp is not None:
+                    resp, _llm_round_ms = _same_model_resp, 0.0
+                elif not _e1210_recovered and is_default_assembled and self._is_fallback_eligible_error(exc):
                     _fallback_metadata: dict[str, Any] = {}
 
                     def _fallback_request_builder(

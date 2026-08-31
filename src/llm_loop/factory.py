@@ -394,6 +394,12 @@ def build_engine(settings: Settings) -> LoopEngine:
                     evidence_ledger,
                     freshness=evidence_freshness,
                     owner_resolver=_evidence_owner,
+                    # R8.24-C C-D9: 复用命中内联正文所需 blob 面 + 内联预算（与 enforcer
+                    # projection budget 同源）；缺 blob 面时命中如实 failure（不静默吞正文）。
+                    blobs=evidence_blobs,
+                    inline_budget_chars=min(
+                        settings.tool_max_output_chars, settings.tool_summary_threshold, 5000
+                    ),
                 )
             )
             registry.register(

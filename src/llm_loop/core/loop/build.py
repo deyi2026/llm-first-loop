@@ -464,6 +464,13 @@ class _BuildMixin:
         协调: 安全水位 = 预算×BREAKER_PRESSURE_RATIO（默认 0.95 = 规则 F BLOCK
         阈值），breaker 前置拦截后规则 F 永不双拦；逃生轮（pressure_escape）
         放行一次受控压缩提交。
+
+        D'-1.2（R8.24 D-D4）breaker pressure 终止条件收窄: 内部 history budget
+        水位（compression breaker active）不再独立终止 run——允许终止 run 的仅剩
+        三类: ①真实 provider window 超限；②用户成本政策；③安全。其余场景由
+        _build_llm_messages 内置 compaction 链（90% 主动压缩/渐进折叠/锚定视图）
+        自行压缩后继续。开关 LFL_BREAKER_PRESSURE_NARROW（默认 0=现状拦截，
+        1=收窄放行+observability 事件）；收窄分支异常 fail 回退现状文案。
         """
         try:
             if not self._cache_monitor.breaker_active_for(sess.session_id):
@@ -487,6 +494,24 @@ class _BuildMixin:
                 budget=effective_budget,
                 model_ref=planned_label,
             )
+            # D'-1.2 收窄态: 内部水位信息降为 optimizer/observability 事件——
+            # 不终止 run，超限载荷由 _build_llm_messages 内置 compaction 链
+            # （衔接 B 包 E17 runtime compact）压缩后继续；指令性输出取消
+            # （通知面属 B 包 E19 改道）。
+            if os.environ.get("LFL_BREAKER_PRESSURE_NARROW", "0") == "1":
+                logger.info(
+                    "event=breaker.context_pressure_narrowed chars=%d budget=%d model=%s"
+                    "（内部水位超安全水位——run 不终止，compaction 链自行压缩后继续）",
+                    _chars_now,
+                    effective_budget,
+                    planned_label,
+                )
+                self._record_action(
+                    "action.llm_decide",
+                    "breaker_context_pressure_narrowed",
+                    f"chars={_chars_now:,} budget={effective_budget:,}（optimizer 观测——run 继续）",
+                )
+                return None
             self._record_action(
                 "action.llm_decide",
                 "breaker_context_pressure",
