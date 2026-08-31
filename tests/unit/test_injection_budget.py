@@ -74,7 +74,11 @@ def test_build_budget_gate_covers_dynamic_appendix_end_to_end(tmp_path):
     from tests.unit.test_injection_fingerprint import _arm_all_slots, _build, _engine
 
     engine, sess = _engine(tmp_path)
-    object.__setattr__(engine.settings, "injection_budget_chars", 900)
+    # R8.16 removes the full automatic Task Frontier, shrinking this production-shape
+    # fixture below the old 900-char trigger.  Use the supported hard minimum so this
+    # test continues to exercise the over-budget receipt path rather than depending on
+    # incidental prompt bloat.
+    object.__setattr__(engine.settings, "injection_budget_chars", 512)
     memory_msgs = _arm_all_slots(engine, sess)
     out = _build(engine, sess, memory_msgs)
 
@@ -83,7 +87,7 @@ def test_build_budget_gate_covers_dynamic_appendix_end_to_end(tmp_path):
         if detect_program_layer(str(m.get("content") or "")) not in (None, InjectionLayer.USER_INSTRUCTION)
     ]
     actual_chars = sum(len(str(m.get("content") or "")) for m in program_msgs)
-    assert actual_chars <= 900
+    assert actual_chars <= 512
     joined = "\n".join(str(m.get("content") or "") for m in program_msgs)
     assert "[注入预算]" not in joined
     assert engine._last_injection_budget.receipt_content.startswith("[注入预算]")

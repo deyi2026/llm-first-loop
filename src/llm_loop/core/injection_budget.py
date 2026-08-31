@@ -44,7 +44,7 @@ _CRITICAL_STATUS_SLOTS = frozenset(
         "decision_header",
         "semantic_header",
         "task_anchor",
-        "task_frontier",
+        "task_active",
         "interop",
     }
 )

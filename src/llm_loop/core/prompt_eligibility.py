@@ -14,6 +14,7 @@ from llm_loop.core.injection_labels import InjectionLayer, infer_layer
 # Explicit automatic-prompt producer allowlist.  Keep this as plain strings so the
 # eligibility core does not depend on loop/err1210 enums (which would create a cycle).
 PROGRAM_FINAL_PROTOCOL_BOUNDARY = "[程序终止边界·无模型回答]"
+TASK_ACTIVE_PROMPT_PREFIX = "[Task Active]"
 
 
 PROMPT_DYNAMIC_PRODUCER_SLOTS = frozenset(
@@ -22,9 +23,28 @@ PROMPT_DYNAMIC_PRODUCER_SLOTS = frozenset(
         "memory",
         "tip",
         "digest",
-        "task_frontier",
+        "task_active",
     }
 )
+
+
+def render_task_active_identity(*, goal_id: str, task_id: str, title: str) -> str:
+    """Render the only task state allowed to auto-project: one active execution identity.
+
+    Full frontier/ready/blocked/completed state remains tool-only.  Empty identifiers deny
+    rather than guessing.  Task titles are collapsed to one stable line so program-owned
+    formatting cannot create additional prompt structure.
+    """
+
+    gid = str(goal_id or "").strip()
+    tid = str(task_id or "").strip()
+    if not gid or not tid:
+        return ""
+    clean_title = " ".join(str(title or "").split())[:80]
+    return (
+        f"{TASK_ACTIVE_PROMPT_PREFIX} goal={gid}; task={tid}; "
+        f"status=in_progress; title={clean_title}"
+    )
 
 
 def dynamic_prompt_layer(content: str, *, slot_kind: str | None) -> InjectionLayer | None:

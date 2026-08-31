@@ -46,6 +46,7 @@ from llm_loop.core.prompt_eligibility import (
     current_turn_program_prompt_eligible,
     dynamic_prompt_layer,
     memory_snapshot_prompt_eligible,
+    render_task_active_identity,
 )
 from llm_loop.core.user_truth_wire import (
     current_ingress_user_truth,
@@ -1214,9 +1215,11 @@ class _BuildMixin:
         # budget_chars 降级兜底——WARM 超界降级本身即 tier_degraded 生产可达
         # 路径）；wire 平铺仍用 _inject_parts 原语义，持久化原文已由历史投影
         # 带出，不重复注入。
-        # DESIGN-20260828 Task Frontier: 有任务图时注入当前 frontier（程序记账/
-        # 模型决策——ready/blocked/unreachable 可执行集每轮可见，替代从历史重推）。
-        # fail-open: 账本不可用/无 goal/空图均不注入（零噪音，缓存友好——尾部聚合条）。
+        # R8.16/E23: task ledger is durable state, but full frontier is not automatic
+        # working context.  Only one uniquely active execution identity may auto-project;
+        # ready/blocked/unreachable/completed/premise-stale state stays behind task_frontier().
+        # Multiple in-progress nodes are intentionally ambiguous: do not guess which one is
+        # "current".  Fail-open here means zero prompt chars, never full-graph fallback.
         try:
             from llm_loop.introspection.goal import GoalStore
             from llm_loop.introspection.task_store import TaskStore
@@ -1227,11 +1230,31 @@ class _BuildMixin:
             if _tf_gid and str((_tf_goal or {}).get("status", "")) == "active":
                 _tf_store = TaskStore(_tf_audit)
                 if _tf_store.count_for_goal(_tf_gid) > 0:
-                    _inject_parts.append(
-                        ("task_frontier", _tf_store.render_frontier(_tf_gid))
-                    )
+                    _tf_state = _tf_store.compute_frontier(_tf_gid)
+                    _tf_doing = list(_tf_state.get("in_progress") or [])
+                    if len(_tf_doing) == 1:
+                        _tf_task = (_tf_doing[0] or {}).get("task")
+                        _tf_active = render_task_active_identity(
+                            goal_id=_tf_gid,
+                            task_id=str(getattr(_tf_task, "task_id", "") or ""),
+                            title=str(getattr(_tf_task, "title", "") or ""),
+                        )
+                        if _tf_active:
+                            _inject_parts.append(("task_active", _tf_active))
+                    else:
+                        try:
+                            self._record_action(
+                                "task.frontier",
+                                "on_demand_only",
+                                f"prompt_chars=0;in_progress={len(_tf_doing)}",
+                            )
+                        except Exception:  # noqa: BLE001 — observability cannot affect build
+                            logger.debug(
+                                "build: task frontier observability action failed",
+                                exc_info=True,
+                            )
         except Exception:  # noqa: BLE001 — fail-open: 任务账本异常不阻断构建
-            logger.debug("build: Task Frontier 注入失败（fail-open 跳过）", exc_info=True)
+            logger.debug("build: Task Active 解析失败（fail-open 零注入）", exc_info=True)
         # R8.8 eligibility precedes semantic profile/budget. ``infer_layer`` may retain
         # its legacy STATUS rendering fallback, but an unknown producer must not gain
         # prompt access merely by reaching this list.
