@@ -438,15 +438,22 @@
     {
       "id": "E26",
       "surface": "interop_coordinate_or_task",
-      "current_status": "PARTIAL",
+      "current_status": "DONE",
       "target_class": "CONDITIONAL_EXTERNAL",
       "priority": "P1",
-      "current_behavior": "coordinate/task pending items are injected as program context when consumed from inbox.",
-      "target_rule": "Eligible only if the external message actually creates/changes the current active task. Otherwise keep in interop state and let the user/model inspect on demand.",
-      "retrieval_path": "interop state/event",
+      "current_behavior": "R8.13 removes automatic prompt authority from interop coordinate/task. Pending external items remain in interop state/UI and are not consumed into Message/provider wire. The factory watcher records only global action observability: it no longer attributes an external item to the most-recent session and never fabricates user_text or starts a model run. Legacy in-memory interop tail/defer state is retired before build, and the central dynamic producer allowlist no longer contains interop.",
+      "target_rule": "External coordinate/task has zero automatic provider eligibility. A message may enter model working context only after an input-side user authorization/accept-insert action turns it into genuine user-authorized task input; session/ref targeting alone is not authorization. Without that authorization it stays retrievable in interop state/UI.",
+      "retrieval_path": "interop pending/Web UI + global action observability; explicit future accept/insert input path",
       "evidence": [
-        "src/llm_loop/core/loop/interop.py:40-117",
-        "src/llm_loop/core/loop/interop.py:175-220"
+        "src/llm_loop/core/loop/interop.py",
+        "src/llm_loop/factory.py",
+        "src/llm_loop/core/prompt_eligibility.py",
+        "tests/unit/test_interop_inject.py",
+        "tests/unit/test_factory.py",
+        "tests/unit/test_prompt_eligibility_r88.py",
+        "tests/unit/test_err1210_recovery.py",
+        "tests/unit/test_injection_fingerprint.py",
+        "docs/injection-governance/eligibility/r813-report.md"
       ]
     },
     {
@@ -636,5 +643,7 @@
   "r8_11_status": "PASS",
   "r8_11_evidence": "docs/injection-governance/eligibility/r811-report.md",
   "r8_12_status": "PASS",
-  "r8_12_evidence": "docs/injection-governance/eligibility/r812-report.md"
+  "r8_12_evidence": "docs/injection-governance/eligibility/r812-report.md",
+  "r8_13_status": "PASS",
+  "r8_13_evidence": "docs/injection-governance/eligibility/r813-report.md"
 }

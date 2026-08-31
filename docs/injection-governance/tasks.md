@@ -186,3 +186,15 @@
 - Matrix: E25 OPEN→DONE；总计 `DONE=23 / KEEP=1 / PARTIAL=10 / OPEN=0`；behavior canary 仍只 READY，未启动。
 - evidence: `docs/injection-governance/eligibility/r812-report.md`、`eligibility/matrix.json`、`tests/unit/test_interop_inject.py`、`tests/unit/test_subagent_report.py`、`tests/web/test_interop_api.py`。
 - evidence_required: true
+
+## R8.13 Conditional External Input Authority Closure — ✅ PASS
+- E26 `interop_coordinate_or_task`: pending coordinate/task no longer becomes program prompt material; zero Message, zero provider chars, no automatic consume. Body remains in interop pending/UI for explicit handling.
+- Root cause: watcher previously guessed the most-recent/default session and fabricated `协调通道有新消息待处理...` as user text. Current historical coordinate census=2, both scheduler `ref=sched-*` with no target session, so recency was not a valid relation proof.
+- Watcher: `_on_inbox_notify` records global action observability only; no guessed session event. Legacy `INBOX_WAKEUP` callback records `blocked_no_user_authorization` and never starts `BackgroundRunner`.
+- Legacy replay: pre-upgrade `_interop_tail_messages` / interop deferred refs are retired before build so err1210 compatibility state cannot resurrect external prompt authority.
+- Central hard gate: commit `d2fc3fe` removes `interop` from `PROMPT_DYNAMIC_PRODUCER_SLOTS`; a future producer cannot regain eligibility merely by using the old slot label.
+- Future allowed path: only explicit input-side user accept/insert may upgrade an external item into genuine user-authorized task input. `target_session`/`ref`/recency alone are not authorization.
+- Verification: implementation commits `8cd2884` + `d2fc3fe`; final detached clean production pyright 0/0; focused + broader tracked interop/watcher/Web/scheduler/job/subagent/factory/1210/eligibility/model-attribution suites PASS; R0-1~R0-4 PASS; checkout before/after clean. Untracked parallel `test_schedule_wake.py` supplementary 5/5 PASS and not committed in this batch.
+- Matrix: E26 PARTIAL→DONE；总计 `DONE=24 / KEEP=1 / PARTIAL=9 / OPEN=0`；behavior canary / R9 未启动。
+- evidence: `docs/injection-governance/eligibility/r813-report.md`、`eligibility/matrix.json`、`tests/unit/test_interop_inject.py`、`tests/unit/test_factory.py`、`tests/unit/test_prompt_eligibility_r88.py`。
+- evidence_required: true

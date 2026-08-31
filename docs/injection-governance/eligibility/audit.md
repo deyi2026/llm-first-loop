@@ -466,3 +466,11 @@ A semantic audit of `subagent_report` found its substantive reports already retu
 Current channel census: direct pending=0; done=50 notify; processed history=168 (166 notify, 2 coordinate). Existing captured artifacts contain 252 occurrences of `[外部协调·from DSH]`, proving real historical prompt reachability (artifact count, not unique requests).
 
 Implementation commit `a25670c` passed detached-clean fixed-point: focused **23/23**, broader tracked E25 adjacent suite PASS, scheduler **16/16**, production pyright **0/0**, changed-test ruff PASS, R0 four gates PASS, frozen R0 unchanged, checkout clean before/after. Matrix becomes `DONE=23 / KEEP=1 / PARTIAL=10 / OPEN=0`; behavior canary remains not started. Full evidence: `docs/injection-governance/eligibility/r812-report.md`.
+
+## R8.13 — Conditional external input authority closure (2026-08-31)
+
+E26 `interop_coordinate_or_task` is now **DONE**. The runtime no longer treats arrival, recency, `ref`, or a guessed recent session as permission to modify model working context. Pending `coordinate/task` stays in interop state/UI with `prompt_chars=0`; it is not converted to `Message`, not auto-consumed, and not injected into provider wire. The watcher no longer attributes external state to the most-recent conversation and never fabricates `user_text` to start a background model run. Legacy interop tail/defer state is retired before build, and `interop` has been removed from the central dynamic prompt producer allowlist.
+
+The future authorization boundary is input-side only: an explicit user accept/insert action may turn a selected external item into genuine user-authorized task input. A `target_session` field by itself would still be routing metadata, not prompt authority. Current historical census found two processed `coordinate` records, both scheduler `sched-*` refs with no target session, which directly disproves the former recent-session guess.
+
+Implementation commits `8cd2884` + `d2fc3fe` pass the final detached-clean fixed-point: production pyright 0/0, focused and broader tracked suites PASS, R0 four gates PASS, checkout clean before/after. Matrix becomes `DONE=24 / KEEP=1 / PARTIAL=9 / OPEN=0`. Behavior canary remains not started. Full evidence: `docs/injection-governance/eligibility/r813-report.md`.
