@@ -398,15 +398,23 @@
     {
       "id": "E23",
       "surface": "task_frontier",
-      "current_status": "PARTIAL",
+      "current_status": "DONE",
       "target_class": "ACTIVE_STATE",
       "priority": "P1",
-      "current_behavior": "If an active Goal has tasks, build can render the frontier into every prompt. The tool task_frontier already exists for explicit inspection.",
-      "target_rule": "Only the current executable node/constraint required for model decision is eligible. Full graph/blocked/unreachable/completed state is tool-only by default.",
-      "retrieval_path": "task_frontier()",
+      "current_behavior": "R8.16 retires the full automatic task_frontier producer. Build now auto-projects only a byte-stable task_active identity when the active Goal has exactly one in_progress task: goal_id + task_id + status=in_progress + one-line title. Zero or multiple in_progress tasks produce zero task prompt chars. Ready/blocked/unreachable/completed/premise_stale/counts and task-operation guidance remain outside automatic prompt. The old task_frontier slot is centrally deny-listed by absence from the prompt producer allowlist, preventing a future full-graph producer from regaining authority by reusing the old slot name.",
+      "target_rule": "Only a uniquely bound current execution identity may be automatic active state. Full graph, candidate selection, blocked/unreachable/completed state and task bookkeeping guidance are tool-only by default; ambiguous or non-executable graphs auto-project nothing.",
+      "retrieval_path": "task_frontier() full graph / get_goal task summary / get_tool_schema discovery",
       "evidence": [
-        "src/llm_loop/core/loop/build.py:1110-1137",
-        "src/llm_loop/introspection/task_store.py:400-437"
+        "src/llm_loop/core/loop/build.py",
+        "src/llm_loop/core/prompt_eligibility.py",
+        "src/llm_loop/core/injection_budget.py",
+        "src/llm_loop/introspection/task_store.py",
+        "src/llm_loop/introspection/tools_task.py",
+        "src/llm_loop/introspection/tools_goal.py",
+        "tests/unit/test_task_active_prompt_r816.py",
+        "tests/unit/test_prompt_eligibility_r88.py",
+        "tests/unit/test_injection_budget.py",
+        "docs/injection-governance/eligibility/r816-report.md"
       ]
     },
     {
@@ -664,5 +672,7 @@
   "r8_14_status": "PASS",
   "r8_14_evidence": "docs/injection-governance/eligibility/r814-report.md",
   "r8_15_status": "PASS",
-  "r8_15_evidence": "docs/injection-governance/eligibility/r815-report.md"
+  "r8_15_evidence": "docs/injection-governance/eligibility/r815-report.md",
+  "r8_16_status": "PASS",
+  "r8_16_evidence": "docs/injection-governance/eligibility/r816-report.md"
 }

@@ -224,3 +224,16 @@
 - Matrix: E08 PARTIAL→DONE；总计 `DONE=26 / KEEP=1 / PARTIAL=7 / OPEN=0`；behavior canary / R9 未启动。
 - evidence: `docs/injection-governance/eligibility/r815-report.md`、`eligibility/matrix.json`、`tests/unit/test_tool_experience_inject.py`、`tests/unit/test_prompt_eligibility_r88.py`、`tests/integration/test_experience_integration.py`、`tests/unit/test_experience_guidance.py`。
 - evidence_required: true
+
+## R8.16 Task Execution Identity Closure — ✅ PASS
+- E23 `task_frontier`: full graph no longer gains prompt authority merely because an active Goal has a non-empty task ledger. Old slot `task_frontier` is removed from the central dynamic producer allowlist.
+- New automatic surface: `task_active` only when there is exactly one `in_progress` task; content is byte-stable `goal_id + task_id + status=in_progress + normalized one-line title` and remains CRITICAL_STATUS for budget survival.
+- Zero/ambiguous rule: all-done、ready-only、blocked-only、unreachable-only、0 in-progress and >1 in-progress all produce `prompt_chars=0`; the program does not auto-select a ready task or guess among concurrent tasks.
+- Retrieval preserved: `task_frontier()` still returns ready/in_progress/blocked/unreachable/premise_stale and `full=true` waiting/done details；`get_goal` still returns compact task counts；CORE `get_tool_schema` can discover the full tool.
+- Current data evidence: 2 task ledgers / 11 tasks / 11 done / 0 open；one Goal is still active with 2 completed tasks, so the former path would emit ~120 chars/turn despite no executable node. Historical ledger replay max concurrent in_progress=1 for both real graphs.
+- Wire evidence: frozen captured provider fixtures contain 3 genuine role=user auto frontier messages around 322 chars. Representative synthetic graph full render 286 chars → task_active 117 chars (**-59.1%**); current all-done graph 120 → 0.
+- Budget side effect: after prompt shrink the production-shape budget fixture used only 643 chars, below its old 900-char red-light threshold; test threshold moved to supported minimum 512 so over-budget receipt semantics remain covered without requiring prompt bloat.
+- Verification: implementation `06dfd6b`; detached clean pyright **0/0**；focused **56/56**；broader **263/263**；R0-1~R0-4 PASS；frozen hash `b54d47a31109a03d9f926f65b7a3d9f6caf3f24c0d42b1bff26fe338ee74b02a` unchanged；checkout before/after clean。
+- Matrix: E23 PARTIAL→DONE；总计 `DONE=27 / KEEP=1 / PARTIAL=6 / OPEN=0`；behavior canary / R9 未启动。
+- evidence: `docs/injection-governance/eligibility/r816-report.md`、`eligibility/matrix.json`、`tests/unit/test_task_active_prompt_r816.py`、`tests/unit/test_prompt_eligibility_r88.py`、`tests/unit/test_injection_budget.py`。
+- evidence_required: true
