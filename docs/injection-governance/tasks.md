@@ -237,3 +237,16 @@
 - Matrix: E23 PARTIAL→DONE；总计 `DONE=27 / KEEP=1 / PARTIAL=6 / OPEN=0`；behavior canary / R9 未启动。
 - evidence: `docs/injection-governance/eligibility/r816-report.md`、`eligibility/matrix.json`、`tests/unit/test_task_active_prompt_r816.py`、`tests/unit/test_prompt_eligibility_r88.py`、`tests/unit/test_injection_budget.py`。
 - evidence_required: true
+
+## R8.17 Compact Runtime Observability Closure — ✅ PASS
+- E10 `compact_archive_pointer_and_fold_status`: compression/archive/fold/cache-degrade occurrence no longer becomes dynamic provider context. Archive/fold operations remain unchanged; only program-authored status/pointer prose exits prompt.
+- Provider reachability: current-format offending-payload census found one canonical `compact_archive_appendix` role=user frame, **224 chars**, containing `[上下文压缩]` + `[中段折叠]`; canonical session metadata census found 0 persisted compact_archive_appendix, proving request-view rather than conversational truth.
+- Retrieval preserved: stable system prompt advertises archive recovery through `search_archive`; ArchiveStore keeps exact bodies; integration test still retrieves unique archived original via RecordSearcher after compaction.
+- Observability preserved: `compact_view_stats` -> pre/post/drop/archived_count；provider fold -> `message.cache_compacted` event；degrade -> cache monitor/transport metadata；`run.compact` action -> true stats + `prompt_chars=0`。
+- Telemetry correction: historical `run.compact`=7,635 rows (`warn=6,910 / ok=725`); 2026-08-30/31 had 192 obsolete missing-facts warns vs 10 ok. Missing retired `[压缩关键事实]/[压缩推理结论]` is no longer treated as failure.
+- Active-state boundary: legacy anchor-mode `[当前决策]` remains separate and is labeled `compact_active_state_appendix`; E10 does not use observability cleanup to delete a potentially active decision surface.
+- Static truth correction: one stable system-prompt line removed the obsolete claim that compression automatically emits `[上下文压缩]` marker/catalog/key facts. This intentionally causes one prefix digest change; golden fingerprint updated only after all memory/tip morphology assertions passed.
+- Verification: implementation `b2b18d9`; detached clean production/new-test pyright **0/0**；focused **24/24**；wider **348/348**；R0-1~R0-4 PASS；frozen hash `b54d47a31109a03d9f926f65b7a3d9f6caf3f24c0d42b1bff26fe338ee74b02a` unchanged；checkout before/after clean。Parent `0b24482` reproduces the same 10 legacy broad-test pyright debts.
+- Matrix: E10 PARTIAL→DONE；总计 `DONE=28 / KEEP=1 / PARTIAL=5 / OPEN=0`；behavior canary / R9 未启动。
+- evidence: `docs/injection-governance/eligibility/r817-report.md`、`eligibility/matrix.json`、`tests/unit/test_compact_observability_r817.py`、`tests/unit/test_append_compression.py`、`tests/unit/test_progressive_fold.py`、`tests/unit/test_history.py`、`tests/unit/test_reference_injection_integration.py`。
+- evidence_required: true

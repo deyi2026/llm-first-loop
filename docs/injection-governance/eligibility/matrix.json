@@ -181,15 +181,23 @@
     {
       "id": "E10",
       "surface": "compact_archive_pointer_and_fold_status",
-      "current_status": "PARTIAL",
+      "current_status": "DONE",
       "target_class": "OBSERVABILITY_ONLY",
       "priority": "P1",
-      "current_behavior": "R3 correctly stopped old key-fact/body replay, but compression/fold status frames and search_archive pointers can still be injected as prompt-visible context.",
-      "target_rule": "Once active task state is independently preserved, archive/fold occurrence is observability; historical content is retrieved by tool only.",
-      "retrieval_path": "search_archive",
+      "current_behavior": "R8.17 removes compression/archive/fold/cache-degrade occurrence from provider working context. Archive and fold mechanics still execute and remain observable through compact_view_stats, message.cache_compacted events, cache-monitor degradation state and run.compact action telemetry. Dynamic archive counts, fold counts and ref=archive:search_archive frames are no longer emitted. The stable system prompt truthfully advertises archive recovery with search_archive without claiming retired compression-status/catalog/key-fact frames. Legacy anchor-mode current-decision compatibility is kept as a separate compact_active_state_appendix active-state surface, not E10 observability.",
+      "target_rule": "Archive/fold/cache-degrade occurrence and dynamic counts are observability only. Historical content is retrieved explicitly through search_archive. A current active decision, when separately proven eligible, must not regain authority merely because it shares a compact build path.",
+      "retrieval_path": "search_archive / ArchiveStore; compact_view_stats / message.cache_compacted / cache monitor / run.compact action telemetry for observability",
       "evidence": [
-        "src/llm_loop/core/history.py:1229-1405",
-        "docs/injection-governance/r3/report.md"
+        "src/llm_loop/core/history.py",
+        "src/llm_loop/core/loop/build.py",
+        "src/llm_loop/core/prompt.py",
+        "tests/unit/test_compact_observability_r817.py",
+        "tests/unit/test_append_compression.py",
+        "tests/unit/test_progressive_fold.py",
+        "tests/unit/test_cache_round_sim.py",
+        "tests/unit/test_history.py",
+        "tests/unit/test_reference_injection_integration.py",
+        "docs/injection-governance/eligibility/r817-report.md"
       ]
     },
     {
@@ -674,5 +682,7 @@
   "r8_15_status": "PASS",
   "r8_15_evidence": "docs/injection-governance/eligibility/r815-report.md",
   "r8_16_status": "PASS",
-  "r8_16_evidence": "docs/injection-governance/eligibility/r816-report.md"
+  "r8_16_evidence": "docs/injection-governance/eligibility/r816-report.md",
+  "r8_17_status": "PASS",
+  "r8_17_evidence": "docs/injection-governance/eligibility/r817-report.md"
 }
