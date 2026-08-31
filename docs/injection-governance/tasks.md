@@ -212,3 +212,15 @@
 - Matrix: E24 PARTIAL→DONE；总计 `DONE=25 / KEEP=1 / PARTIAL=8 / OPEN=0`；behavior canary / R9 未启动。
 - evidence: `docs/injection-governance/eligibility/r814-report.md`、`eligibility/matrix.json`、`tests/unit/test_task_hotcard.py`、`tests/unit/test_handoff_archive.py`、`tests/unit/test_err1210_recovery.py`、`tests/unit/test_injection_fingerprint.py`、`tests/unit/test_prompt_eligibility_r88.py`。
 - evidence_required: true
+
+## R8.15 Experience Catalog On-Demand Closure — ✅ PASS
+- E08 `experience_tip`: generic post-tool experience/skill catalog no longer gets automatic prompt authority.
+- Historical census: 122 persisted role=user tips / 34 sessions / ~49.9k chars; 116 legacy prose + 6 R3 pointers; 46/103 identified rows were above turn 100. Current ExperienceStore: 132 docs, 130 active.
+- Root cause: front-K/task-switch + tool-name relevance + unseen-ref dedup proves only candidate relevance/volume control, not required-now.
+- Producer: `_inject_experience_tips` is compatibility observability only; no store lookup, skill scan, Message append or session mutation; optional action=`experience.catalog/on_demand_only`, `prompt_chars=0`.
+- Provider lifecycle: canonical `metadata.injection_kind=experience_tip` is centrally denied even when turn_ref matches current turn; ordinary human discussion without program metadata is preserved.
+- Capability preserved: `search_records(kind=experience)` keyword + exact `experience:<id>` hydration stays; typed/failure-specific tool recovery and experience guidance stay unchanged.
+- Verification: implementation `d04986b`; detached clean pyright 0/0; focused/preserved **132/132**; broader **288/288**; R0-1~R0-4 PASS; checkout before/after clean.
+- Matrix: E08 PARTIAL→DONE；总计 `DONE=26 / KEEP=1 / PARTIAL=7 / OPEN=0`；behavior canary / R9 未启动。
+- evidence: `docs/injection-governance/eligibility/r815-report.md`、`eligibility/matrix.json`、`tests/unit/test_tool_experience_inject.py`、`tests/unit/test_prompt_eligibility_r88.py`、`tests/integration/test_experience_integration.py`、`tests/unit/test_experience_guidance.py`。
+- evidence_required: true

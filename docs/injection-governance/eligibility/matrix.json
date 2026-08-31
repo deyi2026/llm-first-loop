@@ -144,16 +144,23 @@
     {
       "id": "E08",
       "surface": "experience_tip",
-      "current_status": "PARTIAL",
+      "current_status": "DONE",
       "target_class": "REF_ON_DEMAND",
       "priority": "P0",
-      "current_behavior": "R3 pointer/seen controls remain for current tasks. Experience-tip messages that belong to a proven resolved episode are now retired with that episode instead of persisting into later working context. Current/legacy eligibility is still not a full required-now gate.",
-      "target_rule": "Only task-relevant current experience may surface; resolved experience context returns to the experience index.",
-      "retrieval_path": "search_records(kind=experience) / experience ref; resolved episode transcript via episode ref",
+      "current_behavior": "R8.15 retires the generic post-tool experience/skill catalog from automatic working context. _inject_experience_tips is now an observability-only compatibility hook: it does not query ExperienceStore/skills and does not append Message/session history. Canonical historical injection_kind=experience_tip messages are denied centrally from provider view, including same-turn R3 pointer frames. Explicit experience search and failure-specific recovery remain available.",
+      "target_rule": "Experience/skill knowledge is on-demand by default. Tool-name similarity, front-K, task-switch wording and unseen refs are relevance signals but never sufficient required-now proof. Generic experience enters working context only through an explicit retrieval/tool result; failure-specific recovery may surface after an actual current failure under its separate typed/guidance policy.",
+      "retrieval_path": "search_records(kind=experience) keyword/exact experience:<id>; explicit skill tools; current-failure typed/guidance recovery",
       "evidence": [
-        "src/llm_loop/core/episode_history.py",
         "src/llm_loop/core/loop/tool_exec.py",
-        "tests/unit/test_resolved_episode.py"
+        "src/llm_loop/core/prompt_eligibility.py",
+        "src/llm_loop/introspection/search.py",
+        "src/llm_loop/tools/registry.py",
+        "tests/unit/test_tool_experience_inject.py",
+        "tests/unit/test_prompt_eligibility_r88.py",
+        "tests/unit/test_reference_injection_integration.py",
+        "tests/integration/test_experience_integration.py",
+        "tests/unit/test_experience_guidance.py",
+        "docs/injection-governance/eligibility/r815-report.md"
       ]
     },
     {
@@ -655,5 +662,7 @@
   "r8_13_status": "PASS",
   "r8_13_evidence": "docs/injection-governance/eligibility/r813-report.md",
   "r8_14_status": "PASS",
-  "r8_14_evidence": "docs/injection-governance/eligibility/r814-report.md"
+  "r8_14_evidence": "docs/injection-governance/eligibility/r814-report.md",
+  "r8_15_status": "PASS",
+  "r8_15_evidence": "docs/injection-governance/eligibility/r815-report.md"
 }
