@@ -2,7 +2,7 @@
   "schema": "prompt-eligibility-audit-v1",
   "audit_base_commit": "31df1a3",
   "audit_date": "2026-08-30",
-  "phase": "R8.11_OBSERVABILITY_RECEIPT_PROMPT_EXIT",
+  "phase": "R8.12_INTEROP_NOTIFY_PROMPT_EXIT",
   "production_behavior_changed": true,
   "behavior_canary_allowed": true,
   "status_semantics": {
@@ -419,14 +419,20 @@
     {
       "id": "E25",
       "surface": "interop_notify_and_backlog",
-      "current_status": "OPEN",
+      "current_status": "DONE",
       "target_class": "OBSERVABILITY_ONLY",
       "priority": "P1",
-      "current_behavior": "First-seen topic=notify is still injected; backlog count can also become prompt text. Duplicate notify is later suppressed/archived.",
-      "target_rule": "notify/job-complete/backlog are event/UI state; zero prompt unless the current active task is explicitly waiting on that result.",
-      "retrieval_path": "interop UI/event store / job_output",
+      "current_behavior": "R8.12 removes automatic prompt authority from interop topic=notify and backlog-count notices. First-seen and duplicate notify files are archived directly to lfl_to_dsh/done with body preserved for UI/retrieval, and compact interop.notify action telemetry records prompt_chars=0. Pending backlog depth is action/watchdog observability only; no synthetic \"另有 N 条\" Message is created. Subagent reports remain semantically available through SubAgentResult/spawn_subagent tool receipts, so their notify copy is no longer a duplicate model-input channel. Coordinate/task messages remain unchanged for E26 conditional-external audit.",
+      "target_rule": "notify/job-complete/subagent-copy/backlog are event/UI state and never automatic model prompt. If the current task needs a result, retrieve it explicitly through job_output/interop state/tool receipt; true coordinate/task changes are governed separately by E26.",
+      "retrieval_path": "interop Web UI recent_done/event/action trace / job_output / spawn_subagent tool receipt",
       "evidence": [
-        "src/llm_loop/core/loop/interop.py:40-117"
+        "src/llm_loop/core/loop/interop.py",
+        "tests/unit/test_interop_inject.py",
+        "tests/unit/test_interop_watch.py",
+        "tests/web/test_interop_api.py",
+        "tests/unit/test_job_registry.py",
+        "tests/unit/test_subagent_report.py",
+        "docs/injection-governance/eligibility/r812-report.md"
       ]
     },
     {
@@ -628,5 +634,7 @@
   "r8_10_status": "PASS",
   "r8_10_evidence": "docs/injection-governance/eligibility/r810-report.md",
   "r8_11_status": "PASS",
-  "r8_11_evidence": "docs/injection-governance/eligibility/r811-report.md"
+  "r8_11_evidence": "docs/injection-governance/eligibility/r811-report.md",
+  "r8_12_status": "PASS",
+  "r8_12_evidence": "docs/injection-governance/eligibility/r812-report.md"
 }

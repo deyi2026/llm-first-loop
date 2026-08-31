@@ -456,3 +456,13 @@ E20 `cache_gate_note` and E21 `injection_budget_receipt` are now **DONE / OBSERV
 Implementation commit `1114044` passed detached-clean fixed-point: focused **108/108**, broader **242/242**, touched production pyright **0/0**, R0 four gates PASS, frozen R0 data unchanged, and checkout clean before/after. The production golden morphology now proves that arming a gate marker does not change provider wire. A current artifact scan found the exact historical gate-note phrase 35 times and the current budget-receipt phrase once; these are reachability/artifact counts, not unique-request rates.
 
 Matrix state becomes `DONE=22 / KEEP=1 / PARTIAL=10 / OPEN=1`. Behavior canary/R9 remain not started. Full evidence: `docs/injection-governance/eligibility/r811-report.md`.
+
+## R8.12 — Interop notify/backlog prompt exit (2026-08-31)
+
+E25 `interop_notify_and_backlog` is now **DONE / OBSERVABILITY_ONLY**. `topic=notify` no longer produces any model `Message`: first-seen and duplicate notifications are moved directly to `lfl_to_dsh/done` with body/ref/source preserved for Web UI/retrieval, plus compact `interop.notify` telemetry with `prompt_chars=0`. Pending backlog count similarly becomes action/watcher observability only; the synthetic “另有 N 条待处理消息” prompt is removed.
+
+A semantic audit of `subagent_report` found its substantive reports already return through `SubAgentResult.reports` and the `spawn_subagent` tool receipt. Its inbox notify copy was therefore a duplicate prompt channel and can safely remain UI/audit-only. `coordinate`/`task` is intentionally unchanged for E26.
+
+Current channel census: direct pending=0; done=50 notify; processed history=168 (166 notify, 2 coordinate). Existing captured artifacts contain 252 occurrences of `[外部协调·from DSH]`, proving real historical prompt reachability (artifact count, not unique requests).
+
+Implementation commit `a25670c` passed detached-clean fixed-point: focused **23/23**, broader tracked E25 adjacent suite PASS, scheduler **16/16**, production pyright **0/0**, changed-test ruff PASS, R0 four gates PASS, frozen R0 unchanged, checkout clean before/after. Matrix becomes `DONE=23 / KEEP=1 / PARTIAL=10 / OPEN=0`; behavior canary remains not started. Full evidence: `docs/injection-governance/eligibility/r812-report.md`.

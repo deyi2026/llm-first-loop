@@ -175,3 +175,14 @@
 - Matrix: E20/E21 OPEN→DONE；总计 `DONE=22 / KEEP=1 / PARTIAL=10 / OPEN=1(E25)`；behavior canary 仍只 READY，未启动。
 - evidence: `docs/injection-governance/eligibility/r811-report.md`、`eligibility/matrix.json`、`tests/unit/test_injection_budget.py`、`tests/unit/test_injection_fingerprint.py`、`tests/integration/test_cognitive_integration.py`。
 - evidence_required: true
+
+## R8.12 Interop Notify / Backlog Prompt Exit — ✅ PASS
+- E25 `interop_notify_and_backlog`: `topic=notify` 首见/重复均不再构造 Message；直接归档 `done/`，正文/ref/source/id 保留给 Web interop UI/retrieval，结构化 `interop.notify` action 标注 `prompt_chars=0`。
+- backlog: 超过扫描上限只记录 `interop.pending_backlog` observability，不再生成“另有 N 条待处理消息” prompt；coordinate/task 留给 E26 条件外部输入治理。
+- subagent 语义复核: `SubAgentResult.reports` + `spawn_subagent` tool receipt 已是父模型的真实语义通道，因此 inbox notify 只是重复第二通道；退出 prompt 后工具结果能力不丢失。
+- 当前实证: direct pending=0；done notify=50；processed history=168（notify=166 / coordinate=2）；历史 `[外部协调·from DSH]` artifact occurrence=252（仅证明 reachability，不当作请求率）。
+- 验证: implementation commit `a25670c` detached clean；focused **23/23 PASS**；broader tracked E25 adjacent suite PASS；scheduler **16/16 PASS**；production pyright **0/0**；changed-test ruff PASS；R0-1~R0-4 PASS；frozen hash `b54d47a31109a03d9f926f65b7a3d9f6caf3f24c0d42b1bff26fe338ee74b02a` 不变；checkout before/after clean。
+- channel UX note: `wake=False` scheduler reminder 现在作为 UI/event state；若飞书需要主动提醒，应走 output-side direct notification，不应恢复 LLM prompt 注入。
+- Matrix: E25 OPEN→DONE；总计 `DONE=23 / KEEP=1 / PARTIAL=10 / OPEN=0`；behavior canary 仍只 READY，未启动。
+- evidence: `docs/injection-governance/eligibility/r812-report.md`、`eligibility/matrix.json`、`tests/unit/test_interop_inject.py`、`tests/unit/test_subagent_report.py`、`tests/web/test_interop_api.py`。
+- evidence_required: true
