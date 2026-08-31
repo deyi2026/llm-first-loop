@@ -239,6 +239,19 @@ def _tool_round_zero_tail(msgs: list[Message]) -> list[Message]:
     return msgs[-2:] if n >= 2 else msgs
 
 
+def _cog_freeze_enabled() -> bool:
+    """R8.24-E E-2.1: enforce 冻结开关（LFL_COG_ENFORCE_FREEZE，默认 on）.
+
+    off/false/0/空 视为回滚通道（恢复 promote 必须绑定 E-2.2 重新审批）。
+    """
+    return str(os.environ.get("LFL_COG_ENFORCE_FREEZE", "1")).strip().lower() not in (
+        "",
+        "0",
+        "false",
+        "off",
+    )
+
+
 def _cog_allowlist_hit(settings: Any, sess: Any) -> bool:
     """Stage 2 allowlist 求值（review R3 fail-closed 强化版）.
 
@@ -1286,6 +1299,27 @@ class _BuildMixin:
         # wrap_injection 只包装一次、anchor 单份——build 尾部连续 user 条数恒 ≤1，
         # compact 首请求 1210 结构性消除（merge 变体双样本生产验证）。
         for _m in tail_msgs or []:
+            # R8.24-E E-D2（E-5.1，E08 TIP replay 退出）: TIP 消息不再进入注入
+            # parts（tail 视图消费面门控；存储/事件真相不动，retrieval plane
+            # 保留一切）。shadow 态 would_inject 计数留痕。
+            if _tip_orig and any(_m is _x for _x in _tip_orig):
+                try:
+                    from llm_loop.core.loop.input_authorization import (
+                        current_latent_channel_mode,
+                    )
+
+                    _lat_mode = current_latent_channel_mode()
+                    self._record_action(
+                        "action.latent_channel",
+                        "tip_tail_would_inject" if _lat_mode != "off" else "tip_tail_exited",
+                        (
+                            f"chars={len(str(getattr(_m, 'content', '') or ''))};"
+                            f"mode={_lat_mode}"
+                        ),
+                    )
+                except Exception:  # noqa: BLE001 — 观测 fail-open
+                    pass
+                continue
             _d = _m.to_llm_dict()
             if _d.get("role") == "system":
                 _d["role"] = "user"  # system 静态: 转独立 user 尾部追加
@@ -1295,8 +1329,6 @@ class _BuildMixin:
             _slot = None
             if _interop_orig and any(_m is _x for _x in _interop_orig):
                 _slot = SlotKind.INTEROP
-            elif _tip_orig and any(_m is _x for _x in _tip_orig):
-                _slot = SlotKind.TIP
             _inject_parts.append((_slot, str(_d.get("content") or "")))
         # err1210 T4.1→9.1: defer 回填消息消费检测（is 身份匹配，聚合收尾统一处理）
         _refs = getattr(self, "_deferred_replay_refs", None) or []
@@ -1382,18 +1414,63 @@ class _BuildMixin:
         # 路径）；wire 平铺仍用 _inject_parts 原语义，持久化原文已由历史投影
         # 带出，不重复注入。
         # R8.16/E23: task ledger is durable state, but full frontier is not automatic
-        # working context.  Only one uniquely active execution identity may auto-project;
+        # working context.  Only one uniquely active execution identity may project;
         # ready/blocked/unreachable/completed/premise-stale state stays behind task_frontier().
         # Multiple in-progress nodes are intentionally ambiguous: do not guess which one is
         # "current".  Fail-open here means zero prompt chars, never full-graph fallback.
+        # R8.24-E E-D5（E-3.2，P1-7）: ACTIVE_STATE → USER_AUTHORIZED_STATE——"恰有
+        # in_progress"不再自动投影；仅当本轮用户输入经 input-side resolver 命中
+        # "继续/恢复上次任务"类明确指令（授权一次）才注入，且本 run（turn_ref 绑定）
+        # 内冻结 task identity 不动态变化；授权绑定事件落决策日志（E-G2/E-G5
+        # 双断言判据源）。普通新问题不自动读取 Goal（Goal 恒为 retrievable state）。
         try:
+            from llm_loop.core.loop.input_authorization import (
+                detect_task_continuation,
+            )
             from llm_loop.introspection.goal import GoalStore
             from llm_loop.introspection.task_store import TaskStore
 
             _tf_audit = os.path.join(self.settings.data_dir, "audit")
-            _tf_goal = GoalStore(_tf_audit).get(prefer_session_id=sess.session_id)
+            # 授权信号：本轮人类 ingress 文本命中触发词；工具轮（R6 truth=None）
+            # 沿用冻结快照——同一授权在本 run 内持续生效（E-3.2① identity 冻结）。
+            # 注意 _r6_ingress_truth 即 user truth 文本（str | None，user_truth_wire）。
+            _tf_ingress_text = str(_r6_ingress_truth or "")
+            _tf_authorized = detect_task_continuation(_tf_ingress_text)
+            # identity 冻结（E-3.2①）：授权轮求值一次后按 turn_ref 快照——本 run
+            # 内后续 build 直接用快照（不随 GoalStore/TaskStore 中途状态漂移）；
+            # 新 turn 授权重新求值。快照失配（goal_id 变化）时自然失效重建。
+            _tf_turn_key = str(getattr(self, "_current_turn_ref", None))
+            _tf_cache = getattr(self, "_authorized_task_identity_cache", None)
+            if _tf_cache is None:
+                _tf_cache = {}
+                self._authorized_task_identity_cache = _tf_cache
+            _tf_cached = _tf_cache.get(_tf_turn_key)
+            if _tf_cached is not None and (
+                _tf_authorized or _r6_ingress_truth is None
+            ):
+                _tf_gid, _tf_identity = _tf_cached
+                if _tf_identity:
+                    _inject_parts.append(("task_active", _tf_identity))
+                    self._record_action(
+                        "task.active",
+                        "authorized_inject_frozen",
+                        f"turn_ref={_tf_turn_key};goal={_tf_gid};chars={len(_tf_identity)}",
+                    )
+                _tf_authorized = False  # 快照已注入，跳过下方重新求值
+            elif not _tf_authorized:
+                self._record_action(
+                    "task.active",
+                    "unauthorized_zero_projection",
+                    "prompt_chars=0;goal_read=deferred",
+                )
+            # E-G5: 未授权（含快照未命中）时零 Goal/Task 读取——普通新问题轮
+            # goal_read=0（决策日志可断言）。
+            if not _tf_authorized:
+                _tf_goal = {}
+            else:
+                _tf_goal = GoalStore(_tf_audit).get(prefer_session_id=sess.session_id)
             _tf_gid = str((_tf_goal or {}).get("id", "") or "")
-            if _tf_gid and str((_tf_goal or {}).get("status", "")) == "active":
+            if _tf_authorized and _tf_gid and str((_tf_goal or {}).get("status", "")) == "active":
                 _tf_store = TaskStore(_tf_audit)
                 if _tf_store.count_for_goal(_tf_gid) > 0:
                     _tf_state = _tf_store.compute_frontier(_tf_gid)
@@ -1407,6 +1484,17 @@ class _BuildMixin:
                         )
                         if _tf_active:
                             _inject_parts.append(("task_active", _tf_active))
+                            # 授权轮写入 identity 快照（本 run 内冻结）
+                            _tf_cache[_tf_turn_key] = (_tf_gid, _tf_active)
+                            # 授权绑定审计（E-3.2③）：触发词/会话/轮次/task identity
+                            self._record_action(
+                                "task.active",
+                                "authorized_inject",
+                                (
+                                    f"turn_ref={getattr(self, '_current_turn_ref', None)};"
+                                    f"goal={_tf_gid};chars={len(_tf_active)}"
+                                ),
+                            )
                     else:
                         try:
                             self._record_action(
@@ -1492,6 +1580,24 @@ class _BuildMixin:
         _packet_parts: list[tuple[str | None, str]] = list(_inject_parts)
         _packet_keys: list[str] = list(_inject_keys)
         _packet_memory_seq = 0
+        # R8.24-E E-D1（E-1.x/E-3.2②）: E07 auto memory 退出 → RETRIEVABLE_ONLY。
+        # 自动投影通道死亡（B-3.1 恒 False 底线保留）；恢复路径 1 = input-side
+        # 显式指代（"按我之前的 X/你记得 Y 吗"）授权一次——命中本轮 ingress 时
+        # 全部 memory_snapshot 以真实数据投影（memory_authorized 授权通道，非
+        # 自动 producer）；路线 2 = search_records(kind=memory)（E7 实证已有）；
+        # 路线 3 = playbook 显式查询。shadow 态 would_inject 计数留痕。
+        try:
+            from llm_loop.core.loop.input_authorization import (
+                current_latent_channel_mode,
+                detect_memory_reference,
+            )
+
+            _mem_ref_text = str(_r6_ingress_truth or "")
+            _mem_authorized = detect_memory_reference(_mem_ref_text)
+            _lat_mode = current_latent_channel_mode()
+        except Exception:  # noqa: BLE001 — resolver 不可用 fail-open 视为未授权
+            _mem_authorized = False
+            _lat_mode = "off"
         for _m in sess.messages:
             _md = getattr(_m, "metadata", None) or {}
             # R8.5 eligibility is upstream of both flat wire history and the
@@ -1501,26 +1607,49 @@ class _BuildMixin:
             if _md.get("resolved_episode_ref"):
                 continue
             if _md.get("injection_kind") == "memory_snapshot":
-                if not memory_snapshot_prompt_eligible(
-                    _m, current_turn_ref=_eligibility_turn_ref
-                ):
+                if not _mem_authorized:
+                    # 未授权零投影（E-G1：automatic memory chars=0）；shadow 计数
+                    if _lat_mode == "shadow":
+                        try:  # noqa: SIM105 — 观测 fail-open
+                            self._record_action(
+                                "action.latent_channel",
+                                "memory_would_inject",
+                                (
+                                    f"chars={len(str(getattr(_m, 'content', '') or ''))};"
+                                    "reason=unauthorized_shadow_count"
+                                ),
+                            )
+                        except Exception:  # noqa: BLE001 — 观测 fail-open
+                            pass
                     continue
                 _c = str(getattr(_m, "content", "") or "")
                 if _c.strip():
                     # snapshot 自身已有 outer appendix；嵌入 decision packet 时去掉
                     # outer notice，避免一个 appendix 内重复仲裁声明。
-                    _packet_parts.append(
-                        (
-                            "memory",
-                            ensure_semantic_label(
-                                strip_program_appendix_notice(_c),
-                                InjectionLayer.REFERENCE,
-                                slot_kind="memory",
-                            ),
-                        )
+                    # 授权投影经 eligibility 注册槽显式校验（memory_authorized），
+                    # 同步进 wire 平铺面（_inject_parts）与 packet 编译面——
+                    # 非 allowlist 外旁路。
+                    _stripped = strip_program_appendix_notice(_c)
+                    _mem_layer = dynamic_prompt_layer(
+                        _stripped, slot_kind="memory_authorized"
                     )
-                    _packet_keys.append(f"packet-memory:{_packet_memory_seq}")
-                    _packet_memory_seq += 1
+                    if _mem_layer is not None:
+                        _labeled = ensure_semantic_label(
+                            _stripped, _mem_layer, slot_kind="memory_authorized"
+                        )
+                        _inject_parts.append(("memory_authorized", _labeled))
+                        _inject_keys.append(f"memory-authorized:{_packet_memory_seq}")
+                        _packet_parts.append(("memory_authorized", _labeled))
+                        _packet_keys.append(f"packet-memory:{_packet_memory_seq}")
+                        _packet_memory_seq += 1
+                        try:  # noqa: SIM105 — 审计 fail-open
+                            self._record_action(
+                                "action.memory_authorization",
+                                "authorized_retrieval_inject",
+                                f"chars={len(_labeled)}",
+                            )
+                        except Exception:  # noqa: BLE001 — 审计 fail-open
+                            pass
         # ── P1 统一聚合器（9.1）: 四槽 parts → 单条 user；sidecar 单 AGGREGATED entry ──
         # 尾部连续 user 恒 ≤1（1210 结构性消除）；聚合失败 fail-open 降级零注入（不阻断构建）
         # Cognitive Runtime（tasks 2.3/2.5/2.6，spec 5.2/5.1.1-3b）:
@@ -1539,8 +1668,21 @@ class _BuildMixin:
             _cog_mode_candidate = "shadow"
         # Stage 2（DESIGN-20260901 rev2）: session 级 allowlist 提升——off 硬关前置
         # （名单不可覆盖 P0-2）；fail-closed 全语义在 _cog_allowlist_hit。
+        # R8.24-E E-D4（E-2.1）: enforce 冻结——LFL_COG_ENFORCE_FREEZE（默认 on）下
+        # ①allowlist 自动 promote 恒不触发（program-owned semantic channel 不得
+        # 自我授权）；②显式/现网 enforce 配置降 shadow（effective mode 恒 ∈
+        # {off, shadow}，E-G4）；off 硬关前置语义不变（off 不可被覆盖）。恢复
+        # promote 走 LFL_COG_ENFORCE_FREEZE=off，且必须绑定重新审批（E-2.2
+        # 五条件触发器——开关回滚 ≠ 直接恢复，见 cognitive-refreeze-conditions.md）。
+        _cog_freeze = _cog_freeze_enabled()
+        if _cog_freeze and _cog_mode_candidate == "enforce":
+            _cog_mode_candidate = "shadow"  # 现网 enforce 会话降 shadow（E-G4）
         _cog_promoted = False
-        if _cog_mode_candidate == "shadow" and _cog_allowlist_hit(self.settings, sess):
+        if (
+            _cog_mode_candidate == "shadow"
+            and not _cog_freeze
+            and _cog_allowlist_hit(self.settings, sess)
+        ):
             _cog_mode_candidate = "enforce"
             _cog_promoted = True
         _cog_compute_candidate = (
@@ -1688,6 +1830,20 @@ class _BuildMixin:
                     if _sem_state is not None and _semantic_projection_fn is not None:
                         _projection = _semantic_projection_fn(_sem_state)
                 _anchor = build_task_anchor(self._focus.anchor_sess)
+                # R8.24-E E-D3（E-5.1，E35 compact anchor 退出）: 压缩锚点不再
+                # 作为模型可见语义注入——消费面恒置空（anchor 不承载任务身份；
+                # build_task_anchor 本体保留：审计/压缩热卡等 retrieval 用途
+                # 不动，仅注入消费面退出）；shadow 态 would_inject 计数留痕。
+                if _anchor:
+                    try:  # noqa: SIM105 — 观测 fail-open（E-5.1 退出留痕）
+                        self._record_action(
+                            "action.latent_channel",
+                            "anchor_would_inject" if _lat_mode == "shadow" else "anchor_exited",
+                            f"chars={len(_anchor)};mode={_lat_mode}",
+                        )
+                    except Exception:  # noqa: BLE001 — 观测 fail-open
+                        pass
+                    _anchor = ""
                 if _projection and _cog_enforce:  # CR-R1.1（审查项6）: shadow 投影仅度量不进 prompt
                     if _anchor and bool(
                         getattr(self.settings, "cog_runtime_dual_source_guard", True)

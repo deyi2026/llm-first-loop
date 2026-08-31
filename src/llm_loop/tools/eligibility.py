@@ -29,10 +29,21 @@ CORE_TOOL_ORDER: tuple[str, ...] = (
 # Deterministic lexical task routing.  It is intentionally conservative: false negatives
 # are recoverable through get_tool_schema("*") / get_tool_schema("?keyword"), while false
 # positives only add a small task-specific tail after the stable CORE prefix.
+# R8.24-E E-D7-2（E-4.1）: 「健康」单词增量补齐（独立开关 LFL_KEYWORD_HEALTH，默认
+# on 生效可回滚）——与既有 "health" 英文词条并存不冲突；误报只加小尾部（tasks.md
+# 组 4-4.1 冻结项收编）。"故意保守"注释前提的三层联合评估见 core-routing-ab-report。
 TOOL_TASK_KEYWORDS: dict[str, tuple[str, ...]] = {
     "web_fetch": ("http://", "https://", "网页", "链接", "url", "抓取", "在线文档", "网页文章"),
     "read_image": ("图片", "截图", "图像", "png", "jpg", "jpeg", "流程图", "界面图"),
-    "architecture_status": ("架构状态", "运行状态", "配置状态", "缓存命中", "cache", "health"),
+    "architecture_status": (
+        "架构状态",
+        "运行状态",
+        "配置状态",
+        "缓存命中",
+        "cache",
+        "health",
+        "健康",
+    ),
     "search_archive": ("压缩", "找回", "原文", "早期消息", "archive", "归档"),
     "search_docs": ("设计文档", "需求文档", "审计报告", "评估报告", "spec", "docs/", "文档里"),
     "read_evidence": ("evidence:", "证据 ref", "读取证据", "恢复证据"),
@@ -150,7 +161,16 @@ def _task_relevant_names(user_text: str, all_names: set[str]) -> set[str]:
     for name in all_names:
         if name.lower() in text:
             selected.add(name)
+    # R8.24-E E-4.1: 「健康」增量受独立开关控制（默认 on；off 时该单词退出
+    # 词表——回滚通道，其余词条不受影响）。
+    import os
+
+    _health_keyword_enabled = str(
+        os.environ.get("LFL_KEYWORD_HEALTH", "1")
+    ).strip() not in ("", "0", "false", "off")
     for name, keywords in TOOL_TASK_KEYWORDS.items():
+        if name == "architecture_status" and not _health_keyword_enabled:
+            keywords = tuple(k for k in keywords if k != "健康")
         if name in all_names and any(keyword in text for keyword in keywords):
             selected.add(name)
     return selected

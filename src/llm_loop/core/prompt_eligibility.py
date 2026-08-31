@@ -29,12 +29,16 @@ PROGRAM_FINAL_PROTOCOL_BOUNDARY = "[program-final]"
 TASK_ACTIVE_PROMPT_PREFIX = "[Task Active]"
 
 
+# R8.24-E E-D1/E-D2/E-D6（E-5.1，E-G6）: memory/tip producer 注册表退役——
+# E07 auto memory 与 E08 TIP replay 通道退出（retrieval plane 存储不动；
+# memory 经 input-side 显式指代授权一次检索，走 memory_authorized 授权通道，
+# 不是自动 producer）。program_recovery 属 B 包保留面、task_active 属 E-D5
+# 授权化保留面（无授权时 build 面零投影）。
 PROMPT_DYNAMIC_PRODUCER_SLOTS = frozenset(
     {
         "program_recovery",
-        "memory",
-        "tip",
         "task_active",
+        "memory_authorized",
     }
 )
 

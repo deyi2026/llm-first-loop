@@ -393,6 +393,7 @@ class BackgroundRunner:
         resume: bool = False,
         before_start: Callable[[Any], None] | None = None,
         expected_workspace_epoch: int | None = None,
+        ingress: object | None = None,
     ) -> tuple[RunHandle | None, queue.Queue | None]:
         """注册 + 起后台线程；返回 (handle, queue)，调用方订阅消费.
 
@@ -400,6 +401,9 @@ class BackgroundRunner:
         - resume=True: 同会话已有 running → 返回 (None, 新订阅队列)（重连订阅已有 run，
           刷新/切回会话场景；done 后 handle 已移除 → 返回 (None, None)）
         - disabled → (None, None)
+        - ingress: R8.24-D D-D2（DT-1.3④盘点补齐）——后台 run 的 user 写入同样
+          需要人类通道凭据（web 通道由 routes 调用方签发传入；fail-closed 下
+          无凭据写入将被 guard 拒绝）。
         """
         if not self.enabled:
             return None, None
@@ -447,7 +451,7 @@ class BackgroundRunner:
         q = bus.subscribe()  # 先订阅再起线程（保证不丢 start 后首个事件）
         t = threading.Thread(
             target=self._consume,
-            args=(session_id, user_text, model, reasoning_effort, before_start, handle, bus),
+            args=(session_id, user_text, model, reasoning_effort, before_start, handle, bus, ingress),
             name=f"bg-run-{session_id[:8]}",
             daemon=True,  # B4: 进程退出不阻塞
         )
@@ -464,6 +468,7 @@ class BackgroundRunner:
         before_start: Callable[[Any], None] | None,
         handle: RunHandle,
         bus: EventBus,
+        ingress: object | None = None,
     ) -> None:
         """后台线程体：copy_context 传播（P0-5 模式）→ 迭代 run_stream → 广播终态."""
         self._worker_idents.add(threading.get_ident())
@@ -475,6 +480,8 @@ class BackgroundRunner:
                 it: Any
                 if reasoning_effort is not None:
                     run_kwargs["reasoning_effort"] = reasoning_effort
+                if ingress is not None:
+                    run_kwargs["ingress"] = ingress
                 if before_start is not None:
                     accepted_stream = getattr(self._engine, "_run_stream_with_acquired", None)
                     if not callable(accepted_stream):

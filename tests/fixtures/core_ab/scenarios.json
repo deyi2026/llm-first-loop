@@ -1,0 +1,89 @@
+{
+  "comment": "R8.24-E E-4.2 CORE9 A/B 实验场景（脱敏重写——沿组 5 测试资产纪律；无真实路径/密钥/用户数据）。每场景: task_text=用户任务文本（词法路由输入）, protocol_tools=本轮协议上下文已活跃工具（模拟截断事实行/control-plane 在场）, expected_chain=完成任务所需工具链, evidence_truncation=evidence 截断事实行在场（路线 3 状态驱动触发源）。",
+  "scenarios": [
+    {
+      "id": "s1-file-edit-loop",
+      "task_text": "修改配置文件里的超时参数然后跑一遍自检命令",
+      "protocol_tools": [],
+      "expected_chain": ["read_file", "edit_file", "execute_command"],
+      "evidence_truncation": false
+    },
+    {
+      "id": "s2-web-research",
+      "task_text": "搜一下这个在线文档链接的网页内容做摘要",
+      "protocol_tools": [],
+      "expected_chain": ["web_search", "web_fetch"],
+      "evidence_truncation": false
+    },
+    {
+      "id": "s3-skill-reuse",
+      "task_text": "看看有哪些可复用技能，加载网页抓取那个",
+      "protocol_tools": [],
+      "expected_chain": ["skill_list", "skill_load"],
+      "evidence_truncation": false
+    },
+    {
+      "id": "s4-memory-retrieval",
+      "task_text": "查一下历史记录里之前定过的部署约定",
+      "protocol_tools": [],
+      "expected_chain": ["search_records"],
+      "evidence_truncation": false
+    },
+    {
+      "id": "s5-evidence-recovery",
+      "task_text": "继续读取刚才被截断的执行结果",
+      "protocol_tools": [],
+      "expected_chain": ["read_evidence"],
+      "evidence_truncation": true
+    },
+    {
+      "id": "s6-evidence-inventory",
+      "task_text": "列出证据清单看看有哪些可恢复的输出",
+      "protocol_tools": [],
+      "expected_chain": ["list_evidence"],
+      "evidence_truncation": false
+    },
+    {
+      "id": "s7-health-check",
+      "task_text": "看下当前架构状态和缓存命中情况",
+      "protocol_tools": [],
+      "expected_chain": ["architecture_status"],
+      "evidence_truncation": false
+    },
+    {
+      "id": "s8-archive-restore",
+      "task_text": "把压缩归档里的早期消息原文找回",
+      "protocol_tools": [],
+      "expected_chain": ["search_archive"],
+      "evidence_truncation": false
+    },
+    {
+      "id": "s9-subagent-dispatch",
+      "task_text": "派两个子代理并行调研再汇总",
+      "protocol_tools": [],
+      "expected_chain": ["spawn_subagent", "subagent_report"],
+      "evidence_truncation": false
+    },
+    {
+      "id": "s10-reminder",
+      "task_text": "30 分钟后提醒我复查构建",
+      "protocol_tools": [],
+      "expected_chain": ["schedule"],
+      "evidence_truncation": false
+    },
+    {
+      "id": "s11-truncated-tool-followup",
+      "task_text": "接着处理这个任务，刚才的输出被截断了",
+      "protocol_tools": ["execute_command"],
+      "expected_chain": ["execute_command", "read_evidence"],
+      "evidence_truncation": true
+    },
+    {
+      "id": "s12-doc-check",
+      "task_text": "对照设计文档核对这个改动",
+      "protocol_tools": ["read_file"],
+      "expected_chain": ["read_file", "search_docs"],
+      "evidence_truncation": false
+    }
+  ]
+}
