@@ -305,3 +305,15 @@
 - Canary/R9 remain NOT STARTED pending a strict 34-surface re-audit under the stronger no-program-self-injection rule.
 - evidence: `docs/injection-governance/eligibility/r822-report.md`、`eligibility/matrix.json`、`tests/unit/test_durable_state_on_demand_r822.py`、`src/llm_loop/core/episode_history.py`、`src/llm_loop/memory/retrieve.py`。
 - evidence_required: true
+
+## R8.23 Strict Context Cleanliness Census — ⚠️ BLOCKERS FOUND
+- Re-audited the entire eligibility inventory on detached-clean `3c2a678` under the stronger owner rule: current-turn identity is lifecycle metadata, not prompt authorization.
+- Reopened E07/E08/E12/E15/E16/E17/E18/E19/E32 and added E35 legacy compact anchor decision frame. Matrix: `DONE=24 / KEEP=1 / PARTIAL=10 / OPEN=0`.
+- behavior canary gate reset to `BLOCKED_STRICT_CONTEXT_CENSUS`; R9 remains NOT STARTED.
+- Fresh wire blockers: automatic memory snapshot; err1210 program recovery prose; stagnation/empty-search reminders; first overflow reinjection; max-iteration model decision round.
+- Resurrection/lifecycle blockers: legacy TIP defer can regain prompt authority; E32 repair happens after lifecycle backfill and mechanically re-exposes a completed replay-only Q/A for one build; anchor compatibility mode can reactivate a second compact-specific active-state prompt channel.
+- Storage-control separation: `injected_system` remains conversationally persisted despite provider filtering — **2,993 messages / 530,464 chars / 146 sessions**. Automatic memory historical census: **389 messages / 417,908 chars / 44 sessions**.
+- Keep/protocol exceptions remain narrow: exact current user, unresolved tool pairing, provider-required reasoning, unique minimal `task_active`, bounded tool schema protocol surface.
+- Next recommended implementation order: fresh wire blockers first (`E07/E12/E15/E16/E17/E18`), then E32, then E08/E19/E35 hardening; each batch requires focused + adjacent + R0 + detached clean.
+- evidence: `docs/injection-governance/eligibility/r823-report.md`、`eligibility/matrix.json`。
+- evidence_required: true

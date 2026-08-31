@@ -555,3 +555,15 @@ The same rule now applies to conversational memory state. Automatic memory proje
 Read-only census: 114 standing-marker user messages / 409,422 chars (p90 12,223; max 54,933) could previously inherit whole-message prompt authority from a lexical marker. MemoryStore held 261 decision/convention entries / 37,645 chars, all legacy auto; 103 were versioned with 452 historical versions. R8.22 avoids semantic supersession guessing and instead makes conversation-derived state retrievable by default. Truly always-on rules must come from an explicit stable rule/config/control-plane source.
 
 Implementation `efdb5aa` passes detached clean fixed-point: combined **221/221**, changed pyright **0/0**, py_compile PASS, canonical R0 PASS, checkout clean before/after. Matrix becomes `DONE=33 / KEEP=1 / PARTIAL=0 / OPEN=0`. This does not yet authorize canary/R9; all 34 surfaces must be re-audited against the stronger no-program-self-injection rule. Full evidence: `docs/injection-governance/eligibility/r822-report.md`.
+
+## R8.23 — Strict context cleanliness census (2026-08-31)
+
+The mandatory post-R8.22 re-audit proves the mechanically green matrix was not a true fixed point under the newer owner rule. The older R8.9 lifecycle model treated “same human turn” as sufficient authority for some program controls; the stricter rule says turn identity proves lifecycle only, not required-now prompt eligibility.
+
+Detached-clean `3c2a678` inspection reopens E07/E08/E12/E15/E16/E17/E18/E19/E32 and adds newly inventoried E35 `legacy_compact_anchor_decision_frame`. Matrix is now **DONE=24 / KEEP=1 / PARTIAL=10 / OPEN=0**, and behavior canary is explicitly blocked.
+
+Fresh wire blockers are automatic current-turn memory snapshot, programmatic err1210 recovery instruction, stagnation reminder, empty-search reminder, first-overflow reinjection, and max-iteration decision round. Compatibility/lifecycle blockers are legacy TIP defer replay, E32 interruption-repair ordering, and operator-enabled compact anchor decision injection. E19 is provider-filtered but still pollutes conversational storage: current census finds **2,993 injected_system messages / 530,464 chars / 146 sessions**. Memory census finds **389 memory_snapshot messages / 417,908 chars / 44 sessions**.
+
+E32 was mechanically reproduced: completed replay-only Q/A inserted after lifecycle backfill has no resolved ref for the current build and is therefore provider-visible once (`provider_contains_missing_resolved=True`). This proves recovery correctness must be ordered before eligibility retirement rather than merely replacing a natural-language recovery tip.
+
+Canary/R9 remain NOT STARTED. Full findings and the bounded closure order are in `docs/injection-governance/eligibility/r823-report.md`.
