@@ -1,8 +1,8 @@
 """M56 如实反馈/程序最小化收敛 测试（ANALYSIS-20260811-loop-strategy-branch-inventory）.
 
 覆盖:
-- C1: 初始会话持久化失败 → 注入 [程序异常]（不静默）
-- C3: 压缩另存失败 → 注入 [程序异常] 到会话（AI 可感知）
+- C1: 初始会话持久化失败 → observability/recovery 保留，但不注入 prompt/history
+- C3: 压缩另存失败 → selfheal/status 可查，但不注入 prompt/history
 - B5: architecture_status snapshot 的 context_usage.model_window（注入 fn 可见）
 - RULE-AI-10 收敛: _check_loop_signals 统一入口存在且不改变既有检查行为
 """
@@ -14,15 +14,16 @@ from unittest import mock
 from llm_loop.core.message import Message, MessageSource
 
 
-def test_c1_initial_session_save_failure_injects_feedback(build_test_engine, fake_settings):
-    """会话初始持久化失败 → 如实注入 [程序异常]，不静默（PREFERENCE_1）."""
+def test_c1_initial_session_save_failure_is_observable_not_prompted(build_test_engine, fake_settings):
+    """初始保存失败保留 selfheal/status 证据，但不写会话或 provider prompt."""
+    import json
+
     from llm_loop.core.session import SessionStore
 
     engine, fake = build_test_engine([{"content": "ok"}])
     original_save = SessionStore.save
 
     def _boom_first(session):
-        # 仅首次（初始保存）失败；后续保存正常，便于验证注入内容已持久化
         if getattr(_boom_first, "count", 0) == 0:
             _boom_first.count = 1
             raise OSError("disk full")
@@ -31,32 +32,37 @@ def test_c1_initial_session_save_failure_injects_feedback(build_test_engine, fak
     with mock.patch.object(engine.session, "save", side_effect=_boom_first):
         result = engine.run("fresh-session", "hello")
 
-    # run 本身不崩（fail-open），会话中注入如实提示
+    assert result.final_answer == "ok"
     sess = engine.session.load(result.session_id)
-    texts = [m.content for m in sess.messages]
-    assert any("[程序异常]" in t and "session_persistence" in t for t in texts), texts
+    assert not any("session_persistence" in m.content for m in sess.messages)
+    wire = json.dumps(fake.calls[0]["messages"], ensure_ascii=False)
+    assert "session_persistence" not in wire
+    assert "[程序异常]" not in wire
+    log = fake_settings.audit_dir / "selfheal_log.jsonl"
+    assert '"component": "session_persistence"' in log.read_text(encoding="utf-8")
 
 
-def test_c3_archive_sink_failure_injects_feedback(build_test_engine, fake_settings):
-    """压缩另存失败 → 如实注入 [程序异常] 到会话（AI 可感知，不静默）."""
+def test_c3_archive_sink_failure_is_observable_not_persisted(build_test_engine, fake_settings):
+    """archive_sink 失败写 selfheal/status，但不创建会话级程序消息."""
     engine, fake = build_test_engine([])
     sid = engine.session.create()
     if engine.archive is None:
-        return  # archive 未装配时无可测路径（行为不变）
+        return
 
     msg = Message(role="user", content="将被压缩的消息", source=MessageSource.USER)
     with mock.patch.object(engine.archive, "archive", side_effect=OSError("archive fail")):
         engine._archive_sink(sid, msg)
 
     sess = engine.session.load(sid)
-    texts = [m.content for m in sess.messages]
-    assert any("[程序异常]" in t and "archive_sink" in t for t in texts), texts
+    assert not any("archive_sink" in m.content for m in sess.messages)
+    log = fake_settings.audit_dir / "selfheal_log.jsonl"
+    assert '"component": "archive_sink"' in log.read_text(encoding="utf-8")
 
 
-def test_c3_archive_sink_failure_during_active_run_updates_bound_session(
+def test_c3_archive_sink_failure_during_active_run_does_not_pollute_bound_session(
     build_test_engine, fake_settings
 ):
-    """真实run持whole-run lease时，archive失败反馈必须写入已绑定Session，不能reload后被自己gate掉。"""
+    """active run 的 archive fault 也只能进 observability，不能污染绑定 Session."""
     engine, _fake = build_test_engine([])
     sid = engine.session.create()
     if engine.archive is None:
@@ -81,9 +87,8 @@ def test_c3_archive_sink_failure_during_active_run_updates_bound_session(
             finally:
                 current_session_id.reset(ctx_token)
 
-            texts = [m.content for m in active.messages]
-            assert any("[程序异常]" in t and "archive_sink" in t for t in texts), texts
-            # 活动对象已绑定run token，保存必须成功；用于证明反馈能随run最终落盘。
+            assert not any("archive_sink" in m.content for m in active.messages)
+            # 活动对象仍可正常持久化；fault 证据走 selfheal/status，不写 history。
             engine.session.save(active)
         finally:
             with engine._run_states_guard:  # noqa: SLF001
@@ -92,7 +97,9 @@ def test_c3_archive_sink_failure_during_active_run_updates_bound_session(
                 engine.session._deactivate_run_save_token(sid, token)  # noqa: SLF001
 
     stored = engine.session.load(sid)
-    assert any("[程序异常]" in m.content and "archive_sink" in m.content for m in stored.messages)
+    assert not any("archive_sink" in m.content for m in stored.messages)
+    log = fake_settings.audit_dir / "selfheal_log.jsonl"
+    assert '"component": "archive_sink"' in log.read_text(encoding="utf-8")
 
 
 def test_b5_model_window_in_status_snapshot():

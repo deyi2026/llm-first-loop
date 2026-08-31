@@ -13,6 +13,9 @@ from llm_loop.core.injection_labels import InjectionLayer, infer_layer
 
 # Explicit automatic-prompt producer allowlist.  Keep this as plain strings so the
 # eligibility core does not depend on loop/err1210 enums (which would create a cycle).
+PROGRAM_FINAL_PROTOCOL_BOUNDARY = "[程序终止边界·无模型回答]"
+
+
 PROMPT_DYNAMIC_PRODUCER_SLOTS = frozenset(
     {
         "program_recovery",
@@ -80,6 +83,9 @@ _LEGACY_DECLARATION_REMINDER_PREFIX = (
     "[声明提醒] 你的最终回答中存在与工具回执不符的完成声明，请知悉"
     "（不影响本次输出，后续请如实声明）。"
 )
+# Pre-R8.10 auxiliary component failures were persisted as ordinary system messages.
+# They remain durable history/audit facts but have no automatic prompt entitlement.
+_LEGACY_PROGRAM_FAULT_PREFIX = "[程序异常]"
 
 
 def current_turn_program_prompt_eligible(
@@ -112,6 +118,8 @@ def current_turn_program_prompt_eligible(
     role = str(getattr(message, "role", "") or "")
     content = str(getattr(message, "content", "") or "").lstrip()
     if role == "system" and any(content.startswith(p) for p in _LEGACY_EPHEMERAL_SYSTEM_PREFIXES):
+        return False
+    if role == "system" and content.startswith(_LEGACY_PROGRAM_FAULT_PREFIX):
         return False
     # Pre-R8.9 declaration reminders were program-generated as role=user without
     # metadata.  Match the exact historical sentence rather than the generic label so a

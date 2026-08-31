@@ -15,7 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from llm_loop.core.injection_labels import PROGRAM_APPENDIX_NOTICE, REFERENCE_LABEL, STATUS_LABEL
+from llm_loop.core.injection_labels import PROGRAM_APPENDIX_NOTICE, REFERENCE_LABEL
 from llm_loop.core.loop.engine import LoopEngine
 from llm_loop.core.loop.tool_exec import _ToolExecMixin
 from llm_loop.core.message import Message, MessageSource
@@ -161,18 +161,17 @@ def test_legacy_messages_no_turn_ref_no_collision():
 
 
 def test_memory_fault_fail_open():
-    """检索异常 → fail-open: fault feedback turn 级一次注入 + 程序故障计数，不抛."""
+    """检索异常 → fail-open: 只记 observability，不生成 memory_snapshot prompt."""
     eng = _engine(_BoomStore())
     sess = _sess()
     eng._inject_turn_memory_snapshot(sess, "database migration deploy", turn_ref=0)
-    # fault 反馈同样走 turn 级持久化（同 kind 幂等——避免每轮重复 fault 注入）
-    assert len(_snapshots(sess)) == 1
-    assert "程序异常反馈:memory" in sess.messages[0].content
-    assert STATUS_LABEL in sess.messages[0].content
-    assert sess.messages[0].metadata.get("origin_layer") == "status"
+    assert _snapshots(sess) == []
+    assert sess.messages == []
     assert eng._faults == ["memory"]
+    # 同一 turn 重入仍不生成程序 fault prompt；fault 计数可重复反映真实调用失败。
     eng._inject_turn_memory_snapshot(sess, "database migration deploy", turn_ref=0)
-    assert len(_snapshots(sess)) == 1  # 重入不膨胀
+    assert _snapshots(sess) == []
+
 
 
 class _TipStub(_ToolExecMixin):

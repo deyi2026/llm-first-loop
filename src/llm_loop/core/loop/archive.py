@@ -147,12 +147,13 @@ class _ArchiveMixin:
             ):
                 self.summarizer.summarize_archive(entry.id, msg.content, self.archive)
         except Exception as exc:
-            # C3（PREFERENCE_1）: 压缩另存/摘要失败如实注入会话（AI 可感知，不静默——
-            # 被压缩消息可能无法找回）。注入失败静默（尽力而为）。
+            # R8.10/E33: archive failure is runtime state. Preserve selfheal/status/action
+            # observability, but do not write program-authored fault prose into session
+            # history (which would gain prompt authority on this or later turns).
             logger.warning("压缩另存/摘要失败（fail-open）", exc_info=True)
             from contextlib import suppress
 
             with suppress(Exception):
-                s = self._archive_feedback_session(session_id)
-                s.messages.append(self._fault_feedback("archive_sink", exc))
-                self.session.save(s)
+                self._fault_feedback("archive_sink", exc)  # selfheal_log side effect only
+                self._record_program_fault("archive_sink")
+                self._record_action("archive_sink", "fault_observed", type(exc).__name__)

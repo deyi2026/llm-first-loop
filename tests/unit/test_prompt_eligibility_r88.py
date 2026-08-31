@@ -95,6 +95,7 @@ def test_legacy_ephemeral_system_controls_are_not_prompt_eligible():
         "[上下文溢出] old",
         "[模型降级: a→b, 原因: x] old",
         "[模型降级] 事实: 全失败",
+        "[程序异常] 事实: 程序辅助组件 archive_sink 发生故障。",
     ):
         msg = Message(role="system", content=text, source=MessageSource.SYSTEM)
         assert current_turn_program_prompt_eligible(msg, current_turn_ref=7) is False

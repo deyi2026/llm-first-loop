@@ -355,7 +355,9 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             try:
                 self.session.save(sess)
             except Exception as exc:
-                # C1（PREFERENCE_1）: 会话持久化失败如实告知 AI，不静默——消息可能未落盘
+                # R8.10/E33: persistence fault is runtime observability, not model authority.
+                # Keep recovery + selfheal/status telemetry, but never append fault prose to
+                # conversational history or the provider prompt.
                 logger.warning("初始会话保存失败（fail-open）", exc_info=True)
                 recovery_note = self._persist_with_recovery_note(
                     target_type="session",
@@ -364,16 +366,16 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                     payload=self._session_payload(sess),
                     trigger_point="initial_save",
                 )
-                msg = self._fault_feedback("session_persistence", exc)
-                if recovery_note:
-                    msg = Message(
-                        role=msg.role,
-                        content=msg.content + f"\n{recovery_note}",
-                        source=msg.source,
+                self._fault_feedback("session_persistence", exc)  # selfheal_log side effect only
+                self._record_program_fault("session_persist")
+                try:
+                    self._record_action(
+                        "session_persistence",
+                        "fault_observed",
+                        f"error={type(exc).__name__};recovery={'recorded' if recovery_note else 'none'}",
                     )
-                sess.messages.append(msg)
-                # D1: 系统注入消息事件（fail-open）
-                self._append_message_event(sess, msg)
+                except Exception:  # noqa: BLE001 — observability must not block the run
+                    pass
         elif accepted_changed:
             try:
                 self.session.save(sess)
@@ -890,11 +892,11 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                         final_answer = self._e1210_llm_error_finalize(
                             session_id, exc, len(messages), "fallback_exhausted"
                         )
+                        resp = None  # 程序反馈不得继承上一轮成功响应的 reasoning（GPT 审计 P0：stale reasoning 嫁接）
                         if inject_msgs:
                             # The all-failed summary is useful to the current user, not
                             # to a future model turn. Surface it in this program result.
                             final_answer = f"{final_answer}\n\n{inject_msgs[-1].content}"
-                        resp = None  # 程序反馈不得继承上一轮成功响应的 reasoning（GPT 审计 P0：stale reasoning 嫁接）
                         break
                 elif not _e1210_recovered:
                     # 严格模式 / 非降级错误 → 如实反馈（DFX-REL-02）

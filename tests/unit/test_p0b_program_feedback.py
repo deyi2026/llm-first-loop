@@ -3,7 +3,7 @@
 
 覆盖三处小修的行为契约：
 - B1 engine 收尾 source 判定（前缀语义，与 B2/B3 同源常量）
-- B2 build 投影标记（提交视图加前缀，存储原文不动）
+- B2 build 协议边界（提交视图移除故障细节但保留 assistant role，存储原文不动）
 - B3 extractor 过滤（程序反馈不进长期记忆提取）
 """
 from pathlib import Path
@@ -14,7 +14,9 @@ from llm_loop.feedback.honesty import PROGRAM_FEEDBACK_PREFIXES
 
 def test_b1_prefix_semantics():
     """前缀清单语义: 程序反馈文本命中，正常回答不命中（B1/B2/B3 共用判定源）."""
-    assert len(PROGRAM_FEEDBACK_PREFIXES) == 10
+    # The list is an extensible single source of truth; test semantic coverage rather
+    # than freezing its cardinality as new program exits are added.
+    assert PROGRAM_FEEDBACK_PREFIXES
     pf_samples = [
         "[LLM 调用异常] 事实: LLM 调用失败。\n原因: HTTP 400。",
         "[停滞熔断] 事实: 已连续 5 次以相同参数调用工具。",
@@ -49,18 +51,54 @@ def test_b3_extractor_filters():
     assert "这是 user 角色同前缀文本" in text  # 仅滤 assistant，user 不误伤
 
 
-def test_b2_projection_marks_and_storage_untouched(tmp_path: Path):
-    """B2: 投影副本加 [程序反馈·非模型回答] 前缀；存储原文不动（含存量 USER source）."""
+def test_b2_projection_uses_constant_protocol_boundary_and_storage_untouched(tmp_path: Path):
+    """B2 supersession: retire program detail but preserve assistant protocol shape."""
+    from llm_loop.core.prompt_eligibility import PROGRAM_FINAL_PROTOCOL_BOUNDARY
+    from tests.unit.test_injection_fingerprint import _engine
+
+    engine, sess = _engine(tmp_path)
+    sess.messages.extend(
+        [
+            Message(role="user", content="OLD-UNRESOLVED-TASK", source=MessageSource.USER),
+            Message(
+                role="assistant",
+                content="[停滞熔断] SECRET-OLD-FAULT-DETAIL",
+                source=MessageSource.USER,
+            ),
+            Message(role="user", content="继续", source=MessageSource.USER),
+        ]
+    )
+    engine._current_turn_ref = 2
+    built = engine._build_llm_messages(
+        sess, [], max_chars=200_000, planned_label="zhipu/glm-5"
+    )
+    contents = [str(d.get("content", "")) for d in built]
+    assert "SECRET-OLD-FAULT-DETAIL" not in str(built)
+    idx = contents.index(PROGRAM_FINAL_PROTOCOL_BOUNDARY)
+    assert built[idx]["role"] == "assistant"
+    assert built[idx - 1]["role"] == "user"
+    assert built[idx + 1]["role"] == "user"
+    assert built[idx + 1]["content"] == "继续"
+    # Storage remains exact historical truth; only provider projection is minimized.
+    assert sess.messages[-2].content == "[停滞熔断] SECRET-OLD-FAULT-DETAIL"
+
+
+def test_b2_metadata_program_origin_projects_same_constant_boundary(tmp_path: Path):
+    from llm_loop.core.prompt_eligibility import PROGRAM_FINAL_PROTOCOL_BOUNDARY
     from tests.unit.test_injection_fingerprint import _engine
 
     engine, sess = _engine(tmp_path)
     sess.messages.append(
-        Message(role="assistant", content="[停滞熔断] 事实: 已连续 5 次。", source=MessageSource.USER)
-    )  # 存量形态（B1 落库前 source 仍 USER）
-    built = engine._build_llm_messages(sess, [], max_chars=200_000, planned_label="zhipu/glm-5")
-    marked = [d for d in built if "停滞熔断" in str(d.get("content", ""))]
-    assert marked, "程序反馈消息未进投影（投影完整性）"
-    assert all(str(d["content"]).startswith("[程序反馈·非模型回答]") for d in marked)
-    # 存储原文不动（replace 语义副本，非原地改）
-    assert sess.messages[-1].content.startswith("[停滞熔断]")
-    assert "[程序反馈·非模型回答]" not in sess.messages[-1].content
+        Message(
+            role="assistant",
+            content="DYNAMIC-PROGRAM-DETAIL-WITHOUT-LEGACY-PREFIX",
+            source=MessageSource.SYSTEM,
+            metadata={"answer_origin": "program", "run_end_reason": "llm_error"},
+        )
+    )
+    built = engine._build_llm_messages(
+        sess, [], max_chars=200_000, planned_label="zhipu/glm-5"
+    )
+    assert "DYNAMIC-PROGRAM-DETAIL-WITHOUT-LEGACY-PREFIX" not in str(built)
+    assert any(d.get("content") == PROGRAM_FINAL_PROTOCOL_BOUNDARY for d in built)
+    assert sess.messages[-1].content == "DYNAMIC-PROGRAM-DETAIL-WITHOUT-LEGACY-PREFIX"

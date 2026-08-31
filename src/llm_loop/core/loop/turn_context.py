@@ -135,8 +135,11 @@ class _TurnContextMixin:
                 except Exception:  # noqa: BLE001 — telemetry fail-open
                     pass
         except Exception as exc:  # noqa: BLE001 — 记忆失败不阻塞（FR-MEM-03）
-            memory_msgs = [self._fault_feedback("memory", exc)]
+            # R8.10/E33: memory backend faults stay observable/retrievable; they are not
+            # semantic memory and must never become a current-turn memory_snapshot prompt.
+            self._fault_feedback("memory", exc)  # selfheal_log side effect only
             self._record_program_fault("memory")
+            memory_msgs = []
         if not memory_msgs:
             return memory_msgs
         try:

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest import mock
 
 from llm_loop.core.message import ToolCall
@@ -20,6 +21,10 @@ def test_memory_failure_does_not_block(build_test_engine):
         sid = engine.session.create()
         result = engine.run(sid, "查询记忆相关")
     assert result.final_answer  # 回答仍输出
+    # E33: memory backend failure is observability-only, never model-facing advice.
+    wire = json.dumps(fake.calls[0]["messages"], ensure_ascii=False)
+    assert "[程序异常]" not in wire
+    assert "程序辅助组件 memory" not in wire
 
 
 def test_session_save_failure_does_not_block(build_test_engine):
@@ -76,7 +81,8 @@ def test_declaration_light_reminder_no_block(build_test_engine):
     assert result.final_answer == "我已写入文件 output.txt"  # 直接输出
     assert result.verification_note is not None  # 差异记录
     sess = engine.session.load(sid)
-    assert any("[声明提醒]" in m.content for m in sess.messages)
+    # R8.9: discrepancy remains in LoopResult/UI, not future conversational authority.
+    assert not any("[声明提醒]" in m.content for m in sess.messages)
 
 
 def test_prompt_contains_ai_rules(build_test_engine):

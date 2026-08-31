@@ -42,6 +42,7 @@ from llm_loop.core.program_recovery import (
     is_program_recovery_message,
 )
 from llm_loop.core.prompt_eligibility import (
+    PROGRAM_FINAL_PROTOCOL_BOUNDARY,
     current_turn_program_prompt_eligible,
     dynamic_prompt_layer,
     memory_snapshot_prompt_eligible,
@@ -650,18 +651,19 @@ class _BuildMixin:
         # （system+摘要）固定 → KV 命中 → prefill 秒级（本地模型实测 4-13 tokens
         # prefill 仅 0.2-0.8s）。
         # 注意: 保留最近配对组而非固定 -2 条（2026-08-24: 多回执截断会破坏 C1 配对）。
-        # P0-B2（2026-08-28 批准）: 程序反馈投影语义标记——历史中的程序反馈 assistant
-        # 消息（错误/熔断/守卫/耗尽文本）投影时加前缀，防下轮模型误读为"assistant
-        # 已回答过"（恢复链语义污染治理）。前缀判定同时覆盖 B1 落库前存量（source
-        # 仍为 USER 的历史错误消息）；存储原文不动，仅提交视图（同遥测剥离模式）。
+        # R8.10 / P0-B2 supersession: a persisted program final is user-visible storage
+        # truth, but its fault/cancel/guard prose has no automatic next-turn authority.
+        # Dropping the assistant frame outright would turn user→program-assistant→user into
+        # consecutive user roles and can recreate the provider 1210 shape.  Provider view
+        # therefore keeps only one byte-stable assistant protocol boundary while retiring
+        # all historical program-result detail.  Storage/event truth remains untouched.
         from dataclasses import replace
 
         from llm_loop.feedback.honesty import PROGRAM_FEEDBACK_PREFIXES
 
-        # GPT 审计批次2: answer_origin 优先（保存点写入的单一真相源），prefix 仅 legacy 兜底
         base = [
             (
-                replace(m, content=f"[程序反馈·非模型回答] {m.content}")
+                replace(m, content=PROGRAM_FINAL_PROTOCOL_BOUNDARY, reasoning_content=None)
                 if (
                     m.role == "assistant"
                     and (
