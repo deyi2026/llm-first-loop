@@ -121,16 +121,17 @@ def test_b5_model_window_in_status_snapshot():
 def test_check_loop_signals_unified_entry(build_test_engine, fake_settings):
     """_check_loop_signals 统一入口存在，且逐个委托既有检测（行为不变）."""
     engine, fake = build_test_engine([])
-    assert hasattr(engine, "_check_loop_signals")
+    assert hasattr(engine, "_termination")
+    assert hasattr(engine._termination, "_check_loop_signals")
     with mock.patch.object(
-        engine, "_check_eval_trigger", wraps=engine._check_eval_trigger
+        engine._termination, "_check_eval_trigger", wraps=engine._termination._check_eval_trigger
     ) as eval_spy, mock.patch.object(
-        engine, "_check_evolution_executing", wraps=engine._check_evolution_executing
+        engine._termination, "_check_evolution_executing", wraps=engine._termination._check_evolution_executing
     ) as evo_spy, mock.patch.object(
-        engine, "_check_pending_review", wraps=engine._check_pending_review
+        engine._termination, "_check_pending_review", wraps=engine._termination._check_pending_review
     ) as review_spy:
         sess = engine.session.load(engine.session.create())
-        engine._check_loop_signals(sess, rounds=1)
+        engine._termination._check_loop_signals(sess, rounds=1)
         eval_spy.assert_called_once()
         evo_spy.assert_called_once()
         review_spy.assert_called_once()

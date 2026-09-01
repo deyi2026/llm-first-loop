@@ -34,6 +34,7 @@ from llm_loop.core.injection_labels import (
 # M53 拆分: 职责 mixin（signals 信号检查 / runtime 运行时参数 / fallback 模型降级链 / routing 模型路由 / overflow overflow 处理 / tool_exec 工具执行）
 from llm_loop.core.loop.archive import _ArchiveMixin
 from llm_loop.core.loop.build import _BuildMixin  # EVO-20260817-e63f712f: 消息构建拆分
+from llm_loop.core.loop.engine_services.termination_controller import TerminationController
 from llm_loop.core.loop.err1210 import (
     _Err1210Mixin,  # err1210 P0 恢复（tasks 4.2/4.3；状态字段/接线方法均在 err1210.py）
 )
@@ -42,7 +43,6 @@ from llm_loop.core.loop.fallback import _FallbackMixin
 from llm_loop.core.loop.interop import _InteropMixin
 from llm_loop.core.loop.kpi import _KpiMixin
 from llm_loop.core.loop.lifecycle import _LifecycleMixin
-from llm_loop.core.loop.overflow import _OverflowMixin
 from llm_loop.core.loop.routing import (
     _CHARS_PER_TOKEN_EST,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
     _CONTEXT_SAFETY_MARGIN,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
@@ -50,7 +50,6 @@ from llm_loop.core.loop.routing import (
 )
 from llm_loop.core.loop.runstate import _RunState, _RunStateMixin
 from llm_loop.core.loop.runtime import _RuntimeParamsMixin
-from llm_loop.core.loop.signals import _SignalsMixin
 from llm_loop.core.loop.tool_eligibility import _ToolEligibilityMixin
 from llm_loop.core.loop.tool_exec import (
     _json_dumps_args,
@@ -152,7 +151,7 @@ class LoopResult:
     cancel_reason: str = ""
 
 
-class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _OverflowMixin, _Err1210Mixin, _ToolEligibilityMixin, _ToolExecMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin, _KpiMixin, _LifecycleMixin, _TurnContextMixin):
+class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _Err1210Mixin, _ToolEligibilityMixin, _ToolExecMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin, _KpiMixin, _LifecycleMixin, _TurnContextMixin):
     """五阶段核心循环控制器."""
 
     # EVO 后台 run 执行器（factory 动态装配 BackgroundRunner；声明类型供 pyright 静态检查）
@@ -252,6 +251,8 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         self._last_snapshot_count = 0
         # R4 增强: overflow 反馈注入次数（同一 run 内最多注入 1 次后让 AI 决策，第二次直接结束）
         self._overflow_reinject_count = 0
+        # R9 Phase 5 T6-A: 终止域 service（B5-W1-02 迁入 _SignalsMixin/_OverflowMixin 职责）
+        self._termination = TerminationController(self)
         # EVO-20260817-cef296f8 L2: 缓存命中率窗口监控（跨 run 累计，实例级；
         # 低命中率 → final_answer 注入诊断 + action_trace 审计，fail-open）
         # EVO-20260817-72fcd94a L3（闭环）: 缓存健康监控 + 发送前门禁（独立模块，程序常态锚点管理）
@@ -476,7 +477,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         _run_end_reason = "completed"
         _cancel_reason = ""  # 取消原因标记位（user_stop/runner_stop；""=未取消，收口贯穿 LoopResult）
         _run_started_at = time.monotonic()
-        self._reset_overflow_state()  # R4: 每次 run 重置 overflow 注入计数
+        self._termination._reset_overflow_state()  # R4: 每次 run 重置 overflow 注入计数
         self._err1210_run_begin()  # 修复A: per-run 降级机会（attempted 键 = run seq）
         self._focus.reset()  # 2026-08-22 单向切换锁定重置
         model_used = ""  # M51: 本轮实际使用的模型标签（每轮 LLM 调用时刷新）
@@ -871,7 +872,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 self._record_program_fault("llm_call")
                 # M53 拆分: overflow 如实反馈（不自动重试/不自动压缩，决策权归 AI）
                 # → _OverflowMixin._handle_overflow（move 语义，行为零变化）
-                overflow_action, overflow_final = self._handle_overflow(
+                overflow_action, overflow_final = self._termination._handle_overflow(
                     exc, sess, model_used,
                     model_window={"label": model_used, "context": _response_context_limit},
                 )
@@ -1139,7 +1140,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             # ── M56 收敛（ANALYSIS-20260811-loop-strategy-branch-inventory）:
             # 每轮末信号检测统一为一次调用（自评/演进待办/待审提醒，均仅提示不强制，
             # 触发判断与决策交 AI 自主——RULE-AI-10 每轮自主检查清单）──
-            self._check_loop_signals(sess, rounds)
+            self._termination._check_loop_signals(sess, rounds)
 
             # ── R10 → R8.24-B B-2.1（B-D6）: 轮数预警注入路径删除（E18 分量）──
             # 模型可见面零预警（B-G8）；剩余轮数事实只落观测事件。"继续/调大/收尾"
@@ -1332,7 +1333,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         except Exception:  # noqa: BLE001 — consumption audit must not block delivery
             logger.warning("耗尽消息消费标记异常（fail-open）", exc_info=True)
         # M12 深化 T65: run 完成里程碑自我评估提醒（仅提示不强制，EVAL-03；追加后随会话保存）
-        self._check_eval_trigger(sess, rounds, milestone=True)
+        self._termination._check_eval_trigger(sess, rounds, milestone=True)
         # T39: 会话保存异常 → 如实标注 + 不抛穿（程序故障不影响 AI 发挥）
         try:
             self.session.save(sess)

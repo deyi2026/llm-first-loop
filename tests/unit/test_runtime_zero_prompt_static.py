@@ -44,12 +44,19 @@ def test_engine_no_longer_imports_retired_messages():
 
 
 def test_overflow_path_is_deterministic_runtime_control():
-    """overflow 处理面零 prompt 语义: _handle_overflow 不构造任何 Message 注入。"""
-    overflow_src = (_SRC_ROOT / "core" / "loop" / "overflow.py").read_text(encoding="utf-8")
-    assert "sess.messages.append" not in overflow_src
-    assert "render_program_appendix" not in overflow_src
+    """overflow 处理面零 prompt 语义: _handle_overflow 不构造任何 Message 注入.
+
+    R9 B5-W1-02: 面迁至 engine_services/termination_controller.py（_OverflowMixin 退役），
+    零注入断言跟随迁移（"budget_shrunk" 确定性收缩在场；终态纯事实文本在场；
+    旧注入通道标识双缺席 = B-D5 零 prompt 注入面持续成立）。
+    """
+    overflow_src = (
+        _SRC_ROOT / "core" / "loop" / "engine_services" / "termination_controller.py"
+    ).read_text(encoding="utf-8")
     assert "overflow_feedback" not in overflow_src
+    assert "render_program_appendix" not in overflow_src
     assert "budget_shrunk" in overflow_src  # 确定性收缩在场
+    assert "[上下文超限]" in overflow_src  # B-G3 纯事实终态文本在场
 
 
 def test_stagnation_reminder_is_event_only():

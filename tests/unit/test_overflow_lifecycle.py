@@ -3,11 +3,11 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-from llm_loop.core.loop.overflow import _OverflowMixin
+from llm_loop.core.loop.engine_services.termination_controller import TerminationController
 from llm_loop.llm.errors import LLMError
 
 
-class _Engine(_OverflowMixin):
+class _Engine:
     def __init__(self):
         self._overflow_reinject_count = 0
         self._current_turn_ref = 9
@@ -19,8 +19,9 @@ class _Engine(_OverflowMixin):
 
 def test_overflow_reinject_is_current_turn_only():
     eng: Any = _Engine()
+    ctl = TerminationController(eng)
     sess = SimpleNamespace(messages=[])
-    action, final = eng._handle_overflow(
+    action, final = ctl._handle_overflow(
         LLMError("maximum context length exceeded"), sess, "model"
     )
     assert action == "reinject" and final is None

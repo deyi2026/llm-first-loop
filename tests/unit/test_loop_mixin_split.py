@@ -22,11 +22,10 @@ def engine_src() -> str:
 
 def test_loop_mixin_split_layout():
     """新 Mixin 模块布局：类定义 + 文件级 pyright 豁免 + TYPE_CHECKING 循环规避."""
-    for fname in ("routing.py", "overflow.py", "tool_exec.py", "lifecycle.py"):
+    for fname in ("routing.py", "tool_exec.py", "lifecycle.py"):
         src = (LOOP_DIR / fname).read_text(encoding="utf-8")
         mixin = {
             "routing.py": "_RoutingMixin",
-            "overflow.py": "_OverflowMixin",
             "tool_exec.py": "_ToolExecMixin",
             "lifecycle.py": "_LifecycleMixin",
         }[fname]
@@ -54,7 +53,7 @@ def test_loop_reexport_kept():
 def test_run_stream_delegation_points(engine_src):
     """run_stream 三处委托调用全部就位（REQ-REF-02a）."""
     assert "self._route_model(" in engine_src
-    assert "self._handle_overflow(" in engine_src
+    assert "self._termination._handle_overflow(" in engine_src
     assert "yield from self._execute_tools(" in engine_src
 
 
