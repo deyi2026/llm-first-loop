@@ -74,6 +74,8 @@ bash scripts/r9_commit.sh "<message>"   # 机检(r9_commit_check) + ci_gate + gi
 
 单条性质提交保证 bisect 可判定（R9-P1-04）；机检为独立脚本形态（不装 git hook——`.git` 与外部会话共享，hook 会波及外部提交）。
 
+**门禁全量口径已生效（commit `54743b1`，R9-P1-01）**：自 B2-P1-06 起，main 只收 `ci_gate.sh` 全链路绿 + 机检通过 的提交——第 1 步 ruff 已升级为**全量阻断**（`ruff check src tests scripts`；外部混合层文件按 D-07 区分逻辑呈现不阻断，外部合流时清偿）。过渡期已知红 `test_functions_within_baseline`（外部 factory.py working 1031 > 基线 1004）已由守卫读源双口径收口（commit `dbf340f`，B2-P2-06）：外部漂移未 staged 文件回退 HEAD 口径，真实违规全量设防——main 全绿无豁免。
+
 ## 功能
 
 - **核心循环**：LoopEngine 五阶段状态机（消息进→理解→行动→真诚回答→记住）
