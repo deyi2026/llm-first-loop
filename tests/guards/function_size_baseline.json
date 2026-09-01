@@ -1,0 +1,39 @@
+{
+  "_meta": {
+    "说明": "函数级防膨胀基线。值为 AST 实测行数，只允许下降，不允许上升。",
+    "阈值": "收录标准 ≥150 行；硬顶 HARD_CAP=2000 行（见测试文件）",
+    "生成时间": "2026-09-01 07:41:42",
+    "生成方式": "python -c '见 tests/unit/test_function_size_guard.py 内 _measure()'",
+    "收录函数数": 25,
+    "合计行数": 8394,
+    "收编校准": "2026-09-01 B2-P1-01：25 键以 HEAD(72e54cc) 提交树 AST 实测逐键校准；edit_file.py::run 192→181（生成时点陈旧值剔除，禁收 working 漂移）"
+  },
+  "functions": {
+    "src/llm_loop/core/loop/build.py::_build_llm_messages": 1732,
+    "src/llm_loop/core/loop/engine.py::_run_stream_inner": 1135,
+    "src/llm_loop/factory.py::build_engine": 1004,
+    "src/llm_loop/core/history.py::build_history_messages": 721,
+    "src/llm_loop/core/loop/fallback.py::_try_fallback_chain": 235,
+    "src/llm_loop/eval/oracle_1210.py::run_oracle": 233,
+    "src/llm_loop/tools/registry.py::execute": 228,
+    "src/llm_loop/tools/registry.py::_run_with_timeout": 222,
+    "src/llm_loop/core/loop/err1210.py::_try_err1210_recovery": 214,
+    "src/llm_loop/introspection/tools_model.py::run_switch_model": 192,
+    "src/llm_loop/tools/builtin/edit_file.py::run": 181,
+    "src/llm_loop/tools/builtin/web_fetch.py::execute": 186,
+    "src/llm_loop/core/loop/err1210.py::_defer_store": 179,
+    "src/llm_loop/config.py::load_settings": 172,
+    "src/llm_loop/feishu/rest.py::_write_markdown_to_doc": 170,
+    "src/llm_loop/tools/builtin/execute_command.py::execute": 170,
+    "src/llm_loop/llm/client.py::_stream_openai": 169,
+    "src/llm_loop/codearts/scheduler.py::dispatch": 163,
+    "src/llm_loop/llm/providers.py::_parse_providers_dict": 161,
+    "src/llm_loop/subagent/runner.py::_execute_subagent": 160,
+    "src/llm_loop/core/loop/turn_context.py::_inject_turn_memory_snapshot": 155,
+    "src/llm_loop/web/routes.py::chat_stream": 154,
+    "src/llm_loop/task_quality/fix_loop.py::execute": 153,
+    "src/llm_loop/tools/builtin/search_files.py::execute": 153,
+    "src/llm_loop/introspection/search.py::search": 152
+  },
+  "exemptions": []
+}
