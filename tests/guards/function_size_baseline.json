@@ -49,7 +49,7 @@
     "src/llm_loop/core/loop/archive.py::_archive_sink": 121
   },
   "legacy_super_functions": {
-    "src/llm_loop/core/loop/build.py::_build_llm_messages": 1702,
+    "src/llm_loop/core/loop/build.py::_build_llm_messages": 199,
     "src/llm_loop/core/loop/engine.py::_run_stream_inner": 1126,
     "src/llm_loop/factory.py::build_engine": 1004,
     "src/llm_loop/core/history.py::build_history_messages": 721
