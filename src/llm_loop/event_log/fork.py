@@ -17,7 +17,8 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from llm_loop.event_log.session_types import (  # ForkReport 兼容 re-export + 冲突异常直用（R9-P3-02）
+from llm_loop.event_log.session_types import (  # ForkReport 兼容 re-export + 冲突异常/种子直用（R9-P3-02/03）
+    BranchSeed,
     ForkReport,
     SessionIdConflictError,
 )
@@ -128,11 +129,11 @@ def fork_session(
         event_error = result[1]
 
     # 同步生成 session JSON（双轨）——先事件日志后 session JSON，_event_backfill 不重复
-    from llm_loop.core.session import Session
-
-    branch = Session(
-        session_id=new_id,
-        messages=list(prefix),
+    # R9-P3-02 步3/4 + R9-P3-03：BranchSeed 组装（字段值快照——created_at/title 求值留 fork 内，
+    # 时点等价）→ SessionStore.create_branch 重建（Session 构造知识移交，环②最后一条边消失）
+    seed = BranchSeed(
+        new_session_id=new_id,
+        messages_prefix=list(prefix),
         created_at=_now_iso(),
         title=(source_session.title or "未命名") + "（分支）",
         parent_id=source_session_id,
@@ -140,10 +141,7 @@ def fork_session(
         branch_summary=summary,
         channel=source_session.channel,
     )
-    try:
-        session_store.save(branch)
-    except Exception as exc:  # noqa: BLE001 — fail-open
-        logger.warning("fork session JSON 保存失败（fail-open）: %s", exc)
+    session_store.create_branch(seed)
 
     if event_error:
         return _report(

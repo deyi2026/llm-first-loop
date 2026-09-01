@@ -23,7 +23,8 @@ from typing import Any, Literal
 
 from llm_loop.core.message import Message, MessageSource, ToolResultStatus
 from llm_loop.event_log.model import build_message_payload
-from llm_loop.event_log.session_types import (  # noqa: F401 — R9-P3-02 re-export（历史导入路径兼容）
+from llm_loop.event_log.session_types import (  # noqa: F401 — SessionIdConflictError 为 R9-P3-02 re-export（历史导入路径兼容）
+    BranchSeed,
     SessionIdConflictError,
 )
 
@@ -1481,6 +1482,29 @@ class SessionStore:
                 return False
 
     # ── EVO-20260810-3188682f: 会话分支 ──
+    def create_branch(self, seed: BranchSeed) -> Session:
+        """分支会话重建入口（R9-P3-03：Session 构造知识收归 SessionStore 侧）.
+
+        自 fork.py:149-160 纯 move——构造字段序（seed 快照已求值）、fail-open
+        try-except + logger.warning 语义原样；fork 侧只负责 BranchSeed 组装
+        （design T4-C 切分线：数据生成 ↔ 持久化分界）。
+        """
+        branch = Session(
+            session_id=seed.new_session_id,
+            messages=seed.messages_prefix,
+            created_at=seed.created_at,
+            title=seed.title,
+            parent_id=seed.parent_id,
+            branch_id=seed.branch_id,
+            branch_summary=seed.branch_summary,
+            channel=seed.channel,
+        )
+        try:
+            self.save(branch)
+        except Exception as exc:  # noqa: BLE001 — fail-open
+            logger.warning("fork session JSON 保存失败（fail-open）: %s", exc)
+        return branch
+
     def fork(
         self,
         session_id: str,

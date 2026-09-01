@@ -58,8 +58,6 @@
     "src/llm_loop/tools/registry.py": 23,
     "src/llm_loop/core/loop/engine.py": 13
   },
-  "known_cycles": [
-    "session<->fork"
-  ],
+  "known_cycles": [],
   "exemptions": []
 }
