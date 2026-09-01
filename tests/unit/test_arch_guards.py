@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import ast
+import functools
 import json
 import re
 import subprocess
@@ -101,13 +102,13 @@ def test_global_redline_300():
 
     已登记函数豁免红线、走棘轮零增长断言（见 _classify_redlines docstring）。
     """
-    failures, _ = _classify_redlines(_measure_functions())
+    failures, _ = _classify_redlines(_measure_functions_cached())
     assert not failures, "三层红线违例（拆分是唯一通道，基线不上调）：\n" + "\n".join(failures)
 
 
 def test_core_redline_200():
     """core 层：CORE_FILES 内函数 >200 FAIL（R9-P2-01a core 面）。"""
-    failures, _ = _classify_redlines(_measure_functions())
+    failures, _ = _classify_redlines(_measure_functions_cached())
     core_only = [f for f in failures if "core红线" in f]
     assert not core_only, "core 层违例：\n" + "\n".join(core_only)
 
@@ -119,7 +120,7 @@ def test_core_warn_report_120_150():
     WARN ≠ 违例：120-150 是"审查提醒带"——首行可见于 -m guard_report 运行，
     CI 常驻报告中呈现（spec §5.3.3-1c 可见性），FAIL 用例默认跑不受影响。
     """
-    _, warns = _classify_redlines(_measure_functions())
+    _, warns = _classify_redlines(_measure_functions_cached())
     if warns:
         print(f"\ncore 层 WARN（{len(warns)} 处，审查提醒不阻断）：\n" + "\n".join(warns))
 
@@ -163,7 +164,10 @@ def test_redline_synthetic_trees(tmp_path):
 # 不维护静态清单（防腐化）。
 
 
+@functools.lru_cache(maxsize=1)
 def _git_porcelain() -> list[str]:
+    """会话级缓存（只读守卫进程内 porcelain 稳定；R9-DFX-16 性能——254 文件
+    单次判定，免每文件 spawn git status）。"""
     proc = subprocess.run(
         ["git", "status", "--porcelain"], capture_output=True, text=True, check=True, cwd=ROOT
     )
@@ -194,6 +198,14 @@ def _read_source(rel: str) -> str:
         )
         return proc.stdout
     return (ROOT / rel).read_text(encoding="utf-8")
+
+
+
+@functools.lru_cache(maxsize=1)
+def _measure_functions_cached() -> dict[str, int]:
+    """真实树实测的会话级缓存（R9-DFX-16：254 文件单遍共享，多检测器复用）。"""
+    return _measure_functions()
+
 
 
 def test_external_unstaged_pure_classification():
@@ -281,7 +293,7 @@ def test_baseline_v2_schema():
 
 def test_function_lines_ratchet_within_baseline(measured: dict[str, int] | None = None):
     """实测 ≤ 基线（function_lines + legacy 四函数）；实测更低输出收紧建议。"""
-    m = measured if measured is not None else _measure_functions()
+    m = measured if measured is not None else _measure_functions_cached()
     b = _load_baseline()
     failures, suggestions = [], []
     for sec in ("function_lines", "legacy_super_functions"):
@@ -300,7 +312,7 @@ def test_function_lines_ratchet_within_baseline(measured: dict[str, int] | None 
 
 def test_new_large_functions_must_be_recorded(measured: dict[str, int] | None = None):
     """新出现 ≥INCLUDE_THRESHOLD 行的函数必须登记进基线（防漏网）。"""
-    m = measured if measured is not None else _measure_functions()
+    m = measured if measured is not None else _measure_functions_cached()
     b = _load_baseline()
     known = set(b["function_lines"]) | set(b["legacy_super_functions"])
     unrecorded = [k for k, v in m.items() if v >= INCLUDE_THRESHOLD and k not in known]
