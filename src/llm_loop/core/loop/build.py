@@ -27,8 +27,7 @@ from llm_loop.core.history import (
     is_cache_compacted_for,
     projection_check,  # noqa: F401 (history 工具, 函数内使用)
     projection_ver,  # noqa: F401 (history 工具, 函数内使用)
-    stable_digest,  # 投影门闸
-)
+    )
 from llm_loop.core.injection_budget import (
     DEFAULT_INJECTION_BUDGET_CHARS,
     plan_prompt_injection_budget,
@@ -73,9 +72,10 @@ except Exception:  # noqa: BLE001 — fail-open 回退平铺聚合（零回归�
 
 # 快照文本函数已迁 core/session_snapshot.py（零 llm_loop 依赖叶子模块，R9-P3-01）——
 # 顶层 import 不再触发循环：build→engine 运行时反向边删除（步2/3 断环点），engine→build 正向边保留
-from llm_loop.core.message import Message, MessageSource
+from llm_loop.core.message import Message
 from llm_loop.core.prompt import build_system_prompt
 from llm_loop.core.prompt_build import BuildAudit, BuildDecision
+from llm_loop.core.prompt_build.stages.base_assembly import run_base_assembly
 from llm_loop.core.prompt_build.stages.compaction_audit import run_compaction_audit
 from llm_loop.core.prompt_build.stages.ingress_resolution import resolve_ingress
 from llm_loop.core.prompt_build.stages.projection_gate import (
@@ -84,7 +84,6 @@ from llm_loop.core.prompt_build.stages.projection_gate import (
 )
 from llm_loop.core.prompt_build.stages.trace_isolation import run_trace_isolation
 from llm_loop.core.prompt_build.stages.user_truth import run_user_truth_wire
-from llm_loop.core.session_snapshot import build_session_snapshot_text
 
 
 def merge_persisted_tail_injections(
@@ -675,63 +674,25 @@ class _BuildMixin:
                 for _m in base
                 if id(_m) in _pre_zero_pos
             ]
-        prefix_len = 0
-        # RULE-AI-14 协调通道: 程序级自动注入 DSH→LFL 待处理消息（每轮 run 必感知，
-        # 非仅提示词引导；实现见 core/loop/interop.py _InteropMixin，fail-open）
-        # 注入位置: memory 之后、历史之前（2026-08-16 优化: system_prompt+memory 前缀
-        # 有/无消息轮字节级一致，服务端缓存命中不受 inbox 影响）
-        base, prefix_len = self._inject_interop_messages(base, prefix_len, sess.session_id)
-        # EVO-20260817-72fcd94a L3 发送前门禁·预检（程序常态锚点管理）: 稳定段指纹
-        # （system+注入）与该 session 基线不符 → 强制缓存友好压缩，当次 build 即合规化。fail-open。
-        try:
-            self._cache_gate_stable_fp = stable_digest(
-                [(m.role, m.content) for m in base[:prefix_len]] + [system_prompt]
-            )
-            self._cache_monitor.preflight(sess.session_id, self._cache_gate_stable_fp)
-        except Exception:  # noqa: BLE001
-            self._cache_gate_stable_fp = ""
-        # EVO-20260811-9ccdec97: 会话状态快照节流——每间隔注入状态帧（定位锚点，fail-open）
-        # M58 配置面收敛: 间隔走 runtime（动态优先，AI 可调）
-        # P1-10: 仅无锚时注入（锚定后快照为推送式注入（已打标被跳过提交）, 且避免锚点换算复杂化）
-        # EVO-20260818-8c8791c2: 快照【尾部追加】而非 insert(0)——前缀区只留 system+稳定历史头，
-        # 快照内容（消息数/记忆数/演进摘要）每轮变化，驻留前缀区即每轮断前缀（gate_drift_count=12
-        # 实证，命中 17%↔98% 间歇）；尾部追加后变化只影响尾部新增段，前缀字节稳定（对齐 memory/interop）
-        if sess_anchor == 0:
-            try:
-                interval = self._runtime_extract_interval()
-                if len(sess.messages) - self._last_snapshot_count >= interval:
-                    evo_summary = None
-                    if self.evolution_store is not None and hasattr(
-                        self.evolution_store, "summary"
-                    ):
-                        try:
-                            s = self.evolution_store.summary()
-                            evo_summary = s if isinstance(s, dict) else None
-                        except Exception:
-                            evo_summary = None
-                    # R9-P3-01 步2/3：函数内延迟 import 退役（EVO-20260818 防循环理由
-                    # 消失——改指顶层 session_snapshot 叶子模块，环①反向边消失）
-                    snapshot = Message(
-                        role="system",
-                        content=build_session_snapshot_text(
-                            len(sess.messages), self.memory.count(), evo_summary
-                        ),
-                        source=MessageSource.SYSTEM,
-                        metadata={
-                            "injected_system": True
-                        },  # P1-7: 快照=推送式注入（本地 provider 下不进提交）
-                    )
-                    base.append(
-                        snapshot
-                    )  # EVO-20260818-8c8791c2: 尾部追加（原 insert(0) 驻留前缀区断前缀）
-                    # prefix_len 不再 +1（快照不进前缀区——稳定段指纹 base[:prefix_len] 不含动态内容）
-                    self._last_snapshot_count = len(sess.messages)
-            except Exception:
-                import logging
-
-                logging.getLogger(__name__).warning(
-                    "会话状态快照注入失败（fail-open）", exc_info=True
-                )
+        # base 装配 → stages/base_assembly.py（interop 注入/门禁预检/快照节流；
+        # stable_fp 与 last_snapshot_count 调用点回写 self 面）
+        _asm = run_base_assembly(
+            base=base,
+            system_prompt=system_prompt,
+            session_id=sess.session_id,
+            sess_message_count=len(sess.messages),
+            sess_anchor=sess_anchor,
+            inject_interop=self._inject_interop_messages,
+            cache_monitor=self._cache_monitor,
+            runtime_extract_interval=self._runtime_extract_interval,
+            memory=self.memory,
+            evolution_store=self.evolution_store,
+            last_snapshot_count=self._last_snapshot_count,
+        )
+        base = _asm.base
+        prefix_len = _asm.prefix_len
+        self._cache_gate_stable_fp = _asm.stable_fp
+        self._last_snapshot_count = _asm.last_snapshot_count
         from llm_loop.core.history import build_history_messages
 
         archive_sink = None
