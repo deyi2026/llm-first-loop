@@ -2,6 +2,12 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+### R9-B2 Phase 1+2：worktree/门禁/机检 + 架构守卫四检测器上线（2026-09-01）
+- **守卫资产收编 + 基线 v2**（guard）：workbuddy 雏形转正（`ff37e92`，HEAD 口径逐键校准）；`function_size_baseline.json` 升级五节 schema:2（`legacy_super_functions`/`function_lines` 37 键/`local_imports`/`known_cycles`/`exemptions`），全数值节 HEAD 棘轮只降不升（`179b375`）；守卫文件更名 `test_arch_guards.py`。
+- **四检测器**（guard，spec §5.3 三层红线 + 棘轮 + cycle）：三层红线 300/200/WARN 120-150 三态（`837eb51`）｜棘轮防篡改纯函数化 + import 守卫行内豁免标记（`2e10219`）｜runtime cycle 检测器 AST 依赖图 + Tarjan SCC 实测恰两环（`2aa50af`）｜守卫读源双口径——外部未 staged 漂移回退 HEAD、真实违规全量设防（`dbf340f`，外部级豁免归零）｜豁免清单数量单调不增（`2d9eb03`）。演练发现并修复语义缺陷：强制登记线 150 与 WARN 下限 120 解耦（`658f1df`）。
+- **门禁与机检**（chore/fix）：commit 性质机检五规则 + `r9_commit.sh` 三步包装（`f871d66`，前缀白名单/行为面隔离/wire 回执/守卫防篡改/switch 前缀）；ruff 存量清偿 + ci_gate 第 1 步全量阻断、外部级 D-07 区分呈现（`ae6faca`+`54743b1`）；旧守卫 `_base=1361` 口径冲突退役（`f0dcc16`）；守卫性能 24.98s→1.32s + tier0/markers/ci_gate 三层接线 CI 常驻（`cebdebc`+`0238c2a`，全链路 56.1s）；机检空 diff 崩溃修复（`2cf7a79`）；xdist 假红降级——红→serial 单点复核（`ace4f3e`，门禁语义 = serial 可复现红才阻断）。
+- **演练回执**：七场景红/黄/绿全矩阵（tmp 构造树 + /tmp worktree 端到端各一轮）；12 commits 逐条机检单性质全过（bisect 可判定）；外部混合层 69 项零触碰（交集=0 实证）。
+
 ### R9 结构收口准备：三批默认值切换 + 行为基线固化（2026-09-01）
 - **立即项四件**（refactor/fix）：删除 tests/unit 四源码副本 1994 行死代码（`c6f9f4e`）；path_registry 隔离洞双修——静默 fallback 改抛错 + 测试沙箱 chdir 锁（`5c5df12`）；dev extras/lockfile 可复现安装口径（`69e154b`+`046bd34`）；symlink 探测三态化——edit_file 探测失败也拒写（fail-closed），read_file 如实标注不拒读（`347af8f`+`64beb97`）。
 - **测试工作流**（test/chore）：tier0 冒烟集（338 用例 14.8s 分钟级反馈）+ xdist 并行化（全量 13min→36s，失败集合与串行一致）+ `ci_gate.sh` 一条命令复现 CI 三件套（`0fc28e3`+`65aa515`+`6fb94b0`）。
