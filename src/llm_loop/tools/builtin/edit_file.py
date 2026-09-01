@@ -101,17 +101,24 @@ class EditFileTool:
 
         # ── T5b: symlink 写防护（fail-closed）——写路径含符号链接（自身或父目录）
         # 可能越界写项目外文件（对齐 Harness Unlink 模式；读路径 read_file 仅标注）──
+        # R9-IMM-04 三态化：仅 no_links 放行；links_found / probe_failed 均拒写
         path = Path(path_str)
         # 工作区跟随: 相对路径基于当前工作区根（无工作区 → 进程 cwd，零回归）
         if not path.is_absolute():
             from llm_loop.core.run_context import workspace_base
 
             path = Path(workspace_base()) / path
-        _links = link_shaped_paths(path)
-        if _links:
+        _probe = link_shaped_paths(path)
+        if _probe.status == "links_found":
             return self._fail(
-                f"写路径含符号链接，已拒绝写入（防越界写）: {' → '.join(_links)}。"
+                f"写路径含符号链接，已拒绝写入（防越界写）: {' → '.join(_probe.links)}。"
                 "如需修改目标文件请使用其真实路径（realpath 解析后重试）。",
+                "SymlinkGuard",
+            )
+        if _probe.status == "probe_failed":
+            return self._fail(
+                "符号链接探测失败（ELOOP/权限等障碍，无法确认路径安全性），已拒绝写入。"
+                "请用 execute_command realpath 确认真实路径后重试。",
                 "SymlinkGuard",
             )
 

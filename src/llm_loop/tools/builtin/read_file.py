@@ -116,8 +116,15 @@ class ReadFileTool:
 
             p = Path(workspace_base()) / p
         # T5b: symlink 透明标注（读放行，信息不隐藏；写路径在 edit_file 拒绝）
-        _links = link_shaped_paths(p)
-        _link_note = f"\n[symlink] 路径含符号链接: {' → '.join(_links)}" if _links else ""
+        # R9-IMM-04 三态化：探测结果透传——links_found 标注链；probe_failed 标注
+        # 探测障碍（读面 fail-open 不拒读；写面由 edit_file 对 probe_failed 拒写）
+        _probe = link_shaped_paths(p)
+        if _probe.status == "links_found":
+            _link_note = f"\n[symlink] 路径含符号链接: {' → '.join(_probe.links)}"
+        elif _probe.status == "probe_failed":
+            _link_note = "\n[symlink] 符号链接探测失败（ELOOP/权限障碍）：路径安全性未确认（该路径写入将被 edit_file 拒绝）"
+        else:
+            _link_note = ""
         try:
             if not p.exists():
                 # EVO-20260823-12be9cac: 失败登记否定帧 + 回执内嵌"已登记不存在"提示

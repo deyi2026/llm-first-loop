@@ -20,6 +20,7 @@ import shlex
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 logger = logging.getLogger(__name__)
 
@@ -397,13 +398,28 @@ def is_readonly_command(command: str) -> bool:
     return False
 
 
-def link_shaped_paths(path: str | Path) -> list[str]:
-    """路径链中的符号链接组件（自身或任一父目录，T5b 对齐 Harness Unlink 模式）.
+@dataclass(frozen=True)
+class LinkProbeResult:
+    """link_shaped_paths 三态探测结果（R9-IMM-04 / R9-DFX-05，D7）.
+
+    探测函数保持 fail-open：如实返回探测结果、不抛异常；
+    fail-closed 决策（如 edit_file 拒写）由调用方按 status 处置。
+    """
+
+    status: Literal["no_links", "probe_failed", "links_found"]
+    links: tuple[str, ...] = ()  # links_found 时的路径链（根→叶）；其余态为空
+
+
+def link_shaped_paths(path: str | Path) -> LinkProbeResult:
+    """路径链中的符号链接组件探测（自身或任一父目录，T5b 对齐 Harness Unlink 模式）.
 
     路径可不存在（写场景的待建文件）：从最深现有祖先向下检查每层 is_symlink。
-    解析失败如实返回空（fail-open，不阻断正常路径）。
 
-    Returns: 含符号链接的路径字符串列表（根 → 叶顺序）；空 = 无链接。
+    Returns: LinkProbeResult 三态——
+      - no_links: 探测完成，路径链无符号链接
+      - probe_failed: 探测失败（ELOOP/权限等 OSError）——探测失败≠无链接，
+        这正是最需防护的场景（fail-open：如实返回，不抛异常）
+      - links_found: 链含符号链接（links 为根→叶顺序路径链）
     """
     out: list[str] = []
     try:
@@ -428,5 +444,9 @@ def link_shaped_paths(path: str | Path) -> list[str]:
             if c.is_symlink():
                 out.append(str(c))
     except OSError:
-        pass  # 路径解析失败 fail-open：如实返回已收集结果（不阻断正常路径）
-    return out
+        # 路径解析失败 fail-open：如实返回"探测失败"态（不阻断正常路径；
+        # 调用方按语义处置——写面应拒、读面放行）
+        return LinkProbeResult(status="probe_failed")
+    if out:
+        return LinkProbeResult(status="links_found", links=tuple(out))
+    return LinkProbeResult(status="no_links")
