@@ -156,25 +156,101 @@ def test_redline_synthetic_trees(tmp_path):
     assert not any("ok_below_global" in w for w in warns)
 
 
+# ── 守卫读源口径（B2-P2-06 / D-07 机制化）───────────────────────────────────
+# 对 git status 中 M 状态且未 staged 的 src/llm_loop 文件（外部漂移，如
+# factory.py working 1031）回退读 git HEAD 版本——效果：外部漂移不触发守卫红
+# （守卫测 HEAD 1004），真实违规（staged/已提交内容）全量设防。动态判定，
+# 不维护静态清单（防腐化）。
+
+
+def _git_porcelain() -> list[str]:
+    proc = subprocess.run(
+        ["git", "status", "--porcelain"], capture_output=True, text=True, check=True, cwd=ROOT
+    )
+    return proc.stdout.splitlines()
+
+
+def _external_unstaged_src(porcelain: list[str]) -> frozenset[str]:
+    """porcelain 行 → M 状态且不在 staged 集的 src/llm_loop 文件集（纯函数）。
+
+    XY 码：X=staged / Y=worktree。判定 = Y=='M' 且 X 不在 {'M','A'}（' M' 纯
+    外部漂移 → HEAD 口径；'M '/'MM' 含 staged 内容 → working 口径——staged 集
+    是将要提交的现实，守卫必须设防）。
+    """
+    out: list[str] = []
+    for ln in porcelain:
+        if len(ln) > 3 and ln[1] == "M" and ln[0] not in ("M", "A"):
+            path = ln[3:]
+            if path.startswith("src/llm_loop"):
+                out.append(path)
+    return frozenset(out)
+
+
+def _read_source(rel: str) -> str:
+    """守卫读源：外部漂移未 staged 文件回退 `git show HEAD:<rel>`，其余 working。"""
+    if rel in _external_unstaged_src(_git_porcelain()):
+        proc = subprocess.run(
+            ["git", "show", f"HEAD:{rel}"], capture_output=True, text=True, check=True, cwd=ROOT
+        )
+        return proc.stdout
+    return (ROOT / rel).read_text(encoding="utf-8")
+
+
+def test_external_unstaged_pure_classification():
+    """双口径切换纯函数断言面：' M'→HEAD / 'M '/'MM'→working / untracked 与非 src 不计。"""
+    porcelain = [
+        " M src/llm_loop/factory.py",      # 纯外部漂移 → HEAD
+        "M  src/llm_loop/core/prompt.py",  # staged → working
+        "MM src/llm_loop/config.py",       # staged 后又改 → working（含 staged 现实）
+        "?? src/llm_loop/new.py",          # untracked → 不计（守卫测已提交树+staged）
+        " M tests/unit/x.py",              # 非 src/llm_loop → 不计
+        "A  src/llm_loop/added.py",        # 新增 staged → working
+    ]
+    assert _external_unstaged_src(porcelain) == {"src/llm_loop/factory.py"}
+
+
+def test_read_source_dual_caliber_integration():
+    """集成回执：当前 factory.py 为 ' M' 外部漂移 → _read_source 输出 == git show HEAD。
+
+    外部合流入 main 后的处置流程（R-2 预案 / B2-PREP-02 §2.2 衔接，固化为标准动作）：
+    1. 外部直接提交使 HEAD 破基线（如 factory 1031 入库 > 1004）→ 守卫红；
+    2. 登记偏差 D-B2-xx（外部 commit hash + 膨胀量），判定"外部入库膨胀"非 R9 违规
+       （R9 提交链机检 scripts/r9_commit_check.sh 自证清白）；
+    3. EVO 登记 + 交用户裁决协调外部合流节奏——**基线不上调**（裁决 4 无条件）。
+    """
+    show = subprocess.run(
+        ["git", "show", "HEAD:src/llm_loop/factory.py"],
+        capture_output=True, text=True, check=True, cwd=ROOT,
+    ).stdout
+    assert _read_source("src/llm_loop/factory.py") == show, "漂移文件应读 HEAD 口径"
+    # CLEAN 文件读 working（与磁盘一致）
+    assert _read_source("src/llm_loop/core/loop/build.py") == (
+        ROOT / "src/llm_loop/core/loop/build.py"
+    ).read_text(encoding="utf-8")
+
+
 def _measure_functions(root: Path | None = None) -> dict[str, int]:
     """AST 实测函数行数，返回 {key: lines}（R9-DFX-16 单遍解析共享入口）。
 
-    key 形如 'src/llm_loop/...::name'：真实树以 ROOT/src 为基；tmp_path 构造树
-    传入其 src 目录，key 空间与真实树一致（供三层红线/基线检测器直调）。
+    key 形如 'src/llm_loop/...::name'：真实树以 ROOT/src 为基（**走守卫读源口径
+    ——外部漂移未 staged 文件回退 HEAD**，D-07 收口）；tmp_path 构造树传入其
+    src 目录直读文件，key 空间与真实树一致。
     """
     base = root if root is not None else SRC
+    real = root is None
     out: dict[str, int] = {}
     for p in sorted(base.rglob("*.py")):
         if "__pycache__" in str(p):
             continue
+        rel = f"src/{p.relative_to(base).as_posix()}"
         try:
-            tree = ast.parse(p.read_text(encoding="utf-8"))
+            tree = ast.parse(_read_source(rel) if real else p.read_text(encoding="utf-8"))
         except Exception:  # noqa: BLE001 — 语法错误由 lint/CI 负责，守卫不重复报错
             continue
         for n in ast.walk(tree):
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 lines = getattr(n, "end_lineno", n.lineno) - n.lineno + 1
-                out[f"src/{p.relative_to(base).as_posix()}::{n.name}"] = lines
+                out[f"{rel}::{n.name}"] = lines
     return out
 
 
@@ -351,7 +427,7 @@ def test_local_imports_ratchet():
         if not p.exists():
             problems.append(f"  {rel}: 文件不存在（请随拆分提交更新 local_imports 节）")
             continue
-        counted, _exempt, bad_marks = _count_fn_imports(p.read_text(encoding="utf-8"))
+        counted, _exempt, bad_marks = _count_fn_imports(_read_source(rel))
         if bad_marks:
             problems.append(f"  {rel}: {bad_marks} 处非法豁免标记（须 optional|plugin）")
         if counted > cap:
@@ -371,7 +447,7 @@ def test_import_exempt_markers_zero_this_batch():
     for rel in b["local_imports"]:
         p = ROOT / rel
         if p.exists():
-            _, exempt, _ = _count_fn_imports(p.read_text(encoding="utf-8"))
+            _, exempt, _ = _count_fn_imports(_read_source(rel))
             total_marks += exempt
     assert total_marks == 0, f"本批应登记 0 处豁免标记，实测 {total_marks} 处"
 
@@ -463,7 +539,10 @@ def _build_import_graph(root: Path | None = None) -> dict[str, dict[str, set[str
         if mod is None:
             continue
         try:
-            tree = ast.parse(p.read_text(encoding="utf-8"))
+            tree = ast.parse(
+                _read_source(f"src/{p.relative_to(base).as_posix()}") if root is None
+                else p.read_text(encoding="utf-8")
+            )
         except Exception:  # noqa: BLE001
             continue
         v = _ImportGraphBuilder(mod, is_pkg)
