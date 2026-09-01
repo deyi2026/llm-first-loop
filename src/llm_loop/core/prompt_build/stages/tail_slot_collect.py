@@ -255,3 +255,66 @@ def _retire_replay_markers(
         except Exception:  # noqa: BLE001 — observability must not affect build
             logger.debug("build: cache gate observability action failed", exc_info=True)
     return _slots
+
+
+@dataclass(slots=True)
+class TailCollectionOutcome:
+    """尾部槽收集 wiring 产物（B4-CLOSE-01 步C2；一次性消费面）."""
+
+    inject_parts: list[tuple[str | None, str]]
+    tail_msgs: Any
+    defer_refs: list[Any]
+    replay_slots: set[Any]
+
+
+def run_tail_collection(
+    *,
+    sess: Any,
+    memory_msgs: list[Any],
+    r6_ingress_truth: Any,
+    record_action: Any,
+    cache_monitor: Any,
+    current_turn_ref: Any,
+    pending_recovery: Any,
+    interop_tail: Any,
+    tip_tail: Any,
+    defer_refs: list[Any],
+    replay_slots: set[Any],
+    note_defer_replayed: Any,
+) -> TailCollectionOutcome:
+    """持久化/恢复/interop/tip 四路尾部槽收集接线（语义原样迁自 build.py）.
+
+    collect_persisted_and_recovery（P1 9.1 聚合收集）→ tail_msgs
+    原位合并（gate 水印面：interop+tip 合列表）→ consume_tail_slots
+    （一次性消费 + replay 状态机推进）。调用点回写 self 面。
+    """
+    _inject_parts: list[tuple[str | None, str]] = []  # (slot|None=hint, content)——P1 9.1 聚合收集
+    collect_persisted_and_recovery(
+        inject_parts=_inject_parts,
+        current_turn_ref=current_turn_ref,
+        pending_recovery=pending_recovery,
+        memory_msgs=memory_msgs,
+        sess=sess,
+        r6_ingress_truth=r6_ingress_truth,
+        record_action=record_action,
+    )
+    tail_msgs = interop_tail  # 原位合并语义（gate 水印面用：interop+tip 合列表）
+    if tip_tail:
+        tail_msgs = (tail_msgs or []) + tip_tail
+    _outcome = consume_tail_slots(
+        inject_parts=_inject_parts,
+        interop_tail=interop_tail,
+        tip_tail=tip_tail,
+        defer_refs=defer_refs,
+        replay_slots=replay_slots,
+        note_defer_replayed=note_defer_replayed,
+        record_action=record_action,
+        cache_monitor=cache_monitor,
+        session_id=sess.session_id,
+    )
+    return TailCollectionOutcome(
+        inject_parts=_inject_parts,
+        tail_msgs=tail_msgs,
+        defer_refs=_outcome.defer_refs,
+        replay_slots=_outcome.replay_slots,
+    )

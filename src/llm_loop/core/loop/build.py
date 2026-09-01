@@ -79,10 +79,7 @@ from llm_loop.core.prompt_build.stages.tail_assembly import (
     merge_persisted_tail_injections as merge_persisted_tail_injections,  # re-export：test_direction_c_tail_merge 从此导入（零测试改动）
 )
 from llm_loop.core.prompt_build.stages.tail_assembly import run_tail_assembly
-from llm_loop.core.prompt_build.stages.tail_slot_collect import (
-    collect_persisted_and_recovery,
-    consume_tail_slots,
-)
+from llm_loop.core.prompt_build.stages.tail_slot_collect import run_tail_collection
 from llm_loop.core.prompt_build.stages.trace_isolation import run_trace_isolation
 from llm_loop.core.prompt_build.stages.user_truth import (
     run_user_truth_wire,  # noqa: F401 — re-export 兼容面（阶段内部已移 tail_assembly）
@@ -533,38 +530,29 @@ class _BuildMixin:
         # Keep an empty fingerprint field for projection telemetry schema compatibility.
         _evidence_manifest_content = ""
 
-        # B4-C2-04: 尾部槽收集迁 stages/tail_slot_collect（三函数）；授权投影→B4-C3-01 升格 authorization。
-        # self 面写收窄：一次性消费清理/状态机新值由调用点回写；probe/recovery 读点先算传入。
+        # 尾部槽收集 wiring → stages/tail_slot_collect.py::run_tail_collection
+        # （B4-CLOSE-01 步C2；四路槽收集/原位合并/一次性消费语义原样；
+        # self 面读写经参数与 outcome 回接，一次性消费清理留在调用点）。
         _pending_recovery = getattr(self, "_program_recovery_tail_message", None)
         self._program_recovery_tail_message = None
-        _inject_parts: list[tuple[str | None, str]] = []  # (slot|None=hint, content)——P1 9.1 聚合收集
-        collect_persisted_and_recovery(
-            inject_parts=_inject_parts,
-            current_turn_ref=getattr(self, "_current_turn_ref", None),
-            pending_recovery=_pending_recovery,
-            memory_msgs=memory_msgs,
+        _tailc = run_tail_collection(
             sess=sess,
+            memory_msgs=memory_msgs,
             r6_ingress_truth=_r6_ingress_truth,
             record_action=self._record_action,
-        )
-        _interop_tail = getattr(self, "_interop_tail_messages", None)
-        _tip_tail = getattr(self, "_tip_tail_messages", None)
-        tail_msgs = _interop_tail  # 原位合并语义（gate 水印面用：interop+tip 合列表）
-        if _tip_tail:
-            tail_msgs = (tail_msgs or []) + _tip_tail
-        _outcome = consume_tail_slots(
-            inject_parts=_inject_parts,
-            interop_tail=_interop_tail,
-            tip_tail=_tip_tail,
+            cache_monitor=self._cache_monitor,
+            current_turn_ref=getattr(self, "_current_turn_ref", None),
+            pending_recovery=_pending_recovery,
+            interop_tail=getattr(self, "_interop_tail_messages", None),
+            tip_tail=getattr(self, "_tip_tail_messages", None),
             defer_refs=getattr(self, "_deferred_replay_refs", None) or [],
             replay_slots=getattr(self, "_deferred_replay_slots", None) or set(),
             note_defer_replayed=self._note_defer_replayed,
-            record_action=self._record_action,
-            cache_monitor=self._cache_monitor,
-            session_id=sess.session_id,
         )
-        self._deferred_replay_refs = _outcome.defer_refs
-        self._deferred_replay_slots = _outcome.replay_slots
+        _inject_parts = _tailc.inject_parts
+        tail_msgs = _tailc.tail_msgs
+        self._deferred_replay_refs = _tailc.defer_refs
+        self._deferred_replay_slots = _tailc.replay_slots
         self._interop_tail_messages = None  # 一次性消费（每轮重扫 pending）
         self._tip_tail_messages = None  # 经验提示同机制一次性消费（下轮工具执行再注入）
         _identity_cache = getattr(self, "_authorized_task_identity_cache", None)
