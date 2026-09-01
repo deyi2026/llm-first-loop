@@ -27,9 +27,11 @@
 ## 快速开始
 
 ```bash
-# 1. 初始化
+# 1. 初始化（uv 一键安装，lockfile 精确可复现；含 dev 门禁三件套 ruff/pyright/pytest）
 cd llm-first-loop
-python3.13 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+uv sync --frozen --extra dev
+# 无 uv 时退化安装（不保证版本精确一致）：
+# python3.13 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 
 # 2. 配置密钥（LLM_MODEL 缺省默认 deepseek-v4-flash，可不设）
 export LLM_API_KEY=sk-xxx
@@ -47,6 +49,9 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 
 # 5. 测试
 .venv/bin/python -m pytest tests/ -q
+
+# 6. CI 同款三件套门禁（本地一条命令复现；R9-IMM-03 可复现口径）
+.venv/bin/ruff check src tests && .venv/bin/pyright && .venv/bin/python -m pytest tests/ -q
 ```
 
 ## 功能
