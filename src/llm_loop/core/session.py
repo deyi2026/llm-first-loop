@@ -23,6 +23,9 @@ from typing import Any, Literal
 
 from llm_loop.core.message import Message, MessageSource, ToolResultStatus
 from llm_loop.event_log.model import build_message_payload
+from llm_loop.event_log.session_types import (  # noqa: F401 — R9-P3-02 re-export（历史导入路径兼容）
+    SessionIdConflictError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,10 +47,6 @@ def _validate_session_id(session_id: str) -> str:
 
 class SessionMutationBusyError(RuntimeError):
     """目标会话正被 whole-run lease 占用，管理写必须 fail-fast。"""
-
-
-class SessionIdConflictError(RuntimeError):
-    """session_id 已由另一个workspace持有；全局Event/Archive键禁止复用。"""
 
 
 class SessionDeletedError(SessionIdConflictError):

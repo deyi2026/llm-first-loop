@@ -14,31 +14,14 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from llm_loop.event_log.session_types import (  # noqa: F401 — R9-P3-02 re-export（历史导入路径兼容）
+    ForkReport,
+)
+
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class ForkReport:
-    """fork 操作报告（design.md §2.2.2-A）.
-
-    P1-6(2026-08-15，审计发现 #15)：fork 点落在 assistant(tool_calls) 与其 tool
-    回执之间时，自动向前对齐到完整工具轮边界（不产孤儿声明——孤儿声明会在分支
-    下次运行时被配对修复伪造 `[程序异常]` 回执）。``snapped_fork_point`` 为实际
-    生效点（未指定 fork 点时为 None）。
-    """
-
-    new_session_id: str
-    source_session_id: str
-    fork_point: int | None
-    inherited_event_count: int
-    elapsed_ms: float
-    success: bool
-    error: str = ""
-    snapped_fork_point: int | None = None  # 工具轮边界对齐后的实际 fork 点（如实）
 
 
 def _now_iso() -> str:
