@@ -50,8 +50,9 @@ def test_summary_window_widened_2500():
     assert "m" * 4000 not in r.content  # 中部仍省略（如实标注非全文）
 
 
-def test_summary_carries_distill_guidance():
-    """摘要标注带行动指引：先提炼要点再继续 + 最终总结纳入."""
+def test_summary_carries_distill_guidance(monkeypatch):
+    """摘要标注带行动指引：先提炼要点再继续 + 最终总结纳入（on 态机制，R9-P0-01 批 2/3 钉住前提）."""
+    monkeypatch.setenv("LFL_TOOL_GUIDANCE", "on")
     reg = ToolRegistry(summary_threshold=100)
     reg.register(_BigTool("y" * 6000))  # 超首尾窗口（2500+2500）→ 真摘要分支
     r = reg.execute(_call())
@@ -59,8 +60,9 @@ def test_summary_carries_distill_guidance():
     assert "最终总结" in r.content or "最终回答" in r.content
 
 
-def test_hard_truncation_carries_distill_guidance():
-    """硬上限截断标注同样带行动指引（信息零丢失声明保留）."""
+def test_hard_truncation_carries_distill_guidance(monkeypatch):
+    """硬上限截断标注同样带行动指引（信息零丢失声明保留；on 态机制，R9-P0-01 批 2/3 钉住前提）."""
+    monkeypatch.setenv("LFL_TOOL_GUIDANCE", "on")
     reg = ToolRegistry(summary_threshold=10_000_000, max_output_chars=2000)
     reg.register(_BigTool("z" * 5000))
     r = reg.execute(_call())

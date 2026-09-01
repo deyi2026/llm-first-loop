@@ -62,6 +62,7 @@ def test_hot_large_evidence_is_excerpt_not_forced_full():
 def test_enforce_read_file_captures_before_projection_and_hydrates_hidden_middle(
     tmp_path, monkeypatch
 ):
+    monkeypatch.setenv("LFL_EVIDENCE_CAPSULE", "on")  # R9-P0-01 批 1/3：on 态机制测试钉住前提
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "legacy-data"))
     path = tmp_path / "large.txt"
     marker = "MIDDLE_ONLY_IN_EVIDENCE_314159"
@@ -140,7 +141,10 @@ def test_enforce_capture_failure_preserves_side_effect_action_truth_and_does_not
     assert len(result.content) < 1500
 
 
-def test_enforce_structured_metadata_is_preserved_but_only_capsule_is_model_visible(tmp_path):
+def test_enforce_structured_metadata_is_preserved_but_only_capsule_is_model_visible(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("LFL_EVIDENCE_CAPSULE", "on")  # R9-P0-01 批 1/3：on 态机制测试钉住前提
     _, _, enforcer = _enforcer(tmp_path, projection_budget_chars=500)
 
     class Tool:
@@ -266,6 +270,7 @@ def test_enforce_full_true_is_still_bounded_and_recoverable(tmp_path, monkeypatc
 def test_enforce_large_execute_command_does_not_create_legacy_command_sidecar(
     tmp_path, monkeypatch
 ):
+    monkeypatch.setenv("LFL_EVIDENCE_CAPSULE", "on")  # R9-P0-01 批 1/3：on 态机制测试钉住前提
     import shlex
     import sys
 

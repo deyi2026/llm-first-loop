@@ -141,7 +141,8 @@ def test_registry_preflight_does_not_execute_known_bad_web_fetch_domain():
     assert result.recovery_advice.preferred_skill == "web-fetch-fast"
 
 
-def test_typed_recovery_replaces_generic_failure_guidance():
+def test_typed_recovery_replaces_generic_failure_guidance(monkeypatch):
+    monkeypatch.setenv("LFL_TOOL_GUIDANCE", "on")  # R9-P0-01 批 2/3：on 态机制测试钉住前提
     advice = ToolRecoveryAdvice(
         failure_class="url_not_found",
         retry_same_tool="no",
@@ -223,6 +224,7 @@ def test_engine_enforce_projects_web_fetch_only_when_current_task_needs_it(build
 
 def test_mcp_zero_capability_closes_connection_and_registers_nothing(monkeypatch):
     import json
+
     import llm_loop.tools.mcp_client as mcp
 
     conn = _FakeMcpConn([])
@@ -279,6 +281,7 @@ def test_generic_writing_request_does_not_open_web_fetch():
 
 def test_mcp_nonempty_list_but_zero_valid_registrations_closes_connection(monkeypatch):
     import json
+
     import llm_loop.tools.mcp_client as mcp
 
     conn = _FakeMcpConn([mcp.McpToolDef(name="bad", description="bad", input_schema={})])

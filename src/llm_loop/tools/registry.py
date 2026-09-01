@@ -27,18 +27,19 @@ logger = logging.getLogger(__name__)
 
 
 def _tool_guidance_mode() -> str:
-    """R8.24-C C-1.1（C-D2）: 工具回执建议源渲染模式（三态；默认 on=现状注入零变化）.
+    """R8.24-C C-1.1（C-D2）: 工具回执建议源渲染模式（三态）.
 
-    四建议源: _FAILURE_GUIDANCE / ToolRecoveryAdvice.render() / guidance_extra /
+    建议源四类: _FAILURE_GUIDANCE / ToolRecoveryAdvice.render() / guidance_extra /
     _DISTILL_GUIDANCE。typed recovery 分类与 metadata["tool_recovery"]（failure_class
     输入面，B 包熔断计数依赖）全路径保留，不受本开关影响。
 
-    - "on"（默认）: 四源照旧投影（行为零变化）
-    - "shadow":     建议文本照旧投影 + 记 shadow 观测事件（不进上下文，观测期对账）
-    - "off":        四源模型可见 chars=0（enforce 态）
+    - "on":        四源照旧投影
+    - "shadow":    建议文本照旧投影 + 记 shadow 观测事件（不进上下文，观测期对账）
+    - "off"（默认，R9-P0-01 批 2/3 切换 2026-09-01，前置=C 包 shadow 期指标达标）:
+                  四源模型可见 chars=0（enforce 态）
     """
-    raw = (os.environ.get("LFL_TOOL_GUIDANCE", "on") or "on").strip().lower()
-    return raw if raw in {"on", "shadow", "off"} else "on"
+    raw = (os.environ.get("LFL_TOOL_GUIDANCE", "off") or "off").strip().lower()
+    return raw if raw in {"on", "shadow", "off"} else "off"
 
 
 def _emit_guidance_shadow_event(

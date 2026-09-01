@@ -26,7 +26,6 @@ sk- 虚构样例说明: 本文件沿用 test_cache_block_reclassification.py 先
 from __future__ import annotations
 
 import inspect
-from pathlib import Path
 
 import pytest
 
@@ -71,12 +70,12 @@ class TestFinalGateSwitchDefaults:
       态承载测试证明，切换动作属生产配置变更，不属本验收测量权限）。
     """
 
-    def test_tool_guidance_default_on(self, monkeypatch):
-        """H3 开关面: LFL_TOOL_GUIDANCE 默认 on=四建议源照旧投影（enforce 切换未发生）."""
+    def test_tool_guidance_default_off_enforced(self, monkeypatch):
+        """H3 开关面: LFL_TOOL_GUIDANCE 默认 off=最终治理态（批 2/3 切换，R9-P0-01）."""
         from llm_loop.tools.registry import _tool_guidance_mode
 
         _clear_gates_env(monkeypatch)
-        assert _tool_guidance_mode() == "on"
+        assert _tool_guidance_mode() == "off"
 
     def test_evidence_capsule_default_off_enforced(self, monkeypatch):
         """H4 开关面: LFL_EVIDENCE_CAPSULE 默认 off=最终治理态（批 1/3 切换，R9-P0-01）."""
@@ -173,7 +172,6 @@ class TestH1NormalTurnWireZeroProgramProse:
 
     def test_normal_tool_success_turn_zero_program_prose(self, tmp_path, monkeypatch):
         from llm_loop.llm.client import LLMResponse
-
         from tests.unit.test_err1210_recovery import _mk
 
         target = tmp_path / "normal.txt"
@@ -217,8 +215,8 @@ class TestH3H4H6MechanismReadyAndCurrentState:
 
     # ── H3: tool result advisory-prose ──
 
-    def test_h3_default_failure_receipt_advisory_present(self, monkeypatch):
-        """H3 现状登记: 默认态失败回执 advisory 在场（终验实测 FAIL 的常驻证据）."""
+    def test_h3_default_failure_receipt_advisory_absent(self, monkeypatch):
+        """H3 现状登记: 默认态失败回执 advisory chars=0（批 2/3 切换后现状）."""
         _clear_gates_env(monkeypatch)
         result = ToolResult(
             status=ToolResultStatus.FAILURE,
@@ -227,7 +225,7 @@ class TestH3H4H6MechanismReadyAndCurrentState:
             tool_name="read_file",
         )
         msg = tool_result_to_message(result)
-        assert "可选项（判断归你）" in msg.content
+        assert "可选项（判断归你）" not in msg.content
 
     def test_h3_off_mode_advisory_chars_zero_mechanism_ready(self, monkeypatch):
         """H3 机制 READY: off 态同一回执 advisory chars=0（复核对既有承载的抽样）."""

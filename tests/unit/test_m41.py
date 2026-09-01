@@ -56,8 +56,9 @@ def test_not_truncated_keeps_declaration_check(build_test_engine, fake_settings)
     assert result.verification_note is None or "声明" in str(result.verification_note)
 
 
-def test_failure_guidance_appended():
-    """工具 failure 回执追加引导段（错误类型 + 建议换用工具/重试）."""
+def test_failure_guidance_appended(monkeypatch):
+    """工具 failure 回执追加引导段（错误类型 + 建议换用工具/重试；on 态机制，R9-P0-01 批 2/3 钉住前提）."""
+    monkeypatch.setenv("LFL_TOOL_GUIDANCE", "on")
     result = ToolResult(
         status=ToolResultStatus.FAILURE,
         content="[工具不存在] 未注册的工具 'xyz'",

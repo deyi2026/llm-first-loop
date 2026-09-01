@@ -187,15 +187,15 @@ class TestCG1CG4GuidanceExit:
             "tool_guidance_shadow" in r.message for r in caplog.records
         )  # shadow 观测事件在场
 
-    def test_tristate_invalid_falls_back_on(self, monkeypatch):
+    def test_tristate_invalid_falls_back_off(self, monkeypatch):
         from llm_loop.tools.registry import _tool_guidance_mode
 
         monkeypatch.setenv("LFL_TOOL_GUIDANCE", "garbage")
-        assert _tool_guidance_mode() == "on"
+        assert _tool_guidance_mode() == "off"
         monkeypatch.setenv("LFL_TOOL_GUIDANCE", "shadow")
         assert _tool_guidance_mode() == "shadow"
-        monkeypatch.setenv("LFL_TOOL_GUIDANCE", "off")
-        assert _tool_guidance_mode() == "off"
+        monkeypatch.setenv("LFL_TOOL_GUIDANCE", "on")
+        assert _tool_guidance_mode() == "on"
 
 
 class TestCG5VariantInstructions:

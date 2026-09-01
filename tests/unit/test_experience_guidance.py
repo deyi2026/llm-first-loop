@@ -10,8 +10,16 @@
 """
 from __future__ import annotations
 
+import pytest
+
 from llm_loop.core.message import ToolCall, ToolResultStatus
 from llm_loop.tools.registry import ToolRegistry, tool_result_to_message
+
+
+@pytest.fixture(autouse=True)
+def _pin_tool_guidance_on(monkeypatch):
+    """R9-P0-01 批 2/3：生产默认 LFL_TOOL_GUIDANCE 已翻 off；本文件为 on 态机制测试，钉住 on 前提（机制语义不变）."""
+    monkeypatch.setenv("LFL_TOOL_GUIDANCE", "on")
 
 
 def _fail_call():
