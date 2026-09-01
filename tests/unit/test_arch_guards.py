@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -234,49 +235,222 @@ def test_new_large_functions_must_be_recorded(measured: dict[str, int] | None = 
     )
 
 
+_IMPORT_EXEMPT_RE = re.compile(r"#\s*r9-import-exempt:\s*(\w+)\s*$")
+
+
+def _is_type_checking(test: ast.expr) -> bool:
+    """TYPE_CHECKING 判定：裸 Name 或 typing.TYPE_CHECKING 属性形态。"""
+    if isinstance(test, ast.Name) and test.id == "TYPE_CHECKING":
+        return True
+    return (
+        isinstance(test, ast.Attribute)
+        and test.attr == "TYPE_CHECKING"
+        and isinstance(test.value, ast.Name)
+        and test.value.id == "typing"
+    )
+
+
+def _count_fn_imports(source: str) -> tuple[int, int, int]:
+    """函数内 import 计数：返回 (未豁免计数, 豁免计数, 非法标记数)。纯函数供单测直调。
+
+    口径（B2-P2-04 / D2 裁定）：
+    - 只计 FunctionDef/AsyncFunctionDef 直接体内（含嵌套函数）的 Import/ImportFrom；
+    - **不进入嵌套类**（depth>0 时 ClassDef 子树整体跳过）；模块级类方法天然不计；
+    - 排除 `if TYPE_CHECKING:` 块（静态类型面，非运行时 import）；
+    - 行内 `# r9-import-exempt: optional|plugin` 标记的 import 计入豁免桶不占棘轮
+      （豁免仅两类语义：optional 依赖 try/except、registry 延迟插件加载）。
+    """
+    lines = source.splitlines()
+    v = _FnImportCounter(lines)
+    v.visit(ast.parse(source))
+    return v.counted, v.exempt, v.bad_marks
+
+
+class _FnImportCounter(ast.NodeVisitor):
+    def __init__(self, lines: list[str]) -> None:
+        self.lines = lines
+        self.depth = 0
+        self.counted = 0
+        self.exempt = 0
+        self.bad_marks = 0
+        self._tc = 0
+
+    def visit_FunctionDef(self, n: ast.FunctionDef) -> None:  # noqa: N802
+        self.depth += 1
+        self.generic_visit(n)
+        self.depth -= 1
+
+    visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[method-assign]  # noqa: N802
+
+    def visit_ClassDef(self, n: ast.ClassDef) -> None:  # noqa: N802
+        if self.depth > 0:
+            return  # 不进入嵌套类
+        self.generic_visit(n)
+
+    def visit_If(self, n: ast.If) -> None:  # noqa: N802
+        if _is_type_checking(n.test):
+            self._tc += 1
+            self.generic_visit(n)
+            self._tc -= 1
+        else:
+            self.generic_visit(n)
+
+    def _mark_class(self, lineno: int) -> str | None:
+        m = _IMPORT_EXEMPT_RE.search(self.lines[lineno - 1]) if lineno - 1 < len(self.lines) else None
+        if m is None:
+            return None
+        return m.group(1) if m.group(1) in ("optional", "plugin") else "INVALID"
+
+    def visit_Import(self, n: ast.Import) -> None:  # noqa: N802
+        self._hit(n)
+
+    def visit_ImportFrom(self, n: ast.ImportFrom) -> None:  # noqa: N802
+        self._hit(n)
+
+    def _hit(self, n: ast.AST) -> None:
+        if self.depth <= 0 or self._tc > 0:
+            return
+        mark = self._mark_class(getattr(n, "lineno", 0))
+        if mark is None:
+            self.counted += 1
+        elif mark == "INVALID":
+            self.bad_marks += 1
+        else:
+            self.exempt += 1
+
+
+def test_import_counter_semantics():
+    """豁免标记解析 + 差值核对口径单测（tmp 源码字符串直调，覆盖四形态）。"""
+    src = (
+        "import os\n"                                    # 模块级 → 不计
+        "from typing import TYPE_CHECKING\n"
+        "if TYPE_CHECKING:\n"
+        "    from x import A\n"                          # TC 块 → 不计
+        "def f():\n"
+        "    import json\n"                              # 函数内未豁免 → counted
+        "    import yaml  # r9-import-exempt: optional\n"  # 豁免桶
+        "    from z import w  # r9-import-exempt: plugin\n"  # 豁免桶
+        "    class Inner:\n"
+        "        def m(self):\n"
+        "            import io\n"                        # 嵌套类 → 不计
+        "    def g():\n"
+        "        import re\n"                            # 嵌套函数 → counted
+        "    import q  # r9-import-exempt: wrongclass\n"  # 非法标记
+    )
+    counted, exempt, bad = _count_fn_imports(src)
+    assert counted == 2, f"未豁免计数应为 2（json/re），实测 {counted}"
+    assert exempt == 2 and bad == 1
+
+
 def test_local_imports_ratchet():
     """五文件函数内 import 总量 ≤ 基线（D2 裁定：文件级总量棘轮，分函数不登记）。"""
     b = _load_baseline()
-
-    class _FnImportCounter(ast.NodeVisitor):
-        def __init__(self) -> None:
-            self.depth = 0
-            self.count = 0
-
-        def visit_FunctionDef(self, n: ast.FunctionDef) -> None:  # noqa: N802
-            self.depth += 1
-            self.generic_visit(n)
-            self.depth -= 1
-
-        visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[method-assign]  # noqa: N802
-
-        def visit_Import(self, n: ast.Import) -> None:  # noqa: N802
-            if self.depth > 0:
-                self.count += 1
-
-        def visit_ImportFrom(self, n: ast.ImportFrom) -> None:  # noqa: N802
-            if self.depth > 0:
-                self.count += 1
-
     problems = []
     for rel, cap in b["local_imports"].items():
         p = ROOT / rel
         if not p.exists():
             problems.append(f"  {rel}: 文件不存在（请随拆分提交更新 local_imports 节）")
             continue
-        v = _FnImportCounter()
-        v.visit(ast.parse(p.read_text(encoding="utf-8")))
-        if v.count > cap:
-            problems.append(f"  {rel}: {cap} → {v.count}（函数内 import 只减不增——豁免仅 optional/plugin 行内标记）")
+        counted, _exempt, bad_marks = _count_fn_imports(p.read_text(encoding="utf-8"))
+        if bad_marks:
+            problems.append(f"  {rel}: {bad_marks} 处非法豁免标记（须 optional|plugin）")
+        if counted > cap:
+            problems.append(
+                f"  {rel}: {cap} → {counted}（函数内 import 只减不增——豁免仅 optional/plugin 行内标记）"
+            )
+        if cap == 0 and counted > _exempt:  # 值=0 收口目标键：实测 ≤ 豁免标记数
+            problems.append(f"  {rel}: 收口目标键实测 {counted} > 豁免标记 {_exempt}")
     assert not problems, "local_imports 超基线：\n" + "\n".join(problems)
 
 
-def test_baseline_ratchet_not_raised():
-    """防篡改层 2（全节）：基线 JSON 任何数值较 git HEAD 上升即 FAIL（无论实测）。
+def test_import_exempt_markers_zero_this_batch():
+    """本批豁免标记登记 0 处（D2 裁定：存量五键为总量基线，逐处语义标注留待
+    Phase 4/6/7 域收口时随拆分登记——标注即行为判断，不提前批量标注）。"""
+    b = _load_baseline()
+    total_marks = 0
+    for rel in b["local_imports"]:
+        p = ROOT / rel
+        if p.exists():
+            _, exempt, _ = _count_fn_imports(p.read_text(encoding="utf-8"))
+            total_marks += exempt
+    assert total_marks == 0, f"本批应登记 0 处豁免标记，实测 {total_marks} 处"
 
-    新键允许（新登记 = 一次可见的 guard(r9) 提交）；同键上调 = FAIL。
-    known_cycles 长度较 HEAD 增加即 FAIL（环只减不增）。
+
+def _numeric_raises(head_base: dict[str, Any], cur_base: dict[str, Any]) -> list[str]:
+    """纯函数：基线数值节同键上调检测（v1/v2 兼容）——棘轮测试与篡改负例单测直调。
+
+    - v2（schema≥2）：三数值节同键上调 + known_cycles 长度增加 → 逐条列出
+    - v1（迁移视图）：functions ∩（function_lines ∪ legacy）同键上调；
+      known_cycles 在 v1 无登记，初登记属 bootstrap 非增长
+    - 下降与新键放行（收紧/登记 = 一次可见的 guard(r9) 提交）
     """
+    problems: list[str] = []
+    head_schema = head_base.get("_meta", {}).get("schema", 1)
+    if head_schema < 2:
+        merged = dict(cur_base.get("function_lines", {}))
+        merged.update(cur_base.get("legacy_super_functions", {}))
+        for k, head_v in head_base.get("functions", {}).items():
+            if k in merged and merged[k] > head_v:
+                problems.append(f"  {k}: {head_v} → {merged[k]}（+{merged[k] - head_v}）")
+        return problems
+    for sec in NUMERIC_SECTIONS:
+        head_sec = head_base.get(sec, {})
+        cur_sec = cur_base.get(sec, {})
+        for k, head_v in head_sec.items():
+            if k in cur_sec and cur_sec[k] > head_v:
+                problems.append(f"  {sec}[{k}]: {head_v} → {cur_sec[k]}（+{cur_sec[k] - head_v}）")
+    head_cycles = len(head_base.get("known_cycles", []))
+    cur_cycles = len(cur_base.get("known_cycles", []))
+    if cur_cycles > head_cycles:
+        problems.append(f"  known_cycles: {head_cycles} → {cur_cycles}（环只减不增）")
+    return problems
+
+
+def test_baseline_tamper_negative_cases():
+    """[任何修改基线常量使其上调的提交] → [CI FAIL + 评审拒绝]（R9-P2-03b 断言面）。
+
+    纯函数直调模拟篡改：三数值节同键上调与环登记增加必须全部检出；
+    下降与新键放行（合法收紧/登记通道）；v1→v2 迁移视图同检。
+    """
+    head = {
+        "_meta": {"schema": 2},
+        "function_lines": {"src/x.py::f": 100},
+        "legacy_super_functions": {"src/y.py::g": 700},
+        "local_imports": {"src/y.py": 10},
+        "known_cycles": ["x<->y"],
+    }
+    tampered = {
+        "_meta": {"schema": 2},
+        "function_lines": {"src/x.py::f": 101},
+        "legacy_super_functions": {"src/y.py::g": 701},
+        "local_imports": {"src/y.py": 11},
+        "known_cycles": ["x<->y", "x<->z"],
+    }
+    raises = _numeric_raises(head, tampered)
+    joined = "\n".join(raises)
+    assert "function_lines[src/x.py::f]" in joined and "101" in joined
+    assert "legacy_super_functions[src/y.py::g]" in joined and "701" in joined
+    assert "local_imports[src/y.py]" in joined and "11" in joined
+    assert "known_cycles" in joined and "环只减不增" in joined
+
+    # 下降 + 新键登记 + 环清空 → 全放行（合法通道）
+    legit = {
+        "_meta": {"schema": 2},
+        "function_lines": {"src/x.py::f": 90, "src/new.py::h": 130},
+        "legacy_super_functions": {"src/y.py::g": 699},
+        "local_imports": {"src/y.py": 10},
+        "known_cycles": [],
+    }
+    assert _numeric_raises(head, legit) == []
+
+    # v1 迁移视图：functions 同键上调检出（迁移期不放松防篡改）
+    v1_head = {"functions": {"src/x.py::f": 100}}
+    v1_check = {"function_lines": {"src/x.py::f": 105}, "legacy_super_functions": {}}
+    assert any("105" in r for r in _numeric_raises(v1_head, v1_check))
+
+
+def test_baseline_ratchet_not_raised():
+    """防篡改层 2（全节）：基线 JSON 任何数值较 git HEAD 上升即 FAIL（无论实测）。"""
     rel = BASELINE_PATH.relative_to(ROOT).as_posix()
     try:
         proc = subprocess.run(
@@ -290,30 +464,7 @@ def test_baseline_ratchet_not_raised():
     except (subprocess.CalledProcessError, json.JSONDecodeError):
         pytest.skip(f"基线文件尚未提交到 git（{rel}），提交后棘轮生效")
 
-    cur = _load_baseline()
-    problems = []
-    head_schema = head_base.get("_meta", {}).get("schema", 1)
-    if head_schema < 2:
-        # v1→v2 迁移期：v1 无分节结构。数值键 = v1 "functions" ∩ v2
-        # （function_lines + legacy 合并视图）同键上调检查；known_cycles 在 v1
-        # 无登记，v2 初次登记两环属 bootstrap 而非增长——跳过长度比对
-        # （迁移提交本身即 guard(r9) 可见动作）。
-        merged = dict(cur.get("function_lines", {}))
-        merged.update(cur.get("legacy_super_functions", {}))
-        for k, head_v in head_base.get("functions", {}).items():
-            if k in merged and merged[k] > head_v:
-                problems.append(f"  {k}: {head_v} → {merged[k]}（+{merged[k] - head_v}）")
-    else:
-        for sec in NUMERIC_SECTIONS:
-            head_sec = head_base.get(sec, {})
-            cur_sec = cur.get(sec, {})
-            for k, head_v in head_sec.items():
-                if k in cur_sec and cur_sec[k] > head_v:
-                    problems.append(f"  {sec}[{k}]: {head_v} → {cur_sec[k]}（+{cur_sec[k] - head_v}）")
-        head_cycles = len(head_base.get("known_cycles", []))
-        cur_cycles = len(cur.get("known_cycles", []))
-        if cur_cycles > head_cycles:
-            problems.append(f"  known_cycles: {head_cycles} → {cur_cycles}（环只减不增）")
+    problems = _numeric_raises(head_base, _load_baseline())
     assert not problems, (
         "基线被上调（棘轮只允许下降）。如为有意放宽，请走 exemptions（reason + deadline），"
         "不要直接改基线值：\n" + "\n".join(problems)
