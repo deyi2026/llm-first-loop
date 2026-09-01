@@ -87,6 +87,7 @@ except Exception:  # noqa: BLE001 — fail-open 回退平铺聚合（零回归�
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.prompt import build_system_prompt
 from llm_loop.core.prompt_build import BuildDecision
+from llm_loop.core.prompt_build.stages.trace_isolation import run_trace_isolation
 from llm_loop.core.session_snapshot import build_session_snapshot_text
 
 
@@ -697,131 +698,22 @@ class _BuildMixin:
                     "stale_history_filtered",
                     f"count={_stale_recovery_count}",
                 )
-        # agent_trace_leak 4.2: α 挂载点——user 消息投影进 provider 视图前泄漏检测
-        # （纯 metadata 单遍，≤1ms；fail-open；处置仅视图层：失真消息剔除，
-        # 会话存储原文零改动，spec 5.4.1-3）。
-        # R8.24-D D-D1（DT-1.1）: 处置面按 LFL_LEAK_QUARANTINE 三态分流——
-        # off（默认，enforce）：mislabel 剔除 + write_quarantine 隔离 + leak.quarantined
-        # 事件（event+UI 双通道，不进 sess.messages——沿 B 包 E19 通知面惯例）+
-        # provider chars=0（不再以 REFERENCE appendix 身份回喂）；
-        # shadow：回喂照旧 + leak.would_quarantine 计数事件（行为零变化）；
-        # on：现状回喂（回滚通道，回滚期结束后整段退役）。
-        _leak_downgrade_parts: list[tuple[str | None, str]] = []
-        try:
-            from llm_loop.core.injection_labels import InjectionLayer as _TLLayer
-            from llm_loop.core.injection_labels import render_program_appendix as _rpax
-            from llm_loop.core.trace_leak import leak_events as _tle
-            from llm_loop.core.trace_leak.leak_detector import detect_leak_at_build
-            from llm_loop.core.trace_leak.leak_events import (
-                LEAK_QUARANTINED,
-                LEAK_WOULD_QUARANTINE,
-                current_quarantine_mode,
-            )
-            from llm_loop.core.trace_leak.leak_events import (
-                write_quarantine as _write_quarantine,
-            )
-            from llm_loop.core.trace_leak.trace_signature import (
-                content_matches_signature,
-                current_signature_mode,
-            )
-
-            _quarantine_mode = current_quarantine_mode()
-            _findings = detect_leak_at_build(
-                base,
-                session_id=sess.session_id,
-                current_ingress=_r6_ingress_truth,
-            )
-            if _findings:
-                _drop_ids: set[int] = set()
-                for _f in _findings:
-                    if (
-                        _f.action == "downgrade_to_appendix"
-                        and 0 <= _f.message_ref < len(base)
-                    ):
-                        _m = base[_f.message_ref]
-                        _drop_ids.add(id(_m))
-                        _leak_content = str(_m.content or "")
-                        if _quarantine_mode == "off":
-                            # D-D1 quarantine 承接：隔离留痕（0600）+ 事件（不含原文，
-                            # sha1/preview≤200/basis）+ UI 提示；不自动回喂、不一键转正。
-                            _write_quarantine(
-                                LEAK_QUARANTINED,
-                                session_id=sess.session_id,
-                                content=_leak_content,
-                                basis=(
-                                    "build α hook：确认 mislabel 的程序内容隔离"
-                                    f"（{_f.basis}；不降级注入，provider chars=0）"
-                                ),
-                            )
-                            _tle.emit_leak_event(
-                                LEAK_QUARANTINED,
-                                entry="build.leak_detector",
-                                session_id=sess.session_id,
-                                content=_leak_content,
-                                basis=(
-                                    "确认 mislabel 内容改 quarantine 承接"
-                                    "（有条内容被隔离，可在 trace_leak_quarantine "
-                                    "区复核；不进本轮 prompt）"
-                                ),
-                                extra={
-                                    "provider_chars": 0,
-                                    "quarantine_mode": _quarantine_mode,
-                                },
-                                sink=self._event_append,
-                            )
-                        else:
-                            if _quarantine_mode == "shadow":
-                                # shadow 计数：行为与现状零变化，仅记录 would_quarantine
-                                _tle.emit_leak_event(
-                                    LEAK_WOULD_QUARANTINE,
-                                    entry="build.leak_detector",
-                                    session_id=sess.session_id,
-                                    content=_leak_content,
-                                    basis=(
-                                        "shadow 计数：若 enforce 本条将 quarantine"
-                                        "（现状回喂照旧，行为零变化）"
-                                    ),
-                                    extra={
-                                        "chars": len(_leak_content),
-                                        "quarantine_mode": _quarantine_mode,
-                                    },
-                                    sink=self._event_append,
-                                )
-                            _leak_downgrade_parts.append(
-                                (
-                                    "leak_downgrade",
-                                    _rpax(_leak_content, _TLLayer.REFERENCE),
-                                )
-                            )
-                if _drop_ids:
-                    base = [_m for _m in base if id(_m) not in _drop_ids]
-                    _base_original_indices = [
-                        _original_base_index_by_id[id(_m)]
-                        for _m in base
-                        if id(_m) in _original_base_index_by_id
-                    ]
-            # 特征兜底（默认 off；warn 仅告警不改视图，spec 5.4.1-2；
-            # 人类凭据消息豁免，spec 5.4.3-2）
-            if current_signature_mode() == "warn":
-                from llm_loop.core.trace_leak import leak_events as _tle
-
-                for _m in base:
-                    _md = getattr(_m, "metadata", None) or {}
-                    if (
-                        getattr(_m, "role", None) == "user"
-                        and _md.get("origin_layer") == "user_instruction"
-                        and not _md.get("ingress_channel")
-                        and content_matches_signature(getattr(_m, "content", ""))
-                    ):
-                        _tle.emit_leak_event(
-                            _tle.LEAK_SIGNATURE_WARNED,
-                            entry="build.trace_signature",
-                            session_id=sess.session_id,
-                            content=str(getattr(_m, "content", "") or ""),
-                            basis="思考过程标记 + 工具调用命令组合特征命中（warn 仅告警不拦截）",
-                        )
-        except Exception:  # noqa: BLE001 — 检测层 fail-open（spec 5.4.3-1）
-            logger.warning("build α 挂载点泄漏检测异常（fail-open 放行）", exc_info=True)
+        # agent_trace_leak 4.2 α 挂载点 → stages/trace_isolation.py（KEEP-HARD 薄接线；
+        # 三态分流 D-D1 / fail-open spec 5.4.3-1 语义原样；本体在 core/trace_leak/）
+        base, _base_original_indices = run_trace_isolation(
+            base,
+            base_indices=_base_original_indices,
+            index_by_id=_original_base_index_by_id,
+            sess=sess,
+            current_ingress=_r6_ingress_truth,
+            event_sink=self._event_append,
+            decision=decision,
+        )
+        _leak_downgrade_parts = (
+            decision.trace_isolation["downgrade_parts"]
+            if decision.trace_isolation
+            else []
+        )
         # P1 遥测内容/传输分层（2026-08-25）: legacy 历史（旧会话已把 ⚡ 缓存命中率
         # 行写进 assistant 正文）与模型伪造行——build 提交视图一律剥离（正文=纯回答；
         # 权威遥测走 metadata.cache_health → transport 渲染）。剥离只影响提交视图，
