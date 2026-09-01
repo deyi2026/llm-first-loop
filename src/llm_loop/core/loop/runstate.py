@@ -68,6 +68,54 @@ class _RunState:
     program_recovery_tail_message: Message | None = None
 
 
+@dataclass
+class RunState:
+    """单次 run 的显式状态对象（R9-P5-03 显式状态流；B5-W1-01 冻结字段面）.
+
+    与 per-session 桶 ``_RunState`` 的生命周期区分：桶字段跨 run 保留
+    （快照节流/恢复序号/turn 身份——P0-5/T5 串台修复语义），本对象随单次
+    run 创建销毁（design §T6-A/创建销毁策略）。七 service（RunCoordinator/
+    TerminationController/ToolCycle/RunFinalizer…）组件间通信一律经此对象，
+    禁止直接读写 engine 实例属性（design §469 拦截判据）。
+
+    字段面 = ``_run_stream_inner`` 前段 :310-:497 局部态收编（B5-W1-01 冻结；
+    切换渐进：tool_trace 可变对象先行真绑定，其余字段随波次 W1-02+ 逐项接管，
+    接管前函数内裸局部仍是真相源——本对象持同值初值镜像）。
+    """
+
+    # ── 轮次与终止（TerminationController authority 面，W1-02 接管）──
+    rounds: int = 0
+    run_end_reason: str = "completed"  # 各结束分支标记；统一出口 run.end 事件用
+    cancel_reason: str = ""  # ""=未取消；user_stop/runner_stop（结构化可审计）
+    # ── 停滞与预警（:328-:338 run 开始重置语义；W1-02 经 TerminationController 消费；
+    #    接管前桶（shim）为真相源，本字段仅持同值初值）──
+    stagnation_state: dict = field(
+        default_factory=lambda: {
+            "fp": None,
+            "count": 0,
+            "reminded": False,
+            "empty_count": 0,
+            "empty_reminded": False,
+        }
+    )
+    context_warning_injected: bool = False
+    # ── 工具循环（ToolCycle authority 面；W1-01 即真绑定——list 可变对象同源）──
+    tool_trace: list[dict] = field(default_factory=list)
+    # ── 收尾产出（RunFinalizer authority 面，W4-01 接管）──
+    final_answer: str = ""
+    verification_note: str | None = None
+    truncation_noted: bool = False
+    resp: Any = None  # M20 THK-04: 最终回答轮思考链来源（异常/停滞路径 None）
+    # ── KPI 观测（_KpiMixin 消费面，W5-02 评估裁决时接管）──
+    run_started_at: float = 0.0
+    model_used: str = ""  # M51: 本轮实际使用的模型标签（每轮 LLM 调用时刷新）
+    tokens_in: int = 0  # M52
+    tokens_out: int = 0
+    tokens_cache_hit: int = 0  # M58: 前缀缓存命中 token（省钱可观测）
+    llm_ms_total: float = 0.0  # M59: LLM 调用总耗时（首 token 埋点聚合）
+    ttft_first_ms: float | None = None  # M59: 首个 token 延迟
+
+
 class _RunStateMixin:
     """per-run 状态属性 shim（接口不变，落到当前会话桶；审计发现 #7 串台修复）."""
 
