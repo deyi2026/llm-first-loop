@@ -46,7 +46,6 @@ from llm_loop.core.loop.err1210 import (
     content_prefix_sha,
 )
 from llm_loop.core.loop.focus import _INJECTION_PREFIX, build_task_anchor, wrap_injection
-from llm_loop.core.loop.hotcard import write_hotcard
 from llm_loop.core.program_recovery import (
     PROGRAM_RECOVERY_SLOT,
     is_program_recovery_message,
@@ -82,7 +81,8 @@ except Exception:  # noqa: BLE001 — fail-open 回退平铺聚合（零回归�
 # 顶层 import 不再触发循环：build→engine 运行时反向边删除（步2/3 断环点），engine→build 正向边保留
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.prompt import build_system_prompt
-from llm_loop.core.prompt_build import BuildDecision
+from llm_loop.core.prompt_build import BuildAudit, BuildDecision
+from llm_loop.core.prompt_build.stages.compaction_audit import run_compaction_audit
 from llm_loop.core.prompt_build.stages.projection_gate import (
     GATE_STATE_UNSET,
     run_projection_gate,
@@ -2038,32 +2038,17 @@ class _BuildMixin:
                 self._record_action("run.cache_gate", "drift", self._cache_gate_hint)
         except Exception:  # noqa: BLE001 — 门禁失败 fail-open
             self._cache_gate_hint = None
-        # R8.17/E10: compression is program/runtime state.  R3 retired automatic key-fact
-        # replay and R8.17 retires compression/fold status prose itself, so the old
-        # "关键事实帧缺失 => warn" check is no longer a valid health signal.  Record the
-        # actual compact-view statistics instead; search_archive remains the retrieval path
-        # advertised by the stable system prompt.
-        with contextlib.suppress(Exception):
-            if decision.compacted:  # P1-01: locals().get 显式化（缺省 False 语义不变）
-                _built_chars = sum(len(m.get("content", "")) for m in built)
-                _compact_stats = compact_view_box[0] if compact_view_box else {}
-                _pre_chars = _compact_stats.get("pre_chars", decision.pre_chars_fallback)
-                _post_chars = _compact_stats.get("post_chars", _built_chars)
-                _archived_count = _compact_stats.get("archived_count", "?")
-                _drop_pct = _compact_stats.get("drop_pct", "?")
-                self._record_action(
-                    "run.compact",
-                    "ok",
-                    f"view {_pre_chars}→{_post_chars} chars; archived={_archived_count}; "
-                    f"drop_pct={_drop_pct}; anchor_moved={int(_anchor_moved_this_build)}; "
-                    "prompt_chars=0; retrieval=search_archive; stable_prefix_guard=pass",
-                )
-                # EVO-20260826-81f8f674: 压缩黄金窗口写任务热卡（anchor=最近用户指令+
-                # 最近动作；active Goal/checkpoint 与待审演进由 hotcard 模块自取；
-                # fail-open 失败仅告警不阻断压缩）
-                write_hotcard(
-                    origin_session=sess.session_id,
-                    anchor=build_task_anchor(self._focus.anchor_sess),
-                    data_dir=self.settings.data_dir,
-                )
+        # R8.17/E10 压缩审计 → stages/compaction_audit.py（统计落 BuildAudit.compaction_audit）
+        audit = BuildAudit()
+        run_compaction_audit(
+            built=built,
+            decision=decision,
+            audit=audit,
+            compact_view_box=compact_view_box,
+            anchor_moved=_anchor_moved_this_build,
+            session_id=sess.session_id,
+            anchor_sess=self._focus.anchor_sess,
+            data_dir=self.settings.data_dir,
+            record_action=self._record_action,
+        )
         return built
