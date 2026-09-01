@@ -20,6 +20,7 @@ EXPECTED_CATEGORIES = {
     "tail2_mem_compact": 2,
     "tail2_tool_user_compact": 2,
     "tail_tc_compact": 2,
+    "old_ref_replay": 0,
 }
 SECRET_PATTERNS = (
     re.compile(r"sk-[A-Za-z0-9]{16,}"),
@@ -73,9 +74,14 @@ def test_fixture_structure_preserved(category: str) -> None:
             assert isinstance(m.get("tool_call_id"), str) and m["tool_call_id"]
         for tc in m.get("tool_calls") or []:
             assert isinstance(tc["function"]["arguments"], str)  # INV-001 形态保留
-    assert isinstance(fx["tools"], list) and fx["tools"]
-    for t in fx["tools"]:
-        assert t["function"]["name"]
+    if category == "old_ref_replay":
+        # 事件流重组源（D13③）：tool 定义面不在事件 payload 中——tool 形态经
+        # messages.tool_calls 保留（上方断言已覆盖）；tools 空态为源类型如实声明
+        assert fx["tools"] == []
+    else:
+        assert isinstance(fx["tools"], list) and fx["tools"]
+        for t in fx["tools"]:
+            assert t["function"]["name"]
     assert "model" in fx["params"]
 
 
@@ -94,6 +100,18 @@ def test_tail3_fixture_actually_has_three_tail_users() -> None:
     fx = _load("tail3_compact")
     roles = [m["role"] for m in fx["messages"][-3:]]
     assert roles == ["user", "user", "user"]
+
+
+def test_old_ref_replay_scenario_preserved() -> None:
+    """D13③/T5-E A-5：旧 ref 防重复消费实证场景入等价性覆盖（guard(r9) 只增不改）."""
+    fx = _load("old_ref_replay")
+    raw = json.dumps(fx["messages"], ensure_ascii=False)
+    refs = re.findall(r"evidence://v1/[0-9a-f]{16,}", raw)
+    assert len(refs) >= 7, f"重复请求实证不足: {len(refs)} < 7"
+    assert len(set(refs)) == 1, "场景要求同一 evidence ref 重复出现"
+    fails = [m for m in fx["messages"] if m["role"] == "tool"
+             and str(m.get("content", "")).startswith("[状态: failure]")]
+    assert len(fails) >= 3, f"失败回环实证不足: {len(fails)} < 3"
 
 
 def test_tail_tc_fixture_has_tool_calls_near_tail() -> None:
