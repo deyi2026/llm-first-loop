@@ -68,13 +68,26 @@ bash scripts/r9_commit.sh "<message>"   # 机检(r9_commit_check) + ci_gate + gi
 | 前缀 | 用途 | 附加机检 |
 |---|---|---|
 | `refactor(r9):` | 纯结构迁移/拆分 | 规则②diff 不得含行为面文件（`src/llm_loop/cache_guard/`、`src/llm_loop/core/trace_leak/`、`docs/r824/*.md`）；规则③body 必含等价性回执行 `wire-fixtures: PASS` |
-| `guard(r9):` | 守卫文件/基线变更 | 唯一允许触碰 `tests/unit/test_arch_guards.py`、`tests/unit/test_function_size_guard.py`、`tests/guards/*.json` 的前缀（规则④防篡改） |
+| `guard(r9):` | 守卫文件/基线变更 | 唯一允许触碰 `tests/unit/test_arch_guards.py`、`tests/unit/test_function_size_guard.py`、`tests/guards/*.json` 的前缀（规则④防篡改）；**唯一例外（B3-PREP-03）**：`refactor(r9)` 断环提交允许且仅允许对 `function_size_baseline.json` 的 `known_cycles` 做数组纯收缩（新 ⊆ 旧且长度只减、其余节零变更）——对齐 cycle 守卫 stale 断言双向语义 |
 | `switch(hN):` | 三开关默认值切换 | 规则⑤：三开关源码默认行（`LFL_TOOL_GUIDANCE`/`LFL_EVIDENCE_CAPSULE`/`CACHE_GUARD_PERF_BLOCK`）变更必须此前缀 |
 | `fix(r9)/feat(r9)/chore(r9)/test(r9)/docs(r9):` | 修复/新增/工程/测试/文档 | — |
 
 单条性质提交保证 bisect 可判定（R9-P1-04）；机检为独立脚本形态（不装 git hook——`.git` 与外部会话共享，hook 会波及外部提交）。
 
-**门禁全量口径已生效（commit `54743b1`，R9-P1-01）**：自 B2-P1-06 起，main 只收 `ci_gate.sh` 全链路绿 + 机检通过 的提交——第 1 步 ruff 已升级为**全量阻断**（`ruff check src tests scripts`；外部混合层文件按 D-07 区分逻辑呈现不阻断，外部合流时清偿）。过渡期已知红 `test_functions_within_baseline`（外部 factory.py working 1031 > 基线 1004）已由守卫读源双口径收口（commit `dbf340f`，B2-P2-06）：外部漂移未 staged 文件回退 HEAD 口径，真实违规全量设防——main 全绿无豁免。
+**提交队列（B3-PREP-06，串行化底座）**：多代理/多会话并行提交的唯一串行化点——机检/门禁/提交全段持锁（`<git-common-dir>/r9-commit.lock`，主区与各 worktree 共享一把、跨 checkout 互斥；flock 二进制缺失时回落 python fcntl 持锁，父亡孤儿自释）。排队语义：取锁后若 HEAD 已被前移，先在新队头基线重跑机检/门禁；暂存触碰面与前驱提交重叠即中止（stale 暂存基线防线）。锁超时 `R9_COMMIT_LOCK_TIMEOUT`（默认 900s）；基建快死（门禁未达测试步）中止不放行（空集豁免漏洞防护）。
+
+## 共享主区安全纪律（2026-09-01 事件固化，立即生效）
+
+主区 = 外部会话与镜像共用的共享工作面。2026-09-01 drill 误提交经 `reset --hard` 清除时抹除外部未提交演进（M60，reflog 不可考）——以下条款自此事件固化：
+
+1. **主区绝对禁用 `reset --hard` / `checkout -- <file>` / `clean -f`** 等破坏工作树的命令；误提交清除一律 `reset --soft <bad>^`（只退引用不动工作树）+ 定向 `restore --staged`。
+2. **drill/自验/演练/排队测试提交一律在 worktree 施工**，共享主区命令白名单化：`git add / status / log / diff / show`、`bash scripts/r9_commit.sh`、只读诊断（pytest/lsof/ps）；白名单外任何变更主区工作树或引用的命令，执行前必须停机向用户确认。
+3. 运行中服务进程 = 外部演进的内存残面（最接近蒸发点），冻结不动、不重启不杀，直至恢复裁决完成。
+4. 事件全记录：`b3-execution-log.md` 事件节（M60 消失 + 两处 drill 误提交 + 复位回执）。
+
+**门禁全量口径已生效（commit `54743b1`，R9-P1-01）**：自 B2-P1-06 起，main 只收 `ci_gate.sh` 全链路绿 + 机检通过 的提交——第 1 步 ruff 已升级为**全量阻断**（`ruff check src tests scripts`；外部混合层文件按 D-07 区分逻辑呈现不阻断，外部合流时清偿）。过渡期已知红 `test_functions_within_baseline`（外部 factory.py working 1031 > 基线 1004）已由守卫读源双口径收口（commit `dbf340f`，B2-P2-06）：外部漂移未 staged 文件回退 HEAD 口径，真实违规全量设防。
+
+**B3 过渡期外部红登记豁免（2026-09-01 裁决 (b)+两闸）**：M60 消失事件致外部演进配对面测试缺口（src 侧已入 HEAD、测试侧蒸发/滞留不可考），门禁红项经 `tests/guards/external_red_registry.json` 逐项登记放行（guard(r9) 通道专管，规则④防篡改）。两闸 = ①逐项归因登记（test id 精确 token 匹配）+ ②B3-CLOSE-03 收口强制逐项销号复核——豁免不是永久遮罩，外部演进合流或代收口后必须清零。
 
 ## 功能
 
