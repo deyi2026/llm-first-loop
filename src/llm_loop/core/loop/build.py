@@ -14,7 +14,6 @@ _inject_interop_messages / _cache_monitor / _last_snapshot_count / _last_compact
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import os
 from typing import TYPE_CHECKING, Any, TypedDict
@@ -40,28 +39,19 @@ from llm_loop.core.loop.err1210 import (
     SlotKind,
     content_prefix_sha,
 )
-from llm_loop.core.loop.focus import _INJECTION_PREFIX, build_task_anchor, wrap_injection
+from llm_loop.core.loop.focus import _INJECTION_PREFIX, wrap_injection
 from llm_loop.core.prompt_eligibility import (
     PROGRAM_FINAL_PROTOCOL_BOUNDARY,
 )
 
-# Cognitive Runtime（tasks 2.3/2.5/2.6）: tier 分级聚合 + 语义投影替代锚点。
-# 惰性容错导入（cognitive 子包独立演进，import 失败时聚合器回退原平铺行为）。
+# Cognitive Runtime packet 装配面（tasks 2.3/2.5/2.6）：门控/状态/投影/Read Barrier
+# 已迁 stages/cognitive.py 自持（B4-C4-01 步1/2）；此处仅留 packet 编译 + telemetry。
 try:  # noqa: SIM105
-    from llm_loop.cognitive.compiler import compile_decision_packet, semantic_projection
-    from llm_loop.cognitive.state import (
-        SemanticStateStore,
-        StateEnvelope,
-        StateIdentity,
-        rebuild_state,
-    )
+    from llm_loop.cognitive.compiler import compile_decision_packet
     from llm_loop.cognitive.telemetry import emit_cognitive_event
 except Exception:  # noqa: BLE001 — fail-open 回退平铺聚合（零回归）
     compile_decision_packet = None  # type: ignore[assignment]
-    semantic_projection = None  # type: ignore[assignment]
     emit_cognitive_event = None  # type: ignore[assignment]
-    SemanticStateStore = None  # type: ignore[assignment]
-    StateEnvelope = None  # type: ignore[assignment]
 
 # 快照文本函数已迁 core/session_snapshot.py（零 llm_loop 依赖叶子模块，R9-P3-01）——
 # 顶层 import 不再触发循环：build→engine 运行时反向边删除（步2/3 断环点），engine→build 正向边保留
@@ -79,6 +69,7 @@ from llm_loop.core.prompt_build.stages.cognitive import (
 )
 from llm_loop.core.prompt_build.stages.cognitive import (
     resolve_cognitive_gate,
+    run_cognitive_state,
 )
 from llm_loop.core.prompt_build.stages.compaction_audit import run_compaction_audit
 from llm_loop.core.prompt_build.stages.history_budget_prep import run_history_budget_prep
@@ -819,156 +810,29 @@ class _BuildMixin:
         _recovery_render_parts: list[str] = []
         if _inject_parts or _cog_compute_candidate or _has_existing_program:
             try:
-                _anchor_mode = str(getattr(self.settings, "cog_runtime_anchor_mode", "auto"))
-                _tier_on = bool(getattr(self.settings, "cog_runtime_tier_enabled", True))
-                # CR-R1（tasks 2.2）: COG_RUNTIME_MODE 三态——off/shadow 时 cognitive
-                # 不进 prompt（anchor+平铺旧行为；shadow 保留构造计算供 telemetry，
-                # 任务 6.2 接线打点）；enforce 时按 ANCHOR_MODE/TIER_ENABLED 现行语义进 prompt。
-                _cog_mode = _cog_mode_candidate
-                # CR-R1.1（审查项6）: shadow 同构——仅 off 彻底关闭计算；shadow 完整跑
-                # load/barrier/compile/telemetry（与 enforce 同一 compiler 产物，shadow
-                # 数据可预演 enforce），仅两处进 prompt 门控（投影替代锚点 + packet
-                # 渲染）由 _cog_enforce 控制。旧行为（shadow 即跳过全部 cognitive
-                # 计算）导致 shadow 下 telemetry rows=0、无法验证 enforce。
-                _cog_enforce = _cog_mode == "enforce"
-                if _cog_mode == "off":
-                    _anchor_mode = "anchor"
-                    _tier_on = False
-                _sem_state = None
-                _env = None  # CR-R1.1: 预初始化——load 失败时 Barrier 仍走 GoalStore 重建
-                _projection = ""
-                # CR-R1.1（审查项1）: 认知运行时会话身份与任务锚点解耦——anchor_sess
-                # 是 Session 对象（build_task_anchor 专用），Cognitive 路径全部使用
-                # sess.session_id 字符串。此前混用导致 StateStore 分片对 Session 对象
-                # 切片 TypeError 被 fail-open 吞掉、语义投影静默消失（enforce 下
-                # Semantic Header 实际不工作）。
-                _cog_sid = str(getattr(sess, "session_id", "") or "")
-                _state_store_cls = SemanticStateStore
-                if _anchor_mode in ("semantic", "auto") and _state_store_cls is not None:
-                    try:
-                        _env = _state_store_cls(
-                            os.path.join(self.settings.data_dir, "audit")
-                        ).load(_cog_sid)
-                        # CR-R1（tasks 1.2）：schema v2 三态解包——仅可信信封且无墓碑
-                        # 才投影；STALE_UNTRUSTED/None/墓碑 → 不注入（宁缺勿错，spec 3.2-1）
-                        _sem_state = (
-                            _env.state
-                            if StateEnvelope is not None
-                            and isinstance(_env, StateEnvelope)
-                            and _env.tombstone is None
-                            else None
-                        )
-                    except Exception:  # noqa: BLE001 — 状态读取 fail-open → 回退 anchor
-                        _sem_state = None
-                    # CR-R1（tasks 3.1）+ CR-R1.1（审查项4）: Read Barrier——信封与
-                    # GoalStore 严格会话读的一致性核验，三路统一：
-                    #   信封在场且 identity 匹配 → 直接用；
-                    #   信封 mismatch/缺失/STALE_UNTRUSTED → strict 读 GoalStore：
-                    #     能安全确认 goal → rebuild+回存（envelope 缺失不再等 compact
-                    #     触发 _persist_semantic_state——冷启动首轮即建 header）；
-                    #   goal 缺失/终态/异常 → 宁缺勿错置 None（header 不注入）。
-                    # "没有 envelope"本身不是"不可信"——GoalStore 无法安全确定当前
-                    # Goal 才是不可信（审查报告 §4）。墓碑防复活由三态解包
-                    # （_sem_state=None）+ rebuild_state(终态)→None 双层保障。
-                    if (
-                        StateEnvelope is not None
-                        and rebuild_state is not None
-                    ):
-                        _env_candidate = (
-                            _env if isinstance(_env, StateEnvelope) else None
-                        )
-                        try:
-                            from llm_loop.introspection.goal import GoalStore
-
-                            _goal = GoalStore(
-                                os.path.join(self.settings.data_dir, "audit")
-                            ).get(prefer_session_id=_cog_sid, strict_session=True)
-                            if (
-                                _env_candidate is not None
-                                and _goal
-                                and _goal.get("id")
-                                and _env_candidate.identity.matches(_goal)
-                            ):
-                                pass  # 一致：信封可信，直接用
-                            elif _goal and _goal.get("id"):
-                                _rb = rebuild_state(_goal)  # 重建（终态→None 防复活）
-                                if _rb is None:
-                                    _sem_state = None  # goal 已终态：投影不可用
-                                else:
-                                    _cps = _goal.get("checkpoints") or [{}]
-                                    # CR-R1.1（审查项11）: state_revision 单调继承——
-                                    # 在场 mismatch → old+1；缺失/STALE 首建 → 1。
-                                    _prev_rev = (
-                                        _env_candidate.identity.state_revision
-                                        if _env_candidate is not None
-                                        else 0
-                                    )
-                                    _env = StateEnvelope(
-                                        identity=StateIdentity(
-                                            session_id=_cog_sid,
-                                            goal_id=str(_goal.get("id", "")),
-                                            goal_updated_at=str(_goal.get("updated_at", "")),
-                                            checkpoint_ts=str((_cps[-1] or {}).get("ts", "")),
-                                            state_revision=_prev_rev + 1,
-                                        ),
-                                        state=_rb,
-                                    )
-                                    _state_store_cls(
-                                        os.path.join(self.settings.data_dir, "audit")
-                                    ).save(_cog_sid, _env)
-                                    _sem_state = _rb
-                                    logger.info(  # telemetry(state_rebuild)（tasks 6.2 接线）
-                                        "build: Read Barrier 不一致→重建语义状态并回存 goal=%s",
-                                        _goal.get("id"),
-                                    )
-                                    if emit_cognitive_event is not None:  # CR-R1 6.2
-                                        emit_cognitive_event(
-                                            "state_rebuild",
-                                            data_dir=self.settings.data_dir,
-                                            session_id=_cog_sid,
-                                            goal_id=str(_goal.get("id", "")),
-                                            mode=_cog_mode,  # Stage 2 P1-4 同套归因
-                                            configured_mode=str(
-                                                getattr(
-                                                    self.settings, "cog_runtime_mode", ""
-                                                )
-                                            ),
-                                            promoted=_cog_promoted,
-                                        )
-                            else:
-                                _sem_state = None  # goal 缺失→宁缺勿错（header=None）
-                        except Exception:  # noqa: BLE001 — Barrier fail-open：宁缺勿错
-                            _sem_state = None
-                            logger.debug(
-                                "build: Read Barrier 核验异常，fail-open 降级无投影",
-                                exc_info=True,
-                            )
-                    _semantic_projection_fn = semantic_projection
-                    if _sem_state is not None and _semantic_projection_fn is not None:
-                        _projection = _semantic_projection_fn(_sem_state)
-                _anchor = build_task_anchor(self._focus.anchor_sess)
-                # R8.24-E E-D3（E-5.1，E35 compact anchor 退出）: 压缩锚点不再
-                # 作为模型可见语义注入——消费面恒置空（anchor 不承载任务身份；
-                # build_task_anchor 本体保留：审计/压缩热卡等 retrieval 用途
-                # 不动，仅注入消费面退出）；shadow 态 would_inject 计数留痕。
-                if _anchor:
-                    with contextlib.suppress(Exception):
-                        self._record_action(
-                            "action.latent_channel",
-                            "anchor_would_inject" if _lat_mode == "shadow" else "anchor_exited",
-                            f"chars={len(_anchor)};mode={_lat_mode}",
-                        )
-                    _anchor = ""
-                if _projection and _cog_enforce:  # CR-R1.1（审查项6）: shadow 投影仅度量不进 prompt
-                    if _anchor and bool(
-                        getattr(self.settings, "cog_runtime_dual_source_guard", True)
-                    ):
-                        logger.warning(
-                            "build: 锚点与投影同轮并存，fail-open 剔除锚点（DUAL_SOURCE_GUARD）"
-                        )
-                    _anchor = _projection  # 投影替代锚点（演进不并存，spec 5.2.1-7）
-                elif _anchor_mode == "semantic" and _cog_enforce:
-                    _anchor = ""  # semantic 严格态: 语义不可用不回退锚点（可观测零指针）
+                # 认知运行时状态装配 → stages/cognitive.py（B4-C4-01 第 2 步）：load/
+                # schema v2 三态解包/Read Barrier（GoalStore 三路一致性 + rebuild
+                # 回存 + state_revision 单调继承 + state_rebuild telemetry）/投影
+                # 渲染/锚点消费面退出（E-D3 latent 留痕）+ 投影替代
+                # （DUAL_SOURCE_GUARD）。语义原样，产物经 CognitiveStateOutcome 回接。
+                _cs = run_cognitive_state(
+                    self.settings,
+                    sess=sess,
+                    mode_candidate=_cog_mode_candidate,
+                    promoted=_cog_promoted,
+                    lat_mode=_lat_mode,
+                    anchor_sess=self._focus.anchor_sess,
+                    record_action=self._record_action,
+                )
+                _anchor_mode = _cs.anchor_mode
+                _tier_on = _cs.tier_on
+                _cog_mode = _cs.mode
+                _cog_enforce = _cs.enforce
+                _cog_sid = _cs.sid
+                _sem_state = _cs.sem_state
+                _env = _cs.env
+                _projection = _cs.projection
+                _anchor = _cs.anchor
 
                 # B4-C3-03: 预算切分迁 stages/budget_application（R2/L2-1 单一总预算门闸
                 # + R4 recovery 拉出）；决策入 BuildDecision.budget；self._last_injection_budget 回写。

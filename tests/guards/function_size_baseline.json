@@ -21,6 +21,7 @@
     "src/llm_loop/core/loop/tool_exec.py::_execute_tools": 131,
     "src/llm_loop/core/loop/turn_context.py::_inject_turn_memory_snapshot": 151,
     "src/llm_loop/core/prompt_build/stages/budget_application.py::apply_injection_budget": 168,
+    "src/llm_loop/core/prompt_build/stages/cognitive.py::run_cognitive_state": 172,
     "src/llm_loop/eval/oracle_1210.py::run_oracle": 233,
     "src/llm_loop/event_log/fork.py::fork_session": 122,
     "src/llm_loop/event_log/inventory.py::run_inventory": 131,
