@@ -60,7 +60,8 @@ def chat(message: str, session_id=None, timeout=1800):  # 27B 本地 agentic 单
     return done or {}, cur_sid
 
 def main():
-    fixture = json.load(open("docs/injection-governance/fixtures/fixture-tasks.json"))
+    with open("docs/injection-governance/fixtures/fixture-tasks.json") as fh:
+        fixture = json.load(fh)
     results = []
     for t in fixture["tasks"]:
         tid, sid, rounds = t["id"], None, []
@@ -84,10 +85,11 @@ def main():
         results.append({"id": tid, "type": t["type"], "session_id": sid,
                         "rounds_total": total, "drift_rounds": drifts,
                         "drift_rate": round(drifts / total, 3) if total else None, "rounds": rounds})
-    json.dump({"model": MODEL, "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "results": results},
-              open("docs/injection-governance/fixtures/baseline-results.json", "w"), ensure_ascii=False, indent=1)
+    with open("docs/injection-governance/fixtures/baseline-results.json", "w") as fh:
+        json.dump({"model": MODEL, "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "results": results},
+                  fh, ensure_ascii=False, indent=1)
     ok = [r for r in results if r["drift_rate"] is not None]
-    print(f"\n==== 汇总 ====", flush=True)
+    print("\n==== 汇总 ====", flush=True)
     for r in results:
         print(f"{r['id']} {r['type']:<15} 漂移率={r['drift_rate']}", flush=True)
     if ok:

@@ -5,8 +5,6 @@
 
 from __future__ import annotations
 
-import os
-
 from fastapi.testclient import TestClient
 
 from llm_loop.web import build_app

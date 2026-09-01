@@ -135,6 +135,7 @@ def run_task_create(ctx: Any, host: Any, args: dict) -> ToolResult:
     audit, err = _require_active_goal(ctx, host, goal_id)
     if err:
         return ToolResult(ToolResultStatus.FAILURE, err, "", name)
+    assert audit is not None  # _require_active_goal 契约：err 为空 ⟺ audit 非 None
     try:
         store = TaskStore(audit)
         acc = args.get("acceptance") or []
@@ -169,6 +170,7 @@ def run_task_update(ctx: Any, host: Any, args: dict) -> ToolResult:
     audit, err = _require_active_goal(ctx, host, goal_id)
     if err:
         return ToolResult(ToolResultStatus.FAILURE, err, "", name)
+    assert audit is not None  # _require_active_goal 契约：err 为空 ⟺ audit 非 None
     try:
         store = TaskStore(audit)
         task = store.update(

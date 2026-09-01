@@ -17,7 +17,6 @@ from llm_loop.core.loop.duplicate_allowlist import (
 )
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.prompt_eligibility import (
-    _note_would_have_granted,  # noqa: SLF001 — 观察字段断言需直连
     would_have_granted_snapshot,
 )
 
@@ -109,7 +108,7 @@ class TestG8KeywordScan:
 class TestB42DuplicateSuppressionAllowlist:
     def test_baseline_empty_allowlist_suppresses_nothing(self):
         """B-4.2/B-D10: 基线空清单 → 一切同参重复放行（全局拦截取消）。"""
-        assert DETERMINISTIC_IDEMPOTENT_TOOLS == frozenset()
+        assert frozenset() == DETERMINISTIC_IDEMPOTENT_TOOLS
         for tool in ("read_file", "search_files", "execute_command", "web_fetch"):
             assert duplicate_suppression_enabled(tool) is False
 
