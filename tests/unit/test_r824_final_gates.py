@@ -120,8 +120,8 @@ class TestFinalGateSwitchDefaults:
         _clear_gates_env(monkeypatch)
         assert _cog_freeze_enabled() is True
 
-    def test_cache_perf_block_default_on(self):
-        """H6 开关面: CACHE_GUARD_PERF_BLOCK 默认 on=性能 BLOCK 保留（enforce 未切）.
+    def test_cache_perf_block_default_enforced(self):
+        """H6 开关面: CACHE_GUARD_PERF_BLOCK 默认 enforce=最终治理态（批 3/3 切换，R9-P0-01）.
 
         沿 test_cache_block_reclassification.test_perf_mode_default_is_on 先例：
         不用 importlib.reload（会重定义 guard 模块类对象，污染同进程先期绑定），
@@ -130,7 +130,7 @@ class TestFinalGateSwitchDefaults:
         import llm_loop.cache_guard.guard as guard_mod
 
         src = inspect.getsource(guard_mod)
-        assert 'os.environ.get("CACHE_GUARD_PERF_BLOCK", "on")' in src
+        assert 'os.environ.get("CACHE_GUARD_PERF_BLOCK", "enforce")' in src
 
 
 # ══════════════ 组二: H1 正常任务轮 wire 零程序注入（默认态）══════════════
@@ -285,11 +285,12 @@ class TestH3H4H6MechanismReadyAndCurrentState:
 
     # ── H6: cache hit/performance alone BLOCK ──
 
-    def test_h6_default_perf_block_present_and_enforce_zero(self, tmp_path, monkeypatch):
-        """H6 双面: 默认态 ratio>95% BLOCK（现状登记）；enforce 态同一场景 WARN（机制 READY）.
+    def test_h6_default_perf_warn_and_on_block_retained(self, tmp_path, monkeypatch):
+        """H6 双面: 默认态(enforce) ratio>95% WARN+would_block（批 3/3 切换后现状登记）；
+        on 态同一场景 BLOCK（历史形态对照，回滚保障半面）.
 
         privacy/safety BLOCK 双态保留（D-G5 一票否决项）同场景复核。
-        perf 模式经 setattr 显式钉住（进程常量默认 on 由组一源码断言守护——
+        perf 模式经 setattr 显式钉住（进程常量默认 enforce 由组一源码断言守护——
         setattr 与重启默认等价，且免疫测试进程 env 漂移）。
         """
         import llm_loop.cache_guard.guard as guard_mod
@@ -299,7 +300,19 @@ class TestH3H4H6MechanismReadyAndCurrentState:
             {"role": "user", "content": "u" * 5000},
         ]
 
-        # 默认态现状登记（on=重启生产默认）
+        # 默认态现状登记（enforce=重启生产默认，批 3/3 切换后）
+        monkeypatch.setattr(guard_mod, "_PERF_BLOCK_MODE", "enforce")
+        d_default = guard_mod.validate_request(
+            system_text="s" * 1000,
+            messages=msgs_over,
+            meta={"history_budget": 6000, "breaker_active": False},
+            audit_file=tmp_path / "h6-default.jsonl",
+        )
+        assert d_default.verdict == "WARN"
+        assert d_default.rule == "submit_ratio_perf"
+        assert d_default.audit.get("would_block") is True
+
+        # on 态历史形态对照（可回滚保障：revert 后恢复 BLOCK 行为）
         monkeypatch.setattr(guard_mod, "_PERF_BLOCK_MODE", "on")
         d_on = guard_mod.validate_request(
             system_text="s" * 1000,
@@ -309,18 +322,6 @@ class TestH3H4H6MechanismReadyAndCurrentState:
         )
         assert d_on.verdict == "BLOCK"
         assert d_on.rule == "submit_ratio"
-
-        # enforce 态机制 READY（D-G4 主断言复检）
-        monkeypatch.setattr(guard_mod, "_PERF_BLOCK_MODE", "enforce")
-        d_enforce = guard_mod.validate_request(
-            system_text="s" * 1000,
-            messages=msgs_over,
-            meta={"history_budget": 6000, "breaker_active": False},
-            audit_file=tmp_path / "h6-enforce.jsonl",
-        )
-        assert d_enforce.verdict == "WARN"
-        assert d_enforce.rule == "submit_ratio_perf"
-        assert d_enforce.audit.get("would_block") is True
 
         # privacy/safety BLOCK 双态保留（硬门后半句不受影响）
         for mode in ("on", "enforce"):

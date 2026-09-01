@@ -183,8 +183,8 @@ class TestPerfBlockModeSourceComments:
         src = inspect.getsource(guard_mod.PromptGuard._check_hit_rate)
         assert 'verdict="BLOCK"' not in src
 
-    def test_perf_mode_default_is_on(self):
-        """默认 on=现状（enforce 切换留待 D'-1.3 观测达标——回执声明）.
+    def test_perf_mode_default_is_enforce(self):
+        """默认 enforce=最终治理态（R9-P0-01 批 3/3 切换 2026-09-01，D'-1.3 齐备性判读通过）.
 
         注: 不用 importlib.reload 验证——reload 会重定义 guard 模块内全部类
         对象（CacheGuardBlockedError 等），使进程内先期绑定的类引用
@@ -193,4 +193,4 @@ class TestPerfBlockModeSourceComments:
         import inspect
 
         src = inspect.getsource(guard_mod)
-        assert 'os.environ.get("CACHE_GUARD_PERF_BLOCK", "on")' in src
+        assert 'os.environ.get("CACHE_GUARD_PERF_BLOCK", "enforce")' in src

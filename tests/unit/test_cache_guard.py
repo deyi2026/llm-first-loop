@@ -77,9 +77,13 @@ class TestValidateRequest:
         assert d3.verdict == "WARN"
         assert d3.rule == "system_stability"
 
-    def test_submit_ratio_block(self, tmp_path):
+    def test_submit_ratio_block(self, tmp_path, monkeypatch):
         """提交占比 >95% 预算 → BLOCK（不应出去的请求）——显式 breaker_active=False
-        （非冻结期正常传递）维持拦截语义."""
+        （非冻结期正常传递）维持拦截语义（on 态机制，R9-P0-01 批 3/3 钉住前提——
+        模块级常量故用 setattr 而非 setenv）."""
+        import llm_loop.cache_guard.guard as guard_mod
+
+        monkeypatch.setattr(guard_mod, "_PERF_BLOCK_MODE", "on")
         msgs = [{"role": "system", "content": "s" * 1000}, {"role": "user", "content": "u" * 5000}]
         d = validate_request(
             system_text="s" * 1000, messages=msgs,

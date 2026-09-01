@@ -363,17 +363,21 @@ def test_submission_single_system_after_fix():
     assert "[相关记忆]" in contents  # memory 转 user 保留（AI 可见）
 
 
-def test_69715765_baseline():
+def test_69715765_baseline(monkeypatch):
     """69715765 事故复现基准（spec §5.1 任务6.4 + 任务12.3）: MiniMax 400K 档预算 +
     ~288K 字符提交 + 320+ 条中段消息 + 每轮新增 ~2K chars 尾部 + 初始命中 ~22% + guard F 每轮 BLOCK.
 
     事故表现: 每轮压缩 320-386 条、命中钉死 22%、提交恒定 288K、压缩无效
-    （head_keep fold=0 大裁后视图未缩小）→ guard 规则 F 每轮 BLOCK。
+    （head_keep fold=0 大裁后视图未缩小）→ guard 规则 F 每轮 BLOCK.
 
     修复闭环（任务6）: ①归档中段 + ②cache_compacted_out per-provider 视图排除
     + ③锚点推进安全防护 → 压缩后视图真正缩小 ≥10%、不再每轮 288K 恒定、
-    后续轮不重复归档中段、guard 规则 F 放行、命中率回升 >70%。
+    后续轮不重复归档中段、guard 规则 F 放行、命中率回升 >70%.
+    （on 态机制基准，R9-P0-01 批 3/3 setattr 钉住前提——模块级常量）
     """
+    import llm_loop.cache_guard.guard as guard_mod
+
+    monkeypatch.setattr(guard_mod, "_PERF_BLOCK_MODE", "on")
     budget = 320_000  # MiniMax 有效预算（事故 288K 恒定提交 → 有效预算贴近该量级）
     compact_ratio = 0.9  # 压缩线 288K——略低于 288K+2K 首轮提交 → 恰触发首轮压缩
     # （真实配置压缩线 > 压缩目标 60% + head 15% = 75%，压缩后留增长空间，

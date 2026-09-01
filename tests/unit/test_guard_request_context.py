@@ -46,8 +46,12 @@ def _consume(it):
             return exc.value
 
 
-def test_llm_guard_context_wires_history_budget_into_submit_ratio():
-    """真实 LLMClient 出口必须把 history_budget 接进规则F，而非只在 validate_request 单测生效。"""
+def test_llm_guard_context_wires_history_budget_into_submit_ratio(monkeypatch):
+    """真实 LLMClient 出口必须把 history_budget 接进规则F，而非只在 validate_request 单测生效。
+    （on 态机制，R9-P0-01 批 3/3 setattr 钉住前提——模块级常量）"""
+    import llm_loop.cache_guard.guard as guard_mod
+
+    monkeypatch.setattr(guard_mod, "_PERF_BLOCK_MODE", "on")
     ctx = _guard_ctx(
         session_id="s-budget",
         system_text="S" * 20,

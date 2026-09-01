@@ -260,8 +260,11 @@ def test_guard_rule_g_provider_miss_warns_with_or_without_breaker(tmp_path):
     assert d2.verdict == "WARN" and d2.rule == "low_hit_rate_provider"
 
 
-def test_guard_rule_f_downgraded_when_breaker_active(tmp_path):
-    """breaker 冻结期规则 F BLOCK 降级 WARN（防双拦死锁）."""
+def test_guard_rule_f_downgraded_when_breaker_active(tmp_path, monkeypatch):
+    """breaker 冻结期规则 F BLOCK 降级 WARN（防双拦死锁）（on 态机制，R9-P0-01 批 3/3 setattr 钉住前提）."""
+    import llm_loop.cache_guard.guard as guard_mod
+
+    monkeypatch.setattr(guard_mod, "_PERF_BLOCK_MODE", "on")
     g = PromptGuard(audit_file=str(tmp_path / "guard.jsonl"))
     big = [{"role": "user", "content": "x" * 1000}]  # 1000 chars
     d = g.check(session_id="s1", system_text="sys", messages=big,
@@ -272,10 +275,14 @@ def test_guard_rule_f_downgraded_when_breaker_active(tmp_path):
     assert d2.verdict == "WARN" and d2.rule == "submit_ratio_breaker"
 
 
-def test_guard_rule_f_fail_safe_when_breaker_active_missing(tmp_path):
+def test_guard_rule_f_fail_safe_when_breaker_active_missing(tmp_path, monkeypatch):
     """任务3（§5.9）: breaker_active=None（传递丢失——如 MCP 通道未传该标志）→ 规则 F
     超限降级 WARN（submit_ratio_breaker_missing）——无法确认冻结期状态时保守放行，
-    防"禁压缩 + 禁提交"双拦死锁（宁可交前置 context_pressure 管控）."""
+    防"禁压缩 + 禁提交"双拦死锁（宁可交前置 context_pressure 管控）（on 态机制，
+    R9-P0-01 批 3/3 setattr 钉住前提）."""
+    import llm_loop.cache_guard.guard as guard_mod
+
+    monkeypatch.setattr(guard_mod, "_PERF_BLOCK_MODE", "on")
     g = PromptGuard(audit_file=str(tmp_path / "guard3.jsonl"))
     big = [{"role": "user", "content": "x" * 1000}]  # 1000 chars > 95% × 1000
     # 未传 breaker_active（默认 None = 传递丢失）
