@@ -27,17 +27,18 @@ logger = logging.getLogger(__name__)
 
 
 def _capsule_mode() -> str:
-    """R8.24-C C-2.1（C-D4）: evidence capsule 投影模式（三态；默认 on=现状）.
+    """R8.24-C C-2.1（C-D4）: evidence capsule 投影模式（三态）.
 
-    - "on"（默认）: capsule 照旧拼接（行为零变化）
-    - "shadow":     capsule 照旧投影 + 记"若 enforce 则省略 chars"计数事件
-    - "off":        complete=true 回执不拼接 capsule（metadata 六字段照落审计）；
+    - "on":        capsule 照旧拼接
+    - "shadow":    capsule 照旧投影 + 记"若 enforce 则省略 chars"计数事件
+    - "off"（默认，R9-P0-01 批 1/3 切换 2026-09-01，前置=CORE9 终判已生效）:
+                    complete=true 回执不拼接 capsule（metadata 六字段照落审计）；
                     complete=false 回执以单行事实行（C-D5 三元组）替换 capsule
     evidence.py render_capsule 本体与存储层零改动（R-4 红线）——开关只落在
     本调用方（与 D2 status 门 :52 叠加不冲突）。
     """
-    raw = (os.environ.get("LFL_EVIDENCE_CAPSULE", "on") or "on").strip().lower()
-    return raw if raw in {"on", "shadow", "off"} else "on"
+    raw = (os.environ.get("LFL_EVIDENCE_CAPSULE", "off") or "off").strip().lower()
+    return raw if raw in {"on", "shadow", "off"} else "off"
 
 
 class EvidenceEnforcer:

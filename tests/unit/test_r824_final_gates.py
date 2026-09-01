@@ -78,12 +78,12 @@ class TestFinalGateSwitchDefaults:
         _clear_gates_env(monkeypatch)
         assert _tool_guidance_mode() == "on"
 
-    def test_evidence_capsule_default_on(self, monkeypatch):
-        """H4 开关面: LFL_EVIDENCE_CAPSULE 默认 on=capsule 照旧拼接（enforce 切换未发生）."""
+    def test_evidence_capsule_default_off_enforced(self, monkeypatch):
+        """H4 开关面: LFL_EVIDENCE_CAPSULE 默认 off=最终治理态（批 1/3 切换，R9-P0-01）."""
         from llm_loop.tools.evidence_enforce import _capsule_mode
 
         _clear_gates_env(monkeypatch)
-        assert _capsule_mode() == "on"
+        assert _capsule_mode() == "off"
 
     def test_leak_quarantine_default_off_enforced(self, monkeypatch):
         """H5 开关面: LFL_LEAK_QUARANTINE 默认 off=quarantine+provider chars=0（enforce 态）."""
@@ -244,8 +244,8 @@ class TestH3H4H6MechanismReadyAndCurrentState:
 
     # ── H4: evidence full-result capsule ──
 
-    def test_h4_default_capsule_present_and_off_zero(self, tmp_path, monkeypatch):
-        """H4 双面: 默认态 complete=true capsule 在场（现状登记）；off 态 capsule chars=0（机制 READY）.
+    def test_h4_default_capsule_absent_and_off_zero(self, tmp_path, monkeypatch):
+        """H4 双面: 默认态 capsule chars=0（批 1/3 切换后现状登记）；off 态机制 READY 同态复核.
 
         两态各用独立文件——同文件二次读会触发 EvidenceSourceResolver 的 reuse
         内联短路（C-G8 面），不复现 enforcer 投影路径。
@@ -258,7 +258,7 @@ class TestH3H4H6MechanismReadyAndCurrentState:
 
         registry, _, _ = _enforce_registry(tmp_path, projection_budget_chars=900)
 
-        # 默认态（GATES env 清理后 = 生产重启默认 on）
+        # 默认态（GATES env 清理后 = 生产重启默认 off——批 1/3 切换后）
         _clear_gates_env(monkeypatch)
         result_default = registry.execute(
             ToolCall(
@@ -267,7 +267,7 @@ class TestH3H4H6MechanismReadyAndCurrentState:
         )
         assert result_default.status is ToolResultStatus.SUCCESS
         assert result_default.evidence_projection_complete is True
-        assert "[evidence]" in result_default.content  # 现状登记: capsule 照旧拼接
+        assert "[evidence]" not in result_default.content  # 现状登记: capsule chars=0
 
         # off 态（机制 READY）
         monkeypatch.setenv("LFL_EVIDENCE_CAPSULE", "off")
