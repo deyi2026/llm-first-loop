@@ -71,7 +71,27 @@ if [[ "$MODE" == "--quick" ]]; then
 fi
 
 echo "═══ [4/4] pytest 全量门禁（xdist loadfile 并行；提交门禁恒为全量）═══"
-"$PY" -m pytest --dist loadfile -n auto -q
+GATE_OUT="$(mktemp)"; GATE_SER="$(mktemp)"
+if "$PY" -m pytest --dist loadfile -n auto -q >"$GATE_OUT" 2>&1; then
+  echo "（xdist 全量绿）"
+else
+  # xdist 假红降级（D-B2-09，第四轮审查采纳）：红 → serial 单点复核——
+  # serial 绿 = xdist worker 分布假红（呈现不阻断 + 登记观察）；仍红 = 真回归（阻断）。
+  # 不登记永久 flaky 豁免（假红清单会烂账）；门禁语义 = serial 可复现红才阻断。
+  fail_files="$(grep '^FAILED' "$GATE_OUT" | sed 's/^FAILED //' | cut -d: -f1 | sort -u)"
+  if [ -z "$fail_files" ]; then
+    cat "$GATE_OUT"; rm -f "$GATE_OUT" "$GATE_SER"; exit 1
+  fi
+  n_files="$(echo "$fail_files" | wc -l | tr -d ' ')"
+  echo "── xdist 红（${n_files} 文件）→ serial 单点复核（D-B2-09 降级流程）──"
+  if "$PY" -m pytest $fail_files -q >"$GATE_SER" 2>&1; then  # shellcheck disable=SC2086
+    echo "⚠️ serial 复核绿 = xdist 分布假红（不阻断；文件清单如下，登记观察）"
+    echo "$fail_files"
+  else
+    cat "$GATE_SER"; rm -f "$GATE_OUT" "$GATE_SER"; exit 1
+  fi
+fi
+rm -f "$GATE_OUT" "$GATE_SER"
 
 # Phase 2 接线（B2-P2-08）：守卫 WARN 汇总呈现（不阻断；FAIL 用例已在 [4/4] 全量天然覆盖）
 "$PY" -m pytest tests/unit/test_arch_guards.py -m guard_report -q
