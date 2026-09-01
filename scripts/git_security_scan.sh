@@ -53,6 +53,7 @@ _ALLOWLIST=(
   'docs/MIRROR-workspace-protocol.md' # 镜像协议文档（合法引用工作区路径，非泄露）
     "tests/unit/test_cache_guard.py"  # 缓存守卫测试样例（sk- 模式用例）
   'skills/mirror-restart/SKILL.md'  # 镜像重启标准操作技能（命令需绝对路径，同镜像协议文档先例，非泄露）
+  'tests/fixtures/wire/'  # R9 行为基线 wire fixtures：生产报文如实固化快照（报文内含工作区路径记录，非泄露；等价对照用途内容不可改写）
 )
 
 # macOS/Linux 兼容的 stat 大小

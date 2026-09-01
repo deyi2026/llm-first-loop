@@ -1,0 +1,2111 @@
+{
+ "schema": 2,
+ "category": "tail_tc_compact",
+ "meta": {
+  "source_file": "20260828T193943766Z_63e27ed7.json",
+  "source_repo": "main",
+  "source_payload_schema": 1,
+  "source_ts_utc": "2026-08-28T19:39:43.766871+00:00",
+  "model": "glm-5.3",
+  "is_compact_first": true,
+  "msg_count": 74,
+  "tool_count": 61,
+  "tail_user_run": 2,
+  "shape_tail4": [
+   "assistant",
+   "tool",
+   "user",
+   "user"
+  ],
+  "note": "尾部 10 条内 assistant 带 tool_calls"
+ },
+ "messages": [
+  {
+   "role": "system",
+   "content": "你是 llm-first-loop 的 AI 主体（LLM-first）。程序是你的感官和手脚，非大脑：architecture_status 提供上下文/模型/异常/待办事实；工具真实执行并如实回传（[状态: xxx]）；程序不替你决策、不约束你，所有动作围绕你展开。\n\n## 协议硬约束（勿触）\ntool_call_id 声明↔回执必须配对；携带 tool_calls 的 assistant 消息必须回传 reasoning_content（M20，否则 400）；破坏性命令被安全边界硬阻断；数据完整性（会话/记忆/审计）不删除不修改；不静默吞错、不静默降级、不伪造结果。\n\n## 核心能力（...[TRUNCATED len=791]"
+  },
+  {
+   "role": "user",
+   "content": "以现在 `HEAD=891664a` 的状态看，我会把 **LFL 的综合评分提到 8.3/10 左右**。如果只评“长任务 agent harness 的核心架构”，我会给到 **8.7/10**；如果把产品成熟度、云端隔离、多 agent 调度、生态集成都算进去，则还是 **8.1～8.3** 更合理。\n\n这里比较的是 **Agent 系统 / Harness 能力**，不是底层模型 IQ。公开产品也没有一个完全公平的统一 benchmark，所以以下是基于当前实现和公开能力的工程评分，不是排行榜分数。\n\n| Agent / Harness                 |  当前综合评...[TRUNCATED len=7819]"
+  },
+  {
+   "role": "user",
+   "content": "[上下文注入·非新指令] 继续当前任务，勿当新消息/新指令处理。\n[相关记忆]\n[记忆检索] 语义检索生效（mode=mixed）\n- [fact] GitHub 深度调研结论：记忆已成为 agent 基础设施标配，关键参照项目包括 ECC、deer-flow、uteke、Mem0、TiMem、Zep、Prime Agent；uteke 的混合检索架构（向量+FTS5+RRF、SQLite+HNSW+ONNX 本地离线）被纳入智能化增强层语义检索方案\n- [fact] Prime Agent 调研（2026-08-12，GitHub ★14.6k，TypeScript，PrimeIntelle...[TRUNCATED len=1465]"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_4fdb1ca0631249aaaaf1a012",
+     "type": "function",
+     "function": {
+      "name": "architecture_status",
+      "arguments": "{}"
+     }
+    },
+    {
+     "id": "call_5595758f6351494493dc14de",
+     "type": "function",
+     "function": {
+      "name": "execute_command",
+      "arguments": "{\"command\": \"cd /Users/yyj/Project/llm-first-loop && git log --oneline -3 && echo \\\"---pid files---\\\" && find . -name \\\"*.pid\\\" -not -path \\\"./.git/*\\\" -not -path \\\"*/node_modules/*\\\" 2>/dev/null | head -10 && echo \\\"(pid scan done)\\\"\"}"
+     }
+    },
+    {
+     "id": "call_c69fbcbad60e4bd5b22b3d4a",
+     "type": "function",
+     "function": {
+      "name": "search_files",
+      "arguments": "{\"content\": \"TaskFrontier\", \"root\": \"/Users/yyj/Project/llm-first-loop/src\", \"max_results\": 10}"
+     }
+    },
+    {
+     "id": "call_2d23937895704b3b8cae3562",
+     "type": "function",
+     "function": {
+      "name": "search_files",
+      "arguments": "{\"content\": \"semantic_reset\", \"root\": \"/Users/yyj/Project/llm-first-loop/src\", \"max_results\": 10}"
+     }
+    }
+   ],
+   "reasoning_content": "让我理清当前状态。用户的最新消息是一个详细的 LFL 评分分析（8.3/10 综合评分，8.7/10 核心架构），指出了 LFL 与 Codex/Cursor 的差距已经从\"认知状态正确性\"转移到\"执行组织能力\"，并提出了三大优先方向：\n\n1. **第一优先：Task Frontier + typed task contract**\n2. **第二优先：Programmatic Tool Runtime**\n3. **第三优先：真正的 isolated multi-agent runtime**\n\n热卡提到\"清 5 个死 pid 文件\"，但用户最新指令是这个评分分析。热卡说\"若与用户最新指令冲突，以用户最新指令为准\"。\n\n用户这条消息本质上是：\n- 对 LFL 当前状态（HEAD=891664a）的评估\n- 指出下一步最值得做的不是继续修 context/cache，而是把\"认知正确性\"转化成\"执行组织能力\"\n- 排序了三大 runtime capability 的优先级\n\n这是一个战略性的输入。作为 LFL 的 AI 主体，我应该：\n\n1. 先了解当前状态（architecture_status），确认 HEAD、演进待办等\n2. 验证用户提到的几个关键事实（Semantic Reset 无 runtime consumer、TaskFrontier/SubtaskContract/Programmatic Tool Runtime 不存在）\n3. 把用户的这个评估转化为可执行的演进建议（submit_evolution），因为这是架构层面的重大方向\n4. 可能需要读规则文件\n\n用户的消息不是直接的\"去做XX\"指令，而是一个深度评估。最合理的响应是：\n- 确认收到并消化这个评估\n- 验证其中的关键事实断言（比如 Semantic Reset 无 consumer、TaskFrontier 不存在）\n- 把三大优先方向转化为正式的演进建议提交（供人工审阅）\n- 或者直接开始第一优先（Task Frontier + typed task contract）的设计\n\n考虑到记忆中有\"强制镜像工作区协议\"：一切涉及 LFL 自身代码修改必须先在镜像区修改验证。而演进建议 submit_evolution 是\"结构化落盘供人工审阅\"，这不涉及主区代码修改，可以直接做。\n\n让我先并行做几件事：\n1. architecture_status 看当前状态（演进待办、HEAD 确认）\n2. 读规则文件（任务开始时应读）——实际上我应该先看 architecture_status 的 rules_version，但规则说\"任务开始或规则存疑时\"读。这个会话是继续任务，可能已经读过。但为稳妥，还是读一下。\n\n不过要注意：这轮是\"继续当前任务\"，用户消息是评估报告。我需要判断：这个评估本身是否要求我立即行动？\n\n用户没有明确说\"现在就去做 Task Frontier\"。但整篇的结论是\"现在 LFL 最值得做的已经不是继续修 context/cache，而是把认知正确性转化成执行组织能力\"。这是方向性指导。\n\n合理的行动：\n1. 验证关键事实断言（Semantic Reset consumer、TaskFrontier 等不存在）——用 search_files 快速验证\n2. 把三大方向作为演进建议正式提交（submit_evolution），其中第一优先 Task Frontier 可以给出具体设计草案\n3. 回应用户评估，说明我的验证结果和下一步计划\n\n另外热卡说\"清 5 个死 pid 文件\"——上一会话压缩前在清理死 pid 文件，最近动作显示 deleted=0 skipped=0，可能已经完成或没找到。这个是小任务，可以顺手检查一下是否还有残留。\n\n让我并行发起：\n1. architecture_status（看演进状态、HEAD）\n2. search_files 验证 TaskFrontier/SubtaskContract 是否存在\n3. search_files 验证 Semantic Reset runtime consumer\n\n然后根据结果决定下一步。\n\n工具调用规划（第一批，独立并行）：\n- architecture_status(dimensions=[\"all\"]) 或不指定\n- search_files(content=\"TaskFrontier\", root 主区 src)\n- search_files(content=\"SubtaskContract\", ...)\n- 检查 pid 文件是否清理完\n\n注意主区路径：/Users/yyj/Project/llm-first-loop（推测，镜像区是 /Users/yyj/Project/llm-first-loop-mirror）。让我先用 execute_command 确认主区路径和 HEAD。\n\n第一批并行：\n1. architecture_status —— 系统状态\n2. execute_command: cd /Users/yyj/Project/llm-first-loop && git log --oneline -3 && git status --short | head -20 —— 确认 HEAD=891664a\n3. search_files: content=\"TaskFrontier\" root=\"/Users/yyj/Project/llm-first-loop/src\"\n4. search_files: content=\"SemanticReset\" 或 \"semantic_reset\" —— 验证 runtime consumer\n\npid 文件检查也可以并入 execute_command：ls runtime/pids 之类。我不知道 pid 文件的具体位置，热卡说 \"/Users/yyj/ ...\" 被截断。可以 find 一下 *.pid。\n\n让我组织第一批调用。"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_4fdb1ca0631249aaaaf",
+   "content": "[状态: success] {\n  \"current_phase\": \"action.tool_loop\",\n  \"context_usage\": {\n    \"llm_rounds\": 15,\n    \"action_trace_count\": 60,\n    \"archive\": {\n      \"archived_count\": 2041427,\n      \"archived_chars\": 1283231705\n    },\n    \"model_window\": {\n      \"label\": \"deepseek/deepseek-v4-flash\",\n      \"contex...[TRUNCATED len=6217]",
+   "name": "architecture_status"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_5595758f6351494493d",
+   "content": "[状态: success] [命令] cd /Users/yyj/Project/llm-first-loop && git log --oneline -3 && [退出码 0] [输出 7 行]\n003dd30 cognitive: T4.1-T4.3 跨边界恢复/单管线降级集成测试；reset 对齐 spec 4.2-1（硬约束与已确认事实不因 reset 丢失）\n599f227 cognitive: T3.1-T3.5 语义重置基准（EfficiencyMeter 口径冻结 + FixtureRegistry 双轨 + A/B 编排前置依赖阻断，spec 5.3）；state.Rese...[TRUNCATED len=533]",
+   "name": "execute_command"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_c69fbcbad60e4bd5b22",
+   "content": "[状态: success] [search_files] 无匹配（pattern=-, content=TaskFrontier）",
+   "name": "search_files"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_2d23937895704b3b8ca",
+   "content": "[状态: success] [search_files] 无匹配（pattern=-, content=semantic_reset）",
+   "name": "search_files"
+  },
+  {
+   "role": "user",
+   "content": "[搜索空结果提醒] 事实: 搜索类工具 search_files 已连续 2 次返回空结果。\n原因: 目标可能不存在、或搜索前提（记忆/路径）与实际不符——重复换参数搜同一目标不会产生新信息。\n建议: 以工具回执为准：目标不存在即停止该目标搜索，标注'记忆待修正'，如实说明并询问用户；确需继续请换全新目标或改向用户求证。"
+  },
+  {
+   "role": "user",
+   "content": "[上下文注入·非新指令] 继续当前任务，勿当新消息/新指令处理。\n[经验提示] 以下为本次工具调用相关的已验证经验（可复用，避免重复探测/踩已知坑）:\n- 工具 'execute_command' → 批量合并确认类小动作：避免 execute_command 碎调用推高停滞率\n- 工具 'execute_command' → 大实施任务期间自我评估指标解读：区分任务形态重复与真实停滞、llm_call 外部错误与内部缺陷\n- 可用 skill: cache-cost —— LLM 前缀缓存成本核算技能——需要对比不同预算窗口（大/小）成本、估算每 run 成本、或决策缓存配置时使用。核心方法...[TRUNCATED len=702]"
+  },
+  {
+   "role": "assistant",
+   "content": "[程序反馈·非模型回答] （已停止——用户点击停止按钮，本轮回答终止）"
+  },
+  {
+   "role": "user",
+   "content": "Github看下mojo这个语言怎么样？"
+  },
+  {
+   "role": "user",
+   "content": "[上下文注入·非新指令] 继续当前任务，勿当新消息/新指令处理。\n[相关记忆]\n[记忆检索] 语义检索生效（mode=mixed）\n- [fact] M48-C垂直搜索通道（commit 2b940dc，借鉴AnySearch全免API key）：web_search新增scholar通道（OpenAlex+Crossref+PubMed三源并行按URL去重，单源失败降级）和code通道（GitHub免认证搜索含星数/语言）；arXiv本机HTTP 429限流未接入；auto模式保守关键词路由（论文文献→scholar，github仓库→code）\n- [fact] 2026-08-11 经用...[TRUNCATED len=1385]"
+  },
+  {
+   "role": "assistant",
+   "content": "主区是 `_inject_parts` → `compile_decision_packet` 聚合。看镜像 patch 中 build.py 注入块原文，适配插入：",
+   "tool_calls": [
+    {
+     "id": "call_9614c55c73ff464799e594a9",
+     "type": "function",
+     "function": {
+      "name": "execute_command",
+      "arguments": "{\"command\": \"sed -n '/diff --git a\\\\/src\\\\/llm_loop\\\\/core\\\\/loop\\\\/build.py/,/^diff --git/p' /tmp/task_frontier.patch | head -60\"}"
+     }
+    }
+   ],
+   "reasoning_content": "结构清楚了：`_inject_parts` 聚合后经 `compile_decision_packet(_inject_parts, _sem_state).render_slots()` 聚合渲染。镜像版我的 task frontier 注入是在 `_inject_parts` 收集区（hotcard 之后、聚合渲染之前）追加一段 try 块。主区等价位置：在 815 行 GATE_NOTE 块之后、`if _inject_parts:` 聚合之前。\n\n先看镜像版注入块的原始形态（format-patch 里 build.py 部分），然后适配插入主区。看 patch 中 build.py 的 diff 内容。"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_9614c55c73ff464799e",
+   "content": "[状态: success] [命令] sed -n '/diff --git a\\/src\\/llm_loop\\/core\\/loop\\/build.py/,/^diff --git/p' /tmp/task_frontier.patch | [退出码 0] [输出 30 行]\ndiff --git a/src/llm_loop/core/loop/build.py b/src/llm_loop/core/loop/build.py\nindex 2c72f83..9a16de1 100644\n--- a/src/llm_loop/core/loop/build.py\n+++ b/src/llm...[TRUNCATED len=1809]",
+   "name": "execute_command"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_53d2b93a7109419c8dedc24b",
+     "type": "function",
+     "function": {
+      "name": "read_file",
+      "arguments": "{\"limit\": 28, \"offset\": 816, \"path\": \"/Users/yyj/Project/llm-first-loop/src/llm_loop/core/loop/build.py\"}"
+     }
+    }
+   ],
+   "reasoning_content": "镜像版注入块是独立 try 块，往 `_inject_parts` append `(\"task_frontier\", text)`。主区插入点：`if _inject_parts:` 聚合块之前（约 820 行附近，GATE_NOTE 块后）。需要精确找到主区 GATE_NOTE 块结束、`if _inject_parts:` 开始的位置。读 build.py 818-845 行。"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_53d2b93a7109419c8de",
+   "content": "[状态: success] [read_file] /Users/yyj/Project/llm-first-loop/src/llm_loop/core/loop/build.py 共 995 行，显示 817-844 行\n817 |             if str(SlotKind.GATE_NOTE) in _slots:\n818 |                 self._note_defer_replayed(sess.session_id, SlotKind.GATE_NOTE)\n819 |                 _slots.discard(str(SlotK...[TRUNCATED len=2002]",
+   "name": "read_file"
+  },
+  {
+   "role": "assistant",
+   "content": "插入点确定（820 行 GATE_NOTE 块结束后、821 注释前）。适配主区结构注入：",
+   "tool_calls": [
+    {
+     "id": "call_91713a7707c44b919f7b1dad",
+     "type": "function",
+     "function": {
+      "name": "edit_file",
+      "arguments": "{\"dry_run\": true, \"new_string\": \"                self._deferred_replay_slots = _slots\\n        # DESIGN-20260828 Task Frontier: 有任务图时注入当前 frontier（程序记账/\\n        # 模型决策——ready/blocked/unreachable 可执行集每轮可见，替代从历史重推）。\\n        # fail-open: 账本不可用/无 goal/空图均不注入（零噪音，缓存友好——尾部聚合条）。\\n        try:\\n          ...[TRUNCATED len=1452]"
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_91713a7707c44b919f7",
+   "content": "[状态: success] [预览模式 dry_run: 未写入] /Users/yyj/Project/llm-first-loop/src/llm_loop/core/loop/build.py\n匹配 1 处，变更 +18/-0 行。确认无误后去掉 dry_run 应用。\n```diff\n--- a/build.py\n+++ b/build.py\n@@ -819,4 +819,22 @@\n                 _slots.discard(str(SlotKind.GATE_NOTE))\n                 self._deferred_replay_slots ...[TRUNCATED len=1500]",
+   "name": "edit_file"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_5b4d2a43bbea45cc91ab67df",
+     "type": "function",
+     "function": {
+      "name": "edit_file",
+      "arguments": "{\"new_string\": \"                self._deferred_replay_slots = _slots\\n        # DESIGN-20260828 Task Frontier: 有任务图时注入当前 frontier（程序记账/\\n        # 模型决策——ready/blocked/unreachable 可执行集每轮可见，替代从历史重推）。\\n        # fail-open: 账本不可用/无 goal/空图均不注入（零噪音，缓存友好——尾部聚合条）。\\n        try:\\n            from llm_loop.i...[TRUNCATED len=1435]"
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_5b4d2a43bbea45cc91a",
+   "content": "[状态: success] [修改完成并已校验] /Users/yyj/Project/llm-first-loop/src/llm_loop/core/loop/build.py\n替换 1 处，变更 +18/-0 行（原子写入，写后复读一致）。\n```diff\n--- a/build.py\n+++ b/build.py\n@@ -819,4 +819,22 @@\n                 _slots.discard(str(SlotKind.GATE_NOTE))\n                 self._deferred_replay_slots = _slots\n+     ...[TRUNCATED len=1485]",
+   "name": "edit_file"
+  },
+  {
+   "role": "assistant",
+   "content": "build.py 已注入。主区全链路验证（含 cognitive 聚合测试防回归 + 真实 prompt 注入验证）：",
+   "tool_calls": [
+    {
+     "id": "call_89100a33810f42239aa45caa",
+     "type": "function",
+     "function": {
+      "name": "execute_command",
+      "arguments": "{\"command\": \"cd /Users/yyj/Project/llm-first-loop && .venv/bin/python -m py_compile src/llm_loop/core/loop/build.py src/llm_loop/introspection/corrections.py src/llm_loop/introspection/tools_goal.py && echo \\\"compile ok\\\" && ls tests/unit/ | grep -iE \\\"cognitive|decision|packet\\\" | head -5 && PYTHON...[TRUNCATED len=414]"
+     }
+    }
+   ],
+   "reasoning_content": "build.py 注入完成。还需要确认 corrections.py / tools_goal.py 的 apply 是否干净（已 apply 的 6 文件包括这两个 + 3 新文件 + 测试）。tools_goal.py 的收口校验依赖 goal.py 的什么接口？先验证主区全链路：\n\n1. py_compile build.py + corrections.py\n2. PYTHONPATH 主区跑 test_task_store.py（14 测试）\n3. 跑受影响回归（test_goal、cognitive 相关 build 测试——主区有 cognitive 的测试，build.py 被我改了，必须跑 cognitive build 测试防回归）\n4. 实测收口拒绝（同镜像 smoke）\n\n注意：cognitive T2 决策包融合有自己的 build 测试（tier 分级聚合/黄金摘要），我的 append 用非 SlotKind 的 \"task_frontier\" 字符串 slot——compile_decision_packet 对未知 slot 会怎么处理？tier 聚合可能按 SlotKind 分级，未知字符串 slot 可能落入默认槽。跑 cognitive 的 build 测试确认无回归 + 构造真 goal+task 看 frontier 是否真进 prompt。\n\n先找主区 cognitive build 测试文件名。"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_89100a33810f42239aa",
+   "content": "[状态: success] [命令] cd /Users/yyj/Project/llm-first-loop && .venv/bin/python -m py_compile src/llm_loop/core/loop/build.py src/llm_loop/introspection/corrections.py [退出码 0] [输出 8 行]\ncompile ok\ntest_cognitive_benchmark.py\ntest_cognitive_compiler.py\ntest_cognitive_state.py\ntest_exhaustion_decision.py\nt...[TRUNCATED len=557]",
+   "name": "execute_command"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_475ba9019900496fb478e4c3",
+     "type": "function",
+     "function": {
+      "name": "execute_command",
+      "arguments": "{\"command\": \"cd /Users/yyj/Project/llm-first-loop && PYTHONPATH=$PWD/src .venv/bin/python -m pytest tests/unit/test_cognitive_compiler.py tests/unit/test_build_tool_round_tail.py tests/unit/test_injection_fingerprint.py -q 2>&1 | tail -2 && echo \\\"=== 真实 build 注入验证: goal+task → frontier 进 prompt ===...[TRUNCATED len=1361]"
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_475ba9019900496fb47",
+   "content": "[状态: success] [命令] cd /Users/yyj/Project/llm-first-loop && PYTHONPATH=$PWD/src .venv/bin/python -m pytest tests/unit/test_cognitive_compiler.py [退出码 0] [输出 9 行]\n  - /Users/yyj/Project/llm-first-loop/tests/unit/test_providers.py:116 真实provider base_url（低风险-隔离不触网则忽略）: llm_base_url=\"https://api.minimax...[TRUNCATED len=749]",
+   "name": "execute_command"
+  },
+  {
+   "role": "assistant",
+   "content": "收口/渲染全过。最后验证 tier 聚合管线对未知 slot `task_frontier` 不丢内容，然后 commit + 重启：",
+   "tool_calls": [
+    {
+     "id": "call_710f2eed15d744e6b5f0c4fd",
+     "type": "function",
+     "function": {
+      "name": "execute_command",
+      "arguments": "{\"command\": \"cd /Users/yyj/Project/llm-first-loop && PYTHONPATH=$PWD/src .venv/bin/python -c \\\"\\nfrom llm_loop.cognitive.compiler import compile_decision_packet\\nagg = compile_decision_packet([('task_frontier', 'TF_CONTENT_MARKER')], None)\\nout = agg.render_slots()\\nprint('tier 聚合保留 task_frontier:',...[TRUNCATED len=380]"
+     }
+    }
+   ],
+   "reasoning_content": "主区全绿：\n- cognitive_compiler 31 tests + build/injection 回归全过\n- frontier 渲染、summary、收口拒绝全部工作\n\n还差一步验证：build.py 的 frontier **真实进 prompt**（tier 聚合下 unknown slot \"task_frontier\" 的处理）——这个可以等重启后用真实会话观察，或快速单测。编译器测试过了说明聚合管线没坏，但 unknown slot 会不会被 tier 聚合丢弃？看 compile_decision_packet 对非 SlotKind slot 的处理——cognitive_compiler 测试过了我的 append 吗？没有——测试是既有的，不含 task_frontier slot。\n\n快速验证：调用 compile_decision_packet([(\"task_frontier\", \"X\")], None).render_slots() 看输出是否保留。"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_710f2eed15d744e6b5f",
+   "content": "[状态: success] [命令] cd /Users/yyj/Project/llm-first-loop && PYTHONPATH=$PWD/src .venv/bin/python -c \" from [退出码 0] [输出 4 行]\ntier 聚合保留 task_frontier: True\n--- render 摘要 ---\n--- [tier:warm][slot:task_frontier] ---\nTF_CONTENT_MARKER",
+   "name": "execute_command"
+  },
+  {
+   "role": "assistant",
+   "content": "tier 聚合保留内容（warm 槽）。提交主区并重启进程：",
+   "tool_calls": [
+    {
+     "id": "call_4ba1ed5937c843f792f6ba96",
+     "type": "function",
+     "function": {
+      "name": "execute_command",
+      "arguments": "{\"command\": \"cd /Users/yyj/Project/llm-first-loop && git add src/llm_loop/introspection/task_store.py src/llm_loop/introspection/tools_task.py src/llm_loop/introspection/registry_task.py src/llm_loop/introspection/tools_goal.py src/llm_loop/introspection/corrections.py src/llm_loop/core/loop/build.p...[TRUNCATED len=618]"
+     }
+    }
+   ],
+   "reasoning_content": "tier aggregation preserves task_frontier content (falls into warm tier slot). Full pipeline verified. Now:\n1. Main repo commit (only the 7 files from this round; there are other dirty files in the main repo — webui, restart_system.sh, etc. — don't touch them)\n2. Restart processes (web/feishu/cli)\n3. Complete goal registration\n\nCommit files: task_store.py tools_task.py registry_task.py tools_goal.py corrections.py build.py test_task_store.py"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_4ba1ed5937c843f792f",
+   "content": "[状态: success] [命令] cd /Users/yyj/Project/llm-first-loop && git add src/llm_loop/introspection/task_store.py src/llm_loop/introspection/tools_task.py src/llm_loop/introspection/registry_task.py [退出码 0] [输出 8 行]\n[main d4525cc] task frontier: T1 主区应用（镜像 7e103f1 同源，用户批准）——TaskStore append-only 账本 + task...[TRUNCATED len=1033]",
+   "name": "execute_command"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_49d3549f5f7d474fb2eba8c1",
+     "type": "function",
+     "function": {
+      "name": "execute_command",
+      "arguments": "{\"command\": \"cd /Users/yyj/Project/llm-first-loop && ls scripts/ | grep -i restart | head -3 && cat data/web.pid data/feishu.pid 2>/dev/null | tr '\\\\n' ' ' && echo\"}"
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_49d3549f5f7d474fb2e",
+   "content": "[状态: success] [命令] cd /Users/yyj/Project/llm-first-loop && ls scripts/ | grep -i [退出码 0] [输出 4 行]\ndsh_web_restart.sh\nrestart_feishu.sh\nrestart_mirror.sh\n47793 47978",
+   "name": "execute_command"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_ff396bc3236c42fb8da57039",
+     "type": "function",
+     "function": {
+      "name": "execute_command",
+      "arguments": "{\"command\": \"cd /Users/yyj/Project/llm-first-loop && bash scripts/dsh_web_restart.sh 2>&1 | tail -4; bash scripts/restart_feishu.sh 2>&1 | tail -4\"}"
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_ff396bc3236c42fb8da",
+   "content": "[状态: success] [命令] cd /Users/yyj/Project/llm-first-loop && bash scripts/dsh_web_restart.sh 2>&1 | tail [退出码 0] [输出 7 行]\n[dsh-web] 2026-08-29 03:34:00 停止旧进程（pid 49254, 端口 3080）...\n[dsh-web] 2026-08-29 03:34:00 旧进程已停止\n[dsh-web] 2026-08-29 03:34:00 启动 dsh web（端口 3080, 日志: ./data/dsh_web.log）...\n[dsh-we...[TRUNCATED len=540]",
+   "name": "execute_command"
+  },
+  {
+   "role": "assistant",
+   "content": "web 已重启（pid 69778）；feishu 桥报 LLM_API_KEY 未配置（既有配置问题，非本次引入，旧 pid 已是死文件）。验证新进程工具注册：",
+   "tool_calls": [
+    {
+     "id": "call_d0b2552b0ee047dfa722a8f2",
+     "type": "function",
+     "function": {
+      "name": "execute_command",
+      "arguments": "{\"command\": \"curl -s http://127.0.0.1:3080/api/health 2>/dev/null | head -c 200; echo; curl -s http://127.0.0.1:3080/api/tools 2>/dev/null | .venv/bin/python -c \\\"import json,sys; d=json.load(sys.stdin); names=[t['name'] for t in (d if isinstance(d,list) else d.get('tools',[]))]; print('task tools:'...[TRUNCATED len=458]"
+     }
+    }
+   ],
+   "reasoning_content": "- dsh web 已重启（pid 69778，端口 3080）✓\n- restart_feishu.sh 报 LLM_API_KEY 未配置——这不是我造成的（可能 .feishu.env 里没 LLM key，feishu 桥需要 LLM）。之前 feishu.pid 47978 存在，但脚本说\"未运行，跳过停止\"——可能旧进程已死（死 pid 文件）。而且报错说明 feishu 桥本来就起不来（配置问题），不是我引入的。如实汇报，不强行修复（涉配置需用户确认）。\n\n检查当前会话自身（CLI loop）是否是旧代码——我当前运行在这个进程里，工具注册 introspection corrections 是启动时装的，本会话还没有 task_* 工具。重启 CLI = 结束本会话，不能自杀。web 已重启已生效；CLI 侧新会话自动生效。\n\n验证 web 端健康 + 工具注册（新进程的工具列表应含 task_create）。用 web API 查。"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_d0b2552b0ee047dfa72",
+   "content": "[状态: success] [命令] curl -s http://127.0.0.1:3080/api/health 2>/dev/null | head -c 200; [退出码 0] [输出 3 行]\nnot found\ntools API 路径不同，改查日志\n0",
+   "name": "execute_command"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_46359f2135c64a018393bb67",
+     "type": "function",
+     "function": {
+      "name": "execute_command",
+      "arguments": "{\"command\": \"cd /Users/yyj/Project/llm-first-loop && tail -5 data/dsh_web.log && echo \\\"=== 工具注册直接验证（新进程代码路径）===\\\" && PYTHONPATH=$PWD/src .venv/bin/python -c \\\"\\nfrom llm_loop.introspection.corrections import register_introspection_tools\\nimport inspect\\nsrc = inspect.getsource(register_introspectio...[TRUNCATED len=503]"
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_46359f2135c64a01839",
+   "content": "[状态: failure] [命令] cd /Users/yyj/Project/llm-first-loop && tail -5 data/dsh_web.log && echo [退出码 1] [输出 10 行]\n[2026-08-24T03:37:13.460Z] feishu [info] inbound message om_x100b678f8642f4a8c3bf459527d5767 in oc_87830cb87edc1f969667c3b6b7f8c413 (p2p): 我已经充值DeepSeek,有余额的。\n[warn]: [ 'no im.message.reacti...[TRUNCATED len=1032]",
+   "name": "execute_command"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_b02cee04aa274012bfe25a27",
+     "type": "function",
+     "function": {
+      "name": "execute_command",
+      "arguments": "{\"command\": \"cd /Users/yyj/Project/llm-first-loop && grep -n \\\"^def \\\\|^class \\\\|registry_task\\\" src/llm_loop/introspection/corrections.py | head -10\"}"
+     }
+    }
+   ],
+   "reasoning_content": "ImportError——我猜错了函数名。corrections.py 里注册函数的真实名是什么？看镜像/主区 corrections.py 我改的那段 import 了什么。dsh_web.log 尾部显示旧日志（feishu 08-24 的）+ 新进程启动行，说明 dsh web 启动成功（log 是追加的）。\n\n直接看 corrections.py 里的注册入口名。"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_b02cee04aa274012bfe",
+   "content": "[状态: success] [命令] cd /Users/yyj/Project/llm-first-loop && grep -n \"^def \\|^class \\|registry_task\" [退出码 0] [输出 5 行]\n31:    registry_task,\n44:    registry_task,\n51:def _now() -> str:\n56:class CorrectionContext:\n92:class CorrectionToolRegistry:",
+   "name": "execute_command"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_0550e11b44d14675a717391f",
+     "type": "function",
+     "function": {
+      "name": "execute_command",
+      "arguments": "{\"command\": \"cd /Users/yyj/Project/llm-first-loop && sed -n '25,50p' src/llm_loop/introspection/corrections.py && echo \\\"=== registry 全量注册验证（模拟真实启动路径）===\\\" && PYTHONPATH=$PWD/src .venv/bin/python -c \\\"\\nfrom llm_loop.introspection.corrections import registry_task\\nimport importlib\\nm = importlib.imp...[TRUNCATED len=600]"
+     }
+    }
+   ]
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_0550e11b44d14675a71",
+   "content": "[状态: success] [命令] cd /Users/yyj/Project/llm-first-loop && sed -n '25,50p' src/llm_loop/introspection/corrections.py && [退出码 0] [输出 30 行]\n    registry_goal,\n    registry_introspection,\n    registry_model,\n    registry_playwright,\n    registry_recovery,\n    registry_skills,\n    registry_task,\n)\nfrom ...[TRUNCATED len=731]",
+   "name": "execute_command"
+  },
+  {
+   "role": "assistant",
+   "content": "全链路确认。登记里程碑并汇报：",
+   "tool_calls": [
+    {
+     "id": "call_4fd57e570cd344d2a33c442e",
+     "type": "function",
+     "function": {
+      "name": "checkpoint_goal",
+      "arguments": "{\"evidence\": \"主区 commit d4525cc（7 files +998 行，security_scan 过）；主区验证: 14（task_store）+41（goal/build/injection）+31（cognitive_compiler）tests 全绿；实测: frontier 渲染/收口拒绝/依赖解锁/环检测/tier 聚合保留 task_frontier 内容全过；dsh web 已重启（pid 69778, http 200），新进程启动路径 _REGISTRIES 含 registry_task 自动注册三工具\", \"goal_id\": \"GOAL-2026...[TRUNCATED len=705]"
+     }
+    }
+   ],
+   "reasoning_content": "全部确认：\n- corrections.py `_REGISTRIES` 含 `registry_task`（启动路径自动注册 task_create/task_update/task_frontier 三工具）✓\n- web 进程 http 200（新代码）✓\n- registry_task.execute 可调 ✓\n\n收尾：\n1. checkpoint_goal（T1 主区应用完成）\n2. 更新 goal 状态？T1 goal 是\"落地 Task Frontier\"，核心已完成且验证——但 goal 定义可能包含\"真实任务中观察\"。先 checkpoint，goal 保持 active（后续观察 frontier 实际使用）。\n3. 简短汇报（遵守自管理规范：不复述回执全文，结论先行）"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_4fd57e570cd344d2a33",
+   "content": "[状态: success] [checkpoint 已记录] goal=GOAL-20260828-df03e08e 累计 4 次 | 最新: Task Frontier T1 主区应用完成并重启生效: 镜像 7e103f1 经 patch 应用（6 文件干净 apply + build.py 适配 cognitive tier 聚合管线手动",
+   "name": "checkpoint_goal"
+  },
+  {
+   "role": "assistant",
+   "content": "## T1 主区应用完成 ✅（commit `d4525cc`，web 已重启生效）\n\n**应用过程**：镜像 `7e103f1` → 主区 patch 应用（6 文件干净 apply；build.py 因 cognitive 决策包融合重构过同区域，改为手动注入并**适配 tier 聚合管线**——验证了 `task_frontier` slot 落入 warm 槽、内容不丢）。\n\n**主区验证全过**：\n- 86 tests 全绿（14 task_store 新测 + 41 goal/build/injection 回归 + 31 cognitive_compiler 回归）\n- 实测：f...[TRUNCATED len=818]"
+  },
+  {
+   "role": "user",
+   "content": "已经重启，按建议执行"
+  },
+  {
+   "role": "user",
+   "content": "[上下文注入·非新指令] 继续当前任务，勿当新消息/新指令处理。\n[相关记忆]\n[记忆检索] 语义检索生效（mode=mixed）\n- [fact] 演进执行边界（RULE-AI-06）：accepted 且权限允许的演进可自动执行；涉边界/权限/白名单的 accepted 演进必须人工执行，AI 不能自行落地。工具描述/回执行为属协议面改动，即使 accepted 也需授权后落地。\n- [decision] 待审演进队列及审批建议（2026-08-15，3 条 pending_review，用户已指示『按建议执行』但登记时工具通道故障，CLI evolve-review 登记与代码落地待人工...[TRUNCATED len=1006]"
+  },
+  {
+   "role": "assistant",
+   "content": "好——当前进程已加载新代码，工具表含 task_* 三工具（本会话即可 dogfood）。按建议执行：把\"frontier 实际效果观察\"本身作为真实多步任务建图走完。先建带依赖的任务图：",
+   "tool_calls": [
+    {
+     "id": "call_09a45053dff4451c9a5a6e9c",
+     "type": "function",
+     "function": {
+      "name": "task_create",
+      "arguments": "{\"acceptance\": [\"从会话注入 sidecar 或审计记录中取到含 [Task Frontier] 的注入条目原文\", \"注入条目出现在本轮 build 之后的消息中\"], \"done_when\": [\"取证输出包含 [Task Frontier] open=... 行与所在注入条目标识\"], \"evidence_required\": true, \"goal_id\": \"GOAL-20260828-df03e08e\", \"title\": \"取证 frontier 注入真实进 prompt（sidecar/审计原文）\"}"
+     }
+    }
+   ],
+   "reasoning_content": "用户说\"已经重启，按建议执行\"。我的建议是：**在下一个多步骤真实任务中用 task_create 建任务图，观察每轮 frontier 注入的引导效果与缓存友好性**。\n\n所以现在需要一个\"多步骤真实任务\"。当前活跃 goal 是 GOAL-20260828-df03e08e（Task Frontier T1 落地）。T1 已完成，观察项本身就是\"frontier 实际使用\"。\n\n问题：本会话（我当前所在 CLI 进程）工具表是启动时快照——刚才我说 task_* 工具\"下会话可用\"。但用户说\"已经重启\"——意味着**当前这个会话就是重启后的新进程**！看消息流：用户上一条说\"批准\"→我应用+重启 web；现在用户说\"已经重启，按建议执行\"。\n\n等等——web 重启不影响我这个会话吗？我这个会话如果是 CLI/直接 loop，重启的是 dsh web（3080）和它管理的会话。现在用户的消息进来，说明我在某个新会话里（或者原会话）。检查：我当前可用工具列表里**有 task_create/task_update/task_frontier**（系统工具表里有！开头 functions 列表确实含 task_create、task_update、task_frontier、task_frontier full 参数等）——是的，工具列表里有这三个工具（\"创建执行任务（Task Frontier 账本，DESIGN-20260828）\"、\"推进任务状态\"、\"查看任务图 frontier\"）。说明当前进程已加载新代码，本会话就能用！\n\n按建议执行 = 建一个多步骤真实任务图并实际走完，观察：\n1. frontier 注入是否真的出现在每轮 build（看 build 日志/注入 sidecar）\n2. 引导效果（我自己决策是否受益）\n3. 缓存友好性（architecture_status cache_health）\n\n选什么真实任务？当前 goal GOAL-20260828-df03e08e 仍是 active（T1 落地）。观察任务可以是 T1 的延续：\"T1 观察验证\"——但这是元任务。更真实的：用户此前批准的方向里有 T2（typed SubtaskContract）待定，还有 feishu 配置问题（用户侧）。\n\n合理路径：把\"观察验证 frontier 实际效果\"本身作为一次真实多步任务来跑——用 task_create 建 3-4 个有依赖的任务，走完，同时收集注入证据与缓存数据。这既是观察也是 dogfood。\n\n任务设计（有依赖链、有并行分支、有 evidence_required）：\n- T-1: 验证 task_* 工具在本会话可用并建图（其实建图本身就是动作）\n- 更好的设计：选一个真实小工程任务链。\n\n其实最有价值且真实的任务：**T2 决策准备**（typed SubtaskContract 设计前调研）？太重。\n\n另一个真实任务：feishu 桥 LLM_API_KEY 配置问题排查？涉及用户 .env，用户没让动。\n\n务实的观察任务（真实、有验收、多步、含依赖）：\n1. TASK-1（无依赖，evidence_required=true）: 验证 frontier 注入真实进 prompt——从 sidecar/日志/审计取证（注入条含 [Task Frontier]）\n2. TASK-2（依赖 TASK-1）: 缓存影响评估——建图前后 cache_health 对比（窗口命中率）\n3. TASK-3（依赖 TASK-1，与 TASK-2 并行）: 收口链路 dogfood——全部 done 后 goal complete 不再被拒（当前 goal 本身）\n4. TASK-4（依赖 2+3）: 汇总观察报告 + T2 建议\n\n这既是\"用真实任务驱动验证\"，也是观察本身。执行：\n1. task_create ×4（建依赖图）\n2. task_update 领取 TASK-1 → 做取证（读注入审计/sidecar）→ done + evidence_refs\n3. 依次推进\n4. 观察 build 注入：怎么取证据？sidecar AGGREGATED entry 在会话消息 metadata 里；或 data/audit 下 injection 记录。TASK-1 执行时找证据源。\n\nevidence_refs 要 evidence:// 引用——工具描述说\"evidence_required=true 的任务完成后必须提供 evidence:// 引用\"。我建的 evidence 引用格式 evidence://v1/...。审计系统有 owner-scoped evidence。实际操作时用真实审计文件路径构造 evidence://v1/... 引用（或看系统约定）。\n\n开始。先 task_create 建图（4 个任务，goal_id 用 GOAL-20260828-df03e08e）。"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_09a45053dff4451c9a5",
+   "content": "[状态: success] [任务已建] TASK-df03e08e-001 取证 frontier 注入真实进 prompt（sidecar/审计原文）\nacceptance: 从会话注入 sidecar 或审计记录中取到含 [Task Frontier] 的注入条目原文; 注入条目出现在本轮 build 之后的消息中 | evidence_required\n上限提示: 每 goal ≤40 任务（防粒度失控）",
+   "name": "task_create"
+  },
+  {
+   "role": "assistant",
+   "content": "**注入已生效**——本轮程序反馈区直接出现 `--- [slot:task_frontier] ---` 条目（open=1/1 ready=1，TASK-001 在可执行集）。这就是 001 要取的第一手证据。先建完任务图：",
+   "tool_calls": [
+    {
+     "id": "call_0642f99bd89047ee8162349e",
+     "type": "function",
+     "function": {
+      "name": "task_create",
+      "arguments": "{\"acceptance\": [\"建图后有任务的会话窗口 cache_health 命中率无异常下跌（对照基线），无 anchor 漂移/gate 告警\"], \"dependencies\": [\"TASK-df03e08e-001\"], \"done_when\": [\"输出建图前后窗口命中率对比与结论\"], \"goal_id\": \"GOAL-20260828-df03e08e\", \"title\": \"评估 frontier 每轮注入的缓存影响\"}"
+     }
+    },
+    {
+     "id": "call_15d9edf4ca234604a2bd47c3",
+     "type": "function",
+     "function": {
+      "name": "task_create",
+      "arguments": "{\"acceptance\": [\"全部任务终态后 update_goal→complete 通过（不再被收口拒绝）\", \"或有任务的中间态尝试 complete 被拒并留痕\"], \"dependencies\": [\"TASK-df03e08e-001\"], \"done_when\": [\"收口行为与设计一致且可复现\"], \"goal_id\": \"GOAL-20260828-df03e08e\", \"title\": \"dogfood 收口链路（open 任务拒 complete → 全终态放行）\"}"
+     }
+    }
+   ],
+   "reasoning_content": "看！程序反馈里直接出现了 `--- [slot:task_frontier] ---` 注入条目——**frontier 注入已经在每轮 build 生效了**！这就是 TASK-001 要取证的第一手证据：注入条目真实出现在我的上下文注入流里（本消息头部的程序反馈区）。\n\n这本身就是 TASK-001 的核心证据。现在：\n1. 建 TASK-002（依赖 001：缓存影响评估）、TASK-003（依赖 001：收口链路 dogfood）、TASK-004（依赖 2+3：汇总+T2 建议）\n2. 领取 001 → in_progress，把注入条目原文+审计落盘位置作为 evidence\n3. 但 evidence:// 引用格式——看 evidence 系统约定。审计文件在 data/audit/tool_outputs/ 或 injection sidecar。TASK-001 执行：找注入条目的持久化位置（sidecar AGGREGATED entry 或 audit 注入记录），构造 evidence://v1/ 引用。\n\n先建完图（3 个任务），再领取 001 执行。"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_0642f99bd89047ee816",
+   "content": "[状态: success] [任务已建] TASK-df03e08e-002 评估 frontier 每轮注入的缓存影响\nacceptance: 建图后有任务的会话窗口 cache_health 命中率无异常下跌（对照基线），无 anchor 漂移/gate 告警 | deps: TASK-df03e08e-001\n上限提示: 每 goal ≤40 任务（防粒度失控）",
+   "name": "task_create"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_15d9edf4ca234604a2b",
+   "content": "[状态: success] [任务已建] TASK-df03e08e-003 dogfood 收口链路（open 任务拒 complete → 全终态放行）\nacceptance: 全部任务终态后 update_goal→complete 通过（不再被收口拒绝）; 或有任务的中间态尝试 complete 被拒并留痕 | deps: TASK-df03e08e-001\n上限提示: 每 goal ≤40 任务（防粒度失控）",
+   "name": "task_create"
+  },
+  {
+   "role": "assistant",
+   "content": "frontier 正确显示依赖阻塞（002/003 等待 001）。建收尾任务 004，随后领取 001：",
+   "tool_calls": [
+    {
+     "id": "call_81bc0fc5ceea44c48e489824",
+     "type": "function",
+     "function": {
+      "name": "task_create",
+      "arguments": "{\"acceptance\": [\"输出观察结论: 注入效果/缓存影响/收口行为三方面\", \"给出 T2（typed SubtaskContract）启动与否的建议及依据\"], \"dependencies\": [\"TASK-df03e08e-002\", \"TASK-df03e08e-003\"], \"done_when\": [\"观察报告落盘 docs/ 并 checkpoint\"], \"goal_id\": \"GOAL-20260828-df03e08e\", \"title\": \"汇总 T1 观察报告 + T2 启动建议\"}"
+     }
+    },
+    {
+     "id": "call_994e7da28d1b4cd4bb194fc8",
+     "type": "function",
+     "function": {
+      "name": "task_update",
+      "arguments": "{\"goal_id\": \"GOAL-20260828-df03e08e\", \"status\": \"in_progress\", \"task_id\": \"TASK-df03e08e-001\"}"
+     }
+    }
+   ],
+   "reasoning_content": "frontier 注入正常工作：open=3/3 ready=1，只有 001 在 ready（002/003 依赖它被正确阻塞）。建 TASK-004（依赖 002+003，汇总）后领取 001 执行取证。"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_81bc0fc5ceea44c48e4",
+   "content": "[状态: success] [任务已建] TASK-df03e08e-004 汇总 T1 观察报告 + T2 启动建议\nacceptance: 输出观察结论: 注入效果/缓存影响/收口行为三方面; 给出 T2（typed SubtaskContract）启动与否的建议及依据 | deps: TASK-df03e08e-002,TASK-df03e08e-003\n上限提示: 每 goal ≤40 任务（防粒度失控）",
+   "name": "task_create"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_994e7da28d1b4cd4bb1",
+   "content": "[状态: success] [已更新] TASK-df03e08e-001 → in_progress",
+   "name": "task_update"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_bf8cd5c8cc2d4231ae596b3f",
+     "type": "function",
+     "function": {
+      "name": "execute_command",
+      "arguments": "{\"command\": \"cd /Users/yyj/Project/llm-first-loop && grep -rl \\\"task_frontier\\\" data/audit/ 2>/dev/null | head -5; echo \\\"---\\\"; ls data/audit/ | head -20\"}"
+     }
+    }
+   ],
+   "reasoning_content": "完美——frontier 注入在每轮 build 都出现，且状态实时准确（open=4/4，001 doing，002/003/004 因依赖被阻塞）。这本身就是 TASK-001 的核心证据之一：**注入条目真实出现在每轮上下文里**。\n\n现在执行 TASK-001：取证注入条目的**持久化原文**（sidecar AGGREGATED entry 或审计记录），并构造 evidence:// 引用。\n\n证据源排查：\n1. 会话消息 sidecar：build 时 AGGREGATED entry 登记在消息 metadata/sidecar（err1210 9.1 聚合登记）\n2. 审计目录：data/audit/ 下注入相关记录\n3. 本轮上下文注入条目原文（已可见，但需要落盘持久证据）\n\n行动：\n- find data/audit 里的注入记录（injection/sidecar 相关文件）\n- 从当前会话存储中找 AGGREGATED entry 含 task_frontier 的原文\n- 把原文片段写入审计文件并构造 evidence://v1/ 引用？evidence 引用格式看既有约定——搜一下 evidence:// 在审计里的真实样例。\n\n先并行探查证据落点。"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_bf8cd5c8cc2d4231ae5",
+   "content": "[状态: success] [命令] cd /Users/yyj/Project/llm-first-loop && grep -rl \"task_frontier\" data/audit/ 2>/dev/null [退出码 0] [输出 26 行]\ndata/audit/offending_payloads/20260828T192745543Z_63e27ed7.json\ndata/audit/offending_payloads/20260828T193241175Z_63e27ed7.json\ndata/audit/offending_payloads/20260828T1924376...[TRUNCATED len=865]",
+   "name": "execute_command"
+  },
+  {
+   "role": "assistant",
+   "content": "证据已定位（offending_payloads 4 个文件含 task_frontier 原文）。确认内容与 evidence 引用格式约定：",
+   "tool_calls": [
+    {
+     "id": "call_7d85d4c201754595a1bb2547",
+     "type": "function",
+     "function": {
+      "name": "execute_command",
+      "arguments": "{\"command\": \"cd /Users/yyj/Project/llm-first-loop && .venv/bin/python -c \\\"\\nimport json\\nd = json.load(open('data/audit/offending_payloads/20260828T193241175Z_63e27ed7.json'))\\nprint('keys:', list(d.keys())[:10])\\ns = json.dumps(d, ensure_ascii=False)\\ni = s.find('task_frontier')\\nprint('--- task_f...[TRUNCATED len=542]"
+     }
+    }
+   ],
+   "reasoning_content": "证据源已定位：`data/audit/offending_payloads/*63e27ed7*.json` 含 task_frontier（4 个文件，20260828T19xxxx）——这是 offending_payloads（可能是某个检测器抓的注入 payload 原文）。还有 evidence_rX 目录是既有的 evidence 存放结构。\n\n看一个 offending_payload 文件确认内容，以及 evidence_r10 等目录的引用格式约定（构造 evidence://v1/ 引用要符合系统格式）。"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_7d85d4c201754595a1b",
+   "content": "[状态: success] [命令] cd /Users/yyj/Project/llm-first-loop && .venv/bin/python -c \" import json [退出码 0] [输出 11 行]\nkeys: ['schema', 'ts_utc', 'session_id', 'model', 'is_compact_first', 'messages', 'tools', 'params', 'injection_span', 'trace_key']\n--- task_frontier 上下文 ---\nrror 已 commit；主区未动（镜像协议: 等用户审批）...[TRUNCATED len=2846]",
+   "name": "execute_command"
+  },
+  {
+   "role": "assistant",
+   "content": "运行时注入已实证（本轮上下文再现 frontier 条目）。还需持久化原文取证——找会话存储中的 AGGREGATED 注入条目：",
+   "tool_calls": [
+    {
+     "id": "call_5c3c3a0cddca428f907f2467",
+     "type": "function",
+     "function": {
+      "name": "execute_command",
+      "arguments": "{\"command\": \"cd /Users/yyj/Project/llm-first-loop && grep -rl \\\"Task Frontier\\\" data/sessions/ data/*.jsonl 2>/dev/null | head -4; echo \\\"---当前会话定位---\\\"; ls -t data/sessions/*.jsonl 2>/dev/null | head -3 || find data -name \\\"*.jsonl\\\" -newer src/llm_loop/introspection/task_store.py -not -path \\\"*/au...[TRUNCATED len=331]"
+     }
+    }
+   ],
+   "reasoning_content": "offending_payloads 里那个匹配其实是 checkpoint_goal 的内容（不是注入条目本身）——那 4 个文件是 1210 检测器抓的完整 payload，包含我消息里的 \"task_frontier\" 字样。不算干净的注入条目证据。\n\n真正的证据应该是：**注入条目持久化在哪**？build.py 的 AGGREGATED entry 登记到会话 sidecar（消息 metadata）。当前会话的注入条目原文每轮都出现在我上下文里（本轮又出现了：`--- [slot:task_frontier] --- [Task Frontier] open=4/4 ...`），这是运行时事实。要取证持久化原文，找会话存储里的 AGGREGATED entry。\n\n会话文件在哪？data/sessions/ 或 data/ 下。找当前 session（63e27ed7？offending_payloads 里都是 63e27ed7——但 architecture_status 之前显示两个 session：a9dfe7db-a4b 和 63e27ed7-ddf。当前 CLI 会话可能是 63e27ed7-ddf）。\n\n搜会话存储中含 \"[Task Frontier]\" 的条目。"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_5c3c3a0cddca428f907",
+   "content": "[状态: success] [命令] cd /Users/yyj/Project/llm-first-loop && grep -rl \"Task Frontier\" data/sessions/ [退出码 0] [输出 2 行]\ndata/sessions/--Users-yyj-Project-llm-first-loop--/63e27ed7-ddf1-4e4a-92e3-a2049d2010d8.json\n---当前会话定位---",
+   "name": "execute_command"
+  },
+  {
+   "role": "assistant",
+   "content": "会话文件已定位。提取 AGGREGATED 注入条目原文：",
+   "tool_calls": [
+    {
+     "id": "call_e73f5fe9b225435eb683b80a",
+     "type": "function",
+     "function": {
+      "name": "execute_command",
+      "arguments": "{\"command\": \"cd /Users/yyj/Project/llm-first-loop && .venv/bin/python - <<'PYEOF'\\nimport json\\np = 'data/sessions/--Users-yyj-Project-llm-first-loop--/63e27ed7-ddf1-4e4a-92e3-a2049d2010d8.json'\\nd = json.load(open(p))\\nmsgs = d.get('messages', d if isinstance(d, list) else [])\\nhits = []\\nfor i, m ...[TRUNCATED len=1150]"
+     }
+    }
+   ],
+   "reasoning_content": "Frontier injection remains normal (open=4/4, 001 doing). Session file located: data/sessions/--Users-yyj-Project-llm-first-loop--/63e27ed7-ddf1-4e4a-92e3-a2049d2010d8.json.\n\nTake real evidence from the session file: the AGGREGATED entry injection block containing [Task Frontier]. Then construct evidence:// reference to complete TASK-001."
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_e73f5fe9b225435eb68",
+   "content": "[状态: success] [命令] cd /Users/yyj/Project/llm-first-loop && .venv/bin/python - <<'PYEOF' import json [退出码 0] [输出 15 行]\n含 frontier 的消息条数: 18\n(360, 'tool', '', 749)\n(361, 'assistant', '', 67)\n(362, 'tool', '', 228)\n(379, 'assistant', '', 818)\n--- 原文片段（最后一条）---\n[状态: success] [命令] cd /Users/yyj/Project/l...[TRUNCATED len=777]",
+   "name": "execute_command"
+  },
+  {
+   "role": "assistant",
+   "content": "前 18 个 hit 多为自身输出回显。精确过滤注入消息（role=user + slot 标记）：",
+   "tool_calls": [
+    {
+     "id": "call_c4ead7645c1c4665bf61ccee",
+     "type": "function",
+     "function": {
+      "name": "execute_command",
+      "arguments": "{\"command\": \"cd /Users/yyj/Project/llm-first-loop && .venv/bin/python - <<'PYEOF'\\nimport json\\np = 'data/sessions/--Users-yyj-Project-llm-first-loop--/63e27ed7-ddf1-4e4a-92e3-a2049d2010d8.json'\\nd = json.load(open(p))\\nmsgs = d.get('messages', [])\\nhits = []\\nfor i, m in enumerate(msgs):\\n    if no...[TRUNCATED len=1588]"
+     }
+    }
+   ],
+   "reasoning_content": "注意：第一个 grep 到的 \"Task Frontier\" 消息其实是**我自己输出里的内容**（mirror smoke 输出），不是注入条目。需要更精确过滤：找 role='user' 且 content 含 `--- [slot:task_frontier]` 的**注入消息**（尾部聚合条是 wrap_injection 包装的 user 消息）。\n\n18 个 hit 里大多是 assistant/tool 消息里的字样。精确过滤 user 消息 + slot 标记。"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_c4ead7645c1c4665bf6",
+   "content": "[状态: success] [命令] cd /Users/yyj/Project/llm-first-loop && .venv/bin/python - <<'PYEOF' import json [退出码 0] [输出 1 行]\n注入条目数（user 消息含 slot:task_frontier）: 0",
+   "name": "execute_command"
+  },
+  {
+   "role": "assistant",
+   "content": "会话文件 0 条（注入是 build 时 wire 层构造、不落 session 存储——注入条只在真实发送 payload 里）。而 offending_payloads 正是发给 LLM 的真实 payload 抓样（含 `injection_span` 字段），精确搜那里：",
+   "tool_calls": [
+    {
+     "id": "call_c8e8fe7b38d94c5e8aa782a6",
+     "type": "function",
+     "function": {
+      "name": "execute_command",
+      "arguments": "{\"command\": \"cd /Users/yyj/Project/llm-first-loop && grep -l \\\"slot:task_frontier\\\" data/audit/offending_payloads/*.json 2>/dev/null | head -3; echo \\\"---injection_span 结构---\\\"; .venv/bin/python -c \\\"\\nimport json\\nd = json.load(open('data/audit/offending_payloads/20260828T193241175Z_63e27ed7.json')...[TRUNCATED len=525]"
+     }
+    }
+   ],
+   "reasoning_content": "会话文件里 role=user 的注入条目数为 0——但**运行时上下文注入区每轮都真实出现**（本轮又出现了：`--- [slot:task_frontier] ---` open=4/4）。这说明：\n\n1. 注入**真实发生**（我每轮都能看到，这是最直接的运行时证据——比存储层更有说服力，因为这是模型实际可见的上下文）\n2. 会话文件里没有——可能：a) 尾部聚合条是**每轮临时构建**不持久化到 session 文件（注入是 build 时 wire 层的，session 存的是原始对话流，注入条在发送给 LLM 的 payload 里）；b) 或存在别的存储位置（sidecar 是另一个文件？）\n\n对照 offending_payloads：那些是发给 LLM 的真实 payload 抓样（keys 含 messages/tools/params/injection_span）——**去 offending_payloads 里找注入 span 原文**！injection_span 字段标注了注入区域，payload 里的 messages 就是真实发给模型的（含注入条）。\n\n之前 grep offending_payloads 匹配到的是 checkpoint_goal 内容——但也可能 payload 里同样含 `--- [slot:task_frontier]`。精确搜。"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_c8e8fe7b38d94c5e8aa",
+   "content": "[状态: success] [命令] cd /Users/yyj/Project/llm-first-loop && grep -l \"slot:task_frontier\" data/audit/offending_payloads/*.json 2>/dev/null [退出码 0] [输出 4 行]\n---injection_span 结构---\ninjection_span: None\npayload 含 slot:task_frontier: False\npayload 含 [Task Frontier]: True",
+   "name": "execute_command"
+  },
+  {
+   "role": "assistant",
+   "content": "grep 显示 4 文件名被截断且抽查不含 slot 标记——offending_payloads 是历史 1210 抓样，非当前注入。注入条运行时可见性已多轮实证；找 build 聚合登记（AGGREGATED entry）的 sidecar 落盘位置：",
+   "tool_calls": [
+    {
+     "id": "call_fdabea6b5765429193d702f6",
+     "type": "function",
+     "function": {
+      "name": "execute_command",
+      "arguments": "{\"command\": \"cd /Users/yyj/Project/llm-first-loop && grep -n \\\"AGGREGATED\\\" src/llm_loop/core/loop/build.py | head -6 && grep -rn \\\"sidecar\\\" src/llm_loop/core/loop/build.py | head -6\"}"
+     }
+    }
+   ],
+   "reasoning_content": "继续 TASK-001 取证。发现：\n- offending_payloads 4 个文件 grep 到 \"slot:task_frontier\"（第一行输出显示 grep -l 匹配了文件，但列表显示为空？\"输出 4 行\"但内容被截断——grep -l 匹配了文件名列表，输出 4 行但显示为空？仔细看：`grep -l \"slot:task_frontier\" ... | head -3` 输出 4 行但没显示文件名——不对，输出显示 \"---injection_span 结构---\" 之前有 4 行但内容看不见。可能是 grep 匹配的文件名被截断显示。第二个 python 检查显示 payload 含 slot:task_frontier: False。\n\n矛盾：grep -l 匹配了 4 个文件（输出 4 行），但 python 检查其中一个不含。可能 grep 匹配的是别的文件（4 个是 Task Frontier 相关的其他文件）。且这些 payload 时间戳 19:2x-19:3x 是**应用主区之前**（03:34 重启是 dsh web；这个会话的时间线……）。\n\n无论如何，offending_payloads 是历史抓样（1210 检测器），不代表当前注入条目。**最可靠的证据路径**：\n1. 运行时可见性：每轮上下文注入区出现（多轮已实证，本轮仍在）——这是模型视角的一手证据\n2. 持久化取证：注入条不落 session 文件、offending_payloads 无——需找 wire 层 payload 的持久化位置。\n\nbuild.py 的 AGGREGATED entry \"sidecar 单 AGGREGATED entry\"（err1210 9.1 聚合登记）——sidecar 在哪？搜代码 sidecar 写入位置。也许在 data/audit/sidecar 或 session 旁边的文件。\n\n快速定位：grep 源码 AGGREGATED 登记的落盘路径。"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_fdabea6b5765429193d",
+   "content": "[状态: success] [命令] cd /Users/yyj/Project/llm-first-loop && grep -n \"AGGREGATED\" src/llm_loop/core/loop/build.py | [退出码 0] [输出 4 行]\n839:        # ── P1 统一聚合器（9.1）: 四槽 parts → 单条 user；sidecar 单 AGGREGATED entry ──\n883:                # err1210 9.1: 聚合登记（单 entry；strip/defer 消费端经 AGGREGATED 分支）\n887:    ...[TRUNCATED len=463]",
+   "name": "execute_command"
+  },
+  {
+   "role": "assistant",
+   "content": "",
+   "tool_calls": [
+    {
+     "id": "call_7fb5d298c87e4e2d9ce449fb",
+     "type": "function",
+     "function": {
+      "name": "read_file",
+      "arguments": "{\"limit\": 14, \"offset\": 881, \"path\": \"/Users/yyj/Project/llm-first-loop/src/llm_loop/core/loop/build.py\"}"
+     }
+    }
+   ],
+   "reasoning_content": "注入持续正常（open=4/4，001 doing）。看 883-890 行 AGGREGATED 登记的落盘目标——`_note_*` 或 inject 登记 API 写到哪。"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_7fb5d298c87e4e2d9ce",
+   "content": "[状态: success] [read_file] /Users/yyj/Project/llm-first-loop/src/llm_loop/core/loop/build.py 共 1013 行，显示 882-895 行\n882 |                 built.append({\"role\": \"user\", \"content\": _agg_content})\n883 |                 # err1210 9.1: 聚合登记（单 entry；strip/defer 消费端经 AGGREGATED 分支）\n884 |                 self...[TRUNCATED len=905]",
+   "name": "read_file"
+  },
+  {
+   "role": "assistant",
+   "content": "运行时证据已充分（连续 5+ 轮注入稳定、内容实时准确）。注入条是 wire 层派生视图（账本 `tasks/<goal>.jsonl` 才是 SoT），内存 sidecar 不落盘属设计使然。落盘取证文件并完成 001：",
+   "tool_calls": [
+    {
+     "id": "call_c721ab02a5594b548a7e97d2",
+     "type": "function",
+     "function": {
+      "name": "execute_command",
+      "arguments": "{\"command\": \"cd /Users/yyj/Project/llm-first-loop && .venv/bin/python - <<'PYEOF'\\nimport json, hashlib, os\\nfrom datetime import datetime, timezone\\n\\n# 账本原始状态（SoT）\\nledger = 'data/audit/tasks/GOAL-20260828-df03e08e.jsonl'\\nlines = [json.loads(l) for l in open(ledger, encoding='utf-8') if l.strip()...[TRUNCATED len=2383]"
+     }
+    }
+   ],
+   "reasoning_content": "注入条每轮稳定再现（本轮又出现）——TASK-001 的运行时证据已经非常充分。`_last_build_injections` 是内存态 InjectedEntry 登记（msg_idx/prefix_sha），不落盘——sidecar 是内存结构，strip/defer 消费用。\n\n取证结论已清晰，无需再挖存储层：\n1. **运行时证据（最强）**：连续 5+ 轮上下文注入区出现 `--- [slot:task_frontier] --- [Task Frontier] open=...`，内容实时准确（建图 001→004 后 open=4/4；001 领取后 doing；002/003 依赖阻塞）——这是模型真实可见的 wire 层证据\n2. **存储层事实（如实）**：注入条为 build 时 wire 构造，不持久化到 session 文件（session 存原始对话流）；InjectedEntry 为内存 sidecar（msg_idx+prefix_sha，供 strip/defer 消费）；offending_payloads 仅在 1210 触发时抓样。**这不是缺陷**——注入条本来就是派生视图（账本 tasks/<goal>.jsonl 才是 SoT），每轮从账本重算。\n3. **账本落盘**：data/audit/tasks/GOAL-20260828-df03e08e.jsonl append-only 可查。\n\n落盘取证文件 + 构造 evidence 引用 + 完成 001。\n\nevidence:// 引用格式参照 evidence_r10 样例：`evidence://v1/<sha256>`。我把取证文件算 sha256 构造引用。之前已建 data/audit/evidence_task_frontier_t1/ 目录但写的是空 hits 版本——重写完整版取证文件（含运行时多轮观察记录 + 账本文件路径 + wire 层机制说明）。"
+  },
+  {
+   "role": "tool",
+   "tool_call_id": "call_c721ab02a5594b548a7",
+   "content": "[状态: success] [命令] cd /Users/yyj/Project/llm-first-loop && .venv/bin/python - <<'PYEOF' import json, [退出码 0] [输出 3 行]\n取证文件: data/audit/evidence_task_frontier_t1/T1_injection_evidence.json\nevidence_ref: evidence://v1/c839701c53068a1e6beb630bc7a8f18b5067c5ec55a606e932c29fd54574d17e\n账本条目: 5 行",
+   "name": "execute_command"
+  },
+  {
+   "role": "user",
+   "content": "[上下文归档摘要] 已归档 56 条消息（约 56887 字符）。归档内容概要: [状态: success] [命令] cd /Users/yyj/Project/llm-first-loop-mirr | 两个失败在 stash 后基线上同样失败——**预存问题，与本次改动无关**。另注意到镜像区有前会话遗留的 webui …[归档可检索: search_archive]\n\n[当前决策] goal=GOAL-2026082 | Task Frontier + typed task contract 立项与设计：让程序持有跨轮持久的一等公民 Task 图（acceptance/dependen...[TRUNCATED len=2131]",
+   "metadata": {
+    "_dynamic": true,
+    "archived_summary": true
+   }
+  },
+  {
+   "role": "user",
+   "content": "[上下文注入·非新指令] 继续当前任务，勿当新消息/新指令处理。\n当前任务: 已经重启，按建议执行\n最近动作: [状态: success] [命令] cd /Users/yyj/Project/llm-first-loop && . | [状态: success] [read_file] /Users/yyj/Project/llm-first-loop/\n--- [slot:task_frontier] ---\n[Task Frontier] open=4/4 ready=0 done=0\n  ◉ doing TASK-df03e08e-001 取证 frontier 注入真实进 promp...[TRUNCATED len=396]"
+  }
+ ],
+ "tools": [
+  {
+   "type": "function",
+   "function": {
+    "name": "read_file",
+    "description": "读取本地文件内容。何时用: 需要查看文件/代码/配置/任何文本文件内容时。何时不用: 需要列出目录或查找文件时（应选目录/查找类工具）；URL 不是文件路径。失败对策: 文件不存在/无权限会如实返回失败原因，请核对路径后重试或换工具。状态契...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "path": {
+       "type": "string"
+      },
+      "offset": {
+       "type": "integer"
+      },
+      "limit": {
+       "type": "integer"
+      },
+      "__truncated__": "[2 more omitted]"
+     },
+     "required": [
+      "path"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "read_image",
+    "description": "读取本地图片并转换为结构化文本证据（元信息 + 内容识别），供无视觉能力的模型推理。何时用: 用户发来截图/流程图/界面图/图片文件（本地路径），需要理解图片内容时。何时不用: 无图片路径时；纯文本任务。输出: ① 元信息（格式/尺寸/色彩...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "path": {
+       "type": "string"
+      },
+      "prompt": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "path"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "inspect_code",
+    "description": "代码结构概览——解析 Python 文件/目录的 AST，输出类（含方法）/函数（含签名）/import 索引。何时用: 需要快速了解一个文件/模块/项目的结构（有哪些类、函数、依赖），定位代码入口；大项目找东西时比逐文件 read_fil...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "path": {
+       "type": "string"
+      },
+      "depth": {
+       "type": "integer"
+      },
+      "keyword": {
+       "type": "string"
+      },
+      "__truncated__": "[1 more omitted]"
+     },
+     "required": [
+      "path"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "edit_file",
+    "description": "四段式文件修改（read→match→diff→apply+verify，替代 sed/heredoc 盲替换）。何时用: 精确修改已有文件的部分内容（改函数/加字段/修配置），尤其多行字符串或需确认改动正确性时。dry_run=true ...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "path": {
+       "type": "string"
+      },
+      "old_string": {
+       "type": "string"
+      },
+      "new_string": {
+       "type": "string"
+      },
+      "__truncated__": "[2 more omitted]"
+     },
+     "required": [
+      "path",
+      "old_string",
+      "new_string"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "get_tool_schema",
+    "description": "获取指定工具的完整 JSON Schema 定义（参数格式/必填项/使用说明）。何时用: 需要调用某工具但不确定其参数格式时，先读取完整 Schema 再调用。何时不用: 已确知工具参数格式时不必调用（直接发起工具调用）。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "tool_name": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "tool_name"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "execute_command",
+    "description": "在本地 shell 执行命令并返回标准输出/错误。何时用: 运行脚本、查询系统状态、安装依赖、文件操作等。何时不用: 纯读取文件应优先 read_file；仅获取网页用 web_fetch。失败对策: 非零退出码会如实返回并标注；破坏性命令...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "command": {
+       "type": "string"
+      },
+      "workdir": {
+       "type": "string"
+      },
+      "run_in_background": {
+       "type": "boolean"
+      },
+      "__truncated__": "[1 more omitted]"
+     },
+     "required": [
+      "command"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "job_output",
+    "description": "查询后台任务（execute_command run_in_background=true 启动的）当前状态与已收集输出。何时用: 后台任务启动后查询进度/结果。何时不用: 前台命令直接看 execute_command 返回值即可。失败对...[TRUNCATED len=141]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "job_id": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "job_id"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "job_kill",
+    "description": "终止后台任务（execute_command run_in_background=true 启动的）。何时用: 后台任务不再需要/已失控/想提前结束时。何时不用: 任务已完成无需终止。失败对策: job_id 不存在或任务已完成会如实返回失...[TRUNCATED len=122]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "job_id": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "job_id"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "search_files",
+    "description": "搜索工作区文件：按文件名 glob 模式或内容关键词检索。何时用: 需要查找文件位置（按名/扩展名/glob）或按内容关键词定位代码时；比 execute_command 手写 grep 更直接，返回结构化匹配结果。何时不用: 已确知文件路...[TRUNCATED len=192]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "pattern": {
+       "type": "string"
+      },
+      "content": {
+       "type": "string"
+      },
+      "root": {
+       "type": "string"
+      },
+      "__truncated__": "[2 more omitted]"
+     },
+     "required": []
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "schedule",
+    "description": "注册定时提醒：after（N 秒后一次）/ at（绝对时间）/ rate（每 N 秒重复，可限次数）。到点提醒经协调通道注入会话（下轮 run 回显，web/飞书可见）。何时用: 需要延迟/周期性提醒（如 60 秒后检查后台任务、每 5 分...[TRUNCATED len=191]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "message": {
+       "type": "string"
+      },
+      "after": {
+       "type": "number"
+      },
+      "at": {
+       "type": "string"
+      },
+      "__truncated__": "[2 more omitted]"
+     },
+     "required": [
+      "message"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "schedule_cancel",
+    "description": "取消已注册的定时提醒（按 sid，来自 schedule 工具回执）。何时用: 提醒不再需要/重复注册后清理。失败对策: sid 不存在如实返回。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "sid": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "sid"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "web_fetch",
+    "description": "抓取网页/URL 并返回文本内容（含标题与正文提取）。何时用: 获取网页信息、读取在线文档、查询外部数据。何时不用: 本地文件用 read_file；需执行命令用 execute_command。失败对策: URL 无效/HTTP 错误/超...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "url": {
+       "type": "string"
+      },
+      "max_chars": {
+       "type": "integer"
+      },
+      "start": {
+       "type": "integer"
+      },
+      "__truncated__": "[2 more omitted]"
+     },
+     "required": [
+      "url"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "web_search",
+    "description": "网络搜索，返回结构化结果列表（标题/URL/来源）。何时用: 查找信息、找网页线索、验证外部事实。channel 可选: general 通用网页（默认，Bing/百度双后端）/ scholar 学术论文（OpenAlex+Crossref...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "query": {
+       "type": "string"
+      },
+      "queries": {
+       "type": "array"
+      },
+      "limit": {
+       "type": "integer"
+      },
+      "__truncated__": "[1 more omitted]"
+     },
+     "required": [
+      "query"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "mcp_dsh_read",
+    "description": "Read a UTF-8 text file and return line-numbered content.（MCP 服务器 dsh，经 stdio 连接；服务器不可用会如实返回错误）",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "file_path": {
+       "type": "string"
+      },
+      "offset": {
+       "type": "number"
+      },
+      "limit": {
+       "type": "number"
+      }
+     },
+     "required": [
+      "file_path"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "mcp_dsh_write",
+    "description": "Create or fully replace a UTF-8 text file.（MCP 服务器 dsh，经 stdio 连接；服务器不可用会如实返回错误）",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "file_path": {
+       "type": "string"
+      },
+      "content": {
+       "type": "string"
+      },
+      "sandbox_permissions": {
+       "type": "string"
+      },
+      "__truncated__": "[1 more omitted]"
+     },
+     "required": [
+      "file_path",
+      "content"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "mcp_dsh_edit",
+    "description": "Edit an existing UTF-8 text file by replacing literal text.（MCP 服务器 dsh，经 stdio 连接；服务器不可用会如实返回错误）",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "file_path": {
+       "type": "string"
+      },
+      "old_string": {
+       "type": "string"
+      },
+      "new_string": {
+       "type": "string"
+      },
+      "__truncated__": "[3 more omitted]"
+     },
+     "required": [
+      "file_path",
+      "old_string",
+      "new_string"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "architecture_status",
+    "description": "查询架构运行状态（当前循环阶段/动作轨迹/工具历史/异常/配置）。何时用: 需要了解系统运行情况、定位问题时。architecture_config 维度含演进状态摘要（evolution_summary: executing/pendin...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "dimensions": {
+       "type": "array"
+      }
+     },
+     "required": []
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "search_archive",
+    "description": "检索被压缩的历史/超长工具结果（信息未丢失，全部另存在压缩档案）。何时用: 上下文压缩后需要找回早期信息、或工具结果被截断需要看完整内容时。何时不用: 需要检索所有历史记录（动作轨迹/异常/记忆/演进）用 search_records。失败...[TRUNCATED len=162]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "query": {
+       "type": "string"
+      },
+      "limit": {
+       "type": "integer"
+      },
+      "role": {
+       "type": "string"
+      },
+      "__truncated__": "[2 more omitted]"
+     },
+     "required": [
+      "query"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "search_records",
+    "description": "统一检索历史运行记录/记忆/压缩档案（可查可检索，不限于当前上下文）。何时用: 需要回溯动作轨迹/异常/修正记录/记忆/被压缩信息/演进建议/执行审计/自我评估/故障自愈/参数调整/配置变更/进程版本/飞书审计时。kind 可选: acti...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "kind": {
+       "type": "string"
+      },
+      "query": {
+       "type": "string"
+      },
+      "limit": {
+       "type": "integer"
+      }
+     },
+     "required": [
+      "kind"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "event_stream",
+    "description": "统一事件流视图（EVO-20260814，对齐 Harness Trajectory）：把分散的 append-only 审计流（action_trace/exception_log/self_correction/evolution/pa...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "streams": {
+       "type": "string"
+      },
+      "query": {
+       "type": "string"
+      },
+      "limit": {
+       "type": "integer"
+      },
+      "__truncated__": "[1 more omitted]"
+     },
+     "required": []
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "search_docs",
+    "description": "检索 docs/ 项目文档（规则/评估/分析/设计/spec/反思/报告等 Markdown 文件），返回结构化条目（路径/标题/摘要/相关性）。何时用: 需要定位 docs/ 中相关文档而非全量加载时（如查规则约束/评估结论/设计方案/反...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "query": {
+       "type": "string"
+      },
+      "doc_type": {
+       "type": "string"
+      },
+      "limit": {
+       "type": "integer"
+      }
+     },
+     "required": [
+      "query"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "adjust_strategy",
+    "description": "调整后续循环策略参数（白名单: max_iterations/timeout_s/history_budget）。何时用: 发现循环参数不合理时（异常率偏高/停滞/预算占用逼近上限，可先经 architecture_status 自查）。何...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "strategy": {
+       "type": "object"
+      }
+     },
+     "required": [
+      "strategy"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "retry_tool",
+    "description": "对指定工具按提供参数重新执行（重新走完整执行包裹，含安全校验与超时）。何时用: 工具上次失败、且失败属瞬态（网络超时/上游 5xx）或参数已更正时重试。何时不用: 连续同参失败应停止重试、换路径（见停滞自主调整）；需调整策略参数用 adju...[TRUNCATED len=184]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "tool_name": {
+       "type": "string"
+      },
+      "arguments": {
+       "type": "object"
+      }
+     },
+     "required": [
+      "tool_name",
+      "arguments"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "refresh_config",
+    "description": "重载程序自身配置（配置文件/环境变量）。生效范围（EVO-20260815-b3339561）: LLM 凭据（api_key/base_url/model/协议）与模型目录（providers.json）原地同步即时生效；其余配置为启动时...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {},
+     "required": []
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "save_experience",
+    "description": "沉淀工程经验到经验库（跨会话复用）。何时用: 产生可复用的工程经验（根因分析/修复模式/架构决策）时。何时不用: 闲聊/过程性内容。失败对策: 必填字段缺失返回参数错误，IO 异常返回程序异常，均如实不伪造成功。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "title": {
+       "type": "string"
+      },
+      "scenario": {
+       "type": "string"
+      },
+      "solution": {
+       "type": "string"
+      },
+      "__truncated__": "[5 more omitted]"
+     },
+     "required": [
+      "title",
+      "scenario",
+      "solution"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "refine_experience",
+    "description": "经验生命周期流转（归档/失效/恢复）。何时用: 经验过时/失效/需恢复时。何时不用: 经验仍有效时无需流转。失败对策: 经验不存在返回未找到，action 非法返回参数错误，均如实。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "experience_id": {
+       "type": "string"
+      },
+      "action": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "experience_id",
+      "action"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "submit_evolution",
+    "description": "提交架构演进建议（结构化落盘供人工审阅）。何时用: 通过 architecture_status/search_records/self_evaluate 发现架构改进机会时（如冗余工具/重复模式/效率建议）。注意: 涉安全边界/协议硬约束...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "content": {
+       "type": "string"
+      },
+      "evidence": {
+       "type": "string"
+      },
+      "impact_scope": {
+       "type": "string"
+      },
+      "__truncated__": "[2 more omitted]"
+     },
+     "required": [
+      "content"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "evolution_complete",
+    "description": "登记演进执行完成（executing→executed，executor=ai）。何时用: 你经修正工具（adjust_strategy/retry_tool/refresh_config/恢复工具）落地了 executing 状态的演进建...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "suggestion_id": {
+       "type": "string"
+      },
+      "note": {
+       "type": "string"
+      },
+      "actions": {
+       "type": "array"
+      }
+     },
+     "required": [
+      "suggestion_id",
+      "note"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "generate_evolution_template",
+    "description": "自动生成演进建议模板（基于代码 diff/工具注册/经验沉淀）。何时用: 准备提交 submit_evolution 但不想从头写背景/实施/影响段；需快速生成结构化模板以便修改。何时不用: 演进内容已完整，直接 submit_evolut...[TRUNCATED len=157]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "source": {
+       "type": "string"
+      },
+      "title": {
+       "type": "string"
+      },
+      "priority": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "title"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "create_goal",
+    "description": "创建任务级目标（任务状态机起点，EVO-20260824-3cd4d74b）。何时用: 接到长任务（深度审计/分析/推进类）需跨会话/跨模型持续追踪进度时。有界推进: 目标为里程碑收敛式，禁止'永不结束对话'语义；遇成本/方向/安全边界应暂...[TRUNCATED len=168]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "objective": {
+       "type": "string"
+      },
+      "session_id": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "objective"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "checkpoint_goal",
+    "description": "任务里程碑 checkpoint（四要素，EVO-20260824-3cd4d74b）。何时用: 每个有意义里程碑（重要发现/决策/实质编辑/验证结果/阻塞状态变化）后；交接/模型切换/回合结束前；距上次 checkpoint 已 5 个实...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "goal_id": {
+       "type": "string"
+      },
+      "what": {
+       "type": "string"
+      },
+      "evidence": {
+       "type": "string"
+      },
+      "__truncated__": "[2 more omitted]"
+     },
+     "required": [
+      "goal_id",
+      "what"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "get_goal",
+    "description": "获取当前任务目标 + 最近 checkpoints（恢复上下文，EVO-20260824-3cd4d74b）。何时用: 会话恢复/模型切换/交接后，用返回的 checkpoints 作 handoff 上下文；恢复时先验证worktree/...[TRUNCATED len=171]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "goal_id": {
+       "type": "string"
+      }
+     },
+     "required": []
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "update_goal",
+    "description": "更新任务目标状态（EVO-20260824-3cd4d74b）。status=complete 仅当全部需求已用当前证据验证（对照工具回执如实声明）；status=blocked 仅当严格阻塞条件实际满足（外部阻塞/安全边界/等人工）。何时...[TRUNCATED len=139]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "goal_id": {
+       "type": "string"
+      },
+      "status": {
+       "type": "string"
+      },
+      "reason": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "goal_id",
+      "status"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "self_evaluate",
+    "description": "主动发起自我评估（五维指标: 成功率/工具效率/诚实性/停滞率/异常率，来源可溯）。何时用: 发现运行异常/完成阶段性任务/希望沉淀经验时。评估结果落盘可检索（search_records kind=self_eval），可基于评估结果 s...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "trigger": {
+       "type": "string"
+      }
+     },
+     "required": []
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "send_feishu_message",
+    "description": "主动向飞书用户/群发送文本/卡片消息（EVO-20260813-432813b2 涉安全边界）。何时用: 用户明确要求'把内容发到我飞书'且已开启 FEISHU_OUTBOUND_ENABLED 时。何时不用: 默认禁用、未经用户授权、未通...[TRUNCATED len=186]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "receive_id": {
+       "type": "string"
+      },
+      "content": {
+       "type": "string"
+      },
+      "receive_id_type": {
+       "type": "string"
+      },
+      "__truncated__": "[2 more omitted]"
+     },
+     "required": [
+      "receive_id",
+      "content",
+      "confirm"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "create_feishu_doc",
+    "description": "创建飞书文档（docx）并返回 doc_id + URL（EVO-20260813-432813b2 涉安全边界）。何时用: 用户明确要求生成飞书文档。何时不用: 开关未启用时。失败对策: SDK 异常/权限不足如实返回。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "title": {
+       "type": "string"
+      },
+      "content": {
+       "type": "string"
+      },
+      "folder_token": {
+       "type": "string"
+      },
+      "__truncated__": "[1 more omitted]"
+     },
+     "required": [
+      "title",
+      "content",
+      "confirm"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "send_feishu_attachment",
+    "description": "向飞书用户发送本地文件或飞书文档作为附件（EVO-20260813-432813b2 涉安全边界）。何时用: 用户要求'把文档发给我'且本地有该文件时。何时不用: 开关未启用/白名单不通过/速率限制/文件不存在时。失败对策: 各类失败如实回...[TRUNCATED len=122]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "receive_id": {
+       "type": "string"
+      },
+      "file_path": {
+       "type": "string"
+      },
+      "doc_id": {
+       "type": "string"
+      },
+      "__truncated__": "[2 more omitted]"
+     },
+     "required": [
+      "receive_id",
+      "confirm"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "code_review",
+    "description": "多维代码审查工具（5维：正确性/安全/性能/测试/回归）。何时用: 实施完一段代码想自查/发现代码异味/提交前自查。何时不用: 仅查架构状态用 architecture_status；评估整个项目用 self_evaluate。失败对策: ...[TRUNCATED len=144]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "code": {
+       "type": "string"
+      },
+      "language": {
+       "type": "string"
+      },
+      "focus": {
+       "type": "array"
+      }
+     },
+     "required": [
+      "code"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "grill_me",
+    "description": "追问式设计评审（在让 AI 实施前盘问设计漏洞）。何时用: 准备实施一个方案/特性/重构前，主动触发深度盘问找出未思考到的边界。何时不用: 任务简单无需盘问；已确认方案要落地时（应直接做）。失败对策: 设计为空时如实返回错误。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "design": {
+       "type": "string"
+      },
+      "depth": {
+       "type": "integer"
+      },
+      "focus_areas": {
+       "type": "array"
+      }
+     },
+     "required": [
+      "design"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "stop_slop",
+    "description": "去 AI 味检测清理（识别套话/空话/过分强调/虚假精确）。何时用: AI 输出看起来'正确但读起来别扭'时自查；给客户/老板前清洗文本。何时不用: 内部技术对话；纯事实陈述。失败对策: 文本为空时如实返回错误。",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "text": {
+       "type": "string"
+      },
+      "aggressive": {
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "text"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "handoff_now",
+    "description": "生成结构化交接文档（handoff.md），新会话可无缝接管当前进度。何时用: 上下文压力高（context_usage > 70%）时主动触发；任务跨多会话需要交接；显式长期任务存档。何时不用: 任务简单无需交接；当前会话未开始工作。失败...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "urgency": {
+       "type": "string"
+      },
+      "include_decisions": {
+       "type": "boolean"
+      },
+      "include_memory": {
+       "type": "boolean"
+      }
+     },
+     "required": []
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "brainstorm_design",
+    "description": "Multi-perspective brainstorm + scoring (Superpowers Stage 1). When: complex problems needing evaluation. When NOT: simpl...[TRUNCATED len=152]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "problem": {
+       "type": "string"
+      },
+      "constraints": {
+       "type": "array"
+      },
+      "num_options": {
+       "type": "integer"
+      }
+     },
+     "required": [
+      "problem"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "tdd_red_green",
+    "description": "TDD red-green cycle (Superpowers Stage 1). When: TDD-driven new feature. When NOT: one-off scripts. Failure: empty spec.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "spec": {
+       "type": "string"
+      },
+      "framework": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "spec"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "design_review",
+    "description": "Cross-role design review (Superpowers Stage 1). When: pre-implementation review. When NOT: trivial changes. Failure: emp...[TRUNCATED len=134]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "design_doc": {
+       "type": "string"
+      },
+      "roles": {
+       "type": "array"
+      }
+     },
+     "required": [
+      "design_doc"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "record_skill",
+    "description": "操作序列→SKILL.md 生成器（Record & Replay Stage 1）。何时用: 想把重复操作沉淀为 Skill 但不愿手写 SKILL.md；用户给操作 JSON→自动生成模板。何时不用: 简单任务无需 Skill 化；GU...[TRUNCATED len=175]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "skill_name": {
+       "type": "string"
+      },
+      "action_log": {
+       "type": "array"
+      },
+      "parameters_hint": {
+       "type": "array"
+      },
+      "__truncated__": "[1 more omitted]"
+     },
+     "required": [
+      "skill_name",
+      "action_log"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "skill_list",
+    "description": "列出可用外部 Skill（skills/ 目录自动扫描，含名称与一句话描述）。何时用: 任务可能命中外部技能库（部署/运维/领域流程等自定义 SKILL.md）时先查清单。何时不用: 内置工具（code_review/grill_me 等）...[TRUNCATED len=173]",
+    "parameters": {
+     "type": "object",
+     "properties": {},
+     "required": []
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "skill_load",
+    "description": "按名加载外部 Skill 全文（SKILL.md，含 frontmatter 与正文）进当前上下文执行。何时用: skill_list 发现目标技能后、执行该技能流程前。何时不用: 未在 skill_list 确认的技能（先 list 再 ...[TRUNCATED len=167]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "name": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "name"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "task_create",
+    "description": "创建执行任务（Task Frontier 账本，DESIGN-20260828）。何时用: 长任务拆解为可验收子任务时——程序记结构/依赖/状态，模型定优先级。acceptance 必填（可验收陈述），evidence_required=t...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "goal_id": {
+       "type": "string"
+      },
+      "title": {
+       "type": "string"
+      },
+      "acceptance": {
+       "type": "array"
+      },
+      "__truncated__": "[4 more omitted]"
+     },
+     "required": [
+      "goal_id",
+      "title",
+      "acceptance"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "task_update",
+    "description": "推进任务状态（领取/完成/阻塞/重开）。合法转移: pending→in_progress/cancelled/failed; in_progress→done/blocked/cancelled/failed; blocked→in_pr...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "goal_id": {
+       "type": "string"
+      },
+      "task_id": {
+       "type": "string"
+      },
+      "status": {
+       "type": "string"
+      },
+      "__truncated__": "[5 more omitted]"
+     },
+     "required": [
+      "goal_id",
+      "task_id"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "task_frontier",
+    "description": "查看任务图 frontier（当前可执行集 + 全图状态）。何时用: 长任务每轮决策前/会话恢复后/不确定下一步时。默认渲染 ready/in_progress/blocked/unreachable/premise_stale；full=...[TRUNCATED len=178]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "goal_id": {
+       "type": "string"
+      },
+      "full": {
+       "type": "boolean"
+      }
+     },
+     "required": []
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "model_catalog",
+    "description": "列出当前可用的模型目录（provider/模型/上下文窗口/思考支持/成本档）及当前会话所用模型。何时用: 判断当前任务是否需要更强/更便宜的模型，或当前模型异常需要换模型前先用本工具查候选。何时不用: 已知要用哪个模型时直接用 switc...[TRUNCATED len=174]",
+    "parameters": {
+     "type": "object",
+     "properties": {},
+     "required": []
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "switch_model",
+    "description": "切换当前会话使用的模型（provider/model 或裸模型名；model='default' 清除覆盖回默认）。何时用: 当前模型不适合任务（如需要更强推理/需要本地离线/成本约束），或当前模型连续异常经判断为模型侧问题时。何时不用: ...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "model": {
+       "type": "string"
+      },
+      "reason": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "model",
+      "reason"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "recover_from_backup",
+    "description": "从备份归档恢复未落盘数据到正式位置。何时用: 经 architecture_status 查询发现 recovery 维度有待恢复备份（pending_count>0），且自主判断需要恢复（如会话历史丢失影响后续对话/记忆统计偏移影响排序）...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "backup_id": {
+       "type": "string"
+      },
+      "on_conflict": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "backup_id"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "playwright_test",
+    "description": "用 Playwright 执行端到端测试（描述场景→生成脚本→执行→返回截图+pass/fail）。何时用: 验证 UI 改动无回归（飞书卡片/网关 Web）；补 E2E 缺口。何时不用: 仅单元测试（用 pytest）；本地浏览器调试（用...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "scenario": {
+       "type": "string"
+      },
+      "url": {
+       "type": "string"
+      },
+      "confirm": {
+       "type": "boolean"
+      },
+      "__truncated__": "[1 more omitted]"
+     },
+     "required": [
+      "scenario",
+      "url"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "playwright_exec",
+    "description": "执行你写的 Python 浏览器脚本（单 exec 形态：一次调用打包 navigate+act+extract，预置 helper 见下）。何时用: 需要交互/登录态/JS 渲染的 E2E 验证。何时不用: 纯 HTTP 可取的公开页面（...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "code": {
+       "type": "string"
+      },
+      "session": {
+       "type": "string"
+      },
+      "confirm": {
+       "type": "boolean"
+      },
+      "__truncated__": "[1 more omitted]"
+     },
+     "required": [
+      "code"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "spawn_subagent",
+    "description": "派生子代理执行子任务（递归子代理，EVO 第五项）。何时用: 复杂任务需要拆解成独立子任务（如独立调研/独立计算/并行验证）时，委派给子代理在隔离上下文中真实执行，结果回传后整合。何时不用: 任务简单直接处理时；子任务依赖父上下文大量状态时...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "task": {
+       "type": "string"
+      },
+      "context": {
+       "type": "string"
+      },
+      "inherit": {
+       "type": "boolean"
+      },
+      "__truncated__": "[2 more omitted]"
+     },
+     "required": [
+      "task"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "subagent_report",
+    "description": "子代理中途报告：向父代理回报当前进展/发现（可多次调用，报告≠结束，结束后仍需给出最终回答）。仅子代理会话内可用。何时用: 子代理任务执行中发现关键信息/阶段性结论/需要父侧知晓的异常时。何时不用: 最终结论（请放入最终回答）；非子代理上下...[TRUNCATED len=127]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "content": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "content"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "fix_loop",
+    "description": "修复循环编排：封装'跑检查→失败→定位→子代理修复→重跑'为原子工作流。何时用: 测试/检查失败需自动迭代修复（LLM 一次调用启动循环，子代理完成修复）。何时不用: 简单单次修复直接 edit_file；需要主 LLM 全程掌控时手动迭代...[TRUNCATED len=159]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "check_command": {
+       "type": "string"
+      },
+      "max_rounds": {
+       "type": "integer"
+      },
+      "fuse_count": {
+       "type": "integer"
+      },
+      "__truncated__": "[1 more omitted]"
+     },
+     "required": [
+      "check_command"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "workflow_run",
+    "description": "工作流编排（EVO-20260814 P1-B，对齐 Harness 多 Agent 编排）。何时用: 需要一次派发多个子代理任务（parallel 模式：独立调研/独立计算/并行验证）、依赖链编排（pipeline 模式：上一步结果自动传...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "mode": {
+       "type": "string"
+      },
+      "steps": {
+       "type": "array"
+      }
+     },
+     "required": [
+      "mode",
+      "steps"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "dsh_task",
+    "description": "调度 DeepSeek Harness（DSH）headless 执行任务（进程级子代理）。何时用: 需要 DSH 完整工具链/多模型路由/大上下文长任务，或需要在其他工作区执行的任务，委派给 DSH 在隔离进程 + 新会话中真实执行。何时...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "task": {
+       "type": "string"
+      },
+      "ctx_path": {
+       "type": "string"
+      },
+      "cwd": {
+       "type": "string"
+      },
+      "__truncated__": "[6 more omitted]"
+     },
+     "required": [
+      "task"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "dsh_session_read",
+    "description": "读取 DeepSeek Harness 最近 session 的事件日志（回放检索，协议 v2 补全中间过程）。何时用: dsh_task 只回了最终文本，需要看 DSH 执行过程中的推理/工具调用/中间结论（排查为什么这么做、验证执行轨迹...[TRUNCATED len=200]",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "workspace": {
+       "type": "string"
+      },
+      "session_id": {
+       "type": "string"
+      },
+      "keyword": {
+       "type": "string"
+      },
+      "__truncated__": "[1 more omitted]"
+     },
+     "required": []
+    }
+   }
+  }
+ ],
+ "params": {
+  "model": "glm-5.3",
+  "max_tokens": 65536,
+  "thinking_mode": true,
+  "reasoning_effort": "high",
+  "timeout_s": null,
+  "provider": "openai-compat"
+ }
+}
