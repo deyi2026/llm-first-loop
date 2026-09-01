@@ -17,8 +17,9 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from llm_loop.event_log.session_types import (  # noqa: F401 — R9-P3-02 re-export（历史导入路径兼容）
+from llm_loop.event_log.session_types import (  # ForkReport 兼容 re-export + 冲突异常直用（R9-P3-02）
     ForkReport,
+    SessionIdConflictError,
 )
 
 logger = logging.getLogger(__name__)
@@ -99,8 +100,7 @@ def fork_session(
         effective_fp = snapped_fp
 
     # 生成并先声明全局唯一session_id；Event/Archive以sid为全局键，必须在写child事件前claim。
-    from llm_loop.core.session import SessionIdConflictError
-
+    # R9-P3-02 步2/4：异常类型改指 session_types 顶层（边①断——环②仅剩 :148 Session 边）
     for _attempt in range(8):
         new_id = str(uuid.uuid4())
         try:
