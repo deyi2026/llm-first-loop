@@ -43,13 +43,17 @@ echo "═══ [1/4] ruff 全量门禁（全量阻断 + 外部层呈现）═�
 # 面（R9 提交过的文件——含其编辑窗口——及一切干净文件）违规即阻断。R9 编辑
 # 窗口内 staged==working，工作区口径即提交口径（负例实测：R9 文件注入违规
 # 必须阻断，不得因"变脏"误判外部级）。
+# B3 口径修正（并行底座）：阻断面 = R9 提交链触碰过的文件（绝对口径，与
+# porcelain 无关）——worktree 干净检出下"非外部=R9 拥有面"的旧相对判定会把
+# 外部历史遗留违规（HEAD 上的 I001 等）全量误判阻断（parity 实测 0.31s 即挂）。
+# R9 编辑窗口语义不变：R9 文件无论 staged/working 均在 diff 集 → 违规阻断。
 R9_BASE="${LFL_R9_BASE:-eac9b2a}"
 _r9_py="$(git diff --name-only --diff-filter=d "${R9_BASE}..HEAD" -- '*.py' | sort -u || true)"
 _ext_py="$(git status --porcelain | awk '$1=="M"||$1=="??"{print $2}' | grep '\.py$' | grep -vxFf <(printf '%s\n' "$_r9_py") || true)"
 _ruff_out="$("$PY" -m ruff check src tests scripts --output-format=concise 2>&1 || true)"
 _vfiles="$(printf '%s\n' "$_ruff_out" | grep -oE '^[^:]+\.py' | sort -u || true)"
 if [ -n "$_vfiles" ]; then
-  _blocked="$(printf '%s\n' "$_vfiles" | grep -vxFf <(printf '%s\n' "$_ext_py") || true)"
+  _blocked="$(printf '%s\n' "$_vfiles" | grep -xFf <(printf '%s\n' "$_r9_py") || true)"
   printf '%s\n' "$_ruff_out" | grep -E '^[^:]+\.py:[0-9]+' | while IFS= read -r ln; do
     _f="$(printf '%s' "$ln" | cut -d: -f1)"
     if printf '%s\n' "$_ext_py" | grep -qxF "$_f"; then
