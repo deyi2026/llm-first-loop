@@ -49,7 +49,6 @@ from llm_loop.core.program_recovery import PROGRAM_RECOVERY_SLOT
 from llm_loop.core.prompt_eligibility import (
     PROGRAM_FINAL_PROTOCOL_BOUNDARY,
     dynamic_prompt_layer,
-    render_task_active_identity,
 )
 
 # Cognitive Runtime（tasks 2.3/2.5/2.6）: tier 分级聚合 + 语义投影替代锚点。
@@ -85,6 +84,11 @@ from llm_loop.core.prompt_build.stages.projection_gate import (
     GATE_STATE_UNSET,
     run_projection_gate,
 )
+from llm_loop.core.prompt_build.stages.tail_slot_collect import (
+    collect_persisted_and_recovery,
+    consume_tail_slots,
+)
+from llm_loop.core.prompt_build.stages.task_active_projection import project_task_active
 from llm_loop.core.prompt_build.stages.trace_isolation import run_trace_isolation
 from llm_loop.core.prompt_build.stages.user_truth import run_user_truth_wire
 
@@ -785,295 +789,53 @@ class _BuildMixin:
         # Keep an empty fingerprint field for projection telemetry schema compatibility.
         _evidence_manifest_content = ""
 
-        # EVO-20260818（spec §5.3.1-1 c/d，grill-me B1）: interop 外部协调注入——
-        # 尾部追加（GATE_NOTE 模式，转 user），system+稳定历史前缀字节不变（注入轮不断前缀）;
-        # env INTEROP_INJECT_TAIL=0 回退旧行为（头部插入，见 interop.py）
-        # EVO-2026XXXX（spec §5.3.1-1c）: memory 检索注入尾部追加（GATE_NOTE 模式，转 user）——
-        # 检索结果随查询变化（top_k 语义/关键词召回），前置注入每轮改变前缀首段 → 前缀断；
-        # 尾部追加保持 system+稳定历史前缀字节不变（命中率不因 memory 变化受损）。
-        # 2026-08-22 记忆注入统一包装（用户决策）: memory_msgs（[相关记忆]）此前直接
-        # 转 user 尾部追加, 无"[上下文注入·非新指令] 继续当前任务"前缀 → AI 误读为
-        # 独立消息 → "没有明确任务" → 反复 search 找回（实证 d1192d8c: 健康检查任务
-        # 15+ 次 search_archive/search_records 死循环）。与 tail_msgs 同包装机制。
-        # EVO-20260827-f42496bc: memory 注入已改为一次性持久化（engine 检索后
-        # wrap+append 进 sess.messages，见 engine.py 理解段）——本函数不再追加
-        # 动态 memory 段：历史投影自然带出持久化注入（存储字节稳定，下轮前缀
-        # 命中不断崖）。此前每轮在此重新包装追加（含动态 anchor），下一轮真实
-        # 回复顶替注入位置 → 前缀字节分叉 → provider 前缀缓存全断（断崖根因）。
-        # memory_msgs 参数保留（签名兼容 + fail-open 路径: engine 持久化异常时
-        # 仍可走旧动态注入，见下方 fallback 判断）。
-        # EVO-20260827-ed4c1350: turn 快照注入位于 turn 入口（会话前部），多轮后
-        # 尾部 8 条不再包含它——检查升级为 turn_ref 身份匹配（本 turn 已持久化
-        # 即视为成功）；无 turn 上下文（旧会话/直调 build）回退旧尾部检查（零回归）。
-        _turn_ref = getattr(self, "_current_turn_ref", None)
-        if _turn_ref is not None:
-            _persisted_ok = any(
-                (getattr(_m, "metadata", None) or {}).get("turn_ref") == _turn_ref
-                and (getattr(_m, "metadata", None) or {}).get("injection_kind")
-                == "memory_snapshot"
-                for _m in sess.messages
-            )
-        else:
-            _persisted_ok = any(
-                getattr(_m, "metadata", None)
-                and _m.metadata.get("persisted_injection")
-                for _m in sess.messages[-8:]
-            )
-        _inject_parts: list[tuple[str | None, str]] = []  # (slot|None=hint, content)——P1 9.1 聚合收集
-        # R4: recovery lives in a one-shot runtime slot.  Consume it at build start so it
-        # cannot leak into a later tool-followup/rebuild.  Only an initial human ingress with
-        # matching turn_ref may activate it; otherwise it is safely discarded.
+        # B4-C2-04: 尾部槽收集迁 stages/tail_slot_collect（三函数）+ task_active_projection。
+        # self 面写收窄：一次性消费清理/状态机新值由调用点回写；probe/recovery 读点先算传入。
         _pending_recovery = getattr(self, "_program_recovery_tail_message", None)
         self._program_recovery_tail_message = None
-        if _pending_recovery is not None:
-            _pr_meta = getattr(_pending_recovery, "metadata", None) or {}
-            _pr_turn_ref = _pr_meta.get("recovery_turn_ref")
-            if _r6_ingress_truth is not None and _pr_turn_ref == _turn_ref:
-                _inject_parts.append((PROGRAM_RECOVERY_SLOT, _pending_recovery.content))
-            else:
-                with contextlib.suppress(Exception):
-                    self._record_action(
-                        "action.program_recovery",
-                        "dropped_without_user_boundary",
-                        f"recovery_turn_ref={_pr_turn_ref}; current_turn_ref={_turn_ref}",
-                    )
-        if not _persisted_ok and memory_msgs:
-            # fail-open 回退: 持久化失败（engine 异常路径）→ 兜底收集进聚合
-            # （P1 9.1: 旧独立 wrap+append 撤销——保尾部连续 user ≤1；memory 非消费槽）
-            for _m in memory_msgs:
-                _c = str(_m.to_llm_dict().get("content") or "")
-                if _c:
-                    _inject_parts.append(("memory", _c))
-        tail_msgs = getattr(self, "_interop_tail_messages", None)
-        _interop_orig = tail_msgs  # err1210 T4.1: 身份匹配用（区分 interop/tip/local 提示）
-        # EVO-20260819-7bb7d689: 经验提示尾部追加槽并入统一消费（与 interop 同机制）——
-        # 不进历史存储，build 末尾一次性追加（转 user），system+稳定历史前缀字节不变
-        tip_msgs = getattr(self, "_tip_tail_messages", None)
-        _tip_orig = tip_msgs
-        if tip_msgs:
-            tail_msgs = (tail_msgs or []) + tip_msgs
-        # R8.8: provider-local evaluation/behaviour patches are not runtime prompt
-        # authority. The old per-build command-shaped local hint is deliberately gone.
-        # R8.18/E09: SessionDigest remains a deterministic diagnostic/retrieval helper,
-        # but build no longer turns its generic catalog into prompt material or durable
-        # session history.  Current tool results are already present in the active history
-        # when the old catalog was emitted; after compaction the exact tool_call_id is
-        # searchable through ArchiveStore/search_archive (which accepts ``digest:`` refs).
-        # ``digest_enabled`` is therefore a compatibility capability flag, not an
-        # automatic-prompt entitlement.
-        # ── P1 尾部注入聚合（err1210 8.4 Verdict: STRUCTURE_TRIGGER 尾部连续 user 条数，
-        # tasks 9.1 方案 A）：四槽产物合并单条 user（--- [slot:xxx] --- 分段标记保留语义），
-        # wrap_injection 只包装一次、anchor 单份——build 尾部连续 user 条数恒 ≤1，
-        # compact 首请求 1210 结构性消除（merge 变体双样本生产验证）。
-        for _m in tail_msgs or []:
-            # R8.24-E E-D2（E-5.1，E08 TIP replay 退出）: TIP 消息不再进入注入
-            # parts（tail 视图消费面门控；存储/事件真相不动，retrieval plane
-            # 保留一切）。shadow 态 would_inject 计数留痕。
-            if _tip_orig and any(_m is _x for _x in _tip_orig):
-                with contextlib.suppress(Exception):
-                    from llm_loop.core.loop.input_authorization import (
-                        current_latent_channel_mode,
-                    )
-
-                    _lat_mode = current_latent_channel_mode()
-                    self._record_action(
-                        "action.latent_channel",
-                        "tip_tail_would_inject" if _lat_mode != "off" else "tip_tail_exited",
-                        (
-                            f"chars={len(str(getattr(_m, 'content', '') or ''))};"
-                            f"mode={_lat_mode}"
-                        ),
-                    )
-                continue
-            _d = _m.to_llm_dict()
-            if _d.get("role") == "system":
-                _d["role"] = "user"  # system 静态: 转独立 user 尾部追加
-                _c = str(_d.get("content") or "")
-                if _c:
-                    _d["content"] = _c
-            _slot = None
-            if _interop_orig and any(_m is _x for _x in _interop_orig):
-                _slot = SlotKind.INTEROP
-            _inject_parts.append((_slot, str(_d.get("content") or "")))
-        # err1210 T4.1→9.1: defer 回填消息消费检测（is 身份匹配，聚合收尾统一处理）
-        _refs = getattr(self, "_deferred_replay_refs", None) or []
-        if _refs and tail_msgs:
-            _consumed_ids = {id(_m) for _m in tail_msgs}
-            _kept = [
-                (_r_slot, _r_ref)
-                for _r_slot, _r_ref in _refs
-                if not (
-                    id(_r_ref) in _consumed_ids
-                    and self._note_defer_replayed(sess.session_id, _r_slot)
-                )
-            ]
-            self._deferred_replay_refs = _kept
+        _inject_parts: list[tuple[str | None, str]] = []  # (slot|None=hint, content)——P1 9.1 聚合收集
+        collect_persisted_and_recovery(
+            inject_parts=_inject_parts,
+            current_turn_ref=getattr(self, "_current_turn_ref", None),
+            pending_recovery=_pending_recovery,
+            memory_msgs=memory_msgs,
+            sess=sess,
+            r6_ingress_truth=_r6_ingress_truth,
+            record_action=self._record_action,
+        )
+        _interop_tail = getattr(self, "_interop_tail_messages", None)
+        _tip_tail = getattr(self, "_tip_tail_messages", None)
+        tail_msgs = _interop_tail  # 原位合并语义（gate 水印面用：interop+tip 合列表）
+        if _tip_tail:
+            tail_msgs = (tail_msgs or []) + _tip_tail
+        _outcome = consume_tail_slots(
+            inject_parts=_inject_parts,
+            interop_tail=_interop_tail,
+            tip_tail=_tip_tail,
+            defer_refs=getattr(self, "_deferred_replay_refs", None) or [],
+            replay_slots=getattr(self, "_deferred_replay_slots", None) or set(),
+            note_defer_replayed=self._note_defer_replayed,
+            record_action=self._record_action,
+            cache_monitor=self._cache_monitor,
+            session_id=sess.session_id,
+        )
+        self._deferred_replay_refs = _outcome.defer_refs
+        self._deferred_replay_slots = _outcome.replay_slots
         self._interop_tail_messages = None  # 一次性消费（每轮重扫 pending）
         self._tip_tail_messages = None  # 经验提示同机制一次性消费（下轮工具执行再注入）
-        # agent_trace_leak 4.3: β 挂载点——休眠 tail 消费链视图出口一致性观测。
-        # 该链路现行生产者恒空（R8.13 后 live path 返回空），本观测不激活不改语义；
-        # 若历史 defer 残留经此出口进入视图，须携带程序层标记（SlotKind 身份
-        # 匹配不破坏，err1210.py:460,534 引用面零影响）。
-        try:
-            if tail_msgs:
-                _tail_no_mark = [
-                    _m
-                    for _m in tail_msgs
-                    if not (getattr(_m, "metadata", None) or {}).get("origin_layer")
-                ]
-                if _tail_no_mark:
-                    from llm_loop.core.trace_leak import leak_events as _tle
-
-                    _tle.emit_leak_event(
-                        _tle.LEAK_CHANNEL_OVERREACH,
-                        entry="build.interop_tail_view",
-                        session_id=sess.session_id,
-                        content=str(getattr(_tail_no_mark[0], "content", "") or ""),
-                        basis=(
-                            f"tail 视图出口存在无程序层标记消息 count={len(_tail_no_mark)}"
-                            "（休眠链路观测；仅视图不落盘）"
-                        ),
-                    )
-        except Exception:  # noqa: BLE001 — 观测 fail-open（spec 5.4.3-1）
-            logger.debug("build β tail 出口观测失败（fail-open）", exc_info=True)
-        # R8.14/E24: hotcard remains a durable handoff artifact, not an automatic prompt source.
-        # Cross-session is not continuation authorization.  Retire any pre-upgrade defer marker
-        # here so a hot-reloaded process cannot resurrect an old HOTCARD slot into a later build.
-        _slots = getattr(self, "_deferred_replay_slots", None) or set()
-        if str(SlotKind.HOTCARD) in _slots:
-            _slots.discard(str(SlotKind.HOTCARD))
-            self._deferred_replay_slots = _slots
-            try:
-                self._record_action(
-                    "handoff.hotcard",
-                    "retired_replay",
-                    "prompt_chars=0;reason=user_authorization_required",
-                )
-            except Exception:  # noqa: BLE001 — observability must not affect build
-                logger.debug("build: hotcard replay retirement action failed", exc_info=True)
-        # R8.11/E20: cache-gate intervention is runtime observability, not model input.
-        # Consume its one-shot marker so it cannot churn forever, but emit zero prompt chars.
-        # Legacy err1210 may have restored a gate_note slot; retire that replay marker here
-        # rather than resurrecting old program prose into a new provider request.
-        if self._cache_monitor.take_gate_note(session_id=sess.session_id):
-            _slots = getattr(self, "_deferred_replay_slots", None) or set()
-            if str(SlotKind.GATE_NOTE) in _slots:
-                _slots.discard(str(SlotKind.GATE_NOTE))
-                self._deferred_replay_slots = _slots
-            try:
-                self._record_action(
-                    "run.cache_gate",
-                    "observed_only",
-                    "prompt_chars=0",
-                )
-            except Exception:  # noqa: BLE001 — observability must not affect build
-                logger.debug("build: cache gate observability action failed", exc_info=True)
-        # CR-R1.1 批次D（审查项6 补全）: packet 编译输入面 = 真实注入面。memory 自
-        # EVO-20260827-f42496bc 改为一次性持久化（engine wrap+append 进
-        # sess.messages）后不再进 _inject_parts（仅 fail-open 才进，见上方
-        # fallback），但 packet 编译必须覆盖它——否则 slots 恒空、warm_tokens
-        # 恒 0（glm-minimax-3 实测 24/24 warm_active=0 的根因），shadow 无法
-        # 预演 enforce（审查项6 同构语义：shadow 与 enforce 使用同一 compiler
-        # 产物）。投影全量 memory_snapshot（每 turn 一条，多轮堆积由 compiler
-        # budget_chars 降级兜底——WARM 超界降级本身即 tier_degraded 生产可达
-        # 路径）；wire 平铺仍用 _inject_parts 原语义，持久化原文已由历史投影
-        # 带出，不重复注入。
-        # R8.16/E23: task ledger is durable state, but full frontier is not automatic
-        # working context.  Only one uniquely active execution identity may project;
-        # ready/blocked/unreachable/completed/premise-stale state stays behind task_frontier().
-        # Multiple in-progress nodes are intentionally ambiguous: do not guess which one is
-        # "current".  Fail-open here means zero prompt chars, never full-graph fallback.
-        # R8.24-E E-D5（E-3.2，P1-7）: ACTIVE_STATE → USER_AUTHORIZED_STATE——"恰有
-        # in_progress"不再自动投影；仅当本轮用户输入经 input-side resolver 命中
-        # "继续/恢复上次任务"类明确指令（授权一次）才注入，且本 run（turn_ref 绑定）
-        # 内冻结 task identity 不动态变化；授权绑定事件落决策日志（E-G2/E-G5
-        # 双断言判据源）。普通新问题不自动读取 Goal（Goal 恒为 retrievable state）。
-        try:
-            from llm_loop.core.loop.input_authorization import (
-                detect_task_continuation,
-            )
-            from llm_loop.introspection.goal import GoalStore
-            from llm_loop.introspection.task_store import TaskStore
-
-            _tf_audit = os.path.join(self.settings.data_dir, "audit")
-            # 授权信号：本轮人类 ingress 文本命中触发词；工具轮（R6 truth=None）
-            # 沿用冻结快照——同一授权在本 run 内持续生效（E-3.2① identity 冻结）。
-            # 注意 _r6_ingress_truth 即 user truth 文本（str | None，user_truth_wire）。
-            _tf_ingress_text = str(_r6_ingress_truth or "")
-            _tf_authorized = detect_task_continuation(_tf_ingress_text)
-            # identity 冻结（E-3.2①）：授权轮求值一次后按 turn_ref 快照——本 run
-            # 内后续 build 直接用快照（不随 GoalStore/TaskStore 中途状态漂移）；
-            # 新 turn 授权重新求值。快照失配（goal_id 变化）时自然失效重建。
-            _tf_turn_key = str(getattr(self, "_current_turn_ref", None))
-            _tf_cache = getattr(self, "_authorized_task_identity_cache", None)
-            if _tf_cache is None:
-                _tf_cache = {}
-                self._authorized_task_identity_cache = _tf_cache
-            _tf_cached = _tf_cache.get(_tf_turn_key)
-            if _tf_cached is not None and (
-                _tf_authorized or _r6_ingress_truth is None
-            ):
-                _tf_gid, _tf_identity = _tf_cached
-                if _tf_identity:
-                    _inject_parts.append(("task_active", _tf_identity))
-                    self._record_action(
-                        "task.active",
-                        "authorized_inject_frozen",
-                        f"turn_ref={_tf_turn_key};goal={_tf_gid};chars={len(_tf_identity)}",
-                    )
-                _tf_authorized = False  # 快照已注入，跳过下方重新求值
-            elif not _tf_authorized:
-                self._record_action(
-                    "task.active",
-                    "unauthorized_zero_projection",
-                    "prompt_chars=0;goal_read=deferred",
-                )
-            # E-G5: 未授权（含快照未命中）时零 Goal/Task 读取——普通新问题轮
-            # goal_read=0（决策日志可断言）。
-            if not _tf_authorized:
-                _tf_goal = {}
-            else:
-                _tf_goal = GoalStore(_tf_audit).get(prefer_session_id=sess.session_id)
-            _tf_gid = str((_tf_goal or {}).get("id", "") or "")
-            if _tf_authorized and _tf_gid and str((_tf_goal or {}).get("status", "")) == "active":
-                _tf_store = TaskStore(_tf_audit)
-                if _tf_store.count_for_goal(_tf_gid) > 0:
-                    _tf_state = _tf_store.compute_frontier(_tf_gid)
-                    _tf_doing = list(_tf_state.get("in_progress") or [])
-                    if len(_tf_doing) == 1:
-                        _tf_task = (_tf_doing[0] or {}).get("task")
-                        _tf_active = render_task_active_identity(
-                            goal_id=_tf_gid,
-                            task_id=str(getattr(_tf_task, "task_id", "") or ""),
-                            title=str(getattr(_tf_task, "title", "") or ""),
-                        )
-                        if _tf_active:
-                            _inject_parts.append(("task_active", _tf_active))
-                            # 授权轮写入 identity 快照（本 run 内冻结）
-                            _tf_cache[_tf_turn_key] = (_tf_gid, _tf_active)
-                            # 授权绑定审计（E-3.2③）：触发词/会话/轮次/task identity
-                            self._record_action(
-                                "task.active",
-                                "authorized_inject",
-                                (
-                                    f"turn_ref={getattr(self, '_current_turn_ref', None)};"
-                                    f"goal={_tf_gid};chars={len(_tf_active)}"
-                                ),
-                            )
-                    else:
-                        try:
-                            self._record_action(
-                                "task.frontier",
-                                "on_demand_only",
-                                f"prompt_chars=0;in_progress={len(_tf_doing)}",
-                            )
-                        except Exception:  # noqa: BLE001 — observability cannot affect build
-                            logger.debug(
-                                "build: task frontier observability action failed",
-                                exc_info=True,
-                            )
-        except Exception:  # noqa: BLE001 — fail-open: 任务账本异常不阻断构建
-            logger.debug("build: Task Active 解析失败（fail-open 零注入）", exc_info=True)
+        _identity_cache = getattr(self, "_authorized_task_identity_cache", None)
+        if _identity_cache is None:
+            _identity_cache = {}
+            self._authorized_task_identity_cache = _identity_cache
+        project_task_active(
+            inject_parts=_inject_parts,
+            sess=sess,
+            settings=self.settings,
+            current_turn_ref=getattr(self, "_current_turn_ref", None),
+            r6_ingress_truth=_r6_ingress_truth,
+            identity_cache=_identity_cache,
+            record_action=self._record_action,
+        )
         # R8.8 eligibility precedes semantic profile/budget. ``infer_layer`` may retain
         # its legacy STATUS rendering fallback, but an unknown producer must not gain
         # prompt access merely by reaching this list.
