@@ -47,7 +47,12 @@ class BuildDecision:
     cog_freeze: dict[str, Any] | None = None
     consumed_filtering: dict[str, Any] | None = None  # 过滤决策显式可追溯（A-4）
     compacted: bool = False  # P1-01：locals().get("_compressed_this_build") 显式化落位
-    history_total_chars: int = 0  # P1-01：locals().get("_history_total") 显式化落位
+    history_total_chars: int = -1  # P1-01：locals().get("_history_total") 显式化；-1 = 未测算哨兵（复刻缺省 "?" 语义区分位）
+
+    @property
+    def pre_chars_fallback(self) -> int | str:
+        """压缩审计缺省值：-1 哨兵（未测算）复刻旧 locals().get 缺省 "?"（P1-01）."""
+        return self.history_total_chars if self.history_total_chars >= 0 else "?"
 
 
 @dataclass(slots=True)

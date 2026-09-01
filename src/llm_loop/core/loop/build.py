@@ -86,6 +86,7 @@ except Exception:  # noqa: BLE001 — fail-open 回退平铺聚合（零回归�
 # 顶层 import 不再触发循环：build→engine 运行时反向边删除（步2/3 断环点），engine→build 正向边保留
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.prompt import build_system_prompt
+from llm_loop.core.prompt_build import BuildDecision
 from llm_loop.core.session_snapshot import build_session_snapshot_text
 
 
@@ -576,6 +577,7 @@ class _BuildMixin:
         P1-10: 窗口锚定——按 provider 固定历史起点（只追加不挤旧, 超预算优先降级中段),
         前缀稳定命中引擎/服务端缓存; 锚点写入 sess.history_anchors 随会话持久化。
         """
+        decision = BuildDecision()  # R9-P4/B4-P1-01: 判定显式化载体（design T5-B），C1-C4 拆分时逐项迁入
         resolved_label: str = (
             planned_label
             if planned_label is not None
@@ -952,7 +954,8 @@ class _BuildMixin:
         # 关键事实帧+档案零丢失，不打断推理）；②90% 压缩态（compact_ratio, env 可调）:
         # 预算附近提前平滑压缩（裁到 COMPRESS_TARGET_RATIO 留缓冲），优于撞顶被动压缩。
         try:
-            _history_total = _provider_visible_chars(sess.messages, provider_id, sess_anchor)
+            _history_total = decision.history_total_chars = _provider_visible_chars(
+                sess.messages, provider_id, sess_anchor)
             _compact_ratio = float(os.environ.get("COMPACT_RATIO", "0.9"))
             if 0 < _compact_ratio < 1.0:
                 # EVO-20260824-54d46549 增长率 nudge（billion-context 拷问产出, 双轨）:
@@ -2195,7 +2198,8 @@ class _BuildMixin:
             _built_hash = stable_digest(_built_for_hash)
             # EVO-20260817: 压缩轮判定——主动/被动压缩归档（built 消息数 < base）属合法
             # 变化（缓存友好压缩锚点不动 → ver 不变但 built 变短），豁免投影 mismatch 误报
-            _compressed_this_build = bool(self._last_history_compacted) or len(built) < len(base)
+            _compressed_this_build = decision.compacted = (
+                bool(self._last_history_compacted) or len(built) < len(base))
             _guards = sess.projection_guard if sess.projection_guard is not None else {}
             _prev = _guards.get(provider_id)
             _state = projection_check(_prev, ver=_ver, seq=_seq, built_hash=_built_hash)
@@ -2235,11 +2239,10 @@ class _BuildMixin:
         # actual compact-view statistics instead; search_archive remains the retrieval path
         # advertised by the stable system prompt.
         with contextlib.suppress(Exception):
-            _compressed = locals().get("_compressed_this_build", False)
-            if _compressed:
+            if decision.compacted:  # P1-01: locals().get 显式化（缺省 False 语义不变）
                 _built_chars = sum(len(m.get("content", "")) for m in built)
                 _compact_stats = compact_view_box[0] if compact_view_box else {}
-                _pre_chars = _compact_stats.get("pre_chars", locals().get("_history_total", "?"))
+                _pre_chars = _compact_stats.get("pre_chars", decision.pre_chars_fallback)
                 _post_chars = _compact_stats.get("post_chars", _built_chars)
                 _archived_count = _compact_stats.get("archived_count", "?")
                 _drop_pct = _compact_stats.get("drop_pct", "?")
