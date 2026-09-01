@@ -83,7 +83,10 @@ class TestOriginWiring:
     def test_build_projection_wiring(self):
         from pathlib import Path
 
-        src = (Path(__file__).resolve().parents[2] / "src/llm_loop/core/loop/build.py").read_text(
-            encoding="utf-8"
-        )
+        # B4-CLOSE-01 步B: origin 投影条件随 scrub_provider_view 迁
+        # stages/base_assembly.py（语义原样；锚点随新家）
+        src = (
+            Path(__file__).resolve().parents[2]
+            / "src/llm_loop/core/prompt_build/stages/base_assembly.py"
+        ).read_text(encoding="utf-8")
         assert '(m.metadata or {}).get("answer_origin") == "program"' in src

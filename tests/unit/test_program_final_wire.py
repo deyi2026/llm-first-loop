@@ -60,8 +60,10 @@ class TestG9ProgramFinalWire:
         """engine 终态写入与 build 替换共用同一常量（wire 字节稳定）。"""
         import inspect
 
-        from llm_loop.core.loop import build as build_mod
+        # B4-CLOSE-01 步B: build 侧替换随 scrub_provider_view 迁
+        # stages/base_assembly.py（同源守卫锚点随新家）
         from llm_loop.core.loop import engine as engine_mod
+        from llm_loop.core.prompt_build.stages import base_assembly as build_mod
 
         engine_src = inspect.getsource(engine_mod)
         build_src = inspect.getsource(build_mod)

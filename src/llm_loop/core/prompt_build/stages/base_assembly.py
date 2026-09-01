@@ -11,12 +11,15 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
+from llm_loop.core.cache_health import strip_cache_telemetry_lines
 from llm_loop.core.history import stable_digest
 from llm_loop.core.message import Message, MessageSource
+from llm_loop.core.prompt_eligibility import PROGRAM_FINAL_PROTOCOL_BOUNDARY
 from llm_loop.core.session_snapshot import build_session_snapshot_text
+from llm_loop.feedback.honesty import PROGRAM_FEEDBACK_PREFIXES
 
 logger = logging.getLogger(__name__)
 
@@ -107,3 +110,110 @@ def run_base_assembly(
                 "会话状态快照注入失败（fail-open）", exc_info=True
             )
     return result
+
+
+def _tool_round_zero_tail(msgs: list[Message]) -> list[Message]:
+    """工具轮极小窗口: 保留【最近用户指令 + 最近完整协议配对组】.
+
+    结构: [user(当前任务), assistant(tool_calls 最后声明), ...其全部 tool 回执]。
+    中间轮次（早期配对组）不入载荷——极小窗口本意（任务锚点摘要补偿早期动作）。
+
+    两项硬约束（2026-08-24 实证修复）:
+    1. C1 协议: 声明↔回执必须同窗（原固定 base[-2:] 在多回执时截断配对组 → 孤儿回执;
+       实证 "声明 3 个工具调用仅 1 条回执缺 2 条"）。
+    2. 聊天模板: llama.cpp Qwen 模板要求载荷含 user 消息, 缺 user 直接 500
+       "No user query found in messages"（实证 llama-server Qwen3.8 500）——
+       故必须带上最近一条 user（任务指令）, 不能只发配对组。
+    """
+    n = len(msgs)
+    if n == 0:
+        return msgs
+    group_start = -1
+    for i in range(n - 1, -1, -1):
+        if getattr(msgs[i], "role", "") == "assistant" and getattr(msgs[i], "tool_calls", None):
+            group_start = i
+            break
+    user_idx = -1
+    for i in range(n - 1, -1, -1):
+        if getattr(msgs[i], "role", "") == "user":
+            user_idx = i
+            break
+    if user_idx >= 0 and group_start >= 0:
+        if user_idx >= group_start:
+            # 最近 user 已在配对组之后（中断恢复/续跑）→ 整段保留, 不重复前置
+            return msgs[group_start:]
+        return msgs[user_idx : user_idx + 1] + msgs[group_start:]
+    if user_idx >= 0:  # 无配对组 → 从任务指令起（模型可能直接回答）
+        return msgs[user_idx:]
+    if group_start >= 0:  # 无 user（异常会话）→ 配对组兜底（模板可能拒, 但保协议）
+        return msgs[group_start:]
+    return msgs[-2:] if n >= 2 else msgs
+
+
+@dataclass(slots=True)
+class ProviderViewScrub:
+    """provider 视图预清洗产物（base 序列 + 原始索引重映射）."""
+
+    base: list[Message]
+    base_original_indices: list[int]
+
+
+def scrub_provider_view(
+    *,
+    base: list[Message],
+    base_original_indices: list[int],
+    tool_round_zero: bool = False,
+) -> ProviderViewScrub:
+    """base 提交视图三段预清洗（B4-CLOSE-01 步B；语义原样迁自 build.py）.
+
+    ① 缓存遥测剥离 ② program 协议边界收敛 ③ tool_round_zero 极小窗口；
+    存档/存储原文零改动（仅 provider 视图）。
+    """
+    # P1 遥测内容/传输分层（2026-08-25）: legacy 历史（旧会话已把 ⚡ 缓存命中率
+    # 行写进 assistant 正文）与模型伪造行——build 提交视图一律剥离（正文=纯回答；
+    # 权威遥测走 metadata.cache_health → transport 渲染）。剥离只影响提交视图，
+    # 存档/存储原文不动（archive_sink 收到的是剥离后副本——遥测行属噪音，无信息损失）。
+    if any(
+        m.role == "assistant" and "缓存命中率" in (m.content or "") for m in base
+    ):
+        base = [
+            replace(m, content=strip_cache_telemetry_lines(m.content))
+            if (m.role == "assistant" and "缓存命中率" in (m.content or ""))
+            else m
+            for m in base
+        ]
+    # 2026-08-21 工具轮零历史（TOOL_ROUND_ZERO_HISTORY=1 / provider 配置）: 工具轮只发
+    # system+摘要+最近完整协议配对组（assistant(tool_calls)+全部 tool 回执）——前缀
+    # （system+摘要）固定 → KV 命中 → prefill 秒级（本地模型实测 4-13 tokens
+    # prefill 仅 0.2-0.8s）。
+    # 注意: 保留最近配对组而非固定 -2 条（2026-08-24: 多回执截断会破坏 C1 配对）。
+    # R8.10 / P0-B2 supersession: a persisted program final is user-visible storage
+    # truth, but its fault/cancel/guard prose has no automatic next-turn authority.
+    # Dropping the assistant frame outright would turn user→program-assistant→user into
+    # consecutive user roles and can recreate the provider 1210 shape.  Provider view
+    # therefore keeps only one byte-stable assistant protocol boundary while retiring
+    # all historical program-result detail.  Storage/event truth remains untouched.
+    base = [
+        (
+            replace(m, content=PROGRAM_FINAL_PROTOCOL_BOUNDARY, reasoning_content=None)
+            if (
+                m.role == "assistant"
+                and (
+                    (m.metadata or {}).get("answer_origin") == "program"
+                    or str(m.content or "").startswith(PROGRAM_FEEDBACK_PREFIXES)
+                )
+            )
+            else m
+        )
+        for m in base
+    ]
+    if tool_round_zero:
+        _pre_zero_base = base
+        _pre_zero_pos = {id(_m): _idx for _idx, _m in enumerate(_pre_zero_base)}
+        base = _tool_round_zero_tail(base)
+        base_original_indices = [
+            base_original_indices[_pre_zero_pos[id(_m)]]
+            for _m in base
+            if id(_m) in _pre_zero_pos
+        ]
+    return ProviderViewScrub(base=base, base_original_indices=base_original_indices)
