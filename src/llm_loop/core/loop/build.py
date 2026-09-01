@@ -19,7 +19,6 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any, TypedDict
 
-from llm_loop.core.cache_health import GATE_NOTE_CONTENT  # 门禁干预知情标记
 from llm_loop.core.episode_history import provider_message_visible
 
 # EVO-20260818: projection_ver/check 提升到模块级（消除函数内 import 遮蔽导致的 F823）——
@@ -84,6 +83,10 @@ except Exception:  # noqa: BLE001 — fail-open 回退平铺聚合（零回归�
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.prompt import build_system_prompt
 from llm_loop.core.prompt_build import BuildDecision
+from llm_loop.core.prompt_build.stages.projection_gate import (
+    GATE_STATE_UNSET,
+    run_projection_gate,
+)
 from llm_loop.core.prompt_build.stages.trace_isolation import run_trace_isolation
 from llm_loop.core.prompt_build.stages.user_truth import run_user_truth_wire
 from llm_loop.core.session_snapshot import build_session_snapshot_text
@@ -1997,85 +2000,34 @@ class _BuildMixin:
                 logger.warning(
                     "build: 方向 C 持久化注入合并失败，原样发送（fail-open）", exc_info=True
                 )
-        # EVO-20260817-b6554376: 投影一致性门闸（借鉴 DSH seq 水印，fail-open 不阻断 run）
-        # seq（消息数）负责"历史追加"水印；ver（构建参数+动态输入指纹）负责参数水印；
-        # ver+seq 匹配而 built_hash 不同 → 非确定性构建/历史被改 → 告警（只读，不阻断）。
-        try:
-            _fp = lambda msgs: stable_digest([(m.role, m.content) for m in msgs])  # noqa: E731
-            _settings_fp = stable_digest(
-                {
-                    "tool_trim_enabled": getattr(self.settings, "tool_trim_enabled", False),
-                    "tool_trim_age": getattr(self.settings, "tool_trim_age", 0),
-                    "tool_trim_threshold": getattr(self.settings, "tool_trim_threshold", 8000),
-                    "tool_tail": getattr(
-                        self.settings, "tool_tail", 0
-                    ),  # EVO-20260818-f675796c: tail 窗口
-                    "reasoning_tail": _reasoning_tail_for(
-                        self.settings,
-                        resolved_label=resolved_label,
-                        registry_snapshot=registry_snapshot,
-                    ),
-                    "skip_injected_system": True,  # spec §5.3.1-5: 推送式注入一律不进提交
-                    "extract_interval_msgs": getattr(self.settings, "extract_interval_msgs", 20),
-                    # Phase5: manifest changes are legitimate projection changes, not nondeterminism.
-                    "evidence_manifest_fp": stable_digest(_evidence_manifest_content),
-                }
-            )
-            # EVO-20260818: interop 尾部追加后 base[:prefix_len] 仅 memory 段——
-            # interop_fp 改为对注入消息指纹（tail 模式）或 memory+inbox 段（旧模式），
-            # 保证 ver 与 built 中的尾部注入内容一致（投影一致性不误报）
-            _interop_for_fp = tail_msgs if tail_msgs is not None else [m for m in base[:prefix_len]]
-            _ver = projection_ver(
-                model=resolved_label,
-                budget=effective_budget,
-                anchor=sess_anchor,
-                memory_fp=_fp(memory_msgs),
-                interop_fp=stable_digest([(m.role, m.content) for m in _interop_for_fp]),
-                system_fp=stable_digest(system_prompt),
-                settings_fp=_settings_fp,
-            )
-            _seq = len(sess.messages)
-            # 知情标记剔除: 门闸比较的 built 不含门禁干预注（末尾固定 system 消息）；
-            # P1 9.1 聚合后 gate_note 埋入聚合消息（--- [slot:gate_note] --- 段），
-            # 含该段的聚合消息整条剔除（近似等价：知情标记不参与投影 hash）
-            _c_tail = built[-1].get("content") if built else None
-            _built_for_hash = (
-                built[:-1]
-                if isinstance(_c_tail, str)
-                and (
-                    _c_tail == GATE_NOTE_CONTENT
-                    or "--- [slot:gate_note] ---" in _c_tail
-                )
-                else built
-            )
-            _built_hash = stable_digest(_built_for_hash)
-            # EVO-20260817: 压缩轮判定——主动/被动压缩归档（built 消息数 < base）属合法
-            # 变化（缓存友好压缩锚点不动 → ver 不变但 built 变短），豁免投影 mismatch 误报
-            _compressed_this_build = decision.compacted = (
-                bool(self._last_history_compacted) or len(built) < len(base))
-            _guards = sess.projection_guard if sess.projection_guard is not None else {}
-            _prev = _guards.get(provider_id)
-            _state = projection_check(_prev, ver=_ver, seq=_seq, built_hash=_built_hash)
-            self._projection_guard_state = _state
-            if _state == "mismatch" and not _compressed_this_build:
-                _hint = (
-                    f"[投影一致性告警] provider={provider_id} seq={_seq} ver 匹配但构建输出与上次不一致"
-                    f"——非确定性构建或历史被改（追加式保证被破坏），前缀缓存可能失效（成本放大 ~50 倍）。"
-                    "只读告警，是否处理由你决定。"
-                )
-                self._record_action("run.projection_guard", "mismatch", _hint)
-            # 更新缓存行（mismatch 也更新——保留最近构建作新基准，但已告警过）
-            import datetime as _dt
-
-            _guards[provider_id] = {
-                "ver": _ver,
-                "seq": _seq,
-                "built_hash": _built_hash,
-                "ts": _dt.datetime.now(_dt.UTC).isoformat(),
-            }
-            sess.projection_guard = _guards
-        except Exception:  # noqa: BLE001 — 门闸失败 fail-open，不阻断 run
-            logging.getLogger(__name__).warning("投影一致性门闸异常（fail-open）", exc_info=True)
+        # EVO-20260817-b6554376: 投影一致性门闸（seq 历史水印 + ver 参数水印 +
+        # built_hash 输出水印；借鉴 DSH seq 水印，fail-open 不阻断 run）
+        # → stages/projection_gate.py
+        _gate_state = run_projection_gate(
+            built=built,
+            base=base,
+            memory_msgs=memory_msgs,
+            system_prompt=system_prompt,
+            tail_msgs=tail_msgs,
+            prefix_len=prefix_len,
+            resolved_label=resolved_label,
+            effective_budget=effective_budget,
+            sess_anchor=sess_anchor,
+            provider_id=provider_id,
+            evidence_manifest_content=_evidence_manifest_content,
+            reasoning_tail=_reasoning_tail_for(
+                self.settings,
+                resolved_label=resolved_label,
+                registry_snapshot=registry_snapshot,
+            ),
+            settings=self.settings,
+            last_history_compacted=self._last_history_compacted,
+            sess=sess,
+            decision=decision,
+            record_action=self._record_action,
+        )
+        if _gate_state is not GATE_STATE_UNSET:
+            self._projection_guard_state = _gate_state
         # EVO-20260817-72fcd94a L3 发送前门禁·后检（合规再出闸）: 校验稳定段与该 session
         # 基线一致；不一致 → 审计 + hint（run 末注入 final_answer），fail-open 不阻断发送。
         try:
