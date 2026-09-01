@@ -17,6 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "pytest-xdist>=3.6", # R9-WF-02: 全量并行压缩（--dist loadfile；门禁不降级，仅提速）
     "ruff>=0.15",
     "pyright>=1.1.390",
     "Pillow>=10.0",

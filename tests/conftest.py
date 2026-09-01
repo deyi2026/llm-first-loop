@@ -50,12 +50,25 @@ TIER0_FILES = (
 
 
 def pytest_collection_modifyitems(config, items):
-    """tier0 单点打标（路径清单驱动；本地回路 pytest -m tier0，门禁仍全量）."""
-    marker = pytest.mark.tier0
+    """tier0 单点打标 + serial 顺序敏感登记（路径/nodeid 清单驱动，不侵入测试文件）."""
+    tier0_marker = pytest.mark.tier0
     for item in items:
         fpath = str(item.path).replace(str(Path(__file__).resolve().parent.parent) + "/", "")
         if fpath in TIER0_FILES:
-            item.add_marker(marker)
+            item.add_marker(tier0_marker)
+        # R9-WF-02: 顺序敏感测试（load_env_file 进程级 env 注入面）serial + 单 worker 收拢；
+        # 登记在案、只减不增（R9-DFX-03）
+        if item.nodeid in SERIAL_NODEIDS:
+            item.add_marker(pytest.mark.serial)
+            item.add_marker(pytest.mark.xdist_group("env-file"))
+
+
+# ── R9-WF-02 顺序敏感测试登记（serial + xdist_group 单 worker 收拢；只减不增）──
+# 已知污染面：load_env_file() 无参调用读仓库根 .env 注入 os.environ（进程级、
+# monkeypatch 不回滚其注入键）——同 worker 内跨文件可见。
+SERIAL_NODEIDS = (
+    "tests/unit/test_b2_examples.py::test_example01_assembly_chain_runs",
+)
 
 
 # ── M64 测试环境污染全局防御（pytest 收集前执行）──

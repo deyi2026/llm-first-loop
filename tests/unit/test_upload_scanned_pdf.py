@@ -48,8 +48,14 @@ _TEXT_PDF = (
 )
 
 
-def test_scanned_pdf_reports_error_with_reason():
-    """无文字层 PDF → error + 明确原因（防模型猜测/幻觉）."""
+def test_scanned_pdf_reports_error_with_reason(monkeypatch):
+    """无文字层 PDF → error + 明确原因（防模型猜测/幻觉）.
+
+    R9-WF-02 修复：显式关闭视觉转录兜底模拟"转录亦失败"前提——原实现隐式依赖
+    环境无 MINIMAX_API_KEY（本地带真实凭据时 sips 渲染+真实转录成功 → ok，
+    xdist/单跑形态下暴露；同前提的成功路径由下方 vision mock 用例承载）。
+    """
+    monkeypatch.setenv("WEB_PDF_VISION_FALLBACK", "0")
     r = _extract_pdf(_SCANNED_PDF, "scan.pdf")
     assert r.status == "error"
     assert "无文字层" in r.detail
