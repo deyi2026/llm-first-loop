@@ -64,6 +64,9 @@ from llm_loop.core.run_context import (
     current_reasoning_effort as _current_reasoning_effort,
 )
 from llm_loop.core.session import SessionStore
+from llm_loop.core.session_snapshot import (  # noqa: F401 — D11 过渡 re-export（R9-P3-01 步1/3；C1-03 清理）
+    build_session_snapshot_text,
+)
 from llm_loop.core.trace_leak import leak_events
 from llm_loop.core.trace_leak.invariant import (
     correct_mislabeled_metadata,
@@ -151,24 +154,6 @@ class LoopResult:
     # 取消原因标记位（""=未取消；值域 user_stop/runner_stop，结构化可审计，spec 6.1.2）
     cancel_reason: str = ""
 
-def build_session_snapshot_text(
-    message_count: int, memory_count: int, evolution_summary: dict | None = None
-) -> str:
-    """会话状态快照文本（EVO-20260811-9ccdec97）: 客观指标 + 定位校准引导.
-
-    作为 system 消息注入，帮助 AI 在长会话中保有"我在哪、要去哪"的定位锚点；
-    客观指标取实时值，语义部分（当前任务/下一步）由 AI 以本条为锚点自行校准。
-    """
-    parts = [f"[会话状态快照] 消息 {message_count} 条；记忆 {memory_count} 条"]
-    if evolution_summary:
-        parts.append(
-            "演进待办: "
-            + ", ".join(
-                f"{k}={v}" for k, v in evolution_summary.items() if k in ("pending_review", "executed", "executing")
-            )
-        )
-    parts.append("若你对当前任务/已完成/下一步/未决事项的定位漂移，以本条为锚点重新校准。")
-    return "；".join(parts)
 
 class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _OverflowMixin, _Err1210Mixin, _ToolEligibilityMixin, _ToolExecMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin, _KpiMixin, _LifecycleMixin, _TurnContextMixin):
     """五阶段核心循环控制器."""
