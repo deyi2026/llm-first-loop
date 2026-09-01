@@ -376,6 +376,225 @@ def test_import_exempt_markers_zero_this_batch():
     assert total_marks == 0, f"本批应登记 0 处豁免标记，实测 {total_marks} 处"
 
 
+# ── runtime cycle 守卫（B2-P2-05 / R9-P2-06·DFX-12）─────────────────────────
+# 图构建口径：节点 = llm_loop.* 模块；static 边 = 模块级（TYPE_CHECKING 外）import；
+# runtime 边 = 函数体内 import；TYPE_CHECKING 块一律排除（静态类型面非运行时）。
+# core runtime cycle = SCC（≥2 模块）且成员间含 ≥1 条 runtime 边。
+# 纯 AST 推断，不执行真实 import（防副作用）。
+
+_PKG = "llm_loop"
+
+
+def _module_name(p: Path, base: Path) -> tuple[str | None, bool]:
+    """路径 → (模块名, 是否包 __init__)；src 外/非 llm_loop 返回 (None, False)。"""
+    try:
+        rel = p.relative_to(base).with_suffix("")
+    except ValueError:
+        return None, False
+    parts = [x for x in rel.parts if x != "__init__"]
+    if not parts or parts[0] != _PKG:
+        return None, False
+    return ".".join(parts), p.name == "__init__.py"
+
+
+class _ImportGraphBuilder(ast.NodeVisitor):
+    def __init__(self, mod: str, is_pkg: bool) -> None:
+        self.mod, self.is_pkg = mod, is_pkg
+        self.static: set[str] = set()
+        self.runtime: set[str] = set()
+        self.depth = 0
+        self._tc = 0
+
+    def _edge(self, target: str) -> None:
+        if target != self.mod:
+            (self.runtime if self.depth > 0 else self.static).add(target)
+
+    def _hit(self, node: ast.Import | ast.ImportFrom) -> None:
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                if a.name == _PKG or a.name.startswith(_PKG + "."):
+                    self._edge(a.name)
+            return
+        if node.level == 0:
+            t = node.module or ""
+            if t == _PKG or t.startswith(_PKG + "."):
+                self._edge(t)
+            return
+        base = self.mod if self.is_pkg else self.mod.rsplit(".", 1)[0]
+        if node.level > 1:
+            for _ in range(node.level - 1):
+                base = base.rsplit(".", 1)[0]
+        t = f"{base}.{node.module}" if node.module else base
+        if t == _PKG or t.startswith(_PKG + "."):
+            self._edge(t)
+
+    def visit_FunctionDef(self, n: ast.FunctionDef) -> None:  # noqa: N802
+        self.depth += 1
+        self.generic_visit(n)
+        self.depth -= 1
+
+    visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[method-assign]  # noqa: N802
+
+    def visit_If(self, n: ast.If) -> None:  # noqa: N802
+        if _is_type_checking(n.test):
+            self._tc += 1
+            self.generic_visit(n)
+            self._tc -= 1
+        else:
+            self.generic_visit(n)
+
+    def visit_Import(self, n: ast.Import) -> None:  # noqa: N802
+        if self._tc == 0:
+            self._hit(n)
+
+    def visit_ImportFrom(self, n: ast.ImportFrom) -> None:  # noqa: N802
+        if self._tc == 0:
+            self._hit(n)
+
+
+def _build_import_graph(root: Path | None = None) -> dict[str, dict[str, set[str]]]:
+    """AST 构建模块依赖图（static/runtime 双边集）。root 缺省真实 src。"""
+    base = root if root is not None else SRC
+    graph: dict[str, dict[str, set[str]]] = {}
+    for p in sorted(base.rglob("*.py")):
+        if "__pycache__" in str(p):
+            continue
+        mod, is_pkg = _module_name(p, base)
+        if mod is None:
+            continue
+        try:
+            tree = ast.parse(p.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        v = _ImportGraphBuilder(mod, is_pkg)
+        v.visit(tree)
+        graph[mod] = {"static": v.static, "runtime": v.runtime}
+    return graph
+
+
+def _find_runtime_cycles(graph: dict[str, dict[str, set[str]]]) -> set[str]:
+    """Tarjan SCC（迭代式）；返回 runtime 环签名集（'a<->b'，成员短名排序）。
+
+    短名 = 模块末段；若环内出现短名歧义（不同模块同末段）退化为全名防误判。
+    """
+    sccs: list[list[str]] = []
+    index: dict[str, int] = {}
+    low: dict[str, int] = {}
+    onstack: set[str] = set()
+    stack: list[str] = []
+    counter = [0]
+
+    def succs(m: str):
+        d = graph.get(m, {})
+        return d.get("static", set()) | d.get("runtime", set())
+
+    for root_mod in sorted(graph):
+        if root_mod in index:
+            continue
+        work: list[tuple[str, list[str]]] = [(root_mod, sorted(succs(root_mod)))]
+        index[root_mod] = low[root_mod] = counter[0]
+        counter[0] += 1
+        stack.append(root_mod)
+        onstack.add(root_mod)
+        while work:
+            node, it = work[-1]
+            advanced = False
+            for succ in it:
+                if succ not in graph:
+                    continue
+                if succ not in index:
+                    index[succ] = low[succ] = counter[0]
+                    counter[0] += 1
+                    stack.append(succ)
+                    onstack.add(succ)
+                    work.append((succ, sorted(succs(succ))))
+                    advanced = True
+                    break
+                if succ in onstack:
+                    low[node] = min(low[node], index[succ])
+            if advanced:
+                continue
+            work.pop()
+            if work:
+                parent = work[-1][0]
+                low[parent] = min(low[parent], low[node])
+            if low[node] == index[node]:
+                comp: list[str] = []
+                while True:
+                    w = stack.pop()
+                    onstack.discard(w)
+                    comp.append(w)
+                    if w == node:
+                        break
+                if len(comp) >= 2:
+                    sccs.append(comp)
+
+    cycles: set[str] = set()
+    for comp in sccs:
+        cs = set(comp)
+        has_rt = any(t in cs for m in comp for t in graph[m].get("runtime", set()))
+        if not has_rt:
+            continue
+        shorts = [m.rsplit(".", 1)[-1] for m in comp]
+        if len(set(shorts)) != len(shorts):  # 短名歧义 → 全名签名
+            sig = "<->".join(sorted(comp))
+        else:
+            sig = "<->".join(sorted(shorts))
+        cycles.add(sig)
+    return cycles
+
+
+def test_runtime_cycles_match_known():
+    """实测 runtime 环集合 == known_cycles（R9-P2-06a：新增任何运行时环 → CI FAIL）。
+
+    存量两环（D07/B2-P2-06 锚点实证）：
+    - engine<->build：engine.py:41 顶层 import _BuildMixin（static）↔
+      build.py:918 函数内 import build_session_snapshot_text（runtime）
+    - session<->fork：session.py:1492 函数内 import fork_session（runtime）↔
+      fork.py:119/:148 函数内 import Session/SessionIdConflictError（runtime）
+    Phase 3 断环后 known 清空，本断言退化为"实测恒空"。
+    """
+    def _canon(sig: str) -> str:
+        return "<->".join(sorted(sig.split("<->")))
+
+    known = {_canon(c) for c in _load_baseline()["known_cycles"]}
+    measured = _find_runtime_cycles(_build_import_graph())
+    unknown = measured - known
+    assert not unknown, (
+        f"新增 runtime 环（R9-P2-06a 违例，Phase 2 期间环只减不增）：\n  "
+        + "\n  ".join(sorted(unknown))
+        + "\n如为拆分中间态，请走 exemptions 或先断旧环。"
+    )
+    stale = known - measured
+    assert not stale, f"known 环已消失（好消息！）——请随拆分提交清空 known_cycles：\n  {'\n  '.join(sorted(stale))}"
+
+
+def test_cycle_detector_synthetic(tmp_path):
+    """tmp 构造树：第三环检出 FAIL 面 + TYPE_CHECKING 边排除语义（R9-P2-06a 断言面）。"""
+    pkg = tmp_path / "src" / "llm_loop"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    # 第三环（模拟）：x → y 静态，y → x 函数内
+    (pkg / "x.py").write_text("from llm_loop.y import g\n\ndef f():\n    pass\n", encoding="utf-8")
+    (pkg / "y.py").write_text("def g():\n    from llm_loop.x import f\n    return f\n", encoding="utf-8")
+    cycles = _find_runtime_cycles(_build_import_graph(tmp_path / "src"))
+    assert "x<->y" in cycles, "模拟第三环未检出"
+
+    # TYPE_CHECKING 边不构成环：a → b（TC 内 import，被排除），b 顶层 → 无环
+    pkg2 = tmp_path / "tc" / "src" / "llm_loop"
+    pkg2.mkdir(parents=True)
+    (pkg2 / "__init__.py").write_text("", encoding="utf-8")
+    (pkg2 / "a.py").write_text(
+        "from typing import TYPE_CHECKING\n"
+        "if TYPE_CHECKING:\n"
+        "    from llm_loop.b import h\n"
+        "def fa():\n    return 1\n",
+        encoding="utf-8",
+    )
+    (pkg2 / "b.py").write_text("def h():\n    return 2\n", encoding="utf-8")
+    assert _find_runtime_cycles(_build_import_graph(tmp_path / "tc" / "src")) == set(), "TC 边应被排除"
+
+
 def _numeric_raises(head_base: dict[str, Any], cur_base: dict[str, Any]) -> list[str]:
     """纯函数：基线数值节同键上调检测（v1/v2 兼容）——棘轮测试与篡改负例单测直调。
 
