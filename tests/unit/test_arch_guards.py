@@ -40,6 +40,7 @@ BASELINE_PATH = ROOT / "tests" / "guards" / "function_size_baseline.json"
 
 # 收录基线的门槛（v2：与三层红线 WARN 下限联动，150 → 120）
 INCLUDE_THRESHOLD = 120
+RECORD_THRESHOLD = 150  # 强制登记线（≥150 未登记即 FAIL）；120-149 为 WARN 报告态
 
 # ── 三层红线（B2-P2-02 / R9-P2-01·02·04，取代 v1 HARD_CAP=2000 硬顶 D10）──
 # 全局层：任意函数 >300 行 FAIL（无豁免通道，超限只能拆）
@@ -311,13 +312,18 @@ def test_function_lines_ratchet_within_baseline(measured: dict[str, int] | None 
 
 
 def test_new_large_functions_must_be_recorded(measured: dict[str, int] | None = None):
-    """新出现 ≥INCLUDE_THRESHOLD 行的函数必须登记进基线（防漏网）。"""
+    """新出现 ≥RECORD_THRESHOLD（150）行的函数必须登记进基线（防漏网）。
+
+    120-149 行 WARN 区为报告态不阻断（T3-A 审查提醒带）——强制登记线与
+    WARN 下限解耦（演练③发现的语义缺陷修复：130 行新函数曾误被本用例拦截，
+    与"WARN ≠ 违例"矛盾）。
+    """
     m = measured if measured is not None else _measure_functions_cached()
     b = _load_baseline()
     known = set(b["function_lines"]) | set(b["legacy_super_functions"])
-    unrecorded = [k for k, v in m.items() if v >= INCLUDE_THRESHOLD and k not in known]
+    unrecorded = [k for k, v in m.items() if v >= RECORD_THRESHOLD and k not in known]
     assert not unrecorded, (
-        f"存在 ≥{INCLUDE_THRESHOLD} 行未登记函数（{len(unrecorded)} 个）。"
+        f"存在 ≥{RECORD_THRESHOLD} 行未登记函数（{len(unrecorded)} 个）。"
         f"请将其当前行数写入 {BASELINE_PATH.name}：\n"
         + "\n".join(f"  {k}: {m[k]}" for k in sorted(unrecorded)[:20])
     )
@@ -368,7 +374,7 @@ class _FnImportCounter(ast.NodeVisitor):
         self.generic_visit(n)
         self.depth -= 1
 
-    visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[method-assign]  # noqa: N802
+    visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[method-assign]  # noqa: N802,N815
 
     def visit_ClassDef(self, n: ast.ClassDef) -> None:  # noqa: N802
         if self.depth > 0:
@@ -521,7 +527,7 @@ class _ImportGraphBuilder(ast.NodeVisitor):
         self.generic_visit(n)
         self.depth -= 1
 
-    visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[method-assign]  # noqa: N802
+    visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[method-assign]  # noqa: N802,N815
 
     def visit_If(self, n: ast.If) -> None:  # noqa: N802
         if _is_type_checking(n.test):
@@ -652,7 +658,7 @@ def test_runtime_cycles_match_known():
     measured = _find_runtime_cycles(_build_import_graph())
     unknown = measured - known
     assert not unknown, (
-        f"新增 runtime 环（R9-P2-06a 违例，Phase 2 期间环只减不增）：\n  "
+        "新增 runtime 环（R9-P2-06a 违例，Phase 2 期间环只减不增）：\n  "
         + "\n  ".join(sorted(unknown))
         + "\n如为拆分中间态，请走 exemptions 或先断旧环。"
     )
