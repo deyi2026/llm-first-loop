@@ -64,9 +64,6 @@ from llm_loop.core.run_context import (
     current_reasoning_effort as _current_reasoning_effort,
 )
 from llm_loop.core.session import SessionStore
-from llm_loop.core.session_snapshot import (  # noqa: F401 — D11 过渡 re-export（R9-P3-01 步1/3；C1-03 清理）
-    build_session_snapshot_text,
-)
 from llm_loop.core.trace_leak import leak_events
 from llm_loop.core.trace_leak.invariant import (
     correct_mislabeled_metadata,

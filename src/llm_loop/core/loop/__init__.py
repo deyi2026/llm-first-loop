@@ -10,8 +10,8 @@
 from llm_loop.core.loop.engine import (
     LoopEngine,
     LoopResult,
-    build_session_snapshot_text,
     format_tokens,
 )
+from llm_loop.core.session_snapshot import build_session_snapshot_text
 
 __all__ = ["LoopEngine", "LoopResult", "build_session_snapshot_text", "format_tokens"]
