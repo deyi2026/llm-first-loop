@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import os
-import re
+
 import time
 
 import pytest
@@ -606,11 +606,30 @@ def _arm_compact_first(engine, sid, *, prev_count=100):
     engine._last_request_msg_count_by_session[sid] = prev_count
 
 
-def _arm_live_prompt_slot(engine, text="tip 恢复夹具"):
-    """Arm one still-eligible TIP slot for engine-level strip/defer tests."""
-    engine._tip_tail_messages = [
-        Message(role="system", content=text, source=MessageSource.SYSTEM)
-    ]
+def _arm_live_prompt_slot(engine, sid, text="授权恢复夹具"):
+    """R8.24-E（E-D2）: 旧 tip 槽退役——live 注册 entry 改经授权投影武装.
+
+    持久化 memory 快照（engine 理解段落盘形态）+ run 文本显式指代授权
+    （类级 fixture 放宽 LFL_MEMORY_REF_KEYWORDS）→ memory_authorized 投影
+    进 R6 envelope（USER_ENVELOPE entry），供 1210 strip/blind 链验证。
+    """
+    from llm_loop.core.injection_labels import InjectionLayer, origin_metadata
+
+    engine.session.append(
+        sid,
+        Message(
+            role="user",
+            content=text,
+            source=MessageSource.USER,
+            metadata=origin_metadata(
+                InjectionLayer.REFERENCE,
+                injection_kind="memory_snapshot",
+                persisted_injection=True,
+                turn_ref=0,
+                query_fp="deadbeefcafe",
+            ),
+        ),
+    )
 
 
 class TestEngineRecovery:
@@ -621,13 +640,22 @@ class TestEngineRecovery:
     def _no_blind_retry(self, monkeypatch):
         monkeypatch.setenv("ERR1210_BLIND_RETRY", "0")
 
+    @pytest.fixture(autouse=True)
+    def _mem_ref_loose(self, monkeypatch):
+        """R8.24-E: 授权词表放宽——本类 run 文本（任务/继续/压缩）视为显式指代.
+
+        测试对象是 1210 恢复机械（与授权词表从严正交）；生产默认词表
+        不受影响（monkeypatch 作用域限本类）。
+        """
+        monkeypatch.setenv("LFL_MEMORY_REF_KEYWORDS", "任务,继续,压缩")
+
     def test_basic_recovery(self, tmp_path, monkeypatch):
         """T5.1: 首调 1210 → 重试恰好 1 次、公共前缀一致、resp 正常合流、登记正确."""
         engine, fake = _mk(tmp_path, monkeypatch, responses=[_e1210(), _resp()])
         sid = engine.session.create()
         _arm_compact_first(engine, sid)
         # 武装仍具 prompt eligibility 的 tip 槽，验证 strip/defer 主链。
-        _arm_live_prompt_slot(engine)
+        _arm_live_prompt_slot(engine, sid)
         result = engine.run(sid, "长任务继续")
         assert "恢复后的正常回答" in result.final_answer
         assert result.truncated is False
@@ -640,16 +668,20 @@ class TestEngineRecovery:
         assert retry[:-1] == orig[:-1]
         assert retry[-1] == {"role": "user", "content": "长任务继续"}
         assert str(orig[-1].get("content", "")).endswith("长任务继续")
-        # defer: live tip 槽已回填；interop/gate_note 均不再是 live prompt producer。
-        assert engine._tip_tail_messages and any(
-            x.content.endswith("tip 恢复夹具") for x in engine._tip_tail_messages
-        )
+        # R8.24-E（E-D2）: tip 槽退役——无 defer 回填（tail 消费后置 None；
+        # 授权投影 envelope 由 strip 直接剥除，不经 tail defer 链）。
+        assert engine._tip_tail_messages is None
         assert engine._cache_monitor.take_gate_note(sid) is False
         # 耗尽标记已写（本 run 不再二次降级——修复A per-run 语义）
         assert engine._err1210_attempted.get(sid) == engine._err1210_run_seq
 
     def test_defer_reinject_next_round(self, tmp_path, monkeypatch):
-        """T5.2a: P0 恢复后的 live tip 在下一 run 重注入；interop legacy 不复活."""
+        """R8.24-E（E-D2）: tip replay 退出——defer 重注入链路不再复活 tip 段.
+
+        旧语义（T5.2a defer 回填重注入）随 tip 槽退役废除：tip 武装后 wire
+        恒零 tip 文本（E-G3），_tip_tail_messages 一次性消费置 None，无 defer
+        引用残留；interop legacy 不复活照旧。
+        """
         engine, fake = _mk(
             tmp_path, monkeypatch,
             responses=[_e1210(), _resp(), _resp("第二轮回答")],
@@ -659,20 +691,19 @@ class TestEngineRecovery:
         m = Message(role="system", content="tip 可恢复消息", source=MessageSource.SYSTEM)
         engine._tip_tail_messages = [m]
         engine.run(sid, "任务A")
-        assert engine._tip_tail_messages and any(
-            x.content.endswith("tip 可恢复消息") for x in engine._tip_tail_messages
-        )
+        assert engine._tip_tail_messages is None  # 一次性消费、无 defer 回填
         engine.run(sid, "任务B")
         second_msgs = fake.calls[2]["messages"]
-        assert any(
-            isinstance(x, dict) and "tip 可恢复消息" in str(x.get("content", ""))
+        assert all(
+            "tip 可恢复消息" not in str(x.get("content", ""))
             for x in second_msgs
-        )
+            if isinstance(x, dict)
+        )  # E-G3: TIP replay 恒零注入
         assert all(r is not m for r in (engine._deferred_replay_refs or []))
 
 
     def test_tip_recovery_does_not_gain_hotcard_authority(self, tmp_path, monkeypatch):
-        """E24: live tip 可恢复；durable hotcard 不因同轮 1210 获得 prompt/defer 权限."""
+        """E24（R8.24-E 更新）: tip 退役零注入；durable hotcard 不获 prompt/defer 权限."""
         engine, fake = _mk(tmp_path, monkeypatch, responses=[_e1210(), _resp()])
         sid = engine.session.create()
         _arm_compact_first(engine, sid)
@@ -685,20 +716,14 @@ class TestEngineRecovery:
         assert "恢复后的正常回答" in result.final_answer
         assert len(fake.calls) == 2
         orig, retry = fake.calls[0]["messages"], fake.calls[1]["messages"]
-        _slot_user = lambda ms: [  # noqa: E731
-            d for d in ms
-            if isinstance(d, dict) and d.get("role") == "user"
-            and re.search(r"--- (?:\[tier:\w+\])?\[slot:", str(d.get("content", "")))
-        ]
-        assert len(_slot_user(orig)) == 1
-        inj = engine._last_build_injections
-        assert inj and all(e.slot_kind == SlotKind.USER_ENVELOPE for e in inj)
-        assert _slot_user(retry) == []
+        # R8.24-E（E-D2/E-G3）: tip 武装零投影（无授权指代 → 无任何注入段）
+        wire = "\n".join(str(m.get("content", "")) for m in orig)
+        assert "经验提示 tip" not in wire
+        assert "--- [slot:" not in wire
+        assert engine._last_build_injections == []
         assert retry[:-1] == orig[:-1]
         assert retry[-1] == {"role": "user", "content": "tip 活跃"}
-        assert engine._tip_tail_messages and any(
-            x.content.endswith("经验提示 tip") for x in engine._tip_tail_messages
-        )
+        assert engine._tip_tail_messages is None  # 一次性消费、无 defer 回填
         card = json.loads(hotcard_path(engine.settings.data_dir).read_text(encoding="utf-8"))
         assert card["consumed"] is False
         assert not any("slot:hotcard" in str(m.get("content", "")) for m in orig)
@@ -709,7 +734,12 @@ class TestEngineRecovery:
 
 
     def test_deferred_tip_ignores_new_durable_hotcard(self, tmp_path, monkeypatch):
-        """E24: deferred tip remains live; a newly written hotcard cannot join its aggregate."""
+        """E24（R8.24-E 更新）: tip 零注入；新写 durable hotcard 不得借 defer 复活.
+
+        旧语义（deferred tip 与 hotcard 不混合聚合）随 tip defer 链退役简化为：
+        两轮 wire 恒零 tip/hotcard 槽段（E-G3 + E24 权威边界），hotcard
+        durable 存储保留（retrieval plane 不动）。
+        """
         engine, fake = _mk(
             tmp_path, monkeypatch,
             responses=[_e1210(), _resp(), _resp("第二轮回答")],
@@ -720,22 +750,16 @@ class TestEngineRecovery:
             Message(role="system", content="defer 回放 tip", source=MessageSource.SYSTEM)
         ]
         engine.run(sid, "第一轮")
-        assert engine._tip_tail_messages and any(
-            x.content.endswith("defer 回放 tip") for x in engine._tip_tail_messages
-        )
+        assert engine._tip_tail_messages is None  # 一次性消费、无 defer 回填
         write_hotcard(origin_session="origin-sess", anchor="当轮 hotcard",
                       data_dir=engine.settings.data_dir)
         engine.run(sid, "第二轮")
         second = fake.calls[2]["messages"]
-        agg = [d for d in second
-               if isinstance(d, dict) and d.get("role") == "user"
-               and re.search(r"--- (?:\[tier:\w+\])?\[slot:", str(d.get("content", "")))]
-        assert len(agg) == 1
-        content = str(agg[0]["content"])
-        m_tip = re.search(r"--- (?:\[tier:\w+\])?\[slot:tip\] ---", content)
-        m_hot = re.search(r"--- (?:\[tier:\w+\])?\[slot:hotcard\] ---", content)
-        assert m_tip and m_hot is None
-        assert "defer 回放 tip" in content
+        wire = "\n".join(
+            str(d.get("content", "")) for d in second if isinstance(d, dict)
+        )
+        assert "defer 回放 tip" not in wire  # E-G3: TIP replay 恒零注入
+        assert "slot:hotcard" not in wire  # E24: hotcard 不进 prompt
         card = json.loads(hotcard_path(engine.settings.data_dir).read_text(encoding="utf-8"))
         assert card["consumed"] is False
 
@@ -748,7 +772,7 @@ class TestEngineRecovery:
         )
         sid = engine.session.create()
         _arm_compact_first(engine, sid)
-        _arm_live_prompt_slot(engine)
+        _arm_live_prompt_slot(engine, sid)
         result = engine.run(sid, "长任务继续")
         assert len(fake.calls) == 3  # 原始+blind+strip/raw 耗尽；每 run 机会一次，第四不发生
         assert "[LLM 调用异常]" in (result.final_answer or "")  # 如实反馈（llm_error）
@@ -778,7 +802,7 @@ class TestEngineRecovery:
         engine, fake = _mk(tmp_path, monkeypatch, responses=[_e1210()])
         sid = engine.session.create()
         _arm_compact_first(engine, sid)
-        _arm_live_prompt_slot(engine)
+        _arm_live_prompt_slot(engine, sid)
         result = engine.run(sid, "任务")
         assert len(fake.calls) == 1
         assert "[LLM 调用异常]" in (result.final_answer or "")
@@ -791,21 +815,24 @@ class TestEngineRecovery:
         )
         sid = engine.session.create()
         _arm_compact_first(engine, sid)
-        _arm_live_prompt_slot(engine)  # 需有 live 注入登记可供剥离
+        _arm_live_prompt_slot(engine, sid)  # 需有 live 注入登记可供剥离
         engine.run(sid, "任务")  # f8e106d blind-first: 原始+blind+strip(剥gate_note) 3 次耗尽
         assert len(fake.calls) == 3
         # 修复A: 新 run 自动重获降级机会（run seq 递增，无需手动 compact 事件）
         _arm_compact_first(engine, sid)
-        _arm_live_prompt_slot(engine)
+        _arm_live_prompt_slot(engine, sid)
         result = engine.run(sid, "新压缩后继续")
         assert len(fake.calls) == 5  # run2: 原始 1210(4) + blind 恢复成功(5)——rearm 生效
         assert "第三次成功" in result.final_answer
 
     def test_second_order_failure_records_event(self, tmp_path, monkeypatch):
-        """T5.2d 二阶失败 [r3-P2 修订]: 重注入轮再 1210 → 新 run 降级重试仍失败 → defer_lost_on_reinject 记录.
+        """T5.2d 二阶失败 [R8.24-E 更新]: 第二 run 降级重试仍 1210 → 耗尽上抛.
 
         修复A（2026-08-29）语义更新: 第二 run 重新获得一次降级机会
         （attempted 键 = run seq 自动递增），重试仍 1210 → 耗尽上抛 → 二阶失败。
+        R8.24-E（E-D2）: tip defer 链退役——defer_replayed/defer_lost_on_reinject
+        事件源消失（授权投影 envelope 由 strip 直接剥除，无 tail defer 回存），
+        二阶失败机械由 5 次调用耗尽断言承载。
         """
         engine, fake = _mk(
             tmp_path, monkeypatch,
@@ -813,19 +840,10 @@ class TestEngineRecovery:
         )
         sid = engine.session.create()
         _arm_compact_first(engine, sid)
-        _arm_live_prompt_slot(engine)
+        _arm_live_prompt_slot(engine, sid)
         engine.run(sid, "任务A")  # 第一 run: blind(第2次)恢复成功，共 2 次调用
-        # defer 回存完成；第二 run: build 重注入 tip（defer_replayed）
         engine.run(sid, "任务B")  # run2: 原始(3)+blind(4)+strip(5) 均 1210 → 耗尽
-        assert len(fake.calls) == 5
-        # 二阶失败: 重试仍 1210（每 run 至多一次降级）
-        # defer_lost_on_reinject 已记录
-        trace = Path(os.environ.get("LFL_DATA_DIR", "data")) / "audit" / "defer_trace.jsonl"
-        # conftest isolated_data_dir 设置了 LFL_DATA_DIR
-        assert trace.exists()
-        events = [json.loads(x) for x in trace.read_text(encoding="utf-8").splitlines() if x.strip()]
-        assert any(e["event"] == "defer_lost_on_reinject" for e in events)
-        assert any(e["event"] == "defer_replayed" for e in events)
+        assert len(fake.calls) == 5  # 二阶失败: 重试仍 1210（每 run 至多一次降级）
 
     def test_noncompact_1210_recovery(self, tmp_path, monkeypatch):
         """修复A核心: 非 compact 轮 1210（主区 883b4725 形态）→ 降级重试不再静默跳过.
@@ -836,7 +854,7 @@ class TestEngineRecovery:
         engine, fake = _mk(tmp_path, monkeypatch, responses=[_e1210(), _resp()])
         sid = engine.session.create()
         # 刻意不 arm compact_first——非 compact、无骤降形态
-        _arm_live_prompt_slot(engine)
+        _arm_live_prompt_slot(engine, sid)
         result = engine.run(sid, "长任务继续")
         assert "恢复后的正常回答" in result.final_answer
         assert len(fake.calls) == 2  # 旧语义 1 次（静默上抛），新语义降级重试成功
@@ -848,7 +866,7 @@ class TestEngineRecovery:
             responses=[_e1210(), _e1210(), _e1210()],
         )
         sid = engine.session.create()
-        _arm_live_prompt_slot(engine)
+        _arm_live_prompt_slot(engine, sid)
         result = engine.run(sid, "任务")
         assert len(fake.calls) == 3  # 原始+blind+raw-fallback 耗尽 break（与 R9 互斥，不再续跑）
         assert "[LLM 调用异常]" in (result.final_answer or "")

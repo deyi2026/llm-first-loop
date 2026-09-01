@@ -146,6 +146,7 @@ def test_chat_stream_busy_does_not_persist_model_override(build_test_engine):
         def start(
             self, session_id, message, model=None, reasoning_effort=None, *,
             resume=False, before_start=None, expected_workspace_epoch=None,
+            ingress=None,
         ):
             return None, None
 

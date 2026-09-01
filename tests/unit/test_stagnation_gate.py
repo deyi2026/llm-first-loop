@@ -9,16 +9,16 @@ from llm_loop.feedback.honesty import stagnation_feedback
 
 class TestStagnationFeedbackEvidenceGate:
     def test_has_evidence_default_advice(self):
-        """默认（有证据）: 保留"基于已获得的信息给出最终回答"建议（向后兼容）."""
+        """R8.24-B B-D3 收口后: 有证据 → 纯事实（回执可检索），建议句式取消."""
         msg = stagnation_feedback("search_files", 5, ["search_files"])
-        assert "基于已获得的信息给出最终回答" in msg.content
+        assert "基于已获得的信息给出最终回答" not in msg.content
+        assert "历史回执" in msg.content  # 证据事实行在场
         assert "[停滞熔断]" in msg.content
 
     def test_no_evidence_reports_unresolved(self):
-        """无证据: 报 unresolved/replan，禁止推测性结论，不暗示已有答案."""
+        """无证据: 报 unresolved（事实），不暗示已有答案、无建议性指令."""
         msg = stagnation_feedback("search_files", 5, ["search_files"], has_evidence=False)
         assert "unresolved" in msg.content
-        assert "禁止给出推测性结论" in msg.content
         assert "基于已获得的信息给出最终回答" not in msg.content
         assert "[停滞熔断]" in msg.content  # 事实/原因行保留
 

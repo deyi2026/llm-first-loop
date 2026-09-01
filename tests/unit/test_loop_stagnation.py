@@ -45,16 +45,17 @@ def test_below_threshold_no_reminder():
     assert eng._stagnation_state["count"] == _STAGNATION_REMIND_AT - 1
 
 
-def test_reminder_injected_once_at_threshold():
+def test_reminder_recorded_once_at_threshold_as_event():
+    """R8.24-B B-D3: 达阈值只记观测事件（一次），sess.messages 零注入."""
     eng, sess = _StubEngine(), _Sess()
     for _ in range(_STAGNATION_REMIND_AT + 1):  # 第 3 次提醒，第 4 次不重复
         eng._track_stagnation(_tc(path="/a.py"), sess, [])
     reminders = [m for m in sess.messages if "[停滞提醒]" in m.content]
-    assert len(reminders) == 1  # 只提醒一次
-    assert "read_file" in reminders[0].content
-    assert reminders[0].metadata.get("prompt_lifecycle") == "current_turn"
-    assert reminders[0].metadata.get("turn_ref") == 11
-    assert eng.actions and eng.actions[0][0] == "stagnation.reminder"
+    assert len(reminders) == 0  # 零注入（B-G2）
+    events = [a for a in eng.actions if a[0] == "stagnation.reminder"]
+    assert len(events) == 1  # 只观测一次
+    assert events[0][1] == "suppressed"
+    assert "read_file" in events[0][2]
 
 
 def test_fingerprint_change_resets_streak():
@@ -108,7 +109,7 @@ def test_search_target_fingerprint_ignores_detail_params():
 
 
 def test_search_empty_result_reminder_at_threshold():
-    """搜索类工具连续空结果 ≥2 → 注入 [搜索空结果提醒]（一次）."""
+    """R8.24-B B-D4: 连续空结果 ≥2 → 事件观测一次，sess.messages 零注入."""
     eng, sess = _StubEngine(), _Sess()
     eng._track_stagnation(
         _tc(name="search_records", kind="action_trace", query="x"), sess, [],
@@ -119,23 +120,24 @@ def test_search_empty_result_reminder_at_threshold():
         result=_empty_result(),
     )
     reminders = [m for m in sess.messages if "[搜索空结果提醒]" in m.content]
-    assert len(reminders) == 1
-    assert "search_records" in reminders[0].content
-    assert reminders[0].metadata.get("prompt_lifecycle") == "current_turn"
-    assert reminders[0].metadata.get("turn_ref") == 11
-    assert eng.actions and eng.actions[-1][0] == "empty_search.reminder"
+    assert len(reminders) == 0  # 零注入（B-G2）
+    events = [a for a in eng.actions if a[0] == "empty_search.reminder"]
+    assert len(events) == 1
+    assert events[0][1] == "suppressed"
+    assert "search_records" in events[0][2]
 
 
 def test_search_empty_result_reminder_single_injection():
-    """空结果提醒只注入一次（连续多次不再重复）."""
+    """空结果提醒事件只记一次（连续多次不再重复）."""
     eng, sess = _StubEngine(), _Sess()
     for _ in range(5):
         eng._track_stagnation(
             _tc(name="search_archive", query="x"), sess, [],
             result=_empty_result(),
         )
-    reminders = [m for m in sess.messages if "[搜索空结果提醒]" in m.content]
-    assert len(reminders) == 1
+    events = [a for a in eng.actions if a[0] == "empty_search.reminder"]
+    assert len(events) == 1
+    assert sess.messages == []
 
 
 def test_nonempty_result_resets_empty_streak():
@@ -169,10 +171,11 @@ def test_exec_cmd_find_empty_counts_and_registers():
         sess, [],
         result=_empty_result("（命令执行成功，无输出）"),
     )
-    # 空结果计数达 2 → 注入 [搜索空结果提醒]（execute_command 变体也被拦截）
+    # 空结果计数达 2 → 事件观测一次（R8.24-B B-D4 零注入），execute_command 变体也覆盖
     reminders = [m for m in sess.messages if "[搜索空结果提醒]" in m.content]
-    assert len(reminders) == 1
-    assert eng.actions and eng.actions[-1][0] == "empty_search.reminder"
+    assert len(reminders) == 0
+    events = [a for a in eng.actions if a[0] == "empty_search.reminder"]
+    assert len(events) == 1 and events[0][1] == "suppressed"
     # 否定帧已登记（目标键 cmd:...）
     assert pr.check_known_missing("cmd:find wkdir -name ANALYSIS-2026*.md")
 

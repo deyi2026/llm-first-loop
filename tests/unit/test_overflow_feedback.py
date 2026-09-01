@@ -1,9 +1,9 @@
-"""R4: overflow 如实反馈测试（不自动重试，决策权归 AI）.
+"""R4 → R8.24-B: overflow 处理测试.
 
 验证:
 - is_overflow_error 模式识别正确
-- overflow_feedback 含错误事实 + 占用 + 模型窗口 + 4 个可选动作
-- overflow 不静默吞错（反馈注入 AI 可见）
+- overflow_feedback（deprecated 反例保留体）文本结构——生产调用点为零
+- R8.24-B B-D5 集成: 首次 overflow 确定性收缩重发（零注入）、二次终止
 """
 from __future__ import annotations
 
@@ -79,35 +79,35 @@ def test_overflow_feedback_no_breakdown_no_error():
     assert "search_archive" in feedback  # 动作建议仍在
 
 
-# ── R4 增强: overflow 注入 system 消息 + continue 集成测试 ──
+# ── R4 → R8.24-B B-D5: overflow 确定性 runtime 处理（零 prompt 注入）集成测试 ──
 
 
-def test_overflow_injects_system_message_and_continues(build_test_engine):
-    """第一次 overflow 注入 system 消息 + continue，AI 在同会话内有机会处理."""
-
+def test_overflow_first_shrinks_budget_and_continues(build_test_engine):
+    """R8.24-B B-D5: 首次 overflow → 确定性收缩重发（continue），sess 零注入."""
 
     def raise_overflow(history):
         raise LLMHTTPError("context length exceeded", status_code=400)
 
-    engine, _fake = build_test_engine([
+    engine, fake = build_test_engine([
         raise_overflow,
         {"content": "已处理overflow"},
     ])
     result = engine.run("s1", "你好")
     assert "已处理overflow" in result.final_answer
+    assert len(fake.calls) == 2  # continue 后第二次调用在场
     sess = engine.session.load("s1")
     overflow_sys = [m for m in sess.messages if "上下文溢出" in m.content and m.role == "system"]
-    assert len(overflow_sys) == 1
+    assert len(overflow_sys) == 0  # 零注入
 
 
 def test_overflow_second_time_ends_loop(build_test_engine):
-    """第二次 overflow 直接结束（避免无限循环）."""
+    """R8.24-B B-D5: 第二次 overflow 直接确定性终止（纯事实终态，无注入）."""
     def raise_overflow(history):
         raise LLMHTTPError("context length exceeded", status_code=400)
 
     engine, _fake = build_test_engine([raise_overflow, raise_overflow])
     result = engine.run("s2", "你好")
-    assert "上下文溢出" in result.final_answer
+    assert "上下文超限" in result.final_answer  # 新事实终态文案
     sess = engine.session.load("s2")
     overflow_sys = [m for m in sess.messages if "上下文溢出" in m.content and m.role == "system"]
-    assert len(overflow_sys) == 1
+    assert len(overflow_sys) == 0

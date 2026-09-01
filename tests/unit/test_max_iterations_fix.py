@@ -37,14 +37,14 @@ def test_env_override_preserved(monkeypatch):
 
 
 def test_max_iterations_feedback_has_resume_guidance():
-    """上限反馈含续做引导（如实说明未完成 + 同会话可续聊）."""
+    """R8.24-B B-D6 收口后: 纯事实终态（事实+轨迹+可继续提示），建议段取消."""
     msg = max_iterations_feedback(["read_file", "execute_command"])
     assert msg.role == "system"
     assert "已达轮数上限" in msg.content
-    assert "未完成" in msg.content
-    assert "继续发消息" in msg.content
-    assert "LLM_MAX_ITERATIONS" in msg.content
     assert "read_file" in msg.content  # 轨迹如实呈现
+    assert "继续发送消息" in msg.content  # 事实级"用户可继续"提示（衔接 E 包）
+    assert "建议:" not in msg.content  # 建议性自然语言取消（§11.1 修订）
+    assert "adjust_strategy" not in msg.content
 
 
 def test_warning_message_structure():
@@ -58,7 +58,7 @@ def test_warning_message_structure():
 
 
 def test_engine_injects_warning_at_80_percent(tmp_path, monkeypatch):
-    """引擎达 80% 轮数注入 [轮数预警] 一次；调大后不再重复注入."""
+    """R8.24-B B-2.1: 达 80% 轮数只记 suppressed 观测事件，sess.messages 零注入."""
     from llm_loop.core.loop.engine import LoopEngine
     from llm_loop.core.session import SessionStore
     from llm_loop.llm.client import LLMResponse
@@ -67,7 +67,7 @@ def test_engine_injects_warning_at_80_percent(tmp_path, monkeypatch):
     class _Fake:
         """迷你 FakeLLM: 前 8 轮返回工具调用（execute_command），第 9 轮直接回答.
 
-        预算 10 的 80% = 8 → 第 8 轮工具轮末注入 [轮数预警]（第 9 轮回答 break 不经检查点）。
+        预算 10 的 80% = 8 → 第 8 轮工具轮末记 round.warning/suppressed 事件。
         """
 
         def __init__(self) -> None:
@@ -137,7 +137,7 @@ def test_engine_injects_warning_at_80_percent(tmp_path, monkeypatch):
         llm_base_url="http://t",
         llm_model="m",
         data_dir=str(tmp_path / "data"),
-        max_iterations=10,  # 80% = 8 轮 → 第 8 轮注入预警
+        max_iterations=10,  # 80% = 8 轮 → 第 8 轮记预警观测事件
     )
     engine = LoopEngine(
         llm_client=fake,  # type: ignore[arg-type]
@@ -146,12 +146,21 @@ def test_engine_injects_warning_at_80_percent(tmp_path, monkeypatch):
         session=store,
         settings=settings,
     )
+    actions: list[tuple[str, str]] = []
+    _orig_record = engine._record_action
+
+    def _spy(phase, action_type, detail=""):
+        actions.append((phase, action_type))
+        return _orig_record(phase, action_type, detail)
+
+    engine._record_action = _spy
     sid = store.create()
     result = engine.run(sid, "多步任务")
     sess = store.load(sid)
     warnings = [m for m in sess.messages if m.role == "system" and "[轮数预警]" in m.content]
-    assert len(warnings) == 1  # 只注入一次
-    assert warnings[0].source == MessageSource.SYSTEM
+    assert len(warnings) == 0  # 零注入（B-G8）
+    assert ("round.warning", "suppressed") in actions  # 观测事件在场（只一次）
+    assert sum(1 for a in actions if a[0] == "round.warning") == 1
     assert result.final_answer  # 正常完成（未触顶）
 
 

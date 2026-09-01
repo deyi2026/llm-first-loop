@@ -115,12 +115,12 @@ def test_reasoning_policy_binds_selected_deepseek_not_global_local() -> None:
     ) == 0
 
 
-def test_reasoning_policy_glm_keeps_only_tool_call_reasoning() -> None:
+def test_reasoning_policy_glm_preserves_historical_reasoning() -> None:
     settings = SimpleNamespace(reasoning_tail=0, llm_base_url="http://localhost:1234/v1")
     registry = _registry("glm", "https://open.bigmodel.cn/api/coding/paas/v4")
     assert _reasoning_tail_for(
         settings, resolved_label="glm/m", registry_snapshot=registry
-    ) == -1
+    ) == 0
 
 
 def test_reasoning_policy_minimax_thinking_off_is_prompt_neutral() -> None:
@@ -147,7 +147,7 @@ def test_reasoning_policy_unknown_provider_fails_safe_to_configured_policy() -> 
     ) == 3
 
 
-def test_glm_projection_strips_non_tool_reasoning_but_keeps_tool_protocol_reasoning() -> None:
+def test_tool_call_only_projection_helper_preserves_tool_protocol_reasoning() -> None:
     msgs = [
         Message(
             role="assistant",

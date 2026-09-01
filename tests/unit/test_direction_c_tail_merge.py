@@ -85,10 +85,14 @@ class TestMerge:
 
 
 def test_build_direction_c_remaps_registered_dynamic_entry_after_persisted_merge(tmp_path):
-    """Legacy/tool-followup view: removing persisted user must not leave err1210 index stale."""
+    """Legacy/tool-followup view: tip 退役后零 dynamic 登记——持久化尾无 stale entry.
+
+    R8.24-E（E-D2）: tip 槽退役后 tool-followup 轮（无本轮 ingress）不再有
+    dynamic 注册 entry；持久化 program 尾作为 base 历史平铺保留（merge 无
+    注册面需 remap）。纯函数 merge 语义由本文件前半部分覆盖。
+    """
     from llm_loop.core.injection_labels import InjectionLayer, origin_metadata, render_program_appendix
     from llm_loop.core.message import Message, MessageSource
-    from llm_loop.core.loop.err1210 import content_prefix_sha
     from tests.unit.test_injection_fingerprint import _build, _engine
 
     engine, sess = _engine(tmp_path)
@@ -108,8 +112,8 @@ def test_build_direction_c_remaps_registered_dynamic_entry_after_persisted_merge
 
     out = _build(engine, sess, [])
 
-    assert len(engine._last_build_injections) == 1
-    entry = engine._last_build_injections[0]
-    assert 0 <= entry.msg_idx < len(out)
-    assert content_prefix_sha(str(out[entry.msg_idx].get("content") or "")) == entry.prefix_sha
-    assert persisted in str(out[entry.msg_idx - 1].get("content") or "")
+    # tip 退役: 无 dynamic 注册 entry（无 stale remap 面）
+    assert engine._last_build_injections == []
+    wire = "\n".join(str(m.get("content") or "") for m in out)
+    assert "persisted reference" in wire  # 持久化 base 历史平铺保留
+    assert "dynamic tip" not in wire  # E-G3: TIP replay 恒零注入
