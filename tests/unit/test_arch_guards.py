@@ -644,12 +644,15 @@ def _find_runtime_cycles(graph: dict[str, dict[str, set[str]]]) -> set[str]:
 def test_runtime_cycles_match_known():
     """实测 runtime 环集合 == known_cycles（R9-P2-06a：新增任何运行时环 → CI FAIL）。
 
-    存量两环（D07/B2-P2-06 锚点实证）：
-    - engine<->build：engine.py:41 顶层 import _BuildMixin（static）↔
-      build.py:918 函数内 import build_session_snapshot_text（runtime）
-    - session<->fork：session.py:1492 函数内 import fork_session（runtime）↔
-      fork.py:119/:148 函数内 import Session/SessionIdConflictError（runtime）
-    Phase 3 断环后 known 清空，本断言退化为"实测恒空"。
+    终态（R9-P2-06b，2026-09-01 B3-C1/C2 七连链断环后）：两存量环已断，known_cycles
+    空态锚定，本断言生效为"实测恒空"——任何新环（含拆分中间态环）一律 CI FAIL，
+    无中间态豁免路径（拆分期间如需临时环：先 exemptions 登记 + 独立提交清理）。
+
+    历史锚点（断环前存量两环，§0.5-5 修正表）：
+    - engine<->build：已断（ac7b7c6）——build.py 快照 import 改指 session_snapshot
+      叶子模块，函数内 engine 反向边退役
+    - session<->fork：已断（95c5724）——session_types 纯类型先行 + BranchSeed 重建
+      入口，fork 收窄为数据生成（f98b527/3e6cf72/95c5724 三步）
     """
     def _canon(sig: str) -> str:
         return "<->".join(sorted(sig.split("<->")))
@@ -658,7 +661,7 @@ def test_runtime_cycles_match_known():
     measured = _find_runtime_cycles(_build_import_graph())
     unknown = measured - known
     assert not unknown, (
-        "新增 runtime 环（R9-P2-06a 违例，Phase 2 期间环只减不增）：\n  "
+        "新增 runtime 环（R9-P2-06a 违例，恒 0 终态：环计数只减不增且已归零）：\n  "
         + "\n  ".join(sorted(unknown))
         + "\n如为拆分中间态，请走 exemptions 或先断旧环。"
     )
