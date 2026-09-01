@@ -88,7 +88,7 @@ from llm_loop.core.prompt_build.stages.tail_slot_collect import (
     collect_persisted_and_recovery,
     consume_tail_slots,
 )
-from llm_loop.core.prompt_build.stages.task_active_projection import project_task_active
+from llm_loop.core.prompt_build.stages.authorization import resolve_authorized
 from llm_loop.core.prompt_build.stages.trace_isolation import run_trace_isolation
 from llm_loop.core.prompt_build.stages.user_truth import run_user_truth_wire
 
@@ -789,7 +789,7 @@ class _BuildMixin:
         # Keep an empty fingerprint field for projection telemetry schema compatibility.
         _evidence_manifest_content = ""
 
-        # B4-C2-04: 尾部槽收集迁 stages/tail_slot_collect（三函数）+ task_active_projection。
+        # B4-C2-04: 尾部槽收集迁 stages/tail_slot_collect（三函数）；授权投影→B4-C3-01 升格 authorization。
         # self 面写收窄：一次性消费清理/状态机新值由调用点回写；probe/recovery 读点先算传入。
         _pending_recovery = getattr(self, "_program_recovery_tail_message", None)
         self._program_recovery_tail_message = None
@@ -827,7 +827,8 @@ class _BuildMixin:
         if _identity_cache is None:
             _identity_cache = {}
             self._authorized_task_identity_cache = _identity_cache
-        project_task_active(
+        # B4-C3-01: task_active 升格 authorization 阶段（A-2 承载）；决策入 BuildDecision.authorization_slots
+        decision.authorization_slots = resolve_authorized(
             inject_parts=_inject_parts,
             sess=sess,
             settings=self.settings,

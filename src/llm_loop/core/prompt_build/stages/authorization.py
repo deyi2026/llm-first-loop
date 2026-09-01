@@ -1,4 +1,4 @@
-"""task_active 授权投影阶段（design T5-C 第二批 / B4-C2-04）.
+"""authorization 阶段（design T5-C 第三批 / B4-C3-01，A-2 承载位置显式标注）.
 
 R8.24-E E-D5（E-3.2，P1-7）: ACTIVE_STATE → USER_AUTHORIZED_STATE
 ——"恰有 in_progress"不再自动投影；仅本轮用户输入命中"继续/恢复"
@@ -17,7 +17,7 @@ from llm_loop.core.prompt_eligibility import render_task_active_identity
 logger = logging.getLogger(__name__)
 
 
-def project_task_active(
+def resolve_authorized(
     *,
     inject_parts: list[tuple[str | None, str]],
     sess: Any,
@@ -26,8 +26,8 @@ def project_task_active(
     r6_ingress_truth: Any,
     identity_cache: dict[Any, Any],
     record_action: Callable[..., Any],
-) -> None:
-    """授权投影 + identity 快照冻结（fail-open 零注入）."""
+) -> dict[str, Any]:
+    """授权投影 + identity 快照冻结（fail-open 零注入）；决策回传 BuildDecision.authorization_slots."""
     # CR-R1.1 批次D（审查项6 补全）: packet 编译输入面 = 真实注入面。memory 自
     # EVO-20260827-f42496bc 改为一次性持久化（engine wrap+append 进
     # sess.messages）后不再进 inject_parts（仅 fail-open 才进，见上方
@@ -48,6 +48,7 @@ def project_task_active(
     # "继续/恢复上次任务"类明确指令（授权一次）才注入，且本 run（turn_ref 绑定）
     # 内冻结 task identity 不动态变化；授权绑定事件落决策日志（E-G2/E-G5
     # 双断言判据源）。普通新问题不自动读取 Goal（Goal 恒为 retrievable state）。
+    _decision: dict[str, Any] = {"turn_ref": str(current_turn_ref)}
     try:
         from llm_loop.core.loop.input_authorization import (
             detect_task_continuation,
@@ -61,6 +62,7 @@ def project_task_active(
         # 注意 r6_ingress_truth 即 user truth 文本（str | None，user_truth_wire）。
         _tf_ingress_text = str(r6_ingress_truth or "")
         _tf_authorized = detect_task_continuation(_tf_ingress_text)
+        _decision["ingress_authorized"] = bool(_tf_authorized)
         # identity 冻结（E-3.2①）：授权轮求值一次后按 turn_ref 快照——本 run
         # 内后续 build 直接用快照（不随 GoalStore/TaskStore 中途状态漂移）；
         # 新 turn 授权重新求值。快照失配（goal_id 变化）时自然失效重建。
@@ -80,6 +82,9 @@ def project_task_active(
                     "authorized_inject_frozen",
                     f"turn_ref={_tf_turn_key};goal={_tf_gid};chars={len(_tf_identity)}",
                 )
+                _decision.update(mode="authorized_inject_frozen", goal_id=_tf_gid, prompt_chars=len(_tf_identity))
+            else:
+                _decision["mode"] = "frozen_no_identity"
             _tf_authorized = False  # 快照已注入，跳过下方重新求值
         elif not _tf_authorized:
             record_action(
@@ -87,6 +92,7 @@ def project_task_active(
                 "unauthorized_zero_projection",
                 "prompt_chars=0;goal_read=deferred",
             )
+            _decision.update(mode="unauthorized_zero_projection", goal_read=0)
         # E-G5: 未授权（含快照未命中）时零 Goal/Task 读取——普通新问题轮
         # goal_read=0（决策日志可断言）。
         if not _tf_authorized:
@@ -119,6 +125,7 @@ def project_task_active(
                                 f"goal={_tf_gid};chars={len(_tf_active)}"
                             ),
                         )
+                        _decision.update(mode="authorized_inject", goal_id=_tf_gid, prompt_chars=len(_tf_active))
                 else:
                     try:
                         record_action(
@@ -126,6 +133,7 @@ def project_task_active(
                             "on_demand_only",
                             f"prompt_chars=0;in_progress={len(_tf_doing)}",
                         )
+                        _decision.update(mode="on_demand_only", in_progress=len(_tf_doing))
                     except Exception:  # noqa: BLE001 — observability cannot affect build
                         logger.debug(
                             "build: task frontier observability action failed",
@@ -133,3 +141,6 @@ def project_task_active(
                         )
     except Exception:  # noqa: BLE001 — fail-open: 任务账本异常不阻断构建
         logger.debug("build: Task Active 解析失败（fail-open 零注入）", exc_info=True)
+        _decision["mode"] = "fail_open"
+    _decision.setdefault("mode", "noop")
+    return _decision
