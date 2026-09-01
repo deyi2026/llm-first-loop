@@ -20,8 +20,18 @@
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
+ROOT="$(pwd)"
 
-PY=".venv/bin/python"
+# 并行底座自足化（R9-B3 前置/用户原则：阻碍并行执行的环境陷阱要修）：
+# 1) PY 解析——worktree 自带 .venv 优先；无则回落主检出区 .venv（worktree 共享 venv 可用，
+#    但必须配 PYTHONPATH 指向本 worktree src，否则 editable 安装锚定主区 src → 静默测错代码树）
+# 2) PYTHONPATH 前置本树 src——任何 worktree/主区运行 ci_gate，被测代码恒为本树。
+PY="${PY:-$ROOT/.venv/bin/python}"
+if [[ ! -x "$PY" ]]; then
+  MAIN_WT="$(git worktree list --porcelain | head -1 | cut -d' ' -f2)"
+  [[ -x "$MAIN_WT/.venv/bin/python" ]] && PY="$MAIN_WT/.venv/bin/python"
+fi
+export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
 MODE="${1:-full}"
 
 echo "═══ [1/4] ruff 全量门禁（全量阻断 + 外部层呈现）═══"
