@@ -55,8 +55,39 @@ fi
 
 # ── 规则④：守卫文件前缀保护 ──
 for f in ${files[@]+"${files[@]}"}; do  # 空 diff 提交（纯消息）set -u 不崩（D-B2-05：负例1 演练发现）
-  if [[ "$f" == "tests/unit/test_arch_guards.py" || "$f" == "tests/unit/test_function_size_guard.py" || "$f" == tests/guards/*.json ]]; then
+  if [[ "$f" == "tests/unit/test_arch_guards.py" || "$f" == "tests/unit/test_function_size_guard.py" ]]; then
     $is_guard || fail "④" "非 guard(r9) 前缀触碰守卫文件: ${f}（防篡改层 3，T3-C）"
+  fi
+  if [[ "$f" == tests/guards/*.json ]]; then
+    $is_guard && continue
+    # 唯一例外（B3-PREP-03 / tasks-b3 §0.5-1）：refactor(r9) 断环提交允许（且仅
+    # 允许）同步缩减 known_cycles——数组纯收缩（新 ⊆ 旧且长度只减）+ 其余节零
+    # 变更。对齐 cycle 守卫 stale 断言双向语义（环消失未清 known 即红 vs 规则④
+    # 禁触守卫文件的死锁）；增长/改值/他节变更仍拦（防篡改层 3 不弱化）
+    if $is_refactor && [[ "$f" == "tests/guards/function_size_baseline.json" ]]; then
+      if ! python3 - "$COMMIT" "$f" <<'PY'
+import json, subprocess, sys
+c, rel = sys.argv[1], sys.argv[2]
+def ver(ref):
+    try:
+        out = subprocess.run(["git", "show", f"{ref}:{rel}"], capture_output=True, text=True, check=True).stdout
+        return json.loads(out)
+    except Exception:
+        return None
+old, new = ver(c + "^"), ver(c)
+if old is None or new is None:
+    sys.exit(1)
+oc, nc = old.get("known_cycles", []), new.get("known_cycles", [])
+old.pop("known_cycles", None); new.pop("known_cycles", None)
+ok = (old == new) and set(nc) <= set(oc) and len(nc) <= len(oc)
+sys.exit(0 if ok else 1)
+PY
+      then
+        fail "④" "known_cycles 例外不满足（须数组纯收缩且其余节零变更）: ${f}"
+      fi
+    else
+      fail "④" "非 guard(r9) 前缀触碰守卫文件: ${f}（防篡改层 3，T3-C；唯一例外 = refactor(r9)+known_cycles 纯收缩）"
+    fi
   fi
 done
 
