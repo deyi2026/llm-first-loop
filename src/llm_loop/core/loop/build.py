@@ -35,7 +35,7 @@ from llm_loop.core.loop.err1210 import (
     SlotKind,
     content_prefix_sha,
 )
-from llm_loop.core.loop.focus import _INJECTION_PREFIX, wrap_injection
+from llm_loop.core.loop.focus import wrap_injection
 from llm_loop.core.prompt_eligibility import (
     PROGRAM_FINAL_PROTOCOL_BOUNDARY,
 )
@@ -51,7 +51,7 @@ except Exception:  # noqa: BLE001 — fail-open 回退平铺聚合（零回归�
 # 顶层 import 不再触发循环：build→engine 运行时反向边删除（步2/3 断环点），engine→build 正向边保留
 from llm_loop.core.message import Message
 from llm_loop.core.prompt import build_system_prompt
-from llm_loop.core.prompt_build import BuildAudit, BuildDecision
+from llm_loop.core.prompt_build import BuildDecision
 from llm_loop.core.prompt_build.stages.authorization import resolve_authorized
 from llm_loop.core.prompt_build.stages.base_assembly import run_base_assembly
 from llm_loop.core.prompt_build.stages.budget_application import apply_injection_budget
@@ -66,7 +66,6 @@ from llm_loop.core.prompt_build.stages.cognitive import (
     run_cognitive_packet,
     run_cognitive_state,
 )
-from llm_loop.core.prompt_build.stages.compaction_audit import run_compaction_audit
 from llm_loop.core.prompt_build.stages.history_budget_prep import run_history_budget_prep
 from llm_loop.core.prompt_build.stages.history_postprocess import run_history_postprocess
 from llm_loop.core.prompt_build.stages.history_projection import run_history_projection
@@ -74,67 +73,19 @@ from llm_loop.core.prompt_build.stages.ingress_resolution import resolve_ingress
 from llm_loop.core.prompt_build.stages.injection_assembly import assemble_injections
 from llm_loop.core.prompt_build.stages.projection_gate import (
     GATE_STATE_UNSET,
-    run_projection_gate,
 )
+from llm_loop.core.prompt_build.stages.tail_assembly import (
+    merge_persisted_tail_injections as merge_persisted_tail_injections,  # re-export：test_direction_c_tail_merge 从此导入（零测试改动）
+)
+from llm_loop.core.prompt_build.stages.tail_assembly import run_tail_assembly
 from llm_loop.core.prompt_build.stages.tail_slot_collect import (
     collect_persisted_and_recovery,
     consume_tail_slots,
 )
 from llm_loop.core.prompt_build.stages.trace_isolation import run_trace_isolation
-from llm_loop.core.prompt_build.stages.user_truth import run_user_truth_wire
-
-
-def merge_persisted_tail_injections(
-    built: list[dict], registered_idx: set[int]
-) -> tuple[int, list[dict], list[int]]:
-    """方向 C（2026-08-29）: 尾部持久化注入 wire 级合并（build 出口调用）.
-
-    背景: EVO-20260827-f42496bc 将 memory 注入改为持久化（engine wrap+append 进
-    sess.messages）后，历史投影尾部出现"用户消息+持久化注入"连续 user 对（主区
-    883b4725 实测 510/511 形态，1210 结构触发根因形态）；_inject_parts 聚合只
-    覆盖动态消费槽，不含已持久化消息。
-
-    规则: 尾部连续 user 群（≥2 条）中，不在 registered_idx（动态注入登记）且
-    content 以 _INJECTION_PREFIX 开头的持久化注入条，并入前一条 user（content
-    追加 "\\n\\n"+原文，逐字保留）。群首注入（无前一条可并）/用户真实消息/登记条
-    一律保留原位。
-
-    返回 (tail_start, kept, removed): tail_start=尾部群起点下标；kept=重建后的
-    尾部消息列表（元素为原 dict 引用，被并入目标的 content 原地修改）；removed=
-    被并入的原下标列表（调用方据此重映射 InjectedEntry.msg_idx）。
-    群 <2 条时返回 (tail_start, [], [])——调用方不动作。
-    """
-    tail_start = len(built)
-    for i in range(len(built) - 1, -1, -1):
-        if built[i].get("role") != "user":
-            tail_start = i + 1
-            break
-    else:
-        tail_start = 0  # 全 user 极端形态（防御）
-    if len(built) - tail_start < 2:
-        return tail_start, [], []
-    kept: list[dict] = []
-    removed: list[int] = []
-    for j in range(tail_start, len(built)):
-        cand = built[j]
-        if (
-            kept
-            and j not in registered_idx
-            and str(cand.get("content") or "").startswith(_INJECTION_PREFIX)
-        ):
-            prev = kept[-1]
-            if prev.get("role") == "user":  # 群内恒真，防御性保留
-                prev["content"] = (
-                    str(prev.get("content") or "")
-                    + "\n\n"
-                    + str(cand.get("content") or "")
-                )
-                removed.append(j)
-                continue
-        kept.append(cand)
-    return tail_start, kept, removed
-
-
+from llm_loop.core.prompt_build.stages.user_truth import (
+    run_user_truth_wire,  # noqa: F401 — re-export 兼容面（阶段内部已移 tail_assembly）
+)
 
 if TYPE_CHECKING:
     pass
@@ -892,45 +843,11 @@ class _BuildMixin:
                 logger.warning(
                     "build: 尾部注入聚合失败，本轮零注入降级（fail-open）", exc_info=True
                 )
-        # ── INJECTION-GOVERNANCE R6: initial human-ingress wire projection ──
-        # → stages/user_truth.py（KEEP-HARD：用户语义保真；storage 原文零改动，
-        # 仅 provider 视图投影为 program appendix -> fixed boundary -> exact
-        # user truth 单信封；工具轮排除语义见该模块 docstring）
-        built, self._last_build_injections, _r6_applied = run_user_truth_wire(
-            built,
-            ingress_truth=_r6_ingress_truth,
-            injections=self._last_build_injections,
-            record_action=self._record_action,
-        )
-
-        # ── 方向 C（2026-08-29）: legacy/tool-followup tail merge ──
-        # R6 initial ingress already owns the single-envelope contract. Direction C remains
-        # only for non-ingress/tool-followup/legacy direct-build paths; it must never append
-        # program material after a current human truth that R6 has just projected.
-        if not _r6_applied and _r6_ingress_truth is None:
-            try:
-                _reg_idx = {e.msg_idx for e in self._last_build_injections}
-                _ts, _kept, _removed = merge_persisted_tail_injections(built, _reg_idx)
-                if _removed:
-                    built[_ts:] = _kept
-                    # InjectedEntry is frozen; remap by replacement rather than mutating
-                    # msg_idx in place.  Otherwise strip/defer may target the pre-merge index.
-                    self._last_build_injections = [
-                        replace(
-                            _entry,
-                            msg_idx=_entry.msg_idx
-                            - sum(1 for _removed_idx in _removed if _removed_idx < _entry.msg_idx),
-                        )
-                        for _entry in self._last_build_injections
-                    ]
-            except Exception:  # noqa: BLE001 — 合并失败 fail-open（原样发送）
-                logger.warning(
-                    "build: 方向 C 持久化注入合并失败，原样发送（fail-open）", exc_info=True
-                )
-        # EVO-20260817-b6554376: 投影一致性门闸（seq 历史水印 + ver 参数水印 +
-        # built_hash 输出水印；借鉴 DSH seq 水印，fail-open 不阻断 run）
-        # → stages/projection_gate.py
-        _gate_state = run_projection_gate(
+        # 尾段装配 → stages/tail_assembly.py（B4-CLOSE-01 步A）：user_truth wire
+        # 投影（R6 单信封 KEEP-HARD）→ 方向 C 持久化注入合并（非 ingress 路径）→
+        # 投影一致性门闸（水印 + gate_state 回写）→ cache 门禁后检（fail-open）→
+        # 压缩审计（BuildAudit）。产物经 TailAssemblyOutcome 回接。
+        _ta = run_tail_assembly(
             built=built,
             base=base,
             memory_msgs=memory_msgs,
@@ -942,40 +859,23 @@ class _BuildMixin:
             sess_anchor=sess_anchor,
             provider_id=provider_id,
             evidence_manifest_content=_evidence_manifest_content,
-            reasoning_tail=_reasoning_tail_for(
-                self.settings,
-                resolved_label=resolved_label,
-                registry_snapshot=registry_snapshot,
-            ),
+            registry_snapshot=registry_snapshot,
+            reasoning_tail_fn=_reasoning_tail_for,
+            compact_view_box=compact_view_box,
+            anchor_moved=_anchor_moved_this_build,
+            ingress_truth=_r6_ingress_truth,
+            injections=self._last_build_injections,
             settings=self.settings,
-            last_history_compacted=self._last_history_compacted,
             sess=sess,
             decision=decision,
             record_action=self._record_action,
-        )
-        if _gate_state is not GATE_STATE_UNSET:
-            self._projection_guard_state = _gate_state
-        # EVO-20260817-72fcd94a L3 发送前门禁·后检（合规再出闸）: 校验稳定段与该 session
-        # 基线一致；不一致 → 审计 + hint（run 末注入 final_answer），fail-open 不阻断发送。
-        try:
-            self._cache_gate_hint = self._cache_monitor.postcheck(
-                sess.session_id, self._cache_gate_stable_fp
-            )
-            if self._cache_gate_hint:
-                self._record_action("run.cache_gate", "drift", self._cache_gate_hint)
-        except Exception:  # noqa: BLE001 — 门禁失败 fail-open
-            self._cache_gate_hint = None
-        # R8.17/E10 压缩审计 → stages/compaction_audit.py（统计落 BuildAudit.compaction_audit）
-        audit = BuildAudit()
-        run_compaction_audit(
-            built=built,
-            decision=decision,
-            audit=audit,
-            compact_view_box=compact_view_box,
-            anchor_moved=_anchor_moved_this_build,
-            session_id=sess.session_id,
+            cache_monitor=self._cache_monitor,
+            cache_gate_stable_fp=self._cache_gate_stable_fp,
+            last_history_compacted=self._last_history_compacted,
             anchor_sess=self._focus.anchor_sess,
-            data_dir=self.settings.data_dir,
-            record_action=self._record_action,
         )
-        return built
+        self._last_build_injections = _ta.injections
+        if _ta.gate_state is not GATE_STATE_UNSET:
+            self._projection_guard_state = _ta.gate_state
+        self._cache_gate_hint = _ta.cache_gate_hint
+        return _ta.built
