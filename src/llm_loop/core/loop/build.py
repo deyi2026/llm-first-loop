@@ -59,10 +59,7 @@ from llm_loop.core.prompt_eligibility import (
     memory_snapshot_prompt_eligible,
     render_task_active_identity,
 )
-from llm_loop.core.user_truth_wire import (
-    current_ingress_user_truth,
-    project_user_truth_tail,
-)
+from llm_loop.core.user_truth_wire import current_ingress_user_truth
 
 # Cognitive Runtime（tasks 2.3/2.5/2.6）: tier 分级聚合 + 语义投影替代锚点。
 # 惰性容错导入（cognitive 子包独立演进，import 失败时聚合器回退原平铺行为）。
@@ -88,6 +85,7 @@ from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.prompt import build_system_prompt
 from llm_loop.core.prompt_build import BuildDecision
 from llm_loop.core.prompt_build.stages.trace_isolation import run_trace_isolation
+from llm_loop.core.prompt_build.stages.user_truth import run_user_truth_wire
 from llm_loop.core.session_snapshot import build_session_snapshot_text
 
 
@@ -1965,58 +1963,21 @@ class _BuildMixin:
                     "build: 尾部注入聚合失败，本轮零注入降级（fail-open）", exc_info=True
                 )
         # ── INJECTION-GOVERNANCE R6: initial human-ingress wire projection ──
-        # Storage/event history remains untouched. Only the provider view is projected to
-        # `program appendix -> fixed boundary -> exact user truth` in one user envelope.
-        # Tool-followup rounds are deliberately excluded by current_ingress_user_truth() so
-        # assistant(tool_calls)->tool(result) pairing is never reordered and user text is
-        # never replayed on round 2+.
-        _r6_truth = _r6_ingress_truth
-        _r6_applied = False
-        if _r6_truth is not None:
-            try:
-                _r6 = project_user_truth_tail(built, _r6_truth)
-                if _r6.violation:
-                    logger.error(
-                        "build: R6 user-truth wire invariant 未能投影（%s），保持原 payload 供上层拒绝/诊断",
-                        _r6.violation,
-                    )
-                    with contextlib.suppress(Exception):
-                        self._record_action(
-                            "action.user_truth_wire", "violation", _r6.violation
-                        )
-                elif _r6.changed:
-                    _seg_sources: list[tuple[str, str]] = []
-                    for _entry in self._last_build_injections:
-                        if _entry.msg_idx in set(_r6.absorbed_indices):
-                            _seg_sources.extend(_entry.seg_sources or ())
-                    built[:] = _r6.messages
-                    self._last_build_injections = [
-                        InjectedEntry(
-                            msg_idx=_r6.envelope_index,
-                            slot_kind=SlotKind.USER_ENVELOPE,
-                            prefix_sha=content_prefix_sha(
-                                str(built[_r6.envelope_index].get("content") or "")
-                            ),
-                            message_ref=None,
-                            seg_sources=tuple(_seg_sources),
-                            user_truth=_r6_truth,
-                        )
-                    ]
-                    _r6_applied = True
-                    with contextlib.suppress(Exception):
-                        self._record_action(
-                            "action.user_truth_wire",
-                            "projected",
-                            f"absorbed={len(_r6.absorbed_indices)}; envelope_idx={_r6.envelope_index}",
-                        )
-            except Exception:  # noqa: BLE001 — do not silently rewrite user text on error
-                logger.exception("build: R6 user-truth projection 异常，保持原 payload")
+        # → stages/user_truth.py（KEEP-HARD：用户语义保真；storage 原文零改动，
+        # 仅 provider 视图投影为 program appendix -> fixed boundary -> exact
+        # user truth 单信封；工具轮排除语义见该模块 docstring）
+        built, self._last_build_injections, _r6_applied = run_user_truth_wire(
+            built,
+            ingress_truth=_r6_ingress_truth,
+            injections=self._last_build_injections,
+            record_action=self._record_action,
+        )
 
         # ── 方向 C（2026-08-29）: legacy/tool-followup tail merge ──
         # R6 initial ingress already owns the single-envelope contract. Direction C remains
         # only for non-ingress/tool-followup/legacy direct-build paths; it must never append
         # program material after a current human truth that R6 has just projected.
-        if not _r6_applied and _r6_truth is None:
+        if not _r6_applied and _r6_ingress_truth is None:
             try:
                 _reg_idx = {e.msg_idx for e in self._last_build_injections}
                 _ts, _kept, _removed = merge_persisted_tail_injections(built, _reg_idx)
