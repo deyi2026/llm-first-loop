@@ -77,6 +77,9 @@ from llm_loop.core.prompt import build_system_prompt
 from llm_loop.core.prompt_build import BuildAudit, BuildDecision
 from llm_loop.core.prompt_build.stages.base_assembly import run_base_assembly
 from llm_loop.core.prompt_build.stages.compaction_audit import run_compaction_audit
+from llm_loop.core.prompt_build.stages.history_budget_prep import run_history_budget_prep
+from llm_loop.core.prompt_build.stages.history_postprocess import run_history_postprocess
+from llm_loop.core.prompt_build.stages.history_projection import run_history_projection
 from llm_loop.core.prompt_build.stages.ingress_resolution import resolve_ingress
 from llm_loop.core.prompt_build.stages.projection_gate import (
     GATE_STATE_UNSET,
@@ -693,277 +696,89 @@ class _BuildMixin:
         prefix_len = _asm.prefix_len
         self._cache_gate_stable_fp = _asm.stable_fp
         self._last_snapshot_count = _asm.last_snapshot_count
-        from llm_loop.core.history import build_history_messages
-
-        archive_sink = None
-        if self.archive is not None or getattr(
-            self.registry, "evidence_history_capture_enabled", False
-        ):
-            archive_sink = self._archive_sink
-        # R1: 存构建中间值，供主循环在 tools_param 构造后计算 breakdown（含 tool_schema_chars）
-        effective_budget = max_chars if max_chars is not None else self._runtime_history_budget()
+        # 历史投影接线三段 → stages/（budget_prep / projection / postprocess；
+        # 调 history 现函数，Phase 7 前不动其内部）
+        _prep = run_history_budget_prep(
+            sess_messages=sess.messages,
+            provider_id=provider_id,
+            sess_anchor=sess_anchor,
+            max_chars=max_chars,
+            runtime_history_budget=self._runtime_history_budget,
+            archive=self.archive,
+            registry=self.registry,
+            archive_sink_cb=self._archive_sink,
+            decision=decision,
+            record_action=self._record_action,
+            last_nudge_total=getattr(self, "_last_nudge_total", None),
+            provider_visible_chars=_provider_visible_chars,
+            growth_nudge_kind=_growth_nudge_kind,
+        )
+        archive_sink = _prep.archive_sink
+        effective_budget = _prep.effective_budget
         self._last_build_info = {
             "base": base,
             "system_prompt": system_prompt,
             "memory_msgs": memory_msgs,
             "budget": effective_budget,
         }
-        # EVO-20260817: 预算分级管理——①80% 准备态（审计提示，不压缩）:
-        # 长任务大几率撞顶，接近预算时让 AI 感知"下轮可能主动整理压缩"（压缩仍保留
-        # 关键事实帧+档案零丢失，不打断推理）；②90% 压缩态（compact_ratio, env 可调）:
-        # 预算附近提前平滑压缩（裁到 COMPRESS_TARGET_RATIO 留缓冲），优于撞顶被动压缩。
-        try:
-            _history_total = decision.history_total_chars = _provider_visible_chars(
-                sess.messages, provider_id, sess_anchor)
-            _compact_ratio = float(os.environ.get("COMPACT_RATIO", "0.9"))
-            if 0 < _compact_ratio < 1.0:
-                # EVO-20260824-54d46549 增长率 nudge（billion-context 拷问产出, 双轨）:
-                # - 强制轨: 超预算×compact_ratio（90% 默认）→ 必预警（压缩在即, bypass 增长率）
-                # - 增长率轨: 80% 准备态 → 距上次预警增长 ≥ 阈值（预算×5% 或 20K 字符）才预警
-                #   （重任务增长快早提示, 普通对话增长慢不打扰——替换原固定 80% 每轮必警）
-                _force_at = effective_budget * _compact_ratio
-                _prep_at = effective_budget * 0.8
-                _growth_floor = max(
-                    int(effective_budget * 0.05),
-                    int(os.environ.get("NUDGE_GROWTH_CHARS", "20000")),
-                )
-                _prev_total = getattr(self, "_last_nudge_total", None)
-                _kind = _growth_nudge_kind(
-                    _history_total,
-                    _prev_total,
-                    prep_at=_prep_at,
-                    force_at=_force_at,
-                    growth_floor=_growth_floor,
-                )
-                if _kind == "force":
-                    self._record_action(
-                        "understand.compact_prep",
-                        "approaching_budget",
-                        f"history {_history_total} 字符 超预算×{_compact_ratio}（{int(_force_at)}），"
-                        f"本轮/下轮触发主动压缩整理；压缩保留关键事实帧+档案零丢失，不影响推理",
-                    )
-                    self._last_nudge_total = _history_total
-                elif _kind == "growth" and _prev_total is not None:
-                    _growth = _history_total - int(_prev_total)
-                    self._record_action(
-                        "understand.compact_prep",
-                        "growth_nudge",
-                        f"history {_history_total} 字符 ≥预算 80%（{int(_prep_at)}），"
-                        f"距上次预警增长 {_growth} ≥ {_growth_floor}（增长率门控触发）——"
-                        f"下一轮可能在 {int(_force_at)} 触发主动压缩整理；"
-                        "压缩保留关键事实帧+档案零丢失，不影响推理",
-                    )
-                    self._last_nudge_total = _history_total
-        except Exception:  # noqa: BLE001
-            _compact_ratio = 1.0
-        self._last_compact_ratio = _compact_ratio
-        # EVO-20260824-54d46549 渐进折叠配置（env, 默认关零回归）: PROGRESSIVE_FOLD_K>0 时
-        # 压缩改为"每次最多折最老 K 个配对组"（平滑曲线 + guard 不 BLOCK + 智力无断崖）
-        _progressive_fold_k = int(os.environ.get("PROGRESSIVE_FOLD_K", "0"))
-        # P1-10 + R8.5: persisted anchor uses original sess.messages indices,
-        # while resolved/recovery eligibility filters shrink the provider view.
-        # Translate the boundary before build_history_messages and translate it
-        # back after compaction; otherwise a valid old anchor can skip the current
-        # task or orphan a tool group after resolved messages retire.
-        from llm_loop.core.episode_history import filtered_anchor_from_original
-
-        _filtered_sess_anchor = filtered_anchor_from_original(
-            _base_original_indices, sess_anchor
-        )
-        anchor_arg = _filtered_sess_anchor + prefix_len if _filtered_sess_anchor > 0 else 0
-        anchor_box: list[int] = []
-        compacted_box: list[bool] = []
-        cache_compacted_box: list[Message] = []
-        compact_view_box: list[dict] = []
-        degrade_box: list[dict] = []
-        built = build_history_messages(
-            base,
-            system_prompt,
-            max_chars=max_chars if max_chars is not None else self._runtime_history_budget(),
-            compact_ratio=self._last_compact_ratio,  # EVO-20260817: 预算分级主动压缩
+        self._last_nudge_total = _prep.last_nudge_total
+        self._last_compact_ratio = _prep.compact_ratio
+        _proj = run_history_projection(
+            base=base,
+            system_prompt=system_prompt,
+            filtered_indices=_base_original_indices,
+            sess_anchor=sess_anchor,
+            prefix_len=prefix_len,
             session_id=sess.session_id,
+            max_chars=max_chars,
+            runtime_history_budget_value=self._runtime_history_budget(),
+            compact_ratio=_prep.compact_ratio,
             archive_sink=archive_sink,
-            # RULE-AI-00: 不再传 summarizer（压缩路径不自动 LLM 摘要，AI 主动触发）
-            layer_tool_trim=getattr(
-                self.settings, "tool_trim_enabled", False
-            ),  # EVO-20260811-7baa2737: 历史分层降级
-            tool_trim_age=getattr(self.settings, "tool_trim_age", 0),  # R3: 0=自适应
-            tool_trim_threshold=getattr(
-                self.settings, "tool_trim_threshold", 8000
-            ),  # EVO-A: 降级长度阈值（默认 8000）
-            # 2026-08-20 回滚修复: 移除悬空 tool_tail 参数——history.py 的
-            # build_history_messages() 不接受该参数（3点基线无此功能，config 恒为 0），
-            # 回滚后每次对话 TypeError；参数支持在 backup/20260819-after-3am 分支
+            settings=self.settings,
+            provider_id=provider_id,
+            emergency_compact=emergency_compact,
             reasoning_tail=_reasoning_tail_for(
                 self.settings,
                 resolved_label=resolved_label,
                 registry_snapshot=registry_snapshot,
             ),
-            # P1-7/spec §5.3.1-5（2026-08-18 审计断点归因绝对化）: 推送式注入（架构上报/
-            # 预算预警/轮数预警/声明提醒/自我评估提醒/快照）一律不进提交视图——不再受
-            # provider inject_system_notices 开关影响（原按 provider 放行 → 注入消息转 user
-            # 后仍插历史中部 → 前缀断）。AI 感知走 architecture_status 等工具，不依赖注入。
-            skip_injected_system=True,
-            # P1-10: 窗口锚定
-            history_anchor=anchor_arg,
-            anchor_out=anchor_box,
-            compacted_out=compacted_box,
-            # EVO-20260817-9d3e1f2c: 缓存友好压缩——保留锚点头部（前缀命中）只归档中段;
-            # EVO-20260818: HEAD_KEEP_RATIO 默认 0.10→0.15；2026-08-25 DeepSeek 生产实测
-            # 中段分叉只有“曾作为完整请求端点”的 fixed-head 能稳定复用，因此 DeepSeek
-            # 默认提高到 effective budget 的 0.35（其它 provider 仍 0.15）。配合压缩目标
-            # 0.5，相当于 fixed-head 最多约占压缩后历史水位 70%，同时保留最近尾部语义。
-            # 生产等价直连实测：300K→150K 视图首次压缩命中 71.1%（不含工具schema固定
-            # 前缀）；0.30/0.65 档仅57.2%。force 档位 DeepSeek 默认 0.40 / 其它 provider
-            # 0.20（L3 拦截强制保留——须高于常规档位，
-            # max() 两侧同值会吞掉强制语义，grill-me 2.10）; 0=关闭回到锚点前移行为；env 可调
-            # emergency_compact（M53 拒绝逃生）: 强制 head_keep=0——head 保留时锚点不前移
-            # （history.py），超限会话历史永不缩小 → 拒绝死循环；锚点前移归档才真正缩小
-            # 2026-08-25 中段压缩: progressive fold 重新允许 head_keep。被折中段写入
-            # provider级 cache_compacted_for 标记，后续 build 自动过滤，所以无需靠锚点
-            # 前移来防重复归档；压缩轮缓存断点从序列开头推到固定头部之后。
-            head_keep_chars=(
-                0  # emergency_compact 仍保留从头推进的最终逃生语义
-                if emergency_compact
-                else max(
-                    int(
-                        effective_budget
-                        * float(
-                            os.environ.get(
-                                "HEAD_KEEP_RATIO", "0.35" if provider_id == "deepseek" else "0.15"
-                            )
-                        )
-                    ),
-                    int(
-                        effective_budget
-                        * float(
-                            os.environ.get(
-                                "HEAD_KEEP_FORCE_RATIO",
-                                "0.40" if provider_id == "deepseek" else "0.20",
-                            )
-                        )
-                    )
-                    if self._cache_monitor.force_head_keep
-                    else 0,
-                )
-            ),
-            # fixed-head 占压缩目标水位上限。历史层默认 0.50 保持旧行为；DeepSeek 提到
-            # 0.70，允许 0.35×effective_budget 的 head 真正留下（target=.5 时占70%），
-            # 仍给最近 tail 约30%目标水位；原子组边界会自然留出更多。env 可显式覆盖调参。
-            head_keep_target_ratio=float(
-                os.environ.get(
-                    "HEAD_KEEP_TARGET_RATIO", "0.70" if provider_id == "deepseek" else "0.50"
-                )
-            ),
-            # 2026-08-21 追加式压缩: 归档后追加确定性摘要（APPEND_COMPRESSION=1 启用,
-            # 默认关零回归）——任务语义连贯 + 前缀稳定（同归档→同摘要字节→缓存命中）
-            _append_summary_enabled=os.environ.get("APPEND_COMPRESSION", "0") == "1",
-            # EVO-20260824-54d46549 渐进折叠: PROGRESSIVE_FOLD_K>0 时压缩每次最多折最老 K 个
-            # 配对组（平滑曲线 + guard 不 BLOCK + 智力无断崖）；0=一次性大裁（零回归）
-            progressive_fold=_progressive_fold_k,
-            # P0 压缩风暴熔断冻结（2026-08-25）: 冻结期禁压缩/禁锚点前移（前缀字节稳定）
-            freeze_compression=self._cache_monitor.breaker_freeze_compression(
-                sess.session_id
-            ),
-            cache_archive_provider=provider_id,
-            cache_compacted_out=cache_compacted_box,
-            compact_view_stats=compact_view_box,
-            degrade_out=degrade_box,
-            require_archive_success=getattr(self.registry, "evidence_mode", "off") == "enforce",
-            preserve_last_human_exact=_r6_ingress_truth is not None,
+            r6_ingress_truth=_r6_ingress_truth,
+            registry=self.registry,
+            cache_monitor=self._cache_monitor,
+            effective_budget=effective_budget,
+            progressive_fold_k=_prep.fold_k,
         )
-        for _compacted_msg in cache_compacted_box:
-            _msg_seq = self._resolve_msg_seq(sess.session_id, _compacted_msg)
-            if _msg_seq is None:
-                logger.warning(
-                    "provider中段压缩事件未定位消息序号: sid=%s provider=%s",
-                    sess.session_id,
-                    provider_id,
-                )
-                continue
-            self._event_append(
-                sess.session_id,
-                "message.cache_compacted",
-                {"msg_seq": _msg_seq, "provider_id": provider_id},
-            )
-        self._last_history_compacted = bool(compacted_box and compacted_box[0])
-        # err1210 T4.1: compact 事件序列号——False→True 转变递增（per-session × per-compact-事件
-        # 耗尽标记的"事件标识"，engine 侧 _err1210_attempted 据此判定新事件清除旧标记）
-        if self._last_history_compacted and not getattr(self, "_compact_event_was_compacted", False):
-            self._compact_event_seq = getattr(self, "_compact_event_seq", 0) + 1
-        self._compact_event_was_compacted = self._last_history_compacted
-        # EVO-20260825 任务6.2: 压缩后视图体积验证——drop<5%（压缩但视图几乎没缩小）
-        # → breaker 审计事件 view_not_shrinking_after_compact（压缩风暴前兆归因）
-        if compact_view_box:
-            try:
-                _stats = compact_view_box[0]
-                if _stats.get("drop_pct", 0) < 5:
-                    self._cache_monitor.note_view_not_shrinking(
-                        pre_chars=_stats["pre_chars"],
-                        post_chars=_stats["post_chars"],
-                        drop_pct=_stats["drop_pct"],
-                        session_id=sess.session_id,
-                        model_ref=resolved_label,
-                    )
-            except Exception:  # noqa: BLE001 — fail-open
-                logger.debug("view_not_shrinking 审计注入异常（fail-open）", exc_info=True)
-        # EVO-20260825 任务7（§5.7）: 渐进折叠 archive_provider 缺失降级——审计 +
-        # 降级提示注入 metadata.cache_health（kind="degraded"，_post_run_cache_health 回写）
-        if degrade_box:
-            try:
-                _deg = degrade_box[0]
-                self._cache_monitor.note_degraded(
-                    reason=_deg.get("reason", "progressive_fold 要求 cache_archive_provider"),
-                    head_keep_chars=_deg.get("head_keep_chars", 0),
-                    session_id=sess.session_id,
-                    model_ref=resolved_label,
-                )
-                self._cache_degrade_note = (
-                    f"[渐进折叠降级] {_deg.get('reason')}——已关闭渐进折叠，"
-                    f"head_keep 预算 {_deg.get('head_keep_chars')} 字符"
-                )
-            except Exception:  # noqa: BLE001 — fail-open
-                logger.debug("archive_provider 降级注入异常（fail-open）", exc_info=True)
-        # P1-10: 锚点推进持久化（换算回会话索引, clamp 防御）
-        _anchor_moved_this_build = False
-        if anchor_box:
-            from llm_loop.core.episode_history import original_anchor_from_filtered
-
-            _filtered_new_anchor = max(0, anchor_box[0] - prefix_len)
-            new_anchor = original_anchor_from_filtered(
-                _base_original_indices,
-                _filtered_new_anchor,
-                original_length=len(sess.messages),
-            )
-            new_anchor = max(0, min(len(sess.messages), new_anchor))
-            # EVO-20260817-72fcd94a L3 归因: 锚点实际前移（≠旧锚点）→ 记入缓存失效归因窗口
-            if new_anchor != sess_anchor:
-                self._cache_monitor.note_anchor_moved(session_id=sess.session_id)
-                _anchor_moved_this_build = True
-            # 2026-08-16 锚点推进对齐工具轮边界（现场：tool_call_id is not found 根因）：
-            # 锚点不得落在声明↔回执组内——若锚点处是 tool 回执（其声明在锚点前），
-            # 拉回至该轮声明起点（整组保留，防孤儿回执）。
-            while 0 < new_anchor < len(sess.messages) and sess.messages[new_anchor].role == "tool":
-                new_anchor -= 1
-            if sess.history_anchors is None:
-                sess.history_anchors = {}
-            sess.history_anchors[provider_id] = new_anchor
-        # P0 压缩风暴熔断（2026-08-25）: 每轮 build 结果通知 monitor——
-        # 连续 (compacted 且 anchor_moved) 计数 → 达阈值进入 breaker（冻结压缩+锚点）。
-        # chars_total 用锚定视图口径（实际提交量——锚点压缩只前移锚点不删 sess.messages，
-        # 全量口径会让压力永不解除）。
-        with contextlib.suppress(Exception):
-            _view_start = min(sess_anchor, len(sess.messages))
-            self._cache_monitor.note_build_result(
-                compacted=self._last_history_compacted,
-                anchor_moved=_anchor_moved_this_build,
-                chars_total=_provider_visible_chars(
-                    sess.messages, provider_id, _view_start
-                ),
-                budget=effective_budget,
-                session_id=sess.session_id,
-                model_ref=resolved_label,
-            )
+        built = _proj.built
+        anchor_box = _proj.anchor_box
+        compacted_box = _proj.compacted_box
+        cache_compacted_box = _proj.cache_compacted_box
+        compact_view_box = _proj.compact_view_box
+        degrade_box = _proj.degrade_box
+        _post = run_history_postprocess(
+            cache_compacted_box=cache_compacted_box,
+            compacted_box=compacted_box,
+            compact_view_box=compact_view_box,
+            degrade_box=degrade_box,
+            anchor_box=anchor_box,
+            filtered_indices=_base_original_indices,
+            prefix_len=prefix_len,
+            sess=sess,
+            sess_anchor=sess_anchor,
+            provider_id=provider_id,
+            resolved_label=resolved_label,
+            effective_budget=effective_budget,
+            compact_event_seq=getattr(self, "_compact_event_seq", 0),
+            compact_event_was_compacted=getattr(self, "_compact_event_was_compacted", False),
+            cache_monitor=self._cache_monitor,
+            resolve_msg_seq=self._resolve_msg_seq,
+            event_append=self._event_append,
+            provider_visible_chars=_provider_visible_chars,
+        )
+        self._last_history_compacted = _post.last_history_compacted
+        self._compact_event_seq = _post.compact_event_seq
+        self._compact_event_was_compacted = _post.compact_event_was_compacted
+        _anchor_moved_this_build = _post.anchor_moved
+        self._cache_degrade_note = _post.cache_degrade_note
         # INJECTION-GOVERNANCE R8.8: Evidence Ledger/Manifest remains durable and
         # queryable through list/search/read_evidence, but the recovery index itself no
         # longer has automatic prompt eligibility. This also closes the old R2 bypass.
