@@ -64,6 +64,11 @@ for f in ${files[@]+"${files[@]}"}; do  # 空 diff 提交（纯消息）set -u �
     # 允许）同步缩减 known_cycles——数组纯收缩（新 ⊆ 旧且长度只减）+ 其余节零
     # 变更。对齐 cycle 守卫 stale 断言双向语义（环消失未清 known 即红 vs 规则④
     # 禁触守卫文件的死锁）；增长/改值/他节变更仍拦（防篡改层 3 不弱化）
+    # 例外②（B4-C3-03 / D-B2-13 实证缺口）：refactor(r9) 新函数登记与实现同树
+    # 场景——function_lines / legacy_super_functions 纯新增键（旧键值对零变更，
+    # dict 视图子集判定）+ known_cycles 纯收缩 + 其余节零变更。旧键改值/删键
+    # 仍须 guard(r9)（棘轮"值下降"归守卫测试与 guard 提交分管）；防篡改不弱化：
+    # 任何旧键值篡改、节外变更依旧 FAIL。
     if $is_refactor && [[ "$f" == "tests/guards/function_size_baseline.json" ]]; then
       if ! python3 - "$COMMIT" "$f" <<'PY'
 import json, subprocess, sys
@@ -79,11 +84,15 @@ if old is None or new is None:
     sys.exit(1)
 oc, nc = old.get("known_cycles", []), new.get("known_cycles", [])
 old.pop("known_cycles", None); new.pop("known_cycles", None)
-ok = (old == new) and set(nc) <= set(oc) and len(nc) <= len(oc)
+cycles_ok = set(nc) <= set(oc) and len(nc) <= len(oc)
+fl_o, fl_n = old.pop("function_lines", {}), new.pop("function_lines", {})
+ls_o, ls_n = old.pop("legacy_super_functions", {}), new.pop("legacy_super_functions", {})
+growth_ok = fl_o.items() <= fl_n.items() and ls_o.items() <= ls_n.items()
+ok = (old == new) and cycles_ok and growth_ok
 sys.exit(0 if ok else 1)
 PY
       then
-        fail "④" "known_cycles 例外不满足（须数组纯收缩且其余节零变更）: ${f}"
+        fail "④" "基线例外不满足（known_cycles 须纯收缩；function_lines/legacy 须纯新增键且旧键值零变更；其余节零变更）: ${f}"
       fi
     else
       fail "④" "非 guard(r9) 前缀触碰守卫文件: ${f}（防篡改层 3，T3-C；唯一例外 = refactor(r9)+known_cycles 纯收缩）"

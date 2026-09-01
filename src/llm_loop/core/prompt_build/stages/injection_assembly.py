@@ -20,7 +20,6 @@ from llm_loop.core.injection_labels import (
     ensure_semantic_label,
     strip_program_appendix_notice,
 )
-from llm_loop.core.loop.err1210 import SlotKind
 from llm_loop.core.program_recovery import PROGRAM_RECOVERY_SLOT
 from llm_loop.core.prompt_build.stages.consumed_filtering import (
     ADMIT,
@@ -100,6 +99,10 @@ def assemble_injections(
                 (slot, content) for slot, content in leak_downgrade_parts
             ]
     try:
+        # 惰性 import（结构性）：err1210 位于 loop 包，顶层 import 会形成
+        # stages→loop→build→stages 环（B4-C3-03 实证）；SlotKind 仅观测用。
+        from llm_loop.core.loop.err1210 import SlotKind
+
         _known_slots = {
             str(SlotKind.INTEROP),
             str(SlotKind.TIP),
