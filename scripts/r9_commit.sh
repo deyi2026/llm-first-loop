@@ -104,36 +104,74 @@ CHECK="scripts/r9_commit_check.sh"
 [ -f "$CHECK" ] || CHECK="r9_commit_check.sh"
 bash "$CHECK" "$PROBE"
 
-# [2/3] 门禁：ci_gate 全链路（恒全量口径）
-# 外部红登记豁免（B3 豁免登记机制 / 裁决 2026-09-01 (b)+两闸）：
-# registry = tests/guards/external_red_registry.json（guard(r9) 通道专管，规则④）。
-# 失败项须与 registry 引号定界精确 token 匹配（grep -qF "\"<id>\""）方计豁免；
-# 清单外任何红中止。两闸：①逐项登记含归因（registry _meta）；②B3-CLOSE-03
-# 收口强制逐项销号复核——豁免不设永久遮罩。旧 EXTERNAL_EXEMPT 硬编码数组废止
-# （D-07 已由守卫双口径收口 dbf340f；D-08 env flaky 不预防性豁免，复发按新证据登记）。
+# [2/3] 门禁：ci_gate 全链路（Gate 0 项1+3：PROBE 隔离检出执行 + 完整收集）
+# Gate 0 勘误（b4-execution-log §23.5）：旧口径 ci_gate 在调用者 working tree 运行，
+# 门禁没有执行提交态——同一 PROBE 随外部 M/fixture 状态出现不同红集。改造：
+# ① PROBE 树隔离检出（临时 detached worktree），ruff/pyright/pytest 全部读取 PROBE 内容；
+# ② fixture 按 tests/guards/fixture_manifest.json 校验在位（缺失 = 基建失败，Gate 0 项2）；
+# ③ collect_failed 抓 FAILED+ERROR（含 collection/setup error）；非零退出但失败集为空
+#    = 未知失败形态（xdist worker crash 等）→ 拒绝放行（不留空集漏洞）。
+# 豁免机制不变：registry = tests/guards/external_red_registry.json（PROBE 态即提交态，
+# registry 随提交原子生效）；node id 引号定界精确匹配；清单外任何红中止。
+# Gate 0 日志归档：GATE_LOG 不再即弃，归档 /tmp/r9_gate_last.log（失败指纹审计面）。
 REGISTRY="tests/guards/external_red_registry.json"
+FIXTURE_MANIFEST="tests/guards/fixture_manifest.json"
 GATE_LOG="$(mktemp /tmp/r9_gate.XXXXXX)"
-if bash scripts/ci_gate.sh > "$GATE_LOG" 2>&1; then
-  echo "✅ ci_gate 全链路 EXIT=0"
+PROBE_WT="$(mktemp -d /tmp/r9probe.XXXXXX)"
+trap 'if [ -n "${LOCK_HOLDER_PID:-}" ]; then kill "$LOCK_HOLDER_PID" 2>/dev/null || true; fi; flock -u 9 2>/dev/null || true; if [ -n "${PROBE_WT:-}" ] && git worktree list --porcelain | grep -qF "$PROBE_WT"; then git worktree remove --force "$PROBE_WT" > /dev/null 2>&1 || true; fi; if [ -n "${GATE_LOG:-}" ]; then cp "$GATE_LOG" /tmp/r9_gate_last.log 2>/dev/null || true; rm -f "$GATE_LOG"; fi' EXIT
+git worktree add --detach "$PROBE_WT" "$PROBE" > /dev/null 2>&1 || { echo "❌ PROBE 隔离检出失败（$PROBE_WT）" >&2; exit 1; }
+# Gate 0 项2：fixture 版本化校验（PROBE 树内 manifest 对本体 hash 逐项校验）
+if [ -f "$PROBE_WT/$FIXTURE_MANIFEST" ]; then
+  if ! python3 - "$PROBE_WT" "$FIXTURE_MANIFEST" << 'PYEOF'
+import hashlib, json, sys
+wt, mf = sys.argv[1], sys.argv[2]
+for e in json.load(open(f"{wt}/{mf}"))["files"]:
+    b = open(f"{wt}/{e['path']}", "rb").read()
+    assert hashlib.sha256(b).hexdigest() == e["sha256"], f"hash mismatch: {e['path']}"
+print("fixture manifest OK")
+PYEOF
+  then
+    echo "❌ fixture manifest 校验失败（缺失或 hash 不符）——Gate 0 项2 防线" >&2
+    exit 1
+  fi
+fi
+GATE_EXIT=0
+(cd "$PROBE_WT" && bash scripts/ci_gate.sh) > "$GATE_LOG" 2>&1 || GATE_EXIT=$?
+# PY 解析：PROBE 检出无 .venv → ci_gate 内部回落链取主 worktree .venv；PYTHONPATH 已由 ci_gate 前置 $ROOT/src（=PROBE 树）
+
+if [ "$GATE_EXIT" -eq 0 ]; then
+  echo "✅ ci_gate 全链路 EXIT=0（PROBE 隔离态，PROBE=$(git rev-parse --short "$PROBE")）"
 else
-  # 空集防护（B3-PREP-06 自验实证缺陷）：非零退出但未达 [4/4] 测试步（ruff 快死/
-  # PY 解析失败/早退）= 基建失败，不属任何豁免语义——零 FAILED 行的空集放行即漏洞
+  # Gate 0 项3-空集防护（升级）：未达 [4/4] = 基建失败；达 [4/4] 但失败集为空 = 未知
+  # 失败形态（xdist worker crash / collection 中断无节点行）——两者都拒绝放行。
   if ! grep -q "═══ \[4/4\]" "$GATE_LOG"; then
     echo "❌ ci_gate 非零退出且未达 [4/4] 测试步——基建失败（非测试红），中止" >&2
     echo "── ci_gate 输出尾部 ──"; tail -20 "$GATE_LOG"; exit 1
   fi
-  collect_failed() { grep -oE "FAILED [^ ]+" "$GATE_LOG" | sed 's/^FAILED //'; true; }
+  # 完整收集：FAILED + ERROR（collection/setup error 节点行）；node id 去重排序。
+  # 各 grep 兜底 || true：pipefail 下零匹配（EXIT 1）会静默炸整脚本（三跑 trace 实证）
+  collect_failed() {
+    { grep -oE "FAILED [^ ]+" "$GATE_LOG" || true; grep -oE "ERROR [^ ]+" "$GATE_LOG" || true; } \
+      | awk '{print $2}' | sort -u
+    true
+  }
+  collect_failed > "$GATE_LOG.fails"
+  if [ ! -s "$GATE_LOG.fails" ]; then
+    echo "❌ ci_gate 非零退出（EXIT=$GATE_EXIT）但失败集为空——未知失败形态，拒绝放行（Gate 0 项3）" >&2
+    echo "── ci_gate 输出尾部 ──"; tail -20 "$GATE_LOG"; exit 1
+  fi
+  # registry 匹配：PROBE 态 registry（提交态随提交原子生效）
   bad=0; n_ok=0
   while IFS= read -r t; do
     [ -z "$t" ] && continue
-    if [ -f "$REGISTRY" ] && grep -qF "\"$t\"" "$REGISTRY"; then
+    if grep -qF "\"$t\"" "$PROBE_WT/$REGISTRY" 2>/dev/null; then
       n_ok=$((n_ok+1))
     else
       echo "❌ 门禁红（external_red_registry 清单外）: $t"; bad=1
     fi
-  done < <(collect_failed)
+  done < "$GATE_LOG.fails"
   if [ "$bad" -eq 1 ]; then echo "── ci_gate 输出尾部 ──"; tail -20 "$GATE_LOG"; exit 1; fi
-  echo "⚠️ ci_gate 非零退出：${n_ok} 项失败全部属 external_red_registry 登记项（外部演进配对面缺口；B3-CLOSE-03 强制销号复核）——放行提交"
+  echo "⚠️ ci_gate 非零退出（PROBE 隔离态）：${n_ok} 项失败全部属 external_red_registry 登记项（临时 allowlist；销号复核沿 C 裁决逐批）——放行提交"
 fi
 
 # [3/3] 提交（机检+门禁双绿后，安全扫描拦截）

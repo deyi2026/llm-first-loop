@@ -1,0 +1,28 @@
+{
+  "_meta": {
+    "说明": "Gate 0 项2：PROBE 复现所需 fixture 版本化清单（本体 git add -f 收编入库；收编事实登记执行日志，三分表①区 +2）",
+    "生成时间": "2026-09-02 01:58（+1 修订：h1c_control_bank）",
+    "用途": "r9_commit.sh PROBE 隔离检出后按本清单校验 fixture 在位（hash 一致）；缺失即基建失败",
+    "范围依据": "tests 代码引用反查（isomorphic-replay-pair←test_trace_leak_regression；death-loop-scenario←tool_factualization 系）；forensics/out 零测试引用不入册"
+  },
+  "files": [
+    {
+      "path": "tests/fixtures/trace_leak/isomorphic-replay-pair.jsonl",
+      "sha256": "55c16b0f91f1071f86aa6d4782536538ded4ddf4d07200d28849230bed44d337",
+      "bytes": 47126,
+      "source": "external-untracked-asset（镜像区同源校验 death-loop-scenario=62ac85ec）"
+    },
+    {
+      "path": "tests/fixtures/tool_factualization/death-loop-scenario.json",
+      "sha256": "62ac85ec837f1bab8ee4ce8e714cc6d6ef306a0d4e800f953e07ad82086e9981",
+      "bytes": 707,
+      "source": "external-untracked-asset（镜像区同源校验 death-loop-scenario=62ac85ec）"
+    },
+    {
+      "path": "data/calib/h1c_control_bank.json",
+      "sha256": "07f4d184478eb59fa5dbc9814fe06b7ea78260a9dc671245fca7b38f1df66629",
+      "bytes": 33132,
+      "source": "data/ gitignore 内测试 bank（test_calib_scorer_c1h 依赖；PROBE 首跑暴露补收编）"
+    }
+  ]
+}

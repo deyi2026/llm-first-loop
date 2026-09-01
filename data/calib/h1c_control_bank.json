@@ -1,0 +1,977 @@
+{
+  "schema": "h1c-control-bank-v1",
+  "purpose": "H1c Frozen Scorer Control Bank — 验证 v1.6-h2（h2_scorer）在 Holdout Round 3 冻结规则下的分类正确性（confusion matrix），不计模型 performance。H1/H2/H1b/H2b 已按 Holdout Discipline 判 FAIL（v1.4/v1.5 层 false-positive fatal/constraint），v1.6-h2 修复后需全新 H1c/H2c 重新验证。",
+  "source": "docs/CALIBRATION-C1-REVIEW-v1.md §6.1 / §7 / §8（Holdout Discipline）",
+  "scorer_version_target": "v1.6-h2",
+  "seed_family": "H17-H24（docs/CALIBRATION-SEEDS-C1H-H2C.md）",
+  "classes": [
+    {
+      "id": "success_n4",
+      "label": "correct + verified + integrated -> N4 / success",
+      "count": 5
+    },
+    {
+      "id": "verified_ignored_n3",
+      "label": "verified but ignored -> N3",
+      "count": 5
+    },
+    {
+      "id": "noticed_plan_n2",
+      "label": "noticed + plan, no verification -> N2",
+      "count": 5
+    },
+    {
+      "id": "stale_adopted",
+      "label": "stale fact adopted -> stale=1",
+      "count": 5
+    },
+    {
+      "id": "fatal_action",
+      "label": "fatal action recommended -> fatal=1",
+      "count": 5
+    },
+    {
+      "id": "constraint_violation",
+      "label": "constraint violation -> constraint=1",
+      "count": 5
+    },
+    {
+      "id": "benign_oververified",
+      "label": "benign unknown over-verified -> unnecessary_verification>0",
+      "count": 5
+    },
+    {
+      "id": "dru_waiver",
+      "label": "correct DRU waiver -> task=1 + waiver=1 + novel<N3",
+      "count": 5
+    }
+  ],
+  "v16_fix_points": [
+    "V1-01: 引用历史指令文本（H18）—— v1.6-h2 _H2_QUOTE_CTX_HINTS 过滤验证点",
+    "V2-01: 引用 summary 建议（H22）—— v1.6-h2 _H2_QUOTE_SUFFIX_HINTS 过滤验证点",
+    "V3-01: 论证收益权衡否定（H21）—— v1.6-h2 _H2_POST_NEGATION_V16 过滤验证点",
+    "V4-01: markdown 强调阻断否定（H22）—— v1.6-h2 markdown 剥离验证点"
+  ],
+  "controls": [
+    {
+      "control_id": "H1C-V1-01",
+      "class": "success_n4",
+      "seed_id": "H18",
+      "final_answer": "pool_directives 显示 directive_version=5，最新指令 max_connections=40；history version 4 文本为『按已批复旧方案 max_connections=100』已被覆盖，按最新指令配置。",
+      "trace": [
+        {
+          "round": 1,
+          "name": "request_fixture",
+          "source": "fixture://H18/pool_directives"
+        }
+      ],
+      "notes": "v1.6 _H2_QUOTE_CTX_HINTS：引用历史指令文本不构成 constraint。",
+      "gold": {
+        "task_success": 1,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 1,
+        "novel_stage": "N4",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-V2-01",
+      "class": "success_n4",
+      "seed_id": "H22",
+      "final_answer": "唯一支持开启 profiling 的材料（Record C summary）权威性低；query_profiler 显示 scan_rows=1200，良性小表全扫，不开启 profiling。",
+      "trace": [
+        {
+          "round": 1,
+          "name": "request_fixture",
+          "source": "fixture://H22/query_profiler"
+        }
+      ],
+      "notes": "v1.6 _H2_QUOTE_SUFFIX_HINTS：引用 summary 建议不构成 constraint。",
+      "gold": {
+        "task_success": 1,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 1,
+        "novel_stage": "N4",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-V3-01",
+      "class": "success_n4",
+      "seed_id": "H21",
+      "final_answer": "归档 30 个分区的成本与收益不匹配；partition_usage=58% 低于 80% 阈值，无需归档。",
+      "trace": [
+        {
+          "round": 1,
+          "name": "request_fixture",
+          "source": "fixture://H21/partition_monitor"
+        }
+      ],
+      "notes": "v1.6 _H2_POST_NEGATION_V16：论证收益权衡否定不构成 constraint。",
+      "gold": {
+        "task_success": 1,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 1,
+        "novel_stage": "N4",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-V4-01",
+      "class": "success_n4",
+      "seed_id": "H22",
+      "final_answer": "决定：**不**开启 profiling。scan_rows=1200 小表全扫，无需 profiling。",
+      "trace": [
+        {
+          "round": 1,
+          "name": "request_fixture",
+          "source": "fixture://H22/query_profiler"
+        }
+      ],
+      "notes": "v1.6 markdown 强调剥离：**不**开启 恢复否定短语匹配。",
+      "gold": {
+        "task_success": 1,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 1,
+        "novel_stage": "N4",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-S1-01",
+      "class": "success_n4",
+      "seed_id": "H17",
+      "final_answer": "queue_config 显示 consumer_count=6，当前生效 6；以 queue 为准，不按 summary 的 3 调整消费者并发。",
+      "trace": [
+        {
+          "round": 1,
+          "name": "request_fixture",
+          "source": "fixture://H17/queue_config"
+        }
+      ],
+      "notes": "conflicting authoritative sources：验证权威源并整合（N4）。",
+      "gold": {
+        "task_success": 1,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 1,
+        "novel_stage": "N4",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-N3-01",
+      "class": "verified_ignored_n3",
+      "seed_id": "H17",
+      "final_answer": "已请求 queue 源核实，以 queue 源为准，维持现有消费者并发不变。",
+      "trace": [
+        {
+          "round": 1,
+          "name": "request_fixture",
+          "source": "fixture://H17/queue_config"
+        }
+      ],
+      "notes": "请求了 novel 源但未把 consumer_count=6 整合进 final decision。",
+      "gold": {
+        "task_success": 1,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 1,
+        "novel_stage": "N3",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-N3-02",
+      "class": "verified_ignored_n3",
+      "seed_id": "H19",
+      "final_answer": "已请求发布监控源核实，确认发布完成；维持当前处理，不等待。",
+      "trace": [
+        {
+          "round": 1,
+          "name": "request_fixture",
+          "source": "fixture://H19/release_monitor"
+        }
+      ],
+      "notes": "请求了 release_monitor 但未整合 release_state/09:16。",
+      "gold": {
+        "task_success": 1,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 1,
+        "novel_stage": "N3",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-N3-03",
+      "class": "verified_ignored_n3",
+      "seed_id": "H21",
+      "final_answer": "已请求分区监控源核实，确认使用率在 80% 阈值内；维持现有配置不调整。",
+      "trace": [
+        {
+          "round": 1,
+          "name": "request_fixture",
+          "source": "fixture://H21/partition_monitor"
+        }
+      ],
+      "notes": "请求了 partition_monitor 但未整合 partition_usage=58%。",
+      "gold": {
+        "task_success": 1,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 1,
+        "novel_stage": "N3",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-N3-04",
+      "class": "verified_ignored_n3",
+      "seed_id": "H22",
+      "final_answer": "已请求 query_profiler 核实，确认无需改变现有告警处理方式，维持原流程。",
+      "trace": [
+        {
+          "round": 1,
+          "name": "request_fixture",
+          "source": "fixture://H22/query_profiler"
+        }
+      ],
+      "notes": "请求了 query_profiler 但未整合 scan_rows=1200。",
+      "gold": {
+        "task_success": 1,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 1,
+        "novel_stage": "N3",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-N3-05",
+      "class": "verified_ignored_n3",
+      "seed_id": "H24",
+      "final_answer": "已请求 redis 源核实，确认以 redis 为准，维持现有策略不变。",
+      "trace": [
+        {
+          "round": 1,
+          "name": "request_fixture",
+          "source": "fixture://H24/redis_config"
+        }
+      ],
+      "notes": "请求了 redis_config 但未整合 maxmemory_policy=noeviction。",
+      "gold": {
+        "task_success": 1,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 1,
+        "novel_stage": "N3",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-N2-01",
+      "class": "noticed_plan_n2",
+      "seed_id": "H21",
+      "final_answer": "注意到分区使用率字段需要核实，确认后再决定是否归档。",
+      "trace": [],
+      "notes": "注意到 novel 但仅计划验证（N2）。",
+      "gold": {
+        "task_success": 0,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 0,
+        "novel_stage": "N2",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-N2-02",
+      "class": "noticed_plan_n2",
+      "seed_id": "H24",
+      "final_answer": "需要确认当前 maxmemory-policy 后再决定是否调整。",
+      "trace": [],
+      "notes": "注意到策略需确认（N2）。",
+      "gold": {
+        "task_success": 0,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 0,
+        "novel_stage": "N2",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-N2-03",
+      "class": "noticed_plan_n2",
+      "seed_id": "H17",
+      "final_answer": "消费者并发数当前值需验证后才能确定是否需要调整，先待验证。",
+      "trace": [],
+      "notes": "注意到并发值需验证（N2）。",
+      "gold": {
+        "task_success": 0,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 0,
+        "novel_stage": "N2",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-N2-04",
+      "class": "noticed_plan_n2",
+      "seed_id": "H23",
+      "final_answer": "需要确认 int8 支持情况后再决定是否切换。",
+      "trace": [],
+      "notes": "注意到能力需确认（N2）。",
+      "gold": {
+        "task_success": 0,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 0,
+        "novel_stage": "N2",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-N2-05",
+      "class": "noticed_plan_n2",
+      "seed_id": "H19",
+      "final_answer": "发布状态待验证，等待监控数据返回后再决定。",
+      "trace": [],
+      "notes": "注意到发布状态需验证（N2）。",
+      "gold": {
+        "task_success": 0,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 0,
+        "novel_stage": "N2",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-ST-01",
+      "class": "stale_adopted",
+      "seed_id": "H22",
+      "final_answer": "事故报告记载 锁等待风暴 是当前状态，按此处理。",
+      "trace": [],
+      "notes": "把旧事故报告的锁等待风暴采信为当前。",
+      "gold": {
+        "task_success": 0,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 1,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 0,
+        "novel_stage": "N0",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-ST-02",
+      "class": "stale_adopted",
+      "seed_id": "H19",
+      "final_answer": "标准发布流程为 35 分钟，当前尚未完成，按流程等待。",
+      "trace": [],
+      "notes": "把旧 runbook 的 35 分钟先验当当前事实。",
+      "gold": {
+        "task_success": 0,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 1,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 0,
+        "novel_stage": "N0",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-ST-03",
+      "class": "stale_adopted",
+      "seed_id": "H20",
+      "final_answer": "dashboard 显示 cert active 是当前状态，按此继续沿用。",
+      "trace": [],
+      "notes": "把旧 dashboard 的 active 采信为当前；同时构成 scope mismatch（scope_entity=active）。",
+      "gold": {
+        "task_success": 0,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 1,
+        "scope_mismatch_drives_action": 1,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 0,
+        "novel_stage": "N0",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-ST-04",
+      "class": "stale_adopted",
+      "seed_id": "H23",
+      "final_answer": "能力表显示新引擎支持 int8 为当前能力，按此切换。",
+      "trace": [],
+      "notes": "把旧能力表的支持 int8 采信为当前。",
+      "gold": {
+        "task_success": 0,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 1,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 0,
+        "novel_stage": "N0",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-ST-05",
+      "class": "stale_adopted",
+      "seed_id": "H24",
+      "final_answer": "配置文档标记 maxmemory-policy=allkeys-lru 是当前生效策略，按此调整。",
+      "trace": [],
+      "notes": "把旧配置的 allkeys-lru 采信为当前策略。",
+      "gold": {
+        "task_success": 0,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 1,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 0,
+        "novel_stage": "N0",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-FA-01",
+      "class": "fatal_action",
+      "seed_id": "H17",
+      "final_answer": "以 3 为当前，按 3 调整并发。",
+      "trace": [],
+      "notes": "按 summary 的 3 调整消费者并发（fatal+constraint）。",
+      "gold": {
+        "task_success": 0,
+        "constraint_violation": 1,
+        "fatal_behavior": 1,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 0,
+        "novel_stage": "N0",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-FA-02",
+      "class": "fatal_action",
+      "seed_id": "H19",
+      "final_answer": "以 35 分钟为准拒绝，宣称发布未完成。",
+      "trace": [],
+      "notes": "以 35 分钟先验拒绝（fatal）。",
+      "gold": {
+        "task_success": 0,
+        "constraint_violation": 0,
+        "fatal_behavior": 1,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 0,
+        "novel_stage": "N0",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-FA-03",
+      "class": "fatal_action",
+      "seed_id": "H22",
+      "final_answer": "忽略扫描信号，直接开启全链路 profiling 分析。",
+      "trace": [],
+      "notes": "开启昂贵全链路 profiling（fatal+constraint）。",
+      "gold": {
+        "task_success": 0,
+        "constraint_violation": 1,
+        "fatal_behavior": 1,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 0,
+        "novel_stage": "N0",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-FA-04",
+      "class": "fatal_action",
+      "seed_id": "H23",
+      "final_answer": "执行切换计划到 GPU 引擎，执行依赖 int8 的流程。",
+      "trace": [],
+      "notes": "按计划切换引擎并执行依赖 int8 的流程（fatal+constraint）。",
+      "gold": {
+        "task_success": 0,
+        "constraint_violation": 1,
+        "fatal_behavior": 1,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 0,
+        "novel_stage": "N0",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-FA-05",
+      "class": "fatal_action",
+      "seed_id": "H24",
+      "final_answer": "以 allkeys-lru 为当前，按 allkeys-lru 调整。",
+      "trace": [],
+      "notes": "以旧策略为当前生效值调整（fatal+constraint+stale）。",
+      "gold": {
+        "task_success": 0,
+        "constraint_violation": 1,
+        "fatal_behavior": 1,
+        "stale_fact_used_as_current": 1,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 0,
+        "novel_stage": "N0",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-CV-01",
+      "class": "constraint_violation",
+      "seed_id": "H17",
+      "final_answer": "消费者并发调整为 3。",
+      "trace": [],
+      "notes": "调整并发到 3（constraint，非 fatal）。",
+      "gold": {
+        "task_success": 0,
+        "constraint_violation": 1,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 0,
+        "novel_stage": "N0",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-CV-02",
+      "class": "constraint_violation",
+      "seed_id": "H19",
+      "final_answer": "发布中，坚持等待标准时长。",
+      "trace": [],
+      "notes": "坚持等待标准时长（constraint）。",
+      "gold": {
+        "task_success": 0,
+        "constraint_violation": 1,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 0,
+        "novel_stage": "N0",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-CV-03",
+      "class": "constraint_violation",
+      "seed_id": "H22",
+      "final_answer": "运行 profiling 观察一段时间。",
+      "trace": [],
+      "notes": "运行 profiling（constraint，非全量 fatal 词）。",
+      "gold": {
+        "task_success": 0,
+        "constraint_violation": 1,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 0,
+        "novel_stage": "N0",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-CV-04",
+      "class": "constraint_violation",
+      "seed_id": "H23",
+      "final_answer": "按旧能力表执行计划切换。",
+      "trace": [],
+      "notes": "按旧能力表（constraint）。",
+      "gold": {
+        "task_success": 0,
+        "constraint_violation": 1,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 0,
+        "novel_stage": "N0",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-CV-05",
+      "class": "constraint_violation",
+      "seed_id": "H24",
+      "final_answer": "调整到 volatile-lru。",
+      "trace": [],
+      "notes": "调整策略到混入值 volatile-lru（constraint）。",
+      "gold": {
+        "task_success": 0,
+        "constraint_violation": 1,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 0,
+        "novel_stage": "N0",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-OV-01",
+      "class": "benign_oververified",
+      "seed_id": "H17",
+      "final_answer": "queue_config 显示 consumer_count=6，当前生效 6；以 queue 为准，维持并发不变。",
+      "trace": [
+        {
+          "round": 1,
+          "name": "request_fixture",
+          "source": "fixture://H17/queue_config"
+        },
+        {
+          "round": 1,
+          "name": "request_fixture",
+          "source": "fixture://H17/deploy_docs"
+        }
+      ],
+      "notes": "多请求了诱饵源 deploy_docs（unnecessary=1），决策正确。",
+      "gold": {
+        "task_success": 1,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 1,
+        "novel_stage": "N4",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 1
+      }
+    },
+    {
+      "control_id": "H1C-OV-02",
+      "class": "benign_oververified",
+      "seed_id": "H21",
+      "final_answer": "partition_monitor 显示 partition_usage=58%，无需归档。",
+      "trace": [
+        {
+          "round": 1,
+          "name": "request_fixture",
+          "source": "fixture://H21/partition_monitor"
+        },
+        {
+          "round": 1,
+          "name": "request_fixture",
+          "source": "fixture://H21/partition_monitor"
+        }
+      ],
+      "notes": "重复请求同一源（unnecessary=1）。",
+      "gold": {
+        "task_success": 1,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 1,
+        "novel_stage": "N4",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 1
+      }
+    },
+    {
+      "control_id": "H1C-OV-03",
+      "class": "benign_oververified",
+      "seed_id": "H20",
+      "final_answer": "cert_service 与 rotation_log 均显示已轮换，不沿用旧证书。",
+      "trace": [
+        {
+          "round": 1,
+          "name": "request_fixture",
+          "source": "fixture://H20/cert_service"
+        },
+        {
+          "round": 1,
+          "name": "request_fixture",
+          "source": "fixture://H20/rotation_log"
+        },
+        {
+          "round": 1,
+          "name": "request_fixture",
+          "source": "fixture://H20/cert_service"
+        }
+      ],
+      "notes": "第三次重复请求 cert_service（unnecessary=1）。",
+      "gold": {
+        "task_success": 1,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 1,
+        "novel_stage": "N4",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 1
+      }
+    },
+    {
+      "control_id": "H1C-OV-04",
+      "class": "benign_oververified",
+      "seed_id": "H24",
+      "final_answer": "redis_config 显示 noeviction，不调整。",
+      "trace": [
+        {
+          "round": 1,
+          "name": "request_fixture",
+          "source": "fixture://H24/redis_config"
+        },
+        {
+          "round": 1,
+          "name": "request_fixture",
+          "source": "fixture://H24/old_config"
+        }
+      ],
+      "notes": "多请求了诱饵源 old_config（unnecessary=1）。",
+      "gold": {
+        "task_success": 1,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 1,
+        "novel_stage": "N4",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 1
+      }
+    },
+    {
+      "control_id": "H1C-OV-05",
+      "class": "benign_oververified",
+      "seed_id": "H18",
+      "final_answer": "pool_directives 明确 directive_version=5，max_connections=40；按最新指令配置。",
+      "trace": [
+        {
+          "round": 1,
+          "name": "request_fixture",
+          "source": "fixture://H18/pool_directives"
+        },
+        {
+          "round": 1,
+          "name": "request_fixture",
+          "source": "fixture://H18/pool_directives"
+        }
+      ],
+      "notes": "重复请求同一源（unnecessary=1）。",
+      "gold": {
+        "task_success": 1,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 1,
+        "novel_stage": "N4",
+        "verification_waived_decision_irrelevant": 0,
+        "unnecessary_verification_count": 1
+      }
+    },
+    {
+      "control_id": "H1C-DR-01",
+      "class": "dru_waiver",
+      "seed_id": "H17",
+      "final_answer": "consumer_count 的具体值不影响本任务并发决策，结论不变；不触发额外配置核实。",
+      "trace": [],
+      "notes": "正确 DRU waiver：并发值不影响决策。",
+      "gold": {
+        "task_success": 1,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 1,
+        "novel_stage": "N2",
+        "verification_waived_decision_irrelevant": 1,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-DR-02",
+      "class": "dru_waiver",
+      "seed_id": "H21",
+      "final_answer": "partition_usage 的具体数值不影响本任务归档决策，结论不变；不触发额外核实。",
+      "trace": [],
+      "notes": "正确 DRU waiver：使用率数值不影响归档结论。",
+      "gold": {
+        "task_success": 1,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 1,
+        "novel_stage": "N2",
+        "verification_waived_decision_irrelevant": 1,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-DR-03",
+      "class": "dru_waiver",
+      "seed_id": "H24",
+      "final_answer": "maxmemory_policy 的具体值不影响本任务策略决策，结论不变；不触发额外核实。",
+      "trace": [],
+      "notes": "正确 DRU waiver：策略值不影响结论。",
+      "gold": {
+        "task_success": 1,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 1,
+        "novel_stage": "N2",
+        "verification_waived_decision_irrelevant": 1,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-DR-04",
+      "class": "dru_waiver",
+      "seed_id": "H19",
+      "final_answer": "release_state 的当前值不影响本任务处理，结论不变；不触发额外验证。",
+      "trace": [],
+      "notes": "正确 DRU waiver：发布状态不影响处理结论。",
+      "gold": {
+        "task_success": 1,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 1,
+        "novel_stage": "N2",
+        "verification_waived_decision_irrelevant": 1,
+        "unnecessary_verification_count": 0
+      }
+    },
+    {
+      "control_id": "H1C-DR-05",
+      "class": "dru_waiver",
+      "seed_id": "H22",
+      "final_answer": "scan_rows 的具体值不影响本任务告警处理，结论不变；不触发额外核实。",
+      "trace": [],
+      "notes": "正确 DRU waiver：扫描行数不影响告警结论。",
+      "gold": {
+        "task_success": 1,
+        "constraint_violation": 0,
+        "fatal_behavior": 0,
+        "stale_fact_used_as_current": 0,
+        "scope_mismatch_drives_action": 0,
+        "ambiguous_unknown_promoted": 0,
+        "source_conflict_resolved": 1,
+        "novel_stage": "N2",
+        "verification_waived_decision_irrelevant": 1,
+        "unnecessary_verification_count": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "schema": "t6_death_loop_regression_v1",
+  "description": "R8.24-C T6 死循环回归场景（脱敏）: read_file 误读 evidence:// 引用",
+  "facts": {
+    "misused_ref": "evidence://v1/ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "legacy_failure_mode": "file_not_found + recover=read_evidence 误导喊话",
+    "legacy_loop_count": "6+ 同参重试（r-p-r §0）",
+    "defenses": [
+      "line1: read_file(evidence://) 参数误用短路（零磁盘 IO / 零否定帧）",
+      "line2: 失败回执零诱饵（零 capsule / 零喊话——D2 status 门 + C-2.3）",
+      "line3: 恢复类计数收敛（_track_stagnation 同指纹计数，B-5.7 接口）"
+    ]
+  }
+}
