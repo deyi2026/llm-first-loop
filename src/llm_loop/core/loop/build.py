@@ -69,9 +69,7 @@ from llm_loop.core.prompt_build.stages.cognitive import (
     run_cognitive_packet,
     run_cognitive_state,
 )
-from llm_loop.core.prompt_build.stages.history_budget_prep import run_history_budget_prep
-from llm_loop.core.prompt_build.stages.history_postprocess import run_history_postprocess
-from llm_loop.core.prompt_build.stages.history_projection import run_history_projection
+from llm_loop.core.prompt_build.stages.history_pipeline import run_history_pipeline
 from llm_loop.core.prompt_build.stages.ingress_resolution import resolve_ingress
 from llm_loop.core.prompt_build.stages.injection_assembly import assemble_injections
 from llm_loop.core.prompt_build.stages.projection_gate import (
@@ -482,89 +480,53 @@ class _BuildMixin:
         prefix_len = _asm.prefix_len
         self._cache_gate_stable_fp = _asm.stable_fp
         self._last_snapshot_count = _asm.last_snapshot_count
-        # 历史投影接线三段 → stages/（budget_prep / projection / postprocess；
-        # 调 history 现函数，Phase 7 前不动其内部）
-        _prep = run_history_budget_prep(
-            sess_messages=sess.messages,
+        # 历史投影三段接线 → stages/history_pipeline.py::run_history_pipeline
+        # （B4-CLOSE-01 步C1；prep→projection→postprocess 语义原样，调
+        # history 现函数 Phase 7 前不动其内部）；写回面经 outcome 回接。
+        _hist = run_history_pipeline(
+            sess=sess,
             provider_id=provider_id,
             sess_anchor=sess_anchor,
             max_chars=max_chars,
+            base=base,
+            system_prompt=system_prompt,
+            filtered_indices=_base_original_indices,
+            prefix_len=prefix_len,
+            emergency_compact=emergency_compact,
+            resolved_label=resolved_label,
+            registry_snapshot=registry_snapshot,
+            r6_ingress_truth=_r6_ingress_truth,
+            memory_msgs=memory_msgs,
+            decision=decision,
             runtime_history_budget=self._runtime_history_budget,
             archive=self.archive,
             registry=self.registry,
             archive_sink_cb=self._archive_sink,
-            decision=decision,
             record_action=self._record_action,
-            last_nudge_total=getattr(self, "_last_nudge_total", None),
-            provider_visible_chars=_provider_visible_chars,
-            growth_nudge_kind=_growth_nudge_kind,
-        )
-        archive_sink = _prep.archive_sink
-        effective_budget = _prep.effective_budget
-        self._last_build_info = {
-            "base": base,
-            "system_prompt": system_prompt,
-            "memory_msgs": memory_msgs,
-            "budget": effective_budget,
-        }
-        self._last_nudge_total = _prep.last_nudge_total
-        self._last_compact_ratio = _prep.compact_ratio
-        _proj = run_history_projection(
-            base=base,
-            system_prompt=system_prompt,
-            filtered_indices=_base_original_indices,
-            sess_anchor=sess_anchor,
-            prefix_len=prefix_len,
-            session_id=sess.session_id,
-            max_chars=max_chars,
-            runtime_history_budget_value=self._runtime_history_budget(),
-            compact_ratio=_prep.compact_ratio,
-            archive_sink=archive_sink,
             settings=self.settings,
-            provider_id=provider_id,
-            emergency_compact=emergency_compact,
-            reasoning_tail=_reasoning_tail_for(
-                self.settings,
-                resolved_label=resolved_label,
-                registry_snapshot=registry_snapshot,
-            ),
-            r6_ingress_truth=_r6_ingress_truth,
-            registry=self.registry,
-            cache_monitor=self._cache_monitor,
-            effective_budget=effective_budget,
-            progressive_fold_k=_prep.fold_k,
-        )
-        built = _proj.built
-        anchor_box = _proj.anchor_box
-        compacted_box = _proj.compacted_box
-        cache_compacted_box = _proj.cache_compacted_box
-        compact_view_box = _proj.compact_view_box
-        degrade_box = _proj.degrade_box
-        _post = run_history_postprocess(
-            cache_compacted_box=cache_compacted_box,
-            compacted_box=compacted_box,
-            compact_view_box=compact_view_box,
-            degrade_box=degrade_box,
-            anchor_box=anchor_box,
-            filtered_indices=_base_original_indices,
-            prefix_len=prefix_len,
-            sess=sess,
-            sess_anchor=sess_anchor,
-            provider_id=provider_id,
-            resolved_label=resolved_label,
-            effective_budget=effective_budget,
-            compact_event_seq=getattr(self, "_compact_event_seq", 0),
-            compact_event_was_compacted=getattr(self, "_compact_event_was_compacted", False),
             cache_monitor=self._cache_monitor,
             resolve_msg_seq=self._resolve_msg_seq,
             event_append=self._event_append,
-            provider_visible_chars=_provider_visible_chars,
+            compact_event_seq=getattr(self, "_compact_event_seq", 0),
+            compact_event_was_compacted=getattr(
+                self, "_compact_event_was_compacted", False
+            ),
+            last_nudge_total=getattr(self, "_last_nudge_total", None),
+            provider_visible_chars_fn=_provider_visible_chars,
+            growth_nudge_kind_fn=_growth_nudge_kind,
+            reasoning_tail_fn=_reasoning_tail_for,
         )
-        self._last_history_compacted = _post.last_history_compacted
-        self._compact_event_seq = _post.compact_event_seq
-        self._compact_event_was_compacted = _post.compact_event_was_compacted
-        _anchor_moved_this_build = _post.anchor_moved
-        self._cache_degrade_note = _post.cache_degrade_note
+        built = _hist.built
+        effective_budget = _hist.effective_budget
+        compact_view_box = _hist.compact_view_box
+        _anchor_moved_this_build = _hist.anchor_moved
+        self._last_build_info = _hist.last_build_info
+        self._last_nudge_total = _hist.last_nudge_total
+        self._last_compact_ratio = _hist.last_compact_ratio
+        self._last_history_compacted = _hist.last_history_compacted
+        self._compact_event_seq = _hist.compact_event_seq
+        self._compact_event_was_compacted = _hist.compact_event_was_compacted
+        self._cache_degrade_note = _hist.cache_degrade_note
         # INJECTION-GOVERNANCE R8.8: Evidence Ledger/Manifest remains durable and
         # queryable through list/search/read_evidence, but the recovery index itself no
         # longer has automatic prompt eligibility. This also closes the old R2 bypass.
