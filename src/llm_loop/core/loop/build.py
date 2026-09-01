@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any
 
 from llm_loop.core.episode_history import provider_message_visible
 
@@ -30,10 +30,6 @@ from llm_loop.core.history import (
 from llm_loop.core.injection_budget import (
     DEFAULT_INJECTION_BUDGET_CHARS,
 )
-from llm_loop.core.injection_labels import (
-    InjectionLayer,
-    ensure_semantic_label,
-)
 from llm_loop.core.loop.err1210 import (
     InjectedEntry,
     SlotKind,
@@ -44,14 +40,12 @@ from llm_loop.core.prompt_eligibility import (
     PROGRAM_FINAL_PROTOCOL_BOUNDARY,
 )
 
-# Cognitive Runtime packet 装配面（tasks 2.3/2.5/2.6）：门控/状态/投影/Read Barrier
-# 已迁 stages/cognitive.py 自持（B4-C4-01 步1/2）；此处仅留 packet 编译 + telemetry。
+# Cognitive Runtime：装配面已全部迁 stages/cognitive.py 自持（B4-C4-01 步1/2/3）；
+# 此处仅留 compile_decision_packet 传参 budget 阶段（惰性容错，import 失败回退平铺）。
 try:  # noqa: SIM105
     from llm_loop.cognitive.compiler import compile_decision_packet
-    from llm_loop.cognitive.telemetry import emit_cognitive_event
 except Exception:  # noqa: BLE001 — fail-open 回退平铺聚合（零回归）
     compile_decision_packet = None  # type: ignore[assignment]
-    emit_cognitive_event = None  # type: ignore[assignment]
 
 # 快照文本函数已迁 core/session_snapshot.py（零 llm_loop 依赖叶子模块，R9-P3-01）——
 # 顶层 import 不再触发循环：build→engine 运行时反向边删除（步2/3 断环点），engine→build 正向边保留
@@ -69,6 +63,7 @@ from llm_loop.core.prompt_build.stages.cognitive import (
 )
 from llm_loop.core.prompt_build.stages.cognitive import (
     resolve_cognitive_gate,
+    run_cognitive_packet,
     run_cognitive_state,
 )
 from llm_loop.core.prompt_build.stages.compaction_audit import run_compaction_audit
@@ -139,26 +134,6 @@ def merge_persisted_tail_injections(
         kept.append(cand)
     return tail_start, kept, removed
 
-
-class _CogPacketEvt(TypedDict):
-    """CR-R1.1（审查项10）: packet telemetry 事件显式键型.
-
-    替代裸 dict[str, str|int] 联合——TypedDict 使 **_evt 展开时逐参数
-    类型可检（emit_cognitive_event 具名签名对齐），消除 24 处 union 报错。
-    """
-
-    data_dir: str
-    session_id: str
-    round_no: int
-    goal_id: str
-    state_revision: int
-    hot_tokens: int
-    warm_tokens: int
-    cold_ref_count: int
-    packet_tokens: int
-    mode: str
-    configured_mode: str
-    promoted: bool
 
 
 if TYPE_CHECKING:
@@ -869,91 +844,27 @@ class _BuildMixin:
                 self._last_injection_budget = _budget_outcome.budget_result
                 decision.budget = _budget_outcome.budget
 
-                # CR-R1（tasks 3.2）: packet 组装重构——header 先行（Barrier 通过即含投影
-                # 前导），空 slots 不抑制 header；header+slots 合并单条聚合条（header 在前，
-                # 沿 P1 形态）；header 已含投影 → anchor 位不重复注入（tier 关时投影仍占
-                # anchor 位，旧行为保留）。
-                _packet = (
-                    compile_decision_packet(
-                        _packet_parts,  # CR-R1.1 批次D: packet 输入面=真实注入面（含持久化 memory_snapshot 投影）
-                        _sem_state,
-                        # CR-R1 4.2: 生产预算接线——超上界降级仅 HOT（compiler degraded
-                        # 路径生产可达，不变量⑧）
-                        budget_chars=int(
-                            getattr(self.settings, "cog_runtime_packet_budget", 2000)
-                        ),
-                    )
-                    if _tier_on and compile_decision_packet is not None
-                    else None
+                # packet 装配/telemetry → stages/cognitive.py（B4-C4-01 第 3 步）：CR-R1
+                # header 先行（空 slots 不抑制 header；header 已含投影 → anchor 位不重复
+                # 注入）/CR-R1.1 shadow 同构（产物仅 telemetry 度量，prompt 平铺旧行为）/
+                # CR-R1 4.2 生产预算接线（超上界降级仅 HOT）/CR-R1 6.2 packet_compile +
+                # tier_degraded telemetry（_CogPacketEvt 显式键型随迁）。产物经
+                # CognitivePacketOutcome 回接。
+                _cp = run_cognitive_packet(
+                    self.settings,
+                    inject_parts=_inject_parts,
+                    packet_parts=_packet_parts,
+                    sem_state=_sem_state,
+                    anchor=_anchor,
+                    tier_on=_tier_on,
+                    enforce=_cog_enforce,
+                    sid=_cog_sid,
+                    env=_env,
+                    mode=_cog_mode,
+                    promoted=_cog_promoted,
                 )
-                if _packet is not None:
-                    _packet_text = _packet.render()  # header 在前 + tier 槽位（空 slots→header-only）
-                    if _cog_enforce:  # CR-R1.1（审查项6）: shadow 产物仅 telemetry 度量
-                        _agg = ensure_semantic_label(
-                            _packet_text, InjectionLayer.STATUS, slot_kind="decision_packet"
-                        )
-                        _agg_anchor = _anchor if not _packet.render_header() else ""
-                    else:
-                        _agg = "\n\n".join(  # shadow: prompt 走平铺旧行为（不进投影）
-                            f"--- [slot:{s if s else 'hint'}] ---\n{c}"
-                            for s, c in _inject_parts
-                        )
-                        _agg_anchor = _anchor
-                    if emit_cognitive_event is not None:  # CR-R1 6.2: packet_compile/tier_degraded
-                        _tier_of = lambda _s: str(getattr(getattr(_s, "tier", None), "value", ""))  # noqa: E731
-                        _hot_chars = sum(
-                            len(getattr(_s, "content", "") or "")
-                            for _s in _packet.slots
-                            if _tier_of(_s) == "hot"
-                        )
-                        _warm_chars = sum(
-                            len(getattr(_s, "compact_repr", "") or "")
-                            for _s in _packet.slots
-                            if _tier_of(_s) == "warm"
-                        )
-                        _cold_n = sum(1 for _s in _packet.slots if _tier_of(_s) == "cold")
-                        # CR-R1.1（审查项7）: 归因修正——goal_id/state_revision 改从
-                        # _env.identity（StateEnvelope）取：_sem_state（SemanticTaskState）
-                        # 无 identity 属性，旧写法恒取空串；round 接 current_round_no
-                        # contextvar（engine run 循环每轮 set）；run_id 生产无来源
-                        # 留默认空（诚实归因，不编造）。
-                        _ctx_round = 0
-                        try:
-                            from llm_loop.core.run_context import current_round_no
-
-                            _ctx_round = int(current_round_no.get() or 0)
-                        except Exception:  # noqa: BLE001 — contextvar 未设按 0
-                            _ctx_round = 0
-                        _evt = _CogPacketEvt(
-                            data_dir=self.settings.data_dir,
-                            session_id=_cog_sid,
-                            round_no=_ctx_round,
-                            goal_id=str(
-                                getattr(getattr(_env, "identity", None), "goal_id", "") or ""
-                            ),
-                            state_revision=int(
-                                getattr(getattr(_env, "identity", None), "state_revision", 0)
-                                or 0
-                            ),
-                            hot_tokens=_hot_chars // 4,
-                            warm_tokens=_warm_chars // 4,
-                            cold_ref_count=_cold_n,
-                            packet_tokens=len(_packet_text) // 4,
-                            mode=_cog_mode,  # Stage 2 P1-4: effective mode（含 allowlist 提升）
-                            configured_mode=str(
-                                getattr(self.settings, "cog_runtime_mode", "")
-                            ),
-                            promoted=_cog_promoted,
-                        )
-                        emit_cognitive_event("packet_compile", **_evt)
-                        if getattr(_packet, "degraded", False):
-                            emit_cognitive_event("tier_degraded", **_evt)
-                else:
-                    _agg = "\n\n".join(
-                        f"--- [slot:{s if s else 'hint'}] ---\n{c}"
-                        for s, c in _inject_parts
-                    )
-                    _agg_anchor = _anchor  # 平铺路径：投影/锚点经 anchor 位（旧行为）
+                _agg = _cp.agg
+                _agg_anchor = _cp.agg_anchor
                 # R4 recovery is rendered as its own program message before the ordinary
                 # background appendix.  R6 immediately absorbs both into one user envelope,
                 # leaving recovery as the explicit executable exception before exact user truth.

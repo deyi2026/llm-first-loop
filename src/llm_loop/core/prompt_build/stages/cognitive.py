@@ -21,9 +21,13 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
-from llm_loop.core.injection_labels import InjectionLayer, detect_program_layer
+from llm_loop.core.injection_labels import (
+    InjectionLayer,
+    detect_program_layer,
+    ensure_semantic_label,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +171,7 @@ def resolve_cognitive_gate(
 # 惰性容错导入（cognitive 子包独立演进，import 失败 → 回退 anchor 平铺旧行为零
 # 回归；与 build.py 的 packet 装配面各自独立 fail-open，同环境同结果）。
 try:  # noqa: SIM105
-    from llm_loop.cognitive.compiler import semantic_projection
+    from llm_loop.cognitive.compiler import compile_decision_packet, semantic_projection
     from llm_loop.cognitive.state import (
         SemanticStateStore,
         StateEnvelope,
@@ -176,6 +180,7 @@ try:  # noqa: SIM105
     )
     from llm_loop.cognitive.telemetry import emit_cognitive_event
 except Exception:  # noqa: BLE001 — fail-open 回退锚点（零回归）
+    compile_decision_packet = None  # type: ignore[assignment]
     semantic_projection = None  # type: ignore[assignment]
     emit_cognitive_event = None  # type: ignore[assignment]
     SemanticStateStore = None  # type: ignore[assignment]
@@ -371,3 +376,132 @@ def run_cognitive_state(
         projection=_projection,
         anchor=_anchor,
     )
+
+
+class _CogPacketEvt(TypedDict):
+    """CR-R1.1（审查项10）: packet telemetry 事件显式键型.
+
+    替代裸 dict[str, str|int] 联合——TypedDict 使 **_evt 展开时逐参数
+    类型可检（emit_cognitive_event 具名签名对齐），消除 24 处 union 报错。
+    """
+
+    data_dir: str
+    session_id: str
+    round_no: int
+    goal_id: str
+    state_revision: int
+    hot_tokens: int
+    warm_tokens: int
+    cold_ref_count: int
+    packet_tokens: int
+    mode: str
+    configured_mode: str
+    promoted: bool
+
+
+@dataclass(slots=True)
+class CognitivePacketOutcome:
+    """packet 装配产物（enforce header 聚合 / shadow 平铺 + anchor 位裁决）."""
+
+    agg: str = ""
+    agg_anchor: str = ""
+
+
+def run_cognitive_packet(
+    settings: Any,
+    *,
+    inject_parts: list[Any],
+    packet_parts: list[Any],
+    sem_state: Any,
+    anchor: str,
+    tier_on: bool,
+    enforce: bool,
+    sid: str,
+    env: Any,
+    mode: str,
+    promoted: bool,
+) -> CognitivePacketOutcome:
+    """决策包装配 + packet telemetry（B4-C4-01 第 3 步；语义原样迁自 build.py）.
+
+    - CR-R1（tasks 3.2）header 先行：Barrier 通过即含投影前导，空 slots 不抑制
+      header；header+slots 合并单条聚合条（header 在前，沿 P1 形态）；header 已含
+      投影 → anchor 位不重复注入（tier 关时投影仍占 anchor 位，旧行为保留）；
+    - CR-R1.1（审查项6）shadow 同构：产物仅 telemetry 度量，prompt 走平铺旧行为；
+    - CR-R1 4.2 生产预算接线：超上界降级仅 HOT（compiler degraded 路径生产可达，
+      不变量⑧）；tier 关/不可用 → 平铺路径 anchor 位（旧行为）；
+    - CR-R1 6.2 telemetry：packet_compile / tier_degraded（_CogPacketEvt 显式
+      键型；归因 CR-R1.1 审查项7：goal_id/state_revision 取 env.identity，round
+      取 current_round_no contextvar，run_id 生产无来源留空——诚实归因不编造）。
+    """
+    _packet = (
+        compile_decision_packet(
+            packet_parts,  # CR-R1.1 批次D: packet 输入面=真实注入面（含持久化 memory_snapshot 投影）
+            sem_state,
+            # CR-R1 4.2: 生产预算接线——超上界降级仅 HOT（compiler degraded
+            # 路径生产可达，不变量⑧）
+            budget_chars=int(getattr(settings, "cog_runtime_packet_budget", 2000)),
+        )
+        if tier_on and compile_decision_packet is not None
+        else None
+    )
+    if _packet is not None:
+        _packet_text = _packet.render()  # header 在前 + tier 槽位（空 slots→header-only）
+        if enforce:  # CR-R1.1（审查项6）: shadow 产物仅 telemetry 度量
+            _agg = ensure_semantic_label(
+                _packet_text, InjectionLayer.STATUS, slot_kind="decision_packet"
+            )
+            _agg_anchor = anchor if not _packet.render_header() else ""
+        else:
+            _agg = "\n\n".join(  # shadow: prompt 走平铺旧行为（不进投影）
+                f"--- [slot:{s if s else 'hint'}] ---\n{c}" for s, c in inject_parts
+            )
+            _agg_anchor = anchor
+        if emit_cognitive_event is not None:  # CR-R1 6.2: packet_compile/tier_degraded
+            _tier_of = lambda _s: str(  # noqa: E731
+                getattr(getattr(_s, "tier", None), "value", "")
+            )
+            _hot_chars = sum(
+                len(getattr(_s, "content", "") or "")
+                for _s in _packet.slots
+                if _tier_of(_s) == "hot"
+            )
+            _warm_chars = sum(
+                len(getattr(_s, "compact_repr", "") or "")
+                for _s in _packet.slots
+                if _tier_of(_s) == "warm"
+            )
+            _cold_n = sum(1 for _s in _packet.slots if _tier_of(_s) == "cold")
+            _ctx_round = 0
+            try:
+                from llm_loop.core.run_context import current_round_no
+
+                _ctx_round = int(current_round_no.get() or 0)
+            except Exception:  # noqa: BLE001 — contextvar 未设按 0
+                _ctx_round = 0
+            _evt = _CogPacketEvt(
+                data_dir=settings.data_dir,
+                session_id=sid,
+                round_no=_ctx_round,
+                goal_id=str(
+                    getattr(getattr(env, "identity", None), "goal_id", "") or ""
+                ),
+                state_revision=int(
+                    getattr(getattr(env, "identity", None), "state_revision", 0) or 0
+                ),
+                hot_tokens=_hot_chars // 4,
+                warm_tokens=_warm_chars // 4,
+                cold_ref_count=_cold_n,
+                packet_tokens=len(_packet_text) // 4,
+                mode=mode,  # Stage 2 P1-4: effective mode（含 allowlist 提升）
+                configured_mode=str(getattr(settings, "cog_runtime_mode", "")),
+                promoted=promoted,
+            )
+            emit_cognitive_event("packet_compile", **_evt)
+            if getattr(_packet, "degraded", False):
+                emit_cognitive_event("tier_degraded", **_evt)
+    else:
+        _agg = "\n\n".join(
+            f"--- [slot:{s if s else 'hint'}] ---\n{c}" for s, c in inject_parts
+        )
+        _agg_anchor = anchor  # 平铺路径：投影/锚点经 anchor 位（旧行为）
+    return CognitivePacketOutcome(agg=_agg, agg_anchor=_agg_anchor)
