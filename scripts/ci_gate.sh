@@ -24,21 +24,40 @@ cd "$(dirname "$0")/.."
 PY=".venv/bin/python"
 MODE="${1:-full}"
 
-echo "═══ [1/4] ruff（R9 提交面零违规检查）═══"
-# 口径（R9-B1）：对 R9 批次提交（eac9b2a..HEAD）涉及 .py 文件零违规【阻断】。
-# 全量口径现状：113 处存量历史遗留（build.py/GATES 等，51 文件非外部层）+ 外部
-# 混合层 dirty 中间态——存量清偿属 Phase 1「main 全绿门禁」范围，届时本步骤
-# 升级为全量阻断。当前附全量统计（信息呈现，不阻断）。
-GATE_BASE="${LFL_GATE_BASE:-eac9b2a}"
-_ruff_files="$(git diff --name-only --diff-filter=d "${GATE_BASE}..HEAD" -- '*.py' | sort -u)"
-if [[ -n "$_ruff_files" ]]; then
-  # shellcheck disable=SC2086
-  "$PY" -m ruff check $_ruff_files
+echo "═══ [1/4] ruff 全量门禁（全量阻断 + 外部层呈现）═══"
+# 口径（R9-B2-P1-05 升级）：`ruff check src tests scripts` 退出码【阻断】——
+# R9 拥有面零违规（B1 时点存量 113 处已于 ae6faca 清偿：R9 面 94 修复 +
+# 外部层只读避让；wrapper 提交窗口内 staged==working，工作区口径即提交口径）。
+# 外部混合层 M/untracked 文件（三分表②/③区）的违规属外部责任面——沿 D-07
+# 区分逻辑：外部文件 = 当前脏 ∧ 未被 R9 提交链触碰（R9_BASE..HEAD）；R9 拥有
+# 面（R9 提交过的文件——含其编辑窗口——及一切干净文件）违规即阻断。R9 编辑
+# 窗口内 staged==working，工作区口径即提交口径（负例实测：R9 文件注入违规
+# 必须阻断，不得因"变脏"误判外部级）。
+R9_BASE="${LFL_R9_BASE:-eac9b2a}"
+_r9_py="$(git diff --name-only --diff-filter=d "${R9_BASE}..HEAD" -- '*.py' | sort -u || true)"
+_ext_py="$(git status --porcelain | awk '$1=="M"||$1=="??"{print $2}' | grep '\.py$' | grep -vxFf <(printf '%s\n' "$_r9_py") || true)"
+_ruff_out="$("$PY" -m ruff check src tests scripts --output-format=concise 2>&1 || true)"
+_vfiles="$(printf '%s\n' "$_ruff_out" | grep -oE '^[^:]+\.py' | sort -u || true)"
+if [ -n "$_vfiles" ]; then
+  _blocked="$(printf '%s\n' "$_vfiles" | grep -vxFf <(printf '%s\n' "$_ext_py") || true)"
+  printf '%s\n' "$_ruff_out" | grep -E '^[^:]+\.py:[0-9]+' | while IFS= read -r ln; do
+    _f="$(printf '%s' "$ln" | cut -d: -f1)"
+    if printf '%s\n' "$_ext_py" | grep -qxF "$_f"; then
+      echo "⚠️  外部级（呈现不阻断）: $ln"
+    fi
+  done
+  if [ -n "$_blocked" ]; then
+    echo "❌ ruff 违规（R9 拥有面，阻断）:"
+    printf '%s\n' "$_ruff_out" | grep -E '^[^:]+\.py:[0-9]+' | while IFS= read -r ln; do
+      _f="$(printf '%s' "$ln" | cut -d: -f1)"
+      printf '%s\n' "$_blocked" | grep -qxF "$_f" && echo "$ln"
+    done
+    exit 1
+  fi
+  echo "（R9 拥有面零违规；上述外部级项属三分表②/③区责任面，外部合流时清偿）"
 else
-  echo "（R9 提交面无 .py 变更）"
+  echo "（全量零违规——src tests scripts 干净）"
 fi
-echo "── ruff 全量统计（存量基线 113，信息呈现不阻断）──"
-"$PY" -m ruff check src tests scripts 2>&1 | tail -1 || true
 
 echo "═══ [2/4] pyright（类型检查 src）═══"
 "$PY" -m pyright
