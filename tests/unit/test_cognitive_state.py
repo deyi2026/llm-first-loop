@@ -14,7 +14,6 @@ from pathlib import Path
 
 import pytest
 
-from llm_loop.cognitive.state import StateEnvelope, StateIdentity
 from llm_loop.cognitive.state import (
     CheckpointPointer,
     ConfirmedFact,
@@ -23,6 +22,8 @@ from llm_loop.cognitive.state import (
     SemanticStateStore,
     SemanticStateVersion,
     SemanticTaskState,
+    StateEnvelope,
+    StateIdentity,
     _is_durable,
     promote_ephemeral,
     rebuild_state,

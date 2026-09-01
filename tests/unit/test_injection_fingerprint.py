@@ -18,7 +18,6 @@ import os
 import re
 from pathlib import Path
 
-import llm_loop.core.loop.build as build_mod
 import llm_loop.core.loop.focus as focus_mod
 import llm_loop.core.prompt_build.stages.injection_cognitive as injection_cog_mod
 from llm_loop.core.cache_health import GATE_NOTE_CONTENT

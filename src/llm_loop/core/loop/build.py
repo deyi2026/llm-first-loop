@@ -31,15 +31,11 @@ from llm_loop.core.history import (
 # 快照文本函数已迁 core/session_snapshot.py（零 llm_loop 依赖叶子模块，R9-P3-01）——
 # 顶层 import 不再触发循环：build→engine 运行时反向边删除（步2/3 断环点），engine→build 正向边保留
 from llm_loop.core.message import Message
-from llm_loop.core.prompt import build_system_prompt
 from llm_loop.core.prompt_build import BuildDecision
 from llm_loop.core.prompt_build.stages.base_assembly import (
     _tool_round_zero_tail as _tool_round_zero_tail,  # re-export：test_build_tool_round_tail 从此导入（零测试改动）
 )
-from llm_loop.core.prompt_build.stages.base_assembly import (
-    run_base_assembly,
-    scrub_provider_view,
-)
+from llm_loop.core.prompt_build.stages.base_assembly import run_base_assembly
 from llm_loop.core.prompt_build.stages.cognitive import (  # B4-C4-01: COG 门控迁独占模块
     _cog_allowlist_hit as _cog_allowlist_hit,  # re-export：tests 三处从此导入（零测试改动）
 )
@@ -47,7 +43,7 @@ from llm_loop.core.prompt_build.stages.cognitive import (
     _cog_freeze_enabled as _cog_freeze_enabled,
 )
 from llm_loop.core.prompt_build.stages.history_pipeline import run_history_pipeline
-from llm_loop.core.prompt_build.stages.ingress_resolution import resolve_ingress
+from llm_loop.core.prompt_build.stages.ingress_resolution import run_ingress_prelude
 from llm_loop.core.prompt_build.stages.injection_cognitive import (  # B4-CLOSE-01 步C3
     _UNSET as _BUDGET_UNSET,
 )
@@ -62,7 +58,6 @@ from llm_loop.core.prompt_build.stages.tail_assembly import (
 )
 from llm_loop.core.prompt_build.stages.tail_assembly import run_tail_assembly
 from llm_loop.core.prompt_build.stages.tail_slot_collect import run_tail_collection
-from llm_loop.core.prompt_build.stages.trace_isolation import run_trace_isolation
 from llm_loop.core.prompt_build.stages.user_truth import (
     run_user_truth_wire,  # noqa: F401 — re-export 兼容面（阶段内部已移 tail_assembly）
 )
@@ -378,68 +373,36 @@ class _BuildMixin:
         tool_round_zero: bool = False,  # 2026-08-21: 工具轮零历史——只发 system+摘要+最近结果
     ) -> list[dict]:
         """构造提交 LLM 的消息序列（system prompt + 记忆注入 + 历史 + 压缩另存）.
-
-        M54: max_chars 可覆盖默认预算（模型窗口感知压缩）；None = 运行时预算（零回归）。
-        P1-10: 窗口锚定——按 provider 固定历史起点（只追加不挤旧, 超预算优先降级中段),
-        前缀稳定命中引擎/服务端缓存; 锚点写入 sess.history_anchors 随会话持久化。
+        M54: max_chars 可覆盖默认预算；None = 运行时预算。P1-10: 窗口锚定——
+        按 provider 固定历史起点，前缀稳定命中缓存；锚点随会话持久化。
         """
-        decision = BuildDecision()  # R9-P4/B4-P1-01: 判定显式化载体（design T5-B），C1-C4 拆分时逐项迁入
-        resolved_label: str = (
-            planned_label
-            if planned_label is not None
-            else self._planned_model_label(model, sess)
-        )
-        provider_id = resolved_label.partition("/")[0] or "default"
-        # err1210 T4.1（spec err1210_locating）: 注入登记旁路重置——每轮 build 覆盖，
-        # 消费后不清除（供审计补查）；纯旁路记录，不向注入产物 dict 添加任何自定义键。
+        decision = BuildDecision()  # R9-P4/B4-P1-01: 判定显式化载体（design T5-B）
+        # 预解析簇 → stages/ingress_resolution.py::run_ingress_prelude
+        # （B4-CLOSE-01 步D；label/anchor/system_prompt 解析 + ingress/泄漏
+        # 隔离/provider 预清洗语义原样；decision 就地演进；旁路重置留调用点）。
+        # err1210 T4.1: 注入登记旁路重置——每轮 build 覆盖，消费后不清除（供审计补查）。
         self._last_build_injections = []
         self._last_build_defer_replayed = False
-        anchors = sess.history_anchors or {}
-        sess_anchor = int(anchors.get(provider_id, 0) or 0)
-        system_prompt = build_system_prompt()
-        # EVO-2026XXXX（spec §5.3.1-1c）: memory 检索注入不再前置——检索结果（top_k 语义/
-        # 关键词召回）随本轮查询变化，前置在 system 之后会每轮改变前缀首段 → 前缀断
-        # （2026-08-18 审计断点归因: 96%→2% 全量失效，delta 仅 614 tokens）。
-        # 改为提交视图尾部追加（GATE_NOTE 模式，转 user），system+稳定历史前缀字节不变。
-        # 入口解析/过期清理 → stages/ingress_resolution.py（BuildInputs 产出段；
-        # 四过滤器链 storage truth 零改动，仅 provider 视图收窄）
-        inputs = resolve_ingress(
-            sess_messages=sess.messages,
+        _pre = run_ingress_prelude(
+            decision=decision,
+            sess=sess,
             memory_msgs=memory_msgs,
+            planned_label=planned_label,
+            model=model,
+            planned_model_label=self._planned_model_label,
             current_turn_ref=getattr(self, "_current_turn_ref", None),
             record_action=self._record_action,
-        )
-        base = inputs.base_messages
-        _base_original_indices = inputs.filtered_indices
-        _original_base_index_by_id = inputs.base_index_by_id
-        _r6_ingress_truth = inputs.r6_ingress_truth
-        # agent_trace_leak 4.2 α 挂载点 → stages/trace_isolation.py（KEEP-HARD 薄接线；
-        # 三态分流 D-D1 / fail-open spec 5.4.3-1 语义原样；本体在 core/trace_leak/）
-        base, _base_original_indices = run_trace_isolation(
-            base,
-            base_indices=_base_original_indices,
-            index_by_id=_original_base_index_by_id,
-            sess=sess,
-            current_ingress=_r6_ingress_truth,
-            event_sink=self._event_append,
-            decision=decision,
-        )
-        _leak_downgrade_parts = (
-            decision.trace_isolation["downgrade_parts"]
-            if decision.trace_isolation
-            else []
-        )
-        # provider 视图预清洗 → stages/base_assembly.py::scrub_provider_view
-        # （B4-CLOSE-01 步B）：缓存遥测剥离 → program 协议边界收敛 →
-        # tool_round_zero 极小窗口；base_original_indices 同步重映射。
-        # 存档/存储原文零改动（仅 provider 提交视图）。
-        _scrub = scrub_provider_view(
-            base=base,
-            base_original_indices=_base_original_indices,
+            event_append=self._event_append,
             tool_round_zero=tool_round_zero,
         )
-        base = _scrub.base
-        _base_original_indices = _scrub.base_original_indices
+        resolved_label = _pre.resolved_label
+        provider_id = _pre.provider_id
+        sess_anchor = _pre.sess_anchor
+        system_prompt = _pre.system_prompt
+        base = _pre.base
+        _base_original_indices = _pre.base_original_indices
+        _r6_ingress_truth = _pre.r6_ingress_truth
+        _leak_downgrade_parts = _pre.leak_downgrade_parts
         # base 装配 → stages/base_assembly.py（interop 注入/门禁预检/快照节流；
         # stable_fp 与 last_snapshot_count 调用点回写 self 面）
         _asm = run_base_assembly(

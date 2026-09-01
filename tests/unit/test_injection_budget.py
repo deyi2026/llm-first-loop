@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from llm_loop.core.injection_labels import (
-    InjectionLayer,
     PROGRAM_APPENDIX_NOTICE,
+    InjectionLayer,
     detect_program_layer,
     reference_has_imperative,
 )
@@ -99,7 +99,7 @@ def test_build_budget_gate_covers_dynamic_appendix_end_to_end(tmp_path):
 
 
 def test_build_budget_gate_also_covers_persisted_program_blocks_when_cognitive_off(tmp_path):
-    from llm_loop.core.injection_labels import render_program_appendix, origin_metadata
+    from llm_loop.core.injection_labels import origin_metadata, render_program_appendix
     from llm_loop.core.message import Message, MessageSource
     from tests.unit.test_injection_fingerprint import _build, _engine
 

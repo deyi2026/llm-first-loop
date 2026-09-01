@@ -16,14 +16,13 @@ from llm_loop.cognitive.compiler import (
     compile_decision_packet,
     semantic_projection,
 )
-from llm_loop.cognitive.state import StateEnvelope
 from llm_loop.cognitive.state import (
     CheckpointPointer,
     SemanticStateStore,
     SemanticTaskState,
+    StateEnvelope,
 )
 from llm_loop.core.loop.err1210 import parse_aggregated_slots
-
 
 # ── 风险点②对照锚点: 规则表逐项断言（tier 先验假设锁定）──
 
