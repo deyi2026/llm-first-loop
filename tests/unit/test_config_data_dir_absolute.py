@@ -9,9 +9,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-import pytest
-
-from llm_loop.config import Settings, _DEFAULT_DATA_DIR, load_settings
+from llm_loop.config import _DEFAULT_DATA_DIR, Settings, load_settings
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 

@@ -6,10 +6,7 @@
 import os
 from pathlib import Path
 
-import pytest
-
 from llm_loop.runtime.resolver import (
-    EffectiveConfig,
     apply_to_environ,
     parse_env_file,
     resolve_effective,

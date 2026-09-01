@@ -9,14 +9,15 @@
 
 from __future__ import annotations
 
+import contextlib
 import re
 from typing import Any
 
+from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.reference_injection import (
     reference_metadata,
     render_reference_frame,
 )
-from llm_loop.core.message import Message, MessageSource
 from llm_loop.memory.store import MemoryStore
 
 _TOKEN_RE = re.compile(r"[\w\u4e00-\u9fff]+", re.UNICODE)
@@ -174,10 +175,8 @@ def build_memory_messages(
 
     if not frames:
         return []
-    try:
+    with contextlib.suppress(Exception):
         store.mark_injected(emitted_entries)
-    except Exception:  # noqa: BLE001 — usage counting is non-critical
-        pass
 
     md = {
         "reference_keys": [f.key for f in frames],

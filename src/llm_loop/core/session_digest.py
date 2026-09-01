@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -88,10 +88,9 @@ class SessionDigest:
         for m in messages:
             if getattr(m, "role", None) != "tool":
                 continue
-            if str(getattr(m, "status", "")) != "success":
-                # 兼容枚举：ToolResultStatus.SUCCESS.value == "success"
-                if getattr(getattr(m, "status", None), "value", None) != "success":
-                    continue
+            # 兼容枚举：ToolResultStatus.SUCCESS.value == "success"
+            if str(getattr(m, "status", "")) != "success" and getattr(getattr(m, "status", None), "value", None) != "success":
+                continue
             if self.append(
                 str(getattr(m, "tool_call_id", "") or ""),
                 str(getattr(m, "tool_name", "") or ""),
@@ -234,7 +233,7 @@ class SessionDigest:
             s = line.strip()
             if s.startswith("[状态:") or s.startswith("[状态 "):
                 return s[: self.CONCLUSION_MAX]
-        first = next((l.strip() for l in content.splitlines() if l.strip()), "")
+        first = next((ln.strip() for ln in content.splitlines() if ln.strip()), "")
         return first[: self.CONCLUSION_MAX]
 
     def _persist(self, block: DigestBlock) -> None:

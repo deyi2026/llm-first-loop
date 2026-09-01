@@ -19,7 +19,6 @@ from llm_loop.core.injection_labels import (
 )
 from llm_loop.core.message import Message, MessageSource
 
-
 PROGRAM_RECOVERY_SLOT = "program_recovery"
 
 

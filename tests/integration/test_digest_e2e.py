@@ -46,7 +46,7 @@ def test_real_message_prefix_invariance():
     """真实对象序列: 轮 N-1 全部块渲染在轮 N 中字节一致（前缀不变式端到端）."""
     d = SessionDigest("e2e-prefix")
     d.update_from_messages([_real_tool_msg("c1", "read_file", "[状态: success] A", )])
-    r1 = d.render()
+    d.render()  # r1 基线渲染仅用于副作用初始化（块渲染稳定性由 block1 断言承担）
     block1 = d._render_block(d._blocks[0])
     d.update_from_messages([_real_tool_msg("c2", "search_files", "[状态: success] B")])
     r2 = d.render()

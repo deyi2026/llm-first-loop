@@ -32,8 +32,8 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from llm_loop.core.injection_budget import (  # noqa: E402
-    BudgetBlock,
     DYNAMIC_APPENDIX_GROUP,
+    BudgetBlock,
     enforce_injection_budget,
 )
 from llm_loop.core.injection_labels import (  # noqa: E402
@@ -352,9 +352,7 @@ def _behavior_gate(b: dict[str, Any], a: dict[str, Any] | None = None) -> bool:
         return False
     if not b["hard_structural_gate_pass"]:
         return False
-    if a and b["completion_rate"] + 0.05 < a["completion_rate"]:
-        return False
-    return True
+    return not (a and b["completion_rate"] + 0.05 < a["completion_rate"])
 
 
 def _calibration_candidate_gate(

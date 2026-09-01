@@ -14,7 +14,7 @@ from enum import Enum
 from llm_loop.llm.providers import ProviderRegistry
 
 
-class InjectionProfile(str, Enum):
+class InjectionProfile(str, Enum):  # noqa: UP042 — StrEnum 的 str()/format() 语义差异敏感，留待 Phase 6+ 结构期评估
     """Recommended future injection density profile (R8 shadow vocabulary)."""
 
     MINIMAL = "minimal"

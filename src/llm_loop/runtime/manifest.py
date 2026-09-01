@@ -169,7 +169,7 @@ def health_identity(data_dir: str | Path | None = None) -> dict:
     }
 
 
-def write_runtime_manifest(service: str, data_dir: "str | Path | None" = None) -> "Path | None":
+def write_runtime_manifest(service: str, data_dir: str | Path | None = None) -> Path | None:
     """R3 便捷落盘: 身份事实 + 配置指纹 + providers 三 hash → runtime_manifest.json.
 
     （2026-08-30 重写——恢复半改工作区丢失的未提交 API；原"无参 write_manifest()"

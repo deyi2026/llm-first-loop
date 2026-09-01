@@ -15,7 +15,6 @@ from pathlib import Path
 
 from llm_loop.core.message import ToolCall
 from llm_loop.llm.client import LLMResponse
-
 from tests.unit.test_err1210_recovery import _mk
 
 # B-G3: "三路径替代策略"建议句式（熔断回执不得再现）

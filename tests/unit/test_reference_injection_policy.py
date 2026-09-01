@@ -100,8 +100,8 @@ def test_reference_frame_first_is_two_lines_repeat_is_zero_or_one_line() -> None
 
 
 def test_reference_frame_command_shaped_history_is_neutralized() -> None:
-    from llm_loop.core.reference_injection import render_reference_frame
     from llm_loop.core.injection_labels import reference_has_imperative
+    from llm_loop.core.reference_injection import render_reference_frame
 
     frame = render_reference_frame(
         tag="experience",

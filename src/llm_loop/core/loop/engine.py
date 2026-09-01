@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import threading
@@ -20,20 +21,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from llm_loop.config import Settings
-from llm_loop.core.injection_labels import (
-    InjectionLayer,
-    origin_metadata,
-
-)
-from llm_loop.core.trace_leak import leak_events
-from llm_loop.core.trace_leak.invariant import (
-    correct_mislabeled_metadata,
-    metadata_satisfies_invariant,
-)
 from llm_loop.core.history import (  # noqa: F401 (history 工具)
     projection_check,
     projection_ver,
     stable_digest,
+)
+from llm_loop.core.injection_labels import (
+    InjectionLayer,
+    origin_metadata,
 )
 
 # M53 拆分: 职责 mixin（signals 信号检查 / runtime 运行时参数 / fallback 模型降级链 / routing 模型路由 / overflow overflow 处理 / tool_exec 工具执行）
@@ -69,6 +64,11 @@ from llm_loop.core.run_context import (
     current_reasoning_effort as _current_reasoning_effort,
 )
 from llm_loop.core.session import SessionStore
+from llm_loop.core.trace_leak import leak_events
+from llm_loop.core.trace_leak.invariant import (
+    correct_mislabeled_metadata,
+    metadata_satisfies_invariant,
+)
 from llm_loop.feedback.honesty import (
     max_iterations_feedback,
     stagnation_feedback,
@@ -79,8 +79,11 @@ from llm_loop.introspection.status import ArchitectureStatusProvider
 from llm_loop.llm.client import GuardRequestContext, LLMClient, StreamDelta
 from llm_loop.llm.errors import LLMError
 from llm_loop.memory.store import MemoryStore
+from llm_loop.tools.prefix_layer import (  # GOAL-20260829-7483e375 T2
+    LayeredPrefixState,
+    build_layered_schemas,
+)
 from llm_loop.tools.registry import ToolRegistry
-from llm_loop.tools.prefix_layer import LayeredPrefixState, build_layered_schemas  # GOAL-20260829-7483e375 T2
 
 logger = logging.getLogger(__name__)
 
@@ -377,14 +380,12 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 )
                 self._fault_feedback("session_persistence", exc)  # selfheal_log side effect only
                 self._record_program_fault("session_persist")
-                try:
+                with contextlib.suppress(Exception):
                     self._record_action(
                         "session_persistence",
                         "fault_observed",
                         f"error={type(exc).__name__};recovery={'recorded' if recovery_note else 'none'}",
                     )
-                except Exception:  # noqa: BLE001 — observability must not block the run
-                    pass
         elif accepted_changed:
             try:
                 self.session.save(sess)
@@ -515,12 +516,10 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             rounds += 1
             # CR-R1.1（审查项7）: 轮次入 contextvar——cognitive telemetry 等 build 期
             # 组件归因 round 用（此前 packet_compile 的 round 恒 0）
-            try:
+            with contextlib.suppress(Exception):
                 from llm_loop.core.run_context import current_round_no
 
                 current_round_no.set(rounds)
-            except Exception:  # noqa: BLE001 — set 失败不阻断主循环
-                pass
             _background_note_active(self, session_id, rounds)
             if self.runtime is not None:
                 self.runtime.reset_round()
@@ -952,7 +951,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                         )
                         if (
                             getattr(self.settings, "prefix_layered", False)
-                            and _tool_eligibility_mode != "enforce"
+                            and _tool_eligibility_mode != "enforce"  # noqa: B023 — settings 派生量 per-run 恒定，晚绑定读值等价；Phase 4 收口
                         ):
                             fallback_schemas = self._layered_tool_schemas(
                                 session_id, user_text
@@ -983,14 +982,12 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                     # that response and only pollutes later turns.  Existing corrections/
                     # status telemetry remains the durable observability path.
                     if inject_msgs:
-                        try:
+                        with contextlib.suppress(Exception):
                             self._record_action(
                                 "model.fallback",
                                 "notice_observed",
                                 f"count={len(inject_msgs)}",
                             )
-                        except Exception:  # noqa: BLE001 — fallback result remains authoritative
-                            pass
                     if fallback_resp is not None:
                         # 降级成功: 响应以新模型运行, 进入后续正常路径
                         resp = fallback_resp
@@ -1129,14 +1126,12 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                             # its final answer, so a prompt message cannot repair that answer.
                             # Keep the discrepancy in LoopResult/UI + action telemetry only;
                             # do not create future conversational authority.
-                            try:
+                            with contextlib.suppress(Exception):
                                 self._record_action(
                                     "declaration.check",
                                     "discrepancy",
                                     verification_note[:200],
                                 )
-                            except Exception:  # noqa: BLE001 — result note remains authoritative
-                                pass
                 break
 
             # ── 行动：执行工具（tool_calls）──
@@ -1349,10 +1344,9 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
                 if m.role != "system":
                     continue
                 md = dict(m.metadata or {})
-                if md.get("injection_kind") == "round_exhaustion_decision":
-                    if not md.get("consumed"):
-                        md["consumed"] = True
-                        m.metadata = md
+                if md.get("injection_kind") == "round_exhaustion_decision" and not md.get("consumed"):
+                    md["consumed"] = True
+                    m.metadata = md
         except Exception:  # noqa: BLE001 — consumption audit must not block delivery
             logger.warning("耗尽消息消费标记异常（fail-open）", exc_info=True)
         # M12 深化 T65: run 完成里程碑自我评估提醒（仅提示不强制，EVAL-03；追加后随会话保存）

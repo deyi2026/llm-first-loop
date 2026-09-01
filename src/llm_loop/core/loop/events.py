@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections.abc import Callable
 from pathlib import Path
@@ -318,14 +319,12 @@ class _EventsMixin:
             )
         except Exception:  # noqa: BLE001 — deterministic repair failure stays out of prompt
             logger.debug("中断对账修复异常（fail-open）", exc_info=True)
-            try:
+            with contextlib.suppress(Exception):
                 self._record_action(
                     "run.interruption_recovery",
                     "repair_failed",
                     "reason=exception;prompt_chars=0",
                 )
-            except Exception:  # noqa: BLE001 — observability must not break the run
-                pass
 
     def _persist_long_answer(self, session_id: str, final_answer: str) -> str:
         """EVO-20260820-5bf342ae ②: 长回答（>8000 chars）落盘并附路径（信息零丢失）.

@@ -14,6 +14,7 @@ _inject_interop_messages / _cache_monitor / _last_snapshot_count / _last_compact
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from typing import TYPE_CHECKING, Any, TypedDict
@@ -640,14 +641,12 @@ class _BuildMixin:
                 for _m in base
                 if id(_m) in _original_base_index_by_id
             ]
-            try:
+            with contextlib.suppress(Exception):
                 self._record_action(
                     "action.prompt_eligibility",
                     "memory_snapshot_retired",
                     f"count={_stale_memory_count}",
                 )
-            except Exception:  # noqa: BLE001 — provider hygiene is already applied
-                pass
         # R8.9: same-human-turn program controls may guide later LLM/tool rounds, but
         # lose automatic prompt authority on the next human ingress.  Legacy unlabelled
         # stagnation/search/overflow/fallback system frames are historical control state
@@ -672,14 +671,12 @@ class _BuildMixin:
                 for _m in base
                 if id(_m) in _original_base_index_by_id
             ]
-            try:
+            with contextlib.suppress(Exception):
                 self._record_action(
                     "action.prompt_eligibility",
                     "program_control_retired",
                     f"count={_expired_program_control_count}",
                 )
-            except Exception:  # noqa: BLE001 — provider hygiene is already applied
-                pass
         # INJECTION-GOVERNANCE R4: persisted recovery is audit history, not future
         # executable context.  New recovery never enters sess.messages; this filter retires
         # pre-R4 durable recovery blocks without mutating storage/event truth.
@@ -691,14 +688,12 @@ class _BuildMixin:
                 for _m in base
                 if id(_m) in _original_base_index_by_id
             ]
-            try:
+            with contextlib.suppress(Exception):
                 self._record_action(
                     "action.program_recovery",
                     "stale_history_filtered",
                     f"count={_stale_recovery_count}",
                 )
-            except Exception:  # noqa: BLE001 — provider-view hygiene is already applied
-                pass
         # agent_trace_leak 4.2: α 挂载点——user 消息投影进 provider 视图前泄漏检测
         # （纯 metadata 单遍，≤1ms；fail-open；处置仅视图层：失真消息剔除，
         # 会话存储原文零改动，spec 5.4.1-3）。
@@ -1196,7 +1191,7 @@ class _BuildMixin:
         # 连续 (compacted 且 anchor_moved) 计数 → 达阈值进入 breaker（冻结压缩+锚点）。
         # chars_total 用锚定视图口径（实际提交量——锚点压缩只前移锚点不删 sess.messages，
         # 全量口径会让压力永不解除）。
-        try:
+        with contextlib.suppress(Exception):
             _view_start = min(sess_anchor, len(sess.messages))
             self._cache_monitor.note_build_result(
                 compacted=self._last_history_compacted,
@@ -1208,8 +1203,6 @@ class _BuildMixin:
                 session_id=sess.session_id,
                 model_ref=resolved_label,
             )
-        except Exception:  # noqa: BLE001 — fail-open
-            pass
         # INJECTION-GOVERNANCE R8.8: Evidence Ledger/Manifest remains durable and
         # queryable through list/search/read_evidence, but the recovery index itself no
         # longer has automatic prompt eligibility. This also closes the old R2 bypass.
@@ -1262,14 +1255,12 @@ class _BuildMixin:
             if _r6_ingress_truth is not None and _pr_turn_ref == _turn_ref:
                 _inject_parts.append((PROGRAM_RECOVERY_SLOT, _pending_recovery.content))
             else:
-                try:
+                with contextlib.suppress(Exception):
                     self._record_action(
                         "action.program_recovery",
                         "dropped_without_user_boundary",
                         f"recovery_turn_ref={_pr_turn_ref}; current_turn_ref={_turn_ref}",
                     )
-                except Exception:  # noqa: BLE001 — safe drop already applied
-                    pass
         if not _persisted_ok and memory_msgs:
             # fail-open 回退: 持久化失败（engine 异常路径）→ 兜底收集进聚合
             # （P1 9.1: 旧独立 wrap+append 撤销——保尾部连续 user ≤1；memory 非消费槽）
@@ -1303,7 +1294,7 @@ class _BuildMixin:
             # parts（tail 视图消费面门控；存储/事件真相不动，retrieval plane
             # 保留一切）。shadow 态 would_inject 计数留痕。
             if _tip_orig and any(_m is _x for _x in _tip_orig):
-                try:
+                with contextlib.suppress(Exception):
                     from llm_loop.core.loop.input_authorization import (
                         current_latent_channel_mode,
                     )
@@ -1317,8 +1308,6 @@ class _BuildMixin:
                             f"mode={_lat_mode}"
                         ),
                     )
-                except Exception:  # noqa: BLE001 — 观测 fail-open
-                    pass
                 continue
             _d = _m.to_llm_dict()
             if _d.get("role") == "system":
@@ -1520,14 +1509,12 @@ class _BuildMixin:
                 _content, slot_kind=str(_slot or "")
             )
             if _eligible_layer is None:
-                try:
+                with contextlib.suppress(Exception):
                     self._record_action(
                         "action.prompt_eligibility",
                         "unknown_producer_denied",
                         f"slot={str(_slot or '<none>')[:64]}",
                     )
-                except Exception:  # noqa: BLE001 — deny decision already applied
-                    pass
                 continue
             _eligible_inject_parts.append(
                 (
@@ -1546,15 +1533,13 @@ class _BuildMixin:
         # 不阻断——注入位置 P1-10 缓存前缀零破坏）。leak_downgrade 槽键已从
         # _known_slots 移除（D-G2：allowlist 外旁路身份退役；on 回滚态产物触发
         # overreach 观测事件 = 回滚通道使用审计留痕）。
-        try:
+        with contextlib.suppress(Exception):
             from llm_loop.core.trace_leak.leak_events import current_quarantine_mode
 
             if _leak_downgrade_parts and current_quarantine_mode() in ("on", "shadow"):
                 _inject_parts = list(_inject_parts) + [
                     (slot, content) for slot, content in _leak_downgrade_parts
                 ]
-        except Exception:  # noqa: BLE001 — 开关读取失败 fail-open 不回喂（off 语义）
-            pass
         try:
             _known_slots = {
                 str(SlotKind.INTEROP),
@@ -1610,7 +1595,7 @@ class _BuildMixin:
                 if not _mem_authorized:
                     # 未授权零投影（E-G1：automatic memory chars=0）；shadow 计数
                     if _lat_mode == "shadow":
-                        try:  # noqa: SIM105 — 观测 fail-open
+                        with contextlib.suppress(Exception):
                             self._record_action(
                                 "action.latent_channel",
                                 "memory_would_inject",
@@ -1619,8 +1604,6 @@ class _BuildMixin:
                                     "reason=unauthorized_shadow_count"
                                 ),
                             )
-                        except Exception:  # noqa: BLE001 — 观测 fail-open
-                            pass
                     continue
                 _c = str(getattr(_m, "content", "") or "")
                 if _c.strip():
@@ -1642,14 +1625,12 @@ class _BuildMixin:
                         _packet_parts.append(("memory_authorized", _labeled))
                         _packet_keys.append(f"packet-memory:{_packet_memory_seq}")
                         _packet_memory_seq += 1
-                        try:  # noqa: SIM105 — 审计 fail-open
+                        with contextlib.suppress(Exception):
                             self._record_action(
                                 "action.memory_authorization",
                                 "authorized_retrieval_inject",
                                 f"chars={len(_labeled)}",
                             )
-                        except Exception:  # noqa: BLE001 — 审计 fail-open
-                            pass
         # ── P1 统一聚合器（9.1）: 四槽 parts → 单条 user；sidecar 单 AGGREGATED entry ──
         # 尾部连续 user 恒 ≤1（1210 结构性消除）；聚合失败 fail-open 降级零注入（不阻断构建）
         # Cognitive Runtime（tasks 2.3/2.5/2.6，spec 5.2/5.1.1-3b）:
@@ -1835,14 +1816,12 @@ class _BuildMixin:
                 # build_task_anchor 本体保留：审计/压缩热卡等 retrieval 用途
                 # 不动，仅注入消费面退出）；shadow 态 would_inject 计数留痕。
                 if _anchor:
-                    try:  # noqa: SIM105 — 观测 fail-open（E-5.1 退出留痕）
+                    with contextlib.suppress(Exception):
                         self._record_action(
                             "action.latent_channel",
                             "anchor_would_inject" if _lat_mode == "shadow" else "anchor_exited",
                             f"chars={len(_anchor)};mode={_lat_mode}",
                         )
-                    except Exception:  # noqa: BLE001 — 观测 fail-open
-                        pass
                     _anchor = ""
                 if _projection and _cog_enforce:  # CR-R1.1（审查项6）: shadow 投影仅度量不进 prompt
                     if _anchor and bool(
@@ -1959,12 +1938,10 @@ class _BuildMixin:
                 if len(_recovery_render_parts) > 1:
                     # Closed runtime slot should make this unreachable; latest wins defensively.
                     _recovery_render_parts = [_recovery_render_parts[-1]]
-                    try:
+                    with contextlib.suppress(Exception):
                         self._record_action(
                             "action.program_recovery", "duplicate_suppressed", "count>1"
                         )
-                    except Exception:  # noqa: BLE001
-                        pass
                 if _recovery_keys:
                     _inject_pairs = [
                         (_part, _key)
@@ -2109,12 +2086,10 @@ class _BuildMixin:
                         "build: R6 user-truth wire invariant 未能投影（%s），保持原 payload 供上层拒绝/诊断",
                         _r6.violation,
                     )
-                    try:
+                    with contextlib.suppress(Exception):
                         self._record_action(
                             "action.user_truth_wire", "violation", _r6.violation
                         )
-                    except Exception:  # noqa: BLE001 — invariant telemetry fail-open
-                        pass
                 elif _r6.changed:
                     _seg_sources: list[tuple[str, str]] = []
                     for _entry in self._last_build_injections:
@@ -2134,14 +2109,12 @@ class _BuildMixin:
                         )
                     ]
                     _r6_applied = True
-                    try:
+                    with contextlib.suppress(Exception):
                         self._record_action(
                             "action.user_truth_wire",
                             "projected",
                             f"absorbed={len(_r6.absorbed_indices)}; envelope_idx={_r6.envelope_index}",
                         )
-                    except Exception:  # noqa: BLE001 — invariant telemetry fail-open
-                        pass
             except Exception:  # noqa: BLE001 — do not silently rewrite user text on error
                 logger.exception("build: R6 user-truth projection 异常，保持原 payload")
 
@@ -2262,7 +2235,7 @@ class _BuildMixin:
         # "关键事实帧缺失 => warn" check is no longer a valid health signal.  Record the
         # actual compact-view statistics instead; search_archive remains the retrieval path
         # advertised by the stable system prompt.
-        try:
+        with contextlib.suppress(Exception):
             _compressed = locals().get("_compressed_this_build", False)
             if _compressed:
                 _built_chars = sum(len(m.get("content", "")) for m in built)
@@ -2286,6 +2259,4 @@ class _BuildMixin:
                     anchor=build_task_anchor(self._focus.anchor_sess),
                     data_dir=self.settings.data_dir,
                 )
-        except Exception:  # noqa: BLE001
-            pass
         return built

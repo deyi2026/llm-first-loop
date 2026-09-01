@@ -122,9 +122,7 @@ def _is_human_boundary(message: Any) -> bool:
     text = _content(message).lstrip()
     if text.startswith(_LEGACY_PROGRAM_USER_PREFIXES):
         return False
-    if detect_program_layer(text) is not None:
-        return False
-    return True
+    return detect_program_layer(text) is None
 
 
 def render_identity_summary_placeholder(count: int) -> str:

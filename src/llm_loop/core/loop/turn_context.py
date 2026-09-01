@@ -10,6 +10,7 @@ experience 类 x10），根因 = 检索挂 round 循环内 + 尾部 8 条文本�
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
 from typing import TYPE_CHECKING, Any
@@ -66,7 +67,7 @@ class _TurnContextMixin:
         # 上存活，真实跨 compact/restart 的 seen SoT 仍是持久 message metadata。
         if getattr(sess, "_memory_reference_checked_turn_ref", None) == turn_ref:
             return []
-        setattr(sess, "_memory_reference_checked_turn_ref", turn_ref)
+        sess._memory_reference_checked_turn_ref = turn_ref
         for _m in getattr(sess, "messages", []) or []:
             _md = getattr(_m, "metadata", None) or {}
             if (
@@ -102,14 +103,12 @@ class _TurnContextMixin:
                 auto_turns=_auto_turns,
             )
         if not _policy.allow_catalog:
-            try:
+            with contextlib.suppress(Exception):
                 self._record_action(
                     "action.reference_auto_gate",
                     "suppressed",
                     f"source=memory;human_turn={_policy.human_turn_no};task_switch=0",
                 )
-            except Exception:  # noqa: BLE001 — telemetry must not affect the run
-                pass
             return []
         _seen = seen_injection_set(getattr(sess, "messages", []) or [])
         _suppressed: list[dict[str, str]] = []
@@ -125,14 +124,12 @@ class _TurnContextMixin:
                 suppressed_out=_suppressed,
             )
             for _dup in _suppressed:
-                try:
+                with contextlib.suppress(Exception):
                     self._record_action(
                         "injection_duplicate_suppressed",
                         "suppressed",
                         f"source={_dup.get('source', 'memory')};ref={_dup.get('ref', '')};key={_dup.get('key', '')}",
                     )
-                except Exception:  # noqa: BLE001 — telemetry fail-open
-                    pass
         except Exception as exc:  # noqa: BLE001 — 记忆失败不阻塞（FR-MEM-03）
             # R8.10/E33: memory backend faults stay observable/retrievable; they are not
             # semantic memory and must never become a current-turn memory_snapshot prompt.

@@ -9,11 +9,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from llm_loop.core.message import Message, MessageSource
+from llm_loop.core.message import Message, MessageSource, ToolCall
 from llm_loop.core.prompt_eligibility import PROGRAM_FINAL_PROTOCOL_BOUNDARY
 from llm_loop.llm.client import LLMResponse
-from llm_loop.core.message import ToolCall
-
 from tests.unit.test_err1210_recovery import _mk, _resp
 
 

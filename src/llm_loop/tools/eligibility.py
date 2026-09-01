@@ -9,10 +9,9 @@ unregistered merely to save prompt tokens.
 from __future__ import annotations
 
 import importlib.util
-import re
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable
-
+from typing import Any
 
 CORE_TOOL_ORDER: tuple[str, ...] = (
     "edit_file",

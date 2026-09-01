@@ -22,9 +22,10 @@ import hashlib
 import json
 import re
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 SCHEMA_VERSION = "r0-injection-baseline-v2"
 DEFAULT_TARGETS: tuple[tuple[str, str], ...] = (

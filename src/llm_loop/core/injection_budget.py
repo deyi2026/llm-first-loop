@@ -11,13 +11,14 @@ product constant. R7/L3 A/B may change it later. Operators can override it with
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Any, Sequence
+from typing import Any
 
 from llm_loop.core.injection_labels import (
-    InjectionLayer,
     PROGRAM_APPENDIX_NOTICE,
+    InjectionLayer,
     detect_program_layer,
     infer_layer,
 )

@@ -5,7 +5,6 @@ import json
 import sys
 from pathlib import Path
 
-
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "analysis_injection_baseline.py"
 spec = importlib.util.spec_from_file_location("analysis_injection_baseline", SCRIPT)
 assert spec and spec.loader

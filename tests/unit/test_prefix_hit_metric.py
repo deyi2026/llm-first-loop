@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
@@ -21,7 +20,7 @@ def _run_trace(tmp: Path, messages: list[dict], sess: str = "s1", model: str = "
     _trace_payload_fingerprint(
         {"messages": messages, "tools": []}, messages, session_id=sess, provider="p", model=model
     )
-    lines = [l for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
     return json.loads(lines[-1])
 
 
@@ -30,14 +29,14 @@ def test_prefix_hit_pure_append(tmp_path):
     m1 = [{"role": "system", "content": "S"}, {"role": "user", "content": "U1"}]
     m2 = m1 + [{"role": "assistant", "content": "A"}, {"role": "user", "content": "U2"}]
     _run_trace(tmp_path, m1)
-    r2 = _run_trace(tmp_path, m2)  # 注: _run_trace 内 pop 清状态——需绕过
+    _run_trace(tmp_path, m2)  # 注: _run_trace 内 pop 清状态——需绕过
     # 状态被 pop 后第二轮无 prev → 无 prefix 字段；改为连续调用验证
     _PREFIX_TRACE_STATE.pop(("s2", "m1"), None)
     p = tmp_path / "t2.jsonl"
     os.environ["LLM_PAYLOAD_TRACE_PATH"] = str(p)
     _trace_payload_fingerprint({"messages": m1, "tools": []}, m1, session_id="s2", provider="p", model="m1")
     _trace_payload_fingerprint({"messages": m2, "tools": []}, m2, session_id="s2", provider="p", model="m1")
-    last = json.loads([l for l in p.read_text(encoding="utf-8").splitlines() if l.strip()][-1])
+    last = json.loads([ln for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()][-1])
     assert last["prefix_hit_msgs"] == 2, "m2 前两条与 m1 完全一致 → 公共前缀=2"
     assert last["prefix_hit_chars"] == len("S") + len("U1")
 

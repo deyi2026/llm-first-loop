@@ -34,7 +34,7 @@ FATAL_TAG = "FATAL_RUNTIME_IDENTITY_MISMATCH"
 class RuntimeIdentityError(RuntimeError):
     """enforce 模式下 identity 违规。message 为完整 fatal 报文。"""
 
-    def __init__(self, report: "IdentityReport") -> None:
+    def __init__(self, report: IdentityReport) -> None:
         self.report = report
         super().__init__(report.to_fatal_text())
 
@@ -136,7 +136,7 @@ def check_identity(mode: str | None = None) -> IdentityReport:
     return report
 
 
-def enforce_identity(workspace: "Path | None" = None) -> IdentityReport:
+def enforce_identity(workspace: Path | None = None) -> IdentityReport:
     """R1 服务入口严格守卫（2026-08-30 重写——半改工作区丢失的未提交 API）.
 
     与 check_identity 的差异：除模块归属核验（resolve(llm_loop) ∈ workspace/src）

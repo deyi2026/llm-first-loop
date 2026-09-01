@@ -20,8 +20,7 @@ _RETIRED_FUNCTIONS = (
 
 
 def _iter_py_files():
-    for path in _SRC_ROOT.rglob("*.py"):
-        yield path
+    yield from _SRC_ROOT.rglob("*.py")
 
 
 def test_retired_prompt_functions_have_no_production_call_sites():

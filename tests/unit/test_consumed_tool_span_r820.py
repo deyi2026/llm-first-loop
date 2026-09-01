@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from llm_loop.config import Settings
 from llm_loop.core.episode_history import (
     CONSUMED_TOOL_SPAN_REF_KEY,
     backfill_consumed_tool_spans,
@@ -13,7 +14,6 @@ from llm_loop.core.session import SessionStore
 from llm_loop.introspection.search import RecordSearcher
 from llm_loop.llm.client import LLMResponse
 from llm_loop.memory.episode import EpisodeStore, stable_tool_span_ref
-from llm_loop.config import Settings
 from llm_loop.tools.registry import ToolRegistry
 
 

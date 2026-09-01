@@ -7,8 +7,9 @@ inside one provider-legal user envelope.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
 from llm_loop.core.injection_labels import InjectionLayer, detect_program_layer
 
@@ -52,9 +53,7 @@ def _is_human_user(message: Any) -> bool:
     if layer and layer != InjectionLayer.USER_INSTRUCTION.value:
         return False
     content = str(_attr(message, "content", "") or "")
-    if is_program_user_content(content):
-        return False
-    return True
+    return not is_program_user_content(content)
 
 
 def is_program_user_content(content: str) -> bool:

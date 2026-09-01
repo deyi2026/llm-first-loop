@@ -29,7 +29,6 @@ from llm_loop.core.injection_labels import (
     infer_layer,
     neutralize_reference_frame,
     origin_metadata,
-    render_program_appendix,
 )
 from llm_loop.core.message import Message, MessageSource, ToolCall
 

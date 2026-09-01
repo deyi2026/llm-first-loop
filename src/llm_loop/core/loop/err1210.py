@@ -32,10 +32,9 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-
+from llm_loop.core.message import Message
 from llm_loop.event_log.model import EVENT_PROGRAM_RECOVERY
 from llm_loop.llm.errors import LLMError, LLMHTTPError, parse_provider_error_code
-from llm_loop.core.message import Message, MessageSource
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

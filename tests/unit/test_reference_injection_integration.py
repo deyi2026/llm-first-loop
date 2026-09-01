@@ -16,7 +16,7 @@ def _human(text: str) -> Message:
 
 
 def test_memory_front_k_gate_skips_retrieval_after_k() -> None:
-    from tests.unit.test_memory_turn_snapshot import _MemStore, _engine, _entry, _snapshots
+    from tests.unit.test_memory_turn_snapshot import _engine, _entry, _MemStore, _snapshots
 
     class CountingStore(_MemStore):
         def __init__(self, entries):
@@ -45,7 +45,7 @@ def test_memory_front_k_gate_skips_retrieval_after_k() -> None:
 
 
 def test_memory_task_switch_reopens_catalog_with_seen_pointer_only() -> None:
-    from tests.unit.test_memory_turn_snapshot import _MemStore, _engine, _entry, _snapshots
+    from tests.unit.test_memory_turn_snapshot import _engine, _entry, _MemStore, _snapshots
 
     store = _MemStore(
         [
@@ -84,7 +84,7 @@ def test_memory_task_switch_reopens_catalog_with_seen_pointer_only() -> None:
 def test_experience_front_k_gate_and_switch_pointer(tmp_path) -> None:
     """E08: front-K/task-switch can reopen retrieval choice, never automatic catalog prompt."""
     from llm_loop.core.loop.tool_exec import _ToolExecMixin
-    from tests.unit.test_tool_experience_inject import _Stub, _make_exp_dir
+    from tests.unit.test_tool_experience_inject import _make_exp_dir, _Stub
 
     stub = _Stub(True, _make_exp_dir(tmp_path))
     stub.settings.reference_auto_turns = 3
@@ -134,7 +134,7 @@ def test_compaction_keeps_real_user_anchor_not_summary_echo() -> None:
 
 def test_eighteen_repeat_memory_hits_yield_one_full_snapshot() -> None:
     """09c44093 trap: x18 repeated stable ref -> exactly one full frame per session."""
-    from tests.unit.test_memory_turn_snapshot import _MemStore, _engine, _entry, _snapshots
+    from tests.unit.test_memory_turn_snapshot import _engine, _entry, _MemStore, _snapshots
 
     class CountingStore(_MemStore):
         def __init__(self, entries):
@@ -360,7 +360,7 @@ def test_compaction_archive_pointer_has_retrievable_original(tmp_path) -> None:
 
 def test_memory_same_call_duplicate_id_emits_one_full_frame() -> None:
     from llm_loop.memory.retrieve import build_memory_messages
-    from tests.unit.test_memory_turn_snapshot import _MemStore, _entry
+    from tests.unit.test_memory_turn_snapshot import _entry, _MemStore
 
     entry = _entry("m1", "database migration runbook")
 
@@ -382,7 +382,7 @@ def test_memory_same_call_duplicate_id_emits_one_full_frame() -> None:
 def test_experience_same_call_duplicate_ref_emits_once(tmp_path) -> None:
     """E08: duplicate experience candidates are not even queried on the automatic path."""
     from llm_loop.core.loop.tool_exec import _ToolExecMixin
-    from tests.unit.test_tool_experience_inject import _Stub, _make_exp_dir
+    from tests.unit.test_tool_experience_inject import _make_exp_dir, _Stub
 
     stub = _Stub(True, _make_exp_dir(tmp_path))
     stub.messages.append(_human("抓取页面"))

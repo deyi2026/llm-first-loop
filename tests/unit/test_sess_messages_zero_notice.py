@@ -12,7 +12,6 @@ from llm_loop.core.message import ToolCall
 from llm_loop.core.prompt_eligibility import PROGRAM_FINAL_PROTOCOL_BOUNDARY
 from llm_loop.llm.client import LLMResponse
 from llm_loop.llm.errors import LLMError, LLMHTTPError
-
 from tests.unit.test_err1210_recovery import _mk, _resp
 
 # B-G5 扫描口径: 程序创作通知标记（runtime notice 类；占位符与工具回执事实不在此列）

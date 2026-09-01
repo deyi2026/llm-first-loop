@@ -11,7 +11,6 @@ import pytest
 
 from llm_loop.runtime.identity import (
     FATAL_TAG,
-    IdentityReport,
     RuntimeIdentityError,
     check_identity,
     compute_identity,

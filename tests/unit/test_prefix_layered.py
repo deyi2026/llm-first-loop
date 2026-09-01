@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from types import SimpleNamespace as NS
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
@@ -30,7 +30,7 @@ def _make_tool(name: str, desc: str, required: list[str] | None = None, props: i
     if required:
         for r in required:
             props_d[r] = {"type": "string", "description": "必填字段说明" * 6}
-    return NS(
+    return SimpleNamespace(
         name=name,
         description=desc,
         parameters={"type": "object", "properties": props_d, "required": required or []},
@@ -128,9 +128,9 @@ class TestEscapeHatch:
 
 class TestZeroRegression:
     def test_prefix_layered_default_off(self):
-        from llm_loop.config import Settings
-
         import os
+
+        from llm_loop.config import Settings
         os.environ.pop("PREFIX_LAYERED", None)
         s = Settings.__dataclass_fields__["prefix_layered"].default if hasattr(
             Settings, "__dataclass_fields__"

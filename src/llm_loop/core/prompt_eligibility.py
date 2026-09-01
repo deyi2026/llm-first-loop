@@ -178,6 +178,4 @@ def current_turn_program_prompt_eligible(
     # Pre-R8.9 declaration reminders were program-generated as role=user without
     # metadata.  Match the exact historical sentence rather than the generic label so a
     # human discussing "[声明提醒]" remains ordinary user truth.
-    if role in {"user", "system"} and content.startswith(_LEGACY_DECLARATION_REMINDER_PREFIX):
-        return False
-    return True
+    return not (role in {"user", "system"} and content.startswith(_LEGACY_DECLARATION_REMINDER_PREFIX))

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from types import SimpleNamespace
 
 from llm_loop.config import Settings
@@ -212,15 +213,13 @@ def test_index_failure_does_not_mark_or_retire_episode():
             raise OSError("disk full")
 
     sess = Session(session_id="sid-fail", messages=[_user("Q"), _final("A")])
-    try:
+    with contextlib.suppress(OSError):
         index_current_completed_episode(
             _FailStore(),  # type: ignore[arg-type]
             sess,
             turn_ref=0,
             final_answer_index=1,
         )
-    except OSError:
-        pass
     assert all(RESOLVED_EPISODE_REF_KEY not in m.metadata for m in sess.messages)
     assert provider_view_without_resolved_episodes(sess.messages) == sess.messages
 

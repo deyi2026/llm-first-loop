@@ -71,9 +71,11 @@ def test_replay_last_wins_and_badline_skip(store: TaskStore, tmp_path: Path):
 def test_no_change_update_writes_nothing(store: TaskStore, tmp_path: Path):
     t = _mk(store)
     f = tmp_path / "tasks" / "G1.jsonl"
-    n0 = len(open(f, encoding="utf-8").readlines())
+    with open(f, encoding="utf-8") as fh:
+        n0 = len(fh.readlines())
     store.update("G1", t.task_id)  # 全 None
-    assert len(open(f, encoding="utf-8").readlines()) == n0
+    with open(f, encoding="utf-8") as fh:
+        assert len(fh.readlines()) == n0
 
 
 # ---------- 状态机 ----------

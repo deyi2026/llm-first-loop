@@ -2,7 +2,9 @@
 
 覆盖: 打标规则全分支 / 端点开关 / 幂等 / 原列表不可变 / 注入段 summary。
 """
-import sys, os
+import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 from llm_loop.cognitive.cache_tags import (

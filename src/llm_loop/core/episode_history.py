@@ -64,15 +64,11 @@ def is_consumed_tool_span_message(message: Message) -> bool:
 def provider_message_visible(message: Message) -> bool:
     """Return whether one persisted message belongs in default provider history."""
 
-    if is_consumed_tool_span_message(message):
-        return False
-    if is_resolved_episode_message(message):
-        # R8.22: a historical user turn does not keep prompt authority merely
-        # because its text contains standing-rule language.  Exact source text
-        # remains durable in EpisodeStore and can be hydrated on demand.
-        # ``resolved_episode_keep_provider`` is now legacy storage metadata only.
-        return False
-    return True
+    # R8.22: a historical user turn does not keep prompt authority merely
+    # because its text contains standing-rule language.  Exact source text
+    # remains durable in EpisodeStore and can be hydrated on demand.
+    # ``resolved_episode_keep_provider`` is now legacy storage metadata only.
+    return not (is_consumed_tool_span_message(message) or is_resolved_episode_message(message))
 
 
 def provider_view_without_resolved_episodes(messages: list[Message]) -> list[Message]:

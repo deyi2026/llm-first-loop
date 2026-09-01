@@ -22,6 +22,8 @@ if str(ROOT / "src") not in sys.path:
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import contextlib
+
 from llm_loop.config import load_env_file, load_settings
 from llm_loop.llm.client import LLMClient
 from llm_loop.llm.errors import LLMEmptyResponseError, LLMHTTPError
@@ -167,10 +169,8 @@ def run_model(
         out["classification"] = _classification(out)
         return out
     finally:
-        try:
+        with contextlib.suppress(Exception):
             client._client.close()
-        except Exception:
-            pass
 
 
 def main() -> int:
