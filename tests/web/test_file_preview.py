@@ -31,7 +31,10 @@ def test_preview_normal_file(build_test_engine):
 def test_preview_accepts_absolute_path_in_root(build_test_engine):
     """工作区根内的绝对路径可预览（出产物 chips 用绝对路径）."""
     client = _client(build_test_engine)
-    abs_path = os.path.abspath("pyproject.toml")
+    # R9-IMM-02 适配：conftest chdir 沙箱后 cwd≠仓库根，锚定 __file__ 取根内文件绝对路径
+    from pathlib import Path
+
+    abs_path = str(Path(__file__).resolve().parents[2] / "pyproject.toml")
     resp = client.get("/api/v1/files/preview", params={"path": abs_path})
     assert resp.status_code == 200
     assert "llm-first-loop" in resp.json()["content"]

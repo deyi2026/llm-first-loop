@@ -92,12 +92,16 @@ class TestG8KeywordScan:
             "empty_search_reminder_message",
             "overflow_feedback",
         ):
+            # R9-IMM-02 适配：conftest chdir 沙箱后 cwd≠仓库根，锚定 __file__ 定位 src
+            from pathlib import Path
+
+            repo_src = Path(__file__).resolve().parents[2] / "src" / "llm_loop"
             result = subprocess.run(
-                ["rg", "-l", func, "src/llm_loop"],
+                ["rg", "-l", func, str(repo_src)],
                 capture_output=True, text=True,
             )
             files = [f for f in result.stdout.splitlines() if f.strip()]
-            assert files == ["src/llm_loop/feedback/honesty.py"], (
+            assert files == [str(repo_src / "feedback" / "honesty.py")], (
                 f"{func} 出现在生产面: {files}"
             )
 

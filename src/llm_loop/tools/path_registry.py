@@ -48,8 +48,13 @@ def _registry_file() -> Path:
         from llm_loop.core.run_context import workspace_base
 
         return Path(workspace_base()) / "data" / "path_registry.json"
-    except Exception:  # noqa: BLE001 — fail-open
-        return Path("data") / "path_registry.json"
+    except Exception as exc:  # noqa: BLE001 — 上层 _load/_save fail-open 承接
+        # R9-IMM-02（D6）: workspace_base 不可用时禁止静默落入相对路径 "data/"
+        # （cwd=仓库根时即真实 data/，测试隔离洞与数据污染根因）。fail-open 保护
+        # "登记/查询失败不阻断主流程"，不保护"写入落点"的路径决策（MOVE-CONTROL 面）。
+        raise RuntimeError(
+            "workspace_base unavailable; refusing implicit data/ fallback"
+        ) from exc
 
 
 def _normalize_path(path: str) -> str:

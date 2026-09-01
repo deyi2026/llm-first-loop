@@ -119,6 +119,10 @@ def isolated_data_dir(tmp_path, monkeypatch):
     data_dir.mkdir()
     monkeypatch.setenv("DATA_DIR", str(data_dir))
     monkeypatch.setenv("LFL_DATA_DIR", str(data_dir))
+    # R9-IMM-02（D6 双修·测试面纵深防御）: cwd 锁进沙箱——任何残余相对路径写入
+    # （含 path_registry 曾静默回落 "data/" 的洞）都落在 tmp 而非真实仓库 data/。
+    # 与生产面 fallback 抛错独立成立。
+    monkeypatch.chdir(tmp_path)
     return data_dir
 
 
