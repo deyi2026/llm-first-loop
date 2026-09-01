@@ -6,7 +6,8 @@
     "归因": "外部演进配对面缺口：src 侧已入 HEAD（6fad428..2dc9b3b 外部演进链），配对测试更新位于 M60 未提交工作面；M60 于 2026-09-01 16:11-16:13 drill 误提交复位事件中消失（reflog 无法区分外部自清 vs reset 抹除——逐项区分滞留/蒸发不可考，待外部会话三问定损后细化）",
     "owner": "外部演进线（镜像侧代管登记）",
     "登记时点": "2026-09-01",
-    "复核条款": "tasks-b3.md CLOSE-03；事件全档：b3-execution-log.md 事件节"
+    "复核条款": "tasks-b3.md CLOSE-03；事件全档：b3-execution-log.md 事件节",
+    "闸三": "用户裁决 2026-09-01：方案 A（等外部演进合流，63 项自然转绿后 registry 清空）+ deadline = 第 4 批（B4）收口时点；逾期未合流转 B（test(r9) 代收口 63 项 HEAD 化）或 C（跨批挂账逐批 CLOSE 复核），转 B/C 前交用户确认口径。落款：b3-execution-log §10.4；复核承载：tasks-b4 B4-CLOSE-03。"
   },
   "exempt": [
     "tests/integration/test_cognitive_integration.py::TestSinglePipelineAndDegradation::test_single_packet_pipeline_tier_on_and_off",
