@@ -39,14 +39,131 @@ BASELINE_PATH = ROOT / "tests" / "guards" / "function_size_baseline.json"
 # 收录基线的门槛（v2：与三层红线 WARN 下限联动，150 → 120）
 INCLUDE_THRESHOLD = 120
 
+# ── 三层红线（B2-P2-02 / R9-P2-01·02·04，取代 v1 HARD_CAP=2000 硬顶 D10）──
+# 全局层：任意函数 >300 行 FAIL（无豁免通道，超限只能拆）
+GLOBAL_FAIL = 300
+# core 层：core 文件内函数 >200 FAIL；120-150 区间 WARN（guard_report 报告态，
+# 不阻断 CI）；151-200 为合法增长走廊（超 200 即 FAIL）
+CORE_FAIL = 200
+CORE_WARN_LO, CORE_WARN_HI = 120, 150
+# core 文件清单（R9-P2-04 全覆盖口径：旧守卫"只量 engine.py"盲区消除；后续
+# 新域包在此常量追加——数据外置于源码常量而非基线 JSON，因它是"设防面"而非
+# "棘轮值"，变更本身须过 guard(r9) 前缀机检）
+CORE_FILES: tuple[str, ...] = (
+    "src/llm_loop/core/loop/",  # 前缀匹配：整个 loop 域
+    "src/llm_loop/core/history.py",
+    "src/llm_loop/factory.py",
+    "src/llm_loop/tools/registry.py",
+)
+
 # 数值节清单（防篡改层 2 的 HEAD 比对范围）
 NUMERIC_SECTIONS = ("function_lines", "legacy_super_functions", "local_imports")
 
 
-def _measure_functions() -> dict[str, int]:
-    """AST 实测 src/ 下所有函数行数，返回 {key: lines}（R9-DFX-16 单遍解析共享入口）。"""
+def _is_core(rel_key: str) -> bool:
+    """rel_key 形如 'src/llm_loop/core/loop/engine.py::_run_stream_inner'。"""
+    return any(rel_key.startswith(p) or rel_key == p for p in CORE_FILES)
+
+
+def _classify_redlines(
+    measured: dict[str, int], registered_keys: frozenset[str] | None = None
+) -> tuple[list[str], list[str]]:
+    """三层红线分类：返回 (failures, warns)。纯函数——tmp_path 构造树单测直调。
+
+    **红线管辖 = 未登记函数（防新增膨胀）**；已登记函数（function_lines ∪
+    legacy_super_functions）归棘轮管辖（`test_function_lines_ratchet_within_baseline`
+    零增长断言——比红线更严：214 行登记函数长到 215 即红，无需等 300）。
+    legacy 四函数（1702/1126/1004/721）同为登记存量，Phase 6/7 拆分目标
+    （D10 收编延续：v1 硬顶 2000 从不拦 1732 存量——红线语义自始是防新增）。
+    纵深防御：未登记 301 行函数同时触发本红线（FAIL）与
+    `test_new_large_functions_must_be_recorded`（强制登记）——belt + suspenders。
+    """
+    if registered_keys is None:
+        b = _load_baseline()
+        registered_keys = frozenset(b["function_lines"]) | frozenset(b["legacy_super_functions"])
+    failures, warns = [], []
+    for key, lines in measured.items():
+        if key in registered_keys:
+            continue
+        if lines > GLOBAL_FAIL:
+            failures.append(f"  [全局红线>{GLOBAL_FAIL}] {key}: {lines}")
+        elif _is_core(key):
+            if lines > CORE_FAIL:
+                failures.append(f"  [core红线>{CORE_FAIL}] {key}: {lines}")
+            elif CORE_WARN_LO <= lines <= CORE_WARN_HI:
+                warns.append(f"  [core WARN {CORE_WARN_LO}-{CORE_WARN_HI}] {key}: {lines}")
+    return failures, warns
+
+
+def test_global_redline_300():
+    """全局层：任意**非 legacy** 函数 >300 行 FAIL（R9-P2-01a：新增 301 行函数→CI FAIL）。
+
+    已登记函数豁免红线、走棘轮零增长断言（见 _classify_redlines docstring）。
+    """
+    failures, _ = _classify_redlines(_measure_functions())
+    assert not failures, "三层红线违例（拆分是唯一通道，基线不上调）：\n" + "\n".join(failures)
+
+
+def test_core_redline_200():
+    """core 层：CORE_FILES 内函数 >200 FAIL（R9-P2-01a core 面）。"""
+    failures, _ = _classify_redlines(_measure_functions())
+    core_only = [f for f in failures if "core红线" in f]
+    assert not core_only, "core 层违例：\n" + "\n".join(core_only)
+
+
+@pytest.mark.guard_report
+def test_core_warn_report_120_150():
+    """core 层 WARN 区间报告（guard_report marker 独立呈现，不阻断；T3-A 口径）。
+
+    WARN ≠ 违例：120-150 是"审查提醒带"——首行可见于 -m guard_report 运行，
+    CI 常驻报告中呈现（spec §5.3.3-1c 可见性），FAIL 用例默认跑不受影响。
+    """
+    _, warns = _classify_redlines(_measure_functions())
+    if warns:
+        print(f"\ncore 层 WARN（{len(warns)} 处，审查提醒不阻断）：\n" + "\n".join(warns))
+
+
+def test_redline_synthetic_trees(tmp_path):
+    """tmp_path 构造树承载 EARS 断言面（R9-P2-01a/02a 三形态）。
+
+    - 301 行全局函数 → 全局 FAIL
+    - core 文件 201 行函数 → core FAIL
+    - core 文件 130 行函数 → WARN（非 FAIL）
+    - 非 core 文件 250 行函数 → 仅全局面之外合法（<300 不 FAIL 不 WARN）
+    """
+    core = tmp_path / "src/llm_loop/core/loop"
+    other = tmp_path / "src/llm_loop/other"
+    core.mkdir(parents=True)
+    other.mkdir(parents=True)
+
+    def fn(name: str, lines: int) -> str:
+        # 精确 lines 行：def + x=1 + (lines-3) 填充 + return
+        return f"def {name}():\n    x = 1\n" + "    \n" * (lines - 3) + "    return x\n"
+
+    (core / "a.py").write_text(fn("over_global", 301) + "\n\n" + fn("over_core", 201), encoding="utf-8")
+    (core / "b.py").write_text(fn("warn_zone", 130), encoding="utf-8")
+    (other / "c.py").write_text(fn("ok_below_global", 250), encoding="utf-8")
+
+    m = _measure_functions(tmp_path / "src")
+    failures, warns = _classify_redlines(m)
+    fkeys = " ".join(failures)
+    assert "over_global" in fkeys and "全局红线" in fkeys
+    assert "over_core" in fkeys and "core红线" in fkeys
+    assert not any("warn_zone" in f for f in failures)
+    assert any("warn_zone" in w and "WARN" in w for w in warns)
+    assert not any("ok_below_global" in f for f in failures)
+    assert not any("ok_below_global" in w for w in warns)
+
+
+def _measure_functions(root: Path | None = None) -> dict[str, int]:
+    """AST 实测函数行数，返回 {key: lines}（R9-DFX-16 单遍解析共享入口）。
+
+    key 形如 'src/llm_loop/...::name'：真实树以 ROOT/src 为基；tmp_path 构造树
+    传入其 src 目录，key 空间与真实树一致（供三层红线/基线检测器直调）。
+    """
+    base = root if root is not None else SRC
     out: dict[str, int] = {}
-    for p in sorted(SRC.rglob("*.py")):
+    for p in sorted(base.rglob("*.py")):
         if "__pycache__" in str(p):
             continue
         try:
@@ -56,7 +173,7 @@ def _measure_functions() -> dict[str, int]:
         for n in ast.walk(tree):
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 lines = getattr(n, "end_lineno", n.lineno) - n.lineno + 1
-                out[f"{p.relative_to(ROOT).as_posix()}::{n.name}"] = lines
+                out[f"src/{p.relative_to(base).as_posix()}::{n.name}"] = lines
     return out
 
 
