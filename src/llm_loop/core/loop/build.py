@@ -33,7 +33,6 @@ from llm_loop.core.injection_budget import (
 )
 from llm_loop.core.injection_labels import (
     InjectionLayer,
-    detect_program_layer,
     ensure_semantic_label,
 )
 from llm_loop.core.loop.err1210 import (
@@ -72,6 +71,15 @@ from llm_loop.core.prompt_build import BuildAudit, BuildDecision
 from llm_loop.core.prompt_build.stages.authorization import resolve_authorized
 from llm_loop.core.prompt_build.stages.base_assembly import run_base_assembly
 from llm_loop.core.prompt_build.stages.budget_application import apply_injection_budget
+from llm_loop.core.prompt_build.stages.cognitive import (  # B4-C4-01: COG 门控迁独占模块
+    _cog_allowlist_hit as _cog_allowlist_hit,  # re-export：tests 三处从此导入（零测试改动）
+)
+from llm_loop.core.prompt_build.stages.cognitive import (
+    _cog_freeze_enabled as _cog_freeze_enabled,
+)
+from llm_loop.core.prompt_build.stages.cognitive import (
+    resolve_cognitive_gate,
+)
 from llm_loop.core.prompt_build.stages.compaction_audit import run_compaction_audit
 from llm_loop.core.prompt_build.stages.history_budget_prep import run_history_budget_prep
 from llm_loop.core.prompt_build.stages.history_postprocess import run_history_postprocess
@@ -240,67 +248,6 @@ def _tool_round_zero_tail(msgs: list[Message]) -> list[Message]:
     if group_start >= 0:  # 无 user（异常会话）→ 配对组兜底（模板可能拒, 但保协议）
         return msgs[group_start:]
     return msgs[-2:] if n >= 2 else msgs
-
-
-def _cog_freeze_enabled() -> bool:
-    """R8.24-E E-2.1: enforce 冻结开关（LFL_COG_ENFORCE_FREEZE，默认 on）.
-
-    off/false/0/空 视为回滚通道（恢复 promote 必须绑定 E-2.2 重新审批）。
-    """
-    return str(os.environ.get("LFL_COG_ENFORCE_FREEZE", "1")).strip().lower() not in (
-        "",
-        "0",
-        "false",
-        "off",
-    )
-
-
-def _cog_allowlist_hit(settings: Any, sess: Any) -> bool:
-    """Stage 2 allowlist 求值（review R3 fail-closed 强化版）.
-
-    任何失败（空配置/相对路径/sid 空/文件缺失/OSError/超 64KiB/超 256 条/
-    运行用户可写/非 UTF-8/任意有效行非法 session_id）→ False（保持 shadow）。
-    每轮 build 重读——热更语义（删行下一轮生效）。
-
-    P0-1 R3: operator-owned 边界运行时验证——运行用户对文件可写即视为
-    控制面不可信（self-promote 攻击链闭合点：agent 可写文件+可见路径）。
-    绝对路径是必要非充分条件；root 运行时 os.access 恒真，须配合只读
-    挂载/容器部署（见 DESIGN 部署约束）。
-    P0-2 R3: all-valid-or-no-promotion——任意非注释有效行非法（非单个
-    文件名组件/路径穿越/NUL）→ 整份名单 False，不静默跳过坏行。
-    P1-3 R3: bounded read（read(65537) 硬界）——stat 后无界 read 的
-    TOCTOU 免疫，最多读 65537B；严格 UTF-8 decode。
-    """
-    try:
-        path_s = str(getattr(settings, "cog_enforce_file", "") or "")
-        if not path_s:
-            return False
-        if not os.path.isabs(path_s):  # P0-1: 相对路径=配置无效
-            return False
-        sid = str(getattr(sess, "session_id", "") or "")
-        if not sid:
-            return False
-        if os.access(path_s, os.W_OK):  # P0-1 R3: 运行用户可写=控制面越界
-            return False
-        with open(path_s, "rb") as fh:  # P1-3 R3: bounded read 硬界
-            raw = fh.read(65537)
-        if len(raw) > 65536:
-            return False
-        text = raw.decode("utf-8")  # 非 UTF-8 → UnicodeDecodeError → False
-        from llm_loop.core.session import _validate_session_id
-
-        valid: list[str] = []
-        for ln in text.splitlines():
-            s = ln.strip()
-            if not s or s.startswith("#"):
-                continue
-            _validate_session_id(s)  # P0-2 R3: 非法 raise → 整份名单 False
-            valid.append(s)
-        if len(valid) > 256:  # P1-3: 256 有效条目硬上限
-            return False
-        return sid in valid
-    except Exception:  # noqa: BLE001 — P0-2: fail-closed，任何异常→shadow
-        return False
 
 
 def _reasoning_tail_for(
@@ -854,53 +801,21 @@ class _BuildMixin:
         decision.consumed_filtering = _assembly.consumed_filtering
         decision.injection_eligibility = _assembly.injection_eligibility
         # 尾部连续 user 恒 ≤1（1210 结构性消除）；聚合失败 fail-open 降级零注入（不阻断构建）
-        # Cognitive Runtime（tasks 2.3/2.5/2.6，spec 5.2/5.1.1-3b）:
-        # - COG_RUNTIME_TIER_ENABLED 原子切换 tier 分级聚合（在 T1 单管线之上叠加，不新建
-        #   第二条聚合管线；=0 回退平铺原行为零回归，spec 5.2.3-1）
-        # - COG_RUNTIME_ANCHOR_MODE 三态: semantic=投影替代锚点 / anchor=旧行为 / auto=投影
-        #   可用则替代否则回退（design 2.1.3.4 冻结点④）；投影=wrap_injection 的 anchor 位
-        #   前导（决策包 HOT 首行，落在尾部聚合条内，不插前缀区——design 1.2.4 缓存约束）
-        # - COG_RUNTIME_DUAL_SOURCE_GUARD: 检测锚点与投影同轮并存 → 告警剔除锚点（fail-open）
-        # CR-R1（tasks 3.2）: enforce+semantic/auto 时空 slots 亦进块——header-only 注入
-        # （零注入安静轮 decision_visible=True，不变量⑤）；其余模式无 parts 不造空条。
-        _cog_mode_candidate = (
-            str(getattr(self.settings, "cog_runtime_mode", "shadow")).strip().lower()
+        # Cognitive Runtime 门控解析 → stages/cognitive.py（B4-C4-01 第 1 步；design
+        # §2.1.2 #12 独占模块，RETRIEVAL-ONLY，冻结态 promote 禁止）。tier/anchor_mode/
+        # dual_source_guard 语义与 CR-R1 空 slots header-only 不变量（零注入安静轮
+        # decision_visible=True）见该模块；冻结/提升决策入 decision.cog_freeze。
+        _cog = resolve_cognitive_gate(
+            self.settings,
+            sess=sess,
+            built=built,
+            inject_parts_present=bool(_inject_parts),
+            decision=decision,
         )
-        if _cog_mode_candidate not in ("off", "shadow", "enforce"):
-            _cog_mode_candidate = "shadow"
-        # Stage 2（DESIGN-20260901 rev2）: session 级 allowlist 提升——off 硬关前置
-        # （名单不可覆盖 P0-2）；fail-closed 全语义在 _cog_allowlist_hit。
-        # R8.24-E E-D4（E-2.1）: enforce 冻结——LFL_COG_ENFORCE_FREEZE（默认 on）下
-        # ①allowlist 自动 promote 恒不触发（program-owned semantic channel 不得
-        # 自我授权）；②显式/现网 enforce 配置降 shadow（effective mode 恒 ∈
-        # {off, shadow}，E-G4）；off 硬关前置语义不变（off 不可被覆盖）。恢复
-        # promote 走 LFL_COG_ENFORCE_FREEZE=off，且必须绑定重新审批（E-2.2
-        # 五条件触发器——开关回滚 ≠ 直接恢复，见 cognitive-refreeze-conditions.md）。
-        _cog_freeze = _cog_freeze_enabled()
-        if _cog_freeze and _cog_mode_candidate == "enforce":
-            _cog_mode_candidate = "shadow"  # 现网 enforce 会话降 shadow（E-G4）
-        _cog_promoted = False
-        if (
-            _cog_mode_candidate == "shadow"
-            and not _cog_freeze
-            and _cog_allowlist_hit(self.settings, sess)
-        ):
-            _cog_mode_candidate = "enforce"
-            _cog_promoted = True
-        _cog_compute_candidate = (
-            _cog_mode_candidate in ("shadow", "enforce")
-            and str(getattr(self.settings, "cog_runtime_anchor_mode", "auto"))
-            in ("semantic", "auto")
-        )
-        # CR-R1.1a: quiet shadow 也必须进入与 enforce 同构的 cognitive compute
-        # path；否则没有四槽时 shadow 会系统性漏掉 packet/rebuild telemetry。
-        # R2: 即使 cognitive=off 且本轮无新槽，只要 history 中已有 program-origin
-        # 块也必须进入同一个预算门闸，防持久化 memory/experience 绕过总上限。
-        _has_existing_program = any(
-            detect_program_layer(str(_m.get("content") or ""))
-            not in (None, InjectionLayer.USER_INSTRUCTION)
-            for _m in built
-        )
+        _cog_mode_candidate = _cog.mode
+        _cog_promoted = _cog.promoted
+        _cog_compute_candidate = _cog.compute_candidate
+        _has_existing_program = _cog.has_existing_program
         _recovery_render_parts: list[str] = []
         if _inject_parts or _cog_compute_candidate or _has_existing_program:
             try:
