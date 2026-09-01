@@ -2,6 +2,13 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+### R9 结构收口准备：三批默认值切换 + 行为基线固化（2026-09-01）
+- **立即项四件**（refactor/fix）：删除 tests/unit 四源码副本 1994 行死代码（`c6f9f4e`）；path_registry 隔离洞双修——静默 fallback 改抛错 + 测试沙箱 chdir 锁（`5c5df12`）；dev extras/lockfile 可复现安装口径（`69e154b`+`046bd34`）；symlink 探测三态化——edit_file 探测失败也拒写（fail-closed），read_file 如实标注不拒读（`347af8f`+`64beb97`）。
+- **测试工作流**（test/chore）：tier0 冒烟集（338 用例 14.8s 分钟级反馈）+ xdist 并行化（全量 13min→36s，失败集合与串行一致）+ `ci_gate.sh` 一条命令复现 CI 三件套（`0fc28e3`+`65aa515`+`6fb94b0`）。
+- **Phase 0 三批默认值切换**（每批独立可 revert，批间以镜像流量观测回执为门）：`LFL_EVIDENCE_CAPSULE` on→off（`79376ef`，W1 观测：任务完成 7/7、dup 0%）→ `LFL_TOOL_GUIDANCE` on→off（`cfda166`，W2：完成 4/4、失败自恢复全靠事实性回执零引导依赖）→ `CACHE_GUARD_PERF_BLOCK` on→enforce（`6a137ef`，W3：guard 判定 63 条全 ALLOW 零误拦、privacy 硬拦照旧）。
+- **BEHAVIOR-BASELINE-R824 行为基线固化**（`372aae6`）：六道硬门全 PASS（wire 零程序注入/潜语义通道/advisory/capsule/suspect provenance/性能类 BLOCK 全部 chars=0 或 WARN 化）；R8.24 fixed-point 达成；behavior canary 解除，后续结构重构（R9 Phase 1+）以本基线为只读对照。
+- 详见 `docs/r824/BEHAVIOR-BASELINE-R824.md`（复现口径：`uv sync --frozen --extra dev` + `env -u` 七开关干净进程 + `--dist loadfile -n 8`）。
+
 ### 任务接力热卡 + 紧急压缩空转修复（2026-08-26）
 - **任务接力热卡机制**（feat）：用户中途切换意图时，自动生成「热卡」（上一任务关键进度/证据/下一步摘要）注入新上下文——任务交接连续性保留，无需翻档案从头恢复；含单元测试（test_task_hotcard.py）。配套规则：RULE-AI-20 第 7 条「意图切换即时登记」。
 - **紧急压缩空转修复**（fix）：历史压缩预算原先只统计消息正文（content），不含思维链（reasoning_content）与工具调用参数——实测部分会话思维链占比 40%+，导致「提交超模型窗口被守卫拦截 → 紧急压缩判定未超预算不缩历史 → 下轮仍超限再拦截」空转死循环（会话 fb8f8987 连续 3 次紧急压缩后历史体积 300K 纹丝不动）。现改为按全字段（wire 口径）统计，紧急压缩后历史真正缩小，下轮提交恢复。
