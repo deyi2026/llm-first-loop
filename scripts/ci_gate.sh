@@ -73,7 +73,7 @@ fi
 echo "═══ [4/4] pytest 全量门禁（xdist loadfile 并行；提交门禁恒为全量）═══"
 "$PY" -m pytest --dist loadfile -n auto -q
 
-# Phase 2 接线占位：守卫 WARN 汇总（test_arch_guards.py 收编后启用）
-# "$PY" -m pytest tests/unit/test_arch_guards.py -m guard-report
+# Phase 2 接线（B2-P2-08）：守卫 WARN 汇总呈现（不阻断；FAIL 用例已在 [4/4] 全量天然覆盖）
+"$PY" -m pytest tests/unit/test_arch_guards.py -m guard_report -q
 
 echo "✅ ci_gate 全链路通过（ruff + pyright + tier0 预检 + 全量门禁）"

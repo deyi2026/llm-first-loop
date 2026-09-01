@@ -19,9 +19,11 @@ from llm_loop.core.message import ToolCall
 from llm_loop.llm.client import LLMResponse
 
 # ── R9-WF-01 tier0 冒烟集（T9-A 四类准入；标注口径：conftest 路径清单单点打标，──
-#    不侵入测试文件——外部混合层避让约束下的必然选择；Phase 1/2 守卫资产收编后
-#    在此清单追加 test_function_size_guard.py / test_arch_guards.py）
+#    不侵入测试文件——外部混合层避让约束下的必然选择；Phase 2 守卫就绪后
+#    test_arch_guards.py（四检测器全集类）入列）
 TIER0_FILES = (
+    # ⑤ R9 结构守卫全集（三层红线/棘轮/import/cycle——B2-P2-08，T9-A ②）
+    "tests/unit/test_arch_guards.py",
     # ① 六门与开关锚点（行为基线哨兵）
     "tests/unit/test_r824_final_gates.py",
     "tests/unit/test_runtime_zero_prompt.py",
