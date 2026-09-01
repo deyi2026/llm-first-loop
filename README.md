@@ -54,6 +54,26 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 .venv/bin/ruff check src tests && .venv/bin/pyright && .venv/bin/python -m pytest tests/ -q
 ```
 
+## R9 提交流程（机检 + 门禁；spec `r9_arch_refactor` T2-C / R9-P1-03）
+
+R9 重构期（Phase 1-7）所有提交走包装入口——**机检 → 门禁 → commit** 三步全绿才落库：
+
+```bash
+git add <目标文件>                      # 精确暂存（B1 模式，隔离外部混合层）
+bash scripts/r9_commit.sh "<message>"   # 机检(r9_commit_check) + ci_gate + git commit
+```
+
+**commit message 前缀白名单**（机检规则①，白名单外一律拒收）：
+
+| 前缀 | 用途 | 附加机检 |
+|---|---|---|
+| `refactor(r9):` | 纯结构迁移/拆分 | 规则②diff 不得含行为面文件（`src/llm_loop/cache_guard/`、`src/llm_loop/core/trace_leak/`、`docs/r824/*.md`）；规则③body 必含等价性回执行 `wire-fixtures: PASS` |
+| `guard(r9):` | 守卫文件/基线变更 | 唯一允许触碰 `tests/unit/test_arch_guards.py`、`tests/unit/test_function_size_guard.py`、`tests/guards/*.json` 的前缀（规则④防篡改） |
+| `switch(hN):` | 三开关默认值切换 | 规则⑤：三开关源码默认行（`LFL_TOOL_GUIDANCE`/`LFL_EVIDENCE_CAPSULE`/`CACHE_GUARD_PERF_BLOCK`）变更必须此前缀 |
+| `fix(r9)/feat(r9)/chore(r9)/test(r9)/docs(r9):` | 修复/新增/工程/测试/文档 | — |
+
+单条性质提交保证 bisect 可判定（R9-P1-04）；机检为独立脚本形态（不装 git hook——`.git` 与外部会话共享，hook 会波及外部提交）。
+
 ## 功能
 
 - **核心循环**：LoopEngine 五阶段状态机（消息进→理解→行动→真诚回答→记住）
