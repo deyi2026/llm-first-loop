@@ -834,3 +834,40 @@ def test_exemptions_wellformed():
             except ValueError:
                 problems.append(f"  exemptions[{i}].review_deadline 日期格式非法: {dl!r}")
     assert not problems, "豁免条目存在问题：\n" + "\n".join(problems)
+
+
+# ---------------------------------------------------------------------------
+# R9-P5-01 Mixin 不可增棘轮：LoopEngine 基类列表只能缩短（退役），不能新增
+# ---------------------------------------------------------------------------
+
+_ENGINE_REL = "src/llm_loop/core/loop/engine.py"
+_MIXIN_CAP = 16  # B5 开工实测 16 个 Mixin（engine.py:155）；只允许随退役单调递减
+
+
+def _parse_loop_engine_bases(source: str) -> list[str]:
+    """从 engine.py 源码解析 class LoopEngine(...) 基类列表（文本口径，逗号切分）。"""
+    m = re.search(r"^class LoopEngine\(([^)]*)\):", source, re.MULTILINE)
+    assert m, "engine.py 中未找到 LoopEngine 类定义（文本口径解析失败）"
+    return [b.strip() for b in m.group(1).split(",") if b.strip()]
+
+
+def test_loop_engine_mixin_ratchet():
+    """Mixin 数量棘轮：上限 16 + 与 HEAD 比对单调递减 + 禁止新增基类。"""
+    current = _parse_loop_engine_bases((ROOT / _ENGINE_REL).read_text(encoding="utf-8"))
+    assert len(current) <= _MIXIN_CAP, (
+        f"LoopEngine 基类 {len(current)} 个 > 上限 {_MIXIN_CAP}：禁止新增 Mixin（R9-P5-01）；"
+        "新逻辑请落 engine_services/ 组合对象，不走继承"
+    )
+    head = subprocess.run(
+        ["git", "show", f"HEAD:{_ENGINE_REL}"], cwd=ROOT, capture_output=True, text=True
+    )
+    if head.returncode != 0:
+        pytest.skip("engine.py 尚未入库，棘轮比对跳过")
+    head_bases = _parse_loop_engine_bases(head.stdout)
+    extra = set(current) - set(head_bases)
+    assert not extra, (
+        f"检测到新增基类 {sorted(extra)}：Mixin 列表只允许退役（单调递减），不允许新增"
+    )
+    assert len(current) <= len(head_bases), (
+        f"基类数 {len(current)} > HEAD {len(head_bases)}：违反单调递减棘轮（R9-P5-01）"
+    )
