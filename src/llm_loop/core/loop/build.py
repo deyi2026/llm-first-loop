@@ -26,16 +26,13 @@ from llm_loop.core.history import (
     is_cache_compacted_for,
     projection_check,  # noqa: F401 (history 工具, 函数内使用)
     projection_ver,  # noqa: F401 (history 工具, 函数内使用)
-    )
-from llm_loop.core.injection_budget import (
-    DEFAULT_INJECTION_BUDGET_CHARS,
 )
-from llm_loop.core.loop.err1210 import (
-    InjectedEntry,
-    SlotKind,
-    content_prefix_sha,
-)
-from llm_loop.core.loop.focus import wrap_injection
+
+# 快照文本函数已迁 core/session_snapshot.py（零 llm_loop 依赖叶子模块，R9-P3-01）——
+# 顶层 import 不再触发循环：build→engine 运行时反向边删除（步2/3 断环点），engine→build 正向边保留
+from llm_loop.core.message import Message
+from llm_loop.core.prompt import build_system_prompt
+from llm_loop.core.prompt_build import BuildDecision
 from llm_loop.core.prompt_build.stages.base_assembly import (
     _tool_round_zero_tail as _tool_round_zero_tail,  # re-export：test_build_tool_round_tail 从此导入（零测试改动）
 )
@@ -43,35 +40,20 @@ from llm_loop.core.prompt_build.stages.base_assembly import (
     run_base_assembly,
     scrub_provider_view,
 )
-
-# Cognitive Runtime：装配面已全部迁 stages/cognitive.py 自持（B4-C4-01 步1/2/3）；
-# 此处仅留 compile_decision_packet 传参 budget 阶段（惰性容错，import 失败回退平铺）。
-try:  # noqa: SIM105
-    from llm_loop.cognitive.compiler import compile_decision_packet
-except Exception:  # noqa: BLE001 — fail-open 回退平铺聚合（零回归）
-    compile_decision_packet = None  # type: ignore[assignment]
-
-# 快照文本函数已迁 core/session_snapshot.py（零 llm_loop 依赖叶子模块，R9-P3-01）——
-# 顶层 import 不再触发循环：build→engine 运行时反向边删除（步2/3 断环点），engine→build 正向边保留
-from llm_loop.core.message import Message
-from llm_loop.core.prompt import build_system_prompt
-from llm_loop.core.prompt_build import BuildDecision
-from llm_loop.core.prompt_build.stages.authorization import resolve_authorized
-from llm_loop.core.prompt_build.stages.budget_application import apply_injection_budget
 from llm_loop.core.prompt_build.stages.cognitive import (  # B4-C4-01: COG 门控迁独占模块
     _cog_allowlist_hit as _cog_allowlist_hit,  # re-export：tests 三处从此导入（零测试改动）
 )
 from llm_loop.core.prompt_build.stages.cognitive import (
     _cog_freeze_enabled as _cog_freeze_enabled,
 )
-from llm_loop.core.prompt_build.stages.cognitive import (
-    resolve_cognitive_gate,
-    run_cognitive_packet,
-    run_cognitive_state,
-)
 from llm_loop.core.prompt_build.stages.history_pipeline import run_history_pipeline
 from llm_loop.core.prompt_build.stages.ingress_resolution import resolve_ingress
-from llm_loop.core.prompt_build.stages.injection_assembly import assemble_injections
+from llm_loop.core.prompt_build.stages.injection_cognitive import (  # B4-CLOSE-01 步C3
+    _UNSET as _BUDGET_UNSET,
+)
+from llm_loop.core.prompt_build.stages.injection_cognitive import (
+    run_injection_cognitive,
+)
 from llm_loop.core.prompt_build.stages.projection_gate import (
     GATE_STATE_UNSET,
 )
@@ -559,161 +541,26 @@ class _BuildMixin:
         if _identity_cache is None:
             _identity_cache = {}
             self._authorized_task_identity_cache = _identity_cache
-        # B4-C3-01: task_active 升格 authorization 阶段（A-2 承载）；决策入 BuildDecision.authorization_slots
-        decision.authorization_slots = resolve_authorized(
-            inject_parts=_inject_parts,
+        # 注入+认知接线簇 → stages/injection_cognitive.py::run_injection_cognitive
+        # （B4-CLOSE-01 步C3；授权→注入装配→认知门控/状态/预算/packet→聚合登记
+        # 语义原样，fail-open 降级留模块内）；decision/built/injections 同对象就地
+        # 演进；_last_injection_budget 经 UNSET 哨兵回写（未产生新值不覆盖旧值）。
+        _injc = run_injection_cognitive(
             sess=sess,
             settings=self.settings,
-            current_turn_ref=getattr(self, "_current_turn_ref", None),
-            r6_ingress_truth=_r6_ingress_truth,
-            identity_cache=_identity_cache,
-            record_action=self._record_action,
-        )
-        # R8.8 eligibility precedes semantic profile/budget. ``infer_layer`` may retain
-        # B4-C3-02: 注入装配迁 stages/injection_assembly（eligibility→quarantine→
-        # β 观测→packet init→memory 授权双面注入）；consumed_filtering 判定独立
-        # 防护模块（A-1 consumed 半面，D13 验收面①）；决策入 BuildDecision（A-4）。
-        _assembly = assemble_injections(
+            built=built,
             inject_parts=_inject_parts,
             leak_downgrade_parts=_leak_downgrade_parts,
-            sess=sess,
             r6_ingress_truth=_r6_ingress_truth,
+            current_turn_ref=getattr(self, "_current_turn_ref", None),
             record_action=self._record_action,
-        )
-        _inject_parts = _assembly.inject_parts
-        _inject_keys = _assembly.inject_keys
-        _packet_parts = _assembly.packet_parts
-        _packet_keys = _assembly.packet_keys
-        _packet_memory_seq = _assembly.packet_memory_seq
-        _lat_mode = _assembly.consumed_filtering.get("lat_mode", "off")  # COG 锚点观测用（同轮同值）
-        decision.consumed_filtering = _assembly.consumed_filtering
-        decision.injection_eligibility = _assembly.injection_eligibility
-        # 尾部连续 user 恒 ≤1（1210 结构性消除）；聚合失败 fail-open 降级零注入（不阻断构建）
-        # Cognitive Runtime 门控解析 → stages/cognitive.py（B4-C4-01 第 1 步；design
-        # §2.1.2 #12 独占模块，RETRIEVAL-ONLY，冻结态 promote 禁止）。tier/anchor_mode/
-        # dual_source_guard 语义与 CR-R1 空 slots header-only 不变量（零注入安静轮
-        # decision_visible=True）见该模块；冻结/提升决策入 decision.cog_freeze。
-        _cog = resolve_cognitive_gate(
-            self.settings,
-            sess=sess,
-            built=built,
-            inject_parts_present=bool(_inject_parts),
+            identity_cache=_identity_cache,
+            anchor_sess=self._focus.anchor_sess,
+            injections=self._last_build_injections,
             decision=decision,
         )
-        _cog_mode_candidate = _cog.mode
-        _cog_promoted = _cog.promoted
-        _cog_compute_candidate = _cog.compute_candidate
-        _has_existing_program = _cog.has_existing_program
-        _recovery_render_parts: list[str] = []
-        if _inject_parts or _cog_compute_candidate or _has_existing_program:
-            try:
-                # 认知运行时状态装配 → stages/cognitive.py（B4-C4-01 第 2 步）：load/
-                # schema v2 三态解包/Read Barrier（GoalStore 三路一致性 + rebuild
-                # 回存 + state_revision 单调继承 + state_rebuild telemetry）/投影
-                # 渲染/锚点消费面退出（E-D3 latent 留痕）+ 投影替代
-                # （DUAL_SOURCE_GUARD）。语义原样，产物经 CognitiveStateOutcome 回接。
-                _cs = run_cognitive_state(
-                    self.settings,
-                    sess=sess,
-                    mode_candidate=_cog_mode_candidate,
-                    promoted=_cog_promoted,
-                    lat_mode=_lat_mode,
-                    anchor_sess=self._focus.anchor_sess,
-                    record_action=self._record_action,
-                )
-                _anchor_mode = _cs.anchor_mode
-                _tier_on = _cs.tier_on
-                _cog_mode = _cs.mode
-                _cog_enforce = _cs.enforce
-                _cog_sid = _cs.sid
-                _sem_state = _cs.sem_state
-                _env = _cs.env
-                _projection = _cs.projection
-                _anchor = _cs.anchor
-
-                # B4-C3-03: 预算切分迁 stages/budget_application（R2/L2-1 单一总预算门闸
-                # + R4 recovery 拉出）；决策入 BuildDecision.budget；self._last_injection_budget 回写。
-                _budget_outcome = apply_injection_budget(
-                    built=built,
-                    inject_parts=_inject_parts,
-                    inject_keys=_inject_keys,
-                    packet_parts=_packet_parts,
-                    packet_keys=_packet_keys,
-                    projection=_projection,
-                    anchor=_anchor,
-                    sem_state=_sem_state,
-                    cog_enforce=_cog_enforce,
-                    tier_on=_tier_on,
-                    compile_decision_packet=compile_decision_packet,
-                    recovery_render_parts=_recovery_render_parts,
-                    injection_budget_chars=int(
-                        getattr(
-                            self.settings,
-                            "injection_budget_chars",
-                            DEFAULT_INJECTION_BUDGET_CHARS,
-                        )
-                    ),
-                    record_action=self._record_action,
-                )
-                _inject_parts = _budget_outcome.inject_parts
-                _inject_keys = _budget_outcome.inject_keys
-                _packet_parts = _budget_outcome.packet_parts
-                _packet_keys = _budget_outcome.packet_keys
-                _recovery_render_parts = _budget_outcome.recovery_render_parts
-                _projection = _budget_outcome.projection
-                _anchor = _budget_outcome.anchor
-                _sem_state = _budget_outcome.sem_state
-                self._last_injection_budget = _budget_outcome.budget_result
-                decision.budget = _budget_outcome.budget
-
-                # packet 装配/telemetry → stages/cognitive.py（B4-C4-01 第 3 步）：CR-R1
-                # header 先行（空 slots 不抑制 header；header 已含投影 → anchor 位不重复
-                # 注入）/CR-R1.1 shadow 同构（产物仅 telemetry 度量，prompt 平铺旧行为）/
-                # CR-R1 4.2 生产预算接线（超上界降级仅 HOT）/CR-R1 6.2 packet_compile +
-                # tier_degraded telemetry（_CogPacketEvt 显式键型随迁）。产物经
-                # CognitivePacketOutcome 回接。
-                _cp = run_cognitive_packet(
-                    self.settings,
-                    inject_parts=_inject_parts,
-                    packet_parts=_packet_parts,
-                    sem_state=_sem_state,
-                    anchor=_anchor,
-                    tier_on=_tier_on,
-                    enforce=_cog_enforce,
-                    sid=_cog_sid,
-                    env=_env,
-                    mode=_cog_mode,
-                    promoted=_cog_promoted,
-                )
-                _agg = _cp.agg
-                _agg_anchor = _cp.agg_anchor
-                # R4 recovery is rendered as its own program message before the ordinary
-                # background appendix.  R6 immediately absorbs both into one user envelope,
-                # leaving recovery as the explicit executable exception before exact user truth.
-                if _recovery_render_parts and _r6_ingress_truth is not None:
-                    built.append({"role": "user", "content": _recovery_render_parts[0]})
-                if _agg.strip():
-                    _agg_content = wrap_injection(_agg, _agg_anchor)
-                    built.append({"role": "user", "content": _agg_content})
-                    # err1210 9.1: 聚合登记（单 entry；strip/defer 消费端经 AGGREGATED 分支）
-                    # CR-R1.1（审查项5）: seg_sources 携带投影前原始段——defer 恢复
-                    # 不从 wire 反推（WARM 投影截断会永久丢失原文）。
-                    self._last_build_injections.append(
-                        InjectedEntry(
-                            msg_idx=len(built) - 1,
-                            slot_kind=SlotKind.AGGREGATED,
-                            prefix_sha=content_prefix_sha(_agg_content),
-                            message_ref=None,
-                            seg_sources=tuple(
-                                (str(_k), _c) for _k, _c in _inject_parts
-                            ),
-                        )
-                    )
-                # 空 slots 且无 header：安静轮零注入（不造空条、不登记）
-            except Exception:  # noqa: BLE001 — 聚合失败 fail-open（零注入降级 + WARN）
-                logger.warning(
-                    "build: 尾部注入聚合失败，本轮零注入降级（fail-open）", exc_info=True
-                )
+        if _injc.last_injection_budget is not _BUDGET_UNSET:
+            self._last_injection_budget = _injc.last_injection_budget
         # 尾段装配 → stages/tail_assembly.py（B4-CLOSE-01 步A）：user_truth wire
         # 投影（R6 单信封 KEEP-HARD）→ 方向 C 持久化注入合并（非 ingress 路径）→
         # 投影一致性门闸（水印 + gate_state 回写）→ cache 门禁后检（fail-open）→

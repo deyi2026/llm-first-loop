@@ -20,6 +20,7 @@ from pathlib import Path
 
 import llm_loop.core.loop.build as build_mod
 import llm_loop.core.loop.focus as focus_mod
+import llm_loop.core.prompt_build.stages.injection_cognitive as injection_cog_mod
 from llm_loop.core.cache_health import GATE_NOTE_CONTENT
 from llm_loop.core.injection_labels import PROGRAM_APPENDIX_NOTICE, REFERENCE_LABEL, STATUS_LABEL
 from llm_loop.core.loop.err1210 import InjectionSpan
@@ -252,7 +253,11 @@ class TestRedLightMutations:
 
     def test_wrap_bypassed(self, tmp_path, monkeypatch):
         """绕过 wrap_injection（新槽不接统一包装 → design 风险 5）→ 红灯."""
-        monkeypatch.setattr(build_mod, "wrap_injection", lambda content, anchor="": content)
+        # B4-CLOSE-01 步C3: wrap_injection 调用随注入+认知簇迁
+        # stages/injection_cognitive（monkeypatch 目标随新家）
+        monkeypatch.setattr(
+            injection_cog_mod, "wrap_injection", lambda content, anchor="": content
+        )
         engine, sess = _engine(tmp_path)
         memory_msgs = _arm_all_slots(engine, sess)
         out = _build(engine, sess, memory_msgs)
