@@ -37,7 +37,6 @@ from llm_loop.core.injection_labels import (
     detect_program_layer,
     ensure_semantic_label,
     infer_layer,
-    strip_program_appendix_notice,
 )
 from llm_loop.core.loop.err1210 import (
     InjectedEntry,
@@ -45,10 +44,8 @@ from llm_loop.core.loop.err1210 import (
     content_prefix_sha,
 )
 from llm_loop.core.loop.focus import _INJECTION_PREFIX, build_task_anchor, wrap_injection
-from llm_loop.core.program_recovery import PROGRAM_RECOVERY_SLOT
 from llm_loop.core.prompt_eligibility import (
     PROGRAM_FINAL_PROTOCOL_BOUNDARY,
-    dynamic_prompt_layer,
 )
 
 # Cognitive Runtime（tasks 2.3/2.5/2.6）: tier 分级聚合 + 语义投影替代锚点。
@@ -74,12 +71,14 @@ except Exception:  # noqa: BLE001 — fail-open 回退平铺聚合（零回归�
 from llm_loop.core.message import Message
 from llm_loop.core.prompt import build_system_prompt
 from llm_loop.core.prompt_build import BuildAudit, BuildDecision
+from llm_loop.core.prompt_build.stages.authorization import resolve_authorized
 from llm_loop.core.prompt_build.stages.base_assembly import run_base_assembly
 from llm_loop.core.prompt_build.stages.compaction_audit import run_compaction_audit
 from llm_loop.core.prompt_build.stages.history_budget_prep import run_history_budget_prep
 from llm_loop.core.prompt_build.stages.history_postprocess import run_history_postprocess
 from llm_loop.core.prompt_build.stages.history_projection import run_history_projection
 from llm_loop.core.prompt_build.stages.ingress_resolution import resolve_ingress
+from llm_loop.core.prompt_build.stages.injection_assembly import assemble_injections
 from llm_loop.core.prompt_build.stages.projection_gate import (
     GATE_STATE_UNSET,
     run_projection_gate,
@@ -88,7 +87,6 @@ from llm_loop.core.prompt_build.stages.tail_slot_collect import (
     collect_persisted_and_recovery,
     consume_tail_slots,
 )
-from llm_loop.core.prompt_build.stages.authorization import resolve_authorized
 from llm_loop.core.prompt_build.stages.trace_isolation import run_trace_isolation
 from llm_loop.core.prompt_build.stages.user_truth import run_user_truth_wire
 
@@ -838,139 +836,24 @@ class _BuildMixin:
             record_action=self._record_action,
         )
         # R8.8 eligibility precedes semantic profile/budget. ``infer_layer`` may retain
-        # its legacy STATUS rendering fallback, but an unknown producer must not gain
-        # prompt access merely by reaching this list.
-        _eligible_inject_parts: list[tuple[str | None, str]] = []
-        for _slot, _content in _inject_parts:
-            if not str(_content or "").strip():
-                continue
-            _eligible_layer = dynamic_prompt_layer(
-                _content, slot_kind=str(_slot or "")
-            )
-            if _eligible_layer is None:
-                with contextlib.suppress(Exception):
-                    self._record_action(
-                        "action.prompt_eligibility",
-                        "unknown_producer_denied",
-                        f"slot={str(_slot or '<none>')[:64]}",
-                    )
-                continue
-            _eligible_inject_parts.append(
-                (
-                    _slot,
-                    ensure_semantic_label(
-                        strip_program_appendix_notice(_content),
-                        _eligible_layer,
-                        slot_kind=str(_slot or ""),
-                    ),
-                )
-            )
-        _inject_parts = _eligible_inject_parts
-        # agent_trace_leak 4.2/4.3 + R8.24-D DT-1.2（D-G2）: α 降级产物并入段仅存于
-        # LFL_LEAK_QUARANTINE=on/shadow 回滚分支内（默认 off 不可达；回滚期结束后
-        # 整段退役删除）；β 聚合口槽键一致性观测（未知槽 → overreach 观测事件，
-        # 不阻断——注入位置 P1-10 缓存前缀零破坏）。leak_downgrade 槽键已从
-        # _known_slots 移除（D-G2：allowlist 外旁路身份退役；on 回滚态产物触发
-        # overreach 观测事件 = 回滚通道使用审计留痕）。
-        with contextlib.suppress(Exception):
-            from llm_loop.core.trace_leak.leak_events import current_quarantine_mode
-
-            if _leak_downgrade_parts and current_quarantine_mode() in ("on", "shadow"):
-                _inject_parts = list(_inject_parts) + [
-                    (slot, content) for slot, content in _leak_downgrade_parts
-                ]
-        try:
-            _known_slots = {
-                str(SlotKind.INTEROP),
-                str(SlotKind.TIP),
-                str(PROGRAM_RECOVERY_SLOT),
-                "memory",
-                "task_active",
-            }
-            for _slot, _content in _inject_parts:
-                if _slot is not None and str(_slot) not in _known_slots:
-                    from llm_loop.core.trace_leak import leak_events as _tle
-
-                    _tle.emit_leak_event(
-                        _tle.LEAK_CHANNEL_OVERREACH,
-                        entry="build.inject_parts_aggregate",
-                        session_id=sess.session_id,
-                        content=str(_content or ""),
-                        basis=f"聚合口未知注入槽 slot={str(_slot)[:64]}（来源一致性观测）",
-                    )
-        except Exception:  # noqa: BLE001 — 观测 fail-open
-            logger.debug("build β 聚合口观测失败（fail-open）", exc_info=True)
-        _inject_keys = [f"dynamic:{i}" for i in range(len(_inject_parts))]
-        _packet_parts: list[tuple[str | None, str]] = list(_inject_parts)
-        _packet_keys: list[str] = list(_inject_keys)
-        _packet_memory_seq = 0
-        # R8.24-E E-D1（E-1.x/E-3.2②）: E07 auto memory 退出 → RETRIEVABLE_ONLY。
-        # 自动投影通道死亡（B-3.1 恒 False 底线保留）；恢复路径 1 = input-side
-        # 显式指代（"按我之前的 X/你记得 Y 吗"）授权一次——命中本轮 ingress 时
-        # 全部 memory_snapshot 以真实数据投影（memory_authorized 授权通道，非
-        # 自动 producer）；路线 2 = search_records(kind=memory)（E7 实证已有）；
-        # 路线 3 = playbook 显式查询。shadow 态 would_inject 计数留痕。
-        try:
-            from llm_loop.core.loop.input_authorization import (
-                current_latent_channel_mode,
-                detect_memory_reference,
-            )
-
-            _mem_ref_text = str(_r6_ingress_truth or "")
-            _mem_authorized = detect_memory_reference(_mem_ref_text)
-            _lat_mode = current_latent_channel_mode()
-        except Exception:  # noqa: BLE001 — resolver 不可用 fail-open 视为未授权
-            _mem_authorized = False
-            _lat_mode = "off"
-        for _m in sess.messages:
-            _md = getattr(_m, "metadata", None) or {}
-            # R8.5 eligibility is upstream of both flat wire history and the
-            # Cognitive packet compiler.  A resolved turn memory may remain in
-            # durable session storage, but it must not be resurrected through
-            # the packet side-channel after the episode has retired.
-            if _md.get("resolved_episode_ref"):
-                continue
-            if _md.get("injection_kind") == "memory_snapshot":
-                if not _mem_authorized:
-                    # 未授权零投影（E-G1：automatic memory chars=0）；shadow 计数
-                    if _lat_mode == "shadow":
-                        with contextlib.suppress(Exception):
-                            self._record_action(
-                                "action.latent_channel",
-                                "memory_would_inject",
-                                (
-                                    f"chars={len(str(getattr(_m, 'content', '') or ''))};"
-                                    "reason=unauthorized_shadow_count"
-                                ),
-                            )
-                    continue
-                _c = str(getattr(_m, "content", "") or "")
-                if _c.strip():
-                    # snapshot 自身已有 outer appendix；嵌入 decision packet 时去掉
-                    # outer notice，避免一个 appendix 内重复仲裁声明。
-                    # 授权投影经 eligibility 注册槽显式校验（memory_authorized），
-                    # 同步进 wire 平铺面（_inject_parts）与 packet 编译面——
-                    # 非 allowlist 外旁路。
-                    _stripped = strip_program_appendix_notice(_c)
-                    _mem_layer = dynamic_prompt_layer(
-                        _stripped, slot_kind="memory_authorized"
-                    )
-                    if _mem_layer is not None:
-                        _labeled = ensure_semantic_label(
-                            _stripped, _mem_layer, slot_kind="memory_authorized"
-                        )
-                        _inject_parts.append(("memory_authorized", _labeled))
-                        _inject_keys.append(f"memory-authorized:{_packet_memory_seq}")
-                        _packet_parts.append(("memory_authorized", _labeled))
-                        _packet_keys.append(f"packet-memory:{_packet_memory_seq}")
-                        _packet_memory_seq += 1
-                        with contextlib.suppress(Exception):
-                            self._record_action(
-                                "action.memory_authorization",
-                                "authorized_retrieval_inject",
-                                f"chars={len(_labeled)}",
-                            )
-        # ── P1 统一聚合器（9.1）: 四槽 parts → 单条 user；sidecar 单 AGGREGATED entry ──
+        # B4-C3-02: 注入装配迁 stages/injection_assembly（eligibility→quarantine→
+        # β 观测→packet init→memory 授权双面注入）；consumed_filtering 判定独立
+        # 防护模块（A-1 consumed 半面，D13 验收面①）；决策入 BuildDecision（A-4）。
+        _assembly = assemble_injections(
+            inject_parts=_inject_parts,
+            leak_downgrade_parts=_leak_downgrade_parts,
+            sess=sess,
+            r6_ingress_truth=_r6_ingress_truth,
+            record_action=self._record_action,
+        )
+        _inject_parts = _assembly.inject_parts
+        _inject_keys = _assembly.inject_keys
+        _packet_parts = _assembly.packet_parts
+        _packet_keys = _assembly.packet_keys
+        _packet_memory_seq = _assembly.packet_memory_seq
+        _lat_mode = _assembly.consumed_filtering.get("lat_mode", "off")  # COG 锚点观测用（同轮同值）
+        decision.consumed_filtering = _assembly.consumed_filtering
+        decision.injection_eligibility = _assembly.injection_eligibility
         # 尾部连续 user 恒 ≤1（1210 结构性消除）；聚合失败 fail-open 降级零注入（不阻断构建）
         # Cognitive Runtime（tasks 2.3/2.5/2.6，spec 5.2/5.1.1-3b）:
         # - COG_RUNTIME_TIER_ENABLED 原子切换 tier 分级聚合（在 T1 单管线之上叠加，不新建

@@ -261,10 +261,11 @@ class TestDg2StaticAssertions:
 
     def test_known_slots_registry_excludes_leak_downgrade(self) -> None:
         """β 聚合口 _known_slots 槽键已移除（DT-1.2②；on 回滚态产物触发
-        overreach 观测事件 = 回滚通道使用审计留痕）。"""
+        overreach 观测事件 = 回滚通道使用审计留痕）。
+        B4-C3-02: β 观测段迁 stages/injection_assembly，静态断言随结构走。"""
         import inspect
 
-        from llm_loop.core.loop import build as build_mod
+        from llm_loop.core.prompt_build.stages import injection_assembly as build_mod
 
         src = inspect.getsource(build_mod)
         idx = src.find("_known_slots = {")
