@@ -42,7 +42,7 @@ is_refactor=false; is_guard=false; is_switch=false
 
 # ── 规则②：refactor 不得触行为面文件 ──
 if $is_refactor; then
-  for f in "${files[@]}"; do
+  for f in ${files[@]+"${files[@]}"}; do  # 空 diff（纯消息）set -u 不崩（D-B2-05）
     if [[ "$f" == src/llm_loop/cache_guard/* || "$f" == src/llm_loop/core/trace_leak/* || "$f" == docs/r824/*.md ]]; then
       fail "②" "refactor(r9) 提交含行为面文件: ${f}（结构/行为分提交，T2-C）"
     fi
@@ -54,7 +54,7 @@ if $is_refactor; then
 fi
 
 # ── 规则④：守卫文件前缀保护 ──
-for f in "${files[@]}"; do
+for f in ${files[@]+"${files[@]}"}; do  # 空 diff 提交（纯消息）set -u 不崩（D-B2-05：负例1 演练发现）
   if [[ "$f" == "tests/unit/test_arch_guards.py" || "$f" == "tests/unit/test_function_size_guard.py" || "$f" == tests/guards/*.json ]]; then
     $is_guard || fail "④" "非 guard(r9) 前缀触碰守卫文件: ${f}（防篡改层 3，T3-C）"
   fi
