@@ -29,11 +29,12 @@ class BuildContext:
 class BuildInputs:
     """resolve_inputs 阶段产出（下游只读）."""
 
-    base_messages: list[dict[str, Any]]  # list(sess.messages) 快照
-    base_index_by_id: dict[str, int]  # _original_base_index_by_id
+    base_messages: list[Any]  # list(sess.messages) 快照（Message 对象序列，经四过滤器链收窄）
+    base_index_by_id: dict[int, int]  # _original_base_index_by_id：id(Message) -> 原始下标
     r6_ingress_truth: Any  # R6 ingress 冻结真值（user_truth 阶段消费）
-    memory_msgs: list[dict[str, Any]]
+    memory_msgs: list[Any]  # 记忆注入消息序列（入口参数显式化）
     stale_cleanup: dict[str, Any]  # 过期清理结果集（A-3 语义可指认）
+    filtered_indices: list[int] = field(default_factory=list)  # 四过滤器链后原下标重映射段尾值（trace_isolation 消费）
 
 
 @dataclass(slots=True)
