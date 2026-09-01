@@ -46,7 +46,7 @@ else
     ok=""
     for e in "${EXTERNAL_EXEMPT[@]}"; do [[ "$t" == "$e"* ]] && ok=1 && break; done
     if [ -z "$ok" ]; then echo "❌ 门禁红（清单外，非外部级豁免）: $t"; bad=1; fi
-  done < <(mapfile_failed)
+  done < <(collect_failed)
   if [ "$bad" -eq 1 ]; then echo "── ci_gate 输出尾部 ──"; tail -20 "$GATE_LOG"; exit 1; fi
   echo "⚠️ ci_gate 非零退出，但失败全部属已登记外部级豁免清单（D-07/D-08 过渡期口径）——放行提交"
 fi
