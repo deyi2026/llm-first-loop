@@ -84,6 +84,33 @@ class EditFileTool:
         """框架统一调用约定 execute(**kwargs) → 委托 run(arguments dict)."""
         return self.run(kwargs)
 
+    def _symlink_write_guard(self, path_str: str) -> tuple[Path, ToolResult | None]:
+        """T5b symlink 写防护（fail-closed，R9-IMM-04 三态化）.
+
+        仅 no_links 放行；links_found / probe_failed 均拒写（错误信息两态区分）。
+        返回 (解析后路径, 拒绝回执或 None)。
+        """
+        path = Path(path_str)
+        # 工作区跟随: 相对路径基于当前工作区根（无工作区 → 进程 cwd，零回归）
+        if not path.is_absolute():
+            from llm_loop.core.run_context import workspace_base
+
+            path = Path(workspace_base()) / path
+        _probe = link_shaped_paths(path)
+        if _probe.status == "links_found":
+            return path, self._fail(
+                f"写路径含符号链接，已拒绝写入（防越界写）: {' → '.join(_probe.links)}。"
+                "如需修改目标文件请使用其真实路径（realpath 解析后重试）。",
+                "SymlinkGuard",
+            )
+        if _probe.status == "probe_failed":
+            return path, self._fail(
+                "符号链接探测失败（ELOOP/权限等障碍，无法确认路径安全性），已拒绝写入。"
+                "请用 execute_command realpath 确认真实路径后重试。",
+                "SymlinkGuard",
+            )
+        return path, None
+
     def run(self, arguments: dict) -> ToolResult:
         path_str = str(arguments.get("path", "") or "").strip()
         old = arguments.get("old_string")
@@ -99,28 +126,10 @@ class EditFileTool:
         if old == "":
             return self._fail("old_string 为空无法定位（插入内容请锚定相邻原文）")
 
-        # ── T5b: symlink 写防护（fail-closed）——写路径含符号链接（自身或父目录）
-        # 可能越界写项目外文件（对齐 Harness Unlink 模式；读路径 read_file 仅标注）──
-        # R9-IMM-04 三态化：仅 no_links 放行；links_found / probe_failed 均拒写
-        path = Path(path_str)
-        # 工作区跟随: 相对路径基于当前工作区根（无工作区 → 进程 cwd，零回归）
-        if not path.is_absolute():
-            from llm_loop.core.run_context import workspace_base
-
-            path = Path(workspace_base()) / path
-        _probe = link_shaped_paths(path)
-        if _probe.status == "links_found":
-            return self._fail(
-                f"写路径含符号链接，已拒绝写入（防越界写）: {' → '.join(_probe.links)}。"
-                "如需修改目标文件请使用其真实路径（realpath 解析后重试）。",
-                "SymlinkGuard",
-            )
-        if _probe.status == "probe_failed":
-            return self._fail(
-                "符号链接探测失败（ELOOP/权限等障碍，无法确认路径安全性），已拒绝写入。"
-                "请用 execute_command realpath 确认真实路径后重试。",
-                "SymlinkGuard",
-            )
+        # ── T5b: symlink 写防护（fail-closed；对齐 Harness Unlink 模式；读面 read_file 仅标注）──
+        path, _reject = self._symlink_write_guard(path_str)
+        if _reject is not None:
+            return _reject
 
         # ── 段1: read（bytes 读取，保留 BOM/换行风格信息 + 基线快照）──
         try:
