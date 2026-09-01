@@ -770,15 +770,30 @@ def test_baseline_ratchet_not_raised():
 
 
 def test_exemptions_wellformed():
-    """豁免条目 v2 字段完整（key/reason≥10 字符/review_deadline≤30 天/class∈{optional,plugin}）。
+    """豁免条目 v2 字段完整 + **数量较 HEAD 单调不增**（T3-C 层 3 防篡改）。
 
-    数量单调不增断言随 B2-P2-07 补齐（与 HEAD 比对联动）。
+    初始登记：本批空清单成立——四函数走 legacy 棘轮、≥120 存量走 function_lines
+    基线、optional/plugin 走行内标记（三层各司其职，无存量豁免需求）；守卫上线
+    红区无非 legacy ≥300 命中（test_global_redline_300 绿即回执），OQ-7 无需
+    显式登记项——不允许上调红线（spec §5.3.3-1b）。
     """
     import datetime as _dt
 
     b = _load_baseline()
-    today = _dt.date.today()
+    cur_n = len(b.get("exemptions", []))
+    # 数量单调不增：与 HEAD 比对（新增豁免 = 绕过棘轮的暗门，必须走可见提交评审）
+    rel = BASELINE_PATH.relative_to(ROOT).as_posix()
+    try:
+        proc = subprocess.run(
+            ["git", "show", f"HEAD:{rel}"], capture_output=True, text=True, check=True, cwd=ROOT
+        )
+        head_n = len(json.loads(proc.stdout).get("exemptions", []))
+    except (subprocess.CalledProcessError, json.JSONDecodeError):
+        head_n = None  # 基线首次提交前无对照
     problems: list[str] = []
+    if head_n is not None and cur_n > head_n:
+        problems.append(f"  exemptions 数量 {head_n} → {cur_n}（豁免只减不增；新增须评审可见）")
+    today = _dt.date.today()
     for i, ex in enumerate(b.get("exemptions", [])):
         for field in ("key", "reason", "review_deadline", "class"):
             if field not in ex:
