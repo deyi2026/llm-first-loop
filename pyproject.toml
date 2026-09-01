@@ -58,4 +58,6 @@ addopts = "-q --import-mode=importlib -m \"not real_llm\""
 pythonpath = ["src"]
 markers = [
     "real_llm: 真实 LLM 冒烟测试（需真实 key + 网络，默认不随全量运行）",
+    "tier0: R9-WF-01 本地冒烟集（六门/开关锚点 + wire 契约 + core 回路冒烟；分钟级反馈，提交门禁仍全量——门禁不降级）",
+    "serial: 顺序敏感测试（load_env_file 等进程级污染面；xdist --dist loadgroup 单 worker 收拢）",
 ]

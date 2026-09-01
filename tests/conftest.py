@@ -18,6 +18,46 @@ import pytest
 from llm_loop.core.message import ToolCall
 from llm_loop.llm.client import LLMResponse
 
+# ── R9-WF-01 tier0 冒烟集（T9-A 四类准入；标注口径：conftest 路径清单单点打标，──
+#    不侵入测试文件——外部混合层避让约束下的必然选择；Phase 1/2 守卫资产收编后
+#    在此清单追加 test_function_size_guard.py / test_arch_guards.py）
+TIER0_FILES = (
+    # ① 六门与开关锚点（行为基线哨兵）
+    "tests/unit/test_r824_final_gates.py",
+    "tests/unit/test_runtime_zero_prompt.py",
+    "tests/unit/test_runtime_zero_prompt_static.py",
+    "tests/unit/test_latent_channel_exit.py",
+    "tests/unit/test_tool_result_factualization.py",
+    "tests/unit/test_cache_block_reclassification.py",
+    # ③ wire 契约（等价性证明面；tail packet 系列）
+    "tests/unit/test_wire_fixtures.py",
+    "tests/unit/test_build_tool_round_tail.py",
+    "tests/unit/test_direction_c_tail_merge.py",
+    "tests/unit/test_reasoning_tail.py",
+    # ④ core 回路冒烟：五故障场景承载
+    "tests/unit/test_err1210_recovery.py",
+    "tests/unit/test_loop_stagnation.py",
+    "tests/unit/test_interruption_recovery_r819.py",
+    "tests/unit/test_fail_open_recovery.py",
+    "tests/unit/test_stagnation_gate.py",
+    # ④ core 回路冒烟：engine/build/history/factory 核心单测子集（按文件不拆用例）
+    "tests/unit/test_engine_cancel_llm_error_isolation.py",
+    "tests/unit/test_engine_reentrancy.py",
+    "tests/unit/test_factory.py",
+    "tests/unit/test_history.py",
+    "tests/unit/test_history_layering.py",
+)
+
+
+def pytest_collection_modifyitems(config, items):
+    """tier0 单点打标（路径清单驱动；本地回路 pytest -m tier0，门禁仍全量）."""
+    marker = pytest.mark.tier0
+    for item in items:
+        fpath = str(item.path).replace(str(Path(__file__).resolve().parent.parent) + "/", "")
+        if fpath in TIER0_FILES:
+            item.add_marker(marker)
+
+
 # ── M64 测试环境污染全局防御（pytest 收集前执行）──
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _REAL_DATA_DIR = str((_PROJECT_ROOT / "data").resolve())
