@@ -17,8 +17,9 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from llm_loop.event_log.session_types import (  # ForkReport 兼容 re-export + 冲突异常/种子直用（R9-P3-02/03）
+from llm_loop.event_log.session_types import (  # ForkReport 兼容 re-export + 冲突异常/种子/窄口协议直用（R9-P3-02/03·D4）
     BranchSeed,
+    BranchWriter,
     ForkReport,
     SessionIdConflictError,
 )
@@ -36,7 +37,7 @@ def _is_event_store_available(store: Any) -> bool:
 
 def fork_session(
     event_store: Any,
-    session_store: Any,
+    session_store: BranchWriter,  # D4 窄口协议（R9-P3-03：不感知完整 SessionStore）
     source_session_id: str,
     *,
     fork_point: int | None = None,

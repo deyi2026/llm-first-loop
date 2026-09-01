@@ -9,10 +9,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:  # 仅类型标注，运行时零依赖（Tarjan 静态图不计）
     from llm_loop.core.message import Message
+    from llm_loop.core.session import Session
 
 
 class SessionIdConflictError(RuntimeError):
@@ -55,3 +56,18 @@ class BranchSeed:
     branch_id: str
     branch_summary: str
     channel: str
+
+
+class BranchWriter(Protocol):
+    """fork 侧对 session 持久层的窄口协议（D4 依赖倒置——design §2.2.2）.
+
+    fork 只感知本协议三方法（实测使用面：load 源会话 :79 / claim 唯一 id :126 /
+    create_branch 重建 :145），不感知完整 SessionStore（结构耦合最小化）；
+    SessionStore 结构性满足。Protocol 不参与运行时——类型声明零行为变化。
+    """
+
+    def load(self, session_id: str) -> Session: ...
+
+    def claim_session_id(self, session_id: str) -> None: ...
+
+    def create_branch(self, seed: BranchSeed) -> Session: ...
