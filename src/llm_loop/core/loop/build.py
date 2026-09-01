@@ -82,10 +82,11 @@ except Exception:  # noqa: BLE001 — fail-open 回退平铺聚合（零回归�
     SemanticStateStore = None  # type: ignore[assignment]
     StateEnvelope = None  # type: ignore[assignment]
 
-# build_session_snapshot_text 定义于 engine（loop 包内）——顶层 import 会触发
-# engine→build→loop/__init__ 循环（engine import build 在前），故用函数内延迟 import
+# 快照文本函数已迁 core/session_snapshot.py（零 llm_loop 依赖叶子模块，R9-P3-01）——
+# 顶层 import 不再触发循环：build→engine 运行时反向边删除（步2/3 断环点），engine→build 正向边保留
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.prompt import build_system_prompt
+from llm_loop.core.session_snapshot import build_session_snapshot_text
 
 
 def merge_persisted_tail_injections(
@@ -908,10 +909,8 @@ class _BuildMixin:
                             evo_summary = s if isinstance(s, dict) else None
                         except Exception:
                             evo_summary = None
-                    # EVO-20260818: 函数内延迟 import（engine 已加载，防顶层循环；修复
-                    # 基线 NameError——原无任何 import，快照注入从未生效（被 fail-open 吞掉））
-                    from llm_loop.core.loop.engine import build_session_snapshot_text
-
+                    # R9-P3-01 步2/3：函数内延迟 import 退役（EVO-20260818 防循环理由
+                    # 消失——改指顶层 session_snapshot 叶子模块，环①反向边消失）
                     snapshot = Message(
                         role="system",
                         content=build_session_snapshot_text(

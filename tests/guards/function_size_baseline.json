@@ -59,7 +59,6 @@
     "src/llm_loop/core/loop/engine.py": 13
   },
   "known_cycles": [
-    "engine<->build",
     "session<->fork"
   ],
   "exemptions": []
