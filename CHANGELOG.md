@@ -2,6 +2,13 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+### R9-B3 Phase 3：两依赖环断裂 + cycle 守卫恒 0（2026-09-01）
+- **环① engine<->build 三步**：`build_session_snapshot_text` 纯 move 至 `core/session_snapshot.py`（`1aba90b`）→ build.py 函数内 import 退役改指叶子模块断环（`ac7b7c6`）→ engine re-export 清理、包级导出源直连（`2bc4784`）。
+- **环② session<->fork 四步**：`session_types` 纯类型抽离（SessionIdConflictError/ForkReport/BranchSeed，`f98b527`）→ fork 异常 import 改指（`3e6cf72`）→ BranchSeed 重建入口 + fork 收窄为数据生成、持久化职责移交（`95c5724`，环断点）→ BranchWriter Protocol 依赖倒置窄口（`fa51dc9`）。
+- **守卫翻转**：cycle 守卫恒 0 断言生效、known_cycles 空态锚定（`f54a8e7`）；Tarjan 双侧实测 0 环，断环后依赖全单向 DAG（fork 唯一出边 = 纯类型模块）。
+- **等价性**：全程 wire-fixtures 逐提交回执（21 用例）+ 环② fork 回放三面对照 + 等价套件 133/133；八连提交链机检五规则逐条 PASS、每步可 bisect。
+- **治理事件**：外部滞留测试代收口 9 文件（`2dc9b3b`）+ 提交流程文档化（`3271c1e`：提交队列串行化/共享主区安全纪律/外部红登记豁免口径）。
+
 ### R9-B2 Phase 1+2：worktree/门禁/机检 + 架构守卫四检测器上线（2026-09-01）
 - **守卫资产收编 + 基线 v2**（guard）：workbuddy 雏形转正（`ff37e92`，HEAD 口径逐键校准）；`function_size_baseline.json` 升级五节 schema:2（`legacy_super_functions`/`function_lines` 37 键/`local_imports`/`known_cycles`/`exemptions`），全数值节 HEAD 棘轮只降不升（`179b375`）；守卫文件更名 `test_arch_guards.py`。
 - **四检测器**（guard，spec §5.3 三层红线 + 棘轮 + cycle）：三层红线 300/200/WARN 120-150 三态（`837eb51`）｜棘轮防篡改纯函数化 + import 守卫行内豁免标记（`2e10219`）｜runtime cycle 检测器 AST 依赖图 + Tarjan SCC 实测恰两环（`2aa50af`）｜守卫读源双口径——外部未 staged 漂移回退 HEAD、真实违规全量设防（`dbf340f`，外部级豁免归零）｜豁免清单数量单调不增（`2d9eb03`）。演练发现并修复语义缺陷：强制登记线 150 与 WARN 下限 120 解耦（`658f1df`）。
