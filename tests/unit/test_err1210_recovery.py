@@ -13,12 +13,11 @@ from __future__ import annotations
 
 import json
 import os
-
 import time
-
-import pytest
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from llm_loop.core.cache_health import GATE_NOTE_CONTENT, CacheHealthMonitor
 from llm_loop.core.loop.err1210 import (

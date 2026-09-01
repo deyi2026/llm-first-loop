@@ -91,7 +91,11 @@ def test_build_direction_c_remaps_registered_dynamic_entry_after_persisted_merge
     dynamic 注册 entry；持久化 program 尾作为 base 历史平铺保留（merge 无
     注册面需 remap）。纯函数 merge 语义由本文件前半部分覆盖。
     """
-    from llm_loop.core.injection_labels import InjectionLayer, origin_metadata, render_program_appendix
+    from llm_loop.core.injection_labels import (
+        InjectionLayer,
+        origin_metadata,
+        render_program_appendix,
+    )
     from llm_loop.core.message import Message, MessageSource
     from tests.unit.test_injection_fingerprint import _build, _engine
 

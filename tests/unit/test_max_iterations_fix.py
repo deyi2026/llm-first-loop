@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 from llm_loop.config import Settings, load_settings
-from llm_loop.core.message import MessageSource
 from llm_loop.feedback.honesty import (
     max_iterations_feedback,
     max_iterations_warning_message,
