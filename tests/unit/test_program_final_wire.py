@@ -62,16 +62,18 @@ class TestG9ProgramFinalWire:
 
         # B4-CLOSE-01 步B: build 侧替换随 scrub_provider_view 迁
         # stages/base_assembly.py（同源守卫锚点随新家）
-        from llm_loop.core.loop import engine as engine_mod
+        # B5-W4-01: engine 终态写入随收尾段迁 engine_services/run_finalizer.py
+        # （_persist_turn 持久化半程）——同源守卫锚点随新家
+        from llm_loop.core.loop.engine_services import run_finalizer as finalizer_mod
         from llm_loop.core.prompt_build.stages import base_assembly as build_mod
 
-        engine_src = inspect.getsource(engine_mod)
+        finalizer_src = inspect.getsource(finalizer_mod)
         build_src = inspect.getsource(build_mod)
         # 两处都从 prompt_eligibility 引同一常量（非字面量复制）
-        assert "PROGRAM_FINAL_PROTOCOL_BOUNDARY" in engine_src
+        assert "PROGRAM_FINAL_PROTOCOL_BOUNDARY" in finalizer_src
         assert "PROGRAM_FINAL_PROTOCOL_BOUNDARY" in build_src
         # 无第二处字面量定义（防分叉）
-        assert engine_src.count('"[program-final]"') == 0
+        assert finalizer_src.count('"[program-final]"') == 0
         assert build_src.count('"[program-final]"') == 0
 
     def test_legacy_program_final_replaced_to_neutral_placeholder(

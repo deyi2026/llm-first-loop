@@ -73,9 +73,12 @@ class TestOriginWiring:
     def test_engine_save_point_wiring(self):
         from pathlib import Path
 
-        src = (Path(__file__).resolve().parents[2] / "src/llm_loop/core/loop/engine.py").read_text(
-            encoding="utf-8"
-        )
+        # B5-W4-01: origin 判定/元数据接线随收尾段迁 engine_services/run_finalizer.py
+        # （_persist_turn 持久化半程）——接线锚点随新家（D-B5-10② 口径）
+        src = (
+            Path(__file__).resolve().parents[2]
+            / "src/llm_loop/core/loop/engine_services/run_finalizer.py"
+        ).read_text(encoding="utf-8")
         assert '_answer_origin = "model" if _run_end_reason == "completed" else "program"' in src
         assert "metadata=_origin_metadata" in src
         assert 'resp.reasoning_content and _answer_origin == "model"' in src

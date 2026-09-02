@@ -36,6 +36,7 @@ from llm_loop.core.loop.archive import _ArchiveMixin
 from llm_loop.core.loop.build import _BuildMixin  # EVO-20260817-e63f712f: 消息构建拆分
 from llm_loop.core.loop.engine_services.attempt_executor import AttemptExecutor
 from llm_loop.core.loop.engine_services.recovery_controller import RecoveryController
+from llm_loop.core.loop.engine_services.run_finalizer import RunFinalizer
 from llm_loop.core.loop.engine_services.session_lifecycle import SessionLifecycle
 from llm_loop.core.loop.engine_services.termination_controller import TerminationController
 from llm_loop.core.loop.engine_services.tool_cycle import ToolCycleService
@@ -57,7 +58,6 @@ from llm_loop.core.loop.tool_exec import (
 )
 from llm_loop.core.loop.turn_context import _TurnContextMixin
 from llm_loop.core.message import Message, MessageSource
-from llm_loop.core.prompt_eligibility import PROGRAM_FINAL_PROTOCOL_BOUNDARY
 from llm_loop.core.run_context import (
     current_reasoning_effort as _current_reasoning_effort,
 )
@@ -259,6 +259,7 @@ class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMi
         self._attempt_executor = AttemptExecutor(self)
         # R9-B5-W3-01: ToolCycleService——工具执行循环职责面（_ToolExecMixin/_ToolEligibilityMixin 迁入）
         self._tool_cycle = ToolCycleService(self)
+        self._run_finalizer = RunFinalizer(self)
         # EVO-20260817-cef296f8 L2: 缓存命中率窗口监控（跨 run 累计，实例级；
         # 低命中率 → final_answer 注入诊断 + action_trace 审计，fail-open）
         # EVO-20260817-72fcd94a L3（闭环）: 缓存健康监控 + 发送前门禁（独立模块，程序常态锚点管理）
@@ -1132,202 +1133,28 @@ class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMi
                         "\n（已达轮数硬边界，run 已结束；发送\"继续\"可开新 run 接续任务。）"
                     )
                 break
-
-        # ── 记住：沉淀记忆（不阻塞回答输出，FR-LOOP-03）──
-        self._phase("remember")
-        self._remember(final_answer, session_id, sess)
-        # T33: 独立记忆提取定期触发（异步，不阻塞回答输出 DFX-PERF-04）
-        if self.extractor is not None:
-            try:
-                self.extractor.maybe_trigger(session_id)
-            except Exception:
-                logger.warning("独立提取触发失败（fail-open）", exc_info=True)
-
-        # P0-B1（2026-08-28 批准）: 程序反馈语义分离——错误/熔断/守卫/耗尽类文本
-        # source=SYSTEM（非模型产出的如实标注；防下轮模型误读"assistant 已回答过"，
-        # 并作为 extractor 过滤/投影标记的判定依据）。正常回答保持 USER 不变
-        # （M51/M52 token 统计依赖零破坏）。
-        from llm_loop.feedback.honesty import PROGRAM_FEEDBACK_PREFIXES
-
-        # GPT 审计批次2: answer_origin 单一真相源——run_end_reason 显式信号优先，
-        # prefix 仅 legacy 兜底（老消息无 metadata/未覆盖出口）
-        _answer_origin = "model" if _run_end_reason == "completed" else "program"
-        _pf_source = (
-            MessageSource.SYSTEM
-            if _answer_origin == "program"
-            or final_answer.startswith(PROGRAM_FEEDBACK_PREFIXES)
-            else MessageSource.USER
+        # B5-W4-01: 收尾段归装 RunFinalizer.persist_and_settle（A/B 段拆分 + AST 反替自证；
+        # LoopResult 组装留 engine——run_finalizer 不持 engine 运行时回边，沿 engine<->build
+        # 断环先例保持 runtime 环空态锚定）
+        final_answer, _run_end_reason = self._run_finalizer.persist_and_settle(
+            sess=sess,
+            session_id=session_id,
+            final_answer=final_answer,
+            _run_end_reason=_run_end_reason,
+            _cancel_reason=_cancel_reason,
+            resp=resp,
+            rounds=rounds,
+            tool_trace=tool_trace,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            tokens_cache_hit=tokens_cache_hit,
+            llm_ms_total=llm_ms_total,
+            ttft_first_ms=ttft_first_ms,
+            model_used=model_used,
+            truncation_noted=truncation_noted,
+            verification_note=verification_note,
+            _run_started_at=_run_started_at,
         )
-        _episode_resolution_candidate = bool(
-            _answer_origin == "model"
-            and _run_end_reason == "completed"
-            and final_answer.strip()
-            and resp is not None
-            and not resp.truncated
-        )
-        _origin_metadata = {
-            "answer_origin": _answer_origin,
-            "run_end_reason": _run_end_reason,
-            # R8.5: this dedicated bit is stronger than run_end_reason=completed.
-            # Provider-truncated/empty/program answers never become automatically
-            # retireable, and legacy messages lacking the bit remain fail-open.
-            "episode_resolution_candidate": _episode_resolution_candidate,
-        }
-        # R8.24-B B-3.2/B-D7（E19）: 程序终态全文不再进入 sess.messages——存储面
-        # 只保留 role-shape 协议占位（B-D11 PROTOCOL_ONLY：与 build 链
-        # PROGRAM_FINAL 替换同源常量，字节稳定），全文经 LoopResult（UI）与
-        # program.final 事件（audit）交付；下轮模型可见面零程序通知正文。
-        _program_final = _answer_origin == "program" and bool(final_answer)
-        if _program_final:
-            _origin_metadata = {
-                **_origin_metadata,
-                "program_final_placeholder": True,
-            }
-            try:
-                self._event_append(
-                    session_id,
-                    "program.final",
-                    {
-                        "session_id": session_id,
-                        "reason": _run_end_reason,
-                        "answer_origin": "program",
-                        "full_text": final_answer,
-                    },
-                )
-            except Exception:  # noqa: BLE001 — audit 交付失败 fail-open（UI 轨不受影响）
-                logger.debug("program.final 事件写入失败（fail-open）")
-        _persist_content = (
-            PROGRAM_FINAL_PROTOCOL_BOUNDARY if _program_final else final_answer
-        )
-        sess.messages.append(
-            Message(
-                role="assistant",
-                content=_persist_content,
-                source=_pf_source,
-                metadata=_origin_metadata,
-                # M51/M52: 模型 + 本轮 run token 消耗持久化（web/feishu 页脚数据源）
-                model_used=model_used,
-                tokens_in=tokens_in,
-                tokens_out=tokens_out,
-                tokens_cache_hit=tokens_cache_hit,
-                llm_ms=llm_ms_total,
-                ttft_ms=ttft_first_ms or 0.0,
-            )
-            if final_answer
-            else Message(
-                role="assistant", content="（无回答输出）", source=_pf_source, metadata=_origin_metadata
-            )
-        )
-        # M20 THK-04: 最终回答轮 assistant 消息也回传思考链（官方"后续所有请求"语义，防下一轮 400）
-        # GPT 审计批次2 双保险: 程序反馈（answer_origin != model）不携带任何 reasoning
-        if final_answer and resp is not None and resp.reasoning_content and _answer_origin == "model":
-            last = sess.messages[-1]
-            last.reasoning_content = resp.reasoning_content
-        # D1: 最终回答消息事件（fail-open）
-        self._append_message_event(sess, sess.messages[-1])
-        # R8.5: durable index first, retirement metadata second.  If the index
-        # write fails, no resolved_episode_ref is attached and future provider
-        # views keep the episode visible (fail-open, information-preserving).
-        try:
-            from llm_loop.core.episode_history import index_current_completed_episode
-
-            index_current_completed_episode(
-                self.episode_store,
-                sess,
-                turn_ref=getattr(self, "_current_turn_ref", None),
-                final_answer_index=len(sess.messages) - 1,
-            )
-        except Exception:  # noqa: BLE001 — indexing failure must not corrupt delivery
-            logger.warning("resolved episode 当前轮索引失败（fail-open，不退休）", exc_info=True)
-        # R8.8: round-exhaustion lifecycle is consumed by producer identity before
-        # persistence.  The previous post-save marker was lost on reload even when
-        # classification was correct, allowing the decision prompt to resurrect.
-        try:
-            for m in sess.messages:
-                if m.role != "system":
-                    continue
-                md = dict(m.metadata or {})
-                if md.get("injection_kind") == "round_exhaustion_decision" and not md.get("consumed"):
-                    md["consumed"] = True
-                    m.metadata = md
-        except Exception:  # noqa: BLE001 — consumption audit must not block delivery
-            logger.warning("耗尽消息消费标记异常（fail-open）", exc_info=True)
-        # M12 深化 T65: run 完成里程碑自我评估提醒（仅提示不强制，EVAL-03；追加后随会话保存）
-        self._termination._check_eval_trigger(sess, rounds, milestone=True)
-        # T39: 会话保存异常 → 如实标注 + 不抛穿（程序故障不影响 AI 发挥）
-        try:
-            self.session.save(sess)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("会话保存失败（fail-open）: %s", exc)
-            self._record_program_fault("session_persist")
-            recovery_note = self._session_lifecycle._persist_with_recovery_note(
-                target_type="session",
-                source_id=sess.session_id,
-                write_fn=lambda: self.session.save(sess),
-                payload=self._session_payload(sess),
-                trigger_point="loop_end_save",
-            )
-            extra = f" {recovery_note}" if recovery_note else ""
-            _run_end_reason = "session_save_failed"
-            final_answer = (
-                f"{final_answer}\n\n[程序异常] 会话保存失败（{type(exc).__name__}: {exc}）。"
-                f"本次回答仍有效，但历史可能未持久化。{extra}"
-            )
-        self._phase("done")
-        # EVO-20260817-72fcd94a L3: 缓存健康闭环（fail-open；实现在 _BuildMixin）
-        final_answer = self._post_run_cache_health(
-            final_answer, sess, tokens_in, tokens_cache_hit, model_used
-        )
-        # P1-1(2026-08-15): run 末事件日志滚动检查钩子（大小/天数触发；fail-open 不阻断）
-        self._check_event_rotate(session_id)
-        # H-UI: 循环结束（状态条可收尾）
-        self._notify_action("done")
-
-        # P0-1: 记忆访问统计（decay_score/access_count/last_access_at）落盘——
-        # search() 仅更新内存，此处每轮 run 完成批量持久化（低频，避免每轮检索全量写盘）
-        try:
-            if self.memory is not None:
-                self.memory.flush()
-        except Exception as exc:  # noqa: BLE001 — 统计落盘失败不阻断 run
-            logger.warning("记忆统计落盘失败（fail-open）: %s", exc)
-            recovery_note = self._session_lifecycle._persist_with_recovery_note(
-                target_type="memory_stats",
-                source_id="memory",
-                write_fn=lambda: self.memory.flush() if self.memory is not None else None,
-                payload=self._memory_payload(),
-                trigger_point="memory_flush",
-            )
-            if recovery_note:
-                logger.warning("记忆统计恢复通道: %s", recovery_note)
-
-        # DSH 借鉴(2026-08-17): run 生命周期结束事件（对齐 DSH turn/end reason）——
-        # 统一出口落盘，结束原因/轮数/token 汇总/耗时一次可查（fail-open 不阻断）
-        try:
-            self._event_append(
-                session_id,
-                "run.end",
-                {
-                    "session_id": session_id,
-                    "reason": _run_end_reason,
-                    "cancel_reason": _cancel_reason,
-                    "rounds": rounds,
-                    "tokens_in": tokens_in,
-                    "tokens_out": tokens_out,
-                    "cache_hit": tokens_cache_hit,
-                    "duration_ms": int((time.monotonic() - _run_started_at) * 1000),
-                    "model_used": model_used,
-                    "truncated": truncation_noted,
-                    "answer_preview": (final_answer or "")[:200],
-                    **self._kpi_snapshot(),
-                },
-            )
-        except Exception:  # noqa: BLE001 — run.end 失败 fail-open（不影响返回）
-            logger.debug("run.end 事件写入失败（fail-open）")
-
-        # EVO-20260820-5bf342ae ②: 长回答落盘（实现抽 events.py _persist_long_answer,
-        # 防 engine 膨胀守卫 1136——2026-08-21 内联版触顶后抽取）
-        final_answer = self._persist_long_answer(session_id, final_answer or "")
-
         return LoopResult(
             session_id=session_id,
             final_answer=final_answer,
