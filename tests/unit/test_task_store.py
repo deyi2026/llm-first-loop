@@ -130,7 +130,7 @@ def test_reopen_marks_downstream_premise_stale(store: TaskStore):
     for tid in (t1.task_id, t2.task_id):
         store.update("G1", tid, status="in_progress")
         store.update("G1", tid, status="done")
-    store.update("G1", t1.task_id, status="in_progress")  # 重开
+    store.update("G1", t1.task_id, status="in_progress", confirm=True)  # 重开（用户已批准）
     assert store.get("G1", t2.task_id).premise_stale is True
     fr = store.compute_frontier("G1")
     assert t2.task_id not in [x.task_id for x in fr["ready"]]
@@ -178,3 +178,26 @@ def test_render_and_summary(store: TaskStore):
     s = store.summary_line("G1")
     assert "tasks: 1 open / 1" in s
     assert store.summary_line("G-NOPE") == ""
+
+
+# ---------- done 重开确认门槛（用户规则: 已做过的任务不自动重启） ----------
+
+def test_done_reopen_requires_user_confirm(store: TaskStore):
+    t = _mk(store, "G1", "x")
+    store.update("G1", t.task_id, status="in_progress")
+    store.update("G1", t.task_id, status="done", evidence_refs=["evidence://v1/e"])
+    # 未带 confirm → 拒绝
+    with pytest.raises(ValueError, match="禁止自动重启"):
+        store.update("G1", t.task_id, status="in_progress")
+    # done→failed 同受守卫约束
+    with pytest.raises(ValueError, match="禁止自动重启"):
+        store.update("G1", t.task_id, status="failed")
+    # 带用户批准凭据 → 放行且级联照常
+    task = store.update("G1", t.task_id, status="in_progress", confirm=True)
+    assert task.status == "in_progress"
+
+
+def test_confirm_guard_does_not_affect_normal_transitions(store: TaskStore):
+    t = _mk(store, "G1", "x")
+    store.update("G1", t.task_id, status="in_progress")  # pending→in_progress 无需 confirm
+    assert store.get("G1", t.task_id).status == "in_progress"

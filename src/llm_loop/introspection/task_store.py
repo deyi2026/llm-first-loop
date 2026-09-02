@@ -180,6 +180,7 @@ class TaskStore:
         acceptance: list[str] | None = None,
         done_when: list[str] | None = None,
         title: str | None = None,
+        confirm: bool = False,
     ) -> Task:
         """更新任务。转移合法性/evidence 校验/blocked reason/重开级联在此层强制."""
         with self._file_lock(goal_id):
@@ -228,6 +229,14 @@ class TaskStore:
                         "（格式/存在性分层校验，语义判定归模型+validator，见设计 §2.2）"
                     )
                 if task.status == "done" and status != "done":
+                    # 用户规则落地（EVO-20260902-loopbreaker 同批）: 过去已做过的任务
+                    # 不应再自动重启；确需重启须先问过用户。confirm=true 即"已获用户
+                    # 明确批准"的唯一凭据（模型不得自行代答，须真实征询）。
+                    if not confirm:
+                        raise ValueError(
+                            "已完成的任务禁止自动重启（用户规则）: 过去已做过的任务不应再起；"
+                            "确需重启请先向用户说明理由并获明确批准，然后带 confirm=true 重新调用"
+                        )
                     self._cascade_premise_stale(goal_id, tasks, task_id)
                 task.status = status
             elif blocked_reason is not None and blocked_reason.strip():

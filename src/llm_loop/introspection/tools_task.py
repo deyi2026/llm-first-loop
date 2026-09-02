@@ -59,7 +59,9 @@ TASK_UPDATE_TOOL_DEF: dict = {
         "failed; in_progress→done/blocked/cancelled/failed; blocked→in_progress/cancelled/"
         "failed; done→in_progress(重开,下游自动标 premise_stale)/failed; failed→in_progress"
         "(重试)。→done 且 evidence_required=true 时必须 evidence_refs；→blocked 必须"
-        "blocked_reason。acceptance 修订会留痕（acceptance_revised，历史不可篡改）。"
+        "blocked_reason。done 重开须 confirm=true（用户规则: 已做过的任务不自动重启，"
+        "须先向用户征得明确批准；confirm=false 的重开会被拒绝）。"
+        "acceptance 修订会留痕（acceptance_revised，历史不可篡改）。"
     ),
     "parameters": {
         "type": "object",
@@ -82,6 +84,10 @@ TASK_UPDATE_TOOL_DEF: dict = {
             },
             "done_when": {"type": "array", "items": {"type": "string"}, "description": "修订完成判据"},
             "title": {"type": "string", "description": "修订标题"},
+            "confirm": {
+                "type": "boolean",
+                "description": "仅 done 重开类转移生效: true 表示已获用户明确批准（未获批准禁止代答 true）",
+            },
         },
         "required": ["goal_id", "task_id"],
     },
@@ -182,6 +188,7 @@ def run_task_update(ctx: Any, host: Any, args: dict) -> ToolResult:
             acceptance=([str(a) for a in args["acceptance"]] if args.get("acceptance") is not None else None),
             done_when=([str(w) for w in args["done_when"]] if args.get("done_when") is not None else None),
             title=(str(args["title"]) if args.get("title") else None),
+            confirm=bool(args.get("confirm", False)),
         )
     except ValueError as exc:
         return ToolResult(ToolResultStatus.FAILURE, f"[拒绝] {exc}", "", name)
