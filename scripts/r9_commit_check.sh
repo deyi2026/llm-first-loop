@@ -55,11 +55,59 @@ fi
 
 # ── 规则④：守卫文件前缀保护 ──
 for f in ${files[@]+"${files[@]}"}; do  # 空 diff 提交（纯消息）set -u 不崩（D-B2-05：负例1 演练发现）
-  if [[ "$f" == "tests/unit/test_arch_guards.py" || "$f" == "tests/unit/test_function_size_guard.py" ]]; then
+  if [[ "$f" == "tests/unit/test_arch_guards.py" ]]; then
+    $is_guard && continue
+    # 例外④a（B5-W1-03 / D-B5-xx）：refactor(r9) 触碰 test_arch_guards.py 须
+    # 同时满足——body 含标记行 "guard-verified: ratchet-tighten"（提交者声明
+    # 已在提交树口径跑守卫全绿）+ 守卫常量 _MIXIN_CAP 数值只降不升（棘轮方向
+    # 机检；放松仍拦）。test_function_size_guard.py 不在例外内（guard-only 不变）。
+    if $is_refactor && grep -qE "^guard-verified: ratchet-tighten" <<<"$body"; then
+      old_cap=$(git show "HEAD:tests/unit/test_arch_guards.py" 2>/dev/null | grep -oE "_MIXIN_CAP = [0-9]+" | grep -oE "[0-9]+" | head -1)
+      new_cap=$(git show ":tests/unit/test_arch_guards.py" 2>/dev/null | grep -oE "_MIXIN_CAP = [0-9]+" | grep -oE "[0-9]+" | head -1)
+      if [[ -n "$old_cap" && -n "$new_cap" && "$new_cap" -le "$old_cap" ]]; then
+        continue
+      fi
+      fail "④" "例外④a 不满足：_MIXIN_CAP 非只降不升（HEAD=${old_cap:-无} → staged=${new_cap:-无}）: ${f}"
+    else
+      fail "④" "非 guard(r9) 前缀触碰守卫文件: ${f}（防篡改层 3，T3-C；例外④a = refactor+标记行+CAP 只降）"
+    fi
+  elif [[ "$f" == "tests/unit/test_function_size_guard.py" ]]; then
     $is_guard || fail "④" "非 guard(r9) 前缀触碰守卫文件: ${f}（防篡改层 3，T3-C）"
   fi
   if [[ "$f" == tests/guards/*.json ]]; then
     $is_guard && continue
+    # 例外③（B5-W1-03 / D-B5-xx）：等价路径迁移通道——文件迁移/重命名场景下
+    # 基线键路径随实现迁移（值严格不变）。标记行 "baseline-migration:
+    # value-invariant" + 机检校验：function_lines+legacy 合并**值多重集相等**
+    #（相等 ⇒ 无任何值篡改空间，防篡改不弱化；棘轮 HEAD 对比测试运行时兜底）
+    # + known_cycles 纯收缩 + exemptions 零变更（_meta 说明性元数据豁免）。
+    # 多重集不等 → 落回例外②（纯新增键）判定或拦截。
+    if $is_refactor && grep -qE "^baseline-migration: value-invariant" <<<"$body"; then
+      if ! python3 - "$COMMIT" "$f" <<'PY'
+import json, subprocess, sys
+from collections import Counter
+c, rel = sys.argv[1], sys.argv[2]
+def ver(ref):
+    try:
+        out = subprocess.run(["git", "show", f"{ref}:{rel}"], capture_output=True, text=True, check=True).stdout
+        return json.loads(out)
+    except Exception:
+        return None
+old, new = ver(c + "^"), ver(c)
+if old is None or new is None:
+    sys.exit(1)
+vals_o = Counter(old.get("function_lines", {}).values()) + Counter(old.get("legacy_super_functions", {}).values())
+vals_n = Counter(new.get("function_lines", {}).values()) + Counter(new.get("legacy_super_functions", {}).values())
+oc, nc = old.get("known_cycles", []), new.get("known_cycles", [])
+cycles_ok = set(nc) <= set(oc) and len(nc) <= len(oc)
+exemptions_ok = old.get("exemptions") == new.get("exemptions")
+sys.exit(0 if (vals_o == vals_n and cycles_ok and exemptions_ok) else 1)
+PY
+      then
+        fail "④" "例外③ 不满足（等价迁移须值多重集相等 + known_cycles 纯收缩 + exemptions 零变更）: ${f}"
+      fi
+      continue
+    fi
     # 唯一例外（B3-PREP-03 / tasks-b3 §0.5-1）：refactor(r9) 断环提交允许（且仅
     # 允许）同步缩减 known_cycles——数组纯收缩（新 ⊆ 旧且长度只减）+ 其余节零
     # 变更。对齐 cycle 守卫 stale 断言双向语义（环消失未清 known 即红 vs 规则④
