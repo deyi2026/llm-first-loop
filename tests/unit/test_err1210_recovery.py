@@ -21,6 +21,7 @@ import pytest
 
 from llm_loop.core.cache_health import GATE_NOTE_CONTENT, CacheHealthMonitor
 from llm_loop.core.loop.engine_services.recovery_controller import RecoveryController
+from llm_loop.core.loop.engine_services.run_state import RunStateManager
 from llm_loop.core.loop.err1210 import (
     InjectedEntry,
     InjectionSpan,
@@ -280,7 +281,12 @@ class TestInjectionSpan:
 class _StripStub(RecoveryController):
     def __init__(self, injections):
         super().__init__(self)  # R9 B5-W1-03: stub 自身充当 host（实例态属性面不变）
-        self._host._last_build_injections = injections
+        # R9-B5-W4-03: 桶字段宿主面替身（last_build_injections 读写经 RunStateManager）
+        self._host._run_state_mgr = RunStateManager()
+        self._host._run_state().last_build_injections = injections
+
+    def _run_state(self):
+        return self._run_state_mgr.bucket()
 
 
 class TestStripTailInjections:
@@ -404,8 +410,13 @@ class _DeferStub(RecoveryController):
         self._host._cache_monitor = CacheHealthMonitor()
         self._host._interop_tail_messages = None
         self._host._tip_tail_messages = None
-        self._host._deferred_replay_refs = []
-        self._host._deferred_replay_slots = set()
+        # R9-B5-W4-03: 桶字段宿主面替身（deferred_replay_* 读写经 RunStateManager）
+        self._host._run_state_mgr = RunStateManager()
+        self._host._run_state().deferred_replay_refs = []
+        self._host._run_state().deferred_replay_slots = set()
+
+    def _run_state(self):
+        return self._run_state_mgr.bucket()
 
 
 class TestDeferStore:
@@ -424,7 +435,7 @@ class TestDeferStore:
         assert stub._interop_tail_messages == [m1]
         assert stub._tip_tail_messages == [m2]
         # 重注入检测登记
-        assert {s for s, _ in stub._deferred_replay_refs} == {SlotKind.INTEROP, SlotKind.TIP}
+        assert {s for s, _ in stub._run_state().deferred_replay_refs} == {SlotKind.INTEROP, SlotKind.TIP}
 
     def test_idempotent(self, tmp_path):
         stub = _DeferStub(tmp_path)
@@ -662,9 +673,9 @@ class TestEngineRecovery:
         assert result.truncated is False
         assert len(fake.calls) == 2  # 重试恰好 1 次
         orig, retry = fake.calls[0]["messages"], fake.calls[1]["messages"]
-        n_inj = len(engine._last_build_injections)
+        n_inj = len(engine._run_state().last_build_injections)
         assert n_inj == 1
-        assert engine._last_build_injections[0].slot_kind == SlotKind.USER_ENVELOPE
+        assert engine._run_state().last_build_injections[0].slot_kind == SlotKind.USER_ENVELOPE
         # R6: strip only program prefix; stable prefix stays byte-identical and exact human suffix remains.
         assert retry[:-1] == orig[:-1]
         assert retry[-1] == {"role": "user", "content": "长任务继续"}
@@ -674,7 +685,7 @@ class TestEngineRecovery:
         assert engine._tip_tail_messages is None
         assert engine._cache_monitor.take_gate_note(sid) is False
         # 耗尽标记已写（本 run 不再二次降级——修复A per-run 语义）
-        assert engine._err1210_attempted.get(sid) == engine._err1210_run_seq
+        assert engine._err1210_attempted.get(sid) == engine._run_state().err1210_run_seq
 
     def test_defer_reinject_next_round(self, tmp_path, monkeypatch):
         """R8.24-E（E-D2）: tip replay 退出——defer 重注入链路不再复活 tip 段.
@@ -700,7 +711,7 @@ class TestEngineRecovery:
             for x in second_msgs
             if isinstance(x, dict)
         )  # E-G3: TIP replay 恒零注入
-        assert all(r is not m for r in (engine._deferred_replay_refs or []))
+        assert all(r is not m for r in (engine._run_state().deferred_replay_refs or []))
 
 
     def test_tip_recovery_does_not_gain_hotcard_authority(self, tmp_path, monkeypatch):
@@ -721,7 +732,7 @@ class TestEngineRecovery:
         wire = "\n".join(str(m.get("content", "")) for m in orig)
         assert "经验提示 tip" not in wire
         assert "--- [slot:" not in wire
-        assert engine._last_build_injections == []
+        assert engine._run_state().last_build_injections == []
         assert retry[:-1] == orig[:-1]
         assert retry[-1] == {"role": "user", "content": "tip 活跃"}
         assert engine._tip_tail_messages is None  # 一次性消费、无 defer 回填

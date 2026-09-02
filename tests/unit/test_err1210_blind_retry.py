@@ -32,7 +32,7 @@ class TestBlindRetry:
         orig, retry = fake.calls[0]["messages"], fake.calls[1]["messages"]
         assert retry == orig  # 核心语义: 原样重发，不剥离/不聚合
         # blind 成功 → 耗尽标记已写（本 run 不再二次降级）
-        assert engine._err1210_attempted.get(sid) == engine._err1210_run_seq
+        assert engine._err1210_attempted.get(sid) == engine._run_state().err1210_run_seq
 
     def test_blind_1210_fallback_strip(self, tmp_path, monkeypatch):
         """blind 仍 1210 → 回退剥离路径: 原始+blind+strip 重试 = 3 次调用、strip 剥离版核对."""
@@ -47,7 +47,7 @@ class TestBlindRetry:
         blind = fake.calls[1]["messages"]
         stripped = fake.calls[2]["messages"]
         assert blind == orig  # blind 原样
-        inj = engine._last_build_injections
+        inj = engine._run_state().last_build_injections
         assert len(inj) == 1
         # R6 contract: strip removes only the program prefix from USER_ENVELOPE;
         # exact human truth remains as the retry tail instead of deleting the whole user.
@@ -67,7 +67,7 @@ class TestBlindRetry:
         assert "恢复后的正常回答" in result.final_answer
         assert len(fake.calls) == 2
         orig, retry = fake.calls[0]["messages"], fake.calls[1]["messages"]
-        inj = engine._last_build_injections
+        inj = engine._run_state().last_build_injections
         assert len(inj) == 1
         assert retry[:-1] == orig[:-1]
         assert retry[-1] == {"role": "user", "content": inj[0].user_truth}

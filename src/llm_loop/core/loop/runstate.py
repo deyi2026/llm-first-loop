@@ -4,21 +4,18 @@
 
 - ``_RunState``: 单个会话的可变运行状态（停滞指纹/overflow 计数/预警标志/
   快照节流/breakdown/build_info），按 session_id 分桶，跨会话并发 run 不共享。
-- ``_RunStateMixin``: 属性 shim——既有 ``self._stagnation_state`` 等读写接口不变
-  （零回归），实际按 ``run_context.current_session_id`` 解析到本会话桶；
-  无上下文（out-of-run 复查/测试断言）回退 ``_last_active_sid`` 桶。
+- 桶解析与一致性锁已对象化为 ``engine_services/run_state.RunStateManager``
+  （B5-W4-03：_RunStateMixin 属性 shim 退役，读写触点直迁
+  ``self._run_state().<field>`` 显式形态；guard 同时保护桶表与 run 绑定表）。
 
-依赖宿主提供（engine __init__ 初始化）：
-``self._run_states: dict[str, _RunState]`` / ``self._run_states_guard`` /
-``self._last_active_sid: str``
+本模块只保留两个显式 dataclass（B5-W4-03 任务口径：runstate.py 留显式 dataclass）：
+``_RunState``（per-session 桶）/ ``RunState``（单次 run 显式状态对象）。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
-
-from llm_loop.core.run_context import current_session_id as _current_session_id
 
 if TYPE_CHECKING:
     from llm_loop.core.loop.err1210 import InjectedEntry, SlotKind
@@ -37,7 +34,10 @@ class _RunState:
     """
 
     stagnation_state: dict = field(
-        default_factory=lambda: {"fp": None, "count": 0, "reminded": False}
+        default_factory=lambda: {
+            "fp": None, "count": 0, "reminded": False,
+            "empty_count": 0, "empty_reminded": False,
+        }
     )
     overflow_reinject_count: int = 0
     context_warning_injected: bool = False
@@ -114,174 +114,3 @@ class RunState:
     tokens_cache_hit: int = 0  # M58: 前缀缓存命中 token（省钱可观测）
     llm_ms_total: float = 0.0  # M59: LLM 调用总耗时（首 token 埋点聚合）
     ttft_first_ms: float | None = None  # M59: 首个 token 延迟
-
-
-class _RunStateMixin:
-    """per-run 状态属性 shim（接口不变，落到当前会话桶；审计发现 #7 串台修复）."""
-
-    # 宿主属性（engine __init__ 初始化），此处仅为类型标注
-    _run_states: dict[str, _RunState]
-    _run_states_guard: Any
-    _last_active_sid: str
-
-    def _run_state(self) -> _RunState:
-        """当前执行上下文的会话状态桶；无上下文回退最近活跃会话桶（out-of-run 复查）."""
-        sid = _current_session_id.get() or self._last_active_sid
-        with self._run_states_guard:
-            return self._run_states.setdefault(sid, _RunState())
-
-    @property
-    def _stagnation_state(self) -> dict:
-        return self._run_state().stagnation_state
-
-    @_stagnation_state.setter
-    def _stagnation_state(self, value: dict) -> None:
-        self._run_state().stagnation_state = value
-
-    @property
-    def _overflow_reinject_count(self) -> int:
-        return self._run_state().overflow_reinject_count
-
-    @_overflow_reinject_count.setter
-    def _overflow_reinject_count(self, value: int) -> None:
-        self._run_state().overflow_reinject_count = value
-
-    @property
-    def _context_warning_injected(self) -> bool:
-        return self._run_state().context_warning_injected
-
-    @_context_warning_injected.setter
-    def _context_warning_injected(self, value: bool) -> None:
-        self._run_state().context_warning_injected = value
-
-    @property
-    def _round_warning_injected(self) -> bool:
-        return self._run_state().round_warning_injected
-
-    @_round_warning_injected.setter
-    def _round_warning_injected(self, value: bool) -> None:
-        self._run_state().round_warning_injected = value
-
-    @property
-    def _exhaustion_decision_used(self) -> bool:
-        return self._run_state().exhaustion_decision_used
-
-    @_exhaustion_decision_used.setter
-    def _exhaustion_decision_used(self, value: bool) -> None:
-        self._run_state().exhaustion_decision_used = value
-
-    @property
-    def _last_snapshot_count(self) -> int:
-        return self._run_state().last_snapshot_count
-
-    @_last_snapshot_count.setter
-    def _last_snapshot_count(self, value: int) -> None:
-        self._run_state().last_snapshot_count = value
-
-    @property
-    def _last_breakdown(self) -> Any:
-        return self._run_state().last_breakdown
-
-    @_last_breakdown.setter
-    def _last_breakdown(self, value: Any) -> None:
-        self._run_state().last_breakdown = value
-
-    @property
-    def _last_build_info(self) -> Any:
-        return self._run_state().last_build_info
-
-    @_last_build_info.setter
-    def _last_build_info(self, value: Any) -> None:
-        self._run_state().last_build_info = value
-
-    # T5: turn 身份 / 预算归因 per-session shim（接口不变，读写落当前会话桶）
-    @property
-    def _current_turn_ref(self) -> int | None:
-        return self._run_state().current_turn_ref
-
-    @_current_turn_ref.setter
-    def _current_turn_ref(self, value: int | None) -> None:
-        self._run_state().current_turn_ref = value
-
-    @property
-    def _last_budget_info(self) -> Any:
-        return self._run_state().last_budget_info
-
-    @_last_budget_info.setter
-    def _last_budget_info(self, value: Any) -> None:
-        self._run_state().last_budget_info = value
-
-    # err1210 P0-A/R4: 恢复状态字段 per-session shim（保旧名，读写落当前会话桶）
-    @property
-    def _last_build_injections(self) -> list[InjectedEntry]:
-        return self._run_state().last_build_injections
-
-    @_last_build_injections.setter
-    def _last_build_injections(self, value: list[InjectedEntry]) -> None:
-        self._run_state().last_build_injections = value
-
-    @property
-    def _compact_event_seq(self) -> int:
-        return self._run_state().compact_event_seq
-
-    @_compact_event_seq.setter
-    def _compact_event_seq(self, value: int) -> None:
-        self._run_state().compact_event_seq = value
-
-    @property
-    def _compact_event_was_compacted(self) -> bool:
-        return self._run_state().compact_event_was_compacted
-
-    @_compact_event_was_compacted.setter
-    def _compact_event_was_compacted(self, value: bool) -> None:
-        self._run_state().compact_event_was_compacted = value
-
-    @property
-    def _last_build_defer_replayed(self) -> bool:
-        return self._run_state().last_build_defer_replayed
-
-    @_last_build_defer_replayed.setter
-    def _last_build_defer_replayed(self, value: bool) -> None:
-        self._run_state().last_build_defer_replayed = value
-
-    @property
-    def _deferred_replay_refs(self) -> list[tuple[SlotKind, Message]]:
-        return self._run_state().deferred_replay_refs
-
-    @_deferred_replay_refs.setter
-    def _deferred_replay_refs(self, value: list[tuple[SlotKind, Message]]) -> None:
-        self._run_state().deferred_replay_refs = value
-
-    @property
-    def _deferred_replay_slots(self) -> set[str]:
-        return self._run_state().deferred_replay_slots
-
-    @_deferred_replay_slots.setter
-    def _deferred_replay_slots(self, value: set[str]) -> None:
-        self._run_state().deferred_replay_slots = value
-
-    # R4: err1210 auto-continue sequence/count/pending slot must follow the same
-    # per-session isolation contract as the rest of the recovery state.
-    @property
-    def _err1210_run_seq(self) -> int:
-        return self._run_state().err1210_run_seq
-
-    @_err1210_run_seq.setter
-    def _err1210_run_seq(self, value: int) -> None:
-        self._run_state().err1210_run_seq = int(value)
-
-    @property
-    def _auto_continue_1210(self) -> int:
-        return self._run_state().auto_continue_1210
-
-    @_auto_continue_1210.setter
-    def _auto_continue_1210(self, value: int) -> None:
-        self._run_state().auto_continue_1210 = int(value)
-
-    @property
-    def _program_recovery_tail_message(self) -> Message | None:
-        return self._run_state().program_recovery_tail_message
-
-    @_program_recovery_tail_message.setter
-    def _program_recovery_tail_message(self, value: Message | None) -> None:
-        self._run_state().program_recovery_tail_message = value

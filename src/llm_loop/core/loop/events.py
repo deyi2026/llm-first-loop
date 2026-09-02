@@ -384,7 +384,7 @@ class _EventsMixin:
         contextvar 定位本会话 sess——并发 run 各自写自己的 Session 对象.
         会话不在活跃绑定表（非 run 期间调用）→ None，调用方回退 ctx 环境字段.
         """
-        with self._run_states_guard:
+        with self._run_state_mgr.guard:
             sess = self._run_sessions.get(session_id)
         if sess is None:
             return None

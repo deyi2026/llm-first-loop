@@ -244,8 +244,9 @@ def snapshot_offending_payload(
 # ── R9 B5-W1-03 迁移占位 ──
 # 原 _Err1210Mixin（P0 状态机 14 法）于 R9 Phase 5 退役（design :475 改造类引用面）：
 # 方法体逐字平移至 engine_services/recovery_controller.py（RecoveryController，
-# 宿主实例态 _err1210_attempted/_err1210_run_seq/_deferred_replay_* 经 self._host
-# 读写，行为零变化）。本文件保留模块级组件供新 service 与外部引用：
+# 宿主实例态 _err1210_attempted 留宿主；运行态（err1210_run_seq/deferred_replay_*
+# 等）经 self._host._run_state() per-session 桶读写（B5-W4-03），行为零变化）。
+# 本文件保留模块级组件供新 service 与外部引用：
 # content_prefix_sha / is_err1210 / SlotKind / parse_aggregated_slots / InjectedEntry /
 # InjectionSpan / Err1210RecoveryResult / record_defer_event / snapshot_offending_payload。
 # 类占位随 R9 收尾批清理。

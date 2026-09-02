@@ -731,7 +731,13 @@ class TestT6DeathLoopRegressionFixture:
         from llm_loop.core.loop.engine_services.tool_cycle import ToolCycleService
 
         class _StubEngine:
-            _stagnation_state: dict | None = None
+            def __init__(self) -> None:
+                from llm_loop.core.loop.engine_services.run_state import RunStateManager
+
+                self._run_state_mgr = RunStateManager()
+
+            def _run_state(self):
+                return self._run_state_mgr.bucket()
 
             def _stagnation_fingerprint(self, tc):
                 return f"{tc.name}|fp"
@@ -740,14 +746,14 @@ class TestT6DeathLoopRegressionFixture:
                 self.last_action = (phase, action_type, detail)
 
         stub = _StubEngine()
-        stub._host = stub  # R9-B5-W3-01: 裸替身自指宿主面（_stagnation_state 走 RunState shim 面）
+        stub._host = stub  # R9-B5-W3-01: 裸替身自指宿主面（RunState 桶经 _run_state() 直供）
         tc = ToolCall(id="z1", name="read_file", arguments={"path": "evidence://v1/x"})
         result = ReadFileTool().execute(path="evidence://v1/x")
         for _ in range(3):
             ToolCycleService._track_stagnation(  # pyright: ignore[reportAttributeAccessIssue]
                 stub, tc, None, [], result=result
             )
-        assert (stub._stagnation_state or {}).get("count") == 3  # 计数收敛接口在场且累计
+        assert stub._run_state().stagnation_state["count"] == 3  # 计数收敛接口在场且累计
 
     def test_capability_observability_receipt(self):
         """五项不退化观测口径落档（§13.2）——fixture 场景下三防线断言齐 = 回执。"""

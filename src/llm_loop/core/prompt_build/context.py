@@ -70,7 +70,7 @@ class ProviderProjection:
 class BuildAudit:
     """全程追加（收口只读）."""
 
-    injections_registry: list[dict[str, Any]] = field(default_factory=list)  # _last_build_injections 旁路
+    injections_registry: list[dict[str, Any]] = field(default_factory=list)  # last_build_injections 桶旁路（B5-W4-03）
     projection_fingerprint: str = ""
     compaction_audit: dict[str, Any] = field(default_factory=dict)  # L2265-2290 段产出
     decision_trace: list[dict[str, Any]] = field(default_factory=list)  # Decision 时间线视图

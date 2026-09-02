@@ -237,8 +237,9 @@ class InteropService:
             legacy_tail = getattr(self._host, "_interop_tail_messages", None) or []
             if legacy_tail:
                 self._host._interop_tail_messages = None
-                refs = list(getattr(self._host, "_deferred_replay_refs", None) or [])
-                self._host._deferred_replay_refs = [
+                _st = self._host._run_state()
+                refs = list(_st.deferred_replay_refs or [])
+                _st.deferred_replay_refs = [
                     (slot, ref) for slot, ref in refs if str(slot) != "interop"
                 ]
                 try:

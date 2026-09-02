@@ -609,10 +609,11 @@ class RoutingService:
             "tool_round_small_prefix",
             "零历史" if tool_round_zero else "小前缀",
         )
-        if isinstance(self._host._last_budget_info, dict):
-            self._host._last_budget_info = {
-                **self._host._last_budget_info,
-                "base_effective_budget": self._host._last_budget_info.get("effective_budget"),
+        _st = self._host._run_state()
+        if isinstance(_st.last_budget_info, dict):
+            _st.last_budget_info = {
+                **_st.last_budget_info,
+                "base_effective_budget": _st.last_budget_info.get("effective_budget"),
                 "effective_budget": effective_budget,
                 "limited_by": "tool_round_zero" if tool_round_zero else "tool_round_clamp",
             }

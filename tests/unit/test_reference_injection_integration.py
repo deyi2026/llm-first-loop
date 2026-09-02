@@ -90,7 +90,7 @@ def test_experience_front_k_gate_and_switch_pointer(tmp_path) -> None:
     stub.settings.reference_auto_turns = 3
     for text in ("抓取页面", "继续", "继续", "继续", "换个话题：重新抓取网页"):
         stub.messages.append(_human(text))
-        stub._current_turn_ref = len(stub.messages) - 1
+        stub._run_state().current_turn_ref = len(stub.messages) - 1
         ToolCycleService._inject_experience_tips(stub, stub, ["web_fetch"])
     tips = [m for m in stub.messages if (m.metadata or {}).get("injection_kind") == "experience_tip"]
     assert tips == []

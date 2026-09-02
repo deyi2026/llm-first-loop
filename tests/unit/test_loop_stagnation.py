@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from llm_loop.core.loop.engine_services.run_state import RunStateManager
 from llm_loop.core.loop.engine_services.tool_cycle import ToolCycleService
 from llm_loop.core.loop.tool_exec import (
     _STAGNATION_BREAK_AT,
@@ -21,11 +22,13 @@ class _StubEngine(ToolCycleService):
     """最小引擎替身：仅实现 _track_stagnation 依赖的两个钩子."""
 
     def __init__(self):
-        self._host = self  # R9-B5-W3-01: 替身自给宿主面（迁移前 self.X → 现 self._host.X → 同一字段）
-        self._stagnation_state = {"fp": None, "count": 0, "reminded": False}
-        self._current_turn_ref = 11
+        self._host = self  # R9-B5-W3-01: 替身自给宿主面（RunState 桶经 _run_state() 直供）
+        self._run_state_mgr = RunStateManager()
         self.events = []
         self.actions = []
+
+    def _run_state(self):
+        return self._run_state_mgr.bucket()
 
     def _append_message_event(self, sess, msg):
         self.events.append(msg)
@@ -43,7 +46,7 @@ def test_below_threshold_no_reminder():
     for _ in range(_STAGNATION_REMIND_AT - 1):
         eng._track_stagnation(_tc(path="/a.py"), sess, [])
     assert sess.messages == []
-    assert eng._stagnation_state["count"] == _STAGNATION_REMIND_AT - 1
+    assert eng._run_state().stagnation_state["count"] == _STAGNATION_REMIND_AT - 1
 
 
 def test_reminder_recorded_once_at_threshold_as_event():
@@ -64,7 +67,7 @@ def test_fingerprint_change_resets_streak():
     for _ in range(2):
         eng._track_stagnation(_tc(path="/a.py"), sess, [])
     eng._track_stagnation(_tc(path="/b.py"), sess, [])  # 参数变了 → 指纹变 → 重置
-    assert eng._stagnation_state["count"] == 1
+    assert eng._run_state().stagnation_state["count"] == 1
     assert sess.messages == []
 
 
@@ -105,8 +108,8 @@ def test_search_target_fingerprint_ignores_detail_params():
     eng._track_stagnation(
         _tc(name="search_files", pattern="*.md", root="/b", max_results=50), sess, []
     )
-    assert eng._stagnation_state["count"] == 2  # 目标均为 pattern=*.md → 连续累计
-    assert eng._stagnation_state["fp"] == "search_files|{\"pattern\": \"*.md\"}"
+    assert eng._run_state().stagnation_state["count"] == 2  # 目标均为 pattern=*.md → 连续累计
+    assert eng._run_state().stagnation_state["fp"] == "search_files|{\"pattern\": \"*.md\"}"
 
 
 def test_search_empty_result_reminder_at_threshold():
@@ -150,7 +153,7 @@ def test_nonempty_result_resets_empty_streak():
     eng._track_stagnation(
         _tc(name="search_files", pattern="*.py"), sess, [], result=_nonempty_result()
     )
-    assert eng._stagnation_state["empty_count"] == 0
+    assert eng._run_state().stagnation_state["empty_count"] == 0
     assert sess.messages == []
 
 
@@ -188,5 +191,5 @@ def test_exec_cmd_non_search_empty_not_counted():
         _tc(name="execute_command", command="python3 -c 'print()'"), sess, [],
         result=_empty_result("（无输出）"),
     )
-    assert eng._stagnation_state["empty_count"] == 0
+    assert eng._run_state().stagnation_state["empty_count"] == 0
     assert sess.messages == []

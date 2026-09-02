@@ -2,7 +2,7 @@
 
 _ToolExecMixin（10 法，tool_exec.py:138-486）+ _ToolEligibilityMixin（1 法，
 tool_eligibility.py）逐字平移：宿主面（events/routing mixin + settings/status/
-registry/session + RunState shim 的 _stagnation_state）经 ``self._host``；
+registry/session + 停滞态 per-session 桶）经 ``self._host``；
 域内互调与域状态（_skills_cache/_last_tool_eligibility）保持 self；
 module 级辅助 _json_dumps_args 等留驻 tool_exec.py（REQ-REF-06 re-export 不变）。
 等价证明：生成管线 AST 反替自证 + 提交门禁 PROBE 隔离树 ci_gate 全绿。
@@ -299,18 +299,31 @@ class ToolCycleService:
             return f"{tc.name}|{_json_dumps_args(target)}"
         return f"{tc.name}|{_json_dumps_args(tc.arguments)}"
 
-    def _track_stagnation(self, tc, sess, tool_trace: list[dict], result=None) -> None:
-        """每次工具执行后更新停滞计数（目标级指纹 + 搜索空结果），达阈值注入提醒。
+    def _stagnation_state_of_host(self) -> dict:
+        """宿主停滞态读写入口（B5-W4-03 per-session 桶化；fail-open 保裸实例契约）.
 
-        熔断决策在 engine 主循环（能 break 的位置）读取 _stagnation_should_break() 完成。
+        正常实例经 RunStateManager 桶（host._run_state().stagnation_state，跨会话
+        不共享）；tests __new__ 绕过 __init__ 的裸服务无 mgr，回退宿主旧字段并兜
+        底创建（W4-02e 立约：裸服务 fail-open，D-B5-10 同源教训前置规避）。
         """
-        fp = self._stagnation_fingerprint(tc)
+        mgr = getattr(self._host, "_run_state_mgr", None)
+        if mgr is not None:
+            return mgr.bucket().stagnation_state
         state = getattr(self._host, "_stagnation_state", None)
         if state is None:
             state = self._host._stagnation_state = {
                 "fp": None, "count": 0, "reminded": False,
                 "empty_count": 0, "empty_reminded": False,
             }
+        return state
+
+    def _track_stagnation(self, tc, sess, tool_trace: list[dict], result=None) -> None:
+        """每次工具执行后更新停滞计数（目标级指纹 + 搜索空结果），达阈值注入提醒。
+
+        熔断决策在 engine 主循环（能 break 的位置）读取 _stagnation_should_break() 完成。
+        """
+        fp = self._stagnation_fingerprint(tc)
+        state = self._stagnation_state_of_host()
         # ① 同目标指纹连续计数（原逻辑，指纹已升级为目标级）
         if state["fp"] == fp:
             state["count"] += 1
@@ -360,7 +373,7 @@ class ToolCycleService:
 
     def _stagnation_should_break(self) -> tuple[bool, str, int]:
         """是否达熔断阈值（engine 主循环每轮工具执行后调用）。."""
-        state = getattr(self._host, "_stagnation_state", None)
+        state = self._stagnation_state_of_host()
         if not state or state["count"] < _STAGNATION_BREAK_AT:
             return (False, "", 0)
         name = (state["fp"] or "").split("|", 1)[0]

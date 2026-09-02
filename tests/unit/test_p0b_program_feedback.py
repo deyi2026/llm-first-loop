@@ -68,7 +68,7 @@ def test_b2_projection_uses_constant_protocol_boundary_and_storage_untouched(tmp
             Message(role="user", content="继续", source=MessageSource.USER),
         ]
     )
-    engine._current_turn_ref = 2
+    engine._run_state().current_turn_ref = 2
     built = engine._build_llm_messages(
         sess, [], max_chars=200_000, planned_label="zhipu/glm-5"
     )

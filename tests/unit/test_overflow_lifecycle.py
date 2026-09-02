@@ -9,9 +9,9 @@ from llm_loop.llm.errors import LLMError
 
 class _Engine:
     def __init__(self):
-        self._overflow_reinject_count = 0
-        self._current_turn_ref = 9
-        self._last_breakdown = None
+        self._run_state().overflow_reinject_count = 0
+        self._run_state().current_turn_ref = 9
+        self._run_state().last_breakdown = None
 
     def _current_context_limit(self, model_used):  # noqa: ARG002
         return 1000

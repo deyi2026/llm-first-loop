@@ -29,7 +29,7 @@ _append_message_event / episode_store / _session_payload / session /
 _session_lifecycle / _record_program_fault / _termination / memory /
 _memory_payload / _kpi_snapshot / _post_run_cache_health /
 _check_event_rotate / _notify_action / _phase / _persist_long_answer /
-getattr("_current_turn_ref")
+_run_state().current_turn_ref（per-session 桶）
 """
 
 # pyright: reportAttributeAccessIssue=false, reportGeneralTypeIssues=false
@@ -258,7 +258,7 @@ class RunFinalizer:
             index_current_completed_episode(
                 self._host.episode_store,
                 sess,
-                turn_ref=getattr(self._host, "_current_turn_ref", None),
+                turn_ref=self._host._run_state().current_turn_ref,
                 final_answer_index=len(sess.messages) - 1,
             )
         except Exception:  # noqa: BLE001 — indexing failure must not corrupt delivery

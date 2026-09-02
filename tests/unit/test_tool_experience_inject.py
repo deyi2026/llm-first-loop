@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+from llm_loop.core.loop.engine_services.run_state import RunStateManager
 from llm_loop.core.loop.engine_services.tool_cycle import ToolCycleService
 
 _EXP_MD = """---
@@ -46,7 +47,12 @@ class _Stub(ToolCycleService):
         self.actions = []
         self._tip_tail_messages = []
         self._exp_store = _ExplodingStore()
+        # R9-B5-W4-03: 桶字段宿主面替身（current_turn_ref 读写经 RunStateManager）
+        self._run_state_mgr = RunStateManager()
         type(self)._skills_cache = (0.0, [])
+
+    def _run_state(self):
+        return self._run_state_mgr.bucket()
 
     def _append_message_event(self, sess, msg) -> None:
         self.events.append(msg)

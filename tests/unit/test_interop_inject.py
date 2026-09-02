@@ -319,7 +319,7 @@ def test_legacy_deferred_interop_tail_is_retired_before_build(tmp_path, monkeypa
     legacy = Message(role="system", content="legacy interop command", source=MessageSource.SYSTEM)
     keep = Message(role="system", content="keep tip ref", source=MessageSource.SYSTEM)
     eng._interop_tail_messages = [legacy]
-    eng._deferred_replay_refs = [(SlotKind.INTEROP, legacy), (SlotKind.TIP, keep)]
+    eng._run_state().deferred_replay_refs = [(SlotKind.INTEROP, legacy), (SlotKind.TIP, keep)]
     actions: list[tuple[str, str, str]] = []
     eng._record_action = lambda kind, status, detail: actions.append((kind, status, detail))
 
@@ -327,7 +327,7 @@ def test_legacy_deferred_interop_tail_is_retired_before_build(tmp_path, monkeypa
 
     assert out == [] and prefix_len == 0
     assert eng._interop_tail_messages is None
-    assert eng._deferred_replay_refs == [(SlotKind.TIP, keep)]
+    assert eng._run_state().deferred_replay_refs == [(SlotKind.TIP, keep)]
     assert actions == [(
         "interop.external_input",
         "legacy_defer_retired",

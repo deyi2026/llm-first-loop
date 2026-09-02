@@ -100,7 +100,7 @@ def test_build_direction_c_remaps_registered_dynamic_entry_after_persisted_merge
     from tests.unit.test_injection_fingerprint import _build, _engine
 
     engine, sess = _engine(tmp_path)
-    engine._current_turn_ref = None
+    engine._run_state().current_turn_ref = None
     persisted = render_program_appendix("persisted reference", InjectionLayer.REFERENCE)
     sess.messages.append(
         Message(
@@ -117,7 +117,7 @@ def test_build_direction_c_remaps_registered_dynamic_entry_after_persisted_merge
     out = _build(engine, sess, [])
 
     # tip 退役: 无 dynamic 注册 entry（无 stale remap 面）
-    assert engine._last_build_injections == []
+    assert engine._run_state().last_build_injections == []
     wire = "\n".join(str(m.get("content") or "") for m in out)
     assert "persisted reference" in wire  # 持久化 base 历史平铺保留
     assert "dynamic tip" not in wire  # E-G3: TIP replay 恒零注入

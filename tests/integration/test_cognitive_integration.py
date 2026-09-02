@@ -191,7 +191,7 @@ class TestSinglePipelineAndDegradation:
         tail_users = [m for m in out if m.get("role") == "user"][-1:]
         assert len(tail_users) == 1, "尾部注入恒单条聚合 user（单管线）"
         assert str(tail_users[0]["content"]).startswith(_INJECTION_PREFIX)
-        entries = engine._last_build_injections
+        entries = engine._run_state().last_build_injections
         assert len(entries) == 1 and entries[0].slot_kind == SlotKind.AGGREGATED
         assert "[tier:hot][slot:gate_note]" not in str(tail_users[0]["content"])
         # R8.13/E26: interop live path 恒空 + 手工武装的 _interop_tail_messages 在
@@ -204,7 +204,7 @@ class TestSinglePipelineAndDegradation:
         # Settings 为 frozen dataclass，测试内以 __setattr__ 覆盖（不引入新构造路径）
         object.__setattr__(engine.settings, "cog_runtime_tier_enabled", False)
         _arm_slots(engine, sess)  # 重新武装（gate_note/hotcard 为取走语义，首轮已消费）
-        engine._last_build_injections.clear()
+        engine._run_state().last_build_injections.clear()
         out2 = engine._build_llm_messages(sess, [], max_chars=200_000, planned_label="zhipu/glm-5")
         tail2 = [m for m in out2 if m.get("role") == "user"][-1:]
         assert len(tail2) == 1
@@ -212,7 +212,7 @@ class TestSinglePipelineAndDegradation:
         # R8.13/E26: interop 退役在 tier 开/关两种模式下均成立（live eligible slot
         # 同样不进包——外部内容须走用户输入侧显式授权）
         assert "[slot:interop]" not in str(tail2[0]["content"])
-        assert len(engine._last_build_injections) == 1
+        assert len(engine._run_state().last_build_injections) == 1
 
     def test_projection_time_upper_bound(self):
         """投影+组装耗时上界: 大输入确定性规则路径（spec 4.1-1 相对开销可测）."""

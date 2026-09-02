@@ -202,7 +202,7 @@ class TestGoldenFingerprint:
         engine, sess = _engine(tmp_path)
         memory_msgs = _arm_all_slots(engine, sess)
         out = _build(engine, sess, memory_msgs)
-        entries = engine._last_build_injections
+        entries = engine._run_state().last_build_injections
         assert len(entries) == 1  # 聚合单 entry（memory 兜底不登记）
         assert str(entries[0].slot_kind) == "aggregated"
         assert entries[0].msg_idx == len(out) - 1  # 指向聚合消息（尾位）
@@ -222,7 +222,7 @@ class TestGoldenFingerprint:
         assert _slot_re("tip").search(agg)
         assert _slot_re("hotcard").search(agg) is None
         assert _slot_re("gate_note").search(agg) is None
-        assert [e.msg_idx for e in engine._last_build_injections] == [len(out) - 1]
+        assert [e.msg_idx for e in engine._run_state().last_build_injections] == [len(out) - 1]
 
     def test_wire_prefix_invariant(self, tmp_path):
         """公共前缀 wire 哈希一致结构（附录 C: 注入只追加尾部，前缀逐字节不变）."""

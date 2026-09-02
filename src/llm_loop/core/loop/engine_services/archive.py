@@ -27,7 +27,7 @@ class ArchiveService:
 
         if current_session_id.get() == session_id:
             try:
-                with self._host._run_states_guard:
+                with self._host._run_state_mgr.guard:
                     active = self._host._run_sessions.get(session_id)
                 if active is not None:
                     return active
@@ -55,7 +55,7 @@ class ArchiveService:
 
                 _identity_session = None
                 try:
-                    with self._host._run_states_guard:
+                    with self._host._run_state_mgr.guard:
                         _identity_session = self._host._run_sessions.get(session_id)
                 except Exception:  # noqa: BLE001 — run binding unavailable: read fallback
                     _identity_session = None

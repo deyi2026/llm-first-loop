@@ -132,7 +132,7 @@ def test_build_initial_round_envelope_ends_with_exact_user_truth(tmp_path: Path)
 
     engine, sess = _engine(tmp_path)
     object.__setattr__(engine.settings, "cog_runtime_mode", "enforce")
-    engine._current_turn_ref = 0
+    engine._run_state().current_turn_ref = 0
     truth = sess.messages[0].content
     memory_msgs = _arm_all_slots(engine, sess)
     out = _build(engine, sess, memory_msgs)
@@ -152,7 +152,7 @@ def test_build_tool_followup_does_not_reappend_user_truth(tmp_path: Path) -> Non
     from tests.unit.test_injection_fingerprint import _build, _engine
 
     engine, sess = _engine(tmp_path)
-    engine._current_turn_ref = 0
+    engine._run_state().current_turn_ref = 0
     truth = sess.messages[0].content
     sess.messages.append(
         Message(
@@ -198,7 +198,7 @@ def test_build_compact_initial_round_keeps_exact_truth_as_semantic_tail(tmp_path
         old.append(Message(role="user", content=f"old-u{i}-" + "U" * 600, source=MessageSource.USER))
         old.append(Message(role="assistant", content=f"old-a{i}-" + "A" * 600, source=MessageSource.SYSTEM))
     sess.messages = old + [current]
-    engine._current_turn_ref = len(sess.messages) - 1
+    engine._run_state().current_turn_ref = len(sess.messages) - 1
 
     out = engine._build_llm_messages(
         sess, [], max_chars=1800, planned_label="zhipu/glm-5"
@@ -224,7 +224,7 @@ def test_build_oversized_current_user_is_never_replaced_by_compact_surrogate(tmp
     engine, sess = _engine(tmp_path)
     truth = "X" * 5000
     sess.messages[0].content = truth
-    engine._current_turn_ref = 0
+    engine._run_state().current_turn_ref = 0
 
     out = engine._build_llm_messages(
         sess, [], max_chars=1200, planned_label="zhipu/glm-5"

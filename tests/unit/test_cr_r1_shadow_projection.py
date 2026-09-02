@@ -44,7 +44,7 @@ def test_shadow_packet_covers_current_turn_memory_only(tmp_path, monkeypatch):
     """仅当前 human turn 的持久 memory 可进入 packet；旧 snapshot 不复活。"""
     engine, sess = _engine(tmp_path)  # 默认 cog_runtime_mode=shadow
     monkeypatch.setenv("COG_RUNTIME_TELEMETRY", "1")
-    engine._current_turn_ref = 0
+    engine._run_state().current_turn_ref = 0
     _snap(sess, "[相关记忆] 任务A已完成，正推进批次D", turn_ref=0)
     _snap(sess, "[相关记忆] 上次评估通过", turn_ref="t2")
     out = _build(engine, sess, [])  # 空 memory_msgs: 仅持久化 current-turn 投影路径

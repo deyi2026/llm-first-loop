@@ -49,25 +49,25 @@ def test_auto_continue_arms_one_ephemeral_recovery_without_persisting_message(
     sess.messages.append(
         Message(role="user", content="当前真实任务", source=MessageSource.USER)
     )
-    engine._current_turn_ref = len(sess.messages) - 1
+    engine._run_state().current_turn_ref = len(sess.messages) - 1
     engine._err1210_run_begin()
     before = list(sess.messages)
 
     assert engine._err1210_try_auto_continue(_e1210(), sess) is True
     assert sess.messages == before  # recovery is runtime-only, never long-lived conversation history
-    pending = engine._program_recovery_tail_message
+    pending = engine._run_state().program_recovery_tail_message
     assert pending is not None
     assert pending.metadata.get("injection_kind") == "program_recovery"
     assert pending.metadata.get("recovery_action") == str(
         ProgramRecoveryAction.RETRY_CURRENT_REQUEST_ONCE
     )
-    assert pending.metadata.get("recovery_turn_ref") == engine._current_turn_ref
+    assert pending.metadata.get("recovery_turn_ref") == engine._run_state().current_turn_ref
     assert pending.metadata.get("persisted_injection") is not True
 
     # Per-run guard and single slot make a second recovery block structurally impossible.
     first = pending
     assert engine._err1210_try_auto_continue(_e1210(), sess) is False
-    assert engine._program_recovery_tail_message is first
+    assert engine._run_state().program_recovery_tail_message is first
 
 
 def test_build_consumes_recovery_once_and_r6_keeps_exact_user_tail(tmp_path: Path) -> None:
@@ -76,13 +76,13 @@ def test_build_consumes_recovery_once_and_r6_keeps_exact_user_tail(tmp_path: Pat
     from tests.unit.test_injection_fingerprint import _build, _engine
 
     engine, sess = _engine(tmp_path)
-    engine._current_turn_ref = 0
+    engine._run_state().current_turn_ref = 0
     truth = sess.messages[0].content
-    engine._program_recovery_tail_message = make_program_recovery_message(turn_ref=0)
+    engine._run_state().program_recovery_tail_message = make_program_recovery_message(turn_ref=0)
 
     out = _build(engine, sess, [])
 
-    assert engine._program_recovery_tail_message is None
+    assert engine._run_state().program_recovery_tail_message is None
     assert _tail_user_run(out) == 1
     envelope = out[-1]
     content = str(envelope.get("content") or "")
@@ -108,8 +108,8 @@ def test_r2_budget_keeps_recovery_as_high_priority_without_breaking_r6(tmp_path:
     engine, sess = _engine(tmp_path)
     object.__setattr__(engine.settings, "cog_runtime_mode", "enforce")
     object.__setattr__(engine.settings, "injection_budget_chars", 512)
-    engine._current_turn_ref = 0
-    engine._program_recovery_tail_message = make_program_recovery_message(turn_ref=0)
+    engine._run_state().current_turn_ref = 0
+    engine._run_state().program_recovery_tail_message = make_program_recovery_message(turn_ref=0)
     memory_msgs = _arm_all_slots(engine, sess)
 
     out = _build(engine, sess, memory_msgs)
@@ -144,7 +144,7 @@ def test_legacy_persisted_recovery_is_audit_history_not_future_executable_contex
         ),
     )
     sess.messages.append(stale)
-    engine._current_turn_ref = 0
+    engine._run_state().current_turn_ref = 0
 
     out = _build(engine, sess, [])
     joined = "\n".join(str(m.get("content") or "") for m in out)
@@ -160,15 +160,15 @@ def test_recovery_slot_is_dropped_when_current_human_boundary_is_unavailable(tmp
     from tests.unit.test_injection_fingerprint import _build, _engine
 
     engine, sess = _engine(tmp_path)
-    engine._current_turn_ref = 0
+    engine._run_state().current_turn_ref = 0
     sess.messages.append(
         Message(role="assistant", content="already advanced", source=MessageSource.SYSTEM)
     )
-    engine._program_recovery_tail_message = make_program_recovery_message(turn_ref=0)
+    engine._run_state().program_recovery_tail_message = make_program_recovery_message(turn_ref=0)
 
     out = _build(engine, sess, [])
 
-    assert engine._program_recovery_tail_message is None
+    assert engine._run_state().program_recovery_tail_message is None
     assert all("[任务·程序恢复]" not in str(m.get("content") or "") for m in out)
 
 
@@ -230,7 +230,7 @@ def test_human_text_that_mentions_legacy_recovery_marker_is_never_filtered(tmp_p
     engine, sess = _engine(tmp_path)
     truth = "[程序续跑] 这是我本人输入的测试文本，请原样分析。"
     sess.messages[0].content = truth
-    engine._current_turn_ref = 0
+    engine._run_state().current_turn_ref = 0
 
     out = _build(engine, sess, [])
 
@@ -248,25 +248,25 @@ def test_recovery_runtime_state_is_session_scoped(tmp_path: Path) -> None:
 
     tok_a = current_session_id.set("r4-session-A")
     try:
-        engine._program_recovery_tail_message = make_program_recovery_message(turn_ref=3)
-        engine._auto_continue_1210 = 1
-        engine._err1210_run_seq = 7
+        engine._run_state().program_recovery_tail_message = make_program_recovery_message(turn_ref=3)
+        engine._run_state().auto_continue_1210 = 1
+        engine._run_state().err1210_run_seq = 7
     finally:
         current_session_id.reset(tok_a)
 
     tok_b = current_session_id.set("r4-session-B")
     try:
-        assert engine._program_recovery_tail_message is None
-        assert engine._auto_continue_1210 == 0
-        assert engine._err1210_run_seq == 0
+        assert engine._run_state().program_recovery_tail_message is None
+        assert engine._run_state().auto_continue_1210 == 0
+        assert engine._run_state().err1210_run_seq == 0
     finally:
         current_session_id.reset(tok_b)
 
     tok_a = current_session_id.set("r4-session-A")
     try:
-        assert engine._program_recovery_tail_message is not None
-        assert engine._program_recovery_tail_message.metadata["recovery_turn_ref"] == 3
-        assert engine._auto_continue_1210 == 1
-        assert engine._err1210_run_seq == 7
+        assert engine._run_state().program_recovery_tail_message is not None
+        assert engine._run_state().program_recovery_tail_message.metadata["recovery_turn_ref"] == 3
+        assert engine._run_state().auto_continue_1210 == 1
+        assert engine._run_state().err1210_run_seq == 7
     finally:
         current_session_id.reset(tok_a)

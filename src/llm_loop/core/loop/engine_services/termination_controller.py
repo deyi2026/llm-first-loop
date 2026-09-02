@@ -85,8 +85,8 @@ class TerminationController:
         # 走既有 lossless 归档：完整另存、信息零丢失、可检索找回；unresolved
         # protocol（assistant 声明↔回执配对）与 active user evidence 不裁断）。
         # compact occurrence 只落 telemetry 事件（B-D5），不注入任何模型可见文本。
-        if host._overflow_reinject_count < 1:
-            host._overflow_reinject_count += 1
+        if host._run_state().overflow_reinject_count < 1:
+            host._run_state().overflow_reinject_count += 1
             host._overflow_shrink_factor = _OVERFLOW_SHRINK_FACTOR
             host._record_action(
                 "overflow.compact",
@@ -115,7 +115,7 @@ class TerminationController:
 
     def _reset_overflow_state(self) -> None:
         """R4→R8.24-B: 每次 run 重置 overflow 计数与预算收缩标志（move 自 engine.py:265）."""
-        self._host._overflow_reinject_count = 0
+        self._host._run_state().overflow_reinject_count = 0
         self._host._overflow_shrink_factor = None
 
     # ------------------------------------------------------------------

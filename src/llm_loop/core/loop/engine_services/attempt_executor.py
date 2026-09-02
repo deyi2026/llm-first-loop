@@ -17,7 +17,7 @@ _record_action / _runtime_history_budget / _overflow_shrink_factor 全留宿主�
 宿主依赖（engine 持有）：_planned_model_label / _set_model_label_ctx /
 _effective_history_budget / _effective_history_budget_detail /
 _note_tool_round_budget / _record_action / _runtime_history_budget /
-_overflow_shrink_factor / _last_budget_info（写回宿主面字段）
+_overflow_shrink_factor（宿主面字段）/ _run_state().last_budget_info（写回 per-session 桶）
 """
 
 # pyright: reportAttributeAccessIssue=false, reportGeneralTypeIssues=false
@@ -73,7 +73,7 @@ class AttemptExecutor:
         if _shrink is not None and effective_budget:
             effective_budget = int(effective_budget * _shrink)
         # P0-B: 预算归因（architecture_status.context_usage.budget 消费）
-        self._host._last_budget_info = self._host._effective_history_budget_detail(
+        self._host._run_state().last_budget_info = self._host._effective_history_budget_detail(
             planned_label, registry_snapshot=planning_registry
         )
         _tb = int(os.environ.get("TOOL_ROUND_BUDGET", "8000"))

@@ -66,7 +66,7 @@ def test_build_hides_old_memory_snapshot_but_keeps_current_turn(build_test_engin
             _memory("CURRENT-MEMORY-SHOULD-PROJECT", turn_ref=3),
         ]
     )
-    engine._current_turn_ref = 3
+    engine._run_state().current_turn_ref = 3
     out = engine._build_llm_messages(
         sess, [], max_chars=200000, planned_label="deepseek/model"
     )
@@ -170,7 +170,7 @@ def test_build_keeps_same_turn_control_and_retires_old_or_legacy(build_test_engi
             _current_turn_control("CURRENT-CONTROL-SHOULD-PROJECT", turn_ref=3),
         ]
     )
-    engine._current_turn_ref = 3
+    engine._run_state().current_turn_ref = 3
     out = engine._build_llm_messages(
         sess, [], max_chars=200000, planned_label="deepseek/model"
     )
@@ -209,7 +209,7 @@ def test_build_retires_legacy_and_r3_experience_tips_even_same_turn(build_test_e
         Message(role="user", content="current human", source=MessageSource.USER),
         current,
     ])
-    engine._current_turn_ref = 3
+    engine._run_state().current_turn_ref = 3
     out = engine._build_llm_messages(sess, [], max_chars=200000, planned_label="deepseek/model")
     rendered = str(out)
     assert "LEGACY-EXPERIENCE-TIP-SHOULD-NOT-PROJECT" not in rendered

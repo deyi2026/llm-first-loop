@@ -121,7 +121,7 @@ class TestBuildAlphaMount:
         engine, sess = _wire_engine(tmp_path)
         leaked = _user("外部agent轨迹原文片段XYZ", dict(MISLABEL_MD))
         sess.messages = [leaked] + list(sess.messages)
-        engine._current_turn_ref = len(sess.messages) - 1
+        engine._run_state().current_turn_ref = len(sess.messages) - 1
 
         out = engine._build_llm_messages(sess, [], planned_label="zhipu/glm-5")
 
@@ -141,7 +141,7 @@ class TestBuildAlphaMount:
         leaked = _user("会话原文不可变", dict(MISLABEL_MD))
         before = len(sess.messages)
         sess.messages = [leaked] + list(sess.messages)
-        engine._current_turn_ref = len(sess.messages) - 1
+        engine._run_state().current_turn_ref = len(sess.messages) - 1
 
         engine._build_llm_messages(sess, [], planned_label="zhipu/glm-5")
 
@@ -155,7 +155,7 @@ class TestBuildAlphaMount:
         engine, sess = _wire_engine(tmp_path)
         leaked = _user("故障时也不丢消息", dict(MISLABEL_MD))
         sess.messages = [leaked] + list(sess.messages)
-        engine._current_turn_ref = len(sess.messages) - 1
+        engine._run_state().current_turn_ref = len(sess.messages) - 1
 
         def _boom(messages, **_kw):
             raise RuntimeError("挂载点异常")
@@ -181,7 +181,7 @@ class TestSignatureWarn:
         engine, sess = _wire_engine(tmp_path)
         sig = _user(self.TRACE_CONTENT)
         sess.messages = [sig] + list(sess.messages)
-        engine._current_turn_ref = len(sess.messages) - 1
+        engine._run_state().current_turn_ref = len(sess.messages) - 1
 
         engine._build_llm_messages(sess, [], planned_label="zhipu/glm-5")
         assert leak_events.LEAK_SIGNATURE_WARNED not in sink.kinds()
@@ -194,7 +194,7 @@ class TestSignatureWarn:
             {"origin_layer": "user_instruction", "program_origin": False},
         )
         sess.messages = [sig] + list(sess.messages)
-        engine._current_turn_ref = len(sess.messages) - 1
+        engine._run_state().current_turn_ref = len(sess.messages) - 1
 
         out = engine._build_llm_messages(sess, [], planned_label="zhipu/glm-5")
 
@@ -217,7 +217,7 @@ class TestSignatureWarn:
             },
         )
         sess.messages = [cred] + list(sess.messages)
-        engine._current_turn_ref = len(sess.messages) - 1
+        engine._run_state().current_turn_ref = len(sess.messages) - 1
 
         engine._build_llm_messages(sess, [], planned_label="zhipu/glm-5")
         assert leak_events.LEAK_SIGNATURE_WARNED not in sink.kinds()

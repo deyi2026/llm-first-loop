@@ -236,9 +236,10 @@ def test_read_source_dual_caliber_integration():
         capture_output=True, text=True, check=True, cwd=ROOT,
     ).stdout
     assert _read_source("src/llm_loop/factory.py") == show, "漂移文件应读 HEAD 口径"
-    # CLEAN 文件读 working（与磁盘一致）
-    assert _read_source("src/llm_loop/core/loop/build.py") == (
-        ROOT / "src/llm_loop/core/loop/build.py"
+    # CLEAN 文件读 working（与磁盘一致）。CLEAN 代表样本：message.py（核心稳定层；
+    # 原 build.py 样本因 B5-W4-03 桶化入 M 而退役——代表文件须随批次状态轮换）
+    assert _read_source("src/llm_loop/core/message.py") == (
+        ROOT / "src/llm_loop/core/message.py"
     ).read_text(encoding="utf-8")
 
 

@@ -30,8 +30,8 @@ def test_run_state_buckets_isolated_by_contextvar(build_test_engine):
 
     token = current_session_id.set("sess-a")
     try:
-        engine._stagnation_state["count"] = 7
-        engine._overflow_reinject_count = 1
+        engine._run_state().stagnation_state["count"] = 7
+        engine._run_state().overflow_reinject_count = 1
 
         other: list = []
         barrier = threading.Barrier(2)
@@ -39,19 +39,19 @@ def test_run_state_buckets_isolated_by_contextvar(build_test_engine):
         def _in_b() -> None:
             current_session_id.set("sess-b")
             # B 桶不受 A 污染
-            other.append(engine._stagnation_state["count"])
-            other.append(engine._overflow_reinject_count)
-            engine._stagnation_state["count"] = 2
+            other.append(engine._run_state().stagnation_state["count"])
+            other.append(engine._run_state().overflow_reinject_count)
+            engine._run_state().stagnation_state["count"] = 2
             barrier.wait()
 
         t = threading.Thread(target=_in_b)
         t.start()
         barrier.wait()
         # A 桶保持 A 的写入（B 的写入不影响）
-        assert engine._stagnation_state["count"] == 7
+        assert engine._run_state().stagnation_state["count"] == 7
         t.join()
         assert other == [0, 0], f"B 桶读到 A 的停滞/overflow 状态: {other}"
-        assert engine._run_states["sess-b"].stagnation_state["count"] == 2
+        assert engine._run_state_mgr._buckets["sess-b"].stagnation_state["count"] == 2
     finally:
         current_session_id.reset(token)
 
@@ -174,8 +174,8 @@ def test_concurrent_runs_isolated_state_and_archive(build_test_engine, tmp_path)
     assert res_b.rounds == 2, f"B 轮数异常: {res_b.rounds}"
 
     # 停滞桶按会话独立：A 触发提醒/熔断（count>=3），B 干净
-    assert engine._run_states[sid_a].stagnation_state["count"] >= 3
-    assert engine._run_states[sid_b].stagnation_state["count"] <= 1
+    assert engine._run_state_mgr._buckets[sid_a].stagnation_state["count"] >= 3
+    assert engine._run_state_mgr._buckets[sid_b].stagnation_state["count"] <= 1
 
     # B 的超长输出: 2026-08-18 truncate_output（TOOL_TRIM_MAX=3000）在工具内截断 +
     # 完整输出落盘 DATA_DIR/audit/tool_outputs/——不再走 ArchiveStore 归档（原 archived_count

@@ -2,16 +2,18 @@
 
 B5-W1-03 迁入（design :475 改造类引用面）：_Err1210Mixin（err1210.py 14 法）方法体
 逐字平移，``self.`` → ``self._host.``（宿主 = LoopEngine，实例态
-_err1210_attempted/_err1210_run_seq/_deferred_replay_* 留宿主持有，跨面依赖
-_record_action/_event_append/_runtime_timeout/_cache_monitor/_auto_continue_1210/
-_program_recovery_tail_message 仍归宿主）。行为零变化：
+_err1210_attempted/_last_request_msg_count_by_session 留宿主持有；运行态字段
+（deferred_replay_*/err1210_run_seq/auto_continue_1210/program_recovery_tail_message
+等）经 ``self._host._run_state()`` per-session 桶读写（B5-W4-03 RunStateManager），
+跨面依赖 _record_action/_event_append/_runtime_timeout/_cache_monitor 归宿主）。行为零变化：
 
 - err1210 P0 = 剥离尾部注入 → defer 回存槽位 → 单次重试（全路径 fail-open）
 - fallback 面已随 W4-02c 服务化（engine_services/fallback.py: FallbackService）；本模块对其零运行时依赖
 - classify_and_route 门面（W5-01 RunCoordinator 组装消费预留）
 
 宿主依赖（engine 持有）：settings / _cache_monitor / _record_action / _event_append /
-_runtime_timeout / _auto_continue_1210 / _program_recovery_tail_message /
+_runtime_timeout / _run_state（per-session 运行态桶：deferred_replay_*/
+err1210_run_seq/auto_continue_1210/program_recovery_tail_message）/
 _AGG_MAX_TAIL_USERS / _AGG_SEPARATOR / err1210 实例态四容器。
 """
 
@@ -92,7 +94,7 @@ class RecoveryController:
         """
         try:
             entries = sorted(
-                getattr(self._host, "_last_build_injections", None) or [],
+                self._host._run_state().last_build_injections or [],
                 key=lambda e: e.msg_idx,
             )
             if not entries:
@@ -279,10 +281,9 @@ class RecoveryController:
                             )
                             active = getattr(self._host, attr, None) or []
                             setattr(self._host, attr, [r] + active)  # 前置拼接（旧先注入）
-                            self._host._deferred_replay_refs = list(
-                                getattr(self._host, "_deferred_replay_refs", None) or []
-                            )
-                            self._host._deferred_replay_refs.append((k, r))
+                            _st = self._host._run_state()
+                            _st.deferred_replay_refs = list(_st.deferred_replay_refs or [])
+                            _st.deferred_replay_refs.append((k, r))
                             record_defer_event(
                                 "defer_stored",
                                 sess.session_id,
@@ -355,8 +356,9 @@ class RecoveryController:
                     if new_refs:
                         setattr(self._host, attr, new_refs + active)  # 幂等：整槽赋值语义
                         # 重注入检测（build 消费时 is 身份匹配 → defer_replayed）
-                        self._host._deferred_replay_refs = list(getattr(self._host, "_deferred_replay_refs", None) or [])
-                        self._host._deferred_replay_refs.extend((slot, r) for r in new_refs)
+                        _st = self._host._run_state()
+                        _st.deferred_replay_refs = list(_st.deferred_replay_refs or [])
+                        _st.deferred_replay_refs.extend((slot, r) for r in new_refs)
                     record_defer_event(
                         "defer_stored",
                         sess.session_id,
@@ -371,8 +373,8 @@ class RecoveryController:
             if SlotKind.GATE_NOTE in by_slot:
                 try:
                     self._host._cache_monitor.restore_gate_note(sess.session_id)
-                    self._host._deferred_replay_slots = set(self._host._deferred_replay_slots)
-                    self._host._deferred_replay_slots.add(str(SlotKind.GATE_NOTE))
+                    _st = self._host._run_state()
+                    _st.deferred_replay_slots = {str(SlotKind.GATE_NOTE), *_st.deferred_replay_slots}
                     record_defer_event("defer_stored", sess.session_id, str(SlotKind.GATE_NOTE), {})
                 except Exception:  # noqa: BLE001
                     ok = False
@@ -413,7 +415,7 @@ class RecoveryController:
             # 修复A: 门禁移除——任意 1210 均尝试降级（原"compact 首请求"边界外的
             # 场景: 注入叠加尾部连续 user 的非 compact 轮，主区 883b4725 实证）。
             # compact_first 降级为快照标记信号（真实判定），不再作触发门禁。
-            seq = getattr(self._host, "_err1210_run_seq", 0)
+            seq = self._host._run_state().err1210_run_seq
             attempted = getattr(self._host, "_err1210_attempted", None) or {}
             if attempted.get(session_id) == seq:
                 # 本 run 内已尝试（单次重试防循环，per-run 语义）
@@ -429,7 +431,7 @@ class RecoveryController:
                 or getattr(self._host.settings, "llm_model", "")
             )
             entries = sorted(
-                getattr(self._host, "_last_build_injections", None) or [],
+                self._host._run_state().last_build_injections or [],
                 key=lambda e: e.msg_idx,
             )
             span = InjectionSpan(entries=tuple(entries)) if entries else None
@@ -675,7 +677,7 @@ class RecoveryController:
         record_defer_event(
             "defer_replayed", session_id, str(slot_kind), {"count": count}
         )
-        self._host._last_build_defer_replayed = True
+        self._host._run_state().last_build_defer_replayed = True
 
     # ── engine 接线点（任务组 4.3 瘦身: engine.py 行数守卫只留最小调用）──
 
@@ -685,17 +687,19 @@ class RecoveryController:
         - _err1210_attempted: per-session 耗尽标记（值 = compact 事件 seq；新事件自然不等 → 降级机会重获）
         - _last_request_msg_count_by_session: 骤降兜底判定数据源（每次成功请求后更新）
 
-        其余六个恢复状态字段（注入登记/compact 事件 seq/defer 重注入检测等）已迁
-        _RunState per-session 桶（runstate.py，属性 shim 保旧名——err1210 P0-A）。
+        运行态字段（err1210_run_seq/auto_continue_1210/program_recovery_tail_message
+        及 defer 重注入检测等）经 _RunState per-session 桶读写（B5-W4-03：
+        RunStateManager 对象化，原属性 shim 退役——err1210 P0-A）。
         """
         self._host._err1210_attempted = {}
         self._host._last_request_msg_count_by_session = {}
         # 修复A（2026-08-29 用户批准 B+A 组合）: per-run 降级机会序号。
-        self._host._err1210_run_seq = 0
+        _st = self._host._run_state()
+        _st.err1210_run_seq = 0
         # R9（2026-08-29 用户需求「1210 自动继续」）: 程序化重发计数（每 run 限 1 次）
-        self._host._auto_continue_1210 = 0
+        _st.auto_continue_1210 = 0
         # INJECTION-GOVERNANCE R4: recovery 是一次性 runtime slot，不进入 durable 对话历史。
-        self._host._program_recovery_tail_message = None
+        _st.program_recovery_tail_message = None
 
     def _err1210_run_begin(self) -> None:
         """engine 每 run 入口调用（对齐 _reset_overflow_state 先例）: run seq 递增.
@@ -704,11 +708,12 @@ class RecoveryController:
         1210（注入叠加尾部连续 user 形态，主区 883b4725 实证）同样获得一次
         降级机会；每 run 至多一次，防循环语义不劣化。
         """
-        self._host._err1210_run_seq = getattr(self._host, "_err1210_run_seq", 0) + 1
+        self._host._run_state().err1210_run_seq += 1
         # R9: 每 run 重置程序化重发计数（防循环语义）
-        self._host._auto_continue_1210 = 0
+        _st = self._host._run_state()
+        _st.auto_continue_1210 = 0
         # R4: 异常中断遗留的 pending recovery 不得跨新的 human run 复活。
-        self._host._program_recovery_tail_message = None
+        _st.program_recovery_tail_message = None
 
     def _err1210_attempt_recovery(
         self,
@@ -752,11 +757,11 @@ class RecoveryController:
 
     def _err1210_note_defer_lost(self, session_id: str, reason: str) -> None:
         """defer 重注入轮再次失败 → 槽丢失观测（spec 5.1.3-5；fail-open）."""
-        if getattr(self._host, "_last_build_defer_replayed", False):
+        if self._host._run_state().last_build_defer_replayed:
             record_defer_event(
                 "defer_lost_on_reinject", session_id, "all", {"reason": reason}
             )
-            self._host._last_build_defer_replayed = False
+            self._host._run_state().last_build_defer_replayed = False
 
     def _err1210_try_runtime_retry(
         self,
@@ -780,14 +785,14 @@ class RecoveryController:
         即成功）并单次重试——零 prompt、零模型可见文本（B-G7
         programmatic user resend chars=0）。
 
-        - 每 run 限 1 次（沿用 _auto_continue_1210 R9 计数语义防循环）；
+        - 每 run 限 1 次（沿用 auto_continue_1210 R9 计数语义防循环）；
         - ERR1210_RECOVERY=0 完全旁路（与恢复链同门）；
         - rebuild_fn 为 None / 重建失败 / 非 1210 / 已耗尽 → 返回 None，
           engine 走真实终态（不 retry——副作用安全前提不满足即放弃）；
         - 与恢复链既有 blind retry（:643 起）并存，优先级 blind → rebuild → 终态。
         """
         try:
-            if getattr(self._host, "_auto_continue_1210", 0) >= 1:
+            if self._host._run_state().auto_continue_1210 >= 1:
                 return None
             if not isinstance(exc, LLMError) or not is_err1210(exc):
                 return None
@@ -801,8 +806,8 @@ class RecoveryController:
             messages, tools_param = rebuilt
         except Exception:  # noqa: BLE001 — 判定失败不阻断原路径
             return None
-        self._host._auto_continue_1210 = 1
-        _turn_ref = getattr(self._host, "_current_turn_ref", None)
+        self._host._run_state().auto_continue_1210 = 1
+        _turn_ref = self._host._run_state().current_turn_ref
         self._host._record_action(
             "llm_call",
             "runtime_retry_1210",

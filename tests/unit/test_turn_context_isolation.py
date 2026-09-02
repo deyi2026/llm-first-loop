@@ -14,6 +14,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from llm_loop.core.loop.engine import LoopEngine
+from llm_loop.core.loop.engine_services.run_state import RunStateManager
 from llm_loop.core.loop.engine_services.tool_cycle import ToolCycleService
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.run_context import current_session_id
@@ -101,9 +102,7 @@ def _engine(store) -> LoopEngine:
 
 def _runstate_engine(store) -> LoopEngine:
     eng = _engine(store)
-    eng._run_states = {}
-    eng._run_states_guard = threading.Lock()
-    eng._last_active_sid = ""
+    eng._run_state_mgr = RunStateManager()
     return eng
 
 
@@ -130,10 +129,15 @@ class _TipStub(ToolCycleService):
         self.messages = []
         self.events = []
         self._tip_tail_messages = []
-        self._current_turn_ref = turn_ref
+        self._run_state_mgr = RunStateManager()
+        if turn_ref is not None:
+            self._run_state().current_turn_ref = turn_ref
         self._cache_last_model_by_session = {}
         self._cache_last_model = ""
         type(self)._skills_cache = (0.0, [])
+
+    def _run_state(self):
+        return self._run_state_mgr.bucket()
 
     def _append_message_event(self, sess, msg) -> None:
         self.events.append(msg)
@@ -150,16 +154,16 @@ def test_two_session_turn_ref_isolation():
     """A(turn=10)/B(turn=3) 交错赋值，回 A 仍读 10（RunState 分桶非实例全局）."""
     eng = _runstate_engine(_MemStore([]))
     tok = current_session_id.set("A")
-    eng._current_turn_ref = 10
+    eng._run_state().current_turn_ref = 10
     current_session_id.reset(tok)
     tok = current_session_id.set("B")
-    eng._current_turn_ref = 3
+    eng._run_state().current_turn_ref = 3
     current_session_id.reset(tok)
     tok = current_session_id.set("A")
-    assert eng._current_turn_ref == 10
+    assert eng._run_state().current_turn_ref == 10
     current_session_id.reset(tok)
     tok = current_session_id.set("B")
-    assert eng._current_turn_ref == 3
+    assert eng._run_state().current_turn_ref == 3
     current_session_id.reset(tok)
 
 
@@ -167,17 +171,17 @@ def test_status_budget_session_isolation():
     """A 的 _last_budget_info 不被 B 覆盖（300K/8K 各归各会话）."""
     eng = _runstate_engine(_MemStore([]))
     tok = current_session_id.set("A")
-    eng._last_budget_info = {"effective_budget": 300000, "limited_by": "provider_budget"}
+    eng._run_state().last_budget_info = {"effective_budget": 300000, "limited_by": "provider_budget"}
     current_session_id.reset(tok)
     tok = current_session_id.set("B")
-    eng._last_budget_info = {"effective_budget": 8000, "limited_by": "tool_round_clamp"}
+    eng._run_state().last_budget_info = {"effective_budget": 8000, "limited_by": "tool_round_clamp"}
     current_session_id.reset(tok)
     tok = current_session_id.set("A")
-    assert eng._last_budget_info["effective_budget"] == 300000
-    assert eng._last_budget_info["limited_by"] == "provider_budget"
+    assert eng._run_state().last_budget_info["effective_budget"] == 300000
+    assert eng._run_state().last_budget_info["limited_by"] == "provider_budget"
     current_session_id.reset(tok)
     tok = current_session_id.set("B")
-    assert eng._last_budget_info["effective_budget"] == 8000
+    assert eng._run_state().last_budget_info["effective_budget"] == 8000
     current_session_id.reset(tok)
 
 

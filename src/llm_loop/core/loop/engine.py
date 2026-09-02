@@ -45,6 +45,7 @@ from llm_loop.core.loop.engine_services.routing import (
     RoutingService,
 )
 from llm_loop.core.loop.engine_services.run_finalizer import RunFinalizer
+from llm_loop.core.loop.engine_services.run_state import RunStateManager
 from llm_loop.core.loop.engine_services.runtime_params import RuntimeParamsService
 from llm_loop.core.loop.engine_services.session_lifecycle import SessionLifecycle
 from llm_loop.core.loop.engine_services.termination_controller import TerminationController
@@ -52,7 +53,7 @@ from llm_loop.core.loop.engine_services.tool_cycle import ToolCycleService
 from llm_loop.core.loop.events import _EventsMixin
 from llm_loop.core.loop.kpi import _KpiMixin
 from llm_loop.core.loop.lifecycle import _RunEntrypointMixin
-from llm_loop.core.loop.runstate import _RunState, _RunStateMixin
+from llm_loop.core.loop.runstate import _RunState
 from llm_loop.core.loop.tool_exec import (
     _json_dumps_args,
     _tool_args_summary,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
@@ -151,10 +152,14 @@ class LoopResult:
     cancel_reason: str = ""
 
 
-class LoopEngine(_RunStateMixin, _BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _TurnContextMixin):
+class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _TurnContextMixin):
     """五阶段核心循环控制器."""
 
     # EVO 后台 run 执行器（factory 动态装配 BackgroundRunner；声明类型供 pyright 静态检查）
+
+    def _run_state(self) -> _RunState:
+        """当前会话状态桶（B5-W4-03：解析逻辑在 RunStateManager.bucket，薄委托）."""
+        return self._run_state_mgr.bucket()
     runner: Any | None = None
     # DSH-PLUGINS-20260816 ②: 调度提醒线程（factory 装配；声明类型供 pyright 静态检查）
     scheduler: Any | None = None
@@ -229,15 +234,12 @@ class LoopEngine(_RunStateMixin, _BuildMixin, _EventsMixin, _KpiMixin, _RunEntry
         self.workspace_store: Any | None = None
         # 协调 inbox 监视器由 factory 可选装配；显式声明避免运行时 shape 依赖动态属性。
         self.inbox_watcher: Any | None = None
-        # P0-5: per-session 运行状态表（停滞指纹/overflow/预警/快照/breakdown 按
-        # session_id 分桶防并发污染；属性 shim 保持接口不变）。
-        self._run_states: dict[str, _RunState] = {}
-        self._run_states_guard = threading.Lock()
+        # B5-W4-03: per-session 运行状态桶对象化（_RunStateMixin 退役）——
+        # 桶生命周期/会话解析/一致性锁 authority 在 RunStateManager（自足服务）
+        self._run_state_mgr = RunStateManager()
         # P0-5: 每会话 in-memory Session 绑定表（switch_model 等按 contextvar 解析
         # 本会话 sess，避免并发 run 互踩 override 回调；run finally 立即清理完整Session引用）
         self._run_sessions: dict[str, Any] = {}
-        # P0-5: 最近活跃会话（out-of-run 时属性 shim 的回退锚点，保持 run 后复查语义）
-        self._last_active_sid: str = ""
         # EVO-20260817 审查 P0-3: 同步 run 活跃会话集合——双向互斥防双 run 竞写
         # 会话文件（后台 start 检查不到同步 run → last-write-wins 丢消息）。
         self._sync_active: set[str] = set()
@@ -247,10 +249,6 @@ class LoopEngine(_RunStateMixin, _BuildMixin, _EventsMixin, _KpiMixin, _RunEntry
         # accepted-boundary callback不扩展public API，也不依赖ContextVar。
         self._run_acquired_callbacks: dict[str, Any] = {}
         self._run_acquired_callbacks_guard = threading.Lock()
-        # EVO-20260811-9ccdec97: 会话状态快照节流（上次快照注入时的消息数）—— P0-5 起经 shim 入 per-session 桶
-        self._last_snapshot_count = 0
-        # R4 增强: overflow 反馈注入次数（同一 run 内最多注入 1 次后让 AI 决策，第二次直接结束）
-        self._overflow_reinject_count = 0
         # R9 Phase 5 T6-A: 终止域 service（B5-W1-02 迁入 _SignalsMixin/_OverflowMixin 职责）
         self._termination = TerminationController(self)
         # R9 Phase 5 T6-A: 恢复域 service（B5-W1-03 迁入 _Err1210Mixin 职责；实例态留宿主经 _host 读写）
@@ -423,17 +421,17 @@ class LoopEngine(_RunStateMixin, _BuildMixin, _EventsMixin, _KpiMixin, _RunEntry
         agent_trace_leak 3.5: ingress 为人类输入通道凭据（B2 双因子判定——
         user_instruction 判定从"调用方传参"升级为"调用方凭据 + 通道白名单"）。
         """
-        # P0-5: 记录最近活跃会话（out-of-run 的属性 shim 回退锚点，保持测试复查语义）
-        self._last_active_sid = session_id
+        # P0-5: 记录最近活跃会话（out-of-run 桶解析的回退锚点，保持测试复查语义）
+        self._run_state_mgr.last_active_sid = session_id
         tool_trace: list[dict] = []
         # EVO-20260814-aab7eb0b P2: 每次 run/run_stream 重置实时停滞检测状态（跨会话不泄漏）
         # EVO-20260823-9bb27899: 增加搜索空结果计数字段
-        self._stagnation_state = {
+        self._run_state().stagnation_state = {
             "fp": None, "count": 0, "reminded": False,
             "empty_count": 0, "empty_reminded": False,
         }
         # HARNESS-04(2026-08-14): 上下文预算预警——每次 run 独立判断（上下文随 run 累积）
-        self._context_warning_injected = False
+        self._run_state().context_warning_injected = False
 
         plan = self._session_lifecycle.reconcile(
             session_id, run_save_token=run_save_token, on_run_acquired=on_run_acquired
@@ -455,7 +453,7 @@ class LoopEngine(_RunStateMixin, _BuildMixin, _EventsMixin, _KpiMixin, _RunEntry
             )
             # P0-5: 每会话绑定表——并发 run 各自 sess 不互踩（registry_model 经
             # contextvar 解析本会话绑定，上方 ctx 字段保留为无上下文回退）
-            with self._run_states_guard:
+            with self._run_state_mgr.guard:
                 self._run_sessions[session_id] = sess
 
         # R8.5/R8.20 lifecycle migration-on-use. Whole episodes retire only with
@@ -530,7 +528,7 @@ class LoopEngine(_RunStateMixin, _BuildMixin, _EventsMixin, _KpiMixin, _RunEntry
         self._inject_interruption_recovery(session_id, sess)
         _turn_ref = len(sess.messages) - 1  # user_msg seq（turn 身份）
         # T5: per-session RunState 分桶（串台修复）；tip 判断改 SoT 派生（tool_exec）
-        self._current_turn_ref = _turn_ref
+        self._run_state().current_turn_ref = _turn_ref
         _turn_memory_msgs = self._inject_turn_memory_snapshot(sess, user_text, _turn_ref)
         self._phase("ingress")
 
@@ -631,17 +629,17 @@ class LoopEngine(_RunStateMixin, _BuildMixin, _EventsMixin, _KpiMixin, _RunEntry
             tools_param = [self._tool_cycle._schema_to_param(t) for t in tool_schemas]
 
             # R1: 组件级占用分解（实际发送载荷口径；压缩归档历史不计入当前占用）
-            # 供 architecture_status.context_usage.breakdown 注入；_last_build_info 保留。
+            # 供 architecture_status.context_usage.breakdown 注入；last_build_info 入桶保留。
             from llm_loop.core.history import compute_breakdown_from_dicts
 
-            self._last_breakdown = compute_breakdown_from_dicts(
+            self._run_state().last_breakdown = compute_breakdown_from_dicts(
                 messages,
                 tool_schema_chars=len(_json_dumps_args({"tools": tools_param})),
                 budget=effective_budget,
             )
             # EVO-20260818: 预算归属模型标注（防误读——provider 级预算如 minimax 40K
             # 与全局 1M 并存，AI 看到 ratio>1 需知 budget 属于哪个模型）
-            self._last_breakdown["model"] = planned_label
+            self._run_state().last_breakdown["model"] = planned_label
 
             # ── 行动：LLM 决策 ──
             self._phase("action.llm_decide")
@@ -1178,11 +1176,11 @@ class LoopEngine(_RunStateMixin, _BuildMixin, _EventsMixin, _KpiMixin, _RunEntry
             # 决策不再询问模型——到达硬限后直接结束（见下方 exhaustion 段）。
             _budget = self._runtime_max_iterations()
             if (
-                not getattr(self, "_round_warning_injected", False)
+                not self._run_state().round_warning_injected
                 and _budget >= 10
                 and rounds >= int(_budget * 0.8)
             ):
-                self._round_warning_injected = True
+                self._run_state().round_warning_injected = True
                 self._record_action(
                     "round.warning", "suppressed",
                     f"{rounds}/{_budget}; prompt_chars=0",
@@ -1191,7 +1189,7 @@ class LoopEngine(_RunStateMixin, _BuildMixin, _EventsMixin, _KpiMixin, _RunEntry
             # ── HARNESS-04(2026-08-14): 上下文预算预警（占用率≥80% 注入一次）──
             # 程序只如实告知事实（占用率/预算），"压缩/收尾"决策归 AI（RULE-AI-00，
             # 程序不自动压缩历史——压缩只由 AI 主动触发）
-            _bd = getattr(self, "_last_breakdown", None)
+            _bd = self._run_state().last_breakdown
             _ratio = (_bd or {}).get("ratio")
             # 2026-08-22: 快模型（9B fast_model 轮）不注入预警——其上下文本就精简,
             # 预警是噪音（实证 98605ad7: 9B 收到预警后分心"处理预算"导致任务漂移）
@@ -1200,12 +1198,12 @@ class LoopEngine(_RunStateMixin, _BuildMixin, _EventsMixin, _KpiMixin, _RunEntry
                 or (model_used or "").split("/", 1)[-1].startswith("qwythos")
             )
             if (
-                not self._context_warning_injected
+                not self._run_state().context_warning_injected
                 and _ratio is not None
                 and _ratio >= 0.8
                 and not _is_fast_round
             ):
-                self._context_warning_injected = True
+                self._run_state().context_warning_injected = True
                 _used = (_bd or {}).get("total", {}).get("chars", 0)
                 _budget_chars = (_bd or {}).get("budget", 0)
                 _pct = round(_ratio * 100)

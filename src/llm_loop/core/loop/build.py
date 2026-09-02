@@ -6,7 +6,7 @@
 
 纯重构: 方法体原样迁移（零行为变更），原路径可导入语义保持（REQ-REF-06 对齐）。
 依赖（engine 其他 mixin）: _planned_model_label / _record_action / _runtime_extract_interval / _runtime_history_budget /
-_inject_interop_messages / _cache_monitor / _last_snapshot_count / _last_compact_ratio。
+_inject_interop_messages / _cache_monitor / _run_state().last_snapshot_count（桶）/ _last_compact_ratio。
 """
 
 # pyright: reportAttributeAccessIssue=false, reportGeneralTypeIssues=false
@@ -381,8 +381,8 @@ class _BuildMixin:
         # （B4-CLOSE-01 步D；label/anchor/system_prompt 解析 + ingress/泄漏
         # 隔离/provider 预清洗语义原样；decision 就地演进；旁路重置留调用点）。
         # err1210 T4.1: 注入登记旁路重置——每轮 build 覆盖，消费后不清除（供审计补查）。
-        self._last_build_injections = []
-        self._last_build_defer_replayed = False
+        self._run_state().last_build_injections = []
+        self._run_state().last_build_defer_replayed = False
         _pre = run_ingress_prelude(
             decision=decision,
             sess=sess,
@@ -390,7 +390,7 @@ class _BuildMixin:
             planned_label=planned_label,
             model=model,
             planned_model_label=self._planned_model_label,
-            current_turn_ref=getattr(self, "_current_turn_ref", None),
+            current_turn_ref=self._run_state().current_turn_ref,
             record_action=self._record_action,
             event_append=self._event_append,
             tool_round_zero=tool_round_zero,
@@ -416,12 +416,12 @@ class _BuildMixin:
             runtime_extract_interval=self._runtime_extract_interval,
             memory=self.memory,
             evolution_store=self.evolution_store,
-            last_snapshot_count=self._last_snapshot_count,
+            last_snapshot_count=self._run_state().last_snapshot_count,
         )
         base = _asm.base
         prefix_len = _asm.prefix_len
         self._cache_gate_stable_fp = _asm.stable_fp
-        self._last_snapshot_count = _asm.last_snapshot_count
+        self._run_state().last_snapshot_count = _asm.last_snapshot_count
         # 历史投影三段接线 → stages/history_pipeline.py::run_history_pipeline
         # （B4-CLOSE-01 步C1；prep→projection→postprocess 语义原样，调
         # history 现函数 Phase 7 前不动其内部）；写回面经 outcome 回接。
@@ -449,10 +449,8 @@ class _BuildMixin:
             cache_monitor=self._cache_monitor,
             resolve_msg_seq=self._resolve_msg_seq,
             event_append=self._event_append,
-            compact_event_seq=getattr(self, "_compact_event_seq", 0),
-            compact_event_was_compacted=getattr(
-                self, "_compact_event_was_compacted", False
-            ),
+            compact_event_seq=self._run_state().compact_event_seq,
+            compact_event_was_compacted=self._run_state().compact_event_was_compacted,
             last_nudge_total=getattr(self, "_last_nudge_total", None),
             provider_visible_chars_fn=_provider_visible_chars,
             growth_nudge_kind_fn=_growth_nudge_kind,
@@ -462,12 +460,12 @@ class _BuildMixin:
         effective_budget = _hist.effective_budget
         compact_view_box = _hist.compact_view_box
         _anchor_moved_this_build = _hist.anchor_moved
-        self._last_build_info = _hist.last_build_info
+        self._run_state().last_build_info = _hist.last_build_info
         self._last_nudge_total = _hist.last_nudge_total
         self._last_compact_ratio = _hist.last_compact_ratio
         self._last_history_compacted = _hist.last_history_compacted
-        self._compact_event_seq = _hist.compact_event_seq
-        self._compact_event_was_compacted = _hist.compact_event_was_compacted
+        self._run_state().compact_event_seq = _hist.compact_event_seq
+        self._run_state().compact_event_was_compacted = _hist.compact_event_was_compacted
         self._cache_degrade_note = _hist.cache_degrade_note
         # INJECTION-GOVERNANCE R8.8: Evidence Ledger/Manifest remains durable and
         # queryable through list/search/read_evidence, but the recovery index itself no
@@ -478,26 +476,26 @@ class _BuildMixin:
         # 尾部槽收集 wiring → stages/tail_slot_collect.py::run_tail_collection
         # （B4-CLOSE-01 步C2；四路槽收集/原位合并/一次性消费语义原样；
         # self 面读写经参数与 outcome 回接，一次性消费清理留在调用点）。
-        _pending_recovery = getattr(self, "_program_recovery_tail_message", None)
-        self._program_recovery_tail_message = None
+        _pending_recovery = self._run_state().program_recovery_tail_message
+        self._run_state().program_recovery_tail_message = None
         _tailc = run_tail_collection(
             sess=sess,
             memory_msgs=memory_msgs,
             r6_ingress_truth=_r6_ingress_truth,
             record_action=self._record_action,
             cache_monitor=self._cache_monitor,
-            current_turn_ref=getattr(self, "_current_turn_ref", None),
+            current_turn_ref=self._run_state().current_turn_ref,
             pending_recovery=_pending_recovery,
             interop_tail=getattr(self, "_interop_tail_messages", None),
             tip_tail=getattr(self, "_tip_tail_messages", None),
-            defer_refs=getattr(self, "_deferred_replay_refs", None) or [],
-            replay_slots=getattr(self, "_deferred_replay_slots", None) or set(),
+            defer_refs=self._run_state().deferred_replay_refs or [],
+            replay_slots=self._run_state().deferred_replay_slots or set(),
             note_defer_replayed=self._recovery._note_defer_replayed,
         )
         _inject_parts = _tailc.inject_parts
         tail_msgs = _tailc.tail_msgs
-        self._deferred_replay_refs = _tailc.defer_refs
-        self._deferred_replay_slots = _tailc.replay_slots
+        self._run_state().deferred_replay_refs = _tailc.defer_refs
+        self._run_state().deferred_replay_slots = _tailc.replay_slots
         self._interop_tail_messages = None  # 一次性消费（每轮重扫 pending）
         self._tip_tail_messages = None  # 经验提示同机制一次性消费（下轮工具执行再注入）
         _identity_cache = getattr(self, "_authorized_task_identity_cache", None)
@@ -515,11 +513,11 @@ class _BuildMixin:
             inject_parts=_inject_parts,
             leak_downgrade_parts=_leak_downgrade_parts,
             r6_ingress_truth=_r6_ingress_truth,
-            current_turn_ref=getattr(self, "_current_turn_ref", None),
+            current_turn_ref=self._run_state().current_turn_ref,
             record_action=self._record_action,
             identity_cache=_identity_cache,
             anchor_sess=self._focus.anchor_sess,
-            injections=self._last_build_injections,
+            injections=self._run_state().last_build_injections,
             decision=decision,
         )
         if _injc.last_injection_budget is not _BUDGET_UNSET:
@@ -545,7 +543,7 @@ class _BuildMixin:
             compact_view_box=compact_view_box,
             anchor_moved=_anchor_moved_this_build,
             ingress_truth=_r6_ingress_truth,
-            injections=self._last_build_injections,
+            injections=self._run_state().last_build_injections,
             settings=self.settings,
             sess=sess,
             decision=decision,
@@ -555,7 +553,7 @@ class _BuildMixin:
             last_history_compacted=self._last_history_compacted,
             anchor_sess=self._focus.anchor_sess,
         )
-        self._last_build_injections = _ta.injections
+        self._run_state().last_build_injections = _ta.injections
         if _ta.gate_state is not GATE_STATE_UNSET:
             self._projection_guard_state = _ta.gate_state
         self._cache_gate_hint = _ta.cache_gate_hint

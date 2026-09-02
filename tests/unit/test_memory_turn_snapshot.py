@@ -17,6 +17,7 @@ from types import SimpleNamespace
 
 from llm_loop.core.injection_labels import PROGRAM_APPENDIX_NOTICE, REFERENCE_LABEL
 from llm_loop.core.loop.engine import LoopEngine
+from llm_loop.core.loop.engine_services.run_state import RunStateManager
 from llm_loop.core.loop.engine_services.tool_cycle import ToolCycleService
 from llm_loop.core.message import Message, MessageSource
 
@@ -190,11 +191,16 @@ class _TipStub(ToolCycleService):
         self.messages = []
         self.events = []
         self._tip_tail_messages = []
-        # T5: shadow flag 已删——turn 身份与注入历史均从 sess.messages SoT 派生
-        self._current_turn_ref = turn_ref
         self._cache_last_model_by_session = {}
         self._cache_last_model = ""
         type(self)._skills_cache = (0.0, [])
+        # R9-B5-W4-03: 桶字段宿主面替身（current_turn_ref 读写经 RunStateManager）
+        self._run_state_mgr = RunStateManager()
+        # T5: shadow flag 已删——turn 身份与注入历史均从 sess.messages SoT 派生
+        self._run_state().current_turn_ref = turn_ref
+
+    def _run_state(self):
+        return self._run_state_mgr.bucket()
 
     def _append_message_event(self, sess, msg) -> None:
         self.events.append(msg)

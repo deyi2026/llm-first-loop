@@ -72,7 +72,7 @@ def _build_with_mislabel(tmp_path: Path, sink: _CaptureSink | None = None):
         engine._event_append = sink  # type: ignore[method-assign]
     leaked = _user("外部agent轨迹原文片段XYZ-QUARANTINE-PROBE", dict(MISLABEL_MD))
     sess.messages = [leaked] + list(sess.messages)
-    engine._current_turn_ref = len(sess.messages) - 1
+    engine._run_state().current_turn_ref = len(sess.messages) - 1
     out = engine._build_llm_messages(sess, [], planned_label="zhipu/glm-5")
     return engine, sess, leaked, out
 
@@ -123,7 +123,7 @@ class TestDg1QuarantineEnforce:
         long_body = "外部agent轨迹长文" + "X" * 400 + "尾部敏感"
         leaked = _user(long_body, dict(MISLABEL_MD))
         sess.messages = [leaked] + list(sess.messages)
-        engine._current_turn_ref = len(sess.messages) - 1
+        engine._run_state().current_turn_ref = len(sess.messages) - 1
         engine._build_llm_messages(sess, [], planned_label="zhipu/glm-5")
         quarantined = sink.of(leak_events.LEAK_QUARANTINED)
         assert quarantined
@@ -201,7 +201,7 @@ class TestShadowAndRollback:
         long_body = "外部agent轨迹shadow长文" + "Y" * 400 + "尾部敏感"
         leaked = _user(long_body, dict(MISLABEL_MD))
         sess.messages = [leaked] + list(sess.messages)
-        engine._current_turn_ref = len(sess.messages) - 1
+        engine._run_state().current_turn_ref = len(sess.messages) - 1
         engine._build_llm_messages(sess, [], planned_label="zhipu/glm-5")
         events = sink.of(leak_events.LEAK_WOULD_QUARANTINE)
         assert events

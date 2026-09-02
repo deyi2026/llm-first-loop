@@ -148,7 +148,7 @@ class _RunEntrypointMixin:
                 except Exception:  # noqa: BLE001 — 清理失败不覆盖原始异常
                     logger.warning("run_stream inner close 失败（fail-open）", exc_info=True)
             # inner 已完成/关闭：当前run的in-memory Session绑定不再需要，立即释放整段历史引用。
-            with self._run_states_guard:
+            with self._run_state_mgr.guard:
                 self._run_sessions.pop(session_id, None)
             if _run_save_token is not None:
                 self.session._deactivate_run_save_token(session_id, _run_save_token)
