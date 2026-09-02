@@ -6,7 +6,7 @@ _check_context_fit（M53: 超限载荷拒绝不发送——豁免配置切小窗
 
 from types import SimpleNamespace
 
-from llm_loop.core.loop.routing import _RoutingMixin
+from llm_loop.core.loop.engine_services.routing import RoutingService
 
 
 class _Spec:
@@ -22,14 +22,15 @@ class _Pool:
     registry = _Registry()
 
 
-class _DummyRouting(_RoutingMixin):
-    """免装配 routing mixin（仅测预算/载荷函数）."""
+class _DummyRouting(RoutingService):
+    """免装配 routing 服务（仅测预算/载荷函数；W4-02b 起自托管 _host）."""
 
     def __init__(self, global_budget: int = 1000000, ctx: int | None = 131072):
         self.runtime = None
         self.settings = SimpleNamespace(history_max_chars=global_budget)
         self.llm_pool = _Pool()
         self._ctx = ctx
+        self._host = self  # W4-02b: RoutingService 宿主面 = 本假对象
 
     def _current_context_limit(self, model_label: str) -> int | None:
         return self._ctx
@@ -79,7 +80,7 @@ def test_check_context_fit_rejects_overflow():
     """超限载荷 → 拒绝文案（不发送，无 provider 400）."""
     big = "x" * 300_000  # 300K 字符 ≈ 150K tokens > 131072×0.9（安全边距后）
     msgs = [{"role": "user", "content": big}]
-    refusal = _RoutingMixin._check_context_fit(msgs, [], 131072, "test/m")
+    refusal = RoutingService._check_context_fit(msgs, [], 131072, "test/m")
     assert refusal is not None
     assert "[上下文超限]" in refusal
     assert "131072" in refusal
@@ -88,7 +89,7 @@ def test_check_context_fit_rejects_overflow():
 def test_check_context_fit_allows_within():
     """未超限 → None（放行）."""
     msgs = [{"role": "user", "content": "hi" * 1000}]
-    assert _RoutingMixin._check_context_fit(msgs, [], 131072, "test/m") is None
+    assert RoutingService._check_context_fit(msgs, [], 131072, "test/m") is None
 
 
 def test_check_context_fit_accounts_max_tokens_output_budget():
@@ -96,12 +97,12 @@ def test_check_context_fit_accounts_max_tokens_output_budget():
     # 2026-08-24 估算校准后（0.6 chars/token）: 边界字符 = (131072-16384)×0.6 ≈ 68.8K 字符
     big = 'x' * 240_000  # est 400K tokens >> 窗口——必拒绝
     msgs = [{'role': 'user', 'content': big}]
-    refusal = _RoutingMixin._check_context_fit(msgs, [], 131072, 'local/m', max_tokens=16384)
+    refusal = RoutingService._check_context_fit(msgs, [], 131072, 'local/m', max_tokens=16384)
     assert refusal is not None, '240K 字符载荷（est 400K tokens）超 131K 窗口——应拒绝'
     # 69.5K 字符 ≈ 115.8K tokens（0.6 估算）: 无 max_tokens 放行（≤0.9 边距 117965），
     # +16K 输出扣减后（≤114688）拒绝——验证"输出预算占用窗口"扣减语义
     msgs3 = [{'role': 'user', 'content': 'x' * 69_500}]
-    assert _RoutingMixin._check_context_fit(msgs3, [], 131072, 'test/m') is None
-    assert _RoutingMixin._check_context_fit(msgs3, [], 131072, 'local/m', max_tokens=16384) is not None
+    assert RoutingService._check_context_fit(msgs3, [], 131072, 'test/m') is None
+    assert RoutingService._check_context_fit(msgs3, [], 131072, 'local/m', max_tokens=16384) is not None
     # 无 max_tokens（默认 0）→ 行为不变（0.9 边距）
-    assert _RoutingMixin._check_context_fit(msgs, [], 131072, 'test/m') is not None
+    assert RoutingService._check_context_fit(msgs, [], 131072, 'test/m') is not None

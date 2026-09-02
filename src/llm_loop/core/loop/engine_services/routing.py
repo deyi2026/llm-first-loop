@@ -1,12 +1,11 @@
-"""LoopEngine 模型路由职责 mixin（M53 拆分: engine.py 946 行→按职责分文件，纯重构行为零变化）.
+"""RoutingService——模型路由职责服务（R9-B5-W4-02b：_RoutingMixin 退役；宿主面显式经 self._host 标注，沿 runtime_params v4 惯例）.
 
 move 自 engine.py 内联路由段与守卫段（327-368）及辅助方法（648-735）与估算常量（77-80）：
 - 三级路由（per-call override > 会话 override > 默认装配），model_used 如实标注（M51）
 - 上下文超限前置守卫（M53，估算口径 _CHARS_PER_TOKEN_EST/_CONTEXT_SAFETY_MARGIN）
 """
 
-# pyright: reportAttributeAccessIssue=false, reportGeneralTypeIssues=false
-# (mixin 模式: self 属性来自混入类 LoopEngine.__init__，pyright 无法静态解析，故文件级关闭这两条；参数/返回类型等其余检查保留)
+# (W4-02b) mixin 时代文件级 pyright 豁免已随宿主显式标注移除；如 pyright 报错回退并登记
 
 from __future__ import annotations
 
@@ -55,10 +54,13 @@ class _RouteDecision:
     metadata_registry: ProviderRegistry | None = None
 
 
-class _RoutingMixin:
-    def _pool_registry_snapshot(self: LoopEngine) -> Any:
+class RoutingService:
+    def __init__(self, host: LoopEngine) -> None:
+        self._host = host
+
+    def _pool_registry_snapshot(self) -> Any:
         """读取current registry快照；兼容仅暴露 `.registry` 的旧duck pool。"""
-        pool = self.llm_pool
+        pool = self._host.llm_pool
         if pool is None:
             return None
         getter = getattr(pool, "registry_snapshot", None)
@@ -66,9 +68,9 @@ class _RoutingMixin:
             return getter()
         return getattr(pool, "registry", None)
 
-    def _pool_default_registry_snapshot(self: LoopEngine) -> Any:
+    def _pool_default_registry_snapshot(self) -> Any:
         """default client启动快照；旧duck pool无该API时回退其当前registry。"""
-        pool = self.llm_pool
+        pool = self._host.llm_pool
         if pool is None:
             return None
         getter = getattr(pool, "default_registry_snapshot", None)
@@ -77,7 +79,7 @@ class _RoutingMixin:
         return self._pool_registry_snapshot()
 
     def _round_registry_snapshots(
-        self: LoopEngine, model: str | None, sess
+        self, model: str | None, sess
     ) -> tuple[Any, Any, Any]:
         """返回(current, default-startup, planning)三个本轮不可变快照。"""
         current = self._pool_registry_snapshot()
@@ -86,7 +88,7 @@ class _RoutingMixin:
         return current, default, planning
 
     def _route_model(
-        self: LoopEngine,
+        self,
         model,
         sess,
         messages,
@@ -108,7 +110,7 @@ class _RoutingMixin:
         # - pool 未装配（None）→ 用默认 client（零回归）
         current_registry = None
         default_registry = None
-        if self.llm_pool is not None:
+        if self._host.llm_pool is not None:
             current_registry = registry_snapshot or self._pool_registry_snapshot()
             default_registry = (
                 default_registry_snapshot or self._pool_default_registry_snapshot()
@@ -116,10 +118,10 @@ class _RoutingMixin:
         metadata_registry = current_registry
 
         chat_model_arg = model  # per-call Web override（None 表示不覆盖）
-        if chat_model_arg is not None and self.llm_pool is not None:
+        if chat_model_arg is not None and self._host.llm_pool is not None:
             # per-call 覆盖：解析 provider/model → 对应 provider client
             try:
-                llm_client, pid, resolved_model_id = self.llm_pool.get_resolved_client(
+                llm_client, pid, resolved_model_id = self._host.llm_pool.get_resolved_client(
                     chat_model_arg, registry=current_registry
                 )
                 metadata_registry = current_registry
@@ -127,40 +129,40 @@ class _RoutingMixin:
                 model_used = f"{pid}/{resolved_model_id}"  # M51: 如实标注实际模型
             except ValueError as exc:
                 # 模型不在注册表 / 凭据缺失：如实反馈，不静默降级（PREFERENCE_1）
-                self._record_action("action.llm_decide", "pool_resolve_failed", str(exc)[:200])
+                self._host._record_action("action.llm_decide", "pool_resolve_failed", str(exc)[:200])
                 return _RouteDecision(
-                    llm_client=self.llm,
+                    llm_client=self._host.llm,
                     model_used=self._default_model_label(),
                     chat_model_arg=chat_model_arg,
                     final_answer_override=model_unavailable_text(chat_model_arg, exc),
                 )
-        elif chat_model_arg is None and self.llm_pool is not None:
+        elif chat_model_arg is None and self._host.llm_pool is not None:
             # 会话级 override 路由：不仅换 client，还必须显式传裸 model id。
             # legacy provider-key FakeLLM/共享 client 以及同provider多模型都依赖该不变量。
             try:
                 if sess.model_override:
-                    llm_client, pid, resolved_model_id = self.llm_pool.get_resolved_client(
+                    llm_client, pid, resolved_model_id = self._host.llm_pool.get_resolved_client(
                         sess.model_override, registry=current_registry
                     )
                     metadata_registry = current_registry
                     chat_model_arg = resolved_model_id
                     model_used = f"{pid}/{resolved_model_id}"
                 else:
-                    llm_client = self.llm_pool.get_client(None)
+                    llm_client = self._host.llm_pool.get_client(None)
                     model_used = self._default_model_label(
                         registry_snapshot=default_registry
                     )
                     metadata_registry = default_registry
             except ValueError as exc:
                 # resolve 失败（override 在 refresh_config 后失效等）：如实反馈，走默认 client
-                self._record_action("action.llm_decide", "pool_resolve_failed", str(exc)[:200])
-                llm_client = self.llm
+                self._host._record_action("action.llm_decide", "pool_resolve_failed", str(exc)[:200])
+                llm_client = self._host.llm
                 model_used = self._default_model_label(
                     registry_snapshot=default_registry
                 )
                 metadata_registry = default_registry
         else:
-            llm_client = self.llm
+            llm_client = self._host.llm
             model_used = self._default_model_label()
             metadata_registry = None
         # EVO-20260821-69e7f172（用户批准）+ B2（2026-08-21 审批）: 本地简单任务自动路由
@@ -169,22 +171,22 @@ class _RoutingMixin:
         # （_local_fast_route_ref 首判 provider==local）; 非 local per-call 完全不受影响。
         # 简单任务（输入短 + 无工具历史）→ fast_model（9B 快 3.3x），复杂 → 默认模型（质量优先）。
         # fast 模型不可用 → 静默保持默认（零回归）; 不配置 fast_model → 本段直接跳过。
-        if self.llm_pool is not None:
+        if self._host.llm_pool is not None:
             fast_ref = self._local_fast_route_ref(
                 model_used, messages, registry_snapshot=current_registry
             )
             if fast_ref:
                 try:
-                    llm_client, pid, resolved_fast_id = self.llm_pool.get_resolved_client(
+                    llm_client, pid, resolved_fast_id = self._host.llm_pool.get_resolved_client(
                         fast_ref, registry=current_registry
                     )
                     metadata_registry = current_registry
                     model_used = f"{pid}/{resolved_fast_id}"
                     chat_model_arg = resolved_fast_id
-                    self._record_action("action.llm_decide", "auto_route_fast", model_used)
+                    self._host._record_action("action.llm_decide", "auto_route_fast", model_used)
                 except ValueError as exc:
                     # fast 模型 resolve 失败（配置后注册表未同步等）→ 保持默认，如实记录
-                    self._record_action("action.llm_decide", "fast_route_failed", str(exc)[:200])
+                    self._host._record_action("action.llm_decide", "fast_route_failed", str(exc)[:200])
         # ── M53: 上下文超限前置守卫 ──
         # 载荷估算超模型注册表 context 上限 → 如实拒绝, 不发注定失败的请求
         # (如 kimi/k3-256k 仅 256K 窗口, 1M 预算装配的历史必被 provider 拒绝)
@@ -207,7 +209,7 @@ class _RoutingMixin:
                 chars_per_token=chars_per_token,
             )
             if refusal is not None:
-                self._record_action("action.llm_decide", "context_overflow", refusal[:200])
+                self._host._record_action("action.llm_decide", "context_overflow", refusal[:200])
                 return _RouteDecision(
                     llm_client=llm_client,
                     model_used=model_used,
@@ -224,17 +226,17 @@ class _RoutingMixin:
         )
 
     def _default_model_label(
-        self: LoopEngine, *, registry_snapshot: ProviderRegistry | None = None
+        self, *, registry_snapshot: ProviderRegistry | None = None
     ) -> str:
         """M51: 装配默认模型的全限定标签（provider/model）.
 
         有 pool 时经注册表 resolve 为全限定 ref；无 pool / resolve 失败 → 裸模型名（零回归）.
         client 无 model 属性（如测试 FakeLLM）→ 返回空串（不伪造标签, 无 footer）.
         """
-        model = getattr(self.llm, "model", "")
+        model = getattr(self._host.llm, "model", "")
         if not model:
             return ""
-        if self.llm_pool is not None:
+        if self._host.llm_pool is not None:
             try:
                 registry = registry_snapshot or self._pool_registry_snapshot()
                 if registry is None:
@@ -246,7 +248,7 @@ class _RoutingMixin:
         return model
 
     def _current_context_limit(
-        self: LoopEngine,
+        self,
         model_label: str,
         *,
         registry_snapshot: ProviderRegistry | None = None,
@@ -255,7 +257,7 @@ class _RoutingMixin:
 
         model_label 为全限定 "provider/model"（M51 路由已保证）；无 pool / 裸名 / 未知 → None（守卫跳过）.
         """
-        if self.llm_pool is None or not model_label or "/" not in model_label:
+        if self._host.llm_pool is None or not model_label or "/" not in model_label:
             return None
         pid, mid = model_label.split("/", 1)
         registry = registry_snapshot or self._pool_registry_snapshot()
@@ -267,7 +269,7 @@ class _RoutingMixin:
         context = spec.models[mid].context
         return context if context and context > 0 else None
 
-    def _provider_inject_notices(self: LoopEngine, model_label: str) -> bool:
+    def _provider_inject_notices(self, model_label: str) -> bool:
         """该 provider 的推送式 system 注入是否进提交视图（P1-7 本地慢模型接入）.
 
         ⚠️ 2026-08-18 审计断点归因后废弃（spec §5.3.1-5 绝对化）: 提交层
@@ -277,7 +279,7 @@ class _RoutingMixin:
         快照等仅落会话不进提交, system 前缀保持静态 → llama.cpp 引擎前缀缓存每轮命中
         （首 token 大幅缩短）。未知/未配置 → True（零回归）。
         """
-        if self.llm_pool is None or "/" not in model_label:
+        if self._host.llm_pool is None or "/" not in model_label:
             return True
         pid, _mid = model_label.split("/", 1)
         registry = self._pool_registry_snapshot()
@@ -306,7 +308,7 @@ class _RoutingMixin:
         return frozenset(n.strip() for n in names.split(",") if n.strip())
 
     def _filter_local_tools(
-        self: LoopEngine, tool_schemas: list[dict], model_label: str
+        self, tool_schemas: list[dict], model_label: str
     ) -> list[dict]:
         """本地 provider（local/*）工具精简: 只注入白名单核心工具（固定前缀+省 token）.
 
@@ -314,12 +316,12 @@ class _RoutingMixin:
         """
         if not (model_label and "/" in model_label and model_label.split("/", 1)[0] == "local"):
             return tool_schemas
-        allow = _RoutingMixin._local_tool_allowlist()
+        allow = RoutingService._local_tool_allowlist()
         kept = [t for t in tool_schemas if t.get("name") in allow]
         return kept if kept else tool_schemas
 
     def _local_fast_route_ref(
-        self: LoopEngine,
+        self,
         model_label: str,
         messages: list[dict],
         *,
@@ -341,7 +343,7 @@ class _RoutingMixin:
         """
         if not (model_label and "/" in model_label and model_label.split("/", 1)[0] == "local"):
             return None
-        if self.llm_pool is None:
+        if self._host.llm_pool is None:
             return None
         pid, _mid = model_label.split("/", 1)
         registry = registry_snapshot or self._pool_registry_snapshot()
@@ -351,11 +353,11 @@ class _RoutingMixin:
         if spec is None or not spec.fast_model:
             return None
         # 单向锁定: 本 run 已升级到复杂（27B）→ 不再切回 9B（防来回切换）
-        if getattr(self._focus, "escalated", False):
+        if getattr(self._host._focus, "escalated", False):
             return None
         if not is_simple_task(messages):
             # 本轮复杂 → 置位锁定: 本 run 后续轮保持 27B（简单→复杂单向）
-            self._focus.mark_escalated()
+            self._host._focus.mark_escalated()
             return None
         fast_ref = f"{pid}/{spec.fast_model}"
         try:
@@ -405,7 +407,7 @@ class _RoutingMixin:
 
     # ── 辅助 ──
     def _planned_model_label(
-        self: LoopEngine,
+        self,
         model: str | None,
         sess,
         *,
@@ -416,7 +418,7 @@ class _RoutingMixin:
         与路由同序: per-call override > 会话 override > 默认装配。
         用于在构造消息前计算模型窗口感知的压缩预算。
         """
-        if model is not None and self.llm_pool is not None:
+        if model is not None and self._host.llm_pool is not None:
             try:
                 registry = registry_snapshot or self._pool_registry_snapshot()
                 if registry is None:
@@ -425,7 +427,7 @@ class _RoutingMixin:
                 return f"{pid}/{mid}"
             except ValueError:
                 return model
-        if self.llm_pool is not None and sess.model_override:
+        if self._host.llm_pool is not None and sess.model_override:
             try:
                 registry = registry_snapshot or self._pool_registry_snapshot()
                 if registry is None:
@@ -439,7 +441,7 @@ class _RoutingMixin:
         return self._default_model_label(registry_snapshot=registry_snapshot)
 
     def _provider_chars_per_token(
-        self: LoopEngine,
+        self,
         model_label: str,
         *,
         registry_snapshot: ProviderRegistry | None = None,
@@ -450,7 +452,7 @@ class _RoutingMixin:
         统一 0.6 会让本地载荷高估 1.7-2 倍 → 守卫误拦 + 预算过紧）。
         未配置 / 无 pool / 未知 provider → 全局默认 0.6（零回归）。
         """
-        if self.llm_pool is None or "/" not in model_label:
+        if self._host.llm_pool is None or "/" not in model_label:
             return _CHARS_PER_TOKEN_EST
         pid, _mid = model_label.split("/", 1)
         registry = registry_snapshot or self._pool_registry_snapshot()
@@ -465,7 +467,7 @@ class _RoutingMixin:
         return _CHARS_PER_TOKEN_EST
 
     def _resolve_history_budget(
-        self: LoopEngine,
+        self,
         model_label: str,
         *,
         registry_snapshot: ProviderRegistry | None = None,
@@ -480,7 +482,7 @@ class _RoutingMixin:
         limited_by ∈ {runtime_override, global_budget, window_adaptive,
         provider_budget, model_window, unknown_model_default}。
         """
-        configured_global = getattr(self.settings, "history_max_chars", None)
+        configured_global = getattr(self._host.settings, "history_max_chars", None)
         runtime_override = None
         # T5 修正: 防御式访问（旧 _effective_history_budget 路径不触 self.runtime，
         # 测试桩/老调用方最小依赖面无该属性——单源化后统一 fail-open 风格）
@@ -490,7 +492,7 @@ class _RoutingMixin:
                 runtime_override = runtime_view.get("history_budget", None)
             except Exception:  # noqa: BLE001 — 归因失败不阻塞预算计算
                 runtime_override = None
-        global_budget = self._runtime_history_budget()
+        global_budget = self._host._runtime_history_budget()
         if runtime_override is not None:
             limited_by = "runtime_override"
         elif configured_global is not None:
@@ -505,7 +507,7 @@ class _RoutingMixin:
                 model_label, registry_snapshot=registry_snapshot
             )
         )
-        if self.llm_pool is not None and "/" in model_label:
+        if self._host.llm_pool is not None and "/" in model_label:
             pid, _mid = model_label.split("/", 1)
             registry = registry_snapshot or self._pool_registry_snapshot()
             spec = registry.providers.get(pid) if registry is not None else None
@@ -524,7 +526,7 @@ class _RoutingMixin:
         model_budget: int | None = None
         if not limit:
             # EVO-20260811-10dc2533 P0: 未注册模型保守默认窗口预算（防本地小窗口必超限）。
-            if self.llm_pool is not None and "/" in model_label:
+            if self._host.llm_pool is not None and "/" in model_label:
                 eff = min(global_budget, _UNKNOWN_MODEL_BUDGET_CHARS)
                 if global_budget > _UNKNOWN_MODEL_BUDGET_CHARS:
                     limited_by = "unknown_model_default"
@@ -562,7 +564,7 @@ class _RoutingMixin:
         }
 
     def _effective_history_budget_detail(
-        self: LoopEngine,
+        self,
         model_label: str,
         *,
         registry_snapshot: ProviderRegistry | None = None,
@@ -573,7 +575,7 @@ class _RoutingMixin:
         )
 
     def _effective_history_budget(
-        self: LoopEngine,
+        self,
         model_label: str,
         *,
         registry_snapshot: ProviderRegistry | None = None,
@@ -589,7 +591,7 @@ class _RoutingMixin:
         )["effective_budget"]
 
     def _note_tool_round_budget(
-        self: LoopEngine,
+        self,
         tool_round_zero: bool,
         is_local_tool: bool,
         tb: int,
@@ -602,15 +604,15 @@ class _RoutingMixin:
         """
         if not (tool_round_zero or (tb > 0 and is_local_tool)):
             return
-        self._record_action(
+        self._host._record_action(
             "understand.build_messages",
             "tool_round_small_prefix",
             "零历史" if tool_round_zero else "小前缀",
         )
-        if isinstance(self._last_budget_info, dict):
-            self._last_budget_info = {
-                **self._last_budget_info,
-                "base_effective_budget": self._last_budget_info.get("effective_budget"),
+        if isinstance(self._host._last_budget_info, dict):
+            self._host._last_budget_info = {
+                **self._host._last_budget_info,
+                "base_effective_budget": self._host._last_budget_info.get("effective_budget"),
                 "effective_budget": effective_budget,
                 "limited_by": "tool_round_zero" if tool_round_zero else "tool_round_clamp",
             }

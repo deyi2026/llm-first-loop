@@ -164,7 +164,7 @@ def test_route_guard_metadata_uses_same_snapshot_as_override_client(
         seen["max_tokens"] = max_tokens
         return None
 
-    monkeypatch.setattr(engine, "_check_context_fit", capture_guard)
+    monkeypatch.setattr(engine._routing, "_check_context_fit", capture_guard)  # W4-02b: 桩随 service 化迁实例（原 engine 实例面）
     decision = engine._route_model(
         "deepseek/deepseek-v4-pro", sess, [{"role": "user", "content": "hello"}], []
     )
@@ -213,7 +213,7 @@ def test_default_route_guard_uses_startup_registry_metadata_after_reload(
         seen["cpt"] = chars_per_token
         return None
 
-    monkeypatch.setattr(engine, "_check_context_fit", capture_guard)
+    monkeypatch.setattr(engine._routing, "_check_context_fit", capture_guard)  # W4-02b: 桩随 service 化迁实例（原 engine 实例面）
     decision = engine._route_model(
         None, sess, [{"role": "user", "content": "hello"}], []
     )
@@ -424,8 +424,8 @@ def test_fallback_guard_budget_uses_same_registry_snapshot_as_candidate_client(
     tmp_path, monkeypatch,
 ):
     """fallback client 按旧表选定后即使热重载，GuardRequestContext 预算也必须来自同一旧快照。"""
+    from llm_loop.core.loop.engine_services.routing import RoutingService
     from llm_loop.core.loop.fallback import _FallbackMixin
-    from llm_loop.core.loop.routing import _RoutingMixin
     from llm_loop.llm.client import LLMClient
     from llm_loop.llm.errors import LLMTimeoutError
     from llm_loop.llm.providers import ModelSpec, ProviderRegistry, ProviderSpec
@@ -463,12 +463,13 @@ def test_fallback_guard_budget_uses_same_registry_snapshot_as_candidate_client(
         model_fallbacks_raw="backup/m",
     )
 
-    class _Engine(_FallbackMixin, _RoutingMixin):
+    class _Engine(_FallbackMixin, RoutingService):
         def __init__(self):
             self.llm_pool = pool
             self.status = None
             self.corrections = None
             self.settings = SimpleNamespace(data_dir=str(tmp_path))
+            self._host = self  # W4-02b: RoutingService 宿主面 = 本假引擎（属性面与原 mixin 需求一致）
 
         def _runtime_history_budget(self):
             return 1_000_000

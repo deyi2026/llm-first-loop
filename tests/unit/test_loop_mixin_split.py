@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from llm_loop.core.loop.routing import _RoutingMixin
+from llm_loop.core.loop.engine_services.routing import RoutingService
 
 LOOP_DIR = Path(__file__).resolve().parents[2] / "src" / "llm_loop" / "core" / "loop"
 
@@ -22,14 +22,10 @@ def engine_src() -> str:
 
 def test_loop_mixin_split_layout():
     """新 Mixin 模块布局：类定义 + 文件级 pyright 豁免 + TYPE_CHECKING 循环规避."""
-    for fname in ("routing.py", "lifecycle.py"):
+    # R9-B5-W4-02b: routing.py 退役迁 engine_services/routing.py（RoutingService），布局断言仅存 lifecycle.py
+    for fname in ("lifecycle.py",):
         src = (LOOP_DIR / fname).read_text(encoding="utf-8")
-        mixin = {
-            "routing.py": "_RoutingMixin",
-            # R9-B5-W3-01: _ToolExecMixin 职责面迁 ToolCycleService 后退役（tool_exec.py 仅存模块级辅助）
-            # R9-B5-W2-01: _LifecycleMixin 职责面迁 SessionLifecycle 后更名，编排入口留此
-            "lifecycle.py": "_RunEntrypointMixin",
-        }[fname]
+        mixin = {"lifecycle.py": "_RunEntrypointMixin"}[fname]
         assert f"class {mixin}:" in src, f"{fname} 缺 {mixin} 类定义"
         assert "reportAttributeAccessIssue=false" in src, f"{fname} 缺 pyright 文件级豁免"
         assert "from llm_loop.core.loop.engine import LoopEngine" in src, f"{fname} 缺 TYPE_CHECKING 引用"
@@ -67,10 +63,10 @@ def test_local_tool_allowlist_filter():
         {"name": "switch_model"},
         {"name": "get_tool_schema"},
     ]
-    kept = _RoutingMixin._filter_local_tools(None, schemas, "local/qwen3.8-27b-mlx")
+    kept = RoutingService._filter_local_tools(None, schemas, "local/qwen3.8-27b-mlx")
     names = [t["name"] for t in kept]
     assert "read_file" in names and "web_fetch" in names and "get_tool_schema" in names
     assert "submit_evolution" not in names and "switch_model" not in names
     # 非 local provider 零回归
-    kept2 = _RoutingMixin._filter_local_tools(None, schemas, "deepseek/deepseek-v4-flash")
+    kept2 = RoutingService._filter_local_tools(None, schemas, "deepseek/deepseek-v4-flash")
     assert len(kept2) == len(schemas)

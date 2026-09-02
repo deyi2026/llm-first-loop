@@ -38,7 +38,6 @@
     "src/llm_loop/core/cache_health.py::record": 140,
     "src/llm_loop/core/prompt_build/stages/history_projection.py::run_history_projection": 140,
     "src/llm_loop/core/loop/engine_services/tool_cycle.py::_execute_tools": 131,
-    "src/llm_loop/core/loop/routing.py::_route_model": 137,
     "src/llm_loop/event_log/inventory.py::run_inventory": 131,
     "src/llm_loop/core/prompt_build/stages/trace_isolation.py::run_trace_isolation": 129,
     "src/llm_loop/event_log/retire.py::run_retire": 127,
@@ -53,7 +52,8 @@
     "src/llm_loop/core/prompt_build/stages/tail_assembly.py::run_tail_assembly": 121,
     "src/llm_loop/core/loop/engine_services/recovery_controller.py::_try_err1210_recovery": 214,
     "src/llm_loop/core/loop/engine_services/recovery_controller.py::_defer_store": 179,
-    "src/llm_loop/core/loop/engine_services/run_finalizer.py::_persist_turn": 159
+    "src/llm_loop/core/loop/engine_services/run_finalizer.py::_persist_turn": 159,
+    "src/llm_loop/core/loop/engine_services/routing.py::_route_model": 137
   },
   "legacy_super_functions": {
     "src/llm_loop/core/loop/build.py::_build_llm_messages": 199,

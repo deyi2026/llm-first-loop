@@ -31,10 +31,10 @@ def test_default_ratio_calibrated():
     此测试钉住新默认, 防止误回退。
     """
     from llm_loop.core.cache_window import _CHARS_PER_TOKEN
+    from llm_loop.core.loop.engine_services.routing import _CHARS_PER_TOKEN_EST as _R
     from llm_loop.core.loop.engine_services.runtime_params import (
         _CHARS_PER_TOKEN_EST as _RP,
     )
-    from llm_loop.core.loop.routing import _CHARS_PER_TOKEN_EST as _R
 
     assert _CHARS_PER_TOKEN == 0.6
     assert _R == 0.6

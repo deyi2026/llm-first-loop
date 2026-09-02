@@ -37,6 +37,11 @@ from llm_loop.core.loop.build import _BuildMixin  # EVO-20260817-e63f712f: 消�
 from llm_loop.core.loop.engine_services.attempt_executor import AttemptExecutor
 from llm_loop.core.loop.engine_services.interrupted_capture import InterruptedCapture
 from llm_loop.core.loop.engine_services.recovery_controller import RecoveryController
+from llm_loop.core.loop.engine_services.routing import (
+    _CHARS_PER_TOKEN_EST,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
+    _CONTEXT_SAFETY_MARGIN,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
+    RoutingService,
+)
 from llm_loop.core.loop.engine_services.run_finalizer import RunFinalizer
 from llm_loop.core.loop.engine_services.runtime_params import RuntimeParamsService
 from llm_loop.core.loop.engine_services.session_lifecycle import SessionLifecycle
@@ -47,11 +52,6 @@ from llm_loop.core.loop.fallback import _FallbackMixin
 from llm_loop.core.loop.interop import _InteropMixin
 from llm_loop.core.loop.kpi import _KpiMixin
 from llm_loop.core.loop.lifecycle import _RunEntrypointMixin
-from llm_loop.core.loop.routing import (
-    _CHARS_PER_TOKEN_EST,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
-    _CONTEXT_SAFETY_MARGIN,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
-    _RoutingMixin,
-)
 from llm_loop.core.loop.runstate import _RunState, _RunStateMixin
 from llm_loop.core.loop.tool_exec import (
     _json_dumps_args,
@@ -124,7 +124,7 @@ def format_tokens(n: int) -> str:
         return f"{n / 1000:.1f}k"
     return str(n)
 
-# M53: 上下文守卫估算常量 → llm_loop/core/loop/routing.py（_RoutingMixin）
+# M53: 上下文守卫估算常量 → engine_services/routing.py（W4-02b 起 RoutingService）
 # 迁移注释保留（REQ-REF-06）: 原路径可导入（engine._CHARS_PER_TOKEN_EST/_CONTEXT_SAFETY_MARGIN），取值与迁移前一致。
 # 估算口径（chars/token 保守估计, 中文混合内容约 2 字符/token；安全边距预留 10% 给响应生成）已随迁至 routing.py。
 
@@ -151,7 +151,7 @@ class LoopResult:
     cancel_reason: str = ""
 
 
-class LoopEngine(_RunStateMixin, _FallbackMixin, _RoutingMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _TurnContextMixin):
+class LoopEngine(_RunStateMixin, _FallbackMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _TurnContextMixin):
     """五阶段核心循环控制器."""
 
     # EVO 后台 run 执行器（factory 动态装配 BackgroundRunner；声明类型供 pyright 静态检查）
@@ -257,6 +257,7 @@ class LoopEngine(_RunStateMixin, _FallbackMixin, _RoutingMixin, _InteropMixin, _
         self._recovery = RecoveryController(self)
         # R9-B5-W2-01: SessionLifecycle——会话前段 reconcile / workspace 职责面 / 收尾持久化
         self._runtime_params = RuntimeParamsService(self)
+        self._routing = RoutingService(self)  # W4-02b: _RoutingMixin 退役（模型路由职责服务）
         self._session_lifecycle = SessionLifecycle(self)
         self._attempt_executor = AttemptExecutor(self)
         # R9-B5-W3-01: ToolCycleService——工具执行循环职责面（_ToolExecMixin/_ToolEligibilityMixin 迁入）
@@ -306,7 +307,41 @@ class LoopEngine(_RunStateMixin, _FallbackMixin, _RoutingMixin, _InteropMixin, _
     def _runtime_timeout(self) -> float | None:
         return self._runtime_params._runtime_timeout()
 
-
+    # ---- 模型路由委托壳（W4-02b：_RoutingMixin → RoutingService；签名面为运行时参数形（类型标注见 RoutingService 真身），kwonly 默认值保留且按名转发实值——公开面调用兼容零变化）----
+    def _pool_registry_snapshot(self):
+        return self._routing._pool_registry_snapshot()
+    def _pool_default_registry_snapshot(self):
+        return self._routing._pool_default_registry_snapshot()
+    def _round_registry_snapshots(self, model, sess):
+        return self._routing._round_registry_snapshots(model, sess)
+    def _route_model(self, model, sess, messages, tools_param, *, registry_snapshot=None, default_registry_snapshot=None):
+        return self._routing._route_model(model, sess, messages, tools_param, registry_snapshot=registry_snapshot, default_registry_snapshot=default_registry_snapshot)
+    def _default_model_label(self, *, registry_snapshot=None):
+        return self._routing._default_model_label(registry_snapshot=registry_snapshot)
+    def _current_context_limit(self, model_label, *, registry_snapshot=None):
+        return self._routing._current_context_limit(model_label, registry_snapshot=registry_snapshot)
+    def _provider_inject_notices(self, model_label):
+        return self._routing._provider_inject_notices(model_label)
+    def _local_tool_allowlist(self):
+        return self._routing._local_tool_allowlist()
+    def _filter_local_tools(self, tool_schemas, model_label):
+        return self._routing._filter_local_tools(tool_schemas, model_label)
+    def _local_fast_route_ref(self, model_label, messages, *, registry_snapshot=None):
+        return self._routing._local_fast_route_ref(model_label, messages, registry_snapshot=registry_snapshot)
+    def _check_context_fit(self, tools_param, context_limit, model_label, max_tokens, chars_per_token):
+        return self._routing._check_context_fit(tools_param, context_limit, model_label, max_tokens, chars_per_token)
+    def _planned_model_label(self, model, sess, *, registry_snapshot=None):
+        return self._routing._planned_model_label(model, sess, registry_snapshot=registry_snapshot)
+    def _provider_chars_per_token(self, model_label, *, registry_snapshot=None):
+        return self._routing._provider_chars_per_token(model_label, registry_snapshot=registry_snapshot)
+    def _resolve_history_budget(self, model_label, *, registry_snapshot=None):
+        return self._routing._resolve_history_budget(model_label, registry_snapshot=registry_snapshot)
+    def _effective_history_budget_detail(self, model_label, *, registry_snapshot=None):
+        return self._routing._effective_history_budget_detail(model_label, registry_snapshot=registry_snapshot)
+    def _effective_history_budget(self, model_label, *, registry_snapshot=None):
+        return self._routing._effective_history_budget(model_label, registry_snapshot=registry_snapshot)
+    def _note_tool_round_budget(self, tool_round_zero, is_local_tool, tb, effective_budget):
+        return self._routing._note_tool_round_budget(tool_round_zero, is_local_tool, tb, effective_budget)
 
     def _prefix_state_for(self, session_id: str) -> LayeredPrefixState:
         """Return a session-scoped layered-prefix state on the shared engine."""
@@ -565,7 +600,7 @@ class LoopEngine(_RunStateMixin, _FallbackMixin, _RoutingMixin, _InteropMixin, _
 
             # ── 行动：LLM 决策 ──
             self._phase("action.llm_decide")
-            # M53 拆分: 路由决策 + 上下文守卫 → _RoutingMixin._route_model（move 语义，行为零变化）
+            # M53 拆分: 路由决策 + 上下文守卫 → RoutingService._route_model（W4-02b 起，行为零变化）
             routing = self._route_model(
                 model, sess, messages, tools_param,
                 registry_snapshot=_round_registry,
@@ -1239,7 +1274,7 @@ class LoopEngine(_RunStateMixin, _FallbackMixin, _RoutingMixin, _InteropMixin, _
             )
             return None
 
-    # M53 拆分: 模型路由辅助方法族 → llm_loop/core/loop/routing.py（_RoutingMixin）
+    # M53 拆分: 模型路由辅助方法族 → engine_services/routing.py（W4-02b 起 RoutingService）
     # 迁移注释保留（test_silent_pass_cleanup 源码断言）: 模型标签 resolve 失败时回退裸名（fail-open），
     # 行为与迁移前一致；有 pool 时经注册表 resolve 为全限定 ref。
     # 已随迁方法（经 Mixin 混入后实例可调用，签名/语义不变）:

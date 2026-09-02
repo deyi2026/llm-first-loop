@@ -12,7 +12,7 @@ _record_action / _runtime_history_budget / _overflow_shrink_factor 全留宿主�
   AttemptResult 字段 → build 传参面零变化（planned_label / effective_budget /
   tool_round_zero 原名原语义）
 - LLM 调用点（payload 构建 + stream 获取）与 routing 元组/两个 break 逃生深耦合，
-  归装挂账 W4 波次与 _RoutingMixin 处置同步（D-B5-7）
+  归装挂账 W5 波次（RunCoordinator 组装）；_RoutingMixin 已退役为 RoutingService（W4-02b，宿主面经壳不变，D-B5-7 依据保留）
 
 宿主依赖（engine 持有）：_planned_model_label / _set_model_label_ctx /
 _effective_history_budget / _effective_history_budget_detail /
