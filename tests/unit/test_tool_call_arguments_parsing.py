@@ -100,8 +100,10 @@ def test_full_loop_string_arguments_executes_tool(build_test_engine, tmp_path):
     assert result.final_answer is not None
     tool_msgs = [m for m in engine.session.load(sid).messages if m.role == "tool"]
     assert tool_msgs, "工具未被调用（arguments 解析回归）"
-    assert "内容X" in tool_msgs[-1].content
-    assert "参数必须为 JSON 对象" not in tool_msgs[-1].content
+    # EVO-20260902-loopbreaker: 假流每轮重发同一调用，第 3 次起被执行前拦截；
+    # 断言本意（字符串 arguments 被解析且真实执行过）改为 any 语义
+    assert any("内容X" in m.content for m in tool_msgs), "字符串参数解析后应真实执行"
+    assert not any("参数必须为 JSON 对象" in m.content for m in tool_msgs)
 
 
 def test_registry_rejects_non_dict_honestly():

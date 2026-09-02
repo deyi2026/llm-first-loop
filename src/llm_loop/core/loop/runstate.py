@@ -39,6 +39,11 @@ class _RunState:
             "empty_count": 0, "empty_reminded": False,
         }
     )
+    # EVO-20260902-loopbreaker: 跨 run 停滞指纹延续（本桶按 session 分桶、跨 run 存活；
+    # 每次 run 开始以 carry 播种 stagnation_state，防"每轮 2~4 次重复、跨 run 累计"
+    # 的死循环因计数重置而逃逸检测。同会话内连续同指纹才累计，换指纹即重置，不跨会话泄漏）
+    stagnation_carry_fp: str | None = None
+    stagnation_carry_count: int = 0
     overflow_reinject_count: int = 0
     context_warning_injected: bool = False
     round_warning_injected: bool = False

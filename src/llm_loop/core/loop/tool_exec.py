@@ -27,6 +27,38 @@ logger = logging.getLogger(__name__)
 # 熔断/BLOCKED 全保留；提醒改为事件观测（LFL_STAGNATION_REMINDER 三态控制事件粒度）。
 _STAGNATION_REMIND_AT = 3
 _STAGNATION_BREAK_AT = 5
+# EVO-20260902-loopbreaker（已批准演进）: 执行前拦截阈值——同一指纹连续第 3 次起
+# 不再执行（事后熔断 BREAK_AT=5 保留为兜底）。实测缺陷: 计数按 run 重置，
+# "每轮 run 重复 2~4 次即被收束"的跨 run 死循环永不达 5 → 需跨 run 延续 + 提前拦截。
+_STAGNATION_BLOCK_AT = 3
+
+
+def partition_stagnation_block(
+    calls: list,
+    fp_state: dict,
+    fingerprint_fn,
+) -> tuple[list, list]:
+    """执行前死循环拦截分区（纯函数，EVO-20260902-loopbreaker）.
+
+    按声明顺序模拟指纹推进: 以 fp_state（含跨 run 延续基数）为起点，同一指纹
+    连续计数达 _STAGNATION_BLOCK_AT 的调用被拦截（不执行），其余放行。
+    返回 (allowed_calls, blocked: list[(call, streak_count)]).
+    """
+    projected_fp = fp_state.get("fp")
+    projected_count = int(fp_state.get("count", 0) or 0)
+    allowed: list = []
+    blocked: list[tuple[Any, int]] = []
+    for tc in calls:
+        fp = fingerprint_fn(tc)
+        if fp == projected_fp:
+            projected_count += 1
+        else:
+            projected_fp, projected_count = fp, 1
+        if projected_count >= _STAGNATION_BLOCK_AT:
+            blocked.append((tc, projected_count))
+        else:
+            allowed.append(tc)
+    return allowed, blocked
 
 
 def _stagnation_reminder_mode() -> str:

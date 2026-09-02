@@ -426,8 +426,13 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
         tool_trace: list[dict] = []
         # EVO-20260814-aab7eb0b P2: 每次 run/run_stream 重置实时停滞检测状态（跨会话不泄漏）
         # EVO-20260823-9bb27899: 增加搜索空结果计数字段
-        self._run_state().stagnation_state = {
-            "fp": None, "count": 0, "reminded": False,
+        # EVO-20260902-loopbreaker: fp/count 以会话桶 carry 播种（跨 run 延续连续计数）；
+        # 提醒/空结果一次性标志仍按 run 重置。同会话内换指纹即重置，不跨会话泄漏。
+        _bucket = self._run_state()
+        _bucket.stagnation_state = {
+            "fp": _bucket.stagnation_carry_fp,
+            "count": _bucket.stagnation_carry_count,
+            "reminded": False,
             "empty_count": 0, "empty_reminded": False,
         }
         # HARNESS-04(2026-08-14): 上下文预算预警——每次 run 独立判断（上下文随 run 累积）

@@ -29,8 +29,9 @@ from llm_loop.core.loop.tool_exec import (
     _search_target_key,
     _stagnation_reminder_mode,
     _tool_args_summary,
+    partition_stagnation_block,
 )
-from llm_loop.core.message import Message, MessageSource, ToolResult
+from llm_loop.core.message import Message, MessageSource, ToolResult, ToolResultStatus
 from llm_loop.introspection.status import ToolHistoryItem
 from llm_loop.llm.client import LLMResponse, StreamDelta, ToolRoundInfo
 from llm_loop.tools.eligibility import project_tool_schemas
@@ -138,20 +139,31 @@ class ToolCycleService:
                 if runner is not None and runner.enabled and runner.is_cancelled(sess.session_id):
                     self._synthesize_cancelled(sess, valid_calls, executed_ids=set())
                     return
-                results = self._host.registry.execute_many(valid_calls)
+                # EVO-20260902-loopbreaker: 执行前死循环拦截（同一指纹连续第 3 次起不执行，
+                # 合成 BLOCKED 回执；fp/count 基数含跨 run 延续，见 run 开始播种逻辑）
+                allowed_calls, blocked_calls = partition_stagnation_block(
+                    valid_calls,
+                    self._host._run_state().stagnation_state,
+                    self._stagnation_fingerprint,
+                )
+                results = (
+                    self._host.registry.execute_many(allowed_calls)
+                    if allowed_calls
+                    else []
+                )
                 # 对账不变量: 声明数 == 结果数（缺失 → 合成取消，防孤儿声明落盘）
-                if len(results) != len(valid_calls):
+                if len(results) != len(allowed_calls):
                     executed_ids = {r.tool_call_id for r in results if r.tool_call_id}
-                    missing = [tc for tc in valid_calls if tc.id not in executed_ids]
+                    missing = [tc for tc in allowed_calls if tc.id not in executed_ids]
                     if missing:
                         self._synthesize_cancelled(sess, missing, executed_ids=set())
                         logger.warning(
                             "工具对账不变量缺失: 声明 %d 结果 %d（%d 条合成取消）",
-                            len(valid_calls),
+                            len(allowed_calls),
                             len(results),
                             len(missing),
                         )
-                for tc, result in zip(valid_calls, results, strict=False):
+                for tc, result in zip(allowed_calls, results, strict=False):
                     tool_trace.append(
                         {
                             "id": tc.id,
@@ -174,6 +186,41 @@ class ToolCycleService:
                     # EVO-20260814-aab7eb0b P2: 运行中停滞指纹追踪（evaluator.py:271 同构指纹）
                     # EVO-20260823-9bb27899: 传 result 供搜索类工具空结果计数
                     self._track_stagnation(tc, sess, tool_trace, result=result)
+                # EVO-20260902-loopbreaker: 被拦截声明合成 BLOCKED 回执（对账不变量成立:
+                # 声明数 = 放行结果数 + 拦截回执数 + 取消数），计入停滞计数与跨 run 延续
+                for tc, streak in blocked_calls:
+                    blocked_result = ToolResult(
+                        ToolResultStatus.BLOCKED,
+                        (
+                            f"[已拦截] 工具 '{tc.name}' 为连续第 {streak} 次相同调用"
+                            "（工具名+参数完全一致，含跨轮延续），已触发死循环熔断，本次未执行。"
+                            "事实: 重复同一调用未产生新信息，程序不执行无进展空转。"
+                        ),
+                        tc.id,
+                        tc.name,
+                    )
+                    blocked_msg = tool_result_to_message(
+                        blocked_result,
+                        failure_guidance_enabled=self._host.registry.failure_guidance_enabled,
+                    )
+                    sess.messages.append(blocked_msg)
+                    self._host._append_message_event(sess, blocked_msg)
+                    self._record_tool_history(blocked_result)
+                    tool_trace.append(
+                        {
+                            "id": tc.id,
+                            "name": tc.name,
+                            "arguments": tc.arguments,
+                            "status": blocked_result.status.value,
+                        }
+                    )
+                    try:
+                        self._host._record_action(
+                            "stagnation.pre_block", "blocked", f"{tc.name} x{streak}"
+                        )
+                    except Exception:  # noqa: BLE001 — observability must not block the run
+                        logger.debug("pre_block action record failed (fail-open)", exc_info=True)
+                    self._track_stagnation(tc, sess, tool_trace, result=blocked_result)
                 # EVO-20260816-62977206: 工具执行后经验提示注入（末尾追加，无命中不注入）
                 self._inject_experience_tips(sess, [tc.name for tc in valid_calls])
             # 注：唯一中断点 = tool_round yield（内层 except GeneratorExit 已合成+落盘+重抛）；
@@ -299,31 +346,13 @@ class ToolCycleService:
             return f"{tc.name}|{_json_dumps_args(target)}"
         return f"{tc.name}|{_json_dumps_args(tc.arguments)}"
 
-    def _stagnation_state_of_host(self) -> dict:
-        """宿主停滞态读写入口（B5-W4-03 per-session 桶化；fail-open 保裸实例契约）.
-
-        正常实例经 RunStateManager 桶（host._run_state().stagnation_state，跨会话
-        不共享）；tests __new__ 绕过 __init__ 的裸服务无 mgr，回退宿主旧字段并兜
-        底创建（W4-02e 立约：裸服务 fail-open，D-B5-10 同源教训前置规避）。
-        """
-        mgr = getattr(self._host, "_run_state_mgr", None)
-        if mgr is not None:
-            return mgr.bucket().stagnation_state
-        state = getattr(self._host, "_stagnation_state", None)
-        if state is None:
-            state = self._host._stagnation_state = {
-                "fp": None, "count": 0, "reminded": False,
-                "empty_count": 0, "empty_reminded": False,
-            }
-        return state
-
     def _track_stagnation(self, tc, sess, tool_trace: list[dict], result=None) -> None:
         """每次工具执行后更新停滞计数（目标级指纹 + 搜索空结果），达阈值注入提醒。
 
         熔断决策在 engine 主循环（能 break 的位置）读取 _stagnation_should_break() 完成。
         """
         fp = self._stagnation_fingerprint(tc)
-        state = self._stagnation_state_of_host()
+        state = self._host._run_state().stagnation_state
         # ① 同目标指纹连续计数（原逻辑，指纹已升级为目标级）
         if state["fp"] == fp:
             state["count"] += 1
@@ -331,6 +360,11 @@ class ToolCycleService:
             state["fp"] = fp
             state["count"] = 1
             state["reminded"] = False
+        # EVO-20260902-loopbreaker: 写回跨 run 延续字段（会话桶级持久；run 开始以 carry
+        # 播种 stagnation_state，使"每轮 2~4 次、跨多轮累计"的死循环可达拦截阈值）
+        _st_bucket = self._host._run_state()
+        _st_bucket.stagnation_carry_fp = state["fp"]
+        _st_bucket.stagnation_carry_count = state["count"]
         if state["count"] >= _STAGNATION_REMIND_AT and not state["reminded"]:
             state["reminded"] = True
             # R8.24-B B-D3: 提醒注入取消——改道事件观测（on/shadow 记事件，off 静默）；
@@ -373,7 +407,7 @@ class ToolCycleService:
 
     def _stagnation_should_break(self) -> tuple[bool, str, int]:
         """是否达熔断阈值（engine 主循环每轮工具执行后调用）。."""
-        state = self._stagnation_state_of_host()
+        state = self._host._run_state().stagnation_state
         if not state or state["count"] < _STAGNATION_BREAK_AT:
             return (False, "", 0)
         name = (state["fp"] or "").split("|", 1)[0]
