@@ -985,11 +985,11 @@ class TestLlmErrorBranchesClearResp:
             encoding="utf-8"
         )
         # 锚点用分支内独特语句（"llm_error" 字符串在文件更早处出现，不可作锚）；
-        # 2026-08-29 拆块后两分支收敛为 _e1210_llm_error_finalize 调用（语义等价）
-        matches = list(re.finditer(r"final_answer = self\._recovery\._e1210_llm_error_finalize\(", src))
+        # 2026-08-29 拆块后两分支收敛为 _e1210_llm_error_finalize 调用（语义等价）；
+        # 2026-09-02 B5-W4-03 前置清障（D-B5-14）: 两分支再收敛为 _llm_error_round_exit
+        # 统一出口（中断落盘 + e1210 收尾 + stale reasoning 隔离三合一，语义等价去重）
+        matches = list(re.finditer(r"final_answer, resp = self\._llm_error_round_exit\(", src))
         assert len(matches) >= 2, f"llm_error 分支应 ≥2 处（fallback_exhausted/llm_error），实际 {len(matches)}"
-        for m in matches:
-            window = src[m.end() : m.end() + 300]
-            assert "resp = None" in window, (
-                f"llm_error 分支（offset={m.start()}）未清 resp：stale reasoning 会嫁接到程序反馈"
-            )
+        # 统一出口定义体内必须恒返 resp=None（单一出口全覆盖——强度不低于原逐点 resp = None 检查）
+        exit_def = re.search(r"def _llm_error_round_exit\(.*?return final, None", src, re.S)
+        assert exit_def, "llm_error 统一出口缺失或未清 resp：stale reasoning 会嫁接到程序反馈"

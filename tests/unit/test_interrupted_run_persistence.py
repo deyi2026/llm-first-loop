@@ -132,7 +132,9 @@ def test_b1_fail_open_on_save_failure():
 
 
 def test_llm_error_digest_formats_status_provider_message():
-    from llm_loop.core.loop.engine import _llm_error_digest
+    from llm_loop.core.loop.engine_services.interrupted_capture import (
+        llm_error_digest as _llm_error_digest,
+    )
 
     class _DigestProbeError(Exception):
         status_code = 400
@@ -275,7 +277,9 @@ def test_engine_llm_error_persists_b1_row_and_b2_row(build_test_engine, tmp_path
 
 
 def _digest():
-    from llm_loop.core.loop.engine import _llm_error_digest
+    from llm_loop.core.loop.engine_services.interrupted_capture import (
+        llm_error_digest as _llm_error_digest,
+    )
 
     class _DigestProbeError(Exception):
         status_code = 500

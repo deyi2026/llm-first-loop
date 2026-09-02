@@ -35,6 +35,7 @@ from llm_loop.core.injection_labels import (
 from llm_loop.core.loop.archive import _ArchiveMixin
 from llm_loop.core.loop.build import _BuildMixin  # EVO-20260817-e63f712f: 消息构建拆分
 from llm_loop.core.loop.engine_services.attempt_executor import AttemptExecutor
+from llm_loop.core.loop.engine_services.interrupted_capture import InterruptedCapture
 from llm_loop.core.loop.engine_services.recovery_controller import RecoveryController
 from llm_loop.core.loop.engine_services.run_finalizer import RunFinalizer
 from llm_loop.core.loop.engine_services.runtime_params import RuntimeParamsService
@@ -102,20 +103,6 @@ def _background_cancel_reason(engine: Any, session_id: str) -> str:
         return ""
     fn = getattr(runner, "cancel_reason", None)
     return str(fn(session_id) or "") if callable(fn) else ""
-
-
-def _llm_error_digest(exc: BaseException) -> str:
-    """B1(EVO-20260902-41898b20): LLMError 摘要（状态码/provider/消息头，≤200 chars）.
-
-    字段缺失如实省略（LLMError 仅 provider；LLMHTTPError 另有 status_code/body），
-    用于中断落盘标注与 truncated episode 索引的 error_digest。
-    """
-    parts = (
-        str(getattr(exc, "status_code", "") or ""),
-        str(getattr(exc, "provider", "") or ""),
-        str(exc),
-    )
-    return " ".join(p for p in parts if p)[:200]
 
 
 def _background_note_active(engine: Any, session_id: str, round_no: int) -> None:
@@ -336,6 +323,16 @@ class LoopEngine(_RunStateMixin, _FallbackMixin, _RoutingMixin, _InteropMixin, _
         )
 
     # ── 主循环本体（public run_stream 生命周期包装见 lifecycle.py）──
+    def _llm_error_round_exit(self, sess, cap, exc, session_id, n_messages, rounds, flavor):
+        """LLMError 轮统一出口（D-B5-14 去重：fallback 链全失败/恢复失败两分支逐字重复段）.
+
+        中断半截产物落盘（cap 防重）+ e1210 程序反馈收尾；resp 恒 None——
+        程序反馈不得继承上一轮成功响应的 reasoning（GPT 审计 P0：stale reasoning 嫁接）。
+        """
+        cap.fire(sess, "llm_error", rounds, exc)
+        final = self._recovery._e1210_llm_error_finalize(session_id, exc, n_messages, flavor)
+        return final, None
+
     def _run_stream_inner(
         self, session_id: str, user_text: str, model: str | None = None,
         *, run_save_token: object | None = None, on_run_acquired: Any = None,
@@ -470,7 +467,6 @@ class LoopEngine(_RunStateMixin, _FallbackMixin, _RoutingMixin, _InteropMixin, _
         self._recovery._err1210_run_begin()  # 修复A: per-run 降级机会（attempted 键 = run seq）
         self._focus.reset()  # 2026-08-22 单向切换锁定重置
         self._last_interrupted = None  # B1/B2(EVO-20260902-41898b20): 本 run 中断半截产物缓存（新 run 重置防陈旧串台）
-        _interrupted_hook_fired = False  # B1: 同一 run 至多一行截断标注（设计约束）
         model_used = ""  # M51: 本轮实际使用的模型标签（每轮 LLM 调用时刷新）
         tokens_in = 0  # M52: 本次 run 累计 prompt tokens
         tokens_out = 0
@@ -679,11 +675,7 @@ class LoopEngine(_RunStateMixin, _FallbackMixin, _RoutingMixin, _InteropMixin, _
             except Exception:  # noqa: BLE001 — shadow telemetry must never block LLM
                 logger.debug("injection.profile.shadow 事件写入失败（fail-open）", exc_info=True)
 
-            _cancelled_during_llm = False
-            # B1(EVO-20260902-41898b20): 轮级重置且先于 stream/sync 分支绑定——
-            # LLMError 自 stream_fn() 调用或同步 chat() 抛出时两列表亦有定义
-            partial_parts: list[str] = []  # P1-6 断连落盘累积；B1: 中断尾数据源
-            reasoning_parts: list[str] = []  # B1: 推理增量累积（中断时限量落尾段）
+            cap = InterruptedCapture(self)  # B1: 轮级重置且先于 stream/sync 分支绑定（text 列兼容 P1-6 断连落盘数据源）
             try:
                 stream_fn = getattr(llm_client, "chat_stream", None)
                 _llm_round_ms = 0.0
@@ -739,17 +731,9 @@ class LoopEngine(_RunStateMixin, _FallbackMixin, _RoutingMixin, _InteropMixin, _
                                 d = next(it)
                                 _cancel_reason = _background_cancel_reason(self, session_id)
                                 if _cancel_reason:
-                                    _cancelled_during_llm = True
+                                    cap.cancelled = True
                                     _llm_round_ms = (time.perf_counter() - _llm_start) * 1000.0
-                                    if not _interrupted_hook_fired:  # B1(EVO-20260902-41898b20): 半截产物限量落盘
-                                        _interrupted_hook_fired = True
-                                        self._on_llm_interrupted(
-                                            sess,
-                                            text_parts=partial_parts,
-                                            reasoning_parts=reasoning_parts,
-                                            reason="cancelled",
-                                            round_no=rounds,
-                                        )
+                                    cap.fire(sess, "cancelled", rounds)  # B1: 半截产物限量落盘（防重内聚）
                                     close_stream = getattr(it, "close", None)
                                     if callable(close_stream):
                                         try:
@@ -760,10 +744,7 @@ class LoopEngine(_RunStateMixin, _FallbackMixin, _RoutingMixin, _InteropMixin, _
                                 if not _ttft_done and getattr(d, "text", ""):
                                     _ttft_done = True
                                     ttft_first_ms = (time.perf_counter() - _llm_start) * 1000.0
-                                if getattr(d, "text", ""):
-                                    partial_parts.append(d.text)
-                                if getattr(d, "reasoning", ""):  # B1(EVO-20260902-41898b20)
-                                    reasoning_parts.append(d.reasoning)
+                                cap.on_delta(d)
                                 yield d
                             except StopIteration as exc:
                                 resp = exc.value
@@ -773,7 +754,7 @@ class LoopEngine(_RunStateMixin, _FallbackMixin, _RoutingMixin, _InteropMixin, _
                                 # P1-6(2026-08-15，审计发现 #17)：客户端断连——部分回答如实
                                 # 落会话（中断标注不伪装完整）并立即保存，闭合"事件日志已追加
                                 # 而 session JSON 未保存"的双轨漂移。
-                                self._on_stream_disconnect(sess, partial_parts)
+                                self._on_stream_disconnect(sess, cap.text_parts)
                                 raise
                     else:
                         # 无 chat_stream 的客户端（如测试 FakeLLM）→ 同步 chat（不 yield，行为与 run 一致）
@@ -807,7 +788,7 @@ class LoopEngine(_RunStateMixin, _FallbackMixin, _RoutingMixin, _InteropMixin, _
                         _llm_round_ms = (time.perf_counter() - _llm_sync_start) * 1000.0
                     _cancel_reason = _background_cancel_reason(self, session_id)
                     if _cancel_reason:
-                        _cancelled_during_llm = True
+                        cap.cancelled = True
                 finally:
                     # 恢复本请求的推理等级 context（无论正常/异常/断连）；不改共享 client。
                     if _effort_ctx_saved is not None:
@@ -952,20 +933,9 @@ class LoopEngine(_RunStateMixin, _FallbackMixin, _RoutingMixin, _InteropMixin, _
                     else:
                         # 链全失败 → 已注入汇总提示, 走原异常如实反馈路径
                         _run_end_reason = "llm_error"
-                        if not _interrupted_hook_fired:  # B1(EVO-20260902-41898b20): 中断半截产物落盘
-                            _interrupted_hook_fired = True
-                            self._on_llm_interrupted(
-                                sess,
-                                text_parts=partial_parts,
-                                reasoning_parts=reasoning_parts,
-                                reason="llm_error",
-                                error_digest=_llm_error_digest(exc),
-                                round_no=rounds,
-                            )
-                        final_answer = self._recovery._e1210_llm_error_finalize(
-                            session_id, exc, len(messages), "fallback_exhausted"
+                        final_answer, resp = self._llm_error_round_exit(
+                            sess, cap, exc, session_id, len(messages), rounds, "fallback_exhausted"
                         )
-                        resp = None  # 程序反馈不得继承上一轮成功响应的 reasoning（GPT 审计 P0：stale reasoning 嫁接）
                         if inject_msgs:
                             # The all-failed summary is useful to the current user, not
                             # to a future model turn. Surface it in this program result.
@@ -997,21 +967,12 @@ class LoopEngine(_RunStateMixin, _FallbackMixin, _RoutingMixin, _InteropMixin, _
                         _llm_round_ms = 0.0  # 恢复轮无 TTFT 单列（design 风险 6，如实不伪造）
                     else:
                         _run_end_reason = "llm_error"
-                        if not _interrupted_hook_fired:  # B1(EVO-20260902-41898b20): 中断半截产物落盘
-                            _interrupted_hook_fired = True
-                            self._on_llm_interrupted(
-                                sess,
-                                text_parts=partial_parts,
-                                reasoning_parts=reasoning_parts,
-                                reason="llm_error",
-                                error_digest=_llm_error_digest(exc),
-                                round_no=rounds,
-                            )
-                        final_answer = self._recovery._e1210_llm_error_finalize(session_id, exc, len(messages), "llm_error")
-                        resp = None  # 程序反馈不得继承上一轮成功响应的 reasoning（GPT 审计 P0：stale reasoning 嫁接）
+                        final_answer, resp = self._llm_error_round_exit(
+                            sess, cap, exc, session_id, len(messages), rounds, "llm_error"
+                        )
                         break
 
-            if _cancelled_during_llm:
+            if cap.cancelled:
                 _run_end_reason = "cancelled"
                 final_answer = _CANCELLED_ANSWER
                 resp = None  # 防止上一轮响应残留参与 usage/reasoning/finalize
