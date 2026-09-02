@@ -851,8 +851,14 @@ def _parse_loop_engine_bases(source: str) -> list[str]:
     return [b.strip() for b in m.group(1).split(",") if b.strip()]
 
 
+# R9-B5-W2-01: Mixin 更名映射（职责面迁出后的名称演化，数量守恒不算新增）
+_MIXIN_RENAMES = {
+    "_RunEntrypointMixin": "_LifecycleMixin",  # 职责面迁 SessionLifecycle，编排入口留名
+}
+
+
 def test_loop_engine_mixin_ratchet():
-    """Mixin 数量棘轮：上限 16 + 与 HEAD 比对单调递减 + 禁止新增基类。"""
+    """Mixin 数量棘轮：上限 16 + 与 HEAD 比对单调递减 + 禁止新增基类（更名经 _MIXIN_RENAMES 折算）."""
     current = _parse_loop_engine_bases((ROOT / _ENGINE_REL).read_text(encoding="utf-8"))
     assert len(current) <= _MIXIN_CAP, (
         f"LoopEngine 基类 {len(current)} 个 > 上限 {_MIXIN_CAP}：禁止新增 Mixin（R9-P5-01）；"
@@ -864,9 +870,20 @@ def test_loop_engine_mixin_ratchet():
     if head.returncode != 0:
         pytest.skip("engine.py 尚未入库，棘轮比对跳过")
     head_bases = _parse_loop_engine_bases(head.stdout)
-    extra = set(current) - set(head_bases)
+    # 更名折算：双侧均折算到固定名域（PROBE 检出态 HEAD=本提交，双侧同名；
+    # 工作态 HEAD=旧世代，current 侧新名→旧名）；不动点迭代支持链式更名
+    def _canon(names: set[str]) -> set[str]:
+        prev = None
+        cur = set(names)
+        while prev != cur:
+            prev = cur
+            cur = {_MIXIN_RENAMES.get(n, n) for n in cur}
+        return cur
+
+    extra = _canon(set(current)) - _canon(set(head_bases))
     assert not extra, (
         f"检测到新增基类 {sorted(extra)}：Mixin 列表只允许退役（单调递减），不允许新增"
+        f"（更名须登记 _MIXIN_RENAMES）"
     )
     assert len(current) <= len(head_bases), (
         f"基类数 {len(current)} > HEAD {len(head_bases)}：违反单调递减棘轮（R9-P5-01）"

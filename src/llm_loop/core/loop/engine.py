@@ -35,12 +35,13 @@ from llm_loop.core.injection_labels import (
 from llm_loop.core.loop.archive import _ArchiveMixin
 from llm_loop.core.loop.build import _BuildMixin  # EVO-20260817-e63f712f: 消息构建拆分
 from llm_loop.core.loop.engine_services.recovery_controller import RecoveryController
+from llm_loop.core.loop.engine_services.session_lifecycle import SessionLifecycle
 from llm_loop.core.loop.engine_services.termination_controller import TerminationController
 from llm_loop.core.loop.events import _EventsMixin
 from llm_loop.core.loop.fallback import _FallbackMixin
 from llm_loop.core.loop.interop import _InteropMixin
 from llm_loop.core.loop.kpi import _KpiMixin
-from llm_loop.core.loop.lifecycle import _LifecycleMixin
+from llm_loop.core.loop.lifecycle import _RunEntrypointMixin
 from llm_loop.core.loop.routing import (
     _CHARS_PER_TOKEN_EST,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
     _CONTEXT_SAFETY_MARGIN,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
@@ -149,7 +150,7 @@ class LoopResult:
     cancel_reason: str = ""
 
 
-class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _ToolEligibilityMixin, _ToolExecMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin, _KpiMixin, _LifecycleMixin, _TurnContextMixin):
+class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _ToolEligibilityMixin, _ToolExecMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _TurnContextMixin):
     """五阶段核心循环控制器."""
 
     # EVO 后台 run 执行器（factory 动态装配 BackgroundRunner；声明类型供 pyright 静态检查）
@@ -253,6 +254,8 @@ class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMi
         self._termination = TerminationController(self)
         # R9 Phase 5 T6-A: 恢复域 service（B5-W1-03 迁入 _Err1210Mixin 职责；实例态留宿主经 _host 读写）
         self._recovery = RecoveryController(self)
+        # R9-B5-W2-01: SessionLifecycle——会话前段 reconcile / workspace 职责面 / 收尾持久化
+        self._session_lifecycle = SessionLifecycle(self)
         # EVO-20260817-cef296f8 L2: 缓存命中率窗口监控（跨 run 累计，实例级；
         # 低命中率 → final_answer 注入诊断 + action_trace 审计，fail-open）
         # EVO-20260817-72fcd94a L3（闭环）: 缓存健康监控 + 发送前门禁（独立模块，程序常态锚点管理）
@@ -318,62 +321,11 @@ class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMi
         # HARNESS-04(2026-08-14): 上下文预算预警——每次 run 独立判断（上下文随 run 累积）
         self._context_warning_injected = False
 
-        # 会话恢复（重启继续对话，DFX-REL-03）
-        session_existed = self.session.exists(session_id)
-        sess = self.session.load(session_id)
-        if run_save_token is not None:
-            self.session._bind_run_save_token(sess, run_save_token)
-        accepted_changed = False
-        if on_run_acquired is not None:
-            try:
-                on_run_acquired(sess)
-                accepted_changed = True
-            except TypeError:
-                # BackgroundRunner.before_start 历史兼容：旧内部调用方可能仍传零参 callback。
-                try:
-                    on_run_acquired()
-                    accepted_changed = True
-                except Exception:  # noqa: BLE001 — accepted 辅助动作 fail-open
-                    logger.warning("run accepted callback 失败（fail-open）", exc_info=True)
-            except Exception:  # noqa: BLE001 — accepted 辅助动作 fail-open
-                logger.warning("run accepted callback 失败（fail-open）", exc_info=True)
+        plan = self._session_lifecycle.reconcile(
+            session_id, run_save_token=run_save_token, on_run_acquired=on_run_acquired
+        )
+        sess = plan.sess
 
-        if not session_existed:
-            # 2026-08-20 (EVO-20260820-0b96348d, 用户决策): 新会话首轮仅重置活动窗口与
-            # 模型游标（note_new_session），**保留模型桶**——桶是模型生命周期统计，
-            # 跨会话/跨切换持久，保证连续切换模型对话时各模型命中率统计稳定连续。
-            try:
-                if self._cache_monitor is not None:
-                    self._cache_monitor.note_new_session(session_id=session_id)
-            except Exception:  # noqa: BLE001 — fail-open
-                logger.debug("新会话缓存健康重置异常（fail-open）", exc_info=True)
-            try:
-                self.session.save(sess)
-            except Exception as exc:
-                # R8.10/E33: persistence fault is runtime observability, not model authority.
-                # Keep recovery + selfheal/status telemetry, but never append fault prose to
-                # conversational history or the provider prompt.
-                logger.warning("初始会话保存失败（fail-open）", exc_info=True)
-                recovery_note = self._persist_with_recovery_note(
-                    target_type="session",
-                    source_id=sess.session_id,
-                    write_fn=lambda: self.session.save(sess),
-                    payload=self._session_payload(sess),
-                    trigger_point="initial_save",
-                )
-                self._fault_feedback("session_persistence", exc)  # selfheal_log side effect only
-                self._record_program_fault("session_persist")
-                with contextlib.suppress(Exception):
-                    self._record_action(
-                        "session_persistence",
-                        "fault_observed",
-                        f"error={type(exc).__name__};recovery={'recorded' if recovery_note else 'none'}",
-                    )
-        elif accepted_changed:
-            try:
-                self.session.save(sess)
-            except Exception:  # noqa: BLE001 — accepted 辅助持久化失败不阻断本次 run
-                logger.warning("run accepted 状态持久化失败（fail-open）", exc_info=True)
         # T22/T23: 注入当前会话到注册表与修正上下文（压缩档案/检索关联）
         from contextlib import suppress
 
@@ -1340,7 +1292,7 @@ class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMi
         except Exception as exc:  # noqa: BLE001
             logger.warning("会话保存失败（fail-open）: %s", exc)
             self._record_program_fault("session_persist")
-            recovery_note = self._persist_with_recovery_note(
+            recovery_note = self._session_lifecycle._persist_with_recovery_note(
                 target_type="session",
                 source_id=sess.session_id,
                 write_fn=lambda: self.session.save(sess),
@@ -1370,7 +1322,7 @@ class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMi
                 self.memory.flush()
         except Exception as exc:  # noqa: BLE001 — 统计落盘失败不阻断 run
             logger.warning("记忆统计落盘失败（fail-open）: %s", exc)
-            recovery_note = self._persist_with_recovery_note(
+            recovery_note = self._session_lifecycle._persist_with_recovery_note(
                 target_type="memory_stats",
                 source_id="memory",
                 write_fn=lambda: self.memory.flush() if self.memory is not None else None,
@@ -1474,4 +1426,4 @@ class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMi
     #   _schema_to_param / _resp_summary / _record_tool_history
     # 模块级函数 _json_dumps_args/_tool_args_summary 经模块级 re-export 保持原路径可导入。
 
-    # 生命周期/持久化包装已迁至 lifecycle.py（_LifecycleMixin）。
+    # 生命周期/持久化职责面已迁 SessionLifecycle（B5-W2-01）；编排入口留 lifecycle.py（_RunEntrypointMixin）。

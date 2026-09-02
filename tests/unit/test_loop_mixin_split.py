@@ -27,7 +27,8 @@ def test_loop_mixin_split_layout():
         mixin = {
             "routing.py": "_RoutingMixin",
             "tool_exec.py": "_ToolExecMixin",
-            "lifecycle.py": "_LifecycleMixin",
+            # R9-B5-W2-01: _LifecycleMixin 职责面迁 SessionLifecycle 后更名，编排入口留此
+            "lifecycle.py": "_RunEntrypointMixin",
         }[fname]
         assert f"class {mixin}:" in src, f"{fname} 缺 {mixin} 类定义"
         assert "reportAttributeAccessIssue=false" in src, f"{fname} 缺 pyright 文件级豁免"

@@ -26,7 +26,6 @@ from llm_loop.core.run_context import (
 from llm_loop.core.run_context import (
     current_workspace_root as _current_workspace_root,
 )
-from llm_loop.memory.extract import extract_memory_blocks, memory_blocks_to_entries
 
 if TYPE_CHECKING:
     from llm_loop.core.loop.engine import LoopEngine, LoopResult
@@ -35,7 +34,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class _LifecycleMixin:
+class _RunEntrypointMixin:
     # ── 主入口 ──
     def run_stream(
         self, session_id: str, user_text: str, model: str | None = None,
@@ -160,15 +159,6 @@ class _LifecycleMixin:
             # 支撑第二次 /stop 幂等与恢复轮可再停止）
             self._sync_cancel_discard(session_id)
 
-    def _sync_cancel_discard(self: LoopEngine, session_id: str) -> None:
-        """移除会话级同步取消标记（经 runner.discard_sync_cancel；fail-open 兼容旧装配）."""
-        runner = getattr(self, "runner", None)
-        fn = getattr(runner, "discard_sync_cancel", None) if runner is not None else None
-        if callable(fn):
-            try:
-                fn(session_id)
-            except Exception:  # noqa: BLE001 — fail-open 不阻断 run 生命周期
-                logger.warning("同步取消标记清理失败（fail-open）: %s", session_id, exc_info=True)
 
 
     def run(
@@ -195,35 +185,8 @@ class _LifecycleMixin:
             except StopIteration as exc:
                 return exc.value
 
-    def _install_run_acquired_callback(
-        self: LoopEngine, session_id: str, callback: Any
-    ) -> Any:
-        if callback is None:
-            return None
-        with self._run_acquired_callbacks_guard:
-            if session_id in self._run_acquired_callbacks:
-                from llm_loop.core.loop.runner import SessionBusyError
 
-                raise SessionBusyError(f"会话 {session_id} 已有待执行的 accepted callback")
-            self._run_acquired_callbacks[session_id] = callback
-        return callback
 
-    def _clear_run_acquired_callback(
-        self: LoopEngine, session_id: str, marker: Any
-    ) -> None:
-        if marker is None:
-            return
-        with self._run_acquired_callbacks_guard:
-            if self._run_acquired_callbacks.get(session_id) is marker:
-                self._run_acquired_callbacks.pop(session_id, None)
-
-    def _assert_workspace_epoch(self: LoopEngine, expected_workspace_epoch: int | None) -> None:
-        if expected_workspace_epoch is None:
-            return
-        if self._workspace_epoch != expected_workspace_epoch:
-            from llm_loop.workspace.store import WorkspaceChangedError
-
-            raise WorkspaceChangedError("请求解析会话后工作区已切换，请重新选择会话后重试")
 
     def _run_with_acquired(
         self: LoopEngine,
@@ -237,7 +200,7 @@ class _LifecycleMixin:
         ingress: object | None = None,
     ) -> LoopResult:
         """内部同步入口：首个generator推进前校验session解析时的workspace epoch。"""
-        marker = self._install_run_acquired_callback(session_id, on_run_acquired)
+        marker = self._session_lifecycle._install_run_acquired_callback(session_id, on_run_acquired)
         it = self.run_stream(
             session_id, user_text, model=model, reasoning_effort=reasoning_effort,
             ingress=ingress,
@@ -246,7 +209,7 @@ class _LifecycleMixin:
             # 首次next执行run_stream admission；与epoch校验同处workspace guard内，
             # 一旦_sync_active登记完成即可释放guard，后续transition会因active而拒绝。
             with self._workspace_transition_guard:
-                self._assert_workspace_epoch(expected_workspace_epoch)
+                self._session_lifecycle._assert_workspace_epoch(expected_workspace_epoch)
                 try:
                     next(it)
                 except StopIteration as exc:
@@ -260,7 +223,7 @@ class _LifecycleMixin:
             try:
                 it.close()
             finally:
-                self._clear_run_acquired_callback(session_id, marker)
+                self._session_lifecycle._clear_run_acquired_callback(session_id, marker)
 
     def _run_stream_with_acquired(
         self: LoopEngine,
@@ -274,14 +237,14 @@ class _LifecycleMixin:
         ingress: object | None = None,
     ):
         """内部流式入口：首次推进时原子校验workspace epoch并完成run admission。"""
-        marker = self._install_run_acquired_callback(session_id, on_run_acquired)
+        marker = self._session_lifecycle._install_run_acquired_callback(session_id, on_run_acquired)
         it = self.run_stream(
             session_id, user_text, model=model, reasoning_effort=reasoning_effort,
             ingress=ingress,
         )
         try:
             with self._workspace_transition_guard:
-                self._assert_workspace_epoch(expected_workspace_epoch)
+                self._session_lifecycle._assert_workspace_epoch(expected_workspace_epoch)
                 try:
                     first = next(it)
                 except StopIteration as exc:
@@ -292,7 +255,44 @@ class _LifecycleMixin:
             try:
                 it.close()
             finally:
-                self._clear_run_acquired_callback(session_id, marker)
+                self._session_lifecycle._clear_run_acquired_callback(session_id, marker)
+
+    # ---- R9-B5-W2-01 委托壳：职责面已迁 SessionLifecycle（engine_services/session_lifecycle.py），
+    # 公开直调面（web/routes、feishu/bridge、tests）签名不变 ----
+
+    def _sync_cancel_discard(self: LoopEngine, session_id: str) -> None:
+        """移除会话级同步取消标记（委托 SessionLifecycle；feishu/tests 直调面）."""
+        self._session_lifecycle._sync_cancel_discard(session_id)
+
+    def workspace_snapshot(self: LoopEngine):
+        """（委托 SessionLifecycle）"""
+        return self._session_lifecycle.workspace_snapshot()
+
+    def workspace_transition(self: LoopEngine):
+        """（委托 SessionLifecycle）"""
+        return self._session_lifecycle.workspace_transition()
+
+    def prepare_workspace(
+        self: LoopEngine, workspace_root: str, workspace_id: str | None = None
+    ) -> Path:
+        """（委托 SessionLifecycle）"""
+        return self._session_lifecycle.prepare_workspace(workspace_root, workspace_id)
+
+    def set_workspace(
+        self,
+        workspace_root: str,
+        workspace_id: str | None = None,
+        *,
+        prepared_sessions_dir: Path | None = None,
+    ) -> None:
+        """（委托 SessionLifecycle）"""
+        self._session_lifecycle.set_workspace(
+            workspace_root, workspace_id, prepared_sessions_dir=prepared_sessions_dir
+        )
+
+    def _remember(self: LoopEngine, final_answer: str, session_id: str, sess) -> None:
+        """记忆块解析落盘（委托 SessionLifecycle；feishu/bridge 直调面）."""
+        self._session_lifecycle._remember(final_answer, session_id, sess)
 
     def run_single(self: LoopEngine, user_text: str, model: str | None = None, *, ingress: object | None = None) -> LoopResult:
         """一次性便捷入口：自动创建新会话并执行完整循环."""
@@ -310,144 +310,9 @@ class _LifecycleMixin:
         except Exception as exc:  # noqa: BLE001 — 关闭失败 fail-open
             logger.warning("LLM 客户端关闭失败（fail-open）: %s", exc)
 
-    def _workspace_session_root(
-        self: LoopEngine, workspace_root: str, workspace_id: str | None = None
-    ) -> tuple[str, Path]:
-        """解析workspace对应session分区，不产生文件系统副作用。"""
-        new_root = workspace_root or ""
-        base = Path(self.settings.sessions_dir)
-        if not new_root:
-            return new_root, base
-        from llm_loop.workspace.store import _validate_workspace_id, workspace_key
 
-        partition_id = workspace_id or ""
-        if not partition_id and self.workspace_store is not None:
-            finder = getattr(self.workspace_store, "get_by_path", None)
-            if callable(finder):
-                ws = finder(new_root)
-                partition_id = getattr(ws, "id", "") if ws is not None else ""
-        partition_id = _validate_workspace_id(partition_id or workspace_key(new_root))
-        return new_root, base / partition_id
 
-    @contextmanager
-    def workspace_snapshot(self: LoopEngine):
-        """短暂冻结workspace用于session查/建；正常并发请求排队，不误报workspace busy。"""
-        # snapshot只保护“读取当前root/epoch + session查建”这一小段。多个请求可以
-        # 顺序穿过临界区；若恰逢workspace transition，则等待其提交后读取新epoch。
-        # 真正的busy语义只属于transition遇到active run，不属于snapshot彼此竞争。
-        with self._workspace_transition_guard:
-            yield self._workspace_epoch
 
-    @contextmanager
-    def workspace_transition(self: LoopEngine):
-        """独占workspace根切换窗口；任意active run存在时fail-fast。"""
-        from llm_loop.workspace.store import WorkspaceBusyError
 
-        acquired = self._workspace_transition_guard.acquire(blocking=False)
-        if not acquired:
-            raise WorkspaceBusyError("工作区切换/运行准入正在进行，请稍后重试")
-        try:
-            runner = getattr(self, "runner", None)
-            has_background = bool(
-                runner is not None
-                and getattr(runner, "enabled", False)
-                and getattr(runner, "has_running", lambda: False)()
-            )
-            with self._sync_guard:
-                has_sync = bool(self._sync_active)
-            if has_background or has_sync:
-                raise WorkspaceBusyError("存在进行中的会话运行，暂不能切换工作区")
-            yield
-        finally:
-            self._workspace_transition_guard.release()
 
-    def prepare_workspace(
-        self: LoopEngine, workspace_root: str, workspace_id: str | None = None
-    ) -> Path:
-        """只准备可能失败的session分区；registry提交前可安全调用。"""
-        _new_root, session_root = self._workspace_session_root(workspace_root, workspace_id)
-        return self.session.prepare_root(session_root)
 
-    def set_workspace(
-        self: LoopEngine,
-        workspace_root: str,
-        workspace_id: str | None = None,
-        *,
-        prepared_sessions_dir: Path | None = None,
-    ) -> None:
-        """激活工作区；若传prepared_sessions_dir则提交后不再做文件系统I/O。"""
-        with self.workspace_transition():
-            new_root, session_root = self._workspace_session_root(workspace_root, workspace_id)
-            if prepared_sessions_dir is None:
-                prepared_sessions_dir = self.session.prepare_root(session_root)
-            elif Path(prepared_sessions_dir) != session_root:
-                raise ValueError("prepared session root 与 workspace 分区不一致")
-            changed = self.workspace_root != new_root or self.session.root != session_root
-            self.session.activate_prepared_root(prepared_sessions_dir)
-            self.workspace_root = new_root
-            if changed:
-                self._workspace_epoch += 1
-            migrate_legacy = getattr(self, "_evidence_legacy_migrate_workspace_fn", None)
-            if callable(migrate_legacy):
-                try:
-                    report = migrate_legacy(str(new_root))
-                    logger.info("Evidence legacy sidecar migration after workspace activation: %s", report)
-                except Exception:  # noqa: BLE001 - unproven legacy files remain model-invisible
-                    logger.exception(
-                        "Evidence legacy sidecar migration failed after workspace activation; "
-                        "legacy files remain quarantined/unowned"
-                    )
-
-    def _persist_with_recovery_note(
-        self: LoopEngine,
-        *,
-        target_type: str,
-        source_id: str,
-        write_fn: Any,
-        payload: str,
-        trigger_point: str,
-    ) -> str:
-        """调 RecoveryChannel.persist_with_recovery 并返回用户可见标注文本."""
-        if self.recovery is None:
-            return ""
-        try:
-            receipt = self.recovery.persist_with_recovery(
-                target_type=target_type,
-                source_id=source_id,
-                write_fn=write_fn,
-                payload=payload,
-                trigger_point=trigger_point,
-            )
-        except Exception:  # noqa: BLE001 — 恢复通道自身失败不中断主循环
-            logger.warning("恢复通道异常（fail-open）", exc_info=True)
-            return "[恢复通道异常] 重试/备份均未完成"
-        if receipt.status == "retried_ok":
-            return f"[恢复通道] 已重试 {receipt.retries} 次后成功落盘"
-        if receipt.status == "backed_up":
-            return f"[恢复通道] 重试 {receipt.retries} 次仍失败，已备份 {receipt.backup_id}"
-        return f"[恢复通道] 重试 {receipt.retries} 次仍失败，备份也失败: {receipt.error}"
-
-    def _remember(self: LoopEngine, final_answer: str, session_id: str, sess) -> None:
-        """解析最终回答的记忆块并落盘（FR-MEM-01/03，失败不阻塞）."""
-        if not final_answer.strip():
-            return
-        try:
-            blocks = extract_memory_blocks(final_answer)
-            if not blocks:
-                return
-            entries, failures = memory_blocks_to_entries(
-                blocks,
-                session_id=session_id,
-                message_id=str(len(sess.messages)),
-            )
-            for entry in entries:
-                entry.deposit_path = "inline"
-                self.memory.save_entry(entry)
-            if failures:
-                logger.warning(
-                    "记忆块解析失败 %d 条（如实记录，不丢弃回答）: %s",
-                    len(failures),
-                    failures[:2],
-                )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("记忆沉淀失败（不阻塞主循环）: %s", exc)
