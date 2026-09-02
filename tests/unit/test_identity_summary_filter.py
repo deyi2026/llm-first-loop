@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from llm_loop.core.injection_labels import InjectionLayer, origin_metadata, render_program_appendix
+from llm_loop.core.loop.engine_services.archive import ArchiveService
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.session import Session, SessionStore
 
@@ -176,6 +177,7 @@ def test_archive_identity_episode_keeps_raw_but_sanitizes_persistent_summary(tmp
     sess = Session(session_id=sid, messages=messages)
 
     engine = LoopEngine.__new__(LoopEngine)
+    engine._archive = ArchiveService(engine)  # W4-02d: service 面注入（裸实例桩，沿 02a/02b 先例）
     engine.archive = ArchiveStore(tmp_path / "archives")
     engine.summarizer = MagicMock(mode="sync")
     engine.session = MagicMock()
@@ -225,6 +227,7 @@ def test_search_archive_with_summary_never_resummarizes_filtered_identity(tmp_pa
     archive = ArchiveStore(tmp_path / "archives")
 
     engine = LoopEngine.__new__(LoopEngine)
+    engine._archive = ArchiveService(engine)  # W4-02d: service 面注入（裸实例桩，沿 02a/02b 先例）
     engine.archive = archive
     engine.summarizer = MagicMock(mode="off")
     engine.session = MagicMock()
@@ -269,6 +272,7 @@ def test_identity_filtered_archive_summary_is_sticky_against_generic_backfill(tm
     archive = ArchiveStore(tmp_path / "archives")
 
     engine = LoopEngine.__new__(LoopEngine)
+    engine._archive = ArchiveService(engine)  # W4-02d: service 面注入（裸实例桩，沿 02a/02b 先例）
     engine.archive = archive
     engine.summarizer = MagicMock(mode="off")
     engine.session = MagicMock()
@@ -350,6 +354,7 @@ def test_mixed_identity_and_real_task_is_preserved_in_archive_and_trim(tmp_path:
     sess = Session(session_id=sid, messages=messages)
 
     engine = LoopEngine.__new__(LoopEngine)
+    engine._archive = ArchiveService(engine)  # W4-02d: service 面注入（裸实例桩，沿 02a/02b 先例）
     engine.archive = ArchiveStore(tmp_path / "archives")
     engine.summarizer = MagicMock(mode="sync")
     engine.session = MagicMock()
@@ -391,6 +396,7 @@ def test_archive_sidecar_sanitizes_index_but_keeps_raw_content_head(tmp_path: Pa
     archive = ArchiveStore(tmp_path / "archives", segment_bytes=0)
 
     engine = LoopEngine.__new__(LoopEngine)
+    engine._archive = ArchiveService(engine)  # W4-02d: service 面注入（裸实例桩，沿 02a/02b 先例）
     engine.archive = archive
     engine.summarizer = MagicMock(mode="off")
     engine.session = MagicMock()

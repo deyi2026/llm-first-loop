@@ -1,11 +1,8 @@
-"""LoopEngine 压缩另存 mixin（M53 延续：_archive_sink 从 engine.py 拆出，纯重构行为零变化）.
+"""ArchiveService——压缩另存职责服务（R9-B5-W4-02d：_ArchiveMixin 退役；宿主面显式经 self._host 标注，沿 runtime_params v4 惯例）.
 
 触发时机：context trim 时把被裁剪消息原文完整另存 ArchiveStore + context.compressed 事件；
 另存/摘要失败 fail-open（如实 fault_feedback 进会话，不抛穿主循环）。
 """
-
-# pyright: reportAttributeAccessIssue=false, reportGeneralTypeIssues=false
-# (mixin 模式: self 属性来自混入类 LoopEngine.__init__，pyright 无法静态解析，故文件级关闭这两条；参数/返回类型等其余检查保留)
 
 from __future__ import annotations
 
@@ -20,23 +17,25 @@ if TYPE_CHECKING:
     from llm_loop.core.loop.engine import LoopEngine
 
 
-class _ArchiveMixin:
+class ArchiveService:
+    def __init__(self, host: LoopEngine) -> None:
+        self._host = host
 
-    def _archive_feedback_session(self: LoopEngine, session_id: str):
+    def _archive_feedback_session(self, session_id: str):
         """archive故障反馈优先复用当前run的token-bound Session；run外仍从磁盘加载。"""
         from llm_loop.core.run_context import current_session_id
 
         if current_session_id.get() == session_id:
             try:
-                with self._run_states_guard:
-                    active = self._run_sessions.get(session_id)
+                with self._host._run_states_guard:
+                    active = self._host._run_sessions.get(session_id)
                 if active is not None:
                     return active
             except Exception:  # noqa: BLE001 — 绑定表不可用时回退既有load路径
                 logger.debug("archive故障反馈解析active session失败，回退load", exc_info=True)
-        return self.session.load(session_id)
+        return self._host.session.load(session_id)
 
-    def _archive_sink(self: LoopEngine, session_id: str, msg: Message) -> None:
+    def _archive_sink(self, session_id: str, msg: Message) -> None:
         """压缩另存回调（T22）: 将被丢弃的消息原文完整另存到 ArchiveStore.
 
         合规变体 A（方案 3 对话历史语义摘要的合规落地）: SUMMARY_MODE!=off 时，
@@ -44,7 +43,7 @@ class _ArchiveMixin:
         RULE-AI-00 自动摘要边界内: 只作用于已压缩存档的档案条目、回填 summary 字段、
         不注入当前上下文、不丢信息、可经 search_archive(with_summary=true) 检索。
         """
-        msg_seq = self._resolve_msg_seq(session_id, msg)
+        msg_seq = self._host._resolve_msg_seq(session_id, msg)
 
         # INJECTION-GOVERNANCE R5: identity Q&A remains exact archive truth but must
         # not become durable summary detail. Determine episode membership from the
@@ -56,19 +55,19 @@ class _ArchiveMixin:
 
                 _identity_session = None
                 try:
-                    with self._run_states_guard:
-                        _identity_session = self._run_sessions.get(session_id)
+                    with self._host._run_states_guard:
+                        _identity_session = self._host._run_sessions.get(session_id)
                 except Exception:  # noqa: BLE001 — run binding unavailable: read fallback
                     _identity_session = None
                 if _identity_session is None:
-                    _identity_session = self.session.load(session_id)
+                    _identity_session = self._host.session.load(session_id)
                 _identity_start = identity_episode_start(_identity_session.messages, msg_seq)
             except Exception:  # noqa: BLE001 — summary hygiene fail-open must not lose archive bytes
                 logger.debug("identity summary episode detection failed (fail-open)", exc_info=True)
                 _identity_start = None
 
         evidence_ref: str | None = None
-        registry = getattr(self, "registry", None)
+        registry = getattr(self._host, "registry", None)
         try:
             if registry is not None and getattr(
                 registry, "evidence_history_capture_enabled", False
@@ -82,9 +81,9 @@ class _ArchiveMixin:
             logger.warning("压缩消息 Evidence capture 失败；enforce 模式拒绝继续压缩", exc_info=True)
             raise
 
-        if self.archive is None:
+        if self._host.archive is None:
             if evidence_ref:
-                self._event_append(
+                self._host._event_append(
                     session_id,
                     "context.compressed",
                     {
@@ -113,7 +112,7 @@ class _ArchiveMixin:
                 _paths_override = []
                 _summary_source_override = "identity_filtered"
 
-            entry = self.archive.archive(
+            entry = self._host.archive.archive(
                 session_id,
                 role=msg.role,
                 source=msg.source.value,
@@ -128,7 +127,7 @@ class _ArchiveMixin:
                 summary_source_override=_summary_source_override,
             )
             # D1: context.compressed 事件（legacy archive + provider-neutral Evidence ref）.
-            self._event_append(
+            self._host._event_append(
                 session_id,
                 "context.compressed",
                 {
@@ -142,10 +141,10 @@ class _ArchiveMixin:
             # RULE-AI-00 自动摘要边界内: 压缩档案自动回填语义摘要（async 后台/off 跳过）
             if (
                 _identity_start is None
-                and self.summarizer is not None
-                and getattr(self.summarizer, "mode", "off") != "off"
+                and self._host.summarizer is not None
+                and getattr(self._host.summarizer, "mode", "off") != "off"
             ):
-                self.summarizer.summarize_archive(entry.id, msg.content, self.archive)
+                self._host.summarizer.summarize_archive(entry.id, msg.content, self._host.archive)
         except Exception as exc:
             # R8.10/E33: archive failure is runtime state. Preserve selfheal/status/action
             # observability, but do not write program-authored fault prose into session
@@ -154,6 +153,6 @@ class _ArchiveMixin:
             from contextlib import suppress
 
             with suppress(Exception):
-                self._fault_feedback("archive_sink", exc)  # selfheal_log side effect only
-                self._record_program_fault("archive_sink")
-                self._record_action("archive_sink", "fault_observed", type(exc).__name__)
+                self._host._fault_feedback("archive_sink", exc)  # selfheal_log side effect only
+                self._host._record_program_fault("archive_sink")
+                self._host._record_action("archive_sink", "fault_observed", type(exc).__name__)

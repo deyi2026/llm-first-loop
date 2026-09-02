@@ -30,10 +30,10 @@ from llm_loop.core.injection_labels import (
     InjectionLayer,
     origin_metadata,
 )
+from llm_loop.core.loop.build import _BuildMixin  # EVO-20260817-e63f712f: 消息构建拆分
 
 # M53 拆分: 职责 mixin（signals 信号检查 / runtime 运行时参数 / fallback 模型降级链 / routing 模型路由 / overflow overflow 处理 / tool_exec 工具执行）
-from llm_loop.core.loop.archive import _ArchiveMixin
-from llm_loop.core.loop.build import _BuildMixin  # EVO-20260817-e63f712f: 消息构建拆分
+from llm_loop.core.loop.engine_services.archive import ArchiveService
 from llm_loop.core.loop.engine_services.attempt_executor import AttemptExecutor
 from llm_loop.core.loop.engine_services.fallback import FallbackService
 from llm_loop.core.loop.engine_services.interrupted_capture import InterruptedCapture
@@ -151,7 +151,7 @@ class LoopResult:
     cancel_reason: str = ""
 
 
-class LoopEngine(_RunStateMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _TurnContextMixin):
+class LoopEngine(_RunStateMixin, _InteropMixin, _BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _TurnContextMixin):
     """五阶段核心循环控制器."""
 
     # EVO 后台 run 执行器（factory 动态装配 BackgroundRunner；声明类型供 pyright 静态检查）
@@ -259,6 +259,7 @@ class LoopEngine(_RunStateMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _Eve
         self._runtime_params = RuntimeParamsService(self)
         self._routing = RoutingService(self)  # W4-02b: _RoutingMixin 退役（模型路由职责服务）
         self._fallback = FallbackService(self)  # W4-02c: _FallbackMixin 退役（模型降级链职责服务）
+        self._archive = ArchiveService(self)  # W4-02d: _ArchiveMixin 退役（压缩另存职责服务）
         self._session_lifecycle = SessionLifecycle(self)
         self._attempt_executor = AttemptExecutor(self)
         # R9-B5-W3-01: ToolCycleService——工具执行循环职责面（_ToolExecMixin/_ToolEligibilityMixin 迁入）
@@ -365,6 +366,12 @@ class LoopEngine(_RunStateMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _Eve
         return FallbackService._build_fallback_all_failed_message(
             from_model=from_model, primary_error=primary_error, candidate_lines=candidate_lines
         )
+
+    # ---- 压缩另存委托壳（W4-02d：_ArchiveMixin → ArchiveService；签名面为运行时参数形（类型标注见 ArchiveService 真身）——公开面调用兼容零变化）----
+    def _archive_feedback_session(self, session_id):
+        return self._archive._archive_feedback_session(session_id)
+    def _archive_sink(self, session_id, msg):
+        return self._archive._archive_sink(session_id, msg)
 
     def _prefix_state_for(self, session_id: str) -> LayeredPrefixState:
         """Return a session-scoped layered-prefix state on the shared engine."""

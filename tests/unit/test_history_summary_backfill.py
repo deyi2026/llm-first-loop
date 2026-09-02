@@ -5,6 +5,7 @@
 """
 import tempfile
 
+from llm_loop.core.loop.engine_services.archive import ArchiveService
 from llm_loop.memory.archive import ArchiveStore
 from llm_loop.memory.summarize import Summarizer
 
@@ -45,6 +46,7 @@ def test_engine_archive_sink_skips_when_off():
     from llm_loop.core.message import Message, MessageSource
 
     engine = LoopEngine.__new__(LoopEngine)
+    engine._archive = ArchiveService(engine)  # W4-02d: service 面注入（裸实例桩，沿 02a/02b 先例）
     engine.archive = ArchiveStore(tempfile.mkdtemp())
     engine.summarizer = _FakeSummarizer(mode="off")  # off: 跳过
     engine.session = MagicMock()
@@ -62,6 +64,7 @@ def test_engine_archive_sink_backfills_when_sync():
     from llm_loop.core.message import Message, MessageSource
 
     engine = LoopEngine.__new__(LoopEngine)
+    engine._archive = ArchiveService(engine)  # W4-02d: service 面注入（裸实例桩，沿 02a/02b 先例）
     engine.archive = ArchiveStore(tempfile.mkdtemp())
     engine.summarizer = _FakeSummarizer(mode="sync")  # sync: 触发回填
     engine.session = MagicMock()

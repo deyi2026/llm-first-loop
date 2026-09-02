@@ -48,7 +48,7 @@
     "src/llm_loop/core/loop/lifecycle.py::run_stream": 122,
     "src/llm_loop/event_log/fork.py::fork_session": 122,
     "src/llm_loop/introspection/tools_status.py::run_search_records": 122,
-    "src/llm_loop/core/loop/archive.py::_archive_sink": 121,
+    "src/llm_loop/core/loop/engine_services/archive.py::_archive_sink": 121,
     "src/llm_loop/core/prompt_build/stages/tail_assembly.py::run_tail_assembly": 121,
     "src/llm_loop/core/loop/engine_services/recovery_controller.py::_try_err1210_recovery": 214,
     "src/llm_loop/core/loop/engine_services/recovery_controller.py::_defer_store": 179,
