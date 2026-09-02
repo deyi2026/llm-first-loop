@@ -20,6 +20,7 @@ from llm_loop.core.loop.runner import BackgroundRunner
 from llm_loop.event_log.store import EventStore
 from llm_loop.feishu import bridge as bridge_module
 from llm_loop.feishu.bridge import FeishuWsBridge, _WsConnector
+from llm_loop.feishu.compensation import CompensationStore, InterruptionNotifier
 from llm_loop.feishu.config import FeishuConfig
 from llm_loop.feishu.handlers import FeishuMessage, FeishuMessageHandler
 from llm_loop.feishu.session_map import SessionMap
@@ -94,9 +95,11 @@ def _make(build_test_engine, tmp_path, monkeypatch):
     connector = _WsConnector(bridge.config, bridge._on_ws_message, lambda: True)
     bridge._connector = connector
     monkeypatch.setattr(bridge_module, "_DEDUP_PATH", str(tmp_path / "feishu_dedup.json"))
-    monkeypatch.setattr(
-        bridge_module, "_INTERRUPTED_PATH", str(tmp_path / "feishu_interrupted.json")
-    )
+    bridge._compensation_store = CompensationStore(str(tmp_path / "feishu_compensation.jsonl"))
+    bridge._notifier = InterruptionNotifier(bridge.send_text, bridge._compensation_store)
+    connector._notifier = bridge._notifier
+    connector._store = bridge._compensation_store
+    connector._current_sid_fn = bridge._current_processing_sid
     return engine, fake, runner, event_store, session_map, replies, handler, bridge, connector
 
 
@@ -225,7 +228,7 @@ def test_6_2_restart_no_duplicate_compensation(build_test_engine, tmp_path, monk
     # 窗口内优雅退出（bridge.stop 内路径）+ 重启恢复：无补偿性重复消息
     bridge._persist_interrupted()
     bridge._recover_interrupted()
-    assert not (tmp_path / "feishu_interrupted.json").exists(), "窗口内不应落盘补偿"
+    assert not (tmp_path / "feishu_compensation.jsonl").exists(), "窗口内不应落盘补偿"
     assert sent == [], "重启后不应有补偿性重复消息"
 
     # 对照组：非 /stop 的真实中断（收口窗口已关闭）→ 既有补偿行为不变
@@ -236,10 +239,12 @@ def test_6_2_restart_no_duplicate_compensation(build_test_engine, tmp_path, monk
         ),
     )
     bridge._persist_interrupted()
-    assert (tmp_path / "feishu_interrupted.json").exists(), "真实中断应落盘补偿（零回归）"
+    assert (tmp_path / "feishu_compensation.jsonl").exists(), "真实中断应落盘补偿（零回归）"
     bridge._recover_interrupted()
     assert sent and "服务重启被中断" in sent[0][1], "对照组补偿回复应发出"
-    assert not (tmp_path / "feishu_interrupted.json").exists(), "补偿后记录应清理"
+    assert "/continue" in sent[0][1], "补偿文案应含恢复指引"
+    assert "（程序提示）" in sent[0][1], "补偿文案应标注程序提示"
+    assert bridge._compensation_store.read_all() == [], "补偿后记录应清理"
 
 
 # ── 6.3 审计与可观测核验（tasks 6.3，spec 4.4.2/6.1.3）──

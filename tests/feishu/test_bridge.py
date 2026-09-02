@@ -542,14 +542,18 @@ def test_processing_ts_updated():
 
 
 
-# ── 中断补偿（2026-08-16）：长任务被优雅退出打断 → 落盘 → 下次启动主动回复 ──
+# ── 中断补偿（2026-08-16 + JSONL）：长任务被优雅退出打断 → 落盘 → 下次启动主动回复 ──
+
+def _compensation_store_at(tmp_path):
+    from llm_loop.feishu.compensation import CompensationStore
+
+    return CompensationStore(str(tmp_path / "compensation.jsonl"))
+
 
 def test_persist_and_recover_interrupted(monkeypatch, tmp_path):
-    """处理中消息被打断 → 落盘；启动时补偿回复 + 清文件."""
-    import llm_loop.feishu.bridge as _bridge_mod
-
-    monkeypatch.setattr(_bridge_mod, "_INTERRUPTED_PATH", str(tmp_path / "interrupted.json"))
+    """处理中消息被打断 → 落 JSONL；启动时补偿回复 + 剔除记录."""
     bridge = _make_bridge(monkeypatch)
+    bridge._compensation_store = _compensation_store_at(tmp_path)
     # 模拟 connector 处理中消息
     connector = Mock()
     connector._processing_msg_id = "om_test_msg_001"
@@ -557,8 +561,8 @@ def test_persist_and_recover_interrupted(monkeypatch, tmp_path):
     connector._processing_reply_type = "chat_id"
     bridge._connector = connector
     bridge._persist_interrupted()
-    assert (tmp_path / "interrupted.json").exists()
-    # 启动恢复：send_text 被调 + 文件清除
+    assert (tmp_path / "compensation.jsonl").exists()
+    # 启动恢复：send_text 被调 + 记录剔除
     sent: list[tuple[str, str, str]] = []
 
     def fake_send_text(receive_id, text, receive_id_type="chat_id"):
@@ -570,15 +574,13 @@ def test_persist_and_recover_interrupted(monkeypatch, tmp_path):
     assert sent and sent[0][0] == "oc_test_chat_001"
     assert "中断" in sent[0][1]
     assert sent[0][2] == "chat_id"
-    assert not (tmp_path / "interrupted.json").exists()
+    assert bridge._compensation_store.read_all() == []
 
 
 def test_recover_no_file_noop(monkeypatch, tmp_path):
-    """无中断记录文件 → 恢复函数 no-op（不发送）."""
-    import llm_loop.feishu.bridge as _bridge_mod
-
-    monkeypatch.setattr(_bridge_mod, "_INTERRUPTED_PATH", str(tmp_path / "none.json"))
+    """无中断记录 → 恢复函数 no-op（不发送）."""
     bridge = _make_bridge(monkeypatch)
+    bridge._compensation_store = _compensation_store_at(tmp_path)
     sent: list = []
     monkeypatch.setattr(bridge, "send_text", lambda *a, **k: sent.append(a) or True)
     bridge._recover_interrupted()
@@ -587,12 +589,10 @@ def test_recover_no_file_noop(monkeypatch, tmp_path):
 
 def test_persist_no_processing_noop(monkeypatch, tmp_path):
     """无处理中消息 → 不落盘（优雅退出正常时不产生补偿记录）."""
-    import llm_loop.feishu.bridge as _bridge_mod
-
-    monkeypatch.setattr(_bridge_mod, "_INTERRUPTED_PATH", str(tmp_path / "i.json"))
     bridge = _make_bridge(monkeypatch)
+    bridge._compensation_store = _compensation_store_at(tmp_path)
     connector = Mock()
     connector._processing_msg_id = ""
     bridge._connector = connector
     bridge._persist_interrupted()
-    assert not (tmp_path / "i.json").exists()
+    assert not (tmp_path / "compensation.jsonl").exists()

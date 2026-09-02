@@ -108,6 +108,8 @@ class FeishuMessageHandler:
         # P1-11(2026-08-16): 正在处理的会话 id 集合（跨端同步按会话精确跳过——
         # 只防桥自己的回答被当 Web 增量重复推，其他会话照常实时同步）
         self._processing_sids: set[str] = set()
+        # 中断补偿（COMP）：当前处理中会话 sid（受 _busy_lock 保护，供 bridge 生成 context_ref）
+        self._processing_sid: str = ""
         # H-UI(2026-08-14): 当前活动状态卡（引擎动作观察者实时更新；None=未建卡/已结束）
         self._active_status_card: Any | None = None
         # F4(2026-08-14): 折叠全文暂存（key=ts，值=全文；有界最近 _FOLDED_MAX 条；"展开全文"取回）
@@ -118,6 +120,11 @@ class FeishuMessageHandler:
         # 经 is_user_stop_pending fail-open 查询，spec 4.5.3 防重复补偿）
         self._user_stop_pending: dict[str, float] = {}
         self._user_stop_pending_lock = threading.Lock()
+
+    def current_processing_sid(self) -> str:
+        """当前处理中会话 sid（只读；bridge 中断补偿 context_ref 数据源）."""
+        with self._busy_lock:
+            return self._processing_sid
 
     def _attach_action_observer(self) -> None:
         """H-UI: 引擎动作 → 状态卡实时更新（对齐 DeepSeek Harness 动作显示条）.
@@ -282,6 +289,9 @@ class FeishuMessageHandler:
                 self._reply(msg, "当前会话无可恢复内容（会话为空）。")
                 self._audit(msg, "continue_empty", f"sid={sid[:8]}")
                 return True
+            # 续聊前现场预检（CONT）：只读对账 + 锚点来源，如实外显（ADR-6/FTR-CONT-1）；
+            # 不改变引擎对账行为——实际确定性修复仍由 engine.run ingress 承担。
+            self._audit_resume_prep(sid, msg)
             # 用户显式 /continue 本身就是恢复授权。不要再把它翻译成程序撰写的
             # “[程序恢复] ...”自然语言塞回 prompt；保持 USER_INSTRUCTION provenance，
             # 由当前未解决会话现场决定继续什么任务。
@@ -293,6 +303,24 @@ class FeishuMessageHandler:
             self._reply(msg, f"⚠️ 指令处理异常（{type(exc).__name__}），请重发恢复。")
             self._audit(msg, "continue_error", str(exc)[:200])
             return True
+
+    def _audit_resume_prep(self, sid: str, msg: FeishuMessage) -> None:
+        """续聊前现场预检并如实审计（只读；异常 fail-open 仅标注 none/unknown）."""
+        from llm_loop.feishu.resume import ResumeCoordinator
+
+        try:
+            prep = ResumeCoordinator().prepare_resume(sid, self._engine)
+            anchor_source = prep.anchor_source
+            repair_status = prep.repair_status
+        except Exception as exc:  # noqa: BLE001 — 预检失败不阻断续聊
+            logger.warning("续聊现场预检失败（fail-open）: %s", exc)
+            anchor_source = "none"
+            repair_status = "unknown"
+        self._audit(
+            msg,
+            "continue_resume",
+            f"sid={sid[:8]};anchor_source={anchor_source};repair_status={repair_status}",
+        )
 
     def _user_stop_register(self, sid: str, msg: FeishuMessage) -> None:
         """user_stop 待收口登记（sid + 回复目标双键；bridge 补偿判定查询，design §2.1.3-5）."""
@@ -569,6 +597,7 @@ class FeishuMessageHandler:
         with self._busy_lock:
             self._busy_count += 1
             self._processing_sids.add(proc_sid)
+            self._processing_sid = proc_sid
         reaction_id = ""
         card = None
         if self._typing_ack and self._rest_client is not None and msg.message_id:
@@ -591,6 +620,8 @@ class FeishuMessageHandler:
             with self._busy_lock:
                 self._busy_count -= 1
                 self._processing_sids.discard(proc_sid)
+                if self._processing_sid == proc_sid:
+                    self._processing_sid = ""
             # 处理结束 → 状态卡定稿（回填回复摘要）+ 删除 Typing reaction（best-effort）
             self._close_status_card(card, msg, answer)
             if reaction_id and self._rest_client is not None:

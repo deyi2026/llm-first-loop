@@ -2,6 +2,7 @@
 
 user_stop 待收口窗口内优雅退出 → 跳过补偿落盘；窗口外退出 → 补偿行为不变；
 handler 为 stub 无查询方法 → 行为与现状一致（getattr fail-open）。
+补偿记录存储采用 JSONL（CompensationStore，替代旧单文件）。
 """
 
 from __future__ import annotations
@@ -11,8 +12,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from llm_loop.feishu import bridge as bridge_module
 from llm_loop.feishu.bridge import FeishuWsBridge, _WsConnector
+from llm_loop.feishu.compensation import CompensationStore
 from llm_loop.feishu.config import FeishuConfig
 from llm_loop.feishu.handlers import FeishuMessage, FeishuMessageHandler
 from llm_loop.feishu.session_map import SessionMap
@@ -32,6 +33,7 @@ def _make(tmp_path, build_test_engine=None):
     else:
         handler = SimpleNamespace()  # stub：无 is_user_stop_pending（旧实例/测试桩）
     bridge = FeishuWsBridge(FeishuConfig(app_id="cli_ab12cd34", app_secret="sec"), handler)
+    bridge._compensation_store = CompensationStore(str(tmp_path / "feishu_compensation.jsonl"))
     connector = _WsConnector(bridge.config, bridge._on_ws_message, lambda: True)
     bridge._connector = connector
     connector._processing_msg_id = "om_busy"
@@ -41,13 +43,12 @@ def _make(tmp_path, build_test_engine=None):
     return bridge, connector, handler
 
 
-def _interrupted_path(tmp_path) -> Path:
-    return tmp_path / "feishu_interrupted.json"
+def _compensation_path(tmp_path) -> Path:
+    return tmp_path / "feishu_compensation.jsonl"
 
 
 def test_user_stop_window_skips_persist(build_test_engine, tmp_path, monkeypatch):
     bridge, connector, handler = _make(tmp_path, build_test_engine)
-    monkeypatch.setattr(bridge_module, "_INTERRUPTED_PATH", str(_interrupted_path(tmp_path)))
     msg = FeishuMessage(
         message_id="om_stop_1", sender_id="ou_u", chat_id="oc_busy", msg_type="text", text="/stop"
     )
@@ -55,12 +56,11 @@ def test_user_stop_window_skips_persist(build_test_engine, tmp_path, monkeypatch
 
     bridge._persist_interrupted()
 
-    assert not _interrupted_path(tmp_path).exists()  # 跳过补偿落盘（无重复补偿）
+    assert not _compensation_path(tmp_path).exists()  # 跳过补偿落盘（无重复补偿）
 
 
 def test_outside_window_persists_as_before(build_test_engine, tmp_path, monkeypatch):
     bridge, connector, handler = _make(tmp_path, build_test_engine)
-    monkeypatch.setattr(bridge_module, "_INTERRUPTED_PATH", str(_interrupted_path(tmp_path)))
     msg = FeishuMessage(
         message_id="om_stop_2", sender_id="ou_u", chat_id="oc_busy", msg_type="text", text="/stop"
     )
@@ -70,32 +70,29 @@ def test_outside_window_persists_as_before(build_test_engine, tmp_path, monkeypa
 
     bridge._persist_interrupted()
 
-    assert _interrupted_path(tmp_path).exists()  # 窗口外 → 既有补偿行为不变
+    assert _compensation_path(tmp_path).exists()  # 窗口外 → 既有补偿行为不变
 
 
 def test_stub_handler_without_query_behaves_as_before(tmp_path, monkeypatch):
     bridge, connector, handler = _make(tmp_path)  # SimpleNamespace stub
-    monkeypatch.setattr(bridge_module, "_INTERRUPTED_PATH", str(_interrupted_path(tmp_path)))
 
     bridge._persist_interrupted()
 
-    assert _interrupted_path(tmp_path).exists()  # 无查询方法 → 现状行为（fail-open）
+    assert _compensation_path(tmp_path).exists()  # 无查询方法 → 现状行为（fail-open）
 
 
 def test_no_processing_message_no_persist(build_test_engine, tmp_path, monkeypatch):
     bridge, connector, handler = _make(tmp_path, build_test_engine)
-    monkeypatch.setattr(bridge_module, "_INTERRUPTED_PATH", str(_interrupted_path(tmp_path)))
     connector._processing_msg_id = ""  # 无处理中消息 → 正常退出
 
     bridge._persist_interrupted()
 
-    assert not _interrupted_path(tmp_path).exists()
+    assert not _compensation_path(tmp_path).exists()
 
 
 def test_user_stop_clear_after_close_reply(build_test_engine, tmp_path, monkeypatch):
     """收口回复后登记清除 → 后续退出补偿语义恢复."""
     bridge, connector, handler = _make(tmp_path, build_test_engine)
-    monkeypatch.setattr(bridge_module, "_INTERRUPTED_PATH", str(_interrupted_path(tmp_path)))
     msg = FeishuMessage(
         message_id="om_stop_3", sender_id="ou_u", chat_id="oc_busy", msg_type="text", text="/stop"
     )
@@ -104,4 +101,4 @@ def test_user_stop_clear_after_close_reply(build_test_engine, tmp_path, monkeypa
 
     bridge._persist_interrupted()
 
-    assert _interrupted_path(tmp_path).exists()  # 登记已清 → 补偿恢复现状
+    assert _compensation_path(tmp_path).exists()  # 登记已清 → 补偿恢复现状

@@ -21,6 +21,17 @@ from typing import Any
 import httpx
 import lark_oapi
 
+from llm_loop.feishu.compensation import (
+    CRASH,
+    DRAIN_TIMEOUT,
+    PROCESS_TIMEOUT,
+    QUEUE_FULL,
+    WATCHDOG_EXIT,
+    CompensationStore,
+    InterruptionCompensationRecord,
+    InterruptionNotifier,
+    compensation_path,
+)
 from llm_loop.feishu.config import FeishuConfig
 from llm_loop.feishu.handlers import (
     FASTLANE_CONTROL_COMMANDS,
@@ -49,7 +60,7 @@ _WATCHDOG_POLL_S = int(os.environ.get("FEISHU_WS_WATCHDOG_POLL_S", "30"))  # 看
 _WATCHDOG_LOCK_S = float(os.environ.get("FEISHU_WS_WATCHDOG_LOCK_S", "180"))  # SDK 锁持有超此时长判定假死
 _HEARTBEAT_PATH = os.environ.get("FEISHU_HEARTBEAT_PATH", "data/feishu_heartbeat.json")
 # 中断补偿（2026-08-16）：优雅退出打断长任务 → 落盘 → 下次启动主动回复（避免静默丢失）
-_INTERRUPTED_PATH = os.environ.get("FEISHU_INTERRUPTED_PATH", "data/feishu_interrupted.json")
+# 2026-09 起：单文件改 JSONL 增量存储（feishu/compensation.py，legacy 单文件启动时自动迁移）
 _DEDUP_PATH = os.environ.get("FEISHU_DEDUP_PATH", "data/feishu_dedup.json")
 _HEARTBEAT_HISTORY_PATH = os.environ.get(
     "FEISHU_HEARTBEAT_HISTORY_PATH", "data/feishu_heartbeat_history.jsonl"
@@ -197,6 +208,9 @@ class _WsConnector:
         *,
         ws_client_factory: Callable[..., Any] | None = None,
         sleep: Callable[[float], None] | None = None,
+        notifier: InterruptionNotifier | None = None,
+        store: CompensationStore | None = None,
+        current_sid_fn: Callable[[], str] | None = None,
     ) -> None:
         self._config = config
         self._on_message = on_message
@@ -204,6 +218,10 @@ class _WsConnector:
         self._rest = rest_client
         self._ws_client_factory = ws_client_factory or self._default_ws_client
         self._sleep = sleep or _sleep
+        # 中断检测（DET）依赖：提示发送器 + 补偿存储 + 处理中 sid 只读回查（context_ref 数据源）
+        self._notifier = notifier
+        self._store = store
+        self._current_sid_fn = current_sid_fn
         self._stop = False
         self._reconnect_count = 0  # SDK on_reconnecting 计数（心跳可观测）
         self._lock_held_since: float | None = None  # SDK 锁首次观测为持有的时刻
@@ -306,6 +324,7 @@ class _WsConnector:
                 header.get("event_type", ""),
                 header.get("event_id", ""),
             )
+            self._handle_queue_full(payload)
             return False
 
     @staticmethod
@@ -341,6 +360,122 @@ class _WsConnector:
         except Exception as exc:  # noqa: BLE001 — 旁路异常不阻断桥
             logger.exception("飞书控制指令快车道分发异常（fail-open）: %s", exc)
 
+    # ── 中断检测与提示（DET/COMP 落点）──
+    def _current_sid(self) -> str:
+        """当前处理中会话 sid（供 context_ref；只读回查 handler，fail-open）."""
+        fn = self._current_sid_fn
+        if fn is None:
+            return ""
+        try:
+            return str(fn() or "")
+        except Exception:  # noqa: BLE001 — sid 读取失败如实降级为空
+            return ""
+
+    def _emit_interruption(
+        self,
+        cause: str,
+        receive_id: str,
+        reply_type: str,
+        text: str,
+        *,
+        msg_id: str = "",
+    ) -> None:
+        """落补偿记录 + 尽力提示（提示失败由已落补偿记录启动兜底，至少一次可感知）.
+
+        先落完整补偿记录（含 context_ref/msg_id），再旁路尽力即送提示；提示
+        失败不重复落盘（补偿记录已在）。目标会话不可判定时不落不提示（仅审计）。
+        """
+        if not receive_id:
+            return
+        if self._store is not None:
+            try:
+                self._store.append(
+                    InterruptionCompensationRecord(
+                        receive_id=receive_id,
+                        reply_type=reply_type,
+                        interrupt_cause=cause,
+                        context_ref=self._current_sid(),
+                        msg_id=msg_id,
+                    )
+                )
+            except (ValueError, OSError) as exc:
+                logger.warning("中断补偿落盘失败（fail-open）: %s", exc)
+        if self._notifier is not None and text:
+            try:
+                self._notifier.notify(receive_id, reply_type, cause, text, fallback=False)
+            except Exception as exc:  # noqa: BLE001 — 提示异常由补偿记录兜底
+                logger.warning("中断提示发送异常（fail-open）: %s", exc)
+
+    def _notify_midstate(self, cause: str, text: str) -> None:
+        """中间态提示（不打断、不落补偿；仅尽力告知，如处理超时疑似卡住）."""
+        receive_id = self._processing_reply_id or self._processing_chat_id
+        if not receive_id:
+            return
+        if self._notifier is None:
+            return
+        try:
+            self._notifier.notify(
+                receive_id,
+                self._processing_reply_type or "chat_id",
+                cause,
+                text,
+                fallback=False,
+            )
+        except Exception as exc:  # noqa: BLE001 — 中间态提示失败不阻断探测
+            logger.warning("中间态提示发送异常（fail-open）: %s", exc)
+
+    def _handle_queue_full(self, payload: dict) -> None:
+        """队列满丢弃提示 + 补偿（可判定目标会话时；否则仅落审计标注去向待确认）."""
+        target = _reply_target_from_payload(payload)
+        if target is None:
+            logger.warning("队列满丢弃：目标会话不可判定，仅审计（去向待确认）")
+            return
+        receive_id, reply_type, msg_id = target
+        self._emit_interruption(
+            QUEUE_FULL,
+            receive_id,
+            reply_type,
+            "（程序提示）消息未进入处理（队列忙），请稍后重发。",
+            msg_id=msg_id,
+        )
+
+    def _interrupt_watchdog_exit(self) -> None:
+        """看门狗假死自杀前：落补偿 + 尽力提示（不阻塞退出，ADR-2/RC-1）."""
+        receive_id = self._processing_reply_id or self._processing_chat_id
+        if receive_id:
+            self._emit_interruption(
+                WATCHDOG_EXIT,
+                receive_id,
+                self._processing_reply_type or "chat_id",
+                "（程序提示）服务将因异常退出，当前任务未完成；请稍后发送 /continue 恢复。",
+                msg_id=self._processing_msg_id,
+            )
+
+    def _drain_backlog_compensate(self) -> dict:
+        """drain 预算耗尽时逐条为被丢弃积压消息落补偿（interrupt_cause=drain_timeout）."""
+        results: list[str] = []
+        while True:
+            try:
+                item = self._msg_queue.get_nowait()
+            except queue.Empty:
+                break
+            if item is None:
+                continue
+            target = _reply_target_from_payload(item)
+            if target is None:
+                results.append("<unknown>")
+                continue
+            receive_id, reply_type, msg_id = target
+            results.append(msg_id or "<unknown>")
+            self._emit_interruption(
+                DRAIN_TIMEOUT,
+                receive_id,
+                reply_type,
+                "（程序提示）您的一条消息因服务退出未处理，请重新发送。",
+                msg_id=msg_id,
+            )
+        return {"count": len(results), "ids": ", ".join(results[:8]) + ("…" if len(results) > 8 else "")}
+
     def _worker_loop(self) -> None:
         """消息处理 worker 线程：串行处理队列消息（单 worker 保证 SessionStore 无并发）.
 
@@ -352,9 +487,9 @@ class _WsConnector:
                 deadline = time.monotonic() + _DRAIN_BUDGET_S
                 while True:
                     if time.monotonic() > deadline:
-                        leftover_ids = self._drain_backlog_ids()
+                        leftover_ids = self._drain_backlog_compensate()
                         logger.warning(
-                            "优雅退出 drain 超时: 剩余积压 %d 条，中断消息 id 摘要: %s",
+                            "优雅退出 drain 超时: 剩余积压 %d 条，已逐条落补偿，消息 id 摘要: %s",
                             leftover_ids["count"],
                             leftover_ids["ids"],
                         )
@@ -368,20 +503,6 @@ class _WsConnector:
                 break
             self._safe_handle_message(item)
 
-    def _drain_backlog_ids(self) -> dict:
-        """drain 超时时提取队列剩余消息 id 摘要（用于如实告警）."""
-        ids: list[str] = []
-        while True:
-            try:
-                item = self._msg_queue.get_nowait()
-            except queue.Empty:
-                break
-            if item is not None:
-                header = item.get("header") or {}
-                eid = header.get("event_id", "")
-                mid = (item.get("event") or {}).get("message", {}).get("message_id", "")
-                ids.append(mid or eid or "<unknown>")
-        return {"count": len(ids), "ids": ", ".join(ids[:8]) + ("…" if len(ids) > 8 else "")}
 
     def _safe_handle_message(self, payload: dict) -> None:
         """worker 线程内安全处理单条消息（单条异常不导致 worker 崩溃）.
@@ -539,6 +660,11 @@ class _WsConnector:
                 time.time() - self._processing_since,
                 _MSG_PROCESS_TIMEOUT_S,
             )
+            # DET: 中间态提示（不打断，仅尽力告知「疑似卡住」）
+            self._notify_midstate(
+                PROCESS_TIMEOUT,
+                "（程序提示）任务处理中，疑似卡住（未中断）；请稍候，或发送 /stop 终止后用 /continue 恢复。",
+            )
 
     def _watchdog_loop(self, client: Any) -> None:
         """看门狗：周期心跳落盘；SDK 锁持有超 _WATCHDOG_LOCK_S 判定假死 → 自杀（restart_system.sh 拉起）.
@@ -556,6 +682,7 @@ class _WsConnector:
                     held_s,
                     _WATCHDOG_LOCK_S,
                 )
+                self._interrupt_watchdog_exit()
                 os._exit(42)  # noqa: SLF001 — 假死兜底：不经 atexit，确保退出
             _sleep(_WATCHDOG_POLL_S)  # 模块级真实 sleep（不复用注入 Mock，防忙轮询）
 
@@ -633,6 +760,20 @@ class FeishuWsBridge:
         self._rest_client: FeishuRestClient | None = None
         # 2026-08-15 跨端同步（飞书 ← Web）：Web 侧新消息推送到映射飞书聊天
         self._cross_sync: Any | None = None
+        # 中断补偿（COMP）：JSONL 多记录存储 + 三要素提示发送器（提示失败落补偿兜底）
+        self._compensation_store = CompensationStore(compensation_path())
+        self._notifier = InterruptionNotifier(self.send_text, self._compensation_store)
+
+    def _current_processing_sid(self) -> str:
+        """当前处理中会话 sid（供 connector 生成 context_ref；只读回查 handler fail-open）."""
+        handler = self._handler
+        fn = getattr(handler, "current_processing_sid", None)
+        if callable(fn):
+            try:
+                return str(fn() or "")
+            except Exception:  # noqa: BLE001 — sid 读取失败如实降级为空
+                return ""
+        return ""
 
     @property
     def config(self) -> FeishuConfig:
@@ -658,6 +799,9 @@ class FeishuWsBridge:
             self._on_ws_message,
             self._has_token,
             self._ensure_rest_client(),
+            notifier=self._notifier,
+            store=self._compensation_store,
+            current_sid_fn=self._current_processing_sid,
         )
         self._thread = threading.Thread(target=self._run_loop, name="feishu-ws", daemon=True)
         self._thread.start()
@@ -736,45 +880,47 @@ class FeishuWsBridge:
         if not reply_id:
             return
         try:
-            Path(_INTERRUPTED_PATH).parent.mkdir(parents=True, exist_ok=True)
-            Path(_INTERRUPTED_PATH).write_text(
-                json.dumps(
-                    {
-                        "msg_id": mid,
-                        "reply_id": reply_id,
-                        "reply_type": getattr(connector, "_processing_reply_type", "chat_id") or "chat_id",
-                        "interrupted_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                    },
-                    ensure_ascii=False,
-                ),
-                encoding="utf-8",
+            self._compensation_store.append(
+                InterruptionCompensationRecord(
+                    receive_id=reply_id,
+                    reply_type=getattr(connector, "_processing_reply_type", "chat_id") or "chat_id",
+                    interrupt_cause=CRASH,
+                    context_ref=self._current_processing_sid(),
+                    msg_id=mid,
+                )
             )
-            logger.warning("中断补偿已落盘: msg_id=%s → %s", mid, reply_id)
-        except OSError as exc:
+        except (ValueError, OSError) as exc:
             logger.warning("中断补偿落盘失败（fail-open）: %s", exc)
 
     def _recover_interrupted(self) -> None:
-        """启动补偿：上次优雅退出打断的长任务 → 主动回复（如实告知，非伪装成功）."""
-        try:
-            p = Path(_INTERRUPTED_PATH)
-            if not p.exists():
-                return
-            data = json.loads(p.read_text(encoding="utf-8"))
-            reply_id = str(data.get("reply_id", ""))
-            if reply_id:
-                ok = self.send_text(
-                    reply_id,
-                    "（程序提示）上一条消息的长任务处理因服务重启被中断，未生成回答。请重新发送该消息。",
-                    str(data.get("reply_type", "chat_id")),
-                )
-                logger.warning("中断补偿回复 %s: %s", "成功" if ok else "失败", reply_id)
+        """启动补偿：读 JSONL 逐条如实送达（含原因 + 恢复指引），成功剔除幂等."""
+        records = self._compensation_store.read_all()
+        for rec in records:
+            try:
+                ok = self.send_text(rec.receive_id, self._recovery_text(rec), rec.reply_type)
+                if ok:
+                    self._compensation_store.remove_entry(rec.key())
+                    logger.warning("中断补偿回复成功: %s", rec.receive_id)
+                else:
+                    logger.warning("中断补偿回复失败（保留待重试）: %s", rec.receive_id)
+            except Exception as exc:  # noqa: BLE001 — 单条异常不阻断其余
+                logger.warning("中断补偿回复异常（fail-open）: %s", exc)
             # 补偿过的消息登记去重: 防服务端重推该消息导致重复处理/重复回复
-            mid = str(data.get("msg_id", ""))
-            if mid and self._remember(f"m:{mid}"):
+            if rec.msg_id and self._remember(f"m:{rec.msg_id}"):
                 self._persist_dedup()
-            p.unlink(missing_ok=True)
-        except (OSError, json.JSONDecodeError) as exc:
-            logger.warning("中断补偿恢复失败（fail-open）: %s", exc)
+
+    @staticmethod
+    def _recovery_text(rec: InterruptionCompensationRecord) -> str:
+        """启动补偿三要素文案（未完成 + 原因类别 + 恢复指引）."""
+        hints = {
+            WATCHDOG_EXIT: "服务因异常退出中断，未生成回答；请发送 /continue 恢复。",
+            QUEUE_FULL: "您的消息当时未进入处理；请重新发送该消息。",
+            DRAIN_TIMEOUT: "服务退出时该消息未处理；请重新发送该消息。",
+            PROCESS_TIMEOUT: "上一条任务疑似卡住；请发送 /continue 或重发恢复。",
+            CRASH: "长任务处理因服务重启被中断，未生成回答；请发送 /continue 恢复。",
+        }
+        hint = hints.get(rec.interrupt_cause, hints[CRASH])
+        return f"（程序提示）上一条任务处理未完成（原因：{rec.interrupt_cause}）。{hint}"
 
     def is_healthy(self) -> bool:
         return self._running and self._thread is not None and self._thread.is_alive()
@@ -1084,3 +1230,21 @@ def _extract_post_text(content: dict) -> str:
 def payload_safe(event: dict) -> dict | None:
     """事件原始数据（日志脱敏用，密钥不外泄）."""
     return event if isinstance(event, dict) else None
+
+
+def _reply_target_from_payload(payload: dict) -> tuple[str, str, str] | None:
+    """从 WS payload 提取回复目标 (receive_id, reply_type, msg_id)；不可判定返回 None.
+
+    与 handlers.FeishuMessage.__post_init__ 回复目标推导同源：chat_id 优先，私聊用 open_id。
+    """
+    event = payload.get("event") or {}
+    message = event.get("message") or {}
+    chat_id = str(message.get("chat_id") or (event.get("chat") or {}).get("chat_id") or "")
+    sender = event.get("sender") or {}
+    open_id = str((sender.get("sender_id") or {}).get("open_id", ""))
+    msg_id = str(message.get("message_id", "")) or str((payload.get("header") or {}).get("event_id", ""))
+    if chat_id:
+        return chat_id, "chat_id", msg_id
+    if open_id:
+        return open_id, "open_id", msg_id
+    return None
