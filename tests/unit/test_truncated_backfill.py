@@ -8,6 +8,8 @@ rounds/run_end_seq/ref）/ 幂等重跑 / 与在线路径同键互斥 / dry-run 
 
 from __future__ import annotations
 
+import pytest
+
 from llm_loop.event_log.backfill_truncated import (
     backfill_truncated_runs,
     collect_interrupted_runs,
@@ -127,3 +129,34 @@ def test_search_and_hydrate_acceptance_shape(tmp_path):
     rec = eps.hydrate_truncated(SID, hits[0]["ref"])
     assert rec is not None and rec["complete"] is True
     assert rec["run_end_reason"] in {"llm_error", "cancelled"}
+
+
+# ── 并行会话合并版覆盖恢复（65d4a74 三块，7c1059b 误覆盖后补回）──
+
+
+def test_backfill_skips_session_without_interrupted_runs(tmp_path):
+    es, eps = _make_stores(tmp_path)
+    _seed_events(es, [("run.end", _run_end("completed", rounds=1, preview="ok"))])
+    report = backfill_truncated_runs(eps, es, [SID])
+    assert report["sessions"] == 0 and report["runs_seen"] == 0
+
+
+def test_backfill_rejects_wrong_episode_store(tmp_path):
+    class _Noop:
+        pass
+
+    with pytest.raises(TypeError):
+        backfill_truncated_runs(_Noop(), EventStore(tmp_path / "events"), [SID])
+
+
+def test_backfill_digest_fallback_without_reason_line(tmp_path):
+    """digest 兜底：answer_preview 无"原因: "行（如 guard_blocked）→ 如实取 preview 头."""
+    es, eps = _make_stores(tmp_path)
+    _seed_events(es, [
+        ("run.end", _run_end("guard_blocked", rounds=5, preview="[缓存守卫拦截] 上下文超限，请先压缩。")),
+    ])
+    report = backfill_truncated_runs(eps, es, [SID])
+    assert report["written"] == 1 and report["errors"] == 0
+    (row,) = eps._iter_truncated(SID)
+    assert row["error_digest"] == "[缓存守卫拦截] 上下文超限，请先压缩。"
+    assert row["last_round"] == 5 and row["ref"] == f"truncated:{row['run_end_seq']}"
