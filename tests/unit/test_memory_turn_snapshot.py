@@ -75,6 +75,9 @@ def _engine(store) -> LoopEngine:
     eng.semantic_retriever = None
     eng.runtime = None
     eng.settings = SimpleNamespace(memory_top_k=5)
+    from llm_loop.core.loop.engine_services.runtime_params import RuntimeParamsService
+
+    eng._runtime_params = RuntimeParamsService(eng)  # B5-W4-02a: 裸实例补 service 注入（沿 self._host = self 先例）
     eng._events = []
     eng._faults = []
     eng._append_message_event = lambda sess, msg: eng._events.append(msg)
