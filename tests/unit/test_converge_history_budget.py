@@ -7,16 +7,25 @@
 from types import SimpleNamespace
 
 from llm_loop.core.history import converge_history_budget
-from llm_loop.core.loop.runtime import _RuntimeParamsMixin
+from llm_loop.core.loop.engine_services.runtime_params import RuntimeParamsService
 
 
-class _EmbeddedEngine(_RuntimeParamsMixin):
-    """不经 factory 的嵌入式路径（settings.history_max_chars=None 时运行期自适应）."""
+class _EmbeddedEngine:
+    """不经 factory 的嵌入式路径（settings.history_max_chars=None 时运行期自适应）.
+
+    B5-W4-02a: _RuntimeParamsMixin 退役——替身沿 engine 委托壳形态持
+    RuntimeParamsService（self._host = 替身实例，_current_context_limit/
+    _default_model_label 宿主面桩语义不变）.
+    """
 
     def __init__(self, ctx_limit: int | None) -> None:
         self.runtime = None
         self.settings = SimpleNamespace(history_max_chars=None)
         self._ctx_limit = ctx_limit
+        self._runtime_params = RuntimeParamsService(self)
+
+    def _runtime_history_budget(self) -> int:
+        return self._runtime_params._runtime_history_budget()
 
     def _current_context_limit(self, _model_label: str) -> int | None:
         return self._ctx_limit

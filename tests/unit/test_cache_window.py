@@ -31,12 +31,14 @@ def test_default_ratio_calibrated():
     此测试钉住新默认, 防止误回退。
     """
     from llm_loop.core.cache_window import _CHARS_PER_TOKEN
+    from llm_loop.core.loop.engine_services.runtime_params import (
+        _CHARS_PER_TOKEN_EST as _RP,
+    )
     from llm_loop.core.loop.routing import _CHARS_PER_TOKEN_EST as _R
-    from llm_loop.core.loop.runtime import _CHARS_PER_TOKEN_EST
 
     assert _CHARS_PER_TOKEN == 0.6
-    assert _CHARS_PER_TOKEN_EST == 0.6
     assert _R == 0.6
+    assert _RP == 0.6
     # 示例: 688K tokens（08-23 实测峰值）按 0.6 → ~41 万字符边界（旧估算 137 万, 失真）
     assert int(688_808 * 0.6) == 413_284
 

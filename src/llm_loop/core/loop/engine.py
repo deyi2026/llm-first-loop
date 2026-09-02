@@ -37,6 +37,7 @@ from llm_loop.core.loop.build import _BuildMixin  # EVO-20260817-e63f712f: 消�
 from llm_loop.core.loop.engine_services.attempt_executor import AttemptExecutor
 from llm_loop.core.loop.engine_services.recovery_controller import RecoveryController
 from llm_loop.core.loop.engine_services.run_finalizer import RunFinalizer
+from llm_loop.core.loop.engine_services.runtime_params import RuntimeParamsService
 from llm_loop.core.loop.engine_services.session_lifecycle import SessionLifecycle
 from llm_loop.core.loop.engine_services.termination_controller import TerminationController
 from llm_loop.core.loop.engine_services.tool_cycle import ToolCycleService
@@ -51,7 +52,6 @@ from llm_loop.core.loop.routing import (
     _RoutingMixin,
 )
 from llm_loop.core.loop.runstate import _RunState, _RunStateMixin
-from llm_loop.core.loop.runtime import _RuntimeParamsMixin
 from llm_loop.core.loop.tool_exec import (
     _json_dumps_args,
     _tool_args_summary,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
@@ -150,7 +150,7 @@ class LoopResult:
     cancel_reason: str = ""
 
 
-class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _TurnContextMixin):
+class LoopEngine(_RunStateMixin, _FallbackMixin, _RoutingMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _TurnContextMixin):
     """五阶段核心循环控制器."""
 
     # EVO 后台 run 执行器（factory 动态装配 BackgroundRunner；声明类型供 pyright 静态检查）
@@ -255,6 +255,7 @@ class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMi
         # R9 Phase 5 T6-A: 恢复域 service（B5-W1-03 迁入 _Err1210Mixin 职责；实例态留宿主经 _host 读写）
         self._recovery = RecoveryController(self)
         # R9-B5-W2-01: SessionLifecycle——会话前段 reconcile / workspace 职责面 / 收尾持久化
+        self._runtime_params = RuntimeParamsService(self)
         self._session_lifecycle = SessionLifecycle(self)
         self._attempt_executor = AttemptExecutor(self)
         # R9-B5-W3-01: ToolCycleService——工具执行循环职责面（_ToolExecMixin/_ToolEligibilityMixin 迁入）
@@ -286,6 +287,24 @@ class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMi
         # H-UI(2026-08-14): 动作观察者（实时 UI 状态条：thinking/tool_call/tool_result/answer/done）
         # None = 不通知（零回归）；观察者异常 fail-open 不影响主循环
         self._action_observer: Callable[[str, dict], None] | None = None
+
+    # ---- 运行时参数委托壳（W4-02a：_RuntimeParamsMixin → RuntimeParamsService；
+    #      公开面签名不变——build/routing/turn_context/attempt_executor/tests 零改动）----
+    def _runtime_max_iterations(self) -> int:
+        return self._runtime_params._runtime_max_iterations()
+
+    def _runtime_history_budget(self) -> int:
+        return self._runtime_params._runtime_history_budget()
+
+    def _runtime_extract_interval(self) -> int:
+        return self._runtime_params._runtime_extract_interval()
+
+    def _runtime_memory_top_k(self) -> int:
+        return self._runtime_params._runtime_memory_top_k()
+
+    def _runtime_timeout(self) -> float | None:
+        return self._runtime_params._runtime_timeout()
+
 
 
     def _prefix_state_for(self, session_id: str) -> LayeredPrefixState:
