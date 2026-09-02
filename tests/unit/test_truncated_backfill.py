@@ -153,3 +153,25 @@ def test_backfill_rejects_wrong_episode_store(tmp_path):
 
     with pytest.raises(TypeError):
         backfill_truncated_runs(_Noop(), EventStore(tmp_path / "events"), [_SID])
+
+
+def test_backfill_digest_fallback_without_reason_line(stores):
+    """digest 兜底路径：answer_preview 无"原因: "行（如 guard_blocked）→ 如实取 preview 头."""
+    ep, es = stores
+    sid = "7e2f9c2a-3b4d-4e5f-8a9b-1c2d3e4f5a6b"
+    es.append(sid, "session.created", {"session_id": sid})
+    ev = es.append(
+        sid,
+        "run.end",
+        {
+            "reason": "guard_blocked",
+            "rounds": 5,
+            "answer_preview": "[缓存守卫拦截] 上下文超限，请先压缩。",
+        },
+    )
+    assert ev is not None
+    report = backfill_truncated_runs(ep, es, [sid])
+    assert report["written"] == 1 and report["errors"] == 0
+    (row,) = ep._iter_truncated(sid)
+    assert row["error_digest"] == "[缓存守卫拦截] 上下文超限，请先压缩。"
+    assert row["last_round"] == 5 and row["ref"] == f"truncated:{ev.seq}"
