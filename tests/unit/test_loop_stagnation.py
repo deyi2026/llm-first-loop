@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from llm_loop.core.loop.engine_services.tool_cycle import ToolCycleService
 from llm_loop.core.loop.tool_exec import (
     _STAGNATION_BREAK_AT,
     _STAGNATION_REMIND_AT,
-    _ToolExecMixin,
 )
 from llm_loop.feedback.honesty import stagnation_feedback, stagnation_reminder_message
 
@@ -17,10 +17,11 @@ class _Sess:
         self.messages = []
 
 
-class _StubEngine(_ToolExecMixin):
+class _StubEngine(ToolCycleService):
     """最小引擎替身：仅实现 _track_stagnation 依赖的两个钩子."""
 
     def __init__(self):
+        self._host = self  # R9-B5-W3-01: 替身自给宿主面（迁移前 self.X → 现 self._host.X → 同一字段）
         self._stagnation_state = {"fp": None, "count": 0, "reminded": False}
         self._current_turn_ref = 11
         self.events = []

@@ -38,6 +38,7 @@ from llm_loop.core.loop.engine_services.attempt_executor import AttemptExecutor
 from llm_loop.core.loop.engine_services.recovery_controller import RecoveryController
 from llm_loop.core.loop.engine_services.session_lifecycle import SessionLifecycle
 from llm_loop.core.loop.engine_services.termination_controller import TerminationController
+from llm_loop.core.loop.engine_services.tool_cycle import ToolCycleService
 from llm_loop.core.loop.events import _EventsMixin
 from llm_loop.core.loop.fallback import _FallbackMixin
 from llm_loop.core.loop.interop import _InteropMixin
@@ -50,11 +51,9 @@ from llm_loop.core.loop.routing import (
 )
 from llm_loop.core.loop.runstate import _RunState, _RunStateMixin
 from llm_loop.core.loop.runtime import _RuntimeParamsMixin
-from llm_loop.core.loop.tool_eligibility import _ToolEligibilityMixin
 from llm_loop.core.loop.tool_exec import (
     _json_dumps_args,
     _tool_args_summary,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
-    _ToolExecMixin,
 )
 from llm_loop.core.loop.turn_context import _TurnContextMixin
 from llm_loop.core.message import Message, MessageSource
@@ -151,7 +150,7 @@ class LoopResult:
     cancel_reason: str = ""
 
 
-class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _ToolEligibilityMixin, _ToolExecMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _TurnContextMixin):
+class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _TurnContextMixin):
     """五阶段核心循环控制器."""
 
     # EVO 后台 run 执行器（factory 动态装配 BackgroundRunner；声明类型供 pyright 静态检查）
@@ -258,6 +257,8 @@ class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMi
         # R9-B5-W2-01: SessionLifecycle——会话前段 reconcile / workspace 职责面 / 收尾持久化
         self._session_lifecycle = SessionLifecycle(self)
         self._attempt_executor = AttemptExecutor(self)
+        # R9-B5-W3-01: ToolCycleService——工具执行循环职责面（_ToolExecMixin/_ToolEligibilityMixin 迁入）
+        self._tool_cycle = ToolCycleService(self)
         # EVO-20260817-cef296f8 L2: 缓存命中率窗口监控（跨 run 累计，实例级；
         # 低命中率 → final_answer 注入诊断 + action_trace 审计，fail-open）
         # EVO-20260817-72fcd94a L3（闭环）: 缓存健康监控 + 发送前门禁（独立模块，程序常态锚点管理）
@@ -511,11 +512,11 @@ class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMi
                 tool_schemas = self._layered_tool_schemas(session_id, user_text)
             else:
                 tool_schemas = self.registry.schemas(lazy=self.settings.tool_schema_lazy)
-            tool_schemas = self._project_tool_schemas_for_round(
+            tool_schemas = self._tool_cycle._project_tool_schemas_for_round(
                 tool_schemas, planned_label=planned_label, user_text=user_text,
                 session_messages=sess.messages,
             )
-            tools_param = [self._schema_to_param(t) for t in tool_schemas]
+            tools_param = [self._tool_cycle._schema_to_param(t) for t in tool_schemas]
 
             # R1: 组件级占用分解（实际发送载荷口径；压缩归档历史不计入当前占用）
             # 供 architecture_status.context_usage.breakdown 注入；_last_build_info 保留。
@@ -862,14 +863,14 @@ class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMi
                             fallback_schemas = self.registry.schemas(
                                 lazy=self.settings.tool_schema_lazy
                             )
-                        fallback_schemas = self._project_tool_schemas_for_round(
+                        fallback_schemas = self._tool_cycle._project_tool_schemas_for_round(
                             fallback_schemas,
                             planned_label=fallback_label,
                             user_text=user_text,
                             session_messages=sess.messages,
                         )
                         return fallback_messages, [
-                            self._schema_to_param(schema) for schema in fallback_schemas
+                            self._tool_cycle._schema_to_param(schema) for schema in fallback_schemas
                         ]
 
                     fallback_resp, inject_msgs, fallback_ref = self._try_fallback_chain(
@@ -946,7 +947,7 @@ class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMi
                 resp = None  # 防止上一轮响应残留参与 usage/reasoning/finalize
                 break
 
-            self._record_action("action.llm_decide", "llm_response", self._resp_summary(resp))
+            self._record_action("action.llm_decide", "llm_response", self._tool_cycle._resp_summary(resp))
             self._recovery._err1210_note_request_count(session_id, len(messages))  # T4.2: 骤降兜底数据源（成功+失败轮均更新——修复B，语义见 err1210.py）
             # M52: 聚合本轮 token 用量（含 fallback 成功响应；0 = provider 未提供）
             tokens_in += resp.prompt_tokens
@@ -1038,10 +1039,10 @@ class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMi
 
             # ── 行动：执行工具（tool_calls）──
             # M53 拆分: 工具段 → _ToolExecMixin._execute_tools（yield from 保持 tool_round 外泄次序）
-            yield from self._execute_tools(resp, sess, rounds, tool_trace)
+            yield from self._tool_cycle._execute_tools(resp, sess, rounds, tool_trace)
 
             # ── EVO-20260814-aab7eb0b P2: 实时停滞熔断（连续同指纹工具调用，如实结束）──
-            _should_break, _tool_name, _streak = self._stagnation_should_break()
+            _should_break, _tool_name, _streak = self._tool_cycle._stagnation_should_break()
             if _should_break:
                 self._phase("terminate.stagnation")
                 _run_end_reason = "stagnation"
@@ -1370,11 +1371,11 @@ class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMi
                 schemas = self._layered_tool_schemas(session_id, user_text)
             else:
                 schemas = self.registry.schemas(lazy=self.settings.tool_schema_lazy)
-            schemas = self._project_tool_schemas_for_round(
+            schemas = self._tool_cycle._project_tool_schemas_for_round(
                 schemas, planned_label=planned_label, user_text=user_text,
                 session_messages=sess.messages,
             )
-            return msgs, [self._schema_to_param(t) for t in schemas]
+            return msgs, [self._tool_cycle._schema_to_param(t) for t in schemas]
         except Exception:  # noqa: BLE001 — 重建失败不 retry（终态路径兜底）
             logger.warning(
                 "err1210 runtime retry 请求重建失败（fail-open 不重试）", exc_info=True
@@ -1388,9 +1389,23 @@ class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMi
     #   _default_model_label / _current_context_limit / _check_context_fit / _planned_model_label / _effective_history_budget
     # 估算常量 _CHARS_PER_TOKEN_EST/_CONTEXT_SAFETY_MARGIN 经模块级 re-export 保持原路径可导入。
 
-    # M53 拆分: 工具辅助方法 → llm_loop/core/loop/tool_exec.py（_ToolExecMixin）
-    # 已随迁方法（经 Mixin 混入后实例可调用，签名/语义不变）:
-    #   _schema_to_param / _resp_summary / _record_tool_history
+    # M53 拆分: 工具辅助方法 → llm_loop/core/loop/tool_exec.py（原 _ToolExecMixin）
+    # R9-B5-W3-01: 职责面 11 法已迁 engine_services/tool_cycle.py（ToolCycleService，
+    # 宿主经 self._tool_cycle.* 调用）；下方 3 委托壳为测试直调公开面（签名不变）。
     # 模块级函数 _json_dumps_args/_tool_args_summary 经模块级 re-export 保持原路径可导入。
+
+    # ── R9-B5-W3-01: 工具域公开面委托壳（tests 直调 engine._track_stagnation 等，签名不变）──
+
+    def _track_stagnation(self, tc, sess, tool_trace: list[dict], result=None) -> None:
+        """委托 ToolCycleService（B5-W3-01 迁移；测试直调面保签名）."""
+        self._tool_cycle._track_stagnation(tc, sess, tool_trace, result=result)
+
+    def _inject_experience_tips(self, sess, tool_names: list[str]) -> None:
+        """委托 ToolCycleService（B5-W3-01 迁移；测试直调面保签名）."""
+        self._tool_cycle._inject_experience_tips(sess, tool_names)
+
+    def _stagnation_should_break(self) -> tuple[bool, str, int]:
+        """委托 ToolCycleService（B5-W3-01 迁移；测试直调面保签名）."""
+        return self._tool_cycle._stagnation_should_break()
 
     # 生命周期/持久化职责面已迁 SessionLifecycle（B5-W2-01）；编排入口留 lifecycle.py（_RunEntrypointMixin）。

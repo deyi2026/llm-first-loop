@@ -22,11 +22,11 @@ def engine_src() -> str:
 
 def test_loop_mixin_split_layout():
     """新 Mixin 模块布局：类定义 + 文件级 pyright 豁免 + TYPE_CHECKING 循环规避."""
-    for fname in ("routing.py", "tool_exec.py", "lifecycle.py"):
+    for fname in ("routing.py", "lifecycle.py"):
         src = (LOOP_DIR / fname).read_text(encoding="utf-8")
         mixin = {
             "routing.py": "_RoutingMixin",
-            "tool_exec.py": "_ToolExecMixin",
+            # R9-B5-W3-01: _ToolExecMixin 职责面迁 ToolCycleService 后退役（tool_exec.py 仅存模块级辅助）
             # R9-B5-W2-01: _LifecycleMixin 职责面迁 SessionLifecycle 后更名，编排入口留此
             "lifecycle.py": "_RunEntrypointMixin",
         }[fname]
@@ -52,10 +52,10 @@ def test_loop_reexport_kept():
 
 
 def test_run_stream_delegation_points(engine_src):
-    """run_stream 三处委托调用全部就位（REQ-REF-02a）."""
+    """run_stream 三处委托调用全部就位（REQ-REF-02a；B5-W3-01 起工具段经 ToolCycleService）."""
     assert "self._route_model(" in engine_src
     assert "self._termination._handle_overflow(" in engine_src
-    assert "yield from self._execute_tools(" in engine_src
+    assert "yield from self._tool_cycle._execute_tools(" in engine_src
 
 
 def test_local_tool_allowlist_filter():

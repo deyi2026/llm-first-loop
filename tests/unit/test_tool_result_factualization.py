@@ -728,7 +728,7 @@ class TestT6DeathLoopRegressionFixture:
 
     def test_defense_line3_stagnation_counting_converges(self):
         """恢复类计数收敛: B 包 _track_stagnation 接口对同指纹失败调用累计（B-5.7 对接）。"""
-        from llm_loop.core.loop.tool_exec import _ToolExecMixin
+        from llm_loop.core.loop.engine_services.tool_cycle import ToolCycleService
 
         class _StubEngine:
             _stagnation_state: dict | None = None
@@ -740,10 +740,11 @@ class TestT6DeathLoopRegressionFixture:
                 self.last_action = (phase, action_type, detail)
 
         stub = _StubEngine()
+        stub._host = stub  # R9-B5-W3-01: 裸替身自指宿主面（_stagnation_state 走 RunState shim 面）
         tc = ToolCall(id="z1", name="read_file", arguments={"path": "evidence://v1/x"})
         result = ReadFileTool().execute(path="evidence://v1/x")
         for _ in range(3):
-            _ToolExecMixin._track_stagnation(  # pyright: ignore[reportAttributeAccessIssue]
+            ToolCycleService._track_stagnation(  # pyright: ignore[reportAttributeAccessIssue]
                 stub, tc, None, [], result=result
             )
         assert (stub._stagnation_state or {}).get("count") == 3  # 计数收敛接口在场且累计

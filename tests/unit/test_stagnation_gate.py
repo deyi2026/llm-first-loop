@@ -44,6 +44,7 @@ class TestEvidenceGateWiring:
         from pathlib import Path
 
         src = (
-            Path(__file__).resolve().parents[2] / "src/llm_loop/core/loop/tool_exec.py"
+            Path(__file__).resolve().parents[2]
+            / "src/llm_loop/core/loop/engine_services/tool_cycle.py"
         ).read_text(encoding="utf-8")
         assert '"status": result.status.value' in src

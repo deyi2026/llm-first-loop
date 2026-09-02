@@ -83,7 +83,7 @@ def test_memory_task_switch_reopens_catalog_with_seen_pointer_only() -> None:
 
 def test_experience_front_k_gate_and_switch_pointer(tmp_path) -> None:
     """E08: front-K/task-switch can reopen retrieval choice, never automatic catalog prompt."""
-    from llm_loop.core.loop.tool_exec import _ToolExecMixin
+    from llm_loop.core.loop.engine_services.tool_cycle import ToolCycleService
     from tests.unit.test_tool_experience_inject import _make_exp_dir, _Stub
 
     stub = _Stub(True, _make_exp_dir(tmp_path))
@@ -91,7 +91,7 @@ def test_experience_front_k_gate_and_switch_pointer(tmp_path) -> None:
     for text in ("抓取页面", "继续", "继续", "继续", "换个话题：重新抓取网页"):
         stub.messages.append(_human(text))
         stub._current_turn_ref = len(stub.messages) - 1
-        _ToolExecMixin._inject_experience_tips(stub, stub, ["web_fetch"])
+        ToolCycleService._inject_experience_tips(stub, stub, ["web_fetch"])
     tips = [m for m in stub.messages if (m.metadata or {}).get("injection_kind") == "experience_tip"]
     assert tips == []
 
@@ -381,12 +381,12 @@ def test_memory_same_call_duplicate_id_emits_one_full_frame() -> None:
 
 def test_experience_same_call_duplicate_ref_emits_once(tmp_path) -> None:
     """E08: duplicate experience candidates are not even queried on the automatic path."""
-    from llm_loop.core.loop.tool_exec import _ToolExecMixin
+    from llm_loop.core.loop.engine_services.tool_cycle import ToolCycleService
     from tests.unit.test_tool_experience_inject import _make_exp_dir, _Stub
 
     stub = _Stub(True, _make_exp_dir(tmp_path))
     stub.messages.append(_human("抓取页面"))
-    _ToolExecMixin._inject_experience_tips(stub, stub, ["web_fetch"])
+    ToolCycleService._inject_experience_tips(stub, stub, ["web_fetch"])
     tips = [m for m in stub.messages if (m.metadata or {}).get("injection_kind") == "experience_tip"]
     assert tips == []
 

@@ -60,12 +60,14 @@ def test_overflow_path_is_deterministic_runtime_control():
 
 
 def test_stagnation_reminder_is_event_only():
-    """停滞/空搜索提醒: tool_exec 提醒路径零 Message 构造（事件观测替代）。"""
-    tool_exec_src = (_SRC_ROOT / "core" / "loop" / "tool_exec.py").read_text(encoding="utf-8")
-    assert "stagnation_reminder_message" not in tool_exec_src
-    assert "empty_search_reminder_message" not in tool_exec_src
-    assert "stagnation.reminder" in tool_exec_src  # 事件通道在场
-    assert "empty_search.reminder" in tool_exec_src
+    """停滞/空搜索提醒: tool_cycle 提醒路径零 Message 构造（事件观测替代；B5-W3-01 起实现位 engine_services/tool_cycle.py）。"""
+    tool_cycle_src = (
+        _SRC_ROOT / "core" / "loop" / "engine_services" / "tool_cycle.py"
+    ).read_text(encoding="utf-8")
+    assert "stagnation_reminder_message" not in tool_cycle_src
+    assert "empty_search_reminder_message" not in tool_cycle_src
+    assert "stagnation.reminder" in tool_cycle_src  # 事件通道在场
+    assert "empty_search.reminder" in tool_cycle_src
 
 
 def test_program_final_boundary_is_protocol_only():

@@ -14,7 +14,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from llm_loop.core.loop.engine import LoopEngine
-from llm_loop.core.loop.tool_exec import _ToolExecMixin
+from llm_loop.core.loop.engine_services.tool_cycle import ToolCycleService
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.run_context import current_session_id
 
@@ -114,8 +114,9 @@ def _snapshots(sess) -> list:
     ]
 
 
-class _TipStub(_ToolExecMixin):
+class _TipStub(ToolCycleService):
     def __init__(self, exp_dir: str | Path, turn_ref=None) -> None:
+        self._host = self  # R9-B5-W3-01: 替身自给宿主面（迁移前 self.X → 现 self._host.X → 同一字段）
         self.settings = SimpleNamespace(
             tool_experience_inject=True,
             experiences_dir=str(exp_dir),
@@ -179,11 +180,11 @@ def test_experience_tip_session_isolation(tmp_path):
     """E08: generic experience catalog creates no prompt state in any session."""
     d = _make_exp_dir(tmp_path)
     a = _TipStub(d, turn_ref=1)
-    _ToolExecMixin._inject_experience_tips(a, a, ["web_fetch"])
+    ToolCycleService._inject_experience_tips(a, a, ["web_fetch"])
     assert a.messages == []
     b = _TipStub(d, turn_ref=1)
-    _ToolExecMixin._inject_experience_tips(b, b, ["web_fetch"])
-    _ToolExecMixin._inject_experience_tips(b, b, ["web_fetch", "other_tool"])
+    ToolCycleService._inject_experience_tips(b, b, ["web_fetch"])
+    ToolCycleService._inject_experience_tips(b, b, ["web_fetch", "other_tool"])
     assert b.messages == []
 
 def test_retrieval_exactly_once_on_reentry():

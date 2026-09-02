@@ -17,7 +17,7 @@ from types import SimpleNamespace
 
 from llm_loop.core.injection_labels import PROGRAM_APPENDIX_NOTICE, REFERENCE_LABEL
 from llm_loop.core.loop.engine import LoopEngine
-from llm_loop.core.loop.tool_exec import _ToolExecMixin
+from llm_loop.core.loop.engine_services.tool_cycle import ToolCycleService
 from llm_loop.core.message import Message, MessageSource
 
 _EXP_MD = """---
@@ -174,10 +174,11 @@ def test_memory_fault_fail_open():
 
 
 
-class _TipStub(_ToolExecMixin):
+class _TipStub(ToolCycleService):
     """LoopEngine 最小桩（_inject_experience_tips 依赖面）."""
 
     def __init__(self, exp_dir: str | Path, turn_ref=None) -> None:
+        self._host = self  # R9-B5-W3-01: 替身自给宿主面（迁移前 self.X → 现 self._host.X → 同一字段）
         self.settings = SimpleNamespace(
             tool_experience_inject=True,
             experiences_dir=str(exp_dir),
@@ -220,7 +221,7 @@ def test_tip_turn_done_blocks_reinject_sot(tmp_path):
             },
         )
     )
-    _ToolExecMixin._inject_experience_tips(stub, stub, ["web_fetch"])
+    ToolCycleService._inject_experience_tips(stub, stub, ["web_fetch"])
     assert len(stub.messages) == 1  # SoT 判定本 turn 已注入 → 不再追加
 
 
@@ -228,6 +229,6 @@ def test_tip_inject_persists_turn_ref_and_quota(tmp_path):
     """E08: generic tip is not persisted, so no turn-ref prompt quota is created."""
     d = _make_exp_dir(tmp_path)
     stub = _TipStub(d, turn_ref=3)
-    _ToolExecMixin._inject_experience_tips(stub, stub, ["web_fetch"])
-    _ToolExecMixin._inject_experience_tips(stub, stub, ["web_fetch", "other_tool"])
+    ToolCycleService._inject_experience_tips(stub, stub, ["web_fetch"])
+    ToolCycleService._inject_experience_tips(stub, stub, ["web_fetch", "other_tool"])
     assert stub.messages == []

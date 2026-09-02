@@ -248,16 +248,16 @@ def test_engine_shadow_and_off_preserve_legacy_tool_surface(build_test_engine):
     shadow_names = _wire_tool_names(fake.calls[-1])
     assert "web_fetch" in shadow_names
     assert "schedule" in shadow_names
-    assert engine._last_tool_eligibility["configured_mode"] == "shadow"
-    assert engine._last_tool_eligibility["applied"] is False
+    assert engine._tool_cycle._last_tool_eligibility["configured_mode"] == "shadow"
+    assert engine._tool_cycle._last_tool_eligibility["applied"] is False
 
     object.__setattr__(engine.settings, "tool_eligibility_mode", "off")
     engine.run(sid, "继续整理本地代码")
     off_names = _wire_tool_names(fake.calls[-1])
     assert "web_fetch" in off_names
     assert "schedule" in off_names
-    assert engine._last_tool_eligibility["configured_mode"] == "off"
-    assert engine._last_tool_eligibility["applied"] is False
+    assert engine._tool_cycle._last_tool_eligibility["configured_mode"] == "off"
+    assert engine._tool_cycle._last_tool_eligibility["applied"] is False
 
 
 def test_enforce_ignores_legacy_prefix_index_representation(build_test_engine):
