@@ -57,11 +57,56 @@ fi
 for f in ${files[@]+"${files[@]}"}; do  # 空 diff 提交（纯消息）set -u 不崩（D-B2-05：负例1 演练发现）
   if [[ "$f" == "tests/unit/test_arch_guards.py" ]]; then
     $is_guard && continue
-    # 例外④a（B5-W1-03 / D-B5-xx）：refactor(r9) 触碰 test_arch_guards.py 须
+    # 例外④a（B5-W1-03 / D-B5-3）：refactor(r9) 触碰 test_arch_guards.py 须
     # 同时满足——body 含标记行 "guard-verified: ratchet-tighten"（提交者声明
     # 已在提交树口径跑守卫全绿）+ 守卫常量 _MIXIN_CAP 数值只降不升（棘轮方向
     # 机检；放松仍拦）。test_function_size_guard.py 不在例外内（guard-only 不变）。
-    if $is_refactor && grep -qE "^guard-verified: ratchet-tighten" <<<"$body"; then
+    # 例外④a-2（B5-W2-01 / D-B5-5）：mixin-renames 通道——职责面迁出引发
+    # Mixin 更名（_LifecycleMixin→_RunEntrypointMixin 类），棘轮测试增
+    # _MIXIN_RENAMES 折算表。标记行 "guard-verified: mixin-renames" +
+    # 机检：staged engine.py 基类名经 staged _MIXIN_RENAMES 折算后与 HEAD
+    # 基类集**无净新增**（折算集−HEAD 集=∅ ⇒ "借更名夹带新基类"被守恒机检
+    # 拦截；退役方向不受限）。与例外③ 同构：放松通道自带方向机检。
+    if $is_refactor && grep -qE "^guard-verified: mixin-renames" <<<"$body"; then
+      if python3 - <<'PY'
+import re, subprocess, sys
+
+def show(ref):
+    r = subprocess.run(["git", "show", ref], capture_output=True, text=True)
+    return r.stdout if r.returncode == 0 else ""
+
+def bases(src):
+    m = re.search(r"^class LoopEngine\(([^)]*)\):", src, re.M)
+    return [b.strip() for b in m.group(1).split(",") if b.strip()] if m else None
+
+head = bases(show("HEAD:src/llm_loop/core/loop/engine.py"))
+staged = bases(show(":src/llm_loop/core/loop/engine.py"))
+t = show(":tests/unit/test_arch_guards.py")
+m = re.search(r"_MIXIN_RENAMES\s*=\s*\{([^}]*)\}", t, re.S)
+renames = dict(re.findall(r"['\"]([A-Za-z_]\w*)['\"]\s*:\s*['\"]([A-Za-z_]\w*)['\"]", m.group(1))) if m else {}
+if head is None or staged is None or not renames:
+    print("④a-2 解析失败：基类列表或 _MIXIN_RENAMES 缺失")
+    sys.exit(1)
+def canon(names):
+    # 双侧不动点折算：PROBE 检出态 HEAD=本提交（双侧同名）；提交后重跑态
+    # HEAD=新世代（staged==HEAD，同上）；工作态 HEAD=旧世代（新名→旧名）
+    prev = None
+    cur = set(names)
+    while prev != cur:
+        prev = cur
+        cur = {renames.get(n, n) for n in cur}
+    return cur
+
+extra = canon(staged) - canon(head)
+if extra:
+    print(f"④a-2 净新增基类（折算后）: {sorted(extra)}")
+    sys.exit(1)
+PY
+      then
+        continue
+      fi
+      fail "④" "例外④a mixin-renames 不满足：折算后净新增基类或 _MIXIN_RENAMES 缺失: ${f}"
+    elif $is_refactor && grep -qE "^guard-verified: ratchet-tighten" <<<"$body"; then
       old_cap=$(git show "HEAD:tests/unit/test_arch_guards.py" 2>/dev/null | grep -oE "_MIXIN_CAP = [0-9]+" | grep -oE "[0-9]+" | head -1)
       new_cap=$(git show ":tests/unit/test_arch_guards.py" 2>/dev/null | grep -oE "_MIXIN_CAP = [0-9]+" | grep -oE "[0-9]+" | head -1)
       if [[ -n "$old_cap" && -n "$new_cap" && "$new_cap" -le "$old_cap" ]]; then
@@ -69,7 +114,7 @@ for f in ${files[@]+"${files[@]}"}; do  # 空 diff 提交（纯消息）set -u �
       fi
       fail "④" "例外④a 不满足：_MIXIN_CAP 非只降不升（HEAD=${old_cap:-无} → staged=${new_cap:-无}）: ${f}"
     else
-      fail "④" "非 guard(r9) 前缀触碰守卫文件: ${f}（防篡改层 3，T3-C；例外④a = refactor+标记行+CAP 只降）"
+      fail "④" "非 guard(r9) 前缀触碰守卫文件: ${f}（防篡改层 3，T3-C；例外④a = ratchet-tighten（CAP 只降）/ mixin-renames（守恒机检））"
     fi
   elif [[ "$f" == "tests/unit/test_function_size_guard.py" ]]; then
     $is_guard || fail "④" "非 guard(r9) 前缀触碰守卫文件: ${f}（防篡改层 3，T3-C）"
