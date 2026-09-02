@@ -204,7 +204,7 @@ class FallbackService:
                     if messages and messages[0].get("role") == "system"
                     else None
                 ),
-                compress_count_this_run=getattr(self, "_compress_count_this_run", 0),
+                compress_count_this_run=getattr(self._host, "_compress_count_this_run", 0),
                 history_budget=int(effective_budget or 0),
                 breaker_active=self._host._cache_monitor.breaker_active_for(session_id),
                 run_round=rounds,
@@ -429,7 +429,7 @@ class FallbackService:
             # （status/审计/action_trace 每次照常记录，可观测性不降级；仅消息注入被限频）。
             notices: list[Message] = []
             kind = f"{from_model}->{to_model}"
-            stamp_path = _notice_stamp_path(getattr(self, "settings", None))
+            stamp_path = _notice_stamp_path(getattr(self._host, "settings", None))
             if _fallback_notice_suppressed(stamp_path, kind):
                 self._host._record_action(
                     "action.llm_decide",

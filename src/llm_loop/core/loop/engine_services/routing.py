@@ -486,7 +486,7 @@ class RoutingService:
         runtime_override = None
         # T5 修正: 防御式访问（旧 _effective_history_budget 路径不触 self.runtime，
         # 测试桩/老调用方最小依赖面无该属性——单源化后统一 fail-open 风格）
-        runtime_view = getattr(self, "runtime", None)
+        runtime_view = getattr(self._host, "runtime", None)
         if runtime_view is not None:
             try:
                 runtime_override = runtime_view.get("history_budget", None)

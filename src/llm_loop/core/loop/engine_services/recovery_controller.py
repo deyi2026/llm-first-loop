@@ -277,8 +277,8 @@ class RecoveryController:
                             r = Message(
                                 role="system", content=seg, source=MessageSource.SYSTEM
                             )
-                            active = getattr(self, attr, None) or []
-                            setattr(self, attr, [r] + active)  # 前置拼接（旧先注入）
+                            active = getattr(self._host, attr, None) or []
+                            setattr(self._host, attr, [r] + active)  # 前置拼接（旧先注入）
                             self._host._deferred_replay_refs = list(
                                 getattr(self._host, "_deferred_replay_refs", None) or []
                             )
@@ -350,10 +350,10 @@ class RecoveryController:
                     continue
                 refs = [e.message_ref for e in es if e.message_ref is not None]
                 try:
-                    active = getattr(self, attr, None) or []
+                    active = getattr(self._host, attr, None) or []
                     new_refs = [r for r in refs if not any(r is a for a in active)]
                     if new_refs:
-                        setattr(self, attr, new_refs + active)  # 幂等：整槽赋值语义
+                        setattr(self._host, attr, new_refs + active)  # 幂等：整槽赋值语义
                         # 重注入检测（build 消费时 is 身份匹配 → defer_replayed）
                         self._host._deferred_replay_refs = list(getattr(self._host, "_deferred_replay_refs", None) or [])
                         self._host._deferred_replay_refs.extend((slot, r) for r in new_refs)
