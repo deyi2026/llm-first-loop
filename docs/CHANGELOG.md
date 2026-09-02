@@ -2,6 +2,19 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+### 死循环治理升级：跨 run 延续 + 执行前拦截 + done 重开确认门槛（2026-09-02）
+- **实测缺陷**：停滞计数按 run 重置——「每轮 run 重复 2~4 次同指纹调用即被 `[program-final]` 收束」的病理循环永不达事后熔断阈值（5）；且事后熔断已烧掉整轮 LLM 调用后才终止（发现滞后）。
+- **执行前拦截（第 3 次即断）**：`tool_exec.partition_stagnation_block` 纯函数——同一指纹（工具名+参数完全一致）连续第 3 次起不进 registry，合成 BLOCKED 回执（`[状态: blocked]`，G3 纯事实文案无建议句式）；批次内按声明序逐个投影计数，混合批次不影响合法调用。对账不变量扩展：声明数 = 放行结果数 + 拦截回执数 + 取消数（无孤儿）。
+- **跨 run 延续**：停滞 fp/count 经 `_run_state` 桶字段 `stagnation_carry_fp/carry_count` 跨 run 保留（换指纹即重置），run 开始播种基数——跨 run 的慢速循环也能在第 3 次被拦。
+- **done 重开确认门槛（用户规则：已做过的任务不自动重启）**：`TaskStore.update` 对 done→in_progress/failed 重开类转移强制 `confirm=True`（未获用户批准的重开拒绝并明示规则）；程序面 `task_update` 工具透传 `confirm`，schema 注明「未获批准禁止代答 true」。非重开转移零影响。
+- **测试**：`test_stagnation_cross_run_block.py`（纯函数 + 跨 run 播种病理复现）、`test_loopbreaker_integration.py`（真实 registry 第 3 次拦截 + 对账）、`test_task_store.py` 重开守卫 2 例；相关子集 846 通过、与基线差集为空（零回归）。
+
+### 飞书桥任务中断可感知/可补偿 + /continue 续聊不跑偏（2026-09-02）
+- **中断补偿底座（COMP）**：单文件补偿改 JSONL 增量存储（`data/feishu_compensation.jsonl`，旧 `feishu_interrupted.json` 启动自动无损迁移）——六字段记录（`receive_id/reply_type/interrupt_cause/interrupted_at/context_ref/msg_id`）、原因五类收紧（`watchdog_exit/queue_full/drain_timeout/process_timeout/crash`）、单行损坏隔离、幂等剔除；`FEISHU_COMPENSATION_PATH` 可配。
+- **中断检测与主动提示（DET）**：三类此前静默的场景现可感知——①看门狗假死自杀前先落补偿+尽力提示（1s 上限不阻塞退出，`FEISHU_INTERRUPT_NOTIFY_TIMEOUT_S` 可配）；②队列满丢弃即回执「消息未进入处理（队列忙）」（目标不可判定不伪造）；③单条处理超 300s 发「疑似卡住」中间态提示（不打断）+ drain 退出丢积压逐条补偿。提示失败由补偿记录启动兜底（至少一次可感知）。
+- **续聊上下文连续性（CONT）**：`/continue` 纳入续聊授权（与飞书指令同口径）；授权轮注入 `[Next Step]` 锚点（execution-cursor 优先 → checkpoint 兜底，未落地 cursor 时零依赖降级）；续聊前只读现场预检（`repair_status ∈ repaired/repairable/repair_failed/no_event_log`），来源（`anchor_source`）+ 预检结果落 `feishu_audit.jsonl` 可审计；user turn 保持 `program_origin=false` 原样（零程序 prose）。
+- **零回归红线**：`/stop`·`/continue` 控制语义、快车道/串行化、`is_user_stop_pending` 免重复补偿、非授权轮零 Goal/Task 读取（E-G5/E-G6 守卫同步扩容）全部保持；飞书测试 251 全绿。
+
 ### SWE 对照实验定论：本地 thinking 默认开启（回退早前"默认关闭"决策，2026-08-24）
 - **实验**：同一任务（SWE-bench requests-2317）、同一模型（qwen3.8-27b）、唯一变量 = `LOCAL_ENABLE_THINKING` 开关，判据只有 F2P（`test_encoded_methods`）。
 - **结果**：关思考 4 次独立尝试 **0/4 通过**（全漏第二修复点 `sessions.py builtin_str`）；开思考 1 次 **通过**（对照实验 + wire 抓包 `B'GET'` 溯源，双点修复，回归 135 通过无确定性回归）。
