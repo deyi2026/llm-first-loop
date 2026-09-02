@@ -1,4 +1,4 @@
-"""协调通道 inbox 注入 mixin（RULE-AI-14 实现层，2026-08-16）.
+"""InteropService——协调通道 inbox 注入职责服务（R9-B5-W4-02e：_InteropMixin 退役；宿主面显式经 self._host 标注，沿 archive 惯例）. 原理（RULE-AI-14 实现层，2026-08-16）:
 
 程序级自动感知: DSH→LFL 待处理消息由 runtime 扫描。R8.13 起 notify/backlog 与
 coordinate/task 均只进入 interop UI/action 状态；外部内容必须经未来的用户输入侧
@@ -17,7 +17,7 @@ coordinate/task 均只进入 interop UI/action 状态；外部内容必须经未
 """
 
 # pyright: reportAttributeAccessIssue=false, reportGeneralTypeIssues=false
-# (mixin 模式: self 属性来自混入类 LoopEngine.__init__，pyright 无法静态解析，故文件级关闭这两条)
+# (02e 迁移保留: 动态宿主槽位属性静态不可解析，文件级关闭这两条——宿主态所有权在 LoopEngine)
 
 
 from __future__ import annotations
@@ -27,16 +27,23 @@ import logging
 import os
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from llm_loop.core.message import Message
+
+if TYPE_CHECKING:
+    from llm_loop.core.loop.engine import LoopEngine
 
 logger = logging.getLogger(__name__)
 
 _INTEROP_INBOX_REL = Path("interop") / "lfl_to_dsh" / "pending"
 
 
-class _InteropMixin:
+class InteropService:
     """协调通道（RULE-AI-14）程序级注入."""
+
+    def __init__(self, host: LoopEngine) -> None:
+        self._host = host
 
     def _interop_inbox_messages(self) -> list[Message]:
         """扫描协调通道 inbox；返回值仅为兼容形状，R8.13 live path 恒为空.
@@ -62,9 +69,14 @@ class _InteropMixin:
             _max_inbox_inject = 8  # 注入上限（函数内局部，小写命名）
             files = sorted(base.glob("*.json"))
             # EVO-20260817-c35c9178: notify 已注入指纹（进程级，重启后 pending 已 done 无重复）
-            seen = getattr(self, "_notify_injected", None)
+            seen = getattr(self._host, "_notify_injected", None)
             if seen is None:
-                seen = self._notify_injected = set()
+                if self._host is None:
+                    # 02e 服务化：tests 以 host=None 裸服务直构造验证 fail-open
+                    # 契约（沿 mixin 时代裸实例语义）——dedupe 集合落服务实例
+                    seen = self._notify_injected = set()
+                else:
+                    seen = self._host._notify_injected = set()
             for f in files[-_max_inbox_inject:]:
                 try:
                     d = json.loads(f.read_text(encoding="utf-8"))
@@ -87,7 +99,7 @@ class _InteropMixin:
                     # in processed/, then emit only compact structured action telemetry.
                     if self._archive_interop_notify(f):
                         try:
-                            action = getattr(self, "_record_action", None)
+                            action = getattr(self._host, "_record_action", None)
                             if callable(action):
                                 action(
                                     "interop.notify",
@@ -102,13 +114,17 @@ class _InteropMixin:
                 # Keep the file pending for Web/UI inspection and future explicit input-side
                 # acceptance; record only one compact observation per process/file.
                 topic = str(d.get("topic", "") or "")
-                observed = getattr(self, "_interop_external_observed", None)
+                observed = getattr(self._host, "_interop_external_observed", None)
                 if observed is None:
-                    observed = self._interop_external_observed = set()
+                    if self._host is None:
+                        # 02e 服务化：裸服务（host=None）同 L74 fail-open 守卫
+                        observed = self._interop_external_observed = set()
+                    else:
+                        observed = self._host._interop_external_observed = set()
                 if f.name not in observed:
                     observed.add(f.name)
                     try:
-                        action = getattr(self, "_record_action", None)
+                        action = getattr(self._host, "_record_action", None)
                         if callable(action):
                             action(
                                 "interop.external_input",
@@ -124,7 +140,7 @@ class _InteropMixin:
                 # InboxWatcher also diagnoses backlog; this action gives build-time evidence
                 # without spending prompt characters or distracting the model.
                 try:
-                    action = getattr(self, "_record_action", None)
+                    action = getattr(self._host, "_record_action", None)
                     if callable(action):
                         action(
                             "interop.pending_backlog",
@@ -218,15 +234,15 @@ class _InteropMixin:
             # R8.13/E26: pre-upgrade err1210 defer state may still hold interop frames in
             # memory. Retire them here rather than allowing historical external prose to
             # regain prompt authority after the live producer has been disabled.
-            legacy_tail = getattr(self, "_interop_tail_messages", None) or []
+            legacy_tail = getattr(self._host, "_interop_tail_messages", None) or []
             if legacy_tail:
-                self._interop_tail_messages = None
-                refs = list(getattr(self, "_deferred_replay_refs", None) or [])
-                self._deferred_replay_refs = [
+                self._host._interop_tail_messages = None
+                refs = list(getattr(self._host, "_deferred_replay_refs", None) or [])
+                self._host._deferred_replay_refs = [
                     (slot, ref) for slot, ref in refs if str(slot) != "interop"
                 ]
                 try:
-                    self._record_action(
+                    self._host._record_action(
                         "interop.external_input",
                         "legacy_defer_retired",
                         f"count={len(legacy_tail)};prompt_chars=0",
@@ -239,7 +255,7 @@ class _InteropMixin:
                 # DSH 借鉴(2026-08-17): interop.spliced 注入事件（对齐 agent/inbox/spliced）——
                 # 记录来源/条数/位置，缓存审计可追溯"哪轮请求含外部注入"（fail-open）
                 try:
-                    self._event_append(
+                    self._host._event_append(
                         session_id or "?",
                         "interop.spliced",
                         {
@@ -258,7 +274,7 @@ class _InteropMixin:
                 except Exception:  # noqa: BLE001 — 注入事件失败 fail-open（不影响注入本身）
                     logger.warning("interop.spliced 事件写入失败（fail-open）")
                 if _tail:
-                    self._interop_tail_messages = inbox
+                    self._host._interop_tail_messages = inbox
                     return base, prefix_len
                 return base[:prefix_len] + inbox + base[prefix_len:], prefix_len + len(inbox)
         except Exception:
@@ -279,7 +295,7 @@ class _InteropMixin:
         try:
             if not switch_from or not switch_to or switch_from == switch_to:
                 return
-            self._record_action(
+            self._host._record_action(
                 "model.switch",
                 "observed",
                 f"{switch_from}->{switch_to}",

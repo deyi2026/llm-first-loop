@@ -841,7 +841,7 @@ def test_exemptions_wellformed():
 # ---------------------------------------------------------------------------
 
 _ENGINE_REL = "src/llm_loop/core/loop/engine.py"
-_MIXIN_CAP = 7  # B5-W4-02d 实测 7 个（_RuntimeParamsMixin/_RoutingMixin/_FallbackMixin/_ArchiveMixin 已退役 → RuntimeParams/Routing/Fallback/ArchiveService；累计 _Signals/_Overflow/_Err1210/_ToolExec/_ToolEligibility/_RuntimeParams/_Routing/_Fallback/_Archive）；只允许随退役单调递减
+_MIXIN_CAP = 6  # B5-W4-02d 实测 7 个（_RuntimeParamsMixin/_RoutingMixin/_FallbackMixin/_ArchiveMixin 已退役 → RuntimeParams/Routing/Fallback/ArchiveService；累计 _Signals/_Overflow/_Err1210/_ToolExec/_ToolEligibility/_RuntimeParams/_Routing/_Fallback/_Archive）；只允许随退役单调递减
 
 
 def _parse_loop_engine_bases(source: str) -> list[str]:

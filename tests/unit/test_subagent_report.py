@@ -79,9 +79,9 @@ def test_report_delivery_does_not_duplicate_into_parent_prompt(build_test_engine
     assert result.reports == ["关键发现A", "关键发现B"]  # 生命周期未被打断
     # 父级唯一语义通道已经是 result.reports / spawn_subagent tool receipt；
     # interop notify 只做观测归档，不能重复进入父模型 prompt。
-    from llm_loop.core.loop.interop import _InteropMixin
+    from llm_loop.core.loop.engine_services.interop import InteropService
 
-    parent_eng = _InteropMixin()
+    parent_eng = InteropService(None)  # 02e 服务化：mixin 裸实例 → host=None 裸服务，fail-open 契约不变
     assert parent_eng._interop_inbox_messages() == []
     done_dir = tmp_path / "interop" / "lfl_to_dsh" / "done"
     payloads = [json.loads(f.read_text(encoding="utf-8")) for f in sorted(done_dir.glob("*.json"))]

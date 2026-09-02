@@ -36,6 +36,7 @@ from llm_loop.core.loop.build import _BuildMixin  # EVO-20260817-e63f712f: 消�
 from llm_loop.core.loop.engine_services.archive import ArchiveService
 from llm_loop.core.loop.engine_services.attempt_executor import AttemptExecutor
 from llm_loop.core.loop.engine_services.fallback import FallbackService
+from llm_loop.core.loop.engine_services.interop import InteropService
 from llm_loop.core.loop.engine_services.interrupted_capture import InterruptedCapture
 from llm_loop.core.loop.engine_services.recovery_controller import RecoveryController
 from llm_loop.core.loop.engine_services.routing import (
@@ -49,7 +50,6 @@ from llm_loop.core.loop.engine_services.session_lifecycle import SessionLifecycl
 from llm_loop.core.loop.engine_services.termination_controller import TerminationController
 from llm_loop.core.loop.engine_services.tool_cycle import ToolCycleService
 from llm_loop.core.loop.events import _EventsMixin
-from llm_loop.core.loop.interop import _InteropMixin
 from llm_loop.core.loop.kpi import _KpiMixin
 from llm_loop.core.loop.lifecycle import _RunEntrypointMixin
 from llm_loop.core.loop.runstate import _RunState, _RunStateMixin
@@ -151,7 +151,7 @@ class LoopResult:
     cancel_reason: str = ""
 
 
-class LoopEngine(_RunStateMixin, _InteropMixin, _BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _TurnContextMixin):
+class LoopEngine(_RunStateMixin, _BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _TurnContextMixin):
     """五阶段核心循环控制器."""
 
     # EVO 后台 run 执行器（factory 动态装配 BackgroundRunner；声明类型供 pyright 静态检查）
@@ -260,6 +260,7 @@ class LoopEngine(_RunStateMixin, _InteropMixin, _BuildMixin, _EventsMixin, _KpiM
         self._routing = RoutingService(self)  # W4-02b: _RoutingMixin 退役（模型路由职责服务）
         self._fallback = FallbackService(self)  # W4-02c: _FallbackMixin 退役（模型降级链职责服务）
         self._archive = ArchiveService(self)  # W4-02d: _ArchiveMixin 退役（压缩另存职责服务）
+        self._interop = InteropService(self)  # W4-02e: _InteropMixin 退役（协调通道注入职责服务）
         self._session_lifecycle = SessionLifecycle(self)
         self._attempt_executor = AttemptExecutor(self)
         # R9-B5-W3-01: ToolCycleService——工具执行循环职责面（_ToolExecMixin/_ToolEligibilityMixin 迁入）
@@ -372,6 +373,20 @@ class LoopEngine(_RunStateMixin, _InteropMixin, _BuildMixin, _EventsMixin, _KpiM
         return self._archive._archive_feedback_session(session_id)
     def _archive_sink(self, session_id, msg):
         return self._archive._archive_sink(session_id, msg)
+
+    # ---- 协调通道委托壳（W4-02e：_InteropMixin → InteropService；签名面保真——build.py 以绑定方法传递 _inject_interop_messages、tests 直调 _interop_inbox_messages；公开面调用兼容零变化）----
+    def _interop_svc(self) -> InteropService:
+        """服务惰性兜底：tests 以 __new__ 裸构造绕过 __init__ 挂载时补建（fail-open 契约沿 mixin 时代）."""
+        svc = getattr(self, "_interop", None)
+        if svc is None:
+            svc = self._interop = InteropService(self)
+        return svc
+    def _interop_inbox_messages(self):
+        return self._interop_svc()._interop_inbox_messages()
+    def _inject_interop_messages(self, base, prefix_len, session_id=""):
+        return self._interop_svc()._inject_interop_messages(base, prefix_len, session_id)
+    def _inject_switch_notice(self, switch_from, switch_to, sess=None):
+        return self._interop_svc()._inject_switch_notice(switch_from, switch_to, sess)
 
     def _prefix_state_for(self, session_id: str) -> LayeredPrefixState:
         """Return a session-scoped layered-prefix state on the shared engine."""
