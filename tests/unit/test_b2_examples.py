@@ -130,12 +130,14 @@ def test_public_api_signature_snapshot():
     assert _params(build_engine) == ["settings"]
 
     # 引擎核心方法（session_id 位置参数, model 关键字可选）
-    assert _params(LoopEngine.run) == ["self", "session_id", "user_text", "model", "reasoning_effort"]
-    assert _defaults(LoopEngine.run) == {"model": None, "reasoning_effort": None}
-    assert _params(LoopEngine.run_single) == ["self", "user_text", "model"]
-    assert _defaults(LoopEngine.run_single) == {"model": None}
-    assert _params(LoopEngine.run_stream) == ["self", "session_id", "user_text", "model", "reasoning_effort"]
-    assert _defaults(LoopEngine.run_stream) == {"model": None, "reasoning_effort": None}
+    # 快照跟随（2026-09-02 存量基线红修复）: 3.5 ingress（keyword-only 通道凭据）
+    # 已发布于 run/run_single/run_stream 三入口，快照统一跟随
+    assert _params(LoopEngine.run) == ["self", "session_id", "user_text", "model", "reasoning_effort", "ingress"]
+    assert _defaults(LoopEngine.run) == {"model": None, "reasoning_effort": None, "ingress": None}
+    assert _params(LoopEngine.run_single) == ["self", "user_text", "model", "ingress"]
+    assert _defaults(LoopEngine.run_single) == {"model": None, "ingress": None}
+    assert _params(LoopEngine.run_stream) == ["self", "session_id", "user_text", "model", "reasoning_effort", "ingress"]
+    assert _defaults(LoopEngine.run_stream) == {"model": None, "reasoning_effort": None, "ingress": None}
 
     # 配置入口
     assert _params(load_settings) == []
