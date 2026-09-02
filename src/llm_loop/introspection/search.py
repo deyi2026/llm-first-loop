@@ -280,7 +280,23 @@ class RecordSearcher:
     def _search_episode(self, query: str, limit: int, session_id: str) -> list[dict]:
         if self._episode_store is None or not session_id:
             return []
-        return list(self._episode_store.search(session_id, query=query, limit=limit))
+        resolved = list(self._episode_store.search(session_id, query=query, limit=limit))
+        # B2(EVO-20260902-41898b20): truncated run 行并入列表（state=truncated +
+        # run_end_reason），修复"中断 run 在 episode 检索面结构性不可见"；
+        # duck-typing 守卫：无 search_truncated 的存储实现零影响。
+        truncated: list[dict] = []
+        try:
+            truncated = list(
+                self._episode_store.search_truncated(session_id, query=query, limit=limit)
+            )
+        except AttributeError:
+            pass  # duck-typing 守卫：无 search_truncated 的存储实现零影响
+        except Exception:  # noqa: BLE001 — truncated 列表失败不拖垮 resolved 检索
+            truncated = []
+        merged = sorted(
+            resolved + truncated, key=lambda h: str(h.get("ts") or ""), reverse=True
+        )
+        return merged[: max(1, int(limit))]
 
     def hydrate_episode(
         self,
@@ -294,6 +310,14 @@ class RecordSearcher:
 
         if self._episode_store is None or not session_id:
             return None
+        # B2(EVO-20260902-41898b20): truncated ref → compact 记录（摘要字段+两个
+        # 尾段），不跑 transcript 渲染；无该方法的存储实现回退原路径。
+        if str(ref or "").startswith("truncated:"):
+            # duck-typing 派发：无 hydrate_truncated 的存储实现如实回 None
+            try:
+                return self._episode_store.hydrate_truncated(session_id, ref)
+            except AttributeError:
+                return None
         return self._episode_store.hydrate(
             session_id,
             ref,

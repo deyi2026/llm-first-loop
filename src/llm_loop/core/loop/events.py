@@ -14,7 +14,9 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import logging
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -59,16 +61,21 @@ class _EventsMixin:
 
     # ── D1 事件源化辅助（fail-open：禁用/异常如实记录，不抛穿主循环）──
 
-    def _event_append(self, session_id: str, event_type: str, payload: dict) -> None:
-        """D1 事件写入（fail-open：未注入/禁用/异常均如实 warning，不抛穿主循环）."""
+    def _event_append(self, session_id: str, event_type: str, payload: dict) -> Any:
+        """D1 事件写入（fail-open：未注入/禁用/异常均如实 warning，不抛穿主循环）.
+
+        B1/EVO-20260902-41898b20: 返回已落盘 Event（含 seq——B2 truncated 索引
+        幂等键数据源）；未注入/禁用/失败返回 None。存量调用方忽略返回值，零回归。
+        """
         store = getattr(self, "_event_store", None)
         if store is None or getattr(store, "enabled", False) is False:
-            return
+            return None
         try:
-            store.append(session_id, event_type, payload)
+            return store.append(session_id, event_type, payload)
         except Exception as exc:  # noqa: BLE001 — 事件写入失败不阻断循环（fail-open）
             logger.warning("事件写入失败（fail-open）: %s", exc)
             self._record_program_fault("event_write")
+            return None
 
     def _ensure_session_created(self, sess) -> None:
         """会话首次落库时生成 session.created（顶层字段快照，缺失如实置空）."""
@@ -412,3 +419,117 @@ class _EventsMixin:
             self.session.save(sess)
         except Exception:  # noqa: BLE001 — 断连保存失败不抛穿（生成器关闭路径）
             logger.warning("断连会话保存失败（fail-open）: sid=%s", sess.session_id, exc_info=True)
+
+    # ── B1(EVO-20260902-41898b20)：取消/出错中断的半截产物限量落盘 ──
+
+    @staticmethod
+    def _env_tail_limit(name: str, default: int) -> int:
+        """尾部限量 env 读取（非负 int；非法/缺省回退 default；0=关闭该项）。"""
+        raw = os.environ.get(name)
+        if raw is None or raw == "":
+            return default
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            return default
+
+    def _on_llm_interrupted(
+        self,
+        sess,
+        *,
+        text_parts: list[str],
+        reasoning_parts: list[str],
+        reason: str,
+        error_digest: str = "",
+        round_no: int = 0,
+    ) -> None:
+        """B1(EVO-20260902-41898b20)：user_stop/llm_error 中断时半截产物落盘.
+
+        仿 P1-6 `_on_stream_disconnect` 纪律：如实标注（不伪装完整）+ 会话/事件
+        双轨 + 立即保存 + 全程 fail-open（事件日志为主锚）。差异：
+        - 尾部限量保存（INTERRUPT_TEXT_TAIL_CHARS 默认 4000 / INTERRUPT_REASONING_TAIL_CHARS
+          默认 8000；设 0 关闭该项），超限前缀如实标注"仅尾部 N/M 字符"；
+        - 推理尾随行落 `reasoning_content`（Message 原生字段，存储面本就持久化）；
+        - 缓存 `self._last_interrupted` 供 B2 truncated episode 索引；
+        - `llm.interrupted` 事件恒写（零内容中断同样可检索）；
+        - llm_error 且零内容时不加独立消息行（噪声控制；事实由事件+truncated 索引承载）。
+
+        wire 安全：metadata.answer_origin="program" → 投影层既有谓词（base_assembly）
+        将本行替换为字节稳定 `[program-final]` 占位且 reasoning 置 None，零新增 provider 面。
+        """
+        try:
+            text_full = "".join(text_parts)
+            reasoning_full = "".join(reasoning_parts)
+            text_limit = self._env_tail_limit("INTERRUPT_TEXT_TAIL_CHARS", 4000)
+            reasoning_limit = self._env_tail_limit("INTERRUPT_REASONING_TAIL_CHARS", 8000)
+            text_tail = text_full[-text_limit:] if text_limit and text_full else ""
+            reasoning_tail = reasoning_full[-reasoning_limit:] if reasoning_limit and reasoning_full else ""
+            total_partial = len(text_full) + len(reasoning_full)
+            partial_sha = hashlib.sha256(
+                (text_full + reasoning_full).encode("utf-8", "replace")
+            ).hexdigest()
+            info: dict[str, Any] = {
+                "round": int(round_no or 0),
+                "reason": str(reason or ""),
+                "error_digest": str(error_digest or "")[:200],
+                "text_tail": text_tail,
+                "reasoning_tail": reasoning_tail,
+                "partial_chars": total_partial,
+                "partial_sha256": partial_sha,
+            }
+            self._last_interrupted = info  # B2 truncated 索引数据源（run 结束时消费）
+            # 事件主锚：恒写（审计与 B2 索引共用数据源；fail-open 内置）
+            self._event_append(
+                sess.session_id,
+                "llm.interrupted",
+                {
+                    "round": info["round"],
+                    "reason": info["reason"],
+                    "error_digest": info["error_digest"],
+                    "text_tail_chars": len(text_tail),
+                    "reasoning_tail_chars": len(reasoning_tail),
+                    "partial_chars": total_partial,
+                    "partial_sha256": partial_sha,
+                },
+            )
+            if not text_tail and not reasoning_tail and info["reason"] != "cancelled":
+                return  # llm_error 零半截产物：不加消息行（不伪装、不加噪）
+            note = f"\n[截断标注] reason={info['reason']}; 保存尾 {len(text_tail)}/{len(text_full)} 字符"
+            if len(reasoning_full) > len(reasoning_tail):
+                note += f"; 推理保存尾 {len(reasoning_tail)}/{len(reasoning_full)} 字符"
+            if info["error_digest"]:
+                note += f"; error={info['error_digest']}"
+            if text_tail:
+                content = text_tail + note  # 如实标注：尾部非完整回答
+            else:
+                head = f"[截断标注] 本回合被中断（reason={info['reason']}）。"
+                if text_full and not text_tail:
+                    head += "回答文本未保存（tail limit=0）。"
+                elif not text_full:
+                    head += "未产生回答内容。"
+                if reasoning_tail:
+                    head += f"推理保存尾 {len(reasoning_tail)} 字符。"
+                content = head + note.strip()
+            msg = Message(
+                role="assistant",
+                content=content,
+                source=MessageSource.SYSTEM,
+                reasoning_content=reasoning_tail or None,
+                metadata={
+                    "answer_origin": "program",
+                    "run_end_reason": info["reason"],
+                    "llm_interrupted": True,
+                    "partial_chars": total_partial,
+                    "partial_sha256": partial_sha,
+                },
+            )
+            sess.messages.append(msg)
+            self._append_message_event(sess, msg)  # 双轨：事件同步（fail-open 内置）
+            self.session.save(sess)  # 闭合双轨漂移（同 P1-6）
+        except Exception:  # noqa: BLE001 — 中断落盘失败不抛穿（取消/异常路径）
+            logger.warning(
+                "中断半截产物落盘失败（fail-open）: sid=%s reason=%s",
+                getattr(sess, "session_id", "?"),
+                reason,
+                exc_info=True,
+            )

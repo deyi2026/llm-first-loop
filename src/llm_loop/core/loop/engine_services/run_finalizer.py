@@ -57,6 +57,38 @@ class RunFinalizer:
     def __init__(self, host: LoopEngine) -> None:
         self._host = host
 
+    def _index_truncated_run(
+        self, *, session_id: str, run_end_reason: str, rounds: int, run_end_seq: int
+    ) -> None:
+        """B2(EVO-20260902-41898b20): 非 completed 终态 → truncated.jsonl 一行.
+
+        数据源 = host._last_interrupted（B1 cancelled/llm_error 时写入；其余程序
+        终态无半截产物，尾段如实置空）。幂等键 (session_id, run_end_seq)；
+        存储未注入时静默跳过（无索引面即无义务）。
+        """
+        store = getattr(self._host, "episode_store", None)
+        if store is None:
+            return
+        info = getattr(self._host, "_last_interrupted", None) or {}
+        created = store.index_truncated_run(
+            session_id,
+            run_end_reason=run_end_reason,
+            error_digest=str(info.get("error_digest") or ""),
+            last_round=int(info.get("round") or rounds or 0),
+            run_end_seq=run_end_seq,
+            text_tail=str(info.get("text_tail") or ""),
+            reasoning_tail=str(info.get("reasoning_tail") or ""),
+            partial_chars=int(info.get("partial_chars") or 0),
+            partial_sha256=str(info.get("partial_sha256") or ""),
+        )
+        if created:
+            logger.info(
+                "truncated episode 已索引: sid=%s reason=%s run_end_seq=%s",
+                session_id,
+                run_end_reason,
+                run_end_seq,
+            )
+
     def persist_and_settle(
         self,
         *,
@@ -313,8 +345,9 @@ class RunFinalizer:
 
         # DSH 借鉴(2026-08-17): run 生命周期结束事件（对齐 DSH turn/end reason）——
         # 统一出口落盘，结束原因/轮数/token 汇总/耗时一次可查（fail-open 不阻断）
+        _run_end_event = None
         try:
-            self._host._event_append(
+            _run_end_event = self._host._event_append(
                 session_id,
                 "run.end",
                 {
@@ -334,6 +367,22 @@ class RunFinalizer:
             )
         except Exception:  # noqa: BLE001 — run.end 失败 fail-open（不影响返回）
             logger.debug("run.end 事件写入失败（fail-open）")
+
+        # B2(EVO-20260902-41898b20): 一切非 completed 终态（cancelled/llm_error/
+        # overflow/guard_blocked/stagnation/breaker_context_pressure/…）→ truncated
+        # 索引行（独立文件、非退休型、幂等键=(session_id, run_end 事件 seq)），
+        # 修复"中断 run 在 episode 检索面结构性不可见"。completed 不写；fail-open
+        # 不阻断收尾（存档见 run.end 事件）。
+        if _run_end_reason != "completed":
+            try:
+                self._index_truncated_run(
+                    session_id=session_id,
+                    run_end_reason=_run_end_reason,
+                    rounds=rounds,
+                    run_end_seq=int(getattr(_run_end_event, "seq", 0) or 0),
+                )
+            except Exception:  # noqa: BLE001 — 索引失败不阻断 run 返回
+                logger.warning("truncated episode 索引失败（fail-open，不阻断收尾）", exc_info=True)
 
         # EVO-20260820-5bf342ae ②: 长回答落盘（实现抽 events.py _persist_long_answer,
         # 防 engine 膨胀守卫 1136——2026-08-21 内联版触顶后抽取）

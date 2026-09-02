@@ -30,6 +30,12 @@ EPISODE_SCHEMA = 1
 DEFAULT_HYDRATE_CHARS = 6000
 MAX_HYDRATE_CHARS = 12000
 
+# B2(EVO-20260902-41898b20): truncated run 索引（{sid}.truncated.jsonl，非退休型）
+TRUNCATED_SCHEMA = 1
+# 行级 <2KB 硬顶 → 尾段在索引行内二次裁剪（完整尾段存于 B1 会话消息与事件日志）
+TRUNCATED_ROW_TEXT_TAIL_CHARS = 700
+TRUNCATED_ROW_REASONING_TAIL_CHARS = 800
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
@@ -275,6 +281,141 @@ class EpisodeStore:
             f.flush()
             os.fsync(f.fileno())
         return EpisodeIndexResult(ref=ref, created=True)
+
+    # ── B2(EVO-20260902-41898b20)：truncated run 索引（独立文件，非退休型）──
+
+    def _truncated_path(self, session_id: str) -> Path:
+        """truncated 索引独立文件（与 resolved 索引同目录、不混文件、schema 独立演进）."""
+        sid = _validate_session_id(session_id)
+        return self._root / f"{sid}.truncated.jsonl"
+
+    def _iter_truncated(self, session_id: str) -> list[dict[str, Any]]:
+        """按文件顺序（≈时间序）读本会话全部 truncated 行；损坏行跳过不抛穿."""
+        path = self._truncated_path(session_id)
+        if not path.exists():
+            return []
+        out: list[dict[str, Any]] = []
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                for raw in f:
+                    line = raw.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(entry, dict) and entry.get("session_id") == session_id:
+                        out.append(entry)
+        except OSError:
+            return []
+        return out
+
+    def index_truncated_run(
+        self,
+        session_id: str,
+        *,
+        ts: str = "",
+        run_end_reason: str,
+        error_digest: str = "",
+        last_round: int = 0,
+        run_end_seq: int = 0,
+        text_tail: str = "",
+        reasoning_tail: str = "",
+        partial_chars: int = 0,
+        partial_sha256: str = "",
+    ) -> bool:
+        """持久化一条 truncated run 行（append + flush + fsync，幂等）.
+
+        幂等键 = (session_id, run_end_seq)（run_end 事件 seq；seq<=0 视为事件存储
+        不可用，如实追加不去重）。行级 <2KB：尾段入库前二次裁剪（完整尾段在
+        B1 会话消息/事件日志）。永不参与 resolved 退休判定（独立文件天然隔离）。
+
+        Returns:
+            True=新写入；False=幂等命中（已存在同键行）。
+        """
+        sid = _validate_session_id(session_id)
+        if run_end_seq > 0:
+            for entry in self._iter_truncated(sid):
+                try:
+                    if int(entry.get("run_end_seq") or 0) == int(run_end_seq):
+                        return False
+                except (TypeError, ValueError):
+                    continue
+        entry: dict[str, Any] = {
+            "schema": TRUNCATED_SCHEMA,
+            "entry_kind": "truncated",
+            "ref": f"truncated:{int(run_end_seq or 0)}",
+            "session_id": sid,
+            "ts": ts or _now(),
+            "run_end_reason": str(run_end_reason or ""),
+            "error_digest": str(error_digest or "")[:200],
+            "last_round": int(last_round or 0),
+            "run_end_seq": int(run_end_seq or 0),
+            "text_tail": str(text_tail or "")[:TRUNCATED_ROW_TEXT_TAIL_CHARS],
+            "reasoning_tail": str(reasoning_tail or "")[:TRUNCATED_ROW_REASONING_TAIL_CHARS],
+            "partial_chars": int(partial_chars or 0),
+            "partial_sha256": str(partial_sha256 or ""),
+        }
+        path = self._truncated_path(sid)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = (json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n").encode(
+            "utf-8"
+        )
+        with path.open("ab") as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        return True
+
+    def search_truncated(
+        self, session_id: str, query: str = "", limit: int = 10
+    ) -> list[dict[str, Any]]:
+        """truncated 行检索（与 resolved 检索同构的 hit 形状 + state=truncated）."""
+        q = str(query or "").strip().casefold()
+        hits: list[dict[str, Any]] = []
+        for entry in reversed(self._iter_truncated(session_id)):
+            hay = " ".join(
+                str(entry.get(k) or "")
+                for k in ("run_end_reason", "error_digest", "text_tail", "reasoning_tail")
+            ).casefold()
+            if q and q not in hay:
+                continue
+            ref = str(entry.get("ref") or "")
+            reason = str(entry.get("run_end_reason") or "")
+            tail_head = " ".join(str(entry.get("text_tail") or "").split())[:120]
+            summary = (
+                f"ref={ref} | type=truncated | reason={reason}"
+                f" | round={entry.get('last_round', 0)}"
+                + (f" | error={entry.get('error_digest', '')[:120]}" if entry.get("error_digest") else "")
+                + (f" | tail={tail_head}…" if tail_head else "")
+            )
+            hits.append(
+                {
+                    "kind": "episode",
+                    "ts": entry.get("ts", ""),
+                    "id": ref,
+                    "ref": ref,
+                    "state": "truncated",
+                    "run_end_reason": reason,
+                    "summary": summary,
+                }
+            )
+            if len(hits) >= max(1, int(limit)):
+                break
+        return hits
+
+    def hydrate_truncated(self, session_id: str, ref: str) -> dict[str, Any] | None:
+        """truncated ref → compact 记录（不跑 transcript 渲染；行本身即有界 <2KB）."""
+        wanted = str(ref or "").strip()
+        if not wanted.startswith("truncated:"):
+            return None
+        for entry in reversed(self._iter_truncated(session_id)):
+            if str(entry.get("ref") or "") == wanted:
+                out = dict(entry)
+                out["complete"] = True
+                return out
+        return None
 
     def index_tool_span(
         self,
