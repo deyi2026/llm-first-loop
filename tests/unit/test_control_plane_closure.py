@@ -64,11 +64,11 @@ class TestG7ProgrammaticResendRetired:
     def test_resend_markers_absent_from_wire_and_events_scoped(self, tmp_path: Path, monkeypatch):
         """B-G7: 程序化重发文本不在任何 wire 面（端到端 runtime retry 场景见
         test_program_recovery_boundary；此处断言旧 resend 句式已无生产通路）。"""
-        from llm_loop.core.loop.err1210 import _Err1210Mixin
+        from llm_loop.core.loop.engine_services.recovery_controller import RecoveryController
 
         # 旧 auto-continue（resend 武装）方法已不存在于 mixin
-        assert not hasattr(_Err1210Mixin, "_err1210_try_auto_continue")
-        assert hasattr(_Err1210Mixin, "_err1210_try_runtime_retry")
+        assert not hasattr(RecoveryController, "_err1210_try_auto_continue")
+        assert hasattr(RecoveryController, "_err1210_try_runtime_retry")
 
     def test_runtime_retry_event_registered(self):
         """runtime retry 事件类型已注册（audit 轨道可用）。"""

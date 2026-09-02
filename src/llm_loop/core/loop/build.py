@@ -492,7 +492,7 @@ class _BuildMixin:
             tip_tail=getattr(self, "_tip_tail_messages", None),
             defer_refs=getattr(self, "_deferred_replay_refs", None) or [],
             replay_slots=getattr(self, "_deferred_replay_slots", None) or set(),
-            note_defer_replayed=self._note_defer_replayed,
+            note_defer_replayed=self._recovery._note_defer_replayed,
         )
         _inject_parts = _tailc.inject_parts
         tail_msgs = _tailc.tail_msgs

@@ -34,10 +34,8 @@ from llm_loop.core.injection_labels import (
 # M53 拆分: 职责 mixin（signals 信号检查 / runtime 运行时参数 / fallback 模型降级链 / routing 模型路由 / overflow overflow 处理 / tool_exec 工具执行）
 from llm_loop.core.loop.archive import _ArchiveMixin
 from llm_loop.core.loop.build import _BuildMixin  # EVO-20260817-e63f712f: 消息构建拆分
+from llm_loop.core.loop.engine_services.recovery_controller import RecoveryController
 from llm_loop.core.loop.engine_services.termination_controller import TerminationController
-from llm_loop.core.loop.err1210 import (
-    _Err1210Mixin,  # err1210 P0 恢复（tasks 4.2/4.3；状态字段/接线方法均在 err1210.py）
-)
 from llm_loop.core.loop.events import _EventsMixin
 from llm_loop.core.loop.fallback import _FallbackMixin
 from llm_loop.core.loop.interop import _InteropMixin
@@ -151,7 +149,7 @@ class LoopResult:
     cancel_reason: str = ""
 
 
-class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _Err1210Mixin, _ToolEligibilityMixin, _ToolExecMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin, _KpiMixin, _LifecycleMixin, _TurnContextMixin):
+class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _ToolEligibilityMixin, _ToolExecMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin, _KpiMixin, _LifecycleMixin, _TurnContextMixin):
     """五阶段核心循环控制器."""
 
     # EVO 后台 run 执行器（factory 动态装配 BackgroundRunner；声明类型供 pyright 静态检查）
@@ -253,12 +251,14 @@ class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMi
         self._overflow_reinject_count = 0
         # R9 Phase 5 T6-A: 终止域 service（B5-W1-02 迁入 _SignalsMixin/_OverflowMixin 职责）
         self._termination = TerminationController(self)
+        # R9 Phase 5 T6-A: 恢复域 service（B5-W1-03 迁入 _Err1210Mixin 职责；实例态留宿主经 _host 读写）
+        self._recovery = RecoveryController(self)
         # EVO-20260817-cef296f8 L2: 缓存命中率窗口监控（跨 run 累计，实例级；
         # 低命中率 → final_answer 注入诊断 + action_trace 审计，fail-open）
         # EVO-20260817-72fcd94a L3（闭环）: 缓存健康监控 + 发送前门禁（独立模块，程序常态锚点管理）
         from llm_loop.core.cache_health import CacheHealthMonitor
         self._cache_monitor = CacheHealthMonitor()
-        self._err1210_init()  # err1210 P0 恢复状态字段（tasks 4.2；字段语义见 err1210.py）
+        self._recovery._err1210_init()  # err1210 P0 恢复状态字段（tasks 4.2；字段语义见 err1210.py）
         # 2026-08-22 任务聚焦状态（focus 模块: 单向切换锁定 + 任务锚点数据源）
         from llm_loop.core.loop.focus import TaskFocusState
 
@@ -478,7 +478,7 @@ class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMi
         _cancel_reason = ""  # 取消原因标记位（user_stop/runner_stop；""=未取消，收口贯穿 LoopResult）
         _run_started_at = time.monotonic()
         self._termination._reset_overflow_state()  # R4: 每次 run 重置 overflow 注入计数
-        self._err1210_run_begin()  # 修复A: per-run 降级机会（attempted 键 = run seq）
+        self._recovery._err1210_run_begin()  # 修复A: per-run 降级机会（attempted 键 = run seq）
         self._focus.reset()  # 2026-08-22 单向切换锁定重置
         model_used = ""  # M51: 本轮实际使用的模型标签（每轮 LLM 调用时刷新）
         tokens_in = 0  # M52: 本次 run 累计 prompt tokens
@@ -884,12 +884,12 @@ class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMi
                 if overflow_action == "end" and overflow_final is not None:
                     _run_end_reason = "overflow"
                     final_answer = overflow_final
-                    self._err1210_note_defer_lost(session_id, "overflow")  # 二阶失败观测
+                    self._recovery._err1210_note_defer_lost(session_id, "overflow")  # 二阶失败观测
                     break
                 # ── err1210 P0（tasks 4.3）: compact 首请求 1210 定向降级重试（mixin 封装，
                 # 编排与控制流语义见 err1210.py；恢复成功 → 新 resp 走下方正常路径，
                 # 失败 → 原样继续既有错误链；env ERR1210_RECOVERY=0 完全旁路）──
-                _e1210_recovered, resp, _llm_round_ms = self._err1210_attempt_recovery(
+                _e1210_recovered, resp, _llm_round_ms = self._recovery._err1210_attempt_recovery(
                     exc=exc, sess=sess, messages=messages, tools_param=tools_param,
                     llm_client=llm_client, chat_model_arg=chat_model_arg,
                     session_id=session_id, current_resp=resp, current_round_ms=_llm_round_ms,
@@ -982,7 +982,7 @@ class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMi
                     else:
                         # 链全失败 → 已注入汇总提示, 走原异常如实反馈路径
                         _run_end_reason = "llm_error"
-                        final_answer = self._e1210_llm_error_finalize(
+                        final_answer = self._recovery._e1210_llm_error_finalize(
                             session_id, exc, len(messages), "fallback_exhausted"
                         )
                         resp = None  # 程序反馈不得继承上一轮成功响应的 reasoning（GPT 审计 P0：stale reasoning 嫁接）
@@ -996,7 +996,7 @@ class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMi
                     # R8.24-B B-2.4（B-D2）: 恢复链未覆盖的 1210 → runtime
                     # rebuild+retry once（零 prompt、零模型可见文本——B-G7；
                     # 原"程序化用户重发"路径退役：不再 continue 多耗一轮 LLM）。
-                    _rt_resp = self._err1210_try_runtime_retry(
+                    _rt_resp = self._recovery._err1210_try_runtime_retry(
                         exc=exc, sess=sess, session_id=session_id,
                         llm_client=llm_client, chat_model_arg=chat_model_arg,
                         timeout_s=self._runtime_timeout(),
@@ -1017,7 +1017,7 @@ class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMi
                         _llm_round_ms = 0.0  # 恢复轮无 TTFT 单列（design 风险 6，如实不伪造）
                     else:
                         _run_end_reason = "llm_error"
-                        final_answer = self._e1210_llm_error_finalize(session_id, exc, len(messages), "llm_error")
+                        final_answer = self._recovery._e1210_llm_error_finalize(session_id, exc, len(messages), "llm_error")
                         resp = None  # 程序反馈不得继承上一轮成功响应的 reasoning（GPT 审计 P0：stale reasoning 嫁接）
                         break
 
@@ -1028,7 +1028,7 @@ class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMi
                 break
 
             self._record_action("action.llm_decide", "llm_response", self._resp_summary(resp))
-            self._err1210_note_request_count(session_id, len(messages))  # T4.2: 骤降兜底数据源（成功+失败轮均更新——修复B，语义见 err1210.py）
+            self._recovery._err1210_note_request_count(session_id, len(messages))  # T4.2: 骤降兜底数据源（成功+失败轮均更新——修复B，语义见 err1210.py）
             # M52: 聚合本轮 token 用量（含 fallback 成功响应；0 = provider 未提供）
             tokens_in += resp.prompt_tokens
             tokens_out += resp.completion_tokens

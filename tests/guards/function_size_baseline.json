@@ -6,18 +6,17 @@
     "说明": "R9 架构守卫基线 v2。function_lines：全函数 ≥120 行登记（三层红线联动：全局>300 FAIL / core>200 FAIL / core 120-150 WARN）；legacy_super_functions：四函数专属棘轮；local_imports：文件级函数内 import 总量（只减不增，豁免仅 optional/plugin 行内标记）；known_cycles：环登记（Phase 3 断两环后清空并断言空）；exemptions：OQ-7 强约束豁免清单。全部数值 = git HEAD 实测口径。",
     "计量口径": "AST 实测：行数 = end_lineno - lineno + 1；local_imports = 函数体内 import/import-from 语句总数",
     "head_commit": "54743b1",
-    "生成时间": "2026-09-01"
+    "生成时间": "2026-09-01",
+    "迁移记录": "B5-W1-03: err1210.py::_try_err1210_recovery/_defer_store → engine_services/recovery_controller.py（值不变等价迁移，伴 RecoveryController 独立提交）"
   },
   "function_lines": {
     "src/llm_loop/core/loop/fallback.py::_try_fallback_chain": 235,
     "src/llm_loop/eval/oracle_1210.py::run_oracle": 233,
     "src/llm_loop/tools/registry.py::execute": 228,
     "src/llm_loop/tools/registry.py::_run_with_timeout": 222,
-    "src/llm_loop/core/loop/err1210.py::_try_err1210_recovery": 214,
     "src/llm_loop/introspection/tools_model.py::run_switch_model": 192,
     "src/llm_loop/tools/builtin/web_fetch.py::execute": 186,
     "src/llm_loop/tools/builtin/edit_file.py::run": 181,
-    "src/llm_loop/core/loop/err1210.py::_defer_store": 179,
     "src/llm_loop/core/prompt_build/stages/injection_cognitive.py::run_injection_cognitive": 176,
     "src/llm_loop/config.py::load_settings": 172,
     "src/llm_loop/core/prompt_build/stages/cognitive.py::run_cognitive_state": 172,
@@ -51,7 +50,9 @@
     "src/llm_loop/event_log/fork.py::fork_session": 122,
     "src/llm_loop/introspection/tools_status.py::run_search_records": 122,
     "src/llm_loop/core/loop/archive.py::_archive_sink": 121,
-    "src/llm_loop/core/prompt_build/stages/tail_assembly.py::run_tail_assembly": 121
+    "src/llm_loop/core/prompt_build/stages/tail_assembly.py::run_tail_assembly": 121,
+    "src/llm_loop/core/loop/engine_services/recovery_controller.py::_try_err1210_recovery": 214,
+    "src/llm_loop/core/loop/engine_services/recovery_controller.py::_defer_store": 179
   },
   "legacy_super_functions": {
     "src/llm_loop/core/loop/build.py::_build_llm_messages": 199,

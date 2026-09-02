@@ -85,7 +85,7 @@ def _compact_event(engine) -> None:
 
 
 def _attempt(engine, fake, sid: str, msgs: list[dict]):
-    return engine._try_err1210_recovery(
+    return engine._recovery._try_err1210_recovery(
         exc=_e1210(), sess=SimpleNamespace(session_id=sid), messages=msgs,
         tools_param=[], llm_client=fake, chat_model_arg=None, timeout_s=1.0, session_id=sid)
 
@@ -94,12 +94,12 @@ class TestTwoSessionInterleaving:
     def test_interleaved_a1_to_a6(self, tmp_path, monkeypatch):
         engine, fake = _mk_engine(tmp_path, monkeypatch, responses=[_e1210(), _e1210(), _e1210(), _e1210()])
         with _switch_session("A"):
-            engine._err1210_run_begin()
+            engine._recovery._err1210_run_begin()
             msgs_a = _arm_build(engine, 5, "A")
             _compact_event(engine)  # A compact → A 桶 seq=1
             assert engine._compact_event_seq == 1
         with _switch_session("B"):
-            engine._err1210_run_begin()
+            engine._recovery._err1210_run_begin()
             msgs_b = _arm_build(engine, 3, "B")
             _compact_event(engine)  # B compact → B 桶 seq=1（独立计数）
             assert engine._compact_event_seq == 1

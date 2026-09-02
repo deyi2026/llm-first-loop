@@ -20,11 +20,11 @@ from types import SimpleNamespace
 import pytest
 
 from llm_loop.core.cache_health import GATE_NOTE_CONTENT, CacheHealthMonitor
+from llm_loop.core.loop.engine_services.recovery_controller import RecoveryController
 from llm_loop.core.loop.err1210 import (
     InjectedEntry,
     InjectionSpan,
     SlotKind,
-    _Err1210Mixin,
     content_prefix_sha,
     is_err1210,
     record_defer_event,
@@ -277,9 +277,10 @@ class TestInjectionSpan:
         assert InjectionSpan(()).is_tail_contiguous([{"role": "user"}]) is False
 
 
-class _StripStub(_Err1210Mixin):
+class _StripStub(RecoveryController):
     def __init__(self, injections):
-        self._last_build_injections = injections
+        super().__init__(self)  # R9 B5-W1-03: stub 自身充当 host（实例态属性面不变）
+        self._host._last_build_injections = injections
 
 
 class TestStripTailInjections:
@@ -396,14 +397,15 @@ class TestSnapshot:
         ) is None
 
 
-class _DeferStub(_Err1210Mixin):
+class _DeferStub(RecoveryController):
     def __init__(self, data_dir):
-        self.settings = SimpleNamespace(data_dir=str(data_dir))
-        self._cache_monitor = CacheHealthMonitor()
-        self._interop_tail_messages = None
-        self._tip_tail_messages = None
-        self._deferred_replay_refs = []
-        self._deferred_replay_slots = set()
+        super().__init__(self)  # R9 B5-W1-03: stub 自身充当 host（实例态属性面不变）
+        self._host.settings = SimpleNamespace(data_dir=str(data_dir))
+        self._host._cache_monitor = CacheHealthMonitor()
+        self._host._interop_tail_messages = None
+        self._host._tip_tail_messages = None
+        self._host._deferred_replay_refs = []
+        self._host._deferred_replay_slots = set()
 
 
 class TestDeferStore:
@@ -885,7 +887,7 @@ class TestExhaustLifecycle:
         _arm_compact_first(engine, sid)
         engine.run(sid, "任务")  # 耗尽（2 调用）
         # 直接再调 _try_err1210_recovery（同事件）
-        result = engine._try_err1210_recovery(
+        result = engine._recovery._try_err1210_recovery(
             exc=_e1210(), sess=SimpleNamespace(session_id=sid),
             messages=[{"role": "user", "content": "x"}],
             tools_param=[], llm_client=fake, chat_model_arg=None,
@@ -958,10 +960,14 @@ class TestNormalizeWiring:
     def test_strip_branch_wires_residual_aggregate(self):
         from pathlib import Path
 
-        src = (Path(__file__).resolve().parents[2] / "src/llm_loop/core/loop/err1210.py").read_text(
+        src = (
+            Path(__file__).resolve().parents[2]
+            / "src/llm_loop/core/loop/engine_services/recovery_controller.py"
+        ).read_text(
             encoding="utf-8"
         )
         # strip 分支内必须对 strip 结果做残留聚合检查，且保持单次重试（不新增 provider 调用）
+        # （B5-W1-03: 断言随实现迁移 err1210.py → recovery_controller.py，锚点逐字不变）
         assert "residual = self._aggregate_tail_users(retry_messages)" in src
         assert '"strip+aggregate"' in src
         # strip 失败分支的原聚合路径保留（双入口）
@@ -980,7 +986,7 @@ class TestLlmErrorBranchesClearResp:
         )
         # 锚点用分支内独特语句（"llm_error" 字符串在文件更早处出现，不可作锚）；
         # 2026-08-29 拆块后两分支收敛为 _e1210_llm_error_finalize 调用（语义等价）
-        matches = list(re.finditer(r"final_answer = self\._e1210_llm_error_finalize\(", src))
+        matches = list(re.finditer(r"final_answer = self\._recovery\._e1210_llm_error_finalize\(", src))
         assert len(matches) >= 2, f"llm_error 分支应 ≥2 处（fallback_exhausted/llm_error），实际 {len(matches)}"
         for m in matches:
             window = src[m.end() : m.end() + 300]

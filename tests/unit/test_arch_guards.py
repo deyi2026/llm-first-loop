@@ -841,7 +841,7 @@ def test_exemptions_wellformed():
 # ---------------------------------------------------------------------------
 
 _ENGINE_REL = "src/llm_loop/core/loop/engine.py"
-_MIXIN_CAP = 14  # B5-W1-02 实测 14 个（退役 _SignalsMixin/_OverflowMixin → TerminationController）；只允许随退役单调递减
+_MIXIN_CAP = 13  # B5-W1-03 实测 13 个（退役 _Err1210Mixin → RecoveryController；累计 _Signals/_Overflow/_Err1210）；只允许随退役单调递减
 
 
 def _parse_loop_engine_bases(source: str) -> list[str]:
