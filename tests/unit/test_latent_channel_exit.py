@@ -28,11 +28,16 @@ from llm_loop.core.prompt_eligibility import (
 
 
 def test_eg6_slots_registry_memory_tip_retired():
-    """E-G6: memory/tip 槽退出注册表; 存续槽 = {program_recovery, task_active, memory_authorized}."""
+    """E-G6: memory/tip 槽退出注册表.
+
+    存续槽 = {program_recovery, task_active, task_next_step, memory_authorized}——
+    task_next_step 属续聊授权轮 next_step 锚点（ADR-5，仅授权轮产生，同
+    task_active 授权化语义，非自动 producer）。
+    """
     assert "memory" not in PROMPT_DYNAMIC_PRODUCER_SLOTS
     assert "tip" not in PROMPT_DYNAMIC_PRODUCER_SLOTS
     assert frozenset(
-        {"program_recovery", "task_active", "memory_authorized"}
+        {"program_recovery", "task_active", "task_next_step", "memory_authorized"}
     ) == PROMPT_DYNAMIC_PRODUCER_SLOTS
 
 
@@ -61,7 +66,7 @@ def test_eg1_eg3_armed_channels_zero_model_chars(tmp_path):
     wire = "\n".join(str(m.get("content") or "") for m in out)
     for slot in ("memory", "tip", "hotcard", "gate_note", "memory_authorized", "anchor"):
         assert f"[slot:{slot}]" not in wire, f"E-G1/E-G3: slot:{slot} 模型可见 chars=0"
-    assert engine._last_build_injections == []
+    assert engine._run_state().last_build_injections == []
 
 
 def test_eg1_retrieval_plane_storage_untouched(tmp_path):

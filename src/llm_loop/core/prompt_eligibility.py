@@ -33,11 +33,13 @@ TASK_ACTIVE_PROMPT_PREFIX = "[Task Active]"
 # E07 auto memory 与 E08 TIP replay 通道退出（retrieval plane 存储不动；
 # memory 经 input-side 显式指代授权一次检索，走 memory_authorized 授权通道，
 # 不是自动 producer）。program_recovery 属 B 包保留面、task_active 属 E-D5
-# 授权化保留面（无授权时 build 面零投影）。
+# 授权化保留面（无授权时 build 面零投影）。task_next_step 属续聊授权轮
+# next_step 锚点（ADR-5，仅授权轮产生，同 task_active 授权化语义）。
 PROMPT_DYNAMIC_PRODUCER_SLOTS = frozenset(
     {
         "program_recovery",
         "task_active",
+        "task_next_step",
         "memory_authorized",
     }
 )

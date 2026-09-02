@@ -72,19 +72,22 @@ def _arm_build(engine, n: int, label: str) -> list[dict]:
             msg_idx=len(msgs) - 1, slot_kind=SlotKind.INTEROP,
             prefix_sha=content_prefix_sha(content),
             message_ref=Message(role="system", content=content, source=MessageSource.SYSTEM)))
-    engine._last_build_injections = entries
+    engine._run_state().last_build_injections = entries
     return msgs
 
 
 def _compact_event(engine) -> None:
     """模拟 build.py:570-575 compact 事件写点（seq False→True 转变递增，落当前会话桶）."""
     engine._last_history_compacted = True  # 共享字段（本包不改，a6 联动覆盖）
-    if not engine._compact_event_was_compacted:
-        engine._compact_event_seq = engine._compact_event_seq + 1
-    engine._compact_event_was_compacted = True
+    if not engine._run_state().compact_event_was_compacted:
+        engine._run_state().compact_event_seq = engine._run_state().compact_event_seq + 1
+    engine._run_state().compact_event_was_compacted = True
 
 
 def _attempt(engine, fake, sid: str, msgs: list[dict]):
+    # R9-B5-W4-03 尾巴适配: 模拟 run() 开头设回退锚（lifecycle 同源机制）——
+    # 恢复链 timeout 线程内 contextvar 不传播，defer 写点按 mgr.last_active_sid 回退
+    engine._run_state_mgr.last_active_sid = sid
     return engine._recovery._try_err1210_recovery(
         exc=_e1210(), sess=SimpleNamespace(session_id=sid), messages=msgs,
         tools_param=[], llm_client=fake, chat_model_arg=None, timeout_s=1.0, session_id=sid)
@@ -97,37 +100,37 @@ class TestTwoSessionInterleaving:
             engine._recovery._err1210_run_begin()
             msgs_a = _arm_build(engine, 5, "A")
             _compact_event(engine)  # A compact → A 桶 seq=1
-            assert engine._compact_event_seq == 1
+            assert engine._run_state().compact_event_seq == 1
         with _switch_session("B"):
             engine._recovery._err1210_run_begin()
             msgs_b = _arm_build(engine, 3, "B")
             _compact_event(engine)  # B compact → B 桶 seq=1（独立计数）
-            assert engine._compact_event_seq == 1
+            assert engine._run_state().compact_event_seq == 1
         with _switch_session("A"):
             res_a = _attempt(engine, fake, "A", msgs_a)  # A 1210 到达
             assert res_a.stripped_count == 5  # a1: A 剥离 5 条（非 B 的 3/混合）
-            assert engine._compact_event_seq == 1  # a2: A seq 仍 1（B 未污染）
+            assert engine._run_state().compact_event_seq == 1  # a2: A seq 仍 1（B 未污染）
             assert res_a.exhausted is True and engine._err1210_attempted == {"A": 1}
-            assert len(engine._deferred_replay_refs) == 5  # A defer 归属 A
+            assert len(engine._run_state().deferred_replay_refs) == 5  # A defer 归属 A
         with _switch_session("B"):
-            assert engine._deferred_replay_refs == []  # a4: B build 不消费 A defer 槽
+            assert engine._run_state().deferred_replay_refs == []  # a4: B build 不消费 A defer 槽
             res_b = _attempt(engine, fake, "B", msgs_b)  # B 1210 到达
             assert res_b.stripped_count == 3  # a1: B 剥离 3 条；a6: 共享
             # _last_history_compacted（A build 写 True）下 B 判定与串行基线一致
             assert res_b.exhausted and engine._err1210_attempted == {"A": 1, "B": 1}
-            assert len(engine._deferred_replay_refs) == 3  # a6: B defer 归属 B
+            assert len(engine._run_state().deferred_replay_refs) == 3  # a6: B defer 归属 B
             res_b2 = _attempt(engine, fake, "B", msgs_b)
             assert res_b2.attempted and res_b2.exhausted  # a3: 会话内防循环（单次重试）
         trace = Path(os.environ.get("LFL_DATA_DIR", "data")) / "audit" / "defer_trace.jsonl"
         events = [json.loads(x) for x in trace.read_text(encoding="utf-8").splitlines() if x.strip()]
         assert all(e["session_id"] != "B" for e in events if e["event"] == "defer_replayed")
-        engine._last_active_sid = "A"  # a5: 无上下文回退最近活跃会话桶（out-of-run）
-        assert len(engine._deferred_replay_refs) == 5
-        engine._last_active_sid = "B"
-        assert len(engine._deferred_replay_refs) == 3  # a5: 回退锚点切换 → B 桶
+        engine._run_state_mgr.last_active_sid = "A"  # a5: 无上下文回退最近活跃会话桶（out-of-run；锚在 mgr 上）
+        assert len(engine._run_state().deferred_replay_refs) == 5
+        engine._run_state_mgr.last_active_sid = "B"
+        assert len(engine._run_state().deferred_replay_refs) == 3  # a5: 回退锚点切换 → B 桶
 
     def test_a7_no_instance_attribute_leak(self, tmp_path, monkeypatch):
-        """a7: 恢复属性名均不驻留 engine.__dict__（读写全经 property shim 落桶）."""
+        """a7: 恢复域散布字段不驻留 engine.__dict__（W4-03 后正规读写面 = engine._run_state().X）."""
         engine, _ = _mk_engine(tmp_path, monkeypatch, responses=[])
         _attrs = {"_last_build_injections": [], "_compact_event_seq": 1,
                   "_compact_event_was_compacted": True,
@@ -135,7 +138,11 @@ class TestTwoSessionInterleaving:
                   "_deferred_replay_refs": [], "_deferred_replay_slots": set(),
                   "_err1210_run_seq": 3, "_auto_continue_1210": 1,
                   "_program_recovery_tail_message": None}
+        # 引擎构造不初始化任何散布字段
+        assert [attr for attr in _attrs if attr in engine.__dict__] == []
+        # 经桶写入（正规面）后依旧不驻留实例 dict——跨会话状态全在 mgr 桶
         with _switch_session("A"):
+            st = engine._run_state()
             for attr, value in _attrs.items():
-                setattr(engine, attr, value)
+                setattr(st, attr, value)
         assert [attr for attr in _attrs if attr in engine.__dict__] == []

@@ -102,10 +102,16 @@ def _configured_keywords(base: tuple[str, ...], env: str) -> tuple[str, ...]:
 
 
 def detect_task_continuation(text: str) -> bool:
-    """task_active 授权检测（从严触发词表；词表可经 env 配置）."""
+    """task_active 授权检测（从严触发词表 + /continue 续聊指令；词表可经 env 配置).
+
+    ``/continue`` 与飞书 ``_try_handle_continue_command`` 同口径（strip+lower 精确匹配），
+    是明确的续聊授权信号；不影响 memory 显式指代检测。
+    """
     t = str(text or "")
     if not t:
         return False
+    if t.strip().lower() == "/continue":
+        return True
     keywords = _configured_keywords(
         TASK_CONTINUATION_KEYWORDS, "LFL_TASK_CONTINUE_KEYWORDS"
     )

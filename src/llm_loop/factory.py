@@ -1011,9 +1011,9 @@ def build_engine(settings: Settings) -> LoopEngine:
     engine.set_workspace(current_ws.path, current_ws.id)
 
     # R1: 上下文占用分解注入 architecture_status（AI 每轮可见，自主决策压缩/切换）
-    status_provider.set_context_breakdown_fn(lambda: getattr(engine, "_last_breakdown", None))
-    # EVO-20260827-ed4c1350（P0-B）: 有效预算归因（engine 每 round 刷新 _last_budget_info）
-    status_provider.set_budget_fn(lambda: getattr(engine, "_last_budget_info", None))
+    status_provider.set_context_breakdown_fn(lambda: engine._run_state().last_breakdown)
+    # EVO-20260827-ed4c1350（P0-B）: 有效预算归因（engine 每 round 刷新 last_budget_info）
+    status_provider.set_budget_fn(lambda: engine._run_state().last_budget_info)
     # EVO-20260818（spec §5.4.1-2）: cache_health/cache_guard 对外可观测注入——
     # cache_guard 回调透传 session_id（guard 窗口 per-session，grill-me Q11）；fail-open
     try:
@@ -1049,7 +1049,7 @@ def build_engine(settings: Settings) -> LoopEngine:
 
     # T3: 上下文占用率注入 runtime（memory_top_k 自适应消费；breakdown 不可用时走默认值零回归）
     def _context_usage_ratio() -> float:
-        bd = getattr(engine, "_last_breakdown", None)
+        bd = engine._run_state().last_breakdown
         if bd is None:
             return 0.0
         total = getattr(bd, "total_chars", 0) or 0

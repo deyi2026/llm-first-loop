@@ -102,6 +102,11 @@ def resolve_authorized(
         _tf_gid = str((_tf_goal or {}).get("id", "") or "")
         if _tf_authorized and _tf_gid and str((_tf_goal or {}).get("status", "")) == "active":
             _tf_store = TaskStore(_tf_audit)
+            # ADR-5: 授权轮追加 next_step 锚点（execution-cursor 优先 → checkpoint 兜底）；
+            # 复用已读 _tf_goal/_tf_store，零额外 Goal/Task 读取（E-G5 不回归）。
+            _tf_next = _resolve_next_step(_tf_store, _tf_gid, sess.session_id, _tf_goal)
+            if _tf_next:
+                inject_parts.append(("task_next_step", f"[Next Step] {_tf_next}"))
             if _tf_store.count_for_goal(_tf_gid) > 0:
                 _tf_state = _tf_store.compute_frontier(_tf_gid)
                 _tf_doing = list(_tf_state.get("in_progress") or [])
@@ -144,3 +149,25 @@ def resolve_authorized(
         _decision["mode"] = "fail_open"
     _decision.setdefault("mode", "noop")
     return _decision
+
+
+def _resolve_next_step(store: Any, goal_id: str, session_id: str, goal: dict | None) -> str:
+    """ADR-5：续聊 next_step 锚点（execution-cursor 优先 → checkpoint 兜底）.
+
+    不新增独立存储读取：checkpoint 复用已读 ``goal``；execution-cursor 仅在
+    TaskStore 已落地 ``get_cursor`` 时才读取（当前未落地 → 恒定走 checkpoint 兜底）。
+    """
+    get_cursor = getattr(store, "get_cursor", None)
+    if callable(get_cursor):
+        try:
+            cursor = get_cursor(goal_id, session_id)
+        except Exception:  # noqa: BLE001 — 游标读取失败降级 checkpoint
+            cursor = None
+        if cursor:
+            next_step = str(getattr(cursor, "next_step", "") or "")
+            if next_step:
+                return next_step
+    checkpoints = (goal or {}).get("checkpoints") or []
+    if checkpoints:
+        return str((checkpoints[-1] or {}).get("next", "") or "")
+    return ""

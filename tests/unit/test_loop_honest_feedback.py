@@ -77,7 +77,7 @@ def test_c3_archive_sink_failure_during_active_run_does_not_pollute_bound_sessio
             from llm_loop.core.run_context import current_session_id
 
             engine.session._bind_run_save_token(active, token)  # noqa: SLF001
-            with engine._run_states_guard:  # noqa: SLF001 — 与engine真实run绑定表一致
+            with engine._run_state_mgr.guard:  # noqa: SLF001 — 与engine真实run绑定表一致（前会话重构: _run_states_guard → _run_state_mgr.guard）
                 engine._run_sessions[sid] = active  # noqa: SLF001
             ctx_token = current_session_id.set(sid)
             try:
@@ -91,7 +91,7 @@ def test_c3_archive_sink_failure_during_active_run_does_not_pollute_bound_sessio
             # 活动对象仍可正常持久化；fault 证据走 selfheal/status，不写 history。
             engine.session.save(active)
         finally:
-            with engine._run_states_guard:  # noqa: SLF001
+            with engine._run_state_mgr.guard:  # noqa: SLF001
                 engine._run_sessions.pop(sid, None)  # noqa: SLF001
             if token is not None:
                 engine.session._deactivate_run_save_token(sid, token)  # noqa: SLF001
