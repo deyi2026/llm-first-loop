@@ -34,6 +34,7 @@ from llm_loop.core.injection_labels import (
 # M53 拆分: 职责 mixin（signals 信号检查 / runtime 运行时参数 / fallback 模型降级链 / routing 模型路由 / overflow overflow 处理 / tool_exec 工具执行）
 from llm_loop.core.loop.archive import _ArchiveMixin
 from llm_loop.core.loop.build import _BuildMixin  # EVO-20260817-e63f712f: 消息构建拆分
+from llm_loop.core.loop.engine_services.attempt_executor import AttemptExecutor
 from llm_loop.core.loop.engine_services.recovery_controller import RecoveryController
 from llm_loop.core.loop.engine_services.session_lifecycle import SessionLifecycle
 from llm_loop.core.loop.engine_services.termination_controller import TerminationController
@@ -256,6 +257,7 @@ class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMi
         self._recovery = RecoveryController(self)
         # R9-B5-W2-01: SessionLifecycle——会话前段 reconcile / workspace 职责面 / 收尾持久化
         self._session_lifecycle = SessionLifecycle(self)
+        self._attempt_executor = AttemptExecutor(self)
         # EVO-20260817-cef296f8 L2: 缓存命中率窗口监控（跨 run 累计，实例级；
         # 低命中率 → final_answer 注入诊断 + action_trace 审计，fail-open）
         # EVO-20260817-72fcd94a L3（闭环）: 缓存健康监控 + 发送前门禁（独立模块，程序常态锚点管理）
@@ -471,50 +473,15 @@ class LoopEngine(_RunStateMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMi
                 self._round_registry_snapshots(model, sess)
             )
 
-            # M54: 模型窗口感知的主动压缩 — 先定模型标签, 再按其同一快照窗口收紧历史预算
-            planned_label = self._planned_model_label(
-                model, sess, registry_snapshot=_planning_registry
-            )
-            self._set_model_label_ctx(planned_label)
-            effective_budget = self._effective_history_budget(
-                planned_label, registry_snapshot=_planning_registry
-            )
-            # R8.24-B B-2.2/B-D5: overflow 确定性收缩消费点——首次 overflow 后
-            # _overflow_shrink_factor 生效（预算收紧 → build 链重组，超出部分走
-            # 既有 lossless 归档链；程序侧确定性 compaction，零 prompt 注入）。
-            _shrink = getattr(self, "_overflow_shrink_factor", None)
-            if _shrink is not None and effective_budget:
-                effective_budget = int(effective_budget * _shrink)
-            # P0-B: 预算归因（architecture_status.context_usage.budget 消费）
-            self._last_budget_info = self._effective_history_budget_detail(
-                planned_label, registry_snapshot=_planning_registry
-            )
-            _tb = int(os.environ.get("TOOL_ROUND_BUDGET", "8000"))
-            _last_tool = next((bool(getattr(m, "tool_calls", None))
-                               for m in reversed(sess.messages) if m.role == "assistant"), False)
-            _is_local_tool = _last_tool and planned_label.split("/", 1)[0] == "local"
-            # 2026-08-24: 工具轮零历史开关 = env TOOL_ROUND_ZERO_HISTORY 显式 > provider 级
-            # tool_round_zero_history 配置（local 已配 true → 工具轮极小窗口默认启用;
-            # 云端不配 → False 零回归）。零历史 = 只发 system+工具 schema+最近完整协议
-            # 配对组 → KV 前缀稳定命中 + prefill 秒级（本地实测 4-13 tokens prefill 0.2-0.8s）
-            _zero_env = os.environ.get("TOOL_ROUND_ZERO_HISTORY")
-            if _zero_env is None and _planning_registry is not None and "/" in planned_label:
-                _spec_tmp = _planning_registry.providers.get(planned_label.split("/", 1)[0])
-                _zero_env = "1" if (_spec_tmp is not None and _spec_tmp.tool_round_zero_history) else "0"
-            _tool_round_zero = _is_local_tool and (_zero_env or "0") == "1"  # noqa: E501
-            if _tool_round_zero:
-                effective_budget = min(effective_budget, 4000)
-            elif _tb > 0 and _is_local_tool:
-                effective_budget = min(effective_budget, _tb)
-            self._note_tool_round_budget(
-                _tool_round_zero, _is_local_tool, _tb, effective_budget
-            )
-            if effective_budget < self._runtime_history_budget():
-                self._record_action(
-                    "understand.build_messages",
-                    "model_aware_budget",
-                    f"{planned_label}: {self._runtime_history_budget()}→{effective_budget}",
-                )
+            # M54: 模型窗口感知的主动压缩 — 规划段归装 AttemptExecutor（B5-W2-02；
+            # planned_label/budget 预取链/工具轮零历史判定 → AttemptResult，
+            # build 传参面零变化）
+            _plan = self._attempt_executor.plan(model, sess, _planning_registry)
+            planned_label = _plan.planned_label
+            effective_budget = _plan.effective_budget
+            _tool_round_zero = _plan.tool_round_zero
+            _tb = _plan.tool_budget
+            _is_local_tool = _plan.is_local_tool
             self._focus.anchor_sess = sess  # 2026-08-22 任务锚点数据源（build 注入包装用）
             # P0 压缩风暴熔断（2026-08-25 规格）: 冻结期超安全水位 → context_pressure
             # （实现在 _BuildMixin._breaker_pressure_block——engine 只接线）
