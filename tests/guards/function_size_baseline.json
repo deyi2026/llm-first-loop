@@ -10,7 +10,7 @@
     "迁移记录": "B5-W1-03: err1210.py::_try_err1210_recovery/_defer_store → engine_services/recovery_controller.py（值不变等价迁移，伴 RecoveryController 独立提交）"
   },
   "function_lines": {
-    "src/llm_loop/core/loop/fallback.py::_try_fallback_chain": 235,
+    "src/llm_loop/core/loop/engine_services/fallback.py::_try_fallback_chain": 235,
     "src/llm_loop/eval/oracle_1210.py::run_oracle": 233,
     "src/llm_loop/tools/registry.py::execute": 228,
     "src/llm_loop/tools/registry.py::_run_with_timeout": 222,

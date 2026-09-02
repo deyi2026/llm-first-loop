@@ -35,6 +35,7 @@ from llm_loop.core.injection_labels import (
 from llm_loop.core.loop.archive import _ArchiveMixin
 from llm_loop.core.loop.build import _BuildMixin  # EVO-20260817-e63f712f: 消息构建拆分
 from llm_loop.core.loop.engine_services.attempt_executor import AttemptExecutor
+from llm_loop.core.loop.engine_services.fallback import FallbackService
 from llm_loop.core.loop.engine_services.interrupted_capture import InterruptedCapture
 from llm_loop.core.loop.engine_services.recovery_controller import RecoveryController
 from llm_loop.core.loop.engine_services.routing import (
@@ -48,7 +49,6 @@ from llm_loop.core.loop.engine_services.session_lifecycle import SessionLifecycl
 from llm_loop.core.loop.engine_services.termination_controller import TerminationController
 from llm_loop.core.loop.engine_services.tool_cycle import ToolCycleService
 from llm_loop.core.loop.events import _EventsMixin
-from llm_loop.core.loop.fallback import _FallbackMixin
 from llm_loop.core.loop.interop import _InteropMixin
 from llm_loop.core.loop.kpi import _KpiMixin
 from llm_loop.core.loop.lifecycle import _RunEntrypointMixin
@@ -151,7 +151,7 @@ class LoopResult:
     cancel_reason: str = ""
 
 
-class LoopEngine(_RunStateMixin, _FallbackMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _TurnContextMixin):
+class LoopEngine(_RunStateMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _TurnContextMixin):
     """五阶段核心循环控制器."""
 
     # EVO 后台 run 执行器（factory 动态装配 BackgroundRunner；声明类型供 pyright 静态检查）
@@ -258,6 +258,7 @@ class LoopEngine(_RunStateMixin, _FallbackMixin, _InteropMixin, _ArchiveMixin, _
         # R9-B5-W2-01: SessionLifecycle——会话前段 reconcile / workspace 职责面 / 收尾持久化
         self._runtime_params = RuntimeParamsService(self)
         self._routing = RoutingService(self)  # W4-02b: _RoutingMixin 退役（模型路由职责服务）
+        self._fallback = FallbackService(self)  # W4-02c: _FallbackMixin 退役（模型降级链职责服务）
         self._session_lifecycle = SessionLifecycle(self)
         self._attempt_executor = AttemptExecutor(self)
         # R9-B5-W3-01: ToolCycleService——工具执行循环职责面（_ToolExecMixin/_ToolEligibilityMixin 迁入）
@@ -342,6 +343,28 @@ class LoopEngine(_RunStateMixin, _FallbackMixin, _InteropMixin, _ArchiveMixin, _
         return self._routing._effective_history_budget(model_label, registry_snapshot=registry_snapshot)
     def _note_tool_round_budget(self, tool_round_zero, is_local_tool, tb, effective_budget):
         return self._routing._note_tool_round_budget(tool_round_zero, is_local_tool, tb, effective_budget)
+
+    # ---- 模型降级链委托壳（W4-02c：_FallbackMixin → FallbackService；签名面为运行时参数形（类型标注见 FallbackService 真身），kwonly 默认值保留且按名转发实值——公开面调用兼容零变化）----
+    def _is_fallback_eligible_error(self, exc):
+        return FallbackService._is_fallback_eligible_error(exc)
+    def _merge_fallback_metadata(self, metadata, context_limit, chars_per_token):
+        return FallbackService._merge_fallback_metadata(metadata, context_limit, chars_per_token)
+    def _same_model_retry_gate(self, *, exc, e1210_recovered, is_default_assembled, sess, messages, tools_param, llm_client, chat_model_arg, session_id, effective_budget, rounds):
+        return self._fallback._same_model_retry_gate(exc=exc, e1210_recovered=e1210_recovered, is_default_assembled=is_default_assembled, sess=sess, messages=messages, tools_param=tools_param, llm_client=llm_client, chat_model_arg=chat_model_arg, session_id=session_id, effective_budget=effective_budget, rounds=rounds)
+    def _same_model_retry_before_fallback(self, *, sess, messages, tools_param, llm_client, chat_model_arg, session_id, effective_budget, rounds):
+        return self._fallback._same_model_retry_before_fallback(sess=sess, messages=messages, tools_param=tools_param, llm_client=llm_client, chat_model_arg=chat_model_arg, session_id=session_id, effective_budget=effective_budget, rounds=rounds)
+    def _try_fallback_chain(self, *, messages, tools, timeout_s, primary_error, session_id, run_round=None, metadata_out=None, request_builder=None):
+        return self._fallback._try_fallback_chain(messages=messages, tools=tools, timeout_s=timeout_s, primary_error=primary_error, session_id=session_id, run_round=run_round, metadata_out=metadata_out, request_builder=request_builder)
+    def _fallback_reason_label(self, exc):
+        return FallbackService._fallback_reason_label(exc)
+    def _build_fallback_notice_message(self, *, from_model, to_model, reason, primary_error):
+        return FallbackService._build_fallback_notice_message(
+            from_model=from_model, to_model=to_model, reason=reason, primary_error=primary_error
+        )
+    def _build_fallback_all_failed_message(self, *, from_model, primary_error, candidate_lines):
+        return FallbackService._build_fallback_all_failed_message(
+            from_model=from_model, primary_error=primary_error, candidate_lines=candidate_lines
+        )
 
     def _prefix_state_for(self, session_id: str) -> LayeredPrefixState:
         """Return a session-scoped layered-prefix state on the shared engine."""

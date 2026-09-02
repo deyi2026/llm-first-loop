@@ -424,8 +424,8 @@ def test_fallback_guard_budget_uses_same_registry_snapshot_as_candidate_client(
     tmp_path, monkeypatch,
 ):
     """fallback client 按旧表选定后即使热重载，GuardRequestContext 预算也必须来自同一旧快照。"""
+    from llm_loop.core.loop.engine_services.fallback import FallbackService
     from llm_loop.core.loop.engine_services.routing import RoutingService
-    from llm_loop.core.loop.fallback import _FallbackMixin
     from llm_loop.llm.client import LLMClient
     from llm_loop.llm.errors import LLMTimeoutError
     from llm_loop.llm.providers import ModelSpec, ProviderRegistry, ProviderSpec
@@ -463,7 +463,7 @@ def test_fallback_guard_budget_uses_same_registry_snapshot_as_candidate_client(
         model_fallbacks_raw="backup/m",
     )
 
-    class _Engine(_FallbackMixin, RoutingService):
+    class _Engine(FallbackService, RoutingService):
         def __init__(self):
             self.llm_pool = pool
             self.status = None

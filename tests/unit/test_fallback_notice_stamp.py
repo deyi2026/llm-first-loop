@@ -21,10 +21,10 @@ from pathlib import Path
 
 import pytest
 
-from llm_loop.core.loop.fallback import (
+from llm_loop.core.loop.engine_services.fallback import (
+    FallbackService,
     _fallback_notice_cooldown_s,
     _fallback_notice_suppressed,
-    _FallbackMixin,
     _load_notice_stamps,
     _notice_stamp_path,
     _record_fallback_notice,
@@ -120,8 +120,9 @@ class _FakePool:
         return "deepseek/primary"
 
 
-class _FakeEngine(_FallbackMixin):
+class _FakeEngine(FallbackService):
     def __init__(self, pool, data_dir: Path):
+        self._host = self  # W4-02c: service 宿主面 = 本桩（沿 02a/02b 先例）
         self.llm_pool = pool
         self.status = None
         self.corrections = None

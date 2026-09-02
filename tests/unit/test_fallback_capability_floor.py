@@ -187,14 +187,17 @@ class TestSameModelRetryBounded:
 
     def _engine_stub(self, tool_messages: bool):
         """最小 engine stub——mixin 方法仅依赖 _runtime_timeout/_cache_monitor/_record_action."""
-        from llm_loop.core.loop.fallback import _FallbackMixin
+        from llm_loop.core.loop.engine_services.fallback import FallbackService
         from llm_loop.core.message import Message, MessageSource
 
         class _CacheMonitor:
             def breaker_active_for(self, _sid: str) -> bool:
                 return False
 
-        class _Stub(_FallbackMixin):
+        class _Stub(FallbackService):
+            def __init__(self) -> None:
+                self._host = self  # W4-02c: service 宿主面 = 本桩（沿 02a/02b 先例）
+
             def _runtime_timeout(self):
                 return 1.0
 

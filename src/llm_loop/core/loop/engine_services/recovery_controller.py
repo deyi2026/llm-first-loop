@@ -7,7 +7,7 @@ _record_action/_event_append/_runtime_timeout/_cache_monitor/_auto_continue_1210
 _program_recovery_tail_message 仍归宿主）。行为零变化：
 
 - err1210 P0 = 剥离尾部注入 → defer 回存槽位 → 单次重试（全路径 fail-open）
-- fallback 路由仅只读引用 _FallbackMixin 面（改造类，B5-W4-02 归装，本步不迁移）
+- fallback 面已随 W4-02c 服务化（engine_services/fallback.py: FallbackService）；本模块对其零运行时依赖
 - classify_and_route 门面（W5-01 RunCoordinator 组装消费预留）
 
 宿主依赖（engine 持有）：settings / _cache_monitor / _record_action / _event_append /

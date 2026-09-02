@@ -4,7 +4,7 @@
 - engine.py: LoopEngine 主类（run 主流程 + 上下文构建 + 归档/记忆）
 - signals.py: _SignalsMixin（信号检查）
 - runtime.py: _RuntimeParamsMixin（运行时参数）
-- fallback.py: _FallbackMixin（模型降级链）
+- engine_services/fallback.py: FallbackService（模型降级链）
 """
 
 from llm_loop.core.loop.engine import (

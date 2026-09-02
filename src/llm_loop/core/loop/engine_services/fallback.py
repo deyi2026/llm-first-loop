@@ -1,11 +1,9 @@
-"""LoopEngine 模型降级链 mixin（M53 拆分: loop.py 1087 行→按职责分文件，纯重构行为零变化）.
+"""FallbackService——模型降级链职责服务（R9-B5-W4-02c：_FallbackMixin 退役；宿主面显式经 self._host 标注，沿 runtime_params v4 惯例）.
 
 design §5.4 行为规则表: 可降级 5xx/429/超时/网络；4xx 非 429 不降级（换模型无用）；
 沿 fallback 链尝试候选，链全部失败如实汇总（原则 2 诚实反馈）。
+(mixin 时代文件级 pyright 豁免已随宿主显式标注移除；如 pyright 报错回退并登记)
 """
-
-# pyright: reportAttributeAccessIssue=false, reportGeneralTypeIssues=false
-# (mixin 模式: self 属性来自混入类 LoopEngine.__init__，pyright 无法静态解析，故文件级关闭这两条；参数/返回类型等其余检查保留)
 
 
 from __future__ import annotations
@@ -16,7 +14,7 @@ import os
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from llm_loop.core.loop.engine import LoopEngine
@@ -89,7 +87,9 @@ def _record_fallback_notice(path: Path, kind: str) -> None:
         logger.warning("fallback notice stamp 写入失败（fail-open，不影响降级）", exc_info=True)
 
 
-class _FallbackMixin:
+class FallbackService:
+    def __init__(self, host: LoopEngine) -> None:
+        self._host = host
     # ── M49（design §5.4）: 降级逻辑辅助 ──
 
     @staticmethod
@@ -129,7 +129,7 @@ class _FallbackMixin:
         )
 
     def _same_model_retry_gate(
-        self: LoopEngine,
+        self,
         *,
         exc: LLMError,
         e1210_recovered: bool,
@@ -157,7 +157,7 @@ class _FallbackMixin:
         )
 
     def _same_model_retry_before_fallback(
-        self: LoopEngine,
+        self,
         *,
         sess,
         messages: list[dict],
@@ -193,7 +193,7 @@ class _FallbackMixin:
         chat_kwargs: dict[str, Any] = {
             "messages": messages,
             "tools": tools_param,
-            "timeout_s": self._runtime_timeout(),
+            "timeout_s": self._host._runtime_timeout(),
             "model": chat_model_arg,
         }
         if isinstance(llm_client, LLMClient):
@@ -206,14 +206,14 @@ class _FallbackMixin:
                 ),
                 compress_count_this_run=getattr(self, "_compress_count_this_run", 0),
                 history_budget=int(effective_budget or 0),
-                breaker_active=self._cache_monitor.breaker_active_for(session_id),
+                breaker_active=self._host._cache_monitor.breaker_active_for(session_id),
                 run_round=rounds,
                 provider=getattr(llm_client, "provider", ""),
                 model=chat_model_arg or getattr(llm_client, "model", ""),
             )
         for attempt in range(1, max_retries + 1):
             try:
-                self._record_action(
+                self._host._record_action(
                     "model.fallback",
                     "same_model_retry",
                     f"attempt={attempt}/{max_retries}",
@@ -229,7 +229,7 @@ class _FallbackMixin:
         return None
 
     def _try_fallback_chain(
-        self: LoopEngine,
+        self,
         *,
         messages: list[dict],
         tools: list[dict],
@@ -260,28 +260,28 @@ class _FallbackMixin:
             resp: 首个成功的降级响应（链全失败/无候选时为 None）。
             messages_to_inject: 提示消息（降级成功提示 / 链全失败汇总；空 list = 无需注入）。
         """
-        if self.llm_pool is None:
+        if self._host.llm_pool is None:
             # 池未装配（如某些测试路径）→ 不启用降级, 调用方如实反馈
             return None, [], None
 
         # 真实ModelClientPool支持不可变snapshot：候选筛选、client构造和GuardRequestContext
         # 必须绑定同一表，避免refresh夹在fallback链中造成client=A而budget/context=B。
         # 最小duck pool（测试/外部注入）没有这些API时完整保留旧接口。
-        snapshot_fn = getattr(self.llm_pool, "registry_snapshot", None)
-        resolved_fn = getattr(self.llm_pool, "get_resolved_client", None)
+        snapshot_fn = getattr(self._host.llm_pool, "registry_snapshot", None)
+        resolved_fn = getattr(self._host.llm_pool, "get_resolved_client", None)
         fallback_registry: Any = None
         if callable(snapshot_fn) and callable(resolved_fn):
             fallback_registry = snapshot_fn()
 
         if fallback_registry is not None:
-            candidates = self.llm_pool.fallback_candidates(registry=fallback_registry)
+            candidates = self._host.llm_pool.fallback_candidates(registry=fallback_registry)
         else:
-            candidates = self.llm_pool.fallback_candidates()
+            candidates = self._host.llm_pool.fallback_candidates()
         if not candidates:
             # MODEL_FALLBACKS 未配置/全非法 → 不启用降级（零回归路径）
             return None, [], None
 
-        from_model = self.llm_pool.get_default_model()
+        from_model = self._host.llm_pool.get_default_model()
         primary_reason = self._fallback_reason_label(primary_error)
 
         candidate_failures: list[tuple[str, str, str]] = []  # (model_ref, error_type, error_msg)
@@ -289,8 +289,8 @@ class _FallbackMixin:
         for ref in candidates:
             try:
                 if fallback_registry is not None and callable(resolved_fn):
-                    client, provider_id, model_id = resolved_fn(
-                        ref, registry=fallback_registry
+                    client, provider_id, model_id = cast(
+                        Any, resolved_fn(ref, registry=fallback_registry)
                     )
                 else:
                     # duck pool兼容：fallback_candidates公开契约仍是规范化provider/model ref。
@@ -298,7 +298,7 @@ class _FallbackMixin:
                     provider_id, sep, model_id = ref.partition("/")
                     if not sep or not provider_id or not model_id:
                         raise ValueError(f"非法 fallback 模型引用: {ref!r}")
-                    client = self.llm_pool.get_client(ref)
+                    client = self._host.llm_pool.get_client(ref)
             except ValueError as exc:
                 # 候选格式 / client 构造失败：记录后继续下一个候选（fail-soft）。
                 candidate_failures.append((ref, type(exc).__name__, str(exc)[:200]))
@@ -331,11 +331,11 @@ class _FallbackMixin:
                 if isinstance(client, LLMClient):
                     fallback_label = f"{provider_id}/{model_id}"
                     fallback_budget = (
-                        self._effective_history_budget(
+                        self._host._effective_history_budget(
                             fallback_label, registry_snapshot=fallback_registry
                         )
                         if fallback_registry is not None
-                        else self._effective_history_budget(fallback_label)
+                        else self._host._effective_history_budget(fallback_label)
                     )
                     chat_kwargs["guard_context"] = GuardRequestContext(
                         session_id=session_id,
@@ -361,7 +361,7 @@ class _FallbackMixin:
                     from llm_loop.core.injection_profile import shadow_profile_event_payload
                     from llm_loop.event_log.model import EVENT_INJECTION_PROFILE_SHADOW
 
-                    self._event_append(
+                    self._host._event_append(
                         session_id,
                         EVENT_INJECTION_PROFILE_SHADOW,
                         shadow_profile_event_payload(
@@ -388,17 +388,17 @@ class _FallbackMixin:
             if metadata_out is not None:
                 label = f"{provider_id}/{model_id}"
                 if fallback_registry is not None:
-                    metadata_out["context_limit"] = self._current_context_limit(
+                    metadata_out["context_limit"] = self._host._current_context_limit(
                         label, registry_snapshot=fallback_registry
                     )
-                    metadata_out["chars_per_token"] = self._provider_chars_per_token(
+                    metadata_out["chars_per_token"] = self._host._provider_chars_per_token(
                         label, registry_snapshot=fallback_registry
                     )
                 else:
-                    metadata_out["context_limit"] = self._current_context_limit(label)
-                    metadata_out["chars_per_token"] = self._provider_chars_per_token(label)
+                    metadata_out["context_limit"] = self._host._current_context_limit(label)
+                    metadata_out["chars_per_token"] = self._host._provider_chars_per_token(label)
             reason = primary_reason
-            self._record_action(
+            self._host._record_action(
                 "action.llm_decide",
                 "fallback_success",
                 f"{from_model}->{to_model}: {reason}",
@@ -410,16 +410,16 @@ class _FallbackMixin:
                 primary_error=primary_error,
             )
             # 状态上报（architecture_status 可见降级态 + 原因, design §5.4）
-            if self.status:
-                self.status.record_fallback(
+            if self._host.status:
+                self._host.status.record_fallback(
                     from_model=from_model,
                     to_model=to_model,
                     reason=reason,
                     session_id=session_id,
                 )
             # 审计落盘
-            if self.corrections is not None:
-                self.corrections.audit_fallback_event(
+            if self._host.corrections is not None:
+                self._host.corrections.audit_fallback_event(
                     from_model=from_model,
                     to_model=to_model,
                     reason=reason,
@@ -431,7 +431,7 @@ class _FallbackMixin:
             kind = f"{from_model}->{to_model}"
             stamp_path = _notice_stamp_path(getattr(self, "settings", None))
             if _fallback_notice_suppressed(stamp_path, kind):
-                self._record_action(
+                self._host._record_action(
                     "action.llm_decide",
                     "fallback_notice_suppressed",
                     f"{kind}（{int(_fallback_notice_cooldown_s())}s 内已提示, 本次仅记录不注入提示消息）",
@@ -453,8 +453,8 @@ class _FallbackMixin:
             candidate_lines=detail_lines,
         )
         # 审计（全失败 = result_status="all_failed"）
-        if self.corrections is not None:
-            self.corrections.audit_fallback_event(
+        if self._host.corrections is not None:
+            self._host.corrections.audit_fallback_event(
                 from_model=from_model,
                 to_model="all_failed",
                 reason=primary_reason,
