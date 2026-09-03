@@ -1,0 +1,23 @@
+# cloudflared Named Tunnel 配置（固定域名访问）
+#
+# 【使用前必须完成】
+#   1. 登录 Cloudflare Zero Trust: https://one.cloudflare.com
+#   2. Networks > Tunnels > Create a tunnel（选 Manual）
+#   3. 获取 Tunnel ID，填入下方 `tunnel:`
+#   4. 下载 credentials file 到本目录，命名为 tunnel.json
+#   5. 添加 Route: 选择域名（如 ui.example.com）指向本地 http://127.0.0.1:8903
+#
+# 生成后启动: ./scripts/start-web-tunnel.sh named
+#
+# 若只想快速测试（临时公共域名，重启即变），用: ./scripts/start-web-tunnel.sh quick
+#
+tunnel: REPLACE_WITH_TUNNEL_ID
+credentials-file: ./tunnel.json
+
+ingress:
+  # 主路由: 浏览器访问 https://YOUR_DOMAIN  → 本地 Web 端（端口以 WEB_PORT 为准，默认 8903）
+  - hostname: YOUR_DOMAIN
+    service: http://127.0.0.1:8903
+
+  # 兜底: 未匹配的路径返回 404（避免误暴露内部路径）
+  - service: http_status:404

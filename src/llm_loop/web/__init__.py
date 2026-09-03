@@ -27,6 +27,27 @@ _STATIC_DIR = Path(__file__).resolve().parent / "static"
 _MUTATING_METHODS = frozenset({"POST", "PUT", "DELETE", "PATCH"})
 
 
+def _load_origin_allowlist() -> frozenset[str]:
+    """读取 WEB_ORIGIN_ALLOWLIST（逗号分隔的公网域名，如 example.com,my-tunnel.cfargotunnel.com）.
+
+    用于 cloudflared 等隧道暴露场景：浏览器 Origin 为隧道域名（非回环）时，
+    命中白名单即放行写请求（否则 _OriginGuardMiddleware 会按 P2-1 返回 403）。
+    空值=不启用白名单（仅回环豁免，零回归原有安全语义）。域名统一小写、去端口。
+    """
+    raw = os.environ.get("WEB_ORIGIN_ALLOWLIST", "").strip()
+    if not raw:
+        return frozenset()
+    hosts = set()
+    for item in raw.split(","):
+        host = item.strip().lower()
+        if not host:
+            continue
+        host = host.split(":")[0]  # 去掉可能的端口
+        if host:
+            hosts.add(host)
+    return frozenset(hosts)
+
+
 class _OriginGuardMiddleware:
     """P2-1(2026-08-15，审计发现)：回环豁免部署的跨站写防护.
 
@@ -34,10 +55,16 @@ class _OriginGuardMiddleware:
     （表单/fetch 打 127.0.0.1）。浏览器跨站请求必带 Origin 头——mutating 方法
     携非回环 Origin → 403 如实拒绝；无 Origin（curl/脚本/服务器间）与非
     mutating 方法不受影响（零回归）。令牌鉴权开启时本层冗余但无害。
+
+    扩展（2026-09-04）：WEB_ORIGIN_ALLOWLIST 支持隧道暴露场景。通过 cloudflared
+    等把服务暴露到公网域名时，浏览器 Origin 为隧道域名（非回环），命中白名单
+    即放行写请求；未列入白名单的非回环 Origin 仍按 P2-1 拒绝（安全语义不降级）。
     """
 
     def __init__(self, app):
         self.app = app
+        # 启动期读取一次（env 在 main() 中 load_env_file 后、build_app 前已装配）
+        self.origin_allowlist = _load_origin_allowlist()
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") == "http" and scope.get("method") in _MUTATING_METHODS:
@@ -50,7 +77,7 @@ class _OriginGuardMiddleware:
                 from urllib.parse import urlparse
 
                 host = (urlparse(origin).hostname or "").lower()
-                if not is_loopback(host):
+                if not is_loopback(host) and host not in self.origin_allowlist:
                     body = (
                         '{"error":"foreign_origin_forbidden","detail":'
                         '"跨站 Origin 拒绝（本机服务仅接受回环来源的写请求）。"}'
@@ -172,6 +199,8 @@ def main() -> None:
     # 不可用默认 __file__ 锚定——共享代码（venv .pth 指向镜像 src）会让主区进程
     # 误读镜像 .env 的 WEB_PORT=8903/LFL_DATA_DIR，主区 web 绑镜像端口直接起不来。
     load_env_file(Path.cwd() / ".env")
+    # P1 route attribution: 服务入口本身是 route 的权威事实；显式 LFL_ROUTE 仍优先。
+    os.environ.setdefault("LFL_ROUTE", "web")
     # EVO-20260811-f94e5306: 记录进程启动版本（一致性检测）
     from llm_loop.introspection.proc_version import record_process_start
 

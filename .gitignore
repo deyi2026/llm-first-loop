@@ -67,3 +67,4 @@ logs/
 Nexitally_Surge.fixed.conf
 .venv
 /tasks.md
+cloudflared/tunnel.json
