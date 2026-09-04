@@ -1,8 +1,9 @@
 """R8.24 D'-3.3: breaker pressure 终止条件收窄断言（D-G8——用户指定验证门）.
 
-- D-G8 主断言: LFL_BREAKER_PRESSURE_NARROW=1 时 _breaker_pressure_block 因内部
-  budget 水位终止 run = 0（返回 None + observability 事件在场）。
-- 开关默认 0: 现状行为不变（返回拦截文案 + _run_end_reason 路径仍在 engine）。
+- D-G8 主断言: LFL_BREAKER_PRESSURE_NARROW 缺省或显式 =1 时
+  _breaker_pressure_block 因内部 budget 水位终止 run = 0
+  （返回 None + observability 事件在场）。
+- 显式 =0 保留旧拦截行为，作为可回滚兼容锚点。
 - 允许终止 run 的三类（真实 provider window 超限/用户成本/安全）各自单测在场:
   * 真实 window 超限 → test_overflow_lifecycle.py / overflow_action == "end" 路径
     （M 红线既有面——本文件静态断言接线在场，不修改）
@@ -69,8 +70,11 @@ class _Sess:
         )
 
 
-def _run(monkeypatch, narrow: str, *, breaker=True, pressure=True):
-    monkeypatch.setenv("LFL_BREAKER_PRESSURE_NARROW", narrow)
+def _run(monkeypatch, narrow: str | None, *, breaker=True, pressure=True):
+    if narrow is None:
+        monkeypatch.delenv("LFL_BREAKER_PRESSURE_NARROW", raising=False)
+    else:
+        monkeypatch.setenv("LFL_BREAKER_PRESSURE_NARROW", narrow)
     eng = _StubEngine(breaker=breaker, pressure=pressure)
     out = eng._breaker_pressure_block(_Sess(), effective_budget=1000, planned_label="local/qwen")
     return eng, out
@@ -78,6 +82,14 @@ def _run(monkeypatch, narrow: str, *, breaker=True, pressure=True):
 
 class TestDG8NarrowModeNoTermination:
     """D-G8: 收窄态内部 budget 水位不终止 run."""
+
+    def test_default_is_narrow(self, tmp_path, monkeypatch, caplog):
+        """P3.3-B: 未配置开关时默认观测放行，不再把性能水位升级成任务终止。"""
+        with caplog.at_level(logging.INFO, logger="llm_loop.core.loop.build"):
+            eng, out = _run(monkeypatch, None)
+        assert out is None
+        assert "event=breaker.context_pressure_narrowed" in caplog.text
+        assert any(a[1] == "breaker_context_pressure_narrowed" for a in eng.actions)
 
     def test_narrow_returns_none(self, tmp_path, monkeypatch, caplog):
         """主断言: 超安全水位 + breaker active + 收窄态 → 返回 None（run 不终止）."""
@@ -99,25 +111,24 @@ class TestDG8NarrowModeNoTermination:
         assert out is None  # 文案载体（返回 str）已消失——指令面移交 compaction 链
 
 
-class TestOffStateStatusQuo:
-    """开关默认 0: 现状行为不变（可回滚锚点）."""
+class TestExplicitLegacyRollback:
+    """显式 0 保留旧阻断行为，作为兼容/回滚锚点."""
 
-    def test_default_returns_block_copy(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("LFL_BREAKER_PRESSURE_NARROW", raising=False)
+    def test_explicit_zero_returns_block_copy(self, tmp_path, monkeypatch):
         eng, out = _run(monkeypatch, "0")
         assert out is not None
         assert "上下文压力" in out
         assert any(a[1] == "breaker_context_pressure" for a in eng.actions)
 
-    def test_no_breaker_returns_none_both_states(self, tmp_path, monkeypatch):
-        """breaker 未激活 → 两态均放行（现状语义）."""
-        for narrow in ("0", "1"):
+    def test_no_breaker_returns_none_all_states(self, tmp_path, monkeypatch):
+        """breaker 未激活 → 默认/显式两态均放行."""
+        for narrow in (None, "0", "1"):
             _, out = _run(monkeypatch, narrow, breaker=False)
             assert out is None, f"narrow={narrow}"
 
-    def test_no_pressure_returns_none_both_states(self, tmp_path, monkeypatch):
-        """水位未超 → 两态均放行（现状语义）."""
-        for narrow in ("0", "1"):
+    def test_no_pressure_returns_none_all_states(self, tmp_path, monkeypatch):
+        """水位未超 → 默认/显式两态均放行."""
+        for narrow in (None, "0", "1"):
             _, out = _run(monkeypatch, narrow, pressure=False)
             assert out is None, f"narrow={narrow}"
 
@@ -151,8 +162,7 @@ class TestLegalTerminationSet:
         assert "LFL_BREAKER_PRESSURE_NARROW" in src
 
     def test_engine_run_end_reason_wiring_intact(self):
-        """现状接线在场: 文案非空 → _run_end_reason=breaker_context_pressure
-        （off 态回滚路径完整）."""
+        """显式 0 回滚接线在场: 文案非空 → breaker_context_pressure 仍可收口."""
         from llm_loop.core.loop import engine
 
         src = inspect.getsource(engine)

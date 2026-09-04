@@ -286,8 +286,8 @@ class _BuildMixin:
         水位（compression breaker active）不再独立终止 run——允许终止 run 的仅剩
         三类: ①真实 provider window 超限；②用户成本政策；③安全。其余场景由
         _build_llm_messages 内置 compaction 链（90% 主动压缩/渐进折叠/锚定视图）
-        自行压缩后继续。开关 LFL_BREAKER_PRESSURE_NARROW（默认 0=现状拦截，
-        1=收窄放行+observability 事件）；收窄分支异常 fail 回退现状文案。
+        自行压缩后继续。开关 LFL_BREAKER_PRESSURE_NARROW（默认 1=收窄放行+
+        observability 事件；显式 0=兼容旧拦截回滚）。
         """
         try:
             if not self._cache_monitor.breaker_active_for(sess.session_id):
@@ -315,7 +315,7 @@ class _BuildMixin:
             # 不终止 run，超限载荷由 _build_llm_messages 内置 compaction 链
             # （衔接 B 包 E17 runtime compact）压缩后继续；指令性输出取消
             # （通知面属 B 包 E19 改道）。
-            if os.environ.get("LFL_BREAKER_PRESSURE_NARROW", "0") == "1":
+            if os.environ.get("LFL_BREAKER_PRESSURE_NARROW", "1") == "1":
                 logger.info(
                     "event=breaker.context_pressure_narrowed chars=%d budget=%d model=%s"
                     "（内部水位超安全水位——run 不终止，compaction 链自行压缩后继续）",
