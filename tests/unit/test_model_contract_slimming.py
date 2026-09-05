@@ -105,7 +105,7 @@ def test_g2_lite_has_no_operational_topics():
 
 
 def test_g2_lite_retained_rules_present():
-    """v12 保留集在场（含 current-task authority 与过渡 Rule21）."""
+    """v13 保留集在场；已满足删除条件的过渡 Rule21 必须离场."""
     zh = _read("docs/ai_rules.lite.md")
     for kw in [
         "1诚实",
@@ -115,10 +115,10 @@ def test_g2_lite_retained_rules_present():
         "7工具优先",
         "12身份声明",
         "23当前任务/授权",
-        "21程序反馈语义",
         "灾难性安全",
     ]:
-        assert kw in zh, f"lite v8 保留条目缺失: {kw!r}"
+        assert kw in zh, f"lite v13 保留条目缺失: {kw!r}"
+    assert "21程序反馈语义" not in zh, "已满足删除条件的过渡 Rule21 不得回灌 lite"
 
 
 # ---------- A-G3: 方法层①~⑥ chars=0 ----------
@@ -242,8 +242,11 @@ def test_legacy_playbook_counterexample_exercises_banned_topics():
 # ---------- rules_version 联动（A-2.3 复核）----------
 
 
-def test_rules_version_reflects_v8():
-    """lite 头部 version=8 且 _rules_version() 解析一致（缓存失效联动的前置）."""
+def test_rules_version_reflects_v13():
+    """lite 头部 version=13 且 _rules_version() 解析一致。
+
+    v13 在 B-G5/R8.24-C 已满足后退休迁移期 Rule21，并收正 current-first 检索/SOP 下沉。
+    """
     import sys
 
     sys.path.insert(0, str(_ROOT / "src"))
@@ -251,5 +254,5 @@ def test_rules_version_reflects_v8():
 
     lite = _read("docs/ai_rules.lite.md")
     m = re.search(r"version=(\d+)", lite.splitlines()[0])
-    assert m and m.group(1) == "12", "lite 头部应为 version=12"
-    assert _rules_version() == "12", "_rules_version() 应反映 v12"
+    assert m and m.group(1) == "13", "lite 头部应为 version=13"
+    assert _rules_version() == "13", "_rules_version() 应反映 v13"

@@ -18,6 +18,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from llm_loop.introspection.rule_index import RuleIndex
+
 _VALID_KINDS = {
     "action_trace",
     "exception_log",
@@ -36,6 +38,7 @@ _VALID_KINDS = {
     "feishu_audit",  # P2-6: 飞书消息审计
     "experience",  # P1-2: 经验库检索
     "episode",  # INJECTION-GOVERNANCE R8.5: resolved Q&A/tool-chain index
+    "rule",  # on-demand Rule SoT index / exact hydration
     "all",
 }
 
@@ -120,6 +123,7 @@ class RecordSearcher:
         episode_store: Any | None = None,
         experience_store: Any | None = None,
         semantic_retriever: Any | None = None,
+        rule_path: str | Path | None = None,
     ) -> None:
         self._audit_dir = Path(audit_dir)
         self._memory = memory_store
@@ -127,6 +131,8 @@ class RecordSearcher:
         self._episode_store = episode_store
         self._experience_store = experience_store  # P1-2: 经验库（None 时 _search_experience 返回空）
         self._semantic = semantic_retriever  # T31: 语义检索器（可 None 走关键词）
+        default_rule_path = Path(__file__).resolve().parents[3] / "docs" / "ai_rules.md"
+        self._rule_index = RuleIndex(rule_path or default_rule_path)
         self._last_diagnostics: dict[str, Any] | None = None
 
     @property
@@ -164,6 +170,8 @@ class RecordSearcher:
             return self._search_episode(query, limit, session_id)
         if kind == "experience":  # P1-2: 经验库检索
             return self._search_experience(query, limit)
+        if kind == "rule":
+            return self._rule_index.search(query, limit)
 
         # P1-4: kind=all 时各 kind 均匀分配 limit（避免前序 kind 挤占、后序永远不可见）
         each_limit = max(1, limit // 14) if kind == "all" else limit

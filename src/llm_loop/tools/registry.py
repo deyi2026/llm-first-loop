@@ -55,7 +55,7 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "get_goal": "读取当前 durable Goal 与最近 checkpoints；只返回已记录事实，不替模型决定下一步。",
     "task_frontier": "读取当前 Goal 的 Task 图状态/frontier；程序记结构，模型决定如何推进。",
     "architecture_status": "读取 LFL 运行时状态、缓存、异常、配置与动作轨迹；不作为用户任务 Goal 事实源。",
-    "search_records": "按 kind/query 检索历史记录。experience 命中给 stable ref；experience:<id> 水合完整记录，projection_complete=true 时空字段即存储事实；task_applicability 由模型判断。历史命中仍需核对当前事实。",
+    "search_records": "按 kind/query 检索记录。episode=已解决/退休片段，非当前任务；experience 命中给 stable ref 后精确水合；kind=rule 返回 RULE-AI 卡片，RULE-AI-xx 精确水合规则正文。历史适用性由模型判断。",
     "event_stream": "按时间顺序读取统一运行事件流，用于审计、交接与排障。",
     "search_docs": "检索 docs/ Markdown 文档并返回路径、标题、摘要与相关性。",
     "adjust_strategy": "调整白名单运行参数 max_iterations/timeout_s/history_budget，受全局硬上限约束。",
@@ -1345,9 +1345,9 @@ class ToolRegistry:
 
 
 _FAILURE_GUIDANCE = {
-    "failure": "可选项（判断归你）: 检查参数/路径/网络后重试；或改用其他更合适的工具（RULE-AI-02/07）。不确定调用方式可先 search_records(kind=memory)/search_docs 查证（EVO-20260814-3c65c11b）；禁止逐个试错探测。",
-    "error": "可选项（判断归你）: 检查输入后重试；或换用等价工具完成任务。不确定调用方式可先 search_records(kind=memory)/search_docs 查证（EVO-20260814-3c65c11b）。",
-    "timeout": "可选项（判断归你）: 重试（可增大超时或换更轻量方案）；或改用其他工具。",
+    "failure": "可选项（判断归你）[RULE-AI-02/07]: 先按本次 status/error 检查参数/路径/网络与当前工具 schema/参数；需要完整 schema 用 get_tool_schema。当前事实不足或复用已验路径时，再按需 search_records(kind=experience/memory)/search_docs；禁止逐个试错探测。",
+    "error": "可选项（判断归你）[RULE-AI-02/07]: 先按本次 error 与当前工具 schema/参数检查；需要完整 schema 用 get_tool_schema。当前事实不足或复用已验路径时，再按需 search_records(kind=experience/memory)/search_docs。",
+    "timeout": "可选项（判断归你）: 先结合本次 timeout 与当前工具/网络事实判断；可有界重试（如增大超时）或换更轻量方案。",
 }
 
 

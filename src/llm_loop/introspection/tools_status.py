@@ -462,6 +462,25 @@ def _render_experience_record(record: dict, fallback_kind: str) -> str:
     return "\n".join(fields)
 
 
+def _render_rule_record(record: dict, fallback_kind: str) -> str:
+    ref = str(record.get("rule_ref") or record.get("key") or "")
+    title = str(record.get("summary") or "")
+    representation = str(record.get("representation") or "rule_card")
+    complete = str(bool(record.get("projection_complete"))).lower()
+    applicability = str(record.get("task_applicability") or "not_evaluated")
+    version = str(record.get("source_version_token") or "")[:16]
+    head = (
+        f"{record.get('kind', fallback_kind)}: {title} | rule_ref={ref} | "
+        f"authority={record.get('authority', 'rule_sot')} | representation={representation} | "
+        f"projection_complete={complete} | task_applicability={applicability} | "
+        f"source_version={version}"
+    )
+    if record.get("hydrated"):
+        return head + f"\nsource={record.get('source', '')}\ncontent={record.get('content', '')}"
+    synopsis = str(record.get("synopsis") or "")
+    return head + f" | synopsis={synopsis}"
+
+
 def _finalize_search_records(
     search_fn: Any, kind: str, query: str, limit: int, result: list[dict]
 ) -> ToolResult:
@@ -500,8 +519,14 @@ def _finalize_search_records(
     lines: list[str] = []
     raw_lines: list[str] = []
     for r in result[:limit]:
-        if str(r.get("kind", kind)) == "experience":
+        record_kind = str(r.get("kind", kind))
+        if record_kind == "experience":
             rendered = _render_experience_record(r, kind)
+            lines.append(rendered)
+            raw_lines.append(rendered)
+            continue
+        if record_kind == "rule":
+            rendered = _render_rule_record(r, kind)
             lines.append(rendered)
             raw_lines.append(rendered)
             continue

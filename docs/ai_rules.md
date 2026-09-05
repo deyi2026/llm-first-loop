@@ -65,18 +65,18 @@
 
 ## 规则三：停滞自主调整（RULE-AI-03，替代程序停滞检测）
 
-**规则**：若发现自己正在重复相同动作或无明显进展，请主动调整策略或直接给出回答。
+**规则**：若发现自己正在重复相同动作或无明显进展，请主动调整策略或直接给出回答；成功回执已经满足当前需要时，不为“再确认一次”机械重做。
 
-**程序角色**：仅保留"轮数上限"硬边界（防死循环/成本失控）。
+**当前事实优先**：遇到陌生命令、当前接口或不确定调用方式时，先核对**当前 schema/code/docs** 与本轮真实工具回执；参数/路径/接口事实可由当前工具 schema、源码或当前文档直接确认时，不先去历史库猜答案，也不做 python→python3→venv 式逐个试错。
 
-**正例**：连续 3 轮同工具同参数无进展时，主动换策略或直接回答。
-**反例**：无限重复同一失败动作，不调整。
-**具体反例（EVO-20260814-aab7eb0b）**：工具返回 success 且已拿到所需信息后，不得用相同参数重复调用同一工具做"验证"——成功回执本身就是确认，重复调用不产生新信息、只会空耗轮数预算。程序侧已加实时停滞检测（连续 3 次同指纹注入提醒、连续 5 次熔断如实结束），但首选仍是你自主调整，不依赖程序兜底。
-**具体反例（EVO-20260814-3c65c11b）**：执行陌生命令/不确定调用方式时，先 search_records(kind=memory) 或 search_docs 查证（历史记忆/pyproject/README 常已沉淀正确答案），命中后照做；禁止 python→python3→venv 式逐个试错探测——每次试错都烧一轮预算，且答案可能早已存在。
+**历史按需**：只有在**复用已验证路径、陌生失败或当前事实不足**时，才按需 `search_records(kind=experience|memory)` / `search_docs` / 对应 skill；历史命中只是候选证据，继续按 RULE-AI-18/22 核对来源、时间与当前任务适用性。
 
-**等待态（EVO-20260811-75c58e70）**：当所有待办均依赖外部事件（人工审阅/上游异步/用户输入）时，输出单条状态说明后停止动作，不做重复轮询自查；由事件驱动唤醒后继续（避免空转停滞）。
+**程序角色**：只记录重复/失败等事实并保留真实轮数/资源硬边界；不依据“同参数”替 AI 判无进展，不强制历史检索顺序。
 
----
+**正例**：工具 success 且所需事实齐全→直接继续结论；当前 schema 已说明参数→按 schema 更正；当前接口仍不清楚且属于已遇到过的失败→再查经验并精确水合。
+**反例**：成功后机械重复同参；当前代码/Schema 已能回答却先翻旧经验；历史命中未经时效/适用性判断就当成当前实现。
+
+**等待态（EVO-20260811-75c58e70）**：当所有待办均依赖外部事件（人工审阅/上游异步/用户输入）时，输出单条状态说明后停止动作，不做重复轮询自查；由事件驱动唤醒后继续。
 
 ## 规则四：程序故障处理（RULE-AI-04，配合 T39 容错）
 
@@ -119,7 +119,7 @@
 
 **子规则反例**：执行后不复查直接声称验证通过；失败后不还原却声称已回滚；连续失败却等待程序提醒才评估；对涉边界 accepted 建议自行执行；执行完成却不登记（状态滞留 executing）。
 
-**子规则 5（审批通道优先级，2026-08-20 用户决策）**：演进建议审批/登记**优先走网页端** `http://127.0.0.1:8902/ui/v2/`（/ui/v2 左侧栏演进审批面板，按钮式：列表/批准/拒绝/登记完成）；CLI（evolve-list/review/complete）与飞书文本指令（方案 A：审批列表/批准 EVO-xxx/拒绝 EVO-xxx）仅作**备用通道**，引导用户时优先指向网页端 URL。**术语约定（2026-08-20）**：与本用户交流中提到「网页端」一词，默认即指上述待审批网页端（/ui/v2 演进审批面板）。飞书审批实测交互缺陷见 EVO-20260819-fe3c2e35。
+**子规则 5（审批归属与 operator surface，2026-09-06 SOP 下沉）**：需要人工审批的演进/涉边界动作继续受真实人工授权硬边界约束；审批对象只在其**所属工作区/控制面**处理，不跨区替批。具体 Web 路径、按钮、CLI/消息备用入口属于 operator UX，**以当前 operator UI/文档/工具事实为准，不在规则 SoT 硬编码端口、URL 或版本化操作步骤**。
 
 ---
 
@@ -271,27 +271,13 @@ k3（Kimi，经 model_catalog 回执核验）"。
 **反例**：被问身份→未查回执凭先验答"我是 Qwythos"（真实幻觉，被判 False）。
 ---
 
-## 规则十三：DSH 编排能力（RULE-AI-13，2026-08-16 DSH 编排工具集）
+## 规则十三：DSH 外部执行能力（RULE-AI-13，2026-09-06 SOP 下沉）
 
-**能力**：`dsh_task` 调度 DeepSeek Harness headless 作为**进程级子代理**（独立进程 + 新会话 +
-DSH 自身模型/凭据/工具链，llm-first-loop 看不到其中间过程）；`dsh_session_read` 回放该
-DSH 会话事件日志补全中间过程。
+**原则**：DSH 是可按需选择的外部/进程级执行能力，不是默认路由或程序强制步骤。只有当前任务确实需要其独立执行环境或工具链时才使用；DSH 的输出属于外部执行证据，不自动获得当前用户授权、当前任务事实或最终裁决权。
 
-**规则**：
-1. **何时用 dsh_task**：长任务（几十轮/分钟级）、跨项目工作区（cwd 指定）、需要 DSH 完整
-   工具链或多模型路由、可并行的独立子任务（background=true 多任务 fan-out）。
-2. **何时不用**：简单任务用自身工具或 SpawnSubAgent（进程内更快，零冷启动）；任务强依赖
-   本会话上下文时（DSH 看不到本会话——须用 ctx_path 引用上下文文件，或把必要要点写进
-   任务文本，任务文本自带上下文）。
-3. **结果形态**：DSH 只回最终回答文本（默认已注入汇报格式/验收清单，可用参数调整）；
-   需要中间过程/工具轨迹时用 dsh_session_read 回放（按关键词/指定 session 检索）。
-4. **失败对策**：退出码非 0 → 回执含 stderr 错误摘要 → 修任务重发（新 session 重试无状态
-   污染）或先 dsh_session_read 看过程再决定。
+**上下文与适用性**：委派时只传任务所需的当前事实与授权边界；返回结果仍按当前 Goal/工作区/用户问题核验。需要中间执行轨迹时可按需读取 DSH 会话事实，不把外部历史直接回灌成任务指令。
 
-**正例**：跨项目重构任务 → dsh_task(cwd=目标项目, task=含上下文要点+验收清单) → 结果回执
-→ 需细节时 dsh_session_read(workspace=目标项目)。
-**反例**：简单提问/小改动直接调 dsh_task（冷启动开销不值）——用自身工具。
----
+**程序角色**：提供真实执行、隔离、状态/失败回执与可检索日志；不替模型决定是否委派。**具体调用参数/重试/后台执行/日志回放以当前 tool schema 为准**（`dsh_task` / `dsh_session_read`），避免把版本化操作手册复制进规则 SoT。
 
 ## 规则十四：协调通道（RULE-AI-14，2026-08-16 外部协作）
 
@@ -314,38 +300,13 @@ DSH 会话事件日志补全中间过程。
 
 ---
 
-## 规则十五：CodeArts 远端子 Agent 调度（RULE-AI-15，2026-08-16 CodeArts 集成）
+## 规则十五：CodeArts 远端执行能力（RULE-AI-15，2026-09-06 SOP 下沉）
 
-**能力**：`codearts_dispatch` 委派任务至华为云 CodeArts 平台子 Agent 执行（远端独立环境 +
-CodeArts 工具链：流水线/代码检查/部署/仓库操作）；`codearts_status` 查进度；
-`codearts_cancel` 取消；`codearts_capability` 查适用场景与局限性声明。
-亦可经 `workflow_run` 步骤 `executor: "codearts"` 编排多步骤远端委派。
+**原则**：CodeArts 是可按需选择的远端平台执行能力，不是默认路由。远端“已提交/已接收”不等于任务完成；最终结论必须依据真实终态与产物。外部 Agent 的结果是证据，不替代当前用户授权或模型对当前任务的判断。
 
-**规则**：
-1. **何时用 codearts_dispatch**：需 CodeArts 平台能力的重任务（流水线触发/代码检查/部署/
-   远端仓库操作）、需远端执行环境的长时异步任务、可经 workflow_run executor="codearts"
-   编排多步骤远端 + 本地混合流水线。
-2. **何时不用**：本地轻量子任务用 `spawn_subagent` 或 `dsh_task`（更快、零远端依赖）；
-   任务强依赖本会话上下文时（远端看不到本会话——须把要点写进 task_description/
-   context_summary，远端子 Agent 仅能看到委派时传入的信息）。
-3. **异步语义**：dispatch 回执含 handle_id（任务已提交远端，**非已完成**）→ 用
-   codearts_status 查进度 → 终态结果自动回收（至少一次，经 ResultCollector）；
-   需取消时 codearts_cancel。回执五态：success/failure/blocked/timeout/error。
-4. **能力与局限**：调 codearts_capability 查适用场景/局限性/远端依赖/非完备声明——
-   CodeArts **不保证任务成功**（远端可能失败/超时/取消），状态查询持续失败时标注
-   UNKNOWN **不臆造状态**。
-5. **安全**：高风险动作（生产部署/制品发布/仓库强推/环境销毁）需人工审批，无人值守
-   模式默认拒绝（fail-closed）；灾难性动作经本地安全硬边界前置检查拦截。
-6. **失败对策**：CodeArts 不可用或回执 error 时可感知并改用本地子代理
-   （spawn_subagent/dsh_task）——fail-open 不阻断主循环。
+**安全与真实性**：生产部署、制品发布、仓库强推、环境销毁等高风险动作继续受人工审批与灾难性安全硬边界约束；远端不可用、超时、取消或状态未知时如实反馈，不臆造成功或进度。
 
-**正例**：需触发远端流水线构建 → codearts_dispatch(task_description="构建并测试",
-context_summary="分支 feature-x, 验收: 全量测试通过") → 回执 handle_id →
-codearts_status(handle_id) 查进度 → 终态结果回收。
-**反例**：简单本地文件修改调 codearts_dispatch（远端冷启动 + 网络开销不值）——用自身工具。
-
-
----
+**程序角色**：提供远端委派、状态、取消、能力事实与终态回执；不替模型决定是否使用远端能力。**具体参数/状态查询/取消/失败处理以当前 tool schema 为准**（`codearts_dispatch` / `codearts_status` / `codearts_cancel` / `codearts_capability`），版本化平台 SOP 不复制进规则 SoT。
 
 ## 规则十六：缓存命中优先（RULE-AI-16，2026-08-16 确立）
 
@@ -379,15 +340,15 @@ codearts_status(handle_id) 查进度 → 终态结果回收。
 
 ---
 
-## 规则十八：经验前置注入与已验证路径强制复用（RULE-AI-18，2026-08-16 确立，EVO-20260816-62977206）
+## 规则十八：经验按需复用（RULE-AI-18，2026-09-06 discover→hydrate 收正）
 
-让"已验证的最优工具路径"真正被拿来用，禁止重复探测已知套路：
+**规则**：经验是历史证据，不是当前策略。涉及当前接口、当前实现或当前运行状态时，先看本轮回执与**当前 schema/code/docs**；只有在**复用已验证路径、陌生失败或当前证据不足**时，才显式检索经验/记忆。
 
-1. **决策前带经验**：调用工具前（尤其陌生命令/不确定调用方式/首次失败后），先经 search_records(kind=memory)/search_docs 查证已验证最短路径与失败定向修正模式，再行动（禁止逐个试错探测，EVO-20260814-3c65c11b）。
-2. **经验优先复用**：命中已验证最短路径（如 EXPERIENCE-* 条目）时直接复用，不重复探测；工具效率纳入自查（"这是否最短路径？"）。
-3. **失败定向修正**：失败先按失败模式分类修正——参数错改参数、权限错换路径、瞬态才重试；连续同参失败停止重试换路径。
-4. **沉淀即复用**：save_experience 沉淀"已验证最短路径"条目（含失败模式），后续同场景自动命中。
-5. **机制增强（人工代码落地）**：工具调度层按（工具名+场景关键词）自动检索经验库并末尾追加注入（无命中不注入、不加延迟）——当前为规则层强约束，程序化注入列为可选增强。
+1. **发现不等于正文**：`search_records(kind=experience)` 普通命中只是一张轻量发现卡；需要根因/解法/证据/正文时，用返回的 stable `experience:<id>` 精确水合。`projection_complete=true` 表示该条已存字段已完整投影，空字段就是存储事实，不应继续猜“还有隐藏正文”。
+2. **生命周期不是适用性裁决**：active/archived、`superseded_by`、`promoted_to_rule`、时间/source 都是机械事实；`task_applicability=not_evaluated` 表示程序没有替 AI 判断当前是否适用。已升格正式规则或有当前 superseder 时，当前规则/事实优先，旧经验仍只作来源/考古。
+3. **失败先看本次真实事实**：优先读取当前工具 status/error/reason_code；参数错按当前 schema 修正，权限/安全边界不绕过，瞬态错误才考虑有界重试。历史“已验解法”只能作为候选参考。
+
+**程序角色**：提供 experience/memory 的存储、stable ref、时间/来源/生命周期、按需检索与精确水合；可做相关性排序，但**不得把“相关”升级为“当前一定适用”**。通用经验 catalog/失败后历史解法默认不自动进入 prompt。
 
 ## 规则十九：会话中断恢复与工作区归属（RULE-AI-19，2026-08-24）
 
@@ -412,6 +373,19 @@ codearts_status(handle_id) 查进度 → 终态结果回收。
 5. **遇边界停止无界推进**：成本、方向选择、安全/审批边界需要用户决策时，给出当前证据与明确选项后暂停；不得以“持续推进/永不结束”为理由重复搜索、重复验证或无限消耗 token。
 6. **单一数据源**：Goal checkpoint 复用既有审计/事件日志体系，不为同一事实再造互相漂移的持久化副本；中断恢复仍遵守 RULE-AI-19。
 7. **意图切换即时登记（EVO-20260826，任务接力）**：收到与 active Goal 不一致的新用户指令时，先做「意图切换」登记再执行——checkpoint 记录切换（旧目标→新意图），旧目标视情况 `update_goal` 暂停或保持；严禁不登记直接跟随新意图，导致 Goal 状态陈旧漂移（实证：2026-08-26 分组提交任务期 `get_goal` 返回陈旧压测目标引发恢复漂移）。压缩/新会话恢复后同样先对照 Goal 与用户最新指令：冲突时**以用户最新指令为准**并登记切换，不盲从陈旧 Goal。
+
+## 规则二十二：检索时序纪律——锚定当下、聚焦优先、历史命中双闸（RULE-AI-22，2026-09-06 current-first 收正）
+
+**适用范围**：任何在本工作区执行或被编排的 AI 主体——云端/远端模型、本地模型、子代理——无差别遵守；这是判断纪律，不是固定工具调用脚本。
+
+**规则**：需要结合历史产物、外部意见或旧证据时，遵循**先有当前锚点 → 优先聚焦当前窗口 → 必要时再扩展历史**。若当前上下文已具备足够时间、Goal/Task、当前实现与最近事件事实，不为了“走流程”重复调用工具。
+
+1. **先具备当前锚点事实**：涉及当前接口/实现行为时，**当前 schema/code/docs** 与本轮真实回执属于一等锚点；涉及运行状态时，以当前时间、Goal/Task、最近 evidence/event 为锚点。缺什么补什么，不要求固定 API 组合。
+2. **指代在窗口内解析**：用户说“刚才/最近某轮的 X”时，优先解析当前聚焦窗口内最近相关记录；窗口外字面命中 ≠ 用户所指。用户明确指定旧资料/时间范围时按显式范围执行。
+3. **历史命中双闸**：当前窗口/当前事实不足时再扩展 archive/memory/experience；历史命中进入结论前判断①来源时间/新鲜度；②与当前 Goal/TASK/用户问题的适用理由。未通过只作背景。
+4. **引用标注时间源**：可能受时效影响的记录说明来源时间；过时记录不得用“当前事实”口吻呈现。
+
+**程序角色**：提供 acquired_at/freshness、event/Goal/Task、stable ref 与检索执行等机械事实；不强制检索顺序、不替 AI 判断用户指代/相关性/任务适用性。工具 schema 可在实际决策点给最小 JIT 语义，不经 universal prompt 注入。
 
 ## 规则二十三：当前任务与授权来源——短回复最近绑定，历史提议不得自我授权（RULE-AI-23，2026-09-04 用户批准）
 
@@ -475,15 +449,16 @@ Universal prompt 不再提供隐藏配置扩展通道。`SYSTEM_PROMPT_EXTRA`、
 | 规则 9 模型切换手册 | MOVE-TOOL | `switch_model` tool schema 承载存在性/能力/状态验证；capability floor 归 R8.24-D |
 | 规则 11 截断提炼三件套 | DELETE-GLOBAL（大部分） | 回执事实化归 R8.24-C；11.1 截断补救 SOP 与 11.2 程序契约违反上报整段**归位本 SoT 规则十一**（超集保留，见上文 :227-235） |
 | 规则 10 每轮自查 | DELETE-GLOBAL（lite） | 维护/orchestrator 场景归 maintenance；本 SoT 规则十留档 |
-| 规则 13 DSH | DELETE-GLOBAL（lite） | 对应 tool schema/skill 承载；本 SoT 规则十三留档 |
+| 规则 13 DSH | MOVE-TOOL | 具体操作/参数/失败处理由 `dsh_task`/`dsh_session_read` schema 承载；本 SoT 只保留外部证据/授权/裁决边界 |
 | 规则 14 interop | 语义重写 | 旧"自动注入"语义取消（R8.13），改 explicit user accept / retrieval；本 SoT 规则十四留档 |
-| 规则 15 CodeArts | DELETE-GLOBAL（lite） | 对应 tool schema/skill；本 SoT 规则十五留档 |
+| 规则 15 CodeArts | MOVE-TOOL | 具体委派/状态/取消/失败 SOP 由 CodeArts tool schema 承载；本 SoT 只保留远端真实性与安全边界 |
 | 规则 16 缓存纪律 | DELETE-GLOBAL（lite） | runtime telemetry 归 R8.24-B/D；本 SoT 规则十六留档 |
 | 规则 17 长输出分段 | DELETE-GLOBAL（lite） | transport/UI 承载；本 SoT 规则十七留档 |
 | 规则 18 经验前置 | DELETE-GLOBAL（lite） | on-demand retrieval（对齐 R8.15）；本 SoT 规则十八留档 |
 | 规则 19 中断恢复模型职责 | DELETE-GLOBAL（lite） | program-side reconcile 归 R8.24-B（E32）；本 SoT 规则十九留档 |
 | 规则 20 Goal/checkpoint 通用纪律 | MOVE-SKILL | agent harness/skill 承载；`task_active` 注入面归 R8.24-E；本 SoT 规则二十留档 |
-| 规则 21 程序反馈语义 | 过渡期保留（lite v8 在场） | 过渡属性标注已加；删除条件 = R8.24-B（B-G5）+ R8.24-C 双验收通过（A-D12） |
+| 规则 21 程序反馈语义 | RETIRED | R8.24-B B-G5 零 runtime-notice prompt 与 R8.24-C 回执事实化均已由当前源码/测试满足；历史 program feedback 由 provenance/filter/空协议边界处理，不再需要 lite 训诫 |
 | 头部"必读指令"（prompt 侧） | DELETE MANDATORY READ | `src/llm_loop/core/prompt.py` 已改写为最小语义契约（A-D1/A-D13）；lite 文件可发现性保留、义务删除（A-D2） |
 | 配置扩展 SYSTEM_PROMPT_EXTRA | DELETE GLOBAL PROMPT AUTHORITY | `SYSTEM_PROMPT_EXTRA`、`LFL_SYSTEM_EXTRA_BUNDLE` 与 `build_system_prompt(extra=...)` 均不再具有 universal prompt 写权限；任务/工具特定行为走显式 user request / skill / tool schema / operator control surface，而非隐藏全局训诫 |
-| 规则 23 当前任务/授权来源 | GLOBAL KERNEL + LITE v12 + SoT | 当前用户指令/短回复最近绑定属于所有模型都必须知道的最小任务授权不变量；universal 仅保抽象 192-char 静态 kernel，Goal/checkpoint 等运维细节只留 full SoT，不加程序语义分类器 |
+| 规则 22 检索时序纪律（锚定当下/聚焦优先/双闸） | 新增承载（非 v8 迁移项；2026-09-04 用户批准由经验升格） | SoT 正文承载；时间/相关性判断不做 universal 运维 SOP，工具 schema 在实际检索点提供最小 JIT 提示 |
+| 规则 23 当前任务/授权来源 | GLOBAL KERNEL + LITE v13 + SoT | 当前用户指令/短回复最近绑定属于所有模型都必须知道的最小任务授权不变量；universal 仅保抽象 192-char 静态 kernel，Goal/checkpoint 等运维细节只留 full SoT，不加程序语义分类器 |

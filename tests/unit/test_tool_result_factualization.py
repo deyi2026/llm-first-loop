@@ -479,6 +479,17 @@ class TestCG7ReferencedToolNames:
         unregistered = [n for n in fake_whitelist if n not in registry.names()]
         assert unregistered == list(fake_whitelist)  # 扫描器对未注册名判红
 
+    def test_failure_guidance_current_facts_before_history(self):
+        """失败引导先看当前事实/schema；历史经验只在事实不足或复用路径时按需查。"""
+        from llm_loop.tools.registry import _FAILURE_GUIDANCE
+
+        for kind in ("failure", "error"):
+            guidance = _FAILURE_GUIDANCE[kind]
+            assert "当前工具 schema/参数" in guidance
+            assert "get_tool_schema" in guidance
+            assert "当前事实不足或复用已验路径" in guidance
+            assert guidance.index("get_tool_schema") < guidance.index("search_records")
+
     def test_registry_failure_guidance_no_unregistered_tool_names(self):
         """_FAILURE_GUIDANCE 文本中的指名工具须在完整注册集在册（模板构造点扫描）。"""
         from llm_loop.tools.registry import _FAILURE_GUIDANCE

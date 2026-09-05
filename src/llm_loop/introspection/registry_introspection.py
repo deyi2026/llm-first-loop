@@ -61,7 +61,7 @@ _SEARCH_ARCHIVE_TOOL_DEF: dict[str, Any] = {
 
 _SEARCH_RECORDS_TOOL_DEF: dict[str, Any] = {
     "name": "search_records",
-    "description": "统一检索历史运行记录/记忆/压缩档案/已解决会话 episode（可查可检索，不限于当前上下文）。episode 可按 stable ref 精确水合；experience 普通命中返回 stable experience_ref 与轻量场景卡，需要根因/解法/证据/正文时用 experience:<id> 精确水合完整记录；projection_complete=true 仅表示所有已存字段均已投影，task_applicability=not_evaluated 仍由模型结合当前事实判断。其它 kind 包括 action_trace/exception_log/self_correction_log/declaration_check/memory/memory_extract/archive/selfheal/param_adjust/evolution/evolution_exec/self_eval/change_log/proc_versions/feishu_audit/experience/all。当前上下文已有信息不必检索。",
+    "description": "检索持久记录与按需知识索引：运行审计、memory、archive、experience、self_eval、resolved episode、rule 等。当前 Goal/Task 状态用 get_goal/task_frontier。episode 表示已解决/退休的对话片段，不代表当前活动任务。episode/experience 普通命中先给 stable ref，再用 exact ref 水合正文。rule 普通查询/空 query 返回轻量 RULE-AI card/index；需要规则正文时用精确 RULE-AI-xx 水合当前 docs/ai_rules.md 单节，projection_complete=true 表示该节完整投影。experience/历史记录仍需检查时间与当前适用性；rule authority=rule_sot 表示当前规则来源，但 task_applicability 仍由模型结合任务判断。",
     "parameters": {
         "type": "object",
         "properties": {
@@ -85,6 +85,7 @@ _SEARCH_RECORDS_TOOL_DEF: dict[str, Any] = {
                     "feishu_audit",
                     "experience",
                     "episode",
+                    "rule",
                     "all",
                 ],
             },
