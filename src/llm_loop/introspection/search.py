@@ -40,6 +40,10 @@ _VALID_KINDS = {
 }
 
 
+class InvalidSearchKindError(ValueError):
+    """kind 取值不合法专用异常（typed 归因事实源）."""
+
+
 def _jsonl_search(
     path: Path,
     query: str,
@@ -123,6 +127,12 @@ class RecordSearcher:
         self._episode_store = episode_store
         self._experience_store = experience_store  # P1-2: 经验库（None 时 _search_experience 返回空）
         self._semantic = semantic_retriever  # T31: 语义检索器（可 None 走关键词）
+        self._last_diagnostics: dict[str, Any] | None = None
+
+    @property
+    def last_diagnostics(self) -> dict[str, Any] | None:
+        """最近一次 experience 检索的机械诊断；非 experience 路径为 None。"""
+        return self._last_diagnostics
 
     def search(
         self,
@@ -140,10 +150,11 @@ class RecordSearcher:
             session_id: 会话过滤（archive 用）.
 
         Raises:
-            ValueError: kind 不合法.
+            InvalidSearchKindError: kind 不合法（ValueError 子类）.
         """
+        self._last_diagnostics = None
         if kind not in _VALID_KINDS:
-            raise ValueError(f"kind '{kind}' 不在可选范围: {', '.join(sorted(_VALID_KINDS))}")
+            raise InvalidSearchKindError(f"kind '{kind}' 不在可选范围: {', '.join(sorted(_VALID_KINDS))}")
 
         if kind == "memory":
             return self._search_memory(query, limit, session_id=session_id)
@@ -408,14 +419,21 @@ class RecordSearcher:
         return merged
 
     def _search_experience(self, query: str, limit: int) -> list[dict]:
-        """P1-2/R3: experience search with exact ``experience:<id>`` hydration."""
+        """Experience search plus scan diagnostics; exact ref remains metadata hydration here."""
         if self._experience_store is None:
+            self._last_diagnostics = None
             return []
         raw = str(query or "").strip()
         exact = raw[len("experience:") :] if raw.lower().startswith("experience:") else raw
         if exact:
             doc = self._experience_store.get(exact)
             if doc is not None:
+                self._last_diagnostics = {
+                    "scanned": 0,
+                    "degraded": 0,
+                    "skipped": 0,
+                    "scan_error": None,
+                }
                 stem = exact.removesuffix(".md")
                 return [
                     {
@@ -430,7 +448,14 @@ class RecordSearcher:
                         "key": f"experience:{stem}",
                     }
                 ][:limit]
-        return self._experience_store.list_active(query, limit)
+        outcome = self._experience_store.search_outcome(query, limit)
+        self._last_diagnostics = {
+            "scanned": outcome.scanned_count,
+            "degraded": outcome.degraded_count,
+            "skipped": outcome.skipped_count,
+            "scan_error": outcome.scan_error,
+        }
+        return outcome.records
 
     @staticmethod
     def _memory_visible_in_session(entry: Any, session_id: str) -> bool:

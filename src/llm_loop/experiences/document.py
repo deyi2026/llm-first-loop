@@ -40,6 +40,10 @@ class ExperienceDocument:
         lines.append(f"evidence: {_yaml_str(self.evidence)}")
         lines.append(f"tags: [{', '.join(_yaml_str(t) for t in self.tags)}]")
         if self.source:
+            if set(self.source.keys()) == {"raw"} and "\n" in str(self.source["raw"]):
+                raise ValueError(
+                    "source 降级形态 raw 值含换行，破坏单行不变量，拒绝写入（防静默改写，design D15）"
+                )
             lines.append("source:")
             for k, v in self.source.items():
                 lines.append(f"  {k}: {_yaml_str(str(v))}")
@@ -56,22 +60,44 @@ class ExperienceDocument:
 
     @classmethod
     def from_md(cls, content: str) -> ExperienceDocument:
-        """解析 YAML front matter 还原对象；失败抛 ExperienceParseError。"""
-        fields_map = _parse_front_matter(content)
-        body = _extract_body(content)
-        return cls(
-            title=str(fields_map.get("title", "")),
-            scenario=str(fields_map.get("scenario", "")),
-            root_cause=str(fields_map.get("root_cause", "")),
-            solution=str(fields_map.get("solution", "")),
-            evidence=str(fields_map.get("evidence", "")),
-            tags=list(fields_map.get("tags", [])),
-            source=dict(fields_map.get("source", {})),
-            status=str(fields_map.get("status", "active")),
-            created_at=str(fields_map.get("created_at", "")),
-            updated_at=str(fields_map.get("updated_at", "")),
-            body=body,
-        )
+        """解析 YAML front matter 还原对象；失败唯一异常形态 ExperienceParseError。
+
+        source 字段非法形态（标量/内联 JSON 等）宽容降级为 {"raw": "<原值>"}，不判死文档
+        （可降级文档态）；其余任何内部异常转译为 ExperienceParseError，不裸逃逸。
+        """
+        try:
+            fields_map = _parse_front_matter(content)
+            body = _extract_body(content)
+            return cls(
+                title=str(fields_map.get("title", "")),
+                scenario=str(fields_map.get("scenario", "")),
+                root_cause=str(fields_map.get("root_cause", "")),
+                solution=str(fields_map.get("solution", "")),
+                evidence=str(fields_map.get("evidence", "")),
+                tags=list(fields_map.get("tags", [])),
+                source=_coerce_mapping(fields_map.get("source", {}), "source"),
+                status=str(fields_map.get("status", "active")),
+                created_at=str(fields_map.get("created_at", "")),
+                updated_at=str(fields_map.get("updated_at", "")),
+                body=body,
+            )
+        except ExperienceParseError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise ExperienceParseError(f"经验文档解析失败({type(exc).__name__}): {exc}") from exc
+
+
+def _coerce_mapping(value: object, field_name: str) -> dict:
+    """映射型字段宽容降级：dict 原样返回，其余形态降级为 {"raw": "<原值文本>"}。
+
+    field_name 供未来映射型字段复用（当前仅 source 调用）；原值文本完整保留（不截断
+    不转义），禁止猜测还原内联 JSON——'{"type": "x"}' 字符串只降级 raw，不 parse 回映射。
+    """
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        return {"raw": value}
+    return {"raw": str(value)}
 
 
 def _yaml_str(val: str) -> str:

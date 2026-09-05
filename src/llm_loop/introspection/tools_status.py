@@ -8,15 +8,87 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.introspection.search import _VALID_KINDS, InvalidSearchKindError
 
-_SEARCH_RECORDS_KIND_HINT = (
-    "action_trace/exception_log/self_correction_log/declaration_check/"
-    "memory/memory_extract/archive/selfheal/param_adjust/evolution/evolution_exec/"
-    "self_eval/change_log/proc_versions/feishu_audit/experience/episode/all"
-)
+_SEARCH_RECORDS_KIND_HINT = "/".join(sorted(_VALID_KINDS))
+
+
+def _sanitize_error_summary(exc: BaseException) -> str:
+    line = " ".join(f"{exc}".split())
+    home = str(Path.home())
+    if home and home != "/":
+        line = line.replace(home, "~")
+    return line[:300]
+
+
+def _read_last_diagnostics(search_fn: Any) -> dict | None:
+    owner = getattr(search_fn, "__self__", None)
+    for obj in (owner, search_fn):
+        diag = getattr(obj, "last_diagnostics", None)
+        if isinstance(diag, dict):
+            return diag
+    return None
+
+
+def _parse_limit(args: dict) -> int | ToolResult:
+    raw = args.get("limit")
+    if raw is None or raw == "":
+        return 10
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return ToolResult(
+            status=ToolResultStatus.FAILURE,
+            content=(
+                f"[参数错误] 事实: limit '{raw}' 取值不合法。\n"
+                "原因: limit 须为整数。\n"
+                "建议: 省略 limit（默认 10）或提供 1-50 的整数后重试。"
+            ),
+            tool_call_id="",
+            tool_name="search_records",
+        )
+
+
+def _kind_param_error_receipt(exc: InvalidSearchKindError) -> ToolResult:
+    return ToolResult(
+        status=ToolResultStatus.FAILURE,
+        content=(
+            f"[参数错误] 事实: {exc}\n原因: kind 取值不合法。\n"
+            f"建议: 可选 {_SEARCH_RECORDS_KIND_HINT}。"
+        ),
+        tool_call_id="",
+        tool_name="search_records",
+    )
+
+
+def _internal_error_receipt(kind: str, exc: BaseException) -> ToolResult:
+    return ToolResult(
+        status=ToolResultStatus.FAILURE,
+        content=(
+            f"[内部错误] 事实: {type(exc).__name__}: {_sanitize_error_summary(exc)}\n"
+            f"原因: kind={kind} 检索执行期间发生内部异常。\n"
+            "建议: 可更换其它合法 kind（如 episode）重试，或联系运维依据日志定位数据问题。"
+        ),
+        tool_call_id="",
+        tool_name="search_records",
+    )
+
+
+def _scan_error_receipt(kind: str, scan_error: str) -> ToolResult:
+    return ToolResult(
+        status=ToolResultStatus.FAILURE,
+        content=(
+            f"[内部错误] 事实: 经验库目录扫描失败: {scan_error}\n"
+            f"原因: kind={kind} 检索涉及的经验库目录级扫描失败。\n"
+            "建议: 检查 experiences 目录权限后重试，或联系运维处理。"
+        ),
+        tool_call_id="",
+        tool_name="search_records",
+    )
 
 # EVO-20260826: architecture_status() 无 dimensions 时默认返回精简子集，
 # 避免全量快照 >8000 字符被截断且不归档→search_archive 取不回（RULE-AI-11.1 截断类型 c）。
@@ -261,8 +333,10 @@ def run_search_records(ctx: Any, search_fn: Any, args: dict, session_id_fn: Any)
         )
     kind = str(args.get("kind", "all")).strip()
     query = str(args.get("query", "")).strip()
-    limit = int(args.get("limit") or 10)
-    limit = max(1, min(limit, 50))
+    parsed_limit = _parse_limit(args)
+    if isinstance(parsed_limit, ToolResult):
+        return parsed_limit
+    limit = max(1, min(parsed_limit, 50))
     # R8.5: resolved episodes are index-first history. Reuse the existing query
     # field so hydration does not permanently expand every request's tool schema:
     #   kind=episode, query=""                    -> recent refs
@@ -334,14 +408,42 @@ def run_search_records(ctx: Any, search_fn: Any, args: dict, session_id_fn: Any)
         )
     try:
         result = search_fn(kind=kind, query=query, limit=limit, session_id=session_id_fn())
-    except ValueError as exc:
-        return ToolResult(
-            status=ToolResultStatus.FAILURE,
-            content=f"[参数错误] 事实: {exc}\n原因: kind 取值不合法。\n建议: 可选 {_SEARCH_RECORDS_KIND_HINT}。",
-            tool_call_id="",
-            tool_name="search_records",
-        )
+    except InvalidSearchKindError as exc:
+        return _kind_param_error_receipt(exc)
+    except Exception as exc:  # noqa: BLE001 - execution failure is not a parameter fact
+        return _internal_error_receipt(kind, exc)
+    return _finalize_search_records(search_fn, kind, query, limit, result)
+
+
+def _finalize_search_records(
+    search_fn: Any, kind: str, query: str, limit: int, result: list[dict]
+) -> ToolResult:
+    diag = _read_last_diagnostics(search_fn)
+    scan_error = diag.get("scan_error") if diag else None
+    skipped = int(diag.get("skipped") or 0) if diag else 0
+    degraded = int(diag.get("degraded") or 0) if diag else 0
+    if scan_error:
+        return _scan_error_receipt(kind, str(scan_error))
+
+    def _diag_section(n: int) -> str:
+        parts = [f"命中 {n} 条"]
+        if degraded:
+            parts.append(f"降级字段记录 {degraded} 条")
+        if skipped:
+            parts.append(f"跳过不可解析文档 {skipped} 个（库不完整）")
+        return "[检索诊断] " + "；".join(parts)
+
     if not result:
+        if skipped > 0:
+            return ToolResult(
+                status=ToolResultStatus.SUCCESS,
+                content=(
+                    f"[search_records] 未命中 '{query}'。注意: 本次扫描跳过 {skipped} 个"
+                    "不可解析文档，结果可能不完整。\n" + _diag_section(0)
+                ),
+                tool_call_id="",
+                tool_name="search_records",
+            )
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=f"[search_records] 未找到匹配 '{query}' 的记录（不伪造结果）。",
@@ -356,12 +458,13 @@ def run_search_records(ctx: Any, search_fn: Any, args: dict, session_id_fn: Any)
         lines.append(prefix + summary[:200])
         raw_lines.append(prefix + summary)
     content = "[search_records] 命中 " + str(len(result)) + " 条:\n" + "\n".join(lines[:6])
-    # M19 FIX-02: 命中 > 展示数时如实标注（真实命中数 len(result)，非截断后计数）
     if len(result) > 6:
         content += (
             f"\n[仅显示前 6 条] 共 {len(result)} 条命中（limit={limit}）。"
             "可缩小 query 或提高 limit 精确检索。"
         )
+    if degraded or skipped:
+        content += "\n" + _diag_section(len(result))
     from llm_loop.core.run_context import current_evidence_shadow_enabled
 
     raw_content = "[search_records] 命中 " + str(len(result)) + " 条:\n" + "\n".join(raw_lines)

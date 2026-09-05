@@ -401,9 +401,12 @@ def test_search_records_schema_has_self_eval():
     assert "self_eval" in enum and "self_eval" in _VALID_KINDS
     assert "self_eval" in td["description"]
 
-    # 错误提示文案含 self_eval（注入检索实现使 kind 校验可达——抛 ValueError 触发错误分支）
+    # 错误提示文案含 self_eval（注入检索实现使 kind 校验可达——R3 typed 归因后
+    # 须抛 InvalidSearchKindError 才归 [参数错误]，裸 ValueError 属内部错误）
+    from llm_loop.introspection.search import InvalidSearchKindError
+
     def _raising(**kw):
-        raise ValueError("kind 'no_such_kind' 不在可选范围")
+        raise InvalidSearchKindError("kind 'no_such_kind' 不在可选范围")
 
     reg._search_records_fn = _raising  # noqa: SLF001
     r = reg.execute("search_records", {"kind": "no_such_kind"})
