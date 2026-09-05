@@ -291,16 +291,68 @@ class ExperienceStore:
 
     @staticmethod
     def _to_record(filename: str, doc: ExperienceDocument) -> dict:
-        """构造检索结果记录（可降级 source 附 degraded_fields 字段级标注，D8）."""
+        """Build a compact discovery card without claiming current applicability."""
+        stem = filename.removesuffix(".md")
+        experience_ref = f"experience:{stem}"
+        scenario = " ".join(str(doc.scenario or "").split())[:240]
         rec: dict = {
             "kind": "experience",
             "ts": doc.updated_at or doc.created_at,
-            "id": filename.removesuffix(".md"),
+            "id": stem,
             "summary": doc.title,
             "file": filename,
             "tags": doc.tags,
             "source": doc.source,
             "status": doc.status,
+            "created_at": doc.created_at,
+            "updated_at": doc.updated_at,
+            "key": experience_ref,
+            "experience_ref": experience_ref,
+            "scenario": scenario,
+            "superseded_by": doc.superseded_by,
+            "promoted_to_rule": doc.promoted_to_rule,
+            "last_verified_at": doc.last_verified_at,
+            "task_applicability": "not_evaluated",
+        }
+        if ExperienceStore._is_degraded_source(doc.source):
+            rec["degraded_fields"] = ["source"]
+        return rec
+
+    @staticmethod
+    def to_hydrated_record(experience_id: str, doc: ExperienceDocument) -> dict:
+        """Project the exact stored experience for explicit ref hydration.
+
+        This is a mechanical projection only.  It deliberately reports that task
+        applicability has not been evaluated so historical evidence cannot become
+        current strategy merely because it was retrieved.
+        """
+        stem = experience_id.removesuffix(".md")
+        experience_ref = f"experience:{stem}"
+        rec: dict = {
+            "kind": "experience",
+            "ts": doc.updated_at or doc.created_at,
+            "id": stem,
+            "summary": doc.title,
+            "file": f"{stem}.md",
+            "tags": doc.tags,
+            "source": doc.source,
+            "status": doc.status,
+            "created_at": doc.created_at,
+            "updated_at": doc.updated_at,
+            "key": experience_ref,
+            "experience_ref": experience_ref,
+            "hydrated": True,
+            "representation": "full_record",
+            "projection_complete": True,
+            "scenario": doc.scenario,
+            "root_cause": doc.root_cause,
+            "solution": doc.solution,
+            "evidence": doc.evidence,
+            "body": doc.body,
+            "superseded_by": doc.superseded_by,
+            "promoted_to_rule": doc.promoted_to_rule,
+            "last_verified_at": doc.last_verified_at,
+            "task_applicability": "not_evaluated",
         }
         if ExperienceStore._is_degraded_source(doc.source):
             rec["degraded_fields"] = ["source"]

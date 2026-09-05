@@ -415,6 +415,53 @@ def run_search_records(ctx: Any, search_fn: Any, args: dict, session_id_fn: Any)
     return _finalize_search_records(search_fn, kind, query, limit, result)
 
 
+def _single_line(value: Any, limit: int = 240) -> str:
+    return " ".join(str(value or "").split())[:limit]
+
+
+def _render_experience_record(record: dict, fallback_kind: str) -> str:
+    """Render either a thin discovery card or an explicitly hydrated experience."""
+    ts = str(record.get("ts", ""))
+    title = str(record.get("summary", ""))
+    ref = str(record.get("experience_ref") or record.get("key") or "")
+    status = str(record.get("status", ""))
+    applicability = str(record.get("task_applicability") or "not_evaluated")
+    source = str(record.get("source") or {})
+    lifecycle = [
+        f"{name}={record.get(name)}"
+        for name in ("superseded_by", "promoted_to_rule", "last_verified_at")
+        if record.get(name)
+    ]
+    lifecycle_suffix = (" | " + " | ".join(lifecycle)) if lifecycle else ""
+    if not record.get("hydrated"):
+        scenario = _single_line(record.get("scenario"))
+        return (
+            f"[{ts}] {record.get('kind', fallback_kind)}: {title} | "
+            f"experience_ref={ref} | status={status} | "
+            f"task_applicability={applicability} | scenario={scenario} | source={source}"
+            f"{lifecycle_suffix}"
+        )
+    fields = [
+        f"[{ts}] {record.get('kind', fallback_kind)}: {title}",
+        f"experience_ref={ref}",
+        f"status={status}",
+        f"task_applicability={applicability}",
+        f"representation={record.get('representation', 'full_record')}",
+        f"projection_complete={str(bool(record.get('projection_complete'))).lower()}",
+        f"created_at={record.get('created_at', '')}",
+        f"updated_at={record.get('updated_at', '')}",
+        f"source={source}",
+        *lifecycle,
+        f"tags={record.get('tags', [])}",
+        f"scenario={record.get('scenario', '')}",
+        f"root_cause={record.get('root_cause', '')}",
+        f"solution={record.get('solution', '')}",
+        f"evidence={record.get('evidence', '')}",
+        f"body={record.get('body', '')}",
+    ]
+    return "\n".join(fields)
+
+
 def _finalize_search_records(
     search_fn: Any, kind: str, query: str, limit: int, result: list[dict]
 ) -> ToolResult:
@@ -453,6 +500,11 @@ def _finalize_search_records(
     lines: list[str] = []
     raw_lines: list[str] = []
     for r in result[:limit]:
+        if str(r.get("kind", kind)) == "experience":
+            rendered = _render_experience_record(r, kind)
+            lines.append(rendered)
+            raw_lines.append(rendered)
+            continue
         summary = str(r.get("summary", ""))
         prefix = f"[{r.get('ts', '')}] {r.get('kind', kind)}: "
         lines.append(prefix + summary[:200])

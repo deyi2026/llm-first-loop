@@ -435,19 +435,7 @@ class RecordSearcher:
                     "scan_error": None,
                 }
                 stem = exact.removesuffix(".md")
-                return [
-                    {
-                        "kind": "experience",
-                        "ts": doc.updated_at or doc.created_at,
-                        "id": stem,
-                        "summary": doc.title,
-                        "file": f"{stem}.md",
-                        "tags": doc.tags,
-                        "source": doc.source,
-                        "status": doc.status,
-                        "key": f"experience:{stem}",
-                    }
-                ][:limit]
+                return [self._experience_store.to_hydrated_record(stem, doc)][:limit]
         outcome = self._experience_store.search_outcome(query, limit)
         self._last_diagnostics = {
             "scanned": outcome.scanned_count,

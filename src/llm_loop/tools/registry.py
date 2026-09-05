@@ -55,7 +55,7 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "get_goal": "读取当前 durable Goal 与最近 checkpoints；只返回已记录事实，不替模型决定下一步。",
     "task_frontier": "读取当前 Goal 的 Task 图状态/frontier；程序记结构，模型决定如何推进。",
     "architecture_status": "读取 LFL 运行时状态、缓存、异常、配置与动作轨迹；不作为用户任务 Goal 事实源。",
-    "search_records": "按 kind/query 检索持久运行记录、记忆、归档、经验、自评与已退休 episode。命中为历史记录：采信前先对照时间锚点（list_evidence/event_stream）；字面命中≠当前所指，过时命中仅作背景。",
+    "search_records": "按 kind/query 检索历史记录。experience 命中给 stable ref；experience:<id> 水合完整记录，projection_complete=true 时空字段即存储事实；task_applicability 由模型判断。历史命中仍需核对当前事实。",
     "event_stream": "按时间顺序读取统一运行事件流，用于审计、交接与排障。",
     "search_docs": "检索 docs/ Markdown 文档并返回路径、标题、摘要与相关性。",
     "adjust_strategy": "调整白名单运行参数 max_iterations/timeout_s/history_budget，受全局硬上限约束。",

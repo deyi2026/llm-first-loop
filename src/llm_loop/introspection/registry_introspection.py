@@ -61,7 +61,7 @@ _SEARCH_ARCHIVE_TOOL_DEF: dict[str, Any] = {
 
 _SEARCH_RECORDS_TOOL_DEF: dict[str, Any] = {
     "name": "search_records",
-    "description": "统一检索历史运行记录/记忆/压缩档案/已解决会话 episode（可查可检索，不限于当前上下文）。当用户说‘继续/上次/之前那个问题’而旧问答已退休时：kind=episode + query空串列最近索引，query=关键词搜索；拿到稳定 episode:... ref 后，把该 ref 直接作为 query 精确水合，若返回 next_query 则用它继续分页。其它 kind 包括 action_trace/exception_log/self_correction_log/declaration_check/memory/memory_extract/archive/selfheal/param_adjust/evolution/evolution_exec/self_eval/change_log/proc_versions/feishu_audit/experience/all。当前上下文已有信息不必检索。",
+    "description": "统一检索历史运行记录/记忆/压缩档案/已解决会话 episode（可查可检索，不限于当前上下文）。episode 可按 stable ref 精确水合；experience 普通命中返回 stable experience_ref 与轻量场景卡，需要根因/解法/证据/正文时用 experience:<id> 精确水合完整记录；projection_complete=true 仅表示所有已存字段均已投影，task_applicability=not_evaluated 仍由模型结合当前事实判断。其它 kind 包括 action_trace/exception_log/self_correction_log/declaration_check/memory/memory_extract/archive/selfheal/param_adjust/evolution/evolution_exec/self_eval/change_log/proc_versions/feishu_audit/experience/all。当前上下文已有信息不必检索。",
     "parameters": {
         "type": "object",
         "properties": {

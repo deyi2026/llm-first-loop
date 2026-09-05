@@ -29,6 +29,9 @@ class ExperienceDocument:
     created_at: str = ""
     updated_at: str = ""
     body: str = ""
+    superseded_by: str = ""
+    promoted_to_rule: str = ""
+    last_verified_at: str = ""
 
     def to_md(self) -> str:
         """序列化为 YAML front matter + Markdown body。"""
@@ -52,6 +55,12 @@ class ExperienceDocument:
         lines.append(f"status: {self.status}")
         lines.append(f"created_at: {_yaml_str(self.created_at)}")
         lines.append(f"updated_at: {_yaml_str(self.updated_at)}")
+        if self.superseded_by:
+            lines.append(f"superseded_by: {_yaml_str(self.superseded_by)}")
+        if self.promoted_to_rule:
+            lines.append(f"promoted_to_rule: {_yaml_str(self.promoted_to_rule)}")
+        if self.last_verified_at:
+            lines.append(f"last_verified_at: {_yaml_str(self.last_verified_at)}")
         lines.append("---")
         if self.body:
             lines.append("")
@@ -80,6 +89,9 @@ class ExperienceDocument:
                 created_at=str(fields_map.get("created_at", "")),
                 updated_at=str(fields_map.get("updated_at", "")),
                 body=body,
+                superseded_by=str(fields_map.get("superseded_by", "")),
+                promoted_to_rule=str(fields_map.get("promoted_to_rule", "")),
+                last_verified_at=str(fields_map.get("last_verified_at", "")),
             )
         except ExperienceParseError:
             raise

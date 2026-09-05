@@ -121,6 +121,24 @@ def test_success_no_injection():
     assert r.guidance_extra == ""
 
 
+def test_default_off_does_not_query_or_mark_experience(monkeypatch):
+    """Rule-first: off means zero automatic historical relevance work, not just chars=0."""
+    monkeypatch.setenv("LFL_TOOL_GUIDANCE", "off")
+
+    class _ExplodingMemory:
+        def search(self, keywords, top_k=5):
+            raise AssertionError("off mode must not query historical experience")
+
+    reg = ToolRegistry(memory_store=_ExplodingMemory())
+    r = reg._result(
+        ToolResultStatus.FAILURE,
+        _fail_call(),
+        "[文件不存在] /x",
+        duration_ms=1.0,
+    )
+    assert r.guidance_extra == ""
+
+
 # --- 阶段4-A: 经验注入独立开关（子代理路径）---
 
 def test_experience_independent_switch_only_extra():
