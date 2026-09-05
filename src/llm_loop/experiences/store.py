@@ -9,6 +9,7 @@ ExperienceSearchOutcome 承载结果 + 诊断四要素；last_experience_diagnos
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
 import re
@@ -65,6 +66,9 @@ class ExperienceStore:
     def __init__(self, experiences_dir: str | Path, *, embedder: Any | None = None) -> None:
         self._dir = Path(experiences_dir)
         self._embedder = embedder  # T5: 可选 embedder 注入（None 时走关键词匹配，零回归）
+        # 文档向量只缓存机械可验证的输入→输出；query 向量每次现算。
+        # filename 作为槽位可让同一经验内容变化时原位替换，避免陈旧 hash 无限累积。
+        self._doc_embedding_cache: dict[str, tuple[str, list[float]]] = {}
         self._last_diagnostics: dict[str, Any] = {
             "scanned": 0,
             "degraded": 0,
@@ -178,59 +182,155 @@ class ExperienceStore:
     def _search(
         self, active: list[tuple[str, ExperienceDocument]], query: str, limit: int
     ) -> list[dict]:
-        """T5 检索分流（原 list_active 检索段，逻辑零变化）：语义 / 关键词。"""
-        if query and self._embedder is not None:
-            try:
-                query_vec = self._embedder.embed(query)
-            except Exception:
-                query_vec = None
-            if query_vec is not None:
-                return self._semantic_search(active, query_vec, limit, degraded=False)
-            # embed 失败 → 回退关键词匹配（fail-open）
-            return self._keyword_search(active, query, limit, degraded=True)
+        """相关性检索：weighted lexical 为主，semantic 为可选附加信号。
 
-        # 无 query 或无 embedder → 关键词匹配
-        return self._keyword_search(active, query, limit, degraded=False)
+        程序只排序相关性，不判断经验对当前任务是否适用；后者仍由模型结合
+        lifecycle/source/current facts 判断。空 query 保持按文件顺序列 active catalog。
+        """
+        if not query:
+            return self._keyword_search(active, query, limit, degraded=False)
 
-    def _semantic_search(
-        self, active: list[tuple[str, ExperienceDocument]], query_vec: list[float], limit: int, *, degraded: bool
+        lexical = [
+            (self._lexical_score(doc, query), filename, doc) for filename, doc in active
+        ]
+        if self._embedder is None:
+            return self._rank_lexical(lexical, limit, degraded=False)
+
+        try:
+            query_vec = self._embedder.embed(query)
+        except Exception:
+            query_vec = None
+        if query_vec is None:
+            # embed 失败 → fail-open 到 lexical ranking，并如实标注。
+            return self._rank_lexical(lexical, limit, degraded=True)
+        return self._hybrid_search(lexical, query_vec, limit)
+
+    def _hybrid_search(
+        self,
+        lexical: list[tuple[float, str, ExperienceDocument]],
+        query_vec: list[float],
+        limit: int,
     ) -> list[dict]:
-        """语义检索：对每条 active 计算 cosine 相似度，降序排列。"""
+        """合并 lexical + semantic；强 lexical 命中不会被纯 semantic 噪声压过。"""
         if self._embedder is None:
             return []
+        max_lexical = max((score for score, _, _ in lexical), default=0.0)
         scored: list[tuple[float, str, ExperienceDocument]] = []
-        for filename, doc in active:
-            doc_text = " ".join([doc.title, doc.scenario, doc.root_cause, doc.solution])
-            try:
-                doc_vec = self._embedder.embed(doc_text)
-            except Exception:
-                doc_vec = None
+        for lexical_score, filename, doc in lexical:
+            doc_vec = self._document_embedding(filename, doc)
             if doc_vec is None:
-                continue
-            score = _cosine_similarity(query_vec, doc_vec)
+                semantic_score = 0.0
+            else:
+                semantic_score = min(1.0, max(0.0, _cosine_similarity(query_vec, doc_vec)))
+            lexical_norm = lexical_score / max_lexical if max_lexical > 0 else 0.0
+            # lexical 是主信号；semantic 只补充相关性，不授予 task applicability。
+            score = 0.75 * lexical_norm + 0.25 * semantic_score
             scored.append((score, filename, doc))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        results = []
+        scored.sort(key=lambda row: (-row[0], row[1]))
+        results: list[dict] = []
         for score, filename, doc in scored[:limit]:
             rec = self._to_record(filename, doc)
             rec["score"] = round(score, 4)
             results.append(rec)
         return results
 
+    def _document_embedding(
+        self, filename: str, doc: ExperienceDocument
+    ) -> list[float] | None:
+        """按实际嵌入文本内容指纹复用文档向量；失败结果不缓存。"""
+        if self._embedder is None:
+            return None
+        doc_text = " ".join([doc.title, doc.scenario, doc.root_cause, doc.solution])
+        namespace = self._embedder_cache_namespace()
+        fingerprint = hashlib.sha256(
+            f"{namespace}\0{doc_text}".encode()
+        ).hexdigest()
+        cached = self._doc_embedding_cache.get(filename)
+        if cached is not None and cached[0] == fingerprint:
+            return cached[1]
+        try:
+            doc_vec = self._embedder.embed(doc_text)
+        except Exception:
+            doc_vec = None
+        if doc_vec is not None:
+            self._doc_embedding_cache[filename] = (fingerprint, doc_vec)
+        return doc_vec
+
+    def _embedder_cache_namespace(self) -> str:
+        """机械描述向量契约，防 provider/model/vector-version 变化复用旧向量。"""
+        embedder = self._embedder
+        if embedder is None:
+            return "none"
+        parts = [f"{type(embedder).__module__}.{type(embedder).__qualname__}"]
+        for name in ("provider", "vector_version", "model", "base_url", "_dim"):
+            value = getattr(embedder, name, None)
+            if value not in (None, ""):
+                parts.append(f"{name}={value}")
+        return "|".join(parts)
+
     def _keyword_search(
         self, active: list[tuple[str, ExperienceDocument]], query: str, limit: int, *, degraded: bool
     ) -> list[dict]:
-        """关键词匹配检索（fail-open 回退时附降级标注）。"""
-        results = []
-        for filename, doc in active:
-            if query and not self._match(doc, query):
-                continue
+        """Weighted lexical 检索；空 query 保持 catalog 顺序。"""
+        if not query:
+            results: list[dict] = []
+            for filename, doc in active[:limit]:
+                rec = self._to_record(filename, doc)
+                rec["score"] = None
+                results.append(rec)
+            return results
+        lexical = [(self._lexical_score(doc, query), filename, doc) for filename, doc in active]
+        return self._rank_lexical(lexical, limit, degraded=degraded)
+
+    def _rank_lexical(
+        self,
+        lexical: list[tuple[float, str, ExperienceDocument]],
+        limit: int,
+        *,
+        degraded: bool,
+    ) -> list[dict]:
+        matched = [row for row in lexical if row[0] > 0]
+        matched.sort(key=lambda row: (-row[0], row[1]))
+        results: list[dict] = []
+        for score, filename, doc in matched[:limit]:
             rec = self._to_record(filename, doc)
-            rec["score"] = None
+            rec["score"] = round(score, 4)
             if degraded:
                 self._append_degraded(rec, "[语义检索降级] embed 失败，回退关键词匹配")
             results.append(rec)
-        return results[:limit]
+        return results
+
+    @staticmethod
+    def _lexical_score(doc: ExperienceDocument, query: str) -> float:
+        """字段加权 lexical score；只做相关性事实，不推断任务适用性。"""
+        norm_query = _normalize_search_text(query)
+        if not norm_query:
+            return 0.0
+        terms = _lexical_terms(norm_query)
+        fields = (
+            (5.0, doc.title),
+            (4.0, " ".join(doc.tags)),
+            (3.0, doc.scenario),
+            (3.0, doc.root_cause),
+            (2.0, doc.solution),
+        )
+        score = 0.0
+        matched_terms: set[str] = set()
+        for field_weight, raw in fields:
+            field = _normalize_search_text(raw)
+            if not field:
+                continue
+            if norm_query in field:
+                score += 6.0 * field_weight
+            for term, term_weight in terms.items():
+                if term in field:
+                    score += field_weight * term_weight
+                    matched_terms.add(term)
+        if matched_terms and terms:
+            matched_mass = sum(terms[term] for term in matched_terms)
+            total_mass = sum(terms.values())
+            score += 4.0 * matched_mass / total_mass
+        return score
 
     def get(self, experience_id: str) -> ExperienceDocument | None:
         """按文件名/标识读取并解析；不存在/任何解析故障返回 None（读取面 fail-open 隔离）."""
@@ -274,15 +374,6 @@ class ExperienceStore:
         except ValueError:
             return None
         return path
-
-    @staticmethod
-    def _match(doc: ExperienceDocument, query: str) -> bool:
-        """关键词匹配 title/scenario/root_cause/solution/tags。"""
-        q = query.lower()
-        fields_text = " ".join(
-            [doc.title, doc.scenario, doc.root_cause, doc.solution, " ".join(doc.tags)]
-        ).lower()
-        return q in fields_text
 
     @staticmethod
     def _is_degraded_source(source: dict) -> bool:
@@ -363,6 +454,33 @@ class ExperienceStore:
         """degraded 保持 str 类型拼接共存（修正 setdefault 先到先得互斥丢标注缺陷，D12）."""
         existing = rec.get("degraded")
         rec["degraded"] = f"{existing}；{text}" if existing else text
+
+
+def _normalize_search_text(text: object) -> str:
+    """Lowercase + whitespace normalization shared by lexical scoring."""
+    return " ".join(str(text or "").lower().split())
+
+
+def _lexical_terms(query: str) -> dict[str, float]:
+    """Extract weighted ASCII words and CJK n-grams from a natural-language query.
+
+    CJK runs longer than four characters are decomposed into 2-4 grams so a natural
+    sentence can match stored phrases without requiring the whole sentence verbatim.
+    """
+    terms: dict[str, float] = {}
+    for token in re.findall(r"[a-z0-9]+", query):
+        if len(token) < 2:
+            continue
+        terms[token] = max(terms.get(token, 0.0), 1.0 if len(token) >= 4 else 0.6)
+    for run in re.findall(r"[\u3400-\u9fff]+", query):
+        if len(run) <= 4:
+            terms[run] = max(terms.get(run, 0.0), 1.0)
+            continue
+        for size, weight in ((2, 0.45), (3, 0.7), (4, 1.0)):
+            for start in range(len(run) - size + 1):
+                gram = run[start : start + size]
+                terms[gram] = max(terms.get(gram, 0.0), weight)
+    return terms
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
