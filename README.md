@@ -13,14 +13,14 @@
 - **程序最小化**：能由 AI 自主 + 文档规则（`docs/ai_rules.md`）实现的判断，尽量不用程序。程序只保留 AI 无法自完成的部分（工具真实执行、存储、灾难性安全硬边界）。
 - **程序是便利与补充，不是约束**：工具成功/失败/异常如实构造（`[状态: xxx]` 标注），错误完整透传，不静默降级。
 - **容错优先**：程序组件故障 → `[程序异常]` 如实告知 AI → 循环继续，不影响大模型发挥。
-- **AI 自主规则**：诚实自查 / 参数自主规范 / 停滞自主调整 / 程序故障处理（见 `docs/ai_rules.md`，唯一规则真相源，内嵌于 system prompt）。
+- **Rule-first 演进**：`docs/ai_rules.md` 是维护/演进规则 SoT；普通 user run 不把规则全文内嵌进 system prompt。修复/新增先审“能否由规则 + 事实 + 局部 schema/skill 完成”，证明必要后才增加 runtime 约束。
 
 ## AI 视角速读（T4，spec.md 5.3.1/5.5.1）
 
 > 程序/文档规则/架构三者角色声明（AI 优先视角）：
 
 - **程序 = 感官 + 手脚**：提供信息（`architecture_status` 感知上下文/模型/异常/待办）+ 执行通道（`adjust_strategy`/`retry_tool`/`switch_model` 等工具）+ 硬边界（灾难性安全/协议约束/存储）；不替 AI 思考、不替 AI 选择。
-- **文档规则 = 大脑约束**：`docs/ai_rules.md` 为唯一规则真相源（SoT），RULE-AI-00~07 内嵌 system prompt，AI 自主遵守；程序不重复实现规则。
+- **文档规则 = 判断纪律**：`docs/ai_rules.md` 为维护/演进规则 SoT；普通 user run 的 system prompt 只保留最小身份/职责边界，具体工具/任务行为在实际决策点通过 user request、tool schema 或按需 skill 获得。
 - **架构 = 服务于 AI 执行力发挥**：程序最小化（能 AI 自主 + 规则完成的不用程序），程序是便利与补充非约束，避免程序错误影响大模型。
 - **硬约束不移交**：C1-C6 协议（tool_call_id 绑定等）/ FR-SAFE-01 灾难性安全 / 数据完整性仍由程序硬执行（AI 无法自完成），仅决策类判断移交 AI + 规则。
 
@@ -162,7 +162,7 @@ bash scripts/r9_commit.sh "<message>"   # 机检(r9_commit_check) + ci_gate + gi
 | `SELF_EVAL_ENABLED` | 1 | 自我评估能力开关（self_evaluate 工具） |
 | `SELF_EVAL_REMIND_ENABLED` | 1 | 触发提醒开关（仅提示不强制） |
 | `SELF_EVAL_INTERVAL_ROUNDS` / `SELF_EVAL_MIN_SAMPLES` / `SELF_EVAL_SPAN` | 50/5/50 | 定期触发间隔/样本不足阈值/聚合窗口 |
-| `SYSTEM_PROMPT_EXTRA` | — | 叠加自定义 AI 规则（程序最小化，无需改代码） |
+| `SYSTEM_PROMPT_EXTRA` | 已退役 | 不再拥有 universal prompt 写权限；局部行为用显式 user request / tool schema / skill / operator control surface |
 | `HISTORY_MAX_CHARS` | 100000 | 提交给 LLM 的历史上下文预算（字符），默认 100K（≈50K tokens），可按模型窗口调整（1M 窗口模型可调大，小窗模型调小）；预算过高会撑爆窗口导致所有模型调用失败/超时 |
 | `MODEL_FALLBACKS` | 空 | 降级链（逗号分隔 `provider/model`，如 `deepseek/deepseek-v4-flash,local/qwen3.6-27b-fable-fusion-711-uncensored-heretic-nm-dau-neo-max-mtp`）；空=不启用降级 |
 | `EVENT_LOG_ENABLED` | 1 | 事件源化单一真相源开关（`data/event_logs/<session_id>.jsonl` 追加写；0=事件写入零行为） |

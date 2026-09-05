@@ -1,11 +1,10 @@
 # AI 自主规则清单（T40 / M11 唯一规则真相源 docs/ai_rules.md）
 
-> 依据"程序最小化"原则（T38 审查结论），以下判断逻辑从程序移交给 **AI 自主完成**。
-> 程序只保留执行与如实反馈；规则即文档，程序不重复实现。
-> 这些规则已内嵌于 system prompt（`core/prompt.py`，对应段带 RULE-AI 编号），
-> 并可通过 `SYSTEM_PROMPT_EXTRA` 叠加扩展（自定义段不纳入本 SoT 校验）。
-> **一致性维护**：本文件为唯一规则真相源（SoT），`core/prompt.py` 为其派生呈现；
-> 规则改动必须先改本文件再同步 prompt，由 `tests/unit/test_ai_rules_sync.py` 校验防漂移。
+> 依据“程序最小化 / agency-first”原则，本文件是维护、演进与审查用规则 SoT，**不是普通 user run 的 universal prompt**。
+> 程序负责真实执行、协议/授权/资源边界和可检索证据；模型围绕当前任务自主判断。
+> `core/prompt.py` 只保留最小静态身份/职责边界，不镜像本文件规则正文，也不要求模型每轮读取本文件。
+> `SYSTEM_PROMPT_EXTRA`、`LFL_SYSTEM_EXTRA_BUNDLE`、`build_system_prompt(extra=...)` 均无 universal prompt 写权限。
+> **一致性维护**：`tests/unit/test_ai_rules_sync.py` 校验“规则可维护/可发现”与“不得重新进入 universal prompt”两类边界，而不是 prompt↔SoT 文本同步。
 
 ---
 
@@ -416,13 +415,11 @@ codearts_status(handle_id) 查进度 → 终态结果回收。
 
 ---
 
-## 配置扩展
+## 配置扩展（2026-09-03 agency-first 修订）
 
-通过环境变量 `SYSTEM_PROMPT_EXTRA` 叠加自定义规则段（程序最小化：规则可配置注入，无需改代码）：
+Universal prompt 不再提供隐藏配置扩展通道。`SYSTEM_PROMPT_EXTRA`、`LFL_SYSTEM_EXTRA_BUNDLE` 与 `build_system_prompt(extra=...)` 均不获得 prompt 写权限。
 
-```bash
-SYSTEM_PROMPT_EXTRA="## 附加规则\n...你的自定义规则..." python -m llm_loop.cli "消息"
-```
+需要局部行为时应选择可归因、可撤销的显式载体：当前 user request、按需 skill、tool schema，或 operator-owned control surface。不得为了“可配置”重新建立每轮不可见的全局训诫。
 
 *（AI 自主规则清单完）*
 
@@ -471,4 +468,4 @@ SYSTEM_PROMPT_EXTRA="## 附加规则\n...你的自定义规则..." python -m llm
 | 规则 20 Goal/checkpoint 通用纪律 | MOVE-SKILL | agent harness/skill 承载；`task_active` 注入面归 R8.24-E；本 SoT 规则二十留档 |
 | 规则 21 程序反馈语义 | 过渡期保留（lite v8 在场） | 过渡属性标注已加；删除条件 = R8.24-B（B-G5）+ R8.24-C 双验收通过（A-D12） |
 | 头部"必读指令"（prompt 侧） | DELETE MANDATORY READ | `src/llm_loop/core/prompt.py` 已改写为最小语义契约（A-D1/A-D13）；lite 文件可发现性保留、义务删除（A-D2） |
-| 配置扩展 SYSTEM_PROMPT_EXTRA | GOVERNED（指针） | 自由文本直拼通道已删除，改为 `LFL_SYSTEM_EXTRA_BUNDLE` 版本化 policy bundle（manifest/hash/大小上限校验；A-D14 方案 2）——上文「配置扩展」节描述的旧通道仅作历史留档 |
+| 配置扩展 SYSTEM_PROMPT_EXTRA | DELETE GLOBAL PROMPT AUTHORITY | `SYSTEM_PROMPT_EXTRA`、`LFL_SYSTEM_EXTRA_BUNDLE` 与 `build_system_prompt(extra=...)` 均不再具有 universal prompt 写权限；任务/工具特定行为走显式 user request / skill / tool schema / operator control surface，而非隐藏全局训诫 |

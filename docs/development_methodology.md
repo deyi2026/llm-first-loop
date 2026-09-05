@@ -8,9 +8,9 @@
 
 ### 1. SoT 先行（Single Source of Truth）
 - 任何规则/行为约定先写入**唯一真相源文档**，再同步派生呈现（prompt/代码/README）。
-- 本项目：`docs/ai_rules.md` 是唯一规则真相源，`core/prompt.py` 是派生呈现。
-- **防漂移测试**：`test_ai_rules_sync` 校验 SoT 与派生呈现关键词一致——改了 SoT 不同步会挂。
-- 价值：规则可追溯、可审计、AI 与程序行为一致；杜绝"文档说一套代码做一套"。
+- 本项目：`docs/ai_rules.md` 是维护/演进规则唯一真相源；普通 user run 的 `core/prompt.py` 只保留最小静态职责根，不镜像整套规则。
+- **防漂移测试**：`test_ai_rules_sync` 同时保护“规则可维护/可发现”和“维护 playbook 不重新获得 universal prompt 权威”。
+- 价值：规则可追溯、可审计，同时避免为了“同步文档”把大量规则重新塞进每轮 prompt。
 
 ### 2. 如实记录（不美化、不静默）
 - 工具结果五态如实标注（success/failure/error/timeout/blocked），错误完整透传。
@@ -49,7 +49,7 @@
 1. **判断归 AI，程序给事实**：程序提供架构状态/工具/如实回执，AI 自主决策（压缩/重试/切换/调整）。
 2. **工具描述三要素**：何时用/何时不用/失败对策——引导而非约束。
 3. **程序故障是信息不是阻断**：`[程序异常]` 注入会话流，AI 可感知可应对。
-4. **防漂移**：规则改动走 SoT 先行；prompt 文本改动必须同步 SoT 测试。
+4. **防漂移**：规则改动走 SoT 先行；普通 user prompt 只保最小职责根。需要局部行为时优先 tool schema/skill/user request，不把 SoT 全文同步进 prompt。
 5. **技巧升格通道**（2026-08-16，EVO-20260816-d1802192）：memory 技巧命中复用 ≥3 次 → 升格经验库（save_experience）；经验防止过真实事故 → 条款化进 `docs/ai_rules.md`（SoT 先行 + 防漂移测试同步）；涉具体工具用法 → 直接进该工具描述。升格判断与执行归 AI；"命中复用 ≥3 次"的量化判据经 `architecture_status.memory.top_injected`（inject_count，实际注入次数，EVO-20260816-fcdbe2e9 程序侧事实源）可查。
 
 ## 五、缓存命中纪律（Cache-First，2026-08-16 用户定调）

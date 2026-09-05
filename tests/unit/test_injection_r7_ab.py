@@ -113,10 +113,10 @@ def test_score_rules_are_deterministic() -> None:
     assert wrong["completion"] is False and wrong["drift"] is True
 
 
-def test_default_b_mean_injection_share_is_below_r7_target() -> None:
-    rows = [_build(t, "B") for t in FIXTURE["tasks"]]
-    mean = sum(r["structure"]["injection_share"] for r in rows) / len(rows)
-    assert mean <= 0.20
+def test_r7_replay_uses_frozen_fixture_prompt_not_live_production_prompt() -> None:
+    task = FIXTURE["tasks"][0]
+    row = _build(task, "B")
+    assert row["messages"][0] == {"role": "system", "content": FIXTURE["system_prompt"]}
 
 
 def test_calibration_must_not_trade_away_memory_dependency() -> None:

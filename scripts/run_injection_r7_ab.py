@@ -41,7 +41,6 @@ from llm_loop.core.injection_labels import (  # noqa: E402
     reference_has_imperative,
     render_program_appendix,
 )
-from llm_loop.core.prompt import build_system_prompt  # noqa: E402
 from llm_loop.core.reference_injection import (  # noqa: E402
     reference_auto_decision,
     render_reference_frame,
@@ -87,7 +86,9 @@ def build_arm(
     reference_auto_turns: int,
     injection_budget_chars: int,
 ) -> dict[str, Any]:
-    system = {"role": "system", "content": build_system_prompt()}
+    # R7-v1 is a frozen historical morphology fixture; do not couple replay
+    # metrics to the mutable production universal prompt.
+    system = {"role": "system", "content": str(fixture.get("system_prompt") or "")}
     truth = str(task["user_truth"])
     refs = list(task.get("references") or [])
 

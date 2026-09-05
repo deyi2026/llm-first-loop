@@ -4,16 +4,13 @@
 - A-G1: system prompt 中"任务开始/规则存疑必读 ai_rules"类指令 chars=0
 - A-G2: 11 类运维主题在 lite（中/英）与 system prompt 中 chars=0（full SoT 豁免——超集留档）
 - A-G3: 方法层①~⑥在 universal prompt 与 lite 中 chars=0
-- A-G4: SYSTEM_PROMPT_EXTRA 自由文本通道 = 0；bundle 通道三态（未配置/合法/非法）
+- A-G4: universal prompt 扩展通道 = 0；SYSTEM_PROMPT_EXTRA / LFL_SYSTEM_EXTRA_BUNDLE / extra 参数均不得注入
 - 常驻断言（§7.1 风险 4）: lite 文件被 prompt 引用即红灯（防 playbook 定位漂移）
 - v7 反例自证: 以 .backup/ai_rules.lite.v7.md 旧版验证断言有效性（旧版必"红"）
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
-import logging
 import re
 from pathlib import Path
 
@@ -166,126 +163,79 @@ def test_standing_prompt_source_has_no_lite_reference():
     assert "SYSTEM_PROMPT_EXTRA" not in prompt_mod._BASE_PROMPT
 
 
-# ---------- A-G4: SYSTEM_PROMPT_EXTRA / bundle 三态 ----------
+# ---------- A-G4: universal prompt 扩展通道归零 ----------
 
 
 def test_g4_free_text_env_channel_removed(monkeypatch):
-    """自由文本 SYSTEM_PROMPT_EXTRA 注入 chars=0（通道已删除）."""
-    import sys
-
-    sys.path.insert(0, str(_ROOT / "src"))
-    from llm_loop.core.prompt import build_system_prompt
-
-    monkeypatch.setenv("SYSTEM_PROMPT_EXTRA", "## 附加规则\n必须使用简体中文回答。")
-    monkeypatch.delenv("LFL_SYSTEM_EXTRA_BUNDLE", raising=False)
-    prompt = build_system_prompt()
-    assert "必须使用简体中文回答" not in prompt, "A-G4 失败: 自由文本通道仍生效"
-    assert "## 附加规则" not in prompt
-
-
-def test_g4_unconfigured_bundle_prompt_equals_base(monkeypatch):
-    """bundle 未配置时 system prompt 与 _BASE_PROMPT 逐字节一致（缓存前缀不漂移）."""
+    """旧 SYSTEM_PROMPT_EXTRA 不再具有 prompt 写权限。"""
     import sys
 
     sys.path.insert(0, str(_ROOT / "src"))
     from llm_loop.core import prompt as prompt_mod
 
-    monkeypatch.delenv("SYSTEM_PROMPT_EXTRA", raising=False)
+    monkeypatch.setenv("SYSTEM_PROMPT_EXTRA", "## 附加规则\n必须使用简体中文回答。")
     monkeypatch.delenv("LFL_SYSTEM_EXTRA_BUNDLE", raising=False)
     assert prompt_mod.build_system_prompt() == prompt_mod._BASE_PROMPT
 
 
-def _make_bundle(tmp_path: Path, body: str, version: str = "1.0.0") -> Path:
+def test_g4_bundle_env_channel_removed(monkeypatch, tmp_path):
+    """未证明必要的 policy bundle 也不获得 universal prompt 写权限。"""
+    import sys
+
+    sys.path.insert(0, str(_ROOT / "src"))
+    from llm_loop.core import prompt as prompt_mod
+
     d = tmp_path / "bundle"
     d.mkdir()
-    target = d / "policy.md"
-    target.write_text(body, encoding="utf-8")
-    manifest = {
-        "version": version,
-        "files": [{"path": "policy.md", "sha256": hashlib.sha256(target.read_bytes()).hexdigest()}],
-    }
-    (d / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    return d
-
-
-def test_g4_valid_bundle_injected_verbatim(monkeypatch, tmp_path):
-    """合法 bundle（manifest/hash 齐备）注入成功且内容逐字节一致."""
-    import sys
-
-    sys.path.insert(0, str(_ROOT / "src"))
-    from llm_loop.core import prompt as prompt_mod
-
-    body = "## operator policy\nbundle-only line"
-    monkeypatch.setenv("LFL_SYSTEM_EXTRA_BUNDLE", str(_make_bundle(tmp_path, body)))
+    (d / "policy.md").write_text("must-not-appear", encoding="utf-8")
+    monkeypatch.setenv("LFL_SYSTEM_EXTRA_BUNDLE", str(d))
     monkeypatch.delenv("SYSTEM_PROMPT_EXTRA", raising=False)
     prompt = prompt_mod.build_system_prompt()
-    assert prompt.startswith(prompt_mod._BASE_PROMPT)
-    assert prompt.count("\n\n" + body) == 1, "bundle 内容应原样追加一次"
-    assert prompt.endswith(body)
+    assert prompt == prompt_mod._BASE_PROMPT
+    assert "must-not-appear" not in prompt
 
 
-def test_g4_invalid_bundle_rejected_with_warning(monkeypatch, tmp_path, caplog):
-    """manifest 校验失败（hash 不匹配）拒绝注入 + 告警留痕."""
+def test_g4_function_extra_argument_has_no_prompt_authority(monkeypatch):
+    """兼容保留的 extra 参数是 inert，不再是隐藏规则注入口。"""
     import sys
 
     sys.path.insert(0, str(_ROOT / "src"))
     from llm_loop.core import prompt as prompt_mod
 
-    d = tmp_path / "bad_bundle"
-    d.mkdir()
-    (d / "policy.md").write_text("tampered body", encoding="utf-8")
-    manifest = {
-        "version": "1.0.0",
-        "files": [{"path": "policy.md", "sha256": "0" * 64}],
-    }
-    (d / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    monkeypatch.setenv("LFL_SYSTEM_EXTRA_BUNDLE", str(d))
     monkeypatch.delenv("SYSTEM_PROMPT_EXTRA", raising=False)
-    with caplog.at_level(logging.WARNING, logger="llm_loop.core.prompt"):
-        prompt = prompt_mod.build_system_prompt()
-    assert prompt == prompt_mod._BASE_PROMPT, "非法 bundle 必须拒绝注入（fail-closed）"
-    assert any("拒绝注入" in r.message for r in caplog.records), "校验失败须落告警留痕"
+    monkeypatch.delenv("LFL_SYSTEM_EXTRA_BUNDLE", raising=False)
+    prompt = prompt_mod.build_system_prompt("INVISIBLE-POLICY-MUST-NOT-APPEAR")
+    assert prompt == prompt_mod._BASE_PROMPT
+    assert "INVISIBLE-POLICY-MUST-NOT-APPEAR" not in prompt
 
 
-def test_g4_oversize_bundle_rejected(monkeypatch, tmp_path):
-    """超出大小上限拒绝注入."""
+def test_g4_unconfigured_prompt_is_byte_stable(monkeypatch):
+    """默认 universal prefix 是单一静态字节串。"""
     import sys
 
     sys.path.insert(0, str(_ROOT / "src"))
     from llm_loop.core import prompt as prompt_mod
 
-    d = tmp_path / "big_bundle"
-    d.mkdir()
-    blob = "x" * (prompt_mod._BUNDLE_MAX_BYTES + 1)
-    target = d / "policy.md"
-    target.write_text(blob, encoding="utf-8")
-    manifest = {
-        "version": "1.0.0",
-        "files": [
-            {"path": "policy.md", "sha256": hashlib.sha256(target.read_bytes()).hexdigest()}
-        ],
-    }
-    (d / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    monkeypatch.setenv("LFL_SYSTEM_EXTRA_BUNDLE", str(d))
     monkeypatch.delenv("SYSTEM_PROMPT_EXTRA", raising=False)
+    monkeypatch.delenv("LFL_SYSTEM_EXTRA_BUNDLE", raising=False)
     assert prompt_mod.build_system_prompt() == prompt_mod._BASE_PROMPT
 
 
 # ---------- v7 反例自证（断言有效性证明）----------
 
 
-def test_v7_backup_would_fail_assertions():
-    """以 .backup/ai_rules.lite.v7.md 作反例：旧版必含被禁主题（证明断言有效）."""
-    v7 = _read(".backup/ai_rules.lite.v7.md")
-    hits = [
-        w
-        for words in _G2_BANNED_TOPICS.values()
-        for w in words
-        if w in v7
-    ]
-    assert len(hits) >= 8, f"v7 反例失效: 旧版应大量命中被禁主题，实际仅 {len(hits)}: {hits}"
-    method_hits = [t for t in _G3_METHOD_TOPICS if t in v7]
-    assert len(method_hits) == 6, f"v7 反例失效: 方法层应全部在场，实际 {method_hits}"
+def test_legacy_playbook_counterexample_exercises_banned_topics():
+    """Self-contained counterexample: legacy global playbook topics must trip the guards."""
+    legacy = " ".join(
+        [
+            "每轮自查", "动作链", "回答报工具名", "[[memory]]", "缓存纪律", "分段输出",
+            "CodeArts", "经验前置", "模型切换手册", "中断恢复", "checkpoint",
+            *_G3_METHOD_TOPICS,
+        ]
+    )
+    hits = [w for words in _G2_BANNED_TOPICS.values() for w in words if w in legacy]
+    assert len(hits) >= 8
+    assert all(topic in legacy for topic in _G3_METHOD_TOPICS)
 
 
 # ---------- rules_version 联动（A-2.3 复核）----------

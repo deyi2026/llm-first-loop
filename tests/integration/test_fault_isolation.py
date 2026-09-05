@@ -85,26 +85,24 @@ def test_declaration_light_reminder_no_block(build_test_engine):
     assert not any("[声明提醒]" in m.content for m in sess.messages)
 
 
-def test_prompt_contains_ai_rules(build_test_engine):
-    """T40（P2 适配）: L0 prompt 含协议硬约束 + 必读指令（规则移入 docs/ai_rules.lite.md）.
-
-    规则细节（诚实/参数/停滞/故障）由 lite 文件承载，经 test_ai_rules_sync 校验 lite↔SoT。
-    """
+def test_prompt_keeps_runtime_policy_out_of_model_contract(build_test_engine):
+    """Provider/playbook mechanics are runtime responsibilities, not model SOP."""
     from llm_loop.core.prompt import build_system_prompt
 
     prompt = build_system_prompt()
-    assert "reasoning_content" in prompt  # 协议硬约束（M20）
-    assert "ai_rules.lite.md" in prompt  # 必读指令
-    assert "read_file(full=true)" in prompt  # 防截断读取
+    assert "不替你制定任务策略或完成裁决" in prompt
+    assert "reasoning_content" not in prompt
+    assert "ai_rules.lite" not in prompt
+    assert "read_file(full=true)" not in prompt
 
 
-def test_prompt_system_extra_env(monkeypatch, build_test_engine):
-    """T40: SYSTEM_PROMPT_EXTRA 叠加自定义规则."""
+def test_prompt_system_extra_env_has_no_prompt_authority(monkeypatch, build_test_engine):
+    """Legacy SYSTEM_PROMPT_EXTRA cannot silently rewrite every model turn."""
     from llm_loop.core.prompt import build_system_prompt
 
     monkeypatch.setenv("SYSTEM_PROMPT_EXTRA", "## 附加规则\n必须使用简体中文回答。")
     prompt = build_system_prompt()
-    assert "必须使用简体中文回答" in prompt
+    assert "必须使用简体中文回答" not in prompt
 
 
 def test_evolution_state_transition_fail_open(tmp_path, monkeypatch):

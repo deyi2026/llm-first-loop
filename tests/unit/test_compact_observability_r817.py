@@ -60,10 +60,12 @@ def test_compact_runtime_status_is_prompt_neutral_but_observable():
         assert forbidden not in joined
 
 
-def test_search_archive_discovery_is_stable_not_dynamic():
+def test_search_archive_discovery_is_not_forced_into_universal_prompt():
     prompt = build_system_prompt()
-    assert "search_archive" in prompt
-    assert "会话超长时程序把最早消息完整另存到压缩档案" in prompt
+    # Archive retrieval remains a tool capability; every user turn must not carry a
+    # retrieval SOP merely because compaction might happen in some sessions.
+    assert "search_archive" not in prompt
+    assert "会话超长时程序把最早消息完整另存到压缩档案" not in prompt
     assert "[上下文压缩] 标注 + 档案目录 + 关键事实" not in prompt
 
 

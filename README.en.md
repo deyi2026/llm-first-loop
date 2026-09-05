@@ -13,14 +13,14 @@ Program code assists the LLM (timely feedback, honest feedback), never constrain
 - **Program minimalism**: judgments that the AI can make autonomously (guided by documentation rules, `docs/ai_rules.md`) stay out of code wherever possible. Code keeps only what the AI cannot do on its own (real tool execution, storage, catastrophic-safety hard bounds).
 - **Programs are convenience and complement, not constraint**: tool success/failure/anomaly outcomes are constructed truthfully (marked `[状态: xxx]`), errors pass through in full — no silent degradation.
 - **Fault tolerance first**: a program-component failure surfaces to the AI truthfully as `[程序异常]` → the loop continues, without affecting the LLM's performance.
-- **AI autonomy rules**: honest self-check / parameter self-governance / stagnation self-adjustment / program-fault handling (see `docs/ai_rules.md` — the single source of truth for rules, embedded in the system prompt).
+- **Rule-first evolution**: `docs/ai_rules.md` is the maintenance/evolution rule SoT; ordinary user runs do not embed the full rulebook into the system prompt. Fixes/features first ask whether rules + facts + local schema/skill guidance are sufficient before adding runtime constraints.
 
 ## AI-Perspective Quick Read (T4, spec.md 5.3.1/5.5.1)
 
 > Role declaration of the program / documentation rules / architecture (AI-first perspective):
 
 - **Program = senses + hands and feet**: provides information (`architecture_status` perceives context/model/anomalies/todos) + an execution channel (tools such as `adjust_strategy`/`retry_tool`/`switch_model`) + hard bounds (catastrophic safety / protocol constraints / storage); it does not think for the AI, nor choose for the AI.
-- **Documentation rules = brain constraints**: `docs/ai_rules.md` is the single source of truth (SoT) for rules; RULE-AI-00~07 are embedded in the system prompt and followed autonomously by the AI; the program does not re-implement the rules.
+- **Documentation rules = judgment discipline**: `docs/ai_rules.md` is the maintenance/evolution rule SoT; the ordinary system prompt keeps only a minimal static responsibility root. Task/tool-specific behavior is supplied at the decision point by the user request, tool schema, or an on-demand skill.
 - **Architecture = serving the AI's execution capability**: program minimalism (what the AI can do autonomously + via rules needs no program), programs are convenience and complement rather than constraint, avoiding program errors affecting the LLM.
 - **Hard constraints are not handed over**: the C1-C6 protocol (tool_call_id binding, etc.) / FR-SAFE-01 catastrophic safety / data integrity remain hard-executed by the program (the AI cannot do them itself); only decision-type judgments are handed over to AI + rules.
 
@@ -122,7 +122,7 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 | `SELF_EVAL_ENABLED` | 1 | Self-evaluation capability switch (self_evaluate tool) |
 | `SELF_EVAL_REMIND_ENABLED` | 1 | Trigger-reminder switch (prompt only, never force) |
 | `SELF_EVAL_INTERVAL_ROUNDS` / `SELF_EVAL_MIN_SAMPLES` / `SELF_EVAL_SPAN` | 50/5/50 | Periodic trigger interval / insufficient-sample threshold / aggregation window |
-| `SYSTEM_PROMPT_EXTRA` | — | Append custom AI rules (program minimalism — no code changes needed) |
+| `SYSTEM_PROMPT_EXTRA` | retired | No universal-prompt write authority; use explicit user requests / tool schemas / skills / operator-owned control surfaces for local behavior |
 | `HISTORY_MAX_CHARS` | 100000 | History context budget (chars) submitted to the LLM; default 100K (≈50K tokens); adjustable per model window (raise for 1M-window models, lower for small-window models); too large a budget overflows the window and fails/times out every model call |
 | `MODEL_FALLBACKS` | empty | Fallback chain (comma-separated `provider/model`, e.g. `deepseek/deepseek-v4-flash,local/qwen3.6-27b-fable-fusion-711-uncensored-heretic-nm-dau-neo-max-mtp`); empty = fallback disabled |
 | `EVENT_LOG_ENABLED` | 1 | Event-sourced single-source-of-truth switch (append-write to `data/event_logs/<session_id>.jsonl`; 0 = event writes are a no-op) |
