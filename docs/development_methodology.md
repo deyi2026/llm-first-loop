@@ -50,7 +50,8 @@
 2. **工具描述三要素**：何时用/何时不用/失败对策——引导而非约束。
 3. **程序故障是信息不是阻断**：`[程序异常]` 注入会话流，AI 可感知可应对。
 4. **防漂移**：规则改动走 SoT 先行；普通 user prompt 只保最小职责根。需要局部行为时优先 tool schema/skill/user request，不把 SoT 全文同步进 prompt。
-5. **技巧升格通道**（2026-08-16，EVO-20260816-d1802192）：memory 技巧命中复用 ≥3 次 → 升格经验库（save_experience）；经验防止过真实事故 → 条款化进 `docs/ai_rules.md`（SoT 先行 + 防漂移测试同步）；涉具体工具用法 → 直接进该工具描述。升格判断与执行归 AI；"命中复用 ≥3 次"的量化判据经 `architecture_status.memory.top_injected`（inject_count，实际注入次数，EVO-20260816-fcdbe2e9 程序侧事实源）可查。
+5. **当前任务授权**：当前真实用户指令是任务授权 SoT；短回复只绑定最近相关交互。若最近交互要求明确选择、缺失参数或权限提升，泛化短回复不得替用户补全或扩大授权；历史 assistant 提议/计划与旧任务状态只作背景。
+6. **技巧升格通道**（2026-08-16，EVO-20260816-d1802192）：memory 技巧命中复用 ≥3 次 → 升格经验库（save_experience）；经验防止过真实事故 → 条款化进 `docs/ai_rules.md`（SoT 先行 + 防漂移测试同步）；涉具体工具用法 → 直接进该工具描述。升格判断与执行归 AI；"命中复用 ≥3 次"的量化判据经 `architecture_status.memory.top_injected`（inject_count，实际注入次数，EVO-20260816-fcdbe2e9 程序侧事实源）可查。
 
 ## 五、缓存命中纪律（Cache-First，2026-08-16 用户定调）
 

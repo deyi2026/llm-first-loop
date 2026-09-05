@@ -14,6 +14,7 @@ Program code assists the LLM (timely feedback, honest feedback), never constrain
 - **Programs are convenience and complement, not constraint**: tool success/failure/anomaly outcomes are constructed truthfully (marked `[状态: xxx]`), errors pass through in full — no silent degradation.
 - **Fault tolerance first**: a program-component failure surfaces to the AI truthfully as `[程序异常]` → the loop continues, without affecting the LLM's performance.
 - **Rule-first evolution**: `docs/ai_rules.md` is the maintenance/evolution rule SoT; ordinary user runs do not embed the full rulebook into the system prompt. Fixes/features first ask whether rules + facts + local schema/skill guidance are sufficient before adding runtime constraints.
+- **Current-task authority**: the latest genuine user instruction is the task-authority truth. Short replies such as “continue/ok/yes/do that” bind only to the nearest relevant interaction. If that interaction explicitly requires a choice, parameter, or permission increase, a generic short reply must not fill it or widen authority; older model proposals/plans and prior task state stay retrievable context, not execution authorization.
 
 ## AI-Perspective Quick Read (T4, spec.md 5.3.1/5.5.1)
 

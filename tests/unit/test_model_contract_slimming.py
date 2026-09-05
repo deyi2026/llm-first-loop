@@ -105,7 +105,7 @@ def test_g2_lite_has_no_operational_topics():
 
 
 def test_g2_lite_retained_rules_present():
-    """v8 保留集在场（1/2/3/6/7/12/21 + 灾难安全）——防过度删除回归."""
+    """v12 保留集在场（含 current-task authority 与过渡 Rule21）."""
     zh = _read("docs/ai_rules.lite.md")
     for kw in [
         "1诚实",
@@ -114,6 +114,7 @@ def test_g2_lite_retained_rules_present():
         "6演进/自评",
         "7工具优先",
         "12身份声明",
+        "23当前任务/授权",
         "21程序反馈语义",
         "灾难性安全",
     ]:
@@ -250,5 +251,5 @@ def test_rules_version_reflects_v8():
 
     lite = _read("docs/ai_rules.lite.md")
     m = re.search(r"version=(\d+)", lite.splitlines()[0])
-    assert m and m.group(1) == "8", "lite 头部应为 version=8"
-    assert _rules_version() == "8", "_rules_version() 应反映 v8"
+    assert m and m.group(1) == "12", "lite 头部应为 version=12"
+    assert _rules_version() == "12", "_rules_version() 应反映 v12"
