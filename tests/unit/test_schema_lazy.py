@@ -27,6 +27,13 @@ class _FakeTool:
         return f"{self.name}:ok"
 
 
+class _FutureTool(_FakeTool):
+    def __init__(self, *, compact_description: str | None = None):
+        super().__init__("future_plugin_tool", "F" * 300)
+        if compact_description is not None:
+            self.compact_description = compact_description
+
+
 def _reg() -> ToolRegistry:
     reg = ToolRegistry()
     reg.register(_FakeTool("read_file"))
@@ -64,6 +71,25 @@ def test_lazy_index_smaller_than_full():
     assert lazy_len < full_len
 
 
+def test_unmapped_future_tool_remains_callable_with_bounded_description():
+    """No compact map entry may ever turn into tool hiding or parameter loss."""
+    reg = ToolRegistry()
+    reg.register(_FutureTool())
+    row = reg.schemas(lazy=True)[0]
+    assert row["name"] == "future_plugin_tool"
+    assert row["description"] == "F" * 120
+    assert row["parameters"]["properties"]["a"] == {"type": "string"}
+    assert row["parameters"]["required"] == ["a"]
+
+
+def test_tool_owned_compact_description_overrides_fallback_without_touching_full():
+    reg = ToolRegistry()
+    tool = _FutureTool(compact_description="compact contract")
+    reg.register(tool)
+    assert reg.schemas(lazy=True)[0]["description"] == "compact contract"
+    assert reg.schemas()[0]["description"] == "F" * 300
+
+
 def test_get_tool_schema_full():
     """get_tool_schema 返回指定工具完整 Schema（含参数说明）."""
     reg = _reg()
@@ -82,3 +108,26 @@ def test_get_tool_schema_not_found():
     assert result.status == ToolResultStatus.FAILURE
     assert "工具不存在" in result.content
     assert "read_file" in result.content
+
+
+def test_compact_contract_keeps_load_bearing_search_and_evidence_semantics():
+    """P0: compact schema may drop prose, but not semantics that change how a call is interpreted."""
+    reg = ToolRegistry()
+    reg.register(_FakeTool("search_files"))
+    reg.register(_FakeTool("read_evidence"))
+    defs = {row["name"]: row for row in reg.schemas(lazy=True)}
+
+    assert "pattern+content" in defs["search_files"]["description"]
+    assert "限定文件" in defs["search_files"]["description"]
+    assert "path" in defs["search_files"]["description"]
+    assert "stat" in defs["search_files"]["description"]
+    assert "不执行 pattern/content 搜索" in defs["search_files"]["description"]
+    assert "root" in defs["search_files"]["description"]
+    assert "text_char" in defs["read_evidence"]["description"]
+    assert "Unicode 字符" in defs["read_evidence"]["description"]
+    assert "line" in defs["read_evidence"]["description"]
+    assert "0-based" in defs["read_evidence"]["description"]
+    assert "limit" in defs["read_evidence"]["description"]
+    assert "4000" in defs["read_evidence"]["description"]
+    assert "source 版本" in defs["read_evidence"]["description"]
+    assert "当前任务" in defs["read_evidence"]["description"]

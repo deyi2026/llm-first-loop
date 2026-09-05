@@ -26,6 +26,81 @@ from llm_loop.tools.safety import CatastrophicGuard
 logger = logging.getLogger(__name__)
 
 
+# Provider-facing compact descriptions for the current built-in tool surface.
+#
+# This is intentionally NOT a tool-eligibility/routing table: every registered tool
+# remains present and keeps the same executable parameter skeleton.  The compact
+# string only removes repeated strategy prose ("when to use / when not / failure
+# advice") from the stable provider prefix while retaining capability and any
+# load-bearing authorization/protocol fact.  Full descriptions remain available via
+# ``schemas(lazy=False)`` / exact ``get_tool_schema``.
+_COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
+    "read_evidence": "按 EvidenceRef 分页恢复已取得证据；range_type=text_char 表示 Unicode 字符，line 表示 Evidence 行；start 为 0-based；limit 1..4000；不重新执行原工具。freshness/currentness 仅指 source 版本，不判断内容对当前任务是否适用。",
+    "search_evidence": "检索当前会话已持久化 Evidence，返回片段与稳定 EvidenceRef；不重新执行 source。命中为历史 observation；source currentness≠task applicability，结合 acquired_at/当前证据自主判断。",
+    "search_archive": "兼容检索历史/归档 Evidence，返回稳定 ref；全文用 read_evidence。命中为历史 observation；source currentness≠task applicability，结合 acquired_at/当前证据自主判断。",
+    "list_evidence": "列出当前会话最近 Evidence、acquired_at 与稳定 ref；freshness 仅表示 source 版本状态，不判断任务适用性。",
+    "read_file": "读取已知路径的本地文本文件；目录或关键词定位用 search_files。",
+    "read_image": "读取本地图片并返回结构化视觉与元信息证据；需要图片路径。",
+    "inspect_code": "解析 Python 文件/目录 AST，列类、函数、签名与 imports；实现正文用 read_file。",
+    "edit_file": "精确修改已有文件：read→match→diff→apply+verify；dry_run 可只预览。",
+    "get_tool_schema": "读取工具完整 Schema；'*' 列目录，'?关键词' 搜索。仅在需要更多参数说明时使用。",
+    "execute_command": "在本地 shell 执行命令并返回 stdout/stderr；每次为独立进程，灾难性命令由硬安全边界阻断。",
+    "job_output": "查询 execute_command 后台任务的状态与已收集输出。",
+    "job_kill": "终止仍在运行的 execute_command 后台任务。",
+    "search_files": "按文件名/glob 或内容搜索工作区；pattern+content 表示先按 pattern 限定文件，再在其中搜索 content；path 只做精确存在/stat 查询（不执行 pattern/content 搜索）；限定搜索目录用 root。",
+    "schedule": "注册一次或周期提醒；wake 仅是当前真人 run 签发的一次性同会话续跑，不可递归唤醒。",
+    "schedule_cancel": "按 schedule 返回的 sid 取消已注册提醒。",
+    "web_fetch": "抓取 URL 并提取网页正文；反爬/JS 壳失败会如实返回 recovery 信息。",
+    "web_search": "搜索网络并返回结构化标题/URL/来源；支持 general/scholar/code/auto channel。",
+    "get_goal": "读取当前 durable Goal 与最近 checkpoints；只返回已记录事实，不替模型决定下一步。",
+    "task_frontier": "读取当前 Goal 的 Task 图状态/frontier；程序记结构，模型决定如何推进。",
+    "architecture_status": "读取 LFL 运行时状态、缓存、异常、配置与动作轨迹；不作为用户任务 Goal 事实源。",
+    "search_records": "按 kind/query 检索持久运行记录、记忆、归档、经验、自评与已退休 episode。命中为历史记录：采信前先对照时间锚点（list_evidence/event_stream）；字面命中≠当前所指，过时命中仅作背景。",
+    "event_stream": "按时间顺序读取统一运行事件流，用于审计、交接与排障。",
+    "search_docs": "检索 docs/ Markdown 文档并返回路径、标题、摘要与相关性。",
+    "adjust_strategy": "调整白名单运行参数 max_iterations/timeout_s/history_budget，受全局硬上限约束。",
+    "retry_tool": "用给定参数重新执行指定工具，仍经过完整安全、校验与超时包裹。",
+    "refresh_config": "重载 provider/model registry 等运行配置；共享默认 client 的启动 contract 仍需重启才变化。",
+    "save_experience": "把可复用工程经验持久化到经验库，供跨会话检索。",
+    "refine_experience": "对既有经验执行归档、失效或恢复生命周期变更。",
+    "submit_evolution": "提交结构化架构演进建议供人工审阅；硬安全/授权/协议边界只能建议，不可自行放宽。",
+    "evolution_complete": "登记 executing 演进建议已执行并验证；尚未完成时不得登记。",
+    "generate_evolution_template": "根据现有改进证据生成结构化演进建议模板。",
+    "create_goal": "创建可跨会话持续追踪的 durable Goal；适合长任务。",
+    "checkpoint_goal": "记录 Goal 的里程碑变化、证据、影响路径与确切下一步。",
+    "update_goal": "更新 Goal 状态；complete/blocked 必须有当前事实依据。",
+    "self_evaluate": "基于运行证据生成成功率、效率、诚实性、停滞与异常等自评并持久化。",
+    "send_feishu_message": "向飞书发送文本/卡片；仅在用户明确要求且 outbound、白名单与限速允许时执行。",
+    "create_feishu_doc": "创建飞书文档并返回 doc_id/URL；受飞书 outbound 配置与权限约束。",
+    "send_feishu_attachment": "向飞书发送本地文件/文档附件；受用户授权、白名单、限速与文件存在性约束。",
+    "code_review": "按正确性、安全、性能、测试与回归维度审查代码。",
+    "grill_me": "对待实施方案做追问式设计评审，暴露边界与遗漏。",
+    "stop_slop": "检查并清理文本中的套话、空话、过度强调与虚假精确。",
+    "handoff_now": "生成结构化本地 handoff 文档，供长任务跨会话接管。",
+    "brainstorm_design": "对复杂问题进行多视角方案 brainstorm 与评分。",
+    "tdd_red_green": "执行 TDD red→green 循环以实现明确规格。",
+    "design_review": "用多角色视角审查设计文档并输出问题与建议。",
+    "record_skill": "把结构化操作序列生成可复用 SKILL.md 模板。",
+    "skill_list": "列出 skills/ 中可用外部 Skill 的名称与简述。",
+    "skill_load": "按已知名称加载外部 Skill 全文到当前执行上下文。",
+    "task_create": "在当前 Goal 下创建带依赖与验收条件的 durable Task。",
+    "task_update": "推进、阻塞、完成、失败、取消或重开 durable Task；状态转移受任务图约束。",
+    "model_catalog": "列出可用 provider/model、context、reasoning contract 与成本档。",
+    "switch_model": "切换当前会话模型或恢复 default；按当前 registry 精确解析 provider/model。",
+    "recover_from_backup": "从已存在备份恢复未落盘数据；冲突、损坏或不存在会如实失败。",
+    "playwright_test": "生成并执行隔离 Playwright E2E 场景，返回截图与 pass/fail。",
+    "playwright_exec": "执行给定 Python Playwright 脚本，用于需要浏览器交互/JS 的验证。",
+    "spawn_subagent": "非阻塞启动隔离子代理并返回 child_id；父代理可继续当前 run。",
+    "agent_message": "向直接 parent 或仍运行的直接 child 发消息；sender 由运行时确定，不能指定。",
+    "subagent_result": "查询/短暂等待自己的直接 child；completed 才代表子任务成功结算。",
+    "fix_loop": "原子编排检查→定位→子代理修复→重跑的有界修复循环。",
+    "workflow_run": "编排 parallel/pipeline/DAG 子任务；按依赖执行并传递前序结果。",
+    "dsh_task": "在隔离进程/会话中委派 DeepSeek Harness 任务；不会自动继承当前会话历史。",
+    "dsh_session_read": "读取 DSH 最近 session 的事件日志，查看中间推理、工具调用与结果。",
+}
+
+
+
 def _tool_guidance_mode() -> str:
     """R8.24-C C-1.1（C-D2）: 工具回执建议源渲染模式（三态）.
 
@@ -394,16 +469,16 @@ class ToolRegistry:
     def schemas(self, lazy: bool = False) -> list[dict]:
         """生成 LLM tools 参数（JSON Schema，约束 C4）.
 
-        EVO-d5db88d9: lazy=True 时返回精简索引（name + description 截断 + 参数骨架），
-        模型需要某工具完整参数时调用 get_tool_schema 按需读取（工具规模扩展时上下文占用可控）。
-        默认 lazy=False 全量注入（零回归，当前工具规模推荐）。
+        EVO-d5db88d9: lazy=True 时返回精简可执行 Schema（name + reviewed compact description
+        + 原有参数骨架）。工具仍全部可调用；完整说明仍可按需读取。
+        默认 lazy=False 全量注入（零回归）。
         """
         with self._lock:
             if lazy:
                 defs = [
                     {
                         "name": t.name,
-                        "description": (t.description or "")[:200],
+                        "description": self._compact_description(t),
                         "parameters": self._lazy_parameters(t),
                     }
                     for t in self._tools.values()
@@ -414,6 +489,18 @@ class ToolRegistry:
                     for t in self._tools.values()
                 ]
         return defs
+
+    @staticmethod
+    def _compact_description(t: Any) -> str:
+        """Shorten stable provider-prefix prose without changing tool capability."""
+        explicit = getattr(t, "compact_description", None)
+        if isinstance(explicit, str) and explicit.strip():
+            return explicit.strip()[:160]
+        name = str(getattr(t, "name", "") or "")
+        known = _COMPACT_TOOL_DESCRIPTIONS.get(name)
+        if known is not None:
+            return known
+        return str(getattr(t, "description", "") or "")[:120]
 
     @staticmethod
     def _lazy_parameters(t) -> dict:
