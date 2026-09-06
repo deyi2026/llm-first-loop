@@ -10,7 +10,7 @@ from scripts.calib.treatments_a1 import build_system_prompt_a1
 from scripts.calib.treatments_a2 import A2_VARIANTS, build_system_prompt_a2
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-MATRIX = ROOT / "data/calib/a2_matrix_v1.json"
+MATRIX = ROOT / "tests/fixtures/calib/a2_matrix_v1.json"
 
 
 def test_shape():

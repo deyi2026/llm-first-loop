@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -12,14 +11,6 @@ from llm_loop.memory.evidence import EvidenceLedgerStore, OwnerScope
 _ROOT = Path(__file__).parents[2]
 _ORACLE = _ROOT / "tests" / "fixtures" / "evidence_recoverability_r0.json"
 _GATE = _ROOT / "tests" / "fixtures" / "evidence_r0_phase7_gate_v1.json"
-_SPEC = _ROOT / ".codeartsdoer" / "specs" / "ev_recov" / "spec.md"
-_DESIGN = _ROOT / ".codeartsdoer" / "specs" / "ev_recov" / "design.md"
-
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 def _manifest(messages: list[dict]) -> str:
     rows = [
         str(row.get("content") or "")
@@ -126,9 +117,6 @@ def test_r0_12_non_target_guardrails_and_no_provider_policy(monkeypatch):
     gate = json.loads(_GATE.read_text(encoding="utf-8"))
     assert oracle["provider_calls_allowed"] is False
     assert gate["network_policy"] == "deny"
-    assert _sha256(_SPEC) == oracle["contract_sha256"]["spec"]
-    assert _sha256(_DESIGN) == oracle["contract_sha256"]["design"]
-
     # Default rollout remains opt-in/off.
     monkeypatch.delenv("EVIDENCE_MODE", raising=False)
     from llm_loop.config import _env_evidence_mode

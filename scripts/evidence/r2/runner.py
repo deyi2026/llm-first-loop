@@ -360,7 +360,8 @@ def execute_run(row: dict[str, Any], *, dry: bool) -> dict[str, Any]:
     fixture = FIXTURES[str(row["seed_id"])]
     p = PROVIDERS[provider]
     owner = OwnerScope(workspace_id="r2-fixture", session_id=run_id)
-    temp = Path(tempfile.mkdtemp(prefix=f"{run_id}-", dir=OUT_DIR))
+    # Per-run evidence sandbox is ephemeral and must not require the runtime output tree to pre-exist.
+    temp = Path(tempfile.mkdtemp(prefix=f"lfl-r2-{run_id}-"))
     blobs = BlobStore(temp / "blobs")
     ledger = EvidenceLedgerStore(temp / "ledger")
     capture = EvidenceCapture(blobs, ledger)

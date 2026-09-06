@@ -19,7 +19,7 @@ from scripts.calib.treatments import build_task_prompt  # noqa: E402
 
 RUNS = ROOT / "data/calib/runs_a1"
 JDIR = ROOT / "data/calib/a1_judges"
-MATRIX = ROOT / "data/calib/a1_matrix_v1.json"
+MATRIX = ROOT / "tests/fixtures/calib/a1_matrix_v1.json"
 REPORT = ROOT / "data/calib/a1_report.json"
 
 

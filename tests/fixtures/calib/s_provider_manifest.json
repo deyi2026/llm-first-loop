@@ -1,0 +1,53 @@
+{
+  "version": "S1-provider-manifest-v1",
+  "resolved_at": "2026-08-26T07:14:00+08:00",
+  "benchmark_policy": {
+    "wire_protocol": "openai",
+    "benchmark_max_tokens": 16384,
+    "reasoning_effort": "high",
+    "timeout_s": 300,
+    "cache_policy": "record-and-randomize",
+    "fallback": "forbidden -> INFRA_FAILURE",
+    "temperature": null,
+    "top_p": null
+  },
+  "providers": {
+    "minimax": {
+      "role": "anchor",
+      "service": "MiniMax API",
+      "model": "MiniMax-M3",
+      "base_url": "https://api.minimax.chat/v1",
+      "api_key_env": "MINIMAX_API_KEY",
+      "context_tokens": 1000000,
+      "thinking_supported": false
+    },
+    "deepseek": {
+      "role": "anchor",
+      "service": "DeepSeek API",
+      "model": "deepseek-v4-flash",
+      "base_url": "https://api.deepseek.com/v1",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "context_tokens": 1000000,
+      "thinking_supported": true
+    },
+    "kimi": {
+      "role": "holdout",
+      "service": "Kimi Code API",
+      "model": "k3",
+      "base_url": "https://api.kimi.com/coding/v1",
+      "api_key_env": "KIMI_API_KEY",
+      "context_tokens": 1048576,
+      "thinking_supported": true
+    },
+    "glm": {
+      "role": "holdout",
+      "service": "Zhipu GLM API",
+      "model": "glm-5.2",
+      "base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "api_key_env": "GLM_API_KEY",
+      "context_tokens": 1000000,
+      "provider_max_output_tokens": 131072,
+      "thinking_supported": true
+    }
+  }
+}
