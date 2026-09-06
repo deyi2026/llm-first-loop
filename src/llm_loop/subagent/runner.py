@@ -23,6 +23,7 @@ from llm_loop.core.message import (
 )
 from llm_loop.core.runtime_params import HARD_CAP_MAX_ITERATIONS
 from llm_loop.core.session import Session, SessionStore
+from llm_loop.core.subagent_topology import SubAgentTopologyJournal, SubAgentTopologyState
 from llm_loop.core.tool_execution_journal import ToolExecutionJournal
 from llm_loop.llm.client import LLMClient
 from llm_loop.tools.registry import ToolRegistry
@@ -85,6 +86,7 @@ class _SubAgentHandle:
     child_id: str
     parent_id: str
     depth: int
+    generation: str
     state: str = "running"
     result: SubAgentResult | None = None
     cancel_requested: bool = False
@@ -123,9 +125,15 @@ class SubAgentRunner:
             result_root=journal_root,
             session_store=self.session_store,
         )
+        self._topology_journal = SubAgentTopologyJournal(self.session_store.event_store)
+        self._runner_owner_id = uuid.uuid4().hex
         self._children_guard = threading.Lock()
+        # Local-active maps remain strictly process-local.  Recovered topology is kept
+        # separately so restart never fabricates Thread/Event/Future or a writable mailbox.
         self._children_by_parent: dict[str, set[str]] = {}
         self._parent_by_child: dict[str, str] = {}
+        self._durable_topology: dict[str, SubAgentTopologyState] = {}
+        self._local_generation_by_child: dict[str, str] = {}
         self._cancel_events: dict[str, threading.Event] = {}
         self._agent_inbox: dict[str, list[tuple[int, str, str]]] = {}
         self._messages_to_parent: dict[str, list[str]] = {}
@@ -133,6 +141,78 @@ class SubAgentRunner:
         self._handle_order: list[str] = []
         self._max_handles = 128
         self._message_seq = 0
+        self._recover_topology_index()
+
+    def _recover_topology_index(self) -> None:
+        """Rebuild read-only durable topology; never recreate an active worker."""
+        recovered: dict[str, SubAgentTopologyState] = {}
+        try:
+            candidates = sorted(self.session_store.root.glob("subagent_*.json"))
+        except OSError:
+            candidates = []
+        for path in candidates:
+            state = self._topology_journal.recover(path.stem)
+            if state is None or not state.parent_id:
+                continue
+            # Durable direct-parent authority requires two independent mechanical facts:
+            # the child Session parent_id and the append-only topology edge must agree.
+            # Mismatch/corruption fails closed to "unknown", never broadens adjacency.
+            try:
+                session_parent = str(self.session_store.load(path.stem).parent_id or "")
+            except Exception:  # noqa: BLE001 - recovery is read-only and fail-closed
+                continue
+            if session_parent != state.parent_id:
+                continue
+            recovered[state.child_id] = state
+        with self._children_guard:
+            self._durable_topology.update(recovered)
+
+    def _refresh_topology_state(self, child_id: str) -> SubAgentTopologyState | None:
+        state = self._topology_journal.recover(child_id)
+        with self._children_guard:
+            if state is None:
+                self._durable_topology.pop(child_id, None)
+            else:
+                self._durable_topology[child_id] = state
+        return state
+
+    def topology_snapshot(self, child_session_id: str) -> dict[str, object] | None:
+        """Return mechanical topology/ownership facts without recovering execution state."""
+        sid = str(child_session_id or "").strip()
+        if not sid:
+            return None
+        with self._children_guard:
+            handle = self._handles.get(sid)
+            durable = self._durable_topology.get(sid)
+            if handle is not None:
+                terminal = handle.state != "running"
+                outcome = (handle.result.outcome if handle.result is not None else "")
+                return {
+                    "child_id": sid,
+                    "parent_id": handle.parent_id,
+                    "generation": handle.generation,
+                    "owner_state": "terminal_local" if terminal else "local_active",
+                    "local_active": not terminal,
+                    "terminal": terminal,
+                    "outcome": outcome,
+                    "settlement_state": (
+                        "collected" if handle.collected else "uncollected"
+                    ),
+                }
+            if durable is None:
+                return None
+            return {
+                "child_id": durable.child_id,
+                "parent_id": durable.parent_id,
+                "generation": durable.generation,
+                "owner_state": "terminal_known" if durable.terminal else "orphaned",
+                "local_active": False,
+                "terminal": durable.terminal,
+                "outcome": durable.outcome,
+                # Collection/settlement is process-local until ST2-C.  Restart must
+                # report epistemic unknown instead of inventing uncollected/collected.
+                "settlement_state": "unknown",
+            }
 
     def _prune_handles_locked(self, *, reserve_slot: bool = False) -> None:
         """只淘汰最老 terminal handle；running child 永不被静默丢弃。"""
@@ -170,9 +250,13 @@ class SubAgentRunner:
             ]
 
     def parent_of(self, child_session_id: str) -> str:
-        """返回运行中 child 的直接父会话；非 active child 返回空串。"""
+        """返回已知 direct parent；durable edge 不代表 child 在本进程 active。"""
         with self._children_guard:
-            return self._parent_by_child.get(child_session_id, "")
+            active = self._parent_by_child.get(child_session_id, "")
+            if active:
+                return active
+            durable = self._durable_topology.get(child_session_id)
+            return durable.parent_id if durable is not None else ""
 
     def send_current_message(self, target_id: str, content: str) -> tuple[bool, str, str]:
         """以当前运行会话为 sender，向直接 parent/child 投递消息。
@@ -295,11 +379,13 @@ class SubAgentRunner:
     def _reserve_child(self, parent_sid: str) -> tuple[str, threading.Event, Session]:
         """同步登记 active child topology；调用者负责最终 ``_finalize_child``。"""
         sid = f"subagent_{uuid.uuid4().hex[:12]}"
+        generation = uuid.uuid4().hex
         cancel_event = threading.Event()
         with self._children_guard:
             if parent_sid:
                 self._children_by_parent.setdefault(parent_sid, set()).add(sid)
                 self._parent_by_child[sid] = parent_sid
+            self._local_generation_by_child[sid] = generation
             self._cancel_events[sid] = cancel_event
             self._agent_inbox[sid] = []
             self._messages_to_parent[sid] = []
@@ -316,11 +402,24 @@ class SubAgentRunner:
         parent_sid: str,
         result: SubAgentResult | None,
     ) -> SubAgentResult | None:
-        """原子收束 active topology，并把 async handle 切到真实 terminal outcome。"""
+        """原子收束 local active topology，并以 generation fencing 记录 durable terminal。"""
+        with self._children_guard:
+            generation = self._local_generation_by_child.get(sid, "")
+            durable_before = self._durable_topology.get(sid)
+        if generation:
+            self._topology_journal.terminal(
+                child_id=sid,
+                parent_id=parent_sid,
+                generation=generation,
+                depth=(durable_before.depth if durable_before is not None else 0),
+                outcome=(result.outcome if result is not None else "failed"),
+            )
+            self._refresh_topology_state(sid)
         with self._children_guard:
             if result is not None:
                 result.reports = list(self._messages_to_parent.get(sid, []))
             self._cancel_events.pop(sid, None)
+            self._local_generation_by_child.pop(sid, None)
             self._agent_inbox.pop(sid, None)
             self._messages_to_parent.pop(sid, None)
             self._parent_by_child.pop(sid, None)
@@ -368,6 +467,9 @@ class SubAgentRunner:
             # The reserve snapshot is intentionally not reused: the public facade loads
             # and binds exactly one save-authorized snapshot while the lease is held.
             del sess
+            with self._children_guard:
+                generation = self._local_generation_by_child.get(sid, "")
+                parent_sid = self._parent_by_child.get(sid, "")
             with self.session_store.run_owned_session(sid) as owned_sess:
                 if owned_sess is None:
                     if startup_state is not None:
@@ -381,32 +483,88 @@ class SubAgentRunner:
                         outcome="failed",
                         depth=depth,
                     )
-                try:
-                    self._persist_delegated_task(
-                        owned_sess,
-                        task=task,
-                        context=context,
-                        depth=depth,
-                        acceptance=acceptance,
-                    )
-                except BaseException as exc:  # noqa: BLE001 - startup must be acknowledged
+                # Reserve-time parent save is best-effort for historical compatibility;
+                # the run-owned snapshot must carry the direct-parent fact before the
+                # durable delegated task is acknowledged.
+                if parent_sid and parent_sid != sid:
+                    owned_sess.parent_id = parent_sid
+                if not generation:
                     if startup_state is not None:
-                        startup_state.update(
-                            {"ok": False, "detail": f"durable_start_failed:{type(exc).__name__}"}
-                        )
+                        startup_state.update({"ok": False, "detail": "child_generation_missing"})
                     if startup_event is not None:
                         startup_event.set()
-                    raise
-                if startup_state is not None:
-                    startup_state.update({"ok": True, "detail": "durable_start_ready"})
-                if startup_event is not None:
-                    startup_event.set()
-                return self._execute_subagent(
-                    owned_sess,
-                    depth,
-                    max_rounds=max_rounds,
-                    cancel_event=cancel_event,
+                    return SubAgentResult(
+                        final_answer="[状态: failure] 子代理执行代际缺失，当前 worker 未执行任何动作。",
+                        outcome="failed",
+                        depth=depth,
+                    )
+                linked = self._topology_journal.linked(
+                    child_id=sid,
+                    parent_id=parent_sid,
+                    generation=generation,
+                    depth=depth,
                 )
+                started = linked and self._topology_journal.generation_started(
+                    child_id=sid,
+                    parent_id=parent_sid,
+                    generation=generation,
+                    owner_id=self._runner_owner_id,
+                    depth=depth,
+                )
+                self._refresh_topology_state(sid)
+                if not started:
+                    if startup_state is not None:
+                        startup_state.update({"ok": False, "detail": "topology_start_not_durable"})
+                    if startup_event is not None:
+                        startup_event.set()
+                    return SubAgentResult(
+                        final_answer=(
+                            "[状态: failure] 子代理 topology/generation 启动事实未持久化，"
+                            "当前 worker 未执行任何 provider/tool 动作。"
+                        ),
+                        outcome="failed",
+                        depth=depth,
+                    )
+                try:
+                    try:
+                        self._persist_delegated_task(
+                            owned_sess,
+                            task=task,
+                            context=context,
+                            depth=depth,
+                            acceptance=acceptance,
+                        )
+                    except BaseException as exc:  # noqa: BLE001 - startup must be acknowledged
+                        if startup_state is not None:
+                            startup_state.update(
+                                {
+                                    "ok": False,
+                                    "detail": f"durable_start_failed:{type(exc).__name__}",
+                                }
+                            )
+                        if startup_event is not None:
+                            startup_event.set()
+                        raise
+                    if startup_state is not None:
+                        startup_state.update({"ok": True, "detail": "durable_start_ready"})
+                    if startup_event is not None:
+                        startup_event.set()
+                    return self._execute_subagent(
+                        owned_sess,
+                        depth,
+                        max_rounds=max_rounds,
+                        cancel_event=cancel_event,
+                    )
+                finally:
+                    self._topology_journal.generation_released(
+                        child_id=sid,
+                        parent_id=parent_sid,
+                        generation=generation,
+                        owner_id=self._runner_owner_id,
+                        depth=depth,
+                        reason="worker_exit",
+                    )
+                    self._refresh_topology_state(sid)
         finally:
             _CURRENT_SUBAGENT_DEPTH.reset(_depth_tok)
             current_session_id.set(old_ctx_sid)
@@ -416,8 +574,11 @@ class SubAgentRunner:
     ) -> tuple[str, threading.Event, Session, _SubAgentHandle] | None:
         """原子保留一个 background handle 槽位；容量只约束并发资源，不判断任务。"""
         sid = f"subagent_{uuid.uuid4().hex[:12]}"
+        generation = uuid.uuid4().hex
         cancel_event = threading.Event()
-        handle = _SubAgentHandle(child_id=sid, parent_id=parent_sid, depth=depth)
+        handle = _SubAgentHandle(
+            child_id=sid, parent_id=parent_sid, depth=depth, generation=generation
+        )
         with self._children_guard:
             self._prune_handles_locked(reserve_slot=True)
             if len(self._handles) >= self._max_handles:
@@ -425,6 +586,7 @@ class SubAgentRunner:
             if parent_sid:
                 self._children_by_parent.setdefault(parent_sid, set()).add(sid)
                 self._parent_by_child[sid] = parent_sid
+            self._local_generation_by_child[sid] = generation
             self._cancel_events[sid] = cancel_event
             self._agent_inbox[sid] = []
             self._messages_to_parent[sid] = []

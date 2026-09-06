@@ -36,6 +36,10 @@ from llm_loop.event_log.model import (
     EVENT_SESSION_CREATED,
     EVENT_SESSION_FORKED,
     EVENT_SESSION_META_CHANGED,
+    EVENT_SUBAGENT_GENERATION_RELEASED,
+    EVENT_SUBAGENT_GENERATION_STARTED,
+    EVENT_SUBAGENT_LINKED,
+    EVENT_SUBAGENT_TERMINAL,
     EVENT_TOOL_EXECUTION_DECLARED,
     EVENT_TOOL_EXECUTION_FINISHED,
     EVENT_TOOL_EXECUTION_RECEIPT_COMMITTED,
@@ -116,6 +120,10 @@ def test_registry_covers_registered_types_with_fields():
         EVENT_HISTORY_COMPACTION_STATE_RESET,
         EVENT_MESSAGE_CACHE_COMPACTED,
         EVENT_SESSION_META_CHANGED,
+    EVENT_SUBAGENT_GENERATION_RELEASED,
+    EVENT_SUBAGENT_GENERATION_STARTED,
+    EVENT_SUBAGENT_LINKED,
+    EVENT_SUBAGENT_TERMINAL,
         EVENT_SESSION_FORKED,
         EVENT_REQUEST_META,  # HARNESS-02: request.meta 请求快照
         EVENT_REQUEST_USAGE,  # DSH 借鉴: request.usage 响应 usage 明细
@@ -126,6 +134,10 @@ def test_registry_covers_registered_types_with_fields():
         EVENT_TOOL_EXECUTION_STARTED,
         EVENT_TOOL_EXECUTION_FINISHED,
         EVENT_TOOL_EXECUTION_RECEIPT_COMMITTED,
+        EVENT_SUBAGENT_LINKED,
+        EVENT_SUBAGENT_GENERATION_STARTED,
+        EVENT_SUBAGENT_GENERATION_RELEASED,
+        EVENT_SUBAGENT_TERMINAL,
         EVENT_INJECTION_PROFILE_SHADOW,  # R8: per-attempt shadow 注入 profile 归因
         EVENT_RUN_END,  # DSH 借鉴: run.end run 生命周期结束事件
         EVENT_PROGRAM_RECOVERY,  # R4: runtime-only recovery 的 session 审计事件
@@ -192,6 +204,9 @@ def test_registry_covers_registered_types_with_fields():
     run_end_spec = REGISTRY.spec(EVENT_RUN_END)
     assert run_end_spec is not None
     assert {"reason", "rounds", "tokens_in", "cache_hit", "duration_ms"} <= set(run_end_spec.fields)
+    topology_spec = REGISTRY.spec(EVENT_SUBAGENT_GENERATION_STARTED)
+    assert topology_spec is not None
+    assert {"child_id", "parent_id", "generation", "owner_id", "depth"} <= set(topology_spec.fields)
 
 
 def test_registry_unregistered_spec_none():

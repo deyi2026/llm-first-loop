@@ -33,6 +33,10 @@ EVENT_TOOL_EXECUTION_DECLARED = "tool.execution.declared"
 EVENT_TOOL_EXECUTION_STARTED = "tool.execution.started"
 EVENT_TOOL_EXECUTION_FINISHED = "tool.execution.finished"
 EVENT_TOOL_EXECUTION_RECEIPT_COMMITTED = "tool.execution.receipt_committed"
+EVENT_SUBAGENT_LINKED = "subagent.linked"
+EVENT_SUBAGENT_GENERATION_STARTED = "subagent.generation.started"
+EVENT_SUBAGENT_GENERATION_RELEASED = "subagent.generation.released"
+EVENT_SUBAGENT_TERMINAL = "subagent.terminal"
 EVENT_PROGRAM_RECOVERY = "program.recovery"  # R4: 一次性程序恢复动作审计（不作为 durable 对话消息）
 EVENT_INJECTION_PROFILE_SHADOW = "injection.profile.shadow"  # Historical R8 schema; P1-C keeps read compatibility only, no new emitter
 
@@ -381,6 +385,58 @@ REGISTRY.register(
             "tool_name": "工具名",
             "result_state_sha256": "已提交 receipt 对应 result sidecar 指纹；可为空",
             "recovered": "是否由重启恢复路径完成 commit",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_SUBAGENT_LINKED,
+        version=1,
+        fields={
+            "child_id": "child session id",
+            "parent_id": "direct parent session id",
+            "generation": "execution-generation fencing id",
+            "depth": "mechanical recursion depth",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_SUBAGENT_GENERATION_STARTED,
+        version=1,
+        fields={
+            "child_id": "child session id",
+            "parent_id": "direct parent session id",
+            "generation": "execution-generation fencing id",
+            "owner_id": "runner instance owner id; diagnostic/fencing fact, not PID authority",
+            "depth": "mechanical recursion depth",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_SUBAGENT_GENERATION_RELEASED,
+        version=1,
+        fields={
+            "child_id": "child session id",
+            "parent_id": "direct parent session id",
+            "generation": "execution-generation fencing id",
+            "owner_id": "runner instance owner id",
+            "depth": "mechanical recursion depth",
+            "reason": "mechanical release reason",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_SUBAGENT_TERMINAL,
+        version=1,
+        fields={
+            "child_id": "child session id",
+            "parent_id": "direct parent session id",
+            "generation": "execution-generation fencing id",
+            "depth": "mechanical recursion depth",
+            "outcome": "terminal child outcome fact",
         },
     )
 )
