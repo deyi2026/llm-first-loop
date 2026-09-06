@@ -108,7 +108,8 @@ def _login_response(*, next_path: str, error: str = "", status_code: int = 200) 
     response.headers["Content-Security-Policy"] = (
         "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
     )
-    response.headers["Referrer-Policy"] = "no-referrer"
+    # no-referrer makes browsers send Origin: null for this same-origin POST.
+    response.headers["Referrer-Policy"] = "same-origin"
     response.headers["X-Content-Type-Options"] = "nosniff"
     return response
 
@@ -179,6 +180,7 @@ def browser_entry(request: Request):
     return RedirectResponse("/login?next=/ui/v2/", status_code=303)
 
 
+@router.get("/auth/login", response_model=None, include_in_schema=False)
 @router.get("/login", response_model=None)
 def login_page(request: Request, next: str = "/ui/v2/"):
     next_path = _safe_next(next)

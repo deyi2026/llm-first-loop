@@ -4,6 +4,7 @@
 复用 tests/conftest.py 的 build_test_engine fixture（既有装配，不复制逻辑）。
 """
 
+import pytest
 from fastapi.testclient import TestClient
 
 from llm_loop.web import build_app
@@ -246,3 +247,46 @@ def test_public_https_origin_forces_secure_cookie_even_if_local_proxy_hop_is_htt
     )
     assert response.status_code == 303
     assert "Secure" in response.headers["set-cookie"]
+
+
+@pytest.mark.parametrize("base_url", [
+    "http://127.0.0.1:8903", "https://app.example.com",
+])
+def test_html_login_preserves_same_origin_on_first_attempt_and_retry(
+    base_url, build_test_engine, monkeypatch
+):
+    """HTML POST needs a non-null Origin; no-referrer breaks that even same-origin."""
+    from llm_loop.web.auth import hash_login_password
+
+    monkeypatch.setenv("WEB_AUTH_REQUIRE", "1")
+    monkeypatch.setenv("WEB_LOGIN_PASSWORD_HASH", hash_login_password("test-login-password"))
+    monkeypatch.delenv("WEB_ORIGIN_ALLOWLIST", raising=False)
+    engine, _ = build_test_engine([])
+    client = TestClient(build_app(engine=engine), base_url=base_url)
+    for path in ("/login", "/auth/login"):
+        page = client.get(path)
+        assert page.status_code == 200
+        assert page.headers["Referrer-Policy"] == "same-origin"
+        assert page.headers["Cache-Control"] == "no-store"
+        assert "form-action 'self'" in page.headers["Content-Security-Policy"]
+        assert 'method="post" action="/auth/login"' in page.text
+
+    rejected = client.post(
+        "/auth/login", data={"password": "wrong-password"}, headers={"Origin": base_url}
+    )
+    assert rejected.status_code == 401
+    assert rejected.headers["Referrer-Policy"] == "same-origin"
+    accepted = client.post(
+        "/auth/login", data={"password": "test-login-password"},
+        headers={"Origin": base_url}, follow_redirects=False,
+    )
+    assert accepted.status_code == 303
+    assert client.get("/health").status_code == 200
+
+    for origin in ("null", "https://evil.example", base_url + ":8443"):
+        blocked = client.post("/auth/logout", headers={"Origin": origin})
+        assert blocked.status_code == 403
+        assert blocked.json()["error"] == "foreign_origin_forbidden"
+    assert client.get("/health").status_code == 200
+    assert client.post("/auth/logout", headers={"Origin": base_url}).status_code == 200
+    assert client.get("/health").status_code == 401
