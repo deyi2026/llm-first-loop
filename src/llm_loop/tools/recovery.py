@@ -56,12 +56,20 @@ def web_fetch_preflight(url: str) -> ToolRecoveryAdvice | None:
     if not host:
         return None
     if any(host == suffix or host.endswith("." + suffix) for suffix in _KNOWN_ANTI_BOT_SUFFIXES):
+        # Site adapters run inside WebFetchTool and preserve the same SSRF/redirect/curl
+        # safety boundary.  Do not route supported article URLs away before the tool
+        # gets a chance to execute its deterministic adapter.  Keep the legacy R8.7
+        # route only for Toutiao URL shapes that the adapter cannot handle.
+        from llm_loop.tools.builtin.web_fetch import _toutiao_article_id
+
+        if _toutiao_article_id(url) is not None:
+            return None
         return ToolRecoveryAdvice(
             failure_class="known_domain_anti_bot",
             retry_same_tool="no",
             preferred_next=("skill_load:web-fetch-fast",),
             preferred_skill="web-fetch-fast",
-            reason="direct web_fetch is a known low-value path for this domain; no network request was executed",
+            reason="direct web_fetch has no deterministic adapter for this URL shape; no network request was executed",
         )
     return None
 

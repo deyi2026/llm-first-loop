@@ -140,8 +140,20 @@ def test_retired_selection_modes_are_not_settings_or_config(monkeypatch):
     assert not hasattr(Settings, "tool_eligibility_mode")
 
 
-def test_web_fetch_preflight_routes_toutiao_without_retry():
-    advice = web_fetch_preflight("https://m.toutiao.com/article/123/")
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://m.toutiao.com/article/1234567890123456789/",
+        "https://m.toutiao.com/i1234567890123456789/",
+        "https://www.toutiao.com/x?group_id=1234567890123456789",
+    ],
+)
+def test_web_fetch_preflight_allows_toutiao_site_adapter_urls(url):
+    assert web_fetch_preflight(url) is None
+
+
+def test_web_fetch_preflight_routes_unsupported_toutiao_without_retry():
+    advice = web_fetch_preflight("https://m.toutiao.com/search/?keyword=test")
     assert advice is not None
     assert advice.failure_class == "known_domain_anti_bot"
     assert advice.retry_same_tool == "no"

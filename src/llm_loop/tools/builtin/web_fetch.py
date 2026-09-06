@@ -19,10 +19,12 @@ from __future__ import annotations
 
 import html as _html
 import ipaddress
+import json
 import logging
 import re
 import subprocess
 import time as _time
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 
@@ -50,6 +52,8 @@ _UA_POOL = [
 
 # 疑似 JS 壳/反爬页特征（正文提取失败时如实提示，不伪装成功）
 _SHELL_HINTS = ("enable javascript", "需要允许", "_$jsvmprt", "browser check", "cf-chl")
+
+_TOUTIAO_ARTICLE_ID_RE = re.compile(r"/(?:article/|i)(\d{8,30})(?:/|$)")
 
 
 def _extract_title(raw: str) -> str:
@@ -185,6 +189,48 @@ def _extract_content(raw: str, url: str) -> tuple[str, str, str]:
     return ("strip", title, _strip_tags(raw))
 
 
+def _toutiao_article_id(url: str) -> str | None:
+    """Extract a Toutiao article id only from trusted Toutiao hostnames."""
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return None
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if host != "toutiao.com" and not host.endswith(".toutiao.com"):
+        return None
+    match = _TOUTIAO_ARTICLE_ID_RE.search(parsed.path)
+    if match:
+        return match.group(1)
+    group_id = parse_qs(parsed.query).get("group_id", [])
+    if group_id and re.fullmatch(r"\d{8,30}", group_id[0]):
+        return group_id[0]
+    return None
+
+
+def _extract_toutiao_info(raw: str) -> tuple[str, str] | None:
+    """Parse the public Toutiao info/v2 payload into title + readable text."""
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, dict):
+        return None
+    content = data.get("content")
+    if not isinstance(content, str) or not content.strip():
+        return None
+    text = re.sub(r"<br\s*/?>", "\n", content, flags=re.I)
+    text = re.sub(r"</p\s*>", "\n\n", text, flags=re.I)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = _html.unescape(text)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    if len(text) < 20:
+        return None
+    title = str(data.get("title") or "").strip()
+    return (title, text)
+
+
 # ── HARNESS-03: SSRF 内网拦截（默认开；WEB_FETCH_BLOCK_PRIVATE=0 关闭）──
 _BLOCK_PRIVATE_DEFAULT = "1"
 
@@ -298,7 +344,8 @@ class WebFetchTool:
     description = (
         "抓取网页/URL 并返回文本内容（含标题与正文提取）。何时用: 获取网页信息、读取在线文档、查询外部数据。"
         "何时不用: 本地文件用 read_file；需执行命令用 execute_command。"
-        "已知反爬域名会由预检返回专用 skill/recovery 路径；失败后不要同参盲重试。"
+        "已知反爬站点的确定性快路径由本工具内部安全适配；不要为同一 URL 另用 execute_command 手写 curl。"
+        "失败后按回执原因转搜索/归档/浏览器，不要同参盲重试。"
         + SHARED_SOURCE_RECOVERY_CONTRACT
         + source_recovery_guidance(SourceRecoveryKind.WEB_FETCH)
     )
@@ -439,6 +486,22 @@ class WebFetchTool:
             return (hop[1], hop[2])
         raise _RedirectLimitExceededError(f"重定向超过 {_MAX_REDIRECT_HOPS} 跳")
 
+    def _site_fast_fetch(self, url: str) -> tuple[str, str, str, str] | None:
+        """Run deterministic site adapters through the protected curl path."""
+        article_id = _toutiao_article_id(url)
+        if not article_id:
+            return None
+        adapter_url = f"https://m.toutiao.com/i{article_id}/info/v2/"
+        fetched = self._curl_fetch(adapter_url)
+        if fetched is None:
+            return None
+        _method, raw = fetched
+        parsed = _extract_toutiao_info(raw)
+        if parsed is None:
+            return None
+        title, text = parsed
+        return ("toutiao_info_v2", title, text, adapter_url)
+
     def _curl_hop(self, url: str, resolve: str | None) -> tuple | None:
         """单跳 curl：返回 ("ok", method, raw) / ("redirect", location) / None."""
         for ua in _UA_POOL:
@@ -554,8 +617,29 @@ class WebFetchTool:
                 "（单例精神: 可考虑复用上次结果，网页动态变化才重抓）\n"
             )
         httpx_note = ""
+        fast_fetch_note = ""
+        fast_result: tuple[str, str, str, str] | None = None
         try:
-            resp = self._request(url)
+            fast_result = self._site_fast_fetch(url)
+        except _PrivateTargetBlockedError as exc:
+            return ToolResult(
+                status=ToolResultStatus.BLOCKED,
+                content=(
+                    f"[内网拦截] {exc}，已拒绝访问（SSRF 防护——站点快路径逐跳校验）。\n"
+                    "原因: 站点快路径复用 web_fetch 的受保护 curl 通道，不允许绕过网络安全边界。"
+                ),
+                tool_call_id="",
+                tool_name=self.name,
+            )
+        except _RedirectLimitExceededError as exc:
+            fast_fetch_note = f"站点快路径重定向超限（{exc}）"
+        except Exception as exc:  # noqa: BLE001 — 快路径失败必须退回通用抓取
+            fast_fetch_note = f"站点快路径 {type(exc).__name__}: {exc}"
+
+        resp = None
+        try:
+            if fast_result is None:
+                resp = self._request(url)
         except _PrivateTargetBlockedError as exc:
             # P0-2: 重定向/连接后命中内网（与初始拦截同一回执语义）
             return ToolResult(
@@ -582,12 +666,15 @@ class WebFetchTool:
             resp = None
             httpx_note = f"httpx {type(exc).__name__}: {exc}"
 
-        if resp is not None and resp.status_code >= 400:
+        if fast_result is None and resp is not None and resp.status_code >= 400:
             httpx_note = f"httpx HTTP {resp.status_code}（已轮换 {len(_UA_POOL)} 个 UA）"
             resp = None
 
         curl_used = False
-        if resp is not None:
+        if fast_result is not None:
+            method_out, title, text, adapter_url = fast_result
+            fast_fetch_note = f"站点快路径 {method_out}（受保护 curl；{adapter_url}）"
+        elif resp is not None:
             raw = resp.text
             method, title, text = _extract_content(raw, url)
             lower = raw[:5000].lower()
@@ -598,7 +685,7 @@ class WebFetchTool:
             else:
                 method_out = method
 
-        if resp is None:
+        if fast_result is None and resp is None:
             try:
                 fallback = self._curl_fetch(url)
             except _PrivateTargetBlockedError as exc:
@@ -636,6 +723,8 @@ class WebFetchTool:
         header = f"[title] {title}\n[source] {url}\n[extract] {method_out}\n" if title else ""
         if curl_used:
             header += f"[fetch] curl 回退（{httpx_note}）\n"
+        elif fast_fetch_note:
+            header += f"[fetch] {fast_fetch_note}\n"
         header += reuse_note  # 单例感知提示（无重复则为空）
         header += fake_ip_note  # 代理假 IP 放行如实标注（未命中则为空）
         header += "\n"
