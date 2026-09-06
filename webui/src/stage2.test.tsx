@@ -129,6 +129,20 @@ describe("MessageItem", () => {
     expect(screen.getByText("推理过程")).toBeInTheDocument();
   });
 
+  it("思考块：shell 美元变量不经过 KaTeX，不产生 MathML 污染", () => {
+    const reasoning = 'check $d$p and "$p" from repo root';
+    render(
+      <MessageItem
+        msg={{ role: "assistant", content: "回答", reasoningContent: reasoning }}
+      />
+    );
+    fireEvent.click(screen.getByTestId("think-block").querySelector("button")!);
+    const body = screen.getByTestId("think-block").querySelector(".v2-think-body")!;
+    expect(body.textContent).toContain("$d$p");
+    expect(body.querySelector(".katex")).toBeNull();
+    expect(body.querySelector("math")).toBeNull();
+  });
+
   it("工具链折叠 + 工具参数展开", () => {
     render(
       <MessageItem

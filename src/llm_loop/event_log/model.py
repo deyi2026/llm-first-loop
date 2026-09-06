@@ -398,7 +398,9 @@ REGISTRY.register(
             "reasoning_requested": "发送前可确定的请求状态；auto+provider 默认未知时为 null",
             "reasoning_effort": "推理强度",
             "tools_count": "本轮注入的工具 schema 数量",
-            "history_chars": "提交历史字符数",
+            "history_chars": "提交 message content 字符数（不含 reasoning_content）",
+            "reasoning_chars": "提交 messages 中 reasoning_content 字符数",
+            "provider_visible_chars": "主要 provider-visible 结构字符数（messages + tool schemas；不含传输头/凭据）",
             "budget": "本轮历史预算",
         },
     )

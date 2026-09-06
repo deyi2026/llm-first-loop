@@ -75,10 +75,19 @@ function looksLikePath(code: string): boolean {
   return code.includes("/") || PATH_EXT.test(code);
 }
 
-export function renderMarkdown(src: string, clickablePaths?: Set<string>): string {
+export interface RenderMarkdownOptions {
+  /** reasoning/debug surfaces may contain shell variables such as $d$p; disable KaTeX there. */
+  enableMath?: boolean;
+}
+
+export function renderMarkdown(
+  src: string,
+  clickablePaths?: Set<string>,
+  options: RenderMarkdownOptions = {}
+): string {
   if (!src) return "";
   try {
-    const math = renderMath(src);
+    const math = options.enableMath === false ? src : renderMath(src);
     const raw = marked.parse(math) as string;
     let clean = DOMPurify.sanitize(raw, {
       ALLOWED_TAGS,

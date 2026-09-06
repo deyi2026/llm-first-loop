@@ -162,6 +162,9 @@ def test_registry_covers_registered_types_with_fields():
         "model", "provider_id", "effective_budget", "legacy_anchor_reset",
         "anchor_before", "reopened_marker_count", "reason",
     } <= set(reset_spec.fields)
+    request_meta_spec = REGISTRY.spec(EVENT_REQUEST_META)
+    assert request_meta_spec is not None
+    assert {"history_chars", "reasoning_chars", "provider_visible_chars"} <= set(request_meta_spec.fields)
     checkpoint_spec = REGISTRY.spec(EVENT_LLM_PARTIAL_CHECKPOINT)
     assert checkpoint_spec is not None
     assert {
@@ -316,6 +319,7 @@ def test_request_meta_event_written_per_round(tmp_path):
                         ToolCall(id="tc-m", name="read_file", arguments={"path": "a"})
                     ],
                     provider="fake",
+                    reasoning_content="PLAN-ABC",
                 )
             return LLMResponse(content="完成", tool_calls=[], provider="fake")
 
@@ -370,6 +374,12 @@ def test_request_meta_event_written_per_round(tmp_path):
     assert "reasoning_capable" in metas[0].payload
     assert "reasoning_control" in metas[0].payload
     assert "reasoning_supported" in metas[0].payload
+    assert metas[0].payload["reasoning_chars"] == 0
+    assert metas[1].payload["reasoning_chars"] == len("PLAN-ABC")
+    for meta in metas:
+        assert meta.payload["provider_visible_chars"] >= (
+            meta.payload["history_chars"] + meta.payload["reasoning_chars"]
+        )
 
 
 def test_request_usage_separates_context_capacity_from_cache_reuse(tmp_path, monkeypatch):

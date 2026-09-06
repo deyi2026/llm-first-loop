@@ -49,8 +49,19 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function Markdown({ text, clickablePaths }: { text: string; clickablePaths?: Set<string> }) {
-  const html = useMemo(() => renderMarkdown(text, clickablePaths), [text, clickablePaths]);
+function Markdown({
+  text,
+  clickablePaths,
+  enableMath = true,
+}: {
+  text: string;
+  clickablePaths?: Set<string>;
+  enableMath?: boolean;
+}) {
+  const html = useMemo(
+    () => renderMarkdown(text, clickablePaths, { enableMath }),
+    [text, clickablePaths, enableMath]
+  );
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   // 代码块复制按钮 + 出产物内联路径链接：dangerouslySetInnerHTML 内容无法绑
   // React 事件 → 事件委托
@@ -92,7 +103,9 @@ function ThinkingBlock({ text, streaming }: { text: string; streaming?: boolean 
       </button>
       {open && (
         <div className="v2-think-body">
-          <Markdown text={text} />
+          {/* Reasoning often contains shell variables such as $d$p.  Treating those as
+              inline-TeX corrupts the diagnostic surface with KaTeX MathML. */}
+          <Markdown text={text} enableMath={false} />
           {streaming && <span className="v2-think-cursor">▌</span>}
         </div>
       )}

@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
 import threading
@@ -779,6 +780,24 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 reasoning_capable = _round_reasoning_capable
                 reasoning_control = _round_reasoning_control
                 reasoning_supported = _round_reasoning_supported
+                _history_chars = sum(len(str(m.get("content", "") or "")) for m in messages)
+                _reasoning_chars = sum(
+                    len(str(m.get("reasoning_content", "") or "")) for m in messages
+                )
+                try:
+                    # Major provider-visible structures only: message payload + tool schemas.
+                    # This deliberately excludes transport-only headers/credentials while making
+                    # hidden historical reasoning visible in telemetry.
+                    _provider_visible_chars = len(
+                        json.dumps(
+                            {"messages": messages, "tools": tools_param},
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                            default=str,
+                        )
+                    )
+                except (TypeError, ValueError):
+                    _provider_visible_chars = _history_chars + _reasoning_chars
                 self._event_append(
                     session_id,
                     "request.meta",
@@ -799,7 +818,9 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             or getattr(llm_client, "reasoning_effort", "")
                         ),
                         "tools_count": len(tools_param),
-                        "history_chars": sum(len(str(m.get("content", ""))) for m in messages),
+                        "history_chars": _history_chars,
+                        "reasoning_chars": _reasoning_chars,
+                        "provider_visible_chars": _provider_visible_chars,
                         "budget": effective_budget,
                         "projection_guard": getattr(self, "_projection_guard_state", "miss"),
                     },
