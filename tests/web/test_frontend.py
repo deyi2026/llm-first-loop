@@ -37,34 +37,28 @@ def test_root_redirects_to_ui_v2(build_test_engine, fake_settings, tmp_path, mon
     assert resp.headers["location"] == "/ui/v2/"
 
 
-def test_root_falls_back_to_legacy_html(build_test_engine, fake_settings, tmp_path, monkeypatch):
-    """产物缺失（CI/未构建）→ 回退旧版聊天页 200 HTML（旧版保留兜底）."""
+def test_root_reports_missing_v2_without_legacy_fallback(build_test_engine, fake_settings, tmp_path, monkeypatch):
+    """V2 产物缺失时如实 503；已退役 v1 不再被静默复活."""
     monkeypatch.setenv("UI_V2_DIR", str(tmp_path / "nonexistent"))
     engine, _ = build_test_engine([])
     client = _make_client(engine)
     resp = client.get("/")
-    assert resp.status_code == 200
-    assert "text/html" in resp.headers["content-type"]
-    assert "<!DOCTYPE html>" in resp.text
-    assert "LLM-First Loop" in resp.text
+    assert resp.status_code == 503
+    assert resp.json()["error"] == "frontend_missing"
 
 
-def test_static_app_js_reachable(build_test_engine, fake_settings):
+def test_legacy_static_app_js_not_served(build_test_engine, fake_settings):
     engine, _ = build_test_engine([])
     client = _make_client(engine)
     resp = client.get("/static/app.js")
-    assert resp.status_code == 200
-    assert "application/javascript" in resp.headers["content-type"] or "text/javascript" in resp.headers["content-type"]
-    assert "sendMessage" in resp.text
+    assert resp.status_code == 404
 
 
-def test_static_style_css_reachable(build_test_engine, fake_settings):
+def test_legacy_static_style_css_not_served(build_test_engine, fake_settings):
     engine, _ = build_test_engine([])
     client = _make_client(engine)
     resp = client.get("/static/style.css")
-    assert resp.status_code == 200
-    assert "text/css" in resp.headers["content-type"]
-    assert "#sidebar" in resp.text
+    assert resp.status_code == 404
 
 
 def test_api_info_returns_json(build_test_engine, fake_settings):

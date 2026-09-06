@@ -91,3 +91,56 @@ def test_thinking_off_zero_regression(build_test_engine):
     assert answer_events, "正文应正常渲染"
     joined = "".join(e["data"]["data"] for e in answer_events)
     assert joined == "回答"
+
+
+def test_reasoning_mode_web_request_reaches_run_context(build_test_engine):
+    """Web off/on/auto 控制必须是 request-local，不能只停留在 Pydantic/UI 层。"""
+    from llm_loop.core.run_context import current_reasoning_mode
+
+    seen: list[str] = []
+
+    class _CaptureReasoningMode(StreamingFakeLLM):
+        def chat_stream(self, messages, tools, **kwargs):
+            seen.append(current_reasoning_mode.get())
+            return super().chat_stream(messages, tools, **kwargs)
+
+    engine, _ = build_test_engine([])
+    engine.llm_pool.default_client = _CaptureReasoningMode("回答")
+    client = _make_client(engine)
+    resp = client.post(
+        "/api/v1/chat",
+        json={"message": "hi", "reasoning_mode": "on"},
+    )
+    assert resp.status_code == 200
+    assert seen == ["on"]
+    assert resp.json()["reasoning_mode"] == "on"
+
+
+def test_web_distinguishes_reasoning_capability_from_control(build_test_engine):
+    """有 reasoning 能力但未知控制协议时，Web 不应误报 unsupported/no-capability。"""
+    engine, _ = build_test_engine([])
+    fake = StreamingFakeLLM("回答", reasoning_content="思考")
+    fake.reasoning_capable = True
+    fake.reasoning_control = "unknown"
+    fake.thinking_supported = False
+    engine.llm_pool.default_client = fake
+    client = _make_client(engine)
+    resp = client.post(
+        "/api/v1/chat",
+        json={"message": "hi", "reasoning_mode": "auto"},
+    )
+    body = resp.json()
+    assert body["reasoning_capable"] is True
+    assert body["reasoning_control"] == "unknown"
+    assert body["reasoning_supported"] is False  # explicit control support
+    assert body["reasoning_effective"] is True
+
+
+def test_reasoning_mode_web_rejects_unknown_value(build_test_engine):
+    engine, _ = build_test_engine([])
+    client = _make_client(engine)
+    resp = client.post(
+        "/api/v1/chat",
+        json={"message": "hi", "reasoning_mode": "max"},
+    )
+    assert resp.status_code == 422

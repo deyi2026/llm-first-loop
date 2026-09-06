@@ -99,16 +99,14 @@ def test_katex_resources_present():
     assert "0.16.47" in readme
 
 
-def test_katex_reachable_via_static(build_test_engine):
-    """静态资源经 /static/ 本地分发 HTTP 200 可达."""
+def test_legacy_katex_not_served_via_static(build_test_engine):
+    """v1 /static 已退役；历史 KaTeX 资产可留档但不得继续形成第二前端入口."""
     engine, _ = build_test_engine([])
     client = TestClient(build_app(engine=engine))
     resp_js = client.get("/static/katex/katex.min.js")
-    assert resp_js.status_code == 200
-    assert "javascript" in resp_js.headers["content-type"]
+    assert resp_js.status_code == 404
     resp_css = client.get("/static/katex/katex.min.css")
-    assert resp_css.status_code == 200
-    assert "css" in resp_css.headers["content-type"]
+    assert resp_css.status_code == 404
 
 
 def test_katex_style_present(style_css_src):

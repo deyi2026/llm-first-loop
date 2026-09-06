@@ -89,7 +89,7 @@ describe("发送链路", () => {
     expect((ta as HTMLTextAreaElement).value).toBe("");
   });
 
-  it("降级附件：发送载荷携带【图片未包含】诚实标记（防幻觉）", async () => {
+  it("降级附件：失败事实留在 UI，不改写 user 载荷", async () => {
     mockBackend();
     // 捕获发送到后端的 body
     let sentBody = "";
@@ -112,8 +112,10 @@ describe("发送链路", () => {
     await sendMessage("识别", [
       { filename: "a.png", result_text: "", status: "degraded", detail: "图片识别失败" },
     ]);
-    expect(sentBody).toContain("未能识别");
-    expect(sentBody).toContain("未包含该图片内容");
+    expect(sentBody).toContain('"message":"识别"');
+    expect(sentBody).not.toContain("未能识别");
+    expect(sentBody).not.toContain("请勿猜测");
+    expect(sentBody).not.toContain("a.png");
     expect(convSt.getState().streaming).toBe(false);
   });
 

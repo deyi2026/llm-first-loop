@@ -38,12 +38,11 @@ def test_index_html_refers_marked():
     assert "app.js" in index
 
 
-def test_marked_reachable_via_static(build_test_engine, fake_settings):
+def test_legacy_marked_not_served_via_static(build_test_engine, fake_settings):
     engine, _ = build_test_engine([])
     client = _make_client(engine)
     resp = client.get("/static/marked.min.js")
-    assert resp.status_code == 200
-    assert "javascript" in resp.headers["content-type"]
+    assert resp.status_code == 404
 
 
 def test_no_cdn_reference():

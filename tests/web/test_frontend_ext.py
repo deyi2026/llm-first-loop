@@ -99,8 +99,8 @@ def test_frontend_served(build_test_engine, fake_settings, tmp_path, monkeypatch
     monkeypatch.setenv("UI_V2_DIR", str(tmp_path / "nonexistent"))
     client = _make_client(engine)
     resp = client.get("/")
-    assert resp.status_code == 200
-    assert "upload-btn" in resp.text
+    assert resp.status_code == 503
+    assert resp.json()["error"] == "frontend_missing"
     app_js = read_all_js()
     assert "copy-btn" in app_js  # 复制按钮由 JS 动态生成
 

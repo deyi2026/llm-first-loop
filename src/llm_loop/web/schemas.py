@@ -4,6 +4,8 @@ ChatResponse 六字段与 core.loop.LoopResult 六字段一一对应（如实透
 仅格式校验（Pydantic 类型约束），不新增业务校验。
 """
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -15,6 +17,10 @@ class ChatRequest(BaseModel):
     new_session: bool = Field(default=False, description="2026-08-18: true=强制新建会话（/new 语义——前端清 currentSessionId 但后端复用共享当前导致'新开不成功'）；与 session_id 互斥（同传时 new_session 优先）")
     model: str | None = Field(default=None, description="模型名，可选；不传用装配默认模型")
     reasoning_effort: str | None = Field(default=None, description="推理等级（low/medium/high），可选；不传用装配默认")
+    reasoning_mode: Literal["auto", "off", "on"] = Field(
+        default="auto",
+        description="reasoning 模式：auto=尊重 provider/operator 默认，off/on=本请求显式关闭/开启",
+    )
     resume: bool = Field(default=False, description="EVO 后台 run：true=不提交新 run，订阅已有 run（刷新/切回）")
 
 
@@ -27,10 +33,17 @@ class ChatResponse(BaseModel):
     tool_calls: list[dict] = []
     truncated: bool = False
     model_used: str = ""  # M51: 实际生成回复的模型标签（provider/model）
+    fallback_receipt: dict[str, str] | None = None  # current-user runtime fact; never prompt history
     tokens_in: int = 0  # M52: 本轮 prompt tokens（0 = provider 未提供）
     tokens_out: int = 0  # M52: 本轮 completion tokens
     tokens_cache_hit: int = 0  # M58: 本轮前缀缓存命中 token（0=未提供/未命中）
     reasoning_content: str | None = None  # P1-1: 最终回答轮思考链透传（缺失/思考模式关闭为 None）
+    reasoning_mode: str = "auto"
+    reasoning_capable: bool = False
+    reasoning_control: str = "unknown"
+    reasoning_supported: bool = False
+    reasoning_effective: bool = False
+    reasoning_tokens: int | None = None
 
 
 class ChatCancelRequest(BaseModel):

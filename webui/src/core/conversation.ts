@@ -336,21 +336,13 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
   const sessionId = sessionStore.getState().currentSessionId || null;
   // 本地发送即将写入/产生新消息：停空闲轮询防竞态（基线由完成后的重载路径重建）
   stopIdlePoll();
-  // 识别成功/待处理附件：内容注入上下文
+  // 只有已经成功识别的附件内容才进入模型输入。
+  // pending/degraded/error 仅作为 UI/上传事实展示，不由程序改写成 user prose。
   const okPrefix = attachments
-    .filter((a) => a.status === "ok" || a.status === "pending")
+    .filter((a) => a.status === "ok")
     .map((a) => `[附件 ${a.filename}] ${a.result_text}`)
     .join("\n\n");
-  // 识别失败/降级附件：如实标记"图片未包含"（防 LLM 从历史旧图内容幻觉，2026-08-15 现场）
-  const failedPrefix = attachments
-    .filter((a) => a.status === "degraded" || a.status === "error")
-    .map(
-      (a) =>
-        `[附件 ${a.filename} 未能识别（${a.detail ?? "识别失败"}）——` +
-        `本次请求未包含该图片内容，请勿猜测或虚构图片内容]`
-    )
-    .join("\n\n");
-  const attachmentPrefix = [okPrefix, failedPrefix].filter(Boolean).join("\n\n");
+  const attachmentPrefix = okPrefix;
   const effectiveText = attachmentPrefix ? `${attachmentPrefix}\n\n${text}` : text;
 
   const userMsg: ChatMessage = { role: "user", content: text };
@@ -382,6 +374,7 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
     session_id: sessionId,
     model: sessionStore.getState().model,
     reasoning_effort: sessionStore.getState().reasoningEffort,
+    reasoning_mode: sessionStore.getState().thinkingMode,
     new_session: newSessionPending || undefined,
   };
   const controller = new AbortController();
@@ -458,12 +451,27 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
       finalize({
         role: "assistant",
         content: "",
+        reasoningContent: data.reasoning_content ?? (acc.reasoning || null),
         toolCalls: data.tool_calls,
-        note: "（无文字回答）",
+        note: buildAssistantNote(data) ?? "（无文字回答）",
         streaming: false,
+        model_used: data.model_used ?? "",
+        tokens_in: data.tokens_in ?? 0,
+        tokens_out: data.tokens_out ?? 0,
+        tokens_cache_hit: data.tokens_cache_hit ?? 0,
       });
     } else {
-      finalize({ role: "assistant", content: acc.answer || "（无文字回答）", note: null, streaming: false });
+      finalize({
+        role: "assistant",
+        content: acc.answer || "（无文字回答）",
+        reasoningContent: data.reasoning_content ?? (acc.reasoning || null),
+        note: buildAssistantNote(data),
+        streaming: false,
+        model_used: data.model_used ?? "",
+        tokens_in: data.tokens_in ?? 0,
+        tokens_out: data.tokens_out ?? 0,
+        tokens_cache_hit: data.tokens_cache_hit ?? 0,
+      });
     }
   } else {
     const detail = outcome.error?.detail ?? "服务内部错误。";

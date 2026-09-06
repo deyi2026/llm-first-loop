@@ -155,9 +155,7 @@ def build_app(settings=None, engine=None) -> FastAPI:
     else:
         app.include_router(router)
 
-    # 静态前端资源挂载（M37：聊天页面 /static/*）
-    if _STATIC_DIR.exists():
-        app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+    # v1（原版 M37 前端 /static）已弃用：保留 static/ 历史产物，但不再挂载路由。
 
     # Web V2（React+TS，2026-08-15，对齐 DeepSeek Harness Web 端）：
     # 独立目录 webui/（独立分支 feature/web-v2），构建产物挂载 /ui/v2 与原版 / 并存。

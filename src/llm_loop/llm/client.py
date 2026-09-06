@@ -175,6 +175,9 @@ def _merge_reasoning_details(prev: Any, new: Any, prev_text: str, new_text: str)
 
 _THINK_OPEN = "<think>"
 _THINK_CLOSE = "</think>"
+# 非流首开标签的待证实上限: 字面 `<think>`（无配对闭合）积压超过该字符数即放弃
+# 等待并按字面吐出，防止流式 UI 无限积压（M3 典型思考段远小于该值）。
+_THINK_PENDING_LIMIT = 65536
 
 
 @dataclass
@@ -183,6 +186,11 @@ class _ThinkTagStreamParser:
 
     buffer: str = ""
     in_think: bool = False
+    # 所有开标签都先进入 pending；只有实际看到配对 `</think>` 后才解释为
+    # provider reasoning。这样同一字节流不因 SSE delta 如何切分而改变语义，
+    # 且未闭合的字面 `<think>` 在 flush 时能完整回吐到正文，不丢标签。
+    emitted: bool = False
+    pending_open: bool = False
 
     @staticmethod
     def _partial_marker_suffix(text: str, marker: str) -> int:
@@ -195,32 +203,80 @@ class _ThinkTagStreamParser:
     def feed(self, content: str) -> list[tuple[str, str]]:
         self.buffer += content
         out: list[tuple[str, str]] = []
-        while self.buffer:
+        while self.buffer or self.pending_open:
+            if self.pending_open:
+                close = self.buffer.find(_THINK_CLOSE)
+                if close >= 0:
+                    # 证实为真思考段: 标签内文本归 reasoning，闭合后回落正文。
+                    inner = self.buffer[:close]
+                    if inner:
+                        out.append(("reasoning", inner))
+                        self.emitted = True
+                    self.buffer = self.buffer[close + len(_THINK_CLOSE):]
+                    self.pending_open = False
+                    continue
+                if len(self.buffer) >= _THINK_PENDING_LIMIT:
+                    logger.info(
+                        "think_parser: pending <think> exceeded %d chars without "
+                        "close tag, kept as literal content",
+                        _THINK_PENDING_LIMIT,
+                    )
+                    out.append(("content", _THINK_OPEN + self.buffer))
+                    self.emitted = True
+                    self.buffer = ""
+                    self.pending_open = False
+                break
             marker = _THINK_CLOSE if self.in_think else _THINK_OPEN
             kind = "reasoning" if self.in_think else "content"
             idx = self.buffer.find(marker)
             if idx >= 0:
                 before = self.buffer[:idx]
+                if marker == _THINK_OPEN:
+                    if before:
+                        out.append((kind, before))
+                        self.emitted = True
+                    self.buffer = self.buffer[idx + len(marker):]
+                    self.pending_open = True
+                    continue
                 self.buffer = self.buffer[idx + len(marker):]
                 if before:
                     out.append((kind, before))
+                    self.emitted = True
                 self.in_think = not self.in_think
+                self.emitted = True
                 continue
 
             keep = self._partial_marker_suffix(self.buffer, marker)
             safe_end = len(self.buffer) - keep
             if safe_end > 0:
                 out.append((kind, self.buffer[:safe_end]))
+                self.emitted = True
             self.buffer = self.buffer[safe_end:]
             break
         return out
 
     def flush(self) -> list[tuple[str, str]]:
         """正常流结束时排空残片并重置；状态绝不跨请求存活."""
+        out: list[tuple[str, str]] = []
+        if self.pending_open:
+            # 流结束仍未等到配对 `</think>`: 判为字面，整段（含标签）回吐正文。
+            logger.info(
+                "think_parser: stream ended with unconfirmed <think>, "
+                "kept as literal content (len=%d)",
+                len(self.buffer),
+            )
+            if self.buffer:
+                out.append(("content", _THINK_OPEN + self.buffer))
+            self.buffer = ""
+            self.in_think = False
+            self.emitted = False
+            self.pending_open = False
+            return out
         text = self.buffer
         kind = "reasoning" if self.in_think else "content"
         self.buffer = ""
         self.in_think = False
+        self.emitted = False
         return [(kind, text)] if text else []
 
 

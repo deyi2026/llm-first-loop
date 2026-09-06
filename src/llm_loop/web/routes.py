@@ -16,7 +16,6 @@ from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Request
 from fastapi.responses import (
-    HTMLResponse,
     JSONResponse,
     RedirectResponse,
     Response,
@@ -64,6 +63,14 @@ from .upload_handlers import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _result_fallback_receipt(result: Any) -> dict[str, str] | None:
+    """Normalize optional LoopResult fallback facts; mocks/legacy results fail-open to None."""
+    value = getattr(result, "fallback_receipt", None)
+    if not isinstance(value, dict):
+        return None
+    return {str(k): str(v) for k, v in value.items()}
 
 # EVO-20260818: 文件树/会话树 API（独立模块 fs_tree.py，安全边界+审计）
 from llm_loop.web.fs_tree import fs_router  # noqa: E402 — 延迟导入防循环（与下方 approve 同模式）
@@ -161,18 +168,6 @@ def chat(
     """
     engine = _engine_from(request)
 
-    # T5.2: 超长输入前置校验（不创建会话、不写入审计、不消耗 LLM 配额，spec.md 5.4.1）
-    # EVO-20260816-3af5dee3: history_max_chars 可 None（未配置→运行时窗口自适应），输入上限兜底 100K
-    input_max = getattr(engine.settings, "history_max_chars", None) or 100000
-    if len(payload.message) > input_max:
-        return UTF8JSONResponse(
-            status_code=413,
-            content={
-                "error": "input_too_long",
-                "detail": f"输入超长（{len(payload.message)} > {input_max}），请缩短后重试或新建会话。",
-            },
-        )
-
     try:
         with engine.workspace_snapshot() as workspace_epoch:
             if getattr(payload, "new_session", False):
@@ -220,7 +215,9 @@ def chat(
 
         result = engine._run_with_acquired(
             session_id, payload.message, model=payload.model,
-            reasoning_effort=payload.reasoning_effort, on_run_acquired=_on_run_acquired,
+            reasoning_effort=payload.reasoning_effort,
+            reasoning_mode=payload.reasoning_mode,
+            on_run_acquired=_on_run_acquired,
             expected_workspace_epoch=workspace_epoch,
             ingress=issue_ingress("web"),
         )
@@ -268,10 +265,17 @@ def chat(
         tool_calls=result.tool_calls,
         truncated=result.truncated,
         model_used=result.model_used,
+        fallback_receipt=_result_fallback_receipt(result),
         tokens_in=result.tokens_in,
         tokens_out=result.tokens_out,
         tokens_cache_hit=result.tokens_cache_hit,  # M58: 非流式路径透传（DSH 修复 20260817）
         reasoning_content=result.reasoning_content,  # P1-1: 非流式路径透传思考链
+        reasoning_mode=result.reasoning_mode,
+        reasoning_capable=result.reasoning_capable,
+        reasoning_control=result.reasoning_control,
+        reasoning_supported=result.reasoning_supported,
+        reasoning_effective=result.reasoning_effective,
+        reasoning_tokens=result.reasoning_tokens,
     )
 
 
@@ -329,6 +333,7 @@ def _stream_background(
     message: str,
     model: str | None,
     reasoning_effort: str | None = None,
+    reasoning_mode: str | None = None,
     *,
     resume: bool = False,
     before_start: Callable[[Any], None] | None = None,
@@ -349,6 +354,7 @@ def _stream_background(
 
         handle, q = runner.start(
             session_id, message, model=model, reasoning_effort=reasoning_effort,
+            reasoning_mode=reasoning_mode,
             resume=resume, before_start=before_start,
             expected_workspace_epoch=expected_workspace_epoch,
             ingress=None if resume else issue_ingress("web"),
@@ -424,10 +430,17 @@ def _stream_background(
                         "tool_calls": getattr(result, "tool_calls", 0),
                         "truncated": getattr(result, "truncated", False),
                         "model_used": getattr(result, "model_used", ""),
+                        "fallback_receipt": _result_fallback_receipt(result),
                         "tokens_in": getattr(result, "tokens_in", 0),
                         "tokens_out": getattr(result, "tokens_out", 0),
                         "tokens_cache_hit": getattr(result, "tokens_cache_hit", 0),
                         "reasoning_content": getattr(result, "reasoning_content", ""),
+                        "reasoning_mode": getattr(result, "reasoning_mode", "auto"),
+                        "reasoning_capable": getattr(result, "reasoning_capable", False),
+                        "reasoning_control": getattr(result, "reasoning_control", "unknown"),
+                        "reasoning_supported": getattr(result, "reasoning_supported", False),
+                        "reasoning_effective": getattr(result, "reasoning_effective", False),
+                        "reasoning_tokens": getattr(result, "reasoning_tokens", None),
                     },
                 )
                 return
@@ -458,18 +471,6 @@ def chat_stream(
     只停订阅、run 继续落盘）；否则回退旧生成器直驱（RUNNER_BACKGROUND=0 或未装配）。
     """
     engine = _engine_from(request)
-
-    # 超长输入前置校验（与 chat 端点一致，不创建会话、不消耗 LLM 配额）
-    # EVO-20260816-3af5dee3: history_max_chars 可 None（未配置→运行时窗口自适应），输入上限兜底 100K
-    input_max = getattr(engine.settings, "history_max_chars", None) or 100000
-    if len(payload.message) > input_max:
-        return UTF8JSONResponse(
-            status_code=413,
-            content={
-                "error": "input_too_long",
-                "detail": f"输入超长（{len(payload.message)} > {input_max}），请缩短后重试或新建会话。",
-            },
-        )
 
     # 会话查/建与workspace切换互斥；响应生成延迟执行时再用epoch复核归属。
     try:
@@ -515,9 +516,21 @@ def chat_stream(
                 payload.message,
                 payload.model,
                 reasoning_effort=payload.reasoning_effort,
+                reasoning_mode=payload.reasoning_mode,
                 resume=_resume,
                 before_start=_before_start,
                 expected_workspace_epoch=workspace_epoch,
+            )
+            return
+        if _resume:
+            # resume 是“订阅已有后台 run”的协议语义，不是新的 human ingress。
+            # runner 关闭/不可用时不能把恢复占位 message 落入旧直驱执行路径。
+            yield _sse(
+                "error",
+                {
+                    "error": "no_active_run",
+                    "detail": "后台运行器未启用，当前请求不能恢复订阅。",
+                },
             )
             return
         # 回退旧路径（生成器直驱，原行为；RUNNER_BACKGROUND=0 或未装配）
@@ -535,7 +548,9 @@ def chat_stream(
 
             it = engine._run_stream_with_acquired(
                 session_id, payload.message, model=payload.model,
-                reasoning_effort=payload.reasoning_effort, on_run_acquired=_before_start,
+                reasoning_effort=payload.reasoning_effort,
+                reasoning_mode=payload.reasoning_mode,
+                on_run_acquired=_before_start,
                 expected_workspace_epoch=workspace_epoch,
                 ingress=issue_ingress("web"),
             )
@@ -591,10 +606,17 @@ def chat_stream(
                 "tool_calls": result.tool_calls,
                 "truncated": result.truncated,
                 "model_used": result.model_used,
+                "fallback_receipt": _result_fallback_receipt(result),
                 "tokens_in": result.tokens_in,
                 "tokens_out": result.tokens_out,
                 "tokens_cache_hit": getattr(result, "tokens_cache_hit", 0),  # M58: 缓存命中
                 "reasoning_content": result.reasoning_content,  # P1-1: 终态兜底
+                "reasoning_mode": getattr(result, "reasoning_mode", "auto"),
+                "reasoning_capable": getattr(result, "reasoning_capable", False),
+                "reasoning_control": getattr(result, "reasoning_control", "unknown"),
+                "reasoning_supported": getattr(result, "reasoning_supported", False),
+                "reasoning_effective": getattr(result, "reasoning_effective", False),
+                "reasoning_tokens": getattr(result, "reasoning_tokens", None),
             },
         )
 
@@ -641,22 +663,23 @@ _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 @router.get("/")
 def root() -> Response:
-    """服务根路径：默认重定向到 Web V2（/ui/v2，2026-08-20 起默认入口）；
-    产物缺失时回退旧版聊天页面（M37 前端 UI，旧版逐步弃用但保留兜底）."""
+    """服务根路径：默认重定向到 Web V2（/ui/v2，2026-08-20 起默认入口）。
+
+    2026-09-04 弃用 v1（原版 M37 前端）：v2 产物缺失时直接 503，不再回退旧版
+    聊天页面（static/index.html 保留不删，但不再服务，避免两套前端混淆）。
+    """
     # 与 build_app 挂载逻辑同源：函数内求值（测试可 monkeypatch UI_V2_DIR）
     ui_v2 = Path(os.environ.get("UI_V2_DIR", "") or Path(__file__).resolve().parents[3] / "webui" / "dist")
     if ui_v2.is_dir():
         return RedirectResponse("/ui/v2/", status_code=307)
-    index = _STATIC_DIR / "index.html"
-    if not index.exists():
-        return JSONResponse(
-            status_code=503,
-            content={
-                "error": "frontend_missing",
-                "detail": "前端页面缺失（static/index.html 不存在），请检查安装完整性。",
-            },
-        )
-    return HTMLResponse(content=index.read_text(encoding="utf-8"))
+    # v1 已弃用：产物缺失时返回 503，不再 fallback 旧版前端
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": "frontend_missing",
+            "detail": "Web V2 前端产物缺失（webui/dist 不存在），请重新构建：cd webui && npm run build。",
+        },
+    )
 
 
 @router.get("/api/info")

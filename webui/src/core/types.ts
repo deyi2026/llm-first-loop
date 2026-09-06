@@ -45,6 +45,13 @@ export interface ChatDoneData {
   tokens_in?: number;
   tokens_out?: number;
   tokens_cache_hit?: number;
+  fallback_receipt?: Record<string, string> | null;
+  reasoning_mode?: string;
+  reasoning_capable?: boolean;
+  reasoning_control?: string;
+  reasoning_supported?: boolean;
+  reasoning_effective?: boolean;
+  reasoning_tokens?: number | null;
 }
 
 export interface HistoryMessage {

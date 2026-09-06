@@ -1356,9 +1356,7 @@ def test_chat_think_tags_can_split_across_sse_chunks():
 
 
 def test_unclosed_think_does_not_poison_next_request():
-    """同一 client 上一请求异常结束在 think 内，下一请求必须从干净 parser 状态开始。"""
-    from llm_loop.llm.errors import LLMEmptyResponseError
-
+    """未闭合标签按字面正文回吐，且下一请求仍从干净 parser 状态开始。"""
     first = _FakeStreamCtx([
         'data: {"choices": [{"delta": {"content": "<think>未闭合推理"}}]}',
         "data: [DONE]",
@@ -1371,9 +1369,10 @@ def test_unclosed_think_does_not_poison_next_request():
     with mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.stream.side_effect = [first, second]
         c = _client()
-        with pytest.raises(LLMEmptyResponseError):
-            c.chat(messages=[{"role": "user", "content": "first"}], tools=[])
+        first_resp = c.chat(messages=[{"role": "user", "content": "first"}], tools=[])
         resp = c.chat(messages=[{"role": "user", "content": "second"}], tools=[])
+    assert first_resp.content == "<think>未闭合推理"
+    assert first_resp.reasoning_content is None
     assert resp.content == "下一轮正文"
     assert resp.reasoning_content is None
 
@@ -1396,12 +1395,13 @@ def test_concurrent_streams_on_same_client_have_isolated_think_state():
         client_cls.return_value.stream.side_effect = [first, second]
         c = _client()
         g1 = c.chat_stream([{"role": "user", "content": "a"}], [])
+        # 为保证未闭合字面标签不被误分类，reasoning 在 close tag 到达前不提前吐出。
         d1 = next(g1)
-        assert d1.reasoning
-        d1b = next(g1)
-        assert d1b.reasoning
+        assert d1.reasoning == "AB"
         g2 = c.chat_stream([{"role": "user", "content": "b"}], [])
         d2 = next(g2)
         assert d2.text == "visible-b"
+        d1b = next(g1)
+        assert d1b.text == "done-a"
         g1.close()
         g2.close()

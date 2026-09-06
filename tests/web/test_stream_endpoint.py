@@ -16,6 +16,23 @@ from fastapi.testclient import TestClient
 from llm_loop.web import build_app
 from tests.unit.test_stream_equivalence import StreamingFakeLLM
 
+
+def test_resume_without_background_runner_never_executes_placeholder(build_test_engine):
+    """resume is subscription-only; direct-run fallback must never become human ingress."""
+    engine, fake = build_test_engine([{"content": "must-not-run"}])
+    sid = engine.session.create()
+    client = TestClient(build_app(engine=engine))
+
+    resp = client.post(
+        "/api/v1/chat/stream",
+        json={"message": "（恢复连接）", "session_id": sid, "resume": True},
+    )
+
+    assert resp.status_code == 200
+    assert '"type": "error"' in resp.text
+    assert "no_active_run" in resp.text
+    assert len(fake.calls) == 0
+
 CHAT_RESPONSE_FIELDS = [
     "session_id",
     "final_answer",
@@ -24,9 +41,17 @@ CHAT_RESPONSE_FIELDS = [
     "tool_calls",
     "truncated",
     "model_used",
+    "fallback_receipt",
     "tokens_in",
     "tokens_out",
     "tokens_cache_hit",
+    "reasoning_content",
+    "reasoning_mode",
+    "reasoning_capable",
+    "reasoning_control",
+    "reasoning_supported",
+    "reasoning_effective",
+    "reasoning_tokens",
 ]
 
 
@@ -60,7 +85,7 @@ def test_chat_stream_emits_deltas_then_done(build_test_engine):
     assert done["final_answer"] == "你好世界"
 
 
-def test_chat_stream_done_has_nine_fields(build_test_engine):
+def test_chat_stream_done_has_complete_runtime_fields(build_test_engine):
     engine, _ = build_test_engine([])
     engine.llm_pool.default_client = StreamingFakeLLM("回答")
     client = _make_client(engine)
@@ -145,7 +170,7 @@ def test_chat_stream_busy_does_not_persist_model_override(build_test_engine):
 
         def start(
             self, session_id, message, model=None, reasoning_effort=None, *,
-            resume=False, before_start=None, expected_workspace_epoch=None,
+            reasoning_mode=None, resume=False, before_start=None, expected_workspace_epoch=None,
             ingress=None,
         ):
             return None, None

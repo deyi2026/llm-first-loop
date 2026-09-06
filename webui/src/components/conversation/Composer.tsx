@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { zh } from "../../i18n/zh";
 import { sendMessage, stopStreaming, useConversation, conversationStore } from "../../core/conversation";
 import { fetchModels, uploadFileBase64 } from "../../core/chat";
-import { sessionStore, useModel, useReasoningEffort } from "../../core/stores";
+import { sessionStore, useModel, useReasoningEffort, useThinkingMode, type ThinkingMode } from "../../core/stores";
 
 type AttachStatus = "ok" | "pending" | "degraded" | "error";
 
@@ -211,9 +211,10 @@ export function Composer() {
 
   const doSend = async () => {
     const trimmed = text.trim();
-    // 2026-08-20: 允许"纯附件"发送（图片/文件无文字）——附件内容经 sendMessage
-    // 拼入 effectiveText（[附件 x] result_text），后端 message 非空可接收
-    if ((!trimmed && attachments.length === 0) || conv.streaming) return;
+    // 纯附件发送只允许已有成功识别内容的附件。pending/degraded/error 是 UI 事实，
+    // 不应被程序改写成 user prose，也不能制造空 message 请求。
+    const hasSendableAttachment = attachments.some((a) => a.status === "ok");
+    if ((!trimmed && !hasSendableAttachment) || conv.streaming) return;
     // 命令分支（纯前端，对齐 M39）
     if (trimmed.startsWith("/")) {
       const [name, ...rest] = trimmed.slice(1).split(/\s+/);
@@ -275,6 +276,13 @@ export function Composer() {
   // 对齐 DSH：推理等级选择（low/medium/high——每请求携带）
   const currentEffort = useReasoningEffort();
   const EFFORT_OPTIONS = ["low", "medium", "high"];
+  // 2026-09-04（用户反馈）: 思维链开关——本地 chat_template 模型需显式 on（enable_thinking）
+  const currentThinking = useThinkingMode();
+  const THINKING_OPTIONS: { value: ThinkingMode; label: string }[] = [
+    { value: "auto", label: zh.thinkingDefault },
+    { value: "on", label: zh.thinkingOn },
+    { value: "off", label: zh.thinkingOff },
+  ];
 
   return (
     <div className="v2-composer" data-testid="composer">
@@ -381,6 +389,21 @@ export function Composer() {
                 </option>
               ))}
             </select>
+            <select
+              className="v2-model-select v2-effort-select"
+              value={currentThinking}
+              onChange={(e) =>
+                sessionStore.setThinkingMode((e.target.value as ThinkingMode) || "auto")
+              }
+              title={zh.thinkingModeSelect}
+              data-testid="thinking-select"
+            >
+              {THINKING_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
             <label className="v2-icon-btn" title={zh.attach}>
               📎
               <input
@@ -405,7 +428,7 @@ export function Composer() {
                 type="button"
                 className="v2-btn primary"
                 onClick={() => void doSend()}
-                disabled={conv.streaming || (!text.trim() && attachments.length === 0)}
+                disabled={conv.streaming || (!text.trim() && !attachments.some((a) => a.status === "ok"))}
               >
                 {zh.send}
               </button>

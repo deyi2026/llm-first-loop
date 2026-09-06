@@ -129,14 +129,13 @@ def test_health_no_llm_call(build_test_engine, fake_settings):
 
 
 def test_root_returns_service_info(build_test_engine, fake_settings, tmp_path, monkeypatch):
-    """根路径：Web V2 产物缺失（CI）时回退旧版聊天页 HTML（M37 兼容兜底）."""
+    """V2 产物缺失时根路径如实报 frontend_missing，API 仍独立可用."""
     monkeypatch.setenv("UI_V2_DIR", str(tmp_path / "nonexistent"))
     engine, fake = build_test_engine([])
     client = _make_client(engine)
     resp = client.get("/")
-    assert resp.status_code == 200
-    assert "text/html" in resp.headers["content-type"]
-    assert "<!DOCTYPE html>" in resp.text
+    assert resp.status_code == 503
+    assert resp.json()["error"] == "frontend_missing"
     assert len(fake.calls) == 0  # 根路径不调 LLM
     info = client.get("/api/info")
     assert info.status_code == 200
@@ -414,12 +413,12 @@ def test_ui_v2_mounted_when_dist_present(build_test_engine, fake_settings, tmp_p
 
 
 def test_ui_v2_not_mounted_without_dist(build_test_engine, fake_settings, tmp_path, monkeypatch):
-    """无构建产物（CI/未构建）→ /ui/v2 不挂载（404），原版 / 不受影响."""
+    """无构建产物 → /ui/v2 404，根入口明确 503，不回退已退役 v1."""
     monkeypatch.setenv("UI_V2_DIR", str(tmp_path / "nonexistent"))
     engine, _ = build_test_engine([{"content": "a"}])
     client = _make_client(engine)
     assert client.get("/ui/v2/").status_code == 404
-    assert client.get("/").status_code in (200, 307)  # 原版入口不受影响
+    assert client.get("/").status_code == 503
 
 
 def test_ui_v2_assets_same_origin_api(build_test_engine, fake_settings, tmp_path, monkeypatch):

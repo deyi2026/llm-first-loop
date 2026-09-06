@@ -21,7 +21,7 @@ export interface StreamHandlers {
 }
 
 export async function streamChatRequest(
-  body: { message: string; session_id?: string | null; model?: string | null; resume?: boolean },
+  body: { message: string; session_id?: string | null; model?: string | null; resume?: boolean; reasoning_mode?: string },
   handlers: StreamHandlers,
   signal?: AbortSignal
 ): Promise<StreamOutcome> {
@@ -223,6 +223,23 @@ export function buildAssistantNote(data: ChatDoneData): string | null {
   const note: string[] = [];
   if (data.truncated) note.push("（回答被截断，已有输出保留在对话中。发送“继续”可让模型接着输出。）");
   if (data.verification_note) note.push(data.verification_note);
+  if (data.fallback_receipt) {
+    const from = data.fallback_receipt.from ?? "";
+    const to = data.fallback_receipt.to ?? "";
+    const reason = data.fallback_receipt.reason ?? "";
+    note.push(`模型回退：${from || "未知"} → ${to || "未知"}${reason ? `（${reason}）` : ""}`);
+  }
+  if (data.reasoning_mode || data.reasoning_control || data.reasoning_capable !== undefined) {
+    const parts = [
+      `mode=${data.reasoning_mode ?? "unknown"}`,
+      `control=${data.reasoning_control ?? "unknown"}`,
+      `capable=${String(data.reasoning_capable ?? false)}`,
+      `supported=${String(data.reasoning_supported ?? false)}`,
+      `effective=${String(data.reasoning_effective ?? false)}`,
+    ];
+    if (data.reasoning_tokens != null) parts.push(`tokens=${data.reasoning_tokens}`);
+    note.push(`推理状态：${parts.join(" · ")}`);
+  }
   return note.length > 0 ? note.join("\n") : null;
 }
 
