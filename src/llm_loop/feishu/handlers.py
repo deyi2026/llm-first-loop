@@ -120,6 +120,8 @@ class FeishuMessageHandler:
         # 经 is_user_stop_pending fail-open 查询，spec 4.5.3 防重复补偿）
         self._user_stop_pending: dict[str, float] = {}
         self._user_stop_pending_lock = threading.Lock()
+        # C-G5: 重启授权守卫（懒构造；engine 依赖注入，异常 fail-open 不阻断消息链路）
+        self._restart_guard_svc: Any | None = None
 
     def current_processing_sid(self) -> str:
         """当前处理中会话 sid（只读；bridge 中断补偿 context_ref 数据源）."""
@@ -216,6 +218,11 @@ class FeishuMessageHandler:
             return
         if self._try_handle_continue_command(msg, text):
             return
+        # Explicit /continue may leave one pending confirmation frame. Ordinary
+        # natural-language turns are not interpreted against historical Goal state:
+        # only a reply to that already-pending control frame is consumed here.
+        if self._try_restart_gate(msg, text):
+            return
         self._run_with_processing_actions(msg, self._run_text, text)
 
     def _try_handle_approval_command(self, msg: FeishuMessage, text: str) -> bool:
@@ -292,9 +299,13 @@ class FeishuMessageHandler:
             # 续聊前现场预检（CONT）：只读对账 + 锚点来源，如实外显（ADR-6/FTR-CONT-1）；
             # 不改变引擎对账行为——实际确定性修复仍由 engine.run ingress 承担。
             self._audit_resume_prep(sid, msg)
-            # 用户显式 /continue 本身就是恢复授权。不要再把它翻译成程序撰写的
-            # “[程序恢复] ...”自然语言塞回 prompt；保持 USER_INSTRUCTION provenance，
-            # 由当前未解决会话现场决定继续什么任务。
+            # C-G5 重启授权守卫（T5.4）：恢复会话 ≠ 同意重跑任务（spec 5.2.1-5，
+            # 原注释"/continue 本身就是恢复授权"作废）。completed → 拒绝；已开始
+            # 未完成 → 确认帧挂起；无已开始任务/守卫 fail-open → 既有直跑零变化。
+            # 保持 USER_INSTRUCTION provenance，不向 prompt 注入程序撰写的恢复说明。
+            guard_decision = self._check_restart_guard(sid, msg)
+            if guard_decision == "handled":
+                return True
             self._run_with_processing_actions(msg, self._run_text, text)
             self._audit(msg, "continue_accepted", f"sid={sid[:8]}")
             return True
@@ -303,6 +314,104 @@ class FeishuMessageHandler:
             self._reply(msg, f"⚠️ 指令处理异常（{type(exc).__name__}），请重发恢复。")
             self._audit(msg, "continue_error", str(exc)[:200])
             return True
+
+    def _restart_guard(self) -> Any:
+        """C-G5: 重启授权守卫懒构造（engine 注入审计；守卫自身零状态跨消息复用）."""
+        if self._restart_guard_svc is None:
+            from llm_loop.feishu.restart_guard import RestartGuardService
+
+            self._restart_guard_svc = RestartGuardService(self._engine)
+        return self._restart_guard_svc
+
+    def _check_restart_guard(self, sid: str, msg: FeishuMessage) -> str:
+        """C-G5 /continue 守卫三分支（T5.4）：deny 回执 / confirm 挂起 / 其余放行.
+
+        Returns: "handled"（已处置勿再执行 run）| "passthrough"（维持既有直跑）。
+        守卫异常 fail-open 留痕后放行（宁可多问不可误跑的对偶：守卫故障不阻断恢复）。
+        """
+        try:
+            decision = self._restart_guard().check_restart(sid)
+        except Exception as exc:  # noqa: BLE001 — 授权硬边界异常时不得静默启动
+            logger.exception("重启守卫判定异常（本次不启动）: %s", exc)
+            self._audit(msg, "restart_guard_error", f"stage=check_restart; error={str(exc)[:150]}")
+            self._reply(
+                msg,
+                "[重启确认] 当前无法可靠核验任务状态，本次未恢复执行；请稍后重新发送 /continue。",
+            )
+            return "handled"
+        if decision.kind == "deny":
+            self._reply(
+                msg,
+                f"任务已完成（{decision.goal_id}），不再自动重跑；"
+                "如需重做请发送 /new 后发起新任务。",
+            )
+            self._audit(msg, "restart_denied", f"goal_id={decision.goal_id}; reason={decision.reason}")
+            return "handled"
+        if decision.kind == "confirm":
+            self._push_restart_confirm(msg, decision)
+            return "handled"
+        return "passthrough"
+
+    def _try_restart_gate(self, msg: FeishuMessage, text: str) -> bool:
+        """Consume only replies to an already-pending explicit /continue frame.
+
+        P1-A: ordinary text (including ``继续`` / ``重跑这个任务``) must reach the
+        model unchanged. Goal/task history is factual state, not a program-side intent
+        classifier. Pending explicit-control approval remains a scoped UI protocol.
+        """
+        try:
+            guard = self._restart_guard()
+            sid = self._session_map.get_or_create(self._map_key(msg))
+            grant = guard.match_reply(sid, text)
+            if grant.ok and grant.decision == "approved":
+                # Execute the queued genuine explicit command, not the approval word.
+                # The latter is control-plane consent and may otherwise reach the LLM
+                # without its confirmation-frame referent.
+                queued = str(getattr(grant, "command_text", "") or "/continue")
+                self._run_with_processing_actions(msg, self._run_text, queued)
+                return True
+            if grant.decision in ("denied", "consumed", "timeout"):
+                self._reply_restart_unexecuted(msg, grant)
+                return True
+            # none/mismatch is not task semantics; the genuine user turn proceeds to LLM.
+            return False
+        except Exception as exc:  # noqa: BLE001 — control-plane failure must not swallow user input
+            logger.exception("重启确认应答判定异常（fail-open 放行）: %s", exc)
+            self._audit(msg, "restart_guard_error", f"stage=pending_reply; error={str(exc)[:150]}")
+            return False
+
+    def _reply_restart_unexecuted(self, msg: FeishuMessage, grant: Any) -> None:
+        """授权应答未放行回执（denied 拒绝确认 / consumed 票据已失效，spec 5.2.1-2c/3a）."""
+        if grant.decision == "denied":
+            grant_reason = getattr(grant, "reason", "")
+            if grant_reason == "completed":
+                reason = "任务已完成，无需重启"
+            elif grant_reason == "state_unknown":
+                reason = "任务状态无法可靠复核，本次不执行；如需恢复请重新发送 /continue"
+            else:
+                reason = "已收到拒绝，本次任务不执行"
+            self._reply(msg, f"[重启守卫] {reason}（goal_id={grant.goal_id or '未知'}）。")
+            return
+        if grant.decision == "timeout":
+            self._reply(msg, "[重启守卫] 上一条 /continue 授权已过期，本次不执行；如需恢复请重新发送 /continue。")
+            return
+        self._reply(
+            msg,
+            "[重启守卫] 该授权已使用过（一次性有效），本次不执行；如需再次恢复请发送 /continue。",
+        )
+
+    def _push_restart_confirm(self, msg: FeishuMessage, decision: Any) -> None:
+        """确认帧推送（含任务标识/进度锚点/待续概要）；帧缺失走兜底文案（run 不启动）."""
+        from llm_loop.feishu.restart_guard import confirmation_frame_text
+
+        frame = getattr(decision, "frame", None)
+        if frame is None:
+            self._reply(
+                msg,
+                "[重启确认] 任务状态待确认，本次未恢复执行；如需继续请重新发送 /continue。",
+            )
+            return
+        self._reply(msg, confirmation_frame_text(frame))
 
     def _audit_resume_prep(self, sid: str, msg: FeishuMessage) -> None:
         """续聊前现场预检并如实审计（只读；异常 fail-open 仅标注 none/unknown）."""
