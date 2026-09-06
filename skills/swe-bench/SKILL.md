@@ -1,6 +1,6 @@
 ---
 name: swe-bench
-description: SWE-bench（AI 软件工程师基准）评测技能——真测真实开源 bug 修复能力时使用（取实例→环境→基线→修复→验证→导出 patch 全流程）。核心：独立 venv 替代 docker、基线先失败确认、独立修复+回归、成果先导出再清理。实测 pytest 19 实例 35/35 + pylint 10 实例 42/42 全部通过。触发工具: execute_command/datasets/load_dataset/read_file（描述含工具名才会被经验注入自动提示）。
+description: SWE-bench（AI 软件工程师基准）评测技能——真测真实开源 bug 修复能力时使用（取实例→环境→基线→修复→验证→导出 patch 全流程）。核心：独立 venv 替代 docker、基线先失败确认、独立修复+回归、成果先导出再清理。实测 pytest 19 实例 35/35 + pylint 10 实例 42/42 全部通过。常用工具: execute_command/datasets/load_dataset/read_file。
 ---
 # SWE-bench 评测全流程（swe-bench）
 

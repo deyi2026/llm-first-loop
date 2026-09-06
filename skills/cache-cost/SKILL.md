@@ -1,10 +1,10 @@
 ---
 name: cache-cost
-description: LLM 前缀缓存成本核算技能——需要对比不同预算窗口（大/小）成本、估算每 run 成本、或决策缓存配置时使用。核心方法：从 request.usage 事件聚合真实 tokens_in/cache_hit/cache_miss → 按价目（hit 0.05/M, miss 1.5/M）核算 → 对比方案。目标：用实测数据做成本决策，避免"命中率百分比≠成本"的直觉陷阱。触发工具: execute_command/search_records（描述含工具名才会被经验注入自动提示）。
+description: LLM 前缀缓存成本核算技能——需要对比不同预算窗口（大/小）成本、估算每 run 成本、或决策缓存配置时使用。核心方法：从 request.usage 事件聚合真实 tokens_in/cache_hit/cache_miss → 按**当前 provider 价目**核算 → 对比方案。目标：用实测数据做成本决策，避免"命中率百分比≠成本"的直觉陷阱。常用工具: execute_command/search_records。
 ---
 # LLM 前缀缓存成本核算（cache-cost）
 
-用户/自检需要决策缓存配置（预算窗口大小）或估算 prompt 成本时使用。**核心：成本 = miss×1.5/M + hit×0.05/M，必须用 request.usage 实测数据核算，禁止用命中率百分比做结论。**
+用户/自检需要决策缓存配置（预算窗口大小）或估算 prompt 成本时使用。**核心：成本 = miss×价目 + hit×价目（下文所有具体价格均为 DeepSeek 2026-08 历史/示例价目，非永久当前价，实际核算前必须读取/确认当前 provider 价目）；必须用 request.usage 实测数据核算，禁止用命中率百分比做结论。**
 
 ## 为什么需要这个 skill（血的教训）
 
@@ -37,7 +37,8 @@ for f in glob.glob('data/event_logs/*/*.jsonl') + glob.glob('data/event_logs/*.j
 ### Step 2: 核算每 run 成本
 
 ```python
-MISS_PRICE, HIT_PRICE = 1.5, 0.05  # 每百万 token 美元（DeepSeek）
+# 价目为历史/示例值（DeepSeek 2026-08），实际核算前必须读取/确认当前 provider 价目（见"价目速查"）
+MISS_PRICE, HIT_PRICE = 1.5, 0.05  # 每百万 token 美元（示例价目）
 for 方案 in [小窗口, 大窗口]:
     miss = in - hit
     cost = miss * MISS_PRICE / 1e6 + hit * HIT_PRICE / 1e6
@@ -57,7 +58,7 @@ for 方案 in [小窗口, 大窗口]:
 - **配置变更走协调通道 + 用户确认**（勿静默改）
 - 生效后重启 + 实测验证（对比前后 cost/命中率）
 
-## 价目速查（DeepSeek 2026-08 实测）
+## 价目速查（DeepSeek 2026-08 历史/示例价目，**非永久当前价**）
 
 | 项 | 价格 | 说明 |
 |:---|:---|:---|
@@ -65,7 +66,7 @@ for 方案 in [小窗口, 大窗口]:
 | 未命中 (miss) | $1.5/M | 非命中 token（30 倍差价） |
 | 输出 | 另计（本 skill 只算输入） | |
 
-**注意**：价目可能变，核算前先确认当前价目（usage_cost_report 脚本或账单）。
+**重要**：上表是**历史实验/示例价目**（DeepSeek 2026-08），不是永久当前价格；不同 provider/模型价目不同，实际核算前必须读取/确认当前 provider 价目（provider 定价页 / usage_cost_report 脚本 / 账单），勿把示例值当事实。
 
 ## 反模式清单
 

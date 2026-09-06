@@ -1,6 +1,6 @@
 ---
 name: md2pdf
-description: Markdown 转 PDF 技能（reportlab 方案）——需要把报告/文档转 PDF 发送或存档时使用。pandoc 缺 xelatex/pdflatex、weasyprint 缺 libgobject 系统库时用本方案（脚本 scripts/md2pdf.py 已入库，2026-08-20 升级支持 ### 标题/加粗/图片/页码）。配图报告可结合 graphviz 架构图 + scripts/graphviz_layout_check.py（交叉检测）+ scripts/graphviz_overlay.py（图例/标注框叠加）。触发工具: execute_command（描述含工具名才会被经验注入自动提示）。
+description: Markdown 转 PDF 技能（reportlab 方案）——需要把报告/文档转 PDF 发送或存档时使用。pandoc 缺 xelatex/pdflatex、weasyprint 缺 libgobject 系统库时用本方案（脚本 scripts/md2pdf.py 已入库，2026-08-20 升级支持 ### 标题/加粗/图片/页码）。配图报告可结合 graphviz 架构图 + scripts/graphviz_layout_check.py（交叉检测）+ scripts/graphviz_overlay.py（图例/标注框叠加）。常用工具: execute_command。
 ---
 # Markdown → PDF（reportlab 方案）
 

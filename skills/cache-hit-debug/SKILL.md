@@ -1,6 +1,6 @@
 ---
 name: cache-hit-debug
-description: LLM 前缀缓存命中排查技能——缓存命中率异常低（~1%）、怀疑缓存不生效、或想优化 prompt 成本时使用。核心方法：三实验法（缓存类型区分/TTL 排除/预算链定位）+ request.meta 真相源验证。目标：系统性定位根因而非猜测（实测从误判到根因 5 步内）。触发工具: architecture_status/execute_command/search_records/search_archive（描述含工具名才会被经验注入自动提示）。
+description: LLM 前缀缓存命中排查技能——缓存命中率异常低（~1%）、怀疑缓存不生效、或想优化 prompt 成本时使用。核心方法：三实验法（缓存类型区分/TTL 排除/预算链定位）+ request.meta 真相源验证。目标：系统性定位根因而非猜测（实测从误判到根因 5 步内）。常用工具: architecture_status/execute_command/search_records/search_archive。
 ---
 # LLM 前缀缓存命中排查（cache-hit-debug）
 
@@ -52,14 +52,18 @@ effective_budget = min(
 
 `HISTORY_MAX_CHARS` 未配置时**没有一层隐式 100K/200K cap**；不要为了“补齐三层”主动加它。
 
-**真相源是 event_logs 的 request.meta**（每轮含 model/budget/history_chars），不是 .env：
+**真相源是 event_logs 的 request.meta**（每轮含 model/budget/history_chars/reasoning_chars/provider_visible_chars），不是 .env：
 ```python
 # 查每轮真实 budget
 reqs = [(json.loads(l)['ts'], json.loads(l)['payload']) for l in open(log) if 'request.meta' in l]
-for ts, p in reqs[-5:]: print(ts[11:19], p.get('model'), p.get('budget'), p.get('history_chars'))
+for ts, p in reqs[-5:]:
+    print(ts[11:19], p.get('model'), p.get('budget'),
+          p.get('history_chars'), p.get('reasoning_chars'), p.get('provider_visible_chars'))
 ```
 
 **注意**：request.meta 里 model 字段才是实际运行模型（可能被 session model_override 覆盖）；budget 才是真正生效预算（min 链结果）。先查 model 再查对应 provider 的预算配置。
+
+**三字符字段含义（务必一起看，别只看 history_chars）**：`history_chars` = 本轮提交的 message content 字符数（**不含 reasoning_content**）；`reasoning_chars` = 本轮重新提交的历史 reasoning_content 字符数；`provider_visible_chars` = 更接近实际 provider 输入的可见结构规模（messages + tool schemas，不含传输头/凭据）。**注意：`history_chars` 是遥测口径、不含 reasoning_content，单独看会低估实际输入规模**——本地实测过 history_chars≈50K、reasoning_chars≈41K 的场景：按 history_chars 看 budget 看似够，但真实提交体积还要加上 reasoning 历史重发。压缩器预算判定其实已含 reasoning_content（`history.py::_wire_size` 口径），所以问题出在"遥测口径低估"而非"压缩器看不见 reasoning"。**排查输入体积/窗口压力时，以 `provider_visible_chars` 为主要观察量；排查前缀稳定性时，看 `request.usage` 的 `prefix_changed` / `stable_prefix_fp` / `prefix_change_reason` / `cache_prefix_epoch`，并结合 `cache_hit_rate` / `uncached_prompt_tokens`。`history_chars` 与 `reasoning_chars` 用于拆分输入来源。**
 
 ### Step 4: 修复（只改被证据证明是压制点的那一层）
 
@@ -90,7 +94,7 @@ for ts, p in reqs[-5:]: print(ts[11:19], p.get('model'), p.get('budget'), p.get(
 
 **注入漂移排查**（实测高发）：协调通道 inbox（data/interop/lfl_to_dsh/pending/）消息滞留 → 每轮注入 system 段 → 前缀每轮漂移 → 命中率持续低。检查：`ls data/interop/lfl_to_dsh/pending/ | wc -l`，有堆积即按协议归档（notify 自动归档已上线，coordinate/task 人工处理）。
 
-**命中率数字不是目标，成本才是——但必须用实测价目核算，勿凭直觉**：小窗口 22% 命中（78% miss 全价 1.5/M）每 run ≈$0.059；大窗口 99.9% 命中（miss 仅 ~150 tokens）每 run ≈$0.008——**实测大窗口便宜约 7 倍**（hit 0.05 vs miss 1.5，30 倍差价 + 高命中下 miss 占比极小）。"小窗口命中占比小但总成本低"的直觉被实测推翻（2026-08-17 教训）。核算方法：`miss_tokens × 1.5/M + hit_tokens × 0.05/M`，用 request.usage 事件聚合每轮真实 in/hit，勿用命中率百分比做成本判断。
+**命中率数字不是目标，成本才是——但必须用**实测价目**核算，勿凭直觉。**"小窗口命中占比小但总成本低"的直觉被实测推翻（2026-08-17 教训）：高 miss 占比下全价 miss 才是成本大头。**成本核算（真实 tokens 聚合 + 当前 provider 价目）按 cache-cost skill 执行，勿在本技能内重复维护价格/成本案例。
 
 ## 反模式清单
 
