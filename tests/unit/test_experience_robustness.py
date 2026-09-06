@@ -207,6 +207,9 @@ def test_differential_harness_production_dir():
         assert isinstance(doc.created_at, str)
         assert isinstance(doc.updated_at, str)
         assert isinstance(doc.body, str)
+        assert isinstance(doc.superseded_by, str)
+        assert isinstance(doc.promoted_to_rule, str)
+        assert isinstance(doc.last_verified_at, str)
     assert not unparseable, f"生产经验库仍有不可解析文档: {unparseable}"
 
 
