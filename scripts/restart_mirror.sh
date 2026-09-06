@@ -2,7 +2,7 @@
 # restart_mirror.sh — 镜像工作区常驻服务重启脚本（2026-08-22 实践整理）
 #
 # 管理镜像的常驻服务:
-#   web    FastAPI 服务（python -m llm_loop.web，端口 8903，健康端点 GET /health）
+#   web    FastAPI 服务（python -m llm_loop.web，端口 8903，公开就绪端点 GET /auth/status）
 #   feishu 飞书桥（python -m llm_loop.feishu，WS 长连接 msg-frontier.feishu.cn）
 #
 # ⚠️⚠️ 最重要注意事项 ⚠️⚠️
@@ -104,7 +104,8 @@ _start_web() {
   # R2: 业务配置归 python（web main 的 load_env_file，环境优先）——shell 不再
   # source .env、不再设 PYTHONPATH（R1 venv .pth 天然指向镜像 src，PYTHONPATH
   # 反而是跨区污染源）。清空继承锚点键防残留压过 .env（对齐 restart_system.sh）；
-  # health check 用启动前捕获的局部变量（unset 后 $WEB_* 不再绑定，-u 会报错）。
+  # readiness check 用公开 /auth/status；/health 在 WEB_AUTH_REQUIRE=1 时按设计需要认证。
+  # 检查仍用启动前捕获的局部变量（unset 后 $WEB_* 不再绑定，-u 会报错）。
   local check_host="$WEB_HOST" check_port="$WEB_PORT"
   unset WEB_PORT WEB_HOST LFL_DATA_DIR DATA_DIR
   # 协议 §3 恢复(2026-08-29): 共享 venv 属主区（editable .pth 指主区 src），
@@ -114,7 +115,7 @@ _start_web() {
   PYTHONPATH="$MIRROR_DIR/src" nohup "$VENV_PY" -m llm_loop.web >> data/web.log 2>&1 &
   local pid=$!
   for _ in $(seq 1 30); do
-    if curl -sf --max-time 2 "http://$check_host:$check_port/health" >/dev/null 2>&1; then
+    if curl -sf --max-time 2 "http://$check_host:$check_port/auth/status" >/dev/null 2>&1; then
       _log "✅ web 就绪: http://$check_host:$check_port/(pid $pid)"
       return 0
     fi
@@ -170,7 +171,7 @@ _status() {
   web_pid="$(_port_pid "$WEB_PORT" || true)"
   feishu_pid="$(pgrep -f "^$VENV_PY -m llm_loop.feishu" | head -1 || true)"
   if [[ -n "$web_pid" ]]; then
-    echo "web    : ✅ pid $web_pid $(curl -sf --max-time 2 "http://$WEB_HOST:$WEB_PORT/health" | head -c 20 || echo '(health 异常)')"
+    echo "web    : ✅ pid $web_pid $(curl -sf --max-time 2 "http://$WEB_HOST:$WEB_PORT/auth/status" | head -c 80 || echo '(readiness 异常)')"
   else
     echo "web    : ❌ 未运行"
   fi
