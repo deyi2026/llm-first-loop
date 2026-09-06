@@ -47,6 +47,22 @@ export async function fetchHealth(): Promise<HealthInfo | null> {
   return status === 200 ? data : null;
 }
 
+export interface AuthStatus {
+  status?: string;
+  authenticated?: boolean;
+  browser_login?: boolean;
+}
+
+export async function fetchAuthStatus(): Promise<AuthStatus | null> {
+  const { status, data } = await api<AuthStatus>("/auth/status");
+  return status === 200 ? data : null;
+}
+
+export async function logoutBrowserSession(): Promise<boolean> {
+  const { status } = await api("/auth/logout", { method: "POST" });
+  return status === 200;
+}
+
 export async function fetchSessions(includeArchived = false): Promise<SessionMeta[]> {
   const { status, data } = await api<SessionListResponse>(
     `/api/v1/sessions${includeArchived ? "?include_archived=true" : ""}`

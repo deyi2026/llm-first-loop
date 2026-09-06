@@ -2,13 +2,14 @@
 
 import { zh } from "../../i18n/zh";
 import { themeStore, useConnection, useTheme } from "../../core/stores";
-import { fetchHealth } from "../../core/api";
-import { useEffect } from "react";
+import { fetchAuthStatus, fetchHealth, logoutBrowserSession } from "../../core/api";
+import { useEffect, useState } from "react";
 import type { ThemePreference } from "../../core/stores";
 
 export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
   const { ok, version, checked } = useConnection();
   const { preference, dark } = useTheme();
+  const [browserAuthenticated, setBrowserAuthenticated] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -25,6 +26,22 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
     };
   }, []);
 
+  useEffect(() => {
+    let alive = true;
+    void fetchAuthStatus().then((status) => {
+      if (alive) setBrowserAuthenticated(Boolean(status?.browser_login && status.authenticated));
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const handleLogout = async () => {
+    if (!(await logoutBrowserSession())) return;
+    setBrowserAuthenticated(false);
+    window.location.reload();
+  };
+
   return (
     <header className="v2-topbar" data-testid="topbar">
       <button
@@ -38,6 +55,17 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
       </button>
       <span style={{ fontSize: 13, color: "var(--dsw-alias-label-secondary)" }}>会话</span>
       <div style={{ flex: 1 }} />
+      {browserAuthenticated && (
+        <button
+          type="button"
+          className="v2-btn ghost"
+          onClick={() => void handleLogout()}
+          aria-label="退出登录"
+          title="退出登录"
+        >
+          退出
+        </button>
+      )}
       <ThemeSwitch preference={preference} dark={dark} />
       <div className={`v2-status-badge ${checked && !ok ? "err" : ""}`} data-testid="status-badge">
         <span className="v2-status-dot" />
