@@ -131,3 +131,40 @@ def test_compact_contract_keeps_load_bearing_search_and_evidence_semantics():
     assert "4000" in defs["read_evidence"]["description"]
     assert "source 版本" in defs["read_evidence"]["description"]
     assert "当前任务" in defs["read_evidence"]["description"]
+
+
+def test_lazy_schema_preserves_current_machine_bounds_without_parameter_prose():
+    """Lazy transport keeps current hard bounds as machine schema, not duplicate prose."""
+    from llm_loop.tools.builtin.agent_message import AgentMessageTool
+    from llm_loop.tools.builtin.schedule import ScheduleTool
+    from llm_loop.tools.builtin.subagent_result import SubAgentResultTool
+
+    reg = ToolRegistry()
+    reg.register(ScheduleTool())
+    reg.register(AgentMessageTool(None))
+    reg.register(SubAgentResultTool(None))
+    defs = {row["name"]: row for row in reg.schemas(lazy=True)}
+
+    schedule_message = defs["schedule"]["parameters"]["properties"]["message"]
+    agent_content = defs["agent_message"]["parameters"]["properties"]["content"]
+    wait_seconds = defs["subagent_result"]["parameters"]["properties"]["wait_seconds"]
+
+    assert schedule_message == {"type": "string", "maxLength": 4000}
+    assert agent_content == {"type": "string", "maxLength": 4000}
+    assert wait_seconds == {"type": "number", "minimum": 0, "maximum": 30}
+    assert all("description" not in spec for spec in (schedule_message, agent_content, wait_seconds))
+
+
+def test_lazy_schema_does_not_copy_unreviewed_validator_keywords():
+    """New validator kinds require an explicit provider/prefix audit before entering lazy."""
+    spec = {
+        "type": "string",
+        "minLength": 2,
+        "maxLength": 9,
+        "pattern": "^[a-z]+$",
+        "description": "high-tax prose",
+    }
+    assert ToolRegistry._lazy_schema_skeleton(spec) == {
+        "type": "string",
+        "maxLength": 9,
+    }

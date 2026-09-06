@@ -32,6 +32,12 @@ from llm_loop.tools.safety import CatastrophicGuard
 
 logger = logging.getLogger(__name__)
 
+# Machine validators present in the current built-in full-schema inventory and
+# required for a truthful first-call contract. Keep this list evidence-based:
+# a new validator keyword needs a provider-compatibility/prefix audit instead
+# of silently widening the stable lazy prefix.
+_LAZY_SCHEMA_VALIDATION_KEYS = ("minimum", "maximum", "maxLength")
+
 
 # Provider-facing compact descriptions for the current built-in tool surface.
 #
@@ -549,9 +555,10 @@ class ToolRegistry:
     def _lazy_schema_skeleton(spec: dict) -> dict:
         """递归保留可执行 JSON Schema 结构，删除说明性大文本。
 
-        lazy 的目标是省掉 description/examples 等语义文本，不是删掉模型首调所需的
-        结构事实。保留 type/enum/properties/items/required，覆盖嵌套 object/array；
-        其它校验关键词当前工具定义未使用，后续出现时应按事实库存再扩，不猜测。
+        lazy 的目标是省掉 description/examples 等说明性文本，不是删掉模型首调所需的
+        机器事实。保留 type/enum/properties/items/required，并保留当前已审计 full-schema
+        库实际使用的 minimum/maximum/maxLength；其它 validator 出现时须先做 provider
+        兼容与 prefix 成本审计，再扩本稳定集合。
         """
         if not isinstance(spec, dict):
             return {}
@@ -562,6 +569,9 @@ class ToolRegistry:
         enum_vals = spec.get("enum")
         if isinstance(enum_vals, list) and enum_vals:
             out["enum"] = list(enum_vals)
+        for key in _LAZY_SCHEMA_VALIDATION_KEYS:
+            if key in spec:
+                out[key] = spec[key]
         props = spec.get("properties")
         if isinstance(props, dict):
             out["properties"] = {
