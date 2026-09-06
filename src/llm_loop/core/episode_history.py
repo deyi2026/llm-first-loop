@@ -8,6 +8,8 @@ annotated with the stable episode ref.
 from __future__ import annotations
 
 import bisect
+import hashlib
+import json
 import logging
 import os
 import re
@@ -185,6 +187,289 @@ def _tool_evidence_receipt(message: Message) -> Message | None:
     return replace(message, content=" ".join(facts), metadata=projected_md)
 
 
+_EVIDENCE_GROUP_DIGEST_VERSION = 1
+_EVIDENCE_ARGS_INLINE_CHARS = 384
+_EVIDENCE_ARGS_PREVIEW_CHARS = 192
+
+
+def _mechanical_status(message: Message) -> str:
+    return str(getattr(message.status, "value", None) or message.status or "unknown")
+
+
+def _canonical_argument(value: Any) -> str:
+    """Canonicalize one tool argument value without interpreting its task meaning."""
+
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return value
+        return json.dumps(decoded, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _bounded_canonical_argument(value: Any) -> str:
+    canonical = _canonical_argument(value)
+    if len(canonical) <= _EVIDENCE_ARGS_INLINE_CHARS:
+        return canonical
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    preview = canonical[:_EVIDENCE_ARGS_PREVIEW_CHARS]
+    return f"sha256={digest};preview={preview}"
+
+
+def _canonical_json_bytes(value: Any) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _evidence_protocol_digest(declaration: Message, results: list[Message]) -> str:
+    """Stable protocol identity for one exact assistant/tool evidence group."""
+
+    payload = {
+        "version": _EVIDENCE_GROUP_DIGEST_VERSION,
+        "tool_calls": declaration.tool_calls or [],
+        "results": [
+            {
+                "tool_call_id": str(result.tool_call_id or ""),
+                "tool_name": str(result.tool_name or ""),
+                "status": _mechanical_status(result),
+                "content_sha256": hashlib.sha256((result.content or "").encode("utf-8")).hexdigest(),
+            }
+            for result in results
+        ],
+    }
+    return f"v{_EVIDENCE_GROUP_DIGEST_VERSION}:" + hashlib.sha256(
+        _canonical_json_bytes(payload)
+    ).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class _AtomicToolGroupSpan:
+    """Lightweight paired current-turn group used by both receipt and S0 identity paths."""
+
+    start: int
+    end_exclusive: int
+    result_indices: tuple[int, ...]
+    exposed: bool
+
+
+def _collect_active_tool_group_spans(messages: list[Message]) -> tuple[_AtomicToolGroupSpan, ...]:
+    """Collect complete current-human-turn tool groups without hashing raw evidence."""
+
+    human_starts = [idx for idx, message in enumerate(messages) if is_human_user_message(message)]
+    if not human_starts:
+        return ()
+    start = human_starts[-1]
+    end = len(messages)
+    groups: list[_AtomicToolGroupSpan] = []
+    cursor = start + 1
+    while cursor < end:
+        declaration = messages[cursor]
+        if declaration.role != "assistant" or not declaration.tool_calls:
+            cursor += 1
+            continue
+        group_end = _tool_group_end(messages, cursor, end)
+        if group_end is None:
+            cursor += 1
+            continue
+        result_indices = tuple(
+            idx for idx in range(cursor + 1, group_end) if messages[idx].role == "tool"
+        )
+        groups.append(
+            _AtomicToolGroupSpan(
+                start=cursor,
+                end_exclusive=group_end,
+                result_indices=result_indices,
+                exposed=any(_is_model_followup(messages[idx]) for idx in range(group_end, end)),
+            )
+        )
+        cursor = group_end
+    return tuple(groups)
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceGroupDescriptor:
+    """Model-facing mechanical facts for one complete assistant/tool protocol group."""
+
+    evidence_id: str
+    protocol_digest: str
+    tool_call_ids: tuple[str, ...]
+    tool_names: tuple[str, ...]
+    canonical_args: tuple[str, ...]
+    raw_chars: int
+    result_count: int
+    statuses: tuple[str, ...]
+    recoverable: bool
+
+    def to_catalog_dict(self) -> dict[str, Any]:
+        """Return only the bounded mechanical fields permitted in an evidence catalog."""
+
+        return {
+            "id": self.evidence_id,
+            "protocol_digest": self.protocol_digest,
+            "tool_call_ids": list(self.tool_call_ids),
+            "tool_names": list(self.tool_names),
+            "canonical_args": list(self.canonical_args),
+            "raw_chars": self.raw_chars,
+            "result_count": self.result_count,
+            "status": list(self.statuses),
+            "recoverable": self.recoverable,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class AtomicEvidenceGroup:
+    """One complete current-human-turn tool group plus non-model-facing storage indices."""
+
+    descriptor: EvidenceGroupDescriptor
+    start: int
+    end_exclusive: int
+    result_indices: tuple[int, ...]
+    exposed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceSelectionShadowStats:
+    """Prompt-neutral mechanics for a model-produced evidence-ID selection."""
+
+    candidate_set_digest: str
+    selected_ids: tuple[str, ...]
+    candidate_group_count: int
+    candidate_raw_chars: int
+    selected_group_count: int
+    selected_raw_chars: int
+    selected_tool_call_count: int
+    unknown_id_count: int
+    duplicate_id_count: int
+    pairing_valid: bool
+    selection_valid: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "candidate_set_digest": self.candidate_set_digest,
+            "selected_ids": list(self.selected_ids),
+            "candidate_group_count": self.candidate_group_count,
+            "candidate_raw_chars": self.candidate_raw_chars,
+            "selected_group_count": self.selected_group_count,
+            "selected_raw_chars": self.selected_raw_chars,
+            "selected_tool_call_count": self.selected_tool_call_count,
+            "unknown_id_count": self.unknown_id_count,
+            "duplicate_id_count": self.duplicate_id_count,
+            "pairing_valid": self.pairing_valid,
+            "selection_valid": self.selection_valid,
+        }
+
+
+def collect_active_evidence_groups(messages: list[Message]) -> tuple[AtomicEvidenceGroup, ...]:
+    """Collect complete current-human-turn tool groups in deterministic transcript order.
+
+    The collector performs protocol identity/pairing work only. It does not rank,
+    summarize, or infer relevance/sufficiency. Fold-local IDs are assigned over the
+    complete groups visible in this snapshot and therefore restart from ``e1`` for
+    each new candidate snapshot.
+    """
+
+    groups: list[AtomicEvidenceGroup] = []
+    for span in _collect_active_tool_group_spans(messages):
+        declaration = messages[span.start]
+        results = [messages[idx] for idx in span.result_indices]
+        tool_calls = [call for call in (declaration.tool_calls or []) if isinstance(call, dict)]
+        tool_call_ids = tuple(str(call.get("id") or "") for call in tool_calls)
+        tool_names = tuple(
+            str((call.get("function") or {}).get("name") or "")
+            if isinstance(call.get("function"), dict)
+            else ""
+            for call in tool_calls
+        )
+        canonical_args = tuple(
+            _bounded_canonical_argument((call.get("function") or {}).get("arguments"))
+            if isinstance(call.get("function"), dict)
+            else _bounded_canonical_argument(None)
+            for call in tool_calls
+        )
+        recoverable = bool(results) and all(
+            str(_metadata(result).get("recoverability_status") or "") == "recorded"
+            and bool(str(_metadata(result).get("evidence_ref") or "").strip())
+            for result in results
+        )
+        descriptor = EvidenceGroupDescriptor(
+            evidence_id=f"e{len(groups) + 1}",
+            protocol_digest=_evidence_protocol_digest(declaration, results),
+            tool_call_ids=tool_call_ids,
+            tool_names=tool_names,
+            canonical_args=canonical_args,
+            raw_chars=sum(len(result.content or "") for result in results),
+            result_count=len(results),
+            statuses=tuple(_mechanical_status(result) for result in results),
+            recoverable=recoverable,
+        )
+        groups.append(
+            AtomicEvidenceGroup(
+                descriptor=descriptor,
+                start=span.start,
+                end_exclusive=span.end_exclusive,
+                result_indices=span.result_indices,
+                exposed=span.exposed,
+            )
+        )
+    return tuple(groups)
+
+
+def evidence_candidate_set_digest(groups: tuple[AtomicEvidenceGroup, ...]) -> str:
+    """Digest one ordered candidate snapshot without depending on fold-local IDs."""
+
+    payload = {
+        "version": _EVIDENCE_GROUP_DIGEST_VERSION,
+        "protocol_digests": [group.descriptor.protocol_digest for group in groups],
+    }
+    return f"v{_EVIDENCE_GROUP_DIGEST_VERSION}:" + hashlib.sha256(
+        _canonical_json_bytes(payload)
+    ).hexdigest()
+
+
+def measure_evidence_selection_shadow(
+    groups: tuple[AtomicEvidenceGroup, ...], selected_ids: list[str] | tuple[str, ...]
+) -> EvidenceSelectionShadowStats:
+    """Measure an external/model selection without applying it to provider history."""
+
+    selected = tuple(str(item) for item in selected_ids)
+    by_id = {group.descriptor.evidence_id: group for group in groups}
+    seen: set[str] = set()
+    duplicate_count = 0
+    known_unique: list[AtomicEvidenceGroup] = []
+    unknown_count = 0
+    for evidence_id in selected:
+        if evidence_id in seen:
+            duplicate_count += 1
+            continue
+        seen.add(evidence_id)
+        group = by_id.get(evidence_id)
+        if group is None:
+            unknown_count += 1
+            continue
+        known_unique.append(group)
+    return EvidenceSelectionShadowStats(
+        candidate_set_digest=evidence_candidate_set_digest(groups),
+        selected_ids=selected,
+        candidate_group_count=len(groups),
+        candidate_raw_chars=sum(group.descriptor.raw_chars for group in groups),
+        selected_group_count=len(known_unique),
+        selected_raw_chars=sum(group.descriptor.raw_chars for group in known_unique),
+        selected_tool_call_count=sum(len(group.descriptor.tool_call_ids) for group in known_unique),
+        unknown_id_count=unknown_count,
+        duplicate_id_count=duplicate_count,
+        pairing_valid=True,
+        selection_valid=unknown_count == 0 and duplicate_count == 0,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ToolWorkingSetProjectionStats:
     """Prompt-neutral facts about one active-run representation projection."""
@@ -254,8 +539,6 @@ def project_active_tool_working_set_with_stats(
             latest_raw_chars=0,
             fold_boundaries=(),
         )
-    start = human_starts[-1]
-    end = len(messages)
     projected = list(messages)
     pending: list[tuple[int, Message]] = []
     pending_chars = 0
@@ -266,28 +549,14 @@ def project_active_tool_working_set_with_stats(
     receipt_chars = 0
     fold_boundaries: list[int] = []
     latest_raw_chars = 0
-    cursor = start + 1
-    while cursor < end:
-        message = messages[cursor]
-        if message.role != "assistant" or not message.tool_calls:
-            cursor += 1
-            continue
-        group_end = _tool_group_end(messages, cursor, end)
-        if group_end is None:
-            cursor += 1
-            continue
-        later_model_turn = any(_is_model_followup(messages[idx]) for idx in range(group_end, end))
-        group_raw_chars = sum(
-            len(messages[idx].content or "")
-            for idx in range(cursor + 1, group_end)
-            if messages[idx].role == "tool"
-        )
-        if not later_model_turn:
+    for group in _collect_active_tool_group_spans(messages):
+        group_raw_chars = sum(len(messages[idx].content or "") for idx in group.result_indices)
+        if not group.exposed:
             latest_raw_chars += group_raw_chars
         else:
             group_receipts: list[tuple[int, Message]] = []
             group_chars = 0
-            for idx in range(cursor + 1, group_end):
+            for idx in group.result_indices:
                 receipt = _tool_evidence_receipt(messages[idx])
                 if receipt is not None:
                     group_receipts.append((idx, receipt))
@@ -305,11 +574,10 @@ def project_active_tool_working_set_with_stats(
                         receipt_chars += len(receipt.content or "")
                     folded_results += len(pending)
                     folded_groups += pending_group_count
-                    fold_boundaries.append(group_end)
+                    fold_boundaries.append(group.end_exclusive)
                     pending = []
                     pending_chars = 0
                     pending_group_count = 0
-        cursor = group_end
     projected_tool_chars = sum(
         len(message.content or "") for message in projected if message.role == "tool"
     )
