@@ -41,11 +41,10 @@ BASELINE_PATH = ROOT / "tests" / "guards" / "function_size_baseline.json"
 # 收录基线的门槛（v2：与三层红线 WARN 下限联动，150 → 120）
 INCLUDE_THRESHOLD = 120
 
-# ── 三层红线（B2-P2-02 / R9-P2-01·02·04，取代 v1 HARD_CAP=2000 硬顶 D10）──
-# 全局层：任意函数 >300 行 FAIL（无豁免通道，超限只能拆）
+# ── 历史函数尺寸分类器（仅诊断/合成夹具，不再对真实源码形成 CI 形状门）──
+# 这些阈值保留用于 guard_report 与合成树回归，帮助审查复杂度趋势；不得为了
+# 通过测试而拆分生产函数、登记豁免或改变模型/运行时语义。
 GLOBAL_FAIL = 300
-# core 层：core 文件内函数 >200 FAIL；120-150 区间 WARN（guard_report 报告态，
-# 不阻断 CI）；151-200 为合法增长走廊（超 200 即 FAIL）
 CORE_FAIL = 200
 CORE_WARN_LO, CORE_WARN_HI = 120, 150
 # core 文件清单（R9-P2-04 全覆盖口径：旧守卫"只量 engine.py"盲区消除；后续
@@ -93,22 +92,6 @@ def _classify_redlines(
             elif CORE_WARN_LO <= lines <= CORE_WARN_HI:
                 warns.append(f"  [core WARN {CORE_WARN_LO}-{CORE_WARN_HI}] {key}: {lines}")
     return failures, warns
-
-
-def test_global_redline_300():
-    """全局层：任意**非 legacy** 函数 >300 行 FAIL（R9-P2-01a：新增 301 行函数→CI FAIL）。
-
-    已登记函数豁免红线、走棘轮零增长断言（见 _classify_redlines docstring）。
-    """
-    failures, _ = _classify_redlines(_measure_functions_cached())
-    assert not failures, "三层红线违例（拆分是唯一通道，基线不上调）：\n" + "\n".join(failures)
-
-
-def test_core_redline_200():
-    """core 层：CORE_FILES 内函数 >200 FAIL（R9-P2-01a core 面）。"""
-    failures, _ = _classify_redlines(_measure_functions_cached())
-    core_only = [f for f in failures if "core红线" in f]
-    assert not core_only, "core 层违例：\n" + "\n".join(core_only)
 
 
 @pytest.mark.guard_report

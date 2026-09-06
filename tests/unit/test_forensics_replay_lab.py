@@ -39,8 +39,39 @@ def leak_sample() -> str:
 
 
 @pytest.fixture(scope="module")
-def root_cause_report() -> dict:
-    return build_forensics_report(_PROJECT_ROOT)
+def root_cause_report(tmp_path_factory: pytest.TempPathFactory) -> dict:
+    """用仓库内脱敏 fixture 重建取证输入，不依赖本机运行态 event_logs/out。"""
+    root = tmp_path_factory.mktemp("forensics-report")
+    event_dir = root / "data" / "event_logs"
+    out_dir = root / "scripts" / "forensics" / "out"
+    event_dir.mkdir(parents=True)
+    out_dir.mkdir(parents=True)
+
+    event_rows: list[dict] = []
+    for name in (
+        "incident-context-279.jsonl",
+        "leak-280-msg.jsonl",
+        "isomorphic-replay-pair.jsonl",
+        "leak-290-msg.jsonl",
+    ):
+        for line in (FIXTURE_DIR / name).read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                event_rows.append(json.loads(line))
+    event_rows.sort(key=lambda row: int((row.get("payload") or {}).get("index", -1)))
+    incident = event_dir / "004976ea-5a23-4ae9-9f16-83b18767720a.jsonl"
+    incident.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in event_rows) + "\n",
+        encoding="utf-8",
+    )
+
+    sample = _load_leak_sample()
+    for candidate in ("e1_abuse", "interop_legacy_tail", "err1210_defer_residual"):
+        receipt = replay_candidate_path(candidate, sample, repo_root=_PROJECT_ROOT).to_dict()
+        (out_dir / f"replay-{candidate}.json").write_text(
+            json.dumps(receipt, ensure_ascii=False, indent=1), encoding="utf-8"
+        )
+
+    return build_forensics_report(root)
 
 
 class TestReplayLabVerdict:
