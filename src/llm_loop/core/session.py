@@ -36,6 +36,11 @@ _IDENTITY_FALLBACK_LOCKS: dict[str, threading.Lock] = {}
 _ACTIVE = "active"
 _ARCHIVED = "archived"
 
+# 会话元数据缓存（2026-09-07 CPU 修复）：绝对路径 → ((mtime_ns, size), SessionMeta)。
+# 供 _list_sessions_in 复用未变化文件的解析结果；文件落盘 mtime 必变，天然失效。
+_SESSION_META_CACHE: dict[Path, tuple[tuple[int, int], SessionMeta]] = {}
+_SESSION_META_CACHE_LOCK = threading.Lock()
+
 
 def _validate_session_id(session_id: str) -> str:
     """会话ID必须是单个文件名组件；保留legacy非UUID ID但禁止路径穿越。"""
@@ -1316,22 +1321,40 @@ class SessionStore:
         return self._list_sessions_in(Path(sessions_dir), include_archived=include_archived)
 
     def _list_sessions_in(self, target: Path, include_archived: bool = False) -> list[SessionMeta]:
-        """list_sessions 实现体（目录参数化；M56 排序语义不变）."""
+        """list_sessions 实现体（目录参数化；M56 排序语义不变）.
+
+        2026-09-07 CPU 修复：按 (mtime_ns, size) 缓存单文件解析结果——
+        跨端同步每 1.5s 轮询一次 list_sessions，此前每轮全量 json.loads
+        全部会话文件（275 个/108MB），持续占用 ~20% CPU。文件未变化时
+        复用缓存元数据；mtime/size 变化即失效重解析（语义与全量解析一致，
+        save 落盘必然更新 mtime）。本轮回收未出现文件对应条目，防删文件泄漏。
+        """
         metas: list[SessionMeta] = []
+        new_cache: dict[Path, tuple[tuple[int, int], SessionMeta]] = {}
+        seen_paths: set[Path] = set()
         for p in sorted(target.glob("*.json")):
             if p.name == self._SHARED_SESSION_FILE:
                 continue  # 工作区分区后共享会话文件在会话目录内，排除（非会话文件）
+            seen_paths.add(p)
             try:
-                data = json.loads(p.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
+                st = p.stat()
+                fkey = (st.st_mtime_ns, st.st_size)
+            except OSError:
                 continue
-            status = data.get("status", _ACTIVE)
-            if status == _ARCHIVED and not include_archived:
-                continue
-            messages = data.get("messages", [])
-            preview = messages[-1].get("content", "")[:80] if messages else ""
-            metas.append(
-                SessionMeta(
+            with _SESSION_META_CACHE_LOCK:
+                cached = _SESSION_META_CACHE.get(p)
+            if cached is not None and cached[0] == fkey:
+                meta = cached[1]
+                new_cache[p] = cached
+            else:
+                try:
+                    data = json.loads(p.read_text(encoding="utf-8"))
+                except (json.JSONDecodeError, OSError):
+                    continue
+                status = data.get("status", _ACTIVE)
+                messages = data.get("messages", [])
+                preview = messages[-1].get("content", "")[:80] if messages else ""
+                meta = SessionMeta(
                     session_id=data.get("session_id", p.stem),
                     title=data.get("title") or "未命名",
                     created_at=data.get("created_at", ""),
@@ -1343,7 +1366,15 @@ class SessionStore:
                     pinned=bool(data.get("pinned", False)),
                     channel=data.get("channel", "web"),
                 )
-            )
+                new_cache[p] = (fkey, meta)
+            if meta.status == _ARCHIVED and not include_archived:
+                continue
+            metas.append(meta)
+        with _SESSION_META_CACHE_LOCK:
+            for cached_path in list(_SESSION_META_CACHE):
+                if cached_path.parent == target and cached_path not in seen_paths:
+                    _SESSION_META_CACHE.pop(cached_path, None)
+            _SESSION_META_CACHE.update(new_cache)
         # M56: 置顶会话优先（同置顶级别内保持 updated_at 降序；稳定排序保证相对序不变）
         metas.sort(key=lambda m: m.updated_at, reverse=True)
         metas.sort(key=lambda m: not m.pinned)

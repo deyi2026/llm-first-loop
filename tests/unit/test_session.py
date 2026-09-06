@@ -364,6 +364,48 @@ def test_create_default_model_override_none(tmp_path):
     assert store.load(sid).model_override is None
 
 
+def test_session_meta_cache_isolated_by_directory_and_invalidates(tmp_path):
+    """列表缓存不得跨目录互相清空，文件变化/删除必须只失效自己的条目。"""
+    import llm_loop.core.session as session_module
+
+    base = tmp_path / "sessions"
+    store_a = SessionStore(base / "workspace-A")
+    store_b = SessionStore(base / "workspace-B")
+    sid_a = store_a.create()
+    sid_b = store_b.create()
+    store_a.rename(sid_a, "A")
+    store_b.rename(sid_b, "B")
+    path_a = store_a._path(sid_a)  # noqa: SLF001 — 精确锁定缓存 Path key
+    path_b = store_b._path(sid_b)  # noqa: SLF001
+
+    with session_module._SESSION_META_CACHE_LOCK:  # noqa: SLF001
+        session_module._SESSION_META_CACHE.clear()  # noqa: SLF001
+
+    try:
+        assert store_a.list_sessions()[0].title == "A"
+        assert store_b.list_sessions()[0].title == "B"
+        with session_module._SESSION_META_CACHE_LOCK:  # noqa: SLF001
+            assert path_a in session_module._SESSION_META_CACHE  # noqa: SLF001
+            assert path_b in session_module._SESSION_META_CACHE  # noqa: SLF001
+
+        # 再轮询 A 不得清掉 B；B 落盘变化后必须重新解析而非复用旧 title。
+        store_a.list_sessions()
+        with session_module._SESSION_META_CACHE_LOCK:  # noqa: SLF001
+            assert path_b in session_module._SESSION_META_CACHE  # noqa: SLF001
+        store_b.rename(sid_b, "B2")
+        assert store_b.list_sessions()[0].title == "B2"
+
+        # 删除 B 后只回收 B 的缓存，A 仍保留。
+        assert store_b.delete(sid_b) is True
+        assert store_b.list_sessions() == []
+        with session_module._SESSION_META_CACHE_LOCK:  # noqa: SLF001
+            assert path_b not in session_module._SESSION_META_CACHE  # noqa: SLF001
+            assert path_a in session_module._SESSION_META_CACHE  # noqa: SLF001
+    finally:
+        with session_module._SESSION_META_CACHE_LOCK:  # noqa: SLF001
+            session_module._SESSION_META_CACHE.clear()  # noqa: SLF001
+
+
 
 def test_session_id_path_traversal_cannot_cross_workspace_roots(tmp_path):
     """外部session_id不得用../跨workspace读/删兄弟会话。"""
