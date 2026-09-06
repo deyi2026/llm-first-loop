@@ -19,7 +19,7 @@
 
 ### 1.1 当前 continuity 实证边界（2026-09-07 本地复核）
 - `LFL_TOOL_WORKING_SET_RECEIPTS` 默认关闭；receipt 只做 representation/provenance，不做 relevance/importance/sufficiency 判断。
-- selective evidence shadow、working-state checkpoint 的 consumer/persistence/provider projection 已存在；但 `build_working_state_checkpoint()` 在 `src/` 内没有生产 producer 调用，当前仅定义、测试和 benchmark 使用。**S1 production producer 是当前最大单点缺口。**
+- selective evidence / working-state checkpoint 的 consumer、persistence 与 provider projection 已存在；`build_working_state_checkpoint()` 在 `src/` 内仍没有生产 producer 调用，当前仅定义、测试和 benchmark 使用。后续真实本地模型实验显示：当真正的证据工具仍可用时，模型并不稳定采用独立 checkpoint 动作；强制 producer 会重新引入 Program Authority。因此 **S1 consumer 保留，production producer 当前 HOLD；眼前优先级是 Continuity Kernel owner/precedence 收敛与机械恢复缺口。**
 - provider truncation continuity 已能持久化 exact partial assistant output，并向下一次 provider view 暴露“上次被 provider 截断”的运行事实，不注入“继续”等程序指令。
 - private handoff 明确是 historical evidence，不自动获得 current instruction authority。
 - SubAgent child session 本身已经经 `SessionStore`/event-log 路径持久化；真正缺失的是进程重启后的 runner topology/ownership 恢复：parent↔child 映射、mailbox、pending handle、terminal/settled state 仍主要是进程内状态。
@@ -70,7 +70,7 @@
 | 风险 | 证据 | 建议 | 优先级 |
 |---|---|---|---|
 | 本地 secret sprawl | 根目录 23 个 `.env.bak*`；均被 ignore，Git 当前/历史未发现被跟踪 | 先做不输出秘密值的 credential inventory；清理明文备份；仅对仍有效或无法排除外传的凭据执行轮换 | P0-hygiene |
-| S1 生产链缺口 | `build_working_state_checkpoint()` 在 `src` 无生产 producer | 先实现 model-selected Evidence IDs + model-authored working state 的生产 producer；程序只做机械 schema/digest/bound 校验 | P0 |
+| S1 producer 采用率不足 | consumer 已存在但 `src` 无 producer；真实本地 Agent exercise 中独立 checkpoint 在有实际证据工具时采用率不足 | producer HOLD；不靠 pressure prompt/required field 强迫采用。先收敛现有 continuity owner，保留 optional model-authored consumer | HOLD |
 | continuity 概念重叠 | receipt / selective evidence / working-state / recent continuity / truncation / handoff 并存 | 收敛成 Continuity Kernel 1.0，明确每种状态的 owner、生命周期、失效条件与恢复路径 | P0 |
 | SubAgent 重启不可恢复 | child Session 已持久化，但 topology/mailbox/handle/ownership 为进程态 | 不新建第二持久层；基于 SessionStore/EventLog 补 topology replay + generation/lease ownership，防双执行 | P1 |
 | 评测外推过度 | 114/500，重仓库未跑 | 补 django/sympy 重仓库批次，公开样本构成 | P1 |
@@ -80,20 +80,20 @@
 | ROADMAP-B 未结项 | docs/ROADMAP-B-20260814.md | 逐项结清或显式废止 | P2 |
 
 ## 五、下一阶段路线：Continuity Kernel 1.0
-严格串行，不并行扩功能：
+严格串行，不并行扩功能。2026-09-07 的 CK1 实证已取代本报告早期“先做 S1 producer”的路线：
 
-1. **CK0 — clean/green baseline**：先收口当前独立 dirty patch，保证后续 A/B 有可信基线。
-2. **CK1 — S1 production producer**：模型看到机械 candidate Evidence catalog；模型返回 selected Evidence IDs + 短 working state。程序只验证格式、digest、范围、finish reason，不判断 relevance/importance/sufficiency。
-3. **CK2 — deterministic + real long-agent A/B**：先测 LFL 自身 receipts off/on、S1 off/on；指标至少包括完成率、重复工具调用、Evidence re-read、fold/restart 后重调查率、TTFT/prefill、cache prefix retention、final fidelity。
-4. **CK3 — responsibility inventory**：把 RAW EVIDENCE → EXPOSED RAW → RECEIPT → MODEL-SELECTED RAW → WORKING STATE → RESOLVED/RETIRED 的 owner 和状态迁移统一，禁止再增加平行 summary/checkpoint 表示。
-5. **CK4 — default-on 裁决**：只有 CK2 证明收益且 CK3 owner 唯一后，才讨论 receipts/S1 默认开启；S2/S3 在此之前冻结。
+1. **CK0 — clean/green baseline**：fresh detached 全量非 real-LLM 测试与 repo Pyright 先保持全绿。
+2. **CK1 — authority / precedence convergence**：先把 Session/EventLog、EvidenceRef、provider partial/native replay、receipts、optional WorkingStateCheckpoint、recent continuity、Goal/handoff 的 owner、生命周期和失效条件统一。
+3. **CK2 — deterministic continuity matrix**：覆盖 raw history、receipts、selected raw、provider truncation、restart、stale checkpoint、later human、tool failure/retry pairing 和多机制 precedence；正确性/可恢复性优先，不用 cache hit 当正确性门。
+4. **CK3 — minimal mechanical repairs**：只修实证的连续性事实丢失/身份错配，不新增 semantic summary、completion gate 或强制 checkpoint。
+5. **CK4 — S1 producer HOLD / revisit only with evidence**：consumer 可继续存在；只有未来模型原生地、稳定地在真实 Agent 流程中产生足够事实/来源完整的 state，才重开 producer 讨论。
 6. **CK5 — Durable SubAgent Topology Recovery**：复用既有 child Session/EventLog，只持久化可重放机械事实；通过 owner generation/lease 防止旧 worker + 新 worker 双执行。
 7. **CK6 — ExecutionWorkspace / Capability Boundary**：在 continuity 内核稳定后再做，不与 CK1~CK5 并行。
 8. **CK7 — Memory maintenance**：借鉴 sleep-time/dreaming 仅作为后台 proposed diff；历史记忆仍需 provenance/currentness，不能自动成为当前指令。
 9. **CK8 — 横向 benchmark**：最后再投入 Codex/Claude Code/Gemini CLI 等跨 harness 高成本对比；先证明 LFL 自身机制有因果收益。
 
 ### 明确不做
-- 不在 S1 producer + 真实 A/B 前推进 S2/S3 selective evidence。
+- 不为了推进路线图而强迫 S1 producer；S1/S2/S3 任何升级都必须由真实 Agent 采用率与 final fidelity 证据支持。
 - 不新增第二套 summary/checkpoint/working-state 表示。
 - 不让程序判断 Evidence 的 relevance、importance、sufficiency 或 task applicability。
 - 不把 Letta 式 memory consolidation 自动注入普通 prompt。

@@ -1420,3 +1420,43 @@ def test_concurrent_streams_on_same_client_have_isolated_think_state():
         assert d1b.text == "done-a"
         g1.close()
         g2.close()
+
+
+def test_interruption_replay_marker_keeps_existing_provider_projection_boundary():
+    """Recent-continuity opaque replay is native only for its originating provider."""
+    from llm_loop.core.message import Message, MessageSource
+    from llm_loop.core.recent_continuity import apply_recent_continuity_suffix
+
+    replay = {
+        "provider": "minimax",
+        "fields": {
+            "reasoning_details": [
+                {"type": "reasoning.text", "text": "plan", "signature": "sig-1"}
+            ]
+        },
+    }
+    current = Message(role="user", content="continue", source=MessageSource.USER)
+    resumed, _ = apply_recent_continuity_suffix(
+        [{"role": "system", "content": "SYS"}, current.to_llm_dict()],
+        session_messages=[
+            Message(role="user", content="inspect", source=MessageSource.USER),
+            current,
+        ],
+        current_turn_ref=1,
+        interruption_resume={
+            "source": "open_stream_checkpoint",
+            "text_tail": "PARTIAL",
+            "reasoning_tail": "plan",
+            "provider_replay": replay,
+        },
+    )
+    assert resumed[-2]["_provider_replay"] == replay
+
+    minimax = _client(provider="minimax")._project_provider_replay(resumed)  # noqa: SLF001
+    foreign = _client(provider="deepseek")._project_provider_replay(resumed)  # noqa: SLF001
+
+    assert minimax[-2]["reasoning_details"] == replay["fields"]["reasoning_details"]
+    assert "_provider_replay" not in minimax[-2]
+    assert "reasoning_details" not in foreign[-2]
+    assert "_provider_replay" not in foreign[-2]
+    assert resumed[-2]["_provider_replay"] == replay

@@ -251,3 +251,229 @@ def test_short_continue_keeps_only_immediately_recent_model_context() -> None:
     assert out[-2]["content"] == "我保持只分析。要继续审查这条边界吗？"
     assert out[-1] == {"role": "user", "content": "继续"}
     assert all(item.get("content") != "下一步建议直接落补丁" for item in out)
+
+
+def test_interruption_resume_preserves_provider_native_replay_marker() -> None:
+    """Crash recovery must not discard exact provider-native replay already captured."""
+    previous_user = _user("inspect")
+    current_user = _user("continue")
+    session = [previous_user, current_user]
+    replay = {
+        "provider": "minimax",
+        "fields": {
+            "reasoning_details": [
+                {"type": "reasoning.text", "text": "plan", "signature": "sig-1"}
+            ]
+        },
+    }
+    built = [
+        {"role": "system", "content": "SYS"},
+        {"role": "user", "content": "continue"},
+    ]
+
+    out, info = apply_recent_continuity_suffix(
+        built,
+        session_messages=session,
+        current_turn_ref=1,
+        interruption_resume={
+            "source": "open_stream_checkpoint",
+            "text_tail": "MODEL-PARTIAL",
+            "reasoning_tail": "plan",
+            "provider": "minimax",
+            "model": "minimax/MiniMax-M3",
+            "provider_replay": replay,
+        },
+    )
+
+    assert info["source"] == "open_stream_checkpoint"
+    assert out[-2]["content"] == "MODEL-PARTIAL"
+    assert out[-2]["_provider_replay"] == replay
+    assert out[-1] == {"role": "user", "content": "continue"}
+
+
+def test_attachment_bearing_current_user_keeps_interruption_continuity() -> None:
+    """Attachment wire projection must not make the current human structurally invisible."""
+    previous_user = _user("inspect")
+    current_user = Message(
+        role="user",
+        content="continue with this file",
+        source=MessageSource.USER,
+        metadata={
+            "attachments": [
+                {
+                    "ref": "attachment://abc",
+                    "filename": "facts.txt",
+                    "content_type": "text/plain",
+                    "media_type": "text",
+                    "size_bytes": 3,
+                    "sha256": "abc123",
+                    "excerpt_kind": "text",
+                    "excerpt": "XYZ",
+                }
+            ]
+        },
+    )
+    session = [previous_user, current_user]
+    current_wire = current_user.to_llm_dict()
+    assert current_wire["content"] != current_user.content
+    built = [
+        {"role": "system", "content": "SYS"},
+        current_wire,
+    ]
+
+    out, info = apply_recent_continuity_suffix(
+        built,
+        session_messages=session,
+        current_turn_ref=1,
+        interruption_resume={
+            "source": "open_stream_checkpoint",
+            "text_tail": "MODEL-PARTIAL",
+            "reasoning_tail": "MODEL-REASONING",
+        },
+    )
+
+    assert info["source"] == "open_stream_checkpoint"
+    assert out[-2] == {
+        "role": "assistant",
+        "content": "MODEL-PARTIAL",
+        "reasoning_content": "MODEL-REASONING",
+    }
+    assert out[-1] == current_wire
+    assert "[attachment_facts]" in out[-1]["content"]
+
+
+def test_attachment_projection_survives_provider_truncation_runtime_fact() -> None:
+    """Ephemeral truncation provenance appends after, never replaces, attachment facts."""
+    previous_user = _user("inspect")
+    current_user = Message(
+        role="user",
+        content="continue",
+        source=MessageSource.USER,
+        metadata={
+            "attachments": [
+                {
+                    "ref": "attachment://abc",
+                    "filename": "facts.txt",
+                    "content_type": "text/plain",
+                    "media_type": "text",
+                    "size_bytes": 3,
+                    "sha256": "abc123",
+                    "excerpt_kind": "text",
+                    "excerpt": "XYZ",
+                }
+            ]
+        },
+    )
+    current_wire = current_user.to_llm_dict()
+    out, info = apply_recent_continuity_suffix(
+        [{"role": "system", "content": "SYS"}, current_wire],
+        session_messages=[previous_user, current_user],
+        current_turn_ref=1,
+        interruption_resume={
+            "source": "persisted_provider_truncated",
+            "text_tail": "PARTIAL",
+            "reasoning_tail": "",
+            "provider_truncated": True,
+            "finish_reason": "length",
+        },
+    )
+
+    assert info["runtime_fact"] is True
+    assert out[-2] == {"role": "assistant", "content": "PARTIAL"}
+    assert out[-1]["content"].startswith(current_wire["content"])
+    assert "[attachment_facts]" in out[-1]["content"]
+    assert "[provider_runtime_fact—not_human_text]" in out[-1]["content"]
+    assert current_user.content == "continue"
+
+
+def test_current_turn_capability_fact_does_not_hide_current_human_identity() -> None:
+    """Known factual wire suffixes do not replace the durable human-message identity."""
+    previous_user = _user("inspect")
+    current_user = _user("continue")
+    current_wire = current_user.to_llm_dict()
+    current_wire["content"] += (
+        "\n[能力边界事实]\n"
+        "tool=browser_exec; available=false; reason=runtime_unhealthy"
+    )
+
+    out, info = apply_recent_continuity_suffix(
+        [{"role": "system", "content": "SYS"}, current_wire],
+        session_messages=[previous_user, current_user],
+        current_turn_ref=1,
+        interruption_resume={
+            "source": "open_stream_checkpoint",
+            "text_tail": "PARTIAL",
+            "reasoning_tail": "",
+        },
+    )
+
+    assert info["source"] == "open_stream_checkpoint"
+    assert out[-2] == {"role": "assistant", "content": "PARTIAL"}
+    assert out[-1] == current_wire
+
+
+def test_failure_then_retry_tool_protocol_is_never_reordered_by_recent_continuity() -> None:
+    """Failure+retry protocol order is storage/wire truth once the current turn advanced."""
+    from llm_loop.core.history import validate_tool_call_pairing
+
+    previous_user = _user("old")
+    current_user = _user("inspect")
+    first_decl = Message(
+        role="assistant",
+        content="",
+        source=MessageSource.USER,
+        tool_calls=[
+            {"id": "c1", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}
+        ],
+        metadata={"answer_origin": "model"},
+    )
+    failed = Message(
+        role="tool",
+        content="TOOL_ERROR: FileNotFoundError",
+        source=MessageSource.TOOL,
+        tool_call_id="c1",
+        tool_name="read_file",
+        status="failure",
+    )
+    retry_decl = Message(
+        role="assistant",
+        content="",
+        source=MessageSource.USER,
+        tool_calls=[
+            {"id": "c2", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}
+        ],
+        metadata={"answer_origin": "model"},
+    )
+    success = Message(
+        role="tool",
+        content="OK",
+        source=MessageSource.TOOL,
+        tool_call_id="c2",
+        tool_name="read_file",
+        status="success",
+    )
+    session = [previous_user, current_user, first_decl, failed, retry_decl, success]
+    built = [
+        {"role": "system", "content": "SYS"},
+        current_user.to_llm_dict(),
+        first_decl.to_llm_dict(),
+        failed.to_llm_dict(),
+        retry_decl.to_llm_dict(),
+        success.to_llm_dict(),
+    ]
+
+    out, info = apply_recent_continuity_suffix(
+        built,
+        session_messages=session,
+        current_turn_ref=1,
+        interruption_resume={
+            "source": "open_stream_checkpoint",
+            "text_tail": "STALE",
+            "reasoning_tail": "",
+        },
+    )
+
+    assert info == {"applied": False, "reason": "turn_already_advanced"}
+    assert out == built
+    assert validate_tool_call_pairing(out) == []
+    assert [row.get("tool_call_id") for row in out if row.get("role") == "tool"] == ["c1", "c2"]

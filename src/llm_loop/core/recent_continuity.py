@@ -58,12 +58,45 @@ def _resume_message(state: dict[str, Any] | None) -> dict[str, Any] | None:
         return None
     text_tail = str(state.get("text_tail") or "")
     reasoning_tail = str(state.get("reasoning_tail") or "")
-    if not text_tail and not reasoning_tail:
+    replay = state.get("provider_replay")
+    if not text_tail and not reasoning_tail and not isinstance(replay, dict):
         return None
     out: dict[str, Any] = {"role": "assistant", "content": text_tail}
     if reasoning_tail:
         out["reasoning_content"] = reasoning_tail
+    # Opaque provider-native replay is transport state, not prose. Keep the
+    # internal marker so LLMClient can project it only to its originating provider;
+    # foreign providers deterministically strip it. Partial tool-call drafts remain
+    # non-executable and are intentionally not projected here.
+    if isinstance(replay, dict):
+        out["_provider_replay"] = replay
     return out
+
+
+def _current_user_wire_index(built: list[dict], current: Any) -> int | None:
+    """Locate the current genuine-human wire without equating raw and wire text.
+
+    ``Message.to_llm_dict`` may mechanically append attachment facts. History may
+    additionally append a current-turn capability-boundary fact block. Both are
+    provider-view representations of the same durable human message, so match the
+    exact projected user text plus only that known factual suffix. Search from the
+    tail to avoid an older identical human message.
+    """
+    projected = current.to_llm_dict() if hasattr(current, "to_llm_dict") else None
+    projected_text = (
+        str(projected.get("content") or "")
+        if isinstance(projected, dict)
+        else str(getattr(current, "content", "") or "")
+    )
+    capability_suffix = "\n[能力边界事实]"
+    for idx in range(len(built) - 1, -1, -1):
+        item = built[idx]
+        if item.get("role") != "user":
+            continue
+        wire_text = str(item.get("content") or "")
+        if wire_text == projected_text or wire_text.startswith(projected_text + capability_suffix):
+            return idx
+    return None
 
 
 def _resume_runtime_fact(state: dict[str, Any] | None) -> str:
@@ -120,16 +153,7 @@ def apply_recent_continuity_suffix(
         for message in session_messages[current_turn_ref + 1 :]
     ):
         return built, {"applied": False, "reason": "turn_already_advanced"}
-    current_text = str(getattr(current, "content", "") or "")
-    user_idx = next(
-        (
-            idx
-            for idx in range(len(built) - 1, -1, -1)
-            if built[idx].get("role") == "user"
-            and str(built[idx].get("content") or "") == current_text
-        ),
-        None,
-    )
+    user_idx = _current_user_wire_index(built, current)
     if user_idx is None:
         return built, {"applied": False, "reason": "current_user_not_in_wire"}
 
@@ -189,8 +213,12 @@ def apply_recent_continuity_suffix(
     # moved ahead of the recent pair.  The exact human ingress remains the final item.
     out = before + after_user
     if runtime_fact:
+        # Preserve the exact already-projected current-human wire (attachments and
+        # current-turn factual capability boundary included); only append ephemeral
+        # provider runtime provenance. Durable Message.content remains untouched.
+        projected_current_text = str(current_wire.get("content") or "")
         current_wire["content"] = (
-            f"{current_text}\n\n[provider_runtime_fact—not_human_text]\n{runtime_fact}"
+            f"{projected_current_text}\n\n[provider_runtime_fact—not_human_text]\n{runtime_fact}"
         )
     if assistant_wire is not None:
         out.append(assistant_wire)
