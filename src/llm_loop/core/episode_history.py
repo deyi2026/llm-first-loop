@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import bisect
 import logging
+import os
 import re
+from dataclasses import dataclass, replace
 from typing import Any
 
 from llm_loop.core.message import Message, MessageSource
@@ -96,13 +98,255 @@ def provider_message_visible(message: Message) -> bool:
     )
 
 
+def _working_set_receipts_enabled() -> bool:
+    raw = (os.environ.get("LFL_TOOL_WORKING_SET_RECEIPTS", "0") or "0").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _working_set_batch_chars() -> int:
+    """Mechanical fold size; batching amortizes prefix rewrites without judging relevance."""
+
+    raw = (os.environ.get("LFL_TOOL_WORKING_SET_BATCH_CHARS", "32768") or "32768").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 32768
+    return max(4096, min(value, 1_048_576))
+
+
+def _working_set_grace_groups() -> int:
+    """Mechanical recency grace; keep newest exposed tool groups raw for continuity."""
+
+    raw = (os.environ.get("LFL_TOOL_WORKING_SET_GRACE_GROUPS", "0") or "0").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    return max(0, min(value, 64))
+
+
+def _is_model_followup(message: Message) -> bool:
+    """Return whether a later real model turn proves the prior tool bytes were exposed once."""
+
+    if message.role != "assistant":
+        return False
+    md = _metadata(message)
+    if md.get("answer_origin") == "program" or message.source == MessageSource.SYSTEM:
+        return False
+    if message.tool_calls:
+        return True
+    return _is_tool_consumer(message)
+
+
+def _tool_evidence_receipt(message: Message) -> Message | None:
+    """Return a protocol-preserving compact view for one durably recoverable tool result."""
+
+    if message.role != "tool":
+        return None
+    md = _metadata(message)
+    if str(md.get("recoverability_status") or "") != "recorded":
+        return None
+    ref = str(md.get("evidence_ref") or "").strip()
+    if not ref:
+        return None
+    status = getattr(message.status, "value", None) or str(message.status or "unknown")
+    source = str(md.get("evidence_source_label") or message.tool_name or "")
+    coverage = str(md.get("evidence_coverage_label") or "")
+    representation = str(md.get("evidence_representation") or "")
+    complete = md.get("evidence_projection_complete")
+    facts = [
+        f"[状态: {status}] [tool_result_receipt]",
+        "prior_full_result_exposed=true",
+        f"evidence_ref={ref}",
+    ]
+    if source:
+        facts.append(f"source={source}")
+    if coverage:
+        facts.append(f"coverage={coverage}")
+    if representation:
+        facts.append(f"representation={representation}")
+    if complete is not None:
+        facts.append(f"projection_complete={str(bool(complete)).lower()}")
+    origin = md.get("evidence_origin_facts")
+    if isinstance(origin, dict):
+        acquired_at = str(origin.get("acquired_at") or "").strip()
+        version_policy = str(origin.get("source_version_policy") or "").strip()
+        if acquired_at:
+            facts.append(f"acquired_at={acquired_at}")
+        if version_policy:
+            facts.append(f"version_policy={version_policy}")
+    # Receipt stays deliberately thin. Full source kind/version token/provenance remain
+    # durably available through read_evidence; the folded view only carries the two
+    # origin facts that help the model notice temporal/applicability risk.
+    facts.append("task_applicability=not_evaluated")
+    facts.append("recovery_tool=read_evidence")
+    projected_md = dict(md)
+    projected_md["working_set_projection"] = "evidence_receipt"
+    return replace(message, content=" ".join(facts), metadata=projected_md)
+
+
+@dataclass(frozen=True, slots=True)
+class ToolWorkingSetProjectionStats:
+    """Prompt-neutral facts about one active-run representation projection."""
+
+    enabled: bool
+    batch_chars: int
+    raw_tool_chars: int
+    projected_tool_chars: int
+    receipt_chars: int
+    folded_results: int
+    folded_groups: int
+    grace_groups: int
+    grace_raw_chars: int
+    grace_results: int
+    pending_raw_chars: int
+    pending_results: int
+    latest_raw_chars: int
+    fold_boundaries: tuple[int, ...]
+
+
+def project_active_tool_working_set_with_stats(
+    messages: list[Message],
+) -> tuple[list[Message], ToolWorkingSetProjectionStats]:
+    """Project active-run tool results and return factual, non-prompt telemetry.
+
+    ``fold_boundaries`` are message indices at the end of each newly completed coarse
+    batch in the current projection. They describe representation mechanics only; they
+    do not claim that any evidence is important, stale, sufficient, or safe to ignore.
+    """
+
+    enabled = _working_set_receipts_enabled()
+    batch_chars = _working_set_batch_chars() if enabled else 0
+    grace_groups = _working_set_grace_groups() if enabled else 0
+    raw_tool_chars = sum(len(message.content or "") for message in messages if message.role == "tool")
+    if not enabled or not messages:
+        return messages, ToolWorkingSetProjectionStats(
+            enabled=enabled,
+            batch_chars=batch_chars,
+            raw_tool_chars=raw_tool_chars,
+            projected_tool_chars=raw_tool_chars,
+            receipt_chars=0,
+            folded_results=0,
+            folded_groups=0,
+            grace_groups=grace_groups,
+            grace_raw_chars=0,
+            grace_results=0,
+            pending_raw_chars=0,
+            pending_results=0,
+            latest_raw_chars=0,
+            fold_boundaries=(),
+        )
+    human_starts = [idx for idx, message in enumerate(messages) if is_human_user_message(message)]
+    if not human_starts:
+        return messages, ToolWorkingSetProjectionStats(
+            enabled=True,
+            batch_chars=batch_chars,
+            raw_tool_chars=raw_tool_chars,
+            projected_tool_chars=raw_tool_chars,
+            receipt_chars=0,
+            folded_results=0,
+            folded_groups=0,
+            grace_groups=grace_groups,
+            grace_raw_chars=0,
+            grace_results=0,
+            pending_raw_chars=0,
+            pending_results=0,
+            latest_raw_chars=0,
+            fold_boundaries=(),
+        )
+    start = human_starts[-1]
+    end = len(messages)
+    projected = list(messages)
+    pending: list[tuple[int, Message]] = []
+    pending_chars = 0
+    pending_group_count = 0
+    grace_queue: list[tuple[list[tuple[int, Message]], int]] = []
+    folded_results = 0
+    folded_groups = 0
+    receipt_chars = 0
+    fold_boundaries: list[int] = []
+    latest_raw_chars = 0
+    cursor = start + 1
+    while cursor < end:
+        message = messages[cursor]
+        if message.role != "assistant" or not message.tool_calls:
+            cursor += 1
+            continue
+        group_end = _tool_group_end(messages, cursor, end)
+        if group_end is None:
+            cursor += 1
+            continue
+        later_model_turn = any(_is_model_followup(messages[idx]) for idx in range(group_end, end))
+        group_raw_chars = sum(
+            len(messages[idx].content or "")
+            for idx in range(cursor + 1, group_end)
+            if messages[idx].role == "tool"
+        )
+        if not later_model_turn:
+            latest_raw_chars += group_raw_chars
+        else:
+            group_receipts: list[tuple[int, Message]] = []
+            group_chars = 0
+            for idx in range(cursor + 1, group_end):
+                receipt = _tool_evidence_receipt(messages[idx])
+                if receipt is not None:
+                    group_receipts.append((idx, receipt))
+                    group_chars += len(messages[idx].content or "")
+            if group_receipts:
+                grace_queue.append((group_receipts, group_chars))
+            while len(grace_queue) > grace_groups:
+                promoted_receipts, promoted_chars = grace_queue.pop(0)
+                pending.extend(promoted_receipts)
+                pending_chars += promoted_chars
+                pending_group_count += 1
+                if pending and pending_chars >= batch_chars:
+                    for idx, receipt in pending:
+                        projected[idx] = receipt
+                        receipt_chars += len(receipt.content or "")
+                    folded_results += len(pending)
+                    folded_groups += pending_group_count
+                    fold_boundaries.append(group_end)
+                    pending = []
+                    pending_chars = 0
+                    pending_group_count = 0
+        cursor = group_end
+    projected_tool_chars = sum(
+        len(message.content or "") for message in projected if message.role == "tool"
+    )
+    grace_raw_chars = sum(chars for _receipts, chars in grace_queue)
+    grace_results = sum(len(receipts) for receipts, _chars in grace_queue)
+    return projected, ToolWorkingSetProjectionStats(
+        enabled=True,
+        batch_chars=batch_chars,
+        raw_tool_chars=raw_tool_chars,
+        projected_tool_chars=projected_tool_chars,
+        receipt_chars=receipt_chars,
+        folded_results=folded_results,
+        folded_groups=folded_groups,
+        grace_groups=grace_groups,
+        grace_raw_chars=grace_raw_chars,
+        grace_results=grace_results,
+        pending_raw_chars=pending_chars,
+        pending_results=len(pending),
+        latest_raw_chars=latest_raw_chars,
+        fold_boundaries=tuple(fold_boundaries),
+    )
+
+
+def project_active_tool_working_set(messages: list[Message]) -> list[Message]:
+    """Compatibility wrapper returning only the provider projection."""
+
+    projected, _stats = project_active_tool_working_set_with_stats(messages)
+    return projected
+
+
 def provider_view_without_resolved_episodes(messages: list[Message]) -> list[Message]:
     """Project working context after durable lifecycle retirement.
 
     The historical public name is kept for compatibility.  Besides whole
-    resolved episodes, R8.20 also retires raw tool declaration/result spans only
-    after a later model assistant has consumed them and EpisodeStore has durably
-    indexed the exact visible evidence.
+    resolved episodes, R8.20 retires durably indexed tool spans across completed
+    answer boundaries.  Optional active-run receipts additionally compress only
+    the representation of older, already-exposed, durably recoverable tool results.
     """
 
     return [m for m in messages if provider_message_visible(m)]

@@ -14,7 +14,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from llm_loop.core.episode_history import provider_view_without_resolved_episodes
+from llm_loop.core.episode_history import (
+    project_active_tool_working_set_with_stats,
+    provider_view_without_resolved_episodes,
+)
 from llm_loop.core.program_recovery import is_program_recovery_message
 from llm_loop.core.prompt import build_system_prompt
 from llm_loop.core.prompt_build.context import BuildInputs
@@ -237,12 +240,39 @@ def run_ingress_prelude(
         base=base,
         base_original_indices=_base_original_indices,
     )
+    # Active-run working-set receipts are representation-only: order and message
+    # count stay identical, so the already-computed storage index mapping remains
+    # authoritative.  Applying after all id-based filtering avoids teaching the
+    # index mapper about ephemeral projection copies.
+    _provider_base, _working_set_stats = project_active_tool_working_set_with_stats(_scrub.base)
+    if _working_set_stats.enabled:
+        with contextlib.suppress(Exception):
+            record_action(
+                "run.tool_working_set",
+                "projected",
+                (
+                    f"batch_chars={_working_set_stats.batch_chars};"
+                    f"raw_tool_chars={_working_set_stats.raw_tool_chars};"
+                    f"projected_tool_chars={_working_set_stats.projected_tool_chars};"
+                    f"receipt_chars={_working_set_stats.receipt_chars};"
+                    f"folded_results={_working_set_stats.folded_results};"
+                    f"folded_groups={_working_set_stats.folded_groups};"
+                    f"grace_groups={_working_set_stats.grace_groups};"
+                    f"grace_raw_chars={_working_set_stats.grace_raw_chars};"
+                    f"grace_results={_working_set_stats.grace_results};"
+                    f"pending_raw_chars={_working_set_stats.pending_raw_chars};"
+                    f"pending_results={_working_set_stats.pending_results};"
+                    f"latest_raw_chars={_working_set_stats.latest_raw_chars};"
+                    f"fold_boundaries={','.join(str(x) for x in _working_set_stats.fold_boundaries)};"
+                    "prompt_chars=0"
+                ),
+            )
     return IngressPreludeOutcome(
         resolved_label=resolved_label,
         provider_id=provider_id,
         sess_anchor=sess_anchor,
         system_prompt=system_prompt,
-        base=_scrub.base,
+        base=_provider_base,
         base_original_indices=_scrub.base_original_indices,
         r6_ingress_truth=_r6_ingress_truth,
     )
