@@ -377,7 +377,9 @@ def _canonical_persist_model(engine: Any, model: str | None) -> str | None:
     if pool is None:
         return model
     try:
-        pid, mid = pool.registry.resolve(model)
+        snapshot_fn = getattr(pool, "registry_snapshot", None)
+        registry: Any = snapshot_fn() if callable(snapshot_fn) else pool.registry
+        pid, mid = registry.resolve(model)
         return f"{pid}/{mid}"
     except ValueError:
         return None
