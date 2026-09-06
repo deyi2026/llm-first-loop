@@ -18,7 +18,7 @@ from scripts.calib.runner_a3 import (
 from scripts.calib.treatments import build_task_prompt
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-MATRIX = ROOT / "data/calib/a3_matrix_v1.json"
+MATRIX = ROOT / "tests/fixtures/calib/a3_matrix_v1.json"
 
 
 def test_shape():

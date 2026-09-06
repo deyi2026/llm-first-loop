@@ -12,7 +12,7 @@ from llm_loop.config import load_env_file  # noqa: E402
 from scripts.calib import fixtures_a1 as f  # noqa: E402
 from scripts.calib.runner_a1 import execute_run_a1  # noqa: E402
 
-MATRIX = ROOT / "data/calib/a1_matrix_v1.json"
+MATRIX = ROOT / "tests/fixtures/calib/a1_matrix_v1.json"
 OUT = ROOT / "data/calib/runs_a1"
 
 class Data:

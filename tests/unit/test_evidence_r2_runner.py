@@ -92,7 +92,9 @@ def test_r2_prompts_have_no_duplicate_suppression_instruction() -> None:
 def test_r2_frozen_scorer_passes_dry_contract_shape() -> None:
     from scripts.evidence.r2.score import score_runs
 
-    payload = json.loads((ROOT / "data/audit/evidence_r2/runs_dry_v1.json").read_text())
+    matrix = json.loads((ROOT / "tests/fixtures/evidence_r2/matrix_v1.json").read_text())
+    runs = [execute_run(dict(row), dry=True) for row in matrix["runs"]]
+    payload = {"schema": "evidence-r2-runs-v1", "count": len(runs), "runs": runs}
     report = score_runs(payload)
     assert report["status"] == "PASS"
     assert report["safety"] == {"side_effect_duplicates": 0, "stale_as_current": 0}

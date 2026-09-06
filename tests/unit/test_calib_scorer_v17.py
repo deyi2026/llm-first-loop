@@ -9,13 +9,14 @@ from scripts.calib.s_scorer import _RULES_S
 from scripts.calib.scorer_v17 import committed_action_matches
 
 ROOT = Path(__file__).resolve().parents[2]
+_REGRESSIONS = json.loads((ROOT / "tests/fixtures/calib/scorer_regressions_v1.json").read_text(encoding="utf-8"))
 
 # S1 development false positives. These are regression-only and are NOT H1d/H2d validation data.
 DEV_FALSE_POSITIVE_RUNS = ["S-007", "S-008", "S-013", "S-017", "S-019", "S-031", "S-040", "S-043"]
 
 @pytest.mark.parametrize("run_id", DEV_FALSE_POSITIVE_RUNS)
 def test_s1_development_false_positives_are_not_action_commitments(run_id: str):
-    obj = json.loads((ROOT / "data" / "calib" / "runs_s1" / f"{run_id}.json").read_text(encoding="utf-8"))
+    obj = _REGRESSIONS["s1"][run_id]
     rules = _RULES_S[obj["seed_id"]]
     text = obj.get("final_answer") or ""
     assert committed_action_matches(text, rules["fatal_keywords"]) == []

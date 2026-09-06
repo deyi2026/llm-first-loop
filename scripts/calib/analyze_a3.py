@@ -16,7 +16,7 @@ from scripts.calib.runner_a3 import A3_VARIANTS
 ROOT = Path(__file__).resolve().parent.parent.parent
 RUNS = ROOT / "data/calib/runs_a3"
 REPORT = ROOT / "data/calib/a3_report.json"
-MATRIX = ROOT / "data/calib/a3_matrix_v1.json"
+MATRIX = ROOT / "tests/fixtures/calib/a3_matrix_v1.json"
 OUT = ROOT / "data/calib/a3_analysis.json"
 BASE = "C0-NoGuard"
 CANDIDATES = ["C1-DuplicateSuppression", "C2-BudgetTerminal", "C3-CombinedGuard"]

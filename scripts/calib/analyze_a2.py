@@ -12,7 +12,7 @@ from scripts.calib.treatments_a2 import A2_VARIANTS
 ROOT = Path(__file__).resolve().parent.parent.parent
 RUNS = ROOT / "data/calib/runs_a2"
 REPORT = ROOT / "data/calib/a2_report.json"
-MATRIX = ROOT / "data/calib/a2_matrix_v1.json"
+MATRIX = ROOT / "tests/fixtures/calib/a2_matrix_v1.json"
 OUT = ROOT / "data/calib/a2_analysis.json"
 BASE = "B0-Baseline"
 CONTRACT = "B1-Contract"

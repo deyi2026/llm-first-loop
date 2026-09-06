@@ -1,7 +1,7 @@
 """Stage S1 generic multi-provider screening runner.
 
 No provider-specific benchmark semantics live here. Provider/model/runtime controls
-come from data/calib/s_provider_manifest.json. S fixtures are P01-P08 and are
+come from tests/fixtures/calib/s_provider_manifest.json. S fixtures are P01-P08 and are
 fresh effectiveness-screening tasks, separate from calibration holdouts.
 """
 
@@ -20,7 +20,7 @@ from scripts.calib import fixtures_s
 from scripts.calib.treatments import build_system_prompt
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-MANIFEST_PATH = ROOT / "data" / "calib" / "s_provider_manifest.json"
+MANIFEST_PATH = ROOT / "tests" / "fixtures" / "calib" / "s_provider_manifest.json"
 MAX_ROUNDS = 8
 
 

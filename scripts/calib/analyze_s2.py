@@ -11,7 +11,7 @@ from scripts.calib.fixtures_s2 import ORACLES_S2
 ROOT = Path(__file__).resolve().parent.parent.parent
 RUNS = ROOT / "data/calib/runs_s2"
 REPORT = ROOT / "data/calib/s2_report.json"
-MATRIX = ROOT / "data/calib/s2_matrix_v1.json"
+MATRIX = ROOT / "tests/fixtures/calib/s2_matrix_v1.json"
 OUT = ROOT / "data/calib/s2_analysis.json"
 
 

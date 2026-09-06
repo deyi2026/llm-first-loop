@@ -9,7 +9,7 @@ from scripts.calib.treatments import build_system_prompt, build_task_prompt
 from scripts.calib.treatments_a1 import A1_VARIANTS, build_system_prompt_a1
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-MATRIX = ROOT / "data/calib/a1_matrix_v1.json"
+MATRIX = ROOT / "tests/fixtures/calib/a1_matrix_v1.json"
 
 
 def test_a1_shape():
