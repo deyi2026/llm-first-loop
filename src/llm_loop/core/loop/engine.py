@@ -1243,32 +1243,25 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     final_answer = "[LLM 输出异常] 模型连续返回内部协议标记，未获得正常最终回答。"
                     resp = None
                     break
-                # Structured concurrency: background child 的“线程已结束”不等于
-                # parent 已消费 settlement。正常 completed 前必须没有未回收 async
-                # obligations；否则本次 no-tool 文本只是过早 final，不交付用户。
-                # Engine 只依赖 ToolRegistry 的通用结构化事实源，不硬编码 subagent。
+                # 模型已经选择正常 final 时，程序不得强制其读取 child 结果或重开一轮。
+                # 但仍在运行的异步 child 是机械副作用资源：在 parent final 前取消并收束，
+                # 防止用户已收到最终答复后后台继续产生新副作用。terminal-but-unread
+                # child result 不属于 completion gate，模型可自行决定是否读取。
                 try:
                     _async_pending = self.registry.async_obligations(session_id)
                 except Exception:  # noqa: BLE001 — registry 已 fail-open，此处再兜底
                     _async_pending = []
                 if _async_pending:
-                    # Structured-concurrency settlement is a mechanical completion gate.
-                    # Do not synthesize assistant/user control messages: the real spawn
-                    # tool receipt already carries child_id + subagent_result semantics.
-                    # Premature model text is discarded and the next round reuses that
-                    # truthful receipt as its only settlement context.
                     with contextlib.suppress(Exception):
                         self._record_action(
                             "async.obligation",
-                            "final_deferred",
+                            "cancelled_on_model_final",
                             f"count={len(_async_pending)}; ids="
                             + ",".join(str(row.get("id", "")) for row in _async_pending)
                             + "; prompt_chars=0",
                         )
-                    self._tool_cycle._reachability_finalize("final_deferred_async_obligation")
-                    final_answer = ""
-                    resp = None
-                    continue
+                    with contextlib.suppress(Exception):
+                        self.registry.cancel_session(session_id)
                 self._tool_cycle._reachability_finalize("completed_no_tools")
                 self._kpi_note_no_tool()
                 self._phase("honest_answer")
@@ -1372,6 +1365,13 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         # B5-W4-01: 收尾段归装 RunFinalizer.persist_and_settle（A/B 段拆分 + AST 反替自证；
         # LoopResult 组装留 engine——run_finalizer 不持 engine 运行时回边，沿 engine<->build
         # 断环先例保持 runtime 环空态锚定）
+        # Structured concurrency abnormal-exit rule: parent 不是正常 completed 时，
+        # 未结算 background children 不能继续产生副作用。session-level cancel hook
+        # 会级联 child/descendants；正常 completed 已由上面的 obligation gate 保证结算。
+        if _run_end_reason != "completed":
+            with contextlib.suppress(Exception):
+                self.registry.cancel_session(session_id)
+
         final_answer, _run_end_reason = self._run_finalizer.persist_and_settle(
             sess=sess,
             session_id=session_id,

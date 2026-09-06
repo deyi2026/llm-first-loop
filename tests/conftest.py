@@ -166,7 +166,7 @@ def isolated_data_dir(tmp_path, monkeypatch):
     """隔离数据目录：所有测试不触碰真实 ./data.
 
     EVO-20260817-38364821（已 accepted）: 同时覆盖 LFL_DATA_DIR——
-    interop 写方（job 终态通知 _notify_completion / subagent_report inbox）读
+    interop 写方（如 job 终态通知 _notify_completion）读取
     os.environ.get("LFL_DATA_DIR", "data")，缺省回落项目真实 data/ 造成污染
     （2026-08-17 实测 10 条 job 通知混入真实 inbox）。
     """
@@ -269,11 +269,14 @@ def build_test_engine(fake_settings):
         subagent_runner = SubAgentRunner(
             llm=fake, registry=registry, session_store=session
         )
+        registry.add_session_cancel_hook(subagent_runner.cancel_parent)
+        registry.add_async_obligation_hook(subagent_runner.pending_obligations)
         registry.register(SpawnSubAgentTool(subagent_runner))
-        # DSH 借鉴 022-B: 子代理中途报告（与 factory 装配一致）
-        from llm_loop.tools.builtin.subagent_report import SubagentReportTool
+        from llm_loop.tools.builtin.agent_message import AgentMessageTool
+        from llm_loop.tools.builtin.subagent_result import SubAgentResultTool
 
-        registry.register(SubagentReportTool())
+        registry.register(AgentMessageTool(subagent_runner))
+        registry.register(SubAgentResultTool(subagent_runner))
         status = ArchitectureStatusProvider(
             audit_dir=fake_settings.audit_dir,
             enabled=fake_settings.self_inspection_enabled,

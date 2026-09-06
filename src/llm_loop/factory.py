@@ -1110,11 +1110,18 @@ def build_engine(settings: Settings) -> LoopEngine:
         session_store=session_store,
         max_iterations=settings.max_iterations,
     )
+    # nonblocking child 在 spawn 工具返回后仍属于 parent lifecycle；Stop 必须
+    # 通过 session-level hook 继续精确取消，不能依赖 spawn tool active future。
+    registry.add_session_cancel_hook(subagent_runner.cancel_parent)
+    registry.add_async_obligation_hook(subagent_runner.pending_obligations)
     registry.register(SpawnSubAgentTool(subagent_runner))
-    # DSH 借鉴 022-B: 子代理中途报告工具（仅子代理会话内 contextvar 上下文可用）
-    from llm_loop.tools.builtin.subagent_report import SubagentReportTool
+    # Agent Communication Contract：统一 agent↔agent 通信 + 显式 child result 查询。
+    # 旧 subagent_report 公共工具已退休，不保留第二套投递路径。
+    from llm_loop.tools.builtin.agent_message import AgentMessageTool
+    from llm_loop.tools.builtin.subagent_result import SubAgentResultTool
 
-    registry.register(SubagentReportTool())
+    registry.register(AgentMessageTool(subagent_runner))
+    registry.register(SubAgentResultTool(subagent_runner))
 
     # task_quality 六路径装配（2026-08-17，D3 定案: 动态开关默认关零回归）:
     # 路径 A 预检层注入 ToolRegistry（安全检查前拦截参数错误）；
