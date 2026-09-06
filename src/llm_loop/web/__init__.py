@@ -10,12 +10,26 @@ import sys
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from llm_loop.config import load_env_file, load_settings
 from llm_loop.factory import build_engine
 
-from .auth import is_loopback, require_api_key, validate_auth_require, validate_binding
+from .auth import (
+    LoginRateLimiter,
+    WebSessionStore,
+    auth_required,
+    configured_origin_allowlist,
+    is_loopback,
+    normalize_origin,
+    request_authenticated,
+    require_api_key,
+    validate_auth_require,
+    validate_binding,
+    validate_origin_allowlist,
+)
+from .auth_routes import router as auth_router
 from .routes import UTF8JSONResponse, router
 
 logger = logging.getLogger(__name__)
@@ -27,44 +41,53 @@ _STATIC_DIR = Path(__file__).resolve().parent / "static"
 _MUTATING_METHODS = frozenset({"POST", "PUT", "DELETE", "PATCH"})
 
 
-def _load_origin_allowlist() -> frozenset[str]:
-    """读取 WEB_ORIGIN_ALLOWLIST（逗号分隔的公网域名，如 example.com,my-tunnel.cfargotunnel.com）.
+def _scope_header(scope, name: bytes) -> str:
+    for key, value in scope.get("headers") or []:
+        if key.lower() == name:
+            return value.decode("latin-1", errors="replace").strip()
+    return ""
 
-    用于 cloudflared 等隧道暴露场景：浏览器 Origin 为隧道域名（非回环）时，
-    命中白名单即放行写请求（否则 _OriginGuardMiddleware 会按 P2-1 返回 403）。
-    空值=不启用白名单（仅回环豁免，零回归原有安全语义）。域名统一小写、去端口。
+
+def _effective_request_origin(scope) -> str:
+    """Build the browser-visible request Origin for exact CSRF comparison.
+
+    Proxy scheme is trusted only from a loopback immediate peer (the supported
+    local cloudflared/reverse-proxy topology). Host remains the HTTP Host header
+    seen by the application, preserving public-domain and explicit-port identity.
     """
-    raw = os.environ.get("WEB_ORIGIN_ALLOWLIST", "").strip()
-    if not raw:
-        return frozenset()
-    hosts = set()
-    for item in raw.split(","):
-        host = item.strip().lower()
-        if not host:
-            continue
-        host = host.split(":")[0]  # 去掉可能的端口
-        if host:
-            hosts.add(host)
-    return frozenset(hosts)
+    scheme = str(scope.get("scheme") or "http").lower()
+    client = scope.get("client")
+    peer = str(client[0]) if isinstance(client, (tuple, list)) and client else ""
+    if is_loopback(peer):
+        forwarded = _scope_header(scope, b"x-forwarded-proto").split(",", 1)[0].strip().lower()
+        if forwarded in {"http", "https"}:
+            scheme = forwarded
+    host = _scope_header(scope, b"host")
+    if not host:
+        return ""
+    try:
+        return normalize_origin(f"{scheme}://{host}", default_scheme=scheme)
+    except ValueError:
+        return ""
 
 
 class _OriginGuardMiddleware:
     """P2-1(2026-08-15，审计发现)：回环豁免部署的跨站写防护.
 
-    默认本机部署（127.0.0.1 + 无 key）下浏览器任意网页可跨站 POST 本服务
-    （表单/fetch 打 127.0.0.1）。浏览器跨站请求必带 Origin 头——mutating 方法
-    携非回环 Origin → 403 如实拒绝；无 Origin（curl/脚本/服务器间）与非
-    mutating 方法不受影响（零回归）。令牌鉴权开启时本层冗余但无害。
+    默认本机部署也不能把“所有 loopback host”当同源：scheme/host/port 任一不同都
+    是不同浏览器 Origin。mutating 请求带 Origin 时，只接受当前请求的精确同源，
+    或 WEB_ORIGIN_ALLOWLIST 明确列出的完整 Origin；无 Origin（curl/脚本/服务器间）
+    与非 mutating 方法不受影响。
 
-    扩展（2026-09-04）：WEB_ORIGIN_ALLOWLIST 支持隧道暴露场景。通过 cloudflared
-    等把服务暴露到公网域名时，浏览器 Origin 为隧道域名（非回环），命中白名单
-    即放行写请求；未列入白名单的非回环 Origin 仍按 P2-1 拒绝（安全语义不降级）。
+    隧道/反代场景可显式列出公网 Origin；裸域名兼容项按 HTTPS 解释。allowlist
+    比较保留 scheme + host + 非默认 port，避免 host-only 白名单把同主机其它端口
+    的不可信页面误当成已授权写来源。
     """
 
     def __init__(self, app):
         self.app = app
         # 启动期读取一次（env 在 main() 中 load_env_file 后、build_app 前已装配）
-        self.origin_allowlist = _load_origin_allowlist()
+        self.origin_allowlist = configured_origin_allowlist()
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") == "http" and scope.get("method") in _MUTATING_METHODS:
@@ -74,13 +97,17 @@ class _OriginGuardMiddleware:
                     origin = v.decode("utf-8", errors="replace").strip()
                     break
             if origin:
-                from urllib.parse import urlparse
-
-                host = (urlparse(origin).hostname or "").lower()
-                if not is_loopback(host) and host not in self.origin_allowlist:
+                try:
+                    browser_origin = normalize_origin(origin)
+                except ValueError:
+                    browser_origin = ""
+                request_origin = _effective_request_origin(scope)
+                if not browser_origin or (
+                    browser_origin != request_origin and browser_origin not in self.origin_allowlist
+                ):
                     body = (
                         '{"error":"foreign_origin_forbidden","detail":'
-                        '"跨站 Origin 拒绝（本机服务仅接受回环来源的写请求）。"}'
+                        '"跨站 Origin 拒绝（写请求仅接受当前同源或显式完整 Origin 白名单）。"}'
                     ).encode()
                     await send({
                         "type": "http.response.start",
@@ -108,6 +135,11 @@ def build_app(settings=None, engine=None) -> FastAPI:
         title="llm-first-loop-web", version="0.6.6", default_response_class=UTF8JSONResponse
     )
     app.state.engine = engine
+    app.state.web_sessions = WebSessionStore()
+    app.state.login_rate_limiter = LoginRateLimiter()
+    # Login/logout/status are deliberately public; all engine/data APIs stay behind
+    # the protected router below when public exposure is enabled.
+    app.include_router(auth_router)
     # P2-1: 跨站写防护（ASGI 中间件，mutating + 非回环 Origin → 403）
     app.add_middleware(_OriginGuardMiddleware)
 
@@ -115,15 +147,13 @@ def build_app(settings=None, engine=None) -> FastAPI:
     _lock_enabled = os.environ.get("SESSION_CONCURRENCY_LOCK", "true").strip().lower() in ("true", "1", "")
     app.state.session_locks = {} if _lock_enabled else None
 
-    # 鉴权：条件挂载到受保护路由（远程监听时要求 Bearer 令牌）
-    if os.environ.get("WEB_AUTH_REQUIRE", "").strip() == "1":
+    # 鉴权：公网/隧道暴露时，API 接受浏览器 session cookie 或 Bearer API key。
+    # auth_required() 同时覆盖 WEB_AUTH_REQUIRE、非回环绑定和 origin allowlist，
+    # 避免 cloudflared 回源 127.0.0.1 时误触回环豁免。
+    if auth_required():
         app.include_router(router, dependencies=[Depends(require_api_key)])
     else:
-        host = os.environ.get("WEB_HOST", "127.0.0.1")
-        if not _is_loopback(host):
-            app.include_router(router, dependencies=[Depends(require_api_key)])
-        else:
-            app.include_router(router)
+        app.include_router(router)
 
     # 静态前端资源挂载（M37：聊天页面 /static/*）
     if _STATIC_DIR.exists():
@@ -134,6 +164,26 @@ def build_app(settings=None, engine=None) -> FastAPI:
     # 原版代码/资源保留不删不改；UI_V2_DIR 可覆盖（测试注入）；产物缺失时不挂载（零影响）。
     _ui_v2_dir = Path(os.environ.get("UI_V2_DIR", "") or Path(__file__).resolve().parents[3] / "webui" / "dist")
     if Path(_ui_v2_dir).is_dir():
+        @app.middleware("http")
+        async def _ui_v2_auth_gate(request: Request, call_next):
+            # Mounted StaticFiles does not inherit APIRouter dependencies. Protect it
+            # explicitly so unauthenticated users cannot load the application shell/assets.
+            if (
+                auth_required()
+                and request.url.path.startswith("/ui/v2")
+                and not request_authenticated(request)
+            ):
+                from urllib.parse import quote
+
+                target = request.url.path
+                if request.url.query:
+                    target += "?" + request.url.query
+                return RedirectResponse(
+                    url="/login?next=" + quote(target, safe="/"),
+                    status_code=303,
+                )
+            return await call_next(request)
+
         app.mount("/ui/v2", StaticFiles(directory=str(_ui_v2_dir), html=True), name="ui-v2")
 
         # Web V2 缓存策略：index.html 不缓存（迭代频繁，浏览器必须每次拉新；
@@ -147,12 +197,6 @@ def build_app(settings=None, engine=None) -> FastAPI:
             return response
 
     return app
-
-
-def _is_loopback(host: str) -> bool:
-    from .auth import is_loopback as _il
-
-    return _il(host)
 
 
 def _install_exit_signal_log() -> None:
@@ -216,7 +260,8 @@ def main() -> None:
     try:
         validate_binding(host)
         validate_auth_require()  # P2-1: WEB_AUTH_REQUIRE=1 无 key → 拒绝启动（fail-closed）
-    except RuntimeError as exc:
+        validate_origin_allowlist()  # P3: allowlist 非空（公网暴露意图）无 key → 拒绝启动（fail-closed）
+    except (RuntimeError, ValueError) as exc:
         print(f"❌ {exc}", file=sys.stderr)
         raise SystemExit(2) from None
 

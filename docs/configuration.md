@@ -94,10 +94,12 @@
 
 | 变量 | 默认 | 说明 |
 |:---|:---|:---|
-| `WEB_API_KEY` | 空 | 远程访问令牌（回环默认豁免；远程绑定未配置 key → 启动报错） |
-| `WEB_AUTH_REQUIRE` | 0 | 1=回环也强制令牌；**fail-closed**：设为 1 但未配置 WEB_API_KEY → 启动拒绝 + 请求 503（v0.5.0 起，不再静默放行）。回环豁免部署下 mutating 端点自带 Origin 跨站写防护（非回环来源 403） |
-| `WEB_ORIGIN_ALLOWLIST` | 空 | 逗号分隔公网域名（隧道/反代 Origin 白名单，命中放行跨站写）。**fail-closed**：非空（=公网暴露意图）但未配置 WEB_API_KEY → 启动拒绝（2026-09-04 安全审查起，隧道场景回环豁免已被击穿，开隧道必须先配令牌） |
-| `WEB_HOST` / `WEB_PORT` | 127.0.0.1 / 8902 | 绑定地址 / 端口 |
+| `WEB_API_KEY` | 空 | API/自动化 Bearer 令牌。远程绑定或公网 Origin 启用时，至少配置它或浏览器登录密码哈希之一 |
+| `WEB_LOGIN_PASSWORD_HASH` | 空 | 浏览器登录 PBKDF2-SHA256 verifier；仅保存哈希，不保存明文。可在本机用 `python -c 'from llm_loop.web.auth import hash_login_password; import getpass; print(hash_login_password(getpass.getpass()))'` 生成后写入 `.env` |
+| `WEB_SESSION_TTL_SECONDS` | 43200 | 浏览器 server-side session 有效期，300..604800 秒；进程重启会使全部浏览器 session 失效 |
+| `WEB_AUTH_REQUIRE` | 0 | 1=回环也强制鉴权；**fail-closed**：启用但既无 `WEB_LOGIN_PASSWORD_HASH` 也无 `WEB_API_KEY` 时启动拒绝 + 请求 503 |
+| `WEB_ORIGIN_ALLOWLIST` | 空 | 逗号分隔**完整浏览器 Origin**（scheme + host + 可选非默认 port），如 `https://app.example.com`；裸域名兼容写法按 HTTPS 解释。只要非空就视为公网暴露意图并强制鉴权。mutating 请求的 Origin 必须与当前请求精确同源或命中此列表；同 host 不同 scheme/port 不再自动放行 |
+| `WEB_HOST` / `WEB_PORT` | 127.0.0.1 / 8902 | 绑定地址 / 端口；非回环监听未配置任何鉴权机制时拒绝启动 |
 | `SESSION_CONCURRENCY_LOCK` | 1 | 会话级并发锁（0=无锁） |
 | `WEB_FETCH_BLOCK_FAKE_IP` | 0 | web_fetch 代理假 IP 段（198.18/15，Surge/Clash fake-ip）严格拦截开关；默认 0=放行+回执如实标注（真实连接由代理通道完成），1=严格拦截 |
 | `LONG_LINE_THRESHOLD` | 200 | 长内容分块粒度（前端展示；v0.5.2 起回复不折叠，超长代码块按 200 行/段顺序分段全量展示） |
