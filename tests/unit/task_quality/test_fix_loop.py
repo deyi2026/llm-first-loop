@@ -219,3 +219,21 @@ def test_real_pytest_output_failure_with_location():
     r = tool.execute(check_command="pytest -q", max_rounds=2)
     assert r.status == ToolResultStatus.SUCCESS
     assert len(reg.calls) == 2  # 第一轮失败 → 第二轮修复后通过
+
+
+def test_subagent_noncompleted_outcome_is_reported_truthfully():
+    """Structured child outcome is authoritative beyond the legacy refused flag."""
+    from types import SimpleNamespace
+
+    class _TruncatedSubAgent:
+        def run(self, task, context="", depth=0, max_rounds=None):
+            return SimpleNamespace(
+                final_answer="partial work",
+                outcome="truncated",
+                refused=False,
+            )
+
+    tool = _tool(_FakeRegistry({}), _TruncatedSubAgent())
+    summary = tool._subagent_fix("pytest", "failure", "fix", "loop", 1)  # noqa: SLF001
+    assert "子代理未完成[truncated]" in summary
+    assert "partial work" in summary

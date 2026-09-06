@@ -244,8 +244,9 @@ class FixLoopTool:
         )
         try:
             result = self._subagent_runner.run(task, context=f"修复循环 {loop_id} 第 {rn} 轮", depth=1)
-            if result is not None and getattr(result, "refused", False):
-                return f"(子代理拒绝: {getattr(result, 'final_answer', '')[:100]})"
+            outcome = str(getattr(result, "outcome", "completed")) if result is not None else "failed"
+            if result is not None and outcome != "completed":
+                return f"(子代理未完成[{outcome}]: {getattr(result, 'final_answer', '')[:100]})"
             return str(getattr(result, "final_answer", "") or "")[:200] or "(子代理无输出)"
         except Exception as exc:  # noqa: BLE001 — 子代理异常不阻断循环
             logger.warning("子代理修复异常（继续下一轮）: %s", exc)

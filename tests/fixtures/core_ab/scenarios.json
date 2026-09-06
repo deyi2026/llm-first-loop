@@ -61,7 +61,7 @@
       "id": "s9-subagent-dispatch",
       "task_text": "派两个子代理并行调研再汇总",
       "protocol_tools": [],
-      "expected_chain": ["spawn_subagent", "subagent_report"],
+      "expected_chain": ["spawn_subagent", "subagent_result"],
       "evidence_truncation": false
     },
     {
