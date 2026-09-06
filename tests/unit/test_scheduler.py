@@ -235,3 +235,29 @@ def test_schedule_cancel_tool(tmp_path):
     assert r3.status.value == "failure" and "不存在" in r3.content
     r4 = ct.execute(sid="")
     assert r4.status.value == "failure" and "缺少必填" in r4.content
+
+
+def test_non_posix_file_lock_fallback_is_reentrant(tmp_path, monkeypatch):
+    """无 fcntl 时 _file_lock + _mutate 内层锁不得自锁。"""
+    import builtins
+    import threading
+
+    store = ScheduleStore(tmp_path / "schedule.json")
+    real_import = builtins.__import__
+
+    def no_fcntl(name, *args, **kwargs):
+        if name == "fcntl":
+            raise ImportError("simulated non-posix")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_fcntl)
+    done = threading.Event()
+
+    def worker():
+        store.add("fallback-lock", after=30)
+        done.set()
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    assert done.wait(1.0), "non-POSIX fallback must not deadlock on nested store lock"
+    assert len(store.list()) == 1

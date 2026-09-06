@@ -563,3 +563,46 @@ def test_interop_wakeup_never_starts_model_without_user_authorization(tmp_path, 
         "blocked_no_user_authorization",
         "files=coord.json;prompt_chars=0",
     )]
+
+
+def test_schedule_wake_uses_delegated_same_session_runner_not_inbox_wakeup(tmp_path, monkeypatch):
+    """Authorized scheduler delivery starts same session directly; it does not use INBOX_WAKEUP."""
+    from llm_loop.core.interop_watch import InboxWatcher
+    from llm_loop.core.scheduler import SchedulerThread
+    from llm_loop.factory import build_engine
+
+    monkeypatch.setattr(InboxWatcher, "start", lambda self: None)
+    monkeypatch.setattr(SchedulerThread, "start", lambda self: None)
+    notified: list[str] = []
+    monkeypatch.setattr(
+        SchedulerThread,
+        "_notify_via_interop",
+        staticmethod(lambda entry: notified.append(entry.sid)),
+    )
+    engine = build_engine(_settings(tmp_path))  # type: ignore[arg-type]
+    store = engine.scheduler._store
+    grant = object()
+    sid = store.add(
+        "复查后台 job", after=0, wake=True, session_id="sess-scheduled", wake_grant=grant
+    )
+    (entry,) = store.due()
+    starts: list[tuple] = []
+
+    def _start(session_id, user_text, *args, **kwargs):
+        starts.append((session_id, user_text, kwargs.get("ingress")))
+        return object(), object()
+
+    engine.runner.start = _start
+    assert engine.scheduler._notify(entry) is True
+    assert starts == [(
+        "sess-scheduled",
+        "[定时续跑·先前真人授权的程序委派·非新真人输入] 复查后台 job",
+        grant,
+    )]
+    assert store.wake_grant(sid) is None, "成功启动后 one-shot grant 必须立即消费"
+    # 模拟 run 已启动但 schedule ack 尚未落盘：同一 entry 再次交付时已无 capability，
+    # 只能降级通知，不能重复自动启动第二个模型 run。
+    assert engine.scheduler._notify(entry) is True
+    assert len(starts) == 1
+    assert notified == [sid]
+    assert sid == entry.sid

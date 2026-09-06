@@ -976,9 +976,60 @@ def build_engine(settings: Settings) -> LoopEngine:
     # BUGFIX(2026-08-27): 复用上方工具注册处的 _schedule_store（原此处再建
     # 新实例，双 Store 内存互不可见 → 提醒永不触发）
     try:
-        from llm_loop.core.scheduler import SchedulerThread
+        from llm_loop.core.scheduler import ScheduleEntry, SchedulerThread
 
-        engine.scheduler = SchedulerThread(_schedule_store)
+        def _deliver_schedule(entry: ScheduleEntry) -> bool:
+            """提醒交付：普通通知；或持有效 one-shot grant 的同会话续跑。"""
+            if not getattr(entry, "wake", False):
+                SchedulerThread._notify_via_interop(entry)
+                return True
+
+            grant = _schedule_store.wake_grant(entry.sid)
+            session_id = str(getattr(entry, "session_id", "") or "")
+            if grant is None or not session_id:
+                # grant 不持久化：进程重启/owner 退出后安全降级为通知，不伪造授权。
+                SchedulerThread._notify_via_interop(entry)
+                engine._record_action(
+                    "schedule.wake",
+                    "degraded_to_notify",
+                    f"sid={entry.sid};reason=grant_unavailable;prompt_chars=0",
+                )
+                return True
+
+            handle, _q = background_runner.start(
+                session_id,
+                f"[定时续跑·先前真人授权的程序委派·非新真人输入] {entry.message}",
+                ingress=grant,
+            )
+            if handle is not None:
+                # Consume the one-shot capability immediately after a real run starts.
+                # If schedule ack persistence later fails, a stale entry may notify again
+                # but can never launch a second autonomous model run.
+                _schedule_store.clear_wake_grant(entry.sid)
+                engine._record_action(
+                    "schedule.wake",
+                    "started",
+                    f"sid={entry.sid};session={session_id};delegated=1",
+                )
+                return True
+            if background_runner.is_running(session_id) or background_runner.is_sync_active(session_id):
+                engine._record_action(
+                    "schedule.wake",
+                    "session_busy_retry",
+                    f"sid={entry.sid};session={session_id}",
+                )
+                return False
+
+            # runner disabled/不可启动时不丢提醒，退化为可见通知。
+            SchedulerThread._notify_via_interop(entry)
+            engine._record_action(
+                "schedule.wake",
+                "degraded_to_notify",
+                f"sid={entry.sid};reason=runner_unavailable;prompt_chars=0",
+            )
+            return True
+
+        engine.scheduler = SchedulerThread(_schedule_store, notify=_deliver_schedule)
         engine.scheduler.start()
     except Exception:  # noqa: BLE001 — 调度装配失败不影响核心链路
         logger.exception("调度提醒线程装配失败（fail-open）")

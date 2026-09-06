@@ -1,22 +1,29 @@
-"""基础工具: 定时提醒（DSH-PLUGINS-20260816 ②）——at/after/rate 注册提醒.
+"""基础工具: 注册定时通知或当前任务的一次性 delegated continuation。
 
-何时用: 需要定时提醒（如 N 秒后检查结果、周期汇报、绝对时间点提醒）；
-提醒经 interop notify 注入会话（LFL 下轮 run 回显，web/飞书可见）。
-何时不用: 即时通知直接说；跨系统协作消息走 interop 协调通道（topic=coordinate）。
-失败对策: 参数非法如实返回；存储 fail-open。
+普通提醒是 output-side notify，不自动进入模型 prompt。wake=true 只允许当前真人 run
+把同会话执行权降权委派一次；它不是未来的新真人输入，也不能递归或周期唤醒。
 """
 
 from __future__ import annotations
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.core.run_context import current_session_id
 from llm_loop.core.scheduler import ScheduleStore
+from llm_loop.core.trace_leak.ingress_token import (
+    current_ingress_session_id,
+    current_ingress_token,
+    delegate_ingress,
+)
+
+_MAX_SCHEDULE_MESSAGE_CHARS = 4000
 
 
 class ScheduleTool:
     name = "schedule"
     description = (
         "注册定时提醒：after（N 秒后一次）/ at（绝对时间）/ rate（每 N 秒重复，可限次数）。"
-        "到点提醒经协调通道注入会话（下轮 run 回显，web/飞书可见）。"
+        "默认到点仅通知；wake=true 时仅在当前真实用户 run 可签发一次性同会话续跑，"
+        "后台续跑不能递归再唤醒。"
         "何时用: 需要延迟/周期性提醒（如 60 秒后检查后台任务、每 5 分钟汇报状态）。"
         "何时不用: 即时动作直接执行；一次性协调消息走 interop。"
         "失败对策: 参数校验失败如实返回；存储异常 fail-open。"
@@ -26,7 +33,8 @@ class ScheduleTool:
         "properties": {
             "message": {
                 "type": "string",
-                "description": "提醒内容（必填，将注入会话可见）",
+                "maxLength": _MAX_SCHEDULE_MESSAGE_CHARS,
+                "description": "提醒/一次性续跑内容（必填，最多 4000 字符）",
             },
             "after": {
                 "type": "number",
@@ -43,6 +51,13 @@ class ScheduleTool:
             "max_count": {
                 "type": "integer",
                 "description": "最多触发次数（重复时有效，默认 1）",
+            },
+            "wake": {
+                "type": "boolean",
+                "description": (
+                    "到点后自动续跑当前会话。仅当前真实用户输入触发的顶层 run 可授权；"
+                    "默认 false 只通知。"
+                ),
             },
         },
         "required": ["message"],
@@ -63,6 +78,7 @@ class ScheduleTool:
             at = str(kwargs.get("at", "") or "").strip()
             repeat_interval = float(kwargs.get("repeat_interval", 0) or 0)
             max_count = int(kwargs.get("max_count", 1) or 1)
+            wake = bool(kwargs.get("wake", False))
         except (TypeError, ValueError) as exc:
             # 审查低危修复: 参数类型转换异常如实返回 FAILURE（原实现直接外抛）
             return ToolResult(
@@ -79,10 +95,25 @@ class ScheduleTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
+        if len(message) > _MAX_SCHEDULE_MESSAGE_CHARS:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[参数错误] message 最多 {_MAX_SCHEDULE_MESSAGE_CHARS} 字符",
+                tool_call_id="",
+                tool_name=self.name,
+            )
         if after < 0 or repeat_interval < 0:
             return ToolResult(
                 status=ToolResultStatus.FAILURE,
                 content="[参数错误] after/repeat_interval 必须 ≥ 0",
+                tool_call_id="",
+                tool_name=self.name,
+            )
+
+        if wake and repeat_interval > 0:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content="[参数错误] wake=true 仅支持一次性续跑；周期任务请使用普通通知后由用户决定是否继续",
                 tool_call_id="",
                 tool_name=self.name,
             )
@@ -115,15 +146,44 @@ class ScheduleTool:
                     tool_name=self.name,
                 )
 
+        wake_grant = None
+        wake_session_id = ""
+        if wake:
+            wake_session_id = current_session_id.get()
+            ingress_session_id = current_ingress_session_id.get()
+            ingress = current_ingress_token.get()
+            if not wake_session_id or ingress_session_id != wake_session_id or ingress is None:
+                return ToolResult(
+                    status=ToolResultStatus.UNAUTHORIZED,
+                    content=(
+                        "[schedule] wake=true 需要当前真实用户输入绑定的同会话授权；"
+                        "后台/子代理/无 ingress 上下文不能创建自动续跑。"
+                    ),
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+            try:
+                wake_grant = delegate_ingress(ingress, entry="schedule_wake")
+            except ValueError as exc:
+                return ToolResult(
+                    status=ToolResultStatus.UNAUTHORIZED,
+                    content=f"[schedule] 自动续跑授权失败: {exc}",
+                    tool_call_id="",
+                    tool_name=self.name,
+                )
+
         sid = self._get_store().add(
-            message, after=after, at=at_ts, repeat_interval=repeat_interval, max_count=max_count
+            message, after=after, at=at_ts, repeat_interval=repeat_interval,
+            max_count=max_count, wake=wake, session_id=wake_session_id,
+            wake_grant=wake_grant,
         )
         when = f"after {after}s" if after > 0 else (f"at {at}" if at else "immediate")
         if repeat_interval > 0:
             when += f"（每 {repeat_interval}s，最多 {max_count} 次）"
+        delivery = "到点自动续跑当前会话" if wake else "到点仅发送通知"
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
-            content=f"[schedule] 已注册提醒 {sid}: '{message}'（{when}）。到点经协调通道注入会话。",
+            content=f"[schedule] 已注册提醒 {sid}: '{message}'（{when}；{delivery}）。",
             tool_call_id="",
             tool_name=self.name,
         )
