@@ -61,6 +61,8 @@ For dirty work, the manifest records only counts and a fingerprint; it does not 
 
 ## Configure
 
+Run the CLI from the source repository worktree whose state is being handed off or resumed. The CLI resolves source identity from the current working directory; invoking the script by an absolute path from another repository does not retarget it.
+
 Use a credential-free SSH remote or a credential-helper-backed HTTPS remote. Credentialed HTTP(S) URLs are rejected.
 
 ```bash
