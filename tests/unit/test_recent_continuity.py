@@ -116,6 +116,51 @@ def test_interruption_resume_wins_and_contains_no_program_annotation() -> None:
     assert out[-1] == {"role": "user", "content": "继续"}
 
 
+def test_provider_truncation_resume_exposes_factual_runtime_state_before_exact_partial() -> None:
+    previous_user = _user("分析这个问题")
+    interrupted_storage = Message(
+        role="assistant",
+        content="MODEL-PARTIAL",
+        source=MessageSource.USER,
+        metadata={
+            "llm_interrupted": True,
+            "provider_truncated": True,
+            "answer_origin": "model",
+        },
+    )
+    current_user = _user("继续")
+    session = [previous_user, interrupted_storage, current_user]
+    built = [
+        {"role": "system", "content": "SYS"},
+        {"role": "user", "content": "继续"},
+    ]
+    resume = {
+        "source": "persisted_provider_truncated",
+        "text_tail": "MODEL-PARTIAL",
+        "reasoning_tail": "",
+        "provider_truncated": True,
+        "finish_reason": "length",
+    }
+
+    out, info = apply_recent_continuity_suffix(
+        built,
+        session_messages=session,
+        current_turn_ref=2,
+        interruption_resume=resume,
+    )
+
+    assert info["runtime_fact"] is True
+    assert out[0]["role"] == "system"
+    assert out[0]["content"] == "SYS"
+    assert out[-2] == {"role": "assistant", "content": "MODEL-PARTIAL"}
+    assert out[-1]["role"] == "user"
+    assert out[-1]["content"].startswith("继续\n\n[provider_runtime_fact—not_human_text]\n")
+    assert '"previous_assistant_output_truncated":true' in out[-1]["content"]
+    assert '"previous_assistant_output_complete":false' in out[-1]["content"]
+    assert '"partial_output_persisted":true' in out[-1]["content"]
+    assert '"finish_reason":"length"' in out[-1]["content"]
+
+
 def test_does_not_reach_past_immediately_previous_human_turn() -> None:
     old_user = _user("OLD-Q")
     old_assistant = _model("OLD-A")

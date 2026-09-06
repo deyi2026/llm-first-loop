@@ -308,6 +308,7 @@ def test_engine_truncated_answer_is_not_indexed_or_retired(tmp_path):
                 tool_calls=[],
                 provider="fake",
                 truncated=True,
+                finish_reason="length",
             )
 
         def chat_stream(self, messages, tools, **kw):
@@ -341,8 +342,92 @@ def test_engine_truncated_answer_is_not_indexed_or_retired(tmp_path):
     stored = sessions.load(sid)
     final = stored.messages[-1]
     assert final.metadata.get("episode_resolution_candidate") is False
+    assert final.content == "PARTIAL-ANSWER"
+    assert final.metadata.get("llm_interrupted") is True
+    assert final.metadata.get("provider_truncated") is True
+    assert final.metadata.get("provider_finish_reason") == "length"
     assert all(RESOLVED_EPISODE_REF_KEY not in m.metadata for m in stored.messages)
     assert episodes.search(sid, "", 10) == []
+
+
+def test_engine_next_human_turn_receives_truncation_fact_and_exact_partial(tmp_path):
+    class _Fake:
+        def __init__(self) -> None:
+            self.calls: list[list[dict]] = []
+            self.responses = [
+                LLMResponse(
+                    content="PARTIAL-ANSWER",
+                    tool_calls=[],
+                    provider="fake",
+                    truncated=True,
+                    finish_reason="length",
+                ),
+                LLMResponse(
+                    content="CONTINUED-ANSWER",
+                    tool_calls=[],
+                    provider="fake",
+                    truncated=False,
+                    finish_reason="stop",
+                ),
+            ]
+
+        def chat(self, messages, tools, **kw):
+            self.calls.append([dict(row) for row in messages])
+            return self.responses.pop(0)
+
+        def chat_stream(self, messages, tools, **kw):
+            def _gen():
+                yield from ()
+                return self.chat(messages, tools, **kw)
+
+            return _gen()
+
+    settings = Settings(
+        llm_api_key="k",
+        llm_base_url="https://x/v1",
+        llm_model="m",
+        data_dir=str(tmp_path / "data"),
+        extract_enabled=False,
+        summary_mode="off",
+    )
+    sessions = SessionStore(tmp_path / "sessions")
+    episodes = EpisodeStore(tmp_path / "episodes")
+    fake = _Fake()
+    engine = LoopEngine(
+        llm_client=fake,  # type: ignore[arg-type]
+        registry=ToolRegistry(),
+        memory=None,  # type: ignore[arg-type]
+        session=sessions,
+        settings=settings,
+        episode_store=episodes,
+    )
+    sid = sessions.create()
+
+    first = engine.run(sid, "请分析")
+    assert first.truncated is True
+    second = engine.run(sid, "继续")
+    assert second.final_answer == "CONTINUED-ANSWER"
+
+    assert len(fake.calls) == 2
+    second_wire = fake.calls[1]
+    assert second_wire[0]["role"] == "system"
+    assert "runtime_continuity" not in second_wire[0]["content"]
+    assert second_wire[-2] == {"role": "assistant", "content": "PARTIAL-ANSWER"}
+    assert second_wire[-1]["role"] == "user"
+    assert second_wire[-1]["content"].startswith(
+        "继续\n\n[provider_runtime_fact—not_human_text]\n[runtime_continuity] "
+    )
+    assert '"previous_assistant_output_truncated":true' in second_wire[-1]["content"]
+    assert '"previous_assistant_output_complete":false' in second_wire[-1]["content"]
+    assert '"partial_output_persisted":true' in second_wire[-1]["content"]
+    assert '"finish_reason":"length"' in second_wire[-1]["content"]
+    stored_after_second = sessions.load(sid)
+    genuine_continue = [
+        message
+        for message in stored_after_second.messages
+        if message.role == "user" and message.content == "继续"
+    ]
+    assert len(genuine_continue) == 1
 
 
 def test_search_records_episode_lists_and_hydrates_without_new_tool(tmp_path):

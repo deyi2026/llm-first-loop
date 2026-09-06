@@ -413,8 +413,13 @@ class _EventsMixin:
                     )
                     native_sha = str(md.get("interrupted_native_state_sha256") or "")
                     if text_tail or reasoning_tail or native_sha:
+                        provider_truncated = md.get("provider_truncated") is True
                         persisted = {
-                            "source": "persisted_interrupted",
+                            "source": (
+                                "persisted_provider_truncated"
+                                if provider_truncated
+                                else "persisted_interrupted"
+                            ),
                             "text_tail": text_tail,
                             "reasoning_tail": reasoning_tail,
                             "provider": str(md.get("interrupted_provider") or ""),
@@ -424,6 +429,12 @@ class _EventsMixin:
                                 or ""
                             ),
                             "partial_sha256": str(md.get("partial_sha256") or ""),
+                            "provider_truncated": provider_truncated,
+                            "finish_reason": str(
+                                md.get("provider_finish_reason")
+                                or md.get("run_end_reason")
+                                or ""
+                            ),
                         }
                         native = self._load_inflight_native_state(
                             session_id,
