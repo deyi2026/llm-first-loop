@@ -727,6 +727,18 @@
 }
 
 /* ── 附件预览 ── */
+.v2-msg-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dsw-space-2);
+  margin-bottom: var(--dsw-space-2);
+}
+
+.v2-attachment-size {
+  color: var(--dsw-alias-label-dimmed);
+  white-space: nowrap;
+}
+
 .v2-attachments {
   display: flex;
   flex-wrap: wrap;

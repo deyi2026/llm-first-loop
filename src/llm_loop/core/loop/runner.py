@@ -395,6 +395,7 @@ class BackgroundRunner:
         before_start: Callable[[Any], None] | None = None,
         expected_workspace_epoch: int | None = None,
         ingress: object | None = None,
+        user_metadata: dict[str, Any] | None = None,
     ) -> tuple[RunHandle | None, queue.Queue | None]:
         """注册 + 起后台线程；返回 (handle, queue)，调用方订阅消费.
 
@@ -452,7 +453,7 @@ class BackgroundRunner:
         q = bus.subscribe()  # 先订阅再起线程（保证不丢 start 后首个事件）
         t = threading.Thread(
             target=self._consume,
-            args=(session_id, user_text, model, reasoning_effort, reasoning_mode, before_start, handle, bus, ingress),
+            args=(session_id, user_text, model, reasoning_effort, reasoning_mode, before_start, handle, bus, ingress, user_metadata),
             name=f"bg-run-{session_id[:8]}",
             daemon=True,  # B4: 进程退出不阻塞
         )
@@ -471,6 +472,7 @@ class BackgroundRunner:
         handle: RunHandle,
         bus: EventBus,
         ingress: object | None = None,
+        user_metadata: dict[str, Any] | None = None,
     ) -> None:
         """后台线程体：copy_context 传播（P0-5 模式）→ 迭代 run_stream → 广播终态."""
         self._worker_idents.add(threading.get_ident())
@@ -486,6 +488,8 @@ class BackgroundRunner:
                     run_kwargs["reasoning_mode"] = reasoning_mode
                 if ingress is not None:
                     run_kwargs["ingress"] = ingress
+                if user_metadata is not None:
+                    run_kwargs["user_metadata"] = user_metadata
                 if before_start is not None:
                     accepted_stream = getattr(self._engine, "_run_stream_with_acquired", None)
                     if not callable(accepted_stream):

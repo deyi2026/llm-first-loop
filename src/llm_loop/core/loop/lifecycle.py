@@ -52,7 +52,7 @@ class _RunEntrypointMixin:
         self, session_id: str, user_text: str, model: str | None = None,
         reasoning_effort: str | None = None,
         reasoning_mode: str | None = None,
-        *, ingress: object | None = None,
+        *, ingress: object | None = None, user_metadata: dict[str, Any] | None = None,
     ) -> Iterator[StreamDelta]:
         """单条用户消息的完整循环（流式）：逐 content delta yield，结束返回 LoopResult.
 
@@ -143,7 +143,7 @@ class _RunEntrypointMixin:
             inner = self._run_stream_inner(
                 session_id, user_text, model,
                 run_save_token=_run_save_token, on_run_acquired=on_run_acquired,
-                ingress=ingress,
+                ingress=ingress, user_metadata=user_metadata,
             )
 
             while True:
@@ -196,6 +196,7 @@ class _RunEntrypointMixin:
         reasoning_mode: str | None = None,
         *,
         ingress: object | None = None,
+        user_metadata: dict[str, Any] | None = None,
     ) -> LoopResult:
         """单条用户消息的完整循环（run_stream 的同步聚合包装，签名/返回不变）.
 
@@ -205,7 +206,7 @@ class _RunEntrypointMixin:
         it = self.run_stream(
             session_id, user_text, model, reasoning_effort=reasoning_effort,
             reasoning_mode=reasoning_mode,
-            ingress=ingress,
+            ingress=ingress, user_metadata=user_metadata,
         )
         while True:
             try:
@@ -227,12 +228,13 @@ class _RunEntrypointMixin:
         on_run_acquired: Any = None,
         expected_workspace_epoch: int | None = None,
         ingress: object | None = None,
+        user_metadata: dict[str, Any] | None = None,
     ) -> LoopResult:
         """内部同步入口：首个generator推进前校验session解析时的workspace epoch。"""
         marker = self._session_lifecycle._install_run_acquired_callback(session_id, on_run_acquired)
         it = self.run_stream(
             session_id, user_text, model=model, reasoning_effort=reasoning_effort,
-            reasoning_mode=reasoning_mode, ingress=ingress,
+            reasoning_mode=reasoning_mode, ingress=ingress, user_metadata=user_metadata,
         )
         try:
             # 首次next执行run_stream admission；与epoch校验同处workspace guard内，
@@ -265,12 +267,13 @@ class _RunEntrypointMixin:
         on_run_acquired: Any = None,
         expected_workspace_epoch: int | None = None,
         ingress: object | None = None,
+        user_metadata: dict[str, Any] | None = None,
     ):
         """内部流式入口：首次推进时原子校验workspace epoch并完成run admission。"""
         marker = self._session_lifecycle._install_run_acquired_callback(session_id, on_run_acquired)
         it = self.run_stream(
             session_id, user_text, model=model, reasoning_effort=reasoning_effort,
-            reasoning_mode=reasoning_mode, ingress=ingress,
+            reasoning_mode=reasoning_mode, ingress=ingress, user_metadata=user_metadata,
         )
         try:
             with self._workspace_transition_guard:

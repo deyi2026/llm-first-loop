@@ -1,7 +1,7 @@
 // Web V2：对话 store（消息流 / 流式状态 / 历史分页 / 发送·停止·重试）
 
 import { useSyncExternalStore } from "react";
-import type { ChatDoneData, ChatMessage } from "./types";
+import type { AttachmentFact, ChatDoneData, ChatMessage } from "./types";
 import { streamChatRequest, toChatMessage, buildAssistantNote, fetchHistory, fetchStreamStatus } from "./chat";
 import { sessionStore } from "./stores";
 
@@ -327,6 +327,10 @@ export interface SendAttachment {
   result_text: string;
   status?: "ok" | "pending" | "degraded" | "error";
   detail?: string;
+  attachment_ref?: string;
+  content_type?: string;
+  size_bytes?: number;
+  sha256?: string;
 }
 
 export async function sendMessage(text: string, attachments: SendAttachment[]): Promise<void> {
@@ -336,16 +340,21 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
   const sessionId = sessionStore.getState().currentSessionId || null;
   // 本地发送即将写入/产生新消息：停空闲轮询防竞态（基线由完成后的重载路径重建）
   stopIdlePoll();
-  // 只有已经成功识别的附件内容才进入模型输入。
-  // pending/degraded/error 仅作为 UI/上传事实展示，不由程序改写成 user prose。
-  const okPrefix = attachments
-    .filter((a) => a.status === "ok")
-    .map((a) => `[附件 ${a.filename}] ${a.result_text}`)
-    .join("\n\n");
-  const attachmentPrefix = okPrefix;
-  const effectiveText = attachmentPrefix ? `${attachmentPrefix}\n\n${text}` : text;
+  // 附件以服务端 opaque ref 作为唯一授权引用；不再把提取全文拼进 human message。
+  // pending/degraded/error 不进入当前模型请求，仍只作为 Composer UI 事实展示。
+  const sendable = attachments.filter(
+    (a) => a.status === "ok" && typeof a.attachment_ref === "string" && a.attachment_ref.length > 0
+  );
+  const attachmentRefs = sendable.map((a) => ({ ref: a.attachment_ref! }));
+  const userAttachmentFacts: AttachmentFact[] = sendable.map((a) => ({
+    ref: a.attachment_ref!,
+    filename: a.filename,
+    content_type: a.content_type,
+    size_bytes: a.size_bytes,
+    sha256: a.sha256,
+  }));
 
-  const userMsg: ChatMessage = { role: "user", content: text };
+  const userMsg: ChatMessage = { role: "user", content: text, attachments: userAttachmentFacts };
   const placeholder: ChatMessage = {
     role: "assistant",
     content: "",
@@ -370,7 +379,8 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
   const newSessionPending = sessionStore.getState().newSessionPending;
   if (newSessionPending) sessionStore.setNewSessionPending(false);
   const body = {
-    message: effectiveText,
+    message: text,
+    attachments: attachmentRefs,
     session_id: sessionId,
     model: sessionStore.getState().model,
     reasoning_effort: sessionStore.getState().reasoningEffort,

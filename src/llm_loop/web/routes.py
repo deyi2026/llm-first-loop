@@ -36,6 +36,8 @@ from llm_loop.workspace.store import (
     WorkspacePersistenceError,
 )
 
+from .attachments import AttachmentError, AttachmentStore
+from .attachments import workspace_scope as attachment_workspace_scope
 from .schemas import (
     ChatCancelRequest,
     ChatRequest,
@@ -63,6 +65,62 @@ from .upload_handlers import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _attachment_store(engine: Any) -> AttachmentStore:
+    data_dir = getattr(getattr(engine, "settings", None), "data_dir", "./data")
+    return AttachmentStore(data_dir)
+
+
+def _current_attachment_workspace_scope(engine: Any) -> str:
+    return attachment_workspace_scope(getattr(engine, "workspace_root", "") or None)
+
+
+def _resolve_chat_attachment_facts(
+    engine: Any, refs: list[Any], *, workspace_scope: str
+) -> list[dict[str, Any]]:
+    if not refs:
+        return []
+    store = _attachment_store(engine)
+    facts: list[dict[str, Any]] = []
+    for item in refs:
+        ref = str(getattr(item, "ref", "") or "")
+        record = store.resolve(ref, workspace_scope=workspace_scope, verify_content=True)
+        facts.append(record.public_facts())
+    return facts
+
+
+def _persist_upload_response(
+    engine: Any,
+    *,
+    workspace_scope: str,
+    filename: str,
+    data: bytes,
+    response: UploadResponse,
+) -> UploadResponse:
+    excerpt_kind = ""
+    if response.result_text:
+        excerpt_kind = "vision_text" if response.content_type == "image" else "extracted_text"
+    record = _attachment_store(engine).create(
+        workspace_scope=workspace_scope,
+        filename=filename,
+        data=data,
+        content_type=response.content_type,
+        excerpt=response.result_text,
+        excerpt_kind=excerpt_kind,
+    )
+    return UploadResponse(
+        source_filename=response.source_filename,
+        content_type=response.content_type,
+        status=response.status,
+        result_text=response.result_text,
+        detail=response.detail,
+        truncated=response.truncated,
+        attachment_ref=record.ref,
+        size_bytes=record.size_bytes,
+        sha256=record.sha256,
+        excerpt=record.excerpt,
+    )
 
 
 def _result_fallback_receipt(result: Any) -> dict[str, str] | None:
@@ -170,6 +228,16 @@ def chat(
 
     try:
         with engine.workspace_snapshot() as workspace_epoch:
+            attachment_scope = _current_attachment_workspace_scope(engine)
+            try:
+                attachment_facts = _resolve_chat_attachment_facts(
+                    engine, payload.attachments, workspace_scope=attachment_scope
+                )
+            except AttachmentError as exc:
+                return UTF8JSONResponse(
+                    status_code=400,
+                    content={"error": "invalid_attachment", "detail": str(exc)},
+                )
             if getattr(payload, "new_session", False):
                 # schema 契约：new_session 与 session_id 同传时强制新建优先。
                 session_id = engine.session.create()
@@ -220,6 +288,7 @@ def chat(
             on_run_acquired=_on_run_acquired,
             expected_workspace_epoch=workspace_epoch,
             ingress=issue_ingress("web"),
+            user_metadata={"attachments": attachment_facts} if attachment_facts else None,
         )
     except WorkspaceChangedError as exc:
         return UTF8JSONResponse(
@@ -338,6 +407,7 @@ def _stream_background(
     resume: bool = False,
     before_start: Callable[[Any], None] | None = None,
     expected_workspace_epoch: int | None = None,
+    user_metadata: dict[str, Any] | None = None,
 ) -> Any:
     """后台 run 订阅生成器（EVO 后台 run 改造）：提交 → 消费事件 → 分片 yield SSE.
 
@@ -352,13 +422,18 @@ def _stream_background(
         # （runner 线程体透传 run_stream ingress；resume 不提交新 run 不需要凭据）。
         from llm_loop.core.trace_leak.ingress_token import issue_ingress
 
-        handle, q = runner.start(
-            session_id, message, model=model, reasoning_effort=reasoning_effort,
-            reasoning_mode=reasoning_mode,
-            resume=resume, before_start=before_start,
-            expected_workspace_epoch=expected_workspace_epoch,
-            ingress=None if resume else issue_ingress("web"),
-        )
+        start_kwargs: dict[str, Any] = {
+            "model": model,
+            "reasoning_effort": reasoning_effort,
+            "reasoning_mode": reasoning_mode,
+            "resume": resume,
+            "before_start": before_start,
+            "expected_workspace_epoch": expected_workspace_epoch,
+            "ingress": None if resume else issue_ingress("web"),
+        }
+        if not resume and user_metadata is not None:
+            start_kwargs["user_metadata"] = user_metadata
+        handle, q = runner.start(session_id, message, **start_kwargs)
     except WorkspaceChangedError as exc:
         yield _sse("error", {"error": "workspace_changed", "detail": str(exc)})
         return
@@ -475,6 +550,16 @@ def chat_stream(
     # 会话查/建与workspace切换互斥；响应生成延迟执行时再用epoch复核归属。
     try:
         with engine.workspace_snapshot() as workspace_epoch:
+            attachment_scope = _current_attachment_workspace_scope(engine)
+            try:
+                attachment_facts = _resolve_chat_attachment_facts(
+                    engine, payload.attachments, workspace_scope=attachment_scope
+                )
+            except AttachmentError as exc:
+                return UTF8JSONResponse(
+                    status_code=400,
+                    content={"error": "invalid_attachment", "detail": str(exc)},
+                )
             if getattr(payload, "new_session", False):
                 session_id = engine.session.create()
                 engine.session.set_shared_current(session_id)
@@ -520,6 +605,7 @@ def chat_stream(
                 resume=_resume,
                 before_start=_before_start,
                 expected_workspace_epoch=workspace_epoch,
+                user_metadata={"attachments": attachment_facts} if attachment_facts else None,
             )
             return
         if _resume:
@@ -553,6 +639,7 @@ def chat_stream(
                 on_run_acquired=_before_start,
                 expected_workspace_epoch=workspace_epoch,
                 ingress=issue_ingress("web"),
+                user_metadata={"attachments": attachment_facts} if attachment_facts else None,
             )
             while True:
                 try:
@@ -1596,6 +1683,9 @@ def get_session_messages(
             tokens_cache_hit=getattr(m, "tokens_cache_hit", 0),  # M58: 历史命中透传（页脚 ⚡——漏了显示 0）
             ts=getattr(m, "ts", 0.0),  # 时间戳透传（web 端消息时间显示）
             tool_calls=getattr(m, "tool_calls", None),  # 工具声明透传（历史出产物/正文链接）
+            attachments=list((getattr(m, "metadata", {}) or {}).get("attachments", []))
+            if getattr(m, "role", "") == "user"
+            else [],
         )
         for m in session.messages
     ]
@@ -1715,10 +1805,19 @@ def delete_session(session_id: str, request: Request, confirm: bool = False) -> 
 def upload_file(payload: UploadRequest, request: Request) -> UploadResponse | Response:
     """上传处理端点：base64 解码 → 校验 → 类型分发（文本/docx/PDF → 提取；图片 → 视觉识别）.
 
-    不调用 engine.run（上传处理独立于核心对话链路，结果由前端注入对话上下文）。
+    不调用 engine.run。原始 bytes 持久化为 workspace-scoped opaque attachment ref；
+    提取文本仅作为兼容响应/受控 excerpt，后续 chat 由服务端解析 ref。
     request: 注入以取引擎 settings（vision provider 后端注册表来源）。
     """
     engine = _engine_from(request)
+    try:
+        with engine.workspace_snapshot():
+            upload_workspace_scope = _current_attachment_workspace_scope(engine)
+    except WorkspaceBusyError as exc:
+        return UTF8JSONResponse(
+            status_code=409,
+            content={"error": "workspace_busy", "detail": str(exc)},
+        )
     import base64 as _b64
 
     # P2-2(2026-08-15)：base64 体积前置检查（≈4/3 原始体积），超限 413 不解码
@@ -1750,12 +1849,18 @@ def upload_file(payload: UploadRequest, request: Request) -> UploadResponse | Re
         from .vision import describe_image, vision_enabled
 
         if not vision_enabled(settings=getattr(engine, "settings", None)):
-            return UploadResponse(
-                source_filename=payload.filename,
-                content_type="image",
-                status="degraded",
-                result_text="",
-                detail="图片识别不可用（无视觉模型/工具），图片未识别且未包含在请求中。",
+            return _persist_upload_response(
+                engine,
+                workspace_scope=upload_workspace_scope,
+                filename=payload.filename,
+                data=data,
+                response=UploadResponse(
+                    source_filename=payload.filename,
+                    content_type="image",
+                    status="degraded",
+                    result_text="",
+                    detail="图片识别不可用（无视觉模型/工具），图片未识别且未包含在请求中。",
+                ),
             )
         mime = {
             ".png": "image/png",
@@ -1767,35 +1872,53 @@ def upload_file(payload: UploadRequest, request: Request) -> UploadResponse | Re
         }.get(ext, "image/png")
         try:
             text = describe_image(data, mime=mime, settings=getattr(engine, "settings", None))
-            return UploadResponse(
-                source_filename=payload.filename,
-                content_type="image",
-                status="ok",
-                result_text=text,
+            return _persist_upload_response(
+                engine,
+                workspace_scope=upload_workspace_scope,
+                filename=payload.filename,
+                data=data,
+                response=UploadResponse(
+                    source_filename=payload.filename,
+                    content_type="image",
+                    status="ok",
+                    result_text=text,
+                ),
             )
         except Exception as exc:  # 识别失败如实反馈，不伪装成功
             logger.exception("image vision failed: %s", payload.filename)
-            return UploadResponse(
-                source_filename=payload.filename,
-                content_type="image",
-                status="degraded",
-                detail=(
-                    f"[程序异常] 图片识别失败（{type(exc).__name__}: {exc}）。"
-                    "图片内容**未包含**在本次请求中——请勿让 LLM 猜测图片内容。"
-                    "可设置 WEB_VISION_MODEL 指定 provider/model（如 kimi/k3），"
-                    "或改用文本通道。"
+            return _persist_upload_response(
+                engine,
+                workspace_scope=upload_workspace_scope,
+                filename=payload.filename,
+                data=data,
+                response=UploadResponse(
+                    source_filename=payload.filename,
+                    content_type="image",
+                    status="degraded",
+                    detail=(
+                        f"[程序异常] 图片识别失败（{type(exc).__name__}: {exc}）。"
+                        "图片内容**未包含**在本次请求中——请勿让 LLM 猜测图片内容。"
+                        "可设置 WEB_VISION_MODEL 指定 provider/model（如 kimi/k3），"
+                        "或改用文本通道。"
+                    ),
                 ),
             )
 
     # 文本/docx/PDF → 文档提取
     result = process_upload(payload.filename, data)
-    return UploadResponse(
-        source_filename=result.source_filename,
-        content_type=result.content_type,
-        status=result.status,
-        result_text=result.result_text,
-        detail=result.detail,
-        truncated=result.truncated,
+    return _persist_upload_response(
+        engine,
+        workspace_scope=upload_workspace_scope,
+        filename=payload.filename,
+        data=data,
+        response=UploadResponse(
+            source_filename=result.source_filename,
+            content_type=result.content_type,
+            status=result.status,
+            result_text=result.result_text,
+            detail=result.detail,
+            truncated=result.truncated,
+        ),
     )
 
 

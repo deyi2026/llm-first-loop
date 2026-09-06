@@ -445,6 +445,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         run_save_token: object | None = None,
         on_run_acquired: Any = None,
         ingress: object | None = None,
+        user_metadata: dict[str, Any] | None = None,
     ) -> Iterator[StreamDelta]:
         """run_stream 的循环本体（P0-5 包装层拆出；逻辑与拆分前逐行一致）.
 
@@ -525,11 +526,20 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             logger.warning("history lifecycle 索引失败（fail-open，不退休）", exc_info=True)
 
         # ── 消息进：构造用户消息并落库 ──
+        _user_metadata: dict[str, Any] = {}
+        raw_attachments = (user_metadata or {}).get("attachments")
+        if isinstance(raw_attachments, list):
+            _user_metadata["attachments"] = [
+                dict(item) for item in raw_attachments if isinstance(item, dict)
+            ]
+        # Provenance/ingress are program-owned truth; arbitrary caller metadata never enters a
+        # genuine human message through this transport-only extension.
+        _user_metadata.update(origin_metadata(InjectionLayer.USER_INSTRUCTION))
         user_msg = Message(
             role="user",
             content=user_text,
             source=MessageSource.USER,
-            metadata=origin_metadata(InjectionLayer.USER_INSTRUCTION),
+            metadata=_user_metadata,
         )
         # agent_trace_leak 3.5: user_instruction 判定双因子收口（凭据 + 白名单；
         # 合法凭据路径落盘字节零变化——metadata 仅固化 ingress 通道快照两键）。

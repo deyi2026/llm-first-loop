@@ -9,11 +9,51 @@
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
 
+_ATTACHMENT_TOTAL_EXCERPT_CHARS = 4_000
+
+
+def _project_user_attachments(content: str, metadata: dict) -> str:
+    """Mechanically project durable attachment facts for provider visibility only.
+
+    Raw ``Message.content`` remains the exact human text. Attachment metadata is
+    rendered in stable request order; no semantic selection, summary, or advice is
+    introduced here. Excerpts use one shared representation budget.
+    """
+    raw = metadata.get("attachments") if isinstance(metadata, dict) else None
+    if not isinstance(raw, list) or not raw:
+        return content
+    rows: list[str] = []
+    excerpt_budget = _ATTACHMENT_TOTAL_EXCERPT_CHARS
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        fact = {
+            "ref": str(item.get("ref") or ""),
+            "filename": str(item.get("filename") or ""),
+            "content_type": str(item.get("content_type") or ""),
+            "media_type": str(item.get("media_type") or ""),
+            "size_bytes": int(item.get("size_bytes") or 0),
+            "sha256": str(item.get("sha256") or ""),
+        }
+        excerpt = str(item.get("excerpt") or "")
+        shown = excerpt[:excerpt_budget] if excerpt_budget > 0 else ""
+        excerpt_budget -= len(shown)
+        if excerpt:
+            fact["excerpt_kind"] = str(item.get("excerpt_kind") or "")
+            fact["excerpt_chars_shown"] = len(shown)
+            fact["excerpt_total_chars"] = len(excerpt)
+            fact["excerpt"] = shown
+        rows.append(json.dumps(fact, ensure_ascii=False, sort_keys=True))
+    if not rows:
+        return content
+    block = "[attachment_facts]\n" + "\n".join(rows) + "\n[/attachment_facts]"
+    return f"{content}\n\n{block}" if content else block
 
 class MessageSource(StrEnum):
     """消息来源标识（FR-MSG-04）."""
@@ -102,7 +142,10 @@ class Message:
             if self.tool_name:
                 d["name"] = self.tool_name
             return d
-        d: dict = {"role": self.role, "content": self.content}
+        wire_content = self.content
+        if self.role == "user":
+            wire_content = _project_user_attachments(self.content, self.metadata or {})
+        d: dict = {"role": self.role, "content": wire_content}
         if self.role == "assistant" and self.tool_calls:
             d["tool_calls"] = self.tool_calls
         # M20 THK-04: 思考链非空才回传（缺失态 None 不回传 → 零回归；官方"携带 tools 必须完整回传"）

@@ -79,17 +79,17 @@ class TestHistoryPagination:
             offset += 3
         assert len(collected) == total
 
-    def test_message_item_contract_unchanged(self, build_test_engine):
+    def test_message_item_contract_allows_planned_fields(self, build_test_engine):
         engine, sid, _ = _build_session(build_test_engine, 1)
         client = _make_client(engine)
         resp = client.get(f"/api/v1/sessions/{sid}/messages?limit=10")
         for m in resp.json()["messages"]:
             # M51/M52: 模型 + token 消耗字段（2026-08-16 页脚扩展，属计划内契约变更）
-            # ts: 消息时间戳（2026-08-17 消息时间显示，属计划内契约变更）
+            # ts: 消息时间戳；attachments: 结构化附件卡恢复（均为计划内契约扩展）
             assert set(m.keys()) <= {
                 "role", "content", "tool_call_id", "reasoning_content",
                 "model_used", "tokens_in", "tokens_out", "tokens_cache_hit", "tool_calls",
-                "ts",
+                "ts", "attachments",
             }
 
 

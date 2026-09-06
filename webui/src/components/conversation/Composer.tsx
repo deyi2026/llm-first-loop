@@ -16,6 +16,10 @@ interface Attachment {
   preview?: string;
   status: AttachStatus;
   detail?: string;
+  attachment_ref?: string;
+  content_type?: string;
+  size_bytes?: number;
+  sha256?: string;
 }
 
 interface CommandOption {
@@ -246,12 +250,21 @@ export function Composer() {
       const b64 = String(reader.result).split(",")[1] ?? "";
       const { status, data } = await uploadFileBase64(file.name, b64);
       if (status === 200) {
+        const serverStatus = (data.status as AttachStatus) ?? "error";
+        const hasRef = typeof data.attachment_ref === "string" && data.attachment_ref.length > 0;
         const attach: Attachment = {
           filename: file.name,
           result_text: data.result_text ?? "",
           preview: file.type.startsWith("image/") ? String(reader.result) : undefined,
-          status: (data.status as AttachStatus) ?? "error",
-          detail: data.detail,
+          status: serverStatus === "ok" && !hasRef ? "error" : serverStatus,
+          detail:
+            serverStatus === "ok" && !hasRef
+              ? "上传完成但服务端未返回附件引用，未加入消息。"
+              : data.detail,
+          attachment_ref: data.attachment_ref,
+          content_type: data.content_type,
+          size_bytes: data.size_bytes,
+          sha256: data.sha256,
         };
         setAttachments((prev) => prev.map((a) => (a.filename === file.name ? attach : a)));
       } else {

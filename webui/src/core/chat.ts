@@ -206,6 +206,7 @@ export function toChatMessage(m: HistoryMessage): ChatMessage {
   return {
     role: m.role as ChatMessage["role"],
     content: m.content ?? "",
+    attachments: Array.isArray(m.attachments) ? m.attachments : [],
     reasoningContent: m.reasoning_content ?? null,
     toolCalls: normalizeToolCalls(m.tool_calls),
     toolCallId: m.tool_call_id ?? null,

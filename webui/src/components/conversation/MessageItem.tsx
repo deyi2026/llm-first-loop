@@ -3,7 +3,7 @@
 // 工具行折叠链、代码块 banner（语言+复制）+ 高亮 + 长块分块、笔记 footer）
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ChatMessage, ToolCallInfo } from "../../core/types";
+import type { AttachmentFact, ChatMessage, ToolCallInfo } from "../../core/types";
 import { renderMarkdown } from "../../core/markdown";
 import { formatTokens } from "../../core/chat";
 import { fetchFilePreview, submitFeedback } from "../../core/api";
@@ -265,6 +265,28 @@ function ProducedFiles({ calls }: { calls: ToolCallInfo[] }) {
   );
 }
 
+function formatAttachmentSize(size?: number): string {
+  if (!size || size < 1) return "";
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function UserAttachments({ attachments }: { attachments?: AttachmentFact[] }) {
+  if (!attachments?.length) return null;
+  return (
+    <div className="v2-msg-attachments" data-testid="msg-attachments">
+      {attachments.map((a) => (
+        <div className="v2-attachment" key={a.ref} title={a.filename}>
+          <span aria-hidden="true">📎</span>
+          <span className="v2-attachment-name">{a.filename}</span>
+          {a.size_bytes ? <span className="v2-attachment-size">{formatAttachmentSize(a.size_bytes)}</span> : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function StreamingHint({ startedAt }: { startedAt: number | null }) {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
@@ -342,9 +364,12 @@ export function MessageItem({
         <div className="v2-msg-bubble user">
           {/* EVO-20260818: 用户输入消息与 assistant 同格式渲染（markdown/代码块/表格/
               公式/路径点击）——输入端（Composer）直接输入 markdown 语法即可 */}
-          <div className="v2-msg-text">
-            <Markdown text={msg.content} clickablePaths={producedPaths} />
-          </div>
+          <UserAttachments attachments={msg.attachments} />
+          {msg.content ? (
+            <div className="v2-msg-text">
+              <Markdown text={msg.content} clickablePaths={producedPaths} />
+            </div>
+          ) : null}
         </div>
         <div className="v2-msg-actions">
           <CopyButton text={msg.content} />

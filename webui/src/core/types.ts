@@ -12,9 +12,19 @@ export interface ToolCallDelta {
   arguments_delta?: string;
 }
 
+export interface AttachmentFact {
+  ref: string;
+  filename: string;
+  content_type?: string;
+  media_type?: string;
+  size_bytes?: number;
+  sha256?: string;
+}
+
 export interface ChatMessage {
   role: "user" | "assistant" | "tool" | "system";
   content: string;
+  attachments?: AttachmentFact[];
   reasoningContent?: string | null;
   toolCalls?: ToolCallInfo[] | null;
   toolCallId?: string | null;
@@ -57,6 +67,7 @@ export interface ChatDoneData {
 export interface HistoryMessage {
   role: string;
   content: string;
+  attachments?: AttachmentFact[];
   reasoning_content?: string | null;
   tool_call_id?: string | null;
   tool_name?: string | null;
@@ -83,6 +94,10 @@ export interface UploadResult {
   content_type?: string;
   result_text?: string;
   detail?: string;
+  attachment_ref?: string;
+  size_bytes?: number;
+  sha256?: string;
+  excerpt?: string;
 }
 
 export interface StreamOutcome {
