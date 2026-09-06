@@ -42,3 +42,47 @@ def test_discrepancy_receipt_sample_takes_latest(monkeypatch):
     assert r.discrepancies, "不匹配声明应产生差异反馈"
     text = r.discrepancies[0]
     assert "web_fetch" in text, f"回执样本应含最新回执（就近取样），实际: {text[:200]}"
+
+
+def test_nested_subagent_success_receipt_satisfies_execute_declaration():
+    """subagent_result 的结构化 nested success 可证明 child execute_command 完成。"""
+    from llm_loop.core.message import Message, MessageSource, ToolResultStatus
+    from llm_loop.feedback.validator import DeclarationValidator
+
+    checker = DeclarationValidator(audit_dir=None)
+    msgs = [
+        Message(
+            role="tool",
+            status=ToolResultStatus.SUCCESS,
+            content="[状态: success] child_state=completed child_outcome=completed",
+            source=MessageSource.TOOL,
+            tool_call_id="sub-r1",
+            tool_name="subagent_result",
+            metadata={"verification_receipts": ["execute_command:success"]},
+        )
+    ]
+    result = checker.check("子代理已执行命令并完成验证", msgs)
+    assert result.consistent is True
+    assert "nested:execute_command:success" in result.receipt_summary
+
+
+def test_nested_failure_receipt_never_proves_successful_execute_declaration():
+    """即使外层 subagent_result 是 success，nested failure 也不能冒充执行成功证据。"""
+    from llm_loop.core.message import Message, MessageSource, ToolResultStatus
+    from llm_loop.feedback.validator import DeclarationValidator
+
+    checker = DeclarationValidator(audit_dir=None)
+    msgs = [
+        Message(
+            role="tool",
+            status=ToolResultStatus.SUCCESS,
+            content="[状态: success] child_state=completed child_outcome=completed",
+            source=MessageSource.TOOL,
+            tool_call_id="sub-r2",
+            tool_name="subagent_result",
+            metadata={"verification_receipts": ["execute_command:failure"]},
+        )
+    ]
+    result = checker.check("子代理已执行命令并完成验证", msgs)
+    assert result.consistent is False
+    assert "nested:execute_command:failure" not in result.receipt_summary
