@@ -33,15 +33,12 @@ TIER0_FILES = (
     "tests/unit/test_cache_block_reclassification.py",
     # ③ wire 契约（等价性证明面；tail packet 系列）
     "tests/unit/test_wire_fixtures.py",
-    "tests/unit/test_build_tool_round_tail.py",
-    "tests/unit/test_direction_c_tail_merge.py",
     "tests/unit/test_reasoning_tail.py",
     # ④ core 回路冒烟：五故障场景承载
     "tests/unit/test_err1210_recovery.py",
     "tests/unit/test_loop_stagnation.py",
     "tests/unit/test_interruption_recovery_r819.py",
     "tests/unit/test_fail_open_recovery.py",
-    "tests/unit/test_stagnation_gate.py",
     # ④ core 回路冒烟：engine/build/history/factory 核心单测子集（按文件不拆用例）
     "tests/unit/test_engine_cancel_llm_error_isolation.py",
     "tests/unit/test_engine_reentrancy.py",
