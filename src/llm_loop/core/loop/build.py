@@ -450,6 +450,12 @@ class _BuildMixin:
             reasoning_tail_fn=_reasoning_tail_for,
         )
         built = _hist.built
+        if _pre.working_state_text is not None:
+            # The S1 checkpoint is valid only at the exact persisted transcript
+            # boundary, so appending its model-authored opaque state here is
+            # chronologically true while keeping Session/index mapping untouched.
+            built = list(built)
+            built.append({"role": "assistant", "content": _pre.working_state_text})
         effective_budget = _hist.effective_budget
         compact_view_box = _hist.compact_view_box
         _anchor_moved_this_build = _hist.anchor_moved

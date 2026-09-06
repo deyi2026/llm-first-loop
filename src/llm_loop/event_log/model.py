@@ -173,6 +173,7 @@ REGISTRY.register(
             "channel": "来源通道",
             "fixed_summary": "version 5 固定摘要（生成后不可变）",
             "summary_chain": "version 5 增量摘要链（尾部追加）",
+            "working_state_checkpoint": "S1 内部 working-state checkpoint（缺省 None）",
         },
     )
 )

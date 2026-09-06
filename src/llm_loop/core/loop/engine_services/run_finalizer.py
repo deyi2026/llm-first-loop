@@ -197,6 +197,20 @@ class RunFinalizer:
             # retireable, and legacy messages lacking the bit remain fail-open.
             "episode_resolution_candidate": _episode_resolution_candidate,
         }
+        # A provider token-limit stop is a real model partial, not a completed answer.
+        # Preserve the exact model bytes in the normal assistant row, but mark the row
+        # as unfinished so the next human ingress can rebuild one-shot continuity from
+        # durable storage. This is runtime truth only; no continuation instruction is
+        # persisted into conversational history.
+        if _answer_origin == "model" and resp is not None and resp.truncated:
+            _origin_metadata = {
+                **_origin_metadata,
+                "llm_interrupted": True,
+                "provider_truncated": True,
+                "provider_finish_reason": str(getattr(resp, "finish_reason", "") or ""),
+                "interrupted_provider": str(getattr(resp, "provider", "") or ""),
+                "interrupted_model": model_used,
+            }
         # R8.24-B B-3.2/B-D7（E19）: 程序终态全文不再进入 sess.messages——存储面
         # 只保留 role-shape 协议占位（B-D11 PROTOCOL_ONLY：与 build 链
         # PROGRAM_FINAL 替换同源常量，字节稳定），全文经 LoopResult（UI）与

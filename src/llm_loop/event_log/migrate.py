@@ -48,6 +48,7 @@ _TOP_FIELDS = (
     "channel",
     "fixed_summary",
     "summary_chain",
+    "working_state_checkpoint",
 )
 
 

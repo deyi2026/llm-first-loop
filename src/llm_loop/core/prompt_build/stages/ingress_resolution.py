@@ -14,7 +14,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from llm_loop.core.episode_history import provider_view_without_resolved_episodes
+from llm_loop.core.episode_history import (
+    collect_active_evidence_groups,
+    evidence_candidate_set_digest,
+    project_active_tool_working_set_with_stats,
+    provider_view_without_resolved_episodes,
+    resolve_working_state_checkpoint,
+)
 from llm_loop.core.program_recovery import is_program_recovery_message
 from llm_loop.core.prompt import build_system_prompt
 from llm_loop.core.prompt_build.context import BuildInputs
@@ -169,6 +175,7 @@ class IngressPreludeOutcome:
     base: list
     base_original_indices: list
     r6_ingress_truth: Any
+    working_state_text: str | None = None
 
 
 def run_ingress_prelude(
@@ -237,12 +244,79 @@ def run_ingress_prelude(
         base=base,
         base_original_indices=_base_original_indices,
     )
+    # S1 canary: validate persisted model-authored working state against storage
+    # truth, then confirm the same evidence identity still exists in the scrubbed
+    # provider view. Program logic checks identity/pairing/scope/resource bounds only.
+    _checkpoint = resolve_working_state_checkpoint(
+        getattr(sess, "working_state_checkpoint", None),
+        session_id=sess.session_id,
+        messages=sess.messages,
+        provider_id=provider_id,
+        model=resolved_label,
+    )
+    _preserve_digests: tuple[str, ...] = ()
+    _working_state_text: str | None = None
+    _checkpoint_reason = _checkpoint.reason
+    if _checkpoint.eligible:
+        _provider_groups = collect_active_evidence_groups(_scrub.base)
+        _provider_digests = {group.descriptor.protocol_digest for group in _provider_groups}
+        if (
+            evidence_candidate_set_digest(_provider_groups) == _checkpoint.candidate_set_digest
+            and set(_checkpoint.preserve_group_digests).issubset(_provider_digests)
+        ):
+            _preserve_digests = _checkpoint.preserve_group_digests
+            _working_state_text = _checkpoint.state_text
+            _checkpoint_reason = "eligible"
+        else:
+            _checkpoint_reason = "provider_view_mismatch"
+    if getattr(sess, "working_state_checkpoint", None) is not None:
+        with contextlib.suppress(Exception):
+            record_action(
+                "run.working_state_checkpoint",
+                _checkpoint_reason,
+                (
+                    f"selected_groups={len(_preserve_digests)};"
+                    f"selected_raw_chars={_checkpoint.selected_raw_chars if _working_state_text else 0};"
+                    "prompt_chars=0"
+                ),
+            )
+
+    # Active-run working-set receipts are representation-only: order and message
+    # count stay identical, so the already-computed storage index mapping remains
+    # authoritative. Selected protocol groups are exempted as exact raw evidence;
+    # unselected groups keep the existing batch/grace mechanics unchanged.
+    _provider_base, _working_set_stats = project_active_tool_working_set_with_stats(
+        _scrub.base, preserve_group_digests=_preserve_digests
+    )
+    if _working_set_stats.enabled:
+        with contextlib.suppress(Exception):
+            record_action(
+                "run.tool_working_set",
+                "projected",
+                (
+                    f"batch_chars={_working_set_stats.batch_chars};"
+                    f"raw_tool_chars={_working_set_stats.raw_tool_chars};"
+                    f"projected_tool_chars={_working_set_stats.projected_tool_chars};"
+                    f"receipt_chars={_working_set_stats.receipt_chars};"
+                    f"folded_results={_working_set_stats.folded_results};"
+                    f"folded_groups={_working_set_stats.folded_groups};"
+                    f"grace_groups={_working_set_stats.grace_groups};"
+                    f"grace_raw_chars={_working_set_stats.grace_raw_chars};"
+                    f"grace_results={_working_set_stats.grace_results};"
+                    f"pending_raw_chars={_working_set_stats.pending_raw_chars};"
+                    f"pending_results={_working_set_stats.pending_results};"
+                    f"latest_raw_chars={_working_set_stats.latest_raw_chars};"
+                    f"fold_boundaries={','.join(str(x) for x in _working_set_stats.fold_boundaries)};"
+                    "prompt_chars=0"
+                ),
+            )
     return IngressPreludeOutcome(
         resolved_label=resolved_label,
         provider_id=provider_id,
         sess_anchor=sess_anchor,
         system_prompt=system_prompt,
-        base=_scrub.base,
+        base=_provider_base,
         base_original_indices=_scrub.base_original_indices,
         r6_ingress_truth=_r6_ingress_truth,
+        working_state_text=_working_state_text,
     )

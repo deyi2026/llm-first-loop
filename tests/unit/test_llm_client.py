@@ -56,6 +56,21 @@ def test_chat_content_only():
         resp = _client().chat(messages=[{"role": "user", "content": "hi"}], tools=[])
     assert resp.content == "你好世界"
     assert resp.tool_calls == []
+    assert resp.finish_reason == "stop"
+
+
+def test_chat_length_finish_reason_is_preserved_as_transport_fact():
+    lines = [
+        'data: {"choices": [{"delta": {"content": "PARTIAL"}}]}',
+        'data: {"choices": [{"delta": {}, "finish_reason": "length"}]}',
+        "data: [DONE]",
+    ]
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
+        resp = _client().chat(messages=[{"role": "user", "content": "hi"}], tools=[])
+    assert resp.content == "PARTIAL"
+    assert resp.truncated is True
+    assert resp.finish_reason == "length"
 
 
 def test_chat_tool_calls_aggregation():
