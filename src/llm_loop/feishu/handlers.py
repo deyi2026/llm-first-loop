@@ -42,6 +42,17 @@ _STOP_RESUME_HINT = "\n\n可发送 /continue 或重新发送消息恢复任务�
 _USER_STOP_PENDING_WINDOW_S = 120.0
 
 
+def _fallback_receipt_line(result: Any) -> str:
+    """Render one current-run fallback fact; never persists it into conversation history."""
+    fb = getattr(result, "fallback_receipt", None)
+    if not isinstance(fb, dict) or not fb:
+        return ""
+    return (
+        f"\n[模型降级: {fb.get('from', '?')}→{fb.get('to', '?')}, "
+        f"原因: {fb.get('reason', 'unknown')}]"
+    )
+
+
 @dataclass
 class FeishuMessage:
     """飞书消息（桥解包后的统一结构）."""
@@ -549,6 +560,7 @@ class FeishuMessageHandler:
                 answer += "\n（公式请于 Web 端查看）"
         except Exception:  # noqa: BLE001 — 检测失败 fail-open
             pass
+        answer += _fallback_receipt_line(result)
         # M51: 回复下方标注实际生成模型（provider/model，如实透传）
         if getattr(result, "model_used", ""):
             footer = f"\n—— {result.model_used}"
@@ -671,6 +683,7 @@ class FeishuMessageHandler:
                 reply += "\n（公式请于 Web 端查看）"
         except Exception:  # noqa: BLE001 — 检测失败 fail-open
             pass
+        reply += _fallback_receipt_line(result)
         # M51: 回复下方标注实际生成模型
         if getattr(result, "model_used", ""):
             footer = f"\n—— {result.model_used}"
