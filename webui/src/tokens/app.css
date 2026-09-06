@@ -853,6 +853,14 @@
     transform: none;
   }
 
+  /* 抽屉打开时的背景遮罩（点击关闭；z-index 低于侧栏 200） */
+  .v2-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 190;
+    background: rgba(0, 0, 0, 0.35);
+  }
+
   .v2-panel {
     position: fixed;
     top: 0;

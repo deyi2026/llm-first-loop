@@ -54,6 +54,37 @@ describe("App 布局壳", () => {
     expect(screen.queryByTestId("right-panel")).not.toBeInTheDocument();
   });
 
+  it("移动端侧栏使用完整抽屉而不是 collapsed 空壳", () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => ({
+        matches: true,
+        media: "(max-width: 900px)",
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }))
+    );
+
+    render(<App />);
+    const shell = screen.getByTestId("app-shell");
+    const sidebar = screen.getByTestId("sidebar");
+    expect(sidebar).not.toHaveClass("collapsed");
+    expect(shell).not.toHaveClass("mobile-sidebar-open");
+
+    fireEvent.click(screen.getByTitle("收起侧边栏"));
+    expect(shell).toHaveClass("mobile-sidebar-open");
+    expect(sidebar).not.toHaveClass("collapsed");
+    expect(screen.getByTestId("sidebar-scrim")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("sidebar-scrim"));
+    expect(shell).not.toHaveClass("mobile-sidebar-open");
+    expect(screen.queryByTestId("sidebar-scrim")).toBeNull();
+  });
+
   it("SSE 事件驱动：sessions_updated → 会话列表刷新", async () => {
     // jsdom 无 EventSource → 注入桩（对齐后端 event: sessions_updated 命名帧）
     const eventTarget = new EventTarget();
