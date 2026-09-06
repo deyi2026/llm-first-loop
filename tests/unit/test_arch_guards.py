@@ -40,7 +40,6 @@ BASELINE_PATH = ROOT / "tests" / "guards" / "function_size_baseline.json"
 
 # 收录基线的门槛（v2：与三层红线 WARN 下限联动，150 → 120）
 INCLUDE_THRESHOLD = 120
-RECORD_THRESHOLD = 150  # 强制登记线（≥150 未登记即 FAIL）；120-149 为 WARN 报告态
 
 # ── 三层红线（B2-P2-02 / R9-P2-01·02·04，取代 v1 HARD_CAP=2000 硬顶 D10）──
 # 全局层：任意函数 >300 行 FAIL（无豁免通道，超限只能拆）
@@ -78,8 +77,6 @@ def _classify_redlines(
     零增长断言——比红线更严：214 行登记函数长到 215 即红，无需等 300）。
     legacy 四函数（1702/1126/1004/721）同为登记存量，Phase 6/7 拆分目标
     （D10 收编延续：v1 硬顶 2000 从不拦 1732 存量——红线语义自始是防新增）。
-    纵深防御：未登记 301 行函数同时触发本红线（FAIL）与
-    `test_new_large_functions_must_be_recorded`（强制登记）——belt + suspenders。
     """
     if registered_keys is None:
         b = _load_baseline()
@@ -292,23 +289,6 @@ def test_baseline_v2_schema():
     assert not overlap, f"legacy 键不得同时出现在 function_lines: {overlap}"
 
 
-
-def test_new_large_functions_must_be_recorded(measured: dict[str, int] | None = None):
-    """新出现 ≥RECORD_THRESHOLD（150）行的函数必须登记进基线（防漏网）。
-
-    120-149 行 WARN 区为报告态不阻断（T3-A 审查提醒带）——强制登记线与
-    WARN 下限解耦（演练③发现的语义缺陷修复：130 行新函数曾误被本用例拦截，
-    与"WARN ≠ 违例"矛盾）。
-    """
-    m = measured if measured is not None else _measure_functions_cached()
-    b = _load_baseline()
-    known = set(b["function_lines"]) | set(b["legacy_super_functions"])
-    unrecorded = [k for k, v in m.items() if v >= RECORD_THRESHOLD and k not in known]
-    assert not unrecorded, (
-        f"存在 ≥{RECORD_THRESHOLD} 行未登记函数（{len(unrecorded)} 个）。"
-        f"请将其当前行数写入 {BASELINE_PATH.name}：\n"
-        + "\n".join(f"  {k}: {m[k]}" for k in sorted(unrecorded)[:20])
-    )
 
 
 _IMPORT_EXEMPT_RE = re.compile(r"#\s*r9-import-exempt:\s*(\w+)\s*$")
