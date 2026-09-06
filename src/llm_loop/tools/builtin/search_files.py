@@ -31,11 +31,17 @@ class SearchFilesTool:
         "properties": {
             "pattern": {
                 "type": "string",
-                "description": "文件名 glob 模式（如 '*.py'、'test_*.py'、'**/models/*.py'）；与 content 二选一",
+                "description": (
+                    "文件名/相对路径 glob（如 '*.py'、'test_*.py'、'**/models/*.py'）；"
+                    "单独提供时按文件名搜索；与 content 同时提供时先按 pattern 限定候选文件，再在其中搜索 content"
+                ),
             },
             "content": {
                 "type": "string",
-                "description": "内容关键词（正则，如 'def main'、'history_budget'）；与 pattern 二选一",
+                "description": (
+                    "内容正则（如 'def main'、'history_budget'）；单独提供时搜索全部候选文件；"
+                    "与 pattern 同时提供时只搜索匹配 pattern 的文件"
+                ),
             },
             "root": {
                 "type": "string",
@@ -144,6 +150,9 @@ class SearchFilesTool:
                     dirnames[:] = [d for d in dirnames if d not in _ignore_dirs]
                     for fn in filenames:
                         fp = Path(dirpath) / fn
+                        rel = fp.relative_to(base)
+                        if pattern and not (fnmatch.fnmatch(fn, pattern) or rel.match(pattern)):
+                            continue
                         try:
                             if fp.stat().st_size > 2 * 1024 * 1024:
                                 continue  # 跳过 >2MB 大文件（防卡）
@@ -195,7 +204,7 @@ class SearchFilesTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
-        mode = "内容" if content else "文件名"
+        mode = "文件名+内容" if pattern and content else ("内容" if content else "文件名")
         body = f"[search_files] {mode}搜索命中 {len(results)} 条（截断显示前 {min(len(results), max_results)}）:\n"
         body += "\n".join(results[:max_results])
         if len(results) > max_results:

@@ -36,6 +36,18 @@ def test_content_search(tmp_path):
     assert "README.md:2:" in r.content
 
 
+def test_pattern_and_content_scope_content_search(tmp_path):
+    """pattern+content 表示在 glob 命中的文件中搜内容，而不是静默忽略 pattern。"""
+    root = _mk_project(tmp_path)
+    (root / "src" / "pkg" / "match.py").write_text("keyword_probe\n", encoding="utf-8")
+    tool = SearchFilesTool()
+    r = tool.execute(root=str(root), pattern="*.py", content="keyword_probe")
+    assert r.status.value == "success"
+    assert "src/pkg/match.py:1:" in r.content
+    assert "README.md" not in r.content
+    assert "文件名+内容搜索" in r.content
+
+
 def test_ignore_git_dir(tmp_path):
     """忽略 .git: 搜索内容 'ignore me' 不应命中（.git 被排除）."""
     tool = SearchFilesTool()
