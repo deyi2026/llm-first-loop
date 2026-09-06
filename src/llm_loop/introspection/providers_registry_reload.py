@@ -9,11 +9,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    from llm_loop.config import Settings
-    from llm_loop.llm.pool import ModelClientPool
+from llm_loop.config import Settings
+from llm_loop.llm.pool import ModelClientPool
+from llm_loop.llm.providers import ProviderRegistry
 
 
 def refresh_provider_registry(
@@ -21,7 +21,7 @@ def refresh_provider_registry(
     settings: Settings,
     *,
     re_read_settings: bool = True,
-) -> tuple[str, object]:
+) -> tuple[str, ProviderRegistry]:
     """刷新 provider 注册表: 重读 env + data/providers.json → 重建 ProviderRegistry.
 
     Args:
@@ -41,8 +41,9 @@ def refresh_provider_registry(
     """
     from llm_loop.llm.providers import load_registry as _load_registry
 
-    old_provider_count = len(pool.registry.providers)
-    old_model_count = sum(len(spec.models) for spec in pool.registry.providers.values())
+    old_registry = pool.registry_snapshot()
+    old_provider_count = len(old_registry.providers)
+    old_model_count = sum(len(spec.models) for spec in old_registry.providers.values())
     try:
         # 重新读取 env + providers.json（生产路径走 load_registry 优先级链）
         if re_read_settings:
@@ -68,12 +69,13 @@ def refresh_provider_registry(
                 f"模型 {old_model_count}→{new_model_count}（其中包含回落 L0 合成）。"
             )
         else:
-            # EVO-20260816-ff1e36e8（回执分级声明）: provider 级 history_budget_chars 变更
-            # 仅重建 registry，不作用于运行中引擎的实际预算计算（实证: refresh 后
-            # request.meta budget 仍为旧值）——回执如实标注"需重启生效"，避免误导。
+            # Provider-level history budget participates in routed-model budget
+            # calculation through the exact registry snapshot. Refreshed override/
+            # fallback routes see it immediately; the shared default route remains
+            # intentionally bound to its startup registry snapshot until restart.
             budget_changes = []
-            for pid in set(pool.registry.providers) | set(new_registry.providers):
-                old_spec = pool.registry.providers.get(pid)
+            for pid in set(old_registry.providers) | set(new_registry.providers):
+                old_spec = old_registry.providers.get(pid)
                 new_spec = new_registry.providers.get(pid)
                 old_b = getattr(old_spec, "history_budget_chars", None) if old_spec else None
                 new_b = getattr(new_spec, "history_budget_chars", None) if new_spec else None
@@ -84,7 +86,8 @@ def refresh_provider_registry(
                 budget_note = (
                     " ⚠️ 其中 provider 级 history_budget_chars 有变更（"
                     + "、".join(budget_changes)
-                    + "），该字段仅重建注册表、运行中引擎不生效，需重启进程生效。"
+                    + "）；新 override/fallback 路由按新 registry 即时计算，"
+                    "默认路由仍绑定启动快照，需重启后才使用新值。"
                 )
             msg = (
                 f"[重载完成] 模型目录已从 {old_provider_count} 个 provider / {old_model_count} 个模型 "
@@ -98,7 +101,7 @@ def refresh_provider_registry(
             f" 当前保持旧注册表 ({old_provider_count} 个 provider / {old_model_count} 个模型)。"
         )
         # 失败: 返回原 registry (调用方不应应用 new_registry)
-        return msg, pool.registry
+        return msg, old_registry
 
 
 def install_refresh_executor(engine: object) -> None:
@@ -126,7 +129,8 @@ def install_refresh_executor(engine: object) -> None:
         except Exception as exc:  # noqa: BLE001 — env/settings 读取失败如实回执，不动 registry
             return f"[重载失败] 配置读取失败: {type(exc).__name__}: {exc}。当前保持旧注册表与旧凭据。"
 
-        old_registry = model_pool.registry
+        snapshot_fn = getattr(model_pool, "registry_snapshot", None)
+        old_registry = snapshot_fn() if callable(snapshot_fn) else model_pool.registry
         msg, new_registry = refresh_provider_registry(
             model_pool, new_settings, re_read_settings=False
         )
@@ -179,6 +183,10 @@ def install_refresh_executor(engine: object) -> None:
                 if new_val and getattr(default_client, attr, None) != new_val:
                     changed.append(attr)
 
+        default_contract_note = (
+            "默认路由完整 provider/model contract 绑定启动快照；即使仅 providers.json "
+            "中的 context/max_tokens/reasoning/tool-choice 等元数据变化，也需重启后作用于默认路由。"
+        )
         if changed:
             hot_note = (
                 "⚠️ 默认 client 配置检测到变更（字段: "
@@ -186,11 +194,11 @@ def install_refresh_executor(engine: object) -> None:
                 + "）；为保证在途请求与底层连接配置一致，本次未原地热改，需重启进程生效。"
             )
         else:
-            hot_note = "默认 client 配置已核验与新配置一致（无需变更）。"
+            hot_note = "默认 client 的 env 基础字段已核验与新配置一致。"
         restart_note = (
             "其余 Settings 字段为启动时装配（冻结），变更需重启进程生效；"
             "运行参数（max_iterations/timeout_s/history_budget）请用 adjust_strategy 即时调整。"
         )
-        return f"{msg} {hot_note}{summary_note}{restart_note}"
+        return f"{msg} {hot_note}{default_contract_note}{summary_note}{restart_note}"
 
     ctx.refresh_executor = _refresh_executor

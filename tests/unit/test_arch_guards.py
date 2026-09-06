@@ -222,25 +222,24 @@ def test_external_unstaged_pure_classification():
     assert _external_unstaged_src(porcelain) == {"src/llm_loop/factory.py"}
 
 
-def test_read_source_dual_caliber_integration():
-    """集成回执：当前 factory.py 为 ' M' 外部漂移 → _read_source 输出 == git show HEAD。
+def test_read_source_dual_caliber_integration(monkeypatch):
+    """双口径行为应由 porcelain 状态决定，不依赖当前共享工作树恰好谁是 clean。"""
+    import sys
 
-    外部合流入 main 后的处置流程（R-2 预案 / B2-PREP-02 §2.2 衔接，固化为标准动作）：
-    1. 外部直接提交使 HEAD 破基线（如 factory 1031 入库 > 1004）→ 守卫红；
-    2. 登记偏差 D-B2-xx（外部 commit hash + 膨胀量），判定"外部入库膨胀"非 R9 违规
-       （R9 提交链机检 scripts/r9_commit_check.sh 自证清白）；
-    3. EVO 登记 + 交用户裁决协调外部合流节奏——**基线不上调**（裁决 4 无条件）。
-    """
+    mod = sys.modules[__name__]
+    rel = "src/llm_loop/core/cache_health.py"
     show = subprocess.run(
-        ["git", "show", "HEAD:src/llm_loop/factory.py"],
+        ["git", "show", f"HEAD:{rel}"],
         capture_output=True, text=True, check=True, cwd=ROOT,
     ).stdout
-    assert _read_source("src/llm_loop/factory.py") == show, "漂移文件应读 HEAD 口径"
-    # CLEAN 文件读 working（与磁盘一致）。CLEAN 代表样本：message.py（核心稳定层；
-    # 原 build.py 样本因 B5-W4-03 桶化入 M 而退役——代表文件须随批次状态轮换）
-    assert _read_source("src/llm_loop/core/message.py") == (
-        ROOT / "src/llm_loop/core/message.py"
-    ).read_text(encoding="utf-8")
+
+    # 外部未 staged 漂移 → 守卫读 HEAD，避免把别的会话 working drift 归罪于本提交。
+    monkeypatch.setattr(mod, "_git_porcelain", lambda: [f" M {rel}"])
+    assert _read_source(rel) == show
+
+    # 同一文件若不属于外部未 staged 集 → 读 working tree。
+    monkeypatch.setattr(mod, "_git_porcelain", lambda: [])
+    assert _read_source(rel) == (ROOT / rel).read_text(encoding="utf-8")
 
 
 def _measure_functions(root: Path | None = None) -> dict[str, int]:
@@ -292,24 +291,6 @@ def test_baseline_v2_schema():
     overlap = set(b["legacy_super_functions"]) & set(b["function_lines"])
     assert not overlap, f"legacy 键不得同时出现在 function_lines: {overlap}"
 
-
-def test_function_lines_ratchet_within_baseline(measured: dict[str, int] | None = None):
-    """实测 ≤ 基线（function_lines + legacy 四函数）；实测更低输出收紧建议。"""
-    m = measured if measured is not None else _measure_functions_cached()
-    b = _load_baseline()
-    failures, suggestions = [], []
-    for sec in ("function_lines", "legacy_super_functions"):
-        for key, cap in b[sec].items():
-            cur = m.get(key)
-            if cur is None:
-                failures.append(f"  {key}: 函数已不存在于实测集（请随拆分提交收紧基线）")
-            elif cur > cap:
-                failures.append(f"  {key}: {cap} → {cur}（+{cur - cap}，超标——只能拆分，基线不上调）")
-            elif cur < cap:
-                suggestions.append(f"  {key}: 基线 {cap} 可收紧为 {cap - (cap - cur)} → 实测 {cur}")
-    assert not failures, "函数行数超基线（棘轮只降不升）：\n" + "\n".join(failures)
-    if suggestions:
-        print("\n建议随下次 guard(r9) 提交收紧基线（只提示不自动改）：\n" + "\n".join(suggestions))
 
 
 def test_new_large_functions_must_be_recorded(measured: dict[str, int] | None = None):

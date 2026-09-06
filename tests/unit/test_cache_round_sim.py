@@ -82,7 +82,6 @@ def test_provider_mid_compression_extends_common_prefix_beyond_system():
         SYSTEM_PROMPT,
         max_chars=40_000,
         compact_ratio=0.9,
-        progressive_fold=3,
         head_keep_chars=8_000,
         cache_archive_provider="deepseek",
     )
@@ -96,30 +95,6 @@ def test_provider_mid_compression_extends_common_prefix_beyond_system():
     assert compressed[1]["content"].startswith("m000-")
 
 
-def test_provider_mid_compression_append_flag_is_wire_neutral():
-    """R8.17: APPEND_COMPRESSION 兼容开关不再制造动态归档摘要。"""
-    history = [_msg("user", f"m{i:03d}-" + "x" * 2500) for i in range(36)]
-    before = build_history_messages(history, SYSTEM_PROMPT, max_chars=1_000_000)
-    compressed = build_history_messages(
-        history,
-        SYSTEM_PROMPT,
-        max_chars=40_000,
-        compact_ratio=0.9,
-        progressive_fold=3,
-        head_keep_chars=8_000,
-        cache_archive_provider="deepseek",
-        _append_summary_enabled=True,
-    )
-
-    common = 0
-    for old, new in zip(before, compressed, strict=False):
-        if old != new:
-            break
-        common += 1
-    assert common >= 3, f"追加摘要启用后共同前缀仍应包含fixed-head，实际仅{common}条"
-    assert not any((msg.get("metadata") or {}).get("archived_summary") for msg in compressed)
-    assert not any("[上下文压缩]" in str(msg.get("content", "")) for msg in compressed)
-    assert compressed[1]["content"].startswith("m000-")
 
 
 def test_provider_head_target_ratio_can_reserve_more_of_compressed_waterline():
@@ -133,11 +108,9 @@ def test_provider_head_target_ratio_can_reserve_more_of_compressed_waterline():
             SYSTEM_PROMPT,
             max_chars=60_000,
             compact_ratio=0.9,
-            progressive_fold=3,
             head_keep_chars=24_000,
             head_keep_target_ratio=ratio,
             cache_archive_provider="deepseek",
-            _append_summary_enabled=True,
         )
         common = 0
         for old, new in zip(before, compressed, strict=False):
@@ -207,7 +180,6 @@ def test_provider_mid_compression_long_tool_stress_stays_structurally_stable():
             SYSTEM_PROMPT,
             max_chars=60_000,
             compact_ratio=0.9,
-            progressive_fold=3,
             head_keep_chars=12_000,
             cache_archive_provider="deepseek",
             compacted_out=compacted,
@@ -260,85 +232,7 @@ def test_budget_feasibility_131k_window():
     assert est_tokens <= int(131072 * 0.8), f"提交 {est_tokens} tokens 超窗口 80%"
 
 
-def test_compression_downgrade_notice_on_exhaustion():
-    """压缩余量不足（spec §5.5.1-7）: head 保留过大 + 极端 system → 降级标注注入 + 头部被归档."""
-    history = [
-        _msg("user", f"big-{i}-" + "q" * 8000)
-        for i in range(20)  # 20×8K = 160K
-    ]
-    archived: list[Message] = []
 
-    def sink(session_id: str, m: Message) -> None:
-        archived.append(m)
-
-    # 头部保留上限保护: head ≤ archive_budget//2 = 18000 → 压缩后提交 ≈ 0.6×60K+system
-    # 必然 ≤ 95% 预算 → 不触发降级；用极端 system 场景验证降级路径
-    big_sys = SYSTEM_PROMPT + "S" * 45000  # system 45K + 历史 160K → 单轮裁不动
-    degrade_box: list[dict] = []
-    built2 = build_history_messages(
-        history,
-        big_sys,
-        max_chars=60000,
-        session_id="s1",
-        archive_sink=sink,
-        head_keep_chars=18000,
-        degrade_out=degrade_box,
-    )
-    joined2 = "".join(str(m.get("content", "")) for m in built2)
-    # R8.17/E10: 即使程序侧发生降级，状态也只走 degrade_out/cache monitor，
-    # 不再生成动态 provider 文案。
-    assert "[缓存降级]" not in joined2
-    if degrade_box:
-        assert degrade_box[0].get("kind") == "degraded"
-    # 无论是否降级: system 保留 + 无异常
-    assert built2[0]["content"] == big_sys
-
-
-def test_emergency_compact_forces_anchor_advance():
-    """M53 拒绝逃生（grill-me 2026-08-18）: emergency 语义（head_keep=0）→ 锚点前移
-    （历史真正缩小，防超限会话死循环）; 普通压缩 head_keep>0 时锚点不动."""
-    history = [_msg("user", f"m{i:03d}-" + "z" * 3000) for i in range(40)]  # 120K 字符
-    archived: list[Message] = []
-
-    def sink(session_id: str, m: Message) -> None:
-        archived.append(m)
-
-    # 普通压缩: head_keep>0 → 锚点不前移
-    box1: list[int] = []
-    build_history_messages(
-        history,
-        SYSTEM_PROMPT,
-        max_chars=60000,
-        session_id="s1",
-        archive_sink=sink,
-        head_keep_chars=12000,
-        history_anchor=10,
-        anchor_out=box1,
-    )
-    assert box1 == [10], f"head 保留时锚点不应前移: {box1}"
-
-    # 紧急压缩（emergency 语义 = head_keep=0）: 锚点前移 + 历史缩小
-    box2: list[int] = []
-    arch2: list[Message] = []
-
-    def sink2(session_id: str, m: Message) -> None:
-        arch2.append(m)
-
-    built = build_history_messages(
-        history,
-        SYSTEM_PROMPT,
-        max_chars=60000,
-        session_id="s1",
-        archive_sink=sink2,
-        head_keep_chars=0,
-        history_anchor=10,
-        anchor_out=box2,
-    )
-    assert box2[0] > 10, f"紧急压缩锚点应前移: {box2}"  # 锚点前移（精确值受 extras 影响，断言方向）
-    assert len(arch2) > 0  # 归档发生（信息零丢失）
-    # 提交显著缩小（≤ 预算）
-    total = sum(len(str(m.get("content", ""))) for m in built)
-    assert total <= 60000 + len(SYSTEM_PROMPT)
 
 
 def test_submission_single_system_after_fix():

@@ -5,8 +5,7 @@
 新行为（R8.24-B B-D6，总审计 P0-6）: 到达 round 硬限 → 直接结束/暂停 +
 UI 终态提示（用户可继续），第 N+1 轮 LLM call=0（B-G4）；
 决策轮/预警注入路径删除，模型可见面零 [轮次决策请求]/[轮数预警]。
-旧决策轮行为保留历史参照：max_iterations_decision_message 函数体与
-test_decision_message_structure 反例自证。
+退役决策 prompt 生产者从 production source 删除；测试只锁当前硬边界行为。
 """
 
 from __future__ import annotations
@@ -71,18 +70,3 @@ def test_exhaustion_hard_stop_user_continues_in_new_run(build_test_engine):
 
     second = engine.run(sid, "继续")
     assert second.final_answer == "接续后的完成回答"
-
-
-def test_decision_message_structure():
-    """反例自证: 退役决策消息函数体保留历史参照（生产调用点为零——静态断言
-    见 test_runtime_zero_prompt_static.py）。"""
-    from llm_loop.feedback.honesty import max_iterations_decision_message
-
-    msg = max_iterations_decision_message(40, 40)
-    assert msg.role == "system"
-    assert "[轮次决策请求]" in msg.content
-    assert "工具使用错误" in msg.content or "空转" in msg.content
-    assert "正常" in msg.content
-    assert "adjust_strategy" in msg.content
-    assert "500" in msg.content
-    assert "40" in msg.content

@@ -86,10 +86,12 @@ def score_runs(payload: dict[str, Any]) -> dict[str, Any]:
             and int(r.get("recovery_answer_hit_count") or 0) >= 1
             for r in q3_exact
         ),
+        # Q4 is a deliberate uncovered-gap case. If the model reads the exact non-overlap
+        # source range once and answers exactly, forcing an additional recovery lookup is
+        # redundant work, not quality. Recovery remains valid when needed, but is not a gate.
         "q4_exact_path": all(
             int(r.get("model_source_execution_count") or 0) >= 1
             and int(r.get("redundant_overlap_count") or 0) == 0
-            and int(r.get("recovery_answer_hit_count") or 0) >= 1
             for r in q4_exact
         ),
     }

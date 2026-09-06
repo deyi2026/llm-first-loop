@@ -54,12 +54,23 @@ def test_factory_enforce_installs_canonical_capture_but_default_remains_opt_in(t
 def test_factory_shadow_dual_writes_current_owner_without_changing_visible_output(tmp_path):
     from llm_loop.factory import build_engine
 
+    control = build_engine(_settings(tmp_path / "control", mode="off"))
     settings = _settings(tmp_path, mode="shadow")
     engine = build_engine(settings)
     assert settings.to_status_dict()["evidence_mode"] == "shadow"
     path = tmp_path / "large.txt"
     marker = "FACTORY_SHADOW_MIDDLE_MARKER"
     path.write_text("A" * 5000 + marker + "Z" * 5000, encoding="utf-8")
+
+    control_sid = current_session_id.set("session-control")
+    control_ws = current_workspace_root.set(str(tmp_path))
+    try:
+        control_result = control.registry.execute(
+            ToolCall(id="call-control", name="read_file", arguments={"path": str(path)})
+        )
+    finally:
+        current_workspace_root.reset(control_ws)
+        current_session_id.reset(control_sid)
 
     sid_token = current_session_id.set("session-shadow")
     ws_token = current_workspace_root.set(str(tmp_path))
@@ -71,8 +82,11 @@ def test_factory_shadow_dual_writes_current_owner_without_changing_visible_outpu
         current_workspace_root.reset(ws_token)
         current_session_id.reset(sid_token)
 
-    assert "[输出已截断]" in result.content
-    assert marker not in result.content
+    # Shadow capture must not change ordinary tool-visible bytes.  Compare directly
+    # with an otherwise-equivalent off-mode factory path instead of inferring parity
+    # from one marker/budget assumption.
+    assert result.content == control_result.content
+    assert marker in result.content
     owner = OwnerScope(workspace_id=str(tmp_path.resolve()), session_id="session-shadow")
     ledger = EvidenceLedgerStore(settings.evidence_dir / "ledger")
     records = ledger.list_recent(owner, limit=10)

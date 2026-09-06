@@ -43,7 +43,13 @@ _MARKER_RE = re.compile(
     r"\[输出已截断\]\s*完整\s*(?P<total>\d+)\s*字符，"
     r"仅首\s*(?P<head>\d+)\s*\+\s*尾\s*(?P<tail>\d+)"
 )
-_PATH_RE = re.compile(r"read_file\s+读取落盘全文\s+(?P<path>.+?\.log)(?=。|$)")
+# Accept both pre-agency legacy wording and the current truthful durable-dump marker.
+# The migrator is historical compatibility; it must not force current tool output to
+# keep obsolete prompt guidance merely so old parser regexes continue to match.
+_PATH_RE = re.compile(
+    r"(?:read_file\s+读取落盘全文\s+|完整原文已落盘:\s*)"
+    r"(?P<path>.+?\.log)(?=。|；|$)"
+)
 _DIGEST_NAME_RE = re.compile(r"^(?P<digest>[0-9a-f]{16})_")
 
 

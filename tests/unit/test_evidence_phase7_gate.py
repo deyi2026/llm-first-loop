@@ -109,7 +109,9 @@ def test_r0_09_provider_projection_switch_keeps_exact_evidence_set(tmp_path):
     refs_deepseek_again = {r.evidence_ref.ref for r in ledger.list_recent(owner, limit=100)}
     blobs_after = {r.evidence_ref.ref: r.blob_ref.ref for r in ledger.list_recent(owner, limit=100)}
 
-    assert "MINIMAX_RAW_ONLY" not in str(deepseek)
+    # Legacy provider-only compaction markers are stale once a concrete model/budget
+    # contract is known, so the message is deterministically reopened.
+    assert "MINIMAX_RAW_ONLY" in str(deepseek)
     assert "MINIMAX_RAW_ONLY" in str(minimax)
     assert refs_before == refs_deepseek == refs_minimax == refs_deepseek_again
     assert blobs_before == blobs_after

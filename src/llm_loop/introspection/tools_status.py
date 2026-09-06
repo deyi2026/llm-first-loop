@@ -2,6 +2,10 @@
 
 - architecture_status: LLM 拉取架构运行状态（通道一）
 - search_archive / search_records: 统一检索（压缩档案 / 历史记录·记忆·档案）
+
+R3（tasks §3）: search_records 工具归因闭环——limit 收口、typed 归因捕获链
+（InvalidSearchKindError → [参数错误] / 其余 → [内部错误] 脱敏回执）、三态回执
+分流与 [检索诊断] 段渲染（诊断透传展示链，全坏 ≠ 真实零命中 ≠ 扫描失败）。
 """
 
 from __future__ import annotations
@@ -14,10 +18,17 @@ from typing import Any
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.introspection.search import _VALID_KINDS, InvalidSearchKindError
 
+# R3(P1-2): hint 与 _VALID_KINDS 同源生成（事实源唯一，消除手写清单漂移；
+# 下划线名跨模块导入有 test_introspection.py:391 既有先例）
 _SEARCH_RECORDS_KIND_HINT = "/".join(sorted(_VALID_KINDS))
 
 
 def _sanitize_error_summary(exc: BaseException) -> str:
+    """[内部错误] 回执摘要：异常消息压缩单行 + home 前缀脱敏 + ≤300 字符.
+
+    脱敏与 store 层 ``_sanitize_trace`` 同口径（Path.home() 前缀 → ~，防
+    str(exc) 泄漏 /Users/... 绝对路径）；单行压缩天然无堆栈多行展开。
+    """
     line = " ".join(f"{exc}".split())
     home = str(Path.home())
     if home and home != "/":
@@ -26,6 +37,12 @@ def _sanitize_error_summary(exc: BaseException) -> str:
 
 
 def _read_last_diagnostics(search_fn: Any) -> dict | None:
+    """读取检索实现最近一次经验库检索诊断四要素（duck-typing，缺失优雅降级 None，D11）.
+
+    兼容注入形态：绑定方法（经 ``__self__`` 到达检索器）、直接暴露
+    ``last_diagnostics`` 属性的适配器对象、其它未知实现（None → 无诊断段）。
+    工具层不 import 任何具体检索器类型——search_fn 注入抽象不被破坏。
+    """
     owner = getattr(search_fn, "__self__", None)
     for obj in (owner, search_fn):
         diag = getattr(obj, "last_diagnostics", None)
@@ -35,6 +52,11 @@ def _read_last_diagnostics(search_fn: Any) -> dict | None:
 
 
 def _parse_limit(args: dict) -> int | ToolResult:
+    """R3(P1-3): limit 收口——非法值返回 [参数错误] 回执，不再以未分类异常逃逸.
+
+    None/空串 → 默认 10（既有缺省语义）；其余经 int()，(TypeError, ValueError)
+    → [参数错误] 三段式回执。
+    """
     raw = args.get("limit")
     if raw is None or raw == "":
         return 10
@@ -54,6 +76,7 @@ def _parse_limit(args: dict) -> int | ToolResult:
 
 
 def _kind_param_error_receipt(exc: InvalidSearchKindError) -> ToolResult:
+    """R3(P1-2/D5): typed 归因——仅 kind 校验异常归 [参数错误]（文案结构同既有契约）."""
     return ToolResult(
         status=ToolResultStatus.FAILURE,
         content=(
@@ -66,6 +89,7 @@ def _kind_param_error_receipt(exc: InvalidSearchKindError) -> ToolResult:
 
 
 def _internal_error_receipt(kind: str, exc: BaseException) -> ToolResult:
+    """R3(P1-2/D5): 执行期任意异常归 [内部错误]（脱敏摘要、无堆栈无绝对路径、可行建议）."""
     return ToolResult(
         status=ToolResultStatus.FAILURE,
         content=(
@@ -79,6 +103,7 @@ def _internal_error_receipt(kind: str, exc: BaseException) -> ToolResult:
 
 
 def _scan_error_receipt(kind: str, scan_error: str) -> ToolResult:
+    """R3(P0-4): 扫描失败态 FAILURE 回执（不伪装成业务零结果）."""
     return ToolResult(
         status=ToolResultStatus.FAILURE,
         content=(
@@ -154,6 +179,15 @@ def run_status(ctx: Any, status_provider: Any, args: dict) -> ToolResult:
             + "。完整维度: " + ", ".join(_ALL_DIMS)
             + "。按 dimensions=<维度> 分页查询（如 architecture_status(dimensions=[\"architecture_config\"])）。"
         )
+    _pending = snap.get("pending_actions", {}) if isinstance(snap, dict) else {}
+    _raw_requirements = (
+        _pending.get("capability_requirements", ())
+        if isinstance(_pending, dict)
+        else ()
+    )
+    _capability_requirements = tuple(
+        str(name) for name in (_raw_requirements or ()) if str(name).strip()
+    )
     text = json.dumps(snap, ensure_ascii=False, indent=2)
     # M19 FIX-03: 8000 字符静默截断如实标注（标注拼接在截断段之后，保证标注可见）
     # EVO-20260826: 默认精简视图后截断罕见（仅当单维度本身极大），保留作安全网。
@@ -167,12 +201,14 @@ def run_status(ctx: Any, status_provider: Any, args: dict) -> ToolResult:
             tool_call_id="",
             tool_name="architecture_status",
             raw_observation=text if current_evidence_shadow_enabled.get() else None,
+            capability_requirements=_capability_requirements,
         )
     return ToolResult(
         status=ToolResultStatus.SUCCESS,
         content=text,
         tool_call_id="",
         tool_name="architecture_status",
+        capability_requirements=_capability_requirements,
     )
 
 
@@ -333,6 +369,7 @@ def run_search_records(ctx: Any, search_fn: Any, args: dict, session_id_fn: Any)
         )
     kind = str(args.get("kind", "all")).strip()
     query = str(args.get("query", "")).strip()
+    # R3(P1-3): limit 收口（原 int() 位于归因 try 之外，非法值无回执形态直接逃逸）
     parsed_limit = _parse_limit(args)
     if isinstance(parsed_limit, ToolResult):
         return parsed_limit
@@ -409,9 +446,12 @@ def run_search_records(ctx: Any, search_fn: Any, args: dict, session_id_fn: Any)
     try:
         result = search_fn(kind=kind, query=query, limit=limit, session_id=session_id_fn())
     except InvalidSearchKindError as exc:
+        # R3(P1-2/D5): typed 归因——异常类型即来源，仅 kind 校验异常归 [参数错误]
+        #（捕获顺序：typed 在前、泛化在后）
         return _kind_param_error_receipt(exc)
-    except Exception as exc:  # noqa: BLE001 - execution failure is not a parameter fact
+    except Exception as exc:  # noqa: BLE001 — 执行期异常如实归因 [内部错误]，禁止伪装参数错误
         return _internal_error_receipt(kind, exc)
+    # R3(P0-3/P0-4): 三态回执分流 + [检索诊断] 段（诊断透传展示链）
     return _finalize_search_records(search_fn, kind, query, limit, result)
 
 
@@ -484,6 +524,15 @@ def _render_rule_record(record: dict, fallback_kind: str) -> str:
 def _finalize_search_records(
     search_fn: Any, kind: str, query: str, limit: int, result: list[dict]
 ) -> ToolResult:
+    """R3(P0-3/P0-4): 三态回执分流 + [检索诊断] 段渲染（降级诊断真正展示给模型）.
+
+    ①扫描失败（scan_error 非空）→ FAILURE（禁止伪装业务零结果）；
+    ②部分损坏零命中（skipped>0）→ SUCCESS + 跳过说明 + 诊断段（非"未找到匹配"式伪装）；
+    ③真实零命中 → 既有"未找到匹配"文案（唯一允许形态，健康态无诊断段零噪音）；
+    ④命中 → 既有展示链 + 尾部 [检索诊断]（仅非零要素出现）。
+    诊断经 duck-typing 读取（属性缺失优雅降级为既有回执形态），仅含计数与状态
+    标志，不携带被跳过文档文件名/路径/堆栈。
+    """
     diag = _read_last_diagnostics(search_fn)
     scan_error = diag.get("scan_error") if diag else None
     skipped = int(diag.get("skipped") or 0) if diag else 0
@@ -516,6 +565,7 @@ def _finalize_search_records(
             tool_call_id="",
             tool_name="search_records",
         )
+
     lines: list[str] = []
     raw_lines: list[str] = []
     for r in result[:limit]:
@@ -535,6 +585,7 @@ def _finalize_search_records(
         lines.append(prefix + summary[:200])
         raw_lines.append(prefix + summary)
     content = "[search_records] 命中 " + str(len(result)) + " 条:\n" + "\n".join(lines[:6])
+    # M19 FIX-02: 命中 > 展示数时如实标注（真实命中数 len(result)，非截断后计数）
     if len(result) > 6:
         content += (
             f"\n[仅显示前 6 条] 共 {len(result)} 条命中（limit={limit}）。"

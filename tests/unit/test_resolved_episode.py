@@ -491,8 +491,12 @@ def test_engine_second_run_retires_first_episode_but_episode_is_retrievable(tmp_
         str(m.get("content") or "") for m in calls[-1]
     )
     assert "SECOND-QUESTION" in second_run_payload
+    # Resolved episode retirement removes the old human/tool working set, but the
+    # immediately prior real model answer is intentionally rehydrated once as the
+    # adjacent continuity pair for the new human ingress.  This keeps a user's reply
+    # focused on what the model just said without reopening the retired episode.
     assert "FIRST-QUESTION-SECRET" not in second_run_payload
-    assert "FIRST-ANSWER-SECRET" not in second_run_payload
+    assert "FIRST-ANSWER-SECRET" in second_run_payload
     assert "FIRST-TOOL-SECRET" not in second_run_payload
 
     hits = episodes.search(sid, "FIRST-QUESTION-SECRET", 10)

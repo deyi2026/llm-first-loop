@@ -24,7 +24,7 @@ from llm_loop.core.message import ToolResult, ToolResultStatus
 
 CODE_REVIEW_TOOL_DEF: dict = {
     "name": "code_review",
-    "description": "多维代码审查工具（5维：正确性/安全/性能/测试/回归）。何时用: 实施完一段代码想自查/发现代码异味/提交前自查。何时不用: 仅查架构状态用 architecture_status；评估整个项目用 self_evaluate。失败对策: 无代码可审时如实返回空审查报告，不伪造审查结果。",
+    "description": "多维代码审查工具（5维：正确性/安全/性能/测试/回归）。何时用: 实施完一段代码想自查/发现代码异味/提交前自查。何时不用: 仅查系统状态或评估整个项目时，应使用对应的专用状态/评估能力。失败对策: 无代码可审时如实返回空审查报告，不伪造审查结果。",
     "parameters": {
         "type": "object",
         "properties": {

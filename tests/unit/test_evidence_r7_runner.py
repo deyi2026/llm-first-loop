@@ -35,7 +35,7 @@ def test_overlap_metric_distinguishes_gap_from_reacquisition() -> None:
     assert state.preacquire_interval_seeded is True
 
 
-def test_r7_dry_matrix_and_frozen_scorer_contract() -> None:
+def test_r7_dry_matrix_and_current_scorer_contract() -> None:
     rows = json.loads((ROOT / "tests/fixtures/evidence_r7/matrix_v1.json").read_text())["runs"]
     results = [execute_run(row, dry=True) for row in rows]
     assert len(results) == 24

@@ -154,6 +154,10 @@ class Session:
     # 锚定后历史起点固定（只追加不挤旧, 超预算优先降级中段）, system+历史前缀稳定 →
     # 引擎/服务端前缀缓存命中; 缺省向后兼容（旧 JSON 无键 → {}）
     history_anchors: dict[str, int] = field(default_factory=dict)
+    # P4: anchor 的生成 contract（provider_id → {version, model, effective_budget}）。
+    # 旧会话没有 provenance 时，当前 build 会把非零 legacy anchor 视为 stale 并按
+    # 当前模型/预算重算一次，避免 80K/100K 时代的锚点永久压制后续 1M 模型。
+    history_anchor_scopes: dict[str, dict] = field(default_factory=dict)
     # EVO-20260817-b6554376: 投影一致性门闸缓存行（provider_id → {ver, seq, built_hash, ts}）。
     # 精确水印哨兵：ver+seq 匹配而 built_hash 不同 = 非确定性构建/历史被改 → 告警。
     # 缺省向后兼容（旧 JSON 无键 → {}）
@@ -180,6 +184,7 @@ class Session:
             "pinned": self.pinned,
             "channel": self.channel,
             "history_anchors": self.history_anchors,
+            "history_anchor_scopes": self.history_anchor_scopes,
             "projection_guard": self.projection_guard,  # EVO-20260817-b6554376 投影门闸缓存行
             "fixed_summary": self.fixed_summary,        # 2026-08-21 追加式压缩: 核心固定摘要
             "summary_chain": self.summary_chain,        # 2026-08-21 追加式压缩: 增量摘要链
@@ -1047,6 +1052,8 @@ class SessionStore:
                 channel=data.get("channel", "web"),
                 # P1-10: history_anchors 缺省向后兼容（旧 JSON 无键 → {}）
                 history_anchors=data.get("history_anchors") or {},
+                # P4: legacy JSON 无 scope → 非零旧 anchor 在首次当前-contract build 重算。
+                history_anchor_scopes=data.get("history_anchor_scopes") or {},
                 # EVO-20260817-b6554376: projection_guard 缺省向后兼容（旧 JSON 无键 → {}）
                 projection_guard=data.get("projection_guard") or {},
                 # 2026-08-21 (追加式压缩, version 5): 摘要链缺省向后兼容（旧 JSON 无键 → 空）

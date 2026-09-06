@@ -10,7 +10,7 @@
 本测试覆盖四个层面：
 1. 属性 shim 机制隔离（contextvar 分桶单元验证）
 2. registry._session_id contextvar 优先 + 只读池传播
-3. 两会话并发 run 端到端：停滞状态互不污染、超长归档归属正确
+3. 两会话并发 run 端到端：停滞状态互不污染、工具证据归属正确
 4. switch_model override 绑定按会话解析（不互踩回调）
 """
 
@@ -105,7 +105,7 @@ def _make_files(tmp_path):
     small = tmp_path / "data" / "x.txt"
     small.write_text("小文件", encoding="utf-8")
     big = tmp_path / "data" / "y.txt"
-    big.write_text("y" * 13000, encoding="utf-8")  # 超 summary_threshold(12000，2026-08-15 新默认) 触发归档
+    big.write_text("y" * 13000, encoding="utf-8")  # below hard cap: exact tool evidence stays visible
 
 
 def test_concurrent_runs_isolated_state_and_archive(build_test_engine, tmp_path):
@@ -177,16 +177,15 @@ def test_concurrent_runs_isolated_state_and_archive(build_test_engine, tmp_path)
     assert engine._run_state_mgr._buckets[sid_a].stagnation_state["count"] >= 3
     assert engine._run_state_mgr._buckets[sid_b].stagnation_state["count"] <= 1
 
-    # B 的超长输出: 2026-08-18 truncate_output（TOOL_TRIM_MAX=3000）在工具内截断 +
-    # 完整输出落盘 DATA_DIR/audit/tool_outputs/——不再走 ArchiveStore 归档（原 archived_count
-    # 断言随截断机制同步；串台防护保留: B 的产物不得落入 A）
+    # Tool-level trim is default-off. Isolation test only cares that B's full tool
+    # evidence remains in B and never appears in A's archive/state.
     stats_a = engine.archive.stats(sid_a)
-    assert stats_a["archived_count"] == 0, f"B 的归档串台落入 A: {stats_a}"
+    assert stats_a["archived_count"] == 0, f"B 的产物串台落入 A: {stats_a}"
     sess_b = engine.session.load(sid_b)
     tool_msgs = [m for m in sess_b.messages if m.role == "tool"]
-    assert any("[输出已截断]" in (m.content or "") for m in tool_msgs), (
-        "B 的超长输出未截断（truncate_output 未生效）"
-    )
+    assert tool_msgs
+    assert not any("[输出已截断]" in (m.content or "") for m in tool_msgs)
+    assert any(m.tool_name == "read_file" for m in tool_msgs)
 
 
 # ── 4. switch_model override 绑定按会话解析 ──

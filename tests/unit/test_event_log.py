@@ -21,8 +21,12 @@ from llm_loop.event_log.model import (
     EVENT_CODEARTS_STATUS_SYNCED,
     EVENT_CODEARTS_STATUS_UNKNOWN,
     EVENT_CONTEXT_COMPRESSED,
+    EVENT_HISTORY_COMPACTION,
+    EVENT_HISTORY_COMPACTION_STATE_RESET,
     EVENT_INJECTION_PROFILE_SHADOW,
     EVENT_INTEROP_SPLICED,
+    EVENT_LLM_INTERRUPTED,
+    EVENT_LLM_PARTIAL_CHECKPOINT,
     EVENT_MESSAGE_APPENDED,
     EVENT_MESSAGE_CACHE_COMPACTED,
     EVENT_PROGRAM_RECOVERY,
@@ -32,6 +36,10 @@ from llm_loop.event_log.model import (
     EVENT_SESSION_CREATED,
     EVENT_SESSION_FORKED,
     EVENT_SESSION_META_CHANGED,
+    EVENT_TOOL_EXECUTION_DECLARED,
+    EVENT_TOOL_EXECUTION_FINISHED,
+    EVENT_TOOL_EXECUTION_RECEIPT_COMMITTED,
+    EVENT_TOOL_EXECUTION_STARTED,
     REGISTRY,
     Event,
     parse_event_line,
@@ -104,12 +112,20 @@ def test_registry_covers_registered_types_with_fields():
         EVENT_SESSION_CREATED,
         EVENT_MESSAGE_APPENDED,
         EVENT_CONTEXT_COMPRESSED,
+        EVENT_HISTORY_COMPACTION,
+        EVENT_HISTORY_COMPACTION_STATE_RESET,
         EVENT_MESSAGE_CACHE_COMPACTED,
         EVENT_SESSION_META_CHANGED,
         EVENT_SESSION_FORKED,
         EVENT_REQUEST_META,  # HARNESS-02: request.meta 请求快照
         EVENT_REQUEST_USAGE,  # DSH 借鉴: request.usage 响应 usage 明细
         EVENT_INTEROP_SPLICED,  # DSH 借鉴: interop.spliced 协调注入事件
+        EVENT_LLM_INTERRUPTED,
+        EVENT_LLM_PARTIAL_CHECKPOINT,
+        EVENT_TOOL_EXECUTION_DECLARED,
+        EVENT_TOOL_EXECUTION_STARTED,
+        EVENT_TOOL_EXECUTION_FINISHED,
+        EVENT_TOOL_EXECUTION_RECEIPT_COMMITTED,
         EVENT_INJECTION_PROFILE_SHADOW,  # R8: per-attempt shadow 注入 profile 归因
         EVENT_RUN_END,  # DSH 借鉴: run.end run 生命周期结束事件
         EVENT_PROGRAM_RECOVERY,  # R4: runtime-only recovery 的 session 审计事件
@@ -129,9 +145,44 @@ def test_registry_covers_registered_types_with_fields():
     comp_spec = REGISTRY.spec(EVENT_CONTEXT_COMPRESSED)
     assert comp_spec is not None
     assert {"archive_ref", "tool_call_id", "msg_seq", "chars"} <= set(comp_spec.fields)
+    history_compact_spec = REGISTRY.spec(EVENT_HISTORY_COMPACTION)
+    assert history_compact_spec is not None
+    assert {
+        "model", "provider_id", "compaction_epoch", "trigger",
+        "pre_history_chars", "pre_chars", "post_chars",
+        "effective_budget_chars", "compact_ratio", "trigger_limit_chars",
+        "trigger_excess_chars", "archive_target_ratio", "archive_target_chars",
+        "archived_count", "archived_group_count", "atomic_group_count",
+        "compaction_mode", "cache_boundary_mode", "cache_epoch_reset",
+        "anchor_before", "anchor_after", "anchor_moved",
+    } <= set(history_compact_spec.fields)
+    reset_spec = REGISTRY.spec(EVENT_HISTORY_COMPACTION_STATE_RESET)
+    assert reset_spec is not None
+    assert {
+        "model", "provider_id", "effective_budget", "legacy_anchor_reset",
+        "anchor_before", "reopened_marker_count", "reason",
+    } <= set(reset_spec.fields)
+    checkpoint_spec = REGISTRY.spec(EVENT_LLM_PARTIAL_CHECKPOINT)
+    assert checkpoint_spec is not None
+    assert {
+        "round", "provider", "model", "text_tail", "reasoning_tail",
+        "text_chars", "reasoning_chars", "partial_sha256",
+    } <= set(checkpoint_spec.fields)
+    interrupted_spec = REGISTRY.spec(EVENT_LLM_INTERRUPTED)
+    assert interrupted_spec is not None
+    assert {
+        "round", "reason", "error_digest", "text_tail", "reasoning_tail",
+        "partial_chars", "partial_sha256",
+    } <= set(interrupted_spec.fields)
     usage_spec = REGISTRY.spec(EVENT_REQUEST_USAGE)
     assert usage_spec is not None
-    assert {"tokens_in", "cache_hit", "cache_miss", "usage_available"} <= set(usage_spec.fields)
+    assert {
+        "tokens_in", "cache_hit", "cache_miss", "usage_available",
+        "cache_read_tokens", "uncached_prompt_tokens", "cache_hit_rate",
+        "context_window", "output_reserve_tokens", "context_headroom_tokens",
+        "context_used_ratio", "stable_prefix_fp", "prefix_changed",
+        "cache_prefix_epoch", "compaction_epoch", "runtime_pid",
+    } <= set(usage_spec.fields)
     spliced_spec = REGISTRY.spec(EVENT_INTEROP_SPLICED)
     assert spliced_spec is not None
     assert {"session_id", "count", "start", "sources", "content_preview"} <= set(spliced_spec.fields)
@@ -316,6 +367,65 @@ def test_request_meta_event_written_per_round(tmp_path):
     assert metas[1].payload["round"] == 2
     assert "tools_count" in metas[0].payload
     assert "budget" in metas[0].payload
+    assert "reasoning_capable" in metas[0].payload
+    assert "reasoning_control" in metas[0].payload
+    assert "reasoning_supported" in metas[0].payload
+
+
+def test_request_usage_separates_context_capacity_from_cache_reuse(tmp_path, monkeypatch):
+    """cached tokens 仍占物理窗口；headroom 只由 prompt + output reserve 决定。"""
+    from llm_loop.config import Settings
+    from llm_loop.core.loop.engine import LoopEngine
+    from llm_loop.core.session import SessionStore
+    from llm_loop.event_log.store import EventStore
+    from llm_loop.llm.client import LLMResponse
+    from llm_loop.tools.registry import ToolRegistry
+
+    class _Fake:
+        max_tokens = 200
+
+        def _resp(self):
+            return LLMResponse(
+                content="完成", tool_calls=[], provider="fake",
+                prompt_tokens=300, completion_tokens=10,
+                prompt_cache_hit_tokens=240,
+            )
+
+        def chat(self, messages, tools, **kw):
+            return self._resp()
+
+        def chat_stream(self, messages, tools, **kw):
+            def _gen():
+                yield from ()
+                return self._resp()
+            return _gen()
+
+    event_store = EventStore(tmp_path / "events")
+    store = SessionStore(tmp_path / "sessions", event_store=event_store)
+    settings = Settings(
+        llm_api_key="k", llm_base_url="https://x/v1", llm_model="m",
+        data_dir=str(tmp_path / "data"), extract_enabled=False, summary_mode="off",
+    )
+    engine = LoopEngine(
+        llm_client=_Fake(), registry=ToolRegistry(), memory=None, session=store,
+        settings=settings, event_store=event_store,
+    )
+    monkeypatch.setattr(engine._routing, "_current_context_limit", lambda *a, **k: 1000)
+    result = engine.run_single("任务")
+    usage = [e for e in event_store.read(result.session_id) if e.type == "request.usage"][-1].payload
+    assert usage["tokens_in"] == 300
+    assert usage["cache_read_tokens"] == 240
+    assert usage["uncached_prompt_tokens"] == 60
+    assert usage["cache_hit_rate"] == 0.8
+    assert usage["context_window"] == 1000
+    assert usage["output_reserve_tokens"] == 200
+    # 1000 - 300 - 200 = 500; cached 240 is NOT subtracted from capacity usage.
+    assert usage["context_headroom_tokens"] == 500
+    assert usage["context_used_ratio"] == 0.5
+    assert usage["prefix_changed"] is False
+    assert usage["cache_prefix_epoch"] == 0
+    assert usage["stable_prefix_fp"]
+    assert usage["runtime_pid"] == os.getpid()
 
 
 def test_request_meta_registered_replay_ignored(tmp_path):
@@ -349,6 +459,71 @@ def test_request_meta_registered_replay_ignored(tmp_path):
     assert view["session_id"] == sid  # 视图正常重建
     assert "unknown_event_types" not in view  # 已登记类型不记 unknown
     assert view["messages"] == []  # request.meta 不产生消息
+
+
+def test_compaction_state_reset_clears_legacy_marker_once_then_replays_new_scope(tmp_path):
+    """预算/模型 contract 变化先清旧 marker；本轮仍需压缩时再追加新 versioned marker。"""
+    from llm_loop.event_log.replay import replay_session
+    from llm_loop.event_log.store import EventStore
+
+    store = EventStore(tmp_path / "events")
+    sid = "s-compaction-contract-reset"
+    store.append(
+        sid,
+        EVENT_SESSION_CREATED,
+        {"version": 5, "title": "t", "status": "active"},
+    )
+    store.append(
+        sid,
+        EVENT_MESSAGE_APPENDED,
+        {"index": 0, "role": "assistant", "content": "old", "source": "user"},
+    )
+    # Legacy event: provider only, no model/budget provenance.
+    store.append(
+        sid,
+        EVENT_MESSAGE_CACHE_COMPACTED,
+        {"msg_seq": 0, "provider_id": "minimax"},
+    )
+    legacy = replay_session(list(store.read(sid)))
+    assert legacy["messages"][0]["metadata"]["cache_compacted_for"] == ["minimax"]
+
+    store.append(
+        sid,
+        EVENT_HISTORY_COMPACTION_STATE_RESET,
+        {
+            "model": "minimax/MiniMax-M3",
+            "provider_id": "minimax",
+            "effective_budget": 540_000,
+            "legacy_anchor_reset": False,
+            "anchor_before": 0,
+            "reopened_marker_count": 1,
+            "reason": "compaction_contract_changed",
+        },
+    )
+    reopened = replay_session(list(store.read(sid)))
+    assert "cache_compacted_for" not in reopened["messages"][0]["metadata"]
+
+    # If the current physical budget still requires compaction, the same build emits
+    # a fresh marker after reset. Replay must reconstruct only the new contract.
+    store.append(
+        sid,
+        EVENT_MESSAGE_CACHE_COMPACTED,
+        {
+            "msg_seq": 0,
+            "provider_id": "minimax",
+            "marker_version": 1,
+            "model": "minimax/MiniMax-M3",
+            "effective_budget": 540_000,
+        },
+    )
+    current = replay_session(list(store.read(sid)))
+    meta = current["messages"][0]["metadata"]
+    assert meta["cache_compacted_for"] == ["minimax"]
+    assert meta["cache_compaction_scope"]["minimax"] == {
+        "version": 1,
+        "model": "minimax/MiniMax-M3",
+        "effective_budget": 540_000,
+    }
 
 
 def test_long_answer_persist_uses_pathlib_and_is_content_stable(tmp_path):

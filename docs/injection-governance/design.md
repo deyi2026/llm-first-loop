@@ -91,23 +91,29 @@ R0 产物：`baseline.jsonl + baseline-manifest.json + report.md + frozen fixtur
 
 ## L2 结构治理（主力层）
 
-### L2-1 注入预算硬上限（程序强制）
+### L2-1 注入预算硬上限（历史方案；P1-C 已退役）
+
+> **P1-C 2026-09-04：**本节记录原 R2 设计，不再是生产契约。semantic `INJECTION_BUDGET_CHARS` / block priority / keep-drop 已删除；只保留更前置 prompt eligibility 与独立 physical context/window 资源预算。
 
 - 配置: `INJECTION_BUDGET_CHARS`（8,000 为初始候选，最终值由 R0 冻结）
 - 优先级（高→低）: 程序恢复任务 > 通知（声明/停滞）> 资料指针（记忆/经验）> 状态感知
 - 超限行为: 按优先级从低到高丢弃整块（不截断半块防语义破碎），每丢弃一块保留一条**非祈使**回执，例如 `[注入预算] <名称> 已省略（<N> 字符，ref=<ref>）`
 - 实现位置: `understand.build_messages` / TailPacketAssembler 聚合注入处统一门闸；不得由各注入源自行实现一套预算。
 
-### L2-2 资料按需化 + 指针化（降密核心）
+### L2-2 资料按需化（当前契约；自动 catalog 已退役）
 
-- 现状: 每轮自动注入记忆检索结果（语义检索 mode=mixed）→ 长会话中段持续高占比。
-- 自动注入条件: 仅当（a）会话前 K 轮（K 由 R0 定）或（b）检测到任务切换信号时，允许产生资料**目录/指针**。
-- 每个资料帧最多 2 行：`[tag] 一句话事实` + `ref=<record/evidence/archive ref>`；不得自动注入长正文。
-- 会话级去重：建立 session-scoped `seen_injection_set`。主键优先使用稳定 record/evidence ID；无 ID 时使用规范化内容哈希。当前仅比较最近消息窗口的去重不足以阻断长会话重复。
-- 同一事实帧在一个 session 中**最多完整内联一次**；后续再次命中只允许省略或给 1 行 ref，不得重新投喂正文。seen-set 必须跨 compact 保持，新 session 才重置。
-- telemetry: `injection_duplicate_suppressed{source,ref/hash}`，用于验证 `09c44093` 类高频重复归零。
-- 其余轮次: 不自动注入资料；模型需要细节时主动调 `search_records` / `search_archive` / 对应 evidence reader 取回。
-- 权衡声明: 损失“无意识相关性”换取任务边界清晰；由任务切换检测 + 主动检索补偿。
+> R3 的 front-K / task-switch / seen-set / two-line automatic reference frame 是历史过渡方案，
+> 2026-09-06 delete-first closure 后不再是生产机制。
+
+- memory / experience / skill / historical archive **默认不自动进入 provider prompt**。
+- 程序提供耐久存储、stable ref、来源/时间/currentness 与显式 retrieval/hydration；
+  `retrievable != injectable`。
+- 模型或用户明确需要旧资料时，调用 `search_records` / `search_archive` / Evidence reader 等
+  当前工具按需取得；程序不根据关键词、前 K 轮、task-switch 或“曾经保存过”判断相关性。
+- dynamic program prompt producer registry 为空；旧 persisted program/reference frame 只做
+  backward scrub，不获得新的 prompt authority。
+- compact/archive 只改变表示并保留 durable exact recovery，不生成 Goal/current-decision、
+  key-fact summary 或 archive prose 回灌 prompt。
 
 ### L2-3 身份问答剥离
 
@@ -146,7 +152,9 @@ wire 层按 provider contract 投影：
 
 **R6 实现状态（2026-08-30）：PASS。** provider-view 投影已由 `core/user_truth_wire.py` 统一；仅 initial human-ingress 应用，tool-followup 不重放用户原文；compact 对 current human exact 有专门保护，1210 USER_ENVELOPE strip 只剥程序前缀。完整证据见 `docs/injection-governance/r6/report.md`。
 
-### L2-5 按模型能力分档注入（后置，先 shadow）
+### L2-5 按模型能力分档注入（历史方案；P1-C 已退役）
+
+> **P1-C 2026-09-04：**不再存在 runtime Injection Profile recommendation/emitter；capability tier 不决定 prompt density。历史 R8 shadow/soak 仅作演进证据。
 
 方向认可，但**不阻塞 L1、L2-1~L2-4 与上述横切不变量**，避免当前治理同时引入第二套行为变量。
 
@@ -168,7 +176,7 @@ Owner 冻结原则：
 
 > **Resolved is retrievable, not injectable.** 已解决并回答完成的用户问题/任务退出自动上下文；原问题、答案、tool chain、reasoning 与历史细节保留在可检索 archive/index，需要时按 ref 精确 hydrate。
 
-生命周期先于注入预算：
+生命周期/eligibility 是当前自动 program prompt 的最终准入面（旧“先于注入预算”表述见历史 R2）：
 
 ```text
 RESOLVED      -> archive/index only
@@ -178,7 +186,7 @@ OBSERVABILITY -> event/tool/UI only
 ACTIVE        -> 再判断 required_now
 ```
 
-只有 `ACTIVE + REQUIRED_NOW` 才可继续进入 representation/profile/R2 budget。即使 active，也优先由程序自行处理或通过 tool/ref 按需读取；“最近 K 轮”“已有 ref”“被识别成 STATUS”都**不能单独构成 prompt eligibility**。
+只有 `ACTIVE + REQUIRED_NOW` 才可能进入后续 representation；P1-C 后不再经过 model profile / semantic R2 budget。即使 active，也优先由程序自行处理或通过 tool/ref 按需读取；“最近 K 轮”“已有 ref”“被识别成 STATUS”都**不能单独构成 prompt eligibility**。
 
 实施约束：
 

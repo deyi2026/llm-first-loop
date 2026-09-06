@@ -9,29 +9,12 @@
 
 from __future__ import annotations
 
-import threading
-from pathlib import Path
 from types import SimpleNamespace
 
 from llm_loop.core.loop.engine import LoopEngine
 from llm_loop.core.loop.engine_services.run_state import RunStateManager
-from llm_loop.core.loop.engine_services.tool_cycle import ToolCycleService
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.run_context import current_session_id
-
-_EXP_MD = """---
-title: web_fetch 抓取最短路径
-scenario: web_fetch 抓网页失败需换路径
-root_cause: 反爬/JS 壳
-solution: 用 curl 直取 HTML 再解析
-evidence: test
-tags: [web_fetch, 抓取]
-source: {}
-status: active
-created_at: "2026-08-16T00:00:00+08:00"
-updated_at: "2026-08-16T00:00:00+08:00"
----
-"""
 
 
 class _MemStore:
@@ -47,32 +30,8 @@ class _MemStore:
         self.injected.extend(entries)
 
 
-class _CountingStore(_MemStore):
-    """操作幂等 oracle 用——记录 search/mark_injected 调用次数."""
-
-    def __init__(self, entries: list) -> None:
-        super().__init__(entries)
-        self.search_calls = 0
-        self.mark_calls = 0
-
-    def search(self, *a, **k):
-        self.search_calls += 1
-        return super().search(*a, **k)
-
-    def mark_injected(self, entries):
-        self.mark_calls += 1
-        return super().mark_injected(entries)
 
 
-def _entry(eid: str, content: str) -> SimpleNamespace:
-    return SimpleNamespace(
-        id=eid,
-        content=content,
-        type="fact",
-        scope="global",
-        source_session_id="",
-        inject_policy="auto",
-    )
 
 
 def _engine(store) -> LoopEngine:
@@ -118,38 +77,6 @@ def _snapshots(sess) -> list:
     ]
 
 
-class _TipStub(ToolCycleService):
-    def __init__(self, exp_dir: str | Path, turn_ref=None) -> None:
-        self._host = self  # R9-B5-W3-01: 替身自给宿主面（迁移前 self.X → 现 self._host.X → 同一字段）
-        self.settings = SimpleNamespace(
-            tool_experience_inject=True,
-            experiences_dir=str(exp_dir),
-            skills_dir="nonexistent_skills",
-        )
-        self.messages = []
-        self.events = []
-        self._tip_tail_messages = []
-        self._run_state_mgr = RunStateManager()
-        if turn_ref is not None:
-            self._run_state().current_turn_ref = turn_ref
-        self._cache_last_model_by_session = {}
-        self._cache_last_model = ""
-        type(self)._skills_cache = (0.0, [])
-
-    def _run_state(self):
-        return self._run_state_mgr.bucket()
-
-    def _append_message_event(self, sess, msg) -> None:
-        self.events.append(msg)
-
-
-def _make_exp_dir(tmp_path: Path) -> Path:
-    d = tmp_path / "experiences"
-    d.mkdir()
-    (d / "EXPERIENCE-test-web-fetch.md").write_text(_EXP_MD, encoding="utf-8")
-    return d
-
-
 def test_two_session_turn_ref_isolation():
     """A(turn=10)/B(turn=3) 交错赋值，回 A 仍读 10（RunState 分桶非实例全局）."""
     eng = _runstate_engine(_MemStore([]))
@@ -185,33 +112,17 @@ def test_status_budget_session_isolation():
     current_session_id.reset(tok)
 
 
-def test_experience_tip_session_isolation(tmp_path):
-    """E08: generic experience catalog creates no prompt state in any session."""
-    d = _make_exp_dir(tmp_path)
-    a = _TipStub(d, turn_ref=1)
-    ToolCycleService._inject_experience_tips(a, a, ["web_fetch"])
-    assert a.messages == []
-    b = _TipStub(d, turn_ref=1)
-    ToolCycleService._inject_experience_tips(b, b, ["web_fetch"])
-    ToolCycleService._inject_experience_tips(b, b, ["web_fetch", "other_tool"])
-    assert b.messages == []
-
 def test_retrieval_exactly_once_on_reentry():
-    """同 turn 12 次重入 → 消息/search/mark_injected 各恰 1（操作幂等）."""
-    store = _CountingStore([_entry("e1", "deploy restart 镜像回滚")])
-    eng = _engine(store)
-    sess = _sess()
-    for _ in range(12):
-        eng._inject_turn_memory_snapshot(sess, "deploy restart 镜像回滚", turn_ref=0)
-    assert len(_snapshots(sess)) == 1
-    assert store.search_calls == 1  # 检索恰一次（重入不重查）
-    assert store.mark_calls == 1  # memory 使用统计不污染
+    """Agency-first: reentry cannot duplicate a retired memory prompt producer."""
+    from llm_loop.core.loop.engine import LoopEngine
+
+    assert not hasattr(LoopEngine, "_inject_turn_memory_snapshot")
 
 
 def test_budget_single_source_no_drift():
     """detail 与 _effective 恒等（T5 单源 resolver 结构锁——防漂移回潮）."""
     eng = _engine(_MemStore([]))
-    eng.settings = SimpleNamespace(history_max_chars=50000, memory_top_k=5)
+    eng.settings = SimpleNamespace(history_max_chars=50000, memory_top_k=5, llm_max_tokens=8192)
     eng.llm_pool = None
     eng._runtime_history_budget = lambda: 50000
     eng._provider_chars_per_token = lambda *a, **k: 0.6
@@ -220,10 +131,10 @@ def test_budget_single_source_no_drift():
     eff = eng._effective_history_budget("deepseek/x")
     assert detail["effective_budget"] == eff == 50000
     assert detail["limited_by"] == "global_budget"
-    # 窗口限制分支：65536 × 0.6 × 0.5 = 19660 < 50000
+    # 窗口限制分支：min(65536×0.9, 65536-8192) × 0.6 = 34406 < 50000
     eng._routing._current_context_limit = lambda *a, **k: 65536  # W4-02b: 同上
     detail2 = eng._effective_history_budget_detail("deepseek/x")
     eff2 = eng._effective_history_budget("deepseek/x")
-    assert detail2["effective_budget"] == eff2 == 19660
+    assert detail2["effective_budget"] == eff2 == 34406
     assert detail2["limited_by"] == "model_window"
-    assert detail2["model_window_budget"] == 19660
+    assert detail2["model_window_budget"] == 34406

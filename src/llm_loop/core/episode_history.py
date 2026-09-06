@@ -15,7 +15,12 @@ from typing import Any
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.reference_injection import is_human_user_message
 from llm_loop.feedback.honesty import PROGRAM_FEEDBACK_PREFIXES
-from llm_loop.memory.episode import EpisodeStore, stable_episode_ref, stable_tool_span_ref
+from llm_loop.memory.episode import (
+    EpisodeStore,
+    stable_closed_tool_span_ref,
+    stable_episode_ref,
+    stable_tool_span_ref,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +33,8 @@ EPISODE_RESOLUTION_CANDIDATE_KEY = "episode_resolution_candidate"
 CONSUMED_TOOL_SPAN_REF_KEY = "consumed_tool_span_ref"
 CONSUMED_TOOL_SPAN_STATE_KEY = "tool_span_state"
 CONSUMED_TOOL_SPAN_STATE = "consumed"
+CLOSED_TOOL_SPAN_REF_KEY = "closed_tool_span_ref"
+CLOSED_TOOL_SPAN_STATE = "closed"
 
 _DURABLE_USER_RE = re.compile(
     r"(?:以后|今后|从现在开始|往后|后续(?:都|一律|始终)|始终|永远|长期|不要再|"
@@ -61,14 +68,32 @@ def is_consumed_tool_span_message(message: Message) -> bool:
     return bool(consumed_tool_span_ref(message))
 
 
+def closed_tool_span_ref(message: Message) -> str:
+    return str(_metadata(message).get(CLOSED_TOOL_SPAN_REF_KEY) or "")
+
+
+def is_closed_tool_span_message(message: Message) -> bool:
+    return bool(closed_tool_span_ref(message))
+
+
 def provider_message_visible(message: Message) -> bool:
     """Return whether one persisted message belongs in default provider history."""
 
+    # Interrupted assistant bytes are durable storage/audit truth, not a completed
+    # conversational turn.  In particular, a direct client disconnect can persist
+    # genuine model partial text; replaying that partial as a normal assistant answer
+    # on the next request silently upgrades an incomplete response to completion.
+    if _metadata(message).get("llm_interrupted") is True:
+        return False
     # R8.22: a historical user turn does not keep prompt authority merely
     # because its text contains standing-rule language.  Exact source text
     # remains durable in EpisodeStore and can be hydrated on demand.
     # ``resolved_episode_keep_provider`` is now legacy storage metadata only.
-    return not (is_consumed_tool_span_message(message) or is_resolved_episode_message(message))
+    return not (
+        is_consumed_tool_span_message(message)
+        or is_closed_tool_span_message(message)
+        or is_resolved_episode_message(message)
+    )
 
 
 def provider_view_without_resolved_episodes(messages: list[Message]) -> list[Message]:
@@ -387,6 +412,92 @@ def _mark_consumed_tool_indices(messages: list[Message], indices: list[int], ref
         message.metadata = md
 
 
+def _mark_closed_tool_indices(messages: list[Message], indices: list[int], ref: str) -> None:
+    for idx in indices:
+        message = messages[idx]
+        md = dict(_metadata(message))
+        md[CLOSED_TOOL_SPAN_REF_KEY] = ref
+        md[CONSUMED_TOOL_SPAN_STATE_KEY] = CLOSED_TOOL_SPAN_STATE
+        message.metadata = md
+
+
+def _closed_attempt_event_ranges(
+    event_store: Any | None,
+    session_id: str,
+    messages: list[Message],
+) -> list[tuple[int, int, str]]:
+    """Return event-proven prior failed-run ranges as (user, terminal, reason)."""
+
+    if event_store is None or not session_id:
+        return []
+    try:
+        events = list(event_store.read(session_id) or [])
+    except Exception:  # noqa: BLE001 — missing audit proof means keep provider-visible
+        logger.warning(
+            "closed attempt proof 读取失败（保留 provider 可见）: sid=%s",
+            session_id,
+            exc_info=True,
+        )
+        return []
+    if int(getattr(event_store, "last_read_skipped", 0) or 0) > 0:
+        logger.warning(
+            "closed attempt proof 含损坏事件（保留 provider 可见）: sid=%s skipped=%s",
+            session_id,
+            getattr(event_store, "last_read_skipped", 0),
+        )
+        return []
+
+    proven: list[tuple[int, int, str]] = []
+    segment: list[Any] = []
+    for event in events:
+        if str(getattr(event, "type", "")) != "run.end":
+            segment.append(event)
+            continue
+        end_payload = getattr(event, "payload", None) or {}
+        reason = str(end_payload.get("reason") or "")
+        if reason and reason != "completed":
+            human_indices: list[int] = []
+            terminal_indices: list[int] = []
+            for candidate in segment:
+                if str(getattr(candidate, "type", "")) != "message.appended":
+                    continue
+                payload = getattr(candidate, "payload", None) or {}
+                raw_index = payload.get("index")
+                if raw_index is None:
+                    continue
+                try:
+                    index = int(raw_index)
+                except (TypeError, ValueError):
+                    continue
+                if index < 0 or index >= len(messages):
+                    continue
+                saved = messages[index]
+                if (
+                    str(payload.get("role") or "") != saved.role
+                    or str(payload.get("content") or "") != str(saved.content or "")
+                ):
+                    continue
+                md = _metadata(saved)
+                if is_human_user_message(saved) and md.get("ingress_delegated") is not True:
+                    human_indices.append(index)
+                if (
+                    saved.role == "assistant"
+                    and not saved.tool_calls
+                    and md.get("answer_origin") == "program"
+                    and md.get("llm_interrupted") is not True
+                    and str(md.get("run_end_reason") or "") == reason
+                ):
+                    terminal_indices.append(index)
+            if (
+                len(human_indices) == 1
+                and len(terminal_indices) == 1
+                and human_indices[0] < terminal_indices[0]
+            ):
+                proven.append((human_indices[0], terminal_indices[0], reason))
+        segment = []
+    return proven
+
+
 def backfill_consumed_tool_spans(store: EpisodeStore | None, session: Any) -> list[str]:
     """Durably index and retire raw tool evidence already consumed by a model answer.
 
@@ -429,6 +540,14 @@ def backfill_consumed_tool_spans(store: EpisodeStore | None, session: Any) -> li
                 # do not create a duplicate tool-span record for those groups.
                 if not all(is_resolved_episode_message(messages[idx]) for idx in group_indices):
                     if any(is_resolved_episode_message(messages[idx]) for idx in group_indices):
+                        invalid_group = True
+                        break
+                    # Closed is a distinct terminal state: a later unrelated model
+                    # answer must never rewrite a failed attempt as "consumed".
+                    if all(is_closed_tool_span_message(messages[idx]) for idx in group_indices):
+                        cursor = group_end
+                        continue
+                    if any(is_closed_tool_span_message(messages[idx]) for idx in group_indices):
                         invalid_group = True
                         break
                     tool_indices.extend(group_indices)
@@ -477,6 +596,135 @@ def backfill_consumed_tool_spans(store: EpisodeStore | None, session: Any) -> li
             )
             continue
         _mark_consumed_tool_indices(messages, tool_indices, ref)
+        refs.append(ref)
+    return refs
+
+
+def backfill_closed_tool_attempts(
+    store: EpisodeStore | None,
+    session: Any,
+    *,
+    event_store: Any | None = None,
+) -> list[str]:
+    """Durably retire raw tool protocol from prior event-proven failed runs.
+
+    This is distinct from both resolved episodes and consumed tool evidence.  The
+    original human instruction and terminal failure assistant remain visible; only
+    complete assistant(tool_calls)->tool groups are retired after durable indexing.
+    """
+
+    if store is None:
+        return []
+    messages: list[Message] = list(getattr(session, "messages", []) or [])
+    session_id = str(getattr(session, "session_id", "") or "")
+    refs: list[str] = []
+    # Give the immediately previous interrupted human turn exactly one genuine-user
+    # continuation opportunity before retiring its raw tool protocol.  This is purely
+    # structural (last human + durable llm_interrupted marker), not a guess that the
+    # next user text means "continue".  On the following human ingress the last-human
+    # index has advanced, so an unconsumed older failed span becomes normally closable.
+    last_human_index = next(
+        (
+            idx
+            for idx in range(len(messages) - 1, -1, -1)
+            if is_human_user_message(messages[idx])
+        ),
+        None,
+    )
+    for start, terminal, reason in _closed_attempt_event_ranges(
+        event_store, session_id, messages
+    ):
+        if start == last_human_index and any(
+            _metadata(messages[idx]).get("llm_interrupted") is True
+            for idx in range(start + 1, min(terminal + 1, len(messages)))
+        ):
+            continue
+        tool_indices: list[int] = []
+        call_ids: list[str] = []
+        preexisting_refs: set[str] = set()
+        cursor = start + 1
+        invalid_group = False
+        while cursor < terminal:
+            message = messages[cursor]
+            if message.role != "assistant" or not message.tool_calls:
+                cursor += 1
+                continue
+            group_end = _tool_group_end(messages, cursor, terminal)
+            if group_end is None:
+                invalid_group = True
+                break
+            group_indices = list(range(cursor, group_end))
+            closed_flags = [is_closed_tool_span_message(messages[idx]) for idx in group_indices]
+            if all(closed_flags):
+                preexisting_refs.update(
+                    closed_tool_span_ref(messages[idx]) for idx in group_indices
+                )
+                cursor = group_end
+                continue
+            if any(closed_flags):
+                invalid_group = True
+                break
+            prior_retired = [
+                is_resolved_episode_message(messages[idx])
+                or is_consumed_tool_span_message(messages[idx])
+                for idx in group_indices
+            ]
+            if all(prior_retired):
+                cursor = group_end
+                continue
+            if any(prior_retired):
+                invalid_group = True
+                break
+            tool_indices.extend(group_indices)
+            call_ids.extend(
+                str(call.get("id") or "")
+                for call in (message.tool_calls or [])
+                if isinstance(call, dict)
+            )
+            cursor = group_end
+
+        if invalid_group:
+            continue
+        if preexisting_refs and tool_indices:
+            # Partial prior mutation is ambiguous; leave unmarked material visible.
+            continue
+        if not tool_indices:
+            refs.extend(sorted(ref for ref in preexisting_refs if ref))
+            continue
+
+        ref = stable_closed_tool_span_ref(
+            session_id,
+            messages[start],
+            start,
+            terminal,
+            reason,
+            call_ids,
+        )
+        raw_messages = [
+            messages[start],
+            *[messages[idx] for idx in tool_indices],
+            messages[terminal],
+        ]
+        try:
+            store.index_closed_tool_span(
+                session_id,
+                ref=ref,
+                user_seq=start,
+                terminal_seq=terminal,
+                terminal_reason=reason,
+                raw_messages=raw_messages,
+            )
+        except Exception:  # noqa: BLE001 — durable proof failure => keep visible
+            logger.warning(
+                "closed tool span 索引失败（保留 provider 可见）: sid=%s start=%d terminal=%d reason=%s",
+                session_id,
+                start,
+                terminal,
+                reason,
+                exc_info=True,
+            )
+            continue
+        _mark_closed_tool_indices(messages, tool_indices, ref)
         refs.append(ref)
     return refs
 

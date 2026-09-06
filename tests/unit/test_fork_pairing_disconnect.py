@@ -115,7 +115,7 @@ def test_generator_exit_saves_session(build_test_engine):
     """LLM 流式中客户端断连（生成器 close → GeneratorExit）→ 会话快照仍落盘.
 
     修复前：GeneratorExit 跳过 loop 末 save → 事件日志已追加而 JSON 未保存（双轨漂移）。
-    修复后：部分回答如实落会话（中断标注，不伪装完整）+ 立即保存。
+    修复后：仅模型真实 partial 落 assistant；断连事实走 metadata/event + 立即保存。
     """
     import itertools
 
@@ -138,9 +138,244 @@ def test_generator_exit_saves_session(build_test_engine):
             break
     assert deltas, "未收到任何 delta"
     stored = engine.session.load(sid)
-    # 断连后会话 JSON 已保存：用户消息 + 部分回答（assistant 消息，中断标注）在盘中
+    # 断连后会话 JSON 已保存：用户消息 + 模型真实 partial 在盘中。
     assert any(m.role == "user" and m.content == "开始长回答" for m in stored.messages)
     assistant_msgs = [m for m in stored.messages if m.role == "assistant"]
     assert assistant_msgs, "断连时 assistant 部分回答未随保存落盘（双轨漂移未闭合）"
     assert "片段0" in assistant_msgs[-1].content
-    assert "中断" in assistant_msgs[-1].content or "不完整" in assistant_msgs[-1].content
+    assert "[对话已中断]" not in assistant_msgs[-1].content
+    assert "不完整部分回答" not in assistant_msgs[-1].content
+    assert (assistant_msgs[-1].metadata or {}).get("llm_interrupted") is True
+    assert (assistant_msgs[-1].metadata or {}).get("answer_origin") == "model"
+
+
+def test_generator_exit_partial_resumes_once_before_next_human_ingress(build_test_engine):
+    """Client-disconnect partial is exact one-shot continuity, not a completed answer."""
+    import itertools
+
+    from llm_loop.llm.client import LLMResponse, StreamDelta
+
+    def chat_stream(messages, tools, **kw):  # noqa: ARG001
+        for i in itertools.count():
+            yield StreamDelta(text=f"PARTIAL-{i} ")
+        return LLMResponse(content="never", tool_calls=[], provider="fake")
+
+    engine, fake = build_test_engine([])
+    fake.chat_stream = chat_stream
+    sid = engine.session.create()
+    gen = engine.run_stream(sid, "FIRST-QUESTION")
+    for i, _delta in enumerate(gen):
+        if i >= 1:
+            gen.close()
+            break
+
+    stored = engine.session.load(sid)
+    partial_rows = [m for m in stored.messages if (m.metadata or {}).get("llm_interrupted")]
+    assert partial_rows and "PARTIAL-0" in partial_rows[-1].content
+
+    fake.chat_stream = None
+    fake._responses = [{"content": "SECOND-ANSWER"}]
+    result = engine.run(sid, "SECOND-QUESTION")
+    assert result.final_answer == "SECOND-ANSWER"
+    wire = fake.calls[-1]["messages"]
+    joined = "\n".join(str(m.get("content") or "") for m in wire)
+    assert "FIRST-QUESTION" in joined
+    assert "SECOND-QUESTION" in joined
+    partial_wire = [
+        m
+        for m in wire
+        if m.get("role") == "assistant" and "PARTIAL-" in str(m.get("content") or "")
+    ]
+    assert len(partial_wire) == 1
+    assert "PARTIAL-0" in partial_wire[0]["content"]
+    assert "截断标注" not in partial_wire[0]["content"]
+    assert wire[-2] == partial_wire[0]
+    assert wire[-1] == {"role": "user", "content": "SECOND-QUESTION"}
+    assert not any(
+        m.get("role") == "assistant" and "PARTIAL-" in str(m.get("content") or "")
+        for m in wire[:-2]
+    )
+    stored_after = engine.session.load(sid)
+    assert any(
+        (m.metadata or {}).get("llm_interrupted") and "PARTIAL-0" in m.content
+        for m in stored_after.messages
+    )
+
+
+def test_hard_restart_open_stream_checkpoint_is_first_class_recent_continuity(
+    build_test_engine, tmp_path
+):
+    """A process-death checkpoint with no run.end resumes immediately on next ingress."""
+    engine, fake = build_test_engine([{"content": "RESUMED-ANSWER"}])
+    es = EventStore(str(tmp_path / "restart-events"), enabled=True)
+    engine._event_store = es  # noqa: SLF001 — integration-test durable source
+    sid = engine.session.create()
+    engine.session.append(
+        sid, Message(role="user", content="ORIGINAL-TASK", source=MessageSource.USER)
+    )
+    es.append(
+        sid,
+        "llm.partial_checkpoint",
+        {
+            "round": 7,
+            "provider": "glm",
+            "model": "glm/glm-5.3",
+            "text_tail": "MODEL-PARTIAL",
+            "reasoning_tail": "MODEL-REASONING",
+            "text_chars": 13,
+            "reasoning_chars": 15,
+            "partial_sha256": "a" * 64,
+        },
+    )
+
+    result = engine.run(sid, "继续")
+    assert result.final_answer == "RESUMED-ANSWER"
+    wire = fake.calls[-1]["messages"]
+    assert wire[-2] == {
+        "role": "assistant",
+        "content": "MODEL-PARTIAL",
+        "reasoning_content": "MODEL-REASONING",
+    }
+    assert wire[-1] == {"role": "user", "content": "继续"}
+    assert all("截断标注" not in str(m.get("content") or "") for m in wire)
+
+
+def test_hard_restart_uses_full_sidecar_reasoning_not_bounded_event_tail(
+    build_test_engine, tmp_path, monkeypatch
+):
+    """Long in-flight reasoning resumes from the hash-verified full snapshot."""
+    engine, fake = build_test_engine([{"content": "RESUMED-FULL"}])
+    es = EventStore(str(tmp_path / "full-restart-events"), enabled=True)
+    engine._event_store = es  # noqa: SLF001
+    sid = engine.session.create()
+    engine.session.append(
+        sid, Message(role="user", content="ORIGINAL", source=MessageSource.USER)
+    )
+    sess = engine.session.load(sid)
+    monkeypatch.setenv("INTERRUPT_TEXT_TAIL_CHARS", "9")
+    monkeypatch.setenv("INTERRUPT_REASONING_TAIL_CHARS", "11")
+    text = "TEXT-" * 300
+    reasoning = "REASON-" * 2000
+    engine._on_llm_partial_checkpoint(  # noqa: SLF001
+        sess,
+        text_parts=[text],
+        reasoning_parts=[reasoning],
+        round_no=4,
+        provider="deepseek",
+        model="deepseek/deepseek-v4-flash",
+    )
+    event = [e for e in es.read(sid) if e.type == "llm.partial_checkpoint"][-1]
+    assert event.payload["text_tail"] == text[-9:]
+    assert event.payload["reasoning_tail"] == reasoning[-11:]
+
+    result = engine.run(sid, "继续")
+    assert result.final_answer == "RESUMED-FULL"
+    wire = fake.calls[-1]["messages"]
+    assert wire[-2]["role"] == "assistant"
+    assert wire[-2]["content"] == text
+    assert wire[-2]["reasoning_content"] == reasoning
+    assert wire[-1] == {"role": "user", "content": "继续"}
+
+
+def test_first_stream_delta_is_checkpointed_before_stream_can_be_killed(
+    build_test_engine, tmp_path
+):
+    """The first yielded model bytes already have a durable restart checkpoint."""
+    from llm_loop.llm.client import LLMResponse, StreamDelta
+
+    def chat_stream(messages, tools, **kw):  # noqa: ARG001
+        yield StreamDelta(text="FIRST-TEXT", reasoning="FIRST-THINK")
+        yield StreamDelta(text="SECOND-TEXT", reasoning="SECOND-THINK")
+        return LLMResponse(content="done", tool_calls=[], provider="fake")
+
+    engine, fake = build_test_engine([])
+    es = EventStore(str(tmp_path / "live-checkpoint-events"), enabled=True)
+    engine._event_store = es  # noqa: SLF001
+    fake.chat_stream = chat_stream
+    sid = engine.session.create()
+    gen = engine.run_stream(sid, "TASK")
+
+    first = next(gen)
+    assert first.text == "FIRST-TEXT"
+    rows = [e for e in es.read(sid) if e.type == "llm.partial_checkpoint"]
+    assert rows, "first streamed delta must already be restart-recoverable"
+    assert rows[-1].payload["text_tail"] == "FIRST-TEXT"
+    assert rows[-1].payload["reasoning_tail"] == "FIRST-THINK"
+    gen.close()
+
+
+def test_settled_partial_checkpoint_is_not_resurrected(build_test_engine, tmp_path):
+    """A checkpoint before a durable run.end is historical, never stale-resumed."""
+    engine, fake = build_test_engine([{"content": "NEW-ANSWER"}])
+    es = EventStore(str(tmp_path / "settled-events"), enabled=True)
+    engine._event_store = es  # noqa: SLF001
+    sid = engine.session.create()
+    engine.session.append(
+        sid, Message(role="user", content="OLD-TASK", source=MessageSource.USER)
+    )
+    es.append(
+        sid,
+        "llm.partial_checkpoint",
+        {
+            "round": 1,
+            "provider": "glm",
+            "model": "glm/glm-5.3",
+            "text_tail": "STALE-PARTIAL",
+            "reasoning_tail": "STALE-THINK",
+            "partial_sha256": "b" * 64,
+        },
+    )
+    es.append(
+        sid,
+        "run.end",
+        {
+            "reason": "llm_error",
+            "rounds": 1,
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "cache_hit": 0,
+            "duration_ms": 1,
+            "model_used": "glm/glm-5.3",
+            "truncated": False,
+            "answer_preview": "",
+        },
+    )
+
+    result = engine.run(sid, "新的问题")
+    assert result.final_answer == "NEW-ANSWER"
+    wire = fake.calls[-1]["messages"]
+    joined = "\n".join(str(m.get("content") or "") for m in wire)
+    assert "STALE-PARTIAL" not in joined
+    assert "STALE-THINK" not in "\n".join(str(m.get("reasoning_content") or "") for m in wire)
+    assert wire[-1] == {"role": "user", "content": "新的问题"}
+
+
+def test_engine_adjacent_user_reply_rehydrates_retired_previous_model_turn(
+    build_test_engine, tmp_path
+):
+    """Resolved-episode retirement must not erase the model question the user answers next."""
+    from llm_loop.memory.episode import EpisodeStore
+
+    engine, fake = build_test_engine(
+        [
+            {"content": "你更看重速度还是精度？", "reasoning_content": "ASK-THINK"},
+            {"content": "那就优先精度。"},
+        ]
+    )
+    engine.episode_store = EpisodeStore(tmp_path / "episodes")
+    sid = engine.session.create()
+
+    first = engine.run(sid, "帮我选方案")
+    assert first.final_answer == "你更看重速度还是精度？"
+    stored = engine.session.load(sid)
+    assert stored.messages[-1].metadata.get("resolved_episode_ref"), (
+        "precondition: current lifecycle has retired the completed prior turn"
+    )
+
+    second = engine.run(sid, "更看重精度")
+    assert second.final_answer == "那就优先精度。"
+    wire = fake.calls[-1]["messages"]
+    assert wire[-2]["role"] == "assistant"
+    assert wire[-2]["content"] == "你更看重速度还是精度？"
+    assert wire[-2]["reasoning_content"] == "ASK-THINK"
+    assert wire[-1] == {"role": "user", "content": "更看重精度"}

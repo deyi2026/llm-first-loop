@@ -98,6 +98,27 @@ def stable_tool_span_ref(
     return f"toolspan:{sid}:{user_seq}:{consumer_seq}:{digest}"
 
 
+def stable_closed_tool_span_ref(
+    session_id: str,
+    user_message: Message,
+    user_seq: int,
+    terminal_seq: int,
+    terminal_reason: str,
+    tool_call_ids: Iterable[str],
+) -> str:
+    """Deterministic ref for a durably closed, non-consumed tool attempt."""
+
+    sid = _validate_session_id(session_id)
+    ts_ns = int(float(getattr(user_message, "ts", 0.0) or 0.0) * 1_000_000_000)
+    calls = "\0".join(str(call_id or "") for call_id in tool_call_ids)
+    raw = (
+        f"{sid}\0{user_seq}\0{terminal_seq}\0{terminal_reason}\0{ts_ns}\0"
+        f"{str(getattr(user_message, 'content', '') or '')}\0{calls}"
+    ).encode("utf-8", "replace")
+    digest = hashlib.sha256(raw).hexdigest()[:20]
+    return f"closedspan:{sid}:{user_seq}:{terminal_seq}:{digest}"
+
+
 def _snapshot_message(message: Message) -> dict[str, Any] | None:
     """Snapshot only visible task material, never duplicated hidden reasoning.
 
@@ -497,6 +518,94 @@ class EpisodeStore:
             os.fsync(f.fileno())
         return EpisodeIndexResult(ref=ref, created=True)
 
+    def index_closed_tool_span(
+        self,
+        session_id: str,
+        *,
+        ref: str,
+        user_seq: int,
+        terminal_seq: int,
+        terminal_reason: str,
+        raw_messages: list[Message],
+    ) -> EpisodeIndexResult:
+        """Persist a failed/closed tool protocol without claiming consumption/resolution."""
+
+        sid = _validate_session_id(session_id)
+        reason = str(terminal_reason or "").strip()
+        if not reason or reason == "completed":
+            raise ValueError("closed tool span 缺少非 completed terminal reason")
+        if not raw_messages:
+            raise ValueError("closed tool span 缺少消息")
+        terminal = raw_messages[-1]
+        terminal_md = terminal.metadata if isinstance(terminal.metadata, dict) else {}
+        if (
+            terminal.role != "assistant"
+            or terminal.tool_calls
+            or terminal_md.get("answer_origin") != "program"
+            or str(terminal_md.get("run_end_reason") or "") != reason
+        ):
+            raise ValueError("closed tool span terminal 不是匹配的 program/non-success assistant")
+
+        snapshots = [snap for m in raw_messages if (snap := _snapshot_message(m)) is not None]
+        if not snapshots or snapshots[0].get("role") != "user":
+            raise ValueError("closed tool span 缺少首个真实 user message")
+        if not any(m.get("role") == "tool" for m in snapshots):
+            raise ValueError("closed tool span 缺少 tool evidence")
+        if not any(m.get("role") == "assistant" and m.get("tool_calls") for m in snapshots):
+            raise ValueError("closed tool span 缺少 assistant tool declaration")
+        if snapshots[-1].get("role") != "assistant" or snapshots[-1].get("tool_calls"):
+            raise ValueError("closed tool span 缺少 terminal assistant role frame")
+
+        transcript = _render_transcript(snapshots)
+        transcript_sha256 = hashlib.sha256(transcript.encode("utf-8", "replace")).hexdigest()
+        existing = self.get(sid, ref)
+        if existing is not None:
+            if (
+                str(existing.get("transcript_sha256") or "") != transcript_sha256
+                or str(existing.get("entry_kind") or "") != "closed_tool_span"
+                or str(existing.get("terminal_reason") or "") != reason
+            ):
+                raise ValueError(f"closed tool span ref collision: {ref}")
+            return EpisodeIndexResult(ref=ref, created=False)
+
+        question = str(snapshots[0].get("content") or "")
+        tool_names = list(
+            dict.fromkeys(
+                str(m.get("tool_name") or "")
+                for m in snapshots
+                if m.get("role") == "tool" and str(m.get("tool_name") or "")
+            )
+        )
+        indexed_at = _now()
+        entry: dict[str, Any] = {
+            "schema": EPISODE_SCHEMA,
+            "entry_kind": "closed_tool_span",
+            "ref": ref,
+            "session_id": sid,
+            "resolved_at": indexed_at,
+            "indexed_at": indexed_at,
+            "user_seq": int(user_seq),
+            "terminal_seq": int(terminal_seq),
+            "terminal_reason": reason,
+            "question": question,
+            "final_answer": "",
+            "tool_names": tool_names,
+            "message_count": len(snapshots),
+            "chars": sum(len(str(m.get("content") or "")) for m in snapshots),
+            "transcript_sha256": transcript_sha256,
+            "messages": snapshots,
+        }
+        path = self._path(sid)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = (json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n").encode(
+            "utf-8"
+        )
+        with path.open("ab") as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        return EpisodeIndexResult(ref=ref, created=True)
+
     def search(self, session_id: str, query: str = "", limit: int = 10) -> list[dict[str, Any]]:
         q = str(query or "").strip().casefold()
         rows = self._iter_entries(session_id)
@@ -508,6 +617,7 @@ class EpisodeStore:
                     str(entry.get("ref") or ""),
                     str(entry.get("question") or ""),
                     str(entry.get("final_answer") or ""),
+                    str(entry.get("terminal_reason") or ""),
                     " ".join(str(x) for x in (entry.get("tool_names") or [])),
                     transcript,
                 ]
@@ -518,8 +628,15 @@ class EpisodeStore:
             answer = " ".join(str(entry.get("final_answer") or "").split())[:180]
             tools = ",".join(str(x) for x in (entry.get("tool_names") or [])[:8])
             subtype = str(entry.get("entry_kind") or "episode")
-            summary = f"ref={entry.get('ref')} | Q={question} | A={answer}"
-            if subtype != "episode":
+            if subtype == "closed_tool_span":
+                reason = str(entry.get("terminal_reason") or "")
+                summary = (
+                    f"ref={entry.get('ref')} | type=closed_tool_span | "
+                    f"reason={reason} | Q={question}"
+                )
+            else:
+                summary = f"ref={entry.get('ref')} | Q={question} | A={answer}"
+            if subtype not in {"episode", "closed_tool_span"}:
                 summary = f"ref={entry.get('ref')} | type={subtype} | Q={question} | A={answer}"
             if tools:
                 summary += f" | tools={tools}"

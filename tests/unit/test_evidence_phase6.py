@@ -21,8 +21,32 @@ from llm_loop.memory.evidence import (
     make_capture_request,
 )
 from llm_loop.memory.evidence_legacy import EvidenceLifecycle, LegacySidecarMigrator
-from llm_loop.tools.builtin.execute_command import _truncate_output as truncate_command_output
-from llm_loop.tools.trim import truncate_output
+
+
+def _legacy_projected(
+    data_dir: Path,
+    full: str,
+    *,
+    kind: str = "tool",
+    head: int = 50,
+    tail: int = 50,
+    source: str = "legacy",
+) -> tuple[str, Path]:
+    """Create a historical sidecar fixture without reviving a runtime producer."""
+    subdir = "cmd_outputs" if kind == "command" else "tool_outputs"
+    out_dir = data_dir / "audit" / subdir
+    out_dir.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256(full.encode()).hexdigest()[:16]
+    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in source)[:24] or "legacy"
+    sidecar = out_dir / f"{digest}_{safe}.log"
+    sidecar.write_text(full, encoding="utf-8")
+    projected = (
+        full[:head]
+        + f"\n[输出已截断] 完整 {len(full)} 字符，仅首 {head} + 尾 {tail}（历史格式）。"
+        + f"完整原文已落盘: {sidecar}；\n"
+        + full[-tail:]
+    )
+    return projected, sidecar
 
 
 def _stores(tmp_path: Path):
@@ -63,11 +87,8 @@ def _migrator(tmp_path: Path, store: SessionStore):
 def test_owned_tool_output_sidecar_migrates_with_exact_proof(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     monkeypatch.setenv("DATA_DIR", str(data_dir))
-    monkeypatch.setenv("TOOL_TRIM_MAX", "120")
-    monkeypatch.setenv("TOOL_TRIM_HEAD", "50")
-    monkeypatch.setenv("TOOL_TRIM_TAIL", "50")
     full = "HEAD-" + ("A" * 180) + "-MIDDLE-314159-" + ("Z" * 180) + "-TAIL"
-    projected = truncate_output(full, source="owned.txt")
+    projected, _sidecar = _legacy_projected(data_dir, full, source="owned.txt")
     store = SessionStore(tmp_path / "sessions")
     sid = _session_with_tool(store, projected, tool_name="read_file", tool_call_id="call-owned")
     blobs, ledger, migrator = _migrator(tmp_path, store)
@@ -95,11 +116,10 @@ def test_owned_tool_output_sidecar_migrates_with_exact_proof(tmp_path, monkeypat
 def test_command_sidecar_migrates_and_is_idempotent(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     monkeypatch.setenv("DATA_DIR", str(data_dir))
-    monkeypatch.setenv("TOOL_TRIM_MAX", "100")
-    monkeypatch.setenv("TOOL_TRIM_HEAD", "40")
-    monkeypatch.setenv("TOOL_TRIM_TAIL", "40")
     full = "CMD_HEAD" + ("x" * 260) + "CMD_TAIL"
-    projected = truncate_command_output(full, command="printf legacy")
+    projected, _sidecar = _legacy_projected(
+        data_dir, full, kind="command", head=40, tail=40, source="printf_legacy"
+    )
     store = SessionStore(tmp_path / "sessions")
     sid = _session_with_tool(store, projected, tool_name="execute_command", tool_call_id="cmd-1")
     _, ledger, migrator = _migrator(tmp_path, store)
@@ -122,12 +142,10 @@ def test_command_sidecar_migrates_and_is_idempotent(tmp_path, monkeypatch):
 def test_tampered_sidecar_is_quarantined_not_migrated(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     monkeypatch.setenv("DATA_DIR", str(data_dir))
-    monkeypatch.setenv("TOOL_TRIM_MAX", "100")
-    monkeypatch.setenv("TOOL_TRIM_HEAD", "40")
-    monkeypatch.setenv("TOOL_TRIM_TAIL", "40")
     full = "T" * 400
-    projected = truncate_output(full, source="tampered.txt")
-    sidecar = next((data_dir / "audit" / "tool_outputs").iterdir())
+    projected, sidecar = _legacy_projected(
+        data_dir, full, head=40, tail=40, source="tampered.txt"
+    )
     sidecar.write_text(full + "CORRUPTED", encoding="utf-8")
     store = SessionStore(tmp_path / "sessions")
     sid = _session_with_tool(store, projected, tool_name="read_file", tool_call_id="tampered-1")
@@ -147,10 +165,7 @@ def test_tampered_sidecar_is_quarantined_not_migrated(tmp_path, monkeypatch):
 def test_orphan_sidecar_inventory_only_never_enters_ledger(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     monkeypatch.setenv("DATA_DIR", str(data_dir))
-    monkeypatch.setenv("TOOL_TRIM_MAX", "100")
-    monkeypatch.setenv("TOOL_TRIM_HEAD", "40")
-    monkeypatch.setenv("TOOL_TRIM_TAIL", "40")
-    truncate_output("ORPHAN" * 100, source="orphan.txt")
+    _legacy_projected(data_dir, "ORPHAN" * 100, head=40, tail=40, source="orphan.txt")
     store = SessionStore(tmp_path / "sessions")
     _, ledger, migrator = _migrator(tmp_path, store)
 
@@ -266,13 +281,12 @@ def test_factory_enforce_auto_migrates_and_compression_reuses_full_legacy_eviden
 
     data_dir = tmp_path / "data"
     monkeypatch.setenv("DATA_DIR", str(data_dir))
-    monkeypatch.setenv("TOOL_TRIM_MAX", "120")
-    monkeypatch.setenv("TOOL_TRIM_HEAD", "50")
-    monkeypatch.setenv("TOOL_TRIM_TAIL", "50")
     monkeypatch.setenv("HEAD_KEEP_RATIO", "0")
     monkeypatch.setenv("HEAD_KEEP_FORCE_RATIO", "0")
     full = "LEGACY_HEAD" + ("M" * 420) + "HIDDEN_FULL_BYTES" + ("N" * 420) + "LEGACY_TAIL"
-    projected = truncate_output(full, source="legacy-factory.txt")
+    projected, _sidecar = _legacy_projected(
+        data_dir, full, source="legacy-factory.txt"
+    )
 
     # Create the session through the real legacy/off factory first, so workspace partition
     # and global session identity match production behavior before enforce is introduced.

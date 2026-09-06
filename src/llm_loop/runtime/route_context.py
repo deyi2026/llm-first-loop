@@ -69,12 +69,21 @@ def _valid_or_unknown(value: str, valid: set[str]) -> str:
 
 
 def _derive_zone() -> str:
-    # 复用 identity 既有事实（runtime/identity.py:95-125）：workspace_root 路径
-    # 含 "mirror" 段 → 镜像，否则主区；identity 解析异常由调用方 fail-open 兜底
+    # 复用 identity 既有事实（runtime/identity.py）：workspace_root 是唯一工作区事实。
+    # MIRROR 协议的真实目录名为 llm-first-loop-mirror；旧实现用
+    # ``"mirror" in Path(root).parts`` 只匹配“整个路径段恰好等于 mirror”，
+    # 因而把真实镜像稳定误判为主区。这里按路径段中的分隔 token 判定，
+    # 不依赖 8902/8903 端口、DATA_DIR 或模型配置。
+    import re
+
     from llm_loop.runtime.identity import compute_identity
 
     root = compute_identity().workspace_root
-    return "镜像" if "mirror" in Path(root).parts else "主区"
+    is_mirror = any(
+        "mirror" in {token for token in re.split(r"[-_.]+", part.casefold()) if token}
+        for part in Path(root).parts
+    )
+    return "镜像" if is_mirror else "主区"
 
 
 def _resolve() -> RouteContext:

@@ -1,7 +1,7 @@
 """语义检索器 SemanticRetriever（design.md §3.2.2.2 / FR-P1-RET 系列）.
 
 边界说明（M11）: 本模块提供跨 memory/archive 的统一语义召回算法（预算/降级）;
-记忆消息构造在 memory/retrieve.py（build_memory_messages），本模块被其与 RecordSearcher 共同复用。
+显式记忆检索由 RecordSearcher/MemoryStore 使用；memory/retrieve.py 仅保留词法关键词提取。
 
 语义召回（预算内）→ 关键词兜底 → 如实降级标注（FR-P1-RET-01/02/04/05）。
 - embedding 惰性计算并缓存（避免每次全量重算）

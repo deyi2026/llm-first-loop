@@ -5,11 +5,12 @@ repeat fingerprints: owner, source identity, freshness and source coverage are t
 eligibility contract.  Non-file source kinds remain physical acquisitions unless explicitly
 recovered through the Evidence control plane.
 
-R8.24-C C-D9 (r-p-r P1-2): a ``current_evidence_covers_request`` hit MUST inline the
-observation text into the tool receipt (the receipt body is the actual output).  A hit
-that cannot inline (blob read failure / budget exceeded) is reported as ``failure``
-instead of ``success`` with a metadata-only JSON body — silent content swallowing is
-forbidden ("information is never lost" core promise).
+R8.24-C C-D9 (r-p-r P1-2): a ``current_evidence_covers_request`` hit may replace a
+physical read only when it can inline the observation text into the tool receipt (the
+receipt body is the actual output). If blob read / inline budget prevents that, reuse
+is abandoned and the caller falls back to the physical source read. This preserves the
+"information is never lost" promise without turning a retrieval optimization into a
+capability failure.
 """
 
 from __future__ import annotations
@@ -49,7 +50,7 @@ class EvidenceSourceResolver:
         self.ledger = ledger
         self.freshness = freshness
         self.owner_resolver = owner_resolver
-        # R8.24-C C-D9: 内联正文所需 blob 读取面（None=无法内联——命中即如实 failure）
+        # R8.24-C C-D9: 内联正文所需 blob 读取面（None=无法复用，回退物理读取）
         self.blobs = blobs
         self.inline_budget_chars = inline_budget_chars
 
@@ -101,19 +102,19 @@ class EvidenceSourceResolver:
         )
 
     def _inline_observation(self, record: EvidenceRecord, requested: Coverage) -> str | None:
-        """内联命中 Evidence 的完整 observation（fail 失败返回 None → 如实 failure）.
+        """内联命中 Evidence 的完整 observation（失败返回 None → 回退物理读取）.
 
         blob 是该次工具调用的完整观察（含行号/元信息头，Coverage 声明其对底层
         source 的覆盖范围；_record_can_cover 已保证覆盖本请求范围）。内联完整
-        观察即提供含请求范围的正文——无重排、无伪造；超预算/读取失败如实 failure。
+        观察即提供含请求范围的正文——无重排、无伪造；超预算/读取失败不接管请求。
         """
         if self.blobs is None:
             return None
         try:
             text = self.blobs.read_text(record.blob_ref)
-        except Exception:  # noqa: BLE001 — blob 读取失败属基础设施故障，如实 failure
+        except Exception:  # noqa: BLE001 — 复用失败不得阻断原始 source 能力
             logger.warning(
-                "evidence_reuse inline read failed (fail-closed to failure receipt)",
+                "evidence_reuse inline read failed; falling back to physical source",
                 exc_info=True,
             )
             return None
@@ -127,28 +128,19 @@ class EvidenceSourceResolver:
             return None
         return text
 
-    def _reuse_result(self, call: ToolCall, record: EvidenceRecord, requested: Coverage) -> ToolResult:
-        # R8.24-C C-D9: 命中必须内联正文；无法内联（无 blob 面/读取失败/超预算）→
-        # status=failure 如实回执（success + 无正文 + 仅元数据 = 0，静默吞正文禁止）。
+    def _reuse_result(
+        self, call: ToolCall, record: EvidenceRecord, requested: Coverage
+    ) -> ToolResult | None:
+        # R8.24-C C-D9: 命中必须内联正文；无法内联（无 blob 面/读取失败/超预算）
+        # 则不声称复用成功，也不制造工具 failure，返回 None 让 registry 真实读取 source。
         segment = self._inline_observation(record, requested)
         if segment is None:
-            return ToolResult(
-                status=ToolResultStatus.FAILURE,
-                content=(
-                    "[复用失败] verified-current Evidence 已覆盖该读取范围，但正文无法内联"
-                    "（blob 读取失败或超出内联预算）。"
-                    f"evidence_ref={record.evidence_ref.ref}；"
-                    "force_refresh=true 参数语义为显式物理重读。"
-                ),
-                tool_call_id=call.id,
-                tool_name=call.name,
-                recoverability_status=RecoverabilityStatus.RECORDED,
-                evidence_ref=record.evidence_ref.ref,
-                evidence_representation="ref_only",
-                evidence_projection_complete=False,
-                source_resolution_mode="evidence_reuse",
-                source_execution_performed=False,
+            logger.info(
+                "event=evidence_reuse_fallback_physical ref=%s tool=%s",
+                record.evidence_ref.ref,
+                call.name,
             )
+            return None
         # 正文即 actual output（C-D1 白名单）；单行事实行陈述复用来源（非程序建议）。
         _cov = record.coverage.to_dict()
         fact_line = (

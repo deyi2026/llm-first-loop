@@ -14,7 +14,7 @@ from llm_loop.introspection.tools_docs import SEARCH_DOCS_TOOL_DEF
 
 _ARCHITECTURE_STATUS_TOOL_DEF: dict[str, Any] = {
     "name": "architecture_status",
-    "description": "查询架构运行状态（当前循环阶段/动作轨迹/工具历史/异常/配置）。何时用: 需要了解系统运行情况、定位问题时。architecture_config 维度含演进状态摘要（evolution_summary: executing/pending_review 计数），可一站式感知演进待办。何时不用: 需要执行修正动作（调参数/重试/重载）时用 adjust_strategy/retry_tool/refresh_config。失败对策: 某维度数据不可用会如实标注“读取失败”，请基于已有维度继续分析。",
+    "description": "读取 LFL 运行时架构状态（循环阶段/动作轨迹/工具历史/缓存/异常/配置），用于诊断程序运行；architecture_config 含 evolution_summary 演进待办/状态摘要。它不是用户任务 Goal/Task 的事实源：当前活动目标用 get_goal，任务图用 task_frontier。需要执行参数/重试/重载修正时再用 adjust_strategy/retry_tool/refresh_config。",
     "parameters": {
         "type": "object",
         "properties": {
@@ -29,7 +29,7 @@ _ARCHITECTURE_STATUS_TOOL_DEF: dict[str, Any] = {
 
 _SEARCH_ARCHIVE_TOOL_DEF: dict[str, Any] = {
     "name": "search_archive",
-    "description": "检索被压缩的历史/超长工具结果（信息未丢失，全部另存在压缩档案）。何时用: 上下文压缩后需要找回早期信息、或工具结果被截断需要看完整内容时。何时不用: 需要检索所有历史记录（动作轨迹/异常/记忆/演进）用 search_records。失败对策: 未检索到匹配会如实返回空，请调整关键词或改用 search_records。",
+    "description": "检索被压缩的历史/超长工具结果（信息未丢失，全部另存在压缩档案）。何时用: 上下文压缩后需要找回早期信息、或工具结果被截断需要看完整内容时。何时不用: 需要检索所有历史记录（动作轨迹/异常/记忆/演进）用 search_records。失败对策: 未检索到匹配会如实返回空，请调整关键词或改用 search_records。命中为历史记录：采信前先对照时间锚点（list_evidence/event_stream）；字面命中≠当前所指，过时命中仅作背景。",
     "parameters": {
         "type": "object",
         "properties": {
@@ -105,7 +105,7 @@ _SEARCH_RECORDS_TOOL_DEF: dict[str, Any] = {
 
 _EVENT_STREAM_TOOL_DEF: dict[str, Any] = {
     "name": "event_stream",
-    "description": "统一事件流视图（EVO-20260814，对齐 Harness Trajectory）：把分散的 append-only 审计流（action_trace/exception_log/self_correction/evolution/param_adjust 等）按时间序合并为单一轨迹流。何时用: 需要看'系统最近发生了什么'的连贯轨迹（回溯/审计/交接/排障）而非按 kind 分别检索时。何时不用: 只想查某一类记录用 search_records（更聚焦）；只想查压缩档案用 search_archive。失败对策: 无事件/审计目录不存在会如实返回空视图（不伪造），请核对 audit_dir 配置。",
+    "description": "统一事件流视图（EVO-20260814，对齐 Harness Trajectory）：把分散的 append-only 审计流（action_trace/exception_log/self_correction/evolution/param_adjust 等）按时间序合并为单一轨迹流。何时用: 需要看'系统最近发生了什么'的连贯轨迹（回溯/审计/交接/排障）而非按 kind 分别检索时。何时不用: 只查单类记录或压缩档案时，应使用对应的专用检索能力。失败对策: 无事件/审计目录不存在会如实返回空视图（不伪造），请核对 audit_dir 配置。",
     "parameters": {
         "type": "object",
         "properties": {

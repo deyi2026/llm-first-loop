@@ -59,8 +59,8 @@ TASK_UPDATE_TOOL_DEF: dict = {
         "failed; in_progress→done/blocked/cancelled/failed; blocked→in_progress/cancelled/"
         "failed; done→in_progress(重开,下游自动标 premise_stale)/failed; failed→in_progress"
         "(重试)。→done 且 evidence_required=true 时必须 evidence_refs；→blocked 必须"
-        "blocked_reason。done 重开须 confirm=true（用户规则: 已做过的任务不自动重启，"
-        "须先向用户征得明确批准；confirm=false 的重开会被拒绝）。"
+        "blocked_reason。done→非done 属显式重开：模型须依据当前用户指令判断是否获授权，"
+        "并仅在确认当前授权时传 confirm=true；程序只校验该显式动作位，不解析用户措辞。"
         "acceptance 修订会留痕（acceptance_revised，历史不可篡改）。"
     ),
     "parameters": {
@@ -86,7 +86,10 @@ TASK_UPDATE_TOOL_DEF: dict = {
             "title": {"type": "string", "description": "修订标题"},
             "confirm": {
                 "type": "boolean",
-                "description": "仅 done 重开类转移生效: true 表示已获用户明确批准（未获批准禁止代答 true）",
+                "description": (
+                    "仅 done→非done 重开使用。模型依据当前真实用户指令判断；确认用户已授权本次重开时传 true。"
+                    "程序不从‘继续/重做’等词语推断该值。"
+                ),
             },
         },
         "required": ["goal_id", "task_id"],
@@ -96,10 +99,10 @@ TASK_UPDATE_TOOL_DEF: dict = {
 TASK_FRONTIER_TOOL_DEF: dict = {
     "name": "task_frontier",
     "description": (
-        "查看任务图 frontier（当前可执行集 + 全图状态）。何时用: 长任务每轮决策前/"
-        "会话恢复后/不确定下一步时。默认渲染 ready/in_progress/blocked/unreachable/"
-        "premise_stale；full=true 含 waiting(pending 非 ready) 与已完成任务证据。"
-        "何时不用: 无任务图时（返回空）。"
+        "读取 durable Task 图事实源：ready/in_progress/blocked/unreachable/premise_stale 等当前状态。"
+        "适用于已存在 Goal、需要确认当前执行 frontier；goal_id 省略或 current/active 时解析当前活动 Goal。"
+        "full=true 额外返回 waiting 与 done 证据。它不是历史对话搜索，也不替模型制定下一步；"
+        "历史事实用 search_records/search_archive。"
     ),
     "parameters": {
         "type": "object",
@@ -177,12 +180,13 @@ def run_task_update(ctx: Any, host: Any, args: dict) -> ToolResult:
     if err:
         return ToolResult(ToolResultStatus.FAILURE, err, "", name)
     assert audit is not None  # _require_active_goal 契约：err 为空 ⟺ audit 非 None
+    target = str(args.get("status") or "").strip()
     try:
         store = TaskStore(audit)
         task = store.update(
             goal_id,
             task_id,
-            status=(str(args["status"]) if args.get("status") else None),
+            status=(target if target else None),
             blocked_reason=(str(args["blocked_reason"]) if args.get("blocked_reason") else None),
             evidence_refs=([str(r) for r in args["evidence_refs"]] if args.get("evidence_refs") is not None else None),
             acceptance=([str(a) for a in args["acceptance"]] if args.get("acceptance") is not None else None),
@@ -213,6 +217,8 @@ def run_task_frontier(ctx: Any, host: Any, args: dict) -> ToolResult:
     if not audit:
         return ToolResult(ToolResultStatus.FAILURE, "[存储不可用] audit_dir 未装配", "", name)
     goal_id = str(args.get("goal_id", "") or "").strip()
+    if goal_id.casefold() in {"current", "active", "当前", "当前目标", "当前任务"}:
+        goal_id = ""
     if not goal_id:
         try:
             g = GoalStore(audit).get(prefer_session_id=_current_sid(ctx))
@@ -245,9 +251,9 @@ def run_task_frontier(ctx: Any, host: Any, args: dict) -> ToolResult:
             lines.append(f"  ✓ {t.task_id} {t.title[:50]}{ev}{rev}")
     ok, detail = store.goal_completion_ready(goal_id)
     if ok:
-        lines.append("  [goal 可 complete] 无 open 任务（blocked/failed 需 waive 请人工确认）")
+        lines.append("  goal_completion_ready=true")
     else:
-        lines.append(f"  [goal 未完成] open 详情: {detail}")
+        lines.append(f"  goal_completion_ready=false | {detail}")
     return ToolResult(ToolResultStatus.SUCCESS, "\n".join(lines), "", name)
 
 

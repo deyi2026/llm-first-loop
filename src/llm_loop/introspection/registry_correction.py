@@ -39,7 +39,7 @@ _RETRY_TOOL_DEF: dict[str, Any] = {
 
 _REFRESH_CONFIG_TOOL_DEF: dict[str, Any] = {
     "name": "refresh_config",
-    "description": "重载程序自身配置（配置文件/环境变量）。生效范围（EVO-20260815-b3339561）: LLM 凭据（api_key/base_url/model/协议）与模型目录（providers.json）原地同步即时生效；其余配置为启动时装配（冻结），变更需重启进程生效；运行参数（max_iterations 等白名单）用 adjust_strategy 即时调整。何时用: LLM 凭据/模型目录变更后需要生效时。何时不用: 未变更配置时无需重载。失败对策: 重载失败会如实返回原因，程序保持旧配置与旧凭据继续运行，请核对配置后重试。",
+    "description": "重载程序自身配置。providers.json / MODEL_PROVIDERS 模型目录会原子切换，新的 override/fallback/独立 summary client 可即时使用新 registry；默认路由的共享 client 与其启动 provider/model contract（含 api_key/base_url/model/协议/context/max_tokens/reasoning/tool-choice 元数据）为避免在途请求观察半新半旧状态，不做原地热改，相关变化需重启进程生效。其余 Settings 也按启动装配冻结；运行参数（max_iterations/timeout_s/history_budget 白名单）用 adjust_strategy 即时调整。何时用: 模型目录变更后需要让非默认动态路由使用新 registry，或检查配置差异。何时不用: 期望仅靠本工具热换默认路由 client 时不要误判为已生效。失败对策: 重载失败会如实返回原因并保持旧 registry/client。",
     "parameters": {"type": "object", "properties": {}},
 }
 

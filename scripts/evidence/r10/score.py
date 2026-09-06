@@ -84,10 +84,12 @@ def score_runs(payload: dict[str, Any]) -> dict[str, Any]:
             and int(r.get("recovery_answer_hit_count") or 0) >= 1
             for r in exact_t3
         ),
+        # T4 is the same deliberate uncovered-gap case at the physical-source layer:
+        # one exact non-overlap source execution is already the ideal path. Do not force
+        # a second Evidence recovery step merely to satisfy a historical scorer shape.
         "t4_exact_physical_once_gap": all(
             int(r.get("physical_source_execution_count") or 0) == 1
             and int(r.get("physical_redundant_overlap_count") or 0) == 0
-            and int(r.get("recovery_answer_hit_count") or 0) >= 1
             for r in exact_t4
         ),
         "source_results_accounted": all(

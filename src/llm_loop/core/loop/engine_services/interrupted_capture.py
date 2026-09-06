@@ -10,6 +10,8 @@ truncated episode 行的写入不在此层）。
 """
 from __future__ import annotations
 
+import json
+import time
 from typing import Any
 
 
@@ -30,10 +32,46 @@ def llm_error_digest(exc: BaseException) -> str:
 class InterruptedCapture:
     """一 run 轮一实例：流式增量累积 + 中断触发口（同轮至多一行截断标注）."""
 
-    __slots__ = ("_engine", "text_parts", "reasoning_parts", "cancelled", "_fired")
+    __slots__ = (
+        "_engine",
+        "_sess",
+        "_round_no",
+        "_provider",
+        "_model",
+        "_text_chars",
+        "_reasoning_chars",
+        "_provider_replay",
+        "_tool_call_drafts",
+        "_native_state_chars",
+        "_last_checkpoint_chars",
+        "_last_checkpoint_at",
+        "text_parts",
+        "reasoning_parts",
+        "cancelled",
+        "_fired",
+    )
 
-    def __init__(self, engine: Any) -> None:
+    def __init__(
+        self,
+        engine: Any,
+        *,
+        sess: Any | None = None,
+        round_no: int = 0,
+        provider: str = "",
+        model: str = "",
+    ) -> None:
         self._engine = engine
+        self._sess = sess
+        self._round_no = int(round_no or 0)
+        self._provider = str(provider or "")
+        self._model = str(model or "")
+        self._text_chars = 0
+        self._reasoning_chars = 0
+        self._provider_replay: dict[str, Any] | None = None
+        self._tool_call_drafts: list[dict[str, Any]] = []
+        self._native_state_chars = 0
+        self._last_checkpoint_chars = 0
+        self._last_checkpoint_at = 0.0
         self.text_parts: list[str] = []
         self.reasoning_parts: list[str] = []
         self.cancelled = False  # 吸收原局部 _cancelled_during_llm（取消归因消费点同名语义）
@@ -43,14 +81,76 @@ class InterruptedCapture:
         """流式增量累积：text/reasoning 空串不收（与原两处内联判断逐字等价）."""
         if getattr(delta, "text", ""):
             self.text_parts.append(delta.text)
+            self._text_chars += len(delta.text)
         if getattr(delta, "reasoning", ""):
             self.reasoning_parts.append(delta.reasoning)
+            self._reasoning_chars += len(delta.reasoning)
+        self._maybe_checkpoint()
+
+    def on_provider_state(self, state: dict[str, Any]) -> None:
+        """Capture provider-native opaque replay/tool-call draft state.
+
+        Tool-call drafts remain non-executable crash state.  They are persisted so a
+        restart can diagnose/recover the exact interrupted phase, but they are never
+        converted into normal ToolCall objects here.
+        """
+        replay = state.get("provider_replay")
+        if isinstance(replay, dict):
+            self._provider_replay = replay
+        drafts = state.get("tool_call_drafts")
+        if isinstance(drafts, list):
+            self._tool_call_drafts = [dict(item) for item in drafts if isinstance(item, dict)]
+        try:
+            self._native_state_chars = len(
+                json.dumps(
+                    {
+                        "provider_replay": self._provider_replay,
+                        "tool_call_drafts": self._tool_call_drafts,
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            )
+        except (TypeError, ValueError):
+            self._native_state_chars = 0
+        self._maybe_checkpoint()
+
+    def _maybe_checkpoint(self, *, force: bool = False) -> None:
+        total_chars = self._text_chars + self._reasoning_chars + self._native_state_chars
+        if not total_chars or self._sess is None:
+            return
+        now = time.monotonic()
+        # First non-empty delta is checkpointed immediately; afterwards checkpoint
+        # at most roughly once per 1 KiB or second.  This makes normal restart/kill
+        # recovery durable without fsync-per-token/event-log explosion.
+        if (
+            force
+            or self._last_checkpoint_chars == 0
+            or total_chars - self._last_checkpoint_chars >= 1024
+            or now - self._last_checkpoint_at >= 1.0
+        ):
+            try:
+                self._engine._on_llm_partial_checkpoint(
+                    self._sess,
+                    text_parts=self.text_parts,
+                    reasoning_parts=self.reasoning_parts,
+                    round_no=self._round_no,
+                    provider=self._provider,
+                    model=self._model,
+                    provider_replay=self._provider_replay,
+                    tool_call_drafts=self._tool_call_drafts,
+                )
+                self._last_checkpoint_chars = total_chars
+                self._last_checkpoint_at = now
+            except Exception:  # noqa: BLE001 — checkpoint failure must not break streaming
+                pass
 
     def fire(self, sess: Any, reason: str, round_no: int, exc: BaseException | None = None) -> None:
         """中断半截产物限量落盘（防重：同一 run 轮至多一行截断标注）."""
         if self._fired:
             return
         self._fired = True
+        self._maybe_checkpoint(force=True)
         self._engine._on_llm_interrupted(
             sess,
             text_parts=self.text_parts,
@@ -58,4 +158,8 @@ class InterruptedCapture:
             reason=reason,
             error_digest=llm_error_digest(exc) if exc else "",
             round_no=round_no,
+            provider=self._provider,
+            model=self._model,
+            provider_replay=self._provider_replay,
+            tool_call_drafts=self._tool_call_drafts,
         )

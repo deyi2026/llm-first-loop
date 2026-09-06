@@ -84,6 +84,7 @@ def _registry(
     *,
     model_id: str = "m",
     thinking: bool = True,
+    reasoning_split: bool = False,
 ) -> ProviderRegistry:
     return ProviderRegistry(
         providers={
@@ -91,7 +92,12 @@ def _registry(
                 id=provider_id,
                 base_url=base_url,
                 api_key_env="",
-                models={model_id: ModelSpec(thinking=thinking)},
+                models={
+                    model_id: ModelSpec(
+                        thinking=thinking,
+                        reasoning_split=reasoning_split,
+                    )
+                },
                 default_model=model_id,
             )
         }
@@ -101,9 +107,12 @@ def _registry(
 def test_reasoning_policy_binds_selected_local_provider_not_global_default() -> None:
     settings = SimpleNamespace(reasoning_tail=0, llm_base_url="https://api.deepseek.com/v1")
     registry = _registry("local", "http://localhost:1234/v1")
+    # Local/unknown protocols have no affirmative requirement to discard model
+    # reasoning. Agency-first therefore preserves the configured policy rather
+    # than inventing a locality-based strip rule.
     assert _reasoning_tail_for(
         settings, resolved_label="local/m", registry_snapshot=registry
-    ) == -2
+    ) == 0
 
 
 def test_reasoning_policy_binds_selected_deepseek_not_global_local() -> None:
@@ -126,14 +135,31 @@ def test_reasoning_policy_glm_preserves_historical_reasoning() -> None:
 def test_reasoning_policy_minimax_thinking_off_is_prompt_neutral() -> None:
     settings = SimpleNamespace(reasoning_tail=0, llm_base_url="https://api.deepseek.com/v1")
     registry = _registry("minimax", "https://api.minimax.chat/v1", thinking=False)
+    # thinking=false means this model is not known to require interleaved replay;
+    # it does not prove that historical reasoning must be destroyed. Preserve the
+    # configured neutral policy unless a provider contract requires otherwise.
     assert _reasoning_tail_for(
         settings, resolved_label="minimax/m", registry_snapshot=registry
-    ) == -2
+    ) == 0
 
 
 def test_reasoning_policy_minimax_thinking_on_preserves_interleaved_state() -> None:
     settings = SimpleNamespace(reasoning_tail=-2, llm_base_url="http://localhost:1234/v1")
     registry = _registry("minimax", "https://api.minimax.chat/v1", thinking=True)
+    assert _reasoning_tail_for(
+        settings, resolved_label="minimax/m", registry_snapshot=registry
+    ) == 0
+
+
+def test_reasoning_policy_minimax_reasoning_split_requires_full_replay() -> None:
+    """Structured M3 reasoning_details replay is protocol state, not optional prompt prose."""
+    settings = SimpleNamespace(reasoning_tail=-2, llm_base_url="http://localhost:1234/v1")
+    registry = _registry(
+        "minimax",
+        "https://api.minimax.chat/v1",
+        thinking=False,
+        reasoning_split=True,
+    )
     assert _reasoning_tail_for(
         settings, resolved_label="minimax/m", registry_snapshot=registry
     ) == 0
@@ -184,7 +210,8 @@ def test_build_uses_actual_selected_provider_snapshot(build_test_engine) -> None
         ),
     ]
 
-    # Global/default endpoint points at DeepSeek, but this build actually targets local.
+    # Global/default endpoint points at DeepSeek, but this build actually targets
+    # local. Provider selection must not invent a reasoning-deletion policy.
     object.__setattr__(engine.settings, "llm_base_url", "https://api.deepseek.com/v1")
     local_registry = _registry("local", "http://localhost:1234/v1")
     local = engine._build_llm_messages(
@@ -195,7 +222,7 @@ def test_build_uses_actual_selected_provider_snapshot(build_test_engine) -> None
         registry_snapshot=local_registry,
     )
     local_assistant = next(m for m in local if m.get("role") == "assistant")
-    assert local_assistant.get("reasoning_content") is None
+    assert local_assistant["reasoning_content"] == "HISTORICAL-REASONING"
 
     # Flip the global/default endpoint to local.  The selected DeepSeek provider must
     # still preserve reasoning because its tool protocol owns the replay requirement.

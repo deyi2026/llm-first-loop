@@ -189,17 +189,17 @@ class TestGuardModeMatrix:
         from llm_loop.core.trace_leak.user_ingress_guard import current_guard_mode
 
         monkeypatch.setenv(GUARD_MODE_ENV, "bogus")
-        assert current_guard_mode() == "observe"
+        assert current_guard_mode() == "enforce"
 
 
 class TestEngineMount:
     """挂载点 1：engine.run ingress 参数（observe 存量零回归兜底）。"""
 
-    def test_run_without_ingress_observe_zero_regression(self, build_test_engine) -> None:
+    def test_run_without_ingress_explicit_observe_zero_regression(
+        self, build_test_engine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         engine, fake = build_test_engine([{"content": "ok", "tool_calls": []}])
-        import os
-
-        assert os.environ.get(GUARD_MODE_ENV) is None  # 缺省 observe
+        monkeypatch.setenv(GUARD_MODE_ENV, "observe")
         result = engine.run(engine.session.create(), "普通用户消息")
         assert "ok" in result.final_answer
 

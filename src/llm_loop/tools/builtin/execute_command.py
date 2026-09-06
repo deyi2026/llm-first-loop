@@ -22,27 +22,6 @@ from llm_loop.tools.source_recovery_contract import (
     source_recovery_guidance,
 )
 
-# 方案 4: 工具输出截断（context 优化——长输出只发头尾，完整内容落盘后可经 read_file 取回）
-# EVO-20260814: 裁剪阈值可配置化（对齐 Harness toolResultPruner 思路）——
-# TOOL_TRIM_MAX/HEAD/TAIL 环境变量可调，未设置用默认；非法值回退默认（零回归）。
-_NOISE_WORDS = {"and", "or", "not", "the", "for", "with", "echo"}
-
-
-def _trim_config() -> tuple[int, int, int]:
-    """返回 (max, head, tail) 裁剪参数；环境变量非法/未设置回退默认."""
-    def _get(name: str, default: int) -> int:
-        try:
-            return int(os.environ.get(name, "") or default)
-        except ValueError:
-            return default
-
-    return (
-        _get("TOOL_TRIM_MAX", 3000),
-        _get("TOOL_TRIM_HEAD", 1500),
-        _get("TOOL_TRIM_TAIL", 1500),
-    )
-
-
 # EVO-20260814-61a52baf: 执行环境清洗（Harness defensive-patterns #6）
 # 不给不可信输出 ambient environment：密钥类环境变量一律剔除，白名单基础键强制保留，
 # 其余非敏感键保留（避免破坏 git/ssh/代理等正常功能，零回归）。
@@ -59,12 +38,6 @@ _ENV_BLOCK_PATTERNS = (
     "PRIVATE_KEY", "CREDENTIAL", "ACCESS_KEY", "SESSION_KEY", "BEARER",
 )
 
-# 控制面 capability metadata（review R3 P0-1）：非密钥但 agent 无业务理由
-# 可知——COG_RUNTIME_ENFORCE_FILE 暴露路径即暴露 self-promote 攻击面
-# （同 Unix 用户下 ~/.config 类路径可写），从子进程环境剔除。
-_ENV_CONTROL_PLANE_EXACT = frozenset({"COG_RUNTIME_ENFORCE_FILE"})
-
-
 def _scrubbed_env() -> dict[str, str]:
     """构造清洗后的子进程环境：白名单强制保留 + 密钥类/控制面剔除 + 其余保留."""
     scrubbed: dict[str, str] = {}
@@ -74,59 +47,10 @@ def _scrubbed_env() -> dict[str, str]:
             scrubbed[k] = v
         elif any(p in up for p in _ENV_BLOCK_PATTERNS):
             continue  # 密钥类剔除，不外泄
-        elif k in _ENV_CONTROL_PLANE_EXACT:
-            continue  # 控制面 capability metadata 剔除（review R3 P0-1）
         else:
             scrubbed[k] = v
     return scrubbed
 
-
-def _truncate_output(content: str, command: str = "") -> str:
-    """截断长输出：保留首 N + 末 M 字符（可配），中间附截断说明与搜索关键词.
-
-    EVO-20260817-f485acac: 超阈值完整输出落盘到显式文件（data/audit/cmd_outputs/），
-    回执标注路径——AI 可 read_file 按需读全文，避免反复全量回显撑大请求前缀
-    （缓存命中时前缀体量仍计费；评测/批量任务大输出是成本大头）。
-    落盘失败 fail-open 不影响截断。
-    """
-    max_chars, keep_head, keep_tail = _trim_config()
-    if len(content) <= max_chars:
-        return content
-    head = content[:keep_head]
-    tail = content[-keep_tail:]
-    # 从命令提取关键词（取可打印词，最多 3 个；排除常见 shell 噪音词）
-    kw = " ".join(
-        [w for w in command.split() if w.isalnum() and len(w) >= 2 and w not in _NOISE_WORDS][:3]
-    )
-    # 完整输出落盘（f485acac）——仅超阈值时；data/ 已 gitignore 不入库
-    dump_path_str = ""
-    try:
-        import os
-
-        out_dir = (
-            Path(os.environ.get("DATA_DIR", "data")) / "audit" / "cmd_outputs"
-        )
-        out_dir.mkdir(parents=True, exist_ok=True)
-        safe_cmd = "".join(c if c.isalnum() or c in "-_." else "_" for c in command[:40])
-        # EVO-20260824 对齐 trim.py 先例: 内容哈希替代时间戳——确定性路径（相同输出→
-        # 同路径，前缀稳定缓存命中；不同输出→不同路径，不误读旧文件）。
-        # 原时间戳使同命令重跑路径每轮变化 → 回执字节变 → 服务端缓存全 miss。
-        import hashlib
-
-        digest = hashlib.sha256(content.encode("utf-8", errors="replace")).hexdigest()[:16]
-        dump_path = out_dir / f"{digest}_{safe_cmd[:24] or 'cmd'}.log"
-        dump_path.write_text(content, encoding="utf-8")
-        dump_path_str = str(dump_path)
-    except Exception:  # noqa: BLE001 — 落盘失败不阻断截断
-        dump_path_str = ""
-    # 2026-08-20: 标记统一走共享 truncation_marker（事实+动作两段式——防重跑循环）
-    from llm_loop.tools.trim import truncation_marker
-
-    return (
-        f"{head}\n"
-        f"{truncation_marker(len(content), keep_head, keep_tail, max_chars, kw, dump_path_str)}\n"
-        f"{tail}"
-    )
 
 
 class ExecuteCommandTool:
@@ -136,9 +60,8 @@ class ExecuteCommandTool:
         "何时不用: 纯读取文件应优先 read_file；仅获取网页用 web_fetch。"
         "失败对策: 非零退出码会如实返回并标注；破坏性命令（rm -rf 根目录等）会被安全边界硬阻断，请改用安全方案。"
         "状态契约: 每次调用是独立 shell 进程——cd/环境变量/命令历史不跨调用持久（用 workdir 参数或命令内 cd && 串联）；"
-        "run_in_background 任务跨调用持久，经 job_output/job_kill 管理；"
-        "输出超 3000 字符将截断为首 1500 + 末 1500（完整原文落盘 data/audit/cmd_outputs/，"
-        "legacy 模式可 read_file 落盘路径或 full=true 取全文；Evidence enforce 模式完整 observation 先持久化，再用 read_evidence 恢复；"
+        "run_in_background 任务跨调用持久，启动后用 job_output 查询；需要终止时须以真实用户取消意图为依据；"
+        "命令输出默认完整返回；仅统一 ToolRegistry/Evidence 的真实输出硬上限可截断，并由统一 durable recovery 负责恢复；"
         "长任务拆多次中型调用防超时丢进度，大量中间产物落盘文件而非全靠回显。"
         + SHARED_SOURCE_RECOVERY_CONTRACT
         + source_recovery_guidance(SourceRecoveryKind.COMMAND_SNAPSHOT)
@@ -153,11 +76,7 @@ class ExecuteCommandTool:
             },
             "run_in_background": {
                 "type": "boolean",
-                "description": "后台运行（可选，默认 false）。true 时立即返回 job_id，不阻塞等待；用 job_output 查询输出、job_kill 终止。适合长任务（测试/安装/编译）。",
-            },
-            "full": {
-                "type": "boolean",
-                "description": "legacy 模式 true=跳过工具内 3000 字符截断；Evidence enforce 模式仍受统一 projection budget，完整 observation 用 read_evidence 恢复",
+                "description": "后台运行（可选，默认 false）。true 时立即返回 job_id，不阻塞等待；用 job_output 查询输出。终止能力仅在真实用户明确要求取消时提供。适合长任务（测试/安装/编译）。",
             },
         },
         "required": ["command"],
@@ -260,8 +179,10 @@ class ExecuteCommandTool:
                     start_new_session=True,  # 独立进程组：job_kill 可整树终止（防孤儿进程）
                 )
                 # DSH 借鉴 021-B: owner 并发上限——超限释放已启动进程并如实拒绝
+                # （current_session_id 用模块级 import：函数内重复 import 会遮蔽 198/320 行引用）
+                _sid = current_session_id.get() or ""
                 try:
-                    job_id = JobRegistry.instance().create(proc, command)
+                    job_id = JobRegistry.instance().create(proc, command, session_id=_sid)
                 except JobLimitExceeded as exc:
                     try:
                         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
@@ -277,9 +198,11 @@ class ExecuteCommandTool:
                 return ToolResult(
                     status=ToolResultStatus.SUCCESS,
                     content=f"[后台任务已启动] job_id={job_id} status=running\n命令: {command}\n"
-                            f"用 job_output(job_id={job_id}) 查询输出，job_kill(job_id={job_id}) 终止。",
+                            f"用 job_output(job_id={job_id}) 查询输出；如用户明确要求终止，再按取消意图处理。",
                     tool_call_id="",
                     tool_name=self.name,
+                    # R2 P1-7: 回执文案与结构化字段同一构造点产出（活跃句柄 → 下轮投影选入）
+                    capability_requirements=("job_output",),
                 )
             # P3-3(2026-08-15): EXEC_SANDBOX=bwrap → bwrap argv（shell=False，独立命名空间 +
             # 只读系统目录 + 工作区可写）；显式开启而 bwrap 缺失 → fail-closed 如实失败
@@ -357,16 +280,9 @@ class ExecuteCommandTool:
         _cmd_preview = " ".join(command.split()[:8]) if command else "?"
         _out_lines = len(content.splitlines())
         content = f"[命令] {_cmd_preview} [退出码 {proc.returncode}] [输出 {_out_lines} 行]\n{content}"
-        from llm_loop.core.run_context import (
-            current_evidence_enforce_enabled,
-            current_evidence_shadow_enabled,
-        )
+        from llm_loop.core.run_context import current_evidence_shadow_enabled
 
         raw_observation = content if current_evidence_shadow_enabled.get() else None
-
-        # Phase3 enforce: return raw observation to Registry; projection happens after capture.
-        if not bool(kwargs.get("full", False)) and not current_evidence_enforce_enabled.get():
-            content = _truncate_output(content, command)
 
         return ToolResult(
             status=status,

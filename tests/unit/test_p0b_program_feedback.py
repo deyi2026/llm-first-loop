@@ -72,10 +72,11 @@ def test_b2_projection_uses_constant_protocol_boundary_and_storage_untouched(tmp
     built = engine._build_llm_messages(
         sess, [], max_chars=200_000, planned_label="zhipu/glm-5"
     )
-    contents = [str(d.get("content", "")) for d in built]
     assert "SECRET-OLD-FAULT-DETAIL" not in str(built)
-    idx = contents.index(PROGRAM_FINAL_PROTOCOL_BOUNDARY)
-    assert built[idx]["role"] == "assistant"
+    idx = next(
+        i for i, d in enumerate(built)
+        if d.get("role") == "assistant" and d.get("content") == PROGRAM_FINAL_PROTOCOL_BOUNDARY
+    )
     assert built[idx - 1]["role"] == "user"
     assert built[idx + 1]["role"] == "user"
     assert built[idx + 1]["content"] == "继续"

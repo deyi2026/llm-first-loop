@@ -23,7 +23,6 @@
     "src/llm_loop/feishu/rest.py::_write_markdown_to_doc": 170,
     "src/llm_loop/tools/builtin/execute_command.py::execute": 170,
     "src/llm_loop/llm/client.py::_stream_openai": 169,
-    "src/llm_loop/core/prompt_build/stages/budget_application.py::apply_injection_budget": 168,
     "src/llm_loop/codearts/scheduler.py::dispatch": 163,
     "src/llm_loop/llm/providers.py::_parse_providers_dict": 161,
     "src/llm_loop/subagent/runner.py::_execute_subagent": 160,

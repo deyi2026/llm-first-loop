@@ -90,6 +90,26 @@ def test_replay_messages_field_identical():
     assert view["version"] == 4
 
 
+def test_replay_preserves_provider_opaque_replay_metadata_exactly():
+    """Provider replay state is protocol data, not prose; event replay must be lossless."""
+    src = _source_session()
+    opaque = {
+        "provider": "minimax",
+        "fields": {
+            "reasoning_details": [
+                {
+                    "type": "reasoning.text",
+                    "text": "private-reasoning-state",
+                    "signature": "opaque-signature-1",
+                }
+            ]
+        },
+    }
+    src["messages"][1]["metadata"] = {"provider_replay": opaque}
+    view = replay_session(_events_from_session(src))
+    assert view["messages"][1]["metadata"]["provider_replay"] == opaque
+
+
 def test_replay_compressed_marker_preserved():
     src = _source_session()
     events = _events_from_session(src)

@@ -5,16 +5,15 @@ R8.23 基线对照（设计包 E §6 批 E1② 观测结论）: memory snapshot 
 
 硬门断言:
 - E-G1 自动 memory 投影 chars=0（未授权零投影 + 快照存储保留=retrieval 不删）;
-- E-G2 task_active 授权绑定审计在场（authorized_inject / unauthorized_zero_\
-  projection 决策日志判据）;
+- E-G2 program-owned dynamic prompt producer 注册表为空；
 - E-G3 TIP replay / compact anchor 模型可见 chars=0;
 - E-G4 Cognitive allowlist promote=0（effective mode 恒 ∈ {off, shadow}）;
-- E-G5 未授权轮 Goal/Task 读取=0（goal_read=deferred）;
+- E-G5 build 不因 continuation/new-question 自动读取/投影 Goal/Task state；
 - E-G6 SLOTS 注册表不含 memory/tip（ resurrection=0: 未知 producer 不获语义层）。
 
 恢复路径（resolved is retrievable, not injectable）:
-- 路线 1 显式指代授权一次（memory_authorized 唯一存续通道——正向断言）;
-- 路线 2 search_records(kind=memory) 恢复链路核验（E7 实证已有）。
+- history/memory 统一走显式 search_records/search_archive 等检索工具；
+- program-origin 动态 prompt producer 全部退出；任务连续性走显式 retrieval tools。
 """
 
 from __future__ import annotations
@@ -30,27 +29,24 @@ from llm_loop.core.prompt_eligibility import (
 def test_eg6_slots_registry_memory_tip_retired():
     """E-G6: memory/tip 槽退出注册表.
 
-    存续槽 = {program_recovery, task_active, task_next_step, memory_authorized}——
-    task_next_step 属续聊授权轮 next_step 锚点（ADR-5，仅授权轮产生，同
-    task_active 授权化语义，非自动 producer）。
+    Agency-first 收口后 program-owned dynamic producer 必须精确为空。
     """
     assert "memory" not in PROMPT_DYNAMIC_PRODUCER_SLOTS
     assert "tip" not in PROMPT_DYNAMIC_PRODUCER_SLOTS
-    assert frozenset(
-        {"program_recovery", "task_active", "task_next_step", "memory_authorized"}
-    ) == PROMPT_DYNAMIC_PRODUCER_SLOTS
+    assert frozenset() == PROMPT_DYNAMIC_PRODUCER_SLOTS
 
 
 def test_eg6_unknown_producer_gains_no_semantic_layer():
     """resurrection=0: 以新 producer 名义（含旧名 memory/tip）不得获语义层."""
-    for ghost in ("memory", "tip", "anchor", "hotcard", "gate_note", "interop", "new_channel"):
+    for ghost in (
+        "memory", "tip", "anchor", "hotcard", "gate_note", "interop",
+        "program_recovery", "task_next_step", "memory_authorized",
+        "capability_unavailable", "new_channel",
+    ):
         assert dynamic_prompt_layer("内容", slot_kind=ghost) is None, (
             f"retired/unknown producer '{ghost}' 不得复活语义层"
         )
-    # 存续槽显式校验通过（非 None）
-    assert dynamic_prompt_layer("内容", slot_kind="memory_authorized") is not None
-    assert dynamic_prompt_layer("内容", slot_kind="task_active") is not None
-    assert dynamic_prompt_layer("内容", slot_kind="program_recovery") is not None
+    assert dynamic_prompt_layer("内容", slot_kind="task_active") is None
 
 
 # ── E-G1/E-G3: 模型可见 chars=0（武装全部退出通道后零投影）──────────────
@@ -66,7 +62,7 @@ def test_eg1_eg3_armed_channels_zero_model_chars(tmp_path):
     wire = "\n".join(str(m.get("content") or "") for m in out)
     for slot in ("memory", "tip", "hotcard", "gate_note", "memory_authorized", "anchor"):
         assert f"[slot:{slot}]" not in wire, f"E-G1/E-G3: slot:{slot} 模型可见 chars=0"
-    assert engine._run_state().last_build_injections == []
+    assert not hasattr(engine._run_state(), "last_build_injections")
 
 
 def test_eg1_retrieval_plane_storage_untouched(tmp_path):
@@ -86,49 +82,6 @@ def test_eg1_retrieval_plane_storage_untouched(tmp_path):
 # ── E-G4: Cognitive allowlist promote=0（默认冻结）────────────────────
 
 
-def test_eg4_default_freeze_no_promotion(tmp_path, monkeypatch):
-    """E-G4: 默认 LFL_COG_ENFORCE_FREEZE=on → allowlist 命中也不 promote（恒 shadow）."""
-    monkeypatch.delenv("LFL_COG_ENFORCE_FREEZE", raising=False)
-    from llm_loop.config import _env_cog_mode
-    from tests.unit.test_injection_fingerprint import _engine
-
-    engine, sess = _engine(tmp_path)
-    allow = tmp_path / "allow.txt"
-    allow.write_text(sess.session_id + "\n", encoding="utf-8")
-    allow.chmod(0o444)
-    import dataclasses
-
-    engine.settings = dataclasses.replace(
-        engine.settings, cog_runtime_mode="shadow", cog_enforce_file=str(allow)
-    )
-    # 显式 enforce 配置亦降 shadow（effective mode 恒 ∈ {off, shadow}）
-    engine.settings = dataclasses.replace(engine.settings, cog_runtime_mode="enforce")
-    assert _env_cog_mode  # 配置解析面由 test_cr_r1_mode 承载; 此处冻结由 build 面断言
-
-
-def test_eg4_current_freeze_mode_helper():
-    """冻结开关解析: 默认 on; off/false/0/空 视为回滚通道."""
-    import os
-
-    from llm_loop.core.loop.build import _cog_freeze_enabled
-
-    saved = os.environ.get("LFL_COG_ENFORCE_FREEZE")
-    try:
-        os.environ.pop("LFL_COG_ENFORCE_FREEZE", None)
-        assert _cog_freeze_enabled() is True  # 默认冻结
-        for v in ("0", "false", "off", ""):
-            os.environ["LFL_COG_ENFORCE_FREEZE"] = v
-            assert _cog_freeze_enabled() is False, f"{v!r} 应视为回滚通道"
-        for v in ("1", "true", "on"):
-            os.environ["LFL_COG_ENFORCE_FREEZE"] = v
-            assert _cog_freeze_enabled() is True
-    finally:
-        if saved is None:
-            os.environ.pop("LFL_COG_ENFORCE_FREEZE", None)
-        else:
-            os.environ["LFL_COG_ENFORCE_FREEZE"] = saved
-
-
 # ── E-G2/E-G5: 授权绑定审计与零误读（决策日志判据）────────────────────
 
 
@@ -141,11 +94,11 @@ def test_eg2_eg5_decision_log_boundaries(build_test_engine):
     spy = _spy_actions(engine)
     engine.run(sid, "全新普通问题")
 
-    zero = [c for c in spy.calls if c[:2] == ("task.active", "unauthorized_zero_projection")]
-    assert zero and "goal_read=deferred" in zero[0][2], "E-G5: 零误读轮 goal 读取=0"
-    assert not any(c[:2] == ("task.active", "authorized_inject") for c in spy.calls), (
-        "E-G2: 无授权不得有授权绑定记录"
-    )
+    import json
+    wire = json.dumps(fake.calls[-1]["messages"], ensure_ascii=False) if fake.calls else ""
+    assert "slot:task_active" not in wire
+    assert "IN-PROGRESS-0" not in wire
+    assert not [c for c in spy.calls if c[0] in {"task.active", "task.frontier"}]
 
 
 # ── 路线 2: search_records 恢复链路（E-1.2 验收核验）──────────────────

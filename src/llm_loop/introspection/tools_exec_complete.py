@@ -11,6 +11,7 @@ AI 执行完成登记（executing→executed，executor=ai）: 程序只提供"�
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -104,10 +105,12 @@ def run_evolution_complete(ctx: Any, executor: Any, audit: Any, args: dict) -> T
     current_status = None
     found = False  # M19 FIX-01: 显式 found 标志区分"不存在"与"读取失败"
     read_failed = False  # M19 FIX-01: 读取失败第三态（fail-open 放行，不误判"不存在"）
+    entry_session_id = ""
     try:
         for entry in store.list():
             if entry.get("id") == suggestion_id:
                 current_status = entry.get("status")
+                entry_session_id = str(entry.get("session_id", "") or "")
                 found = True
                 break
     except OSError:
@@ -134,6 +137,41 @@ def run_evolution_complete(ctx: Any, executor: Any, audit: Any, args: dict) -> T
             tool_call_id="",
             tool_name="evolution_complete",
         )
+    # R3-MR owner 校验（主防线）: scope 是影响范围而非 owner 权限；
+    # 模型侧所有建议都必须由记录的 owner session 登记完成。归属不符/缺失均拒绝。
+    owner_session_id = ""
+    if found:
+        try:
+            from llm_loop.core.run_context import current_session_id as _bound_sid
+
+            owner_session_id = str(_bound_sid.get() or "")
+        except Exception:  # noqa: BLE001 — owner 语义缺失必须 fail-closed
+            owner_session_id = ""
+        if not entry_session_id or entry_session_id != owner_session_id:
+            # R3-MR: 结构化拒绝事实留痕（audit 面归因，content 为模型可见对账）
+            with contextlib.suppress(Exception):
+                audit(
+                    "evolution_complete",
+                    {
+                        "suggestion_id": suggestion_id,
+                        "denial": "unauthorized",
+                        "reason_code": "cross_session_owner",
+                        "owner_session": entry_session_id,
+                        "current_session": owner_session_id,
+                    },
+                    "denied_cross_session_owner",
+                )
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=(
+                    f"[跨会话归属拒绝] 事实: 建议 {suggestion_id} 归属会话 "
+                    f"'{entry_session_id or '<legacy-unbound>'}'，当前会话 '{owner_session_id}'，不可代为登记完成。"
+                    "原因: 演进完成登记须由归属会话执行（spec §5.8.1-1d / §6.5-2）。"
+                    "建议: 确认建议归属；如确属本会话演进，请用正确 suggestion_id 重试。"
+                ),
+                tool_call_id="",
+                tool_name="evolution_complete",
+            )
     # 调 EvolutionExecutor.complete()（状态推进 executing→executed + evolution_exec_log 审计）
     try:
         outcome = executor.complete(
@@ -142,6 +180,7 @@ def run_evolution_complete(ctx: Any, executor: Any, audit: Any, args: dict) -> T
             if isinstance(args.get("actions"), list)
             else [],
             note=note,
+            owner_session_id=owner_session_id or None,
         )
     except Exception as exc:  # noqa: BLE001 — 登记异常如实降级（fail-open）
         return ToolResult(

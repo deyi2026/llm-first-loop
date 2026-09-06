@@ -1,15 +1,8 @@
-"""R8.24-E E-3.3: task_active 授权能力门五场景（E-D5，设计包 E §3）.
+"""Agency-first task continuity gates.
 
-task_active 从 ACTIVE_STATE 收紧为 USER_AUTHORIZED_STATE——五场景能力门：
-1. 恢复正确: 授权触发词 + 恰一 in_progress → identity 投影 + authorized_inject 审计；
-2. 零误读: 普通新问题（活跃 goal 在场）→ 零投影 + goal_read=deferred（E-G5）；
-3. ambiguous 零注入: 授权 + 多 in_progress → 不猜测（fail-open = 零注入）；
-4. 工具链不伤: 同 run 内后续 build → identity 冻结快照照常注入（authorized_
-   inject_frozen），不随账本中途漂移；
-5. 指代可取回: memory 显式指代 → memory_authorized 投影（E-D1 恢复路径 1）。
-
-授权绑定事件（task.active/authorized_inject 等）经 _record_action 落
-ArchitectureStatusProvider——E-G2/E-G5 决策日志判据源。
+Explicit user continuation remains an authorization/provenance fact, but does not grant
+program-owned task state prompt authority. Goal/task state is retrieval-only through
+get_goal/task_frontier. Memory/history references are likewise retrieval intent only.
 """
 
 from __future__ import annotations
@@ -70,21 +63,16 @@ def test_authorized_continuation_projects_identity(build_test_engine):
     engine.run(sid, "继续上次任务")
     wire = _wire(fake)
 
-    assert "slot:task_active" in wire
-    assert f"goal={goal.id}" in wire
-    assert "IN-PROGRESS-0" in wire
-    authz = [c for c in spy.calls if c[:2] == ("task.active", "authorized_inject")]
-    assert authz, "授权绑定审计（E-3.2③）必须在场"
-    assert f"goal={goal.id}" in authz[0][2]
-
-
-# ── 场景 2: 零误读（普通新问题不自动读取 Goal，E-G5）──────────────────
+    assert "slot:task_active" not in wire
+    assert f"goal={goal.id}" not in wire
+    assert "IN-PROGRESS-0" not in wire
+    assert not [c for c in spy.calls if c[0] == "task.active"]
 
 
 def test_plain_question_defers_goal_read(build_test_engine):
     engine, fake = build_test_engine([{"content": "ok", "tool_calls": []}])
     sid = engine.session.create()
-    _seed_active_goal(engine, sid)  # 活跃 goal + in_progress 在场
+    _seed_active_goal(engine, sid)
 
     spy = _spy_actions(engine)
     engine.run(sid, "一个全新的普通问题")
@@ -92,15 +80,7 @@ def test_plain_question_defers_goal_read(build_test_engine):
 
     assert "slot:task_active" not in wire
     assert "IN-PROGRESS-0" not in wire
-    deferred = [
-        c for c in spy.calls
-        if c[:2] == ("task.active", "unauthorized_zero_projection")
-        and "goal_read=deferred" in c[2]
-    ]
-    assert deferred, "零误读轮必须记录 goal_read=deferred（E-G5 判据）"
-
-
-# ── 场景 3: ambiguous 零注入 ────────────────────────────────────────
+    assert not [c for c in spy.calls if c[0] in {"task.active", "task.frontier"}]
 
 
 def test_ambiguous_frontier_never_guesses(build_test_engine):
@@ -112,14 +92,9 @@ def test_ambiguous_frontier_never_guesses(build_test_engine):
     engine.run(sid, "继续上次任务")
     wire = _wire(fake)
 
-    assert "slot:task_active" not in wire, "多 in_progress 不得猜测当前任务"
+    assert "slot:task_active" not in wire
     assert "IN-PROGRESS-0" not in wire and "IN-PROGRESS-1" not in wire
-    assert any(
-        c[:2] == ("task.frontier", "on_demand_only") for c in spy.calls
-    ), "ambiguous 态记录 on_demand_only（fail-open 零注入）"
-
-
-# ── 场景 4: 工具链不伤（同 run identity 冻结快照）────────────────────
+    assert not [c for c in spy.calls if c[0] in {"task.active", "task.frontier"}]
 
 
 def test_tool_rounds_reuse_frozen_identity(build_test_engine):
@@ -130,26 +105,21 @@ def test_tool_rounds_reuse_frozen_identity(build_test_engine):
     goal, tasks = _seed_active_goal(engine, sid)
 
     spy = _spy_actions(engine)
-    engine.run(sid, "继续上次任务")  # 授权轮: 建立快照
-    assert any(c[:2] == ("task.active", "authorized_inject") for c in spy.calls)
+    engine.run(sid, "继续上次任务")
+    assert not hasattr(engine, "_authorized_task_identity_cache")
 
-    # 模拟同 run 的后续 build（tool-followup 轮）: 账本中途变化不影响快照
     later = tasks.create(goal.id, "LATER-TASK-DOES-NOT-DRIFT", acceptance=["later"])
-    tasks.update(goal.id, later.task_id, status="in_progress")  # 变 ambiguous
+    tasks.update(goal.id, later.task_id, status="in_progress")
     sess = engine.session.load(sid)
     out = _fp_build(engine, sess, [])
     wire_text = "\n".join(str(m.get("content") or "") for m in out)
-    # 冻结快照仍含原 identity（authorized_inject_frozen）
-    assert "IN-PROGRESS-0" in wire_text
-    assert "LATER-TASK-DOES-NOT-DRIFT" not in wire_text, "identity 冻结——不随账本漂移"
-    frozen = [c for c in spy.calls if c[:2] == ("task.active", "authorized_inject_frozen")]
-    assert frozen, "冻结快照注入必须落审计"
+    assert "IN-PROGRESS-0" not in wire_text
+    assert "LATER-TASK-DOES-NOT-DRIFT" not in wire_text
+    assert "slot:task_active" not in wire_text
+    assert not [c for c in spy.calls if c[0] == "task.active"]
 
 
-# ── 场景 5: 指代可取回（E-D1 恢复路径 1: 显式指代授权一次）────────────
-
-
-def test_memory_reference_authorizes_retrieval_projection(build_test_engine):
+def test_memory_reference_does_not_authorize_prompt_projection(build_test_engine):
     from llm_loop.core.injection_labels import InjectionLayer, origin_metadata
     from llm_loop.core.message import Message, MessageSource
 
@@ -158,11 +128,11 @@ def test_memory_reference_authorizes_retrieval_projection(build_test_engine):
     engine.run(sid, "你记得按我之前说的部署步骤吗")  # 显式指代
 
     wire = _wire(fake)
-    # 未持久化快照时零投影（resolved is retrievable, not injectable——
-    # 授权只打开通道，投影需要真实存储数据在场）
+    # 无论是否存在快照，用户表达“记得之前”只是检索意图，不授予程序
+    # 自动选择历史内容并塞入 provider prompt 的权限。
     assert "slot:memory_authorized" not in wire
 
-    # 快照在场（engine 理解段落盘形态）+ 本轮指代 → 授权投影可取回
+    # 即使 durable 快照在场，仍保持 retrieval-only。
 
     engine.session.append(
         sid,
@@ -181,5 +151,21 @@ def test_memory_reference_authorizes_retrieval_projection(build_test_engine):
     )
     engine.run(sid, "你记得按我之前说的部署步骤吗")
     wire2 = _wire(fake)
-    assert "slot:memory_authorized" in wire2
-    assert "部署步骤事实" in wire2, "显式指代 → 真实数据投影可取回（恢复路径 1）"
+    assert "slot:memory_authorized" not in wire2
+    assert "部署步骤事实" not in wire2
+
+
+def test_task_frontier_current_alias_resolves_active_goal(build_test_engine):
+    from types import SimpleNamespace
+
+    from llm_loop.introspection.tools_task import run_task_frontier
+
+    engine, _fake = build_test_engine([])
+    sid = engine.session.create()
+    goal, _tasks = _seed_active_goal(engine, sid)
+    ctx = SimpleNamespace(session_id=sid)
+    host = SimpleNamespace(audit_dir=Path(engine.settings.data_dir) / "audit")
+    result = run_task_frontier(ctx, host, {"goal_id": "current"})
+    assert result.status.value == "success"
+    assert "goal current" not in result.content
+    assert "IN-PROGRESS-0" in result.content

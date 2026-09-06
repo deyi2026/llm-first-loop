@@ -51,6 +51,9 @@ def _run_single(engine, text: str, session_id: str | None = None) -> None:
     if result.verification_note:
         print(f"[校验] {result.verification_note.splitlines()[0][:100]}")
     print(result.final_answer)
+    if result.fallback_receipt:
+        fb = result.fallback_receipt
+        print(f"[模型降级: {fb.get('from', '?')}→{fb.get('to', '?')}, 原因: {fb.get('reason', 'unknown')}]" )
     if result.model_used:
         from llm_loop.core.loop import format_tokens
 
@@ -128,12 +131,18 @@ def _run_interactive(engine, session_id: str | None = None) -> None:
         if result is not None:
             print(f"[--model 启动] {result.reply}")
     print(f"LLM-First Core Loop 交互模式（会话 {sid[:8]}，输入 exit 退出；M50: /model [provider/model|default] 切换模型）")
-    # M49 RULE-AI-00: 交互模式（有人值守）是唯一启用待审弹窗授权的路径；
-    # web/feishu/单条 CLI 保持默认不弹窗（仅文本注入，不阻塞循环）。
+    # Operator-owned control surface: pending evolution review is checked here,
+    # outside the model loop. Web/Feishu/single-shot runs never get maintenance prose.
     detector = getattr(engine, "loop_signal_detector", None)
     if detector is not None:
         detector.popup_pending_review = True
     while True:
+        if detector is not None:
+            try:
+                store = getattr(getattr(engine, "correction_ctx", None), "evolution_store", None)
+                detector.check_pending_review(store)
+            except Exception as exc:
+                print(f"[程序异常] 待审演进检查失败（{type(exc).__name__}: {exc}）；聊天输入仍可继续。")
         try:
             text = input("\n你> ").strip()
         except (EOFError, KeyboardInterrupt):
@@ -165,6 +174,9 @@ def _run_interactive(engine, session_id: str | None = None) -> None:
 
         result = engine.run(sid, text, ingress=issue_ingress("cli"))
         print(f"\nAI> {result.final_answer}")
+        if result.fallback_receipt:
+            fb = result.fallback_receipt
+            print(f"[模型降级: {fb.get('from', '?')}→{fb.get('to', '?')}, 原因: {fb.get('reason', 'unknown')}]" )
         if result.model_used:
             from llm_loop.core.loop import format_tokens
 

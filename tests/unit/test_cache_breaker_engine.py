@@ -38,12 +38,10 @@ def _mk_engine(
     monkeypatch,
     *,
     budget: int = 60_000,
-    fold: str = "0",
     head_keep_ratio: str = "0",
     audit_file: str = "/tmp/cb_engine_test.jsonl",
 ):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
-    monkeypatch.setenv("PROGRESSIVE_FOLD_K", fold)
     # 风暴复现: 关 head_keep（build 时读 env）——生产风暴走 downgrade 路径
     # （超预算数倍时 head 放弃保留 → 锚点每轮前移），此处直接对齐该形态。
     monkeypatch.setenv("HEAD_KEEP_RATIO", head_keep_ratio)
@@ -100,7 +98,10 @@ def _arm_breaker(mon, sid: str, *, budget: int = 60_000) -> None:
 
 
 def test_breaker_full_chain_storm_to_recovery(tmp_path, monkeypatch):
-    """风暴 → breaker → context_pressure → 逃生受控压缩 → 恢复退出（全链路）."""
+    """显式 legacy 回滚：风暴 → context_pressure → 逃生压缩 → 恢复退出."""
+    # 504641c 后默认行为已收窄为“不因性能水位终止 run”；本测试验证的是
+    # 显式兼容回滚路径，因此必须 opt-in 旧阻断语义，不能把旧默认偷带回来。
+    monkeypatch.setenv("LFL_BREAKER_PRESSURE_NARROW", "0")
     audit = str(tmp_path / "breaker.jsonl")
     engine, fake = _mk_engine(tmp_path, monkeypatch, audit_file=audit)
     sid = engine.session.create()
@@ -141,8 +142,10 @@ def test_breaker_full_chain_storm_to_recovery(tmp_path, monkeypatch):
 
 
 def test_breaker_freeze_prevents_compression(tmp_path, monkeypatch):
-    """冻结期 build 禁止压缩: 提交视图无 [上下文压缩] 标注、锚点不推进."""
+    """显式 legacy 回滚下冻结期 build 禁止压缩并由 pressure 阻断."""
     from llm_loop.llm.client import LLMResponse
+
+    monkeypatch.setenv("LFL_BREAKER_PRESSURE_NARROW", "0")
 
     audit = str(tmp_path / "breaker2.jsonl")
     engine, fake = _mk_engine(tmp_path, monkeypatch, audit_file=audit)
@@ -165,7 +168,7 @@ def test_no_false_breaker_when_hit_healthy(tmp_path, monkeypatch):
 
     audit = str(tmp_path / "breaker3.jsonl")
     engine, fake = _mk_engine(
-        tmp_path, monkeypatch, audit_file=audit, fold="3", head_keep_ratio="0.15"
+        tmp_path, monkeypatch, audit_file=audit, head_keep_ratio="0.15"
     )
     sid = engine.session.create()
     for i in range(8):
@@ -186,7 +189,7 @@ def test_mid_compaction_marker_survives_event_replay(tmp_path, monkeypatch):
 
     audit = str(tmp_path / "breaker-mid.jsonl")
     engine, fake = _mk_engine(
-        tmp_path, monkeypatch, audit_file=audit, fold="3", head_keep_ratio="0.15"
+        tmp_path, monkeypatch, audit_file=audit, head_keep_ratio="0.15"
     )
     engine._event_store = EventStore(tmp_path / "event_logs")  # noqa: SLF001
     sid = engine.session.create()
@@ -297,56 +300,3 @@ def test_telemetry_metadata_only_change_is_persisted(tmp_path, monkeypatch):
     assert last.content == "这是纯回答正文。"
     health = (last.metadata or {}).get("cache_health")
     assert isinstance(health, dict) and "⚡ 缓存命中率" in str(health.get("note", ""))
-
-
-# ── EVO-20260825 任务8（§5.8）: emergency_compact 与 switch_model 决策协调审计 ──
-
-
-def test_emergency_compact_then_switch_model_wasted(tmp_path):
-    """紧急压缩后同一轮（60s 内）switch_model → wasted 计数 + breaker 审计."""
-    from llm_loop.core.cache_health import CacheHealthMonitor
-
-    audit = str(tmp_path / "wasted.jsonl")
-    mon = CacheHealthMonitor(breaker_audit_file=audit)
-    sid = "s-wasted"
-    mon.note_emergency_compact(sid, before_chars=600_000)
-    mon.note_switch_model_after_compact(sid, "minimax/MiniMax-M3")
-
-    snap = mon.snapshot(sid)
-    assert snap["emergency_compact_count"] == 1
-    assert snap["wasted_emergency_compact_count"] == 1, "60s 内 switch_model 应判定 wasted"
-    rows = _read_audit(audit)
-    assert any(r["event"] == "wasted_emergency_compact" for r in rows), (
-        "wasted 事件应写入 breaker 审计"
-    )
-    assert any(r["event"] == "emergency_compact" for r in rows)
-
-
-def test_switch_model_outside_window_not_wasted(tmp_path):
-    """超过 60s 窗口后 switch_model → 不判定 wasted（紧急压缩未被立即覆盖）."""
-    from llm_loop.core.cache_health import CacheHealthMonitor
-
-    audit = str(tmp_path / "no_wasted.jsonl")
-    mon = CacheHealthMonitor(breaker_audit_file=audit)
-    sid = "s-old"
-    mon.note_emergency_compact(sid, before_chars=600_000)
-    mon._last_emergency_compact_ts[sid] -= 120  # 模拟 120s 前  # noqa: SLF001
-    mon.note_switch_model_after_compact(sid, "minimax/MiniMax-M3")
-
-    snap = mon.snapshot(sid)
-    assert snap["wasted_emergency_compact_count"] == 0, "窗口外 switch_model 不判定 wasted"
-    rows = _read_audit(audit)
-    assert not any(r["event"] == "wasted_emergency_compact" for r in rows)
-
-
-def test_emergency_compact_counts_in_snapshot(tmp_path):
-    """snapshot 聚合视图暴露 emergency_compact / wasted 计数（可观测性）."""
-    from llm_loop.core.cache_health import CacheHealthMonitor
-
-    mon = CacheHealthMonitor(breaker_audit_file=str(tmp_path / "agg.jsonl"))
-    mon.note_emergency_compact("s-a", before_chars=10_000)
-    mon.note_emergency_compact("s-a", before_chars=20_000)
-    mon.note_emergency_compact("s-b", before_chars=30_000)
-    agg = mon.snapshot()
-    assert agg["emergency_compact_count"] == 3, "聚合计数应跨会话累计"
-    assert agg["wasted_emergency_compact_count"] == 0

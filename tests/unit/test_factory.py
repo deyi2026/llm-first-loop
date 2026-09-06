@@ -134,8 +134,16 @@ _KIMI_PROVIDERS_JSON = json.dumps(
         "kimi": {
             "base_url": "https://api.kimi.com/coding/v1",
             "api_key_env": "KIMI_API_KEY",
+            "timeout_s": 333,
+            "max_tokens": 16384,
             "models": {
-                "k3-256k": {"context": 262144, "thinking": True, "cost_tier": "low"},
+                "k3-256k": {
+                    "context": 262144,
+                    "thinking": True,
+                    "cost_tier": "low",
+                    "send_tool_choice": False,
+                    "reasoning_split": True,
+                },
             },
             "default_model": "k3-256k",
         },
@@ -154,6 +162,8 @@ def test_default_model_qualified_resolves_provider(tmp_path, monkeypatch):
         llm_api_key="env-key",
         llm_base_url="https://api.deepseek.com/v1",
         llm_model="kimi/k3-256k",
+        # Registry-resolved model contract must win over an unrelated env default.
+        llm_wire_protocol="anthropic",
         data_dir=str(tmp_path / "data"),
         model_providers_raw=_KIMI_PROVIDERS_JSON,
         extract_enabled=False,
@@ -166,6 +176,66 @@ def test_default_model_qualified_resolves_provider(tmp_path, monkeypatch):
     assert client.model == "k3-256k"  # 裸模型名（OpenAI 兼容端点不接受全限定）
     assert client.api_key == "kimi-key-xyz"
     assert client.thinking_supported is True  # 注册表元数据
+    assert client.provider == "kimi"
+    assert client.reasoning_capable is True  # legacy thinking=true 仍是 capability evidence
+    assert client.reasoning_control == "legacy"
+    assert client.timeout_s == 333
+    assert client.max_tokens == 16384
+    assert client.send_tool_choice is False
+    assert client.reasoning_split is True
+    assert client.wire_protocol == "openai"
+    assert engine.llm_pool is not None
+    assert engine.llm_pool.base_timeout_s == settings.llm_timeout_s
+    assert engine.llm_pool.base_max_tokens == settings.llm_max_tokens
+    # None is semantic: no independent global history cap. Factory must not freeze
+    # it to the startup model's old 100K~200K heuristic.
+    assert engine.settings.history_max_chars is None
+    detail = engine._effective_history_budget_detail("kimi/k3-256k")
+    assert detail["configured_global_budget"] is None
+    assert detail["limited_by"] == "model_window"
+    assert detail["effective_budget"] > 100_000
+
+
+def test_default_model_status_window_remains_bound_to_startup_registry_after_reload(
+    tmp_path, monkeypatch
+):
+    """architecture_status must report the same startup contract used by the default route."""
+    from llm_loop.factory import build_engine
+    from llm_loop.llm.providers import ModelSpec, ProviderRegistry, ProviderSpec
+
+    monkeypatch.setenv("KIMI_API_KEY", "kimi-key-xyz")
+    settings = Settings(
+        llm_api_key="env-key",
+        llm_base_url="https://api.deepseek.com/v1",
+        llm_model="kimi/k3-256k",
+        data_dir=str(tmp_path / "data"),
+        model_providers_raw=_KIMI_PROVIDERS_JSON,
+        self_inspection_enabled=True,
+        extract_enabled=False,
+    )
+    engine = build_engine(settings)  # type: ignore[arg-type]
+    startup = engine.llm_pool.default_registry_snapshot()
+    replacement = ProviderRegistry(
+        providers={
+            "kimi": ProviderSpec(
+                id="kimi",
+                base_url="https://new.invalid/v1",
+                api_key_env="",
+                models={"k3-256k": ModelSpec(context=999999)},
+                default_model="k3-256k",
+            )
+        }
+    )
+    engine.llm_pool.replace_registry(replacement)
+
+    snap = engine.status.snapshot(dimensions=["context_usage"])
+
+    assert engine.llm_pool.registry_snapshot() is replacement
+    assert engine.llm_pool.default_registry_snapshot() is startup
+    assert snap["context_usage"]["model_window"] == {
+        "label": "kimi/k3-256k",
+        "context": 262144,
+    }
 
 
 def test_default_model_bare_keeps_env_trio(tmp_path):

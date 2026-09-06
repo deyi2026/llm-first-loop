@@ -3,8 +3,8 @@
 统一收敛所有降级/标注/如实反馈构造（FR-HON-03 不静默降级）：
 错误完整透传（FR-FBK-02）、压缩标注、记忆不可用标注、回答中断标注。
 
-AI-first（T21）: 所有反馈消息统一"事实 + 原因 + 建议下一步"三件套格式，
-AI 无需二次推理即可决策。
+LLM-first: 生产反馈优先承载可核验事实与原因；任务策略由 AI 决定。
+历史程序提示前缀仍保留识别/清洗兼容，但退役生产者不留在运行代码中。
 """
 
 from __future__ import annotations
@@ -32,32 +32,10 @@ from llm_loop.llm.errors import (
     parse_provider_error_code,
 )
 
-# 统一标注常量（FR-HON-03: 任何兜底/降级带显式来源标注）
-MEMORY_UNAVAILABLE = "[记忆不可用] 记忆服务异常，本次未注入记忆"
-ANSWER_INTERRUPTED = "[回答中断] 回答生成不完整"
-MAX_ITERATIONS_NOTE = "[已达轮数上限] 已达到最大循环轮数，已输出当前进展"
-
-
-def compression_message(archived_count: int, archived_chars: int) -> Message:
-    """上下文压缩时的如实标注（T22: 另存提取替代截断）.
-
-    事实: 已压缩 N 条消息；原因: 上下文预算；建议: 可用 search_archive 检索找回。
-    """
-    return Message(
-        role="system",
-        content=(
-            f"[上下文压缩] 已将最早的 {archived_count} 条消息（约 {archived_chars} 字符）"
-            "完整另存；旧正文未自动内联。\n"
-            "ref=archive:search_archive"
-        ),
-        source=MessageSource.SYSTEM,
-    )
-
-
-# P0-B（2026-08-28 用户批准，specs/err1210_locating/P0-B-program-feedback-separation.md）:
-# 程序反馈前缀清单——engine 收尾 source 判定 + memory extractor 过滤共用（单一真相源）。
-# 覆盖: 错误/熔断/守卫/耗尽/压缩提醒等程序生成文本；pressure_block/routing refusal
-# 等动态文案未覆盖（漏标时 source 保持 USER，行为与现状一致，不劣化）。
+# Historical/program-origin feedback prefixes remain a compatibility/source
+# recognition table. They authorize no new producer and inject no prompt text.
+# Old sessions may still contain these frames; source/eligibility filtering needs
+# to distinguish them from genuine model or user semantics.
 PROGRAM_FEEDBACK_PREFIXES = (
     STATUS_LABEL,
     PROGRAM_RECOVERY_LABEL,
@@ -72,6 +50,7 @@ PROGRAM_FEEDBACK_PREFIXES = (
     "[程序异常]",
     "（已停止——",
 )
+
 
 
 def _is_err1210(exc: Exception) -> bool:
@@ -105,16 +84,14 @@ def llm_error_text(error: Exception) -> str:
             f"建议: API 配额周期已用尽（billing quota exhausted），本周期内无法继续；"
             f"非网络/Key/模型配置问题。请等待配额刷新或升级套餐后重试；本次未能获得回答。"
         )
-    # 1210 结构性触发（err1210_locating 已定位: 会话尾部连续多条 user 消息触发
-    # provider 结构校验，与内容无关）: 定向文案——非网络/Key/模型名问题；
-    # 到达本出口时 err1210.recovery 降级（剥离注入/尾部聚合）已尝试且未恢复。
+    # 1210 is a provider request-structure rejection. Recovery may have had no
+    # applicable tail-user transform, so the final receipt must not claim a retry
+    # happened and must not prescribe a next action.
     if _is_err1210(error):
         return (
-            f"[LLM 调用异常] 事实: LLM 调用失败。\n"
+            f"[LLM 调用异常] 事实: provider 拒绝了本次请求（HTTP 400/code 1210）。\n"
             f"原因: {type(error).__name__}: {error}\n"
-            f"建议: 该错误码为结构性触发（会话尾部连续多条 user 消息触发 provider 校验），"
-            f"非网络/Key/模型名问题；系统已自动尝试降级重试（剥离注入/尾部聚合）未恢复。"
-            f"请直接重发本轮（下一轮上下文重建后通常自愈）；本次未能获得回答。"
+            f"边界: 该错误码属于 provider 请求结构校验；本次未能获得模型回答。"
         )
     # EVO-20260818-92bd97d6: 空响应专门文案（流被截断/模型抖动，重试可自愈）
     if isinstance(error, LLMEmptyResponseError):
@@ -162,113 +139,8 @@ def max_iterations_feedback(trace: list[str]) -> Message:
     )
 
 
-def max_iterations_decision_message(rounds: int, budget: int) -> Message:  # noqa: ARG001
-    """[轮次决策请求] —— R8.24-B B-D6 已退役（deprecated，无生产调用点）.
-
-    到达轮数硬限不再花第 N+1 轮 LLM 调用问模型"是否继续"——硬边界直接
-    结束/暂停 + UI 提示（B-G4: 第 N+1 轮 LLM call=0）。保留函数体仅供
-    历史参照与测试反例自证；生产路径禁止调用（静态断言：
-    tests/unit/test_runtime_zero_prompt_static.py）。
-    """
-    return Message(
-        role="system",
-        content=(
-            f"[轮次决策请求] 事实: 已达轮数上限 {budget}（已执行 {rounds} 轮）。\n"
-            f"原因: 轮数耗尽可能有两类成因——① 工具使用错误/空转（参数错误、选错工具、"
-            f"无效重复重试）；② 任务正常推进但步骤较多、预算不足。\n"
-            f"建议: 请先归因再行动——\n"
-            f"- 若属 ① 工具使用错误：不要调大轮数。请在回答中如实归因（哪一步错、"
-            f"正确做法是什么），并基于已有信息给出当前结论与未完成项。\n"
-            f"- 若属 ② 正常推进：调用 adjust_strategy 将 max_iterations 调大"
-            f"（白名单可调，硬上限 500）后继续完成任务；或压缩剩余步骤，"
-            f"在最终回答中如实列出已完成/未完成与下一步。\n"
-            f"程序不会自动续跑——是否继续由你判断。"
-        ),
-        source=MessageSource.SYSTEM,
-    )
 
 
-def max_iterations_warning_message(rounds: int, budget: int) -> Message:  # noqa: ARG001
-    """[轮数预警] —— R8.24-B B-D6 已退役（deprecated，无生产调用点）.
-
-    轮数预警注入取消（模型可见面零预警，B-G8）；到达硬限直接结束。
-    保留函数体仅供历史参照与测试反例自证；生产路径禁止调用。
-    """
-    return Message(
-        role="system",
-        content=(
-            f"[轮数预警] 事实: 本轮已执行 {rounds} 轮，接近轮数上限 {budget}。\n"
-            f"原因: 任务所需工具调用较多时，剩余轮数可能不足以完成全部步骤。\n"
-            f"建议: 若预计还需多轮工具调用，可调用 adjust_strategy 将 max_iterations "
-            f"调大（白名单可调，上限 500）后继续；或压缩剩余步骤、优先完成关键动作，"
-            f"在最终回答中如实说明未完成部分。"
-        ),
-        source=MessageSource.SYSTEM,
-    )
-
-
-def stagnation_reminder_message(tool_name: str, streak: int) -> Message:  # noqa: ARG001
-    """[停滞提醒] —— R8.24-B B-D3 已退役（deprecated，无生产调用点）.
-
-    停滞提醒 prompt 注入取消（总审计 §11.3 撤销判定）；计数/阈值/熔断保留，
-    提醒改道事件观测（tool_exec._track_stagnation）。保留函数体仅供历史
-    参照与测试反例自证；生产路径禁止调用。
-    """
-    return Message(
-        role="system",
-        content=(
-            f"[停滞提醒] 事实: 你已连续 {streak} 次以相同参数调用工具 {tool_name}。\n"
-            f"原因: 重复调用不产生新信息，只会空耗轮数预算（max_iterations 硬边界）。\n"
-            f"建议: 停止重复调用，基于已有回执给出回答；若信息确实不足，请换用不同参数或其他工具。"
-        ),
-        source=MessageSource.SYSTEM,
-    )
-
-
-def empty_search_reminder_message(tool_name: str, streak: int) -> Message:  # noqa: ARG001
-    """[搜索空结果提醒] —— R8.24-B B-D4 已退役（deprecated，无生产调用点）.
-
-    空搜索建议层删除（真实空结果回执已是事实）；否定帧登记保留。
-    保留函数体仅供历史参照与测试反例自证；生产路径禁止调用。
-    """
-    return Message(
-        role="system",
-        content=(
-            f"[搜索空结果提醒] 事实: 搜索类工具 {tool_name} 已连续 {streak} 次返回空结果。\n"
-            f"原因: 目标可能不存在、或搜索前提（记忆/路径）与实际不符——重复换参数搜同一目标不会产生新信息。\n"
-            f"建议: 以工具回执为准：目标不存在即停止该目标搜索，标注'记忆待修正'，如实说明并询问用户；"
-            f"确需继续请换全新目标或改向用户求证。"
-        ),
-        source=MessageSource.SYSTEM,
-    )
-
-
-def stagnation_feedback(
-    tool_name: str, streak: int, trace: list[str], *, has_evidence: bool = True  # noqa: ARG001
-) -> Message:
-    """[停滞熔断] 熔断如实终止（R8.24-B B-D3 收口：纯事实终态）.
-
-    B-D3: "三路径替代策略"建议文案取消（search_evidence 换路/get_tool_schema
-    复核/基于回执作答——全部删除）；结束原因以 run 终态元数据/事实呈现：
-    stagnation、连续 N 次、ref 各不相同。has_evidence 仅作事实区分
-    （无成功回执时如实说明 unresolved，不给建议性指令——GPT 审计批次4
-    证据有效性门的事实面保留）。
-    """
-    trace_str = "; ".join(trace[-10:]) if trace else "（无动作记录）"
-    evidence_fact = (
-        "本 run 已有成功的工具回执（历史回执可经检索复用）。"
-        if has_evidence
-        else "本 run 尚未获得任何成功的工具回执（无有效证据），任务未解决（unresolved）。"
-    )
-    return Message(
-        role="system",
-        content=(
-            f"[停滞熔断] 事实: 已连续 {streak} 次以相同参数调用工具 {tool_name}，循环被程序如实终止。\n"
-            f"原因: 重复调用无法产生新信息，继续执行只会耗尽轮数预算。已执行轨迹: {trace_str}。\n"
-            f"{evidence_fact}"
-        ),
-        source=MessageSource.SYSTEM,
-    )
 
 
 def architecture_report_message(fact: str, reason: str, suggestion: str) -> Message:
@@ -338,40 +210,6 @@ def program_error_message(
     content += "建议: 若尝试修复无效，请基于现有上下文继续作答，或换用其他信息途径；程序会如实反馈，不会静默。"
     return Message(role="system", content=content, source=MessageSource.SYSTEM)
 
-
-def overflow_feedback(
-    exc: Exception,
-    breakdown: dict | None = None,  # noqa: ARG001
-    model_window: dict | None = None,  # noqa: ARG001
-) -> str:
-    """R4 → R8.24-B B-D5 已退役（deprecated，无生产调用点）.
-
-    E17 overflow 改 runtime 确定性处理（compact/route/end + telemetry），
-    模型可见面零 overflow 教程、零"继续/压缩"询问（B-G1 E17 分量）。
-    保留函数体仅供历史参照与测试反例自证；生产路径禁止调用
-    （静态断言: tests/unit/test_runtime_zero_prompt_static.py）。
-    """
-    lines = [
-        f"[上下文溢出] 事实: provider 返回 overflow 错误: {exc}",
-        "原因: 当前上下文超过模型窗口上限。",
-        "程序未自动压缩重试（避免丢信息影响你的决策），请自主选择:",
-        "① search_archive(query=\"关键词\") 检索被压内容，确认关键信息是否在上下文",
-        "② adjust_strategy(history_budget=更小值) 主动压缩历史",
-        "③ switch_model(更大窗口模型) 切换模型",
-        "④ 开新会话（旧会话历史已另存可经 search_archive 找回）",
-    ]
-    if breakdown:
-        total = breakdown.get("total", {})
-        lines.append(
-            f"当前占用: {total.get('chars', 0)} 字符"
-            f" / 预算 {breakdown.get('budget', 0)}"
-            f"（比例 {breakdown.get('ratio', 'N/A')}）"
-        )
-    if model_window:
-        lines.append(
-            f"模型窗口: {model_window.get('label', '?')} context={model_window.get('context', '?')}"
-        )
-    return "\n".join(lines)
 
 
 _FEEDBACK_FALLBACK_LOCK = threading.Lock()

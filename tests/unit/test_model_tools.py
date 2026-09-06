@@ -28,7 +28,9 @@ from llm_loop.introspection.tools_model import (
 )
 from llm_loop.llm.pool import ModelClientPool
 from llm_loop.llm.providers import (
+    ModelSpec,
     ProviderRegistry,
+    ProviderSpec,
     load_registry,
 )
 
@@ -151,8 +153,9 @@ def test_model_catalog_includes_directory_and_current() -> None:
     assert "qwen3.6-27b" in content
     assert "当前会话模型" in content
     assert "默认装配" in content
-    # thinking 标注存在
-    assert "thinking=" in content
+    # reasoning 能力与控制协议分离标注
+    assert "reasoning_capable=" in content
+    assert "reasoning_control=" in content
     # B6: 选型指引（成本/能力语义 + switch_model 引导）
     assert "选型指引" in content
     assert "cost=low/mid/high" in content
@@ -169,6 +172,37 @@ def test_model_catalog_marks_current_with_override() -> None:
     assert result.status.value == "success"
     assert "会话覆盖" in result.content
     assert "local/qwen3.6-27b" in result.content
+
+
+def test_model_catalog_distinguishes_hot_registry_from_startup_default_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hot registry may change immediately while the shared default route remains startup-bound."""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
+    settings = _settings(model_providers_raw=_TWO_PROVIDER_JSON)
+    pool = _build_pool(settings)
+    startup = pool.default_registry_snapshot()
+    replacement = ProviderRegistry(
+        providers={
+            "local": ProviderSpec(
+                id="local",
+                base_url="http://localhost:1234/v1",
+                api_key_env="",
+                models={"new-local": ModelSpec(context=262144)},
+                default_model="new-local",
+            )
+        }
+    )
+    pool.replace_registry(replacement)
+
+    result = run_model_catalog(_build_ctx(pool), pool, None)
+
+    assert result.status.value == "success"
+    assert "当前会话模型: deepseek/deepseek-v4-flash（默认装配）" in result.content
+    assert "new-local: context=262144" in result.content
+    assert "默认路由合同" in result.content
+    assert "启动 registry 快照" in result.content
+    assert pool.default_registry_snapshot() is startup
 
 
 def test_model_catalog_degraded_annotation() -> None:
@@ -242,7 +276,7 @@ def test_switch_model_active_binding_uses_session_getter_for_from_label(
 
 
 def test_switch_model_success_writes_session_and_audit(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """成功路径: override 落会话 + 审计记录 + 回执文案含 from→to + 思考参数标注."""
+    """成功路径: override 落会话 + 审计记录 + 回执文案含 from→to + reasoning 能力标注."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "real-key")
     settings = _settings(model_providers_raw=_TWO_PROVIDER_JSON)
     pool = _build_pool(settings)
@@ -281,7 +315,8 @@ def test_switch_model_success_writes_session_and_audit(tmp_path, monkeypatch: py
     assert "[状态: 成功]" in result.content
     assert "deepseek-v4-flash → deepseek/deepseek-v4-pro" in result.content
     assert "需要更强推理" in result.content
-    assert "思考参数" in result.content
+    assert "reasoning: capable=是, control=legacy" in result.content
+    assert "auto/off/on" in result.content
     # B6: 成本/能力事实注入（目标模型 cost_tier + 能力语义, 判断归 AI）
     assert "成本档:" in result.content
     assert "能力:" in result.content
@@ -300,7 +335,7 @@ def test_switch_model_success_writes_session_and_audit(tmp_path, monkeypatch: py
 
 
 def test_switch_model_cross_provider_thinking_note(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """跨 provider 切换 + thinking_supported 标注."""
+    """跨 provider 切换 + thinking_supported 能力标注（不声称本次一定发送）."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "real-key")
     settings = _settings(model_providers_raw=_TWO_PROVIDER_JSON)
     pool = _build_pool(settings)
@@ -324,7 +359,82 @@ def test_switch_model_cross_provider_thinking_note(tmp_path, monkeypatch: pytest
     )
     assert result.status.value == "success"
     assert "local/qwen3.6-27b" in result.content
-    assert "思考参数: 发送" in result.content
+    assert "reasoning: capable=是, control=legacy" in result.content
+
+
+def test_switch_model_uses_one_registry_snapshot_and_reports_always_on_effort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Refresh during switch validation must not mix old/new capability facts in one receipt."""
+    old_registry = ProviderRegistry(
+        providers={
+            "glm": ProviderSpec(
+                id="glm",
+                base_url="https://old.invalid/v1",
+                api_key_env="",
+                models={
+                    "glm-5.3": ModelSpec(
+                        context=1_000_000,
+                        reasoning_capable=True,
+                        reasoning_control="always_on_effort",
+                        cost_tier="high",
+                        reasoning=True,
+                        long_context=True,
+                    )
+                },
+                default_model="glm-5.3",
+            )
+        }
+    )
+    new_registry = ProviderRegistry(
+        providers={
+            "glm": ProviderSpec(
+                id="glm",
+                base_url="https://new.invalid/v1",
+                api_key_env="",
+                models={
+                    "glm-5.3": ModelSpec(
+                        context=131072,
+                        reasoning_capable=False,
+                        reasoning_control="unknown",
+                        cost_tier="low",
+                    )
+                },
+                default_model="glm-5.3",
+            )
+        }
+    )
+    pool = _build_pool(_settings(), providers=old_registry)
+    original = pool.get_resolved_client
+    reloaded = False
+
+    def resolve_then_reload(ref, **kwargs):
+        nonlocal reloaded
+        resolved = original(ref, **kwargs)
+        if not reloaded:
+            reloaded = True
+            pool.replace_registry(new_registry)
+        return resolved
+
+    monkeypatch.setattr(pool, "get_resolved_client", resolve_then_reload)
+    holder = {"value": None}
+
+    result = run_switch_model(
+        _build_ctx(pool),
+        pool,
+        lambda value: holder.__setitem__("value", value),
+        None,
+        {"model": "glm/glm-5.3", "reason": "snapshot audit"},
+    )
+
+    assert result.status.value == "success"
+    assert holder["value"] == "glm/glm-5.3"
+    assert "control=always_on_effort" in result.content
+    assert "off 映射最低 effort" in result.content
+    assert "成本档: high" in result.content
+    assert "上下文: 976K" in result.content
+    assert "control=unknown" not in result.content
+    assert pool.registry_snapshot() is new_registry
 
 
 # ── switch_model: 失败路径 ──

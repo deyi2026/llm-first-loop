@@ -42,8 +42,15 @@ print(u.get("cached_tokens"), u.get("prompt_tokens"))
 ### Step 3: 预算链定位（查真实生效值）
 
 ```
-effective_budget = min(全局 HISTORY_MAX_CHARS, provider 级 history_budget_chars, 模型窗口 × 系数)
+effective_budget = min(
+  显式 runtime/history override（如有）,
+  显式全局 HISTORY_MAX_CHARS（如有）,
+  provider 级 history_budget_chars（如有）,
+  当前实际路由模型的物理输入预算（context - output reserve + safety margin）
+)
 ```
+
+`HISTORY_MAX_CHARS` 未配置时**没有一层隐式 100K/200K cap**；不要为了“补齐三层”主动加它。
 
 **真相源是 event_logs 的 request.meta**（每轮含 model/budget/history_chars），不是 .env：
 ```python
@@ -54,13 +61,13 @@ for ts, p in reqs[-5:]: print(ts[11:19], p.get('model'), p.get('budget'), p.get(
 
 **注意**：request.meta 里 model 字段才是实际运行模型（可能被 session model_override 覆盖）；budget 才是真正生效预算（min 链结果）。先查 model 再查对应 provider 的预算配置。
 
-### Step 4: 修复（三层都要改）
+### Step 4: 修复（只改被证据证明是压制点的那一层）
 
-1. `data/providers.json`：目标 provider 的 `history_budget_chars`（当前会话实际用的 provider！）
-2. `.env`：`HISTORY_MAX_CHARS`（全局）
-3. `adjust_strategy history_budget`：运行时参数（仅当前进程）
+1. `data/providers.json`：仅本地慢模型/已证实 endpoint 性能问题才设 `history_budget_chars`
+2. `.env`：`HISTORY_MAX_CHARS` 是可选 operator 全局 cap；无明确目的优先保持未配置
+3. `adjust_strategy history_budget`：运行时临时 override，只在当前任务确有需要时使用
 
-**历史量估算**：session 总字符 vs 预算——预算要 > 历史总量（否则每轮压缩=每轮断点）；且 < 模型窗口（1M token 窗口 ≈ 200 万字符，留安全边际）。
+**历史量估算**：session 总字符 vs 实际 provider payload 不是一回事；以 `request.meta` / `request.usage` 为准。字符↔token 只能估算，当前 generic 估算约 0.6 chars/token，不能拿它当 provider tokenizer 的精确事实。
 
 ### Step 5: 重启 + 验证
 

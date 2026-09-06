@@ -279,7 +279,7 @@ def test_build_messages_excludes_unapproved_interop(tmp_path, monkeypatch):
     assert "MEM-1" not in content and "20260816-006" not in content  # 注入不进主体
     users = [m["content"] for m in out if m["role"] == "user"]
     joined = "\n".join(users)
-    assert "MEM-1" in joined  # memory 语义保持本批现状
+    assert "MEM-1" not in joined  # memory 参数已退为 compatibility/retrieval-only
     assert "20260816-006" not in joined
     assert "通道任务装配点验证" not in joined
     assert (inbox / "20260816-006_dsh-x.json").exists(), "未授权 task 应保留 pending"
@@ -302,37 +302,15 @@ def test_tail_mode_does_not_store_unapproved_interop_tail(tmp_path, monkeypatch)
     assert (inbox / "t2.json").exists()
 
 
-def test_legacy_deferred_interop_tail_is_retired_before_build(tmp_path, monkeypatch):
-    """E26 compatibility: pre-upgrade in-memory interop defer cannot regain prompt authority."""
-    from llm_loop.core.message import Message, MessageSource
+def test_interop_observability_has_no_err1210_defer_state():
+    """P2-B: interop scanning is prompt-neutral and independent of ERR1210 recovery state."""
+    import inspect
 
-    monkeypatch.setenv("LFL_DATA_DIR", str(tmp_path))
-    import threading
+    from llm_loop.core.loop.engine_services.interop import InteropService
 
-    from llm_loop.core.loop.err1210 import SlotKind
-    from llm_loop.core.loop.runstate import _RunState
-
-    eng = _bare_engine()
-    eng._last_active_sid = "s1"
-    eng._run_states = {"s1": _RunState()}
-    eng._run_states_guard = threading.RLock()
-    legacy = Message(role="system", content="legacy interop command", source=MessageSource.SYSTEM)
-    keep = Message(role="system", content="keep tip ref", source=MessageSource.SYSTEM)
-    eng._interop_tail_messages = [legacy]
-    eng._run_state().deferred_replay_refs = [(SlotKind.INTEROP, legacy), (SlotKind.TIP, keep)]
-    actions: list[tuple[str, str, str]] = []
-    eng._record_action = lambda kind, status, detail: actions.append((kind, status, detail))
-
-    out, prefix_len = eng._inject_interop_messages([], 0, "s1")
-
-    assert out == [] and prefix_len == 0
-    assert eng._interop_tail_messages is None
-    assert eng._run_state().deferred_replay_refs == [(SlotKind.TIP, keep)]
-    assert actions == [(
-        "interop.external_input",
-        "legacy_defer_retired",
-        "count=1;prompt_chars=0",
-    )]
+    src = inspect.getsource(InteropService._inject_interop_messages)
+    assert "deferred_replay" not in src
+    assert "SlotKind" not in src
 
 
 def test_prefix_mode_cannot_restore_external_auto_injection(tmp_path, monkeypatch):
@@ -407,10 +385,10 @@ def test_build_messages_memory_tail_and_gate_note_observability_only(tmp_path, m
     # 纪律: 仅 out[0] 为 system（主体）——无任何非首位 system（守卫规则 B 无触发源）
     assert roles[0] == "system"
     assert all(r != "system" for r in roles[1:])
-    # memory 尾部 user 保留（AI 可见），不进 system 主体
+    # memory 参数只保 compatibility 形状；自动 prompt 权限已退出。
     assert "MEM-TAIL" not in out[0]["content"]
     tail_join = "\n".join(m.get("content", "") for m in out[1:])
-    assert "MEM-TAIL" in tail_join
+    assert "MEM-TAIL" not in tail_join
     # 门禁干预标记只被消费/观测，不进入 provider prompt。
     assert GATE_NOTE_CONTENT not in tail_join
     assert engine._cache_monitor.take_gate_note(loaded.session_id) is False

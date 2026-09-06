@@ -83,6 +83,8 @@ def test_audit_matched_by_field(tmp_path):
     assert records
     assert "matched_by" in records[-1]
     assert records[-1]["matched_by"]
+    assert str(records[-1].get("id", "")).startswith("DC-")
+    assert records[-1].get("tool_call_ids") == ["c1"]
 
 
 # ── T28: 摘要回填 ──

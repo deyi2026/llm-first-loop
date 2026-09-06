@@ -142,10 +142,21 @@ class CorrectionToolRegistry:
         raise AttributeError(name)
 
     def tool_defs(self) -> list[dict]:
+        """Return a stable schema order with read-only task state discoverable first.
+
+        Registration order is part of the model-facing affordance when many tools share
+        one provider request.  Keep the full surface and every other relative order
+        unchanged; only move the two read-only durable task-state queries ahead of the
+        generic architecture/history introspection group.  This is static and
+        user-text-independent, so it cannot become a hidden task router.
+        """
         defs: list[dict] = []
         for reg in _REGISTRIES:
             defs.extend(reg.tool_defs())
-        return defs
+        preferred = ("get_goal", "task_frontier")
+        by_name = {str(row.get("name") or ""): row for row in defs}
+        head = [by_name[name] for name in preferred if name in by_name]
+        return head + [row for row in defs if str(row.get("name") or "") not in preferred]
 
     # ── 执行分派聚合（边界校验 → 执行 → 审计 → 如实回传）──
     def execute(self, name: str, arguments: dict) -> ToolResult:

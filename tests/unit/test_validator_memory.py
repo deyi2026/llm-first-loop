@@ -5,7 +5,7 @@ from __future__ import annotations
 from llm_loop.core.message import Message, MessageSource, ToolResultStatus
 from llm_loop.feedback.validator import DeclarationValidator
 from llm_loop.memory.extract import extract_memory_blocks, memory_blocks_to_entries
-from llm_loop.memory.retrieve import build_memory_messages, extract_keywords
+from llm_loop.memory.retrieve import extract_keywords
 from llm_loop.memory.store import MemoryEntry, MemoryStore
 
 
@@ -97,13 +97,3 @@ def test_retrieve_keywords():
     kws = extract_keywords("请记住 用户 喜欢 蓝色 这个 颜色", limit=12)
     assert "蓝色" in kws
     assert "的" not in kws  # 停用词过滤
-
-
-def test_build_memory_messages(tmp_path):
-    store = MemoryStore(tmp_path)
-    e = MemoryEntry(id="", type="fact", content="用户喜欢蓝色", keywords=["蓝色"])
-    store.save_entry(e)
-    msgs = build_memory_messages("帮我记住蓝色", store, top_k=5)
-    assert len(msgs) == 1
-    assert msgs[0].source == MessageSource.MEMORY
-    assert "蓝色" in msgs[0].content

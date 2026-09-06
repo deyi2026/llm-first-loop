@@ -4,7 +4,7 @@
 - C1: 初始会话持久化失败 → observability/recovery 保留，但不注入 prompt/history
 - C3: 压缩另存失败 → selfheal/status 可查，但不注入 prompt/history
 - B5: architecture_status snapshot 的 context_usage.model_window（注入 fn 可见）
-- RULE-AI-10 收敛: _check_loop_signals 统一入口存在且不改变既有检查行为
+- RULE-AI-10 Rule-first: 普通模型终止域不再承载周期维护 signal scanner
 """
 
 from __future__ import annotations
@@ -118,20 +118,10 @@ def test_b5_model_window_in_status_snapshot():
     }
 
 
-def test_check_loop_signals_unified_entry(build_test_engine, fake_settings):
-    """_check_loop_signals 统一入口存在，且逐个委托既有检测（行为不变）."""
-    engine, fake = build_test_engine([])
-    assert hasattr(engine, "_termination")
-    assert hasattr(engine._termination, "_check_loop_signals")
-    with mock.patch.object(
-        engine._termination, "_check_eval_trigger", wraps=engine._termination._check_eval_trigger
-    ) as eval_spy, mock.patch.object(
-        engine._termination, "_check_evolution_executing", wraps=engine._termination._check_evolution_executing
-    ) as evo_spy, mock.patch.object(
-        engine._termination, "_check_pending_review", wraps=engine._termination._check_pending_review
-    ) as review_spy:
-        sess = engine.session.load(engine.session.create())
-        engine._termination._check_loop_signals(sess, rounds=1)
-        eval_spy.assert_called_once()
-        evo_spy.assert_called_once()
-        review_spy.assert_called_once()
+def test_model_termination_controller_has_no_maintenance_signal_scanner(build_test_engine):
+    """Rule-first: ordinary model loop has no periodic maintenance strategy scanner."""
+    engine, _fake = build_test_engine([])
+    assert not hasattr(engine._termination, "_check_loop_signals")
+    assert not hasattr(engine._termination, "_check_eval_trigger")
+    assert not hasattr(engine._termination, "_check_evolution_executing")
+    assert not hasattr(engine._termination, "_check_pending_review")

@@ -44,7 +44,12 @@ _VALID_KINDS = {
 
 
 class InvalidSearchKindError(ValueError):
-    """kind 取值不合法专用异常（typed 归因事实源）."""
+    """kind 取值不合法专用异常（typed 归因事实源，R3/D5）.
+
+    继承 ValueError 保持既有 ``Raises: ValueError`` 契约与直接调用方兼容；
+    异常类型即归因依据——工具层仅将该类型归为 [参数错误]，执行期其余异常
+    一律归 [内部错误]，消除"按异常类型归因在类型重叠时结构性失效"缺陷。
+    """
 
 
 def _jsonl_search(
@@ -133,11 +138,16 @@ class RecordSearcher:
         self._semantic = semantic_retriever  # T31: 语义检索器（可 None 走关键词）
         default_rule_path = Path(__file__).resolve().parents[3] / "docs" / "ai_rules.md"
         self._rule_index = RuleIndex(rule_path or default_rule_path)
+        # R3(P0-3/D11): experience 检索诊断透传——search() 入口重置，experience/all 路径回填
         self._last_diagnostics: dict[str, Any] | None = None
 
     @property
     def last_diagnostics(self) -> dict[str, Any] | None:
-        """最近一次 experience 检索的机械诊断；非 experience 路径为 None。"""
+        """最近一次 experience 检索的诊断四要素摘要（{scanned/degraded/skipped/scan_error}）.
+
+        每次 search() 入口重置为 None，仅 experience/all 路径回填——非经验库路径
+        不携带陈旧诊断；工具层经 duck-typing 读取（属性缺失优雅降级为无诊断段）。
+        """
         return self._last_diagnostics
 
     def search(
@@ -156,22 +166,15 @@ class RecordSearcher:
             session_id: 会话过滤（archive 用）.
 
         Raises:
-            InvalidSearchKindError: kind 不合法（ValueError 子类）.
+            InvalidSearchKindError: kind 不合法（ValueError 子类，既有 ValueError 契约保持）.
         """
+        # R3(P0-3): 每次检索重置诊断，防上一次 experience/all 检索的陈旧诊断跨 kind 泄漏
         self._last_diagnostics = None
         if kind not in _VALID_KINDS:
             raise InvalidSearchKindError(f"kind '{kind}' 不在可选范围: {', '.join(sorted(_VALID_KINDS))}")
-
-        if kind == "memory":
-            return self._search_memory(query, limit, session_id=session_id)
-        if kind == "archive":
-            return self._search_archive(query, limit, session_id)
-        if kind == "episode":
-            return self._search_episode(query, limit, session_id)
-        if kind == "experience":  # P1-2: 经验库检索
-            return self._search_experience(query, limit)
-        if kind == "rule":
-            return self._rule_index.search(query, limit)
+        special = self._search_special(kind, query, limit, session_id)
+        if special is not None:
+            return special
 
         # P1-4: kind=all 时各 kind 均匀分配 limit（避免前序 kind 挤占、后序永远不可见）
         each_limit = max(1, limit // 14) if kind == "all" else limit
@@ -260,7 +263,7 @@ class RecordSearcher:
                 query,
                 each_limit,
                 kind="declaration_check",
-                summary_keys=("consistent", "declarations", "discrepancies"),
+                summary_keys=("id", "consistent", "declarations", "discrepancies", "cross_round_hits", "tool_call_ids"),
                 content_key="answer_preview",
             )
         if kind in {"change_log", "all"}:  # P2-6: 配置变更审计
@@ -295,6 +298,98 @@ class RecordSearcher:
             results += self._search_episode(query, each_limit, session_id)
             results += self._search_experience(query, each_limit)  # P1-2: 经验库并列返回
         return results[:limit]
+
+    def _search_special(
+        self, kind: str, query: str, limit: int, session_id: str
+    ) -> list[dict] | None:
+        """对象型/精确水合分派；普通 JSONL 关键词检索仍回主流程。
+
+        memory/archive/episode/experience 走对象存储；declaration_check 只有精确
+        source ref 才短路水合，宽查询返回 None 继续轻量 JSONL 索引。
+        """
+        if kind == "memory":
+            return self._search_memory(query, limit, session_id=session_id)
+        if kind == "archive":
+            return self._search_archive(query, limit, session_id)
+        if kind == "episode":
+            return self._search_episode(query, limit, session_id)
+        if kind == "experience":  # P1-2: 经验库检索
+            return self._search_experience(query, limit)
+        if kind == "rule":
+            return self._rule_index.search(query, limit)
+        if kind == "declaration_check":
+            return self._hydrate_declaration_check(query)
+        return None
+
+    def _hydrate_declaration_check(self, query: str) -> list[dict] | None:
+        """精确 DC id / legacy line-ref 显式水合；宽检索返回 None 走轻量索引。
+
+        declaration_check 是 self_eval honesty 的事实源。只有调用方明确给出
+        ``DC-*`` 或 ``declaration_check.jsonl:L<n>`` 时返回 receipts 等逐样本事实；
+        普通关键词检索仍由 ``_jsonl_search`` 返回 300-char 摘要，避免观测数据
+        因“可检索”变成默认大上下文。
+        """
+        raw = str(query or "").strip()
+        if raw.lower().startswith("declaration_check:"):
+            raw = raw.split(":", 1)[1].strip()
+        by_id = raw.startswith("DC-")
+        line_no: int | None = None
+        if raw.startswith("declaration_check.jsonl:L"):
+            try:
+                line_no = int(raw.rsplit("L", 1)[1])
+            except ValueError:
+                return []
+        if not by_id and line_no is None:
+            return None
+
+        path = self._audit_dir / "declaration_check.jsonl"
+        if not path.exists():
+            return []
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                for current_line, line in enumerate(f, 1):
+                    if line_no is not None and current_line != line_no:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        if line_no is not None:
+                            return []
+                        continue
+                    if by_id and str(entry.get("id") or "") != raw:
+                        continue
+                    source_ref = str(entry.get("id") or f"declaration_check.jsonl:L{current_line}")
+                    detail_keys = (
+                        "session_id",
+                        "consistent",
+                        "declarations",
+                        "discrepancies",
+                        "cross_round_hits",
+                        "tool_call_ids",
+                        "receipts",
+                        "matched_by",
+                        "answer_preview",
+                    )
+                    detail = {key: entry.get(key) for key in detail_keys if key in entry}
+                    return [
+                        {
+                            "kind": "declaration_check",
+                            "ts": entry.get("ts", ""),
+                            "id": source_ref,
+                            "summary": (
+                                f"consistent={entry.get('consistent')} "
+                                f"declarations={entry.get('declarations', [])} "
+                                f"discrepancies={entry.get('discrepancies', [])}"
+                            )[:300],
+                            "file": str(path),
+                            "source_ref": source_ref,
+                            "hydrated": True,
+                            "detail": detail,
+                        }
+                    ]
+        except OSError:
+            return []
+        return []
 
     def _search_episode(self, query: str, limit: int, session_id: str) -> list[dict]:
         if self._episode_store is None or not session_id:
@@ -352,12 +447,18 @@ class RecordSearcher:
         "self_correction": ("self_correction_log.jsonl", ("phase", "action", "detail")),
         "evolution": ("evolution_suggestions.jsonl", ("id", "status", "content")),
         "param_adjust": ("param_adjust_history.jsonl", ("key", "before", "after")),
-        "declaration_check": ("declaration_check_log.jsonl", ("phase", "result", "detail")),
-        "self_eval": ("self_eval.jsonl", ("eval_id", "trigger", "summary")),
+        "declaration_check": (
+            "declaration_check.jsonl",
+            ("id", "consistent", "declarations", "discrepancies", "cross_round_hits", "tool_call_ids"),
+        ),
+        "self_eval": ("self_eval_log.jsonl", ("eval_id", "trigger", "summary")),
         "memory_extract": ("memory_extract_log.jsonl", ("extract_id", "scope", "summary")),
         "proc_versions": ("proc_versions.jsonl", ("process", "version", "started_at")),
         "feishu_audit": ("feishu_audit.jsonl", ("message_id", "sender_id", "action", "note")),
         "evolution_exec": ("evolution_exec_log.jsonl", ("id", "status", "note")),
+        # M2-G1.3: tool octet 观测流（terminal tool receipt；摘要键仅顶层字段，
+        # status/reason_code 在 outcome 嵌套内——红线禁止顺手支持 nested 查询）
+        "tool_octet": ("tool_octet.jsonl", ("tool_name", "round_index", "args_digest")),
     }
 
     def event_stream(
@@ -427,7 +528,7 @@ class RecordSearcher:
         return merged
 
     def _search_experience(self, query: str, limit: int) -> list[dict]:
-        """Experience search plus scan diagnostics; exact ref remains metadata hydration here."""
+        """P1-2/R3: experience search with exact ``experience:<id>`` hydration."""
         if self._experience_store is None:
             self._last_diagnostics = None
             return []
@@ -436,14 +537,13 @@ class RecordSearcher:
         if exact:
             doc = self._experience_store.get(exact)
             if doc is not None:
-                self._last_diagnostics = {
-                    "scanned": 0,
-                    "degraded": 0,
-                    "skipped": 0,
-                    "scan_error": None,
-                }
+                # R3(P0-3): hydrate 路径不走扫描，诊断置健康零值（区分"不存在/不可解析"
+                # 依赖 get 留痕日志归因，design §1.2.3 口径注明）
+                self._last_diagnostics = {"scanned": 0, "degraded": 0, "skipped": 0, "scan_error": None}
                 stem = exact.removesuffix(".md")
                 return [self._experience_store.to_hydrated_record(stem, doc)][:limit]
+        # R3(P0-3): 三态扫描 Outcome——诊断独立于 results[:limit] 截断照常回填
+        #（kind=all 聚合中 experience 记录被挤出返回集时，诊断仍到达模型）
         outcome = self._experience_store.search_outcome(query, limit)
         self._last_diagnostics = {
             "scanned": outcome.scanned_count,
@@ -592,6 +692,13 @@ class RecordSearcher:
                     }
                     if linked:
                         record["linked_suggestions"] = linked  # 评估 → 建议（双向溯源）
+                    # EVO-20260903-06e5a2fd: 只有精确 eval_id 水合才带逐样本诊断；
+                    # 宽检索/列表保持轻量，避免观测数据反向污染工作上下文。
+                    exact_query = q.removeprefix("eval:")
+                    if exact_query == str(entry.get("eval_id", "")).lower():
+                        diagnostics = entry.get("diagnostics")
+                        if isinstance(diagnostics, dict) and diagnostics:
+                            record["diagnostics"] = diagnostics
                     hits.append(record)
                     if len(hits) >= limit:
                         break

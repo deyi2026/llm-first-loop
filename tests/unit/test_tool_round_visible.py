@@ -389,3 +389,30 @@ def test_reconciliation_missing_result_synthesized(tmp_path, monkeypatch):
     cancelled = [m for m in tool_msgs if "执行中断" in m.content]
     assert len(cancelled) == 1
     assert cancelled[0].tool_call_id == "tc-b"
+
+
+def test_missing_tool_call_id_is_repaired_as_paired_blocked_receipt(build_test_engine):
+    """Malformed provider tool call gets protocol pairing only; no program system advice."""
+    engine, fake = build_test_engine([
+        LLMResponse(
+            content="",
+            tool_calls=[ToolCall(id="", name="read_file", arguments={"path": "never-read"})],
+            provider="fake",
+        ),
+        LLMResponse(content="recovered-final", tool_calls=[], provider="fake"),
+    ])
+    sid = engine.session.create()
+    result = engine.run(sid, "测试缺失 tool_call_id")
+    assert result.final_answer == "recovered-final"
+    assert len(fake.calls) == 2
+    wire = fake.calls[1]["messages"]
+    decl = next(m for m in wire if m.get("role") == "assistant" and m.get("tool_calls"))
+    pair_id = decl["tool_calls"][0]["id"]
+    assert pair_id.startswith("lfl-missing-id-r")
+    receipt = next(m for m in wire if m.get("role") == "tool" and m.get("tool_call_id") == pair_id)
+    assert "executed=false" in str(receipt.get("content") or "")
+    assert "reason_code=missing_tool_call_id" in str(receipt.get("content") or "")
+    assert not any(
+        m.get("role") == "system" and "tool_call_id" in str(m.get("content") or "")
+        for m in wire[1:]
+    )

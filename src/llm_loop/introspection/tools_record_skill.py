@@ -177,4 +177,5 @@ def run_record_skill(ctx: Any, audit: Any, args: dict) -> ToolResult:
         ),
         tool_call_id="",
         tool_name="record_skill",
+        capability_requirements=("submit_evolution",),
     )

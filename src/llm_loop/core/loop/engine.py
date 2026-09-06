@@ -18,7 +18,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from llm_loop.config import Settings
 from llm_loop.core.history import (  # noqa: F401 (history 工具)
@@ -58,10 +58,13 @@ from llm_loop.core.loop.tool_exec import (
     _json_dumps_args,
     _tool_args_summary,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
 )
-from llm_loop.core.loop.turn_context import _TurnContextMixin
 from llm_loop.core.message import Message, MessageSource
+from llm_loop.core.prompt_eligibility import LEGACY_PROGRAM_FINAL_MARKER
 from llm_loop.core.run_context import (
     current_reasoning_effort as _current_reasoning_effort,
+)
+from llm_loop.core.run_context import (
+    current_reasoning_mode as _current_reasoning_mode,
 )
 from llm_loop.core.session import SessionStore
 from llm_loop.core.trace_leak import leak_events
@@ -69,20 +72,14 @@ from llm_loop.core.trace_leak.invariant import (
     correct_mislabeled_metadata,
     metadata_satisfies_invariant,
 )
-from llm_loop.feedback.honesty import (
-    max_iterations_feedback,
-    stagnation_feedback,
-)
+from llm_loop.feedback.honesty import max_iterations_feedback
 from llm_loop.feedback.validator import DeclarationValidator, build_discrepancy_feedback
 from llm_loop.introspection.corrections import CorrectionContext, CorrectionToolRegistry
 from llm_loop.introspection.status import ArchitectureStatusProvider
 from llm_loop.llm.client import GuardRequestContext, LLMClient, StreamDelta
 from llm_loop.llm.errors import LLMError
+from llm_loop.llm.pool import ModelClientPool
 from llm_loop.memory.store import MemoryStore
-from llm_loop.tools.prefix_layer import (  # GOAL-20260829-7483e375 T2
-    LayeredPrefixState,
-    build_layered_schemas,
-)
 from llm_loop.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -115,9 +112,11 @@ def _background_note_active(engine: Any, session_id: str, round_no: int) -> None
         except Exception:  # noqa: BLE001 — fail-open
             logger.debug("runner.note_active 失败（忽略）", exc_info=True)
 
+
 # M53 拆分: _json_dumps_args/_tool_args_summary → llm_loop/core/loop/tool_exec.py（_ToolExecMixin）
 # 迁移注释保留（REQ-REF-06）: 原路径可导入（对齐 test_tool_round_visible.py），行为与迁移前一致。
 # 模块级函数随工具执行职责单元迁移，经此 re-export 保持 `engine._tool_args_summary` 等可导入。
+
 
 def format_tokens(n: int) -> str:
     """M52: token 计数人性化显示（1234 → "1.2k"）；0 = 未提供，如实返回 "0"."""
@@ -125,9 +124,11 @@ def format_tokens(n: int) -> str:
         return f"{n / 1000:.1f}k"
     return str(n)
 
+
 # M53: 上下文守卫估算常量 → engine_services/routing.py（W4-02b 起 RoutingService）
 # 迁移注释保留（REQ-REF-06）: 原路径可导入（engine._CHARS_PER_TOKEN_EST/_CONTEXT_SAFETY_MARGIN），取值与迁移前一致。
 # 估算口径（chars/token 保守估计, 中文混合内容约 2 字符/token；安全边距预留 10% 给响应生成）已随迁至 routing.py。
+
 
 @dataclass
 class LoopResult:
@@ -148,11 +149,22 @@ class LoopResult:
     tokens_cache_hit: int = 0
     # P1-1: 最终回答轮完整思考链（供 Web done 事件透传前端渲染）；工具轮思考链不在此字段
     reasoning_content: str | None = None
+    # reasoning 观测四层：配置意图 / 能力支持 / 实际产生 / provider 精确 token（若可得）
+    reasoning_mode: str = "auto"
+    reasoning_capable: bool = False
+    reasoning_control: str = "unknown"
+    # Backward-compatible name: this means explicit control is supported, not
+    # generic reasoning capability.
+    reasoning_supported: bool = False
+    reasoning_effective: bool = False
+    reasoning_tokens: int | None = None
     # 取消原因标记位（""=未取消；值域 user_stop/runner_stop，结构化可审计，spec 6.1.2）
     cancel_reason: str = ""
+    # Emergency MODEL_FALLBACKS fact for the current user/UI only; never persisted as assistant prompt text.
+    fallback_receipt: dict[str, str] | None = None
 
 
-class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _TurnContextMixin):
+class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
     """五阶段核心循环控制器."""
 
     # EVO 后台 run 执行器（factory 动态装配 BackgroundRunner；声明类型供 pyright 静态检查）
@@ -160,9 +172,12 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
     def _run_state(self) -> _RunState:
         """当前会话状态桶（B5-W4-03：解析逻辑在 RunStateManager.bucket，薄委托）."""
         return self._run_state_mgr.bucket()
+
     runner: Any | None = None
     # DSH-PLUGINS-20260816 ②: 调度提醒线程（factory 装配；声明类型供 pyright 静态检查）
     scheduler: Any | None = None
+    # ERR1210 per-engine/session attempt ledger; actual lifecycle owned by RecoveryController.
+    _err1210_attempted: dict[str, int]
     # ERC Phase6: optional workspace-activation legacy sidecar migration hook.
     _evidence_legacy_migrate_workspace_fn: Callable[[str], object] | None = None
 
@@ -185,12 +200,9 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
         fault_classifier: Any | None = None,  # M12 T49: 故障可自愈性分类器
         selfheal_budget: Any | None = None,  # M12 T49: 自愈尝试预算
         runtime: Any | None = None,  # M12 T50: RuntimeParams 动态参数视图
-        eval_trigger_detector: Any | None = None,  # M12 深化 T63: EvalTriggerDetector 自我评估提醒
-        evolution_store: Any
-        | None = None,  # M17 FR-REVIEW-AI-02: EvolutionStore（executing 提醒检测）
         loop_signal_detector: Any
         | None = None,  # M17 FR-REVIEW-AI-02/03: LoopSignalDetector 三合一
-        llm_pool: Any | None = None,  # M48（design §5.3）: ModelClientPool（会话级模型路由）
+        llm_pool: ModelClientPool | None = None,  # M48（design §5.3）: 会话级模型路由
         recovery: Any | None = None,  # P2-2: RecoveryChannel（fail-open 写失败恢复通道）
         event_store: Any | None = None,  # D1: EventStore（事件源化，默认 None 零行为）
         episode_store: Any | None = None,  # R8.5: resolved episode durable index（None=零回归）
@@ -215,8 +227,6 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
         self.fault_classifier = fault_classifier
         self.selfheal_budget = selfheal_budget
         self.runtime = runtime
-        self.eval_trigger_detector = eval_trigger_detector
-        self.evolution_store = evolution_store
         self.loop_signal_detector = loop_signal_detector
         # M48（design §5.3）: 会话级模型路由池；None 时使用装配默认 client（零回归）
         self.llm_pool = llm_pool
@@ -268,21 +278,14 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
         # 低命中率 → final_answer 注入诊断 + action_trace 审计，fail-open）
         # EVO-20260817-72fcd94a L3（闭环）: 缓存健康监控 + 发送前门禁（独立模块，程序常态锚点管理）
         from llm_loop.core.cache_health import CacheHealthMonitor
+
         self._cache_monitor = CacheHealthMonitor()
         self._recovery._err1210_init()  # err1210 P0 恢复状态字段（tasks 4.2；字段语义见 err1210.py）
         # 2026-08-22 任务聚焦状态（focus 模块: 单向切换锁定 + 任务锚点数据源）
-        from llm_loop.core.loop.focus import TaskFocusState
-
-        self._focus = TaskFocusState()
-        # GOAL-20260829-7483e375 T2/P1: 分层前缀状态必须按 session 隔离。
-        # Web/Feishu 共用单 LoopEngine；若只挂一个 state，会把 A 会话动态 schema 泄漏到 B。
-        self._prefix_states: dict[str, LayeredPrefixState] = {}
         # EVO-20260818（spec §5.4.1-3 注记，grill-me C1）: 模型切换检测——每轮对比实际
         # 模型，变化时 reset cache_health 窗口（防跨模型归因污染）
         self._cache_last_model: str | None = None  # 最近活跃模型（兼容诊断；切换判定不再用全局值）
         self._cache_last_model_by_session: dict[str, str] = {}  # 2026-08-27: 防跨会话模型状态污染
-        self._cache_gate_stable_fp = ""  # 门禁: 本次稳定段指纹（system+注入）
-        self._cache_gate_hint: str | None = None  # 门禁: 后检漂移提示（run 末注入 final_answer）
         # EVO-20260817-b6554376: 投影一致性门闸最近状态（ok/miss/mismatch；构建后更新）
         self._projection_guard_state: str = "miss"
         # M50: CLI --model 启动参数装配通道（cli.py 注入，_run_single/_run_interactive 消费）
@@ -311,56 +314,87 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
     # ---- 模型路由委托壳（W4-02b：_RoutingMixin → RoutingService；签名面为运行时参数形（类型标注见 RoutingService 真身），kwonly 默认值保留且按名转发实值——公开面调用兼容零变化）----
     def _pool_registry_snapshot(self):
         return self._routing._pool_registry_snapshot()
+
     def _pool_default_registry_snapshot(self):
         return self._routing._pool_default_registry_snapshot()
+
     def _round_registry_snapshots(self, model, sess):
         return self._routing._round_registry_snapshots(model, sess)
-    def _route_model(self, model, sess, messages, tools_param, *, registry_snapshot=None, default_registry_snapshot=None):
-        return self._routing._route_model(model, sess, messages, tools_param, registry_snapshot=registry_snapshot, default_registry_snapshot=default_registry_snapshot)
+
+    def _route_model(self, model, sess, *, registry_snapshot=None, default_registry_snapshot=None):
+        return self._routing._route_model(
+            model,
+            sess,
+            registry_snapshot=registry_snapshot,
+            default_registry_snapshot=default_registry_snapshot,
+        )
+
     def _default_model_label(self, *, registry_snapshot=None):
         return self._routing._default_model_label(registry_snapshot=registry_snapshot)
+
     def _current_context_limit(self, model_label, *, registry_snapshot=None):
-        return self._routing._current_context_limit(model_label, registry_snapshot=registry_snapshot)
-    def _provider_inject_notices(self, model_label):
-        return self._routing._provider_inject_notices(model_label)
-    def _local_tool_allowlist(self):
-        return self._routing._local_tool_allowlist()
-    def _filter_local_tools(self, tool_schemas, model_label):
-        return self._routing._filter_local_tools(tool_schemas, model_label)
-    def _local_fast_route_ref(self, model_label, messages, *, registry_snapshot=None):
-        return self._routing._local_fast_route_ref(model_label, messages, registry_snapshot=registry_snapshot)
-    def _check_context_fit(self, tools_param, context_limit, model_label, max_tokens, chars_per_token):
-        return self._routing._check_context_fit(tools_param, context_limit, model_label, max_tokens, chars_per_token)
+        return self._routing._current_context_limit(
+            model_label, registry_snapshot=registry_snapshot
+        )
+
     def _planned_model_label(self, model, sess, *, registry_snapshot=None):
         return self._routing._planned_model_label(model, sess, registry_snapshot=registry_snapshot)
+
     def _provider_chars_per_token(self, model_label, *, registry_snapshot=None):
-        return self._routing._provider_chars_per_token(model_label, registry_snapshot=registry_snapshot)
+        return self._routing._provider_chars_per_token(
+            model_label, registry_snapshot=registry_snapshot
+        )
+
     def _resolve_history_budget(self, model_label, *, registry_snapshot=None):
-        return self._routing._resolve_history_budget(model_label, registry_snapshot=registry_snapshot)
+        return self._routing._resolve_history_budget(
+            model_label, registry_snapshot=registry_snapshot
+        )
+
     def _effective_history_budget_detail(self, model_label, *, registry_snapshot=None):
-        return self._routing._effective_history_budget_detail(model_label, registry_snapshot=registry_snapshot)
+        return self._routing._effective_history_budget_detail(
+            model_label, registry_snapshot=registry_snapshot
+        )
+
     def _effective_history_budget(self, model_label, *, registry_snapshot=None):
-        return self._routing._effective_history_budget(model_label, registry_snapshot=registry_snapshot)
-    def _note_tool_round_budget(self, tool_round_zero, is_local_tool, tb, effective_budget):
-        return self._routing._note_tool_round_budget(tool_round_zero, is_local_tool, tb, effective_budget)
+        return self._routing._effective_history_budget(
+            model_label, registry_snapshot=registry_snapshot
+        )
 
     # ---- 模型降级链委托壳（W4-02c：_FallbackMixin → FallbackService；签名面为运行时参数形（类型标注见 FallbackService 真身），kwonly 默认值保留且按名转发实值——公开面调用兼容零变化）----
     def _is_fallback_eligible_error(self, exc):
         return FallbackService._is_fallback_eligible_error(exc)
+
     def _merge_fallback_metadata(self, metadata, context_limit, chars_per_token):
         return FallbackService._merge_fallback_metadata(metadata, context_limit, chars_per_token)
-    def _same_model_retry_gate(self, *, exc, e1210_recovered, is_default_assembled, sess, messages, tools_param, llm_client, chat_model_arg, session_id, effective_budget, rounds):
-        return self._fallback._same_model_retry_gate(exc=exc, e1210_recovered=e1210_recovered, is_default_assembled=is_default_assembled, sess=sess, messages=messages, tools_param=tools_param, llm_client=llm_client, chat_model_arg=chat_model_arg, session_id=session_id, effective_budget=effective_budget, rounds=rounds)
-    def _same_model_retry_before_fallback(self, *, sess, messages, tools_param, llm_client, chat_model_arg, session_id, effective_budget, rounds):
-        return self._fallback._same_model_retry_before_fallback(sess=sess, messages=messages, tools_param=tools_param, llm_client=llm_client, chat_model_arg=chat_model_arg, session_id=session_id, effective_budget=effective_budget, rounds=rounds)
-    def _try_fallback_chain(self, *, messages, tools, timeout_s, primary_error, session_id, run_round=None, metadata_out=None, request_builder=None):
-        return self._fallback._try_fallback_chain(messages=messages, tools=tools, timeout_s=timeout_s, primary_error=primary_error, session_id=session_id, run_round=run_round, metadata_out=metadata_out, request_builder=request_builder)
+
+    def _try_fallback_chain(
+        self,
+        *,
+        messages,
+        tools,
+        timeout_s,
+        primary_error,
+        session_id,
+        from_model=None,
+        run_round=None,
+        metadata_out=None,
+        request_builder=None,
+    ):
+        return self._fallback._try_fallback_chain(
+            messages=messages,
+            tools=tools,
+            timeout_s=timeout_s,
+            primary_error=primary_error,
+            session_id=session_id,
+            from_model=from_model,
+            run_round=run_round,
+            metadata_out=metadata_out,
+            request_builder=request_builder,
+        )
+
     def _fallback_reason_label(self, exc):
         return FallbackService._fallback_reason_label(exc)
-    def _build_fallback_notice_message(self, *, from_model, to_model, reason, primary_error):
-        return FallbackService._build_fallback_notice_message(
-            from_model=from_model, to_model=to_model, reason=reason, primary_error=primary_error
-        )
+
     def _build_fallback_all_failed_message(self, *, from_model, primary_error, candidate_lines):
         return FallbackService._build_fallback_all_failed_message(
             from_model=from_model, primary_error=primary_error, candidate_lines=candidate_lines
@@ -369,6 +403,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
     # ---- 压缩另存委托壳（W4-02d：_ArchiveMixin → ArchiveService；签名面为运行时参数形（类型标注见 ArchiveService 真身）——公开面调用兼容零变化）----
     def _archive_feedback_session(self, session_id):
         return self._archive._archive_feedback_session(session_id)
+
     def _archive_sink(self, session_id, msg):
         return self._archive._archive_sink(session_id, msg)
 
@@ -379,26 +414,15 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
         if svc is None:
             svc = self._interop = InteropService(self)
         return svc
+
     def _interop_inbox_messages(self):
         return self._interop_svc()._interop_inbox_messages()
+
     def _inject_interop_messages(self, base, prefix_len, session_id=""):
         return self._interop_svc()._inject_interop_messages(base, prefix_len, session_id)
+
     def _inject_switch_notice(self, switch_from, switch_to, sess=None):
         return self._interop_svc()._inject_switch_notice(switch_from, switch_to, sess)
-
-    def _prefix_state_for(self, session_id: str) -> LayeredPrefixState:
-        """Return a session-scoped layered-prefix state on the shared engine."""
-        state = self._prefix_states.get(session_id)
-        if state is None:
-            state = LayeredPrefixState()
-            self._prefix_states[session_id] = state
-        return state
-
-    def _layered_tool_schemas(self, session_id: str, user_text: str) -> list[dict]:
-        """Build layered schemas from the current user turn without cross-session bleed."""
-        return build_layered_schemas(
-            self.registry, user_text, self._prefix_state_for(session_id)
-        )
 
     # ── 主循环本体（public run_stream 生命周期包装见 lifecycle.py）──
     def _llm_error_round_exit(self, sess, cap, exc, session_id, n_messages, rounds, flavor):
@@ -412,8 +436,13 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
         return final, None
 
     def _run_stream_inner(
-        self, session_id: str, user_text: str, model: str | None = None,
-        *, run_save_token: object | None = None, on_run_acquired: Any = None,
+        self,
+        session_id: str,
+        user_text: str,
+        model: str | None = None,
+        *,
+        run_save_token: object | None = None,
+        on_run_acquired: Any = None,
         ingress: object | None = None,
     ) -> Iterator[StreamDelta]:
         """run_stream 的循环本体（P0-5 包装层拆出；逻辑与拆分前逐行一致）.
@@ -424,17 +453,24 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
         # P0-5: 记录最近活跃会话（out-of-run 桶解析的回退锚点，保持测试复查语义）
         self._run_state_mgr.last_active_sid = session_id
         tool_trace: list[dict] = []
-        # EVO-20260814-aab7eb0b P2: 每次 run/run_stream 重置实时停滞检测状态（跨会话不泄漏）
-        # EVO-20260823-9bb27899: 增加搜索空结果计数字段
-        # EVO-20260902-loopbreaker: fp/count 以会话桶 carry 播种（跨 run 延续连续计数）；
-        # 提醒/空结果一次性标志仍按 run 重置。同会话内换指纹即重置，不跨会话泄漏。
+        # P2-A Rule-first: run 级只重置工具重复/空结果事实观测；不恢复任何
+        # cross-run blocked/prewarm/no-progress 决策状态。
         _bucket = self._run_state()
+        _bucket.fallback_receipt = None
         _bucket.stagnation_state = {
-            "fp": _bucket.stagnation_carry_fp,
-            "count": _bucket.stagnation_carry_count,
+            "fp": None,
+            "count": 0,
             "reminded": False,
-            "empty_count": 0, "empty_reminded": False,
+            "empty_count": 0,
+            "empty_reminded": False,
         }
+        _bucket.interruption_resume = (
+            None  # rebuilt from durable interruption/checkpoint facts after ingress append
+        )
+        # P1-A/P1-B: runtime does not parse current-user semantics into task or
+        # tool-selection authority. Delegated wakes remain explicitly attributable.
+        if bool(getattr(ingress, "delegated", False)):
+            self._record_action("schedule.wake", "delegated_ingress", f"session={session_id}")
         # HARNESS-04(2026-08-14): 上下文预算预警——每次 run 独立判断（上下文随 run 累积）
         self._run_state().context_warning_injected = False
 
@@ -442,6 +478,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
             session_id, run_save_token=run_save_token, on_run_acquired=on_run_acquired
         )
         sess = plan.sess
+        self._recover_pre_ingress_runtime_state(session_id, sess)
 
         # T22/T23: 注入当前会话到注册表与修正上下文（压缩档案/检索关联）
         from contextlib import suppress
@@ -468,14 +505,21 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
         # the current tool-followup protocol can never be mistaken for historical.
         try:
             from llm_loop.core.episode_history import (
+                backfill_closed_tool_attempts,
                 backfill_completed_episodes,
                 backfill_consumed_tool_spans,
             )
 
-            backfill_completed_episodes(
-                self.episode_store, sess, event_store=self._event_store
-            )
+            backfill_completed_episodes(self.episode_store, sess, event_store=self._event_store)
             backfill_consumed_tool_spans(self.episode_store, sess)
+            # A failed tool attempt remains useful to delegated/automatic recovery
+            # until a new genuine human ingress arrives. Only at that boundary may
+            # event-proven closed raw tool protocol retire from the default provider
+            # view; it is indexed as closed (not consumed/resolved) first.
+            if not bool(getattr(ingress, "delegated", False)):
+                backfill_closed_tool_attempts(
+                    self.episode_store, sess, event_store=self._event_store
+                )
         except Exception:  # noqa: BLE001 — retrieval indexing must not block a run
             logger.warning("history lifecycle 索引失败（fail-open，不退休）", exc_info=True)
 
@@ -495,9 +539,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
                 guard_user_write,
             )
 
-            _verdict = guard_user_write(
-                sess, user_msg, ingress, entry="engine.run"
-            )
+            _verdict = guard_user_write(sess, user_msg, ingress, entry="engine.run")
             if _verdict.action is GuardAction.DENY:
                 # enforce 拒绝：不落盘不执行循环，如实返回拒绝回执（事件/隔离已留痕）
                 return LoopResult(
@@ -530,11 +572,13 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
         # D1: 会话首次落库生成 session.created + 用户消息事件（fail-open）
         self._ensure_session_created(sess)
         self._append_message_event(sess, user_msg)
-        self._inject_interruption_recovery(session_id, sess)
+        self._prepare_interruption_resume(session_id, sess)
         _turn_ref = len(sess.messages) - 1  # user_msg seq（turn 身份）
         # T5: per-session RunState 分桶（串台修复）；tip 判断改 SoT 派生（tool_exec）
         self._run_state().current_turn_ref = _turn_ref
-        _turn_memory_msgs = self._inject_turn_memory_snapshot(sess, user_text, _turn_ref)
+        # Agency-first: memory/history is retrieved explicitly by the model when needed.
+        # Ordinary user turns do not trigger automatic retrieval or persisted snapshots.
+        _turn_memory_msgs: list[Message] = []
         self._phase("ingress")
 
         final_answer = ""
@@ -544,20 +588,33 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
         # DSH 借鉴(2026-08-17): run 结束原因（统一出口 run.end 事件用；各结束分支标记，
         # 默认 completed——未标记即正常完成。fail-open 不阻断）
         _run_end_reason = "completed"
-        _cancel_reason = ""  # 取消原因标记位（user_stop/runner_stop；""=未取消，收口贯穿 LoopResult）
+        _cancel_reason = (
+            ""  # 取消原因标记位（user_stop/runner_stop；""=未取消，收口贯穿 LoopResult）
+        )
         _run_started_at = time.monotonic()
         self._termination._reset_overflow_state()  # R4: 每次 run 重置 overflow 注入计数
         self._recovery._err1210_run_begin()  # 修复A: per-run 降级机会（attempted 键 = run seq）
-        self._focus.reset()  # 2026-08-22 单向切换锁定重置
-        self._last_interrupted = None  # B1/B2(EVO-20260902-41898b20): 本 run 中断半截产物缓存（新 run 重置防陈旧串台）
+        self._last_interrupted = (
+            None  # B1/B2(EVO-20260902-41898b20): 本 run 中断半截产物缓存（新 run 重置防陈旧串台）
+        )
         model_used = ""  # M51: 本轮实际使用的模型标签（每轮 LLM 调用时刷新）
         tokens_in = 0  # M52: 本次 run 累计 prompt tokens
         tokens_out = 0
         tokens_cache_hit = 0  # M58: 本次 run 前缀缓存命中 token（省钱可观测）
+        reasoning_mode_used = _current_reasoning_mode.get() or "auto"
+        reasoning_capable = False
+        reasoning_control = "unknown"
+        reasoning_supported = False
+        reasoning_effective = False
+        reasoning_tokens: int | None = None
         llm_ms_total = 0.0  # M59: 本次 run LLM 调用总耗时（首 token 埋点聚合）
         ttft_first_ms: float | None = None  # M59: 首个 token 延迟（首 token 平均数据源）
         self._kpi_reset()  # EVO-20260822-9fde48f1 第 10 条: KPI 三件套重置（对比基线用）
         resp: Any = None  # M20 THK-04: 最终回答轮思考链来源（LLM 异常/停滞路径为 None）
+        # 2026-09-03: leaked historical [program-final] markers can be imitated by the
+        # model.  One in-process retry is allowed without persisting the echo; a second
+        # exact echo is a truthful output fault, never a completed answer.
+        _program_final_echo_retries = 0
 
         while True:
             # 后台 Stop：轮次边界兜底；LLM 流内另有细粒度检查（原因捕获，2.3）。
@@ -585,9 +642,43 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
             # ── 理解：上下文构造（memory 已上移 run 入口；_turn_memory_msgs 仅 build 回退）──
 
             # 热重载一致性：每个 LLM round 捕获一次 current/default/planning 不可变 registry 快照。
-            _round_registry, _default_registry, _planning_registry = (
-                self._round_registry_snapshots(model, sess)
+            _round_registry, _default_registry, _planning_registry = self._round_registry_snapshots(
+                model, sess
             )
+
+            # Resolve the requested provider/model before any prompt/history mutation.
+            # A missing model/key is a routing fact, not a reason to compact or project history.
+            routing = self._route_model(
+                model,
+                sess,
+                registry_snapshot=_round_registry,
+                default_registry_snapshot=_default_registry,
+            )
+            llm_client = routing.llm_client
+            model_used = routing.model_used
+            chat_model_arg = routing.chat_model_arg
+            _response_context_limit = routing.context_limit
+            _response_chars_per_token = routing.chars_per_token
+            _response_max_output_tokens = max(0, int(getattr(llm_client, "max_tokens", 0) or 0))
+            if routing.final_answer_override is not None:
+                self._tool_cycle._reachability_finalize("route_rejected_before_provider")
+                _run_end_reason = "routing_override"
+                final_answer = routing.final_answer_override
+                break
+
+            # Model-switch observability is session-scoped and does not write prompt text.
+            _sid = sess.session_id
+            _switch_from = self._cache_last_model_by_session.get(_sid)
+            if model_used and model_used != _switch_from:
+                if _switch_from is not None:
+                    self._cache_monitor.reset(
+                        reason=f"model_switch:{model_used}", clear_buckets=False
+                    )
+                self._cache_last_model_by_session[_sid] = model_used
+                self._cache_last_model = model_used
+                self._inject_switch_notice(_switch_from or "", model_used, sess)
+            elif model_used:
+                self._cache_last_model = model_used
 
             # M54: 模型窗口感知的主动压缩 — 规划段归装 AttemptExecutor（B5-W2-02；
             # planned_label/budget 预取链/工具轮零历史判定 → AttemptResult，
@@ -595,43 +686,33 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
             _plan = self._attempt_executor.plan(model, sess, _planning_registry)
             planned_label = _plan.planned_label
             effective_budget = _plan.effective_budget
-            _tool_round_zero = _plan.tool_round_zero
-            _tb = _plan.tool_budget
-            _is_local_tool = _plan.is_local_tool
-            self._focus.anchor_sess = sess  # 2026-08-22 任务锚点数据源（build 注入包装用）
             # P0 压缩风暴熔断（2026-08-25 规格）: 冻结期超安全水位 → context_pressure
             # （实现在 _BuildMixin._breaker_pressure_block——engine 只接线）
-            _pressure_block = self._breaker_pressure_block(
-                sess, effective_budget, planned_label
-            )
+            _pressure_block = self._breaker_pressure_block(sess, effective_budget, planned_label)
             if _pressure_block:
                 _run_end_reason = "breaker_context_pressure"
                 final_answer = _pressure_block
                 break
+            # R3-MR-4: tool projection must precede prompt build so any structured
+            # unavailable facts enter the governed dynamic-injection budget and R6 tail.
+            tool_schemas, tools_param = self._project_request_tools(
+                session_id=session_id,
+                user_text=user_text,
+                planned_label=planned_label,
+                session_messages=sess.messages,
+                logical_round=rounds,
+            )
             messages = self._build_llm_messages(
-                sess, _turn_memory_msgs, max_chars=effective_budget, model=model,
-                planned_label=planned_label, registry_snapshot=_planning_registry,
-                tool_round_zero=_tool_round_zero,
+                sess,
+                _turn_memory_msgs,
+                max_chars=effective_budget,
+                model=model,
+                planned_label=planned_label,
+                registry_snapshot=_planning_registry,
             )
             self._kpi_accumulate_inject()
             if getattr(self, "_last_history_compacted", False):
                 truncation_noted = True
-            _tool_eligibility_mode = getattr(
-                self.settings, "tool_eligibility_mode", "enforce"
-            )
-            if getattr(self.settings, "prefix_layered", False) and _tool_eligibility_mode != "enforce":
-                # Legacy layered-prefix representation remains available in off/shadow.
-                # R8.7 enforce owns eligibility first and therefore starts from canonical
-                # registry schemas; otherwise CORE tools that were old index-only entries
-                # would lose parameter names/types before the eligibility decision.
-                tool_schemas = self._layered_tool_schemas(session_id, user_text)
-            else:
-                tool_schemas = self.registry.schemas(lazy=self.settings.tool_schema_lazy)
-            tool_schemas = self._tool_cycle._project_tool_schemas_for_round(
-                tool_schemas, planned_label=planned_label, user_text=user_text,
-                session_messages=sess.messages,
-            )
-            tools_param = [self._tool_cycle._schema_to_param(t) for t in tool_schemas]
 
             # R1: 组件级占用分解（实际发送载荷口径；压缩归档历史不计入当前占用）
             # 供 architecture_status.context_usage.breakdown 注入；last_build_info 入桶保留。
@@ -648,73 +729,56 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
 
             # ── 行动：LLM 决策 ──
             self._phase("action.llm_decide")
-            # M53 拆分: 路由决策 + 上下文守卫 → RoutingService._route_model（W4-02b 起，行为零变化）
-            routing = self._route_model(
-                model, sess, messages, tools_param,
-                registry_snapshot=_round_registry,
-                default_registry_snapshot=_default_registry,
-            )
-            llm_client = routing.llm_client
-            model_used = routing.model_used
-            chat_model_arg = routing.chat_model_arg
-            _response_context_limit = routing.context_limit
-            _response_chars_per_token = routing.chars_per_token
-            # EVO-20260818（spec §5.4.1-3 注记）: 模型切换 → cache_health 窗口重置
-            # （PromptGuard 按 session/model 重置；cache_health 侧防跨模型归因污染）
-            # 2026-08-20 (EVO-20260820-0b96348d, 用户决策): clear_buckets=False 保留模型桶——
-            # 桶是模型生命周期统计，切换时不清（切回热检查、模型级累计跨切换持久）。
-            # 2026-08-27: 模型切换必须按 session 判定。旧 `_cache_last_model` 是 Engine
-            # 全局值，多会话交错使用不同模型时会把“别的会话刚用了 DeepSeek”误判成
-            # “本会话从 DeepSeek 切到 GLM”，导致新会话也被塞入瞬时切换通知并断前缀。
-            _sid = sess.session_id
-            _switch_from = self._cache_last_model_by_session.get(_sid)
-            if model_used and model_used != _switch_from:
-                if _switch_from is not None:
-                    self._cache_monitor.reset(
-                        reason=f"model_switch:{model_used}", clear_buckets=False
-                    )
-                self._cache_last_model_by_session[_sid] = model_used
-                self._cache_last_model = model_used  # 仅兼容最近活跃模型诊断
-                self._inject_switch_notice(_switch_from or "", model_used, sess)
-            elif model_used:
-                self._cache_last_model = model_used
-            if routing.final_answer_override is not None:
-                # EVO-20260818（M53 拒绝逃生，防死循环）: 提交超模型窗口被拒时，AI 无 LLM
-                # 调用无法自救（无法 switch_model/开新会话/调工具）——现场: 2a3385da 会话
-                # 107 万字符超限连续拒绝 3+ 轮卡死。自动执行一次紧急压缩（emergency_compact:
-                # head_keep=0 → 锚点前移归档，历史真正缩小），本轮如实告知，下轮提交正常。
-                _escape_note = ""
-                try:
-                    self._build_llm_messages(
-                        sess, _turn_memory_msgs, max_chars=effective_budget,
-                        model=model, planned_label=planned_label,
-                        registry_snapshot=_planning_registry, emergency_compact=True,
-                    )
-                    # EVO-20260825 任务8（§5.8）: 记录紧急压缩——供 switch_model 覆盖
-                    # 检测（60s 内切模型 → wasted 审计：锚点前移归档白做）。
-                    try:
-                        self._cache_monitor.note_emergency_compact(
-                            sess.session_id, effective_budget
-                        )
-                    except Exception:  # noqa: BLE001 — fail-open
-                        logger.debug("emergency_compact 审计注入异常（fail-open）", exc_info=True)
-                    _escape_note = (
-                        "\n[自动压缩] 本次提交超模型窗口被守卫拦截——已自动执行紧急压缩"
-                        "（放弃头部保留、锚点前移归档，信息零丢失可 search_archive 检索）；"
-                        "下次请求将基于缩小后的历史正常发送。若仍超限建议 /model 切换更大窗口。"
-                    )
-                except Exception:  # noqa: BLE001 — 自动压缩失败 fail-open（保留原建议）
-                    _escape_note = (
-                        "\n[自动压缩失败] 紧急压缩未生效——请手动 /model 切换更大窗口模型"
-                        "或 /new 开新会话（历史可经 search_archive 找回）。"
-                    )
-                _run_end_reason = "routing_override"
-                final_answer = routing.final_answer_override + _escape_note
-                break
             # HARNESS-02(2026-08-14): 每轮请求快照进事件日志（fail-open）——routing/fallback
             # 可能中途换模型，事件回放据此确知"当时用的哪个模型/挂了哪些工具/预算多少"，
             # 对 self_evaluate 溯源与回放诊断有帮助
             try:
+                _reasoning_contract_fn = getattr(llm_client, "reasoning_contract_state", None)
+                if callable(_reasoning_contract_fn):
+                    (
+                        _round_reasoning_mode,
+                        _round_reasoning_capable,
+                        _round_reasoning_control,
+                        _round_reasoning_supported,
+                        _round_reasoning_requested,
+                    ) = cast(
+                        tuple[str, bool, str, bool, bool],
+                        _reasoning_contract_fn(),
+                    )
+                else:
+                    _reasoning_state_fn = getattr(llm_client, "reasoning_control_state", None)
+                if not callable(_reasoning_contract_fn) and callable(_reasoning_state_fn):
+                    (
+                        _round_reasoning_mode,
+                        _round_reasoning_supported,
+                        _round_reasoning_requested,
+                    ) = cast(
+                        tuple[str, bool, bool],
+                        _reasoning_state_fn(),
+                    )
+                    _round_reasoning_capable = bool(
+                        getattr(llm_client, "reasoning_capable", _round_reasoning_supported)
+                    )
+                    _round_reasoning_control = "legacy" if _round_reasoning_supported else "unknown"
+                elif not callable(_reasoning_contract_fn):
+                    # 兼容测试桩/第三方 client：telemetry 绝不能因缺新方法而整条消失。
+                    _round_reasoning_mode = _current_reasoning_mode.get() or "auto"
+                    _round_reasoning_supported = bool(
+                        getattr(llm_client, "thinking_supported", False)
+                    )
+                    _round_reasoning_capable = bool(
+                        getattr(llm_client, "reasoning_capable", _round_reasoning_supported)
+                    )
+                    _round_reasoning_control = (
+                        str(getattr(llm_client, "reasoning_control", "legacy") or "legacy")
+                        if _round_reasoning_supported
+                        else "unknown"
+                    )
+                    _round_reasoning_requested = None
+                reasoning_mode_used = _round_reasoning_mode
+                reasoning_capable = _round_reasoning_capable
+                reasoning_control = _round_reasoning_control
+                reasoning_supported = _round_reasoning_supported
                 self._event_append(
                     session_id,
                     "request.meta",
@@ -722,7 +786,14 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
                         "round": rounds,
                         # model_used 在无 pool 场景可能为空 → 回退装配模型名（如实标注）
                         "model": model_used or getattr(self.settings, "llm_model", ""),
-                        "thinking": bool(self.settings.thinking_mode),
+                        # legacy 字段保留，但改为真实“本请求是否显式请求 reasoning”；
+                        # auto+本地 provider 默认未知时为 None，不再伪装成 True。
+                        "thinking": _round_reasoning_requested,
+                        "reasoning_mode": _round_reasoning_mode,
+                        "reasoning_capable": _round_reasoning_capable,
+                        "reasoning_control": _round_reasoning_control,
+                        "reasoning_supported": _round_reasoning_supported,
+                        "reasoning_requested": _round_reasoning_requested,
                         "reasoning_effort": str(
                             _current_reasoning_effort.get()
                             or getattr(llm_client, "reasoning_effort", "")
@@ -735,147 +806,119 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
                 )
             except Exception:  # noqa: BLE001 — 快照失败 fail-open（不影响主循环）
                 logger.debug("request.meta 事件写入失败（fail-open）")
-
-            # R8: one shadow attribution event per real provider attempt.  This
-            # is deliberately separate from request.meta (round snapshot), because
-            # a same-round fallback may call a different model.  Audit failure is
-            # fail-open and never changes the provider payload.
-            try:
-                from llm_loop.core.injection_profile import shadow_profile_event_payload
-                from llm_loop.event_log.model import EVENT_INJECTION_PROFILE_SHADOW
-
-                self._event_append(
-                    session_id,
-                    EVENT_INJECTION_PROFILE_SHADOW,
-                    shadow_profile_event_payload(
-                        model_label=model_used or getattr(self.settings, "llm_model", ""),
-                        registry=routing.metadata_registry,
-                        round_no=rounds,
-                        attempt_kind="primary",
-                        attempt_index=0,
-                    ),
-                )
-            except Exception:  # noqa: BLE001 — shadow telemetry must never block LLM
-                logger.debug("injection.profile.shadow 事件写入失败（fail-open）", exc_info=True)
-
-            cap = InterruptedCapture(self)  # B1: 轮级重置且先于 stream/sync 分支绑定（text 列兼容 P1-6 断连落盘数据源）
+            self._tool_cycle._reachability_begin_attempt(
+                kind="primary",
+                attempt_index=0,
+                model=model_used or chat_model_arg or getattr(llm_client, "model", ""),
+                provider=getattr(llm_client, "provider", ""),
+            )
+            cap = InterruptedCapture(
+                self,
+                sess=sess,
+                round_no=rounds,
+                provider=getattr(llm_client, "provider", ""),
+                model=model_used or chat_model_arg or getattr(llm_client, "model", ""),
+            )  # B1: 轮级重置 + durable in-flight checkpoint for restart continuity
             try:
                 stream_fn = getattr(llm_client, "chat_stream", None)
                 _llm_round_ms = 0.0
-                # EVO-20260821-e172ed11 P0: 本地模型工具轮 thinking 降档（隐藏耗时大头——
-                # thinking token 按 decode 逐 token 生成；工具轮仅需执行而非深度推理）。
-                # _is_local_tool 已在循环内判定（本地 provider + 上轮 tool_calls）；仅本地生效，云端零影响。
-                _effort_ctx_saved: str | None = None
-                if stream_fn is not None and _is_local_tool and os.environ.get(
-                    "TOOL_ROUND_THINKING_LOW", "1"
-                ) == "1":
-                    _effort_ctx_saved = _current_reasoning_effort.get()
-                    _current_reasoning_effort.set("low")
-                try:
-                    if stream_fn is not None:
-                        _llm_start = time.perf_counter()
-                        _ttft_done = False
-                        # cache_guard 每请求上下文：只对真实 LLMClient 显式传参，FakeLLM/
-                        # 第三方 duck-typed client 保持旧签名兼容。绝不写 provider 级共享
-                        # client.guard_* 字段，避免并发 session 在流开始/结束时串台。
-                        _guard_ctx = (
-                            GuardRequestContext(
-                                session_id=session_id,
-                                system_text=(
-                                    messages[0].get("content", "")
-                                    if messages and messages[0].get("role") == "system"
-                                    else None
-                                ),
-                                compress_count_this_run=getattr(
-                                    self, "_compress_count_this_run", 0
-                                ),
-                                history_budget=int(effective_budget or 0),
-                                breaker_active=self._cache_monitor.breaker_active_for(
-                                    session_id
-                                ),
-                                run_round=rounds,
-                                provider=getattr(llm_client, "provider", ""),
-                                model=chat_model_arg or getattr(llm_client, "model", ""),
-                            )
-                            if isinstance(llm_client, LLMClient)
-                            else None
+                if stream_fn is not None:
+                    _llm_start = time.perf_counter()
+                    _ttft_done = False
+                    # cache_guard 每请求上下文：只对真实 LLMClient 显式传参，FakeLLM/
+                    # 第三方 duck-typed client 保持旧签名兼容。绝不写 provider 级共享
+                    # client.guard_* 字段，避免并发 session 在流开始/结束时串台。
+                    _guard_ctx = (
+                        GuardRequestContext(
+                            session_id=session_id,
+                            system_text=(
+                                messages[0].get("content", "")
+                                if messages and messages[0].get("role") == "system"
+                                else None
+                            ),
+                            compress_count_this_run=getattr(self, "_compress_count_this_run", 0),
+                            history_budget=int(effective_budget or 0),
+                            breaker_active=self._cache_monitor.breaker_active_for(session_id),
+                            run_round=rounds,
+                            provider=getattr(llm_client, "provider", ""),
+                            model=chat_model_arg or getattr(llm_client, "model", ""),
+                            stream_state_hook=cap.on_provider_state,
                         )
-                        _stream_kwargs: dict[str, Any] = {
-                            "messages": messages,
-                            "tools": tools_param,
-                            "timeout_s": self._runtime_timeout(),
-                            "model": chat_model_arg,
-                        }
-                        if _guard_ctx is not None:
-                            _stream_kwargs["guard_context"] = _guard_ctx
-                        it = stream_fn(**_stream_kwargs)
-                        while True:
-                            try:
-                                d = next(it)
-                                _cancel_reason = _background_cancel_reason(self, session_id)
-                                if _cancel_reason:
-                                    cap.cancelled = True
-                                    _llm_round_ms = (time.perf_counter() - _llm_start) * 1000.0
-                                    cap.fire(sess, "cancelled", rounds)  # B1: 半截产物限量落盘（防重内聚）
-                                    close_stream = getattr(it, "close", None)
-                                    if callable(close_stream):
-                                        try:
-                                            close_stream()
-                                        except Exception:  # noqa: BLE001 — 取消时释放流 fail-open
-                                            logger.debug("LLM stream close 失败（fail-open）", exc_info=True)
-                                    break
-                                if not _ttft_done and getattr(d, "text", ""):
-                                    _ttft_done = True
-                                    ttft_first_ms = (time.perf_counter() - _llm_start) * 1000.0
-                                cap.on_delta(d)
-                                yield d
-                            except StopIteration as exc:
-                                resp = exc.value
+                        if isinstance(llm_client, LLMClient)
+                        else None
+                    )
+                    _stream_kwargs: dict[str, Any] = {
+                        "messages": messages,
+                        "tools": tools_param,
+                        "timeout_s": self._runtime_timeout(),
+                        "model": chat_model_arg,
+                    }
+                    if _guard_ctx is not None:
+                        _stream_kwargs["guard_context"] = _guard_ctx
+                    it = stream_fn(**_stream_kwargs)
+                    while True:
+                        try:
+                            d = next(it)
+                            _cancel_reason = _background_cancel_reason(self, session_id)
+                            if _cancel_reason:
+                                cap.cancelled = True
                                 _llm_round_ms = (time.perf_counter() - _llm_start) * 1000.0
+                                cap.fire(
+                                    sess, "cancelled", rounds
+                                )  # B1: 半截产物限量落盘（防重内聚）
+                                close_stream = getattr(it, "close", None)
+                                if callable(close_stream):
+                                    try:
+                                        close_stream()
+                                    except Exception:  # noqa: BLE001 — 取消时释放流 fail-open
+                                        logger.debug(
+                                            "LLM stream close 失败（fail-open）", exc_info=True
+                                        )
                                 break
-                            except GeneratorExit:
-                                # P1-6(2026-08-15，审计发现 #17)：客户端断连——部分回答如实
-                                # 落会话（中断标注不伪装完整）并立即保存，闭合"事件日志已追加
-                                # 而 session JSON 未保存"的双轨漂移。
-                                self._on_stream_disconnect(sess, cap.text_parts)
-                                raise
-                    else:
-                        # 无 chat_stream 的客户端（如测试 FakeLLM）→ 同步 chat（不 yield，行为与 run 一致）
-                        _llm_sync_start = time.perf_counter()
-                        _chat_kwargs: dict[str, Any] = {
-                            "messages": messages,
-                            "tools": tools_param,
-                            "timeout_s": self._runtime_timeout(),
-                            "model": chat_model_arg,
-                        }
-                        if isinstance(llm_client, LLMClient):
-                            _chat_kwargs["guard_context"] = GuardRequestContext(
-                                session_id=session_id,
-                                system_text=(
-                                    messages[0].get("content", "")
-                                    if messages and messages[0].get("role") == "system"
-                                    else None
-                                ),
-                                compress_count_this_run=getattr(
-                                    self, "_compress_count_this_run", 0
-                                ),
-                                history_budget=int(effective_budget or 0),
-                                breaker_active=self._cache_monitor.breaker_active_for(
-                                    session_id
-                                ),
-                                run_round=rounds,
-                                provider=getattr(llm_client, "provider", ""),
-                                model=chat_model_arg or getattr(llm_client, "model", ""),
-                            )
-                        resp = llm_client.chat(**_chat_kwargs)
-                        _llm_round_ms = (time.perf_counter() - _llm_sync_start) * 1000.0
-                    _cancel_reason = _background_cancel_reason(self, session_id)
-                    if _cancel_reason:
-                        cap.cancelled = True
-                finally:
-                    # 恢复本请求的推理等级 context（无论正常/异常/断连）；不改共享 client。
-                    if _effort_ctx_saved is not None:
-                        _current_reasoning_effort.set(_effort_ctx_saved)
+                            if not _ttft_done and getattr(d, "text", ""):
+                                _ttft_done = True
+                                ttft_first_ms = (time.perf_counter() - _llm_start) * 1000.0
+                            cap.on_delta(d)
+                            yield d
+                        except StopIteration as exc:
+                            resp = exc.value
+                            _llm_round_ms = (time.perf_counter() - _llm_start) * 1000.0
+                            break
+                        except GeneratorExit:
+                            # P1-6(2026-08-15，审计发现 #17)：客户端断连——部分回答如实
+                            # 落会话（中断标注不伪装完整）并立即保存，闭合"事件日志已追加
+                            # 而 session JSON 未保存"的双轨漂移。
+                            self._on_stream_disconnect(sess, cap.text_parts)
+                            raise
+                else:
+                    # 无 chat_stream 的客户端（如测试 FakeLLM）→ 同步 chat（不 yield，行为与 run 一致）
+                    _llm_sync_start = time.perf_counter()
+                    _chat_kwargs: dict[str, Any] = {
+                        "messages": messages,
+                        "tools": tools_param,
+                        "timeout_s": self._runtime_timeout(),
+                        "model": chat_model_arg,
+                    }
+                    if isinstance(llm_client, LLMClient):
+                        _chat_kwargs["guard_context"] = GuardRequestContext(
+                            session_id=session_id,
+                            system_text=(
+                                messages[0].get("content", "")
+                                if messages and messages[0].get("role") == "system"
+                                else None
+                            ),
+                            compress_count_this_run=getattr(self, "_compress_count_this_run", 0),
+                            history_budget=int(effective_budget or 0),
+                            breaker_active=self._cache_monitor.breaker_active_for(session_id),
+                            run_round=rounds,
+                            provider=getattr(llm_client, "provider", ""),
+                            model=chat_model_arg or getattr(llm_client, "model", ""),
+                        )
+                    resp = llm_client.chat(**_chat_kwargs)
+                    _llm_round_ms = (time.perf_counter() - _llm_sync_start) * 1000.0
+                _cancel_reason = _background_cancel_reason(self, session_id)
+                if _cancel_reason:
+                    cap.cancelled = True
             except LLMError as exc:
                 # 取消伴生异常归因拦截（2.4）：取消标记置位后 LLM 抛出的中断异常
                 # （"Operation canceled"/"Model unloaded" 等，文本随运行时漂移）是
@@ -883,6 +926,9 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
                 # spec 4.4.1），短路 guard/overflow/err1210/fallback/R9/故障反馈
                 # 全部真实故障路径（spec 5.1.1-6）；标记未置位时行为与现状一致。
                 _cancel_reason = _background_cancel_reason(self, session_id)
+                self._tool_cycle._reachability_finalize(
+                    "cancelled_provider" if _cancel_reason else "provider_error"
+                )
                 if _cancel_reason:
                     _run_end_reason = "cancelled"
                     final_answer = _CANCELLED_ANSWER
@@ -898,16 +944,21 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
                     if self.status:
                         self.status.record_exception("guard_block", exc)
                     _run_end_reason = "guard_blocked"
-                    final_answer = f"[缓存守卫拦截] {exc}\n\n建议：压缩 checkpoint 或换新会话后重试。"
+                    final_answer = (
+                        f"[缓存守卫拦截] {exc}\n\n建议：压缩 checkpoint 或换新会话后重试。"
+                    )
                     break
                 self._record_action("action.llm_decide", "llm_error", str(exc)[:200])
                 if self.status:
                     self.status.record_exception("llm_call", exc)
                 self._record_program_fault("llm_call")
-                # M53 拆分: overflow 如实反馈（不自动重试/不自动压缩，决策权归 AI）
+                # Actual provider overflow is the authority: one deterministic budget shrink +
+                # lossless normal compaction retry, then factual termination if it still overflows.
                 # → _OverflowMixin._handle_overflow（move 语义，行为零变化）
                 overflow_action, overflow_final = self._termination._handle_overflow(
-                    exc, sess, model_used,
+                    exc,
+                    sess,
+                    model_used,
                     model_window={"label": model_used, "context": _response_context_limit},
                 )
                 if overflow_action == "reinject":
@@ -918,17 +969,25 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
                 if overflow_action == "end" and overflow_final is not None:
                     _run_end_reason = "overflow"
                     final_answer = overflow_final
-                    self._recovery._err1210_note_defer_lost(session_id, "overflow")  # 二阶失败观测
                     break
                 # ── err1210 P0（tasks 4.3）: compact 首请求 1210 定向降级重试（mixin 封装，
                 # 编排与控制流语义见 err1210.py；恢复成功 → 新 resp 走下方正常路径，
                 # 失败 → 原样继续既有错误链；env ERR1210_RECOVERY=0 完全旁路）──
-                _e1210_recovered, resp, _llm_round_ms = self._recovery._err1210_attempt_recovery(
-                    exc=exc, sess=sess, messages=messages, tools_param=tools_param,
-                    llm_client=llm_client, chat_model_arg=chat_model_arg,
-                    session_id=session_id, current_resp=resp, current_round_ms=_llm_round_ms,
-                    model_label=model_used or getattr(self.settings, "llm_model", ""),
-                    metadata_registry=routing.metadata_registry, round_no=rounds,
+                _e1210_recovered, resp, _llm_round_ms, _ = (
+                    self._recovery._err1210_attempt_recovery(
+                        exc=exc,
+                        sess=sess,
+                        messages=messages,
+                        tools_param=tools_param,
+                        llm_client=llm_client,
+                        chat_model_arg=chat_model_arg,
+                        session_id=session_id,
+                        current_resp=resp,
+                        current_round_ms=_llm_round_ms,
+                        model_label=model_used or getattr(self.settings, "llm_model", ""),
+                        metadata_registry=routing.metadata_registry,
+                        round_no=rounds,
+                    )
                 )
                 # ── M49（design §5.4）: 降级逻辑 ──
                 # 仅当当前模型为默认装配（sess.model_override is None 且 per-call override 也为 None）
@@ -937,27 +996,29 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
                 # 4xx (非 429) 不降级：请求本身有问题,换模型无用（design §5.4 行为表注）。
                 # D'-2.3 ③（R8.24 D-D6-3）: strict override 强化——用户选择权 >
                 # 能力下限（floor 只作用于自动链；显式选定模型照执行不静默换链）。
-                is_default_assembled = (
-                    sess.model_override is None and chat_model_arg is None
-                )
-                # D'-2.3 ②（D-D6-5）: 同模型优先重试 ≤2 次（门与实现在 fallback.py）。
-                _same_model_resp = self._same_model_retry_gate(
-                    exc=exc, e1210_recovered=_e1210_recovered, sess=sess,
-                    is_default_assembled=is_default_assembled, rounds=rounds,
-                    messages=messages, tools_param=tools_param, llm_client=llm_client,
-                    chat_model_arg=chat_model_arg, session_id=session_id,
-                    effective_budget=effective_budget,
-                )
-                if _same_model_resp is not None:
-                    resp, _llm_round_ms = _same_model_resp, 0.0
-                elif not _e1210_recovered and is_default_assembled and self._is_fallback_eligible_error(exc):
+                is_default_assembled = sess.model_override is None and chat_model_arg is None
+                # P2-B: no program-side WIP/quality retry heuristic; mechanical
+                # transport retry stays inside LLMClient.
+                if (
+                    not _e1210_recovered
+                    and is_default_assembled
+                    and self._is_fallback_eligible_error(exc)
+                ):
                     _fallback_metadata: dict[str, Any] = {}
 
                     def _fallback_request_builder(
-                        fallback_label: str, fallback_registry: Any
+                        fallback_label: str, fallback_registry: Any, _round: int = rounds
                     ) -> tuple[list[dict], list[dict]]:
                         fallback_budget = self._effective_history_budget(
                             fallback_label, registry_snapshot=fallback_registry
+                        )
+                        fallback_schemas, fallback_tools = self._project_request_tools(
+                            session_id=session_id,
+                            user_text=user_text,
+                            planned_label=fallback_label,
+                            session_messages=sess.messages,
+                            advance_state_round=False,
+                            logical_round=_round,
                         )
                         fallback_messages = self._build_llm_messages(
                             sess,
@@ -966,52 +1027,41 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
                             planned_label=fallback_label,
                             registry_snapshot=fallback_registry,
                         )
-                        if (
-                            getattr(self.settings, "prefix_layered", False)
-                            and _tool_eligibility_mode != "enforce"  # noqa: B023 — settings 派生量 per-run 恒定，晚绑定读值等价；Phase 4 收口
-                        ):
-                            fallback_schemas = self._layered_tool_schemas(
-                                session_id, user_text
-                            )
-                        else:
-                            fallback_schemas = self.registry.schemas(
-                                lazy=self.settings.tool_schema_lazy
-                            )
-                        fallback_schemas = self._tool_cycle._project_tool_schemas_for_round(
-                            fallback_schemas,
-                            planned_label=fallback_label,
-                            user_text=user_text,
-                            session_messages=sess.messages,
-                        )
-                        return fallback_messages, [
-                            self._tool_cycle._schema_to_param(schema) for schema in fallback_schemas
-                        ]
+                        return fallback_messages, fallback_tools
 
                     fallback_resp, inject_msgs, fallback_ref = self._try_fallback_chain(
-                        messages=messages, tools=tools_param,
-                        timeout_s=self._runtime_timeout(), primary_error=exc,
-                        session_id=sess.session_id, run_round=rounds,
+                        messages=messages,
+                        tools=tools_param,
+                        timeout_s=self._runtime_timeout(),
+                        primary_error=exc,
+                        session_id=sess.session_id,
+                        from_model=model_used or getattr(self.settings, "llm_model", ""),
+                        run_round=rounds,
                         metadata_out=_fallback_metadata,
                         request_builder=_fallback_request_builder,
                     )
-                    # R8.9: fallback notices are produced only after the fallback call
-                    # already returned.  Persisting them as chat history cannot influence
-                    # that response and only pollutes later turns.  Existing corrections/
-                    # status telemetry remains the durable observability path.
-                    if inject_msgs:
-                        with contextlib.suppress(Exception):
-                            self._record_action(
-                                "model.fallback",
-                                "notice_observed",
-                                f"count={len(inject_msgs)}",
-                            )
+                    # Successful fallback facts are carried by RunState/LoopResult, not
+                    # model-visible Message objects. inject_msgs is all-failed facts only.
                     if fallback_resp is not None:
                         # 降级成功: 响应以新模型运行, 进入后续正常路径
                         resp = fallback_resp
                         if fallback_ref:
                             model_used = fallback_ref  # M51: 如实标注为降级后的模型
-                        _response_context_limit, _response_chars_per_token = self._merge_fallback_metadata(
-                            _fallback_metadata, _response_context_limit, _response_chars_per_token
+                        _response_context_limit, _response_chars_per_token = (
+                            self._merge_fallback_metadata(
+                                _fallback_metadata,
+                                _response_context_limit,
+                                _response_chars_per_token,
+                            )
+                        )
+                        _response_max_output_tokens = max(
+                            0,
+                            int(
+                                _fallback_metadata.get(
+                                    "max_output_tokens", _response_max_output_tokens
+                                )
+                                or 0
+                            ),
                         )
                     else:
                         # 链全失败 → 已注入汇总提示, 走原异常如实反馈路径
@@ -1025,67 +1075,96 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
                             final_answer = f"{final_answer}\n\n{inject_msgs[-1].content}"
                         break
                 elif not _e1210_recovered:
-                    # 严格模式 / 非降级错误 → 如实反馈（DFX-REL-02）
-                    # R8.24-B B-2.4（B-D2）: 恢复链未覆盖的 1210 → runtime
-                    # rebuild+retry once（零 prompt、零模型可见文本——B-G7；
-                    # 原"程序化用户重发"路径退役：不再 continue 多耗一轮 LLM）。
-                    _rt_resp = self._recovery._err1210_try_runtime_retry(
-                        exc=exc, sess=sess, session_id=session_id,
-                        llm_client=llm_client, chat_model_arg=chat_model_arg,
-                        timeout_s=self._runtime_timeout(),
-                        model_label=model_used or getattr(self.settings, "llm_model", ""),
-                        metadata_registry=routing.metadata_registry, round_no=rounds,
-                        rebuild_fn=lambda _pl=planned_label, _reg=_planning_registry, _eb=effective_budget: (
-                            self._e1210_rebuild_request(
-                                sess=sess, model=model, planned_label=_pl,
-                                registry_snapshot=_reg,
-                                session_id=session_id, user_text=user_text,
-                                effective_budget=_eb,
-                                turn_memory_msgs=_turn_memory_msgs,
-                            )
-                        ),
+                    # P2-B: if no mechanical payload transform recovered the request,
+                    # report the provider failure. No second exact resend/rebuild loop.
+                    _run_end_reason = "llm_error"
+                    final_answer, resp = self._llm_error_round_exit(
+                        sess, cap, exc, session_id, len(messages), rounds, "llm_error"
                     )
-                    if _rt_resp is not None:
-                        resp = _rt_resp  # 恢复成功：落回正常路径（与 fallback 成功合流同构）
-                        _llm_round_ms = 0.0  # 恢复轮无 TTFT 单列（design 风险 6，如实不伪造）
-                    else:
-                        _run_end_reason = "llm_error"
-                        final_answer, resp = self._llm_error_round_exit(
-                            sess, cap, exc, session_id, len(messages), rounds, "llm_error"
-                        )
-                        break
+                    break
 
             if cap.cancelled:
+                self._tool_cycle._reachability_finalize("cancelled_provider")
                 _run_end_reason = "cancelled"
                 final_answer = _CANCELLED_ANSWER
                 resp = None  # 防止上一轮响应残留参与 usage/reasoning/finalize
                 break
 
-            self._record_action("action.llm_decide", "llm_response", self._tool_cycle._resp_summary(resp))
-            self._recovery._err1210_note_request_count(session_id, len(messages))  # T4.2: 骤降兜底数据源（成功+失败轮均更新——修复B，语义见 err1210.py）
+            self._tool_cycle._reachability_record_response(resp)
+            self._record_action(
+                "action.llm_decide", "llm_response", self._tool_cycle._resp_summary(resp)
+            )
             # M52: 聚合本轮 token 用量（含 fallback 成功响应；0 = provider 未提供）
             tokens_in += resp.prompt_tokens
             tokens_out += resp.completion_tokens
             tokens_cache_hit += resp.prompt_cache_hit_tokens
+            if resp.reasoning_content:
+                reasoning_effective = True
+            if resp.reasoning_tokens is not None:
+                reasoning_tokens = (reasoning_tokens or 0) + resp.reasoning_tokens
             llm_ms_total += _llm_round_ms
             self._kpi_accumulate_llm(planned_label, _llm_round_ms)
+            _cache_state = self._run_state()
+            _current_prefix_fp = _cache_state.cache_gate_stable_fp
+            _previous_prefix_fp = _cache_state.last_cache_window_stable_fp
+            _previous_prefix_model = _cache_state.last_cache_window_model
+            _prefix_change_reason = ""
+            if _cache_state.last_cache_window is not None:
+                if _previous_prefix_model and _previous_prefix_model != model_used:
+                    _prefix_change_reason = "model_changed"
+                elif _previous_prefix_fp and _previous_prefix_fp != _current_prefix_fp:
+                    _prefix_change_reason = "stable_prefix_changed"
+            if _prefix_change_reason:
+                _cache_state.cache_prefix_epoch += 1
             # DSH 借鉴(2026-08-17): 本轮响应 usage 明细落盘（fail-open）——命中/miss
             # token 逐轮可审计，命中率实时可算（不依赖 CSV 账单/流式 M58 盲区）。
             try:
                 _req_usage_available = bool(resp.prompt_tokens)
-                self._event_append(
-                    session_id,
-                    "request.usage",
-                    {
-                        "round": rounds,
-                        "model": model_used or getattr(self.settings, "llm_model", ""),
-                        "tokens_in": resp.prompt_tokens,
-                        "tokens_out": resp.completion_tokens,
-                        "cache_hit": resp.prompt_cache_hit_tokens,
-                        "cache_miss": max(0, resp.prompt_tokens - resp.prompt_cache_hit_tokens),
-                        "usage_available": _req_usage_available,
-                    },
+                _cache_miss_tokens = max(0, resp.prompt_tokens - resp.prompt_cache_hit_tokens)
+                _cache_hit_rate = (
+                    resp.prompt_cache_hit_tokens / resp.prompt_tokens
+                    if _req_usage_available
+                    else None
                 )
+                _context_window = int(_response_context_limit) if _response_context_limit else None
+                _context_headroom = (
+                    _context_window - int(resp.prompt_tokens) - _response_max_output_tokens
+                    if _context_window is not None and _req_usage_available
+                    else None
+                )
+                _context_used_ratio = (
+                    (int(resp.prompt_tokens) + _response_max_output_tokens) / _context_window
+                    if _context_window and _req_usage_available
+                    else None
+                )
+                _request_usage_payload = {
+                    "round": rounds,
+                    "model": model_used or getattr(self.settings, "llm_model", ""),
+                    "tokens_in": resp.prompt_tokens,
+                    "tokens_out": resp.completion_tokens,
+                    "reasoning_effective": bool(resp.reasoning_content),
+                    "reasoning_tokens": resp.reasoning_tokens,
+                    "cache_hit": resp.prompt_cache_hit_tokens,
+                    "cache_miss": _cache_miss_tokens,
+                    "cache_read_tokens": resp.prompt_cache_hit_tokens,
+                    "uncached_prompt_tokens": (
+                        _cache_miss_tokens if _req_usage_available else None
+                    ),
+                    "cache_hit_rate": _cache_hit_rate,
+                    "context_window": _context_window,
+                    "output_reserve_tokens": _response_max_output_tokens,
+                    "context_headroom_tokens": _context_headroom,
+                    "context_used_ratio": _context_used_ratio,
+                    "stable_prefix_fp": _current_prefix_fp,
+                    "prefix_changed": bool(_prefix_change_reason),
+                    "prefix_change_reason": _prefix_change_reason,
+                    "cache_prefix_epoch": _cache_state.cache_prefix_epoch,
+                    "compaction_epoch": _cache_state.compact_event_seq,
+                    "runtime_pid": os.getpid(),
+                    "usage_available": _req_usage_available,
+                }
+                _cache_state.last_request_usage = dict(_request_usage_payload)
+                self._event_append(session_id, "request.usage", _request_usage_payload)
             except Exception:  # noqa: BLE001 — usage 明细失败 fail-open（不影响主循环）
                 logger.debug("request.usage 事件写入失败（fail-open）")
 
@@ -1097,11 +1176,18 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
                 from llm_loop.core.cache_window import describe_cache_window
 
                 _win = describe_cache_window(
-                    messages, resp.prompt_cache_hit_tokens, resp.prompt_tokens,
+                    messages,
+                    resp.prompt_cache_hit_tokens,
+                    resp.prompt_tokens,
                     # EVO-20260824: 缓存边界换算与估算同源（provider 级 chars_per_token）
                     chars_per_token=_response_chars_per_token,
                 )
-                self._last_cache_window = _win
+                _cache_state.last_cache_window = _win
+                _cache_state.last_cache_window_model = model_used or getattr(
+                    self.settings, "llm_model", ""
+                )
+                _cache_state.last_cache_window_turn_ref = _cache_state.current_turn_ref
+                _cache_state.last_cache_window_stable_fp = _cache_state.cache_gate_stable_fp
                 self._event_append(
                     session_id,
                     "cache.window",
@@ -1111,8 +1197,20 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
                         "cached_tokens": _win.cached_tokens,
                         "prompt_tokens": _win.prompt_tokens,
                         "hit_ratio": round(_win.hit_ratio, 4),
+                        "cache_read_tokens": _win.cached_tokens,
+                        "uncached_prompt_tokens": max(0, _win.prompt_tokens - _win.cached_tokens)
+                        if _win.prompt_tokens > 0
+                        else None,
                         "boundary_chars": _win.boundary_chars,
                         "boundary_msg_index": _win.boundary_msg_index,
+                        "boundary_mapping": "estimated_message_chars",
+                        "boundary_exact": bool(getattr(_win, "boundary_exact", False)),
+                        "stable_prefix_fp": _current_prefix_fp,
+                        "prefix_changed": bool(_prefix_change_reason),
+                        "prefix_change_reason": _prefix_change_reason,
+                        "cache_prefix_epoch": _cache_state.cache_prefix_epoch,
+                        "compaction_epoch": _cache_state.compact_event_seq,
+                        "runtime_pid": os.getpid(),
                         "cached_msgs": _win.cached_msgs,
                         "new_msgs": _win.new_msgs,
                         "summary": _win.summary(),
@@ -1123,11 +1221,59 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
 
             # 无工具调用 → 最终回答 → 真诚回答阶段
             if not resp.tool_calls:
+                final_answer = resp.content or ""
+                # Internal protocol tokens are not model answers.  Historical builds
+                # leaked ``[program-final]`` into provider-visible assistant content;
+                # when a model imitates it, do not persist it or report completed.
+                if final_answer.strip() == LEGACY_PROGRAM_FINAL_MARKER:
+                    with contextlib.suppress(Exception):
+                        self._record_action(
+                            "action.llm_decide",
+                            "program_final_echo",
+                            f"round={rounds}; retry={_program_final_echo_retries}",
+                        )
+                    if _program_final_echo_retries < 1:
+                        self._tool_cycle._reachability_finalize("program_final_echo_retry")
+                        _program_final_echo_retries += 1
+                        final_answer = ""
+                        resp = None
+                        continue
+                    self._tool_cycle._reachability_finalize("program_final_echo_error")
+                    _run_end_reason = "llm_error"
+                    final_answer = "[LLM 输出异常] 模型连续返回内部协议标记，未获得正常最终回答。"
+                    resp = None
+                    break
+                # Structured concurrency: background child 的“线程已结束”不等于
+                # parent 已消费 settlement。正常 completed 前必须没有未回收 async
+                # obligations；否则本次 no-tool 文本只是过早 final，不交付用户。
+                # Engine 只依赖 ToolRegistry 的通用结构化事实源，不硬编码 subagent。
+                try:
+                    _async_pending = self.registry.async_obligations(session_id)
+                except Exception:  # noqa: BLE001 — registry 已 fail-open，此处再兜底
+                    _async_pending = []
+                if _async_pending:
+                    # Structured-concurrency settlement is a mechanical completion gate.
+                    # Do not synthesize assistant/user control messages: the real spawn
+                    # tool receipt already carries child_id + subagent_result semantics.
+                    # Premature model text is discarded and the next round reuses that
+                    # truthful receipt as its only settlement context.
+                    with contextlib.suppress(Exception):
+                        self._record_action(
+                            "async.obligation",
+                            "final_deferred",
+                            f"count={len(_async_pending)}; ids="
+                            + ",".join(str(row.get("id", "")) for row in _async_pending)
+                            + "; prompt_chars=0",
+                        )
+                    self._tool_cycle._reachability_finalize("final_deferred_async_obligation")
+                    final_answer = ""
+                    resp = None
+                    continue
+                self._tool_cycle._reachability_finalize("completed_no_tools")
                 self._kpi_note_no_tool()
                 self._phase("honest_answer")
                 # H-UI: 进入回答生成
                 self._notify_action("answer")
-                final_answer = resp.content or ""
                 # M41 修复: 回答被截断（truncated=True）时不执行声明-回执校验——
                 # 不完整内容校验不可靠（会误报"声明与回执不符"），截断如实透传标注
                 if resp.truncated:
@@ -1136,8 +1282,24 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
                 if final_answer.strip() and not resp.truncated:
                     tool_msgs = [m for m in sess.messages if m.role == "tool"]
                     if self.validator:
-                        check = self.validator.check(final_answer, tool_msgs)
-                        if not check.consistent:
+                        # advisory 层异常不得拖垮已产出的最终回答（fail-open，
+                        # 同 user_ingress_guard 惯用法）：崩溃时如实留痕
+                        # （warning 日志 + action trace），跳过不一致提醒。
+                        try:
+                            check = self.validator.check(final_answer, tool_msgs)
+                        except Exception as exc:  # noqa: BLE001 — 校验不可用≠回答无效
+                            logger.warning(
+                                "declaration validator.check 异常（fail-open，跳过提醒）",
+                                exc_info=True,
+                            )
+                            with contextlib.suppress(Exception):
+                                self._record_action(
+                                    "declaration.check",
+                                    "validator_error",
+                                    repr(exc)[:200],
+                                )
+                            check = None
+                        if check is not None and not check.consistent:
                             verification_note = build_discrepancy_feedback(check)
                             # R8.9: this check runs after the model has already produced
                             # its final answer, so a prompt message cannot repair that answer.
@@ -1155,27 +1317,6 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
             # M53 拆分: 工具段 → _ToolExecMixin._execute_tools（yield from 保持 tool_round 外泄次序）
             yield from self._tool_cycle._execute_tools(resp, sess, rounds, tool_trace)
 
-            # ── EVO-20260814-aab7eb0b P2: 实时停滞熔断（连续同指纹工具调用，如实结束）──
-            _should_break, _tool_name, _streak = self._tool_cycle._stagnation_should_break()
-            if _should_break:
-                self._phase("terminate.stagnation")
-                _run_end_reason = "stagnation"
-                # GPT 审计批次4: 证据有效性门——无成功回执时不得暗示"基于已获得的信息"可作答
-                _has_evidence = any(t.get("status") == "success" for t in tool_trace)
-                final_answer = stagnation_feedback(
-                    _tool_name,
-                    _streak,
-                    [t["name"] for t in tool_trace],
-                    has_evidence=_has_evidence,
-                ).content
-                self._record_action("stagnation.break", "terminated", f"{_tool_name} x{_streak}")
-                break
-
-            # ── M56 收敛（ANALYSIS-20260811-loop-strategy-branch-inventory）:
-            # 每轮末信号检测统一为一次调用（自评/演进待办/待审提醒，均仅提示不强制，
-            # 触发判断与决策交 AI 自主——RULE-AI-10 每轮自主检查清单）──
-            self._termination._check_loop_signals(sess, rounds)
-
             # ── R10 → R8.24-B B-2.1（B-D6）: 轮数预警注入路径删除（E18 分量）──
             # 模型可见面零预警（B-G8）；剩余轮数事实只落观测事件。"继续/调大/收尾"
             # 决策不再询问模型——到达硬限后直接结束（见下方 exhaustion 段）。
@@ -1187,48 +1328,30 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
             ):
                 self._run_state().round_warning_injected = True
                 self._record_action(
-                    "round.warning", "suppressed",
+                    "round.warning",
+                    "suppressed",
                     f"{rounds}/{_budget}; prompt_chars=0",
                 )
 
-            # ── HARNESS-04(2026-08-14): 上下文预算预警（占用率≥80% 注入一次）──
-            # 程序只如实告知事实（占用率/预算），"压缩/收尾"决策归 AI（RULE-AI-00，
-            # 程序不自动压缩历史——压缩只由 AI 主动触发）
+            # Context pressure is runtime observability, not a model instruction.
+            # The old injected_system Message was always removed by provider projection;
+            # keep one-shot telemetry without polluting durable session history.
             _bd = self._run_state().last_breakdown
             _ratio = (_bd or {}).get("ratio")
-            # 2026-08-22: 快模型（9B fast_model 轮）不注入预警——其上下文本就精简,
-            # 预警是噪音（实证 98605ad7: 9B 收到预警后分心"处理预算"导致任务漂移）
-            _is_fast_round = (
-                "qwythos" in str(model_used)
-                or (model_used or "").split("/", 1)[-1].startswith("qwythos")
-            )
             if (
                 not self._run_state().context_warning_injected
                 and _ratio is not None
                 and _ratio >= 0.8
-                and not _is_fast_round
             ):
                 self._run_state().context_warning_injected = True
                 _used = (_bd or {}).get("total", {}).get("chars", 0)
                 _budget_chars = (_bd or {}).get("budget", 0)
                 _pct = round(_ratio * 100)
-                warning = Message(
-                    role="system",
-                    content=(
-                        f"[预算预警] 当前上下文组装占用已达注入预算的 {_pct}%"
-                        f"（约 {_used:,}/{_budget_chars:,} 字符）。注：此为历史/工具结果"
-                        "组装上限（非模型窗口，模型窗口远大于此，见 architecture_status."
-                        "context_usage.model_window），推理能力不受限；超出部分已归档可检索、"
-                        "信息零丢失。程序不会自动压缩历史；是否压缩归档/收尾由你自主决策"
-                        "（RULE-AI-00）。"
-                    ),
-                    source=MessageSource.SYSTEM,
-                    metadata={"injected_system": True},  # P1-7: 推送式注入标记
+                self._record_action(
+                    "context.warning",
+                    "observed_only",
+                    f"{_pct}%;used={_used};budget={_budget_chars};prompt_chars=0",
                 )
-                sess.messages.append(warning)
-                # D1: 系统注入消息事件（fail-open）
-                self._append_message_event(sess, warning)
-                self._record_action("context.warning", "injected", f"{_pct}%")
 
             # ── 轮数上限（R8.24-B B-2.1/B-D6: 硬边界直接结束）──
             # 删除 N+1 决策轮（不再花一轮 LLM 调用问模型"是否继续"——P0-6：
@@ -1243,7 +1366,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
                 final_answer = max_iterations_feedback([t["name"] for t in tool_trace]).content
                 if os.environ.get("LFL_E18_HARD_STOP", "1") == "1":
                     final_answer += (
-                        "\n（已达轮数硬边界，run 已结束；发送\"继续\"可开新 run 接续任务。）"
+                        '\n（已达轮数硬边界，run 已结束；发送"继续"可开新 run 接续任务。）'
                     )
                 break
         # B5-W4-01: 收尾段归装 RunFinalizer.persist_and_settle（A/B 段拆分 + AST 反替自证；
@@ -1280,72 +1403,43 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin, _Tur
             tokens_out=tokens_out,
             tokens_cache_hit=tokens_cache_hit,
             reasoning_content=resp.reasoning_content if resp is not None else None,
+            reasoning_mode=reasoning_mode_used,
+            reasoning_capable=reasoning_capable,
+            reasoning_control=reasoning_control,
+            reasoning_supported=reasoning_supported,
+            reasoning_effective=reasoning_effective,
+            reasoning_tokens=reasoning_tokens,
             cancel_reason=_cancel_reason,
+            fallback_receipt=self._run_state().fallback_receipt,
         )
 
-    def _e1210_rebuild_request(
+    def _project_request_tools(
         self,
         *,
-        sess: Any,
-        model: str | None,
-        planned_label: str,
-        registry_snapshot: Any,
         session_id: str,
         user_text: str,
-        effective_budget: int | None,
-        turn_memory_msgs: list[Message],
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]] | None:
-        """R8.24-B B-2.4（B-D2）: 1210 runtime retry 的请求重建.
-
-        1210 自愈机制实证 = "下一轮上下文重建后通常自愈"（wire 归档/注入消费
-        状态变化）；本 helper 在失败点当场按最新 wire 状态重组请求载荷。
-        重建失败 → None（不 retry，走真实终态——副作用安全前提不满足即放弃）。
-        """
-        try:
-            msgs = self._build_llm_messages(
-                sess, turn_memory_msgs, max_chars=effective_budget, model=model,
-                planned_label=planned_label, registry_snapshot=registry_snapshot,
-            )
-            _mode = getattr(self.settings, "tool_eligibility_mode", "enforce")
-            if getattr(self.settings, "prefix_layered", False) and _mode != "enforce":
-                schemas = self._layered_tool_schemas(session_id, user_text)
-            else:
-                schemas = self.registry.schemas(lazy=self.settings.tool_schema_lazy)
-            schemas = self._tool_cycle._project_tool_schemas_for_round(
-                schemas, planned_label=planned_label, user_text=user_text,
-                session_messages=sess.messages,
-            )
-            return msgs, [self._tool_cycle._schema_to_param(t) for t in schemas]
-        except Exception:  # noqa: BLE001 — 重建失败不 retry（终态路径兜底）
-            logger.warning(
-                "err1210 runtime retry 请求重建失败（fail-open 不重试）", exc_info=True
-            )
-            return None
-
-    # M53 拆分: 模型路由辅助方法族 → engine_services/routing.py（W4-02b 起 RoutingService）
-    # 迁移注释保留（test_silent_pass_cleanup 源码断言）: 模型标签 resolve 失败时回退裸名（fail-open），
-    # 行为与迁移前一致；有 pool 时经注册表 resolve 为全限定 ref。
-    # 已随迁方法（经 Mixin 混入后实例可调用，签名/语义不变）:
-    #   _default_model_label / _current_context_limit / _check_context_fit / _planned_model_label / _effective_history_budget
-    # 估算常量 _CHARS_PER_TOKEN_EST/_CONTEXT_SAFETY_MARGIN 经模块级 re-export 保持原路径可导入。
-
-    # M53 拆分: 工具辅助方法 → llm_loop/core/loop/tool_exec.py（原 _ToolExecMixin）
-    # R9-B5-W3-01: 职责面 11 法已迁 engine_services/tool_cycle.py（ToolCycleService，
-    # 宿主经 self._tool_cycle.* 调用）；下方 3 委托壳为测试直调公开面（签名不变）。
-    # 模块级函数 _json_dumps_args/_tool_args_summary 经模块级 re-export 保持原路径可导入。
-
-    # ── R9-B5-W3-01: 工具域公开面委托壳（tests 直调 engine._track_stagnation 等，签名不变）──
-
-    def _track_stagnation(self, tc, sess, tool_trace: list[dict], result=None) -> None:
-        """委托 ToolCycleService（B5-W3-01 迁移；测试直调面保签名）."""
-        self._tool_cycle._track_stagnation(tc, sess, tool_trace, result=result)
-
-    def _inject_experience_tips(self, sess, tool_names: list[str]) -> None:
-        """委托 ToolCycleService（B5-W3-01 迁移；测试直调面保签名）."""
-        self._tool_cycle._inject_experience_tips(sess, tool_names)
-
-    def _stagnation_should_break(self) -> tuple[bool, str, int]:
-        """委托 ToolCycleService（B5-W3-01 迁移；测试直调面保签名）."""
-        return self._tool_cycle._stagnation_should_break()
+        planned_label: str,
+        session_messages: list[Message],
+        advance_state_round: bool = True,
+        logical_round: int | None = None,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Build the stable owner tool surface, then apply mechanical runtime health."""
+        # P1-B: provider schema representation may be compact/lazy, but user text
+        # never chooses which tools receive callable parameter schemas.
+        schemas = self.registry.schemas(lazy=self.settings.tool_schema_lazy)
+        projected = self._tool_cycle._project_tool_schemas_for_round(
+            schemas,
+            planned_label=planned_label,
+            user_text=user_text,
+            session_messages=session_messages,
+            advance_state_round=advance_state_round,
+            logical_round=logical_round,
+        )
+        tools = [self._tool_cycle._schema_to_param(schema) for schema in projected]
+        # Cache stability must include the exact tool array/order actually offered
+        # to this attempt. This is observational only; it never changes which tools
+        # are eligible or callable.
+        self._run_state().cache_gate_tools_fp = stable_digest(tools)
+        return projected, tools
 
     # 生命周期/持久化职责面已迁 SessionLifecycle（B5-W2-01）；编排入口留 lifecycle.py（_RunEntrypointMixin）。

@@ -111,7 +111,7 @@ def test_file_freshness_current_then_stale_after_change(tmp_path):
     blobs, ledger = _stores(tmp_path)
     owner = OwnerScope(workspace_id=str(tmp_path), session_id="s1")
     capture = EvidenceCapture(blobs, ledger)
-    registry = ToolRegistry(summary_threshold=500)
+    registry = ToolRegistry()
     registry.register(ReadFileTool())
     registry.set_evidence_enforcer(
         EvidenceEnforcer(
@@ -175,7 +175,7 @@ def test_evidence_control_tools_are_owner_injected_bounded_and_not_recaptured(tm
     freshness = EvidenceFreshness(ledger)
     search = EvidenceSearch(blobs, ledger)
 
-    registry = ToolRegistry(summary_threshold=500)
+    registry = ToolRegistry()
     registry.set_evidence_enforcer(
         EvidenceEnforcer(
             capture,

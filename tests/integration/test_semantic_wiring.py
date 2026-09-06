@@ -12,8 +12,8 @@ from llm_loop.memory.retriever import SemanticRetriever
 from llm_loop.memory.store import MemoryEntry
 
 
-def test_semantic_retriever_injected_and_used(build_test_engine, tmp_path):
-    """R3: semantic retriever is called with the current sid; prompt gets pointer form."""
+def test_semantic_retriever_is_on_demand_not_automatic_prompt(build_test_engine, tmp_path):
+    """Semantic memory remains available but is not run automatically on human ingress."""
     engine, fake = build_test_engine([{"content": "最终回答。"}])
     retriever = SemanticRetriever(HashEmbedder(), memory_dir=str(tmp_path / "data" / "memory"))
     calls: list[dict] = []
@@ -31,16 +31,15 @@ def test_semantic_retriever_injected_and_used(build_test_engine, tmp_path):
     sid = engine.session.create()
     engine.run(sid, "喜欢的色彩是？")
 
-    assert calls and calls[0].get("session_id") == sid
+    assert calls == []
     last_call = fake.calls[0]["messages"]
     joined = "\n".join(str(m.get("content", "")) for m in last_call)
-    assert "[memory:fact] 用户喜欢蓝色" in joined
-    assert "ref=memory:" in joined
-    assert "语义检索生效" not in joined  # R3 不再把检索 mode 当资料正文自动注入
+    assert "[memory:fact] 用户喜欢蓝色" not in joined
+    assert "ref=memory:" not in joined
 
 
-def test_default_config_keyword_path_regression(build_test_engine):
-    """默认配置（semantic_retriever=None）→ 关键词路径（P0 零回归）."""
+def test_default_config_keyword_memory_is_not_auto_projected(build_test_engine):
+    """Default keyword memory also stays on-demand instead of automatic prompt context."""
     engine, fake = build_test_engine([{"content": "最终回答。"}])
     assert engine.semantic_retriever is None  # 默认未装配
     engine.memory.save_entry(
@@ -50,5 +49,5 @@ def test_default_config_keyword_path_regression(build_test_engine):
     engine.run(sid, "Python 相关")
     last_call = fake.calls[0]["messages"]
     joined = "\n".join(str(m.get("content", "")) for m in last_call)
-    assert "[memory:fact] Python 内容" in joined
-    assert "ref=memory:" in joined
+    assert "[memory:fact] Python 内容" not in joined
+    assert "ref=memory:" not in joined

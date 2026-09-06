@@ -34,3 +34,11 @@ class RunStateManager:
         sid = _current_session_id.get() or self.last_active_sid
         with self.guard:
             return self._buckets.setdefault(sid, _RunState())
+
+    def bound_session_id(self) -> str:
+        """Return only the session explicitly bound to the current run context.
+
+        ``last_active_sid`` is diagnostic fallback for bucket inspection only.  It must
+        never authorize session-scoped capability selection or ownership checks.
+        """
+        return str(_current_session_id.get() or "")

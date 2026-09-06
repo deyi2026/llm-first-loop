@@ -25,9 +25,7 @@ def run_projection_gate(
     *,
     built: list[dict[str, Any]],
     base: list[Any],
-    memory_msgs: list[Any],
     system_prompt: Any,
-    tail_msgs: list[Any] | None,
     prefix_len: int,
     resolved_label: str,
     effective_budget: int,
@@ -49,9 +47,6 @@ def run_projection_gate(
         _fp = lambda msgs: stable_digest([(m.role, m.content) for m in msgs])  # noqa: E731
         _settings_fp = stable_digest(
             {
-                "tool_trim_enabled": getattr(settings, "tool_trim_enabled", False),
-                "tool_trim_age": getattr(settings, "tool_trim_age", 0),
-                "tool_trim_threshold": getattr(settings, "tool_trim_threshold", 8000),
                 "tool_tail": getattr(settings, "tool_tail", 0),  # EVO-20260818-f675796c: tail 窗口
                 "reasoning_tail": reasoning_tail,
                 "skip_injected_system": True,  # spec §5.3.1-5: 推送式注入一律不进提交
@@ -60,16 +55,14 @@ def run_projection_gate(
                 "evidence_manifest_fp": stable_digest(evidence_manifest_content),
             }
         )
-        # EVO-20260818: interop 尾部追加后 base[:prefix_len] 仅 memory 段——
-        # interop_fp 改为对注入消息指纹（tail 模式）或 memory+inbox 段（旧模式），
-        # 保证 ver 与 built 中的尾部注入内容一致（投影一致性不误报）
-        _interop_for_fp = tail_msgs if tail_msgs is not None else [m for m in base[:prefix_len]]
+        # Retired automatic memory/interop/tip channels are not provider-wire inputs and
+        # therefore must not perturb the projection version fingerprint.
         _ver = projection_ver(
             model=resolved_label,
             budget=effective_budget,
             anchor=sess_anchor,
-            memory_fp=_fp(memory_msgs),
-            interop_fp=stable_digest([(m.role, m.content) for m in _interop_for_fp]),
+            memory_fp=stable_digest([]),
+            interop_fp=stable_digest([]),
             system_fp=stable_digest(system_prompt),
             settings_fp=_settings_fp,
         )

@@ -36,12 +36,11 @@ def test_unique_in_progress_projects_only_minimal_identity(build_test_engine):
     engine.run(sid, "继续当前工作")
     wire = _wire(fake)
 
-    assert "slot:task_active" in wire
+    assert "slot:task_active" not in wire
     assert "slot:task_frontier" not in wire
-    assert f"goal={goal.id}" in wire
-    assert f"task={active.task_id}" in wire
-    assert "status=in_progress" in wire
-    assert "ACTIVE-TASK-TITLE" in wire
+    assert f"goal={goal.id}" not in wire
+    assert f"task={active.task_id}" not in wire
+    assert "ACTIVE-TASK-TITLE" not in wire
     assert "DONE-SHOULD-NOT-AUTO-PROJECT" not in wire
     assert "BLOCKED-SHOULD-NOT-AUTO-PROJECT" not in wire
     assert "BLOCKED-REASON-HIDDEN" not in wire

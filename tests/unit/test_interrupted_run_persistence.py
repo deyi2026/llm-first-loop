@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import queue
 import threading
+from types import SimpleNamespace
 
 from llm_loop.core.loop.events import _EventsMixin
 from llm_loop.core.loop.runner import BackgroundRunner
@@ -25,8 +26,9 @@ _STOP_TEXT = "（已停止——用户点击停止按钮，本轮回答终止）
 
 # ── 桩：只承载 _EventsMixin（_on_llm_interrupted 单元面）──
 class _StubEngine(_EventsMixin):
-    def __init__(self, event_store=None):
+    def __init__(self, event_store=None, *, data_dir="."):
         self._event_store = event_store
+        self.settings = SimpleNamespace(data_dir=str(data_dir))
         self.status = None
         self.saved = 0
         self.recorded: list[Message] = []
@@ -86,6 +88,137 @@ def test_b1_tail_limited_save_with_honest_annotation(monkeypatch):
     assert eng._last_interrupted["text_tail"] == "A" * 4000
     assert eng._last_interrupted["reasoning_tail"] == "R" * 8000
     assert eng._last_interrupted["partial_chars"] == 22000
+
+
+def test_b1_interrupted_row_is_storage_truth_but_not_provider_history() -> None:
+    from llm_loop.core.episode_history import provider_message_visible
+
+    eng, sess = _run_interrupted(
+        (["partial-answer"], ["partial-reasoning"]), reason="cancelled"
+    )
+    assert eng._last_interrupted["partial_chars"] > 0
+    assert len(sess.messages) == 1
+    assert sess.messages[0].metadata["llm_interrupted"] is True
+    assert provider_message_visible(sess.messages[0]) is False
+
+
+def test_inflight_partial_checkpoint_persists_exact_model_tails(tmp_path) -> None:
+    """Hard-restart recovery source is event-only model state, not a chat message."""
+    from llm_loop.event_log.store import EventStore
+
+    es = EventStore(tmp_path / "checkpoint-events")
+    eng = _StubEngine(es)
+    sess, _store = eng.new()
+    eng._on_llm_partial_checkpoint(
+        sess,
+        text_parts=["MODEL-", "PARTIAL"],
+        reasoning_parts=["THINK-", "TAIL"],
+        round_no=4,
+        provider="glm",
+        model="glm/glm-5.3",
+    )
+
+    rows = [e for e in es.read(sess.session_id) if e.type == "llm.partial_checkpoint"]
+    assert len(rows) == 1
+    payload = rows[0].payload
+    assert payload["round"] == 4
+    assert payload["provider"] == "glm"
+    assert payload["model"] == "glm/glm-5.3"
+    assert payload["text_tail"] == "MODEL-PARTIAL"
+    assert payload["reasoning_tail"] == "THINK-TAIL"
+    assert payload["text_chars"] == len("MODEL-PARTIAL")
+    assert payload["reasoning_chars"] == len("THINK-TAIL")
+    assert len(payload["partial_sha256"]) == 64
+    assert sess.messages == []
+
+
+def test_inflight_native_state_uses_private_sidecar_and_supports_native_only_checkpoint(
+    tmp_path,
+) -> None:
+    """Opaque reasoning/tool drafts are durable without becoming chat history/tool calls."""
+    from llm_loop.event_log.store import EventStore
+
+    es = EventStore(tmp_path / "native-events")
+    eng = _StubEngine(es, data_dir=tmp_path)
+    sess, _store = eng.new()
+    replay = {
+        "provider": "minimax",
+        "fields": {
+            "reasoning_details": [
+                {"type": "reasoning.text", "text": "plan", "signature": "sig-1"}
+            ]
+        },
+    }
+    drafts = [
+        {
+            "index": 0,
+            "id": "call-1",
+            "name": "read_file",
+            "arguments_raw": '{"path":"py',
+        }
+    ]
+    eng._on_llm_partial_checkpoint(
+        sess,
+        text_parts=[],
+        reasoning_parts=[],
+        round_no=2,
+        provider="minimax",
+        model="minimax/MiniMax-M3",
+        provider_replay=replay,
+        tool_call_drafts=drafts,
+    )
+
+    rows = [e for e in es.read(sess.session_id) if e.type == "llm.partial_checkpoint"]
+    assert len(rows) == 1
+    payload = rows[0].payload
+    assert payload["tool_call_draft_count"] == 1
+    assert payload["native_state_chars"] > 0
+    assert len(payload["native_state_sha256"]) == 64
+    sidecar = tmp_path / "audit" / "inflight" / f"{sess.session_id}.json"
+    assert sidecar.exists()
+    native = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert native["provider_replay"] == replay
+    assert native["tool_call_drafts"] == drafts
+    assert sess.messages == []
+
+
+def test_inflight_sidecar_keeps_full_reasoning_when_event_tail_is_bounded(
+    tmp_path, monkeypatch
+) -> None:
+    """Append-only event stays small while private crash snapshot keeps all received bytes."""
+    from llm_loop.event_log.store import EventStore
+
+    monkeypatch.setenv("INTERRUPT_TEXT_TAIL_CHARS", "5")
+    monkeypatch.setenv("INTERRUPT_REASONING_TAIL_CHARS", "7")
+    es = EventStore(tmp_path / "full-events")
+    eng = _StubEngine(es, data_dir=tmp_path)
+    sess, _store = eng.new()
+    text = "TEXT-" * 30
+    reasoning = "REASON-" * 100
+    eng._on_llm_partial_checkpoint(
+        sess,
+        text_parts=[text],
+        reasoning_parts=[reasoning],
+        round_no=3,
+        provider="deepseek",
+        model="deepseek/deepseek-v4-flash",
+    )
+
+    row = [e for e in es.read(sess.session_id) if e.type == "llm.partial_checkpoint"][-1]
+    assert row.payload["text_tail"] == text[-5:]
+    assert row.payload["reasoning_tail"] == reasoning[-7:]
+    assert len(row.payload["native_state_sha256"]) == 64
+    native = eng._load_inflight_native_state(
+        sess.session_id,
+        expected_sha256=row.payload["native_state_sha256"],
+        expected_round=3,
+        expected_provider="deepseek",
+        expected_model="deepseek/deepseek-v4-flash",
+        expected_partial_sha256=row.payload["partial_sha256"],
+    )
+    assert native is not None
+    assert native["text_full"] == text
+    assert native["reasoning_full"] == reasoning
 
 
 def test_b1_env_zero_disables_tails_but_cancelled_still_annotated(monkeypatch):
@@ -245,7 +378,10 @@ def test_b1_row_wire_projection_placeholder_no_leak(build_test_engine):
     joined = "\n".join(str(m.get("content") or "") for m in wire)
     assert "[截断标注]" not in joined, "截断标注文本不得进 provider 视图"
     assert "think-part" not in joined, "推理尾不得进 provider 视图"
-    assert "[program-final]" in joined, "程序行应折叠为字节稳定占位"
+    assert "[program-final]" not in joined, "legacy 程序 marker 不得复活到 provider 视图"
+    assert any(m.get("role") == "assistant" and not str(m.get("content") or "") for m in wire), (
+        "程序终态仅允许 zero-content assistant role boundary"
+    )
     # 存储真相不动：标注行完整保留在会话
     sess = engine.session.load(sid)
     assert any("[截断标注]" in str(m.content or "") for m in sess.messages)

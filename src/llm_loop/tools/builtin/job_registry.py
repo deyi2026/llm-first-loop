@@ -48,6 +48,8 @@ class JobEntry:
     done: bool = False
     exit_code: int | None = None
     killed: bool = False
+    # R2 P1-7: 会话归属（空=存量兼容，不参与会话句柄选入，仅回执 declared 路径覆盖）
+    session_id: str = ""
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
 
@@ -78,10 +80,11 @@ class JobRegistry:
         with self._lock:
             return sum(1 for j in self._jobs.values() if not j.done and not j.killed)
 
-    def create(self, proc: Any, command: str) -> str:
+    def create(self, proc: Any, command: str, session_id: str = "") -> str:
         """登记新任务，返回 job_id；活跃数达上限抛 JobLimitExceeded.
 
         调用方（execute_command/dsh_task）须捕获并如实拒绝（含释放已 Popen 进程）。
+        session_id: R2 P1-7 会话归属（缺省空串存量兼容；调用点经 current_session_id contextvar 接线）。
         """
         with self._lock:
             # 锁内直接计数（active_count 也持锁，避免重入死锁）
@@ -89,16 +92,30 @@ class JobRegistry:
             if active >= self.max_concurrent:
                 raise JobLimitExceeded(
                     f"活跃后台任务数已达上限 {self.max_concurrent}"
-                    f"（可用 job_kill 释放，或调大 JOB_MAX_CONCURRENT 环境变量）"
+                    f"（可等待已有任务结束；若用户明确要求取消现有任务，再走取消授权路径；或由运维调整 JOB_MAX_CONCURRENT）"
                 )
             self._seq += 1
             job_id = f"job-{self._seq}"
-            self._jobs[job_id] = JobEntry(id=job_id, command=command, proc=proc)
+            self._jobs[job_id] = JobEntry(id=job_id, command=command, proc=proc, session_id=session_id)
             return job_id
 
     def get(self, job_id: str) -> JobEntry | None:
         with self._lock:
             return self._jobs.get(job_id)
+
+    def active_for_session(self, session_id: str) -> tuple[JobEntry, ...]:
+        """R2 P1-7: 本会话未终结（未 done 且未 killed）的 JobEntry 元组.
+
+        空归属（session_id=""）存量 job 不参与会话句柄选入（design 4.4.1 兼容）。
+        """
+        if not session_id:
+            return ()
+        with self._lock:
+            return tuple(
+                j
+                for j in self._jobs.values()
+                if j.session_id == session_id and not j.done and not j.killed
+            )
 
     def start_readers(self, job_id: str) -> None:
         """启动 stdout/stderr 读线程 + 完成 watcher（进程刚启动后调用）."""

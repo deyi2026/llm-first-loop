@@ -176,12 +176,14 @@ def test_evolution_complete_registration_fail_open(tmp_path, monkeypatch):
     """M17 FR-REVIEW-AI-01: evolution_complete 登记落盘 OSError → 如实标注不静默驻留 executing."""
     from pathlib import Path
 
+    from llm_loop.core.run_context import current_session_id
     from llm_loop.introspection.corrections import CorrectionContext
     from llm_loop.introspection.evolution import EvolutionStore
     from llm_loop.introspection.evolution_exec import EvolutionExecutor
 
     store = EvolutionStore(tmp_path / "audit")
-    sug = store.submit(content="优化超时参数", impact_scope="timeout_s")
+    sid = "owner-session"
+    sug = store.submit(content="优化超时参数", impact_scope="timeout_s", session_id=sid)
     store.review(sug.id, "accepted")
     store.transition(sug.id, status="executing")
     ctx = CorrectionContext(evolution_store=store)
@@ -199,9 +201,13 @@ def test_evolution_complete_registration_fail_open(tmp_path, monkeypatch):
     try:
         from llm_loop.introspection.tools_exec_complete import run_evolution_complete
 
-        r = run_evolution_complete(
-            ctx, executor, lambda *a, **k: None, {"suggestion_id": sug.id, "note": "完成"}
-        )
+        tok = current_session_id.set(sid)
+        try:
+            r = run_evolution_complete(
+                ctx, executor, lambda *a, **k: None, {"suggestion_id": sug.id, "note": "完成"}
+            )
+        finally:
+            current_session_id.reset(tok)
     finally:
         monkeypatch.setattr(Path, "open", real_open)
     # 状态推进成功（complete 内部审计落盘异常被 suppress）；工具回执如实 success

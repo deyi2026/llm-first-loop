@@ -149,11 +149,9 @@ class TestLiteralScanClean:
             f"生产代码 origin_layer 手工构造点未归零: {[f'{f.file}:{f.line}' for f in literals]}"
         )
 
-    def test_turn_context_gate_view_uses_truth_source(self) -> None:
-        """turn_context 门控合成视图已改为经真相源构造（行为零变化）。"""
-        src = (
-            _PROJECT_ROOT / "src/llm_loop/core/loop/turn_context.py"
-        ).read_text(encoding="utf-8")
+    def test_human_ingress_uses_truth_source(self) -> None:
+        """Current human ingress metadata is constructed through the canonical truth source."""
+        src = (_PROJECT_ROOT / "src/llm_loop/core/loop/engine.py").read_text(encoding="utf-8")
         assert '"origin_layer": "user_instruction"' not in src
         assert "origin_metadata(InjectionLayer.USER_INSTRUCTION)" in src
 

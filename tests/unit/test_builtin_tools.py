@@ -220,45 +220,5 @@ def test_web_fetch_full_skips_truncation():
     assert long_body in r2.content  # 全文返回
 
 
-def test_read_file_full_skips_truncation(tmp_path):
-    """EVO-20260819 full=true: 跳过 3000 字符截断，返回完整内容."""
-    p = tmp_path / "big.txt"
-    p.write_text("\n".join(f"line-{i}" for i in range(600)), encoding="utf-8")
-    tool = ReadFileTool()
-    r_default = tool.execute(path=str(p))
-    assert "截断" in r_default.content  # 默认截断（>3000 字符）
-    r_full = tool.execute(path=str(p), full=True)
-    assert "截断" not in r_full.content
-    assert "line-599" in r_full.content  # 尾部内容完整返回
-
 
 # ── 2026-08-20: 截断标记"事实+动作"两段式（停滞循环排查落地）──
-
-def test_truncate_output_marker_has_action_guidance(tmp_path, monkeypatch):
-    """截断标记含动作段: 防重跑声明 + full=true / 显式落盘取全文路径."""
-    from llm_loop.tools.trim import truncate_output
-
-    monkeypatch.setenv("DATA_DIR", str(tmp_path))  # 落盘隔离到临时目录
-    content = "中段内容" * 2000  # >3000 字符
-    out = truncate_output(content, source="grep foo bar")
-    assert "[输出已截断]" in out
-    assert "重跑得同结果勿重跑" in out  # 防循环声明（精简版）
-    assert "full=true" in out  # 动作①
-    assert "search_archive" not in out  # 未写 ArchiveStore，不得虚构检索路径
-    assert "读取落盘全文" in out  # 动作②（DATA_DIR 可写时）
-
-    # 无全文需求时仍保留首尾内容
-    assert content[:20] in out and content[-20:] in out
-
-
-def test_execute_command_truncate_marker_uses_shared_action(tmp_path, monkeypatch):
-    """execute_command 截断标记与共享版同构（动作段 + 防重跑声明）."""
-    from llm_loop.tools.builtin.execute_command import _truncate_output
-
-    monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    content = "长输出" * 2000
-    out = _truncate_output(content, command="grep foo bar")
-    assert "[输出已截断]" in out
-    assert "重跑得同结果勿重跑" in out
-    assert "full=true" in out
-    assert "search_archive" not in out

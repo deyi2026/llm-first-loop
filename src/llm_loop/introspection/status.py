@@ -35,6 +35,10 @@ class ActionTraceItem:
     action_type: str
     detail: str
     session_id: str = ""
+    # 路由三元组（spec 5.3.1 / 6.4）：标识不可得时显式 unknown，禁止缺列
+    instance: str = "unknown"
+    zone: str = "unknown"
+    route: str = "unknown"
 
     def to_dict(self) -> dict:
         return {
@@ -45,6 +49,10 @@ class ActionTraceItem:
             # CR-R1 6.1: 补 session_id（dataclass 已有字段，to_dict 此前漏写；
             # 旧 trace 行缺此字段，读侧 .get() null 容忍）
             "session_id": self.session_id,
+            # 路由三元组尾部追加（spec 6.4.4）：不动既有五字段位置契约
+            "instance": self.instance,
+            "zone": self.zone,
+            "route": self.route,
         }
 
 
@@ -86,6 +94,7 @@ class ArchitectureStatusProvider:
         archive_stats_fn: Callable[[], dict] | None = None,
         memory_stats_fn: Callable[[], dict] | None = None,  # M18 AA10: 记忆统计（补真实数据）
         workspace_changed_fn: Callable[[], dict | None] | None = None,  # P1-12: 工作区变更检测
+        route_fn: Callable[[], dict] | None = None,  # spec 5.3.1: 路由三元组回调（D6 注入）
     ) -> None:
         self.enabled = enabled
         self.reporter = EventReporter(cooldown_s=cooldown_s)
@@ -93,6 +102,7 @@ class ArchitectureStatusProvider:
         self._archive_stats_fn = archive_stats_fn  # T23: 压缩档案统计
         self._memory_stats_fn = memory_stats_fn  # M18 AA10: 记忆统计（未注入如实标注）
         self._workspace_changed_fn = workspace_changed_fn  # P1-12: 工作区变更（guard 检测）
+        self._route_fn = route_fn  # spec 5.3.1: 路由三元组（未注入 → unknown，fail-open）
         self._audit_dir = Path(audit_dir) if audit_dir else None
 
         self._current_phase: str = "idle"
@@ -118,6 +128,7 @@ class ArchitectureStatusProvider:
         # EVO-20260818（spec §5.4.1-2）: 缓存健康/cache_guard 快照回调（未注入 → None 零回归）
         self._cache_health_fn: Callable[[], dict | None] | None = None
         self._cache_guard_fn: Callable[[str], dict | None] | None = None  # session 透传（grill-me Q11）
+        self._request_usage_fn: Callable[[], dict | None] | None = None
 
     # ── 采集（循环事件附带调用，零侵入）──
     def record_phase(self, phase: str) -> None:
@@ -162,11 +173,34 @@ class ArchitectureStatusProvider:
                 session_id = current_session_id.get()
             except Exception:  # noqa: BLE001 — contextvar 未设按空处理
                 session_id = ""
+        route = self._route_triple()
         item = ActionTraceItem(
-            ts=_now(), phase=phase, action_type=action_type, detail=detail, session_id=session_id
+            ts=_now(),
+            phase=phase,
+            action_type=action_type,
+            detail=detail,
+            session_id=session_id,
+            instance=route["instance"],
+            zone=route["zone"],
+            route=route["route"],
         )
         self._action_trace.append(item)
         self._write_audit("action_trace.jsonl", item.to_dict())
+
+    def _route_triple(self) -> dict:
+        """路由三元组快照（spec 5.3.1）：route_fn 缺省/异常 → 全 unknown（fail-open，主审计不丢）."""
+        triple = {"instance": "unknown", "zone": "unknown", "route": "unknown"}
+        if self._route_fn is None:
+            return triple
+        try:
+            snap = self._route_fn() or {}
+            for key in triple:
+                val = snap.get(key)
+                if isinstance(val, str) and val:
+                    triple[key] = val
+        except Exception:  # noqa: BLE001 — spec 5.3.3-2：降级写 unknown，主记录不丢
+            pass
+        return triple
 
     def record_tool_history(self, item: ToolHistoryItem) -> None:
         if self.enabled:
@@ -374,6 +408,13 @@ class ArchitectureStatusProvider:
         """
         self._budget_fn = fn
 
+    def set_request_usage_fn(self, fn) -> None:
+        """注入最近一次真实 provider usage/context/cache 观测回调。
+
+        仅供 architecture_status 按需读取，不参与 prompt 构造或策略判断。
+        """
+        self._request_usage_fn = fn
+
     def set_pending_actions_fn(self, fn) -> None:
         """注入待办聚合回调（T4: AI 一站式感知系统待办，纯聚合无判断）.
 
@@ -427,6 +468,7 @@ class ArchitectureStatusProvider:
                 runtime_params = fn2()
             except Exception:  # noqa: BLE001 — 参数快照失败如实标注 None（fail-open）
                 runtime_params = None
+        request_usage_fn = self._request_usage_fn
         avail = {
             "current_phase": self._phase_for(session_id),
             "action_trace": [a.to_dict() for a in self._action_trace[-30:]],
@@ -460,6 +502,9 @@ class ArchitectureStatusProvider:
                 # 1M/300K/200K 三口径误读——AI 直接见 effective + limited_by）
                 "budget": (
                     self._budget_fn() if getattr(self, "_budget_fn", None) else None
+                ),
+                "last_request": (
+                    request_usage_fn() if request_usage_fn is not None else None
                 ),
                 # EVO-20260818（spec §5.4.1-2）: 缓存健康/cache_guard 快照（fail-open——
                 # 回调异常字段置 None 不抛穿 architecture_status）
@@ -539,6 +584,14 @@ class ArchitectureStatusProvider:
             import logging
 
             logging.getLogger(__name__).warning("审计写入失败（fail-open）: %s", exc)
+
+    def append_audit_line(self, filename: str, record: dict) -> None:
+        """薄公共 audit append 入口（M2-G1.1 tool_octet sink 接线用）.
+
+        委托既有 _write_audit——audit_dir 解析/mkdir/O_APPEND/序列化/异常策略
+        单一 SoT 不变；本方法仅暴露实例级调用面供 factory 装配注入，不承载新逻辑。
+        """
+        self._write_audit(filename, record)
 
 
 def cleanup_audit_logs(audit_dir: str | Path, ttl_days: int) -> dict:

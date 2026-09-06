@@ -35,7 +35,9 @@ class ModelSpec:
     """模型能力元数据 (design §5.1).
 
     - context: 上下文窗口 (token 数)
-    - thinking: 是否支持思考参数 (M47 泛化前硬编码在 _thinking_supported 中)
+    - thinking: legacy 兼容字段；历史含义为“是否支持显式思考控制参数”
+    - reasoning_capable: 是否有事实证据可产生/返回 reasoning（与可否显式控制分离）
+    - reasoning_control: 显式控制协议；legacy 保持旧行为，unknown/none 不发送控制字段
     - cost_tier: 成本档 (free/low/mid/high, 仅供展示, 不参与路由)
     - reasoning: 强推理能力 (R5: model_catalog 展示, AI 自主选模型)
     - long_context: 长上下文档 (R5: context >= 256K)
@@ -44,12 +46,27 @@ class ModelSpec:
 
     context: int = 131072
     thinking: bool = False
+    reasoning_capable: bool = False
+    reasoning_control: str = "legacy"
     cost_tier: str = "mid"
     reasoning: bool = False
     long_context: bool = False
     multimodal: bool = False
+    # Model-specific output ceiling/budget. None inherits provider-level max_tokens.
+    # Keep this separate because one provider may expose models with different limits.
+    max_tokens: int | None = None
     wire_protocol: str = "openai"  # P3-5: openai / anthropic / google（客户端协议分发）
-    capability_tier: str = "unknown"  # T-P2-1-1: strong/weak/unknown（spec §6.5 漂移治理动态调权依据; unknown=保守视为弱模型）
+    capability_tier: str = "unknown"  # strong/weak/unknown；unknown=无结论，禁止负面能力推断
+    # Provider wire contract: whether this model accepts an explicit
+    # ``tool_choice`` field.  True is the OpenAI-compatible default; models that
+    # require provider-default tool selection (e.g. DeepSeek V4 thinking tool
+    # calls) opt out in registry data instead of client-side provider guessing.
+    send_tool_choice: bool = True
+    # OpenAI-compatible reasoning representation contract. MiniMax-M3 recommends
+    # reasoning_split=true so interleaved thinking is returned as structured
+    # reasoning_details and can be replayed losslessly. This changes representation,
+    # not whether the model is allowed/asked to think.
+    reasoning_split: bool = False
 
 
 @dataclass(frozen=True)
@@ -59,8 +76,8 @@ class ProviderSpec:
     api_key_env 存 **env var 名字** (如 "DEEPSEEK_API_KEY"), 不存 key 本体.
     timeout_s: provider 级 LLM 调用超时（秒）; None = 用全局 LLM_TIMEOUT_S。
     本地慢模型（LM Studio 大模型 prefill 慢）在此放大, 云端保持全局默认（零回归）。
-    history_budget_chars: provider 级历史注入预算（字符）; None = 用全局
-    HISTORY_MAX_CHARS。本地模型 prefill 成本随上下文线性涨, 收紧预算可显著缩短
+    history_budget_chars: provider 级历史/性能预算（字符）; None = 不增加 provider cap，
+    由显式 runtime/global cap（如有）与当前模型物理窗口共同决定。本地模型 prefill 成本随上下文线性涨, 收紧预算可显著缩短
     首 token 时延（旧长历史经压缩归档可检索, 信息零丢失, 不损失可用性）。
     """
 
@@ -69,20 +86,12 @@ class ProviderSpec:
     api_key_env: str
     models: dict[str, ModelSpec] = field(default_factory=dict)
     default_model: str = ""
-    fast_model: str = ""  # 2026-08-21 分级路由: 简单任务快速模型 ref（无配置=不走分级, 零回归）
     timeout_s: float | None = None
     history_budget_chars: int | None = None
     max_tokens: int | None = None  # 2026-08-15: provider 级输出预算（None=全局 LLM_MAX_TOKENS）
     chars_per_token: float | None = None  # EVO-20260824: provider 级字符/token 估算（None=全局 0.6）
     # deepseek 中文混合实测 1.676 tok/char → 0.6 chars/token；local qwen 中文 tokenizer 效率更高
     # （1 token≈1-1.5 中文字）→ 0.9。守卫/预算按 provider 取值，未配置回退全局（零回归）。
-    inject_system_notices: bool = True  # 推送式 system 注入（架构上报/预警/快照）是否进提交视图;
-    # False（本地慢模型用）= 仅落会话不进提交 —— system 前缀保持静态, llama.cpp 引擎前缀缓存
-    # 每轮命中（首 token 大幅缩短）; 功能性注入（压缩标注/降级通知/overflow 回注等）不受影响。
-    tool_round_zero_history: bool = False  # 2026-08-24 本地工具轮极小窗口:
-    # True（本地用）= 工具轮只发 system+工具 schema+最近完整协议配对组（assistant(tool_calls)+
-    # 全部 tool 回执）——KV 前缀稳定 + prefill 秒级; env TOOL_ROUND_ZERO_HISTORY 显式覆盖
-    # （未设时取本配置）; 其他 provider 缺省 False 零回归。
 
 
 @dataclass(frozen=True)
@@ -136,6 +145,17 @@ class ProviderRegistry:
             return False
         return spec.models[model_id].thinking
 
+    def reasoning_contract(self, provider_id: str, model_id: str) -> tuple[bool, str]:
+        """返回 (reasoning_capable, reasoning_control) 的模型事实合同。"""
+        spec = self.providers.get(provider_id)
+        if spec is None or model_id not in spec.models:
+            return False, "unknown"
+        model = spec.models[model_id]
+        # Direct programmatic ModelSpec(...) construction predates the new field;
+        # affirmative legacy reasoning/thinking facts remain capability evidence.
+        capable = bool(model.reasoning_capable or model.reasoning or model.thinking)
+        return capable, model.reasoning_control
+
     def catalog_summary(self) -> str:
         """人类可读目录（供后续 model_catalog 工具复用, M48 对接）.
 
@@ -155,10 +175,11 @@ class ProviderRegistry:
             tag_str = (" " + " ".join(tags)) if tags else ""
             lines.append(f"[{pid}] base_url={spec.base_url}{tag_str}")
             for mid, mspec in spec.models.items():
-                thinking = "✓" if mspec.thinking else "✗"
+                capable, control = self.reasoning_contract(pid, mid)
                 lines.append(
                     f"  - {mid}: context={mspec.context}, "
-                    f"thinking={thinking}, cost={mspec.cost_tier}"
+                    f"reasoning_capable={'✓' if capable else '✗'}, "
+                    f"reasoning_control={control}, cost={mspec.cost_tier}"
                 )
         if self.degraded:
             lines.append(f"[degraded: {self.degraded_reason}]")
@@ -210,9 +231,16 @@ class ProviderRegistry:
             # provider 级超时仅显式配置时下发（None 由 pool 回退全局 LLM_TIMEOUT_S）;
             # 未配置不含该键, 与既有返回契约零差异
             **({"timeout_s": spec.timeout_s} if spec.timeout_s is not None else {}),
-            **({"max_tokens": spec.max_tokens} if spec.max_tokens is not None else {}),
+            **(
+                {"max_tokens": spec.models[model_id].max_tokens}
+                if spec.models[model_id].max_tokens is not None
+                else ({"max_tokens": spec.max_tokens} if spec.max_tokens is not None else {})
+            ),
             # P3-5: 协议（模型级元数据；默认 openai 零回归）
             **({"wire_protocol": spec.models[model_id].wire_protocol} if spec.models[model_id].wire_protocol != "openai" else {}),
+            # 仅非默认值下发，保持旧 client_params 结构零回归。
+            **({"send_tool_choice": False} if not spec.models[model_id].send_tool_choice else {}),
+            **({"reasoning_split": True} if spec.models[model_id].reasoning_split else {}),
         }
 
 
@@ -235,7 +263,14 @@ def _provider_id_from_base_url(base_url: str) -> str:
     return "default"
 
 
-def _parse_bool_field(pid: str, mid: str, field: str, mval: dict[str, Any]) -> bool:
+def _parse_bool_field(
+    pid: str,
+    mid: str,
+    field: str,
+    mval: dict[str, Any],
+    *,
+    default: bool = False,
+) -> bool:
     """解析单布尔字段（P1-3 审计 #14: bool("false")==True 陷阱修复）.
 
     仅接受真正的 bool / 整数 1/0（与 bool() 一致, 零回归）/ 白名单字符串
@@ -243,7 +278,7 @@ def _parse_bool_field(pid: str, mid: str, field: str, mval: dict[str, Any]) -> b
     其余值（含任意非白名单字符串）→ logger.warning 如实告警 + 回退字段默认 False
     （不静默 bool(), 禁用配置不再被静默启用）.
     """
-    value = mval.get(field, False)
+    value = mval.get(field, default)
     if isinstance(value, int):  # bool 是 int 子类, 一并覆盖
         return bool(value)
     if isinstance(value, str):
@@ -254,10 +289,10 @@ def _parse_bool_field(pid: str, mid: str, field: str, mval: dict[str, Any]) -> b
             return False
     logger.warning(
         "模型 %s/%s 字段 %s=%r 非合法布尔（仅接受 true/false/1/0/yes/no/on/off），"
-        "回退默认 False",
-        pid, mid, field, value,
+        "回退默认 %s",
+        pid, mid, field, value, default,
     )
-    return False
+    return default
 
 
 def _parse_context(value: Any) -> int:
@@ -275,6 +310,27 @@ def _parse_context(value: Any) -> int:
         raise ValueError(f"context={value!r} 非整数: {exc}") from exc
 
 
+def _parse_model_max_tokens(pid: str, mid: str, value: Any) -> int | None:
+    """Parse optional per-model output ceiling; invalid values fail open to provider default."""
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        logger.warning(
+            "模型 %s/%s max_tokens=%r 非整数，回退 provider/global 输出预算",
+            pid, mid, value,
+        )
+        return None
+    if parsed <= 0:
+        logger.warning(
+            "模型 %s/%s max_tokens=%r 非正数，回退 provider/global 输出预算",
+            pid, mid, value,
+        )
+        return None
+    return parsed
+
+
 def _parse_wire_protocol(pid: str, mid: str, mval: dict[str, Any]) -> str:
     """P3-5: 协议字段解析（openai/anthropic/google/lms-chat 白名单；非法回退 openai 如实告警）.
 
@@ -290,6 +346,22 @@ def _parse_wire_protocol(pid: str, mid: str, mval: dict[str, Any]) -> str:
             pid, mid, raw,
         )
     return "openai"
+
+
+def _parse_reasoning_control(pid: str, mid: str, mval: dict[str, Any]) -> str:
+    """解析 reasoning 控制协议；非法显式值 fail-safe 到 unknown，不猜控制格式。"""
+    raw = str(mval.get("reasoning_control", "legacy")).strip().lower()
+    allowed = {
+        "legacy", "unknown", "none", "thinking_type", "chat_template",
+        "always_on_effort",
+    }
+    if raw in allowed:
+        return raw
+    logger.warning(
+        "模型 %s/%s 的 reasoning_control=%r 非法（支持 %s），回退 unknown",
+        pid, mid, raw, "/".join(sorted(allowed)),
+    )
+    return "unknown"
 
 
 def _qwen_model_signature(text: str) -> tuple[str, str] | None:
@@ -393,13 +465,13 @@ def _discover_llama_server(requested_model: str | None = None) -> tuple[str, str
 def _parse_capability_tier(pid: str, mid: str, mval: dict[str, Any]) -> str:
     """T-P2-1-1: capability_tier 解析（白名单 strong/weak/unknown, spec §10.4）.
 
-    缺失 → unknown + 降级日志（保守视为弱模型, 完整三层拷问）;
+    缺失 → unknown（无能力结论，不作负面推断）;
     非法 → unknown + warning 如实告警（不拖垮注册表加载）。
     """
     if "capability_tier" not in mval:
         logger.info(
-            "模型 %s/%s 未配置 capability_tier，按 unknown 处理（保守视为弱模型，"
-            "建议显式配置 strong/weak）", pid, mid,
+            "模型 %s/%s 未配置 capability_tier，按 unknown 处理（无能力结论，fail-open）",
+            pid, mid,
         )
         return "unknown"
     v = str(mval["capability_tier"]).strip().lower()
@@ -412,39 +484,39 @@ def _parse_capability_tier(pid: str, mid: str, mval: dict[str, Any]) -> str:
     return "unknown"
 
 
-def is_below_capability_floor(spec: ModelSpec) -> bool:
-    """D'-2.1（R8.24 D-D6）: capability floor 判据——自动 fallback 链成员能力下限.
-
-    判据主源 = ModelSpec.capability_tier 三档（strong/weak/unknown）:
-    - strong → False（可进自动 fallback 链）
-    - weak / unknown → True（低于下限——unknown 保守视为弱模型）
-
-    细粒度定标（参数量/量化位宽，r-p-r 初值假设 <14B 或 <q6 不进自动链）为
-    【待验证假设】——禁止未经验证的数值进配置；需以 D6 死循环场景（9B 4-bit 档）
-    + 健康检查/长链推理任务做档位对照实测后方可接入（届时在 ModelSpec 增加可选
-    元数据字段，缺省回退本三档判据——解析沿 _parse_capability_tier fail-soft 惯例）。
-    本函数为 floor 唯一判据入口（链构造过滤 D'-2.3 / shadow 标记 D'-2.2 一律经此）。
-    """
-    return spec.capability_tier != "strong"
-
-
 def _parse_model_spec(pid: str, mid: str, mval: dict[str, Any]) -> ModelSpec:
     """解析单模型条目 → ModelSpec（P1-3 审计 #14 加固）.
 
     布尔字段走严格解析（bool("false")==True 陷阱修复）+ context 非法如实报错;
     context 非法抛 ValueError, 由调用方 per-条目 try/except 跳过该条（不拖垮注册表）.
     """
+    thinking = _parse_bool_field(pid, mid, "thinking", mval)
+    reasoning = _parse_bool_field(pid, mid, "reasoning", mval)
+    reasoning_capable = (
+        _parse_bool_field(pid, mid, "reasoning_capable", mval)
+        if "reasoning_capable" in mval
+        else bool(reasoning or thinking)
+    )
     return ModelSpec(
         context=_parse_context(mval.get("context")),
-        thinking=_parse_bool_field(pid, mid, "thinking", mval),
+        thinking=thinking,
+        reasoning_capable=reasoning_capable,
+        reasoning_control=_parse_reasoning_control(pid, mid, mval),
         cost_tier=str(mval.get("cost_tier", "mid")),
-        reasoning=_parse_bool_field(pid, mid, "reasoning", mval),
+        reasoning=reasoning,
         long_context=_parse_bool_field(pid, mid, "long_context", mval),
         multimodal=_parse_bool_field(pid, mid, "multimodal", mval),
+        max_tokens=_parse_model_max_tokens(pid, mid, mval.get("max_tokens")),
         # P3-5: 协议白名单（非法值回退 openai + 如实告警，不拖垮注册表）
         wire_protocol=_parse_wire_protocol(pid, mid, mval),
         # T-P2-1-1: 能力档白名单（缺失/非法 → unknown + 降级日志，不拖垮注册表）
         capability_tier=_parse_capability_tier(pid, mid, mval),
+        send_tool_choice=_parse_bool_field(
+            pid, mid, "send_tool_choice", mval, default=True
+        ),
+        reasoning_split=_parse_bool_field(
+            pid, mid, "reasoning_split", mval, default=False
+        ),
     )
 
 
@@ -519,7 +591,7 @@ def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
                         pid, raw_tokens,
                     )
             # provider 级历史注入预算（字符）: 本地慢模型收紧以缩短 prefill;
-            # 非法/缺失 → None（全局 HISTORY_MAX_CHARS 兜底）
+            # 非法/缺失 → None（不增加 provider cap；交由显式全局 cap/模型物理窗口）
             history_budget_chars: int | None = None
             raw_budget = val.get("history_budget_chars")
             if raw_budget is not None:
@@ -537,40 +609,6 @@ def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
                         "provider 条目 %r 的 history_budget_chars=%r 非法, 回退全局预算",
                         pid, raw_budget,
                     )
-            # 推送式 system 注入开关（本地慢模型关 → system 前缀静态 → 引擎前缀缓存命中）;
-            # 严格布尔解析（复用白名单语义）; 非法 → warning + 默认 True（零回归）
-            inject_notices: bool = True
-            raw_inject = val.get("inject_system_notices", True)
-            if isinstance(raw_inject, bool):
-                inject_notices = raw_inject
-            elif isinstance(raw_inject, int):
-                inject_notices = bool(raw_inject)
-            elif isinstance(raw_inject, str) and raw_inject.strip().lower() in _TRUTHY_STRINGS:
-                inject_notices = True
-            elif isinstance(raw_inject, str) and raw_inject.strip().lower() in _FALSY_STRINGS:
-                inject_notices = False
-            else:
-                logger.warning(
-                    "provider 条目 %r 的 inject_system_notices=%r 非法, 回退默认 True",
-                    pid, raw_inject,
-                )
-            # 2026-08-24 本地工具轮极小窗口开关（严格布尔语义同 inject_system_notices）;
-            # 非法 → warning + 默认 False（零回归）
-            tool_round_zero: bool = False
-            raw_tool_zero = val.get("tool_round_zero_history", False)
-            if isinstance(raw_tool_zero, bool):
-                tool_round_zero = raw_tool_zero
-            elif isinstance(raw_tool_zero, int):
-                tool_round_zero = bool(raw_tool_zero)
-            elif isinstance(raw_tool_zero, str) and raw_tool_zero.strip().lower() in _TRUTHY_STRINGS:
-                tool_round_zero = True
-            elif isinstance(raw_tool_zero, str) and raw_tool_zero.strip().lower() in _FALSY_STRINGS:
-                tool_round_zero = False
-            else:
-                logger.warning(
-                    "provider 条目 %r 的 tool_round_zero_history=%r 非法, 回退默认 False",
-                    pid, raw_tool_zero,
-                )
             # EVO-20260824: provider 级字符/token 估算（chars_per_token）——本地 qwen tokenizer
             # 效率高于 deepseek（1 token≈1-1.5 中文字），统一 0.6 会让本地载荷高估 1.7-2 倍
             # → 守卫误拦 + 预算过紧。非法/缺失 → None（全局 0.6 兜底，零回归）。
@@ -597,13 +635,10 @@ def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
                 api_key_env=api_key_env,
                 models=models,
                 default_model=default_model,
-                fast_model=str(val.get("fast_model", "") or ""),  # 2026-08-21 分级路由
                 timeout_s=timeout_s,
                 history_budget_chars=history_budget_chars,
                 max_tokens=max_tokens,
                 chars_per_token=chars_per_token,
-                inject_system_notices=inject_notices,
-                tool_round_zero_history=tool_round_zero,
             )
         except (ValueError, TypeError) as exc:
             # P1-3: provider 条目级兜底（意外转换异常也不拖垮整个注册表）

@@ -389,6 +389,7 @@ class BackgroundRunner:
         user_text: str,
         model: str | None = None,
         reasoning_effort: str | None = None,
+        reasoning_mode: str | None = None,
         *,
         resume: bool = False,
         before_start: Callable[[Any], None] | None = None,
@@ -451,7 +452,7 @@ class BackgroundRunner:
         q = bus.subscribe()  # 先订阅再起线程（保证不丢 start 后首个事件）
         t = threading.Thread(
             target=self._consume,
-            args=(session_id, user_text, model, reasoning_effort, before_start, handle, bus, ingress),
+            args=(session_id, user_text, model, reasoning_effort, reasoning_mode, before_start, handle, bus, ingress),
             name=f"bg-run-{session_id[:8]}",
             daemon=True,  # B4: 进程退出不阻塞
         )
@@ -465,6 +466,7 @@ class BackgroundRunner:
         user_text: str,
         model: str | None,
         reasoning_effort: str | None,
+        reasoning_mode: str | None,
         before_start: Callable[[Any], None] | None,
         handle: RunHandle,
         bus: EventBus,
@@ -480,6 +482,8 @@ class BackgroundRunner:
                 it: Any
                 if reasoning_effort is not None:
                     run_kwargs["reasoning_effort"] = reasoning_effort
+                if reasoning_mode is not None:
+                    run_kwargs["reasoning_mode"] = reasoning_mode
                 if ingress is not None:
                     run_kwargs["ingress"] = ingress
                 if before_start is not None:

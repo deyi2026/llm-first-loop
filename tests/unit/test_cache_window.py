@@ -1,7 +1,7 @@
 """单元测试: 缓存窗口镜像（describe_cache_window, 2026-08-24）.
 
-把服务端 cached_tokens 映射回提交载荷的消息级窗口——缓存覆盖区/新增区（miss 区）。
-信息补充决策的事实来源（引用缓存区内信息零额外 prefill; 新增信息尾部追加保持命中）。
+把服务端 cached_tokens 估算映射回提交载荷的消息级窗口——缓存覆盖区/新增区（miss 区）。
+该映射仅供观测；generic cached_tokens 不提供精确 message boundary，不能作为硬压缩约束。
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ def test_full_hit_all_cached():
     assert len(win.new_msgs) == 0
     assert len(win.cached_msgs) == 3
     assert win.boundary_msg_index == 2
+    assert win.boundary_exact is False
 
 
 def test_default_ratio_calibrated():
@@ -51,6 +52,7 @@ def test_zero_hit_all_new():
     assert len(win.cached_msgs) == 0
     assert len(win.new_msgs) == 2
     assert win.boundary_msg_index == -1
+    assert win.boundary_exact is False
 
 
 def test_partial_boundary_mid_message():
@@ -79,6 +81,7 @@ def test_empty_messages_and_invalid_inputs():
     assert describe_cache_window([], cached_tokens=10, prompt_tokens=10).boundary_msg_index == -1
     win = describe_cache_window([_m("user", "hi")], cached_tokens="abc", prompt_tokens=None)
     assert win.cached_tokens == 0 and win.prompt_tokens == 0
+    assert win.boundary_exact is False
     assert len(win.new_msgs) == 1
 
 
@@ -97,7 +100,7 @@ def test_tool_round_system_only_cached():
     win = describe_cache_window(msgs, cached_tokens=150, prompt_tokens=250)
     assert win.boundary_msg_index == 0
     assert len(win.new_msgs) == 2  # 声明 + 回执均在缓存区外（每轮变化）
-    assert win.summary().startswith("缓存覆盖至消息#0")
+    assert win.summary().startswith("估算缓存覆盖至消息#0")
     assert "新增 2 条" in win.summary()
 
 

@@ -19,8 +19,6 @@ class BuildContext:
     provider_id: str
     max_chars: int
     model: str
-    emergency_compact: bool
-    tool_round_zero: bool
     registry_snapshot: dict[str, Any]
     history_anchors: dict[str, Any]  # sess_anchor 锚点值组
 
@@ -31,8 +29,7 @@ class BuildInputs:
 
     base_messages: list[Any]  # list(sess.messages) 快照（Message 对象序列，经四过滤器链收窄）
     base_index_by_id: dict[int, int]  # _original_base_index_by_id：id(Message) -> 原始下标
-    r6_ingress_truth: Any  # R6 ingress 冻结真值（user_truth 阶段消费）
-    memory_msgs: list[Any]  # 记忆注入消息序列（入口参数显式化）
+    r6_ingress_truth: Any  # exact current human ingress（compact/trace provenance）
     stale_cleanup: dict[str, Any]  # 过期清理结果集（A-3 语义可指认）
     filtered_indices: list[int] = field(default_factory=list)  # 四过滤器链后原下标重映射段尾值（trace_isolation 消费）
 
@@ -46,7 +43,6 @@ class BuildDecision:
     injection_eligibility: dict[str, Any] | None = None
     budget: dict[str, Any] | None = None
     cog_freeze: dict[str, Any] | None = None
-    consumed_filtering: dict[str, Any] | None = None  # 过滤决策显式可追溯（A-4）
     compacted: bool = False  # P1-01：locals().get("_compressed_this_build") 显式化落位
     history_total_chars: int = -1  # P1-01：locals().get("_history_total") 显式化；-1 = 未测算哨兵（复刻缺省 "?" 语义区分位）
 
@@ -70,7 +66,7 @@ class ProviderProjection:
 class BuildAudit:
     """全程追加（收口只读）."""
 
-    injections_registry: list[dict[str, Any]] = field(default_factory=list)  # last_build_injections 桶旁路（B5-W4-03）
+    injections_registry: list[dict[str, Any]] = field(default_factory=list)  # historical observability shape; current producer set is empty
     projection_fingerprint: str = ""
     compaction_audit: dict[str, Any] = field(default_factory=dict)  # L2265-2290 段产出
     decision_trace: list[dict[str, Any]] = field(default_factory=list)  # Decision 时间线视图

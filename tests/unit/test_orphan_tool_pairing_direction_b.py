@@ -36,15 +36,11 @@ def _build(msgs):
         session_id="t",
         archive_sink=None,
         summarizer=None,
-        layer_tool_trim=False,
-        tool_trim_threshold=8000,
-        tool_trim_age=0,
         reasoning_tail=2,
         skip_injected_system=True,
         history_anchor=0,
         anchor_out=[],
         head_keep_chars=0,
-        _append_summary_enabled=False,
     )
 
 

@@ -10,7 +10,7 @@
 
 ## 架构原则（AI 视角）
 
-- **程序最小化**：能由 AI 自主 + 文档规则（`docs/ai_rules.md`）实现的判断，尽量不用程序。程序只保留 AI 无法自完成的部分（工具真实执行、存储、灾难性安全硬边界）。
+- **程序最小化 + 必要补充**：能由 AI 自主 + 文档规则（`docs/ai_rules.md`）完成的判断，尽量不用程序；程序重点承载 AI 无法自行可靠完成的真实执行/持久化、协议与授权、灾难性安全、物理资源、崩溃恢复和不可重复副作用边界。
 - **程序是便利与补充，不是约束**：工具成功/失败/异常如实构造（`[状态: xxx]` 标注），错误完整透传，不静默降级。
 - **容错优先**：程序组件故障 → `[程序异常]` 如实告知 AI → 循环继续，不影响大模型发挥。
 - **Rule-first 演进**：`docs/ai_rules.md` 是维护/演进规则 SoT；普通 user run 不把规则全文内嵌进 system prompt。修复/新增先审“能否由规则 + 事实 + 局部 schema/skill 完成”，证明必要后才增加 runtime 约束。
@@ -95,7 +95,7 @@ bash scripts/r9_commit.sh "<message>"   # 机检(r9_commit_check) + ci_gate + gi
 - **核心循环**：LoopEngine 五阶段状态机（消息进→理解→行动→真诚回答→记住）
 - **严格 function calling**：tool_call_id 由程序统一管理，绝不产无 id 的 tool 消息（兼容 DeepSeek/OpenAI 严格 API）
 - **架构自省**：LLM 可调用 `architecture_status` 查询架构运行状态，异常主动 `[架构上报]`，可用修正工具（adjust_strategy / retry_tool / refresh_config）自主修正
-- **演进建议自动落地执行**（M12 深化 + M16/M17 审计）：AI 可 `submit_evolution` 提交架构演进建议（纯建议通道，回执含"等待 evolve-review 审阅"引导）；`EVOLVE_LOCAL_EXEC` 三级权限（0=仅建议 / 1=白名单局部执行 / 2=全面执行），人工 `evolve-review <id> accepted` 后按权限分级自动执行（状态推进 + 审计 + 执行引导）；**执行动作/验证/回滚由 AI 自主完成**（经修正工具 `adjust_strategy`/`retry_tool`/`refresh_config`，RULE-AI-06 子规则承载，程序不代 AI 执行/验证/回滚，verify_result=unverified 如实标注）；执行完成后 AI 经 `evolution_complete` 工具登记"已完成 + 验证结论"（executing→executed），涉边界演进经 CLI `evolve-complete` 人工登记（executor=human）；循环内存在 executing 演进时自动注入 `[演进执行提醒]`；全链路审计 `evolution_exec_log` 可检索
+- **演进建议自动落地执行**（M12 深化 + M16/M17 审计）：AI 可 `submit_evolution` 提交架构演进建议（纯建议通道，回执含"等待 evolve-review 审阅"引导）；`EVOLVE_LOCAL_EXEC` 三级权限（0=仅建议 / 1=白名单局部执行 / 2=全面执行），人工 `evolve-review <id> accepted` 后按权限分级自动执行（状态推进 + 审计 + 执行引导）；**执行动作/验证/回滚由 AI 自主完成**（经修正工具 `adjust_strategy`/`retry_tool`/`refresh_config`，RULE-AI-06 子规则承载，程序不代 AI 执行/验证/回滚，verify_result=unverified 如实标注）；执行完成后 AI 经 `evolution_complete` 工具登记"已完成 + 验证结论"（executing→executed），涉边界演进经 CLI `evolve-complete` 人工登记（executor=human）；executing/pending 演进状态保持可查询/可审计，不再自动注入普通用户 prompt；全链路审计 `evolution_exec_log` 可检索
 - **AI 自我评估与改进**（M12 深化 + M16 审计）：AI 可 `self_evaluate` 主动发起五维自我评估（成功率/工具效率/诚实性/停滞率/异常率，来源可溯，样本不足如实标注）；定期/里程碑触发仅提示不强制（异常触发时机交 AI 自主，RULE-AI-06）；评估结果落盘 `self_eval_log` 可检索；评估→建议双向溯源（`evidence="eval:SE-..."`），改进执行走同一权限分级，`SelfEvalComparison` 支持改进前后对比
 - **信息不丢失**：上下文超长时另存压缩档案（`search_archive` 检索找回）；`search_records` 统一检索历史记录/记忆/档案（可查可检索）
 - **记忆智能**：LLM 语义摘要（`SUMMARY_MODE`）、语义检索（`EMBEDDING_PROVIDER`）、独立记忆提取（会话结束/定期/手动）
@@ -161,10 +161,9 @@ bash scripts/r9_commit.sh "<message>"   # 机检(r9_commit_check) + ci_gate + gi
 | `EVOLVE_LOCAL_EXEC` | 0 | 演进执行权限三级: 0=仅建议/1=白名单局部执行/2=全面执行（旧布尔兼容） |
 | `EVOLVE_EXEC_WHITELIST` | 空 | 执行白名单（级别 1 时，逗号分隔影响范围/模块/动作类型；空=未配置则不自动执行） |
 | `SELF_EVAL_ENABLED` | 1 | 自我评估能力开关（self_evaluate 工具） |
-| `SELF_EVAL_REMIND_ENABLED` | 1 | 触发提醒开关（仅提示不强制） |
-| `SELF_EVAL_INTERVAL_ROUNDS` / `SELF_EVAL_MIN_SAMPLES` / `SELF_EVAL_SPAN` | 50/5/50 | 定期触发间隔/样本不足阈值/聚合窗口 |
+| `SELF_EVAL_MIN_SAMPLES` / `SELF_EVAL_SPAN` | 5/50 | 自评样本不足阈值 / 聚合窗口；评估时机由 AI/维护任务按需决定 |
 | `SYSTEM_PROMPT_EXTRA` | 已退役 | 不再拥有 universal prompt 写权限；局部行为用显式 user request / tool schema / skill / operator control surface |
-| `HISTORY_MAX_CHARS` | 100000 | 提交给 LLM 的历史上下文预算（字符），默认 100K（≈50K tokens），可按模型窗口调整（1M 窗口模型可调大，小窗模型调小）；预算过高会撑爆窗口导致所有模型调用失败/超时 |
+| `HISTORY_MAX_CHARS` | 未设置 | **可选**全局历史/性能 cap。未设置时不制造独立 100K/200K 限制，每轮按当前实际路由模型的 context window、output reserve 与 provider 显式性能 cap 计算；显式设置时仅限制历史保留/prefill，不作为当前用户原文的能力上限 |
 | `MODEL_FALLBACKS` | 空 | 降级链（逗号分隔 `provider/model`，如 `deepseek/deepseek-v4-flash,local/qwen3.6-27b-fable-fusion-711-uncensored-heretic-nm-dau-neo-max-mtp`）；空=不启用降级 |
 | `EVENT_LOG_ENABLED` | 1 | 事件源化单一真相源开关（`data/event_logs/<session_id>.jsonl` 追加写；0=事件写入零行为） |
 | `EVENT_LOGS_DIR` | 空 | 事件日志目录覆盖（空=从 data_dir 派生 `data/event_logs`） |

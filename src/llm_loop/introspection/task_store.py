@@ -182,7 +182,11 @@ class TaskStore:
         title: str | None = None,
         confirm: bool = False,
     ) -> Task:
-        """更新任务。转移合法性/evidence 校验/blocked reason/重开级联在此层强制."""
+        """更新任务。转移合法性/evidence 校验/blocked reason/重开级联在此层强制.
+
+        done→非done 重开保留一个机械显式位 ``confirm``。程序不解析用户措辞，
+        也不维护第二套授权 token；是否得到当前用户授权由模型依据 RULE-AI-23 判断。
+        """
         with self._file_lock(goal_id):
             tasks = self._replay(goal_id)
             task = tasks.get(task_id)
@@ -229,13 +233,13 @@ class TaskStore:
                         "（格式/存在性分层校验，语义判定归模型+validator，见设计 §2.2）"
                     )
                 if task.status == "done" and status != "done":
-                    # 用户规则落地（EVO-20260902-loopbreaker 同批）: 过去已做过的任务
-                    # 不应再自动重启；确需重启须先问过用户。confirm=true 即"已获用户
-                    # 明确批准"的唯一凭据（模型不得自行代答，须真实征询）。
+                    # Mechanical guard only: reopening a completed task must be an
+                    # explicit model action. The runtime does not interpret current
+                    # user language into an authorization token.
                     if not confirm:
                         raise ValueError(
-                            "已完成的任务禁止自动重启（用户规则）: 过去已做过的任务不应再起；"
-                            "确需重启请先向用户说明理由并获明确批准，然后带 confirm=true 重新调用"
+                            "已完成的任务禁止自动重启（禁止隐式重启）: done→非done 必须在当前用户明确授权后"
+                            "由模型显式传 confirm=true；程序不解析用户措辞代填授权"
                         )
                     self._cascade_premise_stale(goal_id, tasks, task_id)
                 task.status = status
@@ -423,7 +427,7 @@ class TaskStore:
             hot_used += 1
         for entry in fr["in_progress"]:
             t = entry["task"]
-            tag = " ⚠stalled(空转提示,重新评估/继续/放弃)" if entry["stalled"] else ""
+            tag = " stalled=true" if entry["stalled"] else ""
             if hot_used < HOT_TASK_LIMIT:
                 lines.append(f"  ◉ doing {t.task_id} {t.title[:60]}{tag}")
                 hot_used += 1
@@ -436,10 +440,9 @@ class TaskStore:
                 hot_used += 1
         if fr["unreachable"]:
             ids = ", ".join(t.task_id for t in fr["unreachable"][:5])
-            lines.append(f"  ⚠ unreachable-pending（依赖环或依赖已失败）: {ids} — 需解环/取消/拆分")
+            lines.append(f"  ⚠ unreachable-pending {ids} | reason=dependency_cycle_or_failed_dependency")
         for t in fr["premise_stale"]:
-            lines.append(f"  ◇ premise_stale {t.task_id} {t.title[:40]}（前置已重开，结论请复核）")
-        lines.append("  程序记账/模型决策: 领取用 task_update→in_progress, 完成须 evidence_refs（evidence_required 时）")
+            lines.append(f"  ◇ premise_stale {t.task_id} {t.title[:40]}")
         return "\n".join(lines)
 
     def summary_line(self, goal_id: str) -> str:

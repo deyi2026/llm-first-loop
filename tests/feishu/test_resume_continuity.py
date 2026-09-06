@@ -1,9 +1,9 @@
 """续聊上下文连续性测试（tasks 6.3/6.4；FTR-CONT-1~5、FTR-DFX-06/07/09/10）.
 
 覆盖：
-- detect_task_continuation 命中 /continue（与飞书指令同口径；变体/防误命中）。
-- 授权轮 [Next Step] 锚点注入（checkpoint 来源）+ wire 保留原始 /continue、零程序 prose。
-- 非授权轮零新增读取（E-G5）：无 [Next Step]、goal_read=0 审计在场。
+- /continue 是飞书显式控制命令，不依赖自然语言 continuation 分类器。
+- /continue 保留用户授权语义，但 task/checkpoint state 全部 retrieval-only。
+- 普通轮与续聊轮都不自动投影 Goal/Task/Next Step。
 - ResumeAnchorReader 三层降级优先级（execution-cursor > checkpoint > none）。
 - ResumeCoordinator.prepare_resume 只读预检：repaired / no_event_log 如实标注。
 - /continue 入口审计 continue_resume（anchor_source + repair_status 可还原）。
@@ -15,7 +15,6 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from llm_loop.core.loop.input_authorization import detect_task_continuation
 from llm_loop.event_log.store import EventStore
 from llm_loop.feishu.handlers import FeishuMessage, FeishuMessageHandler
 from llm_loop.feishu.resume import (
@@ -65,22 +64,9 @@ def _seed(engine, sid: str, *, with_checkpoint: bool = True):
     return goal
 
 
-# ── /continue 授权命中（tasks 5.3，ADR-4）──
+# ── /continue 显式控制命令：不经自然语言 TaskAuth 分类 ──
 
-
-def test_detect_task_continuation_continue_variants():
-    assert detect_task_continuation("/continue") is True
-    assert detect_task_continuation("/Continue") is True
-    assert detect_task_continuation("  /CONTINUE  ") is True
-    # 防误命中：前缀词/普通文本不得授权
-    assert detect_task_continuation("/continuation") is False
-    assert detect_task_continuation("什么是 /continue 命令") is False
-    assert detect_task_continuation("新问题：你好") is False
-    # 既有触发词表不回归（词表为完整短语，非单词"继续"）
-    assert detect_task_continuation("继续上次任务") is True
-
-
-# ── 授权轮 [Next Step] 注入（tasks 5.4/6.3-2，FTR-CONT-2、FTR-DFX-06）──
+# ── 授权轮 checkpoint next_step 不进入 prompt ──
 
 
 def test_authorized_continue_injects_next_step(build_test_engine):
@@ -91,8 +77,8 @@ def test_authorized_continue_injects_next_step(build_test_engine):
     engine.run(sid, "/continue")
     wire = _wire(fake)
 
-    assert "[Next Step] 跑数据分析第 3 步" in wire, "授权轮应注入 checkpoint 的 next_step"
-    assert "已完成数据清洗" not in wire.split("[Next Step]")[0], "锚点仅注入 next 行"
+    assert "[Next Step]" not in wire, "checkpoint next_step 不应替模型制定下一步"
+    assert "已完成数据清洗" not in wire, "checkpoint 摘要也不应自动进入 provider prompt"
     # 原始 /continue 原样在场（[指令·用户·原文] 段）、零程序 prose
     # （独立 user turn provenance 断言由 e2e T10 ④ 覆盖——飞书链路带 ingress 元数据）
     assert "/continue" in wire
@@ -108,7 +94,7 @@ def test_authorized_without_checkpoint_skips_next_step(build_test_engine):
     wire = _wire(fake)
 
     assert "[Next Step]" not in wire, "无锚点（next 为空）应跳过注入（不伪造）"
-    assert "slot:task_active" in wire, "既有授权投影不回归"
+    assert "slot:task_active" not in wire
 
 
 def test_unauthorized_zero_read_no_next_step(build_test_engine):
@@ -123,8 +109,7 @@ def test_unauthorized_zero_read_no_next_step(build_test_engine):
 
     assert "[Next Step]" not in wire, "非授权轮不得注入锚点"
     assert "slot:task_active" not in wire
-    zero = [c for c in spy.calls if c[:2] == ("task.active", "unauthorized_zero_projection")]
-    assert zero, "E-G5：非授权轮零 Goal/Task 读取审计必须在场"
+    assert not [c for c in spy.calls if c[0] in {"task.active", "task.frontier"}]
 
 
 # ── 锚点读取三层降级（tasks 5.1/6.3-4，ADR-5、FTR-DFX-10）──

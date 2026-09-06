@@ -94,7 +94,9 @@ def test_manifest_is_tail_regenerated_and_provider_neutral(tmp_path):
         sess, [], max_chars=200000, planned_label="deepseek/model"
     )
 
-    assert "VISIBLE_TO_MINIMAX_ONLY" not in str(deepseek)
+    # The hand-built provider-only marker is legacy/unscoped. Under a concrete
+    # model+budget contract it is intentionally reopened rather than hidden forever.
+    assert "VISIBLE_TO_MINIMAX_ONLY" in str(deepseek)
     assert "VISIBLE_TO_MINIMAX_ONLY" in str(minimax)
     assert _manifest(deepseek) == _manifest(minimax) == _manifest(deepseek_again) == ""
     md = engine.registry.evidence_recovery_manifest(limit=8)
@@ -121,9 +123,7 @@ def test_shadow_keeps_zero_prompt_schema_change_and_no_manifest(tmp_path):
     assert {"read_evidence", "search_evidence", "list_evidence"}.isdisjoint(names)
 
 
-def test_progressive_compression_captures_history_and_old_tool_ref_survives(tmp_path, monkeypatch):
-    monkeypatch.setenv("APPEND_COMPRESSION", "1")
-    monkeypatch.setenv("PROGRESSIVE_FOLD_K", "3")
+def test_physical_compaction_captures_history_and_old_tool_ref_survives(tmp_path, monkeypatch):
     monkeypatch.setenv("HEAD_KEEP_RATIO", "0")
     monkeypatch.setenv("HEAD_KEEP_FORCE_RATIO", "0")
     _, engine = _build_engine(tmp_path, manifest_limit=6)
@@ -155,7 +155,7 @@ def test_progressive_compression_captures_history_and_old_tool_ref_survives(tmp_
         manifests.append(manifest)
         counts.append(ledger.count(owner))
 
-    # Progressive folding may legitimately add new archived conversation records, but must
+    # Physical compaction may legitimately add new archived conversation records, but must
     # converge rather than re-archiving the same messages forever.
     assert counts == sorted(counts)
     assert counts[-1] <= len(sess.messages) + 1
@@ -174,8 +174,6 @@ def test_progressive_compression_captures_history_and_old_tool_ref_survives(tmp_
 
 
 def test_provider_switch_does_not_duplicate_already_captured_compressed_history(tmp_path, monkeypatch):
-    monkeypatch.setenv("APPEND_COMPRESSION", "1")
-    monkeypatch.setenv("PROGRESSIVE_FOLD_K", "0")
     monkeypatch.setenv("HEAD_KEEP_RATIO", "0")
     monkeypatch.setenv("HEAD_KEEP_FORCE_RATIO", "0")
     _, engine = _build_engine(tmp_path)
@@ -250,30 +248,9 @@ def test_manifest_is_bounded_and_prioritizes_tool_evidence_over_newer_conversati
     assert len(text) < 3000
 
 
-def test_manifest_also_survives_tool_round_zero_view(tmp_path):
-    _, engine = _build_engine(tmp_path)
-    sid = engine.session.create()
-    sess = engine.session.load(sid)
-    path = tmp_path / "round-zero.txt"
-    path.write_text("round zero evidence", encoding="utf-8")
-    ref = _capture_tool_evidence(engine, sid, path)
-    sess.messages.append(Message(role="user", content="old history", source=MessageSource.USER))
-    out = engine._build_llm_messages(
-        sess,
-        [],
-        max_chars=200000,
-        planned_label="deepseek/model",
-        tool_round_zero=True,
-    )
-    assert _manifest(out) == ""
-    manifest = engine.registry.evidence_recovery_manifest(limit=8)
-    assert manifest and ref in manifest
-
 
 def test_canonical_root_cause_recovery_chain_reads_source_once(tmp_path, monkeypatch):
     """R0-1 canonical: compression/rebuild/provider switch must not force a source re-read."""
-    monkeypatch.setenv("APPEND_COMPRESSION", "1")
-    monkeypatch.setenv("PROGRESSIVE_FOLD_K", "3")
     monkeypatch.setenv("HEAD_KEEP_RATIO", "0")
     monkeypatch.setenv("HEAD_KEEP_FORCE_RATIO", "0")
     _, engine = _build_engine(tmp_path, manifest_limit=8)
@@ -403,8 +380,6 @@ def test_canonical_root_cause_recovery_chain_reads_source_once(tmp_path, monkeyp
 
 
 def test_compressed_tool_message_reuses_original_evidence_ref(tmp_path, monkeypatch):
-    monkeypatch.setenv("APPEND_COMPRESSION", "1")
-    monkeypatch.setenv("PROGRESSIVE_FOLD_K", "0")
     monkeypatch.setenv("HEAD_KEEP_RATIO", "0")
     monkeypatch.setenv("HEAD_KEEP_FORCE_RATIO", "0")
     _, engine = _build_engine(tmp_path)
@@ -463,9 +438,6 @@ def test_compressed_tool_message_reuses_original_evidence_ref(tmp_path, monkeypa
 
 def test_enforce_compression_fails_closed_when_history_evidence_capture_fails(tmp_path, monkeypatch):
     import pytest
-
-    monkeypatch.setenv("APPEND_COMPRESSION", "1")
-    monkeypatch.setenv("PROGRESSIVE_FOLD_K", "0")
     monkeypatch.setenv("HEAD_KEEP_RATIO", "0")
     monkeypatch.setenv("HEAD_KEEP_FORCE_RATIO", "0")
     _, engine = _build_engine(tmp_path)
@@ -495,9 +467,6 @@ def test_enforce_compression_fails_closed_when_history_evidence_capture_fails(tm
 
 def test_context_compressed_event_carries_evidence_ref(tmp_path, monkeypatch):
     from llm_loop.event_log.store import EventStore
-
-    monkeypatch.setenv("APPEND_COMPRESSION", "1")
-    monkeypatch.setenv("PROGRESSIVE_FOLD_K", "0")
     monkeypatch.setenv("HEAD_KEEP_RATIO", "0")
     monkeypatch.setenv("HEAD_KEEP_FORCE_RATIO", "0")
     settings, engine = _build_engine(tmp_path)
@@ -582,8 +551,6 @@ def test_enforce_has_single_new_search_archive_alias_while_off_keeps_legacy(tmp_
 
 
 def test_identical_history_text_at_different_times_stays_distinct_without_msg_seq(tmp_path, monkeypatch):
-    monkeypatch.setenv("APPEND_COMPRESSION", "1")
-    monkeypatch.setenv("PROGRESSIVE_FOLD_K", "0")
     monkeypatch.setenv("HEAD_KEEP_RATIO", "0")
     monkeypatch.setenv("HEAD_KEEP_FORCE_RATIO", "0")
     _, engine = _build_engine(tmp_path)

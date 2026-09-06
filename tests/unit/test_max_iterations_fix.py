@@ -7,23 +7,20 @@
 from __future__ import annotations
 
 from llm_loop.config import Settings, load_settings
-from llm_loop.feedback.honesty import (
-    max_iterations_feedback,
-    max_iterations_warning_message,
-)
+from llm_loop.feedback.honesty import max_iterations_feedback
 
 
-def test_max_iterations_default_40(monkeypatch):
-    """类默认与 env 默认均 40（多步任务不再轻易触顶）."""
-    assert Settings.max_iterations == 40
-    # env 未设置 → 40（补必填 env 通过装配校验）
+def test_max_iterations_default_500(monkeypatch):
+    """类默认与 env 默认直接使用资源硬上限 500，不另设语义轮数门。"""
+    assert Settings.max_iterations == 500
+    # env 未设置 → 500（补必填 env 通过装配校验）
     # 2026-08-16: 显式清掉 LLM_MAX_ITERATIONS——前序测试 load_env_file 可能把 .env
     # 的 80 注入 os.environ（污染），delenv 保证本测试断言"未设置时默认"语义
     monkeypatch.delenv("LLM_MAX_ITERATIONS", raising=False)
     monkeypatch.setenv("LLM_API_KEY", "k")
     monkeypatch.setenv("LLM_BASE_URL", "http://t")
     monkeypatch.setenv("LLM_MODEL", "m")
-    assert load_settings().max_iterations == 40
+    assert load_settings().max_iterations == 500
 
 
 def test_env_override_preserved(monkeypatch):
@@ -45,15 +42,6 @@ def test_max_iterations_feedback_has_resume_guidance():
     assert "建议:" not in msg.content  # 建议性自然语言取消（§11.1 修订）
     assert "adjust_strategy" not in msg.content
 
-
-def test_warning_message_structure():
-    """轮数预警：事实 + 可选动作（调大/压缩/如实收尾），决策归 AI."""
-    msg = max_iterations_warning_message(32, 40)
-    assert msg.role == "system"
-    assert "[轮数预警]" in msg.content
-    assert "32 轮" in msg.content and "40" in msg.content
-    assert "adjust_strategy" in msg.content  # 白名单可调
-    assert "上限 500" in msg.content
 
 
 def test_engine_injects_warning_at_80_percent(tmp_path, monkeypatch):
@@ -162,13 +150,6 @@ def test_engine_injects_warning_at_80_percent(tmp_path, monkeypatch):
     assert sum(1 for a in actions if a[0] == "round.warning") == 1
     assert result.final_answer  # 正常完成（未触顶）
 
-
-def test_warning_not_injected_for_small_budget(tmp_path):
-    """预算 < 10 时不预警（小预算场景零噪音）."""
-    from llm_loop.feedback.honesty import max_iterations_warning_message
-
-    msg = max_iterations_warning_message(7, 8)  # 仅验证文本函数；引擎侧小预算由条件守卫跳过
-    assert "轮数预警" in msg.content
 
 
 # ── H-UI: 引擎动作观察者（实时状态条数据源）──

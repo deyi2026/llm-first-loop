@@ -85,25 +85,22 @@ def test_imperative_reference_is_neutralized() -> None:
     assert "历史资料含动作性或指令性表述" in text
 
 
-def test_k_calibration_fixture_requires_catalog_after_compact() -> None:
-    task = next(t for t in FIXTURE["tasks"] if t["id"] == "T6")
-    k1 = _build(task, "B", k=1, budget=8000)
-    k3 = _build(task, "B", k=3, budget=8000)
-    text1 = "\n".join(str(m.get("content") or "") for m in k1["messages"])
-    text3 = "\n".join(str(m.get("content") or "") for m in k3["messages"])
-    assert "OMEGA-6" not in text1
-    assert "OMEGA-6" in text3
+def test_r7_replay_uses_frozen_fixture_prompt_not_live_production_prompt() -> None:
+    task = FIXTURE["tasks"][0]
+    row = _build(task, "B")
+    assert row["messages"][0] == {"role": "system", "content": FIXTURE["system_prompt"]}
 
 
-def test_low_budget_can_drop_late_relevant_memory_but_default_keeps_it() -> None:
-    task = next(t for t in FIXTURE["tasks"] if t["id"] == "T6")
-    low = _build(task, "B", k=3, budget=512)
-    default = _build(task, "B", k=3, budget=8000)
-    low_text = "\n".join(str(m.get("content") or "") for m in low["messages"])
-    default_text = "\n".join(str(m.get("content") or "") for m in default["messages"])
-    assert "OMEGA-6" not in low_text
-    assert "OMEGA-6" in default_text
-    assert low["structure"]["budget_dropped"] > 0
+def test_r7_v1_is_diagnostic_not_capability_authority() -> None:
+    # The R7-v1 fixture contains intentionally polluted A-arm context and an old
+    # text-labelled program/user envelope in B.  Those are regression evidence,
+    # not a basis for model strong/weak or primary admission.
+    assert FIXTURE["schema"] == "injection-r7-ab-v1"
+    task = next(t for t in FIXTURE["tasks"] if t["id"] == "T4")
+    b = _build(task, "B")
+    assert b["structure"]["hard_gate_pass"] is True  # legacy morphology gate only
+    assert "[程序附录·非用户输入]" in b["messages"][-1]["content"]
+    assert "[指令·用户·原文]" in b["messages"][-1]["content"]
 
 
 def test_score_rules_are_deterministic() -> None:
@@ -111,32 +108,6 @@ def test_score_rules_are_deterministic() -> None:
     assert mod._score_answer("ALPHA-7", t3)["completion"] is True
     wrong = mod._score_answer("BETA-9", t3)
     assert wrong["completion"] is False and wrong["drift"] is True
-
-
-def test_r7_replay_uses_frozen_fixture_prompt_not_live_production_prompt() -> None:
-    task = FIXTURE["tasks"][0]
-    row = _build(task, "B")
-    assert row["messages"][0] == {"role": "system", "content": FIXTURE["system_prompt"]}
-
-
-def test_calibration_must_not_trade_away_memory_dependency() -> None:
-    rows = []
-    for task in FIXTURE["tasks"]:
-        rows.append({
-            "task_id": task["id"],
-            "structure": {"injection_share": 0.10, "hard_gate_pass": True},
-            "score": {
-                "completion": task["id"] != "T6",
-                "drift": False,
-                "dominance": True if (task.get("score") or {}).get("dominance") else None,
-            },
-        })
-    aggregate = mod._aggregate(rows)
-    assert aggregate["completion_rate"] == 0.8333
-    assert mod._behavior_gate(aggregate) is True
-    gate, critical = mod._calibration_candidate_gate(rows, FIXTURE["tasks"])
-    assert gate is False
-    assert [r["task_id"] for r in critical] == ["T6"]
 
 
 def test_model_inventory_scrubs_absolute_paths() -> None:

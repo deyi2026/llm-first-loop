@@ -72,6 +72,13 @@ def _safe_error_record(exc: Exception, elapsed_s: float) -> dict[str, Any]:
 
 
 def _classification(model_result: dict[str, Any]) -> dict[str, Any]:
+    """Do not derive model capability tiers from the legacy R7 pollution replay.
+
+    R7 A-arm measures resilience to an intentionally broken LFL prompt shape.  That
+    is useful diagnostic evidence about prompt pollution, but it is not a model
+    capability or admission test.  A model must not be penalized for failing to
+    recover from context corruption that LFL itself should remove.
+    """
     a_rows = list(model_result.get("A") or [])
     if not a_rows:
         return {"tier": "unknown", "reason": "no_a_arm_evidence"}
@@ -85,15 +92,11 @@ def _classification(model_result: dict[str, Any]) -> dict[str, Any]:
             "reason": "transport_incomplete",
             "transport_failures": int(transport_failures),
         }
-    agg = model_result.get("aggregate_A") or _aggregate(a_rows)
-    completion = float(agg.get("completion_rate", 0.0))
-    drift = float(agg.get("drift_rate", 0.0))
-    dominance = float(agg.get("user_dominance_rate", 0.0))
-    if completion == 1.0 and drift == 0.0 and dominance == 1.0:
-        return {"tier": "strong", "reason": "r7_a_strong_gate"}
-    if completion < 0.80 or dominance < 0.90:
-        return {"tier": "weak", "reason": "r7_a_weak_gate"}
-    return {"tier": "unknown", "reason": "r7_a_inconclusive"}
+    return {
+        "tier": "unknown",
+        "reason": "legacy_r7_not_capability_authority",
+        "legacy_resilience": model_result.get("aggregate_A") or _aggregate(a_rows),
+    }
 
 
 def _make_client(registry: ProviderRegistry, model_label: str, max_tokens: int) -> LLMClient:

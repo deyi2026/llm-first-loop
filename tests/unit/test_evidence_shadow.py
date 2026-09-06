@@ -34,14 +34,13 @@ def test_shadow_captures_pretrim_read_file_without_changing_visible_result(tmp_p
     path.write_text("A" * 5000 + middle_marker + "Z" * 5000, encoding="utf-8")
 
     # Legacy result is our control: no shadow hook, no extra raw observation retained.
-    control_registry = ToolRegistry(summary_threshold=12000)
+    control_registry = ToolRegistry()
     control_registry.register(ReadFileTool())
     control = control_registry.execute(
         ToolCall(id="control-call", name="read_file", arguments={"path": str(path)})
     )
     assert control.raw_observation is None
-    assert middle_marker not in control.content
-    assert "[输出已截断]" in control.content
+    assert middle_marker in control.content
 
     blobs, ledger = _stores(tmp_path)
     recorder = EvidenceShadowRecorder(
@@ -49,7 +48,7 @@ def test_shadow_captures_pretrim_read_file_without_changing_visible_result(tmp_p
         owner_resolver=_owner,
         clock=lambda: datetime(2026, 8, 26, 7, 0, tzinfo=UTC),
     )
-    registry = ToolRegistry(summary_threshold=12000)
+    registry = ToolRegistry()
     registry.register(ReadFileTool())
     registry.set_evidence_shadow_hook(recorder)
     shadow = registry.execute(
@@ -58,8 +57,7 @@ def test_shadow_captures_pretrim_read_file_without_changing_visible_result(tmp_p
 
     # Shadow must not alter any model-visible legacy bytes.
     assert shadow.content == control.content
-    assert middle_marker not in shadow.content
-    assert "[输出已截断]" in shadow.content
+    assert middle_marker in shadow.content
 
     manifest = ManifestProjector(ledger).build_recent(owner=_owner(), limit=10)
     assert len(manifest.entries) == 1
@@ -121,7 +119,7 @@ def test_removing_shadow_hook_restores_no_raw_retention(tmp_path, monkeypatch):
     path = tmp_path / "large.txt"
     path.write_text("X" * 8000, encoding="utf-8")
     blobs, ledger = _stores(tmp_path)
-    registry = ToolRegistry(summary_threshold=12000)
+    registry = ToolRegistry()
     registry.register(ReadFileTool())
     registry.set_evidence_shadow_hook(
         EvidenceShadowRecorder(

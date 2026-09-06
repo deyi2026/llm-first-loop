@@ -1,7 +1,7 @@
 """EVO-20260818 cache_window_converge: 窗口感知预算与载荷校验测试（spec §5.5.1-8，grill-me Q18）.
 
-覆盖: _effective_history_budget（M54: min(全局, context×2×0.5) + provider 预算收紧）、
-_check_context_fit（M53: 超限载荷拒绝不发送——豁免配置切小窗口模型时不 provider 400）。
+覆盖: _effective_history_budget（显式 operator/provider cap + 当前模型物理窗口/output reserve）。
+实际 provider overflow 的恢复由 overflow lifecycle 独立测试。
 """
 
 from types import SimpleNamespace
@@ -25,7 +25,7 @@ class _Pool:
 class _DummyRouting(RoutingService):
     """免装配 routing 服务（仅测预算/载荷函数；W4-02b 起自托管 _host）."""
 
-    def __init__(self, global_budget: int = 1000000, ctx: int | None = 131072):
+    def __init__(self, global_budget: int | None = 1000000, ctx: int | None = 131072):
         self.runtime = None
         self.settings = SimpleNamespace(history_max_chars=global_budget)
         self.llm_pool = _Pool()
@@ -36,17 +36,44 @@ class _DummyRouting(RoutingService):
         return self._ctx
 
     def _runtime_history_budget(self) -> int:
-        return self.settings.history_max_chars
+        # Unconfigured path deliberately returns a tiny compatibility value to
+        # prove RoutingService no longer treats this diagnostic as a hidden cap.
+        return self.settings.history_max_chars or 1234
 
 
 def test_effective_budget_clamped_to_window():
-    """1M 豁免 + 131K 窗口 → effective = min(1M, 131072×0.6×0.5) = 39321 字符.
+    """1M 全局预算 + 131K 窗口 → 只按真实输入安全边界收紧。
 
     2026-08-24 估算校准（拷问产出）: _CHARS_PER_TOKEN_EST 2 → 0.6（实测大上下文
-    1.676 tok/char）——窗口感知预算随估算同步收紧（131072×2×0.5=131072 → 39321）。
+    1.676 tok/char）。2026-09-04 agency-first 修正移除独立 0.5 历史启发式：
+    131072×0.9×0.6 = 70778 字符；该值用于历史预算规划，不是 provider 前硬拒绝器。
     """
     r = _DummyRouting(global_budget=1000000, ctx=131072)
-    assert r._effective_history_budget("test/m") == 39321
+    assert r._effective_history_budget("test/m") == 70778
+
+
+def test_unconfigured_global_budget_uses_current_model_window_not_legacy_cap():
+    """history_max_chars=None → 当前路由模型窗口是 authoritative budget。"""
+    r = _DummyRouting(global_budget=None, ctx=1_000_000)
+    assert r._effective_history_budget("test/m") == 540_000
+    detail = r._effective_history_budget_detail("test/m")
+    assert detail["configured_global_budget"] is None
+    assert detail["effective_budget"] == 540_000
+    assert detail["limited_by"] == "model_window"
+
+
+def test_unconfigured_budget_expands_when_session_switches_to_larger_window():
+    """未配置 cap 时，小窗→大窗必须可扩容，不能冻结为启动模型预算。"""
+    r = _DummyRouting(global_budget=None, ctx=131072)
+    assert r._effective_history_budget("test/m") == 70778
+    r._ctx = 1_000_000
+    assert r._effective_history_budget("test/m") == 540_000
+
+
+def test_explicit_global_budget_still_caps_large_window():
+    """operator 显式 HISTORY_MAX_CHARS 仍是硬意图，不因大窗口被忽略。"""
+    r = _DummyRouting(global_budget=160_000, ctx=1_000_000)
+    assert r._effective_history_budget("test/m") == 160_000
 
 
 def test_effective_budget_unknown_window_with_pool():
@@ -74,35 +101,3 @@ def test_effective_budget_provider_cap():
     r = _DummyRouting(global_budget=1000000, ctx=131072)
     r.llm_pool = _PoolCap()
     assert r._effective_history_budget("local/m") == 12000
-
-
-def test_check_context_fit_rejects_overflow():
-    """超限载荷 → 拒绝文案（不发送，无 provider 400）."""
-    big = "x" * 300_000  # 300K 字符 ≈ 150K tokens > 131072×0.9（安全边距后）
-    msgs = [{"role": "user", "content": big}]
-    refusal = RoutingService._check_context_fit(msgs, [], 131072, "test/m")
-    assert refusal is not None
-    assert "[上下文超限]" in refusal
-    assert "131072" in refusal
-
-
-def test_check_context_fit_allows_within():
-    """未超限 → None（放行）."""
-    msgs = [{"role": "user", "content": "hi" * 1000}]
-    assert RoutingService._check_context_fit(msgs, [], 131072, "test/m") is None
-
-
-def test_check_context_fit_accounts_max_tokens_output_budget():
-    # EVO-20260818: 输出预算占用窗口——local 131K + 16K 输出时允许输入须扣减
-    # 2026-08-24 估算校准后（0.6 chars/token）: 边界字符 = (131072-16384)×0.6 ≈ 68.8K 字符
-    big = 'x' * 240_000  # est 400K tokens >> 窗口——必拒绝
-    msgs = [{'role': 'user', 'content': big}]
-    refusal = RoutingService._check_context_fit(msgs, [], 131072, 'local/m', max_tokens=16384)
-    assert refusal is not None, '240K 字符载荷（est 400K tokens）超 131K 窗口——应拒绝'
-    # 69.5K 字符 ≈ 115.8K tokens（0.6 估算）: 无 max_tokens 放行（≤0.9 边距 117965），
-    # +16K 输出扣减后（≤114688）拒绝——验证"输出预算占用窗口"扣减语义
-    msgs3 = [{'role': 'user', 'content': 'x' * 69_500}]
-    assert RoutingService._check_context_fit(msgs3, [], 131072, 'test/m') is None
-    assert RoutingService._check_context_fit(msgs3, [], 131072, 'local/m', max_tokens=16384) is not None
-    # 无 max_tokens（默认 0）→ 行为不变（0.9 边距）
-    assert RoutingService._check_context_fit(msgs, [], 131072, 'test/m') is not None

@@ -85,3 +85,19 @@ def test_strict_execution_claim_still_checked():
     """约束: 严格行为声明（'已执行命令'）不受 B2/B3 影响仍被抽取——防误豁免漏网."""
     decls = _extract("已执行命令 git status，工作区干净。")
     assert decls and any("已执行" in d for d in decls)
+
+
+# ── Agency-first: 否定动作不是完成声明 ──
+def test_negative_execution_statement_exempt():
+    decls = _extract("按你的要求，仅恢复状态，未执行任何修改、命令或任务推进。")
+    assert decls == [], f"否定动作不得被伪造为完成声明: {decls}"
+
+
+def test_negative_modify_statement_exempt():
+    decls = _extract("没有修改配置，也没有创建文件。")
+    assert decls == [], f"否定动作不得要求成功回执: {decls}"
+
+
+def test_mixed_negative_and_positive_statement_still_checked():
+    decls = _extract("未修改配置，但已执行命令 git status。")
+    assert decls and any("执行" in d for d in decls), "独立正向完成声明不得被否定子句掩盖"

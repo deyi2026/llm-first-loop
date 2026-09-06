@@ -21,10 +21,22 @@ from llm_loop.core.run_context import (
     current_reasoning_effort as _current_reasoning_effort,
 )
 from llm_loop.core.run_context import (
+    current_reasoning_mode as _current_reasoning_mode,
+)
+from llm_loop.core.run_context import (
     current_session_id as _current_session_id,
 )
 from llm_loop.core.run_context import (
     current_workspace_root as _current_workspace_root,
+)
+from llm_loop.core.trace_leak.ingress_token import (
+    IngressToken,
+)
+from llm_loop.core.trace_leak.ingress_token import (
+    current_ingress_session_id as _current_ingress_session_id,
+)
+from llm_loop.core.trace_leak.ingress_token import (
+    current_ingress_token as _current_ingress_token,
 )
 
 if TYPE_CHECKING:
@@ -39,6 +51,7 @@ class _RunEntrypointMixin:
     def run_stream(
         self, session_id: str, user_text: str, model: str | None = None,
         reasoning_effort: str | None = None,
+        reasoning_mode: str | None = None,
         *, ingress: object | None = None,
     ) -> Iterator[StreamDelta]:
         """单条用户消息的完整循环（流式）：逐 content delta yield，结束返回 LoopResult.
@@ -88,6 +101,9 @@ class _RunEntrypointMixin:
             run_workspace = self.workspace_root or ""
 
         run_effort = reasoning_effort or ""
+        run_reasoning_mode = (reasoning_mode or "auto").strip().lower()
+        if run_reasoning_mode not in {"auto", "off", "on"}:
+            run_reasoning_mode = "auto"
         run_model_label = ""
         _run_stack = ExitStack()
         _run_save_token: object | None = None
@@ -98,11 +114,20 @@ class _RunEntrypointMixin:
             sid_token = _current_session_id.set(session_id)
             ws_token = _current_workspace_root.set(run_workspace)
             effort_token = _current_reasoning_effort.set(run_effort)
+            reasoning_mode_token = _current_reasoning_mode.set(run_reasoning_mode)
             model_token = _current_model_label.set(run_model_label)
+            bound_ingress = ingress if isinstance(ingress, IngressToken) else None
+            ingress_token = _current_ingress_token.set(bound_ingress)
+            ingress_sid_token = _current_ingress_session_id.set(
+                session_id if bound_ingress is not None else ""
+            )
             try:
                 yield
             finally:
+                _current_ingress_session_id.reset(ingress_sid_token)
+                _current_ingress_token.reset(ingress_token)
                 _current_model_label.reset(model_token)
+                _current_reasoning_mode.reset(reasoning_mode_token)
                 _current_reasoning_effort.reset(effort_token)
                 _current_workspace_root.reset(ws_token)
                 _current_session_id.reset(sid_token)
@@ -130,6 +155,7 @@ class _RunEntrypointMixin:
                     # inner 可在工具轮临时把 effort 调成 low，也会在每轮刷新 model label；
                     # 捕获后跨 yield 保存，下一次即使换 Context 也精确恢复本 run 状态。
                     run_effort = _current_reasoning_effort.get()
+                    run_reasoning_mode = _current_reasoning_mode.get() or run_reasoning_mode
                     run_model_label = _current_model_label.get()
                 try:
                     yield delta
@@ -167,6 +193,7 @@ class _RunEntrypointMixin:
         user_text: str,
         model: str | None = None,
         reasoning_effort: str | None = None,
+        reasoning_mode: str | None = None,
         *,
         ingress: object | None = None,
     ) -> LoopResult:
@@ -177,6 +204,7 @@ class _RunEntrypointMixin:
         """
         it = self.run_stream(
             session_id, user_text, model, reasoning_effort=reasoning_effort,
+            reasoning_mode=reasoning_mode,
             ingress=ingress,
         )
         while True:
@@ -194,6 +222,7 @@ class _RunEntrypointMixin:
         user_text: str,
         model: str | None = None,
         reasoning_effort: str | None = None,
+        reasoning_mode: str | None = None,
         *,
         on_run_acquired: Any = None,
         expected_workspace_epoch: int | None = None,
@@ -203,7 +232,7 @@ class _RunEntrypointMixin:
         marker = self._session_lifecycle._install_run_acquired_callback(session_id, on_run_acquired)
         it = self.run_stream(
             session_id, user_text, model=model, reasoning_effort=reasoning_effort,
-            ingress=ingress,
+            reasoning_mode=reasoning_mode, ingress=ingress,
         )
         try:
             # 首次next执行run_stream admission；与epoch校验同处workspace guard内，
@@ -231,6 +260,7 @@ class _RunEntrypointMixin:
         user_text: str,
         model: str | None = None,
         reasoning_effort: str | None = None,
+        reasoning_mode: str | None = None,
         *,
         on_run_acquired: Any = None,
         expected_workspace_epoch: int | None = None,
@@ -240,7 +270,7 @@ class _RunEntrypointMixin:
         marker = self._session_lifecycle._install_run_acquired_callback(session_id, on_run_acquired)
         it = self.run_stream(
             session_id, user_text, model=model, reasoning_effort=reasoning_effort,
-            ingress=ingress,
+            reasoning_mode=reasoning_mode, ingress=ingress,
         )
         try:
             with self._workspace_transition_guard:

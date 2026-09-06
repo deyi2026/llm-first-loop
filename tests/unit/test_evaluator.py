@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 
 from llm_loop.introspection.evaluator import (
-    EvalTriggerDetector,
     SelfEvaluator,
 )
 
@@ -81,7 +80,9 @@ def test_evaluate_five_metrics(tmp_path):
     # 工具效率 = 18/20 = 0.9
     assert metrics["tool_efficiency"].value == 0.9
     # 诚实性 = 20/21
-    assert round(metrics["honesty_rate"].value, 4) == round(20 / 21, 4)
+    honesty = metrics["honesty_rate"].value
+    assert honesty is not None
+    assert round(honesty, 4) == round(20 / 21, 4)
     # 异常率 = 3/10 = 0.3
     assert metrics["exception_rate"].value == 0.3
     # 停滞率: 10 条 llm_error（9 条同指纹重复）→ 9/50 = 0.18
@@ -190,36 +191,8 @@ def test_two_evaluations_metric_readable(tmp_path):
     assert not hasattr(evaluator, "compare")
 
 
-# ── EvalTriggerDetector（T63）──
-def test_trigger_periodic():
-    """定期触发: rounds % interval == 0."""
-    d = EvalTriggerDetector(interval_rounds=50)
-    t = d.check(rounds=50)
-    assert t is not None and t.trigger == "periodic"
-    assert d.check(rounds=25) is None
 
 
-def test_trigger_milestone():
-    """里程碑触发: run 完成/会话结束."""
-    d = EvalTriggerDetector()
-    t = d.check(rounds=3, task_completed=True)
-    assert t is not None and t.trigger == "milestone"
-    t2 = d.check(rounds=3, session_ended=True)
-    assert t2 is not None and t2.trigger == "milestone"
-
-
-def test_trigger_none_no_condition():
-    """无命中条件 → None（仅提示不强制，EVAL-03）."""
-    d = EvalTriggerDetector(interval_rounds=50)
-    assert d.check(rounds=10) is None
-
-
-def test_trigger_no_recent_params():
-    """M16 审计（FR-AUDIT-AI-04/08）: check() 无 recent_* 入参（异常触发移交 AI）."""
-    d = EvalTriggerDetector(interval_rounds=50)
-    # periodic/milestone 仍正常
-    assert d.check(rounds=50, task_completed=False).trigger == "periodic"
-    assert d.check(rounds=5, task_completed=True).trigger == "milestone"
 
 
 def test_eval_id_unique_across_runs(tmp_path):
@@ -292,3 +265,89 @@ def test_time_filter_disabled_window_zero(tmp_path):
     report = ev.evaluate(session_id="s1", trigger="manual")
     metrics = {m.name: m for m in report.metrics}
     assert metrics["exception_rate"].value == 0.5  # 4/8 全部计入
+
+
+def test_self_eval_persists_false_declaration_refs_without_receipt_duplication(tmp_path):
+    """False 样本可追溯，但 self_eval 不复制 declaration_check 的大 receipts。"""
+    _write_jsonl(
+        tmp_path / "declaration_check.jsonl",
+        [
+            {
+                "id": "DC-ok", "ts": "", "consistent": True,
+                "declarations": ["已读取文件"], "discrepancies": [],
+                "cross_round_hits": [], "tool_call_ids": ["ok-1"],
+                "receipts": ["R" * 4000],
+            },
+            {
+                "id": "DC-bad", "ts": "", "consistent": False,
+                "declarations": ["已写入不存在的文件"],
+                "discrepancies": ["本轮未见写入成功"],
+                "cross_round_hits": ["跨轮候选未命中"],
+                "tool_call_ids": ["bad-1"],
+                "receipts": ["VERY-LARGE-RECEIPT-" + "X" * 4000],
+            },
+        ],
+    )
+    evaluator = SelfEvaluator(
+        status_provider=_Status(), audit_dir=tmp_path, min_samples=1, span=50, window_hours=0
+    )
+    report = evaluator.evaluate(session_id="s1", trigger="manual")
+    row = json.loads((tmp_path / "self_eval_log.jsonl").read_text().splitlines()[-1])
+    diag = row["diagnostics"]["declaration_check"]
+    assert diag["sample_size"] == 2
+    assert diag["false_count"] == 1
+    sample = diag["false_samples"][0]
+    assert sample["ref"] == "DC-bad"
+    assert sample["tool_call_ids"] == ["bad-1"]
+    assert sample["declaration_summary"] == "已写入不存在的文件"
+    assert sample["discrepancy_summary"] == "本轮未见写入成功"
+    assert sample["cross_round_hit"] is True
+    assert "receipts" not in sample
+    assert "VERY-LARGE-RECEIPT" not in json.dumps(row, ensure_ascii=False)
+
+    from llm_loop.introspection.search import RecordSearcher
+    searcher = RecordSearcher(audit_dir=tmp_path)
+    exact = searcher.search(kind="self_eval", query=report.eval_id, limit=10)
+    assert exact and exact[0]["id"] == report.eval_id
+    assert exact[0]["diagnostics"]["declaration_check"]["false_samples"][0]["ref"] == "DC-bad"
+    broad = searcher.search(kind="self_eval", query="SE-", limit=10)
+    assert broad
+    assert all("diagnostics" not in hit for hit in broad), "宽检索不应自动灌入逐样本明细"
+
+    hydrated = searcher.search(kind="declaration_check", query="DC-bad", limit=10)
+    assert hydrated and hydrated[0]["hydrated"] is True
+    assert hydrated[0]["detail"]["tool_call_ids"] == ["bad-1"]
+    assert hydrated[0]["detail"]["receipts"][0].startswith("VERY-LARGE-RECEIPT-")
+    indexed = searcher.search(kind="declaration_check", query="False", limit=10)
+    assert indexed and all("detail" not in hit for hit in indexed), "宽检索只能给轻量索引"
+
+
+def test_self_eval_omits_diagnostics_when_no_false_declarations(tmp_path):
+    _write_jsonl(
+        tmp_path / "declaration_check.jsonl",
+        [{"id": "DC-ok", "ts": "", "consistent": True}],
+    )
+    evaluator = SelfEvaluator(
+        status_provider=_Status(), audit_dir=tmp_path, min_samples=1, span=50, window_hours=0
+    )
+    evaluator.evaluate(session_id="s1", trigger="manual")
+    row = json.loads((tmp_path / "self_eval_log.jsonl").read_text().splitlines()[-1])
+    assert "diagnostics" not in row
+
+
+def test_declaration_check_legacy_line_ref_hydrates_exact_sample(tmp_path):
+    _write_jsonl(
+        tmp_path / "declaration_check.jsonl",
+        [{
+            "ts": "legacy", "consistent": False,
+            "declarations": ["legacy declaration"],
+            "discrepancies": ["legacy gap"],
+            "receipts": ["legacy full receipt"],
+        }],
+    )
+    from llm_loop.introspection.search import RecordSearcher
+    hit = RecordSearcher(audit_dir=tmp_path).search(
+        kind="declaration_check", query="declaration_check.jsonl:L1", limit=10
+    )
+    assert hit and hit[0]["source_ref"] == "declaration_check.jsonl:L1"
+    assert hit[0]["detail"]["receipts"] == ["legacy full receipt"]

@@ -3,12 +3,10 @@
 覆盖（对齐设计包 §4.1 结构硬门）：
 - D-G1: off（默认 enforce）模式 REFERENCE appendix 回喂路径 chars=0 +
         quarantine 文件落盘 + leak.quarantined 事件在场（sha1/basis/preview≤200 无原文）
-- D-G2: 双静态断言 CI 常驻——PROMPT_DYNAMIC_PRODUCER_SLOTS 不含 leak_downgrade
-        （allowlist 本体）+ build.py 无"无门控的 _leak_downgrade_parts → _inject_parts
-        旁路追加"（旁路仅存于 on/shadow 回滚分支内，默认不可达）
+- D-G2: leak_downgrade 永久无 prompt plumbing；on/shadow 仅改变审计语义。
 - D-G3: default mode=fail-closed（enforce）配置断言 + 无 token user 写入 drop +
         有 token（issue_test_ingress 白名单路径）放行双态
-- shadow 态 would_quarantine 计数 + 行为零变化对照；on 态与现状逐字节一致
+- shadow 态 would_quarantine 计数；on/shadow/provider chars 均为 0。
 - census 计数对账：leak.quarantined 事件数 == quarantine 文件数
 - guard operator 覆盖审计（leak.guard_override）演练留痕
 """
@@ -174,18 +172,18 @@ class TestShadowAndRollback:
     def test_shadow_would_quarantine_counted_and_behavior_unchanged(
         self, tmp_path: Path, sink: _CaptureSink, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """④ shadow：would_quarantine 计数在场且回喂照旧（与 on 态产物一致）."""
+        """shadow/on 只改变审计事件，不恢复 model-visible leaked prose."""
         monkeypatch.setenv(QUARANTINE_ENV, "shadow")
         engine, sess, leaked, out_shadow = _build_with_mislabel(tmp_path, sink)
         assert leak_events.LEAK_WOULD_QUARANTINE in sink.kinds()
         wp = sink.of(leak_events.LEAK_WOULD_QUARANTINE)[0]
         assert wp["chars"] == len(leaked.content)
         assert wp["quarantine_mode"] == "shadow"
-        # 行为零变化：shadow 与 on 同产物（回喂照旧）
+        # 两种 rollback audit mode 都没有 provider prompt 权限。
         monkeypatch.setenv(QUARANTINE_ENV, "on")
         engine2, sess2, leaked2, out_on = _build_with_mislabel(tmp_path, sink)
-        assert _provider_chars(out_shadow, leaked.content) > 0, "shadow 回喂照旧"
-        assert _provider_chars(out_on, leaked2.content) > 0, "on 回喂照旧"
+        assert _provider_chars(out_shadow, leaked.content) == 0
+        assert _provider_chars(out_on, leaked2.content) == 0
         # shadow 期间不产生 quarantine 副作用（计数态零行为变化）
         assert leak_events.LEAK_QUARANTINED not in [
             k for k, _ in sink.events[: len(sink.events)]
@@ -238,40 +236,19 @@ class TestDg2StaticAssertions:
 
         assert "leak_downgrade" not in PROMPT_DYNAMIC_PRODUCER_SLOTS
 
-    def test_build_bypass_append_gated(self) -> None:
-        """build.py 中 `_leak_downgrade_parts → _inject_parts` 追加仅存于
-        on/shadow 回滚分支内（默认 off 不可达；无门控追加路径 = 0）。"""
-        import inspect
+    def test_build_has_no_dynamic_prompt_assembly_control_plane(self) -> None:
+        """leak_downgrade evidence has no model-visible program-prompt assembler."""
+        import importlib.util
 
-        from llm_loop.core.loop import build as build_mod
+        assert importlib.util.find_spec(
+            "llm_loop.core.prompt_build.stages.injection_assembly"
+        ) is None
 
-        src = inspect.getsource(build_mod)
-        lines = src.splitlines()
-        for i, line in enumerate(lines):
-            if "_leak_downgrade_parts" in line and "_inject_parts" in line:
-                window = "\n".join(lines[max(0, i - 6) : i])
-                assert (
-                    "current_quarantine_mode" in window
-                    and '("on", "shadow")' in window
-                ), (
-                    f"发现无门控的旁路追加（build.py 源码第 {i} 行附近）："
-                    "_leak_downgrade_parts 并入 _inject_parts 必须位于"
-                    " LFL_LEAK_QUARANTINE on/shadow 回滚分支内（D-G2）"
-                )
+    def test_dynamic_producer_registry_is_empty(self) -> None:
+        """No legacy slot, including leak_downgrade, can regain prompt authority."""
+        from llm_loop.core.prompt_eligibility import PROMPT_DYNAMIC_PRODUCER_SLOTS
 
-    def test_known_slots_registry_excludes_leak_downgrade(self) -> None:
-        """β 聚合口 _known_slots 槽键已移除（DT-1.2②；on 回滚态产物触发
-        overreach 观测事件 = 回滚通道使用审计留痕）。
-        B4-C3-02: β 观测段迁 stages/injection_assembly，静态断言随结构走。"""
-        import inspect
-
-        from llm_loop.core.prompt_build.stages import injection_assembly as build_mod
-
-        src = inspect.getsource(build_mod)
-        idx = src.find("_known_slots = {")
-        assert idx >= 0
-        segment = src[idx : idx + 400]
-        assert "leak_downgrade" not in segment
+        assert not PROMPT_DYNAMIC_PRODUCER_SLOTS
 
     def test_invariant_marker_preserved(self) -> None:
         """DT-1.2④: invariant.py / downgrade_message 的 injection_kind=

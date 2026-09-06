@@ -10,8 +10,6 @@ from pathlib import Path
 
 import pytest
 
-from llm_loop.core.loop.engine_services.routing import RoutingService
-
 LOOP_DIR = Path(__file__).resolve().parents[2] / "src" / "llm_loop" / "core" / "loop"
 
 
@@ -52,21 +50,3 @@ def test_run_stream_delegation_points(engine_src):
     assert "self._route_model(" in engine_src
     assert "self._termination._handle_overflow(" in engine_src
     assert "yield from self._tool_cycle._execute_tools(" in engine_src
-
-
-def test_local_tool_allowlist_filter():
-    """EVO-20260817: local provider 工具精简（固定白名单, 省 token 不影响推理）."""
-    schemas = [
-        {"name": "read_file"},
-        {"name": "web_fetch"},
-        {"name": "submit_evolution"},
-        {"name": "switch_model"},
-        {"name": "get_tool_schema"},
-    ]
-    kept = RoutingService._filter_local_tools(None, schemas, "local/qwen3.8-27b-mlx")
-    names = [t["name"] for t in kept]
-    assert "read_file" in names and "web_fetch" in names and "get_tool_schema" in names
-    assert "submit_evolution" not in names and "switch_model" not in names
-    # 非 local provider 零回归
-    kept2 = RoutingService._filter_local_tools(None, schemas, "deepseek/deepseek-v4-flash")
-    assert len(kept2) == len(schemas)

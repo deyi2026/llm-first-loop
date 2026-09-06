@@ -6,6 +6,7 @@ import pytest
 
 from llm_loop.config import Settings
 from llm_loop.core.message import RecoverabilityStatus, ToolCall, ToolResult, ToolResultStatus
+from llm_loop.memory.archive import ArchiveStore
 from llm_loop.memory.evidence import (
     BlobStore,
     EvidenceCapture,
@@ -69,7 +70,7 @@ def test_enforce_read_file_captures_before_projection_and_hydrates_hidden_middle
     path.write_text("A" * 6000 + marker + "Z" * 6000, encoding="utf-8")
 
     blobs, ledger, enforcer = _enforcer(tmp_path, projection_budget_chars=700)
-    registry = ToolRegistry(summary_threshold=12000, max_output_chars=20000)
+    registry = ToolRegistry(max_output_chars=20000)
     registry.register(ReadFileTool())
     registry.set_evidence_enforcer(enforcer)
 
@@ -206,7 +207,7 @@ def test_enforce_large_read_file_does_not_create_legacy_tool_sidecar(tmp_path, m
     path.write_text("A" * 12000, encoding="utf-8")
 
     _, _, enforcer = _enforcer(tmp_path, projection_budget_chars=600)
-    registry = ToolRegistry(summary_threshold=12000)
+    registry = ToolRegistry()
     registry.register(ReadFileTool())
     registry.set_evidence_enforcer(enforcer)
     result = registry.execute(
@@ -219,21 +220,28 @@ def test_enforce_large_read_file_does_not_create_legacy_tool_sidecar(tmp_path, m
     assert "data/audit/tool_outputs" not in result.content
 
 
-def test_off_mode_large_read_file_still_uses_legacy_sidecar(tmp_path, monkeypatch):
+def test_off_mode_large_read_file_stays_exact_below_hard_cap(tmp_path, monkeypatch):
     data_dir = tmp_path / "legacy-data"
     monkeypatch.setenv("DATA_DIR", str(data_dir))
     path = tmp_path / "large-control.txt"
     path.write_text("B" * 12000, encoding="utf-8")
 
-    registry = ToolRegistry(summary_threshold=12000)
+    archive = ArchiveStore(tmp_path / "archives")
+    registry = ToolRegistry(archive_store=archive)
+    registry.set_session_id("session-off")
     registry.register(ReadFileTool())
     result = registry.execute(
         ToolCall(id="legacy-read", name="read_file", arguments={"path": str(path)})
     )
 
     assert result.recoverability_status is RecoverabilityStatus.NOT_CONFIGURED
-    assert "[输出已截断]" in result.content
-    assert any((data_dir / "audit" / "tool_outputs").iterdir())
+    assert len(result.content) >= 12000
+    assert "[输出摘要]" not in result.content
+    assert "完整内容已另存" not in result.content
+    hits = archive.search("session-off", "large-control.txt", tool_name="read_file")
+    assert hits == [], "soft size alone must not archive/remove current tool facts"
+    sidecar_dir = data_dir / "audit" / "tool_outputs"
+    assert not sidecar_dir.exists() or list(sidecar_dir.iterdir()) == []
 
 
 def test_enforce_full_true_is_still_bounded_and_recoverable(tmp_path, monkeypatch):
@@ -243,7 +251,7 @@ def test_enforce_full_true_is_still_bounded_and_recoverable(tmp_path, monkeypatc
     path.write_text("L" * 5000 + marker + "R" * 5000, encoding="utf-8")
 
     blobs, ledger, enforcer = _enforcer(tmp_path, projection_budget_chars=650)
-    registry = ToolRegistry(summary_threshold=650, max_output_chars=20000)
+    registry = ToolRegistry(max_output_chars=20000)
     registry.register(ReadFileTool())
     registry.set_evidence_enforcer(enforcer)
     result = registry.execute(
@@ -256,7 +264,7 @@ def test_enforce_full_true_is_still_bounded_and_recoverable(tmp_path, monkeypatc
 
     assert result.evidence_representation == "excerpt"
     assert marker not in result.content
-    assert len(result.content) < 1200
+    assert len(result.content) < 5500  # provider-neutral one-shot evidence page budget is 5K
     hydrated = EvidenceHydration(blobs, ledger, max_limit=20000).read(
         owner=_owner(),
         evidence_ref=EvidenceRef(result.evidence_ref or ""),
@@ -279,7 +287,7 @@ def test_enforce_large_execute_command_does_not_create_legacy_command_sidecar(
     data_dir = tmp_path / "legacy-data"
     monkeypatch.setenv("DATA_DIR", str(data_dir))
     _, _, enforcer = _enforcer(tmp_path, projection_budget_chars=700)
-    registry = ToolRegistry(summary_threshold=12000, tool_timeout_s=10)
+    registry = ToolRegistry(tool_timeout_s=10)
     registry.register(ExecuteCommandTool(timeout_s=10))
     registry.set_evidence_enforcer(enforcer)
     command = f"{shlex.quote(sys.executable)} -c {shlex.quote('print(chr(67) * 7000)')}"
@@ -295,40 +303,18 @@ def test_enforce_large_execute_command_does_not_create_legacy_command_sidecar(
     assert "recover=read_evidence" in result.content
 
 
-def test_enforce_local_projection_budget_uses_local_head_tail_window(tmp_path):
+def test_enforce_projection_page_budget_is_provider_neutral(tmp_path):
     from llm_loop.core.run_context import current_model_label
 
-    _, _, enforcer = _enforcer(tmp_path, projection_budget_chars=5000)
-
-    class Tool:
-        name = "local_budget_tool"
-        parameters = {"type": "object", "properties": {}}
-
-        def execute(self, **_kwargs):
-            return ToolResult(
-                status=ToolResultStatus.SUCCESS,
-                content="X" * 10000,
-                tool_call_id="",
-                tool_name=self.name,
-            )
-
-    registry = ToolRegistry(
-        summary_threshold=12000,
-        summary_local_threshold=4000,
-        summary_local_head_chars=300,
-        summary_local_tail_chars=300,
-    )
-    registry.register(Tool())
-    registry.set_evidence_enforcer(enforcer)
-    token = current_model_label.set("local/model")
-    try:
-        result = registry.execute(ToolCall(id="local-budget", name=Tool.name, arguments={}))
-    finally:
-        current_model_label.reset(token)
-
-    # 600 raw projection chars + a small deterministic capsule; HOT never forces full.
-    assert result.evidence_representation == "excerpt"
-    assert len(result.content) < 1000
+    registry = ToolRegistry(max_output_chars=20_000)
+    budgets = []
+    for label in ("local/model", "deepseek/model"):
+        token = current_model_label.set(label)
+        try:
+            budgets.append(registry._evidence_projection_budget())
+        finally:
+            current_model_label.reset(token)
+    assert budgets == [5000, 5000]
 
 
 def test_enforce_accepts_hookless_pipeline_and_locks_future_post_hooks(tmp_path):
@@ -374,7 +360,7 @@ def test_enforce_order_is_tool_then_capture_then_projection(tmp_path):
                 tool_name=self.name,
             )
 
-    registry = ToolRegistry(summary_threshold=500)
+    registry = ToolRegistry()
     registry.register(Tool())
     registry.set_evidence_enforcer(
         EvidenceEnforcer(
@@ -413,7 +399,7 @@ def test_enforce_edit_file_captures_full_diff_beyond_legacy_preview(tmp_path):
     path = tmp_path / "many-lines.txt"
     path.write_text("".join(f"OLD line {i:03d}\n" for i in range(140)), encoding="utf-8")
     blobs, ledger, enforcer = _enforcer(tmp_path, projection_budget_chars=700)
-    registry = ToolRegistry(summary_threshold=700)
+    registry = ToolRegistry()
     registry.register(EditFileTool())
     registry.set_evidence_enforcer(enforcer)
 
@@ -461,7 +447,7 @@ def test_enforce_web_fetch_captures_full_default_body_before_max_chars_projectio
 
     monkeypatch.setattr(tool, "_request", fake_request)
     blobs, ledger, enforcer = _enforcer(tmp_path, projection_budget_chars=700)
-    registry = ToolRegistry(summary_threshold=700)
+    registry = ToolRegistry()
     registry.register(tool)
     registry.set_evidence_enforcer(enforcer)
 
@@ -505,7 +491,7 @@ def test_enforce_web_fetch_explicit_start_remains_partial_acquisition(tmp_path, 
 
     monkeypatch.setattr(tool, "_request", fake_request)
     blobs, ledger, enforcer = _enforcer(tmp_path, projection_budget_chars=700)
-    registry = ToolRegistry(summary_threshold=700)
+    registry = ToolRegistry()
     registry.register(tool)
     registry.set_evidence_enforcer(enforcer)
 
@@ -578,7 +564,7 @@ def test_enforce_architecture_status_captures_full_snapshot_before_8000_char_vie
             return run_status(None, Provider(), kwargs)
 
     blobs, ledger, enforcer = _enforcer(tmp_path, projection_budget_chars=700)
-    registry = ToolRegistry(summary_threshold=700)
+    registry = ToolRegistry()
     registry.register(Tool())
     registry.set_evidence_enforcer(enforcer)
     result = registry.execute(ToolCall(id="status-full", name=Tool.name, arguments={}))
@@ -610,7 +596,7 @@ def test_enforce_search_records_captures_all_limited_hits_not_only_six(tmp_path)
             return run_search_records(None, lambda **_kw: rows, kwargs, lambda: "session-A")
 
     blobs, ledger, enforcer = _enforcer(tmp_path, projection_budget_chars=700)
-    registry = ToolRegistry(summary_threshold=700)
+    registry = ToolRegistry()
     registry.register(Tool())
     registry.set_evidence_enforcer(enforcer)
     result = registry.execute(

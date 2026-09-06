@@ -13,11 +13,6 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.codearts.config import CodeArtsSettings
-from llm_loop.core.injection_budget import (
-    DEFAULT_INJECTION_BUDGET_CHARS,
-    MIN_INJECTION_BUDGET_CHARS,
-)
-from llm_loop.core.reference_injection import DEFAULT_REFERENCE_AUTO_TURNS
 
 # EVO-20260830（split-brain 修复）: data_dir 默认值从相对 "./data" 改为基于包位置的绝对路径。
 # 根因: 相对路径随进程 cwd 漂移——主区服务进程 cwd=镜像目录时，EvolutionStore/会话/审计
@@ -43,7 +38,9 @@ _fallback_notes: list[ConfigFallbackNote] = []
 def _note_invalid_fallback(name: str, fallback_value: Any, invalid_value_type: str) -> None:
     """记录配置项非法值回退（仅配置项名 + 回退结果 + 类型描述，不回显原始非法值）."""
     _fallback_notes.append(ConfigFallbackNote(name, fallback_value, invalid_value_type))
-    logger.warning("配置项 %s 值非法（%s），已回退默认值 %r", name, invalid_value_type, fallback_value)
+    logger.warning(
+        "配置项 %s 值非法（%s），已回退默认值 %r", name, invalid_value_type, fallback_value
+    )
 
 
 def _raw_env(name: str) -> str:
@@ -198,20 +195,6 @@ def _env_evidence_mode(name: str) -> str:
     return "off"
 
 
-def _env_tool_eligibility_mode(name: str) -> str:
-    """R8.7 tool prompt-visibility mode: off/shadow/enforce.
-
-    Owner-approved default is enforce. Invalid values keep the bounded/core projection
-    instead of silently reopening the full registry prompt surface.
-    """
-    raw = _raw_env(name).strip().lower()
-    if not raw:
-        return "enforce"
-    if raw in {"off", "shadow", "enforce"}:
-        return raw
-    _note_invalid_fallback(name, "enforce", "非 off/shadow/enforce 字符串")
-    return "enforce"
-
 
 def _env_run_mode(name: str) -> str:
     """RUN_MODE 运行模式解析（EVO-20260814 P1-A，对齐 Harness 四种运行模式）.
@@ -230,36 +213,6 @@ def _env_run_mode(name: str) -> str:
         return raw
     _note_invalid_fallback(name, "standard", "非 standard/ptc/minimal/creative 字符串")
     return "standard"
-
-
-def _env_cog_mode(name: str) -> str:
-    """COG_RUNTIME_MODE 三态解析: off/shadow/enforce；非法回退 shadow（CR-R1 tasks 2.1）。"""
-    raw = _raw_env(name).strip().lower()
-    if raw in {"off", "shadow", "enforce"}:
-        return raw
-    if raw:
-        _note_invalid_fallback(name, "shadow", "非 off/shadow/enforce 字符串")
-    return "shadow"
-
-
-def _env_cog_anchor_mode(name: str) -> str:
-    """COG_RUNTIME_ANCHOR_MODE 三态解析: semantic/anchor/auto；非法回退 auto（design 2.1.3.4）。"""
-    raw = _raw_env(name).strip().lower()
-    if raw in {"semantic", "anchor", "auto"}:
-        return raw
-    if raw:
-        _note_invalid_fallback(name, "auto", "非 semantic/anchor/auto 字符串")
-    return "auto"
-
-
-def _env_cog_state_version(name: str) -> str:
-    """COG_RUNTIME_STATE_VERSION 分级解析: v0.1/v0.2；非法回退 v0.1（保守起步）。"""
-    raw = _raw_env(name).strip().lower()
-    if raw in {"v0.1", "v0.2"}:
-        return raw
-    if raw:
-        _note_invalid_fallback(name, "v0.1", "非 v0.1/v0.2 字符串")
-    return "v0.1"
 
 
 def _count_fallbacks(raw: str) -> int:
@@ -284,8 +237,9 @@ class Settings:
 
     # ── 循环控制 ──
     # R10(2026-08-14): 默认 20→40——多步任务（读→改→验证→再改）实测常超 20 轮触顶；
-    # 仍受 adjust_strategy 硬上限 500 约束；80% 轮数时程序注入 [轮数预警]（AI 可自主调大）
-    max_iterations: int = 40
+    # 主 run 默认直接使用既有资源硬上限 500；不再用 40 轮语义预算提前终止复杂任务。
+    # 500 仍是显式防无限循环/副作用资源边界，可由 operator 向下配置。
+    max_iterations: int = 500
     llm_timeout_s: float = 120.0
     llm_max_tokens: int = 8192
     llm_wire_protocol: str = "openai"  # P3-5: 默认 client 协议（openai/anthropic/google）  # 2026-08-15: 显式输出预算（默认 8192，防模型默认 4096 截断长分析；思考链也占此预算）
@@ -314,37 +268,12 @@ class Settings:
     # ── 工具 ──
     tool_timeout_s: float = 60.0
     tool_max_output_chars: int = 100000
-    # EVO-20260811-22a7d3e1: 工具输出分层注入阈值（超过则默认注入首/尾摘要，原文另存可检索）
-    tool_summary_threshold: int = 12000  # 2026-08-15 放大字数（5000→12000；截断信号强化批次）
-    # EVO-20260822-b3e7105e: 本地模型（local provider）工具输出分层收紧参数（预算联动）。
-    # 默认 0 = 未启用（云端零回归）；local 场景按 预算×50% 配置阈值（TOOL_ROUND_BUDGET=8000 → 4000），
-    # 首尾窗口随之收紧（800/800，原 2500/2500 对 local 预算占比 62% 过大）。
-    tool_summary_local_threshold: int = 0
 
-    # ── 会话汇总档案（EVO-20260829-06c96021 / SDD-20260830）──
-    # 过程-终局两阶段：工具 SUCCESS 的 L1 摘要块 append-only 聚合，尾部槽注入。
-    # 关闭（false）= 现状零回归（NFR-3）。
-    digest_enabled: bool = True
-    # INJECTION-GOVERNANCE R2/L2-1: 全部 program-origin 自动附录共用一个硬预算。
-    # 8000 是 R2 候选默认值，不是 A/B 校准后的最终常量；R7 可据实测调整。
-    injection_budget_chars: int = DEFAULT_INJECTION_BUDGET_CHARS
-    # R3/L2-2: 自动资料目录仅前 K 个 human turn / 显式任务切换开放。3 为 R0 候选，R7 A/B 可校准。
-    reference_auto_turns: int = DEFAULT_REFERENCE_AUTO_TURNS
-    tool_summary_local_head_chars: int = 800
-    tool_summary_local_tail_chars: int = 800
-    # EVO-20260822-9fde48f1 第 4 条: local 轮跳过注入白名单（逗号分隔, 默认空=全保留零回归）。
-    # 可选: snapshot(会话状态快照)/tips(经验提示)/archive_summary(归档摘要)——本地慢模型
-    # prefill 随输入线性涨, 低价值注入=秒级成本; 高价值（记忆检索/协调通道）不在此列。
-    # 风格对齐 LOCAL_TOOL_NAMES（固定白名单, 逗号分隔）。
-    tool_local_inject_skip: str = ""
-    # EVO-20260811-7baa2737: 历史分层降级（旧长 tool 消息降级为摘要，原文归档）
-    tool_trim_enabled: bool = True
-    # R3: tool_trim 自适应降级年龄（0=自适应：按占用率自动调 <40%→20/40-70%→10/>70%→5；>0=固定值禁用自适应）
-    tool_trim_age: int = 0  # auto-adaptive (existing): 0=按占用率自适应
-    # EVO-A: tool_trim 降级长度阈值（tool 消息 content 超过此长度且达到年龄才降级；
+    # Context-pressure only: 超物理 history budget 后，允许优先归档/摘要旧长 tool；
+    # 未超预算时即使 True 也保持 tool result 原字节。
+    # 压力路径候选年龄（0=按占用率调候选年龄；不再触发 under-budget 改写）
     # 默认 8000：常规工具输出（grep/读文件片段/短日志）不触发折叠，大输出（长日志/抓取全文）才降级；
     # 折叠时提取关键事实摘要优先、首尾截断兜底；越小越省 token，越大越少折叠触发）
-    tool_trim_threshold: int = 8000
     mcp_servers_raw: str = ""  # P3-1: MCP_SERVERS JSON（stdio MCP 服务器列表）
     # ── EXEC_MODE 命令分级（EVO-20260810-2549e9b6）──
     # 默认空 = 不启用分级（AI 可执行 shell，仅灾难性硬阻断）；可选 readonly/allowlist/blocked 安全分级
@@ -356,40 +285,20 @@ class Settings:
     # ── EVO-d5db88d9: 工具 Schema 索引化（TOOL_SCHEMA_LAZY=1 时 LLM 只见精简索引，按需读完整 Schema）──
     # EVO-20260814: 默认开（节 token；环境变量仍可覆盖回 0 兼容旧用户）
     tool_schema_lazy: bool = True
-    # R8.7: 工具存在 != 每轮 prompt 可见。enforce=CORE+当前任务/协议按需；shadow=只观测；off=旧行为。
-    tool_eligibility_mode: str = "enforce"
-    # ── GOAL-20260829-7483e375 T2: 分层前缀（锚层 Top8 全量+80字符索引 / 动态层追加式）──
-    # PREFIX_LAYERED=1 启用；默认关（零回归，A/B 基线 = 现行 tool_schema_lazy 路径）
-    prefix_layered: bool = False
     # ── EVO-20260813-9ced1f4c: 工具执行瀑布（pipeline.py，默认全关零回归）──
     tool_pipeline_enabled: bool = False  # 总开关（TOOL_PIPELINE_ENABLED）
     tool_materialize_enabled: bool = False  # 参数物化+深冻结（TOOL_MATERIALIZE_ENABLED）
     tool_guard_enabled: bool = False  # 单调守卫（TOOL_GUARD_ENABLED）
     runner_background: bool = True  # 后台 run 执行器（RUNNER_BACKGROUND；0=回退旧 SSE 直驱）
     cache_hit_show_in_answer: bool = False  # EVO-a637d2d7: 常态展示默认关（省固定尾部 token + 根治 AI 复述尾巴）；异常/切换告警注入独立保留（_cache_hint 分支不受此开关影响）
-    # ── EVO-20260816-62977206: 工具执行后经验提示注入（默认开，可关）──
-    tool_experience_inject: bool = True  # 按工具名检索经验库并注入提示（TOOL_EXPERIENCE_INJECT）
-
-    # ── 认知运行时（Cognitive Runtime v1，design.md §2.1.2 新增 env，缺省零回归）──
-    # anchor 退役过渡开关（三态 semantic/anchor/auto，缺省 auto；design 2.1.3.4 冻结点④）
-    cog_runtime_anchor_mode: str = "auto"
-    # 锚点与投影同轮并存检测门闸（fail-open 剔除锚点；spec 5.2.1-7）
-    cog_runtime_dual_source_guard: bool = True
-    # 语义状态字段分级路线（v0.1/v0.2，缺省 v0.1；design 2.1.3.3 冻结点③）
-    cog_runtime_state_version: str = "v0.1"
-    # HOT/WARM/COLD 分级总闸（0 回退平铺聚合原行为；spec 5.2.3-1）
-    cog_runtime_tier_enabled: bool = True
-    cog_runtime_mode: str = "shadow"  # CR-R1: off|shadow|enforce（非法回退 shadow）
-    # Stage 2 allowlist（DESIGN-20260901 rev2 P0-1/P0-2）: operator-owned 控制面文件
-    # 绝对路径（仅绝对路径生效，相对=配置无效→fail-closed shadow）；空=名单禁用。
-    # 不做存在性校验——读取方每轮 fail-closed 求值（P0-2 全语义在 build._cog_allowlist_hit）。
-    cog_enforce_file: str = ""
-    cog_runtime_packet_budget: int = 2000  # CR-R1: 生产 decision packet 预算（chars）
 
     # ── 上下文 ──
-    history_max_chars: int | None = None  # T2(2026-08-14): 默认 100K 收敛（1M 曾撑爆窗口，30000 过保守）；
-    # EVO-20260816-3af5dee3: None=未显式配置 → 运行时按当前模型窗口 8% 自适应（取代固定值）
-    memory_top_k: int = 5  # auto-adaptive: env 未显式设置时按上下文占用率自适应（>70%→8/<30%→3，硬上限 20）
+    history_max_chars: int | None = (
+        None  # None=无独立全局历史 cap；由当前路由模型物理窗口/输出预留收口
+    )
+    memory_top_k: int = (
+        5  # auto-adaptive: env 未显式设置时按上下文占用率自适应（>70%→8/<30%→3，硬上限 20）
+    )
 
     # ── 架构自省（AI-serving, design.md §2.1.4）──
     self_inspection_enabled: bool = True
@@ -398,13 +307,17 @@ class Settings:
     # ── 压缩档案（T22 另存提取替代截断）──
     archive_enabled: bool = True
     experiences_dir: str = "./experiences"  # P1-2: 经验库目录（默认项目根 experiences/）
-    skills_dir: str = "./skills"  # B3(2026-08-14): 插件化 Skill 目录（skills/<name>/SKILL.md；空/不存在=零行为）
+    skills_dir: str = (
+        "./skills"  # B3(2026-08-14): 插件化 Skill 目录（skills/<name>/SKILL.md；空/不存在=零行为）
+    )
     docs_dir: str = "./docs"  # P2-3: 文档检索目录（默认项目根 docs/）
     archive_max_entries: int = 0  # R7: 单会话最大档案条目数（0=不限）
-    archive_ttl_days: int = 0     # R7: 条目存活天数（0=不限）
-    archive_segment_bytes: int = 104857600  # T3b(2026-08-14): 档案单文件分片阈值（默认 100MB；0=不分片）
-    audit_ttl_days: int = 30      # P1-3: 审计 JSONL 条目存活天数（0=不清理）
-    memory_max_entries: int = 0   # P1-5: 记忆条目上限（0=不限；超限淘汰 decay_score 最低）
+    archive_ttl_days: int = 0  # R7: 条目存活天数（0=不限）
+    archive_segment_bytes: int = (
+        104857600  # T3b(2026-08-14): 档案单文件分片阈值（默认 100MB；0=不分片）
+    )
+    audit_ttl_days: int = 30  # P1-3: 审计 JSONL 条目存活天数（0=不清理）
+    memory_max_entries: int = 0  # P1-5: 记忆条目上限（0=不限；超限淘汰 decay_score 最低）
 
     # ── P1 摘要（FR-P1-MEM, §3.6）──
     summary_mode: str = "off"  # off/sync/async
@@ -419,7 +332,9 @@ class Settings:
     embedding_api_key: str = ""  # 仅 env 读取，脱敏
     embedding_dim: int = 128
     retrieve_timeout_s: float = 1.0
-    retrieve_semantic_top_k: int = 20  # auto-adaptive: env 未显式设置时按检索分数自适应（<0.3→10/>0.7→30，硬上限 50）
+    retrieve_semantic_top_k: int = (
+        20  # auto-adaptive: env 未显式设置时按检索分数自适应（<0.3→10/>0.7→30，硬上限 50）
+    )
 
     # ── P1 独立提取（FR-P1-EXT, §3.6）──
     extract_enabled: bool = True
@@ -452,11 +367,7 @@ class Settings:
     evolve_exec_whitelist: str = (
         ""  # 执行白名单（逗号分隔影响范围/模块/动作类型；级别 1 时仅白名单内自动执行）
     )
-    self_eval_enabled: bool = True  # 自我评估能力开关（0 时 self_evaluate 工具不注册 + 触发不提醒）
-    self_eval_remind_enabled: bool = (
-        True  # [自我评估提醒] 触发提示开关（0 仅支持 AI 主动 self_evaluate）
-    )
-    self_eval_interval_rounds: int = 50  # auto-adaptive: env 未显式设置时按异常率自适应（>20%→20/<5%→80，硬上限 200）
+    self_eval_enabled: bool = True  # 自我评估能力开关（0 时 self_evaluate 工具不注册）
     self_eval_min_samples: int = 5  # 指标最小样本数（不足 → 如实标注"样本不足"）
     self_eval_span: int = 50  # 评估聚合窗口（近 N 轮/条）
 
@@ -544,23 +455,12 @@ class Settings:
             "llm_timeout_s": self.llm_timeout_s,
             "tool_timeout_s": self.tool_timeout_s,
             "tool_max_output_chars": self.tool_max_output_chars,
-            "tool_summary_threshold": self.tool_summary_threshold,
-            # EVO-20260822-b3e7105e: local 收紧参数（架构状态可见，供 AI 感知）
-            "tool_summary_local_threshold": self.tool_summary_local_threshold,
-            "tool_summary_local_head_chars": self.tool_summary_local_head_chars,
-            "tool_summary_local_tail_chars": self.tool_summary_local_tail_chars,
-            # EVO-20260822-9fde48f1 第 4 条: local 轮跳过注入白名单
-            "tool_local_inject_skip": self.tool_local_inject_skip,
-            "tool_trim_enabled": self.tool_trim_enabled,
             "tool_schema_lazy": self.tool_schema_lazy,
-            "tool_eligibility_mode": self.tool_eligibility_mode,
-            "prefix_layered": self.prefix_layered,
             "tool_pipeline_enabled": self.tool_pipeline_enabled,
             "tool_materialize_enabled": self.tool_materialize_enabled,
             "tool_guard_enabled": self.tool_guard_enabled,
             "runner_background": self.runner_background,
             "cache_hit_show_in_answer": self.cache_hit_show_in_answer,
-            "tool_experience_inject": self.tool_experience_inject,
             # ERC v1.1 rollout state is safe to expose; no paths/refs/secrets included.
             "evidence_mode": self.evidence_mode,
             "evidence_manifest_limit": self.evidence_manifest_limit,
@@ -582,8 +482,6 @@ class Settings:
             "evolve_local_exec": self.evolve_local_exec,
             "evolve_exec_whitelist": self.evolve_exec_whitelist,
             "self_eval_enabled": self.self_eval_enabled,
-            "self_eval_remind_enabled": self.self_eval_remind_enabled,
-            "self_eval_interval_rounds": self.self_eval_interval_rounds,
             "self_eval_min_samples": self.self_eval_min_samples,
             "self_eval_span": self.self_eval_span,
             # P2-3: 文档检索入口状态（AI 可自查，不暴露路径细节）
@@ -640,14 +538,10 @@ def load_settings() -> Settings:
 
     # T3: 记录 env 未显式设置的可自适应配置项（消费方据此走自适应，env 显式设置时走固定值）
     _auto_adaptive_keys: set[str] = set()
-    if not os.environ.get("TOOL_TRIM_AGE", "").strip():
-        _auto_adaptive_keys.add("tool_trim_age")
     if not os.environ.get("MEMORY_TOP_K", "").strip():
         _auto_adaptive_keys.add("memory_top_k")
     if not os.environ.get("RETRIEVE_SEMANTIC_TOP_K", "").strip():
         _auto_adaptive_keys.add("retrieve_semantic_top_k")
-    if not os.environ.get("SELF_EVAL_INTERVAL_ROUNDS", "").strip():
-        _auto_adaptive_keys.add("self_eval_interval_rounds")
 
     return Settings(
         llm_api_key=api_key,
@@ -655,7 +549,7 @@ def load_settings() -> Settings:
         llm_model=model,
         thinking_mode=_env_thinking_mode("LLM_THINKING_MODE"),
         reasoning_effort=_env_effort("LLM_REASONING_EFFORT"),
-        max_iterations=_env_int("LLM_MAX_ITERATIONS", 40),
+        max_iterations=_env_int("LLM_MAX_ITERATIONS", 500),
         llm_timeout_s=float(_env_int("LLM_TIMEOUT_S", 120)),
         llm_max_tokens=_env_int("LLM_MAX_TOKENS", 8192),  # 2026-08-15 显式输出预算
         llm_wire_protocol=os.environ.get("LLM_WIRE_PROTOCOL", "openai").strip().lower() or "openai",
@@ -672,45 +566,20 @@ def load_settings() -> Settings:
         event_hooks_config=os.environ.get("EVENT_HOOKS_CONFIG", "").strip(),
         tool_timeout_s=float(_env_int("TOOL_TIMEOUT_S", 60)),
         tool_max_output_chars=_env_int("TOOL_MAX_OUTPUT_CHARS", 100000),
-        tool_summary_threshold=_env_int("TOOL_SUMMARY_THRESHOLD", 12000),  # 2026-08-15 放大字数
-        # EVO-20260822-b3e7105e: local 模型收紧阈值/窗口（默认 0=未启用，云端零回归）
-        tool_summary_local_threshold=_env_int("TOOL_SUMMARY_LOCAL_THRESHOLD", 0),
-        digest_enabled=_env_bool("DIGEST_ENABLED", True),
-        injection_budget_chars=max(
-            MIN_INJECTION_BUDGET_CHARS,
-            _env_int("INJECTION_BUDGET_CHARS", DEFAULT_INJECTION_BUDGET_CHARS),
-        ),
-        reference_auto_turns=max(0, _env_int("REFERENCE_AUTO_TURNS", DEFAULT_REFERENCE_AUTO_TURNS)),
-        tool_summary_local_head_chars=_env_int("TOOL_SUMMARY_LOCAL_HEAD_CHARS", 800),
-        tool_summary_local_tail_chars=_env_int("TOOL_SUMMARY_LOCAL_TAIL_CHARS", 800),
-        # EVO-20260822-9fde48f1 第 4 条: local 轮跳过注入白名单（默认空=全保留零回归）
-        tool_local_inject_skip=os.environ.get("LOCAL_INJECT_SKIP", "").strip(),
-        tool_trim_enabled=_env_bool("TOOL_TRIM_ENABLED", True),
-        tool_trim_age=_env_int("TOOL_TRIM_AGE", 0),
-        tool_trim_threshold=_env_int("TOOL_TRIM_THRESHOLD", 8000),
         mcp_servers_raw=os.environ.get("MCP_SERVERS", "").strip(),  # P3-1 MCP stdio 服务器
         exec_mode=_env_exec_mode("EXEC_MODE"),
         exec_allowlist=os.environ.get("EXEC_ALLOWLIST", "").strip(),
         run_mode=_env_run_mode("RUN_MODE"),
         tool_schema_lazy=_env_bool("TOOL_SCHEMA_LAZY", True),  # EVO-20260814: 默认开
-        tool_eligibility_mode=_env_tool_eligibility_mode("TOOL_ELIGIBILITY_MODE"),
-        prefix_layered=_env_bool("PREFIX_LAYERED", False),  # GOAL-20260829-7483e375 T2: 默认关零回归
         tool_pipeline_enabled=_env_bool("TOOL_PIPELINE_ENABLED", False),
         tool_materialize_enabled=_env_bool("TOOL_MATERIALIZE_ENABLED", False),
         tool_guard_enabled=_env_bool("TOOL_GUARD_ENABLED", False),
         runner_background=_env_bool("RUNNER_BACKGROUND", True),  # EVO 后台 run 改造: 默认开
         # EVO-20260819-2254e3b4 方案B（用户批准）: 回答末尾常态展示缓存命中率
         cache_hit_show_in_answer=_env_bool("CACHE_HIT_SHOW_IN_ANSWER", False),
-        tool_experience_inject=_env_bool("TOOL_EXPERIENCE_INJECT", True),  # EVO-20260816-62977206: 默认开
-        # 认知运行时（Cognitive Runtime v1，缺省零回归）
-        cog_runtime_anchor_mode=_env_cog_anchor_mode("COG_RUNTIME_ANCHOR_MODE"),
-        cog_runtime_dual_source_guard=_env_bool("COG_RUNTIME_DUAL_SOURCE_GUARD", True),
-        cog_runtime_state_version=_env_cog_state_version("COG_RUNTIME_STATE_VERSION"),
-        cog_runtime_tier_enabled=_env_bool("COG_RUNTIME_TIER_ENABLED", True),
-        cog_runtime_mode=_env_cog_mode("COG_RUNTIME_MODE"),
-        cog_enforce_file=_raw_env("COG_RUNTIME_ENFORCE_FILE").strip(),
-        cog_runtime_packet_budget=_env_int("COG_RUNTIME_PACKET_BUDGET", 2000),
-        history_max_chars=_env_int_or_none("HISTORY_MAX_CHARS"),  # EVO-20260816-3af5dee3: None=未配置→按窗口自适应
+        history_max_chars=_env_int_or_none(
+            "HISTORY_MAX_CHARS"
+        ),  # EVO-20260816-3af5dee3: None=未配置→按窗口自适应
         memory_top_k=_env_int("MEMORY_TOP_K", 5),
         self_inspection_enabled=_env_bool("SELF_INSPECTION_ENABLED", True),
         status_report_cooldown_s=float(_env_int("STATUS_REPORT_COOLDOWN_S", 60)),
@@ -720,7 +589,9 @@ def load_settings() -> Settings:
         docs_dir=os.environ.get("DOCS_DIR", "./docs").strip(),
         archive_max_entries=_env_int("ARCHIVE_MAX_ENTRIES", 0),
         archive_ttl_days=_env_int("ARCHIVE_TTL_DAYS", 0),
-        archive_segment_bytes=_env_int("ARCHIVE_SEGMENT_BYTES", 104857600),  # T3b: 默认 100MB（0=不分片）
+        archive_segment_bytes=_env_int(
+            "ARCHIVE_SEGMENT_BYTES", 104857600
+        ),  # T3b: 默认 100MB（0=不分片）
         audit_ttl_days=_env_int("AUDIT_TTL_DAYS", 30),
         memory_max_entries=_env_int("MEMORY_MAX_ENTRIES", 0),
         # P1（design.md §3.6，非法值回退默认）
@@ -753,8 +624,6 @@ def load_settings() -> Settings:
         evolve_local_exec=_env_evolve_level("EVOLVE_LOCAL_EXEC"),
         evolve_exec_whitelist=os.environ.get("EVOLVE_EXEC_WHITELIST", "").strip(),
         self_eval_enabled=_env_bool("SELF_EVAL_ENABLED", True),
-        self_eval_remind_enabled=_env_bool("SELF_EVAL_REMIND_ENABLED", True),
-        self_eval_interval_rounds=_env_int("SELF_EVAL_INTERVAL_ROUNDS", 50),
         self_eval_min_samples=_env_int("SELF_EVAL_MIN_SAMPLES", 5),
         self_eval_span=_env_int("SELF_EVAL_SPAN", 50),
         # M47（design §5.1）: MODEL_PROVIDERS 注册表 JSON, 解析由 llm.providers.load_registry 完成

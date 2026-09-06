@@ -57,6 +57,24 @@ class ToolCallDeltaAggregator:
         if args:
             part["arguments"] += str(args)
 
+    def snapshot(self) -> list[dict[str, Any]]:
+        """Return the current incomplete tool-call draft without parsing/executing it.
+
+        This is crash-recovery state only.  ``arguments_raw`` may be incomplete JSON
+        and therefore must never be treated as an executable ToolCall until the
+        provider stream itself reaches a normal completion boundary and ``finish()``
+        performs the ordinary normalization/validation path.
+        """
+        return [
+            {
+                "index": idx,
+                "id": str(self._parts[idx].get("id") or ""),
+                "name": str(self._parts[idx].get("name") or ""),
+                "arguments_raw": str(self._parts[idx].get("arguments") or ""),
+            }
+            for idx in sorted(self._parts)
+        ]
+
     def finish(self) -> list[dict]:
         """聚合完成，返回 [{id, name, arguments(解析后 dict)}]（按 index 排序）.
 

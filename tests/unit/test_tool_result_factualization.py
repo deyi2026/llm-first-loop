@@ -69,7 +69,7 @@ def _enforce_registry(tmp_path: Path, *, projection_budget_chars: int = 900):
     capture = EvidenceCapture(blobs, ledger)
     freshness = EvidenceFreshness(ledger)
     owner = _owner()
-    registry = ToolRegistry(summary_threshold=500, max_output_chars=20000)
+    registry = ToolRegistry(max_output_chars=20000)
     registry.register(ReadFileTool())
     registry.set_evidence_enforcer(
         EvidenceEnforcer(
@@ -153,13 +153,19 @@ class TestCG1CG4GuidanceExit:
         msg_on = tool_result_to_message(result)
         assert "已验解法" in msg_on.content
 
-    def test_distill_guidance_off_chars0_on_present(self, monkeypatch):
-        # _DISTILL_GUIDANCE 源（超摘要阈值且超首尾窗口路径——registry 输出分层注入）
-        registry = ToolRegistry(summary_threshold=100, max_output_chars=9000)
+    def test_distill_guidance_off_chars0_on_present(self, monkeypatch, tmp_path):
+        # Explicit legacy/on guidance is exercised only with a real lossless archive path.
+        from llm_loop.memory.archive import ArchiveStore
+
+        registry = ToolRegistry(
+            max_output_chars=9000,
+            archive_store=ArchiveStore(tmp_path / "archive"),
+        )
+        registry.set_session_id("guidance-session")
         registry.register(_EchoTool())
         monkeypatch.setenv("LFL_TOOL_GUIDANCE", "off")
         result_off = registry.execute(
-            ToolCall(id="t4", name="echo", arguments={"text": "x" * 6000})
+            ToolCall(id="t4", name="echo", arguments={"text": "x" * 12000})
         )
         assert "行动指引" not in result_off.content
         assert "截断高亮" not in result_off.content
@@ -167,7 +173,7 @@ class TestCG1CG4GuidanceExit:
 
         monkeypatch.setenv("LFL_TOOL_GUIDANCE", "on")  # 反例自证
         result_on = registry.execute(
-            ToolCall(id="t5", name="echo", arguments={"text": "y" * 6000})
+            ToolCall(id="t5", name="echo", arguments={"text": "y" * 12000})
         )
         assert "行动指引" in result_on.content
 
@@ -267,7 +273,9 @@ class TestCG2CG3CG9CapsuleCensus:
         assert "[/evidence]" not in result.content
         # 审计 metadata 六字段完整（ref/source/coverage/projection/complete/recover→resolver）
         assert result.evidence_ref is not None
-        assert result.evidence_source_label and result.evidence_source_label.startswith("read_file:")
+        assert result.evidence_source_label and result.evidence_source_label.startswith(
+            "read_file:"
+        )
         assert result.evidence_coverage_label
         assert result.evidence_representation == "full"
         assert result.evidence_projection_complete is True
@@ -296,9 +304,7 @@ class TestCG2CG3CG9CapsuleCensus:
         assert "recover=read_evidence" not in result.content
         # 事实行 ≤1 行且仅含三元组字段
         fact_lines = [
-            ln
-            for ln in result.content.splitlines()
-            if ln.startswith("result_truncated=")
+            ln for ln in result.content.splitlines() if ln.startswith("result_truncated=")
         ]
         assert len(fact_lines) == 1
         assert re.fullmatch(
@@ -443,15 +449,14 @@ class TestCG7ReferencedToolNames:
         source = inspect.getsource(rf_module.evidence_ref_short_circuit_content)
         # 提取说明文本中出现的 snake_case 工具名 token
         candidates = set(re.findall(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b", source))
-        referenced = {
-            t
-            for t in candidates
-            if t in EVIDENCE_SHORT_CIRCUIT_REFERENCED_TOOLS
-        }
+        referenced = {t for t in candidates if t in EVIDENCE_SHORT_CIRCUIT_REFERENCED_TOOLS}
         assert referenced == set(EVIDENCE_SHORT_CIRCUIT_REFERENCED_TOOLS)
         # 白名单之外出现的工具名形态 token（排除法断言无越权指名）
         known_non_tools = {
-            "evidence_ref", "tool_name", "read_evidence", "get_tool_schema",
+            "evidence_ref",
+            "tool_name",
+            "read_evidence",
+            "get_tool_schema",
         }
         assert candidates - known_non_tools - {"evidence"} == set() or referenced
 
@@ -514,9 +519,7 @@ class TestCG8EvidenceReuseInline:
         freshness = EvidenceFreshness(ledger)
         owner = _owner()
         path = tmp_path / "f.txt"
-        path.write_text(
-            "\n".join(f"row-{i:03d}" for i in range(120)), encoding="utf-8"
-        )
+        path.write_text("\n".join(f"row-{i:03d}" for i in range(120)), encoding="utf-8")
         enforcer = EvidenceEnforcer(
             capture,
             projection=ProjectionEngine(),
@@ -555,8 +558,8 @@ class TestCG8EvidenceReuseInline:
         assert "seeded observation" in hit.content  # 正文内联（actual output）
         assert "evidence_reuse" in hit.content
 
-    def test_hit_without_blobs_fails_loud(self, tmp_path):
-        """无法内联（无 blob 面）→ status=failure（静默吞正文形态=0）。"""
+    def test_hit_without_blobs_falls_back_to_physical_source(self, tmp_path):
+        """无法内联（无 blob 面）→ resolver 不接管，registry 可继续物理读取。"""
         blobs, ledger, freshness, owner, first = self._seed(tmp_path)
         resolver = EvidenceSourceResolver(
             ledger,
@@ -567,12 +570,10 @@ class TestCG8EvidenceReuseInline:
         hit = resolver.resolve(
             ToolCall(id="s3", name="read_file", arguments={"path": str(tmp_path / "f.txt")})
         )
-        assert hit is not None
-        assert hit.status is ToolResultStatus.FAILURE
-        assert "[复用失败]" in hit.content
+        assert hit is None
 
     def test_no_silent_success_without_body(self, tmp_path):
-        """success + 无正文 + 仅元数据 = 0（双分支穷尽断言）。"""
+        """复用只有两态：带正文 SUCCESS，或 None 退回 source；绝无元数据空成功。"""
         blobs, ledger, freshness, owner, first = self._seed(tmp_path)
         for resolver_blobs in (blobs, None):
             resolver = EvidenceSourceResolver(
@@ -584,12 +585,10 @@ class TestCG8EvidenceReuseInline:
             hit = resolver.resolve(
                 ToolCall(id="s4", name="read_file", arguments={"path": str(tmp_path / "f.txt")})
             )
-            assert hit is not None
-            if hit.status is ToolResultStatus.SUCCESS:
+            if hit is not None:
+                assert hit.status is ToolResultStatus.SUCCESS
                 body = hit.content.rsplit("[evidence_reuse]", 1)[0]
                 assert len(body.strip()) > 0  # 正文在场（非仅元数据）
-            else:
-                assert hit.status is ToolResultStatus.FAILURE
 
     def test_force_refresh_bypasses_reuse(self, tmp_path):
         blobs, ledger, freshness, owner, first = self._seed(tmp_path)
@@ -660,15 +659,13 @@ class TestC24OnDemandDiscovery:
         assert listing.status is ToolResultStatus.SUCCESS
         assert "read_evidence" in listing.content
 
-    def test_visibility_never_scans_receipt_text(self):
-        """C-D8 禁扫回执文本静态断言: eligibility 投影层源码不含回执程序喊话锚点扫描。"""
+    def test_visibility_never_scans_receipt_text_or_recovery_metadata(self):
+        """P1-B: recovery receipt facts must not become a hidden tool-selection channel."""
         source = (SRC_ROOT / "tools" / "eligibility.py").read_text(encoding="utf-8")
         assert "recover=read_evidence" not in source
-        assert 'recover=' not in source
-        # 恢复可见性的数据源 = control-plane metadata（tool_recovery），非 content 文本
-        assert 'metadata.get("tool_recovery")' in source
-        # 词法路由的数据源 = 用户输入文本（user_text），非回执正文
-        assert "def _task_relevant_names(user_text" in source
+        assert "recover=" not in source
+        assert 'metadata.get("tool_recovery")' not in source
+        assert "tool_recovery" not in source
 
     def test_truncation_fact_line_scenario_discovery(self, tmp_path, monkeypatch):
         """截断事实行在场场景（端到端）: 事实行 + 恢复工具可发现。"""
@@ -680,9 +677,7 @@ class TestC24OnDemandDiscovery:
         result = registry.execute(
             ToolCall(id="e2e", name="read_file", arguments={"path": str(path), "full": True})
         )
-        fact = [
-            ln for ln in result.content.splitlines() if ln.startswith("result_truncated=")
-        ]
+        fact = [ln for ln in result.content.splitlines() if ln.startswith("result_truncated=")]
         assert len(fact) == 1
         recovery_ref = fact[0].split("recovery_ref=", 1)[1]
         # 事实行的 ref 可经 read_evidence 取回（同构 resolver 路由面）
@@ -713,7 +708,7 @@ class TestT6DeathLoopRegressionFixture:
                 "defenses": [
                     "line1: read_file(evidence://) 参数误用短路（零磁盘 IO / 零否定帧）",
                     "line2: 失败回执零诱饵（零 capsule / 零喊话——D2 status 门 + C-2.3）",
-                    "line3: 恢复类计数收敛（_track_stagnation 同指纹计数，B-5.7 接口）",
+                    "line3: 重复调用事实计数（_track_tool_observation 同指纹计数，B-5.7 接口）",
                 ],
             },
         }
@@ -738,7 +733,7 @@ class TestT6DeathLoopRegressionFixture:
         assert "recover=" not in result.content
 
     def test_defense_line3_stagnation_counting_converges(self):
-        """恢复类计数收敛: B 包 _track_stagnation 接口对同指纹失败调用累计（B-5.7 对接）。"""
+        """重复调用事实计数: B 包 _track_tool_observation 接口对同指纹失败调用累计（B-5.7 对接）。"""
         from llm_loop.core.loop.engine_services.tool_cycle import ToolCycleService
 
         class _StubEngine:
@@ -761,7 +756,7 @@ class TestT6DeathLoopRegressionFixture:
         tc = ToolCall(id="z1", name="read_file", arguments={"path": "evidence://v1/x"})
         result = ReadFileTool().execute(path="evidence://v1/x")
         for _ in range(3):
-            ToolCycleService._track_stagnation(  # pyright: ignore[reportAttributeAccessIssue]
+            ToolCycleService._track_tool_observation(  # pyright: ignore[reportAttributeAccessIssue]
                 stub, tc, None, [], result=result
             )
         assert stub._run_state().stagnation_state["count"] == 3  # 计数收敛接口在场且累计
@@ -776,8 +771,11 @@ class TestT6DeathLoopRegressionFixture:
             "tool_protocol_error": "短路返回合法 FAILURE（零孤儿 tool_call）",
         }
         assert set(receipt) == {
-            "tool_discovery", "unresolved_followup", "task_completion",
-            "factual_hallucination", "tool_protocol_error",
+            "tool_discovery",
+            "unresolved_followup",
+            "task_completion",
+            "factual_hallucination",
+            "tool_protocol_error",
         }
 
 
@@ -829,8 +827,12 @@ class TestC34CompressionRecoveryReachability:
 
 class _EchoTool:
     name = "echo"
-    description = "测试用回显工具（输出超阈值以触发摘要层）"
-    parameters = {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}
+    description = "测试用回显工具"
+    parameters = {
+        "type": "object",
+        "properties": {"text": {"type": "string"}},
+        "required": ["text"],
+    }
 
     def execute(self, **kwargs):
         return ToolResult(
@@ -839,3 +841,34 @@ class _EchoTool:
             tool_call_id="",
             tool_name=self.name,
         )
+
+
+def test_bare_registry_keeps_exact_result_below_hard_cap(monkeypatch):
+    """Below the hard cap, the registry never removes model-visible facts."""
+    monkeypatch.setenv("LFL_TOOL_GUIDANCE", "off")
+    body = "EXACT-MIDDLE-FACT" + "x" * 5000
+    registry = ToolRegistry(max_output_chars=9000)
+    registry.register(_EchoTool())
+
+    result = registry.execute(ToolCall(id="bare-soft", name="echo", arguments={"text": body}))
+
+    assert result.content == body
+    assert "[输出摘要]" not in result.content
+    assert "search_archive" not in result.content
+    assert "已另存" not in result.content
+
+
+def test_bare_registry_hard_cap_is_truthful_when_archive_unavailable(monkeypatch):
+    """No archive + real hard cap: bound output, but never invent recoverability."""
+    monkeypatch.setenv("LFL_TOOL_GUIDANCE", "off")
+    body = "H" * 12000
+    registry = ToolRegistry(max_output_chars=9000)
+    registry.register(_EchoTool())
+
+    result = registry.execute(ToolCall(id="bare-hard", name="echo", arguments={"text": body}))
+
+    assert len(result.content) < len(body)
+    assert "硬上限: 9000" in result.content
+    assert "没有 archive 恢复路径" in result.content
+    assert "search_archive" not in result.content
+    assert "已另存" not in result.content

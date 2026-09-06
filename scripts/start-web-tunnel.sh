@@ -66,7 +66,7 @@ case "$TUNNEL_MODE" in
     fi
     echo "🚀 启动 named tunnel（固定域名，读 $CONFIG）"
     echo "   隧道日志: $LOG_DIR/cloudflared-named.log"
-    cloudflared tunnel run --config "$CONFIG" 2>&1 | tee "$LOG_DIR/cloudflared-named.log"
+    cloudflared tunnel --config "$CONFIG" run 2>&1 | tee "$LOG_DIR/cloudflared-named.log"
     ;;
   *)
     echo "用法: $0 {quick|named}"

@@ -52,15 +52,22 @@ def test_tool_registered_in_corrections():
 
 def test_complete_executing_registers(tmp_path):
     """executing 建议经 evolution_complete 登记 → executed + executor=ai + 审计落盘."""
+    from llm_loop.core.run_context import current_session_id
+
     engine = _make_engine(tmp_path)
     store = engine.correction_ctx.evolution_store
-    sug = store.submit(content="优化超时参数", impact_scope="timeout_s")
+    sid = "owner-session"
+    sug = store.submit(content="优化超时参数", impact_scope="timeout_s", session_id=sid)
     store.review(sug.id, "accepted")
     # 置 executing（模拟 maybe_auto_execute 后的中间态）
     store.transition(sug.id, status="executing")
-    r = engine.corrections.execute(
-        "evolution_complete", {"suggestion_id": sug.id, "note": "已执行并对比架构状态，验证通过"}
-    )
+    tok = current_session_id.set(sid)
+    try:
+        r = engine.corrections.execute(
+            "evolution_complete", {"suggestion_id": sug.id, "note": "已执行并对比架构状态，验证通过"}
+        )
+    finally:
+        current_session_id.reset(tok)
     assert r.status.value == "success"
     assert "executor=ai" in r.content
     assert "verify=ai_reported" in r.content  # note 非空 → ai_reported（8.7.2 语义）
@@ -73,15 +80,22 @@ def test_complete_executing_registers(tmp_path):
 
 def test_complete_empty_note_unverified(tmp_path):
     """note 空 → verify_result=unverified（如实标注，未验证不谎报）."""
+    from llm_loop.core.run_context import current_session_id
+
     engine = _make_engine(tmp_path)
     store = engine.correction_ctx.evolution_store
-    sug = store.submit(content="优化超时参数", impact_scope="timeout_s")
+    sid = "owner-session"
+    sug = store.submit(content="优化超时参数", impact_scope="timeout_s", session_id=sid)
     store.review(sug.id, "accepted")
     store.transition(sug.id, status="executing")
-    r = engine.corrections.execute("evolution_complete", {"suggestion_id": sug.id, "note": "  "})
-    assert r.status.value == "failure"  # note 空白 → 必填校验失败
-    # 带空白 note 的场景: note 缺失时工具应拒绝（required 语义）
-    r2 = engine.corrections.execute("evolution_complete", {"suggestion_id": sug.id, "note": "完成"})
+    tok = current_session_id.set(sid)
+    try:
+        r = engine.corrections.execute("evolution_complete", {"suggestion_id": sug.id, "note": "  "})
+        assert r.status.value == "failure"  # note 空白 → 必填校验失败
+        # 带空白 note 的场景: note 缺失时工具应拒绝（required 语义）
+        r2 = engine.corrections.execute("evolution_complete", {"suggestion_id": sug.id, "note": "完成"})
+    finally:
+        current_session_id.reset(tok)
     assert r2.status.value == "success"
     assert "verify=ai_reported" in r2.content
 
@@ -209,28 +223,3 @@ def test_complete_transition_none_error(tmp_path):
 
 
 # ── 方案 4: 工具输出截断（context 优化）──
-
-def test_truncate_short_output_unchanged():
-    """短输出不应截断."""
-    from llm_loop.tools.builtin.execute_command import _truncate_output
-    content = "hello world"
-    assert _truncate_output(content) == content
-
-
-def test_truncate_long_output_head_tail():
-    """长输出应保留头尾 + 截断说明."""
-    from llm_loop.tools.builtin.execute_command import _truncate_output
-    long = "A" * 5000
-    r = _truncate_output(long, "ps aux grep")
-    assert r.startswith("A" * 1500)
-    assert r.endswith("A" * 1500)
-    assert "[输出已截断]" in r
-    assert "5000" in r  # 完整长度
-    assert "ps" in r    # 搜索关键词
-
-
-def test_truncate_exact_boundary():
-    """恰好 3000 字符不截断."""
-    from llm_loop.tools.builtin.execute_command import _truncate_output
-    content = "B" * 3000
-    assert _truncate_output(content) == content

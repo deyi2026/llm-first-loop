@@ -53,7 +53,7 @@ def test_write_and_pop_requires_explicit_authorization(tmp_path):
 
 def test_pop_skips_same_origin_session(tmp_path):
     write_hotcard(**_mk(tmp_path))
-    # 同来源会话（压缩会话自身）: 不注入（已有 [压缩关键事实] 帧，不重复）
+    # 同来源会话不消费自己的 durable handoff；这不是 prompt 注入授权。
     assert pop_hotcard(
         session_id="sess-origin", data_dir=str(tmp_path / "data"), authorized=True
     ) is None

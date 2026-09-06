@@ -1,17 +1,9 @@
-"""TerminationController——终止判定 / 信号提醒 / overflow 确定性处理（R9 Phase 5 T6-A）.
+"""TerminationController——硬终止判定与 overflow 资源边界处理。
 
-B5-W1-02 迁入（design :475 直接消亡类）：_SignalsMixin（signals.py 6 法）+
-_OverflowMixin（overflow.py 2 法）方法体逐字平移，``self.`` → ``self._host.``
-（宿主 = LoopEngine，跨面依赖 _report/_record_action/_current_context_limit 与
-loop_signal_detector/status/evolution_store 仍归宿主）。行为零变化：
-
-- 信号检查面：均仅"事实提醒"不强制，触发判断与决策权归 AI（RULE-AI-10）
-- overflow 面：R8.24-B B-D5 确定性处理（compact→end 两段，零 prompt 注入）
-- should_terminate 门面（W5-01 RunCoordinator 组装消费）：基于 run 级状态对象的
-  纯判定汇总入口（P5-03a 显式状态流事件锚点）
-
-宿主依赖（engine 持有）：loop_signal_detector / status / evolution_store /
-_report / _current_context_limit / _record_action / _overflow_* 计数（经桶 shim）。
+Rule-first 收正：周期自评、executing 演进、pending-review、进程 stale 等
+“何时提醒/该做什么”不再由普通模型主循环扫描。这里仅保留模型无法自行
+保证的运行级终止状态与物理上下文 overflow 处理。operator 的人工审批 UI
+独立留在 CLI/control surface。
 """
 
 # pyright: reportAttributeAccessIssue=false, reportGeneralTypeIssues=false
@@ -36,7 +28,7 @@ _OVERFLOW_SHRINK_FACTOR = 0.5
 
 
 class TerminationController:
-    """终止域 service：信号提醒 + overflow 确定性处理 + 终止判定门面."""
+    """终止域 service：overflow 物理边界 + 显式 run 终止状态。"""
 
     def __init__(self, host: LoopEngine) -> None:
         self._host = host
@@ -117,110 +109,3 @@ class TerminationController:
         """R4→R8.24-B: 每次 run 重置 overflow 计数与预算收缩标志（move 自 engine.py:265）."""
         self._host._run_state().overflow_reinject_count = 0
         self._host._overflow_shrink_factor = None
-
-    # ------------------------------------------------------------------
-    # 信号面（迁自 signals.py::_SignalsMixin，逐字平移）
-    # ------------------------------------------------------------------
-    def _append_report_once(self, sess, msg) -> bool:
-        """EVO-20260827-f42496bc: 上报注入内容级幂等 append（去重兜底）.
-
-        实证 02:35:21 同轮 flush 7 条架构上报、其中 4 条内容完全相同（冷却 key
-        变化/多路径调用穿透 60s 冷却）→ 存储层每轮膨胀重复 system 消息 → 加速
-        触顶压缩（压缩轮必 miss）。兜底: 尾部 12 条内已有相同 role+content 的
-        注入则跳过 append（首条保留，信息零丢失）。
-        """
-        if msg is None:
-            return False
-        msg.metadata = {**(msg.metadata or {}), "injected_system": True}
-        _content = msg.content or ""
-        for _pm in sess.messages[-12:]:
-            _meta = getattr(_pm, "metadata", None) or {}
-            if (
-                getattr(_pm, "role", "") == "system"
-                and _meta.get("injected_system")
-                and (getattr(_pm, "content", "") or "") == _content
-            ):
-                return False
-        sess.messages.append(msg)
-        return True
-
-    def _check_loop_signals(self, sess, rounds: int) -> None:
-        """每轮末信号检测统一入口（M56 收敛，ANALYSIS-20260811）.
-
-        合并自评触发 / executing 演进待办 / pending_review 待审三项检测为一次调用；
-        均仅"事实提醒"不强制，触发判断与决策权归 AI（RULE-AI-10 每轮自主检查清单）。
-        """
-        self._check_eval_trigger(sess, rounds)
-        self._check_evolution_executing(sess)
-        self._check_pending_review(sess)
-        self._check_proc_stale(sess)  # EVO-20260815-69ac0bd0
-
-    def _check_proc_stale(self, sess) -> None:
-        """EVO-20260815-69ac0bd0: 进程代码时效提醒（每轮末，仅提示不强制）.
-
-        复用 LoopSignalDetector 冷却（每进程仅提示一次）；无 stale/检测关闭 → 不注入。
-        """
-        host = self._host
-        if host.loop_signal_detector is None:
-            return
-        event = host.loop_signal_detector.check_proc_stale()
-        if event is None:
-            return
-        msg = host._report(
-            event.event_type, fact=event.fact, reason=event.reason, suggestion=event.suggestion
-        )
-        if msg is not None:
-            self._append_report_once(sess, msg)  # EVO-20260827-f42496bc: 内容级幂等 append
-
-    def _check_eval_trigger(self, sess, rounds: int, *, milestone: bool = False) -> None:
-        """自我评估触发检测（T63/T65: 每轮末 + run 完成里程碑）.
-
-        M16 审计（FR-AUDIT-AI-04/08）: 只保留 periodic/milestone 两个确定性触发；
-        M17 FR-REVIEW-AI-03: 检测逻辑搬移至 introspection/loop_signals.py（薄壳委托）。
-        命中且冷却通过 → 注入 [自我评估提醒]（仅提示不强制，EVAL-03；决策权归 LLM）。
-        """
-        host = self._host
-        if host.loop_signal_detector is None:
-            return
-        event = host.loop_signal_detector.check_eval_trigger(sess, rounds, milestone=milestone)
-        if event is None:
-            return
-        msg = host._report(
-            event.event_type, fact=event.fact, reason=event.reason, suggestion=event.suggestion
-        )
-        if msg is not None:
-            self._append_report_once(sess, msg)  # EVO-20260827-f42496bc: 内容级幂等 append
-
-    def _check_evolution_executing(self, sess) -> None:
-        """M17 FR-REVIEW-AI-02: executing 演进待办提醒（每轮末，仅提示不强制）.
-
-        复用 EventReporter 冷却（key 含 fact 前缀去重）；无 executing / 读取失败 → 不注入。
-        """
-        host = self._host
-        if host.loop_signal_detector is None or host.status is None or not host.status.enabled:
-            return
-        event = host.loop_signal_detector.check_evolution_executing(host.evolution_store)
-        if event is None:
-            return
-        msg = host._report(
-            event.event_type, fact=event.fact, reason=event.reason, suggestion=event.suggestion
-        )
-        if msg is not None:
-            self._append_report_once(sess, msg)  # EVO-20260827-f42496bc: 内容级幂等 append
-
-    def _check_pending_review(self, sess) -> None:
-        """EVO-20260810-86e777d1: pending_review 演进弹窗提醒（每轮末，仅提示不强制）.
-
-        复用 EventReporter 冷却；无 pending_review / 读取失败 → 不注入。
-        """
-        host = self._host
-        if host.loop_signal_detector is None or host.status is None or not host.status.enabled:
-            return
-        event = host.loop_signal_detector.check_pending_review(host.evolution_store)
-        if event is None:
-            return
-        msg = host._report(
-            event.event_type, fact=event.fact, reason=event.reason, suggestion=event.suggestion
-        )
-        if msg is not None:
-            self._append_report_once(sess, msg)  # EVO-20260827-f42496bc: 内容级幂等 append

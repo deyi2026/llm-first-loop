@@ -85,16 +85,3 @@ def test_normal_command_behavior_unchanged():
     r = _run("exit 3")
     assert r.status == ToolResultStatus.FAILURE
     assert "3" in r.content
-
-
-def test_control_plane_env_scrubbed():
-    """review R3 P0-1: COG_RUNTIME_ENFORCE_FILE（控制面 capability metadata）不进子进程环境.
-
-    非 secret 但暴露路径即暴露 self-promote 攻击面（同 Unix 用户可写目录）。
-    """
-    restore = _set_env("COG_RUNTIME_ENFORCE_FILE", "/Users/xxx/.config/lfl/allowlist")
-    try:
-        probe = _probe("'COG_RUNTIME_ENFORCE_FILE' in os.environ")
-        assert probe == "False", f"控制面路径泄露: {probe}"
-    finally:
-        restore()

@@ -9,8 +9,7 @@
 3. 基线文档含「硬边界保留声明」+ 关键词
 4. 基线文档含分类归属（硬边界/仅提示/执行通道/视图）
 5. if-return 度量项保持 AST 精确口径（ai_decision=0）
-6. _adaptive_tool_trim_age 保持「待后续评估」标注
-7. grep 复核源码：五类决策点仍属合规形态（无替 AI 决策退化）
+6. grep 复核源码：五类决策点仍属合规形态（无替 AI 决策退化）
 """
 
 from __future__ import annotations
@@ -60,10 +59,6 @@ class TestDecisionScanConclusion:
     def test_if_return_ast_caliber(self, baseline_src: str):
         assert "ai_decision" in baseline_src
         assert "AST 精确核验" in baseline_src
-
-    def test_adaptive_tool_trim_age_pending(self, baseline_src: str):
-        assert "_adaptive_tool_trim_age" in baseline_src
-        assert "待后续评估" in baseline_src
 
 
 class TestDecisionScanSourceGuard:

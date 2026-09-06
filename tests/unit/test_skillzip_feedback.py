@@ -6,10 +6,18 @@
 """
 from __future__ import annotations
 
+import pytest
+
 from llm_loop.core.message import ToolCall, ToolResultStatus
 from llm_loop.introspection.search import _memory_progressive_summary
 from llm_loop.memory.store import MemoryEntry
 from llm_loop.tools.registry import ToolRegistry
+
+
+@pytest.fixture(autouse=True)
+def _explicit_legacy_guidance_on(monkeypatch):
+    """SkillZip feedback tests exercise the explicit legacy/experiment guidance path."""
+    monkeypatch.setenv("LFL_TOOL_GUIDANCE", "on")
 
 
 def _proc(content, risk=0, used_at=""):

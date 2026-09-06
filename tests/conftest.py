@@ -312,14 +312,10 @@ def build_test_engine(fake_settings):
         runtime.set_max_adjust_per_round(fake_settings.param_adjust_per_round)
         ctx.runtime = runtime
         ctx.evolution_store = EvolutionStore(fake_settings.audit_dir)
-        # M17 FR-REVIEW-AI-02/03: LoopSignalDetector 三合一（executing 提醒检测数据源）
+        # Operator-only pending-review helper; ordinary model loop does not scan it.
         from llm_loop.introspection.loop_signals import LoopSignalDetector
 
-        loop_signal_detector = LoopSignalDetector(
-            eval_trigger_detector=None,
-            status=status,
-            settings=fake_settings,
-        )
+        loop_signal_detector = LoopSignalDetector()
         engine = LoopEngine(
             llm_client=fake,  # type: ignore[arg-type] — FakeLLM 实现 chat 协议（Duck typing）
             registry=registry,
@@ -337,7 +333,6 @@ def build_test_engine(fake_settings):
                 max_attempts=fake_settings.selfheal_max_attempts,
                 max_per_round=fake_settings.selfheal_max_per_round,
             ),
-            evolution_store=ctx.evolution_store,
             loop_signal_detector=loop_signal_detector,
             # M48（design §5.3）: 测试路径注入 ModelClientPool（FakeLLM 作 default_client，
             # pool.get_client(None) → fake；override 路径仅在 test_model_tools 显式构造）

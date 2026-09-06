@@ -29,6 +29,8 @@ class ArchitectureEvent:
     fact: str  # 事实（如实）
     reason: str  # 原因
     suggestion: str = ""  # 建议下一步（AI 易决策）
+    # R2 No Unreachable Advice: 事件指名的下一步能力（与 suggestion 文案同一函数产出）
+    capability_requirements: tuple[str, ...] = ()
 
 
 class EventReporter:
@@ -76,8 +78,14 @@ class EventReporter:
         """构造 [架构上报] 消息（冷却合并计数）."""
         n = self.pending_count(event)
         suffix = f"（该事件已连续发生 {n + 1} 次）" if n else ""
-        return architecture_report_message(
+        msg = architecture_report_message(
             fact=event.fact + suffix,
             reason=event.reason,
             suggestion=event.suggestion,
         )
+        # R2 No Unreachable Advice: 产生点结构化能力需求随注入消息 metadata 留痕
+        # （仅 SYSTEM source 的架构上报通道；仅作对账证据，不作选入依据——design 4.2.2.2 A3）
+        reqs = tuple(str(r) for r in (getattr(event, "capability_requirements", ()) or ()))
+        if reqs:
+            msg.metadata["capability_requirements"] = list(reqs)
+        return msg

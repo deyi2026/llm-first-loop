@@ -3,6 +3,14 @@
 > 立项: GOAL-20260829-afd095ab | 2026-08-31 | 状态: **R0-R8 PASS；R8.4 Eligibility AUDIT PASS；R8.5 resolved-episode PASS；R8.6 Tool Eligibility AUDIT PASS；R8.7 Tool Eligibility PASS；R8.8 seven-blocker closure PASS（eligibility gate READY）；behavior canary / R9 未开始**
 > 依赖链: R0 → R1 → {R2, R3, R4, R5, R6 并行} → R7 → R8 shadow/soak → **R8.4 audit → R8.5 resolved-episode retirement → R8.6 tool eligibility/recovery audit → R8.7 dynamic tool eligibility/recovery → R8.8 remaining eligibility blockers** → behavior canary → R9。R0 未过数据门不得进入行为实现；R8.8 full fixed-point 未过不得进入 behavior canary。
 
+## P1-C Rule-first Prompt Authority 收正 — ✅ PASS（2026-09-04）
+- zero-producer fixed point：`PROMPT_DYNAMIC_PRODUCER_SLOTS=frozenset()`；`build.py` 不产生 program-owned dynamic prompt；persisted program-origin 在 downstream semantic stage 前由 eligibility 退出 provider view。
+- 退役：runtime `InjectionBudget`、`INJECTION_BUDGET_CHARS`、program block priority/keep-drop；runtime `InjectionProfile` recommendation 与 primary/fallback/ERR1210 per-attempt profile emitter。
+- 保留：Prompt Eligibility deny-by-default、historical event schema 读取兼容、Cognitive prompt-neutral observability、physical context/window/output-reserve/overflow/compaction/resource accounting。
+- 验证：focused 58/58、adjacent 289/289、full pytest 100%/0 failure、Ruff + diff-check PASS；三模型 prompt-authority live 3/3，profile/budget 新事件均 0；RULE-AI-23 multi-choice live 3/3。
+- evidence: `data/audit/p1c_prompt_authority_live_canary_20260904.json`、`data/audit/p1c_rule_ai23_multichoice_canary_20260904.json`。
+- evidence_required: true
+
 ## R0 基线取证与 fixture 建立（数据门）— ✅ PASS
 - 内容: 用真实 `data/event_logs` 重建 human turn，区分 user truth / user-role program appendix / system notice；量化尾后注入、会话级重复、资料祈使污染、provider wire 连续 user；按 model/compact/recovery 分桶；冻结脱敏结构 fixture。
 - 产物:
@@ -23,18 +31,29 @@
 - 说明: R1 只完成来源/语义边界，不宣称消除 R0 的尾后注入、重复或 wire 违规；这些属于 R2-R7。
 - evidence_required: true
 
-## R2 注入预算硬上限（L2-1）— ✅ PASS
+## 2026-09-06 Delete-first Context Closure — ✅ CURRENT
+- `COG_RUNTIME_*` SemanticTaskState / Read Barrier / decision packet/tier 已从生产 runtime 退休；
+  仅保留独立机械 cache tagging。
+- R3 front-K/task-switch automatic reference catalog、SessionDigest auto projection、tool-experience
+  tip、APPEND_COMPRESSION 与 per-round `PROGRESSIVE_FOLD_K` 均退休；历史脚本改为自包含 archaeology。
+- dynamic program prompt producer registry=0；memory/experience/history 默认 explicit retrieval。
+- compaction 是 representation-only：达到实际 model/operator budget 后 oldest-contiguous 机械归档，
+  保留 durable exact recovery + versioned marker；不生成 Goal/current-decision/key-fact prose。
+- 旧测试若只保护上述控制面已删除/改写，不以测试红灯为由恢复旧架构。
+
+## R2 注入预算硬上限（L2-1）— ✅ HISTORICAL PASS / P1-C SUPERSEDED
+> **P1-C（2026-09-04）覆盖：**本节保留为 2026-08-30 历史实现证据。生产运行时已删除 `InjectionBudget` / `INJECTION_BUDGET_CHARS` / program block semantic priority；当前自动 program prompt 由 deny-by-default eligibility 在更前面归零，物理 context/window 预算另行保留。
 - 内容: `INJECTION_BUDGET_CHARS` 候选值 + 统一优先级丢弃 + 非祈使回执；在统一 assembler 门闸实现，不能各注入源各算一套。
 - 产物: `src/llm_loop/core/injection_budget.py`、`tests/unit/test_injection_budget.py`、`docs/injection-governance/r2/report.md`；`config.py` / `.env.example` 接入候选参数，`build.py` 只消费中央 budget plan。
 - 验收: persisted/dynamic/header 三类 program-origin 同一门闸；超限整块丢弃、不截断半块；accounting `used_chars <= budget`；off/shadow/enforce 多预算矩阵实际 wire 均低于 accounting；非祈使 receipt 同预算计费；8000 明示仅候选。
-- 说明: `COG_RUNTIME_PACKET_BUDGET` 保留为 Cognitive packet 内部投影压缩预算，只能进一步减少 packet；跨来源最终硬上限的 SoT 是 R2 `INJECTION_BUDGET_CHARS`。R3 已在其外层约束下完成资料降密。
+- 历史说明: 当时 `COG_RUNTIME_PACKET_BUDGET` 与 R2 注入预算并存；两者当前均已退休，本条只保留旧验收语境。
 - evidence_required: true
 
-## R3 资料按需化 + 指针化 + 会话级去重（L2-2）— ✅ PASS
-- 内容: `REFERENCE_AUTO_TURNS` 候选 K + 显式任务切换门；每帧 ≤2 行（事实 + ref）；stable ref 优先/hash fallback；seen-set 从持久 message metadata 重建，跨 compact 保持。
+## R3 资料按需化 + 指针化 + 会话级去重（L2-2）— ✅ HISTORICAL PASS / 2026-09-06 SUPERSEDED
+- 历史内容: `REFERENCE_AUTO_TURNS` + task-switch + two-line frame + seen-set；当前 production 已删除该自动 catalog 控制面，stable ref 仅用于 explicit retrieval/hydration。
 - 产物: `src/llm_loop/core/reference_injection.py`、`tests/unit/test_reference_injection_{policy,integration}.py`、`docs/injection-governance/r3/report.md`；memory/experience/skill/digest/compact/hotcard 自动表示迁移到 pointer-era。
 - 验收: K+1 后 memory 自动检索即停止；09c44093 x18 stable-ref trap 完整正文仅 1 次；显式 task switch 时 seen ref 最多 1 行、新 ref ≤2 行；compact 不再回灌 key facts/index/snippets；主动 `search_records/search_archive` 不回归；原 R3 237 focused tests PASS；post-R3 adversarial audit 进一步验证 human-ref poisoning=0、memory/experience/digest ref 可精确水合、session scope 与真实 restart，并以 281/281 扩展回归 PASS；R2 15 点预算矩阵 PASS；R0 frozen diff=0。
-- 说明: K=3 仍为候选；seen-set 不新增 Session 顶层状态，而从 durable metadata 重建。hotcard 只改成两行 file pointer，消费/恢复语义留 R4。
+- 当前说明: K=3/seen-set/hotcard automatic pointer 不再是生产策略；保留本段仅用于解释历史 R7 数据。
 - evidence_required: true
 
 ## R4 程序恢复边界（L2-4）— ✅ PASS
@@ -69,7 +88,8 @@
 - evidence: `docs/injection-governance/r7/report.md`、`r7/results-mlx4bit.json`、`r7/results-qwen27b.json`。
 - evidence_required: true
 
-## R8 按模型能力分档（L2-5，后置 shadow）— ✅ PASS（R8.3 SOAK PASS；behavior canary NOT STARTED）
+## R8 按模型能力分档（L2-5，后置 shadow）— ✅ HISTORICAL PASS / P1-C SUPERSEDED
+> **P1-C（2026-09-04）覆盖：**runtime Injection Profile recommendation 与 per-attempt `injection.profile.shadow` emitter 已退役；历史事件 schema/报告仅供旧日志与演进取证，不得恢复为 prompt/profile 控制面。
 - 内容: 只读取当前路由绑定的 ProviderRegistry/ModelSpec；`weak/unknown -> minimal`，`strong+reasoning=false -> standard`，`strong+reasoning=true -> full`。第一阶段固定 `mode=shadow, applied=false`，不改变 prompt。
 - 归因: 新增独立 `injection.profile.shadow` event；primary / fallback / err1210 retry 逐真实 provider attempt 记录，避免 request.meta 的 round 级模型快照误归因 fallback。
 - 零行为证据: capability-only minimal↔full 对照的实际 `messages+tools` byte-identical；R2×R4×R5×R6 15/15；R0 frozen 0-byte；focused 268/268；pyright 0/0。
@@ -113,6 +133,8 @@
 - evidence_required: true
 
 ## R8.7 Dynamic Tool Eligibility + Runtime Health + Typed Recovery — ✅ PASS
+
+> **P1-B supersession (2026-09-04):** 本节保留为历史实现/验收证据。CORE/keyword/protocol/recovery 动态 selection 与 `TOOL_ELIGIBILITY_MODE` 已退役；当前工具面固定为 registered healthy tools（另受显式 delegated scope 约束）。Runtime health 与 typed recovery factual metadata 继续有效。
 - Projection: `TOOL_ELIGIBILITY_MODE=enforce` 默认对 local/cloud 统一应用 stable CORE9 + current user task + active tool protocol + latest typed-recovery-next；`shadow/off` 保留旧 provider surface。
 - Discovery: 复用现有 `get_tool_schema(tool_name)`；`*` 列目录、`?keyword` 搜索、exact name 取完整 schema，不新增工具/参数。
 - Runtime health: Playwright Python prerequisite 缺失时 `playwright_exec/test` 不投影，stale direct call 亦被 registry 拒绝并给 replacement；MCP `tools/list=0` 时立即关闭连接并保持 0 capability。
@@ -244,18 +266,18 @@
 - Retrieval preserved: stable system prompt advertises archive recovery through `search_archive`; ArchiveStore keeps exact bodies; integration test still retrieves unique archived original via RecordSearcher after compaction.
 - Observability preserved: `compact_view_stats` -> pre/post/drop/archived_count；provider fold -> `message.cache_compacted` event；degrade -> cache monitor/transport metadata；`run.compact` action -> true stats + `prompt_chars=0`。
 - Telemetry correction: historical `run.compact`=7,635 rows (`warn=6,910 / ok=725`); 2026-08-30/31 had 192 obsolete missing-facts warns vs 10 ok. Missing retired `[压缩关键事实]/[压缩推理结论]` is no longer treated as failure.
-- Active-state boundary: legacy anchor-mode `[当前决策]` remains separate and is labeled `compact_active_state_appendix`; E10 does not use observability cleanup to delete a potentially active decision surface.
+- 2026-09-06 closure: legacy anchor-mode `[当前决策]` / `compact_active_state_appendix` 已退休；compaction 不再从 Goal/checkpoint 派生模型可见语义。
 - Static truth correction: one stable system-prompt line removed the obsolete claim that compression automatically emits `[上下文压缩]` marker/catalog/key facts. This intentionally causes one prefix digest change; golden fingerprint updated only after all memory/tip morphology assertions passed.
 - Verification: implementation `b2b18d9`; detached clean production/new-test pyright **0/0**；focused **24/24**；wider **348/348**；R0-1~R0-4 PASS；frozen hash `b54d47a31109a03d9f926f65b7a3d9f6caf3f24c0d42b1bff26fe338ee74b02a` unchanged；checkout before/after clean。Parent `0b24482` reproduces the same 10 legacy broad-test pyright debts.
 - Matrix: E10 PARTIAL→DONE；总计 `DONE=28 / KEEP=1 / PARTIAL=5 / OPEN=0`；behavior canary / R9 未启动。
-- evidence: `docs/injection-governance/eligibility/r817-report.md`、`eligibility/matrix.json`、`tests/unit/test_compact_observability_r817.py`、`tests/unit/test_append_compression.py`、`tests/unit/test_progressive_fold.py`、`tests/unit/test_history.py`、`tests/unit/test_reference_injection_integration.py`。
+- evidence: `docs/injection-governance/eligibility/r817-report.md`、`eligibility/matrix.json`、`tests/unit/test_compact_observability_r817.py`、historical `test_append_compression.py` / `test_progressive_fold.py`（现已退休）、`tests/unit/test_history.py`、`tests/unit/test_reference_injection_integration.py`。
 - evidence_required: true
 
 
 ## R8.18 Session Digest Catalog On-Demand Closure — ✅ PASS
-- E09 `session_digest_catalog`: generic digest catalog no longer auto-emits, persists, or joins provider tail; `digest_enabled` is capability-only.
+- E09 `session_digest_catalog`: generic digest catalog no longer auto-emits/persists/joins provider tail；2026-09-06 进一步删除无生产 caller 的 SessionDigest compatibility runtime。
 - Central hard gate: `digest` removed from dynamic producer allowlist; canonical legacy `session_digest_catalog` frames are denied even on the current turn, while ordinary user-authored `ref=digest:*` text is preserved.
-- Retrieval preserved: active tool results remain protocol-visible; historical originals remain available through ArchiveStore / `search_archive`; SessionDigest diagnostic render helpers remain.
+- Retrieval preserved: active tool results remain protocol-visible；historical originals remain through ArchiveStore / `search_archive`；不再维护 SessionDigest 自动/诊断投影 helper。
 - Verification: implementation `d458484`; main focused **43/43**; detached clean focused **43/43**; production/new-test pyright **0/0**; R0-1~R0-4 PASS; frozen hash `b54d47a31109a03d9f926f65b7a3d9f6caf3f24c0d42b1bff26fe338ee74b02a` unchanged; checkout clean after standard read-only mounts removed.
 - Matrix: E09 PARTIAL→DONE；总计 `DONE=29 / KEEP=1 / PARTIAL=4 / OPEN=0`；behavior canary / R9 未启动。
 - evidence: `docs/injection-governance/eligibility/r818-report.md`、`eligibility/matrix.json`、`tests/unit/test_session_digest_on_demand_r818.py`、`tests/unit/test_prompt_eligibility_r88.py`。

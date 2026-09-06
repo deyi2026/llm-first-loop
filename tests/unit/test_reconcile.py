@@ -50,6 +50,32 @@ def test_reconcile_identical_passes():
     assert rep.session_id == "s1"
 
 
+def test_reconcile_ignores_recomputable_projection_runtime_caches():
+    """Migration equality must not be blocked by provider/model projection caches.
+
+    history_anchors/history_anchor_scopes/projection_guard are persisted runtime
+    acceleration state.  Event replay may omit them; the next prompt build safely
+    revalidates or recomputes them from the current provider/model/budget contract.
+    """
+    src = _valid_session()
+    src["history_anchors"] = {"deepseek": 17}
+    src["history_anchor_scopes"] = {
+        "deepseek": {"version": 1, "model": "deepseek/m", "effective_budget": 80000}
+    }
+    src["projection_guard"] = {
+        "deepseek": {"ver": 1, "seq": 9, "built_hash": "abc", "ts": "2026-09-04"}
+    }
+    derived = dict(src)
+    derived.pop("history_anchors")
+    derived.pop("history_anchor_scopes")
+    derived.pop("projection_guard")
+
+    rep = reconcile(derived, src)
+
+    assert rep.passed is True
+    assert rep.top_level_diffs == []
+
+
 def test_reconcile_tampered_field_locatable():
     src = _valid_session()
     derived = dict(src)

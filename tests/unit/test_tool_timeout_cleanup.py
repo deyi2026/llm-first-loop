@@ -68,6 +68,23 @@ def test_registry_timeout_invokes_terminate_hook():
     assert tool.terminated.is_set(), "超时路径应调用 terminate() 钩子"
 
 
+class _InternallyBoundedCompoundTool(_SlowTool):
+    """编排型工具：内部自带边界，外层 registry timeout 必须禁用。"""
+
+    registry_timeout_s = None
+
+
+def test_registry_timeout_exempt_compound_tool_waits_for_truthful_result():
+    """外层超时不得先报 TIMEOUT、再让 compound tool 后台继续副作用。"""
+    reg = ToolRegistry(tool_timeout_s=0.02)
+    reg.register(_InternallyBoundedCompoundTool(sleep_s=0.08))
+    start = time.perf_counter()
+    result = reg.execute(ToolCall(id="c1", name="slow_tool", arguments={}))
+    elapsed = time.perf_counter() - start
+    assert result.status == ToolResultStatus.SUCCESS
+    assert elapsed >= 0.07
+
+
 def test_execute_command_normal_path_still_works():
     """P1-5 重构后正常路径不变：短命令成功返回（零回归）."""
     r = ExecuteCommandTool(timeout_s=30).execute(command="echo hello")

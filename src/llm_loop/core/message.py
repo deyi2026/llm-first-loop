@@ -32,6 +32,7 @@ class ToolResultStatus(StrEnum):
     ERROR = "error"  # 异常
     TIMEOUT = "timeout"  # 超时（含部分结果）
     BLOCKED = "blocked"  # 灾难性安全硬阻断
+    UNAUTHORIZED = "unauthorized"  # 缺真实用户/系统授权（任务恢复授权缺失/拒绝）
 
 
 class RecoverabilityStatus(StrEnum):
@@ -107,6 +108,13 @@ class Message:
         # M20 THK-04: 思考链非空才回传（缺失态 None 不回传 → 零回归；官方"携带 tools 必须完整回传"）
         if self.role == "assistant" and self.reasoning_content:
             d["reasoning_content"] = self.reasoning_content
+        # Internal marker only: LLMClient projects this opaque state to a
+        # whitelisted provider-native field before guard/fingerprint/send. It is
+        # never sent as `_provider_replay` on the wire.
+        if self.role == "assistant":
+            replay = (self.metadata or {}).get("provider_replay")
+            if isinstance(replay, dict):
+                d["_provider_replay"] = replay
         return d
 
 
@@ -146,6 +154,10 @@ class ToolResult:
     # 字段）；默认 None 零回归（on/shadow 模式不写——capsule 本体已承载）。
     evidence_source_label: str | None = None
     evidence_coverage_label: str | None = None
+    # Canonical EvidenceRecord origin facts. Metadata-only until an explicit provider
+    # representation (for example a folded receipt) chooses to expose them. Runtime
+    # reports source identity/version/provenance only; it never decides task applicability.
+    evidence_origin_facts: dict[str, object] | None = None
     # R8.24-C C-D7: read_file 对 evidence:// 引用的参数误用短路标记（事件/审计面）。
     short_circuit_kind: str | None = None
     # EVO-d78b270c: 经验驱动注入（M41 升级）——registry 失败时按错误关键词检索
@@ -155,6 +167,16 @@ class ToolResult:
     # R8.7: structured recovery advice is internal metadata plus compact model-facing text.
     # Concrete type lives in llm_loop.tools.recovery to avoid a core->tools import cycle.
     recovery_advice: Any | None = None
+    # LFL Agency First P0-2: 执行层结构化结果指纹（同一调用+同指纹才判无进展）。
+    # 由工具执行层给出，不进 prose 推断；默认 None = 未提供（零回归）。
+    result_fingerprint: str | None = None
+    # P1-B: tool-produced capability facts remain durable metadata only. They may
+    # describe a capability named by the receipt, but never select/hide/promote tools.
+    capability_requirements: tuple[str, ...] = ()
+    # 组合/子代理工具的嵌套成功证据，仅供声明-回执校验与审计消费；不进 LLM wire。
+    # 例: ("execute_command:success", "read_file:success")。只允许真实 SUCCESS
+    # 子动作进入，失败/阻断不得借外层 SUCCESS 冒充已完成。
+    verification_receipts: tuple[str, ...] = ()
 
     def to_message(self) -> Message:
         """构造为 tool 消息（如实承载状态，AI 视角：状态结构化呈现）.
@@ -182,6 +204,8 @@ class ToolResult:
                 metadata["evidence_projection_complete"] = self.evidence_projection_complete
         if self.source_resolution_mode is not None:
             metadata["source_resolution_mode"] = self.source_resolution_mode
+        if self.verification_receipts:
+            metadata["verification_receipts"] = list(self.verification_receipts)
         if self.source_execution_performed is not None:
             metadata["source_execution_performed"] = self.source_execution_performed
         # R8.24-C: capsule metadata-only 审计补充字段 + 短路标记（默认缺省不写，零回归）
@@ -189,12 +213,19 @@ class ToolResult:
             metadata["evidence_source_label"] = self.evidence_source_label
         if self.evidence_coverage_label is not None:
             metadata["evidence_coverage_label"] = self.evidence_coverage_label
+        if self.evidence_origin_facts is not None:
+            metadata["evidence_origin_facts"] = dict(self.evidence_origin_facts)
         if self.short_circuit_kind is not None:
             metadata["short_circuit_kind"] = self.short_circuit_kind
         if self.recovery_advice is not None:
             to_dict = getattr(self.recovery_advice, "to_dict", None)
             if callable(to_dict):
                 metadata["tool_recovery"] = to_dict()
+        if self.result_fingerprint is not None:
+            metadata["result_fingerprint"] = self.result_fingerprint
+        # R2 No Unreachable Advice: 回执指名能力留痕（对账证据，不进 LLM wire）
+        if self.capability_requirements:
+            metadata["capability_requirements"] = list(self.capability_requirements)
         return Message(
             role="tool",
             content=content

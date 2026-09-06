@@ -30,6 +30,7 @@ from contextlib import suppress
 from pathlib import Path
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.core.run_context import current_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +92,7 @@ class DshTaskTool:
         "注意: DSH 每次任务新会话（无跨任务记忆）；结果只回最终回答文本（截断 3 万字符，超限"
         "另存可检索）；进程冷启动有开销（长任务占比可忽略）；任务文本自动附加汇报格式要求与验收清单"
         "（可用 report_format=false 关闭汇报格式），失败可 retry（新 session 重试，无状态污染）；"
-        "background=true 后台执行（返回 job_id，用 job_output/job_kill 管理，支持多任务并行 fan-out）。"
+        "background=true 后台执行（返回 job_id，用 job_output 查询，支持多任务并行 fan-out；终止能力仅在真实用户取消意图下提供）。"
     )
     parameters = {
         "type": "object",
@@ -130,7 +131,7 @@ class DshTaskTool:
             "background": {
                 "type": "boolean",
                 "description": "后台执行（可选，默认 false）。true 时立即返回 job_id 不阻塞等待，"
-                "用 job_output 查询输出、job_kill 终止——支持多 dsh_task 并行 fan-out（每任务独立进程/session）。"
+                "用 job_output 查询输出——支持多 dsh_task 并行 fan-out（每任务独立进程/session）；终止能力仅在真实用户明确要求取消时提供。"
                 "注意: 后台模式不执行 retry/审计，退出码经 job_output 可见。",
             },
             "reasoning_effort": {
@@ -247,8 +248,9 @@ class DshTaskTool:
             start_new_session=True,
         )
         # DSH 借鉴 021-B: owner 并发上限——超限释放已启动进程并如实拒绝
+        _sid = current_session_id.get() or ""
         try:
-            job_id = JobRegistry.instance().create(proc, f"dsh --profile {_DSH_PROFILE} <task>")
+            job_id = JobRegistry.instance().create(proc, f"dsh --profile {_DSH_PROFILE} <task>", session_id=_sid)
         except JobLimitExceeded as exc:
             try:
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
@@ -267,10 +269,12 @@ class DshTaskTool:
                 f"[后台 dsh_task 已启动] job_id={job_id} status=running\n"
                 f"任务: {task[:120]}\n"
                 f"用 job_output(job_id={job_id}) 查询输出（退出码经其可见），"
-                f"job_kill(job_id={job_id}) 终止。"
+                f"如用户明确要求终止，再按取消意图处理。"
             ),
             tool_call_id="",
             tool_name=self.name,
+            # R2 P1-7: 回执文案与结构化字段同一构造点产出（活跃句柄 → 下轮投影选入）
+            capability_requirements=("job_output",),
         )
 
     def _build_task(self, task: str, ctx_path: str, report_format: bool, acceptance: list[str]) -> str:

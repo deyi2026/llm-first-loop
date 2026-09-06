@@ -51,7 +51,8 @@ class WorkflowRunTool:
         "按拓扑序执行，依赖结果自动注入；支持节点级 budget_rounds 轮次预算）时。"
         "何时不用: 单个子任务用 spawn_subagent；任务简单直接处理。"
         "注意: 子代理可用工具受限（read_file/execute_command/web_fetch/web_search/get_tool_schema/edit_file），"
-        "不可改文件/改架构；递归深度上限 3。parallel/dag 当前为顺序执行+聚合（registry 有状态，"
+        "可按任务需要用 edit_file 修改工作区文件，但仍受安全/并发写保护；递归深度由程序控制。"
+        "parallel/dag 当前为顺序执行+聚合（registry 有状态，"
         "真并发有竞态风险——结果等价，如实标注）。"
         "失败对策: 某步失败不阻断后续步骤，每步状态如实标注，请在父级整合。"
     )
@@ -284,13 +285,20 @@ class WorkflowRunTool:
                 "",
                 budget,
             )
-        st = "failure" if result.refused else "success"
-        refused = result.refused
-        if result.truncated:
-            st += "+truncated"
+        outcome = getattr(result, "outcome", None)
+        if not outcome:
+            if getattr(result, "refused", False):
+                outcome = "refused"
+            elif getattr(result, "truncated", False):
+                outcome = "truncated"
+            else:
+                outcome = "completed"
+        st = "success" if outcome == "completed" else "failure"
+        outcome_note = "" if outcome == "completed" else f" child_outcome={outcome}"
+        refused = outcome != "completed"
         budget_note = f" budget_rounds={budget}" if budget else ""
         line = (
-            f"[步骤 {i}/{total}] [状态: {st}] depth={result.depth} rounds={result.rounds}"
+            f"[步骤 {i}/{total}] [状态: {st}]{outcome_note} depth={result.depth} rounds={result.rounds}"
             f" tools={len(result.tool_calls)} tokens_in={result.tokens_in} tokens_out={result.tokens_out}{budget_note}"
         )
         if result.tool_calls:

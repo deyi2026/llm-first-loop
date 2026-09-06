@@ -72,11 +72,6 @@ _TELEMETRY_LINE_EOF_RE = re.compile(r"(?m)^[ \t]*⚡ 缓存命中率 [^\n]*?toke
 # 默认仅检查末尾 N 行（=0 时回退全文匹配兼容旧行为）。
 _STRIP_AUDIT_LOG = os.environ.get("CACHE_TELEMETRY_STRIP_AUDIT_LOG", "0") == "1"
 _STRIP_TAIL_LINES = int(os.environ.get("CACHE_TELEMETRY_STRIP_TAIL_LINES", "10"))
-# EVO-20260825 任务8（§5.8）: emergency_compact 后同一轮（默认 60s 内）switch_model
-# → 判定 wasted（紧急压缩白做）——窗口可经环境变量覆盖。
-_SWITCH_MODEL_WASTED_WINDOW_SEC = float(
-    os.environ.get("SWITCH_MODEL_WASTED_WINDOW_SEC", "60")
-)
 
 
 def strip_cache_telemetry_lines(content: str | None, *, audit_log: bool = False) -> str:
@@ -234,12 +229,6 @@ class CacheHealthMonitor:
         self._breaker_hit_win: dict[str, list[tuple[int, int]]] = {}
         # EVO-20260825 §5.11: 恢复失败 per-session 防刷屏（每会话仅首次提示）
         self._fail_alerted_sessions: set[str] = set()
-        # EVO-20260825 任务8（§5.8）: emergency_compact 与 switch_model 决策协调——
-        # 检测"紧急压缩后 60s 内被 switch_model 覆盖"的浪费（紧急压缩 = 锚点前移
-        # 归档，若随即切模型则压缩白做——前缀按新模型重建，浪费成本可审计）。
-        self._last_emergency_compact_ts: dict[str, float] = {}
-        self._emergency_compact_count: dict[str, int] = {}
-        self._wasted_emergency_compact_count: dict[str, int] = {}
 
     def _get_bucket(self, session_id: str = "") -> _SessionBucket:
         """获取或创建 per-session 窗口桶（默认 __default__ 兼容无 session_id 调用方）."""
@@ -751,90 +740,6 @@ class CacheHealthMonitor:
         except Exception:  # noqa: BLE001 — fail-open
             logger.debug("view_not_shrinking 审计异常（fail-open）", exc_info=True)
 
-    def note_degraded(
-        self,
-        *,
-        reason: str,
-        head_keep_chars: int,
-        session_id: str = "",
-        model_ref: str = "",
-    ) -> None:
-        """EVO-20260825 任务7（§5.7）: 渐进折叠 archive_provider 缺失降级事件.
-
-        降级（progressive_fold>0 但无 cache_archive_provider → 强制关闭渐进折叠）
-        写入 cache_breaker.jsonl 审计，供调用方（build.py）注入 metadata.cache_health
-        （kind="degraded"）。
-        """
-        try:
-            if not session_id:
-                return
-            st = self._breaker(session_id)
-            self._breaker_audit(
-                "archive_provider_degraded",
-                session_id=session_id,
-                model_ref=model_ref,
-                st=st,
-                chars_total=0,
-                budget=0,
-                reason=reason,
-                head_keep_chars=head_keep_chars,
-            )
-        except Exception:  # noqa: BLE001 — fail-open
-            logger.debug("archive_provider 降级审计异常（fail-open）", exc_info=True)
-
-    def note_emergency_compact(self, session_id: str, before_chars: int = 0) -> None:
-        """EVO-20260825 任务8（§5.8）: 紧急压缩发生记录（锚点前移式归档）.
-
-        记录时间戳（供 switch_model 覆盖检测）+ 计数 + breaker 审计。
-        """
-        try:
-            if not session_id:
-                return
-            self._last_emergency_compact_ts[session_id] = time.time()
-            self._emergency_compact_count[session_id] = (
-                self._emergency_compact_count.get(session_id, 0) + 1
-            )
-            st = self._breaker(session_id)
-            self._breaker_audit(
-                "emergency_compact",
-                session_id=session_id,
-                model_ref="",
-                st=st,
-                chars_total=before_chars,
-                budget=0,
-                reason=f"before_chars={before_chars}",
-            )
-        except Exception:  # noqa: BLE001 — fail-open
-            logger.debug("emergency_compact 审计异常（fail-open）", exc_info=True)
-
-    def note_switch_model_after_compact(self, session_id: str, model_ref: str = "") -> None:
-        """EVO-20260825 任务8（§5.8）: 紧急压缩后 60s 内 switch_model → 判定 wasted.
-
-        紧急压缩（锚点前移归档）刚做即被模型切换覆盖——前缀按新模型重建，压缩白做。
-        计数 + breaker 审计事件 wasted_emergency_compact，供运维归因。
-        """
-        try:
-            if not session_id:
-                return
-            _ts = self._last_emergency_compact_ts.get(session_id, 0.0)
-            if _ts <= 0 or time.time() - _ts > _SWITCH_MODEL_WASTED_WINDOW_SEC:
-                return
-            self._wasted_emergency_compact_count[session_id] = (
-                self._wasted_emergency_compact_count.get(session_id, 0) + 1
-            )
-            st = self._breaker(session_id)
-            self._breaker_audit(
-                "wasted_emergency_compact",
-                session_id=session_id,
-                model_ref=model_ref,
-                st=st,
-                chars_total=0,
-                budget=0,
-                reason="emergency_compact 后 60s 内 switch_model——压缩白做",
-            )
-        except Exception:  # noqa: BLE001 — fail-open
-            logger.debug("switch_model 覆盖检测审计异常（fail-open）", exc_info=True)
-
     def breaker_state(self, session_id: str = "") -> dict:
         """熔断状态快照（architecture_status/测试）."""
         try:
@@ -926,9 +831,6 @@ class CacheHealthMonitor:
             self._breakers.pop(session_id, None)
             self._baselines.pop(session_id, None)
             self._fail_alerted_sessions.discard(session_id)
-            self._last_emergency_compact_ts.pop(session_id, None)
-            self._emergency_compact_count.pop(session_id, None)
-            self._wasted_emergency_compact_count.pop(session_id, None)
         except Exception:  # noqa: BLE001 — fail-open
             logger.debug("cache_health reset_session 异常（fail-open）", exc_info=True)
 
@@ -1054,13 +956,6 @@ class CacheHealthMonitor:
                     "buckets": {k: dict(v) for k, v in self._buckets.items()},
                     "breakers": self.breaker_state(session_id),
                     "breaker_trigger_runs": self._breaker_trigger_runs,
-                    # EVO-20260825 任务8（§5.8）: 本会话 emergency_compact/switch_model 协调计数
-                    "emergency_compact_count": self._emergency_compact_count.get(
-                        session_id, 0
-                    ),
-                    "wasted_emergency_compact_count": self._wasted_emergency_compact_count.get(
-                        session_id, 0
-                    ),
                 }
             # 聚合快照 + 惰性清理超 1h 无活跃分桶
             _dead_sids: list[str] = []
@@ -1119,11 +1014,6 @@ class CacheHealthMonitor:
                 "breaker_trigger_runs": self._breaker_trigger_runs,
                 "fail_alerted_sessions": list(self._fail_alerted_sessions),
                 "session_count": len(self._session_buckets),
-                # EVO-20260825 任务8（§5.8）: emergency_compact/switch_model 协调计数
-                "emergency_compact_count": sum(self._emergency_compact_count.values()),
-                "wasted_emergency_compact_count": sum(
-                    self._wasted_emergency_compact_count.values()
-                ),
             }
         except Exception:  # noqa: BLE001 — fail-open
             return {"error": "snapshot fail-open"}

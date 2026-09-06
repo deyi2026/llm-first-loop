@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 from llm_loop.config import Settings
 from llm_loop.core.runtime_params import RuntimeParams
 
@@ -31,6 +33,17 @@ def test_untouched_returns_static():
     rp = RuntimeParams(s)
     assert rp.max_iterations == 20
     assert rp.history_max_chars == 80000
+
+
+def test_unconfigured_history_budget_remains_none_until_explicit_override():
+    """None 是“无独立全局 cap”，RuntimeParams 不得偷换成 100K。"""
+    s = dataclasses.replace(_settings(), history_max_chars=None)
+    shared: dict = {}
+    rp = RuntimeParams(s, strategy=shared)
+    assert rp.history_max_chars is None
+    assert rp.current()["history_budget"] is None
+    shared["history_budget"] = 180000
+    assert rp.history_max_chars == 180000
 
 
 def test_hard_cap_applied():

@@ -123,16 +123,12 @@ def test_m12_deep_config_defaults(monkeypatch):
     monkeypatch.delenv("EVOLVE_LOCAL_EXEC", raising=False)
     monkeypatch.delenv("EVOLVE_EXEC_WHITELIST", raising=False)
     monkeypatch.delenv("SELF_EVAL_ENABLED", raising=False)
-    monkeypatch.delenv("SELF_EVAL_REMIND_ENABLED", raising=False)
-    monkeypatch.delenv("SELF_EVAL_INTERVAL_ROUNDS", raising=False)
     monkeypatch.delenv("SELF_EVAL_MIN_SAMPLES", raising=False)
     monkeypatch.delenv("SELF_EVAL_SPAN", raising=False)
     s = load_settings()
     assert s.evolve_local_exec == 0
     assert s.evolve_exec_whitelist == ""
     assert s.self_eval_enabled is True
-    assert s.self_eval_remind_enabled is True
-    assert s.self_eval_interval_rounds == 50
     assert s.self_eval_min_samples == 5
     assert s.self_eval_span == 50
 
@@ -146,13 +142,11 @@ def test_m12_deep_config_env_override(monkeypatch):
     monkeypatch.setenv("LLM_MODEL", "m")
     monkeypatch.setenv("EVOLVE_EXEC_WHITELIST", "recover_state,clear_cache")
     monkeypatch.setenv("SELF_EVAL_ENABLED", "0")
-    monkeypatch.setenv("SELF_EVAL_INTERVAL_ROUNDS", "20")
     monkeypatch.setenv("SELF_EVAL_MIN_SAMPLES", "10")
     monkeypatch.setenv("SELF_EVAL_SPAN", "100")
     s = load_settings()
     assert s.evolve_exec_whitelist == "recover_state,clear_cache"
     assert s.self_eval_enabled is False
-    assert s.self_eval_interval_rounds == 20
     assert s.self_eval_min_samples == 10
     assert s.self_eval_span == 100
 
@@ -164,10 +158,8 @@ def test_m12_deep_config_invalid_fallback(monkeypatch):
     monkeypatch.setenv("LLM_API_KEY", "k")
     monkeypatch.setenv("LLM_BASE_URL", "https://x/v1")
     monkeypatch.setenv("LLM_MODEL", "m")
-    monkeypatch.setenv("SELF_EVAL_INTERVAL_ROUNDS", "abc")
     monkeypatch.setenv("SELF_EVAL_MIN_SAMPLES", "xyz")
     s = load_settings()
-    assert s.self_eval_interval_rounds == 50  # 非法 → 回退默认
     assert s.self_eval_min_samples == 5  # 非法 → 回退默认
 
 
@@ -186,8 +178,6 @@ def test_to_status_dict_m12_deep_fields():
     assert st["evolve_local_exec"] == 2
     assert st["evolve_exec_whitelist"] == ""
     assert st["self_eval_enabled"] is True
-    assert st["self_eval_remind_enabled"] is True
-    assert st["self_eval_interval_rounds"] == 50
     assert "llm_api_key" not in st  # 密钥不出现在状态摘要（DFX-SEC-02）
 
 

@@ -122,8 +122,8 @@ def test_fallback_candidates_resolves_valid_entries(
         model_fallbacks_raw=settings.model_fallbacks_raw,
     )
     candidates = pool.fallback_candidates()
+    # P2-B: active default is excluded even if operator repeats it in MODEL_FALLBACKS.
     assert candidates == [
-        "deepseek/deepseek-v4-flash",
         "local/qwen3.6-27b",
         "minimax/MiniMax-M3",
     ]
@@ -156,7 +156,7 @@ def test_fallback_candidates_skips_invalid_entries(
     )
     with caplog.at_level("WARNING"):
         candidates = pool.fallback_candidates()
-    assert candidates == ["deepseek/deepseek-v4-flash", "local/qwen3.6-27b"]
+    assert candidates == ["local/qwen3.6-27b"]
     # 至少两条 warning（ghost provider + MINIMAX_API_KEY 缺失）
     warnings = [r.message for r in caplog.records if r.levelname == "WARNING"]
     assert any("ghost/nonexistent" in m for m in warnings)
@@ -352,7 +352,7 @@ def test_default_model_429_triggers_fallback_to_next(
     assert len(fallback_records) == 1
     rec = fallback_records[0]
     assert rec["result_status"] == "success"
-    assert rec["arguments"]["from"] == "deepseek-v4-flash"
+    assert rec["arguments"]["from"] == "deepseek/deepseek-v4-flash"
     assert rec["arguments"]["to"] == "local/qwen3.6-27b"
     assert rec["arguments"]["reason"] == "429 限流"
 
@@ -360,7 +360,7 @@ def test_default_model_429_triggers_fallback_to_next(
     snap = status.snapshot()
     assert "model_fallback" in snap
     assert snap["model_fallback"]["active"] is True
-    assert snap["model_fallback"]["from"] == "deepseek-v4-flash"
+    assert snap["model_fallback"]["from"] == "deepseek/deepseek-v4-flash"
     assert snap["model_fallback"]["to"] == "local/qwen3.6-27b"
     assert snap["model_fallback"]["reason"] == "429 限流"
 
@@ -565,7 +565,8 @@ def test_all_fallbacks_fail_summarizes_reasons(
     assert "deepseek/deepseek-v4-flash" in summary_content
     assert "local/qwen3.6-27b" in summary_content
     assert "minimax/MiniMax-M3" in summary_content
-    assert "网络不可达" in summary_content
+    assert fb1.calls == []  # default model is not retried as its own fallback candidate
+    assert "LLM 网络不可达: timeout" not in summary_content
     assert "请求超时" in summary_content
     assert "429" in summary_content
 
@@ -579,7 +580,7 @@ def test_all_fallbacks_fail_summarizes_reasons(
     assert len(fallback_records) == 1
     rec = fallback_records[0]
     assert rec["result_status"] == "all_failed"
-    assert rec["arguments"]["from"] == "deepseek-v4-flash"
+    assert rec["arguments"]["from"] == "deepseek/deepseek-v4-flash"
     assert rec["arguments"]["to"] == "all_failed"
     assert rec["arguments"]["reason"] == "HTTP 503 上游错误"
 

@@ -216,68 +216,14 @@ class InteropService:
     def _inject_interop_messages(
         self, base: list[Message], prefix_len: int, session_id: str = ""
     ) -> tuple[list[Message], int]:
-        """装配点调用: inbox 消息注入（返回注入后的 base 与 prefix_len）.
-
-        engine._build_llm_messages 调用（每轮 run 必感知）；任何异常回落原值（fail-open）。
-        session_id: 注入目标会话（供 interop.spliced 事件溯源，缺省不记）。
-
-        注入位置（EVO-20260818 cache_window_converge spec §5.3.1-1 c/d，grill-me B1）:
-        - 默认尾部追加（env INTEROP_INJECT_TAIL=1，GATE_NOTE 模式）: inbox 存入
-          _interop_tail_messages，由 build 在提交末尾追加（转 user）——system+稳定历史
-          前缀字节不变，注入轮不断前缀（原实现插在 memory 之后、历史之前 = 前缀区，
-          每轮变化即断）。base/prefix_len 原样返回。
-        - INTEROP_INJECT_TAIL=0 回退旧行为: 插入 memory 之后、历史之前（2026-08-16 优化）。
-        """
-        import os
+        """扫描 interop inbox for UI/telemetry only; never mutate provider context."""
+        del session_id  # compatibility-only; no provider splice event remains
 
         try:
-            # R8.13/E26: pre-upgrade err1210 defer state may still hold interop frames in
-            # memory. Retire them here rather than allowing historical external prose to
-            # regain prompt authority after the live producer has been disabled.
-            legacy_tail = getattr(self._host, "_interop_tail_messages", None) or []
-            if legacy_tail:
-                self._host._interop_tail_messages = None
-                _st = self._host._run_state()
-                refs = list(_st.deferred_replay_refs or [])
-                _st.deferred_replay_refs = [
-                    (slot, ref) for slot, ref in refs if str(slot) != "interop"
-                ]
-                try:
-                    self._host._record_action(
-                        "interop.external_input",
-                        "legacy_defer_retired",
-                        f"count={len(legacy_tail)};prompt_chars=0",
-                    )
-                except Exception:  # noqa: BLE001 — observability only
-                    logger.debug("interop legacy defer retire trace 失败（忽略）", exc_info=True)
-            inbox = self._interop_inbox_messages()
-            if inbox:
-                _tail = os.environ.get("INTEROP_INJECT_TAIL", "1") == "1"
-                # DSH 借鉴(2026-08-17): interop.spliced 注入事件（对齐 agent/inbox/spliced）——
-                # 记录来源/条数/位置，缓存审计可追溯"哪轮请求含外部注入"（fail-open）
-                try:
-                    self._host._event_append(
-                        session_id or "?",
-                        "interop.spliced",
-                        {
-                            "session_id": session_id or "?",
-                            "round": 0,  # 构建期不知轮次，如实置 0
-                            "count": len(inbox),
-                            "start": prefix_len if not _tail else -1,  # tail 模式无前缀偏移
-                            "position": "tail" if _tail else "prefix",
-                            "sources": [
-                                (m.metadata or {}).get("interop_source", "")
-                                for m in inbox
-                            ],
-                            "content_preview": (inbox[0].content or "")[:200],
-                        },
-                    )
-                except Exception:  # noqa: BLE001 — 注入事件失败 fail-open（不影响注入本身）
-                    logger.warning("interop.spliced 事件写入失败（fail-open）")
-                if _tail:
-                    self._host._interop_tail_messages = inbox
-                    return base, prefix_len
-                return base[:prefix_len] + inbox + base[prefix_len:], prefix_len + len(inbox)
+            # Live interop producer is observability/user-authorization only. Scanning may
+            # archive notify items or record pending coordinate/task facts, but it never
+            # returns model input. Do not preserve an unreachable injection branch here.
+            self._interop_inbox_messages()
         except Exception:
             logger.warning("协调通道 inbox 注入失败（fail-open）", exc_info=True)
         return base, prefix_len

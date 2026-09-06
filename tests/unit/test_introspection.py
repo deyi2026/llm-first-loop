@@ -438,6 +438,8 @@ def test_adjust_strategy_frequency_budget(tmp_path):
         extract_enabled=False,
     )
     engine = build_engine(settings)  # type: ignore[arg-type]
+    assert engine.corrections is not None
+    assert engine.correction_ctx is not None
     ctx = engine.correction_ctx
     # 3 次合法调整（PARAM_ADJUST_PER_ROUND=3）
     for i in (30, 40, 50):
@@ -449,6 +451,7 @@ def test_adjust_strategy_frequency_budget(tmp_path):
     assert "PARAM-03" in r4.content
     assert "已达上限" in r4.content
     # 非法参数不消耗频次（校验失败先于 can_adjust）: reset 后第 1 次传非法 → 白名单错误，不消耗
+    assert ctx.runtime is not None
     ctx.runtime.reset_round()
     r_bad = engine.corrections.execute("adjust_strategy", {"strategy": {"safety": False}})
     assert r_bad.status.value == "failure"
@@ -577,6 +580,39 @@ def test_status_default_returns_lean_subset_with_hint(tmp_path):
     assert "H" * 6000 not in r.content  # 重维度 payload 不出现
 
 
+def test_architecture_status_propagates_pending_capability_requirements():
+    from llm_loop.introspection.tools_status import run_status
+
+    p = ArchitectureStatusProvider()
+    p.set_pending_actions_fn(lambda: {
+        "executing_evolutions": 1,
+        "pending_reviews": 0,
+        "pending_self_evals": 0,
+        "hint": "1 项演进执行中（可经 evolution_complete 登记）",
+        "capability_requirements": ("evolution_complete",),
+        "note": None,
+    })
+    r = run_status(CorrectionContext(), p, {})
+    assert r.status.value == "success"
+    assert r.capability_requirements == ("evolution_complete",)
+
+
+def test_self_evaluate_success_jit_declares_submit_evolution():
+    from types import SimpleNamespace
+
+    from llm_loop.introspection.tools_eval import run_self_evaluate
+
+    class _Evaluator:
+        def evaluate(self, **kwargs):
+            return SimpleNamespace(eval_id="SE-JIT", metrics=[])
+
+    ctx = SimpleNamespace(evaluator=_Evaluator(), session_id="s1")
+    r = run_self_evaluate(ctx, lambda *a, **k: None, {"trigger": "manual"})
+    assert r.status.value == "success"
+    assert "submit_evolution" in r.content
+    assert r.capability_requirements == ("submit_evolution",)
+
+
 def test_status_all_dims_in_sync():
     """EVO-20260826 守护: tools_status._ALL_DIMS 与 ArchitectureStatusProvider.snapshot 全量键一致（防漂移）."""
     from llm_loop.introspection.tools_status import _ALL_DIMS
@@ -603,6 +639,7 @@ def test_submit_evolution_eval_id_hint(tmp_path):
     )
     assert r.status.value == "success"
     assert "评估 ID 'SE-NOPE' 未在 self_eval_log 中找到" in r.content
+    assert "self_evaluate" in r.capability_requirements
     assert store.list()[0]["eval_id"] == "SE-NOPE"  # 建议仍落盘（双向溯源不阻断）
 
 
@@ -633,6 +670,7 @@ def test_submit_evolution_scope_session_receipt(tmp_path):
     assert "状态=executing" in r.content
     assert "evolution_complete" in r.content
     assert "pending_review" not in r.content
+    assert r.capability_requirements == ("evolution_complete",)
     assert store.list(status="pending_review") == []
 
 
@@ -671,6 +709,7 @@ def test_submit_evolution_default_scope_global_receipt(tmp_path):
     assert r.status.value == "success"
     assert "scope=global" in r.content
     assert "evolve-review" in r.content
+    assert r.capability_requirements == ()
 
 
 # ── R2/A6: 程序故障计数（AI 可感知程序故障率）──
@@ -692,8 +731,8 @@ def test_program_fault_counter_and_snapshot():
     assert p.snapshot()["program_faults"] == {"memory": 2, "llm_call": 1}
 
 
-def test_engine_fault_recording(tmp_path):
-    """引擎 fail-open 点记录程序故障（记忆失败路径）."""
+def test_engine_ordinary_run_does_not_touch_memory_retrieval(tmp_path):
+    """retrieval-only: 普通 run 不得自动 memory.search，也不应伪造 memory fault."""
     from llm_loop.config import Settings
     from llm_loop.core.loop.engine import LoopEngine
     from llm_loop.core.session import SessionStore
@@ -738,8 +777,9 @@ def test_engine_fault_recording(tmp_path):
     )
     result = engine.run_single("任务")
     assert result.final_answer  # 记忆故障不阻断
+    assert engine.status is not None
     faults = engine.status.snapshot()["program_faults"]
-    assert faults.get("memory", 0) >= 1  # 记忆故障已计数
+    assert faults.get("memory", 0) == 0  # 未显式检索就不触碰 memory
 
 
 def test_record_searcher_global_archive_search_sees_new_segment_layout(tmp_path):

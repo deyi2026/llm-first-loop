@@ -12,7 +12,6 @@ move 自 engine.py 内联工具段（492-553）与辅助方法（888-913）及�
 from __future__ import annotations
 
 import logging
-import os
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -20,56 +19,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# EVO-20260814-aab7eb0b P2: 循环实时停滞检测阈值
-# 连续 N 次相同指纹（tool_name + 规范化参数 JSON）：
-#   >= _STAGNATION_REMIND_AT 达阈值（事件留痕）；>= _STAGNATION_BREAK_AT 熔断如实结束。
-# R8.24-B B-D3: [停滞提醒] prompt 注入已取消（总审计 §11.3 撤销判定）——计数/阈值/
-# 熔断/BLOCKED 全保留；提醒改为事件观测（LFL_STAGNATION_REMINDER 三态控制事件粒度）。
+# P2-A Rule-first: 阈值仅控制观测事件采样频率，不阻断、不终止、不注入。
 _STAGNATION_REMIND_AT = 3
-_STAGNATION_BREAK_AT = 5
-# EVO-20260902-loopbreaker（已批准演进）: 执行前拦截阈值——同一指纹连续第 3 次起
-# 不再执行（事后熔断 BREAK_AT=5 保留为兜底）。实测缺陷: 计数按 run 重置，
-# "每轮 run 重复 2~4 次即被收束"的跨 run 死循环永不达 5 → 需跨 run 延续 + 提前拦截。
-_STAGNATION_BLOCK_AT = 3
-
-
-def partition_stagnation_block(
-    calls: list,
-    fp_state: dict,
-    fingerprint_fn,
-) -> tuple[list, list]:
-    """执行前死循环拦截分区（纯函数，EVO-20260902-loopbreaker）.
-
-    按声明顺序模拟指纹推进: 以 fp_state（含跨 run 延续基数）为起点，同一指纹
-    连续计数达 _STAGNATION_BLOCK_AT 的调用被拦截（不执行），其余放行。
-    返回 (allowed_calls, blocked: list[(call, streak_count)]).
-    """
-    projected_fp = fp_state.get("fp")
-    projected_count = int(fp_state.get("count", 0) or 0)
-    allowed: list = []
-    blocked: list[tuple[Any, int]] = []
-    for tc in calls:
-        fp = fingerprint_fn(tc)
-        if fp == projected_fp:
-            projected_count += 1
-        else:
-            projected_fp, projected_count = fp, 1
-        if projected_count >= _STAGNATION_BLOCK_AT:
-            blocked.append((tc, projected_count))
-        else:
-            allowed.append(tc)
-    return allowed, blocked
-
-
-def _stagnation_reminder_mode() -> str:
-    """R8.24-B B-1.1: 提醒事件观测模式（三态，均零 prompt 注入）.
-
-    - "on"（默认）: 达阈值记 "suppressed" 事件（观测在场）
-    - "shadow":     达阈值记 "suppressed_shadow" 事件（shadow 观测期语义）
-    - "off":        完全静默（仅计数/熔断机械路径）
-    """
-    raw = (os.environ.get("LFL_STAGNATION_REMINDER", "on") or "on").strip().lower()
-    return raw if raw in {"on", "shadow", "off"} else "on"
 
 # EVO-20260823-9bb27899: 搜索/定位类工具目标级停滞检测
 # 背景: 原指纹 = 工具名 + 完整参数 JSON 全等匹配；"换深度/换目录/换工具搜同一目标"时
@@ -77,13 +28,6 @@ def _stagnation_reminder_mode() -> str:
 # 对策: ① 对搜索类工具提取"目标指纹"（同目标不同细节参数 → 同一指纹 → 计数累计）；
 #       ② 搜索类工具连续空结果达阈值 → 注入 [搜索空结果提醒]（目标可能不存在/前提失效）。
 _SEARCH_LIKE_TOOLS = {"search_files", "search_records", "search_archive", "search_docs"}
-# 各搜索类工具用于判定"找什么"的核心字段（忽略 limit/root/offset 等细节参数）
-_SEARCH_TARGET_FIELDS = {
-    "search_files": ("pattern", "content"),
-    "search_records": ("kind", "query"),
-    "search_archive": ("query", "role", "tool_name"),
-    "search_docs": ("query", "doc_type"),
-}
 _EMPTY_SEARCH_REMIND_AT = 2  # 连续空结果达此数 → 注入 [搜索空结果提醒]（一次）
 
 
@@ -107,17 +51,6 @@ def _is_search_like_call(tc) -> bool:
         cmd = str((tc.arguments or {}).get("command", ""))
         return _is_search_like_command(cmd)
     return False
-
-
-def _search_target_key(tc) -> str:
-    """提取搜索类调用的"目标"登记键（用于否定帧，同目标跨工具/跨会话命中）."""
-    args = tc.arguments or {}
-    if tc.name == "execute_command":
-        return f"cmd:{str(args.get('command', ''))[:200]}"
-    if tc.name == "search_files":
-        return f"pattern:{args.get('pattern') or args.get('content') or ''}"
-    # search_records / search_archive / search_docs: 用 query 作目标
-    return f"query:{args.get('query') or ''}"
 
 
 def _is_empty_search_result(result) -> bool:
@@ -158,4 +91,15 @@ def _tool_args_summary(arguments: Any) -> str:
         )
     except (TypeError, ValueError):
         s = str(arguments)
+    return s[:200] + "…" if len(s) > 200 else s
+
+
+def fingerprint_summary(fp: str) -> str:
+    """同参指纹摘要（spec 5.3.1-5b / 6.5.5）：200 字符截断附 "…"，可辨识优先于可还原.
+
+    决策口径（llm_decide 的 _resp_summary）与执行口径（tool_loop 回执留痕）
+    两口径同源调用，防截断规则漂移（对齐 _tool_args_summary 的 200 截断规则，
+    即阻断帧指纹摘要约束）；同时是会话级预热回放的解析依赖（C-G4 上游）。
+    """
+    s = str(fp or "")
     return s[:200] + "…" if len(s) > 200 else s

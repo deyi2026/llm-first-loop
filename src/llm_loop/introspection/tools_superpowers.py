@@ -87,9 +87,9 @@ def run_brainstorm_design(ctx, audit, args):
 
     lines.append("## Next Steps")
     lines.append("1. Pick 1-2 options to deep-dive")
-    lines.append("2. Use grill_me for design challenge")
-    lines.append("3. Use design_review for cross-role review")
-    lines.append("4. Use submit_evolution to land")
+    lines.append("2. Challenge the strongest options against constraints")
+    lines.append("3. Run an independent cross-role review before implementation")
+    lines.append("4. Decide whether the evidence merits a durable evolution proposal")
 
     return ToolResult(status=ToolResultStatus.SUCCESS, content="\n".join(lines), tool_call_id="", tool_name="brainstorm_design")
 

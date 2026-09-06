@@ -25,7 +25,6 @@ from llm_loop.tools.source_recovery_contract import (
     SourceRecoveryKind,
     source_recovery_guidance,
 )
-from llm_loop.tools.trim import truncate_output
 
 _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -247,8 +246,8 @@ class WebSearchTool:
         "网络搜索，返回结构化结果列表（标题/URL/来源）。何时用: 查找信息、找网页线索、验证外部事实。"
         "channel 可选: general 通用网页（默认，Bing/百度双后端）/ scholar 学术论文（OpenAlex+Crossref+PubMed 免 key 多源合并）"
         "/ code 代码仓库（GitHub 免认证）/ auto 按关键词自动路由。"
-        "状态契约: 结果超 3000 字符将截断（首尾保留 + 完整落盘 data/audit/tool_outputs/ 可检索——TOOL_TRIM_MAX 可调）。"
-        "何时不用: 已知确切 URL 时用 web_fetch 直接抓取；本地检索用 search_records/search_archive。"
+        "状态契约: 搜索结果默认完整返回；仅统一 ToolRegistry/Evidence 的真实输出硬上限可截断。"
+        "何时不用: 已知确切 URL 时使用直接抓取能力；本地记录/档案检索使用对应的本地检索能力。"
         "失败对策: 后端被限流/超时会自动降级到备用后端并如实标注来源；全部失败如实返回原因。"
         + SHARED_SOURCE_RECOVERY_CONTRACT
         + source_recovery_guidance(SourceRecoveryKind.WEB_SEARCH)
@@ -303,15 +302,9 @@ class WebSearchTool:
         if errors:
             lines.append(f"[降级记录] 部分源失败: {'; '.join(errors)}")
         content = "\n".join(lines)
-        from llm_loop.core.run_context import (
-            current_evidence_enforce_enabled,
-            current_evidence_shadow_enabled,
-        )
+        from llm_loop.core.run_context import current_evidence_shadow_enabled
 
         raw_observation = content if current_evidence_shadow_enabled.get() else None
-        # Phase3 enforce defers projection until Registry has committed Evidence.
-        if not current_evidence_enforce_enabled.get():
-            content = truncate_output(content, source=query)
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=content,
@@ -428,15 +421,10 @@ class WebSearchTool:
                 tool_name=self.name,
             )
         raw_content = "\n".join(raw_lines)
-        from llm_loop.core.run_context import (
-            current_evidence_enforce_enabled,
-            current_evidence_shadow_enabled,
-        )
+        from llm_loop.core.run_context import current_evidence_shadow_enabled
 
         raw_observation = raw_content if current_evidence_shadow_enabled.get() else None
         content = "\n".join(lines)
-        if not current_evidence_enforce_enabled.get():
-            content = truncate_output(content, source="|".join(queries[:5]))
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=content,

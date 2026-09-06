@@ -26,13 +26,19 @@ class CountingReadFileTool(ReadFileTool):
         return super().execute(**kwargs)
 
 
-def _registry(tmp_path: Path, owner: OwnerScope):
+def _registry(
+    tmp_path: Path,
+    owner: OwnerScope,
+    *,
+    resolver_has_blobs: bool = True,
+    inline_budget_chars: int = 5000,
+):
     blobs = BlobStore(tmp_path / "evidence" / "blobs")
     ledger = EvidenceLedgerStore(tmp_path / "evidence" / "ledger")
     capture = EvidenceCapture(blobs, ledger)
     freshness = EvidenceFreshness(ledger)
     tool = CountingReadFileTool()
-    registry = ToolRegistry(summary_threshold=500, max_output_chars=20000)
+    registry = ToolRegistry(max_output_chars=20000)
     registry.register(tool)
     registry.set_evidence_enforcer(
         EvidenceEnforcer(
@@ -43,7 +49,13 @@ def _registry(tmp_path: Path, owner: OwnerScope):
         )
     )
     registry.set_evidence_source_resolver(
-        EvidenceSourceResolver(ledger, freshness=freshness, owner_resolver=lambda: owner)
+        EvidenceSourceResolver(
+            ledger,
+            freshness=freshness,
+            owner_resolver=lambda: owner,
+            blobs=blobs if resolver_has_blobs else None,
+            inline_budget_chars=inline_budget_chars,
+        )
     )
     return registry, tool, ledger
 
@@ -79,9 +91,55 @@ def test_current_full_evidence_satisfies_overlapping_read_without_source_executi
     assert second.source_execution_performed is False
     assert second.evidence_ref == first.evidence_ref
     assert "evidence_reuse" in second.content
-    assert "source_execution" in second.content
+    assert "source_execution" not in second.content
     assert tool.execute_count == 1
     assert ledger.count(owner) == 1
+
+
+def test_current_evidence_without_blob_reader_falls_back_to_physical_source(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "no-blob-reader.txt"
+    _write(path)
+    owner = OwnerScope(workspace_id=str(tmp_path), session_id="r9-no-blob")
+    registry, tool, ledger = _registry(tmp_path, owner, resolver_has_blobs=False)
+
+    first = registry.execute(
+        ToolCall(id="nb1", name="read_file", arguments={"path": str(path), "full": True})
+    )
+    assert first.status is ToolResultStatus.SUCCESS
+    second = registry.execute(
+        ToolCall(id="nb2", name="read_file", arguments={"path": str(path), "full": True})
+    )
+
+    assert second.status is ToolResultStatus.SUCCESS
+    assert second.source_resolution_mode == "source_execution"
+    assert second.source_execution_performed is True
+    assert tool.execute_count == 2
+    assert ledger.count(owner) == 2
+
+
+def test_current_evidence_over_inline_budget_falls_back_to_physical_source(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "over-inline-budget.txt"
+    _write(path)
+    owner = OwnerScope(workspace_id=str(tmp_path), session_id="r9-over-budget")
+    registry, tool, ledger = _registry(tmp_path, owner, inline_budget_chars=100)
+
+    first = registry.execute(
+        ToolCall(id="ob1", name="read_file", arguments={"path": str(path), "full": True})
+    )
+    assert first.status is ToolResultStatus.SUCCESS
+    second = registry.execute(
+        ToolCall(id="ob2", name="read_file", arguments={"path": str(path), "full": True})
+    )
+
+    assert second.status is ToolResultStatus.SUCCESS
+    assert second.source_resolution_mode == "source_execution"
+    assert second.source_execution_performed is True
+    assert tool.execute_count == 2
+    assert ledger.count(owner) == 2
 
 
 def test_stale_file_evidence_forces_new_source_acquisition(tmp_path: Path) -> None:

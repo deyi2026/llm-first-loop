@@ -60,39 +60,39 @@
 
 R1 **没有**实现预算、按需/去重、恢复单边界、身份剥离、user truth 物理尾位或行为 A/B。
 
-## 4B. R2 已验收的统一注入预算
+## 4A-1. P1-C 当前 Prompt Authority 契约（2026-09-04）
 
-- 总预算 SoT：`INJECTION_BUDGET_CHARS`；默认 **8000 仅为候选值**，R7/L3 A/B 前不得宣称最佳/最终。
-- 最小运行值 512 字符，用于保证超限时仍可在同一预算内携带一条非祈使组装回执。
-- 中央 assembler 同时收集：history 已持久化 program-origin、本轮动态 slots、enforce packet/header；Cognitive=off 且无新 slots 也不能绕过。
-- 裁决粒度是完整 block：只保留或整块丢弃，R2 自身不做半块截断。
-- 统一优先级：预算回执 > 程序恢复 > 关键状态（decision/anchor/frontier/interop/gate）> 其他状态 > reference。
-- accounting 对最终渲染采用保守成本估算（含 group/slot/merge 开销），因此 `used_chars <= budget` 是硬门，实际 program-origin wire 字符不高于 accounting。
-- `COG_RUNTIME_PACKET_BUDGET` 属 Cognitive 内部投影压缩，只会进一步减少 packet；它不是跨来源注入总预算，也不能扩大 R2 上限。
-- R2 不实施 session 去重、K 轮按需、身份剥离、恢复次数策略、user-truth 物理尾位重排；分别留给 R3-R6。
+- 自动 program prompt producer registry 为空；unknown/unapproved producer fail-closed to retrieval/tool/event plane。
+- 不存在 runtime Injection Profile 或 semantic Injection Budget；model capability tier、program block kind/priority 不得决定 prompt density/keep/drop。
+- historical `injection.profile.shadow` event schema 只为旧 append-only log 兼容，不得再有新 emitter。
+- physical provider context limit、history byte/token capacity、output reserve、overflow retry/termination、compaction 属机械资源边界，继续保留。
+- Cognitive state/packet 若保留，只能 prompt-neutral observability，不能以 packet/profile/budget 名义恢复 program prompt authority。
 
-## 4C. R3 已验收的资料按需化 / 指针化 / 去重
+## 4B. R2/R3 历史注入控制面（已退役）
 
-权威报告：`docs/injection-governance/r3/report.md`。
+> **当前权威（2026-09-06）：**R2 `INJECTION_BUDGET_CHARS`、R3
+> `REFERENCE_AUTO_TURNS` / task-switch / seen-set / automatic reference frame、以及
+> Cognitive packet/tier 均只保留历史证据，不再是生产契约。
 
-- 自动资料窗口由 `REFERENCE_AUTO_TURNS` 控制，默认 3 仍是候选；K+1 默认关闭，显式 task switch 临时重开。
-- 每个自动 reference frame 最多两行：一句中性事实 + stable ref；command-shaped 历史不自动内联。
-- session seen-set 不新增第二份 Session 状态；从持久 message metadata 的 `reference_key(s)` 重建，stable ID 优先、无 ID 用规范化内容 hash，跨 compact 保持。
-- memory / experience / skill / SessionDigest 已按同一策略投影；重复 stable ref 默认零正文，任务切换相关命中最多一行 ref。
-- compact/archive 不再自动回灌旧消息片段、`[压缩关键事实]` 或 `[压缩档案目录]`，只保留两行 `ref=archive:search_archive` 状态；原文仍完整可检索。
-- hotcard 自动表示降为两行状态 + `ref=file:.../task_hotcard.json`；完整结构可 `read_file`，恢复/消费语义未提前进入 R4。
-- 09c44093 x18 重复 trap：同一 `memory:m1` 连续命中 18 次，完整正文只注入一次。
-- adversarial hardening：human user 中的 `ref=` 不得污染 seen-set；`memory:<id>` / `experience:<id>` / digest archive ref 必须能由对应检索路径精确水合；keyword/semantic memory 检索都在候选层保持 session scope；真实 SessionStore restart 后 seen-set 仍成立。
-- R3 暴露并修复了旧 compact anchor 伪 PASS：真实 user anchor 现在保留原消息本体，而不是归档后靠 `[压缩关键事实]` 字符串 echo 假装仍在。
-- 原 R3 focused 237 tests PASS；post-R3 adversarial audit 扩展为 281/281 PASS；R2 15 点预算矩阵继续满足 `actual <= used <= budget`；R0 frozen 0-byte diff。
-
-R3 **没有**实现恢复单边界、身份问答剥离、user-truth 物理尾位 / provider wire invariant 或行为 A/B。
+- dynamic program prompt producer registry 必须为空；程序不得通过自动 memory/reference/
+  experience/digest catalog 获得 prompt-write 权限。
+- persisted legacy program frames 允许被机械识别并从 provider view scrub，但该兼容逻辑不能
+  产生新正文。
+- memory / experience / archive 通过 stable ref + explicit retrieval/exact hydration 提供；
+  程序只给 provenance/currentness 等机械事实，`task_applicability=not_evaluated`。
+- compaction/folding 仅在实际 routed-model 物理窗口或显式 operator cap 触发时做机械表示变换；
+  不按语义相关性摘要/裁剪，不自动注入 `[当前决策]`、key facts、目录或“压缩提示”。
+- durable archive / EvidenceRef / provider-native replay state 是恢复真相；provider compaction 使用
+  versioned marker 防止同一旧 span 每轮重写。
+- 历史 R2/R3 设计、A/B 与验收数据仍见 `r2/report.md`、`r3/report.md`、`r7/`，不得据此
+  恢复旧生产权力。
 
 ## 4D. R6 已验收的 User Truth Tail / Wire Invariant
 
 权威报告：`docs/injection-governance/r6/report.md`。
 
 - initial human-ingress provider view 有 program 时必须是单 user envelope：`program appendix → fixed separator → exact user truth`；无 program 正常请求保持 byte-identical no-op。
+- 2026-09-03 复审限定：上述单-user envelope 只是一项 provider/1210 transport 兼容形态，**不是 protocol-level provenance isolation，也不能作为行为治理 PASS 证据**。应优先减少/取消非必要 program-origin prompt material；不得靠可见文字标签要求模型自行恢复来源边界。
 - exact user truth 来自 canonical Session current turn，byte-for-byte、不复制、不追加 program suffix；未知第二 human 不得被吞并。
 - tool-followup 不重复 user truth，必须保持 assistant/tool pairing。
 - compact 不得用摘要/指针/截断文本替换 current human truth；truth 自身超 history budget 时保留原文并由上层 context guard 显式拒绝。
@@ -133,25 +133,29 @@ R5 **没有**实施 R7 行为 A/B、R8 model-tier shadow 或 R9 主区应用。
 
 ## 4F. R7 已验收的 L3 A/B
 
-权威报告：`docs/injection-governance/r7/report.md`。
+历史报告：`docs/injection-governance/r7/report.md`。**当前裁决以 `docs/injection-governance/r7/CURRENT-STATUS-20260903.md` 为准。**
+
+> 2026-09-03 agency-first 复审：R7-v1 降级为 frozen historical diagnostic；不得再据其 A/B 结果做 model strong/weak、primary admission、fallback floor、injection profile 或 K 默认值裁决。以下数值仅保留历史证据语义。
 
 - A 臂确定性重放 R0 的 post-user / duplicate / imperative reference / identity-attraction 结构；B 臂直接使用 production R2/R3/R5/R6 helper，排除工具与网络成功率变量。
 - `qwen3.8-27b-mlx@4bit`：A completion=66.67%、dominance=0%、injection=32.57%、structure FAIL；B completion=100%、drift=0%、dominance=100%、injection=16.44%、structure PASS。
 - `qwen/qwen3.8-27b` 对照 A/B 均 completion=100%，但 A 仍 structure FAIL；B structure PASS 且 injection 32.57%→16.44%。
 - B 结构硬门：post-user=0、完整重复=0、reference imperative=0、tail_user_run<=1、exact user suffix=true。
-- 校准：K=3 是 [0,1,3] 中唯一保住 critical T6 的候选；budget=900 是 [512,900,2000,8000] 中最小通过候选。生产默认 8000 在 R7 不变。
+- 历史校准曾选 K=3 / budget=900；该结论已于 2026-09-03 失去生产默认值裁决权。T6 是 tool-less synthetic memory dependency，不能证明 blanket auto replay 必要。
 - 原指定 `cognilocal/qwen3.8-27b-cog` 本轮 8901 不提供，覆盖=N/A；未以其它模型冒充。
 
-## 4G. R8 已验收的模型能力分档 Shadow
+## 4G. R8 已验收的模型能力分档 Shadow（历史；P1-C 已覆盖）
+
+> **当前权威（2026-09-04 P1-C）：**runtime Injection Profile recommendation / emitter 已退役，不再按 capability tier 计算 prompt density，也不再新写 `injection.profile.shadow`。历史 event schema 保留为 append-only 旧日志读取兼容。
 
 权威报告：`docs/injection-governance/r8/report.md`。
 
 - 能力事实只取当前路由所绑定的 `ProviderRegistry/ModelSpec` 快照；不按模型名、provider 名、context、价格或 thinking 状态猜档。
-- 沿用既有 `capability_tier=strong/weak/unknown`，不新增第二套 tier 枚举：`weak/unknown -> minimal`；`strong + reasoning=false -> standard`；`strong + reasoning=true -> full`。`unknown` 继续遵守既有“保守视为弱”契约。
+- `capability_tier` 仅保留兼容/审计元数据；R7-v1 不再是 tier 来源。`unknown`=无结论，禁止负面能力推断；只有独立 production-path 证据明确标注的 `weak` 才可被 capability floor 视为低于下限。tier 不再映射注入密度，profile telemetry 统一 neutral `standard`、shadow-only。
 - R8 第一阶段固定 `mode=shadow`、`applied=false`，推荐值不得进入 build、R2 budget、R3 K/seen-set、R4 recovery、R6 provider-view projection 或 provider payload。
 - 归因采用独立 `injection.profile.shadow` 事件而不改写 `request.meta`：primary、每个真实 fallback provider call、err1210 blind/strip retry 均逐 attempt 记录；resolve 失败不冒充 provider attempt。
 - capability-only A/B 证明：同 model id / system / tools / user，只改能力元数据使推荐从 minimal 变 full，实际 provider `messages + tools` 序列化结果 byte-identical。
-- R8 初验时运行时 inventory 为 11/11 `unknown -> minimal`、覆盖 0%。Post-R8 R8.1 只对有受控证据的模型补 metadata；随后 owner 退役不用的 Qwen3.6，R8.2 远端受控 A/B 后，`mxnook/glm-5.3-flash` 因持续 HTTP 502 且 owner 明确表示可忽略，已从 active provider inventory 退役，transport failure 从未被猜成 weak。当前 active inventory 9/9 已分类：strong=1、weak=8、unknown=0，classified/metadata-complete coverage=100.0%，profile full=1/minimal=8，`canary_ready=true`。这只表示 metadata gate READY；behavior canary 尚未启动。
+- 历史 R8.1/R8.2 曾产出 strong/weak inventory 与 profile coverage；2026-09-03 复审确认其强弱来源受 R7-v1 污染韧性测试混杂，active runtime 这些 tier 已撤回 `unknown`。旧 coverage/canary-ready 仅作为历史记录，不再代表当前 admission readiness。
 - R2×R4×R5×R6 正交矩阵 15/15 PASS；R0 frozen 0-byte；R8/adjacent focused 268/268 PASS（另 4 个 Web/飞书 model-attribution 用例因当前解释器缺 `pypdf` / `lark_oapi` 未纳入，不是 R8 逻辑失败）；touched production + R8 tests pyright 0/0。
 - R8.3 live shadow soak：mirror live registry 已加载 9/9 metadata；strong-short 3 calls、weak-short 3 calls、weak-long-history 1 call，共 `request.usage=7` / `injection.profile.shadow=7`，unattributed=0、profile churn=0、attribution/mode/source violation=0；全部 `mode=shadow, applied=false`。fallback/1210/byte-identity production-path E2E 3/3 PASS；R8.3 + R2/R3/R4/R5/R6 focused 145/145；R0 再次 0-byte。
 
@@ -162,7 +166,7 @@ R8 **没有**启用任何 profile 行为。Metadata gate 与 R8.3 shadow soak �
 权威审计：`docs/injection-governance/eligibility/audit.md`；机器清单：`docs/injection-governance/eligibility/matrix.json`。
 
 - 新硬原则：**resolved / consumed / superseded / observability 默认不具备 prompt eligibility**；已解决 Q&A、tool chain、reasoning 与旧程序状态应可检索但不自动可见。
-- Eligibility 必须先于 model profile 与 R2 budget。Budget 只决定 eligible material 的 keep/drop，不能把本来不该进入 prompt 的内容合法化。
+- Eligibility 是当前 program-origin 自动 prompt 的最终准入边界；P1-C 后不存在 model profile 或 semantic R2 budget 的后续准入/排序。物理 context/window 资源预算属于另一条机械链路。
 - `ACTIVE + REQUIRED_NOW` 才能继续进入 provider context；若程序可自行处理则 0 prompt，若可通过工具/索引按需 hydrate 则默认不内联正文。
 - resolved episode 在 provider-view 退休前必须建立 durable index/archive + stable ref + hydration 验证；R8.5 已对**新/proven episode**用独立 `EpisodeStore` 闭合该链路，旧历史没有 resolution proof 时保持可见，不做猜测式迁移。
 - durable constraints/decisions 只保留当前 effective state；旧版本标记 superseded 后只留历史检索。
@@ -188,7 +192,7 @@ R8 **没有**启用任何 profile 行为。Metadata gate 与 R8.3 shadow soak �
 - `web_fetch` 标杆：普通静态站点可继续用；Toutiao 等已知 anti-bot domain preflight 优先 `web-fetch-fast`；403/418/JS-shell 不重复同工具；404 先找 canonical URL；timeout/5xx 才允许一次 bounded retry。
 - Skill 本身也受 runtime health：当前 `web-fetch-fast` 的 Chromium 末级 fallback 在本机不可执行，因此实现层必须标出该 fallback unavailable，不能静态照单全收。
 - MCP 当前只有 `dsh` server；initialize/tools-list 成功但 tools=0，因此推荐 no-capability quarantine/disable。重入门：`tools/list>0 + schema valid + health probe + allowlist/dedupe review`。
-- R8.7 已实施中央 prompt-facing tool projection：默认 `enforce`；`shadow/off` 是 rollback。simple task clean-source CORE=9 / raw lazy 3,425 chars（provider wrapper 3,714），满足 default <=12 tools / <=5,000 chars。
+- R8.7 projection 代码保留为显式实验能力，但当前/新部署默认 **`off`**，缺失或非法 mode 也 fail-open 为 off。注册工具的完整可调用面默认交给模型；shadow/enforce 不得因旧模板或局部 fallback 静默复活。
 - Hidden healthy tools 不 unregister；`get_tool_schema` 必须提供目录/关键词/exact schema discovery。active assistant-tool protocol 和 typed-recovery-next 必须能把需要的 secondary tool 临时加入 tail。
 - QUARANTINED 工具既不能被 prompt projection 暴露，stale direct call 也必须在 execution boundary 被拒绝；Playwright 当前按 Python runtime prerequisite 执行该规则。
 - MCP `tools/list=0` 视为 no capability：关闭该次连接、注册0工具；不得仅维持一个“在线但无能力”的 stdio 进程。
@@ -201,7 +205,7 @@ R8.7 最终硬门：default cloud tool-schema chars <=5,000；universal default 
 
 - 不修改 LLM 本体。
 - 不追求“所有程序信息为零”；必要 system notice 可保留，但不得冒充 user truth，也不得破坏稳定前缀/provider 协议。
-- 不把强模型排除在结构治理之外；**行为 A/B 重点是弱模型，wire invariant 则跨模型强制**。
+- 不按模型名或未经独立验证的 strong/weak 标量施加不同语义治理；模型差异先作为测量维度，不自动获得限制或额外注入。
 - 不让 `err1210.py` 承担正常注入排序/合并职责。
 - R8.4/R8.5 允许把 historical reasoning 作为 **Prompt Eligibility surface** 治理；R8.5 通过退休 resolved episode 且不复制 `reasoning_content` 来降噪，但不修改 `REASONING_TAIL` 参数或 provider reasoning 协议。
 - R8.7 可以改变 prompt-facing tool projection 与 no-capability MCP connection lifetime，但不安装 Playwright/Chromium、不伪造 MCP capability、不删除 healthy discoverable tools，也不进入 model-profile behavior canary/R9。

@@ -97,6 +97,8 @@ def test_cross_context_close_preserves_disconnect_save_and_releases_lease(
     assistants = [m for m in stored.messages if m.role == "assistant"]
     assert assistants
     assert "片段0" in assistants[-1].content
-    assert "中断" in assistants[-1].content or "不完整" in assistants[-1].content
+    assert "中断" not in assistants[-1].content and "不完整" not in assistants[-1].content
+    assert (assistants[-1].metadata or {}).get("llm_interrupted") is True
+    assert (assistants[-1].metadata or {}).get("run_end_reason") == "client_disconnect"
     with engine.session.run_lease(sid) as acquired:
         assert acquired is True, "跨 Context close 后 whole-run lease 必须释放"

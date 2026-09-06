@@ -330,6 +330,18 @@ class EvidenceRecord:
         )
 
 
+def evidence_origin_facts(record: EvidenceRecord) -> dict[str, object]:
+    """Return immutable/mechanical source facts; never infer task applicability."""
+
+    return {
+        "acquired_at": record.acquired_at,
+        "source_kind": record.source.kind.value,
+        "source_version_policy": record.source.version_policy.value,
+        "source_version_token": record.source.version_token,
+        "provenance": record.provenance.to_dict(),
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class EvidenceState:
     evidence_ref: EvidenceRef
@@ -1062,6 +1074,7 @@ def render_recovery_manifest(manifest: RecoveryManifest) -> str:
         f"ledger_version={manifest.ledger_version[:16]} entries={len(manifest.entries)} "
         f"truncated={'true' if manifest.truncated else 'false'}",
         "用途=恢复此前已获取/已压缩证据；优先 list_evidence/search_evidence 定位，read_evidence 精确分页取回；不要仅因上下文不可见而重跑原 source。",
+        "freshness/currentness 仅表示 source 版本状态；task_applicability=not_evaluated，由模型结合 acquired_at/来源/当前证据判断。",
     ]
     for entry in manifest.entries:
         currentness = (
@@ -1074,7 +1087,8 @@ def render_recovery_manifest(manifest: RecoveryManifest) -> str:
         lines.append(
             f"- ref={entry.evidence_ref.ref} source={entry.source_label} "
             f"coverage={entry.coverage_label} freshness={entry.freshness.value} "
-            f"currentness={currentness}"
+            f"currentness={currentness} currentness_scope=source_version_only "
+            f"task_applicability=not_evaluated acquired_at={entry.acquired_at}"
         )
     lines.append("[/Evidence Recovery Manifest]")
     return "\n".join(lines)

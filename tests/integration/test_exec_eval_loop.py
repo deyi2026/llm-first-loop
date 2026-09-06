@@ -30,13 +30,16 @@ def _make_engine(tmp_path):
 def test_accepted_auto_execute_loop(tmp_path):
     """accepted + 级别 2 → executing → evolution_complete 工具登记 → executed（G1 闭环，生产路径）."""
     from llm_loop.cli import _cmd_evolve_review
+    from llm_loop.core.run_context import current_session_id
 
     engine = _make_engine(tmp_path)
     store = engine.correction_ctx.evolution_store
+    sid = "owner-session"
     sug = store.submit(
         content="清理缓存演进",
         impact_scope="recover_state",
         actions=[{"tool_name": "recover_state", "arguments": {"scope": "clear_cache"}}],
+        session_id=sid,
     )
     engine.correction_ctx.evolve_local_exec = 2
     assert _cmd_evolve_review(engine, sug.id, "accepted") == 0
@@ -49,9 +52,13 @@ def test_accepted_auto_execute_loop(tmp_path):
     assert '"verify_result": "unverified"' in exec_log
     assert "architecture_status" in exec_log  # note 含验证引导
     # M17 G1 闭环: AI 经 evolution_complete 工具登记（生产路径，非直调 complete）
-    r = engine.corrections.execute(
-        "evolution_complete", {"suggestion_id": sug.id, "note": "已执行并对比架构状态，验证通过"}
-    )
+    tok = current_session_id.set(sid)
+    try:
+        r = engine.corrections.execute(
+            "evolution_complete", {"suggestion_id": sug.id, "note": "已执行并对比架构状态，验证通过"}
+        )
+    finally:
+        current_session_id.reset(tok)
     assert r.status.value == "success"
     assert "executor=ai" in r.content
     assert "verify=ai_reported" in r.content
@@ -120,18 +127,6 @@ def test_eval_improve_verify_loop(tmp_path):
     assert sug["id"] in linked
 
 
-def test_eval_trigger_reminder_not_blocking(build_test_engine):
-    """触发提醒仅提示不强制: AI 选择不评估 → 回答正常输出（EVAL-03，DFX-PERF-06）."""
-    from llm_loop.introspection.evaluator import EvalTriggerDetector
-
-    engine, fake = build_test_engine([{"content": "我是 AI 助手。"}])
-    engine.loop_signal_detector._eval_trigger_detector = EvalTriggerDetector(interval_rounds=9999)
-    sid = engine.session.create()
-    result = engine.run(sid, "你好")
-    # 里程碑提醒已注入但回答不受影响
-    assert result.final_answer == "我是 AI 助手。"
-    assert result.rounds >= 1
-
 
 def test_production_wiring_no_verifier_rollback(tmp_path):
     """M16 审计（FR-AUDIT-AI-01）生产路径接线断言: EvolutionExecutor 无 verifier/rollback 参数
@@ -157,8 +152,8 @@ def test_production_wiring_no_verifier_rollback(tmp_path):
     assert executor._audit_dir is not None
 
 
-def test_evolution_executing_reminder_injected(build_test_engine):
-    """M17 FR-REVIEW-AI-02: executing 演进 → 循环内注入 [演进执行提醒]（含 id + 引导）."""
+def test_evolution_executing_state_does_not_inject_prompt(build_test_engine):
+    """Executing evolution state remains inspectable but cannot push a program directive into prompt."""
     from llm_loop.core.message import ToolCall
 
     engine, fake = build_test_engine(
@@ -184,10 +179,7 @@ def test_evolution_executing_reminder_injected(build_test_engine):
         and "executing 演进建议" in m.content
         and "evolution_complete" in m.content
     ]
-    assert len(reminders) >= 1
-    assert sug.id in reminders[0].content
-    # M19 T121 场景 e 冷却频率断言: 连续多轮不重复刷屏（60s 冷却 >> 测试时长 → ≤1 次/窗口）
-    assert len(reminders) <= 1, f"提醒应经冷却去重（≤1 次/60s 窗口），实际 {len(reminders)} 次"
+    assert reminders == []
     assert result.rounds >= 1  # 提醒不改变循环轮数语义
 
 

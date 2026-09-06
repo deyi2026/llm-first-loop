@@ -117,3 +117,30 @@ def test_event_stream_dispatch_empty_dir_honest():
     res = ri_execute("event_stream", {"streams": "all"}, _Host(s))
     assert res.status.value == "success"
     assert "无匹配事件" in res.content
+
+
+def test_event_stream_reads_actual_self_eval_and_declaration_files(tmp_path):
+    """观测流必须读取真实落盘文件名，不能指向历史旧名导致“有数据却查不到”。"""
+    (tmp_path / "declaration_check.jsonl").write_text(
+        json.dumps({
+            "id": "DC-1", "ts": "2026-09-03T10:00:00+00:00",
+            "consistent": False, "declarations": ["已完成"],
+            "discrepancies": ["无回执"], "cross_round_hits": [],
+            "tool_call_ids": ["tc-1"],
+        }, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "self_eval_log.jsonl").write_text(
+        json.dumps({
+            "eval_id": "SE-1", "ts": "2026-09-03T10:00:01+00:00",
+            "trigger": "manual", "summary": "honesty_rate=0.50",
+        }, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    searcher = RecordSearcher(audit_dir=tmp_path)
+    decl = searcher.event_stream(streams="declaration_check", query="DC-1")
+    ev = searcher.event_stream(streams="self_eval", query="SE-1")
+    assert len(decl) == 1 and decl[0]["stream"] == "declaration_check"
+    assert "DC-1" in decl[0]["summary"]
+    assert len(ev) == 1 and ev[0]["stream"] == "self_eval"
+    assert "SE-1" in ev[0]["summary"]

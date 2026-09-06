@@ -60,11 +60,6 @@ class TestComplexityBaseline:
         for kw in ("输入校验", "并发安全", "FR-SAFE-01", "C1-C6", "资源"):
             assert kw in baseline_src
 
-    def test_adaptive_tool_trim_age_still_pending(self, baseline_src: str):
-        # 方向 A 未处置，保持待后续评估标注（spec 5.1 规则 8）
-        assert "_adaptive_tool_trim_age" in baseline_src
-        assert "待后续评估" in baseline_src
-
     def test_no_implementation_details(self, baseline_src: str):
         # 文档不含实现方案（spec 5.4.2 规则 4）
         assert "```python" not in baseline_src

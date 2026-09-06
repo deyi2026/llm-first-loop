@@ -8,7 +8,6 @@ from llm_loop.core.episode_history import (
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.introspection.search import RecordSearcher
 from llm_loop.memory.extract import memory_blocks_to_entries
-from llm_loop.memory.retrieve import build_memory_messages
 from llm_loop.memory.store import MemoryEntry, MemoryStore
 
 
@@ -22,22 +21,13 @@ def _entry(kind: str, content: str, keyword: str, *, inject_policy: str = "auto"
     )
 
 
-def test_legacy_auto_decision_and_convention_do_not_auto_project(tmp_path) -> None:
-    store = MemoryStore(tmp_path / "memory")
-    decision = store.save_entry(_entry("decision", "旧决策：使用方案 A", "方案"))
-    convention = store.save_entry(_entry("convention", "长期约定：不要自动 stage", "stage"))
-    fact = store.save_entry(_entry("fact", "事实：方案 A 的接口名是 foo", "方案"))
+def test_memory_state_has_no_automatic_prompt_constructor() -> None:
+    import llm_loop.memory.retrieve as retrieve
+    from llm_loop.core.loop.engine import LoopEngine
 
-    messages = build_memory_messages("方案 stage", store, top_k=5)
+    assert not hasattr(retrieve, "build_memory_messages")
+    assert not hasattr(LoopEngine, "_inject_turn_memory_snapshot")
 
-    assert len(messages) == 1
-    wire = messages[0].content
-    assert decision.content not in wire
-    assert convention.content not in wire
-    assert fact.content in wire
-    assert decision.inject_count == 0
-    assert convention.inject_count == 0
-    assert fact.inject_count == 1
 
 
 def test_explicit_memory_search_still_finds_recall_only_state(tmp_path) -> None:

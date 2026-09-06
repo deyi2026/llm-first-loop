@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -71,6 +72,12 @@ _COMPLETION_MARKERS = ["已", "了", "成功", "完成", "did", "has ", "have ",
 # EVO-20260815-640fc96a: B2 计划陈述豁免标记（未来时态/规划句非完成声明）
 # 仅当句子不含完成标志时豁免（"已执行计划中的迁移"仍保留校验）
 _PLAN_MARKERS = ["下一步", "建议执行", "优先级", "计划", "待办", "接下来", "后续将", "即将"]
+
+# Agency-first: negative action statements are facts about *non-execution*, not completion
+# claims that require a success receipt. Keep the matcher local to the matched action verb;
+# a mixed sentence containing a separate positive claim (e.g. "未修改，但已执行") must
+# still be checked rather than blanket-exempted because it contains "未".
+_NEGATION_PREFIXES = ("未", "并未", "没有", "从未", "未曾", "不曾", "不", "无需")
 
 # B3 markdown 结构行（代码 fence/表格行/引用块）为引用内容，不进入声明抽取
 _MARKDOWN_STRUCT_PREFIXES = ("|", ">")
@@ -136,6 +143,12 @@ class DeclarationValidator:
             if m.status == ToolResultStatus.SUCCESS:
                 _tag = "（⚠️截断: 部分数据未核验）" if "[输出已截断]" in (m.content or "") else ""
                 receipts.append(f"{m.tool_name}{_tag}: {m.content[:120]}")
+                # 组合工具可携带真实嵌套 SUCCESS 证据；metadata 不进模型 wire，
+                # 这里只扩展校验事实面，避免 subagent_result 外层摘要截断导致假阴性。
+                for nested in (m.metadata or {}).get("verification_receipts", ()) or ():
+                    nested_text = str(nested or "")
+                    if nested_text.endswith(":success"):
+                        receipts.append(f"nested:{nested_text}")
             elif m.status == ToolResultStatus.BLOCKED:
                 receipts.append(f"{m.tool_name}（已阻断）: {m.content[:120]}")
 
@@ -196,6 +209,12 @@ class DeclarationValidator:
             text = m.group(0).strip()
             if not text or text in decls:
                 continue
+            # Agency-first: "未执行/没有修改/not executed" describes absence of an
+            # action. It must not be turned into a fabricated completion claim that then
+            # demands a success receipt. Mixed clauses with a separate positive action
+            # remain checkable (see _is_negated_action_statement).
+            if self._is_negated_action_statement(text, m.group(1)):
+                continue
             # EVO-20260810-50816b30: 能力陈述（"可以调用工具执行命令"）非完成声明，跳过
             if self._is_ability_statement(text):
                 continue
@@ -219,6 +238,49 @@ class DeclarationValidator:
             if not ln.lstrip().startswith(_MARKDOWN_STRUCT_PREFIXES)
         ]
         return "\n".join(lines)
+
+    @staticmethod
+    def _is_negated_action_statement(text: str, verb: str) -> bool:
+        """Return True when the matched action is explicitly negated, with no positive action claim.
+
+        Examples exempted: ``未执行任何修改`` / ``没有创建文件`` / ``not executed``.
+        Mixed clauses such as ``未修改配置，但已执行命令`` stay eligible for checking so a
+        negative clause cannot mask an independent positive completion claim.
+        """
+        lower = text.lower()
+        action_verbs_zh = [v for v in _DECLARE_VERBS if re.search(r"[\u4e00-\u9fff]", v) and not v.startswith("已")]
+        action_alt_zh = "|".join(re.escape(v) for v in action_verbs_zh)
+        # The extractor's 40-char prefix is greedy, so m.group(1) can be a noun-like
+        # later verb (e.g. it captures "修改" in "未执行任何修改"). Determine negation
+        # from the whole extracted clause rather than trusting that one regex group.
+        zh_negated = any(
+            re.search(re.escape(prefix) + r"\s*(?:任何)?\s*(?:" + action_alt_zh + r")", text)
+            for prefix in _NEGATION_PREFIXES
+        )
+        action_verbs_en = [
+            "wrote", "created", "deleted", "saved", "modified", "executed", "installed", "downloaded", "written"
+        ]
+        en_alt = "|".join(re.escape(v) for v in action_verbs_en)
+        en_negated = bool(
+            re.search(
+                r"\b(?:did\s+not|didn't|have\s+not|haven't|has\s+not|hasn't|not|never)\s+(?:" + en_alt + r")\b",
+                lower,
+            )
+        )
+        if not (zh_negated or en_negated):
+            return False
+
+        # A separate explicit positive completion in the same extracted clause wins: keep
+        # the clause for verification rather than blanket-exempting it due to one negation.
+        positive_zh = re.search(
+            r"(?:已|已经|成功)\s*(?:" + "|".join(re.escape(v) for v in _DECLARE_VERBS if not v.startswith("已")) + r")",
+            text,
+        )
+        positive_en = re.search(
+            r"\b(?:successfully|already)\s+(?:wrote|created|deleted|saved|modified|executed|installed|downloaded)\b",
+            lower,
+        )
+        return not bool(positive_zh or positive_en)
 
     @staticmethod
     def _is_plan_statement(text: str) -> bool:
@@ -270,6 +332,15 @@ class DeclarationValidator:
         for verb in _DECLARE_VERBS:
             if verb in declaration and any(verb in r for r in receipts):
                 return "keyword"
+        # 结构化工具名匹配：声明出现该工具语义动词，成功回执中存在对应 tool name。
+        # `_TOOL_RECEIPT_KEYWORDS` 过去仅定义未消费；这里补上原设计意图，同时
+        # 支持 nested:execute_command:success 等组合工具证据。
+        lower_decl = declaration.lower()
+        for tool_name, keywords in _TOOL_RECEIPT_KEYWORDS.items():
+            if not any(str(keyword).lower() in lower_decl for keyword in keywords):
+                continue
+            if any(receipt == f"nested:{tool_name}:success" for receipt in receipts):
+                return "keyword"
         # P1 语义匹配（可选，默认关闭）
         if self._semantic_matcher is not None:
             try:
@@ -292,12 +363,22 @@ class DeclarationValidator:
         if self._audit_dir is None:
             return
         self._audit_dir.mkdir(parents=True, exist_ok=True)
+        now = datetime.now(UTC)
         record = {
-            "ts": datetime.now(UTC).isoformat(),
+            "id": f"DC-{now.strftime('%Y%m%dT%H%M%S%f')}-{uuid.uuid4().hex[:6]}",
+            "ts": now.isoformat(),
+            "session_id": _current_session_id.get() or "",
             "consistent": result.consistent,
             "declarations": result.declarations,
             "discrepancies": result.discrepancies,
             "cross_round_hits": result.cross_round_hits,  # EVO-20260820-409f3f60: 跨轮引用命中可审计
+            "tool_call_ids": list(
+                dict.fromkeys(
+                    str(m.tool_call_id)
+                    for m in tool_msgs
+                    if getattr(m, "tool_call_id", None)
+                )
+            ),
             "receipts": result.receipt_summary,
             "matched_by": matched_by or [],  # P1: keyword/semantic（匹配方式可审计）
             "answer_preview": answer[:200],

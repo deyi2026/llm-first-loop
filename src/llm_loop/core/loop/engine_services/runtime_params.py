@@ -36,14 +36,19 @@ class RuntimeParamsService:
             return self._host.runtime.max_iterations
         return self._host.settings.max_iterations
     def _runtime_history_budget(self) -> int:
-        """上下文注入预算（PARAM-01: 动态优先、静态兜底）.
+        """历史预算诊断值（显式 cap 优先，否则按默认模型物理窗口估算）.
 
-        EVO-20260816-3af5dee3: settings.history_max_chars=None（未显式配置）时
-        按当前模型窗口 8% 自适应（取代固定 100K——1M 窗口下 100K 仅 10% 过保守，
-        262K 窗口下 100K 达 38% 偏激进）。窗口未知兜底旧默认 100000。
+        settings.history_max_chars=None 不再代表一个全局执行 cap。RoutingService 会基于
+        当前实际路由模型计算 authoritative effective budget；本方法保留 int 返回仅供
+        兼容诊断/旧调用方，不能被当作未配置时的独立限制。
         """
-        if self._host.runtime is not None:
-            return self._host.runtime.history_max_chars
+        if (
+            self._host.runtime is not None
+            and self._host.runtime.is_overridden("history_budget")
+        ):
+            dynamic = self._host.runtime.history_max_chars
+            if dynamic is not None:
+                return dynamic
         configured = getattr(self._host.settings, "history_max_chars", None)
         if configured is not None:
             return configured
@@ -53,7 +58,8 @@ class RuntimeParamsService:
             if ctx_lim is not None and def_model is not None:
                 limit = ctx_lim(def_model())
                 if limit:
-                    # EVO-20260818: 与装配期同源收敛（converge_history_budget——兜底 100K / 上限 200K）
+                    # 未配置全局 cap：这里只返回物理窗口预算的诊断估算；routing 再按
+                    # 当前实际模型扣 output reserve/provider cap。
                     return converge_history_budget(None, model_window=limit)[0]
         except Exception:  # noqa: BLE001 — 窗口查询失败兜底旧默认
             pass

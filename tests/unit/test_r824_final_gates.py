@@ -45,7 +45,6 @@ _GATES_ENV_KEYS = (
     "LFL_LEAK_QUARANTINE",
     "LFL_LEAK_GUARD_MODE",
     "LFL_LATENT_CHANNEL",
-    "LFL_COG_ENFORCE_FREEZE",
     "CACHE_GUARD_PERF_BLOCK",
 )
 
@@ -113,12 +112,6 @@ class TestFinalGateSwitchDefaults:
         _clear_gates_env(monkeypatch)
         assert current_latent_channel_mode() == "off"
 
-    def test_cog_enforce_freeze_default_on(self, monkeypatch):
-        """H2 开关面: LFL_COG_ENFORCE_FREEZE 默认 on=allowlist promote 禁止（冻结态）."""
-        from llm_loop.core.loop.build import _cog_freeze_enabled
-
-        _clear_gates_env(monkeypatch)
-        assert _cog_freeze_enabled() is True
 
     def test_cache_perf_block_default_enforced(self):
         """H6 开关面: CACHE_GUARD_PERF_BLOCK 默认 enforce=最终治理态（批 3/3 切换，R9-P0-01）.

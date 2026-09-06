@@ -348,63 +348,7 @@ def test_archive_semantic_retrieval(build_test_engine):
     assert any("蓝色" in c for c in contents)
 
 
-def test_eval_trigger_milestone_injected(build_test_engine):
-    """T65: run 完成里程碑 → 注入 [自我评估提醒]（仅提示不强制，EVAL-03）."""
-    from llm_loop.introspection.evaluator import EvalTriggerDetector
 
-    engine, fake = build_test_engine([{"content": "我是 AI 助手。"}])
-    # 注入触发检测器（里程碑必触发）
-    engine.loop_signal_detector._eval_trigger_detector = EvalTriggerDetector(interval_rounds=9999)
-    sid = engine.session.create()
-    result = engine.run(sid, "你好")
-    assert result.final_answer == "我是 AI 助手。"  # 不阻塞回答输出（DFX-PERF-06）
-    sess = engine.session.load(sid)
-    reminders = [m for m in sess.messages if m.role == "system" and "自我评估" in m.content]
-    assert len(reminders) >= 1
-    assert "self_evaluate" in reminders[0].content
-
-
-def test_eval_trigger_periodic_injected(build_test_engine, tmp_path):
-    """T65: 定期触发（rounds % interval == 0）→ 每轮末注入提醒."""
-    from llm_loop.introspection.evaluator import EvalTriggerDetector
-
-    f = tmp_path / "p.txt"
-    f.write_text("内容P", encoding="utf-8")
-    engine, fake = build_test_engine(
-        [
-            {"tool_calls": [_read_file_call(str(f), "call_p1")]},
-            {"tool_calls": [_read_file_call(str(f), "call_p2")]},
-            {"content": "最终回答"},
-        ]
-    )
-    # interval=2 → rounds=2 触发定期提醒
-    engine.loop_signal_detector._eval_trigger_detector = EvalTriggerDetector(interval_rounds=2)
-    sid = engine.session.create()
-    result = engine.run(sid, "多轮任务")
-    assert result.final_answer == "最终回答"
-    assert result.rounds >= 2  # 提醒注入不改变回答流程
-    sess = engine.session.load(sid)
-    reminders = [m for m in sess.messages if m.role == "system" and "自我评估" in m.content]
-    assert len(reminders) >= 1
-    assert "self_evaluate" in reminders[0].content
-
-
-def test_eval_trigger_remind_disabled(build_test_engine):
-    """T65: SELF_EVAL_REMIND_ENABLED=0 → 不注入提醒（可配置关闭）."""
-    from dataclasses import replace
-
-    from llm_loop.introspection.evaluator import EvalTriggerDetector
-
-    engine, fake = build_test_engine([{"content": "我是 AI 助手。"}])
-    engine.loop_signal_detector._eval_trigger_detector = EvalTriggerDetector(interval_rounds=1)
-    # 关闭提醒（Settings 为 frozen，用 replace 构造新实例；同步更新 detector 注入的 settings）
-    engine.settings = replace(engine.settings, self_eval_remind_enabled=False)
-    engine.loop_signal_detector._settings = engine.settings
-    sid = engine.session.create()
-    engine.run(sid, "你好")
-    sess = engine.session.load(sid)
-    reminders = [m for m in sess.messages if m.role == "system" and "自我评估" in m.content]
-    assert reminders == []
 
 
 def test_multi_tool_round_reasoning_roundtrip(build_test_engine):

@@ -19,6 +19,7 @@ from llm_loop.memory.evidence import (
     OwnerScope,
     ProjectionEngine,
     Provenance,
+    evidence_origin_facts,
     make_capture_request,
 )
 from llm_loop.tools.evidence_shadow import source_for_call
@@ -77,10 +78,11 @@ class EvidenceEnforcer:
         raw = result.raw_observation if result.raw_observation is not None else result.content
         source, coverage = source_for_call(call, result)
         budget = max(128, budget_chars or self.projection_budget_chars)
+        owner = self.owner_resolver()
         try:
             captured = self.capture.capture(
                 make_capture_request(
-                    owner=self.owner_resolver(),
+                    owner=owner,
                     stable_capture_id=call.id,
                     raw_observation=raw,
                     acquired_at=self.clock(),
@@ -104,6 +106,21 @@ class EvidenceEnforcer:
             result.evidence_projection_complete = None
             result.content = self._capture_failure_view(raw, budget_chars=budget)
             return result
+
+        # Canonical origin facts come from the committed record rather than a new
+        # timestamp. Failure to enrich observability must not rewrite a successful action.
+        origin_error: str | None = None
+        try:
+            record = self.capture.ledger.get_record(owner, captured.evidence_ref)
+            if record is not None:
+                result.evidence_origin_facts = evidence_origin_facts(record)
+        except Exception as exc:
+            logger.exception("failed to attach Evidence origin facts; preserving tool action truth")
+            origin_error = (
+                "[程序异常] Evidence origin facts enrichment failed; "
+                f"error_type={type(exc).__name__}; source_action_status={result.status.value}; "
+                "source action result remains valid."
+            )
 
         try:
             projection = self.projection.project(
@@ -130,6 +147,8 @@ class EvidenceEnforcer:
                 f"available at {captured.evidence_ref.ref}; representation=ref_only; "
                 "projection=failed"
             )
+            if origin_error:
+                result.content = f"{result.content}\n{origin_error}"
             return result
 
         result.recoverability_status = RecoverabilityStatus.RECORDED
@@ -153,6 +172,8 @@ class EvidenceEnforcer:
                 _fact_line = (
                     f"result_truncated=true omitted=true recovery_ref={captured.evidence_ref.ref}"
                 )
+                # R2 P0-3: 截断文案与结构化字段同一构造点产出（exact omitted → read_evidence）
+                result.capability_requirements = ("read_evidence",)
                 result.content = (
                     f"{projection.content}\n{_fact_line}"
                     if projection.content
@@ -176,6 +197,8 @@ class EvidenceEnforcer:
                     captured.evidence_ref.ref,
                 )
             result.content = f"{projection.content}\n{projection.model_capsule}"
+        if origin_error:
+            result.content = f"{result.content}\n{origin_error}"
         return result
 
     @staticmethod

@@ -1,7 +1,7 @@
 """M54 模型窗口感知主动压缩测试（founder 2026-08-11 指令, k3-256k 事故治本）.
 
-核心: 压缩预算从全局静态 1M → min(全局, 模型 context × 2字符/token × 0.5)。
-小窗模型 (262144 tokens ≈ 26万字符预算) 提前压缩, 不再等爆了才拒。
+核心: 压缩预算从全局静态值 → min(全局, 模型真实输入窗口预算, provider 显式预算)。
+窗口预算只预留可证明的安全边距/输出容量，不再固定砍半；最终载荷仍有发送前硬校验。
 
 全部 Mock, 零真实网络。
 """
@@ -9,8 +9,12 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
+
+from llm_loop.core.message import Message, MessageSource, ToolCall
+from llm_loop.core.prompt_build.stages.history_pipeline import _anchor_for_current_contract
 
 from .test_model_attribution import (  # noqa: F401
     _FakeLLMClient,
@@ -41,7 +45,9 @@ def _stuff_history(engine, sid, total_chars: int) -> None:
     from llm_loop.core.message import Message, MessageSource
 
     per_msg = 5000
-    for i in range(total_chars // per_msg):
+    # 每轮追加 user+assistant 两条，各约 per_msg；旧 helper 按 total/per_msg
+    # 循环导致实际载荷约为声明的 2 倍，使大窗口测试错误触发 compact。
+    for i in range(total_chars // (per_msg * 2)):
         sess.messages.append(
             Message(role="user", content=f"历史消息{i} " + "x" * (per_msg - 20), source=MessageSource.USER)
         )
@@ -56,8 +62,124 @@ def _received_history_chars(fake) -> int:
     return sum(len(json.dumps(m, ensure_ascii=False)) for m in fake.calls[-1]["messages"])
 
 
+def test_legacy_history_anchor_is_reopened_for_current_contract() -> None:
+    sess = SimpleNamespace(
+        history_anchors={"minimax": 42},
+        history_anchor_scopes={},
+    )
+    assert _anchor_for_current_contract(
+        sess,
+        provider_id="minimax",
+        resolved_label="minimax/MiniMax-M3",
+        sess_anchor=42,
+        effective_budget=540_000,
+    ) == 0
+    assert sess.history_anchors["minimax"] == 0
+
+
+def test_versioned_history_anchor_survives_only_same_or_stricter_contract() -> None:
+    def _sess():
+        return SimpleNamespace(
+            history_anchors={"glm": 37},
+            history_anchor_scopes={
+                "glm": {
+                    "version": 1,
+                    "model": "glm/glm-5.3",
+                    "effective_budget": 300_000,
+                }
+            },
+        )
+
+    same = _sess()
+    assert _anchor_for_current_contract(
+        same,
+        provider_id="glm",
+        resolved_label="glm/glm-5.3",
+        sess_anchor=37,
+        effective_budget=300_000,
+    ) == 37
+
+    stricter = _sess()
+    assert _anchor_for_current_contract(
+        stricter,
+        provider_id="glm",
+        resolved_label="glm/glm-5.3",
+        sess_anchor=37,
+        effective_budget=200_000,
+    ) == 37
+
+    expanded = _sess()
+    assert _anchor_for_current_contract(
+        expanded,
+        provider_id="glm",
+        resolved_label="glm/glm-5.3",
+        sess_anchor=37,
+        effective_budget=500_000,
+    ) == 0
+
+    switched = _sess()
+    assert _anchor_for_current_contract(
+        switched,
+        provider_id="glm",
+        resolved_label="glm/glm-5.3-flash",
+        sess_anchor=37,
+        effective_budget=300_000,
+    ) == 0
+
+
+def test_engine_clears_legacy_marker_once_on_actual_session_messages(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Compaction-contract migration must mutate durable Session messages, not a copy."""
+    monkeypatch.setenv("KIMI_API_KEY", "k")
+    settings = _settings(
+        tmp_path,
+        model_providers_raw=_K256_JSON,
+        llm_model="k3-256k",
+        history_max_chars=1_000_000,
+    )
+    fake = _FakeLLMClient("k3")
+    pool = _make_pool(settings, fake, cached={"kimi": fake})
+    engine = _make_engine(tmp_path, pool, settings)
+    sid = engine.session.create()
+    sess = engine.session.load(sid)
+    sess.model_override = "kimi/k3"
+    sess.messages.append(
+        Message(
+            role="assistant",
+            content="legacy-hidden-but-now-fits",
+            source=MessageSource.USER,
+            metadata={"cache_compacted_for": ["kimi"]},
+        )
+    )
+    engine.session.save(sess)
+
+    registry = pool.registry_snapshot()
+    engine._build_llm_messages(  # noqa: SLF001 — regression targets real build state migration
+        sess,
+        [],
+        max_chars=540_000,
+        planned_label="kimi/k3",
+        registry_snapshot=registry,
+    )
+    epoch_after_first = engine._run_state().cache_prefix_epoch  # noqa: SLF001
+    assert "cache_compacted_for" not in sess.messages[0].metadata
+    engine.session.save(sess)
+    reloaded = engine.session.load(sid)
+    assert "cache_compacted_for" not in reloaded.messages[0].metadata
+
+    engine._build_llm_messages(  # noqa: SLF001
+        reloaded,
+        [],
+        max_chars=540_000,
+        planned_label="kimi/k3",
+        registry_snapshot=registry,
+    )
+    assert engine._run_state().cache_prefix_epoch == epoch_after_first  # noqa: SLF001
+
+
 def test_small_window_model_compresses_proactively(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """256K 窗模型: 30万字符历史 → 主动压缩到 ~26万字符预算内（M54 核心）."""
+    """256K 窗模型: 30万字符历史超过物理输入预算 → 主动压缩（M54 核心）."""
     monkeypatch.setenv("KIMI_API_KEY", "k")
     settings = _settings(tmp_path, model_providers_raw=_K256_JSON, llm_model="k3-256k", history_max_chars=1_000_000)  # EVO-20260814: 显式 1M 模拟生产环境
     fake = _FakeLLMClient("k3-256k")
@@ -65,25 +187,23 @@ def test_small_window_model_compresses_proactively(tmp_path, monkeypatch: pytest
     engine = _make_engine(tmp_path, pool, settings)
 
     sid = engine.session.create()
-    _stuff_history(engine, sid, 300000)  # 30万字符 > 26万预算, < 全局 1M
+    _stuff_history(engine, sid, 300000)  # 30万字符 > ~14.2万模型历史预算, < 全局 1M
 
     result = engine.run(sid, "新问题")
     assert result.final_answer.startswith("默认回答")  # 方案B尾行适配（EVO-20260819-2254e3b4，展示层不参与断言）
-    # 全局 1M 预算不会压缩 30万; k3-256k 预算 (262144*2*0.5=262144) 应压缩
+    # 全局 1M 预算不会压缩 30万；256K 模型窗口预算约 14.2万字符，应压缩。
     received = _received_history_chars(fake)
     assert received < 290000, f"应压缩到预算内, 实际 {received}"
 
 
 def test_large_window_model_calibrated_budget(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """1M 窗模型 (kimi/k3): 30万字符历史 → 按校准后预算压缩（M54 + 2026-08-24 估算校准）.
+    """1M 窗模型 (kimi/k3): 30万字符历史不应被旧 50% 启发式提前压缩。
 
-    估算 2→0.6（实测大上下文 1.676 tok/char）后 model_budget = 1M×0.6×0.5 = 300K 字符
-    （实际 ≈503K tokens = 窗口 50%, 留 50% 输出空间）——30万字符 > 270K 压缩阈值 → 压缩。
-    2026-08-25: 钉住 PROGRESSIVE_FOLD_K=0——本测试验证一次性大裁路径的预算校准，
-    渐进折叠（单轮只折 K 组）是独立特性（env 默认开 3），不参与本口径。
+    当前 model_budget = 1M×0.9×0.6 = 540K 字符（无额外 provider 输出预算），
+    30万字符仍有明确物理 headroom，应保持 append-only 稳定前缀而不是 compact。
+    本测试只验证物理模型预算校准；不存在独立的 K-fold 语义策略。
     """
     monkeypatch.setenv("KIMI_API_KEY", "k")
-    monkeypatch.setenv("PROGRESSIVE_FOLD_K", "0")
     settings = _settings(
         tmp_path,
         model_providers_raw=_K256_JSON,
@@ -104,11 +224,11 @@ def test_large_window_model_calibrated_budget(tmp_path, monkeypatch: pytest.Monk
     result = engine.run(sid, "新问题")
     assert result.final_answer.startswith("默认回答")  # 方案B尾行适配
     received = _received_history_chars(fake)
-    assert received < 290000, f"1M 窗校准预算(300K)下 30万字符应压缩, 实际 {received}"
+    assert received > 290000, f"1M 窗仍有 headroom 时不应提前压缩 30万字符, 实际 {received}"
 
 
 def test_effective_budget_math(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """预算计算: min(全局, context×2×0.5)."""
+    """预算计算: min(全局, context×0.9×chars_per_token)，再预留显式输出容量。"""
     monkeypatch.setenv("KIMI_API_KEY", "k")
     settings = _settings(
         tmp_path,
@@ -120,10 +240,10 @@ def test_effective_budget_math(tmp_path, monkeypatch: pytest.MonkeyPatch) -> Non
     pool = _make_pool(settings, fake)
     engine = _make_engine(tmp_path, pool, settings)
 
-    # 256K 窗: 262144 × 0.6 × 0.5 = 78643（2026-08-24 估算校准: 2→0.6）
-    assert engine._effective_history_budget("kimi/k3-256k") == 78643
-    # 1M 窗: min(1M全局, 1000000×0.6×0.5=300000) = 300000
-    assert engine._effective_history_budget("kimi/k3") == 300_000
+    # 256K 窗: 262144 × 0.9 × 0.6 = 141557
+    assert engine._effective_history_budget("kimi/k3-256k") == 141557
+    # 1M 窗: min(1M全局, 1000000×0.9×0.6=540000) = 540000
+    assert engine._effective_history_budget("kimi/k3") == 540_000
     # 未知模型（有 pool 且 "/"）→ 8K 保守兜底（M53: 防 4K/8K/32K 小窗口模型超限硬拒绝）
     assert engine._effective_history_budget("ghost/x") == 8000
 
@@ -177,12 +297,78 @@ def test_provider_history_budget_caps_global(tmp_path, monkeypatch: pytest.Monke
     pool = _make_pool(settings, fake)
     engine = _make_engine(tmp_path, pool, settings)
 
-    # local 27B: min(1M, 131072×2×0.5=131072, 12000) = 12000
+    # local 27B: provider 显式 12000 仍优先于更大的模型窗口预算
     assert engine._effective_history_budget("local/qwen3.6-27b") == 12000
     # local 9B（1M 窗）: provider 预算仍压到 12000（窗口大 ≠ prefill 快）
     assert engine._effective_history_budget("local/qwen9b") == 12000
-    # 未配置 provider: 窗口公式不变（2026-08-24 估算校准: 262144×0.6×0.5=78643）
-    assert engine._effective_history_budget("kimi/k3-256k") == 78643
+    # 未配置 provider cap: 只受模型物理窗口预算约束
+    assert engine._effective_history_budget("kimi/k3-256k") == 141557
+
+
+def test_local_tool_round_has_no_hidden_budget_clamp(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A prior tool call must not silently turn a 12K explicit/provider cap into 8K/4K."""
+    monkeypatch.setenv("KIMI_API_KEY", "k")
+    settings = _settings(
+        tmp_path,
+        model_providers_raw=_LOCAL_JSON,
+        llm_model="qwen3.6-27b",
+        history_max_chars=1_000_000,
+    )
+    fake = _FakeLLMClient("qwen3.6-27b")
+    pool = _make_pool(settings, fake)
+    engine = _make_engine(tmp_path, pool, settings)
+    sid = engine.session.create()
+    sess = engine.session.load(sid)
+    sess.messages.append(
+        Message(
+            role="assistant",
+            content="",
+            source=MessageSource.USER,
+            tool_calls=[ToolCall(id="t1", name="read_file", arguments={"path": "x"})],
+        )
+    )
+
+    plan = engine._attempt_executor.plan(None, sess, pool.registry_snapshot())
+
+    assert plan.planned_label == "local/qwen3.6-27b"
+    assert plan.effective_budget == 12_000
+    assert set(vars(plan)) == {"planned_label", "effective_budget"}
+
+
+def test_model_output_budget_reserve_overrides_provider_output_default(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """物理输入预算必须预留实际路由模型的输出上限，而不是 provider 兄弟模型默认值。"""
+    providers = json.dumps(
+        {
+            "glm": {
+                "base_url": "https://x.invalid/v1",
+                "api_key_env": "",
+                "max_tokens": 65536,
+                "models": {
+                    "glm-5.3": {"context": 1_000_000, "max_tokens": 131072},
+                    "glm-5.3-flash": {"context": 1_000_000},
+                },
+                "default_model": "glm-5.3",
+            }
+        }
+    )
+    settings = _settings(
+        tmp_path,
+        model_providers_raw=providers,
+        llm_model="glm-5.3",
+        history_max_chars=1_000_000,
+    )
+    fake = _FakeLLMClient("glm-5.3")
+    pool = _make_pool(settings, fake)
+    engine = _make_engine(tmp_path, pool, settings)
+
+    # 5.3: (1,000,000 - 131,072) * 0.6 = 521,356 chars.
+    # Flash inherits provider 65,536; 90% safety margin (900K) is tighter => 540K chars.
+    assert engine._effective_history_budget("glm/glm-5.3") == 521356
+    assert engine._effective_history_budget("glm/glm-5.3-flash") == 540000
 
 
 def test_provider_history_budget_compresses_sent_context(

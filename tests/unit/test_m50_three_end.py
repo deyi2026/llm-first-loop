@@ -779,6 +779,57 @@ def test_refresh_executor_does_not_mutate_default_client_in_place(tmp_path, monk
     assert "默认 client" in msg and "需重启" in msg
 
 
+def test_refresh_executor_keeps_default_route_startup_contract_but_updates_dynamic_registry(
+    tmp_path, monkeypatch
+):
+    """Registry hot reload is immediate for dynamic routes, never silently for default route."""
+    original = json.loads(_TWO_PROVIDER_JSON)
+    _write_providers_json(tmp_path, original)
+    settings = _make_settings(tmp_path, model_providers_raw="")
+    pool = _make_pool(settings, _FakeLLM())
+    engine = _FakeEngine(pool)
+    install_refresh_executor(engine)
+    startup_registry = pool.default_registry_snapshot()
+    startup_context = startup_registry.providers["deepseek"].models[
+        "deepseek-v4-flash"
+    ].context
+
+    updated = json.loads(_TWO_PROVIDER_JSON)
+    updated["deepseek"]["models"]["deepseek-v4-flash"]["context"] = 777777
+    updated["deepseek"]["history_budget_chars"] = 222222
+    _write_providers_json(tmp_path, updated)
+    _executor_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_BASE_URL", "https://api.deepseek.com/v1")
+    monkeypatch.setenv("LLM_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "dynamic-key")
+
+    msg = engine.correction_ctx.refresh_executor()
+
+    assert pool.registry is not startup_registry
+    assert pool.registry.providers["deepseek"].models["deepseek-v4-flash"].context == 777777
+    assert pool.registry.providers["deepseek"].history_budget_chars == 222222
+    assert pool.default_registry_snapshot() is startup_registry
+    assert (
+        pool.default_registry_snapshot().providers["deepseek"].models[
+            "deepseek-v4-flash"
+        ].context
+        == startup_context
+    )
+    assert "override/fallback" in msg
+    assert "默认路由" in msg and "启动快照" in msg and "需重启" in msg
+
+
+def test_refresh_config_tool_description_matches_default_route_freeze_contract():
+    from llm_loop.introspection.registry_correction import tool_defs
+
+    definition = next(item for item in tool_defs() if item["name"] == "refresh_config")
+    desc = definition["description"]
+    assert "override/fallback" in desc
+    assert "默认路由" in desc
+    assert "需重启" in desc
+
+
 def test_refresh_executor_rebinds_independent_summary_client(tmp_path, monkeypatch):
     """SUMMARY_MODEL 长期 client 必须在 registry 热重载后换到新 cache，不能永久持旧 endpoint/key。"""
     _write_providers_json(tmp_path, json.loads(_TWO_PROVIDER_JSON))

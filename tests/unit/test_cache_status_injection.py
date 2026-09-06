@@ -21,6 +21,21 @@ def test_status_no_injection_fields_none():
     snap = sp.snapshot()
     assert snap["context_usage"]["cache_health"] is None
     assert snap["context_usage"]["cache_guard"] is None
+    assert snap["context_usage"]["last_request"] is None
+
+
+def test_status_exposes_last_request_usage_without_prompt_injection():
+    """context/cache/headroom 事实可按需查询，不需要动态系统提示注入。"""
+    sp = _provider()
+    usage = {
+        "context_window": 1_000_000,
+        "context_headroom_tokens": 800_000,
+        "cache_read_tokens": 100_000,
+        "uncached_prompt_tokens": 20_000,
+        "cache_prefix_epoch": 2,
+    }
+    sp.set_request_usage_fn(lambda: usage)
+    assert sp.snapshot()["context_usage"]["last_request"] == usage
 
 
 def test_status_injects_cache_health_field():
@@ -108,10 +123,13 @@ class _Harness(_BuildMixin):
 
     def __init__(self, hint: str | None):
         self._cache_monitor = _FakeMonitor(hint)
-        self._cache_gate_hint = None
+        self._state = SimpleNamespace(cache_gate_hint=None)
         self._actions: list[tuple] = []
         self.session = SimpleNamespace(save=lambda s: None)
         self.settings = SimpleNamespace(cache_hit_show_in_answer=False)
+
+    def _run_state(self):
+        return self._state
 
     def _record_action(self, kind: str, status: str, text: str) -> None:
         self._actions.append((kind, status, text))

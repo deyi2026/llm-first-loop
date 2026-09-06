@@ -223,6 +223,11 @@ class RunFinalizer:
         _persist_content = (
             PROGRAM_FINAL_PROTOCOL_BOUNDARY if _program_final else final_answer
         )
+        if resp is not None and resp.provider_replay and _answer_origin == "model":
+            _origin_metadata = {
+                **_origin_metadata,
+                "provider_replay": resp.provider_replay,
+            }
         sess.messages.append(
             Message(
                 role="assistant",
@@ -239,7 +244,10 @@ class RunFinalizer:
             )
             if final_answer
             else Message(
-                role="assistant", content="（无回答输出）", source=_pf_source, metadata=_origin_metadata
+                role="assistant",
+                content="",
+                source=_pf_source,
+                metadata={**_origin_metadata, "empty_output": True},
             )
         )
         # M20 THK-04: 最终回答轮 assistant 消息也回传思考链（官方"后续所有请求"语义，防下一轮 400）
@@ -276,8 +284,6 @@ class RunFinalizer:
                     m.metadata = md
         except Exception:  # noqa: BLE001 — consumption audit must not block delivery
             logger.warning("耗尽消息消费标记异常（fail-open）", exc_info=True)
-        # M12 深化 T65: run 完成里程碑自我评估提醒（仅提示不强制，EVAL-03；追加后随会话保存）
-        self._host._termination._check_eval_trigger(sess, rounds, milestone=True)
         # T39: 会话保存异常 → 如实标注 + 不抛穿（程序故障不影响 AI 发挥）
         try:
             self._host.session.save(sess)
@@ -368,8 +374,14 @@ class RunFinalizer:
         except Exception:  # noqa: BLE001 — run.end 失败 fail-open（不影响返回）
             logger.debug("run.end 事件写入失败（fail-open）")
 
+        if _run_end_reason == "completed":
+            try:
+                self._host._clear_inflight_native_state(session_id)
+            except Exception:  # noqa: BLE001 — stale sidecar cleanup must not affect answer
+                logger.debug("in-flight native state 清理失败（fail-open）", exc_info=True)
+
         # B2(EVO-20260902-41898b20): 一切非 completed 终态（cancelled/llm_error/
-        # overflow/guard_blocked/stagnation/breaker_context_pressure/…）→ truncated
+        # overflow/guard_blocked/legacy_stagnation/breaker_context_pressure/…）→ truncated
         # 索引行（独立文件、非退休型、幂等键=(session_id, run_end 事件 seq)），
         # 修复"中断 run 在 episode 检索面结构性不可见"。completed 不写；fail-open
         # 不阻断收尾（存档见 run.end 事件）。

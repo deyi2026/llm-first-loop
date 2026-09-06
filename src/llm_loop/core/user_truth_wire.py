@@ -1,35 +1,22 @@
-"""R6 user-truth wire projection.
+"""Exact human-ingress identification and legacy program-user recognition.
 
-Storage/event history stays untouched.  This module only projects the initial
-human-ingress request so program-origin user frames precede the exact human text
-inside one provider-legal user envelope.
+New provider requests never merge program text into a human ``role=user`` message.
+The helpers here preserve exact user provenance for history/compact/trace logic and
+recognize pre-agency-first program-user frames for cleanup/recovery only.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
 from typing import Any
 
 from llm_loop.core.injection_labels import InjectionLayer, detect_program_layer
-
-# Fixed and provider-neutral.  The exact user text starts immediately after this
-# boundary and is never rewritten/prefixed/suffixed by R6.
-USER_TRUTH_SEPARATOR = "\n\n--- [指令·用户·原文] ---\n"
+from llm_loop.core.reference_injection import is_human_user_message
 
 # ERC Recovery Manifest predates R1 labels but is program-origin by construction.
 _LEGACY_PROGRAM_CONTEXT_PREFIXES = (
     "[上下文注入·",
 )
-
-
-@dataclass(frozen=True)
-class UserTruthWireProjection:
-    messages: list[dict]
-    changed: bool = False
-    envelope_index: int = -1
-    absorbed_indices: tuple[int, ...] = ()
-    violation: str = ""
 
 
 def _attr(message: Any, name: str, default: Any = None) -> Any:
@@ -85,7 +72,7 @@ def current_ingress_user_truth(
     if turn_ref < 0 or turn_ref >= len(messages):
         return None
     current = messages[turn_ref]
-    if not _is_human_user(current):
+    if not is_human_user_message(current):
         return None
     for message in messages[turn_ref + 1 :]:
         role = str(_attr(message, "role", "") or "")
@@ -94,71 +81,3 @@ def current_ingress_user_truth(
         if role == "user" and _is_human_user(message):
             return None
     return str(_attr(current, "content", "") or "")
-
-
-def project_user_truth_tail(
-    messages: list[dict], user_truth: str
-) -> UserTruthWireProjection:
-    """Move contiguous program-user tail frames before exact current user truth.
-
-    Only the provider view changes.  No-program requests are returned by identity
-    (byte-identical fast path).  Unknown trailing user content is refused rather
-    than guessed to be program-origin.
-    """
-    truth = str(user_truth)
-    current_idx = -1
-    for i in range(len(messages) - 1, -1, -1):
-        m = messages[i]
-        if m.get("role") == "user" and str(m.get("content") or "") == truth:
-            current_idx = i
-            break
-    if current_idx < 0:
-        return UserTruthWireProjection(messages=messages, violation="user_truth_not_found")
-
-    # Initial human-ingress projection may only have program-user frames after the
-    # current truth.  Anything else is a structural ambiguity and is not swallowed.
-    post_program: list[tuple[int, str]] = []
-    for i in range(current_idx + 1, len(messages)):
-        m = messages[i]
-        if m.get("role") != "user":
-            return UserTruthWireProjection(messages=messages, violation="trailing_non_user")
-        content = m.get("content")
-        if not isinstance(content, str) or not is_program_user_content(content):
-            return UserTruthWireProjection(
-                messages=messages, violation="trailing_non_program_user"
-            )
-        post_program.append((i, content))
-
-    # Also collapse immediately preceding program-user frames.  They are commonly
-    # persisted R3 appendices from the same ingress turn and otherwise leave a
-    # consecutive-user run in front of the final envelope.
-    pre_program_rev: list[tuple[int, str]] = []
-    i = current_idx - 1
-    while i >= 0:
-        m = messages[i]
-        content = m.get("content")
-        if (
-            m.get("role") == "user"
-            and isinstance(content, str)
-            and is_program_user_content(content)
-        ):
-            pre_program_rev.append((i, content))
-            i -= 1
-            continue
-        break
-    pre_program = list(reversed(pre_program_rev))
-
-    programs = pre_program + post_program
-    if not programs:
-        return UserTruthWireProjection(messages=messages)
-
-    start = pre_program[0][0] if pre_program else current_idx
-    program_text = "\n\n".join(content for _, content in programs)
-    envelope = {"role": "user", "content": program_text + USER_TRUTH_SEPARATOR + truth}
-    projected = list(messages[:start]) + [envelope]
-    return UserTruthWireProjection(
-        messages=projected,
-        changed=True,
-        envelope_index=start,
-        absorbed_indices=tuple(idx for idx, _ in programs),
-    )

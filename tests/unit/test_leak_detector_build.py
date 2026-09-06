@@ -13,7 +13,6 @@ from pathlib import Path
 
 import pytest
 
-from llm_loop.core.injection_labels import PROGRAM_APPENDIX_NOTICE
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.trace_leak import leak_events
 from llm_loop.core.trace_leak.leak_detector import detect_leak_at_build
@@ -115,8 +114,7 @@ class TestBuildAlphaMount:
     def test_mislabel_message_excluded_and_downgraded(
         self, tmp_path: Path, sink: _CaptureSink, monkeypatch
     ) -> None:
-        # R8.24-D DT-1.1/DT-1.2: 处置面默认 off（quarantine 承接，provider chars=0）；
-        # 本用例显式切 on 验证回滚通道行为与旧现状一致（REFERENCE 附录回喂照旧）。
+        # Quarantine mode may change audit handling, never provider prompt authority.
         monkeypatch.setenv("LFL_LEAK_QUARANTINE", "on")
         engine, sess = _wire_engine(tmp_path)
         leaked = _user("外部agent轨迹原文片段XYZ", dict(MISLABEL_MD))
@@ -130,10 +128,9 @@ class TestBuildAlphaMount:
             m.get("role") == "user" and str(m.get("content") or "") == leaked.content
             for m in out
         )
-        # 2) on 回滚通道：降级附录进入聚合产物（REFERENCE 语义包装）与旧现状一致
+        # 2) Even explicit on rollback cannot turn leaked content into model context.
         downgraded = [str(m.get("content") or "") for m in out if leaked.content[:10] in str(m.get("content") or "")]
-        assert downgraded, "降级附录应出现在 provider 视图"
-        assert any(PROGRAM_APPENDIX_NOTICE in d for d in downgraded)
+        assert downgraded == []
         assert leak_events.LEAK_MISLABEL_DETECTED in sink.kinds()
 
     def test_session_storage_untouched(self, tmp_path: Path, sink: _CaptureSink) -> None:
@@ -164,11 +161,13 @@ class TestBuildAlphaMount:
             "llm_loop.core.trace_leak.leak_detector._detect_inner", _boom
         )
         out = engine._build_llm_messages(sess, [], planned_label="zhipu/glm-5")
-        # fail-open: 原消息按既有投影逻辑保留（不因检测层故障丢内容）
-        assert any(
+        # Detector failure must not override the independent program-origin eligibility
+        # boundary: explicit contradictory provenance remains provider-invisible.
+        assert not any(
             m.get("role") == "user" and str(m.get("content") or "") == leaked.content
             for m in out
         )
+        assert leak_events.LEAK_DETECTOR_FAULT in sink.kinds()
 
 
 class TestSignatureWarn:

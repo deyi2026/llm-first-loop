@@ -15,53 +15,25 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from llm_loop.core.injection_labels import InjectionLayer, infer_layer
+from llm_loop.core.injection_labels import InjectionLayer, detect_program_layer, infer_layer
 
 logger = logging.getLogger(__name__)
 
 # Explicit automatic-prompt producer allowlist.  Keep this as plain strings so the
 # eligibility core does not depend on loop/err1210 enums (which would create a cycle).
-# R8.24-B B-4.1（B-D11）: PROTOCOL_ONLY neutral placeholder——中文语义标签
-# （"[程序终止边界·无模型回答]"）从模型可读面消失；role-shape 兼容保留
-# （user→program-assistant→user 删除会复现 provider 1210 形状——B6 锚点教训），
-# 与 build.py 替换逻辑/engine.py 终态写入同源（wire 字节稳定）。
-PROGRAM_FINAL_PROTOCOL_BOUNDARY = "[program-final]"
-TASK_ACTIVE_PROMPT_PREFIX = "[Task Active]"
-
-
-# R8.24-E E-D1/E-D2/E-D6（E-5.1，E-G6）: memory/tip producer 注册表退役——
-# E07 auto memory 与 E08 TIP replay 通道退出（retrieval plane 存储不动；
-# memory 经 input-side 显式指代授权一次检索，走 memory_authorized 授权通道，
-# 不是自动 producer）。program_recovery 属 B 包保留面、task_active 属 E-D5
-# 授权化保留面（无授权时 build 面零投影）。task_next_step 属续聊授权轮
-# next_step 锚点（ADR-5，仅授权轮产生，同 task_active 授权化语义）。
-PROMPT_DYNAMIC_PRODUCER_SLOTS = frozenset(
-    {
-        "program_recovery",
-        "task_active",
-        "task_next_step",
-        "memory_authorized",
-    }
-)
-
-
-def render_task_active_identity(*, goal_id: str, task_id: str, title: str) -> str:
-    """Render the only task state allowed to auto-project: one active execution identity.
-
-    Full frontier/ready/blocked/completed state remains tool-only.  Empty identifiers deny
-    rather than guessing.  Task titles are collapsed to one stable line so program-owned
-    formatting cannot create additional prompt structure.
-    """
-
-    gid = str(goal_id or "").strip()
-    tid = str(task_id or "").strip()
-    if not gid or not tid:
-        return ""
-    clean_title = " ".join(str(title or "").split())[:80]
-    return (
-        f"{TASK_ACTIVE_PROMPT_PREFIX} goal={gid}; task={tid}; "
-        f"status=in_progress; title={clean_title}"
-    )
+# R8.24-B B-4.1 / 2026-09-03 echo-loop correction:
+# program-final needs a structural assistant boundary for providers that reject a
+# historical user→user shape, but that boundary must carry *zero model-visible
+# control tokens*.  GLM live probe proves user→assistant(content="")→user is legal.
+# Storage/event truth remains elsewhere; this value is only the neutral role frame.
+PROGRAM_FINAL_PROTOCOL_BOUNDARY = ""
+# Pre-fix durable sessions may still contain this leaked marker, and a model may echo
+# it.  Keep the literal only as a scrub/detection sentinel; never project it as content.
+LEGACY_PROGRAM_FINAL_MARKER = "[program-final]"
+# Agency-first producer registry (2026-09-03): no program-owned dynamic block has
+# automatic prompt authority. Task/memory/recovery/capability/status state remains
+# retrievable/observable through explicit tools and runtime telemetry.
+PROMPT_DYNAMIC_PRODUCER_SLOTS: frozenset[str] = frozenset()
 
 
 def dynamic_prompt_layer(content: str, *, slot_kind: str | None) -> InjectionLayer | None:
@@ -154,6 +126,13 @@ def current_turn_program_prompt_eligible(
     """
 
     md = getattr(message, "metadata", None) or {}
+    # Canonical current human ingress is explicit provenance and never confused with a
+    # program frame merely because the user discusses an internal-looking label.
+    if (
+        md.get("program_origin") is not True
+        and str(md.get("origin_layer") or "") == InjectionLayer.USER_INSTRUCTION.value
+    ):
+        return True
     # R8.15/E08 + R8.18/E09: generic reference catalogs are durable/retrievable
     # state, not automatic working context. Deny canonical catalog frames even when
     # their turn_ref still matches the current human turn. Explicit search/tool
@@ -170,6 +149,10 @@ def current_turn_program_prompt_eligible(
     if lifecycle:
         # Unknown persisted lifecycle is not an eligibility grant.
         return False
+    # Explicit program provenance never gets an implicit history-side grant. New
+    # producers must not bypass the dynamic producer registry by persisting a frame.
+    if md.get("program_origin") is True:
+        return False
 
     role = str(getattr(message, "role", "") or "")
     content = str(getattr(message, "content", "") or "").lstrip()
@@ -177,6 +160,13 @@ def current_turn_program_prompt_eligible(
         return False
     if role == "system" and content.startswith(_LEGACY_PROGRAM_FAULT_PREFIX):
         return False
+    # Legacy labelled program frames may predate metadata. Treat an explicit program
+    # semantic label as program provenance; canonical modern human turns were already
+    # returned above via origin_layer=user_instruction.
+    if role in {"user", "system"}:
+        layer = detect_program_layer(content)
+        if layer not in (None, InjectionLayer.USER_INSTRUCTION):
+            return False
     # Pre-R8.9 declaration reminders were program-generated as role=user without
     # metadata.  Match the exact historical sentence rather than the generic label so a
     # human discussing "[声明提醒]" remains ordinary user truth.

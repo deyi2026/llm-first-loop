@@ -45,6 +45,15 @@ def run_compaction_audit(
                 "archived_count": _archived_count,
                 "drop_pct": _drop_pct,
                 "anchor_moved": int(anchor_moved),
+                "cache_boundary_mode": _compact_stats.get(
+                    "cache_boundary_mode", "inactive"
+                ),
+                "cache_protected_messages": _compact_stats.get(
+                    "cache_protected_messages", 0
+                ),
+                "cache_protected_chars": _compact_stats.get(
+                    "cache_protected_chars", 0
+                ),
             }
             record_action(
                 "run.compact",

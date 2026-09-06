@@ -70,6 +70,98 @@ def test_env_json_channel_parsed() -> None:
     assert ds.models["deepseek-v4-flash"].thinking is True
     assert ds.models["deepseek-v4-flash"].context == 1000000
     assert ds.models["deepseek-v4-pro"].cost_tier == "high"
+    assert ds.models["deepseek-v4-flash"].send_tool_choice is True
+
+
+def test_model_wire_contract_can_disable_tool_choice() -> None:
+    raw = json.dumps(
+        {
+            "deepseek": {
+                "base_url": "https://api.deepseek.com/v1",
+                "api_key_env": "DEEPSEEK_API_KEY",
+                "models": {
+                    "deepseek-v4-flash": {
+                        "context": 1000000,
+                        "thinking": True,
+                        "send_tool_choice": False,
+                    }
+                },
+                "default_model": "deepseek-v4-flash",
+            }
+        }
+    )
+    reg = load_registry(_settings(model_providers_raw=raw))
+    assert reg.providers["deepseek"].models["deepseek-v4-flash"].send_tool_choice is False
+
+
+def test_reasoning_capability_and_control_are_independent() -> None:
+    raw = json.dumps(
+        {
+            "minimax": {
+                "base_url": "https://api.minimax.chat/v1",
+                "api_key_env": "MINIMAX_API_KEY",
+                "models": {
+                    "MiniMax-M3": {
+                        "context": 1000000,
+                        "thinking": False,
+                        "reasoning_capable": True,
+                        "reasoning_control": "unknown",
+                    }
+                },
+                "default_model": "MiniMax-M3",
+            }
+        }
+    )
+    reg = load_registry(_settings(model_providers_raw=raw))
+    model = reg.providers["minimax"].models["MiniMax-M3"]
+    assert model.thinking is False
+    assert model.reasoning_capable is True
+    assert model.reasoning_control == "unknown"
+    assert reg.reasoning_contract("minimax", "MiniMax-M3") == (True, "unknown")
+
+
+def test_invalid_reasoning_control_fails_safe_to_unknown(caplog) -> None:
+    raw = json.dumps(
+        {
+            "p": {
+                "base_url": "https://example.test/v1",
+                "api_key_env": "",
+                "models": {
+                    "m": {
+                        "thinking": True,
+                        "reasoning_control": "magic-provider-mode",
+                    }
+                },
+                "default_model": "m",
+            }
+        }
+    )
+    reg = load_registry(_settings(model_providers_raw=raw))
+    assert reg.providers["p"].models["m"].reasoning_control == "unknown"
+    assert "reasoning_control" in caplog.text
+
+
+def test_always_on_effort_reasoning_control_is_explicitly_supported() -> None:
+    raw = json.dumps(
+        {
+            "glm": {
+                "base_url": "https://open.bigmodel.cn/api/coding/paas/v4",
+                "api_key_env": "",
+                "models": {
+                    "glm-5.3": {
+                        "thinking": True,
+                        "reasoning_capable": True,
+                        "reasoning_control": "always_on_effort",
+                    }
+                },
+            }
+        }
+    )
+    reg = load_registry(_settings(model_providers_raw=raw))
+    assert reg.reasoning_contract("glm", "glm-5.3") == (
+        True,
+        "always_on_effort",
+    )
 
 
 def test_file_channel_parsed(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -215,6 +307,22 @@ def test_client_params_reads_key_on_demand(monkeypatch: pytest.MonkeyPatch) -> N
         "base_url": "https://api.deepseek.com/v1",
         "model": "deepseek-v4-flash",
     }
+
+
+def test_reasoning_split_model_contract_is_parsed_and_passed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MINIMAX_API_KEY", "k")
+    raw = json.dumps({
+        "minimax": {
+            "base_url": "https://api.minimax.io/v1",
+            "api_key_env": "MINIMAX_API_KEY",
+            "models": {"MiniMax-M3": {"context": 1_000_000, "reasoning_split": True}},
+            "default_model": "MiniMax-M3",
+        }
+    })
+    reg = load_registry(_settings(model_providers_raw=raw))
+    spec = reg.providers["minimax"].models["MiniMax-M3"]
+    assert spec.reasoning_split is True
+    assert reg.client_params("minimax", "MiniMax-M3")["reasoning_split"] is True
 
 
 def test_client_params_missing_key_truthful_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -377,103 +485,10 @@ def test_provider_chars_per_token_invalid_warns_and_defaults(
     assert any("chars_per_token" in r.message and "local" in r.message for r in caplog.records)
 
 
-# ── 2026-08-24 本地工具轮极小窗口（tool_round_zero_history, KV 前缀稳定）──
-
-
-def _tool_zero_provider_json(value: object) -> str:
-    return json.dumps(
-        {
-            "local": {
-                "base_url": "http://localhost:1234/v1",
-                "api_key_env": "",
-                "tool_round_zero_history": value,
-                "models": {"qwen3.6-27b": {"context": 131072}},
-                "default_model": "qwen3.6-27b",
-            }
-        }
-    )
-
-
-def test_provider_tool_round_zero_parsed_true() -> None:
-    """local 配置 tool_round_zero_history=true → 工具轮极小窗口启用."""
-    reg = load_registry(_settings(model_providers_raw=_tool_zero_provider_json(True)))
-    assert reg.providers["local"].tool_round_zero_history is True
-
-
-def test_provider_tool_round_zero_absent_defaults_false() -> None:
-    """未配置 → False（云端/缺省零回归）."""
-    reg = load_registry(_settings(model_providers_raw=_TWO_PROVIDER_JSON))
-    assert reg.providers["local"].tool_round_zero_history is False
-    assert reg.providers["deepseek"].tool_round_zero_history is False
-
-
-@pytest.mark.parametrize("bad", ["maybe", {"x": 1}])
-def test_provider_tool_round_zero_invalid_warns_and_defaults(
-    bad, caplog: pytest.LogCaptureFixture
-) -> None:
-    """非法 tool_round_zero_history → warning 如实告警 + 回退 False（不拖垮注册表）."""
-    with caplog.at_level(logging.WARNING, logger="llm_loop.llm.providers"):
-        reg = load_registry(_settings(model_providers_raw=_tool_zero_provider_json(bad)))
-    assert reg.providers["local"].tool_round_zero_history is False
-    assert not reg.degraded
-    assert any("tool_round_zero_history" in r.message and "local" in r.message for r in caplog.records)
-
-
-def test_provider_tool_round_zero_string_forms() -> None:
-    """字符串布尔形态严格解析（"true"/"false"，防 bool("false")==True 陷阱）."""
-    reg_true = load_registry(_settings(model_providers_raw=_tool_zero_provider_json("true")))
-    assert reg_true.providers["local"].tool_round_zero_history is True
-    reg_false = load_registry(_settings(model_providers_raw=_tool_zero_provider_json("false")))
-    assert reg_false.providers["local"].tool_round_zero_history is False
-
-
 def test_catalog_summary_shows_provider_history_budget() -> None:
     """catalog_summary 标注 provider 级历史预算."""
     reg = load_registry(_settings(model_providers_raw=_budget_provider_json(12000)))
     assert "history_budget=12000" in reg.catalog_summary()
-
-
-# ── provider 级推送式注入开关（inject_system_notices, 本地慢模型前缀稳定）──
-
-
-def _inject_provider_json(value: object) -> str:
-    return json.dumps(
-        {
-            "local": {
-                "base_url": "http://localhost:1234/v1",
-                "api_key_env": "",
-                "inject_system_notices": value,
-                "models": {"qwen3.6-27b": {"context": 131072}},
-            }
-        }
-    )
-
-
-def test_inject_system_notices_default_true() -> None:
-    """未配置 → 默认 True（零回归, 推送式注入保持既有行为）."""
-    reg = load_registry(_settings(model_providers_raw=_TWO_PROVIDER_JSON))
-    assert reg.providers["local"].inject_system_notices is True
-    assert reg.providers["deepseek"].inject_system_notices is True
-
-
-def test_inject_system_notices_parsed() -> None:
-    """显式 false（本地慢模型）→ 解析为 False."""
-    reg = load_registry(_settings(model_providers_raw=_inject_provider_json(False)))
-    assert reg.providers["local"].inject_system_notices is False
-    reg2 = load_registry(_settings(model_providers_raw=_inject_provider_json("false")))
-    assert reg2.providers["local"].inject_system_notices is False
-
-
-@pytest.mark.parametrize("bad", ["maybe", [], "yes?"])
-def test_inject_system_notices_invalid_warns_defaults(
-    bad, caplog: pytest.LogCaptureFixture
-) -> None:
-    """非法值 → warning 如实告警 + 回退默认 True（不静默）."""
-    with caplog.at_level(logging.WARNING, logger="llm_loop.llm.providers"):
-        reg = load_registry(_settings(model_providers_raw=_inject_provider_json(bad)))
-    assert reg.providers["local"].inject_system_notices is True
-    assert not reg.degraded
-    assert any("inject_system_notices" in r.message for r in caplog.records)
 
 
 # ── catalog_summary ──
@@ -485,7 +500,8 @@ def test_catalog_summary_human_readable() -> None:
     summary = reg.catalog_summary()
     assert "[deepseek]" in summary
     assert "deepseek-v4-flash" in summary
-    assert "thinking=✓" in summary
+    assert "reasoning_capable=✓" in summary
+    assert "reasoning_control=legacy" in summary
     assert "[local]" in summary
 
 
@@ -688,6 +704,27 @@ def test_provider_max_tokens_missing_absent() -> None:
         )
     )
     assert "max_tokens" not in reg.client_params("p1", "m1")
+
+
+def test_model_max_tokens_overrides_provider_default() -> None:
+    """同 provider 不同模型可声明不同输出上限，模型级优先。"""
+    raw = json.dumps(
+        {
+            "glm": {
+                "base_url": "https://open.bigmodel.cn/api/coding/paas/v4",
+                "api_key_env": "",
+                "max_tokens": 65536,
+                "models": {
+                    "glm-5.3": {"context": 1_000_000, "max_tokens": 131072},
+                    "glm-5.3-flash": {"context": 1_000_000},
+                },
+            }
+        }
+    )
+    reg = load_registry(_settings(model_providers_raw=raw))
+    assert reg.providers["glm"].models["glm-5.3"].max_tokens == 131072
+    assert reg.client_params("glm", "glm-5.3")["max_tokens"] == 131072
+    assert reg.client_params("glm", "glm-5.3-flash")["max_tokens"] == 65536
 
 
 # ── P3-5: wire_protocol 元数据 ──

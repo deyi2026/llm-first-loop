@@ -14,7 +14,12 @@
 
 from __future__ import annotations
 
-from llm_loop.event_log.model import EVENT_MESSAGE_CACHE_COMPACTED, REGISTRY, Event
+from llm_loop.event_log.model import (
+    EVENT_HISTORY_COMPACTION_STATE_RESET,
+    EVENT_MESSAGE_CACHE_COMPACTED,
+    REGISTRY,
+    Event,
+)
 
 # 对齐 Session.to_dict() 的顶层字段默认值（session.created 缺失字段如实置空）
 _TOP_LEVEL_DEFAULTS: dict = {
@@ -36,7 +41,14 @@ _TOP_LEVEL_DEFAULTS: dict = {
 }
 
 
-def _apply_cache_compacted(message: dict, provider_id: str) -> None:
+def _apply_cache_compacted(
+    message: dict,
+    provider_id: str,
+    *,
+    marker_version: int | None = None,
+    model: str = "",
+    effective_budget: int | None = None,
+) -> None:
     """Replay provider-scoped prompt-view compaction into message metadata."""
     metadata = message.get("metadata")
     if not isinstance(metadata, dict):
@@ -51,6 +63,43 @@ def _apply_cache_compacted(message: dict, provider_id: str) -> None:
     if provider_id not in providers:
         providers.append(provider_id)
     metadata["cache_compacted_for"] = providers
+    if marker_version and model and effective_budget:
+        scopes_raw = metadata.get("cache_compaction_scope")
+        scopes = dict(scopes_raw) if isinstance(scopes_raw, dict) else {}
+        scopes[provider_id] = {
+            "version": int(marker_version),
+            "model": model,
+            "effective_budget": int(effective_budget),
+        }
+        metadata["cache_compaction_scope"] = scopes
+    message["metadata"] = metadata
+
+
+def _clear_cache_compacted(message: dict, provider_id: str) -> None:
+    """Replay a compaction-contract reset by removing this provider's old marker."""
+    metadata = message.get("metadata")
+    if not isinstance(metadata, dict):
+        return
+    raw = metadata.get("cache_compacted_for")
+    if isinstance(raw, str):
+        providers = [raw]
+    elif isinstance(raw, (list, tuple, set)):
+        providers = [str(item) for item in raw if item]
+    else:
+        providers = []
+    providers = [item for item in providers if item != provider_id]
+    if providers:
+        metadata["cache_compacted_for"] = providers
+    else:
+        metadata.pop("cache_compacted_for", None)
+    scopes_raw = metadata.get("cache_compaction_scope")
+    if isinstance(scopes_raw, dict):
+        scopes = dict(scopes_raw)
+        scopes.pop(provider_id, None)
+        if scopes:
+            metadata["cache_compaction_scope"] = scopes
+        else:
+            metadata.pop("cache_compaction_scope", None)
     message["metadata"] = metadata
 
 
@@ -107,11 +156,22 @@ def replay_session(events: list[Event]) -> dict:
                     "chars": event.payload.get("chars"),
                 }
             )
+        elif event.type == EVENT_HISTORY_COMPACTION_STATE_RESET:
+            provider_id = str(event.payload.get("provider_id") or "")
+            if provider_id:
+                for message in messages_by_index.values():
+                    _clear_cache_compacted(message, provider_id)
         elif event.type == EVENT_MESSAGE_CACHE_COMPACTED:
             idx = _as_int(event.payload.get("msg_seq"))
             provider_id = str(event.payload.get("provider_id") or "")
             if idx is not None and provider_id and idx in messages_by_index:
-                _apply_cache_compacted(messages_by_index[idx], provider_id)
+                _apply_cache_compacted(
+                    messages_by_index[idx],
+                    provider_id,
+                    marker_version=_as_int(event.payload.get("marker_version")),
+                    model=str(event.payload.get("model") or ""),
+                    effective_budget=_as_int(event.payload.get("effective_budget")),
+                )
         elif event.type == "session.forked":
             # D3: 提取 fork 元信息写入视图标注字段（不改变既有顶层字段重建语义）
             view.setdefault(

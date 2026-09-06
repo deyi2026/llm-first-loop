@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
-"""Injection Governance R7/L3 deterministic prompt A/B evaluator.
+"""Historical Injection Governance R7/L3 deterministic prompt A/B diagnostic.
 
 Arm A replays the structural failure shapes frozen by R0: program-user material is
 appended *after* current user truth, duplicate reference bodies repeat, and historical
-imperatives remain verbatim.  Arm B is assembled with current production helpers:
-R3 reference neutralization/dedup, R2 hard budget, and R6 exact-user-tail projection.
+imperatives remain verbatim. Arm B replays a frozen historical R3/R6 morphology using
+helpers defined locally in this script. It intentionally does not import retired current
+runtime reference/auto-injection policy.
 For identity-header fixtures the governed visible history is empty, representing the
 R5+R3 compacted state where identity Q&A remains recoverable archive truth but is not
 automatically replayed into prompt context.
 
 The runner can operate structure-only (no model calls) or call an OpenAI-compatible
-local endpoint at temperature=0.  It never invokes agent tools or external web content,
-so the changed variable is prompt governance rather than tool/network success.
+local endpoint at temperature=0. It intentionally preserves the 2026-08-30 R7-v1
+synthetic morphology for regression archaeology. It is NOT a model capability, routing,
+primary-admission, or fallback-floor authority. Current capability must be measured on
+the production agent/runtime path, not on resilience to deliberately polluted prompts.
 """
 from __future__ import annotations
 
@@ -22,6 +25,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from enum import IntEnum
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -31,24 +35,182 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from llm_loop.core.injection_budget import (  # noqa: E402
-    DYNAMIC_APPENDIX_GROUP,
-    BudgetBlock,
-    enforce_injection_budget,
-)
 from llm_loop.core.injection_labels import (  # noqa: E402
     InjectionLayer,
     reference_has_imperative,
     render_program_appendix,
 )
-from llm_loop.core.reference_injection import (  # noqa: E402
-    reference_auto_decision,
-    render_reference_frame,
-)
-from llm_loop.core.user_truth_wire import (  # noqa: E402
-    USER_TRUTH_SEPARATOR,
-    project_user_truth_tail,
-)
+
+
+class _HistoricalReferenceAutoDecision:
+    def __init__(self, *, human_turn_no: int, task_switch: bool, allow_catalog: bool) -> None:
+        self.human_turn_no = human_turn_no
+        self.task_switch = task_switch
+        self.allow_catalog = allow_catalog
+
+
+class _HistoricalReferenceFrame:
+    def __init__(self, *, key: str, content: str, ref: str, full: bool, duplicate: bool) -> None:
+        self.key = key
+        self.content = content
+        self.ref = ref
+        self.full = full
+        self.duplicate = duplicate
+
+
+def _historical_reference_auto_decision(messages, *, auto_turns: int) -> _HistoricalReferenceAutoDecision:
+    texts = [str(m.get("content") or "") for m in messages if m.get("role") == "user"]
+    turn_no = len(texts)
+    # Frozen R7 synthetic fixture only: explicit switch phrases reopen the old catalog gate.
+    current = texts[-1].casefold() if texts else ""
+    switched = any(token in current for token in ("换个话题", "新任务", "new task", "switch topic", "switch task"))
+    k = max(0, int(auto_turns))
+    return _HistoricalReferenceAutoDecision(
+        human_turn_no=turn_no, task_switch=switched, allow_catalog=bool(turn_no and (turn_no <= k or switched))
+    )
+
+
+def _historical_reference_frame(*, tag: str, fact: str, ref: str, source: str, seen_keys: set[str]) -> _HistoricalReferenceFrame:
+    stable = str(ref or "").strip()
+    key = f"ref:{stable.casefold()}" if stable else f"hash:{source}:{sha256(str(fact).encode()).hexdigest()[:24]}"
+    if key in seen_keys:
+        return _HistoricalReferenceFrame(key=key, content="", ref=stable or key, full=False, duplicate=True)
+    raw = " ".join(str(fact or "").split())
+    if reference_has_imperative(raw):
+        one = "历史资料含动作性或指令性表述，正文未自动内联"
+    else:
+        one = re.split(r"(?<=[。！？!?])\s*", raw, maxsplit=1)[0].strip() or "历史资料条目"
+        if len(one) > 180:
+            one = one[:179].rstrip() + "…"
+    display_ref = stable or key
+    return _HistoricalReferenceFrame(
+        key=key, content=f"[{tag}] {one}\nref={display_ref}", ref=display_ref, full=True, duplicate=False
+    )
+
+
+# Frozen 2026-08-30 R7-v1 archaeology only. This local assembler deliberately does
+# not exist in production runtime after P1-C.
+DYNAMIC_APPENDIX_GROUP = "dynamic_appendix"
+_HISTORICAL_GROUP_OVERHEAD = 64
+
+
+class _HistoricalPriority(IntEnum):
+    PROGRAM_RECOVERY = 10
+    STATUS = 30
+    REFERENCE = 40
+
+
+class BudgetBlock:
+    def __init__(
+        self,
+        key: str,
+        content: str,
+        layer: InjectionLayer,
+        slot_kind: str = "",
+        group: str = "",
+        cost_chars_override: int | None = None,
+        ordinal: int = 0,
+    ) -> None:
+        self.key = key
+        self.content = content
+        self.layer = layer
+        self.slot_kind = slot_kind
+        self.group = group
+        self.cost_chars_override = cost_chars_override
+        self.ordinal = ordinal
+
+    @property
+    def cost_chars(self) -> int:
+        return (
+            max(0, int(self.cost_chars_override))
+            if self.cost_chars_override is not None
+            else len(self.content)
+        )
+
+    @property
+    def priority(self) -> int:
+        if self.layer is InjectionLayer.PROGRAM_RECOVERY:
+            return int(_HistoricalPriority.PROGRAM_RECOVERY)
+        if self.layer is InjectionLayer.STATUS:
+            return int(_HistoricalPriority.STATUS)
+        return int(_HistoricalPriority.REFERENCE)
+
+
+class _HistoricalBudgetResult:
+    def __init__(
+        self,
+        budget_chars: int,
+        used_chars: int,
+        over_budget: bool,
+        kept_blocks: tuple[BudgetBlock, ...],
+        dropped_blocks: tuple[BudgetBlock, ...],
+        receipt_content: str = "",
+    ) -> None:
+        self.budget_chars = budget_chars
+        self.used_chars = used_chars
+        self.over_budget = over_budget
+        self.kept_blocks = kept_blocks
+        self.dropped_blocks = dropped_blocks
+        self.receipt_content = receipt_content
+
+
+def enforce_injection_budget(blocks, *, budget_chars: int) -> _HistoricalBudgetResult:
+    """Frozen R7 fixture behavior; never imported by production runtime."""
+    source = list(blocks)
+    budget = max(512, int(budget_chars))
+    def cost(seq):
+        groups = {b.group for b in seq if b.group}
+        return sum(b.cost_chars for b in seq) + (
+            _HISTORICAL_GROUP_OVERHEAD if DYNAMIC_APPENDIX_GROUP in groups else 0
+        )
+    total = cost(source)
+    if total <= budget:
+        return _HistoricalBudgetResult(budget, total, False, tuple(source), ())
+    ranked = sorted(
+        enumerate(source), key=lambda item: (item[1].priority, item[1].ordinal, item[0])
+    )
+    kept = []
+    for _idx, block in ranked:
+        if cost([*kept, block]) <= budget:
+            kept.append(block)
+    kept_keys = {b.key for b in kept}
+    kept_source = tuple(b for b in source if b.key in kept_keys)
+    dropped = tuple(b for b in source if b.key not in kept_keys)
+    used = cost(list(kept_source))
+    receipt = (
+        f"[注入预算] 本轮自动程序附录超过候选预算上限 {budget} 字符；"
+        "部分低优先级块未进入请求。该记录仅描述本轮组装结果。"
+    )
+    return _HistoricalBudgetResult(budget, used, True, kept_source, dropped, receipt)
+# This script intentionally replays the frozen 2026-08-30 R7 morphology.  The
+# production user-truth envelope API was retired by agency-first and must not be
+# reintroduced merely to keep this archaeology fixture executable.
+_HISTORICAL_USER_TRUTH_SEPARATOR = "\n\n--- [指令·用户·原文] ---\n"
+
+
+def _project_historical_user_truth_tail(
+    messages: list[dict[str, Any]], truth: str
+) -> tuple[list[dict[str, Any]], bool, str]:
+    """Reproduce the frozen R7-v1 single-user envelope locally, never in production."""
+    truth_idx = next(
+        (
+            i
+            for i in range(len(messages) - 1, -1, -1)
+            if messages[i].get("role") == "user"
+            and str(messages[i].get("content") or "") == truth
+        ),
+        None,
+    )
+    if truth_idx is None:
+        return messages, False, "missing_user_truth"
+    suffix = messages[truth_idx + 1 :]
+    if not suffix:
+        return messages, False, ""
+    if any(m.get("role") != "user" for m in suffix):
+        return messages, False, "non_user_suffix"
+    program_text = "\n\n".join(str(m.get("content") or "") for m in suffix)
+    envelope = program_text + _HISTORICAL_USER_TRUTH_SEPARATOR + truth
+    return messages[:truth_idx] + [{"role": "user", "content": envelope}], True, ""
 
 IDENTITY_RE = re.compile(
     r"(?:我是.{0,18}(?:模型|AI|助手)|作为.{0,14}(?:模型|AI|助手)|我能做|我的能力|能力清单)",
@@ -86,8 +248,9 @@ def build_arm(
     reference_auto_turns: int,
     injection_budget_chars: int,
 ) -> dict[str, Any]:
-    # R7-v1 is a frozen historical morphology fixture; do not couple replay
-    # metrics to the mutable production universal prompt.
+    # R7-v1 is a frozen historical morphology fixture.  Never mix a mutable
+    # production system prompt into this replay; doing so confounds LFL prompt
+    # changes with model behavior and destroys reproducibility.
     system = {"role": "system", "content": str(fixture.get("system_prompt") or "")}
     truth = str(task["user_truth"])
     refs = list(task.get("references") or [])
@@ -117,7 +280,7 @@ def build_arm(
         decision_messages = list(task.get("canonical_history") or []) + [
             {"role": "user", "content": truth}
         ]
-        decision = reference_auto_decision(
+        decision = _historical_reference_auto_decision(
             decision_messages, auto_turns=reference_auto_turns
         )
         seen: set[str] = set()
@@ -127,7 +290,7 @@ def build_arm(
             for item in refs:
                 repeat = max(1, int(item.get("repeat", 1)))
                 for _ in range(repeat):
-                    frame = render_reference_frame(
+                    frame = _historical_reference_frame(
                         tag="memory",
                         fact=str(item.get("fact") or ""),
                         ref=str(item.get("ref") or ""),
@@ -174,13 +337,13 @@ def build_arm(
         messages.append({"role": "user", "content": truth})
         for program in program_messages:
             messages.append({"role": "user", "content": program})
-        projection = project_user_truth_tail(messages, truth)
-        messages = projection.messages
-        projection_violation = projection.violation
+        messages, projection_changed, projection_violation = (
+            _project_historical_user_truth_tail(messages, truth)
+        )
         injection_chars = sum(len(x) for x in program_messages)
-        if projection.changed:
-            injection_chars += len(USER_TRUTH_SEPARATOR)
-        injection_after = 0 if not projection.violation else injection_chars
+        if projection_changed:
+            injection_chars += len(_HISTORICAL_USER_TRUTH_SEPARATOR)
+        injection_after = 0 if not projection_violation else injection_chars
         duplicate_full = 0
         imperative_count = sum(1 for text in kept if reference_has_imperative(text))
         # Expose suppression count as evidence without counting it as a violation.
@@ -375,7 +538,16 @@ def main() -> int:
     parser.add_argument("--endpoint", default="http://127.0.0.1:1234/v1")
     parser.add_argument("--model", action="append", default=[])
     parser.add_argument("--calibration-model", default="")
-    parser.add_argument("--skip-calibration", action="store_true")
+    parser.add_argument(
+        "--legacy-calibration",
+        action="store_true",
+        help="explicitly run deprecated R7 K/budget archaeology; never production authority",
+    )
+    parser.add_argument(
+        "--skip-calibration",
+        action="store_true",
+        help="deprecated compatibility flag; calibration is already off by default",
+    )
     parser.add_argument("--requested-primary-endpoint", default="http://127.0.0.1:8901/v1")
     parser.add_argument("--structure-only", action="store_true")
     parser.add_argument("--timeout", type=int, default=180)
@@ -409,6 +581,8 @@ def main() -> int:
 
     output: dict[str, Any] = {
         "schema": "injection-r7-ab-result-v1",
+        "evaluation_scope": "historical_injection_morphology_diagnostic",
+        "capability_admission_authority": False,
         "fixture_schema": fixture["schema"],
         "defaults": defaults,
         "structural": structural,
@@ -494,13 +668,18 @@ def main() -> int:
         model_result.update(
             {
                 "default": {"A": default_a, "B": default_b, "aggregate_A": agg_a, "aggregate_B": agg_b},
-                "default_gate_pass": _behavior_gate(agg_b, agg_a),
+                "legacy_behavior_metrics": {
+                    "would_pass_deprecated_composite_gate": _behavior_gate(agg_b, agg_a),
+                    "authority": False,
+                },
+                "gate_semantics": "deprecated_composite_metric_only_not_model_admission",
             }
         )
         output["models"][model] = model_result
 
     calibration_model = args.calibration_model or (models[0] if models else "")
-    if (not args.skip_calibration and calibration_model in output["models"]
+    if (args.legacy_calibration and not args.skip_calibration
+            and calibration_model in output["models"]
             and output["models"][calibration_model].get("available")):
         cal = output["models"][calibration_model].setdefault("calibration", {})
         k_rows = []
@@ -544,7 +723,7 @@ def main() -> int:
         "models": {
             name: {
                 "available": data.get("available"),
-                "default_gate_pass": data.get("default_gate_pass"),
+                "legacy_behavior_metrics": data.get("legacy_behavior_metrics"),
                 "A": (data.get("default") or {}).get("aggregate_A"),
                 "B": (data.get("default") or {}).get("aggregate_B"),
                 "calibration": data.get("calibration"),

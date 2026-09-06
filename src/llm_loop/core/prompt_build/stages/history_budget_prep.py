@@ -1,8 +1,8 @@
 """历史预算准备阶段（design T5-C 第二批 / B4-C2-03①）.
 
 archive_sink 装配 + effective_budget 解析（R1 中间值）+ EVO-20260817
-预算分级 nudge（80% 准备态/90% 压缩态，EVO-20260824-54d46549 双轨
-force/growth 增长率门控）+ 渐进折叠 env 配置。compact_ratio 语义
+预算观测 nudge（历史兼容；默认 compact_ratio=1.0 不提前压缩，
+force/growth 增长率门控）。compact_ratio 语义
 fail-open：异常回退 1.0（不触发分级）。decision.history_total_chars
 就地写（P1-01 显式化位）。
 """
@@ -18,12 +18,11 @@ from llm_loop.core.prompt_build.context import BuildDecision
 
 @dataclass(slots=True)
 class HistoryBudgetPrep:
-    """预算准备产出（compact_ratio/fold_k 进投影调用；nudge 状态调用点回写）."""
+    """预算准备产出（physical budget/compact ratio；nudge 状态调用点回写）."""
 
     archive_sink: Any = None
     effective_budget: int = 0
     compact_ratio: float = 1.0
-    fold_k: int = 0
     last_nudge_total: Any = None
 
 
@@ -43,7 +42,7 @@ def run_history_budget_prep(
     provider_visible_chars: Callable[..., int],
     growth_nudge_kind: Callable[..., str | None],
 ) -> HistoryBudgetPrep:
-    """archive_sink/budget/nudge/fold_k 装配（产出投影调用前置值）."""
+    """archive_sink/budget/nudge 装配（产出投影调用前置值）."""
     prep = HistoryBudgetPrep()
     if archive is not None or getattr(
         registry, "evidence_history_capture_enabled", False
@@ -53,15 +52,15 @@ def run_history_budget_prep(
     prep.effective_budget = (
         max_chars if max_chars is not None else runtime_history_budget()
     )
-    # EVO-20260817: 预算分级管理——①80% 准备态（审计提示，不压缩）:
-    # 长任务大几率撞顶，接近预算时让 AI 感知"下轮可能主动整理压缩"（压缩仍保留
-    # 关键事实帧+档案零丢失，不打断推理）；②90% 压缩态（compact_ratio, env 可调）:
-    # 预算附近提前平滑压缩（裁到 COMPRESS_TARGET_RATIO 留缓冲），优于撞顶被动压缩。
+    # Agency-first: 默认不做预算前置语义压缩。真正的 context 物理裕量已在
+    # _resolve_history_budget handles planned pressure; provider overflow is the final authority.
+    # COMPACT_RATIO<1
+    # 仅保留显式性能实验。旧 80% nudge 只在显式预压缩实验时存在。
     try:
         _history_total = decision.history_total_chars = provider_visible_chars(
             sess_messages, provider_id, sess_anchor
         )
-        _compact_ratio = float(os.environ.get("COMPACT_RATIO", "0.9"))
+        _compact_ratio = float(os.environ.get("COMPACT_RATIO", "1.0"))
         if 0 < _compact_ratio < 1.0:
             # EVO-20260824-54d46549 增长率 nudge（billion-context 拷问产出, 双轨）:
             # - 强制轨: 超预算×compact_ratio（90% 默认）→ 必预警（压缩在即, bypass 增长率）
@@ -103,7 +102,4 @@ def run_history_budget_prep(
     except Exception:  # noqa: BLE001
         _compact_ratio = 1.0
     prep.compact_ratio = _compact_ratio
-    # EVO-20260824-54d46549 渐进折叠配置（env, 默认关零回归）: PROGRESSIVE_FOLD_K>0 时
-    # 压缩改为"每次最多折最老 K 个配对组"（平滑曲线 + guard 不 BLOCK + 智力无断崖）
-    prep.fold_k = int(os.environ.get("PROGRESSIVE_FOLD_K", "0"))
     return prep

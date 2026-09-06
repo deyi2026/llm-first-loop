@@ -93,9 +93,25 @@ def run_model_catalog(
             tool_name="model_catalog",
         )
 
-    registry = pool.registry
+    registry = pool.registry_snapshot()
+    default_registry = pool.default_registry_snapshot()
     default_model = pool.get_default_model()
-    current_model = session_override if session_override else default_model
+    current_pid = ""
+    current_mid = ""
+    if session_override:
+        current_model = session_override
+        try:
+            current_pid, current_mid = registry.resolve(session_override)
+            current_model = f"{current_pid}/{current_mid}"
+        except ValueError:
+            pass
+    else:
+        current_model = default_model
+        try:
+            current_pid, current_mid = default_registry.resolve(default_model)
+            current_model = f"{current_pid}/{current_mid}"
+        except ValueError:
+            pass
     current_source = "会话覆盖" if session_override else "默认装配"
 
     lines: list[str] = []
@@ -104,21 +120,11 @@ def run_model_catalog(
         lines.append(f"[degraded] {registry.degraded_reason}")
     lines.append("可用模型目录:")
     # 按 provider 分组列出, 标记当前会话模型所在 provider
-    try:
-        if session_override:
-            cur_pid, _ = registry.resolve(session_override)
-        else:
-            cur_pid = ""
-    except ValueError:
-        cur_pid = ""
     for pid, spec in registry.providers.items():
         lines.append(f"  [{pid}] base_url={spec.base_url}")
         for mid, mspec in spec.models.items():
-            thinking = "✓" if mspec.thinking else "✗"
-            is_current = pid == cur_pid and (
-                (session_override and mid in session_override)
-                or (not session_override and mid == default_model)
-            )
+            reasoning_capable, reasoning_control = registry.reasoning_contract(pid, mid)
+            is_current = pid == current_pid and mid == current_mid
             mark = " ← 当前" if is_current else ""
             caps = []
             if mspec.reasoning:
@@ -130,13 +136,20 @@ def run_model_catalog(
             cap_str = f" [{'/'.join(caps)}]" if caps else ""
             lines.append(
                 f"    - {mid}: context={mspec.context}, "
-                f"thinking={thinking}, cost={mspec.cost_tier}{cap_str}{mark}"
+                f"reasoning_capable={'✓' if reasoning_capable else '✗'}, "
+                f"reasoning_control={reasoning_control}, "
+                f"cost={mspec.cost_tier}{cap_str}{mark}"
             )
+    if not session_override and default_registry is not registry:
+        lines.append(
+            f"默认路由合同: {current_model} 仍绑定进程启动 registry 快照；"
+            "当前模型目录已热重载，重启前默认路由不随目录切换。"
+        )
     # B6(2026-08-14): 成本/能力选型指引（对齐 RULE-AI-09 切前自查——判断归 AI，程序只给事实）
     lines.append(
-        "选型指引: cost=low/mid/high 成本档；thinking/reasoning=强推理；"
-        "long_context=长上下文；multimodal=多模态。"
-        "复杂推理→thinking+reasoning 模型；长任务→long_context；成本敏感/批量→low。"
+        "选型指引: cost=low/mid/high 成本档；reasoning_capable=有推理产出能力证据；"
+        "reasoning_control=已知显式控制协议；long_context=长上下文；multimodal=多模态。"
+        "复杂推理优先看 reasoning_capable；是否可 on/off 另看 reasoning_control。"
         "切换经 switch_model（必带 reason，审计可溯，RULE-AI-09）。"
     )
     return ToolResult(
@@ -237,9 +250,11 @@ def run_switch_model(
             tool_name="switch_model",
         )
 
-    # resolve 模型引用 → (provider_id, model_id)
+    registry = pool.registry_snapshot()
+
+    # resolve 模型引用 → (provider_id, model_id)，本次切模判定全程绑定同一 registry 快照。
     try:
-        provider_id, model_id = pool.registry.resolve(model_ref)
+        provider_id, model_id = registry.resolve(model_ref)
     except ValueError as exc:
         # 如实回执（resolve 失败不改变现状）
         return ToolResult(
@@ -254,7 +269,7 @@ def run_switch_model(
 
     # client_params 检查（含 key 缺失 → 如实报错含 env var 名）
     try:
-        pool.registry.client_params(provider_id, model_id)
+        registry.client_params(provider_id, model_id)
     except ValueError as exc:
         return ToolResult(
             status=ToolResultStatus.FAILURE,
@@ -265,7 +280,7 @@ def run_switch_model(
 
     # 预构建 client（提前暴露构造异常；缓存命中走快路径）
     try:
-        pool.get_client(f"{provider_id}/{model_id}")
+        pool.get_resolved_client(f"{provider_id}/{model_id}", registry=registry)
     except ValueError as exc:
         return ToolResult(
             status=ToolResultStatus.FAILURE,
@@ -275,7 +290,15 @@ def run_switch_model(
         )
 
     to_label = f"{provider_id}/{model_id}"
-    thinking_supported = pool.registry.supports_thinking(provider_id, model_id)
+    reasoning_capable, reasoning_control = registry.reasoning_contract(
+        provider_id, model_id
+    )
+    thinking_supported = reasoning_control in {
+        "thinking_type", "chat_template", "always_on_effort"
+    } or (
+        reasoning_control == "legacy"
+        and registry.supports_thinking(provider_id, model_id)
+    )
 
     # 写会话 override
     if session_set_override is not None:
@@ -306,16 +329,18 @@ def run_switch_model(
         )
 
     thinking_note = (
-        "思考参数: 发送" if thinking_supported else "思考参数: 不发送（该 provider 不支持）"
+        f"reasoning: capable={'是' if reasoning_capable else '未证实'}, control={reasoning_control}（请求级 auto/off/on；always_on_effort 的 off 映射最低 effort，不代表关闭 reasoning）"
+        if thinking_supported
+        else f"reasoning: capable={'是' if reasoning_capable else '未证实'}, control={reasoning_control}（无已证实显式控制；auto/off/on 不伪造 provider 控制）"
     )
     # B6(2026-08-15): 成本/能力事实注入——目标模型 cost_tier + 能力语义（对齐
     # model_catalog 选型指引, 判断归 AI, 程序只给事实）
     try:
-        mspec = pool.registry.providers[provider_id].models[model_id]
+        mspec = registry.providers[provider_id].models[model_id]
         cost_note = f"成本档: {mspec.cost_tier}"
         caps = []
-        if mspec.thinking:
-            caps.append("thinking")
+        if reasoning_capable:
+            caps.append("reasoning_capable")
         if mspec.reasoning:
             caps.append("reasoning")
         if mspec.long_context:

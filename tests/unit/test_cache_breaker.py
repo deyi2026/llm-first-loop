@@ -16,6 +16,7 @@ import pytest
 from llm_loop.cache_guard.guard import PromptGuard
 from llm_loop.core.cache_health import CacheHealthMonitor, strip_cache_telemetry_lines
 from llm_loop.core.history import build_history_messages, is_cache_compacted_for
+from llm_loop.core.message import Message, MessageSource
 
 
 @pytest.fixture
@@ -296,56 +297,8 @@ def test_guard_rule_f_fail_safe_when_breaker_active_missing(tmp_path, monkeypatc
     assert d2.verdict == "WARN" and d2.rule == "submit_ratio_breaker_missing"
 
 
-def test_fold_without_provider_degrades_to_head_keep():
-    """任务7（§5.7）: progressive_fold>0 但无 cache_archive_provider → 降级.
-
-    降级后: progressive_fold 强制 0（回一次性大裁）、head_keep_chars 恢复调用者
-    原值（不得错误置 0）、degrade_out 填充 degraded 事件、提交视图保留头部。
-    """
-    from llm_loop.core.message import Message, MessageSource
-
-    msgs = []
-    for i in range(30):
-        msgs.append(Message(role="user", content=f"任务{i} " + "x" * 1000, source=MessageSource.USER))
-        msgs.append(Message(role="assistant", content=f"回答{i} " + "y" * 1000, source=MessageSource.USER))
-    sys_p = "system"
-    budget = 20000
-    archived1: list[Message] = []
-    degrade_box: list[dict] = []
-    out1 = build_history_messages(
-        msgs, sys_p, max_chars=budget, compact_ratio=0.9, session_id="s1",
-        progressive_fold=3, head_keep_chars=3000,
-        archive_sink=lambda sid, m: archived1.append(m),
-        degrade_out=degrade_box,
-    )
-    # 降级事件填充（kind="degraded"，供调用方写 metadata.cache_health）
-    assert degrade_box and degrade_box[0]["kind"] == "degraded"
-    assert degrade_box[0]["head_keep_chars"] == 3000, "降级必须恢复调用者原值，不得置 0"
-    assert "cache_archive_provider" in degrade_box[0]["reason"]
-    # 降级后 head_keep 生效：提交视图保留头部（前缀稳定），中段归档
-    joined = "\n".join(str(m.get("content", "")) for m in out1)
-    assert "任务0 " in joined and "回答0 " in joined, "降级后 head_keep 生效：头部保留在提交前缀"
-    assert archived1, "降级后仍归档中段（一次性大裁）"
 
 
-def test_fold_without_provider_head_keep_zero_uses_default():
-    """任务7（§5.7.3-1）: fold>0 + 无 provider + head_keep=0 → 强制默认 2000."""
-    from llm_loop.core.message import Message, MessageSource
-
-    msgs = []
-    for i in range(20):
-        msgs.append(Message(role="user", content=f"任务{i} " + "x" * 1000, source=MessageSource.USER))
-        msgs.append(Message(role="assistant", content=f"回答{i} " + "y" * 1000, source=MessageSource.USER))
-    sys_p = "system"
-    budget = 20000
-    degrade_box: list[dict] = []
-    build_history_messages(
-        msgs, sys_p, max_chars=budget, compact_ratio=0.9, session_id="s1",
-        progressive_fold=3, head_keep_chars=0,
-        degrade_out=degrade_box,
-    )
-    assert degrade_box and degrade_box[0]["kind"] == "degraded"
-    assert degrade_box[0]["head_keep_chars"] == 2000, "head_keep=0 降级应用默认 2000"
 
 
 def test_provider_mid_fold_keeps_head_and_does_not_rearchive(tmp_path):
@@ -374,7 +327,6 @@ def test_provider_mid_fold_keeps_head_and_does_not_rearchive(tmp_path):
         max_chars=budget,
         compact_ratio=0.9,
         session_id="s1",
-        progressive_fold=3,
         head_keep_chars=3_000,
         archive_sink=lambda sid, m: archived1.append(m),
         anchor_out=anchor1,
@@ -409,7 +361,6 @@ def test_provider_mid_fold_keeps_head_and_does_not_rearchive(tmp_path):
         max_chars=budget,
         compact_ratio=0.9,
         session_id="s1",
-        progressive_fold=3,
         head_keep_chars=3_000,
         archive_sink=lambda sid, m: archived2.append(m),
         cache_archive_provider="deepseek",
@@ -427,6 +378,69 @@ def test_provider_mid_fold_keeps_head_and_does_not_rearchive(tmp_path):
     )
     other_joined = "\n".join(str(m.get("content", "")) for m in other)
     assert marked_sample in other_joined, "provider级折叠状态不得污染另一provider"
+
+
+def test_legacy_cache_compaction_marker_reopens_under_concrete_current_contract() -> None:
+    """旧 provider-only marker 不能永久压制升级后的大窗口模型。"""
+    msg = Message(
+        role="assistant",
+        content="legacy-visible-again",
+        source=MessageSource.USER,
+        metadata={"cache_compacted_for": ["minimax"]},
+    )
+    built = build_history_messages(
+        [msg],
+        "",
+        max_chars=540_000,
+        cache_archive_provider="minimax",
+        cache_archive_model="minimax/MiniMax-M3",
+        cache_archive_budget=540_000,
+    )
+    assert any(m.get("content") == "legacy-visible-again" for m in built)
+    # Provider-only diagnostic/introspection remains backward-compatible.
+    assert is_cache_compacted_for(msg, "minimax") is True
+
+
+def test_versioned_cache_marker_tracks_model_and_budget_contract() -> None:
+    msg = Message(
+        role="assistant",
+        content="scoped",
+        source=MessageSource.USER,
+        metadata={
+            "cache_compacted_for": ["deepseek"],
+            "cache_compaction_scope": {
+                "deepseek": {
+                    "version": 1,
+                    "model": "deepseek/deepseek-v4-flash",
+                    "effective_budget": 300_000,
+                }
+            },
+        },
+    )
+    assert is_cache_compacted_for(
+        msg,
+        "deepseek",
+        model_ref="deepseek/deepseek-v4-flash",
+        effective_budget=300_000,
+    )
+    assert is_cache_compacted_for(
+        msg,
+        "deepseek",
+        model_ref="deepseek/deepseek-v4-flash",
+        effective_budget=200_000,
+    )
+    assert not is_cache_compacted_for(
+        msg,
+        "deepseek",
+        model_ref="deepseek/deepseek-v4-flash",
+        effective_budget=540_000,
+    )
+    assert not is_cache_compacted_for(
+        msg,
+        "deepseek",
+        model_ref="deepseek/deepseek-v4-pro",
+        effective_budget=300_000,
+    )
 
 
 def test_guard_g_compression_round_has_specific_warn(tmp_path):

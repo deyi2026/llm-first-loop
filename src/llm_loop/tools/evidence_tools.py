@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 
-from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.core.message import RecoverabilityStatus, ToolResult, ToolResultStatus
 from llm_loop.memory.evidence import (
     BlobStore,
     EvidenceAuthDeniedError,
@@ -27,6 +27,7 @@ from llm_loop.memory.evidence import (
     RangeType,
     SourceKind,
     SourceVersionPolicy,
+    evidence_origin_facts,
 )
 
 _OWNER_HIDDEN = "当前会话无权访问该 Evidence，或该 Evidence 不存在。"
@@ -145,11 +146,35 @@ class EvidenceReadTool:
             },
             "content": result.content,
         }
+        source_payload = _source_payload(record)
+        range_label = (
+            f"{result.range_type.value}:{result.start}+{result.count}"
+            f"/next={result.next_start if result.next_start is not None else 'end'}"
+        )
+        coverage_label = str(source_payload.get("coverage") or "")
+        if coverage_label:
+            coverage_label = f"{coverage_label}; hydration={range_label}"
+        else:
+            coverage_label = f"hydration={range_label}"
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=json.dumps(payload, ensure_ascii=False),
             tool_call_id="",
             tool_name=self.name,
+            # read_evidence is itself a deterministic projection of an already durable
+            # Evidence blob. Mark that existing durability directly instead of recursively
+            # capturing the hydration output as new Evidence. This lets the active-run
+            # working-set projector later replace the large hydrated bytes with a factual
+            # receipt while preserving the exact ref/range needed to recover them again.
+            recoverability_status=RecoverabilityStatus.RECORDED,
+            evidence_ref=result.evidence_ref.ref,
+            evidence_representation="hydration_range",
+            evidence_projection_complete=result.next_start is None,
+            source_resolution_mode="evidence_hydration",
+            source_execution_performed=False,
+            evidence_source_label=str(source_payload.get("label") or record.tool_name or ""),
+            evidence_coverage_label=coverage_label,
+            evidence_origin_facts=evidence_origin_facts(record),
         )
 
 
@@ -228,7 +253,10 @@ class EvidenceListTool:
                 tool_name=self.name,
             )
         total = self.ledger.count(owner)
-        lines = [f"[list_evidence] 最近 {len(records)}/{total} 条："]
+        lines = [
+            f"[list_evidence] 最近 {len(records)}/{total} 条：",
+            "freshness/currentness_scope=source_version_only; task_applicability=not_evaluated",
+        ]
         for record in records:
             try:
                 state = self.freshness.refresh(owner=owner, evidence_ref=record.evidence_ref)
@@ -238,7 +266,8 @@ class EvidenceListTool:
             lines.append(
                 f"- ref={record.evidence_ref.ref} source={record.tool_name}:"
                 f"{record.source.safe_locator} coverage={record.coverage.label} "
-                f"freshness={freshness} acquired_at={record.acquired_at}"
+                f"freshness={freshness} acquired_at={record.acquired_at} "
+                f"version_policy={record.source.version_policy.value}"
             )
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
@@ -253,6 +282,7 @@ class EvidenceSearchTool:
     description = (
         "在当前会话 durable Evidence 中检索已获取证据，不重新执行原 source。"
         "默认多词 AND；显式 OR 表示备选；双引号表示连续 phrase；返回命中位置附近片段和 EvidenceRef。"
+        "命中为历史记录：采信前先对照时间锚点（list_evidence/event_stream）；字面命中≠当前所指，过时命中仅作背景。"
     )
     parameters = {
         "type": "object",
@@ -322,7 +352,9 @@ class EvidenceSearchTool:
             if stale_probeable_file and not allow_stale:
                 lines.append(
                     f"- ref={hit.evidence_ref.ref} source={hit.source_label} "
-                    f"freshness={freshness} currentness={currentness} content=blocked "
+                    f"freshness={freshness} currentness={currentness} "
+                    f"currentness_scope=source_version_only task_applicability=not_evaluated "
+                    f"acquired_at={record.acquired_at} content=blocked "
                     "historical_search_requires=allow_stale=true"
                 )
                 continue
@@ -330,7 +362,8 @@ class EvidenceSearchTool:
             lines.append(
                 f"- ref={hit.evidence_ref.ref} source={hit.source_label} "
                 f"freshness={freshness} currentness={currentness} "
-                f"match_char={hit.snippet_start_char}\n  {snippet}"
+                f"currentness_scope=source_version_only task_applicability=not_evaluated "
+                f"acquired_at={record.acquired_at} match_char={hit.snippet_start_char}\n  {snippet}"
             )
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
@@ -361,16 +394,22 @@ def _freshness_payload(freshness: FreshnessState) -> dict[str, object]:
     return {
         "state": freshness.value,
         "currentness": _currentness(freshness),
+        "currentness_scope": "source_version_only",
+        "task_applicability": "not_evaluated",
         "verified_current": freshness is FreshnessState.VERIFIED_CURRENT,
     }
 
 
-def _source_payload(record) -> dict[str, str]:
+def _source_payload(record) -> dict[str, object]:
     return {
         "tool_name": record.tool_name,
         "kind": record.source.kind.value,
         "label": record.source.safe_locator,
         "coverage": record.coverage.label,
+        "acquired_at": record.acquired_at,
+        "version_policy": record.source.version_policy.value,
+        "version_token": record.source.version_token,
+        "provenance": record.provenance.to_dict(),
     }
 
 def _failure(tool_name: str, content: str) -> ToolResult:
@@ -403,7 +442,7 @@ class SearchArchiveCompatTool(EvidenceSearchTool):
     description = (
         "Evidence enforce 兼容入口：历史提示中的 search_archive 会转入新的 owner-scoped "
         "Evidence 检索。多词默认 AND，支持 OR/引号 phrase；命中返回稳定 ref，完整内容用 "
-        "read_evidence。"
+        "read_evidence。命中为历史记录：采信前先对照时间锚点（list_evidence/event_stream）；字面命中≠当前所指，过时命中仅作背景。"
     )
     parameters = {
         "type": "object",

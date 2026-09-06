@@ -3,7 +3,7 @@
 - B-G6: current_turn 作为 grant 的放行记录=0（would_have_granted 观察字段在场）；
 - B-G7: E12 场景 programmatic user resend chars=0；runtime retry 事件在场；
 - B-G8: 熔断/提醒/替代策略相关词在模型可见面 chars=0；
-- B-4.2: duplicate suppression 白名单边界（白名单外零拦截）；
+- P2-A: generic duplicate suppression policy is absent from runtime;
 - B-3.3: repair-before-lifecycle 执行顺序固化（源码序断言）。
 """
 
@@ -11,10 +11,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from llm_loop.core.loop.duplicate_allowlist import (
-    DETERMINISTIC_IDEMPOTENT_TOOLS,
-    duplicate_suppression_enabled,
-)
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.prompt_eligibility import (
     would_have_granted_snapshot,
@@ -66,12 +62,11 @@ class TestG7ProgrammaticResendRetired:
         test_program_recovery_boundary；此处断言旧 resend 句式已无生产通路）。"""
         from llm_loop.core.loop.engine_services.recovery_controller import RecoveryController
 
-        # 旧 auto-continue（resend 武装）方法已不存在于 mixin
         assert not hasattr(RecoveryController, "_err1210_try_auto_continue")
-        assert hasattr(RecoveryController, "_err1210_try_runtime_retry")
+        assert not hasattr(RecoveryController, "_err1210_try_runtime_retry")
 
     def test_runtime_retry_event_registered(self):
-        """runtime retry 事件类型已注册（audit 轨道可用）。"""
+        """Historical program.recovery rows remain readable; no runtime emitter is required."""
         from llm_loop.event_log.model import EVENT_PROGRAM_RECOVERY, REGISTRY
 
         spec = REGISTRY.spec(EVENT_PROGRAM_RECOVERY)
@@ -81,7 +76,7 @@ class TestG7ProgrammaticResendRetired:
 
 class TestG8KeywordScan:
     def test_forbidden_program_keywords_zero_in_code_paths(self):
-        """B-G8 静态面: 退役提示函数不再被生产 import（honesty 定义处除外）."""
+        """B-G8 静态面: 退役策略提示生产者从生产源码完全消失."""
         import subprocess
 
         for func in (
@@ -100,22 +95,8 @@ class TestG8KeywordScan:
                 capture_output=True, text=True,
             )
             files = [f for f in result.stdout.splitlines() if f.strip()]
-            assert files == [str(repo_src / "feedback" / "honesty.py")], (
-                f"{func} 出现在生产面: {files}"
-            )
+            assert files == [], f"{func} 出现在生产面: {files}"
 
-
-class TestB42DuplicateSuppressionAllowlist:
-    def test_baseline_empty_allowlist_suppresses_nothing(self):
-        """B-4.2/B-D10: 基线空清单 → 一切同参重复放行（全局拦截取消）。"""
-        assert frozenset() == DETERMINISTIC_IDEMPOTENT_TOOLS
-        for tool in ("read_file", "search_files", "execute_command", "web_fetch"):
-            assert duplicate_suppression_enabled(tool) is False
-
-    def test_polling_tools_never_suppressed(self):
-        """轮询/实时查询类合法重复放行（即使未来白名单扩充也须显式排除）。"""
-        for tool in ("search_records", "get_tool_schema", "architecture_status"):
-            assert duplicate_suppression_enabled(tool) is False
 
 
 class TestB33RepairBeforeLifecycle:
@@ -126,6 +107,6 @@ class TestB33RepairBeforeLifecycle:
         from llm_loop.core.loop import engine as engine_mod
 
         src = inspect.getsource(engine_mod.LoopEngine._run_stream_inner)
-        repair_idx = src.index("self._inject_interruption_recovery(")
+        repair_idx = src.index("self._recover_pre_ingress_runtime_state(")
         loop_idx = src.index("while True:")
         assert repair_idx < loop_idx, "repair-before-lifecycle 顺序被破坏"

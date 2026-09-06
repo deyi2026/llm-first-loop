@@ -1,4 +1,8 @@
-"""EVO-20260814-aab7eb0b P2: 循环实时停滞检测测试（3 提醒 / 5 熔断）."""
+"""P2-A Rule-first: repeated-call / empty-search factual observability tests.
+
+Program code may report exact repeated calls and consecutive empty search receipts, but it
+must not merge semantically different calls, persist a deny state, block tools, or end a run.
+"""
 
 from __future__ import annotations
 
@@ -6,11 +10,7 @@ from types import SimpleNamespace
 
 from llm_loop.core.loop.engine_services.run_state import RunStateManager
 from llm_loop.core.loop.engine_services.tool_cycle import ToolCycleService
-from llm_loop.core.loop.tool_exec import (
-    _STAGNATION_BREAK_AT,
-    _STAGNATION_REMIND_AT,
-)
-from llm_loop.feedback.honesty import stagnation_feedback, stagnation_reminder_message
+from llm_loop.core.loop.tool_exec import _STAGNATION_REMIND_AT
 
 
 class _Sess:
@@ -19,10 +19,8 @@ class _Sess:
 
 
 class _StubEngine(ToolCycleService):
-    """最小引擎替身：仅实现 _track_stagnation 依赖的两个钩子."""
-
     def __init__(self):
-        self._host = self  # R9-B5-W3-01: 替身自给宿主面（RunState 桶经 _run_state() 直供）
+        self._host = self
         self._run_state_mgr = RunStateManager()
         self.events = []
         self.actions = []
@@ -41,56 +39,6 @@ def _tc(name="read_file", **arguments):
     return SimpleNamespace(name=name, arguments=arguments)
 
 
-def test_below_threshold_no_reminder():
-    eng, sess = _StubEngine(), _Sess()
-    for _ in range(_STAGNATION_REMIND_AT - 1):
-        eng._track_stagnation(_tc(path="/a.py"), sess, [])
-    assert sess.messages == []
-    assert eng._run_state().stagnation_state["count"] == _STAGNATION_REMIND_AT - 1
-
-
-def test_reminder_recorded_once_at_threshold_as_event():
-    """R8.24-B B-D3: 达阈值只记观测事件（一次），sess.messages 零注入."""
-    eng, sess = _StubEngine(), _Sess()
-    for _ in range(_STAGNATION_REMIND_AT + 1):  # 第 3 次提醒，第 4 次不重复
-        eng._track_stagnation(_tc(path="/a.py"), sess, [])
-    reminders = [m for m in sess.messages if "[停滞提醒]" in m.content]
-    assert len(reminders) == 0  # 零注入（B-G2）
-    events = [a for a in eng.actions if a[0] == "stagnation.reminder"]
-    assert len(events) == 1  # 只观测一次
-    assert events[0][1] == "suppressed"
-    assert "read_file" in events[0][2]
-
-
-def test_fingerprint_change_resets_streak():
-    eng, sess = _StubEngine(), _Sess()
-    for _ in range(2):
-        eng._track_stagnation(_tc(path="/a.py"), sess, [])
-    eng._track_stagnation(_tc(path="/b.py"), sess, [])  # 参数变了 → 指纹变 → 重置
-    assert eng._run_state().stagnation_state["count"] == 1
-    assert sess.messages == []
-
-
-def test_should_break_only_at_break_threshold():
-    eng, sess = _StubEngine(), _Sess()
-    for i in range(1, _STAGNATION_BREAK_AT + 1):
-        eng._track_stagnation(_tc(name="execute_command", command="ls"), sess, [])
-        should, name, streak = eng._stagnation_should_break()
-        if i < _STAGNATION_BREAK_AT:
-            assert not should
-        else:
-            assert should and name == "execute_command" and streak == _STAGNATION_BREAK_AT
-
-
-def test_feedback_messages_honest_format():
-    r = stagnation_reminder_message("read_file", 3)
-    assert "事实" in r.content and "建议" in r.content and "read_file" in r.content
-    b = stagnation_feedback("read_file", 5, ["read_file"] * 5)
-    assert "[停滞熔断]" in b.content and "如实终止" in b.content
-
-
-# ── EVO-20260823-9bb27899: 搜索类工具目标级指纹 + 空结果计数 ──
-
 def _empty_result(content="未找到匹配 'x' 的记录（不伪造结果）。"):
     return SimpleNamespace(status=SimpleNamespace(value="success"), content=content)
 
@@ -99,97 +47,106 @@ def _nonempty_result(content="[状态: success] 找到 1 条"):
     return SimpleNamespace(status=SimpleNamespace(value="success"), content=content)
 
 
-def test_search_target_fingerprint_ignores_detail_params():
-    """同目标不同细节参数（limit/root 变化）→ 同一目标指纹 → 计数累计."""
+def test_below_threshold_no_repeat_event():
     eng, sess = _StubEngine(), _Sess()
-    eng._track_stagnation(
-        _tc(name="search_files", pattern="*.md", root="/a"), sess, []
-    )
-    eng._track_stagnation(
-        _tc(name="search_files", pattern="*.md", root="/b", max_results=50), sess, []
-    )
-    assert eng._run_state().stagnation_state["count"] == 2  # 目标均为 pattern=*.md → 连续累计
-    assert eng._run_state().stagnation_state["fp"] == "search_files|{\"pattern\": \"*.md\"}"
+    for _ in range(_STAGNATION_REMIND_AT - 1):
+        eng._track_tool_observation(_tc(path="/a.py"), sess, [])
+    assert eng.actions == []
+    assert eng._run_state().stagnation_state["count"] == _STAGNATION_REMIND_AT - 1
 
 
-def test_search_empty_result_reminder_at_threshold():
-    """R8.24-B B-D4: 连续空结果 ≥2 → 事件观测一次，sess.messages 零注入."""
+def test_exact_repeat_observed_once_at_threshold():
     eng, sess = _StubEngine(), _Sess()
-    eng._track_stagnation(
-        _tc(name="search_records", kind="action_trace", query="x"), sess, [],
-        result=_empty_result(),
-    )
-    eng._track_stagnation(
-        _tc(name="search_records", kind="memory", query="x"), sess, [],
-        result=_empty_result(),
-    )
-    reminders = [m for m in sess.messages if "[搜索空结果提醒]" in m.content]
-    assert len(reminders) == 0  # 零注入（B-G2）
-    events = [a for a in eng.actions if a[0] == "empty_search.reminder"]
-    assert len(events) == 1
-    assert events[0][1] == "suppressed"
-    assert "search_records" in events[0][2]
-
-
-def test_search_empty_result_reminder_single_injection():
-    """空结果提醒事件只记一次（连续多次不再重复）."""
-    eng, sess = _StubEngine(), _Sess()
-    for _ in range(5):
-        eng._track_stagnation(
-            _tc(name="search_archive", query="x"), sess, [],
-            result=_empty_result(),
+    for _ in range(_STAGNATION_REMIND_AT + 2):
+        eng._track_tool_observation(_tc(path="/a.py"), sess, [])
+    events = [a for a in eng.actions if a[0] == "tool.repeat_observed"]
+    assert events == [
+        (
+            "tool.repeat_observed",
+            "observed",
+            f"tool=read_file; exact_call_count={_STAGNATION_REMIND_AT}; prompt_chars=0",
         )
-    events = [a for a in eng.actions if a[0] == "empty_search.reminder"]
-    assert len(events) == 1
+    ]
     assert sess.messages == []
 
 
-def test_nonempty_result_resets_empty_streak():
-    """非空结果重置空结果计数（前提有效时正常推进不受干扰）."""
+def test_argument_change_resets_repeat_count():
     eng, sess = _StubEngine(), _Sess()
-    eng._track_stagnation(
+    for _ in range(2):
+        eng._track_tool_observation(_tc(path="/a.py"), sess, [])
+    eng._track_tool_observation(_tc(path="/b.py"), sess, [])
+    assert eng._run_state().stagnation_state["count"] == 1
+
+
+def test_search_different_roots_are_different_exact_calls():
+    """P2-A regression: program must not collapse root/depth/options into a semantic target."""
+    eng, sess = _StubEngine(), _Sess()
+    a = _tc(name="search_files", pattern="*.md", root="/a")
+    b = _tc(name="search_files", pattern="*.md", root="/b", max_results=50)
+    assert eng._stagnation_fingerprint(a) != eng._stagnation_fingerprint(b)
+    eng._track_tool_observation(a, sess, [])
+    eng._track_tool_observation(b, sess, [])
+    assert eng._run_state().stagnation_state["count"] == 1
+
+
+def test_empty_search_observed_once_at_threshold():
+    eng, sess = _StubEngine(), _Sess()
+    for _ in range(4):
+        eng._track_tool_observation(
+            _tc(name="search_records", kind="memory", query="x"),
+            sess,
+            [],
+            result=_empty_result(),
+        )
+    events = [a for a in eng.actions if a[0] == "tool.empty_search_observed"]
+    assert len(events) == 1
+    assert events[0][1] == "observed"
+    assert "consecutive_empty=2" in events[0][2]
+    assert sess.messages == []
+
+
+def test_nonempty_search_resets_empty_count():
+    eng, sess = _StubEngine(), _Sess()
+    eng._track_tool_observation(
         _tc(name="search_files", pattern="*.py"), sess, [], result=_empty_result()
     )
-    eng._track_stagnation(
+    eng._track_tool_observation(
         _tc(name="search_files", pattern="*.py"), sess, [], result=_nonempty_result()
     )
     assert eng._run_state().stagnation_state["empty_count"] == 0
-    assert sess.messages == []
 
 
-# ── EVO-20260823-12be9cac 边界①: execute_command 搜索命令空结果同样计数 + 登记否定帧 ──
-
-def test_exec_cmd_find_empty_counts_and_registers():
-    """execute_command 的 find 空结果 → 计入空结果计数 + 登记否定帧（跨会话防反复搜索）."""
+def test_empty_search_never_writes_path_registry(monkeypatch):
+    """A search miss is not a filesystem non-existence fact."""
     from llm_loop.tools import path_registry as pr
 
-    pr.reset()
+    writes: list[tuple[str, str]] = []
+
+    def _spy(path: str, *, source: str = "tool") -> None:
+        writes.append((path, source))
+
+    monkeypatch.setattr(pr, "register_missing", _spy)
     eng, sess = _StubEngine(), _Sess()
-    eng._track_stagnation(
-        _tc(name="execute_command", command="find wkdir -name ANALYSIS-2026*.md"),
-        sess, [],
-        result=_empty_result("（命令执行成功，无输出）"),
-    )
-    eng._track_stagnation(
-        _tc(name="execute_command", command="find wkdir -maxdepth 3 -name ANALYSIS-2026*.md"),
-        sess, [],
-        result=_empty_result("（命令执行成功，无输出）"),
-    )
-    # 空结果计数达 2 → 事件观测一次（R8.24-B B-D4 零注入），execute_command 变体也覆盖
-    reminders = [m for m in sess.messages if "[搜索空结果提醒]" in m.content]
-    assert len(reminders) == 0
-    events = [a for a in eng.actions if a[0] == "empty_search.reminder"]
-    assert len(events) == 1 and events[0][1] == "suppressed"
-    # 否定帧已登记（目标键 cmd:...）
-    assert pr.check_known_missing("cmd:find wkdir -name ANALYSIS-2026*.md")
+    for command in (
+        "find wkdir -name ANALYSIS-2026*.md",
+        "find wkdir -maxdepth 3 -name ANALYSIS-2026*.md",
+    ):
+        eng._track_tool_observation(
+            _tc(name="execute_command", command=command),
+            sess,
+            [],
+            result=_empty_result("（命令执行成功，无输出）"),
+        )
+    assert writes == []
+    assert any(a[0] == "tool.empty_search_observed" for a in eng.actions)
 
 
-def test_exec_cmd_non_search_empty_not_counted():
-    """execute_command 非搜索命令（python 正常无输出）不视为搜索空结果（防误判）."""
+def test_non_search_empty_command_not_counted():
     eng, sess = _StubEngine(), _Sess()
-    eng._track_stagnation(
-        _tc(name="execute_command", command="python3 -c 'print()'"), sess, [],
+    eng._track_tool_observation(
+        _tc(name="execute_command", command="python3 -c 'print()'"),
+        sess,
+        [],
         result=_empty_result("（无输出）"),
     )
     assert eng._run_state().stagnation_state["empty_count"] == 0
-    assert sess.messages == []

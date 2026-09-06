@@ -6,7 +6,7 @@
 
 纯重构: 方法体原样迁移（零行为变更），原路径可导入语义保持（REQ-REF-06 对齐）。
 依赖（engine 其他 mixin）: _planned_model_label / _record_action / _runtime_extract_interval / _runtime_history_budget /
-_inject_interop_messages / _cache_monitor / _run_state().last_snapshot_count（桶）/ _last_compact_ratio。
+_inject_interop_messages / _cache_monitor / _last_compact_ratio。
 """
 
 # pyright: reportAttributeAccessIssue=false, reportGeneralTypeIssues=false
@@ -14,6 +14,7 @@ _inject_interop_messages / _cache_monitor / _run_state().last_snapshot_count（�
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from typing import TYPE_CHECKING, Any
@@ -32,35 +33,13 @@ from llm_loop.core.history import (
 # 顶层 import 不再触发循环：build→engine 运行时反向边删除（步2/3 断环点），engine→build 正向边保留
 from llm_loop.core.message import Message
 from llm_loop.core.prompt_build import BuildDecision
-from llm_loop.core.prompt_build.stages.base_assembly import (
-    _tool_round_zero_tail as _tool_round_zero_tail,  # re-export：test_build_tool_round_tail 从此导入（零测试改动）
-)
 from llm_loop.core.prompt_build.stages.base_assembly import run_base_assembly
-from llm_loop.core.prompt_build.stages.cognitive import (  # B4-C4-01: COG 门控迁独占模块
-    _cog_allowlist_hit as _cog_allowlist_hit,  # re-export：tests 三处从此导入（零测试改动）
-)
-from llm_loop.core.prompt_build.stages.cognitive import (
-    _cog_freeze_enabled as _cog_freeze_enabled,
-)
 from llm_loop.core.prompt_build.stages.history_pipeline import run_history_pipeline
 from llm_loop.core.prompt_build.stages.ingress_resolution import run_ingress_prelude
-from llm_loop.core.prompt_build.stages.injection_cognitive import (  # B4-CLOSE-01 步C3
-    _UNSET as _BUDGET_UNSET,
-)
-from llm_loop.core.prompt_build.stages.injection_cognitive import (
-    run_injection_cognitive,
-)
 from llm_loop.core.prompt_build.stages.projection_gate import (
     GATE_STATE_UNSET,
 )
-from llm_loop.core.prompt_build.stages.tail_assembly import (
-    merge_persisted_tail_injections as merge_persisted_tail_injections,  # re-export：test_direction_c_tail_merge 从此导入（零测试改动）
-)
 from llm_loop.core.prompt_build.stages.tail_assembly import run_tail_assembly
-from llm_loop.core.prompt_build.stages.tail_slot_collect import run_tail_collection
-from llm_loop.core.prompt_build.stages.user_truth import (
-    run_user_truth_wire,  # noqa: F401 — re-export 兼容面（阶段内部已移 tail_assembly）
-)
 
 if TYPE_CHECKING:
     pass
@@ -76,6 +55,48 @@ def _provider_visible_chars(messages: list[Message], provider_id: str, start: in
         if not is_cache_compacted_for(m, provider_id)
         and provider_message_visible(m)
     )
+
+
+def _cache_boundary_protection(
+    state: Any,
+    *,
+    resolved_label: str,
+    current_turn_ref: int | None,
+    stable_fp: str,
+    system_prompt: str,
+) -> tuple[int, int]:
+    """Return an *exactly known* cached history prefix to protect for the next build.
+
+    Protection is deliberately narrow: same session is guaranteed by ``_RunState``;
+    model, human turn and stable-prefix fingerprint must also match.  New user turns
+    may retire resolved history, so carrying an old boundary across turns would protect
+    unrelated bytes and cannot preserve provider cache truth.
+
+    Generic provider ``cached_tokens`` telemetry cannot locate a message boundary
+    exactly because it includes tool schemas/chat templates/role tokens.  Those
+    CacheWindow estimates are observability-only and must not become a hard compaction
+    constraint.  Mandatory protection is enabled only for an explicit exact-boundary
+    contract (``boundary_exact=True``).
+    """
+    win = getattr(state, "last_cache_window", None)
+    if win is None or int(getattr(win, "cached_tokens", 0) or 0) <= 0:
+        return 0, 0
+    if not bool(getattr(win, "boundary_exact", False)):
+        return 0, 0
+    if getattr(state, "last_cache_window_model", "") != resolved_label:
+        return 0, 0
+    if getattr(state, "last_cache_window_turn_ref", None) != current_turn_ref:
+        return 0, 0
+    if getattr(state, "last_cache_window_stable_fp", "") != stable_fp:
+        return 0, 0
+    cached_msgs = list(getattr(win, "cached_msgs", None) or [])
+    if not cached_msgs:
+        return 0, 0
+    system_cached = str(cached_msgs[0].get("role") or "") == "system"
+    history_msgs = max(0, len(cached_msgs) - (1 if system_cached else 0))
+    boundary_chars = max(0, int(getattr(win, "boundary_chars", 0) or 0))
+    history_chars = max(0, boundary_chars - (len(system_prompt) if system_cached else 0))
+    return history_msgs, history_chars
 
 
 def _growth_nudge_kind(
@@ -112,15 +133,14 @@ def _reasoning_tail_for(
 ) -> int:
     """R8.21/E05: bind reasoning replay to the actual planned provider.
 
-    Historical reasoning is not generic task context.  Keep only bytes required by
-    the selected provider's replay protocol:
+    Reasoning visibility must not be inferred from deployment locality or a generic
+    strong/weak assumption. Preserve the configured policy by default (0 = all).
+    Only provider protocols with an affirmative replay requirement may force 0:
 
-    - local endpoints: no replay requirement -> strip all (``-2``);
-    - GLM preserved/interleaved thinking: replay all still-visible reasoning (``0``);
-    - DeepSeek tool requests: replay all still-visible assistant reasoning (``0``);
-    - MiniMax thinking disabled: strip all; thinking enabled: preserve all because
-      interleaved-thinking state is part of its official agent protocol;
-    - unknown provider: preserve the configured legacy policy fail-safe.
+    - GLM preserved/interleaved thinking: replay all still-visible reasoning;
+    - DeepSeek tool requests: replay all still-visible assistant reasoning;
+    - MiniMax with structured reasoning_split replay: preserve all interleaved state;
+    - local/other/unknown providers: use the configured policy unchanged.
 
     Crucially this uses ``resolved_label`` + the same immutable planning registry as
     history budget/model planning.  The former implementation inspected only the
@@ -148,20 +168,19 @@ def _reasoning_tail_for(
     try:
         from urllib.parse import urlparse
 
-        host = (urlparse(base).hostname or "").lower()
+        _host = (urlparse(base).hostname or "").lower()
     except Exception:  # noqa: BLE001 — 解析失败按非本地（保守：云端协议约束优先）
-        host = ""
-    if host in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
-        return -2
+        _host = ""
     base_lower = base.lower()
     if provider_id == "deepseek" or "deepseek.com" in base_lower:
         return 0
     if provider_id in {"glm", "zhipu"} or "bigmodel.cn" in base_lower:
         return 0
-    if provider_id == "minimax" or "minimax.io" in base_lower or "minimax.chat" in base_lower:
-        if model_spec is not None and getattr(model_spec, "thinking", None) is False:
-            return -2
-        if model_spec is not None and getattr(model_spec, "thinking", None) is True:
+    if provider_id == "minimax" or "minimax.io" in base_lower or "minimax.chat" in base_lower:  # noqa: SIM102
+        if model_spec is not None and (
+            getattr(model_spec, "reasoning_split", False) is True
+            or getattr(model_spec, "thinking", None) is True
+        ):
             return 0
     return configured
 
@@ -190,14 +209,15 @@ class _BuildMixin:
             _cache_hint = self._cache_monitor.record(
                 tokens_in, tokens_cache_hit, model_ref=model_used, session_id=sess.session_id
             )
-            # 发送前门禁·后检漂移提示（build 时记录）一并注入 final_answer（告警发给用户）
-            if self._cache_gate_hint:
+            # 发送前门禁·后检漂移提示按 session 分桶，避免并发会话串台。
+            _cache_state = self._run_state()
+            if _cache_state.cache_gate_hint:
                 _cache_hint = (
-                    f"{_cache_hint}\n\n{self._cache_gate_hint}"
+                    f"{_cache_hint}\n\n{_cache_state.cache_gate_hint}"
                     if _cache_hint
-                    else self._cache_gate_hint
+                    else _cache_state.cache_gate_hint
                 )
-                self._cache_gate_hint = None
+                _cache_state.cache_gate_hint = None
             _telemetry_note: str | None = None  # 程序 canonical 遥测（进 metadata，不进正文）
             if _cache_hint:
                 self._record_action(
@@ -243,12 +263,7 @@ class _BuildMixin:
                         )
                         _old_md = dict(_last_asst.metadata or {})
                         _md = dict(_old_md)
-                        _degrade_note = getattr(self, "_cache_degrade_note", None)
-                        if _degrade_note:
-                            # 任务7（§5.7）: 降级事件优先进 metadata.cache_health（kind="degraded"）
-                            _md["cache_health"] = {"note": _degrade_note, "kind": "degraded"}
-                            self._cache_degrade_note = None
-                        elif _telemetry_note:
+                        if _telemetry_note:
                             _md["cache_health"] = {
                                 "note": _telemetry_note,
                                 "kind": "alert" if _cache_hint else "normal",
@@ -343,24 +358,6 @@ class _BuildMixin:
         except Exception:  # noqa: BLE001 — fail-open
             return None
 
-    def _session_digest(self, sess):
-        """会话汇总档案实例缓存（EVO-20260829-06c96021；生命周期随会话）.
-
-        lazy getattr 初始化——mixin 无 __init__ 契约，不侵入宿主类装配。
-        MVP 内存态；持久化（P2 FR-6）落地后经 persist_dir 接入。
-        """
-        cache = getattr(self, "_digest_cache", None)
-        if cache is None:
-            cache = {}
-            self._digest_cache = cache  # type: ignore[attr-defined]
-        d = cache.get(sess.session_id)
-        if d is None:
-            from llm_loop.core.session_digest import SessionDigest
-
-            d = SessionDigest(sess.session_id)
-            cache[sess.session_id] = d
-        return d
-
     def _build_llm_messages(
         self,
         sess,
@@ -369,31 +366,25 @@ class _BuildMixin:
         model: str | None = None,  # P1-7: per-call 模型覆盖（判定本地 provider 跳过推送式注入）
         planned_label: str | None = None,  # 热重载一致性: 复用本轮已解析标签，避免构造期二次读registry
         registry_snapshot: Any | None = None,  # R8.21: reasoning policy must bind to this round's provider
-        emergency_compact: bool = False,  # EVO-20260818: M53 拒绝逃生——head_keep=0 锚点前移激进压缩
-        tool_round_zero: bool = False,  # 2026-08-21: 工具轮零历史——只发 system+摘要+最近结果
     ) -> list[dict]:
         """构造提交 LLM 的消息序列（system prompt + 记忆注入 + 历史 + 压缩另存）.
         M54: max_chars 可覆盖默认预算；None = 运行时预算。P1-10: 窗口锚定——
         按 provider 固定历史起点，前缀稳定命中缓存；锚点随会话持久化。
         """
         decision = BuildDecision()  # R9-P4/B4-P1-01: 判定显式化载体（design T5-B）
+        del memory_msgs  # compatibility-only parameter; automatic memory prompt path retired
         # 预解析簇 → stages/ingress_resolution.py::run_ingress_prelude
         # （B4-CLOSE-01 步D；label/anchor/system_prompt 解析 + ingress/泄漏
         # 隔离/provider 预清洗语义原样；decision 就地演进；旁路重置留调用点）。
-        # err1210 T4.1: 注入登记旁路重置——每轮 build 覆盖，消费后不清除（供审计补查）。
-        self._run_state().last_build_injections = []
-        self._run_state().last_build_defer_replayed = False
         _pre = run_ingress_prelude(
             decision=decision,
             sess=sess,
-            memory_msgs=memory_msgs,
             planned_label=planned_label,
             model=model,
             planned_model_label=self._planned_model_label,
             current_turn_ref=self._run_state().current_turn_ref,
             record_action=self._record_action,
             event_append=self._event_append,
-            tool_round_zero=tool_round_zero,
         )
         resolved_label = _pre.resolved_label
         provider_id = _pre.provider_id
@@ -402,9 +393,7 @@ class _BuildMixin:
         base = _pre.base
         _base_original_indices = _pre.base_original_indices
         _r6_ingress_truth = _pre.r6_ingress_truth
-        _leak_downgrade_parts = _pre.leak_downgrade_parts
-        # base 装配 → stages/base_assembly.py（interop 注入/门禁预检/快照节流；
-        # stable_fp 与 last_snapshot_count 调用点回写 self 面）
+        # base 装配 → stages/base_assembly.py（interop 观测 + 稳定段门禁预检）。
         _asm = run_base_assembly(
             base=base,
             system_prompt=system_prompt,
@@ -413,15 +402,19 @@ class _BuildMixin:
             sess_anchor=sess_anchor,
             inject_interop=self._inject_interop_messages,
             cache_monitor=self._cache_monitor,
-            runtime_extract_interval=self._runtime_extract_interval,
-            memory=self.memory,
-            evolution_store=self.evolution_store,
-            last_snapshot_count=self._run_state().last_snapshot_count,
+            tool_prefix_fp=self._run_state().cache_gate_tools_fp,
         )
         base = _asm.base
         prefix_len = _asm.prefix_len
-        self._cache_gate_stable_fp = _asm.stable_fp
-        self._run_state().last_snapshot_count = _asm.last_snapshot_count
+        _state = self._run_state()
+        _state.cache_gate_stable_fp = _asm.stable_fp
+        _cache_protected_messages, _cache_protected_chars = _cache_boundary_protection(
+            _state,
+            resolved_label=resolved_label,
+            current_turn_ref=_state.current_turn_ref,
+            stable_fp=_asm.stable_fp,
+            system_prompt=system_prompt,
+        )
         # 历史投影三段接线 → stages/history_pipeline.py::run_history_pipeline
         # （B4-CLOSE-01 步C1；prep→projection→postprocess 语义原样，调
         # history 现函数 Phase 7 前不动其内部）；写回面经 outcome 回接。
@@ -434,11 +427,9 @@ class _BuildMixin:
             system_prompt=system_prompt,
             filtered_indices=_base_original_indices,
             prefix_len=prefix_len,
-            emergency_compact=emergency_compact,
             resolved_label=resolved_label,
             registry_snapshot=registry_snapshot,
             r6_ingress_truth=_r6_ingress_truth,
-            memory_msgs=memory_msgs,
             decision=decision,
             runtime_history_budget=self._runtime_history_budget,
             archive=self.archive,
@@ -447,7 +438,9 @@ class _BuildMixin:
             record_action=self._record_action,
             settings=self.settings,
             cache_monitor=self._cache_monitor,
-            resolve_msg_seq=self._resolve_msg_seq,
+            cache_protected_prefix_messages=_cache_protected_messages,
+            cache_protected_prefix_chars=_cache_protected_chars,
+            current_turn_ref=_state.current_turn_ref,
             event_append=self._event_append,
             compact_event_seq=self._run_state().compact_event_seq,
             compact_event_was_compacted=self._run_state().compact_event_was_compacted,
@@ -466,72 +459,32 @@ class _BuildMixin:
         self._last_history_compacted = _hist.last_history_compacted
         self._run_state().compact_event_seq = _hist.compact_event_seq
         self._run_state().compact_event_was_compacted = _hist.compact_event_was_compacted
-        self._cache_degrade_note = _hist.cache_degrade_note
+        if _hist.cache_epoch_reset:
+            self._run_state().cache_prefix_epoch += 1
         # INJECTION-GOVERNANCE R8.8: Evidence Ledger/Manifest remains durable and
         # queryable through list/search/read_evidence, but the recovery index itself no
         # longer has automatic prompt eligibility. This also closes the old R2 bypass.
         # Keep an empty fingerprint field for projection telemetry schema compatibility.
         _evidence_manifest_content = ""
 
-        # 尾部槽收集 wiring → stages/tail_slot_collect.py::run_tail_collection
-        # （B4-CLOSE-01 步C2；四路槽收集/原位合并/一次性消费语义原样；
-        # self 面读写经参数与 outcome 回接，一次性消费清理留在调用点）。
-        _pending_recovery = self._run_state().program_recovery_tail_message
-        self._run_state().program_recovery_tail_message = None
-        _tailc = run_tail_collection(
-            sess=sess,
-            memory_msgs=memory_msgs,
-            r6_ingress_truth=_r6_ingress_truth,
-            record_action=self._record_action,
-            cache_monitor=self._cache_monitor,
-            current_turn_ref=self._run_state().current_turn_ref,
-            pending_recovery=_pending_recovery,
-            interop_tail=getattr(self, "_interop_tail_messages", None),
-            tip_tail=getattr(self, "_tip_tail_messages", None),
-            defer_refs=self._run_state().deferred_replay_refs or [],
-            replay_slots=self._run_state().deferred_replay_slots or set(),
-            note_defer_replayed=self._recovery._note_defer_replayed,
-        )
-        _inject_parts = _tailc.inject_parts
-        tail_msgs = _tailc.tail_msgs
-        self._run_state().deferred_replay_refs = _tailc.defer_refs
-        self._run_state().deferred_replay_slots = _tailc.replay_slots
-        self._interop_tail_messages = None  # 一次性消费（每轮重扫 pending）
-        self._tip_tail_messages = None  # 经验提示同机制一次性消费（下轮工具执行再注入）
-        _identity_cache = getattr(self, "_authorized_task_identity_cache", None)
-        if _identity_cache is None:
-            _identity_cache = {}
-            self._authorized_task_identity_cache = _identity_cache
-        # 注入+认知接线簇 → stages/injection_cognitive.py::run_injection_cognitive
-        # （B4-CLOSE-01 步C3；授权→注入装配→认知门控/状态/预算/packet→聚合登记
-        # 语义原样，fail-open 降级留模块内）；decision/built/injections 同对象就地
-        # 演进；_last_injection_budget 经 UNSET 哨兵回写（未产生新值不覆盖旧值）。
-        _injc = run_injection_cognitive(
-            sess=sess,
-            settings=self.settings,
-            built=built,
-            inject_parts=_inject_parts,
-            leak_downgrade_parts=_leak_downgrade_parts,
-            r6_ingress_truth=_r6_ingress_truth,
-            current_turn_ref=self._run_state().current_turn_ref,
-            record_action=self._record_action,
-            identity_cache=_identity_cache,
-            anchor_sess=self._focus.anchor_sess,
-            injections=self._run_state().last_build_injections,
-            decision=decision,
-        )
-        if _injc.last_injection_budget is not _BUDGET_UNSET:
-            self._last_injection_budget = _injc.last_injection_budget
-        # 尾段装配 → stages/tail_assembly.py（B4-CLOSE-01 步A）：user_truth wire
-        # 投影（R6 单信封 KEEP-HARD）→ 方向 C 持久化注入合并（非 ingress 路径）→
+        if self._cache_monitor.take_gate_note(session_id=sess.session_id):
+            with contextlib.suppress(Exception):
+                self._record_action("run.cache_gate", "observed_only", "prompt_chars=0")
+        # Dynamic program-owned prompt producers are retired. This is a factual
+        # runtime contract, not a semantic eligibility decision.
+        decision.authorization_slots = {"mode": "retrieval_only", "prompt_chars": 0}
+        decision.injection_eligibility = {
+            "admitted": 0,
+            "dynamic_program_prompt_producers": 0,
+            "prompt_chars": 0,
+        }
+        # 尾段装配 → stages/tail_assembly.py（B4-CLOSE-01 步A）：
         # 投影一致性门闸（水印 + gate_state 回写）→ cache 门禁后检（fail-open）→
         # 压缩审计（BuildAudit）。产物经 TailAssemblyOutcome 回接。
         _ta = run_tail_assembly(
             built=built,
             base=base,
-            memory_msgs=memory_msgs,
             system_prompt=system_prompt,
-            tail_msgs=tail_msgs,
             prefix_len=prefix_len,
             resolved_label=resolved_label,
             effective_budget=effective_budget,
@@ -542,19 +495,20 @@ class _BuildMixin:
             reasoning_tail_fn=_reasoning_tail_for,
             compact_view_box=compact_view_box,
             anchor_moved=_anchor_moved_this_build,
-            ingress_truth=_r6_ingress_truth,
-            injections=self._run_state().last_build_injections,
             settings=self.settings,
             sess=sess,
             decision=decision,
             record_action=self._record_action,
             cache_monitor=self._cache_monitor,
-            cache_gate_stable_fp=self._cache_gate_stable_fp,
+            cache_gate_stable_fp=self._run_state().cache_gate_stable_fp,
             last_history_compacted=self._last_history_compacted,
-            anchor_sess=self._focus.anchor_sess,
+            anchor_sess=sess,
+            current_turn_ref=_state.current_turn_ref,
+            interruption_resume=self._run_state().interruption_resume,
         )
-        self._run_state().last_build_injections = _ta.injections
+        # Program-owned prompt producers are retired; registry remains empty for
+        # legacy err1210 observability compatibility.
         if _ta.gate_state is not GATE_STATE_UNSET:
             self._projection_guard_state = _ta.gate_state
-        self._cache_gate_hint = _ta.cache_gate_hint
+        self._run_state().cache_gate_hint = _ta.cache_gate_hint
         return _ta.built

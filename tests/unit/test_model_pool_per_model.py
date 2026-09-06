@@ -6,7 +6,6 @@ import json
 from types import SimpleNamespace
 from unittest import mock
 
-from llm_loop.config import Settings
 from llm_loop.llm.client import LLMResponse
 from llm_loop.llm.pool import ModelClientPool
 from llm_loop.llm.providers import ModelSpec, ProviderRegistry, ProviderSpec
@@ -34,8 +33,17 @@ def test_pool_caches_clients_per_provider_model(monkeypatch):
                 base_url="http://configured/v1",
                 api_key_env="X",
                 models={
-                    "model-a": ModelSpec(thinking=True),
-                    "model-b": ModelSpec(thinking=False),
+                    "model-a": ModelSpec(
+                        thinking=True,
+                        reasoning_capable=True,
+                        reasoning_control="thinking_type",
+                        reasoning_split=True,
+                    ),
+                    "model-b": ModelSpec(
+                        thinking=False,
+                        reasoning_capable=True,
+                        reasoning_control="unknown",
+                    ),
                 },
             )
         }
@@ -50,6 +58,7 @@ def test_pool_caches_clients_per_provider_model(monkeypatch):
             "timeout_s": None,
             "max_tokens": None,
             "wire_protocol": "openai",
+            "reasoning_split": mid == "model-a",
         },
     )
     made: list[SimpleNamespace] = []
@@ -69,7 +78,64 @@ def test_pool_caches_clients_per_provider_model(monkeypatch):
     assert b.base_url == "http://model-b.local/v1"
     assert a.thinking_supported is True
     assert b.thinking_supported is False
+    assert a.reasoning_capable is True
+    assert a.reasoning_control == "thinking_type"
+    assert b.reasoning_capable is True
+    assert b.reasoning_control == "unknown"
+    assert a.reasoning_split is True
+    assert b.reasoning_split is False
     assert len(made) == 2
+
+
+def test_pool_routed_client_uses_global_baseline_not_default_model_contract(monkeypatch):
+    """A model-specific default contract must not leak into unrelated routed models."""
+    registry = ProviderRegistry(
+        providers={
+            "other": ProviderSpec(
+                id="other",
+                base_url="https://other.invalid/v1",
+                api_key_env="X",
+                models={"plain-openai": ModelSpec()},
+                default_model="plain-openai",
+            )
+        }
+    )
+    monkeypatch.setattr(
+        ProviderRegistry,
+        "client_params",
+        lambda self, pid, mid: {
+            "api_key": "k",
+            "base_url": "https://other.invalid/v1",
+            "model": mid,
+            # Intentionally omit timeout/max_tokens/wire_protocol: this model has
+            # no provider/model override and ModelSpec wire default is OpenAI.
+        },
+    )
+    resolved_default = _default_client()
+    resolved_default.timeout_s = 333.0
+    resolved_default.max_tokens = 131072
+    resolved_default.wire_protocol = "anthropic"
+
+    made: list[SimpleNamespace] = []
+
+    def build_client(**kwargs):
+        obj = SimpleNamespace(**kwargs, close=lambda: None)
+        made.append(obj)
+        return obj
+
+    with mock.patch("llm_loop.llm.pool.LLMClient", side_effect=build_client):
+        pool = ModelClientPool(
+            registry=registry,
+            default_client=resolved_default,  # type: ignore[arg-type]
+            base_timeout_s=120.0,
+            base_max_tokens=8192,
+        )
+        routed = pool.get_client("other/plain-openai")
+
+    assert routed.timeout_s == 120.0
+    assert routed.max_tokens == 8192
+    assert routed.wire_protocol == "openai"
+    assert len(made) == 1
 
 
 def test_route_uses_one_registry_snapshot_for_client_and_model(
@@ -103,12 +169,7 @@ def test_route_uses_one_registry_snapshot_for_client_and_model(
         return client
 
     monkeypatch.setattr(pool, "get_client", get_then_reload)
-    decision = engine._route_model(
-        "deepseek/deepseek-v4-pro",
-        sess,
-        [{"role": "user", "content": "hello"}],
-        [],
-    )
+    decision = engine._route_model("deepseek/deepseek-v4-pro", sess)
 
     assert decision.final_answer_override is None
     assert decision.llm_client is shared_fake
@@ -116,7 +177,7 @@ def test_route_uses_one_registry_snapshot_for_client_and_model(
     assert decision.chat_model_arg == "deepseek-v4-pro"
 
 
-def test_route_guard_metadata_uses_same_snapshot_as_override_client(
+def test_route_metadata_uses_same_snapshot_as_override_client(
     tmp_path, monkeypatch,
 ):
     """override client 已按旧快照选定后即使热切表，context/cpt 也必须来自同一旧快照。"""
@@ -156,26 +217,15 @@ def test_route_guard_metadata_uses_same_snapshot_as_override_client(
         return resolved
 
     monkeypatch.setattr(pool, "get_resolved_client", get_then_reload)
-    seen = {}
-
-    def capture_guard(_messages, _tools, context_limit, _label, *, max_tokens=0, chars_per_token=0.0):
-        seen["context"] = context_limit
-        seen["cpt"] = chars_per_token
-        seen["max_tokens"] = max_tokens
-        return None
-
-    monkeypatch.setattr(engine._routing, "_check_context_fit", capture_guard)  # W4-02b: 桩随 service 化迁实例（原 engine 实例面）
-    decision = engine._route_model(
-        "deepseek/deepseek-v4-pro", sess, [{"role": "user", "content": "hello"}], []
-    )
+    decision = engine._route_model("deepseek/deepseek-v4-pro", sess)
 
     assert decision.final_answer_override is None
     assert decision.llm_client is shared_fake
-    assert seen["context"] == 1_000_000
-    assert seen["cpt"] == 0.6
+    assert decision.context_limit == 1_000_000
+    assert decision.chars_per_token == 0.6
 
 
-def test_default_route_guard_uses_startup_registry_metadata_after_reload(
+def test_default_route_metadata_uses_startup_registry_after_reload(
     tmp_path, monkeypatch,
 ):
     """default client 不热改，因此其context/cpt也必须绑定启动registry，而不是热重载新表。"""
@@ -206,27 +256,17 @@ def test_default_route_guard_uses_startup_registry_metadata_after_reload(
             )
         }
     )
-    seen = {}
-
-    def capture_guard(_messages, _tools, context_limit, _label, *, max_tokens=0, chars_per_token=0.0):
-        seen["context"] = context_limit
-        seen["cpt"] = chars_per_token
-        return None
-
-    monkeypatch.setattr(engine._routing, "_check_context_fit", capture_guard)  # W4-02b: 桩随 service 化迁实例（原 engine 实例面）
-    decision = engine._route_model(
-        None, sess, [{"role": "user", "content": "hello"}], []
-    )
+    decision = engine._route_model(None, sess)
 
     assert decision.llm_client is default_fake
-    assert seen["context"] == 1_000_000
-    assert seen["cpt"] == 0.6
+    assert decision.context_limit == 1_000_000
+    assert decision.chars_per_token == 0.6
 
 
-def test_engine_round_snapshot_survives_reload_during_message_build(
+def test_route_binding_precedes_build_reload_and_next_round_sees_new_registry(
     tmp_path, monkeypatch,
 ):
-    """refresh夹在build与route之间时，本轮仍用旧snapshot；旧client不得写回新cache，下一轮才切新表。"""
+    """Route/client binds before build; a build-time reload affects only the next round."""
     from llm_loop.llm.providers import ModelSpec, ProviderRegistry, ProviderSpec
     from tests.unit.test_model_attribution import (
         _FakeLLMClient,
@@ -244,7 +284,6 @@ def test_engine_round_snapshot_survives_reload_during_message_build(
     new_fake.queue([LLMResponse(content="new-snapshot", tool_calls=[], provider="fake")])
     pool = _make_pool(settings, default_fake, cached={"deepseek": old_fake})
     engine = _make_engine(tmp_path, pool, settings)
-    old_registry = pool.registry_snapshot()
     new_registry = ProviderRegistry(
         providers={
             "deepseek": ProviderSpec(
@@ -261,18 +300,6 @@ def test_engine_round_snapshot_survives_reload_during_message_build(
         }
     )
 
-    original_locked = pool._get_client_locked  # noqa: SLF001 — 断言stale snapshot cache策略
-    seen_use_cache: list[tuple[object, bool]] = []
-
-    def observe_get(registry, provider_id, model_id, *, use_cache=True):
-        seen_use_cache.append((registry, use_cache))
-        if registry is old_registry and not use_cache:
-            return old_fake
-        return original_locked(
-            registry, provider_id, model_id, use_cache=use_cache
-        )
-
-    monkeypatch.setattr(pool, "_get_client_locked", observe_get)
     original_build = engine._build_llm_messages
     reloaded = False
 
@@ -292,7 +319,6 @@ def test_engine_round_snapshot_survives_reload_during_message_build(
     first = engine.run(sid, "first", model="deepseek/deepseek-v4-pro")
     assert first.final_answer == "old-snapshot"
     assert first.model_used == "deepseek/deepseek-v4-pro"
-    assert any(reg is old_registry and use_cache is False for reg, use_cache in seen_use_cache)
     assert pool._provider_cache["deepseek"] is new_fake  # noqa: SLF001
 
     second = engine.run(sid, "second", model="deepseek/deepseek-v4-pro")
@@ -329,50 +355,6 @@ def test_session_override_same_provider_passes_resolved_model(
     assert result.model_used == "deepseek/deepseek-v4-pro"
     assert shared_fake.calls[-1]["kwargs"]["model"] == "deepseek-v4-pro"
 
-
-def test_local_fast_route_passes_fast_model_to_shared_provider_client(
-    tmp_path, monkeypatch,
-):
-    """local 27B→9B fast route 不得只改标签，实际 route.model 参数也必须是 fast。"""
-    from tests.unit.test_model_attribution import _FakeLLMClient, _make_engine, _make_pool
-
-    monkeypatch.setenv("LOCAL_API_KEY", "k")
-    providers = json.dumps(
-        {
-            "local": {
-                "api_key_env": "LOCAL_API_KEY",
-                "base_url": "http://localhost:1234/v1",
-                "models": {
-                    "large": {"context": 131072, "thinking": True},
-                    "fast": {"context": 131072, "thinking": False},
-                },
-                "default_model": "large",
-                "fast_model": "fast",
-            }
-        }
-    )
-    settings = Settings(
-        llm_api_key="k",
-        llm_base_url="http://localhost:1234/v1",
-        llm_model="large",
-        data_dir=str(tmp_path / "data"),
-        model_providers_raw=providers,
-        self_inspection_enabled=False,
-        extract_enabled=False,
-    )
-    default_fake = _FakeLLMClient("large")
-    shared_fake = _FakeLLMClient("large")
-    pool = _make_pool(settings, default_fake, cached={"local": shared_fake})
-    engine = _make_engine(tmp_path, pool, settings)
-    engine._focus.reset()
-    sess = engine.session.load(engine.session.create())
-
-    decision = engine._route_model(
-        None, sess, [{"role": "user", "content": "1+1=?"}], []
-    )
-    assert decision.model_used == "local/fast"
-    assert decision.chat_model_arg == "fast"
-    assert decision.llm_client is shared_fake
 
 
 def test_fallback_same_provider_passes_candidate_model(build_test_engine, fake_settings, monkeypatch):
@@ -429,8 +411,6 @@ def test_fallback_guard_budget_uses_same_registry_snapshot_as_candidate_client(
     from llm_loop.llm.client import LLMClient
     from llm_loop.llm.errors import LLMTimeoutError
     from llm_loop.llm.providers import ModelSpec, ProviderRegistry, ProviderSpec
-
-    monkeypatch.setenv("FALLBACK_NOTICE_COOLDOWN_S", "0")
 
     old_registry = ProviderRegistry(
         providers={
@@ -503,12 +483,15 @@ def test_fallback_guard_budget_uses_same_registry_snapshot_as_candidate_client(
 
     assert resp is not None and ref == "backup/m"
     assert captured["guard"] is not None
-    assert captured["guard"].history_budget == 50_000
+    # old registry snapshot: context=100K, chars/token=1.0, 90% physical
+    # input safety boundary => 90K. The former 50K expectation encoded the
+    # retired fixed-half-window heuristic.
+    assert captured["guard"].history_budget == 90_000
     pool.close()
 
 
 def test_overflow_feedback_keeps_request_snapshot_window_after_reload(tmp_path, monkeypatch):
-    """请求期间refresh后，overflow反馈必须报告实际请求快照窗口，而不是新registry元数据。"""
+    """refresh 后 overflow telemetry 必须报告请求快照窗口，且不恢复 prompt 注入。"""
     from llm_loop.llm.errors import LLMHTTPError
     from llm_loop.llm.providers import ModelSpec, ProviderRegistry, ProviderSpec
     from tests.unit.test_model_attribution import (
@@ -523,6 +506,10 @@ def test_overflow_feedback_keeps_request_snapshot_window_after_reload(tmp_path, 
     default_fake = _FakeLLMClient("deepseek-v4-flash")
     pool = _make_pool(settings, default_fake)
     engine = _make_engine(tmp_path, pool, settings)
+    actions: list[tuple] = []
+    monkeypatch.setattr(
+        engine, "_record_action", lambda *args, **kwargs: actions.append(args)
+    )
     new_registry = ProviderRegistry(
         providers={
             "deepseek": ProviderSpec(
@@ -553,10 +540,17 @@ def test_overflow_feedback_keeps_request_snapshot_window_after_reload(tmp_path, 
     result = engine.run(sid, "hello")
     assert result.final_answer == "after-overflow"
     sess = engine.session.load(sid)
+    # R8.24-B: overflow occurrence is telemetry/runtime state only; do not
+    # reintroduce model-visible program prose just to satisfy an old test.
     overflow_msgs = [m.content for m in sess.messages if "上下文溢出" in m.content]
-    assert overflow_msgs
-    assert "1000000" in overflow_msgs[0]
-    assert "64" not in overflow_msgs[0]
+    assert overflow_msgs == []
+    overflow_actions = [
+        a for a in actions if len(a) >= 3 and a[0] == "overflow.compact"
+    ]
+    assert overflow_actions
+    detail = str(overflow_actions[-1][2])
+    assert "provider_window=1000000" in detail
+    assert "provider_window=64" not in detail
 
 
 def test_cache_window_uses_request_snapshot_cpt_after_reload(tmp_path, monkeypatch):

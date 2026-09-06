@@ -11,7 +11,7 @@ from unittest import mock
 
 import pytest
 
-from llm_loop.llm.client import LLMClient
+from llm_loop.llm.client import GuardRequestContext, LLMClient
 from llm_loop.llm.errors import LLMHTTPError, LLMTimeoutError
 
 
@@ -113,6 +113,252 @@ def test_chat_reasoning_content_aggregation():
     assert resp.content == "你好"
 
 
+def test_chat_reasoning_alias_aggregation():
+    """mlx_lm dialect: delta.reasoning is normalized into reasoning_content."""
+    lines = [
+        'data: {"choices": [{"delta": {"reasoning": "思考过"}}]}',
+        'data: {"choices": [{"delta": {"content": "你好", "reasoning": "程"}}]}',
+        'data: {"choices": [{"delta": {}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
+        resp = _client().chat(messages=[{"role": "user", "content": "hi"}], tools=[])
+    assert resp.reasoning_content == "思考过程"
+    assert resp.content == "你好"
+
+
+def test_chat_reasoning_details_cumulative_is_not_double_counted():
+    """MiniMax-style cumulative reasoning_details: display dedup + raw replay preserved."""
+    lines = [
+        'data: {"choices": [{"delta": {"reasoning_details": [{"type": "reasoning.text", "text": "思考"}]}}]}',
+        'data: {"choices": [{"delta": {"reasoning_details": [{"type": "reasoning.text", "text": "思考过程"}]}}]}',
+        'data: {"choices": [{"delta": {"content": "答案"}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
+        resp = _client(provider="minimax").chat(
+            messages=[{"role": "user", "content": "hi"}], tools=[]
+        )
+    assert resp.reasoning_content == "思考过程"
+    assert resp.content == "答案"
+    assert resp.provider_replay == {
+        "provider": "minimax",
+        "fields": {
+            "reasoning_details": [
+                {"type": "reasoning.text", "text": "思考过程"}
+            ]
+        },
+    }
+
+
+def test_stream_state_hook_gets_opaque_reasoning_and_non_executable_tool_draft():
+    """Hard-restart observer sees native state without changing normal ToolCall completion."""
+    lines = [
+        'data: {"choices": [{"delta": {"reasoning_details": [{"type": "reasoning.text", "text": "plan", "signature": "sig-1"}]}}]}',
+        'data: {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_1", "type": "function", "function": {"name": "read_file", "arguments": "{\\"path\\":\\"py"}}]}}]}',
+        'data: {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": "project.toml\\"}"}}]}}]}',
+        'data: {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}',
+        "data: [DONE]",
+    ]
+    observed: list[dict] = []
+    ctx = GuardRequestContext(stream_state_hook=observed.append)
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
+        resp = _client(provider="minimax").chat(
+            messages=[{"role": "user", "content": "read"}],
+            tools=[{"type": "function", "function": {"name": "read_file", "parameters": {"type": "object"}}}],
+            guard_context=ctx,
+        )
+
+    assert observed
+    assert observed[0]["provider_replay"]["fields"]["reasoning_details"][0]["signature"] == "sig-1"
+    draft_states = [s for s in observed if s.get("tool_call_drafts")]
+    assert draft_states
+    first_draft = draft_states[0]["tool_call_drafts"][0]
+    assert first_draft["name"] == "read_file"
+    assert first_draft["arguments_raw"] == '{"path":"py'
+    assert resp.tool_calls[0].arguments == {"path": "pyproject.toml"}
+
+
+def test_provider_replay_projects_only_to_matching_provider():
+    """Opaque replay 不跨 provider 泄漏；匹配 provider 使用原生字段。"""
+    lines = ['data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}', "data: [DONE]"]
+    details = [{"type": "reasoning.text", "text": "raw"}]
+    message = {
+        "role": "assistant",
+        "content": "old",
+        "reasoning_content": "raw",
+        "_provider_replay": {
+            "provider": "minimax",
+            "fields": {"reasoning_details": details},
+        },
+    }
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
+        _client(provider="minimax").chat(messages=[message], tools=[])
+        minimax_payload = client_cls.return_value.stream.call_args.kwargs["json"]
+    assert minimax_payload["messages"][0]["reasoning_details"] == details
+    assert "reasoning_content" not in minimax_payload["messages"][0]
+    assert "_provider_replay" not in minimax_payload["messages"][0]
+
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
+        _client(provider="deepseek").chat(messages=[message], tools=[])
+        other_payload = client_cls.return_value.stream.call_args.kwargs["json"]
+    assert "reasoning_details" not in other_payload["messages"][0]
+    assert "_provider_replay" not in other_payload["messages"][0]
+    assert other_payload["messages"][0]["reasoning_content"] == "raw"
+
+
+def test_provider_replay_survives_cross_provider_projection_and_returns_to_origin():
+    """Projection is a view, never a mutation of durable provider replay state."""
+    lines = ['data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}', "data: [DONE]"]
+    details = [
+        {
+            "type": "reasoning.text",
+            "text": "raw",
+            "signature": "opaque-signature",
+        }
+    ]
+    message = {
+        "role": "assistant",
+        "content": "old",
+        "reasoning_content": "raw",
+        "_provider_replay": {
+            "provider": "minimax",
+            "fields": {"reasoning_details": details},
+        },
+    }
+
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
+        _client(provider="deepseek").chat(messages=[message], tools=[])
+        deepseek_payload = client_cls.return_value.stream.call_args.kwargs["json"]
+    assert "reasoning_details" not in deepseek_payload["messages"][0]
+    assert message["_provider_replay"]["fields"]["reasoning_details"] == details
+
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
+        _client(provider="minimax").chat(messages=[message], tools=[])
+        minimax_payload = client_cls.return_value.stream.call_args.kwargs["json"]
+    assert minimax_payload["messages"][0]["reasoning_details"] == details
+    assert "reasoning_content" not in minimax_payload["messages"][0]
+
+
+def test_reasoning_split_is_representation_contract_not_reasoning_control():
+    """MiniMax M3 compatible format requests structured replay without enabling thinking."""
+    lines = [
+        'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
+        _client(
+            provider="minimax",
+            reasoning_split=True,
+            reasoning_capable=True,
+            reasoning_control="unknown",
+            thinking_supported=False,
+        ).chat(messages=[{"role": "user", "content": "hi"}], tools=[])
+    payload = client_cls.return_value.stream.call_args.kwargs["json"]
+    assert payload["reasoning_split"] is True
+    assert "thinking" not in payload
+    assert "reasoning_effort" not in payload
+
+
+def test_reasoning_split_stays_legacy_for_old_tool_history_without_native_replay():
+    """Do not switch a pre-P3 MiniMax tool chain to reasoning_details mid-history."""
+    lines = [
+        'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
+    messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            "reasoning_content": "legacy-think",
+            "tool_calls": [
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "c1", "content": "done"},
+        {"role": "user", "content": "continue"},
+    ]
+    tools = [
+        {
+            "type": "function",
+            "function": {"name": "read_file", "description": "x", "parameters": {"type": "object"}},
+        }
+    ]
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
+        _client(provider="minimax", reasoning_split=True).chat(messages=messages, tools=tools)
+    payload = client_cls.return_value.stream.call_args.kwargs["json"]
+    assert "reasoning_split" not in payload
+    assert payload["messages"][0]["reasoning_content"] == "legacy-think"
+
+
+def test_reasoning_split_uses_native_replay_when_tool_history_has_reasoning_details():
+    lines = [
+        'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
+    details = [{"type": "reasoning.text", "text": "native", "signature": "sig"}]
+    messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            "reasoning_content": "native",
+            "tool_calls": [
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": "{}"},
+                }
+            ],
+            "_provider_replay": {
+                "provider": "minimax",
+                "fields": {"reasoning_details": details},
+            },
+        },
+        {"role": "tool", "tool_call_id": "c1", "content": "done"},
+        {"role": "user", "content": "continue"},
+    ]
+    tools = [
+        {
+            "type": "function",
+            "function": {"name": "read_file", "description": "x", "parameters": {"type": "object"}},
+        }
+    ]
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
+        _client(provider="minimax", reasoning_split=True).chat(messages=messages, tools=tools)
+    payload = client_cls.return_value.stream.call_args.kwargs["json"]
+    assert payload["reasoning_split"] is True
+    assert payload["messages"][0]["reasoning_details"] == details
+    assert "reasoning_content" not in payload["messages"][0]
+
+
+def test_chat_reasoning_content_preferred_when_both_dialects_present():
+    """Dual-key chunks are consumed once rather than double-counting reasoning."""
+    lines = [
+        'data: {"choices": [{"delta": {"reasoning_content": "canonical", "reasoning": "alias"}}]}',
+        'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+        "data: [DONE]",
+    ]
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
+        resp = _client().chat(messages=[{"role": "user", "content": "hi"}], tools=[])
+    assert resp.reasoning_content == "canonical"
+    assert resp.content == "ok"
+
+
 def test_chat_reasoning_content_missing():
     """M20 THK-03: 全部 chunk 无 reasoning_content → None（缺失态兼容）."""
     lines = [
@@ -125,6 +371,197 @@ def test_chat_reasoning_content_missing():
         resp = _client().chat(messages=[{"role": "user", "content": "hi"}], tools=[])
     assert resp.reasoning_content is None
     assert resp.content == "你好"
+
+
+def test_local_reasoning_mode_on_off_is_request_local(monkeypatch):
+    """本地模型显式 on/off 必须落到 chat_template_kwargs，且不污染后续 auto。"""
+    from llm_loop.core.run_context import current_reasoning_mode
+
+    monkeypatch.delenv("LOCAL_ENABLE_THINKING", raising=False)
+    payloads = []
+
+    def fake_stream(self, method, url, **kwargs):
+        payloads.append(kwargs.get("json", {}))
+        return _FakeStreamCtx([
+            'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+            "data: [DONE]",
+        ])
+
+    with mock.patch("httpx.Client.stream", fake_stream):
+        c = _client(
+            api_key="",
+            base_url="http://127.0.0.1:8901/v1",
+            thinking_supported=True,
+        )
+        token = current_reasoning_mode.set("on")
+        try:
+            c.chat(messages=[{"role": "user", "content": "on"}], tools=[])
+        finally:
+            current_reasoning_mode.reset(token)
+        token = current_reasoning_mode.set("off")
+        try:
+            c.chat(messages=[{"role": "user", "content": "off"}], tools=[])
+        finally:
+            current_reasoning_mode.reset(token)
+        c.chat(messages=[{"role": "user", "content": "auto"}], tools=[])
+
+    assert payloads[0]["chat_template_kwargs"] == {"enable_thinking": True}
+    assert payloads[1]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert "chat_template_kwargs" not in payloads[2]
+
+
+def test_remote_reasoning_mode_auto_off_on_is_request_local():
+    """云端 auto 不覆盖 provider 默认；off/on 必须显式落到 wire。"""
+    from llm_loop.core.run_context import current_reasoning_mode
+
+    payloads = []
+
+    def fake_stream(self, method, url, **kwargs):
+        payloads.append(kwargs.get("json", {}))
+        return _FakeStreamCtx([
+            'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+            "data: [DONE]",
+        ])
+
+    with mock.patch("httpx.Client.stream", fake_stream):
+        c = _client(provider="deepseek", thinking_supported=True)
+        for mode in ("auto", "off", "on"):
+            token = current_reasoning_mode.set(mode)
+            try:
+                c.chat(messages=[{"role": "user", "content": mode}], tools=[])
+            finally:
+                current_reasoning_mode.reset(token)
+
+    assert "thinking" not in payloads[0]
+    assert "reasoning_effort" not in payloads[0]
+    assert payloads[1]["thinking"] == {"type": "disabled"}
+    assert "reasoning_effort" not in payloads[1]
+    assert payloads[2]["thinking"] == {"type": "enabled"}
+    assert payloads[2]["reasoning_effort"] == "high"
+
+
+def test_reasoning_capable_does_not_imply_control_protocol():
+    """MiniMax 类模型可有 reasoning 能力，但 control=unknown 时 on/off 不应乱发 thinking 字段。"""
+    from llm_loop.core.run_context import current_reasoning_mode
+
+    payloads = []
+
+    def fake_stream(self, method, url, **kwargs):
+        payloads.append(kwargs.get("json", {}))
+        return _FakeStreamCtx([
+            'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+            "data: [DONE]",
+        ])
+
+    with mock.patch("httpx.Client.stream", fake_stream):
+        c = _client(
+            provider="minimax",
+            thinking_supported=False,
+            reasoning_capable=True,
+            reasoning_control="unknown",
+        )
+        for mode in ("off", "on"):
+            token = current_reasoning_mode.set(mode)
+            try:
+                state = c.reasoning_contract_state()
+                c.chat(messages=[{"role": "user", "content": mode}], tools=[])
+            finally:
+                current_reasoning_mode.reset(token)
+            assert state[1] is True  # capable
+            assert state[2] == "unknown"
+            assert state[3] is False  # no proven explicit control
+            assert state[4] is None  # no request was actually applied
+
+    assert all("thinking" not in payload for payload in payloads)
+    assert all("chat_template_kwargs" not in payload for payload in payloads)
+
+
+def test_always_on_effort_maps_off_to_low_without_sending_disabled():
+    """GLM-5.3: off intent must not emit provider-invalid thinking.type=disabled."""
+    from llm_loop.core.run_context import current_reasoning_mode
+
+    payloads = []
+
+    def fake_stream(self, method, url, **kwargs):
+        payloads.append(kwargs.get("json", {}))
+        return _FakeStreamCtx([
+            'data: {"choices": [{"delta": {"reasoning_content": "r"}}]}',
+            'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+            "data: [DONE]",
+        ])
+
+    with mock.patch("httpx.Client.stream", fake_stream):
+        c = _client(
+            provider="glm",
+            thinking_supported=True,
+            reasoning_capable=True,
+            reasoning_control="always_on_effort",
+            reasoning_effort="high",
+        )
+        for mode in ("auto", "off", "on"):
+            token = current_reasoning_mode.set(mode)
+            try:
+                c.chat(messages=[{"role": "user", "content": mode}], tools=[])
+            finally:
+                current_reasoning_mode.reset(token)
+
+    assert "thinking" not in payloads[0]
+    assert "reasoning_effort" not in payloads[0]
+    assert payloads[1]["thinking"] == {"type": "enabled"}
+    assert payloads[1]["reasoning_effort"] == "low"
+    assert payloads[2]["thinking"] == {"type": "enabled"}
+    assert payloads[2]["reasoning_effort"] == "high"
+    assert all(
+        p.get("thinking") != {"type": "disabled"}
+        for p in payloads
+    )
+
+
+def test_explicit_chat_template_contract_is_not_inferred_from_url():
+    """chat_template 控制由模型 contract 决定，不依赖 localhost URL 猜测。"""
+    from llm_loop.core.run_context import current_reasoning_mode
+
+    payloads = []
+
+    def fake_stream(self, method, url, **kwargs):
+        payloads.append(kwargs.get("json", {}))
+        return _FakeStreamCtx([
+            'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+            "data: [DONE]",
+        ])
+
+    with mock.patch("httpx.Client.stream", fake_stream):
+        c = _client(
+            api_key="",
+            base_url="http://127.0.0.1:8901/v1",
+            thinking_supported=True,
+            reasoning_capable=True,
+            reasoning_control="chat_template",
+        )
+        token = current_reasoning_mode.set("on")
+        try:
+            c.chat(messages=[{"role": "user", "content": "on"}], tools=[])
+        finally:
+            current_reasoning_mode.reset(token)
+
+    assert payloads[0]["chat_template_kwargs"] == {"enable_thinking": True}
+    assert "thinking" not in payloads[0]
+
+
+def test_openai_reasoning_tokens_usage_passthrough():
+    """provider 给精确 reasoning_tokens 时如实透传，不做字符估算。"""
+    lines = [
+        'data: {"choices": [{"delta": {"reasoning": "想"}}]}',
+        'data: {"choices": [{"delta": {"content": "答"}, "finish_reason": "stop"}]}',
+        'data: {"choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 7, "completion_tokens_details": {"reasoning_tokens": 5}}}',
+        "data: [DONE]",
+    ]
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
+        resp = _client().chat(messages=[{"role": "user", "content": "hi"}], tools=[])
+    assert resp.reasoning_content == "想"
+    assert resp.reasoning_tokens == 5
+    assert resp.completion_tokens == 7
 
 
 def test_chat_payload_thinking_deepseek():
@@ -191,7 +628,7 @@ def test_chat_payload_thinking_disabled():
 
 
 def test_chat_payload_tools_empty_thinking():
-    """M21 AUX-03: tools=[] + thinking enabled → payload 含思考参数且 tools 为空数组（协议边界锁定）."""
+    """无工具时不进入 tool protocol；thinking 控制保持独立生效。"""
     lines = ['data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}', "data: [DONE]"]
     with mock.patch("httpx.Client") as client_cls:
         client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
@@ -199,7 +636,43 @@ def test_chat_payload_tools_empty_thinking():
         c.chat(messages=[{"role": "user", "content": "总结"}], tools=[])
     payload = client_cls.return_value.stream.call_args.kwargs["json"]
     assert payload["thinking"] == {"type": "enabled"}  # 思考参数保持发送（不降级）
-    assert payload["tools"] == []  # 空数组原样携带（FIX-02 未触发时的基线断言）
+    assert "tools" not in payload
+    assert "tool_choice" not in payload
+
+
+def test_chat_payload_nonempty_tools_enters_tool_protocol():
+    """真正暴露工具时才发送 tools/tool_choice，避免 empty-tools 修复误伤工具调用。"""
+    lines = ['data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}', "data: [DONE]"]
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "lookup",
+                "description": "lookup",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
+        c = _client(provider="deepseek")
+        c.chat(messages=[{"role": "user", "content": "查一下"}], tools=tools)
+    payload = client_cls.return_value.stream.call_args.kwargs["json"]
+    assert payload["tools"] == tools
+    assert payload["tool_choice"] == "auto"
+
+
+def test_chat_payload_model_contract_can_omit_tool_choice():
+    """Provider contract 可只发送 tools、依赖 provider 默认 auto，避免 thinking 兼容 400。"""
+    lines = ['data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}', "data: [DONE]"]
+    tools = [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}]
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
+        c = _client(provider="deepseek", send_tool_choice=False)
+        c.chat(messages=[{"role": "user", "content": "查一下"}], tools=tools)
+    payload = client_cls.return_value.stream.call_args.kwargs["json"]
+    assert payload["tools"] == tools
+    assert "tool_choice" not in payload
 
 
 def test_chat_no_auth_header_when_api_key_empty():

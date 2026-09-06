@@ -97,6 +97,15 @@ class EvolutionSuggestion:
         return asdict(self)
 
 
+class EvolutionOwnerError(RuntimeError):
+    """跨会话归属拒绝（模型侧任何有 owner session 的条目均不可被他会话流转）.
+
+    继承 RuntimeError 而非 ValueError——executor.complete 的 fail-open 捕获面是
+    (OSError, ValueError)，owner 拒绝必须显式区分（不得伪装为"建议不存在"或被
+    静默吞掉，spec §5.8.3 / MR-3 完成标准）。
+    """
+
+
 class EvolutionStore:
     """演进建议存储（JSONL，M12 + T56 七态扩展）."""
 
@@ -220,16 +229,28 @@ class EvolutionStore:
         suggestion_id: str,
         *,
         status: EvolutionStatus,
+        owner_session_id: str | None = None,
         **fields: str,
     ) -> dict | None:
         """通用状态流转（EXEC-07, T56）: 任意合法状态迁移 + 附加字段落盘.
 
-        M16 审计（FR-AUDIT-AI-09）: mark_executed 已移除（无生产调用方，功能与此方法重复），
-        本方法为唯一流转实现；manual_complete（evolution_exec.py）走本入口标记 executed。
+        R3-MR owner 断言: ``scope`` 是影响范围，不是 owner 权限。模型侧
+        owner_session_id 非 None 时，只要条目记录了 session_id，就必须与 owner
+        精确匹配；空归属存量条目也不允许模型侧自证归属。None 表示人工通道
+        CLI/飞书/Web 既有权限体系，显式放行。
         """
-        return self._transition(suggestion_id, status=status, **fields)
+        return self._transition(
+            suggestion_id, status=status, owner_session_id=owner_session_id, **fields
+        )
 
-    def _transition(self, suggestion_id: str, *, status: str, **fields: str) -> dict | None:
+    def _transition(
+        self,
+        suggestion_id: str,
+        *,
+        status: str,
+        owner_session_id: str | None = None,
+        **fields: str,
+    ) -> dict | None:
         """内部流转实现: 仅对已存在的建议生效，不存在的返回 None.
 
         EVO-20260817 飞书审批 UX: 跨进程写锁（flock LOCK_EX；非 POSIX 回退进程内锁）——
@@ -252,6 +273,16 @@ class EvolutionStore:
                     continue
                 if entry.get("id") == suggestion_id:
                     entry = self._with_defaults(entry)
+                    # R3-MR owner 纵深防御：scope=global 只表示影响范围，不授予
+                    # 其它模型会话状态推进权。模型侧 owner 必须与建议 owner 精确匹配；
+                    # 空归属旧记录无法证明 owner，模型侧同样拒绝。人工通道 owner=None 放行。
+                    if owner_session_id is not None:
+                        entry_owner = str(entry.get("session_id", "") or "")
+                        if not entry_owner or entry_owner != owner_session_id:
+                            raise EvolutionOwnerError(
+                                f"跨会话归属拒绝: 建议 {suggestion_id} "
+                                f"归属 {entry_owner or '<legacy-unbound>'}，当前会话 {owner_session_id}"
+                            )
                     entry["status"] = status
                     for key, val in fields.items():
                         entry[key] = val

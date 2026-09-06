@@ -32,17 +32,19 @@ logger = logging.getLogger(__name__)
 def resolve_ingress(
     *,
     sess_messages: list[Any],
-    memory_msgs: list[Any],
     current_turn_ref: Any,
     record_action: Callable[..., Any],
+    ingress_truth: Any,
+    original_index_by_id: dict[int, int],
+    initial_indices: list[int],
 ) -> BuildInputs:
     """入口解析 + 过期清理（产出 BuildInputs，下游只读）."""
     base = list(sess_messages)
-    _original_base_index_by_id = {id(_m): _idx for _idx, _m in enumerate(base)}
-    _base_original_indices = list(range(len(base)))
-    # R6: freeze the canonical current human ingress before history/compact projects it.
-    # Tool-followup rounds return None and retain assistant(tool_calls)->tool(result) order.
-    _r6_ingress_truth = current_ingress_user_truth(sess_messages, current_turn_ref)
+    _original_base_index_by_id = dict(original_index_by_id)
+    _base_original_indices = list(initial_indices)
+    # Canonical current human ingress was frozen against storage truth before trace
+    # isolation/filtering; tool-followup rounds carry None.
+    _r6_ingress_truth = ingress_truth
     stale_cleanup: dict[str, Any] = {}
     # INJECTION-GOVERNANCE R8.5/R8.20 eligibility: completed episodes and
     # already-consumed raw tool spans are durable indexed history, not default
@@ -94,10 +96,17 @@ def resolve_ingress(
     # lose automatic prompt authority on the next human ingress.  Legacy unlabelled
     # stagnation/search/overflow/fallback system frames are historical control state
     # and are filtered by the same central eligibility policy.
+    def _is_current_human_ingress(_m: Any) -> bool:
+        return (
+            _r6_ingress_truth is not None
+            and _original_base_index_by_id.get(id(_m)) == current_turn_ref
+        )
+
     _expired_program_control_count = sum(
         1
         for _m in base
-        if not current_turn_program_prompt_eligible(
+        if not _is_current_human_ingress(_m)
+        and not current_turn_program_prompt_eligible(
             _m, current_turn_ref=_eligibility_turn_ref
         )
     )
@@ -105,7 +114,8 @@ def resolve_ingress(
         base = [
             _m
             for _m in base
-            if current_turn_program_prompt_eligible(
+            if _is_current_human_ingress(_m)
+            or current_turn_program_prompt_eligible(
                 _m, current_turn_ref=_eligibility_turn_ref
             )
         ]
@@ -143,7 +153,6 @@ def resolve_ingress(
         base_messages=base,
         base_index_by_id=_original_base_index_by_id,
         r6_ingress_truth=_r6_ingress_truth,
-        memory_msgs=memory_msgs,
         stale_cleanup=stale_cleanup,
         filtered_indices=_base_original_indices,
     )
@@ -160,21 +169,18 @@ class IngressPreludeOutcome:
     base: list
     base_original_indices: list
     r6_ingress_truth: Any
-    leak_downgrade_parts: list
 
 
 def run_ingress_prelude(
     *,
     decision: Any,
     sess: Any,
-    memory_msgs: list,
     planned_label: str | None,
     model: str | None,
     planned_model_label: Callable[[str | None, Any], str],
     current_turn_ref: Any,
     record_action: Any,
     event_append: Any,
-    tool_round_zero: bool,
 ) -> IngressPreludeOutcome:
     """入口解析 → 泄漏隔离 → provider 预清洗（语义原样迁自 build.py 步D）.
 
@@ -197,40 +203,39 @@ def run_ingress_prelude(
     # 改为提交视图尾部追加（GATE_NOTE 模式，转 user），system+稳定历史前缀字节不变。
     # 入口解析/过期清理 → stages/ingress_resolution.py（BuildInputs 产出段；
     # 四过滤器链 storage truth 零改动，仅 provider 视图收窄）
-    inputs = resolve_ingress(
-        sess_messages=sess.messages,
-        memory_msgs=memory_msgs,
-        current_turn_ref=current_turn_ref,
-        record_action=record_action,
-    )
-    base = inputs.base_messages
-    _base_original_indices = inputs.filtered_indices
-    _original_base_index_by_id = inputs.base_index_by_id
-    _r6_ingress_truth = inputs.r6_ingress_truth
-    # agent_trace_leak 4.2 α 挂载点 → stages/trace_isolation.py（KEEP-HARD 薄接线；
-    # 三态分流 D-D1 / fail-open spec 5.4.3-1 语义原样；本体在 core/trace_leak/）
-    base, _base_original_indices = run_trace_isolation(
-        base,
-        base_indices=_base_original_indices,
+    # Trace isolation must observe storage truth BEFORE prompt eligibility retires any
+    # contradictory program-origin frame.  This preserves quarantine/would-quarantine
+    # evidence while the later provider view remains deny-by-default.
+    _raw_base = list(sess.messages)
+    _original_base_index_by_id = {id(_m): _idx for _idx, _m in enumerate(_raw_base)}
+    _raw_indices = list(range(len(_raw_base)))
+    _r6_ingress_truth = current_ingress_user_truth(sess.messages, current_turn_ref)
+    _trace_base, _trace_indices = run_trace_isolation(
+        _raw_base,
+        base_indices=_raw_indices,
         index_by_id=_original_base_index_by_id,
         sess=sess,
         current_ingress=_r6_ingress_truth,
         event_sink=event_append,
         decision=decision,
     )
-    _leak_downgrade_parts = (
-        decision.trace_isolation["downgrade_parts"]
-        if decision.trace_isolation
-        else []
+    inputs = resolve_ingress(
+        sess_messages=_trace_base,
+        current_turn_ref=current_turn_ref,
+        record_action=record_action,
+        ingress_truth=_r6_ingress_truth,
+        original_index_by_id=_original_base_index_by_id,
+        initial_indices=_trace_indices,
     )
-    # provider 视图预清洗 → stages/base_assembly.py::scrub_provider_view
-    # （B4-CLOSE-01 步B）：缓存遥测剥离 → program 协议边界收敛 →
-    # tool_round_zero 极小窗口；base_original_indices 同步重映射。
+    base = inputs.base_messages
+    _base_original_indices = inputs.filtered_indices
+    _original_base_index_by_id = inputs.base_index_by_id
+    # provider 视图预清洗：缓存遥测剥离 + program 协议边界收敛；
+    # 不因 local/tool-round 性能策略裁历史。
     # 存档/存储原文零改动（仅 provider 提交视图）。
     _scrub = scrub_provider_view(
         base=base,
         base_original_indices=_base_original_indices,
-        tool_round_zero=tool_round_zero,
     )
     return IngressPreludeOutcome(
         resolved_label=resolved_label,
@@ -240,5 +245,4 @@ def run_ingress_prelude(
         base=_scrub.base,
         base_original_indices=_scrub.base_original_indices,
         r6_ingress_truth=_r6_ingress_truth,
-        leak_downgrade_parts=_leak_downgrade_parts,
     )

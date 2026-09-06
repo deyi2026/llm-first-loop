@@ -1,12 +1,8 @@
-"""M53 上下文超限前置守卫测试（founder 2026-08-11 拍板 B: kimi/k3-256k 401 教训）.
+"""Rule-first context-boundary authority tests.
 
-覆盖:
-- 载荷超模型 context 上限 → 如实拒绝, 不发送请求 (fake.calls 为空)
-- 载荷未超 → 正常调用
-- 无 pool / 裸标签 / 注册表未知模型 → 守卫跳过, 不阻断
-- 拒绝文案含模型标签 + 建议 + 估算口径如实说明
-
-全部 Mock, 零真实网络。
+Model-aware history budgeting is proactive, but approximate chars/token estimates are
+not a second pre-provider hard authority. Actual provider overflow drives recovery.
+Routing/model-resolution failure must stop before prompt/history mutation.
 """
 
 from __future__ import annotations
@@ -15,14 +11,15 @@ import json
 
 import pytest
 
-from .test_model_attribution import (  # noqa: F401
+from llm_loop.core.message import Message, MessageSource
+
+from .test_model_attribution import (
     _FakeLLMClient,
     _make_engine,
     _make_pool,
     _settings,
 )
 
-# 小窗口 provider: context=100 tokens（守卫阈值 90 tokens = 180 chars, system prompt 即超）
 _TINY_CTX_JSON = json.dumps(
     {
         "tiny": {
@@ -37,62 +34,62 @@ _TINY_CTX_JSON = json.dumps(
 )
 
 
-def test_overflow_refuses_without_llm_call(tmp_path) -> None:
-    """载荷超限 → 如实拒绝 + 未发送 LLM 请求."""
+def test_approximate_oversize_is_not_hard_rejected_before_provider(tmp_path) -> None:
+    """A tiny declared context does not let a chars/token estimate overrule provider truth."""
     settings = _settings(tmp_path, model_providers_raw=_TINY_CTX_JSON, llm_model="tiny-model")
     fake = _FakeLLMClient("tiny-model")
     pool = _make_pool(settings, fake)
     engine = _make_engine(tmp_path, pool, settings)
 
     result = engine.run(engine.session.create(), "你好")
-    assert "[上下文超限]" in result.final_answer
-    assert "tiny/tiny-model" in result.final_answer
-    assert "未发送请求" in result.final_answer
-    assert len(fake.calls) == 0  # 关键: 未发注定失败的请求
 
-
-def test_overflow_message_has_suggestions(tmp_path) -> None:
-    """拒绝文案含可操作建议 + 估算口径如实说明."""
-    settings = _settings(tmp_path, model_providers_raw=_TINY_CTX_JSON, llm_model="tiny-model")
-    fake = _FakeLLMClient("tiny-model")
-    pool = _make_pool(settings, fake)
-    engine = _make_engine(tmp_path, pool, settings)
-
-    result = engine.run(engine.session.create(), "你好")
-    assert "/model" in result.final_answer
-    assert "估算" in result.final_answer
+    assert result.final_answer.startswith("默认回答")
+    assert len(fake.calls) == 1
+    assert "[上下文超限]" not in result.final_answer
 
 
 def test_under_limit_proceeds(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """载荷未超限 → 正常调用 LLM."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
-    settings = _settings(tmp_path)  # deepseek-v4-flash context=1M
+    settings = _settings(tmp_path)
     fake = _FakeLLMClient("deepseek-v4-flash")
     pool = _make_pool(settings, fake)
     engine = _make_engine(tmp_path, pool, settings)
 
     result = engine.run(engine.session.create(), "你好")
-    assert result.final_answer.startswith("默认回答")  # 尾部可能有缓存命中率展示行（方案B）
+    assert result.final_answer.startswith("默认回答")
     assert len(fake.calls) == 1
 
 
-def test_guard_skipped_without_pool(build_test_engine) -> None:
-    """无 pool（零回归路径）→ 守卫跳过, 正常调用."""
+def test_no_pool_path_still_proceeds(build_test_engine) -> None:
     engine, fake = build_test_engine([{"content": "你好"}])
     fake.model = "fake-model"
     engine.llm_pool = None
     result = engine.run(engine.session.create(), "你好")
-    assert result.final_answer.startswith("你好")  # 尾部可能有缓存命中率展示行（方案B）
+    assert result.final_answer.startswith("你好")
 
 
-def test_guard_skipped_for_unknown_model(tmp_path) -> None:
-    """client 无 model 属性（标签为空）→ 守卫跳过."""
+def test_invalid_requested_model_stops_before_history_build(tmp_path, monkeypatch) -> None:
+    """No valid provider route => no compaction/projection side effect on existing history."""
     settings = _settings(tmp_path, model_providers_raw=_TINY_CTX_JSON, llm_model="tiny-model")
     fake = _FakeLLMClient("tiny-model")
-    del fake.model  # 模拟无 model 属性的 stub → 标签空 → 守卫跳过
     pool = _make_pool(settings, fake)
     engine = _make_engine(tmp_path, pool, settings)
+    sid = engine.session.create()
+    sess = engine.session.load(sid)
+    original = [
+        Message(role="user", content="OLD-U-" + "x" * 2000, source=MessageSource.USER),
+        Message(role="assistant", content="OLD-A-" + "y" * 2000, source=MessageSource.USER),
+    ]
+    sess.messages.extend(original)
+    engine.session.save(sess)
+    actions = []
+    monkeypatch.setattr(engine, "_record_action", lambda *args, **kwargs: actions.append(args))
 
-    result = engine.run(engine.session.create(), "你好")
-    assert result.final_answer.startswith("默认回答")  # 尾部可能有缓存命中率展示行（方案B）
-    assert len(fake.calls) == 1
+    result = engine.run(sid, "new question", model="tiny/missing-model")
+
+    assert result.final_answer.startswith("[模型不可用]")
+    assert fake.calls == []
+    after = engine.session.load(sid)
+    assert [m.content for m in after.messages[:2]] == [m.content for m in original]
+    assert not any(a and a[0] == "overflow.compact" for a in actions)
+    assert not any("自动压缩" in str(a) for a in actions)

@@ -141,6 +141,8 @@ def guard_user_write(
                 md = dict(message.metadata or {})
                 md.setdefault("ingress_channel", channel)
                 md.setdefault("ingress_entry", ingress_entry)
+                if bool(getattr(ingress, "delegated", False)):
+                    md.setdefault("ingress_delegated", True)
                 message.metadata = md
                 return GuardVerdict(
                     GuardAction.ALLOW, message, f"白名单通道凭据: {channel}/{ingress_entry}"

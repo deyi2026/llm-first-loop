@@ -56,7 +56,7 @@ def _same_arg_resp(call_id: str) -> LLMResponse:
 
 class TestG2StagnationObservability:
     def test_reminder_event_and_break_both_recorded(self, tmp_path: Path, monkeypatch):
-        """同参 5 次: 阈值事件（3 次）留痕 + 硬熔断事件在场——观测不降级."""
+        """同参失败可观测，但 legacy x5 程序终止不得覆盖模型裁决."""
         engine, fake = _mk(
             tmp_path, monkeypatch,
             responses=[_same_arg_resp(f"c{i}") for i in range(1, 7)],
@@ -67,11 +67,9 @@ class TestG2StagnationObservability:
         result = engine.run(sid, "真实任务")
 
         # 3 次阈值事件留痕（B-G2 前半）
-        assert ("stagnation.reminder", "suppressed") in actions
-        # 5 次硬熔断（B-G2 后半）
-        assert ("stagnation.break", "terminated") in actions
-        assert "read_file" in result.final_answer
-        assert "停滞熔断" in result.final_answer or "终止" in result.final_answer
+        assert ("tool.repeat_observed", "observed") in actions
+        assert ("stagnation.break", "terminated") not in actions
+        assert result.final_answer == "默认回答"
 
     def test_identical_args_injection_chars_zero(self, tmp_path: Path, monkeypatch):
         """B-G2: identical_args 路径提醒注入 chars=0（wire + sess.messages 双面）."""
@@ -108,7 +106,7 @@ class TestG2StagnationObservability:
         sid = engine.session.create()
         engine.run(sid, "真实任务")
 
-        assert ("empty_search.reminder", "suppressed") in actions
+        assert ("tool.empty_search_observed", "observed") in actions
         assert "[搜索空结果提醒]" not in _wire_text(fake)
         persisted = engine.session.load(sid)
         assert not any(
@@ -118,7 +116,7 @@ class TestG2StagnationObservability:
 
 class TestG3BreakFactsOnly:
     def test_break_final_has_facts_no_advice(self, tmp_path: Path, monkeypatch):
-        """B-G3: 熔断终态 = 事实（连续 N 次/工具名/轨迹），建议文案 chars=0."""
+        """Agency-first: 程序不得以停滞终态覆盖模型最终回答."""
         engine, fake = _mk(
             tmp_path, monkeypatch,
             responses=[_same_arg_resp(f"c{i}") for i in range(1, 7)],
@@ -127,9 +125,7 @@ class TestG3BreakFactsOnly:
 
         result = engine.run(sid, "真实任务")
 
-        # 结束原因事实在场（run 终态呈现 + LoopResult 交付）
-        assert "连续" in result.final_answer
-        assert "read_file" in result.final_answer
+        assert result.final_answer == "默认回答"
         # 三路径替代策略取消
         for advice in _FORBIDDEN_ADVICE:
             assert advice not in result.final_answer
@@ -139,12 +135,11 @@ class TestG3BreakFactsOnly:
             assert advice not in wire
 
     def test_no_evidence_gate_states_unresolved(self, tmp_path: Path, monkeypatch):
-        """证据有效性门（事实面保留）: 无成功回执时如实说明 unresolved."""
+        """无成功回执只留观测事实，不得由程序伪造 unresolved 最终回答."""
         engine, fake = _mk(
             tmp_path, monkeypatch,
             responses=[_same_arg_resp(f"c{i}") for i in range(1, 7)],
         )
         sid = engine.session.create()
         result = engine.run(sid, "真实任务")
-        # /nonexistent/ 路径全部失败 → 无成功回执 → unresolved 事实
-        assert "unresolved" in result.final_answer or "未获得" in result.final_answer
+        assert result.final_answer == "默认回答"

@@ -1,7 +1,6 @@
-"""focus 模块（任务聚焦）单测——纯函数/状态类，不依赖 engine 实例.
+"""Factual task-anchor and legacy appendix rendering helpers.
 
-覆盖: 简单任务判定（复杂动词/工具历史/长输入）、单向切换锁定、任务锚点提取、
-注入统一包装。2026-08-22 独立模块化后补测。
+Program-side task-complexity/model-routing policy is deliberately retired.
 """
 
 from __future__ import annotations
@@ -11,12 +10,7 @@ from llm_loop.core.injection_labels import (
     REFERENCE_LABEL,
     STATUS_LABEL,
 )
-from llm_loop.core.loop.focus import (
-    TaskFocusState,
-    build_task_anchor,
-    is_simple_task,
-    wrap_injection,
-)
+from llm_loop.core.loop.focus import build_task_anchor, wrap_injection
 
 
 class _M:
@@ -30,41 +24,9 @@ class _Sess:
         self.messages = messages
 
 
-def test_is_simple_task_complex_verb():
-    """复杂任务动词（配置/修改等）→ False（不切快模型）."""
-    assert is_simple_task([{"role": "user", "content": "给镜像LFL配置飞书"}]) is False
-    assert is_simple_task([{"role": "user", "content": "帮我修改 .env 配置"}]) is False
-    assert is_simple_task([{"role": "user", "content": "部署新版本"}]) is False
 
 
-def test_is_simple_task_simple_question():
-    """简单问题 → True（切快模型）."""
-    assert is_simple_task([{"role": "user", "content": "1+1=?"}]) is True
-    assert is_simple_task([{"role": "user", "content": "什么是缓存命中？"}]) is True
 
-
-def test_is_simple_task_tool_history():
-    """有工具调用历史 → False（复杂任务信号）."""
-    msgs = [{"role": "user", "content": "1+1=?"}, {"role": "tool", "content": "ok"}]
-    assert is_simple_task(msgs) is False
-    msgs2 = [{"role": "user", "content": "1+1=?"}, {"role": "assistant", "tool_calls": [{"id": "1"}]}]
-    assert is_simple_task(msgs2) is False
-
-
-def test_is_simple_task_long_input():
-    """长输入 → False."""
-    msgs = [{"role": "user", "content": "请详细说明" * 101}]  # 505 字符 > 500
-    assert is_simple_task(msgs) is False
-
-
-def test_task_focus_state_oneway_lock():
-    """单向切换锁定: 判复杂 → mark_escalated → escalated=True; reset 恢复."""
-    st = TaskFocusState()
-    assert st.escalated is False
-    st.mark_escalated()
-    assert st.escalated is True
-    st.reset()
-    assert st.escalated is False
 
 
 def test_build_task_anchor():

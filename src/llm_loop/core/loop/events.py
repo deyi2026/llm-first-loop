@@ -15,13 +15,15 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import json
 import logging
 import os
+import uuid
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
-from llm_loop.core.message import Message, MessageSource
+from llm_loop.core.message import Message, MessageSource, ToolResultStatus
 from llm_loop.core.session import _validate_session_id
 from llm_loop.event_log.model import build_message_payload
 from llm_loop.introspection.events import ArchitectureEvent, ArchitectureEventType
@@ -102,13 +104,13 @@ class _EventsMixin:
         except Exception as exc:  # noqa: BLE001 — fail-open
             logger.warning("session.created 事件写入失败（fail-open）: %s", exc)
 
-    def _append_message_event(self, sess, msg: Message) -> None:
+    def _append_message_event(self, sess, msg: Message) -> Any | None:
         """消息落库点事件（payload 与 Session.to_dict() 消息字段逐一对齐）."""
         store = getattr(self, "_event_store", None)
         if store is None or getattr(store, "enabled", False) is False:
-            return
+            return None
         try:
-            store.append(
+            return store.append(
                 sess.session_id,
                 "message.appended",
                 build_message_payload(
@@ -127,6 +129,7 @@ class _EventsMixin:
             )
         except Exception as exc:  # noqa: BLE001 — fail-open
             logger.warning("message.appended 事件写入失败（fail-open）: %s", exc)
+            return None
 
     def _resolve_msg_seq(self, session_id: str, msg: Message) -> int | None:
         """尽力定位消息在会话中的序号（tool_call_id 优先，其次内容匹配；失败如实 None）.
@@ -172,12 +175,18 @@ class _EventsMixin:
         fact: str,
         reason: str,
         suggestion: str,
+        capability_requirements: tuple[str, ...] = (),
     ) -> Message | None:
         """推送式架构上报（冷却去重）；返回可注入消息或 None."""
         if self.status is None or not self.status.enabled:
             return None
         event = ArchitectureEvent(
-            event_type=event_type, fact=fact, reason=reason, suggestion=suggestion
+            event_type=event_type,
+            fact=fact,
+            reason=reason,
+            suggestion=suggestion,
+            # R2 No Unreachable Advice: 产生点结构化能力需求随事件透传（build_message 落 metadata）
+            capability_requirements=tuple(capability_requirements),
         )
         if self.status.report_event(event):
             return self.status.build_report_message(event)
@@ -333,6 +342,210 @@ class _EventsMixin:
                     "reason=exception;prompt_chars=0",
                 )
 
+    def _recover_pre_ingress_runtime_state(self, session_id: str, sess) -> None:
+        """Settle deterministic crash state before lifecycle and new human ingress."""
+        self._inject_interruption_recovery(session_id, sess)
+        self._recover_inflight_tool_executions(session_id, sess)
+
+    def _prepare_interruption_resume(self, session_id: str, sess) -> None:
+        """Prepare one-shot exact model continuity for the current human ingress.
+
+        Two durable sources are accepted, newest/open source winning:
+        1) a persisted ``llm_interrupted`` assistant storage row from a controlled
+           cancel/provider error/disconnect;
+        2) the latest unsettled ``llm.partial_checkpoint`` after the most recent
+           ``run.end`` (process restart/kill while streaming).
+
+        The result lives only in the per-session run bucket.  It is not appended as
+        conversational history and contains no program-authored recovery prose.
+        """
+        bucket = self._run_state()
+        bucket.interruption_resume = None
+        try:
+            from llm_loop.core.episode_history import is_human_user_message
+
+            messages = list(getattr(sess, "messages", []) or [])
+            if not messages or not is_human_user_message(messages[-1]):
+                return
+            current_idx = len(messages) - 1
+            previous_human = None
+            for idx in range(current_idx - 1, -1, -1):
+                if is_human_user_message(messages[idx]):
+                    previous_human = idx
+                    break
+
+            persisted: dict[str, Any] | None = None
+            if previous_human is not None:
+                for idx in range(current_idx - 1, previous_human, -1):
+                    message = messages[idx]
+                    md = message.metadata if isinstance(message.metadata, dict) else {}
+                    if md.get("llm_interrupted") is not True:
+                        continue
+                    # A later genuine model assistant means this partial was already
+                    # superseded; never resurrect stale reasoning merely because it is
+                    # still durable storage truth.
+                    superseded = False
+                    for later in messages[idx + 1 : current_idx]:
+                        lmd = later.metadata if isinstance(later.metadata, dict) else {}
+                        if (
+                            later.role == "assistant"
+                            and lmd.get("answer_origin") == "model"
+                            and lmd.get("llm_interrupted") is not True
+                        ):
+                            superseded = True
+                            break
+                    if superseded:
+                        break
+                    text_tail = str(md.get("interrupted_text_tail") or "")
+                    if not text_tail:
+                        # Backward-compatible recovery for pre-contract rows: use only
+                        # the model-origin portion before the human-readable truncation
+                        # annotation; never feed the program annotation back.
+                        raw = str(message.content or "")
+                        if "\n[截断标注]" in raw:
+                            text_tail = raw.split("\n[截断标注]", 1)[0]
+                        elif not raw.startswith("[截断标注]"):
+                            text_tail = raw
+                    reasoning_tail = str(
+                        md.get("interrupted_reasoning_tail")
+                        or message.reasoning_content
+                        or ""
+                    )
+                    native_sha = str(md.get("interrupted_native_state_sha256") or "")
+                    if text_tail or reasoning_tail or native_sha:
+                        persisted = {
+                            "source": "persisted_interrupted",
+                            "text_tail": text_tail,
+                            "reasoning_tail": reasoning_tail,
+                            "provider": str(md.get("interrupted_provider") or ""),
+                            "model": str(
+                                md.get("interrupted_model")
+                                or getattr(message, "model_used", "")
+                                or ""
+                            ),
+                            "partial_sha256": str(md.get("partial_sha256") or ""),
+                        }
+                        native = self._load_inflight_native_state(
+                            session_id,
+                            expected_sha256=native_sha,
+                            expected_provider=str(persisted.get("provider") or ""),
+                            expected_model=str(persisted.get("model") or ""),
+                            expected_partial_sha256=str(persisted.get("partial_sha256") or ""),
+                        )
+                        if native is not None:
+                            full_text = native.get("text_full")
+                            full_reasoning = native.get("reasoning_full")
+                            if isinstance(full_text, str):
+                                persisted["text_tail"] = full_text
+                            if isinstance(full_reasoning, str):
+                                persisted["reasoning_tail"] = full_reasoning
+                            persisted["full_snapshot"] = True
+                            replay = native.get("provider_replay")
+                            drafts = native.get("tool_call_drafts")
+                            if isinstance(replay, dict):
+                                persisted["provider_replay"] = replay
+                            if isinstance(drafts, list):
+                                persisted["tool_call_drafts"] = [
+                                    dict(item) for item in drafts if isinstance(item, dict)
+                                ]
+                            persisted["native_state_sha256"] = native_sha
+                    break
+
+            open_checkpoint: dict[str, Any] | None = None
+            estore = getattr(self, "_event_store", None)
+            if estore is not None and getattr(estore, "enabled", False):
+                events = list(estore.read(session_id) or [])
+                last_run_end = -1
+                for pos, event in enumerate(events):
+                    if str(getattr(event, "type", "")) == "run.end":
+                        last_run_end = pos
+                open_events = events[last_run_end + 1 :]
+                checkpoint_pos = -1
+                checkpoint_event = None
+                for pos, event in enumerate(open_events):
+                    if str(getattr(event, "type", "")) == "llm.partial_checkpoint":
+                        checkpoint_pos = pos
+                        checkpoint_event = event
+                if checkpoint_event is not None:
+                    settled = False
+                    for later in open_events[checkpoint_pos + 1 :]:
+                        if str(getattr(later, "type", "")) == "run.end":
+                            settled = True
+                            break
+                        if str(getattr(later, "type", "")) != "message.appended":
+                            continue
+                        payload = getattr(later, "payload", None) or {}
+                        md = payload.get("metadata") or {}
+                        if (
+                            payload.get("role") == "assistant"
+                            and md.get("answer_origin") == "model"
+                            and md.get("llm_interrupted") is not True
+                        ):
+                            settled = True
+                            break
+                    if not settled:
+                        payload = getattr(checkpoint_event, "payload", None) or {}
+                        text_tail = str(payload.get("text_tail") or "")
+                        reasoning_tail = str(payload.get("reasoning_tail") or "")
+                        native_sha = str(payload.get("native_state_sha256") or "")
+                        if text_tail or reasoning_tail or native_sha:
+                            open_checkpoint = {
+                                "source": "open_stream_checkpoint",
+                                "text_tail": text_tail,
+                                "reasoning_tail": reasoning_tail,
+                                "provider": str(payload.get("provider") or ""),
+                                "model": str(payload.get("model") or ""),
+                                "partial_sha256": str(payload.get("partial_sha256") or ""),
+                            }
+                            native = self._load_inflight_native_state(
+                                session_id,
+                                expected_sha256=native_sha,
+                                expected_round=int(payload.get("round") or 0),
+                                expected_provider=str(open_checkpoint.get("provider") or ""),
+                                expected_model=str(open_checkpoint.get("model") or ""),
+                                expected_partial_sha256=str(
+                                    open_checkpoint.get("partial_sha256") or ""
+                                ),
+                            )
+                            if native is not None:
+                                full_text = native.get("text_full")
+                                full_reasoning = native.get("reasoning_full")
+                                if isinstance(full_text, str):
+                                    open_checkpoint["text_tail"] = full_text
+                                if isinstance(full_reasoning, str):
+                                    open_checkpoint["reasoning_tail"] = full_reasoning
+                                open_checkpoint["full_snapshot"] = True
+                                replay = native.get("provider_replay")
+                                drafts = native.get("tool_call_drafts")
+                                if isinstance(replay, dict):
+                                    open_checkpoint["provider_replay"] = replay
+                                if isinstance(drafts, list):
+                                    open_checkpoint["tool_call_drafts"] = [
+                                        dict(item)
+                                        for item in drafts
+                                        if isinstance(item, dict)
+                                    ]
+                                open_checkpoint["native_state_sha256"] = native_sha
+
+            state = open_checkpoint or persisted
+            if state is None:
+                return
+            bucket.interruption_resume = state
+            with contextlib.suppress(Exception):
+                self._record_action(
+                    "run.interruption_resume",
+                    "prepared",
+                    "source={};model={};chars={}".format(
+                        state.get("source", ""),
+                        state.get("model", ""),
+                        len(state.get("text_tail", ""))
+                        + len(state.get("reasoning_tail", "")),
+                    ),
+                )
+        except Exception:  # noqa: BLE001 — continuity is fail-open, never blocks ingress
+            bucket.interruption_resume = None
+            logger.debug("中断续思准备失败（fail-open）", exc_info=True)
+
     def _persist_long_answer(self, session_id: str, final_answer: str) -> str:
         """EVO-20260820-5bf342ae ②: 长回答（>8000 chars）落盘并附路径（信息零丢失）.
 
@@ -370,14 +583,6 @@ class _EventsMixin:
         sess.model_override = value
         if self.correction_ctx is not None:
             self.correction_ctx.session_model_override = value
-        # EVO-20260825 任务8（§5.8）: emergency_compact 后 60s 内 switch_model →
-        # wasted 审计（紧急压缩锚点前移归档被模型切换覆盖——前缀按新模型重建白做）。
-        try:
-            _cm = getattr(self, "_cache_monitor", None)
-            if _cm is not None and value:
-                _cm.note_switch_model_after_compact(sess.session_id, value)
-        except Exception:  # noqa: BLE001 — fail-open
-            logger.debug("switch_model 覆盖检测审计异常（fail-open）", exc_info=True)
 
     def _resolve_session_binding(self, session_id: str):
         """P0-5: 按会话解析 switch_model 绑定（getter/setter），供 registry_model 经
@@ -404,20 +609,40 @@ class _EventsMixin:
             logger.warning("事件日志滚动检查失败（fail-open）: sid=%s", session_id, exc_info=True)
 
     def _on_stream_disconnect(self, sess, partial_parts: list[str]) -> None:
-        """P1-6(2026-08-15，审计发现 #17)：LLM 流式中客户端断连（GeneratorExit）的落盘处理.
+        """Persist genuine model partial output on client disconnect without program prose.
 
-        部分回答如实落会话（中断标注，不伪装完整）+ 事件双轨同步 + 立即保存——
-        闭合"事件日志已追加而 session JSON 未保存"的双轨漂移。保存失败 fail-open。
+        The historical implementation appended ``[对话已中断]`` to assistant content.
+        That annotation could re-enter a later provider request as if the model had said
+        it.  Interruption is runtime metadata/event state; only bytes actually emitted by
+        the model belong in assistant content.  Even with zero partial text we still save
+        the session so the user ingress/event log cannot drift from the JSON snapshot.
         """
         partial = "".join(partial_parts).strip()
-        note = "\n[对话已中断] 客户端断连，以上为不完整部分回答（如实标注，可能截断于任意位置）。"
-        content = (partial + note) if partial else "[对话已中断] 客户端断连，本回合未产生回答内容。"
-        msg = Message(role="assistant", content=content, source=MessageSource.SYSTEM)
-        sess.messages.append(msg)
         try:
-            self._append_message_event(sess, msg)  # 双轨：事件同步（fail-open 内置）
+            self._event_append(
+                sess.session_id,
+                "llm.interrupted",
+                {
+                    "reason": "client_disconnect",
+                    "partial_chars": len(partial),
+                },
+            )
+            if partial:
+                msg = Message(
+                    role="assistant",
+                    content=partial,
+                    source=MessageSource.USER,
+                    metadata={
+                        "answer_origin": "model",
+                        "run_end_reason": "client_disconnect",
+                        "llm_interrupted": True,
+                        "episode_resolution_candidate": False,
+                    },
+                )
+                sess.messages.append(msg)
+                self._append_message_event(sess, msg)
             self.session.save(sess)
-        except Exception:  # noqa: BLE001 — 断连保存失败不抛穿（生成器关闭路径）
+        except Exception:  # noqa: BLE001 -- disconnect close path must remain fail-open
             logger.warning("断连会话保存失败（fail-open）: sid=%s", sess.session_id, exc_info=True)
 
     # ── B1(EVO-20260902-41898b20)：取消/出错中断的半截产物限量落盘 ──
@@ -433,6 +658,549 @@ class _EventsMixin:
         except ValueError:
             return default
 
+    def _inflight_native_state_path(self, session_id: str) -> Path:
+        """Return the private overwrite-only sidecar for provider-native crash state."""
+        sid = _validate_session_id(session_id)
+        return Path(self.settings.data_dir) / "audit" / "inflight" / f"{sid}.json"
+
+    def _persist_inflight_native_state(
+        self,
+        session_id: str,
+        *,
+        round_no: int,
+        provider: str,
+        model: str,
+        partial_sha256: str,
+        text_full: str = "",
+        reasoning_full: str = "",
+        provider_replay: dict[str, Any] | None,
+        tool_call_drafts: list[dict[str, Any]] | None,
+    ) -> tuple[str, int, int]:
+        """Atomically persist full in-flight model state + opaque provider state.
+
+        The append-only event keeps only bounded tails + digest; this private sidecar
+        keeps all model bytes received so far, plus provider replay and non-executable
+        tool drafts.  Recovery accepts it only when the digest matches.  Tool drafts
+        are storage facts, never executable ToolCalls.
+        """
+        if not text_full and not reasoning_full and not provider_replay and not tool_call_drafts:
+            return "", 0, 0
+        snapshot = {
+            "version": 1,
+            "session_id": str(session_id),
+            "round": int(round_no or 0),
+            "provider": str(provider or ""),
+            "model": str(model or ""),
+            "partial_sha256": str(partial_sha256 or ""),
+            "text_full": str(text_full or ""),
+            "reasoning_full": str(reasoning_full or ""),
+            "provider_replay": provider_replay if isinstance(provider_replay, dict) else None,
+            "tool_call_drafts": [
+                dict(item) for item in (tool_call_drafts or []) if isinstance(item, dict)
+            ],
+        }
+        raw = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        digest = hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()
+        path = self._inflight_native_state_path(session_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            tmp.write_text(raw, encoding="utf-8")
+            with contextlib.suppress(OSError):
+                tmp.chmod(0o600)
+            tmp.replace(path)
+            with contextlib.suppress(OSError):
+                path.chmod(0o600)
+        finally:
+            tmp.unlink(missing_ok=True)
+        return digest, len(raw), len(snapshot["tool_call_drafts"])
+
+    def _load_inflight_native_state(
+        self,
+        session_id: str,
+        *,
+        expected_sha256: str,
+        expected_round: int | None = None,
+        expected_provider: str = "",
+        expected_model: str = "",
+        expected_partial_sha256: str = "",
+    ) -> dict[str, Any] | None:
+        """Load a sidecar only when its content digest matches the checkpoint fact."""
+        if not expected_sha256:
+            return None
+        try:
+            raw = self._inflight_native_state_path(session_id).read_text(encoding="utf-8")
+            digest = hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()
+            if digest != expected_sha256:
+                return None
+            value = json.loads(raw)
+            if not isinstance(value, dict):
+                return None
+            if expected_round is not None and int(value.get("round") or 0) != int(expected_round):
+                return None
+            if expected_provider and str(value.get("provider") or "") != expected_provider:
+                return None
+            if expected_model and str(value.get("model") or "") != expected_model:
+                return None
+            if (
+                expected_partial_sha256
+                and str(value.get("partial_sha256") or "") != expected_partial_sha256
+            ):
+                return None
+            return value
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return None
+
+    def _clear_inflight_native_state(self, session_id: str) -> None:
+        """Best-effort cleanup after a later completed run supersedes crash state."""
+        with contextlib.suppress(OSError, ValueError):
+            self._inflight_native_state_path(session_id).unlink(missing_ok=True)
+
+    @staticmethod
+    def _tool_execution_id(session_id: str, round_no: int, call: Any) -> str:
+        """Stable id for one declared tool execution attempt without exposing raw args."""
+        raw = json.dumps(
+            {
+                "session_id": str(session_id),
+                "round": int(round_no or 0),
+                "tool_call_id": str(getattr(call, "id", "") or ""),
+                "tool_name": str(getattr(call, "name", "") or ""),
+                "arguments": getattr(call, "arguments", {}) or {},
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        return hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:32]
+
+    def _tool_execution_result_path(self, session_id: str, execution_id: str) -> Path:
+        sid = _validate_session_id(session_id)
+        safe_id = hashlib.sha256(str(execution_id).encode("utf-8", "replace")).hexdigest()[:32]
+        return Path(self.settings.data_dir) / "audit" / "tool_execution" / sid / f"{safe_id}.json"
+
+    @staticmethod
+    def _tool_message_snapshot(message: Message) -> dict[str, Any]:
+        return {
+            "role": message.role,
+            "content": message.content,
+            "source": message.source.value,
+            "tool_call_id": message.tool_call_id,
+            "status": message.status.value if message.status else None,
+            "tool_name": message.tool_name,
+            "error_detail": message.error_detail,
+            "tool_calls": message.tool_calls,
+            "reasoning_content": message.reasoning_content,
+            "duration_ms": message.duration_ms,
+            "metadata": dict(message.metadata or {}),
+        }
+
+    @staticmethod
+    def _tool_message_from_snapshot(snapshot: dict[str, Any]) -> Message:
+        status = None
+        raw_status = snapshot.get("status")
+        if raw_status:
+            with contextlib.suppress(ValueError):
+                status = ToolResultStatus(str(raw_status))
+        source = MessageSource.SYSTEM
+        with contextlib.suppress(ValueError):
+            source = MessageSource(str(snapshot.get("source") or "system"))
+        raw_role = str(snapshot.get("role") or "tool")
+        role = cast(
+            Literal["user", "assistant", "tool", "system"],
+            raw_role if raw_role in {"user", "assistant", "tool", "system"} else "tool",
+        )
+        return Message(
+            role=role,
+            content=str(snapshot.get("content") or ""),
+            source=source,
+            tool_call_id=str(snapshot.get("tool_call_id") or "") or None,
+            status=status,
+            tool_name=str(snapshot.get("tool_name") or "") or None,
+            error_detail=snapshot.get("error_detail"),
+            tool_calls=snapshot.get("tool_calls"),
+            reasoning_content=snapshot.get("reasoning_content"),
+            duration_ms=float(snapshot.get("duration_ms") or 0.0),
+            metadata=dict(snapshot.get("metadata") or {}),
+        )
+
+    def _tool_execution_declared(self, sess, call: Any, *, round_no: int) -> str:
+        """Persist declaration WAL fact after assistant(tool_calls) is durable.
+
+        When the event WAL is enabled, a failed declaration write returns an empty id
+        so the caller must not execute the tool: otherwise a later restart could know
+        that execution started/finished but lack the durable declaration needed to pair
+        the result safely.
+        """
+        execution_id = self._tool_execution_id(sess.session_id, round_no, call)
+        args_raw = json.dumps(
+            getattr(call, "arguments", {}) or {},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        event = self._event_append(
+            sess.session_id,
+            "tool.execution.declared",
+            {
+                "execution_id": execution_id,
+                "round": int(round_no or 0),
+                "tool_call_id": str(getattr(call, "id", "") or ""),
+                "tool_name": str(getattr(call, "name", "") or ""),
+                "args_sha256": hashlib.sha256(args_raw.encode("utf-8", "replace")).hexdigest(),
+            },
+        )
+        store = getattr(self, "_event_store", None)
+        if store is not None and getattr(store, "enabled", False) and event is None:
+            return ""
+        return execution_id
+
+    def _tool_execution_started(
+        self, session_id: str, *, execution_id: str, round_no: int, call: Any
+    ) -> bool:
+        """Persist started before execution; enabled WAL must confirm durability."""
+        store = getattr(self, "_event_store", None)
+        if store is None or not getattr(store, "enabled", False):
+            return True
+        event = self._event_append(
+            session_id,
+            "tool.execution.started",
+            {
+                "execution_id": execution_id,
+                "round": int(round_no or 0),
+                "tool_call_id": str(getattr(call, "id", "") or ""),
+                "tool_name": str(getattr(call, "name", "") or ""),
+            },
+        )
+        return event is not None
+
+    def _tool_execution_finished(
+        self,
+        session_id: str,
+        *,
+        execution_id: str,
+        round_no: int,
+        call: Any,
+        tool_message: Message,
+    ) -> str:
+        """Durably store the exact future tool receipt before normal history append."""
+        snapshot = {
+            "version": 1,
+            "session_id": str(session_id),
+            "execution_id": str(execution_id),
+            "round": int(round_no or 0),
+            "tool_call_id": str(getattr(call, "id", "") or ""),
+            "tool_name": str(getattr(call, "name", "") or ""),
+            "message": self._tool_message_snapshot(tool_message),
+        }
+        raw = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        digest = hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()
+        path = self._tool_execution_result_path(session_id, execution_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            tmp.write_text(raw, encoding="utf-8")
+            with contextlib.suppress(OSError):
+                tmp.chmod(0o600)
+            tmp.replace(path)
+            with contextlib.suppress(OSError):
+                path.chmod(0o600)
+        finally:
+            tmp.unlink(missing_ok=True)
+        self._event_append(
+            session_id,
+            "tool.execution.finished",
+            {
+                "execution_id": execution_id,
+                "round": int(round_no or 0),
+                "tool_call_id": str(getattr(call, "id", "") or ""),
+                "tool_name": str(getattr(call, "name", "") or ""),
+                "result_state_sha256": digest,
+                "result_state_chars": len(raw),
+                "status": tool_message.status.value if tool_message.status else None,
+            },
+        )
+        return digest
+
+    def _load_tool_execution_result(
+        self, session_id: str, execution_id: str, *, expected_sha256: str
+    ) -> Message | None:
+        if not expected_sha256:
+            return None
+        try:
+            raw = self._tool_execution_result_path(session_id, execution_id).read_text(
+                encoding="utf-8"
+            )
+            if hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest() != expected_sha256:
+                return None
+            payload = json.loads(raw)
+            if not isinstance(payload, dict) or payload.get("execution_id") != execution_id:
+                return None
+            message = payload.get("message")
+            return self._tool_message_from_snapshot(message) if isinstance(message, dict) else None
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return None
+
+    def _tool_execution_receipt_committed(
+        self,
+        session_id: str,
+        *,
+        execution_id: str,
+        round_no: int,
+        tool_call_id: str,
+        tool_name: str,
+        result_state_sha256: str = "",
+        recovered: bool = False,
+    ) -> None:
+        self._event_append(
+            session_id,
+            "tool.execution.receipt_committed",
+            {
+                "execution_id": execution_id,
+                "round": int(round_no or 0),
+                "tool_call_id": str(tool_call_id or ""),
+                "tool_name": str(tool_name or ""),
+                "result_state_sha256": str(result_state_sha256 or ""),
+                "recovered": bool(recovered),
+            },
+        )
+        with contextlib.suppress(OSError, ValueError):
+            self._tool_execution_result_path(session_id, execution_id).unlink(missing_ok=True)
+
+    def _recover_inflight_tool_executions(self, session_id: str, sess) -> int:
+        """Close feature-era incomplete tool WAL states without re-executing tools."""
+        store = getattr(self, "_event_store", None)
+        if store is None or not getattr(store, "enabled", False) or not store.exists(session_id):
+            return 0
+        try:
+            states: dict[str, dict[str, Any]] = {}
+            for event in store.read(session_id) or []:
+                etype = str(getattr(event, "type", ""))
+                if not etype.startswith("tool.execution."):
+                    continue
+                payload = getattr(event, "payload", None) or {}
+                execution_id = str(payload.get("execution_id") or "")
+                if not execution_id:
+                    continue
+                state = states.setdefault(execution_id, {"declared_seq": int(event.seq)})
+                if etype == "tool.execution.declared":
+                    state.update({"declared": payload, "declared_seq": int(event.seq)})
+                elif etype == "tool.execution.started":
+                    state["started"] = payload
+                elif etype == "tool.execution.finished":
+                    state["finished"] = payload
+                elif etype == "tool.execution.receipt_committed":
+                    state["committed"] = payload
+
+            recovered = 0
+            for execution_id, state in sorted(
+                states.items(), key=lambda item: int(item[1].get("declared_seq") or 0)
+            ):
+                declared = state.get("declared")
+                if not isinstance(declared, dict) or state.get("committed"):
+                    continue
+                call_id = str(declared.get("tool_call_id") or "")
+                tool_name = str(declared.get("tool_name") or "")
+                round_no = int(declared.get("round") or 0)
+                if not call_id:
+                    continue
+                # If the ordinary receipt is already durable in session/event repair,
+                # the only missing step is WAL settlement; never append it twice.
+                if any(m.role == "tool" and m.tool_call_id == call_id for m in sess.messages):
+                    self._tool_execution_receipt_committed(
+                        session_id,
+                        execution_id=execution_id,
+                        round_no=round_no,
+                        tool_call_id=call_id,
+                        tool_name=tool_name,
+                        result_state_sha256=str(
+                            (state.get("finished") or {}).get("result_state_sha256") or ""
+                        ),
+                        recovered=True,
+                    )
+                    continue
+
+                # Only repair declarations that are actually present.  Missing
+                # declaration means event/session reconciliation is not trustworthy.
+                declaration_present = any(
+                    m.role == "assistant"
+                    and any(
+                        str((tc or {}).get("id") or "") == call_id
+                        for tc in (m.tool_calls or [])
+                    )
+                    for m in sess.messages
+                )
+                if not declaration_present:
+                    continue
+
+                finished = state.get("finished")
+                if isinstance(finished, dict):
+                    result_sha = str(finished.get("result_state_sha256") or "")
+                    msg = self._load_tool_execution_result(
+                        session_id, execution_id, expected_sha256=result_sha
+                    )
+                    if msg is None:
+                        msg = Message(
+                            role="tool",
+                            content=(
+                                "[状态: error] execution_completed=true; "
+                                "result_unavailable_after_restart=true; auto_reexecuted=false"
+                            ),
+                            source=MessageSource.SYSTEM,
+                            tool_call_id=call_id,
+                            tool_name=tool_name,
+                            status=ToolResultStatus.ERROR,
+                            metadata={
+                                "tool_execution_recovery": {
+                                    "state": "finished_result_unavailable",
+                                    "auto_reexecuted": False,
+                                    "execution_id": execution_id,
+                                }
+                            },
+                        )
+                elif state.get("started"):
+                    result_sha = ""
+                    msg = Message(
+                        role="tool",
+                        content=(
+                            "[状态: error] execution_outcome=unknown_after_restart; "
+                            "auto_reexecuted=false"
+                        ),
+                        source=MessageSource.SYSTEM,
+                        tool_call_id=call_id,
+                        tool_name=tool_name,
+                        status=ToolResultStatus.ERROR,
+                        metadata={
+                            "tool_execution_recovery": {
+                                "state": "started_outcome_unknown",
+                                "auto_reexecuted": False,
+                                "execution_id": execution_id,
+                            }
+                        },
+                    )
+                else:
+                    result_sha = ""
+                    msg = Message(
+                        role="tool",
+                        content=(
+                            "[状态: error] executed=false; reason_code=restart_before_execution; "
+                            "auto_reexecuted=false"
+                        ),
+                        source=MessageSource.SYSTEM,
+                        tool_call_id=call_id,
+                        tool_name=tool_name,
+                        status=ToolResultStatus.ERROR,
+                        metadata={
+                            "tool_execution_recovery": {
+                                "state": "declared_not_started",
+                                "auto_reexecuted": False,
+                                "execution_id": execution_id,
+                            }
+                        },
+                    )
+                sess.messages.append(msg)
+                message_event = self._append_message_event(sess, msg)
+                if message_event is not None:
+                    self._tool_execution_receipt_committed(
+                        session_id,
+                        execution_id=execution_id,
+                        round_no=round_no,
+                        tool_call_id=call_id,
+                        tool_name=tool_name,
+                        result_state_sha256=result_sha,
+                        recovered=True,
+                    )
+                recovered += 1
+            if recovered:
+                self.session.save(sess)
+                self._record_action(
+                    "run.tool_execution_recovery",
+                    "recovered",
+                    f"count={recovered};auto_reexecuted=0;prompt_chars=0",
+                )
+            return recovered
+        except Exception:  # noqa: BLE001 — crash recovery is fail-open, never re-executes
+            logger.warning("tool execution WAL 恢复失败（fail-open，不自动重执行）", exc_info=True)
+            return 0
+
+    def _on_llm_partial_checkpoint(
+        self,
+        sess,
+        *,
+        text_parts: list[str],
+        reasoning_parts: list[str],
+        round_no: int = 0,
+        provider: str = "",
+        model: str = "",
+        provider_replay: dict[str, Any] | None = None,
+        tool_call_drafts: list[dict[str, Any]] | None = None,
+    ) -> None:
+        """Persist an in-flight model-output checkpoint without creating chat history.
+
+        The checkpoint is model-origin recovery state for process restart/crash, not
+        a completed assistant message and not a program instruction.  Normal run.end
+        or a later completed assistant settles it; only an otherwise-open stream may
+        be projected once on the next genuine human ingress.
+        """
+        try:
+            text_full = "".join(text_parts)
+            reasoning_full = "".join(reasoning_parts)
+            if (
+                not text_full
+                and not reasoning_full
+                and not provider_replay
+                and not tool_call_drafts
+            ):
+                return
+            text_limit = self._env_tail_limit("INTERRUPT_TEXT_TAIL_CHARS", 4000)
+            reasoning_limit = self._env_tail_limit("INTERRUPT_REASONING_TAIL_CHARS", 8000)
+            text_tail = text_full[-text_limit:] if text_limit and text_full else ""
+            reasoning_tail = (
+                reasoning_full[-reasoning_limit:]
+                if reasoning_limit and reasoning_full
+                else ""
+            )
+            partial_sha = hashlib.sha256(
+                (text_full + reasoning_full).encode("utf-8", "replace")
+            ).hexdigest()
+            native_sha = ""
+            native_chars = 0
+            draft_count = 0
+            try:
+                native_sha, native_chars, draft_count = self._persist_inflight_native_state(
+                    sess.session_id,
+                    round_no=round_no,
+                    provider=provider,
+                    model=model,
+                    partial_sha256=partial_sha,
+                    text_full=text_full,
+                    reasoning_full=reasoning_full,
+                    provider_replay=provider_replay,
+                    tool_call_drafts=tool_call_drafts,
+                )
+            except Exception:  # noqa: BLE001 — full/native sidecar is fail-open
+                logger.debug("provider-native in-flight sidecar 写入失败（fail-open）", exc_info=True)
+            self._event_append(
+                sess.session_id,
+                "llm.partial_checkpoint",
+                {
+                    "round": int(round_no or 0),
+                    "provider": str(provider or ""),
+                    "model": str(model or ""),
+                    "text_tail": text_tail,
+                    "reasoning_tail": reasoning_tail,
+                    "text_chars": len(text_full),
+                    "reasoning_chars": len(reasoning_full),
+                    "partial_sha256": partial_sha,
+                    "native_state_sha256": native_sha,
+                    "native_state_chars": native_chars,
+                    "tool_call_draft_count": draft_count,
+                },
+            )
+        except Exception:  # noqa: BLE001 — checkpointing must never break streaming
+            logger.debug("LLM in-flight checkpoint 写入失败（fail-open）", exc_info=True)
+
     def _on_llm_interrupted(
         self,
         sess,
@@ -442,6 +1210,10 @@ class _EventsMixin:
         reason: str,
         error_digest: str = "",
         round_no: int = 0,
+        provider: str = "",
+        model: str = "",
+        provider_replay: dict[str, Any] | None = None,
+        tool_call_drafts: list[dict[str, Any]] | None = None,
     ) -> None:
         """B1(EVO-20260902-41898b20)：user_stop/llm_error 中断时半截产物落盘.
 
@@ -454,8 +1226,8 @@ class _EventsMixin:
         - `llm.interrupted` 事件恒写（零内容中断同样可检索）；
         - llm_error 且零内容时不加独立消息行（噪声控制；事实由事件+truncated 索引承载）。
 
-        wire 安全：metadata.answer_origin="program" → 投影层既有谓词（base_assembly）
-        将本行替换为字节稳定 `[program-final]` 占位且 reasoning 置 None，零新增 provider 面。
+        wire 安全：metadata.llm_interrupted=true → lifecycle provider projection 直接
+        退役本行；存储/事件/truncated 索引仍保留真相，零新增 provider 面。
         """
         try:
             text_full = "".join(text_parts)
@@ -468,6 +1240,23 @@ class _EventsMixin:
             partial_sha = hashlib.sha256(
                 (text_full + reasoning_full).encode("utf-8", "replace")
             ).hexdigest()
+            native_sha = ""
+            native_chars = 0
+            draft_count = 0
+            try:
+                native_sha, native_chars, draft_count = self._persist_inflight_native_state(
+                    sess.session_id,
+                    round_no=round_no,
+                    provider=provider,
+                    model=model,
+                    partial_sha256=partial_sha,
+                    text_full=text_full,
+                    reasoning_full=reasoning_full,
+                    provider_replay=provider_replay,
+                    tool_call_drafts=tool_call_drafts,
+                )
+            except Exception:  # noqa: BLE001 — full/native sidecar is fail-open
+                logger.debug("中断 provider-native sidecar 写入失败（fail-open）", exc_info=True)
             info: dict[str, Any] = {
                 "round": int(round_no or 0),
                 "reason": str(reason or ""),
@@ -476,6 +1265,7 @@ class _EventsMixin:
                 "reasoning_tail": reasoning_tail,
                 "partial_chars": total_partial,
                 "partial_sha256": partial_sha,
+                "native_state_sha256": native_sha,
             }
             self._last_interrupted = info  # B2 truncated 索引数据源（run 结束时消费）
             # 事件主锚：恒写（审计与 B2 索引共用数据源；fail-open 内置）
@@ -490,6 +1280,9 @@ class _EventsMixin:
                     "reasoning_tail_chars": len(reasoning_tail),
                     "partial_chars": total_partial,
                     "partial_sha256": partial_sha,
+                    "native_state_sha256": native_sha,
+                    "native_state_chars": native_chars,
+                    "tool_call_draft_count": draft_count,
                 },
             )
             if not text_tail and not reasoning_tail and info["reason"] != "cancelled":
@@ -521,6 +1314,16 @@ class _EventsMixin:
                     "llm_interrupted": True,
                     "partial_chars": total_partial,
                     "partial_sha256": partial_sha,
+                    # Exact model-origin tails are kept separately from the
+                    # human-readable truncation annotation in ``content`` so the
+                    # next-run continuity projection never feeds program prose back
+                    # to the model.
+                    "interrupted_text_tail": text_tail,
+                    "interrupted_reasoning_tail": reasoning_tail,
+                    "interrupted_provider": str(provider or ""),
+                    "interrupted_model": str(model or ""),
+                    "interrupted_native_state_sha256": native_sha,
+                    "interrupted_tool_call_draft_count": draft_count,
                 },
             )
             sess.messages.append(msg)

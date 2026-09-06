@@ -2,7 +2,7 @@
 
 - SelfEvaluator: 从既有数据源（action_trace / tool_history / exception_log / declaration_check）
   聚合五维指标（成功率/工具效率/诚实性/停滞率/异常率），每条指标可溯源；纯聚合（无 LLM 往返）
-- EvalTriggerDetector: 三类触发（定期/里程碑/异常），仅提示不强制（决策权归 LLM）
+- 评估时机由调用方/AI 按当前任务显式决定；本模块不提供周期/里程碑自动触发器
 - SelfEvalReport: 评估结果（EVAL-04 落盘 self_eval_log.jsonl，可经 search_records 检索）
 - 对比判定（EVAL-07）: 由 AI 先后两次 self_evaluate 自行比对指标 delta（来源可溯），程序不提供 compare
 
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -55,9 +55,12 @@ class SelfEvalReport:
     metrics: list[EvalMetric]  # 五维指标（如实，可溯源）
     summary: str  # 聚合摘要（程序按指标如实生成的客观描述，非 LLM 结论）
     note: str = ""  # 整体说明（如"声明-回执数据不足，诚实性指标样本不足"）
+    # EVO-20260903-06e5a2fd: 只持久化轻量诊断引用/摘要，不复制大 receipts；
+    # search_records 精确 eval_id 查询时才暴露，绝不自动进入 prompt。
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        return {
+        payload = {
             "eval_id": self.eval_id,
             "ts": self.ts,
             "session_id": self.session_id,
@@ -75,62 +78,9 @@ class SelfEvalReport:
             "summary": self.summary,
             "note": self.note,
         }
-
-
-@dataclass(frozen=True)
-class EvalTrigger:
-    """一次自我评估触发（EVAL-03，仅提示不强制）.
-
-    M16 审计（FR-AUDIT-AI-04/08）: trigger 收敛为 periodic/milestone（异常触发时机移交
-    AI 自主判断，RULE-AI-06 子规则 3）；manual self_evaluate(trigger=anomaly) 通道仍存在
-    （SelfEvalReport.trigger 保留 anomaly 枚举）。
-    """
-
-    trigger: Literal["periodic", "milestone"]
-    fact: str  # 事实（如 "已连续运行 50 轮"）
-    reason: str  # 原因
-    suggestion: str  # 建议（"可调用 self_evaluate 进行自我评估…"）
-
-
-class EvalTriggerDetector:
-    """自我评估触发检测器（EVAL-03）: 定期/里程碑两类确定性触发（检测纯函数，无 IO）.
-
-    M16 审计（FR-AUDIT-AI-04/08）: 移除失效的 anomaly 异常三路触发（参数语义错误致永不
-    命中/取模错乱），异常触发时机移交 AI 自主判断（RULE-AI-06 子规则 3）。
-    """
-
-    def __init__(
-        self,
-        *,
-        interval_rounds: int = 50,  # SELF_EVAL_INTERVAL_ROUNDS
-    ) -> None:
-        self._interval_rounds = interval_rounds
-
-    def check(
-        self,
-        *,
-        rounds: int,
-        session_ended: bool = False,
-        task_completed: bool = False,
-    ) -> EvalTrigger | None:
-        """检测两类确定性触发（命中返回触发；否则 None）."""
-        # 1. periodic 定期: rounds % interval == 0
-        if self._interval_rounds > 0 and rounds > 0 and rounds % self._interval_rounds == 0:
-            return EvalTrigger(
-                trigger="periodic",
-                fact=f"已连续运行 {rounds} 轮",
-                reason=f"达到定期评估间隔（每 {self._interval_rounds} 轮）",
-                suggestion="可调用 self_evaluate 进行自我评估，发现改进机会可 submit_evolution",
-            )
-        # 2. milestone 里程碑: run 完成/会话结束
-        if session_ended or task_completed:
-            return EvalTrigger(
-                trigger="milestone",
-                fact="本轮 run 已完成" if task_completed else "会话已结束",
-                reason="里程碑节点（run 完成/会话结束）",
-                suggestion="可调用 self_evaluate 进行自我评估，沉淀本轮经验与改进机会",
-            )
-        return None
+        if self.diagnostics:
+            payload["diagnostics"] = self.diagnostics
+        return payload
 
 
 class SelfEvaluator:
@@ -181,9 +131,44 @@ class SelfEvaluator:
             metrics=metrics,
             summary=summary,
             note="；".join(notes) if notes else "",
+            diagnostics=self._build_declaration_diagnostics(declaration_checks),
         )
         self._persist(report)
         return report
+
+    def _build_declaration_diagnostics(self, checks: list[dict]) -> dict[str, Any]:
+        """冻结本次 honesty 窗口的 False 样本索引；事实正文仍留源日志按需水合。"""
+        recent = checks[-self._span :]
+        false_rows = [row for row in recent if row.get("consistent") is False]
+        if not false_rows:
+            return {}
+
+        def _first_text(value: Any, max_chars: int = 160) -> str:
+            if not isinstance(value, list) or not value:
+                return ""
+            return str(value[0])[:max_chars]
+
+        samples: list[dict[str, Any]] = []
+        for row in false_rows:
+            samples.append(
+                {
+                    "ref": str(row.get("id") or row.get("_source_ref") or ""),
+                    "ts": str(row.get("ts") or ""),
+                    "declaration_summary": _first_text(row.get("declarations")),
+                    "discrepancy_summary": _first_text(row.get("discrepancies")),
+                    "cross_round_hit": bool(row.get("cross_round_hits")),
+                    "tool_call_ids": [
+                        str(v) for v in (row.get("tool_call_ids") or [])[:8]
+                    ],
+                }
+            )
+        return {
+            "declaration_check": {
+                "sample_size": len(recent),
+                "false_count": len(false_rows),
+                "false_samples": samples,
+            }
+        }
 
     def _next_eval_id(self) -> str:
         """生成跨进程唯一 eval_id（M16 审计 FR-AUDIT-AI-10 修复）.
@@ -373,21 +358,24 @@ class SelfEvaluator:
         return f"{window_desc}窗口指标: {parts}"
 
     # ── 数据源读取（读取失败如实标注，不伪造）──
-    def _read_jsonl(self, filename: str) -> list[dict]:
+    def _read_jsonl(self, filename: str, *, with_source_ref: bool = False) -> list[dict]:
         path = self._audit_dir / filename
         if not path.exists():
             return []
         out: list[dict] = []
         try:
             with path.open("r", encoding="utf-8") as f:
-                for line in f:
+                for line_no, line in enumerate(f, 1):
                     line = line.strip()
                     if not line:
                         continue
                     try:
-                        out.append(json.loads(line))
+                        entry = json.loads(line)
                     except json.JSONDecodeError:
                         continue
+                    if with_source_ref:
+                        entry.setdefault("_source_ref", f"{filename}:L{line_no}")
+                    out.append(entry)
         except OSError:
             return []
         return out
@@ -406,7 +394,7 @@ class SelfEvaluator:
         return self._read_jsonl("tool_history.jsonl")
 
     def _read_declaration_checks(self) -> list[dict]:
-        return self._read_jsonl("declaration_check.jsonl")
+        return self._read_jsonl("declaration_check.jsonl", with_source_ref=True)
 
     def _read_exceptions(self) -> list[dict]:
         return self._read_jsonl("exception_log.jsonl")

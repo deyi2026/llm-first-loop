@@ -17,7 +17,7 @@ import logging
 import os
 import shutil
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -32,7 +32,7 @@ from llm_loop.cognitive.cache_tags import (  # M4.3 认知缓存标记（研究�
     tagging_enabled_for,
 )
 from llm_loop.core.message import ToolCall
-from llm_loop.core.run_context import current_reasoning_effort
+from llm_loop.core.run_context import current_reasoning_effort, current_reasoning_mode
 from llm_loop.llm.errors import (
     LLMEmptyResponseError,
     LLMError,
@@ -56,6 +56,14 @@ class LLMResponse:
     prompt_tokens: int = 0  # M52: 缺失保持 0 = 未提供，不伪造
     completion_tokens: int = 0
     prompt_cache_hit_tokens: int = 0  # M58: provider 前缀缓存命中 token（省钱可观测）
+    # provider 若提供 completion_tokens_details.reasoning_tokens 则如实透传；
+    # 不提供时为 None，不用字符数伪造 token 数。
+    reasoning_tokens: int | None = None
+    # Provider-specific opaque replay state required by some multi-turn tool
+    # protocols (for example MiniMax reasoning_details). This is distinct from
+    # reasoning_content: the latter is normalized for display/telemetry, while
+    # this field preserves wire structure for the same provider only.
+    provider_replay: dict[str, Any] | None = None
 
 
 @dataclass
@@ -87,6 +95,41 @@ class GuardRequestContext:
     provider: str = ""
     model: str = ""
     breaker_active: bool = False  # P0（2026-08-25）: 压缩风暴熔断冻结期（规则 F 降级协调）
+    # Optional request-scoped observer for provider-native in-flight state.  It is
+    # deliberately carried on the immutable request context rather than shared client
+    # state so concurrent sessions cannot cross-write crash-recovery checkpoints.
+    stream_state_hook: Callable[[dict[str, Any]], None] | None = field(
+        default=None, repr=False, compare=False
+    )
+
+
+def _emit_stream_state(
+    guard_context: GuardRequestContext | None,
+    *,
+    provider: str,
+    provider_replay: dict[str, Any] | None = None,
+    tool_call_drafts: list[dict[str, Any]] | None = None,
+) -> None:
+    """Emit provider-native crash state to the request-scoped recovery observer.
+
+    This channel is runtime-only.  It never alters user-visible stream deltas and a
+    partial tool-call draft is explicitly non-executable until the normal provider
+    stream completion path produces a real ``ToolCall``.
+    """
+    hook = guard_context.stream_state_hook if guard_context is not None else None
+    if hook is None:
+        return
+    state: dict[str, Any] = {"provider": str(provider or "")}
+    if provider_replay:
+        state["provider_replay"] = provider_replay
+    if tool_call_drafts:
+        state["tool_call_drafts"] = tool_call_drafts
+    if len(state) == 1:
+        return
+    try:
+        hook(state)
+    except Exception:  # noqa: BLE001 — observability/recovery hook must not break stream
+        logger.debug("provider-native stream-state hook failed (fail-open)", exc_info=True)
 
 
 @dataclass
@@ -100,6 +143,34 @@ class _StreamAcc:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     prompt_cache_hit_tokens: int = 0
+    reasoning_tokens: int | None = None
+    provider_replay_fields: dict[str, Any] = field(default_factory=dict)
+    reasoning_details_text: str = ""
+
+
+def _reasoning_details_text(value: Any) -> str:
+    """Extract display text from provider reasoning_details without changing raw state."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        text = value.get("text")
+        return text if isinstance(text, str) else ""
+    if isinstance(value, list):
+        return "".join(_reasoning_details_text(item) for item in value)
+    return ""
+
+
+def _merge_reasoning_details(prev: Any, new: Any, prev_text: str, new_text: str) -> Any:
+    """Preserve cumulative or incremental reasoning_details streams for replay."""
+    if prev is None:
+        return new
+    if new_text and prev_text and new_text.startswith(prev_text):
+        return new
+    if new_text and prev_text and prev_text.startswith(new_text):
+        return prev
+    if isinstance(prev, list) and isinstance(new, list):
+        return [*prev, *new]
+    return new
 
 
 _THINK_OPEN = "<think>"
@@ -198,6 +269,12 @@ def _finish_response(
         prompt_tokens=acc.prompt_tokens,
         completion_tokens=acc.completion_tokens,
         prompt_cache_hit_tokens=acc.prompt_cache_hit_tokens,
+        reasoning_tokens=acc.reasoning_tokens,
+        provider_replay=(
+            {"provider": provider, "fields": dict(acc.provider_replay_fields)}
+            if acc.provider_replay_fields
+            else None
+        ),
     )
 
 
@@ -405,6 +482,17 @@ class LLMClient:
     # M47（design §5.5）: 思考参数泛化 - 显式传入时以此为准（消除硬编码 deepseek.com）;
     # None 时保持原 _thinking_supported() 行为（向后兼容，零回归）.
     thinking_supported: bool | None = None
+    # Reasoning contract split: capability is an observed/model fact; control is
+    # the request wire mechanism. A model may be capable while control is unknown.
+    reasoning_capable: bool | None = None
+    reasoning_control: str = "legacy"
+    # Provider/model wire contract.  False means omit explicit tool_choice and
+    # rely on the provider's default selection semantics when tools are present.
+    send_tool_choice: bool = True
+    # Provider/model representation contract. True asks compatible OpenAI endpoints
+    # to return structured reasoning_details for exact replay. It is deliberately
+    # independent from reasoning_mode / thinking enable-disable control.
+    reasoning_split: bool = False
     # 2026-08-18 cache_guard（MCP 出入口）: 请求前规则校验开关（默认开；CACHE_GUARD=0 关闭）
     guard_enabled: bool = True
     # legacy guard 字段：仅兼容直接调用方。主 engine 使用 GuardRequestContext，
@@ -452,6 +540,65 @@ class LLMClient:
         if self.thinking_supported is not None:
             return self.thinking_supported
         return self.provider == "deepseek" or "deepseek.com" in self.base_url
+
+    def reasoning_control_state(self) -> tuple[str, bool, bool | None]:
+        """兼容接口：返回 (configured_mode, control_supported, requested)."""
+        mode, _capable, _control, supported, requested = self.reasoning_contract_state()
+        return mode, supported, requested
+
+    def reasoning_contract_state(self) -> tuple[str, bool, str, bool, bool | None]:
+        """返回 (mode, capable, control_kind, control_supported, requested).
+
+        requested=None 表示 auto 且本地 provider/operator 默认未被 LFL 覆盖，
+        因而发送前不能诚实声称“已开启/已关闭”。不做内容复杂度启发式判断。
+        """
+        raw_mode = (current_reasoning_mode.get() or "").strip().lower()
+        mode = raw_mode or "auto"
+        if mode not in {"auto", "off", "on"}:
+            mode = "auto"
+        legacy_supported = self._thinking_supported()
+        capable = (
+            bool(self.reasoning_capable)
+            if self.reasoning_capable is not None
+            else legacy_supported
+        )
+        control = (self.reasoning_control or "legacy").strip().lower()
+        if control == "legacy":
+            if getattr(self, "_is_local_base", False) and (
+                legacy_supported or "LOCAL_ENABLE_THINKING" in os.environ
+            ):
+                control = "chat_template"
+            elif legacy_supported:
+                control = "thinking_type"
+            else:
+                control = "none"
+        supported = control in {"thinking_type", "chat_template", "always_on_effort"}
+        if mode == "on":
+            return mode, capable, control, supported, True if supported else None
+        if mode == "off":
+            return mode, capable, control, supported, False if supported else None
+        if control == "chat_template":
+            if "LOCAL_ENABLE_THINKING" in os.environ:
+                raw = os.environ.get("LOCAL_ENABLE_THINKING", "").strip().lower()
+                return mode, capable, control, supported, raw not in {"0", "false", "off", "no"}
+            # Local chat-template servers own their default when no explicit
+            # request/operator override exists, including legacy direct calls.
+            return mode, capable, control, supported, None
+        if not supported:
+            return mode, capable, control, False, None
+        # A run-bound explicit `auto` means provider-native/default behavior:
+        # do not turn reasoning on or off from LFL.  Empty contextvar is the
+        # legacy direct-client path; preserve its historical thinking_mode
+        # default for compatibility with callers that do not use LoopEngine.
+        if raw_mode == "auto":
+            return mode, capable, control, True, None
+        # Legacy direct-client path (no request context): historical
+        # thinking_mode=False meant "do not send a thinking parameter", not an
+        # explicit provider disable request. Preserve that compatibility while
+        # run-bound mode=off above remains a real disabled wire control.
+        if not raw_mode and not self.thinking_mode:
+            return mode, capable, control, True, None
+        return mode, capable, control, True, bool(self.thinking_mode)
 
     @property
     def guard(self) -> PromptGuard | None:
@@ -657,6 +804,10 @@ class LLMClient:
 
         异常按类型抛出 LLMError 子类，由循环如实反馈。
         """
+        # Convert internal provider replay markers into exact wire fields before
+        # guard/fingerprint/context accounting. Replay state from another
+        # provider is stripped instead of leaking across model switches.
+        messages = self._project_provider_replay(messages)
         protocol = self.wire_protocol
         actual_model = self.model if model is None else model
         # 每请求 guard 快照：显式上下文优先；legacy 直接调用仍从兼容字段构造一次
@@ -757,6 +908,54 @@ class LLMClient:
             )
         return result
 
+    def _project_provider_replay(self, messages: list[dict]) -> list[dict]:
+        """Project opaque assistant replay state only back to its originating provider."""
+        out: list[dict] = []
+        for message in messages:
+            replay = message.get("_provider_replay")
+            if replay is None:
+                out.append(message)
+                continue
+            m = dict(message)
+            m.pop("_provider_replay", None)
+            if (
+                m.get("role") == "assistant"
+                and isinstance(replay, dict)
+                and str(replay.get("provider") or "") == self.provider
+            ):
+                fields = replay.get("fields")
+                if isinstance(fields, dict):
+                    details = fields.get("reasoning_details")
+                    if details is not None:
+                        m["reasoning_details"] = details
+                        # reasoning_content is the normalized display form of the
+                        # same state. Prefer the exact provider-native structure.
+                        m.pop("reasoning_content", None)
+            out.append(m)
+        return out
+
+    @staticmethod
+    def _reasoning_split_safe_for_history(
+        messages: list[dict], tools: list[dict]
+    ) -> bool:
+        """Whether structured reasoning representation can be enabled this request.
+
+        Pre-P3 MiniMax sessions persisted normalized ``reasoning_content`` but not
+        provider-native ``reasoning_details``.  For a tool request, switching such a
+        history to structured interleaved-thinking mid-chain would claim replay state
+        that LFL does not possess.  Keep that request on the legacy representation
+        until those old tool rounds retire; fresh sessions can use reasoning_split
+        immediately.
+        """
+        if not tools:
+            return True
+        for message in messages:
+            if message.get("role") != "assistant" or not message.get("tool_calls"):
+                continue
+            if message.get("reasoning_content") and "reasoning_details" not in message:
+                return False
+        return True
+
     # ── OpenAI 兼容（既有行为，零回归） ──
     def _stream_openai(
         self,
@@ -774,34 +973,65 @@ class LLMClient:
             "stream": True,
             "stream_options": {"include_usage": True},
         }
-        # 2026-08-20 (Sub2API Grok 兼容): 对第三方网关（base_url 含 mxnook.com 等），
-        # tools 为空数组时省略 tools/tool_choice——该网关对 `tools: []` + thinking 字段
-        # 组合返回 HTTP 400（单独都正常）。OpenAI 规范允许省略空 tools；
-        # 其余 provider 保持原行为（M21 AUX-03: 空数组原样携带，协议边界锁定）。
+        # 无工具时不要进入 provider 的 tool protocol。OpenAI-compatible provider
+        # 不需要 `tools: []`；部分 reasoning provider 会把“请求携带 tools 参数”
+        # 视为后续 assistant/reasoning replay 的协议边界。空数组既不增加能力，
+        # 还可能无意义触发更严格的 replay 约束，因此只在本轮确有工具时发送。
         if tools:
             payload["tools"] = tools
-            payload["tool_choice"] = "auto"  # 约束 C6
-        elif "mxnook.com" in self.base_url:
-            pass  # 第三方网关: 省略空 tools/tool_choice
-        else:
-            payload["tools"] = []
-            payload["tool_choice"] = "auto"  # 约束 C6
+            if self.send_tool_choice:
+                payload["tool_choice"] = "auto"  # provider 明确支持时才显式发送
+        if self.reasoning_split and self._reasoning_split_safe_for_history(messages, tools):
+            payload["reasoning_split"] = True
         # 2026-08-15: 显式输出预算（None=不发字段，模型默认——思考链模型默认 4096 时
         # 思考占大半、最终分析被截断，用户现场反馈"回答被截断"根因）
         if self.max_tokens is not None:
             payload["max_tokens"] = self.max_tokens
-        # M20 THK-01: DeepSeek V4 思考模式显式声明（thinking_mode AND provider 支持才发送）
-        # P1-FEISHU: 本地 provider (LM Studio) 不发 OpenAI 的 `thinking` 字段
-        if self.thinking_mode and self._thinking_supported() and self.api_key:
+        # 请求级 reasoning 模式：auto/off/on。
+        # - auto: 不做内容启发式判断；本地尊重 server/operator 默认，远端保持既有
+        #   thinking_mode 默认语义。
+        # - on/off: 仅在 provider 元数据确认支持时显式控制。
+        # 这样“模型支持 reasoning”与“本次是否启用 reasoning”不再混为一谈。
+        (
+            _reasoning_mode,
+            _reasoning_capable,
+            _reasoning_control,
+            _reasoning_supported,
+            _reasoning_requested,
+        ) = self.reasoning_contract_state()
+        if _reasoning_control == "chat_template":
+            _legacy_local_override = (
+                _reasoning_mode == "auto" and "LOCAL_ENABLE_THINKING" in os.environ
+            )
+            if _reasoning_requested is not None and (
+                _reasoning_supported or _legacy_local_override
+            ):
+                payload["chat_template_kwargs"] = {
+                    "enable_thinking": _reasoning_requested
+                }
+        elif _reasoning_control == "thinking_type" and _reasoning_supported and _reasoning_requested is not None:
+            payload["thinking"] = {
+                "type": "enabled" if _reasoning_requested else "disabled"
+            }
+            if _reasoning_requested:
+                payload["reasoning_effort"] = (
+                    current_reasoning_effort.get() or self.reasoning_effort
+                )
+        elif (
+            _reasoning_control == "always_on_effort"
+            and _reasoning_supported
+            and _reasoning_requested is not None
+        ):
+            # GLM-5.3-class contract: reasoning cannot be disabled. Provider docs
+            # prescribe enabled+low as the migration equivalent of the old disabled
+            # intent. Keep requested=False in telemetry; do not lie that reasoning
+            # was actually disabled. auto sends nothing and preserves provider max.
             payload["thinking"] = {"type": "enabled"}
-            payload["reasoning_effort"] = current_reasoning_effort.get() or self.reasoning_effort
-        # 2026-08-24 本地 thinking 开关（SWE 对照实验定论, 见 docs/swe_ab_report.md）:
-        # A 臂（关思考, 4 次独立尝试）0/4 通过 F2P, 全漏第二修复点; B 臂（开思考）通过。
-        # → 本地默认【开启】thinking（能力优先）; env LOCAL_ENABLE_THINKING=0 显式关闭
-        # （纯速度场景, 如交互闲聊）。llama.cpp qwen 模板默认思考开启, OpenAI 协议
-        # thinking 字段不被尊重, 故用 chat_template_kwargs 显式控制。
-        if getattr(self, "_is_local_base", False) and os.environ.get("LOCAL_ENABLE_THINKING", "1") == "0":
-            payload["chat_template_kwargs"] = {"enable_thinking": False}
+            payload["reasoning_effort"] = (
+                (current_reasoning_effort.get() or self.reasoning_effort)
+                if _reasoning_requested
+                else "low"
+            )
         # 本地 provider（api_key 为空）不发 Authorization 头
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self.api_key:
@@ -859,6 +1089,14 @@ class LLMClient:
                         ct = usage.get("completion_tokens")
                         if ct:
                             acc.completion_tokens = int(ct)
+                        _completion_details = usage.get("completion_tokens_details") or {}
+                        _reasoning_tokens = (
+                            _completion_details.get("reasoning_tokens")
+                            if isinstance(_completion_details, dict)
+                            else None
+                        )
+                        if _reasoning_tokens is not None:
+                            acc.reasoning_tokens = int(_reasoning_tokens)
                         # M58: 前缀缓存命中（DeepSeek prompt_cache_hit_tokens；Kimi 兜底 cached_tokens；
                         # 2026-08-18 MiniMax-M3: prompt_tokens_details.cached_tokens（嵌套——实测 128 命中）
                         hit = usage.get("prompt_cache_hit_tokens")
@@ -884,14 +1122,68 @@ class LLMClient:
                             else:
                                 acc.content_parts.append(text)
                                 yield StreamDelta(text=text)
-                    rc = delta.get("reasoning_content")
-                    if rc:
+                    # Structured reasoning replay (MiniMax reasoning_split and
+                    # compatible gateways). Preserve raw structure for the next
+                    # provider round while emitting only newly-added display text.
+                    reasoning_details = delta.get("reasoning_details")
+                    if reasoning_details is not None:
+                        new_details_text = _reasoning_details_text(reasoning_details)
+                        prev_details_text = acc.reasoning_details_text
+                        acc.provider_replay_fields["reasoning_details"] = _merge_reasoning_details(
+                            acc.provider_replay_fields.get("reasoning_details"),
+                            reasoning_details,
+                            prev_details_text,
+                            new_details_text,
+                        )
+                        if new_details_text:
+                            if prev_details_text and new_details_text.startswith(prev_details_text):
+                                reasoning_delta = new_details_text[len(prev_details_text):]
+                                acc.reasoning_details_text = new_details_text
+                            elif prev_details_text.startswith(new_details_text):
+                                reasoning_delta = ""
+                            else:
+                                reasoning_delta = new_details_text
+                                acc.reasoning_details_text = prev_details_text + new_details_text
+                            if reasoning_delta:
+                                acc.reasoning_parts.append(reasoning_delta)
+                                yield StreamDelta(text="", reasoning=reasoning_delta)
+                        _emit_stream_state(
+                            guard_context,
+                            provider=self.provider,
+                            provider_replay={
+                                "provider": self.provider,
+                                "fields": dict(acc.provider_replay_fields),
+                            },
+                            tool_call_drafts=agg.snapshot(),
+                        )
+                    # OpenAI-compatible reasoning field dialects differ by server.
+                    # DeepSeek-style gateways use `reasoning_content`, while the
+                    # mlx_lm OpenAI-compatible server emits `reasoning`.  Accept
+                    # both at the wire boundary and normalize them into LFL's
+                    # internal `reasoning_content` field.  Prefer the established
+                    # key when a provider happens to emit both so one chunk is not
+                    # counted twice.
+                    rc = delta.get("reasoning_content") or delta.get("reasoning")
+                    if reasoning_details is None and rc:
                         acc.reasoning_parts.append(rc)
                         yield StreamDelta(text="", reasoning=rc)
                     if delta.get("tool_calls"):
                         _tc_seen = True
                         for tc in delta["tool_calls"]:
                             agg.add_delta(tc)
+                        _emit_stream_state(
+                            guard_context,
+                            provider=self.provider,
+                            provider_replay=(
+                                {
+                                    "provider": self.provider,
+                                    "fields": dict(acc.provider_replay_fields),
+                                }
+                                if acc.provider_replay_fields
+                                else None
+                            ),
+                            tool_call_drafts=agg.snapshot(),
+                        )
                     fr = choice.get("finish_reason")
                     if fr:
                         acc.finish_reason = fr

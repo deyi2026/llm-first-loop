@@ -19,14 +19,22 @@ EVENT_SESSION_CREATED = "session.created"
 EVENT_MESSAGE_APPENDED = "message.appended"
 EVENT_CONTEXT_COMPRESSED = "context.compressed"
 EVENT_MESSAGE_CACHE_COMPACTED = "message.cache_compacted"
+EVENT_HISTORY_COMPACTION = "history.compaction"
+EVENT_HISTORY_COMPACTION_STATE_RESET = "history.compaction_state_reset"
 EVENT_SESSION_META_CHANGED = "session.meta_changed"
 EVENT_SESSION_FORKED = "session.forked"  # D3 预留：本期登记不触发行为
 EVENT_REQUEST_META = "request.meta"  # HARNESS-02(2026-08-14): 每轮请求快照（模型/思考/工具目录/预算）
 EVENT_REQUEST_USAGE = "request.usage"  # DSH 借鉴(2026-08-17): 每轮响应 usage 明细（命中/miss token 精确落盘）
 EVENT_INTEROP_SPLICED = "interop.spliced"  # DSH 借鉴(2026-08-17): 协调通道 inbox 注入事件（对齐 agent/inbox/spliced）
 EVENT_RUN_END = "run.end"  # DSH 借鉴(2026-08-17): run 生命周期结束事件（对齐 turn/end，结束原因可审计）
+EVENT_LLM_INTERRUPTED = "llm.interrupted"  # 未完成 provider 输出的终止事实（storage/audit，不等于完成 assistant）
+EVENT_LLM_PARTIAL_CHECKPOINT = "llm.partial_checkpoint"  # 流式 in-flight model state；重启续思数据源，不进对话
+EVENT_TOOL_EXECUTION_DECLARED = "tool.execution.declared"
+EVENT_TOOL_EXECUTION_STARTED = "tool.execution.started"
+EVENT_TOOL_EXECUTION_FINISHED = "tool.execution.finished"
+EVENT_TOOL_EXECUTION_RECEIPT_COMMITTED = "tool.execution.receipt_committed"
 EVENT_PROGRAM_RECOVERY = "program.recovery"  # R4: 一次性程序恢复动作审计（不作为 durable 对话消息）
-EVENT_INJECTION_PROFILE_SHADOW = "injection.profile.shadow"  # R8: per-provider-attempt 注入分档只读归因
+EVENT_INJECTION_PROFILE_SHADOW = "injection.profile.shadow"  # Historical R8 schema; P1-C keeps read compatibility only, no new emitter
 
 # ── CodeArts 子 Agent 调度集成事件类型（design.md §1.1.2，凭证明文绝不入 payload）──
 EVENT_CODEARTS_DISPATCHED = "codearts.dispatched"
@@ -206,6 +214,58 @@ REGISTRY.register(
         fields={
             "msg_seq": "原消息在会话中的序号",
             "provider_id": "该折叠状态所属 provider",
+            "marker_version": "provider-view compaction marker contract version；legacy 事件缺失",
+            "model": "生成该 marker 的完整 provider/model 标签；模型变化时旧 marker 可重算",
+            "effective_budget": "生成该 marker 时的有效历史字符预算；预算扩容时旧 marker 可重算",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_HISTORY_COMPACTION,
+        version=1,
+        fields={
+            "model": "本次实际路由模型标签",
+            "provider_id": "本次 provider",
+            "compaction_epoch": "session 级历史压缩事件序号",
+            "trigger": "压缩触发原因码",
+            "pre_history_chars": "触发判断时 provider-visible 历史字符数",
+            "pre_chars": "压缩前视图字符数（含 system）",
+            "post_chars": "压缩后实际提交视图字符数",
+            "effective_budget_chars": "本次实际历史预算",
+            "compact_ratio": "触发阈值比例",
+            "trigger_limit_chars": "本次触发阈值字符数",
+            "trigger_excess_chars": "超出触发阈值的字符数",
+            "archive_target_ratio": "归档目标比例",
+            "archive_target_chars": "归档目标字符数",
+            "archived_count": "本次归档消息数",
+            "archived_group_count": "本次归档原子消息组数",
+            "atomic_group_count": "压缩前原子消息组总数",
+            "compaction_mode": "本次机械 compaction 投影模式",
+            "head_keep_chars": "本次 fixed-head 配置字符预算",
+            "head_keep_target_ratio": "fixed-head 占归档目标上限比例",
+            "cache_boundary_mode": "inactive/protected/epoch_reset",
+            "cache_protected_messages": "实际原子组取整后保护消息数",
+            "cache_protected_chars": "实际原子组取整后保护字符数",
+            "cache_epoch_reset": "本次是否显式重建 cache prefix epoch",
+            "anchor_before": "压缩前 provider history anchor",
+            "anchor_after": "压缩后 provider history anchor",
+            "anchor_moved": "history anchor 是否移动",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_HISTORY_COMPACTION_STATE_RESET,
+        version=1,
+        fields={
+            "model": "当前完整 provider/model 标签",
+            "provider_id": "当前 provider",
+            "effective_budget": "当前有效历史字符预算",
+            "legacy_anchor_reset": "旧/失配 history anchor 是否被清零重算",
+            "anchor_before": "重算前 provider history anchor",
+            "reopened_marker_count": "因旧/失配 contract 重新进入当前 provider view 的消息数",
+            "reason": "稳定原因码；当前为 compaction_contract_changed",
         },
     )
 )
@@ -232,12 +292,110 @@ REGISTRY.register(
 )
 REGISTRY.register(
     EventTypeSpec(
+        name=EVENT_LLM_PARTIAL_CHECKPOINT,
+        version=1,
+        fields={
+            "round": "生成该 checkpoint 的模型轮次",
+            "provider": "生成中断状态的 provider",
+            "model": "生成中断状态的模型标签",
+            "text_tail": "最近已收到的模型正文尾段；非完成答案",
+            "reasoning_tail": "最近已收到的 reasoning 尾段；仅用于同一未完成交互续接",
+            "text_chars": "截至 checkpoint 已收到的正文总字符数",
+            "reasoning_chars": "截至 checkpoint 已收到的 reasoning 总字符数",
+            "partial_sha256": "截至 checkpoint 模型输出的内容指纹",
+            "native_state_sha256": "原子 in-flight provider-native sidecar 内容指纹；空表示本轮尚无 opaque/tool draft 状态",
+            "native_state_chars": "provider-native sidecar JSON 字符数",
+            "tool_call_draft_count": "尚未到 provider 完成边界的 tool-call draft 数；仅恢复诊断，绝不可直接执行",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_LLM_INTERRUPTED,
+        version=1,
+        fields={
+            "round": "中断发生的模型轮次",
+            "reason": "client_disconnect/cancelled/llm_error 等终止原因",
+            "error_digest": "可选错误摘要",
+            "text_tail": "保存的模型正文尾段",
+            "reasoning_tail": "保存的模型 reasoning 尾段",
+            "text_tail_chars": "保存的模型正文尾段字符数",
+            "reasoning_tail_chars": "保存的模型 reasoning 尾段字符数",
+            "partial_chars": "中断时正文+reasoning 总字符数",
+            "partial_sha256": "中断模型输出的内容指纹",
+            "native_state_sha256": "中断时 provider-native sidecar 内容指纹",
+            "native_state_chars": "中断时 provider-native sidecar JSON 字符数",
+            "tool_call_draft_count": "中断时未完成 tool-call draft 数；非可执行工具调用",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_TOOL_EXECUTION_DECLARED,
+        version=1,
+        fields={
+            "execution_id": "session+round+tool_call+arguments 的稳定执行尝试 id",
+            "round": "模型工具轮次",
+            "tool_call_id": "provider tool call id",
+            "tool_name": "工具名",
+            "args_sha256": "规范化 arguments 的 SHA256；不存原参数副本",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_TOOL_EXECUTION_STARTED,
+        version=1,
+        fields={
+            "execution_id": "对应 declared 执行尝试 id",
+            "round": "模型工具轮次",
+            "tool_call_id": "provider tool call id",
+            "tool_name": "工具名",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_TOOL_EXECUTION_FINISHED,
+        version=1,
+        fields={
+            "execution_id": "对应 declared 执行尝试 id",
+            "round": "模型工具轮次",
+            "tool_call_id": "provider tool call id",
+            "tool_name": "工具名",
+            "result_state_sha256": "原子 result sidecar 内容 SHA256",
+            "result_state_chars": "result sidecar JSON 字符数",
+            "status": "已返回 ToolResult 的状态",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_TOOL_EXECUTION_RECEIPT_COMMITTED,
+        version=1,
+        fields={
+            "execution_id": "对应 declared 执行尝试 id",
+            "round": "模型工具轮次",
+            "tool_call_id": "provider tool call id",
+            "tool_name": "工具名",
+            "result_state_sha256": "已提交 receipt 对应 result sidecar 指纹；可为空",
+            "recovered": "是否由重启恢复路径完成 commit",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
         name=EVENT_REQUEST_META,
         version=1,
         fields={
             "round": "循环轮次",
             "model": "本轮实际使用的模型标签（routing/fallback 后最终值）",
-            "thinking": "思考模式是否开启",
+            "thinking": "legacy：本请求是否显式请求 reasoning；auto+本地默认未知时可为 null",
+            "reasoning_mode": "配置模式 auto/off/on",
+            "reasoning_capable": "是否有模型/provider/实测事实支持该模型可产生 reasoning；与可否显式控制分离",
+            "reasoning_control": "显式控制协议：thinking_type/chat_template/unknown/none/legacy",
+            "reasoning_supported": "兼容字段：该模型/provider 是否支持 LFL 当前已知的显式 reasoning 控制",
+            "reasoning_requested": "发送前可确定的请求状态；auto+provider 默认未知时为 null",
             "reasoning_effort": "推理强度",
             "tools_count": "本轮注入的工具 schema 数量",
             "history_chars": "提交历史字符数",
@@ -254,9 +412,9 @@ REGISTRY.register(
             "attempt_kind": "provider attempt 类型（primary/fallback/err1210_retry）",
             "attempt_index": "同轮同类型 attempt 序号；primary=0，fallback/retry 从1开始",
             "model": "该次真实 provider attempt 的模型标签",
-            "mode": "R8 注入分档模式；第一阶段固定 shadow",
-            "recommended_injection_profile": "推荐 profile（minimal/standard/full）",
-            "applied": "推荐是否作用到 prompt；R8 必须为 false",
+            "mode": "历史 R8 注入分档模式（P1-C 后仅旧日志读取兼容）",
+            "recommended_injection_profile": "历史 R8 推荐 profile（minimal/standard/full）",
+            "applied": "历史 R8 字段；旧事件固定 false，P1-C 后不再新写",
             "model_capability_tier": "推荐所依据的 ModelSpec capability_tier",
             "source": "能力归因来源（provider registry 或保守 fallback）",
             "reason": "稳定的推荐原因码",
@@ -276,6 +434,19 @@ REGISTRY.register(
             "tokens_out": "本轮输出 token",
             "cache_hit": "前缀缓存命中 token（provider 未返回为 0）",
             "cache_miss": "缓存未命中 token（=tokens_in−cache_hit，负值截 0；provider 无 usage 时不可据此判命中率）",
+            "cache_read_tokens": "缓存复用 token；统一别名，当前等于 cache_hit",
+            "uncached_prompt_tokens": "真实未缓存输入 token；usage 不可用时为 null，不把未知伪装成 0",
+            "cache_hit_rate": "cache_read_tokens/tokens_in；usage 不可用时为 null",
+            "context_window": "本次实际路由模型注册的物理 context window；未知为 null",
+            "output_reserve_tokens": "本次 client 实际配置/请求的 max output 预留，不等同模型理论最大输出",
+            "context_headroom_tokens": "context_window−tokens_in−output_reserve；缓存命中 token 仍占窗口，不从容量中扣除",
+            "context_used_ratio": "(tokens_in+output_reserve)/context_window；未知窗口/usage 时为 null",
+            "stable_prefix_fp": "system/稳定 base + 实际投影 tools 的结构指纹；仅用于缓存漂移观测",
+            "prefix_changed": "相对上一成功 provider 请求，模型或稳定结构指纹是否变化",
+            "prefix_change_reason": "model_changed/stable_prefix_changed/空字符串",
+            "cache_prefix_epoch": "session 级 provider-prefix 代数；结构替换或显式 cache epoch reset 时递增",
+            "compaction_epoch": "历史压缩事件序号；与 cache_prefix_epoch 分离",
+            "runtime_pid": "产生本次请求的 LFL 进程 PID；用于归因进程重启后的 cache/run-state 冷启动，不参与 prompt/路由",
             "usage_available": "provider 是否返回 usage（false 时 tokens_in/cache_hit=0 不可当全 miss）",
         },
     )

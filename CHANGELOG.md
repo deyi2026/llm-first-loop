@@ -2,6 +2,18 @@
 
 > 面向使用者的变更摘要（内部开发过程记录不公开）。版本语义：0.x 内小版本可增补能力，不破坏既有行为。
 
+### M61：工具可达性每轮观测（Phase 0）——EVO-20260903-ba25857b 第一优先落地（2026-09-03）
+- **背景**：P0-0 能力可达性缺陷（get_tool_schema(X) 连续 SUCCESS 但 X 未进 provider callable 集、schema-loop 熔断）的演进修复，实施顺序冻结 P0-1→P0-2→P0-3；本轮执行第一优先 Phase 0 观测性（P0-1 状态机/P0-2 no-progress 语义已先行在位，单测 25+ 全过）。
+- **新增**（`engine_services/tool_reachability.py`，224 行）：`RoundReachabilityRecorder` 每轮记录 registered_tools / candidate_tools / final_provider_callable_tools / promoted / quarantined / promotion_state 快照及 schema_lookups（get_tool_schema 探测事件）→ emissions（raw_arguments 线上 JSON 串 + arguments 解析态）→ executed（真实回执 + duplicate-guard 阻断帧 blocked=True 如实区分）全链；JSONL 每轮一行落盘 `data/observability/tool_reachability.jsonl`（env `TOOL_REACHABILITY_LOG` 覆盖，`off` 禁写）；flush 成功即清当前轮（防重复落盘）并留 last_flushed 快照。
+- **接线**（`engine_services/tool_cycle.py` 六点，全 fail-open）：`__init__` 持有观测器；投影入口 begin_round（round 取 promotion 跨 run 单调投影序号，利于 incident 对齐）；enforce/shadow/off 三分支投影快照同口径入记录；promotion resolver 探测事件入记录；`_execute_tools` 声明链（含缺 id 声明 valid=False）+ 回执链 + 逐轮 flush。纯观测面：不读不写 run state、不做决策、任何失败降级 debug 不阻断主循环。
+- **测试**：`tests/unit/test_tool_reachability.py` 10 用例（全链 JSONL/fail-open 不可写/env off/env 覆盖/flush 幂等/防御路径形状/schema 名提取/promotion 快照/resolver 接线/观测器持有）+ 既有 promotion/no-progress/duplicate-guard/stagnation/tool-round-tail 回归 70 passed（合计 80）。
+
+### M60：Web 新建会话继承模型覆盖——修"飞书新建会话变成本地模型"（2026-09-03）
+- **症状**：新建会话后模型回落装配默认（本地模型），丢失用户此前所选云端模型。
+- **根因**：三端"/new 继承 model_override"仅 CLI（M52）与飞书（M52-fix）落地；Web `/api/v1/chat`·`/api/v1/chat/stream` 的 `new_session=true` 分支仍裸 `create()`（override=None）。owner 飞书私聊与 Web 跨端共享当前会话（shared_current），Web 侧新建的 override=None 会话被飞书经 `get_shared_current()` 拉走 → 回落本地默认。
+- **修复**（`web/routes.py`，新增 `_inherit_shared_model_override`）：Web 两端点新建会话前继承旧共享会话 `model_override`（fail-open → None，旧会话缺失/损坏不阻断新建），与飞书/CLI 同语义；用户在请求中显式携带 `model` 时仍按既有语义接单后覆盖（EVO-20260829-ad8c5984 不变）。
+- **测试**：`tests/unit/test_m60_web_new_session_inherit.py` 4 用例（chat 继承/无共享 fail-open/损坏 fail-open/流式继承）+ 既有 M52/M50/locks/stream/csrf 回归 57 passed；ruff PASS。
+
 ### R9-B3 Phase 3：两依赖环断裂 + cycle 守卫恒 0（2026-09-01）
 - **环① engine<->build 三步**：`build_session_snapshot_text` 纯 move 至 `core/session_snapshot.py`（`1aba90b`）→ build.py 函数内 import 退役改指叶子模块断环（`ac7b7c6`）→ engine re-export 清理、包级导出源直连（`2bc4784`）。
 - **环② session<->fork 四步**：`session_types` 纯类型抽离（SessionIdConflictError/ForkReport/BranchSeed，`f98b527`）→ fork 异常 import 改指（`3e6cf72`）→ BranchSeed 重建入口 + fork 收窄为数据生成、持久化职责移交（`95c5724`，环断点）→ BranchWriter Protocol 依赖倒置窄口（`fa51dc9`）。

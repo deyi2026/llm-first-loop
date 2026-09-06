@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from llm_loop.core.injection_labels import InjectionLayer
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.prompt_eligibility import (
     current_turn_program_prompt_eligible,
@@ -24,8 +23,8 @@ def test_unknown_dynamic_producer_is_not_prompt_eligible():
     assert dynamic_prompt_layer("cross-session handoff", slot_kind="hotcard") is None
     assert dynamic_prompt_layer("digest catalog", slot_kind="digest") is None
     assert dynamic_prompt_layer("full task graph", slot_kind="task_frontier") is None
-    assert dynamic_prompt_layer("active task state", slot_kind="task_active") is InjectionLayer.STATUS
-    assert dynamic_prompt_layer("[相关记忆] fact", slot_kind="memory") is InjectionLayer.REFERENCE
+    assert dynamic_prompt_layer("active task state", slot_kind="task_active") is None
+    assert dynamic_prompt_layer("[相关记忆] fact", slot_kind="memory") is None
 
 
 def test_session_digest_catalog_is_retrievable_not_prompt_eligible():
@@ -43,17 +42,17 @@ def test_session_digest_catalog_is_retrievable_not_prompt_eligible():
     assert current_turn_program_prompt_eligible(msg, current_turn_ref=7) is False
 
 
-def test_memory_snapshot_requires_exact_current_turn_identity():
+def test_memory_snapshot_never_gains_prompt_authority_from_turn_identity():
     current = _memory("CURRENT-MEMORY", turn_ref=7)
     old = _memory("OLD-MEMORY", turn_ref=2)
     legacy = _memory("LEGACY-MEMORY")
-    assert memory_snapshot_prompt_eligible(current, current_turn_ref=7) is True
+    assert memory_snapshot_prompt_eligible(current, current_turn_ref=7) is False
     assert memory_snapshot_prompt_eligible(old, current_turn_ref=7) is False
     assert memory_snapshot_prompt_eligible(legacy, current_turn_ref=7) is False
     assert memory_snapshot_prompt_eligible(current, current_turn_ref=None) is False
 
 
-def test_build_hides_old_memory_snapshot_but_keeps_current_turn(build_test_engine):
+def test_build_hides_memory_snapshots_including_current_turn(build_test_engine):
     engine, _ = build_test_engine([{"content": "unused"}])
     sid = engine.session.create()
     sess = engine.session.load(sid)
@@ -72,7 +71,7 @@ def test_build_hides_old_memory_snapshot_but_keeps_current_turn(build_test_engin
     )
     rendered = str(out)
     assert "OLD-MEMORY-SHOULD-NOT-PROJECT" not in rendered
-    assert "CURRENT-MEMORY-SHOULD-PROJECT" in rendered
+    assert "CURRENT-MEMORY-SHOULD-PROJECT" not in rendered
 
 
 def test_local_provider_no_longer_gets_behavior_patch(build_test_engine):
@@ -100,12 +99,29 @@ def _current_turn_control(text: str, *, turn_ref: int) -> Message:
     )
 
 
-def test_current_turn_program_control_expires_by_turn_identity():
+def test_generic_current_turn_program_control_has_no_prompt_authority():
     current = _current_turn_control("CURRENT-CONTROL", turn_ref=7)
     old = _current_turn_control("OLD-CONTROL", turn_ref=2)
-    assert current_turn_program_prompt_eligible(current, current_turn_ref=7) is True
+    assert current_turn_program_prompt_eligible(current, current_turn_ref=7) is False
     assert current_turn_program_prompt_eligible(old, current_turn_ref=7) is False
     assert current_turn_program_prompt_eligible(current, current_turn_ref=None) is False
+
+
+def test_async_obligation_has_no_program_prompt_authority():
+    current = Message(
+        role="user",
+        content="[通知·状态]\nasync_settlement=pending; child:c1:running",
+        source=MessageSource.SYSTEM,
+        metadata={
+            "program_origin": True,
+            "origin_layer": "status",
+            "injection_kind": "async_obligation",
+            "turn_ref": 7,
+        },
+    )
+    assert current_turn_program_prompt_eligible(current, current_turn_ref=7) is False
+    assert current_turn_program_prompt_eligible(current, current_turn_ref=8) is False
+
 
 
 def test_experience_tip_never_gets_automatic_prompt_authority():
@@ -131,6 +147,24 @@ def test_experience_tip_never_gets_automatic_prompt_authority():
     assert current_turn_program_prompt_eligible(human, current_turn_ref=7) is True
 
 
+def test_unknown_program_origin_history_frame_is_deny_by_default():
+    unknown = Message(
+        role="user",
+        content="future-program-frame",
+        source=MessageSource.SYSTEM,
+        metadata={"program_origin": True, "origin_layer": "status", "injection_kind": "future_x"},
+    )
+    assert current_turn_program_prompt_eligible(unknown, current_turn_ref=7) is False
+
+    labelled_legacy = Message(
+        role="user",
+        content="[通知·状态]\nfuture-program-frame",
+        source=MessageSource.USER,
+        metadata={},
+    )
+    assert current_turn_program_prompt_eligible(labelled_legacy, current_turn_ref=7) is False
+
+
 def test_legacy_ephemeral_system_controls_are_not_prompt_eligible():
     for text in (
         "[停滞提醒] old",
@@ -153,11 +187,16 @@ def test_legacy_ephemeral_system_controls_are_not_prompt_eligible():
         source=MessageSource.USER,
     )
     assert current_turn_program_prompt_eligible(legacy_declaration, current_turn_ref=7) is False
-    quoted = Message(role="user", content="[声明提醒] 请分析这个标签", source=MessageSource.USER)
+    quoted = Message(
+        role="user",
+        content="[声明提醒] 请分析这个标签",
+        source=MessageSource.USER,
+        metadata={"program_origin": False, "origin_layer": "user_instruction"},
+    )
     assert current_turn_program_prompt_eligible(quoted, current_turn_ref=7) is True
 
 
-def test_build_keeps_same_turn_control_and_retires_old_or_legacy(build_test_engine):
+def test_build_retires_same_turn_control_and_old_or_legacy(build_test_engine):
     engine, _ = build_test_engine([{"content": "unused"}])
     sid = engine.session.create()
     sess = engine.session.load(sid)
@@ -177,7 +216,7 @@ def test_build_keeps_same_turn_control_and_retires_old_or_legacy(build_test_engi
     rendered = str(out)
     assert "OLD-CONTROL-SHOULD-NOT-PROJECT" not in rendered
     assert "LEGACY-SHOULD-NOT-PROJECT" not in rendered
-    assert "CURRENT-CONTROL-SHOULD-PROJECT" in rendered
+    assert "CURRENT-CONTROL-SHOULD-PROJECT" not in rendered
 
 
 def test_build_retires_legacy_and_r3_experience_tips_even_same_turn(build_test_engine):

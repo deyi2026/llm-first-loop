@@ -13,14 +13,13 @@
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import weakref
 from dataclasses import dataclass, field
 from typing import Any
 
 from llm_loop.llm.client import LLMClient
-from llm_loop.llm.providers import ProviderRegistry, is_below_capability_floor
+from llm_loop.llm.providers import ProviderRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +47,11 @@ class ModelClientPool:
         default_factory=list, init=False, repr=False
     )
     _retired_ducks: list[Any] = field(default_factory=list, init=False, repr=False)
+    # Startup-global client defaults are distinct from the resolved default model
+    # contract. A fully-qualified default model may override timeout/max_tokens;
+    # other routed models must not inherit those model-specific values.
+    base_timeout_s: float | None = None
+    base_max_tokens: int | None = None
     # M49（design §5.4）: MODEL_FALLBACKS env 原始字符串（构造时由 builder 注入）
     # 解析在 fallback_candidates() 中按调用执行（每次取最新值，避免启动时缓存过期）
     model_fallbacks_raw: str = ""
@@ -55,6 +59,12 @@ class ModelClientPool:
     def __post_init__(self) -> None:
         # default_client 不参与 provider 热重载；其能力/窗口元数据也必须绑定启动快照。
         self._default_registry = self.registry
+        # Direct/test constructors historically supplied only default_client. Keep
+        # that contract; factory passes the authoritative Settings baselines.
+        if self.base_timeout_s is None:
+            self.base_timeout_s = float(getattr(self.default_client, "timeout_s", 120.0))
+        if self.base_max_tokens is None:
+            self.base_max_tokens = getattr(self.default_client, "max_tokens", None)
 
     def registry_snapshot(self) -> ProviderRegistry:
         """返回当前不可变 ProviderRegistry 快照（与replace_registry互斥读取）."""
@@ -85,9 +95,26 @@ class ModelClientPool:
                 return legacy_cached
         params = registry.client_params(provider_id, model_id)
         thinking_supported = registry.supports_thinking(provider_id, model_id)
+        reasoning_contract_fn = getattr(registry, "reasoning_contract", None)
+        if callable(reasoning_contract_fn):
+            contract_state = reasoning_contract_fn(provider_id, model_id)
+            if isinstance(contract_state, tuple) and len(contract_state) == 2:
+                reasoning_capable = bool(contract_state[0])
+                reasoning_control = str(contract_state[1])
+            else:
+                reasoning_capable = bool(thinking_supported)
+                reasoning_control = "legacy"
+        else:
+            # Backward-compatible duck-typed registries used by hot-reload callers
+            # before ReasoningContract existed: the only proven fact available is
+            # the legacy thinking capability/control bit.
+            reasoning_capable = bool(thinking_supported)
+            reasoning_control = "legacy"
         provider_timeout = params.get("timeout_s")
         provider_max_tokens = params.get("max_tokens")
         provider_wire_protocol = params.get("wire_protocol")
+        send_tool_choice = params.get("send_tool_choice", True)
+        reasoning_split = params.get("reasoning_split", False)
         client = LLMClient(
             api_key=params["api_key"],
             base_url=params["base_url"],
@@ -95,21 +122,25 @@ class ModelClientPool:
             timeout_s=(
                 provider_timeout
                 if provider_timeout is not None
-                else self.default_client.timeout_s
+                else float(self.base_timeout_s or 120.0)
             ),
             max_tokens=(
                 provider_max_tokens
                 if provider_max_tokens is not None
-                else self.default_client.max_tokens
+                else self.base_max_tokens
             ),
-            wire_protocol=(
-                provider_wire_protocol
-                if provider_wire_protocol is not None
-                else self.default_client.wire_protocol
-            ),
+            # Registry omits the default "openai" value from client_params for
+            # compatibility. Absence therefore means openai, never "inherit the
+            # assembled default model's protocol" (which may be anthropic/google).
+            wire_protocol=provider_wire_protocol or "openai",
             thinking_mode=self.default_client.thinking_mode,
             reasoning_effort=self.default_client.reasoning_effort,
             thinking_supported=thinking_supported,
+            reasoning_capable=reasoning_capable,
+            reasoning_control=reasoning_control,
+            provider=provider_id,
+            send_tool_choice=bool(send_tool_choice),
+            reasoning_split=bool(reasoning_split),
         )
         if use_cache:
             self._provider_cache[cache_key] = client
@@ -270,78 +301,52 @@ class ModelClientPool:
         if not raw:
             return []
 
+        # Operator config is the fallback policy. Runtime only canonicalizes it:
+        # resolve refs, validate credentials, drop duplicates and never "fallback"
+        # to the already-active default model under a second spelling. Model quality
+        # metadata (capability_tier) has zero routing authority.
+        default_provider = str(getattr(self.default_client, "provider", "") or "").strip()
+        default_model = str(getattr(self.default_client, "model", "") or "").strip()
+        if default_provider and default_model.startswith(default_provider + "/"):
+            default_ref = default_model
+        elif default_provider and default_model:
+            default_ref = f"{default_provider}/{default_model}"
+        else:
+            default_ref = ""
+            if default_model:
+                try:
+                    dp, dm = self._default_registry.resolve(default_model)
+                    default_ref = f"{dp}/{dm}"
+                except ValueError:
+                    pass
+
         out: list[str] = []
+        seen: set[str] = set()
         for raw_item in raw.split(","):
             ref = raw_item.strip()
             if not ref:
-                # 空条目（如连续逗号/首尾逗号）→ 静默跳过
                 continue
             try:
                 provider_id, model_id = selected_registry.resolve(ref)
             except ValueError as exc:
-                # resolve 失败 → 跳过 + 如实标注（fail-soft；非法配置不阻断降级链）
                 logger.warning("MODEL_FALLBACKS 跳过非法条目 '%s': %s", ref, exc)
                 continue
-            # 预检 api_key（client_params 触发按需读取 env var）
+            canonical = f"{provider_id}/{model_id}"
             try:
                 selected_registry.client_params(provider_id, model_id)
             except ValueError as exc:
-                # key 缺失 → 跳过 + 如实标注含 env var 名字（设计原则 4 密钥不出域: 仅日志回显 env 名, 不回显 key）
                 logger.warning(
                     "MODEL_FALLBACKS 跳过候选 '%s'（api_key 不可用）: %s",
-                    f"{provider_id}/{model_id}",
+                    canonical,
                     exc,
                 )
                 continue
-            out.append(f"{provider_id}/{model_id}")
-        return self._apply_capability_floor(out, selected_registry)
-
-    def _apply_capability_floor(
-        self, candidates: list[str], registry: ProviderRegistry
-    ) -> list[str]:
-        """D'-2.2/D'-2.3（R8.24 D-D6）: capability floor——shadow 标记 / enforce 过滤.
-
-        - shadow（LFL_FALLBACK_FLOOR 默认）: 链行为与现状零变化——仅对低于 floor
-          候选记录 would_downgrade_below_floor 观测事件（含候选 ref、capability
-          档位、task_complexity 标签字段——pool 层无任务上下文，登记 unknown 由
-          engine 消费侧观测补全；对照 D6 场景: 9B 档候选在链中应被标记）。
-        - enforce: 低于下限候选剔除 + 如实日志含剔除原因（不静默吞）；
-          全部候选被剔除时回退原链（不启用降级优于空链死锁——回退现状可回滚）。
-        判据唯一入口 = providers.is_below_capability_floor（三档: weak/unknown 低于
-        下限，strong 进链；细粒度定标为待验证假设不进配置——见其 docstring）。
-        """
-        mode = os.environ.get("LFL_FALLBACK_FLOOR", "shadow").strip().lower()
-        if not candidates:
-            return candidates
-        kept: list[str] = []
-        for ref in candidates:
-            try:
-                pid, mid = ref.split("/", 1)
-                spec = registry.providers[pid].models.get(mid)
-                below = spec is not None and is_below_capability_floor(spec)
-            except Exception:  # noqa: BLE001 — 判据失败 fail-open 不动链
-                below = False
-            tier = getattr(spec, "capability_tier", "unknown")
-            if not below:
-                kept.append(ref)
+            if canonical == default_ref:
+                logger.info("event=fallback.default_candidate_skipped ref=%s", canonical)
                 continue
-            if mode == "enforce":
-                logger.info(
-                    "event=fallback.floor_filtered ref=%s capability_tier=%s"
-                    "（低于能力下限，自动链剔除——shadow 观测达标后 enforce，LFL_FALLBACK_FLOOR 可回滚）",
-                    ref, tier,
-                )
+            if canonical in seen:
+                logger.info("event=fallback.duplicate_candidate_skipped ref=%s", canonical)
                 continue
-            logger.info(
-                "event=fallback.would_downgrade_below_floor ref=%s capability_tier=%s"
-                " task_complexity=unknown（shadow 观测——链行为不变，仅登记）",
-                ref, tier,
-            )
-            kept.append(ref)
-        if mode == "enforce" and not kept:
-            logger.warning(
-                "event=fallback.floor_exhausted candidates=%d（全部低于能力下限——"
-                "回退原链防空链死锁，可 LFL_FALLBACK_FLOOR=shadow 回滚）", len(candidates),
-            )
-            return candidates
-        return kept
+            seen.add(canonical)
+            out.append(canonical)
+        return out

@@ -16,7 +16,6 @@ import hashlib
 import json
 import os
 from collections.abc import Callable
-from datetime import UTC
 from typing import Any
 
 from llm_loop.core.injection_labels import (
@@ -24,27 +23,27 @@ from llm_loop.core.injection_labels import (
     PROGRAM_RECOVERY_LABEL,
     REFERENCE_LABEL,
     STATUS_LABEL,
-    InjectionLayer,
-    ensure_semantic_label,
-    infer_layer,
-    neutralize_reference_frame,
-    origin_metadata,
 )
 from llm_loop.core.message import Message, MessageSource, ToolCall
 
 
-def _wire_size(m: Message) -> int:
+def _wire_size(m: Message, current_turn_ref: int | None = None) -> int:
     """提交视图口径体积（与守卫估算 routing._estimate_request_chars 对齐）.
 
     content + reasoning_content + tool_calls 参数。history 压缩预算原只看
     content——reasoning_content 可占 40%+（实测 fb8f8987: 287K/598K 全字段），
-    压缩器看不见 → 恒不触发 → emergency_compact 空转（2026-08-26 glm 超限
+    压缩器看不见 → 恒不触发（2026-08-26 glm 超限
     死循环根因：守卫按全字段 907K tokens 拦截、压缩按 content 159K<255K 判
     不超）。预算判定一律改用本口径；纯展示/审计统计不变。
     """
-    n = len(m.content or "")
+    n = len(m.content or "") + len(_capability_boundary_block(m, current_turn_ref))
     if m.role == "assistant":
-        n += len(m.reasoning_content or "")
+        replay = (m.metadata or {}).get("provider_replay")
+        replay_fields = replay.get("fields") if isinstance(replay, dict) else None
+        if isinstance(replay_fields, dict) and replay_fields.get("reasoning_details") is not None:
+            n += len(json.dumps(replay_fields["reasoning_details"], ensure_ascii=False))
+        else:
+            n += len(m.reasoning_content or "")
         for tc in m.tool_calls or []:
             # ToolCall dataclass（扁平 name/arguments）或 OpenAI wire dict（嵌套 function）兼容
             if isinstance(tc, ToolCall):
@@ -58,40 +57,159 @@ def _wire_size(m: Message) -> int:
 def _dict_wire_size(d: dict) -> int:
     """to_llm_dict 后的提交口径体积（out 列表元素用）."""
     n = len(str(d.get("content") or ""))
-    n += len(str(d.get("reasoning_content") or ""))
+    replay = d.get("_provider_replay")
+    replay_fields = replay.get("fields") if isinstance(replay, dict) else None
+    if isinstance(replay_fields, dict) and replay_fields.get("reasoning_details") is not None:
+        n += len(json.dumps(replay_fields["reasoning_details"], ensure_ascii=False))
+    else:
+        n += len(str(d.get("reasoning_content") or ""))
     for tc in d.get("tool_calls") or []:
         fn = (tc or {}).get("function") or {}
         n += len(str(fn.get("arguments") or "")) + len(str(fn.get("name") or ""))
     return n
 
+
+def _same_turn_ref(raw: Any, current_turn_ref: int | None) -> bool:
+    if raw is None or current_turn_ref is None:
+        return False
+    try:
+        return int(raw) == int(current_turn_ref)
+    except (TypeError, ValueError):
+        return False
+
+
+def _capability_boundary_block(m: Message, current_turn_ref: int | None) -> str:
+    """Render producer-attached G6-v2 boundary facts for the current human turn only.
+
+    The source Message is never mutated. The block is factual (no imperative next-step
+    wording), deterministic, and loses prompt visibility on the next human turn while
+    structured metadata remains available for audit/retrieval.
+    """
+    metadata = m.metadata if isinstance(m.metadata, dict) else {}
+    if not _same_turn_ref(metadata.get("capability_boundary_turn_ref"), current_turn_ref):
+        return ""
+    rows = metadata.get("capability_unavailable")
+    if not isinstance(rows, list):
+        return ""
+    normalized: list[tuple[str, str, tuple[str, ...]]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("tool_name", "") or "").strip()
+        reason = str(row.get("reason_code", "") or "runtime_unhealthy").strip()
+        if not name:
+            continue
+        raw_repl = row.get("replacement") or ()
+        if isinstance(raw_repl, str):
+            raw_repl = (raw_repl,)
+        repl = tuple(sorted({str(x).strip() for x in raw_repl if str(x).strip()}))
+        normalized.append((name, reason, repl))
+    if not normalized:
+        return ""
+    lines = ["[能力边界事实]"]
+    for name, reason, repl in sorted(set(normalized)):
+        line = f"tool={name}; available=false; reason={reason}"
+        if repl:
+            line += "; alternatives=" + ",".join(repl)
+        lines.append(line)
+    return "\n" + "\n".join(lines)
+
+
+def _provider_message_dict(m: Message, current_turn_ref: int | None) -> dict:
+    d = m.to_llm_dict()
+    block = _capability_boundary_block(m, current_turn_ref)
+    if block:
+        d["content"] = str(d.get("content") or "") + block
+    return d
+
 # EVO-20260816-380f1c2e: 压缩目标比例（裁到预算×此值，留缓冲降低断点频率）。
-# 实证: 前缀缓存下压缩轮必断点；裁到 100% → 每轮压缩 → 永久断点（命中率 ~1%）；
-# 裁到 60% → 留 40% 增长空间 → 稳定期纯追加高命中（97%+）。可经环境变量覆盖（缓存纪律: 配置低频改）。
-_COMPRESS_TARGET_RATIO = float(os.environ.get("COMPRESS_TARGET_RATIO", "0.6"))
+# 2026-09-03 P0: 不能在模块 import 时读取 env。Web 入口会先 import factory/history，
+# 后在 main() 才 load_env_file；旧常量因此永久固化默认 0.6，磁盘 .env=0.5 实际不生效。
+# 默认仍冻结为生产真实行为 0.6；每次进入压缩路径时读取运行态 env，修 SoT 不夹带调参。
+_DEFAULT_COMPRESS_TARGET_RATIO = 0.6
+
+
+def _compress_target_ratio() -> float:
+    """Return the runtime compression target ratio without import-order split brain."""
+    raw = os.environ.get("COMPRESS_TARGET_RATIO", "").strip()
+    if not raw:
+        return _DEFAULT_COMPRESS_TARGET_RATIO
+    try:
+        ratio = float(raw)
+    except ValueError:
+        return _DEFAULT_COMPRESS_TARGET_RATIO
+    if not 0.0 < ratio < 1.0:
+        return _DEFAULT_COMPRESS_TARGET_RATIO
+    return ratio
 
 _CACHE_COMPACTED_FOR_META = "cache_compacted_for"
-
-# 任务7（§5.7）: progressive_fold 要求 cache_archive_provider（provider 级折叠标记）
-# 缺失时的降级 head 预算——降级后 head_keep_chars 原值 ≤0 时使用（env 可配，默认 2000）。
-_DEFAULT_HEAD_KEEP_CHARS_ON_DEGRADE = int(
-    os.environ.get("DEFAULT_HEAD_KEEP_CHARS_ON_DEGRADE", "2000")
-)
+_CACHE_COMPACTION_SCOPE_META = "cache_compaction_scope"
+_CACHE_COMPACTION_SCOPE_VERSION = 1
 
 
-def is_cache_compacted_for(message: Message, provider_id: str) -> bool:
-    """Return whether a message is hidden from one provider's prompt view."""
+def is_cache_compacted_for(
+    message: Message,
+    provider_id: str,
+    *,
+    model_ref: str = "",
+    effective_budget: int | None = None,
+) -> bool:
+    """Return whether a provider-scoped compaction marker is valid *now*.
+
+    Legacy markers carried only ``provider_id`` and therefore became permanent:
+    a message compacted under an old 80K/100K budget stayed hidden even after the
+    same provider moved to a 1M model.  When the current model/budget contract is
+    supplied, unversioned legacy markers are deliberately treated as stale and are
+    eligible for one deterministic re-projection.  Versioned markers remain valid
+    for the same model while the current budget is no more permissive than the
+    budget that created the marker.
+
+    Callers that do not supply model/budget retain the historical provider-only
+    membership semantics for diagnostics/tests.
+    """
     if not provider_id:
         return False
-    raw = (message.metadata or {}).get(_CACHE_COMPACTED_FOR_META)
+    meta = message.metadata or {}
+    raw = meta.get(_CACHE_COMPACTED_FOR_META)
     if isinstance(raw, str):
-        return raw == provider_id
-    if isinstance(raw, (list, tuple, set)):
-        return provider_id in raw
-    return False
+        marked = raw == provider_id
+    elif isinstance(raw, (list, tuple, set)):
+        marked = provider_id in raw
+    else:
+        marked = False
+    if not marked:
+        return False
+    if not model_ref or effective_budget is None:
+        return True
+    scopes = meta.get(_CACHE_COMPACTION_SCOPE_META)
+    scope = scopes.get(provider_id) if isinstance(scopes, dict) else None
+    if not isinstance(scope, dict):
+        return False  # legacy provider-only marker: stale under a concrete contract
+    try:
+        version = int(scope.get("version", 0) or 0)
+        marker_budget = int(scope.get("effective_budget", 0) or 0)
+    except (TypeError, ValueError):
+        return False
+    if version != _CACHE_COMPACTION_SCOPE_VERSION:
+        return False
+    if str(scope.get("model") or "") != model_ref:
+        return False
+    if marker_budget <= 0:
+        return False
+    # Smaller/equal current budget is at least as restrictive: keeping the old
+    # hidden set is safe and the current build may compact further.  A larger
+    # budget must re-open candidates so the new model can actually use its window.
+    return int(effective_budget) <= marker_budget
 
 
-def _mark_cache_compacted_for(message: Message, provider_id: str) -> bool:
-    """Persist a provider-scoped prompt-view compaction marker."""
+def _mark_cache_compacted_for(
+    message: Message,
+    provider_id: str,
+    *,
+    model_ref: str = "",
+    effective_budget: int | None = None,
+) -> bool:
+    """Persist/update a provider-scoped prompt-view compaction marker contract."""
     if not provider_id:
         return False
     meta = message.metadata if isinstance(message.metadata, dict) else {}
@@ -102,22 +220,66 @@ def _mark_cache_compacted_for(message: Message, provider_id: str) -> bool:
         providers = [str(item) for item in raw if item]
     else:
         providers = []
-    if provider_id in providers:
-        return False
-    providers.append(provider_id)
+    was_marked = provider_id in providers
+    if not was_marked:
+        providers.append(provider_id)
     meta[_CACHE_COMPACTED_FOR_META] = providers
+    scope_changed = False
+    if model_ref and effective_budget is not None:
+        scopes_raw = meta.get(_CACHE_COMPACTION_SCOPE_META)
+        scopes = dict(scopes_raw) if isinstance(scopes_raw, dict) else {}
+        new_scope = {
+            "version": _CACHE_COMPACTION_SCOPE_VERSION,
+            "model": model_ref,
+            "effective_budget": int(effective_budget),
+        }
+        scope_changed = scopes.get(provider_id) != new_scope
+        scopes[provider_id] = new_scope
+        meta[_CACHE_COMPACTION_SCOPE_META] = scopes
     message.metadata = meta
-    return True
+    return (not was_marked) or scope_changed
 
-# EVO-20260818 cache_window_converge（spec §5.1.1-1/2/4/5）: 窗口收敛上限守卫。
-# - value=None → 按模型窗口自适应 min(200000, max(100000, int(window*2*0.08)))（×2 字符/token 估算，
-#   1M=1,000,000 十进制；自适应仅对窗口 ≥625K tokens 生效，其余取兜底 100K）; 窗口未知 → 100K 兜底。
-# - 显式 ∈ [1000, 200000] → 原值生效 (value, None)。
-# - 显式 > 200K → 显式豁免保留原值 + 告警 note（2026-08-18 用户拍板: 兼容"方案A"大预算实践）。
-# - 非法（<1000 / 非整数 / 负数）→ 兜底 100K + note。
-# 纯函数: 无副作用、不抛异常、不读 env/不写日志; 供 factory.py 装配期与 runtime.py 运行期同源复用。
-_HISTORY_BUDGET_MAX = 200_000  # 收敛上限（默认/自适应路径强制; 显式配置豁免）
+
+def clear_cache_compacted_for(message: Message, provider_id: str) -> bool:
+    """Remove one provider's stale prompt-view marker while preserving other providers."""
+    if not provider_id:
+        return False
+    meta = message.metadata if isinstance(message.metadata, dict) else {}
+    raw = meta.get(_CACHE_COMPACTED_FOR_META)
+    if isinstance(raw, str):
+        providers = [raw]
+    elif isinstance(raw, (list, tuple, set)):
+        providers = [str(item) for item in raw if item]
+    else:
+        providers = []
+    changed = provider_id in providers
+    if changed:
+        providers = [item for item in providers if item != provider_id]
+        if providers:
+            meta[_CACHE_COMPACTED_FOR_META] = providers
+        else:
+            meta.pop(_CACHE_COMPACTED_FOR_META, None)
+    scopes_raw = meta.get(_CACHE_COMPACTION_SCOPE_META)
+    if isinstance(scopes_raw, dict) and provider_id in scopes_raw:
+        scopes = dict(scopes_raw)
+        scopes.pop(provider_id, None)
+        if scopes:
+            meta[_CACHE_COMPACTION_SCOPE_META] = scopes
+        else:
+            meta.pop(_CACHE_COMPACTION_SCOPE_META, None)
+        changed = True
+    message.metadata = meta
+    return changed
+
+# EVO-20260818 cache_window_converge 的兼容入口。
+# 2026-09-04 agency-first 修正：未配置全局 HISTORY_MAX_CHARS 不再等价于隐藏
+# 100K~200K cap。value=None 时只给出按物理窗口估算的诊断预算：90% 输入安全
+# 边界 × 0.6 chars/token。真正执行预算由当前路由模型再扣 output reserve/provider
+# cap，并由最终 payload guard 校验。显式 operator 值 >=1000 原样保留，不再存在
+# 无事实依据的 200K 上限/“显式豁免”语义；非法输入仍保守兜底 100K。
 _HISTORY_BUDGET_DEFAULT = 100_000  # 兜底默认值（与 max_chars 形参默认一致）
+_HISTORY_BUDGET_CHARS_PER_TOKEN = 0.6
+_HISTORY_BUDGET_INPUT_MARGIN = 0.9
 
 
 def converge_history_budget(
@@ -125,433 +287,35 @@ def converge_history_budget(
     *,
     model_window: int | None,
 ) -> tuple[int, str | None]:
-    """窗口收敛上限守卫（spec §5.1.1-1/2/4/5）.
+    """历史预算兼容/诊断收敛。
 
     Args:
         value: 显式配置值（None=未配置，按窗口自适应）.
         model_window: 模型窗口上限（tokens），None=未知.
 
     Returns:
-        (收敛后预算, 告警说明或 None). 默认/自适应路径预算 ∈ [100000, 200000];
-        显式配置 >200K 豁免保留原值（note 含"显式豁免"）; 非法输入兜底 100K.
+        (预算, 告警说明或 None)。value=None 且窗口已知时返回窗口输入安全边界的
+        字符估算，不代表独立全局 cap；显式合法配置原样保留；非法输入兜底 100K。
     """
     if value is None:
         if model_window is None:
             return _HISTORY_BUDGET_DEFAULT, "窗口未知兜底 100K"
         try:
-            adaptive = int(model_window * 2 * 0.08)
+            adaptive = int(
+                model_window
+                * _HISTORY_BUDGET_INPUT_MARGIN
+                * _HISTORY_BUDGET_CHARS_PER_TOKEN
+            )
         except (TypeError, ValueError):
             return _HISTORY_BUDGET_DEFAULT, "窗口非法兜底 100K"
         if adaptive <= 0:
             return _HISTORY_BUDGET_DEFAULT, "窗口非法兜底 100K"
-        return min(_HISTORY_BUDGET_MAX, max(_HISTORY_BUDGET_DEFAULT, adaptive)), None
+        return max(1, adaptive), None
     if not isinstance(value, int) or isinstance(value, bool):
         return _HISTORY_BUDGET_DEFAULT, "输入非法兜底 100K"
     if value < 1000:
         return _HISTORY_BUDGET_DEFAULT, f"输入非法兜底 100K（{value} < 1000）"
-    if value > _HISTORY_BUDGET_MAX:
-        return value, (
-            f"显式配置 {value} 超收敛上限 200K（显式豁免，已保留）；"
-            "如需收敛请配置 ≤200K"
-        )
     return value, None
-
-
-def _top_keywords(messages: list[Message], top: int = 5) -> list[str]:
-    """从消息内容抽取高频词作为检索建议词（极简词频，fail-open 由调用方包裹）."""
-    import re
-    from collections import Counter
-
-    stop = {
-        "的", "了", "是", "在", "我", "你", "他", "她", "它", "这", "那", "个", "与", "和",
-        "及", "对", "为", "从", "到", "把", "被", "也", "都", "就", "而", "但", "并", "或",
-        "the", "a", "an", "is", "are", "was", "to", "of", "for", "and", "or", "in", "on",
-        "with", "as", "at", "by", "from", "that", "this", "it", "we", "you", "i",
-    }
-    counter: Counter = Counter()
-    for m in messages:
-        if not m.content:
-            continue
-        for tok in re.findall(r"[\u4e00-\u9fff]+|[A-Za-z][A-Za-z0-9_]{2,}", m.content):
-            t = tok.lower()
-            if t not in stop and len(t) >= 2:
-                counter[t] += 1
-    return [w for w, _ in counter.most_common(top)]
-
-
-_REASON_WORDS = (
-    "因为", "所以", "决定", "选择", "由于", "为了", "判断", "推断",
-    "结论", "理由", "依据", "优先", "采用", "建议", "认为", "考虑",
-)
-
-
-def _extract_reasoning_facts(messages: list[Message], max_facts: int = 6) -> list[str]:
-    """EVO-3b39134f（OpenAI harness 借鉴）: 提取"决策点+理由"信号行.
-
-    压缩保留推理（为什么这样做）而非仅动作/结果——被压缩的推理链丢失后，
-    AI 检索归档只见动作不见动机，易重复分析。规则提取零 LLM：
-    含决策/推理连接词的行（因为/所以/决定/选择/由于/为了/判断/推断/结论/理由/
-    依据/优先/采用/建议/认为/考虑）且长度 <=200 视为推理结论候选。
-    """
-    facts: list[str] = []
-    seen: set[str] = set()
-    for m in messages:
-        if not m.content:
-            continue
-        for line in m.content.splitlines():
-            line = line.strip()
-            if not line or line in seen:
-                continue
-            if len(line) > 200:
-                continue
-            if any(w in line for w in _REASON_WORDS):
-                seen.add(line)
-                facts.append(line)
-            if len(facts) >= max_facts:
-                return facts
-    return facts
-
-
-def _cog_anchor_mode() -> str:
-    """读 COG_RUNTIME_ANCHOR_MODE（对齐 config._env_cog_anchor_mode 语义；模块级 env 惯例）."""
-    import os
-
-    raw = os.environ.get("COG_RUNTIME_ANCHOR_MODE", "").strip().lower()
-    return raw if raw in ("semantic", "anchor", "auto") else "auto"
-
-
-def _persist_semantic_state(session_id: str = "") -> bool:
-    """压缩黄金窗口: 从 GoalStore 派生语义状态并原子落盘（Cognitive Runtime tasks 2.4）.
-
-    决策线（T2 [当前决策]+[下一步] 独立注入帧）升级演进为 SemanticTaskState 投影——
-    压缩时把决策指针持久化（rebuild+save），build 每轮从状态文件投影为决策包 HOT 首行
-    （尾部聚合条内），代码演进不并存（spec 5.1.1-3b）。
-    fail-open: GoalStore 不可用/无活跃 goal/损坏 → False（不阻断压缩主流程）。
-    audit 路径 = LFL_DATA_DIR（镜像/跨区隔离锚点）或 data/（主区默认）。
-    CR-R1（tasks 2.2）: COG_RUNTIME_MODE=off 时短路——连 store 写也不做（纯旧行为）。
-    """
-    import os as _os_mod
-    if _os_mod.environ.get("COG_RUNTIME_MODE", "shadow").strip().lower() == "off":
-        return False
-    # CR-R1.1a: Semantic State 是会话级认知寄存器；缺失会话身份时禁止
-    # 退化到 GoalStore 全局恢复语义，避免 compact 边界把他会 Goal 写入当前 shard。
-    if not session_id:
-        return False
-    try:
-        import os
-        from datetime import datetime
-        from pathlib import Path as _Path
-
-        from llm_loop.cognitive.state import (
-            SemanticStateStore,
-            StateEnvelope,
-            StateIdentity,
-            Tombstone,
-            rebuild_state,
-        )
-        from llm_loop.introspection.goal import GoalStore
-
-        base = os.environ.get("LFL_DATA_DIR", "data")
-        audit = _Path(base) / "audit"
-        goal = GoalStore(audit).get(
-            prefer_session_id=session_id, strict_session=True
-        )
-        store = SemanticStateStore(audit)
-        state = rebuild_state(goal)
-        if state is None:
-            # spec 4.1-3 墓碑：goal 终态（complete/blocked）→ 对现存分片打 tombstone，
-            # 不删除（供审计）；无 goal 时保留旧分片不覆盖（原语义）。
-            if goal and str(goal.get("status", "")) in ("complete", "blocked"):
-                old = store.load(session_id)
-                if isinstance(old, StateEnvelope) and old.tombstone is None:
-                    old.tombstone = Tombstone(
-                        reason=f"goal_{str(goal.get('status', ''))}",
-                        ts=datetime.now(UTC).isoformat(),
-                    )
-                    store.save(session_id, old)
-            return False  # 无活跃 goal：不覆盖既有状态文件（保留旧指针）
-        if goal is None:
-            # CR-R1.1（审查项10 pyright 归零）: 有 state 无 goal——identity 无从派生
-            # （宁缺勿错，同上语义不覆盖）；显式收窄 Optional，替代原先 .get 隐式
-            # AttributeError→except 兜底（行为等价：均 return False）。
-            return False
-        cps = goal.get("checkpoints") or []
-        identity = StateIdentity(
-            session_id=session_id or "_",
-            goal_id=str(goal.get("id", "")),
-            goal_updated_at=str(goal.get("updated_at", "")),
-            checkpoint_ts=str((cps[-1] or {}).get("ts", "")) if cps else "",
-        )
-        old = store.load(session_id)
-        if isinstance(old, StateEnvelope):
-            # revision 语义：源未变（identity matches）保留；源变更 +1（design §2.1）
-            identity.state_revision = (
-                old.identity.state_revision
-                if old.identity.matches(goal)
-                else old.identity.state_revision + 1
-            )
-        store.save(session_id, StateEnvelope(identity=identity, state=state))
-        return True
-    except Exception:
-        import logging
-
-        logging.getLogger(__name__).warning(
-            "语义状态持久化失败（fail-open）", exc_info=True
-        )
-        return False
-
-
-def _decision_line_frame(session_id: str = "") -> str:
-    """能力 B 决策线（injection_hygiene 5.2）: 活跃 goal + 最近 checkpoint 两行指针.
-
-    注入位置 = 压缩产物帧首行（[压缩关键事实] 之前）——压缩后恢复从「检索式」变
-    「指针式」（AI 不必 search 重建上下文，直接知道当前在做什么/下一步）。
-    内容 ≤400 字符（spec 5.2-2）；只带 goal_id 指针不带 evidence 全文（5.2-4）。
-    全路径 fail-open: GoalStore 不可用/无活跃 goal → 空串省略（禁阻塞压缩主流程）。
-    audit 路径 = LFL_DATA_DIR（镜像/跨区隔离锚点）或 data/（主区默认）。
-    """
-    if not session_id:
-        return ""
-    try:
-        import os
-        from pathlib import Path as _Path
-
-        from llm_loop.introspection.goal import GoalStore
-
-        base = os.environ.get("LFL_DATA_DIR", "data")
-        g = GoalStore(_Path(base) / "audit").get(
-            prefer_session_id=session_id, strict_session=True
-        )
-        if not g or g.get("status") != "active":
-            return ""
-        obj = str(g.get("objective", ""))
-        cps = g.get("checkpoints") or []
-        nxt = str((cps[-1] or {}).get("next", "")) if cps else ""
-        line1 = f"[当前决策] goal={str(g.get('id', ''))[:12]} | {obj}"
-        line2 = f"[下一步] {nxt}" if nxt else "[下一步] （无 checkpoint；见 objective）"
-        return (line1 + "\n" + line2)[:400]
-    except Exception:
-        import logging
-
-        logging.getLogger(__name__).warning(
-            "决策线读取失败（fail-open 省略）", exc_info=True
-        )
-        return ""
-
-
-def _archive_key_facts(messages: list[Message], max_facts: int = 8) -> str:
-    """RULE-AI-00 增强: 压缩注入"确定性关键事实清单"（规则提取零 LLM）.
-
-    对被压缩消息逐条用 extract_key_info 提取含动作/结果信号的行，
-    汇总去重后注入——AI 快速感知旧内容要点，再决定是否主动检索原文。
-    不调 LLM（程序只提供客观要点，不替 AI 理解）。
-    """
-    from llm_loop.memory.archive import extract_key_info
-
-    facts: list[str] = []
-    seen: set[str] = set()
-    for m in messages:
-        if not m.content:
-            continue
-        try:
-            f, _p, _s = extract_key_info(m.content, max_facts=3)
-        except Exception:
-            continue
-        for item in f:
-            item = item.strip()
-            if item and len(item) >= 4 and item not in seen:
-                seen.add(item)
-                facts.append(
-                    neutralize_reference_frame(item, ref="archive:search_archive")
-                )
-            if len(facts) >= max_facts:
-                break
-        if len(facts) >= max_facts:
-            break
-    # EVO-3b39134f: 动作/结果 + 推理结论（决策+理由）并列注入。
-    # 推理结论独立于动作/结果——归档消息若只有决策理由（无动作结果信号词），
-    # facts 为空也应注入推理段（否则推理结论丢失，OpenAI 实验痛点复现）。
-    reasoning = [
-        neutralize_reference_frame(item, ref="archive:search_archive")
-        for item in _extract_reasoning_facts(messages, max_facts=6)
-    ]
-    if not facts and not reasoning:
-        return ""
-    parts: list[str] = []
-    if facts:
-        parts.append(
-            "[压缩关键事实] 被压缩旧消息中的关键动作/结果（规则提取，非语义总结；细节以原文为准）：\n- "
-            + "\n- ".join(facts)
-        )
-    if reasoning:
-        parts.append(
-            "[压缩推理结论] 关键决策与理由（规则提取，供追溯决策动机、避免重复推理；"
-            "细节以原文为准）：\n- " + "\n- ".join(reasoning)
-        )
-    return "\n".join(parts)
-
-def _archive_index_dir(messages: list[Message]) -> str:
-    """生成压缩档案索引目录（数行，供 AI 主动检索；原文已另存至档案）."""
-    from collections import Counter
-
-    roles = Counter(m.role for m in messages if m.content)
-    # DSH 借鉴（2026-08-18 拷问产出）: 归档目录【去动态计数】——N/角色/工具计数每轮变
-    # → 前缀持续漂移。改为固定文本（字节稳定——压缩断点后前缀稳定）；检索词由 search_archive
-    # 自行索引（AI 需要时主动检索——RULE-AI-00）。
-    from collections import Counter as _Counter
-
-    roles = _Counter(m.role for m in messages if m.content)
-    tools = _Counter(m.tool_name for m in messages if m.tool_name)
-    n = len(messages)
-    chars = sum(len(m.content) for m in messages)
-    lines = [
-        f"[压缩档案目录] 本次归档 {n} 条消息（约 {chars} 字符），原文已完整另存；"
-        "检索入口: search_archive。"
-    ]
-    if roles:
-        lines.append("- 消息构成: " + ", ".join(f"{r}×{c}" for r, c in roles.most_common()))
-    if tools:
-        lines.append("- 工具结果: " + ", ".join(f"{t}×{c}" for t, c in tools.most_common(6)))
-    words = _top_keywords(messages)
-    if words:
-        lines.append("- 索引关键词: " + ", ".join(words))
-    return "\n".join(lines)
-
-
-
-
-def _adaptive_tool_trim_age(total_chars: int, max_chars: int) -> int:
-    """R3: 按上下文占用率自适应 tool_trim_age（AI 无感零配置）.
-
-    - < 40% → 20（保守，保护最近上下文完整）
-    - 40-70% → 10（中等）
-    - > 70% → 5（激进，更早降级旧 tool 结果）
-    """
-    if max_chars <= 0:
-        return 20
-    ratio = total_chars / max_chars
-    if ratio < 0.4:
-        return 20
-    if ratio < 0.7:
-        return 10
-    return 5
-
-
-def _prune_oversized_tool_result(content: str, limit: int = 200_000) -> str:
-    """DSH 借鉴（2026-08-18 拷问产出）: 超长工具结果【中间剪枝标记】（保留头尾）.
-
-    与归档不同——不触发归档目录变化（前缀稳定）；保留头尾（AI 可见关键信息）。
-    仅提交视图剪枝（不动原消息）。超过 limit 的单条 tool 结果在此截断。
-    """
-    if content is None or len(content) <= limit:
-        return content
-    head = content[: limit // 2]
-    tail = content[-limit // 2 :]
-    return (
-        head
-        + f"\n\n[... 工具结果中间已剪枝（{len(content) - limit:,} 字符）——原文可 search_archive 检索 ...]\n\n"
-        + tail
-    )
-
-
-def _layer_trim(
-    messages: list[Message],
-    *,
-    enabled: bool,
-    threshold: int,
-    age: int,
-    session_id: str,
-    archive_sink: ArchiveSink | None,
-    require_archive_success: bool = False,
-) -> list[Message]:
-    """历史分层降级（EVO-20260811-7baa2737）: 旧的长 tool 消息降级为首尾摘要.
-
-    规则: role=tool 且 content 超 threshold 且距最新消息 >= age 条 → 降级。
-    原文经 archive_sink 归档（信息零丢失），消息本身保留（role/tool_name/status 不变），
-    仅 content 替换为摘要 + 检索指引。返回新消息列表（无副作用，不动原消息）。
-    """
-    if not enabled:
-        return list(messages)
-    out: list[Message] = []
-    n = len(messages)
-    for idx, m in enumerate(messages):
-        is_old_tool = (
-            m.role == "tool" and m.content and len(m.content) > threshold and (n - 1 - idx) >= age
-        )
-        if not is_old_tool:
-            out.append(m)
-            continue
-        full = m.content
-        archived = False
-        if archive_sink is not None and session_id:
-            try:
-                archive_sink(session_id, m)
-                archived = True
-            except Exception:
-                import logging
-
-                logging.getLogger(__name__).warning(
-                    "分层降级原文归档失败（fail-open，标注如实声明）", exc_info=True
-                )
-                if require_archive_success:
-                    raise
-        # 审查中危修复: sink 失败时标注如实声明"未能归档"——原实现失败仍写
-        # "原文已另存"（信息零丢失承诺失实，AI 检索必空手而归）。
-        if archived:
-            _hint = (
-                f'完整原文检索入口: search_archive(tool_name="{m.tool_name}"); query 可用于关键词定位'
-                if m.tool_name
-                else "完整原文检索入口: search_archive(query=<关键词>)"
-            )
-            archived_note = "原文已另存压缩档案"
-        else:
-            _hint = ""
-            archived_note = "原文归档失败（未另存，仅保留以下摘要）"
-        # 摘要优先（EVO-20260815）: 折叠时先提取关键事实+关键路径/URL（复用 extract_key_info，
-        # 规则提取零 LLM），避免机械首尾截断把中间关键信息丢给 AI 迫使二次检索浪费 token；
-        # 提取不到任何内容（无路径/URL/动作信号词）时回退首尾截断兜底（背景+结论）。
-        digest = ""
-        try:
-            from llm_loop.memory.archive import extract_key_info
-
-            facts, paths, _s = extract_key_info(full, max_facts=5)
-            parts: list[str] = []
-            if facts:
-                # 清洗: facts 可能保留原文行前缀（"- "等），避免 join 后出现 "- - xxx" 重复噪音
-                cleaned = [f.strip().lstrip("-").strip() for f in facts if f.strip()]
-                cleaned = [f for f in cleaned if f]
-                if cleaned:
-                    parts.append(
-                        "关键事实（规则提取，非语义总结；细节以原文为准）：\n- "
-                        + "\n- ".join(cleaned)
-                    )
-            if paths:
-                parts.append("关键路径/URL：\n- " + "\n- ".join(paths[:8]))
-            digest = "\n\n".join(parts)
-        except Exception:
-            digest = ""
-        if not digest:
-            digest = f"── 首部 ──\n{full[:400]}\n── 尾部 ──\n{full[-400:]}"
-        out.append(
-            Message(
-                role=m.role,
-                content=(
-                    f"[工具输出已分层] 共 {len(full)} 字符（触发阈值: {threshold} 字符），{archived_note}"
-                    + (f"（{_hint}）：\n" if _hint else "：\n")
-                    + f"{digest}"
-                ),
-                source=m.source,
-                tool_call_id=m.tool_call_id,
-                status=m.status,
-                tool_name=m.tool_name,
-                error_detail=m.error_detail,
-                tool_calls=m.tool_calls,
-                reasoning_content=m.reasoning_content,
-                metadata=m.metadata,
-            )
-        )
-    return out
-
 
 
 # archive sink: (session_id, message) -> None（由调用方装配 ArchiveStore）
@@ -694,9 +458,6 @@ def build_history_messages(
     session_id: str = "",
     archive_sink: ArchiveSink | None = None,
     summarizer: Any | None = None,  # 保留签名向后兼容；压缩路径不再自动调 LLM 摘要（RULE-AI-00，LLM 摘要由 AI 经 search_archive(with_summary=true) 主动触发）
-    layer_tool_trim: bool = False,  # EVO-20260811-7baa2737: 历史分层降级（默认关=零回归，loop 装配时按 settings 启用）
-    tool_trim_threshold: int = 8000,  # tool 消息 content 超此长度才降级（默认 8000，EVO-20260815 调大减少折叠触发）
-    tool_trim_age: int = 0,  # R3: 0=自适应（按占用率自动调）；>0=固定值禁用自适应
     reasoning_tail: int = 0,  # M66: 历史中仅保留最近 N 轮思考链（默认 0=全保留，T-P0-1-1 capability-first）
     skip_injected_system: bool = False,  # P1-7: 跳过推送式 system 注入（metadata.injected_system）
     # —— 仅落会话不进提交, system 前缀保持静态 → 引擎前缀缓存命中; 功能性注入不受影响
@@ -711,28 +472,24 @@ def build_history_messages(
     head_keep_target_ratio: float = 0.5,  # fixed-head 最多占压缩目标水位的比例；默认保持旧 50%
     # provider 中段压缩可调高（DeepSeek 生产建议 0.65），给稳定前缀更多目标预算，同时
     # 至少给最近尾部预留约 35% 水位；避免为了命中把最近语义全部挤出。
-    _append_summary_enabled: bool = False,  # 2026-08-21 追加式压缩: 归档后追加确定性摘要
     # （默认关=零回归）。启用后归档消息生成固定格式摘要追加提交尾部——任务语义连贯
     # + 前缀稳定（同归档内容→同摘要字节→缓存命中）。
-    progressive_fold: int = 0,  # EVO-20260824-54d46549（billion-context 拷问产出）: 渐进折叠 K 值。
-    # >0 时压缩改为"每次最多归档最老 K 个配对组"（K 小, 默认建议 3-5），不一次裁到预算×0.6；
-    # 0=一次性大裁（现有行为, 零回归）。诚实定位（字节级前缀缓存下"前缀保持"不存在——
-    # billion README 宣传已被推翻）: 渐进价值是命中率曲线平滑 + cache_guard 不 BLOCK
-    # + 智力无断崖（每次只丢几组, AI 可逐步适应/检索），而非省 token（单次 miss 范围不变）。
-    # 折叠后注入折叠标注（AI 有感知, 减少"刚引用的内容已被折掉"的落空）。
     freeze_compression: bool = False,  # P0 压缩风暴熔断（2026-08-25）: 冻结期禁止
     # 一切程序压缩/归档/分层降级（前缀字节稳定），且锚点不前移（anchor_out 不填充）。
     # 仅用于熔断冻结轮——超预算时由 engine 前置 context_pressure 管控，不在此提交超限载荷。
     cache_archive_provider: str = "",  # provider级提交视图压缩标记；非空时中段只折一次
+    cache_archive_model: str = "",  # P4: marker provenance，模型变化可重算旧 provider 折叠
+    cache_archive_budget: int | None = None,  # P4: marker provenance，预算扩容可重算旧折叠
     cache_compacted_out: list[Message] | None = None,  # 本轮新写标记的原消息，供事件链同步
+    cache_compacted_index_out: list[int] | None = None,  # 对应消息在原始 session_messages/base 中的精确索引
+    cache_protected_prefix_messages: int = 0,  # P1: 上轮已确认 cached 的历史消息数（system 后）
+    cache_protected_prefix_chars: int = 0,  # P1: 上轮 cached boundary 扣除 system 后的字符近似
     compact_view_stats: list[dict] | None = None,  # EVO-20260825 任务6: 压缩后视图体积验证
-    # 输出容器——大裁/折叠发生后填充 [{pre_chars, post_chars, drop_pct, archived_count}]，
+    # 输出容器——大裁/折叠发生后填充真实触发/目标/结果参数，供 deterministic replay；
     # 供调用方（build.py）写 breaker 审计事件 view_not_shrinking_after_compact（drop<5% 时）。
-    degrade_out: list[dict] | None = None,  # EVO-20260825 任务7（§5.7）: 渐进折叠降级输出容器
-    # ——progressive_fold>0 但 cache_archive_provider 缺失时填充
-    # [{kind: "degraded", reason, head_keep_chars}]，供调用方写 metadata.cache_health。
     require_archive_success: bool = False,  # ERC enforce: hidden bytes must be durable before shrink
     preserve_last_human_exact: bool = False,  # R6 initial ingress: never replace current human truth with a compact surrogate
+    current_turn_ref: int | None = None,  # G6-v2: render source-attached boundary facts only in owning human turn
 ) -> list[dict]:
     """组装提交 LLM 的消息序列（保序 + 超长另存压缩 + 如实标注）.
 
@@ -747,45 +504,16 @@ def build_history_messages(
         LLM 协议消息列表（dict）。压缩发生时消息序列含 `[上下文压缩]` 标注。
     """
     out: list[dict] = []
+    # P1 replay fidelity: 在任何 slice/filter/layer-trim 前冻结原始 base identity→index。
+    # 后续 projection 用 prefix_len + filtered_indices 映射回 Session 真正 msg_seq，
+    # message.cache_compacted 不再依赖 role/content/ts fuzzy resolve。
+    _source_index_by_id = {id(m): i for i, m in enumerate(session_messages)}
     if compacted_out is not None:
         compacted_out[:] = [False]
     if cache_compacted_out is not None:
         cache_compacted_out.clear()
-    if degrade_out is not None:
-        degrade_out.clear()
-    # 直接调用者若没有 provider 级折叠标记，仍保持旧防御：fold+head_keep 会重复
-    # 归档同一中段。LoopEngine 会传 cache_archive_provider，因此可安全保留固定头部。
-    if progressive_fold > 0 and not cache_archive_provider:
-        # 任务7（§5.7）: archive_provider 缺失——无法写入 provider 级 cache_compacted_for
-        # 标记，"固定头部 + 渐进折叠"会重复归档同一中段。降级：强制关闭渐进折叠
-        # （回一次性大裁），head_keep_chars 恢复原值（不得因降级而错误置 0）；
-        # 原值 ≤0 时用 DEFAULT_HEAD_KEEP_CHARS_ON_DEGRADE（env 可配，默认 2000）。
-        import logging
-
-        _deg_log = logging.getLogger(__name__)
-        _deg_log.warning(
-            "渐进折叠降级: progressive_fold=%d 要求 cache_archive_provider（当前缺省）"
-            "——强制关闭渐进折叠，head_keep_chars 恢复原值 %d（session=%s）",
-            progressive_fold,
-            head_keep_chars,
-            session_id,
-        )
-        if head_keep_chars <= 0:
-            head_keep_chars = _DEFAULT_HEAD_KEEP_CHARS_ON_DEGRADE
-            _deg_log.error(
-                "渐进折叠降级后 head_keep_chars 仍 ≤0，使用默认 %d（session=%s）",
-                _DEFAULT_HEAD_KEEP_CHARS_ON_DEGRADE,
-                session_id,
-            )
-        progressive_fold = 0
-        if degrade_out is not None:
-            degrade_out[:] = [
-                {
-                    "kind": "degraded",
-                    "reason": "progressive_fold 要求 cache_archive_provider（缺省）",
-                    "head_keep_chars": head_keep_chars,
-                }
-            ]
+    if cache_compacted_index_out is not None:
+        cache_compacted_index_out.clear()
     if system_prompt:
         out.append({"role": "system", "content": system_prompt})
     # Cache-First (2026-08-16): system_prompt 静态主体长度——永不截断（前缀缓存锚）。
@@ -843,7 +571,20 @@ def build_history_messages(
         else:
             out.append(msg_dict)
 
-    total_chars = sum(_wire_size(m) for m in session_messages)
+    total_chars = sum(_wire_size(m, current_turn_ref) for m in session_messages)
+
+    def _marker_active(m: Message) -> bool:
+        # Breaker freeze 的语义是“本轮绝不改写 provider view”。冻结期间继续沿用
+        # 既有 marker；待 freeze 解除后再按新 model/budget contract 一次性重投影。
+        if freeze_compression:
+            return is_cache_compacted_for(m, cache_archive_provider)
+        return is_cache_compacted_for(
+            m,
+            cache_archive_provider,
+            model_ref=cache_archive_model,
+            effective_budget=cache_archive_budget,
+        )
+
     # P1-10: 窗口锚定——起点固定（锚点前的消息已归档, 不再参与构建/重复归档）
     if history_anchor > 0 and history_anchor < len(session_messages):
         session_messages = session_messages[history_anchor:]
@@ -851,7 +592,7 @@ def build_history_messages(
             session_messages = [
                 m
                 for m in session_messages
-                if not is_cache_compacted_for(m, cache_archive_provider)
+                if not _marker_active(m)
             ]
         # 2026-08-16 锚点对齐工具轮边界（现场：tool_call_id is not found 根因）：
         # 锚点落在声明↔回执组内会把声明裁掉、留下孤儿回执（API 拒绝）。
@@ -879,59 +620,31 @@ def build_history_messages(
                 dropped_orphans,
             )
         session_messages = kept_msgs
-        total_chars = sum(_wire_size(m) for m in session_messages)
+        total_chars = sum(_wire_size(m, current_turn_ref) for m in session_messages)
     elif cache_archive_provider:
         session_messages = [
             m
             for m in session_messages
-            if not is_cache_compacted_for(m, cache_archive_provider)
+            if not _marker_active(m)
         ]
-        total_chars = sum(_wire_size(m) for m in session_messages)
-    # R3: tool_trim_age=0 时按占用率自适应（AI 无感零配置）
-    if tool_trim_age <= 0:
-        tool_trim_age = _adaptive_tool_trim_age(total_chars, max_chars)
-    # EVO-20260817: 主动压缩阈值（预算×compact_ratio; 1.0=现行为超限才压,
-    # <1.0 预算附近提前整理——用户决策: 长任务大几率撞顶, 提前平滑压缩优于被动撞顶）
+        total_chars = sum(_wire_size(m, current_turn_ref) for m in session_messages)
+
+    # 2026-09-03 P0 projected-wire pressure: 明确不会进入 provider wire 的推送式
+    # system 历史必须在压缩阈值判定前退出。旧路径只在正常序列化/锚定超限后跳过，
+    # 导致 08:27 实例把 38 条、6527 chars 的 injected_system 算入 255K 阈值，
+    # 实际 wire 249413 < 255000 却误触发一次 cache epoch reset。
+    if skip_injected_system:
+        session_messages = [m for m in session_messages if not _is_injected_system(m)]
+    total_chars = sum(_wire_size(m, current_turn_ref) for m in session_messages)
+
+    # Physical history pressure is handled by the single atomic-group compaction path.
+    # There is no separate tool-result relevance/age/threshold rewrite policy.
     compact_limit = max(1, int(max_chars * compact_ratio))
-    # P0 压缩风暴熔断冻结: 冻结期不走任何归档/压缩/分层降级路径（提交前缀字节稳定），
-    # 且锚点不前移（正常路径不填充 anchor_out）。超限载荷由 engine 前置 context_pressure
-    # 管控，不在此硬提交。
     if freeze_compression:
-        compact_limit = max(1, total_chars)  # 恒走正常路径（只序列化，不改写）
-        layer_tool_trim = False  # 分层降级改写中段 → 冻结期一并禁用
-    # P1-10: 锚定模式超预算 → 依次: ①剔除注入消息（推送式 system 不进提交, 剔除对提交
-    # 零影响且不产生归档/extras——提交前缀完全稳定）; ②分层降级中段旧 tool 消息（不移动锚点）;
-    # 仍超才走归档路径（锚点前移, 前缀断一次后重新锚定）
-    if history_anchor > 0 and total_chars > compact_limit:
-        if skip_injected_system:
-            filtered = [m for m in session_messages if not _is_injected_system(m)]
-            if len(filtered) != len(session_messages):
-                session_messages = filtered
-                total_chars = sum(_wire_size(m) for m in session_messages)
-        if total_chars > compact_limit and layer_tool_trim:
-            session_messages = _layer_trim(
-                session_messages,
-                enabled=True,
-                threshold=tool_trim_threshold,
-                age=tool_trim_age,
-                session_id=session_id,
-                archive_sink=archive_sink,
-                require_archive_success=require_archive_success,
-            )
-            total_chars = sum(_wire_size(m) for m in session_messages)
+        compact_limit = max(1, total_chars)
     if total_chars <= compact_limit:
-        for m in _apply_reasoning_tail(
-            _layer_trim(
-                session_messages,
-                enabled=layer_tool_trim,
-                threshold=tool_trim_threshold,
-                age=tool_trim_age,
-                session_id=session_id,
-                archive_sink=archive_sink,
-                require_archive_success=require_archive_success,
-            ),
-            reasoning_tail,
-        ):
+        # Agency-first: below the physical history budget, preserve tool-result bytes.
+        for m in _apply_reasoning_tail(session_messages, reasoning_tail):
             if skip_injected_system and _is_injected_system(m):
                 continue  # P1-7: 推送式注入仅落会话, 不进提交（system 前缀稳定）
             # EVO-20260817-cef296f8 L1b: 已消费的耗尽注入 system（[轮次决策请求]/
@@ -939,12 +652,12 @@ def build_history_messages(
             # system 区 → 前缀不因耗尽注入持续分叉（缓存 MISS 收敛）
             if skip_injected_system and m.role == "system" and (m.metadata or {}).get("consumed"):
                 continue
-            _d = m.to_llm_dict()
-            if _d.get("role") == "tool" and _d.get("content"):
-                _d["content"] = _prune_oversized_tool_result(_d["content"])
+            _d = _provider_message_dict(m, current_turn_ref)
             _append_or_merge(_d, dynamic=_is_dynamic_inject(m))
         return _repair_tool_call_pairing(out)
 
+    # 兼容既有语义：无 boundary 的超大真实 user 即使 R6 禁止删字节，也要如实标记
+    # “进入压缩/压力路径”；P1 boundary 的 no-op 会在归档选择后单独降回 False。
     if compacted_out is not None:
         compacted_out[0] = True
 
@@ -992,23 +705,54 @@ def build_history_messages(
         else None
     )
 
+    # 2026-09-03 cache-boundary P1: 上轮 provider 已确认命中的 prefix 是 mandatory head。
+    # 双口径（消息数 + chars）都向 atomic-group 末端取整：宁可多保护一组，也不能拆开
+    # assistant(tool_calls)↔tool 回执或只保护半条 boundary message。调用侧只会在同 session /
+    # 同模型 / 同 human turn / 同 stable-prefix fingerprint 时传非零值；其它情况自动为 0。
+    try:
+        _reported_cached_messages = max(
+            0, int(cache_protected_prefix_messages or 0)
+        )
+    except (TypeError, ValueError):
+        _reported_cached_messages = 0
+    try:
+        _protect_char_req = max(0, int(cache_protected_prefix_chars or 0))
+    except (TypeError, ValueError):
+        _protect_char_req = 0
+    _protected_group_count = 0
+    _protected_message_count = 0
+    _protected_chars = 0
+    # boundary_msg_index 属于最终 wire 索引，不能直接映射为 history-base 消息数；
+    # 08:28 实证把 wire#122 当 history 122 条会把保护区从约50K误放大到108K。
+    # 因此 chars 是保护 authority，reported message count 只进审计。
+    if _protect_char_req:
+        for _pg in atomic_groups:
+            if _protected_chars >= _protect_char_req:
+                break
+            _protected_group_count += 1
+            _protected_message_count += len(_pg)
+            _protected_chars += sum(_wire_size(mm, current_turn_ref) for mm in _pg)
+
     kept_groups: list[list[Message]] = []
     archived: list[Message] = []
     # EVO-20260816-380f1c2e（缓存友好压缩）: 归档目标从"裁到预算上限"改为"裁到预算×0.6 留缓冲"。
     # 前缀缓存机制: 追加消息不破坏命中（实证 97%+），但修改已提交序列（压缩）必断点。
     # 裁到 100% 上限 → 下一轮必再超 → 每轮压缩 → 前缀每轮变化 → 永久断点（实测 1% 命中率）。
     # 裁到 60% → 压缩后留 40% 增长空间 → 稳定期从"几轮"延长到"几十轮"（该时段纯追加、高命中）。
-    archive_budget = int(max_chars * _COMPRESS_TARGET_RATIO)
+    _archive_target_ratio = _compress_target_ratio()
+    _archive_target_chars = int(max_chars * _archive_target_ratio)
+    archive_budget = _archive_target_chars
     # EVO-20260817-9d3e1f2c（缓存友好压缩 v2）: 保留锚点头部（提交前缀命中）+ 最近尾部（语义），
     # 只归档中段——压缩不再破坏前缀缓存。实证: 锚点前移式压缩后首轮命中 6.8%→次轮起 96%
     # （全量失效后重新锚定）; 保留头部后压缩轮即命中 system+头部（~70%+），次轮 99%，无断崖。
     # 头部保留代价: 每轮多占预算（命中价 ~1/10），换来压缩轮无全量失效; head_keep_chars=0 关闭。
-    head_groups: list[list[Message]] = []
-    head_chars = 0  # 兜底初始化: head_keep_chars=0 时无头部保留, 渐进折叠分支引用不炸（2026-08-24 镜像实证 UnboundLocalError）
+    # mandatory cached-prefix 先占位；普通 fixed-head 只能在它之后追加，不能把它裁掉。
+    head_groups: list[list[Message]] = list(atomic_groups[:_protected_group_count])
+    head_chars = sum(_wire_size(mm, current_turn_ref) for g in head_groups for mm in g)
     # R3: 真实任务锚点保护只覆盖“真实对话组”，不覆盖锚点后 program-only user
     # 附录。旧实现把后续 [相关记忆]/[声明提醒] 也计入保护区，噪声一多就把
     # _anchor_protect_valid 打成 False，最终真实 user 任务反而被归档；旧
-    # [压缩关键事实] 又把该任务复述回来，形成伪 PASS。program-only 组仍可按普通
+    # 旧自动压缩摘要曾把任务复述回来形成伪 PASS。program-only 组仍可按普通
     # archive/budget 规则淘汰，不能获得与用户任务相同的保护权。
     _anchor_protected_groups: set[int] = set()
     if _anchor_group_idx is not None:
@@ -1019,12 +763,16 @@ def build_history_messages(
     _anchor_protect_valid = True
     if head_keep_chars > 0:
         acc = 0
-        for g in atomic_groups:  # 从最旧端累积头部保留组（前缀核心）
-            gl = sum(_wire_size(mm) for mm in g)
+        optional_count = 0
+        for g in atomic_groups:  # 从最旧端累积普通 fixed-head 候选
+            gl = sum(_wire_size(mm, current_turn_ref) for mm in g)
             if acc + gl > head_keep_chars:
                 break
-            head_groups.append(g)
+            optional_count += 1
             acc += gl
+        desired_count = max(_protected_group_count, optional_count)
+        head_groups = list(atomic_groups[:desired_count])
+        head_chars = sum(_wire_size(mm, current_turn_ref) for g in head_groups for mm in g)
         # 上限保护: 默认仍不超过归档预算一半；provider 中段压缩可显式提高到例如 0.65，
         # 让压缩轮保留更大的、曾作为早期请求端点出现过的 fixed-head。DeepSeek 实测：
         # “长 prompt → 中段分叉”不会自动复用全部共同前缀，但若 fixed-head 边界曾作为
@@ -1035,17 +783,17 @@ def build_history_messages(
             _head_target_ratio = 0.5
         _head_target_ratio = max(0.1, min(_head_target_ratio, 0.85))
         _head_cap = int(archive_budget * _head_target_ratio)
-        head_chars = acc
-        while head_groups and head_chars > _head_cap:
-            g = head_groups.pop()  # 收缩时去掉最新头部组（靠近中段，前缀核心不变）
-            head_chars -= sum(_wire_size(mm) for mm in g)
+        # cap 只允许收缩 optional fixed-head；mandatory cached prefix 永不因 target cap 被裁。
+        while len(head_groups) > _protected_group_count and head_chars > _head_cap:
+            g = head_groups.pop()
+            head_chars -= sum(_wire_size(mm, current_turn_ref) for mm in g)
     head_count = len(head_groups)
     # head 预算确定后再验证真实对话保护区，避免旧实现“注释计 head、实际未计”的
     # 时序漂移。只要真实对话保护区本身能放进整个 max_chars，就允许它穿透
     # 60% archive target；单条超大真实 user 仍走既有 trim+archive 兜底。
     if _anchor_protected_groups:
         _anchor_zone_chars = sum(
-            _wire_size(mm)
+            _wire_size(mm, current_turn_ref)
             for _pgi in _anchor_protected_groups
             for mm in atomic_groups[_pgi]
             if _pgi >= head_count
@@ -1066,69 +814,38 @@ def build_history_messages(
     # 最新组单条超限兜底仍按全预算判断（不因留缓冲而更激进截断单条消息;
     # 该分支语义=单条消息就超整个预算的极端场景, 保留语义与留缓冲解耦）。
     trim_budget = max_chars
-    # EVO-20260824-54d46549 渐进折叠: 每次最多归档最老 K 个配对组（K 小, 平滑曲线）——
-    # 常规超限只折 K 组即停（guard 不 BLOCK + 智力无断崖）; 若折满 K 组后提交仍
-    # >预算×0.95（guard 规则 F BLOCK 阈值）→ 突破 K 上限继续归档（保命兜底）。
-    # P0 修复（2026-08-25 实测）: fold 必须【从最老端连续折】——原实现混用"从最新
-    # 保留预算"逻辑，预算边界拆散消息对 → 归档区/保留区交错 → 锚点无法推进到
-    # 归档边界 → 同一批消息每轮重复归档（archive_ref ×N）→ 提交永不缩小 →
-    # guard 规则 F 永久 BLOCK。fold 语义 = 最老 K 组连续折 + 锚点同步前移。
-    if progressive_fold > 0:
+    # Provider compaction is a mechanical contiguous-oldest projection once the
+    # effective physical/operator budget is exceeded. It is intentionally independent
+    # of the retired per-round K-fold experiment: no semantic relevance decision and
+    # no per-round K rewrite. Durable archive + versioned provider markers preserve exact
+    # recovery and prevent the same old span from being folded again every round.
+    if cache_archive_provider:
         kept_groups = list(atomic_groups[head_count:])
-        _fold_left = progressive_fold
         _fold_count = 0
-        _next_group_idx = head_count  # kept_groups 首组对应的原列表索引（锚点保护用）
+        _next_group_idx = head_count
         while kept_groups:
             if _exact_human_group is not None and kept_groups[0] is _exact_human_group:
-                break  # R6: never fold the current human ingress group
-            if (
-                _next_group_idx in _anchor_protected_groups
-                and _anchor_protect_valid
-            ):
-                # 任务锚点保护（漂移修复 2026-08-29）: 首组已达锚点组——剩余组全在
-                # 保护边界内，停止折叠（穿透预算保留，锚点丢失代价 > 超限 BLOCK 兜底）。
-                # 保护失效例外（回归修复）: _anchor_protect_valid=False（锚点区超整
-                # 预算）时不 break——继续折叠使原文入档（零丢失），防单条大锚点永久
-                # 占满预算 + 档案零命中。
                 break
-            _kept_chars = sum(_wire_size(mm) for g in kept_groups for mm in g)
-            _total_now = len(system_prompt) + head_chars + _kept_chars
-            if cache_archive_provider:
-                # provider中段压缩已有稳定head + 持久化隐藏标记，不再需要靠K小步保护
-                # 前缀。一次压到目标水位，换取更长纯追加区间，避免90-95%附近每轮压缩。
-                if _total_now <= archive_budget:
-                    break
-            else:
-                if _fold_left <= 0:
-                    # 兼容旧渐进语义: 折满K后≤95%即可停；否则突破K继续折（保命）
-                    if _total_now <= int(max_chars * 0.95):
-                        break
-                elif _total_now <= archive_budget:
-                    break
-            g = kept_groups.pop(0)  # 最老组（连续折——归档区=视图头部连续段）
-            archived.extend(g)
+            if _next_group_idx in _anchor_protected_groups and _anchor_protect_valid:
+                break
+            _kept_chars = sum(
+                _wire_size(mm, current_turn_ref) for g in kept_groups for mm in g
+            )
+            if len(system_prompt) + head_chars + _kept_chars <= archive_budget:
+                break
+            group = kept_groups.pop(0)
+            archived.extend(group)
+            _next_group_idx += 1
             _fold_count += 1
-            if _fold_left > 0:
-                _fold_left -= 1
     else:
-        _fold_cap = 0
         _fold_count = 0
         for _gi in range(len(atomic_groups) - 1, head_count - 1, -1):
             group = atomic_groups[_gi]
-            group_len = sum(_wire_size(mm) for mm in group)
+            group_len = sum(_wire_size(mm, current_turn_ref) for mm in group)
             if _exact_human_group is not None and group is _exact_human_group:
                 kept_groups.insert(0, group)
                 archive_budget -= group_len
                 continue  # R6: exact human truth may pierce history budget; routing owns hard model limit
-            if _fold_cap > 0 and _fold_count >= _fold_cap:
-                # 已达渐进折叠上限: 评估保留后是否 ≤95% 预算——是则保留（平滑停折）;
-                # 否则突破上限继续归档（保命, 防 guard 规则 F BLOCK / 提交超限 400）。
-                _cur_kept = head_chars + sum(_wire_size(mm) for g in kept_groups for mm in g)
-                if len(system_prompt) + _cur_kept + group_len <= int(max_chars * 0.95):
-                    kept_groups.insert(0, group)
-                    archive_budget -= group_len
-                    continue
-                # 超限兜底: 落入下方归档分支（不因 K 上限而拒绝归档）
             if (
                 archive_budget - group_len < 0
                 and kept_groups
@@ -1140,8 +857,7 @@ def build_history_messages(
                 # 漂移修复（2026-08-29）: 保护边界内（锚点组起）不归档——穿透预算
                 # 保留任务锚点，锚点丢失代价 > 超限 BLOCK 兜底
                 archived.extend(group)  # 整组归档（配对原子性：不拆散）
-                if _fold_cap > 0:
-                    _fold_count += 1
+                _fold_count += 1
                 continue
             if group_len > trim_budget and (
                 not kept_groups
@@ -1185,10 +901,15 @@ def build_history_messages(
     # 压缩后提交 ≈ head(15-20%) + archive(60%)）→ 放弃 head 保留（锚点前移式压缩），
     # 防规则 F 反复 BLOCK 与压缩风暴；head 与最老保留组一并归档（信息零丢失）。
     _downgraded_head = False
-    if head_keep_chars > 0 and head_groups and kept_groups:
-        _kept_total = head_chars + sum(_wire_size(mm) for g in kept_groups for mm in g)
+    _cache_boundary_mode = "protected" if _protected_group_count > 0 else "inactive"
+    if head_groups and kept_groups:
+        _kept_total = head_chars + sum(_wire_size(mm, current_turn_ref) for g in kept_groups for mm in g)
         if len(system_prompt) + _kept_total > int(max_chars * 0.95):
             _downgraded_head = True
+            if _protected_group_count > 0:
+                # suffix 已压到不能再压仍超过安全线：允许一次显式 cache epoch reset，
+                # 不能静默声称“保护缓存”同时又把 cached prefix 归档。
+                _cache_boundary_mode = "epoch_reset"
             for g in head_groups:
                 archived.extend(g)
             head_groups = []
@@ -1196,12 +917,17 @@ def build_history_messages(
             head_chars = 0
             # head 归档后仍超（system 巨大场景）→ 继续从最老端连续归档，保护最新语义尾部。
             while kept_groups:
-                _cur = sum(_wire_size(mm) for g in kept_groups for mm in g)
+                _cur = sum(_wire_size(mm, current_turn_ref) for g in kept_groups for mm in g)
                 if len(system_prompt) + _cur <= int(max_chars * 0.95):
                     break
                 if _exact_human_group is not None and kept_groups[0] is _exact_human_group:
                     break  # R6: explicit over-budget is safer than silently replacing the user text
                 archived.extend(kept_groups.pop(0))
+
+    if compacted_out is not None and _protected_group_count > 0 and not archived:
+        # P1: confirmed cache boundary 把本轮所有可归档 suffix 都保护/锚定住，
+        # wire 实际未改变——不能把 soft-pressure no-op 记成 cache compaction。
+        compacted_out[0] = False
 
     # 另存被丢弃消息（信息零丢失）
     if archive_sink is not None and session_id and archived:
@@ -1219,32 +945,26 @@ def build_history_messages(
     # build 跳过本轮已经折叠的中段，解决 head_keep + fold 重复归档。
     if cache_archive_provider and archived:
         for m in archived:
-            if _mark_cache_compacted_for(m, cache_archive_provider) and cache_compacted_out is not None:
-                cache_compacted_out.append(m)
-
-    # R8.17/E10: compression/archive occurrence is runtime observability, not working
-    # context.  ``APPEND_COMPRESSION`` is retained as a compatibility setting but no
-    # longer grants prompt authority to archive counts/pointers.  The stable system
-    # prompt already advertises search_archive; durable ArchiveStore remains the truth.
-    del _append_summary_enabled
+            if _mark_cache_compacted_for(
+                m,
+                cache_archive_provider,
+                model_ref=cache_archive_model,
+                effective_budget=cache_archive_budget,
+            ):
+                if cache_compacted_out is not None:
+                    cache_compacted_out.append(m)
+                if cache_compacted_index_out is not None:
+                    _src_idx = _source_index_by_id.get(id(m))
+                    if _src_idx is not None:
+                        cache_compacted_index_out.append(_src_idx)
 
     # EVO-20260818 修复基线 bug（仿真测试暴露）: kept_flat 原实现从不包含 head_groups——
     # 头部消息既不在提交也不在归档（静默丢失）→ "缓存友好压缩保留锚点头部"从未真正生效，
     # 压缩轮命中率仅 system 占比（spec §5.3.1-3b ≥70% 不可达）。head 组并入提交最前。
     kept_flat = [m for g in head_groups for m in g] + [m for g in kept_groups for m in g]
-    kept_flat = _apply_reasoning_tail(
-        _layer_trim(
-            kept_flat,
-            enabled=layer_tool_trim,
-            threshold=tool_trim_threshold,
-            age=tool_trim_age,
-            session_id=session_id,
-            archive_sink=archive_sink,
-        ),
-        reasoning_tail,
-    )
+    kept_flat = _apply_reasoning_tail(kept_flat, reasoning_tail)
     # P1-10: 超长归档后锚点推进 = 旧锚点 + 窗口内被丢弃消息数
-    # （kept_flat 消息数不变（_layer_trim/思考链瘦身不删消息）, 差值即整组丢弃数;
+    # （kept_flat 中不删消息；差值即整组丢弃数；reasoning 瘦身只改提交视图）
     # "最新组超限精简注入"分支的消息仍在 kept → 不计入推进）
     # EVO-20260817-9d3e1f2c: 缓存友好压缩——头部保留（head_count>0）时锚点不动
     # （提交前缀稳定命中，只归档中段）；仅头部也被归档（head_count=0）才前移。
@@ -1280,83 +1000,14 @@ def build_history_messages(
         # 否则 system 落在消息中间 → qwen 系模板(9B/27B) 报
         # "System message must be at the beginning" (HTTP 400/500)。
         if m.role == "system":
-            _append_or_merge(m.to_llm_dict(), dynamic=_is_dynamic_inject(m))
+            _append_or_merge(_provider_message_dict(m, current_turn_ref), dynamic=_is_dynamic_inject(m))
         else:
-            _d = m.to_llm_dict()
-            if _d.get("role") == "tool" and _d.get("content"):
-                _d["content"] = _prune_oversized_tool_result(_d["content"])
+            _d = _provider_message_dict(m, current_turn_ref)
             out.append(_d)
-    # R8.17: compact runtime status itself is no longer projected.  This frame list is
-    # retained only for the legacy anchor-mode *active decision* compatibility path,
-    # which is a separate active-state surface and must not be removed as E10 cleanup.
-    _compact_frames: list[Message] = []
-    if archived:
-        # EVO-9794797e: 主动压缩——对被丢弃的旧消息做"另存 + 可见标注"
-        # （原文已完整另存至压缩档案保信息零丢失，fail-open）
-        # AI 优先（RULE-AI-00）: 压缩路径不自动调 LLM 摘要（程序不知道哪些信息重要、
-        # 自动摘要可能误导 + 增计费）；LLM 语义摘要由 AI 主动触发（search_archive with_summary=true）。
-        # EVO-20260811-1e68f400: 附加压缩档案目录（主动检索意识，fail-open）
-        extras: list[Message] = []
-
-        # 能力 B 决策线（injection_hygiene 5.2）→ Cognitive Runtime tasks 2.4 升级演进:
-        # semantic/auto: 压缩黄金窗口持久化语义状态（决策指针两行，_persist_semantic_state），
-        #   build 每轮从状态文件投影为决策包 HOT 首行（尾部聚合条内）；不再注入独立
-        #   决策线帧（代码演进不并存，spec 5.1.1-3b）。
-        # anchor（过渡回退态，design 2.1.3.4 冻结点④）: 保留旧决策线帧（零回归）。
-        # 两套路径同轮互斥（spec 4.2-3 单管线）。
-        try:
-            if _cog_anchor_mode() == "anchor":
-                _dl = _decision_line_frame(session_id)
-                if _dl:
-                    extras.append(
-                        Message(role="system", content=_dl, source=MessageSource.SYSTEM)
-                    )
-            else:
-                _persist_semantic_state(session_id)
-        except Exception:
-            import logging
-
-            logging.getLogger(__name__).warning(
-                "决策线注入失败（fail-open）", exc_info=True
-            )
-
-        # R8.17/E10: archive/fold/cache-degrade occurrence and dynamic counts are now
-        # telemetry only.  Do not append compression_message, fold notes, or cache-degrade
-        # prose here.  ArchiveStore + compact_view_stats + message.cache_compacted events
-        # preserve recovery/observability without consuming provider attention.
-        _compact_frames.extend(extras)
-        if _compact_frames:
-            _labeled_frames = [
-                ensure_semantic_label(
-                    str(f.content or ""),
-                    infer_layer(str(f.content or "")),
-                )
-                for f in _compact_frames
-                if str(f.content or "").strip()
-            ]
-            _merged = Message(
-                role="system",
-                content=(
-                    PROGRAM_APPENDIX_NOTICE
-                    + "\n"
-                    + "\n\n".join(_labeled_frames)
-                ),
-                source=MessageSource.SYSTEM,
-                metadata=origin_metadata(
-                    InjectionLayer.STATUS,
-                    injection_kind="compact_active_state_appendix",
-                    program_appendix_mixed=len(_labeled_frames) > 1,
-                ),
-            )
-            _merged.metadata["_dynamic"] = True
-            _merged_d = _merged.to_llm_dict()
-            if _merged.metadata:
-                # to_llm_dict 只输出 {role, content}——metadata 显式补进 dict
-                # （探测方按 m["metadata"]["archived_summary"] 定位归档摘要）
-                _merged_d["metadata"] = dict(_merged.metadata)
-            _append_or_merge(
-                _merged_d, dynamic=_is_dynamic_inject(_merged)
-            )
+    # Compaction is representation-only: archived source bytes remain durable and
+    # recoverable through explicit search/read paths. The runtime does not synthesize
+    # Goal/checkpoint decisions, key-fact summaries, or compression prose into provider
+    # context.
     # EVO-20260825 任务6.2: 压缩后视图体积验证——pre vs post 对比（drop<5% → WARN +
     # 审计事件由调用方写 breaker）。pre 口径 = 压缩前完整载荷（system + 窗口历史）；
     # post 口径 = 实际提交协议视图（含 head/kept/extras）。
@@ -1367,12 +1018,37 @@ def build_history_messages(
             _drop_pct = (
                 (max(1, _pre_chars) - _post_chars) / max(1, _pre_chars) * 100.0
             )
+            _archived_ids = {id(m) for m in archived}
+            _archived_group_count = sum(
+                1
+                for _g in atomic_groups
+                if any(id(_m) in _archived_ids for _m in _g)
+            )
             compact_view_stats.append(
                 {
+                    "trigger": "projected_history_over_compact_limit",
+                    "pre_history_chars": total_chars,
                     "pre_chars": _pre_chars,
                     "post_chars": _post_chars,
                     "drop_pct": round(_drop_pct, 1),
+                    "effective_budget_chars": max_chars,
+                    "compact_ratio": compact_ratio,
+                    "trigger_limit_chars": compact_limit,
+                    "trigger_excess_chars": max(0, total_chars - compact_limit),
+                    "archive_target_ratio": _archive_target_ratio,
+                    "archive_target_chars": _archive_target_chars,
                     "archived_count": len(archived),
+                    "archived_group_count": _archived_group_count,
+                    "atomic_group_count": len(atomic_groups),
+                    "compaction_mode": (
+                        "provider_contiguous_oldest" if cache_archive_provider else "budget_recent_tail"
+                    ),
+                    "head_keep_chars": head_keep_chars,
+                    "head_keep_target_ratio": head_keep_target_ratio,
+                    "cache_boundary_mode": _cache_boundary_mode,
+                    "cache_boundary_reported_messages": _reported_cached_messages,
+                    "cache_protected_messages": _protected_message_count,
+                    "cache_protected_chars": _protected_chars,
                 }
             )
             if _drop_pct < 5:

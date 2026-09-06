@@ -57,7 +57,7 @@ def _tool_resp(call_id: str, name: str, args: dict) -> LLMResponse:
 
 class TestE15StagnationReminder:
     def test_threshold_hits_event_only_zero_wire_injection(self, tmp_path: Path, monkeypatch):
-        """E15: 同参 3 次达阈值 → 'stagnation.reminder/suppressed' 事件在场、wire 零提醒."""
+        """E15: 同参 3 次达阈值 → 'tool.repeat_observed/observed' 事件在场、wire 零提醒."""
         engine, fake = _mk(
             tmp_path, monkeypatch,
             responses=[
@@ -73,47 +73,12 @@ class TestE15StagnationReminder:
         result = engine.run(sid, "真实任务")
 
         assert "停滞后的正常回答" in result.final_answer
-        assert ("stagnation.reminder", "suppressed") in actions
+        assert ("tool.repeat_observed", "observed") in actions
         wire = _wire_text(fake)
         assert "[停滞提醒]" not in wire
         for marker in _PROGRAM_MARKERS:
             assert marker not in wire, f"程序注入泄漏: {marker}"
 
-    def test_shadow_mode_records_shadow_event(self, tmp_path: Path, monkeypatch):
-        """LFL_STAGNATION_REMINDER=shadow: 计数照记、事件带 shadow 语义、零注入."""
-        monkeypatch.setenv("LFL_STAGNATION_REMINDER", "shadow")
-        engine, fake = _mk(
-            tmp_path, monkeypatch,
-            responses=[
-                _tool_resp("c1", "read_file", {"path": "/nonexistent/shadow-target"}),
-                _tool_resp("c2", "read_file", {"path": "/nonexistent/shadow-target"}),
-                _tool_resp("c3", "read_file", {"path": "/nonexistent/shadow-target"}),
-                _resp("shadow 正常回答"),
-            ],
-        )
-        actions = _spy_actions(engine)
-        sid = engine.session.create()
-        engine.run(sid, "真实任务")
-        assert ("stagnation.reminder", "suppressed_shadow") in actions
-        assert "[停滞提醒]" not in _wire_text(fake)
-
-    def test_off_mode_silent_zero_events(self, tmp_path: Path, monkeypatch):
-        """LFL_STAGNATION_REMINDER=off: 事件静默（三态开关语义完整）。"""
-        monkeypatch.setenv("LFL_STAGNATION_REMINDER", "off")
-        engine, fake = _mk(
-            tmp_path, monkeypatch,
-            responses=[
-                _tool_resp("c1", "read_file", {"path": "/nonexistent/off-target"}),
-                _tool_resp("c2", "read_file", {"path": "/nonexistent/off-target"}),
-                _tool_resp("c3", "read_file", {"path": "/nonexistent/off-target"}),
-                _resp("off 正常回答"),
-            ],
-        )
-        actions = _spy_actions(engine)
-        sid = engine.session.create()
-        engine.run(sid, "真实任务")
-        assert ("stagnation.reminder", "suppressed") not in actions
-        assert ("stagnation.reminder", "suppressed_shadow") not in actions
 
 
 class TestE16EmptySearchReminder:
@@ -139,7 +104,7 @@ class TestE16EmptySearchReminder:
         result = engine.run(sid, "真实任务")
 
         assert "空搜索后的正常回答" in result.final_answer
-        assert ("empty_search.reminder", "suppressed") in actions
+        assert ("tool.empty_search_observed", "observed") in actions
         wire = _wire_text(fake)
         assert "[搜索空结果提醒]" not in wire
         # 真实空结果回执原文保留（事实层不删）
@@ -232,17 +197,17 @@ class TestE18RoundExhaustion:
 
 
 class TestE12Err1210:
-    def test_blind_retry_path_zero_recovery_block(self, tmp_path: Path, monkeypatch):
-        """E12（恢复链 blind retry 分支）: 1210 → 原样重试成功，wire 零恢复块."""
+    def test_single_tail_user_1210_zero_recovery_prompt_and_zero_retry(self, tmp_path: Path, monkeypatch):
+        """P2-B: no structural wire transform => truthful 1210 end, no exact resend."""
         e1210 = LLMHTTPError(
             "400 Invalid parameter", status_code=400,
             body='{"error":{"code":"1210","message":"Invalid parameter"}}',
         )
-        engine, fake = _mk(tmp_path, monkeypatch, responses=[e1210, _resp("1210 自愈回答")])
+        engine, fake = _mk(tmp_path, monkeypatch, responses=[e1210])
         sid = engine.session.create()
-
         result = engine.run(sid, "真实任务")
-
-        assert "1210 自愈回答" in result.final_answer
-        assert "[任务·程序恢复]" not in _wire_text(fake)
-        assert "恢复动作=" not in _wire_text(fake)
+        assert "LLM 调用异常" in result.final_answer
+        assert len(fake.calls) == 1
+        wire = _wire_text(fake)
+        for marker in _PROGRAM_MARKERS:
+            assert marker not in wire

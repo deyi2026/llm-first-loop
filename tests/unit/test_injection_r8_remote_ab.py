@@ -52,7 +52,7 @@ def test_transport_failure_forces_unknown() -> None:
     assert mod._classification(result)["tier"] == "unknown"
 
 
-def test_weak_gate_counts_empty_response_as_completion_failure() -> None:
+def test_behavioral_a_arm_never_classifies_weak() -> None:
     rows = [
         _row("answer", completion=True, dominance=True),
         _row("answer", completion=True, dominance=None),
@@ -69,10 +69,13 @@ def test_weak_gate_counts_empty_response_as_completion_failure() -> None:
             "user_dominance_rate": 0.5,
         },
     }
-    assert mod._classification(result) == {"tier": "weak", "reason": "r7_a_weak_gate"}
+    classified = mod._classification(result)
+    assert classified["tier"] == "unknown"
+    assert classified["reason"] == "legacy_r7_not_capability_authority"
+    assert classified["legacy_resilience"]["completion_rate"] == 0.8333
 
 
-def test_strong_gate_requires_perfect_a_arm() -> None:
+def test_perfect_a_arm_never_classifies_strong() -> None:
     rows = [_row("answer", completion=True, dominance=True) for _ in range(6)]
     result = {
         "A": rows,
@@ -82,4 +85,6 @@ def test_strong_gate_requires_perfect_a_arm() -> None:
             "user_dominance_rate": 1.0,
         },
     }
-    assert mod._classification(result) == {"tier": "strong", "reason": "r7_a_strong_gate"}
+    classified = mod._classification(result)
+    assert classified["tier"] == "unknown"
+    assert classified["reason"] == "legacy_r7_not_capability_authority"

@@ -12,6 +12,7 @@ token 为模块私有哨兵类型实例（非字符串——防字符串拼接�
 
 from __future__ import annotations
 
+import contextvars
 import time
 from typing import TYPE_CHECKING
 
@@ -22,21 +23,25 @@ if TYPE_CHECKING:  # pragma: no cover - 类型检查专用，避免运行时循�
 class IngressToken:
     """人类输入通道准入凭据（哨兵对象；仅本模块可构造实例）。"""
 
-    __slots__ = ("channel", "entry", "issued_at")
+    __slots__ = ("channel", "entry", "issued_at", "delegated")
 
-    def __init__(self, _pin: object, channel: str, entry: str) -> None:
+    def __init__(
+        self, _pin: object, channel: str, entry: str, *, delegated: bool = False
+    ) -> None:
         # _pin 为模块私有哨兵：外部无法伪造该参数 → 无法绕过 issue_ingress 构造
         if _pin is not _ISSUE_PIN:
             raise ValueError("IngressToken 仅可经 issue_ingress 构造（哨兵防护）")
         object.__setattr__(self, "channel", channel)
         object.__setattr__(self, "entry", entry)
         object.__setattr__(self, "issued_at", f"{time.time():.6f}")
+        object.__setattr__(self, "delegated", bool(delegated))
 
     def __setattr__(self, name: str, value: object) -> None:
         raise AttributeError("IngressToken 不可变（哨兵凭据）")
 
     def __repr__(self) -> str:  # pragma: no cover - 调试友好
-        return f"IngressToken(channel={self.channel!r}, entry={self.entry!r})"
+        suffix = ", delegated=True" if self.delegated else ""
+        return f"IngressToken(channel={self.channel!r}, entry={self.entry!r}{suffix})"
 
 
 class _IssuePin:
@@ -49,6 +54,16 @@ _ISSUE_PIN = _IssuePin()
 _ALLOWED_CHANNELS = frozenset({"feishu", "web", "cli"})
 
 _ISSUED: dict[str, IngressToken] = {}
+
+# 当前顶层 run 的真实 ingress 凭据及其绑定 session。schedule(wake=True) 只允许
+# 在同一 human run 内把该凭据降权委派一次；子代理改写 current_session_id 后会
+# 因 session 不匹配失去授权，scheduled continuation 本身也不能递归再委派。
+current_ingress_token: contextvars.ContextVar[IngressToken | None] = contextvars.ContextVar(
+    "llm_loop_current_ingress_token", default=None
+)
+current_ingress_session_id: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "llm_loop_current_ingress_session_id", default=""
+)
 
 
 def issue_ingress(channel: str) -> IngressToken:
@@ -76,6 +91,22 @@ def issue_test_ingress() -> IngressToken:
         tok = IngressToken(_ISSUE_PIN, "test_harness", entry="test_harness")
         _ISSUED["test_harness"] = tok
     return tok
+
+
+def delegate_ingress(token: IngressToken, *, entry: str) -> IngressToken:
+    """把真实 human ingress 降权为一次性程序续跑凭据。
+
+    委派 token 保留原 human channel 以复用既有白名单，但显式标记 delegated，
+    且只驻留进程内、不写 schedule.json；进程重启后自动唤醒安全降级为通知。
+    """
+    if not isinstance(token, IngressToken) or token.delegated or not is_whitelisted(token):
+        raise ValueError("ingress 不可委派：必须是未委派的真实 human ingress")
+    ref = str(entry or "").strip()
+    if not ref:
+        raise ValueError("delegated ingress entry 不能为空")
+    return IngressToken(
+        _ISSUE_PIN, token.channel, entry=f"scheduled:{ref}", delegated=True
+    )
 
 
 def is_whitelisted(token: object) -> bool:

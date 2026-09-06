@@ -44,6 +44,18 @@ current_reasoning_effort: contextvars.ContextVar[str] = contextvars.ContextVar(
     "llm_loop_current_reasoning_effort", default=""
 )
 
+# 当前请求 reasoning 模式 override。值域: auto/off/on；空串表示调用方未显式指定，
+# 等价于 auto（保留 provider/operator 默认，不做内容启发式判断）。
+current_reasoning_mode: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "llm_loop_current_reasoning_mode", default=""
+)
+
+# 当前工具发现作用域。None 表示完整 registry；子代理等受限执行域可设置为
+# frozenset(tool_names)，确保 provider 投影与 get_tool_schema 发现面一致。
+current_tool_discovery_scope: contextvars.ContextVar[frozenset[str] | None] = (
+    contextvars.ContextVar("llm_loop_current_tool_discovery_scope", default=None)
+)
+
 # ERC R0/Phase2 shadow only: tools preserve their pre-trim observation only when an explicit
 # registry shadow hook is installed. Default false keeps legacy memory/runtime behavior unchanged.
 current_evidence_shadow_enabled: contextvars.ContextVar[bool] = contextvars.ContextVar(

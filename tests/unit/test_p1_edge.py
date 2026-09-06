@@ -6,7 +6,6 @@ from llm_loop.core.message import ToolCall, ToolResultStatus
 from llm_loop.introspection.search import RecordSearcher
 from llm_loop.memory.archive import ArchiveStore
 from llm_loop.memory.embedder import HashEmbedder
-from llm_loop.memory.retrieve import build_memory_messages
 from llm_loop.memory.retriever import SemanticRetriever
 from llm_loop.memory.store import MemoryEntry, MemoryStore
 from llm_loop.tools.builtin.read_file import ReadFileTool
@@ -35,16 +34,6 @@ def test_search_records_keyword_when_semantic_none(tmp_path):
     searcher = RecordSearcher(audit_dir=tmp_path / "audit", memory_store=mem)
     hits = searcher.search(kind="memory", query="Python", limit=5)
     assert len(hits) == 1
-
-
-def test_build_memory_messages_semantic(tmp_path):
-    """T30: build_memory_messages 语义检索命中（mode 标注注入）."""
-    mem = MemoryStore(tmp_path / "memory")
-    mem.save_entry(MemoryEntry(id="", type="fact", content="用户喜欢蓝色", keywords=["蓝色"]))
-    retriever = SemanticRetriever(HashEmbedder(), memory_dir=tmp_path / "memory")
-    msgs = build_memory_messages("喜欢的色彩", mem, semantic_retriever=retriever)
-    assert len(msgs) == 1
-    assert msgs[0].source.value == "memory"
 
 
 def test_summarizer_async_backfill(tmp_path):

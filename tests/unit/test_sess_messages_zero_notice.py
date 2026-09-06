@@ -73,7 +73,7 @@ class TestG5SessMessagesZeroNotice:
         persisted = engine.session.load(sid)
         assert _scan_sess_notices(persisted) == []
         # 观测轨在场（可观测性对照）
-        assert ("stagnation.reminder", "suppressed") in actions
+        assert ("tool.repeat_observed", "observed") in actions
 
     def test_e16_empty_search_path(self, tmp_path: Path, monkeypatch):
         engine, fake = _mk(
@@ -92,7 +92,7 @@ class TestG5SessMessagesZeroNotice:
 
         persisted = engine.session.load(sid)
         assert _scan_sess_notices(persisted) == []
-        assert ("empty_search.reminder", "suppressed") in actions
+        assert ("tool.empty_search_observed", "observed") in actions
 
     def test_e17_overflow_path(self, tmp_path: Path, monkeypatch):
         overflow = LLMError("provider says maximum context length exceeded")
@@ -136,9 +136,9 @@ class TestG5SessMessagesZeroNotice:
             "400 Invalid parameter", status_code=400,
             body='{"error":{"code":"1210","message":"Invalid parameter"}}',
         )
-        engine, fake = _mk(tmp_path, monkeypatch, responses=[e1210, _resp("g5 e12 回答")])
+        engine, fake = _mk(tmp_path, monkeypatch, responses=[e1210])
         sid = engine.session.create()
         engine.run(sid, "真实任务")
-
         persisted = engine.session.load(sid)
         assert _scan_sess_notices(persisted) == []
+        assert len(fake.calls) == 1

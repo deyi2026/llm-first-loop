@@ -74,13 +74,13 @@ def test_history_compression_pair_atomic_2m():
             i += 1
 
 
-def test_tool_oversize_archived_not_lost():
-    """300K 工具输出：分层摘要注入 + 完整结果另存（EVO-20260811-22a7d3e1 更新验收）.
+def test_tool_hard_cap_archives_exact_result_not_lost(tmp_path):
+    """300K output: physical hard cap truncates only after exact archive persistence."""
+    from llm_loop.memory.archive import ArchiveStore
 
-    演进后行为: 超 summary_threshold(默认5000) 先注入首/尾摘要（远小于硬上限），
-    完整结果仍另存至压缩档案可检索找回（信息零丢失不变）。
-    """
-    registry = ToolRegistry(max_output_chars=100_000)
+    archive = ArchiveStore(tmp_path / "archives")
+    registry = ToolRegistry(max_output_chars=100_000, archive_store=archive)
+    registry.set_session_id("m40-hard")
 
     class _BigTool:
         name = "big_tool"
@@ -98,11 +98,13 @@ def test_tool_oversize_archived_not_lost():
     registry.register(_BigTool())
     from llm_loop.core.message import ToolCall
 
-    call = ToolCall(id="big_1", name="big_tool", arguments={})
-    result = registry.execute(call)
-    assert len(result.content) <= 100_000 + 200  # 注入内容远小于硬上限（分层摘要）
-    assert "[输出摘要]" in result.content  # 分层注入（EVO-20260811-22a7d3e1）
-    assert 'search_archive(tool_name="big_tool")' in result.content  # EVO-20260814-e5b045d3: 可照抄的检索调用示例（旧通用指引已升级）
+    result = registry.execute(ToolCall(id="big_1", name="big_tool", arguments={}))
+    assert "[结果超长，已截断" in result.content
+    assert "硬上限: 100000" in result.content
+    assert "完整内容已另存" in result.content
+    hits = archive.search("m40-hard", "kkkk", tool_name="big_tool")
+    assert hits and hits[0]["chars"] == 300_000
+    assert len(hits[0]["content_preview"]) == 800
 
 
 def test_history_within_800k_budget_no_compression():

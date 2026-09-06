@@ -1,6 +1,6 @@
 """EVO-20260818 cache_window_converge: converge_history_budget 单元测试（spec §5.1.1）.
 
-覆盖: 未配置自适应/兜底、显式合法值、显式豁免、下限边界、非法输入、
+覆盖: 未配置物理窗口诊断/兜底、显式合法值、下限边界、非法输入、
 嵌入式路径（不经 factory 的 `_runtime_history_budget` 同源收敛）。
 """
 
@@ -36,13 +36,13 @@ class _EmbeddedEngine:
 
 def test_converge_unset_with_262k_window():
     budget, note = converge_history_budget(None, model_window=262000)
-    assert budget == 100000  # max(100K, min(200K, 262000*2*0.08=41920))
+    assert budget == 141480  # 262000 × 0.9 × 0.6
     assert note is None
 
 
 def test_converge_unset_with_1m_window():
     budget, note = converge_history_budget(None, model_window=1000000)
-    assert budget == 160000  # max(100K, min(200K, 1000000*2*0.08=160000))
+    assert budget == 540000  # 1M × 0.9 × 0.6；不再硬封 200K
     assert note is None
 
 
@@ -70,10 +70,10 @@ def test_converge_explicit_within_range():
     assert note is None
 
 
-def test_converge_explicit_over_limit_exempt():
+def test_converge_explicit_large_value_is_plain_operator_cap():
     budget, note = converge_history_budget(500000, model_window=262000)
-    assert budget == 500000  # 显式豁免: 保留原值（2026-08-18 用户拍板）
-    assert note is not None and "显式豁免" in note
+    assert budget == 500000
+    assert note is None  # 不再存在无事实依据的 200K 上限/豁免语义
 
 
 def test_converge_explicit_at_lower_bound():
@@ -110,12 +110,12 @@ def test_converge_explicit_bool_fallback():
 
 def test_embedded_runtime_budget_262k_window():
     engine = _EmbeddedEngine(ctx_limit=262000)
-    assert engine._runtime_history_budget() == 100000
+    assert engine._runtime_history_budget() == 141480
 
 
 def test_embedded_runtime_budget_1m_window():
     engine = _EmbeddedEngine(ctx_limit=1000000)
-    assert engine._runtime_history_budget() == 160000
+    assert engine._runtime_history_budget() == 540000
 
 
 def test_embedded_runtime_budget_window_unknown():

@@ -59,10 +59,9 @@ CHECKPOINT_GOAL_TOOL_DEF: dict = {
 GET_GOAL_TOOL_DEF: dict = {
     "name": "get_goal",
     "description": (
-        "获取当前任务目标 + 最近 checkpoints（恢复上下文，EVO-20260824-3cd4d74b）。何时用: "
-        "会话恢复/模型切换/交接后，用返回的 checkpoints 作 handoff 上下文；恢复时先验证"
-        "worktree/外部状态（git status、文件 mtime、演进建议状态）再依赖内容。何时不用: "
-        "无活动目标时。"
+        "读取 durable Goal 事实源：当前活动目标 + 最近 checkpoints。适用于用户明确继续/恢复"
+        "持久任务、模型切换/交接后确认当前 Goal，或已知 goal_id 需要读取。只返回已记录事实，"
+        "不替模型决定下一步；具体 task 状态与可执行 frontier 用 task_frontier。无活动 Goal 时返回空。"
     ),
     "parameters": {
         "type": "object",
@@ -202,7 +201,6 @@ def run_get_goal(ctx: Any, host: Any, args: dict) -> ToolResult:
                 lines.append(_ts)
         except Exception:  # noqa: BLE001
             pass
-    lines.append("恢复注意: 先验证 worktree/外部状态再依赖上述内容（RULE-AI-20）")
     return ToolResult(ToolResultStatus.SUCCESS, "\n".join(lines), "", "get_goal")
 
 

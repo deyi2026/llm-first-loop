@@ -2,7 +2,7 @@
 
 move 自 engine.py 内联路由段与守卫段（327-368）及辅助方法（648-735）与估算常量（77-80）：
 - 三级路由（per-call override > 会话 override > 默认装配），model_used 如实标注（M51）
-- 上下文超限前置守卫（M53，估算口径 _CHARS_PER_TOKEN_EST/_CONTEXT_SAFETY_MARGIN）
+- context/window metadata and model-aware history budget planning; actual provider overflow remains authoritative
 """
 
 # (W4-02b) mixin 时代文件级 pyright 豁免已随宿主显式标注移除；如 pyright 报错回退并登记
@@ -13,9 +13,6 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from llm_loop.core.injection_labels import InjectionLayer, ensure_semantic_label
-from llm_loop.core.loop.focus import is_simple_task
-from llm_loop.core.loop.tool_exec import _json_dumps_args
 from llm_loop.feedback.honesty import model_unavailable_text
 from llm_loop.llm.client import LLMClient
 
@@ -40,7 +37,7 @@ _UNKNOWN_MODEL_BUDGET_CHARS = 8000
 class _RouteDecision:
     """内部路由决策容器（仅内部使用，非对外契约）.
 
-    final_answer_override 非 None 时主链路直接以其结束本轮（守卫拒绝 / per-call resolve 失败）。
+    final_answer_override is reserved for factual routing/resolve failure, never an estimated context rejection.
     """
 
     llm_client: LLMClient
@@ -91,16 +88,14 @@ class RoutingService:
         self,
         model,
         sess,
-        messages,
-        tools_param,
         *,
         registry_snapshot: ProviderRegistry | None = None,
         default_registry_snapshot: ProviderRegistry | None = None,
     ) -> _RouteDecision:
-        """行动：模型三级路由 + 上下文守卫（move 自 engine.py:327-368）.
+        """Resolve the explicit per-call/session/default model route.
 
-        路由判定序: per-call override > 会话 override > 默认装配；
-        守卫拒绝 / per-call resolve 失败 → final_answer_override 非 None（主链路 break）。
+        Context metadata is returned for budgeting/telemetry. Estimated payload size is not
+        a second hard authority; actual provider overflow drives deterministic recovery.
         """
         # M48（design §5.3）: 路由决策——
         # - per-call Web model（run() 参数）优先级最高：经池路由到对应 provider client
@@ -165,60 +160,17 @@ class RoutingService:
             llm_client = self._host.llm
             model_used = self._default_model_label()
             metadata_registry = None
-        # EVO-20260821-69e7f172（用户批准）+ B2（2026-08-21 审批）: 本地简单任务自动路由
-        # 仅 local provider 且配置 fast_model 时生效; per-call 显式 model 为 local 时同样参与
-        # （B2 用户审批: Web/飞书切 local 27B 后简单任务自动走 9B）; deepseek/minimax 零回归
-        # （_local_fast_route_ref 首判 provider==local）; 非 local per-call 完全不受影响。
-        # 简单任务（输入短 + 无工具历史）→ fast_model（9B 快 3.3x），复杂 → 默认模型（质量优先）。
-        # fast 模型不可用 → 静默保持默认（零回归）; 不配置 fast_model → 本段直接跳过。
-        if self._host.llm_pool is not None:
-            fast_ref = self._local_fast_route_ref(
-                model_used, messages, registry_snapshot=current_registry
-            )
-            if fast_ref:
-                try:
-                    llm_client, pid, resolved_fast_id = self._host.llm_pool.get_resolved_client(
-                        fast_ref, registry=current_registry
-                    )
-                    metadata_registry = current_registry
-                    model_used = f"{pid}/{resolved_fast_id}"
-                    chat_model_arg = resolved_fast_id
-                    self._host._record_action("action.llm_decide", "auto_route_fast", model_used)
-                except ValueError as exc:
-                    # fast 模型 resolve 失败（配置后注册表未同步等）→ 保持默认，如实记录
-                    self._host._record_action("action.llm_decide", "fast_route_failed", str(exc)[:200])
-        # ── M53: 上下文超限前置守卫 ──
-        # 载荷估算超模型注册表 context 上限 → 如实拒绝, 不发注定失败的请求
-        # (如 kimi/k3-256k 仅 256K 窗口, 1M 预算装配的历史必被 provider 拒绝)
-        # 未知模型 context（无 pool/裸标签）→ 跳过守卫, 不阻断
+        # Rule-first: model selection is explicit user/session/default state.
+        # No program-side "simple task" classifier may silently substitute a faster model.
+        # Physical context metadata is still needed by history budgeting, overflow
+        # attribution and telemetry. Do not turn an approximate chars/token conversion
+        # into a pre-provider hard rejection.
         context_limit = self._current_context_limit(
             model_used, registry_snapshot=metadata_registry
         )
         chars_per_token = self._provider_chars_per_token(
             model_used, registry_snapshot=metadata_registry
         )
-        if context_limit:
-            refusal = self._check_context_fit(
-                messages,
-                tools_param,
-                context_limit,
-                model_used,
-                # EVO-20260818: 输出预算占用窗口——local(16384)/minimax(65536) 等
-                max_tokens=getattr(llm_client, "max_tokens", 0) or 0,
-                # EVO-20260824: provider 级估算（deepseek 0.6 / local 0.9）
-                chars_per_token=chars_per_token,
-            )
-            if refusal is not None:
-                self._host._record_action("action.llm_decide", "context_overflow", refusal[:200])
-                return _RouteDecision(
-                    llm_client=llm_client,
-                    model_used=model_used,
-                    chat_model_arg=chat_model_arg,
-                    final_answer_override=refusal,
-                    context_limit=context_limit,
-                    chars_per_token=chars_per_token,
-                    metadata_registry=metadata_registry,
-                )
         return _RouteDecision(
             llm_client=llm_client, model_used=model_used, chat_model_arg=chat_model_arg,
             context_limit=context_limit, chars_per_token=chars_per_token,
@@ -268,142 +220,6 @@ class RoutingService:
             return None
         context = spec.models[mid].context
         return context if context and context > 0 else None
-
-    def _provider_inject_notices(self, model_label: str) -> bool:
-        """该 provider 的推送式 system 注入是否进提交视图（P1-7 本地慢模型接入）.
-
-        ⚠️ 2026-08-18 审计断点归因后废弃（spec §5.3.1-5 绝对化）: 提交层
-        skip_injected_system 恒 True，推送式注入一律不进提交视图——本函数不再被调用，
-        保留仅作 provider 配置面（inject_system_notices 字段解析）兼容与回退参考。
-        provider 配置 inject_system_notices=false（本地模型用）→ False: 架构上报/预警/
-        快照等仅落会话不进提交, system 前缀保持静态 → llama.cpp 引擎前缀缓存每轮命中
-        （首 token 大幅缩短）。未知/未配置 → True（零回归）。
-        """
-        if self._host.llm_pool is None or "/" not in model_label:
-            return True
-        pid, _mid = model_label.split("/", 1)
-        registry = self._pool_registry_snapshot()
-        spec = registry.providers.get(pid) if registry is not None else None
-        if spec is None:
-            return True
-        return spec.inject_system_notices
-
-    @staticmethod
-    def _local_tool_allowlist() -> frozenset[str]:
-        """本地模型工具白名单（EVO-20260817 用户需求: 固化精简工具集 + 尾部追加）.
-
-        lms-chat 文本工具协议/本地模型 prefill 下，全量 40+ 工具每轮文本化是 token 大头；
-        只注入核心常用工具（固定前缀稳定），完整目录仍可经 get_tool_schema 按需读取。
-        可经 env LOCAL_TOOL_NAMES 覆盖（逗号分隔）。
-        """
-        import os
-
-        names = os.environ.get(
-            "LOCAL_TOOL_NAMES",
-            # 核心集: 信息获取+执行+检索+架构自查（get_tool_schema 自举完整 schema）
-            "read_file,execute_command,search_files,web_fetch,web_search,"
-            "get_tool_schema,architecture_status,search_records,search_archive,"
-            "schedule,job_output,adjust_strategy",
-        )
-        return frozenset(n.strip() for n in names.split(",") if n.strip())
-
-    def _filter_local_tools(
-        self, tool_schemas: list[dict], model_label: str
-    ) -> list[dict]:
-        """本地 provider（local/*）工具精简: 只注入白名单核心工具（固定前缀+省 token）.
-
-        非 local provider → 原样返回（零回归）。
-        """
-        if not (model_label and "/" in model_label and model_label.split("/", 1)[0] == "local"):
-            return tool_schemas
-        allow = RoutingService._local_tool_allowlist()
-        kept = [t for t in tool_schemas if t.get("name") in allow]
-        return kept if kept else tool_schemas
-
-    def _local_fast_route_ref(
-        self,
-        model_label: str,
-        messages: list[dict],
-        *,
-        registry_snapshot: ProviderRegistry | None = None,
-    ) -> str | None:
-        """EVO-20260821-69e7f172（用户批准）: 本地简单任务 → 快模型自动路由判定.
-
-        返回快模型全限定 ref（"provider/model"）; 不满足条件返回 None（保持默认装配，零回归）。
-        判定（保守，避免复杂任务误路由到无 thinking 快模型）:
-        - 仅 local provider 且配置了 fast_model;
-        - 本轮简单任务（见 focus.is_simple_task: 输入短 + 无工具历史 + 非复杂动词）;
-        - fast_model 必须在注册表内（否则 resolve 失败 → 保持默认）。
-
-        2026-08-22 单向锁定（用户决策）: 同一个任务只允许"简单→复杂"单向升级,
-        不允许做途中"复杂→简单"切回（来回切换不聚焦, 实证 98605ad7）。实现:
-        - run 级 _task_escalated 标记: 本轮判复杂（切到 27B）→ 置位 → 本 run 后续
-          轮次即使输入短也保持 27B（不切回 9B）, 直到 run 结束（engine 重置）。
-        - 会话级: 消息含工具历史（任务已进入执行）→ 判复杂 → 天然不切 9B。
-        """
-        if not (model_label and "/" in model_label and model_label.split("/", 1)[0] == "local"):
-            return None
-        if self._host.llm_pool is None:
-            return None
-        pid, _mid = model_label.split("/", 1)
-        registry = registry_snapshot or self._pool_registry_snapshot()
-        if registry is None:
-            return None
-        spec = registry.providers.get(pid)
-        if spec is None or not spec.fast_model:
-            return None
-        # 单向锁定: 本 run 已升级到复杂（27B）→ 不再切回 9B（防来回切换）
-        if getattr(self._host._focus, "escalated", False):
-            return None
-        if not is_simple_task(messages):
-            # 本轮复杂 → 置位锁定: 本 run 后续轮保持 27B（简单→复杂单向）
-            self._host._focus.mark_escalated()
-            return None
-        fast_ref = f"{pid}/{spec.fast_model}"
-        try:
-            registry.resolve(fast_ref)
-        except ValueError:
-            return None  # 快模型未注册/不可用 → 保持默认（零回归）
-        return fast_ref
-
-    @staticmethod
-    @staticmethod
-    def _check_context_fit(
-        messages: list[dict],
-        tools_param: list[dict],
-        context_limit: int,
-        model_label: str,
-        max_tokens: int = 0,  # EVO-20260818: 输出预算（占用窗口，边距须扣除）
-        chars_per_token: float = _CHARS_PER_TOKEN_EST,  # EVO-20260824: provider 级估算
-    ) -> str | None:
-        """M53: 载荷 vs 模型上下文上限校验.
-
-        估算口径: JSON 序列化字符数 / chars_per_token ≈ tokens + 10% 安全边距。
-        EVO-20260824: chars_per_token 按 provider 级取值（deepseek 0.6 / local 0.9——
-        qwen tokenizer 效率更高, 统一 0.6 会让本地载荷高估 1.7-2 倍 → 守卫误拦）。
-        EVO-20260818: 0.9 边距未覆盖 max_tokens 的场景（如 local 131K 窗口 +
-        16K 输出 = 12.2% > 10%）——允许输入须再扣除输出预算，防"输入+输出超窗口"。
-        超限 → 返回如实拒绝文案（不发送请求）；未超 → None。
-        """
-        payload_chars = sum(len(_json_dumps_args(m)) for m in messages) + len(
-            _json_dumps_args({"tools": tools_param})
-        )
-        est_tokens = int(payload_chars / chars_per_token)
-        allowed = int(context_limit * _CONTEXT_SAFETY_MARGIN)
-        if max_tokens and max_tokens > 0:
-            allowed = min(allowed, context_limit - max_tokens)
-        if est_tokens <= allowed:
-            return None
-        return ensure_semantic_label(
-            (
-                f"[上下文超限] 本次请求载荷约 {est_tokens} tokens（按 {chars_per_token} 字符/token 估算），"
-                f"超过当前模型 {model_label} 的上下文上限 {context_limit}（安全边距后可用 {allowed}）。\n"
-                f"建议：① /model 切换到更大窗口模型；② /new 开新会话（历史另存可经 search_archive 找回）；"
-                f"③ 缩短本次输入。\n"
-                f"（程序守卫：未发送请求，避免必失败调用；估算口径可能有误差，以 provider 实际判定为准）"
-            ),
-            InjectionLayer.STATUS,
-        )
 
     # ── 辅助 ──
     def _planned_model_label(
@@ -476,8 +292,8 @@ class RoutingService:
 
         原实现 detail 与 _effective_history_budget 是两份独立 min 链（漂移
         风险：显示值与执行值可能脱节），T5 收敛为本方法单源，两个公开方法
-        均为薄委托。消除三口径误读（.env 全局 1M / provider 300K / AI 白名单
-        200K 并存，审计实测 DeepSeek effective 恒为 300K 而配置面看似 1M）——
+        均为薄委托。2026-09-04 再收敛：history_max_chars=None 表示没有独立
+        全局 cap，不能拿默认模型的兼容/诊断预算去限制当前路由模型——
         architecture_status.context_usage.budget 直接展示，AI 与人无需自行推算。
         limited_by ∈ {runtime_override, global_budget, window_adaptive,
         provider_budget, model_window, unknown_model_default}。
@@ -492,13 +308,18 @@ class RoutingService:
                 runtime_override = runtime_view.get("history_budget", None)
             except Exception:  # noqa: BLE001 — 归因失败不阻塞预算计算
                 runtime_override = None
-        global_budget = self._host._runtime_history_budget()
         if runtime_override is not None:
+            global_budget: int | None = int(runtime_override)
             limited_by = "runtime_override"
         elif configured_global is not None:
+            global_budget = int(configured_global)
             limited_by = "global_budget"
         else:
-            limited_by = "window_adaptive"
+            # None 是真实“无独立全局 cap”，后续由 provider cap / 当前模型物理
+            # window / output reserve 决定；不要把 _runtime_history_budget() 的
+            # 兼容诊断值重新引入执行 min 链。
+            global_budget = None
+            limited_by = "model_window"
         provider_budget: int | None = None
         cpt = (
             self._provider_chars_per_token(model_label)
@@ -513,7 +334,9 @@ class RoutingService:
             spec = registry.providers.get(pid) if registry is not None else None
             if spec is not None:
                 provider_budget = spec.history_budget_chars
-        if provider_budget and provider_budget < global_budget:
+        if provider_budget and (
+            global_budget is None or provider_budget < global_budget
+        ):
             global_budget = provider_budget
             limited_by = "provider_budget"
         limit = (
@@ -527,8 +350,12 @@ class RoutingService:
         if not limit:
             # EVO-20260811-10dc2533 P0: 未注册模型保守默认窗口预算（防本地小窗口必超限）。
             if self._host.llm_pool is not None and "/" in model_label:
-                eff = min(global_budget, _UNKNOWN_MODEL_BUDGET_CHARS)
-                if global_budget > _UNKNOWN_MODEL_BUDGET_CHARS:
+                eff = (
+                    min(global_budget, _UNKNOWN_MODEL_BUDGET_CHARS)
+                    if global_budget is not None
+                    else _UNKNOWN_MODEL_BUDGET_CHARS
+                )
+                if global_budget is None or global_budget > _UNKNOWN_MODEL_BUDGET_CHARS:
                     limited_by = "unknown_model_default"
                 return {
                     "configured_global_budget": configured_global,
@@ -539,17 +366,39 @@ class RoutingService:
                     "limited_by": limited_by,
                     "model": model_label,
                 }
+            # 无 pool/裸模型且窗口未知：保持保守 100K fallback；这不是已知大窗口
+            # 模型的隐藏 cap，而是“没有任何窗口事实”时的 fail-safe。
+            eff = global_budget if global_budget is not None else 100_000
+            if global_budget is None:
+                limited_by = "unknown_model_default"
             return {
                 "configured_global_budget": configured_global,
                 "runtime_override": runtime_override,
                 "provider_budget": provider_budget,
                 "model_window_budget": None,
-                "effective_budget": global_budget,
+                "effective_budget": eff,
                 "limited_by": limited_by,
                 "model": model_label,
             }
-        model_budget = int(limit * cpt * 0.5)
-        if model_budget < global_budget:
+        # Agency-first: history budget tracks the model's physical context boundary.
+        # Reserve concrete output capacity here; if the provider still reports overflow,
+        # that real response is the authoritative trigger for deterministic recovery.
+        output_tokens = int(getattr(self._host.settings, "llm_max_tokens", 0) or 0)
+        if self._host.llm_pool is not None and "/" in model_label:
+            pid, mid = model_label.split("/", 1)
+            registry = registry_snapshot or self._pool_registry_snapshot()
+            spec = registry.providers.get(pid) if registry is not None else None
+            if spec is not None:
+                model_spec = (getattr(spec, "models", None) or {}).get(mid)
+                if model_spec is not None and getattr(model_spec, "max_tokens", None):
+                    output_tokens = int(model_spec.max_tokens or 0)
+                elif getattr(spec, "max_tokens", None):
+                    output_tokens = int(spec.max_tokens or 0)
+        allowed_input_tokens = int(limit * _CONTEXT_SAFETY_MARGIN)
+        if output_tokens > 0:
+            allowed_input_tokens = min(allowed_input_tokens, max(1, limit - output_tokens))
+        model_budget = int(allowed_input_tokens * cpt)
+        if global_budget is None or model_budget < global_budget:
             eff, limited_by = model_budget, "model_window"
         else:
             eff = global_budget
@@ -582,38 +431,10 @@ class RoutingService:
     ) -> int:
         """M54: 模型窗口感知的历史压缩预算（T5: resolver 单源投影）.
 
-        effective = min(全局预算, 模型 context × chars_per_token × 0.5 压缩系数,
-        provider history_budget_chars 若配置)。完整归因字段见
+        effective = min(全局预算, 与最终 context guard 同口径的模型输入字符预算
+        （90% 物理窗口安全边距并预留 max_tokens）, provider history_budget_chars 若配置)。完整归因字段见
         _resolve_history_budget。
         """
         return self._resolve_history_budget(
             model_label, registry_snapshot=registry_snapshot
         )["effective_budget"]
-
-    def _note_tool_round_budget(
-        self,
-        tool_round_zero: bool,
-        is_local_tool: bool,
-        tb: int,
-        effective_budget: int,
-    ) -> None:
-        """T5(GPT 复审): tool-round clamp 进预算归因（routing mixin——engine 体量守卫 1172，新逻辑不进主体）.
-
-        status 显示值 = build 实际值（感官与执行同源；此前 status 报 base 300K
-        而实际 local tool round 用 8K/4K，误导 AI 与人）。
-        """
-        if not (tool_round_zero or (tb > 0 and is_local_tool)):
-            return
-        self._host._record_action(
-            "understand.build_messages",
-            "tool_round_small_prefix",
-            "零历史" if tool_round_zero else "小前缀",
-        )
-        _st = self._host._run_state()
-        if isinstance(_st.last_budget_info, dict):
-            _st.last_budget_info = {
-                **_st.last_budget_info,
-                "base_effective_budget": _st.last_budget_info.get("effective_budget"),
-                "effective_budget": effective_budget,
-                "limited_by": "tool_round_zero" if tool_round_zero else "tool_round_clamp",
-            }

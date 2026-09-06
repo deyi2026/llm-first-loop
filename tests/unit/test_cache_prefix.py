@@ -116,7 +116,7 @@ def test_system_inject_no_merge_no_truncation():
     assert any("STATE-29" in m["content"] for m in users)
 
 
-def test_head_keep_fold0_three_action_compaction():
+def test_head_keep_three_action_compaction():
     """任务6.1: head_keep 一次性大裁（fold=0）三动作协作（69715765 事故根因回归）——
     ① 归档中段 + ② cache_compacted_out 视图排除（尾部保留组绝不参与）+ ③ 体积验证：
     压缩后视图真正缩小，且再次 build 同一批不重复归档中段."""
@@ -172,46 +172,6 @@ def test_head_keep_fold0_three_action_compaction():
     )
 
 
-def test_compact_view_stats_warns_when_view_not_shrinking(caplog, monkeypatch):
-    """任务6.2: 压缩发生但视图几乎没缩小（drop<5%）→ 体积验证 WARN
-    （压缩风暴前兆——head 保留 + 归档目标使 post≈pre 时归因可见）.
-
-    构造边界（2026-08-27 二次修正 + 系数钉死加固）: progressive_fold=0 路径下
-    head 组不占 archive_budget，装载能力 = head 组数 + ⌊archive_budget/组宽⌋，
-    随 _COMPRESS_TARGET_RATIO 漂移——模块默认 0.6（history.py import 时求值），
-    而 .env 运行态配置为 0.5，两口径装载能力分别为 294/257 组。测试构造必须
-    显式钉死系数（monkeypatch 模块常量），否则环境加载顺序不同 → 同一 n 在
-    "全保留零归档（stats 不填充）"与"大裁 drop 越界"之间漂移（两次预存失败根因）。
-    钉死 0.6 + n=300: head 70 + kept 224 → 归档 6 组 → drop ≈ 6×855/257K
-    ≈ 2.0% < 5%，WARN 场景稳定且远离边界（两侧余量 ≥6 组 / ≥3 个百分点）。
-    """
-    import llm_loop.core.history as history_mod
-
-    monkeypatch.setattr(history_mod, "_COMPRESS_TARGET_RATIO", 0.6)
-    history = [_fake_msg("user", f"m{i:03d}-" + "x" * 850) for i in range(300)]
-    stats_box: list[dict] = []
-    archived: list[Message] = []
-
-    def sink(session_id: str, m: Message) -> None:
-        archived.append(m)
-
-    with caplog.at_level("WARNING", logger="llm_loop.core.history"):
-        build_history_messages(
-            history,
-            "S" * 500,
-            max_chars=320000,
-            compact_ratio=0.7,
-            session_id="s-tiny",
-            archive_sink=sink,
-            head_keep_chars=60000,
-            cache_archive_provider="minimax",
-            compact_view_stats=stats_box,
-        )
-    assert stats_box, "压缩应填充体积统计"
-    assert stats_box[0]["drop_pct"] < 5, f"构造的微降场景 drop 应 <5%，实际 {stats_box[0]}"
-    assert any("head_keep 大裁后视图未缩小" in r.message for r in caplog.records), (
-        "drop<5% 时应发出 WARN「head_keep 大裁后视图未缩小」"
-    )
 
 
 def test_head_keep_empty_head_groups_degrades_to_full_archive():
@@ -238,7 +198,6 @@ def test_head_keep_empty_head_groups_degrades_to_full_archive():
     assert box and box[0] > 0, "降级 head_keep=0 语义 → 锚点前移（历史真正缩小）"
 
 
-# ── 任务7（2026-08-25 §5.7）: progressive_fold 缺失 archive_provider 降级防护 ──
 
 def _make_pairs(n: int, body: str = "x" * 1000) -> list[Message]:
     msgs: list[Message] = []
@@ -246,57 +205,3 @@ def _make_pairs(n: int, body: str = "x" * 1000) -> list[Message]:
         msgs.append(_fake_msg("user", f"任务{i} " + body))
         msgs.append(_fake_msg("assistant", f"回答{i} " + body))
     return msgs
-
-
-def test_fold_missing_provider_degrades_with_head_keep_restored():
-    """任务7.1: fold>0 + 无 provider + head_keep>0 → 降级.
-
-    验证: 降级事件填充（kind=degraded）、head_keep 恢复调用者原值（不得置 0）、
-    提交视图保留头部 3000 chars、中段归档仍发生（一次性大裁）。"""
-    msgs = _make_pairs(30)
-    archived: list[Message] = []
-    degrade_box: list[dict] = []
-
-    def sink(session_id: str, m: Message) -> None:
-        archived.append(m)
-
-    out = build_history_messages(
-        msgs,
-        "system",
-        max_chars=20000,
-        compact_ratio=0.9,
-        session_id="s-deg",
-        progressive_fold=3,
-        head_keep_chars=3000,
-        archive_sink=sink,
-        degrade_out=degrade_box,
-    )
-    assert degrade_box and degrade_box[0]["kind"] == "degraded", "降级事件应填充"
-    assert degrade_box[0]["head_keep_chars"] == 3000, "降级必须恢复调用者原值 3000"
-    assert "cache_archive_provider" in degrade_box[0]["reason"]
-    joined = "\n".join(str(m.get("content", "")) for m in out)
-    assert "任务0 " in joined, "降级后 head_keep 生效：头部保留在提交前缀"
-    assert archived, "降级后中段归档仍发生（信息零丢失）"
-
-
-def test_fold_missing_provider_head_keep_zero_uses_default(monkeypatch):
-    """任务7.1（§5.7.3-1）: fold>0 + 无 provider + head_keep=0 → 强制默认 2000."""
-    import llm_loop.core.history as hist
-
-    monkeypatch.setattr(hist, "_DEFAULT_HEAD_KEEP_CHARS_ON_DEGRADE", 2000)
-    msgs = _make_pairs(20)
-    degrade_box: list[dict] = []
-    out = build_history_messages(
-        msgs,
-        "system",
-        max_chars=20000,
-        compact_ratio=0.9,
-        session_id="s-deg0",
-        progressive_fold=3,
-        head_keep_chars=0,
-        degrade_out=degrade_box,
-    )
-    assert degrade_box and degrade_box[0]["kind"] == "degraded"
-    assert degrade_box[0]["head_keep_chars"] == 2000, "head_keep=0 降级应用默认 2000"
-    joined = "\n".join(str(m.get("content", "")) for m in out)
-    assert "任务0 " in joined, "默认 head_keep 生效：前缀仍稳定"

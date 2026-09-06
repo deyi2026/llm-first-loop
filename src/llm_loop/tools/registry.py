@@ -19,7 +19,14 @@ from datetime import UTC
 from pathlib import Path
 from typing import Any
 
-from llm_loop.core.message import Message, MessageSource, ToolCall, ToolResult, ToolResultStatus
+from llm_loop.core.message import (
+    Message,
+    MessageSource,
+    RecoverabilityStatus,
+    ToolCall,
+    ToolResult,
+    ToolResultStatus,
+)
 from llm_loop.tools.pipeline import ImmutableResult, MaterializationError
 from llm_loop.tools.safety import CatastrophicGuard
 
@@ -100,7 +107,6 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
 }
 
 
-
 def _tool_guidance_mode() -> str:
     """R8.24-C C-1.1（C-D2）: 工具回执建议源渲染模式（三态）.
 
@@ -132,6 +138,8 @@ PreExecuteHook = Callable[[ToolCall], None]
 EvidenceShadowHook = Callable[[ToolCall, ToolResult], None]
 EvidenceManifestProvider = Callable[[int], str]
 EvidenceHistoryCaptureHook = Callable[[str, Message, int | None, str | None], str | None]
+SessionCancelHook = Callable[[str], Any]
+AsyncObligationHook = Callable[[str], list[dict[str, Any]]]
 
 
 class ToolRegistry:
@@ -143,13 +151,6 @@ class ToolRegistry:
         safety_guard: CatastrophicGuard | None = None,
         tool_timeout_s: float = 60.0,
         max_output_chars: int = 100000,
-        summary_threshold: int = 12000,  # 2026-08-15 放大字数（5000→12000）
-        # EVO-20260822-b3e7105e: 本地模型（local provider）收紧分层参数——预算联动。
-        # 默认 None = 不启用（云端零回归）；装配时按 local 预算×50% 配置阈值，
-        # 首尾窗口随之收紧（当前 2500/2500 对 local 预算 8000 占比 62% 过大）。
-        summary_local_threshold: int | None = None,
-        summary_local_head_chars: int = 800,
-        summary_local_tail_chars: int = 800,
         archive_store: Any | None = None,
         failure_guidance_enabled: bool = True,
         # EVO-d78b270c: 经验库（MemoryStore）注入——失败回执按错误关键词检索
@@ -180,16 +181,16 @@ class ToolRegistry:
         self.safety = safety_guard or CatastrophicGuard(audit_dir=safety_audit_dir)
         self.tool_timeout_s = tool_timeout_s
         self.max_output_chars = max_output_chars
-        self.summary_threshold = summary_threshold
-        # EVO-20260822-b3e7105e: 本地模型收紧参数（None = 未启用，云端零回归）
-        self.summary_local_threshold = summary_local_threshold
-        self.summary_local_head_chars = summary_local_head_chars
-        self.summary_local_tail_chars = summary_local_tail_chars
         self.failure_guidance_enabled = failure_guidance_enabled
         self._memory_store = memory_store  # EVO-d78b270c: 经验库（fail-open 零回归）
         self.exec_mode = exec_mode  # readonly/allowlist/blocked（空 = 不启用分级）
         self.exec_allowlist = [s.strip() for s in (exec_allowlist or "").split(",") if s.strip()]
         self._pre_execute_hooks: list[PreExecuteHook] = []
+        # 会话级长期资源取消钩子。与 _active_exec 不同，这类资源可能在创建它的
+        # 工具已经返回后仍继续存在（例如 nonblocking subagent handle）。Stop 必须
+        # 仍能按 parent session 精确触达，不能依赖“创建工具当前仍 active”。
+        self._session_cancel_hooks: list[SessionCancelHook] = []
+        self._async_obligation_hooks: list[AsyncObligationHook] = []
         # ERC Phase2 shadow and Phase3 enforce are mutually exclusive.  ``off`` means both
         # are None and preserves the exact legacy path.
         self._evidence_shadow_hook: EvidenceShadowHook | None = None
@@ -320,21 +321,8 @@ class ToolRegistry:
         return self._evidence_history_capture_hook(session_id, message, msg_seq, archive_id)
 
     def _evidence_projection_budget(self) -> int:
-        """Bound immediate tool projection without coupling HOT relevance to full bytes."""
-        try:
-            from llm_loop.core.run_context import current_model_label
-
-            model_label = current_model_label.get() or ""
-        except Exception:  # noqa: BLE001 - context lookup failure falls back to cloud defaults
-            model_label = ""
-        is_local = bool(model_label) and model_label.split("/", 1)[0] == "local"
-        if is_local and self.summary_local_threshold:
-            threshold = int(self.summary_local_threshold)
-            head_tail = self.summary_local_head_chars + self.summary_local_tail_chars
-        else:
-            threshold = self.summary_threshold
-            head_tail = 5000
-        return max(128, min(self.max_output_chars, threshold, head_tail))
+        """Bound one evidence projection page; full bytes remain retrievable by stable ref."""
+        return max(128, min(self.max_output_chars, 5000))
 
     def set_pipeline(self, pipeline: Any) -> None:
         """装配工具执行瀑布（EVO-20260813-9ced1f4c + ERC R12）.
@@ -347,10 +335,14 @@ class ToolRegistry:
             self._lock_pipeline_for_evidence_enforce(pipeline)
         self._pipeline = pipeline
 
-    def _archive_oversize_output(self, call: ToolCall, full_content: str) -> None:
-        """T22: 超长工具结果另存到压缩档案（信息零丢失，可检索找回）."""
+    def _archive_oversize_output(self, call: ToolCall, full_content: str) -> bool:
+        """Persist the exact oversized result; return whether recovery is real.
+
+        The return value is model-honesty authority: callers may only claim
+        ``search_archive`` recovery after this method returns True.
+        """
         if self._archive_store is None or not self._session_id:
-            return
+            return False
         try:
             self._archive_store.archive(
                 self._session_id,
@@ -361,10 +353,10 @@ class ToolRegistry:
                 tool_call_id=call.id,
                 status="oversize",
             )
+            return True
         except Exception:
-            import logging
-
-            logging.getLogger(__name__).warning("超长结果另存失败（fail-open）", exc_info=True)
+            logger.warning("超长结果另存失败（fail-open）", exc_info=True)
+            return False
 
     # ── 注册 / 发现 ──
     def register(self, tool: Any) -> None:
@@ -464,14 +456,35 @@ class ToolRegistry:
                         getattr(tool, "name", type(tool).__name__),
                         exc_info=True,
                     )
-        return len(entries)
+        hook_hits = 0
+        for hook in list(self._session_cancel_hooks):
+            try:
+                hit = hook(session_id)
+                if isinstance(hit, bool):
+                    hook_hits += int(hit)
+                elif isinstance(hit, int):
+                    hook_hits += max(0, hit)
+            except Exception:  # noqa: BLE001 — Stop 仍是 best-effort，单 hook 不得阻断其它取消
+                logger.warning(
+                    "会话资源取消钩子失败（fail-open）: session=%s hook=%r",
+                    session_id,
+                    hook,
+                    exc_info=True,
+                )
+        return len(entries) + hook_hits
 
     def schemas(self, lazy: bool = False) -> list[dict]:
         """生成 LLM tools 参数（JSON Schema，约束 C4）.
 
-        EVO-d5db88d9: lazy=True 时返回精简可执行 Schema（name + reviewed compact description
-        + 原有参数骨架）。工具仍全部可调用；完整说明仍可按需读取。
-        默认 lazy=False 全量注入（零回归）。
+        EVO-d5db88d9: lazy=True 时返回精简可执行 Schema（name + compact description
+        + 参数骨架）。参数骨架始终保留首调所需 type/enum/properties/items/required，
+        不要求模型先调用 get_tool_schema；完整说明仍可按需读取。
+        默认 lazy=False 全量注入（零回归，当前工具规模推荐）。
+
+        EVO-20260903-20152277: 枚举型参数合法取值在投递层前置暴露。lazy 路径
+        在机器可读 parameters 中保留 enum，不再把同一约束复制进 description（避免
+        双真值与前缀膨胀）；只有 index-only 路径因 parameters 无 properties，才在
+        description 内保留紧凑枚举摘要。
         """
         with self._lock:
             if lazy:
@@ -492,7 +505,13 @@ class ToolRegistry:
 
     @staticmethod
     def _compact_description(t: Any) -> str:
-        """Shorten stable provider-prefix prose without changing tool capability."""
+        """Shorten stable provider-prefix prose without changing tool capability.
+
+        Built-ins use reviewed compact contracts.  Future/plugin tools remain callable
+        with a bounded description rather than being hidden merely because no curated
+        entry exists.  A tool may provide ``compact_description`` as an explicit
+        override.  Full descriptions are untouched on ``schemas(lazy=False)``.
+        """
         explicit = getattr(t, "compact_description", None)
         if isinstance(explicit, str) and explicit.strip():
             return explicit.strip()[:160]
@@ -503,15 +522,71 @@ class ToolRegistry:
         return str(getattr(t, "description", "") or "")[:120]
 
     @staticmethod
+    def _enum_summary(params: dict, max_chars: int = 240) -> str:
+        """枚举型参数合法取值摘要（EVO-20260903-20152277）.
+
+        扫描 properties 中带 enum 的字段，生成紧凑摘要，如
+        "枚举: trigger(periodic|milestone|anomaly|manual); priority(high|medium|low)"。
+        超长截断（max_chars 上限，尾部加 …），无枚举返回空串。
+        """
+        props = (params or {}).get("properties", {}) or {}
+        parts: list[str] = []
+        for name, spec in props.items():
+            if not isinstance(spec, dict):
+                continue
+            enum_vals = spec.get("enum")
+            if not isinstance(enum_vals, list) or not enum_vals:
+                continue
+            parts.append(f"{name}({'|'.join(str(v) for v in enum_vals)})")
+        if not parts:
+            return ""
+        summary = "枚举: " + "; ".join(parts)
+        if len(summary) > max_chars:
+            summary = summary[:max_chars].rstrip(";：: ") + "…"
+        return summary
+
+    @staticmethod
+    def _lazy_schema_skeleton(spec: dict) -> dict:
+        """递归保留可执行 JSON Schema 结构，删除说明性大文本。
+
+        lazy 的目标是省掉 description/examples 等语义文本，不是删掉模型首调所需的
+        结构事实。保留 type/enum/properties/items/required，覆盖嵌套 object/array；
+        其它校验关键词当前工具定义未使用，后续出现时应按事实库存再扩，不猜测。
+        """
+        if not isinstance(spec, dict):
+            return {}
+        out: dict = {}
+        schema_type = spec.get("type")
+        if schema_type:
+            out["type"] = schema_type
+        enum_vals = spec.get("enum")
+        if isinstance(enum_vals, list) and enum_vals:
+            out["enum"] = list(enum_vals)
+        props = spec.get("properties")
+        if isinstance(props, dict):
+            out["properties"] = {
+                str(name): ToolRegistry._lazy_schema_skeleton(child)
+                for name, child in props.items()
+                if isinstance(child, dict)
+            }
+        items = spec.get("items")
+        if isinstance(items, dict):
+            out["items"] = ToolRegistry._lazy_schema_skeleton(items)
+        required = spec.get("required")
+        if isinstance(required, list) and required:
+            out["required"] = [str(name) for name in required]
+        return out
+
+    @staticmethod
     def _lazy_parameters(t) -> dict:
-        """参数骨架（lazy 索引）：仅保留字段名与类型，体积最小."""
+        """lazy 参数骨架：递归保留调用结构/合法值，删除说明文本。"""
         params = getattr(t, "parameters", {}) or {}
-        props = params.get("properties", {})
-        return {
-            "type": "object",
-            "properties": {k: {"type": v.get("type", "string")} for k, v in props.items()},
-            "required": list(params.get("required", [])),
-        }
+        skeleton = ToolRegistry._lazy_schema_skeleton(params)
+        if not skeleton:
+            return {"type": "object", "properties": {}}
+        skeleton.setdefault("type", "object")
+        skeleton.setdefault("properties", {})
+        return skeleton
 
     def index_schemas(self, desc_chars: int = 80) -> list[dict]:
         """分层前缀 PoC（GOAL-20260829-7483e375 T2）索引模式.
@@ -527,9 +602,14 @@ class ToolRegistry:
             for t in self._tools.values():
                 params = getattr(t, "parameters", {}) or {}
                 required = list(params.get("required", []))
-                desc = (t.description or "")[:desc_chars]
+                enum_note = self._enum_summary(params, max_chars=80)
+                # EVO-20260903-20152277: 枚举摘要计入预算（截断让位），保持 ≤ desc_chars 量级
+                budget = desc_chars - (len(enum_note) + 3) if enum_note else desc_chars
+                desc = (t.description or "")[:max(0, budget)]
                 if required:
                     desc = f"{desc} | 必填: {', '.join(required)}"
+                if enum_note:
+                    desc = f"{desc} | {enum_note}" if desc else enum_note
                 defs.append(
                     {"name": t.name, "description": desc, "parameters": {"type": "object"}}
                 )
@@ -538,6 +618,32 @@ class ToolRegistry:
     def add_pre_execute_hook(self, hook: PreExecuteHook) -> None:
         """注册执行前钩子（如架构自省动作轨迹采集，零侵入）."""
         self._pre_execute_hooks.append(hook)
+
+    def add_session_cancel_hook(self, hook: SessionCancelHook) -> None:
+        """注册会话级长期资源取消钩子（如 parent→background child 级联）."""
+        if hook not in self._session_cancel_hooks:
+            self._session_cancel_hooks.append(hook)
+
+    def add_async_obligation_hook(self, hook: AsyncObligationHook) -> None:
+        """注册结构化并发未结算事实源；仅用于正常 final 前生命周期完整性检查。"""
+        if hook not in self._async_obligation_hooks:
+            self._async_obligation_hooks.append(hook)
+
+    def async_obligations(self, session_id: str) -> list[dict[str, Any]]:
+        """收集指定 session 尚未 terminal 的异步子资源；异常源 fail-open。"""
+        out: list[dict[str, Any]] = []
+        for hook in list(self._async_obligation_hooks):
+            try:
+                rows = hook(session_id) or []
+                out.extend(row for row in rows if isinstance(row, dict))
+            except Exception:  # noqa: BLE001 — observability/lifecycle source fail-open
+                logger.warning(
+                    "异步 obligation 查询失败（fail-open）: session=%s hook=%r",
+                    session_id,
+                    hook,
+                    exc_info=True,
+                )
+        return out
 
     # ── 执行包裹 ──
     def execute(self, call: ToolCall) -> ToolResult:
@@ -788,7 +894,12 @@ class ToolRegistry:
     )
     _READONLY_MAX_WORKERS = 4
 
-    def execute_many(self, calls: list[ToolCall]) -> list[ToolResult]:
+    def execute_many(
+        self,
+        calls: list[ToolCall],
+        *,
+        on_result: Callable[[ToolCall, ToolResult], None] | None = None,
+    ) -> list[ToolResult]:
         """批量执行工具调用：只读并行 / 修改串行 / 结果按声明顺序回写.
 
         只读工具（read_file/web_fetch/架构检索类，无副作用）同一轮并行执行以降低延迟；
@@ -816,10 +927,20 @@ class ToolRegistry:
                 for fut in concurrent.futures.as_completed(futures):
                     call = futures[fut]
                     result = fut.result()
+                    if on_result is not None:
+                        try:
+                            on_result(call, result)
+                        except Exception:  # noqa: BLE001 — WAL/observer failure must not lose result
+                            logger.warning("execute_many on_result hook failed (fail-open)", exc_info=True)
                     by_id[result.tool_call_id or call.id] = result
 
         for c in mutating:
             result = self.execute(c)
+            if on_result is not None:
+                try:
+                    on_result(c, result)
+                except Exception:  # noqa: BLE001 — WAL/observer failure must not lose result
+                    logger.warning("execute_many on_result hook failed (fail-open)", exc_info=True)
             by_id[result.tool_call_id or c.id] = result
 
         # 防御性取值（防程序错误向 AI 传导）: 执行路径若未能把结果写入 by_id
@@ -861,8 +982,13 @@ class ToolRegistry:
             tool_name=call.name,
             duration_ms=duration_ms,
         )
-        # EVO-d78b270c: 失败/异常/超时 → 经验驱动注入（命中 procedure 已验解法）
-        if status in (ToolResultStatus.FAILURE, ToolResultStatus.ERROR, ToolResultStatus.TIMEOUT):
+        # Rule-first: production default LFL_TOOL_GUIDANCE=off means historical
+        # experience has no model authority.  Do not even query/mutate the experience
+        # store in that mode; explicit on/shadow remain compatibility/experiment paths.
+        if (
+            _tool_guidance_mode() != "off"
+            and status in (ToolResultStatus.FAILURE, ToolResultStatus.ERROR, ToolResultStatus.TIMEOUT)
+        ):
             result.guidance_extra = self._inject_experience_guidance(result)
         return self._attach_typed_recovery(result)
 
@@ -951,41 +1077,10 @@ class ToolRegistry:
                 end = min(end, pos)
         return content[start:end].strip()
 
-    @staticmethod
-    def _archive_query_hint(call) -> str:
-        """EVO-20260814-e5b045d3: 从工具调用参数提取 archive 检索建议.
-
-        与 ArchiveStore.search 契约对齐: query 子串匹配（content/summary/key_facts/key_paths），
-        tool_name 精确过滤。路径取 basename、命令取前缀，给出可直接照抄的调用示例。
-        """
-        name = getattr(call, "name", "") or ""
-        args = getattr(call, "arguments", None) or {}
-        path = str(args.get("path", "") or "").strip()
-        cmd = str(args.get("command", "") or "").strip()
-        if path:
-            q = path.rsplit("/", 1)[-1] or path
-        elif cmd:
-            q = cmd[:40]
-        else:
-            q = ""
-        if q:
-            return f'search_archive(query="{q}", tool_name="{name}")'
-        return f'search_archive(tool_name="{name}")'
-
     # 2026-08-15 截断信号强化（用户需求）：行动指引统一文案——摘要/截断回执均附。
     # 程序只发信号不替 AI 摘要（RULE-AI-00）：提炼与纳入最终总结由 AI 完成。
     # EVO-20260820-be72efb1 建议②（截断高亮）: 截断/摘要回执附诚实性高亮——缺失部分
     # 未核验, 禁止基于摘要推断"已完成/成功", 需 search_archive 取回原文核验后再声明。
-    # 证据型工具（漂移修复 2026-08-29 会话 68fed5f5 实证）: 内容承载型回执是任务
-    # 分析的直接依据。本地通道 4000 阈值把 web_fetch 全文压成首尾 1600c 摘要——
-    # 证据在场但不完整，弱模型据此生成时被上下文尾部元状态带偏（DFlash 文档被摘要
-    # 后答非所问输出能力清单）。豁免本地收紧走全局阈值；膨胀由 history 压缩 +
-    # 锚点保护（history.py 2026-08-29）兜底，硬上限安全阀不变。
-    EVIDENCE_TOOL_NAMES = frozenset({
-        "web_fetch", "web_search", "read_file", "search_records",
-        "search_archive", "search_docs", "dsh_session_read", "inspect_code",
-    })
-
     _DISTILL_GUIDANCE = (
         "行动指引：中部/被省略内容不在当前上下文——继续推理前，请先把可见要点与"
         "待核实缺口提炼记录（写入你的推理链或 [[memory]] 记忆块），最终总结时请纳入"
@@ -1009,68 +1104,6 @@ class ToolRegistry:
                 tool="", status="", source="distill_guidance", chars=len(guidance)
             )
         return guidance
-
-    @staticmethod
-    def _summarize_output(
-        full: str, head_chars: int = 2500, tail_chars: int = 2500, call=None
-    ) -> str:
-        """输出分层摘要: 关键信息提取优先（extract_key_info 规则提取零 LLM），
-        提取不到回退首尾截断兜底；附规模 + 检索指引 + 截断高亮。
-
-        原文已由调用方完整另存至压缩档案（信息零丢失），此处仅注入摘要。
-        EVO-20260823 摘要方式升级: 复用 history.py 折叠层已实证模式（EVO-20260815）——
-        机械首尾截断会把中间关键信息（路径/URL/错误行）丢给 AI，迫使二次检索浪费 token；
-        extract_key_info 确定性提取路径/URL/动作信号行，前缀稳定、体积更小
-        （关键事实+路径 ~600 字符 vs 首尾窗口 1600+），历史膨胀再降；
-        提取不到（无路径/URL/信号词）才回退首尾截断兜底。
-        """
-        # 摘要优先: extract_key_info 规则提取（确定性→前缀稳定，零 LLM 成本；fail-open）
-        digest = ""
-        try:
-            from llm_loop.memory.archive import extract_key_info
-
-            facts, paths, _s = extract_key_info(full, max_facts=5)
-            parts: list[str] = []
-            if facts:
-                # 清洗: facts 可能保留原文行前缀（"- "等），避免 join 后 "- - xxx" 重复噪音
-                cleaned = [f.strip().lstrip("-").strip() for f in facts if f.strip()]
-                cleaned = [f for f in cleaned if f]
-                if cleaned:
-                    parts.append(
-                        "关键事实（规则提取，非语义总结；细节以原文为准）：\n- "
-                        + "\n- ".join(cleaned)
-                    )
-            if paths:
-                parts.append("关键路径/URL：\n- " + "\n- ".join(paths[:8]))
-            digest = "\n\n".join(parts)
-        except Exception:  # noqa: BLE001 — fail-open：提取失败回退首尾截断
-            digest = ""
-        hint = (
-            f"查看完整原文请直接调用 {ToolRegistry._archive_query_hint(call)}"
-            "（一次取回，勿换命令重复执行同一工具）"
-            if call is not None
-            else "可用 search_archive 检索找回"
-        )
-        n = len(full)
-        if digest:
-            return (
-                f"[输出摘要] 共 {n} 字符，关键信息如下"
-                f"（完整内容已另存至压缩档案，{hint}）：\n{digest}\n"
-                f"{ToolRegistry._distill_guidance_or_empty()}"
-            )
-        if n <= head_chars + tail_chars:
-            return (
-                f"[输出摘要] 共 {n} 字符，内容未超首尾窗口故完整展示"
-                f"（原文已另存至压缩档案，{hint}）：\n{full}"
-            )
-        head = full[:head_chars]
-        tail = full[-tail_chars:]
-        return (
-            f"[输出摘要] 共 {n} 字符，以下为首部/尾部关键内容"
-            f"（完整内容已另存至压缩档案，{hint}）：\n"
-            f"── 首部 ──\n{head}\n── 尾部 ──\n{tail}\n"
-            f"{ToolRegistry._distill_guidance_or_empty()}"
-        )
 
     def _is_destructive_tool(self, name: str) -> bool:
         """是否具备破坏能力的工具（需过灾难性安全校验）."""
@@ -1161,8 +1194,16 @@ class ToolRegistry:
         future = pool.submit(tool_context.run, tool.execute, **call.arguments)
         active_session_id = current_session_id.get()
         self._track_active(active_session_id, future, tool)
+        # Compound/orchestration tools can own a stronger internal bound (for example
+        # spawn_subagent has bounded rounds and each nested LLM/tool call has its own
+        # timeout). Applying the atomic-tool 60s wrapper to them is factually unsafe:
+        # ThreadPoolExecutor cannot kill a running worker, so the parent can return
+        # TIMEOUT while the compound tool continues producing side effects. A tool may
+        # explicitly set ``registry_timeout_s = None`` to opt out of this outer timeout.
+        _registry_timeout = getattr(tool, "registry_timeout_s", self.tool_timeout_s)
+        timeout_s = None if _registry_timeout is None else float(_registry_timeout)
         try:
-            result = future.result(timeout=self.tool_timeout_s)
+            result = future.result() if timeout_s is None else future.result(timeout=timeout_s)
         except concurrent.futures.TimeoutError:
             # P1-5(审计发现 #11): 超时即放弃等待，让"超时"按时返回——
             # ① future.cancel()（运行中任务取消无效，尽力而为）;
@@ -1184,7 +1225,7 @@ class ToolRegistry:
             pool.shutdown(wait=False, cancel_futures=True)
             return ToolResult(
                 status=ToolResultStatus.TIMEOUT,
-                content=f"[执行超时] 工具 '{call.name}' 超过 {self.tool_timeout_s:.0f}s 未完成",
+                content=f"[执行超时] 工具 '{call.name}' 超过 {timeout_s:.0f}s 未完成",
                 tool_call_id=call.id,
                 tool_name=call.name,
                 partial_output=None,
@@ -1243,97 +1284,23 @@ class ToolRegistry:
                     "evidence shadow capture failed (action result preserved)", exc_info=True
                 )
 
-        # 输出分层注入（EVO-20260811-22a7d3e1）:
-        # - 超过 summary_threshold: 默认注入首/尾摘要（全文另存可检索，信息零丢失）
-        # - 超过 max_output_chars（硬上限）: 全文另存 + 截断（T22 既有逻辑）
-        # - EVO-20260819 full=true（按需全量）: AI 显式声明全量时跳过摘要层；
-        #   硬上限仍作安全阀（防单条结果撑爆上下文）。默认路径零回归。
-        # - EVO-20260822-b3e7105e: local 模型按预算收紧阈值/窗口（预算联动，
-        #   消除"中间地带全量注入"——全局 15000 阈值对 local 8000 预算失配；
-        #   云端无 contextvar 或非 local → 全局配置，零回归）
-        try:
-            from llm_loop.core.run_context import current_model_label as _cml
-
-            _model_label = _cml.get() or ""
-        except Exception:  # noqa: BLE001 — contextvar 读取失败走全局配置（fail-open）
-            _model_label = ""
-        _is_local = bool(_model_label) and _model_label.split("/", 1)[0] == "local"
-        # 证据型工具本地豁免（漂移修复 2026-08-29）: 见 EVIDENCE_TOOL_NAMES 注释——
-        # 豁免后 threshold/head/tail 全走全局分支（15000 / 2500 / 2500）
-        _evidence_tool = getattr(call, "name", "") in self.EVIDENCE_TOOL_NAMES
-        _use_local = (
-            _is_local
-            and bool(self.summary_local_threshold)
-            and not _evidence_tool
-        )
-        if _use_local and self.summary_local_threshold is not None:
-            _threshold = self.summary_local_threshold
-        else:
-            _threshold = self.summary_threshold
-        _head, _tail = (
-            (self.summary_local_head_chars, self.summary_local_tail_chars)
-            if _use_local
-            else (2500, 2500)
-        )
-        _full_mode = isinstance(call.arguments, dict) and bool(call.arguments.get("full"))
-        if _full_mode:
-            if len(result.content) > self.max_output_chars:
-                full = result.content
-                self._archive_oversize_output(call, full)
-                result.content = (
-                    full[: self.max_output_chars]
-                    + f"\n…[结果超长，已截断，共 {len(full)} 字符（硬上限: {self.max_output_chars}，full 模式仅保此安全阀）]；"
-                    "完整结果已另存至压缩档案，可用 search_archive 检索找回…\n"
-                    + self._distill_guidance_or_empty()
-                )
-        elif len(result.content) > _threshold:
+        # Rule-first tool-result projection: exact bytes stay model-visible until the
+        # real per-result hard cap. Crossing that cap triggers exact archival when
+        # available, then truthful truncation; there is no soft/local summary policy.
+        if len(result.content) > self.max_output_chars:
             full = result.content
-            self._archive_oversize_output(call, full)  # 原文完整另存（信息零丢失）
-            result.content = self._summarize_output(
-                full, head_chars=_head, tail_chars=_tail, call=call
+            archived = self._archive_oversize_output(call, full)
+            recovery = (
+                "完整内容已另存至压缩档案，可用 search_archive 检索找回"
+                if archived
+                else "完整内容未成功归档；被截断部分当前没有 archive 恢复路径"
             )
-            # 硬上限安全阀: 摘要后仍超限才截断（原文已存档，无需重复存档）
-            if len(result.content) > self.max_output_chars:
-                result.content = (
-                    result.content[: self.max_output_chars]
-                    + f"\n…[结果超长，已截断，共 {len(result.content)} 字符"
-                    f"（阈值: 摘要 {_threshold}/硬上限 {self.max_output_chars}）]；"
-                    "完整内容已另存至压缩档案，可用 search_archive 检索找回…\n"
-                    + self._distill_guidance_or_empty()
-                )
-        elif len(result.content) > self.max_output_chars:
-            # 未超摘要阈值但超硬上限（阈值配置异常）→ 存档 + 截断（T22 既有行为）
-            full = result.content
-            self._archive_oversize_output(call, full)
             result.content = (
                 full[: self.max_output_chars]
                 + f"\n…[结果超长，已截断，共 {len(full)} 字符（硬上限: {self.max_output_chars}）]；"
-                "完整内容已另存至压缩档案，可用 search_archive 检索找回…\n"
+                + recovery
+                + "…\n"
                 + self._distill_guidance_or_empty()
-            )
-        elif len(result.content) > _threshold:
-            full = result.content
-            self._archive_oversize_output(call, full)  # 原文完整另存（信息零丢失）
-            result.content = self._summarize_output(
-                full, head_chars=_head, tail_chars=_tail, call=call
-            )
-            # 硬上限安全阀: 摘要后仍超限才截断（原文已存档，无需重复存档）
-            if len(result.content) > self.max_output_chars:
-                result.content = (
-                    result.content[: self.max_output_chars]
-                    + f"\n…[结果超长，已截断，共 {len(result.content)} 字符"
-                    f"（阈值: 摘要 {_threshold}/硬上限 {self.max_output_chars}）]；"
-                    "完整内容已另存至压缩档案，可用 search_archive 检索找回…\n"
-                    + self._DISTILL_GUIDANCE
-                )
-        elif len(result.content) > self.max_output_chars:
-            # 未超摘要阈值但超硬上限（阈值配置异常）→ 存档 + 截断（T22 既有行为）
-            full = result.content
-            self._archive_oversize_output(call, full)
-            result.content = (
-                full[: self.max_output_chars]
-                + f"\n…[结果超长，已截断，共 {len(full)} 字符（硬上限: {self.max_output_chars}）]；"
-                "完整结果已另存至压缩档案，可用 search_archive 检索找回…\n" + self._DISTILL_GUIDANCE
             )
         # 约束 C1 绑定: 工具返回的 tool_call_id 必须等于声明 id（空/不一致都纠正为
         # call.id，防 execute_many 索引键错位导致 KeyError 中断整轮）
@@ -1420,10 +1387,42 @@ def tool_result_to_message(
         if _experience:
             content += "\n" + _experience
     metadata: dict = {}
+    # Preserve the same recoverability/provenance facts as ToolResult.to_message().
+    # ToolCycle uses this helper, so dropping them here made durable Evidence
+    # invisible to later provider-view lifecycle projection.  These remain
+    # metadata-only and do not enter the provider wire by themselves.
+    if result.recoverability_status is not RecoverabilityStatus.NOT_CONFIGURED:
+        metadata["recoverability_status"] = result.recoverability_status.value
+        if result.evidence_ref:
+            metadata["evidence_ref"] = result.evidence_ref
+        if result.evidence_representation is not None:
+            metadata["evidence_representation"] = result.evidence_representation
+        if result.evidence_projection_complete is not None:
+            metadata["evidence_projection_complete"] = result.evidence_projection_complete
+    if result.source_resolution_mode is not None:
+        metadata["source_resolution_mode"] = result.source_resolution_mode
+    if result.source_execution_performed is not None:
+        metadata["source_execution_performed"] = result.source_execution_performed
+    if result.evidence_source_label is not None:
+        metadata["evidence_source_label"] = result.evidence_source_label
+    if result.evidence_coverage_label is not None:
+        metadata["evidence_coverage_label"] = result.evidence_coverage_label
+    if result.evidence_origin_facts is not None:
+        metadata["evidence_origin_facts"] = dict(result.evidence_origin_facts)
+    if result.short_circuit_kind is not None:
+        metadata["short_circuit_kind"] = result.short_circuit_kind
+    if result.result_fingerprint is not None:
+        metadata["result_fingerprint"] = result.result_fingerprint
     if typed_recovery is not None:
         to_dict = getattr(typed_recovery, "to_dict", None)
         if callable(to_dict):
             metadata["tool_recovery"] = to_dict()
+    if result.verification_receipts:
+        metadata["verification_receipts"] = list(result.verification_receipts)
+    if result.capability_requirements:
+        # Internal producer fact. G6-v2 may attach turn-scoped boundary metadata in
+        # ToolCycleService; Message.metadata itself never goes on the provider wire.
+        metadata["capability_requirements"] = list(result.capability_requirements)
     return Message(
         role="tool",
         content=content,
@@ -1462,6 +1461,7 @@ class GetToolSchemaTool:
 
     def execute(self, **kwargs) -> Any:
         from llm_loop.core.message import ToolResult, ToolResultStatus
+        from llm_loop.core.run_context import current_tool_discovery_scope
 
         name = str(kwargs.get("tool_name", "")).strip()
         if not name:
@@ -1476,7 +1476,11 @@ class GetToolSchemaTool:
             from llm_loop.tools.eligibility import runtime_tool_health
 
             rows: list[str] = []
-            for tool_name in self._registry.names():
+            scope = current_tool_discovery_scope.get()
+            names = self._registry.names()
+            if scope is not None:
+                names = [tool_name for tool_name in names if tool_name in scope]
+            for tool_name in names:
                 tool_obj = self._registry.get(tool_name)
                 desc = str(getattr(tool_obj, "description", "") or "").replace("\n", " ")
                 hay = f"{tool_name} {desc}".lower()
@@ -1495,6 +1499,18 @@ class GetToolSchemaTool:
             return ToolResult(
                 status=ToolResultStatus.SUCCESS,
                 content=title + "\n" + "\n".join(rows),
+                tool_call_id="",
+                tool_name=self.name,
+            )
+
+        scope = current_tool_discovery_scope.get()
+        if scope is not None and name not in scope:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=(
+                    f"[当前执行域不可用] 工具 '{name}' 不在当前可调用集合。"
+                    f"当前集合: {', '.join(sorted(scope))}"
+                ),
                 tool_call_id="",
                 tool_name=self.name,
             )
@@ -1528,6 +1544,10 @@ class GetToolSchemaTool:
                 f"[runtime_health=quarantined reason={health.reason_code}]\n"
                 f"[preferred_next={','.join(health.preferred_next) or 'none'}]\n"
             )
+
+        # P1-B: exact lookup is schema discovery only. A healthy registered tool is
+        # already callable on the stable provider surface; discovery never grants a
+        # promotion or permission. Runtime-unhealthy state is reported as a fact above.
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=health_note + f"工具 '{name}' 完整 Schema:\n{schema}",

@@ -2,13 +2,14 @@
 
 构造真实 `_try_fallback_chain` 触发路径（非单测直接调 mixin）：
 FakeLLM 主模型首轮抛 HTTP 500 → 引擎沿 MODEL_FALLBACKS 链降级成功。
-断言：回答来自降级模型 + 会话注入 `[模型降级]` 回执 + architecture_status 快照
-降级态可见 + config_status.model_fallbacks_count 可见；4xx 不降级（零回归）。
+断言：回答来自降级模型 + 当前用户结构化 fallback_receipt + architecture_status 快照
+降级态可见；成功降级事实不写入会话 prompt；4xx 不进入 availability failover。
 """
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.llm.client import LLMResponse
@@ -70,9 +71,13 @@ def test_fallback_500_triggers_chain_success(build_test_engine, fake_settings, m
     # ① 回答来自降级模型
     assert result.final_answer == "降级模型回答"
     assert fake_fb.calls, "降级候选未被调用"
+    assert result.fallback_receipt == {
+        "from": "primary/fake-model", "to": "fb/fb-model", "reason": "HTTP 500 上游错误"
+    }
     # ② R8.9: fallback call 已经完成后不再把 notice 写进未来 prompt history。
     sess = engine.session.load(sid)
     assert not any("[模型降级:" in (m.content or "") for m in sess.messages)
+    assert not (Path(new_settings.data_dir) / "state" / "fallback_notice_stamps.json").exists()
     # ③ architecture_status 快照降级态仍可见
     snap = engine.status.snapshot(session_id=sid)
     fb_state = snap.get("model_fallback") or snap.get("fallback") or {}
@@ -191,7 +196,10 @@ def test_cross_provider_fallback_rebuilds_reasoning_projection(
     fallback_assistant = next(
         m for m in fallback_history if m.get("role") == "assistant" and m.get("content") == "OLD-A"
     )
-    assert primary_assistant.get("reasoning_content") is None, "GLM strips non-tool historical reasoning"
+    assert primary_assistant["reasoning_content"] == "OLD-NON-TOOL-REASONING", (
+        "GLM interleaved thinking keeps still-visible historical reasoning; "
+        "fallback rebuild must not rely on a stale strip policy"
+    )
     assert fallback_assistant["reasoning_content"] == "OLD-NON-TOOL-REASONING", (
         "DeepSeek fallback must rebuild from session truth rather than reuse GLM-projected messages"
     )

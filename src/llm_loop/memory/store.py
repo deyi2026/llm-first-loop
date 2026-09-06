@@ -8,7 +8,7 @@ source_message_id/created_at（数据约束 6.3: 可检索、来源可溯）。
 
 版本化与去重（EVO-20260811-cbd6c52a）: 同一事实更新时覆盖旧版而非追加，
 保留 version/updated_at，旧版内容沉入 version_history（不删除业务数据），
-注入排序按版本新鲜度。
+检索排序按版本新鲜度。
 """
 
 from __future__ import annotations
@@ -43,21 +43,18 @@ class MemoryEntry:
     # scope=session: 会话瞬时性内容（调试现场/进度快照/路径/PID），仅原会话（或查询含
     #   对应会话标识）可召回——防 A 会话调试现场污染 B 会话判断。
     scope: str = "global"
-    # ── 记忆注入分级（EVO-20260822-cc3f8e7a，镜像）──
-    # inject_policy=auto（默认）: 正常参与 build_memory_messages top_k 主动注入。
-    # inject_policy=recall_only: 不主动注入（身份纠错/历史决策/一次性决策类低价值记忆），
-    #   仅显式检索可找回（search_records/search_archive）——信息不丢失，只是不占注入预算。
+    # Legacy persistence field: automatic memory prompt injection is retired.
+    # Keep inject_policy only so old index.json entries remain readable; current runtime
+    # retrieves memory explicitly and does not use this field to grant prompt authority.
     inject_policy: str = "auto"
     # ── Phase 2 增强（EVO-20260810-baae4016）──
     access_count: int = 0            # 检索命中次数
     last_access_at: str = ""         # 最近访问时间 ISO（空=从未被检索）
     decay_score: float = 1.0         # 衰减分（1.0=最新最活跃；随未访问天数下降）
-    # ── 升格判据事实源（EVO-20260816-fcdbe2e9）──
-    # inject_count/last_inject_at 仅记录"实际注入上下文"（build_memory_messages 最终 top_k），
-    # 与 access_count（检索命中，含未进 top_k 的噪音）区分——升格通道"命中复用 ≥3 次"以
-    # inject_count 为量化判据（architecture_status.memory.top_injected 可查）。
-    inject_count: int = 0            # 实际注入上下文次数
-    last_inject_at: str = ""         # 最近注入时间 ISO（空=从未被注入）
+    # Legacy persistence fields from the retired automatic-injection era. They are
+    # read/write compatible only and no longer drive current applicability/promotion.
+    inject_count: int = 0
+    last_inject_at: str = ""
     # SkillZip ReZip 借鉴（执行感知反馈环）:
     # guidance_used_at: 最近一次被 M41 注入使用的时间（执行感知）
     # guidance_risk: 风险标记（注入后同场景仍失败累计，>=2 提示经验可能失效）

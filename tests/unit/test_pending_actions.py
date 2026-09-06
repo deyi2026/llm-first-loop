@@ -108,6 +108,36 @@ class TestFactoryPendingActionsFn:
         assert result["pending_self_evals"] == 0
         assert result["hint"] is None
 
+    def test_build_pending_actions_fn_executing_is_bound_session_only(self, tmp_path):
+        from llm_loop.core.run_context import current_session_id
+        from llm_loop.factory import _build_pending_actions_fn
+        from llm_loop.introspection.evolution import EvolutionStore
+
+        class FakeSettings:
+            audit_dir = tmp_path
+
+        store = EvolutionStore(tmp_path)
+        a = store.submit(content="A", session_id="sA", scope="session")
+        b = store.submit(content="B", session_id="sB", scope="session")
+        assert a.status == b.status == "executing"
+        fn = _build_pending_actions_fn(FakeSettings())
+
+        tok = current_session_id.set("sA")
+        try:
+            result_a = fn()
+        finally:
+            current_session_id.reset(tok)
+        assert result_a["executing_evolutions"] == 1
+        assert result_a["capability_requirements"] == ("evolution_complete",)
+
+        tok = current_session_id.set("sC")
+        try:
+            result_c = fn()
+        finally:
+            current_session_id.reset(tok)
+        assert result_c["executing_evolutions"] == 0
+        assert result_c["capability_requirements"] == ()
+
     def test_build_pending_actions_fn_fail_open(self, tmp_path, monkeypatch):
         import llm_loop.introspection.evolution as ev_module
         from llm_loop.factory import _build_pending_actions_fn

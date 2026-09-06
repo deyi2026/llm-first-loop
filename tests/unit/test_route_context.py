@@ -9,13 +9,10 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
-from llm_loop.core.loop.engine_services.duplicate_guard import (
-    DuplicateGuardService,
-    new_duplicate_guard_state,
-)
 from llm_loop.core.loop.engine_services.run_state import RunStateManager
 from llm_loop.core.loop.engine_services.tool_cycle import ToolCycleService
 from llm_loop.core.loop.tool_exec import fingerprint_summary
@@ -77,6 +74,28 @@ def test_r531_1a_triple_fields_present(tmp_path, monkeypatch):
 # ── spec 5.3.1-1b: 显式 zone 如实落盘、检索完整召回 ──
 
 
+def test_zone_derives_real_mirror_workspace_name(monkeypatch):
+    """llm-first-loop-mirror 目录必须机械归因为镜像，不要求独立 /mirror/ 路径段."""
+    import llm_loop.runtime.identity as identity_mod
+
+    monkeypatch.setattr(
+        identity_mod,
+        "compute_identity",
+        lambda: SimpleNamespace(workspace_root="/workspace/llm-first-loop-mirror"),
+    )
+    ctx = get_route_context()
+    assert ctx.zone == "镜像"
+
+
+def test_entrypoint_route_env_is_honored_and_operator_override_wins(monkeypatch):
+    """入口写入的 LFL_ROUTE 是进程事实；显式 operator 值仍由同一 env SoT 覆盖."""
+    monkeypatch.setenv("LFL_ROUTE", "web")
+    assert get_route_context().route == "web"
+    reset_route_context()
+    monkeypatch.setenv("LFL_ROUTE", "feishu")
+    assert get_route_context().route == "feishu"
+
+
 def test_r531_1b_zone_mirror_env(tmp_path, monkeypatch):
     """LFL_ZONE=镜像 → 该实例全部行 zone=镜像、检索可完整召回."""
     monkeypatch.setenv("LFL_ZONE", "镜像")
@@ -98,7 +117,7 @@ def test_r531_2a_triple_question_answerable(tmp_path, monkeypatch):
     monkeypatch.setenv("LFL_ZONE", "镜像")
     monkeypatch.setenv("LFL_ROUTE", "web")
     p = _provider_with_route(tmp_path)
-    for at in ("llm_decide", "tool_call", "stagnation.reminder"):
+    for at in ("llm_decide", "tool_call", "tool.repeat_observed"):
         p.record_action("phase", at, "x")
     rows = _read_jsonl(tmp_path / "action_trace.jsonl")
     ctx = get_route_context()
@@ -161,14 +180,11 @@ class _StubEngine(ToolCycleService):
     def __init__(self):
         self._host = self  # 替身自给宿主面
         self._run_state_mgr = RunStateManager()
+        ToolCycleService.__init__(self, cast(Any, self))  # 走真实服务装配，避免 stub 字段漂移
         self.registry = SimpleNamespace(failure_guidance_enabled=False)
         self.status = None  # _record_tool_history 的空转面
         self.events: list = []
         self.actions: list = []
-        # C-G3 跟随: _record_single_receipt 现并行更新熔断窗口，替身补装配
-        # （生产路径经 ToolCycleService.__init__ 恒装配，此处对齐该事实）
-        self._duplicate_guard = DuplicateGuardService(self)
-        self._run_state().duplicate_guard_state = new_duplicate_guard_state()
 
     def _run_state(self):
         return self._run_state_mgr.bucket()
@@ -196,15 +212,21 @@ def test_r531_5a_fingerprint_calibers_separated():
         SimpleNamespace(id="3", name="read_file", arguments={"path": "a.py"}),  # A
     ]
     # 决策口径（llm_decide）：_resp_summary 的 detail 富含逐调用指纹摘要
-    detail = eng._resp_summary(SimpleNamespace(tool_calls=calls, content=""))
+    detail = eng._resp_summary(cast(Any, SimpleNamespace(tool_calls=calls, content="")))
     assert detail.count(_FP_A) == 2  # 注入 2 次同参 → 决策口径统计一致
     assert detail.count(_FP_B) == 1
     # 执行口径（tool_loop）：tool_trace 的 fp_summary 字段独立统计
     trace: list[dict] = []
     ok = ToolResult(ToolResultStatus.SUCCESS, "ok", "x", "read_file")
-    eng._record_single_receipt(SimpleNamespace(messages=[]), calls[0], ok, trace)
-    eng._record_single_receipt(SimpleNamespace(messages=[]), calls[1], ok, trace)
-    eng._record_single_receipt(SimpleNamespace(messages=[]), calls[2], ok, trace)
+    eng._record_single_receipt(
+        SimpleNamespace(messages=[], session_id="route-t"),
+        calls[0], ok, trace, round_index=0)
+    eng._record_single_receipt(
+        SimpleNamespace(messages=[], session_id="route-t"),
+        calls[1], ok, trace, round_index=0)
+    eng._record_single_receipt(
+        SimpleNamespace(messages=[], session_id="route-t"),
+        calls[2], ok, trace, round_index=0)
     fps = [t["fp_summary"] for t in trace]
     assert fps.count(_FP_A) == 2  # 执行口径同指纹次数与注入一致
     assert fps.count(_FP_B) == 1
@@ -223,7 +245,7 @@ def test_r531_5b_summary_truncated():
     # 决策口径集成：超长参数经 _resp_summary 落盘时同样截断
     eng = _StubEngine()
     big = SimpleNamespace(id="1", name="read_file", arguments={"path": "y" * 500})
-    detail = eng._resp_summary(SimpleNamespace(tool_calls=[big], content=""))
+    detail = eng._resp_summary(cast(Any, SimpleNamespace(tool_calls=[big], content="")))
     assert detail.endswith("…" + "}")  # fp 摘要截断附省略号（外层为名{}包裹）
     assert len(detail) <= len("tool_calls=read_file{}") + 200 + 1  # 可辨识优先于可还原
 

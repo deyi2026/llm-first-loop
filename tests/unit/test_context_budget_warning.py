@@ -108,8 +108,8 @@ def _build_engine(tmp_path, fake, settings):
     return store, engine
 
 
-def test_engine_injects_context_warning_at_80_percent(tmp_path):
-    """上下文占用 ≥80% 预算 → 工具轮末注入 [预算预警] 一次（事实告知，不自动压缩）."""
+def test_engine_observes_context_warning_at_80_percent_without_prompt_message(tmp_path):
+    """上下文占用 ≥80% 只触发 runtime flag；不得写入 program system message."""
     settings = Settings(
         llm_api_key="k",
         llm_base_url="http://t",
@@ -133,13 +133,9 @@ def test_engine_injects_context_warning_at_80_percent(tmp_path):
     result = engine.run(sid, "继续")
     sess = store.load(sid)
     warnings = [m for m in sess.messages if m.role == "system" and "[预算预警]" in m.content]
-    assert len(warnings) == 1  # 只注入一次
-    assert warnings[0].source == MessageSource.SYSTEM
-    # 文本结构: 占用率 + 字符数 + 决策归 AI（不自动压缩）
-    assert "预算的" in warnings[0].content and "%" in warnings[0].content
-    assert "字符" in warnings[0].content
-    assert "RULE-AI-00" in warnings[0].content and "不会自动压缩" in warnings[0].content
-    assert result.final_answer  # 正常完成（预警不阻断）
+    assert warnings == []
+    assert engine._run_state().context_warning_injected is True
+    assert result.final_answer  # telemetry 不阻断正常完成
 
 
 def test_engine_no_context_warning_below_threshold(tmp_path):
@@ -162,8 +158,8 @@ def test_engine_no_context_warning_below_threshold(tmp_path):
     assert result.final_answer
 
 
-def test_context_warning_once_per_run(tmp_path):
-    """同一次 run 内多工具轮也只注入一次（幂等）. """
+def test_context_warning_flag_once_per_run_without_session_pollution(tmp_path):
+    """同一次 run 内多工具轮只触发一次 flag，session 始终零 warning Message."""
     settings = Settings(
         llm_api_key="k",
         llm_base_url="http://t",
@@ -214,4 +210,5 @@ def test_context_warning_once_per_run(tmp_path):
     engine.run(sid, "继续")
     sess = store.load(sid)
     warnings = [m for m in sess.messages if m.role == "system" and "[预算预警]" in m.content]
-    assert len(warnings) == 1  # 3 轮工具仍只注入一次
+    assert warnings == []
+    assert engine._run_state().context_warning_injected is True

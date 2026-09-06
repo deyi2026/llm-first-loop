@@ -10,7 +10,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from llm_loop.core.message import Message, MessageSource, ToolCall
-from llm_loop.core.prompt_eligibility import PROGRAM_FINAL_PROTOCOL_BOUNDARY
+from llm_loop.core.prompt_eligibility import (
+    LEGACY_PROGRAM_FINAL_MARKER,
+    PROGRAM_FINAL_PROTOCOL_BOUNDARY,
+)
 from llm_loop.llm.client import LLMResponse
 from tests.unit.test_err1210_recovery import _mk, _resp
 
@@ -102,9 +105,100 @@ class TestG9ProgramFinalWire:
         wire = fake.calls[-1]["messages"]
         joined = "\n".join(str(m.get("content") or "") for m in wire)
         assert "[模型不可用]" not in joined
-        assert PROGRAM_FINAL_PROTOCOL_BOUNDARY in joined
+        assert LEGACY_PROGRAM_FINAL_MARKER not in joined
+        assert any(
+            m.get("role") == "assistant" and m.get("content") == PROGRAM_FINAL_PROTOCOL_BOUNDARY
+            for m in wire
+        )
         # 存储真相不动
         persisted = engine.session.load(sid)
         assert any(
             "[模型不可用]" in str(m.content or "") for m in persisted.messages
         )
+
+    def test_legacy_model_echo_is_scrubbed_to_empty_role_frame(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """Pre-fix model-origin [program-final] must never survive provider projection."""
+        engine, fake = _mk(tmp_path, monkeypatch, responses=[_resp("正常总结")])
+        sid = engine.session.create()
+        sess = engine.session.load(sid)
+        sess.messages.extend(
+            [
+                Message(role="user", content="旧任务", source=MessageSource.USER),
+                Message(
+                    role="assistant",
+                    content=LEGACY_PROGRAM_FINAL_MARKER,
+                    source=MessageSource.USER,
+                    metadata={"answer_origin": "model", "run_end_reason": "completed"},
+                ),
+            ]
+        )
+        engine.session.save(sess)
+
+        result = engine.run(sid, "继续")
+        assert result.final_answer == "正常总结"
+        wire = fake.calls[-1]["messages"]
+        assert LEGACY_PROGRAM_FINAL_MARKER not in "\n".join(
+            str(m.get("content") or "") for m in wire
+        )
+        assert any(
+            m.get("role") == "assistant" and m.get("content") == "" for m in wire
+        )
+
+    def test_model_echo_retries_once_without_persisting_marker(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """One leaked-marker echo is not a completed answer; next provider round may recover."""
+        engine, fake = _mk(
+            tmp_path,
+            monkeypatch,
+            responses=[_resp(LEGACY_PROGRAM_FINAL_MARKER), _resp("正常最终总结")],
+        )
+        sid = engine.session.create()
+        result = engine.run(sid, "完成任务并总结")
+
+        assert result.final_answer == "正常最终总结"
+        assert len(fake.calls) == 2
+        persisted = engine.session.load(sid)
+        assert all(str(m.content or "").strip() != LEGACY_PROGRAM_FINAL_MARKER for m in persisted.messages)
+        final = [m for m in persisted.messages if m.role == "assistant"][-1]
+        assert (final.metadata or {}).get("answer_origin") == "model"
+        assert (final.metadata or {}).get("run_end_reason") == "completed"
+
+
+    def test_empty_model_output_persists_zero_content_not_program_phrase(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """Completed empty response keeps only assistant role shape; program text stays out."""
+        engine, fake = _mk(tmp_path, monkeypatch, responses=[_resp("")])
+        sid = engine.session.create()
+        result = engine.run(sid, "只做一次空输出测试")
+
+        assert result.final_answer == ""
+        persisted = engine.session.load(sid)
+        final = [m for m in persisted.messages if m.role == "assistant"][-1]
+        assert final.content == ""
+        assert (final.metadata or {}).get("empty_output") is True
+        assert "无回答输出" not in "\n".join(str(m.content or "") for m in persisted.messages)
+
+    def test_repeated_model_echo_is_llm_error_not_completed(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """Two exact echoes fail truthfully instead of silently completing with a control token."""
+        engine, fake = _mk(
+            tmp_path,
+            monkeypatch,
+            responses=[_resp(LEGACY_PROGRAM_FINAL_MARKER), _resp(LEGACY_PROGRAM_FINAL_MARKER)],
+        )
+        sid = engine.session.create()
+        result = engine.run(sid, "完成任务并总结")
+
+        assert "LLM 输出异常" in result.final_answer
+        assert len(fake.calls) == 2
+        persisted = engine.session.load(sid)
+        final = [m for m in persisted.messages if m.role == "assistant"][-1]
+        assert final.content == PROGRAM_FINAL_PROTOCOL_BOUNDARY
+        assert (final.metadata or {}).get("answer_origin") == "program"
+        assert (final.metadata or {}).get("run_end_reason") == "llm_error"
+        assert all(str(m.content or "").strip() != LEGACY_PROGRAM_FINAL_MARKER for m in persisted.messages)

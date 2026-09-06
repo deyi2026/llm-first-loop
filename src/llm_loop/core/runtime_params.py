@@ -97,11 +97,11 @@ class RuntimeParams:
         return default
 
     @property
-    def history_max_chars(self) -> int:
+    def history_max_chars(self) -> int | None:
         default = self._settings.history_max_chars
-        if default is None:  # EVO-20260816-3af5dee3: 未配置兜底旧默认（factory 装配已归一，此处防御）
-            default = 100000
-        return int(self.get("history_budget", default))
+        value = self.get("history_budget", default)
+        # None 是有意义的：没有独立全局 cap，执行预算由当前路由模型物理窗口决定。
+        return int(value) if value is not None else None
 
     @property
     def llm_timeout_s(self) -> float:

@@ -31,6 +31,7 @@ from typing import Literal
 
 from llm_loop.config import _env_evolve_level
 from llm_loop.introspection.evolution import (
+    EvolutionOwnerError,
     EvolutionStatus,
     EvolutionStore,
     EvolutionSuggestion,
@@ -264,6 +265,7 @@ class EvolutionExecutor:
         *,
         actions: list[dict] | None = None,
         note: str = "",
+        owner_session_id: str | None = None,
     ) -> ExecutionOutcome:
         """AI 执行完成登记（executor=ai）: executing→executed + 审计.
 
@@ -274,16 +276,26 @@ class EvolutionExecutor:
         suppress 吞异常——该 suppress 使"建议不存在"与"读取异常"都返回 None 无法区分）:
         target is None（read 正常但无该 id）→ outcome.error 标注"状态未推进（建议不存在）"；
         OSError/ValueError（read/write 异常）→ fail-open（error 不标，现状语义 DFX-REL-08）。
+        MR-3: owner_session_id 非 None 时透传 store.transition owner 断言——跨会话
+        归属拒绝（EvolutionOwnerError）显式标注 error（不伪装 NOT_FOUND、不被
+        fail-open 吞掉）；人工通道（manual_complete）不传 owner 不受影响。
         """
         ts_end = _now()
         error = ""
         if self._store is not None:
             try:
                 target = self._store.transition(
-                    suggestion_id, status="executed", executed_at=_now()
+                    suggestion_id,
+                    status="executed",
+                    executed_at=_now(),
+                    owner_session_id=owner_session_id,
                 )
                 if target is None:
                     error = "状态未推进（建议不存在）"
+            except EvolutionOwnerError as exc:
+                # MR-3: 跨会话归属拒绝（纵深防御；主防线在工具层前置校验）——
+                # 如实标注，store 状态不变
+                error = f"状态未推进（跨会话归属拒绝: {exc}）"
             except (OSError, ValueError):
                 pass  # fail-open: 状态流转异常不阻断（DFX-REL-08）
         outcome = ExecutionOutcome(

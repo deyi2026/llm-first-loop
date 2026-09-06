@@ -78,11 +78,12 @@ def test_llm_error_text_1210_structural_specialized():
         body='{"error":{"code":"1210","message":"API 调用参数有误，请检查文档。"}}',
     )
     text = llm_error_text(exc)
-    assert "结构性触发" in text
-    assert "非网络/Key/模型名问题" in text
-    assert "降级重试" in text
-    assert "本次未能获得回答" in text  # 如实三件套保留
-    assert "检查网络/Key/模型名配置后重试" not in text  # 不再走误导性泛化建议
+    assert "HTTP 400/code 1210" in text
+    assert "provider 请求结构校验" in text
+    assert "本次未能获得模型回答" in text
+    assert "降级重试" not in text
+    assert "剥离" not in text
+    assert "检查网络/Key/模型名配置后重试" not in text
 
 
 def test_llm_error_text_400_non_1210_regression():

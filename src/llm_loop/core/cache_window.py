@@ -1,10 +1,11 @@
 """缓存窗口镜像（2026-08-24）: 把服务端每轮上报的 cached_tokens 映射回提交载荷的
 消息级窗口——缓存覆盖到哪条消息、哪些是新增（miss 区）。
 
-对齐服务端缓存管理逻辑: 前缀缓存按字节前缀命中, cached_tokens = 命中的前缀 token 数
-（llama.cpp / DeepSeek / MiniMax 均按此上报）。镜像窗口 = 提交载荷的
-[cached 区 | 新增区] 分界; 用字符估算（×2 chars/token, 与 runtime 同源）把 token
-边界换算回消息索引。
+对齐服务端缓存管理逻辑: 前缀缓存按前缀命中, cached_tokens = 命中的前缀 token 数。
+镜像窗口只做**消息字符级估算**：provider usage 还包含 chat template、role token、
+tool schema 等非 message.content 开销，无法仅凭 cached_tokens 精确反推消息索引。
+因此 boundary_msg_index/边界字符只能用于观测与保守 cache-boundary 保护，不能当成
+provider tokenizer 的精确映射事实。
 
 用途（信息补充决策, RULE-AI-00: 程序给事实, AI 决策）:
 - 引用缓存区内信息 = 零额外 prefill（已含在载荷内, KV 复用, 可放心引用）
@@ -32,8 +33,12 @@ class CacheWindow:
     prompt_tokens: int
     hit_ratio: float  # cached/prompt（服务端口径）
     total_chars: int  # 提交载荷总字符
-    boundary_chars: int  # cached 前缀折合字符（min(total_chars, cached×2)）
+    boundary_chars: int  # cached 前缀折合 message.content 字符（估算）
     boundary_msg_index: int  # 边界所在消息下标（-1 = 无缓存区）
+    # Generic cached_tokens→message mapping is estimated and must never become a
+    # mandatory compaction boundary. Future provider-specific exact metadata may
+    # set this True explicitly.
+    boundary_exact: bool = False
     cached_msgs: list[dict] = field(default_factory=list)  # [{index, role, chars, partial}]
     new_msgs: list[dict] = field(default_factory=list)  # [{index, role, chars}]
 
@@ -41,7 +46,7 @@ class CacheWindow:
         """单行可读摘要（日志/状态展示用）."""
         if not self.cached_msgs and not self.new_msgs:
             return "（空载荷）"
-        cached = f"缓存覆盖至消息#{self.boundary_msg_index}"
+        cached = f"估算缓存覆盖至消息#{self.boundary_msg_index}"
         if self.cached_msgs and self.cached_msgs[-1].get("partial"):
             cached += "（部分）"
         return (
@@ -64,6 +69,7 @@ def describe_cache_window(
         cached_tokens: 服务端上报的命中前缀 token 数（0 = 未命中）.
         prompt_tokens: 服务端上报的输入 token 总数（0 = 未提供, 窗口按无缓存处理）.
         chars_per_token: 字符/token 估算（默认 0.6, 与 runtime 同源; 测试可覆盖）.
+            该换算不包含 tool schema/chat template 等 provider token 开销。
 
     Returns:
         CacheWindow（消息为空/参数异常 → 空窗口, 不抛异常）.
@@ -103,6 +109,7 @@ def describe_cache_window(
         total_chars=total_chars,
         boundary_chars=boundary_chars,
         boundary_msg_index=boundary_idx,
+        boundary_exact=False,
         cached_msgs=cached_msgs,
         new_msgs=new_msgs,
     )

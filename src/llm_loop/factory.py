@@ -34,6 +34,8 @@ from llm_loop.llm.client import LLMClient
 from llm_loop.memory.archive import ArchiveStore
 from llm_loop.memory.episode import EpisodeStore
 from llm_loop.memory.store import MemoryStore
+from llm_loop.runtime.route_context import get_route_context, set_route_audit_fn
+from llm_loop.runtime.tool_octet import register_octet_sink
 from llm_loop.subagent.runner import SubAgentRunner
 from llm_loop.tools.builtin.dsh_session_read import DshSessionReadTool
 from llm_loop.tools.builtin.dsh_task import DshTaskTool
@@ -130,6 +132,9 @@ def build_engine(settings: Settings) -> LoopEngine:
     # 失败原因）+ config_status 暴露 model_registry_resolved=false, 让 AI 经
     # architecture_status 感知"模型配置未生效"（程序故障对 AI 可见原则）.
     thinking_supported: bool | None = None
+    reasoning_capable: bool | None = None
+    reasoning_control = "legacy"
+    resolved_provider_id = ""
     model_registry_resolved = False
     # P1-8(2026-08-15): 默认模型支持 "provider/model" 全限定（如 kimi/k3-256k）——
     # 全限定 → 默认 client 按注册表 provider 参数装配（base_url/api_key 来自 provider 配置,
@@ -141,10 +146,11 @@ def build_engine(settings: Settings) -> LoopEngine:
 
         registry = load_registry(settings)
         provider_id, model_id = registry.resolve(settings.llm_model)
-        # EVO-20260818 cache_window_converge（spec §5.1.1）: 窗口收敛上限守卫统一委托
-        # converge_history_budget——未配置（None）→ 按窗口自适应（兜底 100K / 上限 200K）并写回
-        # 非 None；显式 ≤200K → 原值生效；显式 >200K → 显式豁免保留原值 + 强告警（不降级，
-        # 2026-08-18 用户拍板兼容"方案A"大预算）；显式非法（<1000）→ 兜底写回纠错。
+        resolved_provider_id = provider_id
+        # 2026-09-04: history_max_chars=None 是“未配置独立全局 cap”的真实状态，
+        # 不能在装配时冻结成默认模型的 100K/160K 预算；否则会话随后切换到更大窗口
+        # 模型仍被启动模型的旧预算限制。None 保持 None，执行期由当前路由模型物理窗口
+        # + output reserve/provider cap 决定。仅显式非法值仍做兼容纠错。
         if settings.history_max_chars is None:
             _limit: int | None = None
             try:
@@ -153,19 +159,27 @@ def build_engine(settings: Settings) -> LoopEngine:
             except Exception:  # noqa: BLE001 — 窗口未知兜底旧默认
                 _limit = None
             _budget, _note = converge_history_budget(None, model_window=_limit)
-            settings = dataclasses.replace(settings, history_max_chars=_budget)
             if _note:
-                logger.warning("history_max_chars 未配置 → %s（生效: %d）", _note, _budget)
+                logger.info(
+                    "history_max_chars 未配置（无独立全局 cap）；%s，诊断预算=%d",
+                    _note, _budget,
+                )
             else:
-                logger.info("history_max_chars 未配置 → 按模型窗口自适应: %d 字符", _budget)
+                logger.info(
+                    "history_max_chars 未配置（无独立全局 cap）；默认模型物理预算估算=%d 字符",
+                    _budget,
+                )
         else:
             _budget, _note = converge_history_budget(settings.history_max_chars, model_window=None)
             if _note:
                 logger.warning("%s（当前生效: %d）", _note, _budget)
-                # 非法输入兜底 → 写回纠错；豁免场景 budget==原值 → 不写回（保留用户配置）
+                # 非法输入兜底 → 写回纠错；合法显式 cap 原样保留。
                 if _budget != settings.history_max_chars:
                     settings = dataclasses.replace(settings, history_max_chars=_budget)
         thinking_supported = registry.supports_thinking(provider_id, model_id)
+        reasoning_capable, reasoning_control = registry.reasoning_contract(
+            provider_id, model_id
+        )
         model_registry_resolved = True
         if "/" in settings.llm_model:
             llm_params = registry.client_params(provider_id, model_id)
@@ -184,14 +198,23 @@ def build_engine(settings: Settings) -> LoopEngine:
         api_key=(llm_params or {}).get("api_key", settings.llm_api_key),
         base_url=(llm_params or {}).get("base_url", settings.llm_base_url),
         model=(llm_params or {}).get("model", settings.llm_model),
-        timeout_s=settings.llm_timeout_s,
-        max_tokens=settings.llm_max_tokens,  # 2026-08-15 显式输出预算
-        wire_protocol=settings.llm_wire_protocol,  # P3-5 协议分发
+        timeout_s=(llm_params or {}).get("timeout_s", settings.llm_timeout_s),
+        max_tokens=(llm_params or {}).get("max_tokens", settings.llm_max_tokens),
+        wire_protocol=(
+            (llm_params.get("wire_protocol") or "openai")
+            if llm_params is not None
+            else settings.llm_wire_protocol
+        ),
         # M20 THK-01: 思考参数装配一次，三条 LLM 路径统一受益（VAL-02）
         thinking_mode=settings.thinking_mode,
         reasoning_effort=settings.reasoning_effort,
         # M47 §5.5: 元数据驱动的思考支持判定（None 时退回硬编码，向后兼容）
         thinking_supported=thinking_supported,
+        reasoning_capable=reasoning_capable,
+        reasoning_control=reasoning_control,
+        provider=resolved_provider_id,
+        send_tool_choice=bool((llm_params or {}).get("send_tool_choice", True)),
+        reasoning_split=bool((llm_params or {}).get("reasoning_split", False)),
     )
 
     # M48（design §5.3）: 模型客户端路由池（会话级 model_override 路由 + provider 级缓存）
@@ -203,6 +226,8 @@ def build_engine(settings: Settings) -> LoopEngine:
         registry=registry,
         default_client=llm,
         model_fallbacks_raw=settings.model_fallbacks_raw,
+        base_timeout_s=settings.llm_timeout_s,
+        base_max_tokens=settings.llm_max_tokens,
     )
 
     # 存储（记忆 + 压缩档案 + 会话 + fail-open恢复备份）
@@ -301,11 +326,7 @@ def build_engine(settings: Settings) -> LoopEngine:
     registry = ToolRegistry(
         tool_timeout_s=settings.tool_timeout_s,
         max_output_chars=settings.tool_max_output_chars,
-        summary_threshold=settings.tool_summary_threshold,
         # EVO-20260822-b3e7105e: local 模型预算联动收紧参数（默认 0=未启用，云端零回归）
-        summary_local_threshold=settings.tool_summary_local_threshold,
-        summary_local_head_chars=settings.tool_summary_local_head_chars,
-        summary_local_tail_chars=settings.tool_summary_local_tail_chars,
         archive_store=archive,  # T22: 超长工具结果另存
         exec_mode=settings.exec_mode,  # EVO-20260810-2549e9b6: EXEC_MODE 命令分级
         exec_allowlist=settings.exec_allowlist,
@@ -384,9 +405,7 @@ def build_engine(settings: Settings) -> LoopEngine:
                     evidence_capture,
                     projection=ProjectionEngine(),
                     owner_resolver=_evidence_owner,
-                    projection_budget_chars=min(
-                        settings.tool_max_output_chars, settings.tool_summary_threshold, 5000
-                    ),
+                    projection_budget_chars=min(settings.tool_max_output_chars, 5000),
                 )
             )
             registry.set_evidence_source_resolver(
@@ -397,9 +416,7 @@ def build_engine(settings: Settings) -> LoopEngine:
                     # R8.24-C C-D9: 复用命中内联正文所需 blob 面 + 内联预算（与 enforcer
                     # projection budget 同源）；缺 blob 面时命中如实 failure（不静默吞正文）。
                     blobs=evidence_blobs,
-                    inline_budget_chars=min(
-                        settings.tool_max_output_chars, settings.tool_summary_threshold, 5000
-                    ),
+                    inline_budget_chars=min(settings.tool_max_output_chars, 5000),
                 )
             )
             registry.register(
@@ -658,14 +675,24 @@ def build_engine(settings: Settings) -> LoopEngine:
         # P1-12(2026-08-16): 工作区变更检测——guard 检测 .env/providers.json/src/skills
         # 变化后写 data/workspace_changed.json, AI 经 architecture_status 自查可见
         workspace_changed_fn=lambda: _read_workspace_changed_flag(settings.data_dir),
+        # spec 5.3.1/D6: 路由三元组（进程级一次解析，随审计行顺带落盘）
+        route_fn=lambda: get_route_context().__dict__,
     )
+
+    # spec 6.5.4/D6: route.missing 留痕回调接既有审计单口（C-G1 遗留接线，恰一次）
+    set_route_audit_fn(status_provider.record_action)
+
+    # M2-G1.1: tool_octet 观测流 sink 一次性接线（沿用 set_route_audit_fn 装配模式；
+    # writer 仍为 status_provider._write_audit 单一 SoT；开关门控在 observer 首行，装配不判环境）
+    register_octet_sink(status_provider.append_audit_line)
 
     # M56 B5（ANALYSIS-20260811）: 当前模型窗口注入 architecture_status（AI 可查后
     # 自主决策上下文压缩；resolve 失败/未知模型如实返回 label+context=None，不伪造）
     def _model_window_snapshot() -> dict:
         try:
-            pid, mid = model_pool.registry.resolve(settings.llm_model)
-            spec = model_pool.registry.providers[pid].models.get(mid)
+            registry_snapshot = model_pool.default_registry_snapshot()
+            pid, mid = registry_snapshot.resolve(settings.llm_model)
+            spec = registry_snapshot.providers[pid].models.get(mid)
             return {"label": f"{pid}/{mid}", "context": spec.context if spec else None}
         except Exception:  # noqa: BLE001 — 窗口查询失败如实降级
             return {"label": settings.llm_model, "context": None}
@@ -756,6 +783,12 @@ def build_engine(settings: Settings) -> LoopEngine:
 
         def hydrate_episode(self, **kw: Any) -> dict | None:
             return self._searcher.hydrate_episode(**kw)
+
+        @property
+        def last_diagnostics(self) -> Any:
+            """R3(P0-3): experience 检索诊断透传（工具层 duck-typing 读取；缺失 None）."""
+
+            return getattr(self._searcher, "last_diagnostics", None)
 
     corrections._search_records_fn = _RecordSearcherAdapter(searcher)  # noqa: SLF001
     corrections._experience_store = experience_store  # noqa: SLF001 — P1-2: 工具分派注入
@@ -915,9 +948,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         runtime=runtime,  # M12 T50: 动态参数视图
         fault_classifier=_build_fault_classifier(),
         selfheal_budget=_build_selfheal_budget(settings),
-        eval_trigger_detector=_build_eval_trigger_detector(settings),
-        evolution_store=correction_ctx.evolution_store,  # M17 FR-REVIEW-AI-02: executing 提醒数据源
-        loop_signal_detector=_build_loop_signal_detector(settings, status_provider, corrections),
+        loop_signal_detector=_build_loop_signal_detector(),
         llm_pool=model_pool,  # M48（design §5.3）: 会话级模型路由
         recovery=recovery_channel,  # P2-2: fail-open 写失败恢复通道
         event_store=_build_event_store(settings),  # D1: 事件源化（共享同一实例）
@@ -934,7 +965,8 @@ def build_engine(settings: Settings) -> LoopEngine:
     # run 在后台 daemon 线程执行，断连只停订阅、结果落盘；RUNNER_BACKGROUND=0 回退旧直驱
     from llm_loop.core.loop.runner import BackgroundRunner
 
-    engine.runner = BackgroundRunner(engine, enabled=settings.runner_background)
+    background_runner = BackgroundRunner(engine, enabled=settings.runner_background)
+    engine.runner = background_runner
     logger.info("后台 run 执行器已装配 enabled=%s", settings.runner_background)
 
     # 调度提醒线程：到点写 interop；R8.12/R8.13 后仅进入 interop UI/action，
@@ -1014,6 +1046,11 @@ def build_engine(settings: Settings) -> LoopEngine:
     status_provider.set_context_breakdown_fn(lambda: engine._run_state().last_breakdown)
     # EVO-20260827-ed4c1350（P0-B）: 有效预算归因（engine 每 round 刷新 last_budget_info）
     status_provider.set_budget_fn(lambda: engine._run_state().last_budget_info)
+    # 2026-09-04 P1: 最近一次真实 provider request 的 context/cache 事实按需可查，
+    # 不再靠 prompt 注入让模型猜 headroom / prefix 漂移。
+    status_provider.set_request_usage_fn(
+        lambda: engine._run_state().last_request_usage
+    )
     # EVO-20260818（spec §5.4.1-2）: cache_health/cache_guard 对外可观测注入——
     # cache_guard 回调透传 session_id（guard 窗口 per-session，grill-me Q11）；fail-open
     try:
@@ -1024,7 +1061,7 @@ def build_engine(settings: Settings) -> LoopEngine:
             snap = engine._cache_monitor.snapshot()
             if snap is None:
                 return None
-            win = getattr(engine, "_last_cache_window", None)
+            win = getattr(engine._run_state(), "last_cache_window", None)
             if win is None:
                 return snap
             snap = dict(snap)
@@ -1035,6 +1072,11 @@ def build_engine(settings: Settings) -> LoopEngine:
                 "hit_ratio": round(win.hit_ratio, 4),
                 "boundary_chars": win.boundary_chars,
                 "boundary_msg_index": win.boundary_msg_index,
+                "boundary_mapping": "estimated_message_chars",
+                "boundary_exact": bool(getattr(win, "boundary_exact", False)),
+                "stable_prefix_fp": engine._run_state().last_cache_window_stable_fp,
+                "cache_prefix_epoch": engine._run_state().cache_prefix_epoch,
+                "compaction_epoch": engine._run_state().compact_event_seq,
                 "cached_msgs": win.cached_msgs[-8:],  # 展示截断（完整见事件日志）
                 "new_msgs": win.new_msgs[-8:],
             }
@@ -1060,11 +1102,13 @@ def build_engine(settings: Settings) -> LoopEngine:
     # T4（spec.md 5.3.1）: 待办聚合注入 architecture_status（AI 一站式感知系统待办）
     status_provider.set_pending_actions_fn(_build_pending_actions_fn(settings))
 
-    # EVO 第五项: 递归子代理（参考 OpenRSI 四算子 + 执行反馈）— 独立会话隔离 + 受限工具 + 深度/预算边界
+    # 子代理继承父工具执行域；不因 child 身份维护第二套静态工具能力表。
+    # 轮数默认跟随 operator/main resource budget；有限 recursion depth 仍是并发资源边界。
     subagent_runner = SubAgentRunner(
         llm=llm,
         registry=registry,
         session_store=session_store,
+        max_iterations=settings.max_iterations,
     )
     registry.register(SpawnSubAgentTool(subagent_runner))
     # DSH 借鉴 022-B: 子代理中途报告工具（仅子代理会话内 contextvar 上下文可用）
@@ -1385,9 +1429,20 @@ def _build_pending_actions_fn(settings) -> Any:
 
     def _aggregate() -> dict:
         try:
+            from llm_loop.core.run_context import current_session_id as _current_session_id
+
             store = EvolutionStore(settings.audit_dir)
             items = store.list()
-            executing = sum(1 for it in items if it.get("status") == "executing")
+            _sid = str(_current_session_id.get() or "")
+            # Capability-bearing executing hints are session-owned facts.  Human
+            # pending-review count may remain global because it does not grant a model tool.
+            executing = sum(
+                1
+                for it in items
+                if it.get("status") == "executing"
+                and _sid
+                and str(it.get("session_id", "") or "") == _sid
+            )
             pending_review = sum(1 for it in items if it.get("status") == "pending_review")
         except Exception as exc:  # noqa: BLE001 — 聚合失败如实标注（fail-open）
             return {
@@ -1395,6 +1450,7 @@ def _build_pending_actions_fn(settings) -> Any:
                 "pending_reviews": None,
                 "pending_self_evals": None,
                 "hint": None,
+                "capability_requirements": (),
                 "note": f"演进待办聚合失败: {type(exc).__name__}: {exc}",
             }
         hint_parts: list[str] = []
@@ -1407,36 +1463,19 @@ def _build_pending_actions_fn(settings) -> Any:
             "pending_reviews": pending_review,
             "pending_self_evals": 0,
             "hint": "；".join(hint_parts) if hint_parts else None,
+            # R2 P0-1: hint 文案与结构化字段同一函数产出（§5.7.1-2a；executing>0 → evolution_complete）
+            "capability_requirements": ("evolution_complete",) if executing else (),
             "note": None,
         }
 
     return _aggregate
 
 
-def _build_loop_signal_detector(settings, status_provider, corrections) -> Any:
-    """装配每轮末信号检测统一壳（M17 FR-REVIEW-AI-02/03; M18 AA1 收敛）.
-
-    M18 审计（FR-AUDIT3-AI-01）: 参数信号检测已移除并移交 RULE-AI-02；本壳仅
-    eval_trigger/executing（executing 经 evolution_store 由 LoopEngine 薄壳调用）。
-    """
+def _build_loop_signal_detector() -> Any:
+    """Build the opt-in operator pending-review helper; ordinary runs do not scan it."""
     from llm_loop.introspection.loop_signals import LoopSignalDetector
 
-    return LoopSignalDetector(
-        eval_trigger_detector=_build_eval_trigger_detector(settings),
-        status=status_provider,
-        settings=settings,
-    )
-
-
-def _build_eval_trigger_detector(settings) -> Any:
-    """装配自我评估触发检测器（T65，SELF_EVAL_ENABLED=0 时返回 None）."""
-    if not getattr(settings, "self_eval_enabled", True):
-        return None
-    from llm_loop.introspection.evaluator import EvalTriggerDetector
-
-    return EvalTriggerDetector(
-        interval_rounds=getattr(settings, "self_eval_interval_rounds", 50),
-    )
+    return LoopSignalDetector()
 
 
 def _make_tool_call(name: str, arguments: dict):

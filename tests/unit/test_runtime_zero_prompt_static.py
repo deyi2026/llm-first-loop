@@ -1,7 +1,7 @@
 """R8.24-B 6.3: "运行时故障零 prompt"静态断言.
 
-五个退役提示函数（E15/E16/E18 决策与预警/E17 overflow 教程）不得存在任何
-生产调用点（调用即红灯）——函数体仅在 honesty.py 保留历史参照与测试反例。
+五个退役提示生产者（E15/E16/E18 决策与预警/E17 overflow 教程）不得存在于
+生产源码。历史语义由 Git/测试场景留存，不在 runtime 养无调用函数。
 """
 
 from __future__ import annotations
@@ -23,17 +23,15 @@ def _iter_py_files():
     yield from _SRC_ROOT.rglob("*.py")
 
 
-def test_retired_prompt_functions_have_no_production_call_sites():
-    """函数名只允许出现在 honesty.py（定义+docstring）；他处出现即红灯。"""
+def test_retired_prompt_producers_are_absent_from_production_source():
+    """Rule-first: retired strategy-prose producers do not remain as dead runtime APIs."""
     violations: list[str] = []
     for path in _iter_py_files():
-        if path.name == "honesty.py" and path.parent.name == "feedback":
-            continue
         text = path.read_text(encoding="utf-8")
         for func in _RETIRED_FUNCTIONS:
-            if func in text:
+            if f"def {func}(" in text or f"import {func}" in text:
                 violations.append(f"{path.relative_to(_SRC_ROOT)}: {func}")
-    assert violations == [], f"退役函数生产调用点: {violations}"
+    assert violations == [], f"退役 prompt producer 仍在生产源码: {violations}"
 
 
 def test_engine_no_longer_imports_retired_messages():
@@ -59,20 +57,24 @@ def test_overflow_path_is_deterministic_runtime_control():
     assert "[上下文超限]" in overflow_src  # B-G3 纯事实终态文本在场
 
 
-def test_stagnation_reminder_is_event_only():
-    """停滞/空搜索提醒: tool_cycle 提醒路径零 Message 构造（事件观测替代；B5-W3-01 起实现位 engine_services/tool_cycle.py）。"""
+def test_repeat_and_empty_search_are_event_only():
+    """P2-A: repeat/empty-search telemetry is event-only and cannot create model messages."""
     tool_cycle_src = (
         _SRC_ROOT / "core" / "loop" / "engine_services" / "tool_cycle.py"
     ).read_text(encoding="utf-8")
     assert "stagnation_reminder_message" not in tool_cycle_src
     assert "empty_search_reminder_message" not in tool_cycle_src
-    assert "stagnation.reminder" in tool_cycle_src  # 事件通道在场
-    assert "empty_search.reminder" in tool_cycle_src
+    assert "tool.repeat_observed" in tool_cycle_src
+    assert "tool.empty_search_observed" in tool_cycle_src
+    assert "stagnation.break" not in tool_cycle_src
 
 
 def test_program_final_boundary_is_protocol_only():
-    """B-D11/B-G9: 占位为 neutral ASCII 协议形状，中文语义标签退役。"""
-    from llm_loop.core.prompt_eligibility import PROGRAM_FINAL_PROTOCOL_BOUNDARY
+    """B-D11/B-G9: role boundary carries zero model-visible control tokens."""
+    from llm_loop.core.prompt_eligibility import (
+        LEGACY_PROGRAM_FINAL_MARKER,
+        PROGRAM_FINAL_PROTOCOL_BOUNDARY,
+    )
 
-    assert PROGRAM_FINAL_PROTOCOL_BOUNDARY == "[program-final]"
-    assert "[程序终止边界" not in PROGRAM_FINAL_PROTOCOL_BOUNDARY
+    assert PROGRAM_FINAL_PROTOCOL_BOUNDARY == ""
+    assert LEGACY_PROGRAM_FINAL_MARKER == "[program-final]"

@@ -68,9 +68,10 @@ def test_cancel_stops_llm_stream_before_more_deltas(build_test_engine):
     assert stream_closed.wait(0.5), "取消后应 close LLM stream 释放 HTTP/生成资源"
 
     sess = engine.session.load(sid)
-    # 快照跟随（2026-09-02 存量基线红修复）: R8.24-B 起 cancelled 收口行存
-    # [program-final] 协议占位（原断言期待完整文案，与已发布协议不符）
-    assert sess.messages[-1].content == "[program-final]"
+    # Agency-first: cancelled 收口仍保留 assistant role 边界，但边界内容必须为零，
+    # 不能把历史 [program-final] 控制字串重新暴露给后续 provider prompt。
+    assert sess.messages[-1].role == "assistant"
+    assert sess.messages[-1].content == ""
     # B1(EVO-20260902-41898b20): 倒数第二行 = 中断半截产物（截断标注如实落盘，
     # 本次取消仅消费首 token "A"）
     assert "[截断标注]" in sess.messages[-2].content

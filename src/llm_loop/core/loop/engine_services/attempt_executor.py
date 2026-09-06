@@ -1,22 +1,20 @@
 """AttemptExecutor——attempt 规划职责面（provider planning / budget 预取）（R9 Phase 5 T6-A）.
 
 B5-W2-02 迁入：engine._run_stream_inner 规划段（planned_label 解析 /
-effective_budget 预取链：窗口感知 → overflow 收缩 → 归因 → 工具轮零历史/预算上限 →
-note/记录）装配为 plan(model, sess, planning_registry) -> AttemptResult 门面。
+effective_budget 预取链：模型物理窗口/显式 operator-provider cap → overflow 收缩 → 归因）
+装配为 plan(model, sess, planning_registry) -> AttemptResult 门面。
 语句逐字平移，``self.`` → ``self._host.``（宿主 = LoopEngine；_planned_model_label /
-_effective_history_budget* / _set_model_label_ctx / _note_tool_round_budget /
-_record_action / _runtime_history_budget / _overflow_shrink_factor 全留宿主域）。
+_effective_history_budget* / _set_model_label_ctx / _record_action /
+_overflow_shrink_factor 全留宿主域）。
 行为零变化：
 
-- build 阶段（_build_llm_messages）与 routing 决策（_route_model）留宿主主循环，
-  AttemptResult 字段 → build 传参面零变化（planned_label / effective_budget /
-  tool_round_zero 原名原语义）
+- build 阶段（_build_llm_messages）与 routing 决策（_route_model）留宿主主循环；
+  AttemptResult 只承载 planned_label / effective_budget，不按“工具轮/local”额外降智。
 - LLM 调用点（payload 构建 + stream 获取）与 routing 元组/两个 break 逃生深耦合，
   归装挂账 W5 波次（RunCoordinator 组装）；_RoutingMixin 已退役为 RoutingService（W4-02b，宿主面经壳不变，D-B5-7 依据保留）
 
 宿主依赖（engine 持有）：_planned_model_label / _set_model_label_ctx /
-_effective_history_budget / _effective_history_budget_detail /
-_note_tool_round_budget / _record_action / _runtime_history_budget /
+_effective_history_budget / _effective_history_budget_detail / _record_action /
 _overflow_shrink_factor（宿主面字段）/ _run_state().last_budget_info（写回 per-session 桶）
 """
 
@@ -26,7 +24,6 @@ _overflow_shrink_factor（宿主面字段）/ _run_state().last_budget_info（�
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -40,9 +37,6 @@ class AttemptResult:
 
     planned_label: str
     effective_budget: int
-    tool_round_zero: bool
-    tool_budget: int
-    is_local_tool: bool
 
 
 class AttemptExecutor:
@@ -73,39 +67,25 @@ class AttemptExecutor:
         if _shrink is not None and effective_budget:
             effective_budget = int(effective_budget * _shrink)
         # P0-B: 预算归因（architecture_status.context_usage.budget 消费）
-        self._host._run_state().last_budget_info = self._host._effective_history_budget_detail(
+        _budget_info = self._host._effective_history_budget_detail(
             planned_label, registry_snapshot=planning_registry
         )
-        _tb = int(os.environ.get("TOOL_ROUND_BUDGET", "8000"))
-        _last_tool = next((bool(getattr(m, "tool_calls", None))
-                           for m in reversed(sess.messages) if m.role == "assistant"), False)
-        _is_local_tool = _last_tool and planned_label.split("/", 1)[0] == "local"
-        # 2026-08-24: 工具轮零历史开关 = env TOOL_ROUND_ZERO_HISTORY 显式 > provider 级
-        # tool_round_zero_history 配置（local 已配 true → 工具轮极小窗口默认启用;
-        # 云端不配 → False 零回归）。零历史 = 只发 system+工具 schema+最近完整协议
-        # 配对组 → KV 前缀稳定命中 + prefill 秒级（本地实测 4-13 tokens prefill 0.2-0.8s）
-        _zero_env = os.environ.get("TOOL_ROUND_ZERO_HISTORY")
-        if _zero_env is None and planning_registry is not None and "/" in planned_label:
-            _spec_tmp = planning_registry.providers.get(planned_label.split("/", 1)[0])
-            _zero_env = "1" if (_spec_tmp is not None and _spec_tmp.tool_round_zero_history) else "0"
-        _tool_round_zero = _is_local_tool and (_zero_env or "0") == "1"  # noqa: E501
-        if _tool_round_zero:
-            effective_budget = min(effective_budget, 4000)
-        elif _tb > 0 and _is_local_tool:
-            effective_budget = min(effective_budget, _tb)
-        self._host._note_tool_round_budget(
-            _tool_round_zero, _is_local_tool, _tb, effective_budget
+        self._host._run_state().last_budget_info = _budget_info
+        # 只把“相对显式 operator/runtime cap 又被模型/provider 收紧”记录成
+        # model-aware 收缩。history_max_chars=None 时没有独立全局 cap，不能拿
+        # _runtime_history_budget() 的兼容诊断值制造一个虚构的 before 值。
+        _explicit_ref = (
+            _budget_info.get("runtime_override")
+            if _budget_info.get("runtime_override") is not None
+            else _budget_info.get("configured_global_budget")
         )
-        if effective_budget < self._host._runtime_history_budget():
+        if _explicit_ref is not None and effective_budget < int(_explicit_ref):
             self._host._record_action(
                 "understand.build_messages",
                 "model_aware_budget",
-                f"{planned_label}: {self._host._runtime_history_budget()}→{effective_budget}",
+                f"{planned_label}: {int(_explicit_ref)}→{effective_budget}",
             )
         return AttemptResult(
             planned_label=planned_label,
             effective_budget=effective_budget,
-            tool_round_zero=_tool_round_zero,
-            tool_budget=_tb,
-            is_local_tool=_is_local_tool,
         )
