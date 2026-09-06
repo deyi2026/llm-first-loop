@@ -104,6 +104,7 @@ _EVENT_TOP_FIELDS = (
     "channel",
     "fixed_summary",
     "summary_chain",
+    "working_state_checkpoint",
 )
 
 
@@ -168,6 +169,10 @@ class Session:
     # 缺省向后兼容（旧 JSON 无键 → 空）
     fixed_summary: str = ""                       # 核心固定摘要（首次压缩生成, 永不更新）
     summary_chain: list[str] = field(default_factory=list)  # 增量摘要链（尾部追加, 低频合并）
+    # S1 selective-evidence canary: internal model-authored fold state. It is
+    # persisted out-of-band from messages so it cannot masquerade as a normal
+    # assistant turn or trigger tool-consumer retirement. None = zero behavior.
+    working_state_checkpoint: dict[str, Any] | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -188,6 +193,7 @@ class Session:
             "projection_guard": self.projection_guard,  # EVO-20260817-b6554376 投影门闸缓存行
             "fixed_summary": self.fixed_summary,        # 2026-08-21 追加式压缩: 核心固定摘要
             "summary_chain": self.summary_chain,        # 2026-08-21 追加式压缩: 增量摘要链
+            "working_state_checkpoint": self.working_state_checkpoint,
             "messages": [
                 {
                     "role": m.role,
@@ -817,9 +823,15 @@ class SessionStore:
 
                 view = replay_session(events)
                 changes = {}
-                for field_name in ("fixed_summary", "summary_chain"):
+                for field_name in ("fixed_summary", "summary_chain", "working_state_checkpoint"):
                     current = getattr(session, field_name)
-                    previous = view.get(field_name, "" if field_name == "fixed_summary" else [])
+                    if field_name == "fixed_summary":
+                        fallback = ""
+                    elif field_name == "summary_chain":
+                        fallback = []
+                    else:
+                        fallback = None
+                    previous = view.get(field_name, fallback)
                     if previous != current:
                         changes[field_name] = {"from": previous, "to": current}
                 if changes:
@@ -923,6 +935,18 @@ class SessionStore:
 
     def _save_locked(self, session: Session) -> None:
         """save 的持锁内层（调用方必须已持有 _session_lock，否则并发保护不成立）."""
+        checkpoint = session.working_state_checkpoint
+        if isinstance(checkpoint, dict):
+            boundary = checkpoint.get("boundary_message_count")
+            try:
+                boundary_count = int(boundary) if isinstance(boundary, int | str) else -1
+            except ValueError:
+                boundary_count = -1
+            if boundary_count != len(session.messages):
+                # S1 checkpoint is valid only for the exact transcript snapshot on
+                # which selection occurred. Any later user/model/tool message makes
+                # it mechanically stale; clear rather than carrying hidden old state.
+                session.working_state_checkpoint = None
         session.updated_at = _now()
         if not session.title:
             first_user = next((m for m in session.messages if m.role == "user"), None)
@@ -1022,6 +1046,11 @@ class SessionStore:
                 # 2026-08-21 (追加式压缩, version 5): 摘要链缺省向后兼容
                 fixed_summary=view.get("fixed_summary", ""),
                 summary_chain=list(view.get("summary_chain") or []),
+                working_state_checkpoint=(
+                    dict(view["working_state_checkpoint"])
+                    if isinstance(view.get("working_state_checkpoint"), dict)
+                    else None
+                ),
             )
         except Exception as exc:  # noqa: BLE001 — fail-open
             logger.warning("event_log replay 重建异常（fail-open）: %s: %s", session_id, exc)
@@ -1059,6 +1088,11 @@ class SessionStore:
                 # 2026-08-21 (追加式压缩, version 5): 摘要链缺省向后兼容（旧 JSON 无键 → 空）
                 fixed_summary=data.get("fixed_summary", ""),
                 summary_chain=list(data.get("summary_chain") or []),
+                working_state_checkpoint=(
+                    dict(data["working_state_checkpoint"])
+                    if isinstance(data.get("working_state_checkpoint"), dict)
+                    else None
+                ),
             )
         except (json.JSONDecodeError, KeyError, ValueError):
             # 如实降级：文件损坏时备份原始文件（不覆盖丢数据），返回新会话（不伪造恢复）
