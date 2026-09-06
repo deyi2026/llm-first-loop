@@ -20,18 +20,35 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 TUNNEL_MODE="${1:-quick}"
-WEB_PORT="${WEB_PORT:-8903}"
-WEB_HOST="${WEB_HOST:-127.0.0.1}"
 LOG_DIR="$PROJECT_ROOT/data"
 mkdir -p "$LOG_DIR"
 
-# 加载 .env（与 web 服务同约定，保证 WEB_PORT 等一致）
-if [[ -f "$PROJECT_ROOT/.env" ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source "$PROJECT_ROOT/.env"
-  set +a
-fi
+# 只读取 tunnel 实际需要的两个 .env 字段，不 source/eval 整份文件。
+# 密码哈希、token 等值可能含 `$`/shell 元字符；执行 .env 既脆弱也扩大秘密暴露面。
+_read_env_value() {
+  local key="$1"
+  python3 - "$PROJECT_ROOT/.env" "$key" <<'PYENV'
+from pathlib import Path
+import sys
+path, key = Path(sys.argv[1]), sys.argv[2]
+if path.is_file():
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, value = line.split("=", 1)
+        if k.strip() == key:
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+                value = value[1:-1]
+            print(value)
+            break
+PYENV
+}
+ENV_WEB_PORT="$(_read_env_value WEB_PORT)"
+ENV_WEB_HOST="$(_read_env_value WEB_HOST)"
+WEB_PORT="${WEB_PORT:-${ENV_WEB_PORT:-8903}}"
+WEB_HOST="${WEB_HOST:-${ENV_WEB_HOST:-127.0.0.1}}"
 
 # 校验 cloudflared
 if ! command -v cloudflared >/dev/null 2>&1; then
@@ -40,8 +57,8 @@ if ! command -v cloudflared >/dev/null 2>&1; then
 fi
 
 # 校验后端可达（避免隧道通了但后端没起）
-if ! curl -sf "http://$WEB_HOST:$WEB_PORT/health" >/dev/null 2>&1; then
-  echo "⚠️  后端 http://$WEB_HOST:$WEB_PORT/health 不可达（继续建隧道，但写请求会失败）"
+if ! curl -sf "http://$WEB_HOST:$WEB_PORT/auth/status" >/dev/null 2>&1; then
+  echo "⚠️  后端 http://$WEB_HOST:$WEB_PORT/auth/status 不可达（继续建隧道，但请求会失败）"
   echo "   请先启动 web 服务: WEB_PORT=$WEB_PORT python -m llm_loop.web"
 fi
 
@@ -53,15 +70,17 @@ case "$TUNNEL_MODE" in
     cloudflared tunnel --url "http://$WEB_HOST:$WEB_PORT" --no-autoupdate 2>&1 | tee "$LOG_DIR/cloudflared-quick.log"
     ;;
   named)
-    CONFIG="$PROJECT_ROOT/cloudflared/config.yaml"
+    LOCAL_CONFIG="$PROJECT_ROOT/cloudflared/config.local.yaml"
+    TEMPLATE_CONFIG="$PROJECT_ROOT/cloudflared/config.yaml"
+    CONFIG="$TEMPLATE_CONFIG"
+    [[ -f "$LOCAL_CONFIG" ]] && CONFIG="$LOCAL_CONFIG"
     if [[ ! -f "$CONFIG" ]]; then
       echo "❌ 未找到配置文件: $CONFIG"
-      echo "   请先运行: ./scripts/gen-cloudflared-config.sh <tunnel-id> <your-domain>"
+      echo "   请生成本机 cloudflared/config.local.yaml"
       exit 1
     fi
     if grep -q "REPLACE_WITH_TUNNEL_ID\|YOUR_DOMAIN" "$CONFIG"; then
-      echo "❌ 配置文件尚未填写：tunnel ID 和 hostname 仍是占位符"
-      echo "   请先运行: ./scripts/gen-cloudflared-config.sh <tunnel-id> <your-domain>"
+      echo "❌ 当前仅有模板配置；请生成本机 cloudflared/config.local.yaml"
       exit 1
     fi
     echo "🚀 启动 named tunnel（固定域名，读 $CONFIG）"
