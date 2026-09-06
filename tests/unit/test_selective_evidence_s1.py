@@ -12,6 +12,7 @@ from llm_loop.core.episode_history import (
     resolve_working_state_checkpoint,
 )
 from llm_loop.core.message import Message, MessageSource, ToolResultStatus
+from llm_loop.core.recent_continuity import apply_recent_continuity_suffix
 from llm_loop.core.session import Session, SessionStore
 from llm_loop.event_log.store import EventStore
 
@@ -110,6 +111,70 @@ def test_truncated_selection_is_not_persisted_as_checkpoint():
             selected_raw_char_limit=20000,
             selection_finish_reason="length",
         )
+
+
+def test_provider_truncation_takes_recovery_ownership_after_s1_boundary_advances():
+    messages = _messages()
+    checkpoint = _checkpoint(messages)
+    initial = resolve_working_state_checkpoint(
+        checkpoint,
+        session_id="s1",
+        messages=messages,
+        provider_id="deepseek",
+        model="deepseek/model",
+    )
+    assert initial.eligible is True
+
+    partial = Message(
+        role="assistant",
+        content="PARTIAL-ANSWER",
+        source=MessageSource.USER,
+        metadata={
+            "answer_origin": "model",
+            "llm_interrupted": True,
+            "provider_truncated": True,
+            "provider_finish_reason": "length",
+        },
+    )
+    current_user = Message(role="user", content="继续", source=MessageSource.USER)
+    advanced = [*messages, partial, current_user]
+
+    stale = resolve_working_state_checkpoint(
+        checkpoint,
+        session_id="s1",
+        messages=advanced,
+        provider_id="deepseek",
+        model="deepseek/model",
+    )
+    assert stale.eligible is False
+    assert stale.reason == "boundary"
+    assert stale.state_text == ""
+    assert stale.preserve_group_digests == ()
+
+    built, info = apply_recent_continuity_suffix(
+        [
+            {"role": "system", "content": "SYS"},
+            {"role": "user", "content": "继续"},
+        ],
+        session_messages=advanced,
+        current_turn_ref=len(advanced) - 1,
+        interruption_resume={
+            "source": "persisted_provider_truncated",
+            "text_tail": "PARTIAL-ANSWER",
+            "reasoning_tail": "",
+            "provider_truncated": True,
+            "finish_reason": "length",
+        },
+    )
+
+    assert info["source"] == "persisted_provider_truncated"
+    assert info["runtime_fact"] is True
+    assert built[-2] == {"role": "assistant", "content": "PARTIAL-ANSWER"}
+    assert built[-1]["role"] == "user"
+    assert built[-1]["content"].startswith("继续\n\n[provider_runtime_fact—not_human_text]\n")
+    assert checkpoint["state_text"] not in "\n".join(
+        str(row.get("content") or "") for row in built
+    )
 
 
 def test_checkpoint_rejects_unknown_and_duplicate_selection():
