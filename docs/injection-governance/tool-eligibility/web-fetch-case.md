@@ -1,6 +1,8 @@
 # R8.6 benchmark case: `web_fetch` -> `web-fetch-fast`
 
-Status: **R8.6 AUDITED / R8.7 POLICY APPLIED**
+Status: **R8.6/R8.7 historical benchmark; current fetch-path addendum applied 2026-09-06**
+
+> **2026-09-06 current behavior:** supported Toutiao article URL shapes (`/article/<id>`, `/i<id>`, or `group_id=<id>`) are allowed through registry preflight and handled inside `WebFetchTool` by the protected deterministic `info/v2` adapter. Only Toutiao URL shapes not covered by that adapter retain the preflight typed-recovery route. This removes the former `web_fetch → skill_load → web_fetch` loop while preserving SSRF/redirect/DNS-rebinding protections. P1-B also retired recovery-driven tool visibility; recovery metadata is factual guidance, not a tool-selection grant.
 
 ## Current behavior
 
@@ -49,7 +51,7 @@ The important signal is not merely `web_fetch` aggregate success. It is that som
 - avoid repeating the same failed `web_fetch`;
 - alternate source/browser fallback.
 
-The current disconnect is lifecycle timing: automatic Skill matching occurs after a tool result. Therefore a predictable `web_fetch` failure may happen before the model is shown the relevant Skill ref.
+The former lifecycle disconnect was resolved by moving the deterministic site adapter inside the protected `web_fetch` execution path. The Skill now teaches when to fetch/stop/recover; it does not provide a raw-curl bypass.
 
 ## Proposed routing
 
@@ -59,8 +61,13 @@ The current disconnect is lifecycle timing: automatic Skill matching occurs afte
 URL is ordinary/static and no known bad-domain evidence
 -> web_fetch
 
-URL matches known anti-bot/article domain such as toutiao
--> prefer skill_load("web-fetch-fast") before direct fetch
+URL is a supported Toutiao article shape
+-> web_fetch
+-> protected internal site adapter (`info/v2`)
+
+Toutiao host is known but URL shape is not supported by the adapter
+-> preflight typed recovery
+-> skill_load("web-fetch-fast") / alternate source as guidance
 ```
 
 ### Failure recovery
@@ -124,7 +131,7 @@ It should not receive the complete domain decision tree on every request.
 At minimum test:
 
 1. ordinary GitHub/document URL -> `web_fetch` remains eligible;
-2. Toutiao article URL -> preflight prefers `web-fetch-fast`;
+2. supported Toutiao article URL -> registry reaches `WebFetchTool` and the protected `toutiao_info_v2` adapter; unsupported Toutiao path -> typed preflight recovery;
 3. HTTP 404 -> canonical-URL search, no same-URL retry;
 4. HTTP 403 after internal UA exhaustion -> no same-tool retry;
 5. timeout -> one bounded retry allowed;
@@ -135,9 +142,9 @@ At minimum test:
 
 ## R8.7 applied behavior
 
-- Toutiao preflight occurs in `ToolRegistry.execute()` before `WebFetchTool.execute()`; fixture asserts the underlying fetch implementation receives zero calls.
+- **Historical R8.7 behavior:** all Toutiao hosts were preflight-routed before `WebFetchTool.execute()`. **Current behavior (2026-09-06):** adapter-supported article URLs bypass that broad preflight and execute the protected `toutiao_info_v2` fast path; unsupported Toutiao paths still receive typed preflight recovery.
 - Ordinary URL tasks still expose `web_fetch`; unrelated tasks do not.
 - 403/418, 404, 429, JS-shell, timeout/5xx, and security-block results map to typed recovery classes.
-- `ToolResult.recovery_advice` is rendered as the sole matched recovery recommendation and copied to `Message.metadata.tool_recovery`; future tool projection may keep its `preferred_next` tool visible.
+- `ToolResult.recovery_advice` is rendered as the matched recovery recommendation and copied to `Message.metadata.tool_recovery`; under P1-B it does not change the provider-callable tool surface.
 - If no typed rule matches, legacy truthful generic guidance remains available.
 - Playwright/Chromium are not installed by this phase; the current Playwright tools are runtime-quarantined instead of being advertised as a working fallback.

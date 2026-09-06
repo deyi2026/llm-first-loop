@@ -2,7 +2,9 @@
 
 Date: 2026-08-30
 
-Status: **PASS**
+Status: **PASS (historical); runtime selector superseded by P1-B on 2026-09-04**
+
+> **P1-B supersession:** CORE/current-task/protocol/recovery eligibility projection, `TOOL_ELIGIBILITY_MODE`, and later Promotion/Capability selection state are retired. Current provider tool callability is registered healthy tools minus explicit delegated-scope exclusions. This report remains evidence for the original incident and rollout.
 
 Base audit: `e1e7a12` (R8.6)
 
@@ -141,7 +143,9 @@ Authoritative implementation:
 
 ### Preflight
 
-A Toutiao hostname is recognized before the generic fetcher performs any network request:
+**Historical R8.7 behavior:** any Toutiao hostname was recognized before the fetcher performed a network request and returned `known_domain_anti_bot`. That broad rule became incompatible with the later protected Toutiao adapter inside `WebFetchTool` and produced a real `web_fetch → skill_load → web_fetch` loop.
+
+**2026-09-06 correction:** adapter-supported article forms (`/article/<id>`, `/i<id>`, `group_id=<id>`) now return no preflight advice and reach `WebFetchTool._site_fast_fetch()`, which calls the protected `m.toutiao.com/i<id>/info/v2/` path. Unsupported Toutiao URL shapes still return:
 
 ```text
 failure_class=known_domain_anti_bot
@@ -150,7 +154,7 @@ preferred_skill=web-fetch-fast
 next=skill_load:web-fetch-fast
 ```
 
-The registry fixture proves the wrapped `web_fetch` implementation is called **zero times** in this branch.
+The regression fixture now proves both sides: supported article URLs reach the internal adapter; unsupported Toutiao URLs still avoid a low-value generic fetch. Real canary `7681944417883669007` completed through `ToolRegistry → WebFetchTool → toutiao_info_v2` in about 0.45 s with `recovery=None`.
 
 ### Post-failure classes
 
@@ -165,7 +169,7 @@ Applied classes:
 
 The tool's own failure body now reports only the fetch facts. When a typed policy matches, `tool_result_to_message()` emits that typed policy instead of appending the old generic retry advice or a potentially conflicting historical experience tip.
 
-Structured recovery is also copied to `Message.metadata.tool_recovery`; the next projection may keep the recommended hidden tool visible without making the recovery prose a permanent prompt injection.
+Structured recovery is also copied to `Message.metadata.tool_recovery` as a factual recovery record. P1-B later retired recovery-driven tool projection, so this metadata no longer grants or hides provider-callable tools.
 
 ## 6. Verification so far
 

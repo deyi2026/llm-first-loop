@@ -218,6 +218,8 @@ Behavior canary remains **NOT STARTED**. R8.7 Tool Eligibility detached clean fi
 
 ## 10. R8.7 implementation update
 
+> **Historical / superseded by P1-B (2026-09-04):** CORE/current-required projection and `TOOL_ELIGIBILITY_MODE` are no longer runtime contracts. This section remains incident/evolution evidence. Runtime-health hard facts remain valid.
+
 The implementation stage approved after this audit is now in place. The current code applies CORE9 + current-required projection by default (`TOOL_ELIGIBILITY_MODE=enforce`), preserves `shadow/off` rollback, keeps hidden healthy tools discoverable, quarantines unavailable Playwright tools at both projection and stale-call execution boundaries, closes MCP connections that expose zero tools, and implements typed `web_fetch` recovery as the first policy family.
 
 Clean-source pre-commit measurement after the implementation is 61 / 22,699 all-lazy chars, with a simple-task CORE9 of 3,425 raw lazy chars (3,714 provider-wrapper chars), still **84.9%** below the all-tool raw lazy surface. See `r87-report.md` for implementation and verification evidence. Non-`web_fetch` recovery rules in `recovery-policy.json` remain explicitly PROPOSED.

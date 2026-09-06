@@ -1,5 +1,7 @@
 # CORE9 词法路由终判记录
 
+> **P1-B supersession (2026-09-04): 本文仅保留为历史裁决/事故证据，不再是运行时契约。** CORE9、词法路由、`PREFIX_LAYERED` 与按需 promotion selector 已退役；当前 provider 工具面为 registered healthy tools（另受显式 delegated scope 约束）。原 A/B fixture 与结论不得作为恢复 selector 的依据。
+
 > 日期: 2026-09-01 | 终判人: 用户（采纳执行代理 A/B 评估建议）| 状态: 已生效
 
 ## 终判结论

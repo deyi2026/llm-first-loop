@@ -40,7 +40,9 @@ Indexed History
 
 后者默认 **0 字符自动进入 provider prompt**。
 
-## 2. Eligibility 必须位于 Budget 之前
+## 2. Eligibility 当前是最终 program-prompt 准入边界（P1-C 收正）
+
+> 2026-09-04 P1-C：原 R2 semantic budget 与 R8 profile runtime 已退役。下方“现有链路/目标顺序”保留为本审计当时的问题模型；当前链路在 representation/tool-only/archive-only 后直接进入 wire/physical context pipeline，不再经过 semantic profile/budget。
 
 现有链路大体是：
 
@@ -322,7 +324,7 @@ Tool schema 虽不叫 injection，但同样占 prompt/attention。
 3. **R6 user truth**：程序内容不得追加在 current user truth 之后；exact user text byte-for-byte 尾位。
 4. **push-style injected_system observability**：architecture/self-eval/proc-stale/预算预警/轮数预警等带 `injected_system` 的 system message 由 `skip_injected_system=True` 排除 provider view。
 5. **cache telemetry line**：legacy assistant cache telemetry 在 build provider view strip，权威数据走 telemetry。
-6. **R8 capability shadow telemetry**：`injection.profile.shadow` 是 event，不进入 provider payload，R8.3 证明 `applied=false`。
+6. **R8 capability shadow telemetry**：历史上曾为 prompt-neutral event；P1-C 已停止新事件 emitter，event schema 仅保留旧日志读取兼容。
 
 注意：上述 DONE 只表示特定 surface 已退出 provider prompt，不表示整个 Eligibility 已实现。
 
@@ -378,7 +380,7 @@ EligibilityDecision
 
 要求：
 
-1. Gate 在 R2 budget 和 R8 profile **之前**执行；
+1. Gate 是当前 program-origin 自动 prompt 的最终准入面；P1-C 后无 R2 semantic budget / R8 profile 后续选择器；
 2. flat history、dynamic `_inject_parts`、Cognitive `_packet_parts`、evidence manifest、tool schema surface 使用同一 eligibility 语义；
 3. unknown producer 默认 deny；
 4. `drop_from_provider` 不删除 storage/audit truth；

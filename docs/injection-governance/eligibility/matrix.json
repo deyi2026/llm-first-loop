@@ -386,8 +386,8 @@
       "current_status": "DONE",
       "target_class": "OBSERVABILITY_ONLY",
       "priority": "P1",
-      "current_behavior": "R8.11 keeps injection-budget pruning as structured InjectionBudgetResult + action telemetry only. receipt_content still describes the pruning decision for observability, but no receipt BudgetBlock is created/reserved/charged and build never appends the receipt to wire or cognitive packet. used_chars now measures actual kept prompt blocks only.",
-      "target_rule": "Prompt-budget bookkeeping is control-plane observability. Budget decisions may prune prompt material but must not themselves consume prompt budget or create model-facing prose.",
+      "current_behavior": "P1-C: semantic InjectionBudget runtime retired after zero-producer fixed-point proof; no program-origin keep/drop priority remains.",
+      "target_rule": "Physical context/window budgeting may bound bytes/tokens; program semantics must not be ranked by a runtime budget selector.",
       "retrieval_path": "LoopEngine._last_injection_budget / action.injection_budget trace / architecture status",
       "evidence": [
         "src/llm_loop/core/injection_budget.py",
@@ -542,8 +542,8 @@
       "current_status": "DONE",
       "target_class": "OBSERVABILITY_ONLY",
       "priority": "closed-protect",
-      "current_behavior": "R8 profile recommendation is emitted as injection.profile.shadow event and applied=false; capability-only tests prove messages+tools byte identity.",
-      "target_rule": "Keep telemetry outside prompt until a separately approved behavior policy consumes it after eligibility.",
+      "current_behavior": "P1-C: runtime Injection Profile recommendation/emitter retired; historical injection.profile.shadow schema remains read-compatible only, with no new provider-attempt emission.",
+      "target_rule": "No model-tier prompt-density selector. Capability metadata may remain factual elsewhere but cannot grant/withhold program prompt authority.",
       "retrieval_path": "event log",
       "evidence": [
         "docs/injection-governance/r8/report.md",
