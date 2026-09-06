@@ -240,7 +240,11 @@ def chat(
                 )
             if getattr(payload, "new_session", False):
                 # schema 契约：new_session 与 session_id 同传时强制新建优先。
-                session_id = engine.session.create()
+                # M60（Web 对齐 M52）: 继承旧共享会话 model_override，不回落装配默认——
+                # 否则 Web 新建会话经 owner 跨端共享把飞书侧也拉回本地默认模型。
+                session_id = engine.session.create(
+                    model_override=_inherit_shared_model_override(engine)
+                )
                 engine.session.set_shared_current(session_id)
             elif payload.session_id is not None:
                 if not engine.session.exists(payload.session_id):
@@ -394,6 +398,22 @@ def _apply_session_model_override(session: Any, model_ref: str | None) -> None:
                 model_ref,
             )
         session.model_override = model_ref
+
+
+def _inherit_shared_model_override(engine: Any) -> str | None:
+    """读旧共享当前会话的 model_override 供新建会话继承（M60，fail-open → None）.
+
+    与飞书 SessionMap.inherit_model_override（M52-fix）/ CLI /new 同语义：新建会话
+    沿用用户所选模型而非回落装配默认；旧共享会话缺失/损坏时不阻断新建。
+    """
+    from contextlib import suppress
+
+    old_sid = engine.session.get_shared_current()
+    if old_sid is None:
+        return None
+    with suppress(Exception):
+        return engine.session.load(old_sid).model_override
+    return None
 
 
 def _stream_background(
@@ -561,7 +581,10 @@ def chat_stream(
                     content={"error": "invalid_attachment", "detail": str(exc)},
                 )
             if getattr(payload, "new_session", False):
-                session_id = engine.session.create()
+                # M60（Web 对齐 M52）: 继承旧共享会话 model_override（fail-open → None）
+                session_id = engine.session.create(
+                    model_override=_inherit_shared_model_override(engine)
+                )
                 engine.session.set_shared_current(session_id)
             elif payload.session_id is not None:
                 if not engine.session.exists(payload.session_id):
