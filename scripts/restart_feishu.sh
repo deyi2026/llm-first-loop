@@ -96,7 +96,7 @@ _load_llm() {
   export LLM_API_KEY="${LLM_API_KEY:-${DEEPSEEK_API_KEY:-}}"
   export LLM_BASE_URL="${LLM_BASE_URL:-https://api.deepseek.com/v1}"
   export LLM_MODEL="${LLM_MODEL:-deepseek-v4-flash}"
-  export SUMMARY_MODE="${SUMMARY_MODE:-sync}"      # EVO-20260811: 压缩主动化 LLM 摘要
+  export SUMMARY_MODE="${SUMMARY_MODE:-off}"       # semantic archive summary is explicit opt-in
   export TOOL_SCHEMA_LAZY="${TOOL_SCHEMA_LAZY:-1}" # EVO-20260811: 工具 Schema 懒加载
   if [[ -z "$LLM_API_KEY" ]]; then
     _die "LLM_API_KEY / DEEPSEEK_API_KEY 未配置"

@@ -35,6 +35,13 @@ def test_parse_env_file_strips_comments_and_trailing_spaces(tmp_path):
     assert "非法键" not in parsed
 
 
+def test_summary_mode_launch_default_is_off_without_dotenv(tmp_path):
+    """Missing .env must not silently activate semantic archive summarization."""
+    ec = resolve_effective("web", env={}, workspace_root=tmp_path)
+    assert ec.values["SUMMARY_MODE"] == "off"
+    assert ec.sources["SUMMARY_MODE"] == "launch_default"
+
+
 def test_stale_shell_env_does_not_override_dotenv(tmp_path):
     """矩阵第 6 行：shell 残留 LLM_MODEL 不覆盖 .env。"""
     _make_env_file(tmp_path, ["LLM_MODEL=glm/glm-5.3"])

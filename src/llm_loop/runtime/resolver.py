@@ -38,7 +38,7 @@ _SECRET_KEYS = ("LLM_API_KEY", "DEEPSEEK_API_KEY", "FEISHU_APP_ID", "FEISHU_APP_
 # R2 等价迁移：shell 时代（restart_system.sh _load_llm）注入的启动默认值。
 # .env 未定义且无显式 override 时兜底（sources 标记 launch_default；
 # shell 残留不覆盖 launch 默认——与 dotenv 同权重的防残留语义）。
-LAUNCH_DEFAULTS = {"SUMMARY_MODE": "sync", "TOOL_SCHEMA_LAZY": "1"}
+LAUNCH_DEFAULTS = {"SUMMARY_MODE": "off", "TOOL_SCHEMA_LAZY": "1"}
 
 _KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _COMMENT_RE = re.compile(r"\s+#.*$")
