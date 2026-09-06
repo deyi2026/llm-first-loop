@@ -41,7 +41,7 @@ def _init_source(tmp_path: Path, *, with_remote: bool = False) -> tuple[Path, Pa
     remote = None
     if with_remote:
         remote = tmp_path / "source-remote.git"
-        _run(["git", "init", "-q", "--bare", str(remote)], tmp_path)
+        _run(["git", "init", "-q", "--bare", "-b", "main", str(remote)], tmp_path)
         _git(source, "remote", "add", "origin", str(remote))
         _git(source, "push", "-q", "-u", "origin", "main")
     return source, remote
