@@ -37,6 +37,7 @@ from llm_loop.memory.store import MemoryStore
 from llm_loop.runtime.route_context import get_route_context, set_route_audit_fn
 from llm_loop.runtime.tool_octet import register_octet_sink
 from llm_loop.subagent.runner import SubAgentRunner
+from llm_loop.tools.builtin.agent_message import AgentMessageTool
 from llm_loop.tools.builtin.dsh_session_read import DshSessionReadTool
 from llm_loop.tools.builtin.dsh_task import DshTaskTool
 from llm_loop.tools.builtin.edit_file import EditFileTool
@@ -49,6 +50,7 @@ from llm_loop.tools.builtin.read_image import ReadImageTool
 from llm_loop.tools.builtin.schedule import ScheduleCancelTool, ScheduleTool
 from llm_loop.tools.builtin.search_files import SearchFilesTool
 from llm_loop.tools.builtin.spawn_subagent import SpawnSubAgentTool
+from llm_loop.tools.builtin.subagent_result import SubAgentResultTool
 from llm_loop.tools.builtin.web_fetch import WebFetchTool
 from llm_loop.tools.builtin.web_search import WebSearchTool
 from llm_loop.tools.builtin.workflow import WorkflowRunTool
@@ -1117,9 +1119,6 @@ def build_engine(settings: Settings) -> LoopEngine:
     registry.register(SpawnSubAgentTool(subagent_runner))
     # Agent Communication Contract：统一 agent↔agent 通信 + 显式 child result 查询。
     # 旧 subagent_report 公共工具已退休，不保留第二套投递路径。
-    from llm_loop.tools.builtin.agent_message import AgentMessageTool
-    from llm_loop.tools.builtin.subagent_result import SubAgentResultTool
-
     registry.register(AgentMessageTool(subagent_runner))
     registry.register(SubAgentResultTool(subagent_runner))
 
