@@ -13,9 +13,7 @@ from pathlib import Path
 from llm_loop.config import load_env_file, load_settings
 from llm_loop.factory import build_engine
 
-from .bridge import FeishuWsBridge
 from .config import FeishuConfig, load_feishu_config
-from .handlers import FeishuMessageHandler
 from .session_map import SessionMap
 
 __all__ = ["build_bridge", "start_bridge", "main"]
@@ -75,6 +73,12 @@ def build_bridge(engine=None, config: FeishuConfig | None = None, lark_client=No
             .log_level(lark.LogLevel.WARNING)
             .build()
         )
+    # SDK-heavy bridge/handler are loaded only when the bridge is actually built.
+    # Pure control modules remain importable without lark_oapi; real bridge import
+    # failures are not hidden by a broad package-level ImportError catch.
+    from .bridge import FeishuWsBridge
+    from .handlers import FeishuMessageHandler
+
     session_map = SessionMap(
         engine.session,
         path=config.session_map_path,
@@ -98,7 +102,7 @@ def build_bridge(engine=None, config: FeishuConfig | None = None, lark_client=No
     return bridge, handler, session_map
 
 
-def start_bridge(bridge: FeishuWsBridge) -> bool:
+def start_bridge(bridge) -> bool:
     """启动桥（启用条件 + 预检 + 后台线程）."""
     return bridge.start()
 
