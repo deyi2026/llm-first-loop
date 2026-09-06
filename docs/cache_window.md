@@ -45,40 +45,45 @@
 - **多会话/双实例交错**：槽被不同前缀轮流占用 → 缓存互相驱逐 → 命中率自然衰减
 - **进程重启/模型重载**：KV 全清 → 全部会话冷启动（物理现实）
 
-## 渐进压缩（progressive_fold，EVO-20260824-54d46549 镜像落地）
+## 当前压缩策略（2026-09-06 context-safe closure）
 
-billion-context 拷问产出（2026-08-24）: **字节级前缀缓存下"小范围折叠保前缀"宣传不成立**
-（DeepSeek/OpenAI 前缀缓存按字节比较——折叠点之后全量失效, 折 5 条与折 50 条当轮 miss 范围相同）。
-故渐进折叠的价值**不是省 token**，而是:
+旧的 per-round `progressive_fold` / `PROGRESSIVE_FOLD_K` 与 `APPEND_COMPRESSION`
+实验已经退休。原因不是“参数没调好”，而是它们会让程序持续重写旧 provider 前缀，
+并把折叠时机/语义连续性变成第二套策略控制面。当前生产契约是：
 
-1. **命中率曲线平滑**：每次只折最老 K 个配对组（K 小, 建议 3-5）→ 命中率小幅下降不崩盘
-   （对比一次性大裁: 99%×几十轮 + 崩到 4%×1 轮）→ cache_guard 规则 G（<30% BLOCK）
-   **不触发** → 执行不被打断（渐进压缩最强理由）。
-2. **智力无断崖**：每次只丢几组, AI 可逐步适应/检索；一次性大裁当轮突然看不到 20-90 条中段事实。
-3. **折叠标注注入**：折叠后注入 `[渐进折叠] 本轮仅折叠最老 N 个配对组…可 search_archive 检索`
-   → AI 有感知, 减少"刚引用的内容已被折掉"的推理落空。
+1. **物理预算触发**：以当前路由模型窗口与显式 operator cap 为边界；`COMPACT_RATIO`
+   默认 `1.0`，不因历史经验值提前压缩。
+2. **机械 coarse compaction**：需要压缩时按最老端连续、协议原子组归档；provider 路径
+   使用 versioned `cache_compacted_for`（含 model/effective-budget provenance），避免同一批内容
+   每轮重复折叠。
+3. **目标水位而非语义筛选**：默认 `COMPRESS_TARGET_RATIO=0.6`，只决定表示体积；程序
+   不判断哪些事实“更重要”，不生成 Goal/当前决策、关键事实、推理结论或动态折叠提示。
+4. **信息零丢失靠 durable recovery**：被移出 provider view 的原始消息进入 Archive/Evidence
+   持久层，可通过显式 `search_archive` / EvidenceRef 精确恢复；折叠只改变表示，不改变事实。
+5. **缓存代价显式化**：一次 coarse compaction 可能造成一次前缀重算，但之后前缀应重新
+   稳定；禁止为了“平滑命中率”做每轮 K-fold 重写。
 
-**保命兜底**：折满 K 组后提交仍 >95% 预算 → 突破 K 继续归档（防 guard 规则 F BLOCK / 提交超限 400）。
-**配对原子性**：渐进折叠按配对组整体归档（声明↔回执同折, 无孤儿 → 协议 400 不出现）。
-
-**启用**：`PROGRESSIVE_FOLD_K=3`（env；0=一次性大裁现有行为, 零回归）。
+历史 event/report 中的 `progressive_fold` 字段继续按旧 schema 可读，仅用于考古与对账，
+**不表示当前 runtime 仍有对应配置或执行分支**。
 
 ## 增长率 nudge（growth nudge，EVO-20260824-54d46549 镜像落地）
 
 替换固定 80% 预警（每轮必警）为**双轨**（对齐 billion-context decideNudge）:
 
-- **强制轨**：history 超预算×compact_ratio（90% 默认）→ 必警（压缩在即, bypass 增长率）
+- **强制轨**：history 超预算×compact_ratio（当前默认 1.0）→ 必警（压缩在即, bypass 增长率）
 - **增长率轨**：80% 准备态 + 距上次预警增长 ≥ 阈值（预算×5% 或 20K 字符）→ 才预警
   （重任务增长快早提示, 普通对话增长慢不打扰——不干扰执行）
 
-nudge 是**尾部注入/审计动作**（不碰已提交前缀）→ 缓存命中零影响；AI 感知走
-`understand.compact_prep` action + architecture_status，决策归 AI（RULE-AI-00）。
+nudge 现在是 **prompt-neutral observability**：只记录 `understand.compact_prep` action /
+architecture status，不向 provider messages 追加提示文本，因此不会获得新的 prompt authority；
+模型若查询这些事实，再自行决定是否需要整理/检索。
 
 ## 实现
 
 - `src/llm_loop/core/cache_window.py`：纯函数 `describe_cache_window(messages, cached_tokens, prompt_tokens)`
-- `src/llm_loop/core/history.py`：`build_history_messages(progressive_fold=K)` 渐进折叠（归档循环 K 上限 + 95% 保命兜底 + 折叠标注）
-- `src/llm_loop/core/loop/build.py`：`_growth_nudge_kind()` 纯函数（双轨判定）+ PROGRESSIVE_FOLD_K 接线
+- `src/llm_loop/core/history.py`：物理预算触发 + oldest-contiguous 原子组归档 + versioned provider marker
+- `src/llm_loop/core/prompt_build/stages/history_budget_prep.py`：物理预算 / `COMPACT_RATIO` / prompt-neutral growth observability
+- `src/llm_loop/core/prompt_build/stages/history_postprocess.py`：记录 `compaction_mode`、pre/post/drop 等机械事实
 - `engine.py`：每轮响应后追加 `cache.window` 事件（fail-open）
 - `factory.py`：`cache_health` 快照合并 `window` 维度
-- 测试：`tests/unit/test_cache_window.py`、`tests/unit/test_progressive_fold.py`、`tests/unit/test_growth_nudge.py`
+- 测试：`tests/unit/test_cache_window.py`、`tests/unit/test_cache_round_sim.py`、`tests/unit/test_history.py`
