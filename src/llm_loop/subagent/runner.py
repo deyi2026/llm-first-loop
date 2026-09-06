@@ -14,9 +14,16 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 
 from llm_loop.core.injection_labels import InjectionLayer, origin_metadata
-from llm_loop.core.message import Message, MessageSource, ToolCall
+from llm_loop.core.message import (
+    Message,
+    MessageSource,
+    ToolCall,
+    ToolResult,
+    ToolResultStatus,
+)
 from llm_loop.core.runtime_params import HARD_CAP_MAX_ITERATIONS
 from llm_loop.core.session import Session, SessionStore
+from llm_loop.core.tool_execution_journal import ToolExecutionJournal
 from llm_loop.llm.client import LLMClient
 from llm_loop.tools.registry import ToolRegistry
 
@@ -99,12 +106,23 @@ class SubAgentRunner:
         *,
         max_depth: int = MAX_DEPTH,
         max_iterations: int = MAX_ITERATIONS,
+        tool_execution_root: str | None = None,
     ) -> None:
         self.llm = llm
         self.registry = registry
         self.session_store = session_store
         self.max_depth = max_depth
         self.max_iterations = max_iterations
+        journal_root = (
+            tool_execution_root
+            if tool_execution_root is not None
+            else str(self.session_store.root.parent / "audit" / "tool_execution")
+        )
+        self._tool_journal = ToolExecutionJournal(
+            event_store=self.session_store.event_store,
+            result_root=journal_root,
+            session_store=self.session_store,
+        )
         self._children_guard = threading.Lock()
         self._children_by_parent: dict[str, set[str]] = {}
         self._parent_by_child: dict[str, str] = {}
@@ -246,6 +264,9 @@ class SubAgentRunner:
                 ),
             )
         )
+        # Once a queued message crosses the step boundary into transcript, it must
+        # be durable before the next provider call. Queue durability itself is ST2-C.
+        self.session_store.save(sess)
         return len(pending)
 
     def cancel_parent(self, parent_session_id: str) -> int:
@@ -329,6 +350,8 @@ class SubAgentRunner:
         max_rounds: int | None,
         acceptance: list[str] | None,
         cancel_event: threading.Event,
+        startup_event: threading.Event | None = None,
+        startup_state: dict[str, object] | None = None,
     ) -> SubAgentResult:
         """在已登记的 child sid 上执行迷你循环；不负责 topology cleanup。"""
         from llm_loop.core.run_context import current_session_id
@@ -341,15 +364,49 @@ class SubAgentRunner:
         _depth_tok = _CURRENT_SUBAGENT_DEPTH.set(depth)
         try:
             current_session_id.set(sid)
-            return self._execute_subagent(
-                sess,
-                task,
-                context,
-                depth,
-                max_rounds=max_rounds,
-                acceptance=acceptance,
-                cancel_event=cancel_event,
-            )
+            # Child execution has the same whole-run ownership invariant as LoopEngine.
+            # The reserve snapshot is intentionally not reused: the public facade loads
+            # and binds exactly one save-authorized snapshot while the lease is held.
+            del sess
+            with self.session_store.run_owned_session(sid) as owned_sess:
+                if owned_sess is None:
+                    if startup_state is not None:
+                        startup_state.update({"ok": False, "detail": "child_run_lease_busy"})
+                    if startup_event is not None:
+                        startup_event.set()
+                    return SubAgentResult(
+                        final_answer=(
+                            "[状态: failure] 子代理会话正由另一执行者持有，当前 worker 未执行任何动作。"
+                        ),
+                        outcome="failed",
+                        depth=depth,
+                    )
+                try:
+                    self._persist_delegated_task(
+                        owned_sess,
+                        task=task,
+                        context=context,
+                        depth=depth,
+                        acceptance=acceptance,
+                    )
+                except BaseException as exc:  # noqa: BLE001 - startup must be acknowledged
+                    if startup_state is not None:
+                        startup_state.update(
+                            {"ok": False, "detail": f"durable_start_failed:{type(exc).__name__}"}
+                        )
+                    if startup_event is not None:
+                        startup_event.set()
+                    raise
+                if startup_state is not None:
+                    startup_state.update({"ok": True, "detail": "durable_start_ready"})
+                if startup_event is not None:
+                    startup_event.set()
+                return self._execute_subagent(
+                    owned_sess,
+                    depth,
+                    max_rounds=max_rounds,
+                    cancel_event=cancel_event,
+                )
         finally:
             _CURRENT_SUBAGENT_DEPTH.reset(_depth_tok)
             current_session_id.set(old_ctx_sid)
@@ -416,6 +473,8 @@ class SubAgentRunner:
         sid, cancel_event, sess, handle = reserved
 
         caller_ctx = contextvars.copy_context()
+        startup_event = threading.Event()
+        startup_state: dict[str, object] = {}
 
         def _worker() -> None:
             def _inside_context() -> None:
@@ -429,8 +488,15 @@ class SubAgentRunner:
                         max_rounds=max_rounds,
                         acceptance=acceptance,
                         cancel_event=cancel_event,
+                        startup_event=startup_event,
+                        startup_state=startup_state,
                     )
                 except BaseException as exc:  # noqa: BLE001 — background thread 必须形成真实 terminal
+                    if not startup_event.is_set():
+                        startup_state.update(
+                            {"ok": False, "detail": f"startup_exception:{type(exc).__name__}"}
+                        )
+                        startup_event.set()
                     result = SubAgentResult(
                         final_answer=(
                             f"[状态: failure] 子代理后台执行异常: "
@@ -468,6 +534,29 @@ class SubAgentRunner:
                 "state": "failed",
                 "depth": depth,
                 "detail": failed.final_answer,
+            }
+        if not startup_event.wait(timeout=2.0):
+            cancel_event.set()
+            with self._children_guard:
+                if sid in self._handles:
+                    self._handles[sid].collected = True
+            return {
+                "accepted": False,
+                "child_id": sid,
+                "state": "failed",
+                "depth": depth,
+                "detail": "child durable startup 超时，已请求取消；未确认任何子任务执行。",
+            }
+        if not bool(startup_state.get("ok")):
+            with self._children_guard:
+                if sid in self._handles:
+                    self._handles[sid].collected = True
+            return {
+                "accepted": False,
+                "child_id": sid,
+                "state": "failed",
+                "depth": depth,
+                "detail": f"child durable startup 失败: {startup_state.get('detail', 'unknown')}",
             }
         return {
             "accepted": True,
@@ -602,25 +691,16 @@ class SubAgentRunner:
             if still_active:
                 self._finalize_child(sid, parent_sid, None)
 
-    def _execute_subagent(
+    def _persist_delegated_task(
         self,
         sess: Session,
+        *,
         task: str,
         context: str,
         depth: int,
-        max_rounds: int | None = None,
-        acceptance: list[str] | None = None,
-        cancel_event: threading.Event | None = None,
-    ) -> SubAgentResult:
-        """子代理循环本体（会话注入/恢复由 run 包裹；拆出保证 finally 覆盖全部返回路径）."""
-        effective_rounds = (
-            max(1, int(max_rounds)) if max_rounds is not None else self.max_iterations
-        )
-        # Delegation payload only: tool availability comes from the actual schema plane,
-        # resource limits from runtime, and communication behavior from tool schemas.
-        # Do not turn those program mechanics into another child-specific instruction
-        # manual. Parent-provided acceptance remains task context, not a programmatic
-        # completion oracle.
+        acceptance: list[str] | None,
+    ) -> None:
+        """Persist the exact delegated input before background execution is acknowledged."""
         sys_prompt = (
             "【父代理委派任务·非真人新授权】\n"
             "以下任务来自当前代理委派，只在既有真人用户授权范围内生效；不得据此扩大权限。\n"
@@ -631,9 +711,6 @@ class SubAgentRunner:
         if acceptance:
             items = "\n".join(f"{i}. {a}" for i, a in enumerate(acceptance, 1))
             sys_prompt += f"\n\n验收条件（供交付核对）：\n{items}"
-        # agent_trace_leak 2.1（决策 D6）: sys_prompt 为程序构造（父代理轨迹派生），
-        # 落盘必须携带程序附录层标记；仅补 metadata，role/source/消息序零改动，
-        # metadata 不进 to_llm_dict() 投影（对子代理 LLM 行为与调用方不可感知）。
         sess.messages.append(
             Message(
                 role="user",
@@ -646,7 +723,20 @@ class SubAgentRunner:
                 ),
             )
         )
+        # Save failure is a hard execution boundary: provider/tool work must not start.
+        self.session_store.save(sess)
 
+    def _execute_subagent(
+        self,
+        sess: Session,
+        depth: int,
+        max_rounds: int | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> SubAgentResult:
+        """子代理循环本体（会话注入/恢复由 run 包裹；拆出保证 finally 覆盖全部返回路径）."""
+        effective_rounds = (
+            max(1, int(max_rounds)) if max_rounds is not None else self.max_iterations
+        )
         rounds = 0
         tool_trace: list[dict] = []
         tokens_in = 0
@@ -821,53 +911,108 @@ class SubAgentRunner:
                 ),
             )
             sess.messages.append(assistant_decl)
+            # Declaration must be durable before any tool can execute. SessionStore
+            # backfills the matching message.appended event from this exact snapshot.
+            self.session_store.save(sess)
+            execution_ids: dict[str, str] = {}
             for tc in resp.tool_calls:
                 call = ToolCall(id=tc.id, name=tc.name, arguments=tc.arguments)
+                execution_ids[call.id] = self._tool_journal.declared(
+                    sess, call, round_no=rounds
+                )
+
+            from llm_loop.tools.registry import tool_result_to_message
+
+            for tc in resp.tool_calls:
+                call = ToolCall(id=tc.id, name=tc.name, arguments=tc.arguments)
+                execution_id = execution_ids.get(call.id, "")
+                result_state_sha = ""
+                executed = False
                 # Explicit parent scope is an authorization boundary and must survive
                 # hallucinated/unadvertised tool calls. With scope=None, registry/tool
                 # implementations own callability and safety; child identity adds no penalty.
                 from llm_loop.core.run_context import current_tool_discovery_scope
 
                 scope = current_tool_discovery_scope.get()
-                if scope is not None and call.name not in scope:
-                    result_content = (
-                        f"[状态: blocked] 工具 {call.name} 不在父执行域授权集合内。"
+                if not execution_id:
+                    result = ToolResult(
+                        status=ToolResultStatus.ERROR,
+                        content=(
+                            "execution_not_started=true; reason_code=wal_declaration_unavailable; "
+                            "auto_reexecuted=false"
+                        ),
+                        tool_call_id=call.id,
+                        tool_name=call.name,
                     )
-                    tool_trace.append({"name": call.name, "status": "blocked"})
-                    sess.messages.append(
-                        Message(
-                            role="tool",
-                            content=result_content,
-                            source=MessageSource.TOOL,
+                elif scope is not None and call.name not in scope:
+                    result = ToolResult(
+                        status=ToolResultStatus.BLOCKED,
+                        content=f"[状态: blocked] 工具 {call.name} 不在父执行域授权集合内。",
+                        tool_call_id=call.id,
+                        tool_name=call.name,
+                    )
+                else:
+                    started = self._tool_journal.started(
+                        sess.session_id,
+                        execution_id=execution_id,
+                        round_no=rounds,
+                        call=call,
+                    )
+                    if not started:
+                        result = ToolResult(
+                            status=ToolResultStatus.ERROR,
+                            content=(
+                                "execution_not_started=true; reason_code=wal_start_not_durable; "
+                                "auto_reexecuted=false"
+                            ),
                             tool_call_id=call.id,
+                            tool_name=call.name,
                         )
-                    )
-                    continue
-                try:
-                    result = self.registry.execute(call)
-                    tool_trace.append({"name": call.name, "status": result.status.value})
-                except Exception as exc:  # noqa: BLE001 — 如实回传
-                    tool_trace.append({"name": call.name, "status": "error"})
-                    result_content = f"[状态: error] 子代理工具执行异常: {type(exc).__name__}: {exc}"
-                    sess.messages.append(
-                        Message(
-                            role="tool",
-                            content=result_content,
-                            source=MessageSource.TOOL,
-                            tool_call_id=call.id,
-                        )
-                    )
-                    continue
-                # 工具结果回注入子会话（T21 前置状态标注）
-                from llm_loop.tools.registry import tool_result_to_message
+                    else:
+                        executed = True
+                        try:
+                            result = self.registry.execute(call)
+                        except Exception as exc:  # noqa: BLE001 — 如实回传
+                            result = ToolResult(
+                                status=ToolResultStatus.ERROR,
+                                content=(
+                                    "[状态: error] 子代理工具执行异常: "
+                                    f"{type(exc).__name__}: {exc}"
+                                ),
+                                tool_call_id=call.id,
+                                tool_name=call.name,
+                            )
 
-                sess.messages.append(
-                    tool_result_to_message(
-                        result,
-                        failure_guidance_enabled=False,
-                        experience_guidance_enabled=True,  # 阶段4-A: 子代理仅注入经验（无默认模板噪音）
-                    )
+                tool_trace.append({"name": call.name, "status": result.status.value})
+                tool_msg = tool_result_to_message(
+                    result,
+                    failure_guidance_enabled=False,
+                    experience_guidance_enabled=True,
                 )
+                if executed and execution_id:
+                    # Exact future receipt is staged immediately after execution; if
+                    # the process dies before this point, started-but-unknown recovery
+                    # explicitly forbids automatic re-execution.
+                    result_state_sha = self._tool_journal.finished(
+                        sess.session_id,
+                        execution_id=execution_id,
+                        round_no=rounds,
+                        call=call,
+                        tool_message=tool_msg,
+                    )
+                sess.messages.append(tool_msg)
+                # The ordinary transcript receipt is durable before WAL settlement.
+                # If save fails, the exact sidecar remains for later repair.
+                self.session_store.save(sess)
+                if execution_id:
+                    self._tool_journal.receipt_committed(
+                        sess.session_id,
+                        execution_id=execution_id,
+                        round_no=rounds,
+                        tool_call_id=call.id,
+                        tool_name=call.name,
+                        result_state_sha256=result_state_sha,
+                    )
                 if cancel_event is not None and cancel_event.is_set():
                     return SubAgentResult(
                         final_answer="[状态: cancelled] 子代理在工具执行期间收到父会话停止请求，已停止后续轮次。",

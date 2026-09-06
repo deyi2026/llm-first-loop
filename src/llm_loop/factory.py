@@ -1162,6 +1162,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         registry=registry,
         session_store=session_store,
         max_iterations=settings.max_iterations,
+        tool_execution_root=str(settings.audit_dir / "tool_execution"),
     )
     # nonblocking child 在 spawn 工具返回后仍属于 parent lifecycle；Stop 必须
     # 通过 session-level hook 继续精确取消，不能依赖 spawn tool active future。

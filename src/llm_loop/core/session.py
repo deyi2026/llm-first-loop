@@ -305,6 +305,11 @@ class SessionStore:
         """当前会话持久化根；workspace切换时原子更新。"""
         return self._dir
 
+    @property
+    def event_store(self) -> Any | None:
+        """Read-only event-log dependency used by crash-safe execution helpers."""
+        return self._event_store
+
     def prepare_root(self, sessions_dir: str | Path) -> Path:
         """预创建/验证会话根；失败时不改变当前SessionStore状态。"""
         target = Path(sessions_dir)
@@ -690,6 +695,28 @@ class SessionStore:
         except OSError as exc:
             logger.warning("会话整轮锁文件不可用（fail-closed）: %s: %s", lock_path, exc)
             yield False
+
+    @contextmanager
+    def run_owned_session(self, session_id: str) -> Iterator[Session | None]:
+        """Acquire whole-run ownership and yield one save-authorized Session snapshot.
+
+        This is the public lifecycle facade for executors that need the same durability
+        contract as ``LoopEngine`` without reaching into the opaque save-token internals.
+        ``None`` means ownership could not be acquired; callers must not execute work
+        without the lease. The token is process-local and is never serialized.
+        """
+        session_id = _validate_session_id(session_id)
+        with self.run_lease(session_id) as acquired:
+            if not acquired:
+                yield None
+                return
+            token = self._activate_run_save_token(session_id)
+            try:
+                session = self.load(session_id)
+                self._bind_run_save_token(session, token)
+                yield session
+            finally:
+                self._deactivate_run_save_token(session_id, token)
 
     def _activate_run_save_token(self, session_id: str) -> object:
         """为已取得 whole-run lease 的本轮创建 opaque save token。"""

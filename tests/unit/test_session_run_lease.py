@@ -210,3 +210,29 @@ def test_workspace_switch_rejected_while_sync_stream_is_active(build_test_engine
     stored = engine.session.load(sid)
     assert any(m.role == "assistant" and "AB" in m.content for m in stored.messages)
     assert not (engine.settings.sessions_dir / "ws-b" / f"{sid}.json").exists()
+
+
+def test_run_owned_session_binds_save_authority_without_serializing_token(tmp_path: Path):
+    """Public run-owned facade owns save rights only for the context lifetime."""
+    from llm_loop.core.message import Message, MessageSource
+
+    owner = SessionStore(tmp_path)
+    other = SessionStore(tmp_path)
+    sid = owner.create()
+
+    with owner.run_owned_session(sid) as active:
+        assert active is not None
+        active.messages.append(Message(role="user", content="durable", source=MessageSource.USER))
+        owner.save(active)
+
+        with other.run_lease(sid) as acquired:
+            assert acquired is False
+
+        snapshot = active.to_dict()
+        serialized = repr(snapshot)
+        assert "run_save_token" not in serialized
+        assert "opaque" not in serialized.lower()
+
+    assert owner.load(sid).messages[-1].content == "durable"
+    with other.run_lease(sid) as acquired:
+        assert acquired is True
