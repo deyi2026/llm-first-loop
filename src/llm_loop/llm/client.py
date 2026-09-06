@@ -52,6 +52,9 @@ class LLMResponse:
     tool_calls: list[ToolCall]
     provider: str = "openai-compat"
     truncated: bool = False
+    # Exact provider stop reason when available (e.g. ``length``/``max_tokens``).
+    # Keep this as transport fact; the loop must not infer semantic completion from it.
+    finish_reason: str = ""
     reasoning_content: str | None = None  # M20 THK-02/03
     prompt_tokens: int = 0  # M52: 缺失保持 0 = 未提供，不伪造
     completion_tokens: int = 0
@@ -321,6 +324,7 @@ def _finish_response(
         tool_calls=tool_calls,
         provider=provider,
         truncated=acc.truncated,
+        finish_reason=acc.finish_reason,
         reasoning_content="".join(acc.reasoning_parts) or None,
         prompt_tokens=acc.prompt_tokens,
         completion_tokens=acc.completion_tokens,

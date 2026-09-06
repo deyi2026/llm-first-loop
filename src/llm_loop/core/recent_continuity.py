@@ -11,6 +11,7 @@ adjacent interaction pair.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from llm_loop.core.episode_history import is_human_user_message
@@ -65,6 +66,29 @@ def _resume_message(state: dict[str, Any] | None) -> dict[str, Any] | None:
     return out
 
 
+def _resume_runtime_fact(state: dict[str, Any] | None) -> str:
+    """Return a provider-only factual marker for a token-limited model partial.
+
+    The partial assistant bytes themselves remain exact model output. The marker is
+    explicitly labelled as runtime provenance and is attached only to the ephemeral
+    provider view of the current genuine-human message. Durable human input remains
+    byte-exact. It contains no directive about whether/how to continue; the model
+    keeps that decision.
+    """
+    if not isinstance(state, dict) or state.get("provider_truncated") is not True:
+        return ""
+    finish_reason = str(state.get("finish_reason") or "")[:80]
+    payload = {
+        "previous_assistant_output_truncated": True,
+        "previous_assistant_output_complete": False,
+        "partial_output_persisted": True,
+        "finish_reason": finish_reason,
+    }
+    return "[runtime_continuity] " + json.dumps(
+        payload, ensure_ascii=False, separators=(",", ":")
+    )
+
+
 def apply_recent_continuity_suffix(
     built: list[dict],
     *,
@@ -76,7 +100,12 @@ def apply_recent_continuity_suffix(
 
     Returns a fresh list only when an initial genuine-human ingress is present.
     ``interruption_resume`` wins over the prior completed assistant because it is the
-    more recent unfinished model state.  No synthetic prose/labels are added.
+    more recent unfinished model state. For provider token-limit truncation only, a
+    provider-only structured runtime fact is attached to the provider view of the
+    current genuine-human wire message, after the exact human text and under an
+    explicit runtime marker. Durable Session content remains byte-exact human input.
+    This keeps the stable system prefix unchanged and avoids providers that reject a
+    second/mid-turn system role. The fact contains no continuation directive.
     """
     if current_turn_ref is None or current_turn_ref < 0 or current_turn_ref >= len(session_messages):
         return built, {"applied": False, "reason": "no_current_turn"}
@@ -106,6 +135,7 @@ def apply_recent_continuity_suffix(
 
     source = "current_user_only"
     assistant_wire = _resume_message(interruption_resume)
+    runtime_fact = _resume_runtime_fact(interruption_resume)
     candidate = None
     if assistant_wire is not None:
         # _resume_message() only succeeds for a dict state, but keep the local
@@ -158,6 +188,10 @@ def apply_recent_continuity_suffix(
     # Any build-time dynamic/program material that appeared after current human is
     # moved ahead of the recent pair.  The exact human ingress remains the final item.
     out = before + after_user
+    if runtime_fact:
+        current_wire["content"] = (
+            f"{current_text}\n\n[provider_runtime_fact—not_human_text]\n{runtime_fact}"
+        )
     if assistant_wire is not None:
         out.append(assistant_wire)
     out.append(current_wire)
@@ -166,4 +200,5 @@ def apply_recent_continuity_suffix(
         "source": source,
         "moved_after_user": len(after_user),
         "rehydrated": bool(assistant_wire is not None and not removed_existing),
+        "runtime_fact": bool(runtime_fact),
     }

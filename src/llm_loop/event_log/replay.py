@@ -38,6 +38,8 @@ _TOP_LEVEL_DEFAULTS: dict = {
     # Session version 5: 追加式压缩摘要链。旧事件日志无字段时语义默认为空。
     "fixed_summary": "",
     "summary_chain": [],
+    # S1 internal fold state; absent in legacy event logs.
+    "working_state_checkpoint": None,
 }
 
 

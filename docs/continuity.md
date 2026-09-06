@@ -8,6 +8,18 @@ The source repository remains the authority for code and public project document
 
 A handoff is never automatically injected into a new task. It is read only when a user explicitly asks to resume prior work. After retrieval, volatile facts must be re-verified against the current source repository and runtime. Historical text such as "must", "continue", or "next step" has no current instruction authority.
 
+## Continuity layers are separate
+
+LFL currently has three continuity concerns with different authority and lifetimes. They must not be collapsed into one shared "continuity state":
+
+1. **Private handoff transport** — this document's optional companion Git store. It moves historical handoffs across agents, machines, or clones. It is never runtime-memory authority and is never injected automatically.
+2. **S1 fold / working-state continuity** — in-session provider projection for long active tool runs. `Session.working_state_checkpoint` can preserve model-authored opaque state plus model-selected exact raw evidence. A checkpoint is eligible only for the exact transcript/provider/model boundary on which it was built, and checkpoint selection must have completed with `finish_reason=stop`. The production runtime currently contains checkpoint storage/validation/projection consumers; the model-driven checkpoint producer is still a separately gated capability and is not default-enabled by this integration.
+3. **Interruption / provider-truncation continuity** — recovery of an unfinished model output. The exact partial assistant bytes remain durable and are marked `llm_interrupted`; provider token-limit stops additionally carry `provider_truncated` and the exact provider finish reason. On the next genuine human ingress, that partial can be exposed one-shot through `RunState.interruption_resume`, with only a factual provider-view truncation marker and no program-authored continuation instruction.
+
+The runtime ownership rule is mechanical: an S1 checkpoint cannot be created from a `length` selection; any later persisted transcript message invalidates the old S1 boundary; therefore a later provider-truncated partial and new human ingress cannot simultaneously reuse that old checkpoint as current working state. The truncation path recovers the unfinished output, while S1 remains responsible only for fold/evidence continuity at its own exact boundary.
+
+Do not copy one layer's state into another layer merely to make recovery "more robust". If a future change needs cross-layer coordination, preserve these authority boundaries and add a mechanical regression proving that only one layer owns the same recovery state at a time.
+
 ## Public/private split
 
 The public repository contains only this protocol, `AGENTS.md`, the generic CLI, and tests. Private configuration is stored in the source repository's local Git config (`.git/config`) and is never tracked.
