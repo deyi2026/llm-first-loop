@@ -318,15 +318,7 @@ export function stopStreaming(): void {
   }
   // EVO-20260823 停止按钮修复: SSE abort 只停订阅（后台 run 线程继续执行），
   // 需调后端 cancel API 请求真正取消（runner.cancel → 引擎主循环检查点终止）。
-  // fail-open: 取消失败不影响前端状态（后端 run 终会自然结束落盘）。
-  const sid = sessionStore.getState().currentSessionId;
-  if (sid) {
-    void fetch("/api/v1/chat/cancel", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sid }),
-    }).catch(() => undefined);
-  }
+  // （2026-09-04 修复重复声明: 原第二段 const sid 重复取消逻辑与上方重复，删除）
 }
 
 /** 发送消息（含附件前缀注入；流式渲染思考/工具轮/正文；done 终态覆盖；错误可重试） */
