@@ -14,6 +14,7 @@ from typing import Any
 _COMPONENTS = {
     "runtime": "runtime.causality/runtime snapshot",
     "generation_contract": "llm client/provider contract",
+    "input_budget": "routing/input-output capacity contract",
     "ingress": "core.prompt_build.stages.ingress_resolution",
     "history": "core.prompt_build.stages.history_pipeline",
     "recent_continuity": "core.recent_continuity",
@@ -136,6 +137,19 @@ def _normalized_history(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalized_input_budget(payload: dict[str, Any]) -> dict[str, Any]:
+    value = payload.get("input_budget") or {}
+    return {
+        "requested_input_tokens": value.get("requested_input_tokens"),
+        "allowed_input_tokens": value.get("allowed_input_tokens"),
+        "tool_schema_reserve_chars": int(value.get("tool_schema_reserve_chars", 0) or 0),
+        "effective_history_budget_chars": int(
+            value.get("effective_history_budget_chars", payload.get("budget", 0)) or 0
+        ),
+        "limited_by": str(value.get("limited_by") or ""),
+    }
+
+
 def _normalized_continuity(payload: dict[str, Any]) -> dict[str, Any]:
     value = (payload.get("influence") or {}).get("recent_continuity") or {}
     return {
@@ -177,6 +191,8 @@ def _stage_values(attempt: _Attempt) -> list[tuple[str, Any]]:
     if runtime.get("snapshot_id"):
         values.append(("runtime", str(runtime.get("snapshot_id") or "")))
     values.append(("generation_contract", dict(payload.get("generation_contract") or {})))
+    if payload.get("input_budget"):
+        values.append(("input_budget", _normalized_input_budget(payload)))
     if payload.get("influence"):
         values.extend(
             [

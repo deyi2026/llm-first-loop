@@ -52,8 +52,9 @@ class ModelSpec:
     reasoning: bool = False
     long_context: bool = False
     multimodal: bool = False
-    # Model-specific output ceiling/budget. None inherits provider-level max_tokens.
-    # Keep this separate because one provider may expose models with different limits.
+    # Model-specific input/output budgets. These are operational caps, distinct from
+    # the model's physical context window. None inherits the provider-level value.
+    max_input_tokens: int | None = None
     max_tokens: int | None = None
     wire_protocol: str = "openai"  # P3-5: openai / anthropic / google（客户端协议分发）
     capability_tier: str = "unknown"  # strong/weak/unknown；unknown=无结论，禁止负面能力推断
@@ -98,6 +99,7 @@ class ProviderSpec:
     default_model: str = ""
     timeout_s: float | None = None
     history_budget_chars: int | None = None
+    max_input_tokens: int | None = None  # provider 级输入 token 预算（None=仅物理窗口/其它 cap）
     max_tokens: int | None = None  # 2026-08-15: provider 级输出预算（None=全局 LLM_MAX_TOKENS）
     chars_per_token: float | None = None  # EVO-20260824: provider 级字符/token 估算（None=全局 0.6）
     # deepseek 中文混合实测 1.676 tok/char → 0.6 chars/token；local qwen 中文 tokenizer 效率更高
@@ -180,6 +182,8 @@ class ProviderRegistry:
                 tags.append(f"timeout={spec.timeout_s:g}s")
             if spec.history_budget_chars:
                 tags.append(f"history_budget={spec.history_budget_chars}")
+            if spec.max_input_tokens:
+                tags.append(f"max_input_tokens={spec.max_input_tokens}")
             if spec.max_tokens:
                 tags.append(f"max_tokens={spec.max_tokens}")
             tag_str = (" " + " ".join(tags)) if tags else ""
@@ -188,6 +192,8 @@ class ProviderRegistry:
                 capable, control = self.reasoning_contract(pid, mid)
                 lines.append(
                     f"  - {mid}: context={mspec.context}, "
+                    f"max_input_tokens={mspec.max_input_tokens or spec.max_input_tokens or 'physical'}, "
+                    f"max_tokens={mspec.max_tokens or spec.max_tokens or 'global'}, "
                     f"reasoning_capable={'✓' if capable else '✗'}, "
                     f"reasoning_control={control}, cost={mspec.cost_tier}"
                 )
@@ -339,6 +345,27 @@ def _parse_model_max_tokens(pid: str, mid: str, value: Any) -> int | None:
     if parsed <= 0:
         logger.warning(
             "模型 %s/%s max_tokens=%r 非正数，回退 provider/global 输出预算",
+            pid, mid, value,
+        )
+        return None
+    return parsed
+
+
+def _parse_model_max_input_tokens(pid: str, mid: str, value: Any) -> int | None:
+    """Parse optional per-model input-token budget; invalid values inherit provider cap."""
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        logger.warning(
+            "模型 %s/%s max_input_tokens=%r 非整数，回退 provider/物理窗口预算",
+            pid, mid, value,
+        )
+        return None
+    if parsed <= 0:
+        logger.warning(
+            "模型 %s/%s max_input_tokens=%r 非正数，回退 provider/物理窗口预算",
             pid, mid, value,
         )
         return None
@@ -563,6 +590,7 @@ def _parse_model_spec(pid: str, mid: str, mval: dict[str, Any]) -> ModelSpec:
         reasoning=reasoning,
         long_context=_parse_bool_field(pid, mid, "long_context", mval),
         multimodal=_parse_bool_field(pid, mid, "multimodal", mval),
+        max_input_tokens=_parse_model_max_input_tokens(pid, mid, mval.get("max_input_tokens")),
         max_tokens=_parse_model_max_tokens(pid, mid, mval.get("max_tokens")),
         # P3-5: 协议白名单（非法值回退 openai + 如实告警，不拖垮注册表）
         wire_protocol=_parse_wire_protocol(pid, mid, mval),
@@ -634,6 +662,25 @@ def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
                         "provider 条目 %r 的 timeout_s=%r 非法, 回退全局超时",
                         pid, raw_timeout,
                     )
+            # provider 级输入 token 预算：只限制模型可见输入，不伪造物理 context。
+            # 非法/缺失 → None（由物理窗口 / output reserve / 其它显式 cap 决定）。
+            max_input_tokens: int | None = None
+            raw_input_tokens = val.get("max_input_tokens")
+            if raw_input_tokens is not None:
+                try:
+                    parsed_input_tokens = int(raw_input_tokens)
+                    if parsed_input_tokens > 0:
+                        max_input_tokens = parsed_input_tokens
+                    else:
+                        logger.warning(
+                            "provider 条目 %r 的 max_input_tokens=%r 非正数, 回退物理窗口预算",
+                            pid, raw_input_tokens,
+                        )
+                except (ValueError, TypeError):
+                    logger.warning(
+                        "provider 条目 %r 的 max_input_tokens=%r 非法, 回退物理窗口预算",
+                        pid, raw_input_tokens,
+                    )
             # provider 级输出预算（token）: 2026-08-15 显式 max_tokens（长分析模型放大）;
             # 非法/缺失 → None（全局 LLM_MAX_TOKENS 兜底）
             max_tokens: int | None = None
@@ -700,6 +747,7 @@ def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
                 default_model=default_model,
                 timeout_s=timeout_s,
                 history_budget_chars=history_budget_chars,
+                max_input_tokens=max_input_tokens,
                 max_tokens=max_tokens,
                 chars_per_token=chars_per_token,
             )

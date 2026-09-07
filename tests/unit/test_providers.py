@@ -693,6 +693,48 @@ def test_non_dict_provider_warns_and_skipped(caplog: pytest.LogCaptureFixture) -
     assert any("p1" in r.message and "非 dict" in r.message for r in caplog.records)
 
 
+
+
+def test_provider_and_model_max_input_tokens_parse_without_entering_client_payload() -> None:
+    """Input-token budget belongs to routing metadata, not provider wire params."""
+    raw = json.dumps(
+        {
+            "p1": {
+                "base_url": "http://a",
+                "api_key_env": "",
+                "max_input_tokens": 184000,
+                "models": {
+                    "m1": {},
+                    "m2": {"max_input_tokens": 120000},
+                },
+            }
+        }
+    )
+    reg = load_registry(_settings(model_providers_raw=raw))
+    spec = reg.providers["p1"]
+    assert spec.max_input_tokens == 184000
+    assert spec.models["m1"].max_input_tokens is None
+    assert spec.models["m2"].max_input_tokens == 120000
+    assert "max_input_tokens" not in reg.client_params("p1", "m1")
+    assert "max_input_tokens" not in reg.client_params("p1", "m2")
+
+
+def test_invalid_max_input_tokens_fail_open_to_physical_window() -> None:
+    raw = json.dumps(
+        {
+            "p1": {
+                "base_url": "http://a",
+                "api_key_env": "",
+                "max_input_tokens": 0,
+                "models": {"m1": {"max_input_tokens": "bad"}},
+            }
+        }
+    )
+    reg = load_registry(_settings(model_providers_raw=raw))
+    assert reg.providers["p1"].max_input_tokens is None
+    assert reg.providers["p1"].models["m1"].max_input_tokens is None
+
+
 # ── 2026-08-15: provider 级 max_tokens 输出预算 ──
 
 def test_provider_max_tokens_parsed_and_passed() -> None:

@@ -101,3 +101,76 @@ def test_effective_budget_provider_cap():
     r = _DummyRouting(global_budget=1000000, ctx=131072)
     r.llm_pool = _PoolCap()
     assert r._effective_history_budget("local/m") == 12000
+
+
+def test_effective_budget_provider_input_token_cap_is_distinct_from_physical_context():
+    """184K input / 16K output is an operational cap; physical context remains factual."""
+
+    class _InputCapModel:
+        max_input_tokens = None
+        max_tokens = None
+
+    class _InputCapSpec:
+        history_budget_chars = None
+        max_input_tokens = 184_000
+        max_tokens = 16_000
+        models = {"m": _InputCapModel()}
+
+    class _InputCapRegistry:
+        providers = {"cloud": _InputCapSpec()}
+
+    class _InputCapPool:
+        registry = _InputCapRegistry()
+
+    r = _DummyRouting(global_budget=None, ctx=1_000_000)
+    r.llm_pool = _InputCapPool()
+    detail = r._effective_history_budget_detail("cloud/m")
+    assert detail["input_token_budget"] == 184_000
+    assert detail["allowed_input_tokens"] == 184_000
+    assert detail["effective_budget"] == 110_400  # 184K tokens × 0.6 chars/token
+    assert detail["limited_by"] == "input_token_budget"
+
+
+def test_physical_window_wins_over_requested_184k_input_cap():
+    """A 65,536-token local runtime must not be advertised/executed as 184K input."""
+
+    class _LocalModel:
+        max_input_tokens = None
+        max_tokens = None
+
+    class _LocalSpec:
+        history_budget_chars = None
+        max_input_tokens = 184_000
+        max_tokens = 16_000
+        models = {"m": _LocalModel()}
+
+    class _LocalRegistry:
+        providers = {"local": _LocalSpec()}
+
+    class _LocalPool:
+        registry = _LocalRegistry()
+
+    r = _DummyRouting(global_budget=None, ctx=65_536)
+    r.llm_pool = _LocalPool()
+    detail = r._effective_history_budget_detail("local/m")
+    assert detail["input_token_budget"] == 184_000
+    assert detail["allowed_input_tokens"] == 49_536  # 65,536 - 16,000 output reserve
+    assert detail["effective_budget"] == 29_721
+    assert detail["limited_by"] == "model_window"
+
+
+def test_tool_schema_is_reserved_inside_total_input_budget_without_semantic_tool_filtering():
+    budget_info = {"model_window_budget": 110_400}
+    assert RoutingService.reserve_tool_schema_from_history_budget(
+        110_400, budget_info, 20_639
+    ) == 89_761
+    # A stricter explicit history cap remains authoritative; tool reservation must not
+    # expand or otherwise rewrite it.
+    assert RoutingService.reserve_tool_schema_from_history_budget(
+        50_000, budget_info, 20_639
+    ) == 50_000
+    # Unknown physical/input-token capacity preserves legacy behavior rather than
+    # inventing a new cap.
+    assert RoutingService.reserve_tool_schema_from_history_budget(
+        50_000, {}, 20_639
+    ) == 50_000

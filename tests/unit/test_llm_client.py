@@ -813,14 +813,14 @@ def test_chat_payload_max_tokens_absent_when_none():
 
 
 def test_default_client_wired_with_settings_max_tokens(monkeypatch):
-    """装配默认 client 携带 settings.llm_max_tokens（默认 8192，env 可调）."""
+    """装配默认 client 携带 settings.llm_max_tokens（默认 16000，env 可调）."""
     from llm_loop.config import Settings, load_settings
 
-    assert Settings.llm_max_tokens == 8192
+    assert Settings.llm_max_tokens == 16000
     monkeypatch.setenv("LLM_API_KEY", "k")
     monkeypatch.setenv("LLM_BASE_URL", "http://t")
     monkeypatch.setenv("LLM_MODEL", "m")
-    assert load_settings().llm_max_tokens == 8192
+    assert load_settings().llm_max_tokens == 16000
     monkeypatch.setenv("LLM_MAX_TOKENS", "16384")
     assert load_settings().llm_max_tokens == 16384
 

@@ -241,8 +241,8 @@ class Settings:
     # 500 仍是显式防无限循环/副作用资源边界，可由 operator 向下配置。
     max_iterations: int = 500
     llm_timeout_s: float = 120.0
-    llm_max_tokens: int = 8192
-    llm_wire_protocol: str = "openai"  # P3-5: 默认 client 协议（openai/anthropic/google）  # 2026-08-15: 显式输出预算（默认 8192，防模型默认 4096 截断长分析；思考链也占此预算）
+    llm_max_tokens: int = 16000
+    llm_wire_protocol: str = "openai"  # P3-5: 默认 client 协议（openai/anthropic/google）  # 2026-08-15: 显式输出预算（默认 16000，防 thinking/reasoning 占满生成预算后截断最终回答/工具调用）
 
     # ── 数据目录 ──（EVO-20260830: 默认绝对路径 _DEFAULT_DATA_DIR，防 cwd 漂移 split-brain）
     data_dir: str = _DEFAULT_DATA_DIR
@@ -551,7 +551,7 @@ def load_settings() -> Settings:
         reasoning_effort=_env_effort("LLM_REASONING_EFFORT"),
         max_iterations=_env_int("LLM_MAX_ITERATIONS", 500),
         llm_timeout_s=float(_env_int("LLM_TIMEOUT_S", 120)),
-        llm_max_tokens=_env_int("LLM_MAX_TOKENS", 8192),  # 2026-08-15 显式输出预算
+        llm_max_tokens=_env_int("LLM_MAX_TOKENS", 16000),  # 2026-08-15 显式输出预算
         llm_wire_protocol=os.environ.get("LLM_WIRE_PROTOCOL", "openai").strip().lower() or "openai",
         data_dir=os.environ.get("DATA_DIR", _DEFAULT_DATA_DIR).strip(),
         evidence_mode=_env_evidence_mode("EVIDENCE_MODE"),

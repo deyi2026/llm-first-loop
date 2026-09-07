@@ -92,6 +92,11 @@ def test_causal_recording_is_provider_payload_neutral(tmp_path: Path) -> None:
     assert meta.payload["influence"]["ingress"]["storage_messages"] >= 1
     assert meta.payload["influence"]["history"]["effective_budget"] > 0
     assert "recent_continuity" in meta.payload["influence"]
+    assert "input_budget" in meta.payload
+    assert "requested_input_tokens" in meta.payload["input_budget"]
+    assert "allowed_input_tokens" in meta.payload["input_budget"]
+    assert meta.payload["input_budget"]["effective_history_budget_chars"] == meta.payload["budget"]
+    assert "tool_schema_reserve_chars" in meta.payload["input_budget"]
 
 
 def test_runtime_snapshot_is_startup_only_and_prompt_neutral(tmp_path: Path) -> None:

@@ -74,7 +74,8 @@ def providers_hashes(data_dir: str | Path) -> dict[str, str]:
 def _provider_info(model_ref: str, data_dir: str | Path) -> dict[str, Any]:
     """从 providers.json 提取 provider_id / endpoint_host / model 元信息（宽松）。"""
     info: dict[str, Any] = {
-        "provider_id": "", "provider_endpoint_host": "", "model_meta": {},
+        "provider_id": "", "provider_endpoint_host": "",
+        "provider_meta": {}, "model_meta": {},
     }
     pid, _, mname = model_ref.partition("/")
     info["provider_id"] = pid
@@ -83,6 +84,7 @@ def _provider_info(model_ref: str, data_dir: str | Path) -> dict[str, Any]:
         prov = data.get(pid) or {}
         info["provider_endpoint_host"] = (
             (prov.get("base_url") or "").split("//")[-1].split("/")[0])
+        info["provider_meta"] = prov
         info["model_meta"] = (prov.get("models") or {}).get(mname or model_ref, {})
     except Exception:
         pass  # providers.json 缺失/损坏：字段留空，manifest 仍产出（不阻塞启动）
@@ -95,7 +97,10 @@ def build_manifest(service: str, ec: EffectiveConfig,
     v = ec.values
     model_ref = v.get("LLM_MODEL", "")
     pinfo = _provider_info(model_ref, report.data_dir)
+    provider_meta = pinfo.get("provider_meta") or {}
     meta = pinfo.get("model_meta") or {}
+    max_input_tokens = meta.get("max_input_tokens", provider_meta.get("max_input_tokens", ""))
+    max_tokens = meta.get("max_tokens", provider_meta.get("max_tokens", v.get("LLM_MAX_TOKENS", "")))
     return {
         # —— 服务与进程 ——
         "service": service,
@@ -114,7 +119,8 @@ def build_manifest(service: str, ec: EffectiveConfig,
         "provider_id": pinfo["provider_id"],
         "provider_endpoint_host": pinfo["provider_endpoint_host"],
         "history_budget_chars": v.get("HISTORY_MAX_CHARS", ""),
-        "max_tokens": meta.get("max_tokens", ""),
+        "max_input_tokens": max_input_tokens,
+        "max_tokens": max_tokens,
         "model_context": meta.get("context", ""),
         "data_dir": report.data_dir,
         "config_file": report.config_file,

@@ -23,14 +23,17 @@ from llm_loop.runtime.resolver import resolve_effective
 P05_FIELDS = [
     "workspace_root", "git_head", "python_executable", "llm_loop_module",
     "service", "pid", "model_ref", "provider_id", "provider_endpoint_host",
-    "history_budget_chars", "data_dir", "config_sources", "config_hash",
+    "history_budget_chars", "max_input_tokens", "max_tokens",
+    "data_dir", "config_sources", "config_hash",
     "providers_base_hash", "providers_override_hash", "providers_effective_hash",
 ]
 
 _PROVIDERS = {
     "glm": {
         "base_url": "https://open.bigmodel.cn/api/coding/paas/v4",
-        "models": {"glm-5.3": {"context": 1000000, "max_tokens": 8192}},
+        "max_input_tokens": 184000,
+        "max_tokens": 16000,
+        "models": {"glm-5.3": {"context": 1000000}},
     }
 }
 
@@ -59,7 +62,8 @@ def test_manifest_fields_complete_and_no_api_key(tmp_path, monkeypatch):
     assert m["provider_id"] == "glm"
     assert m["provider_endpoint_host"] == "open.bigmodel.cn"
     assert m["history_budget_chars"] == "150000"
-    assert m["max_tokens"] == 8192  # 从 providers.json 模型元信息提取
+    assert m["max_input_tokens"] == 184000
+    assert m["max_tokens"] == 16000  # model 缺省时继承 provider 级输出预算
 
 
 def test_config_hash_changes_on_cli_override(tmp_path, monkeypatch):

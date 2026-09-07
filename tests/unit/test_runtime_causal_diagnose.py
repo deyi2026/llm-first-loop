@@ -30,6 +30,9 @@ def _meta(
     storage_messages: int = 10,
     eligible_messages: int = 8,
     resolved_or_consumed: int = 2,
+    input_tokens: int | None = None,
+    allowed_input_tokens: int | None = None,
+    tool_schema_reserve_chars: int = 0,
 ) -> Event:
     return _event(
         seq,
@@ -45,6 +48,21 @@ def _meta(
             "reasoning_chars": 0,
             "provider_visible_chars": history_chars + 100,
             "provider_structure_fp": provider_fp,
+            **(
+                {
+                    "input_budget": {
+                        "requested_input_tokens": input_tokens,
+                        "allowed_input_tokens": (
+                            input_tokens if allowed_input_tokens is None else allowed_input_tokens
+                        ),
+                        "tool_schema_reserve_chars": tool_schema_reserve_chars,
+                        "effective_history_budget_chars": 100000,
+                        "limited_by": "input_token_budget" if input_tokens else "model_window",
+                    }
+                }
+                if input_tokens is not None
+                else {}
+            ),
             "runtime_snapshot": {"snapshot_id": runtime},
             "generation_contract": {
                 "provider": "p",
@@ -407,3 +425,16 @@ def test_oracle_ordinary_new_user_turn_remains_non_alarm() -> None:
         ]
     )
     assert report["earliest_mechanical_divergence"] is None
+
+
+def test_input_budget_change_is_first_class_mechanical_divergence():
+    report = diagnose_causality(
+        [
+            _meta(1, input_tokens=184000, tool_schema_reserve_chars=20000),
+            _usage(2),
+            _meta(3, input_tokens=64000, allowed_input_tokens=48000, tool_schema_reserve_chars=20000),
+        ]
+    )
+    assert report["earliest_mechanical_divergence"]["stage"] == "input_budget"
+    assert report["earliest_mechanical_divergence"]["reference"]["requested_input_tokens"] == 184000
+    assert report["earliest_mechanical_divergence"]["target"]["allowed_input_tokens"] == 48000

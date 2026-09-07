@@ -295,8 +295,8 @@ class RoutingService:
         均为薄委托。2026-09-04 再收敛：history_max_chars=None 表示没有独立
         全局 cap，不能拿默认模型的兼容/诊断预算去限制当前路由模型——
         architecture_status.context_usage.budget 直接展示，AI 与人无需自行推算。
-        limited_by ∈ {runtime_override, global_budget, window_adaptive,
-        provider_budget, model_window, unknown_model_default}。
+        limited_by ∈ {runtime_override, global_budget, provider_budget,
+        input_token_budget, model_window, unknown_model_default}。
         """
         configured_global = getattr(self._host.settings, "history_max_chars", None)
         runtime_override = None
@@ -321,6 +321,7 @@ class RoutingService:
             global_budget = None
             limited_by = "model_window"
         provider_budget: int | None = None
+        input_token_budget: int | None = None
         cpt = (
             self._provider_chars_per_token(model_label)
             if registry_snapshot is None
@@ -334,6 +335,11 @@ class RoutingService:
             spec = registry.providers.get(pid) if registry is not None else None
             if spec is not None:
                 provider_budget = spec.history_budget_chars
+                model_spec = (getattr(spec, "models", None) or {}).get(_mid)
+                if model_spec is not None and getattr(model_spec, "max_input_tokens", None):
+                    input_token_budget = int(model_spec.max_input_tokens or 0)
+                elif getattr(spec, "max_input_tokens", None):
+                    input_token_budget = int(spec.max_input_tokens or 0)
         if provider_budget and (
             global_budget is None or provider_budget < global_budget
         ):
@@ -361,6 +367,8 @@ class RoutingService:
                     "configured_global_budget": configured_global,
                     "runtime_override": runtime_override,
                     "provider_budget": provider_budget,
+                    "input_token_budget": input_token_budget,
+                    "allowed_input_tokens": input_token_budget,
                     "model_window_budget": None,
                     "effective_budget": eff,
                     "limited_by": limited_by,
@@ -375,6 +383,8 @@ class RoutingService:
                 "configured_global_budget": configured_global,
                 "runtime_override": runtime_override,
                 "provider_budget": provider_budget,
+                "input_token_budget": input_token_budget,
+                "allowed_input_tokens": input_token_budget,
                 "model_window_budget": None,
                 "effective_budget": eff,
                 "limited_by": limited_by,
@@ -397,20 +407,43 @@ class RoutingService:
         allowed_input_tokens = int(limit * _CONTEXT_SAFETY_MARGIN)
         if output_tokens > 0:
             allowed_input_tokens = min(allowed_input_tokens, max(1, limit - output_tokens))
+        model_limit_reason = "model_window"
+        if input_token_budget and input_token_budget < allowed_input_tokens:
+            allowed_input_tokens = input_token_budget
+            model_limit_reason = "input_token_budget"
         model_budget = int(allowed_input_tokens * cpt)
         if global_budget is None or model_budget < global_budget:
-            eff, limited_by = model_budget, "model_window"
+            eff, limited_by = model_budget, model_limit_reason
         else:
             eff = global_budget
         return {
             "configured_global_budget": configured_global,
             "runtime_override": runtime_override,
             "provider_budget": provider_budget,
+            "input_token_budget": input_token_budget,
+            "allowed_input_tokens": allowed_input_tokens,
             "model_window_budget": model_budget,
             "effective_budget": eff,
             "limited_by": limited_by,
             "model": model_label,
         }
+
+    @staticmethod
+    def reserve_tool_schema_from_history_budget(
+        history_budget: int, budget_info: dict, tool_schema_chars: int
+    ) -> int:
+        """Reserve provider-visible tool schema inside the same total input budget.
+
+        ``model_window_budget`` is the already-resolved total input capacity in chars
+        after physical context, output reserve and optional max_input_tokens. System
+        prompt is already counted by history projection; tools are not, so subtract only
+        the mechanical tool-schema bytes here. No semantic tool selection occurs.
+        """
+        total_input_chars = budget_info.get("model_window_budget")
+        if not isinstance(total_input_chars, int) or total_input_chars <= 0:
+            return history_budget
+        remaining = max(1, total_input_chars - max(0, int(tool_schema_chars or 0)))
+        return min(history_budget, remaining)
 
     def _effective_history_budget_detail(
         self,

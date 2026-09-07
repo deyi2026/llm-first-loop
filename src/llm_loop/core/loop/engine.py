@@ -722,6 +722,18 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 session_messages=sess.messages,
                 logical_round=rounds,
             )
+            _tool_schema_chars = len(_json_dumps_args({"tools": tools_param}))
+            _budget_info = self._run_state().last_budget_info or {}
+            _pre_tool_budget = effective_budget
+            effective_budget = self._routing.reserve_tool_schema_from_history_budget(
+                effective_budget, _budget_info, _tool_schema_chars
+            )
+            if effective_budget != _pre_tool_budget:
+                _budget_info = dict(_budget_info)
+                _budget_info["pre_tool_history_budget"] = _pre_tool_budget
+                _budget_info["tool_schema_reserve_chars"] = _tool_schema_chars
+                _budget_info["effective_budget"] = effective_budget
+                self._run_state().last_budget_info = _budget_info
             messages = self._build_llm_messages(
                 sess,
                 _turn_memory_msgs,
@@ -740,7 +752,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
 
             self._run_state().last_breakdown = compute_breakdown_from_dicts(
                 messages,
-                tool_schema_chars=len(_json_dumps_args({"tools": tools_param})),
+                tool_schema_chars=_tool_schema_chars,
                 budget=effective_budget,
             )
             # EVO-20260818: 预算归属模型标注（防误读——provider 级预算如 minimax 40K
@@ -852,6 +864,14 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                         "reasoning_chars": _reasoning_chars,
                         "provider_visible_chars": _provider_visible_chars,
                         "budget": effective_budget,
+                        "input_budget": {
+                            "requested_input_tokens": _budget_info.get("input_token_budget"),
+                            "allowed_input_tokens": _budget_info.get("allowed_input_tokens"),
+                            "pre_tool_history_budget_chars": _budget_info.get("pre_tool_history_budget"),
+                            "tool_schema_reserve_chars": _budget_info.get("tool_schema_reserve_chars", 0),
+                            "effective_history_budget_chars": effective_budget,
+                            "limited_by": _budget_info.get("limited_by"),
+                        },
                         "projection_guard": getattr(self, "_projection_guard_state", "miss"),
                         "attempt_id": _primary_attempt_id,
                         "attempt_kind": "primary",
