@@ -33,6 +33,9 @@ EVENT_TOOL_EXECUTION_DECLARED = "tool.execution.declared"
 EVENT_TOOL_EXECUTION_STARTED = "tool.execution.started"
 EVENT_TOOL_EXECUTION_FINISHED = "tool.execution.finished"
 EVENT_TOOL_EXECUTION_RECEIPT_COMMITTED = "tool.execution.receipt_committed"
+EVENT_EXTERNAL_EXECUTION_LAUNCHED = "external.execution.launched"
+EVENT_EXTERNAL_EXECUTION_TERMINAL = "external.execution.terminal"
+EVENT_EXTERNAL_EXECUTION_CANCEL_REQUESTED = "external.execution.cancel_requested"
 EVENT_SUBAGENT_LINKED = "subagent.linked"
 EVENT_SUBAGENT_GENERATION_STARTED = "subagent.generation.started"
 EVENT_SUBAGENT_GENERATION_RELEASED = "subagent.generation.released"
@@ -389,6 +392,45 @@ REGISTRY.register(
             "tool_name": "工具名",
             "result_state_sha256": "已提交 receipt 对应 result sidecar 指纹；可为空",
             "recovered": "是否由重启恢复路径完成 commit",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_EXTERNAL_EXECUTION_LAUNCHED,
+        version=1,
+        fields={
+            "job_id": "稳定后台执行 id",
+            "workspace_root": "启动时规范化工作区根；机械归属事实",
+            "executor": "启动该外部执行的工具/执行器",
+            "command_sha256": "命令/任务文本 SHA256；不持久化原始命令",
+            "pid": "启动进程观察到的 PID；不单独授权重连/终止",
+            "pgid": "启动进程观察到的进程组 ID；不单独授权重连/终止",
+            "auto_reclaim": "恒 false；本阶段不自动重连/重启",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_EXTERNAL_EXECUTION_TERMINAL,
+        version=1,
+        fields={
+            "job_id": "对应后台执行 id",
+            "state": "completed/failed/killed 机械终态",
+            "exit_code": "进程退出码；不可得时 None",
+            "killed": "是否由本进程机械终止路径标记",
+            "auto_reclaim": "恒 false",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_EXTERNAL_EXECUTION_CANCEL_REQUESTED,
+        version=1,
+        fields={
+            "job_id": "对应后台执行 id",
+            "reason": "机械取消来源，例如 session_cancel/user_job_kill",
+            "auto_reclaim": "恒 false",
         },
     )
 )

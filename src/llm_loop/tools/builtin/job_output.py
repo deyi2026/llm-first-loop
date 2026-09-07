@@ -1,26 +1,23 @@
-"""基础工具: 查询后台任务输出（EVO-20260814: Harness ctx.jobs 对齐）.
-
-与 execute_command(run_in_background=true) 配合：查询任务状态与已收集输出。
-"""
+"""Query process-local or durable background execution facts."""
 
 from __future__ import annotations
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
+from llm_loop.core.run_context import current_session_id
 from llm_loop.tools.builtin.job_registry import JobRegistry
 
 
 class JobOutputTool:
     name = "job_output"
     description = (
-        "查询后台任务（execute_command run_in_background=true 启动的）当前状态与已收集输出。"
-        "何时用: 后台任务启动后查询进度/结果。"
-        "何时不用: 前台命令直接看 execute_command 返回值即可。"
-        "失败对策: job_id 不存在会如实返回失败。"
+        "查询后台任务当前状态与本进程已收集输出；重启后若只有durable事实会如实显示orphaned/终态，"
+        "不会自动重连或重启。何时用: execute_command/dsh_task 后台启动后查询进度/结果。"
+        "失败对策: job_id 不存在或不属于当前会话时如实返回。"
     )
     parameters = {
         "type": "object",
         "properties": {
-            "job_id": {"type": "string", "description": "后台任务 ID（execute_command 返回的 job_id）"},
+            "job_id": {"type": "string", "description": "后台任务 ID（后台启动回执中的 job_id）"},
         },
         "required": ["job_id"],
     }
@@ -34,27 +31,34 @@ class JobOutputTool:
                 tool_call_id="",
                 tool_name=self.name,
             )
-        entry = JobRegistry.instance().get(job_id)
-        if entry is None:
+        requester = current_session_id.get() or ""
+        snapshot = JobRegistry.instance().snapshot(job_id, session_id=requester)
+        if snapshot is None:
             return ToolResult(
                 status=ToolResultStatus.FAILURE,
-                content=f"[任务不存在] job_id={job_id}（可能从未启动或进程已退出）",
+                content=f"[任务不存在或无权访问] job_id={job_id}",
                 tool_call_id="",
                 tool_name=self.name,
             )
-        with entry._lock:
-            output = list(entry.output)
-            done, exit_code, killed = entry.done, entry.exit_code, entry.killed
-        if killed:
-            state = "killed"
-        elif done:
-            state = f"done (exit={exit_code})"
-        else:
-            state = "running"
-        body = "\n".join(output) if output else "（暂无输出）"
+        state = str(snapshot.get("state") or "unknown")
+        exit_code = snapshot.get("exit_code")
+        local = bool(snapshot.get("local_handle"))
+        durable = bool(snapshot.get("durable"))
+        state_durable = bool(snapshot.get("state_durable", durable))
+        cancel_requested = bool(snapshot.get("cancel_requested"))
+        state_label = (
+            f"done (exit={exit_code})" if state in {"completed", "failed"} else state
+        )
+        raw_output = snapshot.get("output")
+        output = list(raw_output) if isinstance(raw_output, list) else []
+        body = "\n".join(str(x) for x in output) if output else "（暂无本进程输出）"
+        command = str(snapshot.get("command") or "")
+        command_line = f"\n命令: {command}" if command else ""
         content = (
-            f"[任务 {job_id}] 状态={state}\n命令: {entry.command}\n"
-            f"--- 输出（{len(output)} 行）---\n{body}"
+            f"[任务 {job_id}] 状态={state_label} local_handle={str(local).lower()} "
+            f"durable={str(durable).lower()} state_durable={str(state_durable).lower()} "
+            f"cancel_requested={str(cancel_requested).lower()} auto_reclaim=false"
+            f"{command_line}\n--- 输出（{len(output)} 行）---\n{body}"
         )
         return ToolResult(
             status=ToolResultStatus.SUCCESS,

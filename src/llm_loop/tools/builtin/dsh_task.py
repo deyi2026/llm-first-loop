@@ -232,7 +232,11 @@ class DshTaskTool:
     # ── 内部 ──
     def _start_background(self, task: str, cwd: str, dsh_bin: str, patch_path: str = "") -> ToolResult:
         """后台执行：spawn + JobRegistry 登记（对齐 execute_command run_in_background）."""
-        from llm_loop.tools.builtin.job_registry import JobLimitExceeded, JobRegistry
+        from llm_loop.tools.builtin.job_registry import (
+            JobDurabilityError,
+            JobLimitExceeded,
+            JobRegistry,
+        )
 
         cmd = [dsh_bin, "--profile", _DSH_PROFILE]
         if patch_path:
@@ -250,15 +254,22 @@ class DshTaskTool:
         # DSH 借鉴 021-B: owner 并发上限——超限释放已启动进程并如实拒绝
         _sid = current_session_id.get() or ""
         try:
-            job_id = JobRegistry.instance().create(proc, f"dsh --profile {_DSH_PROFILE} <task>", session_id=_sid)
-        except JobLimitExceeded as exc:
+            job_id = JobRegistry.instance().create(
+                proc,
+                f"dsh --profile {_DSH_PROFILE} <task>",
+                session_id=_sid,
+                workspace_root=cwd,
+                executor="dsh_task",
+            )
+        except (JobLimitExceeded, JobDurabilityError) as exc:
             try:
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
             except (ProcessLookupError, PermissionError, OSError):
                 proc.terminate()  # 兜底：单进程 SIGTERM
+            kind = "任务超限拒绝" if isinstance(exc, JobLimitExceeded) else "后台任务持久化失败"
             return ToolResult(
                 status=ToolResultStatus.FAILURE,
-                content=f"[任务超限拒绝] {exc}\ndsh_task 未执行（进程已释放）",
+                content=f"[{kind}] {exc}\ndsh_task 后台进程已释放，不返回 false-success",
                 tool_call_id="",
                 tool_name=self.name,
             )

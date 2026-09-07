@@ -15,7 +15,7 @@ from pathlib import Path
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.core.run_context import current_session_id
-from llm_loop.tools.builtin.job_registry import JobLimitExceeded, JobRegistry
+from llm_loop.tools.builtin.job_registry import JobDurabilityError, JobLimitExceeded, JobRegistry
 from llm_loop.tools.source_recovery_contract import (
     SHARED_SOURCE_RECOVERY_CONTRACT,
     SourceRecoveryKind,
@@ -182,15 +182,22 @@ class ExecuteCommandTool:
                 # （current_session_id 用模块级 import：函数内重复 import 会遮蔽 198/320 行引用）
                 _sid = current_session_id.get() or ""
                 try:
-                    job_id = JobRegistry.instance().create(proc, command, session_id=_sid)
-                except JobLimitExceeded as exc:
+                    job_id = JobRegistry.instance().create(
+                        proc,
+                        command,
+                        session_id=_sid,
+                        workspace_root=str(workdir or ""),
+                        executor="execute_command",
+                    )
+                except (JobLimitExceeded, JobDurabilityError) as exc:
                     try:
                         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
                     except (ProcessLookupError, PermissionError, OSError):
                         proc.terminate()  # 兜底：单进程 SIGTERM
+                    kind = "任务超限拒绝" if isinstance(exc, JobLimitExceeded) else "后台任务持久化失败"
                     return ToolResult(
                         status=ToolResultStatus.FAILURE,
-                        content=f"[任务超限拒绝] {exc}\n命令未执行（进程已释放）: {command}",
+                        content=f"[{kind}] {exc}\n后台进程已释放，不返回 false-success: {command}",
                         tool_call_id="",
                         tool_name=self.name,
                     )

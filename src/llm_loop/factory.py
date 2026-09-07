@@ -45,6 +45,7 @@ from llm_loop.tools.builtin.execute_command import ExecuteCommandTool
 from llm_loop.tools.builtin.inspect_code import InspectCodeTool
 from llm_loop.tools.builtin.job_kill import JobKillTool
 from llm_loop.tools.builtin.job_output import JobOutputTool
+from llm_loop.tools.builtin.job_registry import JobRegistry
 from llm_loop.tools.builtin.read_file import ReadFileTool
 from llm_loop.tools.builtin.read_image import ReadImageTool
 from llm_loop.tools.builtin.schedule import ScheduleCancelTool, ScheduleTool
@@ -336,6 +337,13 @@ def build_engine(settings: Settings) -> LoopEngine:
         approval_audit_path=settings.audit_dir / "approval_audit.jsonl",  # T5a: 审批审计落盘
         safety_audit_dir=settings.audit_dir,  # P0-1: 灾难性阻断审计 safety_blocks.jsonl
     )
+    # EW2-A: background external executions keep process-local handles, while the
+    # shared EventStore owns durable launch/terminal/cancel facts.  Session cancellation
+    # only signals currently local handles; normal model final remains unaffected.
+    _job_registry = JobRegistry.instance()
+    _job_registry.configure(event_store=event_store)
+    registry.add_session_cancel_hook(_job_registry.cancel_session)
+
     # ERC v1.1 rollout: explicit opt-in only.  Default ``off`` creates no Evidence store
     # and installs no hook.  ``shadow`` dual-writes legacy bytes; ``enforce`` performs
     # capture-before-projection and emits a bounded recovery capsule.

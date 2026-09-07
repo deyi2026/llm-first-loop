@@ -21,6 +21,9 @@ from llm_loop.event_log.model import (
     EVENT_CODEARTS_STATUS_SYNCED,
     EVENT_CODEARTS_STATUS_UNKNOWN,
     EVENT_CONTEXT_COMPRESSED,
+    EVENT_EXTERNAL_EXECUTION_CANCEL_REQUESTED,
+    EVENT_EXTERNAL_EXECUTION_LAUNCHED,
+    EVENT_EXTERNAL_EXECUTION_TERMINAL,
     EVENT_HISTORY_COMPACTION,
     EVENT_HISTORY_COMPACTION_STATE_RESET,
     EVENT_INJECTION_PROFILE_SHADOW,
@@ -120,6 +123,12 @@ def test_registry_covers_registered_types_with_fields():
         EVENT_SESSION_CREATED,
         EVENT_MESSAGE_APPENDED,
         EVENT_CONTEXT_COMPRESSED,
+        EVENT_EXTERNAL_EXECUTION_LAUNCHED,
+        EVENT_EXTERNAL_EXECUTION_TERMINAL,
+        EVENT_EXTERNAL_EXECUTION_CANCEL_REQUESTED,
+    EVENT_EXTERNAL_EXECUTION_CANCEL_REQUESTED,
+    EVENT_EXTERNAL_EXECUTION_LAUNCHED,
+    EVENT_EXTERNAL_EXECUTION_TERMINAL,
         EVENT_HISTORY_COMPACTION,
         EVENT_HISTORY_COMPACTION_STATE_RESET,
         EVENT_MESSAGE_CACHE_COMPACTED,
@@ -158,6 +167,11 @@ def test_registry_covers_registered_types_with_fields():
     }
     assert set(REGISTRY.registered()) == names
     # 字段语义可查询
+    external_spec = REGISTRY.spec(EVENT_EXTERNAL_EXECUTION_LAUNCHED)
+    assert external_spec is not None
+    assert {"job_id", "workspace_root", "executor", "command_sha256", "pid", "pgid"} <= set(
+        external_spec.fields
+    )
     msg_spec = REGISTRY.spec(EVENT_MESSAGE_APPENDED)
     assert msg_spec is not None
     assert msg_spec.version >= 1
