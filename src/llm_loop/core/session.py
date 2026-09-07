@@ -55,6 +55,10 @@ class SessionMutationBusyError(RuntimeError):
     """目标会话正被 whole-run lease 占用，管理写必须 fail-fast。"""
 
 
+class SessionExternalResourceBusyError(RuntimeError):
+    """会话仍拥有未终态外部执行；物理删除必须保留其 durable owner facts。"""
+
+
 class SessionDeletedError(SessionIdConflictError):
     """session_id 已物理删除且不可恢复/复用。"""
 
@@ -280,6 +284,7 @@ class SessionStore:
         identity_root: str | Path | None = None,
         identity_history_exists_fn: Callable[[str], bool] | None = None,
         delete_sidecars_fn: Callable[[str], object] | None = None,
+        delete_resource_blocker_fn: Callable[[str], str | None] | None = None,
     ) -> None:
         self._dir = Path(sessions_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
@@ -289,6 +294,7 @@ class SessionStore:
         self._identity_verified: set[str] = set()
         self._identity_history_exists_fn = identity_history_exists_fn
         self._delete_sidecars_fn = delete_sidecars_fn
+        self._delete_resource_blocker_fn = delete_resource_blocker_fn
         self._event_store = event_store
         self._read_path_source = read_path_source
         # P0-4(2026-08-15): 非 POSIX 平台 flock 不可得时的进程内回退锁表
@@ -1557,13 +1563,25 @@ class SessionStore:
         return True
 
     def delete(self, session_id: str) -> bool:
-        """物理删除主会话 + Event/Archive sidecar；任一清理失败不得误报成功。"""
+        """物理删除主会话 + sidecar；未终态外部资源存在时先 fail-closed。"""
         if not self.exists(session_id):
             return False
         with self.management_lease(session_id):
             p = self._path(session_id)
             if not p.exists():
                 return False
+            blocker_fn = self._delete_resource_blocker_fn
+            if blocker_fn is not None:
+                try:
+                    blocker = blocker_fn(session_id)
+                except SessionExternalResourceBusyError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - 无法证明资源已终态时拒绝破坏SoT
+                    raise SessionExternalResourceBusyError(
+                        "外部资源状态无法确认；为保留执行归属事实，拒绝物理删除。"
+                    ) from exc
+                if blocker:
+                    raise SessionExternalResourceBusyError(str(blocker))
             try:
                 with self._session_lock(session_id):
                     # 先durable标记不可恢复；崩溃/部分清理后也绝不允许旧sid重新活跃。

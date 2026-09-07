@@ -184,6 +184,32 @@ class ExternalExecutionJournal:
             }
         )
 
+    def nonterminal(self, session_id: str) -> tuple[ExternalExecutionState, ...]:
+        """List durable launched-without-terminal executions for one exact owner session."""
+        store = self.event_store
+        if not self.enabled or store is None or not session_id or not store.exists(session_id):
+            return ()
+        launched_ids: list[str] = []
+        terminal_ids: set[str] = set()
+        for event in store.read(session_id) or []:
+            payload = dict(getattr(event, "payload", None) or {})
+            job_id = str(payload.get("job_id") or "")
+            if not job_id:
+                continue
+            etype = str(getattr(event, "type", ""))
+            if etype == EVENT_EXTERNAL_EXECUTION_LAUNCHED and job_id not in launched_ids:
+                launched_ids.append(job_id)
+            elif etype == EVENT_EXTERNAL_EXECUTION_TERMINAL:
+                terminal_ids.add(job_id)
+        states: list[ExternalExecutionState] = []
+        for job_id in launched_ids:
+            if job_id in terminal_ids:
+                continue
+            state = self.state(session_id, job_id)
+            if state is not None and not state.terminal_seq:
+                states.append(state)
+        return tuple(states)
+
     def state(self, session_id: str, job_id: str) -> ExternalExecutionState | None:
         """Rebuild one job from the owner's append-only event stream."""
         store = self.event_store

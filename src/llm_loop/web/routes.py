@@ -23,7 +23,7 @@ from fastapi.responses import (
 )
 
 from llm_loop.core.loop.runner import SessionBusyError
-from llm_loop.core.session import SessionMutationBusyError
+from llm_loop.core.session import SessionExternalResourceBusyError, SessionMutationBusyError
 from llm_loop.feedback.honesty import (
     append_feedback,
     session_deleted_message,
@@ -1794,6 +1794,11 @@ def delete_session(session_id: str, request: Request, confirm: bool = False) -> 
 
     try:
         deleted = engine.session.delete(session_id)
+    except SessionExternalResourceBusyError as exc:
+        return UTF8JSONResponse(
+            status_code=409,
+            content={"error": "external_resource_busy", "detail": str(exc)},
+        )
     except SessionMutationBusyError as exc:
         return UTF8JSONResponse(
             status_code=409,

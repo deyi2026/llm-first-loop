@@ -294,6 +294,23 @@ def build_engine(settings: Settings) -> LoopEngine:
             return False
         return int(archive.stats(session_id).get("archived_count", 0)) > 0
 
+    def external_resource_delete_blocker(session_id: str) -> str | None:
+        """ST2-D0: fence unfinished execution facts; delete never auto-cancels/reclaims."""
+        sid = _validate_session_id(session_id)
+        from llm_loop.core.external_execution import ExternalExecutionJournal
+
+        durable = ExternalExecutionJournal(event_store).nonterminal(sid)
+        local = JobRegistry.instance().active_for_session(sid)
+        job_ids = sorted({state.job_id for state in durable} | {entry.id for entry in local})
+        if not job_ids:
+            return None
+        visible = ", ".join(job_ids[:3])
+        suffix = "…" if len(job_ids) > 3 else ""
+        return (
+            f"会话仍拥有 {len(job_ids)} 个未终态外部执行（{visible}{suffix}）；"
+            "为保留执行归属/终态事实，拒绝物理删除。请先等待结束或显式终止后重试。"
+        )
+
     def delete_session_sidecars(session_id: str) -> None:
         sid = _validate_session_id(session_id)
         if archive is not None:
@@ -324,6 +341,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         identity_root=settings.sessions_dir,
         identity_history_exists_fn=identity_history_exists,
         delete_sidecars_fn=delete_session_sidecars,
+        delete_resource_blocker_fn=external_resource_delete_blocker,
     )
 
     # 工具注册表（3 基础工具 + 自省/修正/检索工具）

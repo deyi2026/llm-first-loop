@@ -13,7 +13,11 @@ from datetime import UTC
 from pathlib import Path
 
 from llm_loop.config import load_settings
-from llm_loop.core.session import SessionMutationBusyError, SessionStore
+from llm_loop.core.session import (
+    SessionExternalResourceBusyError,
+    SessionMutationBusyError,
+    SessionStore,
+)
 
 
 def _run_single(engine, text: str, session_id: str | None = None) -> None:
@@ -227,6 +231,9 @@ def _cmd_delete(engine, session_id: str, yes: bool) -> int:
             return 1
     try:
         deleted = engine.session.delete(session_id)
+    except SessionExternalResourceBusyError as exc:
+        print(f"[外部资源繁忙] {exc}")
+        return 1
     except SessionMutationBusyError as exc:
         print(f"[会话繁忙] {exc}")
         return 1
