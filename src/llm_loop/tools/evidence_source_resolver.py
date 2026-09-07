@@ -59,6 +59,10 @@ class EvidenceSourceResolver:
             return None
         if bool(call.arguments.get("force_refresh", False)):
             return None
+        # P2 T07: snapshot=true is an explicit request to observe the current physical
+        # file and mint a new immutable baseline. Historical Evidence must not replace it.
+        if bool(call.arguments.get("snapshot", False)):
+            return None
         try:
             source, requested = source_for_call(call)
         except (TypeError, ValueError):

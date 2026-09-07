@@ -392,7 +392,7 @@ def test_session_delete_keeps_workspace_artifact_for_next_session_same_workspace
     assert recovered.sha256 == record.sha256
 
 
-def test_factory_shares_one_artifact_store_between_edit_and_read(tmp_path: Path) -> None:
+def test_factory_shares_file_service_and_artifact_store_between_edit_and_read(tmp_path: Path) -> None:
     from llm_loop.factory import build_engine
 
     settings = Settings(
@@ -408,6 +408,7 @@ def test_factory_shares_one_artifact_store_between_edit_and_read(tmp_path: Path)
     assert isinstance(read_tool, ReadFileTool)
     assert isinstance(edit_tool, EditFileTool)
     assert read_tool.artifact_store is edit_tool.artifact_store
+    assert read_tool.file_service is edit_tool._file_service  # noqa: SLF001 - assembly contract
     assert read_tool.artifact_store is not None
     assert read_tool.artifact_store.root == (tmp_path / "data" / "artifacts").resolve()
 

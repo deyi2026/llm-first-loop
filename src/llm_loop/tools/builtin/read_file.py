@@ -13,6 +13,8 @@ from llm_loop.tools.source_recovery_contract import (
     source_recovery_guidance,
 )
 from llm_loop.workspace.artifacts import ARTIFACT_SCHEME, ArtifactError, WorkspaceArtifactStore
+from llm_loop.workspace.file_effects import FileArtifactProvenance
+from llm_loop.workspace.file_service import FileService, FileServiceError
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,7 @@ class ReadFileTool:
         + "Evidence enforce 中 verified-current 且 coverage 已覆盖时由 resolver 复用 Evidence 并内联正文；"
         "无法内联时该次复用按 failure 如实回执（force_refresh=true 显式要求物理重读）。"
         "legacy/off 模式下超大文件仍可用 offset/limit 分段读取。"
+        "snapshot=true 时强制物理观察当前完整文件并返回 file_contract_version=1 的 immutable baseline ref；"
         "path 也可为 artifact://v1/...；此时读取当前工作区绑定的 immutable artifact snapshot，"
         "并如实报告其 workspace path 当前是否仍匹配该版本。"
     )
@@ -67,12 +70,23 @@ class ReadFileTool:
                 "type": "boolean",
                 "description": "Evidence enforce 模式显式要求物理重新读取，即使 verified-current Evidence 已覆盖；默认 false",
             },
+            "snapshot": {
+                "type": "boolean",
+                "description": "为 true 时强制物理读取完整当前文件并保存 immutable baseline，返回 file_contract_version=1/snapshot_ref；默认 false",
+            },
         },
         "required": ["path"],
     }
 
-    def __init__(self, artifact_store: WorkspaceArtifactStore | None = None) -> None:
+    def __init__(
+        self,
+        artifact_store: WorkspaceArtifactStore | None = None,
+        file_service: FileService | None = None,
+    ) -> None:
         self.artifact_store = artifact_store
+        self.file_service = file_service or (
+            FileService(artifact_store=artifact_store) if artifact_store is not None else None
+        )
 
     def execute(self, **kwargs) -> ToolResult:
         path = str(kwargs.get("path", "")).strip()
@@ -102,6 +116,7 @@ class ReadFileTool:
             )
         offset = int(kwargs.get("offset", 0) or 0)
         limit = kwargs.get("limit")
+        snapshot_requested = bool(kwargs.get("snapshot", False))
         if not path:
             return ToolResult(
                 status=ToolResultStatus.FAILURE,
@@ -149,6 +164,13 @@ class ReadFileTool:
                     content=f"[不是文件] {p} 是目录而非文件，请用目录工具。",
                     tool_call_id="",
                     tool_name=self.name,
+                )
+            if snapshot_requested:
+                return self._read_physical_snapshot(
+                    p,
+                    offset=offset,
+                    limit=(None if limit is None else int(limit)),
+                    link_note=_link_note,
                 )
             st_before = p.stat()
             file_text = p.read_text(encoding="utf-8", errors="replace")
@@ -214,6 +236,117 @@ class ReadFileTool:
                 error_type=type(exc).__name__,
                 error_detail=str(exc),
             )
+
+    def _read_physical_snapshot(
+        self,
+        path: Path,
+        *,
+        offset: int,
+        limit: int | None,
+        link_note: str,
+    ) -> ToolResult:
+        if self.file_service is None or self.artifact_store is None:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content="[snapshot unavailable] 当前运行时未装配共享 file service/artifact store。",
+                tool_call_id="",
+                tool_name=self.name,
+                error_type="SnapshotUnavailable",
+            )
+        from llm_loop.core.run_context import (
+            current_evidence_shadow_enabled,
+            current_session_id,
+            workspace_base,
+        )
+        from llm_loop.core.tool_execution_journal import current_tool_effect_binding
+
+        scope = workspace_base()
+        binding = current_tool_effect_binding()
+        if binding is not None and binding.tool_name == self.name:
+            provenance = FileArtifactProvenance(
+                workspace_scope=scope,
+                owner_session_id=str(binding.session_id),
+                operation_id=str(binding.execution_id),
+                tool_call_id=str(binding.tool_call_id),
+                tool_name=self.name,
+                effect_kind="file_observation",
+            )
+        else:
+            provenance = FileArtifactProvenance(
+                workspace_scope=scope,
+                owner_session_id=str(current_session_id.get() or ""),
+                operation_id="",
+                tool_name=self.name,
+                effect_kind="file_observation",
+            )
+        try:
+            observation = self.file_service.observe(
+                path=path,
+                workspace_scope=scope,
+                provenance=provenance,
+                offset=offset,
+                limit=limit,
+            )
+        except FileServiceError as exc:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[snapshot 失败] {exc.error_type}",
+                tool_call_id="",
+                tool_name=self.name,
+                error_type=exc.error_type,
+                error_detail=exc.detail or exc.error_type,
+            )
+
+        start, end = observation.content_range
+        header = (
+            f"[read_file snapshot] {path} 共 {observation.total_lines} 行，"
+            f"显示 {start + 1}-{end} 行 "
+            f"file_contract_version={observation.file_contract_version} "
+            f"snapshot_ref={observation.snapshot_ref} sha256={observation.sha256} "
+            f"size_bytes={observation.size_bytes} "
+            f"workspace_path_state={observation.workspace_path_state}"
+        )
+        selected = observation.content.splitlines()
+        if selected:
+            numbered = "\n".join(f"{start + i + 1} | {line}" for i, line in enumerate(selected))
+            note = (
+                f"\n[共 {observation.total_lines} 行，已显示 {len(selected)} 行]"
+                if len(selected) < observation.total_lines
+                else ""
+            )
+            content = header + "\n" + numbered + note + link_note
+        else:
+            content = header + "\n[空文件或所选范围无内容]" + link_note
+        facts = {
+            "artifact_ref": observation.snapshot_ref,
+            "path": observation.path,
+            "size_bytes": observation.size_bytes,
+            "sha256": observation.sha256,
+            "created_at": observation.observed_at,
+            "artifact_identity": "immutable_snapshot",
+            "task_applicability": "not_evaluated",
+        }
+        try:
+            from llm_loop.tools.path_registry import register_seen
+
+            stat = path.stat()
+            register_seen(
+                str(path),
+                mtime=stat.st_mtime_ns,
+                size=stat.st_size,
+                kind="file",
+            )
+        except Exception:  # noqa: BLE001 - derived path cache remains fail-open
+            pass
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content=content,
+            tool_call_id="",
+            tool_name=self.name,
+            raw_observation=content if current_evidence_shadow_enabled.get() else None,
+            evidence_source_version_token=observation.source_version_token,
+            artifact_facts=(facts,),
+        )
 
     def _read_artifact(self, ref: str, kwargs: dict) -> ToolResult:
         if self.artifact_store is None:

@@ -58,6 +58,7 @@ from llm_loop.tools.builtin.web_search import WebSearchTool
 from llm_loop.tools.builtin.workflow import WorkflowRunTool
 from llm_loop.tools.registry import ToolRegistry
 from llm_loop.workspace.artifacts import WorkspaceArtifactStore
+from llm_loop.workspace.file_service import FileService
 
 # EVO-20260814 P1-A: RUN_MODE 运行模式（对齐 Harness 四种运行模式）
 # standard: 全工具集（默认零回归）; ptc: 命令执行为主路径（web 外围降级）;
@@ -615,13 +616,23 @@ def build_engine(settings: Settings) -> LoopEngine:
         # runtime unavailable.  Tools remain usable and report ref unavailability.
         _artifact_store = None
         logger.warning("workspace artifact store unavailable; artifact refs disabled", exc_info=True)
-    _register_basic("read_file", ReadFileTool(artifact_store=_artifact_store))
+    _file_service = FileService(
+        artifact_store=_artifact_store,
+        lock_root=Path(settings.data_dir) / "file_locks",
+    )
+    _register_basic(
+        "read_file",
+        ReadFileTool(artifact_store=_artifact_store, file_service=_file_service),
+    )
     # EVO-20260820-5d0a7b99: 图像转结构化文本证据（元信息 + 内容识别，借鉴 DSH rc.8 工具层视觉）
     _register_basic("read_image", ReadImageTool())
     # EVO-20260817: 代码结构概览（AST 索引，最高 ROI 能力工具——大项目定位提速）
     _register_basic("inspect_code", InspectCodeTool())
     # M51: 四段式文件修改（read→match→diff→apply+verify，替代 sed/heredoc 盲替换）
-    _register_basic("edit_file", EditFileTool(artifact_store=_artifact_store))
+    _register_basic(
+        "edit_file",
+        EditFileTool(artifact_store=_artifact_store, file_service=_file_service),
+    )
     # EVO-d5db88d9: 按需读取工具完整 Schema（懒加载配套；零副作用可始终注册）
     from llm_loop.tools.registry import GetToolSchemaTool
 
