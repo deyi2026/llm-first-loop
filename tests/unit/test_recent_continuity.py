@@ -47,7 +47,9 @@ def test_resolved_previous_model_answer_is_rehydrated_for_adjacent_user_turn() -
         current_turn_ref=2,
     )
 
-    assert info["source"] == "recent_model_assistant"
+    assert info["source"] == "recent_dialogue_window"
+    assert info["dialogue_pairs"] == 1
+    assert out[-3]["content"] == "请判断 A 还是 B"
     assert out[-2]["role"] == "assistant"
     assert out[-2]["content"] == "你更看重速度还是精度？"
     assert out[-2]["reasoning_content"] == "THINK"
@@ -75,7 +77,8 @@ def test_current_user_is_final_even_if_dynamic_material_was_appended_after_it() 
     assert info["moved_after_user"] == 1
     assert out[-2]["content"] == "请补充版本号"
     assert out[-1] == {"role": "user", "content": "v3"}
-    assert out[-3] == {"role": "user", "content": "[program status]"}
+    assert {"role": "user", "content": "[program status]"} in out[:-3]
+    assert out[-3]["content"] == "Q"
 
 
 def test_interruption_resume_wins_and_contains_no_program_annotation() -> None:
@@ -246,11 +249,13 @@ def test_short_continue_keeps_only_immediately_recent_model_context() -> None:
         built, session_messages=session, current_turn_ref=4
     )
 
-    assert info["source"] == "recent_model_assistant"
-    assert out[-2]["role"] == "assistant"
+    assert info["source"] == "recent_dialogue_window"
+    assert info["dialogue_pairs"] == 2
+    assert out[-5]["content"] == "处理旧的 fail-closed 补丁"
+    assert out[-4]["content"] == "下一步建议直接落补丁"
+    assert out[-3]["content"] == "先不动代码，只分析安全边界"
     assert out[-2]["content"] == "我保持只分析。要继续审查这条边界吗？"
     assert out[-1] == {"role": "user", "content": "继续"}
-    assert all(item.get("content") != "下一步建议直接落补丁" for item in out)
 
 
 def test_interruption_resume_preserves_provider_native_replay_marker() -> None:
@@ -477,3 +482,89 @@ def test_failure_then_retry_tool_protocol_is_never_reordered_by_recent_continuit
     assert out == built
     assert validate_tool_call_pairing(out) == []
     assert [row.get("tool_call_id") for row in out if row.get("role") == "tool"] == ["c1", "c2"]
+
+
+def test_recent_dialogue_window_preserves_three_completed_pairs_for_cross_turn_reference() -> None:
+    """A new human turn keeps the last three exact dialogue pairs, not only the last assistant."""
+    url_user = _user("https://example.test/context-layer")
+    url_assistant = _model("这篇文章讲的是 Context Layer。", resolved=True)
+    analysis_user = _user("是的，你分析这个技术的可行性。")
+    analysis_assistant = _model("Context Layer 技术整体可行，核心是缓存、合并与上下文裁剪。", resolved=True)
+    compare_user = _user("和我们项目的技术相比呢？")
+    compare_assistant = _model("我需要先了解你们项目。", resolved=True)
+    agent_user = _user("你现在在用的这个 AI Agent 架构啊。")
+    agent_assistant = _model("当前是 LFL Agent 架构。", resolved=True)
+    current_user = _user("我们的这个上下文管理和他的项目比较。")
+    session = [
+        url_user,
+        url_assistant,
+        analysis_user,
+        analysis_assistant,
+        compare_user,
+        compare_assistant,
+        agent_user,
+        agent_assistant,
+        current_user,
+    ]
+    # Resolved-episode projection has retired every completed pair.
+    built = [
+        {"role": "system", "content": "SYS"},
+        {"role": "user", "content": current_user.content},
+    ]
+
+    out, info = apply_recent_continuity_suffix(
+        built,
+        session_messages=session,
+        current_turn_ref=8,
+    )
+
+    assert info["dialogue_pairs"] == 3
+    assert [item.get("content") for item in out[-7:]] == [
+        analysis_user.content,
+        analysis_assistant.content,
+        compare_user.content,
+        compare_assistant.content,
+        agent_user.content,
+        agent_assistant.content,
+        current_user.content,
+    ]
+    assert url_user.content not in [item.get("content") for item in out]
+    assert url_assistant.content not in [item.get("content") for item in out]
+
+
+def test_recent_dialogue_char_budget_drops_older_pairs_but_keeps_latest_pair() -> None:
+    old_user = _user("OLD-U-" + "x" * 20000)
+    old_assistant = _model("OLD-A-" + "y" * 20000, resolved=True)
+    recent_user = _user("RECENT-U")
+    recent_assistant = _model("RECENT-A", resolved=True)
+    current_user = _user("CURRENT")
+    session = [old_user, old_assistant, recent_user, recent_assistant, current_user]
+    built = [{"role": "system", "content": "SYS"}, {"role": "user", "content": "CURRENT"}]
+
+    out, info = apply_recent_continuity_suffix(
+        built, session_messages=session, current_turn_ref=4
+    )
+
+    assert info["dialogue_pairs"] == 1
+    contents = [item.get("content") for item in out]
+    assert "RECENT-U" in contents
+    assert "RECENT-A" in contents
+    assert old_user.content not in contents
+    assert old_assistant.content not in contents
+
+
+def test_unresolved_human_turn_blocks_reaching_older_completed_dialogue() -> None:
+    old_user = _user("OLD-Q")
+    old_assistant = _model("OLD-A", resolved=True)
+    unresolved_user = _user("UNRESOLVED-Q")
+    current_user = _user("CURRENT-Q")
+    session = [old_user, old_assistant, unresolved_user, current_user]
+    built = [{"role": "system", "content": "SYS"}, {"role": "user", "content": "CURRENT-Q"}]
+
+    out, info = apply_recent_continuity_suffix(
+        built, session_messages=session, current_turn_ref=3
+    )
+
+    assert info["dialogue_pairs"] == 0
+    assert info["source"] == "current_user_only"
+    assert all(item.get("content") not in {"OLD-Q", "OLD-A"} for item in out)

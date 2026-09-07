@@ -1,12 +1,10 @@
-"""Prompt-tail continuity for the immediately adjacent human/model interaction.
+"""Prompt-tail continuity for the recent human/model working dialogue.
 
-This module is deliberately structural.  It never classifies whether the user text
-"looks like" an answer, continuation, or new task.  On an initial genuine-human
-round it only guarantees that the latest real model assistant (or one-shot exact
-interrupted model state) and the current human ingress form the final prompt suffix.
-Older resolved material remains indexed/retrievable and program-origin material may
-exist earlier in the prompt, but nothing program-authored is allowed to split this
-adjacent interaction pair.
+This module is deliberately structural. It never classifies whether user text looks
+like an answer, continuation, reference, or new task. On an initial genuine-human
+round it restores a bounded exact window of the most recent completed human→model
+dialogue pairs, then guarantees that the latest model state and current human ingress
+form the final prompt suffix. Older resolved material remains indexed/retrievable.
 """
 
 from __future__ import annotations
@@ -22,6 +20,72 @@ from llm_loop.feedback.honesty import PROGRAM_FEEDBACK_PREFIXES
 def _metadata(message: Any) -> dict[str, Any]:
     value = getattr(message, "metadata", None)
     return value if isinstance(value, dict) else {}
+
+
+RECENT_DIALOGUE_PAIR_LIMIT = 3
+RECENT_DIALOGUE_CHAR_LIMIT = 32_768
+
+
+def _is_completed_model_answer(message: Any) -> bool:
+    md = _metadata(message)
+    content = str(getattr(message, "content", "") or "")
+    return bool(
+        getattr(message, "role", "") == "assistant"
+        and md.get("answer_origin") == "model"
+        and md.get("run_end_reason") == "completed"
+        and md.get("episode_resolution_candidate") is True
+        and md.get("program_origin") is not True
+        and md.get("llm_interrupted") is not True
+        and not getattr(message, "tool_calls", None)
+        and content
+        and content.strip() != LEGACY_PROGRAM_FINAL_MARKER
+        and not content.startswith(PROGRAM_FEEDBACK_PREFIXES)
+    )
+
+
+def recent_completed_dialogue_pairs(
+    session_messages: list[Any], current_turn_ref: int | None
+) -> list[tuple[Any, Any]]:
+    """Return up to three exact recent human/final-model pairs under a char cap.
+
+    Selection is purely chronological/mechanical. Tool protocol, program output,
+    interrupted answers, and unresolved turns are not promoted into dialogue state.
+    """
+    if current_turn_ref is None or current_turn_ref <= 0:
+        return []
+    pairs_rev: list[tuple[Any, Any]] = []
+    total_chars = 0
+    end = min(int(current_turn_ref), len(session_messages))
+    human_indices = [
+        idx for idx in range(end) if is_human_user_message(session_messages[idx])
+    ]
+    for pos in range(len(human_indices) - 1, -1, -1):
+        start = human_indices[pos]
+        span_end = human_indices[pos + 1] if pos + 1 < len(human_indices) else end
+        final = next(
+            (
+                session_messages[idx]
+                for idx in range(span_end - 1, start, -1)
+                if _is_completed_model_answer(session_messages[idx])
+            ),
+            None,
+        )
+        if final is None:
+            # An unresolved/interrupted human turn is a hard structural boundary.
+            # Never skip across it to resurrect an older completed task.
+            break
+        user = session_messages[start]
+        pair_chars = len(str(getattr(user, "content", "") or "")) + len(
+            str(getattr(final, "content", "") or "")
+        )
+        if pairs_rev and total_chars + pair_chars > RECENT_DIALOGUE_CHAR_LIMIT:
+            break
+        pairs_rev.append((user, final))
+        total_chars += pair_chars
+        if len(pairs_rev) >= RECENT_DIALOGUE_PAIR_LIMIT:
+            break
+    pairs_rev.reverse()
+    return pairs_rev
 
 
 def latest_model_assistant_before_turn(
@@ -160,58 +224,40 @@ def apply_recent_continuity_suffix(
     source = "current_user_only"
     assistant_wire = _resume_message(interruption_resume)
     runtime_fact = _resume_runtime_fact(interruption_resume)
-    candidate = None
+    dialogue_pairs = recent_completed_dialogue_pairs(session_messages, current_turn_ref)
+    dialogue_wires = [
+        (user.to_llm_dict(), assistant.to_llm_dict()) for user, assistant in dialogue_pairs
+    ]
     if assistant_wire is not None:
-        # _resume_message() only succeeds for a dict state, but keep the local
-        # narrowing explicit so the runtime fact and static contract agree.
         assert interruption_resume is not None
         source = str(interruption_resume.get("source") or "interruption_resume")
-    else:
-        candidate = latest_model_assistant_before_turn(session_messages, current_turn_ref)
-        if candidate is not None:
-            source = "recent_model_assistant"
-            # Prefer the already-projected wire form (it may contain provider-required
-            # reasoning replay).  If R8.5 retired it, rehydrate exact storage form for
-            # this one adjacent user turn only.
-            candidate_content = str(getattr(candidate, "content", "") or "")
-            candidate_calls = getattr(candidate, "tool_calls", None)
-            match_idx = next(
-                (
-                    idx
-                    for idx in range(user_idx - 1, -1, -1)
-                    if built[idx].get("role") == "assistant"
-                    and str(built[idx].get("content") or "") == candidate_content
-                    and built[idx].get("tool_calls") == candidate_calls
-                ),
-                None,
-            )
-            if match_idx is not None:
-                assistant_wire = dict(built[match_idx])
-            else:
-                assistant_wire = candidate.to_llm_dict()
+    elif dialogue_wires:
+        source = "recent_dialogue_window"
 
     before = list(built[:user_idx])
     after_user = list(built[user_idx + 1 :])
     current_wire = dict(built[user_idx])
 
-    # If the prior assistant is already in history, move only its closest matching
-    # occurrence; do not duplicate identical content from older unrelated turns.
-    removed_existing = False
-    if assistant_wire is not None and source == "recent_model_assistant":
-        for idx in range(len(before) - 1, -1, -1):
-            item = before[idx]
-            if (
-                item.get("role") == "assistant"
-                and str(item.get("content") or "") == str(assistant_wire.get("content") or "")
-                and item.get("tool_calls") == assistant_wire.get("tool_calls")
-            ):
-                before.pop(idx)
-                removed_existing = True
-                break
+    # Remove already-visible exact dialogue wires before re-appending the bounded
+    # chronological window. This changes representation only, never durable history.
+    for user_wire, model_wire in reversed(dialogue_wires):
+        for wire in (model_wire, user_wire):
+            for idx in range(len(before) - 1, -1, -1):
+                item = before[idx]
+                if (
+                    item.get("role") == wire.get("role")
+                    and str(item.get("content") or "") == str(wire.get("content") or "")
+                    and item.get("tool_calls") == wire.get("tool_calls")
+                ):
+                    before.pop(idx)
+                    break
 
     # Any build-time dynamic/program material that appeared after current human is
-    # moved ahead of the recent pair.  The exact human ingress remains the final item.
+    # moved ahead of recent dialogue. Exact current human ingress remains final.
     out = before + after_user
+    for user_wire, model_wire in dialogue_wires:
+        out.append(dict(user_wire))
+        out.append(dict(model_wire))
     if runtime_fact:
         # Preserve the exact already-projected current-human wire (attachments and
         # current-turn factual capability boundary included); only append ephemeral
@@ -221,12 +267,14 @@ def apply_recent_continuity_suffix(
             f"{projected_current_text}\n\n[provider_runtime_fact—not_human_text]\n{runtime_fact}"
         )
     if assistant_wire is not None:
+        # Exact unfinished model state is newer than the last completed dialogue pair.
         out.append(assistant_wire)
     out.append(current_wire)
     return out, {
         "applied": True,
         "source": source,
         "moved_after_user": len(after_user),
-        "rehydrated": bool(assistant_wire is not None and not removed_existing),
+        "rehydrated": bool(dialogue_wires or assistant_wire is not None),
         "runtime_fact": bool(runtime_fact),
+        "dialogue_pairs": len(dialogue_wires),
     }
