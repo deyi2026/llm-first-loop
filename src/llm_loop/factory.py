@@ -367,6 +367,7 @@ def build_engine(settings: Settings) -> LoopEngine:
     # and installs no hook.  ``shadow`` dual-writes legacy bytes; ``enforce`` performs
     # capture-before-projection and emits a bounded recovery capsule.
     _legacy_evidence_migrate_workspace_fn: Callable[[str], object] | None = None
+    task_evidence_verifier: Any | None = None
     if settings.evidence_mode in {"shadow", "enforce"}:
         from llm_loop.core.run_context import current_session_id, workspace_base
         from llm_loop.memory.evidence import (
@@ -393,6 +394,14 @@ def build_engine(settings: Settings) -> LoopEngine:
         def _evidence_owner() -> OwnerScope:
             sid = current_session_id.get() or registry._session_id
             return _evidence_owner_for_session(sid)
+
+        from llm_loop.introspection.task_evidence import TaskEvidenceVerifier
+
+        task_evidence_verifier = TaskEvidenceVerifier(
+            evidence_blobs,
+            evidence_ledger,
+            owner_resolver=_evidence_owner,
+        )
 
         if settings.evidence_mode == "shadow":
             from llm_loop.tools.evidence_shadow import EvidenceShadowRecorder
@@ -741,6 +750,7 @@ def build_engine(settings: Settings) -> LoopEngine:
     from llm_loop.core.runtime_params import RuntimeParams
 
     correction_ctx = CorrectionContext()
+    correction_ctx.task_evidence_verifier = task_evidence_verifier
     runtime = RuntimeParams(settings, strategy=correction_ctx.strategy)
     runtime.set_persist_path(settings.audit_dir / "param_adjust_history.jsonl")
     runtime.set_max_adjust_per_round(settings.param_adjust_per_round)

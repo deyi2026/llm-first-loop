@@ -14,6 +14,7 @@ from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.introspection.goal import GoalStore, GoalStoreCorruptionError
+from llm_loop.introspection.task_evidence import TaskEvidenceVerificationError
 from llm_loop.introspection.task_store import TASK_LIMIT_PER_GOAL, TaskStore
 
 TASK_CREATE_TOOL_DEF: dict = {
@@ -61,7 +62,9 @@ TASK_UPDATE_TOOL_DEF: dict = {
         "(重试)。→done 且 evidence_required=true 时必须 evidence_refs；→blocked 必须"
         "blocked_reason。done→非done 属显式重开：模型须依据当前用户指令判断是否获授权，"
         "并仅在确认当前授权时传 confirm=true；程序只校验该显式动作位，不解析用户措辞。"
-        "acceptance 修订会留痕（acceptance_revised，历史不可篡改）。"
+        "声明 evidence_refs 的完成记录会机械检查当前可信 owner 下的引用存在性和 blob 完整性；"
+        "不判断证据充分性、重要性或任务是否语义完成。acceptance 修订会留痕"
+        "（acceptance_revised，历史不可篡改）。"
     ),
     "parameters": {
         "type": "object",
@@ -182,7 +185,8 @@ def run_task_update(ctx: Any, host: Any, args: dict) -> ToolResult:
     assert audit is not None  # _require_active_goal 契约：err 为空 ⟺ audit 非 None
     target = str(args.get("status") or "").strip()
     try:
-        store = TaskStore(audit)
+        verifier = getattr(getattr(host, "ctx", None), "task_evidence_verifier", None)
+        store = TaskStore(audit, evidence_verifier=verifier)
         task = store.update(
             goal_id,
             task_id,
@@ -193,6 +197,13 @@ def run_task_update(ctx: Any, host: Any, args: dict) -> ToolResult:
             done_when=([str(w) for w in args["done_when"]] if args.get("done_when") is not None else None),
             title=(str(args["title"]) if args.get("title") else None),
             confirm=bool(args.get("confirm", False)),
+        )
+    except TaskEvidenceVerificationError as exc:
+        return ToolResult(
+            ToolResultStatus.FAILURE,
+            f"[证据真实性校验失败] status={exc.status}",
+            "",
+            name,
         )
     except ValueError as exc:
         return ToolResult(ToolResultStatus.FAILURE, f"[拒绝] {exc}", "", name)
@@ -208,6 +219,8 @@ def run_task_update(ctx: Any, host: Any, args: dict) -> ToolResult:
         body += f" | reason: {task.blocked_reason[:100]}"
     if task.evidence_refs:
         body += f" | evidence: {len(task.evidence_refs)} refs"
+    if task.evidence_verification_status == "verified":
+        body += " | evidence_verification=verified"
     return ToolResult(ToolResultStatus.SUCCESS, "\n".join([body] + extra), "", name)
 
 

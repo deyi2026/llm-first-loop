@@ -24,6 +24,11 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from llm_loop.introspection.task_evidence import (
+    TaskEvidenceVerificationError,
+    TaskEvidenceVerifier,
+)
+
 logger = logging.getLogger(__name__)
 
 _FALLBACK_LOCK = threading.Lock()
@@ -72,6 +77,9 @@ class Task:
     blocked_reason: str = ""
     acceptance_revised: bool = False  # §2.2 防洗白：修订留痕
     premise_stale: bool = False  # §2.1 done 重开级联（提示性，不强制重做）
+    evidence_verification_status: str = "not_checked"
+    evidence_verified_at: str = ""
+    evidence_refs_digest: str = ""
     created_at: str = ""
     updated_at: str = ""
 
@@ -95,6 +103,9 @@ class Task:
         t.blocked_reason = str(d.get("blocked_reason", ""))
         t.acceptance_revised = bool(d.get("acceptance_revised", False))
         t.premise_stale = bool(d.get("premise_stale", False))
+        t.evidence_verification_status = str(d.get("evidence_verification_status", "not_checked"))
+        t.evidence_verified_at = str(d.get("evidence_verified_at", ""))
+        t.evidence_refs_digest = str(d.get("evidence_refs_digest", ""))
         t.created_at = str(d.get("created_at", ""))
         t.updated_at = str(d.get("updated_at", ""))
         return t
@@ -107,10 +118,16 @@ def _now() -> str:
 class TaskStore:
     """任务账本存储（JSONL append-only last-wins + flock，对齐 GoalStore 模式）."""
 
-    def __init__(self, audit_dir: str | Path) -> None:
+    def __init__(
+        self,
+        audit_dir: str | Path,
+        *,
+        evidence_verifier: TaskEvidenceVerifier | None = None,
+    ) -> None:
         self._dir = Path(audit_dir)
         self._tasks_dir = self._dir / "tasks"
         self._tasks_dir.mkdir(parents=True, exist_ok=True)
+        self._evidence_verifier = evidence_verifier
 
     # ---------- 写路径 ----------
 
@@ -192,6 +209,8 @@ class TaskStore:
             task = tasks.get(task_id)
             if task is None:
                 raise ValueError(f"任务不存在: {task_id}（goal {goal_id}）")
+            previous_status = task.status
+            previous_refs = tuple(task.evidence_refs)
             no_change = all(
                 v is None
                 for v in (status, blocked_reason, evidence_refs, acceptance, done_when, title)
@@ -227,11 +246,6 @@ class TaskStore:
                     if not reason:
                         raise ValueError("→blocked 必须提供 blocked_reason")
                     task.blocked_reason = reason
-                if status == "done" and task.evidence_required and not task.evidence_refs:
-                    raise ValueError(
-                        "→done 校验失败: evidence_required=true 但 evidence_refs 为空"
-                        "（格式/存在性分层校验，语义判定归模型+validator，见设计 §2.2）"
-                    )
                 if task.status == "done" and status != "done":
                     # Mechanical guard only: reopening a completed task must be an
                     # explicit model action. The runtime does not interpret current
@@ -245,6 +259,40 @@ class TaskStore:
                 task.status = status
             elif blocked_reason is not None and blocked_reason.strip():
                 task.blocked_reason = blocked_reason.strip()
+
+            refs_changed = tuple(task.evidence_refs) != previous_refs
+            if refs_changed and task.status != "done":
+                task.evidence_verification_status = "not_checked"
+                task.evidence_verified_at = ""
+                task.evidence_refs_digest = ""
+
+            if task.status == "done":
+                if task.evidence_required and not task.evidence_refs:
+                    raise ValueError(
+                        "→done 校验失败: evidence_required=true 但 evidence_refs 为空"
+                        "（仅做引用真实性机械校验；证据语义充分性仍归模型判断）"
+                    )
+                entering_done = previous_status != "done"
+                needs_verification = bool(task.evidence_refs) and (entering_done or refs_changed)
+                if needs_verification:
+                    if self._evidence_verifier is None:
+                        raise TaskEvidenceVerificationError(
+                            "verification_unavailable",
+                            failing_ref=task.evidence_refs[0],
+                        )
+                    report = self._evidence_verifier.verify(task.evidence_refs)
+                    if report.status != "verified":
+                        raise TaskEvidenceVerificationError(
+                            report.status,
+                            failing_ref=report.failing_ref,
+                        )
+                    task.evidence_verification_status = report.status
+                    task.evidence_verified_at = report.checked_at
+                    task.evidence_refs_digest = report.refs_digest
+                elif refs_changed and not task.evidence_refs:
+                    task.evidence_verification_status = "not_checked"
+                    task.evidence_verified_at = ""
+                    task.evidence_refs_digest = ""
             task.updated_at = _now()
             self._append(goal_id, task)
             return task

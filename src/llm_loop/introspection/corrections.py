@@ -87,6 +87,7 @@ class CorrectionContext:
     # override getter/setter；并发 run 不互踩。None = 无解析器，回退上方环境字段）
     session_binding_resolver: Callable[[str], Any] | None = None
     summarizer: Any | None = None  # R2: search_archive(with_summary=true) LLM 摘要
+    task_evidence_verifier: Any | None = None  # P1: Task Evidence 机械真实性校验器
 
 
 class CorrectionToolRegistry:

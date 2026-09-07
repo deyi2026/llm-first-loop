@@ -8,17 +8,30 @@ render_frontier/summary_line、no-change 幂等不落盘。
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
 import pytest
 
+from llm_loop.introspection.task_evidence import TaskEvidenceVerificationReport
 from llm_loop.introspection.task_store import Task, TaskStore
+
+
+class _AllowEvidenceVerifier:
+    def verify(self, refs: list[str]) -> TaskEvidenceVerificationReport:
+        raw = json.dumps(refs, ensure_ascii=False, separators=(",", ":")).encode()
+        return TaskEvidenceVerificationReport(
+            status="verified",
+            checked_at="2026-09-07T00:00:00+00:00",
+            refs_digest=hashlib.sha256(raw).hexdigest(),
+            checked_count=len(refs),
+        )
 
 
 @pytest.fixture()
 def store(tmp_path: Path) -> TaskStore:
-    return TaskStore(str(tmp_path))
+    return TaskStore(str(tmp_path), evidence_verifier=_AllowEvidenceVerifier())
 
 
 def _mk(store: TaskStore, gid: str = "G1", title: str = "t", **kw) -> Task:

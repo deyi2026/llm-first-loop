@@ -36,6 +36,7 @@ def test_factory_off_does_not_create_evidence_store_or_hook(tmp_path):
     engine = build_engine(settings)
     assert settings.evidence_dir.exists() is False
     assert engine.registry._evidence_shadow_hook is None
+    assert engine.correction_ctx.task_evidence_verifier is None
     assert settings.to_status_dict()["evidence_mode"] == "off"
 
 
@@ -48,6 +49,7 @@ def test_factory_enforce_installs_canonical_capture_but_default_remains_opt_in(t
     assert engine.registry.evidence_mode == "enforce"
     assert engine.registry._evidence_shadow_hook is None
     assert engine.registry._evidence_enforcer is not None
+    assert engine.correction_ctx.task_evidence_verifier is not None
     assert settings.to_status_dict()["evidence_mode"] == "enforce"
 
 
