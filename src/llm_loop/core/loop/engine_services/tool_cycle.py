@@ -186,18 +186,28 @@ class ToolCycleService:
         if not executable_calls:
             results = []
         else:
-            try:
-                results = self._host.registry.execute_many(
-                    executable_calls, on_result=persist_finished
-                )
-            except TypeError as exc:
-                # Legacy duck-typed registries may reject the new kwarg before entering
-                # their method body; retrying that specific signature mismatch is safe.
-                if "on_result" not in str(exc):
-                    raise
-                results = self._host.registry.execute_many(executable_calls)
-                for call, result in zip(executable_calls, results, strict=False):
-                    persist_finished(call, result)
+            from llm_loop.core.run_context import current_workspace_root
+
+            effect_journal = self._host._tool_execution_journal()
+            with effect_journal.effect_bindings(
+                session_id=sess.session_id,
+                execution_ids=execution_ids,
+                round_no=rounds,
+                calls=executable_calls,
+                workspace_root=current_workspace_root.get(),
+            ):
+                try:
+                    results = self._host.registry.execute_many(
+                        executable_calls, on_result=persist_finished
+                    )
+                except TypeError as exc:
+                    # Legacy duck-typed registries may reject the new kwarg before entering
+                    # their method body; retrying that specific signature mismatch is safe.
+                    if "on_result" not in str(exc):
+                        raise
+                    results = self._host.registry.execute_many(executable_calls)
+                    for call, result in zip(executable_calls, results, strict=False):
+                        persist_finished(call, result)
         by_id = {r.tool_call_id: r for r in results if r.tool_call_id}
         ordered = [
             pre_results.get(call.id) or by_id.get(call.id)

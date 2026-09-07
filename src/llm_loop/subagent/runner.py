@@ -1534,7 +1534,16 @@ class SubAgentRunner:
                     else:
                         executed = True
                         try:
-                            result = self.registry.execute(call)
+                            from llm_loop.core.run_context import current_workspace_root
+
+                            with self._tool_journal.effect_context(
+                                session_id=sess.session_id,
+                                execution_id=execution_id,
+                                round_no=rounds,
+                                call=call,
+                                workspace_root=current_workspace_root.get(),
+                            ):
+                                result = self.registry.execute(call)
                         except Exception as exc:  # noqa: BLE001 — 如实回传
                             result = ToolResult(
                                 status=ToolResultStatus.ERROR,

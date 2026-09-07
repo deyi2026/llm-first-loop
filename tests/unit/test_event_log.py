@@ -48,6 +48,8 @@ from llm_loop.event_log.model import (
     EVENT_SUBAGENT_RESULT_AVAILABLE,
     EVENT_SUBAGENT_TERMINAL,
     EVENT_TOOL_EXECUTION_DECLARED,
+    EVENT_TOOL_EXECUTION_EFFECT_OBSERVED,
+    EVENT_TOOL_EXECUTION_EFFECT_PREPARED,
     EVENT_TOOL_EXECUTION_FINISHED,
     EVENT_TOOL_EXECUTION_RECEIPT_COMMITTED,
     EVENT_TOOL_EXECUTION_STARTED,
@@ -145,6 +147,8 @@ def test_registry_covers_registered_types_with_fields():
         EVENT_LLM_PARTIAL_CHECKPOINT,
         EVENT_TOOL_EXECUTION_DECLARED,
         EVENT_TOOL_EXECUTION_STARTED,
+        EVENT_TOOL_EXECUTION_EFFECT_PREPARED,
+        EVENT_TOOL_EXECUTION_EFFECT_OBSERVED,
         EVENT_TOOL_EXECUTION_FINISHED,
         EVENT_TOOL_EXECUTION_RECEIPT_COMMITTED,
         EVENT_SUBAGENT_LINKED,
@@ -171,6 +175,17 @@ def test_registry_covers_registered_types_with_fields():
     assert external_spec is not None
     assert {"job_id", "workspace_root", "executor", "command_sha256", "pid", "pgid"} <= set(
         external_spec.fields
+    )
+    effect_spec = REGISTRY.spec(EVENT_TOOL_EXECUTION_EFFECT_PREPARED)
+    assert effect_spec is not None
+    assert {
+        "execution_id", "workspace_root", "canonical_path", "before_sha256",
+        "expected_after_sha256",
+    } <= set(effect_spec.fields)
+    observed_spec = REGISTRY.spec(EVENT_TOOL_EXECUTION_EFFECT_OBSERVED)
+    assert observed_spec is not None
+    assert {"actual_after_sha256", "actual_size", "matches_expected"} <= set(
+        observed_spec.fields
     )
     msg_spec = REGISTRY.spec(EVENT_MESSAGE_APPENDED)
     assert msg_spec is not None

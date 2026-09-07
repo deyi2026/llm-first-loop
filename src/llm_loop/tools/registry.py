@@ -1196,8 +1196,11 @@ class ToolRegistry:
         )
         shadow_token = current_evidence_shadow_enabled.set(capture_enabled)
         enforce_token = current_evidence_enforce_enabled.set(self._evidence_enforcer is not None)
+        from llm_loop.core.tool_execution_journal import activate_effect_binding_for_call
+
         try:
-            tool_context = contextvars.copy_context()
+            with activate_effect_binding_for_call(call.id):
+                tool_context = contextvars.copy_context()
         finally:
             current_evidence_enforce_enabled.reset(enforce_token)
             current_evidence_shadow_enabled.reset(shadow_token)

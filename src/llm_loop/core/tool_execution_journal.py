@@ -10,11 +10,12 @@ states without automatically re-executing a tool whose outcome is unknown.
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import hashlib
 import json
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -23,6 +24,67 @@ from llm_loop.core.session import Session, SessionStore, _validate_session_id
 from llm_loop.event_log.model import build_message_payload
 
 logger = logging.getLogger(__name__)
+
+
+class _EffectBinding:
+    """Process-local bridge from one WAL execution attempt to a mechanical tool effect."""
+
+    __slots__ = (
+        "journal",
+        "session_id",
+        "execution_id",
+        "round_no",
+        "tool_call_id",
+        "tool_name",
+        "workspace_root",
+    )
+
+    def __init__(
+        self,
+        *,
+        journal: ToolExecutionJournal,
+        session_id: str,
+        execution_id: str,
+        round_no: int,
+        tool_call_id: str,
+        tool_name: str,
+        workspace_root: str,
+    ) -> None:
+        self.journal = journal
+        self.session_id = session_id
+        self.execution_id = execution_id
+        self.round_no = round_no
+        self.tool_call_id = tool_call_id
+        self.tool_name = tool_name
+        self.workspace_root = workspace_root
+
+
+_current_effect_binding: contextvars.ContextVar[_EffectBinding | None] = contextvars.ContextVar(
+    "llm_loop_tool_effect_binding", default=None
+)
+_current_effect_bindings: contextvars.ContextVar[dict[str, _EffectBinding] | None] = (
+    contextvars.ContextVar("llm_loop_tool_effect_bindings", default=None)
+)
+
+
+def current_tool_effect_binding() -> _EffectBinding | None:
+    """Return the exact process-local execution binding visible to the current tool call."""
+    return _current_effect_binding.get()
+
+
+@contextlib.contextmanager
+def activate_effect_binding_for_call(tool_call_id: str) -> Iterator[None]:
+    """Select one binding from a batch before copying context into the tool worker thread."""
+    bindings = _current_effect_bindings.get()
+    binding = bindings.get(str(tool_call_id or "")) if bindings else None
+    if binding is None:
+        yield
+        return
+    token = _current_effect_binding.set(binding)
+    try:
+        yield
+    finally:
+        _current_effect_binding.reset(token)
 
 
 class ToolExecutionJournal:
@@ -197,6 +259,247 @@ class ToolExecutionJournal:
             },
         )
         return event is not None
+
+    @contextlib.contextmanager
+    def effect_context(
+        self,
+        *,
+        session_id: str,
+        execution_id: str,
+        round_no: int,
+        call: Any,
+        workspace_root: str,
+    ) -> Iterator[None]:
+        """Bind one exact WAL attempt to effect-aware tool code without changing its schema."""
+        binding = _EffectBinding(
+            journal=self,
+            session_id=_validate_session_id(session_id),
+            execution_id=str(execution_id),
+            round_no=int(round_no or 0),
+            tool_call_id=str(getattr(call, "id", "") or ""),
+            tool_name=str(getattr(call, "name", "") or ""),
+            workspace_root=str(Path(workspace_root).expanduser().resolve()),
+        )
+        token = _current_effect_binding.set(binding)
+        try:
+            yield
+        finally:
+            _current_effect_binding.reset(token)
+
+    @contextlib.contextmanager
+    def effect_bindings(
+        self,
+        *,
+        session_id: str,
+        execution_ids: dict[str, str],
+        round_no: int,
+        calls: list[Any],
+        workspace_root: str,
+    ) -> Iterator[None]:
+        """Bind a batch by provider tool_call_id; ToolRegistry selects the active call mechanically."""
+        sid = _validate_session_id(session_id)
+        workspace = str(Path(workspace_root).expanduser().resolve())
+        bindings: dict[str, _EffectBinding] = {}
+        for call in calls:
+            call_id = str(getattr(call, "id", "") or "")
+            execution_id = str(execution_ids.get(call_id) or "")
+            if not call_id or not execution_id:
+                continue
+            bindings[call_id] = _EffectBinding(
+                journal=self,
+                session_id=sid,
+                execution_id=execution_id,
+                round_no=int(round_no or 0),
+                tool_call_id=call_id,
+                tool_name=str(getattr(call, "name", "") or ""),
+                workspace_root=workspace,
+            )
+        token = _current_effect_bindings.set(bindings)
+        try:
+            yield
+        finally:
+            _current_effect_bindings.reset(token)
+
+    @staticmethod
+    def _canonical_effect_scope(workspace_root: str, canonical_path: str) -> tuple[str, str] | None:
+        workspace = Path(workspace_root).expanduser().resolve()
+        target = Path(canonical_path).expanduser().resolve()
+        try:
+            target.relative_to(workspace)
+        except ValueError:
+            return None
+        return str(workspace), str(target)
+
+    @staticmethod
+    def _sha256_bytes(data: bytes) -> str:
+        return hashlib.sha256(data).hexdigest()
+
+    @staticmethod
+    def _sha256_file(path: Path) -> tuple[str, int]:
+        digest = hashlib.sha256()
+        size = 0
+        with path.open("rb") as f:
+            while chunk := f.read(1024 * 1024):
+                digest.update(chunk)
+                size += len(chunk)
+        return digest.hexdigest(), size
+
+    def effect_prepared(
+        self,
+        session_id: str,
+        *,
+        execution_id: str,
+        round_no: int,
+        tool_call_id: str,
+        tool_name: str,
+        workspace_root: str,
+        canonical_path: str,
+        effect_kind: str,
+        before_bytes: bytes,
+        expected_after_bytes: bytes,
+    ) -> bool:
+        """Durably record exact file bytes intended for mutation before the mutation can occur."""
+        if not self.enabled:
+            return True
+        scope = self._canonical_effect_scope(workspace_root, canonical_path)
+        if scope is None:
+            return False
+        workspace, target = scope
+        event = self._append_event(
+            _validate_session_id(session_id),
+            "tool.execution.effect_prepared",
+            {
+                "execution_id": str(execution_id),
+                "round": int(round_no or 0),
+                "tool_call_id": str(tool_call_id or ""),
+                "tool_name": str(tool_name or ""),
+                "effect_kind": str(effect_kind or ""),
+                "workspace_root": workspace,
+                "canonical_path": target,
+                "before_sha256": self._sha256_bytes(before_bytes),
+                "before_size": len(before_bytes),
+                "expected_after_sha256": self._sha256_bytes(expected_after_bytes),
+                "expected_after_size": len(expected_after_bytes),
+            },
+        )
+        return event is not None
+
+    def effect_observed(
+        self,
+        *,
+        session_id: str,
+        execution_id: str,
+        round_no: int,
+        tool_call_id: str,
+        tool_name: str,
+        workspace_root: str,
+        canonical_path: str,
+        effect_kind: str,
+        actual_after_bytes: bytes,
+        expected_after_bytes: bytes,
+        actual_mtime_ns: int | None = None,
+    ) -> bool:
+        """Record the exact post-write bytes observed by the tool; failure never invents durability."""
+        if not self.enabled:
+            return False
+        scope = self._canonical_effect_scope(workspace_root, canonical_path)
+        if scope is None:
+            return False
+        workspace, target = scope
+        actual_sha = self._sha256_bytes(actual_after_bytes)
+        expected_sha = self._sha256_bytes(expected_after_bytes)
+        event = self._append_event(
+            _validate_session_id(session_id),
+            "tool.execution.effect_observed",
+            {
+                "execution_id": str(execution_id),
+                "round": int(round_no or 0),
+                "tool_call_id": str(tool_call_id or ""),
+                "tool_name": str(tool_name or ""),
+                "effect_kind": str(effect_kind or ""),
+                "workspace_root": workspace,
+                "canonical_path": target,
+                "actual_after_sha256": actual_sha,
+                "actual_size": len(actual_after_bytes),
+                "actual_mtime_ns": actual_mtime_ns,
+                "matches_expected": actual_sha == expected_sha,
+            },
+        )
+        return event is not None
+
+    def effect_snapshot(
+        self, session_id: str, execution_id: str, *, workspace_root: str
+    ) -> dict[str, Any] | None:
+        """Read current file identity for one durable effect without inferring execution causation."""
+        store = self.event_store
+        if store is None or not bool(getattr(store, "enabled", False)) or not store.exists(session_id):
+            return None
+        prepared: dict[str, Any] | None = None
+        observed: dict[str, Any] | None = None
+        finished = False
+        for event in store.read(_validate_session_id(session_id)) or []:
+            payload = getattr(event, "payload", None) or {}
+            if str(payload.get("execution_id") or "") != str(execution_id):
+                continue
+            etype = str(getattr(event, "type", ""))
+            if etype == "tool.execution.finished":
+                finished = True
+            elif etype == "tool.execution.effect_prepared":
+                prepared = dict(payload)
+            elif etype == "tool.execution.effect_observed":
+                observed = dict(payload)
+        if prepared is None:
+            return None
+
+        base: dict[str, Any] = {
+            "execution_id": str(execution_id),
+            "effect_kind": str(prepared.get("effect_kind") or ""),
+            "workspace_root": str(prepared.get("workspace_root") or ""),
+            "canonical_path": str(prepared.get("canonical_path") or ""),
+            "before_sha256": str(prepared.get("before_sha256") or ""),
+            "expected_after_sha256": str(prepared.get("expected_after_sha256") or ""),
+            "effect_observed_durable": observed is not None,
+            # A durable prepared fact means mutation may have been attempted even if a
+            # separately expected started row is unavailable/corrupt. Never infer
+            # non-execution from that partial log shape.
+            "execution_outcome": "finished" if finished else "unknown",
+            "causation_proven": False,
+            "auto_reexecuted": False,
+            "path_inspected": False,
+        }
+        requested_workspace = str(Path(workspace_root).expanduser().resolve())
+        if requested_workspace != base["workspace_root"]:
+            base["effect_state"] = "workspace_mismatch"
+            return base
+        scope = self._canonical_effect_scope(base["workspace_root"], base["canonical_path"])
+        if scope is None:
+            base["effect_state"] = "path_outside_workspace"
+            return base
+        _workspace, target_text = scope
+        target = Path(target_text)
+        try:
+            current_sha, current_size = self._sha256_file(target)
+        except FileNotFoundError:
+            base["effect_state"] = "missing"
+            base["path_inspected"] = True
+            return base
+        except OSError as exc:
+            base["effect_state"] = "unreadable"
+            base["read_error_type"] = type(exc).__name__
+            return base
+        base["path_inspected"] = True
+        base["current_sha256"] = current_sha
+        base["current_size"] = current_size
+        if current_sha == base["expected_after_sha256"]:
+            base["effect_state"] = "current_matches_expected_after"
+        elif current_sha == base["before_sha256"]:
+            base["effect_state"] = "current_matches_before"
+        else:
+            base["effect_state"] = "current_diverged"
+        if observed is not None:
+            base["observed_actual_after_sha256"] = str(observed.get("actual_after_sha256") or "")
+            base["observed_matches_expected"] = bool(observed.get("matches_expected"))
+        return base
 
     def finished(
         self,
@@ -396,23 +699,36 @@ class ToolExecutionJournal:
                         )
                 elif state.get("started"):
                     result_sha = ""
+                    from llm_loop.core.run_context import current_workspace_root
+
+                    effect = self.effect_snapshot(
+                        session_id,
+                        execution_id,
+                        workspace_root=current_workspace_root.get(),
+                    )
+                    effect_suffix = (
+                        f"; effect_state={effect['effect_state']}; causation_proven=false"
+                        if effect is not None and effect.get("effect_state")
+                        else ""
+                    )
+                    recovery_meta: dict[str, Any] = {
+                        "state": "started_outcome_unknown",
+                        "auto_reexecuted": False,
+                        "execution_id": execution_id,
+                    }
+                    if effect is not None:
+                        recovery_meta["effect"] = effect
                     msg = Message(
                         role="tool",
                         content=(
                             "[状态: error] execution_outcome=unknown_after_restart; "
-                            "auto_reexecuted=false"
+                            f"auto_reexecuted=false{effect_suffix}"
                         ),
                         source=MessageSource.SYSTEM,
                         tool_call_id=call_id,
                         tool_name=tool_name,
                         status=ToolResultStatus.ERROR,
-                        metadata={
-                            "tool_execution_recovery": {
-                                "state": "started_outcome_unknown",
-                                "auto_reexecuted": False,
-                                "execution_id": execution_id,
-                            }
-                        },
+                        metadata={"tool_execution_recovery": recovery_meta},
                     )
                 else:
                     result_sha = ""

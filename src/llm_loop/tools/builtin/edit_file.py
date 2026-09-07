@@ -134,6 +134,7 @@ class EditFileTool:
         # ── 段1: read（bytes 读取，保留 BOM/换行风格信息 + 基线快照）──
         try:
             raw = path.read_bytes()
+            source_bytes = raw
         except FileNotFoundError:
             return self._fail(f"文件不存在: {path_str}（可用 execute_command ls 确认路径）", "FileNotFoundError")
         except OSError as exc:
@@ -229,6 +230,32 @@ class EditFileTool:
         out_text = updated if ending == "\n" else updated.replace("\n", ending)
         out_bytes = (_UTF8_BOM if had_bom else b"") + out_text.encode("utf-8")
 
+        # EW2-B: when this edit is owned by a durable tool-execution attempt, persist
+        # exact mechanical intent before bytes can change. This is not a semantic
+        # write-set guess: edit_file itself knows the one canonical target and exact
+        # before/expected bytes. Legacy/direct calls without a binding keep old behavior.
+        from llm_loop.core.tool_execution_journal import current_tool_effect_binding
+
+        effect_binding = current_tool_effect_binding()
+        if effect_binding is not None and effect_binding.tool_name == self.name:
+            prepared = effect_binding.journal.effect_prepared(
+                effect_binding.session_id,
+                execution_id=effect_binding.execution_id,
+                round_no=effect_binding.round_no,
+                tool_call_id=effect_binding.tool_call_id,
+                tool_name=effect_binding.tool_name,
+                workspace_root=effect_binding.workspace_root,
+                canonical_path=str(path),
+                effect_kind="file_replace",
+                before_bytes=source_bytes,
+                expected_after_bytes=out_bytes,
+            )
+            if not prepared:
+                return self._fail(
+                    "执行效果准备事实未能持久化或目标路径越出当前工作区；为避免无主写入已拒绝修改。",
+                    "EffectPreparedUnavailable",
+                )
+
         try:
             fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
             tmp = Path(tmp_name)
@@ -258,6 +285,25 @@ class EditFileTool:
                 "VerifyMismatch",
             )
 
+        post_stat = path.stat()
+        if effect_binding is not None and effect_binding.tool_name == self.name:
+            # Observation durability is factual telemetry only. If this append fails,
+            # the successful verified file mutation remains truthful; restart recovery
+            # can only use the prepared fact + current read-only fingerprint comparison.
+            effect_binding.journal.effect_observed(
+                session_id=effect_binding.session_id,
+                execution_id=effect_binding.execution_id,
+                round_no=effect_binding.round_no,
+                tool_call_id=effect_binding.tool_call_id,
+                tool_name=effect_binding.tool_name,
+                workspace_root=effect_binding.workspace_root,
+                canonical_path=str(path),
+                effect_kind="file_replace",
+                actual_after_bytes=reread,
+                expected_after_bytes=out_bytes,
+                actual_mtime_ns=post_stat.st_mtime_ns,
+            )
+
         preserved = []
         if had_bom:
             preserved.append("BOM")
@@ -283,7 +329,6 @@ class EditFileTool:
         )
         from llm_loop.core.run_context import current_evidence_shadow_enabled
 
-        post_stat = path.stat()
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content=visible_content,

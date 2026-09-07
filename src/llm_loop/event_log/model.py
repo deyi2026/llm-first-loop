@@ -31,6 +31,8 @@ EVENT_LLM_INTERRUPTED = "llm.interrupted"  # 未完成 provider 输出的终止�
 EVENT_LLM_PARTIAL_CHECKPOINT = "llm.partial_checkpoint"  # 流式 in-flight model state；重启续思数据源，不进对话
 EVENT_TOOL_EXECUTION_DECLARED = "tool.execution.declared"
 EVENT_TOOL_EXECUTION_STARTED = "tool.execution.started"
+EVENT_TOOL_EXECUTION_EFFECT_PREPARED = "tool.execution.effect_prepared"
+EVENT_TOOL_EXECUTION_EFFECT_OBSERVED = "tool.execution.effect_observed"
 EVENT_TOOL_EXECUTION_FINISHED = "tool.execution.finished"
 EVENT_TOOL_EXECUTION_RECEIPT_COMMITTED = "tool.execution.receipt_committed"
 EVENT_EXTERNAL_EXECUTION_LAUNCHED = "external.execution.launched"
@@ -363,6 +365,44 @@ REGISTRY.register(
             "round": "模型工具轮次",
             "tool_call_id": "provider tool call id",
             "tool_name": "工具名",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_TOOL_EXECUTION_EFFECT_PREPARED,
+        version=1,
+        fields={
+            "execution_id": "对应 started 执行尝试 id",
+            "round": "模型工具轮次",
+            "tool_call_id": "provider tool call id",
+            "tool_name": "工具名",
+            "effect_kind": "机械副作用类型；EW2-B 首期为 file_replace",
+            "workspace_root": "执行时规范化工作区根",
+            "canonical_path": "工作区内规范化目标路径",
+            "before_sha256": "mutation 前精确文件字节 SHA256",
+            "before_size": "mutation 前精确文件字节数",
+            "expected_after_sha256": "预期写入精确字节 SHA256",
+            "expected_after_size": "预期写入精确字节数",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_TOOL_EXECUTION_EFFECT_OBSERVED,
+        version=1,
+        fields={
+            "execution_id": "对应 effect_prepared 执行尝试 id",
+            "round": "模型工具轮次",
+            "tool_call_id": "provider tool call id",
+            "tool_name": "工具名",
+            "effect_kind": "机械副作用类型",
+            "workspace_root": "执行时规范化工作区根",
+            "canonical_path": "工作区内规范化目标路径",
+            "actual_after_sha256": "写后复读精确文件字节 SHA256",
+            "actual_size": "写后复读精确文件字节数",
+            "actual_mtime_ns": "写后 stat mtime_ns；不可用可为空",
+            "matches_expected": "actual_after_sha256 是否等于 prepared 的预期字节",
         },
     )
 )
