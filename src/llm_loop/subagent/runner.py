@@ -23,6 +23,7 @@ from llm_loop.core.message import (
 )
 from llm_loop.core.runtime_params import HARD_CAP_MAX_ITERATIONS
 from llm_loop.core.session import Session, SessionStore
+from llm_loop.core.subagent_delivery import SubAgentDeliveryJournal
 from llm_loop.core.subagent_topology import SubAgentTopologyJournal, SubAgentTopologyState
 from llm_loop.core.tool_execution_journal import ToolExecutionJournal
 from llm_loop.llm.client import LLMClient
@@ -126,6 +127,7 @@ class SubAgentRunner:
             session_store=self.session_store,
         )
         self._topology_journal = SubAgentTopologyJournal(self.session_store.event_store)
+        self._delivery_journal = SubAgentDeliveryJournal(self.session_store.event_store)
         self._runner_owner_id = uuid.uuid4().hex
         self._children_guard = threading.Lock()
         # Local-active maps remain strictly process-local.  Recovered topology is kept
@@ -214,6 +216,138 @@ class SubAgentRunner:
                 "settlement_state": "unknown",
             }
 
+    @staticmethod
+    def _delivered_mailbox_ids(sess: Session, generation: str) -> set[str]:
+        ids: set[str] = set()
+        for message in sess.messages:
+            metadata = dict(getattr(message, "metadata", None) or {})
+            if str(metadata.get("subagent_generation") or "") != generation:
+                continue
+            raw = metadata.get("subagent_mailbox_message_ids")
+            if isinstance(raw, list):
+                ids.update(str(item) for item in raw if str(item))
+        return ids
+
+    @staticmethod
+    def _result_payload(result: SubAgentResult) -> dict[str, object]:
+        return {
+            "final_answer": result.final_answer,
+            "outcome": result.outcome,
+            "rounds": result.rounds,
+            "tool_calls": [dict(item) for item in result.tool_calls],
+            "reports": list(result.reports),
+            "truncated": result.truncated,
+            "refused": result.refused,
+            "depth": result.depth,
+            "tokens_in": result.tokens_in,
+            "tokens_out": result.tokens_out,
+        }
+
+    @staticmethod
+    def _result_from_payload(payload: dict[str, object]) -> SubAgentResult:
+        raw_calls = payload.get("tool_calls")
+        raw_reports = payload.get("reports")
+
+        def _int_value(key: str) -> int:
+            value = payload.get(key)
+            if isinstance(value, bool):
+                return int(value)
+            if isinstance(value, (int, float, str)):
+                try:
+                    return int(value)
+                except (TypeError, ValueError):
+                    return 0
+            return 0
+
+        return SubAgentResult(
+            final_answer=str(payload.get("final_answer") or ""),
+            outcome=str(payload.get("outcome") or "failed"),
+            rounds=_int_value("rounds"),
+            tool_calls=[dict(item) for item in raw_calls if isinstance(item, dict)]
+            if isinstance(raw_calls, list)
+            else [],
+            reports=[str(item) for item in raw_reports]
+            if isinstance(raw_reports, list)
+            else [],
+            truncated=bool(payload.get("truncated")),
+            refused=bool(payload.get("refused")),
+            depth=_int_value("depth"),
+            tokens_in=_int_value("tokens_in"),
+            tokens_out=_int_value("tokens_out"),
+        )
+
+    def delivery_snapshot(self, child_session_id: str) -> dict[str, object] | None:
+        """Return durable delivery/result facts without fabricating a worker or settlement."""
+        sid = str(child_session_id or "").strip()
+        if not sid:
+            return None
+        with self._children_guard:
+            handle = self._handles.get(sid)
+            durable = self._durable_topology.get(sid)
+            generation = handle.generation if handle is not None else (durable.generation if durable else "")
+            parent_id = handle.parent_id if handle is not None else (durable.parent_id if durable else "")
+        if not generation or not parent_id:
+            return None
+        try:
+            sess = self.session_store.load(sid)
+            delivered = self._delivered_mailbox_ids(sess, generation)
+        except Exception:  # noqa: BLE001 - read-only delivery observability fails closed
+            delivered = set()
+        pending = self._delivery_journal.pending_mailbox(
+            sid, generation, delivered_ids=delivered
+        )
+        reports = self._delivery_journal.reports(sid, generation)
+        result = self._delivery_journal.result(sid, generation)
+        cancel = self._delivery_journal.cancel_state(sid, generation)
+        return {
+            "child_id": sid,
+            "parent_id": parent_id,
+            "generation": generation,
+            "pending_mailbox_count": len(pending),
+            "pending_mailbox": [
+                {
+                    "message_id": row.message_id,
+                    "sender_id": row.sender_id,
+                    "content": row.content,
+                    "seq": row.seq,
+                }
+                for row in pending
+            ],
+            "reports": [
+                {"report_id": row.report_id, "content": row.content, "seq": row.seq}
+                for row in reports
+            ],
+            "result_available": result is not None,
+            "result_id": result.result_id if result is not None else "",
+            "cancel_requested": cancel is not None,
+            "cancel_reason": cancel.reason if cancel is not None else "",
+        }
+
+    def _persist_terminal_result(
+        self,
+        *,
+        child_id: str,
+        parent_id: str,
+        generation: str,
+        result: SubAgentResult,
+    ) -> bool:
+        if self._delivery_journal.enabled:
+            reports = self._delivery_journal.reports(child_id, generation)
+            result.reports = [row.content for row in reports]
+            report_ids = [row.report_id for row in reports]
+        else:
+            with self._children_guard:
+                result.reports = list(self._messages_to_parent.get(child_id, []))
+            report_ids = []
+        record = self._delivery_journal.result_available(
+            child_id=child_id,
+            parent_id=parent_id,
+            generation=generation,
+            result=self._result_payload(result),
+            report_ids=report_ids,
+        )
+        return record is not None
+
     def _prune_handles_locked(self, *, reserve_slot: bool = False) -> None:
         """只淘汰最老 terminal handle；running child 永不被静默丢弃。"""
         limit = self._max_handles - (1 if reserve_slot else 0)
@@ -288,9 +422,20 @@ class SubAgentRunner:
                 return False, "禁止向自身发送 agent message", resolved_target
 
             if parent_id and resolved_target == parent_id:
+                generation = self._local_generation_by_child.get(sender_id, "")
+                if not generation:
+                    return False, "当前 child 缺少可归因 execution generation", resolved_target
                 bucket = self._messages_to_parent.setdefault(sender_id, [])
                 if len(bucket) >= 20:
                     return False, "已达本 child 向 parent 的消息上限（20 条）", resolved_target
+                report = self._delivery_journal.queue_report(
+                    child_id=sender_id,
+                    parent_id=parent_id,
+                    generation=generation,
+                    content=body,
+                )
+                if report is None:
+                    return False, "child report durable queue 写入失败，未投递", resolved_target
                 bucket.append(body)
                 handle = self._handles.get(sender_id)
                 if handle is not None:
@@ -300,10 +445,24 @@ class SubAgentRunner:
 
             children = self._children_by_parent.get(sender_id, set())
             if resolved_target in children and resolved_target in self._cancel_events:
+                generation = self._local_generation_by_child.get(resolved_target, "")
+                if not generation:
+                    return False, "目标 child 缺少可归因 execution generation", resolved_target
                 inbox = self._agent_inbox.setdefault(resolved_target, [])
                 if len(inbox) >= 20:
                     return False, "目标 child 的待处理消息已达上限（20 条）", resolved_target
+                queued = self._delivery_journal.queue_mailbox(
+                    child_id=resolved_target,
+                    parent_id=sender_id,
+                    generation=generation,
+                    sender_id=sender_id,
+                    content=body,
+                )
+                if queued is None:
+                    return False, "parent steer durable queue 写入失败，未排队", resolved_target
                 self._message_seq += 1
+                # Preserve the historical process-local fast index for wake/test paths;
+                # durable EventStore remains the source of truth when enabled.
                 inbox.append((self._message_seq, sender_id, body))
                 return True, f"已排队到直接 child {resolved_target} 的下一 step boundary", resolved_target
 
@@ -316,22 +475,42 @@ class SubAgentRunner:
         *,
         preceding_assistant: Message | None = None,
     ) -> int:
-        """在 child step boundary 原子取走 inbox 并追加 agent-origin 消息。
-
-        ``preceding_assistant`` 用于消息在 LLM 生成期间到达的情况：先记录旧信息
-        下已经生成的 assistant 文本，再追加 agent message，保持真实时序。
-        """
+        """Durably project current-generation parent steer at a safe child step boundary."""
         with self._children_guard:
-            pending = list(self._agent_inbox.get(child_sid, []))
-            self._agent_inbox[child_sid] = []
-        if not pending:
-            return 0
-        if preceding_assistant is not None:
-            sess.messages.append(preceding_assistant)
+            generation = self._local_generation_by_child.get(child_sid, "")
+            local_pending = list(self._agent_inbox.get(child_sid, []))
+
+        durable_pending = []
+        if generation and self._delivery_journal.enabled:
+            delivered_ids = self._delivered_mailbox_ids(sess, generation)
+            durable_pending = self._delivery_journal.pending_mailbox(
+                child_sid, generation, delivered_ids=delivered_ids
+            )
+            if not durable_pending:
+                return 0
+            rows = [(row.sender_id, row.content) for row in durable_pending]
+            message_ids = [row.message_id for row in durable_pending]
+        else:
+            if not local_pending:
+                return 0
+            rows = [(sender_id, body) for _seq, sender_id, body in local_pending]
+            message_ids = []
+
         ordered = "\n\n".join(
             f"[{idx}. direct-parent {sender_id}] {body}"
-            for idx, (_seq, sender_id, body) in enumerate(pending, 1)
+            for idx, (sender_id, body) in enumerate(rows, 1)
         )
+        metadata = origin_metadata(
+            InjectionLayer.PROGRAM_RECOVERY,
+            injection_kind="agent_message",
+        )
+        if generation:
+            metadata["subagent_generation"] = generation
+        if message_ids:
+            metadata["subagent_mailbox_message_ids"] = message_ids
+        base_len = len(sess.messages)
+        if preceding_assistant is not None:
+            sess.messages.append(preceding_assistant)
         sess.messages.append(
             Message(
                 role="user",
@@ -342,39 +521,60 @@ class SubAgentRunner:
                     + ordered
                 ),
                 source=MessageSource.SYSTEM,
-                metadata=origin_metadata(
-                    InjectionLayer.PROGRAM_RECOVERY,
-                    injection_kind="agent_message",
-                ),
+                metadata=metadata,
             )
         )
-        # Once a queued message crosses the step boundary into transcript, it must
-        # be durable before the next provider call. Queue durability itself is ST2-C.
-        self.session_store.save(sess)
-        return len(pending)
+        try:
+            self.session_store.save(sess)
+        except BaseException:
+            del sess.messages[base_len:]
+            raise
+        with self._children_guard:
+            # The local queue is only a low-latency mirror. New messages that raced with
+            # this save remain recoverable from EventStore even if this list is cleared.
+            self._agent_inbox[child_sid] = []
+        return len(rows)
 
     def cancel_parent(self, parent_session_id: str) -> int:
-        """取消某父会话当前派生的直接子代理，并经 registry 向孙级级联."""
+        """Cancel this process's direct children after attempting a durable fenced fact."""
         if not parent_session_id:
             return 0
         with self._children_guard:
-            child_ids = list(self._children_by_parent.get(parent_session_id, set()))
-            events = [self._cancel_events.get(sid) for sid in child_ids]
-            for sid in child_ids:
+            rows = [
+                (
+                    sid,
+                    self._cancel_events.get(sid),
+                    self._local_generation_by_child.get(sid, ""),
+                )
+                for sid in self._children_by_parent.get(parent_session_id, set())
+            ]
+
+        for sid, event, generation in rows:
+            # The durable attempt happens before the local signal. If persistence fails,
+            # we still stop the in-process worker for the existing resource/safety boundary,
+            # but restart recovery will honestly have no durable cancel fact.
+            if generation:
+                self._delivery_journal.cancel_requested(
+                    child_id=sid,
+                    parent_id=parent_session_id,
+                    generation=generation,
+                    reason="parent_lifecycle_cancel",
+                )
+            with self._children_guard:
+                if self._local_generation_by_child.get(sid, "") != generation:
+                    continue
                 handle = self._handles.get(sid)
                 if handle is not None:
                     handle.cancel_requested = True
-                    # parent Stop/异常退出本身即显式放弃该 child settlement；结果仍
-                    # 可留在 handle/session 供审计，但不再阻塞后续正常 turn final。
+                    # ST2-C1 preserves the historical local settlement shortcut.
+                    # ST2-C2 will bind durable settlement to the parent receipt commit.
                     handle.collected = True
                     handle.activity_event.set()
-        for event in events:
             if event is not None:
                 event.set()
-        for child_sid in child_ids:
             with suppress(Exception):
-                self.registry.cancel_session(child_sid)
-        return len(child_ids)
+                self.registry.cancel_session(sid)
+        return len(rows)
 
     def _reserve_child(self, parent_sid: str) -> tuple[str, threading.Event, Session]:
         """同步登记 active child topology；调用者负责最终 ``_finalize_child``。"""
@@ -402,22 +602,35 @@ class SubAgentRunner:
         parent_sid: str,
         result: SubAgentResult | None,
     ) -> SubAgentResult | None:
-        """原子收束 local active topology，并以 generation fencing 记录 durable terminal。"""
+        """Finalize local state; durable terminal requires an exact result fact first."""
         with self._children_guard:
             generation = self._local_generation_by_child.get(sid, "")
             durable_before = self._durable_topology.get(sid)
-        if generation:
+        if result is not None and generation and self._delivery_journal.enabled:
+            reports = self._delivery_journal.reports(sid, generation)
+            result.reports = [row.content for row in reports]
+        elif result is not None:
+            with self._children_guard:
+                result.reports = list(self._messages_to_parent.get(sid, []))
+
+        result_is_durable = (
+            result is not None
+            and generation != ""
+            and (
+                not self._delivery_journal.enabled
+                or self._delivery_journal.result(sid, generation) is not None
+            )
+        )
+        if result_is_durable:
             self._topology_journal.terminal(
                 child_id=sid,
                 parent_id=parent_sid,
                 generation=generation,
                 depth=(durable_before.depth if durable_before is not None else 0),
-                outcome=(result.outcome if result is not None else "failed"),
+                outcome=result.outcome if result is not None else "failed",
             )
             self._refresh_topology_state(sid)
         with self._children_guard:
-            if result is not None:
-                result.reports = list(self._messages_to_parent.get(sid, []))
             self._cancel_events.pop(sid, None)
             self._local_generation_by_child.pop(sid, None)
             self._agent_inbox.pop(sid, None)
@@ -544,18 +757,58 @@ class SubAgentRunner:
                             )
                         if startup_event is not None:
                             startup_event.set()
+                        failed = SubAgentResult(
+                            final_answer=(
+                                f"[状态: failure] 子代理 durable startup 异常: "
+                                f"{type(exc).__name__}: {exc}"
+                            ),
+                            outcome="failed",
+                            depth=depth,
+                        )
+                        self._persist_terminal_result(
+                            child_id=sid,
+                            parent_id=parent_sid,
+                            generation=generation,
+                            result=failed,
+                        )
                         raise
                     if startup_state is not None:
                         startup_state.update({"ok": True, "detail": "durable_start_ready"})
                     if startup_event is not None:
                         startup_event.set()
-                    return self._execute_subagent(
-                        owned_sess,
-                        depth,
-                        max_rounds=max_rounds,
-                        cancel_event=cancel_event,
+                    try:
+                        result = self._execute_subagent(
+                            owned_sess,
+                            depth,
+                            max_rounds=max_rounds,
+                            cancel_event=cancel_event,
+                        )
+                    except BaseException as exc:  # noqa: BLE001 - persist exact failure then preserve API
+                        failed = SubAgentResult(
+                            final_answer=(
+                                f"[状态: failure] 子代理后台执行异常: "
+                                f"{type(exc).__name__}: {exc}"
+                            ),
+                            outcome="failed",
+                            depth=depth,
+                        )
+                        self._persist_terminal_result(
+                            child_id=sid,
+                            parent_id=parent_sid,
+                            generation=generation,
+                            result=failed,
+                        )
+                        raise
+                    self._persist_terminal_result(
+                        child_id=sid,
+                        parent_id=parent_sid,
+                        generation=generation,
+                        result=result,
                     )
+                    return result
                 finally:
+                    # Result availability is attempted while the run-owned Session lease
+                    # is still held and before this generation is durably released.
                     self._topology_journal.generation_released(
                         child_id=sid,
                         parent_id=parent_sid,
@@ -659,13 +912,22 @@ class SubAgentRunner:
                             {"ok": False, "detail": f"startup_exception:{type(exc).__name__}"}
                         )
                         startup_event.set()
-                    result = SubAgentResult(
-                        final_answer=(
-                            f"[状态: failure] 子代理后台执行异常: "
-                            f"{type(exc).__name__}: {exc}"
-                        ),
-                        outcome="failed",
-                        depth=depth,
+                    with self._children_guard:
+                        generation = self._local_generation_by_child.get(sid, "")
+                    durable_result = (
+                        self._delivery_journal.result(sid, generation) if generation else None
+                    )
+                    result = (
+                        self._result_from_payload(durable_result.payload)
+                        if durable_result is not None
+                        else SubAgentResult(
+                            final_answer=(
+                                f"[状态: failure] 子代理后台执行异常: "
+                                f"{type(exc).__name__}: {exc}"
+                            ),
+                            outcome="failed",
+                            depth=depth,
+                        )
                     )
                 self._finalize_child(sid, parent_sid, result)
 
@@ -729,7 +991,7 @@ class SubAgentRunner:
         }
 
     def result_current(self, child_id: str, wait_seconds: float = 0.0) -> tuple[bool, str, dict]:
-        """当前 agent 查询/等待自己的直接 child；返回只读 snapshot。"""
+        """Query a direct child from local handle or durable generation-scoped facts."""
         from llm_loop.core.run_context import current_session_id
 
         requester = current_session_id.get()
@@ -738,42 +1000,99 @@ class SubAgentRunner:
             return False, "缺少 child_id", {}
         with self._children_guard:
             handle = self._handles.get(sid)
+            durable = self._durable_topology.get(sid)
             if handle is None:
-                return False, "child handle 不存在、已淘汰或不属于当前进程", {}
-            if handle.parent_id != requester:
-                return False, "仅直接 parent 可以读取该 child handle", {}
-            activity_event = handle.activity_event
-            running = handle.state == "running"
-            reports_now = list(self._messages_to_parent.get(sid, []))
-            has_unseen_report = len(reports_now) > handle.seen_reports
-            if running and not has_unseen_report:
-                # 与 child report/finalize 共用 _children_guard，clear 后不会丢掉
-                # 随后到达的 signal：发送方会在同一锁后 set。
-                activity_event.clear()
+                if durable is None:
+                    return False, "child handle 不存在、已淘汰且无durable topology", {}
+                if durable.parent_id != requester:
+                    return False, "仅直接 parent 可以读取该 child", {}
+                generation = durable.generation
+                parent_id = durable.parent_id
+            else:
+                if handle.parent_id != requester:
+                    return False, "仅直接 parent 可以读取该 child handle", {}
+                generation = handle.generation
+                parent_id = handle.parent_id
+                activity_event = handle.activity_event
+                running = handle.state == "running"
+                if self._delivery_journal.enabled:
+                    reports_now = [
+                        row.content for row in self._delivery_journal.reports(sid, generation)
+                    ]
+                else:
+                    reports_now = list(self._messages_to_parent.get(sid, []))
+                has_unseen_report = len(reports_now) > handle.seen_reports
+                if running and not has_unseen_report:
+                    activity_event.clear()
+
+        if handle is None:
+            assert durable is not None
+            report_rows = self._delivery_journal.reports(sid, generation)
+            result_record = self._delivery_journal.result(sid, generation)
+            cancel = self._delivery_journal.cancel_state(sid, generation)
+            result = (
+                self._result_from_payload(result_record.payload)
+                if result_record is not None
+                else None
+            )
+            return True, "ok", {
+                "child_id": sid,
+                "parent_id": parent_id,
+                "state": result.outcome if result is not None else "orphaned",
+                "depth": result.depth if result is not None else durable.depth,
+                "cancel_requested": cancel is not None,
+                "reports": [row.content for row in report_rows],
+                "result": result,
+                "local_active": False,
+            }
+
         bounded_wait = min(30.0, max(0.0, float(wait_seconds or 0.0)))
         if running and not has_unseen_report and bounded_wait > 0:
             activity_event.wait(timeout=bounded_wait)
         with self._children_guard:
             handle = self._handles.get(sid)
-            if handle is None:
-                return False, "child handle 已淘汰", {}
-            result = handle.result
-            reports = (
-                list(self._messages_to_parent.get(sid, []))
-                if handle.state == "running"
-                else list(result.reports if result is not None else [])
-            )
-            handle.seen_reports = max(handle.seen_reports, len(reports))
-            snapshot = {
-                "child_id": handle.child_id,
-                "parent_id": handle.parent_id,
-                "state": handle.state,
-                "depth": handle.depth,
-                "cancel_requested": handle.cancel_requested,
-                "reports": reports,
-                "result": result,
-            }
-        return True, "ok", snapshot
+            # A terminal handle may be pruned while the caller waits. Re-enter the
+            # durable path without fabricating activity.
+            durable = self._durable_topology.get(sid) if handle is None else None
+            if handle is not None:
+                result = handle.result
+                if self._delivery_journal.enabled:
+                    reports = [
+                        row.content for row in self._delivery_journal.reports(sid, handle.generation)
+                    ]
+                else:
+                    reports = (
+                        list(self._messages_to_parent.get(sid, []))
+                        if handle.state == "running"
+                        else list(result.reports if result is not None else [])
+                    )
+                handle.seen_reports = max(handle.seen_reports, len(reports))
+                return True, "ok", {
+                    "child_id": handle.child_id,
+                    "parent_id": handle.parent_id,
+                    "state": handle.state,
+                    "depth": handle.depth,
+                    "cancel_requested": handle.cancel_requested,
+                    "reports": reports,
+                    "result": result,
+                    "local_active": handle.state == "running",
+                }
+        if durable is None or durable.parent_id != requester:
+            return False, "child handle 已淘汰且durable topology不可用", {}
+        report_rows = self._delivery_journal.reports(sid, durable.generation)
+        result_record = self._delivery_journal.result(sid, durable.generation)
+        result = self._result_from_payload(result_record.payload) if result_record is not None else None
+        cancel = self._delivery_journal.cancel_state(sid, durable.generation)
+        return True, "ok", {
+            "child_id": sid,
+            "parent_id": durable.parent_id,
+            "state": result.outcome if result is not None else "orphaned",
+            "depth": result.depth if result is not None else durable.depth,
+            "cancel_requested": cancel is not None,
+            "reports": [row.content for row in report_rows],
+            "result": result,
+            "local_active": False,
+        }
 
     def settle_current(self, child_id: str) -> bool:
         """在 terminal receipt 已成功构造后，由 direct parent ACK settlement。"""

@@ -37,6 +37,10 @@ EVENT_SUBAGENT_LINKED = "subagent.linked"
 EVENT_SUBAGENT_GENERATION_STARTED = "subagent.generation.started"
 EVENT_SUBAGENT_GENERATION_RELEASED = "subagent.generation.released"
 EVENT_SUBAGENT_TERMINAL = "subagent.terminal"
+EVENT_SUBAGENT_MAILBOX_QUEUED = "subagent.mailbox.queued"
+EVENT_SUBAGENT_REPORT_QUEUED = "subagent.report.queued"
+EVENT_SUBAGENT_RESULT_AVAILABLE = "subagent.result.available"
+EVENT_SUBAGENT_CANCEL_REQUESTED = "subagent.cancel_requested"
 EVENT_PROGRAM_RECOVERY = "program.recovery"  # R4: 一次性程序恢复动作审计（不作为 durable 对话消息）
 EVENT_INJECTION_PROFILE_SHADOW = "injection.profile.shadow"  # Historical R8 schema; P1-C keeps read compatibility only, no new emitter
 
@@ -437,6 +441,60 @@ REGISTRY.register(
             "generation": "execution-generation fencing id",
             "depth": "mechanical recursion depth",
             "outcome": "terminal child outcome fact",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_SUBAGENT_MAILBOX_QUEUED,
+        version=1,
+        fields={
+            "message_id": "stable mailbox message id",
+            "child_id": "child session id",
+            "parent_id": "direct parent session id",
+            "generation": "execution-generation fencing id",
+            "sender_id": "direct parent sender session id",
+            "content": "exact delegated message content",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_SUBAGENT_REPORT_QUEUED,
+        version=1,
+        fields={
+            "report_id": "stable child report id",
+            "child_id": "child session id",
+            "parent_id": "direct parent session id",
+            "generation": "execution-generation fencing id",
+            "content": "exact child report content",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_SUBAGENT_RESULT_AVAILABLE,
+        version=1,
+        fields={
+            "result_id": "stable terminal result id for this generation",
+            "child_id": "child session id",
+            "parent_id": "direct parent session id",
+            "generation": "execution-generation fencing id",
+            "result": "exact structured SubAgentResult facts",
+            "report_ids": "durable report ids included by this terminal result",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_SUBAGENT_CANCEL_REQUESTED,
+        version=1,
+        fields={
+            "cancel_id": "stable cancellation fact id",
+            "child_id": "child session id",
+            "parent_id": "direct parent session id",
+            "generation": "execution-generation fencing id",
+            "reason": "mechanical lifecycle cancel reason",
         },
     )
 )

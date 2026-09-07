@@ -36,9 +36,13 @@ from llm_loop.event_log.model import (
     EVENT_SESSION_CREATED,
     EVENT_SESSION_FORKED,
     EVENT_SESSION_META_CHANGED,
+    EVENT_SUBAGENT_CANCEL_REQUESTED,
     EVENT_SUBAGENT_GENERATION_RELEASED,
     EVENT_SUBAGENT_GENERATION_STARTED,
     EVENT_SUBAGENT_LINKED,
+    EVENT_SUBAGENT_MAILBOX_QUEUED,
+    EVENT_SUBAGENT_REPORT_QUEUED,
+    EVENT_SUBAGENT_RESULT_AVAILABLE,
     EVENT_SUBAGENT_TERMINAL,
     EVENT_TOOL_EXECUTION_DECLARED,
     EVENT_TOOL_EXECUTION_FINISHED,
@@ -138,6 +142,10 @@ def test_registry_covers_registered_types_with_fields():
         EVENT_SUBAGENT_GENERATION_STARTED,
         EVENT_SUBAGENT_GENERATION_RELEASED,
         EVENT_SUBAGENT_TERMINAL,
+        EVENT_SUBAGENT_MAILBOX_QUEUED,
+        EVENT_SUBAGENT_REPORT_QUEUED,
+        EVENT_SUBAGENT_RESULT_AVAILABLE,
+        EVENT_SUBAGENT_CANCEL_REQUESTED,
         EVENT_INJECTION_PROFILE_SHADOW,  # R8: per-attempt shadow 注入 profile 归因
         EVENT_RUN_END,  # DSH 借鉴: run.end run 生命周期结束事件
         EVENT_PROGRAM_RECOVERY,  # R4: runtime-only recovery 的 session 审计事件
@@ -201,6 +209,18 @@ def test_registry_covers_registered_types_with_fields():
     spliced_spec = REGISTRY.spec(EVENT_INTEROP_SPLICED)
     assert spliced_spec is not None
     assert {"session_id", "count", "start", "sources", "content_preview"} <= set(spliced_spec.fields)
+    mailbox_spec = REGISTRY.spec(EVENT_SUBAGENT_MAILBOX_QUEUED)
+    assert mailbox_spec is not None
+    assert {"message_id", "child_id", "parent_id", "generation", "sender_id", "content"} <= set(mailbox_spec.fields)
+    report_spec = REGISTRY.spec(EVENT_SUBAGENT_REPORT_QUEUED)
+    assert report_spec is not None
+    assert {"report_id", "child_id", "parent_id", "generation", "content"} <= set(report_spec.fields)
+    result_spec = REGISTRY.spec(EVENT_SUBAGENT_RESULT_AVAILABLE)
+    assert result_spec is not None
+    assert {"result_id", "child_id", "parent_id", "generation", "result", "report_ids"} <= set(result_spec.fields)
+    cancel_spec = REGISTRY.spec(EVENT_SUBAGENT_CANCEL_REQUESTED)
+    assert cancel_spec is not None
+    assert {"cancel_id", "child_id", "parent_id", "generation", "reason"} <= set(cancel_spec.fields)
     run_end_spec = REGISTRY.spec(EVENT_RUN_END)
     assert run_end_spec is not None
     assert {"reason", "rounds", "tokens_in", "cache_hit", "duration_ms"} <= set(run_end_spec.fields)

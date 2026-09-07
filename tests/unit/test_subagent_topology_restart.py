@@ -240,6 +240,7 @@ def test_generation_release_and_terminal_share_spawn_generation(tmp_path) -> Non
     assert [event.type for event in topology] == [
         "subagent.linked",
         "subagent.generation.started",
+        "subagent.result.available",
         "subagent.generation.released",
         "subagent.terminal",
     ]

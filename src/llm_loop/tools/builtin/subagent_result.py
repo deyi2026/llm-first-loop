@@ -70,16 +70,22 @@ class SubAgentResultTool:
         depth = int(snapshot.get("depth", 0) or 0)
         reports = list(snapshot.get("reports") or [])
         cancel_requested = bool(snapshot.get("cancel_requested"))
-        if state == "running":
+        if state in {"running", "orphaned"}:
             parts = [
-                f"[状态: success] child_state=running child_id={child_id} depth={depth} "
+                f"[状态: success] child_state={state} child_id={child_id} depth={depth} "
                 f"cancel_requested={str(cancel_requested).lower()}",
             ]
             if reports:
                 parts.append(f"[中途报告 {len(reports)} 条]")
                 for report in reports[-5:]:
                     parts.append(f"  - {str(report)[:300]}")
-            parts.append("child 尚未结算；可继续父级工作、agent_message steer，或稍后再次查询。")
+            if state == "running":
+                parts.append("child 尚未结算；可继续父级工作、agent_message steer，或稍后再次查询。")
+            else:
+                parts.append(
+                    "child 当前无本进程 active worker；以上仅为durable状态/报告读取，"
+                    "不代表子任务完成，也不会自动恢复执行。"
+                )
             return ToolResult(
                 status=ToolResultStatus.SUCCESS,
                 content="\n".join(parts),
