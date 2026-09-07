@@ -221,8 +221,8 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
       setEditorStatus("保存结果暂时未知：草稿与 request_id 均已保留；再次保存会查询/复用同一操作，不会自动重放。");
       return;
     }
-    setPendingSave(null);
     if (result.status === 409) {
+      setPendingSave(null);
       const err = result.data as { error?: string };
       setEditorStatus(
         err.error === "version_conflict"
@@ -232,10 +232,24 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
       return;
     }
     if (result.status !== 200) {
+      setPendingSave(null);
       const err = result.data as { error?: string; detail?: string };
       setEditorStatus(`保存失败：${err.error ?? err.detail ?? "请求失败"}；草稿已保留。`);
       return;
     }
+    const receipt = result.data as {
+      effect_state?: string;
+      causation_proven?: boolean;
+    };
+    if (receipt.effect_state !== "observed_match" || receipt.causation_proven !== true) {
+      setEditorStatus(
+        receipt.effect_state === "outcome_unknown"
+          ? "保存结果仍未证明：草稿与 request_id 已保留；不会自动重放。请显式重新载入核对当前文件。"
+          : "保存结果未能证明已按预期落盘：草稿与 request_id 已保留；不会自动重放。"
+      );
+      return;
+    }
+    setPendingSave(null);
     const refreshed = await observeHumanFile(sessionId, editor.path);
     if (refreshed.status === 200 && "snapshot_ref" in refreshed.data) {
       setEditor(refreshed.data);
