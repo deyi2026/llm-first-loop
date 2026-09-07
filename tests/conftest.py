@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -49,25 +50,12 @@ TIER0_FILES = (
 
 
 def pytest_collection_modifyitems(config, items):
-    """tier0 单点打标 + serial 顺序敏感登记（路径/nodeid 清单驱动，不侵入测试文件）."""
+    """tier0 单点打标（路径清单驱动，不侵入测试文件）."""
     tier0_marker = pytest.mark.tier0
     for item in items:
         fpath = str(item.path).replace(str(Path(__file__).resolve().parent.parent) + "/", "")
         if fpath in TIER0_FILES:
             item.add_marker(tier0_marker)
-        # R9-WF-02: 顺序敏感测试（load_env_file 进程级 env 注入面）serial + 单 worker 收拢；
-        # 登记在案、只减不增（R9-DFX-03）
-        if item.nodeid in SERIAL_NODEIDS:
-            item.add_marker(pytest.mark.serial)
-            item.add_marker(pytest.mark.xdist_group("env-file"))
-
-
-# ── R9-WF-02 顺序敏感测试登记（serial + xdist_group 单 worker 收拢；只减不增）──
-# 已知污染面：load_env_file() 无参调用读仓库根 .env 注入 os.environ（进程级、
-# monkeypatch 不回滚其注入键）——同 worker 内跨文件可见。
-SERIAL_NODEIDS = (
-    "tests/unit/test_b2_examples.py::test_example01_assembly_chain_runs",
-)
 
 
 # ── M64 测试环境污染全局防御（pytest 收集前执行）──
@@ -110,6 +98,22 @@ def _patch_session_store_isolation():
 
 
 _patch_session_store_isolation()
+
+
+@pytest.fixture(autouse=True)
+def isolate_process_environment():
+    """每个测试后恢复完整进程环境，阻断未走 monkeypatch 的跨测试污染。
+
+    `load_env_file()` 是生产入口，按设计会直接向 ``os.environ`` 写入缺失键。
+    测试若直接调用它，pytest 的 ``monkeypatch`` 无法自动回滚由函数内部新增的
+    其他键。环境恢复属于测试沙箱边界，不改变生产配置加载语义。
+    """
+    before = os.environ.copy()
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(before)
 
 
 class FakeLLM:

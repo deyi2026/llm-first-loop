@@ -117,6 +117,8 @@ def test_example01_assembly_chain_runs(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("EXTRACT_ENABLED", "0")
     monkeypatch.setenv("SUMMARY_MODE", "off")
+    env_file = tmp_path / ".env"
+    env_file.write_text("# isolated example env\n", encoding="utf-8")
 
     class _Fake:
         def chat(self, messages, tools, **kw):
@@ -129,7 +131,9 @@ def test_example01_assembly_chain_runs(tmp_path, monkeypatch):
 
             return _gen()
 
-    load_env_file()  # 文档 §1: 从 .env 加载（此处 env 已注入, 不依赖真实 .env）
+    # 装配链只验证 load_env_file→load_settings→build_engine；测试绝不能读取仓库
+    # 真实 .env，否则其中未显式 monkeypatch 的运行态配置会泄漏到后续测试。
+    load_env_file(env_file)
     settings = load_settings()
     engine = build_engine(settings)
     # 用 Fake 替换默认 client（pool 路由 None override → default_client, 零触网）

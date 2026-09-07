@@ -9,7 +9,9 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
+import llm_loop.config as config_mod
 from llm_loop.config import load_env_file
 
 
@@ -48,7 +50,30 @@ def test_load_env_file_missing_fail_open(tmp_path):
     load_env_file(tmp_path / "nonexistent.env")  # 不应抛异常
 
 
-def test_load_env_file_default_path_is_project_env():
-    """默认路径指向项目根 .env（与 restart_system.sh 注入同源）."""
-    # load_env_file 无参默认使用项目根 .env；仅验证可调用不抛异常
+def test_load_env_file_default_path_is_project_env(monkeypatch):
+    """默认路径指向项目根 .env，但测试不读取真实运行态配置。"""
+    expected = Path(config_mod.__file__).resolve().parent.parent.parent / ".env"
+    seen: list[Path] = []
+    original_exists = Path.exists
+    original_read_text = Path.read_text
+
+    def _exists(path: Path) -> bool:
+        if path == expected:
+            return True
+        return original_exists(path)
+
+    def _read_text(path: Path, *args, **kwargs) -> str:
+        if path == expected:
+            seen.append(path)
+            # 使用已存在键验证 env precedence，避免向进程环境新增测试哨兵。
+            return "LFL_DEFAULT_ENV_PATH_PROBE=from-file\n"
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setenv("LFL_DEFAULT_ENV_PATH_PROBE", "preexisting")
+    monkeypatch.setattr(Path, "exists", _exists)
+    monkeypatch.setattr(Path, "read_text", _read_text)
+
     load_env_file()
+
+    assert seen == [expected]
+    assert os.environ["LFL_DEFAULT_ENV_PATH_PROBE"] == "preexisting"
