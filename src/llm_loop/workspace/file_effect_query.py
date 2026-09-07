@@ -158,9 +158,19 @@ class FileEffectQueryService:
     @staticmethod
     def _project(item: dict[str, Any], scope: str) -> FileEffectReceipt:
         events = item["events"]
-        prepared = next((e for e in events if e.type.endswith(".prepared")), None)
-        observed = next((e for e in reversed(events) if e.type.endswith(".observed")), None)
-        rejected = next((e for e in reversed(events) if e.type.endswith(".rejected")), None)
+        prepared_types = {
+            EVENT_TOOL_EXECUTION_EFFECT_PREPARED,
+            EVENT_HUMAN_FILE_EDIT_PREPARED,
+        }
+        observed_types = {
+            EVENT_TOOL_EXECUTION_EFFECT_OBSERVED,
+            EVENT_HUMAN_FILE_EDIT_OBSERVED,
+        }
+        prepared = next((e for e in events if e.type in prepared_types), None)
+        observed = next((e for e in reversed(events) if e.type in observed_types), None)
+        rejected = next(
+            (e for e in reversed(events) if e.type == EVENT_HUMAN_FILE_EDIT_REJECTED), None
+        )
         primary = observed or rejected or prepared or events[-1]
         pp = prepared.payload if prepared is not None else {}
         op = str(item["operation_id"])

@@ -107,6 +107,10 @@ def test_file_effect_query_projects_human_and_model_without_host_paths(tmp_path:
     assert [r.operation_id for r in page.receipts] == ["mop", "hop"]
     assert page.receipts[0].origin == "model_tool"
     assert page.receipts[0].path == "a.txt"
+    assert page.receipts[0].effect_state == "observed_match"
+    assert page.receipts[0].causation_proven is True
+    assert page.receipts[0].observed_after_sha256 == "f" * 64
+    assert page.receipts[0].artifact_ref == "artifact://v1/" + "9" * 32
     assert page.receipts[0].precondition_checked is None
     assert page.receipts[0].task_applicability == "not_evaluated"
     assert page.receipts[1].origin == "authenticated_user"
