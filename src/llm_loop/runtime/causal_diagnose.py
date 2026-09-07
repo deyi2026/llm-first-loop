@@ -1,0 +1,293 @@
+"""Read-only mechanical diagnosis over EventStore causality facts.
+
+This module compares recorded request construction/runtime facts.  It deliberately
+reports divergence, constraint hits and unknowns; it never decides semantic answer
+quality or changes runtime behavior.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+from dataclasses import dataclass
+from typing import Any
+
+_COMPONENTS = {
+    "runtime": "runtime.causality/runtime snapshot",
+    "generation_contract": "llm client/provider contract",
+    "ingress": "core.prompt_build.stages.ingress_resolution",
+    "history": "core.prompt_build.stages.history_pipeline",
+    "recent_continuity": "core.recent_continuity",
+    "tool_surface": "tools.registry/provider projection",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class _Attempt:
+    seq: int
+    event_type: str
+    payload: dict[str, Any]
+    usage: dict[str, Any] | None = None
+
+
+def _event_parts(event: Any) -> tuple[int, str, dict[str, Any]]:
+    return (
+        int(getattr(event, "seq", 0) or 0),
+        str(getattr(event, "type", "") or ""),
+        dict(getattr(event, "payload", None) or {}),
+    )
+
+
+def _attempts(events: Iterable[Any]) -> list[_Attempt]:
+    rows = [_event_parts(event) for event in events]
+    request_rows = [row for row in rows if row[1] in {"request.meta", "request.attempt"}]
+    out: list[_Attempt] = []
+    for index, (seq, event_type, payload) in enumerate(request_rows):
+        next_seq = request_rows[index + 1][0] if index + 1 < len(request_rows) else 2**63 - 1
+        usage = next(
+            (
+                p
+                for s, t, p in rows
+                if seq < s < next_seq and t == "request.usage"
+            ),
+            None,
+        )
+        out.append(_Attempt(seq=seq, event_type=event_type, payload=payload, usage=usage))
+    return out
+
+
+def _normalized_ingress(payload: dict[str, Any]) -> dict[str, Any]:
+    influence = payload.get("influence") or {}
+    ingress = influence.get("ingress") or {}
+    storage = int(ingress.get("storage_messages", 0) or 0)
+    trace = int(ingress.get("trace_messages", storage) or 0)
+    eligible = int(ingress.get("eligible_messages", trace) or 0)
+    provider = int(ingress.get("provider_base_messages", eligible) or 0)
+    working = ingress.get("tool_working_set") or {}
+    return {
+        "trace_removed": max(0, storage - trace),
+        "eligibility_removed": max(0, trace - eligible),
+        "provider_scrub_removed": max(0, eligible - provider),
+        "stale_cleanup": dict(ingress.get("stale_cleanup") or {}),
+        "working_state_reason": str(ingress.get("working_state_reason") or ""),
+        "working_state_selected_raw_chars": int(
+            ingress.get("working_state_selected_raw_chars", 0) or 0
+        ),
+        "tool_working_set": {
+            "enabled": bool(working.get("enabled")),
+            "folded_results": int(working.get("folded_results", 0) or 0),
+            "folded_groups": int(working.get("folded_groups", 0) or 0),
+        },
+    }
+
+
+def _normalized_history(payload: dict[str, Any]) -> dict[str, Any]:
+    history = (payload.get("influence") or {}).get("history") or {}
+    stats = history.get("compaction_stats") or {}
+    return {
+        "effective_budget": int(history.get("effective_budget", payload.get("budget", 0)) or 0),
+        "compacted": bool(history.get("compacted")),
+        "anchor_moved": bool(history.get("anchor_moved")),
+        "reopened_marker_count": int(history.get("reopened_marker_count", 0) or 0),
+        "cache_boundary_mode": str(stats.get("cache_boundary_mode") or "inactive"),
+    }
+
+
+def _normalized_continuity(payload: dict[str, Any]) -> dict[str, Any]:
+    value = (payload.get("influence") or {}).get("recent_continuity") or {}
+    return {
+        "applied": bool(value.get("applied")),
+        "source": str(value.get("source") or value.get("reason") or ""),
+        "dialogue_pairs": int(value.get("dialogue_pairs", 0) or 0),
+        "rehydrated": bool(value.get("rehydrated")),
+        "runtime_fact": bool(value.get("runtime_fact")),
+    }
+
+
+def _stage_values(attempt: _Attempt) -> list[tuple[str, Any]]:
+    payload = attempt.payload
+    runtime = payload.get("runtime_snapshot") or {}
+    return [
+        ("runtime", str(runtime.get("snapshot_id") or "")),
+        ("generation_contract", dict(payload.get("generation_contract") or {})),
+        ("ingress", _normalized_ingress(payload)),
+        ("history", _normalized_history(payload)),
+        ("recent_continuity", _normalized_continuity(payload)),
+        (
+            "tool_surface",
+            {
+                "tools_count": int(payload.get("tools_count", 0) or 0),
+            },
+        ),
+    ]
+
+
+def _attempt_card(attempt: _Attempt) -> dict[str, Any]:
+    payload = attempt.payload
+    runtime = payload.get("runtime_snapshot") or {}
+    return {
+        "seq": attempt.seq,
+        "attempt_id": str(payload.get("attempt_id") or ""),
+        "attempt_kind": str(payload.get("attempt_kind") or "primary"),
+        "attempt_index": int(payload.get("attempt_index", 0) or 0),
+        "round": int(payload.get("round", 0) or 0),
+        "model": str(payload.get("model") or (payload.get("generation_contract") or {}).get("model") or ""),
+        "provider": str((payload.get("generation_contract") or {}).get("provider") or payload.get("provider") or ""),
+        "runtime_snapshot_id": str(runtime.get("snapshot_id") or ""),
+        "history_chars": int(payload.get("history_chars", 0) or 0),
+        "reasoning_chars": int(payload.get("reasoning_chars", 0) or 0),
+        "provider_visible_chars": int(payload.get("provider_visible_chars", 0) or 0),
+        "provider_structure_fp": str(payload.get("provider_structure_fp") or ""),
+        "usage_available": attempt.usage is not None,
+    }
+
+
+def _select_target(attempts: list[_Attempt], target_attempt_id: str = "") -> _Attempt | None:
+    if target_attempt_id:
+        return next(
+            (a for a in attempts if str(a.payload.get("attempt_id") or "") == target_attempt_id),
+            None,
+        )
+    return attempts[-1] if attempts else None
+
+
+def _select_reference(attempts: list[_Attempt], target: _Attempt) -> tuple[_Attempt | None, str]:
+    prior = [a for a in attempts if a.seq < target.seq]
+    target_model = str(target.payload.get("model") or "")
+    target_provider = str((target.payload.get("generation_contract") or {}).get("provider") or "")
+    for candidate in reversed(prior):
+        candidate_provider = str(
+            (candidate.payload.get("generation_contract") or {}).get("provider") or ""
+        )
+        if (
+            candidate.usage is not None
+            and str(candidate.payload.get("model") or "") == target_model
+            and candidate_provider == target_provider
+        ):
+            return candidate, "previous_provider_success_same_model_provider"
+    for candidate in reversed(prior):
+        if candidate.usage is not None:
+            return candidate, "previous_provider_success"
+    return (prior[-1], "previous_recorded_attempt") if prior else (None, "none")
+
+
+def _constraint_hits(target: _Attempt) -> list[dict[str, Any]]:
+    payload = target.payload
+    generation = payload.get("generation_contract") or {}
+    usage = target.usage or {}
+    hits: list[dict[str, Any]] = []
+    max_tokens = generation.get("max_tokens")
+    tokens_out = usage.get("tokens_out")
+    if (
+        isinstance(max_tokens, int)
+        and max_tokens > 0
+        and isinstance(tokens_out, int)
+        and tokens_out >= max_tokens
+    ):
+        hits.append(
+            {
+                "constraint": "output_budget",
+                "observed": tokens_out,
+                "limit": max_tokens,
+                "mechanical_fact": "provider output tokens reached configured max_tokens",
+            }
+        )
+    headroom = usage.get("context_headroom_tokens")
+    if isinstance(headroom, int) and headroom <= 0:
+        hits.append(
+            {
+                "constraint": "context_headroom",
+                "observed": headroom,
+                "mechanical_fact": "recorded context headroom is non-positive",
+            }
+        )
+    return hits
+
+
+def diagnose_causality(events: Iterable[Any], *, target_attempt_id: str = "") -> dict[str, Any]:
+    """Return a bounded mechanical comparison; never mutate runtime or infer answer quality."""
+    attempts = _attempts(events)
+    target = _select_target(attempts, target_attempt_id)
+    if target is None:
+        return {
+            "status": "insufficient_evidence",
+            "observed_facts": {"recorded_attempts": 0},
+            "earliest_mechanical_divergence": None,
+            "constraint_hits": [],
+            "unchanged_facts": [],
+            "unknown": ["no request.meta/request.attempt events found"],
+        }
+    reference, reference_basis = _select_reference(attempts, target)
+    target_card = _attempt_card(target)
+    observed = {
+        "recorded_attempts": len(attempts),
+        "target": target_card,
+        "reference_basis": reference_basis,
+        "reference": _attempt_card(reference) if reference else None,
+    }
+    if reference is None:
+        return {
+            "status": "single_attempt",
+            "observed_facts": observed,
+            "earliest_mechanical_divergence": None,
+            "constraint_hits": _constraint_hits(target),
+            "unchanged_facts": [],
+            "unknown": ["no earlier recorded attempt is available for mechanical comparison"],
+        }
+
+    ref_stages = dict(_stage_values(reference))
+    target_stages = _stage_values(target)
+    unchanged: list[str] = []
+    divergence: dict[str, Any] | None = None
+    for stage, target_value in target_stages:
+        reference_value = ref_stages.get(stage)
+        if target_value == reference_value:
+            unchanged.append(stage)
+            continue
+        if divergence is None:
+            divergence = {
+                "stage": stage,
+                "component": _COMPONENTS[stage],
+                "reference": reference_value,
+                "target": target_value,
+                "note": "mechanical difference only; this is not a semantic root-cause judgment",
+            }
+
+    unknown: list[str] = []
+    if not target_card["runtime_snapshot_id"]:
+        unknown.append("target runtime snapshot unavailable")
+    if target.usage is None:
+        unknown.append("target request.usage unavailable; provider completion/cache constraints unknown")
+    if target.event_type == "request.attempt" and not target.payload.get("influence"):
+        unknown.append("exceptional attempt reuses/rebuilds prior projection; full stage influence not recorded")
+    return {
+        "status": "compared",
+        "observed_facts": observed,
+        "earliest_mechanical_divergence": divergence,
+        "constraint_hits": _constraint_hits(target),
+        "unchanged_facts": unchanged,
+        "unknown": unknown,
+    }
+
+
+def diagnose_event_store(store: Any, session_id: str, *, target_attempt_id: str = "") -> dict[str, Any]:
+    if not session_id:
+        return {
+            "status": "session_required",
+            "observed_facts": {},
+            "earliest_mechanical_divergence": None,
+            "constraint_hits": [],
+            "unchanged_facts": [],
+            "unknown": ["current session id unavailable"],
+        }
+    try:
+        events = store.read(session_id)
+    except Exception as exc:  # noqa: BLE001 - read-only diagnostics fail honestly
+        return {
+            "status": "read_failed",
+            "observed_facts": {},
+            "earliest_mechanical_divergence": None,
+            "constraint_hits": [],
+            "unchanged_facts": [],
+            "unknown": [f"event store read failed: {type(exc).__name__}"],
+        }
+    return diagnose_causality(events, target_attempt_id=target_attempt_id)

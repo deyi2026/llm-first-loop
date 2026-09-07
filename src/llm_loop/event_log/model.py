@@ -24,6 +24,7 @@ EVENT_HISTORY_COMPACTION_STATE_RESET = "history.compaction_state_reset"
 EVENT_SESSION_META_CHANGED = "session.meta_changed"
 EVENT_SESSION_FORKED = "session.forked"  # D3 预留：本期登记不触发行为
 EVENT_REQUEST_META = "request.meta"  # HARNESS-02(2026-08-14): 每轮请求快照（模型/思考/工具目录/预算）
+EVENT_REQUEST_ATTEMPT = "request.attempt"  # exceptional provider attempts (fallback/retry)
 EVENT_REQUEST_USAGE = "request.usage"  # DSH 借鉴(2026-08-17): 每轮响应 usage 明细（命中/miss token 精确落盘）
 EVENT_INTEROP_SPLICED = "interop.spliced"  # DSH 借鉴(2026-08-17): 协调通道 inbox 注入事件（对齐 agent/inbox/spliced）
 EVENT_RUN_END = "run.end"  # DSH 借鉴(2026-08-17): run 生命周期结束事件（对齐 turn/end，结束原因可审计）
@@ -667,6 +668,27 @@ REGISTRY.register(
             "runtime_snapshot": "启动时进程/source/config/tool surface 机械身份快照；不进入 prompt",
             "generation_contract": "该 attempt 的有效 generation/wire 客户端事实",
             "influence": "请求构建阶段机械 effect 摘要；不含完整 prompt/语义根因判断",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_REQUEST_ATTEMPT,
+        version=1,
+        fields={
+            "round": "循环轮次",
+            "attempt_id": "provider attempt 机械身份",
+            "attempt_kind": "fallback/err1210_retry 等异常路径类型",
+            "attempt_index": "同类 attempt 序号",
+            "provider": "实际 provider",
+            "model": "实际模型",
+            "tools_count": "本 attempt tools 数量",
+            "history_chars": "本 attempt message content 字符数",
+            "reasoning_chars": "本 attempt historical reasoning 字符数",
+            "provider_visible_chars": "本 attempt messages+tools 主要结构字符数",
+            "provider_structure_fp": "本 attempt 主要结构 SHA256 短指纹",
+            "generation_contract": "实际 client generation/wire 机械事实",
+            "transform": "若存在，记录 retry 前后结构机械变换；不判断语义",
         },
     )
 )

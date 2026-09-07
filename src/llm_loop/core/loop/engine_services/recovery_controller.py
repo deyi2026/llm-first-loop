@@ -7,6 +7,7 @@ once. If no structural transform applies, the original provider error is reporte
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 from typing import TYPE_CHECKING, Any, cast
@@ -14,6 +15,7 @@ from typing import TYPE_CHECKING, Any, cast
 from llm_loop.core.loop.err1210 import Err1210RecoveryResult, is_err1210, snapshot_offending_payload
 from llm_loop.core.session import Session
 from llm_loop.llm.errors import LLMError
+from llm_loop.runtime.causality import exceptional_attempt_payload
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -34,14 +36,17 @@ class RecoveryController:
 
     def _reachability_begin_attempt(
         self, *, kind: str, attempt_index: int, model: str, provider: str
-    ) -> None:
+    ) -> str:
         try:
             tool_cycle = getattr(self._host, "_tool_cycle", None)
             fn = getattr(tool_cycle, "_reachability_begin_attempt", None)
             if callable(fn):
-                fn(kind=kind, attempt_index=attempt_index, model=model, provider=provider)
+                return str(
+                    fn(kind=kind, attempt_index=attempt_index, model=model, provider=provider) or ""
+                )
         except Exception:  # noqa: BLE001 - telemetry fail-open
             logger.debug("recovery reachability bind failed (fail-open)", exc_info=True)
+        return ""
 
     def _reachability_finalize(self, outcome: str) -> None:
         try:
@@ -176,18 +181,33 @@ class RecoveryController:
         attempt_index: int = 1,
     ) -> tuple[Any | None, LLMError | None]:
         """Consume one changed-payload retry to completion without emitting partial deltas."""
-        del session_id, metadata_registry, round_no
+        del metadata_registry
         kwargs: dict[str, Any] = {"messages": messages, "tools": tools_param, "timeout_s": timeout_s}
         if chat_model_arg:
             kwargs["model"] = chat_model_arg
         stream_fn = getattr(llm_client, "chat_stream", None)
         try:
-            self._reachability_begin_attempt(
+            _attempt_id = self._reachability_begin_attempt(
                 kind="err1210_retry",
                 attempt_index=attempt_index,
                 model=model_label or chat_model_arg or getattr(llm_client, "model", ""),
                 provider=getattr(llm_client, "provider", ""),
             )
+            with contextlib.suppress(Exception):
+                self._host._event_append(
+                    session_id,
+                    "request.attempt",
+                    exceptional_attempt_payload(
+                        attempt_id=_attempt_id,
+                        kind="err1210_retry",
+                        attempt_index=attempt_index,
+                        round_no=round_no,
+                        client=llm_client,
+                        messages=messages,
+                        tools=tools_param,
+                        transform={"wire_shape_changed": True},
+                    ),
+                )
             if callable(stream_fn):
                 it = cast("Iterator[Any]", stream_fn(**kwargs))
                 while True:

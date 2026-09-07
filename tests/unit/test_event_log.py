@@ -36,6 +36,7 @@ from llm_loop.event_log.model import (
     EVENT_MESSAGE_APPENDED,
     EVENT_MESSAGE_CACHE_COMPACTED,
     EVENT_PROGRAM_RECOVERY,
+    EVENT_REQUEST_ATTEMPT,
     EVENT_REQUEST_META,
     EVENT_REQUEST_USAGE,
     EVENT_RUN_END,
@@ -143,6 +144,7 @@ def test_registry_covers_registered_types_with_fields():
     EVENT_SUBAGENT_LINKED,
     EVENT_SUBAGENT_TERMINAL,
         EVENT_SESSION_FORKED,
+        EVENT_REQUEST_ATTEMPT,
         EVENT_REQUEST_META,  # HARNESS-02: request.meta 请求快照
         EVENT_REQUEST_USAGE,  # DSH 借鉴: request.usage 响应 usage 明细
         EVENT_INTEROP_SPLICED,  # DSH 借鉴: interop.spliced 协调注入事件

@@ -121,3 +121,48 @@ def effective_generation_contract(client: Any) -> dict[str, Any]:
         "send_tool_choice": bool(getattr(client, "send_tool_choice", True)),
         "reasoning_split": bool(getattr(client, "reasoning_split", False)),
     }
+
+
+def exceptional_attempt_payload(
+    *,
+    attempt_id: str,
+    kind: str,
+    attempt_index: int,
+    round_no: int,
+    client: Any,
+    messages: list[dict],
+    tools: list[dict],
+    transform: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build bounded facts for a real non-primary provider attempt.
+
+    Exceptional paths may pay one serialization because they are not the normal hot path.
+    """
+    history_chars = sum(len(str(m.get("content", "") or "")) for m in messages)
+    reasoning_chars = sum(len(str(m.get("reasoning_content", "") or "")) for m in messages)
+    try:
+        serialized = json.dumps(
+            {"messages": messages, "tools": tools},
+            ensure_ascii=False, separators=(",", ":"), default=str,
+        )
+        visible_chars = len(serialized)
+        structure_fp = hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:24]
+    except (TypeError, ValueError):
+        visible_chars = history_chars + reasoning_chars
+        structure_fp = ""
+    contract = effective_generation_contract(client)
+    return {
+        "round": int(round_no or 0),
+        "attempt_id": str(attempt_id or ""),
+        "attempt_kind": str(kind or "unknown"),
+        "attempt_index": int(attempt_index or 0),
+        "provider": contract["provider"],
+        "model": contract["model"],
+        "tools_count": len(tools),
+        "history_chars": history_chars,
+        "reasoning_chars": reasoning_chars,
+        "provider_visible_chars": visible_chars,
+        "provider_structure_fp": structure_fp,
+        "generation_contract": contract,
+        "transform": dict(transform or {}),
+    }

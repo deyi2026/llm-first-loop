@@ -129,6 +129,7 @@ class ArchitectureStatusProvider:
         self._cache_health_fn: Callable[[], dict | None] | None = None
         self._cache_guard_fn: Callable[[str], dict | None] | None = None  # session 透传（grill-me Q11）
         self._request_usage_fn: Callable[[], dict | None] | None = None
+        self._causality_fn: Callable[[str], dict | None] | None = None
 
     # ── 采集（循环事件附带调用，零侵入）──
     def record_phase(self, phase: str) -> None:
@@ -415,6 +416,10 @@ class ArchitectureStatusProvider:
         """
         self._request_usage_fn = fn
 
+    def set_causality_fn(self, fn) -> None:
+        """Inject a read-only, on-demand per-session causal diagnostic callback."""
+        self._causality_fn = fn
+
     def set_pending_actions_fn(self, fn) -> None:
         """注入待办聚合回调（T4: AI 一站式感知系统待办，纯聚合无判断）.
 
@@ -469,6 +474,19 @@ class ArchitectureStatusProvider:
             except Exception:  # noqa: BLE001 — 参数快照失败如实标注 None（fail-open）
                 runtime_params = None
         request_usage_fn = self._request_usage_fn
+        _causality_requested = (
+            isinstance(dimensions, list) and "causality" in dimensions
+        ) or (
+            isinstance(dimensions, str)
+            and "causality" in {
+                item for item in re.split(r"[,，\s]+", dimensions) if item
+            }
+        )
+        _causality = (
+            self._causality_snapshot(session_id)
+            if _causality_requested
+            else {"available": self._causality_fn is not None, "on_demand": True}
+        )
         avail = {
             "current_phase": self._phase_for(session_id),
             "action_trace": [a.to_dict() for a in self._action_trace[-30:]],
@@ -532,6 +550,7 @@ class ArchitectureStatusProvider:
             # P2-2: 备份状态（AI 经 architecture_status.recovery 感知待恢复备份）
             "recovery": self._recovery_status(),
             # R2/A6: 程序故障计数（fail-open 聚合，AI 可感知"程序故障率"）
+            "causality": _causality,
             "program_faults": dict(self._program_faults),
         }
         # EVO-20260818/2026-08-20 防御归一化: dimensions 可能被模型传成字符串/残缺 JSON
@@ -551,6 +570,15 @@ class ArchitectureStatusProvider:
                 )
             return out
         return avail
+
+    def _causality_snapshot(self, session_id: str) -> dict | None:
+        fn = self._causality_fn
+        if fn is None:
+            return {"available": False, "note": "causality source not injected"}
+        try:
+            return fn(session_id)
+        except Exception:  # noqa: BLE001 — diagnosis is read-only/fail-open
+            return {"available": True, "status": "read_failed"}
 
     # ── 缓存快照辅助（fail-open）──
     def _cache_health_snapshot(self) -> dict | None:

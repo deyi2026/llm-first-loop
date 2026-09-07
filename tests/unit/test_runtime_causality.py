@@ -81,6 +81,7 @@ def test_causal_recording_is_provider_payload_neutral(tmp_path: Path) -> None:
     assert with_events[0] == without_events[0]
     assert with_events[1] == without_events[1]
 
+    assert not [event for event in with_events[2] if event.type == "request.attempt"]
     meta = next(event for event in with_events[2] if event.type == "request.meta")
     assert meta.payload["attempt_kind"] == "primary"
     assert str(meta.payload["attempt_id"]).startswith("attempt-")

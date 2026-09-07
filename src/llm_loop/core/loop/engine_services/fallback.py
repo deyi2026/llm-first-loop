@@ -8,6 +8,7 @@ P2-B: 仅对 5xx/429/超时/网络执行默认模型 availability failover；其
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
@@ -23,6 +24,7 @@ from llm_loop.llm.errors import (
     LLMNetworkError,
     LLMTimeoutError,
 )
+from llm_loop.runtime.causality import exceptional_attempt_payload
 
 logger = logging.getLogger(__name__)
 
@@ -35,18 +37,19 @@ class FallbackService:
 
     def _reachability_begin_attempt(
         self, *, kind: str, attempt_index: int, model: str, provider: str
-    ) -> None:
+    ) -> str:
         """Optional observability hook; never a fallback business dependency."""
         try:
             tool_cycle = getattr(self._host, "_tool_cycle", None)
             fn = getattr(tool_cycle, "_reachability_begin_attempt", None)
             if callable(fn):
-                fn(
+                return str(fn(
                     kind=kind, attempt_index=attempt_index,
                     model=model, provider=provider,
-                )
+                ) or "")
         except Exception:  # noqa: BLE001 -- telemetry fail-open
             logger.debug("fallback reachability bind failed (fail-open)", exc_info=True)
+        return ""
 
     def _reachability_finalize(self, outcome: str) -> None:
         """Optional observability finalize hook; no effect on retry semantics."""
@@ -221,12 +224,26 @@ class FallbackService:
                         provider=provider_id,
                         model=model_id,
                     )
-                self._reachability_begin_attempt(
+                _attempt_id = self._reachability_begin_attempt(
                     kind="fallback",
                     attempt_index=provider_attempt_index,
                     model=f"{provider_id}/{model_id}",
                     provider=provider_id,
                 )
+                with contextlib.suppress(Exception):
+                    self._host._event_append(
+                        session_id,
+                        "request.attempt",
+                        exceptional_attempt_payload(
+                            attempt_id=_attempt_id,
+                            kind="fallback",
+                            attempt_index=provider_attempt_index,
+                            round_no=int(run_round or 0),
+                            client=client,
+                            messages=candidate_messages,
+                            tools=candidate_tools,
+                        ),
+                    )
                 resp = client.chat(**chat_kwargs)
             except LLMError as exc:
                 self._reachability_finalize("provider_error")

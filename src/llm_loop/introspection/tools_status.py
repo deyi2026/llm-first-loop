@@ -162,6 +162,7 @@ _ALL_DIMS = [
     "pending_actions",
     "recovery",
     "program_faults",
+    "causality",
 ]
 
 
@@ -188,7 +189,14 @@ def run_status(ctx: Any, status_provider: Any, args: dict) -> ToolResult:
     default_view = dims is None
     if default_view:
         dims = _DEFAULT_DIMS
-    snap = status_provider.snapshot(dimensions=dims)
+    if "causality" in dims:
+        snap = status_provider.snapshot(
+            session_id=current_session_id(ctx), dimensions=dims
+        )
+    else:
+        # Preserve the established duck-typed status-provider contract for every
+        # ordinary dimension; causality is the only session-scoped extension.
+        snap = status_provider.snapshot(dimensions=dims)
     if default_view:
         snap["_default_view_hint"] = (
             "[默认精简视图] 显示维度: " + ", ".join(_DEFAULT_DIMS)

@@ -49,6 +49,7 @@ from llm_loop.memory.synopsis import (
     SynopsisError,
     SynopsisStore,
 )
+from llm_loop.runtime.causal_diagnose import diagnose_event_store
 from llm_loop.runtime.causality import build_runtime_causal_snapshot
 from llm_loop.runtime.route_context import get_route_context, set_route_audit_fn
 from llm_loop.runtime.tool_octet import register_octet_sink
@@ -1318,6 +1319,9 @@ def build_engine(settings: Settings) -> LoopEngine:
     # 不再靠 prompt 注入让模型猜 headroom / prefix 漂移。
     status_provider.set_request_usage_fn(
         lambda: engine._run_state().last_request_usage
+    )
+    status_provider.set_causality_fn(
+        lambda sid: diagnose_event_store(engine._event_store, sid)
     )
     # EVO-20260818（spec §5.4.1-2）: cache_health/cache_guard 对外可观测注入——
     # cache_guard 回调透传 session_id（guard 窗口 per-session，grill-me Q11）；fail-open
