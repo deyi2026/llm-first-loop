@@ -30,6 +30,7 @@ from llm_loop.introspection.corrections import CorrectionContext, CorrectionTool
 from llm_loop.introspection.docs_search import DocsSearcher
 from llm_loop.introspection.search import RecordSearcher
 from llm_loop.introspection.status import ArchitectureStatusProvider
+from llm_loop.introspection.task_evidence import TaskEvidenceVerifier
 from llm_loop.llm.client import LLMClient
 from llm_loop.memory.archive import ArchiveStore
 from llm_loop.memory.episode import EpisodeStore
@@ -394,8 +395,6 @@ def build_engine(settings: Settings) -> LoopEngine:
         def _evidence_owner() -> OwnerScope:
             sid = current_session_id.get() or registry._session_id
             return _evidence_owner_for_session(sid)
-
-        from llm_loop.introspection.task_evidence import TaskEvidenceVerifier
 
         task_evidence_verifier = TaskEvidenceVerifier(
             evidence_blobs,
