@@ -45,6 +45,11 @@ class InterruptedCapture:
         "_native_state_chars",
         "_last_checkpoint_chars",
         "_last_checkpoint_at",
+        "_provider_send_at",
+        "_first_delta_ms",
+        "_first_reasoning_ms",
+        "_first_visible_ms",
+        "_first_tool_call_ms",
         "text_parts",
         "reasoning_parts",
         "cancelled",
@@ -72,19 +77,58 @@ class InterruptedCapture:
         self._native_state_chars = 0
         self._last_checkpoint_chars = 0
         self._last_checkpoint_at = 0.0
+        self._provider_send_at: float | None = None
+        self._first_delta_ms: float | None = None
+        self._first_reasoning_ms: float | None = None
+        self._first_visible_ms: float | None = None
+        self._first_tool_call_ms: float | None = None
         self.text_parts: list[str] = []
         self.reasoning_parts: list[str] = []
         self.cancelled = False  # 吸收原局部 _cancelled_during_llm（取消归因消费点同名语义）
         self._fired = False
 
+    def mark_provider_send(self) -> None:
+        """Mark the primary provider-call boundary; timing is telemetry only."""
+        if self._provider_send_at is None:
+            self._provider_send_at = time.perf_counter()
+
+    def _elapsed_ms(self) -> float | None:
+        if self._provider_send_at is None:
+            return None
+        return (time.perf_counter() - self._provider_send_at) * 1000.0
+
+    def timing(self, *, total_ms: float | None = None) -> dict[str, Any]:
+        return {
+            "provider_total_ms": total_ms if total_ms is not None else self._elapsed_ms(),
+            "first_delta_ms": self._first_delta_ms,
+            "first_reasoning_ms": self._first_reasoning_ms,
+            "first_visible_ms": self._first_visible_ms,
+            "first_tool_call_ms": self._first_tool_call_ms,
+            "prefill_end_ms": None,
+        }
+
     def on_delta(self, delta: Any) -> None:
-        """流式增量累积：text/reasoning 空串不收（与原两处内联判断逐字等价）."""
-        if getattr(delta, "text", ""):
-            self.text_parts.append(delta.text)
-            self._text_chars += len(delta.text)
-        if getattr(delta, "reasoning", ""):
-            self.reasoning_parts.append(delta.reasoning)
-            self._reasoning_chars += len(delta.reasoning)
+        """Accumulate streaming data; read the clock only for unresolved first boundaries."""
+        text = getattr(delta, "text", "")
+        reasoning = getattr(delta, "reasoning", "")
+        need_timing = (
+            self._first_delta_ms is None
+            or (bool(reasoning) and self._first_reasoning_ms is None)
+            or (bool(text) and self._first_visible_ms is None)
+        )
+        elapsed = self._elapsed_ms() if need_timing else None
+        if self._first_delta_ms is None and elapsed is not None and (text or reasoning):
+            self._first_delta_ms = elapsed
+        if reasoning and self._first_reasoning_ms is None:
+            self._first_reasoning_ms = elapsed
+        if text and self._first_visible_ms is None:
+            self._first_visible_ms = elapsed
+        if text:
+            self.text_parts.append(text)
+            self._text_chars += len(text)
+        if reasoning:
+            self.reasoning_parts.append(reasoning)
+            self._reasoning_chars += len(reasoning)
         self._maybe_checkpoint()
 
     def on_provider_state(self, state: dict[str, Any]) -> None:
@@ -94,12 +138,21 @@ class InterruptedCapture:
         restart can diagnose/recover the exact interrupted phase, but they are never
         converted into normal ToolCall objects here.
         """
+        drafts = state.get("tool_call_drafts")
+        need_timing = bool(state) and (
+            self._first_delta_ms is None
+            or (isinstance(drafts, list) and bool(drafts) and self._first_tool_call_ms is None)
+        )
+        elapsed = self._elapsed_ms() if need_timing else None
+        if state and self._first_delta_ms is None and elapsed is not None:
+            self._first_delta_ms = elapsed
         replay = state.get("provider_replay")
         if isinstance(replay, dict):
             self._provider_replay = replay
-        drafts = state.get("tool_call_drafts")
         if isinstance(drafts, list):
             self._tool_call_drafts = [dict(item) for item in drafts if isinstance(item, dict)]
+            if self._tool_call_drafts and self._first_tool_call_ms is None:
+                self._first_tool_call_ms = elapsed
         try:
             self._native_state_chars = len(
                 json.dumps(
@@ -114,6 +167,25 @@ class InterruptedCapture:
         except (TypeError, ValueError):
             self._native_state_chars = 0
         self._maybe_checkpoint()
+
+    def on_response(self, response: Any) -> None:
+        """Capture terminal first-visible/tool boundaries for non-delta responses."""
+        elapsed = self._elapsed_ms()
+        if elapsed is None:
+            return
+        has_any = bool(
+            getattr(response, "reasoning_content", None)
+            or getattr(response, "content", None)
+            or getattr(response, "tool_calls", None)
+        )
+        if has_any and self._first_delta_ms is None:
+            self._first_delta_ms = elapsed
+        if getattr(response, "reasoning_content", None) and self._first_reasoning_ms is None:
+            self._first_reasoning_ms = elapsed
+        if getattr(response, "content", None) and self._first_visible_ms is None:
+            self._first_visible_ms = elapsed
+        if getattr(response, "tool_calls", None) and self._first_tool_call_ms is None:
+            self._first_tool_call_ms = elapsed
 
     def _maybe_checkpoint(self, *, force: bool = False) -> None:
         total_chars = self._text_chars + self._reasoning_chars + self._native_state_chars
@@ -151,6 +223,16 @@ class InterruptedCapture:
             return
         self._fired = True
         self._maybe_checkpoint(force=True)
+        transport_facts: dict[str, Any] = {}
+        if exc is not None:
+            for name in (
+                "finish_reason",
+                "completion_tokens",
+                "reasoning_tokens",
+                "provider_truncated",
+            ):
+                if hasattr(exc, name):
+                    transport_facts[name] = getattr(exc, name)
         self._engine._on_llm_interrupted(
             sess,
             text_parts=self.text_parts,
@@ -162,4 +244,6 @@ class InterruptedCapture:
             model=self._model,
             provider_replay=self._provider_replay,
             tool_call_drafts=self._tool_call_drafts,
+            transport_facts=transport_facts,
+            timing=self.timing(),
         )

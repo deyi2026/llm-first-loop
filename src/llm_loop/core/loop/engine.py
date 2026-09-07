@@ -909,6 +909,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     }
                     if _guard_ctx is not None:
                         _stream_kwargs["guard_context"] = _guard_ctx
+                    cap.mark_provider_send()
                     it = stream_fn(**_stream_kwargs)
                     while True:
                         try:
@@ -937,6 +938,8 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                         except StopIteration as exc:
                             resp = exc.value
                             _llm_round_ms = (time.perf_counter() - _llm_start) * 1000.0
+                            if resp is not None:
+                                cap.on_response(resp)
                             break
                         except GeneratorExit:
                             # P1-6(2026-08-15，审计发现 #17)：客户端断连——部分回答如实
@@ -968,8 +971,11 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             provider=getattr(llm_client, "provider", ""),
                             model=chat_model_arg or getattr(llm_client, "model", ""),
                         )
+                    cap.mark_provider_send()
                     resp = llm_client.chat(**_chat_kwargs)
                     _llm_round_ms = (time.perf_counter() - _llm_sync_start) * 1000.0
+                    if resp is not None:
+                        cap.on_response(resp)
                 _cancel_reason = _background_cancel_reason(self, session_id)
                 if _cancel_reason:
                     cap.cancelled = True
@@ -1216,6 +1222,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     "compaction_epoch": _cache_state.compact_event_seq,
                     "runtime_pid": os.getpid(),
                     "usage_available": _req_usage_available,
+                    "timing": cap.timing(total_ms=_llm_round_ms),
                 }
                 _cache_state.last_request_usage = dict(_request_usage_payload)
                 self._event_append(session_id, "request.usage", _request_usage_payload)

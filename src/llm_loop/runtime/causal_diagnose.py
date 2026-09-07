@@ -18,6 +18,8 @@ _COMPONENTS = {
     "history": "core.prompt_build.stages.history_pipeline",
     "recent_continuity": "core.recent_continuity",
     "tool_surface": "tools.registry/provider projection",
+    "wire_transform": "provider retry/fallback wire transform",
+    "cache": "provider/cache usage observation",
 }
 
 
@@ -27,6 +29,7 @@ class _Attempt:
     event_type: str
     payload: dict[str, Any]
     usage: dict[str, Any] | None = None
+    interruption: dict[str, Any] | None = None
 
 
 def _event_parts(event: Any) -> tuple[int, str, dict[str, Any]]:
@@ -51,7 +54,23 @@ def _attempts(events: Iterable[Any]) -> list[_Attempt]:
             ),
             None,
         )
-        out.append(_Attempt(seq=seq, event_type=event_type, payload=payload, usage=usage))
+        interruption = next(
+            (
+                p
+                for s, t, p in rows
+                if seq < s < next_seq and t == "llm.interrupted"
+            ),
+            None,
+        )
+        out.append(
+            _Attempt(
+                seq=seq,
+                event_type=event_type,
+                payload=payload,
+                usage=usage,
+                interruption=interruption,
+            )
+        )
     return out
 
 
@@ -103,22 +122,56 @@ def _normalized_continuity(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+
+def _normalized_wire_transform(payload: dict[str, Any]) -> dict[str, Any]:
+    transform = payload.get("transform") or {}
+    return {
+        "wire_shape_changed": bool(transform.get("wire_shape_changed")),
+        "messages_before": int(transform.get("messages_before", 0) or 0),
+        "messages_after": int(transform.get("messages_after", 0) or 0),
+        "tail_users_merged": int(transform.get("tail_users_merged", 0) or 0),
+    }
+
+
+def _normalized_cache(attempt: _Attempt) -> dict[str, Any] | None:
+    usage = attempt.usage
+    if usage is None:
+        return None
+    return {
+        "stable_prefix_fp": str(usage.get("stable_prefix_fp") or ""),
+        "prefix_changed": bool(usage.get("prefix_changed")),
+        "prefix_change_reason": str(usage.get("prefix_change_reason") or ""),
+        "cache_prefix_epoch": int(usage.get("cache_prefix_epoch", 0) or 0),
+        "compaction_epoch": int(usage.get("compaction_epoch", 0) or 0),
+    }
+
 def _stage_values(attempt: _Attempt) -> list[tuple[str, Any]]:
     payload = attempt.payload
     runtime = payload.get("runtime_snapshot") or {}
-    return [
-        ("runtime", str(runtime.get("snapshot_id") or "")),
-        ("generation_contract", dict(payload.get("generation_contract") or {})),
-        ("ingress", _normalized_ingress(payload)),
-        ("history", _normalized_history(payload)),
-        ("recent_continuity", _normalized_continuity(payload)),
+    values: list[tuple[str, Any]] = []
+    if runtime.get("snapshot_id"):
+        values.append(("runtime", str(runtime.get("snapshot_id") or "")))
+    values.append(("generation_contract", dict(payload.get("generation_contract") or {})))
+    if payload.get("influence"):
+        values.extend(
+            [
+                ("ingress", _normalized_ingress(payload)),
+                ("history", _normalized_history(payload)),
+                ("recent_continuity", _normalized_continuity(payload)),
+            ]
+        )
+    values.append(
         (
             "tool_surface",
-            {
-                "tools_count": int(payload.get("tools_count", 0) or 0),
-            },
-        ),
-    ]
+            {"tools_count": int(payload.get("tools_count", 0) or 0)},
+        )
+    )
+    if attempt.event_type == "request.attempt":
+        values.append(("wire_transform", _normalized_wire_transform(payload)))
+    cache = _normalized_cache(attempt)
+    if cache is not None:
+        values.append(("cache", cache))
+    return values
 
 
 def _attempt_card(attempt: _Attempt) -> dict[str, Any]:
@@ -138,6 +191,7 @@ def _attempt_card(attempt: _Attempt) -> dict[str, Any]:
         "provider_visible_chars": int(payload.get("provider_visible_chars", 0) or 0),
         "provider_structure_fp": str(payload.get("provider_structure_fp") or ""),
         "usage_available": attempt.usage is not None,
+        "interruption_available": attempt.interruption is not None,
     }
 
 
@@ -152,6 +206,11 @@ def _select_target(attempts: list[_Attempt], target_attempt_id: str = "") -> _At
 
 def _select_reference(attempts: list[_Attempt], target: _Attempt) -> tuple[_Attempt | None, str]:
     prior = [a for a in attempts if a.seq < target.seq]
+    if target.event_type == "request.attempt":
+        target_round = int(target.payload.get("round", 0) or 0)
+        for candidate in reversed(prior):
+            if int(candidate.payload.get("round", 0) or 0) == target_round:
+                return candidate, "preceding_attempt_same_round"
     target_model = str(target.payload.get("model") or "")
     target_provider = str((target.payload.get("generation_contract") or {}).get("provider") or "")
     for candidate in reversed(prior):
@@ -174,23 +233,35 @@ def _constraint_hits(target: _Attempt) -> list[dict[str, Any]]:
     payload = target.payload
     generation = payload.get("generation_contract") or {}
     usage = target.usage or {}
+    interrupted = target.interruption or {}
     hits: list[dict[str, Any]] = []
     max_tokens = generation.get("max_tokens")
     tokens_out = usage.get("tokens_out")
+    token_source = "request.usage"
+    if not isinstance(tokens_out, int):
+        tokens_out = interrupted.get("completion_tokens")
+        token_source = "llm.interrupted"
     if (
         isinstance(max_tokens, int)
         and max_tokens > 0
         and isinstance(tokens_out, int)
         and tokens_out >= max_tokens
     ):
-        hits.append(
-            {
-                "constraint": "output_budget",
-                "observed": tokens_out,
-                "limit": max_tokens,
-                "mechanical_fact": "provider output tokens reached configured max_tokens",
-            }
-        )
+        hit: dict[str, Any] = {
+            "constraint": "output_budget",
+            "observed": tokens_out,
+            "limit": max_tokens,
+            "mechanical_fact": "provider output tokens reached configured max_tokens",
+        }
+        if token_source == "llm.interrupted":
+            hit["evidence_source"] = token_source
+            if (
+                int(interrupted.get("reasoning_tail_chars", 0) or 0) > 0
+                and int(interrupted.get("text_tail_chars", 0) or 0) == 0
+                and int(interrupted.get("tool_call_draft_count", 0) or 0) == 0
+            ):
+                hit["terminal_shape"] = "reasoning_only_no_visible_text_or_tool_draft"
+        hits.append(hit)
     headroom = usage.get("context_headroom_tokens")
     if isinstance(headroom, int) and headroom <= 0:
         hits.append(
@@ -202,6 +273,19 @@ def _constraint_hits(target: _Attempt) -> list[dict[str, Any]]:
         )
     return hits
 
+
+
+def _target_unknowns(target: _Attempt, target_card: dict[str, Any]) -> list[str]:
+    unknown: list[str] = []
+    if not target_card["runtime_snapshot_id"] and target.event_type == "request.meta":
+        unknown.append("target runtime snapshot unavailable")
+    if target.usage is None:
+        unknown.append("target request.usage unavailable; cache constraints unknown")
+        if not isinstance((target.interruption or {}).get("completion_tokens"), int):
+            unknown.append("provider completion constraint unknown")
+    if target.event_type == "request.attempt" and not target.payload.get("influence"):
+        unknown.append("exceptional attempt reuses/rebuilds prior projection; full stage influence not recorded")
+    return unknown
 
 def diagnose_causality(events: Iterable[Any], *, target_attempt_id: str = "") -> dict[str, Any]:
     """Return a bounded mechanical comparison; never mutate runtime or infer answer quality."""
@@ -231,7 +315,10 @@ def diagnose_causality(events: Iterable[Any], *, target_attempt_id: str = "") ->
             "earliest_mechanical_divergence": None,
             "constraint_hits": _constraint_hits(target),
             "unchanged_facts": [],
-            "unknown": ["no earlier recorded attempt is available for mechanical comparison"],
+            "unknown": [
+                "no earlier recorded attempt is available for mechanical comparison",
+                *_target_unknowns(target, target_card),
+            ],
         }
 
     ref_stages = dict(_stage_values(reference))
@@ -239,7 +326,17 @@ def diagnose_causality(events: Iterable[Any], *, target_attempt_id: str = "") ->
     unchanged: list[str] = []
     divergence: dict[str, Any] | None = None
     for stage, target_value in target_stages:
-        reference_value = ref_stages.get(stage)
+        if stage == "cache" and "cache" not in ref_stages:
+            continue
+        if stage == "wire_transform" and "wire_transform" not in ref_stages:
+            reference_value = {
+                "wire_shape_changed": False,
+                "messages_before": 0,
+                "messages_after": 0,
+                "tail_users_merged": 0,
+            }
+        else:
+            reference_value = ref_stages.get(stage)
         if target_value == reference_value:
             unchanged.append(stage)
             continue
@@ -252,13 +349,7 @@ def diagnose_causality(events: Iterable[Any], *, target_attempt_id: str = "") ->
                 "note": "mechanical difference only; this is not a semantic root-cause judgment",
             }
 
-    unknown: list[str] = []
-    if not target_card["runtime_snapshot_id"]:
-        unknown.append("target runtime snapshot unavailable")
-    if target.usage is None:
-        unknown.append("target request.usage unavailable; provider completion/cache constraints unknown")
-    if target.event_type == "request.attempt" and not target.payload.get("influence"):
-        unknown.append("exceptional attempt reuses/rebuilds prior projection; full stage influence not recorded")
+    unknown = _target_unknowns(target, target_card)
     return {
         "status": "compared",
         "observed_facts": observed,

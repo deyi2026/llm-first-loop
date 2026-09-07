@@ -145,6 +145,12 @@ class RecoveryController:
                 model_label=model_ref,
                 round_no=round_no,
                 attempt_index=1,
+                transform={
+                    "wire_shape_changed": True,
+                    "messages_before": len(messages),
+                    "messages_after": len(retry_messages),
+                    "tail_users_merged": int(result.transformed_tail_users or 0),
+                },
             )
             if resp is not None:
                 result.resp = resp
@@ -179,6 +185,7 @@ class RecoveryController:
         metadata_registry: Any = None,
         round_no: int = 0,
         attempt_index: int = 1,
+        transform: dict[str, Any] | None = None,
     ) -> tuple[Any | None, LLMError | None]:
         """Consume one changed-payload retry to completion without emitting partial deltas."""
         del metadata_registry
@@ -205,7 +212,7 @@ class RecoveryController:
                         client=llm_client,
                         messages=messages,
                         tools=tools_param,
-                        transform={"wire_shape_changed": True},
+                        transform=dict(transform or {"wire_shape_changed": True}),
                     ),
                 )
             if callable(stream_fn):

@@ -41,11 +41,23 @@ class LLMProtocolError(LLMError):
 
 
 class LLMEmptyResponseError(LLMError):
-    """LLM 返回空内容（无文本且无工具调用）——流被截断/模型异常，不应静默记为成功.
+    """Terminal response contained no visible text/tool call; preserve transport facts."""
 
-    EVO-20260818-92bd97d6: 此前空响应被静默记为 llm_response content=(空)，
-    用户看到"无回答输出"且无异常记录；现在抛此异常走如实反馈路径。
-    """
+    def __init__(
+        self,
+        message: str,
+        *,
+        provider: str = "",
+        finish_reason: str = "",
+        completion_tokens: int = 0,
+        reasoning_tokens: int | None = None,
+        provider_truncated: bool = False,
+    ) -> None:
+        super().__init__(message, provider=provider)
+        self.finish_reason = str(finish_reason or "")
+        self.completion_tokens = int(completion_tokens or 0)
+        self.reasoning_tokens = reasoning_tokens
+        self.provider_truncated = bool(provider_truncated)
 
 
 # R4: provider 返回的上下文溢出错误模式（如实反馈让 AI 决策，不自动重试）

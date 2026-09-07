@@ -1058,6 +1058,8 @@ class _EventsMixin:
         model: str = "",
         provider_replay: dict[str, Any] | None = None,
         tool_call_drafts: list[dict[str, Any]] | None = None,
+        transport_facts: dict[str, Any] | None = None,
+        timing: dict[str, Any] | None = None,
     ) -> None:
         """B1(EVO-20260902-41898b20)：user_stop/llm_error 中断时半截产物落盘.
 
@@ -1160,6 +1162,11 @@ class _EventsMixin:
                     "truncation_artifact_ref": artifact_ref,
                     "native_state_chars": native_chars,
                     "tool_call_draft_count": draft_count,
+                    "finish_reason": str((transport_facts or {}).get("finish_reason") or ""),
+                    "completion_tokens": (transport_facts or {}).get("completion_tokens"),
+                    "reasoning_tokens": (transport_facts or {}).get("reasoning_tokens"),
+                    "provider_truncated": (transport_facts or {}).get("provider_truncated"),
+                    "timing": dict(timing or {}),
                 },
             )
             if not text_tail and not reasoning_tail and info["reason"] != "cancelled":

@@ -969,6 +969,10 @@ class LLMClient:
             raise LLMEmptyResponseError(
                 f"模型返回空响应（无内容且无工具调用，provider={self.provider}，model={self.model}）",
                 provider=self.provider,
+                finish_reason=result.finish_reason,
+                completion_tokens=result.completion_tokens,
+                reasoning_tokens=result.reasoning_tokens,
+                provider_truncated=result.truncated,
             )
         return result
 

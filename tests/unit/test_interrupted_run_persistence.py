@@ -699,3 +699,93 @@ def test_history_compaction_flag_does_not_create_provider_truncation_index(tmp_p
 
     assert answer == "done"
     host.episode_store.index_truncated_run.assert_not_called()
+
+
+def test_llm_interrupted_event_persists_terminal_transport_and_timing(tmp_path) -> None:
+    from llm_loop.event_log.store import EventStore
+
+    es = EventStore(tmp_path / "events")
+    eng = _StubEngine(es)
+    sess, _store = eng.new()
+    eng._on_llm_interrupted(
+        sess,
+        text_parts=[],
+        reasoning_parts=["R" * 32],
+        reason="llm_error",
+        round_no=9,
+        provider="cognilocal",
+        model="ornith",
+        transport_facts={
+            "finish_reason": "length",
+            "completion_tokens": 4096,
+            "reasoning_tokens": 4096,
+            "provider_truncated": False,
+        },
+        timing={
+            "provider_total_ms": 4100.0,
+            "first_delta_ms": 12.0,
+            "first_reasoning_ms": 12.0,
+            "first_visible_ms": None,
+            "first_tool_call_ms": None,
+            "prefill_end_ms": None,
+        },
+    )
+    rows = [e for e in es.read(sess.session_id) if e.type == "llm.interrupted"]
+    assert len(rows) == 1
+    payload = rows[0].payload
+    assert payload["completion_tokens"] == 4096
+    assert payload["finish_reason"] == "length"
+    assert payload["reasoning_tokens"] == 4096
+    assert payload["provider_truncated"] is False
+    assert payload["reasoning_tail_chars"] == 32
+    assert payload["text_tail_chars"] == 0
+    assert payload["timing"]["first_reasoning_ms"] == 12.0
+    assert payload["timing"]["first_visible_ms"] is None
+    assert payload["timing"]["prefill_end_ms"] is None
+
+
+def test_interrupted_capture_carries_empty_response_transport_facts_without_replay() -> None:
+    from llm_loop.core.loop.engine_services.interrupted_capture import InterruptedCapture
+    from llm_loop.llm.errors import LLMEmptyResponseError
+
+    class Host:
+        def __init__(self) -> None:
+            self.interrupted = None
+
+        def _on_llm_partial_checkpoint(self, *args, **kwargs) -> None:
+            return None
+
+        def _on_llm_interrupted(self, *args, **kwargs) -> None:
+            self.interrupted = kwargs
+
+    host = Host()
+    sess = SimpleNamespace(session_id="s-causal")
+    cap = InterruptedCapture(host, sess=sess, round_no=4, provider="p", model="m")
+    cap.mark_provider_send()
+    cap.on_delta(StreamDelta(text="", reasoning="THINK"))
+    exc = LLMEmptyResponseError(
+        "empty",
+        provider="p",
+        finish_reason="length",
+        completion_tokens=4096,
+        reasoning_tokens=4096,
+        provider_truncated=False,
+    )
+    cap.fire(sess, "llm_error", 4, exc)
+
+    assert host.interrupted is not None
+    assert host.interrupted["transport_facts"] == {
+        "finish_reason": "length",
+        "completion_tokens": 4096,
+        "reasoning_tokens": 4096,
+        "provider_truncated": False,
+    }
+    assert host.interrupted["reasoning_parts"] == ["THINK"]
+    timing = host.interrupted["timing"]
+    assert timing["first_reasoning_ms"] is not None
+    assert timing["first_visible_ms"] is None
+    assert timing["first_tool_call_ms"] is None
+    assert timing["provider_total_ms"] is not None
+    # Telemetry capture does not manufacture a provider replay/tool execution path.
+    assert host.interrupted["provider_replay"] is None
+    assert host.interrupted["tool_call_drafts"] == []

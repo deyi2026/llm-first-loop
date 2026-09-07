@@ -344,6 +344,11 @@ REGISTRY.register(
             "native_state_sha256": "中断时 provider-native sidecar 内容指纹",
             "native_state_chars": "中断时 provider-native sidecar JSON 字符数",
             "tool_call_draft_count": "中断时未完成 tool-call draft 数；非可执行工具调用",
+            "finish_reason": "provider terminal finish reason；未知为空",
+            "completion_tokens": "provider terminal completion token 事实；未知为 null/0",
+            "reasoning_tokens": "provider terminal reasoning token 事实；未知为 null",
+            "provider_truncated": "provider 是否显式报告 truncation；未知为 null",
+            "timing": "primary attempt 机械阶段耗时；prefill 不可观测时为 null",
         },
     )
 )
@@ -737,6 +742,7 @@ REGISTRY.register(
             "compaction_epoch": "历史压缩事件序号；与 cache_prefix_epoch 分离",
             "runtime_pid": "产生本次请求的 LFL 进程 PID；用于归因进程重启后的 cache/run-state 冷启动，不参与 prompt/路由",
             "usage_available": "provider 是否返回 usage（false 时 tokens_in/cache_hit=0 不可当全 miss）",
+            "timing": "primary provider attempt 阶段耗时；异常/非 primary 不伪造",
         },
     )
 )
