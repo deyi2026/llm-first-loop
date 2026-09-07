@@ -14,7 +14,7 @@ from llm_loop.core.message import (
     ToolResult,
     ToolResultStatus,
 )
-from llm_loop.core.run_context import current_workspace_root
+from llm_loop.core.run_context import current_session_id, current_workspace_root
 from llm_loop.core.session import SessionStore
 from llm_loop.core.tool_execution_journal import ToolExecutionJournal
 from llm_loop.event_log.store import EventStore
@@ -330,6 +330,66 @@ def test_generic_shell_effect_never_infers_artifact_identity(tmp_path: Path) -> 
     assert target.read_text(encoding="utf-8") == "shell"
     assert result.artifact_facts == ()
     assert not any(store.records_root.rglob("*.json"))
+
+
+def test_session_delete_keeps_workspace_artifact_for_next_session_same_workspace(
+    tmp_path: Path,
+) -> None:
+    from llm_loop.factory import build_engine
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    target = workspace / "result.txt"
+    original = b"PRODUCER-SNAPSHOT\n"
+    target.write_bytes(original)
+
+    settings = Settings(
+        llm_api_key="k",
+        llm_base_url="https://x.invalid/v1",
+        llm_model="m",
+        data_dir=str(tmp_path / "data"),
+        extract_enabled=False,
+    )
+    engine = build_engine(settings)  # type: ignore[arg-type]
+    read_tool = engine.registry.get("read_file")
+    assert isinstance(read_tool, ReadFileTool)
+    assert read_tool.artifact_store is not None
+
+    producer_sid = engine.session.create()
+    record = read_tool.artifact_store.create(
+        workspace_scope=str(workspace),
+        canonical_path=str(target),
+        data=original,
+        owner_session_id=producer_sid,
+        execution_id="producer-exec",
+        tool_call_id="producer-call",
+        tool_name="edit_file",
+        effect_kind="file_replace",
+    )
+
+    assert engine.session.delete(producer_sid) is True
+    assert engine.session.exists(producer_sid) is False
+
+    # The workspace path may move on; the immutable artifact remains exact and the
+    # deleted producer sid remains provenance rather than retention authority.
+    target.write_bytes(b"CURRENT-WORKSPACE-BYTES\n")
+    consumer_sid = engine.session.create()
+    assert consumer_sid != producer_sid
+
+    sid_token = current_session_id.set(consumer_sid)
+    ws_token = current_workspace_root.set(str(workspace.resolve()))
+    try:
+        result = read_tool.execute(path=record.ref)
+    finally:
+        current_workspace_root.reset(ws_token)
+        current_session_id.reset(sid_token)
+
+    assert result.status is ToolResultStatus.SUCCESS
+    assert "PRODUCER-SNAPSHOT" in result.content
+    assert "CURRENT-WORKSPACE-BYTES" not in result.content
+    recovered = read_tool.artifact_store.resolve(record.ref, workspace_scope=str(workspace))
+    assert recovered.owner_session_id == producer_sid
+    assert recovered.sha256 == record.sha256
 
 
 def test_factory_shares_one_artifact_store_between_edit_and_read(tmp_path: Path) -> None:

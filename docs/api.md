@@ -64,6 +64,8 @@ engine.registry.register(MyTool())   # 实现 name/description/parameters/execut
 | `list_sessions()` / `get_meta(session_id)` | 会话列表/元数据 |
 | `fork(session_id, ...)` | 会话 fork（事件日志物理复制继承） |
 
+**删除语义**：`SessionStore.delete()` 删除的是 session-owned 会话状态及其明确 sidecar；它不级联删除当前工作区的 `artifact://v1/...` immutable artifact。Workspace artifact 属于 workspace-owned durable execution record，记录中的 `owner_session_id` 只表示 producer provenance，不授予 session 级联删除权。因此 producer session 被物理删除后，后续 session 只要仍在同一 workspace 且持有已知 artifact ref，仍可按 SHA256/immutable snapshot 契约精确读取。未来若清理 artifact，必须走独立、显式的 workspace/artifact retention 或 GC 契约，不能从 session delete 隐式推导。
+
 ## 5. 工具系统（`llm_loop.tools`）
 
 ### 工具协议（注册新工具只需实现 4 项）

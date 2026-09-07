@@ -67,6 +67,8 @@ engine.registry.register(MyTool())   # Implements name/description/parameters/ex
 | `list_sessions()` / `get_meta(session_id)` | Session list/metadata |
 | `fork(session_id, ...)` | Session fork (event log physically copied and inherited) |
 
+**Deletion semantics**: `SessionStore.delete()` deletes session-owned conversational state and its explicit sidecars; it does not cascade-delete `artifact://v1/...` immutable artifacts in the current workspace. A workspace artifact is a workspace-owned durable execution record, and its `owner_session_id` is producer provenance rather than session-level deletion authority. After the producer session is physically deleted, a later session in the same workspace that already has the artifact ref can still read the exact immutable snapshot under its SHA256 contract. Any future artifact cleanup must use a separate, explicit workspace/artifact retention or GC contract rather than being inferred from session deletion.
+
 ## 5. Tool System (`llm_loop.tools`)
 
 ### Tool Protocol (Only 4 Items Needed to Register a New Tool)
