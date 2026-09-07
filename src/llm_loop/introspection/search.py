@@ -468,12 +468,14 @@ class RecordSearcher:
 
         if self._episode_store is None or not session_id:
             return None
-        # B2(EVO-20260902-41898b20): truncated ref → compact 记录（摘要字段+两个
-        # 尾段），不跑 transcript 渲染；无该方法的存储实现回退原路径。
+        # truncated ref uses the same explicit hydration surface. New rows prefer
+        # immutable exact artifacts; legacy rows fall back to compact stored tails.
         if str(ref or "").startswith("truncated:"):
             # duck-typing 派发：无 hydrate_truncated 的存储实现如实回 None
             try:
-                return self._episode_store.hydrate_truncated(session_id, ref)
+                return self._episode_store.hydrate_truncated(
+                    session_id, ref, offset=offset, max_chars=max_chars
+                )
             except AttributeError:
                 return None
         return self._episode_store.hydrate(

@@ -10,7 +10,7 @@ spawn `dsh --profile headless "<task>"`（新 Agent + 新 session，cwd=目标�
 - 每次任务新 session（无跨任务记忆 → 任务文本自带上下文）
 
 P1（协议 v2，2026-08-16）:
-- ctx_path: 上下文文件引用（llm-first-loop 写 dsh_ctx.md → 工具读取并入任务文本）
+- ctx_path: 上下文文件 exact 引用（不复制/不截断正文，DSH agent 按需自主读取）
 - report_format: 汇报格式模板注入（决策摘要/关键中间结论/产物清单/未决项）
 - retry: 失败（非 0 退出码）新 session 重试；timeout 不重试（防无限超时）
 - 任务文本脱敏: 替换已知敏感 env 值（防 DSH session 日志留存密钥）
@@ -38,7 +38,6 @@ _DSH_PROFILE = "headless"
 _MAX_OUTPUT_CHARS = 30_000  # 对齐 TOOL_MAX_OUTPUT_CHARS：回答截断，超限标注
 _DEFAULT_TIMEOUT_S = 300.0  # 对齐 FEISHU_MSG_PROCESS_TIMEOUT_S
 _MAX_TIMEOUT_S = 3600.0  # 上限保护（防编排失控）
-_CTX_MAX_CHARS = 8_000  # ctx 文件并入任务文本的上限
 _MAX_RETRY = 3  # retry 上限保护
 
 # 汇报格式模板（协议 v2 §7.1：结构化汇报，压缩 DSH 自由发挥空间）
@@ -182,7 +181,8 @@ class DshTaskTool:
                 "安装/确认后可重试；示例: npm i -g @deepseek-ai/dsh 或确保 ~/.npm/_npx/*/node_modules/.bin 在 PATH。",
             )
 
-        # 任务组装：ctx 引用并入 → 汇报格式注入 → 脱敏
+        # 任务组装：ctx exact source 引用 → 汇报格式注入 → 脱敏。ctx 文件不再
+        # 在编排层复制/截成 8K；DSH agent 可按任务需要自主读取完整原文。
         full_task = self._build_task(task, ctx_path, report_format, acceptance)
 
         if background:
@@ -289,13 +289,31 @@ class DshTaskTool:
         )
 
     def _build_task(self, task: str, ctx_path: str, report_format: bool, acceptance: list[str]) -> str:
-        """任务组装（协议 v2）：ctx 引用并入 + 汇报格式注入 + 验收清单 + 敏感值脱敏."""
+        """任务组装（协议 v2）：ctx exact ref + 汇报格式 + 验收清单 + 脱敏.
+
+        ``ctx_path`` is already a user/model-selected source reference. The harness
+        must not semantically summarize it or silently replace it with an arbitrary
+        prefix. We validate that the source exists and pass its absolute path plus
+        mechanical size/SHA facts; the child model decides whether/where to read it.
+        """
         if ctx_path:
             try:
-                ctx_text = Path(ctx_path).read_text(encoding="utf-8")[:_CTX_MAX_CHARS]
-                task = f"参考上下文（{ctx_path}）：\n{ctx_text}\n\n--- 任务 ---\n{task}"
-            except OSError:
-                task = f"[警告: ctx_path 读取失败（{ctx_path}），已忽略]\n{task}"
+                source = Path(ctx_path).expanduser().resolve(strict=True)
+                if not source.is_file():
+                    raise OSError("ctx_path 不是普通文件")
+                import hashlib
+
+                with source.open("rb") as source_file:
+                    digest = hashlib.file_digest(source_file, "sha256").hexdigest()
+                size_bytes = source.stat().st_size
+                task = (
+                    "参考上下文 exact source（未在编排层截断/摘要）：\n"
+                    f"path={source}\nsize_bytes={size_bytes}\nsha256={digest}\n"
+                    "该路径是任务输入事实；是否读取及读取哪些部分由你按当前任务自主判断。\n\n"
+                    f"--- 任务 ---\n{task}"
+                )
+            except OSError as exc:
+                task = f"[警告: ctx_path 不可读取（{ctx_path}；{exc}），已忽略]\n{task}"
         if report_format:
             task = task + _REPORT_FORMAT_SUFFIX
         if acceptance:

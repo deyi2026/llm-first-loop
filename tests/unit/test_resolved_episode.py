@@ -346,8 +346,17 @@ def test_engine_truncated_answer_is_not_indexed_or_retired(tmp_path):
     assert final.metadata.get("llm_interrupted") is True
     assert final.metadata.get("provider_truncated") is True
     assert final.metadata.get("provider_finish_reason") == "length"
+    assert str(final.metadata.get("truncation_artifact_ref") or "").startswith("truncation:")
     assert all(RESOLVED_EPISODE_REF_KEY not in m.metadata for m in stored.messages)
+    # Provider length is unfinished, so it never enters the resolved episode index.
     assert episodes.search(sid, "", 10) == []
+    truncated_hits = episodes.search_truncated(sid, limit=10)
+    assert len(truncated_hits) == 1
+    assert truncated_hits[0]["run_end_reason"] == "provider_truncated"
+    exact = episodes.hydrate_truncated(sid, truncated_hits[0]["ref"], max_chars=100_000)
+    assert exact is not None and exact["exact_artifact"] is True
+    assert exact["complete"] is True
+    assert "PARTIAL-ANSWER" in exact["content"]
 
 
 def test_engine_next_human_turn_receives_truncation_fact_and_exact_partial(tmp_path):

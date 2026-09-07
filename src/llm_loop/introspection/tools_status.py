@@ -395,11 +395,14 @@ def run_search_records(ctx: Any, search_fn: Any, args: dict, session_id_fn: Any)
     #   kind=episode, query=""                    -> recent refs
     #   kind=episode, query="keyword"             -> search index
     #   kind=episode, query="episode:<ref>"       -> bounded hydrate
-    #   kind=episode, query="episode:<ref>#offset=N" -> next page
+    #   kind=episode, query="truncated:<ref>"     -> bounded exact partial hydrate
+    #   either ref + ``#offset=N``                 -> next page
     _episode_ref = ""
     _episode_offset = 0
-    if kind == "episode" and query.startswith("episode:"):
-        _match = re.fullmatch(r"(episode:[^#]+)(?:#offset=(\d+))?", query)
+    if kind == "episode" and query.startswith(("episode:", "truncated:")):
+        _match = re.fullmatch(
+            r"((?:episode|truncated):[^#]+)(?:#offset=(\d+))?", query
+        )
         if _match is not None:
             _episode_ref = _match.group(1)
             _episode_offset = int(_match.group(2) or 0)
@@ -413,11 +416,16 @@ def run_search_records(ctx: Any, search_fn: Any, args: dict, session_id_fn: Any)
                 tool_name="search_records",
             )
         try:
+            # An explicit recovery read is different from ordinary compact history
+            # hydration: the model has already chosen to inspect the exact source.
+            # Return as much exact source as the tool's physical output budget allows;
+            # only genuinely larger artifacts paginate with a monotonic next_offset.
+            _hydrate_chars = 100_000 if _episode_ref.startswith("truncated:") else 6000
             hydrated_raw = hydrate(
                 session_id=session_id_fn(),
                 ref=_episode_ref,
                 offset=_episode_offset,
-                max_chars=6000,
+                max_chars=_hydrate_chars,
             )
         except (TypeError, ValueError) as exc:
             return ToolResult(

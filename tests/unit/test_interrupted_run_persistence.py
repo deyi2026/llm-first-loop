@@ -504,3 +504,198 @@ def test_b2_searcher_merges_truncated_and_dispatches_hydrate(tmp_path):
     top = [h for h in hits if h.get("state") == "truncated"][0]
     rec = searcher.hydrate_episode(session_id=sid, ref=top["ref"])
     assert rec["complete"] is True and rec["run_end_reason"] == "cancelled"
+
+
+def test_truncated_exact_artifact_survives_tail_projection_and_explicit_recovery(tmp_path):
+    """First view may be tailed; explicit truncated:<ref> recovery returns the exact source."""
+    from llm_loop.introspection.tools_status import run_search_records
+
+    store = EpisodeStore(tmp_path / "episodes-exact")
+    eng = _StubEngine(data_dir=tmp_path / "data")
+    eng.episode_store = store
+    sess, session_store = eng.new()
+    eng.session = session_store
+    text = "T" * 15_000
+    reasoning = "R" * 25_000
+
+    eng._on_llm_interrupted(
+        sess,
+        text_parts=[text],
+        reasoning_parts=[reasoning],
+        reason="llm_error",
+        error_digest="500 fake boom",
+        round_no=7,
+        provider="fake",
+        model="fake/model",
+    )
+
+    # Provider/session projection is still bounded, but exact bytes were captured first.
+    assert len(sess.messages) == 1
+    assert len(sess.messages[0].content.split("\n[截断标注]", 1)[0]) == 4000
+    assert len(sess.messages[0].reasoning_content or "") == 8000
+    info = eng._last_interrupted
+    artifact_ref = str(info.get("artifact_ref") or "")
+    assert artifact_ref.startswith("truncation:")
+    assert store.index_truncated_run(
+        sess.session_id,
+        run_end_reason="llm_error",
+        error_digest="500 fake boom",
+        last_round=7,
+        run_end_seq=77,
+        text_tail=str(info.get("text_tail") or ""),
+        reasoning_tail=str(info.get("reasoning_tail") or ""),
+        partial_chars=int(info.get("partial_chars") or 0),
+        partial_sha256=str(info.get("partial_sha256") or ""),
+        artifact_ref=artifact_ref,
+    )
+
+    searcher = RecordSearcher(audit_dir=tmp_path / "audit", episode_store=store)
+
+    class _Adapter:
+        def __call__(self, **kw):
+            return searcher.search(**kw)
+
+        def hydrate_episode(self, **kw):
+            return searcher.hydrate_episode(**kw)
+
+    recovered = run_search_records(
+        object(),
+        _Adapter(),
+        {"kind": "episode", "query": "truncated:77"},
+        lambda: sess.session_id,
+    )
+    assert recovered.status.value == "success"
+    # 40K source fits the explicit recovery hard page, so the second read is complete.
+    assert "complete=true" in recovered.content
+    assert "T" * 15_000 in recovered.content
+    assert "R" * 25_000 in recovered.content
+
+
+def test_truncated_exact_recovery_over_physical_page_continues_without_repeating_head(tmp_path):
+    """>100K exact source paginates monotonically instead of applying the first-view tail again."""
+    from llm_loop.introspection.tools_status import run_search_records
+
+    store = EpisodeStore(tmp_path / "episodes-page")
+    sid = "s-page-exact"
+    text = "HEAD-UNIQUE|" + "A" * 119_000 + "|TAIL-UNIQUE"
+    artifact_ref = store.capture_truncated_artifact(
+        sid,
+        reason="llm_error",
+        round_no=3,
+        provider="fake",
+        model="fake/model",
+        text_full=text,
+        partial_sha256="x" * 64,
+    )
+    assert store.index_truncated_run(
+        sid,
+        run_end_reason="llm_error",
+        run_end_seq=88,
+        text_tail=text[-700:],
+        partial_chars=len(text),
+        partial_sha256="x" * 64,
+        artifact_ref=artifact_ref,
+    )
+    searcher = RecordSearcher(audit_dir=tmp_path / "audit", episode_store=store)
+
+    class _Adapter:
+        def __call__(self, **kw):
+            return searcher.search(**kw)
+
+        def hydrate_episode(self, **kw):
+            return searcher.hydrate_episode(**kw)
+
+    first = run_search_records(
+        object(), _Adapter(), {"kind": "episode", "query": "truncated:88"}, lambda: sid
+    )
+    assert "complete=false" in first.content
+    assert "HEAD-UNIQUE" in first.content
+    next_query = first.content.split("next_query=", 1)[1].splitlines()[0].strip()
+    second = run_search_records(
+        object(), _Adapter(), {"kind": "episode", "query": next_query}, lambda: sid
+    )
+    assert "HEAD-UNIQUE" not in second.content
+    assert "TAIL-UNIQUE" in second.content
+    assert "complete=true" in second.content
+
+
+def test_open_stream_checkpoint_is_promoted_before_sidecar_can_be_cleared(
+    build_test_engine, tmp_path
+) -> None:
+    """Crash-only checkpoint becomes immutable searchable history on the next human ingress."""
+    from llm_loop.event_log.store import EventStore
+
+    engine, _fake = build_test_engine([])
+    engine.episode_store = EpisodeStore(tmp_path / "episodes-crash")
+    engine._event_store = EventStore(tmp_path / "events-crash")
+    sid = engine.session.create()
+    sess = engine.session.load(sid)
+    text = "CRASH-TEXT-" * 900
+    reasoning = "CRASH-REASON-" * 1300
+    engine._on_llm_partial_checkpoint(
+        sess,
+        text_parts=[text],
+        reasoning_parts=[reasoning],
+        round_no=5,
+        provider="fake",
+        model="fake/model",
+    )
+    checkpoint = [
+        e for e in engine._event_store.read(sid) if e.type == "llm.partial_checkpoint"
+    ][-1]
+    # Simulate the fresh human ingress after the process died before run.end.
+    sess.messages = [Message(role="user", content="继续", source=MessageSource.USER)]
+    engine.session.save(sess)
+
+    engine._prepare_interruption_resume(sid, sess)
+    resumed = engine._run_state().interruption_resume
+    assert resumed is not None and resumed["source"] == "open_stream_checkpoint"
+    assert resumed["text_tail"] == text
+    assert resumed["reasoning_tail"] == reasoning
+    trunc_ref = str(resumed.get("truncation_ref") or "")
+    assert trunc_ref == f"truncated:checkpoint:{checkpoint.seq}"
+    assert str(resumed.get("artifact_ref") or "").startswith("truncation:")
+
+    # A later successful run may clear the overwrite-only sidecar; exact history survives.
+    engine._clear_inflight_native_state(sid)
+    recovered = engine.episode_store.hydrate_truncated(sid, trunc_ref, max_chars=100_000)
+    assert recovered is not None and recovered["exact_artifact"] is True
+    assert recovered["complete"] is True
+    assert text in recovered["content"]
+    assert reasoning in recovered["content"]
+
+
+def test_history_compaction_flag_does_not_create_provider_truncation_index(tmp_path) -> None:
+    """Prompt/history compaction and provider output truncation are different facts."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from llm_loop.core.loop.engine_services.run_finalizer import RunFinalizer
+
+    host = MagicMock()
+    host.memory = None
+    host._post_run_cache_health.return_value = "done"
+    host._kpi_snapshot.return_value = {}
+    host._event_append.return_value = SimpleNamespace(seq=41)
+    host._persist_long_answer.side_effect = lambda _sid, text: text
+    host.episode_store = MagicMock()
+    finalizer = RunFinalizer(host)
+
+    answer = finalizer._settle_run_end(
+        sess=SimpleNamespace(),
+        session_id="s-history-compact",
+        final_answer="done",
+        _run_end_reason="completed",
+        _cancel_reason="",
+        rounds=1,
+        model_used="fake/model",
+        tokens_in=1,
+        tokens_out=1,
+        tokens_cache_hit=0,
+        truncation_noted=True,
+        provider_truncated=False,
+        _run_started_at=0.0,
+    )
+
+    assert answer == "done"
+    host.episode_store.index_truncated_run.assert_not_called()

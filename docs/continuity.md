@@ -150,3 +150,33 @@ Git operations are serialized with a local file lock. Commits stage only the fil
 ## Relationship to `handoff_now`
 
 V1 does not automatically export the existing local `handoff_now` output. That tool currently has a separate local archive lifecycle. After V1 is proven in real use, the model-facing handoff tool can be unified with this transport layer without granting historical content automatic prompt authority.
+
+## Durable truncation recovery
+
+A model/provider/tool output may be too large for the current provider view, but
+representation pressure must not destroy the source that produced it.
+
+The runtime therefore separates **capture** from **projection/replay**:
+
+- terminal model interruptions (`cancelled`, `llm_error`, provider token-limit stops)
+  promote exact received model text/reasoning to an immutable, private,
+  content-addressed truncation artifact before bounded tails are projected;
+- an open-stream crash checkpoint is promoted on the next genuine human ingress,
+  before the overwrite-only in-flight sidecar can be replaced or cleared;
+- the compact `truncated:...` episode index remains the discovery surface;
+  `search_records(kind=episode, query="truncated:...")` explicitly hydrates the exact
+  source when an artifact exists, while legacy rows honestly fall back to their stored
+  tails;
+- an explicit second read is not subjected to the ordinary compact-history display
+  budget again. If the exact source fits the tool's physical recovery page it is
+  returned completely; only a genuinely larger source is split into monotonic,
+  non-overlapping `next_offset` pages;
+- generic `llm_error` artifacts remain historical evidence only and are **not**
+  automatically replayed into a later provider request. Provider-truncation/open-stream
+  continuation eligibility remains owned by the existing mechanical continuity rules.
+
+The same ordering applies to delegated/tool observations: governed CodeArts results flow
+through Evidence/archive capture before Registry projection, and `dsh_task(ctx_path=...)`
+passes an exact file reference plus mechanical size/hash facts instead of silently
+replacing the source with an 8K prefix. These rules preserve source bytes without giving
+storage or projection code semantic task authority.

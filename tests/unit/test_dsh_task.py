@@ -102,10 +102,11 @@ def test_cwd_passed_to_process(monkeypatch, tmp_path):
 
 # ── P1（协议 v2）：ctx 引用 / 汇报格式 / 重试 / 脱敏 ──
 
-def test_ctx_path_merged_into_task(monkeypatch, tmp_path):
-    """ctx_path 文件内容并入任务文本（上下文通过引用传递）."""
+def test_ctx_path_passes_exact_source_ref_without_prefix_truncation(monkeypatch, tmp_path):
+    """ctx_path 只传 exact source ref；编排层不把长文静默替换成 8K 前缀."""
     ctx = tmp_path / "ctx.md"
-    ctx.write_text("前情摘要：已完成 A，待做 B", encoding="utf-8")
+    source_text = "前情摘要：已完成 A，待做 B\n" + ("LONG-CONTEXT\n" * 1200) + "TAIL-UNIQUE"
+    ctx.write_text(source_text, encoding="utf-8")
     captured: dict = {}
 
     def fake_run_once(task, cwd, timeout_s, dsh_bin, patch_path=''):
@@ -118,8 +119,13 @@ def test_ctx_path_merged_into_task(monkeypatch, tmp_path):
     monkeypatch.setattr("shutil.which", lambda _n: "/fake/dsh")
     r = tool.execute(task="继续做 B", ctx_path=str(ctx))
     assert r.status == ToolResultStatus.SUCCESS
-    assert "前情摘要：已完成 A" in captured["task"]
-    assert "继续做 B" in captured["task"]
+    task_text = captured["task"]
+    assert f"path={ctx.resolve()}" in task_text
+    assert "size_bytes=" in task_text and "sha256=" in task_text
+    assert "未在编排层截断/摘要" in task_text
+    assert "继续做 B" in task_text
+    assert "前情摘要：已完成 A" not in task_text
+    assert "TAIL-UNIQUE" not in task_text
 
 
 def test_report_format_injected(monkeypatch, tmp_path):

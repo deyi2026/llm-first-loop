@@ -546,6 +546,67 @@ class _EventsMixin:
                                     ]
                                 open_checkpoint["native_state_sha256"] = native_sha
 
+                            # A crash/open-stream checkpoint has no run.end row. Promote
+                            # its latest exact sidecar before a new run can overwrite or
+                            # clear it, then expose it through the existing episode search
+                            # surface. This changes retrieval durability only; automatic
+                            # continuation eligibility above is unchanged.
+                            checkpoint_seq = int(getattr(checkpoint_event, "seq", 0) or 0)
+                            partial_sha = str(open_checkpoint.get("partial_sha256") or "")
+                            source_key = str(checkpoint_seq) if checkpoint_seq > 0 else partial_sha[:20]
+                            trunc_ref = f"truncated:checkpoint:{source_key}"
+                            artifact_ref = ""
+                            if open_checkpoint.get("full_snapshot"):
+                                try:
+                                    artifact_ref = self._capture_truncation_artifact(
+                                        session_id,
+                                        reason="open_stream_checkpoint",
+                                        round_no=int(payload.get("round") or 0),
+                                        provider=str(open_checkpoint.get("provider") or ""),
+                                        model=str(open_checkpoint.get("model") or ""),
+                                        text_full=str(open_checkpoint.get("text_tail") or ""),
+                                        reasoning_full=str(open_checkpoint.get("reasoning_tail") or ""),
+                                        partial_sha256=partial_sha,
+                                        provider_replay=(
+                                            open_checkpoint.get("provider_replay")
+                                            if isinstance(open_checkpoint.get("provider_replay"), dict)
+                                            else None
+                                        ),
+                                        tool_call_drafts=(
+                                            open_checkpoint.get("tool_call_drafts")
+                                            if isinstance(open_checkpoint.get("tool_call_drafts"), list)
+                                            else None
+                                        ),
+                                    )
+                                except Exception:  # noqa: BLE001 — resume itself stays fail-open
+                                    logger.warning(
+                                        "open-stream exact artifact 晋升失败", exc_info=True
+                                    )
+                            store = getattr(self, "episode_store", None)
+                            index_truncated = getattr(store, "index_truncated_run", None)
+                            if callable(index_truncated) and source_key:
+                                try:
+                                    index_truncated(
+                                        session_id,
+                                        run_end_reason="open_stream_checkpoint",
+                                        last_round=int(payload.get("round") or 0),
+                                        run_end_seq=0,
+                                        text_tail=str(payload.get("text_tail") or ""),
+                                        reasoning_tail=str(payload.get("reasoning_tail") or ""),
+                                        partial_chars=int(payload.get("text_chars") or 0)
+                                        + int(payload.get("reasoning_chars") or 0),
+                                        partial_sha256=partial_sha,
+                                        artifact_ref=artifact_ref,
+                                        ref=trunc_ref,
+                                    )
+                                    open_checkpoint["truncation_ref"] = trunc_ref
+                                    if artifact_ref:
+                                        open_checkpoint["artifact_ref"] = artifact_ref
+                                except Exception:  # noqa: BLE001 — resume itself stays fail-open
+                                    logger.warning(
+                                        "open-stream truncated 索引失败", exc_info=True
+                                    )
+
             state = open_checkpoint or persisted
             if state is None:
                 return
@@ -775,6 +836,45 @@ class _EventsMixin:
         with contextlib.suppress(OSError, ValueError):
             self._inflight_native_state_path(session_id).unlink(missing_ok=True)
 
+    def _capture_truncation_artifact(
+        self,
+        session_id: str,
+        *,
+        reason: str,
+        round_no: int,
+        provider: str,
+        model: str,
+        text_full: str = "",
+        reasoning_full: str = "",
+        partial_sha256: str = "",
+        provider_replay: dict[str, Any] | None = None,
+        tool_call_drafts: list[dict[str, Any]] | None = None,
+    ) -> str:
+        """Persist exact model-origin partial bytes before any bounded tail projection.
+
+        This is storage/retrieval only. The returned artifact never authorizes replay;
+        provider continuation eligibility remains owned by the existing continuity path.
+        """
+        store = getattr(self, "episode_store", None)
+        capture = getattr(store, "capture_truncated_artifact", None)
+        if not callable(capture):
+            return ""
+        return str(
+            capture(
+                session_id,
+                reason=reason,
+                round_no=round_no,
+                provider=provider,
+                model=model,
+                text_full=text_full,
+                reasoning_full=reasoning_full,
+                partial_sha256=partial_sha256,
+                provider_replay=provider_replay,
+                tool_call_drafts=tool_call_drafts,
+            )
+            or ""
+        )
+
     def _tool_execution_journal(self) -> ToolExecutionJournal:
         """Return the shared mechanical WAL facade used by every execution loop."""
         return ToolExecutionJournal(
@@ -976,14 +1076,45 @@ class _EventsMixin:
         try:
             text_full = "".join(text_parts)
             reasoning_full = "".join(reasoning_parts)
-            text_limit = self._env_tail_limit("INTERRUPT_TEXT_TAIL_CHARS", 4000)
-            reasoning_limit = self._env_tail_limit("INTERRUPT_REASONING_TAIL_CHARS", 8000)
-            text_tail = text_full[-text_limit:] if text_limit and text_full else ""
-            reasoning_tail = reasoning_full[-reasoning_limit:] if reasoning_limit and reasoning_full else ""
             total_partial = len(text_full) + len(reasoning_full)
             partial_sha = hashlib.sha256(
                 (text_full + reasoning_full).encode("utf-8", "replace")
             ).hexdigest()
+            artifact_ref = ""
+            artifact_store_available = callable(
+                getattr(getattr(self, "episode_store", None), "capture_truncated_artifact", None)
+            )
+            try:
+                artifact_ref = self._capture_truncation_artifact(
+                    sess.session_id,
+                    reason=str(reason or ""),
+                    round_no=round_no,
+                    provider=provider,
+                    model=model,
+                    text_full=text_full,
+                    reasoning_full=reasoning_full,
+                    partial_sha256=partial_sha,
+                    provider_replay=provider_replay,
+                    tool_call_drafts=tool_call_drafts,
+                )
+            except Exception:  # noqa: BLE001 — interruption delivery must still close
+                logger.warning(
+                    "中断 exact artifact 写入失败；回退会话全文持久化", exc_info=True
+                )
+            text_limit = self._env_tail_limit("INTERRUPT_TEXT_TAIL_CHARS", 4000)
+            reasoning_limit = self._env_tail_limit("INTERRUPT_REASONING_TAIL_CHARS", 8000)
+            if artifact_ref or not artifact_store_available:
+                text_tail = text_full[-text_limit:] if text_limit and text_full else ""
+                reasoning_tail = (
+                    reasoning_full[-reasoning_limit:]
+                    if reasoning_limit and reasoning_full
+                    else ""
+                )
+            else:
+                # A configured exact store failed. Do not discard model bytes in the
+                # same path that just failed to create their long-term recovery source.
+                text_tail = text_full
+                reasoning_tail = reasoning_full
             native_sha = ""
             native_chars = 0
             draft_count = 0
@@ -1010,6 +1141,7 @@ class _EventsMixin:
                 "partial_chars": total_partial,
                 "partial_sha256": partial_sha,
                 "native_state_sha256": native_sha,
+                "artifact_ref": artifact_ref,
             }
             self._last_interrupted = info  # B2 truncated 索引数据源（run 结束时消费）
             # 事件主锚：恒写（审计与 B2 索引共用数据源；fail-open 内置）
@@ -1025,6 +1157,7 @@ class _EventsMixin:
                     "partial_chars": total_partial,
                     "partial_sha256": partial_sha,
                     "native_state_sha256": native_sha,
+                    "truncation_artifact_ref": artifact_ref,
                     "native_state_chars": native_chars,
                     "tool_call_draft_count": draft_count,
                 },
@@ -1067,6 +1200,7 @@ class _EventsMixin:
                     "interrupted_provider": str(provider or ""),
                     "interrupted_model": str(model or ""),
                     "interrupted_native_state_sha256": native_sha,
+                    "truncation_artifact_ref": artifact_ref,
                     "interrupted_tool_call_draft_count": draft_count,
                 },
             )

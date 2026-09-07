@@ -38,6 +38,7 @@ _run_state().current_turn_ref（per-session 桶）
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -80,6 +81,7 @@ class RunFinalizer:
             reasoning_tail=str(info.get("reasoning_tail") or ""),
             partial_chars=int(info.get("partial_chars") or 0),
             partial_sha256=str(info.get("partial_sha256") or ""),
+            artifact_ref=str(info.get("artifact_ref") or ""),
         )
         if created:
             logger.info(
@@ -136,6 +138,7 @@ class RunFinalizer:
             tokens_out=tokens_out,
             tokens_cache_hit=tokens_cache_hit,
             truncation_noted=truncation_noted,
+            provider_truncated=bool(resp is not None and resp.truncated),
             _run_started_at=_run_started_at,
         )
         return final_answer, _run_end_reason
@@ -203,6 +206,31 @@ class RunFinalizer:
         # durable storage. This is runtime truth only; no continuation instruction is
         # persisted into conversational history.
         if _answer_origin == "model" and resp is not None and resp.truncated:
+            _reasoning_full = str(getattr(resp, "reasoning_content", "") or "")
+            _partial_sha = hashlib.sha256(
+                (str(final_answer or "") + _reasoning_full).encode("utf-8", "replace")
+            ).hexdigest()
+            _artifact_ref = ""
+            try:
+                _artifact_ref = self._host._capture_truncation_artifact(
+                    session_id,
+                    reason="provider_truncated",
+                    round_no=rounds,
+                    provider=str(getattr(resp, "provider", "") or ""),
+                    model=model_used,
+                    text_full=str(final_answer or ""),
+                    reasoning_full=_reasoning_full,
+                    partial_sha256=_partial_sha,
+                    provider_replay=(
+                        resp.provider_replay if isinstance(resp.provider_replay, dict) else None
+                    ),
+                    tool_call_drafts=None,
+                )
+            except Exception:  # noqa: BLE001 — full assistant row remains durable fallback
+                logger.warning(
+                    "provider truncation exact artifact 写入失败；保留会话全文",
+                    exc_info=True,
+                )
             _origin_metadata = {
                 **_origin_metadata,
                 "llm_interrupted": True,
@@ -210,6 +238,18 @@ class RunFinalizer:
                 "provider_finish_reason": str(getattr(resp, "finish_reason", "") or ""),
                 "interrupted_provider": str(getattr(resp, "provider", "") or ""),
                 "interrupted_model": model_used,
+                "partial_sha256": _partial_sha,
+                "truncation_artifact_ref": _artifact_ref,
+            }
+            self._host._last_interrupted = {
+                "round": int(rounds or 0),
+                "reason": "provider_truncated",
+                "error_digest": "",
+                "text_tail": str(final_answer or ""),
+                "reasoning_tail": _reasoning_full,
+                "partial_chars": len(str(final_answer or "")) + len(_reasoning_full),
+                "partial_sha256": _partial_sha,
+                "artifact_ref": _artifact_ref,
             }
         # R8.24-B B-3.2/B-D7（E19）: 程序终态全文不再进入 sess.messages——存储面
         # 只保留 role-shape 协议占位（B-D11 PROTOCOL_ONLY：与 build 链
@@ -334,6 +374,7 @@ class RunFinalizer:
         tokens_out: int,
         tokens_cache_hit: int,
         truncation_noted: bool,
+        provider_truncated: bool,
         _run_started_at: float,
     ) -> str:
         self._host._phase("done")
@@ -399,11 +440,16 @@ class RunFinalizer:
         # 索引行（独立文件、非退休型、幂等键=(session_id, run_end 事件 seq)），
         # 修复"中断 run 在 episode 检索面结构性不可见"。completed 不写；fail-open
         # 不阻断收尾（存档见 run.end 事件）。
-        if _run_end_reason != "completed":
+        if _run_end_reason != "completed" or provider_truncated:
             try:
+                _index_reason = (
+                    "provider_truncated"
+                    if _run_end_reason == "completed" and provider_truncated
+                    else _run_end_reason
+                )
                 self._index_truncated_run(
                     session_id=session_id,
-                    run_end_reason=_run_end_reason,
+                    run_end_reason=_index_reason,
                     rounds=rounds,
                     run_end_seq=int(getattr(_run_end_event, "seq", 0) or 0),
                 )

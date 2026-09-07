@@ -98,12 +98,25 @@ class ResultCollector:
         final_answer = _redact(result.final_answer)
         log_summary = _redact(result.execution_log_summary)
 
-        # 结果体积截断
+        # ResultCollector is upstream of ToolRegistry/Evidence projection. In a governed
+        # tool execution, returning a locally truncated string would destroy the exact
+        # observation before the shared capture-before-projection layer can persist it.
+        # Keep the legacy byte cap only for direct/ungoverned collector callers.
+        from llm_loop.core.run_context import (
+            current_evidence_enforce_enabled,
+            current_evidence_shadow_enabled,
+        )
+
         original_bytes = len(final_answer.encode("utf-8"))
-        truncated = original_bytes > self._result_max_bytes
+        governed_capture = bool(
+            current_evidence_enforce_enabled.get() or current_evidence_shadow_enabled.get()
+        )
+        truncated = original_bytes > self._result_max_bytes and not governed_capture
         retained_bytes = original_bytes
         if truncated:
-            # 按字节截断（避免截断多字节字符中段）
+            # Legacy direct-call fallback: byte-bound the presentation. Production tool
+            # execution has already taken the governed branch above, where exact bytes
+            # flow into Evidence/archive before any Registry projection.
             encoded = final_answer.encode("utf-8")[: self._result_max_bytes]
             final_answer = encoded.decode("utf-8", errors="ignore")
             retained_bytes = len(final_answer.encode("utf-8"))

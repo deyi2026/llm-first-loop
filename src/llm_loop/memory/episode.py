@@ -10,10 +10,17 @@ Design invariants:
 - exact visible user/assistant/tool content is retained, while private
   ``reasoning_content`` and program-only prompt injections are not duplicated;
 - search returns compact refs/previews; hydration is explicit and bounded.
+
+Interrupted/truncated model output is a separate recovery class. Its compact
+``truncated:...`` index remains append-only, while an immutable private artifact may
+retain the exact model-origin text/reasoning that existed before any display tail is
+applied. Those artifacts are explicit-retrieval facts only; they never authorize
+automatic replay into a later provider request.
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -35,6 +42,7 @@ TRUNCATED_SCHEMA = 1
 # 行级 <2KB 硬顶 → 尾段在索引行内二次裁剪（完整尾段存于 B1 会话消息与事件日志）
 TRUNCATED_ROW_TEXT_TAIL_CHARS = 700
 TRUNCATED_ROW_REASONING_TAIL_CHARS = 800
+TRUNCATION_ARTIFACT_SCHEMA = 1
 
 
 def _now() -> str:
@@ -207,6 +215,124 @@ class EpisodeStore:
         sid = _validate_session_id(session_id)
         return self._root / f"{sid}.jsonl"
 
+    def _truncated_artifact_dir(self, session_id: str) -> Path:
+        sid = _validate_session_id(session_id)
+        return self._root / f"{sid}.truncated.artifacts"
+
+    def _truncated_artifact_path(self, session_id: str, artifact_ref: str) -> Path | None:
+        prefix = "truncation:"
+        if not isinstance(artifact_ref, str) or not artifact_ref.startswith(prefix):
+            return None
+        digest = artifact_ref[len(prefix) :]
+        if len(digest) != 64:
+            return None
+        try:
+            int(digest, 16)
+        except ValueError:
+            return None
+        return self._truncated_artifact_dir(session_id) / f"{digest}.json"
+
+    def capture_truncated_artifact(
+        self,
+        session_id: str,
+        *,
+        reason: str,
+        round_no: int,
+        provider: str,
+        model: str,
+        text_full: str = "",
+        reasoning_full: str = "",
+        partial_sha256: str = "",
+        provider_replay: dict[str, Any] | None = None,
+        tool_call_drafts: list[dict[str, Any]] | None = None,
+    ) -> str:
+        """Persist exact pre-projection model bytes as an immutable private artifact.
+
+        The artifact is content-addressed and chmod 0600. It is intentionally not a
+        conversational message and not an automatic continuation source. Callers may
+        attach the returned ref to a compact ``truncated:...`` row for explicit
+        search/hydration.
+        """
+        sid = _validate_session_id(session_id)
+        if not text_full and not reasoning_full and not provider_replay and not tool_call_drafts:
+            return ""
+        snapshot: dict[str, Any] = {
+            "schema": TRUNCATION_ARTIFACT_SCHEMA,
+            "session_id": sid,
+            "reason": str(reason or ""),
+            "round": int(round_no or 0),
+            "provider": str(provider or ""),
+            "model": str(model or ""),
+            "text_full": str(text_full or ""),
+            "reasoning_full": str(reasoning_full or ""),
+            "partial_sha256": str(partial_sha256 or ""),
+            "provider_replay": provider_replay if isinstance(provider_replay, dict) else None,
+            "tool_call_drafts": [
+                dict(item) for item in (tool_call_drafts or []) if isinstance(item, dict)
+            ],
+        }
+        canonical = json.dumps(
+            snapshot, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        )
+        digest = hashlib.sha256(canonical.encode("utf-8", "replace")).hexdigest()
+        artifact_ref = f"truncation:{digest}"
+        artifact = {**snapshot, "artifact_ref": artifact_ref}
+        raw = json.dumps(artifact, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        directory = self._truncated_artifact_dir(sid)
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with contextlib.suppress(OSError):
+            os.chmod(directory, 0o700)
+        path = directory / f"{digest}.json"
+        if path.exists():
+            existing = path.read_text(encoding="utf-8")
+            if existing != raw:
+                raise ValueError("truncation artifact digest collision/content mismatch")
+            return artifact_ref
+        tmp = directory / f".{digest}.{os.getpid()}.tmp"
+        try:
+            with tmp.open("w", encoding="utf-8") as f:
+                f.write(raw)
+                f.flush()
+                os.fsync(f.fileno())
+            with contextlib.suppress(OSError):
+                os.chmod(tmp, 0o600)
+            os.replace(tmp, path)
+            with contextlib.suppress(OSError):
+                os.chmod(path, 0o600)
+            try:
+                dir_fd = os.open(directory, os.O_RDONLY)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+            except OSError:
+                pass
+        finally:
+            with contextlib.suppress(OSError):
+                tmp.unlink(missing_ok=True)
+        return artifact_ref
+
+    def _load_truncated_artifact(
+        self, session_id: str, artifact_ref: str
+    ) -> dict[str, Any] | None:
+        path = self._truncated_artifact_path(session_id, artifact_ref)
+        if path is None or not path.is_file():
+            return None
+        try:
+            raw = path.read_text(encoding="utf-8")
+            payload = json.loads(raw)
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        if payload.get("schema") != TRUNCATION_ARTIFACT_SCHEMA:
+            return None
+        if str(payload.get("session_id") or "") != _validate_session_id(session_id):
+            return None
+        if str(payload.get("artifact_ref") or "") != artifact_ref:
+            return None
+        return payload
+
     def _iter_entries(self, session_id: str) -> list[dict[str, Any]]:
         path = self._path(session_id)
         if not path.exists():
@@ -345,6 +471,8 @@ class EpisodeStore:
         reasoning_tail: str = "",
         partial_chars: int = 0,
         partial_sha256: str = "",
+        artifact_ref: str = "",
+        ref: str = "",
     ) -> bool:
         """持久化一条 truncated run 行（append + flush + fsync，幂等）.
 
@@ -356,8 +484,13 @@ class EpisodeStore:
             True=新写入；False=幂等命中（已存在同键行）。
         """
         sid = _validate_session_id(session_id)
-        if run_end_seq > 0:
-            for entry in self._iter_truncated(sid):
+        wanted_ref = str(ref or "").strip()
+        if wanted_ref and not wanted_ref.startswith("truncated:"):
+            raise ValueError("truncated ref 必须以 truncated: 开头")
+        for entry in self._iter_truncated(sid):
+            if wanted_ref and str(entry.get("ref") or "") == wanted_ref:
+                return False
+            if run_end_seq > 0:
                 try:
                     if int(entry.get("run_end_seq") or 0) == int(run_end_seq):
                         return False
@@ -366,7 +499,7 @@ class EpisodeStore:
         entry: dict[str, Any] = {
             "schema": TRUNCATED_SCHEMA,
             "entry_kind": "truncated",
-            "ref": f"truncated:{int(run_end_seq or 0)}",
+            "ref": wanted_ref or f"truncated:{int(run_end_seq or 0)}",
             "session_id": sid,
             "ts": ts or _now(),
             "run_end_reason": str(run_end_reason or ""),
@@ -377,6 +510,7 @@ class EpisodeStore:
             "reasoning_tail": str(reasoning_tail or "")[:TRUNCATED_ROW_REASONING_TAIL_CHARS],
             "partial_chars": int(partial_chars or 0),
             "partial_sha256": str(partial_sha256 or ""),
+            "artifact_ref": str(artifact_ref or ""),
         }
         path = self._truncated_path(sid)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -408,6 +542,7 @@ class EpisodeStore:
             summary = (
                 f"ref={ref} | type=truncated | reason={reason}"
                 f" | round={entry.get('last_round', 0)}"
+                + (" | exact_artifact=true" if entry.get("artifact_ref") else "")
                 + (f" | error={entry.get('error_digest', '')[:120]}" if entry.get("error_digest") else "")
                 + (f" | tail={tail_head}…" if tail_head else "")
             )
@@ -426,16 +561,85 @@ class EpisodeStore:
                 break
         return hits
 
-    def hydrate_truncated(self, session_id: str, ref: str) -> dict[str, Any] | None:
-        """truncated ref → compact 记录（不跑 transcript 渲染；行本身即有界 <2KB）."""
+    def hydrate_truncated(
+        self,
+        session_id: str,
+        ref: str,
+        *,
+        offset: int = 0,
+        max_chars: int = DEFAULT_HYDRATE_CHARS,
+    ) -> dict[str, Any] | None:
+        """Hydrate a truncated ref, preferring the exact immutable source artifact.
+
+        Legacy rows without an artifact remain readable through their compact tails.
+        New rows expose exact model-origin text/reasoning through the same bounded
+        paging contract used by resolved episodes.
+        """
         wanted = str(ref or "").strip()
         if not wanted.startswith("truncated:"):
             return None
         for entry in reversed(self._iter_truncated(session_id)):
-            if str(entry.get("ref") or "") == wanted:
-                out = dict(entry)
-                out["complete"] = True
-                return out
+            if str(entry.get("ref") or "") != wanted:
+                continue
+            artifact_ref = str(entry.get("artifact_ref") or "")
+            artifact = self._load_truncated_artifact(session_id, artifact_ref)
+            if artifact is None:
+                legacy = dict(entry)
+                legacy_content = "\n\n".join(
+                    part
+                    for part in (
+                        "[assistant_text_tail]\n" + str(entry.get("text_tail") or "")
+                        if entry.get("text_tail")
+                        else "",
+                        "[assistant_reasoning_tail]\n" + str(entry.get("reasoning_tail") or "")
+                        if entry.get("reasoning_tail")
+                        else "",
+                    )
+                    if part
+                )
+                legacy.update(
+                    {
+                        "offset": 0,
+                        "next_offset": None,
+                        "complete": True,
+                        "total_chars": len(legacy_content),
+                        "content": legacy_content,
+                        "exact_artifact": False,
+                    }
+                )
+                return legacy
+            exact_text = str(artifact.get("text_full") or "")
+            exact_reasoning = str(artifact.get("reasoning_full") or "")
+            rendered = "\n\n".join(
+                part
+                for part in (
+                    "[assistant_text]\n" + exact_text if exact_text else "",
+                    "[assistant_reasoning]\n" + exact_reasoning if exact_reasoning else "",
+                )
+                if part
+            )
+            start = max(0, int(offset or 0))
+            # Explicit truncation recovery is allowed to return the exact source up
+            # to the caller/tool physical cap. Do not reapply the ordinary 12K
+            # resolved-episode display budget after the model asked to read the source.
+            width = max(256, int(max_chars or DEFAULT_HYDRATE_CHARS))
+            chunk = rendered[start : start + width]
+            next_offset = start + len(chunk)
+            complete = next_offset >= len(rendered)
+            return {
+                "ref": wanted,
+                "artifact_ref": artifact_ref,
+                "offset": start,
+                "next_offset": None if complete else next_offset,
+                "complete": complete,
+                "total_chars": len(rendered),
+                "content": chunk,
+                "exact_artifact": True,
+                "partial_sha256": str(artifact.get("partial_sha256") or ""),
+                "reason": str(artifact.get("reason") or ""),
+                "provider": str(artifact.get("provider") or ""),
+                "model": str(artifact.get("model") or ""),
+            }
         return None
 
     def index_tool_span(
