@@ -27,6 +27,9 @@ def _meta(
     history_chars: int = 1000,
     round_no: int | None = None,
     tools_count: int = 5,
+    storage_messages: int = 10,
+    eligible_messages: int = 8,
+    resolved_or_consumed: int = 2,
 ) -> Event:
     return _event(
         seq,
@@ -57,11 +60,11 @@ def _meta(
             },
             "influence": {
                 "ingress": {
-                    "storage_messages": 10,
-                    "trace_messages": 10,
-                    "eligible_messages": 8,
-                    "provider_base_messages": 8,
-                    "stale_cleanup": {"resolved_or_consumed": 2},
+                    "storage_messages": storage_messages,
+                    "trace_messages": storage_messages,
+                    "eligible_messages": eligible_messages,
+                    "provider_base_messages": eligible_messages,
+                    "stale_cleanup": {"resolved_or_consumed": resolved_or_consumed},
                     "working_state_reason": "",
                     "tool_working_set": {"enabled": False},
                 },
@@ -150,6 +153,33 @@ def test_ordinary_new_turn_does_not_false_positive_on_payload_growth() -> None:
     # program-mechanism divergence merely because a new human turn changed bytes.
     assert report["observed_facts"]["target"]["provider_structure_fp"] == "payload-b"
 
+
+
+def test_natural_ingress_volume_growth_is_observed_not_ranked_as_divergence() -> None:
+    report = diagnose_causality(
+        [
+            _meta(1, storage_messages=10, eligible_messages=8, resolved_or_consumed=2),
+            _usage(2),
+            _meta(3, storage_messages=20, eligible_messages=14, resolved_or_consumed=6),
+            _usage(4),
+        ]
+    )
+    assert report["earliest_mechanical_divergence"] is None
+    target = report["observed_facts"]["target"]
+    assert target["ingress_volume"]["eligibility_removed"] == 6
+    assert target["ingress_volume"]["stale_cleanup"]["resolved_or_consumed"] == 6
+
+
+def test_ingress_mechanism_activation_remains_a_ranked_divergence() -> None:
+    report = diagnose_causality(
+        [
+            _meta(1, storage_messages=10, eligible_messages=10, resolved_or_consumed=0),
+            _usage(2),
+            _meta(3, storage_messages=12, eligible_messages=10, resolved_or_consumed=2),
+            _usage(4),
+        ]
+    )
+    assert report["earliest_mechanical_divergence"]["stage"] == "ingress"
 
 def test_recent_dialogue_mechanical_divergence_is_localized() -> None:
     report = diagnose_causality([_meta(1, dialogue_pairs=3), _usage(2), _meta(3, dialogue_pairs=1)])

@@ -74,7 +74,8 @@ def _attempts(events: Iterable[Any]) -> list[_Attempt]:
     return out
 
 
-def _normalized_ingress(payload: dict[str, Any]) -> dict[str, Any]:
+def _ingress_volume(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return raw ingress volumes for observation, never for divergence ranking."""
     influence = payload.get("influence") or {}
     ingress = influence.get("ingress") or {}
     storage = int(ingress.get("storage_messages", 0) or 0)
@@ -83,18 +84,42 @@ def _normalized_ingress(payload: dict[str, Any]) -> dict[str, Any]:
     provider = int(ingress.get("provider_base_messages", eligible) or 0)
     working = ingress.get("tool_working_set") or {}
     return {
+        "storage_messages": storage,
+        "trace_messages": trace,
+        "eligible_messages": eligible,
+        "provider_base_messages": provider,
         "trace_removed": max(0, storage - trace),
         "eligibility_removed": max(0, trace - eligible),
         "provider_scrub_removed": max(0, eligible - provider),
         "stale_cleanup": dict(ingress.get("stale_cleanup") or {}),
-        "working_state_reason": str(ingress.get("working_state_reason") or ""),
         "working_state_selected_raw_chars": int(
             ingress.get("working_state_selected_raw_chars", 0) or 0
         ),
+        "folded_results": int(working.get("folded_results", 0) or 0),
+        "folded_groups": int(working.get("folded_groups", 0) or 0),
+    }
+
+
+def _normalized_ingress(payload: dict[str, Any]) -> dict[str, Any]:
+    """Compare ingress mechanism state, not naturally growing session volume."""
+    influence = payload.get("influence") or {}
+    ingress = influence.get("ingress") or {}
+    working = ingress.get("tool_working_set") or {}
+    volume = _ingress_volume(payload)
+    return {
+        "trace_filter_active": volume["trace_removed"] > 0,
+        "eligibility_filter_active": volume["eligibility_removed"] > 0,
+        "provider_scrub_active": volume["provider_scrub_removed"] > 0,
+        "stale_cleanup_active": {
+            str(name): bool(value)
+            for name, value in sorted((ingress.get("stale_cleanup") or {}).items())
+        },
+        "working_state_reason": str(ingress.get("working_state_reason") or ""),
+        "working_state_present": volume["working_state_selected_raw_chars"] > 0,
         "tool_working_set": {
             "enabled": bool(working.get("enabled")),
-            "folded_results": int(working.get("folded_results", 0) or 0),
-            "folded_groups": int(working.get("folded_groups", 0) or 0),
+            "folded_results_active": volume["folded_results"] > 0,
+            "folded_groups_active": volume["folded_groups"] > 0,
         },
     }
 
@@ -192,6 +217,7 @@ def _attempt_card(attempt: _Attempt) -> dict[str, Any]:
         "provider_structure_fp": str(payload.get("provider_structure_fp") or ""),
         "usage_available": attempt.usage is not None,
         "interruption_available": attempt.interruption is not None,
+        "ingress_volume": _ingress_volume(payload) if payload.get("influence") else None,
     }
 
 
