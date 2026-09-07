@@ -40,6 +40,9 @@ def _project_user_attachments(content: str, metadata: dict) -> str:
             "media_type": str(item.get("media_type") or ""),
             "size_bytes": int(item.get("size_bytes") or 0),
             "sha256": str(item.get("sha256") or ""),
+            "source_text_chars": int(item.get("source_text_chars") or 0),
+            "source_text_complete": bool(item.get("source_text_complete", False)),
+            "hydration_tool": "read_attachment",
         }
         excerpt = str(item.get("excerpt") or "")
         shown = excerpt[:excerpt_budget] if excerpt_budget > 0 else ""

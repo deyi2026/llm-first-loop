@@ -47,6 +47,7 @@ from llm_loop.tools.builtin.inspect_code import InspectCodeTool
 from llm_loop.tools.builtin.job_kill import JobKillTool
 from llm_loop.tools.builtin.job_output import JobOutputTool
 from llm_loop.tools.builtin.job_registry import JobRegistry
+from llm_loop.tools.builtin.read_attachment import ReadAttachmentTool
 from llm_loop.tools.builtin.read_file import ReadFileTool
 from llm_loop.tools.builtin.read_image import ReadImageTool
 from llm_loop.tools.builtin.schedule import ScheduleCancelTool, ScheduleTool
@@ -633,6 +634,15 @@ def build_engine(settings: Settings) -> LoopEngine:
         "read_file",
         ReadFileTool(artifact_store=_artifact_store, file_service=_file_service),
     )
+    try:
+        from llm_loop.web.attachments import AttachmentStore
+
+        _attachment_store_for_tools = AttachmentStore(settings.data_dir)
+    except OSError:
+        _attachment_store_for_tools = None
+        logger.warning("attachment store unavailable; read_attachment disabled", exc_info=True)
+    if _attachment_store_for_tools is not None:
+        _register_basic("read_attachment", ReadAttachmentTool(_attachment_store_for_tools))
     # EVO-20260820-5d0a7b99: 图像转结构化文本证据（元信息 + 内容识别，借鉴 DSH rc.8 工具层视觉）
     _register_basic("read_image", ReadImageTool())
     # EVO-20260817: 代码结构概览（AST 索引，最高 ROI 能力工具——大项目定位提速）
@@ -1232,6 +1242,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         session_store=session_store,
         max_iterations=settings.max_iterations,
         tool_execution_root=str(settings.audit_dir / "tool_execution"),
+        artifact_store=_artifact_store,
     )
     # nonblocking child 在 spawn 工具返回后仍属于 parent lifecycle；Stop 必须
     # 通过 session-level hook 继续精确取消，不能依赖 spawn tool active future。

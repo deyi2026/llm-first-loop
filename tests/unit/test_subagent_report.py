@@ -585,3 +585,61 @@ def test_spawn_tool_inherit_param(build_test_engine, tmp_path, monkeypatch):
         current_session_id.reset(tok)
     joined = " ".join(str(m) for m in fake.calls[0]["messages"])
     assert "父上下文要点XYZ" in joined
+
+
+def test_inherit_exposes_exact_parent_context_artifact_without_private_reasoning(
+    build_test_engine, tmp_path
+) -> None:
+    from llm_loop.core.message import Message, MessageSource
+    from llm_loop.core.run_context import current_session_id, current_workspace_root
+    from llm_loop.llm.client import LLMResponse
+    from llm_loop.tools.builtin.read_file import ReadFileTool
+    from llm_loop.workspace.artifacts import WorkspaceArtifactStore
+
+    engine, fake = build_test_engine([])
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    artifact_store = WorkspaceArtifactStore(tmp_path / "artifacts-data")
+    runner = SubAgentRunner(
+        llm=fake,
+        registry=engine.registry,
+        session_store=engine.session,
+        artifact_store=artifact_store,
+    )
+    parent_sid = "parent-exact-context"
+    psess = engine.session.load(parent_sid)
+    long_text = "PARENT-HEAD-" + ("Q" * 25_000) + "-PARENT-TAIL"
+    psess.messages.append(Message(role="user", content=long_text, source=MessageSource.USER))
+    psess.messages.append(
+        Message(
+            role="assistant",
+            content="VISIBLE-ANSWER",
+            reasoning_content="PRIVATE-REASONING-MUST-NOT-CROSS-AGENT",
+            source=MessageSource.USER,
+        )
+    )
+    engine.session.save(psess)
+
+    sid_token = current_session_id.set(parent_sid)
+    ws_token = current_workspace_root.set(str(workspace.resolve()))
+    try:
+        fake._responses = [LLMResponse(content="child done", tool_calls=[], provider="fake")]
+        result = runner.run(task="inspect parent", depth=0, inherit=True)
+        assert result.truncated is False
+        joined = "\n".join(str(m) for m in fake.calls[0]["messages"])
+        import re
+
+        match = re.search(r"exact_parent_context_ref=(artifact://v1/[0-9a-f]{32})", joined)
+        assert match, joined
+        ref = match.group(1)
+        hydrated = ReadFileTool(artifact_store=artifact_store).execute(
+            path=ref, offset=0, limit=20
+        )
+    finally:
+        current_workspace_root.reset(ws_token)
+        current_session_id.reset(sid_token)
+    assert hydrated.status.name == "SUCCESS"
+    assert "PARENT-HEAD-" in hydrated.content
+    assert "-PARENT-TAIL" in hydrated.content
+    assert "VISIBLE-ANSWER" in hydrated.content
+    assert "PRIVATE-REASONING-MUST-NOT-CROSS-AGENT" not in hydrated.content

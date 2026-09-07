@@ -380,3 +380,54 @@ def test_recovery_tool_schemas_never_accept_owner_scope(tmp_path):
     for tool in tools:
         props = set(tool.parameters.get("properties", {}))
         assert forbidden.isdisjoint(props), (tool.name, props)
+
+
+def test_read_attachment_is_exact_recovery_control_plane_not_recaptured(tmp_path):
+    from llm_loop.core.run_context import current_workspace_root
+    from llm_loop.tools.builtin.read_attachment import ReadAttachmentTool
+    from llm_loop.web.attachments import AttachmentStore, workspace_scope
+
+    blobs, ledger = _stores(tmp_path)
+    owner = _owner()
+    capture = EvidenceCapture(blobs, ledger)
+    registry = ToolRegistry()
+    registry.set_evidence_enforcer(
+        EvidenceEnforcer(
+            capture,
+            projection=ProjectionEngine(),
+            owner_resolver=lambda: owner,
+            projection_budget_chars=500,
+        )
+    )
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    scope = workspace_scope(workspace)
+    attachment_store = AttachmentStore(tmp_path / "attachment-data")
+    exact = "ATTACHMENT-HEAD\n" + ("R" * 40_000) + "\nATTACHMENT-TAIL"
+    record = attachment_store.create(
+        workspace_scope=scope,
+        filename="recovery.txt",
+        data=exact.encode("utf-8"),
+        content_type="text",
+        excerpt=exact[:2_000],
+        excerpt_kind="extracted_text",
+        extracted_text=exact,
+        extraction_complete=True,
+        extraction_kind="text_full",
+    )
+    registry.register(ReadAttachmentTool(attachment_store))
+    before = ledger.count(owner)
+    token = current_workspace_root.set(scope)
+    try:
+        result = registry.execute(
+            ToolCall(id="attachment-read-1", name="read_attachment", arguments={"ref": record.ref})
+        )
+    finally:
+        current_workspace_root.reset(token)
+
+    assert result.status is ToolResultStatus.SUCCESS
+    assert "ATTACHMENT-HEAD" in result.content
+    assert "ATTACHMENT-TAIL" in result.content
+    assert len(result.content) > 40_000  # not projected back to the 500-char Evidence budget
+    assert ledger.count(owner) == before  # explicit recovery must not recursively create Evidence

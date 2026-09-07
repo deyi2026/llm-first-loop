@@ -41,6 +41,12 @@ class AttachmentRecord:
     created_at: float
     excerpt: str = ""
     excerpt_kind: str = ""
+    extracted_chars: int = 0
+    extracted_sha256: str = ""
+    extraction_complete: bool = False
+    extraction_kind: str = ""
+    page_count: int | None = None
+    pages_extracted: int | None = None
 
     def public_facts(self) -> dict[str, Any]:
         """Facts safe to persist in Message.metadata / return to Web clients."""
@@ -54,6 +60,13 @@ class AttachmentRecord:
             "created_at": self.created_at,
             "excerpt": self.excerpt,
             "excerpt_kind": self.excerpt_kind,
+            "source_text_chars": self.extracted_chars,
+            "source_text_sha256": self.extracted_sha256,
+            "source_text_complete": self.extraction_complete,
+            "source_text_kind": self.extraction_kind,
+            "page_count": self.page_count,
+            "pages_extracted": self.pages_extracted,
+            "hydration_tool": "read_attachment",
         }
 
 
@@ -81,12 +94,19 @@ def _attachment_id(ref: str) -> str:
 
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     text = json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2)
-    tmp.write_text(text, encoding="utf-8")
-    with suppress(OSError):
-        os.chmod(tmp, 0o600)
-    os.replace(tmp, path)
+    try:
+        with tmp.open("w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        with suppress(OSError):
+            os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    finally:
+        with suppress(OSError):
+            tmp.unlink(missing_ok=True)
 
 
 class AttachmentStore:
@@ -107,6 +127,11 @@ class AttachmentStore:
         content_type: str,
         excerpt: str = "",
         excerpt_kind: str = "",
+        extracted_text: str = "",
+        extraction_complete: bool = False,
+        extraction_kind: str = "",
+        page_count: int | None = None,
+        pages_extracted: int | None = None,
     ) -> AttachmentRecord:
         attachment_id = uuid.uuid4().hex
         ref = f"{ATTACHMENT_SCHEME}{attachment_id}"
@@ -125,6 +150,13 @@ class AttachmentStore:
             os.chmod(original, 0o600)
 
         safe_excerpt = str(excerpt or "")[:ATTACHMENT_EXCERPT_CHARS]
+        source_text = str(extracted_text or "")
+        source_text_sha = hashlib.sha256(source_text.encode("utf-8")).hexdigest() if source_text else ""
+        if source_text:
+            extracted_path = record_dir / "extracted.txt"
+            extracted_path.write_text(source_text, encoding="utf-8")
+            with suppress(OSError):
+                os.chmod(extracted_path, 0o600)
         record = AttachmentRecord(
             attachment_id=attachment_id,
             ref=ref,
@@ -137,6 +169,12 @@ class AttachmentStore:
             created_at=time.time(),
             excerpt=safe_excerpt,
             excerpt_kind=str(excerpt_kind or ""),
+            extracted_chars=len(source_text),
+            extracted_sha256=source_text_sha,
+            extraction_complete=bool(extraction_complete and source_text),
+            extraction_kind=str(extraction_kind or ""),
+            page_count=(None if page_count is None else int(page_count)),
+            pages_extracted=(None if pages_extracted is None else int(pages_extracted)),
         )
         _atomic_write_json(record_dir / "metadata.json", self._to_json(record))
         return record
@@ -189,6 +227,12 @@ class AttachmentStore:
             "created_at": record.created_at,
             "excerpt": record.excerpt,
             "excerpt_kind": record.excerpt_kind,
+            "extracted_chars": record.extracted_chars,
+            "extracted_sha256": record.extracted_sha256,
+            "extraction_complete": record.extraction_complete,
+            "extraction_kind": record.extraction_kind,
+            "page_count": record.page_count,
+            "pages_extracted": record.pages_extracted,
         }
 
     @staticmethod
@@ -196,6 +240,12 @@ class AttachmentStore:
         try:
             if int(raw.get("version", 0)) != _METADATA_VERSION:
                 raise ValueError("unsupported version")
+            page_count_raw = raw.get("page_count")
+            pages_extracted_raw = raw.get("pages_extracted")
+            page_count = None if page_count_raw is None else int(page_count_raw)
+            pages_extracted = (
+                None if pages_extracted_raw is None else int(pages_extracted_raw)
+            )
             return AttachmentRecord(
                 attachment_id=str(raw["attachment_id"]),
                 ref=str(raw["ref"]),
@@ -208,9 +258,158 @@ class AttachmentStore:
                 created_at=float(raw["created_at"]),
                 excerpt=str(raw.get("excerpt") or "")[:ATTACHMENT_EXCERPT_CHARS],
                 excerpt_kind=str(raw.get("excerpt_kind") or ""),
+                extracted_chars=max(0, int(raw.get("extracted_chars") or 0)),
+                extracted_sha256=str(raw.get("extracted_sha256") or ""),
+                extraction_complete=bool(raw.get("extraction_complete", False)),
+                extraction_kind=str(raw.get("extraction_kind") or ""),
+                page_count=page_count,
+                pages_extracted=pages_extracted,
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise AttachmentError("附件元数据字段无效。") from exc
+
+    def _record_dir(self, record: AttachmentRecord) -> Path:
+        return self.root / _workspace_bucket(record.workspace_scope) / record.attachment_id
+
+    def _read_extracted_verified(self, record: AttachmentRecord) -> str | None:
+        if not record.extracted_sha256:
+            return None
+        path = self._record_dir(record) / "extracted.txt"
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        if len(text) != record.extracted_chars:
+            raise AttachmentError("附件提取文本长度校验失败。")
+        if hashlib.sha256(text.encode("utf-8")).hexdigest() != record.extracted_sha256:
+            raise AttachmentError("附件提取文本完整性校验失败。")
+        return text
+
+    def _persist_full_extraction(
+        self,
+        record: AttachmentRecord,
+        text: str,
+        *,
+        kind: str,
+        page_count: int | None,
+        coverage_complete: bool,
+    ) -> AttachmentRecord:
+        record_dir = self._record_dir(record)
+        extracted = record_dir / "extracted.txt"
+        tmp = record_dir / f".extracted.txt.{uuid.uuid4().hex}.tmp"
+        try:
+            with tmp.open("w", encoding="utf-8") as f:
+                f.write(text)
+                f.flush()
+                os.fsync(f.fileno())
+            with suppress(OSError):
+                os.chmod(tmp, 0o600)
+            os.replace(tmp, extracted)
+        finally:
+            with suppress(OSError):
+                tmp.unlink(missing_ok=True)
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        updated = AttachmentRecord(
+            attachment_id=record.attachment_id,
+            ref=record.ref,
+            workspace_scope=record.workspace_scope,
+            filename=record.filename,
+            content_type=record.content_type,
+            media_type=record.media_type,
+            size_bytes=record.size_bytes,
+            sha256=record.sha256,
+            created_at=record.created_at,
+            excerpt=record.excerpt,
+            excerpt_kind=record.excerpt_kind,
+            extracted_chars=len(text),
+            extracted_sha256=digest,
+            extraction_complete=bool(text) and bool(coverage_complete),
+            extraction_kind=str(kind or "full_text"),
+            page_count=(record.page_count if page_count is None else int(page_count)),
+            pages_extracted=(
+                (record.pages_extracted if record.pages_extracted is not None else 0)
+                if not coverage_complete
+                else (record.page_count if page_count is None else int(page_count))
+            ),
+        )
+        _atomic_write_json(record_dir / "metadata.json", self._to_json(updated))
+        return updated
+
+    def ensure_full_text(
+        self, ref: str, *, workspace_scope: str
+    ) -> tuple[AttachmentRecord, str]:
+        """Return a complete model-readable text representation when mechanically possible.
+
+        Existing complete extracted text is verified and reused. Legacy or initially
+        partial records are re-extracted from the durable original bytes only after an
+        explicit hydration request. This is source recovery, not semantic summarization.
+        """
+        record = self.resolve(ref, workspace_scope=workspace_scope, verify_content=True)
+        existing = self._read_extracted_verified(record)
+        if existing is not None and record.extraction_complete:
+            return record, existing
+        try:
+            original = self.original_path(ref, workspace_scope=workspace_scope).read_bytes()
+        except OSError as exc:
+            raise AttachmentError("附件原始内容当前不可读。") from exc
+        from llm_loop.web.upload_handlers import extract_full_text
+
+        text, kind, page_count, coverage_complete = extract_full_text(record.filename, original)
+        if not text:
+            if existing is not None:
+                return record, existing
+            raise AttachmentError("附件当前没有可读取的文本表示。")
+        if kind == "pdf_vision_partial" and not coverage_complete:
+            # Current local scan-PDF vision fallback yields one model-readable page.
+            # Preserve that mechanical coverage fact rather than pretending all pages
+            # were extracted simply because page_count is known.
+            record = AttachmentRecord(
+                **{**record.__dict__, "pages_extracted": 1}
+            )
+        updated = self._persist_full_extraction(
+            record,
+            text,
+            kind=kind,
+            page_count=page_count,
+            coverage_complete=coverage_complete,
+        )
+        return updated, text
+
+    def hydrate_text(
+        self,
+        ref: str,
+        *,
+        workspace_scope: str,
+        offset: int = 0,
+        max_chars: int = 100_000,
+    ) -> dict[str, Any]:
+        """Explicit exact-source hydration with monotonic char paging.
+
+        The upload excerpt budget is intentionally not reused here. Up to 100K chars are
+        returned exactly; larger sources expose the next absolute char offset.
+        """
+        record, text = self.ensure_full_text(ref, workspace_scope=workspace_scope)
+        start = max(0, min(int(offset or 0), len(text)))
+        width = max(1, min(int(max_chars or 100_000), 100_000))
+        chunk = text[start : start + width]
+        next_offset = start + len(chunk)
+        complete = next_offset >= len(text)
+        return {
+            "ref": record.ref,
+            "filename": record.filename,
+            "content_type": record.content_type,
+            "media_type": record.media_type,
+            "size_bytes": record.size_bytes,
+            "sha256": record.sha256,
+            "source_text_chars": len(text),
+            "source_text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            "source_text_kind": record.extraction_kind,
+            "source_text_complete": record.extraction_complete,
+            "offset": start,
+            "next_offset": None if complete else next_offset,
+            "complete": complete,
+            "content": chunk,
+        }
 
     def original_path(self, ref: str, *, workspace_scope: str) -> Path:
         """Internal-only path helper. Callers must resolve/verify the record first."""

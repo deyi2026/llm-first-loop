@@ -887,12 +887,13 @@ class ToolRegistry:
 
     # EVO-20260810-750e985a: 工具并发控制
     _EVIDENCE_CONTROL_TOOLS = frozenset(
-        {"read_evidence", "search_evidence", "list_evidence", "search_archive"}
+        {"read_evidence", "search_evidence", "list_evidence", "search_archive", "read_attachment"}
     )
 
     _READONLY_TOOLS = frozenset(
         {
             "read_file",
+            "read_attachment",
             "web_fetch",
             "architecture_status",
             "search_archive",

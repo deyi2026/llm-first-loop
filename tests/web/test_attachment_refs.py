@@ -309,3 +309,44 @@ def test_provider_attachment_projection_is_bounded_and_raw_message_unchanged() -
     assert len(facts[1]["excerpt"]) == 2000
     assert facts[2]["excerpt"] == ""
     assert all("path" not in fact for fact in facts)
+
+
+def test_upload_truncated_preview_preserves_exact_text_for_hydration(
+    build_test_engine, fake_settings
+) -> None:
+    engine, _fake = build_test_engine([])
+    client = _client(engine)
+    exact = ("0123456789" * 12_000).encode("utf-8")  # 120K chars
+    body = _upload(client, "long-upload.txt", exact)
+    assert body["truncated"] is True
+    assert len(body["result_text"]) < len(exact.decode()) + 100
+
+    store = AttachmentStore(fake_settings.data_dir)
+    page1 = store.hydrate_text(
+        body["attachment_ref"], workspace_scope=_scope(engine), offset=0
+    )
+    assert page1["source_text_chars"] == 120_000
+    assert len(page1["content"]) == 100_000
+    assert page1["next_offset"] == 100_000
+    page2 = store.hydrate_text(
+        body["attachment_ref"], workspace_scope=_scope(engine), offset=100_000
+    )
+    assert page2["content"] == exact.decode()[100_000:]
+    assert page2["complete"] is True
+
+
+def test_image_vision_text_is_recoverable_but_never_claimed_as_complete_source(
+    build_test_engine, monkeypatch, fake_settings
+) -> None:
+    engine, _fake = build_test_engine([])
+    client = _client(engine)
+    monkeypatch.setattr("llm_loop.web.vision.vision_enabled", lambda *a, **k: True)
+    monkeypatch.setattr(
+        "llm_loop.web.vision.describe_image", lambda *a, **k: "DERIVED-VISION-DESCRIPTION"
+    )
+    body = _upload(client, "image.png", b"\x89PNG\r\n\x1a\nFAKE")
+    store = AttachmentStore(fake_settings.data_dir)
+    record = store.resolve(body["attachment_ref"], workspace_scope=_scope(engine))
+    assert record.extraction_kind == "vision_text"
+    assert record.extraction_complete is False
+    assert record.extracted_chars == len("DERIVED-VISION-DESCRIPTION")

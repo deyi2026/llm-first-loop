@@ -180,3 +180,40 @@ through Evidence/archive capture before Registry projection, and `dsh_task(ctx_p
 passes an exact file reference plus mechanical size/hash facts instead of silently
 replacing the source with an 8K prefix. These rules preserve source bytes without giving
 storage or projection code semantic task authority.
+
+## Exact source hydration for attachments and delegated parent context
+
+The first provider view of a large source is a representation, not the source itself.
+Two recovery paths keep the exact source available without granting storage code semantic
+authority:
+
+- Web uploads persist the original bytes plus a verified model-readable extraction when
+  one is available. The initial user-message projection keeps only bounded attachment
+  facts/excerpts and exposes the opaque `attachment://...` ref and `read_attachment`
+  capability.
+- `read_attachment(ref, offset=...)` is an explicit source-recovery operation. It does
+  not reuse the initial excerpt budget. Up to 100,000 exact characters are returned in
+  one read; only a genuinely larger readable representation is split into monotonic,
+  non-overlapping character pages using `next_offset`.
+- `source_complete` and `page_complete` are separate facts. A page can be fully read
+  while the available representation is still incomplete (for example, a multi-page
+  scanned PDF when the current local vision fallback covers only part of the source).
+  The runtime never converts that condition into a claim of full-document coverage.
+- Older attachment records remain readable: an explicit hydration may derive a complete
+  text representation from the already-durable original bytes and then persist its
+  length/hash/coverage facts. This is lazy source recovery, not automatic summarization.
+- `read_attachment` is a recovery control-plane tool. In Evidence-enforced execution its
+  output is not recursively captured or re-projected through the ordinary Evidence
+  display budget.
+
+For `spawn_subagent(inherit=true)`, the existing small recent-parent slice remains a fast
+working view. In addition, when the shared immutable artifact store is available, the
+runtime records a complete chunked parent storage transcript and exposes an
+`artifact://...` reference to the child. The child can explicitly page that artifact with
+`read_file` if its task requires older or longer parent context. This artifact contains
+conversation/tool storage facts but deliberately excludes private assistant
+`reasoning_content` and provider replay state; parent-context recovery is not a channel
+for cross-agent reasoning replay.
+
+Neither path creates a program-authored task summary. Model-authored long-source synopsis
+remains a separate derived-view capability and must stay bound to an exact source ref/hash.

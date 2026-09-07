@@ -97,10 +97,24 @@ def _persist_upload_response(
     filename: str,
     data: bytes,
     response: UploadResponse,
+    extracted_text: str | None = None,
+    extraction_complete: bool | None = None,
+    extraction_kind: str = "",
+    page_count: int | None = None,
+    pages_extracted: int | None = None,
 ) -> UploadResponse:
     excerpt_kind = ""
     if response.result_text:
         excerpt_kind = "vision_text" if response.content_type == "image" else "extracted_text"
+    exact_text = response.result_text if extracted_text is None else str(extracted_text or "")
+    if extraction_complete is None:
+        # Vision text is a derived representation of durable image bytes, not a claim
+        # that every source detail has been exhaustively recovered.
+        exact_complete = bool(response.content_type != "image" and not response.truncated)
+    else:
+        exact_complete = bool(extraction_complete)
+    if not extraction_kind and response.content_type == "image" and exact_text:
+        extraction_kind = "vision_text"
     record = _attachment_store(engine).create(
         workspace_scope=workspace_scope,
         filename=filename,
@@ -108,6 +122,11 @@ def _persist_upload_response(
         content_type=response.content_type,
         excerpt=response.result_text,
         excerpt_kind=excerpt_kind,
+        extracted_text=exact_text,
+        extraction_complete=exact_complete,
+        extraction_kind=(extraction_kind or excerpt_kind),
+        page_count=page_count,
+        pages_extracted=pages_extracted,
     )
     return UploadResponse(
         source_filename=response.source_filename,
@@ -1951,6 +1970,11 @@ def upload_file(payload: UploadRequest, request: Request) -> UploadResponse | Re
             detail=result.detail,
             truncated=result.truncated,
         ),
+        extracted_text=result.exact_text,
+        extraction_complete=result.extraction_complete,
+        extraction_kind=(f"{result.content_type}_extracted" if result.exact_text else ""),
+        page_count=result.page_count,
+        pages_extracted=result.pages_extracted,
     )
 
 

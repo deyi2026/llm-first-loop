@@ -8,10 +8,13 @@
 from __future__ import annotations
 
 import contextvars
+import hashlib
+import json
 import threading
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from llm_loop.core.injection_labels import InjectionLayer, origin_metadata
 from llm_loop.core.message import (
@@ -28,6 +31,7 @@ from llm_loop.core.subagent_topology import SubAgentTopologyJournal, SubAgentTop
 from llm_loop.core.tool_execution_journal import ToolExecutionJournal
 from llm_loop.llm.client import LLMClient
 from llm_loop.tools.registry import ToolRegistry
+from llm_loop.workspace.artifacts import WorkspaceArtifactStore
 
 # 子代理不维护第二套静态工具能力表。父执行域由 current_tool_discovery_scope
 # 继承；None=完整 registry，显式集合=不得扩权。工具自身继续承担授权/安全边界。
@@ -39,6 +43,7 @@ MAX_ITERATIONS = HARD_CAP_MAX_ITERATIONS
 _INHERIT_MAX_MSGS = 6
 _INHERIT_MSG_CHARS = 800
 _INHERIT_MAX_CHARS = 3000
+_PARENT_CONTEXT_ARTIFACT_CHUNK_CHARS = 12_000
 
 # 子代理深度属于程序控制面，不允许模型通过 tool arguments 自报/篡改。
 # -1 表示当前不在子代理内；顶层 spawn 产生 depth=0，子代理内再次 spawn 自动 +1。
@@ -110,12 +115,14 @@ class SubAgentRunner:
         max_depth: int = MAX_DEPTH,
         max_iterations: int = MAX_ITERATIONS,
         tool_execution_root: str | None = None,
+        artifact_store: WorkspaceArtifactStore | None = None,
     ) -> None:
         self.llm = llm
         self.registry = registry
         self.session_store = session_store
         self.max_depth = max_depth
         self.max_iterations = max_iterations
+        self.artifact_store = artifact_store
         journal_root = (
             tool_execution_root
             if tool_execution_root is not None
@@ -1636,6 +1643,85 @@ class SubAgentRunner:
         )
 
     # ── fork 继承（DSH 借鉴 022-A）──
+    def _capture_parent_context_artifact(
+        self, parent_sid: str, msgs: list[Message]
+    ) -> tuple[str, int, int]:
+        """Persist a mechanically complete parent storage transcript for child lookup.
+
+        Private assistant reasoning/provider replay is deliberately excluded: this artifact
+        is exact conversational/tool storage truth, not cross-agent reasoning replay. Long
+        message content is split into bounded JSONL chunks so ``read_file(offset/limit)``
+        can advance monotonically without re-truncating one giant line.
+        """
+        if self.artifact_store is None or not msgs:
+            return "", 0, 0
+        from llm_loop.core.run_context import workspace_base
+
+        rows: list[dict[str, object]] = []
+        for message_index, msg in enumerate(msgs):
+            content = str(getattr(msg, "content", "") or "")
+            chunks = [
+                content[pos : pos + _PARENT_CONTEXT_ARTIFACT_CHUNK_CHARS]
+                for pos in range(0, len(content), _PARENT_CONTEXT_ARTIFACT_CHUNK_CHARS)
+            ] or [""]
+            md = getattr(msg, "metadata", {}) or {}
+            for chunk_index, chunk in enumerate(chunks):
+                row: dict[str, object] = {
+                    "message_index": message_index,
+                    "role": str(getattr(msg, "role", "") or ""),
+                    "source": str(getattr(getattr(msg, "source", None), "value", "") or ""),
+                    "chunk_index": chunk_index,
+                    "chunk_count": len(chunks),
+                    "content": chunk,
+                }
+                if chunk_index == 0:
+                    tool_call_id = str(getattr(msg, "tool_call_id", "") or "")
+                    tool_name = str(getattr(msg, "tool_name", "") or "")
+                    if tool_call_id:
+                        row["tool_call_id"] = tool_call_id
+                    if tool_name:
+                        row["tool_name"] = tool_name
+                    tool_calls = getattr(msg, "tool_calls", None)
+                    if isinstance(tool_calls, list) and tool_calls:
+                        row["tool_calls"] = tool_calls
+                    attachments = md.get("attachments") if isinstance(md, dict) else None
+                    if isinstance(attachments, list) and attachments:
+                        row["attachments"] = attachments
+                rows.append(row)
+        manifest = {
+            "kind": "subagent_parent_context",
+            "parent_session_id": parent_sid,
+            "message_count": len(msgs),
+            "chunk_count": len(rows),
+            "chunk_chars": _PARENT_CONTEXT_ARTIFACT_CHUNK_CHARS,
+            "representation": "storage_transcript_without_private_reasoning",
+        }
+        text = "\n".join(
+            [json.dumps(manifest, ensure_ascii=False, sort_keys=True)]
+            + [json.dumps(row, ensure_ascii=False, sort_keys=True) for row in rows]
+        ) + "\n"
+        payload = text.encode("utf-8")
+        digest = hashlib.sha256(payload).hexdigest()
+        scope = workspace_base()
+        canonical = (
+            Path(scope)
+            / ".lfl"
+            / "continuity"
+            / "subagent_parent_context"
+            / f"{digest[:24]}.jsonl"
+        )
+        record = self.artifact_store.create(
+            workspace_scope=scope,
+            canonical_path=str(canonical),
+            data=payload,
+            owner_session_id=parent_sid,
+            execution_id=f"subagent-parent-context:{digest[:24]}",
+            tool_call_id="",
+            tool_name="spawn_subagent",
+            effect_kind="subagent_parent_context",
+        )
+        return record.ref, len(text), len(rows) + 1
+
     def _inherit_parent_context(self, context: str) -> str:
         """父会话切片: 最近消息原文注入（条数/字符预算截断），fail-open.
 
@@ -1652,6 +1738,15 @@ class SubAgentRunner:
             msgs = list(parent_sess.messages)
         except Exception:  # noqa: BLE001 — fail-open: 继承失败不阻断子代理
             return context
+        exact_ref = ""
+        exact_chars = 0
+        exact_lines = 0
+        try:
+            exact_ref, exact_chars, exact_lines = self._capture_parent_context_artifact(
+                parent_sid, msgs
+            )
+        except Exception:  # noqa: BLE001 — exact-ref aid is fail-open
+            exact_ref = ""
         # 取最近 _INHERIT_MAX_MSGS 条、总字符 ≤ _INHERIT_MAX_CHARS、单条截断
         parts: list[str] = []
         total = 0
@@ -1671,8 +1766,16 @@ class SubAgentRunner:
                 break
         if not parts:
             return context
+        exact_fact = ""
+        if exact_ref:
+            exact_fact = (
+                f"exact_parent_context_ref={exact_ref} exact_chars={exact_chars} "
+                f"exact_lines={exact_lines} representation=storage_transcript_without_private_reasoning\n"
+                f"read_contract=read_file(path='{exact_ref}', offset=<line>, limit=<lines>)\n"
+            )
         inherit_block = (
             "【fork 继承·父会话最近上下文（原文切片，非摘要）】\n"
+            + exact_fact
             + "\n".join(reversed(parts))
         )
         return f"{context}\n\n{inherit_block}" if context.strip() else inherit_block

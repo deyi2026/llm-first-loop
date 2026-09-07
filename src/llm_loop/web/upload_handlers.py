@@ -62,6 +62,9 @@ class ExtractResult:
     detail: str = ""
     truncated: bool = False
     page_count: int | None = None
+    exact_text: str = ""
+    extraction_complete: bool = True
+    pages_extracted: int | None = None
 
 
 def file_ext(filename: str) -> str:
@@ -112,13 +115,16 @@ def _extract_text(data: bytes, filename: str) -> ExtractResult:
             text = data.decode("utf-8-sig")
         except UnicodeDecodeError:
             text = data.decode("latin-1")  # 兜底字节解码，如实标注
-    text, truncated = _truncate(text)
+    exact_text = text
+    text, truncated = _truncate(exact_text)
     return ExtractResult(
         source_filename=filename,
         content_type="text",
         status="ok",
         result_text=text,
         truncated=truncated,
+        exact_text=exact_text,
+        extraction_complete=True,
     )
 
 
@@ -237,13 +243,16 @@ def _extract_docx(data: bytes, filename: str) -> ExtractResult:
     except zipfile.BadZipFile:
         pass  # 非 docx/损坏 zip: 无媒体图片，fail-open 继续（不阻断文本提取）
     text += _recognize_doc_images(media_images)
-    text, truncated = _truncate(text)
+    exact_text = text
+    text, truncated = _truncate(exact_text)
     return ExtractResult(
         source_filename=filename,
         content_type="docx",
         status="ok",
         result_text=text,
         truncated=truncated,
+        exact_text=exact_text,
+        extraction_complete=True,
     )
 
 
@@ -308,9 +317,11 @@ def _extract_pdf(data: bytes, filename: str) -> ExtractResult:
             page_t = reader.pages[i].extract_text() or ""
             pages_text.append(page_t)
             parts.append(f"[第 {i + 1} 页]\n" + page_t)
-        if total_pages > PDF_MAX_PAGES:
-            parts.append(f"\n...[截断] PDF 共 {total_pages} 页，仅提取前 {PDF_MAX_PAGES} 页")
-        text = "\n".join(parts).strip()
+        exact_text = "\n".join(parts).strip()
+        text = exact_text
+        page_limited = total_pages > PDF_MAX_PAGES
+        if page_limited:
+            text += f"\n\n...[截断] PDF 共 {total_pages} 页，初始仅提取前 {PDF_MAX_PAGES} 页"
     except Exception as exc:  # pypdf 解析失败如实反馈（加密文档明确提示）
         detail = f"[程序异常] PDF 解析失败（{type(exc).__name__}: {exc}）。"
         if "encrypt" in str(exc).lower() or "password" in str(exc).lower():
@@ -335,6 +346,10 @@ def _extract_pdf(data: bytes, filename: str) -> ExtractResult:
                 status="ok",
                 result_text=vision_text,
                 detail="（扫描件 PDF 视觉转录，来源: 图片识别）",
+                exact_text=vision_text,
+                extraction_complete=total_pages <= 1,
+                page_count=total_pages,
+                pages_extracted=1,
             )
         return ExtractResult(
             source_filename=filename,
@@ -347,15 +362,23 @@ def _extract_pdf(data: bytes, filename: str) -> ExtractResult:
             ),
         )
     # 2026-08-20: 文字层 PDF 内嵌图片识别（默认关 + 5 张上限; 用户定）
-    text += _recognize_doc_images(_collect_pdf_images(reader))
-    text, truncated = _truncate(text)
+    if exact_text:
+        exact_text += _recognize_doc_images(_collect_pdf_images(reader))
+    display_text = exact_text
+    page_limited = total_pages > PDF_MAX_PAGES
+    if page_limited:
+        display_text += f"\n\n...[截断] PDF 共 {total_pages} 页，初始仅提取前 {PDF_MAX_PAGES} 页"
+    display_text, char_truncated = _truncate(display_text)
     return ExtractResult(
         source_filename=filename,
         content_type="pdf",
         status="ok",
-        result_text=text,
-        truncated=truncated,
-        page_count=min(total_pages, PDF_MAX_PAGES),
+        result_text=display_text,
+        truncated=bool(page_limited or char_truncated),
+        page_count=total_pages,
+        exact_text=exact_text,
+        extraction_complete=not page_limited,
+        pages_extracted=max_pages,
     )
 
 
@@ -416,6 +439,53 @@ def _extract_doc_arkcli(data: bytes, filename: str, prompt: str) -> str | None:
                 _os.unlink(tmp_path)
 
 
+def extract_full_text(filename: str, data: bytes) -> tuple[str, str, int | None, bool]:
+    """Extract a complete model-readable text representation from durable source bytes.
+
+    This path is used only after an explicit attachment hydration request. It does not
+    apply the upload preview limits (100K chars / 50 PDF pages); the caller owns the
+    physical read-page bound. The returned tuple is (text, extraction_kind, page_count, coverage_complete).
+    """
+    ext = file_ext(filename)
+    if ext in _TEXT_EXTS:
+        try:
+            return data.decode("utf-8"), "text_full", None, True
+        except UnicodeDecodeError:
+            try:
+                return data.decode("utf-8-sig"), "text_full", None, True
+            except UnicodeDecodeError:
+                return data.decode("latin-1"), "text_full_latin1", None, True
+    if ext in _DOCX_EXTS:
+        result = _extract_docx(data, filename)
+        if result.status != "ok":
+            return "", "docx_unavailable", None, False
+        return result.exact_text or result.result_text, "docx_full", None, True
+    if ext in _PDF_EXTS:
+        try:
+            reader = PdfReader(io.BytesIO(data))
+            total_pages = len(reader.pages)
+            parts: list[str] = []
+            any_text = False
+            for i, page in enumerate(reader.pages):
+                page_t = page.extract_text() or ""
+                if page_t.strip():
+                    any_text = True
+                parts.append(f"[第 {i + 1} 页]\n" + page_t)
+            text = "\n".join(parts).strip()
+            if any_text:
+                return text, "pdf_text_full", total_pages, True
+            vision_text = _extract_pdf_vision(data, filename)
+            if vision_text:
+                # The current local vision fallback renders one page; report that
+                # representation honestly rather than claiming full-document coverage.
+                return vision_text, "pdf_vision_partial", total_pages, total_pages <= 1
+            return "", "pdf_no_text", total_pages, False
+        except Exception:
+            return "", "pdf_extract_error", None, False
+    return "", "unsupported", None, False
+
+
+
 def process_upload(filename: str, data: bytes) -> ExtractResult:
     """上传文件类型分发（文本/docx/PDF/图片）。图片由 vision 模块处理，此处返回降级提示."""
     ext = file_ext(filename)
@@ -433,6 +503,8 @@ def process_upload(filename: str, data: bytes) -> ExtractResult:
                 status="ok",
                 result_text=ark,
                 detail="（arkcli doc-extract 结构化抽取）",
+                exact_text="",
+                extraction_complete=False,
             )
         return _extract_docx(data, filename)
     if ext in _PDF_EXTS:
@@ -447,6 +519,8 @@ def process_upload(filename: str, data: bytes) -> ExtractResult:
                 status="ok",
                 result_text=ark,
                 detail="（arkcli doc-extract 结构化抽取）",
+                exact_text="",
+                extraction_complete=False,
             )
         return _extract_pdf(data, filename)
     if ext in _IMAGE_EXTS:
