@@ -28,6 +28,7 @@ from pathlib import Path
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 from llm_loop.tools.safety import link_shaped_paths
+from llm_loop.workspace.artifacts import WorkspaceArtifactStore
 
 _DIFF_MAX_LINES = 80  # 回执中 diff 预览最大行数（超出截断并如实标注）
 _UTF8_BOM = b"\xef\xbb\xbf"
@@ -79,6 +80,9 @@ class EditFileTool:
         },
         "required": ["path", "old_string", "new_string"],
     }
+
+    def __init__(self, artifact_store: WorkspaceArtifactStore | None = None) -> None:
+        self.artifact_store = artifact_store
 
     def execute(self, **kwargs) -> ToolResult:
         """框架统一调用约定 execute(**kwargs) → 委托 run(arguments dict)."""
@@ -286,6 +290,28 @@ class EditFileTool:
             )
 
         post_stat = path.stat()
+        artifact_fact: dict[str, object] | None = None
+        artifact_error_type = ""
+        if (
+            effect_binding is not None
+            and effect_binding.tool_name == self.name
+            and effect_binding.journal.enabled
+            and self.artifact_store is not None
+        ):
+            try:
+                artifact = self.artifact_store.create(
+                    workspace_scope=effect_binding.workspace_root,
+                    canonical_path=str(path),
+                    data=reread,
+                    owner_session_id=effect_binding.session_id,
+                    execution_id=effect_binding.execution_id,
+                    tool_call_id=effect_binding.tool_call_id,
+                    tool_name=effect_binding.tool_name,
+                    effect_kind="file_replace",
+                )
+                artifact_fact = artifact.public_facts()
+            except Exception as exc:  # noqa: BLE001 - successful bytes must never be rolled back
+                artifact_error_type = type(exc).__name__
         if effect_binding is not None and effect_binding.tool_name == self.name:
             # Observation durability is factual telemetry only. If this append fails,
             # the successful verified file mutation remains truthful; restart recovery
@@ -302,6 +328,11 @@ class EditFileTool:
                 actual_after_bytes=reread,
                 expected_after_bytes=out_bytes,
                 actual_mtime_ns=post_stat.st_mtime_ns,
+                artifact_ref=(
+                    str(artifact_fact.get("artifact_ref") or "")
+                    if artifact_fact is not None
+                    else ""
+                ),
             )
 
         preserved = []
@@ -327,6 +358,22 @@ class EditFileTool:
             f"替换 {count} 处，变更 +{added}/-{removed} 行（原子写入，写后复读一致{preserved_note}）。\n"
             f"```diff\n{full_diff_text}\n```"
         )
+        if artifact_fact is not None:
+            artifact_line = (
+                "[artifact] "
+                f"ref={artifact_fact['artifact_ref']} path={artifact_fact['path']} "
+                f"sha256={artifact_fact['sha256']} size_bytes={artifact_fact['size_bytes']} "
+                "identity=immutable_snapshot task_applicability=not_evaluated"
+            )
+            visible_content += "\n" + artifact_line
+            raw_content += "\n" + artifact_line
+        elif artifact_error_type:
+            artifact_line = (
+                "[artifact] artifact_ref_unavailable=true; "
+                f"error_type={artifact_error_type}; source_action_status=success"
+            )
+            visible_content += "\n" + artifact_line
+            raw_content += "\n" + artifact_line
         from llm_loop.core.run_context import current_evidence_shadow_enabled
 
         return ToolResult(
@@ -336,6 +383,7 @@ class EditFileTool:
             tool_name=self.name,
             raw_observation=raw_content if current_evidence_shadow_enabled.get() else None,
             evidence_source_version_token=f"stat:{post_stat.st_mtime_ns}:{post_stat.st_size}",
+            artifact_facts=((artifact_fact,) if artifact_fact is not None else ()),
         )
 
     @staticmethod

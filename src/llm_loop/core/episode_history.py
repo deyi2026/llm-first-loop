@@ -177,6 +177,20 @@ def _tool_evidence_receipt(message: Message) -> Message | None:
             facts.append(f"acquired_at={acquired_at}")
         if version_policy:
             facts.append(f"version_policy={version_policy}")
+    artifact_facts = md.get("artifact_facts")
+    if isinstance(artifact_facts, list):
+        for artifact in artifact_facts:
+            if not isinstance(artifact, dict):
+                continue
+            artifact_ref = str(artifact.get("artifact_ref") or "").strip()
+            artifact_path = str(artifact.get("path") or "").strip()
+            artifact_sha = str(artifact.get("sha256") or "").strip()
+            if artifact_ref:
+                facts.append(f"artifact_ref={artifact_ref}")
+            if artifact_path:
+                facts.append(f"artifact_path={artifact_path}")
+            if artifact_sha:
+                facts.append(f"artifact_sha256={artifact_sha}")
     # Receipt stays deliberately thin. Full source kind/version token/provenance remain
     # durably available through read_evidence; the folded view only carries the two
     # origin facts that help the model notice temporal/applicability risk.

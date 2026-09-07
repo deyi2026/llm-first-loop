@@ -52,7 +52,7 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "search_evidence": "检索当前会话已持久化 Evidence，返回片段与稳定 EvidenceRef；不重新执行 source。命中为历史 observation；source currentness≠task applicability，结合 acquired_at/当前证据自主判断。",
     "search_archive": "兼容检索历史/归档 Evidence，返回稳定 ref；全文用 read_evidence。命中为历史 observation；source currentness≠task applicability，结合 acquired_at/当前证据自主判断。",
     "list_evidence": "列出当前会话最近 Evidence、acquired_at 与稳定 ref；freshness 仅表示 source 版本状态，不判断任务适用性。",
-    "read_file": "读取已知路径的本地文本文件；目录或关键词定位用 search_files。",
+    "read_file": "读取已知路径的本地文本文件或 artifact://v1/... immutable snapshot；目录或关键词定位用 search_files。",
     "read_image": "读取本地图片并返回结构化视觉与元信息证据；需要图片路径。",
     "inspect_code": "解析 Python 文件/目录 AST，列类、函数、签名与 imports；实现正文用 read_file。",
     "edit_file": "精确修改已有文件：read→match→diff→apply+verify；dry_run 可只预览。",
@@ -1434,6 +1434,8 @@ def tool_result_to_message(
         metadata["verification_receipts"] = list(result.verification_receipts)
     if result.subagent_settlement is not None:
         metadata["subagent_settlement"] = dict(result.subagent_settlement)
+    if result.artifact_facts:
+        metadata["artifact_facts"] = [dict(fact) for fact in result.artifact_facts]
     if result.capability_requirements:
         # Internal producer fact. G6-v2 may attach turn-scoped boundary metadata in
         # ToolCycleService; Message.metadata itself never goes on the provider wire.

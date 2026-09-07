@@ -223,6 +223,9 @@ class ToolResult:
     # ST2-C2: provider-invisible mechanical binding for SubAgent settlement.
     # It carries identity/fencing facts only; Message.to_llm_dict() never projects metadata.
     subagent_settlement: dict[str, str] | None = None
+    # EW2-C: immutable workspace artifact identities produced by execution-owned tools.
+    # Facts are mechanical (ref/path/hash/size/version); task applicability stays with the model.
+    artifact_facts: tuple[dict[str, object], ...] = ()
 
     def to_message(self) -> Message:
         """构造为 tool 消息（如实承载状态，AI 视角：状态结构化呈现）.
@@ -254,6 +257,8 @@ class ToolResult:
             metadata["verification_receipts"] = list(self.verification_receipts)
         if self.subagent_settlement is not None:
             metadata["subagent_settlement"] = dict(self.subagent_settlement)
+        if self.artifact_facts:
+            metadata["artifact_facts"] = [dict(fact) for fact in self.artifact_facts]
         if self.source_execution_performed is not None:
             metadata["source_execution_performed"] = self.source_execution_performed
         # R8.24-C: capsule metadata-only 审计补充字段 + 短路标记（默认缺省不写，零回归）

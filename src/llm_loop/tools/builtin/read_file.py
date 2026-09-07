@@ -12,6 +12,7 @@ from llm_loop.tools.source_recovery_contract import (
     SourceRecoveryKind,
     source_recovery_guidance,
 )
+from llm_loop.workspace.artifacts import ARTIFACT_SCHEME, ArtifactError, WorkspaceArtifactStore
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,8 @@ class ReadFileTool:
         + "Evidence enforce 中 verified-current 且 coverage 已覆盖时由 resolver 复用 Evidence 并内联正文；"
         "无法内联时该次复用按 failure 如实回执（force_refresh=true 显式要求物理重读）。"
         "legacy/off 模式下超大文件仍可用 offset/limit 分段读取。"
+        "path 也可为 artifact://v1/...；此时读取当前工作区绑定的 immutable artifact snapshot，"
+        "并如实报告其 workspace path 当前是否仍匹配该版本。"
     )
     parameters = {
         "type": "object",
@@ -68,8 +71,13 @@ class ReadFileTool:
         "required": ["path"],
     }
 
+    def __init__(self, artifact_store: WorkspaceArtifactStore | None = None) -> None:
+        self.artifact_store = artifact_store
+
     def execute(self, **kwargs) -> ToolResult:
         path = str(kwargs.get("path", "")).strip()
+        if path.startswith(ARTIFACT_SCHEME):
+            return self._read_artifact(path, kwargs)
         # R8.24-C C-D7: evidence:// 引用短路——path 取值后立即判定，先于 path_registry
         # 否定帧登记与任何磁盘 IO（防 evidence:// 被登记为"永不存在的物理路径"污染
         # 跨会话复用；r-p-r §0 死循环诱饵根除）。返回参数误用类 FAILURE（调用方式错误，
@@ -206,3 +214,63 @@ class ReadFileTool:
                 error_type=type(exc).__name__,
                 error_detail=str(exc),
             )
+
+    def _read_artifact(self, ref: str, kwargs: dict) -> ToolResult:
+        if self.artifact_store is None:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=(
+                    "[artifact unavailable] 当前运行时未装配 artifact store；"
+                    "该引用未被当作文件系统路径处理。"
+                ),
+                tool_call_id="",
+                tool_name=self.name,
+                error_type="ArtifactStoreUnavailable",
+            )
+        from llm_loop.core.run_context import current_evidence_shadow_enabled, workspace_base
+
+        scope = workspace_base()
+        try:
+            snapshot, data = self.artifact_store.hydrate(ref, workspace_scope=scope)
+        except ArtifactError as exc:
+            return ToolResult(
+                status=ToolResultStatus.FAILURE,
+                content=f"[artifact 无法读取] {exc}",
+                tool_call_id="",
+                tool_name=self.name,
+                error_type="ArtifactError",
+                error_detail=str(exc),
+            )
+
+        offset = int(kwargs.get("offset", 0) or 0)
+        limit = kwargs.get("limit")
+        text = data.decode("utf-8", errors="replace")
+        lines = text.splitlines()
+        total = len(lines)
+        start = max(0, min(offset, total))
+        selected = lines[start:]
+        if limit is not None:
+            selected = selected[: int(limit)]
+        record = snapshot.record
+        header = (
+            f"[read_file artifact] ref={record.ref} path={record.relative_path} "
+            f"sha256={record.sha256} size_bytes={record.size_bytes} "
+            f"workspace_path_state={snapshot.workspace_path_state} "
+            "artifact_identity=immutable_snapshot task_applicability=not_evaluated"
+        )
+        if selected:
+            numbered = "\n".join(f"{start + i + 1} | {line}" for i, line in enumerate(selected))
+            note = f"\n[共 {total} 行，已显示 {len(selected)} 行]" if len(selected) < total else ""
+            content = header + "\n" + numbered + note
+        else:
+            content = header + "\n[空 artifact 或所选范围无内容]"
+        facts = snapshot.public_facts()
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            content=content,
+            tool_call_id="",
+            tool_name=self.name,
+            raw_observation=content if current_evidence_shadow_enabled.get() else None,
+            evidence_source_version_token=f"artifact-sha256:{record.sha256}",
+            artifact_facts=(facts,),
+        )

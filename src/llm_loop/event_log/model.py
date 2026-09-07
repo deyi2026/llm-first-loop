@@ -403,6 +403,7 @@ REGISTRY.register(
             "actual_size": "写后复读精确文件字节数",
             "actual_mtime_ns": "写后 stat mtime_ns；不可用可为空",
             "matches_expected": "actual_after_sha256 是否等于 prepared 的预期字节",
+            "artifact_ref": "可选：该精确写后版本对应的 workspace-scoped immutable artifact ref",
         },
     )
 )

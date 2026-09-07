@@ -61,6 +61,8 @@ def source_for_call(call: ToolCall, result: ToolResult | None = None) -> tuple[S
     args = call.arguments if isinstance(call.arguments, dict) else {}
     if call.name == "read_file":
         locator = str(args.get("path", "<unknown-file>"))
+        from llm_loop.workspace.artifacts import ARTIFACT_SCHEME
+
         start = max(0, int(args.get("offset", 0) or 0))
         limit = args.get("limit")
         end = None if limit is None else start + max(0, int(limit))
@@ -68,7 +70,11 @@ def source_for_call(call: ToolCall, result: ToolResult | None = None) -> tuple[S
             SourceIdentity(
                 kind=SourceKind.FILE,
                 locator=locator,
-                version_policy=SourceVersionPolicy.PROBEABLE,
+                version_policy=(
+                    SourceVersionPolicy.VERSIONED
+                    if locator.startswith(ARTIFACT_SCHEME)
+                    else SourceVersionPolicy.PROBEABLE
+                ),
                 version_token=(
                     None if result is None else result.evidence_source_version_token
                 ),

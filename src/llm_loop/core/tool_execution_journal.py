@@ -398,6 +398,7 @@ class ToolExecutionJournal:
         actual_after_bytes: bytes,
         expected_after_bytes: bytes,
         actual_mtime_ns: int | None = None,
+        artifact_ref: str = "",
     ) -> bool:
         """Record the exact post-write bytes observed by the tool; failure never invents durability."""
         if not self.enabled:
@@ -423,6 +424,7 @@ class ToolExecutionJournal:
                 "actual_size": len(actual_after_bytes),
                 "actual_mtime_ns": actual_mtime_ns,
                 "matches_expected": actual_sha == expected_sha,
+                "artifact_ref": str(artifact_ref or ""),
             },
         )
         return event is not None
