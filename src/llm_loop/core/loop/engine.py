@@ -235,6 +235,8 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         self.recovery = recovery
         # D1: 事件源化 EventStore（默认 None 零行为；注入时消息/元数据/压缩事件落事件日志）
         self._event_store = event_store
+        # Mechanical post-tool-receipt hook; factory binds SubAgent settlement only.
+        self._tool_receipt_committed_hook: Callable[[str, Message], object] | None = None
         # INJECTION-GOVERNANCE R8.5: completed conversation episodes become
         # retrievable history before they may retire from provider working context.
         self.episode_store = episode_store

@@ -294,7 +294,7 @@ def test_cancel_fact_is_attempted_before_local_signal_and_restart_exposes_it(
     _wait_terminal(runner, parent, child)
 
 
-def test_c1_keeps_existing_local_settlement_semantics_for_st2_c2(tmp_path) -> None:
+def test_direct_terminal_receipt_does_not_settle_before_parent_commit(tmp_path) -> None:
     store, _events = _store(tmp_path)
     runner = _runner(_FinalLLM(), store)
     parent = "parent-settlement-deferred"
@@ -309,8 +309,9 @@ def test_c1_keeps_existing_local_settlement_semantics_for_st2_c2(tmp_path) -> No
     finally:
         current_session_id.reset(token)
     assert receipt.status.value == "success"
-    # Deliberately unchanged in ST2-C1; ST2-C2 will bind this ACK to parent receipt commit.
-    assert runner.topology_snapshot(child)["settlement_state"] == "collected"
+    # ST2-C2: constructing an in-memory receipt is not proof that the parent received it.
+    assert runner.topology_snapshot(child)["settlement_state"] == "uncollected"
+    assert receipt.subagent_settlement is not None
 
 
 class _FailLLM:

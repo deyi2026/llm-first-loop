@@ -481,6 +481,7 @@ class ToolCycleService:
                 tool_call_id=tc.id,
                 tool_name=tc.name,
                 result_state_sha256=wal_result_sha,
+                tool_message=tool_msg,
             )
         # EVO-20260814-aab7eb0b P2: 运行中停滞指纹追踪（evaluator.py:271 同构指纹）
         # EVO-20260823-9bb27899: 传 result 供搜索类工具空结果计数

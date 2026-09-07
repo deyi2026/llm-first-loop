@@ -36,12 +36,14 @@ class ToolExecutionJournal:
         session_store: SessionStore,
         event_append: Callable[[str, str, dict], Any] | None = None,
         message_event_append: Callable[[Session, Message], Any] | None = None,
+        receipt_committed_hook: Callable[[str, Message], object] | None = None,
     ) -> None:
         self.event_store = event_store
         self.result_root = Path(result_root)
         self.session_store = session_store
         self._event_append_override = event_append
         self._message_event_append_override = message_event_append
+        self._receipt_committed_hook = receipt_committed_hook
 
     @property
     def enabled(self) -> bool:
@@ -271,7 +273,8 @@ class ToolExecutionJournal:
         tool_name: str,
         result_state_sha256: str = "",
         recovered: bool = False,
-    ) -> None:
+        tool_message: Message | None = None,
+    ) -> bool:
         event = self._append_event(
             session_id,
             "tool.execution.receipt_committed",
@@ -286,9 +289,16 @@ class ToolExecutionJournal:
         )
         # With WAL enabled, keep the exact sidecar until the commit fact itself is
         # durable. A later repair can settle from the already-durable tool receipt.
+        committed = bool(self.enabled and event is not None)
         if not self.enabled or event is not None:
             with contextlib.suppress(OSError, ValueError):
                 self.result_path(session_id, execution_id).unlink(missing_ok=True)
+        if committed and tool_message is not None and self._receipt_committed_hook is not None:
+            try:
+                self._receipt_committed_hook(session_id, tool_message)
+            except Exception:  # noqa: BLE001 - commit truth survives derived-cache failure
+                logger.warning("tool receipt committed hook failed", exc_info=True)
+        return committed
 
     def recover(self, session_id: str, sess: Session) -> int:
         """Close incomplete WAL facts without automatically re-executing a tool."""
@@ -328,7 +338,11 @@ class ToolExecutionJournal:
                 if not call_id:
                     continue
                 finished = state.get("finished")
-                if any(m.role == "tool" and m.tool_call_id == call_id for m in sess.messages):
+                existing_receipt = next(
+                    (m for m in sess.messages if m.role == "tool" and m.tool_call_id == call_id),
+                    None,
+                )
+                if existing_receipt is not None:
                     self.receipt_committed(
                         session_id,
                         execution_id=execution_id,
@@ -341,6 +355,7 @@ class ToolExecutionJournal:
                             else ""
                         ),
                         recovered=True,
+                        tool_message=existing_receipt,
                     )
                     continue
 
@@ -430,6 +445,7 @@ class ToolExecutionJournal:
                         tool_name=tool_name,
                         result_state_sha256=result_sha,
                         recovered=True,
+                        tool_message=msg,
                     )
                 recovered += 1
             if recovered:

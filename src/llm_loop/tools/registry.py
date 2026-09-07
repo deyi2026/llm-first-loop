@@ -1429,6 +1429,8 @@ def tool_result_to_message(
             metadata["tool_recovery"] = to_dict()
     if result.verification_receipts:
         metadata["verification_receipts"] = list(result.verification_receipts)
+    if result.subagent_settlement is not None:
+        metadata["subagent_settlement"] = dict(result.subagent_settlement)
     if result.capability_requirements:
         # Internal producer fact. G6-v2 may attach turn-scoped boundary metadata in
         # ToolCycleService; Message.metadata itself never goes on the provider wire.

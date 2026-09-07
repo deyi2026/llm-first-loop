@@ -130,14 +130,24 @@ class SubAgentResultTool:
             for item in trace
             if str(item.get("status", "")).lower() == "success"
         )
-        receipt = ToolResult(
+        parent_id = str(snapshot.get("parent_id") or "")
+        generation = str(snapshot.get("generation") or "")
+        result_id = str(snapshot.get("result_id") or "")
+        binding = (
+            {
+                "child_id": child_id,
+                "parent_id": parent_id,
+                "generation": generation,
+                "result_id": result_id,
+            }
+            if all((child_id, parent_id, generation, result_id))
+            else None
+        )
+        return ToolResult(
             status=status,
             content="\n".join(parts),
             tool_call_id="",
             tool_name=self.name,
             verification_receipts=nested_success,
+            subagent_settlement=binding,
         )
-        # settlement ACK 必须晚于 terminal receipt 成功构造；若上面格式化异常，
-        # handle 仍保持 uncollected，Engine 正常 final gate 不会丢失 obligation。
-        self._runner.settle_current(child_id)
-        return receipt

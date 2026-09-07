@@ -177,6 +177,49 @@ class SubAgentDeliveryJournal:
             seq=int(getattr(event, "seq", 0) or 0),
         )
 
+    def settlement_committed(
+        self,
+        *,
+        child_id: str,
+        parent_id: str,
+        generation: str,
+        result_id: str,
+    ) -> bool:
+        """Derive settlement from a parent tool receipt followed by WAL commit."""
+        store = self.event_store
+        if not self.enabled or store is None or not store.exists(parent_id):
+            return False
+        message_seq_by_call: dict[str, int] = {}
+        commit_seq_by_call: dict[str, int] = {}
+        for event in store.read(parent_id) or []:
+            event_type = str(getattr(event, "type", "") or "")
+            payload = dict(getattr(event, "payload", None) or {})
+            tool_call_id = str(payload.get("tool_call_id") or "")
+            if not tool_call_id:
+                continue
+            seq = int(getattr(event, "seq", 0) or 0)
+            if event_type == "message.appended" and str(payload.get("tool_name") or "") == "subagent_result":
+                metadata = payload.get("metadata")
+                binding = metadata.get("subagent_settlement") if isinstance(metadata, dict) else None
+                if not isinstance(binding, dict):
+                    continue
+                if (
+                    str(binding.get("child_id") or "") == child_id
+                    and str(binding.get("parent_id") or "") == parent_id
+                    and str(binding.get("generation") or "") == generation
+                    and str(binding.get("result_id") or "") == result_id
+                ):
+                    message_seq_by_call[tool_call_id] = seq
+            elif (
+                event_type == "tool.execution.receipt_committed"
+                and str(payload.get("tool_name") or "") == "subagent_result"
+            ):
+                commit_seq_by_call[tool_call_id] = seq
+        return any(
+            commit_seq_by_call.get(call_id, 0) > message_seq
+            for call_id, message_seq in message_seq_by_call.items()
+        )
+
     def queue_mailbox(
         self,
         *,

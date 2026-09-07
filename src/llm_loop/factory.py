@@ -1173,6 +1173,7 @@ def build_engine(settings: Settings) -> LoopEngine:
     # 旧 subagent_report 公共工具已退休，不保留第二套投递路径。
     registry.register(AgentMessageTool(subagent_runner))
     registry.register(SubAgentResultTool(subagent_runner))
+    engine._tool_receipt_committed_hook = subagent_runner.settle_committed_receipt
 
     # task_quality 六路径装配（2026-08-17，D3 定案: 动态开关默认关零回归）:
     # 路径 A 预检层注入 ToolRegistry（安全检查前拦截参数错误）；

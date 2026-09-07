@@ -776,6 +776,7 @@ class _EventsMixin:
             session_store=self.session,
             event_append=self._event_append,
             message_event_append=self._append_message_event,
+            receipt_committed_hook=getattr(self, "_tool_receipt_committed_hook", None),
         )
 
     @staticmethod
@@ -837,8 +838,9 @@ class _EventsMixin:
         tool_name: str,
         result_state_sha256: str = "",
         recovered: bool = False,
-    ) -> None:
-        self._tool_execution_journal().receipt_committed(
+        tool_message: Message | None = None,
+    ) -> bool:
+        return self._tool_execution_journal().receipt_committed(
             session_id,
             execution_id=execution_id,
             round_no=round_no,
@@ -846,6 +848,7 @@ class _EventsMixin:
             tool_name=tool_name,
             result_state_sha256=result_state_sha256,
             recovered=recovered,
+            tool_message=tool_message,
         )
 
     def _recover_inflight_tool_executions(self, session_id: str, sess) -> int:

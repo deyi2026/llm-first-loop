@@ -220,6 +220,9 @@ class ToolResult:
     # 例: ("execute_command:success", "read_file:success")。只允许真实 SUCCESS
     # 子动作进入，失败/阻断不得借外层 SUCCESS 冒充已完成。
     verification_receipts: tuple[str, ...] = ()
+    # ST2-C2: provider-invisible mechanical binding for SubAgent settlement.
+    # It carries identity/fencing facts only; Message.to_llm_dict() never projects metadata.
+    subagent_settlement: dict[str, str] | None = None
 
     def to_message(self) -> Message:
         """构造为 tool 消息（如实承载状态，AI 视角：状态结构化呈现）.
@@ -249,6 +252,8 @@ class ToolResult:
             metadata["source_resolution_mode"] = self.source_resolution_mode
         if self.verification_receipts:
             metadata["verification_receipts"] = list(self.verification_receipts)
+        if self.subagent_settlement is not None:
+            metadata["subagent_settlement"] = dict(self.subagent_settlement)
         if self.source_execution_performed is not None:
             metadata["source_execution_performed"] = self.source_execution_performed
         # R8.24-C: capsule metadata-only 审计补充字段 + 短路标记（默认缺省不写，零回归）

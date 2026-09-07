@@ -125,6 +125,7 @@ class SubAgentRunner:
             event_store=self.session_store.event_store,
             result_root=journal_root,
             session_store=self.session_store,
+            receipt_committed_hook=self.settle_committed_receipt,
         )
         self._topology_journal = SubAgentTopologyJournal(self.session_store.event_store)
         self._delivery_journal = SubAgentDeliveryJournal(self.session_store.event_store)
@@ -179,7 +180,7 @@ class SubAgentRunner:
         return state
 
     def topology_snapshot(self, child_session_id: str) -> dict[str, object] | None:
-        """Return mechanical topology/ownership facts without recovering execution state."""
+        """Return mechanical topology/ownership/settlement facts without reviving work."""
         sid = str(child_session_id or "").strip()
         if not sid:
             return None
@@ -187,34 +188,57 @@ class SubAgentRunner:
             handle = self._handles.get(sid)
             durable = self._durable_topology.get(sid)
             if handle is not None:
+                parent_id = handle.parent_id
+                generation = handle.generation
                 terminal = handle.state != "running"
-                outcome = (handle.result.outcome if handle.result is not None else "")
-                return {
-                    "child_id": sid,
-                    "parent_id": handle.parent_id,
-                    "generation": handle.generation,
-                    "owner_state": "terminal_local" if terminal else "local_active",
-                    "local_active": not terminal,
-                    "terminal": terminal,
-                    "outcome": outcome,
-                    "settlement_state": (
-                        "collected" if handle.collected else "uncollected"
-                    ),
-                }
-            if durable is None:
+                outcome = handle.result.outcome if handle.result is not None else ""
+                collected = handle.collected
+            elif durable is not None:
+                parent_id = durable.parent_id
+                generation = durable.generation
+                terminal = durable.terminal
+                outcome = durable.outcome
+                collected = False
+            else:
                 return None
+
+        result_record = self._delivery_journal.result(sid, generation) if terminal else None
+        durable_settled = bool(
+            result_record is not None
+            and self._delivery_journal.settlement_committed(
+                child_id=sid,
+                parent_id=parent_id,
+                generation=generation,
+                result_id=result_record.result_id,
+            )
+        )
+        if handle is not None and durable_settled and not collected:
+            with self._children_guard:
+                current = self._handles.get(sid)
+                if current is not None and current.generation == generation:
+                    current.collected = True
+                    collected = True
+        if handle is not None:
             return {
-                "child_id": durable.child_id,
-                "parent_id": durable.parent_id,
-                "generation": durable.generation,
-                "owner_state": "terminal_known" if durable.terminal else "orphaned",
-                "local_active": False,
-                "terminal": durable.terminal,
-                "outcome": durable.outcome,
-                # Collection/settlement is process-local until ST2-C.  Restart must
-                # report epistemic unknown instead of inventing uncollected/collected.
-                "settlement_state": "unknown",
+                "child_id": sid,
+                "parent_id": parent_id,
+                "generation": generation,
+                "owner_state": "terminal_local" if terminal else "local_active",
+                "local_active": not terminal,
+                "terminal": terminal,
+                "outcome": outcome,
+                "settlement_state": "collected" if collected or durable_settled else "uncollected",
             }
+        return {
+            "child_id": sid,
+            "parent_id": parent_id,
+            "generation": generation,
+            "owner_state": "terminal_known" if terminal else "orphaned",
+            "local_active": False,
+            "terminal": terminal,
+            "outcome": outcome,
+            "settlement_state": "collected" if durable_settled else "unknown",
+        }
 
     @staticmethod
     def _delivered_mailbox_ids(sess: Session, generation: str) -> set[str]:
@@ -1038,6 +1062,8 @@ class SubAgentRunner:
             return True, "ok", {
                 "child_id": sid,
                 "parent_id": parent_id,
+                "generation": generation,
+                "result_id": result_record.result_id if result_record is not None else "",
                 "state": result.outcome if result is not None else "orphaned",
                 "depth": result.depth if result is not None else durable.depth,
                 "cancel_requested": cancel is not None,
@@ -1070,6 +1096,10 @@ class SubAgentRunner:
                 return True, "ok", {
                     "child_id": handle.child_id,
                     "parent_id": handle.parent_id,
+                    "generation": handle.generation,
+                    "result_id": (
+                        f"result-{handle.generation}" if result is not None and self._delivery_journal.result(sid, handle.generation) is not None else ""
+                    ),
                     "state": handle.state,
                     "depth": handle.depth,
                     "cancel_requested": handle.cancel_requested,
@@ -1086,6 +1116,8 @@ class SubAgentRunner:
         return True, "ok", {
             "child_id": sid,
             "parent_id": durable.parent_id,
+            "generation": durable.generation,
+            "result_id": result_record.result_id if result_record is not None else "",
             "state": result.outcome if result is not None else "orphaned",
             "depth": result.depth if result is not None else durable.depth,
             "cancel_requested": cancel is not None,
@@ -1093,6 +1125,56 @@ class SubAgentRunner:
             "result": result,
             "local_active": False,
         }
+
+    def settle_committed_receipt(self, parent_session_id: str, message: Message) -> bool:
+        """Cache a settlement only after its exact parent tool receipt is durably committed."""
+        if message.tool_name != "subagent_result":
+            return False
+        binding = (message.metadata or {}).get("subagent_settlement")
+        if not isinstance(binding, dict):
+            return False
+        child_id = str(binding.get("child_id") or "")
+        parent_id = str(binding.get("parent_id") or "")
+        generation = str(binding.get("generation") or "")
+        result_id = str(binding.get("result_id") or "")
+        if not all((child_id, parent_id, generation, result_id)) or parent_id != parent_session_id:
+            return False
+        with self._children_guard:
+            handle = self._handles.get(child_id)
+            durable = self._durable_topology.get(child_id)
+            expected_parent = handle.parent_id if handle is not None else (durable.parent_id if durable else "")
+            expected_generation = handle.generation if handle is not None else (durable.generation if durable else "")
+        if expected_parent != parent_id or expected_generation != generation:
+            return False
+        result_record = self._delivery_journal.result(child_id, generation)
+        if (
+            result_record is None
+            or result_record.parent_id != parent_id
+            or result_record.result_id != result_id
+        ):
+            return False
+        # The callback is only a notification. Settlement authority remains the
+        # durable parent facts: exact receipt message followed by matching WAL commit.
+        if not self._delivery_journal.settlement_committed(
+            child_id=child_id,
+            parent_id=parent_id,
+            generation=generation,
+            result_id=result_id,
+        ):
+            return False
+        with self._children_guard:
+            handle = self._handles.get(child_id)
+            if handle is not None:
+                if (
+                    handle.parent_id != parent_id
+                    or handle.generation != generation
+                    or handle.state == "running"
+                    or handle.result is None
+                ):
+                    return False
+                handle.collected = True
+                self._prune_handles_locked()
+        return True
 
     def settle_current(self, child_id: str) -> bool:
         """在 terminal receipt 已成功构造后，由 direct parent ACK settlement。"""
@@ -1493,6 +1575,7 @@ class SubAgentRunner:
                         tool_call_id=call.id,
                         tool_name=call.name,
                         result_state_sha256=result_state_sha,
+                        tool_message=tool_msg,
                     )
                 if cancel_event is not None and cancel_event.is_set():
                     return SubAgentResult(
