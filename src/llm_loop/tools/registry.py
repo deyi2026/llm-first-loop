@@ -68,7 +68,7 @@ _COMPACT_TOOL_DESCRIPTIONS: dict[str, str] = {
     "get_goal": "读取当前 durable Goal 与最近 checkpoints；只返回已记录事实，不替模型决定下一步。",
     "task_frontier": "读取当前 Goal 的 Task 图状态/frontier；程序记结构，模型决定如何推进。",
     "architecture_status": "读取 LFL 运行时状态、缓存、异常、配置与动作轨迹；不作为用户任务 Goal 事实源。",
-    "search_records": "按 kind/query 检索记录。episode=已解决/退休片段，非当前任务；experience 命中给 stable ref 后精确水合；kind=rule 返回 RULE-AI 卡片，RULE-AI-xx 精确水合规则正文。历史适用性由模型判断。",
+    "search_records": "按 kind/query 检索记录。episode=已解决/退休片段，非当前任务；experience 命中给 stable ref 后精确水合；kind=synopsis 返回模型自写摘要轻量卡和 stable ref；完整摘要用 source_synopsis(read_summary)，原文用 source_synopsis(read_source)；kind=rule 返回 RULE-AI 卡片，RULE-AI-xx 精确水合规则正文。历史适用性由模型判断。",
     "event_stream": "按时间顺序读取统一运行事件流，用于审计、交接与排障。",
     "search_docs": "检索 docs/ Markdown 文档并返回路径、标题、摘要与相关性。",
     "adjust_strategy": "调整白名单运行参数 max_iterations/timeout_s/history_budget，受全局硬上限约束。",
@@ -887,7 +887,7 @@ class ToolRegistry:
 
     # EVO-20260810-750e985a: 工具并发控制
     _EVIDENCE_CONTROL_TOOLS = frozenset(
-        {"read_evidence", "search_evidence", "list_evidence", "search_archive", "read_attachment"}
+        {"read_evidence", "search_evidence", "list_evidence", "search_archive", "read_attachment", "source_synopsis"}
     )
 
     _READONLY_TOOLS = frozenset(

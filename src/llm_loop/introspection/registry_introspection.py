@@ -52,7 +52,7 @@ _SEARCH_ARCHIVE_TOOL_DEF: dict[str, Any] = {
             },
             "with_summary": {
                 "type": "boolean",
-                "description": "是否对命中条目生成 LLM 语义摘要（默认 false，返回首尾摘要）。设 true 时每条命中多一次 LLM 调用（增加计费），用于需要语义理解被压内容的场景。",
+                "description": "兼容参数。true 只显示既有 archive index summary + preview，并明确 projection_complete=false；不再对 preview 发起隐藏 LLM 摘要调用。需要全文摘要时先恢复 exact source，再由 source_synopsis 保存模型自写摘要。",
             },
         },
         "required": ["query"],
@@ -61,7 +61,7 @@ _SEARCH_ARCHIVE_TOOL_DEF: dict[str, Any] = {
 
 _SEARCH_RECORDS_TOOL_DEF: dict[str, Any] = {
     "name": "search_records",
-    "description": "检索持久记录与按需知识索引：运行审计、memory、archive、experience、self_eval、resolved/truncated episode、rule 等。当前 Goal/Task 状态用 get_goal/task_frontier。episode 表示已解决/退休的对话片段，不代表当前活动任务；truncated episode 仅表示历史中断/截断事实，同样不代表当前任务。普通命中先给 stable ref；显式读取 truncated:<ref> 时恢复 exact source，能在物理输出上限内一次返回则不再次展示截断，只有确实超限才用 next_offset 连续分页。rule 普通查询/空 query 返回轻量 RULE-AI card/index；需要规则正文时用精确 RULE-AI-xx 水合当前 docs/ai_rules.md 单节，projection_complete=true 表示该节完整投影。experience/历史记录仍需检查时间与当前适用性；rule authority=rule_sot 表示当前规则来源，但 task_applicability 仍由模型结合任务判断。",
+    "description": "检索持久记录与按需知识索引：运行审计、memory、archive、experience、self_eval、resolved/truncated episode、synopsis、rule 等。当前 Goal/Task 状态用 get_goal/task_frontier。episode 表示已解决/退休的对话片段，不代表当前活动任务；truncated episode 仅表示历史中断/截断事实，同样不代表当前任务。synopsis 是模型自己写的派生导航视图，绑定 exact source ref/SHA，不能替代原文且不自动注入；search_records 只发现 stable ref，完整摘要/原文分别用 source_synopsis(read_summary/read_source)。普通命中先给 stable ref；显式读取 truncated:<ref> 时恢复 exact source，能在物理输出上限内一次返回则不再次展示截断，只有确实超限才用 next_offset 连续分页。rule 普通查询/空 query 返回轻量 RULE-AI card/index；需要规则正文时用精确 RULE-AI-xx 水合当前 docs/ai_rules.md 单节，projection_complete=true 表示该节完整投影。experience/历史记录仍需检查时间与当前适用性；rule authority=rule_sot 表示当前规则来源，但 task_applicability 仍由模型结合任务判断。",
     "parameters": {
         "type": "object",
         "properties": {
@@ -87,6 +87,7 @@ _SEARCH_RECORDS_TOOL_DEF: dict[str, Any] = {
                     "episode",
                     "rule",
                     "file_effect",
+                    "synopsis",
                     "all",
                 ],
             },

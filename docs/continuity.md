@@ -217,3 +217,54 @@ for cross-agent reasoning replay.
 
 Neither path creates a program-authored task summary. Model-authored long-source synopsis
 remains a separate derived-view capability and must stay bound to an exact source ref/hash.
+
+## Model-authored Source Synopsis
+
+Long source/reasoning synopsis is a **derived navigation view**, not a replacement for
+source truth and not a WorkingState authority.
+
+- `snapshot_complete=true` means the exact model-readable bytes bound by the synopsis were
+  fully persisted; `source_complete` separately reports whether that representation covers the
+  underlying source completely. Interrupted reasoning can therefore be snapshot-complete while
+  still source-incomplete.
+- Exact source first: `attachment://`, `artifact://v1/`, `evidence://v1/`, and exact
+  `truncated:` recovery refs are mechanically resolved before a synopsis can be saved.
+- The model authors `summary`; the program does not generate, score, select, rewrite, or
+  decide semantic importance/task applicability.
+- `source_synopsis(action=save)` binds the model text to the resolved source SHA and an
+  explicit `[source_start, source_end)` range. `expected_source_sha256` is an optional
+  mechanical version precondition.
+- Before the derived record is committed, the exact model-readable source representation
+  is copied into a content-addressed immutable synopsis source blob. A later change in the
+  live source representation therefore cannot rewrite what an older synopsis referred to.
+- `source_synopsis(action=read_source)` reads that immutable source snapshot. A source that
+  fits the physical page budget is returned in one read; larger sources use absolute,
+  monotonic `next_offset` pages and never repeat the first page as a recovery substitute.
+- `search_records(kind=synopsis)` is index-only and returns compact cards/stable refs.
+  `source_synopsis(action=read_summary)` is the exact summary hydration path;
+  `source_synopsis(action=read_source)` is the exact source-snapshot hydration path. This
+  keeps explicit rereads out of ordinary Evidence/result projection so they are not
+  immediately shortened again. Explicit synopsis reads may mechanically report whether
+  the original source ref still resolves to the same snapshot SHA.
+- `source_ref_state` is only a ref/snapshot identity fact (`same_snapshot`,
+  `changed_representation`, `unavailable`, `not_checked`). It is **not** external-source
+  freshness and is never converted into task applicability.
+- A synopsis record is always session-scoped, even when its cited source is a workspace-scoped
+  attachment/artifact. This prevents model-authored derived text from silently widening current
+  session context into another session. The source access scope is retained only as a factual
+  provenance field; cross-session reuse requires a separate explicit promotion mechanism.
+- Session deletion removes its synopsis records and only garbage-collects exact source snapshot
+  blobs proven unreferenced by all remaining records. Corrupt remaining records fail closed for GC.
+- Private provider replay state is never promoted by synopsis persistence.
+- Saving/reading a synopsis is a derived-view/recovery control-plane operation and does not
+  recursively create Evidence records.
+- No core-loop automatic synopsis producer is installed. The model decides whether/when a
+  long source it has read merits a synopsis. This also prevents a hidden background summary
+  request from competing with a single-slot local model.
+- `WorkingStateCheckpoint` production remains HOLD. Synopsis persistence does not authorize
+  automatic prompt injection, evidence selection, completion judgment, or recovery replay.
+
+Legacy `search_archive(with_summary=true)` remains accepted for compatibility but no longer
+runs an LLM over the archive's short `content_preview`. It returns a truthful preview/index
+view with `projection_complete=false`; full-source summarization must start from an exact
+recoverable source instead of a preview that silently omits middle content.

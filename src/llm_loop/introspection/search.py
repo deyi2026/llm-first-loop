@@ -40,6 +40,7 @@ _VALID_KINDS = {
     "episode",  # INJECTION-GOVERNANCE R8.5: resolved Q&A/tool-chain index
     "rule",  # on-demand Rule SoT index / exact hydration
     "file_effect",  # P3: current-session mechanical AI/human file-effect receipts
+    "synopsis",  # model-authored derived view bound to exact source SHA/ref
     "all",
 }
 
@@ -137,6 +138,8 @@ class RecordSearcher:
         rule_path: str | Path | None = None,
         file_effect_query: Any | None = None,
         workspace_scope_resolver: Any | None = None,
+        synopsis_store: Any | None = None,
+        synopsis_source_resolver: Any | None = None,
     ) -> None:
         self._audit_dir = Path(audit_dir)
         self._memory = memory_store
@@ -148,6 +151,8 @@ class RecordSearcher:
         self._rule_index = RuleIndex(rule_path or default_rule_path)
         self._file_effect_query = file_effect_query
         self._workspace_scope_resolver = workspace_scope_resolver
+        self._synopsis_store = synopsis_store
+        self._synopsis_source_resolver = synopsis_source_resolver
         # R3(P0-3/D11): experience 检索诊断透传——search() 入口重置，experience/all 路径回填
         self._last_diagnostics: dict[str, Any] | None = None
 
@@ -307,6 +312,7 @@ class RecordSearcher:
             results += self._search_archive(query, each_limit, session_id)
             results += self._search_episode(query, each_limit, session_id)
             results += self._search_experience(query, each_limit)  # P1-2: 经验库并列返回
+            results += self._search_synopsis(query, each_limit, session_id)
         return results[:limit]
 
     def _search_special(
@@ -327,6 +333,8 @@ class RecordSearcher:
             return self._search_experience(query, limit)
         if kind == "rule":
             return self._rule_index.search(query, limit)
+        if kind == "synopsis":
+            return self._search_synopsis(query, limit, session_id)
         if kind == "file_effect":
             if self._file_effect_query is None or not session_id:
                 return []
@@ -364,6 +372,57 @@ class RecordSearcher:
         if kind == "declaration_check":
             return self._hydrate_declaration_check(query)
         return None
+
+    def _search_synopsis(self, query: str, limit: int, session_id: str) -> list[dict]:
+        """Discover or explicitly hydrate model-authored source synopses.
+
+        Ordinary search is index-only and never re-resolves sources. Exact
+        ``synopsis:<id>`` hydration may compare the current exact source SHA as a
+        mechanical version fact; it does not judge semantic/task applicability.
+        """
+        if self._synopsis_store is None:
+            return []
+        if callable(self._workspace_scope_resolver):
+            scope = str(self._workspace_scope_resolver() or "")
+        else:
+            from llm_loop.core.run_context import workspace_base
+
+            scope = workspace_base()
+        raw = str(query or "").strip()
+        if raw.startswith("synopsis:"):
+            try:
+                record = self._synopsis_store.get(
+                    raw, workspace_scope=scope, session_id=session_id
+                )
+            except (TypeError, ValueError):
+                return []
+            if record is None:
+                return []
+            current_state = "not_checked"
+            if callable(self._synopsis_source_resolver):
+                try:
+                    current = self._synopsis_source_resolver(record.source_ref)
+                    current_sha256 = str(getattr(current, "source_sha256", "") or "")
+                    current_state = (
+                        "same_snapshot"
+                        if current_sha256 and current_sha256 == record.source_sha256
+                        else "changed_representation"
+                    )
+                except Exception:  # noqa: BLE001 - currentness probe is non-authoritative
+                    current_state = "unavailable"
+            card = record.public_card(source_ref_state=current_state)
+            card["exact_summary_read"] = "source_synopsis(action=read_summary, synopsis_ref=<ref>)"
+            return [card]
+        try:
+            records = self._synopsis_store.search(
+                workspace_scope=scope,
+                session_id=session_id,
+                query=raw,
+                limit=limit,
+            )
+        except (TypeError, ValueError):
+            return []
+        return [record.public_card() for record in records]
 
     def _hydrate_declaration_check(self, query: str) -> list[dict] | None:
         """精确 DC id / legacy line-ref 显式水合；宽检索返回 None 走轻量索引。

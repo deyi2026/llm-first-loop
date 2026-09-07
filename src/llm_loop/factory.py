@@ -22,6 +22,12 @@ from llm_loop.config import Settings
 from llm_loop.core.history import converge_history_budget
 from llm_loop.core.loop import LoopEngine
 from llm_loop.core.message import ToolResult
+from llm_loop.core.run_context import (
+    current_session_id as current_session_id_ctx,
+)
+from llm_loop.core.run_context import (
+    workspace_base as runtime_workspace_base,
+)
 from llm_loop.core.scheduler import ScheduleStore  # 2026-08-27 BUGFIX: 共享实例装配
 from llm_loop.core.session import SessionStore, _validate_session_id
 from llm_loop.feedback.honesty import delete_feedback_for_session
@@ -33,8 +39,16 @@ from llm_loop.introspection.status import ArchitectureStatusProvider
 from llm_loop.introspection.task_evidence import TaskEvidenceVerifier
 from llm_loop.llm.client import LLMClient
 from llm_loop.memory.archive import ArchiveStore
+from llm_loop.memory.attachments import AttachmentStore
 from llm_loop.memory.episode import EpisodeStore
+from llm_loop.memory.evidence import EvidenceError
 from llm_loop.memory.store import MemoryStore
+from llm_loop.memory.synopsis import (
+    MAX_SOURCE_SNAPSHOT_CHARS,
+    SourceSnapshot,
+    SynopsisError,
+    SynopsisStore,
+)
 from llm_loop.runtime.route_context import get_route_context, set_route_audit_fn
 from llm_loop.runtime.tool_octet import register_octet_sink
 from llm_loop.subagent.runner import SubAgentRunner
@@ -52,6 +66,7 @@ from llm_loop.tools.builtin.read_file import ReadFileTool
 from llm_loop.tools.builtin.read_image import ReadImageTool
 from llm_loop.tools.builtin.schedule import ScheduleCancelTool, ScheduleTool
 from llm_loop.tools.builtin.search_files import SearchFilesTool
+from llm_loop.tools.builtin.source_synopsis import SourceSynopsisTool
 from llm_loop.tools.builtin.spawn_subagent import SpawnSubAgentTool
 from llm_loop.tools.builtin.subagent_result import SubAgentResultTool
 from llm_loop.tools.builtin.web_fetch import WebFetchTool
@@ -338,6 +353,10 @@ def build_engine(settings: Settings) -> LoopEngine:
                 BlobStore(evidence_root / "blobs"),
                 EvidenceLedgerStore(evidence_root / "ledger"),
             ).delete_session(sid)
+        # Model-authored synopses never widen beyond the producing session, even when
+        # their cited source is workspace-scoped. Session deletion retires those
+        # derived records and safely GCs source snapshots that no remaining record uses.
+        SynopsisStore(settings.data_dir).delete_session(sid)
 
     session_store = SessionStore(
         settings.sessions_dir,
@@ -373,6 +392,9 @@ def build_engine(settings: Settings) -> LoopEngine:
     # capture-before-projection and emits a bounded recovery capsule.
     _legacy_evidence_migrate_workspace_fn: Callable[[str], object] | None = None
     task_evidence_verifier: Any | None = None
+    evidence_blobs: Any | None = None
+    evidence_ledger: Any | None = None
+    evidence_owner_resolver: Callable[[], Any] | None = None
     if settings.evidence_mode in {"shadow", "enforce"}:
         from llm_loop.core.run_context import current_session_id, workspace_base
         from llm_loop.memory.evidence import (
@@ -399,6 +421,8 @@ def build_engine(settings: Settings) -> LoopEngine:
         def _evidence_owner() -> OwnerScope:
             sid = current_session_id.get() or registry._session_id
             return _evidence_owner_for_session(sid)
+
+        evidence_owner_resolver = _evidence_owner
 
         task_evidence_verifier = TaskEvidenceVerifier(
             evidence_blobs,
@@ -635,14 +659,123 @@ def build_engine(settings: Settings) -> LoopEngine:
         ReadFileTool(artifact_store=_artifact_store, file_service=_file_service),
     )
     try:
-        from llm_loop.web.attachments import AttachmentStore
-
         _attachment_store_for_tools = AttachmentStore(settings.data_dir)
     except OSError:
         _attachment_store_for_tools = None
         logger.warning("attachment store unavailable; read_attachment disabled", exc_info=True)
     if _attachment_store_for_tools is not None:
         _register_basic("read_attachment", ReadAttachmentTool(_attachment_store_for_tools))
+
+    # Long-source synopsis substrate: exact source identity/integrity is program-owned;
+    # synopsis text remains model-authored. No automatic producer or prompt injection.
+    _synopsis_store = SynopsisStore(settings.data_dir)
+
+    def _resolve_synopsis_source(source_ref: str) -> SourceSnapshot:
+        ref = str(source_ref or "").strip()
+        scope = runtime_workspace_base()
+        sid = current_session_id_ctx.get() or registry._session_id
+        if ref.startswith("attachment://"):
+            if _attachment_store_for_tools is None:
+                raise SynopsisError("attachment store 当前不可用。")
+            record, text = _attachment_store_for_tools.ensure_full_text(
+                ref, workspace_scope=scope
+            )
+            return SourceSnapshot(
+                source_ref=ref,
+                source_kind="attachment",
+                text=text,
+                source_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                source_chars=len(text),
+                source_complete=record.extraction_complete,
+                representation=record.extraction_kind or "attachment_text",
+                access_scope="workspace",
+                origin_sha256=record.sha256,
+            )
+        if ref.startswith("artifact://v1/"):
+            if _artifact_store is None:
+                raise SynopsisError("artifact store 当前不可用。")
+            snapshot, data = _artifact_store.hydrate(ref, workspace_scope=scope)
+            text = data.decode("utf-8", errors="replace")
+            return SourceSnapshot(
+                source_ref=ref,
+                source_kind="artifact",
+                text=text,
+                source_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                source_chars=len(text),
+                source_complete=True,
+                representation="artifact_utf8_text",
+                access_scope="workspace",
+                origin_sha256=snapshot.record.sha256,
+            )
+        if ref.startswith("evidence://v1/"):
+            if evidence_blobs is None or evidence_ledger is None or evidence_owner_resolver is None:
+                raise SynopsisError("Evidence store 当前不可用。")
+            owner = evidence_owner_resolver()
+            evidence_ref = EvidenceRef(ref)
+            try:
+                record = evidence_ledger.require_authorized(owner, evidence_ref)
+                text = evidence_blobs.read_text(record.blob_ref)
+            except EvidenceError as exc:
+                raise SynopsisError("Evidence source 当前不可访问或完整性校验失败。") from exc
+            return SourceSnapshot(
+                source_ref=ref,
+                source_kind="evidence",
+                text=text,
+                source_sha256=record.blob_ref.sha256,
+                source_chars=len(text),
+                source_complete=bool(record.coverage.source_complete),
+                representation="evidence_exact_observation",
+                access_scope="session",
+                origin_sha256=record.blob_ref.sha256,
+            )
+        if ref.startswith("truncated:"):
+            if not sid:
+                raise SynopsisError("truncated source 缺少当前 session。")
+            offset = 0
+            chunks: list[str] = []
+            exact = False
+            while True:
+                page = episode_store.hydrate_truncated(
+                    sid, ref, offset=offset, max_chars=100_000
+                )
+                if page is None:
+                    raise SynopsisError("truncated source 不存在或当前 session 无权访问。")
+                total = int(page.get("total_chars") or 0)
+                if total > MAX_SOURCE_SNAPSHOT_CHARS:
+                    raise SynopsisError(
+                        f"source 超过 synopsis snapshot 物理上限 {MAX_SOURCE_SNAPSHOT_CHARS} chars。"
+                    )
+                chunks.append(str(page.get("content") or ""))
+                exact = bool(page.get("exact_artifact"))
+                next_offset = page.get("next_offset")
+                if next_offset is None:
+                    break
+                next_int = int(next_offset)
+                if next_int <= offset:
+                    raise SynopsisError("truncated source 分页未前进。")
+                offset = next_int
+            text = "".join(chunks)
+            return SourceSnapshot(
+                source_ref=ref,
+                source_kind="truncated",
+                text=text,
+                source_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                source_chars=len(text),
+                # The exact bytes captured before interruption are complete as a
+                # snapshot, but the underlying generation itself was interrupted.
+                source_complete=False,
+                representation=(
+                    "provider_partial_exact_artifact" if exact else "legacy_truncated_tail"
+                ),
+                access_scope="session",
+                origin_sha256=str(page.get("partial_sha256") or ""),
+            )
+        raise SynopsisError("source_ref scheme 不受 synopsis exact-source contract 支持。")
+
+    _register_basic(
+        "source_synopsis",
+        SourceSynopsisTool(_synopsis_store, _resolve_synopsis_source),
+    )
     # EVO-20260820-5d0a7b99: 图像转结构化文本证据（元信息 + 内容识别，借鉴 DSH rc.8 工具层视觉）
     _register_basic("read_image", ReadImageTool())
     # EVO-20260817: 代码结构概览（AST 索引，最高 ROI 能力工具——大项目定位提速）
@@ -844,6 +977,8 @@ def build_engine(settings: Settings) -> LoopEngine:
         experience_store=experience_store,  # P1-2: 经验库检索接入
         semantic_retriever=semantic_retriever,  # T31: 语义召回
         file_effect_query=_file_effect_query,
+        synopsis_store=_synopsis_store,
+        synopsis_source_resolver=_resolve_synopsis_source,
     )
 
     # EVO-20260814: 适配器同时支持 search_records（可调用）与 event_stream（对象方法）

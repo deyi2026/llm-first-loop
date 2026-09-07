@@ -286,27 +286,21 @@ def run_search_archive(ctx: Any, archive: Any, args: dict, session_id_fn: Any, s
         header = f"[{ts}] {role_h}/{src}"
         if with_summary:
             content_preview = str(h.get("content_preview", ""))
-            # INJECTION-GOVERNANCE R5: a compacted identity episode may keep raw
-            # archive bytes for exact recovery while marking its durable summary as
-            # identity_filtered.  Never feed that raw preview back into Summarizer,
-            # otherwise on-demand summary would reintroduce the details R5 removed.
+            # ``content_preview`` is an index projection, not the exact archive source.
+            # Calling an LLM on that preview and labelling the result a semantic summary
+            # would overstate source coverage. Keep the legacy parameter compatible but
+            # return only truthful preview/index facts. Full-source synopsis is a separate
+            # model-authored derived view bound to an exact source SHA/ref.
             if str(h.get("summary_source", "")) == "identity_filtered":
                 filtered_summary = str(h.get("summary", "") or "[身份问答详情已略]")
                 lines.append(f"{header}: {filtered_summary}")
-            elif summarizer is not None and content_preview:
-                try:
-                    result = summarizer.summarize(content_preview)
-                    lines.append(
-                        f"{header}: 摘要(source={result.source}): {result.summary}\n"
-                        f"原文片段: {content_preview[:200]}"
-                    )
-                except Exception as exc:  # noqa: BLE001 — 如实反馈失败，不静默降级
-                    lines.append(
-                        f"{header}: [摘要失败: {exc}] 原文片段: {content_preview[:400]}"
-                    )
             else:
+                stored_summary = str(h.get("summary", "") or "")
+                summary_source = str(h.get("summary_source", "") or "unknown")
                 lines.append(
-                    f"{header}: [摘要不可用] 原文片段: {content_preview[:400]}"
+                    f"{header}: archive_index_summary(source={summary_source}, "
+                    "projection_complete=false, full_source_semantic_summary_generated=false): "
+                    f"{stored_summary[:300]}\n原文片段(preview_only=true): {content_preview[:400]}"
                 )
         else:
             lines.append(
@@ -528,6 +522,26 @@ def _render_experience_record(record: dict, fallback_kind: str) -> str:
     return "\n".join(fields)
 
 
+def _render_synopsis_record(record: dict, fallback_kind: str) -> str:
+    ref = str(record.get("ref") or record.get("id") or "")
+    summary = str(record.get("summary") or "")
+    head = (
+        f"[{record.get('ts', '')}] {record.get('kind', fallback_kind)}: "
+        f"synopsis_ref={ref} | source_ref={record.get('source_ref', '')} | "
+        f"source_kind={record.get('source_kind', '')} | "
+        f"source_sha256={record.get('source_sha256', '')} | "
+        f"source_complete={str(bool(record.get('source_complete'))).lower()} | "
+        f"source_range={record.get('source_start', 0)}:{record.get('source_end', 0)} | "
+        f"source_ref_state={record.get('source_ref_state', 'not_checked')} | "
+        f"task_applicability={record.get('task_applicability', 'not_evaluated')} | "
+        f"representation={record.get('representation', 'model_authored_synopsis')} | "
+        f"projection_complete={str(bool(record.get('projection_complete'))).lower()}"
+    )
+    exact_read = str(record.get("exact_summary_read") or "")
+    suffix = f" | exact_summary_read={exact_read}" if exact_read else ""
+    return head + f" | synopsis={_single_line(summary, 300)}" + suffix
+
+
 def _render_rule_record(record: dict, fallback_kind: str) -> str:
     ref = str(record.get("rule_ref") or record.get("key") or "")
     title = str(record.get("summary") or "")
@@ -603,6 +617,11 @@ def _finalize_search_records(
             continue
         if record_kind == "rule":
             rendered = _render_rule_record(r, kind)
+            lines.append(rendered)
+            raw_lines.append(rendered)
+            continue
+        if record_kind == "synopsis":
+            rendered = _render_synopsis_record(r, kind)
             lines.append(rendered)
             raw_lines.append(rendered)
             continue

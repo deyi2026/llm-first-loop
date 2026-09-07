@@ -1,11 +1,4 @@
-"""R2: search_archive(with_summary) AI 按需语义摘要测试.
-
-验证:
-- with_summary=true 时返回 LLM 摘要 + source
-- 摘要失败时如实标注 [摘要失败] + 原文片段（不静默降级）
-- summarizer 未装配时标注 [摘要不可用]
-- with_summary 未传时行为不变（零回归）
-"""
+"""search_archive(with_summary) legacy compatibility without false full-source claims."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -22,8 +15,6 @@ class _SummaryResult:
 
 
 class _MockArchive:
-    """mock archive: search 返回固定 hits."""
-
     def __init__(self, hits: list[dict]) -> None:
         self._hits = hits
 
@@ -32,16 +23,12 @@ class _MockArchive:
 
 
 class _MockSummarizer:
-    """mock summarizer: summarize 返回固定结果或抛异常."""
-
-    def __init__(self, result: _SummaryResult | None = None, exc: Exception | None = None) -> None:
-        self._result = result
-        self._exc = exc
+    def __init__(self) -> None:
+        self.calls = 0
 
     def summarize(self, text: str) -> _SummaryResult:
-        if self._exc is not None:
-            raise self._exc
-        return self._result or _SummaryResult(summary="默认摘要", source="llm")
+        self.calls += 1
+        return _SummaryResult(summary="MUST-NOT-BE-CALLED", source="llm")
 
 
 def _hits() -> list[dict]:
@@ -51,8 +38,9 @@ def _hits() -> list[dict]:
             "role": "tool",
             "tool_name": "read_file",
             "source": "tool",
-            "summary": "文件内容摘要",
-            "content_preview": "这是被压缩的原文内容，包含关键信息。",
+            "summary": "文件内容索引摘要",
+            "summary_source": "deterministic",
+            "content_preview": "这是被压缩的原文预览，只是完整 source 的一小部分。",
         }
     ]
 
@@ -64,55 +52,52 @@ def _sid_fn():
 def _ctx():
     class _Ctx:
         session_id = "test-session"
+
     return _Ctx()
 
 
-def test_with_summary_success():
-    """with_summary=true 时返回 LLM 摘要 + source=llm."""
+def test_with_summary_is_preview_only_and_never_calls_hidden_llm():
     archive = _MockArchive(_hits())
-    summarizer = _MockSummarizer(_SummaryResult(summary="这是 LLM 生成的语义摘要", source="llm"))
-    result = run_search_archive(_ctx(), archive, {"query": "关键词", "with_summary": True}, _sid_fn, summarizer)
+    summarizer = _MockSummarizer()
+    result = run_search_archive(
+        _ctx(), archive, {"query": "关键词", "with_summary": True}, _sid_fn, summarizer
+    )
     assert result.status == ToolResultStatus.SUCCESS
-    assert "摘要(source=llm)" in result.content
-    assert "这是 LLM 生成的语义摘要" in result.content
-    assert "原文片段" in result.content
+    assert summarizer.calls == 0
+    assert "archive_index_summary" in result.content
+    assert "projection_complete=false" in result.content
+    assert "full_source_semantic_summary_generated=false" in result.content
+    assert "preview_only=true" in result.content
+    assert "文件内容索引摘要" in result.content
+    assert "MUST-NOT-BE-CALLED" not in result.content
 
 
-def test_with_summary_failure_honest():
-    """摘要失败时如实标注 [摘要失败] + 原文片段（不静默降级）."""
+def test_with_summary_without_summarizer_has_same_truthful_preview_contract():
     archive = _MockArchive(_hits())
-    summarizer = _MockSummarizer(exc=RuntimeError("LLM 摘要服务不可用"))
-    result = run_search_archive(_ctx(), archive, {"query": "关键词", "with_summary": True}, _sid_fn, summarizer)
+    result = run_search_archive(
+        _ctx(), archive, {"query": "关键词", "with_summary": True}, _sid_fn, summarizer=None
+    )
     assert result.status == ToolResultStatus.SUCCESS
-    assert "[摘要失败" in result.content
-    assert "LLM 摘要服务不可用" in result.content
-    assert "原文片段" in result.content  # 回退原文片段
-
-
-def test_with_summary_no_summarizer_unavailable():
-    """summarizer 未装配时标注 [摘要不可用] + 原文片段."""
-    archive = _MockArchive(_hits())
-    result = run_search_archive(_ctx(), archive, {"query": "关键词", "with_summary": True}, _sid_fn, summarizer=None)
-    assert result.status == ToolResultStatus.SUCCESS
-    assert "[摘要不可用]" in result.content
-    assert "原文片段" in result.content
+    assert "projection_complete=false" in result.content
+    assert "preview_only=true" in result.content
 
 
 def test_without_summary_zero_regression():
-    """with_summary 未传时行为与现状完全一致（零回归）."""
     archive = _MockArchive(_hits())
     summarizer = _MockSummarizer()
     result = run_search_archive(_ctx(), archive, {"query": "关键词"}, _sid_fn, summarizer)
     assert result.status == ToolResultStatus.SUCCESS
-    assert "摘要(source" not in result.content  # 既有格式无摘要标注
-    assert "文件内容摘要" in result.content  # 既有 summary 字段
-    assert "原文片段" in result.content  # 既有原文片段
+    assert summarizer.calls == 0
+    assert "文件内容索引摘要" in result.content
+    assert "原文片段" in result.content
 
 
 def test_without_summary_false_zero_regression():
-    """with_summary=false 时行为与现状完全一致."""
     archive = _MockArchive(_hits())
     summarizer = _MockSummarizer()
-    result = run_search_archive(_ctx(), archive, {"query": "关键词", "with_summary": False}, _sid_fn, summarizer)
+    result = run_search_archive(
+        _ctx(), archive, {"query": "关键词", "with_summary": False}, _sid_fn, summarizer
+    )
     assert result.status == ToolResultStatus.SUCCESS
-    assert "摘要(source" not in result.content
+    assert summarizer.calls == 0
+    assert "archive_index_summary" not in result.content
