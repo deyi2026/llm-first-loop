@@ -34,6 +34,7 @@ def test_prefix_hit_pure_append(tmp_path):
     _PREFIX_TRACE_STATE.pop(("s2", "m1"), None)
     p = tmp_path / "t2.jsonl"
     os.environ["LLM_PAYLOAD_TRACE_PATH"] = str(p)
+    os.environ["LLM_PAYLOAD_TRACE"] = "1"
     _trace_payload_fingerprint({"messages": m1, "tools": []}, m1, session_id="s2", provider="p", model="m1")
     _trace_payload_fingerprint({"messages": m2, "tools": []}, m2, session_id="s2", provider="p", model="m1")
     last = json.loads([ln for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()][-1])
@@ -48,6 +49,7 @@ def test_prefix_hit_breaks_at_first_diff(tmp_path):
     _PREFIX_TRACE_STATE.pop(("s3", "m1"), None)
     p = tmp_path / "t3.jsonl"
     os.environ["LLM_PAYLOAD_TRACE_PATH"] = str(p)
+    os.environ["LLM_PAYLOAD_TRACE"] = "1"
     _trace_payload_fingerprint({"messages": m1, "tools": []}, m1, session_id="s3", provider="p", model="m1")
     _trace_payload_fingerprint({"messages": m2, "tools": []}, m2, session_id="s3", provider="p", model="m1")
     last = json.loads(p.read_text(encoding="utf-8").splitlines()[-1])
@@ -59,3 +61,18 @@ def test_first_round_no_theoretical_value(tmp_path):
     """冷启动首轮无 prev → 无 prefix 字段（不伪造理论值）."""
     r = _run_trace(tmp_path, [{"role": "user", "content": "x"}])
     assert "prefix_hit_msgs" not in r and "prefix_hit_chars" not in r
+
+
+def test_deep_payload_trace_is_default_off(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "default-off.jsonl"
+    monkeypatch.delenv("LLM_PAYLOAD_TRACE", raising=False)
+    monkeypatch.setenv("LLM_PAYLOAD_TRACE_PATH", str(path))
+    messages = [{"role": "user", "content": "x"}]
+    _trace_payload_fingerprint(
+        {"messages": messages, "tools": []},
+        messages,
+        session_id="s-off",
+        provider="p",
+        model="m",
+    )
+    assert not path.exists()

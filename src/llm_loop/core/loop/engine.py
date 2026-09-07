@@ -82,7 +82,7 @@ from llm_loop.llm.client import GuardRequestContext, LLMClient, StreamDelta
 from llm_loop.llm.errors import LLMError
 from llm_loop.llm.pool import ModelClientPool
 from llm_loop.memory.store import MemoryStore
-from llm_loop.runtime.causality import effective_generation_contract
+from llm_loop.runtime.causality import effective_generation_contract, provider_message_shape
 from llm_loop.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -826,6 +826,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 except (TypeError, ValueError):
                     _provider_visible_chars = _history_chars + _reasoning_chars
                     _provider_structure_fp = ""
+                _message_shape = provider_message_shape(messages)
                 self._event_append(
                     session_id,
                     "request.meta",
@@ -846,6 +847,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                             or getattr(llm_client, "reasoning_effort", "")
                         ),
                         "tools_count": len(tools_param),
+                        **_message_shape,
                         "history_chars": _history_chars,
                         "reasoning_chars": _reasoning_chars,
                         "provider_visible_chars": _provider_visible_chars,

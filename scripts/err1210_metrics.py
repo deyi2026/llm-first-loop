@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """err1210 观测指标固定重算脚本（tasks 7.3；spec 5.4.1-3a"脚本随规格归档"）.
 
-输入（三文件，spec 7.3 明确）:
-  <data-dir>/audit/payload_trace*.jsonl   通配聚合——当日活跃 payload_trace.jsonl
-                                          + 历史分片 payload_trace-YYYYMMDD.jsonl
+输入（新旧兼容）:
+  <data-dir>/event_logs/**/*.jsonl        新 causal request.meta（优先；常态结构事实）
+  <data-dir>/audit/payload_trace*.jsonl   历史/显式 deep-wire trace（兼容旧时期）
   <data-dir>/audit/exception_log.jsonl    （phase=llm_call, error_type=LLMHTTPError）
   <data-dir>/audit/defer_trace.jsonl      （五事件: stored/replayed/dropped/
                                           exhausted/lost_on_reinject）
@@ -22,8 +22,8 @@
      （spec 5.1.3-5d [r3-P2]）；defer_lost_on_reinject 单列不计入分子分母；
      未回放存量（含进程重启丢失候选，design 风险 3）单列不计入公式。
 
-时区（spec 6.1/6.2）: exception_log 为 UTC 带偏移；payload_trace/defer_trace 为
-本地（Asia/Shanghai）；统一换算到本地比较，归因窗口 ±6 秒，禁止直接字符串比较。
+时区（spec 6.1/6.2）: EventStore/exception_log 为带偏移 ISO；payload_trace/defer_trace
+为本地（Asia/Shanghai）；统一换算到本地 naive 比较，归因窗口 ±6 秒。
 --as-of <ts>（[r3-P3] 时点过滤）: 三文件均只取 ≤as-of 的事件后重算——时点快照对账
 （附录 D.1 统计时点 2026-08-27T20:01:20 本地 → 8/8=100% 可复算）；naive 视为本地。
 
@@ -95,6 +95,14 @@ def _local_naive(ts_str: str) -> datetime:
     return datetime.strptime(ts_str, "%Y-%m-%dT%H:%M:%S")
 
 
+def _event_local_naive(ts_iso: str) -> datetime:
+    """EventStore ISO timestamp -> local naive for legacy metric correlation."""
+    dt = datetime.fromisoformat(ts_iso)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(_LOCAL_TZ).replace(tzinfo=None)
+
+
 def _load_payload_rows(data_dir: Path, as_of: datetime | None) -> list[dict]:
     """payload_trace*.jsonl 通配聚合（活跃 + 历史分片，[r3-P1] 口径）."""
     audit = data_dir / "audit"
@@ -109,6 +117,7 @@ def _load_payload_rows(data_dir: Path, as_of: datetime | None) -> list[dict]:
                 if "ts" not in row or "msgs" not in row:
                     continue
                 row["_ts_local"] = _local_naive(row["ts"])
+                row["_request_source"] = "payload_trace"
                 if as_of is not None and row["_ts_local"] > as_of:
                     continue
                 rows.append(row)
@@ -116,6 +125,107 @@ def _load_payload_rows(data_dir: Path, as_of: datetime | None) -> list[dict]:
             continue  # 单文件损坏 fail-open（记录在案由调用方统计）
     rows.sort(key=lambda r: r["_ts_local"])
     return rows
+
+
+def _load_causal_request_rows(data_dir: Path, as_of: datetime | None) -> list[dict]:
+    """Load P1 causal primary request shape facts from EventStore files."""
+    root = data_dir / "event_logs"
+    rows: list[dict] = []
+    if not root.exists():
+        return rows
+    for path in sorted(root.rglob("*.jsonl")):
+        try:
+            handle = path.open("r", encoding="utf-8")
+        except OSError:
+            continue
+        with handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if event.get("type") != "request.meta":
+                    continue
+                payload = event.get("payload") or {}
+                if not isinstance(payload.get("messages_count"), int):
+                    # Pre-P1 request.meta lacks the exact structural count needed by this
+                    # historical metric. Do not infer it from chars or unrelated fields.
+                    continue
+                ts = str(event.get("ts") or "")
+                sid = str(event.get("session_id") or "")
+                if not ts or not sid:
+                    continue
+                try:
+                    local = _event_local_naive(ts)
+                except (TypeError, ValueError):
+                    continue
+                if as_of is not None and local > as_of:
+                    continue
+                rows.append(
+                    {
+                        "ts": local.strftime("%Y-%m-%dT%H:%M:%S"),
+                        "session_id": sid,
+                        "provider": str(
+                            (payload.get("generation_contract") or {}).get("provider") or ""
+                        ),
+                        "model": str(payload.get("model") or ""),
+                        "messages_count": int(payload.get("messages_count") or 0),
+                        "tail_user_run": int(payload.get("tail_user_run") or 0),
+                        "_ts_local": local,
+                        "_request_source": "causal_event",
+                        "event_seq": int(event.get("seq", 0) or 0),
+                    }
+                )
+    rows.sort(key=lambda row: row["_ts_local"])
+    return rows
+
+
+def _merge_request_rows(legacy: list[dict], causal: list[dict]) -> tuple[list[dict], int]:
+    """Prefer causal rows per session once available; retain unrelated legacy history."""
+    if not causal:
+        return list(legacy), len(legacy)
+    first_causal_by_session: dict[str, datetime] = {}
+    for row in causal:
+        sid = str(row.get("session_id") or "")
+        current = first_causal_by_session.get(sid)
+        ts = row["_ts_local"]
+        if current is None or ts < current:
+            first_causal_by_session[sid] = ts
+    legacy_history = []
+    for row in legacy:
+        sid = str(row.get("session_id") or "")
+        cutoff = first_causal_by_session.get(sid)
+        # Legacy deep trace has second precision; EventStore has microseconds.
+        # Treat the first causal second as authoritative to avoid transition duplicates.
+        cutoff_second = cutoff.replace(microsecond=0) if cutoff is not None else None
+        if cutoff_second is None or row["_ts_local"] < cutoff_second:
+            legacy_history.append(row)
+    rows = legacy_history + list(causal)
+    rows.sort(key=lambda row: row["_ts_local"])
+    return rows, len(legacy_history)
+
+
+def _row_message_count(row: dict) -> int:
+    count = row.get("messages_count")
+    if isinstance(count, int):
+        return count
+    return len(row.get("msgs") or [])
+
+
+def _row_tail_user_run(row: dict) -> int:
+    value = row.get("tail_user_run")
+    if isinstance(value, int):
+        return value
+    n = 0
+    for message in reversed(row.get("msgs") or []):
+        if message.get("role") != "user":
+            break
+        n += 1
+    return n
+
 
 
 def _load_exceptions(data_dir: Path, as_of: datetime | None) -> list[dict]:
@@ -183,13 +293,7 @@ def _aggregated_tail_user(payload_rows: list[dict]) -> dict:
     max_tail = 0
     fallback = 0
     for row in payload_rows:
-        msgs = row.get("msgs") or []
-        n = 0
-        for m in reversed(msgs):
-            if m.get("role") == "user":
-                n += 1
-            else:
-                break
+        n = _row_tail_user_run(row)
         max_tail = max(max_tail, n)
         if n > 1:
             fallback += 1
@@ -208,7 +312,7 @@ def _compact_first_rows(rows: list[dict]) -> list[dict]:
     for sid, srows in by_sess.items():
         prev_n: int | None = None
         for r in srows:
-            n = len(r.get("msgs") or [])
+            n = _row_message_count(r)
             if prev_n is not None:
                 drop = prev_n - n
                 if drop >= 8 and drop >= prev_n * 0.30:
@@ -247,7 +351,7 @@ def _attribute_1210(excs: list[dict], rows: list[dict], cf_rows: list[dict]) -> 
                     "exc_ts": e["ts"],  # exception_log UTC ts
                     "local_ts": e["_local"].strftime("%Y-%m-%dT%H:%M:%S"),
                     "session_id": r["session_id"],
-                    "n": len(r.get("msgs") or []),
+                    "n": _row_message_count(r),
                 }
             )
         elif cands:
@@ -258,7 +362,7 @@ def _attribute_1210(excs: list[dict], rows: list[dict], cf_rows: list[dict]) -> 
                     "exc_ts": e["ts"],
                     "local_ts": e["_local"].strftime("%Y-%m-%dT%H:%M:%S"),
                     "session_id": r["session_id"],
-                    "n": len(r.get("msgs") or []),
+                    "n": _row_message_count(r),
                 }
             )
         else:
@@ -388,26 +492,34 @@ def compute_metrics(data_dir: str | Path, as_of: str | None = None) -> dict:
     base = Path(data_dir)
     as_of_dt = _parse_as_of(as_of)
     payload_rows = _load_payload_rows(base, as_of_dt)
+    causal_rows = _load_causal_request_rows(base, as_of_dt)
+    request_rows, legacy_rows_used = _merge_request_rows(payload_rows, causal_rows)
     excs = _load_exceptions(base, as_of_dt)
     defer_rows = _load_defer_rows(base, as_of_dt)
-    cf_rows = _compact_first_rows(payload_rows)
-    attrib = _attribute_1210(excs, payload_rows, cf_rows)
+    cf_rows = _compact_first_rows(request_rows)
+    attrib = _attribute_1210(excs, request_rows, cf_rows)
     triggers = attrib["attributed_cf"]
     retry = _retry_ledger(triggers, defer_rows)
     defer = _defer_ledger(defer_rows)
     cf_total = len(cf_rows)
     cf_1210 = len(triggers)
-    agg = _aggregated_tail_user(payload_rows)
+    agg = _aggregated_tail_user(request_rows)
 
     report = {
         "schema": "err1210_metrics_v1.1",
         "as_of": as_of or None,
         "generated_at": datetime.now(_LOCAL_TZ).strftime("%Y-%m-%dT%H:%M:%S%z"),
-        "timezone_note": "exception_log UTC→本地+8；payload_trace/defer_trace 本地；归因窗口±6s",
+        "timezone_note": "EventStore/exception_log 按 ISO offset→本地；payload_trace/defer_trace 本地；归因窗口±6s",
         "inputs": {
             "exception_log": {"rows_1210": len(excs), "unattributable": len(attrib["unattributed"])},
             "payload_trace_files": [str(p.relative_to(base)) for p in sorted((base / "audit").glob("payload_trace*.jsonl"))],
             "payload_trace_rows": len(payload_rows),
+            "causal_request_rows": len(causal_rows),
+            "legacy_payload_rows_used": legacy_rows_used,
+            "request_rows_total": len(request_rows),
+            "request_source_mode": (
+                "hybrid" if causal_rows and legacy_rows_used else "causal" if causal_rows else "legacy"
+            ),
             "defer_trace_rows": len(defer_rows),
         },
         "metrics": {
@@ -441,6 +553,7 @@ def compute_metrics(data_dir: str | Path, as_of: str | None = None) -> dict:
                 "defer 脚印存在但剥离放弃的边缘归入 retry_success（三文件不可区分，如实披露）",
                 "defer_unreplayed_candidates 为未回放存量（含进程重启丢失候选），单列不计入分子分母（design 风险 3）",
                 "defer_lost_on_reinject 单列观测不计入分子分母（spec 5.1.3-5d）",
+                "P1 起优先使用 causal request.meta 的 messages_count/tail_user_run；payload_trace 仅保留早于首条 causal shape 记录的历史段，避免双计",
             ],
         },
     }

@@ -123,6 +123,19 @@ def effective_generation_contract(client: Any) -> dict[str, Any]:
     }
 
 
+
+def provider_message_shape(messages: list[dict]) -> dict[str, int]:
+    """Return cheap provider-message shape facts without serializing message content."""
+    tail_user_run = 0
+    for message in reversed(messages):
+        if message.get("role") != "user":
+            break
+        tail_user_run += 1
+    return {
+        "messages_count": len(messages),
+        "tail_user_run": tail_user_run,
+    }
+
 def exceptional_attempt_payload(
     *,
     attempt_id: str,
@@ -151,6 +164,7 @@ def exceptional_attempt_payload(
         visible_chars = history_chars + reasoning_chars
         structure_fp = ""
     contract = effective_generation_contract(client)
+    message_shape = provider_message_shape(messages)
     return {
         "round": int(round_no or 0),
         "attempt_id": str(attempt_id or ""),
@@ -159,6 +173,7 @@ def exceptional_attempt_payload(
         "provider": contract["provider"],
         "model": contract["model"],
         "tools_count": len(tools),
+        **message_shape,
         "history_chars": history_chars,
         "reasoning_chars": reasoning_chars,
         "provider_visible_chars": visible_chars,

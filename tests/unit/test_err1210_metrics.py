@@ -236,3 +236,89 @@ class TestMetricsCli:
         }
         text = render_summary(report)
         assert "n/a" in text
+
+
+def _write_causal_requests(tmp_path: Path, rows: list[tuple[str, str, int, int]]) -> None:
+    """Write request.meta events: (UTC ISO ts, session, messages_count, tail_user_run)."""
+    root = tmp_path / "event_logs"
+    root.mkdir(parents=True, exist_ok=True)
+    by_session: dict[str, list[dict]] = {}
+    for idx, (ts, sid, n, tail) in enumerate(rows, start=1):
+        by_session.setdefault(sid, []).append(
+            {
+                "event_id": f"e-{sid}-{idx}",
+                "session_id": sid,
+                "seq": idx,
+                "type": "request.meta",
+                "ts": ts,
+                "payload": {
+                    "round": idx,
+                    "model": "m",
+                    "messages_count": n,
+                    "tail_user_run": tail,
+                    "generation_contract": {"provider": "openai-compat", "model": "m"},
+                },
+            }
+        )
+    for sid, events in by_session.items():
+        (root / f"{sid}.jsonl").write_text(
+            "\n".join(json.dumps(event, ensure_ascii=False) for event in events) + "\n",
+            encoding="utf-8",
+        )
+
+
+def test_causal_request_rows_replace_future_payload_trace_metrics(tmp_path) -> None:
+    p = _write_audit(
+        tmp_path,
+        trace_rows=[],
+        exceptions=[_exc("2026-08-27T02:00:30+00:00")],
+    )
+    _write_causal_requests(
+        p,
+        [
+            ("2026-08-27T02:00:00+00:00", "sess-A", 100, 1),
+            ("2026-08-27T02:00:30+00:00", "sess-A", 40, 1),
+        ],
+    )
+    report = compute_metrics(p)
+    assert report["inputs"]["payload_trace_rows"] == 0
+    assert report["inputs"]["causal_request_rows"] == 2
+    assert report["inputs"]["legacy_payload_rows_used"] == 0
+    assert report["inputs"]["request_rows_total"] == 2
+    assert report["inputs"]["request_source_mode"] == "causal"
+    assert report["metrics"]["compact_first_total"] == 1
+    assert report["metrics"]["compact_first_1210_count"] == 1
+    assert report["metrics"]["aggregated_tail_user_max"] == 1
+    assert report["metrics"]["aggregated_tail_user_fallback_rounds"] == 0
+
+
+def test_hybrid_request_rows_keep_pre_causal_history_without_overlap(tmp_path) -> None:
+    p = _write_audit(
+        tmp_path,
+        trace_rows=[
+            _trace("2026-08-27T09:00:00", "sess-Z", 80),
+            _trace("2026-08-27T09:00:30", "sess-Z", 30),
+            # Same session/time range later covered by causal request.meta and must not double count.
+            _trace("2026-08-27T10:00:00", "sess-A", 100),
+            _trace("2026-08-27T10:00:30", "sess-A", 40),
+        ],
+        exceptions=[
+            _exc("2026-08-27T01:00:30+00:00"),
+            _exc("2026-08-27T02:00:30+00:00"),
+        ],
+    )
+    _write_causal_requests(
+        p,
+        [
+            ("2026-08-27T02:00:00+00:00", "sess-A", 100, 1),
+            ("2026-08-27T02:00:30+00:00", "sess-A", 40, 1),
+        ],
+    )
+    report = compute_metrics(p)
+    assert report["inputs"]["payload_trace_rows"] == 4
+    assert report["inputs"]["causal_request_rows"] == 2
+    assert report["inputs"]["legacy_payload_rows_used"] == 2
+    assert report["inputs"]["request_rows_total"] == 4
+    assert report["inputs"]["request_source_mode"] == "hybrid"
+    assert report["metrics"]["compact_first_total"] == 2
+    assert report["metrics"]["compact_first_1210_count"] == 2

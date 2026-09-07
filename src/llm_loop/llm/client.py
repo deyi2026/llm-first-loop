@@ -420,9 +420,10 @@ def _trace_payload_fingerprint(
     - 逐消息 sha256（canonical JSON：含 role/content/tool_calls 全字段）
     逐请求一行 JSON 追加 data/audit/payload_trace.jsonl（可用 env 改路径）。
     只读不改 payload；任何异常吞掉 fail-open，绝不影响主请求。
-    env LLM_PAYLOAD_TRACE=0 关闭（默认开，根因定位后建议关闭）。
+    env LLM_PAYLOAD_TRACE=1 显式开启 deep-wire trace；默认关闭。常态结构/因果观测由
+    EventStore request.meta/request.attempt 承担，避免重复 hash + 独立 JSONL 写入。
     """
-    if os.environ.get("LLM_PAYLOAD_TRACE", "1") != "1":
+    if os.environ.get("LLM_PAYLOAD_TRACE", "0") != "1":
         return
     try:
         import hashlib

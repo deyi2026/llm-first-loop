@@ -13,6 +13,7 @@ from llm_loop.llm.client import LLMResponse
 from llm_loop.runtime.causality import (
     build_runtime_causal_snapshot,
     effective_generation_contract,
+    provider_message_shape,
     source_tree_fingerprint,
 )
 from llm_loop.tools.registry import ToolRegistry
@@ -86,6 +87,8 @@ def test_causal_recording_is_provider_payload_neutral(tmp_path: Path) -> None:
     assert meta.payload["attempt_kind"] == "primary"
     assert str(meta.payload["attempt_id"]).startswith("attempt-")
     assert meta.payload["provider_structure_fp"]
+    assert meta.payload["messages_count"] == len(with_events[0])
+    assert meta.payload["tail_user_run"] == 1
     assert meta.payload["influence"]["ingress"]["storage_messages"] >= 1
     assert meta.payload["influence"]["history"]["effective_budget"] > 0
     assert "recent_continuity" in meta.payload["influence"]
@@ -122,3 +125,14 @@ def test_generation_contract_is_mechanical_and_secret_free() -> None:
     }
     assert "api_key" not in fact
     assert "SHOULD-NOT-LEAK" not in repr(fact)
+
+
+def test_provider_message_shape_is_tail_only_and_content_neutral() -> None:
+    messages = [
+        {"role": "system", "content": "S"},
+        {"role": "assistant", "content": "A"},
+        {"role": "user", "content": "U1"},
+        {"role": "user", "content": "U2"},
+    ]
+    assert provider_message_shape(messages) == {"messages_count": 4, "tail_user_run": 2}
+    assert provider_message_shape([]) == {"messages_count": 0, "tail_user_run": 0}
