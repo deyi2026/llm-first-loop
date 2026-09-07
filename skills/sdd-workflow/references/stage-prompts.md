@@ -15,9 +15,9 @@
 
 | 阶段 | subagent_type | 必传输入要素（prompt 组装清单） | 前置文档 |
 |------|---------------|-------------------------------|---------|
-| 1 需求规格 | spec-requirement-agent | ① 用户需求原文（逐字，不得转述缩写）② 项目描述（README/工程上下文摘要）③ steering context 路径（如有：建议书/调研报告）④ feature_name | 无 |
+| 1 需求规格 | spec-requirement-agent | ① 用户需求原文（逐字，不得转述缩写）② 项目描述（README/工程上下文摘要）③ steering context 路径（如有：建议书/调研报告）④ feature_name ⑤ 澄清记录（clarification log，按 SKILL.md 三A；无则显式传"无澄清记录"标记） | 无 |
 | 2 技术设计 | spec-design-agent | ① spec.md 绝对路径 ② 修订模式标记（修订回路时：附修改意见原文 + 与用户版本的差异说明） | spec.md（须"已确认"） |
-| 3 任务规划 | spec-task-agent | ① design.md 绝对路径 ② 任务标注要求（每任务标注 executor / priority / 涉及文件 / 验证方式；nature 沿袭 spec 的标注） | design.md（须"已确认"） |
+| 3 任务规划 | spec-task-agent | ① design.md 绝对路径 ② 任务标注要求（每任务标注 executor / priority / 涉及文件 / 验证方式；nature 为阶段 4 分流唯一依据，只能逐任务沿袭已批准 spec 对应需求标注。若 spec 缺失/混叠 nature，须回到 spec 修订并重新审批后再继续阶段 3，禁止在 tasks 层补造该业务事实） | design.md（须"已确认"） |
 
 ## 三、阶段 4 分流执行指令模板
 
@@ -29,6 +29,7 @@
 2. **任务指令要素**：任务描述原文、涉及文件清单、验证方式（ruff + pytest 及任务标注的其他方式）、对应 spec/design 约束文档的绝对路径。
 3. **并行分组**：涉及文件不重叠的任务分入不同并行组同时发起；同文件任务强制串行（前序完成后再发起）。
 4. **回执约束**：每任务回执含成功/失败/阻塞状态与验证结果；失败任务保留现场等待用户指令。
+5. **失败任务处置（failed-task hold）**：阶段 4 不自动重试失败任务；失败任务及其依赖/文件冲突链保留现场等待用户指令。已由获批 `tasks.md` 授权且与失败链机械独立的任务继续执行并汇总；用户仅裁决失败链后续（与 SKILL.md 5.4、第七章异常表同口径）。
 
 ## 四、占位符定义
 
