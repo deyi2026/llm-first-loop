@@ -78,7 +78,7 @@ from llm_loop.feedback.honesty import max_iterations_feedback
 from llm_loop.feedback.validator import DeclarationValidator, build_discrepancy_feedback
 from llm_loop.introspection.corrections import CorrectionContext, CorrectionToolRegistry
 from llm_loop.introspection.status import ArchitectureStatusProvider
-from llm_loop.llm.client import GuardRequestContext, LLMClient, StreamDelta
+from llm_loop.llm.client import GuardRequestContext, LLMClient, LLMResponse, StreamDelta
 from llm_loop.llm.errors import LLMError
 from llm_loop.llm.pool import ModelClientPool
 from llm_loop.memory.store import MemoryStore
@@ -1152,6 +1152,11 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 resp = None  # 防止上一轮响应残留参与 usage/reasoning/finalize
                 break
 
+            # All paths reaching this boundary have a completed provider response:
+            # normal return, successful fallback, or successful ERR1210 recovery.
+            # Error/cancel paths break above.  Cast only communicates that control-flow
+            # invariant to static analysis; it does not change runtime behavior.
+            resp = cast(LLMResponse, resp)
             self._tool_cycle._reachability_record_response(resp)
             self._record_action(
                 "action.llm_decide", "llm_response", self._tool_cycle._resp_summary(resp)
