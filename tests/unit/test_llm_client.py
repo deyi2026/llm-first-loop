@@ -780,6 +780,24 @@ def test_chat_payload_max_tokens_sent():
     assert payload.get("max_tokens") == 8192
 
 
+
+def test_chat_payload_explicit_generation_profile_sent():
+    lines = [
+        "data: {\"choices\": [{\"delta\": {\"content\": \"ok\"}}]}",
+        "data: {\"choices\": [{\"delta\": {}, \"finish_reason\": \"stop\"}]}",
+        "data: [DONE]",
+    ]
+    with mock.patch("httpx.Client") as client_cls:
+        client_cls.return_value.stream.return_value = _FakeStreamCtx(lines)
+        _client(temperature=0.0, top_p=1.0, top_k=0, min_p=0.0).chat(
+            messages=[{"role": "user", "content": "hi"}], tools=[]
+        )
+        payload = client_cls.return_value.stream.call_args.kwargs["json"]
+    assert payload["temperature"] == 0.0
+    assert payload["top_p"] == 1.0
+    assert payload["top_k"] == 0
+    assert payload["min_p"] == 0.0
+
 def test_chat_payload_max_tokens_absent_when_none():
     """未配置 max_tokens（None）→ 不发字段（向后兼容）."""
     lines = [

@@ -67,6 +67,16 @@ class ModelSpec:
     # reasoning_details and can be replayed losslessly. This changes representation,
     # not whether the model is allowed/asked to think.
     reasoning_split: bool = False
+    # Historical reasoning replay is a provider/model wire capability, not a quality heuristic.
+    # Values: configured / none / tool_calls / full.
+    reasoning_replay: str = "configured"
+    # Factual runtime identity for observability only; never used for routing or prompt policy.
+    runtime_identity: str = ""
+    # Optional explicit generation profile. None means do not send that wire field.
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    min_p: float | None = None
 
 
 @dataclass(frozen=True)
@@ -241,6 +251,10 @@ class ProviderRegistry:
             # 仅非默认值下发，保持旧 client_params 结构零回归。
             **({"send_tool_choice": False} if not spec.models[model_id].send_tool_choice else {}),
             **({"reasoning_split": True} if spec.models[model_id].reasoning_split else {}),
+            **({"temperature": spec.models[model_id].temperature} if spec.models[model_id].temperature is not None else {}),
+            **({"top_p": spec.models[model_id].top_p} if spec.models[model_id].top_p is not None else {}),
+            **({"top_k": spec.models[model_id].top_k} if spec.models[model_id].top_k is not None else {}),
+            **({"min_p": spec.models[model_id].min_p} if spec.models[model_id].min_p is not None else {}),
         }
 
 
@@ -331,6 +345,34 @@ def _parse_model_max_tokens(pid: str, mid: str, value: Any) -> int | None:
     return parsed
 
 
+def _parse_optional_float(pid: str, mid: str, field: str, value: Any, *, minimum: float = 0.0, maximum: float | None = None, exclusive_min: bool = False) -> float | None:
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        logger.warning("模型 %s/%s %s=%r 非数字，忽略该显式生成参数", pid, mid, field, value)
+        return None
+    if (parsed <= minimum if exclusive_min else parsed < minimum) or (maximum is not None and parsed > maximum):
+        logger.warning("模型 %s/%s %s=%r 超出允许范围，忽略该显式生成参数", pid, mid, field, value)
+        return None
+    return parsed
+
+
+def _parse_optional_nonnegative_int(pid: str, mid: str, field: str, value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        logger.warning("模型 %s/%s %s=%r 非整数，忽略该显式生成参数", pid, mid, field, value)
+        return None
+    if parsed < 0:
+        logger.warning("模型 %s/%s %s=%r 为负数，忽略该显式生成参数", pid, mid, field, value)
+        return None
+    return parsed
+
+
 def _parse_wire_protocol(pid: str, mid: str, mval: dict[str, Any]) -> str:
     """P3-5: 协议字段解析（openai/anthropic/google/lms-chat 白名单；非法回退 openai 如实告警）.
 
@@ -362,6 +404,21 @@ def _parse_reasoning_control(pid: str, mid: str, mval: dict[str, Any]) -> str:
         pid, mid, raw, "/".join(sorted(allowed)),
     )
     return "unknown"
+
+
+
+
+def _parse_reasoning_replay(pid: str, mid: str, mval: dict[str, Any]) -> str:
+    """Parse the model historical-reasoning replay wire contract."""
+    raw = str(mval.get("reasoning_replay", "configured")).strip().lower()
+    allowed = {"configured", "none", "tool_calls", "full"}
+    if raw in allowed:
+        return raw
+    logger.warning(
+        "模型 %s/%s 的 reasoning_replay=%r 非法（支持 %s），回退 configured",
+        pid, mid, raw, "/".join(sorted(allowed)),
+    )
+    return "configured"
 
 
 def _qwen_model_signature(text: str) -> tuple[str, str] | None:
@@ -517,6 +574,12 @@ def _parse_model_spec(pid: str, mid: str, mval: dict[str, Any]) -> ModelSpec:
         reasoning_split=_parse_bool_field(
             pid, mid, "reasoning_split", mval, default=False
         ),
+        reasoning_replay=_parse_reasoning_replay(pid, mid, mval),
+        runtime_identity=str(mval.get("runtime_identity", "") or "").strip(),
+        temperature=_parse_optional_float(pid, mid, "temperature", mval.get("temperature")),
+        top_p=_parse_optional_float(pid, mid, "top_p", mval.get("top_p"), maximum=1.0, exclusive_min=True),
+        top_k=_parse_optional_nonnegative_int(pid, mid, "top_k", mval.get("top_k")),
+        min_p=_parse_optional_float(pid, mid, "min_p", mval.get("min_p"), maximum=1.0),
     )
 
 

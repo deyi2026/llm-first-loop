@@ -138,6 +138,8 @@ def run_model_catalog(
                 f"    - {mid}: context={mspec.context}, "
                 f"reasoning_capable={'✓' if reasoning_capable else '✗'}, "
                 f"reasoning_control={reasoning_control}, "
+                f"reasoning_replay={mspec.reasoning_replay}, "
+                f"runtime_identity={mspec.runtime_identity}, "
                 f"cost={mspec.cost_tier}{cap_str}{mark}"
             )
     if not session_override and default_registry is not registry:

@@ -134,8 +134,12 @@ def _reasoning_tail_for(
     """R8.21/E05: bind reasoning replay to the actual planned provider.
 
     Reasoning visibility must not be inferred from deployment locality or a generic
-    strong/weak assumption. Preserve the configured policy by default (0 = all).
-    Only provider protocols with an affirmative replay requirement may force 0:
+    strong/weak assumption. Prefer the selected model explicit replay contract:
+
+    - ``none`` -> no historical assistant reasoning (``-2``);
+    - ``tool_calls`` -> only tool-call assistant reasoning (``-1``);
+    - ``full`` -> all still-visible assistant reasoning (``0``);
+    - ``configured`` -> operator policy plus existing compatibility rules.
 
     - GLM preserved/interleaved thinking: replay all still-visible reasoning;
     - DeepSeek tool requests: replay all still-visible assistant reasoning;
@@ -160,6 +164,16 @@ def _reasoning_tail_for(
                 model_spec = (getattr(provider_spec, "models", None) or {}).get(model_id)
         except Exception:  # noqa: BLE001 — unknown registry shape => configured fail-safe
             base = ""
+
+    replay_contract = str(
+        getattr(model_spec, "reasoning_replay", "configured") or "configured"
+    ).strip().lower()
+    if replay_contract == "none":
+        return -2
+    if replay_contract == "tool_calls":
+        return -1
+    if replay_contract == "full":
+        return 0
 
     # Compatibility for direct/unit build paths that do not supply a registry snapshot:
     # only use the global endpoint when there is no explicit provider identity.

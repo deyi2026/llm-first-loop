@@ -115,6 +115,10 @@ class ModelClientPool:
         provider_wire_protocol = params.get("wire_protocol")
         send_tool_choice = params.get("send_tool_choice", True)
         reasoning_split = params.get("reasoning_split", False)
+        temperature = params.get("temperature")
+        top_p = params.get("top_p")
+        top_k = params.get("top_k")
+        min_p = params.get("min_p")
         client = LLMClient(
             api_key=params["api_key"],
             base_url=params["base_url"],
@@ -141,6 +145,10 @@ class ModelClientPool:
             provider=provider_id,
             send_tool_choice=bool(send_tool_choice),
             reasoning_split=bool(reasoning_split),
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            min_p=min_p,
         )
         if use_cache:
             self._provider_cache[cache_key] = client

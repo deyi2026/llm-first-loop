@@ -382,6 +382,14 @@ class _EventsMixin:
                     md = message.metadata if isinstance(message.metadata, dict) else {}
                     if md.get("llm_interrupted") is not True:
                         continue
+                    provider_truncated = md.get("provider_truncated") is True
+                    # Generic provider/model failure is a durable failure fact, not
+                    # automatically a resumable stream. Do not feed its captured
+                    # runaway reasoning back on the next human ingress. Exact
+                    # provider truncation and open-stream crash checkpoints keep
+                    # their existing continuity paths.
+                    if not provider_truncated and str(md.get("run_end_reason") or "") == "llm_error":
+                        break
                     # A later genuine model assistant means this partial was already
                     # superseded; never resurrect stale reasoning merely because it is
                     # still durable storage truth.
@@ -414,7 +422,6 @@ class _EventsMixin:
                     )
                     native_sha = str(md.get("interrupted_native_state_sha256") or "")
                     if text_tail or reasoning_tail or native_sha:
-                        provider_truncated = md.get("provider_truncated") is True
                         persisted = {
                             "source": (
                                 "persisted_provider_truncated"

@@ -412,6 +412,37 @@ def test_engine_llm_error_persists_b1_row_and_b2_row(build_test_engine, tmp_path
     assert compact["complete"] is True and compact["run_end_seq"] == 7
 
 
+
+def test_generic_llm_error_partial_is_not_promoted_to_adjacent_resume(build_test_engine):
+    from llm_loop.core.run_context import current_session_id
+
+    engine, _fake = build_test_engine([])
+    sid = engine.session.create()
+    sess = engine.session.load(sid)
+    sess.messages = [
+        Message(role="user", content="compare products", source=MessageSource.USER),
+        Message(
+            role="assistant",
+            content="PARTIAL\n[截断标注] reason=llm_error",
+            reasoning_content="RUNAWAY-REASONING",
+            source=MessageSource.SYSTEM,
+            metadata={
+                "answer_origin": "program",
+                "run_end_reason": "llm_error",
+                "llm_interrupted": True,
+                "interrupted_text_tail": "PARTIAL",
+                "interrupted_reasoning_tail": "RUNAWAY-REASONING",
+            },
+        ),
+        Message(role="user", content="continue", source=MessageSource.USER),
+    ]
+    token = current_session_id.set(sid)
+    try:
+        engine._prepare_interruption_resume(sid, sess)
+        assert engine._run_state().interruption_resume is None
+    finally:
+        current_session_id.reset(token)
+
 def _digest():
     from llm_loop.core.loop.engine_services.interrupted_capture import (
         llm_error_digest as _llm_error_digest,

@@ -530,6 +530,10 @@ class LLMClient:
     model: str
     timeout_s: float = 120.0
     max_tokens: int | None = None  # 2026-08-15: 显式输出预算（None=不发字段，模型默认）
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    min_p: float | None = None
     max_retries: int = 0
     wire_protocol: str = "openai"  # P3-5: openai / anthropic / google（ModelSpec 元数据）
 
@@ -1047,6 +1051,14 @@ class LLMClient:
         # 思考占大半、最终分析被截断，用户现场反馈"回答被截断"根因）
         if self.max_tokens is not None:
             payload["max_tokens"] = self.max_tokens
+        if self.temperature is not None:
+            payload["temperature"] = self.temperature
+        if self.top_p is not None:
+            payload["top_p"] = self.top_p
+        if self.top_k is not None:
+            payload["top_k"] = self.top_k
+        if self.min_p is not None:
+            payload["min_p"] = self.min_p
         # 请求级 reasoning 模式：auto/off/on。
         # - auto: 不做内容启发式判断；本地尊重 server/operator 默认，远端保持既有
         #   thinking_mode 默认语义。

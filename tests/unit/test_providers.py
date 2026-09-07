@@ -325,6 +325,35 @@ def test_reasoning_split_model_contract_is_parsed_and_passed(monkeypatch: pytest
     assert reg.client_params("minimax", "MiniMax-M3")["reasoning_split"] is True
 
 
+
+def test_generation_profile_and_runtime_identity_are_explicit_model_facts(monkeypatch: pytest.MonkeyPatch) -> None:
+    raw = json.dumps({
+        "local": {
+            "base_url": "http://localhost:9999/v1",
+            "api_key_env": "",
+            "models": {
+                "m": {
+                    "runtime_identity": "llama.cpp/example.gguf/Q4_K",
+                    "reasoning_replay": "none",
+                    "temperature": 0.0,
+                    "top_p": 1.0,
+                    "top_k": 0,
+                    "min_p": 0.0
+                }
+            },
+            "default_model": "m"
+        }
+    })
+    reg = load_registry(_settings(model_providers_raw=raw))
+    spec = reg.providers["local"].models["m"]
+    assert spec.runtime_identity == "llama.cpp/example.gguf/Q4_K"
+    assert spec.reasoning_replay == "none"
+    params = reg.client_params("local", "m")
+    assert params["temperature"] == 0.0
+    assert params["top_p"] == 1.0
+    assert params["top_k"] == 0
+    assert params["min_p"] == 0.0
+
 def test_client_params_missing_key_truthful_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """key 缺失 → 如实报错含 env var 名字."""
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)

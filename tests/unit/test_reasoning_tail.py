@@ -85,6 +85,7 @@ def _registry(
     model_id: str = "m",
     thinking: bool = True,
     reasoning_split: bool = False,
+    reasoning_replay: str = "configured",
 ) -> ProviderRegistry:
     return ProviderRegistry(
         providers={
@@ -96,6 +97,7 @@ def _registry(
                     model_id: ModelSpec(
                         thinking=thinking,
                         reasoning_split=reasoning_split,
+                        reasoning_replay=reasoning_replay,
                     )
                 },
                 default_model=model_id,
@@ -114,6 +116,32 @@ def test_reasoning_policy_binds_selected_local_provider_not_global_default() -> 
         settings, resolved_label="local/m", registry_snapshot=registry
     ) == 0
 
+
+
+def test_reasoning_policy_explicit_none_strips_history_without_locality_guess() -> None:
+    settings = SimpleNamespace(reasoning_tail=0, llm_base_url="https://api.deepseek.com/v1")
+    registry = _registry(
+        "cognilocal", "https://loopback-gateway.invalid/v1", reasoning_replay="none"
+    )
+    assert _reasoning_tail_for(
+        settings, resolved_label="cognilocal/m", registry_snapshot=registry
+    ) == -2
+
+
+def test_reasoning_policy_explicit_tool_calls_and_full_override_configured() -> None:
+    settings = SimpleNamespace(reasoning_tail=-2, llm_base_url="http://localhost:1234/v1")
+    tool_registry = _registry(
+        "p", "https://provider.invalid/v1", reasoning_replay="tool_calls"
+    )
+    full_registry = _registry(
+        "p", "https://provider.invalid/v1", reasoning_replay="full"
+    )
+    assert _reasoning_tail_for(
+        settings, resolved_label="p/m", registry_snapshot=tool_registry
+    ) == -1
+    assert _reasoning_tail_for(
+        settings, resolved_label="p/m", registry_snapshot=full_registry
+    ) == 0
 
 def test_reasoning_policy_binds_selected_deepseek_not_global_local() -> None:
     settings = SimpleNamespace(reasoning_tail=-2, llm_base_url="http://localhost:1234/v1")
