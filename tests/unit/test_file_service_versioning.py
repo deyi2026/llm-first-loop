@@ -67,6 +67,27 @@ def test_t06_snapshot_keeps_full_bytes_while_returning_selected_range(tmp_path: 
     assert store.read_bytes(ref, workspace_scope=str(workspace)) == full
 
 
+def test_human_observation_byte_limit_rejects_from_stat_before_read(
+    tmp_path: Path, monkeypatch
+) -> None:
+    service, _store, workspace = _service(tmp_path)
+    path = workspace / "large.txt"
+    path.write_bytes(b"0123456789")
+
+    def forbidden_read_bytes(_self: Path) -> bytes:
+        raise AssertionError("oversize observation must reject before reading full bytes")
+
+    monkeypatch.setattr(Path, "read_bytes", forbidden_read_bytes)
+    with pytest.raises(FileServiceError) as exc:
+        service.observe(
+            path=path,
+            workspace_scope=str(workspace),
+            provenance=_provenance(workspace),
+            max_bytes=5,
+        )
+    assert exc.value.error_type == "ResourceLimitExceeded"
+
+
 def test_t07_snapshot_forces_physical_read_and_bypasses_evidence_reuse(tmp_path: Path) -> None:
     class LedgerMustNotBeRead:
         def find_by_source(self, *_args, **_kwargs):

@@ -213,8 +213,12 @@ class FileService:
         with self._path_lock(path, scope):
             try:
                 stat_before = path.stat()
+                byte_limit = max(0, int(max_bytes)) if max_bytes is not None else None
+                if byte_limit is not None and stat_before.st_size > byte_limit:
+                    raise FileServiceError("ResourceLimitExceeded")
                 data = path.read_bytes()
-                if max_bytes is not None and len(data) > max(0, int(max_bytes)):
+                # Re-check actual bytes in case the file grew after stat_before.
+                if byte_limit is not None and len(data) > byte_limit:
                     raise FileServiceError("ResourceLimitExceeded")
                 if strict_utf8:
                     probe = data[len(UTF8_BOM) :] if data.startswith(UTF8_BOM) else data
