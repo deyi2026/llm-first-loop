@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -81,6 +82,7 @@ from llm_loop.llm.client import GuardRequestContext, LLMClient, StreamDelta
 from llm_loop.llm.errors import LLMError
 from llm_loop.llm.pool import ModelClientPool
 from llm_loop.memory.store import MemoryStore
+from llm_loop.runtime.causality import effective_generation_contract
 from llm_loop.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -185,6 +187,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
     _err1210_attempted: dict[str, int]
     # ERC Phase6: optional workspace-activation legacy sidecar migration hook.
     _evidence_legacy_migrate_workspace_fn: Callable[[str], object] | None = None
+    _runtime_causal_snapshot: Any | None = None
 
     def __init__(
         self,
@@ -746,6 +749,12 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
 
             # ── 行动：LLM 决策 ──
             self._phase("action.llm_decide")
+            _primary_attempt_id = self._tool_cycle._reachability_begin_attempt(
+                kind="primary",
+                attempt_index=0,
+                model=model_used or chat_model_arg or getattr(llm_client, "model", ""),
+                provider=getattr(llm_client, "provider", ""),
+            )
             # HARNESS-02(2026-08-14): 每轮请求快照进事件日志（fail-open）——routing/fallback
             # 可能中途换模型，事件回放据此确知"当时用的哪个模型/挂了哪些工具/预算多少"，
             # 对 self_evaluate 溯源与回放诊断有帮助
@@ -804,16 +813,19 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                     # Major provider-visible structures only: message payload + tool schemas.
                     # This deliberately excludes transport-only headers/credentials while making
                     # hidden historical reasoning visible in telemetry.
-                    _provider_visible_chars = len(
-                        json.dumps(
-                            {"messages": messages, "tools": tools_param},
-                            ensure_ascii=False,
-                            separators=(",", ":"),
-                            default=str,
-                        )
+                    _provider_structure_json = json.dumps(
+                        {"messages": messages, "tools": tools_param},
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        default=str,
                     )
+                    _provider_visible_chars = len(_provider_structure_json)
+                    _provider_structure_fp = hashlib.sha256(
+                        _provider_structure_json.encode("utf-8")
+                    ).hexdigest()[:24]
                 except (TypeError, ValueError):
                     _provider_visible_chars = _history_chars + _reasoning_chars
+                    _provider_structure_fp = ""
                 self._event_append(
                     session_id,
                     "request.meta",
@@ -839,16 +851,21 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                         "provider_visible_chars": _provider_visible_chars,
                         "budget": effective_budget,
                         "projection_guard": getattr(self, "_projection_guard_state", "miss"),
+                        "attempt_id": _primary_attempt_id,
+                        "attempt_kind": "primary",
+                        "attempt_index": 0,
+                        "provider_structure_fp": _provider_structure_fp,
+                        "runtime_snapshot": (
+                            self._runtime_causal_snapshot.to_dict()
+                            if self._runtime_causal_snapshot is not None
+                            else {}
+                        ),
+                        "generation_contract": effective_generation_contract(llm_client),
+                        "influence": dict(self._run_state().last_request_influence or {}),
                     },
                 )
             except Exception:  # noqa: BLE001 — 快照失败 fail-open（不影响主循环）
                 logger.debug("request.meta 事件写入失败（fail-open）")
-            self._tool_cycle._reachability_begin_attempt(
-                kind="primary",
-                attempt_index=0,
-                model=model_used or chat_model_arg or getattr(llm_client, "model", ""),
-                provider=getattr(llm_client, "provider", ""),
-            )
             cap = InterruptedCapture(
                 self,
                 sess=sess,

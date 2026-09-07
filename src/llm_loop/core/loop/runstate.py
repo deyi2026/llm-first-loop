@@ -78,6 +78,8 @@ class _RunState:
     # Last successful provider request observability. Kept per-session and exposed
     # only through architecture_status/tooling; never injected into model prompts.
     last_request_usage: dict[str, Any] | None = None
+    # Prompt-neutral causal facts for the next/active provider request.
+    last_request_influence: dict[str, Any] | None = None
     # Physical compaction facts remain independent from ERR1210 recovery.
     compact_event_seq: int = 0
     compact_event_was_compacted: bool = False

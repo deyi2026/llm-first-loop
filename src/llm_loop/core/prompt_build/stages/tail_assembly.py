@@ -27,6 +27,7 @@ class TailAssemblyOutcome:
     built: list[dict]
     gate_state: Any = None
     cache_gate_hint: str | None = None
+    continuity: dict[str, Any] | None = None
 
 
 def run_tail_assembly(
@@ -125,4 +126,5 @@ def run_tail_assembly(
         built=built,
         gate_state=_gate_state,
         cache_gate_hint=cache_gate_hint,
+        continuity=dict(_continuity),
     )

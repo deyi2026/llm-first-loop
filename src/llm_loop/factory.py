@@ -49,6 +49,7 @@ from llm_loop.memory.synopsis import (
     SynopsisError,
     SynopsisStore,
 )
+from llm_loop.runtime.causality import build_runtime_causal_snapshot
 from llm_loop.runtime.route_context import get_route_context, set_route_audit_fn
 from llm_loop.runtime.tool_octet import register_octet_sink
 from llm_loop.subagent.runner import SubAgentRunner
@@ -1437,6 +1438,13 @@ def build_engine(settings: Settings) -> LoopEngine:
             runner.inspect_stale_runs()
     except Exception:  # noqa: BLE001 — 巡检失败不影响启动
         logger.debug("启动残留 run 巡检失败（忽略）", exc_info=True)
+
+    # Runtime causality snapshot is process/startup observability only.  It is
+    # computed after the complete tool registry is assembled and never injected into prompts.
+    try:
+        engine._runtime_causal_snapshot = build_runtime_causal_snapshot(settings, registry)
+    except Exception:  # noqa: BLE001 - observability must never block engine startup
+        engine._runtime_causal_snapshot = None
 
     return engine
 

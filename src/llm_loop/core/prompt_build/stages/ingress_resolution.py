@@ -56,6 +56,7 @@ def resolve_ingress(
     # already-consumed raw tool spans are durable indexed history, not default
     # working context. Current/incomplete tool protocol remains visible fail-open.
     # Storage/event truth is untouched.
+    _before_resolved_count = len(base)
     try:
         base = provider_view_without_resolved_episodes(base)
         _base_original_indices = [
@@ -65,6 +66,7 @@ def resolve_ingress(
         ]
     except Exception:  # noqa: BLE001 — eligibility projection fail-open
         logger.warning("build: resolved episode provider-view 过滤失败（fail-open）", exc_info=True)
+    stale_cleanup["resolved_or_consumed"] = max(0, _before_resolved_count - len(base))
     # INJECTION-GOVERNANCE R8.8: persisted memory is durable retrieval state, not a
     # recency-based prompt entitlement. Only the snapshot bound to the current human
     # turn may stay in automatic working context; legacy/unbound/older snapshots are
@@ -176,6 +178,7 @@ class IngressPreludeOutcome:
     base_original_indices: list
     r6_ingress_truth: Any
     working_state_text: str | None = None
+    influence: dict[str, Any] | None = None
 
 
 def run_ingress_prelude(
@@ -310,6 +313,13 @@ def run_ingress_prelude(
                     "prompt_chars=0"
                 ),
             )
+    _working_set_influence = {
+        "enabled": bool(_working_set_stats.enabled),
+        "raw_tool_chars": int(_working_set_stats.raw_tool_chars or 0),
+        "projected_tool_chars": int(_working_set_stats.projected_tool_chars or 0),
+        "folded_results": int(_working_set_stats.folded_results or 0),
+        "folded_groups": int(_working_set_stats.folded_groups or 0),
+    }
     return IngressPreludeOutcome(
         resolved_label=resolved_label,
         provider_id=provider_id,
@@ -319,4 +329,16 @@ def run_ingress_prelude(
         base_original_indices=_scrub.base_original_indices,
         r6_ingress_truth=_r6_ingress_truth,
         working_state_text=_working_state_text,
+        influence={
+            "storage_messages": len(_raw_base),
+            "trace_messages": len(_trace_base),
+            "eligible_messages": len(inputs.base_messages),
+            "provider_base_messages": len(_provider_base),
+            "stale_cleanup": dict(inputs.stale_cleanup),
+            "working_state_reason": str(_checkpoint_reason or ""),
+            "working_state_selected_raw_chars": int(
+                _checkpoint.selected_raw_chars if _working_state_text else 0
+            ),
+            "tool_working_set": _working_set_influence,
+        },
     )

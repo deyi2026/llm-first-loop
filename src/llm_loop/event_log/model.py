@@ -660,6 +660,13 @@ REGISTRY.register(
             "reasoning_chars": "提交 messages 中 reasoning_content 字符数",
             "provider_visible_chars": "主要 provider-visible 结构字符数（messages + tool schemas；不含传输头/凭据）",
             "budget": "本轮历史预算",
+            "attempt_id": "provider attempt 机械身份；不参与 prompt/provider payload",
+            "attempt_kind": "primary/fallback/err1210_retry 等机械 attempt 类型",
+            "attempt_index": "同类 attempt 序号",
+            "provider_structure_fp": "messages+tools 主要 provider-visible 结构的一次性 SHA256 短指纹",
+            "runtime_snapshot": "启动时进程/source/config/tool surface 机械身份快照；不进入 prompt",
+            "generation_contract": "该 attempt 的有效 generation/wire 客户端事实",
+            "influence": "请求构建阶段机械 effect 摘要；不含完整 prompt/语义根因判断",
         },
     )
 )

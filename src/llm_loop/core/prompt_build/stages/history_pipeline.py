@@ -73,6 +73,7 @@ class HistoryPipelineOutcome:
     compact_event_seq: int
     compact_event_was_compacted: bool
     cache_epoch_reset: bool
+    influence: dict[str, Any]
 
 
 def run_history_pipeline(
@@ -215,4 +216,15 @@ def run_history_pipeline(
         compact_event_seq=_post.compact_event_seq,
         compact_event_was_compacted=_post.compact_event_was_compacted,
         cache_epoch_reset=_post.cache_epoch_reset or compaction_state_reset,
+        influence={
+            "input_messages": len(base),
+            "built_messages": len(built),
+            "history_total_chars": int(decision.history_total_chars or 0),
+            "effective_budget": int(effective_budget or 0),
+            "compacted": bool(_post.last_history_compacted),
+            "anchor_before": int(effective_sess_anchor or 0),
+            "anchor_moved": bool(_post.anchor_moved),
+            "reopened_marker_count": int(_proj.reopened_marker_count or 0),
+            "compaction_stats": dict(compact_view_box[0]) if compact_view_box else {},
+        },
     )

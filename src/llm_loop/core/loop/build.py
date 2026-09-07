@@ -531,4 +531,10 @@ class _BuildMixin:
         if _ta.gate_state is not GATE_STATE_UNSET:
             self._projection_guard_state = _ta.gate_state
         self._run_state().cache_gate_hint = _ta.cache_gate_hint
+        self._run_state().last_request_influence = {
+            "ingress": dict(_pre.influence or {}),
+            "history": dict(_hist.influence),
+            "recent_continuity": dict(_ta.continuity or {}),
+            "final_messages": len(_ta.built),
+        }
         return _ta.built

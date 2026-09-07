@@ -65,10 +65,10 @@ class ToolCycleService:
         attempt_index: int = 0,
         model: str = "",
         provider: str = "",
-    ) -> None:
+    ) -> str:
         """Bind the staged projection to one real provider request (fail-open)."""
         try:
-            self._round_obs.ensure_attempt(
+            return self._round_obs.ensure_attempt(
                 kind=kind,
                 attempt_index=attempt_index,
                 model=model,
@@ -76,6 +76,7 @@ class ToolCycleService:
             )
         except Exception:  # noqa: BLE001 -- observability cannot block the run
             logger.debug("reachability attempt bind failed (fail-open)", exc_info=True)
+            return ""
 
     def _reachability_record_response(self, resp: LLMResponse | None) -> None:
         """Record one provider response emission, including explicit no-tool responses."""
