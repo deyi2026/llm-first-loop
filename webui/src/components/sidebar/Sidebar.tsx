@@ -149,7 +149,7 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
         </button>
       </div>
       {view === "files" ? (
-        <FileTree />
+        <FileTree sessionId={currentId ?? ""} />
       ) : view === "evo" ? (
         <EvolutionPanel />
       ) : view === "archived" ? (

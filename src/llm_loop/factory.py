@@ -58,7 +58,9 @@ from llm_loop.tools.builtin.web_search import WebSearchTool
 from llm_loop.tools.builtin.workflow import WorkflowRunTool
 from llm_loop.tools.registry import ToolRegistry
 from llm_loop.workspace.artifacts import WorkspaceArtifactStore
+from llm_loop.workspace.file_effect_query import FileEffectQueryService
 from llm_loop.workspace.file_service import FileService
+from llm_loop.workspace.human_file_ops import HumanFileOperationService
 
 # EVO-20260814 P1-A: RUN_MODE 运行模式（对齐 Harness 四种运行模式）
 # standard: 全工具集（默认零回归）; ptc: 命令执行为主路径（web 外围降级）;
@@ -620,6 +622,13 @@ def build_engine(settings: Settings) -> LoopEngine:
         artifact_store=_artifact_store,
         lock_root=Path(settings.data_dir) / "file_locks",
     )
+    _file_effect_query = FileEffectQueryService(event_store)
+    _human_file_operations = HumanFileOperationService(
+        session_store=session_store,
+        event_store=event_store,
+        file_service=_file_service,
+        query_service=_file_effect_query,
+    )
     _register_basic(
         "read_file",
         ReadFileTool(artifact_store=_artifact_store, file_service=_file_service),
@@ -824,6 +833,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         episode_store=episode_store,
         experience_store=experience_store,  # P1-2: 经验库检索接入
         semantic_retriever=semantic_retriever,  # T31: 语义召回
+        file_effect_query=_file_effect_query,
     )
 
     # EVO-20260814: 适配器同时支持 search_records（可调用）与 event_stream（对象方法）
@@ -1012,6 +1022,9 @@ def build_engine(settings: Settings) -> LoopEngine:
         event_store=_build_event_store(settings),  # D1: 事件源化（共享同一实例）
         episode_store=episode_store,  # R8.5: resolved episode durable retrieval
     )
+
+    engine.file_effect_query = _file_effect_query
+    engine.human_file_operations = _human_file_operations
 
     if _legacy_evidence_migrate_workspace_fn is not None:
         engine._evidence_legacy_migrate_workspace_fn = _legacy_evidence_migrate_workspace_fn

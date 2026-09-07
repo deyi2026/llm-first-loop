@@ -192,3 +192,23 @@ class EvolutionReviewRequest(BaseModel):
         default=False,
         description="涉边界项（requires_human）单条批准额外确认标志（Approval UX v2 批 1，验证清单 #9）",
     )
+
+
+class HumanFileObserveRequest(BaseModel):
+    """Explicit authenticated-human physical file observation."""
+
+    model_config = ConfigDict(extra="forbid")
+    path: str = Field(min_length=1, max_length=1024, description="当前工作区内相对路径")
+    offset: int = Field(default=0, ge=0)
+    limit: int | None = Field(default=None, ge=1, le=5000)
+
+
+class HumanFileEditRequest(BaseModel):
+    """Version-protected authenticated-human full-text save."""
+
+    model_config = ConfigDict(extra="forbid")
+    request_id: str = Field(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    path: str = Field(min_length=1, max_length=1024, description="当前工作区内相对路径")
+    expected_snapshot_ref: str = Field(pattern=r"^artifact://v1/[0-9a-f]{32}$")
+    content: str = Field(max_length=1_048_576)
+    file_contract_version: Literal[1] = 1

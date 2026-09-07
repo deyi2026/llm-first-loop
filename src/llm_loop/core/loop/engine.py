@@ -177,6 +177,10 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
     runner: Any | None = None
     # DSH-PLUGINS-20260816 ②: 调度提醒线程（factory 装配；声明类型供 pyright 静态检查）
     scheduler: Any | None = None
+    # Human-AI Continuity P3: optional mechanical file collaboration/query services.
+    # They are transport/fact handles only; the model run loop never consumes them implicitly.
+    file_effect_query: Any | None = None
+    human_file_operations: Any | None = None
     # ERR1210 per-engine/session attempt ledger; actual lifecycle owned by RecoveryController.
     _err1210_attempted: dict[str, int]
     # ERC Phase6: optional workspace-activation legacy sidecar migration hook.

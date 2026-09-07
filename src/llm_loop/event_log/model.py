@@ -35,6 +35,9 @@ EVENT_TOOL_EXECUTION_EFFECT_PREPARED = "tool.execution.effect_prepared"
 EVENT_TOOL_EXECUTION_EFFECT_OBSERVED = "tool.execution.effect_observed"
 EVENT_TOOL_EXECUTION_FINISHED = "tool.execution.finished"
 EVENT_TOOL_EXECUTION_RECEIPT_COMMITTED = "tool.execution.receipt_committed"
+EVENT_HUMAN_FILE_EDIT_PREPARED = "human.file_edit.prepared"
+EVENT_HUMAN_FILE_EDIT_OBSERVED = "human.file_edit.observed"
+EVENT_HUMAN_FILE_EDIT_REJECTED = "human.file_edit.rejected"
 EVENT_EXTERNAL_EXECUTION_LAUNCHED = "external.execution.launched"
 EVENT_EXTERNAL_EXECUTION_TERMINAL = "external.execution.terminal"
 EVENT_EXTERNAL_EXECUTION_CANCEL_REQUESTED = "external.execution.cancel_requested"
@@ -404,6 +407,63 @@ REGISTRY.register(
             "actual_mtime_ns": "写后 stat mtime_ns；不可用可为空",
             "matches_expected": "actual_after_sha256 是否等于 prepared 的预期字节",
             "artifact_ref": "可选：该精确写后版本对应的 workspace-scoped immutable artifact ref",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_HUMAN_FILE_EDIT_PREPARED,
+        version=1,
+        fields={
+            "operation_id": "真实人工文件操作 id",
+            "request_id": "客户端幂等请求 id",
+            "request_sha256": "绑定 session/workspace/path/版本/内容的规范化请求摘要",
+            "origin": "authenticated_user；仅表示已认证 Web/CLI 操作者",
+            "workspace_root": "操作时机械绑定的规范化工作区根",
+            "relative_path": "工作区内相对路径",
+            "before_sha256": "mutation 前完整字节 SHA256",
+            "before_size": "mutation 前完整字节数",
+            "expected_after_sha256": "准备写入完整字节 SHA256",
+            "expected_after_size": "准备写入完整字节数",
+            "expected_snapshot_ref": "调用方提交的版本前置 artifact ref",
+            "precondition_checked": "是否已执行精确版本前置核对",
+            "file_contract_version": "文件协作契约版本",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_HUMAN_FILE_EDIT_OBSERVED,
+        version=1,
+        fields={
+            "operation_id": "对应 prepared 的人工文件操作 id",
+            "request_id": "客户端幂等请求 id",
+            "origin": "authenticated_user",
+            "workspace_root": "操作时机械绑定的规范化工作区根",
+            "relative_path": "工作区内相对路径",
+            "actual_after_sha256": "写后复读完整字节 SHA256",
+            "actual_size": "写后复读完整字节数",
+            "actual_mtime_ns": "写后 mtime_ns；不可得时为空",
+            "matches_expected": "实际写后字节是否等于 prepared 预期",
+            "artifact_ref": "写后 immutable artifact ref；失败可为空",
+            "receipt_state": "recorded/recording_failed",
+        },
+    )
+)
+REGISTRY.register(
+    EventTypeSpec(
+        name=EVENT_HUMAN_FILE_EDIT_REJECTED,
+        version=1,
+        fields={
+            "operation_id": "被拒绝请求的操作 id",
+            "request_id": "客户端幂等请求 id",
+            "request_sha256": "规范化请求摘要",
+            "origin": "authenticated_user",
+            "workspace_root": "拒绝时绑定的规范化工作区根",
+            "relative_path": "经安全解析后的工作区相对路径；不可解析时可为空",
+            "reason": "稳定机械拒绝原因",
+            "precondition_checked": "拒绝前是否已执行版本前置核对",
+            "file_contract_version": "文件协作契约版本",
         },
     )
 )

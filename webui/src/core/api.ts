@@ -292,3 +292,60 @@ export async function fetchDirs(path = ""): Promise<DirList | null> {
   const { status, data } = await api<DirList>(`/api/v1/fs/dirs${q}`);
   return status === 200 && typeof data.path === "string" && Array.isArray(data.dirs) ? data : null;
 }
+
+/** Human-AI Continuity P3: explicit physical observation + version-protected human save. */
+export interface HumanFileObservation {
+  path: string;
+  snapshot_ref: string;
+  sha256: string;
+  size_bytes: number;
+  observed_at: number;
+  content_range: { start: number; end_exclusive: number };
+  content: string;
+  total_lines: number;
+  workspace_path_state: string;
+  file_contract_version: 1;
+}
+
+export interface FileEffectReceipt {
+  operation_id: string;
+  origin: "model_tool" | "authenticated_user" | string;
+  path: string;
+  before_sha256: string;
+  expected_after_sha256: string;
+  observed_after_sha256: string | null;
+  artifact_ref: string;
+  effect_state: string;
+  receipt_state: string;
+  precondition_checked: boolean | null;
+  task_applicability: "not_evaluated" | string;
+  causation_proven: boolean;
+}
+
+export async function observeHumanFile(sessionId: string, path: string): Promise<ApiResult<HumanFileObservation | { error?: string; detail?: string }>> {
+  return api(`/api/v1/sessions/${encodeURIComponent(sessionId)}/files/observe`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, offset: 0 }),
+  });
+}
+
+export async function saveHumanFile(
+  sessionId: string,
+  requestId: string,
+  path: string,
+  expectedSnapshotRef: string,
+  content: string
+): Promise<ApiResult<FileEffectReceipt | { error?: string; detail?: string }>> {
+  return api(`/api/v1/sessions/${encodeURIComponent(sessionId)}/files/edit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      request_id: requestId,
+      path,
+      expected_snapshot_ref: expectedSnapshotRef,
+      content,
+      file_contract_version: 1,
+    }),
+  });
+}

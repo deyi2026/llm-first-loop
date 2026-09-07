@@ -86,6 +86,7 @@ _SEARCH_RECORDS_TOOL_DEF: dict[str, Any] = {
                     "experience",
                     "episode",
                     "rule",
+                    "file_effect",
                     "all",
                 ],
             },

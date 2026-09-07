@@ -198,6 +198,9 @@ class FileService:
         provenance: FileArtifactProvenance,
         offset: int = 0,
         limit: int | None = None,
+        max_bytes: int | None = None,
+        strict_utf8: bool = False,
+        strip_utf8_bom: bool = False,
     ) -> FileObservation:
         """Physically read current full bytes and materialize one immutable baseline."""
         if self.artifact_store is None:
@@ -211,6 +214,14 @@ class FileService:
             try:
                 stat_before = path.stat()
                 data = path.read_bytes()
+                if max_bytes is not None and len(data) > max(0, int(max_bytes)):
+                    raise FileServiceError("ResourceLimitExceeded")
+                if strict_utf8:
+                    probe = data[len(UTF8_BOM) :] if data.startswith(UTF8_BOM) else data
+                    try:
+                        probe.decode("utf-8")
+                    except UnicodeDecodeError as exc:
+                        raise FileServiceError("UnsupportedTextEncoding", detail=str(exc)) from exc
                 stat_after = path.stat()
                 if (stat_before.st_mtime_ns, stat_before.st_size) == (
                     stat_after.st_mtime_ns, stat_after.st_size
@@ -218,6 +229,8 @@ class FileService:
                     source_version_token = (
                         f"stat:{stat_after.st_mtime_ns}:{stat_after.st_size}"
                     )
+            except FileServiceError:
+                raise
             except FileNotFoundError as exc:
                 raise FileServiceError("FileNotFoundError") from exc
             except OSError as exc:
@@ -239,8 +252,9 @@ class FileService:
             except ArtifactError as exc:
                 raise FileServiceError("SnapshotUnavailable", detail=str(exc)) from exc
 
-        text = data.decode("utf-8", errors="replace")
-        lines = text.splitlines()
+        visible_data = data[len(UTF8_BOM) :] if strip_utf8_bom and data.startswith(UTF8_BOM) else data
+        text = visible_data.decode("utf-8", errors="replace")
+        lines = text.splitlines(keepends=True)
         total = len(lines)
         start = max(0, min(int(offset or 0), total))
         selected = lines[start:]
@@ -254,7 +268,7 @@ class FileService:
             size_bytes=record.size_bytes,
             observed_at=record.created_at,
             content_range=(start, end),
-            content="\n".join(selected),
+            content="".join(selected),
             total_lines=total,
             workspace_path_state=resolution.workspace_path_state,
             source_version_token=source_version_token,
@@ -271,6 +285,7 @@ class FileService:
         effect_sink: FileEffectSink | None = None,
         workspace_scope: str | None = None,
         expected_snapshot_ref: str = "",
+        whole_file: bool = False,
     ) -> FileEditResult:
         """Coordinate one exact-byte edit under a stable path lock."""
         with self._path_lock(path, workspace_scope):
@@ -283,6 +298,7 @@ class FileService:
                 effect_sink=effect_sink,
                 workspace_scope=workspace_scope,
                 expected_snapshot_ref=str(expected_snapshot_ref or ""),
+                whole_file=whole_file,
             )
 
     def _edit_locked(
@@ -296,6 +312,7 @@ class FileService:
         effect_sink: FileEffectSink | None,
         workspace_scope: str | None,
         expected_snapshot_ref: str,
+        whole_file: bool,
     ) -> FileEditResult:
         try:
             raw = path.read_bytes()
@@ -344,13 +361,16 @@ class FileService:
         original = normalize_lf(text)
         old_n = normalize_lf(old_string)
         new_n = normalize_lf(new_string)
-        count = original.count(old_n)
-        if count == 0:
-            raise FileServiceError("NoMatch")
-        if count > 1 and not replace_all:
-            raise FileServiceError("MultipleMatches", match_count=count)
-
-        updated = original.replace(old_n, new_n)
+        if whole_file:
+            count = 1
+            updated = new_n
+        else:
+            count = original.count(old_n)
+            if count == 0:
+                raise FileServiceError("NoMatch")
+            if count > 1 and not replace_all:
+                raise FileServiceError("MultipleMatches", match_count=count)
+            updated = original.replace(old_n, new_n)
         diff_lines = list(
             difflib.unified_diff(
                 original.splitlines(),

@@ -39,6 +39,7 @@ _VALID_KINDS = {
     "experience",  # P1-2: 经验库检索
     "episode",  # INJECTION-GOVERNANCE R8.5: resolved Q&A/tool-chain index
     "rule",  # on-demand Rule SoT index / exact hydration
+    "file_effect",  # P3: current-session mechanical AI/human file-effect receipts
     "all",
 }
 
@@ -50,6 +51,11 @@ class InvalidSearchKindError(ValueError):
     异常类型即归因依据——工具层仅将该类型归为 [参数错误]，执行期其余异常
     一律归 [内部错误]，消除"按异常类型归因在类型重叠时结构性失效"缺陷。
     """
+
+
+class InvalidSearchQueryError(ValueError):
+    """A kind-specific strict query grammar rejected caller input."""
+
 
 
 def _jsonl_search(
@@ -129,6 +135,8 @@ class RecordSearcher:
         experience_store: Any | None = None,
         semantic_retriever: Any | None = None,
         rule_path: str | Path | None = None,
+        file_effect_query: Any | None = None,
+        workspace_scope_resolver: Any | None = None,
     ) -> None:
         self._audit_dir = Path(audit_dir)
         self._memory = memory_store
@@ -138,6 +146,8 @@ class RecordSearcher:
         self._semantic = semantic_retriever  # T31: 语义检索器（可 None 走关键词）
         default_rule_path = Path(__file__).resolve().parents[3] / "docs" / "ai_rules.md"
         self._rule_index = RuleIndex(rule_path or default_rule_path)
+        self._file_effect_query = file_effect_query
+        self._workspace_scope_resolver = workspace_scope_resolver
         # R3(P0-3/D11): experience 检索诊断透传——search() 入口重置，experience/all 路径回填
         self._last_diagnostics: dict[str, Any] | None = None
 
@@ -317,6 +327,40 @@ class RecordSearcher:
             return self._search_experience(query, limit)
         if kind == "rule":
             return self._rule_index.search(query, limit)
+        if kind == "file_effect":
+            if self._file_effect_query is None or not session_id:
+                return []
+            if callable(self._workspace_scope_resolver):
+                scope = str(self._workspace_scope_resolver() or "")
+            else:
+                from llm_loop.core.run_context import workspace_base
+
+                scope = workspace_base()
+            try:
+                page = self._file_effect_query.query(
+                    session_id=session_id, workspace_scope=scope, query=query, limit=limit
+                )
+            except ValueError as exc:
+                raise InvalidSearchQueryError(str(exc)) from exc
+            out: list[dict] = []
+            for index, receipt in enumerate(page.receipts):
+                facts = receipt.public_facts()
+                facts.update(
+                    {
+                        "kind": "file_effect",
+                        "id": receipt.operation_id,
+                        "ts": receipt.ts,
+                        "summary": (
+                            f"operation={receipt.operation_id} origin={receipt.origin} "
+                            f"path={receipt.path} effect_state={receipt.effect_state} "
+                            f"receipt_state={receipt.receipt_state}"
+                        ),
+                        "has_more": page.has_more,
+                        "next_query": page.next_query if index == len(page.receipts) - 1 else "",
+                    }
+                )
+                out.append(facts)
+            return out
         if kind == "declaration_check":
             return self._hydrate_declaration_check(query)
         return None

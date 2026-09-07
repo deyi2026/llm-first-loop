@@ -131,9 +131,11 @@ def _result_fallback_receipt(result: Any) -> dict[str, str] | None:
     return {str(k): str(v) for k, v in value.items()}
 
 # EVO-20260818: 文件树/会话树 API（独立模块 fs_tree.py，安全边界+审计）
+from llm_loop.web.file_routes import file_router  # noqa: E402
 from llm_loop.web.fs_tree import fs_router  # noqa: E402 — 延迟导入防循环（与下方 approve 同模式）
 
 router.include_router(fs_router)
+router.include_router(file_router)
 
 # EVO-20260818: web 演进审批（复用飞书 approval.py 状态机+幂等+flock 锁）
 from llm_loop.feishu.approval import approve, reject  # noqa: E402

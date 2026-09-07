@@ -4,7 +4,16 @@
 // 重命名/删除两步确认——DELETE confirm=true）
 
 import { useEffect, useRef, useState } from "react";
-import { fetchFsTree, fsDelete, fsMkdir, fsRename, type FsTree } from "../../core/api";
+import {
+  fetchFsTree,
+  fsDelete,
+  fsMkdir,
+  fsRename,
+  observeHumanFile,
+  saveHumanFile,
+  type FsTree,
+  type HumanFileObservation,
+} from "../../core/api";
 import { zh } from "../../i18n/zh";
 
 interface TreeNode {
@@ -21,7 +30,7 @@ function fmtSize(n: number | undefined): string {
   return `${(n / 1024 / 1024).toFixed(1)}M`;
 }
 
-export function FileTree() {
+export function FileTree({ sessionId = "" }: { sessionId?: string }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [children, setChildren] = useState<Map<string, TreeNode[]>>(new Map());
   const [rootItems, setRootItems] = useState<TreeNode[]>([]);
@@ -37,6 +46,18 @@ export function FileTree() {
   const [busy, setBusy] = useState(false);
   const [root, setRoot] = useState("");
   const loadingRef = useRef<Set<string>>(new Set());
+  const [editor, setEditor] = useState<HumanFileObservation | null>(null);
+  const [draft, setDraft] = useState("");
+  const [editorBusy, setEditorBusy] = useState(false);
+  const [editorStatus, setEditorStatus] = useState("");
+  const [pendingSave, setPendingSave] = useState<{ key: string; requestId: string } | null>(null);
+
+  useEffect(() => {
+    setEditor(null);
+    setDraft("");
+    setEditorStatus("");
+    setPendingSave(null);
+  }, [sessionId]);
 
   const toNodes = (t: FsTree): TreeNode[] => [
     ...(t.dirs ?? []).map((name) => ({ path: `${t.path}/${name}`, name, kind: "dir" as const })),
@@ -159,6 +180,70 @@ export function FileTree() {
     }
   };
 
+  const relativePath = (path: string): string => {
+    const prefix = root.endsWith("/") ? root : `${root}/`;
+    return path.startsWith(prefix) ? path.slice(prefix.length) : path;
+  };
+
+  const openEditor = async (node: TreeNode) => {
+    if (!sessionId) {
+      setEditorStatus("请先选择一个会话，再进行协作编辑。");
+      return;
+    }
+    setEditorBusy(true);
+    setEditorStatus("正在观察当前文件…");
+    const result = await observeHumanFile(sessionId, relativePath(node.path));
+    setEditorBusy(false);
+    if (result.status !== 200 || !("snapshot_ref" in result.data)) {
+      const err = result.data as { error?: string; detail?: string };
+      setEditorStatus(`无法打开：${err.error ?? err.detail ?? "请求失败"}`);
+      return;
+    }
+    setEditor(result.data);
+    setDraft(result.data.content);
+    setPendingSave(null);
+    setEditorStatus("已取得当前物理版本；保存时会再次核对该版本。");
+  };
+
+  const saveEditor = async () => {
+    if (!sessionId || !editor) return;
+    setEditorBusy(true);
+    setEditorStatus("正在核对版本并保存…");
+    const requestKey = `${editor.snapshot_ref}\0${draft}`;
+    const requestId =
+      pendingSave?.key === requestKey
+        ? pendingSave.requestId
+        : globalThis.crypto?.randomUUID?.() ?? `human-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    setPendingSave({ key: requestKey, requestId });
+    const result = await saveHumanFile(sessionId, requestId, editor.path, editor.snapshot_ref, draft);
+    setEditorBusy(false);
+    if (result.status === 0) {
+      setEditorStatus("保存结果暂时未知：草稿与 request_id 均已保留；再次保存会查询/复用同一操作，不会自动重放。");
+      return;
+    }
+    setPendingSave(null);
+    if (result.status === 409) {
+      const err = result.data as { error?: string };
+      setEditorStatus(
+        err.error === "version_conflict"
+          ? "版本已变化：未覆盖文件，当前草稿已保留。请显式重新载入后再决定如何处理。"
+          : `保存冲突：${err.error ?? "conflict"}；草稿已保留。`
+      );
+      return;
+    }
+    if (result.status !== 200) {
+      const err = result.data as { error?: string; detail?: string };
+      setEditorStatus(`保存失败：${err.error ?? err.detail ?? "请求失败"}；草稿已保留。`);
+      return;
+    }
+    const refreshed = await observeHumanFile(sessionId, editor.path);
+    if (refreshed.status === 200 && "snapshot_ref" in refreshed.data) {
+      setEditor(refreshed.data);
+      setDraft(refreshed.data.content);
+    }
+    setEditorStatus("已保存并验证；未触发模型运行或自动继续。 ");
+  };
+
   const renderRow = (node: TreeNode, depth: number) => {
     const isOpen = expanded.has(node.path);
     const kids = children.get(node.path);
@@ -179,12 +264,12 @@ export function FileTree() {
         )}
         <span
           className={`v2-tree-icon ${node.kind}`}
-          onClick={() => showArrow && void toggle(node)}
+          onClick={() => (showArrow ? void toggle(node) : void openEditor(node))}
           title={node.path}
         >
           {node.kind === "dir" ? "📂" : "📄"}
         </span>
-        <span className="v2-tree-name" title={node.path} onClick={() => showArrow && void toggle(node)}>
+        <span className="v2-tree-name" title={node.path} onClick={() => (showArrow ? void toggle(node) : void openEditor(node))}>
           {node.name}
           {node.kind === "file" && node.size !== undefined && (
             <span className="v2-tree-size">{fmtSize(node.size)}</span>
@@ -319,7 +404,35 @@ export function FileTree() {
           </button>
         </div>
       )}
-      <div className="v2-tree-hint">{zh.treeHint}</div>
+      {editor && (
+        <div className="v2-file-editor" data-testid="human-file-editor">
+          <div className="v2-file-editor-head">
+            <strong title={editor.path}>{editor.path}</strong>
+            <button type="button" className="v2-icon-btn" onClick={() => setEditor(null)} title="关闭">×</button>
+          </div>
+          <textarea
+            className="v2-file-editor-text"
+            value={draft}
+            disabled={editorBusy}
+            spellCheck={false}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <div className="v2-file-editor-meta">
+            baseline {editor.sha256.slice(0, 12)} · {editor.size_bytes}B · contract v{editor.file_contract_version}
+          </div>
+          <div className="v2-file-editor-actions">
+            <button type="button" className="v2-btn primary" disabled={editorBusy} onClick={() => void saveEditor()}>
+              保存当前版本
+            </button>
+            <button type="button" className="v2-btn" disabled={editorBusy} onClick={() => void openEditor({ path: `${root}/${editor.path}`, name: editor.path, kind: "file" })}>
+              重新载入
+            </button>
+          </div>
+          <div className="v2-file-editor-status" aria-live="polite">{editorStatus}</div>
+        </div>
+      )}
+      {!editor && editorStatus && <div className="v2-tree-loading">{editorStatus}</div>}
+      <div className="v2-tree-hint">{zh.treeHint} · 点击文件可进行带版本保护的人工编辑</div>
     </div>
   );
 }

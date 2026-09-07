@@ -1323,3 +1323,50 @@
   width: 14px;
   flex: none;
 }
+
+/* Human-AI Continuity P3: thin, fact-only collaborative file editor. */
+.v2-file-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--dsw-alias-divider-color, rgba(128,128,128,0.2));
+  max-height: 52%;
+}
+.v2-file-editor-head,
+.v2-file-editor-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.v2-file-editor-head strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.v2-file-editor-text {
+  min-height: 150px;
+  resize: vertical;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-divider-color, rgba(128,128,128,0.3));
+  border-radius: 6px;
+  padding: 7px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  background: var(--dsw-alias-elevation-1, transparent);
+  color: inherit;
+}
+.v2-file-editor-meta,
+.v2-file-editor-status {
+  font-size: 10px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow-wrap: anywhere;
+}
+.v2-file-editor-status {
+  min-height: 14px;
+}

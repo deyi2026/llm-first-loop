@@ -16,7 +16,11 @@ from pathlib import Path
 from typing import Any
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
-from llm_loop.introspection.search import _VALID_KINDS, InvalidSearchKindError
+from llm_loop.introspection.search import (
+    _VALID_KINDS,
+    InvalidSearchKindError,
+    InvalidSearchQueryError,
+)
 
 # R3(P1-2): hint 与 _VALID_KINDS 同源生成（事实源唯一，消除手写清单漂移；
 # 下划线名跨模块导入有 test_introspection.py:391 既有先例）
@@ -82,6 +86,18 @@ def _kind_param_error_receipt(exc: InvalidSearchKindError) -> ToolResult:
         content=(
             f"[参数错误] 事实: {exc}\n原因: kind 取值不合法。\n"
             f"建议: 可选 {_SEARCH_RECORDS_KIND_HINT}。"
+        ),
+        tool_call_id="",
+        tool_name="search_records",
+    )
+
+
+def _query_param_error_receipt(exc: InvalidSearchQueryError) -> ToolResult:
+    return ToolResult(
+        status=ToolResultStatus.FAILURE,
+        content=(
+            f"[参数错误] 事实: {exc}\n原因: 当前 kind 的 query 语法不合法。\n"
+            "建议: file_effect 使用空 query、operation:<id> 或服务返回的 before_seq:<n>。"
         ),
         tool_call_id="",
         tool_name="search_records",
@@ -449,6 +465,8 @@ def run_search_records(ctx: Any, search_fn: Any, args: dict, session_id_fn: Any)
         # R3(P1-2/D5): typed 归因——异常类型即来源，仅 kind 校验异常归 [参数错误]
         #（捕获顺序：typed 在前、泛化在后）
         return _kind_param_error_receipt(exc)
+    except InvalidSearchQueryError as exc:
+        return _query_param_error_receipt(exc)
     except Exception as exc:  # noqa: BLE001 — 执行期异常如实归因 [内部错误]，禁止伪装参数错误
         return _internal_error_receipt(kind, exc)
     # R3(P0-3/P0-4): 三态回执分流 + [检索诊断] 段（诊断透传展示链）
@@ -577,6 +595,24 @@ def _finalize_search_records(
             continue
         if record_kind == "rule":
             rendered = _render_rule_record(r, kind)
+            lines.append(rendered)
+            raw_lines.append(rendered)
+            continue
+        if record_kind == "file_effect":
+            rendered = (
+                f"[{r.get('ts', '')}] file_effect: operation={r.get('operation_id', '')} "
+                f"origin={r.get('origin', '')} path={r.get('path', '')} "
+                f"effect_state={r.get('effect_state', 'outcome_unknown')} "
+                f"receipt_state={r.get('receipt_state', 'unknown')} "
+                f"current_state={r.get('current_state', 'not_checked')} "
+                f"causation_proven={r.get('causation_proven', False)} "
+                f"auto_reexecuted={r.get('auto_reexecuted', False)} "
+                f"artifact_ref={r.get('artifact_ref', '')} "
+                f"precondition_checked={r.get('precondition_checked')} "
+                "task_applicability=not_evaluated"
+            )
+            if r.get("next_query"):
+                rendered += f" next_query={r.get('next_query')}"
             lines.append(rendered)
             raw_lines.append(rendered)
             continue
