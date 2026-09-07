@@ -96,7 +96,7 @@ def test_file_edit_version_conflict_keeps_human_draft_source_unchanged(fake_sett
 
 
 def test_file_collaboration_routes_inherit_existing_web_auth(fake_settings, tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("WEB_API_KEY", "secret-key")
+    monkeypatch.setenv("WEB_API_KEY", "test-only-key")
     monkeypatch.setenv("WEB_HOST", "0.0.0.0")
     monkeypatch.setenv("WEB_AUTH_REQUIRE", "1")
     engine = build_engine(fake_settings)
@@ -113,7 +113,7 @@ def test_file_collaboration_routes_inherit_existing_web_auth(fake_settings, tmp_
     allowed = client.post(
         f"/api/v1/sessions/{sid}/files/observe",
         json={"path": "a.txt"},
-        headers={"Authorization": "Bearer secret-key"},
+        headers={"Authorization": "Bearer test-only-key"},
     )
     assert allowed.status_code == 200
 
