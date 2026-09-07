@@ -16,6 +16,10 @@
 5. **公开面原则**：非必要文档不公开——开发过程文档（specs/内部记录）留本地；
    公开仓库只放运行必需 + 面向使用者的内容。
 
+## 开发/修复防退化必读
+
+任何修改运行行为、Provider、连续性、历史、缓存、工具、Web、SubAgent 或存储的贡献，在动代码前先读 `docs/DEVELOPMENT_REPAIR_SAFETY.md`。其中的六问硬门要求先确认 exact source/可恢复 ref、真实 provider-view、当前 runtime qualification、程序/模型权责边界，以及最终 staged/isolated candidate 的真实验证口径。LFL 自身对应规则入口为 `RULE-AI-24`。
+
 ## 环境与门禁
 
 ```bash

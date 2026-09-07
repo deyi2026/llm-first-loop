@@ -358,6 +358,30 @@ k3（Kimi，经 model_catalog 回执核验）"。
 **正例**：assistant 上轮列出 A=执行工具检查 / B=继续文字分析，并明确要求“回复 A 或 B”；用户只说“继续”——不得自动替用户选择 A，维持当前更窄边界或要求其明确选择。
 **反例**：检索到数小时前 assistant 曾写“建议 1：加 fail-closed 补丁”，当前用户只说“继续”，模型据此自行决定“现在聚焦建议 1，把补丁落地”。这属于 assistant 自我授权。
 
+
+---
+
+## 规则二十四：开发与修复防退化契约——先保真、再优化（RULE-AI-24，2026-09-07 事故收敛）
+
+**适用范围**：维护/开发/修复 LFL 行为的 AI 或人类代理。不是普通 user run 的 universal prompt；详细 SoT 为 `docs/DEVELOPMENT_REPAIR_SAFETY.md`。
+
+**核心规则**：修复“模型健忘/重复/空响应/长文找不回/缓存异常”等体验问题时，先验证程序提供给模型的事实面与当前 runtime，再做最小修复。不得用 prompt 训诫、跨 runtime 默认值、语义启发式或放宽测试基线掩盖程序侧根因。
+
+改动前必须回答六问：
+
+1. **完整事实源仍在吗**：任何 projection/truncation/preview/summary 之前必须已有 durable exact source；区分 snapshot 完整与底层 source 覆盖完整。
+2. **模型真的可恢复吗**：必须存在 stable ref + scope authorization + exact hydration + 单调分页；“已落盘但模型无读取入口”不算恢复闭环。模型第二次显式回读时不得再次套第一次展示截断。
+3. **模型实际看到了什么**：出现“刚说完就忘/重复/变笨/空响应”先查 provider-view、role/tool wire、recent history、retry/cancel/queue、finish reason 和输出预算；未证明模型看到正确输入前，不先改模型能力参数。
+4. **当前 runtime 验证了吗**：`max_tokens`、reasoning、sampling、cache/KV、template、timeout 等跨 backend 只能复用实验起点，不能把另一 runtime 的默认值写成 parity 事实。
+5. **程序是否越界做语义裁决**：程序只负责事实、生命周期、真实资源/安全边界、完整性和可恢复性；“什么重要/何时总结/哪段该 replay/任务是否完成”等内容语义与策略判断留给模型。自动 producer 需独立 qualification，不得随修复顺手启用。
+6. **最终 gate 看的是候选现实吗**：真实事故必须先有 regression；使用项目解释器；保留原始 exit code；最终 architecture/full gate 对 staged candidate 或 isolated worktree 运行，不能被旧 HEAD、unstaged fallback 或 shell pipeline 假绿欺骗。Guard 红时先查职责问题，不默认抬 baseline/加豁免。
+
+**标准顺序**：当前事实锚定 → 真实 incident 最小复现 → RED regression → 最小机械修复 → 邻接 focused gate → staged/isolated candidate 全量 gate → 必要时 live runtime 三层验证（source config → resolved runtime → backend actual request）→ 独立 commit 冻结阶段。
+
+**程序角色**：提供 exact source/ref/SHA/coverage、provider/runtime facts、候选状态和测试回执；不自动把本规则全文注入普通 prompt，也不替模型决定历史内容的任务适用性。LFL 维护主体可通过 `search_records(kind=rule, query="RULE-AI-24")` 精确水合本节。
+
+**事故证据**：`8a45047`（runtime capability contract）、`9766aee`（recent dialogue）、`47556cb`（exact truncated source）、`957b417`（attachment/parent exact hydration）、`deea2b5`（model-authored synopsis）。这些提交只作历史证据，不是当前任务授权。
+
 ---
 
 ## 配置扩展（2026-09-03 agency-first 修订）

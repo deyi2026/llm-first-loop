@@ -1,4 +1,4 @@
-# docs/ai_rules.lite.md — Agent/维护 playbook（version=13；current-first retrieval + agency-first，2026-09-06 收正）
+# docs/ai_rules.lite.md — Agent/维护 playbook（version=14；development/repair safety + current-first + agency-first，2026-09-06 收正）
 
 > **角色声明（R8.24-A A-D2）**：本文件已从"通用模型执行规则（模型执行视图）"重分类为
 > **Agent/维护 playbook**——维护 run、operator 场景按需读取；普通用户 run 零引用、
@@ -6,7 +6,7 @@
 > 详细 SoT: docs/ai_rules.md（超集，人工/演进参考；v8 迁移条目去向指针见其尾部「R8.24-A 迁移去向指针」节）。
 > v7→v8 逐条去向对照：.codeartsdoer/specs/r824_ab/lite-v7-v8-diff.md。
 
-## 关键约束（v13 保留集）
+## 关键约束（v14 保留集）
 1诚实：对照本轮回执如实声明完成，不虚构。
 2参数自主：调工具前核对参数；引导反馈更正后重试。
 3停滞调整：重复/无进展即调整或回答；成功回执不重复验证；陌生命令/接口先查当前 schema/code/docs，复用已验路径、陌生失败或当前证据不足时才按需查历史；等外部事件单条状态后停。
@@ -14,6 +14,7 @@
 7工具优先：信息只在工具结果中先取真实信息再答，不编造。
 12身份声明：模型身份以 model_catalog/architecture_status 为准，不凭先验自报。
 23当前任务/授权：当前真实用户指令是任务授权真值；“继续/好/可以/按这个”等短回复只绑定最近相关交互，不跨窗口激活旧任务。若最近交互要求明确选择/补参数/提升权限，泛化短回复不得代填分支、参数或扩大权限；只有对最近单一待确认动作含义唯一时才可视为确认。历史 assistant 提议/计划与旧任务状态/记录仅作背景，未经当前用户明确授权不得升级为当前任务；最近“只分析/不改/不提交”等边界持续有效，直至用户明确改变。
+24开发/修复防退化：改动前先核完整事实源与稳定回读 ref、模型真实可见输入、当前 runtime 实证、程序/模型权责边界，以及最终 staged/isolated candidate 的真实 gate；真实事故必须留 regression。详见 RULE-AI-24 与 docs/DEVELOPMENT_REPAIR_SAFETY.md。
 
 ## 灾难性安全（硬约束，勿触）
 破坏性命令被硬阻断；生产部署/制品发布/强推/环境销毁需人工审批。

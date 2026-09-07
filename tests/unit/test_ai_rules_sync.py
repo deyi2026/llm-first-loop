@@ -77,6 +77,8 @@ def test_lite_declares_non_global_role_and_agency_first():
     assert "SYSTEM_PROMPT_EXTRA" in sot  # documented as retired/no-authority
     assert "无 universal prompt 写权限" in sot
     assert "RULE-AI-23" in sot
+    assert "RULE-AI-24" in sot
+    assert "docs/DEVELOPMENT_REPAIR_SAFETY.md" in sot
     assert "历史提议不得自我授权" in sot
     assert "短回复最近绑定" in sot
 
