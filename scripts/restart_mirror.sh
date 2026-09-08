@@ -49,29 +49,77 @@ _prep_dsh_env() {
 unset LFL_DATA_DIR DSH_HOME
 }
 
-# 按端口找监听进程（只杀目标端口，不碰主区）
+# 按端口找监听进程（只识别目标端口；不会碰主区 8902）。
 _port_pid() {
   lsof -nP -iTCP:"$1" -sTCP:LISTEN 2>/dev/null | awk 'NR==2 {print $2}'
 }
 
-_stop_port() {
-  local port="$1" pid
-  pid="$(_port_pid "$port" || true)"
-  if [[ -z "$pid" ]]; then
-    _log "port $port 无监听进程"
+# 镜像 Web 还可能在收到 SIGTERM 后先释放监听端口、但进程本身继续存活并持有
+# <session>.run.lock。只等端口释放会错误地启动第二个 Web，之后所有新请求都被旧
+# run owner 判成“另一进程执行”。用镜像 venv 的绝对 argv 精确识别本区 Web，既能
+# 找到已经不监听的 stale owner，也不会误杀主区不同 venv 的 :8902。
+_mirror_web_pids() {
+  pgrep -f "^${VENV_PY} -m llm_loop\.web( |$)" 2>/dev/null || true
+}
+
+_pid_alive() {
+  kill -0 "$1" 2>/dev/null
+}
+
+_stop_web() {
+  local port="$1" listener pids pid survivors
+  listener="$(_port_pid "$port" || true)"
+  pids="$(_mirror_web_pids || true)"
+  if [[ -n "$listener" ]]; then
+    pids="$(printf '%s\n%s\n' "$pids" "$listener" | awk 'NF && !seen[$1]++ {print $1}')"
+  fi
+  if [[ -z "$pids" ]]; then
+    _log "port $port 无镜像 Web 进程"
     return 0
   fi
-  _log "停止 pid ${pid} (port $port)..."
-  kill "$pid" 2>/dev/null || true
-  for _ in $(seq 1 10); do
-    [[ -z "$(_port_pid "$port" || true)" ]] && break
-    sleep 1
+
+  _log "停止镜像 Web pid(s): $(echo "$pids" | tr '\n' ' ') (port $port)..."
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] && kill -TERM "$pid" 2>/dev/null || true
+  done <<< "$pids"
+
+  # 关键：等待 PID 本身退出，而不是只看端口。旧进程释放端口但仍持 run lease
+  # 仍属于未停止状态。
+  for _ in $(seq 1 20); do
+    survivors=""
+    while IFS= read -r pid; do
+      if [[ -n "$pid" ]] && _pid_alive "$pid"; then
+        survivors+="${pid} "
+      fi
+    done <<< "$pids"
+    [[ -z "$survivors" ]] && break
+    sleep 0.5
   done
-  if [[ -n "$(_port_pid "$port" || true)" ]]; then
-    _log "10s 未退出，强制 kill"
-    kill -9 "$pid" 2>/dev/null || true
+
+  if [[ -n "${survivors:-}" ]]; then
+    _log "10s 后仍有旧 PID 存活，强制 kill: $survivors"
+    for pid in $survivors; do
+      kill -KILL "$pid" 2>/dev/null || true
+    done
+    for _ in $(seq 1 30); do
+      survivors=""
+      for pid in $pids; do
+        _pid_alive "$pid" && survivors+="${pid} " || true
+      done
+      [[ -z "$survivors" ]] && break
+      sleep 0.1
+    done
   fi
-  _log "已停止"
+
+  if [[ -n "${survivors:-}" ]]; then
+    _log "✗ 旧镜像 Web PID 仍未退出，拒绝启动新进程: $survivors"
+    return 1
+  fi
+  if [[ -n "$(_port_pid "$port" || true)" ]]; then
+    _log "✗ port $port 仍被占用，拒绝启动新进程"
+    return 1
+  fi
+  _log "已停止（旧 PID 全部退出）"
 }
 
 _start_web() {
@@ -133,11 +181,11 @@ _status() {
 }
 
 case "${1:-web}" in
-  web)     _stop_port "$WEB_PORT"; _start_web ;;
+  web)     _stop_web "$WEB_PORT"; _start_web ;;
   feishu)  pgrep -f "^$VENV_PY -m llm_loop.feishu" | xargs -r kill 2>/dev/null || true
            sleep 2
            _start_feishu ;;
-  all)     _stop_port "$WEB_PORT"
+  all)     _stop_web "$WEB_PORT"
            pgrep -f "^$VENV_PY -m llm_loop.feishu" | xargs -r kill 2>/dev/null || true
            sleep 2
            _start_web && _start_feishu ;;
