@@ -50,6 +50,9 @@ class ModelSpec:
     multimodal: bool = False
     wire_protocol: str = "openai"  # P3-5: openai / anthropic / google（客户端协议分发）
     capability_tier: str = "unknown"  # T-P2-1-1: strong/weak/unknown（spec §6.5 漂移治理动态调权依据; unknown=保守视为弱模型）
+    # Optional model-owned mapping from LFL effort labels to local chat-template labels.
+    # Empty preserves the legacy model-native default.
+    reasoning_effort_map: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -213,6 +216,7 @@ class ProviderRegistry:
             **({"max_tokens": spec.max_tokens} if spec.max_tokens is not None else {}),
             # P3-5: 协议（模型级元数据；默认 openai 零回归）
             **({"wire_protocol": spec.models[model_id].wire_protocol} if spec.models[model_id].wire_protocol != "openai" else {}),
+            **({"reasoning_effort_map": dict(spec.models[model_id].reasoning_effort_map)} if spec.models[model_id].reasoning_effort_map else {}),
         }
 
 
@@ -412,6 +416,26 @@ def _parse_capability_tier(pid: str, mid: str, mval: dict[str, Any]) -> str:
     return "unknown"
 
 
+def _parse_reasoning_effort_map(pid: str, mid: str, mval: dict[str, Any]) -> dict[str, str]:
+    """Parse explicit model-owned effort labels without guessing template vocabulary."""
+    raw = mval.get("reasoning_effort_map")
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        logger.warning("模型 %s/%s reasoning_effort_map=%r 非对象，忽略该映射", pid, mid, raw)
+        return {}
+    allowed_keys = {"low", "medium", "high", "max", "xhigh"}
+    out: dict[str, str] = {}
+    for key, value in raw.items():
+        k = str(key).strip().lower()
+        v = str(value).strip().lower()
+        if k not in allowed_keys or not re.fullmatch(r"[a-z0-9_.-]{1,32}", v):
+            logger.warning("模型 %s/%s reasoning_effort_map 条目 %r:%r 非法，忽略", pid, mid, key, value)
+            continue
+        out[k] = v
+    return out
+
+
 def _parse_model_spec(pid: str, mid: str, mval: dict[str, Any]) -> ModelSpec:
     """解析单模型条目 → ModelSpec（P1-3 审计 #14 加固）.
 
@@ -429,6 +453,7 @@ def _parse_model_spec(pid: str, mid: str, mval: dict[str, Any]) -> ModelSpec:
         wire_protocol=_parse_wire_protocol(pid, mid, mval),
         # T-P2-1-1: 能力档白名单（缺失/非法 → unknown + 降级日志，不拖垮注册表）
         capability_tier=_parse_capability_tier(pid, mid, mval),
+        reasoning_effort_map=_parse_reasoning_effort_map(pid, mid, mval),
     )
 
 

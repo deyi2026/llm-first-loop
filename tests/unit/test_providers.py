@@ -825,3 +825,35 @@ def test_client_params_passes_requested_model_to_local_discovery(monkeypatch):
     params = reg.client_params("local", "qwen3.6-27b")
     assert params["base_url"] == "http://localhost:1234/v1"
     assert seen == ["qwen3.6-27b"]
+
+
+def test_reasoning_effort_map_is_model_owned_and_passed() -> None:
+    raw = json.dumps({
+        "local": {
+            "base_url": "http://127.0.0.1:8901/v1",
+            "api_key_env": "",
+            "models": {"qwen": {
+                "reasoning_effort_map": {"high": "medium", "max": "xhigh"}
+            }},
+            "default_model": "qwen",
+        }
+    })
+    reg = load_registry(_settings(model_providers_raw=raw))
+    spec = reg.providers["local"].models["qwen"]
+    assert spec.reasoning_effort_map == {"high": "medium", "max": "xhigh"}
+    assert reg.client_params("local", "qwen")["reasoning_effort_map"] == spec.reasoning_effort_map
+
+
+def test_invalid_reasoning_effort_map_fails_open() -> None:
+    raw = json.dumps({
+        "local": {
+            "base_url": "http://127.0.0.1:8901/v1",
+            "api_key_env": "",
+            "models": {"qwen": {
+                "reasoning_effort_map": {"high": "medium", "surprise": "xhigh", "max": "bad value"}
+            }},
+            "default_model": "qwen",
+        }
+    })
+    reg = load_registry(_settings(model_providers_raw=raw))
+    assert reg.providers["local"].models["qwen"].reasoning_effort_map == {"high": "medium"}
