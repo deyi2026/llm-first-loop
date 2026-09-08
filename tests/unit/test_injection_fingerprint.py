@@ -115,7 +115,9 @@ class TestGoldenFingerprint:
         """Golden morphology is naked exact history; old slots add zero provider messages."""
         engine, sess = _engine(tmp_path)
         out = _assert_prompt_neutral(engine, sess)
-        assert out[-1] == {"role": "user", "content": "固定任务：继续当前工作。"}
+        assert out[-1]["role"] == "user"
+        assert out[-1]["content"] == "固定任务：继续当前工作。"
+        assert float(out[-1].get("_message_time_ts") or 0.0) > 0
         wire = "\n".join(str(m.get("content") or "") for m in out)
         for forbidden in ("记忆检索结果", "经验提示", "slot:", "[程序附录", GATE_NOTE_CONTENT):
             assert forbidden not in wire

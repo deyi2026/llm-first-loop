@@ -75,6 +75,16 @@ describe("MessageItem", () => {
     expect(screen.getByText("你好")).toBeInTheDocument();
   });
 
+  it("消息时间按浏览器/操作系统本地时区显示，并保留 ISO 机器时间", () => {
+    const ts = 1_700_000_000;
+    render(<MessageItem msg={{ role: "user", content: "带时间消息", ts }} />);
+    const time = document.querySelector("time.v2-msg-time") as HTMLTimeElement | null;
+    expect(time).not.toBeNull();
+    expect(time?.dateTime).toBe(new Date(ts * 1000).toISOString());
+    expect(time?.title).toBe("按设备系统时区显示");
+    expect(time?.textContent).toMatch(/\d{2}:\d{2}:\d{2}$/);
+  });
+
   it("用户/助手消息均有一键复制按钮", () => {
     render(<MessageItem msg={{ role: "user", content: "用户内容" }} />);
     expect(screen.getByTestId("copy-btn")).toBeInTheDocument();

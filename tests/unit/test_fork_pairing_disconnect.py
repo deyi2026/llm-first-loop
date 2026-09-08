@@ -190,7 +190,9 @@ def test_generator_exit_partial_resumes_once_before_next_human_ingress(build_tes
     assert "PARTIAL-0" in partial_wire[0]["content"]
     assert "截断标注" not in partial_wire[0]["content"]
     assert wire[-2] == partial_wire[0]
-    assert wire[-1] == {"role": "user", "content": "SECOND-QUESTION"}
+    assert wire[-1]["role"] == "user"
+    assert wire[-1]["content"] == "SECOND-QUESTION"
+    assert float(wire[-1].get("_message_time_ts") or 0.0) > 0
     assert not any(
         m.get("role") == "assistant" and "PARTIAL-" in str(m.get("content") or "")
         for m in wire[:-2]
@@ -236,7 +238,9 @@ def test_hard_restart_open_stream_checkpoint_is_first_class_recent_continuity(
         "content": "MODEL-PARTIAL",
         "reasoning_content": "MODEL-REASONING",
     }
-    assert wire[-1] == {"role": "user", "content": "继续"}
+    assert wire[-1]["role"] == "user"
+    assert wire[-1]["content"] == "继续"
+    assert float(wire[-1].get("_message_time_ts") or 0.0) > 0
     assert all("截断标注" not in str(m.get("content") or "") for m in wire)
 
 
@@ -274,7 +278,9 @@ def test_hard_restart_uses_full_sidecar_reasoning_not_bounded_event_tail(
     assert wire[-2]["role"] == "assistant"
     assert wire[-2]["content"] == text
     assert wire[-2]["reasoning_content"] == reasoning
-    assert wire[-1] == {"role": "user", "content": "继续"}
+    assert wire[-1]["role"] == "user"
+    assert wire[-1]["content"] == "继续"
+    assert float(wire[-1].get("_message_time_ts") or 0.0) > 0
 
 
 def test_first_stream_delta_is_checkpointed_before_stream_can_be_killed(
@@ -347,7 +353,9 @@ def test_settled_partial_checkpoint_is_not_resurrected(build_test_engine, tmp_pa
     joined = "\n".join(str(m.get("content") or "") for m in wire)
     assert "STALE-PARTIAL" not in joined
     assert "STALE-THINK" not in "\n".join(str(m.get("reasoning_content") or "") for m in wire)
-    assert wire[-1] == {"role": "user", "content": "新的问题"}
+    assert wire[-1]["role"] == "user"
+    assert wire[-1]["content"] == "新的问题"
+    assert float(wire[-1].get("_message_time_ts") or 0.0) > 0
 
 
 def test_engine_adjacent_user_reply_rehydrates_retired_previous_model_turn(
@@ -378,4 +386,6 @@ def test_engine_adjacent_user_reply_rehydrates_retired_previous_model_turn(
     assert wire[-2]["role"] == "assistant"
     assert wire[-2]["content"] == "你更看重速度还是精度？"
     assert "reasoning_content" not in wire[-2]
-    assert wire[-1] == {"role": "user", "content": "更看重精度"}
+    assert wire[-1]["role"] == "user"
+    assert wire[-1]["content"] == "更看重精度"
+    assert float(wire[-1].get("_message_time_ts") or 0.0) > 0

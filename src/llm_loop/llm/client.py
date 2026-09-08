@@ -19,6 +19,7 @@ import shutil
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -980,15 +981,39 @@ class LLMClient:
         return result
 
     def _project_provider_replay(self, messages: list[dict]) -> list[dict]:
-        """Project opaque assistant replay state only back to its originating provider."""
+        """Project internal transport markers at the final provider boundary.
+
+        Provider replay remains provider-scoped. Human message timestamps are persisted
+        epoch facts rendered using the host OS timezone. Neither internal marker is ever
+        sent to a provider as a non-standard field.
+        """
         out: list[dict] = []
         for message in messages:
             replay = message.get("_provider_replay")
-            if replay is None:
+            raw_time_ts = message.get("_message_time_ts")
+            if replay is None and raw_time_ts is None:
                 out.append(message)
                 continue
             m = dict(message)
             m.pop("_provider_replay", None)
+            m.pop("_message_time_ts", None)
+            if m.get("role") == "user" and raw_time_ts is not None:
+                try:
+                    ts = float(raw_time_ts)
+                    local_time = (
+                        datetime.fromtimestamp(ts)
+                        .astimezone()
+                        .isoformat(timespec="seconds")
+                        if ts > 0
+                        else ""
+                    )
+                except (TypeError, ValueError, OverflowError, OSError):
+                    local_time = ""
+                if local_time:
+                    m["content"] = (
+                        f"[message_time system_local={local_time}]\n"
+                        + str(m.get("content") or "")
+                    )
             if (
                 m.get("role") == "assistant"
                 and isinstance(replay, dict)

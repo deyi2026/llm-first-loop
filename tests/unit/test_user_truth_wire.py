@@ -162,6 +162,8 @@ def test_build_oversized_current_user_is_never_replaced_by_compact_surrogate(tmp
     )
 
     assert engine._last_history_compacted is True
-    assert out[-1] == {"role": "user", "content": truth}
+    assert out[-1]["role"] == "user"
+    assert out[-1]["content"] == truth
+    assert float(out[-1].get("_message_time_ts") or 0.0) > 0
     assert sum(len(str(m.get("content") or "")) for m in out) > 1200
     assert not any("本消息已压缩" in str(m.get("content") or "") for m in out)

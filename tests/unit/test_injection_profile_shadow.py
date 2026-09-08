@@ -99,7 +99,17 @@ def test_capability_tier_does_not_change_provider_payload_or_emit_profile(tmp_pa
             event_store=events,
         )
         result = engine.run_single("任务")
-        payload = json.dumps(fake.payloads, ensure_ascii=False, sort_keys=True)
+        normalized_payloads = [
+            (
+                [
+                    {k: v for k, v in message.items() if k != "_message_time_ts"}
+                    for message in messages
+                ],
+                tools,
+            )
+            for messages, tools in fake.payloads
+        ]
+        payload = json.dumps(normalized_payloads, ensure_ascii=False, sort_keys=True)
         event_types = [event.type for event in events.read(result.session_id)]
         return payload, event_types
 

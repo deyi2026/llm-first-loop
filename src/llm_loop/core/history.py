@@ -28,6 +28,21 @@ from llm_loop.core.message import Message, MessageSource, ToolCall
 from llm_loop.core.reference_injection import is_human_user_message
 
 
+def _message_time_marker(m: Message) -> float | None:
+    """Return persisted epoch seconds for a genuine human message, else None.
+
+    This is internal transport metadata only. History/continuity keep exact human
+    content untouched; LLMClient renders the timestamp at the final provider boundary.
+    """
+    if not is_human_user_message(m):
+        return None
+    try:
+        ts = float(getattr(m, "ts", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return None
+    return ts if ts > 0 else None
+
+
 def _wire_size(m: Message, current_turn_ref: int | None = None) -> int:
     """提交视图口径体积（与守卫估算 routing._estimate_request_chars 对齐）.
 
@@ -37,6 +52,10 @@ def _wire_size(m: Message, current_turn_ref: int | None = None) -> int:
     死循环根因：守卫按全字段 907K tokens 拦截、压缩按 content 159K<255K 判
     不超）。预算判定一律改用本口径；纯展示/审计统计不变。
     """
+    # Message-time metadata is a small stable presentation prefix. Keep historical
+    # compaction thresholds on the established semantic payload so adding clock facts
+    # does not silently change archive/cache-boundary mechanics. The final request
+    # guard still measures the actual projected wire.
     n = len(m.content or "") + len(_capability_boundary_block(m, current_turn_ref))
     if m.role == "assistant":
         replay = (m.metadata or {}).get("provider_replay")
@@ -118,9 +137,15 @@ def _capability_boundary_block(m: Message, current_turn_ref: int | None) -> str:
 
 def _provider_message_dict(m: Message, current_turn_ref: int | None) -> dict:
     d = m.to_llm_dict()
-    block = _capability_boundary_block(m, current_turn_ref)
-    if block:
-        d["content"] = str(d.get("content") or "") + block
+    message_time_ts = _message_time_marker(m)
+    if message_time_ts is not None:
+        # Internal-only carrier. LLMClient removes this key and renders one stable
+        # system-local time fact before guard/fingerprint/provider send. Keeping it
+        # out of content preserves exact user-truth and continuity semantics here.
+        d["_message_time_ts"] = message_time_ts
+    boundary_block = _capability_boundary_block(m, current_turn_ref)
+    if boundary_block:
+        d["content"] = str(d.get("content") or "") + boundary_block
     return d
 
 # EVO-20260816-380f1c2e: 压缩目标比例（裁到预算×此值，留缓冲降低断点频率）。

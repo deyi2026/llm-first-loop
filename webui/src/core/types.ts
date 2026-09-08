@@ -30,6 +30,8 @@ export interface ChatMessage {
   toolCallId?: string | null;
   toolName?: string | null;
   note?: string | null;
+  /** 服务端消息时间戳（epoch 秒）；展示时按浏览器/操作系统本地时区转换 */
+  ts?: number;
   /** 流式进行中标记（展示用，不落库） */
   streaming?: boolean;
   /** 流式开始时刻（等待时长展示；仅流式占位符使用） */
@@ -76,6 +78,7 @@ export interface HistoryMessage {
   model_used?: string;
   tokens_in?: number;
   tokens_out?: number;
+  ts?: number;
   [key: string]: unknown;
 }
 

@@ -83,6 +83,17 @@
   white-space: pre-wrap;
 }
 
+
+.v2-msg-time {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+  text-align: right;
+  user-select: none;
+}
+
 /* ── 模型 + token 消耗页脚（M51/M52，对齐 feishu「—— 模型 · N入/M出」） ── */
 .v2-msg-footer {
   margin-top: 2px;

@@ -18,7 +18,7 @@ function renderMessages(scrollToBottom = true) {
       if (msg.ts) {
         const d = new Date(msg.ts * 1000);
         const sameDay = d.toDateString() === new Date().toDateString();
-        const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+        const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
         target.appendChild(el("span", "msg-time", sameDay ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`));
       }
     };

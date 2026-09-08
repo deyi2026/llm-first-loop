@@ -70,7 +70,9 @@ def test_human_text_that_mentions_legacy_marker_is_never_filtered(tmp_path: Path
     out = _build(engine, sess, [])
 
     assert sess.messages[0].source is MessageSource.USER
-    assert out[-1] == {"role": "user", "content": truth}
+    assert out[-1]["role"] == "user"
+    assert out[-1]["content"] == truth
+    assert float(out[-1].get("_message_time_ts") or 0.0) > 0
 
 
 

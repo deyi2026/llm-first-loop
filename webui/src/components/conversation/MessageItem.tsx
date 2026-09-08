@@ -304,6 +304,39 @@ function StreamingHint({ startedAt }: { startedAt: number | null }) {
   );
 }
 
+function formatMessageTime(ts?: number): string | null {
+  if (!ts || !Number.isFinite(ts) || ts <= 0) return null;
+  const d = new Date(ts * 1000);
+  if (Number.isNaN(d.getTime())) return null;
+  const now = new Date();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  const time = new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(d);
+  if (sameDay) return time;
+  const date = new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+  return `${date} ${time}`;
+}
+
+function MessageTime({ ts }: { ts?: number }) {
+  const text = formatMessageTime(ts);
+  return text ? (
+    <time className="v2-msg-time" dateTime={new Date(ts! * 1000).toISOString()} title="按设备系统时区显示">
+      {text}
+    </time>
+  ) : null;
+}
+
 function FeedbackButtons({ sessionId, index }: { sessionId: string; index: number }) {
   const [picked, setPicked] = useState<"up" | "down" | null>(null);
   const [saved, setSaved] = useState(false);
@@ -370,6 +403,7 @@ export function MessageItem({
               <Markdown text={msg.content} clickablePaths={producedPaths} />
             </div>
           ) : null}
+          <MessageTime ts={msg.ts} />
         </div>
         <div className="v2-msg-actions">
           <CopyButton text={msg.content} />
@@ -380,7 +414,10 @@ export function MessageItem({
   if (msg.role === "tool") {
     return (
       <div className="v2-msg tool" data-testid="msg-tool">
-        <ToolReceipt msg={msg} />
+        <div className="v2-msg-body">
+          <ToolReceipt msg={msg} />
+          <MessageTime ts={msg.ts} />
+        </div>
       </div>
     );
   }
@@ -420,6 +457,7 @@ export function MessageItem({
           </div>
         ) : null}
         {msg.note ? <div className="v2-msg-note">{msg.note}</div> : null}
+        <MessageTime ts={msg.ts} />
         <div className="v2-msg-actions">
           <CopyButton text={msg.content} />
           {typeof index === "number" && sessionId ? <FeedbackButtons sessionId={sessionId} index={index} /> : null}

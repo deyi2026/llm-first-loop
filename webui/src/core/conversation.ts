@@ -354,7 +354,8 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
     sha256: a.sha256,
   }));
 
-  const userMsg: ChatMessage = { role: "user", content: text, attachments: userAttachmentFacts };
+  const localSendTs = Date.now() / 1000;
+  const userMsg: ChatMessage = { role: "user", content: text, attachments: userAttachmentFacts, ts: localSendTs };
   const placeholder: ChatMessage = {
     role: "assistant",
     content: "",
@@ -363,6 +364,7 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
     note: null,
     streaming: true,
     streamStartedAt: Date.now(),
+    ts: localSendTs,
     tokens_in: 0,
     tokens_out: 0,
     tokens_cache_hit: 0,
@@ -451,6 +453,7 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
         toolCalls: data.tool_calls ?? null,
         note: buildAssistantNote(data),
         streaming: false,
+        ts: Date.now() / 1000,
         // M51/M52: 模型 + token 消耗结构化填充（页脚渲染，与历史恢复同源）
         model_used: data.model_used ?? "",
         tokens_in: data.tokens_in ?? 0,
@@ -465,6 +468,7 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
         toolCalls: data.tool_calls,
         note: buildAssistantNote(data) ?? "（无文字回答）",
         streaming: false,
+        ts: Date.now() / 1000,
         model_used: data.model_used ?? "",
         tokens_in: data.tokens_in ?? 0,
         tokens_out: data.tokens_out ?? 0,
@@ -477,6 +481,7 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
         reasoningContent: data.reasoning_content ?? (acc.reasoning || null),
         note: buildAssistantNote(data),
         streaming: false,
+        ts: Date.now() / 1000,
         model_used: data.model_used ?? "",
         tokens_in: data.tokens_in ?? 0,
         tokens_out: data.tokens_out ?? 0,
@@ -492,6 +497,7 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
       reasoningContent: acc.reasoning || null,
       note,
       streaming: false,
+      ts: Date.now() / 1000,
     });
     conversationStore.setState({ lastError: note });
   }
