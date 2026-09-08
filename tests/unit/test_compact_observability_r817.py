@@ -1,8 +1,25 @@
 from __future__ import annotations
 
+import pytest
+
 from llm_loop.core.history import build_history_messages
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.prompt import build_system_prompt
+
+
+@pytest.fixture(autouse=True)
+def _pin_compact_ratio_env(monkeypatch: pytest.MonkeyPatch):
+    """Declare COMPACT_RATIO dependency: exact-number assertions need ratio=1.0.
+
+    Compaction trigger threshold = max_chars × COMPACT_RATIO
+    (history_budget_prep.py reads os.environ directly). Ambient env or real
+    .env residue leaking via load_env_file() (same lesson as
+    test_context_budget_warning.py EVO-20260831) silently turns 3000 into
+    2550 and flips these assertions red with zero code change. This module
+    pins the default semantics explicitly; the env→threshold contract is
+    guarded separately in test_compact_ratio_env_syncs_trigger_limit.
+    """
+    monkeypatch.setenv("COMPACT_RATIO", "1.0")
 
 
 def _pair(i: int) -> list[Message]:
@@ -370,3 +387,45 @@ def test_engine_compact_action_reports_real_stats_not_missing_fact_warning(build
     assert payload["archive_target_chars"] == 1_800
     assert int(payload["archived_count"]) > 0
     assert payload["compaction_epoch"] >= 1
+
+
+def test_compact_ratio_env_syncs_trigger_limit(build_test_engine):
+    """Env COMPACT_RATIO scales the trigger threshold, not the budget.
+
+    Guards the production contract that the autouse pin above deliberately
+    neutralizes for exact-number assertions: ratio<1 lowers when compaction
+    fires (3000 × 0.85 = 2550) while effective_budget_chars keeps the full
+    budget. If this fails, budget semantics drifted, not test hygiene.
+    """
+    engine, _fake = build_test_engine([{"content": "unused", "tool_calls": []}])
+    sid = engine.session.create()
+    sess = engine.session.load(sid)
+    for i in range(14):
+        sess.messages.append(
+            Message(
+                role="user",
+                content=f"old-user-{i}-" + "U" * 500,
+                source=MessageSource.USER,
+            )
+        )
+        sess.messages.append(
+            Message(
+                role="assistant",
+                content=f"old-answer-{i}-" + "A" * 500,
+                source=MessageSource.SYSTEM,
+            )
+        )
+
+    events: list[tuple[str, dict]] = []
+    engine._event_append = lambda _sid, typ, payload: events.append(  # type: ignore[method-assign]
+        (typ, payload)
+    )
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("COMPACT_RATIO", "0.85")
+        engine._build_llm_messages(sess, [], max_chars=3_000)
+
+    compact_events = [payload for typ, payload in events if typ == "history.compaction"]
+    assert compact_events, "ratio=0.85 lowers the threshold; history must compact"
+    payload = compact_events[-1]
+    assert payload["trigger_limit_chars"] == 2_550
+    assert payload["effective_budget_chars"] == 3_000

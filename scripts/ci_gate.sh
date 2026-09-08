@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ci_gate.sh — R9 CI 同款三件套门禁（一条命令本地复现）
 #
-# 链路: ruff → pyright → pytest -m tier0（预检快反馈）→ pytest --dist loadfile -n auto（全量）
+# 链路: ruff → 测试环境声明门禁 → pyright → pytest -m tier0（预检快反馈）→ pytest --dist loadfile -n auto（全量）
 #
 # ⚠️ 门禁不降级（R9-WF-01c 常驻原则）: tier0 仅是开发回路预检（分钟级反馈），
 #    提交门禁恒为【全量】——本脚本最后一步永远跑全量用例，任何"分层=可以少跑"
@@ -73,10 +73,17 @@ else
   echo "（全量零违规——src tests scripts 干净）"
 fi
 
-echo "═══ [2/4] pyright（类型检查 src）═══"
+echo "═══ [2/5] 测试环境声明门禁（精确压缩预算断言必须声明 COMPACT_RATIO）═══"
+# R817 教训固化（2026-09-09）：压缩阈值 = max_chars × COMPACT_RATIO（env 直读，
+# history_budget_prep.py）。携带精确数值断言的测试若不声明环境依赖，
+# ambient/.env 残留（load_env_file 写缺失键）可令其在零代码改动下翻红/漂移。
+# 静态全树扫描，违例即阻断；规则与修复样例见 scripts/check_test_env_pins.py。
+"$PY" scripts/check_test_env_pins.py
+
+echo "═══ [3/5] pyright（类型检查 src）═══"
 "$PY" -m pyright
 
-echo "═══ [3/4] pytest tier0 预检（分钟级快反馈，非提交门禁）═══"
+echo "═══ [4/5] pytest tier0 预检（分钟级快反馈，非提交门禁）═══"
 "$PY" -m pytest -m tier0 -q
 
 if [[ "$MODE" == "--quick" ]]; then
@@ -84,7 +91,7 @@ if [[ "$MODE" == "--quick" ]]; then
   exit 0
 fi
 
-echo "═══ [4/4] pytest 全量门禁（xdist loadfile 并行；提交门禁恒为全量）═══"
+echo "═══ [5/5] pytest 全量门禁（xdist loadfile 并行；提交门禁恒为全量）═══"
 GATE_OUT="$(mktemp)"; GATE_SER="$(mktemp)"
 if "$PY" -m pytest --dist loadfile -n auto -q >"$GATE_OUT" 2>&1; then
   echo "（xdist 全量绿）"
@@ -110,4 +117,4 @@ rm -f "$GATE_OUT" "$GATE_SER"
 # Phase 2 接线（B2-P2-08）：守卫 WARN 汇总呈现（不阻断；FAIL 用例已在 [4/4] 全量天然覆盖）
 "$PY" -m pytest tests/unit/test_arch_guards.py -m guard_report -q
 
-echo "✅ ci_gate 全链路通过（ruff + pyright + tier0 预检 + 全量门禁）"
+echo "✅ ci_gate 全链路通过（ruff + env-pin 声明门禁 + pyright + tier0 预检 + 全量门禁）"
