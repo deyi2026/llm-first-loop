@@ -108,6 +108,7 @@ class CorrectionToolRegistry:
         self._search_records_fn: Callable[..., list[dict]] | None = None
         self._search_docs_fn: Callable[..., list[dict]] | None = None
         self._experience_store: Any | None = None
+        self._method_store: Any | None = None
         self._recovery_channel: Any | None = None
         self._recovery_sessions_dir: str | Path | None = None
         self._recovery_sessions_dir_fn: Callable[[], str | Path | None] | None = None
@@ -123,6 +124,7 @@ class CorrectionToolRegistry:
         "search_records_fn": "_search_records_fn",
         "search_docs_fn": "_search_docs_fn",
         "experience_store": "_experience_store",
+        "method_store": "_method_store",
         "recovery_channel": "_recovery_channel",
         "recovery_session_store": "_recovery_session_store",
         "recovery_memory_dir": "_recovery_memory_dir",

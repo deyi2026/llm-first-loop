@@ -112,6 +112,7 @@ bash scripts/r9_commit.sh "<message>"   # 机检(r9_commit_check) + ci_gate + gi
 - **评测体系**（T4）：固定评测集 `tests/eval_sets/scenarios_v1.json`（6 场景，判定口径源自内部实证基线）+ 运行器 `scripts/run_eval.py`（真实 LLM / `--dry` 管道验证，判定 + Wilson CI + 报告落盘 `docs/metrics/`）+ CI nightly 自动运行
 - **CI + 版本**（T7/B11）：GitHub Actions 三件套门禁（pytest/ruff/pyright）+ nightly 真实评测；语义化版本 v0.6.8；Release Drafter（PR 标题自动归类 changelog）+ tag 触发门禁复核 + Release 草稿（发布节奏制度化）
 - **插件化 Skill**（B3）：`skills/<name>/SKILL.md` 目录自动扫描（`SKILLS_DIR`，默认 ./skills），AI 经 `skill_list`/`skill_load` 发现并加载外部技能执行——外部开发者零代码扩展框架能力；损坏/缺失文件 fail-open 跳过；仓库自带示例技能（`skills/`：notebook-session/incident-report）可直接 `skill_list` 发现体验
+- **Method Learning v1**：`search_records(kind=method)` 渐进发现/精确水合，支持 Teacher/Candidate/qualified/active/hold 等生命周期与独立 qualification；运行时 candidate 默认写 `data/methods/`，不自动注入 prompt。`METHOD_REFLECTION_MODE=auto` 可在 run 完成后基于可观察 friction 做隔离 self-distill，默认 `off`。
 - **web_fetch SSRF 内网拦截**（HARNESS-03 + P0-2/P0-3 深化）：`WEB_FETCH_BLOCK_PRIVATE`（默认开）拦截私网/环回/链路本地/保留段地址（IP 字面量 + DNS 解析双路径），防云元数据等内网探测；命中返回 BLOCKED `[内网拦截]`；**重定向逐跳校验**（httpx/curl 均关闭自动跟随，手动循环上限 5 跳，每跳重新校验——公开 URL 302 跳内网不再泄漏）；**DNS rebinding 收窄**（curl `--resolve` 钉已校验 IP 预连接钉扎；httpx 连接后复核实际对端 IP，命中即丢弃——如实标注：httpx 通道 GET 已发出，防数据回读，更强隔离走 curl 钉扎通道）
 - **上下文预算预警**（HARNESS-04）：上下文占用率 ≥80% 预算时注入一次 `[预算预警]`（含占用率/字符数），"压缩/收尾"决策归 AI——程序不自动压缩
 - **孤儿 tool_calls 合成回执**（HARNESS-01）：`run_stream` 客户端中断时自动写「已取消」回执并立即保存，不产生「有声明无回执」的孤儿声明（严格 FC 协议 400 根源）
@@ -164,6 +165,9 @@ bash scripts/r9_commit.sh "<message>"   # 机检(r9_commit_check) + ci_gate + gi
 | `SELF_EVAL_MIN_SAMPLES` / `SELF_EVAL_SPAN` | 5/50 | 自评样本不足阈值 / 聚合窗口；评估时机由 AI/维护任务按需决定 |
 | `SYSTEM_PROMPT_EXTRA` | 已退役 | 不再拥有 universal prompt 写权限；局部行为用显式 user request / tool schema / skill / operator control surface |
 | `HISTORY_MAX_CHARS` | 未设置 | **可选**全局历史/性能 cap。未设置时不制造独立 100K/200K 限制，每轮按当前实际路由模型的 context window、output reserve 与 provider 显式性能 cap 计算；显式设置时仅限制历史保留/prefill，不作为当前用户原文的能力上限 |
+| `METHOD_REFLECTION_MODE` | off | Method post-run self-distill：off/auto；默认不增加模型调用 |
+| `METHOD_REFLECTION_MIN_ROUNDS` / `METHOD_REFLECTION_MIN_TOOLS` / `METHOD_REFLECTION_MIN_FAILURES` | 6/6/2 | auto 模式机械 friction 阈值 |
+| `METHOD_REFLECTION_TIMEOUT_S` | 120 | 隔离 reflection 单次模型调用超时（秒） |
 | `MODEL_FALLBACKS` | 空 | 降级链（逗号分隔 `provider/model`，如 `deepseek/deepseek-v4-flash,local/qwen3.6-27b-fable-fusion-711-uncensored-heretic-nm-dau-neo-max-mtp`）；空=不启用降级 |
 | `EVENT_LOG_ENABLED` | 1 | 事件源化单一真相源开关（`data/event_logs/<session_id>.jsonl` 追加写；0=事件写入零行为） |
 | `EVENT_LOGS_DIR` | 空 | 事件日志目录覆盖（空=从 data_dir 派生 `data/event_logs`） |

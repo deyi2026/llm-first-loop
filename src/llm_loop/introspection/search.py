@@ -41,6 +41,7 @@ _VALID_KINDS = {
     "rule",  # on-demand Rule SoT index / exact hydration
     "file_effect",  # P3: current-session mechanical AI/human file-effect receipts
     "synopsis",  # model-authored derived view bound to exact source SHA/ref
+    "method",  # Method Learning compact discovery / exact hydration
     "all",
 }
 
@@ -134,6 +135,7 @@ class RecordSearcher:
         archive_store: Any | None = None,
         episode_store: Any | None = None,
         experience_store: Any | None = None,
+        method_store: Any | None = None,
         semantic_retriever: Any | None = None,
         rule_path: str | Path | None = None,
         file_effect_query: Any | None = None,
@@ -146,6 +148,7 @@ class RecordSearcher:
         self._archive = archive_store
         self._episode_store = episode_store
         self._experience_store = experience_store  # P1-2: 经验库（None 时 _search_experience 返回空）
+        self._method_store = method_store
         self._semantic = semantic_retriever  # T31: 语义检索器（可 None 走关键词）
         default_rule_path = Path(__file__).resolve().parents[3] / "docs" / "ai_rules.md"
         self._rule_index = RuleIndex(rule_path or default_rule_path)
@@ -313,6 +316,7 @@ class RecordSearcher:
             results += self._search_episode(query, each_limit, session_id)
             results += self._search_experience(query, each_limit)  # P1-2: 经验库并列返回
             results += self._search_synopsis(query, each_limit, session_id)
+            results += self._search_method(query, each_limit)
         return results[:limit]
 
     def _search_special(
@@ -335,6 +339,8 @@ class RecordSearcher:
             return self._rule_index.search(query, limit)
         if kind == "synopsis":
             return self._search_synopsis(query, limit, session_id)
+        if kind == "method":  # Method Learning v1: 轻量 Method 卡发现（method-Mxxx/METHOD-xx 精确水合）
+            return self._search_method(query, limit)
         if kind == "file_effect":
             if self._file_effect_query is None or not session_id:
                 return []
@@ -631,6 +637,12 @@ class RecordSearcher:
         merged = merged[:limit]
         merged.sort(key=lambda e: e["ts"])
         return merged
+
+    def _search_method(self, query: str, limit: int) -> list[dict]:
+        """Method cards by default; exact ``method:<id>`` hydrates one full record."""
+        if self._method_store is None:
+            return []
+        return self._method_store.list(query, limit)
 
     def _search_experience(self, query: str, limit: int) -> list[dict]:
         """P1-2/R3: experience search with exact ``experience:<id>`` hydration."""

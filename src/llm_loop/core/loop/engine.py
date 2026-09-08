@@ -55,6 +55,9 @@ from llm_loop.core.loop.engine_services.tool_cycle import ToolCycleService
 from llm_loop.core.loop.events import _EventsMixin
 from llm_loop.core.loop.kpi import _KpiMixin
 from llm_loop.core.loop.lifecycle import _RunEntrypointMixin
+from llm_loop.core.loop.method_learning import (
+    MethodLearningService,  # Method Learning v1：usage 遥测 + post-run reflection（组合，R9-P5-01）
+)
 from llm_loop.core.loop.runstate import _RunState
 from llm_loop.core.loop.tool_exec import (
     _json_dumps_args,
@@ -273,6 +276,7 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
         self._termination = TerminationController(self)
         # R9 Phase 5 T6-A: 恢复域 service（B5-W1-03 迁入 _Err1210Mixin 职责；实例态留宿主经 _host 读写）
         self._recovery = RecoveryController(self)
+        self._method_learning = MethodLearningService(self)  # v1: 组合持有（不走继承）
         # R9-B5-W2-01: SessionLifecycle——会话前段 reconcile / workspace 职责面 / 收尾持久化
         self._runtime_params = RuntimeParamsService(self)
         self._routing = RoutingService(self)  # W4-02b: _RoutingMixin 退役（模型路由职责服务）
@@ -1478,6 +1482,11 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
             truncation_noted=truncation_noted,
             verification_note=verification_note,
             _run_started_at=_run_started_at,
+        )
+        # Method Learning v1：post-run 钩子（fail-open：usage 遥测 + auto 模式 friction 触发的 self-distill reflection）。
+        # 位置与 feature 原点等价：run.end/长回答落盘已并入 _run_finalizer.persist_and_settle，故在其返回后、LoopResult 前调用。
+        self._method_learning.post_run(
+            session_id, sess, rounds, tool_trace, _run_end_reason, final_answer or "", model_used
         )
         return LoopResult(
             session_id=session_id,

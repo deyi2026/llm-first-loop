@@ -49,6 +49,9 @@ from llm_loop.memory.synopsis import (
     SynopsisError,
     SynopsisStore,
 )
+from llm_loop.methods.store import (
+    MethodStore,  # Method Learning v1：方法卡存储（顶层装配供 corrections/检索共享）
+)
 from llm_loop.runtime.causal_diagnose import diagnose_event_store
 from llm_loop.runtime.causality import build_runtime_causal_snapshot
 from llm_loop.runtime.route_context import get_route_context, set_route_audit_fn
@@ -972,12 +975,14 @@ def build_engine(settings: Settings) -> LoopEngine:
     experience_store = ExperienceStore(
         settings.experiences_dir, embedder=embedder
     )  # T5: 注入 embedder 供语义检索
+    method_store = MethodStore(settings.methods_dir, seed_dir=settings.method_seed_dir)
     searcher = RecordSearcher(
         audit_dir=settings.audit_dir,
         memory_store=memory,
         archive_store=archive,
         episode_store=episode_store,
         experience_store=experience_store,  # P1-2: 经验库检索接入
+        method_store=method_store,
         semantic_retriever=semantic_retriever,  # T31: 语义召回
         file_effect_query=_file_effect_query,
         synopsis_store=_synopsis_store,
@@ -1008,6 +1013,7 @@ def build_engine(settings: Settings) -> LoopEngine:
 
     corrections._search_records_fn = _RecordSearcherAdapter(searcher)  # noqa: SLF001
     corrections._experience_store = experience_store  # noqa: SLF001 — P1-2: 工具分派注入
+    corrections._method_store = method_store  # noqa: SLF001 — Method lifecycle/tool actions
 
     # P2-3: docs/ 文档语义检索装配（fail-open，不阻断启动）
     try:

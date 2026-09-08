@@ -38,6 +38,9 @@ class RegistryHost(Protocol):
     def experience_store(self) -> Any: ...
 
     @property
+    def method_store(self) -> Any: ...
+
+    @property
     def recovery_channel(self) -> Any: ...
 
     @property
