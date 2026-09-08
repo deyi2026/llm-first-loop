@@ -1,7 +1,8 @@
-"""Method Learning post-run integration mixin.
+"""Method Learning post-run integration service（组合，R9-P5-01：新逻辑不走继承）.
 
 Keeps Method observability/reflection out of LoopEngine's core five-stage loop. All behavior is
 post-run, fail-open, and non-authoritative: it cannot rewrite the user-visible final answer.
+Engine wiring: LoopEngine 持有 MethodLearningService 实例（组合而非 Mixin 基类）。
 """
 from __future__ import annotations
 
@@ -11,26 +12,19 @@ from typing import TYPE_CHECKING, Any
 from llm_loop.methods.reflection import reflect_after_run
 
 if TYPE_CHECKING:
-    from llm_loop.config import Settings
-    from llm_loop.llm.client import LLMClient
-    from llm_loop.llm.pool import ModelClientPool
+    pass
 
 logger = logging.getLogger(__name__)
 
 
-class _MethodLearningMixin:
+class MethodLearningService:
     """Post-run Method usage observation and optional self-distillation."""
 
-    if TYPE_CHECKING:
-        llm: LLMClient
-        llm_pool: ModelClientPool | None
-        settings: Settings
+    def __init__(self, engine: Any) -> None:
+        # 组合：显式持有宿主 engine（不继承 LoopEngine，Mixin 列表只许退役）
+        self._engine = engine
 
-        def _event_append(
-            self, session_id: str, event_type: str, payload: dict[str, Any]
-        ) -> None: ...
-
-    def _post_run_method_learning(
+    def post_run(
         self,
         session_id: str,
         sess: Any,
@@ -80,7 +74,7 @@ class _MethodLearningMixin:
                     loaded_refs.append(query)
             if not loaded_refs:
                 return
-            self._event_append(
+            self._engine._event_append(
                 session_id,
                 "method.usage_observed",
                 {
@@ -108,16 +102,16 @@ class _MethodLearningMixin:
     ) -> None:
         """Run isolated post-task reflection when explicitly enabled."""
         try:
-            corrections = getattr(self, "corrections", None)
+            corrections = getattr(self._engine, "corrections", None)
             method_store = getattr(corrections, "method_store", None) if corrections is not None else None
-            method_client = self.llm
-            if self.llm_pool is not None and model_used and "/" in model_used:
+            method_client = self._engine.llm
+            if self._engine.llm_pool is not None and model_used and "/" in model_used:
                 try:
-                    method_client = self.llm_pool.get_client(model_used)
+                    method_client = self._engine.llm_pool.get_client(model_used)
                 except Exception:  # noqa: BLE001 - preserve original run result
                     logger.debug("Method reflection model resolve failed; fallback current client", exc_info=True)
             outcome = reflect_after_run(
-                mode=getattr(self.settings, "method_reflection_mode", "off"),
+                mode=getattr(self._engine.settings, "method_reflection_mode", "off"),
                 llm_client=method_client,
                 store=method_store,
                 session_id=session_id,
@@ -127,12 +121,12 @@ class _MethodLearningMixin:
                 run_end_reason=run_end_reason,
                 final_answer=final_answer,
                 source_model=model_used or getattr(method_client, "model", ""),
-                min_rounds=getattr(self.settings, "method_reflection_min_rounds", 6),
-                min_tools=getattr(self.settings, "method_reflection_min_tools", 6),
-                min_failures=getattr(self.settings, "method_reflection_min_failures", 2),
-                timeout_s=getattr(self.settings, "method_reflection_timeout_s", 120.0),
+                min_rounds=getattr(self._engine.settings, "method_reflection_min_rounds", 6),
+                min_tools=getattr(self._engine.settings, "method_reflection_min_tools", 6),
+                min_failures=getattr(self._engine.settings, "method_reflection_min_failures", 2),
+                timeout_s=getattr(self._engine.settings, "method_reflection_timeout_s", 120.0),
             )
-            self._event_append(
+            self._engine._event_append(
                 session_id,
                 "method.reflection",
                 {

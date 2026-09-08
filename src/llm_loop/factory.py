@@ -33,6 +33,7 @@ from llm_loop.introspection.status import ArchitectureStatusProvider
 from llm_loop.llm.client import LLMClient
 from llm_loop.memory.archive import ArchiveStore
 from llm_loop.memory.store import MemoryStore
+from llm_loop.methods.store import MethodStore  # R9-P5-01: 上移模块级，减少局部导入
 from llm_loop.subagent.runner import SubAgentRunner
 from llm_loop.tools.builtin.dsh_session_read import DshSessionReadTool
 from llm_loop.tools.builtin.dsh_task import DshTaskTool
@@ -717,7 +718,7 @@ def build_engine(settings: Settings) -> LoopEngine:
     # T23: 统一检索实现注入（search_records）+ T31 语义路径
     # P1-2: 经验库装配（fail-open，目录不存在时检索如实返回未命中）
     from llm_loop.experiences.store import ExperienceStore
-    from llm_loop.methods.store import MethodStore
+    # R9-P5-01: MethodStore 已上移模块级导入
 
     experience_store = ExperienceStore(
         settings.experiences_dir, embedder=embedder
