@@ -1083,6 +1083,140 @@ def build_history_messages(
     return _repair_tool_call_pairing(out)
 
 
+
+def _exact_tool_group(messages: list[dict], start: int) -> tuple[int, str] | None:
+    """Return (exclusive_end, canonical_fp) for one complete tool protocol group.
+
+    Canonicalization ignores generated call IDs only. Assistant content/reasoning,
+    function names/arguments, receipt association/order, and every other provider-
+    visible tool field remain part of the fingerprint. Therefore only byte-equivalent
+    action+observation episodes are eligible for exact duplicate projection.
+    """
+    if start >= len(messages):
+        return None
+    assistant = messages[start]
+    if not isinstance(assistant, dict) or assistant.get("role") != "assistant":
+        return None
+    raw_calls = assistant.get("tool_calls")
+    if not isinstance(raw_calls, list) or not raw_calls:
+        return None
+
+    call_index: dict[str, int] = {}
+    canonical_calls: list[dict] = []
+    for idx, raw_call in enumerate(raw_calls):
+        if not isinstance(raw_call, dict):
+            return None
+        call = dict(raw_call)
+        call_id = str(call.pop("id", "") or "")
+        if call_id:
+            call_index[call_id] = idx
+        call["_call_index"] = idx
+        canonical_calls.append(call)
+
+    end = start + 1
+    receipts: list[dict] = []
+    answered: set[int] = set()
+    while end < len(messages):
+        receipt = messages[end]
+        if not isinstance(receipt, dict) or receipt.get("role") != "tool":
+            break
+        item = dict(receipt)
+        receipt_id = str(item.pop("tool_call_id", "") or "")
+        if receipt_id and receipt_id in call_index:
+            idx = call_index[receipt_id]
+        else:
+            remaining = [i for i in range(len(canonical_calls)) if i not in answered]
+            if not remaining:
+                break
+            idx = remaining[0]
+        item["_call_index"] = idx
+        answered.add(idx)
+        receipts.append(item)
+        end += 1
+        if len(answered) >= len(canonical_calls):
+            break
+
+    if len(answered) != len(canonical_calls):
+        return None
+
+    assistant_rest = {
+        key: value
+        for key, value in assistant.items()
+        if key != "tool_calls"
+    }
+    canonical = {
+        "assistant": assistant_rest,
+        "tool_calls": canonical_calls,
+        "receipts": receipts,
+    }
+    digest = hashlib.sha256(
+        json.dumps(
+            canonical,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return end, digest
+
+
+def project_exact_duplicate_tool_groups(
+    messages: list[dict],
+) -> tuple[list[dict], dict[str, int]]:
+    """Mechanically collapse runs of >=3 contiguous exact tool groups, keeping first.
+
+    This is representation-only and intentionally has no semantic stop/retry logic:
+    - only immediately adjacent complete assistant(tool_calls)->tool receipt groups;
+    - two identical groups remain visible; folding begins only once the run reaches three;
+    - generated call IDs are normalized, every other provider-visible byte matters;
+    - the first group is kept for stable-prefix friendliness;
+    - no summary, warning, "do not retry" hint, or completion judgement is injected.
+    The caller retains the unmodified Session/EventLog as durable truth.
+    """
+    if not messages:
+        return [], {"folded_groups": 0, "removed_messages": 0}
+
+    units: list[tuple[str, str | None, list[dict]]] = []
+    cursor = 0
+    while cursor < len(messages):
+        group = _exact_tool_group(messages, cursor)
+        if group is None:
+            units.append(("other", None, [messages[cursor]]))
+            cursor += 1
+            continue
+        end, digest = group
+        units.append(("group", digest, messages[cursor:end]))
+        cursor = end
+
+    projected: list[dict] = []
+    folded_groups = 0
+    removed_messages = 0
+    i = 0
+    while i < len(units):
+        kind, digest, chunk = units[i]
+        if kind != "group":
+            projected.extend(chunk)
+            i += 1
+            continue
+        j = i + 1
+        while j < len(units) and units[j][0] == "group" and units[j][1] == digest:
+            j += 1
+        run_len = j - i
+        if run_len < 3:
+            for unit in units[i:j]:
+                projected.extend(unit[2])
+        else:
+            projected.extend(chunk)  # keep first exact observation for prefix stability
+            for duplicate in units[i + 1 : j]:
+                folded_groups += 1
+                removed_messages += len(duplicate[2])
+        i = j
+
+    return projected, {
+        "folded_groups": folded_groups,
+        "removed_messages": removed_messages,
+    }
+
 def compute_breakdown(
     session_messages: list[Message],
     system_prompt: str,

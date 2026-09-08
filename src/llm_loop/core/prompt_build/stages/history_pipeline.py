@@ -225,6 +225,7 @@ def run_history_pipeline(
             "anchor_before": int(effective_sess_anchor or 0),
             "anchor_moved": bool(_post.anchor_moved),
             "reopened_marker_count": int(_proj.reopened_marker_count or 0),
+            "exact_duplicate_tool_projection": dict(_proj.duplicate_tool_projection_stats or {}),
             "compaction_stats": dict(compact_view_box[0]) if compact_view_box else {},
         },
     )

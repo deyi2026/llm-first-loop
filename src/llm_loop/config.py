@@ -289,6 +289,9 @@ class Settings:
     tool_pipeline_enabled: bool = False  # 总开关（TOOL_PIPELINE_ENABLED）
     tool_materialize_enabled: bool = False  # 参数物化+深冻结（TOOL_MATERIALIZE_ENABLED）
     tool_guard_enabled: bool = False  # 单调守卫（TOOL_GUARD_ENABLED）
+    # Provider-view only: collapse runs of >=3 byte-equivalent tool action+observation groups.
+    # Session/EventLog remain untouched; default off until local canary is explicitly enabled.
+    exact_duplicate_tool_fold: bool = False  # LFL_EXACT_DUPLICATE_TOOL_FOLD
     runner_background: bool = True  # 后台 run 执行器（RUNNER_BACKGROUND；0=回退旧 SSE 直驱）
     cache_hit_show_in_answer: bool = False  # EVO-a637d2d7: 常态展示默认关（省固定尾部 token + 根治 AI 复述尾巴）；异常/切换告警注入独立保留（_cache_hint 分支不受此开关影响）
 
@@ -459,6 +462,7 @@ class Settings:
             "tool_pipeline_enabled": self.tool_pipeline_enabled,
             "tool_materialize_enabled": self.tool_materialize_enabled,
             "tool_guard_enabled": self.tool_guard_enabled,
+            "exact_duplicate_tool_fold": self.exact_duplicate_tool_fold,
             "runner_background": self.runner_background,
             "cache_hit_show_in_answer": self.cache_hit_show_in_answer,
             # ERC v1.1 rollout state is safe to expose; no paths/refs/secrets included.
@@ -574,6 +578,7 @@ def load_settings() -> Settings:
         tool_pipeline_enabled=_env_bool("TOOL_PIPELINE_ENABLED", False),
         tool_materialize_enabled=_env_bool("TOOL_MATERIALIZE_ENABLED", False),
         tool_guard_enabled=_env_bool("TOOL_GUARD_ENABLED", False),
+        exact_duplicate_tool_fold=_env_bool("LFL_EXACT_DUPLICATE_TOOL_FOLD", False),
         runner_background=_env_bool("RUNNER_BACKGROUND", True),  # EVO 后台 run 改造: 默认开
         # EVO-20260819-2254e3b4 方案B（用户批准）: 回答末尾常态展示缓存命中率
         cache_hit_show_in_answer=_env_bool("CACHE_HIT_SHOW_IN_ANSWER", False),

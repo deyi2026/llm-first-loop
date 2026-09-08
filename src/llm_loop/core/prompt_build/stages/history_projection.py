@@ -16,6 +16,7 @@ from llm_loop.core.history import (
     build_history_messages,
     clear_cache_compacted_for,
     is_cache_compacted_for,
+    project_exact_duplicate_tool_groups,
 )
 from llm_loop.core.message import Message
 
@@ -50,6 +51,7 @@ class HistoryProjection:
     cache_compacted_source_box: list[int] = field(default_factory=list)
     compact_view_box: list[dict] = field(default_factory=list)
     reopened_marker_count: int = 0
+    duplicate_tool_projection_stats: dict[str, int | bool] = field(default_factory=dict)
 
 
 def run_history_projection(
@@ -176,6 +178,15 @@ def run_history_projection(
         preserve_last_human_exact=r6_ingress_truth is not None,
         current_turn_ref=current_turn_ref,
     )
+    duplicate_tool_projection_stats: dict[str, int | bool] = {
+        "enabled": bool(getattr(settings, "exact_duplicate_tool_fold", False)),
+        "folded_groups": 0,
+        "removed_messages": 0,
+    }
+    if duplicate_tool_projection_stats["enabled"]:
+        built, duplicate_stats = project_exact_duplicate_tool_groups(built)
+        duplicate_tool_projection_stats.update(duplicate_stats)
+
     cache_compacted_source_box = _map_compacted_source_indices(
         cache_compacted_local_index_box,
         prefix_len=prefix_len,
@@ -190,4 +201,5 @@ def run_history_projection(
         cache_compacted_source_box=cache_compacted_source_box,
         compact_view_box=compact_view_box,
         reopened_marker_count=reopened_marker_count,
+        duplicate_tool_projection_stats=duplicate_tool_projection_stats,
     )

@@ -255,3 +255,16 @@ def test_to_status_dict_thinking_fields():
     assert st["thinking_mode"] is True
     assert st["reasoning_effort"] == "max"
     assert "llm_api_key" not in st
+
+
+def test_exact_duplicate_tool_fold_is_explicit_opt_in(monkeypatch):
+    from llm_loop.config import load_settings
+
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_BASE_URL", "https://example.invalid/v1")
+    monkeypatch.delenv("LFL_EXACT_DUPLICATE_TOOL_FOLD", raising=False)
+    assert load_settings().exact_duplicate_tool_fold is False
+    monkeypatch.setenv("LFL_EXACT_DUPLICATE_TOOL_FOLD", "1")
+    settings = load_settings()
+    assert settings.exact_duplicate_tool_fold is True
+    assert settings.to_status_dict()["exact_duplicate_tool_fold"] is True
