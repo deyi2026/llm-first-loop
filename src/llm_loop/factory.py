@@ -234,6 +234,7 @@ def build_engine(settings: Settings) -> LoopEngine:
         # M20 THK-01: 思考参数装配一次，三条 LLM 路径统一受益（VAL-02）
         thinking_mode=settings.thinking_mode,
         reasoning_effort=settings.reasoning_effort,
+        reasoning_effort_map=(llm_params or {}).get("reasoning_effort_map"),
         # M47 §5.5: 元数据驱动的思考支持判定（None 时退回硬编码，向后兼容）
         thinking_supported=thinking_supported,
         reasoning_capable=reasoning_capable,

@@ -1478,3 +1478,56 @@ def test_interruption_replay_marker_keeps_existing_provider_projection_boundary(
     assert "reasoning_details" not in foreign[-2]
     assert "_provider_replay" not in foreign[-2]
     assert resumed[-2]["_provider_replay"] == replay
+
+
+def test_chat_template_reasoning_effort_uses_explicit_model_mapping() -> None:
+    from llm_loop.core.run_context import current_reasoning_effort, current_reasoning_mode
+
+    payloads = []
+
+    def fake_stream(self, method, url, **kwargs):
+        payloads.append(kwargs.get("json", {}))
+        return _FakeStreamCtx([
+            'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+            "data: [DONE]",
+        ])
+
+    with mock.patch("httpx.Client.stream", fake_stream):
+        c = _client(
+            api_key="",
+            base_url="http://127.0.0.1:8901/v1",
+            thinking_supported=True,
+            reasoning_capable=True,
+            reasoning_control="chat_template",
+            reasoning_effort="high",
+            reasoning_effort_map={"high": "medium", "max": "xhigh"},
+        )
+        mode_token = current_reasoning_mode.set("on")
+        effort_token = current_reasoning_effort.set("high")
+        try:
+            c.chat(messages=[{"role": "user", "content": "high"}], tools=[])
+        finally:
+            current_reasoning_effort.reset(effort_token)
+            current_reasoning_mode.reset(mode_token)
+        mode_token = current_reasoning_mode.set("on")
+        effort_token = current_reasoning_effort.set("max")
+        try:
+            c.chat(messages=[{"role": "user", "content": "max"}], tools=[])
+        finally:
+            current_reasoning_effort.reset(effort_token)
+            current_reasoning_mode.reset(mode_token)
+        mode_token = current_reasoning_mode.set("off")
+        try:
+            c.chat(messages=[{"role": "user", "content": "off"}], tools=[])
+        finally:
+            current_reasoning_mode.reset(mode_token)
+
+    assert payloads[0]["chat_template_kwargs"] == {
+        "enable_thinking": True,
+        "reasoning_effort": "medium",
+    }
+    assert payloads[1]["chat_template_kwargs"] == {
+        "enable_thinking": True,
+        "reasoning_effort": "xhigh",
+    }
+    assert payloads[2]["chat_template_kwargs"] == {"enable_thinking": False}

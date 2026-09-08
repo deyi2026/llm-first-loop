@@ -543,6 +543,8 @@ class LLMClient:
     # M20 THK-01/CFG-03: DeepSeek V4 思考模式（默认开启；非 DeepSeek 不发）
     thinking_mode: bool = True
     reasoning_effort: str = "high"
+    # Model-owned chat-template vocabulary map. Empty preserves legacy enable_thinking-only wire.
+    reasoning_effort_map: dict[str, str] | None = None
 
     # M47（design §5.5）: 思考参数泛化 - 显式传入时以此为准（消除硬编码 deepseek.com）;
     # None 时保持原 _thinking_supported() 行为（向后兼容，零回归）.
@@ -1083,9 +1085,17 @@ class LLMClient:
             if _reasoning_requested is not None and (
                 _reasoning_supported or _legacy_local_override
             ):
-                payload["chat_template_kwargs"] = {
+                _template_kwargs: dict[str, Any] = {
                     "enable_thinking": _reasoning_requested
                 }
+                if _reasoning_requested and self.reasoning_effort_map:
+                    _requested_effort = (
+                        current_reasoning_effort.get() or self.reasoning_effort
+                    ).strip().lower()
+                    _mapped_effort = self.reasoning_effort_map.get(_requested_effort)
+                    if _mapped_effort:
+                        _template_kwargs["reasoning_effort"] = _mapped_effort
+                payload["chat_template_kwargs"] = _template_kwargs
         elif _reasoning_control == "thinking_type" and _reasoning_supported and _reasoning_requested is not None:
             payload["thinking"] = {
                 "type": "enabled" if _reasoning_requested else "disabled"

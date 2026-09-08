@@ -115,6 +115,7 @@ class ModelClientPool:
         provider_wire_protocol = params.get("wire_protocol")
         send_tool_choice = params.get("send_tool_choice", True)
         reasoning_split = params.get("reasoning_split", False)
+        reasoning_effort_map = params.get("reasoning_effort_map")
         temperature = params.get("temperature")
         top_p = params.get("top_p")
         top_k = params.get("top_k")
@@ -139,6 +140,7 @@ class ModelClientPool:
             wire_protocol=provider_wire_protocol or "openai",
             thinking_mode=self.default_client.thinking_mode,
             reasoning_effort=self.default_client.reasoning_effort,
+            reasoning_effort_map=reasoning_effort_map,
             thinking_supported=thinking_supported,
             reasoning_capable=reasoning_capable,
             reasoning_control=reasoning_control,

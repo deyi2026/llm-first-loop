@@ -71,6 +71,9 @@ class ModelSpec:
     # Historical reasoning replay is a provider/model wire capability, not a quality heuristic.
     # Values: configured / none / tool_calls / full.
     reasoning_replay: str = "configured"
+    # Optional model-owned mapping from LFL effort labels to chat-template effort labels.
+    # Empty means do not send reasoning_effort through chat_template_kwargs (legacy behavior).
+    reasoning_effort_map: dict[str, str] = field(default_factory=dict)
     # Factual runtime identity for observability only; never used for routing or prompt policy.
     runtime_identity: str = ""
     # Optional explicit generation profile. None means do not send that wire field.
@@ -257,6 +260,7 @@ class ProviderRegistry:
             # 仅非默认值下发，保持旧 client_params 结构零回归。
             **({"send_tool_choice": False} if not spec.models[model_id].send_tool_choice else {}),
             **({"reasoning_split": True} if spec.models[model_id].reasoning_split else {}),
+            **({"reasoning_effort_map": dict(spec.models[model_id].reasoning_effort_map)} if spec.models[model_id].reasoning_effort_map else {}),
             **({"temperature": spec.models[model_id].temperature} if spec.models[model_id].temperature is not None else {}),
             **({"top_p": spec.models[model_id].top_p} if spec.models[model_id].top_p is not None else {}),
             **({"top_k": spec.models[model_id].top_k} if spec.models[model_id].top_k is not None else {}),
@@ -435,6 +439,36 @@ def _parse_reasoning_control(pid: str, mid: str, mval: dict[str, Any]) -> str:
 
 
 
+def _parse_reasoning_effort_map(pid: str, mid: str, mval: dict[str, Any]) -> dict[str, str]:
+    """Parse explicit model-owned effort label mapping for chat-template control.
+
+    The runtime never guesses template vocabulary. Missing/invalid mappings preserve
+    legacy behavior (enable_thinking only). Keys are LFL request labels; values are
+    provider/template labels and are kept short/opaque after a conservative token check.
+    """
+    raw = mval.get("reasoning_effort_map")
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        logger.warning(
+            "模型 %s/%s reasoning_effort_map=%r 非对象，忽略该映射", pid, mid, raw
+        )
+        return {}
+    allowed_keys = {"low", "medium", "high", "max", "xhigh"}
+    out: dict[str, str] = {}
+    for key, value in raw.items():
+        k = str(key).strip().lower()
+        v = str(value).strip().lower()
+        if k not in allowed_keys or not re.fullmatch(r"[a-z0-9_.-]{1,32}", v):
+            logger.warning(
+                "模型 %s/%s reasoning_effort_map 条目 %r:%r 非法，忽略",
+                pid, mid, key, value,
+            )
+            continue
+        out[k] = v
+    return out
+
+
 def _parse_reasoning_replay(pid: str, mid: str, mval: dict[str, Any]) -> str:
     """Parse the model historical-reasoning replay wire contract."""
     raw = str(mval.get("reasoning_replay", "configured")).strip().lower()
@@ -603,6 +637,7 @@ def _parse_model_spec(pid: str, mid: str, mval: dict[str, Any]) -> ModelSpec:
             pid, mid, "reasoning_split", mval, default=False
         ),
         reasoning_replay=_parse_reasoning_replay(pid, mid, mval),
+        reasoning_effort_map=_parse_reasoning_effort_map(pid, mid, mval),
         runtime_identity=str(mval.get("runtime_identity", "") or "").strip(),
         temperature=_parse_optional_float(pid, mid, "temperature", mval.get("temperature")),
         top_p=_parse_optional_float(pid, mid, "top_p", mval.get("top_p"), maximum=1.0, exclusive_min=True),
