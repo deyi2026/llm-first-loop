@@ -137,23 +137,38 @@ def _current_user_wire_index(built: list[dict], current: Any) -> int | None:
 
 
 def _resume_runtime_fact(state: dict[str, Any] | None) -> str:
-    """Return a provider-only factual marker for a token-limited model partial.
+    """Return provider-only mechanical continuity facts for one interrupted run.
 
-    The partial assistant bytes themselves remain exact model output. The marker is
-    explicitly labelled as runtime provenance and is attached only to the ephemeral
-    provider view of the current genuine-human message. Durable human input remains
-    byte-exact. It contains no directive about whether/how to continue; the model
-    keeps that decision.
+    Model-origin partial bytes remain an assistant message.  This marker carries only
+    runtime facts that cannot be expressed by that text/reasoning alone: provider
+    truncation, sparse-checkpoint selection, and durable execution lifecycle.  It
+    never says what task is active or which action should happen next.
     """
-    if not isinstance(state, dict) or state.get("provider_truncated") is not True:
+    if not isinstance(state, dict):
         return ""
-    finish_reason = str(state.get("finish_reason") or "")[:80]
-    payload = {
-        "previous_assistant_output_truncated": True,
-        "previous_assistant_output_complete": False,
-        "partial_output_persisted": True,
-        "finish_reason": finish_reason,
-    }
+    payload: dict[str, Any] = {}
+    if state.get("provider_truncated") is True:
+        payload.update(
+            {
+                "previous_assistant_output_truncated": True,
+                "previous_assistant_output_complete": False,
+                "partial_output_persisted": True,
+                "finish_reason": str(state.get("finish_reason") or "")[:80],
+            }
+        )
+    mechanical = state.get("mechanical_execution")
+    if isinstance(mechanical, dict) and mechanical:
+        payload["interrupted_execution_state"] = mechanical
+    if state.get("sparse_latest_skipped") is True:
+        payload["checkpoint_selection"] = {
+            "latest_checkpoint_seq": int(state.get("latest_checkpoint_seq") or 0),
+            "model_state_checkpoint_seq": int(state.get("checkpoint_seq") or 0),
+            "latest_checkpoint_model_chars": int(
+                state.get("latest_checkpoint_model_chars") or 0
+            ),
+        }
+    if not payload:
+        return ""
     return "[runtime_continuity] " + json.dumps(
         payload, ensure_ascii=False, separators=(",", ":")
     )
@@ -232,7 +247,7 @@ def apply_recent_continuity_suffix(
             "assistant_context": 1,
             "historical_user_messages": 0,
         }
-    if assistant_wire is not None:
+    if assistant_wire is not None or runtime_fact:
         assert interruption_resume is not None
         source = str(interruption_resume.get("source") or "interruption_resume")
     elif recent_assistant_wire is not None:

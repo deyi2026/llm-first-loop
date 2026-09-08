@@ -244,6 +244,137 @@ def test_hard_restart_open_stream_checkpoint_is_first_class_recent_continuity(
     assert all("截断标注" not in str(m.get("content") or "") for m in wire)
 
 
+def test_restart_merges_latest_useful_model_state_with_mechanical_execution(
+    build_test_engine, tmp_path
+):
+    """A sparse latest checkpoint cannot hide useful model state before a crash."""
+    engine, fake = build_test_engine([{"content": "RESUMED"}])
+    es = EventStore(str(tmp_path / "merged-restart-events"), enabled=True)
+    engine._event_store = es  # noqa: SLF001
+    sid = engine.session.create()
+    engine.session.append(
+        sid, Message(role="user", content="ORIGINAL-TASK", source=MessageSource.USER)
+    )
+
+    useful = es.append(
+        sid,
+        "llm.partial_checkpoint",
+        {
+            "round": 20,
+            "provider": "glm",
+            "model": "glm/glm-5.3",
+            "text_tail": "两个全量对照仍在运行，下一步比较结果。",
+            "reasoning_tail": "WAIT-FOR-BOTH-JOBS-THEN-COMPARE",
+            "text_chars": 22,
+            "reasoning_chars": 31,
+            "partial_sha256": "1" * 64,
+            "native_state_sha256": "",
+            "native_state_chars": 0,
+            "tool_call_draft_count": 0,
+        },
+    )
+    sparse = es.append(
+        sid,
+        "llm.partial_checkpoint",
+        {
+            "round": 21,
+            "provider": "glm",
+            "model": "glm/glm-5.3",
+            "text_tail": "",
+            "reasoning_tail": "",
+            "text_chars": 0,
+            "reasoning_chars": 0,
+            "partial_sha256": "2" * 64,
+            "native_state_sha256": "3" * 64,
+            "native_state_chars": 128,
+            "tool_call_draft_count": 1,
+        },
+    )
+    execution_id = "exec-restart-1"
+    es.append(
+        sid,
+        "tool.execution.declared",
+        {
+            "execution_id": execution_id,
+            "round": 21,
+            "tool_call_id": "call-wait",
+            "tool_name": "execute_command",
+            "args_sha256": "4" * 64,
+        },
+    )
+    es.append(
+        sid,
+        "tool.execution.started",
+        {
+            "execution_id": execution_id,
+            "round": 21,
+            "tool_call_id": "call-wait",
+            "tool_name": "execute_command",
+        },
+    )
+    assert useful is not None
+    assert sparse is not None
+    es.append(
+        sid,
+        "external.execution.launched",
+        {
+            "job_id": "job-A",
+            "workspace_root": str(tmp_path),
+            "executor": "execute_command",
+            "command_sha256": "5" * 64,
+            "pid": 111,
+            "pgid": 111,
+            "auto_reclaim": False,
+        },
+    )
+
+    result = engine.run(sid, "继续")
+    assert result.final_answer == "RESUMED"
+    wire = fake.calls[-1]["messages"]
+    assert wire[-2]["role"] == "assistant"
+    assert wire[-2]["content"] == "两个全量对照仍在运行，下一步比较结果。"
+    assert wire[-2]["reasoning_content"] == "WAIT-FOR-BOTH-JOBS-THEN-COMPARE"
+    assert wire[-1]["role"] == "user"
+    assert wire[-1]["content"].startswith("继续\n\n[provider_runtime_fact—not_human_text]\n")
+    assert '"state":"started_outcome_unknown"' in wire[-1]["content"]
+    assert '"job_id":"job-A"' in wire[-1]["content"]
+    assert '"tool_call_draft_count":1' in wire[-1]["content"]
+    assert f'"latest_checkpoint_seq":{sparse.seq}' in wire[-1]["content"]
+    assert f'"model_state_checkpoint_seq":{useful.seq}' in wire[-1]["content"]
+    assert engine.session.load(sid).messages[-1].content == "RESUMED"
+
+
+def test_nonterminal_background_job_alone_is_not_misclassified_as_restart_state(
+    build_test_engine, tmp_path
+):
+    """A normal completed run may own a background job without implying a crash."""
+    engine, fake = build_test_engine([{"content": "NEW-ANSWER"}])
+    es = EventStore(str(tmp_path / "normal-background-events"), enabled=True)
+    engine._event_store = es  # noqa: SLF001
+    sid = engine.session.create()
+    es.append(
+        sid,
+        "external.execution.launched",
+        {
+            "job_id": "job-normal",
+            "workspace_root": str(tmp_path),
+            "executor": "execute_command",
+            "command_sha256": "6" * 64,
+            "pid": 222,
+            "pgid": 222,
+            "auto_reclaim": False,
+        },
+    )
+    es.append(sid, "run.end", {"reason": "completed"})
+
+    result = engine.run(sid, "新的正常问题")
+    assert result.final_answer == "NEW-ANSWER"
+    wire = fake.calls[-1]["messages"]
+    assert wire[-1]["role"] == "user"
+    assert wire[-1]["content"] == "新的正常问题"
+    assert "provider_runtime_fact" not in wire[-1]["content"]
+
+
 def test_hard_restart_uses_full_sidecar_reasoning_not_bounded_event_tail(
     build_test_engine, tmp_path, monkeypatch
 ):

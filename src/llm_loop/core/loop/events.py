@@ -23,6 +23,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from llm_loop.core.interruption_resume import open_execution_facts, select_open_checkpoint_events
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.session import _validate_session_id
 from llm_loop.core.tool_execution_journal import ToolExecutionJournal
@@ -349,6 +350,201 @@ class _EventsMixin:
         self._inject_interruption_recovery(session_id, sess)
         self._recover_inflight_tool_executions(session_id, sess)
 
+    def _materialize_open_model_checkpoint(
+        self,
+        session_id: str,
+        checkpoint_event: Any,
+        latest_checkpoint_event: Any | None,
+        mechanical_execution: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Materialize one structurally selected model checkpoint for restart."""
+        payload = dict(getattr(checkpoint_event, "payload", None) or {})
+        native_sha = str(payload.get("native_state_sha256") or "")
+        state: dict[str, Any] = {
+            "source": "open_stream_checkpoint",
+            "text_tail": str(payload.get("text_tail") or ""),
+            "reasoning_tail": str(payload.get("reasoning_tail") or ""),
+            "provider": str(payload.get("provider") or ""),
+            "model": str(payload.get("model") or ""),
+            "partial_sha256": str(payload.get("partial_sha256") or ""),
+            "checkpoint_seq": int(getattr(checkpoint_event, "seq", 0) or 0),
+        }
+        if latest_checkpoint_event is not None:
+            latest_payload = dict(getattr(latest_checkpoint_event, "payload", None) or {})
+            state["latest_checkpoint_seq"] = int(
+                getattr(latest_checkpoint_event, "seq", 0) or 0
+            )
+            if latest_checkpoint_event is not checkpoint_event:
+                state["sparse_latest_skipped"] = True
+                state["latest_checkpoint_model_chars"] = int(
+                    latest_payload.get("text_chars") or 0
+                ) + int(latest_payload.get("reasoning_chars") or 0)
+                draft_count = int(latest_payload.get("tool_call_draft_count") or 0)
+                native_chars = int(latest_payload.get("native_state_chars") or 0)
+                if draft_count or native_chars:
+                    mechanical_execution.setdefault(
+                        "provider_state",
+                        {
+                            "round": int(latest_payload.get("round") or 0),
+                            "provider": str(latest_payload.get("provider") or ""),
+                            "model": str(latest_payload.get("model") or ""),
+                            "tool_call_draft_count": draft_count,
+                            "native_state_persisted": bool(native_chars),
+                        },
+                    )
+
+        native = self._load_inflight_native_state(
+            session_id,
+            expected_sha256=native_sha,
+            expected_round=int(payload.get("round") or 0),
+            expected_provider=str(state.get("provider") or ""),
+            expected_model=str(state.get("model") or ""),
+            expected_partial_sha256=str(state.get("partial_sha256") or ""),
+        )
+        if native is not None:
+            if isinstance(native.get("text_full"), str):
+                state["text_tail"] = native["text_full"]
+            if isinstance(native.get("reasoning_full"), str):
+                state["reasoning_tail"] = native["reasoning_full"]
+            state["full_snapshot"] = True
+            if isinstance(native.get("provider_replay"), dict):
+                state["provider_replay"] = native["provider_replay"]
+            drafts = native.get("tool_call_drafts")
+            if isinstance(drafts, list):
+                state["tool_call_drafts"] = [
+                    dict(item) for item in drafts if isinstance(item, dict)
+                ]
+            state["native_state_sha256"] = native_sha
+
+        self._promote_open_model_checkpoint(session_id, checkpoint_event, payload, state)
+        return state
+
+    def _promote_open_model_checkpoint(
+        self,
+        session_id: str,
+        checkpoint_event: Any,
+        payload: dict[str, Any],
+        state: dict[str, Any],
+    ) -> None:
+        """Make the selected useful checkpoint searchable before sidecar cleanup."""
+        checkpoint_seq = int(getattr(checkpoint_event, "seq", 0) or 0)
+        partial_sha = str(state.get("partial_sha256") or "")
+        source_key = str(checkpoint_seq) if checkpoint_seq > 0 else partial_sha[:20]
+        if not source_key:
+            return
+        trunc_ref = f"truncated:checkpoint:{source_key}"
+        artifact_ref = ""
+        if state.get("full_snapshot"):
+            try:
+                artifact_ref = self._capture_truncation_artifact(
+                    session_id,
+                    reason="open_stream_checkpoint",
+                    round_no=int(payload.get("round") or 0),
+                    provider=str(state.get("provider") or ""),
+                    model=str(state.get("model") or ""),
+                    text_full=str(state.get("text_tail") or ""),
+                    reasoning_full=str(state.get("reasoning_tail") or ""),
+                    partial_sha256=partial_sha,
+                    provider_replay=(
+                        state.get("provider_replay")
+                        if isinstance(state.get("provider_replay"), dict)
+                        else None
+                    ),
+                    tool_call_drafts=(
+                        state.get("tool_call_drafts")
+                        if isinstance(state.get("tool_call_drafts"), list)
+                        else None
+                    ),
+                )
+            except Exception:  # noqa: BLE001 — resume stays fail-open
+                logger.warning("open-stream exact artifact 晋升失败", exc_info=True)
+        index_truncated = getattr(getattr(self, "episode_store", None), "index_truncated_run", None)
+        if not callable(index_truncated):
+            return
+        try:
+            index_truncated(
+                session_id,
+                run_end_reason="open_stream_checkpoint",
+                last_round=int(payload.get("round") or 0),
+                run_end_seq=0,
+                text_tail=str(payload.get("text_tail") or ""),
+                reasoning_tail=str(payload.get("reasoning_tail") or ""),
+                partial_chars=int(payload.get("text_chars") or 0)
+                + int(payload.get("reasoning_chars") or 0),
+                partial_sha256=partial_sha,
+                artifact_ref=artifact_ref,
+                ref=trunc_ref,
+            )
+            state["truncation_ref"] = trunc_ref
+            if artifact_ref:
+                state["artifact_ref"] = artifact_ref
+        except Exception:  # noqa: BLE001 — resume stays fail-open
+            logger.warning("open-stream truncated 索引失败", exc_info=True)
+
+    def _prepare_open_interruption_resume(self, session_id: str) -> dict[str, Any] | None:
+        """Merge latest useful model state with latest mechanical execution facts."""
+        estore = getattr(self, "_event_store", None)
+        if estore is None or not getattr(estore, "enabled", False):
+            return None
+        events = list(estore.read(session_id) or [])
+        last_run_end = max(
+            (pos for pos, event in enumerate(events) if str(getattr(event, "type", "")) == "run.end"),
+            default=-1,
+        )
+        open_events = events[last_run_end + 1 :]
+        # Current human ingress itself is appended after the last run.end, so it cannot
+        # prove an interrupted prior run. Require an actual open execution/model fact
+        # before surfacing session-wide nonterminal background jobs as recovery state.
+        has_open_run_fact = any(
+            str(getattr(event, "type", "")) == "request.meta"
+            or str(getattr(event, "type", "")) == "llm.partial_checkpoint"
+            or str(getattr(event, "type", "")).startswith("tool.execution.")
+            or str(getattr(event, "type", "")).startswith("external.execution.")
+            for event in open_events
+        )
+        if not has_open_run_fact:
+            return None
+        model_checkpoint, latest_checkpoint = select_open_checkpoint_events(open_events)
+        mechanical = open_execution_facts(events, after_pos=last_run_end)
+        state: dict[str, Any] | None = None
+        if model_checkpoint is not None:
+            state = self._materialize_open_model_checkpoint(
+                session_id, model_checkpoint, latest_checkpoint, mechanical
+            )
+        elif latest_checkpoint is not None:
+            payload = dict(getattr(latest_checkpoint, "payload", None) or {})
+            native_sha = str(payload.get("native_state_sha256") or "")
+            native = self._load_inflight_native_state(
+                session_id,
+                expected_sha256=native_sha,
+                expected_round=int(payload.get("round") or 0),
+                expected_provider=str(payload.get("provider") or ""),
+                expected_model=str(payload.get("model") or ""),
+                expected_partial_sha256=str(payload.get("partial_sha256") or ""),
+            )
+            replay = native.get("provider_replay") if isinstance(native, dict) else None
+            if isinstance(replay, dict):
+                seq = int(getattr(latest_checkpoint, "seq", 0) or 0)
+                state = {
+                    "source": "open_stream_checkpoint",
+                    "text_tail": "",
+                    "reasoning_tail": "",
+                    "provider": str(payload.get("provider") or ""),
+                    "model": str(payload.get("model") or ""),
+                    "partial_sha256": str(payload.get("partial_sha256") or ""),
+                    "provider_replay": replay,
+                    "checkpoint_seq": seq,
+                    "latest_checkpoint_seq": seq,
+                }
+        if mechanical:
+            state = state or {
+                "source": "open_execution_state",
+                "text_tail": "",
+                "reasoning_tail": "",
+            }
+            state["mechanical_execution"] = mechanical
+        return state
+
     def _prepare_interruption_resume(self, session_id: str, sess) -> None:
         """Prepare one-shot exact model continuity for the current human ingress.
 
@@ -471,142 +667,7 @@ class _EventsMixin:
                             persisted["native_state_sha256"] = native_sha
                     break
 
-            open_checkpoint: dict[str, Any] | None = None
-            estore = getattr(self, "_event_store", None)
-            if estore is not None and getattr(estore, "enabled", False):
-                events = list(estore.read(session_id) or [])
-                last_run_end = -1
-                for pos, event in enumerate(events):
-                    if str(getattr(event, "type", "")) == "run.end":
-                        last_run_end = pos
-                open_events = events[last_run_end + 1 :]
-                checkpoint_pos = -1
-                checkpoint_event = None
-                for pos, event in enumerate(open_events):
-                    if str(getattr(event, "type", "")) == "llm.partial_checkpoint":
-                        checkpoint_pos = pos
-                        checkpoint_event = event
-                if checkpoint_event is not None:
-                    settled = False
-                    for later in open_events[checkpoint_pos + 1 :]:
-                        if str(getattr(later, "type", "")) == "run.end":
-                            settled = True
-                            break
-                        if str(getattr(later, "type", "")) != "message.appended":
-                            continue
-                        payload = getattr(later, "payload", None) or {}
-                        md = payload.get("metadata") or {}
-                        if (
-                            payload.get("role") == "assistant"
-                            and md.get("answer_origin") == "model"
-                            and md.get("llm_interrupted") is not True
-                        ):
-                            settled = True
-                            break
-                    if not settled:
-                        payload = getattr(checkpoint_event, "payload", None) or {}
-                        text_tail = str(payload.get("text_tail") or "")
-                        reasoning_tail = str(payload.get("reasoning_tail") or "")
-                        native_sha = str(payload.get("native_state_sha256") or "")
-                        if text_tail or reasoning_tail or native_sha:
-                            open_checkpoint = {
-                                "source": "open_stream_checkpoint",
-                                "text_tail": text_tail,
-                                "reasoning_tail": reasoning_tail,
-                                "provider": str(payload.get("provider") or ""),
-                                "model": str(payload.get("model") or ""),
-                                "partial_sha256": str(payload.get("partial_sha256") or ""),
-                            }
-                            native = self._load_inflight_native_state(
-                                session_id,
-                                expected_sha256=native_sha,
-                                expected_round=int(payload.get("round") or 0),
-                                expected_provider=str(open_checkpoint.get("provider") or ""),
-                                expected_model=str(open_checkpoint.get("model") or ""),
-                                expected_partial_sha256=str(
-                                    open_checkpoint.get("partial_sha256") or ""
-                                ),
-                            )
-                            if native is not None:
-                                full_text = native.get("text_full")
-                                full_reasoning = native.get("reasoning_full")
-                                if isinstance(full_text, str):
-                                    open_checkpoint["text_tail"] = full_text
-                                if isinstance(full_reasoning, str):
-                                    open_checkpoint["reasoning_tail"] = full_reasoning
-                                open_checkpoint["full_snapshot"] = True
-                                replay = native.get("provider_replay")
-                                drafts = native.get("tool_call_drafts")
-                                if isinstance(replay, dict):
-                                    open_checkpoint["provider_replay"] = replay
-                                if isinstance(drafts, list):
-                                    open_checkpoint["tool_call_drafts"] = [
-                                        dict(item)
-                                        for item in drafts
-                                        if isinstance(item, dict)
-                                    ]
-                                open_checkpoint["native_state_sha256"] = native_sha
-
-                            # A crash/open-stream checkpoint has no run.end row. Promote
-                            # its latest exact sidecar before a new run can overwrite or
-                            # clear it, then expose it through the existing episode search
-                            # surface. This changes retrieval durability only; automatic
-                            # continuation eligibility above is unchanged.
-                            checkpoint_seq = int(getattr(checkpoint_event, "seq", 0) or 0)
-                            partial_sha = str(open_checkpoint.get("partial_sha256") or "")
-                            source_key = str(checkpoint_seq) if checkpoint_seq > 0 else partial_sha[:20]
-                            trunc_ref = f"truncated:checkpoint:{source_key}"
-                            artifact_ref = ""
-                            if open_checkpoint.get("full_snapshot"):
-                                try:
-                                    artifact_ref = self._capture_truncation_artifact(
-                                        session_id,
-                                        reason="open_stream_checkpoint",
-                                        round_no=int(payload.get("round") or 0),
-                                        provider=str(open_checkpoint.get("provider") or ""),
-                                        model=str(open_checkpoint.get("model") or ""),
-                                        text_full=str(open_checkpoint.get("text_tail") or ""),
-                                        reasoning_full=str(open_checkpoint.get("reasoning_tail") or ""),
-                                        partial_sha256=partial_sha,
-                                        provider_replay=(
-                                            open_checkpoint.get("provider_replay")
-                                            if isinstance(open_checkpoint.get("provider_replay"), dict)
-                                            else None
-                                        ),
-                                        tool_call_drafts=(
-                                            open_checkpoint.get("tool_call_drafts")
-                                            if isinstance(open_checkpoint.get("tool_call_drafts"), list)
-                                            else None
-                                        ),
-                                    )
-                                except Exception:  # noqa: BLE001 — resume itself stays fail-open
-                                    logger.warning(
-                                        "open-stream exact artifact 晋升失败", exc_info=True
-                                    )
-                            store = getattr(self, "episode_store", None)
-                            index_truncated = getattr(store, "index_truncated_run", None)
-                            if callable(index_truncated) and source_key:
-                                try:
-                                    index_truncated(
-                                        session_id,
-                                        run_end_reason="open_stream_checkpoint",
-                                        last_round=int(payload.get("round") or 0),
-                                        run_end_seq=0,
-                                        text_tail=str(payload.get("text_tail") or ""),
-                                        reasoning_tail=str(payload.get("reasoning_tail") or ""),
-                                        partial_chars=int(payload.get("text_chars") or 0)
-                                        + int(payload.get("reasoning_chars") or 0),
-                                        partial_sha256=partial_sha,
-                                        artifact_ref=artifact_ref,
-                                        ref=trunc_ref,
-                                    )
-                                    open_checkpoint["truncation_ref"] = trunc_ref
-                                    if artifact_ref:
-                                        open_checkpoint["artifact_ref"] = artifact_ref
-                                except Exception:  # noqa: BLE001 — resume itself stays fail-open
-                                    logger.warning(
-                                        "open-stream truncated 索引失败", exc_info=True
-                                    )
+            open_checkpoint = self._prepare_open_interruption_resume(session_id)
 
             state = open_checkpoint or persisted
             if state is None:
