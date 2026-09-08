@@ -87,6 +87,7 @@ class ModelClientPool:
         provider_timeout = params.get("timeout_s")
         provider_max_tokens = params.get("max_tokens")
         provider_wire_protocol = params.get("wire_protocol")
+        reasoning_effort_map = params.get("reasoning_effort_map")
         client = LLMClient(
             api_key=params["api_key"],
             base_url=params["base_url"],
@@ -108,6 +109,7 @@ class ModelClientPool:
             ),
             thinking_mode=self.default_client.thinking_mode,
             reasoning_effort=self.default_client.reasoning_effort,
+            reasoning_effort_map=reasoning_effort_map,
             thinking_supported=thinking_supported,
         )
         if use_cache:

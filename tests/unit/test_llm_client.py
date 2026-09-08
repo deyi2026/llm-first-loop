@@ -932,3 +932,35 @@ def test_concurrent_streams_on_same_client_have_isolated_think_state():
         assert d2.text == "visible-b"
         g1.close()
         g2.close()
+
+
+def test_local_chat_template_reasoning_effort_uses_explicit_model_mapping(monkeypatch) -> None:
+    from llm_loop.core.run_context import current_reasoning_effort
+
+    payloads = []
+
+    def fake_stream(self, method, url, **kwargs):
+        payloads.append(kwargs.get("json", {}))
+        return _FakeStreamCtx([
+            'data: {"choices": [{"delta": {"content": "ok"}, "finish_reason": "stop"}]}',
+            "data: [DONE]",
+        ])
+
+    monkeypatch.setenv("LOCAL_ENABLE_THINKING", "1")
+    with mock.patch("httpx.Client.stream", fake_stream):
+        c = _client(
+            api_key="",
+            base_url="http://127.0.0.1:8901/v1",
+            reasoning_effort="high",
+            reasoning_effort_map={"high": "medium", "max": "xhigh"},
+        )
+        token = current_reasoning_effort.set("high")
+        try:
+            list(c.chat_stream(messages=[{"role": "user", "content": "high"}], tools=[]))
+        finally:
+            current_reasoning_effort.reset(token)
+
+    assert payloads[0]["chat_template_kwargs"] == {
+        "enable_thinking": True,
+        "reasoning_effort": "medium",
+    }

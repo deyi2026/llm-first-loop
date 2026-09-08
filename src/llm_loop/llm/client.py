@@ -372,6 +372,7 @@ class LLMClient:
     # M20 THK-01/CFG-03: DeepSeek V4 思考模式（默认开启；非 DeepSeek 不发）
     thinking_mode: bool = True
     reasoning_effort: str = "high"
+    reasoning_effort_map: dict[str, str] | None = None
 
     # M47（design §5.5）: 思考参数泛化 - 显式传入时以此为准（消除硬编码 deepseek.com）;
     # None 时保持原 _thinking_supported() 行为（向后兼容，零回归）.
@@ -767,8 +768,17 @@ class LLMClient:
         # → 本地默认【开启】thinking（能力优先）; env LOCAL_ENABLE_THINKING=0 显式关闭
         # （纯速度场景, 如交互闲聊）。llama.cpp qwen 模板默认思考开启, OpenAI 协议
         # thinking 字段不被尊重, 故用 chat_template_kwargs 显式控制。
-        if getattr(self, "_is_local_base", False) and os.environ.get("LOCAL_ENABLE_THINKING", "1") == "0":
-            payload["chat_template_kwargs"] = {"enable_thinking": False}
+        if getattr(self, "_is_local_base", False):
+            _local_thinking = os.environ.get("LOCAL_ENABLE_THINKING", "1") != "0"
+            _template_kwargs: dict[str, Any] = {"enable_thinking": _local_thinking}
+            if _local_thinking and self.reasoning_effort_map:
+                _requested_effort = (current_reasoning_effort.get() or self.reasoning_effort).strip().lower()
+                _mapped_effort = self.reasoning_effort_map.get(_requested_effort)
+                if _mapped_effort:
+                    _template_kwargs["reasoning_effort"] = _mapped_effort
+            # Preserve legacy wire when thinking is enabled but no model-owned mapping exists.
+            if not _local_thinking or self.reasoning_effort_map:
+                payload["chat_template_kwargs"] = _template_kwargs
         # 本地 provider（api_key 为空）不发 Authorization 头
         headers: dict[str, str] = {"Content-Type": "application/json"}
         if self.api_key:
