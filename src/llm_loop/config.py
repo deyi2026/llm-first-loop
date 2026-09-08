@@ -187,6 +187,16 @@ def _env_evidence_mode(name: str) -> str:
     return "off"
 
 
+def _env_method_reflection_mode(name: str) -> str:
+    """Method post-run reflection: off/auto. Invalid values fail safe to off."""
+    raw = _raw_env(name).strip().lower()
+    if raw in {"off", "auto"}:
+        return raw
+    if raw:
+        _note_invalid_fallback(name, "off", "非 off/auto 字符串")
+    return "off"
+
+
 def _env_run_mode(name: str) -> str:
     """RUN_MODE 运行模式解析（EVO-20260814 P1-A，对齐 Harness 四种运行模式）.
 
@@ -360,6 +370,8 @@ class Settings:
     # ── 压缩档案（T22 另存提取替代截断）──
     archive_enabled: bool = True
     experiences_dir: str = "./experiences"  # P1-2: 经验库目录（默认项目根 experiences/）
+    methods_dir: str = "./data/methods"  # runtime-learned candidates; keep private/local by default
+    method_seed_dir: str = "./methods"  # reviewed tracked Method/Teacher seed assets
     skills_dir: str = "./skills"  # B3(2026-08-14): 插件化 Skill 目录（skills/<name>/SKILL.md；空/不存在=零行为）
     docs_dir: str = "./docs"  # P2-3: 文档检索目录（默认项目根 docs/）
     archive_max_entries: int = 0  # R7: 单会话最大档案条目数（0=不限）
@@ -421,6 +433,12 @@ class Settings:
     self_eval_interval_rounds: int = 50  # auto-adaptive: env 未显式设置时按异常率自适应（>20%→20/<5%→80，硬上限 200）
     self_eval_min_samples: int = 5  # 指标最小样本数（不足 → 如实标注"样本不足"）
     self_eval_span: int = 50  # 评估聚合窗口（近 N 轮/条）
+    # Method Learning: post-run isolated reflection. Default off = zero extra model calls.
+    method_reflection_mode: str = "off"
+    method_reflection_min_rounds: int = 6
+    method_reflection_min_tools: int = 6
+    method_reflection_min_failures: int = 2
+    method_reflection_timeout_s: float = 120.0
 
     # ── M20 LLM 思考模式（THK-01, §11.5.1）──
     thinking_mode: bool = True  # LLM_THINKING_MODE（enabled/disabled，默认 enabled）
@@ -545,6 +563,12 @@ class Settings:
             "self_eval_enabled": self.self_eval_enabled,
             "self_eval_remind_enabled": self.self_eval_remind_enabled,
             "self_eval_interval_rounds": self.self_eval_interval_rounds,
+            # Method Learning v1: expose only non-sensitive runtime mode/thresholds, never local paths.
+            "method_reflection_mode": self.method_reflection_mode,
+            "method_reflection_min_rounds": self.method_reflection_min_rounds,
+            "method_reflection_min_tools": self.method_reflection_min_tools,
+            "method_reflection_min_failures": self.method_reflection_min_failures,
+            "method_reflection_timeout_s": self.method_reflection_timeout_s,
             "self_eval_min_samples": self.self_eval_min_samples,
             "self_eval_span": self.self_eval_span,
             # P2-3: 文档检索入口状态（AI 可自查，不暴露路径细节）
@@ -670,6 +694,8 @@ def load_settings() -> Settings:
         status_report_cooldown_s=float(_env_int("STATUS_REPORT_COOLDOWN_S", 60)),
         archive_enabled=_env_bool("ARCHIVE_ENABLED", True),
         experiences_dir=os.environ.get("EXPERIENCES_DIR", "./experiences").strip(),
+        methods_dir=os.environ.get("METHODS_DIR", "./data/methods").strip(),
+        method_seed_dir=os.environ.get("METHOD_SEED_DIR", "./methods").strip(),
         skills_dir=os.environ.get("SKILLS_DIR", "./skills").strip(),  # B3: 插件化 Skill 目录
         docs_dir=os.environ.get("DOCS_DIR", "./docs").strip(),
         archive_max_entries=_env_int("ARCHIVE_MAX_ENTRIES", 0),
@@ -711,6 +737,11 @@ def load_settings() -> Settings:
         self_eval_interval_rounds=_env_int("SELF_EVAL_INTERVAL_ROUNDS", 50),
         self_eval_min_samples=_env_int("SELF_EVAL_MIN_SAMPLES", 5),
         self_eval_span=_env_int("SELF_EVAL_SPAN", 50),
+        method_reflection_mode=_env_method_reflection_mode("METHOD_REFLECTION_MODE"),
+        method_reflection_min_rounds=_env_int("METHOD_REFLECTION_MIN_ROUNDS", 6),
+        method_reflection_min_tools=_env_int("METHOD_REFLECTION_MIN_TOOLS", 6),
+        method_reflection_min_failures=_env_int("METHOD_REFLECTION_MIN_FAILURES", 2),
+        method_reflection_timeout_s=float(_env_int("METHOD_REFLECTION_TIMEOUT_S", 120)),
         # M47（design §5.1）: MODEL_PROVIDERS 注册表 JSON, 解析由 llm.providers.load_registry 完成
         model_providers_raw=os.environ.get("MODEL_PROVIDERS", "").strip(),
         # M49（design §5.4）: MODEL_FALLBACKS 降级链原始值, 解析由 llm.pool 完成

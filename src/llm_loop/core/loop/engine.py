@@ -37,6 +37,7 @@ from llm_loop.core.loop.fallback import _FallbackMixin
 from llm_loop.core.loop.interop import _InteropMixin
 from llm_loop.core.loop.kpi import _KpiMixin
 from llm_loop.core.loop.lifecycle import _LifecycleMixin
+from llm_loop.core.loop.method_learning import MethodLearningService  # R9-P5-01: 组合替代继承（method learning Mixin→Service）
 from llm_loop.core.loop.overflow import _OverflowMixin
 from llm_loop.core.loop.routing import (
     _CHARS_PER_TOKEN_EST,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
@@ -190,6 +191,7 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
         self.status = status_provider
         self.correction_ctx = correction_ctx
         self.corrections = correction_registry
+        self._method_learning = MethodLearningService(self)  # R9-P5-01 新逻辑优先组合：MethodLearning 以服务持有，不再走继承
         # P0-5: 每会话 override 绑定解析器（一次性装配；registry_model 经 contextvar
         # 定位本会话 sess，并发 run 不互踩 switch_model 回调）
         if correction_ctx is not None:
@@ -1128,6 +1130,10 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             )
         except Exception:  # noqa: BLE001 — run.end 失败 fail-open（不影响返回）
             logger.debug("run.end 事件写入失败（fail-open）")
+
+        self._method_learning.post_run(
+            session_id, sess, rounds, tool_trace, _run_end_reason, final_answer or "", model_used
+        )
 
         # EVO-20260820-5bf342ae ②: 长回答落盘（实现抽 events.py _persist_long_answer,
         # 防 engine 膨胀守卫 1136——2026-08-21 内联版触顶后抽取）

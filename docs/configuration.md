@@ -80,6 +80,9 @@
 | `EVOLVE_EXEC_WHITELIST` | 空 | 级别 1 的执行白名单（逗号分隔；空=不自动执行） |
 | `SELF_EVAL_ENABLED` / `SELF_EVAL_REMIND_ENABLED` | 1 / 1 | 自我评估开关 / 提醒开关 |
 | `SELF_EVAL_INTERVAL_ROUNDS` / `SELF_EVAL_MIN_SAMPLES` / `SELF_EVAL_SPAN` | 50 / 5 / 50 | 评估触发间隔 / 样本阈值 / 聚合窗口 |
+| `METHOD_REFLECTION_MODE` | off | Method post-run reflection：off/auto；auto 仅在 final 已确定后按机械 friction 触发，失败不影响原任务 |
+| `METHOD_REFLECTION_MIN_ROUNDS` / `METHOD_REFLECTION_MIN_TOOLS` / `METHOD_REFLECTION_MIN_FAILURES` | 6 / 6 / 2 | auto 模式 friction 触发阈值 |
+| `METHOD_REFLECTION_TIMEOUT_S` | 120 | reflection 单次模型调用超时（秒） |
 | `VALIDATE_SEMANTIC` / `VALIDATE_SEMANTIC_THRESHOLD` | 0 / — | 声明-回执语义匹配（默认关） |
 | `SELFHEAL_MAX_ATTEMPTS` / `SELFHEAL_MAX_PER_ROUND` | 3 / 2 | 自愈尝试预算 |
 | `PARAM_ADJUST_PER_ROUND` | 2 | 每轮参数调整频次上限（PARAM-03） |
@@ -137,6 +140,8 @@
 | `DATA_DIR` | ./data | 运行时数据根（会话/记忆/审计/事件日志） |
 | `DOCS_DIR` | ./docs | search_docs 扫描目录（*.md） |
 | `SKILLS_DIR` | ./skills | 插件化 Skill 目录（skills/<name>/SKILL.md；不存在=零行为） |
+| `METHOD_SEED_DIR` | ./methods | reviewed Method/Teacher seed 资产目录（tracked） |
+| `METHODS_DIR` | ./data/methods | runtime-learned Method candidate/lifecycle 状态目录（默认被 data/ 忽略，不自动发布） |
 
 ---
 

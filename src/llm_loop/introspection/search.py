@@ -35,6 +35,7 @@ _VALID_KINDS = {
     "proc_versions",  # P2-6: 进程版本记录
     "feishu_audit",  # P2-6: 飞书消息审计
     "experience",  # P1-2: 经验库检索
+    "method",  # Method Learning compact discovery / exact hydration
     "all",
 }
 
@@ -113,12 +114,14 @@ class RecordSearcher:
         memory_store: Any | None = None,
         archive_store: Any | None = None,
         experience_store: Any | None = None,
+        method_store: Any | None = None,
         semantic_retriever: Any | None = None,
     ) -> None:
         self._audit_dir = Path(audit_dir)
         self._memory = memory_store
         self._archive = archive_store
         self._experience_store = experience_store  # P1-2: 经验库（None 时 _search_experience 返回空）
+        self._method_store = method_store
         self._semantic = semantic_retriever  # T31: 语义检索器（可 None 走关键词）
 
     def search(
@@ -148,9 +151,11 @@ class RecordSearcher:
             return self._search_archive(query, limit, session_id)
         if kind == "experience":  # P1-2: 经验库检索
             return self._search_experience(query, limit)
+        if kind == "method":
+            return self._search_method(query, limit)
 
         # P1-4: kind=all 时各 kind 均匀分配 limit（避免前序 kind 挤占、后序永远不可见）
-        each_limit = max(1, limit // 13) if kind == "all" else limit
+        each_limit = max(1, limit // 14) if kind == "all" else limit
 
         results: list[dict] = []
         if kind in {"action_trace", "all"}:
@@ -269,6 +274,7 @@ class RecordSearcher:
             results += self._search_memory(query, each_limit)
             results += self._search_archive(query, each_limit, session_id)
             results += self._search_experience(query, each_limit)  # P1-2: 经验库并列返回
+            results += self._search_method(query, each_limit)
         return results[:limit]
 
     # ── EVO-20260814: 统一事件流视图（对齐 Harness Trajectory 思路）──
@@ -352,6 +358,12 @@ class RecordSearcher:
         merged = merged[:limit]
         merged.sort(key=lambda e: e["ts"])
         return merged
+
+    def _search_method(self, query: str, limit: int) -> list[dict]:
+        """Method cards by default; exact ``method:<id>`` hydrates one full record."""
+        if self._method_store is None:
+            return []
+        return self._method_store.list(query, limit)
 
     def _search_experience(self, query: str, limit: int) -> list[dict]:
         """P1-2: 经验库检索（None 时返回空，零回归）。"""

@@ -1,0 +1,6 @@
+{
+  "state": "candidate",
+  "positive_transfer": 1,
+  "counterexample_gate": 1,
+  "promotion": false
+}

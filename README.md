@@ -71,6 +71,7 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 - **评测体系**（T4）：固定评测集 `tests/eval_sets/scenarios_v1.json`（6 场景，判定口径源自内部实证基线）+ 运行器 `scripts/run_eval.py`（真实 LLM / `--dry` 管道验证，判定 + Wilson CI + 报告落盘 `docs/metrics/`）+ CI nightly 自动运行
 - **CI + 版本**（T7/B11）：GitHub Actions 三件套门禁（pytest/ruff/pyright）+ nightly 真实评测；语义化版本 v0.6.8；Release Drafter（PR 标题自动归类 changelog）+ tag 触发门禁复核 + Release 草稿（发布节奏制度化）
 - **插件化 Skill**（B3）：`skills/<name>/SKILL.md` 目录自动扫描（`SKILLS_DIR`，默认 ./skills），AI 经 `skill_list`/`skill_load` 发现并加载外部技能执行——外部开发者零代码扩展框架能力；损坏/缺失文件 fail-open 跳过；仓库自带示例技能（`skills/`：notebook-session/incident-report）可直接 `skill_list` 发现体验
+- **Method Learning v1**：`search_records(kind=method)` 渐进发现/精确水合，支持 Teacher/Candidate/qualified/active/hold 等生命周期与独立 qualification；运行时 candidate 默认写 `data/methods/`，不自动注入 prompt。`METHOD_REFLECTION_MODE=auto` 可在 run 完成后基于可观察 friction 做隔离 self-distill，默认 `off`。
 - **web_fetch SSRF 内网拦截**（HARNESS-03 + P0-2/P0-3 深化）：`WEB_FETCH_BLOCK_PRIVATE`（默认开）拦截私网/环回/链路本地/保留段地址（IP 字面量 + DNS 解析双路径），防云元数据等内网探测；命中返回 BLOCKED `[内网拦截]`；**重定向逐跳校验**（httpx/curl 均关闭自动跟随，手动循环上限 5 跳，每跳重新校验——公开 URL 302 跳内网不再泄漏）；**DNS rebinding 收窄**（curl `--resolve` 钉已校验 IP 预连接钉扎；httpx 连接后复核实际对端 IP，命中即丢弃——如实标注：httpx 通道 GET 已发出，防数据回读，更强隔离走 curl 钉扎通道）
 - **上下文预算预警**（HARNESS-04）：上下文占用率 ≥80% 预算时注入一次 `[预算预警]`（含占用率/字符数），"压缩/收尾"决策归 AI——程序不自动压缩
 - **孤儿 tool_calls 合成回执**（HARNESS-01）：`run_stream` 客户端中断时自动写「已取消」回执并立即保存，不产生「有声明无回执」的孤儿声明（严格 FC 协议 400 根源）
@@ -122,6 +123,9 @@ export LLM_BASE_URL=https://api.deepseek.com/v1
 | `SELF_EVAL_ENABLED` | 1 | 自我评估能力开关（self_evaluate 工具） |
 | `SELF_EVAL_REMIND_ENABLED` | 1 | 触发提醒开关（仅提示不强制） |
 | `SELF_EVAL_INTERVAL_ROUNDS` / `SELF_EVAL_MIN_SAMPLES` / `SELF_EVAL_SPAN` | 50/5/50 | 定期触发间隔/样本不足阈值/聚合窗口 |
+| `METHOD_REFLECTION_MODE` | off | Method post-run self-distill：off/auto；默认不增加模型调用 |
+| `METHOD_REFLECTION_MIN_ROUNDS` / `METHOD_REFLECTION_MIN_TOOLS` / `METHOD_REFLECTION_MIN_FAILURES` | 6/6/2 | auto 模式机械 friction 阈值 |
+| `METHOD_REFLECTION_TIMEOUT_S` | 120 | 隔离 reflection 单次模型调用超时（秒） |
 | `SYSTEM_PROMPT_EXTRA` | — | 叠加自定义 AI 规则（程序最小化，无需改代码） |
 | `HISTORY_MAX_CHARS` | 100000 | 提交给 LLM 的历史上下文预算（字符），默认 100K（≈50K tokens），可按模型窗口调整（1M 窗口模型可调大，小窗模型调小）；预算过高会撑爆窗口导致所有模型调用失败/超时 |
 | `MODEL_FALLBACKS` | 空 | 降级链（逗号分隔 `provider/model`，如 `deepseek/deepseek-v4-flash,local/qwen3.6-27b-fable-fusion-711-uncensored-heretic-nm-dau-neo-max-mtp`）；空=不启用降级 |
