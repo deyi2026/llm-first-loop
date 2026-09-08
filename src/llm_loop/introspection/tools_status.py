@@ -15,7 +15,7 @@ from llm_loop.core.message import ToolResult, ToolResultStatus
 _SEARCH_RECORDS_KIND_HINT = (
     "action_trace/exception_log/self_correction_log/declaration_check/"
     "memory/memory_extract/archive/selfheal/param_adjust/evolution/evolution_exec/"
-    "self_eval/change_log/proc_versions/feishu_audit/experience/all"
+    "self_eval/change_log/proc_versions/feishu_audit/experience/method/all"
 )
 
 # EVO-20260826: architecture_status() 无 dimensions 时默认返回精简子集，
@@ -277,6 +277,23 @@ def run_search_records(ctx: Any, search_fn: Any, args: dict, session_id_fn: Any)
     for r in result[:limit]:
         summary = str(r.get("summary", ""))
         prefix = f"[{r.get('ts', '')}] {r.get('kind', kind)}: "
+        if r.get("kind") == "method":
+            method_ref = str(r.get("key", ""))
+            status = str(r.get("status", ""))
+            description = str(r.get("description", ""))
+            card = f"{summary} ({method_ref}, status={status}) — {description}".strip()
+            if r.get("projection_complete"):
+                body = str(r.get("body", ""))
+                quals = r.get("qualification_entries") or []
+                full = card + f"\n--- exact Method ---\n{body}"
+                if quals:
+                    full += "\n--- qualification ---\n" + json.dumps(quals, ensure_ascii=False)
+                lines.append(prefix + full)
+                raw_lines.append(prefix + full)
+            else:
+                lines.append(prefix + card[:500])
+                raw_lines.append(prefix + card)
+            continue
         lines.append(prefix + summary[:200])
         raw_lines.append(prefix + summary)
     content = "[search_records] 命中 " + str(len(result)) + " 条:\n" + "\n".join(lines[:6])

@@ -37,6 +37,7 @@ from llm_loop.core.loop.fallback import _FallbackMixin
 from llm_loop.core.loop.interop import _InteropMixin
 from llm_loop.core.loop.kpi import _KpiMixin
 from llm_loop.core.loop.lifecycle import _LifecycleMixin
+from llm_loop.core.loop.method_learning import _MethodLearningMixin
 from llm_loop.core.loop.overflow import _OverflowMixin
 from llm_loop.core.loop.routing import (
     _CHARS_PER_TOKEN_EST,  # noqa: F401 — M53 拆分 re-export（原路径可导入，REQ-REF-06）
@@ -143,7 +144,7 @@ def build_session_snapshot_text(
     parts.append("若你对当前任务/已完成/下一步/未决事项的定位漂移，以本条为锚点重新校准。")
     return "；".join(parts)
 
-class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _OverflowMixin, _Err1210Mixin, _ToolExecMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin, _KpiMixin, _LifecycleMixin, _TurnContextMixin):
+class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMixin, _RoutingMixin, _OverflowMixin, _Err1210Mixin, _ToolExecMixin, _InteropMixin, _ArchiveMixin, _BuildMixin, _EventsMixin, _KpiMixin, _LifecycleMixin, _MethodLearningMixin, _TurnContextMixin):
     """五阶段核心循环控制器."""
 
     # EVO 后台 run 执行器（factory 动态装配 BackgroundRunner；声明类型供 pyright 静态检查）
@@ -1128,6 +1129,10 @@ class LoopEngine(_RunStateMixin, _SignalsMixin, _RuntimeParamsMixin, _FallbackMi
             )
         except Exception:  # noqa: BLE001 — run.end 失败 fail-open（不影响返回）
             logger.debug("run.end 事件写入失败（fail-open）")
+
+        self._post_run_method_learning(
+            session_id, sess, rounds, tool_trace, _run_end_reason, final_answer or "", model_used
+        )
 
         # EVO-20260820-5bf342ae ②: 长回答落盘（实现抽 events.py _persist_long_answer,
         # 防 engine 膨胀守卫 1136——2026-08-21 内联版触顶后抽取）
