@@ -20,6 +20,7 @@ from llm_loop.core.episode_history import (
     project_active_tool_working_set_with_stats,
     provider_view_without_resolved_episodes,
     resolve_working_state_checkpoint,
+    superseded_human_attempt_spans,
 )
 from llm_loop.core.program_recovery import is_program_recovery_message
 from llm_loop.core.prompt import build_system_prompt
@@ -57,6 +58,8 @@ def resolve_ingress(
     # working context. Current/incomplete tool protocol remains visible fail-open.
     # Storage/event truth is untouched.
     _before_resolved_count = len(base)
+    _superseded_human_spans = superseded_human_attempt_spans(base)
+    _superseded_human_messages = sum(end - start for start, end in _superseded_human_spans)
     try:
         base = provider_view_without_resolved_episodes(base)
         _base_original_indices = [
@@ -67,6 +70,8 @@ def resolve_ingress(
     except Exception:  # noqa: BLE001 — eligibility projection fail-open
         logger.warning("build: resolved episode provider-view 过滤失败（fail-open）", exc_info=True)
     stale_cleanup["resolved_or_consumed"] = max(0, _before_resolved_count - len(base))
+    stale_cleanup["superseded_human_attempts"] = len(_superseded_human_spans)
+    stale_cleanup["superseded_human_messages"] = _superseded_human_messages
     # INJECTION-GOVERNANCE R8.8: persisted memory is durable retrieval state, not a
     # recency-based prompt entitlement. Only the snapshot bound to the current human
     # turn may stay in automatic working context; legacy/unbound/older snapshots are

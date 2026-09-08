@@ -208,3 +208,46 @@ def test_real_event_store_replay_repairs_duplicate_interrupted_index(tmp_path) -
     assert "recovered=1" in h.actions[-1][2]
     assert "prompt_chars=0" in h.actions[-1][2]
     assert not hasattr(h, "_tip_tail_messages")
+
+
+def test_pre_ingress_repair_restores_open_human_task_before_resolved_history_retirement() -> None:
+    """Crash-open human authority survives even when older completed episodes retire."""
+    from llm_loop.core.episode_history import provider_view_without_resolved_episodes
+
+    ref = "episode:sid:0:done"
+    old_user = _m("OLD-RESOLVED-TASK")
+    old_user.metadata["resolved_episode_ref"] = ref
+    old_answer = _m("OLD-RESOLVED-ANSWER", role="assistant")
+    old_answer.metadata.update(
+        {
+            "resolved_episode_ref": ref,
+            "answer_origin": "model",
+            "run_end_reason": "completed",
+            "episode_resolution_candidate": True,
+        }
+    )
+    active_user = _m("帮我去 GitHub 仓库核实作者身份、许可证和实际代码结构。")
+    partial = _m("I have the README; now verify author/license/tree", role="assistant")
+    sess = SimpleNamespace(messages=[old_user, old_answer])
+    h = _Harness(
+        event_count=4,
+        replay_messages=[old_user, old_answer, active_user, partial],
+    )
+
+    # Production ordering: repair runs before the new follow-up human ingress exists.
+    h._inject_interruption_recovery("sid", sess)
+
+    assert [m.content for m in sess.messages] == [
+        "OLD-RESOLVED-TASK",
+        "OLD-RESOLVED-ANSWER",
+        "帮我去 GitHub 仓库核实作者身份、许可证和实际代码结构。",
+        "I have the README; now verify author/license/tree",
+    ]
+    projected = provider_view_without_resolved_episodes(sess.messages)
+    visible = [m.content for m in projected]
+    assert "OLD-RESOLVED-TASK" not in visible
+    assert "OLD-RESOLVED-ANSWER" not in visible
+    assert "帮我去 GitHub 仓库核实作者身份、许可证和实际代码结构。" in visible
+    assert "I have the README; now verify author/license/tree" in visible
+    assert h.actions[-1][1] == "repaired"
+    assert "recovered=2" in h.actions[-1][2]

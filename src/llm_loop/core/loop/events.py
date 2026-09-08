@@ -240,13 +240,14 @@ class _EventsMixin:
         model-visible semantics (aligned with E19); ordering is load-bearing and
         covered by tests.
 
-        The current user has already been appended to ``sess`` (and normally to the
-        event log) before this hook runs.  Repair therefore preserves that live object,
-        validates the pre-user prefix against event replay, inserts only replay-only
-        historical messages before the current user, and records observability with
-        ``prompt_chars=0``.  Replay/prefix failure is fail-open: keep the live session
-        untouched and report the repair failure out of band; never synthesize prompt
-        prose.
+        Production ingress calls this repair before appending the new human message, so
+        an event-log-only open run (including its exact human ingress) is restored before
+        lifecycle retirement can classify history.  Legacy/direct callers may already
+        have a live trailing human message; in that shape the same routine preserves that
+        live object and inserts only replay-only history before it.  Observability stays
+        prompt-neutral (``prompt_chars=0``).  Replay/prefix failure is fail-open: keep the
+        live session untouched and report the repair failure out of band; never synthesize
+        prompt prose.
         """
         try:
             _estore = getattr(self, "_event_store", None)

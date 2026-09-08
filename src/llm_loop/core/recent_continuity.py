@@ -2,9 +2,10 @@
 
 This module is deliberately structural. It never classifies whether user text looks
 like an answer, continuation, reference, or new task. On an initial genuine-human
-round it restores a bounded exact window of the most recent completed human→model
-dialogue pairs, then guarantees that the latest model state and current human ingress
-form the final prompt suffix. Older resolved material remains indexed/retrievable.
+round it restores only the immediately preceding completed model answer, then
+guarantees that this adjacent model state and the current human ingress form the final
+prompt suffix. Historical human instructions remain retired/indexed and are never
+automatically re-promoted as fresh role=user authority.
 """
 
 from __future__ import annotations
@@ -22,8 +23,7 @@ def _metadata(message: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-RECENT_DIALOGUE_PAIR_LIMIT = 3
-RECENT_DIALOGUE_CHAR_LIMIT = 32_768
+RECENT_ASSISTANT_CHAR_LIMIT = 32_768
 
 
 def _is_completed_model_answer(message: Any) -> bool:
@@ -41,51 +41,6 @@ def _is_completed_model_answer(message: Any) -> bool:
         and content.strip() != LEGACY_PROGRAM_FINAL_MARKER
         and not content.startswith(PROGRAM_FEEDBACK_PREFIXES)
     )
-
-
-def recent_completed_dialogue_pairs(
-    session_messages: list[Any], current_turn_ref: int | None
-) -> list[tuple[Any, Any]]:
-    """Return up to three exact recent human/final-model pairs under a char cap.
-
-    Selection is purely chronological/mechanical. Tool protocol, program output,
-    interrupted answers, and unresolved turns are not promoted into dialogue state.
-    """
-    if current_turn_ref is None or current_turn_ref <= 0:
-        return []
-    pairs_rev: list[tuple[Any, Any]] = []
-    total_chars = 0
-    end = min(int(current_turn_ref), len(session_messages))
-    human_indices = [
-        idx for idx in range(end) if is_human_user_message(session_messages[idx])
-    ]
-    for pos in range(len(human_indices) - 1, -1, -1):
-        start = human_indices[pos]
-        span_end = human_indices[pos + 1] if pos + 1 < len(human_indices) else end
-        final = next(
-            (
-                session_messages[idx]
-                for idx in range(span_end - 1, start, -1)
-                if _is_completed_model_answer(session_messages[idx])
-            ),
-            None,
-        )
-        if final is None:
-            # An unresolved/interrupted human turn is a hard structural boundary.
-            # Never skip across it to resurrect an older completed task.
-            break
-        user = session_messages[start]
-        pair_chars = len(str(getattr(user, "content", "") or "")) + len(
-            str(getattr(final, "content", "") or "")
-        )
-        if pairs_rev and total_chars + pair_chars > RECENT_DIALOGUE_CHAR_LIMIT:
-            break
-        pairs_rev.append((user, final))
-        total_chars += pair_chars
-        if len(pairs_rev) >= RECENT_DIALOGUE_PAIR_LIMIT:
-            break
-    pairs_rev.reverse()
-    return pairs_rev
 
 
 def latest_model_assistant_before_turn(
@@ -115,6 +70,24 @@ def latest_model_assistant_before_turn(
         ):
             return message
     return None
+
+
+def _recent_assistant_wire(message: Any | None) -> dict[str, Any] | None:
+    """Project only adjacent completed assistant text for short-turn continuity.
+
+    Historical human instructions are intentionally excluded: once an episode is
+    resolved they remain durable/retrievable but must not regain role=user authority
+    merely because a later human ingress arrives. Hidden reasoning/provider replay is
+    also excluded here; model-specific replay policy owns that transport concern.
+    """
+    if message is None:
+        return None
+    content = str(getattr(message, "content", "") or "")
+    if not content:
+        return None
+    if len(content) > RECENT_ASSISTANT_CHAR_LIMIT:
+        content = content[-RECENT_ASSISTANT_CHAR_LIMIT:]
+    return {"role": "assistant", "content": content}
 
 
 def _resume_message(state: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -209,14 +182,10 @@ def apply_recent_continuity_suffix(
     current = session_messages[current_turn_ref]
     if not is_human_user_message(current):
         return built, {"applied": False, "reason": "not_human_ingress"}
-    # Initial-human-build only.  Once this turn has produced any assistant/tool
-    # protocol message, its native append order is authoritative.  Re-appending the
-    # user at the tail after assistant(tool_calls)->tool would corrupt provider wire.
-    if any(
+    turn_advanced = any(
         getattr(message, "role", "") in {"assistant", "tool"}
         for message in session_messages[current_turn_ref + 1 :]
-    ):
-        return built, {"applied": False, "reason": "turn_already_advanced"}
+    )
     user_idx = _current_user_wire_index(built, current)
     if user_idx is None:
         return built, {"applied": False, "reason": "current_user_not_in_wire"}
@@ -224,40 +193,74 @@ def apply_recent_continuity_suffix(
     source = "current_user_only"
     assistant_wire = _resume_message(interruption_resume)
     runtime_fact = _resume_runtime_fact(interruption_resume)
-    dialogue_pairs = recent_completed_dialogue_pairs(session_messages, current_turn_ref)
-    dialogue_wires = [
-        (user.to_llm_dict(), assistant.to_llm_dict()) for user, assistant in dialogue_pairs
-    ]
+    adjacent_assistant = latest_model_assistant_before_turn(session_messages, current_turn_ref)
+    recent_assistant_wire = _recent_assistant_wire(adjacent_assistant)
+
+    # Once a turn advances, native assistant(tool_calls)->tool order is authoritative.
+    # Do not re-append the current user or any interruption partial at the tail.  But if
+    # the initial request used the immediately prior completed assistant as adjacency
+    # context, keep that same visible assistant immediately before the current human on
+    # every provider round in this run.  Otherwise round 1 has
+    #   system -> prior-assistant -> current-user
+    # while round 2 drops prior-assistant and destroys exact token-prefix reuse.
+    # This is representation stability only: no historical user, reasoning, tool span,
+    # or completion judgement is restored.
+    if turn_advanced:
+        if recent_assistant_wire is None:
+            return built, {"applied": False, "reason": "turn_already_advanced"}
+        out = list(built)
+        # Remove one identical provider-visible copy if another projection retained it,
+        # then place it at the same adjacency boundary used by the initial round.
+        for idx in range(user_idx - 1, -1, -1):
+            item = out[idx]
+            if (
+                item.get("role") == "assistant"
+                and str(item.get("content") or "") == recent_assistant_wire["content"]
+                and not item.get("tool_calls")
+            ):
+                out.pop(idx)
+                user_idx -= 1
+                break
+        out.insert(user_idx, dict(recent_assistant_wire))
+        return out, {
+            "applied": True,
+            "source": "recent_assistant_sticky",
+            "moved_after_user": 0,
+            "rehydrated": True,
+            "runtime_fact": False,
+            "dialogue_pairs": 0,
+            "assistant_context": 1,
+            "historical_user_messages": 0,
+        }
     if assistant_wire is not None:
         assert interruption_resume is not None
         source = str(interruption_resume.get("source") or "interruption_resume")
-    elif dialogue_wires:
-        source = "recent_dialogue_window"
+    elif recent_assistant_wire is not None:
+        source = "recent_assistant_only"
 
     before = list(built[:user_idx])
     after_user = list(built[user_idx + 1 :])
     current_wire = dict(built[user_idx])
 
-    # Remove already-visible exact dialogue wires before re-appending the bounded
-    # chronological window. This changes representation only, never durable history.
-    for user_wire, model_wire in reversed(dialogue_wires):
-        for wire in (model_wire, user_wire):
-            for idx in range(len(before) - 1, -1, -1):
-                item = before[idx]
-                if (
-                    item.get("role") == wire.get("role")
-                    and str(item.get("content") or "") == str(wire.get("content") or "")
-                    and item.get("tool_calls") == wire.get("tool_calls")
-                ):
-                    before.pop(idx)
-                    break
+    # If the adjacent assistant survived another projection, remove that exact visible
+    # content before re-appending it at the suffix. Historical human messages are never
+    # rehydrated here.
+    if recent_assistant_wire is not None:
+        for idx in range(len(before) - 1, -1, -1):
+            item = before[idx]
+            if (
+                item.get("role") == "assistant"
+                and str(item.get("content") or "") == recent_assistant_wire["content"]
+                and not item.get("tool_calls")
+            ):
+                before.pop(idx)
+                break
 
     # Any build-time dynamic/program material that appeared after current human is
-    # moved ahead of recent dialogue. Exact current human ingress remains final.
+    # moved ahead of recent assistant context. Exact current human ingress remains final.
     out = before + after_user
-    for user_wire, model_wire in dialogue_wires:
-        out.append(dict(user_wire))
-        out.append(dict(model_wire))
+    if recent_assistant_wire is not None and assistant_wire is None:
+        out.append(dict(recent_assistant_wire))
     if runtime_fact:
         # Preserve the exact already-projected current-human wire (attachments and
         # current-turn factual capability boundary included); only append ephemeral
@@ -274,7 +277,9 @@ def apply_recent_continuity_suffix(
         "applied": True,
         "source": source,
         "moved_after_user": len(after_user),
-        "rehydrated": bool(dialogue_wires or assistant_wire is not None),
+        "rehydrated": bool(recent_assistant_wire or assistant_wire is not None),
         "runtime_fact": bool(runtime_fact),
-        "dialogue_pairs": len(dialogue_wires),
+        "dialogue_pairs": 0,
+        "assistant_context": int(recent_assistant_wire is not None and assistant_wire is None),
+        "historical_user_messages": 0,
     }

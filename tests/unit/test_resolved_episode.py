@@ -585,10 +585,9 @@ def test_engine_second_run_retires_first_episode_but_episode_is_retrievable(tmp_
         str(m.get("content") or "") for m in calls[-1]
     )
     assert "SECOND-QUESTION" in second_run_payload
-    # Resolved episode retirement still removes old tool-working-set detail, while
-    # the bounded recent-dialogue window rehydrates the exact prior human/final-model
-    # pair for natural cross-turn references. Older evidence remains on-demand only.
-    assert "FIRST-QUESTION-SECRET" in second_run_payload
+    # Resolved episode retirement keeps historical human task authority out of the
+    # next run. Only the adjacent final assistant may be rehydrated for continuity.
+    assert "FIRST-QUESTION-SECRET" not in second_run_payload
     assert "FIRST-ANSWER-SECRET" in second_run_payload
     assert "FIRST-TOOL-SECRET" not in second_run_payload
 
@@ -690,3 +689,116 @@ def test_engine_anchor_remap_preserves_current_tool_protocol_after_retirement(tm
     assert "NEW-QUESTION" in joined
     assert "NEW-TOOL-RESULT" in joined
     assert "OLD-QUESTION" not in joined
+
+
+def test_older_exact_human_attempt_is_retired_after_later_duplicate_resolves(tmp_path):
+    """A failed/restarted exact duplicate must not survive as a future ghost task."""
+    store = EpisodeStore(tmp_path / "episodes")
+    old_user = _user("你检查下，我们是否已经装好了llama？", ts=1.0)
+    old_partial = Message(
+        role="assistant",
+        content="",
+        source=MessageSource.SYSTEM,
+        ts=1.5,
+    )
+    retry_user = _user("你检查下，我们是否已经装好了llama？", ts=2.0)
+    retry_answer = _final("装好了。", ts=3.0)
+    sess = Session(
+        session_id="sid-ghost-user",
+        messages=[old_user, old_partial, retry_user, retry_answer],
+    )
+
+    ref = index_current_completed_episode(store, sess, turn_ref=2, final_answer_index=3)
+    assert ref
+    assert RESOLVED_EPISODE_REF_KEY not in old_user.metadata
+    assert RESOLVED_EPISODE_REF_KEY not in old_partial.metadata
+    assert retry_user.metadata.get(RESOLVED_EPISODE_REF_KEY) == ref
+
+    projected = provider_view_without_resolved_episodes(sess.messages)
+    assert projected == []
+    # Provider projection is representation-only; source/session truth is untouched.
+    assert sess.messages[0].content == "你检查下，我们是否已经装好了llama？"
+    assert sess.messages[1].content == ""
+
+
+def test_nonidentical_unresolved_human_attempt_stays_visible_after_other_task_resolves(tmp_path):
+    store = EpisodeStore(tmp_path / "episodes")
+    old_user = _user("检查 CPU", ts=1.0)
+    old_partial = _final("未完成", completed=False, ts=1.5)
+    later_user = _user("检查 GPU", ts=2.0)
+    later_answer = _final("GPU 正常", ts=3.0)
+    sess = Session(
+        session_id="sid-nonduplicate-user",
+        messages=[old_user, old_partial, later_user, later_answer],
+    )
+    assert index_current_completed_episode(store, sess, turn_ref=2, final_answer_index=3)
+
+    projected = provider_view_without_resolved_episodes(sess.messages)
+    assert projected == [old_user, old_partial]
+
+
+def test_same_text_with_different_attachment_identity_is_not_superseded(tmp_path):
+    store = EpisodeStore(tmp_path / "episodes")
+    old_user = Message(
+        role="user",
+        content="分析这个文件",
+        source=MessageSource.USER,
+        ts=1.0,
+        metadata={
+            "origin_layer": "user_instruction",
+            "program_origin": False,
+            "attachments": [
+                {
+                    "ref": "attachment://old",
+                    "filename": "a.txt",
+                    "content_type": "text/plain",
+                    "media_type": "text",
+                    "size_bytes": 1,
+                    "sha256": "a" * 64,
+                    "excerpt_kind": "text",
+                    "excerpt": "A",
+                }
+            ],
+        },
+    )
+    old_partial = _final("未完成", completed=False, ts=1.5)
+    later_user = Message(
+        role="user",
+        content="分析这个文件",
+        source=MessageSource.USER,
+        ts=2.0,
+        metadata={
+            "origin_layer": "user_instruction",
+            "program_origin": False,
+            "attachments": [
+                {
+                    "ref": "attachment://new",
+                    "filename": "b.txt",
+                    "content_type": "text/plain",
+                    "media_type": "text",
+                    "size_bytes": 1,
+                    "sha256": "b" * 64,
+                    "excerpt_kind": "text",
+                    "excerpt": "B",
+                }
+            ],
+        },
+    )
+    later_answer = _final("已分析 B", ts=3.0)
+    sess = Session(
+        session_id="sid-attachment-identity",
+        messages=[old_user, old_partial, later_user, later_answer],
+    )
+    assert index_current_completed_episode(store, sess, turn_ref=2, final_answer_index=3)
+
+    projected = provider_view_without_resolved_episodes(sess.messages)
+    assert projected == [old_user, old_partial]
+
+
+def test_later_unresolved_exact_duplicate_does_not_supersede_earlier_attempt():
+    first = _user("继续", ts=1.0)
+    first_partial = _final("未完成1", completed=False, ts=1.5)
+    second = _user("继续", ts=2.0)
+    second_partial = _final("未完成2", completed=False, ts=2.5)
+    messages = [first, first_partial, second, second_partial]
+    assert provider_view_without_resolved_episodes(messages) == messages

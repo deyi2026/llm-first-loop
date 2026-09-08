@@ -838,16 +838,86 @@ def project_active_tool_working_set(messages: list[Message]) -> list[Message]:
     return projected
 
 
+def _human_ingress_wire_identity(message: Message) -> str | None:
+    """Return exact provider-payload identity for one genuine human ingress.
+
+    User text alone is not sufficient because two visually identical messages may
+    carry different attachment facts.  ``to_llm_dict`` is the canonical mechanical
+    provider representation and contains no task interpretation.
+    """
+    if not is_human_user_message(message):
+        return None
+    try:
+        wire = message.to_llm_dict()
+        payload = json.dumps(
+            wire, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    except Exception:  # noqa: BLE001 — identity failure must preserve visibility
+        return None
+    return hashlib.sha256(payload).hexdigest()
+
+
+def superseded_human_attempt_spans(
+    messages: list[Message],
+) -> tuple[tuple[int, int], ...]:
+    """Find older exact-human attempts superseded by a later resolved duplicate.
+
+    This is a lifecycle/identity rule, not semantic task completion:
+    - both ingresses must be genuine human messages with byte-equivalent provider
+      payloads (including attachment projection);
+    - only a *later* ingress already carrying a durable resolved-episode ref can
+      supersede an older unresolved duplicate;
+    - the whole older human-turn span is retired from provider view so its partial
+      assistant/tool trajectory cannot survive as a ghost task;
+    - storage/EventLog bytes and metadata remain untouched.
+
+    Non-identical or still-unresolved human turns fail open and remain visible.
+    """
+    if not messages:
+        return ()
+    human_indices = [
+        idx for idx, message in enumerate(messages) if is_human_user_message(message)
+    ]
+    if len(human_indices) < 2:
+        return ()
+
+    resolved_later_identities: set[str] = set()
+    spans_rev: list[tuple[int, int]] = []
+    for pos in range(len(human_indices) - 1, -1, -1):
+        start = human_indices[pos]
+        message = messages[start]
+        identity = _human_ingress_wire_identity(message)
+        if identity is None:
+            continue
+        if is_resolved_episode_message(message):
+            resolved_later_identities.add(identity)
+            continue
+        if identity not in resolved_later_identities:
+            continue
+        end = human_indices[pos + 1] if pos + 1 < len(human_indices) else len(messages)
+        spans_rev.append((start, end))
+    spans_rev.reverse()
+    return tuple(spans_rev)
+
+
 def provider_view_without_resolved_episodes(messages: list[Message]) -> list[Message]:
     """Project working context after durable lifecycle retirement.
 
-    The historical public name is kept for compatibility.  Besides whole
-    resolved episodes, R8.20 retires durably indexed tool spans across completed
-    answer boundaries.  Optional active-run receipts additionally compress only
-    the representation of older, already-exposed, durably recoverable tool results.
+    The historical public name is kept for compatibility. Besides whole resolved
+    episodes and consumed/closed tool spans, exact older human attempts are also
+    retired when a later byte-equivalent human ingress has durably resolved. This
+    prevents failed/restarted duplicate user turns from surviving as executable
+    ghost tasks. Storage/event truth is never mutated.
     """
 
-    return [m for m in messages if provider_message_visible(m)]
+    superseded_indices: set[int] = set()
+    for start, end in superseded_human_attempt_spans(messages):
+        superseded_indices.update(range(start, end))
+    return [
+        message
+        for idx, message in enumerate(messages)
+        if idx not in superseded_indices and provider_message_visible(message)
+    ]
 
 
 def has_explicit_durable_user_instruction(message: Message) -> bool:

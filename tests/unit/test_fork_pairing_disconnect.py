@@ -377,5 +377,5 @@ def test_engine_adjacent_user_reply_rehydrates_retired_previous_model_turn(
     wire = fake.calls[-1]["messages"]
     assert wire[-2]["role"] == "assistant"
     assert wire[-2]["content"] == "你更看重速度还是精度？"
-    assert wire[-2]["reasoning_content"] == "ASK-THINK"
+    assert "reasoning_content" not in wire[-2]
     assert wire[-1] == {"role": "user", "content": "更看重精度"}
