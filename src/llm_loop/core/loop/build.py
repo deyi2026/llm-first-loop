@@ -25,6 +25,7 @@ from llm_loop.core.cache_health import GATE_NOTE_CONTENT  # 门禁干预知情�
 from llm_loop.core.history import (
     _is_dynamic_inject,
     is_cache_compacted_for,
+    project_exact_duplicate_tool_groups,
     projection_check,  # noqa: F401 (history 工具, 函数内使用)
     projection_ver,  # noqa: F401 (history 工具, 函数内使用)
     stable_digest,  # 投影门闸
@@ -59,6 +60,22 @@ except Exception:  # noqa: BLE001 — fail-open 回退平铺聚合（零回归�
 # engine→build→loop/__init__ 循环（engine import build 在前），故用函数内延迟 import
 from llm_loop.core.message import Message, MessageSource
 from llm_loop.core.prompt import build_system_prompt
+
+
+def project_exact_duplicate_history_if_enabled(
+    built: list[dict], settings: Any
+) -> tuple[list[dict], dict[str, int | bool]]:
+    """Apply exact duplicate tool folding to provider view only when explicitly enabled."""
+    stats: dict[str, int | bool] = {
+        "enabled": bool(getattr(settings, "exact_duplicate_tool_fold", False)),
+        "folded_groups": 0,
+        "removed_messages": 0,
+    }
+    if stats["enabled"]:
+        built, folded = project_exact_duplicate_tool_groups(built)
+        stats.update(folded)
+    return built, stats
+
 
 
 def merge_persisted_tail_injections(
@@ -727,8 +744,14 @@ class _BuildMixin:
             cache_compacted_out=cache_compacted_box,
             compact_view_stats=compact_view_box,
             degrade_out=degrade_box,
+
             require_archive_success=getattr(self.registry, "evidence_mode", "off") == "enforce",
         )
+        built, _duplicate_tool_projection = project_exact_duplicate_history_if_enabled(
+            built, self.settings
+        )
+        # Prompt-neutral observability only; never drives retry/stop/completion.
+        self._last_exact_duplicate_tool_projection = _duplicate_tool_projection
         for _compacted_msg in cache_compacted_box:
             _msg_seq = self._resolve_msg_seq(sess.session_id, _compacted_msg)
             if _msg_seq is None:
