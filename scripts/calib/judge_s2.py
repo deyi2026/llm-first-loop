@@ -18,7 +18,7 @@ from scripts.calib.treatments import build_task_prompt  # noqa: E402
 
 RUNS = ROOT / "data/calib/runs_s2"
 JDIR = ROOT / "data/calib/s2_judges"
-MATRIX = ROOT / "data/calib/s2_matrix_v1.json"
+MATRIX = ROOT / "tests/fixtures/calib/s2_matrix_v1.json"
 REPORT = ROOT / "data/calib/s2_report.json"
 
 

@@ -1,0 +1,404 @@
+{
+  "version": "S2-v1",
+  "randomization_seed": 202608261114,
+  "rows": [
+    {
+      "seq": 1,
+      "run_id": "S2-001",
+      "provider": "minimax",
+      "block_seq": 1,
+      "seed": "E05",
+      "variant": "V0-Baseline"
+    },
+    {
+      "seq": 2,
+      "run_id": "S2-002",
+      "provider": "minimax",
+      "block_seq": 2,
+      "seed": "E04",
+      "variant": "V0-Baseline"
+    },
+    {
+      "seq": 3,
+      "run_id": "S2-003",
+      "provider": "minimax",
+      "block_seq": 3,
+      "seed": "E04",
+      "variant": "V2-Full"
+    },
+    {
+      "seq": 4,
+      "run_id": "S2-004",
+      "provider": "minimax",
+      "block_seq": 4,
+      "seed": "E06",
+      "variant": "V0-Baseline"
+    },
+    {
+      "seq": 5,
+      "run_id": "S2-005",
+      "provider": "minimax",
+      "block_seq": 5,
+      "seed": "E07",
+      "variant": "V1-Contract"
+    },
+    {
+      "seq": 6,
+      "run_id": "S2-006",
+      "provider": "minimax",
+      "block_seq": 6,
+      "seed": "E01",
+      "variant": "V0-Baseline"
+    },
+    {
+      "seq": 7,
+      "run_id": "S2-007",
+      "provider": "minimax",
+      "block_seq": 7,
+      "seed": "E05",
+      "variant": "V1-Contract"
+    },
+    {
+      "seq": 8,
+      "run_id": "S2-008",
+      "provider": "minimax",
+      "block_seq": 8,
+      "seed": "E06",
+      "variant": "V2-Full"
+    },
+    {
+      "seq": 9,
+      "run_id": "S2-009",
+      "provider": "minimax",
+      "block_seq": 9,
+      "seed": "E01",
+      "variant": "V1-Contract"
+    },
+    {
+      "seq": 10,
+      "run_id": "S2-010",
+      "provider": "minimax",
+      "block_seq": 10,
+      "seed": "E08",
+      "variant": "V0-Baseline"
+    },
+    {
+      "seq": 11,
+      "run_id": "S2-011",
+      "provider": "minimax",
+      "block_seq": 11,
+      "seed": "E02",
+      "variant": "V0-Baseline"
+    },
+    {
+      "seq": 12,
+      "run_id": "S2-012",
+      "provider": "minimax",
+      "block_seq": 12,
+      "seed": "E06",
+      "variant": "V1-Contract"
+    },
+    {
+      "seq": 13,
+      "run_id": "S2-013",
+      "provider": "minimax",
+      "block_seq": 13,
+      "seed": "E07",
+      "variant": "V0-Baseline"
+    },
+    {
+      "seq": 14,
+      "run_id": "S2-014",
+      "provider": "minimax",
+      "block_seq": 14,
+      "seed": "E02",
+      "variant": "V1-Contract"
+    },
+    {
+      "seq": 15,
+      "run_id": "S2-015",
+      "provider": "minimax",
+      "block_seq": 15,
+      "seed": "E01",
+      "variant": "V2-Full"
+    },
+    {
+      "seq": 16,
+      "run_id": "S2-016",
+      "provider": "minimax",
+      "block_seq": 16,
+      "seed": "E03",
+      "variant": "V2-Full"
+    },
+    {
+      "seq": 17,
+      "run_id": "S2-017",
+      "provider": "minimax",
+      "block_seq": 17,
+      "seed": "E03",
+      "variant": "V1-Contract"
+    },
+    {
+      "seq": 18,
+      "run_id": "S2-018",
+      "provider": "minimax",
+      "block_seq": 18,
+      "seed": "E05",
+      "variant": "V2-Full"
+    },
+    {
+      "seq": 19,
+      "run_id": "S2-019",
+      "provider": "minimax",
+      "block_seq": 19,
+      "seed": "E07",
+      "variant": "V2-Full"
+    },
+    {
+      "seq": 20,
+      "run_id": "S2-020",
+      "provider": "minimax",
+      "block_seq": 20,
+      "seed": "E08",
+      "variant": "V1-Contract"
+    },
+    {
+      "seq": 21,
+      "run_id": "S2-021",
+      "provider": "minimax",
+      "block_seq": 21,
+      "seed": "E02",
+      "variant": "V2-Full"
+    },
+    {
+      "seq": 22,
+      "run_id": "S2-022",
+      "provider": "minimax",
+      "block_seq": 22,
+      "seed": "E04",
+      "variant": "V1-Contract"
+    },
+    {
+      "seq": 23,
+      "run_id": "S2-023",
+      "provider": "minimax",
+      "block_seq": 23,
+      "seed": "E08",
+      "variant": "V2-Full"
+    },
+    {
+      "seq": 24,
+      "run_id": "S2-024",
+      "provider": "minimax",
+      "block_seq": 24,
+      "seed": "E03",
+      "variant": "V0-Baseline"
+    },
+    {
+      "seq": 25,
+      "run_id": "S2-025",
+      "provider": "deepseek",
+      "block_seq": 1,
+      "seed": "E02",
+      "variant": "V0-Baseline"
+    },
+    {
+      "seq": 26,
+      "run_id": "S2-026",
+      "provider": "deepseek",
+      "block_seq": 2,
+      "seed": "E04",
+      "variant": "V1-Contract"
+    },
+    {
+      "seq": 27,
+      "run_id": "S2-027",
+      "provider": "deepseek",
+      "block_seq": 3,
+      "seed": "E05",
+      "variant": "V2-Full"
+    },
+    {
+      "seq": 28,
+      "run_id": "S2-028",
+      "provider": "deepseek",
+      "block_seq": 4,
+      "seed": "E01",
+      "variant": "V0-Baseline"
+    },
+    {
+      "seq": 29,
+      "run_id": "S2-029",
+      "provider": "deepseek",
+      "block_seq": 5,
+      "seed": "E03",
+      "variant": "V2-Full"
+    },
+    {
+      "seq": 30,
+      "run_id": "S2-030",
+      "provider": "deepseek",
+      "block_seq": 6,
+      "seed": "E08",
+      "variant": "V2-Full"
+    },
+    {
+      "seq": 31,
+      "run_id": "S2-031",
+      "provider": "deepseek",
+      "block_seq": 7,
+      "seed": "E01",
+      "variant": "V2-Full"
+    },
+    {
+      "seq": 32,
+      "run_id": "S2-032",
+      "provider": "deepseek",
+      "block_seq": 8,
+      "seed": "E07",
+      "variant": "V0-Baseline"
+    },
+    {
+      "seq": 33,
+      "run_id": "S2-033",
+      "provider": "deepseek",
+      "block_seq": 9,
+      "seed": "E07",
+      "variant": "V2-Full"
+    },
+    {
+      "seq": 34,
+      "run_id": "S2-034",
+      "provider": "deepseek",
+      "block_seq": 10,
+      "seed": "E01",
+      "variant": "V1-Contract"
+    },
+    {
+      "seq": 35,
+      "run_id": "S2-035",
+      "provider": "deepseek",
+      "block_seq": 11,
+      "seed": "E05",
+      "variant": "V0-Baseline"
+    },
+    {
+      "seq": 36,
+      "run_id": "S2-036",
+      "provider": "deepseek",
+      "block_seq": 12,
+      "seed": "E06",
+      "variant": "V1-Contract"
+    },
+    {
+      "seq": 37,
+      "run_id": "S2-037",
+      "provider": "deepseek",
+      "block_seq": 13,
+      "seed": "E08",
+      "variant": "V0-Baseline"
+    },
+    {
+      "seq": 38,
+      "run_id": "S2-038",
+      "provider": "deepseek",
+      "block_seq": 14,
+      "seed": "E03",
+      "variant": "V0-Baseline"
+    },
+    {
+      "seq": 39,
+      "run_id": "S2-039",
+      "provider": "deepseek",
+      "block_seq": 15,
+      "seed": "E02",
+      "variant": "V1-Contract"
+    },
+    {
+      "seq": 40,
+      "run_id": "S2-040",
+      "provider": "deepseek",
+      "block_seq": 16,
+      "seed": "E03",
+      "variant": "V1-Contract"
+    },
+    {
+      "seq": 41,
+      "run_id": "S2-041",
+      "provider": "deepseek",
+      "block_seq": 17,
+      "seed": "E06",
+      "variant": "V2-Full"
+    },
+    {
+      "seq": 42,
+      "run_id": "S2-042",
+      "provider": "deepseek",
+      "block_seq": 18,
+      "seed": "E05",
+      "variant": "V1-Contract"
+    },
+    {
+      "seq": 43,
+      "run_id": "S2-043",
+      "provider": "deepseek",
+      "block_seq": 19,
+      "seed": "E07",
+      "variant": "V1-Contract"
+    },
+    {
+      "seq": 44,
+      "run_id": "S2-044",
+      "provider": "deepseek",
+      "block_seq": 20,
+      "seed": "E04",
+      "variant": "V0-Baseline"
+    },
+    {
+      "seq": 45,
+      "run_id": "S2-045",
+      "provider": "deepseek",
+      "block_seq": 21,
+      "seed": "E08",
+      "variant": "V1-Contract"
+    },
+    {
+      "seq": 46,
+      "run_id": "S2-046",
+      "provider": "deepseek",
+      "block_seq": 22,
+      "seed": "E04",
+      "variant": "V2-Full"
+    },
+    {
+      "seq": 47,
+      "run_id": "S2-047",
+      "provider": "deepseek",
+      "block_seq": 23,
+      "seed": "E02",
+      "variant": "V2-Full"
+    },
+    {
+      "seq": 48,
+      "run_id": "S2-048",
+      "provider": "deepseek",
+      "block_seq": 24,
+      "seed": "E06",
+      "variant": "V0-Baseline"
+    }
+  ],
+  "secondary_review_runs": [
+    "S2-002",
+    "S2-004",
+    "S2-012",
+    "S2-015",
+    "S2-022",
+    "S2-023",
+    "S2-029",
+    "S2-038",
+    "S2-039",
+    "S2-041",
+    "S2-045",
+    "S2-048"
+  ]
+}

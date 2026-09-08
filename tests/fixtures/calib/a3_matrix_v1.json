@@ -1,0 +1,464 @@
+{
+  "version": "A3-MATRIX-v1",
+  "randomization_seed": 202608261500,
+  "rows": [
+    {
+      "run_id": "A3-001",
+      "provider": "minimax",
+      "block_seq": 1,
+      "seed": "I03",
+      "variant": "C0-NoGuard"
+    },
+    {
+      "run_id": "A3-002",
+      "provider": "minimax",
+      "block_seq": 2,
+      "seed": "I06",
+      "variant": "C3-CombinedGuard"
+    },
+    {
+      "run_id": "A3-003",
+      "provider": "minimax",
+      "block_seq": 3,
+      "seed": "I06",
+      "variant": "C1-DuplicateSuppression"
+    },
+    {
+      "run_id": "A3-004",
+      "provider": "minimax",
+      "block_seq": 4,
+      "seed": "I08",
+      "variant": "C3-CombinedGuard"
+    },
+    {
+      "run_id": "A3-005",
+      "provider": "minimax",
+      "block_seq": 5,
+      "seed": "I03",
+      "variant": "C1-DuplicateSuppression"
+    },
+    {
+      "run_id": "A3-006",
+      "provider": "minimax",
+      "block_seq": 6,
+      "seed": "I02",
+      "variant": "C0-NoGuard"
+    },
+    {
+      "run_id": "A3-007",
+      "provider": "minimax",
+      "block_seq": 7,
+      "seed": "I05",
+      "variant": "C0-NoGuard"
+    },
+    {
+      "run_id": "A3-008",
+      "provider": "minimax",
+      "block_seq": 8,
+      "seed": "I04",
+      "variant": "C3-CombinedGuard"
+    },
+    {
+      "run_id": "A3-009",
+      "provider": "minimax",
+      "block_seq": 9,
+      "seed": "I03",
+      "variant": "C2-BudgetTerminal"
+    },
+    {
+      "run_id": "A3-010",
+      "provider": "minimax",
+      "block_seq": 10,
+      "seed": "I08",
+      "variant": "C0-NoGuard"
+    },
+    {
+      "run_id": "A3-011",
+      "provider": "minimax",
+      "block_seq": 11,
+      "seed": "I01",
+      "variant": "C2-BudgetTerminal"
+    },
+    {
+      "run_id": "A3-012",
+      "provider": "minimax",
+      "block_seq": 12,
+      "seed": "I07",
+      "variant": "C0-NoGuard"
+    },
+    {
+      "run_id": "A3-013",
+      "provider": "minimax",
+      "block_seq": 13,
+      "seed": "I01",
+      "variant": "C3-CombinedGuard"
+    },
+    {
+      "run_id": "A3-014",
+      "provider": "minimax",
+      "block_seq": 14,
+      "seed": "I01",
+      "variant": "C1-DuplicateSuppression"
+    },
+    {
+      "run_id": "A3-015",
+      "provider": "minimax",
+      "block_seq": 15,
+      "seed": "I08",
+      "variant": "C2-BudgetTerminal"
+    },
+    {
+      "run_id": "A3-016",
+      "provider": "minimax",
+      "block_seq": 16,
+      "seed": "I08",
+      "variant": "C1-DuplicateSuppression"
+    },
+    {
+      "run_id": "A3-017",
+      "provider": "minimax",
+      "block_seq": 17,
+      "seed": "I07",
+      "variant": "C3-CombinedGuard"
+    },
+    {
+      "run_id": "A3-018",
+      "provider": "minimax",
+      "block_seq": 18,
+      "seed": "I05",
+      "variant": "C2-BudgetTerminal"
+    },
+    {
+      "run_id": "A3-019",
+      "provider": "minimax",
+      "block_seq": 19,
+      "seed": "I06",
+      "variant": "C0-NoGuard"
+    },
+    {
+      "run_id": "A3-020",
+      "provider": "minimax",
+      "block_seq": 20,
+      "seed": "I03",
+      "variant": "C3-CombinedGuard"
+    },
+    {
+      "run_id": "A3-021",
+      "provider": "minimax",
+      "block_seq": 21,
+      "seed": "I07",
+      "variant": "C1-DuplicateSuppression"
+    },
+    {
+      "run_id": "A3-022",
+      "provider": "minimax",
+      "block_seq": 22,
+      "seed": "I04",
+      "variant": "C1-DuplicateSuppression"
+    },
+    {
+      "run_id": "A3-023",
+      "provider": "minimax",
+      "block_seq": 23,
+      "seed": "I02",
+      "variant": "C1-DuplicateSuppression"
+    },
+    {
+      "run_id": "A3-024",
+      "provider": "minimax",
+      "block_seq": 24,
+      "seed": "I05",
+      "variant": "C3-CombinedGuard"
+    },
+    {
+      "run_id": "A3-025",
+      "provider": "minimax",
+      "block_seq": 25,
+      "seed": "I02",
+      "variant": "C3-CombinedGuard"
+    },
+    {
+      "run_id": "A3-026",
+      "provider": "minimax",
+      "block_seq": 26,
+      "seed": "I01",
+      "variant": "C0-NoGuard"
+    },
+    {
+      "run_id": "A3-027",
+      "provider": "minimax",
+      "block_seq": 27,
+      "seed": "I07",
+      "variant": "C2-BudgetTerminal"
+    },
+    {
+      "run_id": "A3-028",
+      "provider": "minimax",
+      "block_seq": 28,
+      "seed": "I04",
+      "variant": "C0-NoGuard"
+    },
+    {
+      "run_id": "A3-029",
+      "provider": "minimax",
+      "block_seq": 29,
+      "seed": "I02",
+      "variant": "C2-BudgetTerminal"
+    },
+    {
+      "run_id": "A3-030",
+      "provider": "minimax",
+      "block_seq": 30,
+      "seed": "I05",
+      "variant": "C1-DuplicateSuppression"
+    },
+    {
+      "run_id": "A3-031",
+      "provider": "minimax",
+      "block_seq": 31,
+      "seed": "I04",
+      "variant": "C2-BudgetTerminal"
+    },
+    {
+      "run_id": "A3-032",
+      "provider": "minimax",
+      "block_seq": 32,
+      "seed": "I06",
+      "variant": "C2-BudgetTerminal"
+    },
+    {
+      "run_id": "A3-033",
+      "provider": "deepseek",
+      "block_seq": 1,
+      "seed": "I03",
+      "variant": "C0-NoGuard"
+    },
+    {
+      "run_id": "A3-034",
+      "provider": "deepseek",
+      "block_seq": 2,
+      "seed": "I05",
+      "variant": "C3-CombinedGuard"
+    },
+    {
+      "run_id": "A3-035",
+      "provider": "deepseek",
+      "block_seq": 3,
+      "seed": "I08",
+      "variant": "C1-DuplicateSuppression"
+    },
+    {
+      "run_id": "A3-036",
+      "provider": "deepseek",
+      "block_seq": 4,
+      "seed": "I05",
+      "variant": "C1-DuplicateSuppression"
+    },
+    {
+      "run_id": "A3-037",
+      "provider": "deepseek",
+      "block_seq": 5,
+      "seed": "I01",
+      "variant": "C1-DuplicateSuppression"
+    },
+    {
+      "run_id": "A3-038",
+      "provider": "deepseek",
+      "block_seq": 6,
+      "seed": "I04",
+      "variant": "C2-BudgetTerminal"
+    },
+    {
+      "run_id": "A3-039",
+      "provider": "deepseek",
+      "block_seq": 7,
+      "seed": "I07",
+      "variant": "C3-CombinedGuard"
+    },
+    {
+      "run_id": "A3-040",
+      "provider": "deepseek",
+      "block_seq": 8,
+      "seed": "I06",
+      "variant": "C1-DuplicateSuppression"
+    },
+    {
+      "run_id": "A3-041",
+      "provider": "deepseek",
+      "block_seq": 9,
+      "seed": "I06",
+      "variant": "C0-NoGuard"
+    },
+    {
+      "run_id": "A3-042",
+      "provider": "deepseek",
+      "block_seq": 10,
+      "seed": "I08",
+      "variant": "C3-CombinedGuard"
+    },
+    {
+      "run_id": "A3-043",
+      "provider": "deepseek",
+      "block_seq": 11,
+      "seed": "I01",
+      "variant": "C2-BudgetTerminal"
+    },
+    {
+      "run_id": "A3-044",
+      "provider": "deepseek",
+      "block_seq": 12,
+      "seed": "I01",
+      "variant": "C0-NoGuard"
+    },
+    {
+      "run_id": "A3-045",
+      "provider": "deepseek",
+      "block_seq": 13,
+      "seed": "I02",
+      "variant": "C3-CombinedGuard"
+    },
+    {
+      "run_id": "A3-046",
+      "provider": "deepseek",
+      "block_seq": 14,
+      "seed": "I05",
+      "variant": "C0-NoGuard"
+    },
+    {
+      "run_id": "A3-047",
+      "provider": "deepseek",
+      "block_seq": 15,
+      "seed": "I07",
+      "variant": "C2-BudgetTerminal"
+    },
+    {
+      "run_id": "A3-048",
+      "provider": "deepseek",
+      "block_seq": 16,
+      "seed": "I02",
+      "variant": "C2-BudgetTerminal"
+    },
+    {
+      "run_id": "A3-049",
+      "provider": "deepseek",
+      "block_seq": 17,
+      "seed": "I01",
+      "variant": "C3-CombinedGuard"
+    },
+    {
+      "run_id": "A3-050",
+      "provider": "deepseek",
+      "block_seq": 18,
+      "seed": "I06",
+      "variant": "C2-BudgetTerminal"
+    },
+    {
+      "run_id": "A3-051",
+      "provider": "deepseek",
+      "block_seq": 19,
+      "seed": "I07",
+      "variant": "C1-DuplicateSuppression"
+    },
+    {
+      "run_id": "A3-052",
+      "provider": "deepseek",
+      "block_seq": 20,
+      "seed": "I07",
+      "variant": "C0-NoGuard"
+    },
+    {
+      "run_id": "A3-053",
+      "provider": "deepseek",
+      "block_seq": 21,
+      "seed": "I05",
+      "variant": "C2-BudgetTerminal"
+    },
+    {
+      "run_id": "A3-054",
+      "provider": "deepseek",
+      "block_seq": 22,
+      "seed": "I02",
+      "variant": "C1-DuplicateSuppression"
+    },
+    {
+      "run_id": "A3-055",
+      "provider": "deepseek",
+      "block_seq": 23,
+      "seed": "I04",
+      "variant": "C3-CombinedGuard"
+    },
+    {
+      "run_id": "A3-056",
+      "provider": "deepseek",
+      "block_seq": 24,
+      "seed": "I06",
+      "variant": "C3-CombinedGuard"
+    },
+    {
+      "run_id": "A3-057",
+      "provider": "deepseek",
+      "block_seq": 25,
+      "seed": "I03",
+      "variant": "C3-CombinedGuard"
+    },
+    {
+      "run_id": "A3-058",
+      "provider": "deepseek",
+      "block_seq": 26,
+      "seed": "I04",
+      "variant": "C1-DuplicateSuppression"
+    },
+    {
+      "run_id": "A3-059",
+      "provider": "deepseek",
+      "block_seq": 27,
+      "seed": "I03",
+      "variant": "C2-BudgetTerminal"
+    },
+    {
+      "run_id": "A3-060",
+      "provider": "deepseek",
+      "block_seq": 28,
+      "seed": "I02",
+      "variant": "C0-NoGuard"
+    },
+    {
+      "run_id": "A3-061",
+      "provider": "deepseek",
+      "block_seq": 29,
+      "seed": "I08",
+      "variant": "C2-BudgetTerminal"
+    },
+    {
+      "run_id": "A3-062",
+      "provider": "deepseek",
+      "block_seq": 30,
+      "seed": "I03",
+      "variant": "C1-DuplicateSuppression"
+    },
+    {
+      "run_id": "A3-063",
+      "provider": "deepseek",
+      "block_seq": 31,
+      "seed": "I04",
+      "variant": "C0-NoGuard"
+    },
+    {
+      "run_id": "A3-064",
+      "provider": "deepseek",
+      "block_seq": 32,
+      "seed": "I08",
+      "variant": "C0-NoGuard"
+    }
+  ],
+  "secondary_review_runs": [
+    "A3-001",
+    "A3-016",
+    "A3-025",
+    "A3-031",
+    "A3-037",
+    "A3-039",
+    "A3-050",
+    "A3-064"
+  ]
+}

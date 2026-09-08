@@ -17,7 +17,7 @@ from scripts.calib.treatments_a1 import A1_VARIANTS
 ROOT = Path(__file__).resolve().parent.parent.parent
 RUNS = ROOT / "data/calib/runs_a1"
 REPORT = ROOT / "data/calib/a1_report.json"
-MATRIX = ROOT / "data/calib/a1_matrix_v1.json"
+MATRIX = ROOT / "tests/fixtures/calib/a1_matrix_v1.json"
 OUT = ROOT / "data/calib/a1_analysis.json"
 CONTRACT = "A1-Contract"
 COMPONENTS = [
