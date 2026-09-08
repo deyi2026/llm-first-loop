@@ -25,6 +25,7 @@ from llm_loop.core.injection_labels import (
     STATUS_LABEL,
 )
 from llm_loop.core.message import Message, MessageSource, ToolCall
+from llm_loop.core.reference_injection import is_human_user_message
 
 
 def _wire_size(m: Message, current_turn_ref: int | None = None) -> int:
@@ -489,6 +490,7 @@ def build_history_messages(
     # 供调用方（build.py）写 breaker 审计事件 view_not_shrinking_after_compact（drop<5% 时）。
     require_archive_success: bool = False,  # ERC enforce: hidden bytes must be durable before shrink
     preserve_last_human_exact: bool = False,  # R6 initial ingress: never replace current human truth with a compact surrogate
+    preserve_human_message: Message | None = None,  # exact active-human identity from filtered Session mapping
     current_turn_ref: int | None = None,  # G6-v2: render source-attached boundary facts only in owning human turn
 ) -> list[dict]:
     """组装提交 LLM 的消息序列（保序 + 超长另存压缩 + 如实标注）.
@@ -508,6 +510,28 @@ def build_history_messages(
     # 后续 projection 用 prefix_len + filtered_indices 映射回 Session 真正 msg_seq，
     # message.cache_compacted 不再依赖 role/content/ts fuzzy resolve。
     _source_index_by_id = {id(m): i for i, m in enumerate(session_messages)}
+    # Active-human wire invariant: when the caller identifies this build as belonging
+    # to a genuine current human turn, freeze that exact persisted Message identity
+    # before anchor/marker filtering. Provider compaction may retire surrounding tool
+    # groups, but must not erase the human turn that gives those groups protocol
+    # context (GLM rejects assistant/tool-only histories with HTTP 1214).
+    _preserved_human: Message | None = None
+    _preserved_human_source_index: int | None = None
+    if (
+        preserve_human_message is not None
+        and id(preserve_human_message) in _source_index_by_id
+        and is_human_user_message(preserve_human_message)
+        and not _is_injected_block(preserve_human_message)
+    ):
+        _preserved_human = preserve_human_message
+        _preserved_human_source_index = _source_index_by_id[id(preserve_human_message)]
+    elif preserve_last_human_exact:
+        for _idx in range(len(session_messages) - 1, -1, -1):
+            _candidate = session_messages[_idx]
+            if is_human_user_message(_candidate) and not _is_injected_block(_candidate):
+                _preserved_human = _candidate
+                _preserved_human_source_index = _idx
+                break
     if compacted_out is not None:
         compacted_out[:] = [False]
     if cache_compacted_out is not None:
@@ -586,13 +610,21 @@ def build_history_messages(
         )
 
     # P1-10: 窗口锚定——起点固定（锚点前的消息已归档, 不再参与构建/重复归档）
+    # A previously bad compaction may already have advanced the persisted anchor past
+    # the active human. Re-open only as far as that exact identity; provider markers
+    # still suppress every other already-compacted message.
+    if (
+        _preserved_human_source_index is not None
+        and history_anchor > _preserved_human_source_index
+    ):
+        history_anchor = _preserved_human_source_index
     if history_anchor > 0 and history_anchor < len(session_messages):
         session_messages = session_messages[history_anchor:]
         if cache_archive_provider:
             session_messages = [
                 m
                 for m in session_messages
-                if not _marker_active(m)
+                if m is _preserved_human or not _marker_active(m)
             ]
         # 2026-08-16 锚点对齐工具轮边界（现场：tool_call_id is not found 根因）：
         # 锚点落在声明↔回执组内会把声明裁掉、留下孤儿回执（API 拒绝）。
@@ -625,7 +657,7 @@ def build_history_messages(
         session_messages = [
             m
             for m in session_messages
-            if not _marker_active(m)
+            if m is _preserved_human or not _marker_active(m)
         ]
         total_chars = sum(_wire_size(m, current_turn_ref) for m in session_messages)
 
@@ -699,11 +731,14 @@ def build_history_messages(
     # When requested by LoopEngine initial-ingress build, keep the final real-user atomic group
     # byte-for-byte even if it alone exceeds history budget; routing/context guard may then reject
     # the oversized request explicitly. Silent trim/archive substitution would change the user's task.
-    _exact_human_group = (
-        atomic_groups[_anchor_group_idx]
-        if preserve_last_human_exact and _anchor_group_idx is not None
-        else None
-    )
+    _exact_human_group: list[Message] | None = None
+    if _preserved_human is not None:
+        for _group in atomic_groups:
+            if any(mm is _preserved_human for mm in _group):
+                _exact_human_group = _group
+                break
+    elif preserve_last_human_exact and _anchor_group_idx is not None:
+        _exact_human_group = atomic_groups[_anchor_group_idx]
 
     # 2026-09-03 cache-boundary P1: 上轮 provider 已确认命中的 prefix 是 mandatory head。
     # 双口径（消息数 + chars）都向 atomic-group 末端取整：宁可多保护一组，也不能拆开
@@ -821,21 +856,33 @@ def build_history_messages(
     # recovery and prevent the same old span from being folded again every round.
     if cache_archive_provider:
         kept_groups = list(atomic_groups[head_count:])
+        _kept_group_indices = list(range(head_count, len(atomic_groups)))
         _fold_count = 0
-        _next_group_idx = head_count
         while kept_groups:
-            if _exact_human_group is not None and kept_groups[0] is _exact_human_group:
-                break
-            if _next_group_idx in _anchor_protected_groups and _anchor_protect_valid:
-                break
             _kept_chars = sum(
                 _wire_size(mm, current_turn_ref) for g in kept_groups for mm in g
             )
             if len(system_prompt) + head_chars + _kept_chars <= archive_budget:
                 break
-            group = kept_groups.pop(0)
+            # Mechanical oldest-first compaction with one non-removable identity:
+            # skip the active human group, then continue retiring the oldest atomic
+            # tool groups after it. This preserves protocol grounding without pinning
+            # the entire current tool trajectory or making relevance judgements.
+            _remove_pos: int | None = None
+            for _pos, (_group_idx, _group) in enumerate(
+                zip(_kept_group_indices, kept_groups, strict=True)
+            ):
+                if _exact_human_group is not None and _group is _exact_human_group:
+                    continue
+                if _group_idx in _anchor_protected_groups and _anchor_protect_valid:
+                    break
+                _remove_pos = _pos
+                break
+            if _remove_pos is None:
+                break
+            group = kept_groups.pop(_remove_pos)
+            _kept_group_indices.pop(_remove_pos)
             archived.extend(group)
-            _next_group_idx += 1
             _fold_count += 1
     else:
         _fold_count = 0
@@ -910,19 +957,33 @@ def build_history_messages(
                 # suffix 已压到不能再压仍超过安全线：允许一次显式 cache epoch reset，
                 # 不能静默声称“保护缓存”同时又把 cached prefix 归档。
                 _cache_boundary_mode = "epoch_reset"
+            _preserved_head_group: list[Message] | None = None
             for g in head_groups:
+                if _exact_human_group is not None and g is _exact_human_group:
+                    _preserved_head_group = g
+                    continue
                 archived.extend(g)
             head_groups = []
             head_count = 0
             head_chars = 0
+            if _preserved_head_group is not None:
+                kept_groups.insert(0, _preserved_head_group)
             # head 归档后仍超（system 巨大场景）→ 继续从最老端连续归档，保护最新语义尾部。
             while kept_groups:
                 _cur = sum(_wire_size(mm, current_turn_ref) for g in kept_groups for mm in g)
                 if len(system_prompt) + _cur <= int(max_chars * 0.95):
                     break
-                if _exact_human_group is not None and kept_groups[0] is _exact_human_group:
-                    break  # R6: explicit over-budget is safer than silently replacing the user text
-                archived.extend(kept_groups.pop(0))
+                _remove_pos = next(
+                    (
+                        _pos
+                        for _pos, _group in enumerate(kept_groups)
+                        if _exact_human_group is None or _group is not _exact_human_group
+                    ),
+                    None,
+                )
+                if _remove_pos is None:
+                    break  # exact human alone may exceed budget; routing owns the hard model limit
+                archived.extend(kept_groups.pop(_remove_pos))
 
     if compacted_out is not None and _protected_group_count > 0 and not archived:
         # P1: confirmed cache boundary 把本轮所有可归档 suffix 都保护/锚定住，
@@ -969,7 +1030,12 @@ def build_history_messages(
     # EVO-20260817-9d3e1f2c: 缓存友好压缩——头部保留（head_count>0）时锚点不动
     # （提交前缀稳定命中，只归档中段）；仅头部也被归档（head_count=0）才前移。
     if anchor_out is not None:
-        if head_count > 0:
+        if _preserved_human is not None and any(m is _preserved_human for m in kept_flat):
+            # Provider markers represent non-contiguous retired groups after the current
+            # human; advancing the contiguous anchor by archived-count would skip that
+            # human on the next round and recreate the 1214 state.
+            anchor_out.append(history_anchor)
+        elif head_count > 0:
             anchor_out.append(history_anchor)
         else:
             # EVO-20260825 任务6.3: 锚点推进边界安全防护——越界 clamp + WARN
