@@ -37,6 +37,9 @@ describe("immutable user edit via fork", () => {
     let chatCalls = 0;
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.includes("/api/v1/capabilities")) {
+        return new Response(JSON.stringify({ capabilities: {} }), { status: 200 });
+      }
       if (url.includes("/api/v1/models")) {
         return new Response(JSON.stringify({ models: ["glm/glm-5.3"], current: "glm/glm-5.3", catalog: [] }), { status: 200 });
       }

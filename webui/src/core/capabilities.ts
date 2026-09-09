@@ -77,15 +77,68 @@ async function runProbe(key: CapabilityKey, url: string): Promise<void> {
   }
 }
 
+// 后端 capability manifest（GET /api/v1/capabilities）：一次拉取即知全量
+// 能力，替代逐端点 404/405 试探。精简后端未提供该端点（404）时回落到
+// 原有探测逻辑。manifest 只反映"路由是否注册"，不做任何策略判断。
+let manifestLoaded = false;
+let manifestSettled = false;
+const pendingSessionProbes = new Set<string>();
+
+function flushPendingSessionProbes(): void {
+  if (manifestLoaded || pendingSessionProbes.size === 0) return;
+  const ids = [...pendingSessionProbes];
+  pendingSessionProbes.clear();
+  for (const id of ids) {
+    for (const key of SESSION_PROBE_KEYS) {
+      void runProbe(key, `/api/v1/sessions/${encodeURIComponent(id)}/${key}`);
+    }
+  }
+}
+
+async function fetchManifest(): Promise<void> {
+  try {
+    const res = await fetch("/api/v1/capabilities", { cache: "no-store" });
+    if (res.ok && res.status !== 404) {
+      const body = (await res.json()) as { capabilities?: Partial<Capabilities> };
+      const caps = body?.capabilities;
+      if (caps && typeof caps === "object") {
+        const next: Record<CapabilityKey, boolean> = { ...state };
+        for (const key of Object.keys(next) as CapabilityKey[]) {
+          const v = caps[key];
+          if (typeof v === "boolean") next[key] = v;
+        }
+        state = next;
+        manifestLoaded = true;
+        emit();
+      }
+    }
+  } catch {
+    // 网络失败 → 回落探测
+  } finally {
+    manifestSettled = true;
+    if (!manifestLoaded) flushPendingSessionProbes();
+  }
+}
+
 export function ensureProbesStarted(): void {
   if (globalStarted) return;
   globalStarted = true;
-  for (const [key, url] of GLOBAL_PROBES) void runProbe(key, url);
+  void fetchManifest().then(() => {
+    // manifest 已成功加载：能力是权威事实，跳过试探探测。
+    if (manifestLoaded) return;
+    for (const [key, url] of GLOBAL_PROBES) void runProbe(key, url);
+  });
 }
 
 export function probeSessionCapabilities(sessionId: string | null | undefined): void {
   if (!sessionId || probedSessions.has(sessionId)) return;
   probedSessions.add(sessionId);
+  // manifest 未落定：先排队，落定后按其结果决定探测或跳过。
+  if (!manifestSettled) {
+    pendingSessionProbes.add(sessionId);
+    return;
+  }
+  if (manifestLoaded) return;
   for (const key of SESSION_PROBE_KEYS) {
     void runProbe(key, `/api/v1/sessions/${encodeURIComponent(sessionId)}/${key}`);
   }
@@ -117,5 +170,8 @@ export function __resetCapabilitiesForTest(): void {
     continuity: true,
   };
   globalStarted = false;
+  manifestLoaded = false;
+  manifestSettled = false;
+  pendingSessionProbes.clear();
   probedSessions.clear();
 }

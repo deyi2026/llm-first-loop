@@ -58,6 +58,7 @@ const FULL_ROUTES: Route[] = [
 
 beforeEach(() => {
   vi.stubGlobal("fetch", stubFetch);
+  stubFetch.mockClear();
 });
 afterEach(() => {
   cleanup();
@@ -116,5 +117,44 @@ describe("能力探测门控", () => {
     probeSessionCapabilities("s-cap-1");
     await waitFor(() => expect(screen.getByText(/后台任务/)).toBeTruthy(), { timeout: 3000 });
     expect(screen.queryByText(/跨会话连续性/)).toBeNull();
+  });
+});
+
+describe("capability manifest 优先", () => {
+  it("manifest 声明能力 → 直接生效，且不再发起 404/405 试探", async () => {
+    routes = [
+      { match: /\/api\/v1\/capabilities/, status: 200, body: { capabilities: { fsTree: false, jobs: false, continuity: false } } },
+      ...FULL_ROUTES.filter((r) => !r.match.test("/api/v1/capabilities")),
+    ];
+    render(
+      <>
+        <Sidebar collapsed={false} />
+        <RightPanel open />
+        <ContinuityBanner sessionId="s-cap-1" />
+      </>
+    );
+    probeSessionCapabilities("s-cap-1");
+    await waitFor(() => expect(screen.queryByTestId("tab-files")).toBeNull(), { timeout: 3000 });
+    expect(screen.queryByText(/后台任务/)).toBeNull();
+    expect(screen.queryByText(/跨会话连续性/)).toBeNull();
+    // manifest 已加载：不应出现哑探测请求
+    const calls = stubFetch.mock.calls.map((c) => String(c[0]));
+    expect(calls.some((u) => u.includes("__capability_probe__"))).toBe(false);
+  });
+
+  it("精简后端无 manifest（404）→ 回落到原有探测", async () => {
+    routes = [{ match: /\/api\/v1\/capabilities/, status: 404 }, ...OSS_ROUTES];
+    render(
+      <>
+        <Sidebar collapsed={false} />
+        <RightPanel open />
+        <ContinuityBanner sessionId="s-cap-1" />
+      </>
+    );
+    probeSessionCapabilities("s-cap-1");
+    await waitFor(() => expect(screen.queryByTestId("tab-files")).toBeNull(), { timeout: 3000 });
+    expect(screen.queryByText(/后台任务/)).toBeNull();
+    const calls = stubFetch.mock.calls.map((c) => String(c[0]));
+    expect(calls.some((u) => u.includes("__capability_probe__"))).toBe(true);
   });
 });

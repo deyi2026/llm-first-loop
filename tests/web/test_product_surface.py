@@ -92,3 +92,26 @@ def test_continuity_status_never_returns_model_text_or_reasoning(
     serialized = resp.text
     assert "SECRET TEXT" not in serialized
     assert "SECRET REASONING" not in serialized
+
+
+def test_capability_manifest_reflects_registered_routes(build_test_engine) -> None:
+    engine, _ = build_test_engine([])
+    resp = _client(engine).get("/api/v1/capabilities")
+    assert resp.status_code == 200
+    caps = resp.json()["capabilities"]
+    for key in ("attachments", "fsTree", "pin", "archive", "delete", "fork", "feedback", "jobs", "continuity"):
+        assert caps.get(key) is True
+
+
+def test_capability_manifest_reports_false_when_route_missing(build_test_engine) -> None:
+    from llm_loop.web import routes as routes_mod
+
+    engine, _ = build_test_engine([])
+    original = routes_mod._CAPABILITY_ROUTES["jobs"]
+    routes_mod._CAPABILITY_ROUTES["jobs"] = (("GET", "/api/v1/definitely/not/registered"),)
+    try:
+        caps = _client(engine).get("/api/v1/capabilities").json()["capabilities"]
+        assert caps["jobs"] is False
+        assert caps["attachments"] is True
+    finally:
+        routes_mod._CAPABILITY_ROUTES["jobs"] = original

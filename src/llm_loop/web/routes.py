@@ -2585,3 +2585,52 @@ def list_dirs(request: Request, path: str = "") -> Response:
         }
     )
 
+
+
+# --- Capability manifest ---------------------------------------------------
+# 只声明"本后端注册了哪些产品路由"这一机械事实，供前端一次拉取，
+# 替代启动期 404/405 路由探测。不表达策略、健康度或业务判断。
+_CAPABILITY_ROUTES: dict[str, tuple[tuple[str, str], ...]] = {
+    "attachments": (
+        ("GET", "/api/v1/attachments/recent"),
+        ("POST", "/api/v1/attachments/import-workspace"),
+    ),
+    "fsTree": (("GET", "/api/v1/fs/tree"),),
+    "pin": (("POST", "/api/v1/sessions/{session_id}/pin"),),
+    "archive": (("POST", "/api/v1/sessions/{session_id}/archive"),),
+    "delete": (("DELETE", "/api/v1/sessions/{session_id}"),),
+    "fork": (("POST", "/api/v1/sessions/{session_id}/fork"),),
+    "feedback": (("POST", "/api/v1/sessions/{session_id}/feedback"),),
+    "jobs": (
+        ("GET", "/api/v1/sessions/{session_id}/jobs"),
+        ("POST", "/api/v1/sessions/{session_id}/jobs/{job_id}/kill"),
+    ),
+    "continuity": (("GET", "/api/v1/sessions/{session_id}/continuity"),),
+}
+
+
+@router.get("/api/v1/capabilities")
+def api_capabilities(request: Request) -> Response:
+    """Read-only capability manifest derived from actually registered routes."""
+    registered: set[tuple[str, str]] = set()
+
+    def _walk(routes) -> None:
+        for route in routes:
+            # FastAPI>=0.141 include_router 产出 _IncludedRouter 包装对象，
+            # 递归展开其原始 router 以兼容直挂与包装两种结构。
+            sub = getattr(route, "original_router", None)
+            if sub is not None and hasattr(sub, "routes"):
+                _walk(sub.routes)
+                continue
+            path = getattr(route, "path", None)
+            methods = getattr(route, "methods", None)
+            if path and methods:
+                for method in methods:
+                    registered.add((method, path))
+
+    _walk(request.app.routes)
+    capabilities = {
+        key: all(pair in registered for pair in pairs)
+        for key, pairs in _CAPABILITY_ROUTES.items()
+    }
+    return UTF8JSONResponse(content={"capabilities": capabilities})
