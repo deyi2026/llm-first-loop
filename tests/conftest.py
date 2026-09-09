@@ -155,12 +155,26 @@ _DEPLOYED_COMPACT_VARS = (
     "COMPACT_RATIO",
 )
 
+# 部署泄漏隔离（批次3，2026-09-09 provider admin 全量回归归因）：LFL 运行
+# 外壳导出 LLM_MODEL（如 default provider 路由）。provider_admin 端点对
+# 来自进程外部环境的 LLM_MODEL 按"外部属主"保护返回 409，MODEL_PROVIDERS
+# 存在时控制面整体只读；两者泄漏令默认模型持久化用例假红（409 != 200）。
+# 测试体内显式 setenv 的用例（如只读模式、外部属主 409 用例）在 fixture
+# 之后执行，不受影响。
+_DEPLOYED_PROVIDER_ADMIN_VARS = (
+    "LLM_MODEL",
+    "MODEL_PROVIDERS",
+)
+
 
 @pytest.fixture(autouse=True)
 def isolate_deployed_web_auth_env(monkeypatch):
+    """剥离部署环境泄漏的运行时配置变量（按批次清单逐组登记）。"""
     for var in _DEPLOYED_WEB_AUTH_VARS:
         monkeypatch.delenv(var, raising=False)
     for var in _DEPLOYED_COMPACT_VARS:
+        monkeypatch.delenv(var, raising=False)
+    for var in _DEPLOYED_PROVIDER_ADMIN_VARS:
         monkeypatch.delenv(var, raising=False)
 
 
