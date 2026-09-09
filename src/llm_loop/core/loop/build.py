@@ -738,7 +738,7 @@ class _BuildMixin:
             hot_tokens = sum(len(s.content) for s in packet.slots if s.tier is ContextTier.HOT)
             warm_tokens = sum(len(s.content) for s in packet.slots if s.tier is ContextTier.WARM)
             cold_refs = sum(1 for s in packet.slots if s.tier is ContextTier.COLD)
-            tel_kw = dict(
+            tel_kw: dict[str, Any] = dict(
                 data_dir=str(settings.data_dir),
                 session_id=sess.session_id,
                 run_id=str(getattr(self._run_state(), "run_id", "") or ""),

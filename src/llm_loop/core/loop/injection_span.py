@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -18,11 +19,19 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from llm_loop.core.loop.err1210 import _SNAPSHOT_SCHEMA, is_err1210
+from llm_loop.llm.errors import LLMError
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from typing import Protocol
 
     from llm_loop.core.message import Message
-    from llm_loop.core.session import ModelSession
+
+    class ModelSession(Protocol):
+        """结构化最小面：本模块仅消费 session_id（原 llm_loop.core.session.ModelSession 已随演进退役）."""
+
+        session_id: str
 
 logger = logging.getLogger(__name__)
 _DEFER_REPLAY_TOTAL_LIMIT = 8  # spec 6.3-5: 待回放总量 ≤8
@@ -218,8 +227,19 @@ class _Err1210Mixin:
     """P0 状态机（engine 挂载；self 属性由 LoopEngine.__init__ 提供）."""
 
     if TYPE_CHECKING:
+        # 宿主 LoopEngine 提供的实例态/方法（docstring 约定；engine.py:201/296/325、events.py:170）
+        from collections.abc import Callable
+
+        from llm_loop.config import Settings
+        from llm_loop.core.cache_health import CacheHealthMonitor
+
         _err1210_attempted: dict[str, int]
         _last_request_msg_count_by_session: dict[str, int]
+        settings: Settings
+        _cache_monitor: CacheHealthMonitor
+        _record_action: Callable[[str, str, str], None]
+
+        def _runtime_timeout(self) -> float | None: ...
 
     # ── 3.2 compact 首请求判定 ──
 

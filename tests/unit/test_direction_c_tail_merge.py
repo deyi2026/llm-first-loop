@@ -7,8 +7,8 @@ build 出口的 wire 级源头消除（storage 不动）。
 
 # r9 B4-CLOSE-01 步A: 尾段装配簇已从巨型 build.py 迁至 stages/tail_assembly.py
 # ——断言钉拆分后权威位置，不回退巨型 build。
-from llm_loop.core.prompt_build.stages.tail_assembly import merge_persisted_tail_injections
 from llm_loop.core.loop.focus import _INJECTION_PREFIX
+from llm_loop.core.prompt_build.stages.tail_assembly import merge_persisted_tail_injections
 
 
 def _u(content: str) -> dict:
