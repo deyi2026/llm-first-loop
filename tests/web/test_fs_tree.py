@@ -184,3 +184,30 @@ def test_evolution_review_invalid_params(client):
     # 缺 id → 422（min_length 校验）
     r2 = cli.post("/api/v1/evolution/review", json={"id": "", "decision": "accepted"})
     assert r2.status_code == 422
+
+
+def test_evolution_review_store_on_correction_ctx(client, tmp_path):
+    """回归（EVO-20260909 web 审批确认键无效）：store 按 factory.py 真实装配位置挂在 correction_ctx 上，review 必须可用.
+
+    旧实现读 getattr(engine, "evolution_store")，生产引擎该属性恒不存在 → 恒 400 evolve_disabled
+    （面板列表读文件有数据、弹框确认却无效）。本测试不复刻测试夹具的直挂 engine 掩盖路径。
+    """
+    cli, engine = client
+    from llm_loop.introspection.corrections import CorrectionContext
+    from llm_loop.introspection.evolution import EvolutionStore
+
+    st = EvolutionStore(tmp_path / "data" / "audit")
+    st.submit(content="装配位置回归测试", evidence="ev", impact_scope="core", priority="low")
+    sid = st.list()[0]["id"]
+
+    ctx = CorrectionContext()
+    ctx.evolution_store = st
+    engine.correction_ctx = ctx
+    try:
+        r = cli.post("/api/v1/evolution/review", json={"id": sid, "decision": "accepted"})
+        assert r.status_code == 200, f"review 应成功，实际 {r.status_code}: {r.text}"
+        d = r.json()
+        assert d["ok"] is True and "已批准" in d["message"]
+        assert st.list()[0]["status"] == "accepted"
+    finally:
+        engine.correction_ctx = None

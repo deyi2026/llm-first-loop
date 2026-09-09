@@ -174,6 +174,16 @@ def _engine_from(request: Request) -> Any:
     return request.app.state.engine
 
 
+def _evolution_store_from(engine: Any) -> Any | None:
+    """解析 EvolutionStore：优先 correction_ctx.evolution_store（factory.py 装配位置），兼容 engine.evolution_store（测试/历史挂载）.
+
+    修复（EVO-20260909 web 审批确认键无效）：真实引擎只在 correction_ctx 上持有 store，
+    旧的 engine.evolution_store 读取在生产恒为 None，导致 list 有数据但 review 恒 400 evolve_disabled。
+    """
+    ctx = getattr(engine, "correction_ctx", None)
+    return getattr(ctx, "evolution_store", None) or getattr(engine, "evolution_store", None)
+
+
 _locks_guard = threading.Lock()
 _LOCK_TIMEOUT_S = 30
 _SSE_QUEUE_TIMEOUT_S = 15  # 后台 run 订阅队列 get 超时（防御；正常 run 必有 done/error 终态）
@@ -1041,7 +1051,7 @@ def evolution_review(payload: EvolutionReviewRequest, request: Request) -> Respo
     安全: 本地 web（127.0.0.1）默认可信；WEB_AUTH_REQUIRE=1 时受 Bearer 保护。
     """
     engine = _engine_from(request)
-    store = getattr(engine, "evolution_store", None)
+    store = _evolution_store_from(engine)
     if store is None:
         return UTF8JSONResponse(
             status_code=400,
@@ -1120,7 +1130,7 @@ async def evolution_review_batch(request: Request) -> Response:
     逐条独立事务（成功 n / 失败 m，不整体回滚）。
     """
     engine = _engine_from(request)
-    store = getattr(engine, "evolution_store", None)
+    store = _evolution_store_from(engine)
     if store is None:
         return UTF8JSONResponse(
             status_code=400,
