@@ -38,6 +38,7 @@ from llm_loop.workspace.store import (
 
 from .attachments import AttachmentError, AttachmentStore
 from .attachments import workspace_scope as attachment_workspace_scope
+from .provider_routes import router as provider_admin_router
 from .schemas import (
     ChatCancelRequest,
     ChatRequest,
@@ -66,6 +67,8 @@ from .upload_handlers import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+router.include_router(provider_admin_router)
 
 
 def _attachment_store(engine: Any) -> AttachmentStore:
@@ -853,6 +856,9 @@ def api_info() -> dict:
             "DELETE /api/v1/sessions/{session_id}?confirm=true": "删除会话（须确认）",
             "POST /api/v1/sessions/{session_id}/pin": "会话置顶/取消置顶（M56）",
             "GET /api/v1/models": "可用模型列表",
+            "GET /api/v1/providers": "Provider/模型设置事实（不返回密钥）",
+            "POST /api/v1/providers": "添加 Provider（鉴权 + Origin 防护）",
+            "POST /api/v1/providers/{provider_id}/test": "显式测试 Provider 连接",
             "GET /api/v1/events": "SSE 会话更新事件流（M56 实时刷新）",
             "GET /health": "健康检查",
             "GET /docs": "Swagger 交互文档",
@@ -921,7 +927,44 @@ def list_models(request: Request) -> dict:
             current = matched
         else:
             names.insert(0, current)
-    return {"models": names, "current": current}
+    catalog: list[dict[str, Any]] = []
+    for pid, spec in registry.providers.items():
+        for mid, mspec in spec.models.items():
+            model_ref = f"{pid}/{mid}"
+            if model_ref not in names:
+                continue
+            capable, control = registry.reasoning_contract(pid, mid)
+            control_supported = control in {"thinking_type", "chat_template", "always_on_effort"} or (
+                control == "legacy" and bool(getattr(mspec, "thinking", False))
+            )
+            can_disable = control in {"thinking_type", "chat_template"} or (
+                control == "legacy" and bool(getattr(mspec, "thinking", False))
+            )
+            effort_map = dict(getattr(mspec, "reasoning_effort_map", {}) or {})
+            efforts = sorted(effort_map) if effort_map else (
+                ["low", "medium", "high"] if control == "always_on_effort" else []
+            )
+            catalog.append(
+                {
+                    "id": model_ref,
+                    "provider": pid,
+                    "model": mid,
+                    "context": int(getattr(mspec, "context", 0) or 0),
+                    "max_input_tokens": getattr(mspec, "max_input_tokens", None)
+                    or getattr(spec, "max_input_tokens", None),
+                    "max_output_tokens": getattr(mspec, "max_tokens", None)
+                    or getattr(spec, "max_tokens", None),
+                    "cost_tier": str(getattr(mspec, "cost_tier", "") or ""),
+                    "multimodal": bool(getattr(mspec, "multimodal", False)),
+                    "reasoning_capable": bool(capable),
+                    "reasoning_control": control,
+                    "reasoning_control_supported": control_supported,
+                    "reasoning_can_disable": can_disable,
+                    "reasoning_efforts": efforts,
+                }
+            )
+    return {"models": names, "current": current, "catalog": catalog}
+
 
 
 @router.get("/health")
@@ -2606,6 +2649,12 @@ _CAPABILITY_ROUTES: dict[str, tuple[tuple[str, str], ...]] = {
         ("POST", "/api/v1/sessions/{session_id}/jobs/{job_id}/kill"),
     ),
     "continuity": (("GET", "/api/v1/sessions/{session_id}/continuity"),),
+    "providerAdmin": (
+        ("GET", "/api/v1/providers"),
+        ("POST", "/api/v1/providers"),
+        ("POST", "/api/v1/providers/reload"),
+        ("POST", "/api/v1/providers/default-model"),
+    ),
 }
 
 

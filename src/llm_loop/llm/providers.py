@@ -2,7 +2,7 @@
 
 设计要点:
 - ProviderSpec.api_key_env 只存 env var 名字, 密钥从不落代码/JSON/日志 (DFX-SEC-02)
-- 加载优先级: MODEL_PROVIDERS env JSON > {data_dir}/providers.json > LLM_* env 合成单 provider
+- 加载优先级: MODEL_PROVIDERS env JSON > {data_dir}/providers.local.json > {data_dir}/providers.json > LLM_* env 合成单 provider
 - fail-soft: JSON 解析失败 → 回退 L0 合成 + degraded=True + degraded_reason 字段（如实标注, 不崩）
 - resolve 支持 "provider/model" 全限定 + 裸模型名唯一匹配; 歧义/未知抛 ValueError 列候选
 
@@ -661,6 +661,18 @@ def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
             if not isinstance(val, dict):
                 logger.warning("provider 条目 %r 非 dict, 跳过", pid)
                 continue
+            raw_enabled = val.get("enabled", True)
+            if isinstance(raw_enabled, bool):
+                provider_enabled = raw_enabled
+            elif isinstance(raw_enabled, int) and raw_enabled in (0, 1):
+                provider_enabled = bool(raw_enabled)
+            elif isinstance(raw_enabled, str) and raw_enabled.strip().lower() in (_TRUTHY_STRINGS | _FALSY_STRINGS):
+                provider_enabled = raw_enabled.strip().lower() in _TRUTHY_STRINGS
+            else:
+                logger.warning("provider 条目 %r enabled=%r 非合法布尔，按启用处理", pid, raw_enabled)
+                provider_enabled = True
+            if not provider_enabled:
+                continue
             base_url = str(val.get("base_url", ""))
             api_key_env = str(val.get("api_key_env", ""))
             models_raw = val.get("models", {})
@@ -670,6 +682,8 @@ def _parse_providers_dict(raw: dict[str, Any]) -> dict[str, ProviderSpec]:
                     try:
                         # P1-3: 单模型条目独立 try/except（非法条目跳过, 不拖垮同 provider 其余模型）
                         if isinstance(mval, dict):
+                            if not _parse_bool_field(pid, mid, "enabled", mval, default=True):
+                                continue
                             models[mid] = _parse_model_spec(pid, mid, mval)
                         else:
                             models[mid] = ModelSpec()
@@ -816,7 +830,7 @@ def _synthesize_single_provider(settings: Settings) -> dict[str, ProviderSpec]:
 
 
 def load_registry(settings: Settings) -> ProviderRegistry:
-    """加载 Provider 注册表（优先级: env JSON > 文件 > L0 合成）.
+    """加载 Provider 注册表（优先级: env JSON > local overlay > tracked seed > L0 合成）.
 
     fail-soft: 任意通道 JSON 解析失败 → 回退 L0 合成 + degraded=True + degraded_reason 如实标注.
     """
@@ -839,7 +853,25 @@ def load_registry(settings: Settings) -> ProviderRegistry:
                 degraded_reason=f"MODEL_PROVIDERS env JSON malformed: {exc}",
             )
 
-    # 优先级 2: {data_dir}/providers.json
+    # 优先级 2: Web/本机管理的 ignored local overlay。它允许私有 endpoint/模型配置
+    # 留在本机，不污染公开仓库 tracked seed。
+    local_path = Path(settings.data_dir) / "providers.local.json"
+    if local_path.exists():
+        try:
+            data = json.loads(local_path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("providers.local.json must be a JSON object at top level")
+            providers = _parse_providers_dict(data)
+            return ProviderRegistry(providers=providers)
+        except (json.JSONDecodeError, ValueError, OSError) as exc:
+            providers = _synthesize_single_provider(settings)
+            return ProviderRegistry(
+                providers=providers,
+                degraded=True,
+                degraded_reason=f"providers.local.json malformed: {exc}",
+            )
+
+    # 优先级 3: {data_dir}/providers.json tracked seed
     file_path = Path(settings.data_dir) / "providers.json"
     if file_path.exists():
         try:
@@ -856,5 +888,5 @@ def load_registry(settings: Settings) -> ProviderRegistry:
                 degraded_reason=f"providers.json malformed: {exc}",
             )
 
-    # 优先级 3: L0 合成单 provider (零回归路径)
+    # 优先级 4: L0 合成单 provider (零回归路径)
     return ProviderRegistry(providers=_synthesize_single_provider(settings))

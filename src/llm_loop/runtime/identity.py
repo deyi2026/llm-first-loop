@@ -104,7 +104,12 @@ def compute_identity(mode: str | None = None) -> IdentityReport:
 
     data_dir = os.environ.get("DATA_DIR") or str(workspace / "data")
     config_candidates = [workspace / ".env", Path.home() / ".llm_loop" / ".env"]
-    providers_candidates = [Path(data_dir) / "providers.json", workspace / "data" / "providers.json"]
+    providers_candidates = [
+        Path(data_dir) / "providers.local.json",
+        Path(data_dir) / "providers.json",
+        workspace / "data" / "providers.local.json",
+        workspace / "data" / "providers.json",
+    ]
 
     return IdentityReport(
         workspace_root=str(workspace),

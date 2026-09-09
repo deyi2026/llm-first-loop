@@ -988,3 +988,44 @@ def test_invalid_chat_template_reasoning_effort_map_fails_open() -> None:
     )
     reg = load_registry(_settings(model_providers_raw=raw))
     assert reg.providers["local"].models["qwen"].reasoning_effort_map == {"high": "medium"}
+
+
+def test_local_provider_overlay_precedes_tracked_seed_and_filters_disabled(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(exist_ok=True)
+    (data_dir / "providers.json").write_text(
+        json.dumps({
+            "seed": {
+                "base_url": "https://seed.example/v1",
+                "api_key_env": "",
+                "default_model": "seed-model",
+                "models": {"seed-model": {"context": 131072}},
+            }
+        }),
+        encoding="utf-8",
+    )
+    (data_dir / "providers.local.json").write_text(
+        json.dumps({
+            "disabled": {
+                "enabled": False,
+                "base_url": "https://disabled.example/v1",
+                "api_key_env": "",
+                "default_model": "d",
+                "models": {"d": {"context": 131072}},
+            },
+            "local": {
+                "base_url": "https://local.example/v1",
+                "api_key_env": "",
+                "default_model": "on",
+                "models": {
+                    "off": {"enabled": False, "context": 131072},
+                    "on": {"enabled": True, "context": 262144},
+                },
+            },
+        }),
+        encoding="utf-8",
+    )
+    reg = load_registry(_settings(data_dir=str(data_dir)))
+    assert set(reg.providers) == {"local"}
+    assert set(reg.providers["local"].models) == {"on"}
+    assert reg.providers["local"].models["on"].context == 262144

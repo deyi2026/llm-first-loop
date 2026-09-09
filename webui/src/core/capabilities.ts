@@ -18,7 +18,8 @@ export type CapabilityKey =
   | "fork"
   | "feedback"
   | "jobs"
-  | "continuity";
+  | "continuity"
+  | "providerAdmin";
 
 export type Capabilities = Readonly<Record<CapabilityKey, boolean>>;
 
@@ -26,6 +27,7 @@ export type Capabilities = Readonly<Record<CapabilityKey, boolean>>;
 // 405 语义由路由层在 handler 之前产生，哑 id 不会触碰任何真实会话。
 const GLOBAL_PROBES: ReadonlyArray<readonly [CapabilityKey, string]> = [
   ["attachments", "/api/v1/attachments/recent?limit=1"],
+  ["providerAdmin", "/api/v1/providers"],
   ["fsTree", "/api/v1/fs/tree?path=."],
   ["pin", "/api/v1/sessions/__capability_probe__/pin"],
   ["archive", "/api/v1/sessions/__capability_probe__/archive"],
@@ -48,6 +50,7 @@ let state: Capabilities = {
   feedback: true,
   jobs: true,
   continuity: true,
+  providerAdmin: true,
 };
 let globalStarted = false;
 const probedSessions = new Set<string>();
@@ -168,6 +171,7 @@ export function __resetCapabilitiesForTest(): void {
     feedback: true,
     jobs: true,
     continuity: true,
+    providerAdmin: true,
   };
   globalStarted = false;
   manifestLoaded = false;
