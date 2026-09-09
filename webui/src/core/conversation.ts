@@ -1,14 +1,20 @@
 // Web V2：对话 store（消息流 / 流式状态 / 历史分页 / 发送·停止·重试）
 
 import { useSyncExternalStore } from "react";
-import type { ChatDoneData, ChatMessage } from "./types";
+import type { AttachmentFact, ChatDoneData, ChatMessage } from "./types";
 import { streamChatRequest, toChatMessage, buildAssistantNote, fetchHistory, fetchStreamStatus } from "./chat";
 import { sessionStore } from "./stores";
 
 const HISTORY_PAGE_SIZE = 100;
 
+interface ComposerPrefill {
+  text: string;
+  attachments: AttachmentFact[];
+}
+
 interface ConversationState {
   messages: ChatMessage[];
+  composerPrefill: ComposerPrefill | null;
   hasMoreHistory: boolean;
   loadedHistoryCount: number;
   streaming: boolean;
@@ -24,6 +30,7 @@ interface ConversationState {
 const listeners = new Set<() => void>();
 let state: ConversationState = {
   messages: [],
+  composerPrefill: null,
   hasMoreHistory: false,
   loadedHistoryCount: 0,
   streaming: false,
@@ -64,6 +71,13 @@ export const conversationStore = {
 
 export function useConversation(): ConversationState {
   return useSyncExternalStore(conversationStore.subscribe, () => conversationStore.getState());
+}
+
+/** Fill the composer after an explicit human edit/fork action. Never auto-send. */
+export function prefillComposer(text: string, attachments: AttachmentFact[] = []): void {
+  conversationStore.setState({
+    composerPrefill: { text, attachments: [...attachments] },
+  });
 }
 
 function abortForegroundSubscription(): void {
@@ -318,15 +332,7 @@ export function stopStreaming(): void {
   }
   // EVO-20260823 停止按钮修复: SSE abort 只停订阅（后台 run 线程继续执行），
   // 需调后端 cancel API 请求真正取消（runner.cancel → 引擎主循环检查点终止）。
-  // fail-open: 取消失败不影响前端状态（后端 run 终会自然结束落盘）。
-  const sid = sessionStore.getState().currentSessionId;
-  if (sid) {
-    void fetch("/api/v1/chat/cancel", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sid }),
-    }).catch(() => undefined);
-  }
+  // （2026-09-04 修复重复声明: 原第二段 const sid 重复取消逻辑与上方重复，删除）
 }
 
 /** 发送消息（含附件前缀注入；流式渲染思考/工具轮/正文；done 终态覆盖；错误可重试） */
@@ -335,6 +341,10 @@ export interface SendAttachment {
   result_text: string;
   status?: "ok" | "pending" | "degraded" | "error";
   detail?: string;
+  attachment_ref?: string;
+  content_type?: string;
+  size_bytes?: number;
+  sha256?: string;
 }
 
 export async function sendMessage(text: string, attachments: SendAttachment[]): Promise<void> {
@@ -344,24 +354,22 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
   const sessionId = sessionStore.getState().currentSessionId || null;
   // 本地发送即将写入/产生新消息：停空闲轮询防竞态（基线由完成后的重载路径重建）
   stopIdlePoll();
-  // 识别成功/待处理附件：内容注入上下文
-  const okPrefix = attachments
-    .filter((a) => a.status === "ok" || a.status === "pending")
-    .map((a) => `[附件 ${a.filename}] ${a.result_text}`)
-    .join("\n\n");
-  // 识别失败/降级附件：如实标记"图片未包含"（防 LLM 从历史旧图内容幻觉，2026-08-15 现场）
-  const failedPrefix = attachments
-    .filter((a) => a.status === "degraded" || a.status === "error")
-    .map(
-      (a) =>
-        `[附件 ${a.filename} 未能识别（${a.detail ?? "识别失败"}）——` +
-        `本次请求未包含该图片内容，请勿猜测或虚构图片内容]`
-    )
-    .join("\n\n");
-  const attachmentPrefix = [okPrefix, failedPrefix].filter(Boolean).join("\n\n");
-  const effectiveText = attachmentPrefix ? `${attachmentPrefix}\n\n${text}` : text;
+  // 附件以服务端 opaque ref 作为唯一授权引用；不再把提取全文拼进 human message。
+  // pending/degraded/error 不进入当前模型请求，仍只作为 Composer UI 事实展示。
+  const sendable = attachments.filter(
+    (a) => a.status === "ok" && typeof a.attachment_ref === "string" && a.attachment_ref.length > 0
+  );
+  const attachmentRefs = sendable.map((a) => ({ ref: a.attachment_ref! }));
+  const userAttachmentFacts: AttachmentFact[] = sendable.map((a) => ({
+    ref: a.attachment_ref!,
+    filename: a.filename,
+    content_type: a.content_type,
+    size_bytes: a.size_bytes,
+    sha256: a.sha256,
+  }));
 
-  const userMsg: ChatMessage = { role: "user", content: text };
+  const localSendTs = Date.now() / 1000;
+  const userMsg: ChatMessage = { role: "user", content: text, attachments: userAttachmentFacts, ts: localSendTs };
   const placeholder: ChatMessage = {
     role: "assistant",
     content: "",
@@ -370,6 +378,7 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
     note: null,
     streaming: true,
     streamStartedAt: Date.now(),
+    ts: localSendTs,
     tokens_in: 0,
     tokens_out: 0,
     tokens_cache_hit: 0,
@@ -386,10 +395,12 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
   const newSessionPending = sessionStore.getState().newSessionPending;
   if (newSessionPending) sessionStore.setNewSessionPending(false);
   const body = {
-    message: effectiveText,
+    message: text,
+    attachments: attachmentRefs,
     session_id: sessionId,
     model: sessionStore.getState().model,
     reasoning_effort: sessionStore.getState().reasoningEffort,
+    reasoning_mode: sessionStore.getState().thinkingMode,
     new_session: newSessionPending || undefined,
   };
   const controller = new AbortController();
@@ -456,6 +467,7 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
         toolCalls: data.tool_calls ?? null,
         note: buildAssistantNote(data),
         streaming: false,
+        ts: Date.now() / 1000,
         // M51/M52: 模型 + token 消耗结构化填充（页脚渲染，与历史恢复同源）
         model_used: data.model_used ?? "",
         tokens_in: data.tokens_in ?? 0,
@@ -466,12 +478,29 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
       finalize({
         role: "assistant",
         content: "",
+        reasoningContent: data.reasoning_content ?? (acc.reasoning || null),
         toolCalls: data.tool_calls,
-        note: "（无文字回答）",
+        note: buildAssistantNote(data) ?? "（无文字回答）",
         streaming: false,
+        ts: Date.now() / 1000,
+        model_used: data.model_used ?? "",
+        tokens_in: data.tokens_in ?? 0,
+        tokens_out: data.tokens_out ?? 0,
+        tokens_cache_hit: data.tokens_cache_hit ?? 0,
       });
     } else {
-      finalize({ role: "assistant", content: acc.answer || "（无文字回答）", note: null, streaming: false });
+      finalize({
+        role: "assistant",
+        content: acc.answer || "（无文字回答）",
+        reasoningContent: data.reasoning_content ?? (acc.reasoning || null),
+        note: buildAssistantNote(data),
+        streaming: false,
+        ts: Date.now() / 1000,
+        model_used: data.model_used ?? "",
+        tokens_in: data.tokens_in ?? 0,
+        tokens_out: data.tokens_out ?? 0,
+        tokens_cache_hit: data.tokens_cache_hit ?? 0,
+      });
     }
   } else {
     const detail = outcome.error?.detail ?? "服务内部错误。";
@@ -482,6 +511,7 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
       reasoningContent: acc.reasoning || null,
       note,
       streaming: false,
+      ts: Date.now() / 1000,
     });
     conversationStore.setState({ lastError: note });
   }

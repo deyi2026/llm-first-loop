@@ -89,7 +89,7 @@ describe("发送链路", () => {
     expect((ta as HTMLTextAreaElement).value).toBe("");
   });
 
-  it("降级附件：发送载荷携带【图片未包含】诚实标记（防幻觉）", async () => {
+  it("降级附件：失败事实留在 UI，不改写 user 载荷", async () => {
     mockBackend();
     // 捕获发送到后端的 body
     let sentBody = "";
@@ -112,9 +112,66 @@ describe("发送链路", () => {
     await sendMessage("识别", [
       { filename: "a.png", result_text: "", status: "degraded", detail: "图片识别失败" },
     ]);
-    expect(sentBody).toContain("未能识别");
-    expect(sentBody).toContain("未包含该图片内容");
+    expect(sentBody).toContain('"message":"识别"');
+    expect(sentBody).not.toContain("未能识别");
+    expect(sentBody).not.toContain("请勿猜测");
+    expect(sentBody).not.toContain("a.png");
     expect(convSt.getState().streaming).toBe(false);
+  });
+
+  it("成功附件：只发送 opaque ref，不发送提取全文或客户端路径事实", async () => {
+    let sentBody = "";
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/v1/chat/stream")) {
+        sentBody = String(init?.body ?? "");
+        return new Response(
+          sseStream([`data: {"type":"done","data":${JSON.stringify({ ...DONE, final_answer: "ok" })}}`]),
+          { status: 200 }
+        );
+      }
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+    const { sendMessage } = await import("./core/conversation");
+    const ref = "attachment://0123456789abcdef0123456789abcdef";
+    await sendMessage("分析", [
+      {
+        filename: "report.txt",
+        result_text: "THIS-LONG-EXTRACT-MUST-NOT-BE-SENT",
+        status: "ok",
+        attachment_ref: ref,
+        content_type: "text",
+        size_bytes: 1234,
+        sha256: "a".repeat(64),
+      },
+    ]);
+    const body = JSON.parse(sentBody);
+    expect(body.message).toBe("分析");
+    expect(body.attachments).toEqual([{ ref }]);
+    expect(sentBody).not.toContain("THIS-LONG-EXTRACT-MUST-NOT-BE-SENT");
+    expect(sentBody).not.toContain("report.txt");
+    expect(sentBody).not.toContain('"path"');
+    const user = conv.getState().messages.find((m) => m.role === "user");
+    expect(user?.content).toBe("分析");
+    expect(user?.attachments?.[0]).toMatchObject({ ref, filename: "report.txt", size_bytes: 1234 });
+  });
+
+  it("用户气泡显示结构化附件卡，不需要把附件正文塞进消息文本", () => {
+    const ref = "attachment://fedcba9876543210fedcba9876543210";
+    conv.setState({
+      messages: [
+        {
+          role: "user",
+          content: "",
+          attachments: [{ ref, filename: "report.pdf", size_bytes: 3 * 1024 * 1024 }],
+        },
+      ],
+      loadedHistoryCount: 1,
+    });
+    render(<MessageList />);
+    expect(screen.getByTestId("msg-attachments")).toBeInTheDocument();
+    expect(screen.getByText("report.pdf")).toBeInTheDocument();
+    expect(screen.getByText("3.0 MB")).toBeInTheDocument();
   });
 
   it("连续两次发送不卡死：第二次不再被 streaming 拦截", async () => {

@@ -3,10 +3,13 @@
 // 工具行折叠链、代码块 banner（语言+复制）+ 高亮 + 长块分块、笔记 footer）
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ChatMessage, ToolCallInfo } from "../../core/types";
+import type { AttachmentFact, ChatMessage, ToolCallInfo } from "../../core/types";
 import { renderMarkdown } from "../../core/markdown";
 import { formatTokens } from "../../core/chat";
-import { fetchFilePreview, submitFeedback } from "../../core/api";
+import { fetchFilePreview, forkSession, submitFeedback } from "../../core/api";
+import { useCapabilities } from "../../core/capabilities";
+import { loadHistory, prefillComposer } from "../../core/conversation";
+import { sessionStore } from "../../core/stores";
 import { zh } from "../../i18n/zh";
 
 /** 写剪贴板（navigator.clipboard 不可用/失败 → false，静默） */
@@ -49,8 +52,19 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function Markdown({ text, clickablePaths }: { text: string; clickablePaths?: Set<string> }) {
-  const html = useMemo(() => renderMarkdown(text, clickablePaths), [text, clickablePaths]);
+function Markdown({
+  text,
+  clickablePaths,
+  enableMath = true,
+}: {
+  text: string;
+  clickablePaths?: Set<string>;
+  enableMath?: boolean;
+}) {
+  const html = useMemo(
+    () => renderMarkdown(text, clickablePaths, { enableMath }),
+    [text, clickablePaths, enableMath]
+  );
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   // 代码块复制按钮 + 出产物内联路径链接：dangerouslySetInnerHTML 内容无法绑
   // React 事件 → 事件委托
@@ -92,7 +106,9 @@ function ThinkingBlock({ text, streaming }: { text: string; streaming?: boolean 
       </button>
       {open && (
         <div className="v2-think-body">
-          <Markdown text={text} />
+          {/* Reasoning often contains shell variables such as $d$p.  Treating those as
+              inline-TeX corrupts the diagnostic surface with KaTeX MathML. */}
+          <Markdown text={text} enableMath={false} />
           {streaming && <span className="v2-think-cursor">▌</span>}
         </div>
       )}
@@ -252,6 +268,28 @@ function ProducedFiles({ calls }: { calls: ToolCallInfo[] }) {
   );
 }
 
+function formatAttachmentSize(size?: number): string {
+  if (!size || size < 1) return "";
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function UserAttachments({ attachments }: { attachments?: AttachmentFact[] }) {
+  if (!attachments?.length) return null;
+  return (
+    <div className="v2-msg-attachments" data-testid="msg-attachments">
+      {attachments.map((a) => (
+        <div className="v2-attachment" key={a.ref} title={a.filename}>
+          <span aria-hidden="true">📎</span>
+          <span className="v2-attachment-name">{a.filename}</span>
+          {a.size_bytes ? <span className="v2-attachment-size">{formatAttachmentSize(a.size_bytes)}</span> : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function StreamingHint({ startedAt }: { startedAt: number | null }) {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
@@ -267,6 +305,39 @@ function StreamingHint({ startedAt }: { startedAt: number | null }) {
       {elapsed >= 5 ? `（已等待 ${elapsed}s，首 token 生成中，同会话串行排队中）` : ""}
     </div>
   );
+}
+
+function formatMessageTime(ts?: number): string | null {
+  if (!ts || !Number.isFinite(ts) || ts <= 0) return null;
+  const d = new Date(ts * 1000);
+  if (Number.isNaN(d.getTime())) return null;
+  const now = new Date();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  const time = new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(d);
+  if (sameDay) return time;
+  const date = new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+  return `${date} ${time}`;
+}
+
+function MessageTime({ ts }: { ts?: number }) {
+  const text = formatMessageTime(ts);
+  return text ? (
+    <time className="v2-msg-time" dateTime={new Date(ts! * 1000).toISOString()} title="按设备系统时区显示">
+      {text}
+    </time>
+  ) : null;
 }
 
 function FeedbackButtons({ sessionId, index }: { sessionId: string; index: number }) {
@@ -323,26 +394,95 @@ export function MessageItem({
   /** 会话级出产物路径集合（正文路径引用可点击打开；由 MessageList 计算） */
   producedPaths?: Set<string>;
 }) {
+  const caps = useCapabilities();
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState(msg.content);
+  const [editBusy, setEditBusy] = useState(false);
+  const [editError, setEditError] = useState("");
+
+  const editAndFork = async () => {
+    if (!sessionId || typeof msg.sourceIndex !== "number" || msg.sourceIndex < 0 || editBusy) return;
+    if (!editText.trim()) {
+      setEditError("编辑后的消息不能为空。");
+      return;
+    }
+    setEditBusy(true);
+    setEditError("");
+    const report = await forkSession(sessionId, "", msg.sourceIndex);
+    const newSessionId = report?.new_session_id ?? "";
+    if (!newSessionId) {
+      setEditBusy(false);
+      setEditError("创建分支失败；原会话未修改，请重试。");
+      return;
+    }
+    sessionStore.setCurrentSession(newSessionId);
+    localStorage.removeItem(`lfl-draft-${newSessionId}`);
+    await loadHistory(newSessionId);
+    prefillComposer(editText, msg.attachments ?? []);
+    setEditing(false);
+    setEditBusy(false);
+  };
+
   if (msg.role === "user") {
     return (
       <div className="v2-msg user" data-testid="msg-user">
         <div className="v2-msg-bubble user">
           {/* EVO-20260818: 用户输入消息与 assistant 同格式渲染（markdown/代码块/表格/
               公式/路径点击）——输入端（Composer）直接输入 markdown 语法即可 */}
-          <div className="v2-msg-text">
-            <Markdown text={msg.content} clickablePaths={producedPaths} />
-          </div>
+          <UserAttachments attachments={msg.attachments} />
+          {msg.content ? (
+            <div className="v2-msg-text">
+              <Markdown text={msg.content} clickablePaths={producedPaths} />
+            </div>
+          ) : null}
+          <MessageTime ts={msg.ts} />
         </div>
         <div className="v2-msg-actions">
           <CopyButton text={msg.content} />
+          {caps.fork && sessionId && typeof msg.sourceIndex === "number" && msg.sourceIndex >= 0 ? (
+            <button
+              type="button"
+              className="v2-copy-btn"
+              title="编辑并从这里创建新分支（原历史不变）"
+              onClick={() => {
+                setEditText(msg.content);
+                setEditError("");
+                setEditing((value) => !value);
+              }}
+            >
+              编辑并分支
+            </button>
+          ) : null}
         </div>
+        {editing ? (
+          <div className="v2-edit-fork" data-testid="edit-fork-panel">
+            <textarea
+              value={editText}
+              onChange={(event) => setEditText(event.target.value)}
+              rows={Math.min(8, Math.max(2, editText.split("\n").length))}
+              aria-label="编辑消息内容"
+              autoFocus
+            />
+            <div className="v2-edit-fork-note">原会话保持不可变；将在这条 USER 消息之前创建分支，并把编辑内容填入新分支输入框，不自动发送。</div>
+            {editError ? <div className="v2-panel-error">{editError}</div> : null}
+            <div className="v2-edit-fork-actions">
+              <button type="button" className="v2-btn primary" disabled={editBusy || !editText.trim()} onClick={() => void editAndFork()}>
+                {editBusy ? "创建中…" : "创建分支并填入"}
+              </button>
+              <button type="button" className="v2-btn ghost" disabled={editBusy} onClick={() => setEditing(false)}>取消</button>
+            </div>
+          </div>
+        ) : null}
       </div>
     );
   }
   if (msg.role === "tool") {
     return (
       <div className="v2-msg tool" data-testid="msg-tool">
-        <ToolReceipt msg={msg} />
+        <div className="v2-msg-body">
+          <ToolReceipt msg={msg} />
+          <MessageTime ts={msg.ts} />
+        </div>
       </div>
     );
   }
@@ -382,9 +522,10 @@ export function MessageItem({
           </div>
         ) : null}
         {msg.note ? <div className="v2-msg-note">{msg.note}</div> : null}
+        <MessageTime ts={msg.ts} />
         <div className="v2-msg-actions">
           <CopyButton text={msg.content} />
-          {typeof index === "number" && sessionId ? <FeedbackButtons sessionId={sessionId} index={index} /> : null}
+          {caps.feedback && typeof index === "number" && sessionId ? <FeedbackButtons sessionId={sessionId} index={index} /> : null}
         </div>
       </div>
     </div>

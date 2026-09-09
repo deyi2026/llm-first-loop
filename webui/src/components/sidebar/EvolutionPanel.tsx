@@ -65,6 +65,7 @@ export function EvolutionPanel() {
   const [detail, setDetail] = useState<Record<string, EvoDetail>>({});
   const [busy, setBusy] = useState(false);
   const [actionMsg, setActionMsg] = useState("");
+  const [confirmMsg, setConfirmMsg] = useState("");
   const [confirm, setConfirm] = useState<{ id: string; decision: string; requires_human?: boolean } | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [extraConfirmChecked, setExtraConfirmChecked] = useState(false); // 涉边界单条批准额外确认勾选（批 1 #9）
@@ -98,6 +99,7 @@ export function EvolutionPanel() {
   const review = (id: string, decision: string, reason: string, extraConfirm = false) => {
     setBusy(true);
     setActionMsg("");
+    setConfirmMsg("");
     return fetch("/api/v1/evolution/review", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -111,17 +113,18 @@ export function EvolutionPanel() {
     })
       .then(async (r) => {
         const d = await r.json().catch(() => ({ message: r.statusText }));
-        if (r.status === 409) {
-          setActionMsg("⚠️ " + (d.detail || "状态已变化，已刷新"));
-          load();
-        } else {
-          setActionMsg(d.message || (r.ok ? "已处理" : `失败(${r.status})`));
-          if (r.ok) load();
-        }
-        return r.ok; // UX 修复: 返回成败信号，弹窗据此决定关闭与否
+        const message = r.ok
+          ? String(d.message || "已处理")
+          : `⚠️ ${String(d.detail || d.message || `失败(${r.status})`)}`;
+        setActionMsg(message);
+        setConfirmMsg(message);
+        if (r.status === 409 || r.ok) load();
+        return r.ok; // 成功才关闭；失败原因必须留在当前弹窗内可见
       })
       .catch((err) => {
-        setActionMsg(`请求失败: ${String(err)}`);
+        const message = `请求失败: ${String(err)}`;
+        setActionMsg(message);
+        setConfirmMsg(message);
         return false;
       })
       .finally(() => setBusy(false));
@@ -282,6 +285,9 @@ export function EvolutionPanel() {
                         disabled={busy}
                         onClick={(e) => {
                           e.stopPropagation();
+                          setRejectReason("");
+                          setExtraConfirmChecked(false);
+                          setConfirmMsg("");
                           setConfirm({ id: it.id, decision: "accepted", requires_human: it.requires_human });
                         }}
                       >
@@ -293,6 +299,9 @@ export function EvolutionPanel() {
                         disabled={busy}
                         onClick={(e) => {
                           e.stopPropagation();
+                          setRejectReason("");
+                          setExtraConfirmChecked(false);
+                          setConfirmMsg("");
                           setConfirm({ id: it.id, decision: "rejected", requires_human: it.requires_human });
                         }}
                       >
@@ -343,6 +352,14 @@ export function EvolutionPanel() {
                 />
               </div>
             )}
+            {confirmMsg ? (
+              <div className="v2-evo-action-msg" role="status" data-testid="evo-confirm-message">
+                {confirmMsg}
+              </div>
+            ) : null}
+            {confirm.decision === "accepted" && confirm.requires_human && !extraConfirmChecked ? (
+              <div className="v2-evo-action-msg">请先勾选安全边界确认，再执行批准。</div>
+            ) : null}
             <div className="v2-evo-modal-actions">
               <button
                 className="v2-evo-btn approve"
@@ -362,17 +379,21 @@ export function EvolutionPanel() {
                     if (ok) {
                       setConfirm(null); // UX 修复: 成功才关弹窗；失败保持弹窗可重试（消息面板级显示）
                       setRejectReason("");
+                      setExtraConfirmChecked(false);
+                      setConfirmMsg("");
                     }
                   });
                 }}
               >
-                确定
+                {busy ? "处理中…" : "确定"}
               </button>
               <button
                 className="v2-evo-btn ghost"
                 onClick={() => {
                   setConfirm(null);
                   setRejectReason("");
+                  setExtraConfirmChecked(false);
+                  setConfirmMsg("");
                 }}
               >
                 取消

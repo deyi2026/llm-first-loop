@@ -4,6 +4,7 @@
 import { fetchSessions, fetchSharedCurrent } from "./api";
 import { refreshCurrentSessionMessages } from "./conversation";
 import { sessionStore } from "./stores";
+import { readSessionIdFromLocation } from "./sessionUrl";
 
 let lastSyncEvent = Date.now();
 let es: EventSource | null = null;
@@ -25,6 +26,17 @@ export async function refreshSessionsAndCurrent(): Promise<void> {
   // 回填为最近/共享会话；首条消息发送时由 conversation.ts 消费标记（new_session=true）
   // 并切换到服务端新建的会话。发送前若有其他路径需要会话 id，由发起方自行处理。
   if (sessionStore.getState().newSessionPending) return;
+  // Deep links are navigation metadata only: honor them only after validating
+  // the requested id against the current server-provided session list.
+  const requested = readSessionIdFromLocation();
+  if (
+    !sessionStore.getState().currentSessionId &&
+    requested &&
+    sessions.some((s) => s.session_id === requested)
+  ) {
+    sessionStore.setCurrentSession(requested);
+    return;
+  }
   if (!sessionStore.getState().currentSessionId) {
     const shared = await fetchSharedCurrent();
     if (shared) {

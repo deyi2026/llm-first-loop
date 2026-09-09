@@ -1,14 +1,20 @@
 // Web V2：顶栏（侧栏开关 / 会话主区标题 / 模型选择占位 / 主题切换 / 连接状态）
 
 import { zh } from "../../i18n/zh";
-import { themeStore, useConnection, useTheme } from "../../core/stores";
-import { fetchHealth } from "../../core/api";
-import { useEffect } from "react";
-import type { ThemePreference } from "../../core/stores";
+import { useConnection } from "../../core/stores";
+import { fetchAuthStatus, fetchHealth, logoutBrowserSession } from "../../core/api";
+import { useEffect, useState } from "react";
+import { SessionHeaderActions } from "./SessionHeaderActions";
 
-export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
+export function TopBar({
+  onToggleSidebar,
+  onShowFiles,
+}: {
+  onToggleSidebar: () => void;
+  onShowFiles?: () => void;
+}) {
   const { ok, version, checked } = useConnection();
-  const { preference, dark } = useTheme();
+  const [browserAuthenticated, setBrowserAuthenticated] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -25,6 +31,22 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
     };
   }, []);
 
+  useEffect(() => {
+    let alive = true;
+    void fetchAuthStatus().then((status) => {
+      if (alive) setBrowserAuthenticated(Boolean(status?.browser_login && status.authenticated));
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const handleLogout = async () => {
+    if (!(await logoutBrowserSession())) return;
+    setBrowserAuthenticated(false);
+    window.location.reload();
+  };
+
   return (
     <header className="v2-topbar" data-testid="topbar">
       <button
@@ -38,7 +60,18 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
       </button>
       <span style={{ fontSize: 13, color: "var(--dsw-alias-label-secondary)" }}>会话</span>
       <div style={{ flex: 1 }} />
-      <ThemeSwitch preference={preference} dark={dark} />
+      <SessionHeaderActions onShowFiles={onShowFiles} />
+      {browserAuthenticated && (
+        <button
+          type="button"
+          className="v2-btn ghost"
+          onClick={() => void handleLogout()}
+          aria-label="退出登录"
+          title="退出登录"
+        >
+          退出
+        </button>
+      )}
       <div className={`v2-status-badge ${checked && !ok ? "err" : ""}`} data-testid="status-badge">
         <span className="v2-status-dot" />
         <span>
@@ -47,29 +80,6 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
         </span>
       </div>
     </header>
-  );
-}
-
-function ThemeSwitch({ preference, dark }: { preference: ThemePreference; dark: boolean }) {
-  const items: Array<{ key: ThemePreference; label: string }> = [
-    { key: "system", label: zh.themeSystem },
-    { key: "light", label: zh.themeLight },
-    { key: "dark", label: zh.themeDark },
-  ];
-  return (
-    <div className="v2-theme-switch" data-testid="theme-switch">
-      {items.map((it) => (
-        <button
-          key={it.key}
-          type="button"
-          className={preference === it.key ? "active" : ""}
-          onClick={() => themeStore.setPreference(it.key)}
-          title={`${it.label}（当前${dark ? "暗" : "亮"}）`}
-        >
-          {it.label}
-        </button>
-      ))}
-    </div>
   );
 }
 

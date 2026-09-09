@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { SessionStats } from "./SessionStats";
+import { ContinuityBanner } from "./ContinuityBanner";
 import { useCurrentSessionId, useSessions } from "../../core/stores";
 import { fetchAllMessages } from "../../core/api";
 import { conversationStore, loadHistory, useConversation } from "../../core/conversation";
@@ -54,6 +55,7 @@ export function Conversation() {
           ⏳ 后台任务生成中（刷新/切换不会中断，完成后自动显示结果）
         </div>
       )}
+      {currentId ? <ContinuityBanner sessionId={currentId} /> : null}
       {current && (
         <div className="v2-conversation-header">
           <span className="v2-conversation-title">{current.title || current.session_id}</span>

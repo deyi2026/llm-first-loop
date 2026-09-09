@@ -12,7 +12,7 @@ describe("core fetch fail-open", () => {
 
   it("fetchModels returns empty catalog when fetch rejects", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("offline"); }));
-    await expect(fetchModels()).resolves.toEqual({ models: [], current: null });
+    await expect(fetchModels()).resolves.toEqual({ models: [], current: null, catalog: [] });
   });
 
   it("fetchHistory validates a 200 response shape before consumers map it", async () => {

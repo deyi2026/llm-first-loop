@@ -4,6 +4,8 @@ import { useSyncExternalStore } from "react";
 import type { SessionMeta } from "./api";
 
 export type ThemePreference = "system" | "light" | "dark";
+export type ThinkingMode = "auto" | "off" | "on";
+export type SidebarView = "sessions" | "files" | "evo" | "archived";
 
 interface SessionState {
   sessions: SessionMeta[];
@@ -12,6 +14,8 @@ interface SessionState {
   model: string | null;
   /** 会话级推理等级覆盖（对齐 DSH 模型+推理等级选择；chat 请求携带） */
   reasoningEffort: string | null;
+  /** 思维链开关（reasoning_mode：auto/off/on；本地 chat_template 模型选 on 才显式发 enable_thinking） */
+  thinkingMode: ThinkingMode;
   /** /new 语义标记（2026-08-18 修复跳回旧会话）: handleNew 后发送需 new_session=true */
   newSessionPending: boolean;
 }
@@ -39,6 +43,8 @@ function createStore<T extends object>(initial: T) {
 const MODEL_KEY = "lfl.selected.model";
 // 2026-08-20（用户反馈）: 刷新时模型等级也要保持——effort 与 model 同模式持久化
 const EFFORT_KEY = "lfl.selected.effort";
+// 2026-09-04（用户反馈）: V2 缺思维链开关（本地模型需显式 on）——thinkingMode 同模式持久化
+const THINKING_KEY = "lfl.selected.thinking";
 
 function readSavedModel(): string | null {
   try {
@@ -60,11 +66,22 @@ function readSavedEffort(): string | null {
   }
 }
 
+function readSavedThinking(): ThinkingMode {
+  try {
+    if (typeof window === "undefined") return "auto";
+    const v = localStorage.getItem(THINKING_KEY);
+    return v === "on" || v === "off" ? v : "auto";
+  } catch {
+    return "auto";
+  }
+}
+
 const sessionStoreRaw = createStore<SessionState>({
   sessions: [],
   currentSessionId: null,
   model: readSavedModel(),
   reasoningEffort: readSavedEffort(),
+  thinkingMode: readSavedThinking(),
   newSessionPending: false,
 });
 
@@ -90,6 +107,15 @@ export const sessionStore = {
     }
     sessionStoreRaw.setState({ reasoningEffort: effort });
   },
+  setThinkingMode: (mode: ThinkingMode) => {
+    try {
+      if (mode === "auto") localStorage.removeItem(THINKING_KEY);
+      else localStorage.setItem(THINKING_KEY, mode);
+    } catch {
+      /* fail-open */
+    }
+    sessionStoreRaw.setState({ thinkingMode: mode });
+  },
   setNewSessionPending: (v: boolean) => sessionStoreRaw.setState({ newSessionPending: v }),
   subscribe: sessionStoreRaw.subscribe,
 };
@@ -106,8 +132,29 @@ export function useModel(): string | null {
   return useSyncExternalStore(sessionStore.subscribe, () => sessionStore.getState().model);
 }
 
+export function useThinkingMode(): ThinkingMode {
+  return useSyncExternalStore(sessionStore.subscribe, () => sessionStore.getState().thinkingMode);
+}
+
 export function useReasoningEffort(): string | null {
   return useSyncExternalStore(sessionStore.subscribe, () => sessionStore.getState().reasoningEffort);
+}
+
+export function useNewSessionPending(): boolean {
+  return useSyncExternalStore(sessionStore.subscribe, () => sessionStore.getState().newSessionPending);
+}
+
+// ── 侧栏视图 store：允许顶栏“查看聊天中的文件”等真实导航动作打开对应视图 ──
+const sidebarViewStoreRaw = createStore<{ view: SidebarView }>({ view: "sessions" });
+
+export const sidebarViewStore = {
+  getState: sidebarViewStoreRaw.getState,
+  setView: (view: SidebarView) => sidebarViewStoreRaw.setState({ view }),
+  subscribe: sidebarViewStoreRaw.subscribe,
+};
+
+export function useSidebarView(): SidebarView {
+  return useSyncExternalStore(sidebarViewStore.subscribe, () => sidebarViewStore.getState().view);
 }
 
 // ── 主题 store（偏好持久化 localStorage + 跟随系统；body[data-ds-dark-theme] 属性生效） ──

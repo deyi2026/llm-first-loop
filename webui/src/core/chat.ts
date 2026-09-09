@@ -21,7 +21,7 @@ export interface StreamHandlers {
 }
 
 export async function streamChatRequest(
-  body: { message: string; session_id?: string | null; model?: string | null; resume?: boolean },
+  body: { message: string; session_id?: string | null; model?: string | null; resume?: boolean; reasoning_mode?: string },
   handlers: StreamHandlers,
   signal?: AbortSignal
 ): Promise<StreamOutcome> {
@@ -123,23 +123,49 @@ export async function fetchHistory(
   }
 }
 
+export interface ModelCapability {
+  id: string;
+  provider: string;
+  model: string;
+  context: number;
+  max_input_tokens?: number | null;
+  max_output_tokens?: number | null;
+  cost_tier?: string;
+  multimodal?: boolean;
+  reasoning_capable: boolean;
+  reasoning_control: string;
+  reasoning_control_supported: boolean;
+  reasoning_can_disable: boolean;
+  reasoning_efforts: string[];
+}
+
 export interface ModelCatalog {
   models: string[];
   current: string | null;
+  catalog: ModelCapability[];
 }
 
-/** /api/v1/models 真实契约：{models: string[], current: string|null}（模型 id 为字符串） */
+/** /api/v1/models: ids + mechanical model capability facts; never provider secrets. */
 export async function fetchModels(): Promise<ModelCatalog> {
+  const empty: ModelCatalog = { models: [], current: null, catalog: [] };
   try {
     const resp = await fetch("/api/v1/models");
-    if (!resp.ok) return { models: [], current: null };
-    const data = (await resp.json().catch(() => ({}))) as { models?: unknown; current?: unknown };
+    if (!resp.ok) return empty;
+    const data = (await resp.json().catch(() => ({}))) as {
+      models?: unknown; current?: unknown; catalog?: unknown;
+    };
+    const catalog = Array.isArray(data.catalog)
+      ? data.catalog.filter((item): item is ModelCapability =>
+          Boolean(item && typeof item === "object" && typeof (item as ModelCapability).id === "string")
+        )
+      : [];
     return {
       models: Array.isArray(data.models) ? data.models.map(String).filter(Boolean) : [],
       current: typeof data.current === "string" ? data.current : null,
+      catalog,
     };
   } catch {
-    return { models: [], current: null };
+    return empty;
   }
 }
 
@@ -147,13 +173,17 @@ export async function uploadFileBase64(
   filename: string,
   b64: string
 ): Promise<{ status: number; data: UploadResult }> {
-  const resp = await fetch("/api/v1/upload", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ filename, data: b64 }),
-  });
-  const data = (await resp.json().catch(() => ({}))) as UploadResult;
-  return { status: resp.status, data };
+  try {
+    const resp = await fetch("/api/v1/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename, data: b64 }),
+    });
+    const data = (await resp.json().catch(() => ({}))) as UploadResult;
+    return { status: resp.status, data };
+  } catch {
+    return { status: 0, data: { status: "error", detail: "网络连接失败，附件未上传。" } };
+  }
 }
 
 /** 历史 tool_calls 归一化：后端存储为 OpenAI 嵌套格式 {function:{name,arguments}}，
@@ -205,7 +235,9 @@ function normalizeToolCalls(raw: unknown): ToolCallInfo[] | null {
 export function toChatMessage(m: HistoryMessage): ChatMessage {
   return {
     role: m.role as ChatMessage["role"],
+    sourceIndex: typeof m.index === "number" && m.index >= 0 ? m.index : undefined,
     content: m.content ?? "",
+    attachments: Array.isArray(m.attachments) ? m.attachments : [],
     reasoningContent: m.reasoning_content ?? null,
     toolCalls: normalizeToolCalls(m.tool_calls),
     toolCallId: m.tool_call_id ?? null,
@@ -215,6 +247,7 @@ export function toChatMessage(m: HistoryMessage): ChatMessage {
     tokens_in: m.tokens_in ?? 0,
     tokens_out: m.tokens_out ?? 0,
     tokens_cache_hit: (m as { tokens_cache_hit?: number }).tokens_cache_hit ?? 0,
+    ts: typeof m.ts === "number" ? m.ts : 0,
   };
 }
 
@@ -223,6 +256,23 @@ export function buildAssistantNote(data: ChatDoneData): string | null {
   const note: string[] = [];
   if (data.truncated) note.push("（回答被截断，已有输出保留在对话中。发送“继续”可让模型接着输出。）");
   if (data.verification_note) note.push(data.verification_note);
+  if (data.fallback_receipt) {
+    const from = data.fallback_receipt.from ?? "";
+    const to = data.fallback_receipt.to ?? "";
+    const reason = data.fallback_receipt.reason ?? "";
+    note.push(`模型回退：${from || "未知"} → ${to || "未知"}${reason ? `（${reason}）` : ""}`);
+  }
+  if (data.reasoning_mode || data.reasoning_control || data.reasoning_capable !== undefined) {
+    const parts = [
+      `mode=${data.reasoning_mode ?? "unknown"}`,
+      `control=${data.reasoning_control ?? "unknown"}`,
+      `capable=${String(data.reasoning_capable ?? false)}`,
+      `supported=${String(data.reasoning_supported ?? false)}`,
+      `effective=${String(data.reasoning_effective ?? false)}`,
+    ];
+    if (data.reasoning_tokens != null) parts.push(`tokens=${data.reasoning_tokens}`);
+    note.push(`推理状态：${parts.join(" · ")}`);
+  }
   return note.length > 0 ? note.join("\n") : null;
 }
 

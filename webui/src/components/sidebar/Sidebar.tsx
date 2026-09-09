@@ -4,7 +4,14 @@
 import { useEffect, useState } from "react";
 import { channelLabel, archiveSession, deleteSession, fetchAgentsTree, fetchSessions, forkSession, setSessionPin, type SessionMeta } from "../../core/api";
 import { refreshSessionsAndCurrent } from "../../core/events";
-import { sessionStore, useCurrentSessionId, useSessions } from "../../core/stores";
+import { useCapabilities } from "../../core/capabilities";
+import {
+  sessionStore,
+  sidebarViewStore,
+  useCurrentSessionId,
+  useSessions,
+  useSidebarView,
+} from "../../core/stores";
 import { conversationStore } from "../../core/conversation";
 import { loadHistory } from "../../core/conversation";
 import { WorkspaceGroups, formatRelative } from "./WorkspaceGroups";
@@ -13,12 +20,15 @@ import { EvolutionPanel } from "./EvolutionPanel";
 import { zh } from "../../i18n/zh";
 
 export function Sidebar({ collapsed }: { collapsed: boolean }) {
+  const caps = useCapabilities();
   const sessions = useSessions();
   const currentId = useCurrentSessionId();
   const [query, setQuery] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  // 对齐 DSH：侧栏视图切换（会话列表 ↔ 文件树）
-  const [view, setView] = useState<"sessions" | "files" | "evo" | "archived">("sessions");
+  const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [actionError, setActionError] = useState("");
+  // 侧栏视图也可由顶栏真实导航动作驱动。
+  const view = useSidebarView();
   // 2026-08-21: 归档文件夹——旧会话收拢防误操作（fetchSessions(true) 含归档）
   const [archived, setArchived] = useState<SessionMeta[]>([]);
   useEffect(() => {
@@ -51,6 +61,8 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
   });
 
   const handleNew = () => {
+    if (busyAction) return;
+    setActionError("");
     sessionStore.setCurrentSession("");
     sessionStore.setNewSessionPending(true);  // 2026-08-18 修复跳回旧会话
     conversationStore.setState({
@@ -63,15 +75,52 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
     localStorage.removeItem("lfl-draft-new");
   };
 
+  const beginAction = (key: string): boolean => {
+    if (busyAction) return false;
+    setBusyAction(key);
+    setActionError("");
+    return true;
+  };
+
+  const finishAction = () => setBusyAction(null);
+
+  const handlePin = async (sid: string, pinned: boolean) => {
+    if (!beginAction(`pin:${sid}`)) return;
+    const ok = await setSessionPin(sid, pinned);
+    if (ok) await refreshSessionsAndCurrent();
+    else setActionError("置顶状态更新失败；会话未修改，请重试。");
+    finishAction();
+  };
+
+  const handleArchive = async (sid: string, archivedValue: boolean) => {
+    if (!beginAction(`archive:${sid}`)) return;
+    const ok = await archiveSession(sid, archivedValue);
+    if (ok) {
+      if (archivedValue) await refreshSessionsAndCurrent();
+      else setArchived((prev) => prev.filter((item) => item.session_id !== sid));
+    } else {
+      setActionError(archivedValue ? "归档失败；会话未修改，请重试。" : "恢复会话失败，请重试。");
+    }
+    finishAction();
+  };
+
   const handleDelete = async (sid: string) => {
+    if (busyAction) return;
     if (confirmDelete !== sid) {
       setConfirmDelete(sid); // 两步确认：再次点击才执行
+      setActionError("");
       window.setTimeout(() => setConfirmDelete((v) => (v === sid ? null : v)), 3000);
       return;
     }
+    if (!beginAction(`delete:${sid}`)) return;
     setConfirmDelete(null);
     const ok = await deleteSession(sid);
-    if (ok && currentId === sid) {
+    if (!ok) {
+      setActionError("删除失败；原会话仍保留，请重试。");
+      finishAction();
+      return;
+    }
+    if (currentId === sid) {
       sessionStore.setCurrentSession("");
       conversationStore.setState({
         messages: [],
@@ -81,15 +130,21 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
       });
     }
     await refreshSessionsAndCurrent();
+    finishAction();
   };
 
   const handleFork = async (sid: string) => {
+    if (!beginAction(`fork:${sid}`)) return;
     const report = await forkSession(sid);
-    if (report?.new_session_id) {
-      sessionStore.setCurrentSession(report.new_session_id);
-      await refreshSessionsAndCurrent();
-      await loadHistory(report.new_session_id);
+    if (!report?.new_session_id) {
+      setActionError("创建分支失败；原会话未修改，请重试。");
+      finishAction();
+      return;
     }
+    sessionStore.setCurrentSession(report.new_session_id);
+    await refreshSessionsAndCurrent();
+    await loadHistory(report.new_session_id);
+    finishAction();
   };
 
   if (collapsed) {
@@ -111,30 +166,32 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
           {zh.brandSub}
         </span>
       </div>
-      <button type="button" className="v2-new-session" data-testid="new-session" onClick={handleNew}>
+      <button type="button" className="v2-new-session" data-testid="new-session" onClick={handleNew} disabled={Boolean(busyAction)}>
         ＋ {zh.newSession}
       </button>
       <div className="v2-sidebar-tabs">
         <button
           type="button"
           className={`v2-tab ${view === "sessions" ? "active" : ""}`}
-          onClick={() => setView("sessions")}
+          onClick={() => sidebarViewStore.setView("sessions")}
           data-testid="tab-sessions"
         >
           💬 {zh.sessions}
         </button>
-        <button
-          type="button"
-          className={`v2-tab ${view === "files" ? "active" : ""}`}
-          onClick={() => setView("files")}
-          data-testid="tab-files"
-        >
-          📁 {zh.fileTree}
-        </button>
+        {caps.fsTree ? (
+          <button
+            type="button"
+            className={`v2-tab ${view === "files" ? "active" : ""}`}
+            onClick={() => sidebarViewStore.setView("files")}
+            data-testid="tab-files"
+          >
+            📁 {zh.fileTree}
+          </button>
+        ) : null}
         <button
           type="button"
           className={`v2-tab ${view === "evo" ? "active" : ""}`}
-          onClick={() => setView("evo")}
+          onClick={() => sidebarViewStore.setView("evo")}
           data-testid="tab-evo"
         >
           📋 {zh.evolutionShort}
@@ -142,14 +199,19 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
         <button
           type="button"
           className={`v2-tab ${view === "archived" ? "active" : ""}`}
-          onClick={() => setView("archived")}
+          onClick={() => sidebarViewStore.setView("archived")}
           data-testid="tab-archived"
         >
           🗄 归档
         </button>
       </div>
-      {view === "files" ? (
-        <FileTree />
+      {actionError ? (
+        <div className="v2-sidebar-error" role="status" data-testid="sidebar-action-error">
+          {actionError}
+        </div>
+      ) : null}
+      {view === "files" && caps.fsTree ? (
+        <FileTree sessionId={currentId ?? ""} />
       ) : view === "evo" ? (
         <EvolutionPanel />
       ) : view === "archived" ? (
@@ -174,18 +236,17 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                   <span className="v2-session-count">{s.message_count} 条 · 已归档</span>
                 </button>
                 <div className="v2-session-actions">
-                  <button
-                    type="button"
-                    className="v2-icon-btn"
-                    title="恢复为活跃会话"
-                    onClick={() =>
-                      void archiveSession(s.session_id, false).then(() =>
-                        setArchived((prev) => prev.filter((x) => x.session_id !== s.session_id))
-                      )
-                    }
-                  >
-                    ↪
-                  </button>
+                  {caps.archive ? (
+                    <button
+                      type="button"
+                      className="v2-icon-btn"
+                      title="恢复为活跃会话"
+                      disabled={Boolean(busyAction)}
+                      onClick={() => void handleArchive(s.session_id, false)}
+                    >
+                      ↪
+                    </button>
+                  ) : null}
                 </div>
               </div>
             ))
@@ -283,38 +344,50 @@ export function Sidebar({ collapsed }: { collapsed: boolean }) {
                     </span>
                   </button>
                   <div className="v2-session-actions" data-testid="session-actions">
-                    <button
-                      type="button"
-                      className="v2-icon-btn"
-                      title={s.pinned ? "取消置顶" : "置顶"}
-                      onClick={() => void setSessionPin(s.session_id, !s.pinned).then(() => refreshSessionsAndCurrent())}
-                    >
-                      📌
-                    </button>
-                    <button
-                      type="button"
-                      className="v2-icon-btn"
-                      title="在新会话中分支"
-                      onClick={() => void handleFork(s.session_id)}
-                    >
-                      ⑂
-                    </button>
-                    <button
-                      type="button"
-                      className="v2-icon-btn"
-                      title="归档到归档文件夹（防误操作）"
-                      onClick={() => void archiveSession(s.session_id, true).then(() => refreshSessionsAndCurrent())}
-                    >
-                      📁
-                    </button>
-                    <button
-                      type="button"
-                      className={`v2-icon-btn danger ${confirmDelete === s.session_id ? "confirming" : ""}`}
-                      title={confirmDelete === s.session_id ? "再次点击确认删除" : "删除会话"}
-                      onClick={() => void handleDelete(s.session_id)}
-                    >
-                      {confirmDelete === s.session_id ? "确认?" : "🗑"}
-                    </button>
+                    {caps.pin ? (
+                      <button
+                        type="button"
+                        className="v2-icon-btn"
+                        title={s.pinned ? "取消置顶" : "置顶"}
+                        disabled={Boolean(busyAction)}
+                        onClick={() => void handlePin(s.session_id, !s.pinned)}
+                      >
+                        📌
+                      </button>
+                    ) : null}
+                    {caps.fork ? (
+                      <button
+                        type="button"
+                        className="v2-icon-btn"
+                        title="在新会话中分支"
+                        disabled={Boolean(busyAction)}
+                        onClick={() => void handleFork(s.session_id)}
+                      >
+                        ⑂
+                      </button>
+                    ) : null}
+                    {caps.archive ? (
+                      <button
+                        type="button"
+                        className="v2-icon-btn"
+                        title="归档到归档文件夹（防误操作）"
+                        disabled={Boolean(busyAction)}
+                        onClick={() => void handleArchive(s.session_id, true)}
+                      >
+                        📁
+                      </button>
+                    ) : null}
+                    {caps.delete ? (
+                      <button
+                        type="button"
+                        className={`v2-icon-btn danger ${confirmDelete === s.session_id ? "confirming" : ""}`}
+                        title={confirmDelete === s.session_id ? "再次点击确认删除" : "删除会话"}
+                        disabled={Boolean(busyAction)}
+                        onClick={() => void handleDelete(s.session_id)}
+                      >
+                        {confirmDelete === s.session_id ? "确认?" : "🗑"}
+                      </button>
+                    ) : null}
                   </div>
                 </div>
                 {isExpanded && kids.map((c) => renderRow(c, depth + 1))}

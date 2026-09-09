@@ -5,17 +5,28 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { zh } from "../../i18n/zh";
 import { sendMessage, stopStreaming, useConversation, conversationStore } from "../../core/conversation";
-import { fetchModels, uploadFileBase64 } from "../../core/chat";
-import { sessionStore, useModel, useReasoningEffort } from "../../core/stores";
+import { fetchModels, uploadFileBase64, type ModelCatalog } from "../../core/chat";
+import { sessionStore } from "../../core/stores";
+import { useCapabilities } from "../../core/capabilities";
+import { InsertMenu } from "./InsertMenu";
+import { ModelControls } from "./ModelControls";
+import type { ComposerAttachment } from "./composerTypes";
+import { DictationButton } from "./DictationButton";
 
-type AttachStatus = "ok" | "pending" | "degraded" | "error";
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
-interface Attachment {
-  filename: string;
-  result_text: string;
-  preview?: string;
-  status: AttachStatus;
-  detail?: string;
+function newAttachmentId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `att-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function readDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(reader.error ?? new Error("file_read_failed"));
+    reader.onabort = () => reject(new Error("file_read_aborted"));
+    reader.readAsDataURL(file);
+  });
 }
 
 interface CommandOption {
@@ -32,13 +43,16 @@ interface CommandDef {
 }
 
 export function Composer() {
+  const caps = useCapabilities();
   const conv = useConversation();
   const [text, setText] = useState("");
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [cmdOpen, setCmdOpen] = useState(false);
   const [cmdMatch, setCmdMatch] = useState<CommandDef[]>([]);
   const [cmdOptions, setCmdOptions] = useState<CommandOption[]>([]);
   const [models, setModels] = useState<string[]>([]);
+  const [modelCatalog, setModelCatalog] = useState<ModelCatalog>({ models: [], current: null, catalog: [] });
+  const [dragActive, setDragActive] = useState(false);
   // 模型列表 ref：命令 options 闭包始终读最新值（cmdMatch 旧闭包竞态修复）
   const modelsRef = useRef<string[]>([]);
   const [hint, setHint] = useState("");
@@ -53,10 +67,11 @@ export function Composer() {
 
   // 模型目录（下拉与 /model 命令共用；initial current 同步到会话模型覆盖）
   useEffect(() => {
-    void fetchModels().then(({ models, current }) => {
-      modelsRef.current = models;
-      setModels(models);
-      if (current && !sessionStore.getState().model) sessionStore.setModel(current);
+    void fetchModels().then((catalog) => {
+      modelsRef.current = catalog.models;
+      setModels(catalog.models);
+      setModelCatalog(catalog);
+      if (catalog.current && !sessionStore.getState().model) sessionStore.setModel(catalog.current);
     });
   }, []);
 
@@ -140,6 +155,26 @@ export function Composer() {
     localStorage.setItem(draftKey(), text);
   }, [text]);
 
+  useEffect(() => {
+    const prefill = conv.composerPrefill;
+    if (!prefill) return;
+    setText(prefill.text);
+    setAttachments(
+      prefill.attachments.map((item) => ({
+        id: newAttachmentId(),
+        filename: item.filename,
+        result_text: "",
+        status: "ok" as const,
+        attachment_ref: item.ref,
+        content_type: item.content_type,
+        size_bytes: item.size_bytes,
+        sha256: item.sha256,
+      }))
+    );
+    conversationStore.setState({ composerPrefill: null });
+    window.setTimeout(() => taRef.current?.focus(), 0);
+  }, [conv.composerPrefill]);
+
   const autoGrow = () => {
     const el = taRef.current;
     if (!el) return;
@@ -211,9 +246,15 @@ export function Composer() {
 
   const doSend = async () => {
     const trimmed = text.trim();
-    // 2026-08-20: 允许"纯附件"发送（图片/文件无文字）——附件内容经 sendMessage
-    // 拼入 effectiveText（[附件 x] result_text），后端 message 非空可接收
-    if ((!trimmed && attachments.length === 0) || conv.streaming) return;
+    // 纯附件发送只允许已有成功识别内容的附件。pending/degraded/error 是 UI 事实，
+    // 不应被程序改写成 user prose，也不能制造空 message 请求。
+    const hasSendableAttachment = attachments.some((a) => a.status === "ok");
+    const hasUnreadyAttachment = attachments.some((a) => a.status !== "ok");
+    if (hasUnreadyAttachment) {
+      flashHint("有附件仍在处理或处理失败；请等待完成或移除后再发送。");
+      return;
+    }
+    if ((!trimmed && !hasSendableAttachment) || conv.streaming) return;
     // 命令分支（纯前端，对齐 M39）
     if (trimmed.startsWith("/")) {
       const [name, ...rest] = trimmed.slice(1).split(/\s+/);
@@ -233,65 +274,105 @@ export function Composer() {
     await sendMessage(trimmed, attachments);
   };
 
-  const onPickFile = async (file: File) => {
-    // 2026-08-20（用户反馈"上传慢"）: 先加 pending 占位即时反馈——图片/扫描件识别
-    // 走远程视觉 API（约 5-10s）, 白等无反馈像卡住; 占位显示"识别中…"诚实预期
-    setAttachments((prev) => [
-      ...prev,
-      { filename: file.name, result_text: "", status: "pending" },
-    ]);
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const b64 = String(reader.result).split(",")[1] ?? "";
-      const { status, data } = await uploadFileBase64(file.name, b64);
-      if (status === 200) {
-        const attach: Attachment = {
-          filename: file.name,
-          result_text: data.result_text ?? "",
-          preview: file.type.startsWith("image/") ? String(reader.result) : undefined,
-          status: (data.status as AttachStatus) ?? "error",
-          detail: data.detail,
-        };
-        setAttachments((prev) => prev.map((a) => (a.filename === file.name ? attach : a)));
-      } else {
-        setAttachments((prev) =>
-          prev.map((a) =>
-            a.filename === file.name
-              ? {
-                  filename: file.name,
-                  result_text: "",
-                  status: "error",
-                  detail: `上传失败（${status}）：${data.detail ?? "未知错误"}`,
-                }
-              : a
-          )
-        );
+  const addExistingAttachment = (attachment: Omit<ComposerAttachment, "id">) => {
+    setAttachments((prev) => {
+      if (attachment.attachment_ref && prev.some((item) => item.attachment_ref === attachment.attachment_ref)) {
+        flashHint("该附件已经加入当前消息。");
+        return prev;
       }
-    };
-    reader.readAsDataURL(file);
+      return [...prev, { ...attachment, id: newAttachmentId() }];
+    });
   };
 
-  const currentModel = useModel();
-  // 对齐 DSH：推理等级选择（low/medium/high——每请求携带）
-  const currentEffort = useReasoningEffort();
-  const EFFORT_OPTIONS = ["low", "medium", "high"];
+  const processFile = async (file: File) => {
+    const id = newAttachmentId();
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setAttachments((prev) => [
+        ...prev,
+        {
+          id,
+          filename: file.name,
+          result_text: "",
+          status: "error",
+          detail: `文件超过 10MB 上限（${(file.size / (1024 * 1024)).toFixed(1)}MB）。`,
+          size_bytes: file.size,
+        },
+      ]);
+      return;
+    }
+    setAttachments((prev) => [
+      ...prev,
+      { id, filename: file.name, result_text: "", status: "pending", size_bytes: file.size },
+    ]);
+    try {
+      const dataUrl = await readDataUrl(file);
+      const b64 = dataUrl.split(",")[1] ?? "";
+      if (!b64) throw new Error("empty_file_data");
+      const { status, data } = await uploadFileBase64(file.name, b64);
+      const serverStatus = data.status;
+      const hasRef = typeof data.attachment_ref === "string" && data.attachment_ref.length > 0;
+      const nextStatus: ComposerAttachment["status"] =
+        status === 200 && serverStatus === "ok" && hasRef
+          ? "ok"
+          : status === 200 && serverStatus === "degraded" && hasRef
+            ? "degraded"
+            : "error";
+      setAttachments((prev) =>
+        prev.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                result_text: data.result_text ?? "",
+                preview: file.type.startsWith("image/") ? dataUrl : undefined,
+                status: nextStatus,
+                detail:
+                  status === 0
+                    ? data.detail ?? "网络连接失败，附件未上传。"
+                    : nextStatus === "error" && !hasRef
+                      ? data.detail ?? "服务端未返回可验证的附件引用。"
+                      : data.detail,
+                attachment_ref: data.attachment_ref,
+                content_type: data.content_type,
+                size_bytes: data.size_bytes ?? file.size,
+                sha256: data.sha256,
+              }
+            : item
+        )
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      setAttachments((prev) =>
+        prev.map((item) =>
+          item.id === id
+            ? { ...item, status: "error", detail: `读取/上传失败：${detail}` }
+            : item
+        )
+      );
+    }
+  };
+
+  const queueFiles = (files: File[]) => {
+    for (const file of files) void processFile(file);
+  };
+
+
 
   return (
     <div className="v2-composer" data-testid="composer">
       {attachments.length > 0 && (
         <div className="v2-attachments">
-          {attachments.map((a, i) => (
-            <div key={i} className={`v2-attachment ${a.status}`}>
+          {attachments.map((a) => (
+            <div key={a.id} className={`v2-attachment ${a.status}`}>
               {a.preview ? <img src={a.preview} alt={a.filename} /> : <span>📄</span>}
               <span className="v2-attachment-name" title={a.detail ?? ""}>
                 {a.filename}
-                {a.status === "pending" ? "（识别中… 远程视觉约 5-10s）" : ""}
+                {a.status === "pending" ? "（处理中…）" : ""}
                 {a.status === "degraded" || a.status === "error" ? "（降级/失败）" : ""}
               </span>
               <button
                 type="button"
                 className="v2-icon-btn"
-                onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
+                onClick={() => setAttachments((prev) => prev.filter((item) => item.id !== a.id))}
                 title="移除"
               >
                 ✕
@@ -340,7 +421,20 @@ export function Composer() {
             ))}
         </div>
       )}
-      <div className="v2-composer-bar">
+      <div
+        className={`v2-composer-bar ${dragActive ? "drag-active" : ""}`}
+        onDragEnter={(event) => { event.preventDefault(); setDragActive(true); }}
+        onDragOver={(event) => { event.preventDefault(); setDragActive(true); }}
+        onDragLeave={(event) => {
+          if (event.currentTarget === event.target) setDragActive(false);
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragActive(false);
+          const files = Array.from(event.dataTransfer.files ?? []);
+          if (files.length) queueFiles(files);
+        }}
+      >
         <textarea
           ref={taRef}
           className="v2-composer-input"
@@ -348,54 +442,39 @@ export function Composer() {
           value={text}
           onChange={(e) => onTextChange(e.target.value)}
           onKeyDown={handleKeyDown}
+          onPaste={(event) => {
+            const files = Array.from(event.clipboardData.files ?? []);
+            if (files.length) {
+              event.preventDefault();
+              queueFiles(files);
+            }
+          }}
           rows={1}
           data-testid="composer-input"
         />
         <div className="v2-composer-tools">
           <div className="v2-composer-tools-left">
-            <select
-              className="v2-model-select"
-              value={currentModel ?? ""}
-              onChange={(e) => sessionStore.setModel(e.target.value || null)}
-              title={zh.modelSelect}
-              data-testid="model-select"
-            >
-              <option value="">{zh.modelDefault}</option>
-              {models.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
-            <select
-              className="v2-model-select v2-effort-select"
-              value={currentEffort ?? ""}
-              onChange={(e) => sessionStore.setReasoningEffort(e.target.value || null)}
-              title={zh.reasoningEffortSelect}
-              data-testid="effort-select"
-            >
-              <option value="">{zh.effortDefault}</option>
-              {EFFORT_OPTIONS.map((ef) => (
-                <option key={ef} value={ef}>
-                  {ef}
-                </option>
-              ))}
-            </select>
-            <label className="v2-icon-btn" title={zh.attach}>
-              📎
-              <input
-                type="file"
-                hidden
-                accept="image/*,.txt,.md,.pdf,.docx"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) void onPickFile(f);
-                  e.target.value = "";
-                }}
+            {caps.attachments ? (
+              <InsertMenu
+                disabled={conv.streaming}
+                onFiles={queueFiles}
+                onAddAttachment={addExistingAttachment}
               />
-            </label>
+            ) : null}
+            <ModelControls catalog={modelCatalog} />
           </div>
           <div className="v2-composer-tools-right">
+            <DictationButton
+              disabled={conv.streaming}
+              onTranscript={(transcript) => {
+                setText((value) => {
+                  if (!value) return transcript;
+                  return /\s$/.test(value) ? `${value}${transcript}` : `${value} ${transcript}`;
+                });
+                window.setTimeout(() => taRef.current?.focus(), 0);
+              }}
+              onError={flashHint}
+            />
             {conv.streaming ? (
               <button type="button" className="v2-btn primary" onClick={stopStreaming}>
                 ■ {zh.stop}
@@ -405,7 +484,11 @@ export function Composer() {
                 type="button"
                 className="v2-btn primary"
                 onClick={() => void doSend()}
-                disabled={conv.streaming || (!text.trim() && attachments.length === 0)}
+                disabled={
+                  conv.streaming ||
+                  attachments.some((a) => a.status !== "ok") ||
+                  (!text.trim() && !attachments.some((a) => a.status === "ok"))
+                }
               >
                 {zh.send}
               </button>

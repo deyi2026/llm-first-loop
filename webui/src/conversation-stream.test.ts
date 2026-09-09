@@ -142,4 +142,39 @@ describe("conversation stream ownership", () => {
     second.resolve(stopped);
     await run2;
   });
+
+  it("空正文 done 保留已流式 reasoning，并展示 fallback/推理实际状态", async () => {
+    h.streamChatRequest.mockImplementationOnce(async (_body, handlers: any) => {
+      handlers.onReasoningDelta?.("已收到推理");
+      return {
+        ok: true,
+        errorType: null,
+        error: null,
+        data: {
+          session_id: "s1",
+          final_answer: "",
+          tool_calls: [],
+          reasoning_content: null,
+          fallback_receipt: { from: "p/a", to: "p/b", reason: "unavailable" },
+          reasoning_mode: "on",
+          reasoning_capable: true,
+          reasoning_control: "chat_template",
+          reasoning_supported: true,
+          reasoning_effective: true,
+          reasoning_tokens: 12,
+        },
+      } satisfies StreamOutcome;
+    });
+
+    await sendMessage("A", []);
+
+    const msg = conversationStore.getState().messages.at(-1);
+    expect(msg?.content).toBe("（无文字回答）");
+    expect(msg?.reasoningContent).toBe("已收到推理");
+    expect(msg?.note).toContain("模型回退：p/a → p/b（unavailable）");
+    expect(msg?.note).toContain("mode=on");
+    expect(msg?.note).toContain("control=chat_template");
+    expect(msg?.note).toContain("effective=true");
+    expect(msg?.note).toContain("tokens=12");
+  });
 });

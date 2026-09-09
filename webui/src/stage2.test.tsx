@@ -75,6 +75,16 @@ describe("MessageItem", () => {
     expect(screen.getByText("你好")).toBeInTheDocument();
   });
 
+  it("消息时间按浏览器/操作系统本地时区显示，并保留 ISO 机器时间", () => {
+    const ts = 1_700_000_000;
+    render(<MessageItem msg={{ role: "user", content: "带时间消息", ts }} />);
+    const time = document.querySelector("time.v2-msg-time") as HTMLTimeElement | null;
+    expect(time).not.toBeNull();
+    expect(time?.dateTime).toBe(new Date(ts * 1000).toISOString());
+    expect(time?.title).toBe("按设备系统时区显示");
+    expect(time?.textContent).toMatch(/\d{2}:\d{2}:\d{2}$/);
+  });
+
   it("用户/助手消息均有一键复制按钮", () => {
     render(<MessageItem msg={{ role: "user", content: "用户内容" }} />);
     expect(screen.getByTestId("copy-btn")).toBeInTheDocument();
@@ -127,6 +137,20 @@ describe("MessageItem", () => {
     expect(screen.getByText("💭 思考过程（4 字）▸")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("think-block").querySelector("button")!);
     expect(screen.getByText("推理过程")).toBeInTheDocument();
+  });
+
+  it("思考块：shell 美元变量不经过 KaTeX，不产生 MathML 污染", () => {
+    const reasoning = 'check $d$p and "$p" from repo root';
+    render(
+      <MessageItem
+        msg={{ role: "assistant", content: "回答", reasoningContent: reasoning }}
+      />
+    );
+    fireEvent.click(screen.getByTestId("think-block").querySelector("button")!);
+    const body = screen.getByTestId("think-block").querySelector(".v2-think-body")!;
+    expect(body.textContent).toContain("$d$p");
+    expect(body.querySelector(".katex")).toBeNull();
+    expect(body.querySelector("math")).toBeNull();
   });
 
   it("工具链折叠 + 工具参数展开", () => {
