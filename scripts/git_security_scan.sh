@@ -52,6 +52,7 @@ _ALLOWLIST=(
   'docs/local/'                          # 本地过程文档（不入库，此处兜底）
   'docs/MIRROR-workspace-protocol.md' # 镜像协议文档（合法引用工作区路径，非泄露）
     "tests/unit/test_cache_guard.py"  # 缓存守卫测试样例（sk- 模式用例）
+  'tests/unit/test_r824_final_gates.py'  # R9 六门哨兵：虚构 sk- 样例验证 privacy BLOCK 保留（同 cache_block_reclassification 先例，头部自文档化）
   'skills/mirror-restart/SKILL.md'  # 镜像重启标准操作技能（命令需绝对路径，同镜像协议文档先例，非泄露）
   'tests/fixtures/wire/'  # R9 行为基线 wire fixtures：生产报文如实固化快照（报文内含工作区路径记录，非泄露；等价对照用途内容不可改写）
   'data/calib/h1c_control_bank.json'  # Gate0 项2 fixture 版本化：测试 bank 入库（PROBE 提交态自足；hash 背书于 tests/guards/fixture_manifest.json；非运行时数据，评测只读资产快照）
