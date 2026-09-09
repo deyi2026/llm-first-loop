@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from llm_loop.core.episode_history import project_active_tool_working_set
 from llm_loop.core.message import (
     Message,
@@ -9,6 +11,12 @@ from llm_loop.core.message import (
     ToolResultStatus,
 )
 from llm_loop.tools.registry import tool_result_to_message
+
+
+@pytest.fixture(autouse=True)
+def _isolated_grace_groups(monkeypatch):
+    """Isolate grace config from dev-shell leakage; tests rely on default 0."""
+    monkeypatch.setenv("LFL_TOOL_WORKING_SET_GRACE_GROUPS", "0")
 
 
 def _assistant(call_id: str) -> Message:
