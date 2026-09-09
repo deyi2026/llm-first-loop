@@ -39,9 +39,7 @@ def _route_env_guard(monkeypatch):
 
 def _read_jsonl(path):
     return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
     ]
 
 
@@ -219,14 +217,14 @@ def test_r531_5a_fingerprint_calibers_separated():
     trace: list[dict] = []
     ok = ToolResult(ToolResultStatus.SUCCESS, "ok", "x", "read_file")
     eng._record_single_receipt(
-        SimpleNamespace(messages=[], session_id="route-t"),
-        calls[0], ok, trace, round_index=0)
+        SimpleNamespace(messages=[], session_id="route-t"), calls[0], ok, trace, round_index=0
+    )
     eng._record_single_receipt(
-        SimpleNamespace(messages=[], session_id="route-t"),
-        calls[1], ok, trace, round_index=0)
+        SimpleNamespace(messages=[], session_id="route-t"), calls[1], ok, trace, round_index=0
+    )
     eng._record_single_receipt(
-        SimpleNamespace(messages=[], session_id="route-t"),
-        calls[2], ok, trace, round_index=0)
+        SimpleNamespace(messages=[], session_id="route-t"), calls[2], ok, trace, round_index=0
+    )
     fps = [t["fp_summary"] for t in trace]
     assert fps.count(_FP_A) == 2  # 执行口径同指纹次数与注入一致
     assert fps.count(_FP_B) == 1

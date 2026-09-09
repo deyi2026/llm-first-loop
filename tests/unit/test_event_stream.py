@@ -17,13 +17,40 @@ from llm_loop.introspection.search import RecordSearcher
 
 def _seed(dirpath: Path) -> None:
     with (dirpath / "action_trace.jsonl").open("w", encoding="utf-8") as f:
-        f.write(json.dumps({"ts": "2026-08-14T10:00:00", "phase": "run",
-                            "action_type": "tool.execute_command", "detail": "ls"}) + "\n")
-        f.write(json.dumps({"ts": "2026-08-14T10:00:01", "phase": "run",
-                            "action_type": "tool.edit_file", "detail": "修改 registry.py"}) + "\n")
+        f.write(
+            json.dumps(
+                {
+                    "ts": "2026-08-14T10:00:00",
+                    "phase": "run",
+                    "action_type": "tool.execute_command",
+                    "detail": "ls",
+                }
+            )
+            + "\n"
+        )
+        f.write(
+            json.dumps(
+                {
+                    "ts": "2026-08-14T10:00:01",
+                    "phase": "run",
+                    "action_type": "tool.edit_file",
+                    "detail": "修改 registry.py",
+                }
+            )
+            + "\n"
+        )
     with (dirpath / "exception_log.jsonl").open("w", encoding="utf-8") as f:
-        f.write(json.dumps({"ts": "2026-08-14T10:00:02", "phase": "run",
-                            "error_type": "TimeoutError", "detail": "工具超时"}) + "\n")
+        f.write(
+            json.dumps(
+                {
+                    "ts": "2026-08-14T10:00:02",
+                    "phase": "run",
+                    "error_type": "TimeoutError",
+                    "detail": "工具超时",
+                }
+            )
+            + "\n"
+        )
 
 
 def _searcher() -> RecordSearcher:
@@ -33,7 +60,7 @@ def _searcher() -> RecordSearcher:
 
 
 class _Adapter:
-    """可调用 + 方法双接口（同 factory 注入的适配器）. """
+    """可调用 + 方法双接口（同 factory 注入的适配器）."""
 
     def __init__(self, s: RecordSearcher) -> None:
         self._s = s
@@ -122,19 +149,32 @@ def test_event_stream_dispatch_empty_dir_honest():
 def test_event_stream_reads_actual_self_eval_and_declaration_files(tmp_path):
     """观测流必须读取真实落盘文件名，不能指向历史旧名导致“有数据却查不到”。"""
     (tmp_path / "declaration_check.jsonl").write_text(
-        json.dumps({
-            "id": "DC-1", "ts": "2026-09-03T10:00:00+00:00",
-            "consistent": False, "declarations": ["已完成"],
-            "discrepancies": ["无回执"], "cross_round_hits": [],
-            "tool_call_ids": ["tc-1"],
-        }, ensure_ascii=False) + "\n",
+        json.dumps(
+            {
+                "id": "DC-1",
+                "ts": "2026-09-03T10:00:00+00:00",
+                "consistent": False,
+                "declarations": ["已完成"],
+                "discrepancies": ["无回执"],
+                "cross_round_hits": [],
+                "tool_call_ids": ["tc-1"],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
         encoding="utf-8",
     )
     (tmp_path / "self_eval_log.jsonl").write_text(
-        json.dumps({
-            "eval_id": "SE-1", "ts": "2026-09-03T10:00:01+00:00",
-            "trigger": "manual", "summary": "honesty_rate=0.50",
-        }, ensure_ascii=False) + "\n",
+        json.dumps(
+            {
+                "eval_id": "SE-1",
+                "ts": "2026-09-03T10:00:01+00:00",
+                "trigger": "manual",
+                "summary": "honesty_rate=0.50",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
         encoding="utf-8",
     )
     searcher = RecordSearcher(audit_dir=tmp_path)

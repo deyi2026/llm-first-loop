@@ -22,7 +22,7 @@ BLOCKED_PAYLOADS = [
     "import importlib; importlib.import_module('playwright.sync_api')",
     "from importlib import import_module; import_module('playwright')",
     "getattr(importlib, 'import_module')('playwright')",
-    "exec(\"import playwright\")",
+    'exec("import playwright")',
     "eval(\"__import__('playwright')\")",
     "compile(\"import playwright\", '<x>', 'exec')",
     "import sys; m = sys.modules['playwright.sync_api']",
@@ -39,11 +39,7 @@ def test_ast_gate_blocks_all_dynamic_imports():
 
 def test_ast_gate_allows_normal_helper_code():
     """正常 helper 用法不受影响."""
-    ok, _ = _scan_code(
-        "goto('https://a.feishu.cn/x')\n"
-        "click('#btn')\n"
-        "print(axtree_text())"
-    )
+    ok, _ = _scan_code("goto('https://a.feishu.cn/x')\nclick('#btn')\nprint(axtree_text())")
     assert ok
 
 
@@ -59,26 +55,26 @@ def test_preamble_isolates_model_namespace():
 
 # ── 发现 3: URL 沙箱（host 精确校验，绕过 payload 全部拦截）──
 BLOCKED_URLS = [
-    "https://a.feishu.cn@example.com/",        # userinfo@host
-    "https://a.feishu.cn.evil.com/",           # 域后缀
+    "https://a.feishu.cn@example.com/",  # userinfo@host
+    "https://a.feishu.cn.evil.com/",  # 域后缀
     "https://a.feishu.cn:443@evil.com/steal",  # userinfo+端口混淆
-    "https://feishu.cn.evil.com/",             # 裸域+后缀
-    "http://0x7f000001/",                      # 十六进制 IP
-    "http://0x7f.0.0.1/",                      # 混合 IP 变体
-    "http://127.1/",                           # 短 IP
-    "http://2130706433/",                      # 十进制 IP
-    "http://[::1]/",                           # IPv6
-    "http://localhost.evil.com/",              # localhost 域后缀
-    "http://localhost@evil.com/",              # localhost userinfo
-    "http://127.0.0.1.evil.com/",              # IP 域后缀
-    "file:///etc/passwd",                      # 非 http(s) 协议
-    "https://evil.com/",                       # 普通外部域
+    "https://feishu.cn.evil.com/",  # 裸域+后缀
+    "http://0x7f000001/",  # 十六进制 IP
+    "http://0x7f.0.0.1/",  # 混合 IP 变体
+    "http://127.1/",  # 短 IP
+    "http://2130706433/",  # 十进制 IP
+    "http://[::1]/",  # IPv6
+    "http://localhost.evil.com/",  # localhost 域后缀
+    "http://localhost@evil.com/",  # localhost userinfo
+    "http://127.0.0.1.evil.com/",  # IP 域后缀
+    "file:///etc/passwd",  # 非 http(s) 协议
+    "https://evil.com/",  # 普通外部域
 ]
 
 ALLOWED_URLS = [
     "https://a.feishu.cn/x",
-    "https://feishu.cn/",                       # 裸域（修复 false-negative）
-    "https://FEISHU.CN/",                       # 大写（hostname 已 lower，大小写不敏感——修复 false-negative）
+    "https://feishu.cn/",  # 裸域（修复 false-negative）
+    "https://FEISHU.CN/",  # 大写（hostname 已 lower，大小写不敏感——修复 false-negative）
     "http://localhost:8902/",
     "http://localhost/",
     "http://127.0.0.1:8902/api/v1/health",
@@ -125,7 +121,6 @@ def test_child_workdir_limits_to_session(tmp_path, monkeypatch):
     wd = _child_workdir("secreview-test")
     assert wd == (tmp_path / "data" / "e2e" / "secreview-test").resolve()
     assert wd.exists()
-
 
 
 def test_child_workdir_rejects_path_traversal_before_mkdir(tmp_path, monkeypatch):

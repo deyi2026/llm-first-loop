@@ -19,7 +19,6 @@ coordinate/task 均只进入 interop UI/action 状态；外部内容必须经未
 # pyright: reportAttributeAccessIssue=false, reportGeneralTypeIssues=false
 # (02e 迁移保留: 动态宿主槽位属性静态不可解析，文件级关闭这两条——宿主态所有权在 LoopEngine)
 
-
 from __future__ import annotations
 
 import json
@@ -210,7 +209,9 @@ class InteropService:
             f.unlink()
             return True
         except Exception:  # noqa: BLE001 — 归档失败 fail-open，消息保留待人工处理
-            logger.warning("notify 自动归档失败（fail-open，保留 pending）: %s", f.name, exc_info=True)
+            logger.warning(
+                "notify 自动归档失败（fail-open，保留 pending）: %s", f.name, exc_info=True
+            )
             return False
 
     def _inject_interop_messages(

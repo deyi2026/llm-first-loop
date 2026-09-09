@@ -112,10 +112,7 @@ def test_reasoning_policy_binds_selected_local_provider_not_global_default() -> 
     # Local/unknown protocols have no affirmative requirement to discard model
     # reasoning. Agency-first therefore preserves the configured policy rather
     # than inventing a locality-based strip rule.
-    assert _reasoning_tail_for(
-        settings, resolved_label="local/m", registry_snapshot=registry
-    ) == 0
-
+    assert _reasoning_tail_for(settings, resolved_label="local/m", registry_snapshot=registry) == 0
 
 
 def test_reasoning_policy_explicit_none_strips_history_without_locality_guess() -> None:
@@ -123,41 +120,35 @@ def test_reasoning_policy_explicit_none_strips_history_without_locality_guess() 
     registry = _registry(
         "cognilocal", "https://loopback-gateway.invalid/v1", reasoning_replay="none"
     )
-    assert _reasoning_tail_for(
-        settings, resolved_label="cognilocal/m", registry_snapshot=registry
-    ) == -2
+    assert (
+        _reasoning_tail_for(settings, resolved_label="cognilocal/m", registry_snapshot=registry)
+        == -2
+    )
 
 
 def test_reasoning_policy_explicit_tool_calls_and_full_override_configured() -> None:
     settings = SimpleNamespace(reasoning_tail=-2, llm_base_url="http://localhost:1234/v1")
-    tool_registry = _registry(
-        "p", "https://provider.invalid/v1", reasoning_replay="tool_calls"
+    tool_registry = _registry("p", "https://provider.invalid/v1", reasoning_replay="tool_calls")
+    full_registry = _registry("p", "https://provider.invalid/v1", reasoning_replay="full")
+    assert (
+        _reasoning_tail_for(settings, resolved_label="p/m", registry_snapshot=tool_registry) == -1
     )
-    full_registry = _registry(
-        "p", "https://provider.invalid/v1", reasoning_replay="full"
-    )
-    assert _reasoning_tail_for(
-        settings, resolved_label="p/m", registry_snapshot=tool_registry
-    ) == -1
-    assert _reasoning_tail_for(
-        settings, resolved_label="p/m", registry_snapshot=full_registry
-    ) == 0
+    assert _reasoning_tail_for(settings, resolved_label="p/m", registry_snapshot=full_registry) == 0
+
 
 def test_reasoning_policy_binds_selected_deepseek_not_global_local() -> None:
     settings = SimpleNamespace(reasoning_tail=-2, llm_base_url="http://localhost:1234/v1")
     registry = _registry("deepseek", "https://api.deepseek.com/v1")
     # DeepSeek requests carrying tools require the historical reasoning replay.
-    assert _reasoning_tail_for(
-        settings, resolved_label="deepseek/m", registry_snapshot=registry
-    ) == 0
+    assert (
+        _reasoning_tail_for(settings, resolved_label="deepseek/m", registry_snapshot=registry) == 0
+    )
 
 
 def test_reasoning_policy_glm_preserves_historical_reasoning() -> None:
     settings = SimpleNamespace(reasoning_tail=0, llm_base_url="http://localhost:1234/v1")
     registry = _registry("glm", "https://open.bigmodel.cn/api/coding/paas/v4")
-    assert _reasoning_tail_for(
-        settings, resolved_label="glm/m", registry_snapshot=registry
-    ) == 0
+    assert _reasoning_tail_for(settings, resolved_label="glm/m", registry_snapshot=registry) == 0
 
 
 def test_reasoning_policy_minimax_thinking_off_is_prompt_neutral() -> None:
@@ -166,17 +157,17 @@ def test_reasoning_policy_minimax_thinking_off_is_prompt_neutral() -> None:
     # thinking=false means this model is not known to require interleaved replay;
     # it does not prove that historical reasoning must be destroyed. Preserve the
     # configured neutral policy unless a provider contract requires otherwise.
-    assert _reasoning_tail_for(
-        settings, resolved_label="minimax/m", registry_snapshot=registry
-    ) == 0
+    assert (
+        _reasoning_tail_for(settings, resolved_label="minimax/m", registry_snapshot=registry) == 0
+    )
 
 
 def test_reasoning_policy_minimax_thinking_on_preserves_interleaved_state() -> None:
     settings = SimpleNamespace(reasoning_tail=-2, llm_base_url="http://localhost:1234/v1")
     registry = _registry("minimax", "https://api.minimax.chat/v1", thinking=True)
-    assert _reasoning_tail_for(
-        settings, resolved_label="minimax/m", registry_snapshot=registry
-    ) == 0
+    assert (
+        _reasoning_tail_for(settings, resolved_label="minimax/m", registry_snapshot=registry) == 0
+    )
 
 
 def test_reasoning_policy_minimax_reasoning_split_requires_full_replay() -> None:
@@ -188,17 +179,18 @@ def test_reasoning_policy_minimax_reasoning_split_requires_full_replay() -> None
         thinking=False,
         reasoning_split=True,
     )
-    assert _reasoning_tail_for(
-        settings, resolved_label="minimax/m", registry_snapshot=registry
-    ) == 0
+    assert (
+        _reasoning_tail_for(settings, resolved_label="minimax/m", registry_snapshot=registry) == 0
+    )
 
 
 def test_reasoning_policy_unknown_provider_fails_safe_to_configured_policy() -> None:
     settings = SimpleNamespace(reasoning_tail=3, llm_base_url="http://localhost:1234/v1")
     registry = _registry("futurecloud", "https://future.invalid/v1")
-    assert _reasoning_tail_for(
-        settings, resolved_label="futurecloud/m", registry_snapshot=registry
-    ) == 3
+    assert (
+        _reasoning_tail_for(settings, resolved_label="futurecloud/m", registry_snapshot=registry)
+        == 3
+    )
 
 
 def test_tool_call_only_projection_helper_preserves_tool_protocol_reasoning() -> None:

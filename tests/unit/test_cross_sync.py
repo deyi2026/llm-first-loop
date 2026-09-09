@@ -20,8 +20,15 @@ def _watcher() -> CrossSyncWatcher:
     )
 
 
-def _msg(role: str, content: str, *, model_used: str = "", tokens_in: int = 0,
-         tokens_out: int = 0, tokens_cache_hit: int = 0) -> Message:
+def _msg(
+    role: str,
+    content: str,
+    *,
+    model_used: str = "",
+    tokens_in: int = 0,
+    tokens_out: int = 0,
+    tokens_cache_hit: int = 0,
+) -> Message:
     return Message(
         role=role,
         content=content,
@@ -38,8 +45,14 @@ def test_push_includes_model_and_tokens():
     w = _watcher()
     msgs = [
         _msg("user", "问题"),
-        _msg("assistant", "回答内容", model_used="deepseek/deepseek-chat",
-             tokens_in=1234, tokens_out=345, tokens_cache_hit=1100),
+        _msg(
+            "assistant",
+            "回答内容",
+            model_used="deepseek/deepseek-chat",
+            tokens_in=1234,
+            tokens_out=345,
+            tokens_cache_hit=1100,
+        ),
     ]
     out = w._format_push("测试会话", msgs)
     assert len(out) == 1

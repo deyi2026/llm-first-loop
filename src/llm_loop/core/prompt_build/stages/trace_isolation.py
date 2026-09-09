@@ -4,6 +4,7 @@
 （KEEP-HARD 等价——本模块只做编排与产物显式化，行为逐字节不变）。
 三态分流（R8.24-D D-D1）与 fail-open（spec 5.4.3-1）语义原样保留。
 """
+
 from __future__ import annotations
 
 import logging
@@ -63,10 +64,7 @@ def run_trace_isolation(
         )
         if _findings:
             for _f in _findings:
-                if (
-                    _f.action == "downgrade_to_appendix"
-                    and 0 <= _f.message_ref < len(base)
-                ):
+                if _f.action == "downgrade_to_appendix" and 0 <= _f.message_ref < len(base):
                     _m = base[_f.message_ref]
                     _drop_ids.add(id(_m))
                     _leak_content = str(_m.content or "")
@@ -124,11 +122,7 @@ def run_trace_isolation(
                         )
             if _drop_ids:
                 base = [_m for _m in base if id(_m) not in _drop_ids]
-                base_indices = [
-                    index_by_id[id(_m)]
-                    for _m in base
-                    if id(_m) in index_by_id
-                ]
+                base_indices = [index_by_id[id(_m)] for _m in base if id(_m) in index_by_id]
         # 特征兜底（默认 off；warn 仅告警不改视图，spec 5.4.1-2；
         # 人类凭据消息豁免，spec 5.4.3-2）
         if current_signature_mode() == "warn":

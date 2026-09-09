@@ -117,6 +117,7 @@ def test_reset_clear_buckets_false_keeps():
 
 # ── EVO-20260825: session 分桶隔离（§5.3 并发串台）──
 
+
 def test_session_buckets_isolated():
     """并发多会话命中统计互不污染——会话 A 低命中不影响会话 B 快照."""
     m = CacheHealthMonitor(min_runs=3, min_tokens=1000)
@@ -145,8 +146,13 @@ def test_session_breaker_hit_win_isolated():
     for _ in range(3):
         m.record(20000, 19500, session_id="healthy-sess")  # 97.5% 高命中
     for _ in range(3):
-        m.note_build_result(compacted=True, anchor_moved=True, chars_total=300_000,
-                            budget=300_000, session_id="storm-sess")
+        m.note_build_result(
+            compacted=True,
+            anchor_moved=True,
+            chars_total=300_000,
+            budget=300_000,
+            session_id="storm-sess",
+        )
     # 仅风暴会话进入 breaker（共信号不跨会话稀释）
     assert m.breaker_active_for("storm-sess") is True
     assert m.breaker_active_for("healthy-sess") is False
@@ -196,6 +202,7 @@ def test_note_view_not_shrinking_writes_breaker_audit(tmp_path):
 
 
 # ── 任务10（§5.6）: 多会话并发统计隔离验证 ──
+
 
 def test_guard_hit_win_isolated_across_sessions():
     """PromptGuard._hit_win 按 session_id 分桶——会话 A 低命中率不污染会话 B 的
@@ -251,8 +258,13 @@ def test_breaker_audit_rows_carry_session_id(tmp_path):
     for _ in range(3):
         m.record(20000, 2000, session_id="sess-break-A")
     for _ in range(3):
-        m.note_build_result(compacted=True, anchor_moved=True, chars_total=300_000,
-                            budget=300_000, session_id="sess-break-A")
+        m.note_build_result(
+            compacted=True,
+            anchor_moved=True,
+            chars_total=300_000,
+            budget=300_000,
+            session_id="sess-break-A",
+        )
     assert m.breaker_active_for("sess-break-A") is True
     lines = audit.read_text(encoding="utf-8").strip().splitlines()
     assert lines, "breaker 审计应有记录"

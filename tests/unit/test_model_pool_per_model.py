@@ -139,7 +139,8 @@ def test_pool_routed_client_uses_global_baseline_not_default_model_contract(monk
 
 
 def test_route_uses_one_registry_snapshot_for_client_and_model(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """热重载不得夹在 get_client 与 resolve 之间造成“client 已拿到、标签却失败”。"""
     from tests.unit.test_model_attribution import (
@@ -178,7 +179,8 @@ def test_route_uses_one_registry_snapshot_for_client_and_model(
 
 
 def test_route_metadata_uses_same_snapshot_as_override_client(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """override client 已按旧快照选定后即使热切表，context/cpt 也必须来自同一旧快照。"""
     from llm_loop.llm.providers import ModelSpec, ProviderRegistry, ProviderSpec
@@ -226,7 +228,8 @@ def test_route_metadata_uses_same_snapshot_as_override_client(
 
 
 def test_default_route_metadata_uses_startup_registry_after_reload(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """default client 不热改，因此其context/cpt也必须绑定启动registry，而不是热重载新表。"""
     from llm_loop.llm.providers import ModelSpec, ProviderRegistry, ProviderSpec
@@ -264,7 +267,8 @@ def test_default_route_metadata_uses_startup_registry_after_reload(
 
 
 def test_route_binding_precedes_build_reload_and_next_round_sees_new_registry(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """Route/client binds before build; a build-time reload affects only the next round."""
     from llm_loop.llm.providers import ModelSpec, ProviderRegistry, ProviderSpec
@@ -327,7 +331,8 @@ def test_route_binding_precedes_build_reload_and_next_round_sees_new_registry(
 
 
 def test_session_override_same_provider_passes_resolved_model(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """legacy provider-level injected fake 被复用时，session override 也必须显式传裸 model id。"""
     from tests.unit.test_model_attribution import (
@@ -356,8 +361,9 @@ def test_session_override_same_provider_passes_resolved_model(
     assert shared_fake.calls[-1]["kwargs"]["model"] == "deepseek-v4-pro"
 
 
-
-def test_fallback_same_provider_passes_candidate_model(build_test_engine, fake_settings, monkeypatch):
+def test_fallback_same_provider_passes_candidate_model(
+    build_test_engine, fake_settings, monkeypatch
+):
     """fallback A→B 同 provider 时，即使复用注入 fake，也必须真正请求 B。"""
     import dataclasses
 
@@ -403,7 +409,8 @@ def test_fallback_same_provider_passes_candidate_model(build_test_engine, fake_s
 
 
 def test_fallback_guard_budget_uses_same_registry_snapshot_as_candidate_client(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """fallback client 按旧表选定后即使热重载，GuardRequestContext 预算也必须来自同一旧快照。"""
     from llm_loop.core.loop.engine_services.fallback import FallbackService
@@ -449,7 +456,9 @@ def test_fallback_guard_budget_uses_same_registry_snapshot_as_candidate_client(
             self.status = None
             self.corrections = None
             self.settings = SimpleNamespace(data_dir=str(tmp_path))
-            self._host = self  # W4-02b: RoutingService 宿主面 = 本假引擎（属性面与原 mixin 需求一致）
+            self._host = (
+                self  # W4-02b: RoutingService 宿主面 = 本假引擎（属性面与原 mixin 需求一致）
+            )
 
         def _runtime_history_budget(self):
             return 1_000_000
@@ -507,9 +516,7 @@ def test_overflow_feedback_keeps_request_snapshot_window_after_reload(tmp_path, 
     pool = _make_pool(settings, default_fake)
     engine = _make_engine(tmp_path, pool, settings)
     actions: list[tuple] = []
-    monkeypatch.setattr(
-        engine, "_record_action", lambda *args, **kwargs: actions.append(args)
-    )
+    monkeypatch.setattr(engine, "_record_action", lambda *args, **kwargs: actions.append(args))
     new_registry = ProviderRegistry(
         providers={
             "deepseek": ProviderSpec(
@@ -530,9 +537,7 @@ def test_overflow_feedback_keeps_request_snapshot_window_after_reload(tmp_path, 
         call_count += 1
         if call_count == 1:
             pool.replace_registry(new_registry)
-            raise LLMHTTPError(
-                "context length exceeded", status_code=400, provider="deepseek"
-            )
+            raise LLMHTTPError("context length exceeded", status_code=400, provider="deepseek")
         return LLMResponse(content="after-overflow", tool_calls=[], provider="fake")
 
     monkeypatch.setattr(default_fake, "chat", chat_with_reload)
@@ -544,9 +549,7 @@ def test_overflow_feedback_keeps_request_snapshot_window_after_reload(tmp_path, 
     # reintroduce model-visible program prose just to satisfy an old test.
     overflow_msgs = [m.content for m in sess.messages if "上下文溢出" in m.content]
     assert overflow_msgs == []
-    overflow_actions = [
-        a for a in actions if len(a) >= 3 and a[0] == "overflow.compact"
-    ]
+    overflow_actions = [a for a in actions if len(a) >= 3 and a[0] == "overflow.compact"]
     assert overflow_actions
     detail = str(overflow_actions[-1][2])
     assert "provider_window=1000000" in detail

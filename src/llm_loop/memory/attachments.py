@@ -151,7 +151,9 @@ class AttachmentStore:
 
         safe_excerpt = str(excerpt or "")[:ATTACHMENT_EXCERPT_CHARS]
         source_text = str(extracted_text or "")
-        source_text_sha = hashlib.sha256(source_text.encode("utf-8")).hexdigest() if source_text else ""
+        source_text_sha = (
+            hashlib.sha256(source_text.encode("utf-8")).hexdigest() if source_text else ""
+        )
         if source_text:
             extracted_path = record_dir / "extracted.txt"
             extracted_path.write_text(source_text, encoding="utf-8")
@@ -243,9 +245,7 @@ class AttachmentStore:
             page_count_raw = raw.get("page_count")
             pages_extracted_raw = raw.get("pages_extracted")
             page_count = None if page_count_raw is None else int(page_count_raw)
-            pages_extracted = (
-                None if pages_extracted_raw is None else int(pages_extracted_raw)
-            )
+            pages_extracted = None if pages_extracted_raw is None else int(pages_extracted_raw)
             return AttachmentRecord(
                 attachment_id=str(raw["attachment_id"]),
                 ref=str(raw["ref"]),
@@ -335,9 +335,7 @@ class AttachmentStore:
         _atomic_write_json(record_dir / "metadata.json", self._to_json(updated))
         return updated
 
-    def ensure_full_text(
-        self, ref: str, *, workspace_scope: str
-    ) -> tuple[AttachmentRecord, str]:
+    def ensure_full_text(self, ref: str, *, workspace_scope: str) -> tuple[AttachmentRecord, str]:
         """Return a complete model-readable text representation when mechanically possible.
 
         Existing complete extracted text is verified and reused. Legacy or initially
@@ -363,9 +361,7 @@ class AttachmentStore:
             # Current local scan-PDF vision fallback yields one model-readable page.
             # Preserve that mechanical coverage fact rather than pretending all pages
             # were extracted simply because page_count is known.
-            record = AttachmentRecord(
-                **{**record.__dict__, "pages_extracted": 1}
-            )
+            record = AttachmentRecord(**{**record.__dict__, "pages_extracted": 1})
         updated = self._persist_full_extraction(
             record,
             text,

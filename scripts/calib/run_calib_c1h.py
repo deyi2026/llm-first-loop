@@ -186,15 +186,33 @@ SCORER_VERSION = "v1.6-h2"
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="C1H H2/H2b/H2c calibration runner (frozen matrix, DeepSeek)")
-    parser.add_argument("--stage", type=str, default="h2", choices=["h2", "h2b", "h2c"], help="h2=H01-H08(dev data) / h2b=H09-H16(holdout round 2) / h2c=H17-H24(holdout round 3)")
+    parser = argparse.ArgumentParser(
+        description="C1H H2/H2b/H2c calibration runner (frozen matrix, DeepSeek)"
+    )
+    parser.add_argument(
+        "--stage",
+        type=str,
+        default="h2",
+        choices=["h2", "h2b", "h2c"],
+        help="h2=H01-H08(dev data) / h2b=H09-H16(holdout round 2) / h2c=H17-H24(holdout round 3)",
+    )
     parser.add_argument("--run", type=str, default=None, help="run_id，如 CAL-49 / CAL-73 / CAL-97")
-    parser.add_argument("--from", dest="from_run", type=str, default=None, help="从该 run 起（含）执行后续全部")
+    parser.add_argument(
+        "--from", dest="from_run", type=str, default=None, help="从该 run 起（含）执行后续全部"
+    )
     parser.add_argument("--all", action="store_true", help="按冻结矩阵顺序执行全部 24 runs")
-    parser.add_argument("--dry", action="store_true", help="dry 模式：FakeCalibLLM(H2/H2b/H2c)，零 LLM 零网络")
-    parser.add_argument("--dry-mode", type=str, default="pass", choices=["pass", "fail"], help="dry 模式脚本")
-    parser.add_argument("--snapshot", action="store_true", help="快照 resolved DeepSeek request parameters")
-    parser.add_argument("--regrade", action="store_true", help="仅用当前 H2/H2b/H2c scorer 重评分已有 run 结果")
+    parser.add_argument(
+        "--dry", action="store_true", help="dry 模式：FakeCalibLLM(H2/H2b/H2c)，零 LLM 零网络"
+    )
+    parser.add_argument(
+        "--dry-mode", type=str, default="pass", choices=["pass", "fail"], help="dry 模式脚本"
+    )
+    parser.add_argument(
+        "--snapshot", action="store_true", help="快照 resolved DeepSeek request parameters"
+    )
+    parser.add_argument(
+        "--regrade", action="store_true", help="仅用当前 H2/H2b/H2c scorer 重评分已有 run 结果"
+    )
     parser.add_argument("--out", type=Path, default=None, help="输出目录（默认按 stage）")
     args = parser.parse_args(argv)
 
@@ -266,7 +284,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"未知 run_id: {args.from_run}", file=sys.stderr)
             return 2
         run_ids = [r for r, _, _ in matrix]
-        targets = matrix[run_ids.index(args.from_run):]
+        targets = matrix[run_ids.index(args.from_run) :]
     elif args.run:
         if args.run not in matrix_by_run:
             print(f"未知 run_id: {args.run}", file=sys.stderr)
@@ -279,10 +297,18 @@ def main(argv: list[str] | None = None) -> int:
 
     summary = []
     for run_id, seed_id, variant in targets:
-        print(f"[{run_id}] seed={seed_id} variant={variant} {'dry' if args.dry else 'real'} ...", flush=True)
+        print(
+            f"[{run_id}] seed={seed_id} variant={variant} {'dry' if args.dry else 'real'} ...",
+            flush=True,
+        )
         result = execute_run(
-            run_id, seed_id, variant, dry=args.dry, dry_mode=args.dry_mode,
-            provider=PROVIDER, data=data,
+            run_id,
+            seed_id,
+            variant,
+            dry=args.dry,
+            dry_mode=args.dry_mode,
+            provider=PROVIDER,
+            data=data,
         )
         score = score_run_h2(result)
         result["score"] = score

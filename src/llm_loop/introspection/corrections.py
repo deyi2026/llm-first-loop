@@ -61,7 +61,11 @@ class CorrectionContext:
         default_factory=lambda: {
             "max_iterations": {"type": "integer", "min": 5, "max": 500},
             "timeout_s": {"type": "number", "min": 5, "max": 600},
-            "history_budget": {"type": "integer", "min": 1000, "max": 200000},  # EVO-20260818: 收敛上限 1M→200K（spec §5.1.1-2，与 runtime_params 白名单一致）
+            "history_budget": {
+                "type": "integer",
+                "min": 1000,
+                "max": 200000,
+            },  # EVO-20260818: 收敛上限 1M→200K（spec §5.1.1-2，与 runtime_params 白名单一致）
             "memory_top_k": {"type": "integer", "min": 1, "max": 50},
             "extract_interval_msgs": {"type": "integer", "min": 5, "max": 200},
             "retrieve_semantic_top_k": {"type": "integer", "min": 1, "max": 100},
@@ -224,7 +228,12 @@ class CorrectionToolRegistry:
                 "id": f"COR-{datetime.now(UTC).strftime('%Y%m%d')}",
                 "ts": _now(),
                 "tool_name": "model_fallback",
-                "arguments": {"from": from_model, "to": to_model, "reason": reason, "detail": detail},
+                "arguments": {
+                    "from": from_model,
+                    "to": to_model,
+                    "reason": reason,
+                    "detail": detail,
+                },
                 "result_status": result_status,
             }
             with (self._audit_dir / "self_correction_log.jsonl").open("a", encoding="utf-8") as f:

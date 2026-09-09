@@ -1,4 +1,5 @@
 """Read-only projection of model-tool and authenticated-human file effects."""
+
 from __future__ import annotations
 
 import hashlib

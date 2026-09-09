@@ -141,5 +141,5 @@ def _default_msg_value(field_name: str):
 
 
 def _same_value(a, b) -> bool:
-    """值比对（bool/int 同值视为一致：JSON false/0 语义等价）. """
+    """值比对（bool/int 同值视为一致：JSON false/0 语义等价）."""
     return a == b

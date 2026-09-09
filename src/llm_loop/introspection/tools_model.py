@@ -262,8 +262,7 @@ def run_switch_model(
         return ToolResult(
             status=ToolResultStatus.FAILURE,
             content=(
-                f"[状态: 失败] 模型 '{model_ref}' 不可用: {exc}。"
-                "请用 model_catalog 查候选后重试。"
+                f"[状态: 失败] 模型 '{model_ref}' 不可用: {exc}。请用 model_catalog 查候选后重试。"
             ),
             tool_call_id="",
             tool_name="switch_model",
@@ -292,15 +291,12 @@ def run_switch_model(
         )
 
     to_label = f"{provider_id}/{model_id}"
-    reasoning_capable, reasoning_control = registry.reasoning_contract(
-        provider_id, model_id
-    )
+    reasoning_capable, reasoning_control = registry.reasoning_contract(provider_id, model_id)
     thinking_supported = reasoning_control in {
-        "thinking_type", "chat_template", "always_on_effort"
-    } or (
-        reasoning_control == "legacy"
-        and registry.supports_thinking(provider_id, model_id)
-    )
+        "thinking_type",
+        "chat_template",
+        "always_on_effort",
+    } or (reasoning_control == "legacy" and registry.supports_thinking(provider_id, model_id))
 
     # 写会话 override
     if session_set_override is not None:

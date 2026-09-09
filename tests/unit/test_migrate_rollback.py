@@ -22,24 +22,60 @@ from llm_loop.event_log.store import EventStore
 
 def _session_dict(sid: str, with_compressed: bool = False) -> dict:
     messages = [
-        {"role": "user", "content": "问题", "source": "user", "tool_call_id": None,
-         "status": None, "tool_name": None, "error_detail": None, "tool_calls": None,
-         "reasoning_content": None, "metadata": {}},
-        {"role": "assistant", "content": "回答", "source": "user", "tool_call_id": None,
-         "status": None, "tool_name": None, "error_detail": None, "tool_calls": None,
-         "reasoning_content": "思考", "metadata": {}},
+        {
+            "role": "user",
+            "content": "问题",
+            "source": "user",
+            "tool_call_id": None,
+            "status": None,
+            "tool_name": None,
+            "error_detail": None,
+            "tool_calls": None,
+            "reasoning_content": None,
+            "metadata": {},
+        },
+        {
+            "role": "assistant",
+            "content": "回答",
+            "source": "user",
+            "tool_call_id": None,
+            "status": None,
+            "tool_name": None,
+            "error_detail": None,
+            "tool_calls": None,
+            "reasoning_content": "思考",
+            "metadata": {},
+        },
     ]
     if with_compressed:
         messages.append(
-            {"role": "tool", "content": "…[本消息已压缩，完整内容已另存]…", "source": "tool",
-             "tool_call_id": "c1", "status": "success", "tool_name": "f1",
-             "error_detail": None, "tool_calls": None, "reasoning_content": None, "metadata": {}}
+            {
+                "role": "tool",
+                "content": "…[本消息已压缩，完整内容已另存]…",
+                "source": "tool",
+                "tool_call_id": "c1",
+                "status": "success",
+                "tool_name": "f1",
+                "error_detail": None,
+                "tool_calls": None,
+                "reasoning_content": None,
+                "metadata": {},
+            }
         )
     return {
-        "version": 4, "session_id": sid, "created_at": "2026-01-01T00:00:00",
-        "title": f"会话{sid}", "updated_at": "2026-01-01T00:01:00", "status": "active",
-        "parent_id": None, "branch_id": "", "branch_summary": "", "model_override": None,
-        "pinned": False, "channel": "web", "messages": messages,
+        "version": 4,
+        "session_id": sid,
+        "created_at": "2026-01-01T00:00:00",
+        "title": f"会话{sid}",
+        "updated_at": "2026-01-01T00:01:00",
+        "status": "active",
+        "parent_id": None,
+        "branch_id": "",
+        "branch_summary": "",
+        "model_override": None,
+        "pinned": False,
+        "channel": "web",
+        "messages": messages,
     }
 
 
@@ -48,7 +84,9 @@ def _write_sessions(sessions_dir, specs: list[tuple[str, bool]]) -> dict[str, di
     sources = {}
     for sid, comp in specs:
         d = _session_dict(sid, with_compressed=comp)
-        (sessions_dir / f"{sid}.json").write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+        (sessions_dir / f"{sid}.json").write_text(
+            json.dumps(d, ensure_ascii=False), encoding="utf-8"
+        )
         sources[sid] = d
     return sources
 
@@ -69,7 +107,9 @@ def test_migration_idempotent_no_duplicate(tmp_path):
     r2 = run_migration(sessions_dir, logs_dir)
     assert r2.skipped_existing == 2
     assert r2.migrated == 0
-    assert len((logs_dir / "s1.jsonl").read_text(encoding="utf-8").splitlines()) == lines_after_first
+    assert (
+        len((logs_dir / "s1.jsonl").read_text(encoding="utf-8").splitlines()) == lines_after_first
+    )
 
     # 迁移后校验一致
     for sid, src in sources.items():

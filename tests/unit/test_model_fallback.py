@@ -112,7 +112,7 @@ def test_fallback_candidates_resolves_valid_entries(
     settings = _settings(
         model_providers_raw=_THREE_PROVIDER_JSON,
         model_fallbacks_raw="deepseek/deepseek-v4-flash,local/qwen3.6-27b,minimax/MiniMax-M3",
-    data_dir=str(tmp_path / "data"),
+        data_dir=str(tmp_path / "data"),
     )
     from llm_loop.llm.providers import load_registry
 
@@ -130,8 +130,7 @@ def test_fallback_candidates_resolves_valid_entries(
 
 
 def test_fallback_candidates_skips_invalid_entries(
-    tmp_path,
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    tmp_path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """非法条目（未知 provider / 裸名歧义 / key 缺失）→ 跳过 + warning 日志, 不影响链上其他候选."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "real-key")
@@ -164,8 +163,7 @@ def test_fallback_candidates_skips_invalid_entries(
 
 
 def test_fallback_candidates_bare_ambiguous_skipped(
-    tmp_path,
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    tmp_path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """裸名跨 provider 歧义 → 跳过 + warning, 不阻断链上其他合法条目."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "real-key")
@@ -187,7 +185,7 @@ def test_fallback_candidates_bare_ambiguous_skipped(
     settings = _settings(
         model_providers_raw=raw,
         model_fallbacks_raw="shared,local/qwen3.6-27b",  # "shared" 歧义; local 不存在 → 双跳过
-    data_dir=str(tmp_path / "data"),
+        data_dir=str(tmp_path / "data"),
     )
     from llm_loop.llm.providers import load_registry
 
@@ -227,7 +225,9 @@ class _FakeLLMClient:
         self.reasoning_effort = "high"
         self.thinking_supported = True
         self.max_tokens: int | None = None
-        self.wire_protocol: str = "openai"  # P3-5 对齐 LLMClient 新字段  # 2026-08-15 对齐 LLMClient 新装配字段
+        self.wire_protocol: str = (
+            "openai"  # P3-5 对齐 LLMClient 新字段  # 2026-08-15 对齐 LLMClient 新装配字段
+        )
         self._responses: list[Any] = []
         self.calls: list[dict[str, Any]] = []
 
@@ -245,9 +245,7 @@ class _FakeLLMClient:
     ) -> LLMResponse:
         self.calls.append({"messages": messages, "model": model})
         if not self._responses:
-            raise AssertionError(
-                f"_FakeLLMClient({self.model}): no more responses queued"
-            )
+            raise AssertionError(f"_FakeLLMClient({self.model}): no more responses queued")
         item = self._responses.pop(0)
         result = item(self.calls) if callable(item) else item
         if isinstance(result, Exception):
@@ -295,7 +293,7 @@ def test_default_model_429_triggers_fallback_to_next(
     settings = _settings(
         model_providers_raw=_THREE_PROVIDER_JSON,
         model_fallbacks_raw="deepseek/deepseek-v4-flash,local/qwen3.6-27b",
-    data_dir=str(tmp_path / "data"),
+        data_dir=str(tmp_path / "data"),
     )
 
     # 主 client 第一次 chat 抛 429, 之后不再调用（fallback 接管）
@@ -312,22 +310,16 @@ def test_default_model_429_triggers_fallback_to_next(
     )
     # 降级到 local 成功（注意: ModelClientPool 按 provider_id 缓存, 这里 local 命中我们注入的 client）
     fallback_client = _FakeLLMClient("qwen3.6-27b")
-    fallback_client.queue(
-        [LLMResponse(content="（降级后回答）", tool_calls=[], provider="local")]
-    )
+    fallback_client.queue([LLMResponse(content="（降级后回答）", tool_calls=[], provider="local")])
 
-    pool = _build_fallback_pool(
-        settings, provider_clients={"local": fallback_client}
-    )
+    pool = _build_fallback_pool(settings, provider_clients={"local": fallback_client})
     # 把默认 client 替换为我们预制的（带 429 响应）
     pool.default_client = main_client  # type: ignore[assignment]
 
     # 装配 LoopEngine（用预制 pool）
     audit_dir = tmp_path / "audit"
     audit_dir.mkdir(exist_ok=True)
-    status, ctx_corr, engine = _build_loop_engine_with_pool(
-        settings, pool, audit_dir
-    )
+    status, ctx_corr, engine = _build_loop_engine_with_pool(settings, pool, audit_dir)
     ctx_corr.model_pool = pool
 
     sid = engine.session.create()
@@ -345,9 +337,7 @@ def test_default_model_429_triggers_fallback_to_next(
     assert log.exists()
     lines = log.read_text(encoding="utf-8").strip().splitlines()
     fallback_records = [
-        json.loads(ln)
-        for ln in lines
-        if json.loads(ln).get("tool_name") == "model_fallback"
+        json.loads(ln) for ln in lines if json.loads(ln).get("tool_name") == "model_fallback"
     ]
     assert len(fallback_records) == 1
     rec = fallback_records[0]
@@ -373,7 +363,7 @@ def test_default_model_timeout_triggers_fallback_chain(
     settings = _settings(
         model_providers_raw=_THREE_PROVIDER_JSON,
         model_fallbacks_raw="local/qwen3.6-27b,minimax/MiniMax-M3",
-    data_dir=str(tmp_path / "data"),
+        data_dir=str(tmp_path / "data"),
     )
     monkeypatch.setenv("MINIMAX_API_KEY", "real-key")
 
@@ -382,24 +372,24 @@ def test_default_model_timeout_triggers_fallback_chain(
 
     # local 第一个候选（按 model_fallbacks_raw 顺序）
     fallback_client_1 = _FakeLLMClient("qwen3.6-27b")
-    fallback_client_1.queue([LLMResponse(content="（降级到 local 成功）", tool_calls=[], provider="local")])
-
-    pool = _build_fallback_pool(
-        settings, provider_clients={"local": fallback_client_1}
+    fallback_client_1.queue(
+        [LLMResponse(content="（降级到 local 成功）", tool_calls=[], provider="local")]
     )
+
+    pool = _build_fallback_pool(settings, provider_clients={"local": fallback_client_1})
     pool.default_client = main_client  # type: ignore[assignment]
 
     audit_dir = tmp_path / "audit"
     audit_dir.mkdir(exist_ok=True)
-    status, ctx_corr, engine = _build_loop_engine_with_pool(
-        settings, pool, audit_dir
-    )
+    status, ctx_corr, engine = _build_loop_engine_with_pool(settings, pool, audit_dir)
     ctx_corr.model_pool = pool
 
     sid = engine.session.create()
     result = engine.run(sid, "请回答我")
 
-    assert result.final_answer.startswith("（降级到 local 成功）")  # 尾部可能有缓存命中率展示行（方案B）
+    assert result.final_answer.startswith(
+        "（降级到 local 成功）"
+    )  # 尾部可能有缓存命中率展示行（方案B）
     # 降级链走通: 命中第一个候选 local
     assert fallback_client_1.calls  # 确认 fallback_client_1 确实被调用
     # 审计记录
@@ -429,7 +419,7 @@ def test_session_override_model_failure_no_fallback_strict_mode(
     settings = _settings(
         model_providers_raw=_THREE_PROVIDER_JSON,
         model_fallbacks_raw="local/qwen3.6-27b",
-    data_dir=str(tmp_path / "data"),
+        data_dir=str(tmp_path / "data"),
     )
 
     # 默认 client 跑通（设置 override 前先完成设置, 因为 run() 内部读 sess.model_override）
@@ -441,9 +431,7 @@ def test_session_override_model_failure_no_fallback_strict_mode(
 
     audit_dir = tmp_path / "audit"
     audit_dir.mkdir(exist_ok=True)
-    status, ctx_corr, engine = _build_loop_engine_with_pool(
-        settings, pool, audit_dir
-    )
+    status, ctx_corr, engine = _build_loop_engine_with_pool(settings, pool, audit_dir)
     ctx_corr.model_pool = pool
 
     # 关键: 会话已设置 override（模拟用户/AI 经 switch_model 选择 minimax）
@@ -488,16 +476,14 @@ def test_session_override_model_failure_no_fallback_strict_mode(
     assert status.snapshot()["model_fallback"]["active"] is False
 
 
-def test_all_fallbacks_fail_summarizes_reasons(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_all_fallbacks_fail_summarizes_reasons(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """§5.4 表第 3 行: 链全失败 → 汇总各候选原因."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "real-key")
     monkeypatch.setenv("MINIMAX_API_KEY", "real-key")
     settings = _settings(
         model_providers_raw=_THREE_PROVIDER_JSON,
         model_fallbacks_raw="deepseek/deepseek-v4-flash,local/qwen3.6-27b,minimax/MiniMax-M3",
-    data_dir=str(tmp_path / "data"),
+        data_dir=str(tmp_path / "data"),
     )
 
     # 主 client 抛 5xx
@@ -541,9 +527,7 @@ def test_all_fallbacks_fail_summarizes_reasons(
 
     audit_dir = tmp_path / "audit"
     audit_dir.mkdir(exist_ok=True)
-    status, ctx_corr, engine = _build_loop_engine_with_pool(
-        settings, pool, audit_dir
-    )
+    status, ctx_corr, engine = _build_loop_engine_with_pool(settings, pool, audit_dir)
     ctx_corr.model_pool = pool
 
     sid = engine.session.create()
@@ -556,7 +540,8 @@ def test_all_fallbacks_fail_summarizes_reasons(
     # 全失败详情直接进入本次 program result，不写入后续 prompt history。
     sess_loaded = engine.session.load(sid)
     summary_msgs = [
-        m for m in sess_loaded.messages
+        m
+        for m in sess_loaded.messages
         if m.role == "system" and "[模型降级]" in m.content and "全部失败" in m.content
     ]
     assert summary_msgs == []
@@ -588,15 +573,13 @@ def test_all_fallbacks_fail_summarizes_reasons(
     assert status.snapshot()["model_fallback"]["active"] is False
 
 
-def test_http_4xx_no_fallback(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_http_4xx_no_fallback(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """§5.4 表注: 4xx (如 400) 不降级 — 请求本身有问题, 换模型无用."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "real-key")
     settings = _settings(
         model_providers_raw=_THREE_PROVIDER_JSON,
         model_fallbacks_raw="local/qwen3.6-27b,minimax/MiniMax-M3",
-    data_dir=str(tmp_path / "data"),
+        data_dir=str(tmp_path / "data"),
     )
     monkeypatch.setenv("MINIMAX_API_KEY", "real-key")
 
@@ -625,9 +608,7 @@ def test_http_4xx_no_fallback(
 
     audit_dir = tmp_path / "audit"
     audit_dir.mkdir(exist_ok=True)
-    status, ctx_corr, engine = _build_loop_engine_with_pool(
-        settings, pool, audit_dir
-    )
+    status, ctx_corr, engine = _build_loop_engine_with_pool(settings, pool, audit_dir)
     ctx_corr.model_pool = pool
 
     sid = engine.session.create()
@@ -655,15 +636,13 @@ def test_http_4xx_no_fallback(
     assert status.snapshot()["model_fallback"]["active"] is False
 
 
-def test_empty_fallbacks_zero_regression(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_empty_fallbacks_zero_regression(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """MODEL_FALLBACKS 空 → 零回归: 失败直接反馈, 无降级提示/审计/状态变化."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "real-key")
     settings = _settings(
         model_providers_raw=_THREE_PROVIDER_JSON,
         model_fallbacks_raw="",  # 空 = 不启用
-    data_dir=str(tmp_path / "data"),
+        data_dir=str(tmp_path / "data"),
     )
 
     main_client = _FakeLLMClient("deepseek-v4-flash")
@@ -683,9 +662,7 @@ def test_empty_fallbacks_zero_regression(
 
     audit_dir = tmp_path / "audit"
     audit_dir.mkdir(exist_ok=True)
-    status, ctx_corr, engine = _build_loop_engine_with_pool(
-        settings, pool, audit_dir
-    )
+    status, ctx_corr, engine = _build_loop_engine_with_pool(settings, pool, audit_dir)
     ctx_corr.model_pool = pool
 
     sid = engine.session.create()
@@ -778,15 +755,13 @@ def _build_loop_engine_with_pool(
 # ── 密钥安全 ──
 
 
-def test_no_api_key_leaked_in_fallback_audit(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_no_api_key_leaked_in_fallback_audit(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """降级审计 / 提示消息 / status 永不回显 api_key 本体（DFX-SEC-02）."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "supersecret-xyz-789")
     settings = _settings(
         model_providers_raw=_THREE_PROVIDER_JSON,
         model_fallbacks_raw="local/qwen3.6-27b",
-    data_dir=str(tmp_path / "data"),
+        data_dir=str(tmp_path / "data"),
     )
 
     main_client = _FakeLLMClient("deepseek-v4-flash")
@@ -808,9 +783,7 @@ def test_no_api_key_leaked_in_fallback_audit(
 
     audit_dir = tmp_path / "audit"
     audit_dir.mkdir(exist_ok=True)
-    status, ctx_corr, engine = _build_loop_engine_with_pool(
-        settings, pool, audit_dir
-    )
+    status, ctx_corr, engine = _build_loop_engine_with_pool(settings, pool, audit_dir)
     ctx_corr.model_pool = pool
 
     sid = engine.session.create()

@@ -161,7 +161,11 @@ class TaskStore:
             if parent_id and parent_id not in tasks:
                 raise ValueError(f"parent 任务不存在: {parent_id}")
             seq = 1 + max(
-                (int(t.task_id.rsplit("-", 1)[-1]) for t in tasks.values() if t.task_id.rsplit("-", 1)[-1].isdigit()),
+                (
+                    int(t.task_id.rsplit("-", 1)[-1])
+                    for t in tasks.values()
+                    if t.task_id.rsplit("-", 1)[-1].isdigit()
+                ),
                 default=0,
             )
             now = _now()
@@ -297,7 +301,9 @@ class TaskStore:
             self._append(goal_id, task)
             return task
 
-    def _cascade_premise_stale(self, goal_id: str, tasks: dict[str, Task], reopened_id: str) -> None:
+    def _cascade_premise_stale(
+        self, goal_id: str, tasks: dict[str, Task], reopened_id: str
+    ) -> None:
         """done 重开 → 传递闭包内已 done 下游标 premise_stale（提示性，§2.1）."""
         dependents: dict[str, list[str]] = {}
         for t in tasks.values():
@@ -379,18 +385,12 @@ class TaskStore:
                         hopeless.add(t.task_id)
                         changed = True
                     continue
-                if any(
-                    by_id[d].task_id in hopeless
-                    for d in t.dependencies
-                    if d in by_id
-                ):
+                if any(by_id[d].task_id in hopeless for d in t.dependencies if d in by_id):
                     hopeless.add(t.task_id)
                     changed = True
         # Kahn 拓扑（hope 存活的 pending 子图）: 环上/环下游 → unreachable
         pending_ids = {
-            t.task_id
-            for t in tasks.values()
-            if t.status == "pending" and t.task_id not in hopeless
+            t.task_id for t in tasks.values() if t.status == "pending" and t.task_id not in hopeless
         }
         indeg: dict[str, int] = {}
         dependents: dict[str, list[str]] = {}
@@ -438,9 +438,7 @@ class TaskStore:
             "unreachable": unreachable,
             "premise_stale": [t for t in tasks.values() if t.premise_stale and t.status == "done"],
             "open_count": sum(
-                1
-                for t in tasks.values()
-                if t.status in ("pending", "in_progress", "blocked")
+                1 for t in tasks.values() if t.status in ("pending", "in_progress", "blocked")
             ),
             "total": len(tasks),
         }
@@ -469,7 +467,9 @@ class TaskStore:
         hot_used = 0
         for t in fr["ready"]:
             if compact or hot_used >= HOT_TASK_LIMIT:
-                lines.append(f"  ready(+{len(fr['ready']) - hot_used} 更多, 用 task_frontier() 查看全图)")
+                lines.append(
+                    f"  ready(+{len(fr['ready']) - hot_used} 更多, 用 task_frontier() 查看全图)"
+                )
                 break
             lines.append(f"  ▶ ready {t.task_id} {t.title[:60]}")
             hot_used += 1
@@ -488,7 +488,9 @@ class TaskStore:
                 hot_used += 1
         if fr["unreachable"]:
             ids = ", ".join(t.task_id for t in fr["unreachable"][:5])
-            lines.append(f"  ⚠ unreachable-pending {ids} | reason=dependency_cycle_or_failed_dependency")
+            lines.append(
+                f"  ⚠ unreachable-pending {ids} | reason=dependency_cycle_or_failed_dependency"
+            )
         for t in fr["premise_stale"]:
             lines.append(f"  ◇ premise_stale {t.task_id} {t.title[:40]}")
         return "\n".join(lines)

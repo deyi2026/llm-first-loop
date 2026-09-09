@@ -74,7 +74,9 @@ def parse_servers(raw: str) -> list[McpServerSpec]:
         logger.warning("MCP_SERVERS JSON 解析失败，MCP 工具未加载: %s", exc)
         return []
     if not isinstance(data, list):
-        logger.warning("MCP_SERVERS 必须为 JSON 数组（当前 %s），MCP 工具未加载", type(data).__name__)
+        logger.warning(
+            "MCP_SERVERS 必须为 JSON 数组（当前 %s），MCP 工具未加载", type(data).__name__
+        )
         return []
     out: list[McpServerSpec] = []
     for i, item in enumerate(data):
@@ -117,11 +119,14 @@ class McpConnection:
         with self._lock:
             self._start_process()
             try:
-                self._rpc("initialize", {
-                    "protocolVersion": MCP_PROTOCOL_VERSION,
-                    "capabilities": {},
-                    "clientInfo": {"name": "llm-first-loop", "version": "0.6.0"},
-                })
+                self._rpc(
+                    "initialize",
+                    {
+                        "protocolVersion": MCP_PROTOCOL_VERSION,
+                        "capabilities": {},
+                        "clientInfo": {"name": "llm-first-loop", "version": "0.6.0"},
+                    },
+                )
                 self._notify("notifications/initialized", {})
                 result = self._rpc("tools/list", {})
                 tools = result.get("tools") or []
@@ -224,9 +229,7 @@ class McpConnection:
                     if got_id != msg_id:
                         continue
                     if "error" in resp:
-                        raise RuntimeError(
-                            f"MCP {self.spec.name} {method} 错误: {resp['error']}"
-                        )
+                        raise RuntimeError(f"MCP {self.spec.name} {method} 错误: {resp['error']}")
                     return resp.get("result") or {}
             except queue.Empty as exc:
                 raise RuntimeError(

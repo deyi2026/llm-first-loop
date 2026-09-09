@@ -14,9 +14,7 @@ from llm_loop.core.injection_labels import InjectionLayer, detect_program_layer
 from llm_loop.core.reference_injection import is_human_user_message
 
 # ERC Recovery Manifest predates R1 labels but is program-origin by construction.
-_LEGACY_PROGRAM_CONTEXT_PREFIXES = (
-    "[上下文注入·",
-)
+_LEGACY_PROGRAM_CONTEXT_PREFIXES = ("[上下文注入·",)
 
 
 def _attr(message: Any, name: str, default: Any = None) -> Any:
@@ -57,9 +55,7 @@ def is_program_user_content(content: str) -> bool:
     return text.startswith(_LEGACY_PROGRAM_CONTEXT_PREFIXES)
 
 
-def current_ingress_user_truth(
-    session_messages: Iterable[Any], turn_ref: int | None
-) -> str | None:
+def current_ingress_user_truth(session_messages: Iterable[Any], turn_ref: int | None) -> str | None:
     """Return exact current human text only for the initial LLM round of a run.
 
     Program frames may already follow the human message.  Once an assistant/tool

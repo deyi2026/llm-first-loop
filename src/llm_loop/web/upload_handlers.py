@@ -140,7 +140,10 @@ def _recognize_doc_images(images: list[tuple[str, bytes]]) -> str:
     import os as _os
 
     if _os.environ.get("WEB_DOC_IMAGE_RECOGNITION", "0").strip().lower() in (
-        "0", "off", "false", "no",
+        "0",
+        "off",
+        "false",
+        "no",
     ):
         return ""
     try:
@@ -235,7 +238,9 @@ def _extract_docx(data: bytes, filename: str) -> ExtractResult:
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
             for n in zf.namelist():
-                if n.startswith("word/media/") and n.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp")):
+                if n.startswith("word/media/") and n.lower().endswith(
+                    (".png", ".jpg", ".jpeg", ".gif", ".webp")
+                ):
                     try:
                         media_images.append((n.rsplit("/", 1)[-1], zf.read(n)))
                     except Exception:  # noqa: BLE001
@@ -272,7 +277,12 @@ def _extract_pdf_vision(data: bytes, filename: str) -> str | None:
 
     if _shutil.which("sips") is None:
         return None
-    if _os.environ.get("WEB_PDF_VISION_FALLBACK", "1").strip().lower() in ("0", "off", "false", "no"):
+    if _os.environ.get("WEB_PDF_VISION_FALLBACK", "1").strip().lower() in (
+        "0",
+        "off",
+        "false",
+        "no",
+    ):
         return None
     tmp_pdf = None
     try:
@@ -282,7 +292,9 @@ def _extract_pdf_vision(data: bytes, filename: str) -> str | None:
         out_png = tmp_pdf + ".png"
         proc = _sp.run(
             ["sips", "-s", "format", "png", tmp_pdf, "--out", out_png],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         if proc.returncode != 0 or not Path(out_png).exists():
             return None
@@ -408,8 +420,15 @@ def _extract_doc_arkcli(data: bytes, filename: str, prompt: str) -> str | None:
             tmp_path = tmp.name
             tmp.write(data)
         cmd = [
-            "arkcli", "+understand", "doc-extract", "--input", f"@{tmp_path}",
-            prompt, "--no-progress", "--format", "json",
+            "arkcli",
+            "+understand",
+            "doc-extract",
+            "--input",
+            f"@{tmp_path}",
+            prompt,
+            "--no-progress",
+            "--format",
+            "json",
         ]
         import contextlib as _ctx
 
@@ -485,7 +504,6 @@ def extract_full_text(filename: str, data: bytes) -> tuple[str, str, int | None,
     return "", "unsupported", None, False
 
 
-
 def process_upload(filename: str, data: bytes) -> ExtractResult:
     """上传文件类型分发（文本/docx/PDF/图片）。图片由 vision 模块处理，此处返回降级提示."""
     ext = file_ext(filename)
@@ -493,7 +511,8 @@ def process_upload(filename: str, data: bytes) -> ExtractResult:
         return _extract_text(data, filename)
     if ext in _DOCX_EXTS:
         ark = _extract_doc_arkcli(
-            data, filename,
+            data,
+            filename,
             "抽取文档关键信息：标题/核心要点/关键字段（保留原文细节，输出结构化文本）",
         )
         if ark:
@@ -509,7 +528,8 @@ def process_upload(filename: str, data: bytes) -> ExtractResult:
         return _extract_docx(data, filename)
     if ext in _PDF_EXTS:
         ark = _extract_doc_arkcli(
-            data, filename,
+            data,
+            filename,
             "抽取文档关键信息：标题/核心要点/关键字段（保留原文细节，输出结构化文本）",
         )
         if ark:

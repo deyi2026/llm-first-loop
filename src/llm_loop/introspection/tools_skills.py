@@ -29,8 +29,15 @@ CODE_REVIEW_TOOL_DEF: dict = {
         "type": "object",
         "properties": {
             "code": {"type": "string", "description": "待审代码片段"},
-            "language": {"type": "string", "description": "代码语言（python/go/typescript等，默认python）"},
-            "focus": {"type": "array", "items": {"type": "string"}, "description": "审查重点维度（默认全5维：correctness/security/performance/test/regression）"},
+            "language": {
+                "type": "string",
+                "description": "代码语言（python/go/typescript等，默认python）",
+            },
+            "focus": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "审查重点维度（默认全5维：correctness/security/performance/test/regression）",
+            },
         },
         "required": ["code"],
     },
@@ -96,17 +103,18 @@ def run_code_review(ctx: Any, audit: Any, args: dict) -> ToolResult:
         return ToolResult(
             status=ToolResultStatus.FAILURE,
             content="[参数错误] 事实: focus 需为数组。原因: focus 应为字符串列表（correctness/security/performance/test/regression）。建议: 提供 focus=['correctness', 'security'] 或省略使用全5维。",
-            tool_call_id="", tool_name="code_review",
+            tool_call_id="",
+            tool_name="code_review",
         )
     if not code:
         return ToolResult(
             status=ToolResultStatus.FAILURE,
             content="[参数错误] 事实: code 为空。原因: code 必填。建议: 提供待审代码字符串。",
-            tool_call_id="", tool_name="code_review",
+            tool_call_id="",
+            tool_name="code_review",
         )
 
     lines = code.splitlines()
-
 
     # 1. 维度清单（提示 LLM 阅读时重点关注）
     dim_section = ["## 📋 审查维度清单", ""]
@@ -132,7 +140,7 @@ def run_code_review(ctx: Any, audit: Any, args: dict) -> ToolResult:
         "## 📊 基础统计",
         f"- 行数: {len(lines)}",
         f"- 非空行: {sum(1 for line in lines if line.strip())}",
-        f"- 注释行: {sum(1 for line in lines if line.strip().startswith(('#', '//', '/*', '--'))) }",
+        f"- 注释行: {sum(1 for line in lines if line.strip().startswith(('#', '//', '/*', '--')))}",
         f"- 缩进风格: {'空格' if any(line.startswith(' ') for line in lines) else 'Tab/无'}",
         f"- 语言: {language}",
         "",
@@ -154,7 +162,6 @@ def run_code_review(ctx: Any, audit: Any, args: dict) -> ToolResult:
         + ["", deep_review_hint]
     )
 
-
     return ToolResult(
         status=ToolResultStatus.SUCCESS,
         content=report,
@@ -173,9 +180,16 @@ GRILL_ME_TOOL_DEF: dict = {
     "parameters": {
         "type": "object",
         "properties": {
-            "design": {"type": "string", "description": "当前设计/方案描述（可粗略，AI 会追问补全）"},
+            "design": {
+                "type": "string",
+                "description": "当前设计/方案描述（可粗略，AI 会追问补全）",
+            },
             "depth": {"type": "integer", "description": "追问深度（1-5，默认3，每层 4-6 个问题）"},
-            "focus_areas": {"type": "array", "items": {"type": "string"}, "description": "重点追问领域（default: edge_cases/failure_modes/scale/security/ux）"},
+            "focus_areas": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "重点追问领域（default: edge_cases/failure_modes/scale/security/ux）",
+            },
         },
         "required": ["design"],
     },
@@ -228,7 +242,8 @@ def run_grill_me(ctx: Any, audit: Any, args: dict) -> ToolResult:
         return ToolResult(
             status=ToolResultStatus.FAILURE,
             content="[参数错误] 事实: design 为空。原因: 需提供设计描述。建议: 哪怕一句话也可，AI 会追问补全。",
-            tool_call_id="", tool_name="grill_me",
+            tool_call_id="",
+            tool_name="grill_me",
         )
 
     depth = max(1, min(int(args.get("depth", 3) or 3), 5))
@@ -260,7 +275,7 @@ def run_grill_me(ctx: Any, audit: Any, args: dict) -> ToolResult:
     for layer in range(2, depth + 1):
         lines.append(f"## 🔁 第 {layer} 层（递进追问）")
         lines.append("")
-        lines.append(f"- 第 {layer} 层问题基于您对前 {layer-1} 层的回答自动生成")
+        lines.append(f"- 第 {layer} 层问题基于您对前 {layer - 1} 层的回答自动生成")
         lines.append("- 回答前一层的每条问题后，再说'继续 grill' 触发下一层")
         lines.append("- 或直接说'够了'终止追问")
         lines.append("")
@@ -297,7 +312,10 @@ STOP_SLOP_TOOL_DEF: dict = {
         "type": "object",
         "properties": {
             "text": {"type": "string", "description": "待清洗文本"},
-            "aggressive": {"type": "boolean", "description": "激进模式（删除 vs 仅标记，默认false=仅标记）"},
+            "aggressive": {
+                "type": "boolean",
+                "description": "激进模式（删除 vs 仅标记，默认false=仅标记）",
+            },
         },
         "required": ["text"],
     },
@@ -331,7 +349,8 @@ def run_stop_slop(ctx: Any, audit: Any, args: dict) -> ToolResult:
         return ToolResult(
             status=ToolResultStatus.FAILURE,
             content="[参数错误] 事实: text 为空。原因: 需提供待清洗文本。",
-            tool_call_id="", tool_name="stop_slop",
+            tool_call_id="",
+            tool_name="stop_slop",
         )
     aggressive = bool(args.get("aggressive", False))
 
@@ -345,12 +364,14 @@ def run_stop_slop(ctx: Any, audit: Any, args: dict) -> ToolResult:
     for pattern, desc in _SLOP_PATTERNS:
         matches = list(re.finditer(pattern, cleaned, re.IGNORECASE | re.MULTILINE))
         for m in matches:
-            issues.append({
-                "pattern": desc,
-                "matched": m.group(0)[:50] + ("..." if len(m.group(0)) > 50 else ""),
-                "start": m.start(),
-                "end": m.end(),
-            })
+            issues.append(
+                {
+                    "pattern": desc,
+                    "matched": m.group(0)[:50] + ("..." if len(m.group(0)) > 50 else ""),
+                    "start": m.start(),
+                    "end": m.end(),
+                }
+            )
         if aggressive and matches:
             cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE | re.MULTILINE)
 

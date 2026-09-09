@@ -181,13 +181,15 @@ def test_search_records_file_effect_uses_current_session_and_strict_query(tmp_pa
     assert "[参数错误]" in invalid.content
 
 
-def test_prepared_only_crash_recovery_reports_current_bytes_without_reexecution(tmp_path: Path) -> None:
+def test_prepared_only_crash_recovery_reports_current_bytes_without_reexecution(
+    tmp_path: Path,
+) -> None:
     import os
     import subprocess
     import sys
 
     source_root = str(Path(__file__).resolve().parents[2] / "src")
-    child = r'''
+    child = r"""
 import hashlib, os, sys
 from pathlib import Path
 from llm_loop.event_log.model import EVENT_HUMAN_FILE_EDIT_PREPARED
@@ -209,7 +211,7 @@ assert store.append("crash-session", EVENT_HUMAN_FILE_EDIT_PREPARED, {
 if mode == "expected": target.write_bytes(expected)
 elif mode == "other": target.write_bytes(b"other\n")
 os._exit(17)
-'''
+"""
     expected_states = {
         "before": "current_matches_before",
         "expected": "current_matches_expected",

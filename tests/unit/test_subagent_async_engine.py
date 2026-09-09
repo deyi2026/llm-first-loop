@@ -127,7 +127,6 @@ def test_parent_llm_can_spawn_continue_steer_await_and_finalize(build_test_engin
     assert len(child_calls) == 2
 
 
-
 def test_terminal_unread_child_does_not_override_parent_model_final(build_test_engine):
     """terminal child 结果是否读取由模型决定；程序不得丢弃 parent 的 no-tool final。"""
     engine, fake = build_test_engine([])
@@ -147,7 +146,9 @@ def test_terminal_unread_child_does_not_override_parent_model_final(build_test_e
         if parent_round == 1:
             return LLMResponse(
                 content="",
-                tool_calls=[ToolCall(id="spawn-fast", name="spawn_subagent", arguments={"task": "快速完成"})],
+                tool_calls=[
+                    ToolCall(id="spawn-fast", name="spawn_subagent", arguments={"task": "快速完成"})
+                ],
                 provider="fake",
             )
         # 等 child 真正 terminal，证明 unread terminal handle 也不能变成 completion gate。
@@ -160,7 +161,9 @@ def test_terminal_unread_child_does_not_override_parent_model_final(build_test_e
             time.sleep(0.01)
         assert owned and all(h.state == "completed" for h in owned)
         assert all(not h.collected for h in owned)
-        return LLMResponse(content="parent-final-without-reading-child", tool_calls=[], provider="fake")
+        return LLMResponse(
+            content="parent-final-without-reading-child", tool_calls=[], provider="fake"
+        )
 
     fake.chat = _chat  # type: ignore[method-assign]
     result = engine.run(parent_sid, "可派 child；是否采用 child 结果由你自己判断")
@@ -185,6 +188,7 @@ def test_model_final_cancels_still_running_child_without_reopening_model_round(b
         name = "web_search"
         description = "parent final 后不得执行的探针"
         parameters = {"type": "object", "properties": {}}
+
         def execute(self, **kwargs):
             del kwargs
             executed.set()
@@ -208,7 +212,9 @@ def test_model_final_cancels_still_running_child_without_reopening_model_round(b
         if parent_round == 1:
             return LLMResponse(
                 content="",
-                tool_calls=[ToolCall(id="spawn-running", name="spawn_subagent", arguments={"task": "等待"})],
+                tool_calls=[
+                    ToolCall(id="spawn-running", name="spawn_subagent", arguments={"task": "等待"})
+                ],
                 provider="fake",
             )
         assert child_entered.wait(2.0)
@@ -230,6 +236,7 @@ def test_model_final_cancels_still_running_child_without_reopening_model_round(b
     assert all(h.cancel_requested for h in owned)
     assert all(h.state == "cancelled" for h in owned)
     assert not executed.is_set()
+
 
 def test_abnormal_parent_exit_cancels_background_child_before_late_effect(build_test_engine):
     """parent 非 completed 退出时 structured child 必须级联 cancel，不能后台继续副作用。"""

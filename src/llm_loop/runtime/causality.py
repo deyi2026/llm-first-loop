@@ -123,7 +123,6 @@ def effective_generation_contract(client: Any) -> dict[str, Any]:
     }
 
 
-
 def provider_message_shape(messages: list[dict]) -> dict[str, int]:
     """Return cheap provider-message shape facts without serializing message content."""
     tail_user_run = 0
@@ -135,6 +134,7 @@ def provider_message_shape(messages: list[dict]) -> dict[str, int]:
         "messages_count": len(messages),
         "tail_user_run": tail_user_run,
     }
+
 
 def exceptional_attempt_payload(
     *,
@@ -156,7 +156,9 @@ def exceptional_attempt_payload(
     try:
         serialized = json.dumps(
             {"messages": messages, "tools": tools},
-            ensure_ascii=False, separators=(",", ":"), default=str,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
         )
         visible_chars = len(serialized)
         structure_fp = hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:24]

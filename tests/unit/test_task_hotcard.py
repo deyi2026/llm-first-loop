@@ -20,7 +20,11 @@ from llm_loop.core.loop.hotcard import (
 
 
 def _mk(tmp_path):
-    return {"origin_session": "sess-origin", "anchor": "当前任务: 分组提交\n最近动作: git commit", "data_dir": str(tmp_path / "data")}
+    return {
+        "origin_session": "sess-origin",
+        "anchor": "当前任务: 分组提交\n最近动作: git commit",
+        "data_dir": str(tmp_path / "data"),
+    }
 
 
 def test_write_and_pop_requires_explicit_authorization(tmp_path):
@@ -37,31 +41,32 @@ def test_write_and_pop_requires_explicit_authorization(tmp_path):
     assert untouched["consumed"] is False and untouched["consumed_by"] == ""
 
     # 只有输入侧明确授权后才允许取 pointer，并标记 consumed。
-    text = pop_hotcard(
-        session_id="sess-new", data_dir=str(tmp_path / "data"), authorized=True
-    )
+    text = pop_hotcard(session_id="sess-new", data_dir=str(tmp_path / "data"), authorized=True)
     assert text is not None and "[任务热卡]" in text and "ref=file:" in text
     assert "分组提交" not in text  # R3: 自动/恢复 view 都只给 pointer，不复制正文
     card2 = json.loads(p.read_text(encoding="utf-8"))
     assert card2["consumed"] is True and card2["consumed_by"] == "sess-new"
 
     # 已消费 → None（防陈旧卡反复注入）
-    assert pop_hotcard(
-        session_id="sess-new2", data_dir=str(tmp_path / "data"), authorized=True
-    ) is None
+    assert (
+        pop_hotcard(session_id="sess-new2", data_dir=str(tmp_path / "data"), authorized=True)
+        is None
+    )
 
 
 def test_pop_skips_same_origin_session(tmp_path):
     write_hotcard(**_mk(tmp_path))
     # 同来源会话不消费自己的 durable handoff；这不是 prompt 注入授权。
-    assert pop_hotcard(
-        session_id="sess-origin", data_dir=str(tmp_path / "data"), authorized=True
-    ) is None
+    assert (
+        pop_hotcard(session_id="sess-origin", data_dir=str(tmp_path / "data"), authorized=True)
+        is None
+    )
     # 且未被标记消费；另一个 session 仍必须显式授权，不能仅凭“跨会话”自动取卡。
     assert pop_hotcard(session_id="sess-other", data_dir=str(tmp_path / "data")) is None
-    assert pop_hotcard(
-        session_id="sess-other", data_dir=str(tmp_path / "data"), authorized=True
-    ) is not None
+    assert (
+        pop_hotcard(session_id="sess-other", data_dir=str(tmp_path / "data"), authorized=True)
+        is not None
+    )
 
 
 def test_pop_no_card_returns_none(tmp_path):
@@ -79,15 +84,25 @@ def test_payload_aggregates_goals_and_pending(tmp_path):
                 "id": "GOAL-T1",
                 "objective": "压测 106 文件",
                 "status": "active",
-                "checkpoints": [{"ts": "t", "what": "完成 12 轮", "evidence": "e", "path": "p", "next": "第 13 轮"}],
+                "checkpoints": [
+                    {
+                        "ts": "t",
+                        "what": "完成 12 轮",
+                        "evidence": "e",
+                        "path": "p",
+                        "next": "第 13 轮",
+                    }
+                ],
             },
             ensure_ascii=False,
         ),
         encoding="utf-8",
     )
     (audit / "evolution_suggestions.jsonl").write_text(
-        json.dumps({"id": "EVO-T1", "status": "pending_review"}) + "\n"
-        + json.dumps({"id": "EVO-T2", "status": "accepted"}) + "\n",
+        json.dumps({"id": "EVO-T1", "status": "pending_review"})
+        + "\n"
+        + json.dumps({"id": "EVO-T2", "status": "accepted"})
+        + "\n",
         encoding="utf-8",
     )
     payload = build_hotcard_payload(origin_session="s", anchor="a", data_dir=data_dir)
@@ -106,19 +121,19 @@ def test_write_fail_open_on_bad_dir(tmp_path):
     p = tmp_path / "data2" / "handoff"
     p.mkdir(parents=True)
     (p / "task_hotcard.json").write_text("{broken", encoding="utf-8")
-    assert pop_hotcard(
-        session_id="s", data_dir=str(tmp_path / "data2"), authorized=True
-    ) is None
+    assert pop_hotcard(session_id="s", data_dir=str(tmp_path / "data2"), authorized=True) is None
 
 
 def test_build_does_not_auto_inject_or_consume_hotcard(
     build_test_engine, isolated_data_dir, tmp_path
 ):
     """E24: 普通新会话不得因跨 session 自动获得/消费 handoff prompt authority."""
-    engine, fake = build_test_engine([
-        {"content": "ok-1", "tool_calls": []},
-        {"content": "ok-2", "tool_calls": []},
-    ])
+    engine, fake = build_test_engine(
+        [
+            {"content": "ok-1", "tool_calls": []},
+            {"content": "ok-2", "tool_calls": []},
+        ]
+    )
     # 直接写卡（模拟上一会话压缩时刻写入），origin 为外全会话
     from llm_loop.core.loop.hotcard import write_hotcard as _w
 

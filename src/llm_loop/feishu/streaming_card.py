@@ -109,9 +109,7 @@ class StreamingCard:
             if resp.code == 0:
                 self._card_id = (resp.data.card_id if resp.data else "") or ""
                 return bool(self._card_id)
-            if self._raise_if_token_invalid(
-                resp.code, resp.raw.status_code if resp.raw else 0
-            ):
+            if self._raise_if_token_invalid(resp.code, resp.raw.status_code if resp.raw else 0):
                 if attempt == 0:
                     continue
                 break
@@ -154,9 +152,7 @@ class StreamingCard:
             resp = im.v1.message.create(request)
             if resp.code == 0:
                 return True
-            if self._raise_if_token_invalid(
-                resp.code, resp.raw.status_code if resp.raw else 0
-            ):
+            if self._raise_if_token_invalid(resp.code, resp.raw.status_code if resp.raw else 0):
                 if attempt == 0:
                     continue
                 break
@@ -223,9 +219,7 @@ class StreamingCard:
             resp = card.update(request)
             if resp.code == 0:
                 return True
-            if self._raise_if_token_invalid(
-                resp.code, resp.raw.status_code if resp.raw else 0
-            ):
+            if self._raise_if_token_invalid(resp.code, resp.raw.status_code if resp.raw else 0):
                 if attempt == 0:
                     continue
                 break
@@ -269,9 +263,7 @@ class StreamingCard:
             resp = card.settings(request)
             if resp.code == 0:
                 return True
-            if self._raise_if_token_invalid(
-                resp.code, resp.raw.status_code if resp.raw else 0
-            ):
+            if self._raise_if_token_invalid(resp.code, resp.raw.status_code if resp.raw else 0):
                 if attempt == 0:
                     continue
                 break

@@ -105,7 +105,9 @@ def _make_files(tmp_path):
     small = tmp_path / "data" / "x.txt"
     small.write_text("小文件", encoding="utf-8")
     big = tmp_path / "data" / "y.txt"
-    big.write_text("y" * 13000, encoding="utf-8")  # below hard cap: exact tool evidence stays visible
+    big.write_text(
+        "y" * 13000, encoding="utf-8"
+    )  # below hard cap: exact tool evidence stays visible
 
 
 def test_concurrent_runs_isolated_state_and_archive(build_test_engine, tmp_path):
@@ -132,8 +134,9 @@ def test_concurrent_runs_isolated_state_and_archive(build_test_engine, tmp_path)
             time.sleep(0.05)
             return LLMResponse(
                 content=None,
-                tool_calls=[ToolCall(id=f"call_a_{n}", name="read_file",
-                                     arguments={"path": x_path})],
+                tool_calls=[
+                    ToolCall(id=f"call_a_{n}", name="read_file", arguments={"path": x_path})
+                ],
                 provider="fake",
             )
         # B：首轮调工具（大文件），第二轮给最终回答
@@ -141,8 +144,7 @@ def test_concurrent_runs_isolated_state_and_archive(build_test_engine, tmp_path)
         if not has_tool:
             return LLMResponse(
                 content=None,
-                tool_calls=[ToolCall(id="call_b_1", name="read_file",
-                                     arguments={"path": y_path})],
+                tool_calls=[ToolCall(id="call_b_1", name="read_file", arguments={"path": y_path})],
                 provider="fake",
             )
         return LLMResponse(content="B 完成", tool_calls=[], provider="fake")
@@ -170,7 +172,9 @@ def test_concurrent_runs_isolated_state_and_archive(build_test_engine, tmp_path)
 
     res_b = results["b"]
     # 2026-08-20 方案B（3489082）: 回答末尾追加命中率行——断言主体仍须为 B 完成（尾部 ⚡ 行属展示层）
-    assert res_b.final_answer.startswith("B 完成"), f"B 被串台（停滞熔断/预警互吞）: {res_b.final_answer[:120]}"
+    assert res_b.final_answer.startswith("B 完成"), (
+        f"B 被串台（停滞熔断/预警互吞）: {res_b.final_answer[:120]}"
+    )
     assert res_b.rounds == 2, f"B 轮数异常: {res_b.rounds}"
 
     # 停滞桶按会话独立：A 触发提醒/熔断（count>=3），B 干净

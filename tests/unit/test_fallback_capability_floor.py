@@ -1,4 +1,5 @@
 """P2-B fallback routing contract: operator chain, no runtime quality floor."""
+
 from __future__ import annotations
 
 import ast
@@ -24,8 +25,13 @@ def _registry(*models: tuple[str, str, str]) -> ProviderRegistry:
 
 def _pool(registry: ProviderRegistry, fallbacks: str, *, provider="primary", model="default"):
     default = SimpleNamespace(
-        provider=provider, model=model, timeout_s=120.0, max_tokens=8192,
-        thinking_mode=True, reasoning_effort="high", thinking_supported=False,
+        provider=provider,
+        model=model,
+        timeout_s=120.0,
+        max_tokens=8192,
+        thinking_mode=True,
+        reasoning_effort="high",
+        thinking_supported=False,
     )
     return ModelClientPool(
         registry=registry,
@@ -37,7 +43,9 @@ def _pool(registry: ProviderRegistry, fallbacks: str, *, provider="primary", mod
 def test_capability_tier_is_metadata_not_routing_authority(monkeypatch):
     monkeypatch.setenv("LFL_TEST_KEY", "k")
     monkeypatch.setenv("LFL_FALLBACK_FLOOR", "enforce")  # stale env must be inert
-    reg = _registry(("strongp", "big", "strong"), ("weakp", "small", "weak"), ("unknownp", "m", "unknown"))
+    reg = _registry(
+        ("strongp", "big", "strong"), ("weakp", "small", "weak"), ("unknownp", "m", "unknown")
+    )
     pool = _pool(reg, "strongp/big,weakp/small,unknownp/m")
     assert pool.fallback_candidates(registry=reg) == ["strongp/big", "weakp/small", "unknownp/m"]
     assert ModelSpec(capability_tier="weak").capability_tier == "weak"  # factual metadata preserved
@@ -45,7 +53,9 @@ def test_capability_tier_is_metadata_not_routing_authority(monkeypatch):
 
 def test_default_model_and_duplicate_refs_are_mechanically_removed(monkeypatch):
     monkeypatch.setenv("LFL_TEST_KEY", "k")
-    reg = _registry(("primary", "default", "unknown"), ("fb", "one", "unknown"), ("fb", "two", "weak"))
+    reg = _registry(
+        ("primary", "default", "unknown"), ("fb", "one", "unknown"), ("fb", "two", "weak")
+    )
     pool = _pool(reg, "primary/default,fb/one,fb/one,fb/two", provider="primary", model="default")
     assert pool.fallback_candidates(registry=reg) == ["fb/one", "fb/two"]
 
@@ -59,14 +69,19 @@ def test_invalid_candidate_is_skipped_without_changing_valid_order(monkeypatch):
 
 def test_explicit_override_still_disables_automatic_fallback():
     from llm_loop.core.loop import engine
+
     tree = ast.parse(inspect.getsource(engine))
     assignments = [
-        node for node in ast.walk(tree)
+        node
+        for node in ast.walk(tree)
         if isinstance(node, ast.Assign)
         and any(isinstance(t, ast.Name) and t.id == "is_default_assembled" for t in node.targets)
     ]
     assert len(assignments) == 1
-    assert ast.unparse(assignments[0].value) == "sess.model_override is None and chat_model_arg is None"
+    assert (
+        ast.unparse(assignments[0].value)
+        == "sess.model_override is None and chat_model_arg is None"
+    )
 
 
 def test_retired_quality_and_wip_retry_authority_absent():

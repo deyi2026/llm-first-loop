@@ -235,7 +235,9 @@ class TestRecoveryDirNotExists:
 
 
 class TestAnnotationFormatUnchanged:
-    def test_loop_end_save_annotation_contains_program_exception(self, build_test_engine, recovery_setup):
+    def test_loop_end_save_annotation_contains_program_exception(
+        self, build_test_engine, recovery_setup
+    ):
         """轮末会话保存失败 → [程序异常] 标注格式不变（仅补充重试/备份结果）."""
         _, channel, _ = recovery_setup
         engine, fake = build_test_engine([{"content": "test answer"}])

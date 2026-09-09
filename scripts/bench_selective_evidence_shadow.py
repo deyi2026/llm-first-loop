@@ -5,6 +5,7 @@ This benchmark accepts evidence IDs as if they came from a model checkpoint resp
 then measures only identity/size mechanics. It never changes provider history, never
 persists a checkpoint, and never chooses evidence on behalf of the model.
 """
+
 from __future__ import annotations
 
 import argparse

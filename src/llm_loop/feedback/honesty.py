@@ -52,7 +52,6 @@ PROGRAM_FEEDBACK_PREFIXES = (
 )
 
 
-
 def _is_err1210(exc: Exception) -> bool:
     """口径对齐 core/loop/err1210.is_err1210（LLMHTTPError + status 400 + provider code 1210）.
 
@@ -137,10 +136,6 @@ def max_iterations_feedback(trace: list[str]) -> Message:
         ),
         source=MessageSource.SYSTEM,
     )
-
-
-
-
 
 
 def architecture_report_message(fact: str, reason: str, suggestion: str) -> Message:
@@ -240,7 +235,6 @@ def program_error_message(
             )
     content += "建议: 若尝试修复无效，请基于现有上下文继续作答，或换用其他信息途径；程序会如实反馈，不会静默。"
     return Message(role="system", content=content, source=MessageSource.SYSTEM)
-
 
 
 _FEEDBACK_FALLBACK_LOCK = threading.Lock()

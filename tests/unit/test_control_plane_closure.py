@@ -92,11 +92,11 @@ class TestG8KeywordScan:
             repo_src = Path(__file__).resolve().parents[2] / "src" / "llm_loop"
             result = subprocess.run(
                 ["rg", "-l", func, str(repo_src)],
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
             )
             files = [f for f in result.stdout.splitlines() if f.strip()]
             assert files == [], f"{func} 出现在生产面: {files}"
-
 
 
 class TestB33RepairBeforeLifecycle:

@@ -28,20 +28,79 @@ logger = logging.getLogger(__name__)
 _ENTITY_RE = re.compile(r"\b[A-Z][A-Za-z]{2,}\b")  # 首字母大写、长度≥3 的英文专有名词
 # 中文实体启发式（无空格/大小写，用常见实体后缀识别；零依赖）
 _CN_ENTITY_SUFFIXES = (
-    "公司", "集团", "系统", "项目", "模型", "框架", "平台", "协议", "语言",
-    "工具", "部门", "团队", "城市", "国家", "机构", "组织", "企业", "产品",
-    "引擎", "数据库", "服务", "库", "框架", "版本", "标准", "规范", "接口",
+    "公司",
+    "集团",
+    "系统",
+    "项目",
+    "模型",
+    "框架",
+    "平台",
+    "协议",
+    "语言",
+    "工具",
+    "部门",
+    "团队",
+    "城市",
+    "国家",
+    "机构",
+    "组织",
+    "企业",
+    "产品",
+    "引擎",
+    "数据库",
+    "服务",
+    "库",
+    "框架",
+    "版本",
+    "标准",
+    "规范",
+    "接口",
 )
-_CN_ENTITY_RE = re.compile(
-    r"[\u4e00-\u9fff]{2,12}(" + "|".join(_CN_ENTITY_SUFFIXES) + r")"
-)
-_QUOTED_ENTITY_RE = re.compile(r'[“「『]([\u4e00-\u9fffA-Za-z0-9_]{2,20})[”」』]')
+_CN_ENTITY_RE = re.compile(r"[\u4e00-\u9fff]{2,12}(" + "|".join(_CN_ENTITY_SUFFIXES) + r")")
+_QUOTED_ENTITY_RE = re.compile(r"[“「『]([\u4e00-\u9fffA-Za-z0-9_]{2,20})[”」』]")
 _ENTITY_STOP = {
-    "The", "This", "That", "These", "Those", "What", "Which", "When",
-    "Where", "Who", "How", "Why", "And", "But", "For", "Not", "You",
-    "Your", "Please", "Hello", "Hi", "I", "We", "They", "He", "She",
-    "It", "Are", "Is", "Was", "Were", "Do", "Does", "Did", "Can",
-    "Could", "Should", "Would", "Will", "May", "Might", "Must",
+    "The",
+    "This",
+    "That",
+    "These",
+    "Those",
+    "What",
+    "Which",
+    "When",
+    "Where",
+    "Who",
+    "How",
+    "Why",
+    "And",
+    "But",
+    "For",
+    "Not",
+    "You",
+    "Your",
+    "Please",
+    "Hello",
+    "Hi",
+    "I",
+    "We",
+    "They",
+    "He",
+    "She",
+    "It",
+    "Are",
+    "Is",
+    "Was",
+    "Were",
+    "Do",
+    "Does",
+    "Did",
+    "Can",
+    "Could",
+    "Should",
+    "Would",
+    "Will",
+    "May",
+    "Might",
+    "Must",
 }
 
 
@@ -58,7 +117,17 @@ def extract_entities(text: str) -> list[str]:
     # 英文专有名词（原规则）
     for m in _ENTITY_RE.finditer(text):
         w = m.group(0)
-        if w not in _ENTITY_STOP and w.lower() not in {"llm", "api", "ai", "cli", "json", "yaml", "sql", "http", "https"}:
+        if w not in _ENTITY_STOP and w.lower() not in {
+            "llm",
+            "api",
+            "ai",
+            "cli",
+            "json",
+            "yaml",
+            "sql",
+            "http",
+            "https",
+        }:
             ents.append(w)
     # 中文: 实体后缀词（整词保留，如 "记忆系统"）
     for m in _CN_ENTITY_RE.finditer(text):
@@ -245,9 +314,7 @@ class SemanticRetriever:
             entity_hits = entity_hits[: self._semantic_top_k()]
 
         # RRF 多信号融合（Phase 3+5）: 语义 + 关键词 + 实体 → 融合重排
-        fused = self._rrf_fuse(
-            semantic_hits, keyword_results or [], entity_hits, top_k=top_k
-        )
+        fused = self._rrf_fuse(semantic_hits, keyword_results or [], entity_hits, top_k=top_k)
         # mode 如实标注（FR-P1-RET-04）: 多信号参与 → mixed；实体独立命中 → entity
         signals = sum(1 for x in (semantic_hits, keyword_results, entity_hits) if x)
         if signals >= 2:
@@ -320,7 +387,11 @@ class SemanticRetriever:
         - 附加 _rrf_score 便于审计/调试；各通道原始分保留
         """
         fused: dict[str, list] = {}
-        channels = [("语义", semantic_hits), ("关键词", keyword_results), ("实体", entity_hits or [])]
+        channels = [
+            ("语义", semantic_hits),
+            ("关键词", keyword_results),
+            ("实体", entity_hits or []),
+        ]
         for _label, hits in channels:
             for rank, h in enumerate(hits, start=1):
                 key = self._entry_key(h)

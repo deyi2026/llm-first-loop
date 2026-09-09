@@ -68,7 +68,9 @@ def test_public_domain_browser_login_cookie_protects_api_and_ui(
     monkeypatch.setenv("UI_V2_DIR", str(ui))
     monkeypatch.setenv("WEB_HOST", "127.0.0.1")
     monkeypatch.setenv("WEB_AUTH_REQUIRE", "1")
-    monkeypatch.setenv("WEB_ORIGIN_ALLOWLIST", "https://app.llmfirstloop.com,https://llmfirstloop.com")
+    monkeypatch.setenv(
+        "WEB_ORIGIN_ALLOWLIST", "https://app.llmfirstloop.com,https://llmfirstloop.com"
+    )
     monkeypatch.setenv("WEB_LOGIN_PASSWORD_HASH", hash_login_password("correct-horse-battery"))
     monkeypatch.delenv("WEB_API_KEY", raising=False)
 
@@ -111,7 +113,6 @@ def test_public_domain_browser_login_cookie_protects_api_and_ui(
     assert client.get("/health").status_code == 401
 
 
-
 def test_browser_login_preserves_pasted_complex_password_exactly(
     build_test_engine, monkeypatch, tmp_path
 ):
@@ -138,9 +139,9 @@ def test_browser_login_preserves_pasted_complex_password_exactly(
     assert 'inputmode="text"' in page.text
     assert 'autocomplete="off"' in page.text
     assert 'type="password"' not in page.text
-    assert 'password-paste' not in page.text
-    assert '-webkit-text-security:disc' in page.text
-    assert 'autofocus' not in page.text
+    assert "password-paste" not in page.text
+    assert "-webkit-text-security:disc" in page.text
+    assert "autofocus" not in page.text
 
     response = client.post(
         "/auth/login",
@@ -150,6 +151,7 @@ def test_browser_login_preserves_pasted_complex_password_exactly(
     )
     assert response.status_code == 303
     assert client.get("/health").status_code == 200
+
 
 def test_domain_allowlist_with_login_hash_satisfies_fail_closed(monkeypatch):
     from llm_loop.web.auth import hash_login_password, validate_origin_allowlist
@@ -194,15 +196,15 @@ def test_bare_origin_allowlist_means_https_exact_origin(monkeypatch):
     from llm_loop.web.auth import configured_origin_allowlist
 
     monkeypatch.setenv("WEB_ORIGIN_ALLOWLIST", "App.Example.COM,https://api.example.com:443")
-    assert configured_origin_allowlist() == frozenset({
-        "https://app.example.com",
-        "https://api.example.com",
-    })
+    assert configured_origin_allowlist() == frozenset(
+        {
+            "https://app.example.com",
+            "https://api.example.com",
+        }
+    )
 
 
-def test_login_payload_size_is_bounded_before_password_verification(
-    build_test_engine, monkeypatch
-):
+def test_login_payload_size_is_bounded_before_password_verification(build_test_engine, monkeypatch):
     from llm_loop.web.auth import hash_login_password
 
     monkeypatch.setenv("WEB_AUTH_REQUIRE", "1")
@@ -249,9 +251,13 @@ def test_public_https_origin_forces_secure_cookie_even_if_local_proxy_hop_is_htt
     assert "Secure" in response.headers["set-cookie"]
 
 
-@pytest.mark.parametrize("base_url", [
-    "http://127.0.0.1:8903", "https://app.example.com",
-])
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://127.0.0.1:8903",
+        "https://app.example.com",
+    ],
+)
 def test_html_login_preserves_same_origin_on_first_attempt_and_retry(
     base_url, build_test_engine, monkeypatch
 ):
@@ -277,8 +283,10 @@ def test_html_login_preserves_same_origin_on_first_attempt_and_retry(
     assert rejected.status_code == 401
     assert rejected.headers["Referrer-Policy"] == "same-origin"
     accepted = client.post(
-        "/auth/login", data={"password": "test-login-password"},
-        headers={"Origin": base_url}, follow_redirects=False,
+        "/auth/login",
+        data={"password": "test-login-password"},
+        headers={"Origin": base_url},
+        follow_redirects=False,
     )
     assert accepted.status_code == 303
     assert client.get("/health").status_code == 200

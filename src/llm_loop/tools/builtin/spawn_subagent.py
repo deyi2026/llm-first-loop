@@ -39,14 +39,14 @@ class SpawnSubAgentTool:
             "inherit": {
                 "type": "boolean",
                 "description": "fork 继承（可选，默认 false）：自动注入父会话最近上下文切片"
-                               "（原文非摘要，条数/字符预算截断），省手动提取；可与 context 并存",
+                "（原文非摘要，条数/字符预算截断），省手动提取；可与 context 并存",
             },
             "acceptance": {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": "验收清单（可选，对齐 dsh_task 协议 v2）：子代理完成时逐项自检输出"
-                               "完成/未完成/原因——分歧显性化，父级保留最终裁决权。给验收标准后"
-                               "子代理结果更可靠（自检倒逼收敛，避免'答非所问'）。",
+                "完成/未完成/原因——分歧显性化，父级保留最终裁决权。给验收标准后"
+                "子代理结果更可靠（自检倒逼收敛，避免'答非所问'）。",
             },
         },
         "required": ["task"],
@@ -69,6 +69,7 @@ class SpawnSubAgentTool:
 
         depth = next_subagent_depth()
         from llm_loop.tools.arg_coerce import coerce_str_list
+
         acceptance = coerce_str_list(kwargs.get("acceptance"))
 
         if not task:

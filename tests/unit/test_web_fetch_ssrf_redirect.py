@@ -27,8 +27,13 @@ PUBLIC_IP = "93.184.216.34"  # example.com 历史公网 IP（字面量判定，�
 class _FakeStreamResp:
     """httpx stream 响应替身（__enter__/__exit__/read/extensions）."""
 
-    def __init__(self, status: int, body: str = "", headers: dict | None = None,
-                 extensions: dict | None = None) -> None:
+    def __init__(
+        self,
+        status: int,
+        body: str = "",
+        headers: dict | None = None,
+        extensions: dict | None = None,
+    ) -> None:
         self.status_code = status
         self.headers = headers or {}
         self.extensions = extensions or {}
@@ -126,7 +131,9 @@ def test_redirect_public_to_public_succeeds():
     first, final = f"https://{PUBLIC_IP}/old", f"https://{PUBLIC_IP}/new"
     script = {
         first: _FakeStreamResp(302, headers={"location": final}),
-        final: _FakeStreamResp(200, "<html><p>最终页内容充足，超过二十个字符的正文用于通过提取门槛校验。</p></html>"),
+        final: _FakeStreamResp(
+            200, "<html><p>最终页内容充足，超过二十个字符的正文用于通过提取门槛校验。</p></html>"
+        ),
     }
     tool, patches = _make_tool(script)
     with patches[0], patches[1]:
@@ -181,16 +188,20 @@ def test_curl_pins_validated_ip():
 
     def fake_run(argv, **kwargs):
         captured.append(argv)
-        return _fake_proc(200, "<html><p>curl 通道内容，长度需超过二十字符门槛以通过提取校验。</p></html>")
+        return _fake_proc(
+            200, "<html><p>curl 通道内容，长度需超过二十字符门槛以通过提取校验。</p></html>"
+        )
 
     import socket as _socket
 
     def fake_getaddrinfo(host, port, *a, **k):
         return [(2, 1, 6, "", (PUBLIC_IP, 0))]
 
-    with mock.patch("httpx.Client", side_effect=RuntimeError("force curl")), \
-         mock.patch("subprocess.run", side_effect=fake_run), \
-         mock.patch.object(_socket, "getaddrinfo", side_effect=fake_getaddrinfo):
+    with (
+        mock.patch("httpx.Client", side_effect=RuntimeError("force curl")),
+        mock.patch("subprocess.run", side_effect=fake_run),
+        mock.patch.object(_socket, "getaddrinfo", side_effect=fake_getaddrinfo),
+    ):
         r = tool.execute(url="https://curl-pin.example.com/page")
     assert r.status == ToolResultStatus.SUCCESS
     resolve_args = [a for argv in captured for a in argv if a.startswith("curl-pin.example.com:")]
@@ -210,8 +221,10 @@ def test_curl_redirect_to_private_blocked():
             return _fake_proc(302, "", "http://127.0.0.1/internal")
         return _fake_proc(200, "不应到达")
 
-    with mock.patch("httpx.Client", side_effect=RuntimeError("force curl")), \
-         mock.patch("subprocess.run", side_effect=fake_run):
+    with (
+        mock.patch("httpx.Client", side_effect=RuntimeError("force curl")),
+        mock.patch("subprocess.run", side_effect=fake_run),
+    ):
         r = tool.execute(url=f"https://{PUBLIC_IP}/first")
     assert r.status == ToolResultStatus.BLOCKED
     assert "127.0.0.1" in r.content

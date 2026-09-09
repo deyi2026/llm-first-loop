@@ -30,10 +30,6 @@ class _MemStore:
         self.injected.extend(entries)
 
 
-
-
-
-
 def _engine(store) -> LoopEngine:
     eng = object.__new__(LoopEngine)
     eng.memory = store
@@ -43,17 +39,17 @@ def _engine(store) -> LoopEngine:
     from llm_loop.core.loop.engine_services.routing import RoutingService
     from llm_loop.core.loop.engine_services.runtime_params import RuntimeParamsService
 
-    eng._runtime_params = RuntimeParamsService(eng)  # B5-W4-02a: 裸实例补 service 注入（同 turn_snapshot 桩）
+    eng._runtime_params = RuntimeParamsService(
+        eng
+    )  # B5-W4-02a: 裸实例补 service 注入（同 turn_snapshot 桩）
     eng._routing = RoutingService(eng)  # B5-W4-02b: 裸实例补 RoutingService 注入（沿 02a 桩例）
     eng._events = []
     eng._faults = []
     eng._append_message_event = lambda sess, msg: eng._events.append(msg)
-    eng._fault_feedback = (
-        lambda kind, exc: Message(
-            role="system",
-            content=f"[程序异常反馈:{kind}] {exc}",
-            source=MessageSource.SYSTEM,
-        )
+    eng._fault_feedback = lambda kind, exc: Message(
+        role="system",
+        content=f"[程序异常反馈:{kind}] {exc}",
+        source=MessageSource.SYSTEM,
     )
     eng._record_program_fault = lambda kind: eng._faults.append(kind)
     return eng
@@ -71,9 +67,7 @@ def _sess(sid: str = "s1") -> SimpleNamespace:
 
 def _snapshots(sess) -> list:
     return [
-        m
-        for m in sess.messages
-        if (m.metadata or {}).get("injection_kind") == "memory_snapshot"
+        m for m in sess.messages if (m.metadata or {}).get("injection_kind") == "memory_snapshot"
     ]
 
 
@@ -98,7 +92,10 @@ def test_status_budget_session_isolation():
     """A 的 _last_budget_info 不被 B 覆盖（300K/8K 各归各会话）."""
     eng = _runstate_engine(_MemStore([]))
     tok = current_session_id.set("A")
-    eng._run_state().last_budget_info = {"effective_budget": 300000, "limited_by": "provider_budget"}
+    eng._run_state().last_budget_info = {
+        "effective_budget": 300000,
+        "limited_by": "provider_budget",
+    }
     current_session_id.reset(tok)
     tok = current_session_id.set("B")
     eng._run_state().last_budget_info = {"effective_budget": 8000, "limited_by": "tool_round_clamp"}
@@ -126,7 +123,9 @@ def test_budget_single_source_no_drift():
     eng.llm_pool = None
     eng._runtime_history_budget = lambda: 50000
     eng._provider_chars_per_token = lambda *a, **k: 0.6
-    eng._routing._current_context_limit = lambda *a, **k: None  # W4-02b: 桩随 service 化迁实例（service 内部自调用直达，引擎面桩不再可拦截）
+    eng._routing._current_context_limit = lambda *a, **k: (
+        None
+    )  # W4-02b: 桩随 service 化迁实例（service 内部自调用直达，引擎面桩不再可拦截）
     detail = eng._effective_history_budget_detail("deepseek/x")
     eff = eng._effective_history_budget("deepseek/x")
     assert detail["effective_budget"] == eff == 50000

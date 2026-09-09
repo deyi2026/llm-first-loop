@@ -85,19 +85,22 @@ Semantic State 用来解释“为什么会成功/失败”，例如：
 ```python
 # Ground truth 来自 fixture.oracle，而不是 agent state
 detected = sum(
-    1 for injected in fixture.oracle.drift_items
+    1
+    for injected in fixture.oracle.drift_items
     if scorer.correctly_handled(injected, output, action_trace)
 )
 drift_detection_rate = detected / len(fixture.oracle.drift_items)
 
 false_positives = sum(
-    1 for normal in fixture.oracle.valid_items
+    1
+    for normal in fixture.oracle.valid_items
     if scorer.incorrectly_rejected_or_acted_on(normal, output, action_trace)
 )
 false_positive_rate = false_positives / len(fixture.oracle.valid_items)
 
 recovered = sum(
-    1 for signal in fixture.oracle.novel_signals
+    1
+    for signal in fixture.oracle.novel_signals
     if scorer.discovered_verified_and_used(signal, output, action_trace)
 )
 novel_signal_recovery_rate = recovered / len(fixture.oracle.novel_signals)
@@ -128,7 +131,9 @@ total = len(hard_constraints)
 rate = 1.0 - (violated / total) if total > 0 else 1.0
 
 # Closed Decision Stability
-reopened = sum(1 for decision in decisions if decision.reopened and not decision.reopen_if_triggered)
+reopened = sum(
+    1 for decision in decisions if decision.reopened and not decision.reopen_if_triggered
+)
 total = len(decisions)
 rate = 1.0 - (reopened / total) if total > 0 else 1.0
 
@@ -160,7 +165,9 @@ total = len(temporary_observations)
 rate = duplicates / total if total > 0 else 0
 
 # Unnecessary Reopen Rate
-unnecessary = sum(1 for decision in decisions if decision.reopened and not decision.reopen_if_triggered)
+unnecessary = sum(
+    1 for decision in decisions if decision.reopened and not decision.reopen_if_triggered
+)
 total_reopens = sum(1 for decision in decisions if decision.reopened)
 rate = unnecessary / total_reopens if total_reopens > 0 else 0
 ```
@@ -263,11 +270,17 @@ def collect_round_telemetry(state):
         "decision_reopens": sum(1 for d in state.decisions if d.reopened),
         "open_question_count": len(state.open_questions),
         "hypothesis_count": len(state.active_hypotheses),
-        "hypothesis_rejection_rate": sum(1 for h in state.active_hypotheses if h.status == "rejected") / len(state.active_hypotheses),
+        "hypothesis_rejection_rate": sum(
+            1 for h in state.active_hypotheses if h.status == "rejected"
+        )
+        / len(state.active_hypotheses),
         "action_count": len(state.candidate_next_actions),
-        "information_gain_avg": mean(a.expected_information_gain for a in state.candidate_next_actions),
+        "information_gain_avg": mean(
+            a.expected_information_gain for a in state.candidate_next_actions
+        ),
         "observation_count": len(state.temporary_observations),
-        "duplicate_rate": sum(1 for o in state.temporary_observations if o.is_duplicate) / len(state.temporary_observations),
+        "duplicate_rate": sum(1 for o in state.temporary_observations if o.is_duplicate)
+        / len(state.temporary_observations),
         "autonomy_level": state.derived.autonomy_level,
         "drift_trigger_count": state.derived.drift_trigger_count,
         "hot_count": state.derived.context_temperature.count("HOT"),
@@ -275,13 +288,18 @@ def collect_round_telemetry(state):
         "cold_refs_count": state.derived.context_temperature.count("COLD"),
     }
 
+
 # 任务结束采集
 def collect_task_telemetry(state):
     return {
         "task_success": task_success(state.mission, state.decisions, state.actions),
-        "constraint_violation_rate": sum(1 for c in state.mission.hard_constraints if c.violated) / len(state.mission.hard_constraints),
-        "rework_rate": sum(1 for d in state.decisions if d.reopened and not d.reopen_if_triggered) / len(state.decisions),
-        "cost_per_successful_task": state.total_cost if task_success(state.mission, state.decisions, state.actions) else None,
+        "constraint_violation_rate": sum(1 for c in state.mission.hard_constraints if c.violated)
+        / len(state.mission.hard_constraints),
+        "rework_rate": sum(1 for d in state.decisions if d.reopened and not d.reopen_if_triggered)
+        / len(state.decisions),
+        "cost_per_successful_task": state.total_cost
+        if task_success(state.mission, state.decisions, state.actions)
+        else None,
         "drift_rate": calculate_drift_rate(state),
         "novel_signal_recovery_rate": calculate_novel_signal_recovery_rate(state),
     }
@@ -533,7 +551,16 @@ measure provider behavior
 rng = random.Random(seed)
 
 # Variant 执行顺序随机化，避免时间/缓存/服务状态顺序偏差
-variant_order = ["baseline", "contract", "anchor", "evidence", "dru", "context_temp", "adaptive", "full"]
+variant_order = [
+    "baseline",
+    "contract",
+    "anchor",
+    "evidence",
+    "dru",
+    "context_temp",
+    "adaptive",
+    "full",
+]
 rng.shuffle(variant_order)
 
 # 注意：random.shuffle(...) 原地修改并返回 None，不要写成 variant_order = random.shuffle(...)

@@ -52,8 +52,7 @@ def _provider_visible_chars(messages: list[Message], provider_id: str, start: in
     return sum(
         len(m.content)
         for m in messages[max(0, start) :]
-        if not is_cache_compacted_for(m, provider_id)
-        and provider_message_visible(m)
+        if not is_cache_compacted_for(m, provider_id) and provider_message_visible(m)
     )
 
 
@@ -165,9 +164,9 @@ def _reasoning_tail_for(
         except Exception:  # noqa: BLE001 — unknown registry shape => configured fail-safe
             base = ""
 
-    replay_contract = str(
-        getattr(model_spec, "reasoning_replay", "configured") or "configured"
-    ).strip().lower()
+    replay_contract = (
+        str(getattr(model_spec, "reasoning_replay", "configured") or "configured").strip().lower()
+    )
     if replay_contract == "none":
         return -2
     if replay_contract == "tool_calls":
@@ -426,8 +425,10 @@ class _BuildMixin:
         memory_msgs: list[Message],
         max_chars: int | None = None,
         model: str | None = None,  # P1-7: per-call 模型覆盖（判定本地 provider 跳过推送式注入）
-        planned_label: str | None = None,  # 热重载一致性: 复用本轮已解析标签，避免构造期二次读registry
-        registry_snapshot: Any | None = None,  # R8.21: reasoning policy must bind to this round's provider
+        planned_label: str
+        | None = None,  # 热重载一致性: 复用本轮已解析标签，避免构造期二次读registry
+        registry_snapshot: Any
+        | None = None,  # R8.21: reasoning policy must bind to this round's provider
     ) -> list[dict]:
         """构造提交 LLM 的消息序列（system prompt + 记忆注入 + 历史 + 压缩另存）.
         M54: max_chars 可覆盖默认预算；None = 运行时预算。P1-10: 窗口锚定——
@@ -589,7 +590,9 @@ class _BuildMixin:
 
     # ── CR-R1: 认知决策包阶段（四槽 → 唯一决策包 → 单条聚合 user 尾注） ──
 
-    def _run_cognitive_packet_stage(self, sess, built: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _run_cognitive_packet_stage(
+        self, sess, built: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """单管线认知包注入（CR-R1 spec 5.2.1；整体 fail-open，失败原样返回 built）.
 
         - mode=off（默认）: 零计算零遥测；gate_note 仍按 R8.8 observed_only 取走。
@@ -648,12 +651,7 @@ class _BuildMixin:
                     env = None  # None/STALE_UNTRUSTED → 不可信，走 rebuild
             except Exception:
                 env = None
-            if (
-                gd
-                and env is not None
-                and env.state is not None
-                and env.identity.matches(gd)
-            ):
+            if gd and env is not None and env.state is not None and env.identity.matches(gd):
                 cog_state = env.state
                 goal_id = str(env.identity.goal_id or "")
                 state_revision = int(env.identity.state_revision or 1)
@@ -664,11 +662,7 @@ class _BuildMixin:
                     cog_state = None
                 if cog_state is not None:
                     cps = gd.get("checkpoints") or []
-                    revision = (
-                        int(env.identity.state_revision) + 1
-                        if env is not None
-                        else 1
-                    )
+                    revision = int(env.identity.state_revision) + 1 if env is not None else 1
                     identity = StateIdentity(
                         session_id=sess.session_id,
                         goal_id=str(gd.get("id", "") or ""),
@@ -685,7 +679,10 @@ class _BuildMixin:
 
             parts: list[tuple[str, str]] = []
             # interop / tip 槽（enforce: 取走语义；shadow: 只读不消费）
-            for attr, slot in (("_interop_tail_messages", "interop"), ("_tip_tail_messages", "tip")):
+            for attr, slot in (
+                ("_interop_tail_messages", "interop"),
+                ("_tip_tail_messages", "tip"),
+            ):
                 msgs = list(getattr(self, attr, None) or [])
                 for m in msgs:
                     content = str(getattr(m, "content", "") or "")
@@ -706,7 +703,9 @@ class _BuildMixin:
             # gate_note 槽：enforce 进 HOT 位；shadow 维持 observed_only 口径
             gate_note = ""
             if self._cache_monitor:
-                gate_note = str(self._cache_monitor.take_gate_note(session_id=sess.session_id) or "")
+                gate_note = str(
+                    self._cache_monitor.take_gate_note(session_id=sess.session_id) or ""
+                )
             if gate_note and effective == "enforce":
                 parts.append(("gate_note", gate_note))
             elif gate_note:

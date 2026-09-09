@@ -43,20 +43,28 @@ def test_empty_code_fails():
 
 def test_dry_run_returns_preview(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    r = run_playwright_exec(None, None, {
-        "code": '# 步骤\ngoto("http://localhost:8080/")',
-        "confirm": False,
-    })
+    r = run_playwright_exec(
+        None,
+        None,
+        {
+            "code": '# 步骤\ngoto("http://localhost:8080/")',
+            "confirm": False,
+        },
+    )
     assert r.status.value == "success"
     assert "dry_run" in r.content and "静态检查通过" in r.content
 
 
 def test_blocked_code_rejected_even_with_confirm(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    r = run_playwright_exec(None, None, {
-        "code": "import playwright\nprint(1)",
-        "confirm": True,
-    })
+    r = run_playwright_exec(
+        None,
+        None,
+        {
+            "code": "import playwright\nprint(1)",
+            "confirm": True,
+        },
+    )
     assert r.status.value == "failure" and "静态门控拒绝" in r.content
 
 
@@ -103,7 +111,6 @@ def test_exec_visible_in_standard_and_creative(tmp_path):
     for mode in ("standard", "creative"):
         names = _registered_names(build_engine(_settings(tmp_path / mode, mode)))
         assert "playwright_exec" in names, f"playwright_exec 应在 {mode} 可见"
-
 
 
 def test_dry_run_rejects_path_traversal_session(tmp_path, monkeypatch):

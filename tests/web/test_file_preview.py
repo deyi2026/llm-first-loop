@@ -59,7 +59,6 @@ def test_preview_missing_file_404(build_test_engine):
     assert resp.json()["error"] == "file_not_found"
 
 
-
 def test_preview_basename_fallback_rejects_symlink_escape(build_test_engine, tmp_path):
     """裸文件名兜底不得把工作区内symlink解析到根外后读取。"""
     root = tmp_path / "workspace"
@@ -72,9 +71,7 @@ def test_preview_basename_fallback_rejects_symlink_escape(build_test_engine, tmp
     engine, _ = build_test_engine([{"content": "ok"}])
     engine.workspace_root = str(root)
     client = TestClient(build_app(engine=engine))
-    resp = client.get(
-        "/api/v1/files/preview", params={"path": "secret-link.txt"}
-    )
+    resp = client.get("/api/v1/files/preview", params={"path": "secret-link.txt"})
 
     assert resp.status_code == 400
     assert resp.json()["error"] == "out_of_bounds"

@@ -16,6 +16,7 @@
 密钥类例外（_SECRET_KEYS）：API key 等凭据允许环境优先（CI/secret manager 惯例），
 但同样记录来源。
 """
+
 from __future__ import annotations
 
 import os
@@ -25,12 +26,19 @@ from pathlib import Path
 
 # 参与权威层治理的业务配置键（LLM 运行身份相关）
 BUSINESS_KEYS = (
-    "LLM_MODEL", "LLM_BASE_URL", "LLM_THINKING_MODE", "LLM_REASONING_EFFORT",
-    "HISTORY_MAX_CHARS", "WEB_PORT", "LFL_DATA_DIR", "DSH_HOME",
+    "LLM_MODEL",
+    "LLM_BASE_URL",
+    "LLM_THINKING_MODE",
+    "LLM_REASONING_EFFORT",
+    "HISTORY_MAX_CHARS",
+    "WEB_PORT",
+    "LFL_DATA_DIR",
+    "DSH_HOME",
     "RUNTIME_IDENTITY_MODE",
     "WIRE_CONTRACT_MODE",
     # R2: 从 restart_system.sh shell 默认值等价迁移（.env 未定义时兜底）
-    "SUMMARY_MODE", "TOOL_SCHEMA_LAZY",
+    "SUMMARY_MODE",
+    "TOOL_SCHEMA_LAZY",
 )
 # 密钥类：允许 shell 环境优先（secret manager 惯例），但记录来源
 _SECRET_KEYS = ("LLM_API_KEY", "DEEPSEEK_API_KEY", "FEISHU_APP_ID", "FEISHU_APP_SECRET")
@@ -46,8 +54,13 @@ _COMMENT_RE = re.compile(r"\s+#.*$")
 
 def _mask_secret(key: str, val: str) -> str:
     """密钥类键脱敏：值只保留长度信息，不回显任何明文片段。"""
-    if (key in _SECRET_KEYS or "API_KEY" in key or "SECRET" in key
-            or "TOKEN" in key or "PASSWORD" in key):
+    if (
+        key in _SECRET_KEYS
+        or "API_KEY" in key
+        or "SECRET" in key
+        or "TOKEN" in key
+        or "PASSWORD" in key
+    ):
         return f"<secret:{len(val)}chars>"
     return val
 
@@ -82,9 +95,13 @@ class EffectiveConfig:
     service: str
     workspace_root: str
     env_file: str
-    values: dict[str, str] = field(default_factory=dict)          # effective 业务键值
-    sources: dict[str, str] = field(default_factory=dict)         # 键→来源(cli/shell_override/dotenv/secret_env)
-    ignored_shell_env: dict[str, str] = field(default_factory=dict)  # 被忽略的 shell 残留（脱敏值长度）
+    values: dict[str, str] = field(default_factory=dict)  # effective 业务键值
+    sources: dict[str, str] = field(
+        default_factory=dict
+    )  # 键→来源(cli/shell_override/dotenv/secret_env)
+    ignored_shell_env: dict[str, str] = field(
+        default_factory=dict
+    )  # 被忽略的 shell 残留（脱敏值长度）
     allow_runtime_override: bool = False
 
     def to_summary(self) -> dict:
@@ -120,7 +137,7 @@ def resolve_effective(
     ws = Path(workspace_root) if workspace_root else _default_workspace()
     env_file = ws / ".env"
     dotenv = parse_env_file(env_file)
-    allow_override = (env.get("LFL_ALLOW_RUNTIME_OVERRIDE", "") == "1")
+    allow_override = env.get("LFL_ALLOW_RUNTIME_OVERRIDE", "") == "1"
 
     values: dict[str, str] = {}
     sources: dict[str, str] = {}

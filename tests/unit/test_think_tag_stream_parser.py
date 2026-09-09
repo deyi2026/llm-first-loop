@@ -25,8 +25,7 @@ def _feed_all(chunks: list[str]) -> list[tuple[str, str]]:
 def _joined(chunks: list[str]) -> dict[str, str]:
     out = _feed_all(chunks)
     return {
-        kind: "".join(text for k, text in out if k == kind)
-        for kind in ("reasoning", "content")
+        kind: "".join(text for k, text in out if k == kind) for kind in ("reasoning", "content")
     }
 
 

@@ -38,7 +38,7 @@ def coerce_str_list(value: Any) -> list[str]:
             items = re.split(r"[,，\s]+", s)
     else:
         return []
-    cleaned = [re.sub(r'^[\[\"\s]+|[\"\]\s]+$', '', str(x)) for x in items]
+    cleaned = [re.sub(r"^[\[\"\s]+|[\"\]\s]+$", "", str(x)) for x in items]
     return [x for x in cleaned if x]
 
 

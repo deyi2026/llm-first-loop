@@ -152,7 +152,9 @@ def test_lazy_schema_preserves_current_machine_bounds_without_parameter_prose():
     assert schedule_message == {"type": "string", "maxLength": 4000}
     assert agent_content == {"type": "string", "maxLength": 4000}
     assert wait_seconds == {"type": "number", "minimum": 0, "maximum": 30}
-    assert all("description" not in spec for spec in (schedule_message, agent_content, wait_seconds))
+    assert all(
+        "description" not in spec for spec in (schedule_message, agent_content, wait_seconds)
+    )
 
 
 def test_lazy_schema_does_not_copy_unreviewed_validator_keywords():

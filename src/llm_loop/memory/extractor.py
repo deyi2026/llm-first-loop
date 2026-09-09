@@ -231,7 +231,9 @@ class MemoryExtractor:
             # B3 边界修正：prefix 兜底过滤 assistant/system，不误伤 user 角色同前缀正常文本
             if (m.metadata or {}).get("answer_origin") == "program":
                 continue
-            if role in ("assistant", "system") and str(m.content or "").startswith(PROGRAM_FEEDBACK_PREFIXES):
+            if role in ("assistant", "system") and str(m.content or "").startswith(
+                PROGRAM_FEEDBACK_PREFIXES
+            ):
                 continue
             lines.append(f"[{role}] {content}")
         return "\n".join(lines)

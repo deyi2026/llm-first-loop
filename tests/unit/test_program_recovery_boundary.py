@@ -75,7 +75,6 @@ def test_human_text_that_mentions_legacy_marker_is_never_filtered(tmp_path: Path
     assert float(out[-1].get("_message_time_ts") or 0.0) > 0
 
 
-
 def test_runtime_retry_api_is_retired_but_historical_event_schema_remains_readable() -> None:
     from llm_loop.core.loop.engine_services.recovery_controller import RecoveryController
     from llm_loop.event_log.model import EVENT_PROGRAM_RECOVERY, REGISTRY
@@ -86,7 +85,9 @@ def test_runtime_retry_api_is_retired_but_historical_event_schema_remains_readab
     assert spec is not None  # append-only historical rows remain readable
 
 
-def test_real_single_user_1210_has_zero_program_prompt_and_zero_retry(tmp_path: Path, monkeypatch) -> None:
+def test_real_single_user_1210_has_zero_program_prompt_and_zero_retry(
+    tmp_path: Path, monkeypatch
+) -> None:
     from tests.unit.test_err1210_recovery import _e1210, _mk
 
     engine, fake = _mk(tmp_path, monkeypatch, responses=[_e1210()])

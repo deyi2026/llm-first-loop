@@ -75,9 +75,7 @@ class RoutingService:
             return getter()
         return self._pool_registry_snapshot()
 
-    def _round_registry_snapshots(
-        self, model: str | None, sess
-    ) -> tuple[Any, Any, Any]:
+    def _round_registry_snapshots(self, model: str | None, sess) -> tuple[Any, Any, Any]:
         """返回(current, default-startup, planning)三个本轮不可变快照。"""
         current = self._pool_registry_snapshot()
         default = self._pool_default_registry_snapshot()
@@ -107,9 +105,7 @@ class RoutingService:
         default_registry = None
         if self._host.llm_pool is not None:
             current_registry = registry_snapshot or self._pool_registry_snapshot()
-            default_registry = (
-                default_registry_snapshot or self._pool_default_registry_snapshot()
-            )
+            default_registry = default_registry_snapshot or self._pool_default_registry_snapshot()
         metadata_registry = current_registry
 
         chat_model_arg = model  # per-call Web override（None 表示不覆盖）
@@ -124,7 +120,9 @@ class RoutingService:
                 model_used = f"{pid}/{resolved_model_id}"  # M51: 如实标注实际模型
             except ValueError as exc:
                 # 模型不在注册表 / 凭据缺失：如实反馈，不静默降级（PREFERENCE_1）
-                self._host._record_action("action.llm_decide", "pool_resolve_failed", str(exc)[:200])
+                self._host._record_action(
+                    "action.llm_decide", "pool_resolve_failed", str(exc)[:200]
+                )
                 return _RouteDecision(
                     llm_client=self._host.llm,
                     model_used=self._default_model_label(),
@@ -144,17 +142,15 @@ class RoutingService:
                     model_used = f"{pid}/{resolved_model_id}"
                 else:
                     llm_client = self._host.llm_pool.get_client(None)
-                    model_used = self._default_model_label(
-                        registry_snapshot=default_registry
-                    )
+                    model_used = self._default_model_label(registry_snapshot=default_registry)
                     metadata_registry = default_registry
             except ValueError as exc:
                 # resolve 失败（override 在 refresh_config 后失效等）：如实反馈，走默认 client
-                self._host._record_action("action.llm_decide", "pool_resolve_failed", str(exc)[:200])
-                llm_client = self._host.llm
-                model_used = self._default_model_label(
-                    registry_snapshot=default_registry
+                self._host._record_action(
+                    "action.llm_decide", "pool_resolve_failed", str(exc)[:200]
                 )
+                llm_client = self._host.llm
+                model_used = self._default_model_label(registry_snapshot=default_registry)
                 metadata_registry = default_registry
         else:
             llm_client = self._host.llm
@@ -165,21 +161,20 @@ class RoutingService:
         # Physical context metadata is still needed by history budgeting, overflow
         # attribution and telemetry. Do not turn an approximate chars/token conversion
         # into a pre-provider hard rejection.
-        context_limit = self._current_context_limit(
-            model_used, registry_snapshot=metadata_registry
-        )
+        context_limit = self._current_context_limit(model_used, registry_snapshot=metadata_registry)
         chars_per_token = self._provider_chars_per_token(
             model_used, registry_snapshot=metadata_registry
         )
         return _RouteDecision(
-            llm_client=llm_client, model_used=model_used, chat_model_arg=chat_model_arg,
-            context_limit=context_limit, chars_per_token=chars_per_token,
+            llm_client=llm_client,
+            model_used=model_used,
+            chat_model_arg=chat_model_arg,
+            context_limit=context_limit,
+            chars_per_token=chars_per_token,
             metadata_registry=metadata_registry,
         )
 
-    def _default_model_label(
-        self, *, registry_snapshot: ProviderRegistry | None = None
-    ) -> str:
+    def _default_model_label(self, *, registry_snapshot: ProviderRegistry | None = None) -> str:
         """M51: 装配默认模型的全限定标签（provider/model）.
 
         有 pool 时经注册表 resolve 为全限定 ref；无 pool / resolve 失败 → 裸模型名（零回归）.
@@ -325,9 +320,7 @@ class RoutingService:
         cpt = (
             self._provider_chars_per_token(model_label)
             if registry_snapshot is None
-            else self._provider_chars_per_token(
-                model_label, registry_snapshot=registry_snapshot
-            )
+            else self._provider_chars_per_token(model_label, registry_snapshot=registry_snapshot)
         )
         if self._host.llm_pool is not None and "/" in model_label:
             pid, _mid = model_label.split("/", 1)
@@ -340,17 +333,13 @@ class RoutingService:
                     input_token_budget = int(model_spec.max_input_tokens or 0)
                 elif getattr(spec, "max_input_tokens", None):
                     input_token_budget = int(spec.max_input_tokens or 0)
-        if provider_budget and (
-            global_budget is None or provider_budget < global_budget
-        ):
+        if provider_budget and (global_budget is None or provider_budget < global_budget):
             global_budget = provider_budget
             limited_by = "provider_budget"
         limit = (
             self._current_context_limit(model_label)
             if registry_snapshot is None
-            else self._current_context_limit(
-                model_label, registry_snapshot=registry_snapshot
-            )
+            else self._current_context_limit(model_label, registry_snapshot=registry_snapshot)
         )
         model_budget: int | None = None
         if not limit:
@@ -452,9 +441,7 @@ class RoutingService:
         registry_snapshot: ProviderRegistry | None = None,
     ) -> dict:
         """T5: 单源委托（防双实现漂移）."""
-        return self._resolve_history_budget(
-            model_label, registry_snapshot=registry_snapshot
-        )
+        return self._resolve_history_budget(model_label, registry_snapshot=registry_snapshot)
 
     def _effective_history_budget(
         self,
@@ -468,6 +455,6 @@ class RoutingService:
         （90% 物理窗口安全边距并预留 max_tokens）, provider history_budget_chars 若配置)。完整归因字段见
         _resolve_history_budget。
         """
-        return self._resolve_history_budget(
-            model_label, registry_snapshot=registry_snapshot
-        )["effective_budget"]
+        return self._resolve_history_budget(model_label, registry_snapshot=registry_snapshot)[
+            "effective_budget"
+        ]

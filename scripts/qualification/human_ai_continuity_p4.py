@@ -36,7 +36,6 @@ INITIAL_PROMPT = """Human-AI Continuity P4 资格实验。工作区中有 item1.
 RESUME_PROMPT = "继续完成刚才的任务，保留我的修改。"
 
 
-
 def _settings(runtime: Path) -> Settings:
     """Build an isolated qualification config without persisting credentials.
 
@@ -49,8 +48,7 @@ def _settings(runtime: Path) -> Settings:
     model_ref = os.environ.get("P4_MODEL_REF", "").strip()
     if not (env_file and registry_file and model_ref):
         raise RuntimeError(
-            "P4 qualification requires P4_ENV_FILE, "
-            "P4_PROVIDER_REGISTRY_FILE, and P4_MODEL_REF"
+            "P4 qualification requires P4_ENV_FILE, P4_PROVIDER_REGISTRY_FILE, and P4_MODEL_REF"
         )
     load_env_file(env_file)
     raw_registry = Path(registry_file).read_text(encoding="utf-8")
@@ -158,9 +156,7 @@ def _human_hard_exit(runtime: Path) -> None:
     human = engine.human_file_operations
     assert human is not None
 
-    item2 = human.observe(
-        session_id=sid, workspace_scope=str(workspace), relative_path="item2.txt"
-    )
+    item2 = human.observe(session_id=sid, workspace_scope=str(workspace), relative_path="item2.txt")
     human_receipt = human.edit(
         session_id=sid,
         workspace_scope=str(workspace),
@@ -257,9 +253,7 @@ def _evaluate(runtime: Path) -> dict[str, Any]:
     resume_calls = list(resume.get("tool_calls") or [])
 
     final_files_ok = all(
-        "STATUS: reviewed" in text
-        and text.count(AI_MARKER) == 1
-        and f"KEEP: keep-{idx}" in text
+        "STATUS: reviewed" in text and text.count(AI_MARKER) == 1 and f"KEEP: keep-{idx}" in text
         for idx, text in enumerate(files.values(), start=1)
     )
     human_note_preserved = HUMAN_NOTE in files["item2.txt"]
@@ -278,9 +272,7 @@ def _evaluate(runtime: Path) -> dict[str, Any]:
     no_repeat_completed_writes = not any(
         path in {"item1.txt", "item2.txt"} for path in resume_edit_paths
     )
-    completed_remaining = all(
-        f"item{idx}.txt" in resume_edit_paths for idx in range(3, 7)
-    )
+    completed_remaining = all(f"item{idx}.txt" in resume_edit_paths for idx in range(3, 7))
 
     resume_names = _tool_names(resume)
     observed_human_change = any(

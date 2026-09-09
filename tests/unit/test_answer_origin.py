@@ -49,7 +49,9 @@ class TestExtractorOriginFilter:
 
     def test_legacy_prefix_system_fallback(self):
         # 老的 system 原生反馈（无 metadata）同样被 prefix 兜底过滤
-        msgs = [Message(role="system", content="[搜索空结果提醒] 无结果", source=MessageSource.SYSTEM)]
+        msgs = [
+            Message(role="system", content="[搜索空结果提醒] 无结果", source=MessageSource.SYSTEM)
+        ]
         assert "搜索空结果提醒" not in _extractor()._build_history_text(msgs)
 
     def test_model_origin_and_normal_kept(self):

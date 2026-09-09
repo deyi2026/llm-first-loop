@@ -16,8 +16,10 @@ from llm_loop.tools.registry import ToolRegistry, ToolResultStatus
 def test_schemas_aggregator_normalizes_arguments_to_dict():
     """schemas.finish：JSON 字符串 → dict；非法 JSON → _raw_arguments 兜底（不崩）."""
     agg = ToolCallDeltaAggregator()
-    agg.add_delta({"index": 0, "id": "c1", "function": {"name": "read_file", "arguments": "{\"path\":"}})
-    agg.add_delta({"index": 0, "function": {"arguments": "\"a.txt\"}"}})
+    agg.add_delta(
+        {"index": 0, "id": "c1", "function": {"name": "read_file", "arguments": '{"path":'}}
+    )
+    agg.add_delta({"index": 0, "function": {"arguments": '"a.txt"}'}})
     calls = agg.finish()
     assert calls[0]["arguments"] == {"path": "a.txt"}
     assert calls[0]["_arguments_raw"] == '{"path":"a.txt"}'
@@ -38,7 +40,6 @@ def test_full_loop_string_arguments_executes_tool(build_test_engine, tmp_path):
     注册表收到 dict → read_file 真实执行（若回归复现则为 "[参数错误] 参数必须为 JSON 对象"）。
     """
     from unittest import mock as _mock
-
 
     target = tmp_path / "data.txt"
     target.write_text("内容X", encoding="utf-8")

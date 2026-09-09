@@ -27,9 +27,10 @@ def notify(title: str, message: str) -> bool:
         safe_title = str(title).replace('"', '\\"')
         safe_msg = str(message).replace('"', '\\"')
         subprocess.run(
-            ["osascript", "-e",
-             f'display notification "{safe_msg}" with title "{safe_title}"'],
-            capture_output=True, text=True, timeout=5,
+            ["osascript", "-e", f'display notification "{safe_msg}" with title "{safe_title}"'],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         return True
     except Exception:  # noqa: BLE001
@@ -64,7 +65,9 @@ def confirm(
         )
         proc = subprocess.run(
             ["osascript", "-e", script],
-            capture_output=True, text=True, timeout=timeout_s,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
         )
         # 用户点确认 → stdout 含 "button returned:确认"；点拒绝 → 退出码非0
         return "button returned:" in proc.stdout and safe_ok in proc.stdout

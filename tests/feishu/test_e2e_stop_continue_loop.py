@@ -46,16 +46,23 @@ def _payload(text: str, chat_id: str, event_id: str, message_id: str) -> dict:
     }
 
 
-def _wait_reply(replies: list[tuple[str, str, str]], needle: str, count: int = 1,
-                timeout: float = 6.0, desc: str = "") -> None:
+def _wait_reply(
+    replies: list[tuple[str, str, str]],
+    needle: str,
+    count: int = 1,
+    timeout: float = 6.0,
+    desc: str = "",
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         n = sum(1 for r in list(replies) if needle in r[1])
         if n >= count:
             return
         time.sleep(0.02)
-    raise AssertionError(f"等待回复超时: {desc or needle}×{count}（实得 "
-                         f"{sum(1 for r in replies if needle in r[1])} 条）")
+    raise AssertionError(
+        f"等待回复超时: {desc or needle}×{count}（实得 "
+        f"{sum(1 for r in replies if needle in r[1])} 条）"
+    )
 
 
 def _wait_true(fn, timeout: float = 6.0, desc: str = "") -> None:
@@ -141,7 +148,6 @@ def test_t10_stop_continue_full_closed_loop(build_test_engine, tmp_path, monkeyp
     assert connector._submit_message(_payload("/stop", _CHAT, "evt_s1", "om_s1"))
     _wait_reply(replies, "停止已受理", desc="/stop 受理回执应即时")
 
-
     # ③ 推理终止收口：含恢复指引（spec 5.1.1-7）
     _wait_reply(replies, "已停止", desc="取消收口回复")
     closing1 = [r for r in replies if "已停止" in r[1]][0]
@@ -157,9 +163,9 @@ def test_t10_stop_continue_full_closed_loop(build_test_engine, tmp_path, monkeyp
     assert llm2_started.wait(3.0), "恢复轮应启动"
     msgs1 = fake.calls[-1]["messages"]
     wire1 = json.dumps(msgs1, ensure_ascii=False)
-    assert any(
-        m.get("role") == "user" and m.get("content") == "/continue" for m in msgs1
-    ), "恢复轮应保留用户真实 /continue 指令"
+    assert any(m.get("role") == "user" and m.get("content") == "/continue" for m in msgs1), (
+        "恢复轮应保留用户真实 /continue 指令"
+    )
     assert "[程序恢复]" not in wire1, "恢复不得改写成程序自然语言注入"
     assert "任务 X：完成数据分析" in wire1, "任务现场应完整保留"
 
@@ -177,7 +183,9 @@ def test_t10_stop_continue_full_closed_loop(build_test_engine, tmp_path, monkeyp
     # 最终 run 已完成并持久化后核验 user-control provenance：两次恢复均是用户原始
     # /continue turn，不存在程序伪造的 recovery user frame。
     sess_final = engine.session.load(sid)
-    continue_msgs = [m for m in sess_final.messages if m.role == "user" and m.content == "/continue"]
+    continue_msgs = [
+        m for m in sess_final.messages if m.role == "user" and m.content == "/continue"
+    ]
     assert len(continue_msgs) == 2
     assert all(m.metadata.get("origin_layer") == "user_instruction" for m in continue_msgs)
     assert all(m.metadata.get("program_origin") is False for m in continue_msgs)

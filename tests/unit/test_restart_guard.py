@@ -36,6 +36,7 @@ from llm_loop.introspection.task_store import TaskStore
 
 # ── 测试基建（stub engine / session_map / handler）──
 
+
 class _StubRunner:
     def __init__(self) -> None:
         self.enabled = True
@@ -68,8 +69,14 @@ class _StubEngine:
         self.audits.append(("run", "run_started", sid))  # run 启动痕迹（6c 审计序锚点）
         self.ran.append((sid, text))
         return SimpleNamespace(
-            final_answer="ok", truncated=False, verification_note="", cancel_reason="",
-            model_used="", tokens_in=0, tokens_out=0, tool_calls=[],
+            final_answer="ok",
+            truncated=False,
+            verification_note="",
+            cancel_reason="",
+            model_used="",
+            tokens_in=0,
+            tokens_out=0,
+            tool_calls=[],
         )
 
 
@@ -97,7 +104,8 @@ def _make_handler(engine: _StubEngine, sid: str, *, guard: RestartGuardService |
         pytest.skip("lark_oapi 未安装（pyproject 声明依赖，此环境未装全）——守卫逻辑由完整环境覆盖")
     replies: list[str] = []
     handler = FeishuMessageHandler(
-        engine, _StubSessionMap(sid),
+        engine,
+        _StubSessionMap(sid),
         lambda rid, text, rtype: replies.append(text),
         audit_dir=str(Path(engine.settings.audit_dir)),
         typing_ack=False,
@@ -110,8 +118,12 @@ def _make_handler(engine: _StubEngine, sid: str, *, guard: RestartGuardService |
 
 def _msg(text: str) -> FeishuMessage:
     return FeishuMessage(
-        message_id=f"m-{text}", sender_id="ou-1", chat_id="", msg_type="text",
-        text=text, sender_type="user",
+        message_id=f"m-{text}",
+        sender_id="ou-1",
+        chat_id="",
+        msg_type="text",
+        text=text,
+        sender_type="user",
     )
 
 
@@ -130,6 +142,7 @@ def _inprogress_goal(audit_dir: str, sid: str = "s-wip") -> tuple[str, str]:
 
 # ── 1a completed 拒绝重跑 ──
 
+
 def test_r521_1a_completed_deny():
     d = tempfile.mkdtemp()
     engine = _StubEngine(d)
@@ -139,13 +152,20 @@ def test_r521_1a_completed_deny():
     assert handled is True
     assert engine.ran == []  # 任务不执行
     text = replies[0]
-    assert goal_id in text and "不再自动重跑" in text and "发起新任务" in text  # 拒绝回执含标识+引导
-    assert ("restart_guard", "restart.denied", f"goal_id={goal_id}; reason=completed") in engine.audits
+    assert (
+        goal_id in text and "不再自动重跑" in text and "发起新任务" in text
+    )  # 拒绝回执含标识+引导
+    assert (
+        "restart_guard",
+        "restart.denied",
+        f"goal_id={goal_id}; reason=completed",
+    ) in engine.audits
     feishu_audit = (Path(d) / "feishu_audit.jsonl").read_text(encoding="utf-8")
     assert "restart_denied" in feishu_audit  # 通道侧留痕
 
 
 # ── 1b 全新任务不受限 ──
+
 
 def test_r521_1b_new_task_bypass():
     d = tempfile.mkdtemp()
@@ -158,6 +178,7 @@ def test_r521_1b_new_task_bypass():
 
 
 # ── 2a 未完成先确认帧不执行 ──
+
 
 def test_r521_2a_inprogress_confirm_first():
     d = tempfile.mkdtemp()
@@ -175,6 +196,7 @@ def test_r521_2a_inprogress_confirm_first():
 
 # ── 2b 同意后执行 + 帧-应答对应审计 ──
 
+
 def test_r521_2b_approve_then_run():
     d = tempfile.mkdtemp()
     engine = _StubEngine(d)
@@ -191,6 +213,7 @@ def test_r521_2b_approve_then_run():
 
 
 # ── 2c 拒绝 / 超时留痕且不执行 ──
+
 
 def test_r521_2c_deny_and_timeout():
     d = tempfile.mkdtemp()
@@ -216,6 +239,7 @@ def test_r521_2c_deny_and_timeout():
 
 
 # ── 3a 授权一次性（T1 授权不放行 T2）──
+
 
 def test_r521_3a_cross_task_grant_invalid():
     d = tempfile.mkdtemp()
@@ -245,6 +269,7 @@ def _find_frame(guard: RestartGuardService, goal_id: str) -> str:
 
 # ── 4a 终态未知 confirm 兜底 + 异常留痕 ──
 
+
 def test_r521_4a_unknown_state_confirm():
     d = tempfile.mkdtemp()
     engine = _StubEngine(d)
@@ -261,6 +286,7 @@ def test_r521_4a_unknown_state_confirm():
 
 # ── 5a /continue 无应答零执行 ──
 
+
 def test_r521_5a_no_silent_run_on_continue():
     d = tempfile.mkdtemp()
     engine = _StubEngine(d)
@@ -272,6 +298,7 @@ def test_r521_5a_no_silent_run_on_continue():
 
 
 # ── 6a 普通“继续”不再读取历史 Goal 判定语义 ──
+
 
 def test_r521_6a_bare_continue_reaches_model_unchanged():
     d = tempfile.mkdtemp()
@@ -286,6 +313,7 @@ def test_r521_6a_bare_continue_reaches_model_unchanged():
 
 # ── 6b 旧 notify_confirm env 不得恢复普通消息语义门 ──
 
+
 def test_r521_6b_legacy_notify_mode_cannot_reenable_bare_gate(monkeypatch):
     monkeypatch.setenv("LFL_RESTART_NOTIFY_MODE", "notify_confirm")
     d = tempfile.mkdtemp()
@@ -297,6 +325,7 @@ def test_r521_6b_legacy_notify_mode_cannot_reenable_bare_gate(monkeypatch):
 
 
 # ── 6c 只有既存 /continue pending frame 才消费“同意/拒绝” ──
+
 
 def test_r521_6c_pending_frame_remains_scoped_control_protocol():
     d = tempfile.mkdtemp()
@@ -310,6 +339,7 @@ def test_r521_6c_pending_frame_remains_scoped_control_protocol():
 
 
 # ── 6d 显式新任务指令零误伤 ──
+
 
 def test_r521_6d_explicit_new_task_unaffected():
     d = tempfile.mkdtemp()
@@ -326,6 +356,7 @@ def test_r521_6d_explicit_new_task_unaffected():
 
 # ── 7a completed + 普通“重跑”也交当前模型判断 ──
 
+
 def test_r521_7a_plain_rerun_text_is_not_program_denied():
     d = tempfile.mkdtemp()
     engine = _StubEngine(d)
@@ -340,6 +371,7 @@ def test_r521_7a_plain_rerun_text_is_not_program_denied():
 
 # ── 7b 显式坚持重跑 → 新任务建模：新 goal_id、旧终态只读 ──
 
+
 def test_r521_7b_rerun_models_new_goal():
     d = tempfile.mkdtemp()
     engine = _StubEngine(d)
@@ -352,7 +384,9 @@ def test_r521_7b_rerun_models_new_goal():
     handler, replies = _make_handler(engine, "s-new2", guard=guard)
     assert handler._try_restart_gate(_msg("重做这个任务"), "重做这个任务") is False
     assert replies == []
-    new_goal = GoalStore(d).create("重做：进行中的任务（新任务）", session_id="s-new2")  # 既有创建链
+    new_goal = GoalStore(d).create(
+        "重做：进行中的任务（新任务）", session_id="s-new2"
+    )  # 既有创建链
     new_task = TaskStore(d).create(new_goal.id, "子任务A（重做）", acceptance=["验收1"])
     TaskStore(d).update(new_goal.id, new_task.task_id, status="in_progress")
     # 旧任务终态记录只读不变（done/complete 账本未被触碰）
@@ -370,6 +404,7 @@ def test_r521_7b_rerun_models_new_goal():
 
 # ── 票据重放：二次消费 consumed 不二次放行 ──
 
+
 def test_grant_replay_consumed_rejected():
     d = tempfile.mkdtemp()
     engine = _StubEngine(d)
@@ -385,11 +420,14 @@ def test_grant_replay_consumed_rejected():
     assert not grant2.ok and grant2.decision == "consumed"  # 二次消费不二次放行
     # 同帧同意不再 approved（票据已焚，结构性不可能复用）
     handler._try_restart_gate(_msg("同意"), "同意")
-    approved = [x for x in _audit_details(engine, "restart.authorization") if "decision=approved" in x]
+    approved = [
+        x for x in _audit_details(engine, "restart.authorization") if "decision=approved" in x
+    ]
     assert len(approved) == 1
 
 
 # ── 授权时刻复核：等待期变 done → 转拒绝 ──
+
 
 def test_grant_recheck_on_concurrent_done():
     d = tempfile.mkdtemp()
@@ -408,10 +446,17 @@ def test_grant_recheck_on_concurrent_done():
 
 # ── 帧完整性：缺任务标识/进度信息 → 无效 ──
 
+
 def test_frame_without_required_fields_invalid():
     base = dict(
-        frame_id="f1", goal_id="G1", task_summary="t", anchor_source="checkpoint",
-        current_sub_item="做了一半", next_step="继续做", pending_summary="待续 1 项", created_at="t0",
+        frame_id="f1",
+        goal_id="G1",
+        task_summary="t",
+        anchor_source="checkpoint",
+        current_sub_item="做了一半",
+        next_step="继续做",
+        pending_summary="待续 1 项",
+        created_at="t0",
     )
     assert frame_complete(RestartConfirmationFrame(**base))  # 完整帧有效
     assert not frame_complete(None)

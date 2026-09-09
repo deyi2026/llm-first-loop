@@ -63,8 +63,17 @@ _TOOL_RECEIPT_KEYWORDS = {
 # EVO-20260810-50816b30: 能力陈述 vs 行为声明语义区分
 # 情态/能力标志（表"能力/意愿"，非"已完成"）
 _ABILITY_MARKERS = [
-    "可以", "能够", "能", "可", "会", "具备", "支持",
-    "can ", "could ", "may ", "might ",
+    "可以",
+    "能够",
+    "能",
+    "可",
+    "会",
+    "具备",
+    "支持",
+    "can ",
+    "could ",
+    "may ",
+    "might ",
 ]
 # 完成标志（表"已完成/已发生"）
 _COMPLETION_MARKERS = ["已", "了", "成功", "完成", "did", "has ", "have ", "done"]
@@ -91,7 +100,9 @@ class DeclarationCheckResult:
     declarations: list[str] = field(default_factory=list)
     discrepancies: list[str] = field(default_factory=list)  # 声明了什么 vs 实际事实
     receipt_summary: list[str] = field(default_factory=list)
-    cross_round_hits: list[str] = field(default_factory=list)  # EVO-20260820-409f3f60: 近 N 轮回执命中（跨轮引用）
+    cross_round_hits: list[str] = field(
+        default_factory=list
+    )  # EVO-20260820-409f3f60: 近 N 轮回执命中（跨轮引用）
 
 
 class DeclarationValidator:
@@ -234,8 +245,7 @@ class DeclarationValidator:
         """
         text = re.sub(r"```.*?```", "", answer, flags=re.DOTALL)
         lines = [
-            ln for ln in text.splitlines()
-            if not ln.lstrip().startswith(_MARKDOWN_STRUCT_PREFIXES)
+            ln for ln in text.splitlines() if not ln.lstrip().startswith(_MARKDOWN_STRUCT_PREFIXES)
         ]
         return "\n".join(lines)
 
@@ -248,7 +258,9 @@ class DeclarationValidator:
         negative clause cannot mask an independent positive completion claim.
         """
         lower = text.lower()
-        action_verbs_zh = [v for v in _DECLARE_VERBS if re.search(r"[\u4e00-\u9fff]", v) and not v.startswith("已")]
+        action_verbs_zh = [
+            v for v in _DECLARE_VERBS if re.search(r"[\u4e00-\u9fff]", v) and not v.startswith("已")
+        ]
         action_alt_zh = "|".join(re.escape(v) for v in action_verbs_zh)
         # The extractor's 40-char prefix is greedy, so m.group(1) can be a noun-like
         # later verb (e.g. it captures "修改" in "未执行任何修改"). Determine negation
@@ -258,12 +270,22 @@ class DeclarationValidator:
             for prefix in _NEGATION_PREFIXES
         )
         action_verbs_en = [
-            "wrote", "created", "deleted", "saved", "modified", "executed", "installed", "downloaded", "written"
+            "wrote",
+            "created",
+            "deleted",
+            "saved",
+            "modified",
+            "executed",
+            "installed",
+            "downloaded",
+            "written",
         ]
         en_alt = "|".join(re.escape(v) for v in action_verbs_en)
         en_negated = bool(
             re.search(
-                r"\b(?:did\s+not|didn't|have\s+not|haven't|has\s+not|hasn't|not|never)\s+(?:" + en_alt + r")\b",
+                r"\b(?:did\s+not|didn't|have\s+not|haven't|has\s+not|hasn't|not|never)\s+(?:"
+                + en_alt
+                + r")\b",
                 lower,
             )
         )
@@ -273,7 +295,9 @@ class DeclarationValidator:
         # A separate explicit positive completion in the same extracted clause wins: keep
         # the clause for verification rather than blanket-exempting it due to one negation.
         positive_zh = re.search(
-            r"(?:已|已经|成功)\s*(?:" + "|".join(re.escape(v) for v in _DECLARE_VERBS if not v.startswith("已")) + r")",
+            r"(?:已|已经|成功)\s*(?:"
+            + "|".join(re.escape(v) for v in _DECLARE_VERBS if not v.startswith("已"))
+            + r")",
             text,
         )
         positive_en = re.search(
@@ -374,9 +398,7 @@ class DeclarationValidator:
             "cross_round_hits": result.cross_round_hits,  # EVO-20260820-409f3f60: 跨轮引用命中可审计
             "tool_call_ids": list(
                 dict.fromkeys(
-                    str(m.tool_call_id)
-                    for m in tool_msgs
-                    if getattr(m, "tool_call_id", None)
+                    str(m.tool_call_id) for m in tool_msgs if getattr(m, "tool_call_id", None)
                 )
             ),
             "receipts": result.receipt_summary,

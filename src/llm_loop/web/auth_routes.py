@@ -210,7 +210,9 @@ async def login(request: Request):
     if not decision.allowed:
         headers = {"Retry-After": str(decision.retry_after)}
         if wants_json:
-            return JSONResponse({"error": "too_many_login_attempts"}, status_code=429, headers=headers)
+            return JSONResponse(
+                {"error": "too_many_login_attempts"}, status_code=429, headers=headers
+            )
         response = _login_response(
             next_path=next_path,
             error="尝试次数过多，请稍后再试。",

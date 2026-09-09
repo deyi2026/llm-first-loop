@@ -105,21 +105,26 @@ class ConventionExtractor:
 
             # 体积控制
             text = ConventionSummary(
-                target_path=target_path, conventions=tuple(items),
+                target_path=target_path,
+                conventions=tuple(items),
                 source_files=tuple(str(f) for f in files[:5]),
             ).to_injection_text()
             truncated = len(text) > self._max_chars
             retained = min(len(text), self._max_chars)
             summary = ConventionSummary(
-                target_path=target_path, conventions=tuple(items),
+                target_path=target_path,
+                conventions=tuple(items),
                 source_files=tuple(str(f) for f in files[:5]),
-                truncated=truncated, original_size=len(text), retained_size=retained,
+                truncated=truncated,
+                original_size=len(text),
+                retained_size=retained,
             )
             # 事件落盘（统计，不含代码内容）
             if self._event_store is not None:
                 try:
                     self._event_store.append(
-                        self._session_id, "task.convention.injected",
+                        self._session_id,
+                        "task.convention.injected",
                         {
                             "target_path": target_path,
                             "file_count": len(files),
@@ -138,8 +143,11 @@ class ConventionExtractor:
     def _scan_files(self, base_dir: Path) -> list[Path]:
         """扫描代码文件（同目录；scan_depth=1 含子目录；上限 scan_file_limit）."""
         files: list[Path] = []
-        candidates = (sorted(base_dir.glob("*.py")) if self._scan_depth <= 0
-                      else sorted(base_dir.rglob("*.py")))
+        candidates = (
+            sorted(base_dir.glob("*.py"))
+            if self._scan_depth <= 0
+            else sorted(base_dir.rglob("*.py"))
+        )
         for fp in candidates:
             if ".git" in fp.parts or "__pycache__" in fp.parts:
                 continue
@@ -162,10 +170,12 @@ class ConventionExtractor:
                     rel_imports += 1
         if abs_imports + from_imports > 0:
             style = "绝对导入" if rel_imports == 0 else "相对导入为主"
-            items.append(ConventionItem(
-                ConventionType.IMPORT_STYLE,
-                f"import 风格: {style}（import {abs_imports} / from-import {from_imports}）",
-            ))
+            items.append(
+                ConventionItem(
+                    ConventionType.IMPORT_STYLE,
+                    f"import 风格: {style}（import {abs_imports} / from-import {from_imports}）",
+                )
+            )
         return items
 
     @staticmethod
@@ -181,7 +191,9 @@ class ConventionExtractor:
             return []
         snake = sum(1 for n in names if re.fullmatch(r"[a-z][a-z0-9_]*", n or ""))
         pascal = sum(1 for n in names if re.fullmatch(r"[A-Z][a-zA-Z0-9]*", n or ""))
-        camel = sum(1 for n in names if re.fullmatch(r"[a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*", n or ""))
+        camel = sum(
+            1 for n in names if re.fullmatch(r"[a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*", n or "")
+        )
         total = len(names)
         if snake / total >= 0.5:
             style = "snake_case"
@@ -191,24 +203,39 @@ class ConventionExtractor:
             style = "camelCase"
         else:
             style = "混合"
-        items = [ConventionItem(ConventionType.NAMING, f"命名约定: {style}（函数/变量 {total} 个）")]
+        items = [
+            ConventionItem(ConventionType.NAMING, f"命名约定: {style}（函数/变量 {total} 个）")
+        ]
         if style == "混合":
-            items.append(ConventionItem(ConventionType.NAMING, f"  分布: snake {snake} / Pascal {pascal} / camel {camel}"))
+            items.append(
+                ConventionItem(
+                    ConventionType.NAMING,
+                    f"  分布: snake {snake} / Pascal {pascal} / camel {camel}",
+                )
+            )
         return items
 
     @staticmethod
     def _extract_type_annotation(tree: ast.AST) -> list[ConventionItem]:
         """类型标注模式: 是否强制、标注风格."""
-        funcs = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        funcs = [
+            n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ]
         if not funcs:
             return []
         annotated = sum(
-            1 for f in funcs
-            if f.args.args and all(a.annotation is not None for a in f.args.args)
+            1
+            for f in funcs
+            if f.args.args
+            and all(a.annotation is not None for a in f.args.args)
             or f.returns is not None
         )
         if annotated / len(funcs) >= 0.5:
-            return [ConventionItem(ConventionType.TYPE_ANNOTATION, "类型标注: 强制（函数参数/返回值均标注）")]
+            return [
+                ConventionItem(
+                    ConventionType.TYPE_ANNOTATION, "类型标注: 强制（函数参数/返回值均标注）"
+                )
+            ]
         return [ConventionItem(ConventionType.TYPE_ANNOTATION, "类型标注: 非强制（部分函数标注）")]
 
     @staticmethod
@@ -228,14 +255,19 @@ class ConventionExtractor:
         items: list[ConventionItem] = []
         if try_excepts > 0:
             pattern = "裸 except（捕获所有）" if bare_excepts / try_excepts > 0.3 else "精确 except"
-            items.append(ConventionItem(
-                ConventionType.ERROR_HANDLING,
-                f"错误处理: {pattern}（try/except {try_excepts} 处）",
-            ))
+            items.append(
+                ConventionItem(
+                    ConventionType.ERROR_HANDLING,
+                    f"错误处理: {pattern}（try/except {try_excepts} 处）",
+                )
+            )
         if custom_excs > 0:
-            items.append(ConventionItem(
-                ConventionType.ERROR_HANDLING, f"自定义异常: {custom_excs} 个（*Error/*Exception 后缀）"
-            ))
+            items.append(
+                ConventionItem(
+                    ConventionType.ERROR_HANDLING,
+                    f"自定义异常: {custom_excs} 个（*Error/*Exception 后缀）",
+                )
+            )
         return items
 
     @staticmethod
@@ -269,15 +301,27 @@ class ConventionExtractor:
                 uniq = list(dict.fromkeys(main))
                 # 提取共同关键词（snake_case/PascalCase/绝对/相对/强制）
                 common = []
-                for kw in ("snake_case", "PascalCase", "camelCase", "绝对", "相对", "强制", "非强制", "精确", "裸"):
+                for kw in (
+                    "snake_case",
+                    "PascalCase",
+                    "camelCase",
+                    "绝对",
+                    "相对",
+                    "强制",
+                    "非强制",
+                    "精确",
+                    "裸",
+                ):
                     if all(kw in c for c in uniq[:5]):
                         common.append(kw)
                 label = "、".join(common) if common else "混合"
                 out.append(ConventionItem(ctype, f"{ctype.value} 混合风格（主导: {label}）"))
         # 固定顺序: import → naming → annotation → error
         order = {
-            ConventionType.IMPORT_STYLE: 0, ConventionType.NAMING: 1,
-            ConventionType.TYPE_ANNOTATION: 2, ConventionType.ERROR_HANDLING: 3,
+            ConventionType.IMPORT_STYLE: 0,
+            ConventionType.NAMING: 1,
+            ConventionType.TYPE_ANNOTATION: 2,
+            ConventionType.ERROR_HANDLING: 3,
         }
         out.sort(key=lambda i: order.get(i.convention_type, 9))
         return out
@@ -302,20 +346,31 @@ class ConventionExtractor:
             return violations  # 新代码语法错误不判约定违背
         for item in summary.conventions:
             if item.convention_type == ConventionType.NAMING:
-                funcs = [n.name for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+                funcs = [
+                    n.name
+                    for n in ast.walk(tree)
+                    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                ]
                 style = item.content.split(":")[1].split("（")[0].strip()
                 for fname in funcs:
                     style_ok = (
-                        (style == "snake_case" and re.fullmatch(r"[a-z][a-z0-9_]*", fname))
-                        or (style == "PascalCase" and re.fullmatch(r"[A-Z][a-zA-Z0-9]*", fname))
-                    )
+                        style == "snake_case" and re.fullmatch(r"[a-z][a-z0-9_]*", fname)
+                    ) or (style == "PascalCase" and re.fullmatch(r"[A-Z][a-zA-Z0-9]*", fname))
                     if not style_ok:
-                        violations.append(f"命名约定违背: '{fname}' 不符合 {style}（目录约定 {item.content[:40]}）")
+                        violations.append(
+                            f"命名约定违背: '{fname}' 不符合 {style}（目录约定 {item.content[:40]}）"
+                        )
             elif item.convention_type == ConventionType.TYPE_ANNOTATION and "强制" in item.content:
-                funcs = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+                funcs = [
+                    n
+                    for n in ast.walk(tree)
+                    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                ]
                 for f in funcs:
                     if f.args.args and any(a.annotation is None for a in f.args.args):
-                        violations.append(f"类型标注违背: 函数 '{f.name}' 参数缺少类型标注（目录约定强制标注）")
+                        violations.append(
+                            f"类型标注违背: 函数 '{f.name}' 参数缺少类型标注（目录约定强制标注）"
+                        )
                         break
         return violations[:5]  # 最多 5 条防超长
 

@@ -54,10 +54,10 @@ _SENT_OUTCOMES = ("err1210", "ok", "other_error", "throttled")
 class Verdict(StrEnum):
     """触维判定（design 判定矩阵四枚举，P1 分支选择的唯一依据）."""
 
-    STRUCTURE_TRIGGER = "STRUCTURE_TRIGGER"      # 仅骨架轨复现 → 尾部注入聚合
-    CONTENT_TRIGGER = "CONTENT_TRIGGER"          # 仅保真轨复现 → 注入内容修复（附最小消息集）
-    COMPOUND_TRIGGER = "COMPOUND_TRIGGER"        # 双轨均复现 → 聚合先行 + 内容修复跟进
-    NON_REPRODUCIBLE = "NON_REPRODUCIBLE"        # 均不复现 → 挂起，等自然失败自动采样
+    STRUCTURE_TRIGGER = "STRUCTURE_TRIGGER"  # 仅骨架轨复现 → 尾部注入聚合
+    CONTENT_TRIGGER = "CONTENT_TRIGGER"  # 仅保真轨复现 → 注入内容修复（附最小消息集）
+    COMPOUND_TRIGGER = "COMPOUND_TRIGGER"  # 双轨均复现 → 聚合先行 + 内容修复跟进
+    NON_REPRODUCIBLE = "NON_REPRODUCIBLE"  # 均不复现 → 挂起，等自然失败自动采样
 
 
 @dataclass
@@ -104,7 +104,9 @@ class ReplayVariant:
     messages: list[dict]
     label: str = ""  # 人读说明（keep_all/strip_all/bisect 半集描述）
     keep_idx: tuple[int, ...] | None = None  # 二分半集保留的 msg_idx（对照轮为 None）
-    tools_override: list[dict] | None = None  # 结构轨变体级 tools 覆盖（drop-tools 用；None=沿用 sample.tools）
+    tools_override: list[dict] | None = (
+        None  # 结构轨变体级 tools 覆盖（drop-tools 用；None=沿用 sample.tools）
+    )
 
 
 @dataclass
@@ -245,9 +247,7 @@ def build_variants(sample: OracleSample, *, track: str) -> list[ReplayVariant]:
     raise ValueError(f"未知轨道: {track}（skeleton | bisect | struct）")
 
 
-def _bisect_variants(
-    sample: OracleSample, active: list[int], round_no: int
-) -> list[ReplayVariant]:
+def _bisect_variants(sample: OracleSample, active: list[int], round_no: int) -> list[ReplayVariant]:
     """二分轮变体: active（仍复现的最小保留集）对半拆，各构造一个保留半集变体.
 
     每轮 ≤2 变体（与对照轮合计满足 spec 5.2.1-2 "每轮 ≤4"）；|active|<=1 时
@@ -293,23 +293,38 @@ def _struct_variants(sample: OracleSample) -> list[ReplayVariant]:
     if len(run) >= 2:
         merged = dict(run[0])
         merged["content"] = "\n\n".join(str(m.get("content") or "") for m in run)
-        out.append(ReplayVariant(
-            variant_id="struct-merge-tail-user", track="struct", keep_mask=(),
-            messages=msgs[: i + 1] + [merged], label=f"tail_user_{len(run)}to1",
-        ))
-    out.append(ReplayVariant(
-        variant_id="struct-drop-tools", track="struct", keep_mask=(),
-        messages=[dict(m) for m in msgs], label=f"tools_{len(sample.tools)}to0",
-        tools_override=[],
-    ))
+        out.append(
+            ReplayVariant(
+                variant_id="struct-merge-tail-user",
+                track="struct",
+                keep_mask=(),
+                messages=msgs[: i + 1] + [merged],
+                label=f"tail_user_{len(run)}to1",
+            )
+        )
+    out.append(
+        ReplayVariant(
+            variant_id="struct-drop-tools",
+            track="struct",
+            keep_mask=(),
+            messages=[dict(m) for m in msgs],
+            label=f"tools_{len(sample.tools)}to0",
+            tools_override=[],
+        )
+    )
     cut = max(1, len(msgs) // 2)
     while cut < len(msgs) and msgs[cut].get("role") == "tool":
         cut += 1
     trunc = (msgs[:1] + msgs[cut:]) if msgs[:1] and msgs[0].get("role") == "system" else msgs[cut:]
-    out.append(ReplayVariant(
-        variant_id="struct-truncate-tail", track="struct", keep_mask=(),
-        messages=trunc, label=f"msgs_{len(msgs)}to{len(trunc)}",
-    ))
+    out.append(
+        ReplayVariant(
+            variant_id="struct-truncate-tail",
+            track="struct",
+            keep_mask=(),
+            messages=trunc,
+            label=f"msgs_{len(msgs)}to{len(trunc)}",
+        )
+    )
     return out
 
 
@@ -338,9 +353,7 @@ def mock_preflight(variant: ReplayVariant) -> tuple[bool, str | None]:
                     return httpx.Response(400, json={"preflight": f"消息 {j} 非对象"})
                 role = m.get("role")
                 if role not in _VALID_ROLES:
-                    return httpx.Response(
-                        400, json={"preflight": f"消息 {j} role 非法: {role!r}"}
-                    )
+                    return httpx.Response(400, json={"preflight": f"消息 {j} role 非法: {role!r}"})
                 if role == "assistant":
                     for tc in m.get("tool_calls") or []:
                         tc_id = (tc or {}).get("id")
@@ -351,7 +364,9 @@ def mock_preflight(variant: ReplayVariant) -> tuple[bool, str | None]:
                     if tc_id and str(tc_id) not in declared:
                         return httpx.Response(
                             400,
-                            json={"preflight": f"消息 {j} 孤儿 tool（tool_call_id={tc_id} 无前驱声明）"},
+                            json={
+                                "preflight": f"消息 {j} 孤儿 tool（tool_call_id={tc_id} 无前驱声明）"
+                            },
                         )
             return httpx.Response(200, json={"preflight": "ok"})
 
@@ -489,24 +504,42 @@ def run_oracle(
         nonlocal sent_count, aborted
         ok, reason = mock_preflight(variant)
         if not ok:
-            return _record(VariantResult(
-                variant_id=variant.variant_id, track=variant.track, label=variant.label,
-                keep_mask=list(variant.keep_mask), outcome="preflight_failed",
-                detail=reason or "", round_no=round_no,
-            ))
+            return _record(
+                VariantResult(
+                    variant_id=variant.variant_id,
+                    track=variant.track,
+                    label=variant.label,
+                    keep_mask=list(variant.keep_mask),
+                    outcome="preflight_failed",
+                    detail=reason or "",
+                    round_no=round_no,
+                )
+            )
         if dry_run:
-            return _record(VariantResult(
-                variant_id=variant.variant_id, track=variant.track, label=variant.label,
-                keep_mask=list(variant.keep_mask), outcome="ok",
-                detail="dry-run: 变体构造+预检通过，未发送", round_no=round_no,
-            ))
+            return _record(
+                VariantResult(
+                    variant_id=variant.variant_id,
+                    track=variant.track,
+                    label=variant.label,
+                    keep_mask=list(variant.keep_mask),
+                    outcome="ok",
+                    detail="dry-run: 变体构造+预检通过，未发送",
+                    round_no=round_no,
+                )
+            )
         if sent_count >= budget:
             aborted = "budget_exhausted"
-            return _record(VariantResult(
-                variant_id=variant.variant_id, track=variant.track, label=variant.label,
-                keep_mask=list(variant.keep_mask), outcome="skipped_budget",
-                detail=f"预算耗尽（{sent_count}/{budget}）", round_no=round_no,
-            ))
+            return _record(
+                VariantResult(
+                    variant_id=variant.variant_id,
+                    track=variant.track,
+                    label=variant.label,
+                    keep_mask=list(variant.keep_mask),
+                    outcome="skipped_budget",
+                    detail=f"预算耗尽（{sent_count}/{budget}）",
+                    round_no=round_no,
+                )
+            )
         bucket.acquire()
         exc: Exception | None = None
         resp: Any = None
@@ -525,11 +558,18 @@ def run_oracle(
         sent_count += 1
         if outcome == "throttled":
             aborted = "throttled"
-        return _record(VariantResult(
-            variant_id=variant.variant_id, track=variant.track, label=variant.label,
-            keep_mask=list(variant.keep_mask), outcome=outcome, detail=detail,
-            round_no=round_no, elapsed_ms=round((time_fn() - t0) * 1000, 1),
-        ))
+        return _record(
+            VariantResult(
+                variant_id=variant.variant_id,
+                track=variant.track,
+                label=variant.label,
+                keep_mask=list(variant.keep_mask),
+                outcome=outcome,
+                detail=detail,
+                round_no=round_no,
+                elapsed_ms=round((time_fn() - t0) * 1000, 1),
+            )
+        )
 
     # ── 轨道二: 骨架重放（单请求判定结构维度，成本最低——design 决策 1）──
     if "skeleton" in tracks:
@@ -590,9 +630,14 @@ def run_oracle(
     # ── 判定与报告汇总 ──
     report.variants = [
         {
-            "variant_id": r.variant_id, "track": r.track, "label": r.label,
-            "keep_mask": r.keep_mask, "outcome": r.outcome, "detail": r.detail,
-            "round_no": r.round_no, "elapsed_ms": r.elapsed_ms,
+            "variant_id": r.variant_id,
+            "track": r.track,
+            "label": r.label,
+            "keep_mask": r.keep_mask,
+            "outcome": r.outcome,
+            "detail": r.detail,
+            "round_no": r.round_no,
+            "elapsed_ms": r.elapsed_ms,
         }
         for r in results
     ]
@@ -605,7 +650,7 @@ def run_oracle(
         report.confidence = "none-dry-run"
     elif aborted:
         report.confidence = "low-experiment-incomplete"  # 结论降级为"初步"（spec 5.2.3-1c）
-    elif (("skeleton" in tracks or ticket) and "bisect" in tracks):
+    elif ("skeleton" in tracks or ticket) and "bisect" in tracks:
         # 两轨数据齐备（骨架轨=实跑 或 工单证据等效，spec 5.2.1-5b）→ 可判 Verdict
         report.verdict = str(verdict_matrix(report))
         if ticket:
@@ -617,9 +662,7 @@ def run_oracle(
                 else Verdict.STRUCTURE_TRIGGER
             )
         report.confidence = (
-            "medium-non-reproducible"
-            if report.verdict == Verdict.NON_REPRODUCIBLE
-            else "high"
+            "medium-non-reproducible" if report.verdict == Verdict.NON_REPRODUCIBLE else "high"
         )
     else:
         # 单轨运行（或 ticket 下无可执行轨道）→ 不出 Verdict（R3 禁止项: 禁止单轨下结论）
@@ -631,8 +674,7 @@ def run_oracle(
     base = Path(data_dir or os.environ.get("LFL_DATA_DIR", "data"))
     ts_compact = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     report_dir = (
-        base / "audit" / "oracle_1210"
-        / f"{ts_compact}_{sample.session_id[:8] or 'nosession'}"
+        base / "audit" / "oracle_1210" / f"{ts_compact}_{sample.session_id[:8] or 'nosession'}"
     )
     try:
         report_dir.mkdir(parents=True, exist_ok=True)
@@ -676,9 +718,13 @@ def verdict_matrix(report: OracleReport) -> Verdict:
     - 保真轨复现 = keep_all 对照变体 outcome=err1210（二分半集复现蕴含于其中）。
     两轨必跑（R3 禁止项）：任一轨道无结果 → 抛 ValueError（防单轨下结论）。
     """
-    skel = any(v.get("track") == "skeleton" and v.get("outcome") == "err1210" for v in report.variants)
+    skel = any(
+        v.get("track") == "skeleton" and v.get("outcome") == "err1210" for v in report.variants
+    )
     bisect = any(
-        v.get("track") == "bisect" and v.get("label") == "keep_all" and v.get("outcome") == "err1210"
+        v.get("track") == "bisect"
+        and v.get("label") == "keep_all"
+        and v.get("outcome") == "err1210"
         for v in report.variants
     )
     has_skel_track = any(v.get("track") == "skeleton" for v in report.variants)
@@ -742,10 +788,14 @@ def _report_markdown(report: OracleReport) -> str:
 
 def _track_repro(report: OracleReport, track: str) -> str:
     if track == "skeleton":
-        hit = any(v.get("track") == "skeleton" and v.get("outcome") == "err1210" for v in report.variants)
+        hit = any(
+            v.get("track") == "skeleton" and v.get("outcome") == "err1210" for v in report.variants
+        )
     else:
         hit = any(
-            v.get("track") == "bisect" and v.get("label") == "keep_all" and v.get("outcome") == "err1210"
+            v.get("track") == "bisect"
+            and v.get("label") == "keep_all"
+            and v.get("outcome") == "err1210"
             for v in report.variants
         )
     return "是" if hit else "否"

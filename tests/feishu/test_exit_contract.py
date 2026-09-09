@@ -47,7 +47,9 @@ def test_exit_wait_timeout_recorded(tmp_path, monkeypatch, caplog):
     # 模拟 main() finally 的超时路径：drained=False → WARNING + 超时记录
     drained = False
     if not drained:
-        logging.getLogger("llm_loop.feishu").warning("优雅退出: 等待处理中消息超时 10.0s（busy 未归零）")
+        logging.getLogger("llm_loop.feishu").warning(
+            "优雅退出: 等待处理中消息超时 10.0s（busy 未归零）"
+        )
         log_lines.append("优雅退出超时未完成（等待 10s，busy 未归零）")
     assert any("优雅退出超时未完成" in line for line in log_lines)
     assert any(

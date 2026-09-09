@@ -29,9 +29,7 @@ QUEUE_FULL = "queue_full"
 DRAIN_TIMEOUT = "drain_timeout"
 PROCESS_TIMEOUT = "process_timeout"
 CRASH = "crash"
-InterruptCause = Literal[
-    "watchdog_exit", "queue_full", "drain_timeout", "process_timeout", "crash"
-]
+InterruptCause = Literal["watchdog_exit", "queue_full", "drain_timeout", "process_timeout", "crash"]
 INTERRUPT_CAUSES: tuple[str, ...] = (
     WATCHDOG_EXIT,
     QUEUE_FULL,
@@ -68,12 +66,12 @@ def _now_iso() -> str:
 class InterruptionCompensationRecord:
     """中断补偿记录（对齐 spec 6.1；六字段，后两字段可空如实标注）."""
 
-    receive_id: str          # 补偿回复目标会话（chat_id / open_id）
-    reply_type: str          # "chat_id" | "open_id"
-    interrupt_cause: str     # 五类结构化原因（FTR-DFX-08）
+    receive_id: str  # 补偿回复目标会话（chat_id / open_id）
+    reply_type: str  # "chat_id" | "open_id"
+    interrupt_cause: str  # 五类结构化原因（FTR-DFX-08）
     interrupted_at: str = ""  # 中断落盘时点（ISo；空则自动填当前）
-    context_ref: str = ""    # "session_id" 或 "goal_id:<session_id>"；空标注待确认
-    msg_id: str = ""         # 触发中断原始消息 id（可能为空）
+    context_ref: str = ""  # "session_id" 或 "goal_id:<session_id>"；空标注待确认
+    msg_id: str = ""  # 触发中断原始消息 id（可能为空）
 
     def __post_init__(self) -> None:
         if not self.receive_id:
@@ -100,7 +98,9 @@ class CompensationStore:
 
     def __init__(self, path: str | Path, *, legacy_path: str | Path | None = None) -> None:
         self._path = Path(path)
-        self._legacy_path = Path(legacy_path) if legacy_path is not None else Path(legacy_interrupted_path())
+        self._legacy_path = (
+            Path(legacy_path) if legacy_path is not None else Path(legacy_interrupted_path())
+        )
         self._lock = threading.Lock()
         self._migrated = False
 
@@ -115,9 +115,7 @@ class CompensationStore:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             with self._path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(rec.to_dict(), ensure_ascii=False) + "\n")
-            logger.warning(
-                "中断补偿已落盘: cause=%s → %s", rec.interrupt_cause, rec.receive_id
-            )
+            logger.warning("中断补偿已落盘: cause=%s → %s", rec.interrupt_cause, rec.receive_id)
         except OSError as exc:
             logger.warning("中断补偿落盘失败（fail-open，补偿可能丢失）: %s", exc)
         return self._path
@@ -155,7 +153,9 @@ class CompensationStore:
                             )
                         )
                     except ValueError as exc:
-                        logger.warning("补偿记录字段非法已隔离（%s:%d）: %s", self._path, line_no, exc)
+                        logger.warning(
+                            "补偿记录字段非法已隔离（%s:%d）: %s", self._path, line_no, exc
+                        )
                         continue
         except OSError as exc:
             logger.warning("补偿记录读取失败（fail-open）: %s", exc)

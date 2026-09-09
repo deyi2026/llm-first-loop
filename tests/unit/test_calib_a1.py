@@ -61,7 +61,9 @@ def test_a1_matrix_is_complete_and_paired():
     assert len(keys) == 112
     for provider in ["minimax", "deepseek"]:
         for seed in INITIAL_PACKETS_A1:
-            assert {r["variant"] for r in mx["rows"] if r["provider"] == provider and r["seed"] == seed} == set(A1_VARIANTS)
+            assert {
+                r["variant"] for r in mx["rows"] if r["provider"] == provider and r["seed"] == seed
+            } == set(A1_VARIANTS)
 
 
 def test_a1_secondary_review_is_preselected_one_per_provider_variant():
@@ -71,20 +73,40 @@ def test_a1_secondary_review_is_preselected_one_per_provider_variant():
     by_id = {r["run_id"]: r for r in mx["rows"]}
     for provider in ["minimax", "deepseek"]:
         for variant in A1_VARIANTS:
-            hits = [rid for rid in selected if by_id[rid]["provider"] == provider and by_id[rid]["variant"] == variant]
+            hits = [
+                rid
+                for rid in selected
+                if by_id[rid]["provider"] == provider and by_id[rid]["variant"] == variant
+            ]
             assert len(hits) == 1
 
 
 def test_a1_dry_runner_restores_historical_prompt_builder():
     import scripts.calib.runner as base
+
     before = base.build_system_prompt
-    o = execute_run_a1("A1-DRY-TEST", "F01", "A2-Contract-DRU", dry=True, provider="minimax", data=type("D", (), {
-        "ORACLES": ORACLES_A1,
-        "INITIAL_PACKETS": INITIAL_PACKETS_A1,
-        "SOURCE_LIMIT": 2,
-        "UNAVAILABLE_RESPONSE": "SOURCE_NOT_AVAILABLE",
-        "LIMIT_EXCEEDED_RESPONSE": "SOURCE_LIMIT_EXCEEDED",
-        "lookup_source": staticmethod(lambda seed, source: __import__('scripts.calib.fixtures_a1', fromlist=['lookup_source_a1']).lookup_source_a1(seed, source)),
-    })())
+    o = execute_run_a1(
+        "A1-DRY-TEST",
+        "F01",
+        "A2-Contract-DRU",
+        dry=True,
+        provider="minimax",
+        data=type(
+            "D",
+            (),
+            {
+                "ORACLES": ORACLES_A1,
+                "INITIAL_PACKETS": INITIAL_PACKETS_A1,
+                "SOURCE_LIMIT": 2,
+                "UNAVAILABLE_RESPONSE": "SOURCE_NOT_AVAILABLE",
+                "LIMIT_EXCEEDED_RESPONSE": "SOURCE_LIMIT_EXCEEDED",
+                "lookup_source": staticmethod(
+                    lambda seed, source: __import__(
+                        "scripts.calib.fixtures_a1", fromlist=["lookup_source_a1"]
+                    ).lookup_source_a1(seed, source)
+                ),
+            },
+        )(),
+    )
     assert o["status"] == "COMPLETED"
     assert base.build_system_prompt is before

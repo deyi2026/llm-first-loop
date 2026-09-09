@@ -112,13 +112,17 @@ def _project_id(source_root: Path) -> str:
 
 def _default_store_path(source_root: Path) -> Path:
     configured_base = os.environ.get("XDG_DATA_HOME", "").strip()
-    base = Path(configured_base).expanduser() if configured_base else Path.home() / ".local" / "share"
+    base = (
+        Path(configured_base).expanduser() if configured_base else Path.home() / ".local" / "share"
+    )
     return (base / "lfl" / "continuity" / _project_id(source_root)).resolve()
 
 
 def _store_path(source_root: Path) -> Path:
     configured = _config_get(source_root, f"{_CONFIG_PREFIX}.path")
-    return Path(configured).expanduser().resolve() if configured else _default_store_path(source_root)
+    return (
+        Path(configured).expanduser().resolve() if configured else _default_store_path(source_root)
+    )
 
 
 def _validate_store_outside_source(source_root: Path, store: Path) -> None:
@@ -188,7 +192,9 @@ def ensure_store(source_root: Path) -> Path:
             return store
 
         if remote:
-            proc = _run(("git", "clone", "--quiet", remote, str(store)), cwd=store.parent, check=False)
+            proc = _run(
+                ("git", "clone", "--quiet", remote, str(store)), cwd=store.parent, check=False
+            )
             if proc.returncode != 0:
                 raise ContinuityError(
                     "private continuity remote could not be cloned; configure once while it is reachable"
@@ -380,19 +386,19 @@ def _manifest_and_markdown(
 
 ## Objective
 
-{input_data['objective'].strip()}
+{input_data["objective"].strip()}
 
 ## Verified Facts
 
-{bullets(input_data.get('verified_facts', []))}
+{bullets(input_data.get("verified_facts", []))}
 
 ## Completed
 
-{bullets(input_data.get('completed', []))}
+{bullets(input_data.get("completed", []))}
 
 ## Decisions
 
-{bullets(input_data.get('decisions', []))}
+{bullets(input_data.get("decisions", []))}
 
 ## WIP State
 
@@ -400,7 +406,7 @@ def _manifest_and_markdown(
 
 ## Open Questions
 
-{bullets(input_data.get('open_questions', []))}
+{bullets(input_data.get("open_questions", []))}
 
 ## Suggested Next Step (historical, non-authoritative)
 
@@ -439,7 +445,9 @@ def _sync_locked(source_root: Path, store: Path) -> dict[str, Any]:
         return {"remote_synced": False, "sync_reason": "fetch_failed"}
 
     remote_ref = f"refs/remotes/origin/{branch}"
-    has_remote_branch = _run(("git", "show-ref", "--verify", "--quiet", remote_ref), cwd=store, check=False)
+    has_remote_branch = _run(
+        ("git", "show-ref", "--verify", "--quiet", remote_ref), cwd=store, check=False
+    )
     if has_remote_branch.returncode == 0:
         rebase = _run(("git", "rebase", f"origin/{branch}"), cwd=store, check=False)
         if rebase.returncode != 0:
@@ -516,12 +524,28 @@ def _head_relation(source_root: Path, handoff_head: str) -> str:
     current = _git(source_root, "rev-parse", "HEAD")
     if handoff_head == current:
         return "EXACT_HEAD"
-    exists = _run(("git", "cat-file", "-e", f"{handoff_head}^{{commit}}"), cwd=source_root, check=False)
+    exists = _run(
+        ("git", "cat-file", "-e", f"{handoff_head}^{{commit}}"), cwd=source_root, check=False
+    )
     if exists.returncode != 0:
         return "UNKNOWN"
-    if _run(("git", "merge-base", "--is-ancestor", handoff_head, current), cwd=source_root, check=False).returncode == 0:
+    if (
+        _run(
+            ("git", "merge-base", "--is-ancestor", handoff_head, current),
+            cwd=source_root,
+            check=False,
+        ).returncode
+        == 0
+    ):
         return "CURRENT_IS_DESCENDANT"
-    if _run(("git", "merge-base", "--is-ancestor", current, handoff_head), cwd=source_root, check=False).returncode == 0:
+    if (
+        _run(
+            ("git", "merge-base", "--is-ancestor", current, handoff_head),
+            cwd=source_root,
+            check=False,
+        ).returncode
+        == 0
+    ):
         return "HANDOFF_IS_DESCENDANT"
     return "DIVERGED"
 
@@ -606,7 +630,9 @@ def close_handoff(source_root: Path, handoff_id: str, reason_file: Path | None) 
         if closure_path.exists():
             raise ContinuityError("handoff already closed")
         closure_path.parent.mkdir(parents=True, exist_ok=True)
-        closure_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        closure_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
         commit = _commit_paths(store, (closure_path,), f"close: {project}/{hid}")
         sync_result = _sync_locked(source_root, store)
     return {"handoff_id": hid, "continuity_commit": commit, **sync_result}
@@ -713,7 +739,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         source_root = source_root_from_cwd()
         if args.command == "configure":
-            _print_json(configure(source_root, remote=args.remote, path=args.path, project=args.project))
+            _print_json(
+                configure(source_root, remote=args.remote, path=args.path, project=args.project)
+            )
         elif args.command == "status":
             _print_json(status(source_root))
         elif args.command == "handoff":

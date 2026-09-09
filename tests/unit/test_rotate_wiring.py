@@ -35,7 +35,9 @@ def test_append_triggers_rotation_when_wired(tmp_path):
     es, _rm, ss = _build(tmp_path, rotate_bytes=200)  # 极小阈值
     sid = ss.create()
     for i in range(8):
-        ss.append(sid, Message(role="user", content=f"消息{i}" + "长" * 30, source=MessageSource.USER))
+        ss.append(
+            sid, Message(role="user", content=f"消息{i}" + "长" * 30, source=MessageSource.USER)
+        )
     assert es._is_multi_segment(sid), "接线后 append 未触发自动滚动"  # noqa: SLF001
 
 
@@ -45,7 +47,9 @@ def test_unwired_store_never_rotates(tmp_path):
     ss = SessionStore(tmp_path / "sessions", event_store=es)
     sid = ss.create()
     for i in range(8):
-        ss.append(sid, Message(role="user", content=f"消息{i}" + "长" * 30, source=MessageSource.USER))
+        ss.append(
+            sid, Message(role="user", content=f"消息{i}" + "长" * 30, source=MessageSource.USER)
+        )
     assert not es._is_multi_segment(sid)  # noqa: SLF001
 
 
@@ -72,8 +76,11 @@ def test_concurrent_append_and_rotate_no_lost_event(tmp_path):
     def _writer(store, tag, n):
         try:
             for i in range(n):
-                store.append(sid, "message.appended",
-                             {"index": i, "role": "user", "content": f"{tag}-{i}-" + "x" * 40})
+                store.append(
+                    sid,
+                    "message.appended",
+                    {"index": i, "role": "user", "content": f"{tag}-{i}-" + "x" * 40},
+                )
         except Exception as exc:  # noqa: BLE001
             errors.append(exc)
 
@@ -86,9 +93,11 @@ def test_concurrent_append_and_rotate_no_lost_event(tmp_path):
     assert not errors, f"并发写抛异常: {errors[:2]}"
     events = es1.read(sid)
     contents = {e.payload.get("content", "")[:4] for e in events if e.type == "message.appended"}
-    assert len([c for c in contents if c.startswith("a-")]) + len(
-        [c for c in contents if c.startswith("b-")]
-    ) == 30, f"并发写丢事件: 仅 {len(contents)} 条 message.appended 内容前缀"
+    assert (
+        len([c for c in contents if c.startswith("a-")])
+        + len([c for c in contents if c.startswith("b-")])
+        == 30
+    ), f"并发写丢事件: 仅 {len(contents)} 条 message.appended 内容前缀"
     seqs = [e.seq for e in events]
     assert len(seqs) == len(set(seqs)), f"并发下 seq 重复: {sorted(seqs)}"
 

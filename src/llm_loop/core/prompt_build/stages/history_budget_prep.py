@@ -6,6 +6,7 @@ force/growth 增长率门控）。compact_ratio 语义
 fail-open：异常回退 1.0（不触发分级）。decision.history_total_chars
 就地写（P1-01 显式化位）。
 """
+
 from __future__ import annotations
 
 import os
@@ -44,14 +45,10 @@ def run_history_budget_prep(
 ) -> HistoryBudgetPrep:
     """archive_sink/budget/nudge 装配（产出投影调用前置值）."""
     prep = HistoryBudgetPrep()
-    if archive is not None or getattr(
-        registry, "evidence_history_capture_enabled", False
-    ):
+    if archive is not None or getattr(registry, "evidence_history_capture_enabled", False):
         prep.archive_sink = archive_sink_cb
     # R1: 存构建中间值，供主循环在 tools_param 构造后计算 breakdown（含 tool_schema_chars）
-    prep.effective_budget = (
-        max_chars if max_chars is not None else runtime_history_budget()
-    )
+    prep.effective_budget = max_chars if max_chars is not None else runtime_history_budget()
     # Agency-first: 默认不做预算前置语义压缩。真正的 context 物理裕量已在
     # _resolve_history_budget handles planned pressure; provider overflow is the final authority.
     # COMPACT_RATIO<1

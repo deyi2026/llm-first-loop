@@ -4,6 +4,7 @@
 会话状态快照保留为工具/状态能力，不再在 build 中构造 program Message。
 副作用经显式传参与出口对象收窄：stable_fp 由调用点回写 self 面。
 """
+
 from __future__ import annotations
 
 import logging
@@ -49,15 +50,12 @@ def run_base_assembly(
     # 非仅提示词引导；实现见 core/loop/interop.py _InteropMixin，fail-open）
     # 注入位置: memory 之后、历史之前（2026-08-16 优化: system_prompt+memory 前缀
     # 有/无消息轮字节级一致，服务端缓存命中不受 inbox 影响）
-    result.base, result.prefix_len = inject_interop(
-        base, result.prefix_len, session_id
-    )
+    result.base, result.prefix_len = inject_interop(base, result.prefix_len, session_id)
     # EVO-20260817-72fcd94a L3 发送前门禁·预检（程序常态锚点管理）: 稳定段指纹
     # （system+注入）与该 session 基线不符 → 强制缓存友好压缩，当次 build 即合规化。fail-open。
     try:
         _base_fp = stable_digest(
-            [(m.role, m.content) for m in result.base[: result.prefix_len]]
-            + [system_prompt]
+            [(m.role, m.content) for m in result.base[: result.prefix_len]] + [system_prompt]
         )
         # Tool schemas are part of the actual provider request prefix/surface.
         # A schema/order change invalidates the previous cache boundary even when
@@ -74,7 +72,6 @@ def run_base_assembly(
     # Agency-first: session snapshot is runtime/status data, not model input. The old
     # build-time snapshot Message and its throttling plumbing have been removed.
     return result
-
 
 
 @dataclass(slots=True)
@@ -99,9 +96,7 @@ def scrub_provider_view(
     # 行写进 assistant 正文）与模型伪造行——build 提交视图一律剥离（正文=纯回答；
     # 权威遥测走 metadata.cache_health → transport 渲染）。剥离只影响提交视图，
     # 存档/存储原文不动（archive_sink 收到的是剥离后副本——遥测行属噪音，无信息损失）。
-    if any(
-        m.role == "assistant" and "缓存命中率" in (m.content or "") for m in base
-    ):
+    if any(m.role == "assistant" and "缓存命中率" in (m.content or "") for m in base):
         base = [
             replace(m, content=strip_cache_telemetry_lines(m.content))
             if (m.role == "assistant" and "缓存命中率" in (m.content or ""))

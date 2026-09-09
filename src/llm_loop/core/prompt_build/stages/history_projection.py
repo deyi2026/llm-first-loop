@@ -5,6 +5,7 @@ P1-10 + R8.5 锚点边界换算（persisted anchor 用原始会话索引，eligi
 跳过当前任务或孤儿化工具组）+ build_history_messages 一次性大装配调用
 （Phase 7 前不动其内部）。box 系 out-params 显式化进产出对象。
 """
+
 from __future__ import annotations
 
 import os
@@ -85,12 +86,8 @@ def run_history_projection(
     # Translate the boundary before build_history_messages and translate it
     # back after compaction; otherwise a valid old anchor can skip the current
     # task or orphan a tool group after resolved messages retire.
-    _filtered_sess_anchor = filtered_anchor_from_original(
-        filtered_indices, sess_anchor
-    )
-    anchor_arg = (
-        _filtered_sess_anchor + prefix_len if _filtered_sess_anchor > 0 else 0
-    )
+    _filtered_sess_anchor = filtered_anchor_from_original(filtered_indices, sess_anchor)
+    anchor_arg = _filtered_sess_anchor + prefix_len if _filtered_sess_anchor > 0 else 0
     anchor_box: list[int] = []
     compacted_box: list[bool] = []
     cache_compacted_box: list[Message] = []

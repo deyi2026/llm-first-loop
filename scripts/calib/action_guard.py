@@ -3,6 +3,7 @@
 Pure mechanism layer: it knows tool identity/arguments and action budget only.
 It does NOT know benchmark oracles, decision relevance, or expected sources.
 """
+
 from __future__ import annotations
 
 import json
@@ -39,7 +40,9 @@ class GuardOutcome:
 
 
 def canonical_fingerprint(tool_name: str, args: dict) -> str:
-    return f"{tool_name}:{json.dumps(args, ensure_ascii=False, sort_keys=True, separators=(',', ':'))}"
+    return (
+        f"{tool_name}:{json.dumps(args, ensure_ascii=False, sort_keys=True, separators=(',', ':'))}"
+    )
 
 
 def visible_tools(base_tools: list[dict], state: GuardState, config: GuardConfig) -> list[dict]:
@@ -130,8 +133,7 @@ def handle_request_fixture(
     if config.budget_terminal and state.tool_execution_count >= source_limit:
         state.tool_budget_exhausted = True
         content = (
-            content
-            + "\n\nACTION_STATE: tool_budget_exhausted=true; "
+            content + "\n\nACTION_STATE: tool_budget_exhausted=true; "
             "request_fixture action channel is closed after this result. "
             "Continue reasoning from evidence already obtained and finish the decision."
         )

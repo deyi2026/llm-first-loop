@@ -68,9 +68,7 @@ class SessionLifecycle:
             except Exception:  # noqa: BLE001 — fail-open 不阻断 run 生命周期
                 logger.warning("同步取消标记清理失败（fail-open）: %s", session_id, exc_info=True)
 
-    def _install_run_acquired_callback(
-        self, session_id: str, callback: Any
-    ) -> Any:
+    def _install_run_acquired_callback(self, session_id: str, callback: Any) -> Any:
         if callback is None:
             return None
         with self._host._run_acquired_callbacks_guard:
@@ -81,9 +79,7 @@ class SessionLifecycle:
             self._host._run_acquired_callbacks[session_id] = callback
         return callback
 
-    def _clear_run_acquired_callback(
-        self, session_id: str, marker: Any
-    ) -> None:
+    def _clear_run_acquired_callback(self, session_id: str, marker: Any) -> None:
         if marker is None:
             return
         with self._host._run_acquired_callbacks_guard:
@@ -149,9 +145,7 @@ class SessionLifecycle:
         finally:
             self._host._workspace_transition_guard.release()
 
-    def prepare_workspace(
-        self, workspace_root: str, workspace_id: str | None = None
-    ) -> Path:
+    def prepare_workspace(self, workspace_root: str, workspace_id: str | None = None) -> Path:
         """只准备可能失败的session分区；registry提交前可安全调用。"""
         _new_root, session_root = self._workspace_session_root(workspace_root, workspace_id)
         return self._host.session.prepare_root(session_root)
@@ -170,7 +164,9 @@ class SessionLifecycle:
                 prepared_sessions_dir = self._host.session.prepare_root(session_root)
             elif Path(prepared_sessions_dir) != session_root:
                 raise ValueError("prepared session root 与 workspace 分区不一致")
-            changed = self._host.workspace_root != new_root or self._host.session.root != session_root
+            changed = (
+                self._host.workspace_root != new_root or self._host.session.root != session_root
+            )
             self._host.session.activate_prepared_root(prepared_sessions_dir)
             self._host.workspace_root = new_root
             if changed:
@@ -179,7 +175,9 @@ class SessionLifecycle:
             if callable(migrate_legacy):
                 try:
                     report = migrate_legacy(str(new_root))
-                    logger.info("Evidence legacy sidecar migration after workspace activation: %s", report)
+                    logger.info(
+                        "Evidence legacy sidecar migration after workspace activation: %s", report
+                    )
                 except Exception:  # noqa: BLE001 - unproven legacy files remain model-invisible
                     logger.exception(
                         "Evidence legacy sidecar migration failed after workspace activation; "
@@ -295,7 +293,9 @@ class SessionLifecycle:
                     payload=self._host._session_payload(sess),
                     trigger_point="initial_save",
                 )
-                self._host._fault_feedback("session_persistence", exc)  # selfheal_log side effect only
+                self._host._fault_feedback(
+                    "session_persistence", exc
+                )  # selfheal_log side effect only
                 self._host._record_program_fault("session_persist")
                 with contextlib.suppress(Exception):
                     self._host._record_action(

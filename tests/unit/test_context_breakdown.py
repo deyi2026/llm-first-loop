@@ -6,6 +6,7 @@
 - budget/ratio 计算
 - 零组件时不出错
 """
+
 from __future__ import annotations
 
 from llm_loop.core.history import compute_breakdown
@@ -18,8 +19,11 @@ def _user(content: str) -> Message:
 
 def _tool(content: str, name: str = "read_file") -> Message:
     return Message(
-        role="tool", content=content, source=MessageSource.TOOL,
-        tool_call_id="c1", tool_name=name,
+        role="tool",
+        content=content,
+        source=MessageSource.TOOL,
+        tool_call_id="c1",
+        tool_name=name,
     )
 
 
@@ -31,9 +35,9 @@ def test_breakdown_values_correct():
     """各组件字符数/token/占比正确."""
     msgs = [_user("你好"), _tool("X" * 1000), _assistant("回复")]
     bd = compute_breakdown(msgs, "SYS", None, tool_schema_chars=200, budget=10000)
-    assert bd["system"]["chars"] == 3          # "SYS"
-    assert bd["memory"]["chars"] == 0          # None
-    assert bd["history"]["chars"] == 2 + 2     # "你好" + "回复" (非 tool)
+    assert bd["system"]["chars"] == 3  # "SYS"
+    assert bd["memory"]["chars"] == 0  # None
+    assert bd["history"]["chars"] == 2 + 2  # "你好" + "回复" (非 tool)
     assert bd["tool_results"]["chars"] == 1000
     assert bd["tool_schema"]["chars"] == 200
     total = 3 + 0 + 4 + 1000 + 200
@@ -140,6 +144,7 @@ def test_breakdown_from_dicts_measures_built_payload():
     assert compute_breakdown_from_dicts(msgs, budget=0)["ratio"] is None
     # pct 总和 ≈ 100
     pct = sum(
-        bd[k]["pct"] for k in ("system", "memory", "history", "tool_results", "tool_schema", "reasoning")
+        bd[k]["pct"]
+        for k in ("system", "memory", "history", "tool_results", "tool_schema", "reasoning")
     )
     assert abs(pct - 100.0) < 0.2

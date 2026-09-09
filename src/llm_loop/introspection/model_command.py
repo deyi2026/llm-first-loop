@@ -42,7 +42,7 @@ def parse_model_command(text: str) -> tuple[bool, str]:
         if stripped == prefix:
             return True, ""
         if stripped.startswith(prefix + " "):
-            arg = stripped[len(prefix) + 1:].strip()
+            arg = stripped[len(prefix) + 1 :].strip()
             return True, arg
     return False, text
 
@@ -113,6 +113,7 @@ def _switch_reply(
     # fallback override 写入: ctx.session_set_override 为 None 时直接改 in-memory session
     # 关键: 每次调用 freshness 闭环 (闭包捕获本回调的 session, 避免与上一个调用冲突)
     if session is not None:
+
         def _fallback_set_override(value: str | None, _sess: Session = session) -> None:
             _sess.model_override = value
             ctx.session_model_override = value
@@ -131,8 +132,10 @@ def _switch_reply(
     )
     success = result.status.value == "success"
     # changed 语义: 成功且回执包含"已切换/已清除"标记
-    changed = success and session is not None and (
-        "已切换" in result.content or "已清除" in result.content
+    changed = (
+        success
+        and session is not None
+        and ("已切换" in result.content or "已清除" in result.content)
     )
     # 持久化（run_switch_model 内部已调用 session_set_override 修改 in-memory sess；
     #  CLI/飞书 路径不经过 LoopEngine.run() → 需手动 save 以落到 JSON）

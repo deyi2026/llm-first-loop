@@ -15,7 +15,11 @@ BRAINSTORM_DESIGN_TOOL_DEF = {
         "type": "object",
         "properties": {
             "problem": {"type": "string", "description": "Problem to solve"},
-            "constraints": {"type": "array", "items": {"type": "string"}, "description": "Constraints"},
+            "constraints": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Constraints",
+            },
             "num_options": {"type": "integer", "description": "Number of options (default 3)"},
         },
         "required": ["problem"],
@@ -36,14 +40,16 @@ def _generate_options(problem, n):
     perspectives_cycle = _PERSPECTIVES * ((n // len(_PERSPECTIVES)) + 1)
     for i in range(n):
         pname, pdesc = perspectives_cycle[i]
-        options.append({
-            "id": "option_" + str(i + 1),
-            "title": "Option " + chr(65 + i) + " (" + pname + " perspective)",
-            "description": "Solve " + problem[:80] + " via " + pdesc,
-            "perspective": pname,
-            "pros": ["Fits " + pname, "Clear path"],
-            "cons": ["Needs validation", "Edge cases uncovered"],
-        })
+        options.append(
+            {
+                "id": "option_" + str(i + 1),
+                "title": "Option " + chr(65 + i) + " (" + pname + " perspective)",
+                "description": "Solve " + problem[:80] + " via " + pdesc,
+                "perspective": pname,
+                "pros": ["Fits " + pname, "Clear path"],
+                "cons": ["Needs validation", "Edge cases uncovered"],
+            }
+        )
     return options
 
 
@@ -68,21 +74,41 @@ def run_brainstorm_design(ctx, audit, args):
         return ToolResult(
             status=ToolResultStatus.FAILURE,
             content="[ParamError] problem is empty. Required.",
-            tool_call_id="", tool_name="brainstorm_design",
+            tool_call_id="",
+            tool_name="brainstorm_design",
         )
     n = max(2, min(int(args.get("num_options", 3) or 3), 10))
 
     options = _generate_options(problem, n)
     scored = _score_options(options)
 
-    lines = ["# Brainstorm Design Report", "", "**Problem**: " + problem, "**Options**: " + str(n), "", "## Details", ""]
+    lines = [
+        "# Brainstorm Design Report",
+        "",
+        "**Problem**: " + problem,
+        "**Options**: " + str(n),
+        "",
+        "## Details",
+        "",
+    ]
     for i, opt in enumerate(scored, 1):
         lines.append("### " + str(i) + ". " + opt["title"] + " (Score: " + str(opt["avg"]) + ")")
         lines.append("- Perspective: " + opt["perspective"])
         lines.append("- Description: " + opt["description"])
         lines.append("- Pros: " + ", ".join(opt["pros"]))
         lines.append("- Cons: " + ", ".join(opt["cons"]))
-        lines.append("- Scores: UX=" + str(opt["scores"]["UX"]) + " Tech=" + str(opt["scores"]["Tech"]) + " Biz=" + str(opt["scores"]["Biz"]) + " Risk=" + str(opt["scores"]["Risk"]) + " Cost=" + str(opt["scores"]["Cost"]))
+        lines.append(
+            "- Scores: UX="
+            + str(opt["scores"]["UX"])
+            + " Tech="
+            + str(opt["scores"]["Tech"])
+            + " Biz="
+            + str(opt["scores"]["Biz"])
+            + " Risk="
+            + str(opt["scores"]["Risk"])
+            + " Cost="
+            + str(opt["scores"]["Cost"])
+        )
         lines.append("")
 
     lines.append("## Next Steps")
@@ -91,7 +117,12 @@ def run_brainstorm_design(ctx, audit, args):
     lines.append("3. Run an independent cross-role review before implementation")
     lines.append("4. Decide whether the evidence merits a durable evolution proposal")
 
-    return ToolResult(status=ToolResultStatus.SUCCESS, content="\n".join(lines), tool_call_id="", tool_name="brainstorm_design")
+    return ToolResult(
+        status=ToolResultStatus.SUCCESS,
+        content="\n".join(lines),
+        tool_call_id="",
+        tool_name="brainstorm_design",
+    )
 
 
 # ── Tool 2: tdd_red_green ──
@@ -115,11 +146,11 @@ def _pytest_template(spec):
         "import pytest\n\n"
         "def test_normal_case():\n"
         "    # TODO: implement based on spec\n"
-        "    assert False, \"RED - not yet implemented\"\n\n"
+        '    assert False, "RED - not yet implemented"\n\n'
         "def test_edge_case_empty():\n"
-        "    assert False, \"RED - not yet implemented\"\n\n"
+        '    assert False, "RED - not yet implemented"\n\n'
         "def test_edge_case_extreme():\n"
-        "    assert False, \"RED - not yet implemented\"\n"
+        '    assert False, "RED - not yet implemented"\n'
     )
 
 
@@ -142,7 +173,7 @@ def _impl_template(spec):
         "# Minimum implementation for: " + spec + "\n"
         "def main(input_data):\n"
         "    # TODO: Implement based on spec\n"
-        "    raise NotImplementedError(\"Pending TDD-driven implementation\")\n"
+        '    raise NotImplementedError("Pending TDD-driven implementation")\n'
     )
 
 
@@ -152,7 +183,8 @@ def run_tdd_red_green(ctx, audit, args):
         return ToolResult(
             status=ToolResultStatus.FAILURE,
             content="[ParamError] spec is empty. Required.",
-            tool_call_id="", tool_name="tdd_red_green",
+            tool_call_id="",
+            tool_name="tdd_red_green",
         )
     framework = str(args.get("framework", "pytest")).strip() or "pytest"
     if framework not in ("pytest", "jest", "junit"):
@@ -182,7 +214,9 @@ def run_tdd_red_green(ctx, audit, args):
     content += "3. Copy impl template -> minimum code to pass\n"
     content += "4. Refactor -> commit"
 
-    return ToolResult(status=ToolResultStatus.SUCCESS, content=content, tool_call_id="", tool_name="tdd_red_green")
+    return ToolResult(
+        status=ToolResultStatus.SUCCESS, content=content, tool_call_id="", tool_name="tdd_red_green"
+    )
 
 
 # ── Tool 3: design_review ──
@@ -202,7 +236,12 @@ DESIGN_REVIEW_TOOL_DEF = {
 _REVIEW_ROLES = {
     "PM": ["User value clear?", "ROI reasonable?", "Aligns with roadmap?", "Measurable success?"],
     "Dev": ["Tech approach feasible?", "Dependencies controlled?", "Maintainable?", "Testable?"],
-    "QA": ["Acceptance criteria clear?", "Edge cases covered?", "Rollback plan?", "Monitoring/alerting?"],
+    "QA": [
+        "Acceptance criteria clear?",
+        "Edge cases covered?",
+        "Rollback plan?",
+        "Monitoring/alerting?",
+    ],
     "SRE": ["SLA met?", "Capacity estimate?", "Failure domain isolation?", "DR plan?"],
     "Security": ["Data sensitive?", "Permission boundary?", "Attack surface?", "Compliance?"],
 }
@@ -214,13 +253,20 @@ def run_design_review(ctx, audit, args):
         return ToolResult(
             status=ToolResultStatus.FAILURE,
             content="[ParamError] design_doc is empty. Required.",
-            tool_call_id="", tool_name="design_review",
+            tool_call_id="",
+            tool_name="design_review",
         )
     roles = args.get("roles") or list(_REVIEW_ROLES.keys())
     if not isinstance(roles, list):
         roles = list(_REVIEW_ROLES.keys())
 
-    lines = ["# Design Review Report", "", "**Design**: " + design_doc[:200] + ("..." if len(design_doc) > 200 else ""), "**Roles**: " + ", ".join(roles), ""]
+    lines = [
+        "# Design Review Report",
+        "",
+        "**Design**: " + design_doc[:200] + ("..." if len(design_doc) > 200 else ""),
+        "**Roles**: " + ", ".join(roles),
+        "",
+    ]
     for role in roles:
         if role in _REVIEW_ROLES:
             lines.append("## " + role + " Perspective")
@@ -235,4 +281,9 @@ def run_design_review(ctx, audit, args):
     lines.append("3. Aggregate -> revise design")
     lines.append("4. Re-run design_review until all OK")
 
-    return ToolResult(status=ToolResultStatus.SUCCESS, content="\n".join(lines), tool_call_id="", tool_name="design_review")
+    return ToolResult(
+        status=ToolResultStatus.SUCCESS,
+        content="\n".join(lines),
+        tool_call_id="",
+        tool_name="design_review",
+    )

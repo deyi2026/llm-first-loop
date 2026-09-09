@@ -34,12 +34,33 @@ DEF_CONFIRM_TTL_S = 24 * 3600.0
 _STARTED_STATUSES = ("in_progress", "blocked", "done")
 
 _APPROVE_WORDS = (
-    "同意", "继续", "确认", "好的", "可以", "开始吧", "做吧", "执行吧",
-    "恢复执行", "approve", "yes", "ok",
+    "同意",
+    "继续",
+    "确认",
+    "好的",
+    "可以",
+    "开始吧",
+    "做吧",
+    "执行吧",
+    "恢复执行",
+    "approve",
+    "yes",
+    "ok",
 )
 _DENY_WORDS = (
-    "拒绝", "不同意", "不要", "不要继续", "不继续", "不可以", "不行", "不执行",
-    "取消", "停止", "先不", "deny", "no",
+    "拒绝",
+    "不同意",
+    "不要",
+    "不要继续",
+    "不继续",
+    "不可以",
+    "不行",
+    "不执行",
+    "取消",
+    "停止",
+    "先不",
+    "deny",
+    "no",
 )
 
 AuditFn = Any  # (phase, action_type, detail) -> None
@@ -143,9 +164,7 @@ def frame_complete(frame: RestartConfirmationFrame | None) -> bool:
     if frame is None or not frame.goal_id.strip():
         return False
     return bool(
-        frame.pending_summary.strip()
-        or frame.current_sub_item.strip()
-        or frame.next_step.strip()
+        frame.pending_summary.strip() or frame.current_sub_item.strip() or frame.next_step.strip()
     )
 
 
@@ -161,11 +180,12 @@ def confirmation_frame_text(frame: RestartConfirmationFrame) -> str:
     )
 
 
-
 class RestartGuardService:
     """重启授权守卫（feishu 服务层；只读查询，不改 goal/task 账本）."""
 
-    def __init__(self, engine: Any, *, audit_fn: AuditFn | None = None, ttl_s: float | None = None) -> None:
+    def __init__(
+        self, engine: Any, *, audit_fn: AuditFn | None = None, ttl_s: float | None = None
+    ) -> None:
         self._engine = engine
         self._audit_fn = audit_fn
         self._ttl_s = ttl_s if ttl_s is not None and ttl_s > 0 else confirm_ttl_s()
@@ -195,7 +215,9 @@ class RestartGuardService:
             return RestartDecision(kind="allow")  # 无已开始任务（goal 活跃但任务全 pending/无任务）
         return None
 
-    def _attach_unknown_frame(self, session_id: str, verdict: RestartDecision, snap: _GoalSnapshot) -> RestartDecision:
+    def _attach_unknown_frame(
+        self, session_id: str, verdict: RestartDecision, snap: _GoalSnapshot
+    ) -> RestartDecision:
         """state_unknown 兜底：goal 已知时补"状态未知"标注帧（spec 6.3-2）；否则纯 confirm."""
         if verdict.reason != STATE_UNKNOWN:
             return verdict
@@ -222,7 +244,9 @@ class RestartGuardService:
         try:
             # strict_session=True（CR-R1.1 会话隔离读取）：禁跨会话全局回退——
             # 新会话/无 goal 会话不得误见其它会话的 goal（否则全新任务被误 deny/notify）
-            goal = GoalStore(self._audit_dir()).get(prefer_session_id=session_id, strict_session=True)
+            goal = GoalStore(self._audit_dir()).get(
+                prefer_session_id=session_id, strict_session=True
+            )
         except Exception as exc:  # noqa: BLE001 — 决策 3：查询异常按状态未知兜底
             logger.warning("重启守卫 goal 查询失败（按状态未知兜底）: %s", exc)
             self._audit("restart.guard_error", f"stage=goal_query; error={str(exc)[:150]}")
@@ -271,9 +295,13 @@ class RestartGuardService:
             f"anchor_source={frame.anchor_source}; state=unfinished",
         )
         self._register(session_id, snap.goal_id, frame.frame_id)
-        return RestartDecision(kind="confirm", goal_id=snap.goal_id, reason="unfinished", frame=frame)
+        return RestartDecision(
+            kind="confirm", goal_id=snap.goal_id, reason="unfinished", frame=frame
+        )
 
-    def _make_frame(self, session_id: str, snap: _GoalSnapshot, state_note: str) -> RestartConfirmationFrame:
+    def _make_frame(
+        self, session_id: str, snap: _GoalSnapshot, state_note: str
+    ) -> RestartConfirmationFrame:
         """帧装配：锚点复用 ResumeAnchorReader（三层降级）；待续概要 frontier 聚合一句话."""
         anchor_source, current, nxt = self._read_anchor_parts(session_id, state_note)
         return RestartConfirmationFrame(
@@ -336,9 +364,7 @@ class RestartGuardService:
         with self._lock:
             now = time.time()
             had_expired = any(
-                e.session_id == session_id
-                and not e.consumed
-                and now - e.created_at > e.expiry_s
+                e.session_id == session_id and not e.consumed and now - e.created_at > e.expiry_s
                 for e in self._pending.values()
             )
             self._purge_expired_locked(now)
@@ -361,12 +387,31 @@ class RestartGuardService:
             return GrantResult(ok=False, decision="none", session_id=session_id)
         frame_id, entry = found
         if intent == "refer":
-            self._audit("restart.authorization", f"frame_id={frame_id}; decision=mismatch; goal_id={entry.goal_id}")
-            return GrantResult(ok=False, decision="mismatch", session_id=session_id, goal_id=entry.goal_id, frame_id=frame_id)
+            self._audit(
+                "restart.authorization",
+                f"frame_id={frame_id}; decision=mismatch; goal_id={entry.goal_id}",
+            )
+            return GrantResult(
+                ok=False,
+                decision="mismatch",
+                session_id=session_id,
+                goal_id=entry.goal_id,
+                frame_id=frame_id,
+            )
         if intent == "deny":
             self._remove(frame_id)
-            self._audit("restart.authorization", f"frame_id={frame_id}; decision=denied; goal_id={entry.goal_id}")
-            return GrantResult(ok=False, decision="denied", session_id=session_id, goal_id=entry.goal_id, frame_id=frame_id, reason="user")
+            self._audit(
+                "restart.authorization",
+                f"frame_id={frame_id}; decision=denied; goal_id={entry.goal_id}",
+            )
+            return GrantResult(
+                ok=False,
+                decision="denied",
+                session_id=session_id,
+                goal_id=entry.goal_id,
+                frame_id=frame_id,
+                reason="user",
+            )
         return self._approve(session_id, frame_id, entry)
 
     def _approve(self, session_id: str, frame_id: str, entry: PendingEntry) -> GrantResult:
@@ -374,15 +419,38 @@ class RestartGuardService:
         completed = self._recheck_completed(entry.goal_id)
         if completed is True:
             self._remove(frame_id)
-            self._audit("restart.authorization", f"frame_id={frame_id}; decision=denied; goal_id={entry.goal_id}; reason=completed")
-            return GrantResult(ok=False, decision="denied", session_id=session_id, goal_id=entry.goal_id, frame_id=frame_id, reason="completed")
+            self._audit(
+                "restart.authorization",
+                f"frame_id={frame_id}; decision=denied; goal_id={entry.goal_id}; reason=completed",
+            )
+            return GrantResult(
+                ok=False,
+                decision="denied",
+                session_id=session_id,
+                goal_id=entry.goal_id,
+                frame_id=frame_id,
+                reason="completed",
+            )
         if completed is None:
             self._remove(frame_id)
-            self._audit("restart.authorization", f"frame_id={frame_id}; decision=denied; goal_id={entry.goal_id}; reason={STATE_UNKNOWN}")
-            return GrantResult(ok=False, decision="denied", session_id=session_id, goal_id=entry.goal_id, frame_id=frame_id, reason=STATE_UNKNOWN)
+            self._audit(
+                "restart.authorization",
+                f"frame_id={frame_id}; decision=denied; goal_id={entry.goal_id}; reason={STATE_UNKNOWN}",
+            )
+            return GrantResult(
+                ok=False,
+                decision="denied",
+                session_id=session_id,
+                goal_id=entry.goal_id,
+                frame_id=frame_id,
+                reason=STATE_UNKNOWN,
+            )
         grant = self.consume_grant(frame_id)
         if grant.ok:
-            self._audit("restart.authorization", f"frame_id={frame_id}; decision=approved; goal_id={entry.goal_id}")
+            self._audit(
+                "restart.authorization",
+                f"frame_id={frame_id}; decision=approved; goal_id={entry.goal_id}",
+            )
         return grant
 
     def consume_grant(self, frame_id: str) -> GrantResult:
@@ -393,9 +461,23 @@ class RestartGuardService:
             if entry is None:
                 return GrantResult(ok=False, decision="mismatch")
             if entry.consumed:
-                return GrantResult(ok=False, decision="consumed", session_id=entry.session_id, goal_id=entry.goal_id, frame_id=frame_id, command_text=entry.command_text)
+                return GrantResult(
+                    ok=False,
+                    decision="consumed",
+                    session_id=entry.session_id,
+                    goal_id=entry.goal_id,
+                    frame_id=frame_id,
+                    command_text=entry.command_text,
+                )
             self._pending[frame_id] = replace(entry, consumed=True)
-            return GrantResult(ok=True, decision="approved", session_id=entry.session_id, goal_id=entry.goal_id, frame_id=frame_id, command_text=entry.command_text)
+            return GrantResult(
+                ok=True,
+                decision="approved",
+                session_id=entry.session_id,
+                goal_id=entry.goal_id,
+                frame_id=frame_id,
+                command_text=entry.command_text,
+            )
 
     def _recheck_completed(self, goal_id: str) -> bool | None:
         """复核终态（只读）：True=完成，False=未完成，None=状态无法可靠读取。"""
@@ -442,7 +524,9 @@ class RestartGuardService:
     def _purge_expired_locked(self, now: float) -> None:
         """惰性剔除过期帧；剔除即超时失效留痕（任务保持不执行，不降级自动执行）."""
         expired = [
-            (fid, e) for fid, e in self._pending.items() if now - e.created_at > e.expiry_s and not e.consumed
+            (fid, e)
+            for fid, e in self._pending.items()
+            if now - e.created_at > e.expiry_s and not e.consumed
         ]
         for fid, entry in expired:
             self._pending.pop(fid, None)

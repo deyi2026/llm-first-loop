@@ -79,9 +79,11 @@ def _current_attachment_workspace_scope(engine: Any) -> str:
 
 def _resolve_workspace_file(engine: Any, raw_path: str) -> Path | None:
     """Resolve one ordinary file inside the current workspace (no escape)."""
-    root = Path(
-        getattr(engine, "workspace_root", "") or Path(__file__).resolve().parents[3]
-    ).expanduser().resolve()
+    root = (
+        Path(getattr(engine, "workspace_root", "") or Path(__file__).resolve().parents[3])
+        .expanduser()
+        .resolve()
+    )
     try:
         raw = Path(str(raw_path or "")).expanduser()
         target = raw.resolve() if raw.is_absolute() else (root / raw).resolve()
@@ -164,6 +166,7 @@ def _result_fallback_receipt(result: Any) -> dict[str, str] | None:
     if not isinstance(value, dict):
         return None
     return {str(k): str(v) for k, v in value.items()}
+
 
 # EVO-20260818: 文件树/会话树 API（独立模块 fs_tree.py，安全边界+审计）
 from llm_loop.web.file_routes import file_router  # noqa: E402
@@ -324,7 +327,8 @@ def chat(
     _persist_model_ref = _canonical_persist_model(engine, payload.model)
     _on_run_acquired = (
         (lambda sess: _apply_session_model_override(sess, _persist_model_ref))
-        if _persist_model_ref else None
+        if _persist_model_ref
+        else None
     )
     try:
         # R8.24-D D-D2（DT-1.3）: Web 非流式端点签发人类通道凭据（ingress token）——
@@ -333,7 +337,9 @@ def chat(
         from llm_loop.core.trace_leak.ingress_token import issue_ingress
 
         result = engine._run_with_acquired(
-            session_id, payload.message, model=payload.model,
+            session_id,
+            payload.message,
+            model=payload.model,
             reasoning_effort=payload.reasoning_effort,
             reasoning_mode=payload.reasoning_mode,
             on_run_acquired=_on_run_acquired,
@@ -375,7 +381,9 @@ def chat(
     if channel.startswith("feishu:"):
         from .feishu_push import push_web_chat_to_feishu
 
-        background_tasks.add_task(push_web_chat_to_feishu, channel, payload.message, result.final_answer)
+        background_tasks.add_task(
+            push_web_chat_to_feishu, channel, payload.message, result.final_answer
+        )
 
     return ChatResponse(
         session_id=result.session_id,
@@ -526,7 +534,11 @@ def _stream_background(
             {
                 "error": "session_busy",
                 "detail": "该会话正在生成中"
-                + (f"（开始于 {_fmt_ts(snap.get('started_at'))}）" if snap.get("started_at") else "")
+                + (
+                    f"（开始于 {_fmt_ts(snap.get('started_at'))}）"
+                    if snap.get("started_at")
+                    else ""
+                )
                 + "，完成后即可继续发送；可稍后刷新查看结果",
                 "status": snap,
             },
@@ -705,7 +717,9 @@ def chat_stream(
             from llm_loop.core.trace_leak.ingress_token import issue_ingress
 
             it = engine._run_stream_with_acquired(
-                session_id, payload.message, model=payload.model,
+                session_id,
+                payload.message,
+                model=payload.model,
                 reasoning_effort=payload.reasoning_effort,
                 reasoning_mode=payload.reasoning_mode,
                 on_run_acquired=_before_start,
@@ -828,7 +842,9 @@ def root() -> Response:
     聊天页面（static/index.html 保留不删，但不再服务，避免两套前端混淆）。
     """
     # 与 build_app 挂载逻辑同源：函数内求值（测试可 monkeypatch UI_V2_DIR）
-    ui_v2 = Path(os.environ.get("UI_V2_DIR", "") or Path(__file__).resolve().parents[3] / "webui" / "dist")
+    ui_v2 = Path(
+        os.environ.get("UI_V2_DIR", "") or Path(__file__).resolve().parents[3] / "webui" / "dist"
+    )
     if ui_v2.is_dir():
         return RedirectResponse("/ui/v2/", status_code=307)
     # v1 已弃用：产物缺失时返回 503，不再 fallback 旧版前端
@@ -992,22 +1008,26 @@ def evolution_list(request: Request, limit: int = 30, status: str = "") -> Respo
                     continue
                 content = d.get("content") or ""
                 impact_files = d.get("impact_files") or []
-                impact_hint = ", ".join(impact_files[:5]) if impact_files else (
-                    (d.get("impact_scope") or "")[:120] or content[:120]
+                impact_hint = (
+                    ", ".join(impact_files[:5])
+                    if impact_files
+                    else ((d.get("impact_scope") or "")[:120] or content[:120])
                 )
-                out.append({
-                    "id": d.get("id", ""),
-                    "ts": d.get("ts", ""),
-                    "status": d.get("status", ""),
-                    "priority": d.get("priority", ""),
-                    "requires_human": bool(d.get("requires_human")),
-                    "content": content[:120],  # 摘要；全文走 detail 端点
-                    "impact_hint": impact_hint,
-                    "rejected_reason": d.get("rejected_reason", ""),
-                    "reviewed_at": d.get("reviewed_at", ""),
-                    "executed_at": d.get("executed_at"),
-                    "verified_at": d.get("verified_at"),
-                })
+                out.append(
+                    {
+                        "id": d.get("id", ""),
+                        "ts": d.get("ts", ""),
+                        "status": d.get("status", ""),
+                        "priority": d.get("priority", ""),
+                        "requires_human": bool(d.get("requires_human")),
+                        "content": content[:120],  # 摘要；全文走 detail 端点
+                        "impact_hint": impact_hint,
+                        "rejected_reason": d.get("rejected_reason", ""),
+                        "reviewed_at": d.get("reviewed_at", ""),
+                        "executed_at": d.get("executed_at"),
+                        "verified_at": d.get("verified_at"),
+                    }
+                )
         except OSError:
             pass  # 建议文件读取失败 fail-open（返回已收集条目，日志由上层审计兜底）
     out.sort(key=lambda x: x["ts"], reverse=True)
@@ -1020,11 +1040,15 @@ def evolution_detail(request: Request, id: str = "") -> Response:
     from pathlib import Path
 
     if not id:
-        return UTF8JSONResponse(status_code=400, content={"error": "invalid_params", "detail": "id 必填。"})
+        return UTF8JSONResponse(
+            status_code=400, content={"error": "invalid_params", "detail": "id 必填。"}
+        )
     base = Path(os.environ.get("LFL_DATA_DIR", "") or Path(__file__).resolve().parents[3] / "data")
     f = base / "audit" / "evolution_suggestions.jsonl"
     if not f.exists():
-        return UTF8JSONResponse(status_code=404, content={"error": "not_found", "detail": "建议文件不存在"})
+        return UTF8JSONResponse(
+            status_code=404, content={"error": "not_found", "detail": "建议文件不存在"}
+        )
     try:
         for line in f.read_text(encoding="utf-8").splitlines():
             line = line.strip()
@@ -1035,26 +1059,32 @@ def evolution_detail(request: Request, id: str = "") -> Response:
             except Exception:  # noqa: BLE001
                 continue
             if d.get("id") == id:
-                return JSONResponse(content={
-                    "id": d.get("id", ""),
-                    "ts": d.get("ts", ""),
-                    "status": d.get("status", ""),
-                    "priority": d.get("priority", ""),
-                    "requires_human": bool(d.get("requires_human")),
-                    "scope": d.get("scope", "global"),
-                    "content": d.get("content", ""),
-                    "evidence": d.get("evidence", ""),
-                    "impact_scope": d.get("impact_scope", ""),
-                    "impact_files": d.get("impact_files") or [],
-                    "rejected_reason": d.get("rejected_reason", ""),
-                    "reviewed_at": d.get("reviewed_at", ""),
-                    "executed_at": d.get("executed_at", ""),
-                    "verified_at": d.get("verified_at", ""),
-                    "reason_history": d.get("reason_history") or [],
-                })
-        return UTF8JSONResponse(status_code=404, content={"error": "not_found", "detail": f"未找到 {id}"})
+                return JSONResponse(
+                    content={
+                        "id": d.get("id", ""),
+                        "ts": d.get("ts", ""),
+                        "status": d.get("status", ""),
+                        "priority": d.get("priority", ""),
+                        "requires_human": bool(d.get("requires_human")),
+                        "scope": d.get("scope", "global"),
+                        "content": d.get("content", ""),
+                        "evidence": d.get("evidence", ""),
+                        "impact_scope": d.get("impact_scope", ""),
+                        "impact_files": d.get("impact_files") or [],
+                        "rejected_reason": d.get("rejected_reason", ""),
+                        "reviewed_at": d.get("reviewed_at", ""),
+                        "executed_at": d.get("executed_at", ""),
+                        "verified_at": d.get("verified_at", ""),
+                        "reason_history": d.get("reason_history") or [],
+                    }
+                )
+        return UTF8JSONResponse(
+            status_code=404, content={"error": "not_found", "detail": f"未找到 {id}"}
+        )
     except OSError:
-        return UTF8JSONResponse(status_code=500, content={"error": "read_failed", "detail": "建议文件读取失败。"})
+        return UTF8JSONResponse(
+            status_code=500, content={"error": "read_failed", "detail": "建议文件读取失败。"}
+        )
 
 
 @router.post("/api/v1/evolution/review")
@@ -1079,17 +1109,27 @@ def evolution_review(payload: EvolutionReviewRequest, request: Request) -> Respo
     if not evo_id or decision not in {"accepted", "rejected"}:
         return UTF8JSONResponse(
             status_code=400,
-            content={"error": "invalid_params", "detail": "id 必填，decision 须为 accepted/rejected。"},
+            content={
+                "error": "invalid_params",
+                "detail": "id 必填，decision 须为 accepted/rejected。",
+            },
         )
     if decision == "rejected" and not reason:
         return UTF8JSONResponse(
             status_code=400,
-            content={"error": "reason_required", "detail": "拒绝须提供理由（Approval UX v2 批 1: 拒绝理由必填留痕）。"},
+            content={
+                "error": "reason_required",
+                "detail": "拒绝须提供理由（Approval UX v2 批 1: 拒绝理由必填留痕）。",
+            },
         )
     # Approval UX v2 批 1（验证清单 #9）: 涉边界项单条批准需额外确认标志（extra_confirm）
     if decision == "accepted":
         cur_for_confirm = _find_suggestion(store, evo_id)
-        if cur_for_confirm is not None and bool(cur_for_confirm.get("requires_human")) and not payload.extra_confirm:
+        if (
+            cur_for_confirm is not None
+            and bool(cur_for_confirm.get("requires_human"))
+            and not payload.extra_confirm
+        ):
             return UTF8JSONResponse(
                 status_code=409,
                 content={
@@ -1102,7 +1142,9 @@ def evolution_review(payload: EvolutionReviewRequest, request: Request) -> Respo
     if payload.expected_status:
         cur_for_cas = _find_suggestion(store, evo_id)
         if cur_for_cas is None:
-            return UTF8JSONResponse(status_code=404, content={"error": "not_found", "detail": f"未找到 {evo_id}"})
+            return UTF8JSONResponse(
+                status_code=404, content={"error": "not_found", "detail": f"未找到 {evo_id}"}
+            )
         if cur_for_cas.get("status") != payload.expected_status:
             return UTF8JSONResponse(
                 status_code=409,
@@ -1161,7 +1203,10 @@ async def evolution_review_batch(request: Request) -> Response:
     if not items or default_decision not in {"accepted", "rejected"}:
         return UTF8JSONResponse(
             status_code=400,
-            content={"error": "invalid_params", "detail": "items 必填且 decision 须为 accepted/rejected。"},
+            content={
+                "error": "invalid_params",
+                "detail": "items 必填且 decision 须为 accepted/rejected。",
+            },
         )
     results: list[dict] = []
     ok_count = fail_count = 0
@@ -1177,12 +1222,25 @@ async def evolution_review_batch(request: Request) -> Response:
         # 服务端硬校验：涉边界跳过（禁止批量）
         cur = _find_suggestion(store, evo_id)
         if cur is not None and bool(cur.get("requires_human")):
-            results.append({"id": evo_id, "ok": False, "message": "涉边界（requires_human），须单条审批", "skipped": True})
+            results.append(
+                {
+                    "id": evo_id,
+                    "ok": False,
+                    "message": "涉边界（requires_human），须单条审批",
+                    "skipped": True,
+                }
+            )
             fail_count += 1
             continue
         # CAS 乐观锁
         if expected and cur is not None and cur.get("status") != expected:
-            results.append({"id": evo_id, "ok": False, "message": f"状态冲突（期望 {expected}，当前 {cur.get('status')}）"})
+            results.append(
+                {
+                    "id": evo_id,
+                    "ok": False,
+                    "message": f"状态冲突（期望 {expected}，当前 {cur.get('status')}）",
+                }
+            )
             fail_count += 1
             continue
         try:
@@ -1198,7 +1256,9 @@ async def evolution_review_batch(request: Request) -> Response:
             ok_count += bool(ok)
             fail_count += not ok
         except Exception as exc:  # noqa: BLE001 — 单条失败不影响其余
-            results.append({"id": evo_id, "ok": False, "message": f"异常: {type(exc).__name__}: {exc}"})
+            results.append(
+                {"id": evo_id, "ok": False, "message": f"异常: {type(exc).__name__}: {exc}"}
+            )
             fail_count += 1
     return UTF8JSONResponse(
         content={"ok_count": ok_count, "fail_count": fail_count, "results": results},
@@ -1216,11 +1276,15 @@ def evolution_diff(request: Request, id: str = "") -> Response:
     from pathlib import Path
 
     if not id:
-        return UTF8JSONResponse(status_code=400, content={"error": "invalid_params", "detail": "id 必填。"})
+        return UTF8JSONResponse(
+            status_code=400, content={"error": "invalid_params", "detail": "id 必填。"}
+        )
     base = Path(os.environ.get("LFL_DATA_DIR", "") or Path(__file__).resolve().parents[3] / "data")
     f = base / "audit" / "evolution_suggestions.jsonl"
     if not f.exists():
-        return UTF8JSONResponse(status_code=404, content={"error": "not_found", "detail": "建议文件不存在"})
+        return UTF8JSONResponse(
+            status_code=404, content={"error": "not_found", "detail": "建议文件不存在"}
+        )
     try:
         for line in f.read_text(encoding="utf-8").splitlines():
             line = line.strip()
@@ -1232,20 +1296,32 @@ def evolution_diff(request: Request, id: str = "") -> Response:
                 continue
             if d.get("id") == id:
                 if d.get("status") == "rejected":
-                    return UTF8JSONResponse(status_code=404, content={"error": "no_diff", "detail": "已拒绝建议无 diff。"})
+                    return UTF8JSONResponse(
+                        status_code=404,
+                        content={"error": "no_diff", "detail": "已拒绝建议无 diff。"},
+                    )
                 actions = d.get("actions") or []
                 impact_files = d.get("impact_files") or []
                 if not actions and not impact_files:
-                    return UTF8JSONResponse(status_code=404, content={"error": "no_diff", "detail": "该建议无关联改动。"})
-                return JSONResponse(content={
-                    "id": id,
-                    "impact_files": impact_files,
-                    "actions": [a for a in actions if isinstance(a, dict)][:20],
-                    "note": "只读摘要（不含 prompt/密钥）",
-                })
-        return UTF8JSONResponse(status_code=404, content={"error": "not_found", "detail": f"未找到 {id}"})
+                    return UTF8JSONResponse(
+                        status_code=404,
+                        content={"error": "no_diff", "detail": "该建议无关联改动。"},
+                    )
+                return JSONResponse(
+                    content={
+                        "id": id,
+                        "impact_files": impact_files,
+                        "actions": [a for a in actions if isinstance(a, dict)][:20],
+                        "note": "只读摘要（不含 prompt/密钥）",
+                    }
+                )
+        return UTF8JSONResponse(
+            status_code=404, content={"error": "not_found", "detail": f"未找到 {id}"}
+        )
     except OSError:
-        return UTF8JSONResponse(status_code=500, content={"error": "read_failed", "detail": "建议文件读取失败。"})
+        return UTF8JSONResponse(
+            status_code=500, content={"error": "read_failed", "detail": "建议文件读取失败。"}
+        )
 
 
 def _find_suggestion(store: Any, evo_id: str) -> dict | None:
@@ -1272,7 +1348,10 @@ def session_stats(session_id: str, request: Request) -> Any:
     engine = _engine_from(request)
     sess = engine.session.load(session_id)
     if sess is None:
-        return UTF8JSONResponse(status_code=404, content={"error": "session_not_found", "detail": f"会话不存在: {session_id}"})
+        return UTF8JSONResponse(
+            status_code=404,
+            content={"error": "session_not_found", "detail": f"会话不存在: {session_id}"},
+        )
     msgs = getattr(sess, "messages", []) or []
     turns = steps = 0
     for m in msgs:
@@ -1338,7 +1417,8 @@ def session_stats(session_id: str, request: Request) -> Any:
             "tokens_in": _b["tokens_in"],
             "cache_hit": _b["cache_hit"],
             "cache_hit_rate": round(_b["cache_hit"] / _b["tokens_in"] * 100, 1)
-            if _b["tokens_in"] > 0 else 0.0,
+            if _b["tokens_in"] > 0
+            else 0.0,
         }
         for _mdl, _b in sorted(by_model.items())
     }
@@ -1356,6 +1436,7 @@ def session_stats(session_id: str, request: Request) -> Any:
         "tok_s": tok_s,
     }
 
+
 @router.get("/api/v1/interop/messages")
 def list_interop_messages(request: Request) -> dict:
     """协调通道消息（只读，不触发 run）——web 端展示给用户看.
@@ -1365,8 +1446,10 @@ def list_interop_messages(request: Request) -> dict:
     """
     del request  # 纯文件读取，无引擎依赖
     base = Path(os.environ.get("LFL_DATA_DIR", "data")) / "interop"
-    result: dict[str, dict] = {"lfl_to_dsh": {"pending": [], "recent_done": []},
-                               "dsh_to_lfl": {"pending": [], "recent_done": []}}
+    result: dict[str, dict] = {
+        "lfl_to_dsh": {"pending": [], "recent_done": []},
+        "dsh_to_lfl": {"pending": [], "recent_done": []},
+    }
     for direction in ("lfl_to_dsh", "dsh_to_lfl"):
         for sub in ("pending", "done"):
             pdir = base / direction / sub
@@ -1395,6 +1478,7 @@ def list_interop_messages(request: Request) -> dict:
                 )
     return result
 
+
 @router.get("/api/v1/sessions", response_model=SessionListResponse)
 def list_sessions(request: Request, include_archived: bool = False) -> SessionListResponse:
     """会话列表：复用 engine.session.list_sessions，不遍历会话目录."""
@@ -1409,8 +1493,8 @@ def list_sessions(request: Request, include_archived: bool = False) -> SessionLi
             message_count=m.message_count,
             status=m.status,
             last_message_preview=m.last_message_preview,
-            pinned=m.pinned,      # M56: 置顶透传
-            channel=m.channel,    # M56: 来源通道透传
+            pinned=m.pinned,  # M56: 置顶透传
+            channel=m.channel,  # M56: 来源通道透传
         )
         for m in metas
     ]
@@ -1428,7 +1512,11 @@ def get_shared_current(request: Request) -> JSONResponse:
 @router.post(
     "/api/v1/sessions/{session_id}/pin",
     response_model=None,
-    responses={409: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    responses={
+        409: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        500: {"model": ErrorResponse},
+    },
 )
 def set_session_pin(session_id: str, request: Request, pinned: bool = False) -> Response:
     """会话置顶/取消置顶（M56，Web 端列表置顶优先）."""
@@ -1465,7 +1553,11 @@ def set_session_pin(session_id: str, request: Request, pinned: bool = False) -> 
 @router.post(
     "/api/v1/sessions/{session_id}/archive",
     response_model=None,
-    responses={409: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    responses={
+        409: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        500: {"model": ErrorResponse},
+    },
 )
 def set_session_archive(session_id: str, request: Request, archived: bool = False) -> Response:
     """会话归档/取消归档（2026-08-21: 归档文件夹——旧会话收拢防误操作）."""
@@ -1476,7 +1568,9 @@ def set_session_archive(session_id: str, request: Request, archived: bool = Fals
             content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
         )
     try:
-        ok = engine.session.archive(session_id) if archived else engine.session.unarchive(session_id)
+        ok = (
+            engine.session.archive(session_id) if archived else engine.session.unarchive(session_id)
+        )
     except SessionMutationBusyError as exc:
         return UTF8JSONResponse(
             status_code=409,
@@ -1496,13 +1590,19 @@ def set_session_archive(session_id: str, request: Request, archived: bool = Fals
             status_code=404,
             content={"error": "session_not_found", "detail": session_not_found_message(session_id)},
         )
-    return UTF8JSONResponse(content={"status": "ok", "session_id": session_id, "archived": archived})
+    return UTF8JSONResponse(
+        content={"status": "ok", "session_id": session_id, "archived": archived}
+    )
 
 
 @router.post(
     "/api/v1/sessions/{session_id}/fork",
     response_model=None,
-    responses={409: {"model": ErrorResponse}, 404: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
+    responses={
+        409: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        500: {"model": ErrorResponse},
+    },
 )
 def fork_session_endpoint(
     session_id: str,
@@ -1538,7 +1638,10 @@ def fork_session_endpoint(
         logger.exception("session fork failed: session_id=%s", session_id)
         return UTF8JSONResponse(
             status_code=500,
-            content={"error": "fork_failed", "detail": f"[程序异常] fork 失败（{type(exc).__name__}: {exc}）"},
+            content={
+                "error": "fork_failed",
+                "detail": f"[程序异常] fork 失败（{type(exc).__name__}: {exc}）",
+            },
         )
     if not report.success:
         return UTF8JSONResponse(
@@ -1558,6 +1661,7 @@ def fork_session_endpoint(
 
 
 # ── 2026-08-15：消息反馈（对齐 DSH ui-message-feedback；JSONL 追加审计，不侵入会话） ──
+
 
 @router.post(
     "/api/v1/sessions/{session_id}/feedback",
@@ -1660,8 +1764,7 @@ def _session_events_fingerprint(engine: Any) -> str:
     sessions_dir = getattr(session, "root", None)
     if sessions_dir is None:
         sessions_dir = (
-            getattr(getattr(engine, "settings", None), "sessions_dir", None)
-            or "./data/sessions"
+            getattr(getattr(engine, "settings", None), "sessions_dir", None) or "./data/sessions"
         )
     root = Path(sessions_dir)
     return f"{root}:{_sessions_fingerprint(root)}"
@@ -1802,9 +1905,7 @@ def session_continuity_status(session_id: str, request: Request) -> Response:
         content={
             "available": True,
             "open": bool(chosen is not None or mechanical),
-            "source": (
-                "open_stream_checkpoint" if chosen is not None else "open_execution_state"
-            ),
+            "source": ("open_stream_checkpoint" if chosen is not None else "open_execution_state"),
             "provider": str(payload.get("provider") or ""),
             "model": str(payload.get("model") or ""),
             "text_chars": int(payload.get("text_chars") or 0),
@@ -1856,7 +1957,9 @@ def get_session_messages(
             model_used=getattr(m, "model_used", ""),  # M51: 历史模型标签透传（页脚）
             tokens_in=getattr(m, "tokens_in", 0),  # M52: 历史 token 消耗透传
             tokens_out=getattr(m, "tokens_out", 0),  # M52
-            tokens_cache_hit=getattr(m, "tokens_cache_hit", 0),  # M58: 历史命中透传（页脚 ⚡——漏了显示 0）
+            tokens_cache_hit=getattr(
+                m, "tokens_cache_hit", 0
+            ),  # M58: 历史命中透传（页脚 ⚡——漏了显示 0）
             ts=getattr(m, "ts", 0.0),  # 时间戳透传（web 端消息时间显示）
             tool_calls=getattr(m, "tool_calls", None),  # 工具声明透传（历史出产物/正文链接）
             attachments=list((getattr(m, "metadata", {}) or {}).get("attachments", []))
@@ -1889,7 +1992,10 @@ def get_archived_tool_output(session_id: str, tool_call_id: str, request: Reques
     if store is None:
         return JSONResponse(
             status_code=404,
-            content={"error": "archive_unavailable", "detail": "压缩档案不可用（未配置），无法取回原文。"},
+            content={
+                "error": "archive_unavailable",
+                "detail": "压缩档案不可用（未配置），无法取回原文。",
+            },
         )
     try:
         entry = store.get_by_tool_call_id(session_id, tool_call_id)
@@ -1897,12 +2003,18 @@ def get_archived_tool_output(session_id: str, tool_call_id: str, request: Reques
         logger.exception("archive lookup failed: %s/%s", session_id, tool_call_id)
         return JSONResponse(
             status_code=500,
-            content={"error": "archive_lookup_failed", "detail": f"[程序异常] 档案检索失败（{type(exc).__name__}: {exc}）。"},
+            content={
+                "error": "archive_lookup_failed",
+                "detail": f"[程序异常] 档案检索失败（{type(exc).__name__}: {exc}）。",
+            },
         )
     if entry is None:
         return JSONResponse(
             status_code=404,
-            content={"error": "archive_not_found", "detail": "该工具回执未归档（可能未超长或归档降级），无完整原文可取。"},
+            content={
+                "error": "archive_not_found",
+                "detail": "该工具回执未归档（可能未超长或归档降级），无完整原文可取。",
+            },
         )
     return JSONResponse(
         content={
@@ -2152,9 +2264,7 @@ def attachments_recent(request: Request, limit: int = Query(20, ge=1, le=100)) -
             status_code=500,
             content={"error": "attachment_list_failed", "detail": type(exc).__name__},
         )
-    return UTF8JSONResponse(
-        content={"attachments": [record.public_facts() for record in records]}
-    )
+    return UTF8JSONResponse(content={"attachments": [record.public_facts() for record in records]})
 
 
 @router.post("/api/v1/attachments/import-workspace", response_model=None)
@@ -2185,7 +2295,9 @@ def import_workspace_attachment(
                 return UTF8JSONResponse(
                     status_code=413 if size > MAX_UPLOAD_BYTES else 400,
                     content={
-                        "error": "upload_too_large" if size > MAX_UPLOAD_BYTES else "file_unreadable",
+                        "error": "upload_too_large"
+                        if size > MAX_UPLOAD_BYTES
+                        else "file_unreadable",
                         "detail": (
                             f"文件超过 10MB 上限（{size} 字节）。"
                             if size > MAX_UPLOAD_BYTES
@@ -2217,8 +2329,12 @@ _PREVIEW_ROOT = Path(__file__).resolve().parents[3]  # 项目根（与 _ui_v2_di
 _PREVIEW_MAX_CHARS = 200_000  # 预览上限（超限截断提示，不整读）
 _PREVIEW_IMAGE_MAX_BYTES = 5 * 1024 * 1024  # 图片预览上限（超限拒绝，如实提示）
 _PREVIEW_IMAGE_MIME = {
-    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-    ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".svg": "image/svg+xml",
     ".ico": "image/x-icon",
 }
 
@@ -2302,7 +2418,10 @@ def preview_file(request: Request, path: str) -> Response:
             logger.exception("file preview dir list failed: path=%s", path)
             return UTF8JSONResponse(
                 status_code=403,
-                content={"error": "dir_unreadable", "detail": f"目录不可读（{type(exc).__name__}）。"},
+                content={
+                    "error": "dir_unreadable",
+                    "detail": f"目录不可读（{type(exc).__name__}）。",
+                },
             )
         # parent 相对根返回（根自身/根外 → "."；前端据此隐藏"返回上级"）
         try:
@@ -2322,18 +2441,25 @@ def preview_file(request: Request, path: str) -> Response:
     mime = _PREVIEW_IMAGE_MIME.get(target.suffix.lower())
     if mime:
         import base64
+
         try:
             blob = target.read_bytes()
         except OSError as exc:
             logger.exception("file preview image read failed: path=%s", path)
             return UTF8JSONResponse(
                 status_code=500,
-                content={"error": "read_failed", "detail": f"[程序异常] 读取失败（{type(exc).__name__}）。"},
+                content={
+                    "error": "read_failed",
+                    "detail": f"[程序异常] 读取失败（{type(exc).__name__}）。",
+                },
             )
         if len(blob) > _PREVIEW_IMAGE_MAX_BYTES:
             return UTF8JSONResponse(
                 status_code=413,
-                content={"error": "image_too_large", "detail": f"图片 {len(blob)} 字节超预览上限 5MB。"},
+                content={
+                    "error": "image_too_large",
+                    "detail": f"图片 {len(blob)} 字节超预览上限 5MB。",
+                },
             )
         return UTF8JSONResponse(
             content={
@@ -2355,7 +2481,10 @@ def preview_file(request: Request, path: str) -> Response:
         logger.exception("file preview read failed: path=%s", path)
         return UTF8JSONResponse(
             status_code=500,
-            content={"error": "read_failed", "detail": f"[程序异常] 读取失败（{type(exc).__name__}）。"},
+            content={
+                "error": "read_failed",
+                "detail": f"[程序异常] 读取失败（{type(exc).__name__}）。",
+            },
         )
     truncated = len(raw) > _PREVIEW_MAX_CHARS
     return UTF8JSONResponse(
@@ -2399,9 +2528,7 @@ def list_workspace_sessions(workspace_id: str, request: Request) -> JSONResponse
             status_code=404,
             content={"error": "workspace_not_found", "detail": f"工作区未注册: {workspace_id}"},
         )
-    metas = engine.session.list_sessions_in(
-        Path(engine.settings.sessions_dir) / ws.id
-    )
+    metas = engine.session.list_sessions_in(Path(engine.settings.sessions_dir) / ws.id)
     return JSONResponse(
         {
             "sessions": [
@@ -2442,9 +2569,7 @@ def register_workspace(request: Request, body: WorkspaceRequest) -> Response:
     try:
         with engine.workspace_transition():
             ws = store.register_and_switch(path, precommit=prepare_runtime)
-            engine.set_workspace(
-                ws.path, ws.id, prepared_sessions_dir=prepared_sessions_dir
-            )
+            engine.set_workspace(ws.path, ws.id, prepared_sessions_dir=prepared_sessions_dir)
     except WorkspaceBusyError as exc:
         return UTF8JSONResponse(
             status_code=409,
@@ -2487,9 +2612,7 @@ def switch_workspace(request: Request, body: WorkspaceSwitchRequest) -> Response
     try:
         with engine.workspace_transition():
             ws = store.switch(body.id, precommit=prepare_runtime)
-            engine.set_workspace(
-                ws.path, ws.id, prepared_sessions_dir=prepared_sessions_dir
-            )
+            engine.set_workspace(ws.path, ws.id, prepared_sessions_dir=prepared_sessions_dir)
     except WorkspaceBusyError as exc:
         return UTF8JSONResponse(
             status_code=409,
@@ -2586,7 +2709,6 @@ def list_dirs(request: Request, path: str = "") -> Response:
     )
 
 
-
 # --- Capability manifest ---------------------------------------------------
 # 只声明"本后端注册了哪些产品路由"这一机械事实，供前端一次拉取，
 # 替代启动期 404/405 路由探测。不表达策略、健康度或业务判断。
@@ -2630,7 +2752,6 @@ def api_capabilities(request: Request) -> Response:
 
     _walk(request.app.routes)
     capabilities = {
-        key: all(pair in registered for pair in pairs)
-        for key, pairs in _CAPABILITY_ROUTES.items()
+        key: all(pair in registered for pair in pairs) for key, pairs in _CAPABILITY_ROUTES.items()
     }
     return UTF8JSONResponse(content={"capabilities": capabilities})

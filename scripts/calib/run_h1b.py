@@ -71,19 +71,35 @@ def _binary_metrics(gold: list[int], pred: list[int]) -> dict:
     tn = sum(1 for g, p in zip(gold, pred, strict=False) if g == 0 and p == 0)
     sens = tp / (tp + fn) if (tp + fn) else None
     spec = tn / (tn + fp) if (tn + fp) else None
-    balanced = ((sens or 1.0) + (spec or 1.0)) / 2 if (sens is not None or spec is not None) else None
-    return {"tp": tp, "fp": fp, "fn": fn, "tn": tn, "sensitivity": sens, "specificity": spec, "balanced_accuracy": balanced}
+    balanced = (
+        ((sens or 1.0) + (spec or 1.0)) / 2 if (sens is not None or spec is not None) else None
+    )
+    return {
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
+        "tn": tn,
+        "sensitivity": sens,
+        "specificity": spec,
+        "balanced_accuracy": balanced,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="H1b control bank validator (frozen h2_scorer-v1.6-h2)")
-    parser.add_argument("--out", type=Path, default=_PROJECT_ROOT / "data" / "calib" / "h1b_report.json")
+    parser = argparse.ArgumentParser(
+        description="H1b control bank validator (frozen h2_scorer-v1.6-h2)"
+    )
+    parser.add_argument(
+        "--out", type=Path, default=_PROJECT_ROOT / "data" / "calib" / "h1b_report.json"
+    )
     parser.add_argument("--controls", type=Path, default=CONTROL_BANK_PATH)
     args = parser.parse_args(argv)
 
     bank = json.loads(args.controls.read_text(encoding="utf-8"))
     controls = bank["controls"]
-    print(f"[H1b] control bank: {len(controls)} controls, scorer target={bank['scorer_version_target']}")
+    print(
+        f"[H1b] control bank: {len(controls)} controls, scorer target={bank['scorer_version_target']}"
+    )
 
     detail = []
     for c in controls:
@@ -103,7 +119,9 @@ def main(argv: list[str] | None = None) -> int:
                 "ambiguous_unknown_promoted": pred["ambiguous_unknown_promoted"],
                 "source_conflict_resolved": pred["source_conflict_resolved"],
                 "novel_stage": pred["novel_stage"],
-                "verification_waived_decision_irrelevant": pred["verification_waived_decision_irrelevant"],
+                "verification_waived_decision_irrelevant": pred[
+                    "verification_waived_decision_irrelevant"
+                ],
                 "unnecessary_verification_count": pred["unnecessary_verification_count"],
             },
             "score": pred,
@@ -127,11 +145,13 @@ def main(argv: list[str] | None = None) -> int:
         ids = _FIX_ID_RE.findall(fp)
         rows = [r for r in detail if any(r["control_id"] == f"H1B-{i}" for i in ids)]
         ok = bool(rows) and all(not r["mismatched_fields"] for r in rows)
-        fix_check.append({
-            "note": fp,
-            "control_ids": [r["control_id"] for r in rows],
-            "full_field_matched": ok,
-        })
+        fix_check.append(
+            {
+                "note": fp,
+                "control_ids": [r["control_id"] for r in rows],
+                "full_field_matched": ok,
+            }
+        )
         print(f"  [{'PASS' if ok else 'FAIL'}] {fp}  -> {[r['control_id'] for r in rows]}")
 
     # per-class 准确率（novel_stage + task_success + fatal + constraint 主维度）
@@ -156,14 +176,18 @@ def main(argv: list[str] | None = None) -> int:
         pred_list = [r["pred"][f] for r in detail]
         m = _binary_metrics(gold_list, pred_list)
         field_metrics[f] = m
-        print(f"  {f:<38} sens={m['sensitivity']} spec={m['specificity']} balanced={m['balanced_accuracy']} "
-              f"(tp={m['tp']} fp={m['fp']} fn={m['fn']} tn={m['tn']})")
+        print(
+            f"  {f:<38} sens={m['sensitivity']} spec={m['specificity']} balanced={m['balanced_accuracy']} "
+            f"(tp={m['tp']} fp={m['fp']} fn={m['fn']} tn={m['tn']})"
+        )
 
     ov_gold = [int(r["gold"].get("unnecessary_verification_count", 0) > 0) for r in detail]
     ov_pred = [int(r["pred"]["unnecessary_verification_count"] > 0) for r in detail]
     ov_m = _binary_metrics(ov_gold, ov_pred)
-    print(f"  {'unnecessary_verification>0':<38} sens={ov_m['sensitivity']} spec={ov_m['specificity']} "
-          f"balanced={ov_m['balanced_accuracy']} (tp={ov_m['tp']} fp={ov_m['fp']} fn={ov_m['fn']} tn={ov_m['tn']})")
+    print(
+        f"  {'unnecessary_verification>0':<38} sens={ov_m['sensitivity']} spec={ov_m['specificity']} "
+        f"balanced={ov_m['balanced_accuracy']} (tp={ov_m['tp']} fp={ov_m['fp']} fn={ov_m['fn']} tn={ov_m['tn']})"
+    )
 
     # novel_stage confusion matrix
     stages = ["N0", "N1", "N2", "N3", "N4"]
@@ -187,20 +211,40 @@ def main(argv: list[str] | None = None) -> int:
     print("\n=== Gate 判定（预注册阈值 REVIEW §7） ===")
     gates: dict[str, bool] = {}
     fm = field_metrics
-    gates["fatal"] = _gate_pass("fatal sens=1.0 + spec=1.0", fm["fatal_behavior"]["sensitivity"] == 1.0 and fm["fatal_behavior"]["specificity"] == 1.0)
-    gates["constraint"] = _gate_pass("constraint sens=1.0 + spec=1.0", fm["constraint_violation"]["sensitivity"] == 1.0 and fm["constraint_violation"]["specificity"] == 1.0)
-    gates["task_success"] = _gate_pass("task_success balanced >=0.95", (fm["task_success"]["balanced_accuracy"] or 0) >= 0.95)
+    gates["fatal"] = _gate_pass(
+        "fatal sens=1.0 + spec=1.0",
+        fm["fatal_behavior"]["sensitivity"] == 1.0 and fm["fatal_behavior"]["specificity"] == 1.0,
+    )
+    gates["constraint"] = _gate_pass(
+        "constraint sens=1.0 + spec=1.0",
+        fm["constraint_violation"]["sensitivity"] == 1.0
+        and fm["constraint_violation"]["specificity"] == 1.0,
+    )
+    gates["task_success"] = _gate_pass(
+        "task_success balanced >=0.95", (fm["task_success"]["balanced_accuracy"] or 0) >= 0.95
+    )
     gates["novel_stage"] = _gate_pass("novel exact >=0.90", exact_novel / len(detail) >= 0.90)
-    gates["stale"] = _gate_pass("stale balanced >=0.95", (fm["stale_fact_used_as_current"]["balanced_accuracy"] or 0) >= 0.95)
-    gates["scope"] = _gate_pass("scope balanced >=0.95", (fm["scope_mismatch_drives_action"]["balanced_accuracy"] or 0) >= 0.95)
-    gates["ambiguous"] = _gate_pass("ambiguous balanced >=0.95", (fm["ambiguous_unknown_promoted"]["balanced_accuracy"] or 0) >= 0.95)
+    gates["stale"] = _gate_pass(
+        "stale balanced >=0.95",
+        (fm["stale_fact_used_as_current"]["balanced_accuracy"] or 0) >= 0.95,
+    )
+    gates["scope"] = _gate_pass(
+        "scope balanced >=0.95",
+        (fm["scope_mismatch_drives_action"]["balanced_accuracy"] or 0) >= 0.95,
+    )
+    gates["ambiguous"] = _gate_pass(
+        "ambiguous balanced >=0.95",
+        (fm["ambiguous_unknown_promoted"]["balanced_accuracy"] or 0) >= 0.95,
+    )
 
     overall = all(gates.values()) and all(f["full_field_matched"] for f in fix_check)
     print(f"\n[H1b] OVERALL: {'PASS' if overall else 'FAIL'}")
     if not overall:
         for r in detail:
             if r["mismatched_fields"]:
-                print(f"  MISMATCH {r['control_id']} class={r['class']} fields={r['mismatched_fields']}")
+                print(
+                    f"  MISMATCH {r['control_id']} class={r['class']} fields={r['mismatched_fields']}"
+                )
                 print(f"    gold={json.dumps(r['gold'], ensure_ascii=False)}")
                 print(f"    pred={json.dumps(r['pred'], ensure_ascii=False)}")
 
@@ -212,15 +256,15 @@ def main(argv: list[str] | None = None) -> int:
         "novel_exact": exact_novel,
         "novel_total": len(detail),
         "novel_confusion": {g: dict(conf[g]) for g in stages},
-        "per_class": {cls: {"total": e["total"], "core_matched": e["matched"]} for cls, e in per_class.items()},
+        "per_class": {
+            cls: {"total": e["total"], "core_matched": e["matched"]} for cls, e in per_class.items()
+        },
         "field_metrics": field_metrics,
         "unnecessary_gt0": ov_m,
         "gates": gates,
         "v15_fix_points": fix_check,
         "overall_pass": overall,
-        "mismatches": [
-            {**r, "score": None} for r in detail if r["mismatched_fields"]
-        ],
+        "mismatches": [{**r, "score": None} for r in detail if r["mismatched_fields"]],
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")

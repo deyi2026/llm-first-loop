@@ -60,7 +60,9 @@ def _capture_runtime(tmp_path: Path, content: str):
                 locator="runtime:r3",
                 version_policy=SourceVersionPolicy.VERSIONED,
             ),
-            coverage=Coverage(unit="observation", start=0, end_exclusive=None, source_complete=True),
+            coverage=Coverage(
+                unit="observation", start=0, end_exclusive=None, source_complete=True
+            ),
             provenance=Provenance(producer="r3-test"),
         )
     )
@@ -82,7 +84,9 @@ def _capture_file(tmp_path: Path):
             projection_budget_chars=256,
         )
     )
-    result = registry.execute(ToolCall(id="file-capture", name="read_file", arguments={"path": str(path)}))
+    result = registry.execute(
+        ToolCall(id="file-capture", name="read_file", arguments={"path": str(path)})
+    )
     assert result.status is ToolResultStatus.SUCCESS
     return path, blobs, ledger, owner, EvidenceRef(result.evidence_ref or "")
 
@@ -142,7 +146,9 @@ def test_r3_read_evidence_structures_transport_content_and_completeness(tmp_path
 
 def test_r3_verified_current_file_is_current_and_structured(tmp_path: Path) -> None:
     _, blobs, ledger, owner, ref = _capture_file(tmp_path)
-    tool = EvidenceReadTool(blobs, ledger, freshness=EvidenceFreshness(ledger), owner_resolver=lambda: owner)
+    tool = EvidenceReadTool(
+        blobs, ledger, freshness=EvidenceFreshness(ledger), owner_resolver=lambda: owner
+    )
 
     result = tool.execute(evidence_ref=ref.ref, range_type="text_char", start=0, limit=100)
 
@@ -165,10 +171,14 @@ def test_r3_verified_current_file_is_current_and_structured(tmp_path: Path) -> N
     assert payload["transport"]["is_domain_content"] is False
 
 
-def test_r3_stale_probeable_file_blocks_content_by_default_and_allows_explicit_history(tmp_path: Path) -> None:
+def test_r3_stale_probeable_file_blocks_content_by_default_and_allows_explicit_history(
+    tmp_path: Path,
+) -> None:
     path, blobs, ledger, owner, ref = _capture_file(tmp_path)
     path.write_text("NEW-R3-CONTENT\n" + "y" * 500, encoding="utf-8")
-    tool = EvidenceReadTool(blobs, ledger, freshness=EvidenceFreshness(ledger), owner_resolver=lambda: owner)
+    tool = EvidenceReadTool(
+        blobs, ledger, freshness=EvidenceFreshness(ledger), owner_resolver=lambda: owner
+    )
 
     blocked = tool.execute(evidence_ref=ref.ref, range_type="text_char", start=0, limit=4000)
     assert blocked.status is ToolResultStatus.FAILURE
@@ -206,7 +216,9 @@ def test_r3_manifest_marks_stale_as_historical_only(tmp_path: Path) -> None:
     freshness = EvidenceFreshness(ledger)
     assert freshness.refresh(owner=owner, evidence_ref=ref).freshness.value == "stale"
 
-    rendered = render_recovery_manifest(ManifestProjector(ledger).build_recent(owner=owner, limit=5))
+    rendered = render_recovery_manifest(
+        ManifestProjector(ledger).build_recent(owner=owner, limit=5)
+    )
 
     assert "freshness=stale" in rendered
     assert "currentness=historical_only" in rendered
@@ -215,7 +227,9 @@ def test_r3_manifest_marks_stale_as_historical_only(tmp_path: Path) -> None:
     assert "acquired_at=" in rendered
 
 
-def test_r3_search_stale_probeable_file_hides_snippet_by_default_and_allows_explicit_history(tmp_path: Path) -> None:
+def test_r3_search_stale_probeable_file_hides_snippet_by_default_and_allows_explicit_history(
+    tmp_path: Path,
+) -> None:
     path, blobs, ledger, owner, _ = _capture_file(tmp_path)
     path.write_text("NEW-R3-CONTENT\n" + "z" * 500, encoding="utf-8")
     tool = EvidenceSearchTool(

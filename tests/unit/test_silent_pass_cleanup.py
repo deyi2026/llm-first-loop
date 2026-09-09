@@ -29,7 +29,6 @@ def _all_py() -> list[Path]:
     return sorted(_SRC.rglob("*.py"))
 
 
-
 def test_summarize_no_bare_exception_pass():
     text = _read("memory/summarize.py")
     assert not re.search(r"except\s+Exception\s*:\s*\n[ \t]+pass", text)

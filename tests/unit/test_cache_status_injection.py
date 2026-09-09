@@ -69,6 +69,7 @@ def test_status_cache_callback_exception_fail_open():
 
 # ── EVO-20260818: dimensions 防御归一化（字符串被按字符解析的 bug 回归）──
 
+
 def test_status_dimensions_string_not_char_split():
     """字符串维度（模型传错类型）→ 解析为单维度，不再按字符拆解."""
     sp = _provider()
@@ -152,9 +153,11 @@ def test_alert_path_telemetry_not_in_final_answer():
     assert "缓存已恢复" not in result and "命中率" not in result
     # ② 遥测走 metadata.cache_health 结构化路径
     md = h._actions and h._actions[0]
-    assert md == ("run.cache_monitor", "recovered", "[缓存已恢复] 拦截期锚点未再前移，命中率已回升"), (
-        "审计记录保留"
-    )
+    assert md == (
+        "run.cache_monitor",
+        "recovered",
+        "[缓存已恢复] 拦截期锚点未再前移，命中率已回升",
+    ), "审计记录保留"
     # ③ 回写 metadata（本方法用 _Harness 无 session 对象，用 monkey 不验证——见下测）
 
 
@@ -236,6 +239,3 @@ def test_strip_tail_limited_ratio_warn(caplog):
         out = strip_cache_telemetry_lines(body + "\n" + telem)
     assert "缓存命中率" not in out
     assert any("遥测剥离疑似误伤" in r.message for r in caplog.records)
-
-
-

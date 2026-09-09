@@ -18,8 +18,8 @@ from pathlib import Path
 
 from llm_loop.core.message import ToolResult, ToolResultStatus
 
-_MAX_FILES = 40          # 单次扫描最大文件数（目录模式）
-_MAX_DEPTH = 3           # 目录递归最大深度
+_MAX_FILES = 40  # 单次扫描最大文件数（目录模式）
+_MAX_DEPTH = 3  # 目录递归最大深度
 _MAX_LINES_PER_FILE = 60  # 单文件输出最大行数
 _MAX_OUTPUT_CHARS = 12000  # 输出总字符上限（对齐 TOOL_MAX_OUTPUT_CHARS 合理档）
 
@@ -39,8 +39,14 @@ class InspectCodeTool:
         "properties": {
             "path": {"type": "string", "description": "文件或目录路径（相对项目根或绝对路径）"},
             "depth": {"type": "integer", "description": "目录递归深度（默认 2，最大 3）"},
-            "keyword": {"type": "string", "description": "可选：只显示名称含关键词的类/函数（过滤）"},
-            "with_docstrings": {"type": "boolean", "description": "是否显示 docstring 首行（默认 true）"},
+            "keyword": {
+                "type": "string",
+                "description": "可选：只显示名称含关键词的类/函数（过滤）",
+            },
+            "with_docstrings": {
+                "type": "boolean",
+                "description": "是否显示 docstring 首行（默认 true）",
+            },
         },
         "required": ["path"],
     }
@@ -51,7 +57,8 @@ class InspectCodeTool:
             return ToolResult(
                 status=ToolResultStatus.FAILURE,
                 content="[参数错误] 缺少必填参数 'path'",
-                tool_call_id="", tool_name=self.name,
+                tool_call_id="",
+                tool_name=self.name,
             )
         try:
             depth = max(1, min(int(kwargs.get("depth", 2) or 2), _MAX_DEPTH))
@@ -65,13 +72,15 @@ class InspectCodeTool:
             return ToolResult(
                 status=ToolResultStatus.FAILURE,
                 content=f"[路径不存在] {path}",
-                tool_call_id="", tool_name=self.name,
+                tool_call_id="",
+                tool_name=self.name,
             )
         if p.is_file() and p.suffix != ".py":
             return ToolResult(
                 status=ToolResultStatus.FAILURE,
                 content=f"[不支持] 非 Python 文件: {path}（inspect_code 仅解析 .py）",
-                tool_call_id="", tool_name=self.name,
+                tool_call_id="",
+                tool_name=self.name,
             )
         files = [p] if p.is_file() else self._collect_files(p, depth)
 
@@ -79,7 +88,8 @@ class InspectCodeTool:
             return ToolResult(
                 status=ToolResultStatus.SUCCESS,
                 content=f"[空] {path} 下未找到 Python 文件（.py）",
-                tool_call_id="", tool_name=self.name,
+                tool_call_id="",
+                tool_name=self.name,
             )
 
         out: list[str] = []
@@ -105,7 +115,8 @@ class InspectCodeTool:
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
             content="\n".join(out),
-            tool_call_id="", tool_name=self.name,
+            tool_call_id="",
+            tool_name=self.name,
         )
 
     # ── 内部 ──
@@ -128,7 +139,7 @@ class InspectCodeTool:
                         break
         except OSError:
             pass  # 目录遍历权限不足 fail-open（返回已收集文件，不静默吞错——调用方可见收集结果）
-        return files[: _MAX_FILES]
+        return files[:_MAX_FILES]
 
     @staticmethod
     def _rel(f: Path) -> str:
@@ -181,7 +192,10 @@ class InspectCodeTool:
                 mod = node.module or ""
                 for a in node.names:
                     if _match(a.name):
-                        lines.append(f"  from {mod} import {a.name}" + (f" as {a.asname}" if a.asname else ""))
+                        lines.append(
+                            f"  from {mod} import {a.name}"
+                            + (f" as {a.asname}" if a.asname else "")
+                        )
                         count += 1
             if count >= _MAX_LINES_PER_FILE:
                 break
@@ -197,8 +211,14 @@ class InspectCodeTool:
                 for item in node.body:
                     if count >= _MAX_LINES_PER_FILE:
                         break
-                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and _match(item.name):
-                        prefix = "    async def " if isinstance(item, ast.AsyncFunctionDef) else "    def "
+                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and _match(
+                        item.name
+                    ):
+                        prefix = (
+                            "    async def "
+                            if isinstance(item, ast.AsyncFunctionDef)
+                            else "    def "
+                        )
                         lines.append(f"{prefix}{_sig(item)}:{_doc(item)}")
                         count += 1
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and _match(node.name):

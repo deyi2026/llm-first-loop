@@ -238,7 +238,13 @@ def test_event_handler_registers_noop_processors(monkeypatch):
     handler = bridge._build_event_handler()
     assert handler == "handler"
     # 已读回执 / 表情创建 / 表情删除 / 撤回消息 / 进入会话 均注册 no-op（cf6d9a78 + M51 补 recalled）
-    for expected in ("message_read", "reaction_created", "reaction_deleted", "recalled", "access_event"):
+    for expected in (
+        "message_read",
+        "reaction_created",
+        "reaction_deleted",
+        "recalled",
+        "access_event",
+    ):
         assert expected in registered, f"{expected} 未注册 no-op 处理器"
     # 消息接收仍走真实处理
     assert "receive" in registered
@@ -316,7 +322,10 @@ def test_worker_serial_order():
     try:
         for i in range(5):
             connector._submit_message(
-                {"header": {"event_id": f"evt_seq_{i}", "event_type": "im.message.receive_v1"}, "event": {}}
+                {
+                    "header": {"event_id": f"evt_seq_{i}", "event_type": "im.message.receive_v1"},
+                    "event": {},
+                }
             )
         deadline = time.time() + 2.0
         while time.time() < deadline and len(order) < 5:
@@ -343,7 +352,9 @@ def test_long_processing_ping_not_blocked():
 
     connector = _connector_with(_long, queue_max=4)
     try:
-        connector._submit_message({"header": {"event_id": "evt_long", "event_type": "im.message.receive_v1"}, "event": {}})
+        connector._submit_message(
+            {"header": {"event_id": "evt_long", "event_type": "im.message.receive_v1"}, "event": {}}
+        )
 
         def _ping_loop():
             while not stop_flag[0]:
@@ -509,9 +520,7 @@ def test_message_ts_updated_on_submit():
 
     from llm_loop.feishu.bridge import _WsConnector
 
-    connector = _WsConnector(
-        config=_cfg(), on_message=lambda p: None, has_token=lambda: True
-    )
+    connector = _WsConnector(config=_cfg(), on_message=lambda p: None, has_token=lambda: True)
     assert connector._last_message_ts is None
     before = time.time()
     connector._submit_message({"header": {"event_id": "evt_ts"}, "event": {}})
@@ -530,9 +539,7 @@ def test_processing_ts_updated():
         done.append(connector._processing_msg_id)
         done.append(connector._processing_since is not None)
 
-    connector = _WsConnector(
-        config=_cfg(), on_message=_slow, has_token=lambda: True
-    )
+    connector = _WsConnector(config=_cfg(), on_message=_slow, has_token=lambda: True)
     connector._safe_handle_message({"header": {"event_id": "evt_p"}, "event": {}})
     assert done[0] == "evt_p"  # 处理中 msg_id 可见
     assert done[1] is True  # 处理中 since 可见
@@ -541,8 +548,8 @@ def test_processing_ts_updated():
     assert connector._last_processed_ts is not None
 
 
-
 # ── 中断补偿（2026-08-16 + JSONL）：长任务被优雅退出打断 → 落盘 → 下次启动主动回复 ──
+
 
 def _compensation_store_at(tmp_path):
     from llm_loop.feishu.compensation import CompensationStore

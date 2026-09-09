@@ -68,8 +68,10 @@ def _make_e2e_setup(tmp_path: Path, handler, config=None):
     )
     mock_sync = MagicMock(spec=StateSynchronizer)
     result_collector = ResultCollector(
-        client, event_store,
-        result_max_bytes=config.result_max_bytes, max_retries=config.max_retries,
+        client,
+        event_store,
+        result_max_bytes=config.result_max_bytes,
+        max_retries=config.max_retries,
     )
     guard = CatastrophicGuard(audit_dir=None)
     audit_logger = AuditLogger(tmp_path / "audit")
@@ -122,11 +124,14 @@ def test_e2e_success_path(tmp_path: Path):
         if "/status" in request.url.path:
             return httpx.Response(200, json={"status": "SUCCEEDED"})
         if "/result" in request.url.path:
-            return httpx.Response(200, json={
-                "final_answer": "构建成功，产物已上传",
-                "status": "SUCCEEDED",
-                "metrics": {"duration_s": 120},
-            })
+            return httpx.Response(
+                200,
+                json={
+                    "final_answer": "构建成功，产物已上传",
+                    "status": "SUCCEEDED",
+                    "metrics": {"duration_s": 120},
+                },
+            )
         return httpx.Response(404)
 
     scheduler, client, event_store, audit_logger = _make_e2e_setup(tmp_path, handler)
@@ -140,6 +145,7 @@ def test_e2e_success_path(tmp_path: Path):
 
     # collect result
     from llm_loop.codearts.models import ExecutionHandle
+
     handle = scheduler._handle_registry.get("exec-success")
     if handle is None:
         handle = ExecutionHandle(
@@ -168,11 +174,14 @@ def test_e2e_failure_path(tmp_path: Path):
         if "executions" in request.url.path and request.method == "POST":
             return httpx.Response(200, json={"execution_id": "exec-fail"})
         if "/result" in request.url.path:
-            return httpx.Response(200, json={
-                "final_answer": "",
-                "status": "FAILED",
-                "failure_reason": "编译错误: undefined variable",
-            })
+            return httpx.Response(
+                200,
+                json={
+                    "final_answer": "",
+                    "status": "FAILED",
+                    "failure_reason": "编译错误: undefined variable",
+                },
+            )
         return httpx.Response(200, json={"status": "FAILED"})
 
     scheduler, client, event_store, _ = _make_e2e_setup(tmp_path, handler)
@@ -180,6 +189,7 @@ def test_e2e_failure_path(tmp_path: Path):
     assert dispatch_result.status == ToolResultStatus.SUCCESS
 
     from llm_loop.codearts.models import ExecutionHandle
+
     handle = scheduler._handle_registry.get("exec-fail")
     if handle is None:
         handle = ExecutionHandle(
@@ -204,11 +214,14 @@ def test_e2e_timeout_path(tmp_path: Path):
         if "executions" in request.url.path and request.method == "POST":
             return httpx.Response(200, json={"execution_id": "exec-timeout"})
         if "/result" in request.url.path:
-            return httpx.Response(200, json={
-                "final_answer": "",
-                "status": "TIMEOUT",
-                "failure_reason": "执行超时（1800s 上限）",
-            })
+            return httpx.Response(
+                200,
+                json={
+                    "final_answer": "",
+                    "status": "TIMEOUT",
+                    "failure_reason": "执行超时（1800s 上限）",
+                },
+            )
         return httpx.Response(200, json={"status": "TIMEOUT"})
 
     scheduler, client, _, _ = _make_e2e_setup(tmp_path, handler)
@@ -216,6 +229,7 @@ def test_e2e_timeout_path(tmp_path: Path):
     assert dispatch_result.status == ToolResultStatus.SUCCESS
 
     from llm_loop.codearts.models import ExecutionHandle
+
     handle = scheduler._handle_registry.get("exec-timeout")
     if handle is None:
         handle = ExecutionHandle(
@@ -273,6 +287,7 @@ def test_e2e_unknown_path(tmp_path: Path):
 
     # 回收结果时远端不可达 → ERROR（不臆造状态）
     from llm_loop.codearts.models import ExecutionHandle
+
     handle = scheduler._handle_registry.get("exec-unknown")
     if handle is None:
         handle = ExecutionHandle(

@@ -21,9 +21,19 @@ RECORD_SKILL_TOOL_DEF: dict = {
         "type": "object",
         "properties": {
             "skill_name": {"type": "string", "description": "Skill 名称（snake_case）"},
-            "action_log": {"type": "array", "description": "操作日志 JSON 列表，每项含 action/target/args 字段"},
-            "parameters_hint": {"type": "array", "items": {"type": "string"}, "description": "提示哪些字段是参数（amount/date 等）"},
-            "auto_submit": {"type": "boolean", "description": "自动提交为演进（默认 false=仅生成预览）"},
+            "action_log": {
+                "type": "array",
+                "description": "操作日志 JSON 列表，每项含 action/target/args 字段",
+            },
+            "parameters_hint": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "提示哪些字段是参数（amount/date 等）",
+            },
+            "auto_submit": {
+                "type": "boolean",
+                "description": "自动提交为演进（默认 false=仅生成预览）",
+            },
         },
         "required": ["skill_name", "action_log"],
     },
@@ -80,7 +90,9 @@ def _detect_pattern(action_log: list[dict]) -> dict:
     }
 
 
-def _generate_skill_md(skill_name: str, pattern: dict, action_log: list[dict], parameters_hint: list[str]) -> str:
+def _generate_skill_md(
+    skill_name: str, pattern: dict, action_log: list[dict], parameters_hint: list[str]
+) -> str:
     """生成 SKILL.md 草案."""
     params = parameters_hint or pattern["varying_keys"]
     fixed = [k for k in pattern["fixed_keys"] if k not in params]
@@ -144,7 +156,8 @@ def run_record_skill(ctx: Any, audit: Any, args: dict) -> ToolResult:
         return ToolResult(
             status=ToolResultStatus.FAILURE,
             content="[参数错误] 事实: skill_name 为空。原因: 必填。建议: 提供 snake_case 名称。",
-            tool_call_id="", tool_name="record_skill",
+            tool_call_id="",
+            tool_name="record_skill",
         )
 
     action_log = args.get("action_log")
@@ -152,10 +165,12 @@ def run_record_skill(ctx: Any, audit: Any, args: dict) -> ToolResult:
         return ToolResult(
             status=ToolResultStatus.FAILURE,
             content="[参数错误] 事实: action_log 为空或非列表。原因: 需提供至少 1 个操作日志条目。建议: 提供 [{'action': '...', 'target': '...', 'args': {...}}, ...]",
-            tool_call_id="", tool_name="record_skill",
+            tool_call_id="",
+            tool_name="record_skill",
         )
 
     from llm_loop.tools.arg_coerce import coerce_str_list
+
     parameters_hint = coerce_str_list(args.get("parameters_hint"))
 
     pattern = _detect_pattern(action_log)

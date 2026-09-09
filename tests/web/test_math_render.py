@@ -23,7 +23,6 @@ KATEX_DIR = ROOT / "src" / "llm_loop" / "web" / "static" / "katex"
 
 
 @pytest.fixture(scope="module")
-
 def style_css_src() -> str:
     return STYLE_CSS.read_text(encoding="utf-8")
 
@@ -122,7 +121,9 @@ def test_katex_style_present(style_css_src):
 def test_no_cdn_reference():
     """index.html/app.js 无外部 http(s) 引用（本地分发）."""
     for f in ("index.html", "app.js"):
-        content = (Path(ROOT / "src" / "llm_loop" / "web" / "static" / f)).read_text(encoding="utf-8")
+        content = (Path(ROOT / "src" / "llm_loop" / "web" / "static" / f)).read_text(
+            encoding="utf-8"
+        )
         assert "http://" not in content.replace("http://127.0.0.1", "")
         assert "https://" not in content.replace("https://api", "")
 

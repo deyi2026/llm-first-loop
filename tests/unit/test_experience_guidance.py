@@ -8,6 +8,7 @@
 - 检索异常 → fail-open 默认模板
 - tool_result_to_message 带出 guidance_extra
 """
+
 from __future__ import annotations
 
 import pytest
@@ -27,7 +28,7 @@ def _fail_call():
 
 
 class _FakeMemory:
-    """极简 MemoryStore 桩（search 返回预设条目）. """
+    """极简 MemoryStore 桩（search 返回预设条目）."""
 
     def __init__(self, entries):
         self._entries = entries
@@ -38,8 +39,13 @@ class _FakeMemory:
 
 def _proc(content, kws):
     from llm_loop.memory.store import MemoryEntry
+
     return MemoryEntry(
-        id="exp1", type="procedure", content=content, keywords=kws, created_at="2026-08-12T00:00:00Z"
+        id="exp1",
+        type="procedure",
+        content=content,
+        keywords=kws,
+        created_at="2026-08-12T00:00:00Z",
     )
 
 
@@ -60,7 +66,9 @@ def test_hit_procedure_injects_solution():
         ["文件不存在", "read_file"],
     )
     reg = ToolRegistry(memory_store=_FakeMemory([proc]))
-    r = reg._result(ToolResultStatus.FAILURE, _fail_call(), "[文件不存在] /nonexistent/x", duration_ms=1.0)
+    r = reg._result(
+        ToolResultStatus.FAILURE, _fail_call(), "[文件不存在] /nonexistent/x", duration_ms=1.0
+    )
     assert r.guidance_extra != ""
     assert "经验参考" in r.guidance_extra
     assert "先确认路径" in r.guidance_extra
@@ -90,6 +98,7 @@ def test_proc_without_solution_not_injected():
 
 def test_search_exception_fail_open():
     """检索异常 → fail-open 默认模板."""
+
     class _Boom:
         def search(self, keywords, top_k=5):
             raise RuntimeError("检索挂了")
@@ -116,7 +125,9 @@ def test_guidance_disabled_no_extra():
 
 def test_success_no_injection():
     """成功状态不注入经验."""
-    reg = ToolRegistry(memory_store=_FakeMemory([_proc("触发标签: [文件]\n已验解法: x", ["read_file"])]))
+    reg = ToolRegistry(
+        memory_store=_FakeMemory([_proc("触发标签: [文件]\n已验解法: x", ["read_file"])])
+    )
     r = reg._result(ToolResultStatus.SUCCESS, _fail_call(), "正常内容", duration_ms=1.0)
     assert r.guidance_extra == ""
 
@@ -141,22 +152,27 @@ def test_default_off_does_not_query_or_mark_experience(monkeypatch):
 
 # --- 阶段4-A: 经验注入独立开关（子代理路径）---
 
+
 def test_experience_independent_switch_only_extra():
     """failure_guidance_enabled=False + experience_guidance_enabled=True → 仅注入经验，无默认模板."""
     from llm_loop.memory.store import MemoryEntry
 
     proc = MemoryEntry(
-        id="exp2", type="procedure",
+        id="exp2",
+        type="procedure",
         content="触发标签: [x]\n已验解法: ①特殊解法A\n实证: 1/1",
-        keywords=["x"], created_at="2026-08-12T00:00:00Z",
+        keywords=["x"],
+        created_at="2026-08-12T00:00:00Z",
     )
     reg = ToolRegistry(memory_store=_FakeMemory([proc]))
-    r = reg._result(ToolResultStatus.FAILURE, _fail_call(), "[文件不存在] /x 特殊解法A触发词", duration_ms=1.0)
+    r = reg._result(
+        ToolResultStatus.FAILURE, _fail_call(), "[文件不存在] /x 特殊解法A触发词", duration_ms=1.0
+    )
     assert r.guidance_extra != ""
     msg = tool_result_to_message(
         r, failure_guidance_enabled=False, experience_guidance_enabled=True
     )
-    assert "[经验参考]" in msg.content       # 经验注入
+    assert "[经验参考]" in msg.content  # 经验注入
     assert "特殊解法A" in msg.content
     assert "检查参数/路径" not in msg.content  # 默认模板不注入
 
@@ -166,11 +182,15 @@ def test_experience_switch_default_follows_main():
     from llm_loop.memory.store import MemoryEntry
 
     proc = MemoryEntry(
-        id="exp3", type="procedure",
+        id="exp3",
+        type="procedure",
         content="触发标签: [y]\n已验解法: ①解法B\n实证: 1/1",
-        keywords=["y"], created_at="2026-08-12T00:00:00Z",
+        keywords=["y"],
+        created_at="2026-08-12T00:00:00Z",
     )
     reg = ToolRegistry(memory_store=_FakeMemory([proc]))
-    r = reg._result(ToolResultStatus.FAILURE, _fail_call(), "[文件不存在] /x 解法B触发词", duration_ms=1.0)
+    r = reg._result(
+        ToolResultStatus.FAILURE, _fail_call(), "[文件不存在] /x 解法B触发词", duration_ms=1.0
+    )
     msg = tool_result_to_message(r, failure_guidance_enabled=False)  # 未显式传经验开关
     assert "[经验参考]" not in msg.content  # 跟随主开关：不注入

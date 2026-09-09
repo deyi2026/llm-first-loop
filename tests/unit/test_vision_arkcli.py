@@ -24,7 +24,9 @@ def _proc(out: str, code: int = 0, err: str = "") -> mock.MagicMock:
 def test_arkcli_backend_success_parses_content(monkeypatch):
     """成功：扁平 schema content 解析返回."""
     monkeypatch.setenv("WEB_VISION_BACKEND", "arkcli")
-    data = json.dumps({"id": "r1", "model": "doubao-seed-1-6", "content": "图片内容：红色方块", "usage": {}})
+    data = json.dumps(
+        {"id": "r1", "model": "doubao-seed-1-6", "content": "图片内容：红色方块", "usage": {}}
+    )
     with (
         mock.patch("llm_loop.web.vision.shutil.which", return_value="/bin/arkcli"),
         mock.patch("llm_loop.web.vision.subprocess.run", return_value=_proc(data)) as run,
@@ -41,7 +43,9 @@ def test_arkcli_backend_success_parses_content(monkeypatch):
 def test_arkcli_auth_failure_gives_actionable_hint(monkeypatch):
     """鉴权失败（SSO 过期）→ RuntimeError 附登录指引."""
     monkeypatch.setenv("WEB_VISION_BACKEND", "arkcli")
-    err = json.dumps({"ok": False, "error": {"type": "error", "message": "not logged in, SSO token expired"}})
+    err = json.dumps(
+        {"ok": False, "error": {"type": "error", "message": "not logged in, SSO token expired"}}
+    )
     with (
         mock.patch("llm_loop.web.vision.shutil.which", return_value="/bin/arkcli"),
         mock.patch("llm_loop.web.vision.subprocess.run", return_value=_proc("", code=1, err=err)),
@@ -86,9 +90,7 @@ def test_minimax_backend_opt_in_preserved(monkeypatch):
     with mock.patch("llm_loop.web.vision.httpx.post") as post:
         post.return_value.status_code = 200
         post.return_value.raise_for_status.return_value = None
-        post.return_value.json.return_value = {
-            "content": [{"type": "text", "text": "描述文本"}]
-        }
+        post.return_value.json.return_value = {"content": [{"type": "text", "text": "描述文本"}]}
         text = vision.describe_image(b"PNGDATA", prompt="描述")
     assert text == "描述文本"
     # 断言走 Anthropic 端点路径（/anthropic/v1/messages + image base64 block）
@@ -112,6 +114,7 @@ def test_doc_extract_arkcli_priority_then_local_fallback(monkeypatch, tmp_path):
 
 
 # ── provider 后端（注册表 multimodal 模型，2026-08-15：Kimi 视觉实测可用） ──
+
 
 def _settings_with_kimi_multimodal(tmp_path, monkeypatch, key_env: str = "KIMI_API_KEY"):
     """构造含 multimodal kimi 模型的 settings（写 providers.json 到 data_dir）."""
@@ -210,6 +213,7 @@ def test_provider_backend_explicit_model(tmp_path, monkeypatch):
 
 # ── auto 自动链（2026-08-20：MiniMax Anthropic 端点优先，provider 兜底；arkcli 显式 opt-in） ──
 
+
 def test_auto_chain_minimax_first(monkeypatch):
     """auto：MiniMax（Anthropic 端点）优先成功（不调 provider）."""
     monkeypatch.setenv("WEB_VISION_BACKEND", "auto")
@@ -234,7 +238,9 @@ def test_auto_chain_minimax_failure_falls_back_to_provider(tmp_path, monkeypatch
     with mock.patch("llm_loop.web.vision.httpx.post") as post:
         post.return_value.status_code = 200
         post.return_value.raise_for_status.return_value = None
-        post.return_value.json.return_value = {"choices": [{"message": {"content": "红色（kimi 兜底）"}}]}
+        post.return_value.json.return_value = {
+            "choices": [{"message": {"content": "红色（kimi 兜底）"}}]
+        }
         text = vision.describe_image(b"PNG", prompt="颜色", settings=settings)
     assert text == "红色（kimi 兜底）"
     assert "api.kimi.com" in post.call_args.args[0]

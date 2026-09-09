@@ -140,7 +140,9 @@ class TestTraceRotation:
         (tmp_path / "payload_trace-20200101.jsonl").write_text('{"i":0}\n', encoding="utf-8")
         rows = []
         for p in sorted(tmp_path.glob("payload_trace*.jsonl")):
-            rows.extend(json.loads(x) for x in p.read_text(encoding="utf-8").splitlines() if x.strip())
+            rows.extend(
+                json.loads(x) for x in p.read_text(encoding="utf-8").splitlines() if x.strip()
+            )
         assert [r["i"] for r in rows] == [0, 1]
 
 
@@ -181,9 +183,9 @@ class TestResetHotcardConsumed:
         assert card["consumed"] is True
         # 默认 reset 无授权 → 不得复活。
         assert reset_hotcard_consumed(session_id="sess-1", data_dir=tmp_path) is False
-        assert reset_hotcard_consumed(
-            session_id="sess-1", data_dir=tmp_path, authorized=True
-        ) is True
+        assert (
+            reset_hotcard_consumed(session_id="sess-1", data_dir=tmp_path, authorized=True) is True
+        )
         card = json.loads(hotcard_path(tmp_path).read_text(encoding="utf-8"))
         assert card["consumed"] is False and card["consumed_by"] == ""
         # 复位后仍需再次显式授权才能 pop；build 不会调用此路径。
@@ -194,9 +196,9 @@ class TestResetHotcardConsumed:
         write_hotcard(origin_session="other-sess", anchor="任务A", data_dir=tmp_path)
         pop_hotcard(session_id="sess-1", data_dir=tmp_path, authorized=True)
         # 不同会话请求复位 → 拒绝（防复活已被新事件接管的卡）
-        assert reset_hotcard_consumed(
-            session_id="sess-2", data_dir=tmp_path, authorized=True
-        ) is False
+        assert (
+            reset_hotcard_consumed(session_id="sess-2", data_dir=tmp_path, authorized=True) is False
+        )
 
     def test_missing_card_returns_false(self, tmp_path):
         assert reset_hotcard_consumed(session_id="s", data_dir=tmp_path) is False
@@ -204,12 +206,10 @@ class TestResetHotcardConsumed:
     def test_idempotent_double_reset(self, tmp_path):
         write_hotcard(origin_session="o", anchor="a", data_dir=tmp_path)
         pop_hotcard(session_id="s1", data_dir=tmp_path, authorized=True)
-        assert reset_hotcard_consumed(
-            session_id="s1", data_dir=tmp_path, authorized=True
-        ) is True
-        assert reset_hotcard_consumed(
-            session_id="s1", data_dir=tmp_path, authorized=True
-        ) is False  # 已复位
+        assert reset_hotcard_consumed(session_id="s1", data_dir=tmp_path, authorized=True) is True
+        assert (
+            reset_hotcard_consumed(session_id="s1", data_dir=tmp_path, authorized=True) is False
+        )  # 已复位
 
 
 class TestRestoreGateNote:
@@ -242,7 +242,6 @@ class TestIsErr1210:
         assert is_err1210(e) is False
 
 
-
 class TestTailUserNormalization:
     def test_lossless_tail_merge_changes_only_wire_shape(self):
         ctl = RecoveryController(object())  # helper does not consume host
@@ -267,12 +266,16 @@ class TestTailUserNormalization:
 
     def test_non_string_or_over_bound_fails_open(self):
         ctl = RecoveryController(object())
-        assert ctl._aggregate_tail_users([
-            {"role": "user", "content": "a"}, {"role": "user", "content": {"x": 1}}
-        ]) is None
-        assert ctl._aggregate_tail_users([
-            {"role": "user", "content": str(i)} for i in range(17)
-        ]) is None
+        assert (
+            ctl._aggregate_tail_users(
+                [{"role": "user", "content": "a"}, {"role": "user", "content": {"x": 1}}]
+            )
+            is None
+        )
+        assert (
+            ctl._aggregate_tail_users([{"role": "user", "content": str(i)} for i in range(17)])
+            is None
+        )
 
 
 _PROVIDER_JSON = json.dumps(
@@ -304,6 +307,7 @@ def _mk(tmp_path, monkeypatch, *, responses):
 
 def _resp(content="恢复后的正常回答"):
     from llm_loop.llm.client import LLMResponse
+
     return LLMResponse(content=content, tool_calls=[], provider="fake")
 
 
@@ -314,7 +318,10 @@ class TestMechanicalRecovery:
         result = engine.run(sid, "真实用户任务")
         assert "LLM 调用异常" in result.final_answer
         assert len(fake.calls) == 1
-        assert not any(a.get("action_type") == "aggregate_retry" for a in engine.status.snapshot().get("action_trace", []))
+        assert not any(
+            a.get("action_type") == "aggregate_retry"
+            for a in engine.status.snapshot().get("action_trace", [])
+        )
 
     def test_changed_payload_retries_once_and_recovers(self, tmp_path, monkeypatch):
         engine, fake = _mk(tmp_path, monkeypatch, responses=[_resp("聚合后成功")])
@@ -327,15 +334,25 @@ class TestMechanicalRecovery:
             {"role": "user", "content": "U2"},
         ]
         out = engine._recovery._try_err1210_recovery(
-            exc=_e1210(), sess=sess, messages=messages, tools_param=[], llm_client=fake,
-            chat_model_arg=None, timeout_s=10.0, session_id=sid, model_label="zhipu/glm-5",
+            exc=_e1210(),
+            sess=sess,
+            messages=messages,
+            tools_param=[],
+            llm_client=fake,
+            chat_model_arg=None,
+            timeout_s=10.0,
+            session_id=sid,
+            model_label="zhipu/glm-5",
         )
         assert out.recovered is True
         assert out.provider_retry_count == 1
         assert out.transformed_tail_users == 2
         assert len(fake.calls) == 1
         assert len(fake.calls[0]["messages"]) == 2
-        assert fake.calls[0]["messages"][-1]["content"].split(engine._recovery._AGG_SEPARATOR) == ["U1", "U2"]
+        assert fake.calls[0]["messages"][-1]["content"].split(engine._recovery._AGG_SEPARATOR) == [
+            "U1",
+            "U2",
+        ]
 
     def test_changed_payload_still_1210_exhausts_after_one_retry(self, tmp_path, monkeypatch):
         engine, fake = _mk(tmp_path, monkeypatch, responses=[_e1210()])
@@ -343,10 +360,15 @@ class TestMechanicalRecovery:
         engine._recovery._err1210_run_begin()
         sess = engine.session.load(sid)
         out = engine._recovery._try_err1210_recovery(
-            exc=_e1210(), sess=sess,
-            messages=[{"role":"user","content":"a"},{"role":"user","content":"b"}],
-            tools_param=[], llm_client=fake, chat_model_arg=None, timeout_s=10.0,
-            session_id=sid, model_label="zhipu/glm-5",
+            exc=_e1210(),
+            sess=sess,
+            messages=[{"role": "user", "content": "a"}, {"role": "user", "content": "b"}],
+            tools_param=[],
+            llm_client=fake,
+            chat_model_arg=None,
+            timeout_s=10.0,
+            session_id=sid,
+            model_label="zhipu/glm-5",
         )
         assert out.recovered is False and out.exhausted is True
         assert out.provider_retry_count == 1
@@ -358,9 +380,13 @@ class TestMechanicalRecovery:
         sid = engine.session.create()
         engine._recovery._err1210_run_begin()
         out = engine._recovery._try_err1210_recovery(
-            exc=_e1210(), sess=engine.session.load(sid),
-            messages=[{"role":"user","content":"a"},{"role":"user","content":"b"}],
-            tools_param=[], llm_client=fake, chat_model_arg=None, timeout_s=10.0,
+            exc=_e1210(),
+            sess=engine.session.load(sid),
+            messages=[{"role": "user", "content": "a"}, {"role": "user", "content": "b"}],
+            tools_param=[],
+            llm_client=fake,
+            chat_model_arg=None,
+            timeout_s=10.0,
             session_id=sid,
         )
         assert out.attempted is False and out.provider_retry_count == 0
@@ -371,23 +397,35 @@ class TestMechanicalRecovery:
         sid = engine.session.create()
         engine._recovery._err1210_run_begin()
         kwargs = dict(
-            exc=_e1210(), sess=engine.session.load(sid),
-            messages=[{"role":"user","content":"a"},{"role":"user","content":"b"}],
-            tools_param=[], llm_client=fake, chat_model_arg=None, timeout_s=10.0,
+            exc=_e1210(),
+            sess=engine.session.load(sid),
+            messages=[{"role": "user", "content": "a"}, {"role": "user", "content": "b"}],
+            tools_param=[],
+            llm_client=fake,
+            chat_model_arg=None,
+            timeout_s=10.0,
             session_id=sid,
         )
         first = engine._recovery._try_err1210_recovery(**kwargs)
         second = engine._recovery._try_err1210_recovery(**kwargs)
         assert first.recovered is True
-        assert second.attempted is True and second.exhausted is True and second.provider_retry_count == 0
+        assert (
+            second.attempted is True
+            and second.exhausted is True
+            and second.provider_retry_count == 0
+        )
         assert len(fake.calls) == 1
 
 
 def test_snapshot_is_diagnostic_only_without_injection_span(tmp_path, monkeypatch):
     monkeypatch.setenv("ERR1210_SNAPSHOT", "1")
     p = snapshot_offending_payload(
-        messages=[{"role":"user","content":"x"}], tools=[], params={"round_no": 1},
-        session_id="s12345678", model="zhipu/glm-5", data_dir=tmp_path,
+        messages=[{"role": "user", "content": "x"}],
+        tools=[],
+        params={"round_no": 1},
+        session_id="s12345678",
+        model="zhipu/glm-5",
+        data_dir=tmp_path,
     )
     assert p is not None
     row = json.loads(p.read_text(encoding="utf-8"))
@@ -400,7 +438,18 @@ def test_retired_recovery_control_plane_absent():
     import llm_loop.core.loop.err1210 as err
     from llm_loop.core.loop.engine_services.recovery_controller import RecoveryController
 
-    for name in ("_strip_tail_injections", "_defer_store", "_note_defer_replayed", "_err1210_try_runtime_retry"):
+    for name in (
+        "_strip_tail_injections",
+        "_defer_store",
+        "_note_defer_replayed",
+        "_err1210_try_runtime_retry",
+    ):
         assert not hasattr(RecoveryController, name)
-    for name in ("InjectedEntry", "InjectionSpan", "SlotKind", "record_defer_event", "content_prefix_sha"):
+    for name in (
+        "InjectedEntry",
+        "InjectionSpan",
+        "SlotKind",
+        "record_defer_event",
+        "content_prefix_sha",
+    ):
         assert not hasattr(err, name)

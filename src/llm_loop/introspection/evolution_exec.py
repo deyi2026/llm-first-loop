@@ -345,8 +345,7 @@ def maybe_auto_execute_from_engine(engine, store, target: dict) -> str:
     level = int(getattr(engine.correction_ctx, "evolve_local_exec", 0) or 0)
     if level == 0:
         return (
-            f"[等待人工执行] 当前为仅建议模式（EVOLVE_LOCAL_EXEC=0），"
-            f"{target['id']} 由人工执行。"
+            f"[等待人工执行] 当前为仅建议模式（EVOLVE_LOCAL_EXEC=0），{target['id']} 由人工执行。"
         )
     whitelist_raw = getattr(engine.correction_ctx, "evolve_exec_whitelist", "") or ""
     whitelist = (
@@ -361,10 +360,7 @@ def maybe_auto_execute_from_engine(engine, store, target: dict) -> str:
     )
     outcome = executor.maybe_auto_execute(suggestion)
     if outcome is None:
-        return (
-            f"[等待人工执行] {target['id']} 不满足自动执行条件"
-            "（边界/权限/白名单），由人工执行。"
-        )
+        return f"[等待人工执行] {target['id']} 不满足自动执行条件（边界/权限/白名单），由人工执行。"
     return (
         f"[自动执行] {target['id']} → {outcome.status}（executor={outcome.executor} "
         f"verify={outcome.verify_result} rollback={outcome.rollback_result}）: "

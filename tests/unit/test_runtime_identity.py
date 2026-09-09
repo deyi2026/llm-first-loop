@@ -4,6 +4,7 @@
   main venv import → main；mirror venv import → mirror；
   带错误 PYTHONPATH → 检出违规；enforce 模式违规拒绝启动。
 """
+
 import sys
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from llm_loop.runtime.identity import (
     compute_identity,
 )
 
-HERE_ROOT = Path(__file__).resolve().parents[2]          # 当前测试所在仓库根（动态推导）
+HERE_ROOT = Path(__file__).resolve().parents[2]  # 当前测试所在仓库根（动态推导）
 OTHER_ROOT = HERE_ROOT.parent / (
     "llm-first-loop" if HERE_ROOT.name == "llm-first-loop-mirror" else "llm-first-loop-mirror"
 )
@@ -57,6 +58,7 @@ def test_enforce_mode_raises_on_violation(monkeypatch):
         __file__ = "/definitely/not/in/workspace/src/llm_loop/__init__.py"
 
     import llm_loop.runtime.identity as ident
+
     monkeypatch.setattr(ident, "_find_workspace_root", lambda: HERE_ROOT)
     monkeypatch.setitem(sys.modules, "llm_loop", FakeModule())
     with pytest.raises(RuntimeIdentityError) as ei:
@@ -73,6 +75,7 @@ def test_shadow_mode_does_not_raise_on_violation(monkeypatch, capsys):
         __file__ = "/definitely/not/in/workspace/src/llm_loop/__init__.py"
 
     import llm_loop.runtime.identity as ident
+
     monkeypatch.setattr(ident, "_find_workspace_root", lambda: HERE_ROOT)
     monkeypatch.setitem(sys.modules, "llm_loop", FakeModule())
     report = check_identity()
@@ -86,8 +89,18 @@ def test_report_fields_complete(monkeypatch):
     """report 机械字段齐全（R3 manifest 的数据源）。"""
     monkeypatch.setenv("LFL_WORKSPACE_ROOT", str(HERE_ROOT))
     r = compute_identity()
-    for f in ("workspace_root", "git_head", "python_executable", "venv_root",
-              "llm_loop_module", "data_dir", "config_file", "providers_file", "mode", "ok"):
+    for f in (
+        "workspace_root",
+        "git_head",
+        "python_executable",
+        "venv_root",
+        "llm_loop_module",
+        "data_dir",
+        "config_file",
+        "providers_file",
+        "mode",
+        "ok",
+    ):
         assert hasattr(r, f)
     assert r.git_head  # 非空（unknown 或真实 hash）
     assert r.python_executable.endswith("python") or "python" in r.python_executable

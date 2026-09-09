@@ -70,6 +70,7 @@ def test_wake_grant_is_bound_to_same_session_and_not_persisted(tmp_path):
 
     # 模拟进程重启：process-local registry 消失后，磁盘只恢复 wake 意图，不恢复授权。
     import llm_loop.core.scheduler as scheduler_mod
+
     with scheduler_mod._WAKE_GRANT_LOCK:
         scheduler_mod._WAKE_GRANTS.clear()
     restarted = ScheduleStore(tmp_path / "schedule.json")
@@ -185,10 +186,17 @@ def test_claim_due_is_single_owner_until_ack(tmp_path):
 
 
 def test_legacy_json_without_wake_fields_defaults_safe(tmp_path):
-    legacy = [{
-        "sid": "sched-old", "message": "m", "trigger_at": 1.0,
-        "repeat_interval": 0, "max_count": 1, "created_at": 1.0, "count": 0,
-    }]
+    legacy = [
+        {
+            "sid": "sched-old",
+            "message": "m",
+            "trigger_at": 1.0,
+            "repeat_interval": 0,
+            "max_count": 1,
+            "created_at": 1.0,
+            "count": 0,
+        }
+    ]
     p = tmp_path / "schedule.json"
     p.write_text(json.dumps(legacy), encoding="utf-8")
     store = ScheduleStore(p)

@@ -87,9 +87,7 @@ def test_manifest_is_tail_regenerated_and_provider_neutral(tmp_path):
     deepseek = engine._build_llm_messages(
         sess, [], max_chars=200000, planned_label="deepseek/model"
     )
-    minimax = engine._build_llm_messages(
-        sess, [], max_chars=200000, planned_label="minimax/model"
-    )
+    minimax = engine._build_llm_messages(sess, [], max_chars=200000, planned_label="minimax/model")
     deepseek_again = engine._build_llm_messages(
         sess, [], max_chars=200000, planned_label="deepseek/model"
     )
@@ -115,7 +113,9 @@ def test_shadow_keeps_zero_prompt_schema_change_and_no_manifest(tmp_path):
     engine.registry.set_session_id(sid)
     path = tmp_path / "shadow.txt"
     path.write_text("shadow evidence", encoding="utf-8")
-    engine.registry.execute(ToolCall(id="shadow-1", name="read_file", arguments={"path": str(path)}))
+    engine.registry.execute(
+        ToolCall(id="shadow-1", name="read_file", arguments={"path": str(path)})
+    )
     sess = engine.session.load(sid)
     out = engine._build_llm_messages(sess, [], max_chars=200000, planned_label="deepseek/model")
     assert _manifest(out) == ""
@@ -146,9 +146,7 @@ def test_physical_compaction_captures_history_and_old_tool_ref_survives(tmp_path
     owner = OwnerScope(workspace_id=str(Path.cwd()), session_id=sid)
     counts: list[int] = []
     for _ in range(12):
-        out = engine._build_llm_messages(
-            sess, [], max_chars=3500, planned_label="deepseek/model"
-        )
+        out = engine._build_llm_messages(sess, [], max_chars=3500, planned_label="deepseek/model")
         assert _manifest(out) == ""
         manifest = engine.registry.evidence_recovery_manifest(limit=6)
         assert manifest and tool_ref in manifest
@@ -163,17 +161,27 @@ def test_physical_compaction_captures_history_and_old_tool_ref_survives(tmp_path
     assert manifests[-1] == manifests[-2]
 
     found = engine.registry.execute(
-        ToolCall(id="search-compressed", name="search_evidence", arguments={"query": "EARLY_COMPRESSED_MARKER"})
+        ToolCall(
+            id="search-compressed",
+            name="search_evidence",
+            arguments={"query": "EARLY_COMPRESSED_MARKER"},
+        )
     )
     assert "EARLY_COMPRESSED_MARKER" in found.content
     compat = engine.registry.execute(
-        ToolCall(id="search-legacy-name", name="search_archive", arguments={"query": "EARLY_COMPRESSED_MARKER", "with_summary": True})
+        ToolCall(
+            id="search-legacy-name",
+            name="search_archive",
+            arguments={"query": "EARLY_COMPRESSED_MARKER", "with_summary": True},
+        )
     )
     assert "search_archive→search_evidence" in compat.content
     assert "EARLY_COMPRESSED_MARKER" in compat.content
 
 
-def test_provider_switch_does_not_duplicate_already_captured_compressed_history(tmp_path, monkeypatch):
+def test_provider_switch_does_not_duplicate_already_captured_compressed_history(
+    tmp_path, monkeypatch
+):
     monkeypatch.setenv("HEAD_KEEP_RATIO", "0")
     monkeypatch.setenv("HEAD_KEEP_FORCE_RATIO", "0")
     _, engine = _build_engine(tmp_path)
@@ -220,14 +228,18 @@ def test_manifest_is_bounded_and_prioritizes_tool_evidence_over_newer_conversati
                 tool_call_id=stable_id if kind is SourceKind.FILE else None,
                 source=SourceIdentity(
                     kind=kind,
-                    locator=f"src/{stable_id}.txt" if kind is SourceKind.FILE else f"conversation:user:{stable_id}",
+                    locator=f"src/{stable_id}.txt"
+                    if kind is SourceKind.FILE
+                    else f"conversation:user:{stable_id}",
                     version_policy=(
                         SourceVersionPolicy.PROBEABLE
                         if kind is SourceKind.FILE
                         else SourceVersionPolicy.SNAPSHOT_ONLY
                     ),
                 ),
-                coverage=Coverage(unit="observation", start=0, end_exclusive=None, source_complete=True),
+                coverage=Coverage(
+                    unit="observation", start=0, end_exclusive=None, source_complete=True
+                ),
                 provenance=Provenance(producer="phase5-test"),
             )
         )
@@ -248,7 +260,6 @@ def test_manifest_is_bounded_and_prioritizes_tool_evidence_over_newer_conversati
     assert len(text) < 3000
 
 
-
 def test_canonical_root_cause_recovery_chain_reads_source_once(tmp_path, monkeypatch):
     """R0-1 canonical: compression/rebuild/provider switch must not force a source re-read."""
     monkeypatch.setenv("HEAD_KEEP_RATIO", "0")
@@ -260,7 +271,9 @@ def test_canonical_root_cause_recovery_chain_reads_source_once(tmp_path, monkeyp
 
     target = tmp_path / "canonical-large.txt"
     marker = "CANONICAL_HIDDEN_MIDDLE_314159265"
-    target.write_text("TARGET_HEAD\n" + ("A" * 6500) + marker + ("Z" * 6500) + "\nTARGET_TAIL", encoding="utf-8")
+    target.write_text(
+        "TARGET_HEAD\n" + ("A" * 6500) + marker + ("Z" * 6500) + "\nTARGET_TAIL", encoding="utf-8"
+    )
 
     read_tool = engine.registry._tools["read_file"]
     original_execute = read_tool.execute
@@ -436,8 +449,11 @@ def test_compressed_tool_message_reuses_original_evidence_ref(tmp_path, monkeypa
     assert ledger.count(owner) <= before + len(sess.messages)
 
 
-def test_enforce_compression_fails_closed_when_history_evidence_capture_fails(tmp_path, monkeypatch):
+def test_enforce_compression_fails_closed_when_history_evidence_capture_fails(
+    tmp_path, monkeypatch
+):
     import pytest
+
     monkeypatch.setenv("HEAD_KEEP_RATIO", "0")
     monkeypatch.setenv("HEAD_KEEP_FORCE_RATIO", "0")
     _, engine = _build_engine(tmp_path)
@@ -467,6 +483,7 @@ def test_enforce_compression_fails_closed_when_history_evidence_capture_fails(tm
 
 def test_context_compressed_event_carries_evidence_ref(tmp_path, monkeypatch):
     from llm_loop.event_log.store import EventStore
+
     monkeypatch.setenv("HEAD_KEEP_RATIO", "0")
     monkeypatch.setenv("HEAD_KEEP_FORCE_RATIO", "0")
     settings, engine = _build_engine(tmp_path)
@@ -488,8 +505,7 @@ def test_context_compressed_event_carries_evidence_ref(tmp_path, monkeypatch):
     assert compressed
     assert all(event.payload.get("evidence_ref") for event in compressed)
     assert all(
-        str(event.payload["evidence_ref"]).startswith("evidence://v1/")
-        for event in compressed
+        str(event.payload["evidence_ref"]).startswith("evidence://v1/") for event in compressed
     )
 
 
@@ -550,14 +566,18 @@ def test_enforce_has_single_new_search_archive_alias_while_off_keeps_legacy(tmp_
     assert type(off_tool).__name__ != "SearchArchiveCompatTool"
 
 
-def test_identical_history_text_at_different_times_stays_distinct_without_msg_seq(tmp_path, monkeypatch):
+def test_identical_history_text_at_different_times_stays_distinct_without_msg_seq(
+    tmp_path, monkeypatch
+):
     monkeypatch.setenv("HEAD_KEEP_RATIO", "0")
     monkeypatch.setenv("HEAD_KEEP_FORCE_RATIO", "0")
     _, engine = _build_engine(tmp_path)
     sid = engine.session.create()
     engine.registry.set_session_id(sid)
     sess = engine.session.load(sid)
-    first = Message(role="user", content="IDENTICAL-HISTORY " + ("I" * 900), source=MessageSource.USER)
+    first = Message(
+        role="user", content="IDENTICAL-HISTORY " + ("I" * 900), source=MessageSource.USER
+    )
     second = Message(role="user", content=first.content, source=MessageSource.USER)
     second.ts = first.ts + 1.0
     sess.messages.extend([first, second])
@@ -574,7 +594,8 @@ def test_identical_history_text_at_different_times_stays_distinct_without_msg_se
     ledger = EvidenceLedgerStore(Path(engine.settings.evidence_dir) / "ledger")
     owner = OwnerScope(workspace_id=str(Path.cwd()), session_id=sid)
     identical = [
-        row for row in ledger.list_recent(owner, limit=100)
+        row
+        for row in ledger.list_recent(owner, limit=100)
         if row.source.kind is SourceKind.CONVERSATION
         and row.blob_ref.size_chars == len(first.content)
     ]

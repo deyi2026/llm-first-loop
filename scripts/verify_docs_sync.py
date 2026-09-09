@@ -20,8 +20,15 @@ SPEC_DIR = ROOT / ".codeartsdoer" / "specs" / "llm_first_loop"
 _DEPRECATED_PHRASES = ["更正（最多 1 次）", "参数边界校验", "前置类型拦截"]
 _M11_START = {"spec.md": 610, "design.md": 2028, "tasks.md": 668}
 _README_KEYWORDS = [
-    "search_archive", "search_records", "ai_rules", "SYSTEM_PROMPT_EXTRA",
-    "list", "delete", "archive", "extract", "--session",
+    "search_archive",
+    "search_records",
+    "ai_rules",
+    "SYSTEM_PROMPT_EXTRA",
+    "list",
+    "delete",
+    "archive",
+    "extract",
+    "--session",
 ]
 _RULES = ["RULE-AI-01", "RULE-AI-02", "RULE-AI-03", "RULE-AI-04", "RULE-AI-05"]
 
@@ -39,7 +46,12 @@ def main() -> int:
             body = _read(SPEC_DIR / fname).splitlines()[: m11_line - 1]
             for i, line in enumerate(body, 1):
                 for phrase in _DEPRECATED_PHRASES:
-                    if phrase in line and "已移除" not in line and "不再" not in line and "移交" not in line:
+                    if (
+                        phrase in line
+                        and "已移除" not in line
+                        and "不再" not in line
+                        and "移交" not in line
+                    ):
                         errors.append(f"{fname}:{i} 含废弃措辞 '{phrase}'")
     else:
         print("（specs 为本地开发文档，仓库不含——跳过废弃措辞检查）")

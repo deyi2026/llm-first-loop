@@ -40,16 +40,16 @@ def _started_edit(journal: ToolExecutionJournal, sessions: SessionStore, sid: st
     return call, execution_id
 
 
-def test_current_started_edit_crash_window_has_no_execution_bound_effect_fact(tmp_path: Path) -> None:
+def test_current_started_edit_crash_window_has_no_execution_bound_effect_fact(
+    tmp_path: Path,
+) -> None:
     """RED baseline proof: target bytes can change while WAL still has only declared/started."""
     journal, events, sessions, sid = _journal(tmp_path)
     call, _execution_id = _started_edit(journal, sessions, sid)
     target = tmp_path / "target.txt"
     target.write_text("BEFORE\n", encoding="utf-8")
 
-    result = EditFileTool().execute(
-        path=str(target), old_string="BEFORE", new_string="AFTER"
-    )
+    result = EditFileTool().execute(path=str(target), old_string="BEFORE", new_string="AFTER")
     assert result.status.value == "success"
     assert target.read_text(encoding="utf-8") == "AFTER\n"
     # Simulate crash before ToolExecutionJournal.finished().
@@ -83,9 +83,7 @@ def test_effect_prepared_must_be_durable_before_edit_file_replaces_target(
         call=call,
         workspace_root=str(tmp_path),
     ):
-        result = EditFileTool().execute(
-            path=str(target), old_string="BEFORE", new_string="AFTER"
-        )
+        result = EditFileTool().execute(path=str(target), old_string="BEFORE", new_string="AFTER")
 
     assert result.status.value == "error"
     assert result.error_type == "EffectPreparedUnavailable"
@@ -107,9 +105,7 @@ def test_successful_edit_persists_exact_prepared_and_observed_effect_facts(tmp_p
         call=call,
         workspace_root=str(tmp_path),
     ):
-        result = EditFileTool().execute(
-            path=str(target), old_string="BEFORE", new_string="AFTER"
-        )
+        result = EditFileTool().execute(path=str(target), old_string="BEFORE", new_string="AFTER")
 
     assert result.status.value == "success"
     effect_events = [e for e in events.read(sid) if e.type.startswith("tool.execution.effect_")]
@@ -145,9 +141,7 @@ def test_crash_after_replace_before_observed_recovers_current_expected_match_wit
         call=call,
         workspace_root=str(tmp_path),
     ):
-        result = EditFileTool().execute(
-            path=str(target), old_string="BEFORE", new_string="AFTER"
-        )
+        result = EditFileTool().execute(path=str(target), old_string="BEFORE", new_string="AFTER")
     assert result.status.value == "success"
     assert [e.type for e in events.read(sid) if e.type.startswith("tool.execution.effect_")] == [
         "tool.execution.effect_prepared"
@@ -158,9 +152,7 @@ def test_crash_after_replace_before_observed_recovers_current_expected_match_wit
         result_root=tmp_path / "fresh-results",
         session_store=sessions,
     )
-    snapshot = fresh.effect_snapshot(
-        sid, execution_id, workspace_root=str(tmp_path)
-    )
+    snapshot = fresh.effect_snapshot(sid, execution_id, workspace_root=str(tmp_path))
     assert snapshot is not None
     assert snapshot["effect_state"] == "current_matches_expected_after"
     assert snapshot["execution_outcome"] == "unknown"
@@ -168,7 +160,9 @@ def test_crash_after_replace_before_observed_recovers_current_expected_match_wit
     assert snapshot["auto_reexecuted"] is False
 
 
-def test_prepared_current_before_is_only_mechanical_match_not_proof_of_nonexecution(tmp_path: Path) -> None:
+def test_prepared_current_before_is_only_mechanical_match_not_proof_of_nonexecution(
+    tmp_path: Path,
+) -> None:
     journal, _events, _sessions, sid = _journal(tmp_path)
     target = tmp_path / "target.txt"
     before = b"BEFORE\n"
@@ -247,10 +241,15 @@ def test_effect_recovery_is_owner_and_workspace_scoped(tmp_path: Path) -> None:
     assert stale is not None
     assert stale["effect_state"] == "workspace_mismatch"
     assert stale["path_inspected"] is False
-    assert journal.effect_snapshot("different-session", "exec-scope", workspace_root=str(workspace_a)) is None
+    assert (
+        journal.effect_snapshot("different-session", "exec-scope", workspace_root=str(workspace_a))
+        is None
+    )
 
 
-def test_event_store_disabled_keeps_legacy_edit_behavior_without_fake_durability(tmp_path: Path) -> None:
+def test_event_store_disabled_keeps_legacy_edit_behavior_without_fake_durability(
+    tmp_path: Path,
+) -> None:
     journal, events, _sessions, sid = _journal(tmp_path, enabled=False)
     target = tmp_path / "target.txt"
     target.write_text("BEFORE\n", encoding="utf-8")
@@ -266,9 +265,7 @@ def test_event_store_disabled_keeps_legacy_edit_behavior_without_fake_durability
         call=call,
         workspace_root=str(tmp_path),
     ):
-        result = EditFileTool().execute(
-            path=str(target), old_string="BEFORE", new_string="AFTER"
-        )
+        result = EditFileTool().execute(path=str(target), old_string="BEFORE", new_string="AFTER")
     assert result.status.value == "success"
     assert target.read_text(encoding="utf-8") == "AFTER\n"
     assert events.read(sid) == []
@@ -357,7 +354,9 @@ def test_started_unknown_recovery_receipt_exposes_mechanical_effect_state(tmp_pa
     assert "execution_outcome=unknown_after_restart" in receipt.content
 
 
-def test_real_engine_edit_file_uses_execution_bound_effect_facts(build_test_engine, tmp_path: Path) -> None:
+def test_real_engine_edit_file_uses_execution_bound_effect_facts(
+    build_test_engine, tmp_path: Path
+) -> None:
     from llm_loop.event_log.store import EventStore
     from llm_loop.llm.client import LLMResponse
 
@@ -451,7 +450,9 @@ def test_subagent_edit_file_uses_same_execution_effect_journal(tmp_path: Path) -
     assert effect_events[0].payload["workspace_root"] == str(tmp_path.resolve())
 
 
-def test_effect_prepared_rejects_target_outside_bound_workspace_without_fact(tmp_path: Path) -> None:
+def test_effect_prepared_rejects_target_outside_bound_workspace_without_fact(
+    tmp_path: Path,
+) -> None:
     journal, events, _sessions, sid = _journal(tmp_path)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -509,5 +510,8 @@ def test_real_engine_effect_prepare_failure_blocks_edit_before_replace(
     assert result.final_answer == "DONE"
     assert target.read_text(encoding="utf-8") == "BEFORE\n"
     tool_wire = next(m for m in fake.calls[-1]["messages"] if m.get("role") == "tool")
-    assert "EffectPreparedUnavailable" in tool_wire["content"] or "执行效果准备事实" in tool_wire["content"]
+    assert (
+        "EffectPreparedUnavailable" in tool_wire["content"]
+        or "执行效果准备事实" in tool_wire["content"]
+    )
     assert [e for e in events.read(sid) if e.type.startswith("tool.execution.effect_")] == []

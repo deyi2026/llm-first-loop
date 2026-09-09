@@ -49,8 +49,9 @@ class _StubEngine(_EventsMixin):
         return self._Sess(), self._Store()
 
 
-def _run_interrupted(stub_parts, *, reason="cancelled", error_digest="", monkeypatch=None,
-                     env=None):
+def _run_interrupted(
+    stub_parts, *, reason="cancelled", error_digest="", monkeypatch=None, env=None
+):
     if env and monkeypatch is not None:
         for k, v in env.items():
             monkeypatch.setenv(k, v)
@@ -93,9 +94,7 @@ def test_b1_tail_limited_save_with_honest_annotation(monkeypatch):
 def test_b1_interrupted_row_is_storage_truth_but_not_provider_history() -> None:
     from llm_loop.core.episode_history import provider_message_visible
 
-    eng, sess = _run_interrupted(
-        (["partial-answer"], ["partial-reasoning"]), reason="cancelled"
-    )
+    eng, sess = _run_interrupted((["partial-answer"], ["partial-reasoning"]), reason="cancelled")
     assert eng._last_interrupted["partial_chars"] > 0
     assert len(sess.messages) == 1
     assert sess.messages[0].metadata["llm_interrupted"] is True
@@ -144,9 +143,7 @@ def test_inflight_native_state_uses_private_sidecar_and_supports_native_only_che
     replay = {
         "provider": "minimax",
         "fields": {
-            "reasoning_details": [
-                {"type": "reasoning.text", "text": "plan", "signature": "sig-1"}
-            ]
+            "reasoning_details": [{"type": "reasoning.text", "text": "plan", "signature": "sig-1"}]
         },
     }
     drafts = [
@@ -243,8 +240,12 @@ def test_b1_llm_error_zero_content_no_message_row_but_event_cached():
     sess, store = eng.new()
     eng.session = store
     eng._on_llm_interrupted(
-        sess, text_parts=[], reasoning_parts=[], reason="llm_error",
-        error_digest="500 fake boom", round_no=2,
+        sess,
+        text_parts=[],
+        reasoning_parts=[],
+        reason="llm_error",
+        error_digest="500 fake boom",
+        round_no=2,
     )
     assert sess.messages == [] and eng.recorded == []
     assert eng._last_interrupted["reason"] == "llm_error"
@@ -340,9 +341,10 @@ def test_engine_cancel_stream_b1_row_event_and_b2_index(build_test_engine, tmp_p
     assert hits[0]["run_end_reason"] == "cancelled"
     assert int(hits[0]["ref"].split(":")[1]) == run_ends[-1].seq
     # 幂等：同键重复收口不重复写
-    assert store.index_truncated_run(
-        sid, run_end_reason="cancelled", run_end_seq=run_ends[-1].seq
-    ) is False
+    assert (
+        store.index_truncated_run(sid, run_end_reason="cancelled", run_end_seq=run_ends[-1].seq)
+        is False
+    )
 
 
 def test_b1_row_wire_projection_placeholder_no_leak(build_test_engine):
@@ -399,8 +401,12 @@ def test_engine_llm_error_persists_b1_row_and_b2_row(build_test_engine, tmp_path
     sid = engine.session.create()
     sess = engine.session.load(sid)
     engine._on_llm_interrupted(
-        sess, text_parts=[], reasoning_parts=[], reason="llm_error",
-        error_digest=_digest(), round_no=1,
+        sess,
+        text_parts=[],
+        reasoning_parts=[],
+        reason="llm_error",
+        error_digest=_digest(),
+        round_no=1,
     )
     engine._run_finalizer._index_truncated_run(
         session_id=sid, run_end_reason="llm_error", rounds=1, run_end_seq=7
@@ -410,7 +416,6 @@ def test_engine_llm_error_persists_b1_row_and_b2_row(build_test_engine, tmp_path
     assert len(hits) == 1 and hits[0]["run_end_reason"] == "llm_error"
     compact = engine.episode_store.hydrate_truncated(sid, hits[0]["ref"])
     assert compact["complete"] is True and compact["run_end_seq"] == 7
-
 
 
 def test_generic_llm_error_partial_is_not_promoted_to_adjacent_resume(build_test_engine):
@@ -443,6 +448,7 @@ def test_generic_llm_error_partial_is_not_promoted_to_adjacent_resume(build_test
     finally:
         current_session_id.reset(token)
 
+
 def _digest():
     from llm_loop.core.loop.engine_services.interrupted_capture import (
         llm_error_digest as _llm_error_digest,
@@ -460,16 +466,22 @@ def test_b2_store_idempotent_row_bounded_and_search_hydrate(tmp_path):
     store = EpisodeStore(tmp_path / "episodes")
     sid = store.create_session() if hasattr(store, "create_session") else "s1"
     big = "X" * 5000
-    assert store.index_truncated_run(
-        sid, run_end_reason="overflow", text_tail=big, reasoning_tail=big,
-        partial_chars=10000, run_end_seq=3,
-    ) is True
-    assert store.index_truncated_run(
-        sid, run_end_reason="overflow", text_tail=big, run_end_seq=3
-    ) is False, "同 (sid, run_end_seq) 幂等命中"
-    assert store.index_truncated_run(
-        sid, run_end_reason="guard_blocked", run_end_seq=9
-    ) is True
+    assert (
+        store.index_truncated_run(
+            sid,
+            run_end_reason="overflow",
+            text_tail=big,
+            reasoning_tail=big,
+            partial_chars=10000,
+            run_end_seq=3,
+        )
+        is True
+    )
+    assert (
+        store.index_truncated_run(sid, run_end_reason="overflow", text_tail=big, run_end_seq=3)
+        is False
+    ), "同 (sid, run_end_seq) 幂等命中"
+    assert store.index_truncated_run(sid, run_end_reason="guard_blocked", run_end_seq=9) is True
     path = tmp_path / "episodes" / f"{sid}.truncated.jsonl"
     assert path.exists()
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -488,12 +500,18 @@ def test_b2_searcher_merges_truncated_and_dispatches_hydrate(tmp_path):
     store = EpisodeStore(tmp_path / "episodes")
     sid = "s-search"
     store.index_truncated_run(
-        sid, ts="2026-09-02T04:40:00", run_end_reason="cancelled",
-        text_tail="被打断的尾段", run_end_seq=2,
+        sid,
+        ts="2026-09-02T04:40:00",
+        run_end_reason="cancelled",
+        text_tail="被打断的尾段",
+        run_end_seq=2,
     )
     store.index_truncated_run(
-        sid, ts="2026-09-02T04:34:00", run_end_reason="llm_error",
-        error_digest="400 bad", run_end_seq=1,
+        sid,
+        ts="2026-09-02T04:34:00",
+        run_end_reason="llm_error",
+        error_digest="400 bad",
+        run_end_seq=1,
     )
     searcher = RecordSearcher(audit_dir=tmp_path / "audit", episode_store=store)
     hits = searcher.search(kind="episode", query="", session_id=sid)
@@ -640,9 +658,9 @@ def test_open_stream_checkpoint_is_promoted_before_sidecar_can_be_cleared(
         provider="fake",
         model="fake/model",
     )
-    checkpoint = [
-        e for e in engine._event_store.read(sid) if e.type == "llm.partial_checkpoint"
-    ][-1]
+    checkpoint = [e for e in engine._event_store.read(sid) if e.type == "llm.partial_checkpoint"][
+        -1
+    ]
     # Simulate the fresh human ingress after the process died before run.end.
     sess.messages = [Message(role="user", content="继续", source=MessageSource.USER)]
     engine.session.save(sess)

@@ -59,9 +59,9 @@ def test_overflow_path_is_deterministic_runtime_control():
 
 def test_repeat_and_empty_search_are_event_only():
     """P2-A: repeat/empty-search telemetry is event-only and cannot create model messages."""
-    tool_cycle_src = (
-        _SRC_ROOT / "core" / "loop" / "engine_services" / "tool_cycle.py"
-    ).read_text(encoding="utf-8")
+    tool_cycle_src = (_SRC_ROOT / "core" / "loop" / "engine_services" / "tool_cycle.py").read_text(
+        encoding="utf-8"
+    )
     assert "stagnation_reminder_message" not in tool_cycle_src
     assert "empty_search_reminder_message" not in tool_cycle_src
     assert "tool.repeat_observed" in tool_cycle_src

@@ -77,6 +77,7 @@ def test_scanned_pdf_vision_transcription_success(monkeypatch):
 
     import llm_loop.web.upload_handlers as uh
     import llm_loop.web.vision as vision_mod
+
     monkeypatch.setattr(_sh, "which", lambda name: "/usr/bin/sips" if name == "sips" else None)
     monkeypatch.setenv("WEB_PDF_VISION_FALLBACK", "1")
     print("DEBUG shutil.which(sips):", _sh.which("sips"))

@@ -131,6 +131,7 @@ def _scan_error_receipt(kind: str, scan_error: str) -> ToolResult:
         tool_name="search_records",
     )
 
+
 # EVO-20260826: architecture_status() 无 dimensions 时默认返回精简子集，
 # 避免全量快照 >8000 字符被截断且不归档→search_archive 取不回（RULE-AI-11.1 截断类型 c）。
 # 默认子集为 AI 定向所需轻量维度；重维度（action_trace/tool_history/message_flow/
@@ -190,24 +191,22 @@ def run_status(ctx: Any, status_provider: Any, args: dict) -> ToolResult:
     if default_view:
         dims = _DEFAULT_DIMS
     if "causality" in dims:
-        snap = status_provider.snapshot(
-            session_id=current_session_id(ctx), dimensions=dims
-        )
+        snap = status_provider.snapshot(session_id=current_session_id(ctx), dimensions=dims)
     else:
         # Preserve the established duck-typed status-provider contract for every
         # ordinary dimension; causality is the only session-scoped extension.
         snap = status_provider.snapshot(dimensions=dims)
     if default_view:
         snap["_default_view_hint"] = (
-            "[默认精简视图] 显示维度: " + ", ".join(_DEFAULT_DIMS)
-            + "。完整维度: " + ", ".join(_ALL_DIMS)
-            + "。按 dimensions=<维度> 分页查询（如 architecture_status(dimensions=[\"architecture_config\"])）。"
+            "[默认精简视图] 显示维度: "
+            + ", ".join(_DEFAULT_DIMS)
+            + "。完整维度: "
+            + ", ".join(_ALL_DIMS)
+            + '。按 dimensions=<维度> 分页查询（如 architecture_status(dimensions=["architecture_config"])）。'
         )
     _pending = snap.get("pending_actions", {}) if isinstance(snap, dict) else {}
     _raw_requirements = (
-        _pending.get("capability_requirements", ())
-        if isinstance(_pending, dict)
-        else ()
+        _pending.get("capability_requirements", ()) if isinstance(_pending, dict) else ()
     )
     _capability_requirements = tuple(
         str(name) for name in (_raw_requirements or ()) if str(name).strip()
@@ -253,7 +252,9 @@ def current_session_id(ctx: Any) -> str:
     return getattr(ctx, "session_id", "") or ""
 
 
-def run_search_archive(ctx: Any, archive: Any, args: dict, session_id_fn: Any, summarizer: Any = None) -> ToolResult:
+def run_search_archive(
+    ctx: Any, archive: Any, args: dict, session_id_fn: Any, summarizer: Any = None
+) -> ToolResult:
     """search_archive: 检索被压缩的历史/超长结果（T22）.
 
     R2: with_summary=true 时对命中条目生成 LLM 语义摘要（AI 按需触发，增加计费）。
@@ -311,9 +312,7 @@ def run_search_archive(ctx: Any, archive: Any, args: dict, session_id_fn: Any, s
                     f"{stored_summary[:300]}\n原文片段(preview_only=true): {content_preview[:400]}"
                 )
         else:
-            lines.append(
-                f"{header}: {str(h.get('summary', ''))[:200]}"
-            )
+            lines.append(f"{header}: {str(h.get('summary', ''))[:200]}")
     if not with_summary:
         lines.append("原文片段: " + str(hits[0].get("content_preview", ""))[:400])
     content = "[search_archive] 命中 " + str(len(hits)) + " 条:\n" + "\n".join(lines[:6])
@@ -329,7 +328,6 @@ def run_search_archive(ctx: Any, archive: Any, args: dict, session_id_fn: Any, s
         tool_call_id="",
         tool_name="search_archive",
     )
-
 
 
 def run_event_stream(search_fn: Any, args: dict) -> ToolResult:
@@ -364,7 +362,9 @@ def run_event_stream(search_fn: Any, args: dict) -> ToolResult:
         )
     lines: list[str] = []
     for e in result:
-        lines.append(f"[{e.get('ts', '')}] {e.get('stream', '?')}: {str(e.get('summary', ''))[:200]}")
+        lines.append(
+            f"[{e.get('ts', '')}] {e.get('stream', '?')}: {str(e.get('summary', ''))[:200]}"
+        )
     content = "[event_stream] 统一事件流 " + str(len(result)) + " 条（旧→新）:\n" + "\n".join(lines)
     if len(result) == limit:
         content += f"\n[已达 limit={limit} 上限] 如需更早事件可提高 limit 或加 since 过滤。"
@@ -402,9 +402,7 @@ def run_search_records(ctx: Any, search_fn: Any, args: dict, session_id_fn: Any)
     _episode_ref = ""
     _episode_offset = 0
     if kind == "episode" and query.startswith(("episode:", "truncated:")):
-        _match = re.fullmatch(
-            r"((?:episode|truncated):[^#]+)(?:#offset=(\d+))?", query
-        )
+        _match = re.fullmatch(r"((?:episode|truncated):[^#]+)(?:#offset=(\d+))?", query)
         if _match is not None:
             _episode_ref = _match.group(1)
             _episode_offset = int(_match.group(2) or 0)
@@ -458,10 +456,7 @@ def run_search_records(ctx: Any, search_fn: Any, args: dict, session_id_fn: Any)
             f"complete={'true' if hydrated.get('complete') else 'false'}"
         )
         if next_offset is not None:
-            header += (
-                f" next_offset={next_offset}"
-                f" next_query={_episode_ref}#offset={next_offset}"
-            )
+            header += f" next_offset={next_offset} next_query={_episode_ref}#offset={next_offset}"
         content = header + "\n" + str(hydrated.get("content") or "")
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
@@ -473,7 +468,7 @@ def run_search_records(ctx: Any, search_fn: Any, args: dict, session_id_fn: Any)
         result = search_fn(kind=kind, query=query, limit=limit, session_id=session_id_fn())
     except InvalidSearchKindError as exc:
         # R3(P1-2/D5): typed 归因——异常类型即来源，仅 kind 校验异常归 [参数错误]
-        #（捕获顺序：typed 在前、泛化在后）
+        # （捕获顺序：typed 在前、泛化在后）
         return _kind_param_error_receipt(exc)
     except InvalidSearchQueryError as exc:
         return _query_param_error_receipt(exc)

@@ -136,7 +136,9 @@ def test_provider_visible_payload_must_be_exact() -> None:
         (3, "reason", "llm_error"),
     ],
 )
-def test_durable_protocol_fact_changes_fail(event_index: int, payload_key: str, value: object) -> None:
+def test_durable_protocol_fact_changes_fail(
+    event_index: int, payload_key: str, value: object
+) -> None:
     off = _events(suffix="a", cache_hit=0, runtime_pid=101)
     on = _events(suffix="b", cache_hit=900, runtime_pid=202)
     on[event_index]["payload"][payload_key] = value
@@ -207,8 +209,14 @@ def test_semantic_fields_are_never_ignored_by_name() -> None:
 
 
 def test_cli_reports_hashes_without_dumping_payload_content(tmp_path: Path) -> None:
-    off = {"provider_payload": _payload(), "events": _events(suffix="a", cache_hit=0, runtime_pid=101)}
-    on = {"provider_payload": _payload(), "events": _events(suffix="b", cache_hit=900, runtime_pid=202)}
+    off = {
+        "provider_payload": _payload(),
+        "events": _events(suffix="a", cache_hit=0, runtime_pid=101),
+    }
+    on = {
+        "provider_payload": _payload(),
+        "events": _events(suffix="b", cache_hit=900, runtime_pid=202),
+    }
     off_path = tmp_path / "off.json"
     on_path = tmp_path / "on.json"
     off_path.write_text(json.dumps(off), encoding="utf-8")
@@ -256,7 +264,11 @@ def test_session_topology_relation_is_preserved_across_parent_child_keys() -> No
             "seq": 2,
             "ts": "2026-09-07T00:00:06Z",
             "type": "subagent.linked",
-            "payload": {"parent_id": "different-parent-b", "child_id": "child-b", "generation": "gen-b"},
+            "payload": {
+                "parent_id": "different-parent-b",
+                "child_id": "child-b",
+                "generation": "gen-b",
+            },
         },
     )
     with pytest.raises(EquivalenceError, match="durable behavioral facts differ"):
@@ -268,7 +280,9 @@ def test_session_topology_relation_is_preserved_across_parent_child_keys() -> No
         )
 
 
-def test_real_event_objects_are_accepted_and_volatile_event_identity_is_ignored(tmp_path: Path) -> None:
+def test_real_event_objects_are_accepted_and_volatile_event_identity_is_ignored(
+    tmp_path: Path,
+) -> None:
     from llm_loop.event_log.store import EventStore
 
     left = EventStore(tmp_path / "left", enabled=True)

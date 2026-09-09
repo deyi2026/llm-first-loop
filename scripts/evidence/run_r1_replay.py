@@ -5,6 +5,7 @@ No model/provider or source tool is called. Historical tool observations are rep
 in temporal order into an isolated Evidence store, then exact repeats are checked for whether
 the prior concrete observation was already programmatically hidden and still exactly hydratable.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -186,7 +187,9 @@ class PendingRepeat:
             "hydration_exact": self.hydration_exact,
             "prior_model": self.prior_model,
             "current_model": self.current_model,
-            "provider_switch": bool(self.prior_model and self.current_model and self.prior_model != self.current_model),
+            "provider_switch": bool(
+                self.prior_model and self.current_model and self.prior_model != self.current_model
+            ),
             "current_result_status": self.current_result_status,
             "current_result_same": self.current_result_same,
             "classification": self.classification,
@@ -238,7 +241,9 @@ def _verify_frozen_inputs(manifest: dict[str, Any]) -> None:
         path = ROOT / item["path"]
         got = _sha(path)
         if got != item["sha256"]:
-            raise AssertionError(f"historical log changed after freeze: {path}: {got} != {item['sha256']}")
+            raise AssertionError(
+                f"historical log changed after freeze: {path}: {got} != {item['sha256']}"
+            )
 
 
 def replay(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -330,10 +335,14 @@ def replay(manifest: dict[str, Any]) -> dict[str, Any]:
                                 and prior.result_seq is not None
                                 and any(
                                     prior.result_seq < compression_seq < seq
-                                    for compression_seq in compressed_by_index.get(prior.result_index, [])
+                                    for compression_seq in compressed_by_index.get(
+                                        prior.result_index, []
+                                    )
                                 )
                             )
-                            any_compression_between = any(prior.call_seq < s < seq for s in compressed_seqs)
+                            any_compression_between = any(
+                                prior.call_seq < s < seq for s in compressed_seqs
+                            )
                             recoverable = False
                             exact = False
                             if prior.evidence_ref is not None and prior.result_content is not None:
@@ -373,12 +382,16 @@ def replay(manifest: dict[str, Any]) -> dict[str, Any]:
                     continue
                 status = str(payload.get("status") or "")
                 content = str(payload.get("content") or "")
-                occurrence.result_index = payload.get("index") if isinstance(payload.get("index"), int) else None
+                occurrence.result_index = (
+                    payload.get("index") if isinstance(payload.get("index"), int) else None
+                )
                 occurrence.result_seq = seq
                 occurrence.result_content = content
                 occurrence.result_status = status
                 if status == "success":
-                    call = ToolCall(id=occurrence.call_id, name=occurrence.name, arguments=occurrence.args)
+                    call = ToolCall(
+                        id=occurrence.call_id, name=occurrence.name, arguments=occurrence.args
+                    )
                     source, coverage = source_for_call(call, None)
                     t0 = time.perf_counter_ns()
                     captured = capture.capture(
@@ -427,7 +440,11 @@ def replay(manifest: dict[str, Any]) -> dict[str, Any]:
                 counts["repeat_without_any_compression_between"] += 1
             if repeat.recoverable_before_repeat:
                 counts["repeat_with_temporal_prior_evidence"] += 1
-            if repeat.prior_model and repeat.current_model and repeat.prior_model != repeat.current_model:
+            if (
+                repeat.prior_model
+                and repeat.current_model
+                and repeat.prior_model != repeat.current_model
+            ):
                 counts["repeat_crossing_model_change"] += 1
 
             target = synthetic_counts if repeat.synthetic else natural_counts
@@ -459,7 +476,9 @@ def replay(manifest: dict[str, Any]) -> dict[str, Any]:
             "naturalistic_stratum": dict(natural_counts),
             "by_tool": {name: dict(counter) for name, counter in sorted(tool_counts.items())},
             "metrics": {
-                "recoverable_projection_rate_hidden_repeat": 1.0 if hidden == 0 else recoverable / hidden,
+                "recoverable_projection_rate_hidden_repeat": 1.0
+                if hidden == 0
+                else recoverable / hidden,
                 "lost_evidence_ref_count": counts["lost_evidence_ref_count"],
                 "same_source_repeat_without_freshness_change": counts["program_amnesia_avoidable"],
                 "capture_latency_ms": {
@@ -486,7 +505,9 @@ def replay(manifest: dict[str, Any]) -> dict[str, Any]:
         if counts["same_run_exact_repeats"] != int(manifest["expected_same_run_exact_repeats"]):
             raise AssertionError(f"repeat sanity mismatch: {counts['same_run_exact_repeats']}")
         if counts["lost_evidence_ref_count"] != 0:
-            raise AssertionError(f"lost EvidenceRef before repeat: {counts['lost_evidence_ref_count']}")
+            raise AssertionError(
+                f"lost EvidenceRef before repeat: {counts['lost_evidence_ref_count']}"
+            )
         if report["metrics"]["recoverable_projection_rate_hidden_repeat"] != 1.0:
             raise AssertionError("hidden repeat recoverability is not 100%")
         if source_actions_executed != 0:

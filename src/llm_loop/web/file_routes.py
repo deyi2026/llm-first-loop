@@ -1,4 +1,5 @@
 """Thin authenticated-human file collaboration HTTP adapter."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -41,9 +42,7 @@ def _map_error(exc: HumanFileOperationError) -> JSONResponse:
 
 
 @file_router.post("/api/v1/sessions/{session_id}/files/observe")
-def observe_human_file(
-    request: Request, session_id: str, payload: HumanFileObserveRequest
-):
+def observe_human_file(request: Request, session_id: str, payload: HumanFileObserveRequest):
     engine = _engine(request)
     service = getattr(engine, "human_file_operations", None)
     if service is None:
@@ -99,9 +98,7 @@ def edit_human_file(request: Request, session_id: str, payload: HumanFileEditReq
 
 
 @file_router.get("/api/v1/sessions/{session_id}/files/operations")
-def list_file_operations(
-    request: Request, session_id: str, query: str = "", limit: int = 10
-):
+def list_file_operations(request: Request, session_id: str, query: str = "", limit: int = 10):
     engine = _engine(request)
     service = getattr(engine, "file_effect_query", None)
     human = getattr(engine, "human_file_operations", None)

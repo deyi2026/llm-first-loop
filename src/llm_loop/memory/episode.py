@@ -73,9 +73,9 @@ def stable_episode_ref(session_id: str, user_message: Message, user_seq: int) ->
 
     sid = _validate_session_id(session_id)
     ts_ns = int(float(getattr(user_message, "ts", 0.0) or 0.0) * 1_000_000_000)
-    raw = (
-        f"{sid}\0{user_seq}\0{ts_ns}\0{str(getattr(user_message, 'content', '') or '')}"
-    ).encode("utf-8", "replace")
+    raw = (f"{sid}\0{user_seq}\0{ts_ns}\0{str(getattr(user_message, 'content', '') or '')}").encode(
+        "utf-8", "replace"
+    )
     digest = hashlib.sha256(raw).hexdigest()[:20]
     return f"episode:{sid}:{user_seq}:{digest}"
 
@@ -271,9 +271,7 @@ class EpisodeStore:
                 dict(item) for item in (tool_call_drafts or []) if isinstance(item, dict)
             ],
         }
-        canonical = json.dumps(
-            snapshot, ensure_ascii=False, separators=(",", ":"), sort_keys=True
-        )
+        canonical = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
         digest = hashlib.sha256(canonical.encode("utf-8", "replace")).hexdigest()
         artifact_ref = f"truncation:{digest}"
         artifact = {**snapshot, "artifact_ref": artifact_ref}
@@ -312,9 +310,7 @@ class EpisodeStore:
                 tmp.unlink(missing_ok=True)
         return artifact_ref
 
-    def _load_truncated_artifact(
-        self, session_id: str, artifact_ref: str
-    ) -> dict[str, Any] | None:
+    def _load_truncated_artifact(self, session_id: str, artifact_ref: str) -> dict[str, Any] | None:
         path = self._truncated_artifact_path(session_id, artifact_ref)
         if path is None or not path.is_file():
             return None
@@ -543,7 +539,11 @@ class EpisodeStore:
                 f"ref={ref} | type=truncated | reason={reason}"
                 f" | round={entry.get('last_round', 0)}"
                 + (" | exact_artifact=true" if entry.get("artifact_ref") else "")
-                + (f" | error={entry.get('error_digest', '')[:120]}" if entry.get("error_digest") else "")
+                + (
+                    f" | error={entry.get('error_digest', '')[:120]}"
+                    if entry.get("error_digest")
+                    else ""
+                )
                 + (f" | tail={tail_head}…" if tail_head else "")
             )
             hits.append(

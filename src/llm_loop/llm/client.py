@@ -44,7 +44,7 @@ from llm_loop.llm.errors import (
 from llm_loop.llm.schemas import ToolCallDeltaAggregator
 
 logger = logging.getLogger(__name__)
-  # finish() 含 json.loads 归一（约束 C5）
+# finish() 含 json.loads 归一（约束 C5）
 
 
 @dataclass
@@ -216,7 +216,7 @@ class _ThinkTagStreamParser:
                     if inner:
                         out.append(("reasoning", inner))
                         self.emitted = True
-                    self.buffer = self.buffer[close + len(_THINK_CLOSE):]
+                    self.buffer = self.buffer[close + len(_THINK_CLOSE) :]
                     self.pending_open = False
                     continue
                 if len(self.buffer) >= _THINK_PENDING_LIMIT:
@@ -239,10 +239,10 @@ class _ThinkTagStreamParser:
                     if before:
                         out.append((kind, before))
                         self.emitted = True
-                    self.buffer = self.buffer[idx + len(marker):]
+                    self.buffer = self.buffer[idx + len(marker) :]
                     self.pending_open = True
                     continue
-                self.buffer = self.buffer[idx + len(marker):]
+                self.buffer = self.buffer[idx + len(marker) :]
                 if before:
                     out.append((kind, before))
                     self.emitted = True
@@ -301,7 +301,9 @@ def _finish_response(
     try:
         if client is not None:
             _pg = getattr(client, "_pg", None)
-            _sid = (guard_context.session_id if guard_context is not None else client.guard_session_id)
+            _sid = (
+                guard_context.session_id if guard_context is not None else client.guard_session_id
+            )
             if _pg is not None and _sid:
                 _pg.record_result(
                     _sid,
@@ -479,7 +481,9 @@ def _trace_payload_fingerprint(
                 {
                     "i": i,
                     "role": m.get("role"),
-                    "chars": len(m.get("content") or "") if isinstance(m.get("content"), str) else -1,
+                    "chars": len(m.get("content") or "")
+                    if isinstance(m.get("content"), str)
+                    else -1,
                     "h": _h(m),
                     "w": _hw(m),
                     "args": [_arg_type(tc) for tc in m.get("tool_calls") or []] or None,
@@ -571,6 +575,7 @@ class LLMClient:
     guard_history_budget: int = 0
     # 模型切换检测（拷问②）: 记录上次模型——切换时重置 guard 窗口（防旧模型低命中误拦）
     guard_last_model: str = ""
+
     def __post_init__(self) -> None:
         # 2026-08-20 (Sub2API Grok 兼容): Connection: close 关闭连接复用——
         # 复用的 httpx 连接池对 ai.mxnook.com 网关的 keepalive 不兼容（流式请求挂起/HTTP 400）；
@@ -626,9 +631,7 @@ class LLMClient:
             mode = "auto"
         legacy_supported = self._thinking_supported()
         capable = (
-            bool(self.reasoning_capable)
-            if self.reasoning_capable is not None
-            else legacy_supported
+            bool(self.reasoning_capable) if self.reasoning_capable is not None else legacy_supported
         )
         control = (self.reasoning_control or "legacy").strip().lower()
         if control == "legacy":
@@ -746,7 +749,8 @@ class LLMClient:
                     first_fixed = {
                         "msg_idx": mi,
                         "call_idx": ti,
-                        "tool": (fn2.get("name") if isinstance(fn2.get("name"), str) else "") or "?",
+                        "tool": (fn2.get("name") if isinstance(fn2.get("name"), str) else "")
+                        or "?",
                     }
             if changed:
                 m2 = dict(m)
@@ -949,7 +953,9 @@ class LLMClient:
                     messages, tools, timeout_s=timeout_s, model=model, guard_context=_guard_ctx
                 )
             elif protocol == "lms-chat":
-                result = yield from self._stream_lms_chat(messages, tools, timeout_s=timeout_s, model=model)
+                result = yield from self._stream_lms_chat(
+                    messages, tools, timeout_s=timeout_s, model=model
+                )
             else:
                 result = yield from self._stream_openai(
                     messages, tools, timeout_s=timeout_s, model=model, guard_context=_guard_ctx
@@ -1001,18 +1007,15 @@ class LLMClient:
                 try:
                     ts = float(raw_time_ts)
                     local_time = (
-                        datetime.fromtimestamp(ts)
-                        .astimezone()
-                        .isoformat(timespec="seconds")
+                        datetime.fromtimestamp(ts).astimezone().isoformat(timespec="seconds")
                         if ts > 0
                         else ""
                     )
                 except (TypeError, ValueError, OverflowError, OSError):
                     local_time = ""
                 if local_time:
-                    m["content"] = (
-                        f"[message_time system_local={local_time}]\n"
-                        + str(m.get("content") or "")
+                    m["content"] = f"[message_time system_local={local_time}]\n" + str(
+                        m.get("content") or ""
                     )
             if (
                 m.get("role") == "assistant"
@@ -1031,9 +1034,7 @@ class LLMClient:
         return out
 
     @staticmethod
-    def _reasoning_split_safe_for_history(
-        messages: list[dict], tools: list[dict]
-    ) -> bool:
+    def _reasoning_split_safe_for_history(messages: list[dict], tools: list[dict]) -> bool:
         """Whether structured reasoning representation can be enabled this request.
 
         Pre-P3 MiniMax sessions persisted normalized ``reasoning_content`` but not
@@ -1110,21 +1111,21 @@ class LLMClient:
             if _reasoning_requested is not None and (
                 _reasoning_supported or _legacy_local_override
             ):
-                _template_kwargs: dict[str, Any] = {
-                    "enable_thinking": _reasoning_requested
-                }
+                _template_kwargs: dict[str, Any] = {"enable_thinking": _reasoning_requested}
                 if _reasoning_requested and self.reasoning_effort_map:
                     _requested_effort = (
-                        current_reasoning_effort.get() or self.reasoning_effort
-                    ).strip().lower()
+                        (current_reasoning_effort.get() or self.reasoning_effort).strip().lower()
+                    )
                     _mapped_effort = self.reasoning_effort_map.get(_requested_effort)
                     if _mapped_effort:
                         _template_kwargs["reasoning_effort"] = _mapped_effort
                 payload["chat_template_kwargs"] = _template_kwargs
-        elif _reasoning_control == "thinking_type" and _reasoning_supported and _reasoning_requested is not None:
-            payload["thinking"] = {
-                "type": "enabled" if _reasoning_requested else "disabled"
-            }
+        elif (
+            _reasoning_control == "thinking_type"
+            and _reasoning_supported
+            and _reasoning_requested is not None
+        ):
+            payload["thinking"] = {"type": "enabled" if _reasoning_requested else "disabled"}
             if _reasoning_requested:
                 payload["reasoning_effort"] = (
                     current_reasoning_effort.get() or self.reasoning_effort
@@ -1249,7 +1250,7 @@ class LLMClient:
                         )
                         if new_details_text:
                             if prev_details_text and new_details_text.startswith(prev_details_text):
-                                reasoning_delta = new_details_text[len(prev_details_text):]
+                                reasoning_delta = new_details_text[len(prev_details_text) :]
                                 acc.reasoning_details_text = new_details_text
                             elif prev_details_text.startswith(new_details_text):
                                 reasoning_delta = ""
@@ -1308,6 +1309,7 @@ class LLMClient:
                     else:
                         acc.content_parts.append(text)
                         yield StreamDelta(text=text)
+
         _attempt = 0
         while True:
             _attempt += 1
@@ -1322,7 +1324,9 @@ class LLMClient:
                 if _attempt <= _retry_disconnect and not _output_seen:
                     logger.warning(
                         "LLM 流式传输中断（尚无输出已产出），重试 %d/%d: %s",
-                        _attempt, _retry_disconnect, exc,
+                        _attempt,
+                        _retry_disconnect,
+                        exc,
                     )
                     continue
                 raise LLMNetworkError(f"LLM 网络不可达: {exc}") from exc
@@ -1358,7 +1362,9 @@ class LLMClient:
         if _base.endswith("/v1"):
             _base = _base[:-3]
         url = f"{_base}/v1/messages"
-        system_parts = [m["content"] for m in messages if m.get("role") == "system" and m.get("content")]
+        system_parts = [
+            m["content"] for m in messages if m.get("role") == "system" and m.get("content")
+        ]
         msgs = [m for m in messages if m.get("role") != "system"]
         payload: dict[str, Any] = {
             "model": self.model if model is None else model,
@@ -1426,15 +1432,16 @@ class LLMClient:
                             # 参数由随后的 input_json_delta 分片拼装（并入 "{}" 会破坏 JSON）
                             start_input = block.get("input") or {}
                             start_args = (
-                                json.dumps(start_input, ensure_ascii=False)
-                                if start_input
-                                else ""
+                                json.dumps(start_input, ensure_ascii=False) if start_input else ""
                             )
                             agg.add_delta(
                                 {
                                     "index": evt.get("index", 0),
                                     "id": block.get("id", ""),
-                                    "function": {"name": block.get("name", ""), "arguments": start_args},
+                                    "function": {
+                                        "name": block.get("name", ""),
+                                        "arguments": start_args,
+                                    },
                                 }
                             )
                     elif evt_type == "content_block_delta":
@@ -1480,10 +1487,10 @@ class LLMClient:
         guard_context: GuardRequestContext | None = None,
     ) -> Iterator[StreamDelta]:
         model_id = self.model if model is None else model
-        url = (
-            f"{self.base_url.rstrip('/')}/v1beta/models/{model_id}:streamGenerateContent?alt=sse"
-        )
-        system_parts = [m["content"] for m in messages if m.get("role") == "system" and m.get("content")]
+        url = f"{self.base_url.rstrip('/')}/v1beta/models/{model_id}:streamGenerateContent?alt=sse"
+        system_parts = [
+            m["content"] for m in messages if m.get("role") == "system" and m.get("content")
+        ]
         msgs = [m for m in messages if m.get("role") != "system"]
         payload: dict[str, Any] = {
             "contents": self._to_google_contents(msgs),
@@ -1526,12 +1533,18 @@ class LLMClient:
                         ct = usage.get("candidatesTokenCount")
                         if ct:
                             acc.completion_tokens = int(ct)
-                    finish = chunk.get("candidates", [{}])[0].get("finishReason", "") if chunk.get("candidates") else ""
+                    finish = (
+                        chunk.get("candidates", [{}])[0].get("finishReason", "")
+                        if chunk.get("candidates")
+                        else ""
+                    )
                     if finish:
                         acc.finish_reason = finish
                         if finish in ("MAX_TOKENS", "LENGTH"):
                             acc.truncated = True
-                    parts = ((chunk.get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
+                    parts = ((chunk.get("candidates") or [{}])[0].get("content") or {}).get(
+                        "parts"
+                    ) or []
                     for part in parts:
                         if part.get("text"):
                             acc.content_parts.append(part["text"])
@@ -1544,7 +1557,9 @@ class LLMClient:
                                     "id": f"fc_{int(time.time() * 1000)}",
                                     "function": {
                                         "name": fc.get("name", ""),
-                                        "arguments": json.dumps(fc.get("args") or {}, ensure_ascii=False),
+                                        "arguments": json.dumps(
+                                            fc.get("args") or {}, ensure_ascii=False
+                                        ),
                                     },
                                 }
                             )
@@ -1645,7 +1660,9 @@ class LLMClient:
         tool_calls: list[ToolCall] = []
         if content:
             for i, tc in enumerate(self._parse_text_tool_calls(content)):
-                tool_calls.append(ToolCall(id=f"lms-{i}", name=tc["name"], arguments=tc["arguments"]))
+                tool_calls.append(
+                    ToolCall(id=f"lms-{i}", name=tc["name"], arguments=tc["arguments"])
+                )
         return LLMResponse(
             content=content,
             tool_calls=tool_calls,
@@ -1656,7 +1673,9 @@ class LLMClient:
         )
 
     # ── lms-chat 文本工具协议 ──
-    _LMS_CHAT_TAIL = int(os.environ.get("LMS_CHAT_TAIL", "16"))  # 工具轮只保留最近 N 条（上下文精简）
+    _LMS_CHAT_TAIL = int(
+        os.environ.get("LMS_CHAT_TAIL", "16")
+    )  # 工具轮只保留最近 N 条（上下文精简）
 
     def _to_lms_input(self, messages: list[dict], tools: list[dict]) -> list[dict]:
         """消息 → input 模态数组（system + 工具描述 + 最近 N 条历史，文本化）."""
@@ -1666,7 +1685,7 @@ class LLMClient:
                 parts.append("[系统] " + str(m["content"]))
         if tools:
             parts.append(self._lms_tools_text(tools))
-        tail = [m for m in messages if m.get("role") != "system"][-self._LMS_CHAT_TAIL:]
+        tail = [m for m in messages if m.get("role") != "system"][-self._LMS_CHAT_TAIL :]
         for m in tail:
             parts.append(self._lms_msg_text(m))
         return [{"type": "text", "content": "\n\n".join(parts)}]
@@ -1676,8 +1695,10 @@ class LLMClient:
         """单条消息文本化（角色前缀标记；工具结果/调用 JSON 化）."""
         role = m.get("role", "user")
         content = m.get("content")
-        c = content if isinstance(content, str) else (
-            json.dumps(content, ensure_ascii=False) if content else ""
+        c = (
+            content
+            if isinstance(content, str)
+            else (json.dumps(content, ensure_ascii=False) if content else "")
         )
         if role == "tool":
             name = m.get("name") or "tool"
@@ -1690,7 +1711,7 @@ class LLMClient:
                 for tc in tcs:
                     fn = tc.get("function") or tc
                     bits.append(
-                        f'[调用工具 {fn.get("name")} 参数 {json.dumps(fn.get("arguments") or {}, ensure_ascii=False)}]'
+                        f"[调用工具 {fn.get('name')} 参数 {json.dumps(fn.get('arguments') or {}, ensure_ascii=False)}]"
                     )
                 extra = " " + " ".join(bits)
             return f"[助手] {c}{extra}"
@@ -1712,11 +1733,8 @@ class LLMClient:
             fn = t.get("function") or t
             desc = (fn.get("description") or "").strip().split("\n")[0][:120]
             params = fn.get("parameters") or {}
-            props = (params.get("properties") or {})
-            skeleton = {
-                k: {"type": v.get("type", "string")}
-                for k, v in props.items()
-            }
+            props = params.get("properties") or {}
+            skeleton = {k: {"type": v.get("type", "string")} for k, v in props.items()}
             lines.append(
                 json.dumps(
                     {
@@ -1839,8 +1857,8 @@ class LLMClient:
         """
         # 第一遍: 转换 + 记录 tool_use 消费情况
         out: list[dict] = []
-        pending_use_ids: list[str] = []   # 已发出但未消费的 tool_use id
-        consumed: set[str] = set()        # 已被 tool_result 消费的 id
+        pending_use_ids: list[str] = []  # 已发出但未消费的 tool_use id
+        consumed: set[str] = set()  # 已被 tool_result 消费的 id
         # (输出索引, 该条 assistant 的 tool_use id 列表)
         assistant_blocks: list[tuple[int, list[str]]] = []
         # 2026-08-17 修复2: 连续 tool 回执合并为单条 user（含多个 tool_result 块）。
@@ -1901,7 +1919,11 @@ class LLMClient:
             for idx, _ids in assistant_blocks:
                 msgs = out[idx]
                 blocks = msgs.get("content") or []
-                keep = [b for b in blocks if not (b.get("type") == "tool_use" and b.get("id") in orphan_set)]
+                keep = [
+                    b
+                    for b in blocks
+                    if not (b.get("type") == "tool_use" and b.get("id") in orphan_set)
+                ]
                 if keep:
                     out[idx]["content"] = keep
                 else:
@@ -1950,10 +1972,22 @@ class LLMClient:
                 if m.get("content"):
                     parts.append({"text": str(m["content"])})
                 for tc in m.get("tool_calls") or []:
-                    parts.append({"functionCall": {"name": str(tc.get("name") or ""), "args": tc.get("arguments") or {}}})
+                    parts.append(
+                        {
+                            "functionCall": {
+                                "name": str(tc.get("name") or ""),
+                                "args": tc.get("arguments") or {},
+                            }
+                        }
+                    )
                 out.append({"role": "model", "parts": parts})
                 continue
-            out.append({"role": "user" if role == "user" else "model", "parts": [{"text": str(m.get("content") or "")}]})
+            out.append(
+                {
+                    "role": "user" if role == "user" else "model",
+                    "parts": [{"text": str(m.get("content") or "")}],
+                }
+            )
         return out
 
     @staticmethod
@@ -1990,7 +2024,11 @@ class LLMClient:
             except StopIteration as exc:
                 result = exc.value
                 break
-        return result if result is not None else LLMResponse(content=None, tool_calls=[], provider=self.provider)
+        return (
+            result
+            if result is not None
+            else LLMResponse(content=None, tool_calls=[], provider=self.provider)
+        )
 
 
 if __name__ == "__main__":  # pragma: no cover

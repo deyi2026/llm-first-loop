@@ -37,7 +37,10 @@ def main() -> int:
     password = getpass.getpass("Web login password (min 12 chars; paste is supported): ")
     confirm = getpass.getpass("Confirm web login password: ")
     if not hmac.compare_digest(password, confirm):
-        print("ERROR: passwords do not match; existing configuration was not changed.", file=sys.stderr)
+        print(
+            "ERROR: passwords do not match; existing configuration was not changed.",
+            file=sys.stderr,
+        )
         return 2
     try:
         encoded = hash_login_password(password)

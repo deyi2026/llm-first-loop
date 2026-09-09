@@ -64,6 +64,7 @@ def _write_session(tmp_path, name: str, session: dict) -> None:
 
 # ── 用例 1-2: split_segments（P0-2 E2.1）──
 
+
 def test_split_segments_by_user():
     msgs = [_user("u1"), _assistant("a1"), _user("u2"), _assistant("a2"), _user("u3")]
     segs = split_segments(msgs)
@@ -82,6 +83,7 @@ def test_split_segments_system_inside():
 
 
 # ── 用例 3-4: segment_has_non_success（P0-2 E2.2）──
+
 
 def test_filter_non_success():
     seg = [_user("u"), _assistant("a", [_tool_call("c1")]), _tool("bad", "c1", "failure")]
@@ -110,6 +112,7 @@ def test_filter_non_success_multi_reason():
 
 
 # ── 用例 5-8: check_closed_loop（P0-2 E2.3）──
+
 
 def test_closed_loop_ok():
     seg = [
@@ -157,6 +160,7 @@ def test_closed_loop_missing_start():
 
 # ── 用例 9-10: build_react_sample（P0-3）──
 
+
 def test_build_sample_field_mapping():
     calls = [_tool_call("c1", name="search", arguments='{"q": "蒸馏"}')]
     seg = [
@@ -197,10 +201,11 @@ def test_build_sample_reasoning_null():
 
 # ── 用例 11: normalize_tool_call（P0-3）──
 
+
 def test_normalize_tool_call_openai_shape():
-    call = {"id": "call_1", "type": "function", "function": {"name": "f1", "arguments": "{\"a\": 1}"}}
+    call = {"id": "call_1", "type": "function", "function": {"name": "f1", "arguments": '{"a": 1}'}}
     out = normalize_tool_call(call)
-    assert out == {"id": "call_1", "type": "function", "name": "f1", "arguments": "{\"a\": 1}"}
+    assert out == {"id": "call_1", "type": "function", "name": "f1", "arguments": '{"a": 1}'}
     # arguments 与源 function.arguments 逐字节一致
     assert out["arguments"] == call["function"]["arguments"]
     # 未知形状 → 原样返回（防御性不破坏）
@@ -209,6 +214,7 @@ def test_normalize_tool_call_openai_shape():
 
 
 # ── 用例 12-13: JSONL 输出（P0-3 E3.1/E3.4）──
+
 
 def test_jsonl_roundtrip(tmp_path):
     sess = _session(
@@ -257,6 +263,7 @@ def test_jsonl_unicode(tmp_path):
 
 
 # ── 用例 14-18: run_export 编排/容错/只读/报告（P0-1/P0-4）──
+
 
 def test_run_export_readonly(tmp_path):
     sess = _session(

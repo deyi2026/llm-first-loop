@@ -5,6 +5,7 @@
 - SUMMARY_MODEL 未配置时回退主模型（零回归）
 - 独立模型不在注册表时如实 warning + 回退主模型
 """
+
 from __future__ import annotations
 
 import json

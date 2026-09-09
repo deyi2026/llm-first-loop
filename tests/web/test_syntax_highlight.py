@@ -23,7 +23,6 @@ STYLE_CSS = ROOT / "src" / "llm_loop" / "web" / "static" / "style.css"
 
 
 @pytest.fixture(scope="module")
-
 def css_src() -> str:
     return STYLE_CSS.read_text(encoding="utf-8")
 
@@ -60,13 +59,17 @@ class TestSyntaxHighlight:
         assert "span.className = cls" in app_js_src
         assert "span.textContent = full" in app_js_src
         # highlightCodeBlock 函数体内不含 innerHTML（防 XSS）
-        body = app_js_src.split("function highlightCodeBlock", 1)[1].split("function highlightCodeBlocks", 1)[0]
+        body = app_js_src.split("function highlightCodeBlock", 1)[1].split(
+            "function highlightCodeBlocks", 1
+        )[0]
         assert "innerHTML" not in body
 
     def test_highlight_before_copy_and_collapse(self, app_js_src: str):
         assert "highlightCodeBlocks(node);" in app_js_src
         # 顺序：高亮先于复制
-        assert app_js_src.index("highlightCodeBlocks(node)") < app_js_src.index("addCodeBlockCopyButtons(node)")
+        assert app_js_src.index("highlightCodeBlocks(node)") < app_js_src.index(
+            "addCodeBlockCopyButtons(node)"
+        )
 
 
 class TestHighlightStyle:

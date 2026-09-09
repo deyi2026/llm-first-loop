@@ -13,6 +13,7 @@
 矩阵: 2 models × 3 tasks × 2 repeats × 2 phases = 24 runs（--smoke 单任务验证 fixture 有效性）。
 隔离: 每 run 独立子进程 + 独立 LFL_DATA_DIR（fresh session/workspace; 注册表经 MODEL_PROVIDERS 注入）。
 """
+
 import json
 import os
 import subprocess
@@ -46,12 +47,24 @@ TASKS: dict[str, str] = {
 
 # interop 任务种子: 3 条可核实声明（真实文件 + 真实事实，结论可判定）
 INTEROP_SEEDS = [
-    {"id": "ab-seed-1", "topic": "coord", "claim": "声明：docs/ai_rules.lite.md 的规则版本号（version）为 6。请核实。",
-     "file": "docs/ai_rules.lite.md"},
-    {"id": "ab-seed-2", "topic": "coord", "claim": "声明：src/llm_loop/tools/trim.py 中默认工具输出截断阈值（TOOL_TRIM_MAX 默认值）为 3000。请核实。",
-     "file": "src/llm_loop/tools/trim.py"},
-    {"id": "ab-seed-3", "topic": "coord", "claim": "声明：项目根目录 README.md 采用 Apache-2.0 开源许可证。请核实。",
-     "file": "README.md"},
+    {
+        "id": "ab-seed-1",
+        "topic": "coord",
+        "claim": "声明：docs/ai_rules.lite.md 的规则版本号（version）为 6。请核实。",
+        "file": "docs/ai_rules.lite.md",
+    },
+    {
+        "id": "ab-seed-2",
+        "topic": "coord",
+        "claim": "声明：src/llm_loop/tools/trim.py 中默认工具输出截断阈值（TOOL_TRIM_MAX 默认值）为 3000。请核实。",
+        "file": "src/llm_loop/tools/trim.py",
+    },
+    {
+        "id": "ab-seed-3",
+        "topic": "coord",
+        "claim": "声明：项目根目录 README.md 采用 Apache-2.0 开源许可证。请核实。",
+        "file": "README.md",
+    },
 ]
 
 MODELS = ["glm/glm-5.3", "minimax/MiniMax-M3"]
@@ -101,6 +114,7 @@ def _seed_memory(engine, sid: str) -> None:
         )
     )
 
+
 # Recovery 工具白名单（CognitiveOverheadMeter 同源口径）
 RECOVERY_TOOLS = {"read_evidence", "search_archive", "search_records"}
 
@@ -110,7 +124,9 @@ def run_phase(tag: str, phase: str, model: str, task: str, rep: int) -> dict:
     data_dir.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
     env["LFL_DATA_DIR"] = str(data_dir)
-    env["COG_RUNTIME_MODE"] = "off" if phase == "control" else phase  # canary: enforce 透传（driver 子进程边界，不动 src/）
+    env["COG_RUNTIME_MODE"] = (
+        "off" if phase == "control" else phase
+    )  # canary: enforce 透传（driver 子进程边界，不动 src/）
     env["COG_RUNTIME_TELEMETRY"] = "1"
     env["PYTHONPATH"] = str(ROOT / "src")
     # glm-minimax-2 教训: providers.json 定位 {data_dir}/providers.json（优先级 2）——
@@ -120,13 +136,17 @@ def run_phase(tag: str, phase: str, model: str, task: str, rep: int) -> dict:
         env["MODEL_PROVIDERS"] = _providers_p.read_text(encoding="utf-8")
     proc = subprocess.run(
         [sys.executable, Path(__file__).resolve(), "phase", tag, phase, model, task, str(rep)],
-        env=env, cwd=str(ROOT), capture_output=True, text=True, timeout=3600,
+        env=env,
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        timeout=3600,
     )
     out = proc.stdout.strip().splitlines()
     payload = {}
     for ln in reversed(out):
         if ln.startswith("PHASE_RESULT "):
-            payload = json.loads(ln[len("PHASE_RESULT "):])
+            payload = json.loads(ln[len("PHASE_RESULT ") :])
             break
     payload["exit_code"] = proc.returncode
     payload["stderr_tail"] = proc.stderr.strip()[-800:]
@@ -145,14 +165,13 @@ def _seed_interop(data_dir: Path) -> None:
             "from": "ab-driver",
             "body": f"{s['claim']}（涉及文件：{s['file']}）",
         }
-        (pend / f"seed-{i}.json").write_text(
-            json.dumps(msg, ensure_ascii=False), encoding="utf-8"
-        )
+        (pend / f"seed-{i}.json").write_text(json.dumps(msg, ensure_ascii=False), encoding="utf-8")
 
 
 def phase_main(tag: str, phase: str, model: str, task: str, rep: int) -> None:
     # env 已由父进程设置（LFL_DATA_DIR/COG_*）
     from llm_loop.config import load_env_file, load_settings
+
     load_env_file()  # API keys（env 优先，不覆盖父进程已设值）
     settings = load_settings()
     # data_dir 双路径修复（8229639）: Settings.data_dir 不读 LFL_DATA_DIR env——
@@ -161,9 +180,13 @@ def phase_main(tag: str, phase: str, model: str, task: str, rep: int) -> None:
 
     data_dir_str = os.environ.get("LFL_DATA_DIR", settings.data_dir)
     settings = _dc_replace(settings, data_dir=data_dir_str)
-    print(f"[phase] tag={tag} phase={phase} model={model} task={task} rep={rep} "
-          f"cog_mode_env={os.environ.get('COG_RUNTIME_MODE')} data_dir={data_dir_str}", flush=True)
+    print(
+        f"[phase] tag={tag} phase={phase} model={model} task={task} rep={rep} "
+        f"cog_mode_env={os.environ.get('COG_RUNTIME_MODE')} data_dir={data_dir_str}",
+        flush=True,
+    )
     from llm_loop.factory import build_engine
+
     engine = build_engine(settings)
     if task == "interop":
         _seed_interop(Path(data_dir_str))
@@ -196,18 +219,26 @@ def phase_main(tag: str, phase: str, model: str, task: str, rep: int) -> None:
     telem_rows = []
     telem_p = data_dir / "audit" / "cognitive_telemetry.jsonl"
     if telem_p.exists():
-        telem_rows = [json.loads(x) for x in telem_p.read_text(encoding="utf-8").splitlines() if x.strip()]
+        telem_rows = [
+            json.loads(x) for x in telem_p.read_text(encoding="utf-8").splitlines() if x.strip()
+        ]
     pcs = [r for r in telem_rows if r.get("event") == "packet_compile"]
     # action_trace: recovery / duplicate tool calls（Efficiency Gate 原始数据）
     at_rows = []
     at_p = data_dir / "audit" / "action_trace.jsonl"
     if at_p.exists():
-        at_rows = [json.loads(x) for x in at_p.read_text(encoding="utf-8").splitlines() if x.strip()]
+        at_rows = [
+            json.loads(x) for x in at_p.read_text(encoding="utf-8").splitlines() if x.strip()
+        ]
     tc = [r for r in at_rows if r.get("action_type") == "tool_call"]
     tc_names = [str(r.get("detail") or "") for r in tc]
     dup = len(tc_names) - len(set(tc_names))
     report = {
-        "tag": tag, "phase": phase, "model": model, "task": task, "rep": rep,
+        "tag": tag,
+        "phase": phase,
+        "model": model,
+        "task": task,
+        "rep": rep,
         "rounds": len(us),
         "tokens_in": sum(int(r.get("tokens_in", 0) or 0) for r in us),
         "tokens_out": sum(int(r.get("tokens_out", 0) or 0) for r in us),
@@ -268,9 +299,8 @@ def main() -> None:
     # provider 互不干扰限流）；两阶段契约保持: control 全部完成后才 shadow。
     workers = 1 if smoke else 2
     from concurrent.futures import ThreadPoolExecutor
-    phases_seq = (
-        ("control", "enforce") if tag.endswith("-canary") else ("control", "shadow")
-    )
+
+    phases_seq = ("control", "enforce") if tag.endswith("-canary") else ("control", "shadow")
     for phase in phases_seq:
         phase_plan = [p for p in plan if p[0] == phase]
         print(f"[dispatch] phase={phase} n={len(phase_plan)} workers={workers}", flush=True)

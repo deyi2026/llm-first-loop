@@ -89,11 +89,7 @@ def _derive_zone() -> str:
 def _resolve() -> RouteContext:
     instance = _env_or_none("LFL_INSTANCE") or f"{socket.gethostname()}-{os.getpid()}"
     explicit_zone = _env_or_none("LFL_ZONE")
-    zone = (
-        _valid_or_unknown(explicit_zone, _VALID_ZONES)
-        if explicit_zone
-        else _derive_zone()
-    )
+    zone = _valid_or_unknown(explicit_zone, _VALID_ZONES) if explicit_zone else _derive_zone()
     route = _valid_or_unknown(_env_or_none("LFL_ROUTE"), _VALID_ROUTES)
     return RouteContext(instance=instance, zone=zone, route=route)
 

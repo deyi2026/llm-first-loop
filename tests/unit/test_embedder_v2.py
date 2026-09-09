@@ -45,7 +45,9 @@ def test_v2_semantic_recall(tmp_path):
 
     mem = MemoryStore(tmp_path / "memory")
     mem.save_entry(
-        MemoryEntry(id="", type="fact", content="多模态视频理解需要视觉编码器", keywords=["多模态", "视频"])
+        MemoryEntry(
+            id="", type="fact", content="多模态视频理解需要视觉编码器", keywords=["多模态", "视频"]
+        )
     )
     mem.save_entry(
         MemoryEntry(id="", type="fact", content="今天天气晴朗适合散步", keywords=["天气"])
@@ -95,6 +97,7 @@ def test_cache_legacy_flat_only_v1(tmp_path):
     # v2 embedder → 忽略
     r2 = SemanticRetriever(HashEmbedder(), memory_dir=mem)
     assert r2._mem_emb_cache == {}
+
     # v1 兼容模拟：embedder 声明 hash-v1 → 加载
     class _V1Embedder(HashEmbedder):
         vector_version = "hash-v1"

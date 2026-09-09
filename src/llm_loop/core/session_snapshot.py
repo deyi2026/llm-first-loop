@@ -4,6 +4,7 @@
 engine/build 双方可指本模块而不构成新环（Tarjan 单向边）。
 """
 
+
 def build_session_snapshot_text(
     message_count: int, memory_count: int, evolution_summary: dict | None = None
 ) -> str:
@@ -17,9 +18,10 @@ def build_session_snapshot_text(
         parts.append(
             "演进待办: "
             + ", ".join(
-                f"{k}={v}" for k, v in evolution_summary.items() if k in ("pending_review", "executed", "executing")
+                f"{k}={v}"
+                for k, v in evolution_summary.items()
+                if k in ("pending_review", "executed", "executing")
             )
         )
     parts.append("若你对当前任务/已完成/下一步/未决事项的定位漂移，以本条为锚点重新校准。")
     return "；".join(parts)
-

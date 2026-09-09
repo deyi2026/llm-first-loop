@@ -11,6 +11,7 @@
 绝不记录 API key：manifest 是落盘文件，密钥脱敏在 resolver.to_summary
 源头完成（_mask_secret），本模块不再二次防御性过滤但保持结构不含密钥键。
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -60,8 +61,7 @@ def providers_hashes(data_dir: str | Path) -> dict[str, str]:
         try:
             merged: dict = json.loads(base_p.read_text()) if base_p.is_file() else {}
             merged.update(json.loads(over_p.read_text()))
-            effective_hash = _sha256_text(
-                json.dumps(merged, ensure_ascii=False, sort_keys=True))
+            effective_hash = _sha256_text(json.dumps(merged, ensure_ascii=False, sort_keys=True))
         except Exception:
             effective_hash = ""  # override 解析失败：如实置空
     return {
@@ -74,16 +74,17 @@ def providers_hashes(data_dir: str | Path) -> dict[str, str]:
 def _provider_info(model_ref: str, data_dir: str | Path) -> dict[str, Any]:
     """从 providers.json 提取 provider_id / endpoint_host / model 元信息（宽松）。"""
     info: dict[str, Any] = {
-        "provider_id": "", "provider_endpoint_host": "",
-        "provider_meta": {}, "model_meta": {},
+        "provider_id": "",
+        "provider_endpoint_host": "",
+        "provider_meta": {},
+        "model_meta": {},
     }
     pid, _, mname = model_ref.partition("/")
     info["provider_id"] = pid
     try:
         data = json.loads((Path(data_dir) / "providers.json").read_text())
         prov = data.get(pid) or {}
-        info["provider_endpoint_host"] = (
-            (prov.get("base_url") or "").split("//")[-1].split("/")[0])
+        info["provider_endpoint_host"] = (prov.get("base_url") or "").split("//")[-1].split("/")[0]
         info["provider_meta"] = prov
         info["model_meta"] = (prov.get("models") or {}).get(mname or model_ref, {})
     except Exception:
@@ -91,8 +92,7 @@ def _provider_info(model_ref: str, data_dir: str | Path) -> dict[str, Any]:
     return info
 
 
-def build_manifest(service: str, ec: EffectiveConfig,
-                   report: IdentityReport) -> dict:
+def build_manifest(service: str, ec: EffectiveConfig, report: IdentityReport) -> dict:
     """合并身份事实 + 配置指纹 + providers 三 hash（design P0.5 字段清单）。"""
     v = ec.values
     model_ref = v.get("LLM_MODEL", "")
@@ -100,7 +100,9 @@ def build_manifest(service: str, ec: EffectiveConfig,
     provider_meta = pinfo.get("provider_meta") or {}
     meta = pinfo.get("model_meta") or {}
     max_input_tokens = meta.get("max_input_tokens", provider_meta.get("max_input_tokens", ""))
-    max_tokens = meta.get("max_tokens", provider_meta.get("max_tokens", v.get("LLM_MAX_TOKENS", "")))
+    max_tokens = meta.get(
+        "max_tokens", provider_meta.get("max_tokens", v.get("LLM_MAX_TOKENS", ""))
+    )
     return {
         # —— 服务与进程 ——
         "service": service,
@@ -138,8 +140,7 @@ def write_manifest(manifest: dict, data_dir: str | Path) -> Path:
     rt_dir.mkdir(parents=True, exist_ok=True)
     out = rt_dir / "runtime_manifest.json"
     tmp = out.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(manifest, ensure_ascii=False, indent=2),
-                   encoding="utf-8")
+    tmp.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(out)
     return out
 
@@ -158,6 +159,7 @@ def read_manifest(data_dir: str | Path) -> dict | None:
 def default_data_dir() -> str:
     """与 identity.compute_identity 同口径（DATA_DIR env → workspace/data）。"""
     import llm_loop as _lfl
+
     ws = Path(_lfl.__file__).resolve().parents[2]  # __init__.py → llm_loop → src → workspace
     return os.environ.get("DATA_DIR") or str(ws / "data")
 

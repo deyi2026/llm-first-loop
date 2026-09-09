@@ -63,16 +63,20 @@ def test_external_journal_lists_only_nonterminal_owner_executions(tmp_path: Path
     events = EventStore(tmp_path / "events", enabled=True)
     journal = ExternalExecutionJournal(events)
     for job_id in ("job-running", "job-done"):
-        assert journal.launched(
-            session_id="owner-a",
-            job_id=job_id,
-            workspace_root=str(tmp_path),
-            executor="execute_command",
-            command_sha256="a" * 64,
-        ) is not None
-    assert journal.terminal(
-        session_id="owner-a", job_id="job-done", exit_code=0, killed=False
-    ) is not None
+        assert (
+            journal.launched(
+                session_id="owner-a",
+                job_id=job_id,
+                workspace_root=str(tmp_path),
+                executor="execute_command",
+                command_sha256="a" * 64,
+            )
+            is not None
+        )
+    assert (
+        journal.terminal(session_id="owner-a", job_id="job-done", exit_code=0, killed=False)
+        is not None
+    )
 
     pending = journal.nonterminal("owner-a")
 
@@ -117,15 +121,18 @@ def test_fresh_durable_orphan_blocks_delete_and_preserves_owner_facts(tmp_path: 
     events = engine.session.event_store
     assert events is not None
     journal = ExternalExecutionJournal(events)
-    assert journal.launched(
-        session_id=sid,
-        job_id="job-orphan",
-        workspace_root=str(tmp_path),
-        executor="execute_command",
-        command_sha256="b" * 64,
-        pid=9090,
-        pgid=9090,
-    ) is not None
+    assert (
+        journal.launched(
+            session_id=sid,
+            job_id="job-orphan",
+            workspace_root=str(tmp_path),
+            executor="execute_command",
+            command_sha256="b" * 64,
+            pid=9090,
+            pgid=9090,
+        )
+        is not None
+    )
 
     # No local JobRegistry handle exists: this models a fresh runtime after restart.
     JobRegistry._instance = JobRegistry(event_store=events)
@@ -145,16 +152,20 @@ def test_durable_terminal_execution_no_longer_blocks_physical_delete(tmp_path: P
     events = engine.session.event_store
     assert events is not None
     journal = ExternalExecutionJournal(events)
-    assert journal.launched(
-        session_id=sid,
-        job_id="job-complete",
-        workspace_root=str(tmp_path),
-        executor="execute_command",
-        command_sha256="c" * 64,
-    ) is not None
-    assert journal.terminal(
-        session_id=sid, job_id="job-complete", exit_code=0, killed=False
-    ) is not None
+    assert (
+        journal.launched(
+            session_id=sid,
+            job_id="job-complete",
+            workspace_root=str(tmp_path),
+            executor="execute_command",
+            command_sha256="c" * 64,
+        )
+        is not None
+    )
+    assert (
+        journal.terminal(session_id=sid, job_id="job-complete", exit_code=0, killed=False)
+        is not None
+    )
 
     assert engine.session.delete(sid) is True
     assert engine.session.exists(sid) is False
@@ -191,17 +202,18 @@ def test_web_delete_maps_external_resource_fence_to_specific_409(tmp_path: Path)
     engine = build_engine(_settings(tmp_path))
     sid = engine.session.create()
     journal = ExternalExecutionJournal(engine.session.event_store)
-    assert journal.launched(
-        session_id=sid,
-        job_id="job-web-orphan",
-        workspace_root=str(tmp_path),
-        executor="execute_command",
-        command_sha256="d" * 64,
-    ) is not None
-
-    response = TestClient(build_app(engine=engine)).delete(
-        f"/api/v1/sessions/{sid}?confirm=true"
+    assert (
+        journal.launched(
+            session_id=sid,
+            job_id="job-web-orphan",
+            workspace_root=str(tmp_path),
+            executor="execute_command",
+            command_sha256="d" * 64,
+        )
+        is not None
     )
+
+    response = TestClient(build_app(engine=engine)).delete(f"/api/v1/sessions/{sid}?confirm=true")
 
     assert response.status_code == 409
     assert response.json()["error"] == "external_resource_busy"
@@ -217,13 +229,16 @@ def test_cli_delete_reports_external_resource_busy_without_deleting(
     engine = build_engine(_settings(tmp_path))
     sid = engine.session.create()
     journal = ExternalExecutionJournal(engine.session.event_store)
-    assert journal.launched(
-        session_id=sid,
-        job_id="job-cli-orphan",
-        workspace_root=str(tmp_path),
-        executor="execute_command",
-        command_sha256="e" * 64,
-    ) is not None
+    assert (
+        journal.launched(
+            session_id=sid,
+            job_id="job-cli-orphan",
+            workspace_root=str(tmp_path),
+            executor="execute_command",
+            command_sha256="e" * 64,
+        )
+        is not None
+    )
 
     rc = _cmd_delete(engine, sid, True)
     output = capsys.readouterr().out

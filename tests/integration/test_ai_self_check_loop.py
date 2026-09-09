@@ -16,9 +16,7 @@ class TestAISelfCheckLoop:
         assert "context_usage" in snap1
         assert snap1["pending_actions"] is not None
 
-        result = engine.corrections.execute(
-            "adjust_strategy", {"strategy": {"max_iterations": 30}}
-        )
+        result = engine.corrections.execute("adjust_strategy", {"strategy": {"max_iterations": 30}})
         assert result.status.value == "success"
 
         snap2 = engine.status.snapshot()
@@ -30,9 +28,7 @@ class TestAISelfCheckLoop:
 
         for val in (30, 40, 50):
             engine.status.snapshot()
-            r = engine.corrections.execute(
-                "adjust_strategy", {"strategy": {"max_iterations": val}}
-            )
+            r = engine.corrections.execute("adjust_strategy", {"strategy": {"max_iterations": val}})
             assert r.status.value == "success"
             engine.status.snapshot()
 

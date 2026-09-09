@@ -44,7 +44,7 @@ class _StreamFake:
             )
         else:
             resp = LLMResponse(content="done", tool_calls=[], provider="fake")
-        for ch in (resp.content or ""):
+        for ch in resp.content or "":
             yield StreamDelta(text=ch)
         return resp
 
@@ -76,12 +76,16 @@ def test_json_path_interrupt_no_orphan_no_loss(build_test_engine):
 
     msgs = engine.session.load(sid).messages
     declared, answered, orphans = _orphan_report(msgs)
-    print(f"\n[A-JSON] 消息总数: {len(msgs)} 声明: {sorted(declared)} 回执: {sorted(answered)} 孤儿: {sorted(orphans)}")
+    print(
+        f"\n[A-JSON] 消息总数: {len(msgs)} 声明: {sorted(declared)} 回执: {sorted(answered)} 孤儿: {sorted(orphans)}"
+    )
     assert not orphans, "HARNESS-01：中断后不得有孤儿 tool_calls"
     assert declared == {"c1", "c2"} and answered == {"c1", "c2"}, "声明与合成取消回执成对落盘"
     assert any(m.role == "user" for m in msgs), "在途用户消息不得静默丢失"
     cancel_msgs = [m for m in msgs if m.role == "tool"]
-    assert all("中断" in m.content or "取消" in m.content for m in cancel_msgs), "合成回执须诚实标注"
+    assert all("中断" in m.content or "取消" in m.content for m in cancel_msgs), (
+        "合成回执须诚实标注"
+    )
 
 
 def test_event_log_path_interrupt_no_orphan(build_test_engine, tmp_path):
@@ -104,7 +108,9 @@ def test_event_log_path_interrupt_no_orphan(build_test_engine, tmp_path):
 
     msgs = engine.session.load(sid).messages
     declared, answered, orphans = _orphan_report(msgs)
-    print(f"\n[B-EVT] 消息总数: {len(msgs)} 声明: {sorted(declared)} 回执: {sorted(answered)} 孤儿: {sorted(orphans)}")
+    print(
+        f"\n[B-EVT] 消息总数: {len(msgs)} 声明: {sorted(declared)} 回执: {sorted(answered)} 孤儿: {sorted(orphans)}"
+    )
     assert not orphans, "HARNESS-01：event_log replay 后不得有孤儿"
 
     # 下一轮：历史自洽 → 正常继续，无配对自检兜底告警路径

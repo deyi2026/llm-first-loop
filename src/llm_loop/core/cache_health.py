@@ -50,7 +50,9 @@ _BREAKER_EXIT_CHARS_RATIO = float(os.environ.get("BREAKER_EXIT_CHARS_RATIO", "0.
 _BREAKER_PRESSURE_RATIO = float(os.environ.get("BREAKER_PRESSURE_RATIO", "0.95"))
 _BREAKER_PRESSURE_ESCAPE_MAX = int(os.environ.get("BREAKER_PRESSURE_ESCAPE_MAX", "6"))
 _BREAKER_HIT_THR = float(os.environ.get("BREAKER_HIT_THR", "0.5"))  # 命中共信号（防折叠误判）
-_BREAKER_OVER_RATIO = float(os.environ.get("BREAKER_OVER_RATIO", "0.9"))  # 压缩线（=compact_ratio 默认）
+_BREAKER_OVER_RATIO = float(
+    os.environ.get("BREAKER_OVER_RATIO", "0.9")
+)  # 压缩线（=compact_ratio 默认）
 
 
 def _breaker_audit_path() -> Path:
@@ -109,12 +111,18 @@ def strip_cache_telemetry_lines(content: str | None, *, audit_log: bool = False)
         if before > 0 and after / before < 0.8:
             logger.warning(
                 "遥测剥离疑似误伤: before=%d after=%d ratio=%.2f（尾部%d行参与检查）",
-                before, after, after / before, n - start,
+                before,
+                after,
+                after / before,
+                n - start,
             )
         if audit_log or _STRIP_AUDIT_LOG:
             logger.debug(
                 "遥测剥离审计: removed=%d lines tail=%d before=%d after=%d",
-                removed, n - start, before, after,
+                removed,
+                n - start,
+                before,
+                after,
             )
     except Exception:  # noqa: BLE001 — fail-open
         logger.debug("遥测剥离审计异常（fail-open）", exc_info=True)
@@ -157,6 +165,7 @@ class _SessionBucket:
     # anchor_moved>0 且 streak 低 → 破坏型（持续断点）。模型切换重建桶时自然重置。
     trend: deque = field(default_factory=lambda: deque(maxlen=30))
     trend_rounds: int = 0
+
 
 # Legacy wire compatibility text for pre-R8.11 gate-note history/recovery fixtures.
 # R8.11 no longer emits this text into live provider prompts; cache-gate state is
@@ -256,9 +265,7 @@ class CacheHealthMonitor:
     @staticmethod
     def _trend_summary(b: _SessionBucket) -> dict:
         """派生转折点指标: first_recovery_round（首个 hit>0 轮）+ current_streak."""
-        first_recovery = next(
-            (s["round"] for s in b.trend if s["hit"] > 0), None
-        )
+        first_recovery = next((s["round"] for s in b.trend if s["hit"] > 0), None)
         streak = 0
         for s in reversed(b.trend):
             if s["hit"] > 0:
@@ -274,8 +281,9 @@ class CacheHealthMonitor:
         }
 
     # ── 窗口监控（run 末尾调用）──
-    def record(self, tokens_in: int, tokens_hit: int, model_ref: str | None = None,
-               session_id: str = "") -> str | None:
+    def record(
+        self, tokens_in: int, tokens_hit: int, model_ref: str | None = None, session_id: str = ""
+    ) -> str | None:
         """累计窗口并做告警/恢复判定，返回注入提示或 None（fail-open）.
 
         2026-08-20（镜像，观测正确性）: model_ref 感知——模型切换（如跨端 web=minimax /
@@ -352,9 +360,7 @@ class CacheHealthMonitor:
                 # 拦截期: 本轮锚点未前移 → 前缀已稳定，连续计数；本轮前移 → 重置
                 moved_this_round = b.anchor_moved_since_record
                 b.anchor_moved_since_record = False
-                b.good_streak = (
-                    b.good_streak + 1 if not moved_this_round else 0
-                )
+                b.good_streak = b.good_streak + 1 if not moved_this_round else 0
                 if b.good_streak >= self._min_runs:
                     _runs, _hit, _in = b.win_runs, b.win_hit, b.win_in
                     b.alerted = False
@@ -379,7 +385,7 @@ class CacheHealthMonitor:
                     b.last_update_ts = time.time()
                     return (
                         f"[缓存恢复失败] 拦截 {self._recovery_timeout_runs} 轮命中率未回升"
-                        f"（当前 {rate*100:.0f}%）。请查 architecture_status 定位原因"
+                        f"（当前 {rate * 100:.0f}%）。请查 architecture_status 定位原因"
                         "（预算/锚点/注入）；设计行为可确认接受（本会话仅提示一次）。"
                     )
                 return None
@@ -404,7 +410,7 @@ class CacheHealthMonitor:
                 b.anchor_moved_in_win = 0
                 b.anchor_moved_since_record = False
                 return (
-                    f"[缓存命中告警] 近 {_runs} 次 run 命中率 {rate*100:.0f}%"
+                    f"[缓存命中告警] 近 {_runs} 次 run 命中率 {rate * 100:.0f}%"
                     f"（{_hit}/{_in} tokens）。{cause}。"
                     "已拦截：后续压缩强制缓存友好（保留锚点头部，前缀稳定）；"
                     "锚点不再前移后自动解除（不依赖命中率回升）。"
@@ -443,7 +449,7 @@ class CacheHealthMonitor:
                 return None
             rate = b.win_hit / b.win_in if b.win_in else 1.0
             parts = [
-                f"⚡ 缓存命中率 {rate*100:.1f}%",
+                f"⚡ 缓存命中率 {rate * 100:.1f}%",
                 f"（近 {b.win_runs} 轮，{b.win_hit:,}/{b.win_in:,} tokens",
             ]
             # 本模型累计口径（桶持久数据；模型切换不清零，只随真实累计增长）
@@ -453,7 +459,7 @@ class CacheHealthMonitor:
                 if total is not None:
                     _model_name = (self._last_model_ref or "").split("/")[-1] or "本模型"
                     parts.append(
-                        f"；本模型({_model_name})累计 {cur['runs']} 轮 {total*100:.1f}%"
+                        f"；本模型({_model_name})累计 {cur['runs']} 轮 {total * 100:.1f}%"
                         f" {cur['hit']:,}/{cur['in']:,} tokens"
                     )
             parts.append("）")
@@ -461,7 +467,6 @@ class CacheHealthMonitor:
         except Exception:  # noqa: BLE001 — fail-open
             logger.warning("缓存命中率摘要格式化异常（fail-open）", exc_info=True)
             return None
-
 
     def note_anchor_moved(self, session_id: str = "") -> None:
         """build 时锚点实际前移 → 记入归因（压缩破坏前缀证据）.
@@ -511,8 +516,9 @@ class CacheHealthMonitor:
                 # 逃生轮已消费（本轮允许一次受控压缩），下一轮恢复冻结
                 st.pressure_escape = False
             if st.active:
-                self._breaker_round_tick(st, compacted, anchor_moved, chars_total, budget,
-                                         session_id, model_ref)
+                self._breaker_round_tick(
+                    st, compacted, anchor_moved, chars_total, budget, session_id, model_ref
+                )
                 return
             # 非 breaker 期: 风暴计数（结构信号：压缩 + 仍超压缩线）
             over = budget > 0 and chars_total > budget * self._breaker_over_ratio
@@ -520,13 +526,17 @@ class CacheHealthMonitor:
                 st.storm_streak += 1
             elif not compacted:
                 st.storm_streak = 0
-            if (
-                st.storm_streak >= self._breaker_trigger_runs
-                and self._storm_window_low_hit(session_id)
+            if st.storm_streak >= self._breaker_trigger_runs and self._storm_window_low_hit(
+                session_id
             ):
-                self._enter_breaker(st, reason=f"storm_streak={st.storm_streak}",
-                                    session_id=session_id, model_ref=model_ref,
-                                    chars_total=chars_total, budget=budget)
+                self._enter_breaker(
+                    st,
+                    reason=f"storm_streak={st.storm_streak}",
+                    session_id=session_id,
+                    model_ref=model_ref,
+                    chars_total=chars_total,
+                    budget=budget,
+                )
         except Exception:  # noqa: BLE001 — fail-open
             logger.debug("breaker 计数异常（fail-open）", exc_info=True)
 
@@ -566,9 +576,14 @@ class CacheHealthMonitor:
             st.rounds >= self._breaker_cooldown_rounds
             and st.clean_runs >= self._breaker_exit_stable_runs
         ):
-            self._exit_breaker(st, reason="recovered",
-                               session_id=session_id, model_ref=model_ref,
-                               chars_total=chars_total, budget=budget)
+            self._exit_breaker(
+                st,
+                reason="recovered",
+                session_id=session_id,
+                model_ref=model_ref,
+                chars_total=chars_total,
+                budget=budget,
+            )
 
     def breaker_active_for(self, session_id: str) -> bool:
         """该会话是否处于熔断冻结期（build 冻结压缩 + engine 压力管控）."""
@@ -586,9 +601,7 @@ class CacheHealthMonitor:
         except Exception:  # noqa: BLE001 — fail-open
             return False
 
-    def context_pressure_decision(
-        self, session_id: str, chars_total: int, budget: int
-    ) -> bool:
+    def context_pressure_decision(self, session_id: str, chars_total: int, budget: int) -> bool:
         """breaker 冻结期: 上下文超安全水位 → context_pressure（不提交）.
 
         安全水位 = 预算×BREAKER_PRESSURE_RATIO（默认 0.95，与 cache_guard 规则 F
@@ -628,24 +641,37 @@ class CacheHealthMonitor:
             st.last_budget = budget
             self._breaker_audit(
                 "context_pressure",
-                session_id=session_id, model_ref=model_ref, st=st,
-                chars_total=chars_total, budget=budget, reason=reason,
+                session_id=session_id,
+                model_ref=model_ref,
+                st=st,
+                chars_total=chars_total,
+                budget=budget,
+                reason=reason,
             )
             if st.pressure_runs >= self._breaker_pressure_escape_max:
                 st.pressure_escape = True
                 st.pressure_runs = 0
                 self._breaker_audit(
                     "escape_armed",
-                    session_id=session_id, model_ref=model_ref, st=st,
-                    chars_total=chars_total, budget=budget,
+                    session_id=session_id,
+                    model_ref=model_ref,
+                    st=st,
+                    chars_total=chars_total,
+                    budget=budget,
                     reason=f"pressure_runs>={self._breaker_pressure_escape_max}",
                 )
         except Exception:  # noqa: BLE001 — fail-open
             logger.debug("breaker context_pressure 异常（fail-open）", exc_info=True)
 
     def _enter_breaker(
-        self, st: _BreakerState, *, reason: str, session_id: str, model_ref: str,
-        chars_total: int, budget: int,
+        self,
+        st: _BreakerState,
+        *,
+        reason: str,
+        session_id: str,
+        model_ref: str,
+        chars_total: int,
+        budget: int,
     ) -> None:
         st.active = True
         st.rounds = 0
@@ -659,14 +685,30 @@ class CacheHealthMonitor:
         st.last_budget = budget
         logger.warning(
             "cache_health breaker 进入（session=%s）: %s（chars=%s budget=%s）",
-            session_id[:8], reason, chars_total, budget,
+            session_id[:8],
+            reason,
+            chars_total,
+            budget,
         )
-        self._breaker_audit("breaker_enter", session_id=session_id, model_ref=model_ref,
-                            st=st, chars_total=chars_total, budget=budget, reason=reason)
+        self._breaker_audit(
+            "breaker_enter",
+            session_id=session_id,
+            model_ref=model_ref,
+            st=st,
+            chars_total=chars_total,
+            budget=budget,
+            reason=reason,
+        )
 
     def _exit_breaker(
-        self, st: _BreakerState, *, reason: str, session_id: str, model_ref: str,
-        chars_total: int, budget: int,
+        self,
+        st: _BreakerState,
+        *,
+        reason: str,
+        session_id: str,
+        model_ref: str,
+        chars_total: int,
+        budget: int,
     ) -> None:
         st.active = False
         st.storm_streak = 0
@@ -677,10 +719,20 @@ class CacheHealthMonitor:
         st.exit_reason = reason
         logger.warning(
             "cache_health breaker 退出（session=%s）: %s（chars=%s budget=%s）",
-            session_id[:8], reason, chars_total, budget,
+            session_id[:8],
+            reason,
+            chars_total,
+            budget,
         )
-        self._breaker_audit("breaker_exit", session_id=session_id, model_ref=model_ref,
-                            st=st, chars_total=chars_total, budget=budget, reason=reason)
+        self._breaker_audit(
+            "breaker_exit",
+            session_id=session_id,
+            model_ref=model_ref,
+            st=st,
+            chars_total=chars_total,
+            budget=budget,
+            reason=reason,
+        )
 
     def _breaker_audit(
         self,
@@ -875,9 +927,7 @@ class CacheHealthMonitor:
         return bool(b and b.force_head_keep)
 
     # ── 发送前门禁（preflight/postcheck，程序常态锚点管理，per-session 基线）──
-    def preflight(
-        self, session_id: str, stable_fp: str, skeleton_fp: str | None = None
-    ) -> None:
+    def preflight(self, session_id: str, stable_fp: str, skeleton_fp: str | None = None) -> None:
         """发送前预检: 本次稳定段（system+注入）指纹与该 session 基线不符 → 强制缓存友好压缩.
 
         合规化动作（当次 build 即生效，锚点不动 → 前缀恢复稳定）。
@@ -1000,8 +1050,7 @@ class CacheHealthMonitor:
             # 聚合快照 + 惰性清理超 1h 无活跃分桶
             _dead_sids: list[str] = []
             for sid, bucket in self._session_buckets.items():
-                if (not self._breakers.get(sid) and
-                        _now - bucket.last_update_ts > 3600):
+                if not self._breakers.get(sid) and _now - bucket.last_update_ts > 3600:
                     _dead_sids.append(sid)
             for _sid in _dead_sids:
                 self._session_buckets.pop(_sid, None)
@@ -1042,9 +1091,8 @@ class CacheHealthMonitor:
                 "anchor_moved_since_record": _agg.anchor_moved_since_record,
                 "gate_note_pending": _agg.gate_note_pending,
                 "fail_alerted": len(self._fail_alerted_sessions) > 0,
-                "all_sessions_hit_rate": sum(
-                    b.win_hit for b in self._session_buckets.values()
-                ) / max(1, sum(b.win_in for b in self._session_buckets.values())),
+                "all_sessions_hit_rate": sum(b.win_hit for b in self._session_buckets.values())
+                / max(1, sum(b.win_in for b in self._session_buckets.values())),
                 "sessions": sessions,
                 "anchor_move_runs": self._anchor_move_runs,
                 "gate_drift_count": self._gate_drift_count,

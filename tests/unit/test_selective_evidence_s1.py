@@ -172,9 +172,7 @@ def test_provider_truncation_takes_recovery_ownership_after_s1_boundary_advances
     assert built[-2] == {"role": "assistant", "content": "PARTIAL-ANSWER"}
     assert built[-1]["role"] == "user"
     assert built[-1]["content"].startswith("继续\n\n[provider_runtime_fact—not_human_text]\n")
-    assert checkpoint["state_text"] not in "\n".join(
-        str(row.get("content") or "") for row in built
-    )
+    assert checkpoint["state_text"] not in "\n".join(str(row.get("content") or "") for row in built)
 
 
 def test_checkpoint_rejects_unknown_and_duplicate_selection():
@@ -335,7 +333,9 @@ def _settings(tmp_path: Path) -> Settings:
     )
 
 
-def test_engine_projects_state_provider_only_and_preserves_selected_raw(tmp_path: Path, monkeypatch):
+def test_engine_projects_state_provider_only_and_preserves_selected_raw(
+    tmp_path: Path, monkeypatch
+):
     from llm_loop.factory import build_engine
 
     monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
@@ -346,9 +346,7 @@ def test_engine_projects_state_provider_only_and_preserves_selected_raw(tmp_path
     sess.working_state_checkpoint = _checkpoint(sess.messages)
     original_message_count = len(sess.messages)
 
-    wire = engine._build_llm_messages(
-        sess, [], max_chars=200000, planned_label="deepseek/model"
-    )
+    wire = engine._build_llm_messages(sess, [], max_chars=200000, planned_label="deepseek/model")
     texts = [str(row.get("content") or "") for row in wire]
 
     assert '{"verdict":"ready","next":"final"}' in texts
@@ -359,7 +357,9 @@ def test_engine_projects_state_provider_only_and_preserves_selected_raw(tmp_path
     assert all(m.content != '{"verdict":"ready","next":"final"}' for m in sess.messages)
 
 
-def test_new_human_task_removes_provider_state_without_mutating_checkpoint(tmp_path: Path, monkeypatch):
+def test_new_human_task_removes_provider_state_without_mutating_checkpoint(
+    tmp_path: Path, monkeypatch
+):
     from llm_loop.factory import build_engine
 
     monkeypatch.setenv("LFL_TOOL_WORKING_SET_RECEIPTS", "1")
@@ -369,12 +369,11 @@ def test_new_human_task_removes_provider_state_without_mutating_checkpoint(tmp_p
     persisted = dict(sess.working_state_checkpoint)
     sess.messages.append(Message(role="user", content="new task", source=MessageSource.USER))
 
-    wire = engine._build_llm_messages(
-        sess, [], max_chars=200000, planned_label="deepseek/model"
-    )
+    wire = engine._build_llm_messages(sess, [], max_chars=200000, planned_label="deepseek/model")
 
     assert all(row.get("content") != persisted["state_text"] for row in wire)
     assert sess.working_state_checkpoint == persisted
+
 
 def test_checkpoint_resource_limits_are_mechanical_and_fail_before_persistence():
     messages = _messages()
@@ -543,7 +542,7 @@ def test_later_persisted_message_clears_checkpoint_in_json_and_event_log(tmp_pat
     store.save(session)
     assert session.working_state_checkpoint is None
     assert SessionStore(sessions).load("s1").working_state_checkpoint is None
-    replayed = SessionStore(
-        sessions, event_store=event_store, read_path_source="event_log"
-    ).load("s1")
+    replayed = SessionStore(sessions, event_store=event_store, read_path_source="event_log").load(
+        "s1"
+    )
     assert replayed.working_state_checkpoint is None

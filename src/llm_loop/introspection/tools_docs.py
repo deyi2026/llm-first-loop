@@ -172,8 +172,7 @@ def _no_hit_result(query: str, docs_search_fn: Callable[..., list[dict]] | None)
     return ToolResult(
         status=ToolResultStatus.SUCCESS,
         content=(
-            f"[search_docs] 未命中 '{query}'（不伪造结果）；"
-            f"docs/ 最近文档参考引导：\n{guide}"
+            f"[search_docs] 未命中 '{query}'（不伪造结果）；docs/ 最近文档参考引导：\n{guide}"
         ),
         tool_call_id="",
         tool_name="search_docs",

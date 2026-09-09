@@ -298,7 +298,9 @@ class GoalStore:
                 os.fsync(dir_fd)
             except OSError:
                 # rename 已成功；目录fsync只补崩溃/掉电耐久性，平台不支持时不伪装主写失败。
-                logger.warning("Goal 目录 fsync 失败（写入已完成，耐久性降级）: %s", self._dir, exc_info=True)
+                logger.warning(
+                    "Goal 目录 fsync 失败（写入已完成，耐久性降级）: %s", self._dir, exc_info=True
+                )
             finally:
                 if dir_fd is not None:
                     os.close(dir_fd)

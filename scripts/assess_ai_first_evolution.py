@@ -30,15 +30,37 @@ INTROSPECTION_DIR = SRC_DIR / "introspection"
 DIMENSIONS = ["健壮性", "优雅性", "AI 友好性", "内容显示"]
 
 RULE_AI_00_PRINCIPLES = [
-    ("P1", "不替 AI 决策", "压缩/重试/摘要/模型切换等决策权归 AI；程序如实反馈事实 + 提供工具，AI 自主选择。"),
-    ("P2", "不自动压缩/重试/摘要", "这些行为可能丢信息/增计费/注入无用内容，须 AI 主动触发，程序不自动注入。"),
-    ("P3", "如实反馈让 AI 决策", "程序异常/上下文超限/工具失败 → 如实告知 AI + 提供可选动作；不静默吞错、不静默降级。"),
-    ("P4", "简化而非增加配置面", "AI 不能改 env，env 对 AI 是黑盒；优先程序自适应而非暴露更多配置项。"),
+    (
+        "P1",
+        "不替 AI 决策",
+        "压缩/重试/摘要/模型切换等决策权归 AI；程序如实反馈事实 + 提供工具，AI 自主选择。",
+    ),
+    (
+        "P2",
+        "不自动压缩/重试/摘要",
+        "这些行为可能丢信息/增计费/注入无用内容，须 AI 主动触发，程序不自动注入。",
+    ),
+    (
+        "P3",
+        "如实反馈让 AI 决策",
+        "程序异常/上下文超限/工具失败 → 如实告知 AI + 提供可选动作；不静默吞错、不静默降级。",
+    ),
+    (
+        "P4",
+        "简化而非增加配置面",
+        "AI 不能改 env，env 对 AI 是黑盒；优先程序自适应而非暴露更多配置项。",
+    ),
     ("P5", "赋能 AI 上下文感知", "上下文状态作为 architecture_status 工具返回维度，AI 每轮可见。"),
-    ("P6", "避免程序错误影响大模型", "程序故障隔离不抛穿，程序不替 AI 压缩/丢弃上下文，AI 基于完整事实决策。"),
+    (
+        "P6",
+        "避免程序错误影响大模型",
+        "程序故障隔离不抛穿，程序不替 AI 压缩/丢弃上下文，AI 基于完整事实决策。",
+    ),
 ]
 
-_SENSITIVE_PAT = re.compile(r"(api_key|token|secret|password|apikey|sk-)\s*[:=]\s*['\"]?[A-Za-z0-9_\-]{8,}", re.I)
+_SENSITIVE_PAT = re.compile(
+    r"(api_key|token|secret|password|apikey|sk-)\s*[:=]\s*['\"]?[A-Za-z0-9_\-]{8,}", re.I
+)
 
 
 @dataclass
@@ -137,14 +159,16 @@ def scan_robustness() -> tuple[str, list[HiddenRisk]]:
 
     if silent_swallow:
         for ev in silent_swallow[:20]:
-            risks.append(HiddenRisk(
-                id=f"ROB-SILENT-{len(risks) + 1:03d}",
-                dimension="健壮性",
-                description=f"except: pass 静默吞错（无日志标注），违反 fail-open ≠ fail-silent: {ev}",
-                evidence=ev,
-                rule_ai_00="VIOLATES",
-                priority="P1",
-            ))
+            risks.append(
+                HiddenRisk(
+                    id=f"ROB-SILENT-{len(risks) + 1:03d}",
+                    dimension="健壮性",
+                    description=f"except: pass 静默吞错（无日志标注），违反 fail-open ≠ fail-silent: {ev}",
+                    evidence=ev,
+                    rule_ai_00="VIOLATES",
+                    priority="P1",
+                )
+            )
 
     conclusion = (
         f"fail-open 标注覆盖广泛（{fail_open_count} 处匹配），异常如实反馈路径完善；"
@@ -164,32 +188,38 @@ def scan_elegance() -> tuple[str, list[HiddenRisk]]:
         if src is None:
             continue
         for m in re.finditer(r"(回退|降级|退化|fallback|回退主模型|跳过)", src):
-            line_no = src[:m.start()].count("\n") + 1
+            line_no = src[: m.start()].count("\n") + 1
             line = src.splitlines()[line_no - 1]
             if "fail" in line.lower() or "如实" in line or "标注" in line:
                 degrade_annotated += 1
             else:
                 degrade_silent += 1
                 if degrade_silent <= 10:
-                    risks.append(HiddenRisk(
-                        id=f"ELG-DEGRADE-{degrade_silent:03d}",
-                        dimension="优雅性",
-                        description=f"降级/回退路径可能未如实标注: {_evidence(py, line_no)}",
-                        evidence=_evidence(py, line_no),
-                        rule_ai_00="COMPLIES",
-                        priority="P2",
-                    ))
+                    risks.append(
+                        HiddenRisk(
+                            id=f"ELG-DEGRADE-{degrade_silent:03d}",
+                            dimension="优雅性",
+                            description=f"降级/回退路径可能未如实标注: {_evidence(py, line_no)}",
+                            evidence=_evidence(py, line_no),
+                            rule_ai_00="COMPLIES",
+                            priority="P2",
+                        )
+                    )
 
-    guardian = (ROOT / "com.user.llm-loop-guard.plist").exists() or bool(_read(ROOT / "scripts" / "restart_system.sh"))
+    guardian = (ROOT / "com.user.llm-loop-guard.plist").exists() or bool(
+        _read(ROOT / "scripts" / "restart_system.sh")
+    )
     if not guardian:
-        risks.append(HiddenRisk(
-            id="ELG-GUARD-001",
-            dimension="优雅性",
-            description="未发现服务守护/自愈脚本，服务异常时无自动恢复",
-            evidence="scripts/restart_system.sh",
-            rule_ai_00="UNRELATED",
-            priority="P2",
-        ))
+        risks.append(
+            HiddenRisk(
+                id="ELG-GUARD-001",
+                dimension="优雅性",
+                description="未发现服务守护/自愈脚本，服务异常时无自动恢复",
+                evidence="scripts/restart_system.sh",
+                rule_ai_00="UNRELATED",
+                priority="P2",
+            )
+        )
 
     conclusion = (
         f"降级策略多数如实标注（{degrade_annotated} 处标注 / {degrade_silent} 处待核验）；"
@@ -204,29 +234,41 @@ def scan_ai_friendliness() -> tuple[str, list[HiddenRisk]]:
 
     status_src = _read(INTROSPECTION_DIR / "status.py") or ""
 
-    eight_dims = ["current_phase", "action_trace", "tool_history", "message_flow",
-                  "memory_state", "context_usage", "exception_log", "architecture_config"]
+    eight_dims = [
+        "current_phase",
+        "action_trace",
+        "tool_history",
+        "message_flow",
+        "memory_state",
+        "context_usage",
+        "exception_log",
+        "architecture_config",
+    ]
     missing_dims = [d for d in eight_dims if d not in status_src]
     has_pending_actions = "pending_actions" in status_src
 
     if missing_dims:
-        risks.append(HiddenRisk(
-            id="AIF-DIM-001",
-            dimension="AI 友好性",
-            description=f"architecture_status 维度不完整，缺失: {missing_dims}",
-            evidence=_evidence(INTROSPECTION_DIR / "status.py", 1),
-            rule_ai_00="VIOLATES",
-            priority="P1",
-        ))
+        risks.append(
+            HiddenRisk(
+                id="AIF-DIM-001",
+                dimension="AI 友好性",
+                description=f"architecture_status 维度不完整，缺失: {missing_dims}",
+                evidence=_evidence(INTROSPECTION_DIR / "status.py", 1),
+                rule_ai_00="VIOLATES",
+                priority="P1",
+            )
+        )
     if not has_pending_actions:
-        risks.append(HiddenRisk(
-            id="AIF-PENDING-001",
-            dimension="AI 友好性",
-            description="architecture_status 缺 pending_actions 维度，AI 无法一站式感知系统待办（执行中演进/待审阅/待自评）",
-            evidence=_evidence(INTROSPECTION_DIR / "status.py", 261),
-            rule_ai_00="COMPLIES",
-            priority="P1",
-        ))
+        risks.append(
+            HiddenRisk(
+                id="AIF-PENDING-001",
+                dimension="AI 友好性",
+                description="architecture_status 缺 pending_actions 维度，AI 无法一站式感知系统待办（执行中演进/待审阅/待自评）",
+                evidence=_evidence(INTROSPECTION_DIR / "status.py", 261),
+                rule_ai_00="COMPLIES",
+                priority="P1",
+            )
+        )
 
     auto_decision_pats = [
         (r"auto[_-]?compress", "自动压缩"),
@@ -237,31 +279,35 @@ def scan_ai_friendliness() -> tuple[str, list[HiddenRisk]]:
         src = _read(py) or ""
         for pat, label in auto_decision_pats:
             for m in re.finditer(pat, src, re.I):
-                line_no = src[:m.start()].count("\n") + 1
+                line_no = src[: m.start()].count("\n") + 1
                 line = src.splitlines()[line_no - 1]
                 if "兜底" in line or "应急" in line or "另存" in line:
                     continue
-                risks.append(HiddenRisk(
-                    id=f"AIF-AUTO-{len(risks) + 1:03d}",
-                    dimension="AI 友好性",
-                    description=f"疑似程序自动{label}逻辑（可能替 AI 决策）: {_evidence(py, line_no)}",
-                    evidence=_evidence(py, line_no),
-                    rule_ai_00="VIOLATES",
-                    priority="P0",
-                ))
+                risks.append(
+                    HiddenRisk(
+                        id=f"AIF-AUTO-{len(risks) + 1:03d}",
+                        dimension="AI 友好性",
+                        description=f"疑似程序自动{label}逻辑（可能替 AI 决策）: {_evidence(py, line_no)}",
+                        evidence=_evidence(py, line_no),
+                        rule_ai_00="VIOLATES",
+                        priority="P0",
+                    )
+                )
                 break
 
     rules_src = _read(DOCS_DIR / "ai_rules.md") or ""
     rule_count = len(re.findall(r"RULE-AI-\d+", rules_src))
     if rule_count < 8:
-        risks.append(HiddenRisk(
-            id="AIF-RULES-001",
-            dimension="AI 友好性",
-            description=f"ai_rules.md 规则数偏少（{rule_count} 条），RULE-AI-00~08 应完整",
-            evidence=_evidence(DOCS_DIR / "ai_rules.md", 1),
-            rule_ai_00="COMPLIES",
-            priority="P2",
-        ))
+        risks.append(
+            HiddenRisk(
+                id="AIF-RULES-001",
+                dimension="AI 友好性",
+                description=f"ai_rules.md 规则数偏少（{rule_count} 条），RULE-AI-00~08 应完整",
+                evidence=_evidence(DOCS_DIR / "ai_rules.md", 1),
+                rule_ai_00="COMPLIES",
+                priority="P2",
+            )
+        )
 
     conclusion = (
         f"architecture_status 八维{'完整' if not missing_dims else '缺失 ' + str(missing_dims)}；"
@@ -288,49 +334,59 @@ def scan_content_display() -> tuple[str, list[HiddenRisk]]:
         lines = src.splitlines()
         trunc_lines = [i for i, line in enumerate(lines) if "data.truncated" in line]
         for ln in trunc_lines:
-            context = "\n".join(lines[ln:ln + 4])
+            context = "\n".join(lines[ln : ln + 4])
             if any(kw in context for kw in ["新建会话", "续读", "调整 prompt", "缩短", "继续对话"]):
                 has_continue_hint = True
                 break
 
     if not has_collapse:
-        risks.append(HiddenRisk(
-            id="CD-COLLAPSE-001",
-            dimension="内容显示",
-            description="Web 端无长内容折叠器（collapseLongContent），超长代码块/消息体首屏可能卡死",
-            evidence=_evidence(app_js, 1),
-            rule_ai_00="UNRELATED",
-            priority="P1",
-        ))
+        risks.append(
+            HiddenRisk(
+                id="CD-COLLAPSE-001",
+                dimension="内容显示",
+                description="Web 端无长内容折叠器（collapseLongContent），超长代码块/消息体首屏可能卡死",
+                evidence=_evidence(app_js, 1),
+                rule_ai_00="UNRELATED",
+                priority="P1",
+            )
+        )
     if not has_long_threshold:
-        risks.append(HiddenRisk(
-            id="CD-THRESH-001",
-            dimension="内容显示",
-            description="Web 端无长文本阈值常量（LONG_LINE_THRESHOLD/LONG_CHAR_THRESHOLD），折叠无统一标准",
-            evidence=_evidence(app_js, 1),
-            rule_ai_00="UNRELATED",
-            priority="P2",
-        ))
+        risks.append(
+            HiddenRisk(
+                id="CD-THRESH-001",
+                dimension="内容显示",
+                description="Web 端无长文本阈值常量（LONG_LINE_THRESHOLD/LONG_CHAR_THRESHOLD），折叠无统一标准",
+                evidence=_evidence(app_js, 1),
+                rule_ai_00="UNRELATED",
+                priority="P2",
+            )
+        )
     if has_truncated_note and not has_continue_hint:
-        risks.append(HiddenRisk(
-            id="CD-TRUNC-001",
-            dimension="内容显示",
-            description="截断标注仅'回答被截断'，无续读建议（新建会话/调整 prompt），AI/用户不知如何继续",
-            evidence=_evidence(app_js, 370),
-            rule_ai_00="COMPLIES",
-            priority="P1",
-        ))
+        risks.append(
+            HiddenRisk(
+                id="CD-TRUNC-001",
+                dimension="内容显示",
+                description="截断标注仅'回答被截断'，无续读建议（新建会话/调整 prompt），AI/用户不知如何继续",
+                evidence=_evidence(app_js, 370),
+                rule_ai_00="COMPLIES",
+                priority="P1",
+            )
+        )
 
-    react_vue = bool(re.search(r"import\s+React|from\s+['\"]vue['\"]|require\(['\"]vue['\"]\)", src))
+    react_vue = bool(
+        re.search(r"import\s+React|from\s+['\"]vue['\"]|require\(['\"]vue['\"]\)", src)
+    )
     if react_vue:
-        risks.append(HiddenRisk(
-            id="CD-FRAME-001",
-            dimension="内容显示",
-            description="app.js 引入 React/Vue 框架，违反 spec.md 5.2.1 第 8 条禁止项",
-            evidence=_evidence(app_js, 1),
-            rule_ai_00="VIOLATES",
-            priority="P0",
-        ))
+        risks.append(
+            HiddenRisk(
+                id="CD-FRAME-001",
+                dimension="内容显示",
+                description="app.js 引入 React/Vue 框架，违反 spec.md 5.2.1 第 8 条禁止项",
+                evidence=_evidence(app_js, 1),
+                rule_ai_00="VIOLATES",
+                priority="P0",
+            )
+        )
 
     conclusion = (
         f"长文本折叠{'已实现' if has_collapse else '缺失（待 T3 新增）'}；"
@@ -383,13 +439,15 @@ def extract_transferable(risks: list[HiddenRisk]) -> list[TransferableItem]:
             continue
         if r.dimension != "AI 友好性":
             continue
-        transferable.append(TransferableItem(
-            id=f"TF-{len(transferable) + 1:03d}",
-            program_location=r.evidence,
-            suggested_rule=f"将 {r.description.split(':')[0]} 移交 AI 自主 + 文档规则约束，程序仅保留执行与如实反馈",
-            acceptance_criteria=f"程序中该判断逻辑已移除；ai_rules.md 增对应规则；pytest tests/ 全绿；{r.id} 不再出现",
-            priority=r.priority,
-        ))
+        transferable.append(
+            TransferableItem(
+                id=f"TF-{len(transferable) + 1:03d}",
+                program_location=r.evidence,
+                suggested_rule=f"将 {r.description.split(':')[0]} 移交 AI 自主 + 文档规则约束，程序仅保留执行与如实反馈",
+                acceptance_criteria=f"程序中该判断逻辑已移除；ai_rules.md 增对应规则；pytest tests/ 全绿；{r.id} 不再出现",
+                priority=r.priority,
+            )
+        )
     return transferable
 
 
@@ -406,7 +464,9 @@ def write_report(report: AssessmentReport, output_dir: Path) -> Path:
     lines.append("> 类型: 整体评估报告 | 由 `scripts/assess_ai_first_evolution.py` 离线生成")
     lines.append("> 评估维度: 健壮性 / 优雅性 / AI 友好性 / 内容显示")
     lines.append("> 对照基准: RULE-AI-00 六原则（docs/ai_rules.md）")
-    lines.append("> 声明: 本报告只含评估结论与隐患清单，不含实现方案（类图/接口/代码），实现方案见 design.md")
+    lines.append(
+        "> 声明: 本报告只含评估结论与隐患清单，不含实现方案（类图/接口/代码），实现方案见 design.md"
+    )
     lines.append("")
     lines.append("---")
     lines.append("")
@@ -425,7 +485,9 @@ def write_report(report: AssessmentReport, output_dir: Path) -> Path:
             lines.append("| ID | 优先级 | 描述 | 证据 | RULE-AI-00 |")
             lines.append("|:---|:---:|:---|:---|:---:|")
             for r in dim_risks:
-                lines.append(f"| {r.id} | {r.priority} | {_redact(r.description)} | `{r.evidence}` | {r.rule_ai_00} |")
+                lines.append(
+                    f"| {r.id} | {r.priority} | {_redact(r.description)} | `{r.evidence}` | {r.rule_ai_00} |"
+                )
         else:
             lines.append("**隐患清单**：无（本维度现状良好）")
         lines.append("")
@@ -450,7 +512,9 @@ def write_report(report: AssessmentReport, output_dir: Path) -> Path:
         lines.append("| 序 | ID | 优先级 | 维度 | 描述 |")
         lines.append("|:---:|:---|:---:|:---|:---|")
         for i, r in enumerate(ordered, 1):
-            lines.append(f"| {i} | {r.id} | {r.priority} | {r.dimension} | {_redact(r.description)} |")
+            lines.append(
+                f"| {i} | {r.id} | {r.priority} | {r.dimension} | {_redact(r.description)} |"
+            )
     else:
         lines.append("无隐患。")
     lines.append("")
@@ -465,7 +529,9 @@ def write_report(report: AssessmentReport, output_dir: Path) -> Path:
         lines.append("| ID | 优先级 | 程序位置 | 建议规则 | 验收条件 |")
         lines.append("|:---|:---:|:---|:---|:---|")
         for t in report.transferable:
-            lines.append(f"| {t.id} | {t.priority} | `{t.program_location}` | {_redact(t.suggested_rule)} | {_redact(t.acceptance_criteria)} |")
+            lines.append(
+                f"| {t.id} | {t.priority} | `{t.program_location}` | {_redact(t.suggested_rule)} | {_redact(t.acceptance_criteria)} |"
+            )
     else:
         lines.append("本次评估无可移交项（程序最小化现状良好，或隐患均非 AI 友好性维度）。")
     lines.append("")
@@ -514,10 +580,18 @@ def update_index(report_path: Path, date: str) -> None:
 # ── 状态机主流程 ─────────────────────────────────────────────────────────
 
 STATES = [
-    "idle", "scanning_source", "scanning_docs", "scanning_logs",
-    "scanning_tests", "evaluating_4d", "checking_rule_ai_00",
-    "prioritizing", "extracting_transferable", "writing_report",
-    "updating_index", "done",
+    "idle",
+    "scanning_source",
+    "scanning_docs",
+    "scanning_logs",
+    "scanning_tests",
+    "evaluating_4d",
+    "checking_rule_ai_00",
+    "prioritizing",
+    "extracting_transferable",
+    "writing_report",
+    "updating_index",
+    "done",
 ]
 
 
@@ -538,8 +612,10 @@ def run_assessment(output_dir: Path, date: str) -> AssessmentReport:
 
     all_risks = rob_risks + elg_risks + aif_risks + cd_risks
     dimensions = {
-        "健壮性": rob_concl, "优雅性": elg_concl,
-        "AI 友好性": aif_concl, "内容显示": cd_concl,
+        "健壮性": rob_concl,
+        "优雅性": elg_concl,
+        "AI 友好性": aif_concl,
+        "内容显示": cd_concl,
     }
 
     print("[对照] RULE-AI-00 六原则 ...")
@@ -554,8 +630,12 @@ def run_assessment(output_dir: Path, date: str) -> AssessmentReport:
     next_steps = _build_next_steps(ordered, transferable)
 
     report = AssessmentReport(
-        date=date, dimensions=dimensions, risks=all_risks,
-        rule_check=rule_check, transferable=transferable, next_steps=next_steps,
+        date=date,
+        dimensions=dimensions,
+        risks=all_risks,
+        rule_check=rule_check,
+        transferable=transferable,
+        next_steps=next_steps,
     )
 
     print("[写盘] 报告存档 ...")
@@ -579,11 +659,19 @@ def _build_next_steps(ordered: list[HiddenRisk], transferable: list[Transferable
     p0 = [r for r in ordered if r.priority == "P0"]
     p1 = [r for r in ordered if r.priority == "P1"]
     if p0:
-        steps.append(f"立即处理 {len(p0)} 条 P0 隐患（违反 RULE-AI-00 硬约束）：" + "、".join(r.id for r in p0[:5]))
+        steps.append(
+            f"立即处理 {len(p0)} 条 P0 隐患（违反 RULE-AI-00 硬约束）："
+            + "、".join(r.id for r in p0[:5])
+        )
     if p1:
-        steps.append(f"推进 {len(p1)} 条 P1 隐患（影响 AI 执行力/内容显示）：" + "、".join(r.id for r in p1[:8]))
+        steps.append(
+            f"推进 {len(p1)} 条 P1 隐患（影响 AI 执行力/内容显示）："
+            + "、".join(r.id for r in p1[:8])
+        )
     if transferable:
-        steps.append(f"可移交清单 {len(transferable)} 项，按 SOP 逐项移交（SoT 先行 → prompt 同步 → 测试防漂移 → 程序移除 → 全量回归）")
+        steps.append(
+            f"可移交清单 {len(transferable)} 项，按 SOP 逐项移交（SoT 先行 → prompt 同步 → 测试防漂移 → 程序移除 → 全量回归）"
+        )
     steps.append("T3 Web 长文本折叠、T4 pending_actions 维度、T5 并发锁/超长校验可独立并行推进")
     steps.append("全量回归门禁: .venv/bin/python -m pytest tests/ -v --tb=short")
     return steps
@@ -591,8 +679,12 @@ def _build_next_steps(ordered: list[HiddenRisk], transferable: list[Transferable
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="AI 优先演进整体评估报告生成器")
-    parser.add_argument("--output-dir", type=Path, default=DOCS_DIR, help="报告输出目录（默认 docs/）")
-    parser.add_argument("--date", type=str, default=datetime.now().strftime("%Y%m%d"), help="报告日期 YYYYMMDD")
+    parser.add_argument(
+        "--output-dir", type=Path, default=DOCS_DIR, help="报告输出目录（默认 docs/）"
+    )
+    parser.add_argument(
+        "--date", type=str, default=datetime.now().strftime("%Y%m%d"), help="报告日期 YYYYMMDD"
+    )
     args = parser.parse_args()
 
     try:

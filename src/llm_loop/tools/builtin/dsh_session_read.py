@@ -24,7 +24,9 @@ from llm_loop.workspace.store import workspace_key
 
 logger = logging.getLogger(__name__)
 
-_DSH_SESSIONS_ROOT = Path(os.environ.get("DSH_SESSIONS_ROOT", str(Path.home() / ".dsh" / "sessions")))
+_DSH_SESSIONS_ROOT = Path(
+    os.environ.get("DSH_SESSIONS_ROOT", str(Path.home() / ".dsh" / "sessions"))
+)
 _MAX_OUTPUT_CHARS = 30_000
 _MAX_EVENTS_DEFAULT = 40  # 默认提取事件上限（防超大日志淹没回执）
 
@@ -232,7 +234,7 @@ class DshSessionReadTool:
                     parts.append(line)
             elif e.get("type") == "turn/end":
                 d = e.get("data") or {}
-                reason = (d.get("reason") or {})
+                reason = d.get("reason") or {}
                 if isinstance(reason, dict):
                     reason = reason.get("kind", "")
                 line = f"[turn/end seq={e.get('seq')}] reason={reason}"

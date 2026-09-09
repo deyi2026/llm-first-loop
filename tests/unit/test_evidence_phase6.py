@@ -56,7 +56,9 @@ def _stores(tmp_path: Path):
     return blobs, ledger, EvidenceCapture(blobs, ledger)
 
 
-def _session_with_tool(store: SessionStore, content: str, *, tool_name: str, tool_call_id: str) -> str:
+def _session_with_tool(
+    store: SessionStore, content: str, *, tool_name: str, tool_call_id: str
+) -> str:
     sid = store.create()
     sess = store.load(sid)
     sess.messages.append(
@@ -125,13 +127,19 @@ def test_command_sidecar_migrates_and_is_idempotent(tmp_path, monkeypatch):
     _, ledger, migrator = _migrator(tmp_path, store)
 
     first = migrator.migrate_all()
-    refs_first = [r.evidence_ref.ref for r in ledger.list_recent(
-        OwnerScope(workspace_id=str(tmp_path.resolve()), session_id=sid), limit=10
-    )]
+    refs_first = [
+        r.evidence_ref.ref
+        for r in ledger.list_recent(
+            OwnerScope(workspace_id=str(tmp_path.resolve()), session_id=sid), limit=10
+        )
+    ]
     second = migrator.migrate_all()
-    refs_second = [r.evidence_ref.ref for r in ledger.list_recent(
-        OwnerScope(workspace_id=str(tmp_path.resolve()), session_id=sid), limit=10
-    )]
+    refs_second = [
+        r.evidence_ref.ref
+        for r in ledger.list_recent(
+            OwnerScope(workspace_id=str(tmp_path.resolve()), session_id=sid), limit=10
+        )
+    ]
 
     assert first.migrated_records == 1
     assert second.migrated_records == 0
@@ -143,9 +151,7 @@ def test_tampered_sidecar_is_quarantined_not_migrated(tmp_path, monkeypatch):
     data_dir = tmp_path / "data"
     monkeypatch.setenv("DATA_DIR", str(data_dir))
     full = "T" * 400
-    projected, sidecar = _legacy_projected(
-        data_dir, full, head=40, tail=40, source="tampered.txt"
-    )
+    projected, sidecar = _legacy_projected(data_dir, full, head=40, tail=40, source="tampered.txt")
     sidecar.write_text(full + "CORRUPTED", encoding="utf-8")
     store = SessionStore(tmp_path / "sessions")
     sid = _session_with_tool(store, projected, tool_name="read_file", tool_call_id="tampered-1")
@@ -157,7 +163,9 @@ def test_tampered_sidecar_is_quarantined_not_migrated(tmp_path, monkeypatch):
     assert ledger.count(owner) == 0
     assert report.migrated_records == 0
     assert report.quarantined_files == 1
-    inventory = (tmp_path / "data" / "evidence" / "quarantine" / "legacy_sidecars.json").read_text(encoding="utf-8")
+    inventory = (tmp_path / "data" / "evidence" / "quarantine" / "legacy_sidecars.json").read_text(
+        encoding="utf-8"
+    )
     assert "proof_failed" in inventory
     assert sidecar.name in inventory
 
@@ -174,7 +182,9 @@ def test_orphan_sidecar_inventory_only_never_enters_ledger(tmp_path, monkeypatch
     assert report.migrated_records == 0
     assert report.quarantined_files == 1
     assert not (tmp_path / "data" / "evidence" / "ledger" / "owners").exists()
-    inventory = (tmp_path / "data" / "evidence" / "quarantine" / "legacy_sidecars.json").read_text(encoding="utf-8")
+    inventory = (tmp_path / "data" / "evidence" / "quarantine" / "legacy_sidecars.json").read_text(
+        encoding="utf-8"
+    )
     assert "unreferenced" in inventory
 
 
@@ -202,7 +212,9 @@ def test_symlink_sidecar_is_never_accepted_as_owned(tmp_path, monkeypatch):
 
     assert ledger.count(OwnerScope(workspace_id=str(tmp_path.resolve()), session_id=sid)) == 0
     assert report.quarantined_files == 1
-    inventory = (tmp_path / "data" / "evidence" / "quarantine" / "legacy_sidecars.json").read_text(encoding="utf-8")
+    inventory = (tmp_path / "data" / "evidence" / "quarantine" / "legacy_sidecars.json").read_text(
+        encoding="utf-8"
+    )
     assert "symlink" in inventory
 
 
@@ -284,9 +296,7 @@ def test_factory_enforce_auto_migrates_and_compression_reuses_full_legacy_eviden
     monkeypatch.setenv("HEAD_KEEP_RATIO", "0")
     monkeypatch.setenv("HEAD_KEEP_FORCE_RATIO", "0")
     full = "LEGACY_HEAD" + ("M" * 420) + "HIDDEN_FULL_BYTES" + ("N" * 420) + "LEGACY_TAIL"
-    projected, _sidecar = _legacy_projected(
-        data_dir, full, source="legacy-factory.txt"
-    )
+    projected, _sidecar = _legacy_projected(data_dir, full, source="legacy-factory.txt")
 
     # Create the session through the real legacy/off factory first, so workspace partition
     # and global session identity match production behavior before enforce is introduced.

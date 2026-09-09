@@ -113,9 +113,13 @@ def test_store_roundtrip_durable_only(tmp_path: Path):
         objective="任务目标",
         checkpoint=CheckpointPointer(what="里程碑", next="下一步"),
         confirmed_facts=[
-            ConfirmedFact(claim="事实A", provenance=__import__(
-                "llm_loop.memory.evidence", fromlist=["EvidenceRef"]
-            ).EvidenceRef(_valid_evidence_ref()), freshness=ConfirmedFactFreshness.HISTORICAL)
+            ConfirmedFact(
+                claim="事实A",
+                provenance=__import__(
+                    "llm_loop.memory.evidence", fromlist=["EvidenceRef"]
+                ).EvidenceRef(_valid_evidence_ref()),
+                freshness=ConfirmedFactFreshness.HISTORICAL,
+            )
         ],
     )
     state.ephemeral.hypotheses.append("本轮临时假设")  # Ephemeral 不应落盘
@@ -155,6 +159,7 @@ def test_store_load_corrupt_returns_none(tmp_path: Path):
 
 def test_store_atomic_visible_only_new(tmp_path: Path):
     store = SemanticStateStore(str(tmp_path))
+
     def _env(obj: str) -> StateEnvelope:
         return StateEnvelope(
             identity=StateIdentity(

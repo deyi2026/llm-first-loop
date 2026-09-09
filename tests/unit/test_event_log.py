@@ -79,6 +79,7 @@ def _make_event(seq: int = 1, type_: str = EVENT_MESSAGE_APPENDED, **payload) ->
 
 # ── 模型: 序列化/解析 ──
 
+
 def test_event_serialize_parse_roundtrip():
     ev = _make_event(
         seq=3,
@@ -110,8 +111,16 @@ def test_parse_event_line_corrupt_returns_none():
     assert parse_event_line("") is None
     assert parse_event_line("123") is None
     assert parse_event_line('{"event_id": "x"}') is None  # 缺 session_id
-    assert parse_event_line('{"event_id": "x", "session_id": "s", "seq": "bad", "type": "t", "ts": "ts"}') is None
-    assert parse_event_line('{"event_id": "x", "session_id": "s", "seq": 0, "type": "t", "ts": "ts"}') is None
+    assert (
+        parse_event_line(
+            '{"event_id": "x", "session_id": "s", "seq": "bad", "type": "t", "ts": "ts"}'
+        )
+        is None
+    )
+    assert (
+        parse_event_line('{"event_id": "x", "session_id": "s", "seq": 0, "type": "t", "ts": "ts"}')
+        is None
+    )
 
 
 def test_validate_event_type_unregistered():
@@ -124,6 +133,7 @@ def test_validate_event_type_unregistered():
 
 # ── 模型: 类型登记表 ──
 
+
 def test_registry_covers_registered_types_with_fields():
     names = {
         EVENT_SESSION_CREATED,
@@ -132,17 +142,17 @@ def test_registry_covers_registered_types_with_fields():
         EVENT_EXTERNAL_EXECUTION_LAUNCHED,
         EVENT_EXTERNAL_EXECUTION_TERMINAL,
         EVENT_EXTERNAL_EXECUTION_CANCEL_REQUESTED,
-    EVENT_EXTERNAL_EXECUTION_CANCEL_REQUESTED,
-    EVENT_EXTERNAL_EXECUTION_LAUNCHED,
-    EVENT_EXTERNAL_EXECUTION_TERMINAL,
+        EVENT_EXTERNAL_EXECUTION_CANCEL_REQUESTED,
+        EVENT_EXTERNAL_EXECUTION_LAUNCHED,
+        EVENT_EXTERNAL_EXECUTION_TERMINAL,
         EVENT_HISTORY_COMPACTION,
         EVENT_HISTORY_COMPACTION_STATE_RESET,
         EVENT_MESSAGE_CACHE_COMPACTED,
         EVENT_SESSION_META_CHANGED,
-    EVENT_SUBAGENT_GENERATION_RELEASED,
-    EVENT_SUBAGENT_GENERATION_STARTED,
-    EVENT_SUBAGENT_LINKED,
-    EVENT_SUBAGENT_TERMINAL,
+        EVENT_SUBAGENT_GENERATION_RELEASED,
+        EVENT_SUBAGENT_GENERATION_STARTED,
+        EVENT_SUBAGENT_LINKED,
+        EVENT_SUBAGENT_TERMINAL,
         EVENT_SESSION_FORKED,
         EVENT_REQUEST_ATTEMPT,
         EVENT_REQUEST_META,  # HARNESS-02: request.meta 请求快照
@@ -187,14 +197,15 @@ def test_registry_covers_registered_types_with_fields():
     effect_spec = REGISTRY.spec(EVENT_TOOL_EXECUTION_EFFECT_PREPARED)
     assert effect_spec is not None
     assert {
-        "execution_id", "workspace_root", "canonical_path", "before_sha256",
+        "execution_id",
+        "workspace_root",
+        "canonical_path",
+        "before_sha256",
         "expected_after_sha256",
     } <= set(effect_spec.fields)
     observed_spec = REGISTRY.spec(EVENT_TOOL_EXECUTION_EFFECT_OBSERVED)
     assert observed_spec is not None
-    assert {"actual_after_sha256", "actual_size", "matches_expected"} <= set(
-        observed_spec.fields
-    )
+    assert {"actual_after_sha256", "actual_size", "matches_expected"} <= set(observed_spec.fields)
     msg_spec = REGISTRY.spec(EVENT_MESSAGE_APPENDED)
     assert msg_spec is not None
     assert msg_spec.version >= 1
@@ -205,56 +216,108 @@ def test_registry_covers_registered_types_with_fields():
     history_compact_spec = REGISTRY.spec(EVENT_HISTORY_COMPACTION)
     assert history_compact_spec is not None
     assert {
-        "model", "provider_id", "compaction_epoch", "trigger",
-        "pre_history_chars", "pre_chars", "post_chars",
-        "effective_budget_chars", "compact_ratio", "trigger_limit_chars",
-        "trigger_excess_chars", "archive_target_ratio", "archive_target_chars",
-        "archived_count", "archived_group_count", "atomic_group_count",
-        "compaction_mode", "cache_boundary_mode", "cache_epoch_reset",
-        "anchor_before", "anchor_after", "anchor_moved",
+        "model",
+        "provider_id",
+        "compaction_epoch",
+        "trigger",
+        "pre_history_chars",
+        "pre_chars",
+        "post_chars",
+        "effective_budget_chars",
+        "compact_ratio",
+        "trigger_limit_chars",
+        "trigger_excess_chars",
+        "archive_target_ratio",
+        "archive_target_chars",
+        "archived_count",
+        "archived_group_count",
+        "atomic_group_count",
+        "compaction_mode",
+        "cache_boundary_mode",
+        "cache_epoch_reset",
+        "anchor_before",
+        "anchor_after",
+        "anchor_moved",
     } <= set(history_compact_spec.fields)
     reset_spec = REGISTRY.spec(EVENT_HISTORY_COMPACTION_STATE_RESET)
     assert reset_spec is not None
     assert {
-        "model", "provider_id", "effective_budget", "legacy_anchor_reset",
-        "anchor_before", "reopened_marker_count", "reason",
+        "model",
+        "provider_id",
+        "effective_budget",
+        "legacy_anchor_reset",
+        "anchor_before",
+        "reopened_marker_count",
+        "reason",
     } <= set(reset_spec.fields)
     request_meta_spec = REGISTRY.spec(EVENT_REQUEST_META)
     assert request_meta_spec is not None
-    assert {"history_chars", "reasoning_chars", "provider_visible_chars"} <= set(request_meta_spec.fields)
+    assert {"history_chars", "reasoning_chars", "provider_visible_chars"} <= set(
+        request_meta_spec.fields
+    )
     checkpoint_spec = REGISTRY.spec(EVENT_LLM_PARTIAL_CHECKPOINT)
     assert checkpoint_spec is not None
     assert {
-        "round", "provider", "model", "text_tail", "reasoning_tail",
-        "text_chars", "reasoning_chars", "partial_sha256",
+        "round",
+        "provider",
+        "model",
+        "text_tail",
+        "reasoning_tail",
+        "text_chars",
+        "reasoning_chars",
+        "partial_sha256",
     } <= set(checkpoint_spec.fields)
     interrupted_spec = REGISTRY.spec(EVENT_LLM_INTERRUPTED)
     assert interrupted_spec is not None
     assert {
-        "round", "reason", "error_digest", "text_tail", "reasoning_tail",
-        "partial_chars", "partial_sha256",
+        "round",
+        "reason",
+        "error_digest",
+        "text_tail",
+        "reasoning_tail",
+        "partial_chars",
+        "partial_sha256",
     } <= set(interrupted_spec.fields)
     usage_spec = REGISTRY.spec(EVENT_REQUEST_USAGE)
     assert usage_spec is not None
     assert {
-        "tokens_in", "cache_hit", "cache_miss", "usage_available",
-        "cache_read_tokens", "uncached_prompt_tokens", "cache_hit_rate",
-        "context_window", "output_reserve_tokens", "context_headroom_tokens",
-        "context_used_ratio", "stable_prefix_fp", "prefix_changed",
-        "cache_prefix_epoch", "compaction_epoch", "runtime_pid",
+        "tokens_in",
+        "cache_hit",
+        "cache_miss",
+        "usage_available",
+        "cache_read_tokens",
+        "uncached_prompt_tokens",
+        "cache_hit_rate",
+        "context_window",
+        "output_reserve_tokens",
+        "context_headroom_tokens",
+        "context_used_ratio",
+        "stable_prefix_fp",
+        "prefix_changed",
+        "cache_prefix_epoch",
+        "compaction_epoch",
+        "runtime_pid",
     } <= set(usage_spec.fields)
     spliced_spec = REGISTRY.spec(EVENT_INTEROP_SPLICED)
     assert spliced_spec is not None
-    assert {"session_id", "count", "start", "sources", "content_preview"} <= set(spliced_spec.fields)
+    assert {"session_id", "count", "start", "sources", "content_preview"} <= set(
+        spliced_spec.fields
+    )
     mailbox_spec = REGISTRY.spec(EVENT_SUBAGENT_MAILBOX_QUEUED)
     assert mailbox_spec is not None
-    assert {"message_id", "child_id", "parent_id", "generation", "sender_id", "content"} <= set(mailbox_spec.fields)
+    assert {"message_id", "child_id", "parent_id", "generation", "sender_id", "content"} <= set(
+        mailbox_spec.fields
+    )
     report_spec = REGISTRY.spec(EVENT_SUBAGENT_REPORT_QUEUED)
     assert report_spec is not None
-    assert {"report_id", "child_id", "parent_id", "generation", "content"} <= set(report_spec.fields)
+    assert {"report_id", "child_id", "parent_id", "generation", "content"} <= set(
+        report_spec.fields
+    )
     result_spec = REGISTRY.spec(EVENT_SUBAGENT_RESULT_AVAILABLE)
     assert result_spec is not None
-    assert {"result_id", "child_id", "parent_id", "generation", "result", "report_ids"} <= set(result_spec.fields)
+    assert {"result_id", "child_id", "parent_id", "generation", "result", "report_ids"} <= set(
+        result_spec.fields
+    )
     cancel_spec = REGISTRY.spec(EVENT_SUBAGENT_CANCEL_REQUESTED)
     assert cancel_spec is not None
     assert {"cancel_id", "child_id", "parent_id", "generation", "reason"} <= set(cancel_spec.fields)
@@ -271,6 +334,7 @@ def test_registry_unregistered_spec_none():
 
 
 # ── 存储: EventStore ──
+
 
 def test_append_seq_increments_without_duplicate(tmp_path):
     store = EventStore(tmp_path / "logs")
@@ -387,9 +451,7 @@ def test_request_meta_event_written_per_round(tmp_path):
             if self.calls == 1:
                 return LLMResponse(
                     content="用工具",
-                    tool_calls=[
-                        ToolCall(id="tc-m", name="read_file", arguments={"path": "a"})
-                    ],
+                    tool_calls=[ToolCall(id="tc-m", name="read_file", arguments={"path": "a"})],
                     provider="fake",
                     reasoning_content="PLAN-ABC",
                 )
@@ -468,8 +530,11 @@ def test_request_usage_separates_context_capacity_from_cache_reuse(tmp_path, mon
 
         def _resp(self):
             return LLMResponse(
-                content="完成", tool_calls=[], provider="fake",
-                prompt_tokens=300, completion_tokens=10,
+                content="完成",
+                tool_calls=[],
+                provider="fake",
+                prompt_tokens=300,
+                completion_tokens=10,
                 prompt_cache_hit_tokens=240,
             )
 
@@ -480,21 +545,32 @@ def test_request_usage_separates_context_capacity_from_cache_reuse(tmp_path, mon
             def _gen():
                 yield from ()
                 return self._resp()
+
             return _gen()
 
     event_store = EventStore(tmp_path / "events")
     store = SessionStore(tmp_path / "sessions", event_store=event_store)
     settings = Settings(
-        llm_api_key="k", llm_base_url="https://x/v1", llm_model="m",
-        data_dir=str(tmp_path / "data"), extract_enabled=False, summary_mode="off",
+        llm_api_key="k",
+        llm_base_url="https://x/v1",
+        llm_model="m",
+        data_dir=str(tmp_path / "data"),
+        extract_enabled=False,
+        summary_mode="off",
     )
     engine = LoopEngine(
-        llm_client=_Fake(), registry=ToolRegistry(), memory=None, session=store,
-        settings=settings, event_store=event_store,
+        llm_client=_Fake(),
+        registry=ToolRegistry(),
+        memory=None,
+        session=store,
+        settings=settings,
+        event_store=event_store,
     )
     monkeypatch.setattr(engine._routing, "_current_context_limit", lambda *a, **k: 1000)
     result = engine.run_single("任务")
-    usage = [e for e in event_store.read(result.session_id) if e.type == "request.usage"][-1].payload
+    usage = [e for e in event_store.read(result.session_id) if e.type == "request.usage"][
+        -1
+    ].payload
     assert usage["tokens_in"] == 300
     assert usage["cache_read_tokens"] == 240
     assert usage["uncached_prompt_tokens"] == 60
@@ -629,7 +705,6 @@ def test_long_answer_persist_uses_pathlib_and_is_content_stable(tmp_path):
     assert path1 == path2, "同内容应使用内容哈希稳定路径，避免回传历史前缀漂移"
     assert path1.is_file()
     assert path1.read_text(encoding="utf-8") == answer
-
 
 
 def test_event_store_rejects_session_id_path_traversal(tmp_path):

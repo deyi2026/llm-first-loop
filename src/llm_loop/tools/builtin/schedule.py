@@ -173,8 +173,13 @@ class ScheduleTool:
                 )
 
         sid = self._get_store().add(
-            message, after=after, at=at_ts, repeat_interval=repeat_interval,
-            max_count=max_count, wake=wake, session_id=wake_session_id,
+            message,
+            after=after,
+            at=at_ts,
+            repeat_interval=repeat_interval,
+            max_count=max_count,
+            wake=wake,
+            session_id=wake_session_id,
             wake_grant=wake_grant,
         )
         when = f"after {after}s" if after > 0 else (f"at {at}" if at else "immediate")

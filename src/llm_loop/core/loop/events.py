@@ -10,7 +10,6 @@
 # pyright: reportAttributeAccessIssue=false, reportGeneralTypeIssues=false
 # (mixin 模式: self 属性来自混入类 LoopEngine.__init__，pyright 无法静态解析，故文件级关闭这两条)
 
-
 from __future__ import annotations
 
 import contextlib
@@ -371,9 +370,7 @@ class _EventsMixin:
         }
         if latest_checkpoint_event is not None:
             latest_payload = dict(getattr(latest_checkpoint_event, "payload", None) or {})
-            state["latest_checkpoint_seq"] = int(
-                getattr(latest_checkpoint_event, "seq", 0) or 0
-            )
+            state["latest_checkpoint_seq"] = int(getattr(latest_checkpoint_event, "seq", 0) or 0)
             if latest_checkpoint_event is not checkpoint_event:
                 state["sparse_latest_skipped"] = True
                 state["latest_checkpoint_model_chars"] = int(
@@ -488,7 +485,11 @@ class _EventsMixin:
             return None
         events = list(estore.read(session_id) or [])
         last_run_end = max(
-            (pos for pos, event in enumerate(events) if str(getattr(event, "type", "")) == "run.end"),
+            (
+                pos
+                for pos, event in enumerate(events)
+                if str(getattr(event, "type", "")) == "run.end"
+            ),
             default=-1,
         )
         open_events = events[last_run_end + 1 :]
@@ -585,7 +586,10 @@ class _EventsMixin:
                     # runaway reasoning back on the next human ingress. Exact
                     # provider truncation and open-stream crash checkpoints keep
                     # their existing continuity paths.
-                    if not provider_truncated and str(md.get("run_end_reason") or "") == "llm_error":
+                    if (
+                        not provider_truncated
+                        and str(md.get("run_end_reason") or "") == "llm_error"
+                    ):
                         break
                     # A later genuine model assistant means this partial was already
                     # superseded; never resurrect stale reasoning merely because it is
@@ -613,9 +617,7 @@ class _EventsMixin:
                         elif not raw.startswith("[截断标注]"):
                             text_tail = raw
                     reasoning_tail = str(
-                        md.get("interrupted_reasoning_tail")
-                        or message.reasoning_content
-                        or ""
+                        md.get("interrupted_reasoning_tail") or message.reasoning_content or ""
                     )
                     native_sha = str(md.get("interrupted_native_state_sha256") or "")
                     if text_tail or reasoning_tail or native_sha:
@@ -636,9 +638,7 @@ class _EventsMixin:
                             "partial_sha256": str(md.get("partial_sha256") or ""),
                             "provider_truncated": provider_truncated,
                             "finish_reason": str(
-                                md.get("provider_finish_reason")
-                                or md.get("run_end_reason")
-                                or ""
+                                md.get("provider_finish_reason") or md.get("run_end_reason") or ""
                             ),
                         }
                         native = self._load_inflight_native_state(
@@ -680,8 +680,7 @@ class _EventsMixin:
                     "source={};model={};chars={}".format(
                         state.get("source", ""),
                         state.get("model", ""),
-                        len(state.get("text_tail", ""))
-                        + len(state.get("reasoning_tail", "")),
+                        len(state.get("text_tail", "")) + len(state.get("reasoning_tail", "")),
                     ),
                 )
         except Exception:  # noqa: BLE001 — continuity is fail-open, never blocks ingress
@@ -703,7 +702,9 @@ class _EventsMixin:
                 _sid = _validate_session_id(session_id)
                 _la_dir = Path(self.settings.data_dir) / "audit" / "long_answers" / _sid
                 _la_dir.mkdir(parents=True, exist_ok=True)
-                _la_digest = hashlib.sha256(final_answer.encode("utf-8", errors="replace")).hexdigest()[:16]
+                _la_digest = hashlib.sha256(
+                    final_answer.encode("utf-8", errors="replace")
+                ).hexdigest()[:16]
                 _la_file = _la_dir / f"{_la_digest}.md"
                 _tmp = _la_dir / f".{_la_file.name}.{uuid.uuid4().hex}.tmp"
                 try:
@@ -1063,9 +1064,7 @@ class _EventsMixin:
             reasoning_limit = self._env_tail_limit("INTERRUPT_REASONING_TAIL_CHARS", 8000)
             text_tail = text_full[-text_limit:] if text_limit and text_full else ""
             reasoning_tail = (
-                reasoning_full[-reasoning_limit:]
-                if reasoning_limit and reasoning_full
-                else ""
+                reasoning_full[-reasoning_limit:] if reasoning_limit and reasoning_full else ""
             )
             partial_sha = hashlib.sha256(
                 (text_full + reasoning_full).encode("utf-8", "replace")
@@ -1086,7 +1085,9 @@ class _EventsMixin:
                     tool_call_drafts=tool_call_drafts,
                 )
             except Exception:  # noqa: BLE001 — full/native sidecar is fail-open
-                logger.debug("provider-native in-flight sidecar 写入失败（fail-open）", exc_info=True)
+                logger.debug(
+                    "provider-native in-flight sidecar 写入失败（fail-open）", exc_info=True
+                )
             self._event_append(
                 sess.session_id,
                 "llm.partial_checkpoint",
@@ -1162,17 +1163,13 @@ class _EventsMixin:
                     tool_call_drafts=tool_call_drafts,
                 )
             except Exception:  # noqa: BLE001 — interruption delivery must still close
-                logger.warning(
-                    "中断 exact artifact 写入失败；回退会话全文持久化", exc_info=True
-                )
+                logger.warning("中断 exact artifact 写入失败；回退会话全文持久化", exc_info=True)
             text_limit = self._env_tail_limit("INTERRUPT_TEXT_TAIL_CHARS", 4000)
             reasoning_limit = self._env_tail_limit("INTERRUPT_REASONING_TAIL_CHARS", 8000)
             if artifact_ref or not artifact_store_available:
                 text_tail = text_full[-text_limit:] if text_limit and text_full else ""
                 reasoning_tail = (
-                    reasoning_full[-reasoning_limit:]
-                    if reasoning_limit and reasoning_full
-                    else ""
+                    reasoning_full[-reasoning_limit:] if reasoning_limit and reasoning_full else ""
                 )
             else:
                 # A configured exact store failed. Do not discard model bytes in the

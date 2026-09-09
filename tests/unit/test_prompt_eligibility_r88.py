@@ -66,9 +66,7 @@ def test_build_hides_memory_snapshots_including_current_turn(build_test_engine):
         ]
     )
     engine._run_state().current_turn_ref = 3
-    out = engine._build_llm_messages(
-        sess, [], max_chars=200000, planned_label="deepseek/model"
-    )
+    out = engine._build_llm_messages(sess, [], max_chars=200000, planned_label="deepseek/model")
     rendered = str(out)
     assert "OLD-MEMORY-SHOULD-NOT-PROJECT" not in rendered
     assert "CURRENT-MEMORY-SHOULD-PROJECT" not in rendered
@@ -78,11 +76,10 @@ def test_local_provider_no_longer_gets_behavior_patch(build_test_engine):
     engine, _ = build_test_engine([{"content": "unused"}])
     sid = engine.session.create()
     sess = engine.session.load(sid)
-    out = engine._build_llm_messages(
-        sess, [], max_chars=200000, planned_label="local/model"
-    )
+    out = engine._build_llm_messages(sess, [], max_chars=200000, planned_label="local/model")
     assert "本地模型行为提示" not in str(out)
     assert "改≤3文件自主执行" not in str(out)
+
 
 def _current_turn_control(text: str, *, turn_ref: int) -> Message:
     return Message(
@@ -121,7 +118,6 @@ def test_async_obligation_has_no_program_prompt_authority():
     )
     assert current_turn_program_prompt_eligible(current, current_turn_ref=7) is False
     assert current_turn_program_prompt_eligible(current, current_turn_ref=8) is False
-
 
 
 def test_experience_tip_never_gets_automatic_prompt_authority():
@@ -204,15 +200,17 @@ def test_build_retires_same_turn_control_and_old_or_legacy(build_test_engine):
         [
             Message(role="user", content="old user", source=MessageSource.USER),
             _current_turn_control("OLD-CONTROL-SHOULD-NOT-PROJECT", turn_ref=0),
-            Message(role="system", content="[停滞提醒] LEGACY-SHOULD-NOT-PROJECT", source=MessageSource.SYSTEM),
+            Message(
+                role="system",
+                content="[停滞提醒] LEGACY-SHOULD-NOT-PROJECT",
+                source=MessageSource.SYSTEM,
+            ),
             Message(role="user", content="current user", source=MessageSource.USER),
             _current_turn_control("CURRENT-CONTROL-SHOULD-PROJECT", turn_ref=3),
         ]
     )
     engine._run_state().current_turn_ref = 3
-    out = engine._build_llm_messages(
-        sess, [], max_chars=200000, planned_label="deepseek/model"
-    )
+    out = engine._build_llm_messages(sess, [], max_chars=200000, planned_label="deepseek/model")
     rendered = str(out)
     assert "OLD-CONTROL-SHOULD-NOT-PROJECT" not in rendered
     assert "LEGACY-SHOULD-NOT-PROJECT" not in rendered
@@ -241,13 +239,15 @@ def test_build_retires_legacy_and_r3_experience_tips_even_same_turn(build_test_e
             "reference_keys": ["ref:experience:e1"],
         },
     )
-    sess.messages.extend([
-        Message(role="user", content="old human", source=MessageSource.USER),
-        legacy,
-        Message(role="assistant", content="old answer", source=MessageSource.USER),
-        Message(role="user", content="current human", source=MessageSource.USER),
-        current,
-    ])
+    sess.messages.extend(
+        [
+            Message(role="user", content="old human", source=MessageSource.USER),
+            legacy,
+            Message(role="assistant", content="old answer", source=MessageSource.USER),
+            Message(role="user", content="current human", source=MessageSource.USER),
+            current,
+        ]
+    )
     engine._run_state().current_turn_ref = 3
     out = engine._build_llm_messages(sess, [], max_chars=200000, planned_label="deepseek/model")
     rendered = str(out)

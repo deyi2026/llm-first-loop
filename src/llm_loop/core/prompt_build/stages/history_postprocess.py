@@ -6,6 +6,7 @@ EVO-20260825 任务6.2 视图体积验证（压缩风暴前兆归因）+ P1-10
 对齐）+ P0 压缩风暴熔断 note_build_result。R8.8 evidence manifest
 指纹字段留空（schema 兼容）。sess.history_anchors 就地写（会话持久化）。
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -91,12 +92,8 @@ def run_history_postprocess(
                     {
                         "model": resolved_label,
                         "mode": _boundary_mode,
-                        "protected_messages": int(
-                            _stats.get("cache_protected_messages", 0) or 0
-                        ),
-                        "protected_chars": int(
-                            _stats.get("cache_protected_chars", 0) or 0
-                        ),
+                        "protected_messages": int(_stats.get("cache_protected_messages", 0) or 0),
+                        "protected_chars": int(_stats.get("cache_protected_chars", 0) or 0),
                         "pre_chars": _stats.get("pre_chars"),
                         "post_chars": _stats.get("post_chars"),
                     },
@@ -190,9 +187,7 @@ def run_history_postprocess(
         cache_monitor.note_build_result(
             compacted=out.last_history_compacted,
             anchor_moved=out.anchor_moved,
-            chars_total=provider_visible_chars(
-                sess.messages, provider_id, _view_start
-            ),
+            chars_total=provider_visible_chars(sess.messages, provider_id, _view_start),
             budget=effective_budget,
             session_id=sess.session_id,
             model_ref=resolved_label,

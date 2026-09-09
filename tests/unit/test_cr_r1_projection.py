@@ -6,6 +6,7 @@
 - ⑧ 生产超预算 degraded（WARM 投影超上界 → 仅 HOT 最小包 + degraded=True）
 - 4.2b err1210 parse_aggregated_slots 对 header+slots 聚合条兼容（header 行跳过不破坏拆解）
 """
+
 from llm_loop.cognitive.compiler import (
     ContextTier,
     DecisionPacket,
@@ -19,8 +20,11 @@ LONG_RAW = "A" * 400 + "\n" + "B" * 400  # 800 chars 两行原文
 
 def _render_slot(tier: ContextTier, *, compact: str = "", ref: str | None = None) -> str:
     pkt = DecisionPacket(
-        slots=[TieredSlot(slot_kind="tip", content=LONG_RAW, tier=tier,
-                          evidence_ref=ref, compact_repr=compact)]
+        slots=[
+            TieredSlot(
+                slot_kind="tip", content=LONG_RAW, tier=tier, evidence_ref=ref, compact_repr=compact
+            )
+        ]
     )
     return pkt.render_slots()
 

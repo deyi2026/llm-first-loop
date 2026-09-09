@@ -34,7 +34,9 @@ def test_system_prompt_static():
     assert sp1 == sp2, "system_prompt 两次调用必须字节级一致（含时间戳/计数器即破坏前缀）"
     # 无动态模式: 时间戳、uuid、随机（静态规则文本的历史日期如"2026-08-20 R5 事故复盘"
     # 是固定文本允许——测试防的是动态时间注入破坏前缀，sp1==sp2 已证字节级静态）
-    assert not re.search(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}", sp1), "system_prompt 不得含 ISO/日期时间戳"
+    assert not re.search(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}", sp1), (
+        "system_prompt 不得含 ISO/日期时间戳"
+    )
     assert not re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-", sp1), "system_prompt 不得含 uuid"
     assert not re.search(r"random|uuid|time\.", sp1, re.I), "system_prompt 不得引用动态源"
 
@@ -78,9 +80,12 @@ def test_system_prompt_not_truncated_by_dynamic_injects():
     # 2026-08-20 P2: L0 稳定核心 < max_sys_merge_chars(4000) → 动态合并截断分支结构性不触发
     assert len(sp) < 4000, f"L0 应小于合并上限 4000（现 {len(sp)}）——截断风险结构性消除"
     out = build_history_messages(
-        [_fake_msg("system", "MEM-1: 记忆片段"),
-         _fake_msg("system", "[外部协调·from DSH] 20260816-006 请复核")],
-        sp, max_chars=200000,
+        [
+            _fake_msg("system", "MEM-1: 记忆片段"),
+            _fake_msg("system", "[外部协调·from DSH] 20260816-006 请复核"),
+        ],
+        sp,
+        max_chars=200000,
     )
     # 2026-08-18 对齐 DSH: system 主体纯静态（注入不进主体——转独立 user 消息）
     assert out[0]["role"] == "system"
@@ -96,9 +101,9 @@ def test_prefix_stable_with_and_without_inbox():
     sp = build_system_prompt()
     base_sys = [_fake_msg("system", "MEM-1: 记忆片段")]
     no_inbox = _build_with_system_injects(sp, base_sys)
-    with_inbox = _build_with_system_injects(sp, base_sys + [
-        _fake_msg("system", "[外部协调·from DSH] 20260816-006 请复核")
-    ])
+    with_inbox = _build_with_system_injects(
+        sp, base_sys + [_fake_msg("system", "[外部协调·from DSH] 20260816-006 请复核")]
+    )
     # 2026-08-18 对齐 DSH: system 主体跨会话字节一致（注入不进主体——转 user）
     assert no_inbox == with_inbox == sp, "system 主体静态（有无注入轮完全一致——跨会话命中稳定段）"
 
@@ -172,8 +177,6 @@ def test_head_keep_three_action_compaction():
     )
 
 
-
-
 def test_head_keep_empty_head_groups_degrades_to_full_archive():
     """任务6.3: head_keep 预算过小（首组即超）→ head 保留组为空 → 自动降级
     head_keep=0 全量归档（锚点前移式，前缀重建一轮）——归档仍发生、信息零丢失."""
@@ -196,7 +199,6 @@ def test_head_keep_empty_head_groups_degrades_to_full_archive():
     )
     assert len(archived) > 0, "head 保留组为空时应全量归档（信息零丢失）"
     assert box and box[0] > 0, "降级 head_keep=0 语义 → 锚点前移（历史真正缩小）"
-
 
 
 def _make_pairs(n: int, body: str = "x" * 1000) -> list[Message]:

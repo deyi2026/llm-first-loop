@@ -17,9 +17,7 @@ _ADJUST_STRATEGY_TOOL_DEF: dict[str, Any] = {
     "description": "调整后续循环策略参数（白名单: max_iterations/timeout_s/history_budget）。何时用: 发现循环参数不合理时（异常率偏高/停滞/预算占用逼近上限，可先经 architecture_status 自查）。何时不用: 需要重试失败工具用 retry_tool；需重载配置用 refresh_config。失败对策: 参数非法/超出全局硬上限（500）会如实返回失败原因，请按引导更正参数。不可修改安全边界配置。",
     "parameters": {
         "type": "object",
-        "properties": {
-            "strategy": {"type": "object", "description": "要调整的参数 dict"}
-        },
+        "properties": {"strategy": {"type": "object", "description": "要调整的参数 dict"}},
         "required": ["strategy"],
     },
 }

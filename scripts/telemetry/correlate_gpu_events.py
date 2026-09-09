@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Correlate prompt-neutral GPU JSONL samples with LFL request/tool event timing."""
+
 from __future__ import annotations
 
 import argparse

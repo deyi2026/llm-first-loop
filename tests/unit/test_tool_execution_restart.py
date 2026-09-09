@@ -67,9 +67,7 @@ def test_started_not_finished_recovers_as_unknown_and_never_reexecutes(tmp_path)
     h = _Harness(tmp_path)
     call = ToolCall(id="call-started", name="execute_command", arguments={"command": "echo x"})
     sess, execution_id = _session_with_decl(h, call)
-    h._tool_execution_started(
-        sess.session_id, execution_id=execution_id, round_no=1, call=call
-    )
+    h._tool_execution_started(sess.session_id, execution_id=execution_id, round_no=1, call=call)
 
     assert h._recover_inflight_tool_executions(sess.session_id, sess) == 1
     receipt = _receipts(sess, call.id)[0]
@@ -82,9 +80,7 @@ def test_finished_without_receipt_restores_exact_tool_message_from_sidecar(tmp_p
     h = _Harness(tmp_path)
     call = ToolCall(id="call-finished", name="read_file", arguments={"path": "x"})
     sess, execution_id = _session_with_decl(h, call)
-    h._tool_execution_started(
-        sess.session_id, execution_id=execution_id, round_no=1, call=call
-    )
+    h._tool_execution_started(sess.session_id, execution_id=execution_id, round_no=1, call=call)
     expected = Message(
         role="tool",
         content="[状态: success] EXACT-RESULT",
@@ -126,9 +122,7 @@ def test_existing_receipt_only_settles_wal_and_is_not_duplicated(tmp_path) -> No
     h = _Harness(tmp_path)
     call = ToolCall(id="call-existing", name="read_file", arguments={"path": "x"})
     sess, execution_id = _session_with_decl(h, call)
-    h._tool_execution_started(
-        sess.session_id, execution_id=execution_id, round_no=1, call=call
-    )
+    h._tool_execution_started(sess.session_id, execution_id=execution_id, round_no=1, call=call)
     receipt = Message(
         role="tool",
         content="[状态: success] ALREADY-DURABLE",
@@ -199,9 +193,7 @@ def test_real_engine_recovers_unknown_execution_before_new_user_message(
     sid = engine.session.create()
     sess = engine.session.load(sid)
     sess.messages.append(Message(role="user", content="OLD", source=MessageSource.USER))
-    call = ToolCall(
-        id="call-crash", name="execute_command", arguments={"command": "side-effect"}
-    )
+    call = ToolCall(id="call-crash", name="execute_command", arguments={"command": "side-effect"})
     sess.messages.append(_assistant_decl(call))
     engine.session.save(sess)
     execution_id = engine._tool_execution_declared(sess, call, round_no=1)  # noqa: SLF001
@@ -272,9 +264,7 @@ def test_wal_started_write_failure_prevents_tool_execution(
 
     assert result.final_answer == "SAFE-FINAL"
     assert probe.count == 0
-    tool_messages = [
-        m for m in fake.calls[-1]["messages"] if m.get("role") == "tool"
-    ]
+    tool_messages = [m for m in fake.calls[-1]["messages"] if m.get("role") == "tool"]
     assert tool_messages
     assert "wal_start_not_durable" in tool_messages[-1]["content"]
 

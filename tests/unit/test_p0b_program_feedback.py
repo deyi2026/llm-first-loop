@@ -6,6 +6,7 @@
 - B2 build 协议边界（提交视图移除故障细节但保留 assistant role，存储原文不动）
 - B3 extractor 过滤（程序反馈不进长期记忆提取）
 """
+
 from pathlib import Path
 
 from llm_loop.core.message import Message, MessageSource
@@ -41,9 +42,15 @@ def test_b3_extractor_filters():
     ex = object.__new__(MemoryExtractor)  # 纯方法，无状态依赖
     msgs = [
         Message(role="user", content="继续", source=MessageSource.USER),
-        Message(role="assistant", content="[LLM 调用异常] 事实: 调用失败。", source=MessageSource.USER),
+        Message(
+            role="assistant", content="[LLM 调用异常] 事实: 调用失败。", source=MessageSource.USER
+        ),
         Message(role="assistant", content="正常回答：结论 X。", source=MessageSource.USER),
-        Message(role="user", content="[上下文压缩] 这是 user 角色同前缀文本（不应过滤）", source=MessageSource.USER),
+        Message(
+            role="user",
+            content="[上下文压缩] 这是 user 角色同前缀文本（不应过滤）",
+            source=MessageSource.USER,
+        ),
     ]
     text = ex._build_history_text(msgs)
     assert "LLM 调用异常" not in text  # assistant 程序反馈被滤
@@ -69,12 +76,11 @@ def test_b2_projection_uses_constant_protocol_boundary_and_storage_untouched(tmp
         ]
     )
     engine._run_state().current_turn_ref = 2
-    built = engine._build_llm_messages(
-        sess, [], max_chars=200_000, planned_label="zhipu/glm-5"
-    )
+    built = engine._build_llm_messages(sess, [], max_chars=200_000, planned_label="zhipu/glm-5")
     assert "SECRET-OLD-FAULT-DETAIL" not in str(built)
     idx = next(
-        i for i, d in enumerate(built)
+        i
+        for i, d in enumerate(built)
         if d.get("role") == "assistant" and d.get("content") == PROGRAM_FINAL_PROTOCOL_BOUNDARY
     )
     assert built[idx - 1]["role"] == "user"
@@ -97,9 +103,7 @@ def test_b2_metadata_program_origin_projects_same_constant_boundary(tmp_path: Pa
             metadata={"answer_origin": "program", "run_end_reason": "llm_error"},
         )
     )
-    built = engine._build_llm_messages(
-        sess, [], max_chars=200_000, planned_label="zhipu/glm-5"
-    )
+    built = engine._build_llm_messages(sess, [], max_chars=200_000, planned_label="zhipu/glm-5")
     assert "DYNAMIC-PROGRAM-DETAIL-WITHOUT-LEGACY-PREFIX" not in str(built)
     assert any(d.get("content") == PROGRAM_FINAL_PROTOCOL_BOUNDARY for d in built)
     assert sess.messages[-1].content == "DYNAMIC-PROGRAM-DETAIL-WITHOUT-LEGACY-PREFIX"

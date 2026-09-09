@@ -21,14 +21,22 @@ def _full_resp(content: str) -> LLMResponse:
 
 def test_truncated_skips_declaration_check(build_test_engine, fake_settings):
     """truncated=True（回答被截断）时不执行声明-回执校验，不注入 [声明提醒]."""
-    engine, _ = build_test_engine([_truncated_resp("## 🆕 最新项目\n- **rocinante** 本地模型编码 agent")])
+    engine, _ = build_test_engine(
+        [_truncated_resp("## 🆕 最新项目\n- **rocinante** 本地模型编码 agent")]
+    )
     sid = engine.session.create()
     # 预置一条 tool 回执（声明提到 rocinante 但回执无 → 若不跳过会误报）
     from llm_loop.core.message import Message, MessageSource
 
     sess = engine.session.load(sid)
     sess.messages.append(
-        Message(role="tool", content="[状态: success] 无关回执", source=MessageSource.TOOL, tool_call_id="c1", tool_name="architecture_status")
+        Message(
+            role="tool",
+            content="[状态: success] 无关回执",
+            source=MessageSource.TOOL,
+            tool_call_id="c1",
+            tool_name="architecture_status",
+        )
     )
     engine.session.save(sess)
     result = engine.run(sid, "请调研最新项目")
@@ -47,7 +55,13 @@ def test_not_truncated_keeps_declaration_check(build_test_engine, fake_settings)
 
     sess = engine.session.load(sid)
     sess.messages.append(
-        Message(role="tool", content="[状态: success] 无关回执", source=MessageSource.TOOL, tool_call_id="c1", tool_name="architecture_status")
+        Message(
+            role="tool",
+            content="[状态: success] 无关回执",
+            source=MessageSource.TOOL,
+            tool_call_id="c1",
+            tool_name="architecture_status",
+        )
     )
     engine.session.save(sess)
     result = engine.run(sid, "请完成任务")
@@ -94,6 +108,7 @@ def test_guidance_disabled():
     )
     msg = tool_result_to_message(result, failure_guidance_enabled=False)
     assert "建议" not in msg.content
+
 
 def test_declaration_discrepancy_is_result_only_not_prompt_history(build_test_engine):
     engine, _ = build_test_engine([_full_resp("我已完成全部任务。")])

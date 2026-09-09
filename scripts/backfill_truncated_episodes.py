@@ -57,15 +57,17 @@ def main() -> int:
     event_store = EventStore(args.event_logs_dir)
     episode_store = EpisodeStore(args.episodes_dir)
 
-    report = backfill_truncated_runs(
-        episode_store, event_store, sids, dry_run=not args.apply
-    )
+    report = backfill_truncated_runs(episode_store, event_store, sids, dry_run=not args.apply)
     mode = "APPLY" if args.apply else "DRY-RUN"
-    print(f"[{mode}] sessions={report['sessions']} runs_seen={report['runs_seen']} "
-          f"written={report['written']} deduped={report['deduped']} "
-          f"would_write={report['would_write']} errors={report['errors']}")
+    print(
+        f"[{mode}] sessions={report['sessions']} runs_seen={report['runs_seen']} "
+        f"written={report['written']} deduped={report['deduped']} "
+        f"would_write={report['would_write']} errors={report['errors']}"
+    )
     for d in report["details"]:
-        print(f"  {d['session_id']}: seen={d['seen']} written={d['written']} deduped={d['deduped']}")
+        print(
+            f"  {d['session_id']}: seen={d['seen']} written={d['written']} deduped={d['deduped']}"
+        )
     print(json.dumps({k: v for k, v in report.items() if k != "details"}, ensure_ascii=False))
     return 0 if report["errors"] == 0 else 1
 

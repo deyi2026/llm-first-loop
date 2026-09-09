@@ -16,10 +16,13 @@ def _schema(**kw):
 def test_valid_passes():
     """参数合法: valid=True 放行."""
     layer = PreCheckLayer()
-    r = layer.check({"timeout_s": 30, "name": "x"}, _schema(
-        properties={"timeout_s": {"type": "integer"}, "name": {"type": "string"}},
-        required=["name"],
-    ))
+    r = layer.check(
+        {"timeout_s": 30, "name": "x"},
+        _schema(
+            properties={"timeout_s": {"type": "integer"}, "name": {"type": "string"}},
+            required=["name"],
+        ),
+    )
     assert r.valid is True
     assert r.errors == ()
 
@@ -40,9 +43,7 @@ def test_type_error_field_level():
 def test_required_missing():
     """必填缺失: 字段 'X' required but missing."""
     layer = PreCheckLayer()
-    r = layer.check({}, _schema(
-        properties={"name": {"type": "string"}}, required=["name"]
-    ))
+    r = layer.check({}, _schema(properties={"name": {"type": "string"}}, required=["name"]))
     assert r.valid is False
     assert any("required but missing" in e.message and "name" in e.field_path for e in r.errors)
 
@@ -50,17 +51,23 @@ def test_required_missing():
 def test_enum_invalid():
     """枚举非法: value not in enum."""
     layer = PreCheckLayer()
-    r = layer.check({"mode": "bad"}, _schema(properties={"mode": {"type": "string", "enum": ["a", "b"]}}))
+    r = layer.check(
+        {"mode": "bad"}, _schema(properties={"mode": {"type": "string", "enum": ["a", "b"]}})
+    )
     assert r.valid is False
     assert any("not in enum" in e.message and "mode" in e.field_path for e in r.errors)
 
 
 def test_nested_path_location():
     """嵌套错误路径: steps[2].executor."""
-    schema = _schema(properties={
-        "steps": {"type": "array", "items": {"type": "object",
-                 "properties": {"executor": {"type": "string"}}}}
-    })
+    schema = _schema(
+        properties={
+            "steps": {
+                "type": "array",
+                "items": {"type": "object", "properties": {"executor": {"type": "string"}}},
+            }
+        }
+    )
     layer = PreCheckLayer()
     r = layer.check({"steps": [{"executor": "ok"}, {"executor": "ok2"}, {"executor": 123}]}, schema)
     assert r.valid is False
@@ -78,7 +85,10 @@ def test_internal_error_fail_open():
     """校验异常: fail-open 放行."""
     layer = PreCheckLayer()
     # schema 含异常结构（type 非标准）→ 未知类型放行
-    assert layer.check({"x": 1}, {"type": "object", "properties": {"x": {"type": "weird"}}}).valid is True
+    assert (
+        layer.check({"x": 1}, {"type": "object", "properties": {"x": {"type": "weird"}}}).valid
+        is True
+    )
 
 
 def test_depth_limit():
@@ -86,7 +96,21 @@ def test_depth_limit():
     layer = PreCheckLayer(max_depth=3)
     # 构造深嵌套: a{b{c{d{e}}}} = 5 层 > 3
     deep = {"a": {"b": {"c": {"d": {"e": 1}}}}}
-    schema = _schema(properties={"a": _schema(properties={"b": _schema(properties={"c": _schema(properties={"d": _schema(properties={"e": {"type": "integer"}})})})})})
+    schema = _schema(
+        properties={
+            "a": _schema(
+                properties={
+                    "b": _schema(
+                        properties={
+                            "c": _schema(
+                                properties={"d": _schema(properties={"e": {"type": "integer"}})}
+                            )
+                        }
+                    )
+                }
+            )
+        }
+    )
     r = layer.check(deep, schema)
     assert r.valid is False
     assert any("深度超限" in e.message for e in r.errors)
@@ -95,10 +119,12 @@ def test_depth_limit():
 def test_event_store_on_failure():
     """预检失败事件落盘（payload 含字段错误摘要，不含参数明文）."""
     events = []
+
     class _Store:
         def append(self, sid, etype, payload):
             events.append((etype, payload))
             return None
+
     layer = PreCheckLayer(event_store=_Store(), session_id="s1")
     r = layer.check({"timeout_s": "abc"}, _schema(properties={"timeout_s": {"type": "integer"}}))
     assert r.valid is False
@@ -112,8 +138,17 @@ def test_event_store_on_failure():
 def test_latency_under_50ms():
     """单次校验时延 < 50ms."""
     layer = PreCheckLayer()
-    schema = _schema(properties={"items": {"type": "array", "items": {"type": "object",
-                "properties": {"id": {"type": "integer"}, "name": {"type": "string"}}}}})
+    schema = _schema(
+        properties={
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"id": {"type": "integer"}, "name": {"type": "string"}},
+                },
+            }
+        }
+    )
     args = {"items": [{"id": i, "name": f"n{i}"} for i in range(50)]}
     start = time.perf_counter()
     for _ in range(20):

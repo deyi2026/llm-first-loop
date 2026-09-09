@@ -105,9 +105,7 @@ def test_approval_audit_records_decision(tmp_path):
     _reg_execute(reg, args={"command": "ls -la"})
     reg.set_approval_callback(lambda n, s: False)
     _reg_execute(reg, args={"command": "rm x"})
-    lines = [
-        line for line in audit.read_text(encoding="utf-8").splitlines() if line.strip()
-    ]
+    lines = [line for line in audit.read_text(encoding="utf-8").splitlines() if line.strip()]
     recs = [json.loads(line) for line in lines]
     assert [r["decision"] for r in recs] == ["approved", "rejected"]
     assert recs[0]["tool"] == "execute_command"

@@ -232,11 +232,7 @@ def test_generation_release_and_terminal_share_spawn_generation(tmp_path) -> Non
     _wait_terminal(runner, "parent-seq", child_id)
     events = store.event_store
     assert events is not None
-    topology = [
-        event
-        for event in events.read(child_id)
-        if event.type.startswith("subagent.")
-    ]
+    topology = [event for event in events.read(child_id) if event.type.startswith("subagent.")]
     assert [event.type for event in topology] == [
         "subagent.linked",
         "subagent.generation.started",

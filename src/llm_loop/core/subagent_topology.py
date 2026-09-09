@@ -88,7 +88,9 @@ class SubAgentTopologyJournal:
                         child_id=child_id,
                         parent_id=parent_id or (state.parent_id if state else ""),
                         generation=generation,
-                        depth=depth if payload.get("depth") is not None else (state.depth if state else 0),
+                        depth=depth
+                        if payload.get("depth") is not None
+                        else (state.depth if state else 0),
                         owner_id=str(payload.get("owner_id") or ""),
                         generation_started=True,
                         last_seq=seq,

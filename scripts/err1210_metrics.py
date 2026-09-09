@@ -227,9 +227,8 @@ def _row_tail_user_run(row: dict) -> int:
     return n
 
 
-
 def _load_exceptions(data_dir: Path, as_of: datetime | None) -> list[dict]:
-    """exception_log.jsonl 中 code=1210 的 LLMHTTPError 记录（UTC → 本地）. """
+    """exception_log.jsonl 中 code=1210 的 LLMHTTPError 记录（UTC → 本地）."""
     audit = data_dir / "audit"
     out: list[dict] = []
     p = audit / "exception_log.jsonl"
@@ -398,7 +397,10 @@ def _retry_ledger(triggers: list[dict], defer_rows: list[dict]) -> dict:
     exhausted_sessions: set[tuple[str, str]] = set()
     for t in triggers:
         for d in by_sess_event.get((t["session_id"], "defer_exhausted"), []):
-            if abs((d["_local"] - _local_naive(t["ts"])).total_seconds()) <= _RETRY_FOOTPRINT_WINDOW_S:
+            if (
+                abs((d["_local"] - _local_naive(t["ts"])).total_seconds())
+                <= _RETRY_FOOTPRINT_WINDOW_S
+            ):
                 exhausted_sessions.add((t["session_id"], t["ts"]))
                 break
     no_retry = [
@@ -449,9 +451,7 @@ def _defer_ledger(defer_rows: list[dict]) -> dict:
         {
             "session_id": sid,
             "slot_kind": slot,
-            "unreplayed": max(
-                0, v["defer_stored"] - v["defer_dropped"] - v["defer_replayed"]
-            ),
+            "unreplayed": max(0, v["defer_stored"] - v["defer_dropped"] - v["defer_replayed"]),
         }
         for (sid, slot), v in per_slot.items()
         if v["defer_stored"] - v["defer_dropped"] - v["defer_replayed"] > 0
@@ -511,14 +511,24 @@ def compute_metrics(data_dir: str | Path, as_of: str | None = None) -> dict:
         "generated_at": datetime.now(_LOCAL_TZ).strftime("%Y-%m-%dT%H:%M:%S%z"),
         "timezone_note": "EventStore/exception_log 按 ISO offset→本地；payload_trace/defer_trace 本地；归因窗口±6s",
         "inputs": {
-            "exception_log": {"rows_1210": len(excs), "unattributable": len(attrib["unattributed"])},
-            "payload_trace_files": [str(p.relative_to(base)) for p in sorted((base / "audit").glob("payload_trace*.jsonl"))],
+            "exception_log": {
+                "rows_1210": len(excs),
+                "unattributable": len(attrib["unattributed"]),
+            },
+            "payload_trace_files": [
+                str(p.relative_to(base))
+                for p in sorted((base / "audit").glob("payload_trace*.jsonl"))
+            ],
             "payload_trace_rows": len(payload_rows),
             "causal_request_rows": len(causal_rows),
             "legacy_payload_rows_used": legacy_rows_used,
             "request_rows_total": len(request_rows),
             "request_source_mode": (
-                "hybrid" if causal_rows and legacy_rows_used else "causal" if causal_rows else "legacy"
+                "hybrid"
+                if causal_rows and legacy_rows_used
+                else "causal"
+                if causal_rows
+                else "legacy"
             ),
             "defer_trace_rows": len(defer_rows),
         },

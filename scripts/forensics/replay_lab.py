@@ -116,16 +116,11 @@ def _scenario_interop_legacy_tail(sb: _Sandbox, sample: str) -> str:
     build 期以 system→user 角色转换进 provider 视图尾部；全程零
     sess.messages.append（对 interop.py 历史 tail 链路的语义复刻）。
     """
-    _tail: list[Message] = [
-        Message(role="system", content=sample, source=MessageSource.SYSTEM)
-    ]
+    _tail: list[Message] = [Message(role="system", content=sample, source=MessageSource.SYSTEM)]
     view_tail = [
-        {"role": "user", "content": m.content, "metadata": {"interop_tail": True}}
-        for m in _tail
+        {"role": "user", "content": m.content, "metadata": {"interop_tail": True}} for m in _tail
     ]  # 视图转换（历史 build.py:1077-1124 语义）；不触发 _persist_e1_form
-    sb.events.append(
-        {"type": "interop.view_only", "payload": {"tail_count": len(view_tail)}}
-    )
+    sb.events.append({"type": "interop.view_only", "payload": {"tail_count": len(view_tail)}})
     return "interop 历史 tail 链路：仅 provider 视图转换，零 session 落盘"
 
 
@@ -142,7 +137,10 @@ def _scenario_err1210_defer_residual(sb: _Sandbox, sample: str) -> str:
     retired = len(legacy_tail)
     legacy_tail.clear()
     sb.events.append(
-        {"type": "interop.external_input", "payload": {"action": "legacy_defer_retired", "count": retired}}
+        {
+            "type": "interop.external_input",
+            "payload": {"action": "legacy_defer_retired", "count": retired},
+        }
     )
     return "err1210 defer 残留：重放即被清退（观测事件 only），零 session 落盘"
 
@@ -178,11 +176,7 @@ def replay_candidate_path(
     basis = str(SCENARIOS[candidate](sb, sample))  # type: ignore[operator]
 
     user_msgs = [m for m in sb.sess.messages if m.role == "user"]
-    mislabeled = [
-        m
-        for m in user_msgs
-        if (m.metadata or {}).get("program_origin") is False
-    ]
+    mislabeled = [m for m in user_msgs if (m.metadata or {}).get("program_origin") is False]
     with_signature = [m for m in mislabeled if content_has_trace_signature(m.content)]
     # 条件4：沙箱剧本不经任何外部通道（无 feishu/web 注入路径）
     via_external_channel = False

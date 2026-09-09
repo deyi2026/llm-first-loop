@@ -47,10 +47,24 @@ def test_run_mode_minimal_hides_peripheral(tmp_path):
 
     engine = build_engine(_settings(tmp_path, "minimal"))
     names = _registered_names(engine)
-    for hidden in ("web_fetch", "web_search", "send_feishu_message", "playwright_test", "record_skill"):
+    for hidden in (
+        "web_fetch",
+        "web_search",
+        "send_feishu_message",
+        "playwright_test",
+        "record_skill",
+    ):
         assert hidden not in names, f"{hidden} 应在 minimal 下隐藏"
-    for keep in ("read_file", "edit_file", "execute_command", "architecture_status",
-                 "search_records", "event_stream", "search_docs", "adjust_strategy"):
+    for keep in (
+        "read_file",
+        "edit_file",
+        "execute_command",
+        "architecture_status",
+        "search_records",
+        "event_stream",
+        "search_docs",
+        "adjust_strategy",
+    ):
         assert keep in names, f"{keep} 应在 minimal 下保留"
 
 

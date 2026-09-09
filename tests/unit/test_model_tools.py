@@ -83,7 +83,9 @@ class _FakeLLM:
     def __init__(self, model: str = "deepseek-v4-flash") -> None:
         self.model = model
         self.max_tokens: int | None = None
-        self.wire_protocol: str = "openai"  # P3-5 对齐 LLMClient 新字段  # 2026-08-15: 对齐 LLMClient 新装配字段
+        self.wire_protocol: str = (
+            "openai"  # P3-5 对齐 LLMClient 新字段  # 2026-08-15: 对齐 LLMClient 新装配字段
+        )
         self.timeout_s = 120.0
         self.thinking_mode = True
         self.reasoning_effort = "high"
@@ -93,8 +95,10 @@ class _FakeLLM:
         raise AssertionError("FakeLLM.chat should not be called in M48 unit tests")
 
 
-def _build_pool(settings: Settings, *, providers: ProviderRegistry | None = None) -> ModelClientPool:
-    """构造测试用 ModelClientPool（FakeLLM 作 default_client; providers 可外部注入）. """
+def _build_pool(
+    settings: Settings, *, providers: ProviderRegistry | None = None
+) -> ModelClientPool:
+    """构造测试用 ModelClientPool（FakeLLM 作 default_client; providers 可外部注入）."""
     if providers is None:
         providers = load_registry(settings)
     return ModelClientPool(registry=providers, default_client=_FakeLLM(settings.llm_model))  # type: ignore[arg-type]
@@ -120,7 +124,9 @@ def _build_corrections(ctx: CorrectionContext, audit_dir) -> CorrectionToolRegis
 
 def test_model_catalog_tool_def_registered() -> None:
     """tool_defs() 含 model_catalog / switch_model schema（M48 工具注册可见）."""
-    reg = _build_corrections(_build_ctx(), None if False else __import__("pathlib").Path("/tmp/m48-test-audit"))
+    reg = _build_corrections(
+        _build_ctx(), None if False else __import__("pathlib").Path("/tmp/m48-test-audit")
+    )
     names = [td["name"] for td in reg.tool_defs()]
     assert "model_catalog" in names
     assert "switch_model" in names
@@ -275,7 +281,9 @@ def test_switch_model_active_binding_uses_session_getter_for_from_label(
     assert "deepseek/deepseek-v4-pro → default" not in result.content
 
 
-def test_switch_model_success_writes_session_and_audit(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_switch_model_success_writes_session_and_audit(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """成功路径: override 落会话 + 审计记录 + 回执文案含 from→to + reasoning 能力标注."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "real-key")
     settings = _settings(model_providers_raw=_TWO_PROVIDER_JSON)
@@ -334,7 +342,9 @@ def test_switch_model_success_writes_session_and_audit(tmp_path, monkeypatch: py
     assert record["arguments"]["reason"] == "需要更强推理"
 
 
-def test_switch_model_cross_provider_thinking_note(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_switch_model_cross_provider_thinking_note(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """跨 provider 切换 + thinking_supported 能力标注（不声称本次一定发送）."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "real-key")
     settings = _settings(model_providers_raw=_TWO_PROVIDER_JSON)
@@ -477,7 +487,9 @@ def test_switch_model_unknown_model_truthful(tmp_path, monkeypatch: pytest.Monke
     assert sess_model_override_holder["value"] == "deepseek/deepseek-v4-pro"
 
 
-def test_switch_model_ambiguous_bare_name_truthful(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_switch_model_ambiguous_bare_name_truthful(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """裸名跨 provider 歧义 → 如实回执."""
     raw = json.dumps(
         {
@@ -814,7 +826,9 @@ def test_session_to_dict_includes_override(tmp_path) -> None:
 # ── 端到端: 注册表 + 工具 + 池 + 会话 (集成风格) ──
 
 
-def test_end_to_end_catalog_then_switch_then_persist(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_end_to_end_catalog_then_switch_then_persist(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """端到端: catalog 查目录 → switch 切模型 → 会话持久化 → 重载仍在."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "real-key")
     settings = _settings(model_providers_raw=_TWO_PROVIDER_JSON)
@@ -925,7 +939,9 @@ def test_corrections_execute_dispatch_model_catalog(tmp_path) -> None:
     assert "deepseek" in result.content
 
 
-def test_corrections_execute_dispatch_switch_model(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_corrections_execute_dispatch_switch_model(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """CorrectionToolRegistry.execute('switch_model', ...) 端到端通 + 审计."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "real-key")
     settings = _settings(model_providers_raw=_TWO_PROVIDER_JSON)
@@ -938,9 +954,7 @@ def test_corrections_execute_dispatch_switch_model(tmp_path, monkeypatch: pytest
     ctx.session_model_override = None
     ctx.session_set_override = lambda v: None
 
-    result = reg.execute(
-        "switch_model", {"model": "deepseek-v4-pro", "reason": "dispatch 测试"}
-    )
+    result = reg.execute("switch_model", {"model": "deepseek-v4-pro", "reason": "dispatch 测试"})
     assert result.status.value == "success"
     # 审计
     log = audit_dir / "self_correction_log.jsonl"

@@ -55,7 +55,10 @@ def test_upload_docx_ok(build_test_engine, fake_settings):
 
     bio = io.BytesIO()
     with zipfile.ZipFile(bio, "w") as zf:
-        zf.writestr("word/document.xml", "<w:document><w:body><w:p><w:r><w:t>docx内容</w:t></w:r></w:p></w:body></w:document>")
+        zf.writestr(
+            "word/document.xml",
+            "<w:document><w:body><w:p><w:r><w:t>docx内容</w:t></w:r></w:p></w:body></w:document>",
+        )
     resp = _upload(client, "test.docx", bio.getvalue())
     assert resp.status_code == 200
     body = resp.json()

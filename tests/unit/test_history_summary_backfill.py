@@ -3,6 +3,7 @@
 验证: SUMMARY_MODE!=off 时, _archive_sink 压缩另存后自动回填档案语义摘要,
 且不注入当前上下文、不丢原文、可经 search_archive(with_summary=true) 检索。
 """
+
 import tempfile
 
 from llm_loop.core.loop.engine_services.archive import ArchiveService
@@ -15,6 +16,7 @@ class _FakeSummarizer(Summarizer):
 
     def summarize(self, text: str, truncated: bool = False):
         from llm_loop.memory.summarize import SummaryResult
+
         return SummaryResult(
             summary=f"[FAKE-SUM] {text[:50]}",
             source="fake",
@@ -23,7 +25,7 @@ class _FakeSummarizer(Summarizer):
 
 
 def test_archive_backfill_summary_in_rule_boundary():
-    """压缩档案自动回填语义摘要（off 模式跳过, async 回填占位+后台）. """
+    """压缩档案自动回填语义摘要（off 模式跳过, async 回填占位+后台）."""
     with tempfile.TemporaryDirectory() as td:
         store = ArchiveStore(td)
         # mode=off: 不应触发摘要回填
@@ -52,7 +54,9 @@ def test_engine_archive_sink_skips_when_off():
     engine.session = MagicMock()
 
     with patch.object(engine.summarizer, "summarize_archive") as mock_sum:
-        engine._archive_sink("s1", Message(role="user", content="hello world" * 20, source=MessageSource.USER))
+        engine._archive_sink(
+            "s1", Message(role="user", content="hello world" * 20, source=MessageSource.USER)
+        )
         mock_sum.assert_not_called()
 
 
@@ -70,7 +74,9 @@ def test_engine_archive_sink_backfills_when_sync():
     engine.session = MagicMock()
 
     with patch.object(engine.summarizer, "summarize_archive") as mock_sum:
-        engine._archive_sink("s1", Message(role="user", content="hello world" * 20, source=MessageSource.USER))
+        engine._archive_sink(
+            "s1", Message(role="user", content="hello world" * 20, source=MessageSource.USER)
+        )
         mock_sum.assert_called_once()
         # 传入的是已归档 entry.id
         entry_id = mock_sum.call_args[0][0]

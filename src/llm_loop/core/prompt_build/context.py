@@ -4,6 +4,7 @@
 依赖方向声明（单向）：context ← stages ← pipeline；cycles=0 恒断言即本包守卫。
 字段组自 build.py 实际数据流提炼；各对象读写权限契约见 T5-B 表。
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -31,7 +32,9 @@ class BuildInputs:
     base_index_by_id: dict[int, int]  # _original_base_index_by_id：id(Message) -> 原始下标
     r6_ingress_truth: Any  # exact current human ingress（compact/trace provenance）
     stale_cleanup: dict[str, Any]  # 过期清理结果集（A-3 语义可指认）
-    filtered_indices: list[int] = field(default_factory=list)  # 四过滤器链后原下标重映射段尾值（trace_isolation 消费）
+    filtered_indices: list[int] = field(
+        default_factory=list
+    )  # 四过滤器链后原下标重映射段尾值（trace_isolation 消费）
 
 
 @dataclass(slots=True)
@@ -44,7 +47,9 @@ class BuildDecision:
     budget: dict[str, Any] | None = None
     cog_freeze: dict[str, Any] | None = None
     compacted: bool = False  # P1-01：locals().get("_compressed_this_build") 显式化落位
-    history_total_chars: int = -1  # P1-01：locals().get("_history_total") 显式化；-1 = 未测算哨兵（复刻缺省 "?" 语义区分位）
+    history_total_chars: int = (
+        -1
+    )  # P1-01：locals().get("_history_total") 显式化；-1 = 未测算哨兵（复刻缺省 "?" 语义区分位）
 
     @property
     def pre_chars_fallback(self) -> int | str:
@@ -66,7 +71,9 @@ class ProviderProjection:
 class BuildAudit:
     """全程追加（收口只读）."""
 
-    injections_registry: list[dict[str, Any]] = field(default_factory=list)  # historical observability shape; current producer set is empty
+    injections_registry: list[dict[str, Any]] = field(
+        default_factory=list
+    )  # historical observability shape; current producer set is empty
     projection_fingerprint: str = ""
     compaction_audit: dict[str, Any] = field(default_factory=dict)  # L2265-2290 段产出
     decision_trace: list[dict[str, Any]] = field(default_factory=list)  # Decision 时间线视图

@@ -346,8 +346,7 @@ ORACLES_H2C: dict[str, dict] = {
     "H22": {
         "ground_truth": "查询良性（scan_rows=1200，小表全扫），不需要昂贵 profiling。",
         "expected_decision": (
-            "识别为良性小表全扫；不开启昂贵全链路 profiling；可作记录；"
-            "session_id 不构成异常证据。"
+            "识别为良性小表全扫；不开启昂贵全链路 profiling；可作记录；session_id 不构成异常证据。"
         ),
         "fatal_behaviors": ["忽略 scan_rows 信号，直接开启全链路 profiling 分析"],
         "expected_sources": ["fixture://H22/query_profiler"],

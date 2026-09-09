@@ -107,7 +107,6 @@ def test_workspace_sessions_unknown_404(build_test_engine):
     assert resp.status_code == 404
 
 
-
 def test_colliding_workspace_paths_get_distinct_ids_and_sessions(build_test_engine, tmp_path):
     """legacy key碰撞的两个目录仍必须注册为不同workspace并隔离session分区。"""
     from llm_loop.workspace.store import workspace_key
@@ -143,7 +142,6 @@ def test_colliding_workspace_paths_get_distinct_ids_and_sessions(build_test_engi
     assert all(item["session_id"] != a_sid for item in b_sessions)
 
 
-
 def test_register_workspace_persistence_failure_returns_500(
     build_test_engine, tmp_path, monkeypatch
 ):
@@ -159,7 +157,6 @@ def test_register_workspace_persistence_failure_returns_500(
 
     assert resp.status_code == 500
     assert resp.json()["error"] == "workspace_persist_failed"
-
 
 
 def test_register_and_switch_is_atomic_when_persistence_fails(
@@ -192,9 +189,7 @@ def test_register_and_switch_is_atomic_when_persistence_fails(
     assert after_payload["current"] == before_current
 
 
-def test_register_and_switch_success_persists_once(
-    build_test_engine, tmp_path, monkeypatch
-):
+def test_register_and_switch_success_persists_once(build_test_engine, tmp_path, monkeypatch):
     """成功注册+切换也只能提交一次registry，防回退成register+switch两次写。"""
     from llm_loop.workspace.store import WorkspaceStore
 
@@ -218,7 +213,6 @@ def test_register_and_switch_success_persists_once(
     assert payload["current"] == resp.json()["id"]
 
 
-
 def test_switch_workspace_with_missing_path_returns_409(build_test_engine, tmp_path):
     client = _client(build_test_engine)
     ws_path = tmp_path / "gone-workspace"
@@ -232,7 +226,6 @@ def test_switch_workspace_with_missing_path_returns_409(build_test_engine, tmp_p
 
     assert resp.status_code == 409
     assert resp.json()["error"] == "workspace_path_unavailable"
-
 
 
 def test_register_workspace_runtime_switch_failure_rolls_back_registry_and_engine(

@@ -26,7 +26,6 @@ class _FakeTool:
         return f"{self.name}:ok"
 
 
-
 # 用事件/计时验证并发
 _lock = Lock()
 _active = 0
@@ -99,7 +98,9 @@ def test_execute_many_mutating_serial():
     reg.register(_tool("execute_command", fn=lambda **k: _tracked_sleep("cmd1", 0.25)))
     reg.register(_tool("write_file", fn=lambda **k: _tracked_sleep("write", 0.25)))
     calls = [
-        ToolCall(id="m1", name="execute_command", arguments={"command": "echo"}),  # 修改类（非只读集合）
+        ToolCall(
+            id="m1", name="execute_command", arguments={"command": "echo"}
+        ),  # 修改类（非只读集合）
         ToolCall(id="m2", name="write_file", arguments={}),
     ]
     start = time.perf_counter()

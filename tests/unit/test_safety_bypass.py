@@ -78,15 +78,15 @@ def test_sh_c_curl_pipe_blocked():
 
 # ── python -c 载荷绕过 ──
 def test_python_c_rmtree_blocked():
-    assert _blocked('python -c "import shutil; shutil.rmtree(\'/home/x\')"')
+    assert _blocked("python -c \"import shutil; shutil.rmtree('/home/x')\"")
 
 
 def test_python_c_os_remove_etc_blocked():
-    assert _blocked('python3 -c "import os; os.remove(\'/etc/passwd\')"')
+    assert _blocked("python3 -c \"import os; os.remove('/etc/passwd')\"")
 
 
 def test_python_c_subprocess_rm_rf_root_blocked():
-    assert _blocked('python -c "import subprocess; subprocess.run([\'rm\',\'-rf\',\'/\'])"')
+    assert _blocked("python -c \"import subprocess; subprocess.run(['rm','-rf','/'])\"")
 
 
 def test_python_c_harmless_allowed():
@@ -126,15 +126,15 @@ def test_readonly_find_exec_rejected():
 
 
 def test_readonly_python_c_rmtree_rejected():
-    assert not is_readonly_command('python -c "import shutil; shutil.rmtree(\'x\')"')
+    assert not is_readonly_command("python -c \"import shutil; shutil.rmtree('x')\"")
 
 
 def test_readonly_python_c_unlink_rejected():
-    assert not is_readonly_command('python3 -c "import os; os.unlink(\'f\')"')
+    assert not is_readonly_command("python3 -c \"import os; os.unlink('f')\"")
 
 
 def test_readonly_python_c_open_write_rejected():
-    assert not is_readonly_command('python -c "open(\'f\',\'w\').write(\'x\')"')
+    assert not is_readonly_command("python -c \"open('f','w').write('x')\"")
 
 
 def test_readonly_still_allows_pure_read():

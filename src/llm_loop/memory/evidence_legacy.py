@@ -13,6 +13,7 @@ session tool result proves ownership mechanically:
 Files that fail or lack that proof remain in place and are recorded only in a quarantine
 inventory.  The inventory is never part of the Evidence ledger/search surface.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -101,7 +102,6 @@ class EvidenceLifecycle:
                 blobs_deleted=deleted,
                 blobs_retained=retained,
             )
-
 
     def delete_session(self, session_id: str) -> EvidenceDeleteReport:
         total_records = 0

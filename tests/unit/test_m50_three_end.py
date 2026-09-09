@@ -94,7 +94,9 @@ class _FakeLLM:
     thinking_supported: bool = True
     model: str = "deepseek-v4-flash"
     max_tokens: int | None = None
-    wire_protocol: str = "openai"  # P3-5 对齐 LLMClient 新字段  # 2026-08-15: 对齐 LLMClient 新装配字段
+    wire_protocol: str = (
+        "openai"  # P3-5 对齐 LLMClient 新字段  # 2026-08-15: 对齐 LLMClient 新装配字段
+    )
 
     def chat(self, *args, **kwargs):  # noqa: ANN001, ANN002 — 占位
         raise NotImplementedError
@@ -223,7 +225,9 @@ def test_cli_model_command_listing(tmp_path, capsys):
     engine.session = session_store
     engine._cli_startup_model = ""
     engine.run = mock.Mock(
-        return_value=mock.Mock(final_answer="hi", rounds=1, tool_calls=[], truncated=False, verification_note=None)
+        return_value=mock.Mock(
+            final_answer="hi", rounds=1, tool_calls=[], truncated=False, verification_note=None
+        )
     )
 
     sid = session_store.create()
@@ -252,7 +256,9 @@ def test_cli_model_command_switch(tmp_path, capsys):
     engine.session = session_store
     engine._cli_startup_model = ""  # 明确不启动 --model 参数
     engine.run = mock.Mock(
-        return_value=mock.Mock(final_answer="hi", rounds=1, tool_calls=[], truncated=False, verification_note=None)
+        return_value=mock.Mock(
+            final_answer="hi", rounds=1, tool_calls=[], truncated=False, verification_note=None
+        )
     )
 
     sid = session_store.create()
@@ -282,7 +288,9 @@ def test_cli_model_command_default(tmp_path, capsys):
     engine.session = session_store
     engine._cli_startup_model = ""
     engine.run = mock.Mock(
-        return_value=mock.Mock(final_answer="hi", rounds=1, tool_calls=[], truncated=False, verification_note=None)
+        return_value=mock.Mock(
+            final_answer="hi", rounds=1, tool_calls=[], truncated=False, verification_note=None
+        )
     )
 
     sid = session_store.create()
@@ -333,7 +341,9 @@ def _make_feishu_handler(engine, session_store, replies):
     from llm_loop.feishu.handlers import FeishuMessageHandler
     from llm_loop.feishu.session_map import SessionMap
 
-    session_map = SessionMap(session_store, path=str(engine.session._dir.parent / "feishu_map.json"))  # noqa: SLF001
+    session_map = SessionMap(
+        session_store, path=str(engine.session._dir.parent / "feishu_map.json")
+    )  # noqa: SLF001
     return FeishuMessageHandler(
         engine,
         session_map,
@@ -790,9 +800,7 @@ def test_refresh_executor_keeps_default_route_startup_contract_but_updates_dynam
     engine = _FakeEngine(pool)
     install_refresh_executor(engine)
     startup_registry = pool.default_registry_snapshot()
-    startup_context = startup_registry.providers["deepseek"].models[
-        "deepseek-v4-flash"
-    ].context
+    startup_context = startup_registry.providers["deepseek"].models["deepseek-v4-flash"].context
 
     updated = json.loads(_TWO_PROVIDER_JSON)
     updated["deepseek"]["models"]["deepseek-v4-flash"]["context"] = 777777
@@ -811,9 +819,7 @@ def test_refresh_executor_keeps_default_route_startup_contract_but_updates_dynam
     assert pool.registry.providers["deepseek"].history_budget_chars == 222222
     assert pool.default_registry_snapshot() is startup_registry
     assert (
-        pool.default_registry_snapshot().providers["deepseek"].models[
-            "deepseek-v4-flash"
-        ].context
+        pool.default_registry_snapshot().providers["deepseek"].models["deepseek-v4-flash"].context
         == startup_context
     )
     assert "override/fallback" in msg
@@ -944,8 +950,10 @@ def test_refresh_executor_settings_failure_honest_receipt(tmp_path, monkeypatch)
 
     # executor 内函数级导入 → monkeypatch 模块属性生效（load_env_file 禁掉防 .env 回填）
     monkeypatch.setattr("llm_loop.config.load_env_file", lambda: None)
+
     def _boom():
         raise RuntimeError("boom-settings")
+
     monkeypatch.setattr("llm_loop.config.load_settings", _boom)
 
     msg = engine.correction_ctx.refresh_executor()

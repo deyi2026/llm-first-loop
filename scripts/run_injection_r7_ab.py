@@ -16,6 +16,7 @@ synthetic morphology for regression archaeology. It is NOT a model capability, r
 primary-admission, or fallback-floor authority. Current capability must be measured on
 the production agent/runtime path, not on resilience to deliberately polluted prompts.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -58,23 +59,38 @@ class _HistoricalReferenceFrame:
         self.duplicate = duplicate
 
 
-def _historical_reference_auto_decision(messages, *, auto_turns: int) -> _HistoricalReferenceAutoDecision:
+def _historical_reference_auto_decision(
+    messages, *, auto_turns: int
+) -> _HistoricalReferenceAutoDecision:
     texts = [str(m.get("content") or "") for m in messages if m.get("role") == "user"]
     turn_no = len(texts)
     # Frozen R7 synthetic fixture only: explicit switch phrases reopen the old catalog gate.
     current = texts[-1].casefold() if texts else ""
-    switched = any(token in current for token in ("换个话题", "新任务", "new task", "switch topic", "switch task"))
+    switched = any(
+        token in current
+        for token in ("换个话题", "新任务", "new task", "switch topic", "switch task")
+    )
     k = max(0, int(auto_turns))
     return _HistoricalReferenceAutoDecision(
-        human_turn_no=turn_no, task_switch=switched, allow_catalog=bool(turn_no and (turn_no <= k or switched))
+        human_turn_no=turn_no,
+        task_switch=switched,
+        allow_catalog=bool(turn_no and (turn_no <= k or switched)),
     )
 
 
-def _historical_reference_frame(*, tag: str, fact: str, ref: str, source: str, seen_keys: set[str]) -> _HistoricalReferenceFrame:
+def _historical_reference_frame(
+    *, tag: str, fact: str, ref: str, source: str, seen_keys: set[str]
+) -> _HistoricalReferenceFrame:
     stable = str(ref or "").strip()
-    key = f"ref:{stable.casefold()}" if stable else f"hash:{source}:{sha256(str(fact).encode()).hexdigest()[:24]}"
+    key = (
+        f"ref:{stable.casefold()}"
+        if stable
+        else f"hash:{source}:{sha256(str(fact).encode()).hexdigest()[:24]}"
+    )
     if key in seen_keys:
-        return _HistoricalReferenceFrame(key=key, content="", ref=stable or key, full=False, duplicate=True)
+        return _HistoricalReferenceFrame(
+            key=key, content="", ref=stable or key, full=False, duplicate=True
+        )
     raw = " ".join(str(fact or "").split())
     if reference_has_imperative(raw):
         one = "历史资料含动作性或指令性表述，正文未自动内联"
@@ -84,7 +100,11 @@ def _historical_reference_frame(*, tag: str, fact: str, ref: str, source: str, s
             one = one[:179].rstrip() + "…"
     display_ref = stable or key
     return _HistoricalReferenceFrame(
-        key=key, content=f"[{tag}] {one}\nref={display_ref}", ref=display_ref, full=True, duplicate=False
+        key=key,
+        content=f"[{tag}] {one}\nref={display_ref}",
+        ref=display_ref,
+        full=True,
+        duplicate=False,
     )
 
 
@@ -158,11 +178,13 @@ def enforce_injection_budget(blocks, *, budget_chars: int) -> _HistoricalBudgetR
     """Frozen R7 fixture behavior; never imported by production runtime."""
     source = list(blocks)
     budget = max(512, int(budget_chars))
+
     def cost(seq):
         groups = {b.group for b in seq if b.group}
         return sum(b.cost_chars for b in seq) + (
             _HISTORICAL_GROUP_OVERHEAD if DYNAMIC_APPENDIX_GROUP in groups else 0
         )
+
     total = cost(source)
     if total <= budget:
         return _HistoricalBudgetResult(budget, total, False, tuple(source), ())
@@ -182,6 +204,8 @@ def enforce_injection_budget(blocks, *, budget_chars: int) -> _HistoricalBudgetR
         "部分低优先级块未进入请求。该记录仅描述本轮组装结果。"
     )
     return _HistoricalBudgetResult(budget, used, True, kept_source, dropped, receipt)
+
+
 # This script intentionally replays the frozen 2026-08-30 R7 morphology.  The
 # production user-truth envelope API was retired by agency-first and must not be
 # reintroduced merely to keep this archaeology fixture executable.
@@ -196,8 +220,7 @@ def _project_historical_user_truth_tail(
         (
             i
             for i in range(len(messages) - 1, -1, -1)
-            if messages[i].get("role") == "user"
-            and str(messages[i].get("content") or "") == truth
+            if messages[i].get("role") == "user" and str(messages[i].get("content") or "") == truth
         ),
         None,
     )
@@ -211,6 +234,7 @@ def _project_historical_user_truth_tail(
     program_text = "\n\n".join(str(m.get("content") or "") for m in suffix)
     envelope = program_text + _HISTORICAL_USER_TRUTH_SEPARATOR + truth
     return messages[:truth_idx] + [{"role": "user", "content": envelope}], True, ""
+
 
 IDENTITY_RE = re.compile(
     r"(?:我是.{0,18}(?:模型|AI|助手)|作为.{0,14}(?:模型|AI|助手)|我能做|我的能力|能力清单)",
@@ -337,8 +361,8 @@ def build_arm(
         messages.append({"role": "user", "content": truth})
         for program in program_messages:
             messages.append({"role": "user", "content": program})
-        messages, projection_changed, projection_violation = (
-            _project_historical_user_truth_tail(messages, truth)
+        messages, projection_changed, projection_violation = _project_historical_user_truth_tail(
+            messages, truth
         )
         injection_chars = sum(len(x) for x in program_messages)
         if projection_changed:
@@ -403,9 +427,7 @@ def _score_answer(answer: str, task: dict[str, Any]) -> dict[str, Any]:
     text = str(answer or "")
     exact = score.get("expected_exact")
     if exact is not None:
-        completion = bool(
-            re.fullmatch(rf"\s*{re.escape(str(exact))}\s*[。.!]?\s*", text)
-        )
+        completion = bool(re.fullmatch(rf"\s*{re.escape(str(exact))}\s*[。.!]?\s*", text))
     else:
         completion = all(
             str(keyword).casefold() in text.casefold()
@@ -646,7 +668,11 @@ def main() -> int:
                 "prompt_sha256": built["prompt_sha256"],
                 "structure": built["structure"],
                 "response": {"error": f"{type(exc).__name__}: {exc}"},
-                "score": {"completion": False, "drift": False, "dominance": False if (task.get("score") or {}).get("dominance") else None},
+                "score": {
+                    "completion": False,
+                    "drift": False,
+                    "dominance": False if (task.get("score") or {}).get("dominance") else None,
+                },
             }
         cache[key] = record
         print(
@@ -667,7 +693,12 @@ def main() -> int:
         agg_b = _aggregate(default_b)
         model_result.update(
             {
-                "default": {"A": default_a, "B": default_b, "aggregate_A": agg_a, "aggregate_B": agg_b},
+                "default": {
+                    "A": default_a,
+                    "B": default_b,
+                    "aggregate_A": agg_a,
+                    "aggregate_B": agg_b,
+                },
                 "legacy_behavior_metrics": {
                     "would_pass_deprecated_composite_gate": _behavior_gate(agg_b, agg_a),
                     "authority": False,
@@ -678,9 +709,12 @@ def main() -> int:
         output["models"][model] = model_result
 
     calibration_model = args.calibration_model or (models[0] if models else "")
-    if (args.legacy_calibration and not args.skip_calibration
-            and calibration_model in output["models"]
-            and output["models"][calibration_model].get("available")):
+    if (
+        args.legacy_calibration
+        and not args.skip_calibration
+        and calibration_model in output["models"]
+        and output["models"][calibration_model].get("available")
+    ):
         cal = output["models"][calibration_model].setdefault("calibration", {})
         k_rows = []
         for k in fixture["calibration"]["reference_auto_turns"]:
@@ -688,26 +722,44 @@ def main() -> int:
             agg = _aggregate(rows)
             gate_pass, critical = _calibration_candidate_gate(rows, tasks)
             critical_pass = bool(critical) and all(r["score"]["completion"] for r in critical)
-            k_rows.append({
-                "value": int(k),
-                "aggregate": agg,
-                "critical_task_pass": critical_pass,
-                "critical_task_results": [{"task_id": r["task_id"], "completion": r["score"]["completion"], "answer": r["response"].get("answer", "")} for r in critical],
-                "gate_pass": gate_pass,
-            })
+            k_rows.append(
+                {
+                    "value": int(k),
+                    "aggregate": agg,
+                    "critical_task_pass": critical_pass,
+                    "critical_task_results": [
+                        {
+                            "task_id": r["task_id"],
+                            "completion": r["score"]["completion"],
+                            "answer": r["response"].get("answer", ""),
+                        }
+                        for r in critical
+                    ],
+                    "gate_pass": gate_pass,
+                }
+            )
         budget_rows = []
         for budget in fixture["calibration"]["injection_budget_chars"]:
             rows = [run_one(calibration_model, t, "B", default_k, int(budget)) for t in tasks]
             agg = _aggregate(rows)
             gate_pass, critical = _calibration_candidate_gate(rows, tasks)
             critical_pass = bool(critical) and all(r["score"]["completion"] for r in critical)
-            budget_rows.append({
-                "value": int(budget),
-                "aggregate": agg,
-                "critical_task_pass": critical_pass,
-                "critical_task_results": [{"task_id": r["task_id"], "completion": r["score"]["completion"], "answer": r["response"].get("answer", "")} for r in critical],
-                "gate_pass": gate_pass,
-            })
+            budget_rows.append(
+                {
+                    "value": int(budget),
+                    "aggregate": agg,
+                    "critical_task_pass": critical_pass,
+                    "critical_task_results": [
+                        {
+                            "task_id": r["task_id"],
+                            "completion": r["score"]["completion"],
+                            "answer": r["response"].get("answer", ""),
+                        }
+                        for r in critical
+                    ],
+                    "gate_pass": gate_pass,
+                }
+            )
         cal["reference_auto_turns"] = k_rows
         cal["injection_budget_chars"] = budget_rows
         passing_k = [row["value"] for row in k_rows if row["gate_pass"]]
@@ -718,19 +770,27 @@ def main() -> int:
     if args.output:
         out_path = Path(args.output)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(output, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({
-        "models": {
-            name: {
-                "available": data.get("available"),
-                "legacy_behavior_metrics": data.get("legacy_behavior_metrics"),
-                "A": (data.get("default") or {}).get("aggregate_A"),
-                "B": (data.get("default") or {}).get("aggregate_B"),
-                "calibration": data.get("calibration"),
-            }
-            for name, data in output["models"].items()
-        }
-    }, ensure_ascii=False, indent=2))
+        out_path.write_text(
+            json.dumps(output, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+    print(
+        json.dumps(
+            {
+                "models": {
+                    name: {
+                        "available": data.get("available"),
+                        "legacy_behavior_metrics": data.get("legacy_behavior_metrics"),
+                        "A": (data.get("default") or {}).get("aggregate_A"),
+                        "B": (data.get("default") or {}).get("aggregate_B"),
+                        "calibration": data.get("calibration"),
+                    }
+                    for name, data in output["models"].items()
+                }
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
     return 0
 
 

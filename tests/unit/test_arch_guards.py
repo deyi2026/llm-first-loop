@@ -123,7 +123,9 @@ def test_redline_synthetic_trees(tmp_path):
         # 精确 lines 行：def + x=1 + (lines-3) 填充 + return
         return f"def {name}():\n    x = 1\n" + "    \n" * (lines - 3) + "    return x\n"
 
-    (core / "a.py").write_text(fn("over_global", 301) + "\n\n" + fn("over_core", 201), encoding="utf-8")
+    (core / "a.py").write_text(
+        fn("over_global", 301) + "\n\n" + fn("over_core", 201), encoding="utf-8"
+    )
     (core / "b.py").write_text(fn("warn_zone", 130), encoding="utf-8")
     (other / "c.py").write_text(fn("ok_below_global", 250), encoding="utf-8")
 
@@ -181,23 +183,21 @@ def _read_source(rel: str) -> str:
     return (ROOT / rel).read_text(encoding="utf-8")
 
 
-
 @functools.lru_cache(maxsize=1)
 def _measure_functions_cached() -> dict[str, int]:
     """真实树实测的会话级缓存（R9-DFX-16：254 文件单遍共享，多检测器复用）。"""
     return _measure_functions()
 
 
-
 def test_external_unstaged_pure_classification():
     """双口径切换纯函数断言面：' M'→HEAD / 'M '/'MM'→working / untracked 与非 src 不计。"""
     porcelain = [
-        " M src/llm_loop/factory.py",      # 纯外部漂移 → HEAD
+        " M src/llm_loop/factory.py",  # 纯外部漂移 → HEAD
         "M  src/llm_loop/core/prompt.py",  # staged → working
-        "MM src/llm_loop/config.py",       # staged 后又改 → working（含 staged 现实）
-        "?? src/llm_loop/new.py",          # untracked → 不计（守卫测已提交树+staged）
-        " M tests/unit/x.py",              # 非 src/llm_loop → 不计
-        "A  src/llm_loop/added.py",        # 新增 staged → working
+        "MM src/llm_loop/config.py",  # staged 后又改 → working（含 staged 现实）
+        "?? src/llm_loop/new.py",  # untracked → 不计（守卫测已提交树+staged）
+        " M tests/unit/x.py",  # 非 src/llm_loop → 不计
+        "A  src/llm_loop/added.py",  # 新增 staged → working
     ]
     assert _external_unstaged_src(porcelain) == {"src/llm_loop/factory.py"}
 
@@ -210,7 +210,10 @@ def test_read_source_dual_caliber_integration(monkeypatch):
     rel = "src/llm_loop/core/cache_health.py"
     show = subprocess.run(
         ["git", "show", f"HEAD:{rel}"],
-        capture_output=True, text=True, check=True, cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=ROOT,
     ).stdout
 
     # 外部未 staged 漂移 → 守卫读 HEAD，避免把别的会话 working drift 归罪于本提交。
@@ -270,8 +273,6 @@ def test_baseline_v2_schema():
     # legacy 四函数与 function_lines 不得重复登记（三层各司其职）
     overlap = set(b["legacy_super_functions"]) & set(b["function_lines"])
     assert not overlap, f"legacy 键不得同时出现在 function_lines: {overlap}"
-
-
 
 
 _IMPORT_EXEMPT_RE = re.compile(r"#\s*r9-import-exempt:\s*(\w+)\s*$")
@@ -335,7 +336,11 @@ class _FnImportCounter(ast.NodeVisitor):
             self.generic_visit(n)
 
     def _mark_class(self, lineno: int) -> str | None:
-        m = _IMPORT_EXEMPT_RE.search(self.lines[lineno - 1]) if lineno - 1 < len(self.lines) else None
+        m = (
+            _IMPORT_EXEMPT_RE.search(self.lines[lineno - 1])
+            if lineno - 1 < len(self.lines)
+            else None
+        )
         if m is None:
             return None
         return m.group(1) if m.group(1) in ("optional", "plugin") else "INVALID"
@@ -361,19 +366,19 @@ class _FnImportCounter(ast.NodeVisitor):
 def test_import_counter_semantics():
     """豁免标记解析 + 差值核对口径单测（tmp 源码字符串直调，覆盖四形态）。"""
     src = (
-        "import os\n"                                    # 模块级 → 不计
+        "import os\n"  # 模块级 → 不计
         "from typing import TYPE_CHECKING\n"
         "if TYPE_CHECKING:\n"
-        "    from x import A\n"                          # TC 块 → 不计
+        "    from x import A\n"  # TC 块 → 不计
         "def f():\n"
-        "    import json\n"                              # 函数内未豁免 → counted
+        "    import json\n"  # 函数内未豁免 → counted
         "    import yaml  # r9-import-exempt: optional\n"  # 豁免桶
         "    from z import w  # r9-import-exempt: plugin\n"  # 豁免桶
         "    class Inner:\n"
         "        def m(self):\n"
-        "            import io\n"                        # 嵌套类 → 不计
+        "            import io\n"  # 嵌套类 → 不计
         "    def g():\n"
-        "        import re\n"                            # 嵌套函数 → counted
+        "        import re\n"  # 嵌套函数 → counted
         "    import q  # r9-import-exempt: wrongclass\n"  # 非法标记
     )
     counted, exempt, bad = _count_fn_imports(src)
@@ -503,7 +508,8 @@ def _build_import_graph(root: Path | None = None) -> dict[str, dict[str, set[str
             continue
         try:
             tree = ast.parse(
-                _read_source(f"src/{p.relative_to(base).as_posix()}") if root is None
+                _read_source(f"src/{p.relative_to(base).as_posix()}")
+                if root is None
                 else p.read_text(encoding="utf-8")
             )
         except Exception:  # noqa: BLE001
@@ -599,6 +605,7 @@ def test_runtime_cycles_match_known():
     - session<->fork：已断（95c5724）——session_types 纯类型先行 + BranchSeed 重建
       入口，fork 收窄为数据生成（f98b527/3e6cf72/95c5724 三步）
     """
+
     def _canon(sig: str) -> str:
         return "<->".join(sorted(sig.split("<->")))
 
@@ -611,7 +618,9 @@ def test_runtime_cycles_match_known():
         + "\n如为拆分中间态，请走 exemptions 或先断旧环。"
     )
     stale = known - measured
-    assert not stale, f"known 环已消失（好消息！）——请随拆分提交清空 known_cycles：\n  {'\n  '.join(sorted(stale))}"
+    assert not stale, (
+        f"known 环已消失（好消息！）——请随拆分提交清空 known_cycles：\n  {'\n  '.join(sorted(stale))}"
+    )
 
 
 def test_cycle_detector_synthetic(tmp_path):
@@ -621,7 +630,9 @@ def test_cycle_detector_synthetic(tmp_path):
     (pkg / "__init__.py").write_text("", encoding="utf-8")
     # 第三环（模拟）：x → y 静态，y → x 函数内
     (pkg / "x.py").write_text("from llm_loop.y import g\n\ndef f():\n    pass\n", encoding="utf-8")
-    (pkg / "y.py").write_text("def g():\n    from llm_loop.x import f\n    return f\n", encoding="utf-8")
+    (pkg / "y.py").write_text(
+        "def g():\n    from llm_loop.x import f\n    return f\n", encoding="utf-8"
+    )
     cycles = _find_runtime_cycles(_build_import_graph(tmp_path / "src"))
     assert "x<->y" in cycles, "模拟第三环未检出"
 
@@ -637,7 +648,9 @@ def test_cycle_detector_synthetic(tmp_path):
         encoding="utf-8",
     )
     (pkg2 / "b.py").write_text("def h():\n    return 2\n", encoding="utf-8")
-    assert _find_runtime_cycles(_build_import_graph(tmp_path / "tc" / "src")) == set(), "TC 边应被排除"
+    assert _find_runtime_cycles(_build_import_graph(tmp_path / "tc" / "src")) == set(), (
+        "TC 边应被排除"
+    )
 
 
 def _numeric_raises(head_base: dict[str, Any], cur_base: dict[str, Any]) -> list[str]:
@@ -815,6 +828,7 @@ def test_loop_engine_mixin_ratchet():
     if head.returncode != 0:
         pytest.skip("engine.py 尚未入库，棘轮比对跳过")
     head_bases = _parse_loop_engine_bases(head.stdout)
+
     # 更名折算：双侧均折算到固定名域（PROBE 检出态 HEAD=本提交，双侧同名；
     # 工作态 HEAD=旧世代，current 侧新名→旧名）；不动点迭代支持链式更名
     def _canon(names: set[str]) -> set[str]:

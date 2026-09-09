@@ -224,6 +224,7 @@ def test_multi_store_mark_no_resurrect(tmp_path):
 def test_schedule_cancel_tool(tmp_path):
     """审查 P2: schedule_cancel 工具可取消已注册提醒."""
     from llm_loop.tools.builtin.schedule import ScheduleCancelTool, ScheduleTool
+
     st = ScheduleTool(store=ScheduleStore(tmp_path / "s.json"))
     r = st.execute(message="测试提醒", after=60)
     assert r.status.value == "success"

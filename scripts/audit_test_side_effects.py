@@ -20,7 +20,9 @@ from pathlib import Path
 _REAL_DATA = re.compile(r'data_dir\s*=\s*["\'](\./)?data(?:/|["\']|$)', re.IGNORECASE)
 _REAL_DATA_SESSIONS = re.compile(r'["\'](?:\./)?data/sessions["\']')
 _REAL_BASE_URL = re.compile(r'base_url\s*=\s*["\'](https?://[^"\']+)["\']', re.IGNORECASE)
-_RAW_NET = re.compile(r"(?<!\.)\b(requests|httpx|urllib|aiohttp)\.(get|post|put|delete|request|Client)\(")
+_RAW_NET = re.compile(
+    r"(?<!\.)\b(requests|httpx|urllib|aiohttp)\.(get|post|put|delete|request|Client)\("
+)
 _LOCALHOST = ("localhost", "127.0.0.1")
 _LOWRISK_URL_MARK = ("fake", "example", ".local", "embed")
 
@@ -45,8 +47,14 @@ def _scan_file(py: Path) -> list[str]:
         m = _REAL_BASE_URL.search(line)
         if m:
             url = m.group(1)
-            if not any(t in url for t in _LOCALHOST) and len(url) >= 15 and not any(t in url for t in _LOWRISK_URL_MARK):
-                hits.append(f"{py}:{i} 真实provider base_url（低风险-隔离不触网则忽略）: {line.strip()[:80]}")
+            if (
+                not any(t in url for t in _LOCALHOST)
+                and len(url) >= 15
+                and not any(t in url for t in _LOWRISK_URL_MARK)
+            ):
+                hits.append(
+                    f"{py}:{i} 真实provider base_url（低风险-隔离不触网则忽略）: {line.strip()[:80]}"
+                )
         if _RAW_NET.search(line) and "mock" not in text and "fake" not in text:
             hits.append(f"{py}:{i} 裸真实网络调用: {line.strip()[:80]}")
     return hits
@@ -62,13 +70,17 @@ def scan(test_root: Path) -> list[str]:
 
 
 def main() -> int:
-    root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent.parent / "tests"
+    root = (
+        Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent.parent / "tests"
+    )
     if not root.is_dir():
         print(f"[audit_test_side_effects] 目录不存在: {root}（跳过，fail-open）")
         return 0
     hits = scan(root)
     if not hits:
-        print(f"[audit_test_side_effects] ✅ {root} 无高风险真实副作用特征（{len(list(root.rglob('*.py')))} 文件）")
+        print(
+            f"[audit_test_side_effects] ✅ {root} 无高风险真实副作用特征（{len(list(root.rglob('*.py')))} 文件）"
+        )
         return 0
     print(f"[audit_test_side_effects] ⚠️ {len(hits)} 处待人工复核（仅告警不阻断）:")
     for h in hits[:40]:

@@ -11,21 +11,39 @@ def test_by_model_bucketing_separates_models(monkeypatch):
     import llm_loop.web.routes as routes
 
     events = [
-        SimpleNamespace(type="request.usage", payload={
-            "model": "minimax/MiniMax-M3", "tokens_in": 100000, "tokens_out": 100,
-            "cache_hit": 98000, "llm_ms": 500, "tool_ms": 0, "ttft_ms": 100,
-        }),
-        SimpleNamespace(type="request.usage", payload={
-            "model": "deepseek/deepseek-v4-flash", "tokens_in": 100000, "tokens_out": 100,
-            "cache_hit": 0, "llm_ms": 500, "tool_ms": 0, "ttft_ms": 100,
-        }),
+        SimpleNamespace(
+            type="request.usage",
+            payload={
+                "model": "minimax/MiniMax-M3",
+                "tokens_in": 100000,
+                "tokens_out": 100,
+                "cache_hit": 98000,
+                "llm_ms": 500,
+                "tool_ms": 0,
+                "ttft_ms": 100,
+            },
+        ),
+        SimpleNamespace(
+            type="request.usage",
+            payload={
+                "model": "deepseek/deepseek-v4-flash",
+                "tokens_in": 100000,
+                "tokens_out": 100,
+                "cache_hit": 0,
+                "llm_ms": 500,
+                "tool_ms": 0,
+                "ttft_ms": 100,
+            },
+        ),
     ]
     store = MagicMock()
     store.enabled = True
     store.read.return_value = events
     engine = MagicMock()
     engine.session._event_store = store
-    engine.session.load.return_value = SimpleNamespace(messages=[SimpleNamespace(role="assistant")] * 2)
+    engine.session.load.return_value = SimpleNamespace(
+        messages=[SimpleNamespace(role="assistant")] * 2
+    )
 
     request = MagicMock()
     monkeypatch.setattr(routes, "_engine_from", lambda req: engine)

@@ -40,7 +40,9 @@ def test_dispatch_task_frozen():
 
 
 def test_execution_handle_frozen():
-    h = ExecutionHandle(handle_id="h1", session_id="s1", trace_id="t1", created_at="2026-01-01T00:00:00Z")
+    h = ExecutionHandle(
+        handle_id="h1", session_id="s1", trace_id="t1", created_at="2026-01-01T00:00:00Z"
+    )
     with pytest.raises(dataclasses.FrozenInstanceError):
         h.handle_id = "h2"  # type: ignore[misc]
 

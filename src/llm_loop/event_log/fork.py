@@ -82,10 +82,7 @@ def fork_session(
     # ② fork 点越界检查（从"钳位"改为"报错"，spec §5.1.3-2）
     if fork_point is not None and (fork_point < 0 or fork_point > msg_count):
         return _report(
-            error=(
-                f"fork 点越界: {fork_point}，"
-                f"合法范围 0..{msg_count}（{msg_count} 条消息）"
-            )
+            error=(f"fork 点越界: {fork_point}，合法范围 0..{msg_count}（{msg_count} 条消息）")
         )
 
     effective_fp = fork_point if fork_point is not None else msg_count
@@ -123,9 +120,7 @@ def fork_session(
     event_error = ""
     inherited_count = 0
     if _is_event_store_available(event_store):
-        result = _write_event_log(
-            event_store, source_session_id, new_id, effective_fp, summary
-        )
+        result = _write_event_log(event_store, source_session_id, new_id, effective_fp, summary)
         inherited_count = result[0]
         event_error = result[1]
 
@@ -186,9 +181,7 @@ def _write_event_log(
         return len(inherited_events), f"事件物理复制写入失败（fail-open）: {exc}"
 
     # ⑥ 追加 session.created（新会话顶层快照）
-    source_created = next(
-        (e for e in source_events if e.type == "session.created"), None
-    )
+    source_created = next((e for e in source_events if e.type == "session.created"), None)
     created_payload: dict = dict(source_created.payload) if source_created else {}
     created_payload["parent_id"] = source_session_id
     created_payload["branch_id"] = new_id
@@ -268,7 +261,8 @@ def _truncate_events(events: list, fork_point: int) -> list:
 
     # 计算消息事件数
     msg_events = [
-        e for e in events
+        e
+        for e in events
         if e.type == "message.appended" and isinstance(e.payload.get("index"), int)
     ]
     if fork_point >= len(msg_events):

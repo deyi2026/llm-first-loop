@@ -48,12 +48,30 @@ _METHOD_MANAGE_TOOL_DEF: dict[str, Any] = {
             "name": {"type": "string", "description": "save_candidate: Method 名称"},
             "description": {"type": "string", "description": "save_candidate: 触发条件/用途简介"},
             "body": {"type": "string", "description": "save_candidate: 完整 Method Card"},
-            "parent_ref": {"type": "string", "description": "save_candidate: 修订来源 method ref（可选）"},
-            "task_ref": {"type": "string", "description": "record_qualification: 独立任务/evidence 稳定引用"},
-            "verdict": {"type": "string", "enum": ["pass", "fail", "mixed", "insufficient", "not_evaluated"]},
-            "mechanism": {"type": "string", "enum": ["pass", "fail", "mixed", "insufficient", "not_evaluated"]},
-            "task_benefit": {"type": "string", "enum": ["pass", "fail", "mixed", "insufficient", "not_evaluated"]},
-            "promotion": {"type": "string", "enum": ["pass", "fail", "mixed", "insufficient", "not_evaluated"]},
+            "parent_ref": {
+                "type": "string",
+                "description": "save_candidate: 修订来源 method ref（可选）",
+            },
+            "task_ref": {
+                "type": "string",
+                "description": "record_qualification: 独立任务/evidence 稳定引用",
+            },
+            "verdict": {
+                "type": "string",
+                "enum": ["pass", "fail", "mixed", "insufficient", "not_evaluated"],
+            },
+            "mechanism": {
+                "type": "string",
+                "enum": ["pass", "fail", "mixed", "insufficient", "not_evaluated"],
+            },
+            "task_benefit": {
+                "type": "string",
+                "enum": ["pass", "fail", "mixed", "insufficient", "not_evaluated"],
+            },
+            "promotion": {
+                "type": "string",
+                "enum": ["pass", "fail", "mixed", "insufficient", "not_evaluated"],
+            },
             "evidence_refs": {"type": "array", "items": {"type": "string"}},
             "note": {"type": "string"},
             "transition": {
@@ -116,7 +134,11 @@ def _run_save_experience(args: dict, host: RegistryHost) -> ToolResult:
         source=args.get("source") or {},
         body=args.get("body", ""),
     )
-    status = ToolResultStatus.SUCCESS if content.startswith("[save_experience]") else ToolResultStatus.FAILURE
+    status = (
+        ToolResultStatus.SUCCESS
+        if content.startswith("[save_experience]")
+        else ToolResultStatus.FAILURE
+    )
     return ToolResult(status=status, content=content, tool_call_id="", tool_name="save_experience")
 
 
@@ -136,8 +158,14 @@ def _run_refine_experience(args: dict, host: RegistryHost) -> ToolResult:
         experience_id=args.get("experience_id", ""),
         action=args.get("action", ""),
     )
-    status = ToolResultStatus.SUCCESS if content.startswith("[refine_experience]") else ToolResultStatus.FAILURE
-    return ToolResult(status=status, content=content, tool_call_id="", tool_name="refine_experience")
+    status = (
+        ToolResultStatus.SUCCESS
+        if content.startswith("[refine_experience]")
+        else ToolResultStatus.FAILURE
+    )
+    return ToolResult(
+        status=status, content=content, tool_call_id="", tool_name="refine_experience"
+    )
 
 
 def _run_method_manage(args: dict, host: RegistryHost) -> ToolResult:
@@ -150,14 +178,20 @@ def _run_method_manage(args: dict, host: RegistryHost) -> ToolResult:
         forwarded = dict(args)
         forwarded["action"] = str(args.get("transition", "")).strip()
         return _run_refine_method(forwarded, host, tool_name="method_manage")
-    return _method_failure("method_manage", "[参数错误] action 必须为 save_candidate/record_qualification/refine")
+    return _method_failure(
+        "method_manage", "[参数错误] action 必须为 save_candidate/record_qualification/refine"
+    )
 
 
 def _method_failure(tool_name: str, content: str) -> ToolResult:
-    return ToolResult(status=ToolResultStatus.FAILURE, content=content, tool_call_id="", tool_name=tool_name)
+    return ToolResult(
+        status=ToolResultStatus.FAILURE, content=content, tool_call_id="", tool_name=tool_name
+    )
 
 
-def _run_save_method_candidate(args: dict, host: RegistryHost, *, tool_name: str = "save_method_candidate") -> ToolResult:
+def _run_save_method_candidate(
+    args: dict, host: RegistryHost, *, tool_name: str = "save_method_candidate"
+) -> ToolResult:
     store = host.method_store
     if store is None:
         return _method_failure(tool_name, "[程序异常] MethodStore 未装配")
@@ -180,12 +214,25 @@ def _run_save_method_candidate(args: dict, host: RegistryHost, *, tool_name: str
             parent_ref=str(args.get("parent_ref", "")),
         )
     except (OSError, ValueError, RuntimeError) as exc:
-        return _method_failure(tool_name, f"[Method candidate 写入失败] {type(exc).__name__}: {exc}")
-    host.audit("save_method_candidate", {"method_ref": record.method_ref, "content_hash": record.content_hash}, "success")
-    return ToolResult(status=ToolResultStatus.SUCCESS, content=f"[save_method_candidate] {record.method_ref} status=candidate content_hash={record.content_hash}", tool_call_id="", tool_name=tool_name)
+        return _method_failure(
+            tool_name, f"[Method candidate 写入失败] {type(exc).__name__}: {exc}"
+        )
+    host.audit(
+        "save_method_candidate",
+        {"method_ref": record.method_ref, "content_hash": record.content_hash},
+        "success",
+    )
+    return ToolResult(
+        status=ToolResultStatus.SUCCESS,
+        content=f"[save_method_candidate] {record.method_ref} status=candidate content_hash={record.content_hash}",
+        tool_call_id="",
+        tool_name=tool_name,
+    )
 
 
-def _run_record_method_qualification(args: dict, host: RegistryHost, *, tool_name: str = "record_method_qualification") -> ToolResult:
+def _run_record_method_qualification(
+    args: dict, host: RegistryHost, *, tool_name: str = "record_method_qualification"
+) -> ToolResult:
     store = host.method_store
     if store is None:
         return _method_failure(tool_name, "[程序异常] MethodStore 未装配")
@@ -205,23 +252,51 @@ def _run_record_method_qualification(args: dict, host: RegistryHost, *, tool_nam
             note=str(args.get("note", "")),
         )
     except (FileNotFoundError, OSError, ValueError) as exc:
-        return _method_failure(tool_name, f"[Method qualification 写入失败] {type(exc).__name__}: {exc}")
-    host.audit("record_method_qualification", {"method_ref": method_ref, "task_ref": task_ref, "verdict": entry["verdict"]}, "success")
-    return ToolResult(status=ToolResultStatus.SUCCESS, content=f"[record_method_qualification] {method_ref} task_ref={task_ref} verdict={entry['verdict']} promotion={entry['promotion']}", tool_call_id="", tool_name=tool_name)
+        return _method_failure(
+            tool_name, f"[Method qualification 写入失败] {type(exc).__name__}: {exc}"
+        )
+    host.audit(
+        "record_method_qualification",
+        {"method_ref": method_ref, "task_ref": task_ref, "verdict": entry["verdict"]},
+        "success",
+    )
+    return ToolResult(
+        status=ToolResultStatus.SUCCESS,
+        content=f"[record_method_qualification] {method_ref} task_ref={task_ref} verdict={entry['verdict']} promotion={entry['promotion']}",
+        tool_call_id="",
+        tool_name=tool_name,
+    )
 
 
-def _run_refine_method(args: dict, host: RegistryHost, *, tool_name: str = "refine_method") -> ToolResult:
+def _run_refine_method(
+    args: dict, host: RegistryHost, *, tool_name: str = "refine_method"
+) -> ToolResult:
     store = host.method_store
     if store is None:
         return _method_failure(tool_name, "[程序异常] MethodStore 未装配")
     method_ref = str(args.get("method_ref", "")).strip()
     action = str(args.get("action", "")).strip()
-    target = {"qualify": "qualified", "activate": "active", "hold": "hold", "invalidate": "invalidated", "retire": "retired", "reopen": "candidate"}.get(action)
+    target = {
+        "qualify": "qualified",
+        "activate": "active",
+        "hold": "hold",
+        "invalidate": "invalidated",
+        "retire": "retired",
+        "reopen": "candidate",
+    }.get(action)
     if not method_ref or target is None:
-        return _method_failure(tool_name, "[参数错误] method_ref 必填且 action 必须为 qualify/activate/hold/invalidate/retire/reopen")
+        return _method_failure(
+            tool_name,
+            "[参数错误] method_ref 必填且 action 必须为 qualify/activate/hold/invalidate/retire/reopen",
+        )
     try:
         record = store.update_status(method_ref, target)
     except (FileNotFoundError, OSError, ValueError, RuntimeError) as exc:
         return _method_failure(tool_name, f"[Method 生命周期更新失败] {type(exc).__name__}: {exc}")
     host.audit("refine_method", {"method_ref": method_ref, "status": record.status}, "success")
-    return ToolResult(status=ToolResultStatus.SUCCESS, content=f"[refine_method] {method_ref} status={record.status}", tool_call_id="", tool_name=tool_name)
+    return ToolResult(
+        status=ToolResultStatus.SUCCESS,
+        content=f"[refine_method] {method_ref} status={record.status}",
+        tool_call_id="",
+        tool_name=tool_name,
+    )

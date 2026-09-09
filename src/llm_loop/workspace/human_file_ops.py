@@ -1,4 +1,5 @@
 """Authenticated-human file operations over the shared mechanical FileService."""
+
 from __future__ import annotations
 
 import hashlib
@@ -61,7 +62,9 @@ class _HumanFileEffectSink(FileEffectSink):
     def records_durable(self) -> bool:
         return bool(getattr(self.event_store, "enabled", False))
 
-    def prepared(self, *, canonical_path: Path, before_bytes: bytes, expected_after_bytes: bytes) -> bool:
+    def prepared(
+        self, *, canonical_path: Path, before_bytes: bytes, expected_after_bytes: bytes
+    ) -> bool:
         if not self.records_durable:
             return False
         event = self.event_store.append(
@@ -252,14 +255,23 @@ class HumanFileOperationService:
                 matched.append(event)
         return matched
 
-    def _receipt_for_existing(self, session_id: str, workspace_scope: str, events: list[Any]) -> FileEffectReceipt:
+    def _receipt_for_existing(
+        self, session_id: str, workspace_scope: str, events: list[Any]
+    ) -> FileEffectReceipt:
         rejected = next(
             (event for event in reversed(events) if event.type == EVENT_HUMAN_FILE_EDIT_REJECTED),
             None,
         )
         if rejected is not None:
             raise HumanFileOperationError(str(rejected.payload.get("reason") or "request_rejected"))
-        op = next((str(e.payload.get("operation_id") or "") for e in events if e.payload.get("operation_id")), "")
+        op = next(
+            (
+                str(e.payload.get("operation_id") or "")
+                for e in events
+                if e.payload.get("operation_id")
+            ),
+            "",
+        )
         page = self.query_service.query(
             session_id=session_id,
             workspace_scope=workspace_scope,
@@ -329,7 +341,14 @@ class HumanFileOperationService:
         )
         existing = self._existing_request(session_id, workspace_scope, request_id)
         if existing:
-            old_digest = next((str(e.payload.get("request_sha256") or "") for e in existing if e.payload.get("request_sha256")), "")
+            old_digest = next(
+                (
+                    str(e.payload.get("request_sha256") or "")
+                    for e in existing
+                    if e.payload.get("request_sha256")
+                ),
+                "",
+            )
             if old_digest and old_digest != digest:
                 raise HumanFileOperationError("request_conflict")
             return self._receipt_for_existing(session_id, workspace_scope, existing)
@@ -339,7 +358,14 @@ class HumanFileOperationService:
                 raise HumanFileOperationError("session_busy")
             existing = self._existing_request(session_id, workspace_scope, request_id)
             if existing:
-                old_digest = next((str(e.payload.get("request_sha256") or "") for e in existing if e.payload.get("request_sha256")), "")
+                old_digest = next(
+                    (
+                        str(e.payload.get("request_sha256") or "")
+                        for e in existing
+                        if e.payload.get("request_sha256")
+                    ),
+                    "",
+                )
                 if old_digest and old_digest != digest:
                     raise HumanFileOperationError("request_conflict")
                 return self._receipt_for_existing(session_id, workspace_scope, existing)
@@ -377,7 +403,11 @@ class HumanFileOperationService:
                     precondition_checked=False,
                 )
                 raise HumanFileOperationError("invalid_snapshot_ref")
-            probe = expected_bytes[len(UTF8_BOM) :] if expected_bytes.startswith(UTF8_BOM) else expected_bytes
+            probe = (
+                expected_bytes[len(UTF8_BOM) :]
+                if expected_bytes.startswith(UTF8_BOM)
+                else expected_bytes
+            )
             try:
                 old_text = probe.decode("utf-8")
             except UnicodeDecodeError as exc:
@@ -404,7 +434,11 @@ class HumanFileOperationService:
                 )
             except FileServiceError as exc:
                 if exc.error_type in {"VersionConflict", "VersionPreconditionInvalid"}:
-                    reason = "version_conflict" if exc.error_type == "VersionConflict" else "invalid_snapshot_ref"
+                    reason = (
+                        "version_conflict"
+                        if exc.error_type == "VersionConflict"
+                        else "invalid_snapshot_ref"
+                    )
                     self._record_rejected(
                         session_id=session_id,
                         workspace_scope=workspace_scope,
@@ -431,8 +465,14 @@ class HumanFileOperationService:
                 before_sha256=hashlib.sha256(result.source_bytes).hexdigest(),
                 expected_after_sha256=expected_sha,
                 observed_after_sha256=actual_sha,
-                artifact_ref=(str(result.artifact_fact.get("artifact_ref") or "") if result.artifact_fact else ""),
-                effect_state="observed_match" if actual_sha == expected_sha else "observed_mismatch",
+                artifact_ref=(
+                    str(result.artifact_fact.get("artifact_ref") or "")
+                    if result.artifact_fact
+                    else ""
+                ),
+                effect_state="observed_match"
+                if actual_sha == expected_sha
+                else "observed_mismatch",
                 receipt_state=result.receipt_state,
                 precondition_checked=result.precondition_checked,
                 causation_proven=True,

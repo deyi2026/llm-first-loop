@@ -69,18 +69,12 @@ def test_search_records_hydrates_memory_ref_and_enforces_session_scope(tmp_path)
     )
     searcher = RecordSearcher(audit_dir=tmp_path / "audit", memory_store=memory)
 
-    global_hit = searcher.search(
-        kind="memory", query="memory:m-global", limit=5, session_id="s2"
-    )
+    global_hit = searcher.search(kind="memory", query="memory:m-global", limit=5, session_id="s2")
     assert [x["key"] for x in global_hit] == ["memory:m-global"]
 
-    own_hit = searcher.search(
-        kind="memory", query="memory:m-session", limit=5, session_id="s1"
-    )
+    own_hit = searcher.search(kind="memory", query="memory:m-session", limit=5, session_id="s1")
     assert [x["key"] for x in own_hit] == ["memory:m-session"]
-    assert searcher.search(
-        kind="memory", query="memory:m-session", limit=5, session_id="s2"
-    ) == []
+    assert searcher.search(kind="memory", query="memory:m-session", limit=5, session_id="s2") == []
     # Empty query must not enumerate another session's private memory either.
     other_listing = searcher.search(kind="memory", query="", limit=10, session_id="s2")
     assert "m-session" not in {x["id"] for x in other_listing}
@@ -89,6 +83,7 @@ def test_search_records_hydrates_memory_ref_and_enforces_session_scope(tmp_path)
 def test_search_records_hydrates_experience_ref(tmp_path) -> None:
     from llm_loop.experiences.store import ExperienceStore
     from llm_loop.introspection.search import RecordSearcher
+
     exp_md = """---
 title: web_fetch retrieval evidence
 scenario: explicit experience hydration

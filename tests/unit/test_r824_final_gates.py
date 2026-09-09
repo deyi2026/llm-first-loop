@@ -112,7 +112,6 @@ class TestFinalGateSwitchDefaults:
         _clear_gates_env(monkeypatch)
         assert current_latent_channel_mode() == "off"
 
-
     def test_cache_perf_block_default_enforced(self):
         """H6 开关面: CACHE_GUARD_PERF_BLOCK 默认 enforce=最终治理态（批 3/3 切换，R9-P0-01）.
 
@@ -263,9 +262,7 @@ class TestH3H4H6MechanismReadyAndCurrentState:
         # off 态（机制 READY）
         monkeypatch.setenv("LFL_EVIDENCE_CAPSULE", "off")
         result_off = registry.execute(
-            ToolCall(
-                id="h4-o", name="read_file", arguments={"path": str(path_off), "full": True}
-            )
+            ToolCall(id="h4-o", name="read_file", arguments={"path": str(path_off), "full": True})
         )
         assert result_off.status is ToolResultStatus.SUCCESS
         assert result_off.evidence_projection_complete is True

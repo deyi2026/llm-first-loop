@@ -1,5 +1,3 @@
-
-
 def test_double_brace_memory_auto_fix():
     """EVO-20260812-2bd55cf3: {{ }} 双大括号自动纠错为 { }（AI 照抄 Jinja2 模板陷阱）."""
     from llm_loop.memory.extract import extract_memory_blocks

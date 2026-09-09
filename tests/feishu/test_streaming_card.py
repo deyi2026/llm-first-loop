@@ -81,7 +81,9 @@ class _FakeLark:
             (),
             {
                 "v1": type(
-                    "V1", (), {"message": _FakeMessageService(msg_results)}  # type: ignore[arg-type]
+                    "V1",
+                    (),
+                    {"message": _FakeMessageService(msg_results)},  # type: ignore[arg-type]
                 )()
             },
         )()

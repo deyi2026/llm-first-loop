@@ -19,7 +19,9 @@ class _FakeRegistry:
         self._round += 1
         content = self._results.get(self._round, "5 passed")
         status = ToolResultStatus.SUCCESS if "passed" in content else ToolResultStatus.FAILURE
-        return ToolResult(status=status, content=content, tool_call_id=call.id, tool_name="execute_command")
+        return ToolResult(
+            status=status, content=content, tool_call_id=call.id, tool_name="execute_command"
+        )
 
 
 class _FakeSubAgent:
@@ -32,6 +34,7 @@ class _FakeSubAgent:
     def run(self, task, context="", depth=0, max_rounds=None):
         self.tasks.append(task)
         from types import SimpleNamespace
+
         return SimpleNamespace(final_answer=self._answer, refused=False)
 
 
@@ -72,7 +75,9 @@ def test_fail_then_pass_two_rounds():
 
 def test_fuse_after_same_error_3_times():
     """连续 3 次同一错误: 熔断 + FAILURE 含熔断原因."""
-    reg = _FakeRegistry({i: "1 failed\nFAILED tests/test_x.py::test_a - AssertionError" for i in range(1, 4)})
+    reg = _FakeRegistry(
+        {i: "1 failed\nFAILED tests/test_x.py::test_a - AssertionError" for i in range(1, 4)}
+    )
     sub = _FakeSubAgent("修复尝试")
     t = _tool(reg, sub)
     r = t.execute(check_command="pytest tests/", fuse_count=3)

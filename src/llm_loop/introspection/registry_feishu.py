@@ -16,7 +16,11 @@ from llm_loop.introspection.tools_feishu_outbound import (
 
 
 def tool_defs() -> list[dict]:
-    return [SEND_FEISHU_MESSAGE_TOOL_DEF, CREATE_FEISHU_DOC_TOOL_DEF, SEND_FEISHU_ATTACHMENT_TOOL_DEF]
+    return [
+        SEND_FEISHU_MESSAGE_TOOL_DEF,
+        CREATE_FEISHU_DOC_TOOL_DEF,
+        SEND_FEISHU_ATTACHMENT_TOOL_DEF,
+    ]
 
 
 def execute(name: str, args: dict, host: RegistryHost) -> ToolResult | None:

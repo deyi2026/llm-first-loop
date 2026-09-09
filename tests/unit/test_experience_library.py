@@ -62,7 +62,9 @@ def test_document_round_trip_empty_source_and_body():
 
 def test_document_default_status_active():
     """status 默认 active。"""
-    doc = ExperienceDocument(title="t", scenario="s", root_cause="", solution="sol", evidence="", tags=[], source={})
+    doc = ExperienceDocument(
+        title="t", scenario="s", root_cause="", solution="sol", evidence="", tags=[], source={}
+    )
     assert doc.status == "active"
 
 
@@ -146,7 +148,13 @@ def test_save_slug_truncate_50(tmp_path):
     store = ExperienceStore(tmp_path / "exp")
     long_title = "A" * 100
     doc = ExperienceDocument(
-        title=long_title, scenario="s", root_cause="", solution="sol", evidence="", tags=[], source={}
+        title=long_title,
+        scenario="s",
+        root_cause="",
+        solution="sol",
+        evidence="",
+        tags=[],
+        source={},
     )
     filename = store.save(doc)
     # EXPERIENCE-YYYYMMDD-<slug>.md, slug ≤ 50
@@ -177,7 +185,13 @@ def test_save_conflict_not_overwrite(tmp_path):
     """同日同 slug 冲突不覆盖，抛 FileExistsError。"""
     store = ExperienceStore(tmp_path / "exp")
     doc = ExperienceDocument(
-        title="冲突测试", scenario="s", root_cause="", solution="sol", evidence="", tags=[], source={}
+        title="冲突测试",
+        scenario="s",
+        root_cause="",
+        solution="sol",
+        evidence="",
+        tags=[],
+        source={},
     )
     filename = store.save(doc)
     original_content = (tmp_path / "exp" / filename).read_text()
@@ -215,7 +229,13 @@ def test_save_creates_dir_if_not_exist(tmp_path):
     assert not exp_dir.exists()
     store = ExperienceStore(exp_dir)
     doc = ExperienceDocument(
-        title="自动建目录", scenario="s", root_cause="", solution="sol", evidence="", tags=[], source={}
+        title="自动建目录",
+        scenario="s",
+        root_cause="",
+        solution="sol",
+        evidence="",
+        tags=[],
+        source={},
     )
     filename = store.save(doc)
     assert (exp_dir / filename).exists()
@@ -289,7 +309,9 @@ def test_list_active_corrupt_file_skipped(tmp_path):
     store = ExperienceStore(exp_dir)
     store.save(_make_doc(title="正常经验"))
     # 写入损坏文件
-    (exp_dir / "EXPERIENCE-20260813-corrupt.md").write_text("not valid front matter", encoding="utf-8")
+    (exp_dir / "EXPERIENCE-20260813-corrupt.md").write_text(
+        "not valid front matter", encoding="utf-8"
+    )
     results = store.list_active()
     # 损坏文件跳过，正常经验仍返回
     assert len(results) == 1
@@ -510,7 +532,9 @@ def test_run_refine_experience_invalidate_and_restore(tmp_path):
 def test_run_refine_experience_not_found(tmp_path):
     """经验不存在返回 [未找到]，不创建空条目。"""
     store = ExperienceStore(tmp_path / "exp")
-    result = run_refine_experience(store, experience_id="EXPERIENCE-20260813-none", action="archive")
+    result = run_refine_experience(
+        store, experience_id="EXPERIENCE-20260813-none", action="archive"
+    )
     assert result.startswith("[未找到]")
 
 

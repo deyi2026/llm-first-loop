@@ -21,11 +21,18 @@ def _tool_session(ss: SessionStore) -> str:
     """构造含完整工具轮的会话: user, assistant(tc c1,c2), tool c1, tool c2, assistant 文本."""
     sid = ss.create()
     ss.append(sid, Message(role="user", content="查文件", source=MessageSource.USER))
-    ss.append(sid, Message(
-        role="assistant", content="", source=MessageSource.SYSTEM,
-        tool_calls=[{"id": "c1", "name": "read_file", "arguments": {}},
-                    {"id": "c2", "name": "read_file", "arguments": {}}],
-    ))
+    ss.append(
+        sid,
+        Message(
+            role="assistant",
+            content="",
+            source=MessageSource.SYSTEM,
+            tool_calls=[
+                {"id": "c1", "name": "read_file", "arguments": {}},
+                {"id": "c2", "name": "read_file", "arguments": {}},
+            ],
+        ),
+    )
     ss.append(sid, Message(role="tool", content="r1", source=MessageSource.TOOL, tool_call_id="c1"))
     ss.append(sid, Message(role="tool", content="r2", source=MessageSource.TOOL, tool_call_id="c2"))
     ss.append(sid, Message(role="assistant", content="完成", source=MessageSource.SYSTEM))
@@ -76,14 +83,20 @@ def test_pairing_empty_id_receipt_counts():
 
     msgs = [
         {"role": "user", "content": "q"},
-        {"role": "assistant", "content": "", "tool_calls": [
-            {"id": "c1", "function": {"name": "read_file"}},
-            {"id": "c2", "function": {"name": "read_file"}},
-        ]},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "c1", "function": {"name": "read_file"}},
+                {"id": "c2", "function": {"name": "read_file"}},
+            ],
+        },
         {"role": "tool", "tool_call_id": "c1", "content": "r1"},
         {"role": "tool", "tool_call_id": "", "content": "r2"},  # 空 id 回执（存量会话存在）
     ]
-    assert validate_tool_call_pairing(msgs) == [], f"空 id 回执被漏计: {validate_tool_call_pairing(msgs)}"
+    assert validate_tool_call_pairing(msgs) == [], (
+        f"空 id 回执被漏计: {validate_tool_call_pairing(msgs)}"
+    )
     out = _repair_tool_call_pairing(msgs)
     tool_msgs = [m for m in out if m.get("role") == "tool"]
     assert len(tool_msgs) == 2, f"多补了占位（额外 tool 消息无声明 → API 400）: {len(tool_msgs)}"
@@ -96,10 +109,14 @@ def test_pairing_still_fills_genuine_gap():
 
     msgs = [
         {"role": "user", "content": "q"},
-        {"role": "assistant", "content": "", "tool_calls": [
-            {"id": "c1", "function": {"name": "read_file"}},
-            {"id": "c2", "function": {"name": "read_file"}},
-        ]},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "c1", "function": {"name": "read_file"}},
+                {"id": "c2", "function": {"name": "read_file"}},
+            ],
+        },
         {"role": "tool", "tool_call_id": "c1", "content": "r1"},
     ]
     assert validate_tool_call_pairing(msgs), "真缺口未报违规"
@@ -383,9 +400,7 @@ def test_hard_restart_uses_full_sidecar_reasoning_not_bounded_event_tail(
     es = EventStore(str(tmp_path / "full-restart-events"), enabled=True)
     engine._event_store = es  # noqa: SLF001
     sid = engine.session.create()
-    engine.session.append(
-        sid, Message(role="user", content="ORIGINAL", source=MessageSource.USER)
-    )
+    engine.session.append(sid, Message(role="user", content="ORIGINAL", source=MessageSource.USER))
     sess = engine.session.load(sid)
     monkeypatch.setenv("INTERRUPT_TEXT_TAIL_CHARS", "9")
     monkeypatch.setenv("INTERRUPT_REASONING_TAIL_CHARS", "11")
@@ -447,9 +462,7 @@ def test_settled_partial_checkpoint_is_not_resurrected(build_test_engine, tmp_pa
     es = EventStore(str(tmp_path / "settled-events"), enabled=True)
     engine._event_store = es  # noqa: SLF001
     sid = engine.session.create()
-    engine.session.append(
-        sid, Message(role="user", content="OLD-TASK", source=MessageSource.USER)
-    )
+    engine.session.append(sid, Message(role="user", content="OLD-TASK", source=MessageSource.USER))
     es.append(
         sid,
         "llm.partial_checkpoint",

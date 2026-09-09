@@ -17,17 +17,23 @@ def test_latest_generation_fences_late_old_terminal(tmp_path) -> None:
     assert journal.generation_started(
         child_id=child, parent_id=parent, generation="g2", owner_id="owner-2", depth=0
     )
-    assert journal.terminal(
-        child_id=child, parent_id=parent, generation="g1", depth=0, outcome="failed"
-    ) is False
+    assert (
+        journal.terminal(
+            child_id=child, parent_id=parent, generation="g1", depth=0, outcome="failed"
+        )
+        is False
+    )
     state = journal.recover(child)
     assert state is not None
     assert state.generation == "g2"
     assert state.terminal is False
 
-    assert journal.terminal(
-        child_id=child, parent_id=parent, generation="g2", depth=0, outcome="completed"
-    ) is True
+    assert (
+        journal.terminal(
+            child_id=child, parent_id=parent, generation="g2", depth=0, outcome="completed"
+        )
+        is True
+    )
     state = journal.recover(child)
     assert state is not None
     assert state.generation == "g2"
@@ -45,31 +51,40 @@ def test_generation_release_rejects_foreign_owner_and_is_idempotent(tmp_path) ->
     assert journal.generation_started(
         child_id=child, parent_id=parent, generation="g1", owner_id="owner-a", depth=1
     )
-    assert journal.generation_released(
-        child_id=child,
-        parent_id=parent,
-        generation="g1",
-        owner_id="owner-b",
-        depth=1,
-        reason="worker_exit",
-    ) is False
-    assert journal.generation_released(
-        child_id=child,
-        parent_id=parent,
-        generation="g1",
-        owner_id="owner-a",
-        depth=1,
-        reason="worker_exit",
-    ) is True
+    assert (
+        journal.generation_released(
+            child_id=child,
+            parent_id=parent,
+            generation="g1",
+            owner_id="owner-b",
+            depth=1,
+            reason="worker_exit",
+        )
+        is False
+    )
+    assert (
+        journal.generation_released(
+            child_id=child,
+            parent_id=parent,
+            generation="g1",
+            owner_id="owner-a",
+            depth=1,
+            reason="worker_exit",
+        )
+        is True
+    )
     before = len(store.read(child))
-    assert journal.generation_released(
-        child_id=child,
-        parent_id=parent,
-        generation="g1",
-        owner_id="owner-a",
-        depth=1,
-        reason="worker_exit",
-    ) is True
+    assert (
+        journal.generation_released(
+            child_id=child,
+            parent_id=parent,
+            generation="g1",
+            owner_id="owner-a",
+            depth=1,
+            reason="worker_exit",
+        )
+        is True
+    )
     assert len(store.read(child)) == before
     state = journal.recover(child)
     assert state is not None
@@ -90,13 +105,22 @@ def test_terminal_generation_cannot_restart_or_change_outcome(tmp_path) -> None:
         child_id=child, parent_id=parent, generation="g1", depth=0, outcome="completed"
     )
     before = len(store.read(child))
-    assert journal.terminal(
-        child_id=child, parent_id=parent, generation="g1", depth=0, outcome="completed"
-    ) is True
+    assert (
+        journal.terminal(
+            child_id=child, parent_id=parent, generation="g1", depth=0, outcome="completed"
+        )
+        is True
+    )
     assert len(store.read(child)) == before
-    assert journal.terminal(
-        child_id=child, parent_id=parent, generation="g1", depth=0, outcome="failed"
-    ) is False
-    assert journal.generation_started(
-        child_id=child, parent_id=parent, generation="g1", owner_id="owner-a", depth=0
-    ) is False
+    assert (
+        journal.terminal(
+            child_id=child, parent_id=parent, generation="g1", depth=0, outcome="failed"
+        )
+        is False
+    )
+    assert (
+        journal.generation_started(
+            child_id=child, parent_id=parent, generation="g1", owner_id="owner-a", depth=0
+        )
+        is False
+    )

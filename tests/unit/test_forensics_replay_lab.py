@@ -98,9 +98,7 @@ class TestReplayLabVerdict:
 
     def test_interop_legacy_tail_falsified(self, leak_sample: str) -> None:
         """interop 历史版本 tail 链路零落盘 → 证伪（版本差异审计交叉印证）。"""
-        verdict = replay_candidate_path(
-            "interop_legacy_tail", leak_sample, repo_root=_PROJECT_ROOT
-        )
+        verdict = replay_candidate_path("interop_legacy_tail", leak_sample, repo_root=_PROJECT_ROOT)
         assert verdict.reproduced is False
         assert verdict.conditions["persisted_role_user"] is False
 

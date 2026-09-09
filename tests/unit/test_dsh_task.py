@@ -29,6 +29,8 @@ def _write_fake_dsh(dirpath: Path, mode: str) -> str:
 def _make_tool(monkeypatch, fake_dsh: str) -> DshTaskTool:
     monkeypatch.setattr("shutil.which", lambda _name: fake_dsh)
     return DshTaskTool()
+
+
 def test_success_receives_answer(monkeypatch, tmp_path):
     """退出码 0 + stdout 回答 → success 回执."""
     fake = _write_fake_dsh(tmp_path, "ok")
@@ -102,6 +104,7 @@ def test_cwd_passed_to_process(monkeypatch, tmp_path):
 
 # ── P1（协议 v2）：ctx 引用 / 汇报格式 / 重试 / 脱敏 ──
 
+
 def test_ctx_path_passes_exact_source_ref_without_prefix_truncation(monkeypatch, tmp_path):
     """ctx_path 只传 exact source ref；编排层不把长文静默替换成 8K 前缀."""
     ctx = tmp_path / "ctx.md"
@@ -109,7 +112,7 @@ def test_ctx_path_passes_exact_source_ref_without_prefix_truncation(monkeypatch,
     ctx.write_text(source_text, encoding="utf-8")
     captured: dict = {}
 
-    def fake_run_once(task, cwd, timeout_s, dsh_bin, patch_path=''):
+    def fake_run_once(task, cwd, timeout_s, dsh_bin, patch_path=""):
         captured["task"] = task
         return 0, "ok", "", 0.1
 
@@ -132,7 +135,7 @@ def test_report_format_injected(monkeypatch, tmp_path):
     """report_format=true 注入汇报格式模板；false 不注入."""
     captured: dict = {}
 
-    def fake_run_once(task, cwd, timeout_s, dsh_bin, patch_path=''):
+    def fake_run_once(task, cwd, timeout_s, dsh_bin, patch_path=""):
         captured["task"] = task
         return 0, "ok", "", 0.1
 
@@ -152,7 +155,7 @@ def test_retry_on_failure(monkeypatch, tmp_path):
     """非 0 退出码 + retry>0 → 新 session 重跑；最终成功."""
     calls: list[int] = []
 
-    def fake_run_once(task, cwd, timeout_s, dsh_bin, patch_path=''):
+    def fake_run_once(task, cwd, timeout_s, dsh_bin, patch_path=""):
         calls.append(1)
         if len(calls) < 3:
             return 1, "", "dsh: ERROR: boom", 0.1
@@ -172,7 +175,7 @@ def test_retry_exhausted_failure(monkeypatch, tmp_path):
     """重试耗尽仍失败 → failure 回执（含重试次数）."""
     calls: list[int] = []
 
-    def fake_run_once(task, cwd, timeout_s, dsh_bin, patch_path=''):
+    def fake_run_once(task, cwd, timeout_s, dsh_bin, patch_path=""):
         calls.append(1)
         return 1, "", "dsh: ERROR: boom", 0.1
 
@@ -190,7 +193,7 @@ def test_timeout_not_retried(monkeypatch, tmp_path):
     """timeout 不重试（防无限超时），直接回 timeout."""
     calls: list[int] = []
 
-    def fake_run_once(task, cwd, timeout_s, dsh_bin, patch_path=''):
+    def fake_run_once(task, cwd, timeout_s, dsh_bin, patch_path=""):
         calls.append(1)
         return "timeout", "部分", "", 10.0
 
@@ -208,7 +211,7 @@ def test_redact_sensitive_env(monkeypatch, tmp_path):
     monkeypatch.setenv("LLM_API_KEY", "sk-very-secret-key-123456")
     captured: dict = {}
 
-    def fake_run_once(task, cwd, timeout_s, dsh_bin, patch_path=''):
+    def fake_run_once(task, cwd, timeout_s, dsh_bin, patch_path=""):
         captured["task"] = task
         return 0, "ok", "", 0.1
 
@@ -225,7 +228,7 @@ def test_acceptance_injected(monkeypatch, tmp_path):
     """acceptance 清单注入任务文本（逐项自检输出 完成/未完成/原因）."""
     captured: dict = {}
 
-    def fake_run_once(task, cwd, timeout_s, dsh_bin, patch_path=''):
+    def fake_run_once(task, cwd, timeout_s, dsh_bin, patch_path=""):
         captured["task"] = task
         return 0, "ok", "", 0.1
 
@@ -241,6 +244,7 @@ def test_acceptance_injected(monkeypatch, tmp_path):
 
 
 # ── P2：background 并行 fan-out ──
+
 
 def test_background_starts_job(monkeypatch, tmp_path):
     """background=true → 立即返回 job_id（不阻塞），输出经 job_output 可见."""

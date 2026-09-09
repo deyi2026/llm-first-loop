@@ -41,7 +41,9 @@ class _FakeLLMClient:
         self.reasoning_effort = "high"
         self.thinking_supported = True
         self.max_tokens: int | None = None
-        self.wire_protocol: str = "openai"  # P3-5 对齐 LLMClient 新字段  # 2026-08-15 对齐 LLMClient 新装配字段
+        self.wire_protocol: str = (
+            "openai"  # P3-5 对齐 LLMClient 新字段  # 2026-08-15 对齐 LLMClient 新装配字段
+        )
         self._responses: list[Any] = []
         self.calls: list[dict[str, Any]] = []
 
@@ -50,8 +52,10 @@ class _FakeLLMClient:
 
     def chat(self, messages: list[dict], tools: list[dict], **kwargs: Any) -> LLMResponse:
         self.calls.append({"messages": messages, "kwargs": kwargs})
-        item = self._responses.pop(0) if self._responses else LLMResponse(
-            content="默认回答", tool_calls=[], provider="fake"
+        item = (
+            self._responses.pop(0)
+            if self._responses
+            else LLMResponse(content="默认回答", tool_calls=[], provider="fake")
         )
         if isinstance(item, Exception):
             raise item
@@ -230,9 +234,7 @@ def test_fallback_success_label_is_fallback_model(
     """默认模型 429 → 降级成功 → model_used 如实标注为降级后模型."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
     monkeypatch.setenv("MINIMAX_API_KEY", "k")
-    settings = _settings(
-        tmp_path, model_fallbacks_raw="minimax/MiniMax-M3"
-    )
+    settings = _settings(tmp_path, model_fallbacks_raw="minimax/MiniMax-M3")
     default_fake = _FakeLLMClient("deepseek-v4-flash")
     default_fake.queue(
         [LLMHTTPError("HTTP 429: rate limit", status_code=429, body="", provider="deepseek")]
@@ -329,9 +331,7 @@ def test_feishu_reply_no_footer_when_label_empty(tmp_path) -> None:
 # ── Web 端 ──
 
 
-def test_web_chat_response_carries_model_used(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_web_chat_response_carries_model_used(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """POST /api/v1/chat 响应含 model_used 字段."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
     from fastapi.testclient import TestClient
@@ -365,15 +365,22 @@ def test_feishu_new_command_creates_fresh_session(tmp_path) -> None:
 
         def run(self, sid, text):
             return SimpleNamespace(
-                session_id=sid, final_answer="回答", verification_note=None,
-                rounds=1, tool_calls=[], truncated=False, model_used="",
-                tokens_in=0, tokens_out=0,
+                session_id=sid,
+                final_answer="回答",
+                verification_note=None,
+                rounds=1,
+                tool_calls=[],
+                truncated=False,
+                model_used="",
+                tokens_in=0,
+                tokens_out=0,
             )
 
     session_map = SessionMap(session_store, path=str(tmp_path / "map.json"))
     replies: list[tuple[str, str, str]] = []
     handler = FeishuMessageHandler(
-        _StubEngine(), session_map,
+        _StubEngine(),
+        session_map,
         lambda rid, text, rtype: replies.append((rid, text, rtype)),
         audit_dir=str(tmp_path / "audit"),
     )

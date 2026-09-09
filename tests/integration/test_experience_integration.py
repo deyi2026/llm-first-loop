@@ -117,7 +117,15 @@ def test_exp_dir_not_exist_existing_kinds_unaffected(tmp_path):
     audit_dir.mkdir()
     # 写入 action_trace 记录
     (audit_dir / "action_trace.jsonl").write_text(
-        json.dumps({"ts": "2026-08-13T10:00:00", "id": "a1", "phase": "test", "action_type": "call", "detail": "read file"})
+        json.dumps(
+            {
+                "ts": "2026-08-13T10:00:00",
+                "id": "a1",
+                "phase": "test",
+                "action_type": "call",
+                "detail": "read file",
+            }
+        )
         + "\n",
         encoding="utf-8",
     )
@@ -163,19 +171,37 @@ def test_existing_kinds_unchanged_with_experience_store(tmp_path):
     audit_dir.mkdir()
     # 写入多种既有记录
     (audit_dir / "action_trace.jsonl").write_text(
-        json.dumps({"ts": "2026-08-13T10:00:00", "id": "a1", "phase": "p1", "action_type": "call", "detail": "read file"})
+        json.dumps(
+            {
+                "ts": "2026-08-13T10:00:00",
+                "id": "a1",
+                "phase": "p1",
+                "action_type": "call",
+                "detail": "read file",
+            }
+        )
         + "\n",
         encoding="utf-8",
     )
     (audit_dir / "exception_log.jsonl").write_text(
-        json.dumps({"ts": "2026-08-13T10:01:00", "id": "e1", "phase": "p1", "error_type": "ValueError", "error_message": "boom"})
+        json.dumps(
+            {
+                "ts": "2026-08-13T10:01:00",
+                "id": "e1",
+                "phase": "p1",
+                "error_type": "ValueError",
+                "error_message": "boom",
+            }
+        )
         + "\n",
         encoding="utf-8",
     )
 
     exp_dir = tmp_path / "exp"
     # 有 experience_store
-    searcher_with_exp = RecordSearcher(audit_dir=audit_dir, experience_store=ExperienceStore(exp_dir))
+    searcher_with_exp = RecordSearcher(
+        audit_dir=audit_dir, experience_store=ExperienceStore(exp_dir)
+    )
     # 无 experience_store
     searcher_without_exp = RecordSearcher(audit_dir=audit_dir)
 
@@ -185,7 +211,9 @@ def test_existing_kinds_unchanged_with_experience_store(tmp_path):
         assert with_exp == without_exp, f"kind={kind} 检索结果因 experience_store 接入而变化"
 
     # kind=all 既有 kind 部分一致（experience 部分新增但不影响既有）
-    all_with = [r for r in searcher_with_exp.search(kind="all", limit=20) if r["kind"] != "experience"]
+    all_with = [
+        r for r in searcher_with_exp.search(kind="all", limit=20) if r["kind"] != "experience"
+    ]
     all_without = searcher_without_exp.search(kind="all", limit=20)
     assert all_with == all_without
 
@@ -195,7 +223,15 @@ def test_kind_all_experience_parallel_with_existing(tmp_path):
     audit_dir = tmp_path / "audit"
     audit_dir.mkdir()
     (audit_dir / "action_trace.jsonl").write_text(
-        json.dumps({"ts": "2026-08-13T10:00:00", "id": "a1", "phase": "p1", "action_type": "call", "detail": "parallel test"})
+        json.dumps(
+            {
+                "ts": "2026-08-13T10:00:00",
+                "id": "a1",
+                "phase": "p1",
+                "action_type": "call",
+                "detail": "parallel test",
+            }
+        )
         + "\n",
         encoding="utf-8",
     )

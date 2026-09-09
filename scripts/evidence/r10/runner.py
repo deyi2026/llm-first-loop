@@ -123,9 +123,7 @@ def _build_registry(
     capture = EvidenceCapture(blobs, ledger)
     freshness = EvidenceFreshness(ledger)
     search = EvidenceSearch(blobs, ledger, snippet_chars=500)
-    registry = ToolRegistry(
-        max_output_chars=100000, failure_guidance_enabled=False
-    )
+    registry = ToolRegistry(max_output_chars=100000, failure_guidance_enabled=False)
     registry.register(ReadFileTool())
     registry.set_evidence_enforcer(
         EvidenceEnforcer(

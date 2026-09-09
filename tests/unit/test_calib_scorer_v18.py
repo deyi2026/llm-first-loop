@@ -10,7 +10,9 @@ from scripts.calib.s_scorer import _RULES_S
 from scripts.calib.scorer_v18 import committed_action_matches
 
 ROOT = Path(__file__).resolve().parents[2]
-_REGRESSIONS = json.loads((ROOT / "tests/fixtures/calib/scorer_regressions_v1.json").read_text(encoding="utf-8"))
+_REGRESSIONS = json.loads(
+    (ROOT / "tests/fixtures/calib/scorer_regressions_v1.json").read_text(encoding="utf-8")
+)
 
 
 @pytest.mark.parametrize(

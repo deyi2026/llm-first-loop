@@ -11,6 +11,7 @@ from enum import StrEnum
 
 # ── 路径 A：参数预检 ──
 
+
 @dataclass(frozen=True)
 class FieldError:
     """字段级错误（嵌套路径如 "steps[2].executor"）."""
@@ -42,6 +43,7 @@ class PreCheckResult:
 
 
 # ── 路径 D：静态检查 ──
+
 
 class CheckOverallStatus(StrEnum):
     SUCCESS = "success"
@@ -97,10 +99,14 @@ class StaticCheckResult:
 
     def to_feedback_section(self) -> str:
         """五态回执格式的问题清单（含 [状态: xxx] 标注）."""
-        lines = [f"[状态: {self.overall_status.value}] 静态检查（{self.language}）: {self.file_path}"]
+        lines = [
+            f"[状态: {self.overall_status.value}] 静态检查（{self.language}）: {self.file_path}"
+        ]
         for c in self.checkers:
-            lines.append(f"  [{c.checker_name}] {c.status.value}"
-                         + (f"（{len(c.issues)} 问题）" if c.issues else ""))
+            lines.append(
+                f"  [{c.checker_name}] {c.status.value}"
+                + (f"（{len(c.issues)} 问题）" if c.issues else "")
+            )
             for iss in c.issues[:20]:  # 单检查器最多 20 条防超长
                 lines.append(
                     f"    {iss.file_path}:{iss.line}:{iss.column} [{iss.severity.value}] "
@@ -112,6 +118,7 @@ class StaticCheckResult:
 
 
 # ── 路径 E：上下文约定 ──
+
 
 class ConventionType(StrEnum):
     IMPORT_STYLE = "import_style"
@@ -147,13 +154,16 @@ class ConventionSummary:
         for c in self.conventions:
             lines.append(f"  [{c.convention_type.value}] {c.content}")
         if self.truncated:
-            lines.append(f"（约定已截断：原始 {self.original_size} 字符，保留 {self.retained_size} 字符）")
+            lines.append(
+                f"（约定已截断：原始 {self.original_size} 字符，保留 {self.retained_size} 字符）"
+            )
         if self.source_files:
             lines.append(f"（来源: {', '.join(self.source_files[:5])}）")
         return "\n".join(lines)
 
 
 # ── 路径 H：错误定位 ──
+
 
 class TestFramework(StrEnum):
     PYTEST = "pytest"
@@ -189,7 +199,7 @@ class ErrorLocationResult:
     def to_injection_text(self) -> str:
         """结构化错误定位注入文本（替代原始全文，减 token 开销）."""
         if self.fallback:
-            return f"[错误定位] 解析失败已回退原始输出（{len(self.original_output)} 字符）:\n{self.original_output[:self.retained_size or 4000]}"
+            return f"[错误定位] 解析失败已回退原始输出（{len(self.original_output)} 字符）:\n{self.original_output[: self.retained_size or 4000]}"
         lines = [f"[错误定位] 框架: {self.framework.value}，失败 {len(self.failures)} 项："]
         for f in self.failures:
             lines.append(f"  {f.file_path}:{f.line_number} —— {f.reason}")
@@ -199,11 +209,14 @@ class ErrorLocationResult:
                 snippet = f.code_snippet.replace("\n", "\n    ")
                 lines.append(f"    代码: {snippet}")
         if self.truncated:
-            lines.append(f"（已截断：原始 {self.original_size} 字符，保留 {self.retained_size} 字符，优先保留失败位置与原因）")
+            lines.append(
+                f"（已截断：原始 {self.original_size} 字符，保留 {self.retained_size} 字符，优先保留失败位置与原因）"
+            )
         return "\n".join(lines)
 
 
 # ── 路径 I：修复循环 ──
+
 
 class FixLoopFinalStatus(StrEnum):
     PASSED = "passed"
@@ -242,16 +255,22 @@ class FixLoopRecord:
             f"（trace={self.trace_id}，执行 {len(self.rounds)}/{self.max_rounds} 轮）"
         ]
         for r in self.rounds:
-            lines.append(f"  第{r.round_number}轮: 检查={r.check_result or '-'}"
-                         f" 定位={r.location_info or '-'} 修复={r.fix_action or '-'} 重跑={r.rerun_result or '-'}")
+            lines.append(
+                f"  第{r.round_number}轮: 检查={r.check_result or '-'}"
+                f" 定位={r.location_info or '-'} 修复={r.fix_action or '-'} 重跑={r.rerun_result or '-'}"
+            )
         if self.final_status != FixLoopFinalStatus.PASSED:
-            lines.append("  未修复项: " + (", ".join(self.unfixed_items) if self.unfixed_items else "（无明细）"))
+            lines.append(
+                "  未修复项: "
+                + (", ".join(self.unfixed_items) if self.unfixed_items else "（无明细）")
+            )
         if self.final_status == FixLoopFinalStatus.FUSE_TRIGGERED:
             lines.append(f"  熔断: 连续 {self.fuse_count} 次修复同一错误未通过")
         return "\n".join(lines)
 
 
 # ── 路径 K：回归保护 ──
+
 
 class DepNodeType(StrEnum):
     MODULE = "module"
@@ -319,8 +338,12 @@ class RegressionResult:
                 f"受影响测试 {len(self.affected_tests)} 个（全量占比 {self.subset_ratio:.0%}）"
                 f"，通过 {self.passed_count} / 失败 {self.failed_count}"
             ]
-            lines.append("（子集: " + ", ".join(self.affected_tests[:10])
-                         + ("…" if len(self.affected_tests) > 10 else "") + "）")
+            lines.append(
+                "（子集: "
+                + ", ".join(self.affected_tests[:10])
+                + ("…" if len(self.affected_tests) > 10 else "")
+                + "）"
+            )
             for f in self.failures:
                 lines.append(f"  {f.file_path}:{f.line_number} —— {f.reason}")
         lines.append("（受影响文件: " + ", ".join(self.modified_files) + "）")

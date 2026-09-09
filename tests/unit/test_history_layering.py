@@ -1,12 +1,16 @@
 """History projection/compaction invariants under the current LLM-first contract."""
+
 from llm_loop.core.history import build_history_messages
 from llm_loop.core.message import Message, MessageSource
 
 
 def _tool_msg(content: str, name: str = "read_file") -> Message:
     return Message(
-        role="tool", content=content, source=MessageSource.TOOL,
-        tool_call_id="c1", tool_name=name,
+        role="tool",
+        content=content,
+        source=MessageSource.TOOL,
+        tool_call_id="c1",
+        tool_name=name,
     )
 
 
@@ -14,7 +18,9 @@ def _tool_pair(content: str, name: str = "read_file") -> list[Message]:
     """严格 FC 合法 fixture：声明与回执必须成组，避免测试依赖孤立 tool 容忍。"""
     return [
         Message(
-            role="assistant", content=f"调用 {name}", source=MessageSource.USER,
+            role="assistant",
+            content=f"调用 {name}",
+            source=MessageSource.USER,
             tool_calls=[{"id": "c1", "name": name, "arguments": "{}"}],
         ),
         _tool_msg(content, name),
@@ -46,12 +52,16 @@ def test_skip_injected_system_not_submitted():
     from llm_loop.core.message import Message, MessageSource
 
     injected = Message(
-        role="system", content="[架构上报] 事实: 待审阅",
-        source=MessageSource.SYSTEM, metadata={"injected_system": True},
+        role="system",
+        content="[架构上报] 事实: 待审阅",
+        source=MessageSource.SYSTEM,
+        metadata={"injected_system": True},
     )
     func_sys = Message(
-        role="system", content="[模型降级] 事实: 已切换",
-        source=MessageSource.SYSTEM, metadata={},
+        role="system",
+        content="[模型降级] 事实: 已切换",
+        source=MessageSource.SYSTEM,
+        metadata={},
     )
     msgs = [injected, func_sys, _user("问题1")]
 
@@ -63,9 +73,7 @@ def test_skip_injected_system_not_submitted():
     assert "[模型降级]" in default_users
 
     # 开启跳过: 仅 injected 标记的 system 不进提交, 其余保留（转 user）
-    out_skip = build_history_messages(
-        msgs, "SYS", max_chars=100000, skip_injected_system=True
-    )
+    out_skip = build_history_messages(msgs, "SYS", max_chars=100000, skip_injected_system=True)
     assert out_skip[0]["content"] == "SYS"
     skip_users = " ".join(m["content"] for m in out_skip if m["role"] == "user")
     assert "[架构上报]" not in skip_users
@@ -78,8 +86,10 @@ def test_skip_injected_system_survives_long_path():
     from llm_loop.core.message import Message, MessageSource
 
     injected = Message(
-        role="system", content="[预算预警] 事实: 占用超限",
-        source=MessageSource.SYSTEM, metadata={"injected_system": True},
+        role="system",
+        content="[预算预警] 事实: 占用超限",
+        source=MessageSource.SYSTEM,
+        metadata={"injected_system": True},
     )
     msgs = [injected] + [_user(f"问题{i} " + "x" * 2000) for i in range(30)]
     out = build_history_messages(
@@ -110,7 +120,11 @@ def test_anchor_within_budget_no_archive():
     msgs = [_user(f"问题{i} " + "x" * 300) for i in range(20)]  # ~6.2K 字符
     box: list[int] = []
     out = build_history_messages(
-        msgs, "SYS", max_chars=8000, history_anchor=5, anchor_out=box,
+        msgs,
+        "SYS",
+        max_chars=8000,
+        history_anchor=5,
+        anchor_out=box,
         session_id="s1",
     )
     assert len(box) == 0
@@ -124,7 +138,11 @@ def test_anchor_over_budget_advances_anchor():
     msgs = [_user(f"问题{i} " + "x" * 2000) for i in range(30)]  # ~62K 字符
     box: list[int] = []
     out = build_history_messages(
-        msgs, "SYS", max_chars=20000, history_anchor=10, anchor_out=box,
+        msgs,
+        "SYS",
+        max_chars=20000,
+        history_anchor=10,
+        anchor_out=box,
         session_id="s1",
     )
     assert len(box) == 1
@@ -139,15 +157,12 @@ def test_anchor_zero_behavior_unchanged():
     """history_anchor=0（默认）→ 现有行为（零回归）, 锚点 = 归档丢弃数."""
     msgs = [_user(f"问题{i} " + "x" * 2000) for i in range(30)]
     box: list[int] = []
-    out = build_history_messages(
-        msgs, "SYS", max_chars=20000, anchor_out=box, session_id="s1"
-    )
+    out = build_history_messages(msgs, "SYS", max_chars=20000, anchor_out=box, session_id="s1")
     assert len(box) == 1
     assert box[0] > 0  # 无锚: 丢弃数即新锚点
     # 与不带 anchor_out 的默认行为一致（返回内容相同）
     out2 = build_history_messages(msgs, "SYS", max_chars=20000, session_id="s1")
     assert out == out2
-
 
 
 def test_anchor_beyond_len_no_loss():
@@ -159,7 +174,9 @@ def test_anchor_beyond_len_no_loss():
     msgs = _tool_pair("x") + [_user(f"问题{i}") for i in range(5)]
     box: list[int] = []
     out = build_history_messages(
-        msgs, system_prompt="SYS", max_chars=100000,
+        msgs,
+        system_prompt="SYS",
+        max_chars=100000,
         history_anchor=999,  # 越界锚点
         anchor_out=box,
     )

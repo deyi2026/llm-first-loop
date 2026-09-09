@@ -33,7 +33,7 @@ class ResumeAnchor:
 
     source: str  # "execution-cursor" | "checkpoint"
     current_sub_item: str = ""  # 当前进行到哪（cursor.current_sub_item / checkpoint.what）
-    next_step: str = ""         # 下一步（cursor.next_step / checkpoint.next）
+    next_step: str = ""  # 下一步（cursor.next_step / checkpoint.next）
 
 
 @dataclass(kw_only=True)

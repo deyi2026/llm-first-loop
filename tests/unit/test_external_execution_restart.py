@@ -230,12 +230,16 @@ def test_external_execution_events_are_mechanical_and_registered(tmp_path) -> No
         pgid=12,
     )
     assert launched is not None
-    assert journal.cancel_requested(
-        session_id="owner-contract", job_id=job_id, reason="session_cancel"
-    ) is not None
-    assert journal.terminal(
-        session_id="owner-contract", job_id=job_id, exit_code=-15, killed=True
-    ) is not None
+    assert (
+        journal.cancel_requested(
+            session_id="owner-contract", job_id=job_id, reason="session_cancel"
+        )
+        is not None
+    )
+    assert (
+        journal.terminal(session_id="owner-contract", job_id=job_id, exit_code=-15, killed=True)
+        is not None
+    )
     state = journal.state("owner-contract", job_id)
     assert state is not None
     assert state.state == "killed"

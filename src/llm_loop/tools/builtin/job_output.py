@@ -46,9 +46,7 @@ class JobOutputTool:
         durable = bool(snapshot.get("durable"))
         state_durable = bool(snapshot.get("state_durable", durable))
         cancel_requested = bool(snapshot.get("cancel_requested"))
-        state_label = (
-            f"done (exit={exit_code})" if state in {"completed", "failed"} else state
-        )
+        state_label = f"done (exit={exit_code})" if state in {"completed", "failed"} else state
         raw_output = snapshot.get("output")
         output = list(raw_output) if isinstance(raw_output, list) else []
         body = "\n".join(str(x) for x in output) if output else "（暂无本进程输出）"

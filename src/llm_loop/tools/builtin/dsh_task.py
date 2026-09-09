@@ -160,11 +160,14 @@ class DshTaskTool:
         report_format = bool(kwargs.get("report_format", True))
         ctx_path = str(kwargs.get("ctx_path", "") or "").strip()
         from llm_loop.tools.arg_coerce import coerce_str_list
+
         acceptance = coerce_str_list(kwargs.get("acceptance"))
         background = bool(kwargs.get("background", False))
         reasoning_effort = str(kwargs.get("reasoning_effort") or "").strip().lower()
         if reasoning_effort and reasoning_effort not in ("low", "medium", "high", "max"):
-            return self._fail(kwargs, f"reasoning_effort 非法: {reasoning_effort}（low/medium/high/max）")
+            return self._fail(
+                kwargs, f"reasoning_effort 非法: {reasoning_effort}（low/medium/high/max）"
+            )
         # 生成 --patch 文件（reasoningEffort 覆盖；None 沿用 settings 不生成）
         patch_path = ""
         if reasoning_effort:
@@ -192,7 +195,9 @@ class DshTaskTool:
         attempts = 0
         while True:
             attempts += 1
-            code, out, err, elapsed = self._run_once(full_task, cwd, timeout_s, dsh_bin, patch_path=patch_path)
+            code, out, err, elapsed = self._run_once(
+                full_task, cwd, timeout_s, dsh_bin, patch_path=patch_path
+            )
             self._audit(full_task, cwd, code, elapsed, attempts)
             if code == 0:
                 return ToolResult(
@@ -230,7 +235,9 @@ class DshTaskTool:
             )
 
     # ── 内部 ──
-    def _start_background(self, task: str, cwd: str, dsh_bin: str, patch_path: str = "") -> ToolResult:
+    def _start_background(
+        self, task: str, cwd: str, dsh_bin: str, patch_path: str = ""
+    ) -> ToolResult:
         """后台执行：spawn + JobRegistry 登记（对齐 execute_command run_in_background）."""
         from llm_loop.tools.builtin.job_registry import (
             JobDurabilityError,
@@ -288,7 +295,9 @@ class DshTaskTool:
             capability_requirements=("job_output",),
         )
 
-    def _build_task(self, task: str, ctx_path: str, report_format: bool, acceptance: list[str]) -> str:
+    def _build_task(
+        self, task: str, ctx_path: str, report_format: bool, acceptance: list[str]
+    ) -> str:
         """任务组装（协议 v2）：ctx exact ref + 汇报格式 + 验收清单 + 脱敏.
 
         ``ctx_path`` is already a user/model-selected source reference. The harness
@@ -319,8 +328,7 @@ class DshTaskTool:
         if acceptance:
             items = "\n".join(f"{i}. {a}" for i, a in enumerate(acceptance, 1))
             task = task + (
-                "\n\n--- 验收清单（必须逐项自检输出：完成 / 未完成 / 原因）---\n"
-                f"{items}\n"
+                f"\n\n--- 验收清单（必须逐项自检输出：完成 / 未完成 / 原因）---\n{items}\n"
             )
         return self._redact(task)
 
@@ -371,11 +379,7 @@ class DshTaskTool:
         """
         import tempfile
 
-        patch = (
-            "- id: agent-default-model\n"
-            "  config:\n"
-            f"    reasoningEffort: {effort}\n"
-        )
+        patch = f"- id: agent-default-model\n  config:\n    reasoningEffort: {effort}\n"
         fd, path = tempfile.mkstemp(suffix=".yml", prefix="dsh_effort_")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(patch)

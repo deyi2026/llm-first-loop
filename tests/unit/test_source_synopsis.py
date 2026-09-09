@@ -12,7 +12,9 @@ from llm_loop.memory.synopsis import MAX_SOURCE_READ_CHARS, SourceSnapshot, Syno
 from llm_loop.tools.builtin.source_synopsis import SourceSynopsisTool
 
 
-def _snapshot(ref: str, text: str, *, access_scope: str = "workspace", complete: bool = True) -> SourceSnapshot:
+def _snapshot(
+    ref: str, text: str, *, access_scope: str = "workspace", complete: bool = True
+) -> SourceSnapshot:
     return SourceSnapshot(
         source_ref=ref,
         source_kind="test",
@@ -183,7 +185,9 @@ def test_invalid_declared_range_is_rejected_without_semantic_judgement(tmp_path)
         _reset_ctx(tokens)
 
 
-def test_search_records_synopsis_is_index_first_and_exact_hydration_checks_version(tmp_path) -> None:
+def test_search_records_synopsis_is_index_first_and_exact_hydration_checks_version(
+    tmp_path,
+) -> None:
     from llm_loop.introspection.search import RecordSearcher
     from llm_loop.introspection.tools_status import run_search_records
 
@@ -390,7 +394,9 @@ def test_factory_synopsis_resolves_attachment_and_artifact_exact_sources(tmp_pat
         _reset_ctx(tokens)
 
 
-def test_evidence_source_synopsis_is_control_plane_and_does_not_recursively_capture(tmp_path) -> None:
+def test_evidence_source_synopsis_is_control_plane_and_does_not_recursively_capture(
+    tmp_path,
+) -> None:
     from llm_loop.config import Settings
     from llm_loop.core.message import ToolCall
     from llm_loop.factory import build_engine
@@ -469,7 +475,10 @@ def test_workspace_source_synopsis_does_not_widen_summary_to_other_sessions(tmp_
     )
     assert record.access_scope == "session"
     assert record.source_access_scope == "workspace"
-    assert store.get(record.ref, workspace_scope=str(tmp_path), session_id="author-session") is not None
+    assert (
+        store.get(record.ref, workspace_scope=str(tmp_path), session_id="author-session")
+        is not None
+    )
     assert store.get(record.ref, workspace_scope=str(tmp_path), session_id="other-session") is None
 
 

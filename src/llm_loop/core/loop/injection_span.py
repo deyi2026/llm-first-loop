@@ -6,6 +6,7 @@ fingerprint/cognitive_compiler/cr_r1 语料依赖 InjectedEntry/SlotKind/
 InjectionSpan/record_defer_event/content_prefix_sha/parse_aggregated_slots——
 整体搬迁至本模块。
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
         """结构化最小面：本模块仅消费 session_id（原 llm_loop.core.session.ModelSession 已随演进退役）."""
 
         session_id: str
+
 
 logger = logging.getLogger(__name__)
 _DEFER_REPLAY_TOTAL_LIMIT = 8  # spec 6.3-5: 待回放总量 ≤8
@@ -91,7 +93,9 @@ class InjectedEntry:
     msg_idx: int  # built 产物中的绝对下标
     slot_kind: SlotKind
     prefix_sha: str  # content 前 32 字符 sha256（剥离时身份复核）
-    message_ref: Message | None = None  # interop/tip 原 Message（defer 回填）；hotcard/gate_note 为 None
+    message_ref: Message | None = (
+        None  # interop/tip 原 Message（defer 回填）；hotcard/gate_note 为 None
+    )
     # CR-R1.1（审查项5）: AGGREGATED 恢复源——投影前各段 (slot, 原始内容)。
     # Projection 是 view 不是 Source of Truth：WARM 投影截断后 wire 反推会把
     # 原文永久缩水（审查实测 314→120 chars），defer 恢复必须走此原始记录。
@@ -214,9 +218,7 @@ def snapshot_offending_payload(
             },
         }
         path = out_dir / f"{ts_str}_{session_id[:8]}.json"
-        path.write_text(
-            json.dumps(snap, ensure_ascii=False, indent=1), encoding="utf-8"
-        )
+        path.write_text(json.dumps(snap, ensure_ascii=False, indent=1), encoding="utf-8")
         return path
     except Exception:  # noqa: BLE001 — 快照失败 fail-open
         logger.warning("offending payload 快照落盘失败（fail-open）", exc_info=True)
@@ -260,7 +262,9 @@ class _Err1210Mixin:
 
     # ── 3.3 尾部注入剥离 ──
 
-    def _strip_tail_injections(self, messages: list[dict]) -> tuple[list[dict], InjectionSpan] | None:
+    def _strip_tail_injections(
+        self, messages: list[dict]
+    ) -> tuple[list[dict], InjectionSpan] | None:
         """读 build 登记，身份复核 + 尾部连续段校验 → copy-on-write 剥离副本.
 
         任一失败返回 None 记 WARN（spec 5.1.1-5a：无法区分则整体保留放弃降级）。
@@ -289,18 +293,23 @@ class _Err1210Mixin:
                 m = messages[e.msg_idx]
                 content = m.get("content")
                 if not isinstance(content, str) or m.get("role") != "user":
-                    logger.warning("err1210: 注入身份复核失败（非 user/非 str），放弃降级 idx=%d", e.msg_idx)
+                    logger.warning(
+                        "err1210: 注入身份复核失败（非 user/非 str），放弃降级 idx=%d", e.msg_idx
+                    )
                     return None
                 if content_prefix_sha(content) != e.prefix_sha:
                     logger.warning("err1210: 注入前缀 sha 不匹配，放弃降级 idx=%d", e.msg_idx)
                     return None
                 if e.slot_kind == SlotKind.GATE_NOTE:
                     if content != GATE_NOTE_CONTENT:
-                        logger.warning("err1210: gate_note 恒等校验失败，放弃降级 idx=%d", e.msg_idx)
+                        logger.warning(
+                            "err1210: gate_note 恒等校验失败，放弃降级 idx=%d", e.msg_idx
+                        )
                         return None
                 elif not content.startswith(_INJECTION_PREFIX):
                     logger.warning(
-                        "err1210: 注入前缀标识缺失（绕过 wrap_injection?），放弃降级 idx=%d", e.msg_idx
+                        "err1210: 注入前缀标识缺失（绕过 wrap_injection?），放弃降级 idx=%d",
+                        e.msg_idx,
                     )
                     return None
             # copy-on-write：新 list，前缀逐字节不变（spec 5.1.1-2a）
@@ -339,7 +348,9 @@ class _Err1210Mixin:
                 return None
             if n_tail > self._AGG_MAX_TAIL_USERS:
                 logger.info(
-                    "err1210: 尾部 user 群 %d 条超上限 %d, 放弃聚合", n_tail, self._AGG_MAX_TAIL_USERS
+                    "err1210: 尾部 user 群 %d 条超上限 %d, 放弃聚合",
+                    n_tail,
+                    self._AGG_MAX_TAIL_USERS,
                 )
                 return None
             parts: list[str] = []
@@ -421,9 +432,7 @@ class _Err1210Mixin:
                                 if k == SlotKind.INTEROP
                                 else "_tip_tail_messages"
                             )
-                            r = Message(
-                                role="system", content=seg, source=MessageSource.SYSTEM
-                            )
+                            r = Message(role="system", content=seg, source=MessageSource.SYSTEM)
                             active = getattr(self, attr, None) or []
                             setattr(self, attr, [r] + active)  # 前置拼接（旧先注入）
                             self._deferred_replay_refs = list(
@@ -480,7 +489,10 @@ class _Err1210Mixin:
 
             # interop/tip: 回填内存槽（deferred 前置拼接——旧消息先注入，spec 5.1.3-3；
             # is 身份去重保证幂等：重复回存同一 Message 不累积，spec 5.1.1-3b）
-            for slot, attr in ((SlotKind.INTEROP, "_interop_tail_messages"), (SlotKind.TIP, "_tip_tail_messages")):
+            for slot, attr in (
+                (SlotKind.INTEROP, "_interop_tail_messages"),
+                (SlotKind.TIP, "_tip_tail_messages"),
+            ):
                 es = by_slot.get(slot)
                 if not es:
                     continue
@@ -491,7 +503,9 @@ class _Err1210Mixin:
                     if new_refs:
                         setattr(self, attr, new_refs + active)  # 幂等：整槽赋值语义
                         # 重注入检测（build 消费时 is 身份匹配 → defer_replayed）
-                        self._deferred_replay_refs = list(getattr(self, "_deferred_replay_refs", None) or [])
+                        self._deferred_replay_refs = list(
+                            getattr(self, "_deferred_replay_refs", None) or []
+                        )
                         self._deferred_replay_refs.extend((slot, r) for r in new_refs)
                     record_defer_event(
                         "defer_stored",
@@ -659,7 +673,9 @@ class _Err1210Mixin:
                 session_id=session_id,
             )
             mode_desc = (
-                f"剥离 {result.stripped_count} 条后" if retry_mode == "strip" else "尾部 user 聚合后"
+                f"剥离 {result.stripped_count} 条后"
+                if retry_mode == "strip"
+                else "尾部 user 聚合后"
             )
             if resp is not None:
                 result.resp = resp
@@ -672,7 +688,10 @@ class _Err1210Mixin:
             elif retry_exc is not None and is_err1210(retry_exc):
                 result.exhausted = True
                 record_defer_event(
-                    "defer_exhausted", session_id, "all", {"stripped": result.stripped_count, "mode": retry_mode}
+                    "defer_exhausted",
+                    session_id,
+                    "all",
+                    {"stripped": result.stripped_count, "mode": retry_mode},
                 )
                 self._record_action(
                     "err1210.recovery",
@@ -733,9 +752,7 @@ class _Err1210Mixin:
 
     def _note_defer_replayed(self, session_id: str, slot_kind: SlotKind, count: int = 1) -> None:
         """build 消费 defer 回填消息时记 defer_replayed（观测闭环，spec 4.4-2）."""
-        record_defer_event(
-            "defer_replayed", session_id, str(slot_kind), {"count": count}
-        )
+        record_defer_event("defer_replayed", session_id, str(slot_kind), {"count": count})
         self._last_build_defer_replayed = True
 
     # ── engine 接线点（任务组 4.3 瘦身: engine.py 行数守卫只留最小调用）──
@@ -788,9 +805,14 @@ class _Err1210Mixin:
         """
         try:
             result = self._try_err1210_recovery(
-                exc=exc, sess=sess, messages=messages, tools_param=tools_param,
-                llm_client=llm_client, chat_model_arg=chat_model_arg,
-                timeout_s=self._runtime_timeout(), session_id=session_id,
+                exc=exc,
+                sess=sess,
+                messages=messages,
+                tools_param=tools_param,
+                llm_client=llm_client,
+                chat_model_arg=chat_model_arg,
+                timeout_s=self._runtime_timeout(),
+                session_id=session_id,
             )
             if result.recovered and result.resp is not None:
                 return True, result.resp, 0.0
@@ -801,9 +823,7 @@ class _Err1210Mixin:
     def _err1210_note_defer_lost(self, session_id: str, reason: str) -> None:
         """defer 重注入轮再次失败 → 槽丢失观测（spec 5.1.3-5；fail-open）."""
         if getattr(self, "_last_build_defer_replayed", False):
-            record_defer_event(
-                "defer_lost_on_reinject", session_id, "all", {"reason": reason}
-            )
+            record_defer_event("defer_lost_on_reinject", session_id, "all", {"reason": reason})
             self._last_build_defer_replayed = False
 
     def _err1210_note_request_count(self, session_id: str, msg_count: int) -> None:

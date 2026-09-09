@@ -53,7 +53,10 @@ def test_upload_returns_opaque_ref_and_persists_exact_bytes(
     record = store.resolve(body["attachment_ref"], workspace_scope=_scope(engine))
     assert record.filename == "notes.txt"
     assert record.size_bytes == len(payload)
-    assert store.original_path(body["attachment_ref"], workspace_scope=_scope(engine)).read_bytes() == payload
+    assert (
+        store.original_path(body["attachment_ref"], workspace_scope=_scope(engine)).read_bytes()
+        == payload
+    )
     assert Path(fake_settings.data_dir, "attachments").is_dir()
 
 
@@ -120,11 +123,7 @@ def test_stream_chat_carries_attachment_facts_through_background_runner(
         },
     )
     assert resp.status_code == 200, resp.text
-    events = [
-        json.loads(line[6:])
-        for line in resp.text.splitlines()
-        if line.startswith("data: ")
-    ]
+    events = [json.loads(line[6:]) for line in resp.text.splitlines() if line.startswith("data: ")]
     assert events and events[-1]["type"] == "done", events
     sid = events[-1]["data"]["session_id"]
 
@@ -213,10 +212,7 @@ def test_resume_cannot_carry_new_attachment(build_test_engine) -> None:
 def test_attachment_list_has_mechanical_request_bound(build_test_engine) -> None:
     engine, _ = build_test_engine([])
     client = _client(engine)
-    refs = [
-        {"ref": f"attachment://{i:032x}"}
-        for i in range(21)
-    ]
+    refs = [{"ref": f"attachment://{i:032x}"} for i in range(21)]
     resp = client.post("/api/v1/chat", json={"message": "x", "attachments": refs})
     assert resp.status_code == 422
 
@@ -322,9 +318,7 @@ def test_upload_truncated_preview_preserves_exact_text_for_hydration(
     assert len(body["result_text"]) < len(exact.decode()) + 100
 
     store = AttachmentStore(fake_settings.data_dir)
-    page1 = store.hydrate_text(
-        body["attachment_ref"], workspace_scope=_scope(engine), offset=0
-    )
+    page1 = store.hydrate_text(body["attachment_ref"], workspace_scope=_scope(engine), offset=0)
     assert page1["source_text_chars"] == 120_000
     assert len(page1["content"]) == 100_000
     assert page1["next_offset"] == 100_000
@@ -379,9 +373,7 @@ def test_import_workspace_file_uses_same_opaque_attachment_contract(
     source.write_bytes(b"WORKSPACE-BYTES")
     client = _client(engine)
 
-    resp = client.post(
-        "/api/v1/attachments/import-workspace", json={"path": "notes.txt"}
-    )
+    resp = client.post("/api/v1/attachments/import-workspace", json={"path": "notes.txt"})
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["attachment_ref"].startswith("attachment://")
@@ -389,14 +381,15 @@ def test_import_workspace_file_uses_same_opaque_attachment_contract(
     store = AttachmentStore(fake_settings.data_dir)
     record = store.resolve(body["attachment_ref"], workspace_scope=workspace_scope(tmp_path))
     assert record.filename == "notes.txt"
-    assert store.original_path(
-        body["attachment_ref"], workspace_scope=workspace_scope(tmp_path)
-    ).read_bytes() == b"WORKSPACE-BYTES"
+    assert (
+        store.original_path(
+            body["attachment_ref"], workspace_scope=workspace_scope(tmp_path)
+        ).read_bytes()
+        == b"WORKSPACE-BYTES"
+    )
 
     outside = tmp_path.parent / "outside-webui-import.txt"
     outside.write_text("NO", encoding="utf-8")
-    denied = client.post(
-        "/api/v1/attachments/import-workspace", json={"path": str(outside)}
-    )
+    denied = client.post("/api/v1/attachments/import-workspace", json={"path": str(outside)})
     assert denied.status_code == 404
     assert denied.json()["error"] == "workspace_file_not_found"

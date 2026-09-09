@@ -154,7 +154,9 @@ def ensure_semantic_label(
     stripped = text.lstrip()
     if stripped.startswith(_ALL_LABELS):
         return text
-    resolved = InjectionLayer(layer) if layer is not None else infer_layer(text, slot_kind=slot_kind)
+    resolved = (
+        InjectionLayer(layer) if layer is not None else infer_layer(text, slot_kind=slot_kind)
+    )
     return f"{label_for(resolved)}\n{text}" if text else label_for(resolved)
 
 
@@ -182,7 +184,9 @@ def render_program_appendix(
     text = str(content or "")
     if not text:
         return text
-    resolved = InjectionLayer(layer) if layer is not None else infer_layer(text, slot_kind=slot_kind)
+    resolved = (
+        InjectionLayer(layer) if layer is not None else infer_layer(text, slot_kind=slot_kind)
+    )
     if resolved == InjectionLayer.USER_INSTRUCTION:
         return text
     if resolved == InjectionLayer.PROGRAM_RECOVERY:

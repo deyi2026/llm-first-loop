@@ -871,8 +871,12 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                         "input_budget": {
                             "requested_input_tokens": _budget_info.get("input_token_budget"),
                             "allowed_input_tokens": _budget_info.get("allowed_input_tokens"),
-                            "pre_tool_history_budget_chars": _budget_info.get("pre_tool_history_budget"),
-                            "tool_schema_reserve_chars": _budget_info.get("tool_schema_reserve_chars", 0),
+                            "pre_tool_history_budget_chars": _budget_info.get(
+                                "pre_tool_history_budget"
+                            ),
+                            "tool_schema_reserve_chars": _budget_info.get(
+                                "tool_schema_reserve_chars", 0
+                            ),
                             "effective_history_budget_chars": effective_budget,
                             "limited_by": _budget_info.get("limited_by"),
                         },
@@ -1059,21 +1063,19 @@ class LoopEngine(_BuildMixin, _EventsMixin, _KpiMixin, _RunEntrypointMixin):
                 # ── err1210 P0（tasks 4.3）: compact 首请求 1210 定向降级重试（mixin 封装，
                 # 编排与控制流语义见 err1210.py；恢复成功 → 新 resp 走下方正常路径，
                 # 失败 → 原样继续既有错误链；env ERR1210_RECOVERY=0 完全旁路）──
-                _e1210_recovered, resp, _llm_round_ms, _ = (
-                    self._recovery._err1210_attempt_recovery(
-                        exc=exc,
-                        sess=sess,
-                        messages=messages,
-                        tools_param=tools_param,
-                        llm_client=llm_client,
-                        chat_model_arg=chat_model_arg,
-                        session_id=session_id,
-                        current_resp=resp,
-                        current_round_ms=_llm_round_ms,
-                        model_label=model_used or getattr(self.settings, "llm_model", ""),
-                        metadata_registry=routing.metadata_registry,
-                        round_no=rounds,
-                    )
+                _e1210_recovered, resp, _llm_round_ms, _ = self._recovery._err1210_attempt_recovery(
+                    exc=exc,
+                    sess=sess,
+                    messages=messages,
+                    tools_param=tools_param,
+                    llm_client=llm_client,
+                    chat_model_arg=chat_model_arg,
+                    session_id=session_id,
+                    current_resp=resp,
+                    current_round_ms=_llm_round_ms,
+                    model_label=model_used or getattr(self.settings, "llm_model", ""),
+                    metadata_registry=routing.metadata_registry,
+                    round_no=rounds,
                 )
                 # ── M49（design §5.4）: 降级逻辑 ──
                 # 仅当当前模型为默认装配（sess.model_override is None 且 per-call override 也为 None）

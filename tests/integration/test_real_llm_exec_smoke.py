@@ -133,7 +133,9 @@ def _real_llm_settings(tmp_path):
         # 防御: os.environ 可能带尾随空白/行内注释残留（run_real_smoke.sh 注入路径），
         # strip 后直传 LLMClient——否则模型名/reasoning_effort 带空格 → DeepSeek 400
         # （实测 'unknown variant `max   `'，LLM 摘要降级 deterministic）
-        llm_base_url=(os.environ.get("LLM_BASE_URL") or "https://api.deepseek.com/v1").strip(),  # 空串回退（CI secrets 未配置=空串）
+        llm_base_url=(
+            os.environ.get("LLM_BASE_URL") or "https://api.deepseek.com/v1"
+        ).strip(),  # 空串回退（CI secrets 未配置=空串）
         llm_model=(os.environ.get("LLM_MODEL") or "deepseek-v4-flash").strip(),
         data_dir=str(tmp_path / "data"),
         max_iterations=10,

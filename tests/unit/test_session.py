@@ -173,7 +173,9 @@ def test_session_fork_basic(tmp_path):
     sid = store.create()
     store.append(sid, _msg("问题A"))
     sess = store.load(sid)
-    sess.messages.append(Message(role="assistant", content="方案A：改代码", source=MessageSource.USER))
+    sess.messages.append(
+        Message(role="assistant", content="方案A：改代码", source=MessageSource.USER)
+    )
     store.save(sess)
 
     new_id = store.fork(sid)
@@ -195,7 +197,9 @@ def test_session_fork_with_summary(tmp_path):
     sid = store.create()
     store.append(sid, _msg("问题A"))
     sess = store.load(sid)
-    sess.messages.append(Message(role="assistant", content="方案A：改代码", source=MessageSource.USER))
+    sess.messages.append(
+        Message(role="assistant", content="方案A：改代码", source=MessageSource.USER)
+    )
     sess.messages.append(Message(role="user", content="继续探索方案B", source=MessageSource.USER))
     store.save(sess)
     # 从索引 1 分叉（分叉点后 = assistant 方案A + user 继续B）
@@ -253,6 +257,7 @@ def test_save_updates_updated_at(tmp_path):
     first = store.get_meta(sid)
     # 模拟时间流逝后保存
     import time
+
     time.sleep(0.02)
     sess = store.load(sid)
     sess.messages.append(Message(role="user", content="新消息", source=MessageSource.USER))
@@ -266,7 +271,9 @@ def test_save_generates_title_when_empty(tmp_path):
     store = _store(tmp_path)
     sid = store.create()
     sess = store.load(sid)
-    sess.messages.append(Message(role="user", content="这是首条用户消息", source=MessageSource.USER))
+    sess.messages.append(
+        Message(role="user", content="这是首条用户消息", source=MessageSource.USER)
+    )
     store.save(sess)
     assert store.load(sid).title == "这是首条用户消息"[:30]
 
@@ -406,7 +413,6 @@ def test_session_meta_cache_isolated_by_directory_and_invalidates(tmp_path):
             session_module._SESSION_META_CACHE.clear()  # noqa: SLF001
 
 
-
 def test_session_id_path_traversal_cannot_cross_workspace_roots(tmp_path):
     """外部session_id不得用../跨workspace读/删兄弟会话。"""
     base = tmp_path / "sessions"
@@ -423,7 +429,6 @@ def test_session_id_path_traversal_cannot_cross_workspace_roots(tmp_path):
     assert store_a.delete(traversal) is False
     assert victim_path.exists(), "workspace-A不得删除workspace-B会话"
     assert store_b.load(victim_id).messages[-1].content == "SECRET-B"
-
 
 
 def test_safe_legacy_session_id_remains_supported(tmp_path):

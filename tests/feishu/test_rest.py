@@ -351,7 +351,9 @@ def test_table_overflow_convert_retry():
     assert calls[0].request_body.msg_type == "interactive"
     assert calls[1].request_body.msg_type == "interactive"  # 转换后仍 interactive
     converted_card = json.loads(calls[1].request_body.content)
-    assert "- **A | B**" in converted_card["body"]["elements"][0]["content"]  # 表格已转 bullets（表头加粗）
+    assert (
+        "- **A | B**" in converted_card["body"]["elements"][0]["content"]
+    )  # 表格已转 bullets（表头加粗）
     assert "  - A: 1；B: 2" in converted_card["body"]["elements"][0]["content"]  # 数据行列名映射
 
 
@@ -494,9 +496,7 @@ def _reaction_rest(create_results=None, delete_results=None):
 
 def test_typing_reaction_add_success():
     """用例 ①：add_typing_reaction → SDK create（emoji_type=Typing）+ 返回 reaction_id."""
-    client, reaction = _reaction_rest(
-        create_results=[_FakeReactionResp(reaction_id="re_abc")]
-    )
+    client, reaction = _reaction_rest(create_results=[_FakeReactionResp(reaction_id="re_abc")])
     rid = client.add_typing_reaction("om_1")
     assert rid == "re_abc"
     req = reaction.create_calls[0]
@@ -552,6 +552,7 @@ def test_remove_reaction_fail_silent():
 
 # ── G3 错误醒目化 ──
 
+
 def test_send_text_error_highlight():
     """G3: 错误回执发送内容前插 `⚠️ ` + 首行加粗；正常内容零改动."""
     fake = _FakeLark(create_results=[_FakeCreateResp(message_id="om_err")])
@@ -589,7 +590,9 @@ def test_send_throttle_waits_min_interval(monkeypatch):
     def _fake_sleep(sec: float) -> None:
         sleeps.append(sec)
 
-    fake_now = iter([10.0, 10.0, 10.5])  # 第1次发送→立即; 第2次 0.0s 后→sleep 0.3; 第3次 0.5s 后→不 sleep
+    fake_now = iter(
+        [10.0, 10.0, 10.5]
+    )  # 第1次发送→立即; 第2次 0.0s 后→sleep 0.3; 第3次 0.5s 后→不 sleep
 
     import itertools
 
@@ -597,8 +600,9 @@ def test_send_throttle_waits_min_interval(monkeypatch):
         return next(fake_now)
 
     fake_now = itertools.repeat(10.0)  # 时钟静止：每次调用间隔恒 < 0.3s
-    with mock.patch.object(rest_mod.time, "monotonic", _fake_monotonic), mock.patch.object(
-        rest_mod.time, "sleep", _fake_sleep
+    with (
+        mock.patch.object(rest_mod.time, "monotonic", _fake_monotonic),
+        mock.patch.object(rest_mod.time, "sleep", _fake_sleep),
     ):
         rest_client._throttle_send()  # 首次：无上次记录，不 sleep
         rest_client._throttle_send()  # 间隔 0 → sleep 0.3

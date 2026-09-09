@@ -1,5 +1,3 @@
-
-
 def test_chat_stream_raises_on_sse_error_event():
     """P1-FEISHU: LM Studio SSE 错误事件不应被静默忽略.
 
@@ -35,17 +33,21 @@ def test_chat_stream_raises_on_sse_error_event():
         mock_stream.return_value.__exit__ = MagicMock(return_value=False)
 
         with patch("llm_loop.llm.client.httpx.Client") as mock_client:
-            mock_client.return_value.stream.return_value.__enter__ = MagicMock(return_value=mock_resp)
+            mock_client.return_value.stream.return_value.__enter__ = MagicMock(
+                return_value=mock_resp
+            )
             mock_client.return_value.stream.return_value.__exit__ = MagicMock(return_value=False)
 
             raised = None
             try:
-                list(c.chat_stream([{"role":"user","content":"hi"}], tools=[]))
+                list(c.chat_stream([{"role": "user", "content": "hi"}], tools=[]))
             except LLMHTTPError as e:
                 raised = e
             except Exception as e:
                 raised = e
 
-            assert isinstance(raised, LLMHTTPError), f"应抛 LLMHTTPError, 实际: {type(raised).__name__}: {raised}"
+            assert isinstance(raised, LLMHTTPError), (
+                f"应抛 LLMHTTPError, 实际: {type(raised).__name__}: {raised}"
+            )
             assert raised.status_code == 500
             assert "System message" in raised.body or "Jinja" in raised.body

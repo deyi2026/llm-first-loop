@@ -108,7 +108,9 @@ class TestOriginGuard:
     def test_cross_site_origin_post_blocked(self, monkeypatch, build_test_engine):
         from starlette.testclient import TestClient
 
-        client = TestClient(self._app(monkeypatch, build_test_engine), base_url="http://127.0.0.1:8902")
+        client = TestClient(
+            self._app(monkeypatch, build_test_engine), base_url="http://127.0.0.1:8902"
+        )
         r = client.post(
             "/api/v1/chat",
             json={"message": "hi"},
@@ -121,7 +123,9 @@ class TestOriginGuard:
         """零回归：本机页面（Origin 为回环）正常放行."""
         from starlette.testclient import TestClient
 
-        client = TestClient(self._app(monkeypatch, build_test_engine), base_url="http://127.0.0.1:8902")
+        client = TestClient(
+            self._app(monkeypatch, build_test_engine), base_url="http://127.0.0.1:8902"
+        )
         r = client.post(
             "/api/v1/chat",
             json={"message": "hi"},
@@ -133,15 +137,18 @@ class TestOriginGuard:
         """零回归：无 Origin（curl/脚本/服务器间调用）放行——浏览器跨站必带 Origin."""
         from starlette.testclient import TestClient
 
-        client = TestClient(self._app(monkeypatch, build_test_engine), base_url="http://127.0.0.1:8902")
+        client = TestClient(
+            self._app(monkeypatch, build_test_engine), base_url="http://127.0.0.1:8902"
+        )
         r = client.post("/api/v1/chat", json={"message": "hi"})
         assert r.status_code == 200
-
 
     def test_same_loopback_host_wrong_port_is_blocked(self, monkeypatch, build_test_engine):
         from starlette.testclient import TestClient
 
-        client = TestClient(self._app(monkeypatch, build_test_engine), base_url="http://127.0.0.1:8902")
+        client = TestClient(
+            self._app(monkeypatch, build_test_engine), base_url="http://127.0.0.1:8902"
+        )
         r = client.post(
             "/api/v1/chat",
             json={"message": "hi"},
@@ -155,9 +162,7 @@ class TestOriginGuard:
         from llm_loop.web.auth import hash_login_password
 
         monkeypatch.setenv("WEB_LOGIN_PASSWORD_HASH", hash_login_password("correct-horse-battery"))
-        app = self._app(
-            monkeypatch, build_test_engine, public_allowlist="https://app.example.com"
-        )
+        app = self._app(monkeypatch, build_test_engine, public_allowlist="https://app.example.com")
         client = TestClient(app, base_url="https://app.example.com")
 
         exact = client.post(
@@ -183,6 +188,8 @@ class TestOriginGuard:
         """GET 非 mutating 不受 Origin 校验（健康检查等跨源可读无写副作用）."""
         from starlette.testclient import TestClient
 
-        client = TestClient(self._app(monkeypatch, build_test_engine), base_url="http://127.0.0.1:8902")
+        client = TestClient(
+            self._app(monkeypatch, build_test_engine), base_url="http://127.0.0.1:8902"
+        )
         r = client.get("/health", headers={"Origin": "https://evil.example.com"})
         assert r.status_code == 200

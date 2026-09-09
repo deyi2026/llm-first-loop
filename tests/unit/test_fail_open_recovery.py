@@ -240,7 +240,11 @@ class TestBackupStoreListStatus:
     def test_list_pending_sorted_by_time(self, tmp_path):
         """list_pending 按 backup_at 排序."""
         store = BackupStore(tmp_path / ".recovery")
-        for ts in ["2026-08-13T10:30:02+08:00", "2026-08-13T10:30:00+08:00", "2026-08-13T10:30:01+08:00"]:
+        for ts in [
+            "2026-08-13T10:30:02+08:00",
+            "2026-08-13T10:30:00+08:00",
+            "2026-08-13T10:30:01+08:00",
+        ]:
             archive = BackupArchive(
                 source_id="s1",
                 backup_at=ts,
@@ -256,7 +260,11 @@ class TestBackupStoreListStatus:
     def test_status_summary_by_type(self, tmp_path):
         """status_summary 如实返回数量/时间/类型."""
         store = BackupStore(tmp_path / ".recovery")
-        timestamps = ["2026-08-13T10:30:00+08:00", "2026-08-13T10:30:01+08:00", "2026-08-13T10:30:02+08:00"]
+        timestamps = [
+            "2026-08-13T10:30:00+08:00",
+            "2026-08-13T10:30:01+08:00",
+            "2026-08-13T10:30:02+08:00",
+        ]
         for i, target_type in enumerate(["session", "memory_stats", "session"]):
             archive = BackupArchive(
                 source_id="s1" if target_type == "session" else "memory",
@@ -307,7 +315,7 @@ class TestBackupStoreCleanup:
         for i in range(7):
             archive = BackupArchive(
                 source_id="s1",
-                backup_at=f"2026-08-0{i+1}T10:30:00+08:00",
+                backup_at=f"2026-08-0{i + 1}T10:30:00+08:00",
                 target_type="session",
                 payload="{}",
                 retry_count=1,
@@ -661,7 +669,6 @@ class TestArchitectureStatusRecovery:
         assert "recovery" in snapshot
 
 
-
 def test_backup_store_rejects_traversal_backup_id(tmp_path):
     """读取/标记backup_id也必须basename安全，不能只在save时sanitize。"""
     store_a = BackupStore(tmp_path / "recovery-A")
@@ -735,7 +742,6 @@ def test_recover_from_backup_cannot_cross_recovery_or_session_roots(tmp_path):
     assert not escaped_target.exists()
     loaded = store_b.get_archive(bid)
     assert loaded is not None and loaded.recovered is False
-
 
 
 def test_recover_from_backup_rejects_filename_archive_metadata_mismatch(tmp_path):

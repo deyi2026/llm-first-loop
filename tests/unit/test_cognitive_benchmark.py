@@ -50,7 +50,12 @@ class TestEfficiencyMeter:
                 {"ts": "t1", "phase": "p", "action_type": "tool_call", "detail": "memory_search"},
                 {"ts": "t2", "phase": "p", "action_type": "tool_call", "detail": "search_archive"},
                 {"ts": "t3", "phase": "p", "action_type": "tool_call", "detail": "read_file"},
-                {"ts": "t4", "phase": "p", "action_type": "tool_call", "detail": "checkpoint_replay"},
+                {
+                    "ts": "t4",
+                    "phase": "p",
+                    "action_type": "tool_call",
+                    "detail": "checkpoint_replay",
+                },
                 {"ts": "t5", "phase": "p", "action_type": "memory_search", "detail": "字" * 40},
             ],
         )
@@ -69,8 +74,20 @@ class TestEfficiencyMeter:
         usage = _write_jsonl(
             tmp_path / "usage.jsonl",
             [
-                {"round": 1, "tokens_in": 10000, "tokens_out": 500, "cache_hit": 9000, "cache_miss": 1000},
-                {"round": 2, "tokens_in": 20000, "tokens_out": 1500, "cache_hit": 19000, "cache_miss": 1000},
+                {
+                    "round": 1,
+                    "tokens_in": 10000,
+                    "tokens_out": 500,
+                    "cache_hit": 9000,
+                    "cache_miss": 1000,
+                },
+                {
+                    "round": 2,
+                    "tokens_in": 20000,
+                    "tokens_out": 1500,
+                    "cache_hit": 19000,
+                    "cache_miss": 1000,
+                },
             ],
         )
         return trace, goals, usage
@@ -191,24 +208,36 @@ class TestFixtureRegistry:
         long_compact = _write_jsonl(
             tmp_path / "s1.jsonl",
             [
-                {"type": "request.usage", "payload": {"round": r, "tokens_in": 100, "tokens_out": 10}}
+                {
+                    "type": "request.usage",
+                    "payload": {"round": r, "tokens_in": 100, "tokens_out": 10},
+                }
                 for r in range(1, 46)
             ]
             + [
-                {"type": "message.appended", "payload": {"content": "audit: run.compact warn history 642827→647593 字符"}},
+                {
+                    "type": "message.appended",
+                    "payload": {"content": "audit: run.compact warn history 642827→647593 字符"},
+                },
             ],
         )
         short = _write_jsonl(
             tmp_path / "s2.jsonl",
             [
-                {"type": "request.usage", "payload": {"round": r, "tokens_in": 100, "tokens_out": 10}}
+                {
+                    "type": "request.usage",
+                    "payload": {"round": r, "tokens_in": 100, "tokens_out": 10},
+                }
                 for r in range(1, 10)
             ],
         )
         no_compact = _write_jsonl(
             tmp_path / "s3.jsonl",
             [
-                {"type": "request.usage", "payload": {"round": r, "tokens_in": 100, "tokens_out": 10}}
+                {
+                    "type": "request.usage",
+                    "payload": {"round": r, "tokens_in": 100, "tokens_out": 10},
+                }
                 for r in range(1, 45)
             ],
         )
@@ -237,15 +266,13 @@ def _mk_track_spec(tmp_path: Path, n: int = 4) -> FixtureSpec:
 
 def _fake_outcome(sample):
     # reset 组偶数配对源触发首 miss（覆盖 triggered/not_triggered 两子组）
-    triggered = (
-        sample.group == "reset"
-        and int(sample.pair_id.rsplit("-", 1)[-1]) % 2 == 0
-    )
+    triggered = sample.group == "reset" and int(sample.pair_id.rsplit("-", 1)[-1]) % 2 == 0
     return SampleOutcome(
         sample_id=sample.sample_id,
         group=sample.group,
         first_miss=FirstMissCost(
-            triggered=triggered, token_delta=1000 if triggered else 0,
+            triggered=triggered,
+            token_delta=1000 if triggered else 0,
             latency_delta_ms=500.0 if triggered else 0.0,
         ),
         efficiency=CognitiveOverheadMeter().measure(
@@ -410,9 +437,7 @@ class TestCrR1Telemetry:
         from llm_loop.cognitive import telemetry
 
         monkeypatch.delenv("COG_RUNTIME_TELEMETRY", raising=False)
-        wrote = telemetry.emit_cognitive_event(
-            "packet_compile", data_dir=tmp_path, session_id="s1"
-        )
+        wrote = telemetry.emit_cognitive_event("packet_compile", data_dir=tmp_path, session_id="s1")
         assert wrote is False
         assert not (tmp_path / "audit" / "cognitive_telemetry.jsonl").exists()
 

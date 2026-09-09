@@ -78,7 +78,9 @@ class ArchiveService:
                     msg_seq=msg_seq,
                 )
         except Exception:  # noqa: BLE001 - enforce must not shrink bytes without canonical recovery
-            logger.warning("压缩消息 Evidence capture 失败；enforce 模式拒绝继续压缩", exc_info=True)
+            logger.warning(
+                "压缩消息 Evidence capture 失败；enforce 模式拒绝继续压缩", exc_info=True
+            )
             raise
 
         if self._host.archive is None:
@@ -104,9 +106,7 @@ class ArchiveService:
                 from llm_loop.core.identity_summary import render_identity_summary_placeholder
 
                 _summary_override = (
-                    render_identity_summary_placeholder(1)
-                    if msg_seq == _identity_start
-                    else ""
+                    render_identity_summary_placeholder(1) if msg_seq == _identity_start else ""
                 )
                 _facts_override = []
                 _paths_override = []

@@ -402,7 +402,6 @@ def test_goal_cross_process_create_and_checkpoint_are_lossless(tmp_path):
     assert len(parsed) == 7
 
 
-
 def test_goal_implicit_get_refuses_newer_corrupt_record(tmp_path):
     """自动恢复不能在候选Goal之后存在损坏记录时静默回退旧Goal；显式已知有效id仍可读。"""
     store = _store(tmp_path)
@@ -435,7 +434,6 @@ def test_run_get_goal_reports_corruption_instead_of_resuming_old_goal(tmp_path):
     assert result.status.value == "failure"
     assert "存储损坏" in result.content
     assert older.objective not in result.content
-
 
 
 def test_goal_implicit_get_allows_new_valid_after_older_corrupt_record(tmp_path, caplog):
@@ -488,7 +486,6 @@ def test_get_strict_session_prefers_own_latest_over_foreign_active(tmp_path):
     assert got is not None and got["id"] == ga.id
 
 
-
 def test_checkpoint_goal_reports_corruption_when_target_may_be_malformed(tmp_path):
     """checkpoint目标未命中但文件有坏行时，不能误报不存在/非active。"""
     from llm_loop.introspection.tools_goal import run_checkpoint_goal
@@ -529,7 +526,6 @@ def test_update_goal_reports_corruption_when_target_may_be_malformed(tmp_path):
     assert "不存在" not in result.content
 
 
-
 def test_valid_goal_writes_preserve_unrelated_corrupt_record(tmp_path):
     """显式可解析目标仍可checkpoint/update；无关坏行必须原样保留，不能因修复丢数据。"""
     store = _store(tmp_path)
@@ -553,7 +549,6 @@ def test_checkpoint_unknown_goal_on_empty_store_returns_none(tmp_path):
     """空GoalStore上的未知checkpoint应正常返回None，不应FileNotFoundError。"""
     store = _store(tmp_path)
     assert store.checkpoint("GOAL-NOT-THERE", what="noop") is None
-
 
 
 def test_goal_atomic_rewrite_fsyncs_parent_directory(tmp_path, monkeypatch):

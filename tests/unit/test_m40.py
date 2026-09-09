@@ -54,8 +54,16 @@ def test_history_compression_pair_atomic_2m():
     msgs: list[Message] = []
     for k in range(400):  # 构造大量配对组（大字符触发压缩）
         calls = [{"id": f"c{k}_0", "name": "web_fetch", "arguments": "{}"}]
-        msgs.append(Message(role="assistant", content=f"调用 {k}", source=MessageSource.USER, tool_calls=calls))
-        msgs.append(Message(role="tool", content="x" * 2000, source=MessageSource.TOOL, tool_call_id=f"c{k}_0"))
+        msgs.append(
+            Message(
+                role="assistant", content=f"调用 {k}", source=MessageSource.USER, tool_calls=calls
+            )
+        )
+        msgs.append(
+            Message(
+                role="tool", content="x" * 2000, source=MessageSource.TOOL, tool_call_id=f"c{k}_0"
+            )
+        )
     msgs.append(Message(role="user", content="最新问题", source=MessageSource.USER))
     out = build_history_messages(msgs, system_prompt="SYS", max_chars=500_000)
 
@@ -68,7 +76,7 @@ def test_history_compression_pair_atomic_2m():
             j = i + 1
             while j < n and out[j]["role"] == "tool":
                 j += 1
-            assert (j - (i + 1)) == n_calls, f"配对断裂: assistant({n_calls}) 后 tool {j-i-1}"
+            assert (j - (i + 1)) == n_calls, f"配对断裂: assistant({n_calls}) 后 tool {j - i - 1}"
             i = j
         else:
             i += 1

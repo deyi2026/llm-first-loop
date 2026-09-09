@@ -64,7 +64,8 @@ def test_complete_executing_registers(tmp_path):
     tok = current_session_id.set(sid)
     try:
         r = engine.corrections.execute(
-            "evolution_complete", {"suggestion_id": sug.id, "note": "已执行并对比架构状态，验证通过"}
+            "evolution_complete",
+            {"suggestion_id": sug.id, "note": "已执行并对比架构状态，验证通过"},
         )
     finally:
         current_session_id.reset(tok)
@@ -90,10 +91,14 @@ def test_complete_empty_note_unverified(tmp_path):
     store.transition(sug.id, status="executing")
     tok = current_session_id.set(sid)
     try:
-        r = engine.corrections.execute("evolution_complete", {"suggestion_id": sug.id, "note": "  "})
+        r = engine.corrections.execute(
+            "evolution_complete", {"suggestion_id": sug.id, "note": "  "}
+        )
         assert r.status.value == "failure"  # note 空白 → 必填校验失败
         # 带空白 note 的场景: note 缺失时工具应拒绝（required 语义）
-        r2 = engine.corrections.execute("evolution_complete", {"suggestion_id": sug.id, "note": "完成"})
+        r2 = engine.corrections.execute(
+            "evolution_complete", {"suggestion_id": sug.id, "note": "完成"}
+        )
     finally:
         current_session_id.reset(tok)
     assert r2.status.value == "success"

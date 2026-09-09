@@ -34,16 +34,18 @@ logger = logging.getLogger(__name__)
 _INTEROP_INBOX_REL = Path("interop") / "lfl_to_dsh" / "pending"
 _POLL_S = float(os.environ.get("INBOX_WATCH_POLL_S", "10"))
 _WAKEUP_ENABLED = os.environ.get("INBOX_WAKEUP", "0").strip().lower() in {
-    "1", "true", "yes", "on",
+    "1",
+    "true",
+    "yes",
+    "on",
 }
 _WAKEUP_MIN_INTERVAL_S = float(os.environ.get("INBOX_WAKEUP_MIN_INTERVAL_S", "300"))
 # EVO-20260825 任务9（§5.4）: pending 堆积治理——
 # 启动巡检清理过期 job/sched（>TTL 迁移 processed/）、堆积超限告警。
 _PENDING_TTL_HOURS = float(os.environ.get("INBOX_PENDING_TTL_HOURS", "24"))
-_PENDING_CLEANUP_ON_START = (
-    os.environ.get("INBOX_PENDING_CLEANUP_ON_START", "1").strip().lower()
-    in {"1", "true", "yes", "on"}
-)
+_PENDING_CLEANUP_ON_START = os.environ.get(
+    "INBOX_PENDING_CLEANUP_ON_START", "1"
+).strip().lower() in {"1", "true", "yes", "on"}
 _PENDING_MAX = int(os.environ.get("INBOX_PENDING_MAX", "20"))
 
 
@@ -65,15 +67,15 @@ class InboxWatcher:
         wakeup_enabled: bool | None = None,
         wakeup_min_interval_s: float = _WAKEUP_MIN_INTERVAL_S,
     ) -> None:
-        self._inbox_dir = Path(inbox_dir) if inbox_dir else (
-            Path(os.environ.get("LFL_DATA_DIR", "data")) / _INTEROP_INBOX_REL
+        self._inbox_dir = (
+            Path(inbox_dir)
+            if inbox_dir
+            else (Path(os.environ.get("LFL_DATA_DIR", "data")) / _INTEROP_INBOX_REL)
         )
         self._poll_s = poll_s
         self._on_notify = on_notify
         self._wakeup_fn = wakeup_fn
-        self._wakeup_enabled = (
-            _WAKEUP_ENABLED if wakeup_enabled is None else wakeup_enabled
-        )
+        self._wakeup_enabled = _WAKEUP_ENABLED if wakeup_enabled is None else wakeup_enabled
         self._wakeup_min_interval = wakeup_min_interval_s
         self._seen: set[str] = set()  # 已提示文件名（去重）
         self._baselined = False  # 首轮只建基线（启动不刷屏，对齐 cross_sync）
@@ -87,9 +89,7 @@ class InboxWatcher:
         if self._thread is not None and self._thread.is_alive():
             return
         self._stop.clear()
-        self._thread = threading.Thread(
-            target=self._loop, name="interop-inbox-watch", daemon=True
-        )
+        self._thread = threading.Thread(target=self._loop, name="interop-inbox-watch", daemon=True)
         self._thread.start()
         # EVO-20260825 任务9（§5.4.1-3）: 启动巡检——存量过期堆积一次性清理
         try:

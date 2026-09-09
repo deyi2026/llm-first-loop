@@ -20,8 +20,12 @@ def _build_dual_track(tmp_path: Path, num_sessions: int = 2) -> Path:
     session_store = SessionStore(data_dir / "sessions", event_store=event_store)
     for i in range(num_sessions):
         sid = session_store.create()
-        session_store.append(sid, Message(role="user", content=f"msg-{i}", source=MessageSource.USER))
-        session_store.append(sid, Message(role="assistant", content=f"reply-{i}", source=MessageSource.SYSTEM))
+        session_store.append(
+            sid, Message(role="user", content=f"msg-{i}", source=MessageSource.USER)
+        )
+        session_store.append(
+            sid, Message(role="assistant", content=f"reply-{i}", source=MessageSource.SYSTEM)
+        )
     return data_dir
 
 

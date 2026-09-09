@@ -95,6 +95,7 @@ def memory_snapshot_prompt_eligible(message: Any, *, current_turn_ref: int | Non
     _note_would_have_granted("memory_snapshot", message, current_turn_ref)
     return False
 
+
 # Legacy program-control frames predate lifecycle metadata.  New emitters MUST carry
 # ``prompt_lifecycle=current_turn``; an unlabelled system frame with one of these exact
 # prefixes is therefore historical control state and has no automatic prompt entitlement.
@@ -114,9 +115,7 @@ _LEGACY_DECLARATION_REMINDER_PREFIX = (
 _LEGACY_PROGRAM_FAULT_PREFIX = "[程序异常]"
 
 
-def current_turn_program_prompt_eligible(
-    message: Any, *, current_turn_ref: int | None
-) -> bool:
+def current_turn_program_prompt_eligible(message: Any, *, current_turn_ref: int | None) -> bool:
     """Gate persisted current-turn-only program controls by human-turn identity.
 
     A current-turn program frame may be replayed across tool/LLM rounds inside one human
@@ -170,4 +169,6 @@ def current_turn_program_prompt_eligible(
     # Pre-R8.9 declaration reminders were program-generated as role=user without
     # metadata.  Match the exact historical sentence rather than the generic label so a
     # human discussing "[声明提醒]" remains ordinary user truth.
-    return not (role in {"user", "system"} and content.startswith(_LEGACY_DECLARATION_REMINDER_PREFIX))
+    return not (
+        role in {"user", "system"} and content.startswith(_LEGACY_DECLARATION_REMINDER_PREFIX)
+    )

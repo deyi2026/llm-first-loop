@@ -91,7 +91,6 @@ def test_migrate_legacy_sessions(tmp_path):
     assert store.migrate_legacy_sessions(str(data), w) == 0
 
 
-
 def test_workspace_key_collision_does_not_alias_registered_workspaces(tmp_path):
     """legacy DSH key可碰撞，但内部注册表必须为不同真实路径分配不同稳定ID。"""
     store = WorkspaceStore(tmp_path / "data")
@@ -110,7 +109,6 @@ def test_workspace_key_collision_does_not_alias_registered_workspaces(tmp_path):
     assert len(store.list()) == 2
     assert store.get(a.id).path == a.path
     assert store.get(b.id).path == b.path
-
 
 
 def test_collision_workspace_ids_persist_and_reload(tmp_path):
@@ -143,9 +141,7 @@ def test_workspace_store_skips_unsafe_persisted_id(tmp_path, caplog):
             {
                 "version": 1,
                 "current": "../escape",
-                "workspaces": [
-                    {"id": "../escape", "path": str(path), "created_at": "x"}
-                ],
+                "workspaces": [{"id": "../escape", "path": str(path), "created_at": "x"}],
             }
         ),
         encoding="utf-8",
@@ -157,7 +153,6 @@ def test_workspace_store_skips_unsafe_persisted_id(tmp_path, caplog):
     assert store.list() == []
     assert store.get_current() is None
     assert any("不安全ID" in record.message for record in caplog.records)
-
 
 
 def test_stale_workspace_store_instances_do_not_lose_updates(tmp_path):
@@ -200,7 +195,6 @@ def test_stale_workspace_store_switch_reloads_registry_before_mutation(tmp_path)
     assert final.get_current().id == b.id
 
 
-
 def test_workspace_mutation_refuses_to_overwrite_corrupt_registry(tmp_path):
     data = tmp_path / "data"
     data.mkdir(exist_ok=True)
@@ -217,7 +211,6 @@ def test_workspace_mutation_refuses_to_overwrite_corrupt_registry(tmp_path):
     assert registry.read_bytes() == before
 
 
-
 def test_cross_process_concurrent_workspace_register_keeps_both(tmp_path):
     """两个独立Python进程同一barrier后注册，flock内reload必须保留双方更新。"""
     data = tmp_path / "data"
@@ -228,7 +221,7 @@ def test_cross_process_concurrent_workspace_register_keeps_both(tmp_path):
     go = tmp_path / "go"
     ready_a = tmp_path / "ready-a"
     ready_b = tmp_path / "ready-b"
-    script = r'''
+    script = r"""
 import sys, time
 from pathlib import Path
 from llm_loop.workspace.store import WorkspaceStore
@@ -242,7 +235,7 @@ while not go.exists():
         raise SystemExit("barrier timeout")
     time.sleep(0.01)
 store.register(workspace)
-'''
+"""
     env = os.environ.copy()
     repo_src = Path(__file__).resolve().parents[2] / "src"
     existing_pythonpath = env.get("PYTHONPATH", "")
@@ -273,7 +266,6 @@ store.register(workspace)
     assert str(ws_a.resolve()) in paths
     assert str(ws_b.resolve()) in paths
     assert len(paths) == 2
-
 
 
 def test_workspace_register_save_failure_rolls_back_memory_and_disk(tmp_path, monkeypatch):
@@ -328,7 +320,6 @@ def test_workspace_switch_save_failure_rolls_back_current(tmp_path, monkeypatch)
     assert (data / "workspaces.json").read_bytes() == before
 
 
-
 def test_migrate_legacy_sessions_does_not_silently_strand_conflicting_source(tmp_path):
     """部分迁移后同名source/dest内容不同，不能永久跳过旧根而让engine只看旧dest。"""
     data = tmp_path / "data"
@@ -351,7 +342,6 @@ def test_migrate_legacy_sessions_does_not_silently_strand_conflicting_source(tmp
     assert dest.read_text(encoding="utf-8") == '{"version":"DEST-OLDER"}'
 
 
-
 def test_migrate_legacy_sessions_identical_existing_json_is_idempotent(tmp_path):
     """同名JSON内容相同属于安全幂等，不应误报冲突。"""
     data = tmp_path / "data"
@@ -372,7 +362,6 @@ def test_migrate_legacy_sessions_identical_existing_json_is_idempotent(tmp_path)
     assert dest.exists()
 
 
-
 def test_reregister_removed_collision_workspace_reuses_original_id(tmp_path):
     """注销不删会话数据，因此同一路径再次注册必须复用原ID，不能因碰撞集合变化换分区。"""
     data = tmp_path / "data"
@@ -390,7 +379,6 @@ def test_reregister_removed_collision_workspace_reuses_original_id(tmp_path):
     b_again = store.register(b_path)
 
     assert b_again.id == b.id, "注销后重注册必须回到原session分区"
-
 
 
 def test_removed_workspace_id_tombstone_prevents_collision_path_from_stealing_partition(tmp_path):
@@ -423,7 +411,6 @@ def test_removed_workspace_id_tombstone_survives_reload(tmp_path):
     restored = reloaded.register(path)
 
     assert restored.id == original.id
-
 
 
 def test_switch_registered_workspace_with_missing_path_fails_without_changing_current(tmp_path):

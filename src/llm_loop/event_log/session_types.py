@@ -19,6 +19,7 @@ if TYPE_CHECKING:  # 仅类型标注，运行时零依赖（Tarjan 静态图不�
 class SessionIdConflictError(RuntimeError):
     """session_id 已由另一个workspace持有；全局Event/Archive键禁止复用。"""
 
+
 @dataclass
 class ForkReport:
     """fork 操作报告（design.md §2.2.2-A）.

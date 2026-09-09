@@ -206,7 +206,9 @@ def test_artifact_persistence_failure_never_rolls_back_successful_edit(
     assert "artifact_ref_unavailable=true" in result.content
 
 
-def test_read_file_hydrates_exact_artifact_bytes_and_reports_current_path_state(tmp_path: Path) -> None:
+def test_read_file_hydrates_exact_artifact_bytes_and_reports_current_path_state(
+    tmp_path: Path,
+) -> None:
     store, workspace = _store(tmp_path)
     record, target = _create_record(store, workspace, b"OLD\n")
     target.write_bytes(b"NEW\n")
@@ -392,7 +394,9 @@ def test_session_delete_keeps_workspace_artifact_for_next_session_same_workspace
     assert recovered.sha256 == record.sha256
 
 
-def test_factory_shares_file_service_and_artifact_store_between_edit_and_read(tmp_path: Path) -> None:
+def test_factory_shares_file_service_and_artifact_store_between_edit_and_read(
+    tmp_path: Path,
+) -> None:
     from llm_loop.factory import build_engine
 
     settings = Settings(

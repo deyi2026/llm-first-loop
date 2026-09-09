@@ -25,7 +25,14 @@ def _png_bytes(width: int = 64, height: int = 48) -> bytes:
 
 def _jpeg_bytes(width: int = 320, height: int = 240) -> bytes:
     """构造最小 JPEG（SOI + SOF0 段含尺寸）."""
-    sof0 = b"\xff\xd8" + b"\xff\xc0" + struct.pack(">H", 11) + b"\x08" + struct.pack(">HH", height, width) + b"\x03"
+    sof0 = (
+        b"\xff\xd8"
+        + b"\xff\xc0"
+        + struct.pack(">H", 11)
+        + b"\x08"
+        + struct.pack(">HH", height, width)
+        + b"\x03"
+    )
     return sof0
 
 
@@ -51,7 +58,9 @@ def test_read_image_success_with_vision(tmp_path, monkeypatch):
     """后端识别成功 → SUCCESS 含元信息 + 识别文本."""
     p = tmp_path / "shot.png"
     p.write_bytes(_png_bytes(64, 48))
-    with mock.patch("llm_loop.web.vision.describe_image", return_value="界面截图：顶部导航栏 + 内容区"):
+    with mock.patch(
+        "llm_loop.web.vision.describe_image", return_value="界面截图：顶部导航栏 + 内容区"
+    ):
         r = ReadImageTool().execute(path=str(p))
     assert r.status == ToolResultStatus.SUCCESS
     assert "格式=PNG" in r.content

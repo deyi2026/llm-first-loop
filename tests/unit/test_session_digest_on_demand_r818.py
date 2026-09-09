@@ -56,8 +56,7 @@ def test_digest_enabled_does_not_emit_or_persist_catalog(build_test_engine):
     assert "ref=digest:" not in joined
     assert len(sess.messages) == before
     assert not any(
-        (m.metadata or {}).get("injection_kind") == "session_digest_catalog"
-        for m in sess.messages
+        (m.metadata or {}).get("injection_kind") == "session_digest_catalog" for m in sess.messages
     )
 
 
@@ -92,6 +91,5 @@ def test_legacy_catalog_is_filtered_but_human_digest_text_is_preserved(build_tes
     assert "LEGACY_R818_CATALOG" not in joined
     assert "ref=digest:human-text" in joined
     assert any(
-        (m.metadata or {}).get("injection_kind") == "session_digest_catalog"
-        for m in sess.messages
+        (m.metadata or {}).get("injection_kind") == "session_digest_catalog" for m in sess.messages
     ), "storage/event truth must remain untouched"

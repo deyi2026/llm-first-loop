@@ -76,6 +76,7 @@ def test_exec_mode_default_disabled():
 
 # ── EVO-20260814: fail-closed 覆盖所有破坏性工具（修写文件工具绕过分级）──
 
+
 class _MockWriteTool:
     """模拟写文件类工具（name 在破坏性集合，execute 恒 SUCCESS，不碰真实文件）."""
 

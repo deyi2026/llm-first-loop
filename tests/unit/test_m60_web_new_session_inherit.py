@@ -50,7 +50,9 @@ def _engine(store: SessionStore, captured: list[str]) -> mock.Mock:
     engine = mock.Mock()
     engine.llm = mock.Mock(model="fake-model")
     engine.settings = mock.Mock(history_max_chars=10000)
-    engine.workspace_root = ""  # attachment scope fallback uses cwd; keep Mock from fabricating a path
+    engine.workspace_root = (
+        ""  # attachment scope fallback uses cwd; keep Mock from fabricating a path
+    )
     engine.session = store
     engine.runner = None  # 流式走回退生成器直驱路径
     cm = mock.MagicMock()

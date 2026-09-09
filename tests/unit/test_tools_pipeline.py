@@ -88,13 +88,16 @@ def test_pipeline_executes_pre_hooks_in_order():
     order: list[str] = []
     p.add_pre_hook(lambda c: order.append("pre1"))
     p.add_pre_hook(lambda c: order.append("pre2"))
-    p.execute(_fake_tool, ToolCall(id="1", name="t", arguments={}), invoke=lambda t, c: _fake_tool(c))
+    p.execute(
+        _fake_tool, ToolCall(id="1", name="t", arguments={}), invoke=lambda t, c: _fake_tool(c)
+    )
     assert order == ["pre1", "pre2"]
 
 
 def test_pipeline_materialize_frozen():
     p = ToolExecutionPipeline(PipelineConfig(enabled=True, materialize=True))
     seen: dict = {}
+
     def invoke(tool, call):
         seen["args"] = call.arguments
         return _fake_tool(call)
@@ -129,7 +132,8 @@ def test_pipeline_materialize_rejects_bad_args():
 def test_pipeline_result_immutable_snapshot():
     p = ToolExecutionPipeline(PipelineConfig(enabled=True))
     result = p.execute(
-        _fake_tool, ToolCall(id="1", name="t", arguments={}),
+        _fake_tool,
+        ToolCall(id="1", name="t", arguments={}),
         invoke=lambda t, c: _fake_tool(c),
     )
     assert isinstance(result, ImmutableResult)

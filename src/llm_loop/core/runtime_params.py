@@ -54,7 +54,9 @@ class RuntimeParams:
         self._history: list[ParamAdjustRecord] = []
         self._persist_path: Path | None = None
         self._session_id = ""
-        self._context_usage_fn: Any = None  # T3: 上下文占用率回调（0.0-1.0），供 memory_top_k 自适应
+        self._context_usage_fn: Any = (
+            None  # T3: 上下文占用率回调（0.0-1.0），供 memory_top_k 自适应
+        )
 
     # ── 配置注入（factory 装配）──
     def set_max_adjust_per_round(self, n: int) -> None:

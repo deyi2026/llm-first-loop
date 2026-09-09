@@ -46,15 +46,27 @@ def _mon(**kw) -> CacheHealthMonitor:
     return m
 
 
-def _storm_round(m, sid: str, chars: int = 300_000, budget: int = 300_000,
-                 model: str = "deepseek/deepseek-v4-flash") -> None:
+def _storm_round(
+    m,
+    sid: str,
+    chars: int = 300_000,
+    budget: int = 300_000,
+    model: str = "deepseek/deepseek-v4-flash",
+) -> None:
     """一轮风暴 build 通知 + 低命中回馈（窗口共信号）。chars>budget×0.9 保持超限."""
-    m.note_build_result(compacted=True, anchor_moved=True, chars_total=chars,
-                        budget=budget, session_id=sid, model_ref=model)
+    m.note_build_result(
+        compacted=True,
+        anchor_moved=True,
+        chars_total=chars,
+        budget=budget,
+        session_id=sid,
+        model_ref=model,
+    )
     m.record(20000, 2000, model_ref=model, session_id=sid)  # 10% 命中 → 共信号满足
 
 
 # ── P0 breaker: 风暴检测与进入/退出 ──
+
 
 def test_storm_detection_enters_breaker(audit_path):
     """连续 (compacted 且 anchor_moved 且 仍超压缩线) + 低命中 → 进入 breaker + 审计."""
@@ -72,8 +84,9 @@ def test_high_hit_window_does_not_trigger(audit_path):
     """结构信号满足但命中率健康（渐进折叠场景）→ 不触发 breaker."""
     m = CacheHealthMonitor(breaker_audit_file=audit_path, breaker_trigger_runs=3)
     for _ in range(5):
-        m.note_build_result(compacted=True, anchor_moved=True, chars_total=300_000,
-                            budget=300_000, session_id="s1")
+        m.note_build_result(
+            compacted=True, anchor_moved=True, chars_total=300_000, budget=300_000, session_id="s1"
+        )
         m.record(20000, 19500, session_id="s1")  # 97.5% 命中 → 共信号不满足
     assert m.breaker_active_for("s1") is False
 
@@ -83,8 +96,9 @@ def test_clean_round_resets_storm_streak(audit_path):
     m = CacheHealthMonitor(breaker_audit_file=audit_path, breaker_trigger_runs=3)
     for _ in range(2):
         _storm_round(m, "s1")
-    m.note_build_result(compacted=False, anchor_moved=False, chars_total=100_000,
-                        budget=300_000, session_id="s1")
+    m.note_build_result(
+        compacted=False, anchor_moved=False, chars_total=100_000, budget=300_000, session_id="s1"
+    )
     for _ in range(2):
         _storm_round(m, "s1")
     assert m.breaker_active_for("s1") is False  # 中途干净轮清零 → 未达阈值
@@ -96,8 +110,9 @@ def test_head_keep_frozen_anchor_storm_still_triggers(audit_path):
     保留窗口每轮前移同样风暴——锚点移动不是必要条件）。"""
     m = CacheHealthMonitor(breaker_audit_file=audit_path, breaker_trigger_runs=3)
     for _ in range(3):
-        m.note_build_result(compacted=True, anchor_moved=False, chars_total=300_000,
-                            budget=300_000, session_id="s1")
+        m.note_build_result(
+            compacted=True, anchor_moved=False, chars_total=300_000, budget=300_000, session_id="s1"
+        )
         m.record(20000, 2000, session_id="s1")  # 低命中共信号
     assert m.breaker_active_for("s1") is True
     rows = _read_audit(audit_path)
@@ -108,8 +123,9 @@ def test_under_compression_line_does_not_count(audit_path):
     """压缩后已回落到压缩线以下（单次压缩成功）→ 不计入风暴."""
     m = CacheHealthMonitor(breaker_audit_file=audit_path, breaker_trigger_runs=3)
     for _ in range(5):
-        m.note_build_result(compacted=True, anchor_moved=True, chars_total=200_000,
-                            budget=300_000, session_id="s1")  # 200K ≤ 270K（×0.9）
+        m.note_build_result(
+            compacted=True, anchor_moved=True, chars_total=200_000, budget=300_000, session_id="s1"
+        )  # 200K ≤ 270K（×0.9）
         m.record(20000, 2000, session_id="s1")
     assert m.breaker_active_for("s1") is False
 
@@ -119,33 +135,53 @@ def test_breaker_per_session_isolation(audit_path):
     m = CacheHealthMonitor(breaker_audit_file=audit_path, breaker_trigger_runs=3)
     for _ in range(3):
         _storm_round(m, "storm")
-        m.note_build_result(compacted=False, anchor_moved=False, chars_total=50_000,
-                            budget=300_000, session_id="healthy")
+        m.note_build_result(
+            compacted=False,
+            anchor_moved=False,
+            chars_total=50_000,
+            budget=300_000,
+            session_id="healthy",
+        )
     assert m.breaker_active_for("storm") is True
     assert m.breaker_active_for("healthy") is False
 
 
 def test_exit_hysteresis_requires_cooldown_watermark_and_stability(audit_path):
     """退出 = cooldown 轮数下限 + 水位 + 连续稳定（仅时间不够）."""
-    m = CacheHealthMonitor(breaker_audit_file=audit_path, breaker_trigger_runs=3,
-                           breaker_cooldown_rounds=5, breaker_exit_stable_runs=2,
-                           breaker_exit_chars_ratio=0.8)
+    m = CacheHealthMonitor(
+        breaker_audit_file=audit_path,
+        breaker_trigger_runs=3,
+        breaker_cooldown_rounds=5,
+        breaker_exit_stable_runs=2,
+        breaker_exit_chars_ratio=0.8,
+    )
     for _ in range(3):
         _storm_round(m, "s1")
     assert m.breaker_active_for("s1") is True
     # cooldown 未满: 即使干净也不退出
     for _ in range(2):
-        m.note_build_result(compacted=False, anchor_moved=False, chars_total=100_000,
-                            budget=300_000, session_id="s1")
+        m.note_build_result(
+            compacted=False,
+            anchor_moved=False,
+            chars_total=100_000,
+            budget=300_000,
+            session_id="s1",
+        )
     assert m.breaker_active_for("s1") is True
     # 水位未达标（chars 200_000 > 300_000×0.8）: 不退出
-    m.note_build_result(compacted=False, anchor_moved=False, chars_total=200_000,
-                        budget=300_000, session_id="s1")
+    m.note_build_result(
+        compacted=False, anchor_moved=False, chars_total=200_000, budget=300_000, session_id="s1"
+    )
     assert m.breaker_active_for("s1") is True
     # cooldown 满 + 水位达标 + 连续稳定 → 退出
     for _ in range(3):
-        m.note_build_result(compacted=False, anchor_moved=False, chars_total=100_000,
-                            budget=300_000, session_id="s1")
+        m.note_build_result(
+            compacted=False,
+            anchor_moved=False,
+            chars_total=100_000,
+            budget=300_000,
+            session_id="s1",
+        )
     assert m.breaker_active_for("s1") is False
     events = [r["event"] for r in _read_audit(audit_path)]
     assert "breaker_exit" in events
@@ -154,16 +190,18 @@ def test_exit_hysteresis_requires_cooldown_watermark_and_stability(audit_path):
 
 def test_context_pressure_and_escape(audit_path):
     """冻结期超安全水位 → context_pressure；连续达上限 → 武装逃生轮（放行一次压缩）."""
-    m = CacheHealthMonitor(breaker_audit_file=audit_path, breaker_trigger_runs=3,
-                           breaker_pressure_escape_max=2, breaker_pressure_ratio=0.95)
+    m = CacheHealthMonitor(
+        breaker_audit_file=audit_path,
+        breaker_trigger_runs=3,
+        breaker_pressure_escape_max=2,
+        breaker_pressure_ratio=0.95,
+    )
     for _ in range(3):
         _storm_round(m, "s1")
-    assert m.context_pressure_decision("s1", 290_000, 300_000) is True   # 96.7% > 95%
+    assert m.context_pressure_decision("s1", 290_000, 300_000) is True  # 96.7% > 95%
     assert m.context_pressure_decision("s1", 280_000, 300_000) is False  # ≤95% 放行提交
-    m.note_context_pressure("s1", reason="over_safety_cap", chars_total=290_000,
-                            budget=300_000)
-    m.note_context_pressure("s1", reason="over_safety_cap", chars_total=290_000,
-                            budget=300_000)
+    m.note_context_pressure("s1", reason="over_safety_cap", chars_total=290_000, budget=300_000)
+    m.note_context_pressure("s1", reason="over_safety_cap", chars_total=290_000, budget=300_000)
     assert m.breaker_freeze_compression("s1") is False  # 逃生轮: 允许一次受控压缩
     assert m.context_pressure_decision("s1", 290_000, 300_000) is False
     events = [r["event"] for r in _read_audit(audit_path)]
@@ -172,30 +210,35 @@ def test_context_pressure_and_escape(audit_path):
 
 def test_escape_consumed_on_next_build(audit_path):
     """逃生轮在下一轮 build 消费后恢复冻结."""
-    m = CacheHealthMonitor(breaker_audit_file=audit_path, breaker_trigger_runs=3,
-                           breaker_pressure_escape_max=1)
+    m = CacheHealthMonitor(
+        breaker_audit_file=audit_path, breaker_trigger_runs=3, breaker_pressure_escape_max=1
+    )
     for _ in range(3):
         _storm_round(m, "s1")
     m.note_context_pressure("s1", reason="over_safety_cap", chars_total=290_000, budget=300_000)
     assert m.breaker_freeze_compression("s1") is False
     # 逃生轮 build（允许压缩发生）→ 消费逃生
-    m.note_build_result(compacted=True, anchor_moved=True, chars_total=300_000,
-                        budget=300_000, session_id="s1")
+    m.note_build_result(
+        compacted=True, anchor_moved=True, chars_total=300_000, budget=300_000, session_id="s1"
+    )
     assert m.breaker_freeze_compression("s1") is True
     assert m.context_pressure_decision("s1", 290_000, 300_000) is True
 
 
 # ── P0: history freeze_compression ──
 
+
 def _big_history(n: int = 40, chars: int = 2000) -> list:
     from llm_loop.core.message import Message, MessageSource
 
     msgs = []
     for i in range(n):
-        msgs.append(Message(role="user", content=f"任务 {i} " + "x" * chars,
-                            source=MessageSource.USER))
-        msgs.append(Message(role="assistant", content=f"回答 {i} " + "y" * chars,
-                            source=MessageSource.USER))
+        msgs.append(
+            Message(role="user", content=f"任务 {i} " + "x" * chars, source=MessageSource.USER)
+        )
+        msgs.append(
+            Message(role="assistant", content=f"回答 {i} " + "y" * chars, source=MessageSource.USER)
+        )
     return msgs
 
 
@@ -205,16 +248,29 @@ def test_freeze_compression_skips_archive():
     sys_p = "system prompt"
     budget = 5000  # 远小于历史 → 正常应触发压缩
     normal_compacted: list[bool] = []
-    built = build_history_messages(msgs, sys_p, max_chars=budget, compact_ratio=0.9,
-                                   session_id="s1", compacted_out=normal_compacted)
+    built = build_history_messages(
+        msgs,
+        sys_p,
+        max_chars=budget,
+        compact_ratio=0.9,
+        session_id="s1",
+        compacted_out=normal_compacted,
+    )
     assert len(built) < len(msgs)  # 压缩路径只保留尾部少量消息
     assert normal_compacted == [True]
     assert not any("上下文压缩" in str(m.get("content", "")) for m in built)
     compacted_box: list[bool] = []
     anchor_box: list[int] = []
-    built2 = build_history_messages(msgs, sys_p, max_chars=budget, compact_ratio=0.9,
-                                    session_id="s1", freeze_compression=True,
-                                    compacted_out=compacted_box, anchor_out=anchor_box)
+    built2 = build_history_messages(
+        msgs,
+        sys_p,
+        max_chars=budget,
+        compact_ratio=0.9,
+        session_id="s1",
+        freeze_compression=True,
+        compacted_out=compacted_box,
+        anchor_out=anchor_box,
+    )
     assert compacted_box and compacted_box[0] is False  # 未进入归档路径
     assert anchor_box == []  # 锚点不推进
     # 冻结序列化保留全部消息（含 [上下文压缩] 标注缺失）
@@ -222,6 +278,7 @@ def test_freeze_compression_skips_archive():
 
 
 # ── P1: 遥测行剥离 ──
+
 
 def test_strip_telemetry_lines():
     forge = (
@@ -237,7 +294,9 @@ def test_strip_telemetry_lines():
     plain = "普通回答"
     assert strip_cache_telemetry_lines(plain) == plain
     # 多行伪造
-    multi = "a\n⚡ 缓存命中率 1%（近 1 轮，1/100 tokens）\n⚡ 缓存命中率 2%（近 2 轮，2/200 tokens）\nb"
+    multi = (
+        "a\n⚡ 缓存命中率 1%（近 1 轮，1/100 tokens）\n⚡ 缓存命中率 2%（近 2 轮，2/200 tokens）\nb"
+    )
     out2 = strip_cache_telemetry_lines(multi)
     assert "缓存命中率" not in out2 and out2 == "a\nb"
     # 无 tokens 结尾特征的行不剥离（防误伤正文）
@@ -247,17 +306,26 @@ def test_strip_telemetry_lines():
 
 # ── P0: cache_guard 规则 F 协调 ──
 
+
 def test_guard_rule_g_provider_miss_warns_with_or_without_breaker(tmp_path):
     """无结构漂移证据的 provider 低命中始终 WARN；breaker 不应依赖旧的误 BLOCK。"""
     g = PromptGuard(audit_file=str(tmp_path / "guard2.jsonl"))
     # 制造低命中窗口（3 次 BLOCK 阈值内的低命中记录）
     for _ in range(4):
         g.record_result("sg1", tokens_in=20000, tokens_hit=2000, provider="deepseek")
-    d = g.check(session_id="sg1", system_text="sys", messages=[{"role": "user", "content": "hi"}],
-                breaker_active=False)
+    d = g.check(
+        session_id="sg1",
+        system_text="sys",
+        messages=[{"role": "user", "content": "hi"}],
+        breaker_active=False,
+    )
     assert d.verdict == "WARN" and d.rule == "low_hit_rate_provider"
-    d2 = g.check(session_id="sg1", system_text="sys", messages=[{"role": "user", "content": "hi"}],
-                 breaker_active=True)
+    d2 = g.check(
+        session_id="sg1",
+        system_text="sys",
+        messages=[{"role": "user", "content": "hi"}],
+        breaker_active=True,
+    )
     assert d2.verdict == "WARN" and d2.rule == "low_hit_rate_provider"
 
 
@@ -268,11 +336,13 @@ def test_guard_rule_f_downgraded_when_breaker_active(tmp_path, monkeypatch):
     monkeypatch.setattr(guard_mod, "_PERF_BLOCK_MODE", "on")
     g = PromptGuard(audit_file=str(tmp_path / "guard.jsonl"))
     big = [{"role": "user", "content": "x" * 1000}]  # 1000 chars
-    d = g.check(session_id="s1", system_text="sys", messages=big,
-                history_budget=1000, breaker_active=False)
+    d = g.check(
+        session_id="s1", system_text="sys", messages=big, history_budget=1000, breaker_active=False
+    )
     assert d.verdict == "BLOCK" and d.rule == "submit_ratio"
-    d2 = g.check(session_id="s2", system_text="sys", messages=big,
-                 history_budget=1000, breaker_active=True)
+    d2 = g.check(
+        session_id="s2", system_text="sys", messages=big, history_budget=1000, breaker_active=True
+    )
     assert d2.verdict == "WARN" and d2.rule == "submit_ratio_breaker"
 
 
@@ -287,18 +357,18 @@ def test_guard_rule_f_fail_safe_when_breaker_active_missing(tmp_path, monkeypatc
     g = PromptGuard(audit_file=str(tmp_path / "guard3.jsonl"))
     big = [{"role": "user", "content": "x" * 1000}]  # 1000 chars > 95% × 1000
     # 未传 breaker_active（默认 None = 传递丢失）
-    d = g.check(session_id="s-missing", system_text="sys", messages=big,
-                history_budget=1000)
+    d = g.check(session_id="s-missing", system_text="sys", messages=big, history_budget=1000)
     assert d.verdict == "WARN" and d.rule == "submit_ratio_breaker_missing"
     assert "传递丢失" in d.detail and "双拦死锁" in d.detail
     # 显式 None 同语义
-    d2 = g.check(session_id="s-missing2", system_text="sys", messages=big,
-                 history_budget=1000, breaker_active=None)
+    d2 = g.check(
+        session_id="s-missing2",
+        system_text="sys",
+        messages=big,
+        history_budget=1000,
+        breaker_active=None,
+    )
     assert d2.verdict == "WARN" and d2.rule == "submit_ratio_breaker_missing"
-
-
-
-
 
 
 def test_provider_mid_fold_keeps_head_and_does_not_rearchive(tmp_path):
@@ -448,11 +518,13 @@ def test_guard_g_compression_round_has_specific_warn(tmp_path):
     g = PromptGuard(audit_file=str(tmp_path / "guard3.jsonl"))
     for _ in range(4):
         g.record_result("sg2", tokens_in=20000, tokens_hit=2000, provider="deepseek")
-    d = g.check(session_id="sg2", system_text="sys",
-                messages=[{"role": "user", "content": "hi"}],
-                compress_count_this_run=1)
+    d = g.check(
+        session_id="sg2",
+        system_text="sys",
+        messages=[{"role": "user", "content": "hi"}],
+        compress_count_this_run=1,
+    )
     assert d.verdict == "WARN" and d.rule == "low_hit_rate_compressing"
     # 非压缩轮同命中：无结构漂移证据，仅 provider-side WARN
-    d2 = g.check(session_id="sg2", system_text="sys",
-                 messages=[{"role": "user", "content": "hi"}])
+    d2 = g.check(session_id="sg2", system_text="sys", messages=[{"role": "user", "content": "hi"}])
     assert d2.verdict == "WARN" and d2.rule == "low_hit_rate_provider"

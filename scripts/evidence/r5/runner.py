@@ -139,7 +139,9 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
 
 def _build_registry(
     *, fixture: R5Fixture, owner: OwnerScope, run_dir: Path
-) -> tuple[ToolRegistry, EvidenceLedgerStore, EvidenceFreshness, ManifestProjector, R5SnapshotTool | None]:
+) -> tuple[
+    ToolRegistry, EvidenceLedgerStore, EvidenceFreshness, ManifestProjector, R5SnapshotTool | None
+]:
     blobs = BlobStore(run_dir / "evidence" / "blobs")
     ledger = EvidenceLedgerStore(run_dir / "evidence" / "ledger")
     capture = EvidenceCapture(blobs, ledger)
@@ -163,10 +165,14 @@ def _build_registry(
             projection_budget_chars=900,
         )
     )
-    registry.register(EvidenceReadTool(blobs, ledger, freshness=freshness, owner_resolver=lambda: owner))
+    registry.register(
+        EvidenceReadTool(blobs, ledger, freshness=freshness, owner_resolver=lambda: owner)
+    )
     registry.register(EvidenceSearchTool(search, freshness=freshness, owner_resolver=lambda: owner))
     registry.register(EvidenceListTool(ledger, freshness=freshness, owner_resolver=lambda: owner))
-    registry.register(SearchArchiveCompatTool(search, freshness=freshness, owner_resolver=lambda: owner))
+    registry.register(
+        SearchArchiveCompatTool(search, freshness=freshness, owner_resolver=lambda: owner)
+    )
     return registry, ledger, freshness, ManifestProjector(ledger), snapshot_tool
 
 
@@ -201,7 +207,7 @@ def _task_prompt(fixture: R5Fixture, source_path: str | None) -> str:
     return (
         f"R5 freshness holdout {fixture.seed_id}.\n{source_note}\n{fixture.task}\n"
         "A prior source observation was already acquired before this task, but its raw tool result is not in this conversation. "
-        "Use the available recovery/source tools as needed. Return only JSON: {\"answer\":\"<value>\"}."
+        'Use the available recovery/source tools as needed. Return only JSON: {"answer":"<value>"}.'
     )
 
 
@@ -258,7 +264,9 @@ def _result_trace(call: ToolCall, result: ToolResult, round_index: int) -> dict[
     row: dict[str, Any] = {
         "round": round_index,
         "tool": call.name,
-        "arguments": call.arguments if isinstance(call.arguments, dict) else _parse_args(call.arguments),
+        "arguments": call.arguments
+        if isinstance(call.arguments, dict)
+        else _parse_args(call.arguments),
         "status": result.status.value,
         "content_head": result.content[:900],
         "evidence_ref": result.evidence_ref,
@@ -274,7 +282,9 @@ class FakeR5LLM:
         self.source_path = source_path
         self.counter = 0
 
-    def chat_stream(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], **kwargs: Any):
+    def chat_stream(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], **kwargs: Any
+    ):
         response = self._response(messages)
         if False:  # pragma: no cover
             yield None
@@ -410,7 +420,9 @@ def execute_run(row: dict[str, Any], *, dry: bool = False) -> dict[str, Any]:
             stats["prompt_tokens"] += getattr(response, "prompt_tokens", 0) or 0
             stats["completion_tokens"] += getattr(response, "completion_tokens", 0) or 0
             stats["cache_hit_tokens"] += getattr(response, "prompt_cache_hit_tokens", 0) or 0
-            reasoning = getattr(response, "reasoning_content", None) or getattr(response, "reasoning", None)
+            reasoning = getattr(response, "reasoning_content", None) or getattr(
+                response, "reasoning", None
+            )
             if reasoning:
                 reasoning_parts.append(reasoning)
             if not response.tool_calls:
@@ -421,7 +433,9 @@ def execute_run(row: dict[str, Any], *, dry: bool = False) -> dict[str, Any]:
                 ToolCall(
                     id=call.id,
                     name=call.name,
-                    arguments=call.arguments if isinstance(call.arguments, dict) else _parse_args(call.arguments),
+                    arguments=call.arguments
+                    if isinstance(call.arguments, dict)
+                    else _parse_args(call.arguments),
                 )
                 for call in response.tool_calls
             ]
@@ -434,7 +448,12 @@ def execute_run(row: dict[str, Any], *, dry: bool = False) -> dict[str, Any]:
                 if call.name == source_name and result.status is ToolResultStatus.SUCCESS:
                     state.model_source_execution_count += 1
                     _record_source_success(state, call, fixture)
-                if call.name in {"read_evidence", "search_evidence", "list_evidence", "search_archive"}:
+                if call.name in {
+                    "read_evidence",
+                    "search_evidence",
+                    "list_evidence",
+                    "search_archive",
+                }:
                     if result.status is ToolResultStatus.SUCCESS:
                         state.recovery_success_count += 1
                         if call.name == "read_evidence":
@@ -448,7 +467,10 @@ def execute_run(row: dict[str, Any], *, dry: bool = False) -> dict[str, Any]:
                         and "historical_only" in result.content
                     ):
                         state.historical_access_success_count += 1
-                    if "content=blocked" in result.content or "evidence_hydration_blocked" in result.content:
+                    if (
+                        "content=blocked" in result.content
+                        or "evidence_hydration_blocked" in result.content
+                    ):
                         state.stale_block_count += 1
                 trace.append(_result_trace(call, result, round_index))
                 persisted.append(result.to_message().to_llm_dict())
@@ -497,7 +519,9 @@ def execute_run(row: dict[str, Any], *, dry: bool = False) -> dict[str, Any]:
         "historical_access_success_count": state.historical_access_success_count,
         "stale_block_count": state.stale_block_count,
         "request_count": state.request_count,
-        "snapshot_execution_count_total": None if snapshot_tool is None else snapshot_tool.execution_count,
+        "snapshot_execution_count_total": None
+        if snapshot_tool is None
+        else snapshot_tool.execution_count,
         "reasoning": "\n".join(reasoning_parts) if reasoning_parts else None,
         "stats": stats,
         "trace": trace,
@@ -575,10 +599,20 @@ def run_rows(rows: list[dict[str, Any]], *, dry: bool) -> tuple[list[dict[str, A
         )
         for result in results:
             print(
-                result["run_id"], result["provider"], result["seed_id"], result["status"],
-                "exact=", result.get("final_answer_exact"), "source=", result.get("model_source_execution_count"),
-                "repeat=", result.get("exact_source_args_repeat_count"), "overlap=", result.get("redundant_overlap_count"),
-                "hist=", result.get("historical_access_success_count"),
+                result["run_id"],
+                result["provider"],
+                result["seed_id"],
+                result["status"],
+                "exact=",
+                result.get("final_answer_exact"),
+                "source=",
+                result.get("model_source_execution_count"),
+                "repeat=",
+                result.get("exact_source_args_repeat_count"),
+                "overlap=",
+                result.get("redundant_overlap_count"),
+                "hist=",
+                result.get("historical_access_success_count"),
             )
         failed = [r for r in results if r["status"] != "COMPLETED" or not r["final_answer_exact"]]
         return results, 0 if not failed else 1
@@ -592,10 +626,20 @@ def run_rows(rows: list[dict[str, Any]], *, dry: bool) -> tuple[list[dict[str, A
             continue
         result = _execute_real_row(row)
         print(
-            result["run_id"], result["provider"], result["seed_id"], result["status"],
-            "exact=", result.get("final_answer_exact"), "source=", result.get("model_source_execution_count"),
-            "repeat=", result.get("exact_source_args_repeat_count"), "overlap=", result.get("redundant_overlap_count"),
-            "stale=", result.get("stale_as_current"),
+            result["run_id"],
+            result["provider"],
+            result["seed_id"],
+            result["status"],
+            "exact=",
+            result.get("final_answer_exact"),
+            "source=",
+            result.get("model_source_execution_count"),
+            "repeat=",
+            result.get("exact_source_args_repeat_count"),
+            "overlap=",
+            result.get("redundant_overlap_count"),
+            "stale=",
+            result.get("stale_as_current"),
         )
     payload = _aggregate_real(rows)
     unresolved = [r for r in payload["runs"] if r["status"] == "INFRA_FAILURE"]

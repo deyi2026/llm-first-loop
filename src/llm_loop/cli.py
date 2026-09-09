@@ -57,7 +57,9 @@ def _run_single(engine, text: str, session_id: str | None = None) -> None:
     print(result.final_answer)
     if result.fallback_receipt:
         fb = result.fallback_receipt
-        print(f"[模型降级: {fb.get('from', '?')}→{fb.get('to', '?')}, 原因: {fb.get('reason', 'unknown')}]" )
+        print(
+            f"[模型降级: {fb.get('from', '?')}→{fb.get('to', '?')}, 原因: {fb.get('reason', 'unknown')}]"
+        )
     if result.model_used:
         from llm_loop.core.loop import format_tokens
 
@@ -83,9 +85,7 @@ def _apply_cli_startup_model(engine, session_store, session_id: str, model_ref: 
     session_store.save(sess)  # 确保会话 JSON 落盘存在
     # 强制 reload (load 一次后若 start 内已写入，需拿到 in-memory sess 引用)
     sess = session_store.load(session_id)
-    result = handle_model_command(
-        f"/model {model_ref}", ctx, sess, session_store, audit=None
-    )
+    result = handle_model_command(f"/model {model_ref}", ctx, sess, session_store, audit=None)
     if result is not None:
         print(result.reply)
 
@@ -134,7 +134,9 @@ def _run_interactive(engine, session_id: str | None = None) -> None:
         )
         if result is not None:
             print(f"[--model 启动] {result.reply}")
-    print(f"LLM-First Core Loop 交互模式（会话 {sid[:8]}，输入 exit 退出；M50: /model [provider/model|default] 切换模型）")
+    print(
+        f"LLM-First Core Loop 交互模式（会话 {sid[:8]}，输入 exit 退出；M50: /model [provider/model|default] 切换模型）"
+    )
     # Operator-owned control surface: pending evolution review is checked here,
     # outside the model loop. Web/Feishu/single-shot runs never get maintenance prose.
     detector = getattr(engine, "loop_signal_detector", None)
@@ -146,7 +148,9 @@ def _run_interactive(engine, session_id: str | None = None) -> None:
                 store = getattr(getattr(engine, "correction_ctx", None), "evolution_store", None)
                 detector.check_pending_review(store)
             except Exception as exc:
-                print(f"[程序异常] 待审演进检查失败（{type(exc).__name__}: {exc}）；聊天输入仍可继续。")
+                print(
+                    f"[程序异常] 待审演进检查失败（{type(exc).__name__}: {exc}）；聊天输入仍可继续。"
+                )
         try:
             text = input("\n你> ").strip()
         except (EOFError, KeyboardInterrupt):
@@ -167,9 +171,7 @@ def _run_interactive(engine, session_id: str | None = None) -> None:
         ctx = getattr(engine, "correction_ctx", None)
         if ctx is not None:
             sess = session_store.load(sid)
-            cmd_result = handle_model_command(
-                text, ctx, sess, session_store, audit=None
-            )
+            cmd_result = handle_model_command(text, ctx, sess, session_store, audit=None)
             if cmd_result is not None:
                 print(f"\n[模型指令] {cmd_result.reply}")
                 continue
@@ -180,13 +182,17 @@ def _run_interactive(engine, session_id: str | None = None) -> None:
         print(f"\nAI> {result.final_answer}")
         if result.fallback_receipt:
             fb = result.fallback_receipt
-            print(f"[模型降级: {fb.get('from', '?')}→{fb.get('to', '?')}, 原因: {fb.get('reason', 'unknown')}]" )
+            print(
+                f"[模型降级: {fb.get('from', '?')}→{fb.get('to', '?')}, 原因: {fb.get('reason', 'unknown')}]"
+            )
         if result.model_used:
             from llm_loop.core.loop import format_tokens
 
             footer = f"—— {result.model_used}"
             if result.tokens_in or result.tokens_out:
-                footer += f" · {format_tokens(result.tokens_in)}入/{format_tokens(result.tokens_out)}出"
+                footer += (
+                    f" · {format_tokens(result.tokens_in)}入/{format_tokens(result.tokens_out)}出"
+                )
             print(footer)
         if result.verification_note:
             print(f"[校验提示] {result.verification_note}")
@@ -248,7 +254,9 @@ def _cmd_archive(engine, session_id: str, archived: bool) -> int:
     from llm_loop.feedback.honesty import session_archived_message
 
     try:
-        ok = engine.session.archive(session_id) if archived else engine.session.unarchive(session_id)
+        ok = (
+            engine.session.archive(session_id) if archived else engine.session.unarchive(session_id)
+        )
     except SessionMutationBusyError as exc:
         print(f"[会话繁忙] {exc}")
         return 1
@@ -394,6 +402,7 @@ def _dispatch_command(argv: list[str]) -> int:
     from llm_loop.factory import build_engine
 
     engine = build_engine(settings)
+
     # P2-4(2026-08-15): 子命令分派同样装配 engine（持有 LLM httpx 连接），
     # 统一 try/finally 在退出前 close（fail-open 幂等）——覆盖本分派全部 return 出口。
     def _dispatch() -> int:
@@ -426,12 +435,12 @@ def _dispatch_command(argv: list[str]) -> int:
             return _cmd_extract(engine, argv[1])
         if cmd == "rename":
             if len(argv) < 3:
-                print("用法: llm_loop rename <session_id> \"<新标题>\"")
+                print('用法: llm_loop rename <session_id> "<新标题>"')
                 return 2
             return _cmd_rename(engine, argv[1], " ".join(argv[2:]))
         if cmd == "fork":
             if len(argv) < 2:
-                print("用法: llm_loop fork <session_id> [--at <索引>] [--summary \"<摘要>\"]")
+                print('用法: llm_loop fork <session_id> [--at <索引>] [--summary "<摘要>"]')
                 return 2
             at = None
             summary = ""
@@ -730,9 +739,11 @@ def _cmd_event_verify(argv: list[str]) -> int:
             return 2
         targets = [args.session]
     else:
-        targets = sorted(p.stem for p in Path(sessions_dir).glob("*.json")) if Path(
-            sessions_dir
-        ).is_dir() else []
+        targets = (
+            sorted(p.stem for p in Path(sessions_dir).glob("*.json"))
+            if Path(sessions_dir).is_dir()
+            else []
+        )
 
     if not targets:
         print(f"❌ 无会话可校验（目录: {sessions_dir}）", file=sys.stderr)
@@ -800,7 +811,11 @@ def _cmd_event_rollback(argv: list[str]) -> int:
 
     data_dir = args.data_dir
     event_logs_dir = Path(f"{data_dir}/event_logs")
-    backups = sorted((event_logs_dir / "_backup").glob("*")) if (event_logs_dir / "_backup").is_dir() else []
+    backups = (
+        sorted((event_logs_dir / "_backup").glob("*"))
+        if (event_logs_dir / "_backup").is_dir()
+        else []
+    )
     if not backups:
         print("❌ 无备份区可回滚", file=sys.stderr)
         return 1
@@ -819,7 +834,9 @@ def _cmd_event_rollback(argv: list[str]) -> int:
         return 1
     print("【事件日志回滚报告】")
     print(f"- 备份区: {backup_dir}")
-    print(f"- 恢复会话: {len(result['restored'])}（{', '.join(result['restored'][:5])}{'…' if len(result['restored']) > 5 else ''}）")
+    print(
+        f"- 恢复会话: {len(result['restored'])}（{', '.join(result['restored'][:5])}{'…' if len(result['restored']) > 5 else ''}）"
+    )
     print(f"- 清除事件: {len(result['events_removed'])}")
     if result["errors"]:
         print(f"- 错误（如实标注）: {len(result['errors'])}")
@@ -843,7 +860,9 @@ def _cmd_session_fork(argv: list[str]) -> int:
     )
     parser.add_argument("--session", required=True, help="源会话 ID")
     parser.add_argument("--data-dir", default=_DEFAULT_DATA_DIR, help="数据目录（默认 ./data）")
-    parser.add_argument("--fork-point", type=int, default=None, help="fork 点（保留前 N 条消息；缺省=全部）")
+    parser.add_argument(
+        "--fork-point", type=int, default=None, help="fork 点（保留前 N 条消息；缺省=全部）"
+    )
     parser.add_argument("--summary", default="", help="分支摘要（缺省自动提炼）")
     args = parser.parse_args(argv)
 
@@ -924,7 +943,9 @@ def _cmd_event_retire(argv: list[str]) -> int:
     print(f"- 归档清单: {', '.join(report.archived_files) or '无'}")
     print(f"- 备份区: {report.backup_dir}")
     print(f"- 耗时: {report.elapsed_s}s")
-    print(f"- 回滚入口: llm_loop event-retire-rollback --data-dir {args.data_dir} --backup-dir {report.backup_dir}")
+    print(
+        f"- 回滚入口: llm_loop event-retire-rollback --data-dir {args.data_dir} --backup-dir {report.backup_dir}"
+    )
     return 0
 
 
@@ -986,7 +1007,9 @@ def _cmd_event_rotate_status(argv: list[str]) -> int:
             active = "活跃" if s.is_active else "归档"
             print(f"  段 {s.segment_seq}: {s.event_count} 事件, {s.size_bytes}B, {active}")
         return 0
-    multi_sessions = [p.name for p in event_logs_dir.iterdir() if p.is_dir() and not p.name.startswith("_")]
+    multi_sessions = [
+        p.name for p in event_logs_dir.iterdir() if p.is_dir() and not p.name.startswith("_")
+    ]
     if not multi_sessions:
         print("无多段事件日志会话")
         return 0
@@ -1128,9 +1151,6 @@ def _cmd_fork(engine, session_id: str, *, at: int | None, summary: str) -> int:
     return 0
 
 
-
-
-
 # ── 管理完善: 会话重命名 ──
 def _cmd_rename(engine, session_id: str, new_title: str) -> int:
     """重命名会话标题（web 列表可识别，减少"未命名"混乱）.
@@ -1155,6 +1175,6 @@ def _cmd_rename(engine, session_id: str, new_title: str) -> int:
     print("❌ 重命名失败（新标题为空）", file=sys.stderr)
     return 2
 
+
 if __name__ == "__main__":
     raise SystemExit(main())
-

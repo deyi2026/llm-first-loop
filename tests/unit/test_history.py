@@ -101,9 +101,20 @@ def _tool_pair(prefix: str, n_calls: int = 2) -> list[Message]:
     for k in range(n_calls):
         tid = f"{prefix}_call_{k}"
         calls.append({"id": tid, "name": "web_fetch", "arguments": "{}"})
-    msgs.append(Message(role="assistant", content=f"调用 {prefix}", source=MessageSource.USER, tool_calls=calls))
+    msgs.append(
+        Message(
+            role="assistant", content=f"调用 {prefix}", source=MessageSource.USER, tool_calls=calls
+        )
+    )
     for k in range(n_calls):
-        msgs.append(Message(role="tool", content=f"结果 {prefix}_{k}", source=MessageSource.TOOL, tool_call_id=f"{prefix}_call_{k}"))
+        msgs.append(
+            Message(
+                role="tool",
+                content=f"结果 {prefix}_{k}",
+                source=MessageSource.TOOL,
+                tool_call_id=f"{prefix}_call_{k}",
+            )
+        )
     return msgs
 
 
@@ -129,7 +140,9 @@ def test_compression_keeps_tool_pairs_atomic():
             while j < n and out[j]["role"] == "tool":
                 j += 1
             tool_count = j - (i + 1)
-            assert tool_count == n_calls, f"assistant(tool_calls={n_calls}) 后 tool 消息数 {tool_count} 不匹配"
+            assert tool_count == n_calls, (
+                f"assistant(tool_calls={n_calls}) 后 tool 消息数 {tool_count} 不匹配"
+            )
             i = j
         else:
             i += 1
@@ -155,7 +168,9 @@ def test_compression_archives_tool_pairs_atomic():
     for idx, r in enumerate(arch_roles):
         if r == "assistant":
             # 该 assistant 带 tool_calls → 其后必须归档了对应的 tool 响应（整组归档）
-            assert any(t == "tool" for t in arch_roles[idx:]), "归档端 assistant(tool_calls) 无对应 tool 响应"
+            assert any(t == "tool" for t in arch_roles[idx:]), (
+                "归档端 assistant(tool_calls) 无对应 tool 响应"
+            )
     # 保留端配对校验
     i = 0
     n = len(out)
@@ -211,9 +226,7 @@ def test_history_compression_no_auto_llm_summary():
 
 def test_history_compression_summary_fail_open():
     """summarizer 异常 → fail-open：不阻断、无摘要/状态注入."""
-    msgs = [
-        Message(role="user", content="x" * 200, source=MessageSource.USER) for _ in range(10)
-    ]
+    msgs = [Message(role="user", content="x" * 200, source=MessageSource.USER) for _ in range(10)]
     archived: list[Message] = []
     sink = lambda sid, m: archived.append(m)  # noqa: E731
 
@@ -236,9 +249,7 @@ def test_history_compression_summary_fail_open():
 
 def test_history_no_summarizer_backward_compat():
     """summarizer=None → 纯另存，无自动摘要/压缩状态注入."""
-    msgs = [
-        Message(role="user", content="y" * 150, source=MessageSource.USER) for _ in range(10)
-    ]
+    msgs = [Message(role="user", content="y" * 150, source=MessageSource.USER) for _ in range(10)]
     archived: list[Message] = []
     sink = lambda sid, m: archived.append(m)  # noqa: E731
 
@@ -291,9 +302,7 @@ def test_compression_archive_body_and_pointer_are_both_on_demand():
 
 def test_archive_pointer_without_summarizer_is_prompt_neutral():
     """R8.17: summarizer=None 同样不生成正文目录或动态 pointer。"""
-    msgs = [
-        Message(role="user", content="y" * 150, source=MessageSource.USER) for _ in range(10)
-    ]
+    msgs = [Message(role="user", content="y" * 150, source=MessageSource.USER) for _ in range(10)]
     archived: list[Message] = []
     sink = lambda sid, m: archived.append(m)  # noqa: E731
 
@@ -354,7 +363,9 @@ def test_archive_pointer_does_not_replay_tool_result_catalog():
 def test_compression_does_not_reinject_deterministic_key_facts():
     """R3: 关键事实仍随原文归档，但不自动重新注入当前 prompt。"""
     msgs = [
-        Message(role="user", content="方案对比完成：选定方案 A 作为最终方案", source=MessageSource.USER),
+        Message(
+            role="user", content="方案对比完成：选定方案 A 作为最终方案", source=MessageSource.USER
+        ),
         Message(role="tool", content="read_file 成功，配置读取完成", source=MessageSource.TOOL),
         Message(role="user", content="" * 500, source=MessageSource.USER),
         Message(role="user", content="补充内容" * 200, source=MessageSource.USER),
@@ -382,17 +393,7 @@ def test_compression_does_not_reinject_deterministic_key_facts():
 # ── EVO-3b39134f: 压缩保留推理结论（OpenAI harness 借鉴）──
 
 
-
-
-
-
-
-
-
 # ── EVO-3b39134f 端到端缺陷修复回归（facts 为空但 reasoning 非空）──
-
-
-
 
 
 def test_build_history_messages_merges_multiple_system_messages():
@@ -416,7 +417,6 @@ def test_build_history_messages_merges_multiple_system_messages():
     assert "A1" in contents, "system 注入转 user 保留"
     assert "S2" in contents, "后续 system 转 user 保留"
     assert "u1" in contents and "u2" in contents
-
 
 
 def test_validate_pairing_ok():
@@ -483,12 +483,13 @@ def test_head_keep_cache_friendly_archive():
     只归档中段，锚点不动——压缩不再全量破坏前缀缓存."""
     archived: list[Message] = []
     msgs = [
-        _m("user", "旧"), _m("assistant", "旧"),   # 锚点前（history_anchor=2）
-        _long_m("user", "头"),                      # 头部（前缀核心）
+        _m("user", "旧"),
+        _m("assistant", "旧"),  # 锚点前（history_anchor=2）
+        _long_m("user", "头"),  # 头部（前缀核心）
         _long_m("assistant", "头"),
-        _long_m("user", "中"),                      # 中段（应归档）
+        _long_m("user", "中"),  # 中段（应归档）
         _long_m("user", "中"),
-        _long_m("user", "尾"),                      # 尾部（最近，保留）
+        _long_m("user", "尾"),  # 尾部（最近，保留）
     ]
 
     def sink(session_id: str, msg: Message) -> None:
@@ -496,8 +497,13 @@ def test_head_keep_cache_friendly_archive():
 
     anchor_box: list[int] = []
     out = build_history_messages(
-        msgs, system_prompt="SYS", max_chars=800, session_id="s1",
-        archive_sink=sink, history_anchor=2, anchor_out=anchor_box,
+        msgs,
+        system_prompt="SYS",
+        max_chars=800,
+        session_id="s1",
+        archive_sink=sink,
+        history_anchor=2,
+        anchor_out=anchor_box,
         head_keep_chars=400,  # 头部保留 400 字符（idx2+3 组）
     )
     # ① 锚点不动（前缀稳定）
@@ -515,9 +521,12 @@ def test_head_keep_zero_regression():
     """head_keep_chars=0（默认）保持现有行为: 锚点前移 = 丢弃数（旧行为零回归）."""
     archived: list[Message] = []
     msgs = [
-        _m("user", "旧"), _m("assistant", "旧"),
-        _long_m("user", "头"), _long_m("assistant", "头"),
-        _long_m("user", "中"), _long_m("user", "中"),
+        _m("user", "旧"),
+        _m("assistant", "旧"),
+        _long_m("user", "头"),
+        _long_m("assistant", "头"),
+        _long_m("user", "中"),
+        _long_m("user", "中"),
         _long_m("user", "尾"),
     ]
 
@@ -526,8 +535,13 @@ def test_head_keep_zero_regression():
 
     anchor_box: list[int] = []
     build_history_messages(
-        msgs, system_prompt="SYS", max_chars=800, session_id="s1",
-        archive_sink=sink, history_anchor=2, anchor_out=anchor_box,
+        msgs,
+        system_prompt="SYS",
+        max_chars=800,
+        session_id="s1",
+        archive_sink=sink,
+        history_anchor=2,
+        anchor_out=anchor_box,
         head_keep_chars=0,  # 关闭修正 = 现有行为
     )
     # 旧行为: 从最旧端删除直到凑满 480 预算 → 保留尾部 400 字符（2 组）→ 锚点 = 2 + (5-2) = 5
@@ -549,7 +563,10 @@ def test_compact_ratio_preemptive_compression():
     # 0.9: 95% > 90% → 主动压缩（归档最旧，保留最新）
     compacted: list[bool] = []
     out_pre = build_history_messages(
-        msgs, system_prompt="SYS", max_chars=10000, compact_ratio=0.9,
+        msgs,
+        system_prompt="SYS",
+        max_chars=10000,
+        compact_ratio=0.9,
         compacted_out=compacted,
     )
     assert compacted == [True]
@@ -574,7 +591,10 @@ def test_compact_ratio_one_is_legacy():
     msgs2 = [_m("user", "u"), _m("assistant", "x" * 10500)]
     compacted: list[bool] = []
     out2 = build_history_messages(
-        msgs2, system_prompt="SYS", max_chars=10000, compact_ratio=1.0,
+        msgs2,
+        system_prompt="SYS",
+        max_chars=10000,
+        compact_ratio=1.0,
         compacted_out=compacted,
     )
     assert compacted == [True]

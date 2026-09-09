@@ -59,9 +59,7 @@ def test_cancel_stops_llm_stream_before_more_deltas(build_test_engine):
 
     events, result = _wait_done(q, timeout=2.0)
     leaked = "".join(
-        event["delta"].text
-        for event in events
-        if event["type"] == "delta" and event["delta"].text
+        event["delta"].text for event in events if event["type"] == "delta" and event["delta"].text
     )
     assert leaked == "", "Stop 后不应继续外泄后续 token"
     assert result.final_answer == _STOP_TEXT
@@ -120,7 +118,9 @@ def test_cancel_stops_running_execute_command(build_test_engine):
     assert result.final_answer == _STOP_TEXT
     assert len(fake._responses) == 1, "取消后不应进入下一轮 LLM"
     sess = engine.session.load(sid)
-    assert not any("TOOL_FINISHED\n" in (m.content or "") for m in sess.messages if m.role == "tool")
+    assert not any(
+        "TOOL_FINISHED\n" in (m.content or "") for m in sess.messages if m.role == "tool"
+    )
 
 
 def test_registry_cancel_session_does_not_kill_other_session(tmp_path: Path):
@@ -135,10 +135,7 @@ def test_registry_cancel_session_does_not_kill_other_session(tmp_path: Path):
     def run(sid: str, marker: Path, sleep_s: float, done_text: str) -> None:
         token = current_session_id.set(sid)
         try:
-            cmd = (
-                f"echo started > {shlex.quote(str(marker))}; "
-                f"sleep {sleep_s}; echo {done_text}"
-            )
+            cmd = f"echo started > {shlex.quote(str(marker))}; sleep {sleep_s}; echo {done_text}"
             results[sid] = registry.execute(
                 ToolCall(id=f"call-{sid}", name="execute_command", arguments={"command": cmd})
             )

@@ -47,7 +47,12 @@ def test_empty_chain_zero_behavior():
 def test_filter_drop():
     """filter 匹配 → 丢弃返回 None + 审计标记."""
     reg = HookRegistry()
-    reg.register("drop-user", priority=10, action_type="filter", rule=FilterRule(match={"type": "message.appended"}))
+    reg.register(
+        "drop-user",
+        priority=10,
+        action_type="filter",
+        rule=FilterRule(match={"type": "message.appended"}),
+    )
     chain = reg.chain()
     event = _make_event()
     processed, audits = chain.process(event)
@@ -59,7 +64,12 @@ def test_filter_drop():
 def test_filter_no_match_keep():
     """filter 不匹配 → 保留事件."""
     reg = HookRegistry()
-    reg.register("drop-tool", priority=10, action_type="filter", rule=FilterRule(match={"type": "tool.result"}))
+    reg.register(
+        "drop-tool",
+        priority=10,
+        action_type="filter",
+        rule=FilterRule(match={"type": "tool.result"}),
+    )
     chain = reg.chain()
     event = _make_event()
     processed, audits = chain.process(event)
@@ -74,7 +84,9 @@ def test_desensitize_mask():
     """desensitize mask → 字段替换为脱敏值."""
     reg = HookRegistry()
     reg.register(
-        "mask-content", priority=10, action_type="desensitize",
+        "mask-content",
+        priority=10,
+        action_type="desensitize",
         rule=DesensitizeRule(target_fields=["payload.content"], method="mask", replacement="***"),
     )
     chain = reg.chain()
@@ -88,7 +100,9 @@ def test_desensitize_delete():
     """desensitize delete → 字段删除."""
     reg = HookRegistry()
     reg.register(
-        "del-content", priority=10, action_type="desensitize",
+        "del-content",
+        priority=10,
+        action_type="desensitize",
         rule=DesensitizeRule(target_fields=["payload.content"], method="delete"),
     )
     chain = reg.chain()
@@ -104,8 +118,12 @@ def test_transform():
     """transform → 字段替换为转换后值 + transformed_from 标记."""
     reg = HookRegistry()
     reg.register(
-        "upper", priority=10, action_type="transform",
-        rule=TransformRule(target_fields=["payload.content"], transform_fn=str.upper, rule_name="uppercase"),
+        "upper",
+        priority=10,
+        action_type="transform",
+        rule=TransformRule(
+            target_fields=["payload.content"], transform_fn=str.upper, rule_name="uppercase"
+        ),
     )
     chain = reg.chain()
     event = _make_event()
@@ -121,10 +139,22 @@ def test_priority_order():
     """多钩子按 priority 升序执行."""
     reg = HookRegistry()
 
-    reg.register("h2", priority=20, action_type="transform",
-                 rule=TransformRule(target_fields=["payload.content"], transform_fn=lambda x: x + "+2", rule_name="h2"))
-    reg.register("h1", priority=10, action_type="transform",
-                 rule=TransformRule(target_fields=["payload.content"], transform_fn=lambda x: x + "+1", rule_name="h1"))
+    reg.register(
+        "h2",
+        priority=20,
+        action_type="transform",
+        rule=TransformRule(
+            target_fields=["payload.content"], transform_fn=lambda x: x + "+2", rule_name="h2"
+        ),
+    )
+    reg.register(
+        "h1",
+        priority=10,
+        action_type="transform",
+        rule=TransformRule(
+            target_fields=["payload.content"], transform_fn=lambda x: x + "+1", rule_name="h1"
+        ),
+    )
     chain = reg.chain()
     event = _make_event()
     processed, _ = chain.process(event)
@@ -142,8 +172,12 @@ def test_hook_exception_fail_open():
     def bad_fn(x):
         raise RuntimeError("bad transform")
 
-    reg.register("bad", priority=10, action_type="transform",
-                 rule=TransformRule(target_fields=["payload.content"], transform_fn=bad_fn))
+    reg.register(
+        "bad",
+        priority=10,
+        action_type="transform",
+        rule=TransformRule(target_fields=["payload.content"], transform_fn=bad_fn),
+    )
     chain = reg.chain()
     event = _make_event()
     processed, audits = chain.process(event)
@@ -159,7 +193,12 @@ def test_hook_exception_fail_open():
 def test_store_append_with_filter(tmp_path):
     """EventStore.append 挂接钩子链：filter 丢弃 → 事件不进日志."""
     reg = HookRegistry()
-    reg.register("drop-all", priority=10, action_type="filter", rule=FilterRule(match={"type": "message.appended"}))
+    reg.register(
+        "drop-all",
+        priority=10,
+        action_type="filter",
+        rule=FilterRule(match={"type": "message.appended"}),
+    )
     chain = reg.chain()
     store = EventStore(tmp_path / "event_logs", enabled=True, hook_chain=chain)
     result = store.append("s1", "message.appended", {"content": "test"})
@@ -170,8 +209,12 @@ def test_store_append_with_filter(tmp_path):
 def test_store_append_with_desensitize(tmp_path):
     """EventStore.append 挂接钩子链：desensitize → 脱敏后事件落盘."""
     reg = HookRegistry()
-    reg.register("mask", priority=10, action_type="desensitize",
-                 rule=DesensitizeRule(target_fields=["payload.content"], method="mask", replacement="***"))
+    reg.register(
+        "mask",
+        priority=10,
+        action_type="desensitize",
+        rule=DesensitizeRule(target_fields=["payload.content"], method="mask", replacement="***"),
+    )
     chain = reg.chain()
     store = EventStore(tmp_path / "event_logs", enabled=True, hook_chain=chain)
     store.append("s1", "message.appended", {"content": "secret"})
@@ -192,7 +235,12 @@ def test_store_append_no_chain_zero_regression(tmp_path):
 def test_hook_audit_no_payload(tmp_path):
     """审计记录不含原始 payload 敏感内容（spec §6.3-3）."""
     reg = HookRegistry()
-    reg.register("drop", priority=10, action_type="filter", rule=FilterRule(match={"type": "message.appended"}))
+    reg.register(
+        "drop",
+        priority=10,
+        action_type="filter",
+        rule=FilterRule(match={"type": "message.appended"}),
+    )
     chain = reg.chain()
     store = EventStore(tmp_path / "event_logs", enabled=True, hook_chain=chain)
     store.append("s1", "message.appended", {"content": "sensitive"})

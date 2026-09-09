@@ -6,6 +6,7 @@
 - 越界返回 FAILURE（已抓全）
 - 无超长不触发分页逻辑
 """
+
 from __future__ import annotations
 
 from llm_loop.tools.builtin.web_fetch import WebFetchTool
@@ -21,9 +22,13 @@ class _FakeTool(WebFetchTool):
 
 def _patch_fetch(tool, body: str):
     """monkeypatch 网络层：返回固定正文."""
+
     def fake_request(url):
         import httpx
-        resp = httpx.Response(200, text=f"<html><body>{body}</body></html>", request=httpx.Request("GET", url))
+
+        resp = httpx.Response(
+            200, text=f"<html><body>{body}</body></html>", request=httpx.Request("GET", url)
+        )
         return resp
 
     def fake_curl(url):
@@ -102,8 +107,10 @@ def test_count_defaults_to_max_chars(monkeypatch):
 
 # ── 单例感知（短时重复抓取提示复用）──
 
+
 def _reset_history():
     import llm_loop.tools.builtin.web_fetch as wf
+
     wf._fetch_history.clear()
 
 
@@ -135,6 +142,7 @@ def test_single_browser_window_expired(monkeypatch):
     # 非 SSRF 聚焦测试——关闭内网拦截避免测试环境 DNS 干扰
     """超过 5 分钟窗口 → 不提示（网页可能已变化）."""
     import llm_loop.tools.builtin.web_fetch as wf
+
     _reset_history()
     body = "甲" * 50
     t = _patch_fetch(_FakeTool(), body)

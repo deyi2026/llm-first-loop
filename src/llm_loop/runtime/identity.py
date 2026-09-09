@@ -20,6 +20,7 @@ workspace_root 判定优先级：
   1. LFL_WORKSPACE_ROOT 环境变量（显式）
   2. cwd 向上查找最近含 pyproject.toml 的目录（启动目录即 workspace）
 """
+
 from __future__ import annotations
 
 import os
@@ -69,7 +70,9 @@ def _git_head(workspace: Path) -> str:
     try:
         out = subprocess.run(
             ["git", "-C", str(workspace), "rev-parse", "HEAD"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         return out.stdout.strip() if out.returncode == 0 else "unknown"
     except Exception:
@@ -104,7 +107,10 @@ def compute_identity(mode: str | None = None) -> IdentityReport:
 
     data_dir = os.environ.get("DATA_DIR") or str(workspace / "data")
     config_candidates = [workspace / ".env", Path.home() / ".llm_loop" / ".env"]
-    providers_candidates = [Path(data_dir) / "providers.json", workspace / "data" / "providers.json"]
+    providers_candidates = [
+        Path(data_dir) / "providers.json",
+        workspace / "data" / "providers.json",
+    ]
 
     return IdentityReport(
         workspace_root=str(workspace),

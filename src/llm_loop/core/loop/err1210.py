@@ -6,6 +6,7 @@ classification, bounded diagnostics, and one lossless tail-user normalization at
 Historical program-injection strip/defer/replay machinery was retired in P2-B because
 P1-C removed its producers.
 """
+
 from __future__ import annotations
 
 import json

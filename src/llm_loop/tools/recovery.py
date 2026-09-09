@@ -74,7 +74,9 @@ def web_fetch_preflight(url: str) -> ToolRecoveryAdvice | None:
     return None
 
 
-def health_quarantine_advice(tool_name: str, reason_code: str, preferred_next: tuple[str, ...]) -> ToolRecoveryAdvice:
+def health_quarantine_advice(
+    tool_name: str, reason_code: str, preferred_next: tuple[str, ...]
+) -> ToolRecoveryAdvice:
     return ToolRecoveryAdvice(
         failure_class="environment_prerequisite_missing",
         retry_same_tool="after_fix",

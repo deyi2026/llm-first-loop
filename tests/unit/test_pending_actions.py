@@ -36,13 +36,15 @@ class TestPendingActionsField:
 
 class TestPendingActionsAggregation:
     def test_callback_returns_aggregated_values(self, provider):
-        provider.set_pending_actions_fn(lambda: {
-            "executing_evolutions": 2,
-            "pending_reviews": 1,
-            "pending_self_evals": 0,
-            "hint": "2 项演进执行中",
-            "note": None,
-        })
+        provider.set_pending_actions_fn(
+            lambda: {
+                "executing_evolutions": 2,
+                "pending_reviews": 1,
+                "pending_self_evals": 0,
+                "hint": "2 项演进执行中",
+                "note": None,
+            }
+        )
         pa = provider.snapshot()["pending_actions"]
         assert pa["executing_evolutions"] == 2
         assert pa["pending_reviews"] == 1
@@ -52,6 +54,7 @@ class TestPendingActionsAggregation:
     def test_callback_failure_fail_open_null_not_zero(self, provider):
         def bad_fn():
             raise RuntimeError("boom")
+
         provider.set_pending_actions_fn(bad_fn)
         pa = provider.snapshot()["pending_actions"]
         assert pa["executing_evolutions"] is None
@@ -63,6 +66,7 @@ class TestPendingActionsAggregation:
     def test_callback_failure_type_in_note(self, provider):
         def bad_fn():
             raise ValueError("store missing")
+
         provider.set_pending_actions_fn(bad_fn)
         pa = provider.snapshot()["pending_actions"]
         assert "ValueError" in pa["note"]
@@ -74,8 +78,13 @@ class TestPureAggregation:
 
         def fn():
             calls.append(1)
-            return {"executing_evolutions": 0, "pending_reviews": 0,
-                    "pending_self_evals": 0, "hint": None, "note": None}
+            return {
+                "executing_evolutions": 0,
+                "pending_reviews": 0,
+                "pending_self_evals": 0,
+                "hint": None,
+                "note": None,
+            }
 
         provider.set_pending_actions_fn(fn)
         before = len(calls)
@@ -83,10 +92,15 @@ class TestPureAggregation:
         assert len(calls) == before + 1
 
     def test_snapshot_does_not_mutate_provider_state(self, provider):
-        provider.set_pending_actions_fn(lambda: {
-            "executing_evolutions": 5, "pending_reviews": 3,
-            "pending_self_evals": 1, "hint": "test", "note": None,
-        })
+        provider.set_pending_actions_fn(
+            lambda: {
+                "executing_evolutions": 5,
+                "pending_reviews": 3,
+                "pending_self_evals": 1,
+                "hint": "test",
+                "note": None,
+            }
+        )
         phase_before = provider._current_phase
         trace_before = len(provider._action_trace)
         provider.snapshot()

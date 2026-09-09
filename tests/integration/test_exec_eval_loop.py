@@ -55,7 +55,8 @@ def test_accepted_auto_execute_loop(tmp_path):
     tok = current_session_id.set(sid)
     try:
         r = engine.corrections.execute(
-            "evolution_complete", {"suggestion_id": sug.id, "note": "已执行并对比架构状态，验证通过"}
+            "evolution_complete",
+            {"suggestion_id": sug.id, "note": "已执行并对比架构状态，验证通过"},
         )
     finally:
         current_session_id.reset(tok)
@@ -125,7 +126,6 @@ def test_eval_improve_verify_loop(tmp_path):
     assert len(hits) >= 1
     linked = hits[0].get("linked_suggestions", [])
     assert sug["id"] in linked
-
 
 
 def test_production_wiring_no_verifier_rollback(tmp_path):

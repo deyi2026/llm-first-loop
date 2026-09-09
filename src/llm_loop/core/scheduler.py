@@ -140,10 +140,7 @@ class ScheduleStore:
                 return
             data = json.loads(self._path.read_text(encoding="utf-8"))
             with self._lock:
-                self._entries = {
-                    e.sid: e
-                    for e in (ScheduleEntry.from_dict(d) for d in data)
-                }
+                self._entries = {e.sid: e for e in (ScheduleEntry.from_dict(d) for d in data)}
         except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
             logger.warning("schedule 存储刷新失败（fail-open，沿用内存）: %s", exc)
 
@@ -224,17 +221,28 @@ class ScheduleStore:
             logger.warning("schedule 存储写盘失败（fail-open）: %s", exc)
 
     def add(
-        self, message: str, *, after: float = 0, at: float | None = None,
-        repeat_interval: float = 0, max_count: int = 1, wake: bool = False,
-        session_id: str = "", wake_grant: Any = None,
+        self,
+        message: str,
+        *,
+        after: float = 0,
+        at: float | None = None,
+        repeat_interval: float = 0,
+        max_count: int = 1,
+        wake: bool = False,
+        session_id: str = "",
+        wake_grant: Any = None,
     ) -> str:
         """新增提醒；返回 sid."""
         trigger = at if at is not None else time.time() + max(0.0, after)
         sid = f"sched-{uuid.uuid4().hex[:8]}"
         entry = ScheduleEntry(
-            sid=sid, message=message, trigger_at=trigger,
-            repeat_interval=repeat_interval, max_count=max(1, max_count),
-            wake=wake, session_id=session_id,
+            sid=sid,
+            message=message,
+            trigger_at=trigger,
+            repeat_interval=repeat_interval,
+            max_count=max(1, max_count),
+            wake=wake,
+            session_id=session_id,
             wake_owner_pid=(os.getpid() if wake and wake_grant is not None else 0),
         )
         # Capability must exist before the persisted entry becomes claimable. This removes
@@ -279,7 +287,8 @@ class ScheduleStore:
         now = now if now is not None else time.time()
         with self._lock:
             return [
-                e for e in self._entries.values()
+                e
+                for e in self._entries.values()
                 if e.trigger_at <= now and (not e.lease_owner or e.lease_until <= now)
             ]
 
@@ -324,9 +333,7 @@ class ScheduleStore:
 
         self._mutate(_retry)
 
-    def mark_triggered(
-        self, sid: str, now: float | None = None, *, owner: str = ""
-    ) -> None:
+    def mark_triggered(self, sid: str, now: float | None = None, *, owner: str = "") -> None:
         """成功 ack 后推进；owner 非空时只允许 claim 持有者提交。"""
         now = now if now is not None else time.time()
         completed: list[bool] = []
@@ -396,8 +403,7 @@ class SchedulerThread:
         if self._thread is not None and self._thread.is_alive():
             return
         self._stop.clear()
-        self._thread = threading.Thread(target=self._loop, daemon=True,
-                                        name="scheduler-tick")
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="scheduler-tick")
         self._thread.start()
         logger.info("调度提醒线程已启动（tick=%ss）", self._tick)
 
@@ -407,9 +413,7 @@ class SchedulerThread:
     def _loop(self) -> None:
         while not self._stop.is_set():
             try:
-                for e in self._store.claim_due(
-                    self._owner, lease_s=max(30.0, self._tick * 3)
-                ):
+                for e in self._store.claim_due(self._owner, lease_s=max(30.0, self._tick * 3)):
                     try:
                         outcome = self._notify(e)
                         if outcome is False:
@@ -420,9 +424,7 @@ class SchedulerThread:
                         self._store.mark_triggered(e.sid, owner=self._owner)
                     except Exception:  # noqa: BLE001 — 单条失败保留提醒并退避重试
                         logger.warning("提醒触发失败（保留并重试）: %s", e.sid, exc_info=True)
-                        self._store.retry_later(
-                            e.sid, self._owner, delay_s=max(5.0, self._tick)
-                        )
+                        self._store.retry_later(e.sid, self._owner, delay_s=max(5.0, self._tick))
             except Exception:  # noqa: BLE001 — tick 异常自愈
                 logger.warning("调度 tick 异常（自愈继续）", exc_info=True)
             self._stop.wait(self._tick)

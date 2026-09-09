@@ -102,9 +102,7 @@ def memory_blocks_to_entries(
                 # not automatic prompt material.  Facts/procedures retain the
                 # existing policy; runtime retrieval independently hard-denies
                 # legacy auto decision/convention entries as well.
-                inject_policy=(
-                    "recall_only" if mtype in {"decision", "convention"} else "auto"
-                ),
+                inject_policy=("recall_only" if mtype in {"decision", "convention"} else "auto"),
             )
         )
     return entries, failures

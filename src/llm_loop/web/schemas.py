@@ -13,7 +13,9 @@ class ChatAttachmentRef(BaseModel):
     """客户端仅回传服务端签发的 opaque attachment ref。"""
 
     model_config = ConfigDict(extra="forbid")
-    ref: str = Field(pattern=r"^attachment://[0-9a-f]{32}$", description="服务端上传接口签发的附件引用")
+    ref: str = Field(
+        pattern=r"^attachment://[0-9a-f]{32}$", description="服务端上传接口签发的附件引用"
+    )
 
 
 class ChatRequest(BaseModel):
@@ -26,14 +28,21 @@ class ChatRequest(BaseModel):
         description="服务端签发的附件引用；客户端不传 path/hash；单请求最多20个",
     )
     session_id: str | None = Field(default=None, description="会话 ID，可选；不传则新建会话")
-    new_session: bool = Field(default=False, description="2026-08-18: true=强制新建会话（/new 语义——前端清 currentSessionId 但后端复用共享当前导致'新开不成功'）；与 session_id 互斥（同传时 new_session 优先）")
+    new_session: bool = Field(
+        default=False,
+        description="2026-08-18: true=强制新建会话（/new 语义——前端清 currentSessionId 但后端复用共享当前导致'新开不成功'）；与 session_id 互斥（同传时 new_session 优先）",
+    )
     model: str | None = Field(default=None, description="模型名，可选；不传用装配默认模型")
-    reasoning_effort: str | None = Field(default=None, description="推理等级（low/medium/high），可选；不传用装配默认")
+    reasoning_effort: str | None = Field(
+        default=None, description="推理等级（low/medium/high），可选；不传用装配默认"
+    )
     reasoning_mode: Literal["auto", "off", "on"] = Field(
         default="auto",
         description="reasoning 模式：auto=尊重 provider/operator 默认，off/on=本请求显式关闭/开启",
     )
-    resume: bool = Field(default=False, description="EVO 后台 run：true=不提交新 run，订阅已有 run（刷新/切回）")
+    resume: bool = Field(
+        default=False, description="EVO 后台 run：true=不提交新 run，订阅已有 run（刷新/切回）"
+    )
 
     @model_validator(mode="after")
     def _require_human_payload(self) -> "ChatRequest":
@@ -46,6 +55,7 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     """对话响应（LoopResult 七字段如实透传, M51 增 model_used）."""
+
     session_id: str
     final_answer: str
     verification_note: str | None = None
@@ -53,7 +63,9 @@ class ChatResponse(BaseModel):
     tool_calls: list[dict] = []
     truncated: bool = False
     model_used: str = ""  # M51: 实际生成回复的模型标签（provider/model）
-    fallback_receipt: dict[str, str] | None = None  # current-user runtime fact; never prompt history
+    fallback_receipt: dict[str, str] | None = (
+        None  # current-user runtime fact; never prompt history
+    )
     tokens_in: int = 0  # M52: 本轮 prompt tokens（0 = provider 未提供）
     tokens_out: int = 0  # M52: 本轮 completion tokens
     tokens_cache_hit: int = 0  # M58: 本轮前缀缓存命中 token（0=未提供/未命中）
@@ -82,8 +94,8 @@ class SessionMetaItem(BaseModel):
     message_count: int
     status: str
     last_message_preview: str = ""
-    pinned: bool = False   # M56: 置顶（Web 端列表置顶优先）
-    channel: str = "web"   # M56: 来源通道（web / feishu:p2p:* / feishu:group:*）
+    pinned: bool = False  # M56: 置顶（Web 端列表置顶优先）
+    channel: str = "web"  # M56: 来源通道（web / feishu:p2p:* / feishu:group:*）
 
 
 class SessionListResponse(BaseModel):

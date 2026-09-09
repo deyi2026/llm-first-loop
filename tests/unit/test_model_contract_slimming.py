@@ -230,8 +230,17 @@ def test_legacy_playbook_counterexample_exercises_banned_topics():
     """Self-contained counterexample: legacy global playbook topics must trip the guards."""
     legacy = " ".join(
         [
-            "每轮自查", "动作链", "回答报工具名", "[[memory]]", "缓存纪律", "分段输出",
-            "CodeArts", "经验前置", "模型切换手册", "中断恢复", "checkpoint",
+            "每轮自查",
+            "动作链",
+            "回答报工具名",
+            "[[memory]]",
+            "缓存纪律",
+            "分段输出",
+            "CodeArts",
+            "经验前置",
+            "模型切换手册",
+            "中断恢复",
+            "checkpoint",
             *_G3_METHOD_TOPICS,
         ]
     )

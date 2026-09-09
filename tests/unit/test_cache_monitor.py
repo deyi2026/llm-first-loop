@@ -233,6 +233,7 @@ def test_gate_note_not_pending_when_healthy():
 
 # ── EVO-20260818: recent_attribution 归因判定（spec §5.4.1-3）──
 
+
 def test_recent_attribution_insufficient_samples():
     """样本不足（_win_runs < min_runs）→ None."""
     m = CacheHealthMonitor(min_runs=5)
@@ -288,6 +289,7 @@ def test_recent_attribution_unknown():
 
 
 # ── EVO-20260818: reset 模型切换窗口重置（spec §5.4.1-3 注记）──
+
 
 def test_reset_clears_window_baselines_and_gate():
     """reset 清空窗口/基线/归因/强制标志；保留 fail_alerted."""

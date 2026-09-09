@@ -1,5 +1,3 @@
-
-
 def test_truncated_receipt_tagged(monkeypatch):
     """EVO-20260820-be72efb1: 截断回执标注 ⚠️截断，声明比对感知未核验数据."""
     from llm_loop.core.message import Message, MessageSource, ToolResultStatus
@@ -9,9 +7,12 @@ def test_truncated_receipt_tagged(monkeypatch):
     # 截断回执（内容含截断标记）
     msgs = [
         Message(
-            role="tool", status=ToolResultStatus.SUCCESS,
+            role="tool",
+            status=ToolResultStatus.SUCCESS,
             content="[输出已截断] 完整 50000 字符，仅首 4096 + 尾 1024…取全文: read_file",
-            source=MessageSource.TOOL, tool_call_id="c1", tool_name="execute_command",
+            source=MessageSource.TOOL,
+            tool_call_id="c1",
+            tool_name="execute_command",
         )
     ]
     r = checker.check("已执行命令并查看输出", msgs)
@@ -29,14 +30,38 @@ def test_discrepancy_receipt_sample_takes_latest(monkeypatch):
 
     checker = DeclarationValidator(audit_dir=None)
     msgs = [
-        Message(role="tool", status=ToolResultStatus.SUCCESS, content="最早的model_catalog回执内容",
-                source=MessageSource.TOOL, tool_call_id="c1", tool_name="model_catalog"),
-        Message(role="tool", status=ToolResultStatus.SUCCESS, content="中期回执1",
-                source=MessageSource.TOOL, tool_call_id="c2", tool_name="execute_command"),
-        Message(role="tool", status=ToolResultStatus.SUCCESS, content="中期回执2",
-                source=MessageSource.TOOL, tool_call_id="c3", tool_name="search_files"),
-        Message(role="tool", status=ToolResultStatus.SUCCESS, content="最新的web_fetch回执内容",
-                source=MessageSource.TOOL, tool_call_id="c4", tool_name="web_fetch"),
+        Message(
+            role="tool",
+            status=ToolResultStatus.SUCCESS,
+            content="最早的model_catalog回执内容",
+            source=MessageSource.TOOL,
+            tool_call_id="c1",
+            tool_name="model_catalog",
+        ),
+        Message(
+            role="tool",
+            status=ToolResultStatus.SUCCESS,
+            content="中期回执1",
+            source=MessageSource.TOOL,
+            tool_call_id="c2",
+            tool_name="execute_command",
+        ),
+        Message(
+            role="tool",
+            status=ToolResultStatus.SUCCESS,
+            content="中期回执2",
+            source=MessageSource.TOOL,
+            tool_call_id="c3",
+            tool_name="search_files",
+        ),
+        Message(
+            role="tool",
+            status=ToolResultStatus.SUCCESS,
+            content="最新的web_fetch回执内容",
+            source=MessageSource.TOOL,
+            tool_call_id="c4",
+            tool_name="web_fetch",
+        ),
     ]
     r = checker.check("已执行了一个不存在的探测任务并查看结果", msgs)
     assert r.discrepancies, "不匹配声明应产生差异反馈"

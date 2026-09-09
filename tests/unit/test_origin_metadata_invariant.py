@@ -86,9 +86,7 @@ class TestSubagentProvenanceMark:
         from llm_loop.subagent.runner import SubAgentRunner
 
         engine, fake = build_test_engine([])
-        runner = SubAgentRunner(
-            llm=fake, registry=engine.registry, session_store=engine.session
-        )
+        runner = SubAgentRunner(llm=fake, registry=engine.registry, session_store=engine.session)
 
         def seq(calls):
             return LLMResponse(
@@ -107,10 +105,7 @@ class TestSubagentProvenanceMark:
         import json
 
         sid_prefix = "subagent_"
-        files = [
-            p
-            for p in Path(engine.session._dir).glob(f"{sid_prefix}*.json")
-        ]
+        files = [p for p in Path(engine.session._dir).glob(f"{sid_prefix}*.json")]
         assert files, "子代理会话应已落盘"
         data = json.loads(files[-1].read_text(encoding="utf-8"))
         first = data["messages"][0]

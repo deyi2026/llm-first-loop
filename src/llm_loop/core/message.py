@@ -58,6 +58,7 @@ def _project_user_attachments(content: str, metadata: dict) -> str:
     block = "[attachment_facts]\n" + "\n".join(rows) + "\n[/attachment_facts]"
     return f"{content}\n\n{block}" if content else block
 
+
 class MessageSource(StrEnum):
     """消息来源标识（FR-MSG-04）."""
 

@@ -10,7 +10,9 @@ def _mk_project(tmp_path):
     root = tmp_path / "proj"
     (root / "src" / "pkg").mkdir(parents=True)
     (root / "tests").mkdir()
-    (root / "src" / "pkg" / "__init__.py").write_text("def hello():\n    return 1\n", encoding="utf-8")
+    (root / "src" / "pkg" / "__init__.py").write_text(
+        "def hello():\n    return 1\n", encoding="utf-8"
+    )
     (root / "tests" / "test_x.py").write_text("def test_x():\n    assert True\n", encoding="utf-8")
     (root / "README.md").write_text("# Demo\nkeyword_probe\n", encoding="utf-8")
     (root / ".git" / "config").mkdir(parents=True)

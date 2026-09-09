@@ -3,6 +3,7 @@
 Historical/frozen scripts/calib/runner.py is imported read-only and never patched.
 All A3 variants use the exact same Full-Slim-v1 prompt; only action mechanics vary.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -51,6 +52,7 @@ def build_system_prompt_a3(variant: str) -> str:
 
 class FakeLoopLLM:
     """Test helper: emits queued fixture calls while the tool exists, then answers."""
+
     def __init__(self, sources: list[str], final: str = "Final Decision: done"):
         self.sources = list(sources)
         self.final = final
@@ -62,13 +64,25 @@ class FakeLoopLLM:
             self.i += 1
             resp = LLMResponse(
                 content=None,
-                tool_calls=[ToolCall(id=f"loop_{self.i}", name="request_fixture", arguments=json.dumps({"source": src}))],
+                tool_calls=[
+                    ToolCall(
+                        id=f"loop_{self.i}",
+                        name="request_fixture",
+                        arguments=json.dumps({"source": src}),
+                    )
+                ],
                 provider="fake",
                 prompt_tokens=10,
                 completion_tokens=5,
             )
         else:
-            resp = LLMResponse(content=self.final, tool_calls=[], provider="fake", prompt_tokens=10, completion_tokens=20)
+            resp = LLMResponse(
+                content=self.final,
+                tool_calls=[],
+                provider="fake",
+                prompt_tokens=10,
+                completion_tokens=20,
+            )
         if False:
             yield None
         return resp
@@ -160,22 +174,30 @@ def execute_run_a3(
                         content = data.UNAVAILABLE_RESPONSE
                         disposition = "unsupported_tool"
                         executed = False
-                    trace.append({
-                        "round": round_index,
-                        "name": tc.name,
-                        "arguments": args_json,
-                        "source": source,
-                        "result_head": content[:500],
-                        "result_full": content,
-                        "action_disposition": disposition,
-                        "executed": executed,
-                        "tool_attempt_count": state.tool_attempt_count,
-                        "tool_execution_count": state.tool_execution_count,
-                    })
+                    trace.append(
+                        {
+                            "round": round_index,
+                            "name": tc.name,
+                            "arguments": args_json,
+                            "source": source,
+                            "result_head": content[:500],
+                            "result_full": content,
+                            "action_disposition": disposition,
+                            "executed": executed,
+                            "tool_attempt_count": state.tool_attempt_count,
+                            "tool_execution_count": state.tool_execution_count,
+                        }
+                    )
                     assistant_msg = {
                         "role": "assistant",
                         "content": None,
-                        "tool_calls": [{"id": tc.id, "type": "function", "function": {"name": tc.name, "arguments": args_json}}],
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {"name": tc.name, "arguments": args_json},
+                            }
+                        ],
                     }
                     if rc:
                         assistant_msg["reasoning_content"] = rc
@@ -219,7 +241,10 @@ def execute_run_a3(
         "limit_exceeded_count": state.limit_exceeded_count,
         "tool_budget_exhausted": state.tool_budget_exhausted,
         "rounds_to_final": rounds_to_final,
-        "guard": {"duplicate_suppression": config.duplicate_suppression, "budget_terminal": config.budget_terminal},
+        "guard": {
+            "duplicate_suppression": config.duplicate_suppression,
+            "budget_terminal": config.budget_terminal,
+        },
         "trace": trace,
         "stats": stats,
     }

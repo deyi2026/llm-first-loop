@@ -311,9 +311,7 @@ def test_llm_error_type_matrix_injected(build_test_engine, monkeypatch):
     ]
     for err, type_name in cases:
         engine, fake = build_test_engine([{"content": "我是 AI 助手。"}])
-        monkeypatch.setattr(
-            fake, "chat", lambda *a, _e=err, **k: (_ for _ in ()).throw(_e)
-        )
+        monkeypatch.setattr(fake, "chat", lambda *a, _e=err, **k: (_ for _ in ()).throw(_e))
         sid = engine.session.create()
         result = engine.run(sid, "你好")
         # 不抛穿 + 三件套 + 错误类型如实呈现

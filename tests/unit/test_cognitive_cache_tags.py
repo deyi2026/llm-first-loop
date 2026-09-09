@@ -2,6 +2,7 @@
 
 覆盖: 打标规则全分支 / 端点开关 / 幂等 / 原列表不可变 / 注入段 summary。
 """
+
 import os
 import sys
 
@@ -31,17 +32,21 @@ class TestRules:
         assert "cache_tag" not in out[1]  # 非尾部 user 不打（历史问题段，默认桶）
 
     def test_compact_marker_gets_summary(self):
-        out = apply_cognitive_cache_tags([
-            {"role": "user", "content": "[上下文压缩] 早期摘要……"},
-            {"role": "user", "content": "go"},
-        ])
+        out = apply_cognitive_cache_tags(
+            [
+                {"role": "user", "content": "[上下文压缩] 早期摘要……"},
+                {"role": "user", "content": "go"},
+            ]
+        )
         assert out[0]["cache_tag"] == "summary" and "summary" not in PIN_TAGS
 
     def test_injection_marker_gets_summary(self):
-        out = apply_cognitive_cache_tags([
-            {"role": "user", "content": "[上下文注入·非新指令] 继续当前任务……"},
-            {"role": "user", "content": "go"},
-        ])
+        out = apply_cognitive_cache_tags(
+            [
+                {"role": "user", "content": "[上下文注入·非新指令] 继续当前任务……"},
+                {"role": "user", "content": "go"},
+            ]
+        )
         assert out[0]["cache_tag"] == "summary"
 
     def test_evidence_marker_user_and_assistant(self):
@@ -52,15 +57,17 @@ class TestRules:
             {"role": "user", "content": "继续"},
         ]
         out = apply_cognitive_cache_tags(msgs)
-        assert out[0]["cache_tag"] == "evidence"          # assistant 观察 → evidence
-        assert out[1]["cache_tag"] == "evidence"          # 非尾部 user 引用 → evidence
+        assert out[0]["cache_tag"] == "evidence"  # assistant 观察 → evidence
+        assert out[1]["cache_tag"] == "evidence"  # 非尾部 user 引用 → evidence
         assert "evidence" in PIN_TAGS
-        assert out[3]["cache_tag"] == "goal"              # 尾部 user 优先 goal（tail 优先于 evidence）
+        assert out[3]["cache_tag"] == "goal"  # 尾部 user 优先 goal（tail 优先于 evidence）
 
     def test_multimodal_content_untagged(self):
-        out = apply_cognitive_cache_tags([
-            {"role": "user", "content": [{"type": "text", "text": "img"}]},
-        ])
+        out = apply_cognitive_cache_tags(
+            [
+                {"role": "user", "content": [{"type": "text", "text": "img"}]},
+            ]
+        )
         assert "cache_tag" not in out[0]
 
 
@@ -94,5 +101,7 @@ class TestProperties:
         assert msgs[0] == {"role": "system", "content": "s"}
 
     def test_explicit_tag_respected(self):
-        out = apply_cognitive_cache_tags([{"role": "system", "content": "s", "cache_tag": "identity"}])
+        out = apply_cognitive_cache_tags(
+            [{"role": "system", "content": "s", "cache_tag": "identity"}]
+        )
         assert out[0]["cache_tag"] == "identity"

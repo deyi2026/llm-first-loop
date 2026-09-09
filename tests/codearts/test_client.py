@@ -94,9 +94,7 @@ def test_trigger_execution_success():
         return httpx.Response(200, json={"execution_id": "exec-123"})
 
     client = _make_client(_make_config(), handler)
-    handle = client.trigger_execution(
-        _make_task(), _make_credential(), region="cn-north-4"
-    )
+    handle = client.trigger_execution(_make_task(), _make_credential(), region="cn-north-4")
     assert handle.handle_id == "exec-123"
     assert handle.trace_id == "t1"
     assert handle.status == HandleStatus.RUNNING

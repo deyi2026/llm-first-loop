@@ -157,9 +157,7 @@ class SelfEvaluator:
                     "declaration_summary": _first_text(row.get("declarations")),
                     "discrepancy_summary": _first_text(row.get("discrepancies")),
                     "cross_round_hit": bool(row.get("cross_round_hits")),
-                    "tool_call_ids": [
-                        str(v) for v in (row.get("tool_call_ids") or [])[:8]
-                    ],
+                    "tool_call_ids": [str(v) for v in (row.get("tool_call_ids") or [])[:8]],
                 }
             )
         return {
@@ -273,9 +271,7 @@ class SelfEvaluator:
         不参与判定，避免结构性虚高。
         """
         recent = action_trace[-self._span :]
-        eligible = [
-            a for a in recent if not str(a.get("phase", "")).startswith("understand.")
-        ]
+        eligible = [a for a in recent if not str(a.get("phase", "")).startswith("understand.")]
         if len(eligible) < self._min_samples:
             return EvalMetric(
                 name="stagnation_rate",
@@ -289,9 +285,7 @@ class SelfEvaluator:
             return f"{a.get('phase', '')}|{a.get('action_type', '')}|{a.get('detail', '')}"
 
         repeats = sum(
-            1
-            for i in range(1, len(eligible))
-            if _fp(eligible[i]) == _fp(eligible[i - 1])
+            1 for i in range(1, len(eligible)) if _fp(eligible[i]) == _fp(eligible[i - 1])
         )
         exempt = len(recent) - len(eligible)
         return EvalMetric(

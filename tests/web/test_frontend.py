@@ -15,12 +15,14 @@ def _make_client(engine):
 def test_index_html_exists():
     from pathlib import Path
 
-    index = Path(__file__).resolve().parents[2] / "src" / "llm_loop" / "web" / "static" / "index.html"
+    index = (
+        Path(__file__).resolve().parents[2] / "src" / "llm_loop" / "web" / "static" / "index.html"
+    )
     assert index.exists()
     content = index.read_text(encoding="utf-8")
-    assert "id=\"messages\"" in content
-    assert "id=\"session-list\"" in content
-    assert "id=\"message-input\"" in content
+    assert 'id="messages"' in content
+    assert 'id="session-list"' in content
+    assert 'id="message-input"' in content
     assert "app.js" in content
 
 
@@ -37,7 +39,9 @@ def test_root_redirects_to_ui_v2(build_test_engine, fake_settings, tmp_path, mon
     assert resp.headers["location"] == "/ui/v2/"
 
 
-def test_root_reports_missing_v2_without_legacy_fallback(build_test_engine, fake_settings, tmp_path, monkeypatch):
+def test_root_reports_missing_v2_without_legacy_fallback(
+    build_test_engine, fake_settings, tmp_path, monkeypatch
+):
     """V2 产物缺失时如实 503；已退役 v1 不再被静默复活."""
     monkeypatch.setenv("UI_V2_DIR", str(tmp_path / "nonexistent"))
     engine, _ = build_test_engine([])

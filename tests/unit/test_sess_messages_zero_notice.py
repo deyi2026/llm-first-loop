@@ -38,7 +38,8 @@ def _scan_sess_notices(sess) -> list[str]:
 
 def _tool_resp(call_id: str, name: str, args: dict) -> LLMResponse:
     return LLMResponse(
-        content="", tool_calls=[ToolCall(id=call_id, name=name, arguments=args)],
+        content="",
+        tool_calls=[ToolCall(id=call_id, name=name, arguments=args)],
         provider="fake",
     )
 
@@ -58,7 +59,8 @@ def _spy_actions(engine):
 class TestG5SessMessagesZeroNotice:
     def test_e15_stagnation_path(self, tmp_path: Path, monkeypatch):
         engine, fake = _mk(
-            tmp_path, monkeypatch,
+            tmp_path,
+            monkeypatch,
             responses=[
                 _tool_resp("c1", "read_file", {"path": "/nonexistent/g5-stag"}),
                 _tool_resp("c2", "read_file", {"path": "/nonexistent/g5-stag"}),
@@ -77,12 +79,15 @@ class TestG5SessMessagesZeroNotice:
 
     def test_e16_empty_search_path(self, tmp_path: Path, monkeypatch):
         engine, fake = _mk(
-            tmp_path, monkeypatch,
+            tmp_path,
+            monkeypatch,
             responses=[
-                _tool_resp("c1", "execute_command",
-                           {"command": f"find {tmp_path} -name 'g5-missing-*'"}),
-                _tool_resp("c2", "execute_command",
-                           {"command": f"find {tmp_path} -name 'g5-missing-*'"}),
+                _tool_resp(
+                    "c1", "execute_command", {"command": f"find {tmp_path} -name 'g5-missing-*'"}
+                ),
+                _tool_resp(
+                    "c2", "execute_command", {"command": f"find {tmp_path} -name 'g5-missing-*'"}
+                ),
                 _resp("g5 空搜索路径回答"),
             ],
         )
@@ -109,7 +114,8 @@ class TestG5SessMessagesZeroNotice:
     def test_e18_exhaustion_path_program_final_placeholder(self, tmp_path: Path, monkeypatch):
         """E18 硬停: sess 尾部 assistant 为 PROTOCOL_ONLY 占位，全文不落存储."""
         engine, fake = _mk(
-            tmp_path, monkeypatch,
+            tmp_path,
+            monkeypatch,
             responses=[
                 _tool_resp("c1", "read_file", {"path": "/nonexistent/g5-e18"}),
                 _tool_resp("c2", "read_file", {"path": "/nonexistent/g5-e18"}),
@@ -133,7 +139,8 @@ class TestG5SessMessagesZeroNotice:
 
     def test_e12_err1210_path(self, tmp_path: Path, monkeypatch):
         e1210 = LLMHTTPError(
-            "400 Invalid parameter", status_code=400,
+            "400 Invalid parameter",
+            status_code=400,
             body='{"error":{"code":"1210","message":"Invalid parameter"}}',
         )
         engine, fake = _mk(tmp_path, monkeypatch, responses=[e1210])

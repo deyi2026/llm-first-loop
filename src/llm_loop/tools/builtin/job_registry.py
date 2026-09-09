@@ -204,7 +204,9 @@ class JobRegistry:
         if not session_id:
             return ()
         with self._lock:
-            local_ids = [entry.id for entry in self._jobs.values() if entry.session_id == session_id]
+            local_ids = [
+                entry.id for entry in self._jobs.values() if entry.session_id == session_id
+            ]
         snapshots: list[dict[str, object]] = []
         seen: set[str] = set()
         for job_id in local_ids:
@@ -414,10 +416,7 @@ class JobRegistry:
             else:
                 return
             base = (
-                Path(os.environ.get("LFL_DATA_DIR", "data"))
-                / "interop"
-                / "lfl_to_dsh"
-                / "pending"
+                Path(os.environ.get("LFL_DATA_DIR", "data")) / "interop" / "lfl_to_dsh" / "pending"
             )
             base.mkdir(parents=True, exist_ok=True)
             now = datetime.now(UTC)

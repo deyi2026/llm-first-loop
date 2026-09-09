@@ -46,8 +46,6 @@ def _final(text: str, *, completed: bool = True, ts: float = 2.0) -> Message:
     )
 
 
-
-
 def _legacy_final(text: str, *, ts: float = 2.0) -> Message:
     return Message(
         role="assistant",
@@ -94,6 +92,7 @@ def _legacy_proof_events(answer: str, *, truncated: bool = False, preview: str |
         ),
     ]
 
+
 def test_episode_store_stable_ref_search_and_bounded_hydration(tmp_path):
     store = EpisodeStore(tmp_path / "episodes")
     user = _user("FIRST-QUESTION exact", ts=10.0)
@@ -110,12 +109,8 @@ def test_episode_store_stable_ref_search_and_bounded_hydration(tmp_path):
     assistant = _final("FIRST-ANSWER exact", ts=12.0)
     assistant.reasoning_content = "PRIVATE-REASONING-MUST-NOT-DUPLICATE"
 
-    first = store.index_episode(
-        "sid-a", ref=ref, user_seq=0, raw_messages=[user, tool, assistant]
-    )
-    second = store.index_episode(
-        "sid-a", ref=ref, user_seq=0, raw_messages=[user, tool, assistant]
-    )
+    first = store.index_episode("sid-a", ref=ref, user_seq=0, raw_messages=[user, tool, assistant])
+    second = store.index_episode("sid-a", ref=ref, user_seq=0, raw_messages=[user, tool, assistant])
     assert first.created is True
     assert second.created is False
 
@@ -151,9 +146,7 @@ def test_episode_store_excludes_program_prompt_material_from_hydration(tmp_path)
     )
     answer = _final("真实回答", ts=23.0)
     ref = stable_episode_ref("sid-b", user, 0)
-    store.index_episode(
-        "sid-b", ref=ref, user_seq=0, raw_messages=[user, program, system, answer]
-    )
+    store.index_episode("sid-b", ref=ref, user_seq=0, raw_messages=[user, program, system, answer])
     hydrated = store.hydrate("sid-b", ref, max_chars=4096)
     assert hydrated is not None
     assert "真实问题" in hydrated["content"]
@@ -512,15 +505,11 @@ def test_engine_second_run_retires_first_episode_but_episode_is_retrievable(tmp_
             if self.n == 1:
                 return LLMResponse(
                     content="",
-                    tool_calls=[
-                        ToolCall(id="tc-1", name="read_file", arguments={"path": "x"})
-                    ],
+                    tool_calls=[ToolCall(id="tc-1", name="read_file", arguments={"path": "x"})],
                     provider="fake",
                 )
             if self.n == 2:
-                return LLMResponse(
-                    content="FIRST-ANSWER-SECRET", tool_calls=[], provider="fake"
-                )
+                return LLMResponse(content="FIRST-ANSWER-SECRET", tool_calls=[], provider="fake")
             return LLMResponse(content="SECOND-ANSWER", tool_calls=[], provider="fake")
 
         def chat(self, messages, tools, **kw):
@@ -581,9 +570,7 @@ def test_engine_second_run_retires_first_episode_but_episode_is_retrievable(tmp_
     second = engine.run(sid, "SECOND-QUESTION")
     assert second.final_answer == "SECOND-ANSWER"
     assert len(calls) >= 3
-    second_run_payload = "\n".join(
-        str(m.get("content") or "") for m in calls[-1]
-    )
+    second_run_payload = "\n".join(str(m.get("content") or "") for m in calls[-1])
     assert "SECOND-QUESTION" in second_run_payload
     # Resolved episode retirement keeps historical human task authority out of the
     # next run. Only the adjacent final assistant may be rehydrated for continuity.

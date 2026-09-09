@@ -71,7 +71,7 @@ _ADAPTIVE_ENABLED = bool(int(os.environ.get("CACHE_GUARD_HIT_WARN_ADAPTIVE", "1"
 _WARN_TIERS: list[list[float]] = json.loads(
     os.environ.get(
         "CACHE_GUARD_HIT_WARN_TIERS",
-        '[[30000,0.65],[80000,0.75],[200000,0.80]]',
+        "[[30000,0.65],[80000,0.75],[200000,0.80]]",
     )
 )
 _HIT_SAMPLE_MIN = int(os.environ.get("CACHE_GUARD_HIT_SAMPLE", "3"))
@@ -89,6 +89,8 @@ def _adaptive_warn_threshold(tokens_in: int) -> float:
             thr = float(_warn)
             break
     return thr
+
+
 # 逃生（拷问③——2026-08-18）: 连续 BLOCK N 次后自动降级 WARN（防死锁——AI 不处理时
 # 不无限拦截；降级后 AI 可行动）
 _BLOCK_ESCAPE_MAX = int(os.environ.get("CACHE_GUARD_BLOCK_ESCAPE", "3"))
@@ -96,7 +98,7 @@ _BLOCK_ESCAPE_MAX = int(os.environ.get("CACHE_GUARD_BLOCK_ESCAPE", "3"))
 # （间隔 134s 即全 miss，剩 128 tokens 特征最小命中）; 请求间隔超 TTL 的低命中属
 # 缓存过期（provider 侧行为）→ 规则 G 降级 WARN 不 BLOCK（防误拦，grill-me 2.3 实证落地）
 _CACHE_TTL_S: dict[str, int] = {
-    "minimax": 90,     # 实测 ~130s，保守下限
+    "minimax": 90,  # 实测 ~130s，保守下限
     "deepseek": 7200,  # 官方数小时
     "kimi": 300,
     "openai": 300,
@@ -111,13 +113,22 @@ def _cache_ttl_for(provider: str) -> int:
         if key in p:
             return ttl
     return _DEFAULT_CACHE_TTL_S
+
+
 _SENSITIVE_PATTERNS = [
     re.compile(r"sk-[A-Za-z0-9]{16,}"),  # API key
     re.compile(r"AKIA[0-9A-Z]{16}"),  # AWS key
     re.compile(r"ghp_[A-Za-z0-9]{20,}"),  # GitHub token
     re.compile(r"BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY"),  # 私钥
 ]
-_SENSITIVE_ENV_NAMES = {"DEEPSEEK_API_KEY", "LLM_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "KIMI_API_KEY", "MINIMAX_API_KEY"}
+_SENSITIVE_ENV_NAMES = {
+    "DEEPSEEK_API_KEY",
+    "LLM_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "KIMI_API_KEY",
+    "MINIMAX_API_KEY",
+}
 
 
 @dataclass
@@ -236,8 +247,8 @@ def _check_submit_ratio(messages: list[dict], meta: dict) -> GuardDecision | Non
                 verdict="WARN",
                 rule="submit_ratio_perf",
                 detail=(
-                    f"提交 {total_chars:,} 字符 = 预算 {budget:,} 的 {ratio*100:.0f}%"
-                    f"（>{_SUBMIT_RATIO_BLOCK*100:.0f}%——历史接近上限，本次请求可能低命中全价；"
+                    f"提交 {total_chars:,} 字符 = 预算 {budget:,} 的 {ratio * 100:.0f}%"
+                    f"（>{_SUBMIT_RATIO_BLOCK * 100:.0f}%——历史接近上限，本次请求可能低命中全价；"
                     f"性能类不阻断仅观测记录，breaker_active={_ba!r}）"
                 ),
                 audit={"would_block": True, "ratio": round(ratio, 4)},
@@ -250,7 +261,7 @@ def _check_submit_ratio(messages: list[dict], meta: dict) -> GuardDecision | Non
                 verdict="WARN",
                 rule="submit_ratio_breaker_missing",
                 detail=(
-                    f"提交 {total_chars:,} 字符 = 预算 {budget:,} 的 {ratio*100:.0f}%"
+                    f"提交 {total_chars:,} 字符 = 预算 {budget:,} 的 {ratio * 100:.0f}%"
                     "（>95%——但 breaker_active 标志传递丢失（None），无法确认熔断冻结期；"
                     "降级 WARN 防双拦死锁，超限载荷由前置 context_pressure 管控）"
                 ),
@@ -260,7 +271,7 @@ def _check_submit_ratio(messages: list[dict], meta: dict) -> GuardDecision | Non
                 verdict="WARN",
                 rule="submit_ratio_breaker",
                 detail=(
-                    f"提交 {total_chars:,} 字符 = 预算 {budget:,} 的 {ratio*100:.0f}%"
+                    f"提交 {total_chars:,} 字符 = 预算 {budget:,} 的 {ratio * 100:.0f}%"
                     "（>95%——但压缩风暴熔断冻结期，压缩已由 breaker 冻结；超限载荷"
                     "由前置 context_pressure 管控，本条降级 WARN 防双拦死锁）"
                 ),
@@ -269,8 +280,8 @@ def _check_submit_ratio(messages: list[dict], meta: dict) -> GuardDecision | Non
             verdict="BLOCK",
             rule="submit_ratio",
             detail=(
-                f"提交 {total_chars:,} 字符 = 预算 {budget:,} 的 {ratio*100:.0f}%"
-                f"（>{_SUBMIT_RATIO_BLOCK*100:.0f}%——压缩在即——本次请求注定低命中全价）。"
+                f"提交 {total_chars:,} 字符 = 预算 {budget:,} 的 {ratio * 100:.0f}%"
+                f"（>{_SUBMIT_RATIO_BLOCK * 100:.0f}%——压缩在即——本次请求注定低命中全价）。"
                 "建议：先压缩 checkpoint 或换新会话再发（DSH checkpoint rejection 语义）"
             ),
         )
@@ -278,7 +289,7 @@ def _check_submit_ratio(messages: list[dict], meta: dict) -> GuardDecision | Non
         return GuardDecision(
             verdict="WARN",
             rule="submit_ratio",
-            detail=f"提交占比 {ratio*100:.0f}%（>{_SUBMIT_RATIO_WARN*100:.0f}%——接近超限——建议提前压缩/换会话）",
+            detail=f"提交占比 {ratio * 100:.0f}%（>{_SUBMIT_RATIO_WARN * 100:.0f}%——接近超限——建议提前压缩/换会话）",
         )
     return None
 
@@ -395,9 +406,7 @@ class CacheGuardBlockedError(LLMError):
 class PromptGuard:
     """MCP 出入口的进程内接口（校验 + 基线维护 + 命中率闭环）——MCP server 复用本类."""
 
-    def __init__(
-        self, audit_file: str | Path | None = None, *, hit_telemetry: bool = True
-    ) -> None:
+    def __init__(self, audit_file: str | Path | None = None, *, hit_telemetry: bool = True) -> None:
         # EVO-20260818（spec §6.2-6，grill-me 2.2）: 规则 G 命中回执开关——lms-chat 等本地
         # 推理无命中回执（client 三字段兜底后仍恒 0）→ False 时规则 G 不判定防误拦。
         self.hit_telemetry = hit_telemetry
@@ -411,7 +420,7 @@ class PromptGuard:
         self._last_model_by_session: dict[str, str] = {}
 
     def reset_session(self, session_id: str) -> None:
-        """重置会话状态（拷问②——模型切换/换会话时调用）——清窗口/基线/逃生计数. """
+        """重置会话状态（拷问②——模型切换/换会话时调用）——清窗口/基线/逃生计数."""
         try:
             self._hit_win.pop(session_id, None)
             self._baselines.pop(session_id, None)
@@ -460,7 +469,7 @@ class PromptGuard:
             logger.debug("guard record_result 失败（fail-open）")
 
     def _recent_hit_rate(self, session_id: str) -> float | None:
-        """该会话近期命中率（窗口样本不足返回 None——不判）. """
+        """该会话近期命中率（窗口样本不足返回 None——不判）."""
         win = self._hit_win.get(session_id) or []
         if len(win) < _HIT_SAMPLE_MIN:
             return None
@@ -481,9 +490,7 @@ class PromptGuard:
                 win_size = 0
             else:
                 sid = session_id or (
-                    max(self._hit_win, key=lambda s: len(self._hit_win[s]))
-                    if self._hit_win
-                    else ""
+                    max(self._hit_win, key=lambda s: len(self._hit_win[s])) if self._hit_win else ""
                 )
                 win = self._hit_win.get(sid) or []
                 recent = self._recent_hit_rate(sid) if sid else None
@@ -565,7 +572,7 @@ class PromptGuard:
                     verdict="WARN",
                     rule="low_hit_rate_ttl",
                     detail=(
-                        f"该会话近期命中率 {rate*100:.0f}%（低命中）——请求间隔 "
+                        f"该会话近期命中率 {rate * 100:.0f}%（低命中）——请求间隔 "
                         f"{ttl_gap_s:.0f}s 超 {_cache_ttl_for(provider)}s 缓存 TTL"
                         f"（{provider or 'provider'} 侧缓存已过期，属预期；短间隔请求将恢复命中）"
                     ),
@@ -580,7 +587,7 @@ class PromptGuard:
                     verdict="WARN",
                     rule="low_hit_rate_compressing",
                     detail=(
-                        f"该会话近期命中率 {rate*100:.0f}%（<{_HIT_RATE_BLOCK*100:.0f}%"
+                        f"该会话近期命中率 {rate * 100:.0f}%（<{_HIT_RATE_BLOCK * 100:.0f}%"
                         "——本轮为压缩轮，历史被改写、命中低属预期——提交成功即回温；"
                         "压缩轮后持续低命中再排查前缀漂移/风暴）"
                     ),
@@ -594,7 +601,7 @@ class PromptGuard:
                 verdict="WARN",
                 rule="low_hit_rate_provider",
                 detail=(
-                    f"该会话近期命中率 {rate*100:.0f}%（<{_HIT_RATE_BLOCK*100:.0f}%——"
+                    f"该会话近期命中率 {rate * 100:.0f}%（<{_HIT_RATE_BLOCK * 100:.0f}%——"
                     + (
                         "最近两次 tokens_in 相近，但尺寸相近不能证明字节前缀稳定；"
                         if prefix_stable
@@ -612,7 +619,7 @@ class PromptGuard:
                 verdict="WARN",
                 rule="low_hit_rate",
                 detail=(
-                    f"该会话近期命中率 {rate*100:.0f}%（<{_warn_thr*100:.0f}%——"
+                    f"该会话近期命中率 {rate * 100:.0f}%（<{_warn_thr * 100:.0f}%——"
                     f"自适应阈值，当前 tokens_in≈{_last_in}）"
                 ),
             )

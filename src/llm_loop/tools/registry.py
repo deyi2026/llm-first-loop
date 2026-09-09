@@ -136,8 +136,13 @@ def _emit_guidance_shadow_event(
     with contextlib.suppress(Exception):
         logger.info(
             "event=tool_guidance_shadow tool=%s status=%s source=%s chars=%d failure_class=%s",
-            tool, status, source, chars, failure_class,
+            tool,
+            status,
+            source,
+            chars,
+            failure_class,
         )
+
 
 # execute 包裹的扩展钩子（由外部装配: 如架构自省 record_action）
 PreExecuteHook = Callable[[ToolCall], None]
@@ -615,14 +620,12 @@ class ToolRegistry:
                 enum_note = self._enum_summary(params, max_chars=80)
                 # EVO-20260903-20152277: 枚举摘要计入预算（截断让位），保持 ≤ desc_chars 量级
                 budget = desc_chars - (len(enum_note) + 3) if enum_note else desc_chars
-                desc = (t.description or "")[:max(0, budget)]
+                desc = (t.description or "")[: max(0, budget)]
                 if required:
                     desc = f"{desc} | 必填: {', '.join(required)}"
                 if enum_note:
                     desc = f"{desc} | {enum_note}" if desc else enum_note
-                defs.append(
-                    {"name": t.name, "description": desc, "parameters": {"type": "object"}}
-                )
+                defs.append({"name": t.name, "description": desc, "parameters": {"type": "object"}})
         return defs
 
     def add_pre_execute_hook(self, hook: PreExecuteHook) -> None:
@@ -701,9 +704,7 @@ class ToolRegistry:
 
         health = runtime_tool_health(call.name)
         if not health.available:
-            advice = health_quarantine_advice(
-                call.name, health.reason_code, health.preferred_next
-            )
+            advice = health_quarantine_advice(call.name, health.reason_code, health.preferred_next)
             return ToolResult(
                 status=ToolResultStatus.FAILURE,
                 content=(
@@ -887,7 +888,14 @@ class ToolRegistry:
 
     # EVO-20260810-750e985a: 工具并发控制
     _EVIDENCE_CONTROL_TOOLS = frozenset(
-        {"read_evidence", "search_evidence", "list_evidence", "search_archive", "read_attachment", "source_synopsis"}
+        {
+            "read_evidence",
+            "search_evidence",
+            "list_evidence",
+            "search_archive",
+            "read_attachment",
+            "source_synopsis",
+        }
     )
 
     _READONLY_TOOLS = frozenset(
@@ -942,7 +950,9 @@ class ToolRegistry:
                         try:
                             on_result(call, result)
                         except Exception:  # noqa: BLE001 — WAL/observer failure must not lose result
-                            logger.warning("execute_many on_result hook failed (fail-open)", exc_info=True)
+                            logger.warning(
+                                "execute_many on_result hook failed (fail-open)", exc_info=True
+                            )
                     by_id[result.tool_call_id or call.id] = result
 
         for c in mutating:
@@ -996,9 +1006,10 @@ class ToolRegistry:
         # Rule-first: production default LFL_TOOL_GUIDANCE=off means historical
         # experience has no model authority.  Do not even query/mutate the experience
         # store in that mode; explicit on/shadow remain compatibility/experiment paths.
-        if (
-            _tool_guidance_mode() != "off"
-            and status in (ToolResultStatus.FAILURE, ToolResultStatus.ERROR, ToolResultStatus.TIMEOUT)
+        if _tool_guidance_mode() != "off" and status in (
+            ToolResultStatus.FAILURE,
+            ToolResultStatus.ERROR,
+            ToolResultStatus.TIMEOUT,
         ):
             result.guidance_extra = self._inject_experience_guidance(result)
         return self._attach_typed_recovery(result)

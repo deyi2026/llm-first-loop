@@ -44,7 +44,10 @@ class FixLoopTool:
                 "description": "检查命令（如 'pytest tests/test_x.py -x' 或 'ruff check src/x.py'）",
             },
             "max_rounds": {"type": "integer", "description": "循环上限（默认 5）"},
-            "fuse_count": {"type": "integer", "description": "熔断阈值（默认 3，连续修复同一错误）"},
+            "fuse_count": {
+                "type": "integer",
+                "description": "熔断阈值（默认 3，连续修复同一错误）",
+            },
             "fix_hint": {"type": "string", "description": "修复提示（给子代理的上下文指引）"},
         },
         "required": ["check_command"],
@@ -85,23 +88,30 @@ class FixLoopTool:
                             "[状态: failure] fix_loop 未启用（task_quality 动态开关关闭）。"
                             "可经 adjust_strategy 设置 fix_loop_enabled=1 开启。"
                         ),
-                        tool_call_id="", tool_name=self.name,
+                        tool_call_id="",
+                        tool_name=self.name,
                     )
             except Exception:  # noqa: BLE001 — 开关读取异常按关闭处理（fail-safe）
                 return ToolResult(
                     status=ToolResultStatus.FAILURE,
                     content="[状态: failure] fix_loop 开关读取异常，按关闭处理",
-                    tool_call_id="", tool_name=self.name,
+                    tool_call_id="",
+                    tool_name=self.name,
                 )
         check_command = str(kwargs.get("check_command", "") or "").strip()
         if not check_command:
             return ToolResult(
                 status=ToolResultStatus.FAILURE,
                 content="[参数错误] 缺少必填参数 'check_command'",
-                tool_call_id="", tool_name=self.name,
+                tool_call_id="",
+                tool_name=self.name,
             )
-        max_rounds = int(kwargs.get("max_rounds", self._default_max_rounds) or self._default_max_rounds)
-        fuse_count = int(kwargs.get("fuse_count", self._default_fuse_count) or self._default_fuse_count)
+        max_rounds = int(
+            kwargs.get("max_rounds", self._default_max_rounds) or self._default_max_rounds
+        )
+        fuse_count = int(
+            kwargs.get("fuse_count", self._default_fuse_count) or self._default_fuse_count
+        )
         # 审查低危修复: 上限钳制（LLM 可传超大值触发资源失控；超限钳到上限并如实标注）
         _max_rounds_cap, _max_fuse_cap = 20, 10
         clamped = []
@@ -115,7 +125,8 @@ class FixLoopTool:
             return ToolResult(
                 status=ToolResultStatus.FAILURE,
                 content="[参数错误] max_rounds/fuse_count 必须 ≥ 1",
-                tool_call_id="", tool_name=self.name,
+                tool_call_id="",
+                tool_name=self.name,
             )
         fix_hint = str(kwargs.get("fix_hint", "") or "")
 
@@ -129,8 +140,11 @@ class FixLoopTool:
             for rn in range(1, max_rounds + 1):
                 # 1. 跑检查（经 ToolRegistry 包裹，含安全检查）
                 check_result = self._registry.execute(
-                    ToolCall(id=f"{loop_id}_c{rn}", name="execute_command",
-                             arguments={"command": check_command})
+                    ToolCall(
+                        id=f"{loop_id}_c{rn}",
+                        name="execute_command",
+                        arguments={"command": check_command},
+                    )
                 )
                 # 审查 P1 修复: 判定用回执状态（execute_command 已按 returncode 映射
                 # 五态: 0→SUCCESS/非 0→FAILURE）——原"failed"子串判定会误判真实 pytest
@@ -140,11 +154,16 @@ class FixLoopTool:
                 if check_passed:
                     record = RoundRecord(rn, check_result="passed", rerun_result="passed")
                     rounds.append(record)
-                    self._append_event("task.fix_loop.terminated", {
-                        "loop_id": loop_id, "trace_id": trace_id,
-                        "final_status": FixLoopFinalStatus.PASSED.value,
-                        "rounds": rn, "max_rounds": max_rounds,
-                    })
+                    self._append_event(
+                        "task.fix_loop.terminated",
+                        {
+                            "loop_id": loop_id,
+                            "trace_id": trace_id,
+                            "final_status": FixLoopFinalStatus.PASSED.value,
+                            "rounds": rn,
+                            "max_rounds": max_rounds,
+                        },
+                    )
                     self._persist_audit(loop_id, trace_id, rn, "passed", "")
                     return ToolResult(
                         status=ToolResultStatus.SUCCESS,
@@ -154,7 +173,8 @@ class FixLoopTool:
                             + (f"（参数钳制: {'；'.join(clamped)}）\n" if clamped else "")
                             + f"{FixLoopRecord(loop_id, trace_id, max_rounds, tuple(rounds), FixLoopFinalStatus.PASSED).to_feedback_section()}"
                         ),
-                        tool_call_id="", tool_name=self.name,
+                        tool_call_id="",
+                        tool_name=self.name,
                     )
 
                 # 2. 失败 → 定位（路径 H，可选）
@@ -172,13 +192,25 @@ class FixLoopTool:
                 if fingerprint:
                     fingerprint_count[fingerprint] = fingerprint_count.get(fingerprint, 0) + 1
                     if fingerprint_count[fingerprint] >= fuse_count:
-                        rounds.append(RoundRecord(rn, check_result="failed", location_info=fingerprint,
-                                                  fix_action="", rerun_result="fuse"))
-                        self._append_event("task.fix_loop.terminated", {
-                            "loop_id": loop_id, "trace_id": trace_id,
-                            "final_status": FixLoopFinalStatus.FUSE_TRIGGERED.value,
-                            "rounds": rn, "fuse_count": fuse_count,
-                        })
+                        rounds.append(
+                            RoundRecord(
+                                rn,
+                                check_result="failed",
+                                location_info=fingerprint,
+                                fix_action="",
+                                rerun_result="fuse",
+                            )
+                        )
+                        self._append_event(
+                            "task.fix_loop.terminated",
+                            {
+                                "loop_id": loop_id,
+                                "trace_id": trace_id,
+                                "final_status": FixLoopFinalStatus.FUSE_TRIGGERED.value,
+                                "rounds": rn,
+                                "fuse_count": fuse_count,
+                            },
+                        )
                         self._persist_audit(loop_id, trace_id, rn, "fuse", fingerprint)
                         return ToolResult(
                             status=ToolResultStatus.FAILURE,
@@ -187,28 +219,43 @@ class FixLoopTool:
                                 f"（{loop_id}，trace={trace_id}）\n未修复项: {fingerprint[:200]}\n"
                                 f"{FixLoopRecord(loop_id, trace_id, max_rounds, tuple(rounds), FixLoopFinalStatus.FUSE_TRIGGERED, (fingerprint,), fuse_count).to_feedback_section()}"
                             ),
-                            tool_call_id="", tool_name=self.name,
+                            tool_call_id="",
+                            tool_name=self.name,
                         )
 
                 # 4. 子代理修复（P0-D1：子代理 LLM 经 edit_file 自主修复）
                 fix_result = self._subagent_fix(check_command, location_text, fix_hint, loop_id, rn)
-                rounds.append(RoundRecord(
-                    rn, check_result="failed", location_info=fingerprint,
-                    fix_action=fix_result[:100], rerun_result="pending",
-                ))
-                self._append_event("task.fix_loop.round", {
-                    "loop_id": loop_id, "trace_id": trace_id,
-                    "round": rn, "fingerprint": fingerprint,
-                    "fix_result": fix_result[:200],
-                })
+                rounds.append(
+                    RoundRecord(
+                        rn,
+                        check_result="failed",
+                        location_info=fingerprint,
+                        fix_action=fix_result[:100],
+                        rerun_result="pending",
+                    )
+                )
+                self._append_event(
+                    "task.fix_loop.round",
+                    {
+                        "loop_id": loop_id,
+                        "trace_id": trace_id,
+                        "round": rn,
+                        "fingerprint": fingerprint,
+                        "fix_result": fix_result[:200],
+                    },
+                )
                 unfixed.append(fingerprint or "unknown error")
 
             # 达上限
-            self._append_event("task.fix_loop.terminated", {
-                "loop_id": loop_id, "trace_id": trace_id,
-                "final_status": FixLoopFinalStatus.LIMIT_REACHED.value,
-                "rounds": max_rounds,
-            })
+            self._append_event(
+                "task.fix_loop.terminated",
+                {
+                    "loop_id": loop_id,
+                    "trace_id": trace_id,
+                    "final_status": FixLoopFinalStatus.LIMIT_REACHED.value,
+                    "rounds": max_rounds,
+                },
+            )
             self._persist_audit(loop_id, trace_id, max_rounds, "limit", "; ".join(unfixed[:5]))
             return ToolResult(
                 status=ToolResultStatus.FAILURE,
@@ -217,17 +264,21 @@ class FixLoopTool:
                     f"{max_rounds} 轮）\n未修复项: {', '.join(u[:80] for u in unfixed[:5])}\n"
                     f"{FixLoopRecord(loop_id, trace_id, max_rounds, tuple(rounds), FixLoopFinalStatus.LIMIT_REACHED, tuple(unfixed)).to_feedback_section()}"
                 ),
-                tool_call_id="", tool_name=self.name,
+                tool_call_id="",
+                tool_name=self.name,
             )
         except Exception as exc:  # noqa: BLE001 — 编排异常不抛穿主循环
             logger.exception("修复循环编排异常（回执 error）")
             return ToolResult(
                 status=ToolResultStatus.ERROR,
                 content=f"[状态: error] 修复循环异常: {type(exc).__name__}: {exc}，已终止（已完成 {len(rounds)} 轮）",
-                tool_call_id="", tool_name=self.name,
+                tool_call_id="",
+                tool_name=self.name,
             )
 
-    def _subagent_fix(self, check_command: str, location: str, hint: str, loop_id: str, rn: int) -> str:
+    def _subagent_fix(
+        self, check_command: str, location: str, hint: str, loop_id: str, rn: int
+    ) -> str:
         """经 SubAgentRunner 起子代理修复（P0-D1）.
 
         Returns:
@@ -243,8 +294,12 @@ class FixLoopTool:
             "若无法修复请如实说明原因。"
         )
         try:
-            result = self._subagent_runner.run(task, context=f"修复循环 {loop_id} 第 {rn} 轮", depth=1)
-            outcome = str(getattr(result, "outcome", "completed")) if result is not None else "failed"
+            result = self._subagent_runner.run(
+                task, context=f"修复循环 {loop_id} 第 {rn} 轮", depth=1
+            )
+            outcome = (
+                str(getattr(result, "outcome", "completed")) if result is not None else "failed"
+            )
             if result is not None and outcome != "completed":
                 return f"(子代理未完成[{outcome}]: {getattr(result, 'final_answer', '')[:100]})"
             return str(getattr(result, "final_answer", "") or "")[:200] or "(子代理无输出)"
@@ -268,7 +323,9 @@ class FixLoopTool:
         except Exception:  # noqa: BLE001
             logger.warning("修复循环事件落盘失败（fail-open）", exc_info=True)
 
-    def _persist_audit(self, loop_id: str, trace_id: str, rounds: int, status: str, detail: str) -> None:
+    def _persist_audit(
+        self, loop_id: str, trace_id: str, rounds: int, status: str, detail: str
+    ) -> None:
         """审计落盘 data/audit/task_quality.jsonl（fail-open）."""
         if self._audit_dir is None:
             return
@@ -278,10 +335,20 @@ class FixLoopTool:
 
             self._audit_dir.mkdir(parents=True, exist_ok=True)
             with (self._audit_dir / "task_quality.jsonl").open("a", encoding="utf-8") as f:
-                f.write(json.dumps({
-                    "ts": time.time(), "loop_id": loop_id, "trace_id": trace_id,
-                    "rounds": rounds, "status": status, "detail": detail[:200],
-                }, ensure_ascii=False) + "\n")
+                f.write(
+                    json.dumps(
+                        {
+                            "ts": time.time(),
+                            "loop_id": loop_id,
+                            "trace_id": trace_id,
+                            "rounds": rounds,
+                            "status": status,
+                            "detail": detail[:200],
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
         except OSError as exc:
             logger.warning("修复循环审计落盘失败（fail-open）: %s", exc)
 

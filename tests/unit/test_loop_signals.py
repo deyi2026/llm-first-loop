@@ -73,9 +73,7 @@ def test_pending_review_no_popup_no_auto_review(tmp_path, monkeypatch):
     """非弹窗模式: store.review 未被调用、忽略清单不落盘、_prompted_ids 不更新."""
     store = _PendingStore([{"id": "EVO-NOPOP-2", "status": "pending_review", "content": "x"}])
     detector = LoopSignalDetector()
-    monkeypatch.setattr(
-        "llm_loop.introspection.loop_signals.confirm", lambda *a, **k: True
-    )
+    monkeypatch.setattr("llm_loop.introspection.loop_signals.confirm", lambda *a, **k: True)
     ev = detector.check_pending_review(store)
     assert ev is None
     assert store.reviewed == []  # 不自动审阅
@@ -89,9 +87,7 @@ def test_pending_review_popup_enabled_keeps_behavior(tmp_path, monkeypatch):
         [{"id": "EVO-POPUP-1", "status": "pending_review", "content": "x"}]
     )
     detector = LoopSignalDetector(popup_pending_review=True)
-    monkeypatch.setattr(
-        "llm_loop.introspection.loop_signals.confirm", lambda *a, **k: True
-    )
+    monkeypatch.setattr("llm_loop.introspection.loop_signals.confirm", lambda *a, **k: True)
     ev = detector.check_pending_review(confirmed_store)
     assert confirmed_store.reviewed == [("EVO-POPUP-1", "accepted")]  # 确认自动审阅
     assert ev is not None and "accepted" in ev.fact
@@ -100,9 +96,7 @@ def test_pending_review_popup_enabled_keeps_behavior(tmp_path, monkeypatch):
         [{"id": "EVO-POPUP-2", "status": "pending_review", "content": "x"}]
     )
     detector2 = LoopSignalDetector(popup_pending_review=True)
-    monkeypatch.setattr(
-        "llm_loop.introspection.loop_signals.confirm", lambda *a, **k: False
-    )
+    monkeypatch.setattr("llm_loop.introspection.loop_signals.confirm", lambda *a, **k: False)
     ev2 = detector2.check_pending_review(rejected_store)
     assert rejected_store.reviewed == []  # 拒绝不自动审阅
     assert ev2 is not None and "待审阅" in ev2.fact
@@ -142,16 +136,16 @@ def test_pending_review_ghost_ignored(tmp_path, monkeypatch):
         def review(self, sid, decision):
             return None  # 建议不存在（幽灵）
 
-    monkeypatch.setattr(
-        "llm_loop.introspection.loop_signals.confirm", lambda *a, **k: True
-    )
+    monkeypatch.setattr("llm_loop.introspection.loop_signals.confirm", lambda *a, **k: True)
     ev = detector.check_pending_review(_GhostStore())
     assert ev is not None and "已加入忽略清单" in ev.fact
     # 已忽略 → 下次不弹
     assert detector.check_pending_review(_GhostStore()) is None
     # 忽略清单落盘
     assert (tmp_path / "audit" / "pending_ignored.jsonl").exists()
-    assert "EVO-GHOST-1" in (tmp_path / "audit" / "pending_ignored.jsonl").read_text(encoding="utf-8")
+    assert "EVO-GHOST-1" in (tmp_path / "audit" / "pending_ignored.jsonl").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_pending_review_ignored_skips_before_confirm(tmp_path, monkeypatch):
@@ -204,9 +198,7 @@ def test_pending_review_normal_not_ignored(tmp_path, monkeypatch):
         def review(self, sid, decision):
             return {"id": sid, "status": "accepted"}
 
-    monkeypatch.setattr(
-        "llm_loop.introspection.loop_signals.confirm", lambda *a, **k: True
-    )
+    monkeypatch.setattr("llm_loop.introspection.loop_signals.confirm", lambda *a, **k: True)
     ev = detector.check_pending_review(_NormalStore())
     assert ev is not None and "accepted" in ev.fact
     # 不写忽略清单（正常建议）
@@ -223,8 +215,7 @@ def test_pending_review_content_fingerprint_ignored(tmp_path, monkeypatch):
     p = tmp_path / "audit" / "pending_ignored.jsonl"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(
-        _json.dumps({"sid": "EVO-GHOST-OLD", "content": "启用语义检索能力以提升长期记忆"})
-        + "\n",
+        _json.dumps({"sid": "EVO-GHOST-OLD", "content": "启用语义检索能力以提升长期记忆"}) + "\n",
         encoding="utf-8",
     )
 

@@ -5,6 +5,7 @@ ERDC is observational only. It aligns durable LFL event facts with prompt-neutra
 samples and reports physical compute duty plus mechanical observation novelty. It does
 not infer model certainty, answer quality, relevance, retry desirability, or completion.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -271,7 +272,11 @@ def analyze_run(
         cache_read = up.get("cache_read_tokens")
         tokens_in = up.get("tokens_in")
         uncached = up.get("uncached_prompt_tokens")
-        if not isinstance(uncached, (int, float)) and isinstance(tokens_in, (int, float)) and isinstance(cache_read, (int, float)):
+        if (
+            not isinstance(uncached, (int, float))
+            and isinstance(tokens_in, (int, float))
+            and isinstance(cache_read, (int, float))
+        ):
             uncached = max(0, tokens_in - cache_read)
 
         physical_erdc = (
@@ -295,7 +300,9 @@ def analyze_run(
                 "cycle_end_utc": str(cycle_end.isoformat()),
                 "cycle_ms": round(cycle_ms, 2),
                 "provider_total_ms": round(float(provider_total_ms), 2),
-                "provider_share_of_cycle": round(float(provider_total_ms) / cycle_ms, 4) if cycle_ms > 0 else None,
+                "provider_share_of_cycle": round(float(provider_total_ms) / cycle_ms, 4)
+                if cycle_ms > 0
+                else None,
                 "first_delta_ms": first_delta_ms,
                 "first_reasoning_ms": first_reasoning_ms,
                 "first_visible_ms": first_visible_ms,
@@ -306,25 +313,33 @@ def analyze_run(
                 "uncached_prompt_tokens": uncached,
                 "cache_reuse_ratio": (
                     round(float(cache_read) / float(tokens_in), 4)
-                    if isinstance(cache_read, (int, float)) and isinstance(tokens_in, (int, float)) and tokens_in
+                    if isinstance(cache_read, (int, float))
+                    and isinstance(tokens_in, (int, float))
+                    and tokens_in
                     else None
                 ),
                 "tool_calls_finished": len(finished_by_round.get(round_no, [])),
                 "tool_elapsed_union_ms": round(_interval_union_ms(tool_intervals), 2),
                 "tool_wait_share_of_cycle": (
-                    round(_interval_union_ms(tool_intervals) / cycle_ms, 4) if cycle_ms > 0 else None
+                    round(_interval_union_ms(tool_intervals) / cycle_ms, 4)
+                    if cycle_ms > 0
+                    else None
                 ),
                 "tool_duration_sum_ms": round(tool_duration_sum_ms, 2),
                 "novel_observation_results": novel,
                 "repeated_observation_results": repeated,
                 "unhashed_observation_results": unhashed,
-                "observation_yield_ratio": round(observation_yield, 4) if observation_yield is not None else None,
+                "observation_yield_ratio": round(observation_yield, 4)
+                if observation_yield is not None
+                else None,
                 "gpu_provider": provider_gpu,
                 "gpu_pre_first_delta": pre_delta_gpu,
                 "gpu_generation": generation_gpu,
                 "gpu_reasoning": reasoning_gpu,
                 "physical_erdc": round(physical_erdc, 4) if physical_erdc is not None else None,
-                "provider_compute_duty": round(provider_compute_duty, 4) if provider_compute_duty is not None else None,
+                "provider_compute_duty": round(provider_compute_duty, 4)
+                if provider_compute_duty is not None
+                else None,
             }
         )
 
@@ -335,9 +350,7 @@ def analyze_run(
     }
 
 
-def analyze_session(
-    events: list[dict[str, Any]], samples: list[dict[str, Any]]
-) -> dict[str, Any]:
+def analyze_session(events: list[dict[str, Any]], samples: list[dict[str, Any]]) -> dict[str, Any]:
     session_id = str(events[0].get("session_id") or "") if events else ""
     seen_result_fps: set[str] = set()
     runs = [

@@ -40,6 +40,7 @@ def _mk(store: TaskStore, gid: str = "G1", title: str = "t", **kw) -> Task:
 
 # ---------- create 校验 ----------
 
+
 def test_create_rejects_empty_title_or_acceptance(store: TaskStore):
     with pytest.raises(ValueError, match="title"):
         store.create("G1", "", acceptance=["a"])
@@ -68,12 +69,15 @@ def test_goal_isolation(store: TaskStore):
 
 # ---------- replay 持久化 ----------
 
+
 def test_replay_last_wins_and_badline_skip(store: TaskStore, tmp_path: Path):
     t = _mk(store)
     store.update("G1", t.task_id, status="in_progress")
     f = tmp_path / "tasks" / "G1.jsonl"
     with open(f, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps({"op": "create", "task": {"task_id": t.task_id, "title": "bad"}}) + "\n")
+        fh.write(
+            json.dumps({"op": "create", "task": {"task_id": t.task_id, "title": "bad"}}) + "\n"
+        )
         fh.write("not-json\n")
     tasks = store.list_for_goal("G1")
     assert len(tasks) == 1
@@ -92,6 +96,7 @@ def test_no_change_update_writes_nothing(store: TaskStore, tmp_path: Path):
 
 
 # ---------- 状态机 ----------
+
 
 def test_transition_matrix(store: TaskStore):
     t = _mk(store)
@@ -112,7 +117,9 @@ def test_evidence_gate(store: TaskStore):
         store.update("G1", t.task_id, status="done")
     with pytest.raises(ValueError, match="evidence://"):
         store.update("G1", t.task_id, status="done", evidence_refs=["http://x"])
-    store.update("G1", t.task_id, status="done", evidence_refs=["evidence://v1/a", "evidence://v1/b"])
+    store.update(
+        "G1", t.task_id, status="done", evidence_refs=["evidence://v1/a", "evidence://v1/b"]
+    )
     got = store.get("G1", t.task_id)
     assert got.status == "done" and len(got.evidence_refs) == 2
 
@@ -125,6 +132,7 @@ def test_acceptance_revision_leaves_trace(store: TaskStore):
 
 
 # ---------- 依赖 / frontier ----------
+
 
 def test_dependency_blocking_and_ready(store: TaskStore):
     t1 = _mk(store, "G1", "first")
@@ -183,6 +191,7 @@ def test_goal_completion_ready(store: TaskStore):
 
 # ---------- 渲染 ----------
 
+
 def test_render_and_summary(store: TaskStore):
     t1 = _mk(store, "G1", "唯一任务")
     store.update("G1", t1.task_id, status="in_progress")
@@ -194,6 +203,7 @@ def test_render_and_summary(store: TaskStore):
 
 
 # ---------- done 重开确认门槛（用户规则: 已做过的任务不自动重启） ----------
+
 
 def test_done_reopen_requires_user_confirm(store: TaskStore):
     t = _mk(store, "G1", "x")

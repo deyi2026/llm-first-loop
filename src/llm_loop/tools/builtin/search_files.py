@@ -104,8 +104,13 @@ class SearchFilesTool:
             home = Path.home().resolve()
             _sensitive_prefixes = (
                 home,  # 家目录整体（含 .ssh/.aws/.env 等）
-                Path("/etc"), Path("/usr"), Path("/bin"), Path("/sbin"),
-                Path("/var/root"), Path("/private/etc"), Path("/private/var/root"),
+                Path("/etc"),
+                Path("/usr"),
+                Path("/bin"),
+                Path("/sbin"),
+                Path("/var/root"),
+                Path("/private/etc"),
+                Path("/private/var/root"),
             )
             try:
                 base.relative_to(project_root)  # 项目内 → 直接放行
@@ -140,7 +145,17 @@ class SearchFilesTool:
             )
 
         # 默认忽略常见噪声目录
-        _ignore_dirs = {".git", "__pycache__", ".venv", "node_modules", "data", "dist", "build", ".idea", ".vscode"}
+        _ignore_dirs = {
+            ".git",
+            "__pycache__",
+            ".venv",
+            "node_modules",
+            "data",
+            "dist",
+            "build",
+            ".idea",
+            ".vscode",
+        }
 
         results: list[str] = []
         try:

@@ -67,11 +67,17 @@ def _exc(ts_utc: str, code: str = "1210") -> dict:
 
 def _defer(ts: str, event: str, session_id: str, slot: str, count: int | None = None) -> dict:
     payload = {"count": count} if count is not None else {}
-    return {"ts": ts, "event": event, "session_id": session_id, "slot_kind": slot, "payload": payload}
+    return {
+        "ts": ts,
+        "event": event,
+        "session_id": session_id,
+        "slot_kind": slot,
+        "payload": payload,
+    }
 
 
 def _fixture(tmp_path: Path) -> Path:
-    """合成审计数据: 2 个 compact 首请求（10:00:30 / 10:01:30）均 1210. """
+    """合成审计数据: 2 个 compact 首请求（10:00:30 / 10:01:30）均 1210."""
     return _write_audit(
         tmp_path,
         trace_rows=[
@@ -89,8 +95,12 @@ def _fixture(tmp_path: Path) -> Path:
             _exc("2026-08-27T02:02:00.000000+00:00"),  # 本地 10:02:00 → 非 CF（attributed_plain）
             _exc("2026-08-27T02:05:00.000000+00:00"),  # 本地 10:05:00 → 无行（不可归因）
             _exc("2026-08-27T02:00:40.000000+00:00", code="1211"),  # 非 1210 忽略
-            {"ts": "2026-08-27T02:00:41+00:00", "phase": "llm_call",
-             "error_type": "LLMTimeoutError", "error_message": "timeout"},  # 非 HTTP 忽略
+            {
+                "ts": "2026-08-27T02:00:41+00:00",
+                "phase": "llm_call",
+                "error_type": "LLMTimeoutError",
+                "error_message": "timeout",
+            },  # 非 HTTP 忽略
         ],
         defer_rows=[
             _defer("2026-08-27T10:00:35", "defer_stored", "sess-A", "interop", 2),
@@ -149,7 +159,9 @@ class TestMetricsRecompute:
             _trace("2026-08-27T09:00:30", "sess-Z", 30),  # 骤降 → CF（分片内）
         ]
         _write_audit(
-            p, trace_rows=[], exceptions=[_exc("2026-08-27T01:00:30+00:00")],
+            p,
+            trace_rows=[],
+            exceptions=[_exc("2026-08-27T01:00:30+00:00")],
             shard_rows=shard,
         )
         r = compute_metrics(p)
@@ -209,7 +221,9 @@ class TestMetricsCli:
         # v1.1（verdict_p1 B-3）: schema 升级 + 新键（裸数值键零变更）
         assert data["schema"] == "err1210_metrics_v1.1"
         assert data["metrics"]["compact_first_1210_rate_detail"] == {
-            "numerator": 2, "denominator": 2, "rate": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "rate": 1.0,
         }
         assert "aggregated_tail_user_max" in data["metrics"]
         assert "aggregated_tail_user_fallback_rounds" in data["metrics"]
@@ -217,22 +231,39 @@ class TestMetricsCli:
     def test_render_summary_none_rates(self):
         """无样本场景: 发生率/成功率/完整率均为 n/a（非除零崩溃）."""
         report = {
-            "as_of": None, "generated_at": "t",
-            "inputs": {"exception_log": {"rows_1210": 0, "unattributable": 0},
-                       "payload_trace_files": [], "payload_trace_rows": 0, "defer_trace_rows": 0},
+            "as_of": None,
+            "generated_at": "t",
+            "inputs": {
+                "exception_log": {"rows_1210": 0, "unattributable": 0},
+                "payload_trace_files": [],
+                "payload_trace_rows": 0,
+                "defer_trace_rows": 0,
+            },
             "metrics": {
-                "compact_first_total": 0, "compact_first_1210_count": 0,
+                "compact_first_total": 0,
+                "compact_first_1210_count": 0,
                 "compact_first_1210_rate": None,
                 "p0_trigger_count": 0,
-                "triggers": 0, "no_retry_inferred": 0, "retry_attempted": 0,
-                "retry_failed_1210": 0, "retry_success": 0, "retry_success_rate": None,
-                "defer_stored_count": 0, "defer_dropped_count": 0,
-                "defer_replayed_count": 0, "defer_replay_completeness": None,
-                "defer_exhausted_count": 0, "defer_lost_on_reinject_count": 0,
+                "triggers": 0,
+                "no_retry_inferred": 0,
+                "retry_attempted": 0,
+                "retry_failed_1210": 0,
+                "retry_success": 0,
+                "retry_success_rate": None,
+                "defer_stored_count": 0,
+                "defer_dropped_count": 0,
+                "defer_replayed_count": 0,
+                "defer_replay_completeness": None,
+                "defer_exhausted_count": 0,
+                "defer_lost_on_reinject_count": 0,
                 "defer_unreplayed_candidates": [],
             },
-            "details": {"compact_first_rows": [], "attributed_1210_plain": [],
-                        "unattributed_1210": [], "caveats": []},
+            "details": {
+                "compact_first_rows": [],
+                "attributed_1210_plain": [],
+                "unattributed_1210": [],
+                "caveats": [],
+            },
         }
         text = render_summary(report)
         assert "n/a" in text

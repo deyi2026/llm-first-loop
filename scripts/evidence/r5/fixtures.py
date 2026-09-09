@@ -18,7 +18,9 @@ class R5Fixture:
 
 
 def _neutral(prefix: str, target_line: int, target: str, count: int = 225) -> str:
-    rows = [f"record {i:04d}: neutral evidence holdout material {prefix}." for i in range(1, count + 1)]
+    rows = [
+        f"record {i:04d}: neutral evidence holdout material {prefix}." for i in range(1, count + 1)
+    ]
     rows.insert(target_line, target)
     return "\n".join(rows)
 

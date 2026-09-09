@@ -59,9 +59,7 @@ def _events() -> list[dict]:
 
 def _make(monkeypatch, tmp_path, root: Path) -> DshSessionReadTool:
     monkeypatch.delenv("DSH_HOME", raising=False)  # 隔离本机 DSH_HOME 残留
-    monkeypatch.setattr(
-        "llm_loop.tools.builtin.dsh_session_read._DSH_SESSIONS_ROOT", root
-    )
+    monkeypatch.setattr("llm_loop.tools.builtin.dsh_session_read._DSH_SESSIONS_ROOT", root)
     return DshSessionReadTool()
 
 
@@ -145,7 +143,6 @@ def test_dsh_home_redirect(monkeypatch, tmp_path):
     r = tool.execute(workspace="/fake/ws")
     assert r.status == ToolResultStatus.SUCCESS
     assert "session-h" in r.content
-
 
 
 def test_session_id_path_traversal_cannot_read_other_workspace(monkeypatch, tmp_path):

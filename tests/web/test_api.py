@@ -187,9 +187,6 @@ def test_chat_session_not_found_no_create(build_test_engine, fake_settings):
     assert len(engine.session.list_sessions()) == before  # 不静默新建
 
 
-
-
-
 def test_chat_rejects_path_traversal_session_id_before_engine_run(
     build_test_engine, fake_settings, monkeypatch
 ):
@@ -324,7 +321,11 @@ def test_chat_feishu_channel_push(build_test_engine, fake_settings, monkeypatch)
     import llm_loop.web.feishu_push as fp
 
     pushed = []
-    monkeypatch.setattr(fp, "push_web_chat_to_feishu", lambda channel, user_text, answer: pushed.append((channel, user_text, answer)))
+    monkeypatch.setattr(
+        fp,
+        "push_web_chat_to_feishu",
+        lambda channel, user_text, answer: pushed.append((channel, user_text, answer)),
+    )
     engine, _ = build_test_engine([{"content": "第一答"}, {"content": "回答内容"}])
     client = _make_client(engine)
     sid = client.post("/api/v1/chat", json={"message": "web 消息"}).json()["session_id"]
@@ -343,7 +344,9 @@ def test_chat_web_channel_no_push(build_test_engine, fake_settings, monkeypatch)
     import llm_loop.web.feishu_push as fp
 
     pushed = []
-    monkeypatch.setattr(fp, "push_web_chat_to_feishu", lambda channel, user_text, answer: pushed.append(1))
+    monkeypatch.setattr(
+        fp, "push_web_chat_to_feishu", lambda channel, user_text, answer: pushed.append(1)
+    )
     engine, _ = build_test_engine([{"content": "ok"}])
     client = _make_client(engine)
     resp = client.post("/api/v1/chat", json={"message": "x"})
@@ -374,13 +377,14 @@ def test_sse_events_endpoint(build_test_engine, fake_settings):
 # ── 2026-08-15: SSE 命名事件修复（此前 data 内嵌 type，浏览器按默认 message 处理，
 #    addEventListener("sessions_updated") 永不触发 → Web 端必须手动刷新）──
 
+
 def test_sse_named_event_frame_format():
     """命名事件帧带 `event:` 行（浏览器按命名事件分发的前置条件）."""
     from llm_loop.web.routes import _sse_event
 
     frame = _sse_event("sessions_updated", {"type": "sessions_updated"})
     assert frame.startswith("event: sessions_updated\n")
-    assert "data: {\"type\": \"sessions_updated\"}" in frame
+    assert 'data: {"type": "sessions_updated"}' in frame
     assert frame.endswith("\n\n")
     conn = _sse_event("connected", {"type": "connected"})
     assert conn.startswith("event: connected\n")
@@ -398,6 +402,7 @@ def test_sse_route_uses_named_event_helper():
 
 
 # ── Web V2（2026-08-15）：/ui/v2 挂载并存（原版 / 不动；产物缺失不挂载） ──
+
 
 def test_ui_v2_mounted_when_dist_present(build_test_engine, fake_settings, tmp_path, monkeypatch):
     """webui/dist 存在（UI_V2_DIR 注入）→ /ui/v2 挂载并可取 index.html."""
@@ -438,6 +443,7 @@ def test_ui_v2_assets_same_origin_api(build_test_engine, fake_settings, tmp_path
 
 # ── 2026-08-15：消息反馈（对齐 DSH ui-message-feedback） ──
 
+
 def test_feedback_appends_jsonl(build_test_engine, fake_settings, tmp_path, monkeypatch):
     """反馈 → data/feedback.jsonl 追加（含 role/note），会话内容不变."""
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
@@ -451,7 +457,12 @@ def test_feedback_appends_jsonl(build_test_engine, fake_settings, tmp_path, monk
         json={"message_index": 1, "feedback": "up", "note": "回答准确"},
     )
     assert r.status_code == 200
-    lines = (Path(engine.settings.data_dir) / "feedback.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    lines = (
+        (Path(engine.settings.data_dir) / "feedback.jsonl")
+        .read_text(encoding="utf-8")
+        .strip()
+        .splitlines()
+    )
     assert len(lines) == 1
     rec = __import__("json").loads(lines[0])
     assert rec["session_id"] == sid and rec["feedback"] == "up" and rec["note"] == "回答准确"
@@ -493,7 +504,11 @@ def test_feedback_validations(build_test_engine, fake_settings, tmp_path, monkey
 def test_chat_new_session_forces_create(build_test_engine, fake_settings):
     """2026-08-18: new_session=true → 强制新建会话并设为共享当前（/new 语义）."""
     engine, fake = build_test_engine([])
-    fake._responses = [__import__("llm_loop.llm.client", fromlist=["LLMResponse"]).LLMResponse(content="完成", tool_calls=[], provider="fake")]
+    fake._responses = [
+        __import__("llm_loop.llm.client", fromlist=["LLMResponse"]).LLMResponse(
+            content="完成", tool_calls=[], provider="fake"
+        )
+    ]
     cli = _make_client(engine)
     # 先建一个共享会话
     sid0 = engine.session.create()
@@ -511,7 +526,11 @@ def test_chat_new_session_forces_create(build_test_engine, fake_settings):
 def test_chat_without_new_session_reuses_shared(build_test_engine, fake_settings):
     """不带 new_session → 复用共享当前（原逻辑零回归）."""
     engine, fake = build_test_engine([])
-    fake._responses = [__import__("llm_loop.llm.client", fromlist=["LLMResponse"]).LLMResponse(content="完成", tool_calls=[], provider="fake")]
+    fake._responses = [
+        __import__("llm_loop.llm.client", fromlist=["LLMResponse"]).LLMResponse(
+            content="完成", tool_calls=[], provider="fake"
+        )
+    ]
     cli = _make_client(engine)
     sid0 = engine.session.create()
     engine.session.set_shared_current(sid0)

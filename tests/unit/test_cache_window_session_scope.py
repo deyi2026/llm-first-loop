@@ -117,25 +117,40 @@ def test_stable_prefix_fingerprint_includes_projected_tool_surface():
         return base, prefix_len
 
     monitor = _Monitor()
-    tool_a = stable_digest([
-        {"type": "function", "function": {"name": "read_file", "parameters": {}}}
-    ])
-    tool_b = stable_digest([
-        {"type": "function", "function": {"name": "search_text", "parameters": {}}}
-    ])
+    tool_a = stable_digest(
+        [{"type": "function", "function": {"name": "read_file", "parameters": {}}}]
+    )
+    tool_b = stable_digest(
+        [{"type": "function", "function": {"name": "search_text", "parameters": {}}}]
+    )
     a1 = run_base_assembly(
-        base=[], system_prompt="sys", session_id="s", sess_message_count=0,
-        sess_anchor=0, inject_interop=_inject, cache_monitor=monitor,
+        base=[],
+        system_prompt="sys",
+        session_id="s",
+        sess_message_count=0,
+        sess_anchor=0,
+        inject_interop=_inject,
+        cache_monitor=monitor,
         tool_prefix_fp=tool_a,
     )
     a2 = run_base_assembly(
-        base=[], system_prompt="sys", session_id="s", sess_message_count=0,
-        sess_anchor=0, inject_interop=_inject, cache_monitor=monitor,
+        base=[],
+        system_prompt="sys",
+        session_id="s",
+        sess_message_count=0,
+        sess_anchor=0,
+        inject_interop=_inject,
+        cache_monitor=monitor,
         tool_prefix_fp=tool_a,
     )
     b = run_base_assembly(
-        base=[], system_prompt="sys", session_id="s", sess_message_count=0,
-        sess_anchor=0, inject_interop=_inject, cache_monitor=monitor,
+        base=[],
+        system_prompt="sys",
+        session_id="s",
+        sess_message_count=0,
+        sess_anchor=0,
+        inject_interop=_inject,
+        cache_monitor=monitor,
         tool_prefix_fp=tool_b,
     )
     assert a1.stable_fp == a2.stable_fp

@@ -219,9 +219,7 @@ class ArchiveStore:
         paths = list(self._dir.glob("*.jsonl"))
         for seg_dir in self._dir.glob("*.segments"):
             if seg_dir.is_dir():
-                paths.extend(
-                    p for p in seg_dir.glob("*.jsonl") if p.stem.isdigit()
-                )
+                paths.extend(p for p in seg_dir.glob("*.jsonl") if p.stem.isdigit())
         return sorted(set(paths), key=lambda p: str(p))
 
     def session_ids(self) -> list[str]:
@@ -413,7 +411,9 @@ class ArchiveStore:
                             "summary": entry.get("summary", ""),
                             "key_facts": entry.get("key_facts", []),
                             "key_paths": entry.get("key_paths", []),
-                            "content_head": (entry.get("content") or "")[: self._CONTENT_HEAD_CHARS],
+                            "content_head": (entry.get("content") or "")[
+                                : self._CONTENT_HEAD_CHARS
+                            ],
                             "tool_call_id": entry.get("tool_call_id"),
                             "tool_name": entry.get("tool_name"),
                             "role": entry.get("role", ""),
@@ -700,7 +700,9 @@ class ArchiveStore:
                         entry = json.loads(line)
                         chars += int(entry.get("chars", 0))
                     except (json.JSONDecodeError, ValueError) as exc:  # fail-open：单行损坏跳过
-                        logging.getLogger(__name__).debug("档案统计单行损坏跳过（fail-open）: %s", exc)
+                        logging.getLogger(__name__).debug(
+                            "档案统计单行损坏跳过（fail-open）: %s", exc
+                        )
         return {"archived_count": count, "archived_chars": chars}
 
     def update_summary(self, entry_id: str, summary: str, summary_source: str) -> bool:

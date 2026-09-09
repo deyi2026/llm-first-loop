@@ -52,7 +52,8 @@ def run_skill_list(host: Any, args: dict) -> ToolResult:
     if not metas:
         return ToolResult(
             status=ToolResultStatus.SUCCESS,
-            content="[技能清单] 无外部技能（未配置 skills/ 目录或目录为空）。配置方式: 在 skills/<name>/SKILL.md 放置技能文件。" + dsh_section,
+            content="[技能清单] 无外部技能（未配置 skills/ 目录或目录为空）。配置方式: 在 skills/<name>/SKILL.md 放置技能文件。"
+            + dsh_section,
             tool_call_id="",
             tool_name="skill_list",
         )

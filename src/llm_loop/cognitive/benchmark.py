@@ -171,17 +171,14 @@ class CognitiveOverheadMeter:
         numerator = retrieval_tokens + checkpoint_tokens
         # 分母: Σ(tokens_in + tokens_out)
         denominator = sum(
-            int(r.get("tokens_in", 0) or 0) + int(r.get("tokens_out", 0) or 0)
-            for r in usage_rows
+            int(r.get("tokens_in", 0) or 0) + int(r.get("tokens_out", 0) or 0) for r in usage_rows
         )
         ratio = (numerator / denominator) if denominator > 0 else 0.0
         # CR-R1.1（审查项8）: 次数拆独立 rate——retrieval_tokens 无真实计量（恒 0）
         # 时不再以 0 token 冒充（token_overhead_known=False=unknown）；
         # RecoveryActionRate = 恢复动作数/决策轮数（决策轮=usage 行数）。
         decision_rounds = len(usage_rows)
-        recovery_action_rate = (
-            retrieval_count / decision_rounds if decision_rounds > 0 else 0.0
-        )
+        recovery_action_rate = retrieval_count / decision_rounds if decision_rounds > 0 else 0.0
 
         return EfficiencyMetric(
             numerator_tokens=numerator,
@@ -280,8 +277,11 @@ class FixtureRegistry:
         for path in sorted(spec.root.glob("*.jsonl")):
             rows = _read_jsonl(path)
             rounds = max(
-                (int(r.get("payload", {}).get("round", 0) or 0)
-                 for r in rows if r.get("type") == "request.usage"),
+                (
+                    int(r.get("payload", {}).get("round", 0) or 0)
+                    for r in rows
+                    if r.get("type") == "request.usage"
+                ),
                 default=0,
             )
             if rounds < spec.min_rounds:
@@ -404,7 +404,9 @@ class BenchmarkReport:
     baseline: dict = field(default_factory=dict)
     comparison: dict = field(default_factory=dict)
     outcomes: list[SampleOutcome] = field(default_factory=list)
-    first_miss_subgroups: dict = field(default_factory=dict)  # {"triggered": [...], "not_triggered": [...]}
+    first_miss_subgroups: dict = field(
+        default_factory=dict
+    )  # {"triggered": [...], "not_triggered": [...]}
 
 
 class SemanticResetBenchmark:
@@ -436,9 +438,7 @@ class SemanticResetBenchmark:
         # 假设（design 2.3.3 成本须先估并标注假设）:
         #   单样本回放上界 = min_rounds需求 × 平均轮 8k tok（输入+输出经验上界）；
         #   A 轨 SWE 任务按 fixture 输入 ≤60k tok 估。reset/control 双组 ×1。
-        per_sample_upper = (
-            spec.min_rounds * 8000 if spec.track == "B" else 60000
-        )
+        per_sample_upper = spec.min_rounds * 8000 if spec.track == "B" else 60000
         total_upper = n * per_sample_upper
         return CostEstimate(
             samples_total=n,
@@ -506,13 +506,9 @@ class SemanticResetBenchmark:
         return {
             "label": label,
             "n": len(outcomes),
-            "efficiency_ratio_mean": (
-                round(sum(ratios) / len(ratios), 6) if ratios else None
-            ),
+            "efficiency_ratio_mean": (round(sum(ratios) / len(ratios), 6) if ratios else None),
             "objective_fidelity_pass_rate": (
-                round(
-                    sum(1 for o in outcomes if o.objective_fidelity_passed) / len(outcomes), 4
-                )
+                round(sum(1 for o in outcomes if o.objective_fidelity_passed) / len(outcomes), 4)
                 if outcomes and any(o.objective_fidelity_passed is not None for o in outcomes)
                 else None
             ),

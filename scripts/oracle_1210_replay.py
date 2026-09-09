@@ -109,14 +109,14 @@ def _client_factory(model: str):
             max_tokens=settings.llm_max_tokens,
             wire_protocol=settings.llm_wire_protocol,
         )
-        pool = ModelClientPool(
-            registry=load_registry(settings), default_client=default
-        )
+        pool = ModelClientPool(registry=load_registry(settings), default_client=default)
         if model:
             try:
                 return pool.get_client(model)
             except Exception as exc:  # noqa: BLE001 — 路由失败回退默认并警告
-                print(f"警告: 样本模型 {model!r} 路由失败（{exc}），回退默认 client", file=sys.stderr)
+                print(
+                    f"警告: 样本模型 {model!r} 路由失败（{exc}），回退默认 client", file=sys.stderr
+                )
         return default
 
     return factory
@@ -131,9 +131,7 @@ def _summary(args: argparse.Namespace, report) -> str:
         f"  dry-run: {'是' if report.dry_run else '否'}",
     ]
     if args.ticket_ref:
-        lines.append(
-            f"  工单证据: #{args.ticket_ref}（spec 5.2.1-5b 例外条款，跳过骨架轨）"
-        )
+        lines.append(f"  工单证据: #{args.ticket_ref}（spec 5.2.1-5b 例外条款，跳过骨架轨）")
     if report.variants:
         lines.append("  ── 变体明细 ──")
         for v in report.variants:
@@ -142,9 +140,7 @@ def _summary(args: argparse.Namespace, report) -> str:
                 f"{v.get('outcome'):<16} {str(v.get('detail') or '')[:90]}"
             )
     if report.dry_run:
-        lines.append(
-            f"  dry-run 完成: 构造 {len(report.variants)} 变体并预检，未发送任何请求"
-        )
+        lines.append(f"  dry-run 完成: 构造 {len(report.variants)} 变体并预检，未发送任何请求")
     else:
         lines.append(
             f"  Verdict: {report.verdict or '（未判定——单轨/不完整不下结论）'}  "

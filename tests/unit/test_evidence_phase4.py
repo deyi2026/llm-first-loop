@@ -66,7 +66,9 @@ def _capture(
                 version_policy=version_policy,
                 version_token=version_token,
             ),
-            coverage=Coverage(unit="observation", start=0, end_exclusive=None, source_complete=True),
+            coverage=Coverage(
+                unit="observation", start=0, end_exclusive=None, source_complete=True
+            ),
             provenance=Provenance(producer="phase4-test"),
         )
     )
@@ -121,11 +123,16 @@ def test_file_freshness_current_then_stale_after_change(tmp_path):
             projection_budget_chars=500,
         )
     )
-    result = registry.execute(ToolCall(id="read-1", name="read_file", arguments={"path": str(path)}))
+    result = registry.execute(
+        ToolCall(id="read-1", name="read_file", arguments={"path": str(path)})
+    )
     ref = EvidenceRef(result.evidence_ref or "")
     freshness = EvidenceFreshness(ledger)
 
-    assert freshness.refresh(owner=owner, evidence_ref=ref).freshness is FreshnessState.VERIFIED_CURRENT
+    assert (
+        freshness.refresh(owner=owner, evidence_ref=ref).freshness
+        is FreshnessState.VERIFIED_CURRENT
+    )
     path.write_text("version two and changed size", encoding="utf-8")
     assert freshness.refresh(owner=owner, evidence_ref=ref).freshness is FreshnessState.STALE
 
@@ -162,9 +169,18 @@ def test_non_file_freshness_never_fabricates_current(tmp_path):
         version_policy=SourceVersionPolicy.VERSIONED,
     )
     freshness = EvidenceFreshness(ledger)
-    assert freshness.refresh(owner=owner, evidence_ref=command.evidence_ref).freshness is FreshnessState.UNKNOWN
-    assert freshness.refresh(owner=owner, evidence_ref=web.evidence_ref).freshness is FreshnessState.UNKNOWN
-    assert freshness.refresh(owner=owner, evidence_ref=runtime.evidence_ref).freshness is FreshnessState.UNKNOWN
+    assert (
+        freshness.refresh(owner=owner, evidence_ref=command.evidence_ref).freshness
+        is FreshnessState.UNKNOWN
+    )
+    assert (
+        freshness.refresh(owner=owner, evidence_ref=web.evidence_ref).freshness
+        is FreshnessState.UNKNOWN
+    )
+    assert (
+        freshness.refresh(owner=owner, evidence_ref=runtime.evidence_ref).freshness
+        is FreshnessState.UNKNOWN
+    )
 
 
 def test_evidence_control_tools_are_owner_injected_bounded_and_not_recaptured(tmp_path):
@@ -184,7 +200,9 @@ def test_evidence_control_tools_are_owner_injected_bounded_and_not_recaptured(tm
             projection_budget_chars=500,
         )
     )
-    registry.register(EvidenceReadTool(blobs, ledger, freshness=freshness, owner_resolver=lambda: owner))
+    registry.register(
+        EvidenceReadTool(blobs, ledger, freshness=freshness, owner_resolver=lambda: owner)
+    )
     registry.register(EvidenceListTool(ledger, freshness=freshness, owner_resolver=lambda: owner))
     registry.register(EvidenceSearchTool(search, freshness=freshness, owner_resolver=lambda: owner))
     before = ledger.count(owner)
@@ -193,7 +211,9 @@ def test_evidence_control_tools_are_owner_injected_bounded_and_not_recaptured(tm
     assert listed.status is ToolResultStatus.SUCCESS
     assert captured.evidence_ref.ref in listed.content
 
-    found = registry.execute(ToolCall(id="s1", name="search_evidence", arguments={"query": "alpha beta"}))
+    found = registry.execute(
+        ToolCall(id="s1", name="search_evidence", arguments={"query": "alpha beta"})
+    )
     assert found.status is ToolResultStatus.SUCCESS
     assert captured.evidence_ref.ref in found.content
     assert "alpha beta" in found.content.lower()
@@ -202,7 +222,12 @@ def test_evidence_control_tools_are_owner_injected_bounded_and_not_recaptured(tm
         ToolCall(
             id="r1",
             name="read_evidence",
-            arguments={"evidence_ref": captured.evidence_ref.ref, "range_type": "line", "start": 1, "limit": 1},
+            arguments={
+                "evidence_ref": captured.evidence_ref.ref,
+                "range_type": "line",
+                "start": 1,
+                "limit": 1,
+            },
         )
     )
     assert read.status is ToolResultStatus.SUCCESS
@@ -214,8 +239,12 @@ def test_read_evidence_cross_owner_does_not_reveal_existence(tmp_path):
     blobs, ledger = _stores(tmp_path)
     capture = EvidenceCapture(blobs, ledger)
     secret = _capture(capture, _owner("B"), "secret", "private")
-    tool = EvidenceReadTool(blobs, ledger, freshness=EvidenceFreshness(ledger), owner_resolver=_owner)
-    result = tool.execute(evidence_ref=secret.evidence_ref.ref, range_type="text_char", start=0, limit=10)
+    tool = EvidenceReadTool(
+        blobs, ledger, freshness=EvidenceFreshness(ledger), owner_resolver=_owner
+    )
+    result = tool.execute(
+        evidence_ref=secret.evidence_ref.ref, range_type="text_char", start=0, limit=10
+    )
     assert result.status in {ToolResultStatus.FAILURE, ToolResultStatus.BLOCKED}
     assert "session-B" not in result.content
     assert "workspace-B" not in result.content
@@ -233,8 +262,12 @@ def test_factory_registers_recovery_tools_only_in_enforce_mode(tmp_path):
         tool_pipeline_enabled=False,
     )
     off = build_engine(Settings(**base, data_dir=str(tmp_path / "off"), evidence_mode="off"))
-    shadow = build_engine(Settings(**base, data_dir=str(tmp_path / "shadow"), evidence_mode="shadow"))
-    enforce = build_engine(Settings(**base, data_dir=str(tmp_path / "enforce"), evidence_mode="enforce"))
+    shadow = build_engine(
+        Settings(**base, data_dir=str(tmp_path / "shadow"), evidence_mode="shadow")
+    )
+    enforce = build_engine(
+        Settings(**base, data_dir=str(tmp_path / "enforce"), evidence_mode="enforce")
+    )
 
     def names(engine):
         return {row["name"] for row in engine.registry.schemas(lazy=False)}
@@ -244,8 +277,9 @@ def test_factory_registers_recovery_tools_only_in_enforce_mode(tmp_path):
     assert recovery.isdisjoint(names(shadow))  # preserve Phase2 promise: no prompt/schema change
     enforce_names = names(enforce)
     assert recovery <= enforce_names
-    assert "search_archive" in enforce_names  # Phase5 compatibility alias, not legacy substring search
-
+    assert (
+        "search_archive" in enforce_names
+    )  # Phase5 compatibility alias, not legacy substring search
 
 
 def test_search_gold_fixture_precision_recall_visible_matches(tmp_path):
@@ -333,7 +367,6 @@ def test_list_evidence_safe_labels_hide_command_args_and_url_query(tmp_path):
     assert "https://example.test/path" in result.content
 
 
-
 def test_recovery_reads_do_not_churn_ledger_version_when_state_unchanged(tmp_path):
     blobs, ledger = _stores(tmp_path)
     owner = _owner()
@@ -346,7 +379,9 @@ def test_recovery_reads_do_not_churn_ledger_version_when_state_unchanged(tmp_pat
         EvidenceSearch(blobs, ledger), freshness=freshness, owner_resolver=lambda: owner
     )
     before = ledger.ledger_version(owner)
-    assert read_tool.execute(evidence_ref=record.evidence_ref.ref).status is ToolResultStatus.SUCCESS
+    assert (
+        read_tool.execute(evidence_ref=record.evidence_ref.ref).status is ToolResultStatus.SUCCESS
+    )
     assert list_tool.execute(limit=10).status is ToolResultStatus.SUCCESS
     assert search_tool.execute(query="stable").status is ToolResultStatus.SUCCESS
     assert ledger.ledger_version(owner) == before
@@ -359,7 +394,9 @@ def test_model_facing_read_rejects_blob_ref_as_capability(tmp_path):
     tool = EvidenceReadTool(
         blobs, ledger, freshness=EvidenceFreshness(ledger), owner_resolver=lambda: owner
     )
-    result = tool.execute(evidence_ref=record.blob_ref.ref, range_type="text_char", start=0, limit=10)
+    result = tool.execute(
+        evidence_ref=record.blob_ref.ref, range_type="text_char", start=0, limit=10
+    )
     assert result.status is ToolResultStatus.FAILURE
     assert "blob://" not in result.content
     assert "secret" not in result.content

@@ -5,6 +5,7 @@
 - ①③④⑤ 无既有承载（grep 零命中确认），此处补写机械测试。
 本文件全绿是 COG_RUNTIME_MODE=enforce 的 CI 前置门（spec 3.2-1）。
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -89,15 +90,11 @@ def test_invariant_03_tombstone():
 
     assert rebuild_state(None) is None
     assert (
-        rebuild_state(
-            {"id": "G", "objective": "done", "status": "complete", "checkpoints": []}
-        )
+        rebuild_state({"id": "G", "objective": "done", "status": "complete", "checkpoints": []})
         is None
     )
     assert (
-        rebuild_state(
-            {"id": "G", "objective": "hold", "status": "blocked", "checkpoints": []}
-        )
+        rebuild_state({"id": "G", "objective": "hold", "status": "blocked", "checkpoints": []})
         is None
     )
 
@@ -148,9 +145,7 @@ def test_invariant_04_every_turn(tmp_path: Path):
     _prime_goal_and_envelope(engine, sess, "不变量④目标")
     object.__setattr__(engine.settings, "cog_runtime_mode", "enforce")
     _arm_slots(engine, sess)
-    out = engine._build_llm_messages(
-        sess, [], max_chars=200_000, planned_label="zhipu/glm-5"
-    )
+    out = engine._build_llm_messages(sess, [], max_chars=200_000, planned_label="zhipu/glm-5")
     tail = [m for m in out if m.get("role") == "user"][-1:]
     assert len(tail) == 1, "尾部注入恒单条聚合 user"
     assert "不变量④目标" in str(tail[0]["content"]), "header（语义投影）必须在场"
@@ -167,9 +162,7 @@ def test_invariant_05_quiet_round(tmp_path: Path):
     _prime_goal_and_envelope(engine, sess, "安静轮目标")
     object.__setattr__(engine.settings, "cog_runtime_mode", "enforce")
     # 刻意不 arm 任何槽（零注入安静轮）
-    out = engine._build_llm_messages(
-        sess, [], max_chars=200_000, planned_label="zhipu/glm-5"
-    )
+    out = engine._build_llm_messages(sess, [], max_chars=200_000, planned_label="zhipu/glm-5")
     tail = [m for m in out if m.get("role") == "user"][-1:]
     assert len(tail) == 1, "安静轮 header 单独成条（decision_visible）"
     assert "安静轮目标" in str(tail[0]["content"]), "零注入轮 header 不得被空 slots 抑制"
@@ -249,18 +242,12 @@ def test_invariant_08b_budget_live_build_path(tmp_path, monkeypatch):
     object.__setattr__(engine.settings, "cog_runtime_mode", "enforce")
     object.__setattr__(engine.settings, "cog_runtime_packet_budget", 10)  # 极小预算必超
     _arm_all_slots(engine, sess, tip_extra=5)  # 武装大 WARM 群（tip/hotcard/memory）
-    out = engine._build_llm_messages(
-        sess, [], max_chars=200_000, planned_label="zhipu/glm-5"
-    )
+    out = engine._build_llm_messages(sess, [], max_chars=200_000, planned_label="zhipu/glm-5")
     joined = "\n".join(str(m.get("content") or "") for m in out)
     assert "[tier:warm]" not in joined, "超预算 WARM 应降级剔除（degraded 仅 HOT）"
     tpath = Path(engine.settings.data_dir) / "audit" / "cognitive_telemetry.jsonl"
     assert tpath.exists(), "telemetry 应开启"
-    rows = [
-        _json.loads(ln)
-        for ln in tpath.read_text(encoding="utf-8").splitlines()
-        if ln.strip()
-    ]
+    rows = [_json.loads(ln) for ln in tpath.read_text(encoding="utf-8").splitlines() if ln.strip()]
     assert any(r.get("event") == "tier_degraded" for r in rows), "budget 降级事件可观测"
 
 
@@ -287,11 +274,7 @@ def test_engine_run_production_path_no_anchor_hack(tmp_path, monkeypatch):
     # 生产 run 路径 cognitive 归因可观测（批次 A/D 接线全通）
     tpath = Path(engine.settings.data_dir) / "audit" / "cognitive_telemetry.jsonl"
     assert tpath.exists()
-    rows = [
-        _json.loads(ln)
-        for ln in tpath.read_text(encoding="utf-8").splitlines()
-        if ln.strip()
-    ]
+    rows = [_json.loads(ln) for ln in tpath.read_text(encoding="utf-8").splitlines() if ln.strip()]
     pcs = [r for r in rows if r.get("event") == "packet_compile"]
     assert pcs, "run 生产路径应产生 packet_compile 事件"
     assert pcs[0].get("goal_id"), "goal_id 归因非空（_env.identity 来源）"

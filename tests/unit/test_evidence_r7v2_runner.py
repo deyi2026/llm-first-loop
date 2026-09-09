@@ -15,8 +15,17 @@ ROOT = Path(__file__).parents[2]
 def test_r7v2_fixtures_are_fresh_and_unambiguous() -> None:
     assert set(FIXTURES) == {"Q1", "Q2", "Q3", "Q4"}
     text = "\n".join(f.initial_content + f.current_content for f in FIXTURES.values())
-    for prior in ("AMBER-612", "IVORY-374", "MINT-105", "PLUM-842", "ONYX-913",
-                  "SILVER-208", "CEDAR-741", "NORTH-624", "TEAL-908"):
+    for prior in (
+        "AMBER-612",
+        "IVORY-374",
+        "MINT-105",
+        "PLUM-842",
+        "ONYX-913",
+        "SILVER-208",
+        "CEDAR-741",
+        "NORTH-624",
+        "TEAL-908",
+    ):
         assert prior not in text
     assert FIXTURES["Q4"].preacquire_offset == 0
     assert FIXTURES["Q4"].preacquire_limit == 60

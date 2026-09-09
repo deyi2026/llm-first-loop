@@ -24,18 +24,27 @@ def reset_module_state(tmp_path, monkeypatch):
 
 # ── 工具定义层校验 ──
 
+
 def test_tool_defs_present():
     assert tfo.SEND_FEISHU_MESSAGE_TOOL_DEF["name"] == "send_feishu_message"
     assert tfo.CREATE_FEISHU_DOC_TOOL_DEF["name"] == "create_feishu_doc"
     assert tfo.SEND_FEISHU_ATTACHMENT_TOOL_DEF["name"] == "send_feishu_attachment"
-    for td in [tfo.SEND_FEISHU_MESSAGE_TOOL_DEF, tfo.CREATE_FEISHU_DOC_TOOL_DEF, tfo.SEND_FEISHU_ATTACHMENT_TOOL_DEF]:
+    for td in [
+        tfo.SEND_FEISHU_MESSAGE_TOOL_DEF,
+        tfo.CREATE_FEISHU_DOC_TOOL_DEF,
+        tfo.SEND_FEISHU_ATTACHMENT_TOOL_DEF,
+    ]:
         assert "confirm" in td["parameters"]["properties"], f"{td['name']} 必须含二次确认参数"
         assert "confirm" in td["parameters"]["required"]
 
 
 def test_tool_descriptions_mention_security():
     """工具描述必须显式声明涉安全边界，避免 AI 误用."""
-    for td in [tfo.SEND_FEISHU_MESSAGE_TOOL_DEF, tfo.CREATE_FEISHU_DOC_TOOL_DEF, tfo.SEND_FEISHU_ATTACHMENT_TOOL_DEF]:
+    for td in [
+        tfo.SEND_FEISHU_MESSAGE_TOOL_DEF,
+        tfo.CREATE_FEISHU_DOC_TOOL_DEF,
+        tfo.SEND_FEISHU_ATTACHMENT_TOOL_DEF,
+    ]:
         desc = td["description"]
         assert "EVO-20260813-432813b2" in desc
         assert "涉安全边界" in desc or "禁用" in desc
@@ -43,12 +52,14 @@ def test_tool_descriptions_mention_security():
 
 # ── 安全防护校验 ──
 
+
 def test_outbound_disabled_by_default(monkeypatch):
     """默认 FEISHU_OUTBOUND_ENABLED=false 时全部拒绝."""
     monkeypatch.setenv("FEISHU_OUTBOUND_ENABLED", "false")
     monkeypatch.delenv("FEISHU_OUTBOUND_ALLOWED_USERS", raising=False)
     result = tfo.run_send_feishu_message(
-        MagicMock(), MagicMock(),
+        MagicMock(),
+        MagicMock(),
         {"receive_id": "ou_abc", "content": "hi", "confirm": True},
     )
     assert result.status == ToolResultStatus.FAILURE
@@ -60,7 +71,8 @@ def test_requires_confirm_flag(monkeypatch):
     monkeypatch.setenv("FEISHU_OUTBOUND_ENABLED", "true")
     monkeypatch.setenv("FEISHU_OUTBOUND_ALLOWED_USERS", "ou_abc")
     result = tfo.run_send_feishu_message(
-        MagicMock(), MagicMock(),
+        MagicMock(),
+        MagicMock(),
         {"receive_id": "ou_abc", "content": "hi", "confirm": False},
     )
     assert result.status == ToolResultStatus.FAILURE
@@ -72,7 +84,8 @@ def test_whitelist_enforced(monkeypatch):
     monkeypatch.setenv("FEISHU_OUTBOUND_ENABLED", "true")
     monkeypatch.setenv("FEISHU_OUTBOUND_ALLOWED_USERS", "ou_allowed")
     result = tfo.run_send_feishu_message(
-        MagicMock(), MagicMock(),
+        MagicMock(),
+        MagicMock(),
         {"receive_id": "ou_blocked", "content": "hi", "confirm": True},
     )
     assert result.status == ToolResultStatus.FAILURE
@@ -88,20 +101,33 @@ def test_rate_limit_blocks_after_5(monkeypatch):
     # 注入 mock client 避免真发
     fake_lark = MagicMock()
     fake_lark.Client.builder.return_value.app_id.return_value.app_secret.return_value.log_level.return_value.build.return_value = MagicMock()
-    with patch.dict("sys.modules", {
-        "lark_oapi": fake_lark,
-        "llm_loop.feishu.rest": MagicMock(FeishuRestClient=MagicMock(return_value=MagicMock(send_text=MagicMock(return_value="msg_1")))),
-        "llm_loop.feishu.config": MagicMock(load_feishu_config=MagicMock(return_value=MagicMock(has_credentials=True, app_id="cli", app_secret="sec"))),
-    }):
+    with patch.dict(
+        "sys.modules",
+        {
+            "lark_oapi": fake_lark,
+            "llm_loop.feishu.rest": MagicMock(
+                FeishuRestClient=MagicMock(
+                    return_value=MagicMock(send_text=MagicMock(return_value="msg_1"))
+                )
+            ),
+            "llm_loop.feishu.config": MagicMock(
+                load_feishu_config=MagicMock(
+                    return_value=MagicMock(has_credentials=True, app_id="cli", app_secret="sec")
+                )
+            ),
+        },
+    ):
         for i in range(3):
             result = tfo.run_send_feishu_message(
-                MagicMock(), MagicMock(),
+                MagicMock(),
+                MagicMock(),
                 {"receive_id": "ou_abc", "content": f"msg{i}", "confirm": True},
             )
             assert result.status == ToolResultStatus.SUCCESS
         # 第 4 次必须被限流
         result4 = tfo.run_send_feishu_message(
-            MagicMock(), MagicMock(),
+            MagicMock(),
+            MagicMock(),
             {"receive_id": "ou_abc", "content": "msg4", "confirm": True},
         )
         assert result4.status == ToolResultStatus.FAILURE
@@ -111,7 +137,8 @@ def test_rate_limit_blocks_after_5(monkeypatch):
 def test_create_doc_disabled_when_outbound_off(monkeypatch):
     monkeypatch.setenv("FEISHU_OUTBOUND_ENABLED", "false")
     result = tfo.run_create_feishu_doc(
-        MagicMock(), MagicMock(),
+        MagicMock(),
+        MagicMock(),
         {"title": "测试", "content": "# hi", "confirm": True},
     )
     assert result.status == ToolResultStatus.FAILURE
@@ -123,7 +150,8 @@ def test_attachment_rejects_missing_both(monkeypatch):
     monkeypatch.setenv("FEISHU_OUTBOUND_ENABLED", "true")
     monkeypatch.setenv("FEISHU_OUTBOUND_ALLOWED_USERS", "ou_abc")
     result = tfo.run_send_feishu_attachment(
-        MagicMock(), MagicMock(),
+        MagicMock(),
+        MagicMock(),
         {"receive_id": "ou_abc", "confirm": True},
     )
     assert result.status == ToolResultStatus.FAILURE
@@ -134,7 +162,8 @@ def test_attachment_rejects_nonexistent_file(monkeypatch, tmp_path):
     monkeypatch.setenv("FEISHU_OUTBOUND_ENABLED", "true")
     monkeypatch.setenv("FEISHU_OUTBOUND_ALLOWED_USERS", "ou_abc")
     result = tfo.run_send_feishu_attachment(
-        MagicMock(), MagicMock(),
+        MagicMock(),
+        MagicMock(),
         {"receive_id": "ou_abc", "file_path": "/nonexistent/file.txt", "confirm": True},
     )
     assert result.status == ToolResultStatus.FAILURE
@@ -142,6 +171,7 @@ def test_attachment_rejects_nonexistent_file(monkeypatch, tmp_path):
 
 
 # ── 审计落盘校验 ──
+
 
 def test_audit_log_written_on_disabled(monkeypatch, tmp_path):
     """即使被拒绝也要落审计（防规避）."""
@@ -152,7 +182,8 @@ def test_audit_log_written_on_disabled(monkeypatch, tmp_path):
     monkeypatch.setenv("FEISHU_OUTBOUND_ENABLED", "false")
 
     tfo.run_send_feishu_message(
-        MagicMock(), MagicMock(),
+        MagicMock(),
+        MagicMock(),
         {"receive_id": "ou_abc", "content": "hi", "confirm": True},
     )
     # 默认状态下被禁用，不写审计（仅尝试发送才写）
@@ -226,9 +257,7 @@ def test_send_file_upload_flow(monkeypatch, tmp_path):
     fake_send.data.message_id = "om_file"
     client._lark_client.im.v1.file.create.return_value = fake_upload
     client._lark_client.im.v1.message.create.return_value = fake_send
-    mid = client.send_file(
-        receive_id="ou_abc", file_path=str(fp), receive_id_type="open_id"
-    )
+    mid = client.send_file(receive_id="ou_abc", file_path=str(fp), receive_id_type="open_id")
     assert mid == "om_file"
     assert client._lark_client.im.v1.file.create.called
     send_body = client._lark_client.im.v1.message.create.call_args[0][0].request_body
@@ -242,6 +271,4 @@ def test_send_file_upload_nonexistent(monkeypatch, tmp_path):
 
     client = FeishuRestClient(MagicMock(), MagicMock())
     with pytest.raises(FeishuRestError):
-        client.send_file(
-            receive_id="ou_abc", file_path=str(tmp_path / "missing.txt")
-        )
+        client.send_file(receive_id="ou_abc", file_path=str(tmp_path / "missing.txt"))

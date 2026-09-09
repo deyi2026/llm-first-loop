@@ -1,4 +1,5 @@
 """会话状态快照测试（EVO-20260811-9ccdec97）."""
+
 from llm_loop.core.loop import build_session_snapshot_text
 
 
@@ -11,7 +12,8 @@ def test_snapshot_basic():
 
 def test_snapshot_with_evolution_summary():
     text = build_session_snapshot_text(
-        message_count=10, memory_count=1,
+        message_count=10,
+        memory_count=1,
         evolution_summary={"pending_review": 5, "executed": 12, "executing": 0},
     )
     assert "pending_review=5" in text and "executed=12" in text

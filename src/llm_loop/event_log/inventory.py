@@ -55,9 +55,7 @@ class InventoryReport:
             f"- 动作审计 action_trace: {self.action_trace.get('line_count', 0)} 行 / "
             f"{self.action_trace.get('size_bytes', 0)} 字节"
         )
-        lines.append(
-            f"- 事件日志 event_logs: {self.event_logs.get('file_count', 0)} 文件"
-        )
+        lines.append(f"- 事件日志 event_logs: {self.event_logs.get('file_count', 0)} 文件")
         if self.dirs_missing:
             lines.append(f"- 缺失目录（如实标注）: {', '.join(self.dirs_missing)}")
         if self.gaps:

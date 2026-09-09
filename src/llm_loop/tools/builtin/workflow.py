@@ -63,7 +63,7 @@ class WorkflowRunTool:
                 "type": "string",
                 "enum": ["parallel", "pipeline", "dag"],
                 "description": "编排模式: parallel=多独立子任务聚合; pipeline=步骤串联（上步结果注入下步）; "
-                               "dag=有向无环图（步骤 depends_on 声明依赖，拓扑序执行，依赖结果注入，支持 budget_rounds 节点预算）",
+                "dag=有向无环图（步骤 depends_on 声明依赖，拓扑序执行，依赖结果注入，支持 budget_rounds 节点预算）",
             },
             "steps": {
                 "type": "array",
@@ -95,7 +95,7 @@ class WorkflowRunTool:
                             "type": "string",
                             "enum": ["local", "codearts"],
                             "description": "执行器（可选；local=本地 SubAgentRunner（缺省零回归）；"
-                                           "codearts=经 CodeArtsScheduler 委派远端子 Agent 执行）",
+                            "codearts=经 CodeArtsScheduler 委派远端子 Agent 执行）",
                         },
                     },
                     "required": ["task"],
@@ -143,7 +143,9 @@ class WorkflowRunTool:
     # ── pipeline / parallel ──
     def _execute_linear(self, mode: str, steps: list) -> ToolResult:
         prev_answer = ""  # pipeline: 上一步结果
-        parts = [f"[workflow_run] mode={mode}, steps={len(steps)}（顺序执行+聚合，registry 有状态故不真并发）"]
+        parts = [
+            f"[workflow_run] mode={mode}, steps={len(steps)}（顺序执行+聚合，registry 有状态故不真并发）"
+        ]
         all_ok = True
         for i, step in enumerate(steps, start=1):
             extra = ""
@@ -228,7 +230,9 @@ class WorkflowRunTool:
             )
 
         order_str = " → ".join(ids[i] for i in order)
-        parts = [f"[workflow_run] mode=dag, steps={n}（拓扑序: {order_str}；顺序执行+聚合，registry 有状态故不真并发）"]
+        parts = [
+            f"[workflow_run] mode=dag, steps={n}（拓扑序: {order_str}；顺序执行+聚合，registry 有状态故不真并发）"
+        ]
         answers: list[str] = [""] * n
         all_ok = True
         for i in order:

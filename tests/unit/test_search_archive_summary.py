@@ -1,4 +1,5 @@
 """search_archive(with_summary) legacy compatibility without false full-source claims."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

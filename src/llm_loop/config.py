@@ -313,7 +313,9 @@ class Settings:
     cog_runtime_state_version: str = "v0.1"
     # HOT/WARM/COLD 分级总闸（0 回退平铺聚合原行为；spec 5.2.3-1）
     cog_runtime_tier_enabled: bool = True
-    cog_runtime_mode: str = "shadow"  # CR-R1: off|shadow|enforce（与 _env_cog_mode 缺省及镜像 fc45590 同源）
+    cog_runtime_mode: str = (
+        "shadow"  # CR-R1: off|shadow|enforce（与 _env_cog_mode 缺省及镜像 fc45590 同源）
+    )
     # Stage 2 allowlist（DESIGN-20260901 rev2 P0-1/P0-2）: operator-owned 控制面文件
     # 绝对路径（仅绝对路径生效，相对=配置无效→fail-closed shadow）；空=名单禁用。
     # 不做存在性校验——读取方每轮 fail-closed 求值（P0-2 全语义在 build._cog_allowlist_hit）。

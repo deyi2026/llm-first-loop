@@ -40,7 +40,9 @@ def _search_bing(query: str, limit: int, timeout: float) -> list[dict]:
     """
     url = f"https://www.bing.com/search?q={quote_plus(query)}&count={min(limit * 2, 30)}"
     with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-        resp = client.get(url, headers={"User-Agent": _UA, "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"})
+        resp = client.get(
+            url, headers={"User-Agent": _UA, "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"}
+        )
     resp.raise_for_status()
     # 按结果块解析（标题+摘要同块，避免跨块错配）
     blocks = re.findall(r'<li class="b_algo".*?</li>', resp.text, re.S)
@@ -52,7 +54,7 @@ def _search_bing(query: str, limit: int, timeout: float) -> list[dict]:
         u, t = hm.group(1), hm.group(2)
         title = _html.unescape(re.sub(r"<[^>]+>", "", t)).strip()
         snippet = ""
-        for pm in re.findall(r'<p[^>]*>(.*?)</p>', b, re.S):
+        for pm in re.findall(r"<p[^>]*>(.*?)</p>", b, re.S):
             cand = _html.unescape(re.sub(r"<[^>]+>", "", pm)).strip()
             if len(cand) > 30:  # 过滤日期/短碎片
                 snippet = cand
@@ -132,13 +134,22 @@ def _search_openalex(query: str, limit: int, timeout: float) -> list[dict]:
         year = w.get("publication_year") or ""
         cited = w.get("cited_by_count")
         snippet = f"{year} 被引:{cited}" if year else ""
-        out.append({"title": (w.get("title") or "").strip(), "url": url, "snippet": snippet, "source": "openalex"})
+        out.append(
+            {
+                "title": (w.get("title") or "").strip(),
+                "url": url,
+                "snippet": snippet,
+                "source": "openalex",
+            }
+        )
     return [r for r in out if r["title"]][:limit]
 
 
 def _search_crossref(query: str, limit: int, timeout: float) -> list[dict]:
     """Crossref 学术（免 key，DOI 注册机构官方 API）."""
-    data = _get_json(f"https://api.crossref.org/works?query={quote_plus(query)}&rows={limit}", timeout)
+    data = _get_json(
+        f"https://api.crossref.org/works?query={quote_plus(query)}&rows={limit}", timeout
+    )
     out = []
     for w in (data.get("message") or {}).get("items", []):
         titles = w.get("title") or []
@@ -146,12 +157,14 @@ def _search_crossref(query: str, limit: int, timeout: float) -> list[dict]:
         year = ""
         with contextlib.suppress(KeyError, IndexError, TypeError):
             year = str(w["issued"]["date-parts"][0][0])
-        out.append({
-            "title": titles[0].strip() if titles else "",
-            "url": f"https://doi.org/{doi}" if doi else w.get("URL", ""),
-            "snippet": year,
-            "source": "crossref",
-        })
+        out.append(
+            {
+                "title": titles[0].strip() if titles else "",
+                "url": f"https://doi.org/{doi}" if doi else w.get("URL", ""),
+                "snippet": year,
+                "source": "crossref",
+            }
+        )
     return [r for r in out if r["title"]][:limit]
 
 
@@ -172,31 +185,36 @@ def _search_pubmed(query: str, limit: int, timeout: float) -> list[dict]:
     out = []
     for uid in result.get("uids", []):
         item = result.get(uid) or {}
-        out.append({
-            "title": (item.get("title") or "").strip(),
-            "url": f"https://pubmed.ncbi.nlm.nih.gov/{uid}/",
-            "snippet": f"{item.get('source', '')} {item.get('pubdate', '')}".strip(),
-            "source": "pubmed",
-        })
+        out.append(
+            {
+                "title": (item.get("title") or "").strip(),
+                "url": f"https://pubmed.ncbi.nlm.nih.gov/{uid}/",
+                "snippet": f"{item.get('source', '')} {item.get('pubdate', '')}".strip(),
+                "source": "pubmed",
+            }
+        )
     return [r for r in out if r["title"]][:limit]
 
 
 def _search_github(query: str, limit: int, timeout: float) -> list[dict]:
     """GitHub 仓库（免认证 10 次/分钟，429 时如实报错）."""
     data = _get_json(
-        f"https://api.github.com/search/repositories?q={quote_plus(query)}&per_page={limit}", timeout
+        f"https://api.github.com/search/repositories?q={quote_plus(query)}&per_page={limit}",
+        timeout,
     )
     out = []
     for w in data.get("items", []):
         stars = w.get("stargazers_count", 0)
         lang = w.get("language") or ""
         desc = (w.get("description") or "")[:100]
-        out.append({
-            "title": w.get("full_name", ""),
-            "url": w.get("html_url", ""),
-            "snippet": f"★{stars} {lang} {desc}".strip(),
-            "source": "github",
-        })
+        out.append(
+            {
+                "title": w.get("full_name", ""),
+                "url": w.get("html_url", ""),
+                "snippet": f"★{stars} {lang} {desc}".strip(),
+                "source": "github",
+            }
+        )
     return [r for r in out if r["title"]][:limit]
 
 
@@ -222,7 +240,11 @@ def _merge_dedupe(groups: list[list[dict]], limit: int) -> list[dict]:
     return out
 
 
-_SCHOLAR_SOURCES = [("openalex", _search_openalex), ("crossref", _search_crossref), ("pubmed", _search_pubmed)]
+_SCHOLAR_SOURCES = [
+    ("openalex", _search_openalex),
+    ("crossref", _search_crossref),
+    ("pubmed", _search_pubmed),
+]
 _SCHOLAR_HINTS = ("论文", "文献", "研究", "学术", "paper", "study", "research", "arxiv", "doi")
 _CODE_HINTS = ("github", "仓库", "源码", "开源", "repo", "library", "sdk")
 
@@ -294,7 +316,9 @@ class WebSearchTool:
                 tool_name=self.name,
             )
         used = sorted({r["source"] for r in merged})
-        lines = [f"[query] {query}  [channel] {channel}  [sources] {'+'.join(used)}  [count] {len(merged)}"]
+        lines = [
+            f"[query] {query}  [channel] {channel}  [sources] {'+'.join(used)}  [count] {len(merged)}"
+        ]
         for i, r in enumerate(merged, 1):
             lines.append(f"{i}. {r['title']}\n   {r['url']}  ({r['source']})")
             if r["snippet"]:
@@ -407,7 +431,9 @@ class WebSearchTool:
                 seen.add(visible)
                 blocks.append(visible)
                 raw_blocks.append(raw)
-        head = f"[web_search 并发] 查询 {len(queries)} 个，成功 {len(ok)}，聚合去重 {len(blocks)} 块"
+        head = (
+            f"[web_search 并发] 查询 {len(queries)} 个，成功 {len(ok)}，聚合去重 {len(blocks)} 块"
+        )
         lines = [head, ""] + blocks
         raw_lines = [head, ""] + raw_blocks
         if failed:

@@ -80,7 +80,9 @@ class SubAgentResultTool:
                 for report in reports[-5:]:
                     parts.append(f"  - {str(report)[:300]}")
             if state == "running":
-                parts.append("child 尚未结算；可继续父级工作、agent_message steer，或稍后再次查询。")
+                parts.append(
+                    "child 尚未结算；可继续父级工作、agent_message steer，或稍后再次查询。"
+                )
             else:
                 parts.append(
                     "child 当前无本进程 active worker；以上仅为durable状态/报告读取，"

@@ -147,9 +147,7 @@ def normalize_durable_events(events: Sequence[Any]) -> list[dict[str, Any]]:
         etype = str(event.get("type") or "")
         if not etype:
             raise ValueError("event type is required")
-        projected = {
-            str(k): v for k, v in event.items() if str(k) not in _VOLATILE_EVENT_KEYS
-        }
+        projected = {str(k): v for k, v in event.items() if str(k) not in _VOLATILE_EVENT_KEYS}
         payload = projected.get("payload")
         if etype == "request.usage" and isinstance(payload, Mapping):
             projected["payload"] = {

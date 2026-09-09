@@ -190,8 +190,7 @@ def test_head_downgrade_cannot_archive_active_human() -> None:
     )
 
     assert any(
-        item.get("role") == "user" and item.get("content") == "CURRENT-HUMAN"
-        for item in built
+        item.get("role") == "user" and item.get("content") == "CURRENT-HUMAN" for item in built
     )
     assert all(message is not current for message in archived)
     assert archived, "head downgrade should still retire other atomic groups"

@@ -95,8 +95,6 @@ def test_provider_mid_compression_extends_common_prefix_beyond_system():
     assert compressed[1]["content"].startswith("m000-")
 
 
-
-
 def test_provider_head_target_ratio_can_reserve_more_of_compressed_waterline():
     """DeepSeek式中段压缩可把fixed-head从旧50%目标上限提高，同时仍保留尾部。"""
 
@@ -123,9 +121,9 @@ def test_provider_head_target_ratio_can_reserve_more_of_compressed_waterline():
     deepseek_cap, deepseek_common = _build(0.65)
 
     assert deepseek_common > old_common, (old_common, deepseek_common)
-    assert any(
-        str(msg.get("content", "")).startswith("m029-") for msg in deepseek_cap
-    ), "提高fixed-head后仍必须保留最近尾部"
+    assert any(str(msg.get("content", "")).startswith("m029-") for msg in deepseek_cap), (
+        "提高fixed-head后仍必须保留最近尾部"
+    )
     assert len(deepseek_cap) >= len(old_cap)
 
 
@@ -219,7 +217,9 @@ def test_provider_mid_compression_long_tool_stress_stays_structurally_stable():
     assert min_prefix_chars is not None and min_prefix_chars >= 8_000, (
         f"压缩轮应保留显著固定head共同前缀，实际最小{min_prefix_chars}字符"
     )
-    marked = [m for m in history if "deepseek" in ((m.metadata or {}).get("cache_compacted_for") or [])]
+    marked = [
+        m for m in history if "deepseek" in ((m.metadata or {}).get("cache_compacted_for") or [])
+    ]
     assert marked, "压力结束后应有provider级中段折叠标记"
 
 
@@ -230,9 +230,6 @@ def test_budget_feasibility_131k_window():
     total_chars = sum(len(str(m.get("content", ""))) for m in built)
     est_tokens = total_chars // 2
     assert est_tokens <= int(131072 * 0.8), f"提交 {est_tokens} tokens 超窗口 80%"
-
-
-
 
 
 def test_submission_single_system_after_fix():
@@ -336,9 +333,13 @@ def test_69715765_baseline(monkeypatch):
 
     # ① 压缩后提交视图缩小 ≥10%（288K→≤259K），不再每轮 288K 恒定
     assert first_stats is not None
-    assert first_stats["pre_chars"] >= 280_000, f"首轮压缩前视图应 ≈288K，实际 {first_stats['pre_chars']}"
+    assert first_stats["pre_chars"] >= 280_000, (
+        f"首轮压缩前视图应 ≈288K，实际 {first_stats['pre_chars']}"
+    )
     assert first_post_chars is not None
-    assert first_post_chars <= 259_000, f"首轮压缩后视图应 ≤259K（缩小≥10%），实际 {first_post_chars}"
+    assert first_post_chars <= 259_000, (
+        f"首轮压缩后视图应 ≤259K（缩小≥10%），实际 {first_post_chars}"
+    )
     assert first_stats["drop_pct"] >= 10, f"首轮压缩 drop 应 ≥10%，实际 {first_stats['drop_pct']}%"
     # ② 后续轮视图保持缩小（每轮仅增尾部 ~2K，不回到 288K 恒定——验收目标 ≤259K）
     assert all(sz <= 259_000 for sz in view_sizes), (

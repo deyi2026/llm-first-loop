@@ -121,13 +121,21 @@ def test_post_hooks_chain_in_order():
 
     def h1(snap):
         order.append("h1")
-        return ImmutableResult(tool_name=snap.tool_name, status=snap.status,
-                               content="stage1", duration_ms=snap.duration_ms)
+        return ImmutableResult(
+            tool_name=snap.tool_name,
+            status=snap.status,
+            content="stage1",
+            duration_ms=snap.duration_ms,
+        )
 
     def h2(snap):
         order.append("h2")
-        return ImmutableResult(tool_name=snap.tool_name, status=snap.status,
-                               content=snap.content + "+stage2", duration_ms=snap.duration_ms)
+        return ImmutableResult(
+            tool_name=snap.tool_name,
+            status=snap.status,
+            content=snap.content + "+stage2",
+            duration_ms=snap.duration_ms,
+        )
 
     p.add_post_hook(h1)
     p.add_post_hook(h2)

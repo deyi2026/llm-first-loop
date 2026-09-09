@@ -9,8 +9,20 @@ import pytest
 
 def read_all_js():
     from pathlib import Path
+
     _d = Path(__file__).resolve().parents[2] / "src" / "llm_loop" / "web" / "static"
-    _fs = ["modules/state.js","modules/markdown-math.js","modules/tool-render.js","modules/message-render.js","modules/stream-chat.js","modules/app-core.js","modules/responsive.js","modules/session-list.js","modules/command-upload-model.js","app.js"]
+    _fs = [
+        "modules/state.js",
+        "modules/markdown-math.js",
+        "modules/tool-render.js",
+        "modules/message-render.js",
+        "modules/stream-chat.js",
+        "modules/app-core.js",
+        "modules/responsive.js",
+        "modules/session-list.js",
+        "modules/command-upload-model.js",
+        "app.js",
+    ]
     return chr(10).join((_d / f).read_text(encoding="utf-8") for f in _fs if (_d / f).exists())
 
 
@@ -28,6 +40,7 @@ def style_css() -> str:
 
 
 # ── 前端静态断言 ──
+
 
 def test_full_output_button_present(app_js):
     """分层截断回执有"查看完整原文"按钮 + 按 tool_call_id 取档案端点."""
@@ -49,6 +62,7 @@ def test_error_highlight_frontend(app_js, style_css):
 
 # ── 后端：MessageItem 透出 tool_call_id + 档案端点 ──
 
+
 def test_message_item_has_tool_call_id():
     from llm_loop.web.schemas import MessageItem
 
@@ -60,8 +74,15 @@ def test_archive_get_by_tool_call_id(tmp_path):
     from llm_loop.memory.archive import ArchiveStore
 
     store = ArchiveStore(tmp_path)
-    store.archive("s1", role="tool", source="tool", content="完整原文" * 100,
-                  tool_name="execute_command", tool_call_id="call-abc", status="oversize")
+    store.archive(
+        "s1",
+        role="tool",
+        source="tool",
+        content="完整原文" * 100,
+        tool_name="execute_command",
+        tool_call_id="call-abc",
+        status="oversize",
+    )
     entry = store.get_by_tool_call_id("s1", "call-abc")
     assert entry is not None and entry["content"].startswith("完整原文")
     assert store.get_by_tool_call_id("s1", "call-nonexistent") is None
@@ -80,8 +101,15 @@ def test_archive_endpoint(build_test_engine):
 
     engine.session.save(Session(session_id="sess-m52"))
     store = engine.archive
-    store.archive("sess-m52", role="tool", source="tool", content="FULL-OUTPUT-BODY",
-                  tool_name="execute_command", tool_call_id="call-full", status="oversize")
+    store.archive(
+        "sess-m52",
+        role="tool",
+        source="tool",
+        content="FULL-OUTPUT-BODY",
+        tool_name="execute_command",
+        tool_call_id="call-full",
+        status="oversize",
+    )
 
     client = TestClient(build_app(engine=engine))
 

@@ -348,9 +348,6 @@ def test_archive_semantic_retrieval(build_test_engine):
     assert any("蓝色" in c for c in contents)
 
 
-
-
-
 def test_multi_tool_round_reasoning_roundtrip(build_test_engine):
     """M20 T133（THK-04 门禁）: 多轮工具循环中 reasoning_content 完整回传（防 400）."""
     from llm_loop.core.message import ToolCall

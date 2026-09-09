@@ -36,8 +36,13 @@ def _seed_events(es, payloads):
 
 def _run_end(reason, *, cancel_reason="", rounds=7, preview=""):
     payload = {
-        "session_id": SID, "reason": reason, "cancel_reason": cancel_reason,
-        "rounds": rounds, "duration_ms": 123.0, "model_used": "m", "truncated": True,
+        "session_id": SID,
+        "reason": reason,
+        "cancel_reason": cancel_reason,
+        "rounds": rounds,
+        "duration_ms": 123.0,
+        "model_used": "m",
+        "truncated": True,
     }
     if preview:
         payload["answer_preview"] = preview
@@ -46,12 +51,15 @@ def _run_end(reason, *, cancel_reason="", rounds=7, preview=""):
 
 def test_collect_filters_completed_and_keeps_seq_order(tmp_path):
     es, _ = _make_stores(tmp_path)
-    _seed_events(es, [
-        ("run.start", {"session_id": SID}),
-        ("run.end", _run_end("completed")),
-        ("run.end", _run_end("llm_error", preview=_ERR_PREVIEW)),
-        ("run.end", _run_end("cancelled", cancel_reason="user_stop", rounds=17)),
-    ])
+    _seed_events(
+        es,
+        [
+            ("run.start", {"session_id": SID}),
+            ("run.end", _run_end("completed")),
+            ("run.end", _run_end("llm_error", preview=_ERR_PREVIEW)),
+            ("run.end", _run_end("cancelled", cancel_reason="user_stop", rounds=17)),
+        ],
+    )
     runs = collect_interrupted_runs(es.read(SID))
     assert [r["reason"] for r in runs] == ["llm_error", "cancelled"]
     seqs = [r["seq"] for r in runs]
@@ -61,12 +69,21 @@ def test_collect_filters_completed_and_keeps_seq_order(tmp_path):
 
 def test_backfill_writes_rows_with_recovered_fields(tmp_path):
     es, eps = _make_stores(tmp_path)
-    _seed_events(es, [
-        ("run.end", _run_end("llm_error", rounds=48, preview=_ERR_PREVIEW)),
-        ("run.end", _run_end(
-            "cancelled", cancel_reason="user_stop", rounds=17,
-            preview="（已停止——用户点击停止按钮，本轮回答终止）")),
-    ])
+    _seed_events(
+        es,
+        [
+            ("run.end", _run_end("llm_error", rounds=48, preview=_ERR_PREVIEW)),
+            (
+                "run.end",
+                _run_end(
+                    "cancelled",
+                    cancel_reason="user_stop",
+                    rounds=17,
+                    preview="（已停止——用户点击停止按钮，本轮回答终止）",
+                ),
+            ),
+        ],
+    )
     report = backfill_truncated_runs(eps, es, [SID])
     assert report["written"] == 2 and report["deduped"] == 0 and report["errors"] == 0
 
@@ -100,9 +117,7 @@ def test_backfill_dedups_against_live_path_rows(tmp_path):
     es, eps = _make_stores(tmp_path)
     _seed_events(es, [("run.end", _run_end("cancelled", cancel_reason="user_stop", rounds=17))])
     seq = es.read(SID)[-1].seq
-    assert eps.index_truncated_run(
-        SID, ts="T", run_end_reason="cancelled", run_end_seq=seq
-    ) is True
+    assert eps.index_truncated_run(SID, ts="T", run_end_reason="cancelled", run_end_seq=seq) is True
     report = backfill_truncated_runs(eps, es, [SID])
     assert report["written"] == 0 and report["deduped"] == 1
 
@@ -117,10 +132,13 @@ def test_backfill_dry_run_writes_nothing(tmp_path):
 
 def test_search_and_hydrate_acceptance_shape(tmp_path):
     es, eps = _make_stores(tmp_path)
-    _seed_events(es, [
-        ("run.end", _run_end("llm_error", rounds=24, preview=_ERR_PREVIEW)),
-        ("run.end", _run_end("cancelled", cancel_reason="user_stop", rounds=17)),
-    ])
+    _seed_events(
+        es,
+        [
+            ("run.end", _run_end("llm_error", rounds=24, preview=_ERR_PREVIEW)),
+            ("run.end", _run_end("cancelled", cancel_reason="user_stop", rounds=17)),
+        ],
+    )
     backfill_truncated_runs(eps, es, [SID])
     hits = eps.search_truncated(SID, limit=10)
     assert len(hits) == 2
@@ -152,9 +170,17 @@ def test_backfill_rejects_wrong_episode_store(tmp_path):
 def test_backfill_digest_fallback_without_reason_line(tmp_path):
     """digest 兜底：answer_preview 无"原因: "行（如 guard_blocked）→ 如实取 preview 头."""
     es, eps = _make_stores(tmp_path)
-    _seed_events(es, [
-        ("run.end", _run_end("guard_blocked", rounds=5, preview="[缓存守卫拦截] 上下文超限，请先压缩。")),
-    ])
+    _seed_events(
+        es,
+        [
+            (
+                "run.end",
+                _run_end(
+                    "guard_blocked", rounds=5, preview="[缓存守卫拦截] 上下文超限，请先压缩。"
+                ),
+            ),
+        ],
+    )
     report = backfill_truncated_runs(eps, es, [SID])
     assert report["written"] == 1 and report["errors"] == 0
     (row,) = eps._iter_truncated(SID)

@@ -542,7 +542,6 @@ def test_a6_degradable_doc_in_results_with_annotation(tmp_path):
 # ── R3 组 D：typed 归因（tasks §3.6 / design §2.1.3-9）──
 
 
-
 def test_d1_invalid_kind_param_error_with_synthetic_hint(tmp_path):
     """D1 非法 kind → FAILURE [参数错误] + hint 枚举；hint 与 _VALID_KINDS 同源（spec 5.4.1-1b）."""
     # typed 事实源：search() 对非法 kind 抛 InvalidSearchKindError（ValueError 子类，契约兼容）
@@ -552,7 +551,9 @@ def test_d1_invalid_kind_param_error_with_synthetic_hint(tmp_path):
     assert isinstance(ei.value, ValueError)
     assert "experience" in str(ei.value)
     # 工具层归因：typed 异常 → [参数错误]，建议段枚举与 _VALID_KINDS 同源
-    r = run_search_records(None, searcher.search, {"kind": "no_such_kind", "query": "x"}, lambda: "")
+    r = run_search_records(
+        None, searcher.search, {"kind": "no_such_kind", "query": "x"}, lambda: ""
+    )
     assert r.status.value == "failure"
     assert "[参数错误]" in r.content
     assert "kind 取值不合法" in r.content
@@ -685,7 +686,9 @@ def test_e1_tri_state_zero_result_distinction(tmp_path, monkeypatch):
         raise PermissionError(13, "cannot list")
 
     monkeypatch.setattr(Path, "glob", _glob_boom)
-    r3 = run_search_records(None, _r3_tool(broken), {"kind": "experience", "query": "x"}, lambda: "")
+    r3 = run_search_records(
+        None, _r3_tool(broken), {"kind": "experience", "query": "x"}, lambda: ""
+    )
     monkeypatch.undo()
     assert r3.status.value == "failure"
     assert "扫描失败" in r3.content
@@ -702,7 +705,9 @@ def test_e2_diagnostics_reach_receipt(tmp_path):
             "EXPERIENCE-20260903-bad.md": BAD_MD,
         },
     )
-    r = run_search_records(None, _r3_tool(exp_dir), {"kind": "experience", "query": "经验"}, lambda: "")
+    r = run_search_records(
+        None, _r3_tool(exp_dir), {"kind": "experience", "query": "经验"}, lambda: ""
+    )
     assert r.status.value == "success"
     assert "[search_records] 命中 2 条" in r.content
     assert "[检索诊断] 命中 2 条；降级字段记录 1 条；跳过不可解析文档 1 个（库不完整）" in r.content
@@ -714,7 +719,9 @@ def test_e3_all_corrupt_not_disguised_zero_hit(tmp_path):
         tmp_path,
         {"EXPERIENCE-20260903-b1.md": BAD_MD, "EXPERIENCE-20260903-b2.md": BAD_MD},
     )
-    r = run_search_records(None, _r3_tool(exp_dir), {"kind": "experience", "query": "x"}, lambda: "")
+    r = run_search_records(
+        None, _r3_tool(exp_dir), {"kind": "experience", "query": "x"}, lambda: ""
+    )
     assert r.status.value == "success"
     assert "未找到匹配" not in r.content
     assert "跳过 2 个" in r.content
@@ -725,7 +732,9 @@ def test_e3_all_corrupt_not_disguised_zero_hit(tmp_path):
 def test_e4_field_level_degradation_reaches_receipt(tmp_path):
     """E4 字段级降级信息到达：存在降级记录 → 回执出现"降级字段记录 M 条"（spec 5.3.1-2b）."""
     exp_dir = _exp_dir(tmp_path, {"EXPERIENCE-20260903-deg.md": DEGRADABLE_MD})
-    r = run_search_records(None, _r3_tool(exp_dir), {"kind": "experience", "query": "经验"}, lambda: "")
+    r = run_search_records(
+        None, _r3_tool(exp_dir), {"kind": "experience", "query": "经验"}, lambda: ""
+    )
     assert r.status.value == "success"
     assert "命中 1 条" in r.content
     assert "降级字段记录 1 条" in r.content
@@ -765,8 +774,12 @@ def test_e6_episode_unaffected_by_corrupt_experience(tmp_path):
         {"EXPERIENCE-20260903-good.md": GOOD_MD, "EXPERIENCE-20260903-bad.md": BAD_MD},
     )
     clean = _exp_dir(tmp_path / "2", {"EXPERIENCE-20260903-good.md": GOOD_MD})
-    r_dirty = run_search_records(None, _tool(dirty), {"kind": "episode", "query": "kw"}, lambda: "s1")
-    r_clean = run_search_records(None, _tool(clean), {"kind": "episode", "query": "kw"}, lambda: "s1")
+    r_dirty = run_search_records(
+        None, _tool(dirty), {"kind": "episode", "query": "kw"}, lambda: "s1"
+    )
+    r_clean = run_search_records(
+        None, _tool(clean), {"kind": "episode", "query": "kw"}, lambda: "s1"
+    )
     assert r_dirty.status == r_clean.status == ToolResultStatus.SUCCESS
     assert r_dirty.content == r_clean.content
     assert "ep hit" in r_dirty.content
@@ -892,9 +905,7 @@ def test_f3_mixed_fixtures_outcome_counts(tmp_path):
 
 def test_h1_ops_corrected_form_parses_normal_mapping():
     """H1 OPS 订正后形态解析：缩进块版 fixture → 正常映射（非 raw 降级形态）（spec 5.5.1-2b/2c）."""
-    corrected = _load_fixture(DEGRADABLE_FIXTURE).replace(
-        _INLINE_SOURCE_LINE, _INDENT_SOURCE_BLOCK
-    )
+    corrected = _load_fixture(DEGRADABLE_FIXTURE).replace(_INLINE_SOURCE_LINE, _INDENT_SOURCE_BLOCK)
     assert _INDENT_SOURCE_BLOCK in corrected  # 改写生效防呆（fixture 漂移即红灯）
     doc = ExperienceDocument.from_md(corrected)
     assert doc.source == {"type": "user_feedback"}
@@ -903,9 +914,7 @@ def test_h1_ops_corrected_form_parses_normal_mapping():
 
 def test_h2_post_correction_search_recovered(tmp_path, caplog):
     """H2 修复后检索恢复：缩进块版 fixture 命中、无降级标注、无留痕（spec 5.5.1-3a/3b）."""
-    corrected = _load_fixture(DEGRADABLE_FIXTURE).replace(
-        _INLINE_SOURCE_LINE, _INDENT_SOURCE_BLOCK
-    )
+    corrected = _load_fixture(DEGRADABLE_FIXTURE).replace(_INLINE_SOURCE_LINE, _INDENT_SOURCE_BLOCK)
     exp_dir = _exp_dir(
         tmp_path,
         {"EXPERIENCE-20260903-fixture-deg.md": corrected},

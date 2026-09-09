@@ -144,7 +144,10 @@ def request_fixture_tool_spec() -> dict:
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "source": {"type": "string", "description": "证据源标识，如 fixture://S01/runtime_status"}
+                    "source": {
+                        "type": "string",
+                        "description": "证据源标识，如 fixture://S01/runtime_status",
+                    }
                 },
                 "required": ["source"],
             },

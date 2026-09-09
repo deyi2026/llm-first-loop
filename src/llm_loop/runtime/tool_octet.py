@@ -57,11 +57,18 @@ def _digest(text: str | None) -> str | None:
     return hashlib.sha256(text.encode()).hexdigest()[:32]
 
 
-def record_tool_octet(*, session_id: str, round_index: int,
-                      tool_call_id: str, tool_name: str, args: dict,
-                      status: str, duration_ms: float | None = None,
-                      result_content: str | None = None,
-                      reason_code: str | None = None) -> None:
+def record_tool_octet(
+    *,
+    session_id: str,
+    round_index: int,
+    tool_call_id: str,
+    tool_name: str,
+    args: dict,
+    status: str,
+    duration_ms: float | None = None,
+    result_content: str | None = None,
+    reason_code: str | None = None,
+) -> None:
     """记录一条 terminal tool receipt 观测（顶层恰好 8 逻辑字段，冻结 schema）.
 
     fail-open 全吞：任何异常静默降级，绝不向上抛、绝不改变调用方控制流。
@@ -71,8 +78,7 @@ def record_tool_octet(*, session_id: str, round_index: int,
     if not tool_call_id:  # 缺 id 的协议异常输入不入本流（design §1.2）
         return
     try:
-        args_canonical = json.dumps(args, sort_keys=True, ensure_ascii=False,
-                                    separators=(",", ":"))
+        args_canonical = json.dumps(args, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
         ctx = get_route_context()
         record = {
             "ts": _now(),
@@ -81,8 +87,7 @@ def record_tool_octet(*, session_id: str, round_index: int,
             "tool_call_id": tool_call_id,
             "tool_name": tool_name,
             "args_digest": _digest(args_canonical),
-            "route_context": {"instance": ctx.instance, "zone": ctx.zone,
-                              "route": ctx.route},
+            "route_context": {"instance": ctx.instance, "zone": ctx.zone, "route": ctx.route},
             "outcome": {
                 "status": status,
                 "duration_ms": duration_ms,

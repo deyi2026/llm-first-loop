@@ -176,8 +176,7 @@ def compile_decision_packet(
         # 仅对合法 scheme 自动物化，evidence_refs 等泛化槽名仍保持 None。
         evidence_ref = (
             str(slot)
-            if tier is ContextTier.COLD
-            and str(slot or "").lower().startswith("evidence://v1/")
+            if tier is ContextTier.COLD and str(slot or "").lower().startswith("evidence://v1/")
             else None
         )
         packet.slots.append(
@@ -191,9 +190,7 @@ def compile_decision_packet(
                 # 统计 compact_repr 字段，生产留空导致 warm 恒 0（glm-minimax-3
                 # 24/24 warm_active=0 第二层根因）；同时消除渲染投影与字段漂移。
                 compact_repr=(
-                    str(content).split("\n", 1)[0][:120]
-                    if tier is ContextTier.WARM
-                    else ""
+                    str(content).split("\n", 1)[0][:120] if tier is ContextTier.WARM else ""
                 ),
             )
         )
@@ -209,7 +206,9 @@ def compile_decision_packet(
             packet.slots = [s for s in packet.slots if s.tier is ContextTier.HOT]
             packet.degraded = True
             logger.warning(
-                "决策包组装超上界（warm=%d > budget=%d），降级仅 HOT 位最小包", warm_chars, budget_chars
+                "决策包组装超上界（warm=%d > budget=%d），降级仅 HOT 位最小包",
+                warm_chars,
+                budget_chars,
             )
     return packet
 
