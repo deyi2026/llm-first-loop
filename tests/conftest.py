@@ -116,6 +116,40 @@ def isolate_process_environment():
         os.environ.update(before)
 
 
+# 部署泄漏隔离（2026-09-09 全量回归归因）：在 LFL web 部署环境内跑 pytest 时，
+# 进程继承 WEB_AUTH_REQUIRE=1 / WEB_ORIGIN_ALLOWLIST 等生产暴露变量；
+# auth_required() 请求期读 env，任一非空即"鉴权已启用"，配合无 key/hash
+# 触发 fail-closed 503，令未显式配置鉴权的 web 测试假红（CI/干净环境无此
+# 变量，origin/main 全绿即证明无测试依赖该泄漏）。测试体内显式 setenv 的
+# 用例在 fixture 之后执行，不受影响。
+_DEPLOYED_WEB_AUTH_VARS = (
+    "WEB_AUTH_REQUIRE",
+    "WEB_ORIGIN_ALLOWLIST",
+    "WEB_API_KEY",
+    "WEB_LOGIN_PASSWORD_HASH",
+)
+
+# 部署泄漏隔离（2026-09-09 全量回归归因批次2）：LFL 运行环境导出
+# COMPRESS_TARGET_RATIO=0.5 / APPEND_COMPRESSION=1 / COMPACT_RATIO=0.85，
+# history.py _compress_target_ratio() 直接读 os.environ，泄漏令
+# archive_target_ratio 断言（0.6 默认）假红；COMPACT_RATIO 泄漏同源
+# （部分测试模块已自带 monkeypatch 钉值，此处于全局兜底，测试体内
+# setenv 优先级不变）。
+_DEPLOYED_COMPACT_VARS = (
+    "COMPRESS_TARGET_RATIO",
+    "APPEND_COMPRESSION",
+    "COMPACT_RATIO",
+)
+
+
+@pytest.fixture(autouse=True)
+def isolate_deployed_web_auth_env(monkeypatch):
+    for var in _DEPLOYED_WEB_AUTH_VARS:
+        monkeypatch.delenv(var, raising=False)
+    for var in _DEPLOYED_COMPACT_VARS:
+        monkeypatch.delenv(var, raising=False)
+
+
 class FakeLLM:
     """可编程 LLM 桩：按预编程响应序列依次返回.
 

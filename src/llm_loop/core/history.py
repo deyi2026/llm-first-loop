@@ -308,6 +308,133 @@ _HISTORY_BUDGET_CHARS_PER_TOKEN = 0.6
 _HISTORY_BUDGET_INPUT_MARGIN = 0.9
 
 
+def _cog_anchor_mode() -> str:
+    """读 COG_RUNTIME_ANCHOR_MODE（对齐 config._env_cog_anchor_mode 语义；模块级 env 惯例）."""
+    import os
+
+    raw = os.environ.get("COG_RUNTIME_ANCHOR_MODE", "").strip().lower()
+    return raw if raw in ("semantic", "anchor", "auto") else "auto"
+
+
+def _persist_semantic_state(session_id: str = "") -> bool:
+    """压缩黄金窗口: 从 GoalStore 派生语义状态并原子落盘（Cognitive Runtime tasks 2.4）.
+
+    决策线（T2 [当前决策]+[下一步] 独立注入帧）升级演进为 SemanticTaskState 投影——
+    压缩时把决策指针持久化（rebuild+save），build 每轮从状态文件投影为决策包 HOT 首行
+    （尾部聚合条内），代码演进不并存（spec 5.1.1-3b）。
+    fail-open: GoalStore 不可用/无活跃 goal/损坏 → False（不阻断压缩主流程）。
+    audit 路径 = LFL_DATA_DIR（镜像/跨区隔离锚点）或 data/（主区默认）。
+    CR-R1（tasks 2.2）: COG_RUNTIME_MODE=off 时短路——连 store 写也不做（纯旧行为）。
+    """
+    import os as _os_mod
+    if _os_mod.environ.get("COG_RUNTIME_MODE", "shadow").strip().lower() == "off":
+        return False
+    # CR-R1.1a: Semantic State 是会话级认知寄存器；缺失会话身份时禁止
+    # 退化到 GoalStore 全局恢复语义，避免 compact 边界把他会 Goal 写入当前 shard。
+    if not session_id:
+        return False
+    try:
+        import os
+        from datetime import UTC, datetime
+        from pathlib import Path as _Path
+
+        from llm_loop.cognitive.state import (
+            SemanticStateStore,
+            StateEnvelope,
+            StateIdentity,
+            Tombstone,
+            rebuild_state,
+        )
+        from llm_loop.introspection.goal import GoalStore
+
+        base = os.environ.get("LFL_DATA_DIR", "data")
+        audit = _Path(base) / "audit"
+        goal = GoalStore(audit).get(
+            prefer_session_id=session_id, strict_session=True
+        )
+        store = SemanticStateStore(audit)
+        state = rebuild_state(goal)
+        if state is None:
+            # spec 4.1-3 墓碑：goal 终态（complete/blocked）→ 对现存分片打 tombstone，
+            # 不删除（供审计）；无 goal 时保留旧分片不覆盖（原语义）。
+            if goal and str(goal.get("status", "")) in ("complete", "blocked"):
+                old = store.load(session_id)
+                if isinstance(old, StateEnvelope) and old.tombstone is None:
+                    old.tombstone = Tombstone(
+                        reason=f"goal_{str(goal.get('status', ''))}",
+                        ts=datetime.now(UTC).isoformat(),
+                    )
+                    store.save(session_id, old)
+            return False  # 无活跃 goal：不覆盖既有状态文件（保留旧指针）
+        if goal is None:
+            # CR-R1.1（审查项10 pyright 归零）: 有 state 无 goal——identity 无从派生
+            # （宁缺勿错，同上语义不覆盖）；显式收窄 Optional，替代原先 .get 隐式
+            # AttributeError→except 兜底（行为等价：均 return False）。
+            return False
+        cps = goal.get("checkpoints") or []
+        identity = StateIdentity(
+            session_id=session_id or "_",
+            goal_id=str(goal.get("id", "")),
+            goal_updated_at=str(goal.get("updated_at", "")),
+            checkpoint_ts=str((cps[-1] or {}).get("ts", "")) if cps else "",
+        )
+        old = store.load(session_id)
+        if isinstance(old, StateEnvelope):
+            # revision 语义：源未变（identity matches）保留；源变更 +1（design §2.1）
+            identity.state_revision = (
+                old.identity.state_revision
+                if old.identity.matches(goal)
+                else old.identity.state_revision + 1
+            )
+        store.save(session_id, StateEnvelope(identity=identity, state=state))
+        return True
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "语义状态持久化失败（fail-open）", exc_info=True
+        )
+        return False
+
+
+def _decision_line_frame(session_id: str = "") -> str:
+    """能力 B 决策线（injection_hygiene 5.2）: 活跃 goal + 最近 checkpoint 两行指针.
+
+    注入位置 = 压缩产物帧首行（[压缩关键事实] 之前）——压缩后恢复从「检索式」变
+    「指针式」（AI 不必 search 重建上下文，直接知道当前在做什么/下一步）。
+    内容 ≤400 字符（spec 5.2-2）；只带 goal_id 指针不带 evidence 全文（5.2-4）。
+    全路径 fail-open: GoalStore 不可用/无活跃 goal → 空串省略（禁阻塞压缩主流程）。
+    audit 路径 = LFL_DATA_DIR（镜像/跨区隔离锚点）或 data/（主区默认）。
+    """
+    if not session_id:
+        return ""
+    try:
+        import os
+        from pathlib import Path as _Path
+
+        from llm_loop.introspection.goal import GoalStore
+
+        base = os.environ.get("LFL_DATA_DIR", "data")
+        g = GoalStore(_Path(base) / "audit").get(
+            prefer_session_id=session_id, strict_session=True
+        )
+        if not g or g.get("status") != "active":
+            return ""
+        obj = str(g.get("objective", ""))
+        cps = g.get("checkpoints") or []
+        nxt = str((cps[-1] or {}).get("next", "")) if cps else ""
+        line1 = f"[当前决策] goal={str(g.get('id', ''))[:12]} | {obj}"
+        line2 = f"[下一步] {nxt}" if nxt else "[下一步] （无 checkpoint；见 objective）"
+        return (line1 + "\n" + line2)[:400]
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "决策线读取失败（fail-open 省略）", exc_info=True
+        )
+        return ""
+
+
 def converge_history_budget(
     value: int | None,
     *,

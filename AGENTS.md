@@ -10,6 +10,14 @@ For any task that changes or repairs repository behavior (runtime/provider/conti
 - Turn real incidents into regression tests and run final gates against the actual staged/isolated candidate, not a stale HEAD.
 - Do not widen architecture/test baselines merely to make a red guard green; first determine whether the guard exposed a real responsibility error.
 
+## Admission asymmetry (2026-09-09)
+
+Per the governance north star in `docs/subsystem-disposition-20260909.md`:
+
+- Changes that **amplify model agency** (evidence/memory/experience/methods/skills/tools that let the model see more, remember longer, act faster, or self-correct) are admitted by default.
+- Changes that **add control machinery** (new hard gates, heuristic verdicts, silent truncation, compat layers) must state in the change description *why the model plus existing tools cannot judge this itself*, and must provide a documented model-invokable veto/override exit.
+- Known pre-existing red tests are tracked in the known-reds registry (e.g. `docs/known-reds-20260909.md`); each entry must end in either a fix or an explicit acceptance — never a baseline widening.
+
 The six-question preflight and detailed failure patterns live only in the canonical document above to avoid duplicated policy text.
 
 # Agent continuity

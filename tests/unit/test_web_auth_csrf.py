@@ -48,6 +48,9 @@ class TestAuthRequireFailClosed:
         """零回归：未设 WEB_AUTH_REQUIRE 且无 key → 本地放行（语义不变）."""
         monkeypatch.delenv("WEB_AUTH_REQUIRE", raising=False)
         monkeypatch.delenv("WEB_API_KEY", raising=False)
+        # WEB_ORIGIN_ALLOWLIST 非空同样令 auth_required() 为 True（P3 绑定）；
+        # 宿主（LFL web 部署）环境自带该变量，须显式隔离否则假红。
+        monkeypatch.delenv("WEB_ORIGIN_ALLOWLIST", raising=False)
         require_api_key(None)  # 不抛
         validate_auth_require()  # 不抛
 
@@ -86,9 +89,16 @@ class TestOriginAllowlistFailClosed:
 class TestOriginGuard:
     """回环豁免部署的 Origin/CSRF 防护（mutating 方法）."""
 
-    def _app(self, monkeypatch, build_test_engine):
+    def _app(self, monkeypatch, build_test_engine, *, public_allowlist: str | None = None):
         monkeypatch.delenv("WEB_API_KEY", raising=False)
         monkeypatch.delenv("WEB_AUTH_REQUIRE", raising=False)
+        # 宿主环境可能泄漏 WEB_ORIGIN_ALLOWLIST（auth_required() 请求期读 env，
+        # 非空即启用鉴权→fail-closed 503 假红）；默认显式隔离。
+        # 需要公网 Origin 的用例经 public_allowlist 显式注入（middleware 在 build 期快照）。
+        if public_allowlist is None:
+            monkeypatch.delenv("WEB_ORIGIN_ALLOWLIST", raising=False)
+        else:
+            monkeypatch.setenv("WEB_ORIGIN_ALLOWLIST", public_allowlist)
         monkeypatch.setenv("WEB_HOST", "127.0.0.1")
         from llm_loop.web import build_app
 
@@ -144,9 +154,10 @@ class TestOriginGuard:
 
         from llm_loop.web.auth import hash_login_password
 
-        monkeypatch.setenv("WEB_ORIGIN_ALLOWLIST", "https://app.example.com")
         monkeypatch.setenv("WEB_LOGIN_PASSWORD_HASH", hash_login_password("correct-horse-battery"))
-        app = self._app(monkeypatch, build_test_engine)
+        app = self._app(
+            monkeypatch, build_test_engine, public_allowlist="https://app.example.com"
+        )
         client = TestClient(app, base_url="https://app.example.com")
 
         exact = client.post(

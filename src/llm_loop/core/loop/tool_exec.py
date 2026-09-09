@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 
 # P2-A Rule-first: 阈值仅控制观测事件采样频率，不阻断、不终止、不注入。
 _STAGNATION_REMIND_AT = 3
+# EVO-20260814-aab7eb0b P2: 实时停滞熔断阈值（engine 主循环消费，tool_cycle 判定）
+_STAGNATION_BREAK_AT = 5
 
 # EVO-20260823-9bb27899: 搜索/定位类工具目标级停滞检测
 # 背景: 原指纹 = 工具名 + 完整参数 JSON 全等匹配；"换深度/换目录/换工具搜同一目标"时

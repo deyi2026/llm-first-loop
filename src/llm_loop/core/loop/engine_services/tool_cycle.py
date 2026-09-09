@@ -23,6 +23,7 @@ from llm_loop.core.loop.engine_services.tool_reachability import (
 )
 from llm_loop.core.loop.tool_exec import (
     _EMPTY_SEARCH_REMIND_AT,
+    _STAGNATION_BREAK_AT,
     _STAGNATION_REMIND_AT,
     _is_empty_search_result,
     _is_search_like_call,
@@ -599,6 +600,19 @@ class ToolCycleService:
                 "observed",
                 f"tool={tc.name}; consecutive_empty={state['empty_count']}; prompt_chars=0",
             )
+
+    def _stagnation_should_break(self) -> tuple[bool, str, int]:
+        """是否达熔断阈值（engine 主循环每轮工具执行后调用，EVO-20260814-aab7eb0b P2）.
+
+        M53 拆分: 判定贴近停滞状态持有处（run_state.stagnation_state），
+        熔断决策与终态消息由 engine 主循环消费——程序只判定，不越过
+        AI 决策面（P2-A 遥测之上的唯一例外：如实终止，非阻断注入）。
+        """
+        state = self._host._run_state().stagnation_state
+        if not state or state["count"] < _STAGNATION_BREAK_AT:
+            return (False, "", 0)
+        name = (state["fp"] or "").split("|", 1)[0]
+        return (True, name, state["count"])
 
     def _schema_to_param(self, t: dict) -> dict:
         return {

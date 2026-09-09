@@ -304,6 +304,22 @@ class Settings:
     runner_background: bool = True  # 后台 run 执行器（RUNNER_BACKGROUND；0=回退旧 SSE 直驱）
     cache_hit_show_in_answer: bool = False  # EVO-a637d2d7: 常态展示默认关（省固定尾部 token + 根治 AI 复述尾巴）；异常/切换告警注入独立保留（_cache_hint 分支不受此开关影响）
 
+    # ── 认知运行时（Cognitive Runtime v1，design.md §2.1.2 新增 env，缺省零回归）──
+    # anchor 退役过渡开关（三态 semantic/anchor/auto，缺省 auto；design 2.1.3.4 冻结点④）
+    cog_runtime_anchor_mode: str = "auto"
+    # 锚点与投影同轮并存检测门闸（fail-open 剔除锚点；spec 5.2.1-7）
+    cog_runtime_dual_source_guard: bool = True
+    # 语义状态字段分级路线（v0.1/v0.2，缺省 v0.1；design 2.1.3.3 冻结点③）
+    cog_runtime_state_version: str = "v0.1"
+    # HOT/WARM/COLD 分级总闸（0 回退平铺聚合原行为；spec 5.2.3-1）
+    cog_runtime_tier_enabled: bool = True
+    cog_runtime_mode: str = "shadow"  # CR-R1: off|shadow|enforce（与 _env_cog_mode 缺省及镜像 fc45590 同源）
+    # Stage 2 allowlist（DESIGN-20260901 rev2 P0-1/P0-2）: operator-owned 控制面文件
+    # 绝对路径（仅绝对路径生效，相对=配置无效→fail-closed shadow）；空=名单禁用。
+    # 不做存在性校验——读取方每轮 fail-closed 求值（P0-2 全语义在 build._cog_allowlist_hit）。
+    cog_enforce_file: str = ""
+    cog_runtime_packet_budget: int = 2000  # CR-R1: 生产 decision packet 预算（chars）
+
     # ── 上下文 ──
     history_max_chars: int | None = (
         None  # None=无独立全局历史 cap；由当前路由模型物理窗口/输出预留收口
@@ -605,6 +621,14 @@ def load_settings() -> Settings:
         runner_background=_env_bool("RUNNER_BACKGROUND", True),  # EVO 后台 run 改造: 默认开
         # EVO-20260819-2254e3b4 方案B（用户批准）: 回答末尾常态展示缓存命中率
         cache_hit_show_in_answer=_env_bool("CACHE_HIT_SHOW_IN_ANSWER", False),
+        # 认知运行时（Cognitive Runtime v1，缺省零回归）
+        cog_runtime_anchor_mode=_env_cog_anchor_mode("COG_RUNTIME_ANCHOR_MODE"),
+        cog_runtime_dual_source_guard=_env_bool("COG_RUNTIME_DUAL_SOURCE_GUARD", True),
+        cog_runtime_state_version=_env_cog_state_version("COG_RUNTIME_STATE_VERSION"),
+        cog_runtime_tier_enabled=_env_bool("COG_RUNTIME_TIER_ENABLED", True),
+        cog_runtime_mode=_env_cog_mode("COG_RUNTIME_MODE"),
+        cog_enforce_file=_raw_env("COG_RUNTIME_ENFORCE_FILE").strip(),
+        cog_runtime_packet_budget=_env_int("COG_RUNTIME_PACKET_BUDGET", 2000),
         history_max_chars=_env_int_or_none(
             "HISTORY_MAX_CHARS"
         ),  # EVO-20260816-3af5dee3: None=未配置→按窗口自适应
@@ -690,3 +714,34 @@ def load_settings() -> Settings:
         invalid_fallbacks=tuple(_fallback_notes),
         auto_adaptive_keys=frozenset(_auto_adaptive_keys),
     )
+
+
+# CR-R1: COG_RUNTIME_* 三态解析（origin/main 移植；适配 ours _raw_env/_note_invalid_fallback）
+def _env_cog_mode(name: str) -> str:
+    """COG_RUNTIME_MODE 三态解析: off/shadow/enforce；非法回退 shadow（CR-R1 tasks 2.1）。"""
+    raw = _raw_env(name).strip().lower()
+    if raw in {"off", "shadow", "enforce"}:
+        return raw
+    if raw:
+        _note_invalid_fallback(name, "shadow", "非 off/shadow/enforce 字符串")
+    return "shadow"
+
+
+def _env_cog_anchor_mode(name: str) -> str:
+    """COG_RUNTIME_ANCHOR_MODE 三态解析: semantic/anchor/auto；非法回退 auto（design 2.1.3.4）。"""
+    raw = _raw_env(name).strip().lower()
+    if raw in {"semantic", "anchor", "auto"}:
+        return raw
+    if raw:
+        _note_invalid_fallback(name, "auto", "非 semantic/anchor/auto 字符串")
+    return "auto"
+
+
+def _env_cog_state_version(name: str) -> str:
+    """COG_RUNTIME_STATE_VERSION 分级解析: v0.1/v0.2；非法回退 v0.1（保守起步）。"""
+    raw = _raw_env(name).strip().lower()
+    if raw in {"v0.1", "v0.2"}:
+        return raw
+    if raw:
+        _note_invalid_fallback(name, "v0.1", "非 v0.1/v0.2 字符串")
+    return "v0.1"

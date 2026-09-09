@@ -199,6 +199,54 @@ def _reasoning_tail_for(
     return configured
 
 
+def _cog_allowlist_hit(settings: Any, sess: Any) -> bool:
+    """Stage 2 allowlist 求值（review R3 fail-closed 强化版）.
+
+    任何失败（空配置/相对路径/sid 空/文件缺失/OSError/超 64KiB/超 256 条/
+    运行用户可写/非 UTF-8/任意有效行非法 session_id）→ False（保持 shadow）。
+    每轮 build 重读——热更语义（删行下一轮生效）。
+
+    P0-1 R3: operator-owned 边界运行时验证——运行用户对文件可写即视为
+    控制面不可信（self-promote 攻击链闭合点：agent 可写文件+可见路径）。
+    绝对路径是必要非充分条件；root 运行时 os.access 恒真，须配合只读
+    挂载/容器部署（见 DESIGN 部署约束）。
+    P0-2 R3: all-valid-or-no-promotion——任意非注释有效行非法（非单个
+    文件名组件/路径穿越/NUL）→ 整份名单 False，不静默跳过坏行。
+    P1-3 R3: bounded read（read(65537) 硬界）——stat 后无界 read 的
+    TOCTOU 免疫，最多读 65537B；严格 UTF-8 decode。
+    """
+    try:
+        path_s = str(getattr(settings, "cog_enforce_file", "") or "")
+        if not path_s:
+            return False
+        if not os.path.isabs(path_s):  # P0-1: 相对路径=配置无效
+            return False
+        sid = str(getattr(sess, "session_id", "") or "")
+        if not sid:
+            return False
+        if os.access(path_s, os.W_OK):  # P0-1 R3: 运行用户可写=控制面越界
+            return False
+        with open(path_s, "rb") as fh:  # P1-3 R3: bounded read 硬界
+            raw = fh.read(65537)
+        if len(raw) > 65536:
+            return False
+        text = raw.decode("utf-8")  # 非 UTF-8 → UnicodeDecodeError → False
+        from llm_loop.core.session import _validate_session_id
+
+        valid: list[str] = []
+        for ln in text.splitlines():
+            s = ln.strip()
+            if not s or s.startswith("#"):
+                continue
+            _validate_session_id(s)  # P0-2 R3: 非法 raise → 整份名单 False
+            valid.append(s)
+        if len(valid) > 256:  # P1-3: 256 有效条目硬上限
+            return False
+        return sid in valid
+    except Exception:  # noqa: BLE001 — P0-2: fail-closed，任何异常→shadow
+        return False
+
+
 class _BuildMixin:
     def _post_run_cache_health(
         self,
@@ -487,9 +535,8 @@ class _BuildMixin:
         # Keep an empty fingerprint field for projection telemetry schema compatibility.
         _evidence_manifest_content = ""
 
-        if self._cache_monitor.take_gate_note(session_id=sess.session_id):
-            with contextlib.suppress(Exception):
-                self._record_action("run.cache_gate", "observed_only", "prompt_chars=0")
+        # CR-R1: gate_note 取走语义移至 _run_cognitive_packet_stage（build 终点）。
+        # off/shadow 轮仍保持 observed_only 口径（R8.8），enforce 轮升级为决策包 HOT 槽。
         # Dynamic program-owned prompt producers are retired. This is a factual
         # runtime contract, not a semantic eligibility decision.
         decision.authorization_slots = {"mode": "retrieval_only", "prompt_chars": 0}
@@ -537,4 +584,206 @@ class _BuildMixin:
             "recent_continuity": dict(_ta.continuity or {}),
             "final_messages": len(_ta.built),
         }
-        return _ta.built
+        # CR-R1 (spec 5.2.1): 认知决策包阶段——build 终点单管线聚合尾注（fail-open）。
+        return self._run_cognitive_packet_stage(sess, _ta.built)
+
+    # ── CR-R1: 认知决策包阶段（四槽 → 唯一决策包 → 单条聚合 user 尾注） ──
+
+    def _run_cognitive_packet_stage(self, sess, built: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """单管线认知包注入（CR-R1 spec 5.2.1；整体 fail-open，失败原样返回 built）.
+
+        - mode=off（默认）: 零计算零遥测；gate_note 仍按 R8.8 observed_only 取走。
+        - shadow: 组包 + 遥测，不进 prompt、不消费 interop/tip/hotcard 槽。
+        - enforce（配置或 allowlist promoted）: 决策包进 prompt，槽位取走语义生效。
+        - 记忆槽只读持久化 memory_snapshot 消息；memory_msgs 参数已退役（指纹中立）。
+        """
+        try:
+            settings = self.settings
+            configured = str(getattr(settings, "cog_runtime_mode", "off") or "off").strip().lower()
+
+            def _gate_note_observed() -> None:
+                if self._cache_monitor:
+                    note = self._cache_monitor.take_gate_note(session_id=sess.session_id)
+                    if note:
+                        with contextlib.suppress(Exception):
+                            self._record_action("run.cache_gate", "observed_only", "prompt_chars=0")
+
+            if configured not in ("shadow", "enforce"):
+                _gate_note_observed()  # P0-2: off 硬关（无 compute/无事件），观测口径保留
+                return built
+
+            from llm_loop.cognitive.compiler import ContextTier, compile_decision_packet
+            from llm_loop.cognitive.state import (
+                SemanticStateStore,
+                StateEnvelope,
+                StateIdentity,
+                rebuild_state,
+            )
+            from llm_loop.cognitive.telemetry import emit_cognitive_event
+            from llm_loop.core.loop.focus import wrap_injection
+            from llm_loop.core.loop.hotcard import pop_hotcard
+            from llm_loop.core.loop.injection_span import InjectedEntry, SlotKind
+            from llm_loop.introspection.goal import GoalStore
+
+            promoted = configured == "shadow" and _cog_allowlist_hit(settings, sess)
+            effective = "enforce" if (configured == "enforce" or promoted) else "shadow"
+
+            # Read Barrier（spec 5.2.2）: 信封信任 = envelope 有效 ∧ 有 active goal ∧ identity 匹配
+            # 失配/冷启动 → rebuild（继承 revision+1）并回存；无 goal → 宁缺勿错（state=None）
+            audit_dir = os.path.join(str(settings.data_dir), "audit")
+            cog_state = None
+            goal_id = ""
+            state_revision = 0
+            env = None
+            gd = None
+            try:
+                gd = GoalStore(audit_dir).get(
+                    prefer_session_id=sess.session_id, strict_session=True
+                )
+            except Exception:
+                gd = None
+            try:
+                env = SemanticStateStore(audit_dir).load(sess.session_id)
+                if env is not None and not isinstance(env, StateEnvelope):
+                    env = None  # None/STALE_UNTRUSTED → 不可信，走 rebuild
+            except Exception:
+                env = None
+            if (
+                gd
+                and env is not None
+                and env.state is not None
+                and env.identity.matches(gd)
+            ):
+                cog_state = env.state
+                goal_id = str(env.identity.goal_id or "")
+                state_revision = int(env.identity.state_revision or 1)
+            elif gd:
+                try:
+                    cog_state = rebuild_state(gd)
+                except Exception:
+                    cog_state = None
+                if cog_state is not None:
+                    cps = gd.get("checkpoints") or []
+                    revision = (
+                        int(env.identity.state_revision) + 1
+                        if env is not None
+                        else 1
+                    )
+                    identity = StateIdentity(
+                        session_id=sess.session_id,
+                        goal_id=str(gd.get("id", "") or ""),
+                        goal_updated_at=str(gd.get("updated_at", "") or ""),
+                        checkpoint_ts=str(((cps[-1] or {}) if cps else {}).get("ts", "") or ""),
+                        state_revision=revision,
+                    )
+                    goal_id = identity.goal_id
+                    state_revision = revision
+                    with contextlib.suppress(Exception):
+                        SemanticStateStore(audit_dir).save(
+                            sess.session_id, StateEnvelope(identity=identity, state=cog_state)
+                        )
+
+            parts: list[tuple[str, str]] = []
+            # interop / tip 槽（enforce: 取走语义；shadow: 只读不消费）
+            for attr, slot in (("_interop_tail_messages", "interop"), ("_tip_tail_messages", "tip")):
+                msgs = list(getattr(self, attr, None) or [])
+                for m in msgs:
+                    content = str(getattr(m, "content", "") or "")
+                    if content:
+                        parts.append((slot, content))
+                if effective == "enforce" and msgs:
+                    setattr(self, attr, None)
+            # hotcard 槽：enforce 显式程序权威取出；shadow 不读取不消费
+            if effective == "enforce":
+                with contextlib.suppress(Exception):
+                    card = pop_hotcard(
+                        session_id=sess.session_id,
+                        data_dir=str(settings.data_dir),
+                        authorized=True,
+                    )
+                    if card:
+                        parts.append(("hotcard", str(card)))
+            # gate_note 槽：enforce 进 HOT 位；shadow 维持 observed_only 口径
+            gate_note = ""
+            if self._cache_monitor:
+                gate_note = str(self._cache_monitor.take_gate_note(session_id=sess.session_id) or "")
+            if gate_note and effective == "enforce":
+                parts.append(("gate_note", gate_note))
+            elif gate_note:
+                with contextlib.suppress(Exception):
+                    self._record_action("run.cache_gate", "observed_only", "prompt_chars=0")
+            # memory 槽：仅持久化 memory_snapshot 消息（参数 memory_msgs 退役，指纹中立）
+            for m in getattr(sess, "messages", None) or []:
+                meta = getattr(m, "metadata", None) or {}
+                if str(meta.get("injection_kind", "") or "") == "memory_snapshot":
+                    content = str(getattr(m, "content", "") or "")
+                    if content:
+                        parts.append(("memory", content))
+
+            budget = int(getattr(settings, "cog_runtime_packet_budget", 2000) or 2000)
+            tier_enabled = bool(getattr(settings, "cog_runtime_tier_enabled", True))
+            packet = compile_decision_packet(parts, cog_state, budget_chars=max(1, budget))
+            if tier_enabled:
+                rendered = packet.render()
+            else:
+                # tier 关闭: 原子回退平铺（旧格式，单条聚合——不叠加第二管线）
+                flat = [packet.render_header()]
+                flat += [
+                    f"--- [slot:{s.slot_kind or 'hint'}] ---\n{s.content}"
+                    for s in packet.slots
+                    if s.content.strip()
+                ]
+                rendered = "\n\n".join(p for p in flat if p)
+
+            hot_tokens = sum(len(s.content) for s in packet.slots if s.tier is ContextTier.HOT)
+            warm_tokens = sum(len(s.content) for s in packet.slots if s.tier is ContextTier.WARM)
+            cold_refs = sum(1 for s in packet.slots if s.tier is ContextTier.COLD)
+            tel_kw = dict(
+                data_dir=str(settings.data_dir),
+                session_id=sess.session_id,
+                run_id=str(getattr(self._run_state(), "run_id", "") or ""),
+                round_no=int(getattr(self._run_state(), "round_no", 0) or 0),
+                goal_id=goal_id,
+                cognitive_epoch=int(getattr(cog_state, "cognitive_epoch", 0) or 0),
+                state_revision=state_revision,
+                mode=effective,
+                configured_mode=configured,
+                promoted=promoted,
+            )
+            emit_cognitive_event(
+                "packet_compile",
+                hot_tokens=hot_tokens,
+                warm_tokens=warm_tokens,
+                cold_ref_count=cold_refs,
+                packet_tokens=len(rendered),
+                **tel_kw,
+            )
+            if packet.degraded:
+                emit_cognitive_event("tier_degraded", hot_tokens=hot_tokens, **tel_kw)
+
+            if effective != "enforce":
+                return built  # shadow: packet 不进 prompt（指纹中立契约）
+
+            import hashlib
+
+            message = {
+                "role": "user",
+                "content": wrap_injection(
+                    rendered, anchor=sess.session_id, slot_kind=str(SlotKind.AGGREGATED)
+                ),
+            }
+            out = list(built) + [message]
+            self._last_build_injections = [
+                InjectedEntry(
+                    msg_idx=len(out) - 1,
+                    slot_kind=SlotKind.AGGREGATED,
+                    prefix_sha=hashlib.sha256(
+                        str(message["content"])[:32].encode("utf-8")
+                    ).hexdigest(),
+                    seg_sources=tuple(parts),
+                )
+            ]
+            return out
+        except Exception:  # noqa: BLE001 — fail-open: 认知阶段异常不阻断消息构建
+            logger.warning("cognitive packet stage: fail-open（返回原 built）", exc_info=True)
+            return built

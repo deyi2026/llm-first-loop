@@ -68,3 +68,8 @@ Nexitally_Surge.fixed.conf
 .venv
 /tasks.md
 cloudflared/tunnel.json
+
+# 实验残留/工作区污染不入库（治理：见 docs/subsystem-disposition-20260909.md）
+.backup/
+swe-*.json
+Nexitally_Surge*.conf

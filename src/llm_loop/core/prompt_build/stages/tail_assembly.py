@@ -9,6 +9,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from llm_loop.core.loop.focus import _INJECTION_PREFIX
 from llm_loop.core.prompt_build import BuildAudit
 from llm_loop.core.prompt_build.stages.compaction_audit import run_compaction_audit
 from llm_loop.core.prompt_build.stages.projection_gate import (
@@ -17,6 +18,54 @@ from llm_loop.core.prompt_build.stages.projection_gate import (
 from llm_loop.core.recent_continuity import apply_recent_continuity_suffix
 
 logger = logging.getLogger(__name__)
+
+
+def merge_persisted_tail_injections(
+    built: list[dict], registered_idx: set[int]
+) -> tuple[int, list[dict], list[int]]:
+    """方向 C（2026-08-29）: 尾部持久化注入 wire 级合并（build 出口调用）.
+
+    语义原样迁自 r9 e5ea806 权威线（tail_assembly 随迁版）; storage 不动。
+
+    背景: EVO-20260827-f42496bc 将 memory 注入改为持久化（engine wrap+append 进
+    sess.messages）后，历史投影尾部出现"用户消息+持久化注入"连续 user 对（主区
+    883b4725 实测 510/511 形态，1210 结构触发根因形态）；_inject_parts 聚合只
+    覆盖动态消费槽，不含已持久化消息。
+
+    规则: 尾部连续 user 群（≥2 条）中，不在 registered_idx（动态注入登记）且
+    content 以 _INJECTION_PREFIX 开头的持久化注入条，并入前一条 user（content
+    追加 "\\n\\n"+原文，逐字保留）。群首注入（无前一条可并）/用户真实消息/登记条
+    一律保留原位。
+    """
+    tail_start = len(built)
+    for i in range(len(built) - 1, -1, -1):
+        if built[i].get("role") != "user":
+            tail_start = i + 1
+            break
+    else:
+        tail_start = 0  # 全 user 极端形态（防御）
+    if len(built) - tail_start < 2:
+        return tail_start, [], []
+    kept: list[dict] = []
+    removed: list[int] = []
+    for j in range(tail_start, len(built)):
+        cand = built[j]
+        if (
+            kept
+            and j not in registered_idx
+            and str(cand.get("content") or "").startswith(_INJECTION_PREFIX)
+        ):
+            prev = kept[-1]
+            if prev.get("role") == "user":  # 群内恒真，防御性保留
+                prev["content"] = (
+                    str(prev.get("content") or "")
+                    + "\n\n"
+                    + str(cand.get("content") or "")
+                )
+                removed.append(j)
+                continue
+        kept.append(cand)
+    return tail_start, kept, removed
 
 
 
