@@ -12,6 +12,8 @@ from typing import Any
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, Response
 
+import llm_loop.web.provider_admin as provider_admin
+
 from .schemas import (
     ProviderCreateRequest,
     ProviderCredentialRequest,
@@ -30,9 +32,7 @@ def _engine_from(request: Request) -> Any:
     return request.app.state.engine
 
 def _provider_admin_error(exc: Exception) -> Response:
-    from .provider_admin import ProviderAdminError
-
-    if isinstance(exc, ProviderAdminError):
+    if isinstance(exc, provider_admin.ProviderAdminError):
         return UTF8JSONResponse(
             status_code=exc.status_code,
             content={"error": exc.code, "detail": exc.detail},
@@ -66,8 +66,6 @@ def _model_input_to_raw(model: Any) -> tuple[str, dict[str, Any]]:
 @router.get("/api/v1/providers")
 def provider_admin_list(request: Request) -> Response:
     """Return provider/model config facts without credential plaintext."""
-    from . import provider_admin
-
     try:
         return UTF8JSONResponse(content=provider_admin.snapshot(_engine_from(request)))
     except Exception as exc:  # noqa: BLE001 - mapped to bounded admin error
@@ -76,8 +74,6 @@ def provider_admin_list(request: Request) -> Response:
 
 @router.post("/api/v1/providers")
 def provider_admin_create(body: ProviderCreateRequest, request: Request) -> Response:
-    from . import provider_admin
-
     engine = _engine_from(request)
     pid, raw = _provider_input_to_raw(body.provider)
     secret = body.api_key.get_secret_value() if body.api_key is not None else None
@@ -108,8 +104,6 @@ def provider_admin_create(body: ProviderCreateRequest, request: Request) -> Resp
 def provider_admin_replace(
     provider_id: str, body: ProviderReplaceRequest, request: Request
 ) -> Response:
-    from . import provider_admin
-
     engine = _engine_from(request)
     pid, raw = _provider_input_to_raw(body.provider)
     if pid != provider_id:
@@ -149,8 +143,6 @@ def provider_admin_delete(
     expected_version: str = Query(min_length=1, max_length=128),
     confirm: bool = Query(default=False),
 ) -> Response:
-    from . import provider_admin
-
     if not confirm:
         return UTF8JSONResponse(
             status_code=409,
@@ -186,8 +178,6 @@ def provider_admin_delete(
 def provider_admin_credential(
     provider_id: str, body: ProviderCredentialRequest, request: Request
 ) -> Response:
-    from . import provider_admin
-
     try:
         return UTF8JSONResponse(
             content=provider_admin.set_credential(
@@ -202,8 +192,6 @@ def provider_admin_credential(
 def provider_admin_add_model(
     provider_id: str, body: ProviderModelMutationRequest, request: Request
 ) -> Response:
-    from . import provider_admin
-
     engine = _engine_from(request)
     mid, model_raw = _model_input_to_raw(body.model)
     try:
@@ -234,8 +222,6 @@ def provider_admin_add_model(
 def provider_admin_replace_model(
     provider_id: str, model_id: str, body: ProviderModelMutationRequest, request: Request
 ) -> Response:
-    from . import provider_admin
-
     engine = _engine_from(request)
     new_mid, model_raw = _model_input_to_raw(body.model)
     try:
@@ -276,8 +262,6 @@ def provider_admin_delete_model(
     expected_version: str = Query(min_length=1, max_length=128),
     confirm: bool = Query(default=False),
 ) -> Response:
-    from . import provider_admin
-
     if not confirm:
         return UTF8JSONResponse(status_code=409, content={"error": "confirm_required", "detail": "删除模型需 confirm=true。"})
     engine = _engine_from(request)
@@ -316,8 +300,6 @@ def provider_admin_delete_model(
 
 @router.post("/api/v1/providers/default-model")
 def provider_admin_set_default(body: ProviderDefaultModelRequest, request: Request) -> Response:
-    from . import provider_admin
-
     try:
         return UTF8JSONResponse(content=provider_admin.set_default_model(_engine_from(request), body.model))
     except Exception as exc:  # noqa: BLE001
@@ -326,8 +308,6 @@ def provider_admin_set_default(body: ProviderDefaultModelRequest, request: Reque
 
 @router.post("/api/v1/providers/reload")
 def provider_admin_reload(request: Request) -> Response:
-    from . import provider_admin
-
     try:
         return UTF8JSONResponse(content=provider_admin.reload_registry(_engine_from(request)))
     except Exception as exc:  # noqa: BLE001
@@ -338,8 +318,6 @@ def provider_admin_reload(request: Request) -> Response:
 def provider_admin_test(
     provider_id: str, body: ProviderTestRequest, request: Request
 ) -> Response:
-    from . import provider_admin
-
     try:
         return UTF8JSONResponse(
             content=provider_admin.test_provider(_engine_from(request), provider_id, body.model)
