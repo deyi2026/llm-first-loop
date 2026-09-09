@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -31,7 +32,9 @@ def test_preview_normal_file(build_test_engine):
 def test_preview_accepts_absolute_path_in_root(build_test_engine):
     """工作区根内的绝对路径可预览（出产物 chips 用绝对路径）."""
     client = _client(build_test_engine)
-    abs_path = os.path.abspath("pyproject.toml")
+    # cwd 无关：isolated_data_dir 沙箱将 cwd 锁进 tmp，测试内不得假设 cwd==仓库根
+    repo_root = Path(__file__).resolve().parents[2]
+    abs_path = str(repo_root / "pyproject.toml")
     resp = client.get("/api/v1/files/preview", params={"path": abs_path})
     assert resp.status_code == 200
     assert "llm-first-loop" in resp.json()["content"]

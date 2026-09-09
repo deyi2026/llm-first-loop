@@ -20,7 +20,7 @@ def test_s2_seeds_and_sources_are_complete():
 
 
 def test_s2_matrix_is_balanced_and_secondary_sample_stratified():
-    m = json.loads((ROOT / "data/calib/s2_matrix_v1.json").read_text())
+    m = json.loads((ROOT / "tests/fixtures/calib/s2_matrix_v1.json").read_text())
     rows = m["rows"]
     assert len(rows) == 48
     for p in ["minimax", "deepseek"]:

@@ -81,7 +81,12 @@ def _compact_event(engine) -> None:
     engine._compact_event_was_compacted = True
 
 
-def _attempt(engine, fake, sid: str, msgs: list[dict]):
+def _attempt(engine, fake, sid: str, msgs: list[dict], *, new_run: bool = True):
+    """直接驱动 _try_err1210_recovery；new_run=True 先 _err1210_run_begin() 模拟
+    engine.run 入口接线（engine.py run 每次进入时递增 run seq——现行修复A契约：
+    每 run 每会话一次降级机会，attempted 值 = run seq）."""
+    if new_run:
+        engine._err1210_run_begin()
     return engine._try_err1210_recovery(
         exc=_e1210(), sess=SimpleNamespace(session_id=sid), messages=msgs,
         tools_param=[], llm_client=fake, chat_model_arg=None, timeout_s=1.0, session_id=sid)
@@ -89,7 +94,7 @@ def _attempt(engine, fake, sid: str, msgs: list[dict]):
 
 class TestTwoSessionInterleaving:
     def test_interleaved_a1_to_a6(self, tmp_path, monkeypatch):
-        engine, fake = _mk_engine(tmp_path, monkeypatch, responses=[_e1210(), _e1210()])
+        engine, fake = _mk_engine(tmp_path, monkeypatch, responses=[_e1210(), _e1210(), _e1210()])
         with _switch_session("A"):
             msgs_a = _arm_build(engine, 5, "A")
             _compact_event(engine)  # A compact → A 桶 seq=1
@@ -102,17 +107,23 @@ class TestTwoSessionInterleaving:
             res_a = _attempt(engine, fake, "A", msgs_a)  # A 1210 到达
             assert res_a.stripped_count == 5  # a1: A 剥离 5 条（非 B 的 3/混合）
             assert engine._compact_event_seq == 1  # a2: A seq 仍 1（B 未污染）
-            assert res_a.exhausted is True and engine._err1210_attempted == {"A": 1}
+            assert res_a.exhausted is True and engine._err1210_attempted == {"A": 1}  # A run1
             assert len(engine._deferred_replay_refs) == 5  # A defer 归属 A
         with _switch_session("B"):
             assert engine._deferred_replay_refs == []  # a4: B build 不消费 A defer 槽
             res_b = _attempt(engine, fake, "B", msgs_b)  # B 1210 到达
             assert res_b.stripped_count == 3  # a1: B 剥离 3 条；a6: 共享
             # _last_history_compacted（A build 写 True）下 B 判定与串行基线一致
-            assert res_b.exhausted and engine._err1210_attempted == {"A": 1, "B": 1}
+            assert res_b.exhausted and engine._err1210_attempted == {"A": 1, "B": 2}  # B run2（值=run seq）
             assert len(engine._deferred_replay_refs) == 3  # a6: B defer 归属 B
-            res_b2 = _attempt(engine, fake, "B", msgs_b)
-            assert res_b2.attempted and res_b2.exhausted  # a3: 会话内防循环（单次重试）
+            res_b2 = _attempt(engine, fake, "B", msgs_b, new_run=False)
+            # a3: 同 run 内防循环（单次重试；attempted["B"]==2==run_seq 短路，不再剥离）
+            assert res_b2.attempted and res_b2.exhausted and res_b2.stripped_count == 0
+        with _switch_session("A"):
+            # 修复A: A 新 run（run3）→ attempted["A"]=1 != 3 → 降级机会重获（真实剥离+重试）
+            res_a2 = _attempt(engine, fake, "A", msgs_a)
+            assert res_a2.attempted and res_a2.stripped_count == 5
+            assert engine._err1210_attempted == {"A": 3, "B": 2}
         trace = Path(os.environ.get("LFL_DATA_DIR", "data")) / "audit" / "defer_trace.jsonl"
         events = [json.loads(x) for x in trace.read_text(encoding="utf-8").splitlines() if x.strip()]
         assert all(e["session_id"] != "B" for e in events if e["event"] == "defer_replayed")
