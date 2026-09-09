@@ -4,6 +4,38 @@ export interface ToolCallInfo {
   id: string;
   name: string;
   arguments: Record<string, unknown>;
+  /** Mechanical execution status when the backend has it (e.g. done.tool_calls). */
+  status?: string;
+}
+
+export type ToolActivityStatus =
+  | "running"
+  | "completed"
+  | "success"
+  | "failure"
+  | "error"
+  | "blocked"
+  | "unauthorized"
+  | "timeout"
+  | "cancelled"
+  | "interrupted"
+  | "unknown";
+
+export interface ToolRoundEvent {
+  tool_call_id?: string;
+  tool_name?: string;
+  round_index?: number;
+  args_summary?: string;
+}
+
+export interface ToolActivity {
+  id: string;
+  name: string;
+  status: ToolActivityStatus;
+  roundIndex?: number;
+  argsSummary?: string;
+  arguments?: Record<string, unknown>;
+  resultContent?: string;
 }
 
 export interface ToolCallDelta {
@@ -29,6 +61,8 @@ export interface ChatMessage {
   attachments?: AttachmentFact[];
   reasoningContent?: string | null;
   toolCalls?: ToolCallInfo[] | null;
+  /** UI-only projection of tool lifecycle; never persisted back into session history. */
+  toolActivities?: ToolActivity[];
   toolCallId?: string | null;
   toolName?: string | null;
   note?: string | null;

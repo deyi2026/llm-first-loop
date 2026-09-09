@@ -143,6 +143,83 @@ describe("conversation stream ownership", () => {
     await run2;
   });
 
+
+  it("tool_round 实时进入活动条，后续模型分片把上一工具机械收敛为完成", async () => {
+    h.streamChatRequest.mockImplementationOnce(async (_body, handlers: any) => {
+      handlers.onToolRound?.({
+        tool_call_id: "c1",
+        tool_name: "read_file",
+        round_index: 1,
+        args_summary: '{"path":"README.md"}',
+      });
+      let msg = conversationStore.getState().messages.at(-1);
+      expect(msg?.toolActivities?.[0]).toMatchObject({ id: "c1", name: "read_file", status: "running" });
+
+      handlers.onReasoningDelta?.("工具结果已返回，继续判断");
+      msg = conversationStore.getState().messages.at(-1);
+      expect(msg?.toolActivities?.[0]?.status).toBe("completed");
+
+      handlers.onToolRound?.({
+        tool_call_id: "c2",
+        tool_name: "search_text",
+        round_index: 2,
+        args_summary: '{"query":"needle"}',
+      });
+      return {
+        ok: true,
+        errorType: null,
+        error: null,
+        data: {
+          session_id: "s1",
+          final_answer: "done",
+          tool_calls: [
+            { id: "c1", name: "read_file", arguments: { path: "README.md" }, status: "success" },
+            { id: "c2", name: "search_text", arguments: { query: "needle" }, status: "failure" },
+          ],
+        },
+      } satisfies StreamOutcome;
+    });
+
+    await sendMessage("A", []);
+    const msg = conversationStore.getState().messages.at(-1);
+    expect(msg?.toolActivities).toHaveLength(2);
+    expect(msg?.toolActivities?.[0]?.status).toBe("success");
+    expect(msg?.toolActivities?.[1]?.status).toBe("failure");
+  });
+
+  it("同一 round 的多个工具在执行前都保持 running，不把前一个误判为完成", async () => {
+    h.streamChatRequest.mockImplementationOnce(async (_body, handlers: any) => {
+      handlers.onToolRound?.({ tool_call_id: "c1", tool_name: "read_file", round_index: 1, args_summary: '{"path":"a"}' });
+      handlers.onToolRound?.({ tool_call_id: "c2", tool_name: "read_file", round_index: 1, args_summary: '{"path":"b"}' });
+      const live = conversationStore.getState().messages.at(-1)?.toolActivities;
+      expect(live?.map((item) => item.status)).toEqual(["running", "running"]);
+      return {
+        ok: true, errorType: null, error: null,
+        data: { final_answer: "done", tool_calls: [
+          { id: "c1", name: "read_file", arguments: { path: "a" }, status: "success" },
+          { id: "c2", name: "read_file", arguments: { path: "b" }, status: "success" },
+        ] },
+      } satisfies StreamOutcome;
+    });
+    await sendMessage("A", []);
+  });
+
+  it("流中断时仍在 running 的工具如实标成 interrupted", async () => {
+    h.streamChatRequest.mockImplementationOnce(async (_body, handlers: any) => {
+      handlers.onToolRound?.({ tool_call_id: "c1", tool_name: "execute_command", round_index: 1 });
+      return {
+        ok: false,
+        errorType: "network",
+        error: { detail: "连接中断，已保留已生成内容" },
+        data: null,
+      } satisfies StreamOutcome;
+    });
+
+    await sendMessage("A", []);
+    const msg = conversationStore.getState().messages.at(-1);
+    expect(msg?.toolActivities?.[0]?.status).toBe("interrupted");
+  });
+
   it("空正文 done 保留已流式 reasoning，并展示 fallback/推理实际状态", async () => {
     h.streamChatRequest.mockImplementationOnce(async (_body, handlers: any) => {
       handlers.onReasoningDelta?.("已收到推理");

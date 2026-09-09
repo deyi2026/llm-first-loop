@@ -1,9 +1,10 @@
 // Web V2：对话 store（消息流 / 流式状态 / 历史分页 / 发送·停止·重试）
 
 import { useSyncExternalStore } from "react";
-import type { AttachmentFact, ChatDoneData, ChatMessage } from "./types";
+import type { AttachmentFact, ChatDoneData, ChatMessage, ToolRoundEvent } from "./types";
 import { streamChatRequest, toChatMessage, buildAssistantNote, fetchHistory, fetchStreamStatus } from "./chat";
 import { sessionStore } from "./stores";
+import { mergeFinalToolCalls, settleActivitiesBeforeRound, settleRunningActivities, startToolActivity } from "./toolActivity";
 
 const HISTORY_PAGE_SIZE = 100;
 
@@ -265,14 +266,23 @@ async function resumeBackgroundStream(sessionId: string): Promise<boolean> {
           // 会话守卫：当前会话已切换 → 停止渲染（防串写）
           if (sessionStore.getState().currentSessionId !== sid) return;
           acc.answer += d;
-          patchStreaming({ content: acc.answer });
+          const current = conversationStore.getState();
+          const active = current.streamingIndex >= 0 ? current.messages[current.streamingIndex]?.toolActivities : undefined;
+          patchStreaming({ content: acc.answer, toolActivities: settleRunningActivities(active) });
         },
         onReasoningDelta: (d) => {
           if (sessionStore.getState().currentSessionId !== sid) return;
           acc.reasoning += d;
-          patchStreaming({ reasoningContent: acc.reasoning });
+          const current = conversationStore.getState();
+          const active = current.streamingIndex >= 0 ? current.messages[current.streamingIndex]?.toolActivities : undefined;
+          patchStreaming({ reasoningContent: acc.reasoning, toolActivities: settleRunningActivities(active) });
         },
-        onToolRound: () => undefined,
+        onToolRound: (event: ToolRoundEvent) => {
+          if (sessionStore.getState().currentSessionId !== sid) return;
+          const current = conversationStore.getState();
+          const active = current.streamingIndex >= 0 ? current.messages[current.streamingIndex]?.toolActivities : undefined;
+          patchStreaming({ toolActivities: startToolActivity(settleActivitiesBeforeRound(active, event.round_index), event) });
+        },
       },
       controller.signal
     );
@@ -415,17 +425,26 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
         // 会话守卫（2026-08-23 多会话串扰修复）: 当前会话已切换 → 停止渲染（防 A 串写 B 视图）
         if (sessionStore.getState().currentSessionId !== sessionId) return;
         acc.answer += d;
-        patchStreaming({ content: acc.answer });
+        const current = conversationStore.getState();
+        const active = current.streamingIndex >= 0 ? current.messages[current.streamingIndex]?.toolActivities : undefined;
+        patchStreaming({ content: acc.answer, toolActivities: settleRunningActivities(active) });
       },
       onReasoningDelta: (d) => {
         if (sessionStore.getState().currentSessionId !== sessionId) return;
         acc.reasoning += d;
-        patchStreaming({ reasoningContent: acc.reasoning });
+        const current = conversationStore.getState();
+        const active = current.streamingIndex >= 0 ? current.messages[current.streamingIndex]?.toolActivities : undefined;
+        patchStreaming({ reasoningContent: acc.reasoning, toolActivities: settleRunningActivities(active) });
       },
-      onToolRound: () => {
+      onToolRound: (event: ToolRoundEvent) => {
         if (sessionStore.getState().currentSessionId !== sessionId) return;
         acc.toolRounds += 1;
-        patchStreaming({ note: `工具调用进行中（${acc.toolRounds} 轮）…` });
+        const current = conversationStore.getState();
+        const active = current.streamingIndex >= 0 ? current.messages[current.streamingIndex]?.toolActivities : undefined;
+        patchStreaming({
+          toolActivities: startToolActivity(settleActivitiesBeforeRound(active, event.round_index), event),
+          note: null,
+        });
       },
     },
     controller.signal
@@ -446,6 +465,9 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
   }
 
   const st = conversationStore.getState();
+  const liveActivities = st.streamingIndex >= 0
+    ? st.messages[st.streamingIndex]?.toolActivities
+    : undefined;
   const finalize = (msg: ChatMessage) => {
     conversationStore.setState({
       messages: [...st.messages.slice(0, st.streamingIndex), msg, ...st.messages.slice(st.streamingIndex + 1)],
@@ -465,6 +487,7 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
         content: data.final_answer ?? "",
         reasoningContent: data.reasoning_content ?? (acc.reasoning || null),
         toolCalls: data.tool_calls ?? null,
+        toolActivities: mergeFinalToolCalls(liveActivities, data.tool_calls),
         note: buildAssistantNote(data),
         streaming: false,
         ts: Date.now() / 1000,
@@ -480,6 +503,7 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
         content: "",
         reasoningContent: data.reasoning_content ?? (acc.reasoning || null),
         toolCalls: data.tool_calls,
+        toolActivities: mergeFinalToolCalls(liveActivities, data.tool_calls),
         note: buildAssistantNote(data) ?? "（无文字回答）",
         streaming: false,
         ts: Date.now() / 1000,
@@ -493,6 +517,7 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
         role: "assistant",
         content: acc.answer || "（无文字回答）",
         reasoningContent: data.reasoning_content ?? (acc.reasoning || null),
+        toolActivities: mergeFinalToolCalls(liveActivities, data.tool_calls),
         note: buildAssistantNote(data),
         streaming: false,
         ts: Date.now() / 1000,
@@ -509,6 +534,7 @@ export async function sendMessage(text: string, attachments: SendAttachment[]): 
       role: "assistant",
       content: acc.answer || "",
       reasoningContent: acc.reasoning || null,
+      toolActivities: settleRunningActivities(liveActivities, "interrupted"),
       note,
       streaming: false,
       ts: Date.now() / 1000,

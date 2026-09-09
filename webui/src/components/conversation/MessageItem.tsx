@@ -3,7 +3,7 @@
 // 工具行折叠链、代码块 banner（语言+复制）+ 高亮 + 长块分块、笔记 footer）
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { AttachmentFact, ChatMessage, ToolCallInfo } from "../../core/types";
+import type { AttachmentFact, ChatMessage, ToolActivity, ToolActivityStatus, ToolCallInfo } from "../../core/types";
 import { renderMarkdown } from "../../core/markdown";
 import { formatTokens } from "../../core/chat";
 import { fetchFilePreview, forkSession, submitFeedback } from "../../core/api";
@@ -116,78 +116,125 @@ function ThinkingBlock({ text, streaming }: { text: string; streaming?: boolean 
   );
 }
 
-function ToolRow({ tool }: { tool: ToolCallInfo }) {
-  const [open, setOpen] = useState(false);
-  const args = useMemo(() => {
-    try {
-      return JSON.stringify(tool.arguments ?? {}, null, 2);
-    } catch {
-      return String(tool.arguments ?? "");
-    }
-  }, [tool]);
-  return (
-    <div className="v2-tool-row" data-testid="tool-row">
-      <button type="button" className="v2-tool-toggle" onClick={() => setOpen((v) => !v)}>
-        <span className="v2-tool-icon">🔧</span>
-        <span className="v2-tool-name">{tool.name}</span>
-        <span className="v2-tool-id">{tool.id}</span>
-        <span className="v2-tool-arrow">{open ? "▾" : "▸"}</span>
-      </button>
-      {open && (
-        <pre className="v2-tool-args">
-          <code>{args}</code>
-        </pre>
-      )}
-    </div>
-  );
+function toolStatusMeta(status: ToolActivityStatus): { icon: string; label: string; className: string } {
+  if (status === "running") return { icon: "●", label: "执行中", className: "running" };
+  if (status === "success") return { icon: "✓", label: "成功", className: "ok" };
+  if (status === "failure" || status === "error") return { icon: "!", label: "失败", className: "err" };
+  if (status === "blocked") return { icon: "!", label: "已拦截", className: "warn" };
+  if (status === "unauthorized") return { icon: "!", label: "未授权", className: "warn" };
+  if (status === "timeout") return { icon: "!", label: "超时", className: "err" };
+  if (status === "cancelled" || status === "interrupted") return { icon: "–", label: "已中断", className: "neutral" };
+  if (status === "unknown") return { icon: "•", label: "状态未知", className: "neutral" };
+  return { icon: "✓", label: "完成", className: "ok" };
 }
 
-/** 工具回执状态解析（content 内 [状态: xxx] 标记；缺失中性） */
-function receiptStatus(content: string): { key: string; label: string } {
-  const m = /\[状态:\s*([a-z_]+)\]/i.exec(content || "");
-  const key = (m ? m[1] : "done").toLowerCase();
+function toolDisplayName(name: string): string {
   const labels: Record<string, string> = {
-    success: "成功",
-    failure: "失败",
-    error: "错误",
-    blocked: "已拦截",
-    timeout: "超时",
-    done: "完成",
-    running: "执行中",
+    read_file: "读取文件",
+    read_attachment: "读取附件",
+    search_text: "搜索代码",
+    search_files: "搜索文件",
+    search_archive: "搜索历史",
+    search_records: "搜索记录",
+    write_file: "写入文件",
+    edit_file: "修改文件",
+    execute_command: "运行命令",
+    web_fetch: "访问网页",
+    architecture_status: "检查架构状态",
   };
-  return { key, label: labels[key] ?? key };
+  return labels[name] ?? name.replaceAll("_", " ");
 }
 
-function ToolReceipt({ msg }: { msg: ChatMessage }) {
+function activitySubtitle(activity: ToolActivity): string {
+  const args = activity.arguments ?? {};
+  for (const key of ["path", "query", "command", "url", "pattern"] as const) {
+    const value = args[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return activity.argsSummary || "";
+}
+
+function ToolActivityRow({ activity }: { activity: ToolActivity }) {
   const [open, setOpen] = useState(false);
-  const st = receiptStatus(msg.content);
-  const statusClass = st.key === "success" || st.key === "done" ? "ok" : st.key === "blocked" ? "warn" : st.key === "failure" || st.key === "error" ? "err" : "neutral";
+  const meta = toolStatusMeta(activity.status);
+  const subtitle = activitySubtitle(activity);
+  const details = useMemo(() => {
+    const parts: string[] = [];
+    if (activity.arguments && Object.keys(activity.arguments).length > 0) {
+      try {
+        parts.push(`参数\n${JSON.stringify(activity.arguments, null, 2)}`);
+      } catch {
+        parts.push("参数\n[无法序列化]");
+      }
+    } else if (activity.argsSummary) {
+      parts.push(`参数摘要\n${activity.argsSummary}`);
+    }
+    if (activity.resultContent) parts.push(`结果\n${activity.resultContent}`);
+    return parts.join("\n\n");
+  }, [activity]);
+
   return (
-    <div className="v2-tool-receipt" data-testid="tool-receipt">
-      <button type="button" className="v2-tool-receipt-toggle" onClick={() => setOpen((v) => !v)}>
-        <span className="v2-tool-icon">⚙️</span>
-        <span className="v2-tool-name">{msg.toolName || "tool"}</span>
-        <span className={`v2-status-chip ${statusClass}`}>{st.label}</span>
-        {msg.toolCallId ? <span className="v2-tool-id">{msg.toolCallId}</span> : null}
-        <span className="v2-tool-arrow">{open ? "▾" : "▸"}</span>
+    <div className={`v2-tool-activity-row ${meta.className}`} data-testid="tool-activity-row">
+      <button
+        type="button"
+        className="v2-tool-activity-row-toggle"
+        onClick={() => details && setOpen((value) => !value)}
+        aria-expanded={details ? open : undefined}
+      >
+        <span className={`v2-tool-activity-icon ${meta.className}`}>{meta.icon}</span>
+        <span className="v2-tool-activity-copy">
+          <span className="v2-tool-activity-name">{toolDisplayName(activity.name)}</span>
+          {subtitle ? <span className="v2-tool-activity-subtitle">{subtitle}</span> : null}
+        </span>
+        <span className={`v2-tool-activity-status ${meta.className}`}>{meta.label}</span>
+        {details ? <span className="v2-tool-arrow">{open ? "▾" : "▸"}</span> : null}
       </button>
-      {open && (
-        <pre className="v2-tool-receipt-body">
-          <code>{msg.content}</code>
-        </pre>
-      )}
+      {open && details ? (
+        <pre className="v2-tool-activity-detail"><code>{details}</code></pre>
+      ) : null}
     </div>
   );
 }
 
-function ToolChain({ calls }: { calls: ToolCallInfo[] }) {
-  const [open, setOpen] = useState(false);
+function ToolActivityPanel({ activities, streaming }: { activities: ToolActivity[]; streaming?: boolean }) {
+  const hasIssue = activities.some((activity) =>
+    ["failure", "error", "blocked", "unauthorized", "timeout", "cancelled", "interrupted", "unknown"].includes(activity.status)
+  );
+  const hasRunning = activities.some((activity) => activity.status === "running");
+  const [open, setOpen] = useState(Boolean(streaming || hasRunning || hasIssue));
+
+  useEffect(() => {
+    if (streaming || hasRunning || hasIssue) setOpen(true);
+    else setOpen(false);
+  }, [streaming, hasRunning, hasIssue]);
+
+  const summary = hasRunning
+    ? activities.length === 1
+      ? `正在使用工具 · ${toolDisplayName(activities[0].name)}`
+      : `正在使用 ${activities.length} 个工具`
+    : hasIssue
+      ? `工具执行有异常 · ${activities.length} 个工具`
+      : `使用了 ${activities.length} 个工具`;
+
   return (
-    <div className="v2-tool-chain" data-testid="tool-chain">
-      <button type="button" className="v2-tool-chain-toggle" onClick={() => setOpen((v) => !v)}>
-        ⚙️ 工具调用（{calls.length}）{open ? "▾" : "▸"}
+    <div className={`v2-tool-activity ${hasIssue ? "has-issue" : ""}`} data-testid="tool-activity">
+      <button
+        type="button"
+        className="v2-tool-activity-toggle"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+      >
+        <span className={`v2-tool-activity-summary-icon ${hasRunning ? "running" : hasIssue ? "issue" : "done"}`}>
+          {hasRunning ? "●" : hasIssue ? "!" : "✓"}
+        </span>
+        <span>{summary}</span>
+        <span className="v2-tool-arrow">{open ? "▾" : "▸"}</span>
       </button>
-      {open && calls.map((t) => <ToolRow key={t.id} tool={t} />)}
+      {open ? (
+        <div className="v2-tool-activity-list">
+          {activities.map((activity) => <ToolActivityRow key={activity.id} activity={activity} />)}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -477,10 +524,16 @@ export function MessageItem({
     );
   }
   if (msg.role === "tool") {
+    const fallbackActivity: ToolActivity = {
+      id: msg.toolCallId || `orphan:${msg.sourceIndex ?? "unknown"}`,
+      name: msg.toolName || "tool",
+      status: "unknown",
+      resultContent: msg.content,
+    };
     return (
       <div className="v2-msg tool" data-testid="msg-tool">
         <div className="v2-msg-body">
-          <ToolReceipt msg={msg} />
+          <ToolActivityPanel activities={[fallbackActivity]} />
           <MessageTime ts={msg.ts} />
         </div>
       </div>
@@ -493,12 +546,12 @@ export function MessageItem({
         {msg.reasoningContent ? (
           <ThinkingBlock text={msg.reasoningContent} streaming={msg.streaming} />
         ) : null}
+        {Array.isArray(msg.toolActivities) && msg.toolActivities.length > 0 ? (
+          <ToolActivityPanel activities={msg.toolActivities} streaming={msg.streaming} />
+        ) : null}
         {Array.isArray(msg.toolCalls) && msg.toolCalls.length > 0 ? (
-          <>
-            <ToolChain calls={msg.toolCalls} />
-            {/* 出产物（对齐 DSH deliverables）：编辑的文件即时可见可打开 */}
-            <ProducedFiles calls={msg.toolCalls} />
-          </>
+          /* 出产物（对齐 DSH deliverables）：编辑的文件即时可见可打开 */
+          <ProducedFiles calls={msg.toolCalls} />
         ) : null}
         {msg.content ? (
           <Markdown text={msg.content} clickablePaths={producedPaths} />

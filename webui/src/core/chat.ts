@@ -10,13 +10,14 @@ import type {
   StreamOutcome,
   ToolCallDelta,
   ToolCallInfo,
+  ToolRoundEvent,
   UploadResult,
 } from "./types";
 
 export interface StreamHandlers {
   onAnswerDelta?: (text: string) => void;
   onReasoningDelta?: (text: string) => void;
-  onToolRound?: (data: unknown) => void;
+  onToolRound?: (data: ToolRoundEvent) => void;
   onToolCallDeltas?: (deltas: ToolCallDelta[]) => void;
 }
 
@@ -78,7 +79,7 @@ export async function streamChatRequest(
       const d = evt.data as Record<string, unknown> | undefined;
       if (evt.type === "answer_delta") handlers.onAnswerDelta?.(String(d?.data ?? ""));
       else if (evt.type === "reasoning_delta") handlers.onReasoningDelta?.(String(d?.data ?? ""));
-      else if (evt.type === "tool_round") handlers.onToolRound?.(d);
+      else if (evt.type === "tool_round") handlers.onToolRound?.((d ?? {}) as ToolRoundEvent);
       else if (evt.type === "tool_call_deltas" && Array.isArray(d?.deltas)) {
         toolAccum = toolAccum.concat(d.deltas as ToolCallDelta[]);
         handlers.onToolCallDeltas?.(toolAccum);
@@ -226,7 +227,7 @@ function normalizeToolCalls(raw: unknown): ToolCallInfo[] | null {
       }
     }
     if (!id && name) id = name;
-    out.push({ id, name, arguments: args });
+    out.push({ id, name, arguments: args, status: typeof r.status === "string" ? r.status : undefined });
   }
   return out.length > 0 ? out : null;
 }
