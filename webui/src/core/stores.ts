@@ -5,6 +5,7 @@ import type { SessionMeta } from "./api";
 
 export type ThemePreference = "system" | "light" | "dark";
 export type ThinkingMode = "auto" | "off" | "on";
+export type SidebarView = "sessions" | "files" | "evo" | "archived";
 
 interface SessionState {
   sessions: SessionMeta[];
@@ -137,6 +138,23 @@ export function useThinkingMode(): ThinkingMode {
 
 export function useReasoningEffort(): string | null {
   return useSyncExternalStore(sessionStore.subscribe, () => sessionStore.getState().reasoningEffort);
+}
+
+export function useNewSessionPending(): boolean {
+  return useSyncExternalStore(sessionStore.subscribe, () => sessionStore.getState().newSessionPending);
+}
+
+// ── 侧栏视图 store：允许顶栏“查看聊天中的文件”等真实导航动作打开对应视图 ──
+const sidebarViewStoreRaw = createStore<{ view: SidebarView }>({ view: "sessions" });
+
+export const sidebarViewStore = {
+  getState: sidebarViewStoreRaw.getState,
+  setView: (view: SidebarView) => sidebarViewStoreRaw.setState({ view }),
+  subscribe: sidebarViewStoreRaw.subscribe,
+};
+
+export function useSidebarView(): SidebarView {
+  return useSyncExternalStore(sidebarViewStore.subscribe, () => sidebarViewStore.getState().view);
 }
 
 // ── 主题 store（偏好持久化 localStorage + 跟随系统；body[data-ds-dark-theme] 属性生效） ──

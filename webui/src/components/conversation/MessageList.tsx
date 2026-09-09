@@ -69,7 +69,7 @@ export function MessageList() {
         <MessageItem
           key={i}
           msg={m}
-          index={i}
+          index={m.sourceIndex}
           sessionId={sessionStore.getState().currentSessionId ?? undefined}
           producedPaths={producedPaths}
         />

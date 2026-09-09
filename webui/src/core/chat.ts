@@ -123,23 +123,49 @@ export async function fetchHistory(
   }
 }
 
+export interface ModelCapability {
+  id: string;
+  provider: string;
+  model: string;
+  context: number;
+  max_input_tokens?: number | null;
+  max_output_tokens?: number | null;
+  cost_tier?: string;
+  multimodal?: boolean;
+  reasoning_capable: boolean;
+  reasoning_control: string;
+  reasoning_control_supported: boolean;
+  reasoning_can_disable: boolean;
+  reasoning_efforts: string[];
+}
+
 export interface ModelCatalog {
   models: string[];
   current: string | null;
+  catalog: ModelCapability[];
 }
 
-/** /api/v1/models 真实契约：{models: string[], current: string|null}（模型 id 为字符串） */
+/** /api/v1/models: ids + mechanical model capability facts; never provider secrets. */
 export async function fetchModels(): Promise<ModelCatalog> {
+  const empty: ModelCatalog = { models: [], current: null, catalog: [] };
   try {
     const resp = await fetch("/api/v1/models");
-    if (!resp.ok) return { models: [], current: null };
-    const data = (await resp.json().catch(() => ({}))) as { models?: unknown; current?: unknown };
+    if (!resp.ok) return empty;
+    const data = (await resp.json().catch(() => ({}))) as {
+      models?: unknown; current?: unknown; catalog?: unknown;
+    };
+    const catalog = Array.isArray(data.catalog)
+      ? data.catalog.filter((item): item is ModelCapability =>
+          Boolean(item && typeof item === "object" && typeof (item as ModelCapability).id === "string")
+        )
+      : [];
     return {
       models: Array.isArray(data.models) ? data.models.map(String).filter(Boolean) : [],
       current: typeof data.current === "string" ? data.current : null,
+      catalog,
     };
   } catch {
-    return { models: [], current: null };
+    return empty;
   }
 }
 
@@ -147,13 +173,17 @@ export async function uploadFileBase64(
   filename: string,
   b64: string
 ): Promise<{ status: number; data: UploadResult }> {
-  const resp = await fetch("/api/v1/upload", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ filename, data: b64 }),
-  });
-  const data = (await resp.json().catch(() => ({}))) as UploadResult;
-  return { status: resp.status, data };
+  try {
+    const resp = await fetch("/api/v1/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename, data: b64 }),
+    });
+    const data = (await resp.json().catch(() => ({}))) as UploadResult;
+    return { status: resp.status, data };
+  } catch {
+    return { status: 0, data: { status: "error", detail: "网络连接失败，附件未上传。" } };
+  }
 }
 
 /** 历史 tool_calls 归一化：后端存储为 OpenAI 嵌套格式 {function:{name,arguments}}，
@@ -205,6 +235,7 @@ function normalizeToolCalls(raw: unknown): ToolCallInfo[] | null {
 export function toChatMessage(m: HistoryMessage): ChatMessage {
   return {
     role: m.role as ChatMessage["role"],
+    sourceIndex: typeof m.index === "number" && m.index >= 0 ? m.index : undefined,
     content: m.content ?? "",
     attachments: Array.isArray(m.attachments) ? m.attachments : [],
     reasoningContent: m.reasoning_content ?? null,

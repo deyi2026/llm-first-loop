@@ -85,6 +85,44 @@ describe("App 布局壳", () => {
     expect(screen.queryByTestId("sidebar-scrim")).toBeNull();
   });
 
+  it("移动端右侧面板：class 与 DOM 挂载同步开合，不出现挂载但移出屏幕的状态", () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => ({
+        matches: true,
+        media: "(max-width: 900px)",
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }))
+    );
+
+    render(<App />);
+    const shell = screen.getByTestId("app-shell");
+
+    // 初始：移动端抽屉收起 → 无 class、RightPanel 未挂载（确实隐藏）
+    expect(shell).not.toHaveClass("mobile-panel-open");
+    expect(screen.queryByTestId("right-panel")).not.toBeInTheDocument();
+
+    // 点击右侧面板按钮：class 与 RightPanel 同时进入 open
+    fireEvent.click(screen.getByTitle("右侧面板"));
+    expect(shell).toHaveClass("mobile-panel-open");
+    expect(screen.getByTestId("right-panel")).toBeInTheDocument();
+    // 机械一致不变量：RightPanel 挂载 ⇔ mobile-panel-open 存在
+    // （否则 CSS translateX(100%) 会把已挂载面板永久移出屏幕）
+    expect(shell.classList.contains("mobile-panel-open")).toBe(
+      screen.queryByTestId("right-panel") !== null
+    );
+
+    // 再次点击：同时关闭
+    fireEvent.click(screen.getByTitle("右侧面板"));
+    expect(shell).not.toHaveClass("mobile-panel-open");
+    expect(screen.queryByTestId("right-panel")).not.toBeInTheDocument();
+  });
+
   it("SSE 事件驱动：sessions_updated → 会话列表刷新", async () => {
     // jsdom 无 EventSource → 注入桩（对齐后端 event: sessions_updated 命名帧）
     const eventTarget = new EventTarget();

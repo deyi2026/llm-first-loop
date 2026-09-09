@@ -36,6 +36,7 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
   const [rootItems, setRootItems] = useState<TreeNode[]>([]);
   const [loadingRoot, setLoadingRoot] = useState(false);
   const [error, setError] = useState("");
+  const [actionError, setActionError] = useState("");
   const [copied, setCopied] = useState<string | null>(null);
   // 操作态：renameTarget / confirmDelete（两步确认）/ newDirParent
   const [renameTarget, setRenameTarget] = useState<TreeNode | null>(null);
@@ -128,11 +129,17 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
   };
 
   const doMkdir = async () => {
-    if (!newDirParent || !newDirValue.trim()) return;
+    if (!newDirParent || !newDirValue.trim() || busy) return;
     setBusy(true);
+    setActionError("");
     const ok = await fsMkdir(`${newDirParent}/${newDirValue.trim()}`);
     setBusy(false);
+    if (!ok) {
+      setActionError("新建目录失败；文件树未修改，请重试。");
+      return;
+    }
     if (ok) {
+      setActionError("");
       setNewDirParent(null);
       setNewDirValue("");
       // 刷新父目录
@@ -147,11 +154,17 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
   };
 
   const doRename = async () => {
-    if (!renameTarget || !renameValue.trim()) return;
+    if (!renameTarget || !renameValue.trim() || busy) return;
     setBusy(true);
+    setActionError("");
     const ok = await fsRename(renameTarget.path, renameValue.trim());
     setBusy(false);
+    if (!ok) {
+      setActionError("重命名失败；原文件/目录保持不变，请重试。");
+      return;
+    }
     if (ok) {
+      setActionError("");
       const parent = renameTarget.path.split("/").slice(0, -1).join("/");
       setRenameTarget(null);
       const items = await loadDir(parent || "");
@@ -164,11 +177,17 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
   };
 
   const doDelete = async () => {
-    if (!confirmDelete) return;
+    if (!confirmDelete || busy) return;
     setBusy(true);
+    setActionError("");
     const ok = await fsDelete(confirmDelete.path);
     setBusy(false);
+    if (!ok) {
+      setActionError("删除失败；原文件/目录仍保留，请重试。");
+      return;
+    }
     if (ok) {
+      setActionError("");
       const parent = confirmDelete.path.split("/").slice(0, -1).join("/");
       setConfirmDelete(null);
       const items = await loadDir(parent || "");
@@ -298,6 +317,7 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
               type="button"
               className="v2-icon-btn"
               title={zh.newFolder}
+              disabled={busy}
               onClick={() => {
                 setNewDirParent(node.path);
                 setNewDirValue("");
@@ -310,6 +330,7 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
             type="button"
             className="v2-icon-btn"
             title={zh.rename}
+            disabled={busy}
             onClick={() => {
               setRenameTarget(node);
               setRenameValue(node.name);
@@ -321,6 +342,7 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
             type="button"
             className={`v2-icon-btn danger ${confirmDelete?.path === node.path ? "confirming" : ""}`}
             title={confirmDelete?.path === node.path ? zh.confirmDelete : zh.delete}
+            disabled={busy}
             onClick={() => {
               if (confirmDelete?.path !== node.path) {
                 setConfirmDelete(node);
@@ -365,6 +387,9 @@ export function FileTree({ sessionId = "" }: { sessionId?: string }) {
           {root ? root.split("/").filter(Boolean).pop() : "…"}
         </span>
       </div>
+      {actionError ? (
+        <div className="v2-tree-action-error" role="status">{actionError}</div>
+      ) : null}
       <div className="v2-tree-body">
         {loadingRoot ? (
           <div className="v2-tree-loading">加载中…</div>

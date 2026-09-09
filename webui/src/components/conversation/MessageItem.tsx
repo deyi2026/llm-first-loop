@@ -6,7 +6,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { AttachmentFact, ChatMessage, ToolCallInfo } from "../../core/types";
 import { renderMarkdown } from "../../core/markdown";
 import { formatTokens } from "../../core/chat";
-import { fetchFilePreview, submitFeedback } from "../../core/api";
+import { fetchFilePreview, forkSession, submitFeedback } from "../../core/api";
+import { useCapabilities } from "../../core/capabilities";
+import { loadHistory, prefillComposer } from "../../core/conversation";
+import { sessionStore } from "../../core/stores";
 import { zh } from "../../i18n/zh";
 
 /** 写剪贴板（navigator.clipboard 不可用/失败 → false，静默） */
@@ -391,6 +394,35 @@ export function MessageItem({
   /** 会话级出产物路径集合（正文路径引用可点击打开；由 MessageList 计算） */
   producedPaths?: Set<string>;
 }) {
+  const caps = useCapabilities();
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState(msg.content);
+  const [editBusy, setEditBusy] = useState(false);
+  const [editError, setEditError] = useState("");
+
+  const editAndFork = async () => {
+    if (!sessionId || typeof msg.sourceIndex !== "number" || msg.sourceIndex < 0 || editBusy) return;
+    if (!editText.trim()) {
+      setEditError("编辑后的消息不能为空。");
+      return;
+    }
+    setEditBusy(true);
+    setEditError("");
+    const report = await forkSession(sessionId, "", msg.sourceIndex);
+    const newSessionId = report?.new_session_id ?? "";
+    if (!newSessionId) {
+      setEditBusy(false);
+      setEditError("创建分支失败；原会话未修改，请重试。");
+      return;
+    }
+    sessionStore.setCurrentSession(newSessionId);
+    localStorage.removeItem(`lfl-draft-${newSessionId}`);
+    await loadHistory(newSessionId);
+    prefillComposer(editText, msg.attachments ?? []);
+    setEditing(false);
+    setEditBusy(false);
+  };
+
   if (msg.role === "user") {
     return (
       <div className="v2-msg user" data-testid="msg-user">
@@ -407,7 +439,40 @@ export function MessageItem({
         </div>
         <div className="v2-msg-actions">
           <CopyButton text={msg.content} />
+          {caps.fork && sessionId && typeof msg.sourceIndex === "number" && msg.sourceIndex >= 0 ? (
+            <button
+              type="button"
+              className="v2-copy-btn"
+              title="编辑并从这里创建新分支（原历史不变）"
+              onClick={() => {
+                setEditText(msg.content);
+                setEditError("");
+                setEditing((value) => !value);
+              }}
+            >
+              编辑并分支
+            </button>
+          ) : null}
         </div>
+        {editing ? (
+          <div className="v2-edit-fork" data-testid="edit-fork-panel">
+            <textarea
+              value={editText}
+              onChange={(event) => setEditText(event.target.value)}
+              rows={Math.min(8, Math.max(2, editText.split("\n").length))}
+              aria-label="编辑消息内容"
+              autoFocus
+            />
+            <div className="v2-edit-fork-note">原会话保持不可变；将在这条 USER 消息之前创建分支，并把编辑内容填入新分支输入框，不自动发送。</div>
+            {editError ? <div className="v2-panel-error">{editError}</div> : null}
+            <div className="v2-edit-fork-actions">
+              <button type="button" className="v2-btn primary" disabled={editBusy || !editText.trim()} onClick={() => void editAndFork()}>
+                {editBusy ? "创建中…" : "创建分支并填入"}
+              </button>
+              <button type="button" className="v2-btn ghost" disabled={editBusy} onClick={() => setEditing(false)}>取消</button>
+            </div>
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -460,7 +525,7 @@ export function MessageItem({
         <MessageTime ts={msg.ts} />
         <div className="v2-msg-actions">
           <CopyButton text={msg.content} />
-          {typeof index === "number" && sessionId ? <FeedbackButtons sessionId={sessionId} index={index} /> : null}
+          {caps.feedback && typeof index === "number" && sessionId ? <FeedbackButtons sessionId={sessionId} index={index} /> : null}
         </div>
       </div>
     </div>

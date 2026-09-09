@@ -7,8 +7,14 @@ import { sessionStore } from "./stores";
 
 const HISTORY_PAGE_SIZE = 100;
 
+interface ComposerPrefill {
+  text: string;
+  attachments: AttachmentFact[];
+}
+
 interface ConversationState {
   messages: ChatMessage[];
+  composerPrefill: ComposerPrefill | null;
   hasMoreHistory: boolean;
   loadedHistoryCount: number;
   streaming: boolean;
@@ -24,6 +30,7 @@ interface ConversationState {
 const listeners = new Set<() => void>();
 let state: ConversationState = {
   messages: [],
+  composerPrefill: null,
   hasMoreHistory: false,
   loadedHistoryCount: 0,
   streaming: false,
@@ -64,6 +71,13 @@ export const conversationStore = {
 
 export function useConversation(): ConversationState {
   return useSyncExternalStore(conversationStore.subscribe, () => conversationStore.getState());
+}
+
+/** Fill the composer after an explicit human edit/fork action. Never auto-send. */
+export function prefillComposer(text: string, attachments: AttachmentFact[] = []): void {
+  conversationStore.setState({
+    composerPrefill: { text, attachments: [...attachments] },
+  });
 }
 
 function abortForegroundSubscription(): void {

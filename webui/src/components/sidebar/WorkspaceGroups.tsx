@@ -50,6 +50,8 @@ export function WorkspaceGroups({ children, activeSessionId, onOpenOtherSession,
   // 其他工作区会话缓存：{ wsId: SessionMeta[] }
   const [otherSessions, setOtherSessions] = useState<Record<string, SessionMeta[]>>({});
   const [browsing, setBrowsing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
   const reload = (preferredCurrent: string) => {
     void fetchWorkspaces().then((data) => {
@@ -78,25 +80,41 @@ export function WorkspaceGroups({ children, activeSessionId, onOpenOtherSession,
   }, []);
 
   const openOtherSession = async (wsId: string, sid: string) => {
+    if (busy) return;
+    setBusy(true);
+    setError("");
     const ok = await switchWorkspace(wsId);
-    if (!ok) return;
+    if (!ok) {
+      setError("工作区切换失败；当前工作区和会话均未改变。");
+      setBusy(false);
+      return;
+    }
     setCurrentWsId(wsId);
     reload(wsId);
     onOpenOtherSession?.(wsId, sid);
+    setBusy(false);
   };
 
   /** 点击其他工作区分组头 = 切换工作区（无会话的工作区也可切换） */
   const switchWs = async (wsId: string) => {
-    if (wsId === currentWsId) return;
+    if (wsId === currentWsId || busy) return;
+    setBusy(true);
+    setError("");
     const ok = await switchWorkspace(wsId);
-    if (!ok) return;
+    if (!ok) {
+      setError("工作区切换失败；当前工作区保持不变。");
+      setBusy(false);
+      return;
+    }
     setCurrentWsId(wsId);
     reload(wsId);
     onWorkspaceChanged?.();
+    setBusy(false);
   };
 
   const onDirOpened = (ws: WorkspaceInfo) => {
     setBrowsing(false);
+    setError("");
     // 立即切换分组（不等 reload 异步返回，避免仍显示旧工作区）
     setCurrentWsId(ws.id);
     // 新工作区插入开头（当前工作区置顶，不被堆叠挤到最下面）
@@ -109,7 +127,8 @@ export function WorkspaceGroups({ children, activeSessionId, onOpenOtherSession,
   };
 
   return (
-    <div className="v2-ws-tree" data-testid="ws-groups">
+    <div className="v2-ws-tree" data-testid="ws-groups" aria-busy={busy}>
+      {error ? <div className="v2-ws-error" role="status">{error}</div> : null}
       {workspaces.length === 0 ? (
         // 工作区加载中/失败 → 默认组兜底渲染 children（会话列表不空白）
         <div className="v2-ws-tree-node current" data-testid="ws-group">
@@ -173,6 +192,7 @@ export function WorkspaceGroups({ children, activeSessionId, onOpenOtherSession,
                           className={`v2-session-item compact ${s.session_id === activeSessionId ? "active" : ""}`}
                           title={s.title || "未命名"}
                           onClick={() => void openOtherSession(ws.id, s.session_id)}
+                          disabled={busy}
                           data-testid="other-session-item"
                         >
                           <span className="v2-session-title">{s.title || "未命名"}</span>
@@ -193,7 +213,8 @@ export function WorkspaceGroups({ children, activeSessionId, onOpenOtherSession,
         <button
           type="button"
           className="v2-ws-add-btn"
-          onClick={() => setBrowsing(true)}
+          onClick={() => { setError(""); setBrowsing(true); }}
+          disabled={busy}
           data-testid="ws-add-btn"
         >
           ＋ 打开新工作区

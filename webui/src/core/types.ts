@@ -23,6 +23,8 @@ export interface AttachmentFact {
 
 export interface ChatMessage {
   role: "user" | "assistant" | "tool" | "system";
+  /** 持久化会话中的绝对消息索引；仅历史 API 返回，乐观/流式消息为空 */
+  sourceIndex?: number;
   content: string;
   attachments?: AttachmentFact[];
   reasoningContent?: string | null;
@@ -67,6 +69,7 @@ export interface ChatDoneData {
 }
 
 export interface HistoryMessage {
+  index?: number;
   role: string;
   content: string;
   attachments?: AttachmentFact[];
