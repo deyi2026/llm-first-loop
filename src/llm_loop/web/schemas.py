@@ -6,7 +6,7 @@ ChatResponse 六字段与 core.loop.LoopResult 六字段一一对应（如实透
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 
 class ChatAttachmentRef(BaseModel):
@@ -183,6 +183,155 @@ class UploadResponse(BaseModel):
     size_bytes: int = 0
     sha256: str = ""
     excerpt: str = ""
+
+
+class ProviderModelAdminInput(BaseModel):
+    """Strict operator-supplied model registry entry; no semantic capability inference."""
+
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=160)
+    enabled: bool = True
+    context: int = Field(default=131072, ge=1024, le=8_000_000)
+    max_input_tokens: int | None = Field(default=None, ge=1, le=8_000_000)
+    max_tokens: int | None = Field(default=None, ge=1, le=1_000_000)
+    cost_tier: str = Field(default="mid", min_length=1, max_length=32)
+    thinking: bool = False
+    reasoning_capable: bool = False
+    reasoning_control: Literal[
+        "legacy", "unknown", "none", "thinking_type", "chat_template", "always_on_effort"
+    ] = "unknown"
+    reasoning: bool = False
+    long_context: bool = False
+    multimodal: bool = False
+    wire_protocol: Literal["openai", "anthropic", "google", "lms-chat"] = "openai"
+    capability_tier: Literal["strong", "weak", "unknown"] = "unknown"
+    send_tool_choice: bool = True
+    reasoning_split: bool = False
+    reasoning_replay: Literal["configured", "none", "tool_calls", "full"] = "configured"
+    reasoning_effort_map: dict[str, str] = Field(default_factory=dict)
+    runtime_identity: str = Field(default="", max_length=256)
+    temperature: float | None = Field(default=None, ge=0)
+    top_p: float | None = Field(default=None, gt=0, le=1)
+    top_k: int | None = Field(default=None, ge=0)
+    min_p: float | None = Field(default=None, ge=0, le=1)
+
+    @field_validator("id")
+    @classmethod
+    def _model_id_is_wire_safe(cls, value: str) -> str:
+        if value != value.strip() or any(ord(ch) < 32 or ch.isspace() for ch in value):
+            raise ValueError("model id 不得包含空白/控制字符")
+        return value
+
+    @field_validator("reasoning_effort_map")
+    @classmethod
+    def _effort_map_is_bounded(cls, value: dict[str, str]) -> dict[str, str]:
+        allowed = {"low", "medium", "high", "max", "xhigh"}
+        if len(value) > len(allowed):
+            raise ValueError("reasoning_effort_map 条目过多")
+        out: dict[str, str] = {}
+        for key, mapped in value.items():
+            k = str(key).strip().lower()
+            v = str(mapped).strip().lower()
+            if k not in allowed or not v or len(v) > 32 or any(ch.isspace() for ch in v):
+                raise ValueError("reasoning_effort_map 含非法条目")
+            out[k] = v
+        return out
+
+
+class ProviderAdminProviderInput(BaseModel):
+    """Strict provider config persisted to providers.json; credential plaintext is separate."""
+
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,31}$")
+    enabled: bool = True
+    base_url: str = Field(min_length=8, max_length=2048)
+    api_key_env: str = Field(default="", max_length=128)
+    default_model: str = Field(default="", max_length=160)
+    timeout_s: float | None = Field(default=None, gt=0, le=7200)
+    history_budget_chars: int | None = Field(default=None, ge=1000, le=100_000_000)
+    max_input_tokens: int | None = Field(default=None, ge=1, le=8_000_000)
+    max_tokens: int | None = Field(default=None, ge=1, le=1_000_000)
+    chars_per_token: float | None = Field(default=None, gt=0, le=16)
+    models: list[ProviderModelAdminInput] = Field(default_factory=list, max_length=200)
+
+    @field_validator("base_url")
+    @classmethod
+    def _base_url_http_only(cls, value: str) -> str:
+        from urllib.parse import urlsplit
+
+        parsed = urlsplit(value.strip())
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("base_url 仅接受带主机名的 http/https URL")
+        if parsed.username or parsed.password:
+            raise ValueError("base_url 不得内嵌用户名/密码")
+        return value.strip().rstrip("/")
+
+    @field_validator("api_key_env")
+    @classmethod
+    def _api_key_env_name(cls, value: str) -> str:
+        import re
+
+        value = value.strip()
+        if value and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", value) is None:
+            raise ValueError("api_key_env 必须是合法环境变量名")
+        return value
+
+    @model_validator(mode="after")
+    def _provider_model_contract(self) -> "ProviderAdminProviderInput":
+        ids = [item.id for item in self.models]
+        if len(ids) != len(set(ids)):
+            raise ValueError("同一 provider 下 model id 不得重复")
+        if self.enabled and not any(item.enabled for item in self.models):
+            raise ValueError("启用的 provider 至少需要一个启用模型")
+        if self.default_model:
+            matching = next((item for item in self.models if item.id == self.default_model), None)
+            if matching is None:
+                raise ValueError("default_model 必须存在于 models")
+            if self.enabled and not matching.enabled:
+                raise ValueError("启用 provider 的 default_model 不能指向停用模型")
+        return self
+
+
+class ProviderCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_version: str = Field(min_length=1, max_length=128)
+    provider: ProviderAdminProviderInput
+    api_key: SecretStr | None = None
+
+
+class ProviderReplaceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_version: str = Field(min_length=1, max_length=128)
+    provider: ProviderAdminProviderInput
+
+
+class ProviderCredentialRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    api_key: SecretStr = Field(description="仅写入本机 .env；永不回显/日志化")
+
+
+class ProviderModelMutationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_version: str = Field(min_length=1, max_length=128)
+    model: ProviderModelAdminInput
+
+
+class ProviderDefaultModelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    model: str = Field(min_length=3, max_length=256)
+
+    @field_validator("model")
+    @classmethod
+    def _canonical_model_ref(cls, value: str) -> str:
+        value = value.strip()
+        if "/" not in value or any(ch.isspace() for ch in value):
+            raise ValueError("默认模型必须使用 provider/model 全限定引用")
+        return value
+
+
+class ProviderTestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    model: str = Field(default="", max_length=160)
 
 
 class EvolutionReviewRequest(BaseModel):

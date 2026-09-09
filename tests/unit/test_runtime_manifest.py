@@ -25,7 +25,7 @@ P05_FIELDS = [
     "service", "pid", "model_ref", "provider_id", "provider_endpoint_host",
     "history_budget_chars", "max_input_tokens", "max_tokens",
     "data_dir", "config_sources", "config_hash",
-    "providers_base_hash", "providers_override_hash", "providers_effective_hash",
+    "providers_base_hash", "providers_local_hash", "providers_override_hash", "providers_effective_hash",
 ]
 
 _PROVIDERS = {
@@ -90,6 +90,25 @@ def test_providers_hashes_override_semantics(tmp_path, monkeypatch):
     assert h2["providers_override_hash"]
     assert h2["providers_effective_hash"] != h2["providers_base_hash"]
 
+
+
+def test_providers_hashes_local_overlay_is_effective_snapshot(tmp_path):
+    """Web local overlay owns the effective registry snapshot without rewriting tracked seed."""
+    _mk(tmp_path, ["LLM_MODEL=glm/glm-5.3"])
+    data = tmp_path / "data"
+    local = {
+        "local": {
+            "base_url": "https://local.example/v1",
+            "api_key_env": "",
+            "default_model": "m",
+            "models": {"m": {"context": 262144}},
+        }
+    }
+    (data / "providers.local.json").write_text(json.dumps(local), encoding="utf-8")
+    hashes = providers_hashes(data)
+    assert hashes["providers_local_hash"]
+    assert hashes["providers_effective_hash"] == hashes["providers_local_hash"]
+    assert hashes["providers_effective_hash"] != hashes["providers_base_hash"]
 
 def test_write_read_roundtrip_and_health_identity(tmp_path, monkeypatch):
     """原子写 + 读回一致 + /health 精简 identity 回读。"""

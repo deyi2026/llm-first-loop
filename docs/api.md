@@ -114,7 +114,13 @@ app = build_app(settings=load_settings())   # FastAPI 应用（含鉴权/上传/
 `build_app(settings=None, engine=None)`：双参数装配；`app.state.engine` 单实例。
 端点速览：`POST /api/v1/chat`（body: `{message, session_id?, model?}`）、
 `POST /api/v1/chat/stream`、`GET /api/v1/sessions`、`POST /api/v1/upload`、`GET /health`
-（鉴权：回环豁免 + `WEB_API_KEY` 远程强制）。
+（鉴权：回环豁免 + `WEB_API_KEY` 远程强制）。Web 设置页的 Provider/模型控制面使用
+`GET/POST /api/v1/providers`、`PUT/DELETE /api/v1/providers/{provider_id}`、
+`POST /api/v1/providers/{provider_id}/test` 与 `POST /api/v1/providers/reload`。Web 修改写入
+git-ignored `data/providers.local.json` 完整本机快照，不改 tracked `data/providers.json`；API Key
+只写本机 `.env`/进程环境且 API 永不回显明文。动态 Provider/模型可热重载并立即被会话选择；
+修改 `LLM_MODEL` 只改变“配置默认”，共享 startup default client 仍需重启 Web Runtime 才生效。
+若 `MODEL_PROVIDERS` 环境变量存在，它保持最高优先级，Web 设置页只读且拒绝被遮蔽的写入。
 
 **Headless 服务模式（B5）**：无 UI 纯 API 嵌入——示例 `examples/04_headless_service.py`
 （装配 + 同步/流式对话端点，约 20 行），核心是 `build_engine(load_settings())` 单实例 +
@@ -132,7 +138,7 @@ app = build_app(settings=load_settings())   # FastAPI 应用（含鉴权/上传/
 
 | 扩展面 | 入口 |
 |:---|:---|
-| 新 LLM Provider | `MODEL_PROVIDERS` 注册表 JSON + `llm_loop.llm.providers` |
+| 新 LLM Provider | Web 设置 `/api/v1/providers`（本机 overlay）或 `MODEL_PROVIDERS` 注册表 JSON + `llm_loop.llm.providers` |
 | 新工具 | `ToolRegistry.register`（协议见 §5） |
 | 语义检索 | `EMBEDDING_PROVIDER`（none/hash/api）+ `memory.retriever` |
 | 事件溯源 | `EVENT_LOG_ENABLED` + `event_log` 包 |

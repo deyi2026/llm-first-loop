@@ -16,6 +16,7 @@ import {
 } from "../../core/stores";
 import { fetchModels, type ModelCatalog } from "../../core/chat";
 import { useCapabilities } from "../../core/capabilities";
+import { ProviderManager } from "./ProviderManager";
 
 export function RightPanel({ open }: { open: boolean }) {
   const caps = useCapabilities();
@@ -88,7 +89,14 @@ export function RightPanel({ open }: { open: boolean }) {
       </div>
       <div className="v2-panel-body" data-testid="panel-body">
         {tab === "settings" || !caps.jobs ? (
-          <SettingsView conn={conn} theme={theme} catalog={catalog} auth={auth} reload={loadSettings} />
+          <SettingsView
+            conn={conn}
+            theme={theme}
+            catalog={catalog}
+            auth={auth}
+            reload={loadSettings}
+            providerAdminEnabled={caps.providerAdmin}
+          />
         ) : (
           <JobsView
             sessionId={currentSessionId}
@@ -110,12 +118,14 @@ function SettingsView({
   catalog,
   auth,
   reload,
+  providerAdminEnabled,
 }: {
   conn: ReturnType<typeof useConnection>;
   theme: ReturnType<typeof useTheme>;
   catalog: ModelCatalog;
   auth: AuthStatus | null;
   reload: () => Promise<void>;
+  providerAdminEnabled: boolean;
 }) {
   const themes: Array<{ key: ThemePreference; label: string }> = [
     { key: "system", label: "跟随系统" },
@@ -170,6 +180,11 @@ function SettingsView({
               ))}
           {catalog.models.length === 0 ? <div className="v2-placeholder">模型目录暂不可用</div> : null}
         </div>
+        {providerAdminEnabled ? (
+          <ProviderManager onCatalogChanged={reload} />
+        ) : (
+          <div className="v2-provider-readonly-note">当前后端未提供 Provider 管理 API；保留只读模型目录。</div>
+        )}
       </section>
       <section>
         <h3>连接与安全</h3>

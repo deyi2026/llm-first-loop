@@ -5,8 +5,8 @@
 
   - workspace/git/venv/module/pid（身份事实，来自 R1 IdentityReport）
   - effective config 摘要与 config_hash（来自 R2 EffectiveConfig，已脱敏）
-  - providers base/override/effective 三 hash（漂移治理：任何人都能区分
-    "intentional override" 与 "两个 repo 漂移了"）
+  - providers tracked base / Web local snapshot / legacy override / effective hashes
+    （漂移治理：区分公开 seed、本机配置与历史 override）
 
 绝不记录 API key：manifest 是落盘文件，密钥脱敏在 resolver.to_summary
 源头完成（_mask_secret），本模块不再二次防御性过滤但保持结构不含密钥键。
@@ -44,19 +44,22 @@ def config_hash(ec: EffectiveConfig) -> str:
 
 
 def providers_hashes(data_dir: str | Path) -> dict[str, str]:
-    """P0.6：base/override/effective 三 hash。
+    """P0.6 + Web provider admin: tracked/local/legacy-override/effective hashes.
 
-    effective = base 与 override 顶层键合并后序列化的 hash（override 覆盖
-    base）；无 override 文件时 effective_hash == base_hash（override_hash
-    为空串）。解析失败如实置空，不伪造。
+    ``providers.local.json`` is an ignored full registry snapshot owned by the local Web
+    control plane and therefore wins over the tracked seed. If no local snapshot exists,
+    legacy ``providers.override.json`` retains its historical merge behavior. Parse failure
+    is surfaced as an empty effective hash rather than fabricated state.
     """
     data = Path(data_dir)
     base_p = data / "providers.json"
+    local_p = data / "providers.local.json"
     over_p = data / "providers.override.json"
     base_hash = _sha256_file(base_p)
+    local_hash = _sha256_file(local_p)
     override_hash = _sha256_file(over_p)
-    effective_hash = base_hash
-    if override_hash:
+    effective_hash = local_hash or base_hash
+    if not local_hash and override_hash:
         try:
             merged: dict = json.loads(base_p.read_text()) if base_p.is_file() else {}
             merged.update(json.loads(over_p.read_text()))
@@ -66,13 +69,14 @@ def providers_hashes(data_dir: str | Path) -> dict[str, str]:
             effective_hash = ""  # override 解析失败：如实置空
     return {
         "providers_base_hash": base_hash,
+        "providers_local_hash": local_hash,
         "providers_override_hash": override_hash,
         "providers_effective_hash": effective_hash,
     }
 
 
 def _provider_info(model_ref: str, data_dir: str | Path) -> dict[str, Any]:
-    """从 providers.json 提取 provider_id / endpoint_host / model 元信息（宽松）。"""
+    """从 effective local snapshot / tracked seed 提取 provider/model 机械元信息。"""
     info: dict[str, Any] = {
         "provider_id": "", "provider_endpoint_host": "",
         "provider_meta": {}, "model_meta": {},
@@ -80,20 +84,24 @@ def _provider_info(model_ref: str, data_dir: str | Path) -> dict[str, Any]:
     pid, _, mname = model_ref.partition("/")
     info["provider_id"] = pid
     try:
-        data = json.loads((Path(data_dir) / "providers.json").read_text())
+        root = Path(data_dir)
+        provider_file = root / "providers.local.json"
+        if not provider_file.is_file():
+            provider_file = root / "providers.json"
+        data = json.loads(provider_file.read_text())
         prov = data.get(pid) or {}
         info["provider_endpoint_host"] = (
             (prov.get("base_url") or "").split("//")[-1].split("/")[0])
         info["provider_meta"] = prov
         info["model_meta"] = (prov.get("models") or {}).get(mname or model_ref, {})
     except Exception:
-        pass  # providers.json 缺失/损坏：字段留空，manifest 仍产出（不阻塞启动）
+        pass  # effective provider 文件缺失/损坏：字段留空，manifest 仍产出（不阻塞启动）
     return info
 
 
 def build_manifest(service: str, ec: EffectiveConfig,
                    report: IdentityReport) -> dict:
-    """合并身份事实 + 配置指纹 + providers 三 hash（design P0.5 字段清单）。"""
+    """合并身份事实 + 配置指纹 + providers tracked/local/override/effective hashes。"""
     v = ec.values
     model_ref = v.get("LLM_MODEL", "")
     pinfo = _provider_info(model_ref, report.data_dir)
